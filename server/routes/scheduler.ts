@@ -20,34 +20,10 @@ import { resolveCrawlKeywords, resolveCrawlStrategy } from '../lib/crawlKeywords
 import { normalizeKeywordInput, type KeywordPlatform } from '../../src/lib/keywordInput.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DATA = path.join(__dirname, '../../data/tasks.json');
 const PDF_SCRIPT = path.join(__dirname, '../../scripts/render-task-report-pdf.py');
-
-export interface ScheduledTask {
-  id: string;
-  name: string;
-  category: 'daily' | 'monitor' | 'report' | 'automation';
-  taskType: 'trend_report' | 'weekly_review' | 'crm_wakeup' | 'exchange_rate' | 'market_intelligence' | 'holiday_push' | 'video_keyword_crawl' | 'image_post_crawl' | 'competitor_account_crawl' | 'custom';
-  cronExpr: string;      // e.g. "0 8 * * *"
-  cronLabel: string;     // e.g. "每天 08:00"
-  enabled: boolean;
-  lastRun?: string;
-  lastResult?: string;
-  nextRun?: string;
-  channelId?: string;    // which channel to send output to
-  config: Record<string, string>;
-  tenantId?: string;
-  createdAt: string;
-}
-
-export type ScheduledExecutionState = 'idle' | 'queued' | 'running' | 'succeeded' | 'failed' | 'worker_offline' | 'no_data' | 'collected' | 'partial';
-
-export interface ScheduledRunOutcome {
-  taskId: string;
-  state: ScheduledExecutionState;
-  result: string;
-  lastRun?: string;
-}
+import { hydrateScheduledTasks as hydrateTasksFromPocketBase, loadScheduledTasks as load, saveScheduledTasks as save, scheduledExecutionState, type ScheduledExecutionState, type ScheduledRunOutcome, type ScheduledTask } from './schedulerTaskStore.js';
+export type { ScheduledExecutionState, ScheduledRunOutcome, ScheduledTask } from './schedulerTaskStore.js';
+export { scheduledExecutionState } from './schedulerTaskStore.js';
 
 interface HolidayInfo {
   date: string;
@@ -123,98 +99,6 @@ interface BusinessDynamicsSnapshot {
 
 const businessDynamicsCache = new Map<string, { expiresAt: number; value: BusinessDynamicsSnapshot }>();
 const BUSINESS_DYNAMICS_CACHE_MS = 6 * 60 * 60 * 1000;
-
-function load(): ScheduledTask[] {
-  try { return JSON.parse(fs.readFileSync(DATA, 'utf8')); } catch { return []; }
-}
-function save(tasks: ScheduledTask[]) {
-  fs.mkdirSync(path.dirname(DATA), { recursive: true });
-  fs.writeFileSync(DATA, JSON.stringify(tasks, null, 2));
-  void mirrorTasksToPocketBase(tasks).catch(error => {
-    console.error('[scheduler] PocketBase task mirror failed:', error instanceof Error ? error.message : error);
-  });
-}
-
-function taskPayload(task: ScheduledTask): Record<string, unknown> {
-  return {
-    task_id: task.id,
-    tenant_id: task.tenantId || '',
-    name: task.name,
-    category: task.category,
-    task_type: task.taskType,
-    cron_expr: task.cronExpr,
-    cron_label: task.cronLabel,
-    enabled: task.enabled,
-    channel_id: task.channelId || '',
-    config: task.config || {},
-    last_run: task.lastRun || '',
-    last_result: task.lastResult || '',
-    created_at: task.createdAt,
-  };
-}
-
-function taskFromRecord(record: Record<string, any>): ScheduledTask | null {
-  const id = String(record.task_id || '').trim();
-  const tenantId = String(record.tenant_id || '').trim();
-  if (!id || !tenantId) return null;
-  return {
-    id,
-    tenantId,
-    name: String(record.name || id),
-    category: (record.category || 'daily') as ScheduledTask['category'],
-    taskType: (record.task_type || 'custom') as ScheduledTask['taskType'],
-    cronExpr: String(record.cron_expr || '0 8 * * *'),
-    cronLabel: String(record.cron_label || '每天 08:00'),
-    enabled: record.enabled !== false,
-    channelId: String(record.channel_id || '') || undefined,
-    config: record.config && typeof record.config === 'object' ? record.config : {},
-    lastRun: String(record.last_run || '') || undefined,
-    lastResult: String(record.last_result || '') || undefined,
-    createdAt: String(record.created_at || record.created || new Date().toISOString()),
-  };
-}
-
-async function allRemoteTasks(): Promise<Array<Record<string, any>>> {
-  const items: Array<Record<string, any>> = [];
-  let page = 1;
-  while (page <= 50) {
-    const result = await store.list<Record<string, any>>('scheduled_tasks', { page, perPage: 100, sort: 'created_at' });
-    items.push(...result.items);
-    if (page >= result.totalPages || result.items.length < 100) break;
-    page += 1;
-  }
-  return items;
-}
-
-async function mirrorTasksToPocketBase(tasks: ScheduledTask[]): Promise<void> {
-  const remote = await allRemoteTasks();
-  const remoteByTaskId = new Map(remote.map(record => [String(record.task_id || ''), record]));
-  const localIds = new Set(tasks.map(task => task.id));
-  for (const task of tasks) {
-    if (!task.tenantId) continue;
-    const existing = remoteByTaskId.get(task.id);
-    if (existing?.id) await store.update('scheduled_tasks', existing.id, taskPayload(task));
-    else await store.create('scheduled_tasks', taskPayload(task));
-  }
-  for (const record of remote) {
-    if (record.id && record.task_id && !localIds.has(String(record.task_id))) {
-      await store.delete('scheduled_tasks', String(record.id));
-    }
-  }
-}
-
-async function hydrateTasksFromPocketBase(): Promise<ScheduledTask[]> {
-  try {
-    const remote = (await allRemoteTasks()).map(taskFromRecord).filter((task): task is ScheduledTask => Boolean(task));
-    if (!remote.length) return load();
-    fs.mkdirSync(path.dirname(DATA), { recursive: true });
-    fs.writeFileSync(DATA, JSON.stringify(remote, null, 2));
-    return remote;
-  } catch (error) {
-    console.warn('[scheduler] using local task snapshot:', error instanceof Error ? error.message : error);
-    return load();
-  }
-}
 
 function tenantTasks(tenantId: string): ScheduledTask[] {
   return load().filter(task => task.tenantId === tenantId);
@@ -754,29 +638,6 @@ function renderTaskReportPdf(payload: Record<string, unknown>): Promise<Buffer> 
 const activeJobs = new Map<string, CronJob>();
 const runningTaskIds = new Set<string>();
 
-/**
- * Converts the human-readable task report into the small public state machine
- * used by both the scheduler UI and digital-employee approval hand-offs.
- */
-export function scheduledExecutionState(
-  result: string | undefined,
-  options: { running?: boolean; workerOnline?: boolean } = {},
-): ScheduledExecutionState {
-  const text = String(result || '').trim();
-  if (options.running || /任务正在执行|执行状态：[^\n]*执行中\s*[1-9]/.test(text)) return 'running';
-  const queued = /执行状态：已排队|执行状态：处理中|等待\s*(?:Mac\s*)?(?:本地\s*)?Worker|等待\/处理中/.test(text);
-  if (queued && options.workerOnline === false) return 'worker_offline';
-  if (queued) return 'queued';
-  if (/执行状态：部分成功/.test(text)) return 'partial';
-  if (/执行状态：已采集，待分析/.test(text)) return 'collected';
-  if (/执行状态：暂无结果/.test(text)) return 'no_data';
-  if (/执行状态：执行失败/.test(text)) return 'failed';
-  if (/公开采集未找到可入库的真实视频：[\s\S]*(?:search failed|SSL|HTTP [45]\d\d|ECONN|timed out)/i.test(text) && !/新增 [1-9]\d* 条/.test(text)) return 'failed';
-  if (/执行状态：(?:执行成功|部分成功)|任务执行完成|采集已结束|已完成/.test(text)) return 'succeeded';
-  if (/执行状态：执行失败|执行失败[:：]|任务均执行失败|全部失败/.test(text)) return 'failed';
-  return 'idle';
-}
-
 function taskWithExecutionState(task: ScheduledTask): ScheduledTask & { executionState: ScheduledExecutionState } {
   return {
     ...task,
@@ -1279,6 +1140,18 @@ export function scheduledCrawlBatchResult(jobs: Record<string, any>[], requested
 }
 
 async function executeTask(task: ScheduledTask): Promise<string> {
+  if (task.taskType === 'social_discovery_collection') {
+    const { executeApprovedDiscoveryRun } = await import('../socialDiscovery/service.js');
+    const result = await executeApprovedDiscoveryRun({
+      tenantId: String(task.tenantId || task.config.tenantId || ''),
+      triggerType: 'scheduled',
+      expectedScopeId: task.config.discoveryScopeId,
+      expectedScopeVersion: Number(task.config.discoveryScopeVersion || 0) || undefined,
+    });
+    return result.skipped
+      ? `发现采集未执行：${result.reason || 'no_discovery_mode_due'}`
+      : `发现采集已完成：${result.run?.runId || 'unknown_run'}`;
+  }
   if (task.taskType === 'video_keyword_crawl') return executeVideoKeywordCrawl(task);
   if (task.taskType === 'image_post_crawl') return executeImagePostCrawl(task);
   if (task.taskType === 'competitor_account_crawl') return executeCompetitorAccountCrawl(task);
@@ -1291,6 +1164,69 @@ async function executeTask(task: ScheduledTask): Promise<string> {
     case 'crm_wakeup':   return executeCrmWakeup(task);
     default:              return '任务执行完成';
   }
+}
+
+/** One scheduler per tenant. It only stores an approved scope reference; execution resolves the immutable scope snapshot. */
+export function ensureSocialDiscoveryCollectionTask(input: {
+  tenantId: string;
+  discoveryScopeId: string;
+  discoveryScopeVersion: number;
+}): { task: ScheduledTask; created: boolean; updated: boolean } {
+  const tasks = load();
+  const existing = tasks.find(task => task.tenantId === input.tenantId && task.taskType === 'social_discovery_collection');
+  const config: Record<string, string> = {
+    tenantId: input.tenantId,
+    discoveryScopeId: input.discoveryScopeId,
+    discoveryScopeVersion: String(input.discoveryScopeVersion),
+    managedBy: 'social_discovery_scope',
+  };
+  const task: ScheduledTask = existing ? {
+    ...existing,
+    name: '连续发现采集',
+    cronExpr: '*/15 * * * *',
+    cronLabel: '每15分钟检查到期供给',
+    enabled: true,
+    config,
+  } : {
+    id: `task_social_discovery_${randomUUID()}`,
+    tenantId: input.tenantId,
+    name: '连续发现采集',
+    category: 'automation',
+    taskType: 'social_discovery_collection',
+    cronExpr: '*/15 * * * *',
+    cronLabel: '每15分钟检查到期供给',
+    enabled: true,
+    config,
+    createdAt: new Date().toISOString(),
+  };
+  if (existing) tasks[tasks.indexOf(existing)] = task;
+  else tasks.push(task);
+  save(tasks);
+  scheduleTask(task);
+  return { task, created: !existing, updated: Boolean(existing) };
+}
+
+/** Backfill managed schedules for approved scopes created before scheduler wiring existed. */
+export async function reconcileSocialDiscoveryCollectionTasks(): Promise<number> {
+  let page = 1;
+  let reconciled = 0;
+  while (page <= 50) {
+    const result = await store.list<Record<string, any>>('social_discovery_scopes', {
+      where: { status: 'active' }, sort: 'created_at', page, perPage: 100,
+    });
+    for (const scope of result.items) {
+      const tenantId = String(scope.tenant_id || '').trim();
+      const version = Number(scope.version || 0);
+      const payload = scope.payload && typeof scope.payload === 'object' ? scope.payload as Record<string, any> : {};
+      const approval = payload.approval && typeof payload.approval === 'object' ? payload.approval as Record<string, any> : {};
+      if (!tenantId || !scope.id || !version || approval.status !== 'approved' || Number(approval.scopeVersion || 0) !== version) continue;
+      ensureSocialDiscoveryCollectionTask({ tenantId, discoveryScopeId: String(scope.id), discoveryScopeVersion: version });
+      reconciled += 1;
+    }
+    if (page >= result.totalPages || result.items.length < 100) break;
+    page += 1;
+  }
+  return reconciled;
 }
 
 async function executeAndPersistTask(task: ScheduledTask, trigger: 'cron' | 'catch-up' | 'manual'): Promise<string> {
@@ -1457,7 +1393,10 @@ export function ensureDigitalEmployeeSocialCollectionTask(input: {
 
 // Boot: restore active tasks
 export async function initScheduler() {
-  const tasks = (await hydrateTasksFromPocketBase()).filter(t => t.enabled && t.tenantId);
+  await hydrateTasksFromPocketBase();
+  try { await reconcileSocialDiscoveryCollectionTasks(); }
+  catch (error) { console.warn('[scheduler] discovery schedule reconciliation skipped:', error instanceof Error ? error.message : error); }
+  const tasks = load().filter(t => t.enabled && t.tenantId);
   tasks.forEach(scheduleTask);
   for (const task of tasks) {
     const missedAt = latestMissedRun(task);
@@ -1540,6 +1479,10 @@ schedulerRouter.get('/:id/export-pdf', async (req: Request, res: Response) => {
 
 schedulerRouter.post('/', async (req: Request, res: Response) => {
   const { tenantId } = res.locals as AuthLocals;
+  if (req.body.taskType === 'social_discovery_collection') {
+    res.status(403).json({ error: 'discovery_schedule_managed_by_scope' });
+    return;
+  }
   const tasks = load();
   const isCrawler = ['video_keyword_crawl', 'image_post_crawl', 'competitor_account_crawl'].includes(req.body.taskType);
   const requestedCronExpr = String(req.body.cronExpr ?? (isCrawler ? '0 1 * * *' : '0 8 * * *'));
@@ -1579,6 +1522,10 @@ schedulerRouter.put('/:id', async (req: Request, res: Response) => {
   if (idx === -1) { res.status(404).json({ error: 'not found' }); return; }
   const current = tasks[idx];
   const nextTaskType = req.body.taskType ?? current.taskType;
+  if (current.taskType === 'social_discovery_collection' || nextTaskType === 'social_discovery_collection') {
+    res.status(403).json({ error: 'discovery_schedule_managed_by_scope' });
+    return;
+  }
   const requestedCronExpr = String(req.body.cronExpr ?? current.cronExpr);
   if (!cron.validate(requestedCronExpr)) { res.status(400).json({ error: '无效的任务启动时间' }); return; }
   const nextIsCrawler = ['video_keyword_crawl', 'image_post_crawl', 'competitor_account_crawl'].includes(nextTaskType);
@@ -1611,6 +1558,7 @@ schedulerRouter.delete('/:id', (req: Request, res: Response) => {
   const { tenantId } = res.locals as AuthLocals;
   const task = findTenantTask(req.params.id, tenantId);
   if (!task) { res.status(404).json({ error: 'not found' }); return; }
+  if (task.taskType === 'social_discovery_collection') { res.status(403).json({ error: 'discovery_schedule_managed_by_scope' }); return; }
   activeJobs.get(req.params.id)?.stop();
   activeJobs.delete(req.params.id);
   save(load().filter(t => !(t.id === req.params.id && t.tenantId === tenantId)));

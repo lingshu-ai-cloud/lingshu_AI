@@ -6,9 +6,8 @@ import { promisify } from 'util';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { gzipSync, gunzipSync } from 'node:zlib';
 import ffmpegStatic from 'ffmpeg-static';
 import { requireAuth, type AuthLocals } from '../middleware/auth.js';
 import { store } from '../storage/index.js';
@@ -17,13 +16,17 @@ import { objectStorageEnabled, objectStorageDownload, objectStorageGetObject, ob
 import { analyzeImagePostEvidenceWithGemini, analyzeVideo, analyzeYouTubeUrl } from '../agents/gemini.js';
 import { analyzeImagePostEvidenceWithQwen, analyzeVideoFramesWithQwen, analyzeVideoTimelineDetailsWithQwen, transcribeAudioWithQwen, type ImagePostEvidenceAnalysis, type QwenTimelinePlan } from '../agents/qwen.js';
 import type { Platform, VideoAiAnalysis, VideoStatus } from '../types/index.js';
+import type { SocialDiscoveryMode } from '../../shared/contracts/socialContentWorkflow.js';
 import { isDemoMode } from '../lib/demo.js';
 import { recordVideoAdminAlert, updateVideoAdminAlertByRecordId } from '../lib/videoAdminAlerts.js';
 import { requireAdminUser } from '../lib/demoAccounts.js';
-import { ASSET_SESSION_COOKIE, cookieValue, signAssetUrl } from '../lib/assetAccess.js';
+import { ASSET_SESSION_COOKIE, cookieValue, signAssetUrl, tenantAssetDir, tenantAssetRelativePath } from '../lib/assetAccess.js';
+import { buildDownloadedReferenceMaterial } from '../lib/downloadedReferenceMaterial.js';
+import { resolvePublicVideoSource, validatePublicVideoSourceUrl, type ValidatedPublicVideoSource } from '../lib/publicVideoSourceSecurity.js';
 import { fetchCloudMaterial, getCloudMaterialRecord } from '../lib/cloudMaterials.js';
 import { localFallbacksEnabled } from '../lib/localFallbackPolicy.js';
-import { currentDataAuthority } from '../storage/dataAuthority.js';
+import { currentDataAuthority, runWithDataAuthority } from '../storage/dataAuthority.js';
+import { analysisTimelineQualityError, canPromoteExistingAnalysisToExact, hasCompleteVideoGeminiAnalysis, isAutoSeededVideo, isVideoLevelAnalysis, parseAnalysisTimeRange, serializeImagePostAnalysis, videoAnalysisOf } from './videoAnalysisCodec.js';
 
 export const videosRouter = Router();
 videosRouter.use(requireAuth);
@@ -143,6 +146,17 @@ interface Material {
   objectKey?: string;
   tenantId?: string;
   scope: 'shared' | 'own';
+  usage?: 'editable' | 'reference_only';
+  sourceType?: string;
+  sourceUrl?: string;
+  rightsReviewStatus?: string;
+  commercialUseApproved?: boolean;
+  derivativesApproved?: boolean;
+  rawLibraryUseApproved?: boolean;
+  mayAnalyze?: boolean;
+  mayUseInProduction?: boolean;
+  contentSha256?: string;
+  provenance?: Record<string, unknown>;
   createdAt: string;
 }
 
@@ -192,145 +206,6 @@ async function isTestTenantId(tenantId: string): Promise<boolean> {
   return isTestTenantRecord(tenant);
 }
 
-function videoAnalysisOf(record: Record<string, unknown>): Record<string, unknown> {
-  const parsed = parseJsonRecord<Record<string, unknown>>(record.aiAnalysis, {});
-  const compressed = typeof parsed.imageEvidenceGzip === 'string' ? parsed.imageEvidenceGzip : '';
-  if (!parsed.imageEvidence && compressed) {
-    try {
-      parsed.imageEvidence = JSON.parse(gunzipSync(Buffer.from(compressed, 'base64')).toString('utf8'));
-    } catch { /* leave the analysis explicitly unavailable */ }
-  }
-  delete parsed.imageEvidenceGzip;
-  delete parsed.imageEvidenceEncoding;
-  return parsed;
-}
-
-function serializeImagePostAnalysis(analysis: Record<string, unknown>): string {
-  const clean = analysis.contentFormat === 'image' ? { ...analysis, gemini: undefined } : analysis;
-  const plain = JSON.stringify(clean);
-  if (Buffer.byteLength(plain, 'utf8') <= 4_500 || !clean.imageEvidence) return plain;
-  const packed = {
-    ...clean,
-    imageEvidence: undefined,
-    imageEvidenceEncoding: 'gzip-base64',
-    imageEvidenceGzip: gzipSync(JSON.stringify(clean.imageEvidence)).toString('base64'),
-  };
-  return JSON.stringify(packed);
-}
-
-function isAutoSeededVideo(record: Record<string, unknown>): boolean {
-  const analysis = videoAnalysisOf(record);
-  return Boolean(
-    analysis.seededFromRecordId ||
-    analysis.analysisSource === 'demo-local-video' ||
-    String(analysis.crawlRule || '').includes('演示素材')
-  );
-}
-
-function textPresent(value: unknown): boolean {
-  return typeof value === 'string' && value.trim().length > 0;
-}
-
-function objectRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
-}
-
-function hasCompleteVideoGeminiAnalysis(gemini: unknown, duration = 0): boolean {
-  const analysis = objectRecord(gemini);
-  if (!Object.keys(analysis).length) return false;
-
-  const firstTen = objectRecord(analysis.firstTenSeconds);
-  const firstTenCount = ['atmosphere', 'audioVisual', 'camera', 'visuals', 'voiceMusic']
-    .filter(key => textPresent(firstTen[key]))
-    .length;
-  const coarseStructure = Array.isArray(analysis.coarseStructure)
-    ? analysis.coarseStructure.filter(item => {
-      const frame = objectRecord(item);
-      return textPresent(frame.description || frame.desc || frame.frame);
-    })
-    : [];
-  const scriptDetails = Array.isArray(analysis.scriptDetails15s)
-    ? analysis.scriptDetails15s.filter(item => {
-      const detail = objectRecord(item);
-      return textPresent(detail.visual) || textPresent(detail.subtitle);
-    })
-    : [];
-
-  const analyzedUntil = scriptDetails.reduce((max, item) => {
-    const detail = objectRecord(item);
-    const values = String(detail.time || detail.timestamp || '').match(/\d+(?:\.\d+)?/g)?.map(Number) || [];
-    return Math.max(max, values[1] ?? values[0] ?? 0);
-  }, 0);
-  const tolerance = duration > 0 ? Math.max(1, Math.min(3, duration * 0.03)) : 0;
-  const coversFullVideo = duration <= 0 || analyzedUntil + tolerance >= duration;
-
-  return textPresent(analysis.theme)
-    && firstTenCount >= 3
-    // A very short or genuinely static video can have a single valid scene.
-    // Full-duration coverage is validated independently from scene count.
-    && coarseStructure.length >= 1
-    && scriptDetails.length >= 1
-    && coversFullVideo;
-}
-
-function analysisTimelineQualityError(analysis: VideoAiAnalysis, duration: number, mode: 'strategy' | 'exact'): string | null {
-  const details = (analysis.scriptDetails15s || [])
-    .map(detail => ({ detail, range: parseAnalysisTimeRange(String(detail.time || detail.timestamp || '')) }))
-    .filter((item): item is { detail: NonNullable<VideoAiAnalysis['scriptDetails15s']>[number]; range: { start: number; end: number } } => Boolean(item.range))
-    .sort((a, b) => a.range.start - b.range.start);
-  if (!details.length) return 'no_valid_storyboard_segments';
-  // `needsReview` and low confidence are honest uncertainty markers. Keep
-  // those segments available for human review; structural coverage and usable
-  // visual evidence are validated independently.
-
-  const effectiveDuration = duration > 0 ? duration : details[details.length - 1].range.end;
-  const requiredSegments = effectiveDuration > 5 ? Math.max(2, Math.ceil(effectiveDuration / 5)) : 1;
-  if (details.length < requiredSegments) return `insufficient_segment_density_${details.length}_of_${requiredSegments}`;
-
-  const boundaryTolerance = mode === 'exact' ? 0.75 : 1.25;
-  const maxSegmentSeconds = mode === 'exact' ? 5.5 : 6.25;
-  if (details[0].range.start > boundaryTolerance) return `timeline_starts_at_${details[0].range.start.toFixed(2)}s`;
-  for (let index = 0; index < details.length; index += 1) {
-    const { start, end } = details[index].range;
-    if (end <= start) return `invalid_segment_${index + 1}`;
-    if (end - start > maxSegmentSeconds) return `segment_${index + 1}_too_long_${(end - start).toFixed(2)}s`;
-    if (index > 0) {
-      const previousEnd = details[index - 1].range.end;
-      if (start - previousEnd > boundaryTolerance) return `timeline_gap_at_${previousEnd.toFixed(2)}s`;
-      if (previousEnd - start > boundaryTolerance) return `timeline_overlap_at_${start.toFixed(2)}s`;
-    }
-  }
-  const analyzedUntil = details[details.length - 1].range.end;
-  if (duration > 0 && analyzedUntil + boundaryTolerance < duration) return `timeline_ends_at_${analyzedUntil.toFixed(2)}s_of_${duration.toFixed(2)}s`;
-  return null;
-}
-
-function canPromoteExistingAnalysisToExact(gemini: unknown, duration = 0): boolean {
-  if (!hasCompleteVideoGeminiAnalysis(gemini, 0)) return false;
-  const analysis = objectRecord(gemini);
-  const details = Array.isArray(analysis.scriptDetails15s) ? analysis.scriptDetails15s : [];
-  const analyzedUntil = details.reduce((max, item) => {
-    const detail = objectRecord(item);
-    const values = String(detail.time || detail.timestamp || '').match(/\d+(?:\.\d+)?/g)?.map(Number) || [];
-    return Math.max(max, values[1] ?? values[0] ?? 0);
-  }, 0);
-  const requiredSegments = duration > 0 ? Math.max(2, Math.ceil(duration / 5)) : 3;
-  const tolerance = duration > 0 ? Math.max(1.5, Math.min(3, duration * 0.1)) : 0;
-  return details.length >= requiredSegments && (duration <= 0 || analyzedUntil + tolerance >= duration);
-}
-
-function isVideoLevelAnalysis(analysis: Record<string, unknown>): boolean {
-  const geminiStatus = String(analysis.geminiStatus || '');
-  const downloadStatus = String(analysis.downloadStatus || '');
-  const videoFetchStatus = String(analysis.videoFetchStatus || '');
-  const analysisSource = String(analysis.analysisSource || '');
-  if (analysis.analysisQuality !== 'video') return false;
-  if (!analysis.gemini) return false;
-  if (analysisSource === 'metadata-fallback' || geminiStatus === 'metadata_fallback' || downloadStatus === 'metadata_only') return false;
-  return analysis.analysisQuality === 'video'
-    && (!geminiStatus || geminiStatus === 'analyzed')
-    && (!downloadStatus || downloadStatus === 'analyzed' || videoFetchStatus === 'direct_url' || videoFetchStatus === 'fetched');
-}
 
 function isPublicTestTenantVideo(record: Record<string, unknown>): boolean {
   const analysis = videoAnalysisOf(record);
@@ -853,6 +728,24 @@ export interface CrawlVideosInput {
   disableBackfill?: boolean;
   /** Scheduled collection finishes after persistence; analysis owns its own queue. */
   deferAnalysis?: boolean;
+  /** Immutable discovery provenance attached to every imported or deduplicated candidate. */
+  discoveryContext?: {
+    runId: string;
+    scopeId: string;
+    scopeVersion: number;
+    mode: SocialDiscoveryMode;
+    queryRef: string;
+  };
+}
+
+function discoveryOrigins(
+  existing: unknown,
+  context: CrawlVideosInput['discoveryContext'],
+): Array<Record<string, unknown>> | undefined {
+  if (!context) return Array.isArray(existing) ? existing as Array<Record<string, unknown>> : undefined;
+  const previous = Array.isArray(existing) ? existing.filter(item => item && typeof item === 'object') as Array<Record<string, unknown>> : [];
+  const origin = { ...context, observedAt: new Date().toISOString() };
+  return [...previous.filter(item => item.runId !== context.runId || item.mode !== context.mode || item.queryRef !== context.queryRef), origin].slice(-20);
 }
 
 class NoCrawlResultsError extends Error {}
@@ -1267,6 +1160,7 @@ export async function crawlVideosForTenant(input: CrawlVideosInput): Promise<Cra
           sourceAccountName: accountMode ? accountName : existingAnalysis.sourceAccountName,
           dateFrom,
           dateTo,
+          discoveryOrigins: discoveryOrigins(existingAnalysis.discoveryOrigins, input.discoveryContext),
         }),
       };
       // 已有本地落盘缩略图时不要用新的临时签名链接覆盖
@@ -1310,6 +1204,7 @@ export async function crawlVideosForTenant(input: CrawlVideosInput): Promise<Cra
         dateTo,
         importedAt: new Date().toISOString(),
         userVisible: testTenant ? false : undefined,
+        discoveryOrigins: discoveryOrigins(undefined, input.discoveryContext),
       }),
       status: 'analyzed' as VideoStatus,
       crawledAt: new Date().toISOString(),
@@ -2286,6 +2181,7 @@ videosRouter.post('/:id/analysis-pause', async (req, res) => {
   // provider calls may finish remotely, but their result can no longer
   // overwrite this durable paused state.
   await store.update(COL, req.params.id, {
+    status: previous.gemini || previous.analysisQuality ? 'analyzed' as VideoStatus : 'failed' as VideoStatus,
     aiAnalysis: JSON.stringify({
       ...previous,
       analysisRunId: randomUUID(),
@@ -2731,18 +2627,16 @@ async function handleAnalyzeSource(
       }
     }
 
-    const remoteUrl = String(input.sourceUrl || record?.sourceUrl || '').trim();
-    if (!/^https?:\/\//i.test(remoteUrl)) {
-      res.status(400).json({ error: 'A public sourceUrl is required for analysis' });
+    const source = resolvedPublicVideoSource(record, input);
+    if (!source) {
+      res.status(400).json({ error: '只允许当前记录绑定的 YouTube、TikTok、Instagram 或 Facebook HTTPS 单条视频链接' });
       return;
     }
-
-    const inferredPlatform = (input.platform || record?.platform || inferPlatformFromUrl(remoteUrl)) as Platform;
     const job = {
       record,
-      sourceUrl: remoteUrl,
-      title: String(input.title || record?.title || `${inferredPlatform}-video`),
-      platform: inferredPlatform,
+      sourceUrl: source.sourceUrl,
+      title: String(input.title || record?.title || `${source.platform}-video`),
+      platform: source.platform,
     };
 
     if (input.async && record?.id) {
@@ -3061,7 +2955,7 @@ export async function repairMissingCrawledThumbnails(records: unknown[], limit =
 // 用户连重试都点不了。超时后主动释放，让它退回可重试状态。
 const EXACT_ANALYSIS_STALL_MS = Math.max(
   5 * 60_000,
-  Number(process.env.EXACT_ANALYSIS_STALL_MS || 30 * 60_000),
+  Number(process.env.EXACT_ANALYSIS_STALL_MS || 5 * 60_000),
 );
 
 // 卡住的记录是少数，但分布在整个库里，只扫第一页会漏。全量翻页，靠节流控制开销。
@@ -3069,7 +2963,7 @@ const lastStallSweepAt = new Map<string, number>();
 
 async function releaseStalledExactAnalysis(forceInterrupted = false, tenantId?: string): Promise<number> {
   const now = Date.now();
-  const sweepKey = tenantId || '__global__';
+  const sweepKey = `${currentDataAuthority() || 'default'}:${tenantId || '__global__'}`;
   const lastSweep = lastStallSweepAt.get(sweepKey) || 0;
   if (!forceInterrupted && now - lastSweep < Math.max(60_000, Math.floor(EXACT_ANALYSIS_STALL_MS / 6))) return 0;
   lastStallSweepAt.set(sweepKey, now);
@@ -3106,17 +3000,32 @@ async function releaseStalledExactAnalysis(forceInterrupted = false, tenantId?: 
     // processes. Only ownerless work can be released immediately on startup.
     if (!forceInterrupted && Number.isFinite(startedAt) && now - startedAt < EXACT_ANALYSIS_STALL_MS) continue;
     await store.update(COL, recordId, {
+      status: 'analyzed' as VideoStatus,
       aiAnalysis: JSON.stringify({
         ...analysis,
         requestedAnalysisMode: undefined,
         // 超时的升级不能冒充已完成的精确分析。
         analysisMode: analysis.analysisMode === 'exact' ? 'exact' : 'strategy',
+        geminiStatus: analysis.gemini ? 'analyzed' : 'video_failed',
         videoLevelFailureStatus: analysis.videoLevelFailureStatus || '全片精确分析超时/未完成',
         analysisError: analysis.analysisError || 'exact_analysis_stalled',
       }),
     });
     released += 1;
     console.warn(`[videos] exact analysis ${forceInterrupted ? 'interrupted by restart' : 'stalled'}, released for retry: ${recordId}`);
+  }
+  return released;
+}
+
+async function releaseStalledExactAnalysisAcrossAuthorities(forceInterrupted = false): Promise<number> {
+  let released = await releaseStalledExactAnalysis(forceInterrupted);
+  // Local demo accounts and PocketBase accounts can coexist in development.
+  // A process-level sweep has no request authority, so a healthy PocketBase
+  // connection used to make local JSON records invisible to recovery and left
+  // their UI permanently stuck on “分析中”. Sweep the explicitly enabled local
+  // authority as a second, isolated data source.
+  if (localFallbacksEnabled() && currentDataAuthority() !== 'local') {
+    released += await runWithDataAuthority('local', () => releaseStalledExactAnalysis(forceInterrupted));
   }
   return released;
 }
@@ -3146,7 +3055,7 @@ export async function backfillMissingCrawledMedia(records: unknown[]): Promise<v
   }).slice(0, 3);
   for (const record of storageCandidates) {
     const recordId = String(record.id || '');
-    void downloadMaterialJob({ record, sourceUrl: String(record.sourceUrl), title: String(record.title || '爬取视频'), platform: record.platform as Platform, duration: Number(record.duration || 0) })
+    void downloadMaterialJob({ record, tenantId: String(record.tenantId || ''), sourceUrl: String(record.sourceUrl), title: String(record.title || '爬取视频'), platform: record.platform as Platform, duration: Number(record.duration || 0) })
       .then(() => pocketBaseBackfillFailures.delete(recordId))
       .catch(error => {
         // Failed public downloads should not be hammered every minute. Manual retry remains available.
@@ -3202,6 +3111,18 @@ function shouldQueueVideoAnalysis(record: Record<string, unknown>): boolean {
   return true;
 }
 
+function resolvedPublicVideoSource(
+  record: Record<string, unknown> | null,
+  input: { sourceUrl?: string; platform?: Platform },
+): ValidatedPublicVideoSource | null {
+  return resolvePublicVideoSource({
+    recordSourceUrl: record?.sourceUrl,
+    recordPlatform: record?.platform,
+    requestedSourceUrl: input.sourceUrl,
+    requestedPlatform: input.platform,
+  });
+}
+
 async function handleDownloadMaterial(
   req: Request,
   res: Response,
@@ -3218,18 +3139,17 @@ async function handleDownloadMaterial(
       }
     }
 
-    const remoteUrl = String(input.sourceUrl || record?.sourceUrl || '').trim();
-    if (!/^https?:\/\//i.test(remoteUrl)) {
-      res.status(400).json({ error: 'A public sourceUrl is required for download' });
+    const source = resolvedPublicVideoSource(record, input);
+    if (!source) {
+      res.status(400).json({ error: '只允许当前记录绑定的 YouTube、TikTok、Instagram 或 Facebook HTTPS 单条视频链接' });
       return;
     }
-
-    const inferredPlatform = (input.platform || record?.platform || inferPlatformFromUrl(remoteUrl)) as Platform;
     const job = {
       record,
-      sourceUrl: remoteUrl,
-      title: String(input.title || record?.title || `${inferredPlatform}-video`),
-      platform: inferredPlatform,
+      tenantId,
+      sourceUrl: source.sourceUrl,
+      title: String(input.title || record?.title || `${source.platform}-video`),
+      platform: source.platform,
       duration: Number(record?.duration || 0),
     };
 
@@ -3256,12 +3176,16 @@ async function handleDownloadMaterial(
 
 async function downloadMaterialJob(input: {
   record: Record<string, unknown> | null;
+  tenantId: string;
   sourceUrl: string;
   title: string;
   platform: Platform;
   duration: number;
 }): Promise<Material> {
-  return withDownloadSlot(() => downloadMaterialJobInner(input));
+  const source = validatePublicVideoSourceUrl(input.sourceUrl, input.platform);
+  if (!source) throw new Error('unsafe_public_video_source');
+  if (!input.tenantId.trim()) throw new Error('download_material_tenant_missing');
+  return withDownloadSlot(() => downloadMaterialJobInner({ ...input, ...source }));
 }
 
 async function compressPocketBasePreview(sourcePath: string): Promise<string> {
@@ -3305,6 +3229,7 @@ async function compressVideoBufferForPocketBase(buf: Buffer, extension: string):
 
 async function downloadMaterialJobInner(input: {
   record: Record<string, unknown> | null;
+  tenantId: string;
   sourceUrl: string;
   title: string;
   platform: Platform;
@@ -3397,6 +3322,9 @@ export async function analyzeSourceVideoJob(input: {
   suppressVisibleBackfill?: boolean;
   forceManualFailure?: boolean;
 }, adapters: SourceAnalysisAdapters = {}): Promise<unknown> {
+  const source = validatePublicVideoSourceUrl(input.sourceUrl, input.platform);
+  if (!source) throw new Error('unsafe_public_video_source');
+  input = { ...input, ...source };
   const key = String(input.record?.id || '');
   const execute = () => withDownloadSlot(() => analyzeSourceVideoJobInner(input, adapters));
   return key ? activeAnalysisRecords.run(key, () => (adapters.lease || durableAnalysisRecords).run(key, execute)) : execute();
@@ -4776,11 +4704,13 @@ async function downloadVideoToMaterial(input: {
   title: string;
   platform: Platform;
   duration: number;
+  tenantId: string;
   record?: Record<string, unknown> | null;
 }): Promise<Material> {
-  fs.mkdirSync(MEDIA_DIR, { recursive: true });
+  const tenantMediaDir = tenantAssetDir(MEDIA_DIR, input.tenantId);
+  fs.mkdirSync(tenantMediaDir, { recursive: true });
   const id = randomUUID();
-  const outTpl = path.join(MEDIA_DIR, `${id}.%(ext)s`);
+  const outTpl = path.join(tenantMediaDir, `${id}.%(ext)s`);
   const downloadArgs = [
     '--no-playlist',
     '--merge-output-format', 'mp4',
@@ -4790,8 +4720,8 @@ async function downloadVideoToMaterial(input: {
   ];
   const cleanupIncompleteDownload = () => {
     try {
-      for (const filename of fs.readdirSync(MEDIA_DIR)) {
-        if (filename.startsWith(`${id}.`) && filename.endsWith('.part')) fs.unlinkSync(path.join(MEDIA_DIR, filename));
+      for (const filename of fs.readdirSync(tenantMediaDir)) {
+        if (filename.startsWith(`${id}.`) && filename.endsWith('.part')) fs.unlinkSync(path.join(tenantMediaDir, filename));
       }
     } catch { /* best effort */ }
   };
@@ -4816,7 +4746,7 @@ async function downloadVideoToMaterial(input: {
       const downloaded = input.platform === 'instagram'
         ? await downloadInstagramVideoViaApify(input.sourceUrl, tenantId)
         : await downloadTikTokVideoViaApify(input.sourceUrl, tenantId);
-      const materialPath = path.join(MEDIA_DIR, `${id}.mp4`);
+      const materialPath = path.join(tenantMediaDir, `${id}.mp4`);
       fs.copyFileSync(downloaded.filePath, materialPath);
       cleanupTempVideo(downloaded.filePath);
       ytDlpError = null;
@@ -4826,29 +4756,30 @@ async function downloadVideoToMaterial(input: {
     cleanupIncompleteDownload();
     throw ytDlpError instanceof Error ? ytDlpError : new Error('yt-dlp failed for material download');
   }
-  const downloaded = pickDownloadedVideoFile(id);
+  const downloaded = pickDownloadedVideoFile(id, tenantMediaDir);
   if (!downloaded) {
     cleanupIncompleteDownload();
     throw new Error('yt-dlp did not produce a video file');
   }
 
-  const fullPath = path.join(MEDIA_DIR, downloaded);
+  const fullPath = path.join(tenantMediaDir, downloaded);
   const posterFile = `${id}.poster.jpg`;
-  const posterPath = path.join(MEDIA_DIR, posterFile);
+  const posterPath = path.join(tenantMediaDir, posterFile);
   const posterOk = await extractPoster(fullPath, posterPath, input.duration > 1 ? 1 : 0);
-  const material: Material = {
+  const createdAt = new Date().toISOString();
+  const material = buildDownloadedReferenceMaterial({
     id,
+    tenantId: input.tenantId,
     name: safeMaterialName(input.title, input.platform),
-    folder: 'hot',
-    type: 'video',
+    platform: input.platform,
+    sourceUrl: input.sourceUrl,
     duration: input.duration || await probeDuration(fullPath),
     size: humanSize(fs.statSync(fullPath).size),
-    file: downloaded,
-    url: `/media/${downloaded}`,
-    poster: posterOk ? `/media/${posterFile}` : undefined,
-    scope: 'own',
-    createdAt: new Date().toISOString(),
-  };
+    file: tenantAssetRelativePath(input.tenantId, downloaded),
+    poster: posterOk ? tenantAssetRelativePath(input.tenantId, posterFile) : undefined,
+    contentSha256: createHash('sha256').update(fs.readFileSync(fullPath)).digest('hex'),
+    createdAt,
+  }) as Material;
   persistMaterials([material, ...loadMaterials().filter(m => m.id !== material.id)]);
   return material;
 }
@@ -4859,6 +4790,9 @@ export async function downloadVideoForAnalysis(input: {
   platform: Platform;
   record?: Record<string, unknown> | null;
 }, executeDownload = execFileAsync, budget = new DownloadBudget(Math.max(10_000, Number(process.env.VIDEO_ANALYSIS_DOWNLOAD_TIMEOUT_MS || 150_000)))): Promise<{ filePath: string; fileName: string; mimeType: string; size: number }> {
+  const source = validatePublicVideoSourceUrl(input.sourceUrl, input.platform);
+  if (!source) throw new Error('unsafe_public_video_source');
+  input = { ...input, ...source };
   fs.mkdirSync(ANALYSIS_DIR, { recursive: true });
   const tenantId = apifyTenantIdFromRecord(input.record);
   // Facebook's public page frequently blocks yt-dlp or makes it retry several
@@ -5405,12 +5339,6 @@ function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promi
 function isRetryableAnalysisFailure(error: unknown): boolean {
   return /analysis_quality_retryable|analysis_retryable|chunk_quality_failed|video_analysis_hard_timeout|exact_chunk_timeout/i
     .test(error instanceof Error ? error.message : String(error));
-}
-
-function parseAnalysisTimeRange(value: string): { start: number; end: number } | null {
-  const numbers = String(value || '').match(/\d+(?:\.\d+)?/g)?.map(Number) || [];
-  if (!numbers.length) return null;
-  return { start: numbers[0], end: numbers[1] ?? numbers[0] + 3 };
 }
 
 function lockAsrTimeline(analysis: VideoAiAnalysis, transcript?: { text: string; segments: Array<{ start: number; end: number; text: string }> }): VideoAiAnalysis {
@@ -7809,14 +7737,14 @@ export function initCrawlerOpsWorker(): void {
   const workerFlag = process.env.CRAWLER_OPS_WORKER_ENABLED;
   const intervalMs = Math.max(5_000, Number(process.env.CRAWLER_OPS_WORKER_INTERVAL_MS || 30_000));
   if (!stalledExactSweepTimer) {
-    const sweep = () => void releaseStalledExactAnalysis().catch(error => {
+    const sweep = () => void releaseStalledExactAnalysisAcrossAuthorities().catch(error => {
       console.warn('[videos] stalled exact-analysis sweep failed:', error instanceof Error ? error.message : error);
     });
     stalledExactSweepTimer = setInterval(sweep, intervalMs);
     // Every requested exact analysis belongs to the previous process at this
     // point. Clear those locks now; waiting for the age threshold creates a
     // false permanent queue after deployments or crashes.
-    void releaseStalledExactAnalysis(true).catch(error => {
+    void releaseStalledExactAnalysisAcrossAuthorities(true).catch(error => {
       console.warn('[videos] interrupted exact-analysis recovery failed:', error instanceof Error ? error.message : error);
     });
     console.log(`[videos] stalled exact-analysis sweep enabled, interval=${intervalMs}ms`);

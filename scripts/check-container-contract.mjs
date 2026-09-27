@@ -8,6 +8,7 @@ const dockerfile = read('Dockerfile');
 const pocketbaseDockerfile = read('Dockerfile.pocketbase');
 const dockerignore = read('.dockerignore');
 const compose = read('docker-compose.yml');
+const releaseCompose = read('deploy/compose.release.yml');
 const packageJson = JSON.parse(read('package.json'));
 
 assert.match(packageJson.packageManager || '', /^pnpm@\d+\.\d+\.\d+$/, 'packageManager must pin pnpm');
@@ -20,6 +21,10 @@ assert.match(dockerfile, /AS build[\s\S]*pnpm prune --prod[\s\S]*AS runtime/, 'r
 assert.doesNotMatch(dockerfile, /\bnpm ci|\bnpm run|setup:pb/, 'the app image must use the same dependency graph and leave schema writes to PB migrations');
 assert.doesNotMatch(dockerignore, /^\*\.(?:png|gif)$/m, 'runtime UI images must not be globally excluded');
 assert.match(compose, /api\/overseas\/ready/, 'container health must exercise dependency readiness');
+assert.match(releaseCompose, /api\/overseas\/ready/, 'release container health must exercise dependency readiness');
+assert.match(dockerfile, /person-replacement-qa-requirements\.txt[\s\S]*person_replacement_visual_qa\.py/, 'runtime image must copy the independent visual QA dependencies and script');
+assert.match(dockerfile, /person_replacement_visual_qa\.py --self-check/, 'runtime image build must execute the visual QA self-check');
+assert.match(dockerfile, /DIGITAL_HUMAN_VISUAL_QA_PYTHON=\/usr\/bin\/python3/, 'runtime image must declare the bundled QA interpreter');
 assert.match(
   pocketbaseDockerfile,
   /COPY\s+pb_migrations\s+\/pb\/pb_migrations/,

@@ -91,6 +91,16 @@ export function updateLocalMaterial(id: string, tenantId: string, patch: Record<
   records[index] = { ...records[index], ...patch, id: records[index].id, tenantId, updatedAt: new Date().toISOString() };
   saveLocalMaterials(records); return true;
 }
+/** Internal Director analysis may enrich any material already visible to the
+ * tenant, including shared library rows. It never changes file ownership. */
+export function updateAccessibleLocalMaterial(id: string, tenantId: string, patch: Record<string, unknown>): boolean {
+  const records = readLocalMaterials();
+  const index = records.findIndex(item => item.id === id && accessibleMaterial(item, tenantId));
+  if (index < 0) return false;
+  records[index] = { ...records[index], ...patch, id: records[index]!.id, updatedAt: new Date().toISOString() };
+  saveLocalMaterials(records);
+  return true;
+}
 export function accessibleMaterial(item: MaterialRecord, tenantId: string): boolean {
   return !isSyntheticMaterial(item) && (item.scope === 'shared' || String(item.tenantId || item.tenant_id || '') === tenantId);
 }

@@ -138,7 +138,13 @@ export default function SocialAgentWorkflowPanel({ task }: { task: SocialContent
         <span className={`rounded-full px-3 py-1.5 text-[10px] font-black ${blocked ? 'bg-amber-50 text-amber-900' : 'bg-emerald-50 text-emerald-800'}`}>{STAGE_LABEL[workflow.stage]}</span>
       </div>
 
-      <div className="mt-4 grid gap-2 md:grid-cols-3">
+      <details className="mt-4 overflow-hidden rounded-xl border border-border bg-surface-2/30">
+        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 bg-white px-4 py-3 text-xs font-black text-text-primary">
+          <span>查看编导、逐镜方案与检测依据</span>
+          <span className="flex items-center gap-1 text-[10px] font-bold text-text-muted">{workflow.directorBrief.scenes.length} 个镜头 · 默认收起<ChevronRight size={13} /></span>
+        </summary>
+        <div className="border-t border-border p-4">
+      <div className="grid gap-2 md:grid-cols-3">
         <div className="rounded-xl border border-emerald-100 bg-emerald-50/55 p-3"><p className="flex items-center gap-1.5 text-[10px] font-black text-emerald-800"><Target size={13} />经营 Agent</p><p className="mt-1 text-xs font-bold text-text-primary">{workflow.weeklyPackage ? '周任务包' : '即时经营上下文'} · v{context?.version}</p><p className="mt-1 text-[10px] leading-4 text-text-muted">{workflow.weeklyPackage ? `${workflow.weeklyPackage.originalContentCount} 条原创 · ${workflow.weeklyPackage.publicationTaskCount} 个发布任务` : workflow.adHocBusinessContext?.objective}</p></div>
         <div className="rounded-xl border border-violet-100 bg-violet-50/55 p-3"><p className="flex items-center gap-1.5 text-[10px] font-black text-violet-800"><Clapperboard size={13} />编导 Agent</p><p className="mt-1 text-xs font-bold text-text-primary">DirectorBrief · v{workflow.directorBrief.version}</p><p className="mt-1 text-[10px] leading-4 text-text-muted">{workflow.directorBrief.scenes.length} 个分镜 · 定义目标、事实边界和验收条件</p></div>
         <div className="rounded-xl border border-blue-100 bg-blue-50/55 p-3"><p className="flex items-center gap-1.5 text-[10px] font-black text-blue-800"><Bot size={13} />内容 Agent</p><p className="mt-1 text-xs font-bold text-text-primary">ContentExecutionPlan · v{workflow.executionPlan.version}</p><p className="mt-1 text-[10px] leading-4 text-text-muted">逐镜检索候选、比较成本耗时与风险，再执行</p></div>
@@ -187,6 +193,8 @@ export default function SocialAgentWorkflowPanel({ task }: { task: SocialContent
         {workflow.replicationEvaluation.directorDecision.failedCriteria.length > 0 && <p className="mt-2 text-[10px] leading-4 text-rose-800">逐镜返工／复核：{workflow.replicationEvaluation.directorDecision.failedCriteria.slice(0, 4).join('；')}</p>}
         <p className="mt-2 text-[9px] leading-4 text-text-muted">检测器只验证冻结因素和权利风险，不承诺传播结果；缺少连续帧、音频指纹或身份识别证据时不会自动判定通过。</p>
       </section>}
+        </div>
+      </details>
 
       {blocked && <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3"><p className="text-[10px] font-black text-amber-900">当前不能静默继续</p><p className="mt-1 text-[10px] leading-4 text-amber-800">{workflow.executionPlanReview.requiredRevision.join('；') || '需要补齐事实、权利或可执行候选后重新审核。'}</p></div>}
     </section>

@@ -15,11 +15,29 @@ export function normalizeMaterialObservations(id: string, duration: number, raw:
     if (!observedFacts.length) throw Error('素材分析缺少可见事实');
     const grounded = groundedMaterialFacts(observedFacts);
     const score = Number.isFinite(confidence) && confidence >= 0 && confidence <= 1 ? confidence : 0;
+    const within = (value: unknown, fallback: number, minimum = start) => {
+      const parsed = typeof value === 'number' ? value
+        : typeof value === 'string' && value.trim() ? Number(value) : Number.NaN;
+      return Number.isFinite(parsed) ? Math.max(minimum, Math.min(end, parsed)) : fallback;
+    };
+    const actionStart = within(item.actionStart, start);
+    const actionEnd = within(item.actionEnd, end, actionStart);
+    const actionPeak = within(item.actionPeak, (actionStart + actionEnd) / 2, actionStart);
+    const cleanStart = within(item.cleanStart, start);
+    const cleanEnd = within(item.cleanEnd, end, cleanStart);
+    const rawBoundaryConfidence = typeof item.boundaryConfidence === 'number' ? item.boundaryConfidence
+      : typeof item.boundaryConfidence === 'string' && item.boundaryConfidence.trim() ? Number(item.boundaryConfidence) : Number.NaN;
+    const boundaryConfidence = Number.isFinite(rawBoundaryConfidence) ? Math.max(0, Math.min(1, rawBoundaryConfidence)) : 0;
+    const motionLevel = ['static', 'low', 'medium', 'high'].includes(String(item.motionLevel)) ? String(item.motionLevel) : 'unknown';
     return { id: `${id}-segment-${index + 1}`, start, end: Math.min(end,duration), duration: end-start,
       subject: Array.isArray(item.subject) ? item.subject.filter((value: unknown) => typeof value === 'string').slice(0,8) : [],
-      action: String(item.action || ''), shot: String(item.shot || ''), camera: String(item.camera || ''), environment: String(item.environment || ''),
+      action: String(item.action || ''), shot: String(item.shot || ''), angle: String(item.angle || ''), camera: String(item.camera || ''), composition: String(item.composition || ''), environment: String(item.environment || ''),
+      motionLevel, actionStart, actionPeak, actionEnd, cleanStart, cleanEnd,
+      cleanEntry: item.cleanEntry === true && boundaryConfidence >= .6,
+      cleanExit: item.cleanExit === true && boundaryConfidence >= .6,
+      boundaryConfidence,
       observedFacts: grounded.facts, excludedObservations: grounded.review, visual: grounded.facts.join('；'), confidence: score, needsReview: item.needsReview !== false || score < .65 || !grounded.facts.length,
-      recommendedFunctions: ['detail'], productVisible: false, productClarity: 'none', ocrText: '', angle: '', composition: '', quality: Math.round(score * 100), hasPerson: false, hasLogo: false, logoText: [], authenticity: '原始素材视觉分析',
+      recommendedFunctions: ['detail'], productVisible: false, productClarity: 'none', ocrText: '', quality: Math.round(score * 100), hasPerson: false, hasLogo: false, logoText: [], authenticity: '原始素材视觉分析',
     };
   });
 }

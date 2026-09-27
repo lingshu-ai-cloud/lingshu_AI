@@ -30,6 +30,33 @@ type CollectionSpec = { name: string; fields: Field[]; indexes?: string[] };
 /** Legacy repair definitions, derived from what the route handlers write/read. */
 const COLLECTIONS: CollectionSpec[] = [
   {
+    name: 'social_operating_constraints',
+    fields: [
+      { name: 'tenant_id', type: 'text', required: true }, { name: 'program_id', type: 'text', required: true },
+      { name: 'constraints_id', type: 'text', required: true }, { name: 'version', type: 'number', required: true, onlyInt: true },
+      { name: 'payload', type: 'json', required: true, maxSize: 8388608 }, { name: 'created_by', type: 'text', required: true },
+      { name: 'created_at', type: 'text', required: true },
+    ],
+    indexes: [
+      'CREATE UNIQUE INDEX idx_social_operating_constraints_version ON social_operating_constraints (tenant_id, program_id, constraints_id, version)',
+      'CREATE INDEX idx_social_operating_constraints_latest ON social_operating_constraints (tenant_id, program_id, version)',
+    ],
+  },
+  {
+    name: 'social_operating_authority_snapshots',
+    fields: [
+      { name: 'tenant_id', type: 'text', required: true }, { name: 'program_id', type: 'text', required: true },
+      { name: 'snapshot_id', type: 'text', required: true }, { name: 'version', type: 'number', required: true, onlyInt: true },
+      { name: 'status', type: 'text', required: true }, { name: 'input_fingerprint', type: 'text', required: true },
+      { name: 'payload', type: 'json', required: true, maxSize: 8388608 }, { name: 'created_by', type: 'text', required: true },
+      { name: 'created_at', type: 'text', required: true },
+    ],
+    indexes: [
+      'CREATE UNIQUE INDEX idx_social_operating_snapshot_version ON social_operating_authority_snapshots (tenant_id, program_id, snapshot_id, version)',
+      'CREATE INDEX idx_social_operating_snapshot_latest ON social_operating_authority_snapshots (tenant_id, program_id, version)',
+    ],
+  },
+  {
     name: 'social_discovery_scopes',
     fields: [
       { name: 'tenant_id', type: 'text', required: true },
@@ -61,12 +88,42 @@ const COLLECTIONS: CollectionSpec[] = [
       { name: 'nextReviewAt', type: 'text' },
       { name: 'recommendedCadence', type: 'text' },
       { name: 'confidence', type: 'number', min: 0, max: 1 },
+      { name: 'recommendedBy', type: 'text' },
+      { name: 'businessConfirmation', type: 'json', maxSize: 65536 },
       { name: 'updated_by', type: 'text', required: true },
       { name: 'updated_at', type: 'text', required: true },
     ],
     indexes: [
       'CREATE UNIQUE INDEX idx_social_tracked_account ON social_tracked_accounts (tenant_id, accountId)',
       'CREATE INDEX idx_social_tracked_status ON social_tracked_accounts (tenant_id, status, updated_at)',
+    ],
+  },
+  {
+    name: 'social_discovery_runs',
+    fields: [
+      { name: 'tenant_id', type: 'text', required: true },
+      { name: 'runId', type: 'text', required: true },
+      { name: 'planId', type: 'text', required: true },
+      { name: 'keywordSetId', type: 'text', required: true },
+      { name: 'keywordSetVersion', type: 'number', required: true, min: 1, onlyInt: true },
+      { name: 'discoveryScopeId', type: 'text', required: true },
+      { name: 'discoveryScopeVersion', type: 'number', required: true, min: 1, onlyInt: true },
+      { name: 'status', type: 'text', required: true },
+      { name: 'triggerType', type: 'text', required: true },
+      { name: 'scopeSnapshot', type: 'json', required: true, maxSize: 2097152 },
+      { name: 'modeStats', type: 'json', required: true, maxSize: 1048576 },
+      { name: 'sourceRunRefs', type: 'json', maxSize: 262144 },
+      { name: 'queryBasis', type: 'json', required: true, maxSize: 1048576 },
+      { name: 'market', type: 'text' },
+      { name: 'language', type: 'text' },
+      { name: 'stopReason', type: 'text' },
+      { name: 'startedAt', type: 'text', required: true },
+      { name: 'finishedAt', type: 'text' },
+      { name: 'error', type: 'text', max: 2000000 },
+    ],
+    indexes: [
+      'CREATE UNIQUE INDEX idx_social_discovery_run ON social_discovery_runs (tenant_id, runId)',
+      'CREATE INDEX idx_social_discovery_run_scope ON social_discovery_runs (tenant_id, keywordSetId, startedAt)',
     ],
   },
   {
@@ -703,6 +760,49 @@ const COLLECTIONS: CollectionSpec[] = [
       { name: 'created_at', type: 'text', required: true },
     ],
     indexes: ['CREATE UNIQUE INDEX idx_weekly_reviews_run ON weekly_reviews (tenant_id, run_id)'],
+  },
+  {
+    name: 'social_interaction_writebacks',
+    fields: [
+      { name: 'tenant_id', type: 'text', required: true }, { name: 'event_key', type: 'text', required: true },
+      { name: 'kind', type: 'text', required: true }, { name: 'platform', type: 'text', required: true },
+      { name: 'providerEventId', type: 'text', required: true }, { name: 'accountId', type: 'text', required: true },
+      { name: 'contentId', type: 'text' }, { name: 'body', type: 'text', required: true, max: 10000 },
+      { name: 'occurredAt', type: 'text', required: true }, { name: 'actorRef', type: 'text' }, { name: 'entryRef', type: 'text', max: 500 },
+      { name: 'ctaRef', type: 'text', max: 300 }, { name: 'businessDirectionRef', type: 'text', max: 300 }, { name: 'respondedAt', type: 'text' },
+      { name: 'qualificationFields', type: 'json', maxSize: 524288 },
+      { name: 'raw', type: 'json', maxSize: 2097152 }, { name: 'source_confidence', type: 'text', required: true },
+      { name: 'qualification_status', type: 'text', required: true }, { name: 'created_at', type: 'text', required: true }, { name: 'updated_at', type: 'text', required: true },
+    ],
+    indexes: [
+      'CREATE UNIQUE INDEX idx_social_interaction_event ON social_interaction_writebacks (tenant_id, event_key)',
+      'CREATE INDEX idx_social_interaction_content ON social_interaction_writebacks (tenant_id, accountId, contentId, occurredAt)',
+      'CREATE INDEX idx_social_interaction_kind ON social_interaction_writebacks (tenant_id, kind, occurredAt)',
+    ],
+  },
+  {
+    name: 'social_sales_qualifications',
+    fields: [
+      { name: 'tenant_id', type: 'text', required: true }, { name: 'interaction_id', type: 'text', required: true },
+      { name: 'status', type: 'text', required: true }, { name: 'authority', type: 'text', required: true },
+      { name: 'actor_id', type: 'text', required: true }, { name: 'reason', type: 'text', required: true, max: 2000 },
+      { name: 'bant', type: 'json', maxSize: 524288 }, { name: 'confirmed_at', type: 'text', required: true },
+    ],
+    indexes: ['CREATE INDEX idx_social_sales_qualification ON social_sales_qualifications (tenant_id, interaction_id, confirmed_at)'],
+  },
+  {
+    name: 'social_creative_learnings',
+    fields: [
+      { name: 'tenant_id', type: 'text', required: true }, { name: 'learning_id', type: 'text', required: true },
+      { name: 'version', type: 'number', required: true }, { name: 'evidence_kind', type: 'text', required: true }, { name: 'scope', type: 'json', required: true, maxSize: 524288 },
+      { name: 'observation', type: 'text', required: true, max: 4000 }, { name: 'evidence_refs', type: 'json', required: true, maxSize: 524288 },
+      { name: 'sample', type: 'json', required: true, maxSize: 524288 }, { name: 'boundaries', type: 'json', required: true, maxSize: 524288 },
+      { name: 'next_action', type: 'text', required: true, max: 2000 }, { name: 'created_by', type: 'text', required: true }, { name: 'created_at', type: 'text', required: true },
+    ],
+    indexes: [
+      'CREATE UNIQUE INDEX idx_social_creative_learning_version ON social_creative_learnings (tenant_id, learning_id, version)',
+      'CREATE INDEX idx_social_creative_learning_created ON social_creative_learnings (tenant_id, created_at)',
+    ],
   },
   {
     name: 'workflow_corrections',

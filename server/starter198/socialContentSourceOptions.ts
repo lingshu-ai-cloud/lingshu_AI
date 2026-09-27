@@ -58,6 +58,12 @@ function materialOption(item: MaterialRecord): SocialContentSourceOption | null 
   };
 }
 
+function productionEligibleMaterial(item: MaterialRecord, tenantId: string): boolean {
+  if (!['video', 'image'].includes(socialText(item.type))) return false;
+  return socialText(item.scope) === 'shared'
+    || socialText(item.tenantId || item.tenant_id) === tenantId;
+}
+
 function profileFacts(profile: Record<string, unknown>): Record<string, unknown> {
   return {
     company: socialObject(profile.company) ?? {},
@@ -156,7 +162,10 @@ async function allOptions(tenantId: string): Promise<{
     readTenantKnowledgeProfile(tenantId),
   ]);
   const materials = materialsResult.status === 'fulfilled'
-    ? materialsResult.value.items.map(materialOption).filter((item): item is SocialContentSourceOption => Boolean(item))
+    ? materialsResult.value.items
+      .filter(item => productionEligibleMaterial(item, tenantId))
+      .map(materialOption)
+      .filter((item): item is SocialContentSourceOption => Boolean(item))
     : [];
   const knowledge = profileResult.status === 'fulfilled' && profileResult.value ? knowledgeOption(profileResult.value) : null;
   const readySources = Number(materialsResult.status === 'fulfilled' && materialsResult.value.status !== 'unavailable')

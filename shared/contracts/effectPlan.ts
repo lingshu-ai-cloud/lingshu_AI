@@ -45,6 +45,16 @@ export interface EffectSceneV1 {
   color: EffectColor;
   transitionOut: { type: EffectTransition; duration: number };
   overlays: EffectOverlayV1[];
+  spatialEvidence?: SpatialMaskEvidenceV1;
+}
+
+export interface SpatialMaskEvidenceV1 {
+  schemaVersion: 'spatial-mask.v1';
+  provider: 'sam3' | 'manual_reviewed';
+  maskRef: string;
+  analyzedContentHash: string;
+  temporalStability: number;
+  safeOverlayAnchors: Array<{ x: number; y: number }>;
 }
 
 export interface EffectAudioEventV1 {
@@ -54,12 +64,23 @@ export interface EffectAudioEventV1 {
   volume: number;
 }
 
+export interface BeatGridEvidenceV1 {
+  schemaVersion: 'beat-grid.v1';
+  source: 'local_onset_grid' | 'essentia' | 'manual_reviewed';
+  bpm: number;
+  beats: number[];
+  confidence: number;
+  analyzedSeconds: number;
+  sourceHash: string;
+}
+
 export interface EffectPlanV1 {
   schemaVersion: typeof EFFECT_PLAN_SCHEMA_VERSION;
   presetId: EffectPresetId;
   intensity: EffectIntensity;
   beatSync: boolean;
   seed: number;
+  beatEvidence?: BeatGridEvidenceV1;
   scenes: EffectSceneV1[];
   audioEvents: EffectAudioEventV1[];
 }
@@ -68,6 +89,19 @@ export interface EffectTimelineScene {
   sceneId?: string;
   clipId?: string;
   targetDuration?: number;
+}
+
+export interface EffectIntentScene extends EffectTimelineScene {
+  purpose?: string;
+  targetVisual?: string;
+  action?: string;
+  caption?: string;
+  music?: string;
+  pace?: 'slow' | 'medium' | 'fast' | string;
+  /** Real product, face, logo or on-screen text must keep source color and may
+   * not receive decorative overlays without a spatial protection mask. */
+  protectedVisual?: boolean;
+  spatialEvidence?: SpatialMaskEvidenceV1 | null;
 }
 
 const asRecord = (value: unknown): Record<string, unknown> => value && typeof value === 'object' && !Array.isArray(value)
@@ -124,6 +158,48 @@ function normalizeOverlay(value: unknown, duration: number): EffectOverlayV1 | n
   };
 }
 
+function normalizeBeatEvidence(value: unknown): BeatGridEvidenceV1 | null {
+  const raw = asRecord(value);
+  if (raw.schemaVersion !== 'beat-grid.v1'
+    || !['local_onset_grid', 'essentia', 'manual_reviewed'].includes(String(raw.source))) return null;
+  const beats = (Array.isArray(raw.beats) ? raw.beats : [])
+    .map(Number).filter(value => Number.isFinite(value) && value >= 0)
+    .sort((left, right) => left - right).slice(0, 512);
+  const confidence = clamp(raw.confidence, 0, 1, 0);
+  const sourceHash = cleanId(raw.sourceHash, '');
+  if (beats.length < 4 || confidence < .45 || !sourceHash) return null;
+  return {
+    schemaVersion: 'beat-grid.v1',
+    source: raw.source as BeatGridEvidenceV1['source'],
+    bpm: Number(clamp(raw.bpm, 40, 260, 120).toFixed(3)),
+    beats: beats.map(value => Number(value.toFixed(3))),
+    confidence: Number(confidence.toFixed(4)),
+    analyzedSeconds: Number(clamp(raw.analyzedSeconds, 1, 3_600, beats.at(-1) || 1).toFixed(3)),
+    sourceHash,
+  };
+}
+
+function normalizeSpatialEvidence(value: unknown): SpatialMaskEvidenceV1 | null {
+  const raw = asRecord(value);
+  if (raw.schemaVersion !== 'spatial-mask.v1' || !['sam3', 'manual_reviewed'].includes(String(raw.provider))) return null;
+  const maskRef = cleanText(raw.maskRef);
+  const analyzedContentHash = cleanId(raw.analyzedContentHash, '');
+  const temporalStability = clamp(raw.temporalStability, 0, 1, 0);
+  const safeOverlayAnchors = (Array.isArray(raw.safeOverlayAnchors) ? raw.safeOverlayAnchors : [])
+    .map(value => asRecord(value))
+    .map(anchor => ({ x: Number(clamp(anchor.x, .05, .95, .5).toFixed(4)), y: Number(clamp(anchor.y, .05, .95, .5).toFixed(4)) }))
+    .slice(0, 8);
+  if (!maskRef || !analyzedContentHash || temporalStability < .85) return null;
+  return {
+    schemaVersion: 'spatial-mask.v1',
+    provider: raw.provider as SpatialMaskEvidenceV1['provider'],
+    maskRef,
+    analyzedContentHash,
+    temporalStability: Number(temporalStability.toFixed(4)),
+    safeOverlayAnchors,
+  };
+}
+
 /**
  * Normalize untrusted agent/client input to the only values accepted by the
  * renderer. Unknown keys, arbitrary expressions and asset paths are dropped.
@@ -132,6 +208,7 @@ export function normalizeEffectPlan(input: unknown, timeline: EffectTimelineScen
   const raw = asRecord(input);
   const presetId = oneOf(raw.presetId, EFFECT_PRESETS, 'natural');
   const intensity = Math.round(clamp(raw.intensity, 0, 3, 0)) as EffectIntensity;
+  const beatEvidence = normalizeBeatEvidence(raw.beatEvidence);
   const byId = new Map<string, Record<string, unknown>>();
   for (const [index, sceneValue] of (Array.isArray(raw.scenes) ? raw.scenes : []).entries()) {
     const scene = asRecord(sceneValue);
@@ -145,6 +222,7 @@ export function normalizeEffectPlan(input: unknown, timeline: EffectTimelineScen
     const duration = clamp(timelineScene.targetDuration, .5, 300, 3);
     const scene = byId.get(sceneId) || asRecord((Array.isArray(raw.scenes) ? raw.scenes : [])[index]);
     const transition = asRecord(scene.transitionOut);
+    const spatialEvidence = normalizeSpatialEvidence(scene.spatialEvidence);
     const transitionType = oneOf(transition.type, EFFECT_TRANSITIONS, 'cut');
     const maxTransition = Math.max(0, Math.min(1.2, duration * .35));
     return {
@@ -160,6 +238,7 @@ export function normalizeEffectPlan(input: unknown, timeline: EffectTimelineScen
         .slice(0, 12)
         .map(item => normalizeOverlay(item, duration))
         .filter((item): item is EffectOverlayV1 => Boolean(item)),
+      ...(spatialEvidence ? { spatialEvidence } : {}),
     };
   });
   const totalDuration = timeline.reduce((sum, item) => sum + clamp(item.targetDuration, 0, 300, 0), 0) || 3600;
@@ -180,8 +259,9 @@ export function normalizeEffectPlan(input: unknown, timeline: EffectTimelineScen
     schemaVersion: 1,
     presetId,
     intensity,
-    beatSync: raw.beatSync === true,
+    beatSync: raw.beatSync === true && Boolean(beatEvidence && beatEvidence.confidence >= .65),
     seed: Math.round(clamp(raw.seed, 0, 2_147_483_647, 1)),
+    ...(beatEvidence ? { beatEvidence } : {}),
     scenes,
     audioEvents,
   };
@@ -227,4 +307,72 @@ export function createPresetEffectPlan(
     : [];
   void cursor;
   return normalizeEffectPlan({ schemaVersion: 1, presetId, intensity, beatSync: false, seed, scenes, audioEvents }, timeline);
+}
+
+/**
+ * Conservative scene-aware effects for automated production. The plan derives
+ * from Director-owned intent instead of rotating a global preset by scene index.
+ * It deliberately leaves beatSync=false until real audio beat timestamps exist.
+ */
+export function createIntentEffectPlan(
+  timeline: EffectIntentScene[],
+  intensity: EffectIntensity = 1,
+  seed = 1,
+  beatEvidence?: BeatGridEvidenceV1 | null,
+): EffectPlanV1 {
+  let cursor = 0;
+  const audioEvents: EffectAudioEventV1[] = [];
+  const scenes = timeline.map((item, index): EffectSceneV1 => {
+    const duration = clamp(item.targetDuration, .5, 300, 3);
+    const intent = [item.purpose, item.targetVisual, item.action, item.music].filter(Boolean).join(' ').toLowerCase();
+    const hook = index === 0 || /hook|钩子|开场|problem|痛点/.test(intent);
+    const proof = /proof|trust|证据|证明|质检|参数|事实/.test(intent);
+    const demo = /demonstration|demo|演示|操作|过程|使用/.test(intent);
+    const cta = /call.to.action|cta|行动|收尾|咨询|私信/.test(intent);
+    const transitionPurpose = /transition|转场|过渡/.test(intent);
+    const fast = item.pace === 'fast' || /快速|明快|卡点|fast|dynamic/.test(intent);
+    const technical = /技术|设备|参数|工厂|生产|tech|factory/.test(intent);
+    const motion: EffectMotion = proof ? 'none'
+      : hook || cta ? 'push_in'
+        : demo ? (fast ? 'handheld' : 'pan_right')
+          : transitionPurpose ? 'pull_out' : 'none';
+    const color: EffectColor = item.protectedVisual ? 'original'
+      : technical ? 'cool' : proof ? 'clean' : /温暖|生活|warm/.test(intent) ? 'warm' : 'original';
+    const transition: EffectTransition = index === timeline.length - 1 ? 'cut'
+      : transitionPurpose ? 'dissolve' : fast ? 'cut' : 'fade';
+    const overlays: EffectOverlayV1[] = [];
+    const caption = cleanText(item.caption);
+    const spatialEvidence = normalizeSpatialEvidence(item.spatialEvidence);
+    const safeAnchor = spatialEvidence?.safeOverlayAnchors[0];
+    if ((!item.protectedVisual || safeAnchor) && intensity >= 2 && caption && (proof || cta)) {
+      overlays.push({ presetId: cta ? 'cta' : 'fact_card', layer: 'foreground', start: .12,
+        end: Math.min(duration, Math.max(.8, duration - .12)), text: caption,
+        anchor: safeAnchor ?? { x: .5, y: cta ? .72 : .2 }, scale: 1, opacity: .82 });
+    }
+    const nearestBeat = beatEvidence?.beats.slice().sort((left, right) => Math.abs(left - cursor) - Math.abs(right - cursor))[0];
+    const eventAt = beatEvidence && beatEvidence.confidence >= .65 && nearestBeat !== undefined && Math.abs(nearestBeat - cursor) <= .18
+      ? nearestBeat : cursor;
+    if (intensity >= 2 && hook) audioEvents.push({ presetId: 'impact', at: eventAt, volume: .42 });
+    else if (intensity >= 2 && transitionPurpose) audioEvents.push({ presetId: 'whoosh', at: eventAt, volume: .3 });
+    else if (intensity >= 2 && index > 0) audioEvents.push({ presetId: 'pop', at: eventAt, volume: .2 });
+    const scene: EffectSceneV1 = {
+      sceneId: cleanId(item.sceneId || item.clipId, String(index)),
+      enabled: intensity > 0,
+      motion,
+      color,
+      transitionOut: { type: transition, duration: transition === 'cut' ? 0 : Math.min(.28, duration * .2) },
+      overlays,
+      ...(spatialEvidence ? { spatialEvidence } : {}),
+    };
+    cursor += duration;
+    return scene;
+  });
+  const presetId: EffectPresetId = timeline.some(item => /技术|设备|参数|工厂|tech|factory/i.test([item.purpose, item.targetVisual].join(' ')))
+    ? 'tech' : timeline.some(item => item.pace === 'fast') ? 'dynamic' : 'natural';
+  return normalizeEffectPlan({
+    schemaVersion: 1, presetId, intensity,
+    beatSync: Boolean(beatEvidence && beatEvidence.confidence >= .65),
+    ...(beatEvidence ? { beatEvidence } : {}),
+    seed, scenes, audioEvents,
+  }, timeline);
 }

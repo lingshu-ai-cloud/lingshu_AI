@@ -1,8 +1,8 @@
-# 灵枢 AI 社媒平台官方 API 应用审核材料包（V1）
+# 灵枢 AI 社媒平台官方 API 应用审核材料包（V1.1）
 
 > 适用范围：灵枢 AI 现有社媒账号 OAuth、内容发布、账号内容读取、互动数据与评论管理能力。
 > 当前提交范围：Meta（Facebook Page + Instagram Professional）与 Google/YouTube。TikTok Direct Post 和国内抖音官方发布暂不提交。
-> 核对日期：2026-09-20。平台规则会变化，正式提交当天应再次核对官方控制台与文档。
+> 核对日期：2026-09-27。平台规则会变化，正式提交当天应再次核对官方控制台与文档。
 > 说明：本文是产品与审核材料，不替代律师对隐私政策、服务条款、跨境数据和数据处理协议的审查。
 
 ---
@@ -29,7 +29,7 @@
 | 审核说明页 | `https://official.lingshu.site/integrations` | 否 | 解释各平台连接、用户控制、数据使用和删除方式 |
 | 产品工作台 | `https://app.lingshu.site/` | 是 | 审核员登录并完成 OAuth、预览、确认和发布 |
 | 隐私政策 | `https://official.lingshu.site/privacy` | 否 | 所有平台统一填写 |
-| 服务条款 | `https://official.lingshu.site/terms` | 否 | 所有平台统一填写 |
+| 用户协议（服务条款） | `https://official.lingshu.site/terms` | 否 | 所有平台统一填写 |
 | 数据删除 | `https://official.lingshu.site/data-deletion` | 否 | Meta 等平台填写 |
 
 审核租户应满足：
@@ -47,12 +47,12 @@
 
 必须。建议同时具备以下四项：
 
-1. 登录页底部：隐私政策、服务条款、数据删除说明；
-2. 注册页：未默认勾选的同意框，“我已阅读并同意《服务条款》和《隐私政策》”；
+1. 登录页：未默认勾选的同意框；未勾选时登录按钮不可提交，同时保留隐私政策、用户协议、数据删除入口；
+2. 注册页：未默认勾选的同意框，“我已阅读并同意《用户协议》和《隐私政策》”；
 3. 工作台账号设置或页脚：长期可访问的隐私、条款、删除入口；
 4. 每个平台连接前：就地说明将申请的数据、用途、撤销方式，并由用户主动点击“连接”。
 
-当前源码已补齐 `app.lingshu.site/privacy`、`app.lingshu.site/terms` 和 `app.lingshu.site/data-deletion` 三个公开路由；登录页底部已提供三个入口，注册页也增加了默认未勾选的条款与隐私同意框。平台控制台统一填写 `official.lingshu.site` 上的公开法律页面，产品内页面作为用户长期可访问入口。以上变更需在部署后再次从公网验证。
+当前源码已补齐 `app.lingshu.site/privacy`、`app.lingshu.site/terms` 和 `app.lingshu.site/data-deletion` 三个公开路由；登录和注册都要求用户主动勾选《用户协议》和《隐私政策》，复选框默认未勾选，未勾选时不能提交。平台控制台统一填写 `official.lingshu.site` 上的公开法律页面，产品内页面作为用户长期可访问入口。对应应用镜像已通过完整质量门禁和联机冒烟，但截至 2026-09-27 公网登录页仍是旧版本，尚未显示强制同意框；生产服务器只接受未提供给本次执行环境的授权公钥，因此在正式提交审核前必须完成生产切换并从公网复验。
 
 ### 1.3 不要靠“换词”隐藏真实能力
 
@@ -68,16 +68,16 @@
 
 | 状态 | 事项 | 审核前动作 |
 | --- | --- | --- |
-| 已修复，待部署验证 | 应用公开服务条款、登录页法律入口、注册同意框 | 部署后匿名访问三个公开路由并完成一次注册验证 |
-| 已修复，待部署验证 | 官网隐私政策缺少 Google/YouTube、TikTok 与抖音说明 | 部署后检查正文、Google Limited Use 声明和所有外链 |
-| 已修复，待部署验证 | 官网与产品支持邮箱不一致 | 已统一为 `support@lingshu.ai`；提交前确认邮箱可稳定收信 |
-| 已修复，待部署验证 | 官网缺少统一的平台集成与用户控制说明 | 已增加 `/integrations` 公开页面 |
-| 已修复，待部署验证 | 通用发布页出现“群发”文案 | 已改为“正在提交已确认的发布任务”，不改变真实任务数量与状态展示 |
-| 本轮不提交 | TikTok Direct Post UX 与后端尚不满足正式审核要求 | 本轮不申请 `video.publish`、不录制 Direct Post 审核视频、不宣称公开直发已获批；后续单独整改和审核 |
-| P1 | 当前 OAuth 请求的权限多于“首次只审核发布”所需权限 | 按阶段拆 Scope；只申请界面已实现且录屏能逐项证明的权限 |
+| 提交阻断：代码与镜像已验证，生产未生效 | 应用公开用户协议、登录页/注册页强制同意与长期法律入口 | 生产切换后匿名访问三个公开路由，并验证未勾选不能登录或注册；当前公网登录页仍不可提交审核 |
+| 已部署并公网验证 | 官网隐私政策缺少 Google/YouTube、TikTok 与抖音说明 | 已检查正文、Google Limited Use 声明和公开路由 |
+| 官网已部署，应用待生产切换 | 官网与产品支持邮箱不一致 | 源码已统一为 `support@lingshu.ai`；提交前确认邮箱可稳定收信，并复验应用公网版本 |
+| 已部署并公网验证 | 官网缺少统一的平台集成与用户控制说明 | 已增加 `/integrations` 公开页面，并公开各平台当前能力边界 |
+| 官网已部署，应用待生产切换 | 官网与发布页存在“规模化分发、自动发布”等易误解表述 | 官网已改为平台适配、人工复核和用户确认；应用发布页随已验证镜像一并等待生产切换 |
+| 本轮不提交，已服务端关闭 | TikTok Direct Post UX 尚不满足正式审核要求 | 默认不申请 `video.publish`，前端不允许选择 TikTok 直发目标，服务端拒绝直发；后续独立整改和审核 |
+| 已修复，待 OAuth 实测 | OAuth 默认权限多于首期场景所需权限 | Meta 按 Facebook/Instagram 分别请求连接与发布权限；YouTube 默认仅 upload + readonly；评论、洞察、Webhook、商业资产权限均需显式开关 |
 | P1 | TikTok 官方不接受仅服务内部团队或只管理自有账号的上传工具 | 审核材料和真实产品都应体现面向外部企业客户/创作者，每位用户授权自己的账号并拥有完整控制权 |
 | P1 | 抖音代码已有能力门禁与适配器骨架，但未见完整生产 OAuth、真实发布和审核演示链路 | 暂不声称已支持官方发布；先以发布包为正式能力，完成真实 E2E 后再申请 |
-| P1 | 官网首页有“规模化创作、多平台分发”等容易引起滥用疑虑的表述 | 不必虚假删除产品能力，但建议新增平台集成说明页，清楚强调原创/有权内容、人工复核、用户主动授权和逐次控制 |
+| 已部署并公网验证 | 官网首页有“规模化创作、多平台分发”等容易引起滥用疑虑的表述 | 已改为内容创作、平台适配和人工确认，并保留真实能力边界；旧 `/stitch` 原型已从发布产物移除 |
 
 ---
 
@@ -139,7 +139,9 @@
 > 6. The result page shows the platform processing status and receipt. If review of read permissions is required, open **Account Activity / Performance** to view only the connected user's content and metrics.
 > 7. To revoke access, return to **Integrations**, open the connected account menu, and click **Disconnect**. Data deletion instructions are publicly available at https://official.lingshu.site/data-deletion.
 >
-> Please contact [SUPPORT_EMAIL] if the review account or prepared asset needs to be reset. The review account contains only synthetic demonstration data.
+> Please contact support@lingshu.ai if the review account or prepared asset needs to be reset. The review account contains only synthetic demonstration data.
+
+提交前必须把 `[REVIEWER_EMAIL]`、`[REVIEWER_PASSWORD]`、`[PLATFORM]`、`[ASSET_NAME]` 和 `[EXACT_BUTTON_LABEL]` 替换成真实审核环境值。保留任何占位符、让审核员自行注册或要求审核员联系销售获取邀请码，都会显著增加退回概率。
 
 ### 3.7 本材料未合并提交的能力
 
@@ -154,11 +156,22 @@
 
 未来新增平台时，复制本材料的结构即可：公开页面 → 最小 Scope → 逐项理由 → 审核账号 → 完整 OAuth → 用户可见控制 → 单项录屏 → 撤权与删除。
 
+### 3.8 官方 API 申请直达入口
+
+| 平台 | 直接入口 | 本轮动作 |
+| --- | --- | --- |
+| Meta / Facebook / Instagram | [Meta for Developers — My Apps](https://developers.facebook.com/apps/) | 创建或打开生产应用，配置 Facebook Login、App Review、Business Verification 和数据删除 |
+| Google / YouTube | [Google Auth Platform](https://console.cloud.google.com/auth/overview) · [YouTube Data API v3](https://console.cloud.google.com/apis/library/youtube.googleapis.com) | 配置品牌、Audience、Data Access、OAuth 客户端并提交验证 |
+| TikTok | [TikTok for Developers — Manage apps](https://developers.tiktok.com/apps/) | 本轮只配置 Login Kit 的 `user.info.basic`；不要申请 Direct Post |
+| 国内抖音 | [抖音开放平台控制台](https://developer.open-douyin.com/console/) | 创建“网站应用”；当前保留发布包，真实投稿闭环完成后再申请能力 |
+
+以上入口需要登录对应平台账号。若登录后落到首页，按“控制台 / My Apps / Manage apps”进入应用列表；不要使用搜索广告或第三方代办入口。
+
 ---
 
 ## 4. 权限申请策略：分阶段，不一次全要
 
-当前代码会请求较宽的权限集合。首次审核建议只申请“连接 + 用户主动发布”所需的最小权限，数据分析和评论管理在对应页面完整实现后另行提交。
+当前代码默认按首期场景请求最小权限：Meta 仅请求对应平台的账号发现、读取基础主页信息与发布权限；YouTube 仅请求 `youtube.upload` 和 `youtube.readonly`；TikTok 仅请求 `user.info.basic`。评论、洞察、Webhook、商业资产、TikTok 扩展只读与 Direct Post 均需显式功能开关，并应在对应页面完整、真实 E2E 通过和平台批准后另行提交。
 
 ### 4.1 建议分期
 
@@ -236,7 +249,7 @@
 
 ### 5.5 Meta 录屏脚本（每个权限组合单独录制，2–4 分钟）
 
-1. 浏览器地址栏展示 `https://official.lingshu.site/`，打开隐私政策、服务条款、数据删除页。
+1. 浏览器地址栏展示 `https://official.lingshu.site/`，打开隐私政策、用户协议、数据删除页。
 2. 打开 `https://app.lingshu.site/`，使用审核账号登录。
 3. 进入“渠道连接”，点击 Facebook 或 Instagram 的“连接”。
 4. 完整展示 Meta 授权页、应用名和请求权限，不剪掉权限确认画面。
@@ -282,8 +295,9 @@ TikTok Direct Post 审核不能只靠文案。发布页必须真实满足官方 
 | Terms URL | `https://official.lingshu.site/terms` |
 | Privacy URL | `https://official.lingshu.site/privacy` |
 | Redirect URI | `https://app.lingshu.site/api/overseas/social/oauth/tiktok/callback` |
-| Products | `Login Kit`, `Content Posting API` |
-| 首批 Scopes | `user.info.basic`, `video.publish` |
+| Products（当前批次） | `Login Kit` |
+| 当前 Scopes | `user.info.basic` |
+| 后续 Direct Post 独立批次 | 完成第 6.1 节全部交互和 Sandbox E2E 后，再添加 `Content Posting API` 与 `video.publish` |
 | 后续只读 Scopes | `video.list`；只有界面真实展示时再申请。`user.info.profile`、`user.info.stats` 同理 |
 | URL ownership | 验证 Web URL、Terms、Privacy；如使用 `PULL_FROM_URL`，同时验证媒体 URL 的域名或 URL prefix |
 
@@ -332,7 +346,7 @@ TikTok Direct Post 审核不能只靠文案。发布页必须真实满足官方 
 | 字段 | 填写内容 |
 | --- | --- |
 | App name | `Lingshu AI` |
-| User support email | `[统一后的支持邮箱]` |
+| User support email | `support@lingshu.ai` |
 | App logo | 120×120 方形品牌图标，文件不超过 Google 当前限制 |
 | Homepage | `https://official.lingshu.site/` |
 | Privacy Policy | `https://official.lingshu.site/privacy` |
@@ -417,7 +431,7 @@ TikTok Direct Post 审核不能只靠文案。发布页必须真实满足官方 
 
 ### 8.4 抖音审核录屏脚本（真实能力完成后）
 
-1. 展示官网、运营主体、隐私政策、服务条款和数据删除入口。
+1. 展示官网、运营主体、隐私政策、用户协议和数据删除入口。
 2. 登录审核租户，进入抖音渠道连接。
 3. 完整展示抖音官方授权页、授权主体和申请权限。
 4. 返回应用，展示已授权抖音账号，明确国内抖音与 TikTok 国际版完全分离。
@@ -497,13 +511,13 @@ TikTok Direct Post 审核不能只靠文案。发布页必须真实满足官方 
 
 ---
 
-## 11. 服务条款与产品内同意文本
+## 11. 用户协议与产品内同意文本
 
-### 11.1 注册同意文本
+### 11.1 登录与注册同意文本
 
-> 我已阅读并同意《灵枢 AI 服务条款》和《隐私政策》，并确认我有权代表所属企业创建和使用本账号。
+> 我已阅读并同意《用户协议》和《隐私政策》。注册时，我同时确认有权代表所属企业创建和使用本账号。
 
-复选框不得默认勾选。
+登录和注册复选框都不得默认勾选；未勾选时不得提交登录或注册请求。
 
 ### 11.2 平台连接前说明
 
@@ -575,8 +589,8 @@ TikTok Direct Post 审核不能只靠文案。发布页必须真实满足官方 
 
 ## 13. 推荐提交顺序
 
-1. 部署并验证已统一的公司名、应用名、域名、`support@lingshu.ai`、产品内条款入口和注册同意。
-2. 部署并验证已扩展的官网隐私政策与 `/integrations` 平台集成说明页。
+1. **当前首要阻断：**将已通过镜像冒烟的应用版本切换到生产，验证公司名、应用名、域名、`support@lingshu.ai`、产品内条款入口以及登录/注册强制同意。
+2. 官网隐私政策与 `/integrations` 平台集成说明页已部署并完成公网验证；提交当天再做一次可用性检查。
 3. 建立审核租户、审核账号、演示素材和权限最小化开关。
 4. 先做 Meta 的“连接 + 单账号用户确认发布”，评论和洞察后置。
 5. 做 Google/YouTube 品牌验证，再提交实际需要的最小 Scope；上传演示视频。
@@ -588,18 +602,18 @@ TikTok Direct Post 审核不能只靠文案。发布页必须真实满足官方 
 
 ## 14. 提交前一页核对表
 
-- [ ] 官网不是只有登录页，能清楚说明产品功能；
+- [x] 官网不是只有登录页，能清楚说明产品功能；
 - [ ] 官网、应用、隐私、条款、删除页都可匿名访问且返回真实内容；
 - [ ] 公司名、App 名、Logo、邮箱、域名在所有位置一致；
 - [ ] `lingshu.site` 域名所有权已验证；
-- [ ] 应用内隐私政策和服务条款长期可访问；
-- [ ] 注册同意框默认未勾选；
+- [ ] 应用内隐私政策和用户协议长期可访问；
+- [ ] 登录与注册同意框默认未勾选，未勾选不能提交；
 - [ ] 审核账号无需邀请码，不受 CAPTCHA/产品 2FA 阻断；
 - [ ] 审核租户无真实客户数据；
 - [ ] 每个 Scope 都有已实现 UI、真实接口和录屏证据；
 - [ ] 未实现或“未来可能用”的 Scope 已删除；
 - [ ] 发布前显示目标账号、预览、文案、设置和最终确认；
-- [ ] 本轮提交的产品与 Scope 中不包含 TikTok Direct Post；
+- [x] 本轮提交的产品与 Scope 中不包含 TikTok Direct Post；
 - [ ] 视频、封面、音乐和商标权属清楚；
 - [ ] 没有“群发、批量铺量、搬运、自动养号”等审核文案或实际违规流程；
 - [ ] 没有把平台“已接收”误写成“已发布”；

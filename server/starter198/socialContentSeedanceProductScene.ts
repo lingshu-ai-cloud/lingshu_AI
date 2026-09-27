@@ -1,0 +1,296 @@
+import { createHash } from 'node:crypto';
+import fs from 'node:fs';
+import fsp from 'node:fs/promises';
+import path from 'node:path';
+import sharp from 'sharp';
+import { qualityCheckStoryboardFramesWithQwen } from '../agents/qwen.js';
+import { generateSeedanceConceptVideo } from '../lib/generativeVideoGateway.js';
+import { firstFrameInputFingerprint, type FirstFrameReference, type FirstFrameResult } from '../lib/firstFrameGenerator.js';
+import { SeedreamFirstFrameGenerator } from '../lib/seedreamFirstFrameGenerator.js';
+import { runVisualFfmpeg } from '../lib/renderVisualQuality.js';
+import { objectStorageDownload, objectStorageSignedGetUrl, objectStorageUploadFile } from '../storage/objectStorage.js';
+import { store } from '../storage/index.js';
+import type { ProductSceneExecutionPorts, ProductSceneReferenceImage } from './socialContentProductSceneAdapter.js';
+
+function mimeFor(value: string): 'image/jpeg' | 'image/png' | 'image/webp' {
+  if (/png/i.test(value)) return 'image/png';
+  if (/webp/i.test(value)) return 'image/webp';
+  return 'image/jpeg';
+}
+
+async function productBytes(reference: ProductSceneReferenceImage): Promise<{ bytes: Buffer; mimeType: FirstFrameReference['mimeType'] }> {
+  if (reference.localPath && fs.existsSync(reference.localPath)) {
+    return { bytes: await fsp.readFile(reference.localPath), mimeType: mimeFor(reference.localPath) };
+  }
+  if (reference.objectKey) {
+    const stored = await objectStorageDownload(reference.objectKey);
+    if (stored?.buf.length) return { bytes: stored.buf, mimeType: mimeFor(stored.contentType) };
+  }
+  if (/^\/media\//.test(reference.url)) {
+    const local = path.resolve(process.cwd(), 'data', reference.url.replace(/^\/media\//, 'media/'));
+    if (local.startsWith(path.resolve(process.cwd(), 'data/media') + path.sep) && fs.existsSync(local)) {
+      return { bytes: await fsp.readFile(local), mimeType: mimeFor(local) };
+    }
+  }
+  if (/^https:\/\//i.test(reference.url)) {
+    const response = await fetch(reference.url, { signal: AbortSignal.timeout(60_000) });
+    if (!response.ok) throw new Error(`product_reference_download_failed:${response.status}`);
+    return { bytes: Buffer.from(await response.arrayBuffer()), mimeType: mimeFor(response.headers.get('content-type') || reference.url) };
+  }
+  throw new Error(`product_reference_unreadable:${reference.assetId}`);
+}
+
+async function referenceVideo(sourceId: string | null | undefined): Promise<{ bytes: Buffer; contentType: string } | null> {
+  const recordId = String(sourceId || '').replace(/^system-reference:/, '').trim();
+  if (!recordId) return null;
+  const record = await store.getById<Record<string, unknown>>('trend_videos', recordId).catch(() => null);
+  if (!record) return null;
+  let analysis: Record<string, unknown> = {};
+  try { analysis = typeof record.aiAnalysis === 'string' ? JSON.parse(record.aiAnalysis) : record.aiAnalysis as Record<string, unknown> || {}; }
+  catch { analysis = {}; }
+  const key = String(record.videoFileId || analysis.videoObjectKey || '').trim();
+  if (!key) return null;
+  const stored = await objectStorageDownload(key);
+  return stored ? { bytes: stored.buf, contentType: stored.contentType } : null;
+}
+
+async function extractJpeg(inputPath: string, outputPath: string, second: number): Promise<Buffer> {
+  const result = await runVisualFfmpeg([
+    '-ss', Math.max(0, second).toFixed(2), '-i', inputPath, '-frames:v', '1',
+    '-vf', 'scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280', '-q:v', '2', '-y', outputPath,
+  ], false, { timeoutMs: 120_000 });
+  if (!result.ok || !fs.existsSync(outputPath)) throw new Error(`product_scene_frame_extract_failed:${result.stderr || 'missing_output'}`);
+  return fsp.readFile(outputPath);
+}
+
+async function exactProductComposite(environment: Buffer, product: Buffer): Promise<Buffer> {
+  const target = await sharp(environment).metadata();
+  const width = Math.max(720, Number(target.width || 1152));
+  const height = Math.max(1280, Number(target.height || 2048));
+  const prepared = await sharp(product).rotate().resize({ width: Math.round(width * 0.82), height: Math.round(height * 0.66), fit: 'inside' })
+    .removeAlpha().raw().toBuffer({ resolveWithObject: true });
+  const pixels = prepared.data;
+  const count = prepared.info.width * prepared.info.height;
+  const background = new Uint8Array(count);
+  const queue = new Int32Array(count);
+  let head = 0; let tail = 0;
+  const lightBackground = (index: number) => {
+    const offset = index * prepared.info.channels;
+    const r = pixels[offset] || 0; const g = pixels[offset + 1] || 0; const b = pixels[offset + 2] || 0;
+    return r >= 238 && g >= 238 && b >= 238 && Math.max(r, g, b) - Math.min(r, g, b) <= 18;
+  };
+  const enqueue = (index: number) => {
+    if (index < 0 || index >= count || background[index] || !lightBackground(index)) return;
+    background[index] = 1; queue[tail++] = index;
+  };
+  for (let x = 0; x < prepared.info.width; x += 1) {
+    enqueue(x); enqueue((prepared.info.height - 1) * prepared.info.width + x);
+  }
+  for (let y = 0; y < prepared.info.height; y += 1) {
+    enqueue(y * prepared.info.width); enqueue(y * prepared.info.width + prepared.info.width - 1);
+  }
+  while (head < tail) {
+    const index = queue[head++]; const x = index % prepared.info.width;
+    if (x > 0) enqueue(index - 1);
+    if (x + 1 < prepared.info.width) enqueue(index + 1);
+    enqueue(index - prepared.info.width); enqueue(index + prepared.info.width);
+  }
+  const rgba = Buffer.alloc(count * 4);
+  for (let index = 0; index < count; index += 1) {
+    const source = index * prepared.info.channels; const destination = index * 4;
+    rgba[destination] = pixels[source] || 0;
+    rgba[destination + 1] = pixels[source + 1] || 0;
+    rgba[destination + 2] = pixels[source + 2] || 0;
+    rgba[destination + 3] = background[index] ? 0 : 255;
+  }
+  const cutout = await sharp(rgba, { raw: { width: prepared.info.width, height: prepared.info.height, channels: 4 } }).png().toBuffer();
+  const tableStart = Math.round(height * 0.18);
+  const stage = Buffer.from(`<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="table" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#29332f"/><stop offset="0.35" stop-color="#111715"/><stop offset="1" stop-color="#020303"/></linearGradient></defs><rect x="0" y="${tableStart}" width="${width}" height="${height - tableStart}" fill="url(#table)"/><path d="M0 ${Math.round(height * 0.32)} H${width}" stroke="#87918d" stroke-opacity=".18" stroke-width="3"/></svg>`);
+  return sharp(environment).resize(width, height, { fit: 'fill' }).composite([
+    { input: stage, top: 0, left: 0 },
+    { input: cutout, top: Math.round(height * 0.24), left: Math.max(0, Math.round((width - prepared.info.width) / 2)) },
+  ]).jpeg({ quality: 95, chromaSubsampling: '4:4:4' }).toBuffer();
+}
+
+function productScenePrompt(spec: Parameters<ProductSceneExecutionPorts['execute']>[0]['spec']): string {
+  const productSlots = spec.sceneLock.productSlots.map(slot => `${slot.slotId}:${slot.productRef}:${slot.placement}:${slot.orientation}`).join('；');
+  return [
+    'Create a photorealistic vertical commercial product shot.',
+    `ENVIRONMENT LOCK: ${spec.sceneLock.environment}. Background: ${spec.sceneLock.background}. Platform: ${spec.sceneLock.platform}.`,
+    `LIGHTING/COMPOSITION LOCK: ${spec.sceneLock.lighting}; ${spec.sceneLock.composition}.`,
+    `PRODUCT IDENTITY LOCK: use the supplied product reference images exactly. Preserve silhouette, material, color, logo, label text and packaging structure. Never invent a second SKU or morph one product into another. Slots: ${productSlots}.`,
+    `CAMERA LOCK: ${spec.cameraLock.shotSize}; ${spec.cameraLock.cameraAngle}; ${spec.cameraLock.lensFeel}; begin ${spec.cameraLock.startFrame}; move ${spec.cameraLock.movementPath}; end ${spec.cameraLock.endFrame}; ${spec.cameraLock.easing}.`,
+    'The supplied reference video is motion/environment guidance only. Remove its products, people, text, watermark and brand. No subtitles or baked-in text. Stable geometry, natural reflections, no cuts, no slideshow, no still-image pan/zoom.',
+  ].join('\n');
+}
+
+export function createEnvironmentSeedanceProductScenePorts(): ProductSceneExecutionPorts {
+  return {
+    maximumCostCny: Math.max(0.5, Number(process.env.SEEDANCE_MAX_SHOT_COST_CNY || 3)),
+    async execute(input) {
+      const apiKey = String(process.env.SEEDANCE_API_KEY || '').trim();
+      const seedreamKey = String(process.env.SEEDREAM_API_KEY || apiKey).trim();
+      if (!apiKey || !seedreamKey || process.env.SEEDANCE_VIDEO_ENABLED !== 'true') {
+        return { status: 'failed', error: 'seedance_or_seedream_not_enabled' };
+      }
+      const referenceVideoAsset = await referenceVideo(input.spec.referenceSourceId);
+      if (!referenceVideoAsset?.bytes.length) return { status: 'failed', error: 'reference_video_unavailable_for_scene_lock' };
+      const referencePath = path.join(input.outputDirectory, `${input.shotId}-reference.mp4`);
+      await fsp.writeFile(referencePath, referenceVideoAsset.bytes);
+      const compositionPath = path.join(input.outputDirectory, `${input.shotId}-composition.jpg`);
+      const compositionBytes = await extractJpeg(referencePath, compositionPath, Number(input.spec.referenceStartSeconds || 0) + 0.18);
+      const loadedProducts = await Promise.all(input.referenceImages.slice(0, 9).map(productBytes));
+      const compositionReference: FirstFrameReference = {
+        role: 'source_composition', bytes: compositionBytes, mimeType: 'image/jpeg',
+        sha256: createHash('sha256').update(compositionBytes).digest('hex'),
+      };
+      const productReferences: FirstFrameReference[] = loadedProducts.map(item => ({
+        role: 'product_identity', bytes: item.bytes, mimeType: item.mimeType,
+        sha256: createHash('sha256').update(item.bytes).digest('hex'),
+      }));
+      const seedream = new SeedreamFirstFrameGenerator({ apiKey: seedreamKey });
+      const firstFrameRequest = {
+        referenceMode: 'product_scene' as const,
+        tenantId: input.tenantId,
+        videoId: input.taskId,
+        compositionId: input.spec.sceneTemplateKey,
+        presenterVersion: input.referenceImages.map(item => item.contentHash || item.assetId).join(':').slice(0, 300),
+        prompt: `${productScenePrompt(input.spec)}\nGenerate the exact first frame. Match image 1 environment and composition; replace every original product with only the product identity shown in the later reference image(s).`,
+        ratio: '9:16' as const,
+        references: [compositionReference, ...productReferences],
+        idempotencyKey: '',
+      };
+      firstFrameRequest.idempotencyKey = firstFrameInputFingerprint(firstFrameRequest, seedream.provider, seedream.model);
+      const cacheDirectory = path.resolve(
+        process.cwd(),
+        'data/media/generated/product-scene-cache',
+        createHash('sha256').update(input.tenantId).digest('hex').slice(0, 24),
+      );
+      await fsp.mkdir(cacheDirectory, { recursive: true });
+      const cachedFirstFramePath = path.join(cacheDirectory, `${firstFrameRequest.idempotencyKey}.jpg`);
+      const cachedFirstFrameMetaPath = path.join(cacheDirectory, `${firstFrameRequest.idempotencyKey}.json`);
+      let firstFrame: FirstFrameResult;
+      const cachedBytes = await fsp.readFile(cachedFirstFramePath).catch(() => null);
+      if (cachedBytes?.length) {
+        const cachedMeta = await fsp.readFile(cachedFirstFrameMetaPath, 'utf8')
+          .then(value => JSON.parse(value) as Record<string, unknown>)
+          .catch((): Record<string, unknown> => ({}));
+        firstFrame = {
+          bytes: cachedBytes,
+          mimeType: 'image/jpeg',
+          provider: 'seedream',
+          model: String(cachedMeta.model || seedream.model),
+          providerRequestId: String(cachedMeta.providerRequestId || `cached:${firstFrameRequest.idempotencyKey}`),
+          estimatedCostCny: Number(cachedMeta.estimatedCostCny || seedream.estimatedCostCny),
+        };
+      } else {
+        firstFrame = await seedream.generate(firstFrameRequest);
+        const temporary = `${cachedFirstFramePath}.${process.pid}.tmp`;
+        await fsp.writeFile(temporary, firstFrame.bytes);
+        await fsp.rename(temporary, cachedFirstFramePath);
+        await fsp.writeFile(cachedFirstFrameMetaPath, JSON.stringify({
+          model: firstFrame.model,
+          providerRequestId: firstFrame.providerRequestId,
+          estimatedCostCny: firstFrame.estimatedCostCny,
+        }), 'utf8');
+      }
+      const identityLockedFirstFrame = await exactProductComposite(firstFrame.bytes, loadedProducts[0]!.bytes);
+      const identityLockedHash = createHash('sha256').update(identityLockedFirstFrame).digest('hex');
+      await fsp.writeFile(path.join(cacheDirectory, `${firstFrameRequest.idempotencyKey}.identity-locked.jpg`), identityLockedFirstFrame);
+      const firstFramePath = path.join(input.outputDirectory, `${input.shotId}-seedream-first-frame.jpg`);
+      await fsp.writeFile(firstFramePath, identityLockedFirstFrame);
+      const firstFrameDataUrl = `data:image/jpeg;base64,${identityLockedFirstFrame.toString('base64')}`;
+      const productDataUrls = loadedProducts.map(item => `data:${item.mimeType};base64,${item.bytes.toString('base64')}`);
+      const duration = Math.max(4, Math.min(15, Math.round(input.spec.cameraLock.durationSeconds)));
+      const seedanceModel = String(process.env.SEEDANCE_MODEL || 'doubao-seedance-2-0-fast-260128');
+      const supportsFullModalReference = /seedance-(?:2-0|2-5)-/i.test(seedanceModel);
+      let referenceVideoUrl: string | undefined;
+      if (supportsFullModalReference) {
+        const referenceClipDuration = Math.max(2, Math.min(15,
+          Number(input.spec.referenceEndSeconds || duration) - Number(input.spec.referenceStartSeconds || 0)));
+        const referenceClipPath = path.join(input.outputDirectory, `${input.shotId}-seedance-reference.mp4`);
+        const trim = await runVisualFfmpeg([
+          '-ss', Math.max(0, Number(input.spec.referenceStartSeconds || 0)).toFixed(2),
+          '-i', referencePath,
+          '-t', referenceClipDuration.toFixed(2),
+          '-map', '0:v:0', '-an', '-c:v', 'libx264', '-profile:v', 'high', '-pix_fmt', 'yuv420p',
+          '-r', '24', '-movflags', '+faststart', '-y', referenceClipPath,
+        ], false, { timeoutMs: 180_000 });
+        if (!trim.ok || !fs.existsSync(referenceClipPath)) throw new Error(`seedance_reference_trim_failed:${trim.stderr || 'missing_output'}`);
+        const referenceClipStat = await fsp.stat(referenceClipPath);
+        const referenceClipKey = `generated/product-scene-inputs/${createHash('sha256').update(input.tenantId).digest('hex').slice(0, 24)}/${createHash('sha256').update(`${input.idempotencyKey}:${input.spec.referenceStartSeconds}:${input.spec.referenceEndSeconds}`).digest('hex')}.mp4`;
+        await objectStorageUploadFile({ key: referenceClipKey, filePath: referenceClipPath, contentType: 'video/mp4', contentLength: referenceClipStat.size });
+        referenceVideoUrl = await objectStorageSignedGetUrl(referenceClipKey, 3600);
+      }
+      const video = await generateSeedanceConceptVideo({
+        tenantId: input.tenantId,
+        apiKey,
+        model: seedanceModel,
+        baseUrl: process.env.SEEDANCE_BASE_URL,
+        prompt: supportsFullModalReference
+          ? `${productScenePrompt(input.spec)}\nREFERENCE MAP: @image1 is the exact opening composition and product layout. Preserve it as the opening visual. The later images lock product identity. @video1 supplies environment, camera motion and timing only.`
+          : `${productScenePrompt(input.spec)}\nThe supplied first frame is the exact opening composition and product layout. Animate it with the camera path described above while preserving every product.`,
+        durationSeconds: duration,
+        ratio: '9:16',
+        resolution: '720p',
+        idempotencyKey: input.idempotencyKey,
+        timeoutMs: Math.max(180_000, Number(process.env.SEEDANCE_TIMEOUT_MS || 600_000)),
+        firstFrameDataUrl,
+        referenceImageDataUrls: supportsFullModalReference ? productDataUrls : undefined,
+        referenceVideoUrl,
+        checkpointPath: path.join(cacheDirectory, `${createHash('sha256').update(`${input.idempotencyKey}:${seedanceModel}:${identityLockedHash}`).digest('hex')}.seedance.json`),
+      });
+      const localPath = path.join(input.outputDirectory, `${input.shotId}-seedance-product-scene.mp4`);
+      await fsp.writeFile(localPath, video.bytes);
+      const qaFrames: Array<{ base64: string; mimeType: string; timeLabel: string }> = loadedProducts.map((item, index) => ({
+        base64: item.bytes.toString('base64'), mimeType: item.mimeType, timeLabel: `商品参考${index + 1}`,
+      }));
+      for (const [index, second] of [0.2, duration / 2, Math.max(0.2, duration - 0.3)].entries()) {
+        let bytes: Buffer;
+        try {
+          bytes = await extractJpeg(localPath, path.join(input.outputDirectory, `${input.shotId}-qa-${index + 1}.jpg`), second);
+        } catch (error) {
+          throw new Error(`product_scene_qa_frame_extract_${index + 1}:${error instanceof Error ? error.message : String(error)}`);
+        }
+        qaFrames.push({ base64: bytes.toString('base64'), mimeType: 'image/jpeg', timeLabel: `生成视频${second.toFixed(1)}秒` });
+      }
+      let qa: Awaited<ReturnType<typeof qualityCheckStoryboardFramesWithQwen>>;
+      try {
+        qa = await qualityCheckStoryboardFramesWithQwen({
+          frames: qaFrames,
+          storyboard: productScenePrompt(input.spec),
+          productInfo: `前 ${loadedProducts.length} 张是同一生成任务的商品身份参考；后 3 张是生成视频。必须逐项核对外形、颜色、材质、Logo、标签文字和包装结构，不得把不同 SKU 混成同一商品。`,
+          critical: true,
+        });
+      } catch (error) {
+        throw new Error(`product_scene_semantic_qa:${error instanceof Error ? error.message : String(error)}`);
+      }
+      const issues = qa.issues.join(' ');
+      const productIdentity = (qa.checks.productConsistency || 0) / 100;
+      const storyboardMatch = (qa.checks.storyboardMatch || 0) / 100;
+      const visualIntegrity = (qa.checks.visualIntegrity || 0) / 100;
+      const labelOcrExactMatch = productIdentity >= 0.78 && !/(?:logo|label|文字|标签|ocr).{0,20}(?:错误|变化|不一致|模糊|乱码|缺失)/i.test(issues);
+      const evidencePath = path.join(input.outputDirectory, `${input.shotId}-product-scene-quality.json`);
+      await fsp.writeFile(evidencePath, JSON.stringify({ firstFrameProviderRequestId: firstFrame.providerRequestId, seedanceTaskId: video.providerTaskId, qa }, null, 2), 'utf8');
+      const contentHash = createHash('sha256').update(video.bytes).digest('hex');
+      return {
+        status: 'completed',
+        providerId: 'seedream-seedance',
+        providerTaskId: video.providerTaskId,
+        model: `${firstFrame.model}+${video.model}`,
+        localPath,
+        contentHash,
+        duration,
+        actualCostCny: Number((firstFrame.estimatedCostCny + video.estimatedCostCny).toFixed(4)),
+        quality: {
+          productIdentitySimilarity: Object.fromEntries(input.spec.productIdentity.groups.map(group => [group.productRef, productIdentity])),
+          labelOcrExactMatch,
+          sceneTopologyScore: storyboardMatch,
+          productSlotLayoutScore: Math.min(productIdentity, visualIntegrity),
+          cameraTrajectoryScore: storyboardMatch,
+          evidenceRefs: [firstFramePath, evidencePath, ...qaFrames.slice(-3).map((_item, index) => path.join(input.outputDirectory, `${input.shotId}-qa-${index + 1}.jpg`))],
+        },
+      };
+    },
+  };
+}

@@ -214,7 +214,7 @@ try {
   assert.equal(automaticSocialMaterialEligible({ id: 'other', type: 'image', tenantId: 'tenant-b' } as never, 'tenant-a'), false);
   assert.equal(automaticSocialMaterialEligible({
     id: 'shared-without-rights', type: 'video', scope: 'shared', commercialUseApproved: true,
-  } as never, 'tenant-a'), false, 'shared inventory fails closed without derivative rights and license evidence');
+  } as never, 'tenant-a'), true, 'visible material-library rows are directly usable');
   assert.equal(automaticSocialMaterialEligible({
     id: 'shared-authorized', type: 'video', scope: 'shared', commercialUseApproved: true,
     derivativesApproved: true, licenseEvidence: 'license-record-1',
@@ -222,7 +222,7 @@ try {
   assert.equal(automaticSocialMaterialEligible({
     id: 'shared-reference-only', type: 'video', scope: 'shared', usage: 'reference_only', commercialUseApproved: true,
     derivativesApproved: true, licenseEvidence: 'license-record-2',
-  } as never, 'tenant-a'), false);
+  } as never, 'tenant-a'), true, 'legacy reference_only metadata no longer disables production use');
 
   const associationBrief = {
     title: forbiddenUserText, objective: forbiddenUserText, productRef: 'Meno Moso 损伤发质洗护', audience: null,
@@ -412,6 +412,18 @@ try {
   assert.equal(inspirationBaseline.match?.inspirationReference?.recordId, 'inspiration-1');
   assert.deepEqual(inspirationBaseline.scenes[0]?.referenceStructure, inspiration?.nodes[0]?.referenceStructure,
     'the task baseline retains safe per-shot timing and camera grammar from exact reference analysis');
+  const inspirationTaskAssetPlan = buildSocialProductionPlan({
+    baseline: inspirationBaseline,
+    assets: associatedAssets.map((asset, index) => ({
+      ...asset,
+      explicitProductAssociation: undefined,
+      selectionOrigin: 'task' as const,
+      visualObservations: [`用户所选素材 ${index + 1} 的真实视觉观察`],
+    })),
+  });
+  assert.equal(inspirationTaskAssetPlan.ok, true, inspirationTaskAssetPlan.message);
+  assert.deepEqual(inspirationTaskAssetPlan.selectedAssetIds.sort(), ['association-a', 'association-b'],
+    'viral-reference vocabulary must not replace two user-selected task assets with system graphics');
 
   const sourcePath = path.join(temporaryRoot, 'single-upload.mp4');
   const generated = await runVisualFfmpeg([

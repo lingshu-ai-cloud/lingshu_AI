@@ -3,6 +3,12 @@ import { normalizeContinuationPolicy, type ContinuationPolicy } from '../../shar
 import { normalizeAssessment, type OperatingAssessment } from '../../shared/contracts/operatingMaturity.js';
 import { VIDEO_LANGUAGES, normalizeVideoLanguage } from '../../shared/contracts/videoLanguages.js';
 import { normalizeVideoPlan, videoPlanErrors, type VideoCreationPlan } from '../../shared/contracts/videoCreationPlan.js';
+import {
+  connectedAccountIssues,
+  SOCIAL_DISCOVERY_BASELINE,
+  socialOperatingProfile,
+  type SocialOperatingProfileId,
+} from '../../shared/contracts/socialOperatingProfile.js';
 import { automaticExecutionAllowed, resolveRuntimePolicy } from './runtimePolicy.js';
 
 export type AutonomyMode = 'suggest' | 'collaborate' | 'managed' | 'automatic';
@@ -32,6 +38,8 @@ export interface DigitalEmployeeConfig {
   continuationPolicy?: ContinuationPolicy;
   operatingMaturity?: "starting" | "growing" | "established";
   operatingAssessment?: OperatingAssessment;
+  /** Phased social-matrix plan. Growth never bypasses its activation gates. */
+  socialOperatingProfile?: SocialOperatingProfileId;
   defaultParticipation?: "agent" | "team";
   videoDefaults?: Partial<VideoCreationPlan>;
   /** Languages generated autonomously for every content order. */
@@ -170,6 +178,7 @@ export function normalizeDigitalEmployeeConfig(input: Partial<DigitalEmployeeCon
     continuationPolicy: normalizeContinuationPolicy(input.continuationPolicy),
     operatingMaturity: ["starting", "growing", "established"].includes(String(input.operatingMaturity)) ? input.operatingMaturity : "growing",
     operatingAssessment: normalizeAssessment(input.operatingAssessment),
+    socialOperatingProfile: input.socialOperatingProfile === 'dual_account_growth' ? 'dual_account_growth' : 'starter_four_platform',
     defaultParticipation: input.defaultParticipation === "team" ? "team" : "agent",
     videoDefaults: normalizeVideoPlan(input.videoDefaults || {}),
     videoLanguages: videoLanguages.length ? videoLanguages : [defaultVideoLanguage in VIDEO_LANGUAGES ? defaultVideoLanguage : 'en'],
@@ -269,6 +278,8 @@ export function validateWeeklyGoal(goal: WeeklyGoalInput): string[] {
 
 export function buildWeeklyPlan(goal: WeeklyGoalInput, config: DigitalEmployeeConfig): WeeklyPlanDraft {
   const runtimePolicy = resolveRuntimePolicy(config);
+  const operatingProfile = socialOperatingProfile(config.socialOperatingProfile);
+  const profileConnectionIssues = connectedAccountIssues(operatingProfile.id, config.publishingTargets);
   const businessLineName = goal.businessLine === 'content_growth' ? '内容增长' : goal.businessLine === 'customer_conversion' ? '客户转化' : '全链路经营';
   const platformName: Record<WeeklyGoalInput['contentPlatforms'][number], string> = { facebook: 'Facebook', instagram: 'Instagram', tiktok: 'TikTok', youtube: 'YouTube' };
   const contentPlatformNames = goal.contentPlatforms.map(item => platformName[item]).join(' / ');
@@ -283,14 +294,14 @@ export function buildWeeklyPlan(goal: WeeklyGoalInput, config: DigitalEmployeeCo
     {
       key: 'goal_decomposition',
       title: '拆解本周目标与成功标准',
-      description: `灵小枢调用计划能力将“${goal.objective}”按${businessLineName}主线拆解，并绑定指标 ${goal.metric}。`,
-      agentRole: 'orchestrator', backgroundCapability: 'planner', kind: 'planning', sequence: 2, priority: 'high', requiresApproval: false, dependsOn: ['context_readiness'], expectedMinutes: 4,
+      description: `经营 Agent 将“${goal.objective}”按${businessLineName}主线拆解，并绑定指标 ${goal.metric}；当前采用“${operatingProfile.name}”，明确区分 ${operatingProfile.weeklyTargets.baseVideoOriginals + operatingProfile.weeklyTargets.baseNonVideoOriginals} 份原创、${operatingProfile.weeklyTargets.adaptationVersions} 份平台改编和 ${operatingProfile.weeklyTargets.publicationTasks} 个发布任务。`,
+      agentRole: 'business', backgroundCapability: 'planner', kind: 'planning', sequence: 2, priority: 'high', requiresApproval: false, dependsOn: ['context_readiness'], expectedMinutes: 4,
       businessDomain: 'foundation', capabilityKey: 'workflow.plan', destination: 'digitalEmployees', statusSource: 'weekly_plans', executionMode: 'internal', externalEffect: 'none',
     },
     {
       key: 'scheduled_source_collection',
       title: '编导采集平台热点与对标',
-      description: `编导 Agent 调用采集能力，为 ${contentPlatformNames} 配置关键词、对标账号和采集范围，过程结果同步到灵感中心，节奏为：${config.socialCadence}。`,
+      description: `编导 Agent 调用采集能力，为 ${contentPlatformNames} 配置关键词、对标账号和采集范围，冷启动按趋势 / 对标账号 / 创新样本 ${SOCIAL_DISCOVERY_BASELINE.map(item => `${item.percent}%`).join(' / ')} 试配，周复盘后再按自有账号证据调整；过程结果同步到灵感中心，节奏为：${config.socialCadence}。`,
       agentRole: 'director', backgroundCapability: 'channel', kind: 'activation', sequence: 3, priority: 'high', requiresApproval: false, dependsOn: ['goal_decomposition'], expectedMinutes: 4,
       businessDomain: 'content', capabilityKey: 'scheduler.social_collection', destination: 'scheduled', statusSource: 'scheduled_tasks + crawl_jobs', executionMode: 'observe', externalEffect: 'schedule',
     },
@@ -321,7 +332,7 @@ export function buildWeeklyPlan(goal: WeeklyGoalInput, config: DigitalEmployeeCo
       businessDomain: 'content', capabilityKey: 'studio.quality_gate', destination: 'smartAssets', destinationView: 'create', statusSource: 'studio project quality state', executionMode: 'observe', externalEffect: 'none',
     },
     {
-      key: 'content_release_approval', title: '审批发布内容与账号', description: '经营 Agent 汇总作品、平台文案、发布账号和时间交负责人逐项确认；修改内容后原审批自动失效。',
+      key: 'content_release_approval', title: '审批发布内容与账号', description: '经营 Agent 汇总作品、平台文案、发布账号和时间；负责人一次确认本周有界发布范围，包内合规内容自动排期。修改内容或关键经营边界后原授权自动失效并提醒用户。',
       agentRole: 'business', backgroundCapability: 'risk', kind: 'approval', sequence: 8, priority: 'high', requiresApproval: runtimePolicy.agents.content.approvals.contentPublish, dependsOn: ['content_quality_gate'], expectedMinutes: 5,
       businessDomain: 'publishing', capabilityKey: 'publishing.approval', destination: 'smartAssets', destinationView: 'publish', statusSource: 'approval_requests', executionMode: 'approval', externalEffect: 'publish',
     },
@@ -439,12 +450,13 @@ export function buildWeeklyPlan(goal: WeeklyGoalInput, config: DigitalEmployeeCo
       '每个任务都绑定现有业务能力、事实来源与工作台去向',
       '平台发布、批量发送与商业承诺均经过人工审批',
       '作品完成与平台发布使用不同的真实状态来源',
+      `${operatingProfile.name}按“原创 → 平台改编 → 单账号发布任务”分别计数${profileConnectionIssues.length ? `；账号缺口：${profileConnectionIssues.join('、')}` : ''}`,
     ],
     // Kept in the API contract for backwards compatibility; paid-media spend
     // is intentionally not part of the current digital-employee workflow.
     estimatedCost: 0,
     estimatedMinutes,
-    qualityGates: ['企业事实完整性', '爆款证据完整性', '内容质量门', '发布与批量跟进审批', '业务结果可追溯'],
+    qualityGates: ['企业事实完整性', '爆款证据完整性', '平台改编差异化', '内容质量门', '发布与批量跟进审批', '业务结果可追溯'],
     riskSummary: '读取、分析和内部草稿属于低风险动作；平台发布、批量发送与商业承诺仍需负责人批准。',
     tasks,
   };
@@ -467,6 +479,7 @@ export function buildTaskOutput(
     };
   }
   if (taskKey === 'goal_decomposition') {
+    const operatingProfile = socialOperatingProfile(config.socialOperatingProfile);
     return {
       objective: goal.objective,
       successMetric: goal.metric,
@@ -477,6 +490,13 @@ export function buildTaskOutput(
       businessLine: goal.businessLine,
       contentPlatforms: goal.contentPlatforms,
       videoPlans: goal.videoPlans || [],
+      socialOperatingProfile: {
+        id: operatingProfile.id,
+        name: operatingProfile.name,
+        weeklyTargets: operatingProfile.weeklyTargets,
+        activationGates: operatingProfile.activationGates,
+        accountReadinessIssues: connectedAccountIssues(operatingProfile.id, config.publishingTargets),
+      },
       checkpoints: goal.videoPlans?.length ? ['确认每条制作计划', '完整口播与同语言配音字幕', '成片质量检查', '人工验收当前版本', '生成周复盘'] : goal.businessLine === 'content_growth'
         ? ['建立四平台采集', '完成爆款分析与内容生产', '发布回执入库', '归因内容询盘', '生成周复盘']
         : goal.businessLine === 'customer_conversion'
@@ -485,7 +505,7 @@ export function buildTaskOutput(
     };
   }
   if (taskKey === 'scheduled_source_collection') {
-    return { capability: 'scheduler.social_collection', destination: 'scheduled', cadence: config.socialCadence, platforms: goal.contentPlatforms, taskTypes: ['video_keyword_crawl', 'image_post_crawl', 'competitor_account_crawl'], statusSource: 'scheduled_tasks + crawl_jobs', externalWritePerformed: false };
+    return { capability: 'scheduler.social_collection', destination: 'scheduled', cadence: config.socialCadence, platforms: goal.contentPlatforms, discoveryBaseline: SOCIAL_DISCOVERY_BASELINE, mixPolicy: 'cold_start_only_rebalance_with_owned_account_evidence', taskTypes: ['video_keyword_crawl', 'image_post_crawl', 'competitor_account_crawl'], statusSource: 'scheduled_tasks + crawl_jobs', externalWritePerformed: false };
   }
   if (taskKey === 'viral_analysis') {
     return { capability: 'inspiration.exact_analysis', destination: 'socialInspiration', minimumEvidence: 'full_video_exact_analysis', statusSource: 'trend_videos.aiAnalysis', selectionPerformed: false };

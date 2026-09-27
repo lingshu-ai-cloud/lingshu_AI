@@ -32,16 +32,10 @@ import {
   sealedYouTubeCredentialPatch,
   youtubeCredentials,
 } from '../lib/accountCredentials.js';
+import { youtubeOAuthScopes } from '../lib/socialOAuthScopes.js';
 
 const YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY || '';
 const GOOGLE_OAUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
-const YOUTUBE_OAUTH_SCOPES = [
-  'https://www.googleapis.com/auth/youtube.upload',
-  'https://www.googleapis.com/auth/youtube.readonly',
-  'https://www.googleapis.com/auth/youtube.force-ssl',
-  'https://www.googleapis.com/auth/yt-analytics.readonly',
-];
-
 const OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
 
 export const youtubeRouter = Router();
@@ -381,10 +375,11 @@ youtubeRouter.use(requireAuth);
 youtubeRouter.get('/oauth/status', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   const client = await getOAuthClient(tenantId);
+  const scopes = youtubeOAuthScopes();
   res.json({
     configured: Boolean(client),
     redirectUri: getYouTubeRedirectUri(req),
-    scopes: YOUTUBE_OAUTH_SCOPES,
+    scopes,
     manualConnectEnabled: advancedManualConnectEnabled(),
   });
 });
@@ -417,11 +412,12 @@ youtubeRouter.post('/oauth/start', async (req, res) => {
     expiresAt: Date.now() + OAUTH_STATE_TTL_MS,
   });
 
+  const scopes = youtubeOAuthScopes();
   const url = new URL(GOOGLE_OAUTH_URL);
   url.searchParams.set('client_id', client.clientId);
   url.searchParams.set('redirect_uri', getYouTubeRedirectUri(req));
   url.searchParams.set('response_type', 'code');
-  url.searchParams.set('scope', YOUTUBE_OAUTH_SCOPES.join(' '));
+  url.searchParams.set('scope', scopes.join(' '));
   url.searchParams.set('access_type', 'offline');
   url.searchParams.set('include_granted_scopes', 'true');
   url.searchParams.set('prompt', 'consent');

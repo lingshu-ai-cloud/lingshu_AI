@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import {
   createRuntimeReadinessProbe,
   digitalHumanProviderReadiness,
+  digitalHumanQualityRuntimeReadiness,
   readinessCacheTtlMs,
   requiredCapabilityIssues,
   runtimeCapabilities,
@@ -87,6 +91,22 @@ try {
   assert.equal(runtimeCapabilities('web').digital_human.ready, true,
     'a fully configured Runway Act-Two adapter must satisfy digital-human readiness');
 
+  const qualityRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'digital-human-quality-ready-'));
+  const fakePython = path.join(qualityRoot, 'python');
+  const syncnet = path.join(qualityRoot, 'syncnet');
+  fs.mkdirSync(path.join(syncnet, 'data'), { recursive: true });
+  for (const file of ['data/syncnet_v2.model', 'run_pipeline.py', 'run_syncnet.py']) fs.writeFileSync(path.join(syncnet, file), 'fixture');
+  fs.writeFileSync(fakePython, '#!/bin/sh\necho \'{"ready":true}\'\n', { mode: 0o755 });
+  const qualityReady = await digitalHumanQualityRuntimeReadiness({
+    DIGITAL_HUMAN_VISUAL_QA_PYTHON: fakePython,
+    DIGITAL_HUMAN_SEMANTIC_QA_ENABLED: 'true', DASHSCOPE_API_KEY: 'configured-for-test', QWEN_DIGITAL_HUMAN_QA_MODEL: 'qwen-test',
+    DIGITAL_HUMAN_SYNCNET_QA_ENABLED: 'true', DIGITAL_HUMAN_SYNCNET_QA_PYTHON: fakePython, DIGITAL_HUMAN_SYNCNET_DIR: syncnet,
+  });
+  assert.equal(qualityReady.localVisual.ready, true);
+  assert.equal(qualityReady.lipSync.ready, true);
+  assert.equal(qualityReady.autoRelease.ready, true);
+  fs.rmSync(qualityRoot, { recursive: true, force: true });
+
   process.env.GEMINI_API_KEY = 'configured-for-test';
   assert.equal(runtimeCapabilities('web').text_generation.ready, false, 'an unrelated provider key must not satisfy the selected backend');
   process.env.OVERSEAS_LLM_BACKEND = 'gemini';
@@ -110,17 +130,53 @@ try {
     role: 'web',
     startupIssues: ['schema_bootstrap_failed'],
     checkPocketBase: async () => { throw new Error('offline'); },
+    checkDigitalHumanQuality: async () => ({
+      localVisual: { ready: false, reason: 'fixture' }, semantic: { ready: false }, lipSync: { ready: false }, autoRelease: { ready: false, reason: 'fixture' },
+    }),
   });
   assert.equal(degraded.status, 'degraded');
   assert.deepEqual(degraded.issues, ['schema_bootstrap_failed', 'pocketbase_unavailable_or_unmigrated:offline']);
+
+  const workerMissing = await runtimeReadiness({
+    role: 'web',
+    checkPocketBase: async () => {},
+    checkSocialOperating: async () => ({
+      queueBacklog: { count: 3, oldestAt: '2026-09-26T00:00:00.000Z' },
+      unknownReceipts: { count: 1 },
+      exhaustedBudgets: { count: 1 },
+      invalidAuthorizations: { count: 1 },
+      worker: { ready: false, source: 'heartbeat', state: 'missing', lastSeenAt: null },
+    }),
+  });
+  assert.equal(workerMissing.status, 'degraded');
+  assert.deepEqual(workerMissing.issues, ['social_operating_worker_unready:heartbeat:missing']);
+  assert.equal(workerMissing.socialOperating?.queueBacklog.count, 3);
+
+  const workerReady = await runtimeReadiness({
+    role: 'all',
+    checkPocketBase: async () => {},
+    checkSocialOperating: async () => ({
+      queueBacklog: { count: 0, oldestAt: null },
+      unknownReceipts: { count: 0 },
+      exhaustedBudgets: { count: 0 },
+      invalidAuthorizations: { count: 0 },
+      worker: { ready: true, source: 'local', state: 'ready', lastSeenAt: '2026-09-26T00:00:00.000Z' },
+    }),
+  });
+  assert.equal(workerReady.status, 'ready');
 
   process.env.READINESS_CACHE_TTL_MS = '250';
   assert.equal(readinessCacheTtlMs(), 250);
   let now = 1_000;
   let checks = 0;
+  let qualityChecks = 0;
   const probe = createRuntimeReadinessProbe({
     role: 'web',
     now: () => now,
+    checkDigitalHumanQuality: async () => {
+      qualityChecks += 1;
+      return { localVisual: { ready: true }, semantic: { ready: false }, lipSync: { ready: false }, autoRelease: { ready: false } };
+    },
     checkPocketBase: async () => {
       checks += 1;
       await new Promise(resolve => setTimeout(resolve, 5));
@@ -134,6 +190,7 @@ try {
   now += 251;
   await probe();
   assert.equal(checks, 2, 'readiness must be revalidated after the short cache expires');
+  assert.equal(qualityChecks, 1, 'immutable QA runtime self-check must run only once per process');
   console.log('runtime readiness contract passed');
 } finally {
   for (const key of Object.keys(process.env)) if (!(key in previous)) delete process.env[key];

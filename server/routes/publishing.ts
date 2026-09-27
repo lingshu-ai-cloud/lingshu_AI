@@ -24,6 +24,11 @@ import {
 } from '../publishing/publishSourceClaim.js';
 import { createTrackedPostDraft, type PostRecord } from '../publishing/waLink.js';
 import { store } from '../storage/index.js';
+import { realPublishingCapabilities } from '../publishing/weeklyLineage.js';
+import { PUBLICATION_ASSIGNMENTS, PUBLICATION_ATTEMPTS, type DurablePublicationAttempt, type StoredPublicationAssignment } from '../publishing/weeklyLineage.js';
+import { listTenantCapabilityEvidence } from '../publishing/platformCapabilities.js';
+import { fallbackQueueSuggestion, normalizeScheduleSlots } from './publishingSuggestions.js';
+import { externalVideoApprovalsRouter } from './externalVideoApprovals.js';
 
 export const publishingRouter = Router();
 
@@ -164,54 +169,6 @@ function isPublishingPost(post: PostRecord): boolean {
   return publishingMutationBlocked(post);
 }
 
-function presetSchedule(preset: PostingScheduleRecord['preset'] = 'standard'): Array<{ weekday: number; time: string }> {
-  const weekdays = preset === 'light' ? [1, 3, 5] : preset === 'high' ? [0, 1, 2, 3, 4, 5, 6] : [1, 2, 3, 4, 5];
-  return weekdays.map(weekday => ({ weekday, time: '20:00' }));
-}
-
-function normalizeScheduleSlots(value: unknown, preset: PostingScheduleRecord['preset']): Array<{ weekday: number; time: string }> {
-  if (!Array.isArray(value)) return presetSchedule(preset);
-  const slots = value
-    .map(slot => ({
-      weekday: Math.max(0, Math.min(6, Number(slot?.weekday) || 0)),
-      time: /^\d{2}:\d{2}$/.test(text(slot?.time)) ? text(slot?.time) : '20:00',
-    }))
-    .filter((slot, index, list) => list.findIndex(item => item.weekday === slot.weekday && item.time === slot.time) === index)
-    .sort((left, right) => left.weekday - right.weekday || left.time.localeCompare(right.time));
-  return slots.length ? slots : presetSchedule(preset);
-}
-
-function fallbackQueueSuggestion(input: {
-  currentTitle: string;
-  feedback: string;
-  festival: string;
-}): { title: string; brief: string; tags: string[] } {
-  const variants = [
-    { title: '主推产品：3 个采购决策点', brief: '用买家视角拆解用途、采购关注点和询盘入口，不补写未确认参数。', tags: ['主推品', '采购决策'] },
-    { title: '工厂能力：从打样到交付', brief: '展示流程与交付节点，企业资料缺失的部分保持待确认。', tags: ['工厂实力', '交付'] },
-    { title: '采购 FAQ：MOQ、定制与样品', brief: '围绕高频询盘组织短内容，引导买家索取目录和报价。', tags: ['采购FAQ', '询盘'] },
-    { title: '质量证明：细节、包装与检验', brief: '用可拍摄的细节建立信任，只引用企业中心已有事实。', tags: ['质量', '信任'] },
-    { title: '应用场景：买家如何使用这款产品', brief: '从真实使用场景切入，结尾保留清晰的 WhatsApp 询盘动作。', tags: ['场景', '转化'] },
-  ];
-  const currentIndex = variants.findIndex(item => item.title === input.currentTitle);
-  const selected = variants[(currentIndex + 1 + variants.length) % variants.length];
-  if (input.feedback) {
-    return {
-      title: selected.title,
-      brief: `${selected.brief} 修改要求：${input.feedback.slice(0, 120)}`,
-      tags: selected.tags,
-    };
-  }
-  if (input.festival) {
-    return {
-      title: `${input.festival}：采购准备清单`,
-      brief: '围绕节庆采购窗口组织备货、交付与询盘内容，不虚构折扣或库存。',
-      tags: ['节庆', '备货'],
-    };
-  }
-  return selected;
-}
-
 publishingRouter.get('/local-videos/:filename', async (req, res) => {
   const identity = await assetIdentity(req);
   const signed = identity ? null : verifyAssetToken(req.query.assetToken, `${req.baseUrl}${req.path}`);
@@ -231,6 +188,33 @@ publishingRouter.get('/local-videos/:filename', async (req, res) => {
 });
 
 publishingRouter.use(requireAuth);
+
+publishingRouter.get('/capabilities', async (_req, res) => {
+  const { tenantId } = res.locals as AuthLocals;
+  res.json({ items: realPublishingCapabilities(await listTenantCapabilityEvidence(tenantId)) });
+});
+
+publishingRouter.get('/weekly-assignments', async (req, res) => {
+  const { tenantId } = res.locals as AuthLocals;
+  const where: Record<string, string> = { tenant_id: tenantId };
+  if (text(req.query.packageId)) where.operating_package_id = text(req.query.packageId);
+  if (text(req.query.status)) where.status = text(req.query.status);
+  const result = await store.list<StoredPublicationAssignment>(PUBLICATION_ASSIGNMENTS, { where, sort: '-created_at', page: 1, perPage: 200 });
+  res.json({ items: result.items, total: result.totalItems });
+});
+
+publishingRouter.get('/weekly-assignments/:assignmentId/attempts', async (req, res) => {
+  const { tenantId } = res.locals as AuthLocals;
+  const assignmentId = text(req.params.assignmentId);
+  const assignment = await store.list<StoredPublicationAssignment>(PUBLICATION_ASSIGNMENTS, {
+    where: { tenant_id: tenantId, assignment_id: assignmentId }, page: 1, perPage: 2,
+  });
+  if (assignment.totalItems !== 1 || !assignment.items[0]) { res.status(404).json({ error: 'publication_assignment_not_found' }); return; }
+  const attempts = await store.list<DurablePublicationAttempt>(PUBLICATION_ATTEMPTS, {
+    where: { tenant_id: tenantId, assignment_id: assignmentId }, sort: '-started_at', page: 1, perPage: 100,
+  });
+  res.json({ items: attempts.items, total: attempts.totalItems });
+});
 
 publishingRouter.post('/local-videos/manifest', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
@@ -377,7 +361,7 @@ publishingRouter.get('/posting-schedule', async (req, res) => {
       time_zone: 'UTC',
       utc_offset: 0,
       preset: 'standard',
-      slots: presetSchedule('standard'),
+      slots: normalizeScheduleSlots(undefined, 'standard'),
     },
   });
 });
@@ -411,6 +395,8 @@ publishingRouter.put('/posting-schedule', async (req, res) => {
   const item = await store.create<PostingScheduleRecord>('publishing_schedules', next);
   res.status(201).json({ item: item || { id: '', ...next } });
 });
+
+publishingRouter.use('/external-video-approvals', externalVideoApprovalsRouter);
 
 publishingRouter.get('/calendar', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
@@ -569,6 +555,10 @@ publishingRouter.patch('/calendar/:id', async (req, res) => {
     return;
   }
   const currentStats = parseJson<Record<string, unknown>>(post.stats, {});
+  if (currentStats.origin === 'authorized_external_video') {
+    res.status(409).json({ error: 'external_video_approval_immutable', message: '获授权外部素材的审批快照不可修改；请重新上传并审批。' });
+    return;
+  }
   const update: Record<string, unknown> = {};
   const stats = { ...currentStats };
   let changed = false;

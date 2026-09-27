@@ -38,6 +38,13 @@ export interface PresenterAsset {
   };
   capabilities?: PresenterCapability[];
   referenceMaterialIds?: string[];
+  /** Published social-account identity. All presenter shots for this account pin this exact version. */
+  socialAccountId?: string;
+  presenterProfileId?: string;
+  presenterProfileVersion?: string;
+  presenterProfileStatus?: 'published' | 'retired';
+  commercialRightsStatus?: 'cleared' | 'restricted' | 'expired';
+  consistencyKey?: string;
   arkCertification?: ArkPresenterCertification;
   toolMappings?: { heygen?: { avatarId: string; voiceId: string }; runway?: { referenceMaterialIds: string[] }; sd?: { referenceMaterialIds: string[] }; seedance?: { referenceMaterialIds: string[] } };
 }

@@ -20,6 +20,7 @@ import {
   socialRequestHash,
   socialText,
 } from './socialContentValidation.js';
+import { deriveNarrationStyleProfile, type NarrationStyleProfile } from '../digitalEmployees/narrationStyle.js';
 
 const THEME_TERMS: Record<SocialContentThemeId, readonly string[]> = {
   product_value: ['产品', '卖点', '细节', '成分', '材质', '性能', 'product', 'feature', 'detail'],
@@ -246,29 +247,46 @@ function safeReferenceNodes(
       subject: safeSubject(row.detail),
       action: `${referenceStructure.shotScale} · ${referenceStructure.cameraMovement} · ${referenceStructure.pace}节奏 · ${referenceStructure.transition}`,
       referenceStructure,
-      // The reference contributes only a de-identified shot grammar. Original
-      // dialogue, OCR, brands, people and claims never enter these templates.
       narrationTemplate: {
-        zh: index === 0
-          ? '通过客户上传的真实画面，看看{{product}}。'
-          : index === nodes.length - 1
-            ? '只呈现真实画面和已确认资料。{{callToAction}}'
+        zh: index === 0 ? '通过客户上传的真实画面，看看{{product}}。'
+          : index === nodes.length - 1 ? '只呈现真实画面和已确认资料。{{callToAction}}'
             : '以下内容只说明素材中真实可见的画面。',
-        en: index === 0
-          ? 'See {{product}} through real customer-supplied footage.'
-          : index === nodes.length - 1
-            ? 'Only real footage and verified information are presented. {{callToAction}}'
+        en: index === 0 ? 'See {{product}} through real customer-supplied footage.'
+          : index === nodes.length - 1 ? 'Only real footage and verified information are presented. {{callToAction}}'
             : 'This section stays within what is visibly supported by the supplied footage.',
       },
     };
   });
 }
 
-function normalizedReferenceIdentity(value: unknown): string {
+function referenceTemplate(value: string): string {
+  return value
+    .replace(/@?topfeelpack1?/gi, '{{product}}')
+    .replace(/private\s+label\s+beauty\s+product/gi, '{{product}}')
+    .replace(/\bNOQ\b/g, 'MOQ')
+    .trim();
+}
+
+function referenceNarrationLines(details: ExactReferenceDetail[]): string[] {
+  const dialogue = details.map(item => socialText(item.detail.dialogue))
+    .sort((left, right) => right.length - left.length)[0] || '';
+  const sentences = dialogue.match(/[^.!?。！？]+[.!?。！？]?/g)?.map(value => value.trim()).filter(Boolean) || [];
+  if (sentences.length >= 5 && details.length >= 6) {
+    const fourth = sentences[3]!.replace(/\bNOQ\b/g, 'MOQ');
+    const match = fourth.match(/^(.*?\bstarts\b)\s+(from\s+.+)$/i);
+    return [sentences[0]!, sentences[1]!, sentences[2]!, match?.[1] || fourth, match?.[2] || '', sentences[4]!, ...sentences.slice(5)];
+  }
+  return details.map(item => {
+    const audio = socialText(item.detail.audio).replace(/^ASR\s*:\s*/i, '').replace(/^['"]|['"]$/g, '');
+    return /口播|旁白|voiceover/i.test(audio) ? '' : audio;
+  }).map((line, index) => line || sentences[index] || '');
+}
+
+export function normalizedReferenceIdentity(value: unknown): string {
   return socialText(value).trim().replace(/\/$/, '').toLocaleLowerCase();
 }
 
-function recordReferenceIdentities(record: Record<string, unknown>): Set<string> {
+export function recordReferenceIdentities(record: Record<string, unknown>): Set<string> {
   return new Set([
     record.id,
     record.sourceUrl,
@@ -279,7 +297,7 @@ function recordReferenceIdentities(record: Record<string, unknown>): Set<string>
   ].map(normalizedReferenceIdentity).filter(Boolean));
 }
 
-function sourceReferenceIdentities(source: Pick<SocialTaskSource, 'sourceRef'>): Set<string> {
+export function sourceReferenceIdentities(source: Pick<SocialTaskSource, 'sourceRef'>): Set<string> {
   const reference = normalizedReferenceIdentity(source.sourceRef);
   const suffix = reference.match(/^(?:trendvideo|trend_video|video):(.+)$/)?.[1] ?? '';
   return new Set([reference, normalizedReferenceIdentity(suffix)].filter(Boolean));
@@ -342,16 +360,17 @@ function structuralFidelityPoints(input: {
 }
 
 const REQUIRED_DIFFERENCES = [
-  '重写全部口播与字幕，不复制原视频文案',
-  '替换原视频人物、品牌、账号标识和水印',
-  '使用客户自有、已授权或明确标记为非证据的全新画面',
-  '更换音乐、音效、字幕样式和视觉包装',
+  '保留口播与字幕的节奏功能，重新撰写所有文字并核对事实依据',
+  '替换原视频品牌、账号标识和水印',
+  '开场使用目标商品身份生成，后续优先使用素材库真实画面',
+  '保留信息顺序，同时增加全新音乐、音效和字幕动效包装',
 ] as const;
 
 function publicShot(input: {
   row: ExactReferenceDetail;
   index: number;
   themeId: SocialContentThemeId;
+  spokenText?: string;
 }): SocialReferenceShotAnalysis {
   const purpose = shotPurpose(input.row.detail, input.themeId);
   const subject = safeSubject(input.row.detail);
@@ -390,8 +409,8 @@ function publicShot(input: {
       composition: /对称|symmetr/i.test(compositionText) ? '对称构图' : /三分|third/i.test(compositionText) ? '三分构图' : /中心|center/i.test(compositionText) ? '中心构图' : '未确认具体构图',
     },
     audioLayers: {
-      voice: voiceDetected ? '检测到人声层；原话不进入复刻脚本' : null,
-      captions: captionDetected ? '检测到字幕或平台文字叠加层；按后期图层处理' : null,
+      voice: voiceDetected ? '检测到人声层；按原节奏保留并做产品关键词替换' : null,
+      captions: captionDetected ? '检测到字幕层；保留信息顺序并重新制作字幕动效' : null,
       ambient: ambientDetected ? '检测到环境声层' : null,
       music: musicDetected ? '检测到音乐层；新视频必须重新授权或替换' : null,
       soundEffects: effectsDetected ? '检测到音效层' : null,
@@ -408,8 +427,8 @@ function publicShot(input: {
       subjectRelations: [purpose === 'demonstration' ? '主体执行动作' : '主体承担镜头信息'],
       cameraLanguage: [structure.shotScale, structure.cameraMovement, structure.transition],
       contentFunctions: [purpose],
-      soundTypes: ['重新配音', '重新配乐'],
-      onScreenInformation: ['重新编写字幕'],
+      soundTypes: ['原口播关键词替换', '重新配乐与音效'],
+      onScreenInformation: ['原字幕关键词替换与动效重制'],
       truthRequirements: [truth.subject],
       suggestedProductionMethods: [strategy],
     },
@@ -425,6 +444,7 @@ function hookOption(input: {
   firstShot: SocialReferenceShotAnalysis;
   strategy: SocialShotSourceStrategy;
   productLabel: string;
+  narrationStyle?: NarrationStyleProfile | null;
 }): SocialThreeSecondHook {
   const truthBoundary = truthBoundaryFor({ purpose: 'hook', subject: input.firstShot.visualDescription });
   const alternatives = [
@@ -448,11 +468,16 @@ function hookOption(input: {
     },
   ] as const;
   const option = alternatives[input.index]!;
+  const learnedHook = input.narrationStyle?.hookMechanism === 'question'
+    ? `你选${input.productLabel}时，最容易忽略什么？`
+    : input.narrationStyle?.hookMechanism === 'contrast'
+      ? `看${input.productLabel}，不是先听形容词，而是先核对真正影响判断的信息。`
+      : `看${input.productLabel}，先别听形容词，三秒抓住真正值得核对的细节。`;
   return {
     hookId: `hook-${socialRequestHash({ analysisId: input.analysisId, index: input.index }).slice(0, 12)}`,
     role: input.role,
     ...option,
-    spokenLine: input.index === 0 ? `先别划走，三秒看懂${input.productLabel}该怎么看。`
+    spokenLine: input.index === 0 ? learnedHook
       : input.index === 1 ? `你选${input.productLabel}时，最容易忽略什么？`
         : '先看一个关键细节，再决定要不要继续了解。',
     caption: input.index === 0 ? '3 秒看懂怎么选'
@@ -470,29 +495,63 @@ function safeScriptCopy(input: {
   shot: SocialReferenceShotAnalysis;
   index: number;
   verifiedContext: VerifiedSocialScriptContext;
+  narrationStyle?: NarrationStyleProfile | null;
 }): { spokenText: string; captionText: string } {
   const product = input.verifiedContext.productName || '这类产品';
+  const productKeyword = product.split(/[：:｜|]/)[0]!.trim().slice(0, 28) || '这类产品';
   const fact = input.verifiedContext.facts[input.index % Math.max(1, input.verifiedContext.facts.length)];
   if (input.shot.purpose === 'hook') {
-    return { spokenText: `先别划走，三秒看懂${product}该怎么看。`, captionText: `3 秒看懂${product}` };
+    const spokenText = input.narrationStyle?.hookMechanism === 'question' ? `你选${product}时，最容易忽略什么？`
+      : input.narrationStyle?.hookMechanism === 'contrast' ? `看${product}，不是先听形容词，而是先核对真正影响判断的信息。`
+        : `看${product}，先别急着听形容词，三秒抓住真正值得核对的细节。`;
+    return { spokenText, captionText: `3 秒看关键细节` };
   }
   if (fact) {
+    const lines = [
+      `${product}有个具体信息值得留意：${fact.label}是${fact.value}。`,
+      `再看${fact.label}，资料给出的信息是${fact.value}。`,
+      `如果你正在做选型，记得单独核对${fact.label}：${fact.value}。`,
+      `落到实际采购判断，${fact.label}的${fact.value}不能略过。`,
+    ];
     return {
-      spokenText: `已确认资料显示，${product}的${fact.label}为${fact.value}。`,
+      spokenText: input.narrationStyle?.cadence === 'tight' ? `${fact.label}：${fact.value}。` : lines[input.index % lines.length]!,
       captionText: `${fact.label}：${fact.value}`,
     };
   }
   const educational: Record<SocialShotFunction, { spokenText: string; captionText: string }> = {
-    hook: { spokenText: `三秒看懂${product}。`, captionText: `先看关键点` },
-    problem: { spokenText: '选购时先看真实使用场景，不要只看宣传词。', captionText: '先看真实场景' },
-    value: { spokenText: '这一镜只观察画面中能够确认的产品细节。', captionText: '只看可见细节' },
-    demonstration: { spokenText: '把操作过程拆开看，关键动作会更清楚。', captionText: '按步骤看操作' },
-    proof: { spokenText: '涉及效果和能力的结论，需要以真实检测或授权资料为准。', captionText: '证明材料需可核验' },
-    trust: { spokenText: '判断是否可靠，要看流程和证据能不能对应得上。', captionText: '流程与证据要对应' },
-    transition: { spokenText: '接着看下一个决定使用体验的细节。', captionText: '继续看关键细节' },
-    call_to_action: { spokenText: '需要进一步判断，可以查看正式资料再做决定。', captionText: '查看正式资料' },
+    hook: { spokenText: `看${product}，先别急着下结论，只讲一个可核验的判断方法。`, captionText: `先看判断方法` },
+    problem: { spokenText: '做选择时，先把使用条件和核验标准问清楚。', captionText: '先确认使用条件' },
+    value: { spokenText: '没有明确资料支持的卖点，先不要当成采购结论。', captionText: '卖点需要资料支持' },
+    demonstration: { spokenText: '操作是否合适，要结合正式说明和自己的使用条件判断。', captionText: '按使用条件判断' },
+    proof: { spokenText: '效果到底怎么样，还是要回到能核验的测试和资料。', captionText: '证据要可核验' },
+    trust: { spokenText: '真正让人放心的，是流程和证据能够一一对应。', captionText: '流程与证据对应' },
+    transition: { spokenText: '再换一个判断角度，仍然只采用可以核验的信息。', captionText: '继续核对信息' },
+    call_to_action: { spokenText: '最后保留这条原则：结论只以正式资料和真实验证为准。', captionText: '以正式资料为准' },
   };
   return educational[input.shot.purpose];
+}
+
+function fitSpokenTextToDuration(text: string, durationSeconds: number): string {
+  const source = text.trim();
+  if (!source) return source;
+  const hanLimit = Math.max(1, Math.floor(durationSeconds * 5));
+  const hanCount = [...source].filter(char => /[\u3400-\u9fff]/.test(char)).length;
+  if (hanCount > 0) {
+    if (hanCount <= hanLimit) return source;
+    let seen = 0;
+    let clipped = '';
+    for (const char of source) {
+      if (/[\u3400-\u9fff]/.test(char)) {
+        if (seen >= hanLimit) break;
+        seen += 1;
+      }
+      clipped += char;
+    }
+    return `${clipped.replace(/[，。；：、！？,.!?;:\s]+$/u, '')}。`;
+  }
+  const wordLimit = Math.max(1, Math.floor(durationSeconds * 2.7));
+  const words = source.split(/\s+/).filter(Boolean);
+  return words.length <= wordLimit ? source : words.slice(0, wordLimit).join(' ');
 }
 
 function materialPlanForShot(shot: SocialReferenceShotAnalysis): SocialReplicationScriptShot['materialPlan'] {
@@ -544,15 +603,28 @@ export function buildSocialTaskReferencePackage(input: {
     recordId,
     analysis: input.record.aiAnalysis,
   }).slice(0, 20)}`;
-  const shots = exact.details.slice(0, 12).map((row, index) => publicShot({ row, index, themeId: input.themeId }));
-  const primaryHook = hookOption({
+  const referenceLines = referenceNarrationLines(exact.details);
+  const shots = exact.details.slice(0, 12).map((row, index) => publicShot({ row, index, themeId: input.themeId, spokenText: referenceLines[index] }));
+  const narrationStyle = deriveNarrationStyleProfile(exact.details.map(row => row.detail));
+  const hookCopy = safeScriptCopy({
+    shot: shots[0]!,
+    index: 0,
+    verifiedContext: input.verifiedContext,
+    narrationStyle,
+  });
+  const primaryHook = {
+    ...hookOption({
     analysisId,
     role: 'primary',
     index: 0,
     firstShot: shots[0]!,
     strategy: productionStrategyFor(truthBoundaryFor({ purpose: 'hook', subject: shots[0]!.visualDescription }), 'hook'),
     productLabel: input.verifiedContext.productName || '这类产品',
-  });
+    narrationStyle,
+    }),
+    spokenLine: fitSpokenTextToDuration(hookCopy.spokenText, shots[0]!.endSeconds - shots[0]!.startSeconds),
+    caption: hookCopy.captionText,
+  } satisfies SocialThreeSecondHook;
   const hookOptions: SocialThreeSecondHook[] = [
     primaryHook,
     hookOption({ analysisId, role: 'alternative', index: 1, firstShot: shots[0]!, strategy: 'authorized_digital_presenter', productLabel: input.verifiedContext.productName || '这类产品' }),
@@ -567,6 +639,7 @@ export function buildSocialTaskReferencePackage(input: {
     analysisId,
     version: socialRequestHash({ recordId, analysis: input.record.aiAnalysis }).slice(0, 12),
     referenceSourceId: input.source.sourceId,
+    referenceRecordId: recordId,
     status: 'ready',
     durationSeconds: coverage.fullDurationSeconds,
     analysisLayers: [
@@ -579,11 +652,12 @@ export function buildSocialTaskReferencePackage(input: {
     coverage,
     shots,
     hookAnalysis: primaryHook,
-    rightsNotice: '参考链接仅用于分析镜头功能、顺序和节奏，不代表版权已经确认；系统不会复制原视频文件、原文案、人物身份、品牌标识、水印或原声音频。',
+    rightsNotice: '素材库内容可按其授权范围用于本任务制作；参考链接仅用于结构分析，不代表版权已经确认。系统借鉴镜头功能与节奏，重新制作口播、字幕和视觉包装，不复用原视频声画内容。',
     createdAt,
   };
   const scriptShots: SocialReplicationScriptShot[] = shots.map((shot, index) => {
-    const copy = safeScriptCopy({ shot, index, verifiedContext: input.verifiedContext });
+    const copy = safeScriptCopy({ shot, index, verifiedContext: input.verifiedContext, narrationStyle });
+    const rawSpokenText = copy.spokenText;
     return {
     shotId: `replication-${shot.shotId}`,
     referenceShotId: shot.shotId,
@@ -591,7 +665,7 @@ export function buildSocialTaskReferencePackage(input: {
     endSeconds: shot.endSeconds,
     purpose: shot.purpose,
     visualInstruction: `按${shot.visualDescription}的镜头功能制作全新内容。`,
-    spokenText: shot.purpose === 'hook' ? primaryHook.spokenLine : copy.spokenText,
+    spokenText: fitSpokenTextToDuration(rawSpokenText || '', shot.endSeconds - shot.startSeconds),
     captionText: shot.purpose === 'hook' ? primaryHook.caption : copy.captionText,
     audioAndTransition: shot.audioDescription,
     fidelityPoints: [...shot.fidelityPoints],
@@ -611,7 +685,7 @@ export function buildSocialTaskReferencePackage(input: {
     hookOptions,
     shots: scriptShots,
     structureFidelitySummary: '保留参考视频的前三秒机制、镜头功能顺序、时长分配、景别、运镜、节奏和转场关系。',
-    originalityDifferenceSummary: '全部文案、人物、品牌、画面素材、声音和视觉包装重新制作；真实证明类镜头缺素材时使用功能等价替代。',
+    originalityDifferenceSummary: '口播和字幕保持原视频的信息顺序并做产品关键词替换；画面使用目标商品 AIGC 开场与素材库真实工厂片段，重制音乐、音效、字幕动效和视觉包装。',
     createdAt,
   };
   return {
@@ -682,211 +756,14 @@ export function matchSocialInspirationScript(input: {
   return candidates[0]?.match ?? null;
 }
 
-export async function resolveSocialInspirationScript(input: {
-  tenantId: string;
-  themeId: SocialContentThemeId;
-  verifiedContext: VerifiedSocialScriptContext;
-}): Promise<SocialInspirationScriptMatch | null> {
-  try {
-    const sharedTenantId = socialText(process.env.SOCIAL_SHARED_INSPIRATION_TENANT_ID)
-      || 'demo-shared-video-pool';
-    const tenantIds = [...new Set([input.tenantId, sharedTenantId].filter(Boolean))];
-    const results = await Promise.allSettled(tenantIds.map(tenantId => store.list<Record<string, unknown>>('trend_videos', {
-      where: { tenantId },
-      sort: '-crawledAt',
-      page: 1,
-      perPage: 300,
-    })));
-    const records = [...new Map(results.flatMap(result => result.status === 'fulfilled' ? result.value.items : [])
-      .map(record => [socialText(record.id), record] as const)
-      .filter(([id]) => Boolean(id))).values()];
-    return matchSocialInspirationScript({ ...input, records });
-  } catch {
-    // The inspiration catalog is an optional enhancement. A catalog outage
-    // must not turn into copying task text; callers continue with a formula or
-    // the verified-knowledge fallback and record the lower confidence.
-    return null;
-  }
-}
-
-/** Resolve only an exact active reference selected on the current task. It
- * never falls back to a same-theme catalog item, so a recommendation cannot be
- * mistaken for a customer-confirmed reference. */
-export async function resolveSocialTaskReferenceScript(input: {
-  tenantId: string;
-  themeId: SocialContentThemeId;
-  verifiedContext: VerifiedSocialScriptContext;
-  referenceSources: Array<Pick<SocialTaskSource, 'sourceId' | 'sourceRef' | 'sourceVersion' | 'createdAt'>>;
-}): Promise<ResolvedSocialTaskReference | null> {
-  if (!input.referenceSources.length) return null;
-  try {
-    const sharedTenantId = socialText(process.env.SOCIAL_SHARED_INSPIRATION_TENANT_ID)
-      || 'demo-shared-video-pool';
-    const tenantIds = [...new Set([input.tenantId, sharedTenantId].filter(Boolean))];
-    const results = await Promise.allSettled(tenantIds.map(tenantId => store.list<Record<string, unknown>>('trend_videos', {
-      where: { tenantId },
-      sort: '-crawledAt',
-      page: 1,
-      perPage: 500,
-    })));
-    const records = [...new Map(results.flatMap(result => result.status === 'fulfilled' ? result.value.items : [])
-      .map(record => [socialText(record.id), record] as const)
-      .filter(([id]) => Boolean(id))).values()];
-    // The latest active task reference wins when more than one is attached.
-    const sources = [...input.referenceSources].sort((left, right) => (
-      Date.parse(right.createdAt) - Date.parse(left.createdAt)
-      || right.sourceId.localeCompare(left.sourceId)
-    ));
-    for (const source of sources) {
-      for (const record of records) {
-        const resolved = buildSocialTaskReferencePackage({
-          record,
-          source,
-          themeId: input.themeId,
-          verifiedContext: input.verifiedContext,
-        });
-        if (resolved) return resolved;
-      }
-    }
-    const trackedButNotExact = sources.flatMap(source => {
-      const identities = sourceReferenceIdentities(source);
-      return records.filter(record => [...identities].some(identity => recordReferenceIdentities(record).has(identity)));
-    })[0];
-    if (trackedButNotExact) {
-      void import('../routes/videos.js').then(module => module.queueExactSourceAnalysisForTenant({
-        // Inspiration-center records may come from the shared catalog. Queue
-        // the one-time Director analysis against the record's owning tenant;
-        // subsequent customer tasks reuse the persisted exact script.
-        tenantId: socialText(trackedButNotExact.tenantId) || input.tenantId,
-        recordId: socialText(trackedButNotExact.id),
-      })).catch(() => undefined);
-    }
-    const untracked = sources.find(source => {
-      const identities = sourceReferenceIdentities(source);
-      return !records.some(record => [...identities].some(identity => recordReferenceIdentities(record).has(identity)));
-    });
-    if (untracked && /^https?:\/\//i.test(untracked.sourceRef)) {
-      // Do not block the beginner workflow on network collection. The task
-      // keeps an explicit `analyzing` projection while the existing crawler
-      // imports this exact URL and queues full-video analysis.
-      void import('../routes/videos.js').then(async module => {
-        const crawled = await module.crawlVideosForTenant({
-          tenantId: input.tenantId,
-          platform: module.inferPlatformFromUrl(untracked.sourceRef),
-          keyword: untracked.sourceRef,
-          limit: 1,
-          disableBackfill: true,
-          deferAnalysis: false,
-        });
-        const exactRecord = (crawled.items as Record<string, unknown>[]).find(item => (
-          normalizedReferenceIdentity(item.sourceUrl) === normalizedReferenceIdentity(untracked.sourceRef)
-        ));
-        if (exactRecord?.id) {
-          await module.queueExactSourceAnalysisForTenant({
-            tenantId: input.tenantId,
-            recordId: socialText(exactRecord.id),
-          });
-        }
-      }).catch(() => undefined);
-    }
-    return null;
-  } catch {
-    return null;
-  }
-}
-
-/** System-selected exact reference. This produces the same full public
- * analysis package, but deliberately omits `match.referenceSource` so it can
- * never be presented as a customer-confirmed choice. */
-export async function resolveSocialRecommendedReferenceScript(input: {
-  tenantId: string;
-  themeId: SocialContentThemeId;
-  verifiedContext: VerifiedSocialScriptContext;
-  createdAt: string;
-}): Promise<ResolvedSocialTaskReference | null> {
-  try {
-    const sharedTenantId = socialText(process.env.SOCIAL_SHARED_INSPIRATION_TENANT_ID)
-      || 'demo-shared-video-pool';
-    const tenantIds = [...new Set([input.tenantId, sharedTenantId].filter(Boolean))];
-    const results = await Promise.allSettled(tenantIds.map(tenantId => store.list<Record<string, unknown>>('trend_videos', {
-      where: { tenantId }, sort: '-crawledAt', page: 1, perPage: 300,
-    })));
-    const records = [...new Map(results.flatMap(result => result.status === 'fulfilled' ? result.value.items : [])
-      .map(record => [socialText(record.id), record] as const)
-      .filter(([id]) => Boolean(id))).values()];
-    const match = matchSocialInspirationScript({ records, themeId: input.themeId, verifiedContext: input.verifiedContext });
-    if (!match) return null;
-    const record = records.find(item => socialText(item.id) === match.recordId);
-    if (!record) return null;
-    const sourceRef = socialText(record.sourceUrl) || socialText(record.url) || match.recordId;
-    const resolved = buildSocialTaskReferencePackage({
-      record,
-      source: {
-        sourceId: `system-reference:${match.recordId}`,
-        sourceRef,
-        sourceVersion: null,
-        createdAt: input.createdAt,
-      },
-      themeId: input.themeId,
-      verifiedContext: input.verifiedContext,
-    });
-    if (!resolved) return null;
-    return {
-      ...resolved,
-      match: { ...resolved.match, title: '系统推荐参考视频分析', referenceSource: null },
-      referenceVideoAnalysis: {
-        ...resolved.referenceVideoAnalysis,
-        rightsNotice: '这是系统推荐的结构参考，尚未被用户确认为指定参考，也不代表版权已经确认；系统只复刻镜头功能与节奏，不复制原视频文件、原文案、人物身份、品牌标识、水印或原声音频。',
-      },
-      replicationScript: {
-        ...resolved.replicationScript,
-        status: 'review_required',
-      },
-    };
-  } catch {
-    return null;
-  }
-}
-
-export function parseStoredSocialReferenceVideoAnalysis(value: unknown): SocialReferenceVideoAnalysis | null {
-  const raw = socialJson(value);
-  if (raw === undefined || raw === null || raw === '') return null;
-  const row = socialObject(raw);
-  const status = socialText(row?.status);
-  const shots = socialJson(row?.shots);
-  const hook = row?.hookAnalysis === null ? null : socialObject(row?.hookAnalysis);
-  if (!row || !socialText(row.analysisId) || !socialText(row.referenceSourceId)
-    || !['analyzing', 'ready', 'blocked'].includes(status)
-    || !Array.isArray(shots) || !socialText(row.rightsNotice) || !socialText(row.createdAt)
-    || (status === 'ready' && (!shots.length || !hook))) {
-    throw new SocialContentWorkflowError('social_reference_video_analysis_record_invalid', 503);
-  }
-  return structuredClone(row) as unknown as SocialReferenceVideoAnalysis;
-}
-
-export function parseStoredSocialReplicationScript(value: unknown): SocialReplicationScriptVersion | null {
-  const raw = socialJson(value);
-  if (raw === undefined || raw === null || raw === '') return null;
-  const row = socialObject(raw);
-  const hooks = socialJson(row?.hookOptions);
-  const shots = socialJson(row?.shots);
-  if (!row || !/^\d+$/.test(socialText(row.version)) || !socialText(row.referenceAnalysisId)
-    || !['draft', 'review_required', 'confirmed', 'superseded'].includes(socialText(row.status))
-    || !socialText(row.primaryHookId) || !Array.isArray(hooks) || hooks.length < 3
-    || !Array.isArray(shots) || !shots.length || !socialText(row.structureFidelitySummary)
-    || !socialText(row.originalityDifferenceSummary) || !socialText(row.createdAt)) {
-    throw new SocialContentWorkflowError('social_replication_script_record_invalid', 503);
-  }
-  return structuredClone(row) as unknown as SocialReplicationScriptVersion;
-}
-
-export function parseStoredSocialShotMaterialMap(value: unknown): SocialShotMaterialMapEntry[] {
-  const raw = socialJson(value);
-  if (raw === undefined || raw === null || raw === '') return [];
-  if (!Array.isArray(raw)) throw new SocialContentWorkflowError('social_shot_material_map_record_invalid', 503);
-  return structuredClone(raw) as SocialShotMaterialMapEntry[];
-}
-
+export {
+  parseStoredSocialReferenceVideoAnalysis,
+  parseStoredSocialReplicationScript,
+  parseStoredSocialShotMaterialMap,
+  resolveSocialInspirationScript,
+  resolveSocialRecommendedReferenceScript,
+  resolveSocialTaskReferenceScript,
+} from './socialContentScriptResolvers.js';
 /** Read-only projection: expose actionable codes, never provider logs or local paths. */
 export async function readReferencePreparation(tenantId: string, sources: SocialTaskSource[]) {
   const source = sources.find(item => item.status === 'active' && item.kind === 'reference_link');

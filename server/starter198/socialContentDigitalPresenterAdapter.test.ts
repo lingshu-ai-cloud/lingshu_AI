@@ -17,11 +17,17 @@ const baseline: StoredSocialScriptBaseline = {
   createdBeforeMaterialAdaptation: true,
   scenes: [{ sceneId: 'shot-1', formulaNodeId: null, shotFunction: '开场', subject: '产品价值', action: '口播说明', narration: '这是已确认的口播。' }],
 };
+const presenterLock = {
+  socialAccountId: 'tiktok-account-1', presenterProfileId: 'presenter-profile-1', presenterProfileVersion: '7',
+  presenterAssetId: 'presenter-1', avatarId: 'avatar-1', voiceProfileId: 'voice-1', consentRef: 'consent-1',
+  commercialRightsStatus: 'cleared' as const, status: 'published' as const,
+  consistencyKey: 'tiktok-account-1:presenter-profile-1:7',
+};
 const plan: SocialAssetSupplyPlan = {
   planVersion: 'plan-1', creationMode: 'material_processing', assetAvailability: 'ready',
   managementMode: 'one_click_managed', productionRoute: 'zero_asset_generation', status: 'ready',
   overallFeasibility: 'functional_equivalent', canProduceWithoutCustomerShoot: true,
-  customerActions: [], systemActions: [], optionalEnhancements: [],
+  customerActions: [], systemActions: [], optionalEnhancements: [], accountPresenterLock: presenterLock,
   shots: [{
     shotId: 'shot-1', function: 'hook', requestedDescription: '口播', sourceStrategy: 'authorized_digital_presenter',
     sourceRefs: ['presenter-1'], fallbackSourceStrategy: 'motion_graphics', productionInstruction: '授权人物口播',
@@ -31,7 +37,8 @@ const plan: SocialAssetSupplyPlan = {
     functionalEquivalentReplacement: { required: false, preservesFunction: 'hook', replacesSubject: null, description: null, reason: null },
     feasibility: 'functional_equivalent', feasibilityReason: '授权人物可用', customerShootRequired: false,
     digitalHumanPlan: { workflow: 'material_processing', method: 'talking', presenterAssetIds: ['presenter-1'],
-      referenceMaterialIds: [], referenceRequired: false, candidateTools: ['heygen'], executionState: 'ready_for_capability_check' },
+      referenceMaterialIds: [], referenceRequired: false, candidateTools: ['heygen'], executionState: 'ready_for_capability_check',
+      accountPresenterLock: presenterLock },
   }],
 };
 
@@ -40,7 +47,9 @@ let capturedKey = '';
 const ports: SocialDigitalPresenterBridgePorts = {
   async resolvePresenter() {
     return { presenterAssetId: 'presenter-1', providerId: 'heygen', providerPresenterId: 'avatar-1',
-      providerVoiceId: 'voice-1', authorizationRef: 'rights-1', consentRef: 'consent-1', assetVersion: 3, authorized: true };
+      providerVoiceId: 'voice-1', authorizationRef: 'rights-1', consentRef: 'consent-1', assetVersion: 3, authorized: true,
+      socialAccountId: presenterLock.socialAccountId, presenterProfileId: presenterLock.presenterProfileId,
+      presenterProfileVersion: presenterLock.presenterProfileVersion, consistencyKey: presenterLock.consistencyKey };
   },
   async authorizeBudget(input) { capturedKey = input.idempotencyKey; return { allowed: true, reservationRef: 'budget-1' }; },
   async execute(input) {
@@ -60,6 +69,7 @@ assert.equal(completed.assets[0]?.authorizationRef, 'rights-1');
 assert.equal(completed.execution.shots[0]?.provenance.synthetic, true);
 assert.equal(completed.execution.shots[0]?.provenance.authorizationRef, 'rights-1');
 assert.match(completed.execution.shots[0]?.provenance.disclosure || '', /数字人合成/);
+assert.equal((completed.assets[0]?.segments[0] as any)?.presenterConsistencyKey, presenterLock.consistencyKey);
 
 const failedProvider = createSocialDigitalPresenterAdapter({ ...ports, async execute() {
   return { status: 'failed', providerTaskId: 'heygen-task-failed', error: 'provider_failed' };
@@ -85,12 +95,25 @@ assert.match(recovered.execution.shots[0]?.attempts[0]?.reason || '', /digital_p
 
 const missingConsent = createSocialDigitalPresenterAdapter({ ...ports, async resolvePresenter() {
   return { presenterAssetId: 'presenter-1', providerId: 'heygen', providerPresenterId: 'avatar-1',
-    providerVoiceId: 'voice-1', authorizationRef: 'rights-1', consentRef: '', assetVersion: 3, authorized: true };
+    providerVoiceId: 'voice-1', authorizationRef: 'rights-1', consentRef: '', assetVersion: 3, authorized: true,
+    socialAccountId: presenterLock.socialAccountId, presenterProfileId: presenterLock.presenterProfileId,
+    presenterProfileVersion: presenterLock.presenterProfileVersion, consistencyKey: presenterLock.consistencyKey };
 } });
 const noConsent = await executeSocialAssetSupplyPlan({ tenantId: 'tenant-a', taskId: 'task-a', outputDirectory: root,
   plan, baseline, availableAssets: [], adapters: [missingConsent, fallback] });
 assert.equal(noConsent.execution.shots[0]?.attempts[0]?.status, 'unavailable');
 assert.equal(noConsent.execution.shots[0]?.sourceStrategy, 'motion_graphics');
+
+const wrongAccountProfile = createSocialDigitalPresenterAdapter({ ...ports, async resolvePresenter() {
+  return { presenterAssetId: 'presenter-1', providerId: 'heygen', providerPresenterId: 'avatar-1',
+    providerVoiceId: 'voice-1', authorizationRef: 'rights-1', consentRef: 'consent-1', assetVersion: 3, authorized: true,
+    socialAccountId: presenterLock.socialAccountId, presenterProfileId: presenterLock.presenterProfileId,
+    presenterProfileVersion: '8', consistencyKey: 'tiktok-account-1:presenter-profile-1:8' };
+} });
+const wrongProfileResult = await executeSocialAssetSupplyPlan({ tenantId: 'tenant-a', taskId: 'task-a', outputDirectory: root,
+  plan, baseline, availableAssets: [], adapters: [wrongAccountProfile, fallback] });
+assert.equal(wrongProfileResult.execution.shots[0]?.attempts[0]?.status, 'unavailable');
+assert.equal(wrongProfileResult.execution.shots[0]?.sourceStrategy, 'motion_graphics');
 
 fs.rmSync(root, { recursive: true, force: true });
 console.log('social content digital presenter adapter tests passed');

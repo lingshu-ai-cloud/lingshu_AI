@@ -79,7 +79,13 @@ function hasPublishReadyMaterial(
   const hasVideo = existingLabels.some(label => VIDEO_FILE_PATTERN.test(label))
     || selectedMaterials.some(source => /video/i.test(source.type) || VIDEO_FILE_PATTERN.test(source.label))
     || files.some(file => /^video\//i.test(file.type) || VIDEO_FILE_PATTERN.test(file.name));
+  // Persisted task sources intentionally keep a clean user-facing label, so
+  // many records no longer carry a filename extension. Every active material
+  // source has already passed the server-side production-eligibility check;
+  // count extensionless persisted sources conservatively as still images for
+  // the resume gate instead of making users reselect the same material.
   const imageCount = existingLabels.filter(label => IMAGE_FILE_PATTERN.test(label)).length
+    + existingLabels.filter(label => !IMAGE_FILE_PATTERN.test(label) && !VIDEO_FILE_PATTERN.test(label)).length
     + selectedMaterials.filter(source => /image/i.test(source.type) || IMAGE_FILE_PATTERN.test(source.label)).length
     + files.filter(file => /^image\//i.test(file.type) || IMAGE_FILE_PATTERN.test(file.name)).length;
   return socialContentMaterialCanStart(draft.materialInput, {
@@ -98,6 +104,8 @@ interface SocialTaskEditorDialogProps {
   initialCreationPath?: SocialContentCreationPath;
   initialMaterialInput?: SocialContentMaterialInput;
   initialManagedMode?: 'one_click_managed';
+  initialDraftPatch?: Partial<Pick<SocialContentDraft, 'title' | 'topic' | 'productName' | 'referenceLinks' | 'platforms'>>;
+  sourceContext?: { originLabel: string; referenceTitle: string; referenceThumbnail?: string };
   lockMode?: boolean;
   catalog: SocialWorkPackageCard[];
   busy: boolean;
@@ -154,7 +162,7 @@ function ModeSelector({ draft, update, locked }: { draft: SocialContentDraft; up
   );
 }
 
-function BriefStep({ draft, update, lockMode }: { draft: SocialContentDraft; update: (changes: Partial<SocialContentDraft>) => void; lockMode: boolean }) {
+function BriefStep({ draft, update, lockMode, sourceContext }: { draft: SocialContentDraft; update: (changes: Partial<SocialContentDraft>) => void; lockMode: boolean; sourceContext?: { originLabel: string; referenceTitle: string; referenceThumbnail?: string } }) {
   const selectedTheme = SOCIAL_THEME_OPTIONS.find(item => item.id === draft.themeId);
   const materialPolicy = socialContentMaterialPolicy(draft.themeId || null);
   const customSelected = !draft.themeId;
@@ -170,6 +178,10 @@ function BriefStep({ draft, update, lockMode }: { draft: SocialContentDraft; upd
   };
   return (
     <div className="space-y-5">
+      {sourceContext && <div className="flex items-center gap-3 rounded-xl border border-violet-100 bg-violet-50/70 p-3">
+        {sourceContext.referenceThumbnail ? <img src={sourceContext.referenceThumbnail} alt="" className="h-12 w-10 shrink-0 rounded-lg object-cover" /> : <span className="flex h-12 w-10 shrink-0 items-center justify-center rounded-lg bg-white text-violet-700"><Sparkles size={16} /></span>}
+        <div className="min-w-0"><p className="text-[10px] font-black text-violet-700">{sourceContext.originLabel} · 已带入复刻任务</p><p className="mt-1 truncate text-xs font-bold text-text-primary">{sourceContext.referenceTitle}</p><p className="mt-0.5 text-[10px] text-text-muted">下一步只需确认产品与目标，参考链接和分析会随任务保存。</p></div>
+      </div>}
       <ModeSelector draft={draft} update={update} locked={lockMode} />
 
       {draft.mode === 'weekly' ? (
@@ -191,10 +203,18 @@ function BriefStep({ draft, update, lockMode }: { draft: SocialContentDraft; upd
       <section className="rounded-xl border border-border bg-white p-4 sm:p-5">
         <div className="grid gap-4 md:grid-cols-2">
           <label className="text-xs font-bold text-text-secondary">{materialPolicy.focusLabel}{draft.mode === 'instant' ? <span className="ml-1 font-medium text-emerald-700">建议填写，帮助台词更像真实宣传</span> : <span className="text-rose-600"> *</span>}<input value={draft.productName} onChange={event => updateWithSuggestions({ productName: event.target.value })} maxLength={160} placeholder={materialPolicy.focusPlaceholder} className={INPUT_CLASS} /></label>
-          <label className="text-xs font-bold text-text-secondary">目标客户{draft.mode === 'instant' ? <span className="ml-1 font-medium text-text-muted">选填</span> : <span className="text-rose-600"> *</span>}<input value={draft.audience} onChange={event => update({ audience: event.target.value })} maxLength={500} placeholder="例如：德国户外露营家庭" className={INPUT_CLASS} /></label>
-          <label className="text-xs font-bold text-text-secondary md:col-span-2">{draft.mode === 'instant' ? <>具体想讲什么<span className="ml-1 font-medium text-text-muted">选填</span></> : <>本周内容重点<span className="ml-1 font-medium text-text-muted">选填</span></>}<input value={draft.topic} onChange={event => update({ topic: event.target.value })} maxLength={300} placeholder="例如：3 个镜头看懂一支精华从打样到出货" className={INPUT_CLASS} /></label>
+          {draft.mode === 'weekly' && <label className="text-xs font-bold text-text-secondary">目标客户<span className="text-rose-600"> *</span><input value={draft.audience} onChange={event => update({ audience: event.target.value })} maxLength={500} placeholder="例如：德国户外露营家庭" className={INPUT_CLASS} /></label>}
+          {draft.mode === 'weekly' && <label className="text-xs font-bold text-text-secondary md:col-span-2">本周内容重点<span className="ml-1 font-medium text-text-muted">选填</span><input value={draft.topic} onChange={event => update({ topic: event.target.value })} maxLength={300} placeholder="例如：3 个镜头看懂一支精华从打样到出货" className={INPUT_CLASS} /></label>}
           <fieldset className="md:col-span-2"><legend className="text-xs font-bold text-text-secondary">希望客户看完后<span className="ml-1 font-medium text-text-muted">已推荐，可调整</span></legend><div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3">{GOAL_OPTIONS.map(goal => <button key={goal} type="button" aria-pressed={draft.primaryGoal === goal} onClick={() => update({ primaryGoal: goal })} className={`rounded-lg border px-3 py-2.5 text-left text-xs font-bold transition ${draft.primaryGoal === goal ? 'border-accent bg-accent-glow text-accent-dim shadow-[0_0_0_1px_var(--color-accent)]' : 'border-border bg-white text-text-secondary hover:border-border-bright'}`}>{draft.primaryGoal === goal && <Check size={12} className="mr-1.5 inline" strokeWidth={3} />}{goal}</button>)}</div></fieldset>
         </div>
+
+        {draft.mode === 'instant' && <details className="mt-4 rounded-lg border border-border bg-surface-2/45 px-3 py-2.5">
+          <summary className="flex cursor-pointer list-none items-center justify-between text-xs font-black text-text-secondary">让结果更准<span className="inline-flex items-center gap-1 text-[10px] font-semibold text-text-muted">目标客户与具体选题 · 选填<ChevronDown size={13} /></span></summary>
+          <div className="mt-3 grid gap-4 border-t border-border pt-3 md:grid-cols-2">
+            <label className="text-xs font-bold text-text-secondary">目标客户<input value={draft.audience} onChange={event => update({ audience: event.target.value })} maxLength={500} placeholder="例如：德国户外露营家庭" className={INPUT_CLASS} /></label>
+            <label className="text-xs font-bold text-text-secondary">具体想讲什么<input value={draft.topic} onChange={event => update({ topic: event.target.value })} maxLength={300} placeholder="例如：3 个镜头看懂从打样到出货" className={INPUT_CLASS} /></label>
+          </div>
+        </details>}
 
         <details className="mt-4 rounded-lg border border-border bg-surface-2/45 px-3 py-2.5">
           <summary className="flex cursor-pointer list-none items-center justify-between text-xs font-black text-text-secondary">任务命名、市场与交付<span className="inline-flex items-center gap-1 text-[10px] font-semibold text-text-muted">当前：{draft.market} · {draft.language}<ChevronDown size={13} /></span></summary>
@@ -275,7 +295,7 @@ function ReviewStep({ draft, files, task }: { draft: SocialContentDraft; files: 
           ['资料', draft.materialInput === 'none' ? '系统托管，逐镜判断可行性' : `${existingCount} 项已关联 · ${pendingCount} 项待新增`],
         ].map(([label, value]) => <div key={label} className="border-b border-white/10 pb-3 last:border-0 last:pb-0"><dt className="text-[10px] font-bold text-emerald-200/80">{label}</dt><dd className="mt-1 leading-5 text-white/90">{value || '未填写'}</dd></div>)}
       </dl>
-      <div className="mt-5 rounded-lg bg-white/10 px-3 py-3 text-[11px] leading-5 text-white/80">确认后，编导 Agent 会自动准备脚本、口播、字幕与镜头节奏，内容 Agent 再按方案生成视频；你无需逐项填写，只需审核成品。</div>
+      <div className="mt-5 rounded-lg bg-white/10 px-3 py-3 text-[11px] leading-5 text-white/80">保存后先生成分镜、费用与效果预判，不会直接开始成片生成。你确认预估费用后，内容 Agent 才会执行。</div>
       {draft.desiredDeliveryAt && <div className="mt-3 flex items-center gap-2 text-[11px] font-bold text-emerald-100"><CalendarDays size={13} />期望 {new Date(`${draft.desiredDeliveryAt}T12:00:00`).toLocaleDateString('zh-CN', { month: 'long', day: 'numeric' })} 交付</div>}
     </aside>
   );
@@ -290,6 +310,8 @@ export default function SocialTaskEditorDialog({
   initialCreationPath,
   initialMaterialInput,
   initialManagedMode,
+  initialDraftPatch,
+  sourceContext,
   lockMode = false,
   catalog,
   busy,
@@ -312,6 +334,7 @@ export default function SocialTaskEditorDialog({
     if (!task && initialCreationPath) nextDraft.creationPath = initialCreationPath;
     if (!task && initialMaterialInput) nextDraft.materialInput = initialMaterialInput;
     if (!task && initialManagedMode) nextDraft.managedMode = initialManagedMode;
+    if (!task && initialDraftPatch) Object.assign(nextDraft, initialDraftPatch);
     if (!task && initialMode) {
       nextDraft.mode = initialMode;
       if (initialMode === 'instant') nextDraft.quantity = 1;
@@ -382,7 +405,7 @@ export default function SocialTaskEditorDialog({
         </nav>
 
         <main className="min-h-0 flex-1 overflow-y-auto px-4 py-5 sm:px-6 sm:py-6">
-          {step === 0 && <BriefStep draft={draft} update={update} lockMode={lockMode} />}
+          {step === 0 && <BriefStep draft={draft} update={update} lockMode={lockMode} sourceContext={sourceContext} />}
           {step === 1 && <SocialTaskSourcesStep draft={draft} update={update} files={files} setFiles={setFiles} onFileError={message => setErrors([message])} task={task} />}
           {step === 2 && <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_320px]"><ScaleStep draft={draft} update={update} /><ReviewStep draft={draft} files={files} task={task} /></div>}
           {errors.length > 0 && <div role="alert" className="mt-5 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3"><p className="text-xs font-bold text-rose-800">请先完成以下内容</p><ul className="mt-2 list-disc space-y-1 pl-4 text-xs text-rose-700">{errors.map(error => <li key={error}>{error}</li>)}</ul></div>}
@@ -392,8 +415,7 @@ export default function SocialTaskEditorDialog({
           <button type="button" disabled={busy || step === 0} onClick={() => { setErrors([]); setStep(value => Math.max(0, value - 1)); }} className="inline-flex items-center gap-1.5 rounded-lg px-3 py-2.5 text-xs font-bold text-text-secondary hover:bg-surface-2 disabled:invisible"><ArrowLeft size={14} />上一步</button>
           <div className="ml-auto flex items-center gap-2">
             <button type="button" disabled={busy || !draft.title.trim() || !draft.primaryGoal.trim()} onClick={() => void submit(false)} className="rounded-lg border border-border bg-white px-4 py-2.5 text-xs font-bold text-text-secondary hover:bg-surface-2 disabled:opacity-50">保存草稿</button>
-            {step === 1 && draft.mode === 'instant' && publishReadyMaterial && <button type="button" disabled={busy} onClick={() => void submit(true)} className="inline-flex items-center gap-2 rounded-lg bg-accent px-5 py-2.5 text-xs font-black text-white hover:bg-accent-dim disabled:opacity-50">{busy && <Loader2 size={14} className="animate-spin" />}一键托管生成</button>}
-            {step < STEPS.length - 1 ? <button type="button" disabled={busy || (step === 1 && draft.productionMode === 'social_ready' && !publishReadyMaterial)} onClick={next} className={`inline-flex items-center gap-1.5 rounded-lg px-4 py-2.5 text-xs font-black disabled:cursor-not-allowed disabled:opacity-50 ${step === 1 && draft.mode === 'instant' && publishReadyMaterial ? 'border border-border bg-white text-text-secondary hover:bg-surface-2' : 'bg-accent text-white hover:bg-accent-dim'}`}>{step === 0 ? '下一步：确认素材情况' : step === 1 && !publishReadyMaterial ? draft.materialInput === 'limited' ? '请提供商品链接或一张图' : `请先准备${materialPolicy.subjectLabel}` : step === 1 && draft.mode === 'instant' ? '调整输出设置' : '继续'}<ArrowRight size={14} /></button> : <button type="button" disabled={busy} onClick={() => void submit(true)} className="inline-flex items-center gap-2 rounded-lg bg-accent px-5 py-2.5 text-xs font-black text-white hover:bg-accent-dim disabled:opacity-50">{busy && <Loader2 size={14} className="animate-spin" />}{task?.status === 'paused' ? '继续自动处理' : '确认并开始自动制作'}</button>}
+            {step < STEPS.length - 1 ? <button type="button" disabled={busy || (step === 1 && draft.productionMode === 'social_ready' && !publishReadyMaterial)} onClick={next} className="inline-flex items-center gap-1.5 rounded-lg bg-accent px-4 py-2.5 text-xs font-black text-white hover:bg-accent-dim disabled:cursor-not-allowed disabled:opacity-50">{step === 0 ? '下一步：确认素材情况' : step === 1 && !publishReadyMaterial ? draft.materialInput === 'limited' ? '请提供商品链接或一张图' : `请先准备${materialPolicy.subjectLabel}` : step === 1 ? '下一步：费用与效果' : '继续'}<ArrowRight size={14} /></button> : <button type="button" disabled={busy} onClick={() => void submit(false)} className="inline-flex items-center gap-2 rounded-lg bg-accent px-5 py-2.5 text-xs font-black text-white hover:bg-accent-dim disabled:opacity-50">{busy && <Loader2 size={14} className="animate-spin" />}保存并查看费用与效果</button>}
           </div>
         </footer>
       </div>

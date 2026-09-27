@@ -21,9 +21,9 @@ test('Seedream creates exactly one final frame from the two allowed references',
   }) as typeof fetch });
   const result = await generator.generate(request());
   assert.equal(result.bytes.toString(), 'final-frame'); assert.equal(result.providerRequestId, 'provider-1');
-  assert.equal(sent.sequential_image_generation, 'disabled'); assert.equal(sent.response_format, 'b64_json');
-  assert.equal(sent.image.length, 2); assert.equal(sent.size, '1440x2560');
-  assert.deepEqual(Object.keys(sent).sort(), ['image', 'model', 'output_format', 'prompt', 'response_format', 'sequential_image_generation', 'size', 'watermark']);
+  assert.equal(sent.response_format, 'url');
+  assert.equal(sent.image.length, 2); assert.equal(sent.size, '1600x2848');
+  assert.deepEqual(Object.keys(sent).sort(), ['image', 'model', 'output_format', 'prompt', 'response_format', 'size', 'watermark']);
 });
 
 test('Seedream network ambiguity is surfaced as uncertain and never silently retried', async () => {

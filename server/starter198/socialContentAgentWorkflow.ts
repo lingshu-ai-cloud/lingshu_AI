@@ -36,406 +36,34 @@ import {
   inferSocialReplicationReferenceMode,
 } from '../../shared/socialInspirationStrategy.js';
 import { socialRequestHash } from './socialContentValidation.js';
+import type { BusinessContentGoal } from '../../shared/contracts/socialOperatingDecision.js';
+import type {
+  SocialWeeklyPublicationTask,
+  VersionedSocialRef,
+  WeeklyOperatingPackage,
+  WeeklyWorkflowTask,
+} from '../../shared/contracts/socialProgram.js';
+import type { VersionedReferenceSelection } from '../socialDiscovery/orchestration.js';
 
-type CapabilityDefinition = {
-  strategy: SocialShotSourceStrategy;
-  label: string;
-  evidenceStrength: SocialExecutionCandidate['evidenceStrength'];
-  estimatedCostCny: number;
-  estimatedSeconds: number;
-  estimatedSuccessRate: number;
-  dataTransfer: SocialExecutionCandidate['dataTransfer'];
-  rightsStatus: SocialExecutionCandidate['rightsStatus'];
-  canDo: string[];
-  cannotDo: string[];
-  inputRequirements: string[];
-  outputSpec: string;
-  qualityRange: string;
-  concurrencyLimit: number;
-  rateLimitPerMinute: number;
-  /** Product-level support. This does not assert that the current runtime can execute it. */
-  planningAvailability: 'supported' | 'experimental' | 'unsupported';
-  authorizationScope: string;
-  dataRestriction: string;
-  fallbackStrategies: SocialShotSourceStrategy[];
-  applicableScenes: SocialDirectorBriefScene['purpose'][];
-};
-
-export interface SocialContentCapabilityRuntimeRegistration {
-  strategy: SocialShotSourceStrategy;
-  adapterIds: string[];
-  environmentReady: boolean;
-  reason: string | null;
-}
-
-export type SocialContentCapabilityRuntime = CapabilityDefinition & {
-  availability: 'available' | 'degraded' | 'unavailable';
-  executable: boolean;
-  registeredAdapterIds: string[];
-  availabilityReason: string | null;
-};
-
-/** These adapters are unconditionally registered by socialContentAutoProduction.
- * Provider-backed adapters must be passed explicitly after their environment is checked. */
-const EMBEDDED_RUNTIME_REGISTRATIONS: SocialContentCapabilityRuntimeRegistration[] = [
-  { strategy: 'customer_real_asset', adapterIds: ['existing_customer_asset.v1'], environmentReady: true, reason: null },
-  { strategy: 'customer_product_image_animation', adapterIds: ['existing_customer_asset.v1'], environmentReady: true, reason: null },
-  { strategy: 'licensed_stock_asset', adapterIds: ['authorized_shared_library.v1'], environmentReady: true, reason: '执行仍取决于租户可见库存与逐条授权记录' },
-  { strategy: 'motion_graphics', adapterIds: ['system_safe_motion_graphics.v1'], environmentReady: true, reason: null },
-  { strategy: 'verified_fact_card', adapterIds: ['system_safe_motion_graphics.v1'], environmentReady: true, reason: null },
-];
-
-const CAPABILITIES: CapabilityDefinition[] = [
-  { strategy: 'customer_product_image_animation', label: '产品图动效', evidenceStrength: 'supporting', estimatedCostCny: 0.35, estimatedSeconds: 45, estimatedSuccessRate: 0.94, dataTransfer: 'local_only', rightsStatus: 'confirmed', canDo: ['锁定产品图并生成运镜、景深和非事实性背景'], cannotDo: ['重绘包装文字、商标或证明真实使用效果'], inputRequirements: ['已授权且清晰的客户产品图'], outputSpec: '竖屏或横屏短镜头', qualityRange: '产品身份保持优先', concurrencyLimit: 4, rateLimitPerMinute: 30, planningAvailability: 'supported', authorizationScope: '当前租户产品素材', dataRestriction: '本地处理优先', fallbackStrategies: ['motion_graphics'], applicableScenes: ['hook', 'value', 'demonstration', 'call_to_action'] },
-  { strategy: 'authorized_digital_presenter', label: '授权数字人口播', evidenceStrength: 'non_evidentiary', estimatedCostCny: 1.2, estimatedSeconds: 150, estimatedSuccessRate: 0.87, dataTransfer: 'external_processor', rightsStatus: 'restricted', canDo: ['生成授权形象的稳定口播'], cannotDo: ['冒充客户员工、客户证言或真实身份'], inputRequirements: ['已确认口播', '可用形象授权', '目标语言'], outputSpec: '带透明或合成背景的口播镜头', qualityRange: '口型与身份连续性需逐镜检查', concurrencyLimit: 2, rateLimitPerMinute: 10, planningAvailability: 'supported', authorizationScope: '租户已授权数字人', dataRestriction: '仅传输生成所需文案和授权形象', fallbackStrategies: ['motion_graphics'], applicableScenes: ['hook', 'problem', 'value', 'call_to_action'] },
-  { strategy: 'licensed_stock_asset', label: '商用授权素材库', evidenceStrength: 'non_evidentiary', estimatedCostCny: 0.8, estimatedSeconds: 30, estimatedSuccessRate: 0.9, dataTransfer: 'external_processor', rightsStatus: 'confirmed', canDo: ['补充环境、气氛和转场画面'], cannotDo: ['作为客户真实工厂、案例或效果证据'], inputRequirements: ['场景语义', '平台和权利范围'], outputSpec: '已授权图片或视频片段', qualityRange: '依赖素材库供给', concurrencyLimit: 8, rateLimitPerMinute: 60, planningAvailability: 'supported', authorizationScope: '商用授权范围内', dataRestriction: '只发送检索词和规格', fallbackStrategies: ['non_evidentiary_ai_visual', 'motion_graphics'], applicableScenes: ['hook', 'problem', 'value', 'transition'] },
-  { strategy: 'non_evidentiary_ai_visual', label: '非证明性生成画面', evidenceStrength: 'non_evidentiary', estimatedCostCny: 1.8, estimatedSeconds: 220, estimatedSuccessRate: 0.74, dataTransfer: 'external_processor', rightsStatus: 'restricted', canDo: ['生成概念、气氛和非证明性辅助画面'], cannotDo: ['伪造客户工厂、案例、认证、效果或真实产品细节'], inputRequirements: ['真值边界', '画面目标', '禁止事项'], outputSpec: '图片或短视频镜头', qualityRange: '一致性和文字准确性需复检', concurrencyLimit: 2, rateLimitPerMinute: 8, planningAvailability: 'supported', authorizationScope: '允许外部生成的非敏感输入', dataRestriction: '真实客户证据不得外传或作为生成目标', fallbackStrategies: ['motion_graphics', 'licensed_stock_asset'], applicableScenes: ['hook', 'problem', 'value', 'transition'] },
-  { strategy: 'motion_graphics', label: '动态图文与示意动画', evidenceStrength: 'non_evidentiary', estimatedCostCny: 0.25, estimatedSeconds: 35, estimatedSuccessRate: 0.97, dataTransfer: 'local_only', rightsStatus: 'confirmed', canDo: ['生成流程示意、字幕、图标和品牌动画'], cannotDo: ['替代未经确认的产品事实或真实证据'], inputRequirements: ['已确认文案或事实'], outputSpec: '可组合的视频图形层', qualityRange: '稳定可控', concurrencyLimit: 8, rateLimitPerMinute: 120, planningAvailability: 'supported', authorizationScope: '当前租户品牌资产', dataRestriction: '本地处理', fallbackStrategies: ['authorized_digital_presenter'], applicableScenes: ['hook', 'problem', 'value', 'demonstration', 'transition', 'call_to_action'] },
-  { strategy: 'verified_fact_card', label: '已确认事实卡片', evidenceStrength: 'supporting', estimatedCostCny: 0.12, estimatedSeconds: 20, estimatedSuccessRate: 0.99, dataTransfer: 'local_only', rightsStatus: 'confirmed', canDo: ['把已确认参数和事实转为可读信息卡'], cannotDo: ['补写未确认参数、认证、价格或效果'], inputRequirements: ['可追溯事实引用'], outputSpec: '品牌化信息卡视频层', qualityRange: '事实准确性优先', concurrencyLimit: 16, rateLimitPerMinute: 240, planningAvailability: 'supported', authorizationScope: '当前任务确认事实', dataRestriction: '本地处理', fallbackStrategies: ['motion_graphics'], applicableScenes: ['value', 'demonstration', 'proof', 'trust', 'call_to_action'] },
-];
-
-export function socialContentCapabilityRegistry(
-  registrations: SocialContentCapabilityRuntimeRegistration[] = EMBEDDED_RUNTIME_REGISTRATIONS,
-): ReadonlyArray<Readonly<SocialContentCapabilityRuntime>> {
-  const byStrategy = new Map(registrations.map(item => [item.strategy, item]));
-  return CAPABILITIES.map(capability => {
-    const runtime = byStrategy.get(capability.strategy);
-    const adapterIds = runtime?.adapterIds.filter(Boolean) ?? [];
-    const executable = adapterIds.length > 0 && runtime?.environmentReady === true;
-    return {
-      ...structuredClone(capability),
-      availability: executable ? 'available' : adapterIds.length > 0 ? 'degraded' : 'unavailable',
-      executable,
-      registeredAdapterIds: [...adapterIds],
-      availabilityReason: executable ? runtime?.reason ?? null
-        : runtime?.reason ?? (adapterIds.length ? '执行环境未就绪' : '未注册执行适配器'),
-    };
-  });
-}
-
-function unique<T>(values: T[]): T[] {
-  return [...new Set(values)];
-}
-
-function positiveNumber(value: number | null | undefined): number | null {
-  return Number.isFinite(value) && Number(value) >= 0 ? Number(value) : null;
-}
-
-function stableId(prefix: string, value: unknown): string {
-  return `${prefix}_${socialRequestHash(value).slice(0, 20)}`;
-}
-
-function buildBusinessContext(input: BuildSocialAgentWorkflowInput): {
-  weeklyPackage: SocialWeeklyContentPackage | null;
-  adHocBusinessContext: SocialAdHocBusinessContext | null;
-} {
-  const originalContentCount = Math.max(1, Math.floor(input.brief.requestedOutputCount || 1));
-  const publicationTaskCount = originalContentCount * Math.max(1, input.brief.platforms.length);
-  if (input.mode === 'weekly') {
-    return {
-      weeklyPackage: {
-        packageId: input.weeklyPlanId || stableId('weekly_package', { taskId: input.taskId }),
-        version: input.taskVersion,
-        businessGoal: input.brief.objective,
-        productFocus: input.brief.productRef,
-        audience: input.brief.audience,
-        markets: input.brief.markets,
-        languages: input.brief.languages,
-        originalContentCount,
-        adaptationVersionCount: Math.max(0, publicationTaskCount - originalContentCount),
-        publicationTaskCount,
-        platforms: input.brief.platforms,
-        publicationMatrix: input.brief.platforms.map(platform => ({ platform, accountRef: null, accountPositioning: null, publishWindow: input.brief.dueAt })),
-        weeklyBudgetCny: positiveNumber(input.brief.weeklyBudgetCny),
-        perItemBudgetCny: positiveNumber(input.brief.perItemBudgetCny),
-        dueAt: input.brief.dueAt,
-        availableAssetRefs: input.sources.filter(source => source.kind === 'material').map(source => source.sourceId),
-        customerCanShoot: false,
-        availableCapabilities: socialContentCapabilityRegistry(input.capabilityRuntime)
-          .filter(item => item.executable).map(item => item.strategy),
-        priorities: ['must_do'],
-        successCriteria: unique([
-          input.brief.objective,
-          input.brief.callToAction ? `观众完成行动：${input.brief.callToAction}` : '',
-        ].filter(Boolean)),
-        metricTargets: ['播放完成度', '互动质量', '有效询盘或目标行动'],
-        createdBy: 'business_agent',
-      },
-      adHocBusinessContext: null,
-    };
-  }
-  return {
-    weeklyPackage: null,
-    adHocBusinessContext: {
-      contextId: stableId('ad_hoc_context', { taskId: input.taskId }),
-      version: input.taskVersion,
-      objective: input.brief.objective,
-      productRef: input.brief.productRef,
-      audience: input.brief.audience,
-      platforms: input.brief.platforms,
-      markets: input.brief.markets,
-      languages: input.brief.languages,
-      budgetCny: positiveNumber(input.brief.perItemBudgetCny),
-      dueAt: input.brief.dueAt,
-      factSourceRefs: input.factSourceRefs,
-      createdBy: 'business_agent',
-    },
-  };
-}
-
-function platformFromReference(value: string): string {
-  if (/tiktok/i.test(value)) return 'tiktok';
-  if (/youtu/i.test(value)) return 'youtube';
-  if (/instagram/i.test(value)) return 'instagram';
-  if (/facebook|fb\.watch/i.test(value)) return 'facebook';
-  return 'external';
-}
-
-function buildDiscoveryBrief(input: BuildSocialAgentWorkflowInput): SocialDiscoveryBrief | null {
-  if (input.brief.creationMode !== 'viral_replication') return null;
-  const market = input.brief.markets[0] || '';
-  const audience = input.brief.audience || '';
-  const productRef = input.brief.productRef || '';
-  const keywordSetId = stableId('market_keyword_set', { productRef, market, audience });
-  return {
-    discoveryBriefId: stableId('discovery_brief', { taskId: input.taskId, version: input.taskVersion }),
-    keywordSetId,
-    keywordSetVersion: 1,
-    productRef,
-    market,
-    audience,
-    discoverySeedIds: productRef ? [stableId('seed', { keywordSetId, productRef })] : [],
-    trackedSceneIds: [],
-    competitorAccounts: [],
-    discoveryModes: ['momentum', 'account', 'innovation'],
-    platforms: [...input.brief.platforms],
-    lookbackDays: 7,
-    resultLimit: 30,
-    budgetLimitCny: positiveNumber(input.brief.perItemBudgetCny),
-    productionGap: input.referenceAnalysis ? null : '当前任务尚无达到生产级的参考分析',
-    createdBy: 'director_agent',
-  };
-}
-
-function buildInspirationHandoffs(input: BuildSocialAgentWorkflowInput): SocialInspirationHandoff[] {
-  const analysis = input.referenceAnalysis;
-  if (!analysis) return [];
-  const source = input.sources.find(item => item.sourceId === analysis.referenceSourceId)
-    ?? input.sources.find(item => item.kind === 'reference_link');
-  const exactReady = analysis.status === 'ready'
-    && analysis.coverage?.fullTimelineCovered === true
-    && (analysis.analysisLayers ?? []).some(layer => layer.level === 'L3' && layer.status === 'complete');
-  const strategyReady = analysis.status === 'ready'
-    && ((analysis.analysisLayers ?? []).some(layer => layer.level === 'L2' && layer.status === 'complete') || analysis.shots.length > 0);
-  const readiness: SocialInspirationHandoff['readiness'] = exactReady
-    ? 'production_reference'
-    : strategyReady ? 'strategy_reference' : 'discovery_reference';
-  const sourceRef = source?.sourceRef || '';
-  const primaryHook = analysis.hookAnalysis;
-  return [{
-    inspirationId: source?.sourceId || analysis.referenceSourceId,
-    analysisId: analysis.analysisId,
-    analysisVersion: analysis.version || input.taskVersion,
-    readiness,
-    source: { platform: platformFromReference(sourceRef), sourceUrl: sourceRef },
-    taskContext: {
-      taskId: input.taskId,
-      productRef: input.brief.productRef || undefined,
-      market: input.brief.markets[0],
-      audience: input.brief.audience || undefined,
-    },
-    whySelected: source?.sourceId.startsWith('system-reference:')
-      ? ['系统根据当前产品、受众和任务目标推荐']
-      : ['用户已将该参考关联到当前任务'],
-    referenceRole: 'primary_structure',
-    reusableLogic: {
-      hookTypes: unique([primaryHook?.mechanism || ''].filter(Boolean)),
-      revealOrder: analysis.shots.map(shot => shot.purpose),
-      proofPlacement: analysis.shots.filter(shot => shot.purpose === 'proof').map(shot => `${shot.startSeconds}-${shot.endSeconds}s`),
-      pacing: analysis.shots.map(shot => shot.rhythmDescription).filter(Boolean).join(' → '),
-      emotionalProgression: '由前三秒吸引进入价值与证明，再收束到行动',
-      ctaPosition: analysis.shots.some(shot => shot.purpose === 'call_to_action') ? '结尾' : '待编导补充',
-    },
-    adaptationBoundary: {
-      reusable: unique(analysis.shots.flatMap(shot => shot.fidelityPoints)),
-      mustReplace: unique(analysis.shots.flatMap(shot => shot.mustDifferPoints)),
-      prohibited: ['原视频文件', '原人物身份', '原品牌与商标', '原台词和字幕', '未授权音乐'],
-    },
-    productionImplications: {
-      requiredEvidence: unique(analysis.shots.flatMap(shot => shot.observation?.observableFacts ?? [])),
-      likelyAssetNeeds: unique(analysis.shots.flatMap(shot => shot.tags?.sceneTypes ?? [])),
-      difficulty: exactReady ? 'medium' : 'high',
-      risks: analysis.coverage?.gaps.map(gap => `${gap.startSeconds}-${gap.endSeconds}s：${gap.reason}`) ?? [],
-    },
-    evidenceRefs: analysis.shots.map(shot => ({
-      startTime: shot.startSeconds,
-      endTime: shot.endSeconds,
-      description: shot.visualDescription,
-      confidence: analysis.coverage?.overallConfidence ?? 0.7,
-      needsReview: Boolean(shot.observation?.causalGaps?.length),
-    })),
-    rights: { mayAnalyze: true, mayUseOriginalMedia: false, mayAdapt: false, note: analysis.rightsNotice },
-  }];
-}
-
-function mergeInspirationHandoffs(
-  generated: SocialInspirationHandoff[],
-  provided: SocialInspirationHandoff[],
-): SocialInspirationHandoff[] {
-  const byAnalysisId = new Map<string, SocialInspirationHandoff>();
-  for (const handoff of [...provided, ...generated]) byAnalysisId.set(handoff.analysisId, handoff);
-  return [...byAnalysisId.values()];
-}
-
-function referenceChain(input: {
-  context: SocialReplicationJobContext | undefined;
-  analysis: SocialReferenceVideoAnalysis | null;
-  analysisId?: string;
-  analysisVersion?: string;
-  timelineBeatIds?: string[];
-  checkedAt: string;
-}): SocialReplicationReferenceChain {
-  const benchmarkAccountSnapshot = input.context?.benchmarkAccountSnapshotRef ?? null;
-  const referenceContentAnalysis = input.context?.referenceContentAnalysisRef ?? null;
-  const analysisId = input.analysisId ?? input.analysis?.analysisId ?? null;
-  const analysisVersion = input.analysisVersion ?? input.analysis?.version ?? null;
-  const referenceAnalysis = analysisId ? {
-    objectType: 'reference_analysis',
-    id: analysisId,
-    version: analysisVersion || 'historic',
-  } : null;
-  const timelineBeatIds = input.timelineBeatIds ?? (input.analysis ? buildSocialTimelineBeats(input.analysis).map(beat => beat.beatId) : []);
-  const timelineBeats = timelineBeatIds.map(beatId => ({
-    objectType: 'timeline_beat',
-    id: beatId,
-    version: analysisVersion || 'historic',
-  }));
-  const targetAccountPlaybook = input.context?.accountPlaybookRef ?? null;
-  const missing: SocialReplicationReferenceChain['integrity']['missing'] = [];
-  if (!benchmarkAccountSnapshot) missing.push('benchmark_account');
-  if (!referenceContentAnalysis) missing.push('reference_content');
-  if (!referenceAnalysis) missing.push('reference_analysis');
-  if (!timelineBeats.length) missing.push('timeline_beats');
-  if (!targetAccountPlaybook) missing.push('account_playbook');
-  return {
-    benchmarkAccountSnapshot,
-    referenceContentAnalysis,
-    referenceAnalysis,
-    timelineBeats,
-    targetAccountPlaybook,
-    integrity: { complete: missing.length === 0, missing, checkedAt: input.checkedAt },
-  };
-}
-
-function buildReplicationJob(input: BuildSocialAgentWorkflowInput, context: ReturnType<typeof buildBusinessContext>, handoffs: SocialInspirationHandoff[]): SocialReplicationJob | null {
-  if (input.brief.creationMode !== 'viral_replication') return null;
-  const createdAt = (input.now ?? new Date()).toISOString();
-  const replicationContext: SocialReplicationJobContext = {
-    ...input.replicationContext,
-    programRef: input.replicationContext?.programRef ?? input.brief.programRef ?? null,
-    targetAccountRef: input.replicationContext?.targetAccountRef ?? input.brief.targetAccountRef ?? null,
-    accountPlaybookRef: input.replicationContext?.accountPlaybookRef ?? input.brief.accountPlaybookRef ?? null,
-    referenceMode: input.replicationContext?.referenceMode ?? input.brief.referenceMode,
-    primaryExperimentVariable: input.replicationContext?.primaryExperimentVariable ?? input.brief.primaryExperimentVariable ?? null,
-  };
-  const referenceMode: SocialReplicationReferenceMode = inferSocialReplicationReferenceMode({
-    explicitMode: replicationContext.referenceMode,
-    userRequestedExactReplication: replicationContext.referenceMode === 'single_source_fidelity',
-    referenceCount: handoffs.length || (input.referenceAnalysis ? 1 : 0),
-    hasAccountFormatEvidence: Boolean(input.replicationContext?.benchmarkAccountSnapshotRef),
-  });
-  const timelineBeats = input.referenceAnalysis ? buildSocialTimelineBeats(input.referenceAnalysis) : [];
-  const fullTimelineReady = Boolean(input.referenceAnalysis?.status === 'ready'
-    && input.referenceAnalysis.coverage?.fullTimelineCovered !== false
-    && timelineBeats.length);
-  const factors: SocialReplicationFactorSpec[] = input.referenceAnalysis && fullTimelineReady
-    ? buildSocialReplicationFactorSpecs({
-      analysis: input.referenceAnalysis,
-      referenceMode,
-      version: input.taskVersion,
-      frozenAt: createdAt,
-    })
-    : [];
-  const chain = referenceChain({
-    context: replicationContext,
-    analysis: input.referenceAnalysis,
-    timelineBeatIds: timelineBeats.map(beat => beat.beatId),
-    checkedAt: createdAt,
-  });
-  const primaryAnalysisId = replicationContext.primaryReferenceAnalysisId
-    ?? input.referenceAnalysis?.analysisId
-    ?? handoffs.find(handoff => handoff.referenceRole === 'primary_structure')?.analysisId
-    ?? null;
-  const assignments = handoffs.map((handoff, index) => {
-    const primary = referenceMode === 'single_source_fidelity'
-      ? handoff.analysisId === primaryAnalysisId
-      : handoff.referenceRole === 'primary_structure' && index === handoffs.findIndex(item => item.referenceRole === 'primary_structure');
-    return {
-      assignmentId: stableId('reference_assignment', { taskId: input.taskId, analysisId: handoff.analysisId, role: handoff.referenceRole }),
-      inspirationId: handoff.inspirationId,
-      analysisId: handoff.analysisId,
-      analysisVersion: handoff.analysisVersion,
-      role: handoff.referenceRole,
-      primary,
-      purpose: handoff.whySelected.join('；') || `作为${handoff.referenceRole}参考`,
-      chain: handoff.analysisId === input.referenceAnalysis?.analysisId ? chain : referenceChain({
-        context: replicationContext,
-        analysis: null,
-        analysisId: handoff.analysisId,
-        analysisVersion: handoff.analysisVersion,
-        timelineBeatIds: [],
-        checkedAt: createdAt,
-      }),
-    };
-  });
-  const singleSourcePrimaryCount = assignments.filter(assignment => assignment.primary).length;
-  const factorReady = fullTimelineReady
-    && factors.length > 0
-    && factors.every(factor => factor.evidenceRefs.length > 0 && factor.validator.detector && factor.target.metric)
-    && (referenceMode !== 'single_source_fidelity' || singleSourcePrimaryCount === 1);
-  const blocked = Boolean(input.referenceAnalysis && !fullTimelineReady)
-    || (referenceMode === 'single_source_fidelity' && assignments.length > 0 && singleSourcePrimaryCount !== 1);
-  const businessContextRef = context.weeklyPackage ? {
-    objectType: 'weekly_content_package', id: context.weeklyPackage.packageId, version: context.weeklyPackage.version,
-  } : {
-    objectType: 'ad_hoc_business_context',
-    id: context.adHocBusinessContext?.contextId ?? stableId('ad_hoc_context', { taskId: input.taskId }),
-    version: context.adHocBusinessContext?.version ?? input.taskVersion,
-  };
-  const inputRefCandidates = [
-    businessContextRef,
-    ...(chain.benchmarkAccountSnapshot ? [chain.benchmarkAccountSnapshot] : []),
-    ...(chain.referenceContentAnalysis ? [chain.referenceContentAnalysis] : []),
-    ...(chain.referenceAnalysis ? [chain.referenceAnalysis] : []),
-    ...(chain.targetAccountPlaybook ? [chain.targetAccountPlaybook] : []),
-  ];
-  const inputRefs = [...new Map(inputRefCandidates.map(ref => [JSON.stringify(ref), ref])).values()];
-  return {
-    replicationJobId: stableId('replication_job', { taskId: input.taskId }),
-    version: input.taskVersion,
-    contentTaskId: input.taskId,
-    status: blocked ? 'blocked' : factorReady ? 'factor_ready' : input.referenceAnalysis?.status === 'ready' ? 'reference_ready' : 'draft',
-    referenceMode,
-    target: {
-      programRef: replicationContext.programRef ?? null,
-      accountRef: replicationContext.targetAccountRef ?? null,
-      accountPlaybookRef: replicationContext.accountPlaybookRef ?? null,
-      productRef: input.brief.productRef,
-    },
-    businessContextRef,
-    referenceAssignments: assignments,
-    primaryReferenceAnalysisId: primaryAnalysisId,
-    referenceChain: chain,
-    factorSpecVersion: input.taskVersion,
-    factorSpecs: factors,
-    primaryExperimentVariable: replicationContext.primaryExperimentVariable ?? null,
-    frozenAt: factorReady ? createdAt : null,
-    inputRefs,
-    createdBy: 'director_agent',
-    createdAt,
-  };
-}
-
+import {
+  buildBusinessContext,
+  buildDiscoveryBrief,
+  buildInspirationHandoffs,
+  buildReplicationJob,
+  authoritativeHandoffs,
+  EMBEDDED_RUNTIME_REGISTRATIONS,
+  mergeInspirationHandoffs,
+  positiveNumber,
+  socialContentCapabilityRegistry,
+  stableId,
+  unique,
+  type SocialContentCapabilityRuntimeRegistration,
+} from './socialContentAgentWorkflowContext.js';
+export type {
+  SocialContentCapabilityRuntime,
+  SocialContentCapabilityRuntimeRegistration,
+} from './socialContentAgentWorkflowContext.js';
+export { socialContentCapabilityRegistry } from './socialContentAgentWorkflowContext.js';
 function safeBoundary(boundary: SocialShotTruthBoundary): SocialShotTruthBoundary {
   return {
     ...boundary,
@@ -523,7 +151,14 @@ function directorScene(input: {
       ...evidence.map(item => `证据要求：${item}`),
       ...input.replicationFactors.map(factor => `裂变因素 ${factor.factorId}：${factor.target.metric} 达到目标并通过 ${factor.validator.detector}`),
       ...(boundary.mustNotImplyCustomerReality ? ['合成或通用画面不得被表述为客户真实证据'] : []),
+      ...(input.supply.productSceneReplication ? [
+        '产品身份相似度、Logo 与标签 OCR 必须通过，不得重设计产品',
+        '场景拓扑、产品槽位和镜头轨迹必须在冻结容差内，不得退化为单图平移缩放',
+      ] : []),
     ]),
+    ...(input.supply.productSceneReplication ? {
+      productSceneReplication: structuredClone(input.supply.productSceneReplication),
+    } : {}),
     replicationFactors: input.replicationFactors.map(factor => ({
       factorId: factor.factorId,
       factorSpecVersion: factor.version,
@@ -566,7 +201,21 @@ function buildDirectorBrief(
   const referenceRequired = input.brief.creationMode === 'viral_replication';
   const referenceReady = !referenceRequired || Boolean(input.referenceAnalysis?.status === 'ready' && coverage?.fullTimelineCovered !== false);
   const factorsReady = !referenceRequired || replicationJob?.status === 'factor_ready';
-  const status = scenes.length > 0 && referenceReady && factorsReady ? 'ready' : 'blocked';
+  const orderedScenes = [...scenes].sort((left, right) => left.order - right.order);
+  const timelineValid = orderedScenes.every((scene, index) => scene.duration.endSeconds > scene.duration.startSeconds
+    && (index === 0 || scene.duration.startSeconds >= orderedScenes[index - 1]!.duration.endSeconds));
+  // Five Han characters or 2.7 whitespace-delimited words per second is a
+  // deliberately conservative, deterministic speech-capacity gate.
+  const dialogueFits = scenes.every(scene => {
+    const speech = scene.audioLayers.dialogue ?? scene.audioLayers.voiceover;
+    if (!speech) return true;
+    const units = /[\u3400-\u9fff]/.test(speech)
+      ? [...speech].filter(char => /[\u3400-\u9fff]/.test(char)).length
+      : speech.trim().split(/\s+/).filter(Boolean).length;
+    const capacity = /[\u3400-\u9fff]/.test(speech) ? scene.duration.targetSeconds * 5 : scene.duration.targetSeconds * 2.7;
+    return units <= Math.max(1, capacity);
+  });
+  const status = scenes.length > 0 && referenceReady && factorsReady && timelineValid && dialogueFits ? 'ready' : 'blocked';
   const totalDurationSeconds = Math.max(0, ...scenes.map(scene => scene.duration.endSeconds));
   return {
     directorBriefId: stableId('director_brief', { taskId: input.taskId }),
@@ -583,6 +232,9 @@ function buildDirectorBrief(
     } : null,
     referenceMode: replicationJob?.referenceMode ?? null,
     accountPlaybookRef: replicationJob?.target.accountPlaybookRef ?? null,
+    accountPresenterLock: input.assetSupplyPlan.accountPresenterLock
+      ? structuredClone(input.assetSupplyPlan.accountPresenterLock)
+      : null,
     referenceAnalysis: input.referenceAnalysis ? {
       analysisId: input.referenceAnalysis.analysisId,
       version: input.referenceAnalysis.version || input.taskVersion,
@@ -591,11 +243,11 @@ function buildDirectorBrief(
       gaps: coverage?.gaps ?? [],
       overallConfidence: coverage?.overallConfidence ?? null,
     } : null,
-    inspirationHandoffIds: inspirationHandoffs.map(item => item.inspirationId),
+    inspirationHandoffIds: inspirationHandoffs.map(item => item.handoffId ?? item.inspirationId),
     topic: input.brief.title,
     audience: input.brief.audience,
     platforms: input.brief.platforms,
-    accountRefs: [],
+    accountRefs: input.authoritativeContext ? [input.authoritativeContext.publicationTask.accountId] : [],
     creativeIntent: input.brief.objective,
     narrativeStructure: scenes.map(scene => scene.purpose),
     rhythm: input.referenceAnalysis ? '保持参考内容的信息推进节奏，但按新素材重新安排具体切点' : '前三秒快速建立主题，随后逐步补充价值、证据和行动信息',
@@ -606,7 +258,9 @@ function buildDirectorBrief(
     aspectRatio: input.brief.aspectRatio,
     languages: input.brief.languages,
     brandRequirements: unique([input.brief.brandNotes || '', ...input.brief.restrictions].filter(Boolean)),
-    factSourceRefs: input.factSourceRefs,
+    factSourceRefs: input.authoritativeContext
+      ? unique(input.authoritativeContext.publicationTask.factRefs.map(ref => `${ref.type}:${ref.id}@${ref.version}`))
+      : input.factSourceRefs,
     rightsConstraints: unique([
       '参考视频只用于分析结构和节奏，不复制原片素材、人物、声音、商标或原文案',
       ...(input.assetSupplyPlan.status === 'requires_rights_confirmation' ? ['参考内容或素材权利尚待确认'] : []),
@@ -645,7 +299,12 @@ function capabilityCandidates(input: {
     .map(item => [item.strategy, item]));
   const sourceRuntime = runtimeRegistration.get(input.supply.sourceStrategy);
   const sourceExecutable = Boolean(sourceRuntime?.environmentReady && sourceRuntime.adapterIds.length);
-  const actualAssets = (sourceExecutable ? input.supply.sourceRefs : []).map((sourceRef, index): SocialExecutionCandidate => ({
+  // Product image refs are inputs to the paid scene-generation capability,
+  // not zero-cost finished clips. Keeping them out of `actualAssets` makes the
+  // confirmation card report the real Seedream + Seedance route and estimate.
+  const finishedAssetRefs = input.supply.sourceStrategy === 'aigc_product_scene_replication'
+    ? [] : sourceExecutable ? input.supply.sourceRefs : [];
+  const actualAssets = finishedAssetRefs.map((sourceRef, index): SocialExecutionCandidate => ({
     candidateId: stableId('candidate', { sceneId: input.sceneId, sourceRef }),
     kind: 'asset',
     label: `客户或已授权素材 ${index + 1}`,
@@ -675,6 +334,11 @@ function capabilityCandidates(input: {
   const capabilityRows = socialContentCapabilityRegistry(input.capabilityRuntime)
     .filter(capability => capability.executable)
     .filter(capability => !input.supply.truthBoundary.customerEvidenceRequired || capability.evidenceStrength === 'strong')
+    .filter(capability => capability.strategy !== 'authorized_digital_presenter'
+      || (input.supply.digitalHumanPlan !== undefined
+        && ['preview_only', 'ready_for_capability_check'].includes(input.supply.digitalHumanPlan.executionState)))
+    .filter(capability => capability.strategy !== 'aigc_product_scene_replication'
+      || (input.supply.productSceneReplication !== undefined && input.supply.sourceRefs.length > 0))
     .map((capability): SocialExecutionCandidate => ({
       candidateId: stableId('capability', { sceneId: input.sceneId, strategy: capability.strategy }),
       kind: 'capability',
@@ -741,6 +405,9 @@ function executionScene(input: {
       ? ['部分外部能力受授权范围限制，执行前必须校验租户授权'] : [],
     dataTransferRisks: preferred?.dataTransfer === 'external_processor' ? ['推荐路线会把必要输入发送给外部处理服务'] : [],
     idempotencyKey: stableId('social_scene_execution', { taskId: input.taskId, taskVersion: input.taskVersion, sceneId: input.scene.sceneId }),
+    ...(input.supply.productSceneReplication ? {
+      productSceneReplication: structuredClone(input.supply.productSceneReplication),
+    } : {}),
   };
 }
 
@@ -766,6 +433,9 @@ function buildExecutionPlan(input: BuildSocialAgentWorkflowInput, directorBrief:
     maxReviewRounds: 3,
     budgetLimitCny: positiveNumber(input.brief.perItemBudgetCny),
     deadlineAt: input.brief.dueAt,
+    accountPresenterLock: directorBrief.accountPresenterLock
+      ? structuredClone(directorBrief.accountPresenterLock)
+      : null,
     estimatedTotalCostCny: +scenes.reduce((sum, scene) => sum + scene.estimatedCostCny, 0).toFixed(2),
     estimatedTotalSeconds: +scenes.reduce((sum, scene) => sum + scene.estimatedSeconds, 0).toFixed(1),
     scenes,
@@ -922,9 +592,48 @@ export interface BuildSocialAgentWorkflowInput {
   replicationContext?: SocialReplicationJobContext;
   /** Additional references used only by series/hybrid modes. */
   inspirationHandoffs?: SocialInspirationHandoff[];
+  /** Frozen T3/T4 authority. When present, legacy weeklyPlanId and caller facts are projections only. */
+  authoritativeContext?: {
+    programRef: VersionedSocialRef;
+    enterpriseProfileRef: VersionedSocialRef;
+    weeklyPackage: WeeklyOperatingPackage;
+    weeklyWorkflowTask: WeeklyWorkflowTask;
+    publicationTask: SocialWeeklyPublicationTask;
+    businessGoal: BusinessContentGoal;
+    referenceSelection: VersionedReferenceSelection;
+    selectedHandoffs: SocialInspirationHandoff[];
+  };
   /** Runtime registrations after adapter and environment readiness checks. Omit to use only embedded adapters. */
   capabilityRuntime?: SocialContentCapabilityRuntimeRegistration[];
   now?: Date;
+}
+
+function assertAuthoritativeContext(input: BuildSocialAgentWorkflowInput): void {
+  const authority = input.authoritativeContext;
+  if (!authority) return;
+  const packageTask = authority.weeklyPackage.workflowTasks.find(item => item.taskId === authority.weeklyWorkflowTask.taskId);
+  const publicationTask = authority.weeklyPackage.socialContentPackage.publicationTasks
+    .find(item => item.publicationTaskId === authority.publicationTask.publicationTaskId);
+  if (authority.weeklyPackage.programId !== authority.programRef.id
+    || authority.businessGoal.programId !== authority.weeklyPackage.programId
+    || authority.weeklyPackage.businessContentGoalRef?.id !== authority.businessGoal.goalId
+    || authority.weeklyPackage.enterpriseProfileRef?.id !== authority.enterpriseProfileRef.id
+    || !packageTask || packageTask.kind !== 'content' || !publicationTask
+    || !packageTask.subjectRefs.some(ref => ref.type === 'weekly_publication_task'
+      && ref.id === publicationTask.publicationTaskId && ref.version === authority.weeklyPackage.version)
+    || publicationTask.factRefs.some(factRef => !authority.businessGoal.publicFactRefs.some(goalFact => (
+      goalFact.type === factRef.type && goalFact.id === factRef.id && goalFact.version === factRef.version
+    )))
+    || authority.referenceSelection.upstreamTaskRef !== authority.weeklyWorkflowTask.taskId) {
+    throw new Error('social_content_authoritative_context_mismatch');
+  }
+  const mode = input.replicationContext?.referenceMode ?? input.brief.referenceMode;
+  if (mode === 'single_source_fidelity') {
+    const selected = authority.referenceSelection.selected;
+    if (selected.length !== 1 || selected[0]?.readiness !== 'production_reference') {
+      throw new Error('social_content_fidelity_primary_reference_required');
+    }
+  }
 }
 
 /**
@@ -933,11 +642,12 @@ export interface BuildSocialAgentWorkflowInput {
  * objects without allowing the Director to lock assets or providers.
  */
 export function buildSocialAgentWorkflow(input: BuildSocialAgentWorkflowInput): SocialContentAgentWorkflow {
+  assertAuthoritativeContext(input);
   const context = buildBusinessContext(input);
   const discoveryBrief = buildDiscoveryBrief(input);
   const inspirationHandoffs = mergeInspirationHandoffs(
-    buildInspirationHandoffs(input),
-    input.inspirationHandoffs ?? [],
+    input.authoritativeContext ? [] : buildInspirationHandoffs(input),
+    authoritativeHandoffs(input),
   );
   const replicationJob = buildReplicationJob(input, context, inspirationHandoffs);
   const directorBrief = buildDirectorBrief(input, context, inspirationHandoffs, replicationJob);
@@ -961,7 +671,7 @@ export function buildSocialAgentWorkflow(input: BuildSocialAgentWorkflowInput): 
       executionOwner: 'content_agent',
       metricEvidenceProvider: 'metrics_worker',
       mediaEvidenceProvider: 'media_evaluation_worker',
-      finalGateOrder: ['content_agent', 'media_evaluation_worker', 'director_agent', 'user'],
+      finalGateOrder: ['content_agent', 'media_evaluation_worker', 'director_agent', 'business_agent', 'rules_engine'],
       selfApprovalForbidden: true,
     },
     directorBrief,

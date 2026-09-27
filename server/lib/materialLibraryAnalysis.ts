@@ -2,7 +2,7 @@ import { KeyedWorkQueue } from './keyedWorkQueue.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { readMaterialLibrary, updateLocalMaterial, type MaterialRecord } from './materialLibrary.js';
+import { readMaterialLibrary, updateAccessibleLocalMaterial, type MaterialRecord } from './materialLibrary.js';
 import { getOwnedCloudMaterialRecord, updateCloudMaterial } from './cloudMaterials.js';
 import { analyzeProductionMaterial } from '../digitalEmployees/productionMaterialAnalysis.js';
 import type { AssetCandidate } from '../digitalEmployees/contentProduction.js';
@@ -48,8 +48,8 @@ export function analysisFileRevision(record: MaterialRecord): string {
 }
 async function ownedMaterial(tenantId: string, id: string): Promise<MaterialRecord> {
   const inventory = await readMaterialLibrary(tenantId);
-  const record = inventory.items.find(item => item.id === id && String(item.tenantId || item.tenant_id || '') === tenantId);
-  if (!record || record.scope === 'shared' || record.usage === 'reference_only') throw Error('素材不存在或不属于当前账号可编辑素材');
+  const record = inventory.items.find(item => item.id === id);
+  if (!record) throw Error('素材不存在或不属于当前账号可用素材');
   if (!['video','image'].includes(record.type)) throw Error('请选择视频或图片素材');
   if (id.startsWith('pb-') && !await getOwnedCloudMaterialRecord(id.slice(3), tenantId)) throw Error('素材访问权限已变化');
   return record;
@@ -71,7 +71,7 @@ async function patch(tenantId: string, id: string, changes: Record<string, unkno
       provenance: { ...provenance, materialScriptAnalysis: scriptAnalysis },
     });
   } else {
-    ok = id.startsWith('pb-') ? await updateCloudMaterial(id.slice(3), changes) : updateLocalMaterial(id, tenantId, changes);
+    ok = id.startsWith('pb-') ? await updateCloudMaterial(id.slice(3), changes) : updateAccessibleLocalMaterial(id, tenantId, changes);
   }
   if (!ok) throw Error('素材分析结果保存失败，请重试');
 }

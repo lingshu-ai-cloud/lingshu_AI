@@ -110,26 +110,79 @@ export function alignSocialAssetSupplyPlanToBaseline(input: {
   baseline: StoredSocialScriptBaseline;
 }): SocialAssetSupplyPlan {
   const confirmedFactRefs = [...new Set(input.plan.shots.flatMap(shot => shot.truthBoundary.confirmedFactRefs))];
+  const productImageIds = [...new Set(input.plan.shots.flatMap(shot => (
+    shot.productSceneReplication?.productIdentity.groups.flatMap(group => group.referenceImageIds) ?? []
+  )))];
+  const presenterAssetIds = [...new Set(input.plan.shots.flatMap(shot => shot.digitalHumanPlan?.presenterAssetIds ?? []))];
+  const referenceVideoIds = [...new Set(input.plan.shots.flatMap(shot => [
+    ...(shot.digitalHumanPlan?.referenceMaterialIds ?? []),
+    ...(shot.productSceneReplication?.referenceSourceId ? [shot.productSceneReplication.referenceSourceId] : []),
+  ]))];
+  const factoryEvidenceAssetIds = [...new Set(input.plan.shots
+    .filter(shot => shot.truthBoundary.subject === 'customer_factory')
+    .flatMap(shot => shot.truthBoundary.customerEvidenceRefs.length
+      ? shot.truthBoundary.customerEvidenceRefs : shot.sourceRefs))];
+  const customerVideoIds = [...new Set(input.plan.shots
+    .filter(shot => shot.sourceStrategy === 'customer_real_asset' && shot.truthBoundary.subject === 'none')
+    .flatMap(shot => shot.sourceRefs))];
+  const licensedStockAssetIds = [...new Set(input.plan.shots
+    .filter(shot => shot.sourceStrategy === 'licensed_stock_asset')
+    .flatMap(shot => shot.sourceRefs))];
   const aligned = createSocialAssetSupplyPlan({
     creationMode: input.plan.creationMode,
     assetAvailability: input.plan.assetAvailability,
     managementMode: input.plan.managementMode,
     planVersion: input.plan.planVersion,
+    accountPresenterLock: input.plan.accountPresenterLock,
+    inventory: {
+      productImageIds,
+      productIdentityGroups: input.plan.shots.flatMap(shot => (
+        shot.productSceneReplication?.productIdentity.groups.map(group => ({
+          productRef: group.productRef,
+          imageIds: [...group.referenceImageIds],
+        })) ?? []
+      )),
+      presenterAssetIds,
+      referenceVideoIds,
+      factoryEvidenceAssetIds,
+      customerVideoIds,
+      licensedStockAssetIds,
+    },
     confirmedFactRefs,
     rightsConfirmationRequired: input.plan.status === 'requires_rights_confirmation',
-    shots: input.baseline.scenes.map((scene, index) => ({
-      shotId: scene.sceneId,
-      function: shotFunction(scene, index, input.baseline.scenes.length),
-      requestedDescription: [scene.shotFunction, scene.subject, scene.action].filter(Boolean).join(' · '),
-      truthSensitiveSubject: truthSensitiveSubject(scene),
-    })),
+    shots: input.baseline.scenes.map((scene, index) => {
+      const original = input.plan.shots.find(shot => shot.shotId === scene.sceneId) ?? input.plan.shots[index];
+      return {
+        shotId: scene.sceneId,
+        function: shotFunction(scene, index, input.baseline.scenes.length),
+        requestedDescription: [scene.shotFunction, scene.subject, scene.action].filter(Boolean).join(' · '),
+        truthSensitiveSubject: truthSensitiveSubject(scene),
+        referenceShotId: original?.productSceneReplication?.referenceShotId ?? null,
+        ...(original?.productSceneReplication
+          ? { productSceneReplication: structuredClone(original.productSceneReplication) }
+          : {}),
+      };
+    }),
   });
   const originalById = new Map(input.plan.shots.map(shot => [shot.shotId, shot]));
   return {
     ...aligned,
     shots: aligned.shots.map((shot, index) => {
       const original = originalById.get(shot.shotId) ?? input.plan.shots[index];
-      if (!original?.digitalHumanPlan || shot.truthBoundary.subject !== 'none') return shot;
+      if (shot.truthBoundary.subject !== 'none') return shot;
+      if (original?.productSceneReplication) {
+        return {
+          ...shot,
+          sourceStrategy: 'aigc_product_scene_replication',
+          sourceRefs: original.productSceneReplication.productIdentity.groups.flatMap(group => group.referenceImageIds),
+          fallbackSourceStrategy: original.fallbackSourceStrategy ?? 'motion_graphics',
+          productionInstruction: original.productionInstruction,
+          feasibility: original.feasibility,
+          feasibilityReason: original.feasibilityReason,
+          productSceneReplication: structuredClone(original.productSceneReplication),
+        };
+      }
+      if (!original?.digitalHumanPlan) return shot;
       return {
         ...shot,
         sourceStrategy: 'authorized_digital_presenter',
@@ -184,11 +237,26 @@ export function assertSocialAssetSupplyTruthBoundary(input: {
 }
 
 function strategyOrder(shot: SocialAssetSupplyShotPlan): SocialShotSourceStrategy[] {
+  // The fee card promises a real product-scene generation. Provider or quality
+  // failure must pause instead of silently returning a lower-quality graphic.
+  if (shot.sourceStrategy === 'aigc_product_scene_replication') {
+    return shot.productSceneReplication && shot.sourceRefs.length > 0
+      ? ['aigc_product_scene_replication'] : [];
+  }
   return [...new Set([
     shot.sourceStrategy,
     ...(shot.fallbackSourceStrategy ? [shot.fallbackSourceStrategy] : []),
     ...(shot.truthBoundary.syntheticVisualAllowed ? ['motion_graphics' as const] : []),
-  ])];
+  ])].filter(strategy => {
+    if (strategy === 'authorized_digital_presenter') {
+      return Boolean(shot.digitalHumanPlan
+        && ['preview_only', 'ready_for_capability_check'].includes(shot.digitalHumanPlan.executionState));
+    }
+    if (strategy === 'aigc_product_scene_replication') {
+      return Boolean(shot.productSceneReplication && shot.sourceRefs.length > 0);
+    }
+    return true;
+  });
 }
 
 export async function executeSocialAssetSupplyPlan(input: {
@@ -257,7 +325,11 @@ export async function executeSocialAssetSupplyPlan(input: {
       }
       if (selected) break;
     }
-    if (!selected) throw new Error(`asset_supply_provider_exhausted:${shot.shotId}`);
+    if (!selected) {
+      const reasons = attempts.map(item => `${item.adapterId || item.sourceStrategy}:${item.status}${item.reason ? `:${item.reason}` : ''}`)
+        .join('|').slice(0, 900);
+      throw new Error(`asset_supply_provider_exhausted:${shot.shotId}:${reasons}`);
+    }
     assertSocialAssetSupplyTruthBoundary({ shot, result: selected });
     assets.push(selected.asset);
     shots.push({

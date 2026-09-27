@@ -1,6 +1,7 @@
 import { type VideoCreationPlan, videoPlanErrors } from '../../shared/contracts/videoCreationPlan.js';
 import type { DigitalEmployeeConfig, PublishingPlatform, WeeklyGoalInput } from './domain.js';
 import type { DirectorScriptContract } from '../../src/lib/directorScript.js';
+import { platformExecutionConstraints } from '../../shared/contracts/socialOperatingProfile.js';
 
 export type ContentRoute = 'clone' | 'product' | 'material';
 
@@ -102,9 +103,12 @@ export function buildContentBatchPlan(input: {
         theme: { key: 'user_selected', label: plan.theme }, platform: plan.platform, accountId: account?.accountId || '', accountLabel: account?.accountLabel || (enabled.has('content_publish') ? '发布前待绑定账号' : '仅内容生产，不分发'),
         route: plan.route, videoPlan: plan, configurationSnapshot: input.versions, cta: plan.matrix?.cta || ctaFor(input.config.primaryGoal),
         constraints: [...new Set([...input.config.constraints, ...input.goal.constraints,
+          ...platformExecutionConstraints(plan.platform).map(rule => `${plan.platform} 平台改编：${rule}`),
           ...(plan.buyerProblem ? [`必须回答的买家问题：${plan.buyerProblem}`] : []),
           ...(plan.evidenceRequirement ? [`必须呈现并核验的证据：${plan.evidenceRequirement}`] : []),
           ...(plan.matrix?.objective ? [`账号本周目标：${plan.matrix.objective}`] : []),
+          ...(plan.matrix?.accountRole ? [`账号定位：${plan.matrix.accountRole === 'brand_capability' ? '品牌与供应能力' : plan.matrix.accountRole === 'buyer_advisor' ? '买家顾问与采购教育' : '品牌综合账号'}`] : []),
+          ...(plan.matrix?.formats?.length ? [`平台内容形式：${plan.matrix.formats.join('、')}`] : []),
           ...(plan.reviewRequirements || []).map(r => `复盘分镜约束【${r.todoId}】：第1镜0–3秒；参考：${r.reference}；保留：${r.requirements}；素材：${r.materials}；验收：${r.acceptance}`)])],
         evidenceRefs: [...ids.map(id => ({ type: 'enterprise_material' as const, id })), ...(plan.route === 'clone' ? [{ type: 'exact_analysis' as const, id: plan.referenceId }] : [])], status: 'planned' });
     });
@@ -161,7 +165,12 @@ export function buildContentBatchPlan(input: {
       route,
       configurationSnapshot: input.versions,
       cta: ctaFor(input.config.primaryGoal),
-      constraints: [...new Set([...input.config.constraints, ...input.goal.constraints, ...feedbackConstraints])],
+      constraints: [...new Set([
+        ...input.config.constraints,
+        ...input.goal.constraints,
+        ...input.goal.contentPlatforms.flatMap(platform => platformExecutionConstraints(platform).map(rule => `${platform} 平台改编：${rule}`)),
+        ...feedbackConstraints,
+      ])],
       evidenceRefs,
       status: 'planned',
     };

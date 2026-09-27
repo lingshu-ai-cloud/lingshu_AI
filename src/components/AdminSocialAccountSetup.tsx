@@ -13,6 +13,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import { authHeader } from '../lib/auth';
+import { validateOAuthCredentialPairs } from '../lib/socialOAuthCredentialValidation';
 import { SocialPlatformIcon } from './SocialPlatformIcon';
 import { SocialConnectionPanel, YouTubeConnectionPanel } from './YouTubeIntegration';
 import { useModalFocus } from '../hooks/useModalFocus';
@@ -228,6 +229,12 @@ export default function AdminSocialAccountSetup() {
   }
 
   async function save() {
+    const validationError = validateOAuthCredentialPairs([
+      { label: 'YouTube / Google', clientId: form.youtubeOAuthClientId, clientSecret: form.youtubeOAuthClientSecret, savedClientId: config?.values.youtubeOAuthClientId || '', savedSecret: Boolean(config?.secretSet.youtubeOAuthClientSecret) },
+      { label: 'Instagram / Facebook', clientId: form.metaSocialAppId, clientSecret: form.metaSocialAppSecret, savedClientId: config?.values.metaSocialAppId || '', savedSecret: Boolean(config?.secretSet.metaSocialAppSecret) },
+      { label: 'TikTok', clientId: form.tiktokClientKey, clientSecret: form.tiktokClientSecret, savedClientId: config?.values.tiktokClientKey || '', savedSecret: Boolean(config?.secretSet.tiktokClientSecret) },
+    ]);
+    if (validationError) { setError(validationError); return; }
     setSaving(true);
     setNotice('');
     setError('');

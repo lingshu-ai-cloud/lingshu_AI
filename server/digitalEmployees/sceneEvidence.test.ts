@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
-import { allocateEvidenceClips, evidenceClips, type EvidenceAsset } from './sceneEvidence.js';
+import { allocateEvidenceClips, evidenceClips, visualEvidenceScore, type EvidenceAsset } from './sceneEvidence.js';
 import { applySceneRepair, planSceneRepair } from './sceneRepair.js';
+import { buildMaterialScriptAnalysis } from '../../shared/materialScriptAnalysis.js';
 const image = (id: string, observations: string[], url?: string): EvidenceAsset => ({ id, type: 'image', duration: 0, visualObservations: observations, url });
 const video: EvidenceAsset = { id: 'demo', type: 'video', duration: 30, visualObservations: ['正面电路板、背面焊点、接口安装'], segments: [
   { id: 'front', start: 0, end: 10, action: '正面电路板', confidence: .9 },
@@ -19,6 +20,18 @@ assert.equal(evidenceClips({...video,segments:[{...video.segments![0],confidence
 assert.equal(evidenceClips({...video,segments:[]}).length,0,'whole-file observations cannot invent timestamps');
 assert.ok(allocateEvidenceClips({scenes:scenes.slice(0,2).map(s=>({...s,intent:'正面电路板'})),assets:[image('a',['正面电路板'],'/same.png'),image('b',['正面电路板'],'/same.png')]}).gaps.length,'aliases cannot count as distinct scenes');
 assert.equal(allocateEvidenceClips({scenes:[{sceneIndex:0,intent:'产品展示特写',duration:4}],assets:[image('a',['产品展示'])]}).plan.length,0,'generic product keywords are insufficient');
+const indexedAsset: EvidenceAsset = {
+  id: 'indexed', type: 'video', duration: 10, visualObservations: ['桌面包装'],
+  segments: [{ id: 'open', start: 0, end: 10, action: '打开盒盖', confidence: .95, actionStart: 2.5, actionPeak: 4, actionEnd: 6.5 }],
+  scriptAnalysis: buildMaterialScriptAnalysis({ materialId: 'indexed', name: '开箱', sourceRevision: 'r1', duration: 10,
+    segments: [{ id: 'open', start: 0, end: 10, action: '打开盒盖', confidence: .95, cleanStart: 2, cleanEnd: 8, actionPeak: 4, boundaryConfidence: .9, cleanEntry: true, cleanExit: true }] }),
+};
+const indexedPlan = allocateEvidenceClips({ scenes: [{ sceneIndex: 0, intent: '打开盒盖', duration: 4 }], assets: [indexedAsset] });
+assert.equal(indexedPlan.plan[0]?.start, 2, 'precomputed editorial boundaries should choose the clean action window');
+assert.ok(allocateEvidenceClips({ scenes: [{ sceneIndex: 0, intent: '打开盒盖', duration: 4, trimStart: 0 }], assets: [indexedAsset] }).gaps.length,
+  'manual or stale plans outside a high-confidence safe window must be rejected');
+assert.ok(visualEvidenceScore('open the box', ['打开盒盖']) >= 2,
+  'the reusable visual index should bridge common Chinese and English edit concepts');
 const scarce = allocateEvidenceClips({scenes:[{sceneIndex:0,intent:'电路板 焊点',duration:4},{sceneIndex:1,intent:'电路板',duration:4}], assets:[image('only',['电路板']),image('flexible',['焊点'])]});
 assert.deepEqual(scarce.plan.map(c=>c.assetId),['flexible','only'],'reserve unique matching asset for constrained scene');
 const current = scenes.map((scene,i)=>({sceneIndex:i,assetId:'demo',sourceStart:i*10}));

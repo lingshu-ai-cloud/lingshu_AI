@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
-import type { SocialContentTaskDetail } from '../../../shared/contracts/socialContentWorkflow';
 import type { VideoKickoff } from '../AiCreateStudio';
+import type { SocialAccountPresenterLock, SocialContentTaskDetail } from '../../../shared/contracts/socialContentWorkflow';
 import { socialContentApi } from '../../lib/socialContentApi';
 
 export type StudioContentTheme = 'product_proof' | 'use_case' | 'supplier_capability' | 'customization' | 'customer_case';
@@ -35,6 +35,7 @@ export interface StudioSocialTaskSeed {
     referenceRequired: boolean;
     candidateTools: string[];
     executionState: 'needs_presenter' | 'needs_confirmation' | 'preview_only' | 'ready_for_capability_check';
+    accountPresenterLock: SocialAccountPresenterLock | null;
     sourceTaskId: string;
     sourceTaskVersion: string;
   }>;
@@ -124,6 +125,7 @@ export function socialTaskToStudioSeed(task: SocialContentTaskDetail): StudioSoc
     presenterAssetIds: [...shot.digitalHumanPlan.presenterAssetIds],
     referenceMaterialIds: [...shot.digitalHumanPlan.referenceMaterialIds],
     candidateTools: [...shot.digitalHumanPlan.candidateTools],
+    accountPresenterLock: shot.digitalHumanPlan.accountPresenterLock ?? null,
     sourceTaskId: task.taskId,
     sourceTaskVersion: task.version,
   }] : []);

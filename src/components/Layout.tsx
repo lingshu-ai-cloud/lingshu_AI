@@ -12,6 +12,7 @@ import { authApi, exitSupportSession, type AuthSession, type OrganizationRole } 
 import RightPanel from './RightPanel';
 import DemoGuide from './DemoGuide';
 import AccountSettingsModal from './AccountSettingsModal';
+import AgentNotificationBell from './AgentNotificationBell';
 import { useDismissibleLayer } from '../hooks/useDismissibleLayer';
 import { useModalFocus } from '../hooks/useModalFocus';
 
@@ -41,6 +42,11 @@ const SOCIAL_NAV_ICONS: Record<(typeof PRIMARY_SOCIAL_NAV_PAGES)[number], ReactN
 const SOCIAL_NAV: NavSection = {
   label: '社媒运营',
   items: PRIMARY_SOCIAL_NAV_PAGES.map(id => navItem(id, SOCIAL_NAV_ICONS[id])),
+};
+
+const SOCIAL_PROGRAM_NAV: NavSection = {
+  label: '社媒矩阵经营',
+  items: [navItem('socialWorkspace', <Target size={16} />)],
 };
 
 const ADS_NAV: NavSection = {
@@ -86,7 +92,7 @@ const SYSTEM_NAV: NavSection = {
   ],
 };
 
-const NAV_SECTIONS = [OPERATIONS_NAV, SOCIAL_NAV, ADS_NAV, CUSTOMER_NAV, AGENT_NAV, SYSTEM_NAV];
+const NAV_SECTIONS = [OPERATIONS_NAV, SOCIAL_PROGRAM_NAV, SOCIAL_NAV, ADS_NAV, CUSTOMER_NAV, AGENT_NAV, SYSTEM_NAV];
 
 const STARTER_HOME_NAV_ITEM = navItem('digitalEmployees', <Home size={16} />);
 const STARTER_BUSINESS_OVERVIEW_NAV: NavSection = {
@@ -574,7 +580,7 @@ export default function Layout({ page, onNavigate, conversation, children, sessi
                   {onLogout && <button onClick={onLogout} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold text-text-secondary hover:bg-red-50 hover:text-red-600"><LogOut size={17} /><span className="flex-1 text-left">退出登录</span></button>}
                   <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 border-t border-border px-3 pt-2 text-[10px] font-semibold text-text-muted">
                     <a href="/privacy" target="_blank" rel="noreferrer" className="hover:text-accent">隐私政策</a>
-                    <a href="/terms" target="_blank" rel="noreferrer" className="hover:text-accent">服务条款</a>
+                    <a href="/terms" target="_blank" rel="noreferrer" className="hover:text-accent">用户协议</a>
                     <a href="/data-deletion" target="_blank" rel="noreferrer" className="hover:text-accent">数据删除</a>
                   </div>
                 </div>
@@ -606,7 +612,8 @@ export default function Layout({ page, onNavigate, conversation, children, sessi
       <AccountSettingsModal open={accountSettingsOpen} onClose={() => setAccountSettingsOpen(false)} onLogout={onLogout} />
 
       {/* ── Main content ─────────────────────────────── */}
-      <main className="app-main flex min-w-0 flex-1 flex-col overflow-hidden">
+      <main className="app-main relative flex min-w-0 flex-1 flex-col overflow-hidden">
+        {activeSession && <AgentNotificationBell key={`${activeSession.user.tenantId}:${activeSession.user.id}`} onNavigate={navigateFromSidebar} />}
         {supportAccess && (
           <div className="flex h-10 shrink-0 items-center justify-between gap-4 border-b border-emerald-200 bg-emerald-50 px-4 text-xs">
             <div className="flex min-w-0 items-center gap-2 text-emerald-950">

@@ -1,9 +1,12 @@
 import { normalizeVideoPlan, type VideoCreationPlan } from './videoCreationPlan';
 import { VIDEO_LANGUAGES, normalizeVideoLanguage } from './videoLanguages';
 import type { WeeklyPackage } from './weeklyPackage';
+import type { SocialAccountRole } from '../../shared/contracts/socialOperatingProfile';
 
 export interface MatrixAccountPlan {
   accountId: string;
+  accountRole?: SocialAccountRole;
+  formats?: string[];
   platform: VideoCreationPlan['platform'];
   audience: string;
   productName: string;
@@ -31,6 +34,8 @@ export function normalizeMatrixPlan(value: unknown): MatrixAccountPlan[] {
   return value.map(raw => {
     if (!raw || typeof raw !== 'object') throw Error('矩阵账号安排格式无效');
     return { accountId: clean(raw.accountId, 160), platform: clean(raw.platform) as MatrixAccountPlan['platform'],
+      accountRole: ['brand_capability', 'buyer_advisor', 'brand_combined'].includes(clean(raw.accountRole)) ? clean(raw.accountRole) as SocialAccountRole : 'brand_combined',
+      formats: Array.isArray(raw.formats) ? [...new Set<string>(raw.formats.map((item: unknown) => clean(item, 80)).filter(Boolean))].slice(0, 8) : [],
       audience: clean(raw.audience), productName: clean(raw.productName, 180), language: normalizeVideoLanguage(raw.language),
       objective: clean(raw.objective), contentDirection: clean(raw.contentDirection), cta: clean(raw.cta),
       weeklyCount: Number(raw.weeklyCount), sourceProjectIds: Array.isArray(raw.sourceProjectIds) ? [...new Set<string>(raw.sourceProjectIds.map((id: unknown) => clean(id, 160)).filter(Boolean))].slice(0, 30) : [] };
@@ -39,7 +44,7 @@ export function normalizeMatrixPlan(value: unknown): MatrixAccountPlan[] {
 export function bindMatrixVideo(plan: VideoCreationPlan, row?: MatrixAccountPlan): VideoCreationPlan {
   return normalizeVideoPlan({ ...plan, ...(row ? { platform: row.platform, productName: row.productName, language: row.language,
     ...(plan.productName !== row.productName ? { materialIds: [], scenePlan: plan.scenePlan?.map(scene => ({ ...scene, materialId: '' })) } : {}) } : {}),
-    matrix: row ? { accountId: row.accountId, audience: row.audience, objective: row.objective, cta: row.cta } : { accountId: '', audience: '', objective: '', cta: '' } });
+    matrix: row ? { accountId: row.accountId, audience: row.audience, objective: row.objective, cta: row.cta, accountRole: row.accountRole || 'brand_combined', formats: row.formats || [] } : { accountId: '', audience: '', objective: '', cta: '', accountRole: 'brand_combined', formats: [] } });
 }
 /** Preserve user-authored themes, sources and scenes; only add missing deliverables. */
 export function fillMatrixVideos(pack: WeeklyPackage, defaults: Partial<VideoCreationPlan>, dueAt: string): WeeklyPackage {

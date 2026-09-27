@@ -2,8 +2,9 @@ import { normalizeTodo } from '../../src/lib/reviewTodos.js';
 import { normalizeAssessment, maturityProfiles, taskGuidance } from '../../shared/contracts/operatingMaturity.js';
 import { normalizeVideoPlan, videoPlanErrors } from '../../shared/contracts/videoCreationPlan.js';
 import { normalizeMatrixPlan, matrixScopeIssues } from '../../src/lib/weeklyMatrix.js';
-import { TASK_TEMPLATES, packageIssues, type WeeklyPackage, type PackageTask } from '../../src/lib/weeklyPackage.js';
+import { LEGACY_TASK_TEMPLATE_IDS, TASK_TEMPLATES, packageIssues, type WeeklyPackage, type PackageTask, type TemplateId } from '../../src/lib/weeklyPackage.js';
 import { defaultDirectorPlan, normalizeDirectorPlan } from '../../src/lib/contentDirector.js';
+import { connectedAccountIssues } from '../../shared/contracts/socialOperatingProfile.js';
 import { buildWeeklyPlan, type DigitalEmployeeConfig, type WeeklyGoalInput, type WeeklyPlanDraft } from './domain.js';
 
 export function recommendPackage(goal: WeeklyGoalInput, config: DigitalEmployeeConfig, ownerId = '', ownerName = ''): WeeklyPackage {
@@ -11,22 +12,46 @@ export function recommendPackage(goal: WeeklyGoalInput, config: DigitalEmployeeC
   const maturity = config.operatingMaturity || 'growing';
   const participation = config.defaultParticipation || 'agent';
   const keys = new Set(base.tasks.map(t => t.key));
-  const tasks = TASK_TEMPLATES.filter(t => !['collection', 'inspiration'].includes(t.id) && t.keys.some(key => keys.has(key)) && (maturity !== 'starting' || ['readiness', 'director', 'production', 'publishing', 'customers', 'followup', 'review'].includes(t.id))).map(template => ({
+  const tasks = TASK_TEMPLATES.filter(t => t.keys.some(key => keys.has(key)) && (maturity !== 'starting' || ['readiness', 'director', 'production', 'publishing', 'customers', 'followup', 'review'].includes(t.id))).map(template => ({
     templateId: template.id, title: template.title,
     ownerId: participation === 'team' && !['review'].includes(template.id) ? ownerId : '',
     ownerName: participation === 'team' && ownerId ? ownerName : '', dueAt: goal.endsAt, notes: taskGuidance(maturity, template.id, config.operatingAssessment), sourceProjectIds: [],
     ...(template.id === 'production' ? { videoPlans: goal.videoPlans?.length ? goal.videoPlans : [normalizeVideoPlan({ ...config.videoDefaults, productName: config.focusProducts.split(/[、，,；;]/)[0], theme: '介绍产品的用途与特点', platform: goal.contentPlatforms[0] })] } : {}),
   }));
   const contentCount = tasks.find(t => t.templateId === 'production')?.videoPlans?.length || 0;
+  const publishAccountCount = config.publishingTargets.filter(target => goal.contentPlatforms.includes(target.platform)).length;
+  const defaultPublishActions = contentCount * Math.max(1, publishAccountCount);
   return { revision: 1, maturity, operatingAssessment: normalizeAssessment(config.operatingAssessment), participation, tasks,
     directorPlan: defaultDirectorPlan(contentCount),
-    authorization: { mode: 'each', accountIds: config.publishingTargets.map(t => t.accountId), maxPublishItems: 1, customerIds: [], maxCustomerMessages: 1 } };
+    // Approving the weekly package is the single human authorization event.
+    // Every actual publish still has to pass the frozen account/week/count/hash
+    // boundary and the existing quality, connection and receipt safeguards.
+    authorization: { mode: 'bounded', accountIds: config.publishingTargets.map(t => t.accountId), maxPublishItems: Math.max(1, defaultPublishActions), customerIds: [], maxCustomerMessages: 1 } };
 }
 
 export function normalizePackage(raw: WeeklyPackage): WeeklyPackage {
-  if (!raw || !Array.isArray(raw.tasks) || raw.tasks.length > TASK_TEMPLATES.length) throw Error('任务包格式无效');
+  if (!raw || !Array.isArray(raw.tasks) || raw.tasks.length > TASK_TEMPLATES.length + LEGACY_TASK_TEMPLATE_IDS.length) throw Error('任务包格式无效');
   const clean = (s: unknown, max = 500) => String(s || '').trim().slice(0, max);
   const ids = (x: unknown) => Array.isArray(x) ? [...new Set(x.map(v => clean(v, 160)).filter(Boolean))].slice(0, 100) : [];
+  const activeIds = new Set<string>(TASK_TEMPLATES.map(template => template.id));
+  const legacyIds = new Set<string>(LEGACY_TASK_TEMPLATE_IDS);
+  const sourceTasks = raw.tasks as Array<PackageTask & { templateId: string }>;
+  if (sourceTasks.some(task => !activeIds.has(task.templateId) && !legacyIds.has(task.templateId))) throw Error('任务包包含不支持的任务模板');
+  const legacyTasks = sourceTasks.filter(task => legacyIds.has(task.templateId));
+  const currentTasks = sourceTasks.filter(task => !legacyIds.has(task.templateId));
+  if (legacyTasks.length) {
+    const currentDirector = currentTasks.find(task => task.templateId === 'director');
+    const mergedNotes = [...new Set([currentDirector?.notes, ...legacyTasks.map(task => task.notes)].map(note => clean(note, 1000)).filter(Boolean))].join('\n').slice(0, 1000);
+    const mergedSources = ids([...(currentDirector?.sourceProjectIds || []), ...legacyTasks.flatMap(task => task.sourceProjectIds || [])]);
+    const base = currentDirector || legacyTasks[0];
+    const migrated: PackageTask = {
+      templateId: 'director', title: currentDirector?.title || '编排本周内容', ownerId: clean(base.ownerId, 160), ownerName: clean(base.ownerName, 160),
+      dueAt: clean(base.dueAt, 10), notes: mergedNotes, sourceProjectIds: mergedSources,
+    };
+    const index = currentTasks.findIndex(task => task.templateId === 'director');
+    if (index >= 0) currentTasks[index] = migrated;
+    else currentTasks.push(migrated);
+  }
   const a = raw.authorization;
   return {
     ...(raw.directorPlan !== undefined ? { directorPlan: normalizeDirectorPlan(raw.directorPlan) } : {}),
@@ -36,7 +61,7 @@ export function normalizePackage(raw: WeeklyPackage): WeeklyPackage {
     maturity: ['starting', 'growing', 'established'].includes(raw.maturity) ? raw.maturity : 'growing',
     operatingAssessment: normalizeAssessment(raw.operatingAssessment),
     participation: raw.participation === 'team' ? 'team' : 'agent',
-    tasks: raw.tasks.map(t => ({ templateId: t.templateId, title: clean(t.title, 160), ownerId: clean(t.ownerId, 160), ownerName: clean(t.ownerName, 160), dueAt: clean(t.dueAt, 10), notes: clean(t.notes, 1000), sourceProjectIds: ids(t.sourceProjectIds), ...(t.templateId === 'production' ? { videoPlans: (t.videoPlans || []).slice(0, 30).map(normalizeVideoPlan) } : {}) })),
+    tasks: currentTasks.map(t => ({ templateId: t.templateId as TemplateId, title: clean(t.title, 160), ownerId: clean(t.ownerId, 160), ownerName: clean(t.ownerName, 160), dueAt: clean(t.dueAt, 10), notes: clean(t.notes, 1000), sourceProjectIds: ids(t.sourceProjectIds), ...(t.templateId === 'production' ? { videoPlans: (t.videoPlans || []).slice(0, 30).map(normalizeVideoPlan) } : {}) })),
     authorization: { mode: a?.mode === 'bounded' ? 'bounded' : 'each', accountIds: ids(a?.accountIds), customerIds: ids(a?.customerIds), maxPublishItems: Math.min(100, Math.max(0, Math.floor(Number(a?.maxPublishItems) || 0))), maxCustomerMessages: Math.min(100, Math.max(0, Math.floor(Number(a?.maxCustomerMessages) || 0))) },
   };
 }
@@ -47,14 +72,26 @@ export function validatePackage(pack: WeeklyPackage, goal: WeeklyGoalInput, conf
   const versionIssues = config && pack.directorPlan && plannedVersions !== pack.directorPlan.platformVersionTarget
     ? [`编导目标为 ${pack.directorPlan.platformVersionTarget} 个平台版本，但当前语言与账号计划将生成 ${plannedVersions} 个版本`]
     : [];
-  return [...packageIssues(pack, goal.startsAt, goal.endsAt), ...versionIssues, ...(config ? matrixScopeIssues(pack, config.publishingTargets, goal.contentPlatforms) : []), ...pack.tasks.flatMap(t => (t.videoPlans || []).flatMap((p, i) => videoPlanErrors(p).map(e => `第 ${i + 1} 条视频：${e}`)))];
+  const growthIssues = config?.socialOperatingProfile === 'dual_account_growth'
+    ? [
+        ...(config.operatingMaturity === 'established' ? [] : ['双账号增长方案只能在经营成熟度达到稳定经营后启动']),
+        ...connectedAccountIssues('dual_account_growth', config.publishingTargets),
+        ...(pack.tasks.some(task => task.templateId === 'publishing') && !pack.matrixPlan?.length ? ['双账号增长发布前必须配置逐账号矩阵，禁止把同一成片无差别广播到全部账号'] : []),
+        ...(pack.matrixPlan?.some(row => row.platform === 'tiktok' || row.platform === 'facebook')
+          ? ['tiktok', 'facebook'].flatMap(platform => {
+              const roles = new Set(pack.matrixPlan!.filter(row => row.platform === platform).map(row => row.accountRole || 'brand_combined'));
+              return roles.has('brand_capability') && roles.has('buyer_advisor') ? [] : [`${platform} 双账号需要分别标记“品牌能力号”和“买家顾问号”`];
+            })
+          : []),
+      ]
+    : [];
+  return [...packageIssues(pack, goal.startsAt, goal.endsAt), ...versionIssues, ...growthIssues, ...(config ? matrixScopeIssues(pack, config.publishingTargets, goal.contentPlatforms) : []), ...pack.tasks.flatMap(t => (t.videoPlans || []).flatMap((p, i) => videoPlanErrors(p).map(e => `第 ${i + 1} 条视频：${e}`)))];
 }
 
 export function packageConfig(pack: WeeklyPackage, config: DigitalEmployeeConfig): DigitalEmployeeConfig {
   const selected = new Set(pack.tasks.map(t => t.templateId));
   const workflows: DigitalEmployeeConfig['enabledWorkflows'] = [];
-  if (selected.has('director') || selected.has('collection')) workflows.push('scheduled_social');
-  if (selected.has('director') || selected.has('inspiration')) workflows.push('viral_clone');
+  if (selected.has('director')) workflows.push('scheduled_social', 'viral_clone');
   if (selected.has('production')) workflows.push('product_content');
   if (selected.has('publishing')) workflows.push('content_publish');
   if (selected.has('customers')) workflows.push('customer_segmentation');
@@ -88,6 +125,19 @@ export function compilePackage(pack: WeeklyPackage, goal: WeeklyGoalInput, confi
 export function packageTaskForKey(pack: WeeklyPackage | undefined, key: string): PackageTask | undefined {
   const template = TASK_TEMPLATES.find(t => (t.keys as readonly string[]).includes(key));
   return pack?.tasks.find(t => t.templateId === template?.id);
+}
+
+export function criticalBusinessConfigChanges(before: DigitalEmployeeConfig, after: DigitalEmployeeConfig): string[] {
+  const stable = (values: string[]) => JSON.stringify([...new Set(values)].sort());
+  const changed: string[] = [];
+  if (before.focusProducts !== after.focusProducts) changed.push('products');
+  if (before.targetMarkets !== after.targetMarkets) changed.push('markets');
+  if (before.customerProfile !== after.customerProfile) changed.push('audience');
+  if (stable(before.videoLanguages) !== stable(after.videoLanguages)) changed.push('languages');
+  if (stable(before.publishingTargets.map(item => item.platform)) !== stable(after.publishingTargets.map(item => item.platform))) changed.push('platforms');
+  if (stable(before.publishingTargets.map(item => `${item.platform}:${item.accountId}`)) !== stable(after.publishingTargets.map(item => `${item.platform}:${item.accountId}`))) changed.push('accounts');
+  if (before.allowRealPublishing !== after.allowRealPublishing) changed.push('realPublishingPermission');
+  return changed;
 }
 
 // A package grant authorizes only the frozen scope. A later content edit is

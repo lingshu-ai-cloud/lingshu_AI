@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -18,6 +19,14 @@ def run(command: list[str], cwd: str) -> str:
     if result.returncode:
         raise RuntimeError(output.strip())
     return output
+
+
+def sha256(path: str) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def main() -> int:
@@ -63,6 +72,9 @@ def main() -> int:
     if confidence < args.min_confidence:
         failures.append(f"SyncNet confidence {confidence:.3f} is below {args.min_confidence:.3f}")
     result = {
+        "version": 1,
+        "detector": "official_syncnet",
+        "model_sha256": sha256(model),
         "passed": not failures,
         "av_offset_frames": offset,
         "av_offset_ms_at_25fps": offset * 40,

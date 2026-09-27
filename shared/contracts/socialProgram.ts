@@ -48,8 +48,206 @@ export interface SocialProgram {
   productMarketingProfileRefs: VersionedSocialRef[];
   activeMonthlyPlanRef: VersionedSocialRef | null;
   activeWeeklyPlanRef: VersionedSocialRef | null;
+  activeWeeklyOperatingPackageRef: VersionedSocialRef | null;
+  activeBusinessContentGoalRef?: VersionedSocialRef | null;
   version: number;
   status: 'active' | 'archived';
+  createdAt: string;
+  updatedAt: string;
+}
+
+export const WEEKLY_OPERATING_WORKFLOW_KINDS = [
+  'readiness',
+  'discovery',
+  'directing',
+  'content',
+  'publishing',
+  'engagement',
+  'review',
+] as const;
+export type WeeklyOperatingWorkflowKind = typeof WEEKLY_OPERATING_WORKFLOW_KINDS[number];
+
+export const WEEKLY_OPERATING_PACKAGE_STATUSES = ['draft', 'active', 'superseded', 'retired'] as const;
+export type WeeklyOperatingPackageStatus = typeof WEEKLY_OPERATING_PACKAGE_STATUSES[number];
+export type WeeklyOperatingWorkflowStatus = 'planned' | 'blocked' | 'in_progress' | 'completed' | 'cancelled';
+
+export type WeeklyWorkflowTaskStatus = WeeklyOperatingWorkflowStatus;
+
+export const WEEKLY_EXECUTION_TASK_STATUSES = [
+  'pending_activation',
+  'queued',
+  'leased',
+  'blocked',
+  'succeeded',
+  'cancelled',
+  'dead_letter',
+] as const;
+export type WeeklyExecutionTaskStatus = typeof WEEKLY_EXECUTION_TASK_STATUSES[number];
+export type WeeklyExecutionTaskScope = 'package' | 'content' | 'adaptation' | 'account' | 'publication';
+
+export interface WeeklyExecutionTaskLease {
+  leaseId: string;
+  token: string;
+  workerId: string;
+  acquiredAt: string;
+  expiresAt: string;
+}
+
+export interface WeeklyExecutionTaskBudget {
+  category: 'none' | 'discovery' | 'production';
+  limitCny: number | null;
+}
+
+/**
+ * Durable unit consumed by a worker. The snapshots and versioned references
+ * deliberately make the task self-contained: a worker must never silently
+ * read a newer package, policy or planning decision while executing it.
+ */
+export interface WeeklyExecutionTask {
+  taskId: string;
+  tenantId: string;
+  programId: string;
+  packageId: string;
+  packageVersion: number;
+  workflowKind: WeeklyOperatingWorkflowKind;
+  scope: WeeklyExecutionTaskScope;
+  subjectId: string;
+  accountId: string | null;
+  publicationTaskId: string | null;
+  dependsOnTaskIds: string[];
+  upstreamVersionRefs: VersionedSocialRef[];
+  inputSnapshot: Record<string, unknown>;
+  idempotencyKey: string;
+  budget: WeeklyExecutionTaskBudget;
+  status: WeeklyExecutionTaskStatus;
+  ownBlockingReasons: string[];
+  inheritedBlockingTaskIds: string[];
+  attempt: number;
+  maxAttempts: number;
+  nextAttemptAt: string | null;
+  lease: WeeklyExecutionTaskLease | null;
+  resultRefs: VersionedSocialRef[];
+  lastError: { code: string; message: string; retryable: boolean; occurredAt: string } | null;
+  recoveredFromDeadLetterAt: string | null;
+  cancelReason: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface WeeklyExecutionStatusSummary {
+  total: number;
+  byStatus: Record<WeeklyExecutionTaskStatus, number>;
+  byWorkflow: Record<WeeklyOperatingWorkflowKind, WeeklyOperatingWorkflowStatus>;
+  refreshedAt: string;
+}
+
+export interface WeeklyWorkflowTask {
+  taskId: string;
+  kind: WeeklyOperatingWorkflowKind;
+  taskRef: VersionedSocialRef;
+  dependsOnTaskIds: string[];
+  subjectRefs: VersionedSocialRef[];
+  status: WeeklyWorkflowTaskStatus;
+  ownBlockingReasons: string[];
+  inheritedBlockingTaskIds: string[];
+  carriedFromTaskId: string | null;
+}
+
+export interface WeeklyWorkflowEvent {
+  eventId: string;
+  taskId: string;
+  type: 'start' | 'complete' | 'block' | 'unblock' | 'cancel';
+  reason?: string | null;
+  occurredAt: string;
+}
+
+export interface WeeklyTaskVersionMapping {
+  previousTaskId: string;
+  nextTaskId: string | null;
+  handling: 'carried' | 'replaced' | 'cancelled';
+}
+
+export interface WeeklyOperatingWorkflow {
+  kind: WeeklyOperatingWorkflowKind;
+  status: WeeklyOperatingWorkflowStatus;
+  taskRefs: VersionedSocialRef[];
+  blockingReasons: string[];
+}
+
+export interface SocialWeeklyPublicationTask {
+  publicationTaskId: string;
+  motherContentId: string;
+  adaptationOfPublicationTaskId: string | null;
+  platform: Extract<SocialPlatform, 'tiktok' | 'facebook' | 'instagram' | 'youtube'>;
+  accountId: string;
+  accountPositioning: string | null;
+  businessProposition: string | null;
+  cta: string | null;
+  factRefs: VersionedSocialRef[];
+  metricTargets: string[];
+  publishWindow: string | null;
+  status: 'planned' | 'blocked' | 'ready' | 'published' | 'cancelled';
+}
+
+export interface SocialWeeklyContentPackage {
+  contentPackageId: string;
+  operatingPackageId: string;
+  version: number;
+  status: WeeklyOperatingPackageStatus;
+  originalContentTarget: number;
+  adaptationVersionTarget: number;
+  publicationTaskTarget: number;
+  publicationTasks: SocialWeeklyPublicationTask[];
+  weeklyBudgetCny: number | null;
+  perItemBudgetCny: number | null;
+  capacityNotes: string[];
+  authorization: {
+    mode: 'each' | 'bounded';
+    accountIds: string[];
+    maxPublishItems: number;
+    weekStart: string;
+    weekEnd: string;
+    allowRealPublishing: boolean;
+    authorizedBy: string | null;
+    authorizedAt: string | null;
+    revokedBy: string | null;
+    revokedAt: string | null;
+  };
+}
+
+export interface WeeklyOperatingPackage {
+  packageId: string;
+  programId: string;
+  version: number;
+  status: WeeklyOperatingPackageStatus;
+  weekStart: string;
+  weekEnd: string;
+  objective: string;
+  enterpriseProfileRef: VersionedSocialRef | null;
+  businessContentGoalRef?: VersionedSocialRef | null;
+  monthlyPlanRef: VersionedSocialRef | null;
+  workflows: WeeklyOperatingWorkflow[];
+  workflowTasks: WeeklyWorkflowTask[];
+  /** Present on R3-aware reads; optional while older R1 consumers migrate. */
+  executionTaskRefs?: VersionedSocialRef[];
+  executionSummary?: WeeklyExecutionStatusSummary;
+  appliedWorkflowEvents: WeeklyWorkflowEvent[];
+  /** Independent append-only workflow stream version; absent only on legacy rows. */
+  workflowStateVersion?: number;
+  taskVersionMappings: WeeklyTaskVersionMapping[];
+  planningBlockers: string[];
+  capacityPlanRef: VersionedSocialRef | null;
+  automationPolicyRef: VersionedSocialRef | null;
+  operatingDecisionSnapshotRef?: VersionedSocialRef | null;
+  referenceModeRef?: VersionedSocialRef | null;
+  /** R6 output consumed as an explicit, versioned input to this plan. */
+  promotionQuotaRef?: VersionedSocialRef | null;
+  discoveryBudgetCny: number | null;
+  socialContentPackage: SocialWeeklyContentPackage;
+  successCriteria: string[];
+  changeReason: string | null;
+  previousVersion: number | null;
+  createdBy: string;
   createdAt: string;
   updatedAt: string;
 }

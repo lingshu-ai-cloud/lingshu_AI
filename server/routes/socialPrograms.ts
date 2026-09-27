@@ -3,6 +3,12 @@ import { requireAuth, enforceSupportSessionReadOnly, type AuthLocals } from '../
 import { store } from '../storage/index.js';
 import type { DataStore } from '../storage/datastore.js';
 import { createSocialProgramService, SocialProgramError } from '../socialPrograms/service.js';
+import { createWeeklyOperatingPackageService } from '../socialPrograms/weeklyOperatingPackages.js';
+import { createSocialOperatingOrchestrationService, weeklyAuthorityFromResolution } from '../socialOperating/orchestration.js';
+import { SocialOperatingDecisionError } from '../socialOperating/service.js';
+import type { OperatingPlanningRequest } from '../../shared/contracts/socialOperatingDecision.js';
+import { createWeeklyExecutionTaskService } from '../socialPrograms/executionTasks.js';
+import { revokePublicationAssignments } from '../publishing/weeklyLineage.js';
 
 function asyncRoute(handler: RequestHandler): RequestHandler {
   return (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
@@ -12,6 +18,9 @@ export function createSocialProgramsRouter(dataStore: DataStore = store, authent
   const router = Router();
   if (authenticate) router.use(requireAuth, enforceSupportSessionReadOnly);
   const service = createSocialProgramService(dataStore);
+  const weeklyPackages = createWeeklyOperatingPackageService(dataStore);
+  const operating = createSocialOperatingOrchestrationService(dataStore);
+  const executionTasks = createWeeklyExecutionTaskService(dataStore);
 
   router.get('/', asyncRoute(async (_req, res) => {
     const { tenantId } = res.locals as AuthLocals;
@@ -66,8 +75,143 @@ export function createSocialProgramsRouter(dataStore: DataStore = store, authent
     res.status(201).json({ item });
   }));
 
+  router.get('/:programId/operating-constraints', asyncRoute(async (req, res) => {
+    const { tenantId } = res.locals as AuthLocals;
+    res.json({ item: await operating.getConstraints(tenantId, String(req.params.programId || '')) });
+  }));
+
+  router.put('/:programId/operating-constraints', asyncRoute(async (req, res) => {
+    const { tenantId, userId } = res.locals as AuthLocals;
+    const item = await operating.saveConstraints(tenantId, userId, String(req.params.programId || ''), req.body || {});
+    res.status(201).json({ item });
+  }));
+
+  router.post('/:programId/operating-plan/resolve', asyncRoute(async (req, res) => {
+    const { tenantId, userId } = res.locals as AuthLocals;
+    const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body as Record<string, unknown> : {};
+    // Deliberately allow-list intent only. Caller supplied readiness, capacity,
+    // policy and rights fields never cross the server authority boundary.
+    const request: OperatingPlanningRequest = {
+      weekStart: String(body.weekStart || ''),
+      ...(Number.isSafeInteger(body.desiredOriginalContents) ? { desiredOriginalContents: Number(body.desiredOriginalContents) } : {}),
+      ...(Number.isSafeInteger(body.desiredAdaptations) ? { desiredAdaptations: Number(body.desiredAdaptations) } : {}),
+      ...(body.requestedReferenceMode === 'ordinary_inspiration' || body.requestedReferenceMode === 'high_fidelity' || body.requestedReferenceMode === 'auto'
+        ? { requestedReferenceMode: body.requestedReferenceMode } : {}),
+      ...(body.referenceSelectionRef && typeof body.referenceSelectionRef === 'object' && !Array.isArray(body.referenceSelectionRef)
+        ? { referenceSelectionRef: body.referenceSelectionRef as OperatingPlanningRequest['referenceSelectionRef'] } : {}),
+      ...(Number.isSafeInteger(body.expectedSnapshotVersion) ? { expectedSnapshotVersion: Number(body.expectedSnapshotVersion) } : {}),
+    };
+    const resolution = await operating.resolve(tenantId, userId, String(req.params.programId || ''), request);
+    res.status(201).json({ item: resolution, weeklyAuthority: weeklyAuthorityFromResolution(resolution) });
+  }));
+
+  router.get('/:programId/operating-snapshots/:snapshotId', asyncRoute(async (req, res) => {
+    const { tenantId } = res.locals as AuthLocals;
+    const version = typeof req.query.version === 'string' ? Number(req.query.version) : undefined;
+    const item = await operating.getSnapshot(tenantId, String(req.params.programId || ''), String(req.params.snapshotId || ''), version);
+    res.json({ item });
+  }));
+
+  router.get('/:programId/operating-packages', asyncRoute(async (req, res) => {
+    const { tenantId } = res.locals as AuthLocals;
+    const items = await weeklyPackages.list(
+      tenantId,
+      String(req.params.programId || ''),
+      typeof req.query.weekStart === 'string' ? req.query.weekStart : undefined,
+    );
+    res.json({ items });
+  }));
+
+  router.post('/:programId/operating-packages', asyncRoute(async (req, res) => {
+    const { tenantId, userId } = res.locals as AuthLocals;
+    const item = await weeklyPackages.create(tenantId, userId, String(req.params.programId || ''), req.body || {});
+    res.status(201).json({ item });
+  }));
+
+  router.get('/:programId/operating-packages/:packageId', asyncRoute(async (req, res) => {
+    const { tenantId } = res.locals as AuthLocals;
+    const item = await weeklyPackages.get(
+      tenantId, String(req.params.programId || ''), String(req.params.packageId || ''),
+    );
+    res.json({ item });
+  }));
+
+  router.put('/:programId/operating-packages/:packageId', asyncRoute(async (req, res) => {
+    const { tenantId, userId } = res.locals as AuthLocals;
+    const previousVersion = Number(req.body?.expectedVersion);
+    const item = await weeklyPackages.revise(
+      tenantId, userId, String(req.params.programId || ''), String(req.params.packageId || ''), req.body || {},
+    );
+    await revokePublicationAssignments({
+      tenantId, operatingPackageId: String(req.params.packageId || ''),
+      ...(Number.isSafeInteger(previousVersion) ? { operatingPackageVersion: previousVersion } : {}),
+      revokedBy: userId, revokedAt: item.updatedAt, dataStore,
+    });
+    res.status(201).json({ item });
+  }));
+
+  router.post('/:programId/operating-packages/:packageId/activate', asyncRoute(async (req, res) => {
+    const { tenantId, userId } = res.locals as AuthLocals;
+    const item = await weeklyPackages.activate(
+      tenantId, userId, String(req.params.programId || ''), String(req.params.packageId || ''), req.body || {},
+    );
+    res.json({ item });
+  }));
+
+  router.post('/:programId/operating-packages/:packageId/retire', asyncRoute(async (req, res) => {
+    const { tenantId, userId } = res.locals as AuthLocals;
+    const item = await weeklyPackages.retire(
+      tenantId, userId, String(req.params.programId || ''), String(req.params.packageId || ''), req.body || {},
+    );
+    await revokePublicationAssignments({
+      tenantId, operatingPackageId: item.packageId, operatingPackageVersion: item.version,
+      revokedBy: userId, revokedAt: item.updatedAt, dataStore,
+    });
+    res.json({ item });
+  }));
+
+  router.get('/:programId/operating-packages/:packageId/execution-tasks', asyncRoute(async (req, res) => {
+    const { tenantId } = res.locals as AuthLocals;
+    const programId = String(req.params.programId || '');
+    const packageId = String(req.params.packageId || '');
+    const pkg = await weeklyPackages.get(tenantId, programId, packageId);
+    const requestedVersion = Number(req.query.version ?? pkg.version);
+    if (!Number.isSafeInteger(requestedVersion) || requestedVersion < 1) {
+      throw new SocialProgramError('package_version_invalid', 400, '周包版本无效。');
+    }
+    res.json({ items: await executionTasks.list(tenantId, programId, packageId, requestedVersion) });
+  }));
+
+  router.post('/:programId/operating-packages/:packageId/execution-tasks/:taskId/block', asyncRoute(async (req, res) => {
+    const { tenantId } = res.locals as AuthLocals;
+    res.json({ items: await executionTasks.block(tenantId, String(req.params.programId || ''), String(req.params.packageId || ''), String(req.params.taskId || ''), String(req.body?.reason || '')) });
+  }));
+
+  router.post('/:programId/operating-packages/:packageId/execution-tasks/:taskId/unblock', asyncRoute(async (req, res) => {
+    const { tenantId } = res.locals as AuthLocals;
+    res.json({ items: await executionTasks.unblock(tenantId, String(req.params.programId || ''), String(req.params.packageId || ''), String(req.params.taskId || ''), req.body?.reason) });
+  }));
+
+  router.post('/:programId/operating-packages/:packageId/execution-tasks/:taskId/cancel', asyncRoute(async (req, res) => {
+    const { tenantId } = res.locals as AuthLocals;
+    res.json({ items: await executionTasks.cancel(tenantId, String(req.params.programId || ''), String(req.params.packageId || ''), String(req.params.taskId || ''), String(req.body?.reason || '')) });
+  }));
+
+  router.post('/:programId/operating-packages/:packageId/execution-tasks/:taskId/recover', asyncRoute(async (req, res) => {
+    const { tenantId } = res.locals as AuthLocals;
+    res.json({ items: await executionTasks.recoverDeadLetter(tenantId, String(req.params.programId || ''), String(req.params.packageId || ''), String(req.params.taskId || '')) });
+  }));
+
+  router.post('/:programId/operating-packages/:packageId/workflow-events', asyncRoute(async (req, res) => {
+    const { tenantId, userId } = res.locals as AuthLocals;
+    const item = await weeklyPackages.applyWorkflowEvent(
+      tenantId, userId, String(req.params.programId || ''), String(req.params.packageId || ''), req.body || {},
+    );
+    res.json({ item });
+  }));
+
   router.use(((error, _req, res, next) => {
-    if (!(error instanceof SocialProgramError)) {
+    if (!(error instanceof SocialProgramError) && !(error instanceof SocialOperatingDecisionError)) {
       next(error);
       return;
     }

@@ -191,6 +191,15 @@ try {
   assert.equal((await request('/api/overseas/social-engagement/comments', {
     taskId: 'task-a', page: 'traffic',
   })).status, 200, 'the account data workbench may read tenant-scoped comments');
+  assert.equal((await request('/api/overseas/social-engagement/interactions', {
+    taskId: 'task-a', page: 'traffic',
+  })).status, 200, 'the account data workbench may read tenant-scoped interaction writebacks');
+  assert.equal((await request('/api/overseas/social-engagement/creative-learnings', {
+    taskId: 'task-a', page: 'traffic',
+  })).status, 200, 'the review workbench may read tenant-scoped creative learnings');
+  assert.equal((await request('/api/overseas/social-engagement/inquiries/inquiry-a/qualification', {
+    taskId: 'task-a', page: 'traffic', method: 'POST', body: { status: 'qualified', authority: 'sales', reason: 'Sales confirmed' },
+  })).status, 200, 'the authorized data workbench may submit a sales qualification decision');
   assert.equal((await request('/api/overseas/social-engagement/comments/reply', {
     taskId: 'task-a', page: 'accountManagement', method: 'POST',
   })).status, 403, 'the 198 bridge must not send an external comment reply');

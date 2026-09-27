@@ -31,19 +31,13 @@ import { socialUploadHttpResponse } from '../publishing/directPublishHttp.js';
 export { socialUploadHttpResponse } from '../publishing/directPublishHttp.js';
 import { saveSocialMetricSnapshot } from '../socialMetrics/store.js';
 import { sealedSocialCredentialPatch, socialAccessToken } from '../lib/accountCredentials.js';
+import { metaOAuthScopes, tikTokOAuthScopes } from '../lib/socialOAuthScopes.js';
 
 const COL = 'social_accounts';
 const OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
 
 const TIKTOK_AUTH_URL = 'https://www.tiktok.com/v2/auth/authorize/';
 const META_AUTH_URL = 'https://www.facebook.com';
-
-const TIKTOK_SCOPES = ['user.info.basic', 'user.info.profile', 'user.info.stats', 'video.list', 'video.publish'];
-const META_SCOPES = [
-  'pages_show_list', 'pages_manage_metadata', 'pages_read_engagement', 'pages_manage_posts',
-  'pages_read_user_content', 'business_management', 'instagram_basic', 'instagram_content_publish',
-  'instagram_manage_comments', 'instagram_manage_insights', 'read_insights',
-];
 
 export const socialRouter = Router();
 
@@ -299,7 +293,7 @@ async function saveFacebookPageFromMeta(input: {
     accessToken: input.page.accessToken,
     refreshToken: '',
     tokenExpiresAt: '',
-    scope: META_SCOPES.join(','),
+    scope: metaOAuthScopes('facebook').join(','),
     parentPageId: input.page.id,
     parentPageName: input.page.name,
     followerCount: input.page.fanCount || 0,
@@ -326,7 +320,7 @@ async function saveInstagramFromMeta(input: {
     accessToken: input.page.accessToken,
     refreshToken: '',
     tokenExpiresAt: '',
-    scope: META_SCOPES.join(','),
+    scope: metaOAuthScopes('instagram').join(','),
     parentPageId: input.page.id,
     parentPageName: input.page.name,
     followerCount: input.page.instagram.followersCount || 0,
@@ -387,7 +381,7 @@ async function connectMeta(pending: PendingOAuthState, code: string, req: Reques
         accessToken: page.accessToken,
         refreshToken: '',
         tokenExpiresAt: '',
-        scope: META_SCOPES.join(','),
+        scope: metaOAuthScopes('facebook').join(','),
         parentPageId: page.id,
         parentPageName: page.name,
         followerCount: page.fanCount || 0,
@@ -409,7 +403,7 @@ async function connectMeta(pending: PendingOAuthState, code: string, req: Reques
         accessToken: page.accessToken,
         refreshToken: '',
         tokenExpiresAt: '',
-        scope: META_SCOPES.join(','),
+        scope: metaOAuthScopes('instagram').join(','),
         parentPageId: page.id,
         parentPageName: page.name,
         followerCount: page.instagram.followersCount || 0,
@@ -477,10 +471,11 @@ socialRouter.get('/oauth/:platform/status', async (req, res) => {
   }
   const { tenantId } = res.locals as AuthLocals;
   const configured = platform === 'tiktok' ? Boolean(await getTikTokClient(tenantId)) : Boolean(await getMetaClient(tenantId));
+  const scopes = platform === 'tiktok' ? tikTokOAuthScopes() : metaOAuthScopes(platform);
   res.json({
     configured,
     redirectUri: redirectUri(req, platform),
-    scopes: platform === 'tiktok' ? TIKTOK_SCOPES : META_SCOPES,
+    scopes,
     manualConnectEnabled: advancedManualConnectEnabled(),
   });
 });
@@ -514,25 +509,27 @@ socialRouter.post('/oauth/:platform/start', async (req, res) => {
   });
 
   if (platform === 'tiktok') {
+    const scopes = tikTokOAuthScopes();
     const url = new URL(TIKTOK_AUTH_URL);
     url.searchParams.set('client_key', tiktokClient!.clientKey);
     url.searchParams.set('response_type', 'code');
-    url.searchParams.set('scope', TIKTOK_SCOPES.join(','));
+    url.searchParams.set('scope', scopes.join(','));
     url.searchParams.set('redirect_uri', redirectUri(req, platform));
     url.searchParams.set('state', state);
-    res.json({ url: url.toString(), redirectUri: redirectUri(req, platform), scopes: TIKTOK_SCOPES });
+    res.json({ url: url.toString(), redirectUri: redirectUri(req, platform), scopes });
     return;
   }
 
+  const scopes = metaOAuthScopes(platform);
   const url = new URL(`${META_AUTH_URL}/${graphVersion()}/dialog/oauth`);
   url.searchParams.set('client_id', metaClient!.appId);
   url.searchParams.set('redirect_uri', redirectUri(req, platform));
   url.searchParams.set('response_type', 'code');
-  url.searchParams.set('scope', META_SCOPES.join(','));
+  url.searchParams.set('scope', scopes.join(','));
   url.searchParams.set('state', state);
   url.searchParams.set('auth_type', 'rerequest');
   url.searchParams.set('return_scopes', 'true');
-  res.json({ url: url.toString(), redirectUri: redirectUri(req, platform), scopes: META_SCOPES });
+  res.json({ url: url.toString(), redirectUri: redirectUri(req, platform), scopes });
 });
 
 socialRouter.post('/connect/manual', async (req, res) => {
@@ -578,7 +575,7 @@ socialRouter.post('/connect/manual', async (req, res) => {
         accessToken,
         refreshToken,
         tokenExpiresAt: '',
-        scope: TIKTOK_SCOPES.join(','),
+        scope: tikTokOAuthScopes().join(','),
         parentPageId: '',
         parentPageName: '',
         followerCount: user.followerCount || 0,
@@ -619,7 +616,7 @@ socialRouter.post('/connect/manual', async (req, res) => {
           accessToken: page.accessToken,
           refreshToken: '',
           tokenExpiresAt: '',
-          scope: META_SCOPES.join(','),
+          scope: metaOAuthScopes('facebook').join(','),
           parentPageId: page.id,
           parentPageName: page.name,
           followerCount: page.fanCount || 0,
@@ -674,7 +671,7 @@ socialRouter.post('/connect/manual', async (req, res) => {
           accessToken,
           refreshToken: '',
           tokenExpiresAt: '',
-          scope: META_SCOPES.join(','),
+          scope: metaOAuthScopes('instagram').join(','),
           parentPageId: linked.page.id || '',
           parentPageName: linked.page.name || '',
           followerCount: linked.instagram.followersCount || 0,

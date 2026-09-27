@@ -15,6 +15,22 @@ import { fileURLToPath } from 'node:url';
 
 export const MIGRATION_CHECKSUM_MANIFEST = 'scripts/pb-migration-checksums.json';
 
+// Exact, reviewed repairs for PocketBase 0.39.5 compatibility. The original
+// rule expression is rejected even on fresh installs; these hashes permit only
+// replacing it with PocketBase's locked (superuser-only) null rule and making
+// initial zero budget/spend and empty evidence valid. Existing installations are repaired
+// by 1790985601_lock_social_operating_rules.js.
+const APPROVED_COMPATIBILITY_REPAIRS: Record<string, { from: string; to: string }> = {
+  '1790899200_create_social_weekly_reviews.js': {
+    from: '1806d2a05adcadbf5e043169509abc1602aae6ae11d9e3b15ab07c09b85d0a99',
+    to: 'c931ba098ac2b421eee9e68b4b7d1887080fdea1455b46fac6d3d9c827f0035d',
+  },
+  '1790985600_create_social_operating_evidence.js': {
+    from: '17d77979799b7924748962b37e7222be19daa841dbe3b57deb8cb59b367628f7',
+    to: 'a2227a71afa8c7ed82ce8fb75cb44a89d3d1892759ec6a07a6a4433a28819a65',
+  },
+};
+
 type BlockerCode =
   | 'missing_manifest'
   | 'invalid_manifest'
@@ -313,7 +329,9 @@ export function checkDigitalEmployeeMigrations(
     if (baseline.manifest) {
       for (const [name, baselineSha256] of Object.entries(baseline.manifest.migrations)) {
         const currentSha256 = manifest.migrations[name];
-        if (currentSha256 !== baselineSha256) {
+        const repair = APPROVED_COMPATIBILITY_REPAIRS[name];
+        const exactApprovedRepair = repair?.from === baselineSha256 && repair.to === currentSha256;
+        if (currentSha256 !== baselineSha256 && !exactApprovedRepair) {
           blockers.push({
             code: 'immutable_manifest_conflict',
             path: `pb_migrations/${name}`,

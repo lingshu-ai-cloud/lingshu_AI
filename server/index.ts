@@ -64,6 +64,8 @@ import { platformAdMetricHistoryRouter } from './routes/platformAdMetricHistory.
 import { platformAdAutomationStatusRouter } from './routes/platformAdAutomationStatus.js';
 import { platformAdPreflightRouter } from './routes/platformAdPreflight.js';
 import { accountHubRouter } from './routes/accountHub.js';
+import { agentNotificationsRouter } from './routes/agentNotifications.js';
+import { startupHubRouter } from './routes/startupHub.js';
 import {
   apiRateLimitConfig,
   configureHttpServer,
@@ -225,6 +227,8 @@ app.use('/api/overseas/plugins', pluginsRouter);
 app.use('/api/overseas/auth', authRouter);
 app.use('/api/overseas/admin', adminRouter);
 app.use('/api/overseas/account-hub', accountHubRouter);
+app.use('/api/overseas/agent-notifications', agentNotificationsRouter);
+app.use('/api/overseas/startup-hub', startupHubRouter);
 app.use('/api/overseas/support-access', supportAccessRouter);
 app.use('/api/overseas/crawl-worker', crawlWorkerRouter);
 app.use('/api/overseas/studio', studioRouter);
@@ -248,7 +252,7 @@ app.use('/api/overseas/platform-ads', platformAdAutomationStatusRouter);
 app.use('/api/v1/products', productApiRouter);
 app.use('/api/webhooks', webhookRouter);
 
-if (processRoleStartsBackgroundJobs(processRole)) await startBackgroundJobs();
+if (processRoleStartsBackgroundJobs(processRole)) await startBackgroundJobs(processRole);
 
 // 绱犳潗搴撴湰鍦版枃浠舵墭绠★紙POST /studio/materials 涓婁紶鍒?data/media/锛?
 const mediaDir = path.join(__dirname, '..', 'data', 'media');

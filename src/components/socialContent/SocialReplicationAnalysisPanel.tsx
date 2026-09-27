@@ -124,7 +124,12 @@ export default function SocialReplicationAnalysisPanel({ task }: { task: SocialC
         <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-1.5 text-[10px] font-black text-emerald-800"><CheckCircle2 size={13} />编导分析完成</span>
       </div>
 
-      <div className="mt-4 grid gap-2 sm:grid-cols-2">
+      {primaryHook && <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50/70 p-4"><p className="text-[10px] font-black text-emerald-800">前三秒预演</p><p className="mt-1 text-sm font-black text-text-primary">{primaryHook.firstFrame}</p><p className="mt-1 text-xs leading-5 text-text-secondary">{primaryHook.spokenLine || primaryHook.caption || primaryHook.firstSecondAction}</p></div>}
+
+      <details className="mt-3 overflow-hidden rounded-xl border border-border bg-surface-2/30">
+        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 bg-white px-4 py-3 text-xs font-black text-text-primary"><span>查看完整逐镜分析</span><span className="text-[10px] font-bold text-text-muted">{script.shots.length} 个镜头 · 默认收起</span></summary>
+        <div className="border-t border-border p-4">
+      <div className="grid gap-2 sm:grid-cols-2">
         <div className="rounded-lg bg-surface-2 px-3 py-2.5"><p className="text-[9px] font-black text-text-muted">结构怎么保留</p><p className="mt-1 text-xs leading-5 text-text-primary">{script.structureFidelitySummary || '编导分析中'}</p></div>
         <div className="rounded-lg bg-surface-2 px-3 py-2.5"><p className="text-[9px] font-black text-text-muted">原创差异怎么做</p><p className="mt-1 text-xs leading-5 text-text-primary">{script.originalityDifferenceSummary || '编导分析中'}</p></div>
       </div>
@@ -153,6 +158,8 @@ export default function SocialReplicationAnalysisPanel({ task }: { task: SocialC
       })}</div>}
 
       {analysis.rightsNotice && <p className="mt-4 flex items-start gap-2 rounded-lg bg-slate-50 px-3 py-2 text-[10px] leading-4 text-slate-600"><ShieldCheck size={13} className="mt-0.5 shrink-0" />{analysis.rightsNotice}</p>}
+        </div>
+      </details>
     </section>
   );
 }

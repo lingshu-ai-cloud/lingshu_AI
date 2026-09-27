@@ -2,6 +2,7 @@ import { GoogleGenAI, type Content } from '@google/genai';
 import type { VideoAiAnalysis, VoiceoverContent, StoryboardContent, ScriptType, Language } from '../types/index.js';
 import type { ImagePostEvidenceAnalysis } from './qwen.js';
 import { GEMINI_ANALYSIS_DIRECTOR_CONTRACT, GEMINI_STORYBOARD_DIRECTOR_CONTRACT } from '../prompts/geminiVideoScriptDirector.js';
+import { untrustedPromptData } from '../lib/untrustedPromptData.js';
 
 const MODEL = () => (process.env.GEMINI_MODEL ?? 'gemini-2.5-flash').trim();
 
@@ -114,13 +115,16 @@ export async function analyzeImagePostEvidenceWithGemini(opts: {
   tags?: string[];
 }): Promise<ImagePostEvidenceAnalysis> {
   if (!opts.images.length) throw new Error('Gemini image evidence analysis requires at least one image');
+  const metadataEvidence = untrustedPromptData('image_post_metadata', JSON.stringify({
+    title: opts.title || '',
+    caption: opts.caption || '',
+    platform: opts.platform || '',
+    tags: opts.tags || [],
+  }), 12_000);
   const prompt = `你是外贸 B2B 社媒竞品图文的证据提取器。图片按轮播顺序提供。
 只写图片中实际可见或原 caption 明确出现的内容；不得推断爆款原因、目标人群、效果、认证、价格、MOQ、工厂资质或互动结果。无法确认就放入 uncertainties。所有字符串用简体中文，只输出合法 JSON。
 
-标题：${opts.title || ''}
-平台：${opts.platform || ''}
-原始 caption：${opts.caption || ''}
-标签：${(opts.tags || []).join(', ')}
+${metadataEvidence}
 
 Schema:
 {"version":2,"status":"analyzed","observedFacts":[{"imageIndex":1,"subjects":[],"scene":"","composition":"","colors":[],"visibleText":[],"confidence":0}],"carouselFlow":[{"imageIndex":1,"role":"attention|product|detail|proof|process|cta|unknown","evidence":"","confidence":0}],"copyEvidence":{"hooks":[{"text":"","source":"caption|ocr","evidence":""}],"sellingPoints":[{"text":"","source":"caption|ocr","evidence":""}],"cta":[]},"reusableModules":[{"module":"","evidence":"","preserve":"","replace":"","confidence":0}],"uncertainties":[]}`;

@@ -360,6 +360,27 @@ async function existingVersion(input: {
   return result.items[0] ?? null;
 }
 
+/**
+ * Recover the latest immutable Director Plan when a retry refreshed the task's
+ * derived reference outputs and therefore cleared its compatibility pointer.
+ * The version ledger remains authoritative and tenant/task scoped.
+ */
+export async function latestSocialDirectorPlanVersion(input: {
+  repository: Starter198Repository;
+  tenantId: string;
+  taskId: string;
+}): Promise<StoredSocialDirectorPlanVersion | null> {
+  const result = await input.repository.list(
+    STARTER_COLLECTIONS.socialDirectorPlanVersions,
+    input.tenantId,
+    { where: { task_id: input.taskId }, sort: '-created_at', perPage: 500 },
+  );
+  const versions = result.items.map(parseStoredSocialDirectorPlanVersion)
+    .filter(record => record.taskId === input.taskId)
+    .sort((left, right) => Number(right.version) - Number(left.version));
+  return versions[0] ?? null;
+}
+
 function assertSameImmutableVersion(
   stored: StoredSocialDirectorPlanVersion,
   expected: StoredSocialDirectorPlanVersion,

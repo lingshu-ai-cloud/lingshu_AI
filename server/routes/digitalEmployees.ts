@@ -14,13 +14,13 @@ import type { ReviewTodoBoard } from '../../src/lib/reviewTodos.js';
 import { nextTaskFailure, taskRetryDue, type TaskFailure } from '../digitalEmployees/taskRetry.js';
 import { analysisWait, basicTaskWait, collectionWait, followupComplete, followupWait, postFullyPublished, publishingPlatformsCovered, publishingWait, waitState } from '../digitalEmployees/executionDiagnostics.js';
 import { listTenantEmployees } from './auth.js';
-import { recommendPackage, normalizePackage, validatePackage, compilePackage, packageConfig, packageTaskForKey, grantCovers } from '../digitalEmployees/weeklyPackage.js';
+import { recommendPackage, normalizePackage, validatePackage, compilePackage, packageConfig, packageTaskForKey, grantCovers, criticalBusinessConfigChanges } from '../digitalEmployees/weeklyPackage.js';
 import { TASK_TEMPLATES, type WeeklyPackage } from '../../src/lib/weeklyPackage.js';
 import { applyDirectorDecision, DIRECTOR_DECISION_LABELS, DIRECTOR_REASON_LABELS, type DirectorDecision, type DirectorDecisionReason } from '../../src/lib/directorDecision.js';
 import { reviseContent } from '../digitalEmployees/contentRevision.js';
 import { automationBgmCatalog } from './studio.js';
 import { spokenLanguageMatches } from '../../shared/contracts/videoCreationPlan.js';
-import { invalidatePublishingApprovalForProject } from '../digitalEmployees/publishingExecution.js';
+import { invalidatePublishingApprovalForProject, invalidatePublishingAuthorizationForRun } from '../digitalEmployees/publishingExecution.js';
 import { contentAcceptanceHash, contentAccepted } from '../digitalEmployees/contentAcceptance.js';
 import { buildDeliveryResources } from '../digitalEmployees/deliveryResources.js';
 import { buildTaskDeepLink, type WorkflowTask } from '../../src/lib/digitalEmployees.js';
@@ -97,6 +97,7 @@ import {
 } from '../digitalEmployees/domain.js';
 
 export const digitalEmployeesRouter = Router();
+import { DIGITAL_EMPLOYEE_COLLECTION as COLLECTION, jsonObject, withLocalQueue, type ApprovalRecord, type ConfigRecord, type ContentBatchPlanRecord, type CorrectionRecord, type EventRecord, type GoalRecord, type HandoffRecord, type PlanRecord, type RunRecord, type StoredRecord, type TaskRecord } from './digitalEmployeeRecords.js';
 digitalEmployeesRouter.use(requireAuth);
 digitalEmployeesRouter.use(enforceSupportSessionReadOnly);
 
@@ -105,196 +106,11 @@ digitalEmployeesRouter.get('/publishing-accounts', async (_req, res) => {
   res.json({ items: await listConnectedPublishingAccounts(tenantId) });
 });
 
-type StoredRecord = { id: string; [key: string]: unknown };
-type ConfigRecord = StoredRecord & {
-  tenant_id: string;
-  config: unknown;
-  status: string;
-  config_version?: number;
-  policy_version?: string;
-  facts_version?: string;
-  effective_config?: unknown;
-  activated_at?: string;
-};
-type GoalRecord = StoredRecord & {
-  tenant_id: string;
-  business_line?: string;
-  content_platforms?: unknown;
-  title: string;
-  objective: string;
-  metric: string;
-  baseline: number;
-  target: number;
-  unit: string;
-  starts_at: string;
-  ends_at: string;
-  scope: unknown;
-  constraints: unknown;
-  owner_id: string;
-  status: string;
-  version: number;
-  created_at: string;
-  updated_at: string;
-};
-type PlanRecord = StoredRecord & { tenant_id: string; goal_id: string; status: string; plan: unknown; created_at: string };
-type RunRecord = StoredRecord & {
-  tenant_id: string;
-  goal_id: string;
-  plan_id: string;
-  status: string;
-  current_controller: string;
-  pause_reason: string;
-  started_at: string;
-  completed_at: string;
-};
-type TaskRecord = StoredRecord & {
-  tenant_id: string;
-  goal_id: string;
-  plan_id: string;
-  run_id: string;
-  task_key: string;
-  title: string;
-  description: string;
-  agent_role: string;
-  kind: string;
-  status: WorkflowTaskStatus;
-  sequence: number;
-  priority: string;
-  requires_approval: boolean;
-  depends_on: unknown;
-  output: unknown;
-  blocked_reason: string;
-  owner_id: string;
-  created_at: string;
-  updated_at: string;
-  business_domain?: string;
-  capability_key?: string;
-  destination?: string;
-  destination_view?: string;
-  status_source?: string;
-  execution_mode?: 'internal' | 'observe' | 'draft_executor' | 'approval';
-  external_effect?: 'none' | 'draft' | 'schedule' | 'publish' | 'send';
-  automatic_execution_allowed?: boolean;
-  policy_source?: string;
-  business_refs?: unknown;
-  task_version?: number;
-  correction_version?: number;
-};
-type EventRecord = StoredRecord & {
-  tenant_id: string;
-  run_id: string;
-  task_id: string;
-  sequence: number;
-  type: string;
-  level: string;
-  summary: string;
-  payload: unknown;
-  occurred_at: string;
-};
-type ApprovalRecord = StoredRecord & {
-  tenant_id: string;
-  goal_id: string;
-  run_id: string;
-  task_id: string;
-  status: string;
-  action_summary: string;
-  risk_level: string;
-  evidence: unknown;
-  requested_by_agent: string;
-  decided_by: string;
-  decision_note: string;
-  created_at: string;
-  decided_at: string;
-  subject_version?: number;
-  content_hash?: string;
-};
-type HandoffRecord = StoredRecord & {
-  tenant_id: string;
-  run_id: string;
-  task_id: string;
-  status: string;
-  taken_by: string;
-  snapshot: unknown;
-  started_at: string;
-  returned_at: string;
-};
-type CorrectionRecord = StoredRecord & {
-  tenant_id: string;
-  goal_id: string;
-  run_id: string;
-  task_id: string;
-  version: number;
-  scope: 'one_off' | 'rule_candidate';
-  instruction: string;
-  rerun_downstream: boolean;
-  before_state: unknown;
-  after_state: unknown;
-  affected_task_ids: unknown;
-  business_refs: unknown;
-  status: string;
-  created_by: string;
-  created_at: string;
-};
-type ContentBatchPlanRecord = StoredRecord & {
-  tenant_id: string;
-  goal_id: string;
-  plan_id: string;
-  run_id: string;
-  task_id: string;
-  status: string;
-  orders: unknown;
-  routing: unknown;
-  config_version: number;
-  policy_version: string;
-  facts_version: string;
-  created_at: string;
-  updated_at: string;
-};
-
-const COLLECTION = {
-  config: 'digital_employee_configs',
-  configVersions: 'digital_employee_config_versions',
-  goals: 'weekly_goals',
-  plans: 'weekly_plans',
-  runs: 'workflow_runs',
-  tasks: 'workflow_tasks',
-  events: 'run_events',
-  approvals: 'approval_requests',
-  handoffs: 'handoff_sessions',
-  reviews: 'weekly_reviews',
-  corrections: 'workflow_corrections',
-  segments: 'customer_segments',
-  segmentMembers: 'customer_segment_members',
-  followupBatches: 'followup_batches',
-  followupItems: 'followup_batch_items',
-  contentBatchPlans: 'content_batch_plans',
-} as const;
-
 const streamClients = new Map<string, Set<Response>>();
 const eventAppendQueues = new Map<string, Promise<void>>();
 const goalApprovalQueues = new Map<string, Promise<void>>();
 const customerWorkflowQueues = new Map<string, Promise<void>>();
 const scheduledReviewQueues = new Map<string, Promise<void>>();
-
-async function withLocalQueue<T>(queue: Map<string, Promise<void>>, key: string, action: () => Promise<T>): Promise<T> {
-  const prior = queue.get(key) || Promise.resolve();
-  const operation = prior.catch(() => undefined).then(action);
-  const tail = operation.then(() => undefined, () => undefined);
-  queue.set(key, tail);
-  try {
-    return await operation;
-  } finally {
-    if (queue.get(key) === tail) queue.delete(key);
-  }
-}
-
-function jsonObject<T>(value: unknown, fallback: T): T {
-  if (value === undefined || value === null || value === '') return fallback;
-  if (typeof value === 'string') {
-    try { return JSON.parse(value) as T; } catch { return fallback; }
-  }
-  return value as T;
-}
 
 function publicConfig(record: ConfigRecord | null): DigitalEmployeeConfig | null {
   return record ? normalizeDigitalEmployeeConfig(jsonObject(record.config, {})) : null;
@@ -596,6 +412,27 @@ async function appendEvent(input: {
   } finally {
     if (eventAppendQueues.get(queueKey) === tail) eventAppendQueues.delete(queueKey);
   }
+}
+
+async function appendAuthorizationRequiredEvent(input: {
+  tenantId: string;
+  runId: string;
+  taskId?: string;
+  reason: 'content_changed' | 'package_adjusted' | 'critical_business_change';
+  changedFields?: string[];
+}): Promise<void> {
+  await appendEvent({
+    ...input,
+    type: 'authorization_required',
+    level: 'warning',
+    summary: '本周预算、产品、市场或发布授权范围已变更，受影响的自动发布已暂停，请查看差异并重新授权。',
+    payload: {
+      eventType: input.reason === 'critical_business_change' ? 'critical_business_change' : 'weekly_package_adjusted',
+      reason: input.reason,
+      changedFields: input.changedFields || [],
+      action: 'review_weekly_package',
+    },
+  });
 }
 
 agentBrowserSessions.setTelemetry(async (scope, action) => {
@@ -1188,6 +1025,8 @@ async function publishingApprovalPackage(
   const currentConfig = publicConfig(configRecord);
   if (!currentConfig) throw new Error('publishing_config_missing');
   const config = executionConfigForPlan(plan, currentConfig);
+  const planBody = jsonObject<Record<string, unknown>>(plan?.plan, {});
+  const weeklyPackage = planBody.businessPackage as WeeklyPackage | undefined;
   const scope = taskScope(task, tasks);
   const completed = projects.items.filter(item => recordBelongsToTask(item, run, scope) && studioProjectCompleted(item));
   return buildPublishingApprovalPackage({
@@ -1199,6 +1038,26 @@ async function publishingApprovalPackage(
     allowRealPublishing: config.allowRealPublishing,
     now: new Date(scheduleAnchor || (normalizeContinuationPolicy(config.continuationPolicy).publishingTimezone === 'legacy' ? run.started_at : new Date().toISOString())),
     ...(normalizeContinuationPolicy(config.continuationPolicy).publishingTimezone !== 'legacy' ? { scheduling: { startsAt: goal.starts_at, endsAt: goal.ends_at, timezone: normalizeContinuationPolicy(config.continuationPolicy).publishingTimezone as 'account' | 'Asia/Shanghai' } } : {}),
+    ...(weeklyPackage?.authorization.mode === 'bounded' ? { boundedAuthorization: {
+      packageRevision: weeklyPackage.revision,
+      authorizedBy: String(planBody.packageApprovedBy || ''),
+      authorizedAt: String(planBody.packageApprovedAt || ''),
+      startsAt: goal.starts_at,
+      endsAt: goal.ends_at,
+      accountBindings: config.publishingTargets
+        .filter(target => weeklyPackage.authorization.accountIds.includes(target.accountId))
+        .map(target => ({ accountId: target.accountId, platform: target.platform })),
+      maxPublishItems: weeklyPackage.authorization.maxPublishItems,
+      businessBoundary: {
+        products: config.focusProducts,
+        markets: config.targetMarkets,
+        audience: config.customerProfile,
+        languages: [...config.videoLanguages],
+        platforms: [...goalInput(goal).contentPlatforms],
+        productionBudget: Number(weeklyPackage.directorPlan?.productionBudget || 0),
+        paidMediaBudget: Number(weeklyPackage.directorPlan?.paidMediaBudget || 0),
+      },
+    } } : {}),
   });
 }
 
@@ -1547,7 +1406,8 @@ async function applyPackageGrant(tenantId: string, goal: GoalRecord, run: RunRec
   let batch: FollowupBatchRecord | null = null;
   if (task.task_key === 'content_release_approval') {
     publishing = await publishingApprovalPackage(tenantId, goal, run, task, tasks, now);
-    if (!publishing.allowRealPublishing || !grantCovers(pack, 'publish', publishing.items.flatMap(i => i.accountIds), publishing.items.length, beijingDate(new Date(now)), goal.ends_at)) return false;
+    const publishAccountIds = publishing.items.flatMap(i => i.accountIds);
+    if (!publishing.allowRealPublishing || !grantCovers(pack, 'publish', publishAccountIds, publishAccountIds.length, beijingDate(new Date(now)), goal.ends_at)) return false;
     if (publishing.items.some(i => beijingDate(new Date(i.scheduledAt)) > goal.ends_at)) return false;
     const connected = await listConnectedPublishingAccounts(tenantId);
     if (publishing.items.some(i => i.accountIds.some(id => !connected.some(a => a.accountId === id && a.platform === i.platform)))) return false;
@@ -2178,6 +2038,21 @@ digitalEmployeesRouter.post('/onboarding/complete', async (req, res) => {
     created_by: userId,
     created_at: now,
   });
+  const activeRuns = await store.list<RunRecord>(COLLECTION.runs, { where: { tenant_id: tenantId }, perPage: 100 });
+  for (const run of activeRuns.items.filter(item => !['succeeded', 'failed', 'cancelled'].includes(item.status))) {
+    const activePlan = await tenantRecord<PlanRecord>(COLLECTION.plans, run.plan_id, tenantId);
+    if (!activePlan) continue;
+    const changedFields = criticalBusinessConfigChanges(configSnapshotForPlan(activePlan, resolved.config), resolved.config);
+    if (!changedFields.length) continue;
+    await appendEvent({
+      tenantId,
+      runId: run.id,
+      type: 'critical_business_change',
+      level: 'warning',
+      summary: '产品、市场、平台账号或真实发布许可已变更；运行中周包（含原预算边界）仍使用原授权快照，请查看影响并决定是否重新规划。',
+      payload: { eventType: 'critical_business_change', changedFields, action: 'review_weekly_package' },
+    });
+  }
   await appendAudit({ tenantId, userId, action: 'digital_employee.onboarding.completed', targetType: 'digital_employee_config', targetId: existing?.id || tenantId, metadata: { autonomyMode: resolved.config.autonomyMode, configVersion: resolved.configVersion, policyVersion: resolved.policyVersion, factsVersion: resolved.knowledgeBinding.factsVersion } });
   res.json(await buildOverview(tenantId));
 });
@@ -2567,7 +2442,11 @@ digitalEmployeesRouter.post('/runs/:runId/tasks/:taskId/link-project', async (re
     if (!refs.some(r => r.type === 'studio_project' && r.id === project.id)) refs.push({ type: 'studio_project', id: project.id });
     await store.update(COLLECTION.tasks, current.id, { business_refs: refs, updated_at: new Date().toISOString() });
     const linkedPlan = await tenantRecord<PlanRecord>(COLLECTION.plans, run.plan_id, tenantId);
-    if (linkedPlan) await store.update(COLLECTION.plans, linkedPlan.id, { plan: { ...jsonObject<Record<string, unknown>>(linkedPlan.plan, {}), packageApprovedBy: '', packageGrantInvalidatedAt: new Date().toISOString() } });
+    if (linkedPlan) {
+      await store.update(COLLECTION.plans, linkedPlan.id, { plan: { ...jsonObject<Record<string, unknown>>(linkedPlan.plan, {}), packageApprovedBy: '', packageGrantInvalidatedAt: new Date().toISOString() } });
+      await invalidatePublishingAuthorizationForRun(tenantId, run.id);
+      await appendAuthorizationRequiredEvent({ tenantId, runId: run.id, taskId: current.id, reason: 'content_changed', changedFields: ['sourceProjectIds'] });
+    }
     await appendAudit({ tenantId, userId, action: 'weekly_task.project_linked', targetType: 'workflow_task', targetId: current.id, metadata: { projectId: project.id } });
   });
   if (res.headersSent) return;
@@ -3211,6 +3090,14 @@ async function applyTaskControl(input: {
     if (savedPackage && plan) {
       const priorBody = jsonObject<Record<string, unknown>>(plan.plan, {});
       await store.update(COLLECTION.plans, plan.id, { plan: { ...priorBody, packageApprovedBy: '', packageGrantInvalidatedAt: now } });
+      await invalidatePublishingAuthorizationForRun(input.tenantId, run.id);
+      await appendAuthorizationRequiredEvent({
+        tenantId: input.tenantId,
+        runId: run.id,
+        taskId: task.id,
+        reason: 'package_adjusted',
+        changedFields: input.action === 'replan' ? ['enabledWorkflows', 'weeklyPackage'] : ['taskExecution'],
+      });
     }
     const correction = await requiredCreate<CorrectionRecord>(COLLECTION.corrections, {
       tenant_id: input.tenantId,
@@ -3399,6 +3286,8 @@ digitalEmployeesRouter.post('/tasks/:taskId/director-decision', async (req, res)
     const applied = applyDirectorDecision({ pack, contentId, decision, ...(decision !== 'continue' ? { reason } : {}), applyToSimilar: req.body?.applyToSimilar === true, now });
     await store.update(COLLECTION.plans, plan.id, { plan: { ...original, businessPackage: applied.pack, packageApprovedBy: '', packageGrantInvalidatedAt: now } });
     if (decision === 'continue') {
+      await invalidatePublishingAuthorizationForRun(tenantId, task.run_id);
+      await appendAuthorizationRequiredEvent({ tenantId, runId: task.run_id, taskId: task.id, reason: 'package_adjusted', changedFields: ['directorDecision'] });
       await appendEvent({ tenantId, runId: task.run_id, taskId: task.id, type: 'director.continue', level: 'info', summary: `${task.title}：人工选择继续当前内容方向`, payload: { contentId, affectedContentIds: applied.affectedContentIds } });
       await appendAudit({ tenantId, userId, action: 'director_direction.continue', targetType: 'workflow_task', targetId: task.id, metadata: { runId: task.run_id, contentId, affectedContentIds: applied.affectedContentIds } });
       await advanceRun(tenantId, task.run_id);

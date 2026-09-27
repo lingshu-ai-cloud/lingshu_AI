@@ -2,6 +2,7 @@ import type { SentenceCueQuality } from '../../src/lib/digitalHumanPlan.js';
 import type { PersonReplacementTechnicalMetrics } from './personReplacementMediaQuality.js';
 import type { ReferenceVisualMetrics } from '../../src/lib/digitalHumanQuality.js';
 import type { SentenceSemanticQualityReport, SentenceSemanticDecision } from './sentenceSemanticQuality.js';
+import type { SentenceLipSyncQualityReport } from './sentenceLipSyncQuality.js';
 
 type Check = SentenceCueQuality['checks'][number];
 
@@ -22,6 +23,8 @@ export function sentenceCueQualityFromEvidence(input: {
   visualError?: string;
   semantic?: SentenceSemanticQualityReport | null;
   semanticError?: string;
+  lipSync?: SentenceLipSyncQualityReport | null;
+  lipSyncError?: string;
 }): SentenceCueQuality {
   const technical = input.technical;
   const visual = input.visual;
@@ -37,18 +40,26 @@ export function sentenceCueQualityFromEvidence(input: {
     ? `独立视觉代理：姿态配对 ${visual.posePairCount} 帧，误差 ${visual.normalizedPoseError?.toFixed(3) ?? '缺失'}；背景 SSIM ${visual.backgroundSsim?.toFixed(3) ?? '缺失'}；关键点异常 ${visual.landmarkArtifactCount}`
     : `独立视觉代理未完成：${input.visualError || '未配置'}`;
 
-  let motion = pending('motion', `${technicalEvidence}；${visualEvidence}。代理正常仍需确认动作语义。`);
+  const semanticEvidence = (value: SentenceSemanticDecision) => `${input.semantic?.model} · 置信度 ${value.confidence.toFixed(3)} · ${value.evidence} · 帧 ${value.frameRefs.join('、')}`;
+  let motion = pending('motion', `${technicalEvidence}；${visualEvidence}。代理正常仍不能证明动作语义${input.semanticError ? `；独立语义检测未完成：${input.semanticError}` : ''}。`);
   if (motionAnomaly || visualPoseAnomaly) motion = decided('motion', false, `${technicalEvidence}；${visualEvidence}。检测到运动／姿态异常。`);
+  else if (input.semantic?.actionMotion.status === 'fail' && input.semantic.actionMotion.confidence >= .6) motion = decided('motion', false, semanticEvidence(input.semantic.actionMotion));
+  else if (input.semantic?.actionMotion.status === 'pass' && input.semantic.actionMotion.confidence >= .85) motion = decided('motion', true, `${technicalEvidence}；${visualEvidence}；${semanticEvidence(input.semantic.actionMotion)}`);
+  else if (input.semantic?.actionMotion) motion = pending('motion', `${semanticEvidence(input.semantic.actionMotion)}；置信度或采样证据不足，需人工确认`);
 
   let background = pending('background', visualEvidence);
   if (visual?.backgroundSsim !== null && visual?.backgroundSsim !== undefined) {
     background = decided('background', visual.backgroundSsim >= 0.85, `${visualEvidence}。阈值 0.85。`);
   }
 
+  const lipEvidence = input.lipSync
+    ? `official SyncNet · 模型 ${input.lipSync.modelSha256.slice(0, 12)} · 置信度 ${input.lipSync.confidence.toFixed(3)} · 偏移 ${input.lipSync.avOffsetFrames} 帧 · 阈值 ≥${input.lipSync.thresholds.confidenceMin}/≤${input.lipSync.thresholds.absoluteOffsetFramesMax}帧`
+    : `独立 SyncNet 未完成：${input.lipSyncError || '未配置模型与运行环境'}`;
   let audioSync = pending('audio_sync', technical
-    ? `${technicalEvidence}；候选音轨=${technical.candidate.hasAudio ? '有' : '无'}。结构检查不能证明口型同步，仍需人工验收。`
-    : technicalEvidence);
+    ? `${technicalEvidence}；候选音轨=${technical.candidate.hasAudio ? '有' : '无'}；${lipEvidence}。结构检查不能代替口型同步证据。`
+    : `${technicalEvidence}；${lipEvidence}`);
   if (audioStructuralFailure) audioSync = decided('audio_sync', false, `${technicalEvidence}；候选缺少音轨或时长偏差超过 1 帧。`);
+  else if (input.lipSync) audioSync = decided('audio_sync', input.lipSync.passed, `${lipEvidence}${input.lipSync.failures.length ? `；${input.lipSync.failures.join('；')}` : ''}`);
 
   let reuseRisk = pending('reuse_risk', technicalEvidence);
   if (technical?.comparedFrames) {
@@ -60,7 +71,7 @@ export function sentenceCueQualityFromEvidence(input: {
 
   const semanticCheck = (key: 'identity' | 'product_brand_text', value: SentenceSemanticDecision | undefined, fallback: string): Check => {
     if (!value || value.status === 'unknown') return pending(key, value ? `${input.semantic?.model} · 置信度 ${value.confidence.toFixed(3)} · ${value.evidence}` : `${fallback}${input.semanticError ? `；独立语义检测未完成：${input.semanticError}` : ''}`);
-    const evidence = `${input.semantic?.model} · 置信度 ${value.confidence.toFixed(3)} · ${value.evidence} · 帧 ${value.frameRefs.join('、')}`;
+    const evidence = semanticEvidence(value);
     if (value.status === 'fail' && value.confidence >= 0.6) return decided(key, false, evidence);
     if (value.status === 'pass' && value.confidence >= 0.85) return decided(key, true, evidence);
     return pending(key, `${evidence}；置信度未达到自动判定阈值`);
@@ -74,6 +85,7 @@ export function sentenceCueQualityFromEvidence(input: {
     audioSync,
     reuseRisk,
   ];
-  const state = checks.some(check => check.status === 'failed') ? 'failed' : 'manual_review';
+  const state = checks.some(check => check.status === 'failed') ? 'failed'
+    : checks.every(check => check.status === 'passed') ? 'accepted' : 'manual_review';
   return { cueId: input.cueId, kind: 'person_generated', state, checks };
 }

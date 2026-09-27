@@ -26,7 +26,7 @@ const adapters: SourceAnalysisAdapters = {
   compressPreview: async () => { throw Error('isolated preview unavailable'); },
   analyze: async () => ({analysis: {summary:'Injected provider observation',theme:'fixture',firstTenSeconds:{atmosphere:'fixture',audioVisual:'fixture',camera:'fixture'},coarseStructure:[{description:'fixture'}],scriptDetails15s:[{time:'0-10',visual:'fixture'}]} as any,source:'fixture-video'}),
 };
-const run = () => analyzeSourceVideoJob({record:row,sourceUrl:'https://example.invalid/video',title:'fixture',platform:'youtube',skipYoutubeUrlAnalysis:true,suppressOpsRequeue:true}, adapters);
+const run = () => analyzeSourceVideoJob({record:row,sourceUrl:'https://www.youtube.com/watch?v=fixture01',title:'fixture',platform:'youtube',skipYoutubeUrlAnalysis:true,suppressOpsRequeue:true}, adapters);
 try {
   reset(); await run();
   let result = JSON.parse(row.aiAnalysis);
@@ -46,11 +46,11 @@ try {
   const execute = (async (_cmd:any,args:string[]) => {
     const out=args[args.indexOf('-o')+1].replace('%(ext)s','mp4'); fs.writeFileSync(out,Buffer.alloc(2048)); return {stdout:'',stderr:''};
   }) as any;
-  const media=await downloadVideoForAnalysis({sourceUrl:'https://example.invalid/video',title:'fixture',platform:'tiktok'},execute);
+  const media=await downloadVideoForAnalysis({sourceUrl:'https://www.tiktok.com/@fixture/video/1234567890123456789',title:'fixture',platform:'tiktok'},execute);
   assert.equal(media.size,2048); fs.unlinkSync(media.filePath);
   let clock=0, attempts=0;
   const budget=new DownloadBudget(100,()=>clock);
-  await assert.rejects(downloadVideoForAnalysis({sourceUrl:'https://example.invalid/video',title:'fixture',platform:'youtube'},(async (_cmd:any,_args:any,options:any)=>{
+  await assert.rejects(downloadVideoForAnalysis({sourceUrl:'https://www.youtube.com/watch?v=fixture01',title:'fixture',platform:'youtube'},(async (_cmd:any,_args:any,options:any)=>{
     attempts+=1; assert.equal(options.timeout,100); clock=101; throw Error('network timeout');
   }) as any,budget),/下载累计超时/);
   assert.equal(attempts,1,'an exhausted attempt cannot start another format or cookie channel');
@@ -61,14 +61,14 @@ try {
   try {
     Object.assign(process.env,{APIFY_TOKEN:'isolated-token',APIFY_FACEBOOK_VIDEO_FALLBACK_ENABLED:'1',APIFY_TIKTOK_VIDEO_DAILY_LIMIT:'999999',APIFY_TIKTOK_VIDEO_TENANT_DAILY_LIMIT:'999999'});
     globalThis.fetch=(async()=>{actorCalls+=1;return new Response(JSON.stringify({data:{id:'isolated-run',defaultDatasetId:'isolated-dataset',status:'RUNNING'}}));}) as typeof fetch;
-    await assert.rejects(downloadVideoForAnalysis({sourceUrl:'https://example.invalid/video',title:'fixture',platform:'facebook'},(async()=>{shellCalls+=1;throw Error('must not start after actor timeout');}) as any,new DownloadBudget(30)),/下载累计超时/);
+    await assert.rejects(downloadVideoForAnalysis({sourceUrl:'https://www.facebook.com/reel/123456789',title:'fixture',platform:'facebook'},(async()=>{shellCalls+=1;throw Error('must not start after actor timeout');}) as any,new DownloadBudget(30)),/下载累计超时/);
     assert.ok(actorCalls>=1); assert.equal(shellCalls,0,'Apify consumes the same total deadline before yt-dlp fallback');
   } finally {
     globalThis.fetch=fetchOriginal;
     for(const key of keys) if(saved[key]===undefined) delete process.env[key]; else process.env[key]=saved[key];
   }
 
-  await assert.rejects(downloadVideoForAnalysis({sourceUrl:'https://example.invalid/video',title:'fixture',platform:'tiktok'},(async()=>({stdout:'',stderr:''})) as any),/did not produce/);
+  await assert.rejects(downloadVideoForAnalysis({sourceUrl:'https://www.tiktok.com/@fixture/video/1234567890123456789',title:'fixture',platform:'tiktok'},(async()=>({stdout:'',stderr:''})) as any),/did not produce/);
 } finally {
   Object.assign(store,original);
   if(apify===undefined) delete process.env.APIFY_TOKEN; else process.env.APIFY_TOKEN=apify;

@@ -11,6 +11,10 @@ export interface AuthorizedDigitalPresenter {
   authorizationRef: string;
   consentRef: string;
   assetVersion: number;
+  socialAccountId?: string;
+  presenterProfileId?: string;
+  presenterProfileVersion?: string;
+  consistencyKey?: string;
   authorized: true;
 }
 
@@ -46,6 +50,7 @@ export interface SocialDigitalPresenterBridgePorts {
   resolvePresenter(input: {
     tenantId: string;
     presenterAssetId: string;
+    socialAccountId?: string;
   }): Promise<AuthorizedDigitalPresenter | null>;
   authorizeBudget(input: {
     tenantId: string;
@@ -77,6 +82,9 @@ function stableKey(input: {
     shotId: input.shotId,
     presenterAssetId: input.presenter.presenterAssetId,
     assetVersion: input.presenter.assetVersion,
+    presenterProfileId: input.presenter.presenterProfileId || null,
+    presenterProfileVersion: input.presenter.presenterProfileVersion || null,
+    consistencyKey: input.presenter.consistencyKey || null,
     providerId: input.presenter.providerId,
     script: input.script,
     aspectRatio: '9:16',
@@ -109,6 +117,10 @@ function outputAsset(input: {
       providerTaskId: input.execution.providerTaskId,
       presenterAssetId: input.presenter.presenterAssetId,
       presenterAssetVersion: input.presenter.assetVersion,
+      socialAccountId: input.presenter.socialAccountId || null,
+      presenterProfileId: input.presenter.presenterProfileId || null,
+      presenterProfileVersion: input.presenter.presenterProfileVersion || null,
+      presenterConsistencyKey: input.presenter.consistencyKey || null,
       consentRef: input.presenter.consentRef,
       authorizationRef: input.presenter.authorizationRef,
       idempotencyKey: input.idempotencyKey,
@@ -133,9 +145,24 @@ export function createSocialDigitalPresenterAdapter(
       if (!plan || plan.method !== 'talking' || plan.executionState !== 'ready_for_capability_check') return null;
       const presenterAssetId = context.shot.sourceRefs.find(ref => plan.presenterAssetIds.includes(ref));
       if (!presenterAssetId) return null;
-      const presenter = await ports.resolvePresenter({ tenantId: context.tenantId, presenterAssetId });
+      const presenter = await ports.resolvePresenter({
+        tenantId: context.tenantId,
+        presenterAssetId,
+        socialAccountId: plan.accountPresenterLock?.socialAccountId,
+      });
       if (!presenter || presenter.authorized !== true || !presenter.authorizationRef || !presenter.consentRef
         || !presenter.providerPresenterId || !presenter.providerVoiceId) return null;
+      const lock = plan.accountPresenterLock;
+      if (lock && (
+        presenter.presenterAssetId !== lock.presenterAssetId
+        || presenter.socialAccountId !== lock.socialAccountId
+        || presenter.presenterProfileId !== lock.presenterProfileId
+        || presenter.presenterProfileVersion !== lock.presenterProfileVersion
+        || presenter.providerPresenterId !== lock.avatarId
+        || presenter.providerVoiceId !== lock.voiceProfileId
+        || presenter.consentRef !== lock.consentRef
+        || presenter.consistencyKey !== lock.consistencyKey
+      )) return null;
       const script = String(context.baselineScene.narration || context.baselineScene.voiceover
         || context.baselineScene.script || context.baselineScene.caption || '').trim();
       if (!script) return null;

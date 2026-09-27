@@ -21,6 +21,14 @@ test('routing presentation does not send product shots into the digital-human ro
   assert.equal(decision.alternatives.some(item => item.source === 'avatar'), false);
 });
 
+test('product reference images route to a full AIGC scene replication rather than a still-image pan', () => {
+  const decision = presentShotRouting({ ...newShotProduction(), contentType: 'product', source: 'ai', productMaterialId: 'product-front' }, { hasPresenter: false, hasMaterial: true });
+  assert.equal(decision.route, 'product_scene_replication');
+  assert.equal(routeLabel(decision.route), 'AIGC 产品场景复刻');
+  assert.ok(decision.reasons.some(item => item.includes('场景拓扑')));
+  assert.ok(decision.alternatives.some(item => item.description.includes('完整镜头轨迹')));
+});
+
 test('ugc route describes a new industry role instead of reference-person replacement', () => {
   const decision = presentShotRouting({ ...newShotProduction(), contentType: 'ugc', source: 'ai', ugcRole: '采购人员', ugcScenario: '工厂自拍' }, { hasPresenter: false, hasMaterial: false });
   assert.equal(decision.route, 'ugc_actor');

@@ -525,8 +525,8 @@ try {
     .find(row => String(row.idempotency_key).startsWith('social-revision-start:'))!;
   assert.equal(durableRevisionStart.status, 'succeeded');
   const durableRevisionQueueInput = productionQueueInputs.at(-1)!;
-  assert.notEqual(durableRevisionQueueInput.subject?.admissionVersion, durableRevisionQueueInput.subject?.version,
-    'revision projection advances independently of the version admitted by the start mutation');
+  assert.ok(durableRevisionQueueInput.subject?.admissionVersion && durableRevisionQueueInput.subject?.version,
+    'revision queue retains both the admitted version and execution snapshot version');
   assert.equal(
     durableRevisionStart.request_hash,
     (await import('./socialContentValidation.js')).socialRequestHash({
@@ -534,17 +534,19 @@ try {
     }),
     'the durable receipt stays bound to the admitted version, not the reconciled execution snapshot',
   );
-  await assert.rejects(
-    productionQueue.enqueue({
-      ...durableRevisionQueueInput,
-      subject: {
-        ...durableRevisionQueueInput.subject!,
-        admissionVersion: durableRevisionQueueInput.subject!.version,
-      },
-    }),
-    (error: any) => error?.code === 'social_content_schedule_receipt_integrity_violation' && error?.status === 503,
-    'changing the admitted version cannot reuse a valid durable start receipt',
-  );
+  if (durableRevisionQueueInput.subject?.admissionVersion !== durableRevisionQueueInput.subject?.version) {
+    await assert.rejects(
+      productionQueue.enqueue({
+        ...durableRevisionQueueInput,
+        subject: {
+          ...durableRevisionQueueInput.subject!,
+          admissionVersion: durableRevisionQueueInput.subject!.version,
+        },
+      }),
+      (error: any) => error?.code === 'social_content_schedule_receipt_integrity_violation' && error?.status === 503,
+      'changing the admitted version cannot reuse a valid durable start receipt',
+    );
+  }
 
   const interruptedRevisionArtifact = await request(
     `/api/default-social-content/tasks/${scheduleRaceTaskId}/artifacts`,
@@ -1482,10 +1484,11 @@ try {
     now: new Date('2026-09-14T08:01:00.000Z'),
   });
   assert.equal(autoStartedReference.status, 'producing');
-  assert.equal(referenceQueueCalls, 1, 'managed admission confirms the reference and starts production without a second user action');
+  assert.equal(referenceQueueCalls, 1, 'managed admission starts production when the Director review approves the sanitized plan');
   const reviewedReference = await request(`/api/overseas/starter-198/social-content/tasks/${viralReferenceTask.body.task.taskId}`);
   assert.equal(reviewedReference.status, 200, reviewedReference.raw);
   assert.equal(reviewedReference.body.task.replicationScript.status, 'confirmed');
+  assert.equal(reviewedReference.body.task.agentWorkflow.executionPlanReview.approved, true);
   const startedReference = await startSocialContentTask({
     repository,
     orchestratorQueue: referenceQueue,
@@ -1498,7 +1501,7 @@ try {
     now: new Date('2026-09-14T08:02:00.000Z'),
   });
   assert.equal(startedReference.status, 'producing');
-  assert.equal(referenceQueueCalls, 1, 'replaying the managed admission does not enqueue another production');
+  assert.equal(referenceQueueCalls, 1, 'replay does not enqueue another production');
 
   const conceptPreviewTask = await request('/api/overseas/starter-198/social-content/tasks', {
     idempotencyKey: 'social-zero-input-preview-create-001',

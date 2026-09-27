@@ -151,6 +151,8 @@ export interface ApprovedContentPublicationTaskInput {
   approvalTaskId: string;
   subjectVersion: string;
   contentHash: string;
+  /** Deterministic clock injection for replay/tests; production callers omit it. */
+  now?: Date;
 }
 
 /**
@@ -210,6 +212,7 @@ export async function enqueueApprovedContentPublicationPackageTask(
     cost: { status: 'known', estimatedCostCny: 0, reservedCostCny: 0 },
     resourceUnits: { contentArtifacts: 0, contentRevisions: 0, inquiryAi: 0 },
     repository,
+    now: input.now,
   });
   return { taskId: persisted.envelope.taskId, created: persisted.created };
 }

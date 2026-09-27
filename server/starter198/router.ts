@@ -80,6 +80,7 @@ export function createStarter198Router(dependencies: Starter198RouterDependencie
         tenantId,
         role,
         repository,
+        now: dependencies.now?.(),
         orchestratorAvailable: Boolean(dependencies.orchestratorQueue),
         decisionAvailable: Boolean(dependencies.approvalDecision),
         quoteDecisionAvailable: Boolean(dependencies.quoteDecision),

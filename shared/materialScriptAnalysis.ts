@@ -10,6 +10,23 @@ export interface MaterialScriptShot {
   matchTags: string[];
   confidence: number;
   needsReview: boolean;
+  /** Reusable editorial facts computed once when the material is ingested. */
+  editorial: {
+    subjects: string[];
+    actions: string[];
+    environments: string[];
+    shotLanguage: string[];
+    motionLevel: 'static' | 'low' | 'medium' | 'high' | 'unknown';
+    /** Safe source interval for later task-specific trimming. */
+    trim: {
+      preferredStartSeconds: number;
+      preferredEndSeconds: number;
+      actionPeakSeconds: number | null;
+      boundaryConfidence: number;
+      cleanEntry: boolean;
+      cleanExit: boolean;
+    };
+  };
 }
 
 /**
@@ -18,7 +35,7 @@ export interface MaterialScriptShot {
  * the uploaded pixels.
  */
 export interface MaterialScriptAnalysis {
-  schemaVersion: 'material-script-analysis.v1';
+  schemaVersion: 'material-script-analysis.v2';
   status: 'ready';
   sourceRevision: string;
   summary: string;
@@ -28,6 +45,14 @@ export interface MaterialScriptAnalysis {
   };
   functions: string[];
   searchableText: string;
+  /** Faceted index for fast recall; final ranking still uses the current scene. */
+  directorIndex: {
+    subjects: string[];
+    actions: string[];
+    environments: string[];
+    shotLanguage: string[];
+    functions: string[];
+  };
   shots: MaterialScriptShot[];
   truthBoundary: string;
   analyzedAt: string;
@@ -76,6 +101,56 @@ function instructionFor(role: MaterialScriptRole, evidence: string[]): string {
   return instructions[role];
 }
 
+function finiteInRange(value: unknown, min: number, max: number, fallback: number): number {
+  const parsed = typeof value === 'number' ? value
+    : typeof value === 'string' && value.trim() ? Number(value) : Number.NaN;
+  return Number.isFinite(parsed) ? Math.max(min, Math.min(max, parsed)) : fallback;
+}
+
+function motionLevel(segment: SegmentLike): MaterialScriptShot['editorial']['motionLevel'] {
+  const explicit = text(segment.motionLevel, 20).toLowerCase();
+  if (['static', 'low', 'medium', 'high'].includes(explicit)) return explicit as MaterialScriptShot['editorial']['motionLevel'];
+  const source = [text(segment.action), text(segment.camera), ...strings(segment.observedFacts)].join(' ');
+  if (!source) return 'unknown';
+  if (/快速|剧烈|奔跑|旋转|抛|跌落|切换|fast|rapid|shake|spin|drop/i.test(source)) return 'high';
+  if (/移动|操作|打开|关闭|拿起|放下|推进|横移|跟拍|move|open|close|pick|pan|track/i.test(source)) return 'medium';
+  if (/缓慢|轻微|稳定移动|slow|subtle/i.test(source)) return 'low';
+  if (/静止|固定|无明显动作|static|still/i.test(source)) return 'static';
+  return 'unknown';
+}
+
+function editorialFor(segment: SegmentLike, start: number, end: number): MaterialScriptShot['editorial'] {
+  const subjects = unique([...strings(segment.subject), text(segment.subject), ...strings(segment.observedFacts)], 16);
+  const actions = unique([text(segment.action), ...strings(segment.actions)], 12);
+  const environments = unique([text(segment.environment)], 8);
+  const shotLanguage = unique([text(segment.shot), text(segment.angle), text(segment.camera), text(segment.composition)], 12);
+  const preferredStartSeconds = finiteInRange(segment.cleanStart ?? segment.actionStart, start, end, start);
+  const preferredEndSeconds = finiteInRange(segment.cleanEnd ?? segment.actionEnd, preferredStartSeconds, end, end);
+  const rawPeak = typeof segment.actionPeak === 'number' ? segment.actionPeak
+    : typeof segment.actionPeak === 'string' && segment.actionPeak.trim() ? Number(segment.actionPeak) : Number.NaN;
+  const actionPeakSeconds = Number.isFinite(rawPeak) && rawPeak >= preferredStartSeconds && rawPeak <= preferredEndSeconds
+    ? Number(rawPeak.toFixed(2)) : null;
+  // Factual confidence cannot prove that a sampled timestamp is a safe edit
+  // boundary. Older analyses did not produce boundary evidence, so they must
+  // remain conservative until the visual analyzer is run again.
+  const boundaryConfidence = finiteInRange(segment.boundaryConfidence, 0, 1, 0);
+  return {
+    subjects,
+    actions,
+    environments,
+    shotLanguage,
+    motionLevel: motionLevel(segment),
+    trim: {
+      preferredStartSeconds: Number(preferredStartSeconds.toFixed(2)),
+      preferredEndSeconds: Number(preferredEndSeconds.toFixed(2)),
+      actionPeakSeconds,
+      boundaryConfidence: Number(boundaryConfidence.toFixed(3)),
+      cleanEntry: segment.cleanEntry === true && boundaryConfidence >= .6,
+      cleanExit: segment.cleanExit === true && boundaryConfidence >= .6,
+    },
+  };
+}
+
 export function buildMaterialScriptAnalysis(input: {
   materialId: string;
   name: string;
@@ -104,6 +179,7 @@ export function buildMaterialScriptAnalysis(input: {
     const start = Math.max(0, Number(segment.start || 0));
     const end = Math.max(start, Number(segment.end ?? input.duration ?? start));
     const confidence = Math.max(0, Math.min(1, Number(segment.confidence ?? 0.7)));
+    const editorial = editorialFor(segment, start, end);
     return {
       segmentId: text(segment.id, 160) || `${input.materialId}-segment-${index + 1}`,
       startSeconds: Number(start.toFixed(2)),
@@ -114,6 +190,7 @@ export function buildMaterialScriptAnalysis(input: {
       matchTags: unique([role, ...functions, ...evidence]),
       confidence,
       needsReview: Boolean(segment.needsReview) || confidence < 0.65,
+      editorial,
     };
   });
   const functions = unique(shots.flatMap(shot => [shot.role, ...shot.matchTags.slice(0, 6)]));
@@ -134,13 +211,20 @@ export function buildMaterialScriptAnalysis(input: {
     ...shots.flatMap(shot => [shot.role, ...shot.matchTags, ...shot.observedEvidence]),
   ], 120).join(' ').slice(0, 8_000);
   return {
-    schemaVersion: 'material-script-analysis.v1',
+    schemaVersion: 'material-script-analysis.v2',
     status: 'ready',
     sourceRevision: input.sourceRevision,
     summary: `已将${shots.length}个真实画面区间整理为可匹配的脚本镜头；前三秒钩子能力 ${hookScore}/100。`,
     hookCapability: { score: hookScore, reasons: hookReasons },
     functions,
     searchableText,
+    directorIndex: {
+      subjects: unique(shots.flatMap(shot => shot.editorial.subjects), 80),
+      actions: unique(shots.flatMap(shot => shot.editorial.actions), 80),
+      environments: unique(shots.flatMap(shot => shot.editorial.environments), 60),
+      shotLanguage: unique(shots.flatMap(shot => shot.editorial.shotLanguage), 60),
+      functions,
+    },
     shots,
     truthBoundary: '分析只描述原素材中可见、可确认的内容；不会改写客户原片，也不会生成未核实的产品功效、工厂或人物事实。',
     analyzedAt: input.analyzedAt || new Date().toISOString(),
@@ -150,10 +234,12 @@ export function buildMaterialScriptAnalysis(input: {
 export function reusableMaterialScriptAnalysis(value: unknown, sourceRevision: string): MaterialScriptAnalysis | null {
   if (!value || typeof value !== 'object') return null;
   const analysis = value as Partial<MaterialScriptAnalysis>;
-  return analysis.schemaVersion === 'material-script-analysis.v1'
+  return analysis.schemaVersion === 'material-script-analysis.v2'
     && analysis.status === 'ready'
     && analysis.sourceRevision === sourceRevision
     && Array.isArray(analysis.shots)
+    && analysis.shots.every(shot => Boolean(shot?.editorial?.trim))
+    && Boolean(analysis.directorIndex)
     ? analysis as MaterialScriptAnalysis
     : null;
 }

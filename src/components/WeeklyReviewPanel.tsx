@@ -80,6 +80,7 @@ export default function WeeklyReviewPanel({ data, onGoLive, onOpen, onHistory, p
   const selected = insights.find(i => i.id === selectedId);
   const close = useMemo(() => () => setSelectedId(null), []);
   const snapshot = data.businessSnapshot || data.liveReview?.businessSnapshot;
+  const interactionReview = snapshot?.interactionReview;
   const visible = insights.filter(i => filter === 'all' || i.category === filter);
   const featured = insights.filter(i => i.confidence === 'observed').filter((item, index, list) => list.findIndex(other => other.category === item.category) === index).slice(0, 3);
   const delivered = (data.deliveries || []).filter(d => d.column === 'done');
@@ -91,6 +92,22 @@ export default function WeeklyReviewPanel({ data, onGoLive, onOpen, onHistory, p
     </header>
 
     <p className="text-xs leading-6 text-text-secondary">{data.run && !['succeeded', 'completed', 'failed', 'cancelled'].includes(data.run.status) ? '本轮仍在运行，以下为阶段性发现。' : ''}平台数据按所选周期统计；执行卡点与知识候选属于当前目标。</p>
+    <section aria-label="互动与销售资格复盘" className="rounded-md border border-border bg-white p-5 sm:p-6">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div><h2 className="text-base font-bold text-text-primary">互动与销售资格</h2><p className="mt-1 text-xs leading-5 text-text-secondary">{interactionReview?.note || '等待忠实互动回写与销售确认。'}</p></div>
+        <span className="text-xs text-text-muted">{interactionReview?.deadline ? `数据截止 ${new Date(interactionReview.deadline).toLocaleString('zh-CN')}` : '截止时间待回流'}</span>
+      </div>
+      <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-5">
+        {[
+          ['评论', interactionReview?.comments],
+          ['原始询盘', interactionReview?.inquiries],
+          ['销售确认有效', interactionReview?.qualifiedInquiries],
+          ['未知内容来源', interactionReview?.unknownSourceInquiries],
+          ['CreativeLearning', interactionReview?.creativeLearnings],
+        ].map(([label, value]) => <div key={String(label)} className="rounded-md bg-surface-2 px-3 py-4"><p className="text-[11px] text-text-secondary">{label}</p><p className="mt-2 text-xl font-bold text-text-primary">{typeof value === 'number' ? value.toLocaleString('zh-CN') : '—'}</p></div>)}
+      </div>
+      {interactionReview?.breakdown.length ? <details className="mt-4 border-t border-border pt-4"><summary className="cursor-pointer text-xs font-semibold text-text-secondary">按经营方向—账号—内容查看</summary><div className="mt-3 overflow-x-auto"><table className="w-full min-w-[680px] text-left text-xs"><thead className="text-text-muted"><tr><th className="pb-2">经营方向</th><th className="pb-2">账号</th><th className="pb-2">内容</th><th className="pb-2 text-right">评论</th><th className="pb-2 text-right">询盘</th><th className="pb-2 text-right">有效询盘</th></tr></thead><tbody className="divide-y divide-border">{interactionReview.breakdown.map((row, index) => <tr key={`${row.businessDirectionRef || 'unknown'}-${row.accountId}-${row.contentId || 'unknown'}-${index}`}><td className="py-2.5">{row.businessDirectionRef || '未标记'}</td><td className="py-2.5">{row.accountId || '未知'}</td><td className="py-2.5">{row.contentId || '未知来源'}</td><td className="py-2.5 text-right">{row.comments}</td><td className="py-2.5 text-right">{row.inquiries}</td><td className="py-2.5 text-right">{row.qualifiedInquiries}</td></tr>)}</tbody></table></div></details> : null}
+    </section>
     <section aria-label="本期值得行动" className="home-insight-panel p-5 sm:p-6">
       <div className="mb-5 flex items-center justify-between gap-3"><h2 className="flex items-center gap-2 text-base font-bold text-text-primary"><span className="h-2 w-2 rounded-full bg-amber"/>本期值得行动</h2><span className="text-xs text-[#805c47]">优先看这几件事</span></div>
       {featured.length ? <div className={`grid gap-3 ${featured.length === 2 ? 'md:grid-cols-2' : featured.length >= 3 ? 'md:grid-cols-3' : ''}`}>{featured.map((item, index) => <button key={item.id} type="button" onClick={() => setSelectedId(item.id)} className="group flex flex-col rounded-md border border-[#eadfd5] bg-white/70 p-5 text-left transition-colors hover:border-[#d9bca5] hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#f3b37a]/30"><span className="flex w-full items-center justify-between text-xs font-medium text-text-secondary">{categoryOf(item.category).label}<span className="font-mono text-text-muted">0{index + 1}</span></span><h3 className="mb-2 mt-3 text-base font-bold leading-7 text-text-primary">{item.title}</h3><p className="line-clamp-2 text-sm leading-6 text-text-secondary">{item.summary}</p><span className="mt-5 inline-flex items-center gap-2 text-xs font-semibold text-accent">查看判断与行动<ArrowRight size={14}/></span></button>)}</div> : <div className="flex items-start gap-3 border-y border-[#eadfd5] bg-white/60 p-5"><Search size={20} className="mt-1 shrink-0 text-accent"/><div><p className="text-sm font-semibold text-text-primary">本期还没有足够证据支持优先行动</p><p className="mt-2 text-sm leading-6 text-text-secondary">完成发布与客户沟通后，复盘会基于实际回收的数据更新。下方可查看各类洞察还需要哪些信息。</p></div></div>}

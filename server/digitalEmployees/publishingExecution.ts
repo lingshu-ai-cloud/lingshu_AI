@@ -6,6 +6,7 @@ import type { MatrixAccountPlan } from '../../src/lib/weeklyMatrix.js';
 import { createTrackedPostDraft } from '../publishing/waLink.js';
 import { store } from '../storage/index.js';
 import type { PublishingPlatform, PublishingTarget } from './domain.js';
+import type { SocialWeeklyPublicationTask, VersionedSocialRef, WeeklyOperatingPackage } from '../../shared/contracts/socialProgram.js';
 import { runExternalActionBlockedReason, withDigitalEmployeeRunLock } from './runControl.js';
 import {
   currentPublishableVideoPaths,
@@ -33,11 +34,122 @@ export interface PublishingApprovalPackage {
   schemaVersion: 1;
   contentHash: string;
   allowRealPublishing: boolean;
+  authorizationSnapshot?: BoundedPublishingAuthorizationSnapshot;
   items: PublishingApprovalItem[];
 }
 
+export interface BoundedPublishingAuthorizationSnapshot {
+  schemaVersion: 1;
+  packageRevision: number;
+  authorizedBy: string;
+  authorizedAt: string;
+  startsAt: string;
+  endsAt: string;
+  accountBindings: Array<{ accountId: string; platform: PublishingPlatform }>;
+  maxPublishItems: number;
+  businessBoundary: {
+    products: string;
+    markets: string;
+    audience: string;
+    languages: string[];
+    platforms: PublishingPlatform[];
+    productionBudget: number;
+    paidMediaBudget: number;
+  };
+  snapshotHash: string;
+}
+
+export type BoundedPublishingAuthorizationInput = Omit<BoundedPublishingAuthorizationSnapshot, 'schemaVersion' | 'snapshotHash'>;
+
 const text = (value: unknown): string => String(value ?? '').trim();
 const record = (value: unknown): Record<string, unknown> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
+
+/**
+ * The intentionally narrow hand-off from T5. Publishing consumes only a
+ * frozen, accepted artifact; it neither reconstructs nor copies production.
+ */
+export interface PublishableProductionResult {
+  productionResultId: string;
+  contentId: string;
+  contentVersion: string;
+  contentHash: string;
+  title: string;
+  body: string;
+  hashtags?: string[];
+  assets: Array<{ kind: 'video' | 'image' | 'cover' | 'subtitle' | 'document'; fileName: string; downloadUrl: string; contentHash: string }>;
+  sourceRefs: VersionedSocialRef[];
+  acceptedAt: string;
+}
+
+export interface PublicationAssignmentLineage {
+  programRef: VersionedSocialRef;
+  operatingPackageRef: VersionedSocialRef;
+  contentPackageRef: VersionedSocialRef;
+  weeklyPublicationTaskRef: VersionedSocialRef;
+  publishingWorkflowTaskRef: VersionedSocialRef;
+  businessGoalRef: VersionedSocialRef | null;
+  enterpriseProfileRef: VersionedSocialRef | null;
+  factRefs: VersionedSocialRef[];
+  productionResultRef: VersionedSocialRef;
+  upstreamRefs: VersionedSocialRef[];
+}
+
+export interface PublicationAssignment {
+  schemaVersion: 'publication-assignment.v1';
+  assignmentId: string;
+  tenantId: string;
+  publicationTaskId: string;
+  accountId: string;
+  platform: PublishingPlatform;
+  publishWindow: string;
+  packageId: string;
+  packageIdempotencyKey: string;
+  lineage: PublicationAssignmentLineage;
+  assignmentHash: string;
+}
+
+const stableRef = (ref: VersionedSocialRef): VersionedSocialRef => ({ type: text(ref.type), id: text(ref.id), version: Number(ref.version) });
+const stableRefs = (refs: VersionedSocialRef[]) => refs.map(stableRef).sort((a, b) => `${a.type}:${a.id}:${a.version}`.localeCompare(`${b.type}:${b.id}:${b.version}`));
+const stableDigest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
+
+/** Deterministically maps one authoritative weekly item and one future production result. */
+export function buildPublicationAssignment(input: {
+  tenantId: string;
+  operatingPackage: WeeklyOperatingPackage;
+  publicationTask: SocialWeeklyPublicationTask;
+  productionResult: PublishableProductionResult;
+}): PublicationAssignment {
+  const { operatingPackage: weekly, publicationTask: task, productionResult: result } = input;
+  const workflow = weekly.workflowTasks.find(item => item.kind === 'publishing');
+  if (!workflow) throw new Error('publishing_workflow_task_required');
+  if (!weekly.socialContentPackage.publicationTasks.some(item => item.publicationTaskId === task.publicationTaskId)) throw new Error('publication_task_outside_package');
+  if (task.status === 'cancelled') throw new Error('publication_task_cancelled');
+  if (!task.publishWindow) throw new Error('publication_publish_window_required');
+  if (!result.productionResultId || !result.contentId || !/^[a-f0-9]{32,128}$/i.test(result.contentHash)) throw new Error('production_result_invalid');
+  const lineage: PublicationAssignmentLineage = {
+    programRef: { type: 'social_program', id: weekly.programId, version: 1 },
+    operatingPackageRef: { type: 'weekly_operating_package', id: weekly.packageId, version: weekly.version },
+    contentPackageRef: { type: 'social_weekly_content_package', id: weekly.socialContentPackage.contentPackageId, version: weekly.socialContentPackage.version },
+    weeklyPublicationTaskRef: { type: 'weekly_publication_task', id: task.publicationTaskId, version: weekly.version },
+    publishingWorkflowTaskRef: stableRef(workflow.taskRef),
+    businessGoalRef: weekly.businessContentGoalRef ? stableRef(weekly.businessContentGoalRef) : null,
+    enterpriseProfileRef: weekly.enterpriseProfileRef ? stableRef(weekly.enterpriseProfileRef) : null,
+    factRefs: stableRefs(task.factRefs),
+    productionResultRef: { type: 'production_result', id: result.productionResultId, version: 1 },
+    upstreamRefs: stableRefs(result.sourceRefs),
+  };
+  const identity = { tenantId: text(input.tenantId), packageId: weekly.packageId, packageVersion: weekly.version, publicationTaskId: task.publicationTaskId, productionResultId: result.productionResultId, contentHash: result.contentHash.toLowerCase(), accountId: task.accountId, platform: task.platform };
+  const digest = stableDigest(identity);
+  const packageIdempotencyKey = `weekly:${weekly.packageId}:${weekly.version}:${task.publicationTaskId}:${result.productionResultId}`;
+  const packageId = `pubpkg_${stableDigest({ tenantId: text(input.tenantId), idempotencyKey: packageIdempotencyKey }).slice(0, 24)}`;
+  const assignmentHash = stableDigest({ identity, lineage });
+  return {
+    schemaVersion: 'publication-assignment.v1', assignmentId: `pasn_${digest.slice(0, 24)}`,
+    tenantId: text(input.tenantId), publicationTaskId: task.publicationTaskId, accountId: task.accountId,
+    platform: task.platform, publishWindow: task.publishWindow, packageId, packageIdempotencyKey,
+    lineage, assignmentHash,
+  };
+}
 
 function nextDailySlot(index: number, now: Date): string {
   const slot = new Date(now);
@@ -46,8 +158,67 @@ function nextDailySlot(index: number, now: Date): string {
   return slot.toISOString();
 }
 
-function contentFingerprint(items: PublishingApprovalItem[], allowRealPublishing: boolean): string {
-  return createHash('sha256').update(JSON.stringify({ allowRealPublishing, items })).digest('hex');
+function stableAuthorizationValue(input: BoundedPublishingAuthorizationInput) {
+  return {
+    ...input,
+    accountBindings: [...input.accountBindings].sort((a, b) => `${a.platform}:${a.accountId}`.localeCompare(`${b.platform}:${b.accountId}`)),
+    businessBoundary: {
+      ...input.businessBoundary,
+      languages: [...input.businessBoundary.languages].sort(),
+      platforms: [...input.businessBoundary.platforms].sort(),
+    },
+  };
+}
+
+export function buildBoundedPublishingAuthorization(input: BoundedPublishingAuthorizationInput): BoundedPublishingAuthorizationSnapshot {
+  const stable = stableAuthorizationValue(input);
+  return { schemaVersion: 1, ...stable, snapshotHash: createHash('sha256').update(JSON.stringify(stable)).digest('hex') };
+}
+
+export function boundedAuthorizationIssue(snapshot: BoundedPublishingAuthorizationSnapshot | undefined, input: {
+  accountId: string;
+  platform: PublishingPlatform;
+  scheduledAt: string;
+}): string {
+  if (!snapshot) return 'bounded_authorization_missing';
+  const raw = snapshot as unknown as Record<string, unknown>;
+  const boundary = record(raw.businessBoundary);
+  const bindings = raw.accountBindings;
+  const languages = boundary.languages;
+  const platforms = boundary.platforms;
+  if (!Array.isArray(bindings) || !bindings.every(binding => {
+    const item = record(binding);
+    return Boolean(text(item.accountId) && text(item.platform));
+  }) || !Array.isArray(languages) || !languages.every(language => typeof language === 'string')
+    || !Array.isArray(platforms) || !platforms.every(platform => typeof platform === 'string')
+    || typeof raw.snapshotHash !== 'string' || !Number.isInteger(raw.packageRevision)
+    || !Number.isInteger(raw.maxPublishItems)
+    || !Number.isFinite(Number(boundary.productionBudget)) || !Number.isFinite(Number(boundary.paidMediaBudget))) {
+    return 'bounded_authorization_malformed';
+  }
+  if (snapshot.schemaVersion !== 1) return 'bounded_authorization_version_unsupported';
+  const { snapshotHash, schemaVersion: _schemaVersion, ...value } = snapshot;
+  try {
+    if (buildBoundedPublishingAuthorization(value).snapshotHash !== snapshotHash) return 'bounded_authorization_tampered';
+  } catch {
+    return 'bounded_authorization_malformed';
+  }
+  if (!snapshot.authorizedBy || !snapshot.authorizedAt) return 'bounded_authorization_actor_missing';
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(snapshot.startsAt) || !/^\d{4}-\d{2}-\d{2}$/.test(snapshot.endsAt)
+    || snapshot.startsAt > snapshot.endsAt || !Number.isFinite(Date.parse(snapshot.authorizedAt))) return 'bounded_authorization_period_invalid';
+  if (snapshot.maxPublishItems < 1) return 'bounded_authorization_empty';
+  if (!snapshot.businessBoundary.platforms.includes(input.platform)) return 'bounded_authorization_platform_mismatch';
+  const instant = new Date(input.scheduledAt);
+  const scheduledDate = Number.isNaN(instant.getTime()) ? '' : new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(instant);
+  if (!scheduledDate || scheduledDate < snapshot.startsAt || scheduledDate > snapshot.endsAt) return 'bounded_authorization_week_mismatch';
+  if (!snapshot.accountBindings.some(binding => binding.accountId === input.accountId && binding.platform === input.platform)) return 'bounded_authorization_account_mismatch';
+  return '';
+}
+
+function contentFingerprint(items: PublishingApprovalItem[], allowRealPublishing: boolean, authorizationSnapshot?: BoundedPublishingAuthorizationSnapshot): string {
+  return createHash('sha256').update(JSON.stringify({ allowRealPublishing, authorizationSnapshot, items })).digest('hex');
 }
 
 /** Build the exact, human-readable subject of a batch approval. */
@@ -60,6 +231,7 @@ export function buildPublishingApprovalPackage(input: {
   now?: Date;
   scheduling?: { startsAt: string; endsAt: string; timezone: 'account' | 'Asia/Shanghai' };
   matrixPlan?: MatrixAccountPlan[];
+  boundedAuthorization?: BoundedPublishingAuthorizationInput;
 }, dependencies: { sourceClaim: typeof digitalEmployeePublishSourceClaim } = { sourceClaim: digitalEmployeePublishSourceClaim }): PublishingApprovalPackage {
   const now = input.now || new Date();
   const selectedPlatforms = new Set(input.goalPlatforms);
@@ -132,7 +304,24 @@ export function buildPublishingApprovalPackage(input: {
     }
     items.splice(0, items.length, ...expanded);
   }
-  return { schemaVersion: 1, contentHash: contentFingerprint(items, input.allowRealPublishing), allowRealPublishing: input.allowRealPublishing, items };
+  const authorizationSnapshot = input.boundedAuthorization
+    ? buildBoundedPublishingAuthorization(input.boundedAuthorization)
+    : undefined;
+  if (authorizationSnapshot) {
+    const publishActions = items.reduce((count, item) => count + item.accountIds.length, 0);
+    if (publishActions > authorizationSnapshot.maxPublishItems) throw new Error('bounded_authorization_item_limit_exceeded');
+    for (const item of items) for (const accountId of item.accountIds) {
+      const issue = boundedAuthorizationIssue(authorizationSnapshot, { accountId, platform: item.platform, scheduledAt: item.scheduledAt });
+      if (issue) throw new Error(issue);
+    }
+  }
+  return {
+    schemaVersion: 1,
+    contentHash: contentFingerprint(items, input.allowRealPublishing, authorizationSnapshot),
+    allowRealPublishing: input.allowRealPublishing,
+    ...(authorizationSnapshot ? { authorizationSnapshot } : {}),
+    items,
+  };
 }
 
 async function tenantPosts(tenantId: string): Promise<any[]> {
@@ -157,7 +346,7 @@ export async function createPublishingCalendarEntries(input: {
   verifySource: (tenantId: string, claim: unknown, videoPath?: unknown) => Promise<unknown>;
 } = { verifySource: verifyFrozenPublishSourceClaim }): Promise<Array<{ id: string; status: string }>> {
   if (input.package.contentHash !== input.approvedContentHash
-    || contentFingerprint(input.package.items, input.package.allowRealPublishing) !== input.approvedContentHash) throw new Error('approval_subject_changed');
+    || contentFingerprint(input.package.items, input.package.allowRealPublishing, input.package.authorizationSnapshot) !== input.approvedContentHash) throw new Error('approval_subject_changed');
   return withDigitalEmployeeRunLock(input.tenantId, input.runId, async () => {
   const materialize = async (lease?: DurableOperationLease) => {
   const existing = await tenantPosts(input.tenantId);
@@ -218,6 +407,8 @@ export async function createPublishingCalendarEntries(input: {
         approvalId: input.approvalId, approvedContentHash: input.approvedContentHash,
         realPublishingAuthorized: input.package.allowRealPublishing,
         ...(input.managedPublishingGrantId ? { managedPublishingGrantId: input.managedPublishingGrantId } : {}),
+        authorizationMode: input.package.authorizationSnapshot ? 'bounded' : 'each',
+        ...(input.package.authorizationSnapshot ? { boundedAuthorization: input.package.authorizationSnapshot } : {}),
       },
     });
     existing.push(tracked);
@@ -308,4 +499,37 @@ export async function buildSocialContentPublishingPackage(input: {
       videoPath: sourceClaim.deliveryVideoPath, scheduledAt: item.scheduledAt, sourceClaim });
   }
   return { schemaVersion: 1, contentHash: contentFingerprint(items, input.allowRealPublishing), allowRealPublishing: input.allowRealPublishing, items };
+}
+
+/** Pause queued delivery when the approved weekly-package boundary changes. */
+export async function invalidatePublishingAuthorizationForRun(
+  tenantId: string,
+  runId: string,
+): Promise<number> {
+  return withDigitalEmployeeRunLock(tenantId, runId, async () => {
+    const posts = await tenantPosts(tenantId);
+    const affected = posts.filter(post => {
+      const stats = record(post.stats);
+      if (text(stats.workflowRunId) !== runId || ['published', 'partial', 'awaiting_reapproval'].includes(text(stats.status))) return false;
+      const results = record(stats.publishResults);
+      // Provider-accepted, successful, or ambiguous calls must remain in the
+      // receipt-recovery path. Revoking them here could cause a duplicate send.
+      return !Object.values(results).some(value => {
+        const status = text(record(value).status);
+        return ['published', 'provider_accepted', 'in_flight', 'unknown'].includes(status);
+      });
+    });
+    for (const post of affected) {
+      const stats = record(post.stats);
+      await store.update('posts', post.id, { stats: {
+        ...stats,
+        status: 'awaiting_reapproval',
+        realPublishingAuthorized: false,
+        nextPublishAttemptAt: '',
+        authorizationInvalidatedAt: new Date().toISOString(),
+        authorizationInvalidatedReason: 'weekly_package_changed',
+      } });
+    }
+    return affected.length;
+  });
 }

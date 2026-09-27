@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-import argparse, json, math
+import argparse, json, math, sys
 from pathlib import Path
 import cv2
 import mediapipe as mp
 import numpy as np
+from skimage import __version__ as skimage_version
 from skimage.metrics import structural_similarity
 
 def points(landmarks):
@@ -33,11 +34,29 @@ def mean_or_none(values): return float(np.mean(values)) if values else None
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('source')
-    parser.add_argument('candidate')
+    parser.add_argument('source', nargs='?')
+    parser.add_argument('candidate', nargs='?')
     parser.add_argument('--output')
     parser.add_argument('--sample-fps', type=float, default=5.0)
+    parser.add_argument('--self-check', action='store_true')
     args = parser.parse_args()
+    if args.self_check:
+        print(json.dumps({
+            'ready': True,
+            'scriptVersion': 1,
+            'python': sys.version.split()[0],
+            'dependencies': {
+                'opencv': cv2.__version__,
+                'mediapipe': mp.__version__,
+                'numpy': np.__version__,
+                'scikit-image': skimage_version,
+            },
+            'scope': ['pose', 'hands', 'background', 'landmark_artifacts', 'face_appearance_proxy'],
+            'limitations': ['identity', 'product_brand_text', 'lip_sync', 'action_semantics']
+        }, ensure_ascii=False))
+        return
+    if not args.source or not args.candidate:
+        parser.error('source and candidate are required unless --self-check is used')
     source, candidate = cv2.VideoCapture(args.source), cv2.VideoCapture(args.candidate)
     if not source.isOpened() or not candidate.isOpened(): raise SystemExit('video_open_failed')
     duration = min(source.get(cv2.CAP_PROP_FRAME_COUNT)/max(1, source.get(cv2.CAP_PROP_FPS)), candidate.get(cv2.CAP_PROP_FRAME_COUNT)/max(1, candidate.get(cv2.CAP_PROP_FPS)))

@@ -10,6 +10,7 @@ import {
   starterWorkspaceCommandTargetId,
 } from './starterWorkspace.js';
 import { deriveStarterWorkflowSpotlight } from '../components/starter/StarterWorkflowOverview.js';
+import { isAdminSession } from '../appSession.js';
 
 function workspacePayload(overrides: Record<string, unknown> = {}) {
   const capabilities = Object.fromEntries(STARTER_198_CAPABILITIES.map(capability => [
@@ -239,6 +240,7 @@ assert.equal(shouldBypassStarter198Probe({
 }), true, 'an explicit read-only support session keeps its internal observation surface');
 
 const appSource = fs.readFileSync('src/App.tsx', 'utf8');
+const appSessionSource = fs.readFileSync('src/appSession.ts', 'utf8');
 const authRouteSource = fs.readFileSync('server/routes/auth.ts', 'utf8');
 const layoutSource = fs.readFileSync('src/components/Layout.tsx', 'utf8');
 const clientSource = fs.readFileSync('src/lib/starterWorkspace.ts', 'utf8');
@@ -266,21 +268,32 @@ assert.equal(authRouteSource.match(/const admin = await adminUserForHttp\(req, r
   'the explicit platform-admin signal must come from the outage-safe hardened server identity check');
 assert.equal(authRouteSource.match(/platformAdmin:\s*Boolean\(admin\)/g)?.length, 2,
   'both local and persistent /auth/me responses must emit the verified platform-admin signal');
-for (const source of [appSource, layoutSource]) {
-  assert.match(source, /!session(?:\?|)\.supportAccess && session(?:\?|)\.platformAdmin === true/,
-    'admin navigation must depend only on the verified platform-admin signal');
+assert.match(appSource, /import \{[^}]*isAdminSession[^}]*\} from ['"]\.\/appSession['"]/,
+  'App must consume the centralized verified-admin predicate');
+assert.match(appSessionSource, /!session\.supportAccess && session\.platformAdmin === true/,
+  'the centralized admin predicate must reject support sessions and require the verified platform-admin signal');
+assert.equal(isAdminSession(presentationAdminSession), false,
+  'an admin subscription label must not unlock platform-admin navigation');
+assert.equal(isAdminSession({ ...presentationAdminSession, platformAdmin: true }), true,
+  'a server-verified platform admin may access platform-admin navigation');
+assert.equal(isAdminSession({
+  ...presentationAdminSession,
+  platformAdmin: true,
+  supportAccess: { requestId: 'support-admin', adminEmail: 'support@example.com', tenantName: 'Customer' },
+}), false, 'read-only support access must not become a writable platform-admin session');
+for (const source of [appSessionSource, layoutSource]) {
   assert.doesNotMatch(source, /subscriptionPlan === 'admin'|subscription\?\.plan === 'admin'|lingshu-admin@local\.test/,
     'email and subscription labels must never unlock platform-admin UI');
 }
-const superAdminRolePages = appSource.match(/super_admin:\s*new Set\(\[([^\]]*)\]\)/)?.[1] || '';
+const superAdminRolePages = appSessionSource.match(/super_admin:\s*new Set\(\[([^\]]*)\]\)/)?.[1] || '';
 assert.doesNotMatch(superAdminRolePages, /contentFormulaAdmin/,
   'the retired formula library must not remain in role navigation');
 assert.match(appSource,
   /\(page === 'admin' \|\| page === 'adminDelivery'\) && !isAdminSession\(session\)/,
   'ordinary tenant administrators must be redirected from platform-only pages');
-assert.doesNotMatch(`${appSource}\n${layoutSource}\n${pageRegistrySource}`, /contentFormulaAdmin|爆款公式库/,
+assert.doesNotMatch(`${appSource}\n${appSessionSource}\n${layoutSource}\n${pageRegistrySource}`, /contentFormulaAdmin|爆款公式库/,
   'the formula product surface must be removed rather than hidden behind an admin role');
-for (const navigationLabel of ['首页', '灵感中心', '内容制作', '发布与渠道', '内容监控', '渠道设置', '智能客服', '我的会话', '订单', '企业知识库', '定时任务', '集成中心', '组织与权限']) {
+for (const navigationLabel of ['首页', '灵感中心', '内容制作', '发布与渠道', '内容监控', '渠道连接', '智能客服', '我的会话', '订单', '企业知识库', '定时任务', '集成中心', '组织与权限']) {
   assert.match(pageRegistrySource, new RegExp(navigationLabel), `starter navigation must register the ${navigationLabel} page`);
 }
 assert.match(layoutSource, /PRIMARY_SOCIAL_NAV_PAGES\.map/, 'organic-content navigation must come from the shared page registry');

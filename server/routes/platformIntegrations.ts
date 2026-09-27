@@ -5,6 +5,7 @@ import {
   getTenantPlatformApp,
   publicTenantPlatformApp,
   upsertTenantPlatformApp,
+  validateTenantOAuthCredentialPair,
 } from '../lib/tenantPlatformApps.js';
 import { getPublicOrigin } from '../lib/oauthConfig.js';
 import { disconnectTenantPlatformAccounts } from '../lib/socialAccountCleanup.js';
@@ -47,17 +48,27 @@ platformIntegrationsRouter.put('/oauth-config', requireAuth, async (req, res) =>
     getTenantPlatformApp(tenantId, 'meta'),
     getTenantPlatformApp(tenantId, 'tiktok'),
   ]);
+  const appId = (value: unknown, current: string | undefined) => value === undefined ? text(current) : text(value);
   const entries = [
-    { platform: 'google' as const, appId: text(req.body?.youtubeOAuthClientId), appSecret: text(req.body?.youtubeOAuthClientSecret) },
+    { platform: 'google' as const, appId: appId(req.body?.youtubeOAuthClientId, existing[0]?.app_id), appSecret: text(req.body?.youtubeOAuthClientSecret) },
     {
       platform: 'meta' as const,
-      appId: text(req.body?.metaSocialAppId),
+      appId: appId(req.body?.metaSocialAppId, existing[1]?.app_id),
       appSecret: text(req.body?.metaSocialAppSecret),
       waConfigId: text(req.body?.metaWhatsAppConfigId),
       webhookVerifyToken: text(req.body?.metaWebhookVerifyToken),
     },
-    { platform: 'tiktok' as const, appId: text(req.body?.tiktokClientKey), appSecret: text(req.body?.tiktokClientSecret) },
+    { platform: 'tiktok' as const, appId: appId(req.body?.tiktokClientKey, existing[2]?.app_id), appSecret: text(req.body?.tiktokClientSecret) },
   ];
+  // Validate every pair before starting any write so one invalid application
+  // cannot leave the other two partially updated.
+  for (const [index, entry] of entries.entries()) {
+    const error = validateTenantOAuthCredentialPair({ appId: entry.appId, appSecret: entry.appSecret, existing: existing[index] });
+    if (error) {
+      res.status(400).json({ error, platform: entry.platform });
+      return;
+    }
+  }
   await Promise.all(entries.filter((entry, index) => existing[index] || entry.appId || entry.appSecret || ('waConfigId' in entry && entry.waConfigId) || ('webhookVerifyToken' in entry && entry.webhookVerifyToken)).map(entry => upsertTenantPlatformApp({
     tenantId,
     ...entry,

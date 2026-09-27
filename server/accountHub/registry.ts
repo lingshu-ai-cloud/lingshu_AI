@@ -1,8 +1,9 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { assertValidAccountId, resolveAccountHubDataDir } from './paths.js';
-import { containsCredentialLikeText, isStrictSafeLabel } from './safeText.js';
+import { ACCOUNT_STATUSES, ACCOUNT_STATUS_REASONS, AccountBindingChangedError, AccountDisabledError, AccountLeaseConflictError, AccountNotReadyError, AccountReassignmentStateError, DEVICE_ID_PATTERN, LEGACY_TASK_STATUSES, MEMBER_ID_PATTERN, PROVIDERS, assertNoCredentialMaterial, assertOnlyKeys, assertPlainObject, clone, delay, emptyDocument, hasOwn, isLeaseExpired, optionalIsoDate, parseEmail, providerIdentityHash, requiredIdentifier, requiredIsoDate, requiredNonNegativeInteger, requiredString, strictSafeLabel, type AccountRegistryOptions, type LegacyTaskSummary, type RegistryDocument } from './registrySupport.js';
+export { AccountBindingChangedError, AccountDisabledError, AccountLeaseConflictError, AccountNotReadyError, AccountReassignmentStateError, assertNoCredentialMaterial } from './registrySupport.js';
 import type {
   AccountLease,
   AccountProvider,
@@ -19,136 +20,11 @@ import type {
 } from './types.js';
 
 /** Read-only compatibility shape for task indexes created before web dispatch was removed. */
-interface LegacyTaskSummary {
-  id: string;
-  accountId: string;
-  provider: AccountProvider;
-  status: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
-  createdAt: string;
-  updatedAt: string;
-  startedAt?: string;
-  finishedAt?: string;
-}
-
-interface RegistryDocument {
-  schemaVersion: 1;
-  accounts: Record<string, AccountRecord>;
-  tasks: Record<string, LegacyTaskSummary>;
-  leases: Record<string, AccountLease>;
-  identityClaims: Record<string, ProviderIdentityClaim>;
-}
-
-export interface AccountRegistryOptions {
-  dataDir?: string;
-  now?: () => Date;
-}
-
-const ACCOUNT_STATUSES = new Set<AccountStatus>([
-  'pending_login',
-  'ready',
-  'busy',
-  'cooldown',
-  'reauthorization_required',
-  'disabled',
-  'error',
-]);
-const ACCOUNT_STATUS_REASONS = new Set<AccountStatusReason>([
-  'login_required',
-  'authorization_expired',
-  'rate_limited',
-  'subscription_inactive',
-  'provider_unavailable',
-  'operator_disabled',
-  'unknown',
-]);
-const PROVIDERS = new Set<AccountProvider>(['codex', 'claude']);
-const LEGACY_TASK_STATUSES = new Set<LegacyTaskSummary['status']>(['queued', 'running', 'succeeded', 'failed', 'cancelled']);
-const SENSITIVE_KEY = /(password|passwd|passphrase|cookie|token|secret|credential|api[_-]?key|authorization|auth[_-]?json|private[_-]?key|session[_-]?key)/i;
-const MEMBER_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,127}$/;
-const DEVICE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,127}$/;
 const DEFAULT_LEASE_TTL_MS = 5 * 60_000;
 const MAX_LEASE_TTL_MS = 24 * 60 * 60_000;
 const REGISTRY_LOCK_STALE_MS = 30_000;
 const REGISTRY_LOCK_TIMEOUT_MS = 5_000;
 
-function emptyDocument(): RegistryDocument {
-  return { schemaVersion: 1, accounts: {}, tasks: {}, leases: {}, identityClaims: {} };
-}
-
-function assertPlainObject(value: unknown, context: string): asserts value is Record<string, unknown> {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    throw new Error(`${context} must be a plain object`);
-  }
-}
-
-/** Reject credential-shaped keys at every depth before any value can reach disk. */
-export function assertNoCredentialMaterial(value: unknown): void {
-  const visited = new WeakSet<object>();
-  const visit = (current: unknown): void => {
-    if (typeof current === 'string') {
-      if (containsCredentialLikeText(current)) {
-        throw new Error('Credential material is forbidden in account registry string value');
-      }
-      return;
-    }
-    if (!current || typeof current !== 'object') return;
-    if (visited.has(current)) return;
-    visited.add(current);
-    for (const [key, child] of Object.entries(current)) {
-      if (SENSITIVE_KEY.test(key)) {
-        throw new Error(`Credential material is forbidden in account registry field: ${key}`);
-      }
-      visit(child);
-    }
-  };
-  visit(value);
-}
-
-function strictSafeLabel(value: unknown, field: string, maxLength: number): string {
-  const normalized = requiredString(value, field, maxLength).trim();
-  if (!isStrictSafeLabel(normalized)) throw new Error(`Invalid ${field}`);
-  return normalized;
-}
-
-function assertOnlyKeys(value: Record<string, unknown>, allowed: readonly string[], context: string): void {
-  const allowedSet = new Set(allowed);
-  const unexpected = Object.keys(value).find(key => !allowedSet.has(key));
-  if (unexpected) throw new Error(`Unsupported ${context} field: ${unexpected}`);
-}
-
-function requiredString(value: unknown, field: string, maxLength = 200): string {
-  if (typeof value !== 'string' || !value.trim() || value.length > maxLength) {
-    throw new Error(`Invalid ${field}`);
-  }
-  return value;
-}
-
-function requiredIdentifier(value: unknown, field: string, pattern: RegExp): string {
-  const identifier = requiredString(value, field, 128);
-  if (!pattern.test(identifier)) throw new Error(`Invalid ${field}`);
-  return identifier;
-}
-
-function requiredNonNegativeInteger(value: unknown, field: string): number {
-  if (!Number.isSafeInteger(value) || (value as number) < 0) throw new Error(`Invalid ${field}`);
-  return value as number;
-}
-
-function optionalIsoDate(value: unknown, field: string): string | undefined {
-  if (value === undefined) return undefined;
-  if (typeof value !== 'string' || !Number.isFinite(Date.parse(value))) throw new Error(`Invalid ${field}`);
-  return value;
-}
-
-function requiredIsoDate(value: unknown, field: string): string {
-  const parsed = optionalIsoDate(value, field);
-  if (!parsed) throw new Error(`Invalid ${field}`);
-  return parsed;
-}
-
-function hasOwn(index: object, key: string): boolean {
-  return Object.prototype.hasOwnProperty.call(index, key);
-}
 
 function parseAccount(value: unknown): AccountRecord {
   assertPlainObject(value, 'account');
@@ -210,15 +86,6 @@ function parseLease(value: unknown): AccountLease {
   };
 }
 
-function parseEmail(value: unknown): string {
-  const email = requiredString(value, 'email', 254).trim();
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error('Invalid email');
-  return email;
-}
-
-function providerIdentityHash(provider: AccountProvider, email: string): string {
-  return createHash('sha256').update(`${provider}\0${email.trim().toLowerCase()}`).digest('hex');
-}
 
 function parseIdentityClaim(value: unknown): ProviderIdentityClaim {
   assertPlainObject(value, 'provider identity claim');
@@ -364,57 +231,6 @@ function parseDocument(value: unknown): RegistryDocument {
     }
   }
   return { schemaVersion: 1, accounts, tasks, leases, identityClaims };
-}
-
-function isLeaseExpired(lease: AccountLease, now: Date): boolean {
-  return Date.parse(lease.expiresAt) <= now.getTime();
-}
-
-function delay(milliseconds: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, milliseconds));
-}
-
-export class AccountLeaseConflictError extends Error {
-  constructor(readonly lease: AccountLease) {
-    super('Account is already in use by another device');
-    this.name = 'AccountLeaseConflictError';
-  }
-}
-
-export class AccountDisabledError extends Error {
-  constructor(readonly accountId: string) {
-    super('Account is disabled');
-    this.name = 'AccountDisabledError';
-  }
-}
-
-export class AccountNotReadyError extends Error {
-  constructor(readonly accountId: string, readonly status: AccountStatus) {
-    super('Account is not ready for lease acquisition');
-    this.name = 'AccountNotReadyError';
-  }
-}
-
-export class AccountBindingChangedError extends Error {
-  constructor(
-    readonly accountId: string,
-    readonly actualMemberId: string,
-    readonly actualBindingGeneration: number,
-  ) {
-    super('Account owner or binding generation changed');
-    this.name = 'AccountBindingChangedError';
-  }
-}
-
-export class AccountReassignmentStateError extends Error {
-  constructor(readonly accountId: string, readonly status: AccountStatus) {
-    super('Account is not in a logged-out state for reassignment');
-    this.name = 'AccountReassignmentStateError';
-  }
-}
-
-function clone<T>(value: T): T {
-  return structuredClone(value);
 }
 
 export class AccountRegistry {

@@ -5,7 +5,13 @@ import type {
   SocialMonthlyPlan,
   SocialProgram,
   SocialWeeklyPlan,
+  WeeklyOperatingPackage,
 } from '../../shared/contracts/socialProgram';
+import type {
+  OperatingPlanningRequest,
+  OperatingPlanningResolution,
+  SocialOperatingConstraints,
+} from '../../shared/contracts/socialOperatingDecision';
 
 export class SocialProgramRequestError extends Error {
   constructor(readonly status: number, readonly code: string, message: string) {
@@ -82,5 +88,38 @@ export const socialProgramApi = {
   },
   async saveWeeklyPlan(programId: string, input: Record<string, unknown>): Promise<SocialWeeklyPlan> {
     return (await request<{ item: SocialWeeklyPlan }>(`/${encodeURIComponent(programId)}/plans/weekly`, { method: 'POST', ...json(input) })).item;
+  },
+  async getOperatingConstraints(programId: string): Promise<SocialOperatingConstraints | null> {
+    return (await request<{ item: SocialOperatingConstraints | null }>(`/${encodeURIComponent(programId)}/operating-constraints`)).item;
+  },
+  async saveOperatingConstraints(programId: string, input: Record<string, unknown>): Promise<SocialOperatingConstraints> {
+    return (await request<{ item: SocialOperatingConstraints }>(`/${encodeURIComponent(programId)}/operating-constraints`, { method: 'PUT', ...json(input) })).item;
+  },
+  async resolveOperatingPlan(programId: string, input: OperatingPlanningRequest): Promise<{
+    item: OperatingPlanningResolution;
+    weeklyAuthority: Record<string, unknown>;
+  }> {
+    return request(`/${encodeURIComponent(programId)}/operating-plan/resolve`, { method: 'POST', ...json(input) });
+  },
+  async listOperatingPackages(programId: string, weekStart?: string): Promise<WeeklyOperatingPackage[]> {
+    const query = weekStart ? `?weekStart=${encodeURIComponent(weekStart)}` : '';
+    const payload = await request<{ items: WeeklyOperatingPackage[] }>(`/${encodeURIComponent(programId)}/operating-packages${query}`);
+    if (!Array.isArray(payload.items)) throw new SocialProgramRequestError(502, 'social_program_invalid_response', '周任务包列表格式不正确。');
+    return payload.items;
+  },
+  async getOperatingPackage(programId: string, packageId: string): Promise<WeeklyOperatingPackage> {
+    return (await request<{ item: WeeklyOperatingPackage }>(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}`)).item;
+  },
+  async createOperatingPackage(programId: string, input: Record<string, unknown>): Promise<WeeklyOperatingPackage> {
+    return (await request<{ item: WeeklyOperatingPackage }>(`/${encodeURIComponent(programId)}/operating-packages`, { method: 'POST', ...json(input) })).item;
+  },
+  async reviseOperatingPackage(programId: string, packageId: string, input: Record<string, unknown>): Promise<WeeklyOperatingPackage> {
+    return (await request<{ item: WeeklyOperatingPackage }>(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}`, { method: 'PUT', ...json(input) })).item;
+  },
+  async activateOperatingPackage(programId: string, packageId: string, input: Record<string, unknown>): Promise<WeeklyOperatingPackage> {
+    return (await request<{ item: WeeklyOperatingPackage }>(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/activate`, { method: 'POST', ...json(input) })).item;
+  },
+  async retireOperatingPackage(programId: string, packageId: string, input: Record<string, unknown>): Promise<WeeklyOperatingPackage> {
+    return (await request<{ item: WeeklyOperatingPackage }>(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/retire`, { method: 'POST', ...json(input) })).item;
   },
 };

@@ -93,6 +93,7 @@ import {
   socialContentAccessResolver,
   type SocialContentAccessResolver,
 } from './socialContentAccess.js';
+import { readSocialProductionState } from './socialContentProductionHandoff.js';
 
 type AccessLevel = 'read' | 'write' | 'start';
 
@@ -344,6 +345,18 @@ export function createSocialContentRouter(dependencies: SocialContentRouterDepen
       task.referencePreparation = await readReferencePreparation(identity.tenantId, task.sources).catch(() => ({ status: 'blocked' as const, reason: 'reference_status_unavailable' }));
     }
     res.json({ task });
+  }));
+
+  router.get('/tasks/:taskId/production-state', asyncRoute(async (req, res) => {
+    const identity = await authorize(req, res, 'read');
+    const state = await readSocialProductionState({
+      repository,
+      tenantId: identity.tenantId,
+      taskId: requireSocialId(req.params.taskId),
+      version: socialText(req.query.version) || null,
+    });
+    if (!state) throw new SocialContentWorkflowError('social_production_handoff_not_found', 404);
+    res.json(state);
   }));
 
   router.patch('/tasks/:taskId', asyncRoute(async (req, res) => {

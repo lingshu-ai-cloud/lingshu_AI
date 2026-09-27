@@ -32,13 +32,14 @@ const FRAME_BYTES = WIDTH * HEIGHT;
 export function runVisualFfmpeg(args: string[], captureStdout = false, options: {
   timeoutMs?: number;
   spawnProcess?: typeof spawn;
+  logLevel?: 'error' | 'warning' | 'info';
 } = {}): Promise<{ ok: boolean; stdout: Buffer; stderr: string }> {
   return new Promise(resolve => {
     if (!ffmpegStatic) {
       resolve({ ok: false, stdout: Buffer.alloc(0), stderr: 'ffmpeg unavailable' });
       return;
     }
-    const child = (options.spawnProcess || spawn)(String(ffmpegStatic), ['-hide_banner', '-loglevel', 'error', '-nostdin', ...args], {
+    const child = (options.spawnProcess || spawn)(String(ffmpegStatic), ['-hide_banner', '-loglevel', options.logLevel ?? 'error', '-nostdin', ...args], {
       stdio: ['ignore', captureStdout ? 'pipe' : 'ignore', 'pipe'],
     });
     const stdout: Buffer[] = [];

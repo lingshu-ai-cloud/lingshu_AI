@@ -8,6 +8,7 @@ import {
   publishSourceRequestFields,
   studioGenerationIsVerified,
 } from './TrafficPage';
+import { directPublishOutcome, pendingDirectPublishAccountIds } from '../lib/publishQueueState';
 
 assert.equal(publishStorageKey('ow_publish_queue', 'tenant A'), 'ow_publish_queue:tenant%20A');
 assert.notEqual(publishStorageKey('ow_publish_queue', 'tenant-a'), publishStorageKey('ow_publish_queue', 'tenant-b'));
@@ -79,6 +80,35 @@ assert.deepEqual(publishSourceRequestFields(validItem), {
   publishable: true, generationRecordId: 'script-v1',
 });
 assert.equal(publishSourceRequestFields({ ...validItem, sourceProjectId: undefined }).sourceKind, 'manual_upload');
+
+const partiallyDelivered = {
+  ...validItem,
+  targetAccountIds: ['youtube-id', 'instagram-id', 'tiktok-id', 'facebook-id'],
+  deliveryResults: {
+    'youtube-id': { platform: 'youtube' as const, deliveryStatus: 'published' as const, platformPostId: 'yt-video' },
+    'instagram-id': { platform: 'instagram' as const, deliveryStatus: 'provider_accepted' as const, providerReceiptId: 'ig-receipt' },
+    'tiktok-id': { platform: 'tiktok' as const, deliveryStatus: 'unknown' as const },
+  },
+};
+assert.deepEqual(pendingDirectPublishAccountIds(partiallyDelivered, partiallyDelivered.targetAccountIds), ['facebook-id']);
+const restoredPartial = normalizeStoredPublishQueueItem(partiallyDelivered);
+assert.ok(restoredPartial);
+assert.deepEqual(pendingDirectPublishAccountIds(restoredPartial, restoredPartial.targetAccountIds), ['facebook-id']);
+assert.equal(restoredPartial.deliveryResults['tiktok-id']?.deliveryStatus, 'unknown');
+assert.deepEqual(directPublishOutcome(partiallyDelivered.targetAccountIds, partiallyDelivered.deliveryResults, 0), {
+  status: 'partial', allPublished: false,
+});
+const publishedResults = {
+  'youtube-id': partiallyDelivered.deliveryResults['youtube-id'],
+  'instagram-id': { platform: 'instagram' as const, deliveryStatus: 'published' as const, platformPostId: 'ig-post' },
+};
+assert.deepEqual(directPublishOutcome(['youtube-id', 'instagram-id'], publishedResults, 0), {
+  status: 'published', allPublished: true,
+});
+assert.deepEqual(directPublishOutcome(['youtube-id', 'instagram-id'], {
+  ...publishedResults,
+  'instagram-id': partiallyDelivered.deliveryResults['instagram-id'],
+}, 0), { status: 'provider_processing', allPublished: false });
 
 const acceptedDelivery = classifyDirectPublishResponse('tiktok', {
   ok: true,

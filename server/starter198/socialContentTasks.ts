@@ -8,12 +8,17 @@ import type {
   SocialContentTaskSummary,
   SocialContentWorkspace,
   SocialWeeklyPlan,
+  SocialContentAgentWorkflow,
   SocialTaskSource,
   UpdateSocialContentTaskInput,
 } from '../../shared/contracts/socialContentWorkflow.js';
+import type { BusinessContentGoal } from '../../shared/contracts/socialOperatingDecision.js';
+import type { SocialWeeklyPublicationTask, VersionedSocialRef, WeeklyOperatingPackage, WeeklyWorkflowTask } from '../../shared/contracts/socialProgram.js';
+import type { VersionedReferenceSelection } from '../socialDiscovery/orchestration.js';
+import { buildSocialAgentWorkflow, type BuildSocialAgentWorkflowInput } from './socialContentAgentWorkflow.js';
 import type { Starter198OrchestratorQueuePort } from './runtimePorts.js';
 import { Starter198RuntimePortError } from './runtimePorts.js';
-import { readTenantEnterpriseProfile } from '../routes/enterprise.js';
+import { readTenantEnterpriseProfile } from '../lib/socialContentLegacyPorts.js';
 import { STARTER_COLLECTIONS, type Starter198Repository, type StarterRecord } from './repository.js';
 import { executeSocialContentMutation } from './socialContentMutation.js';
 import {
@@ -67,237 +72,46 @@ import {
   type ResolvedSocialTaskReference,
 } from './socialContentScriptSources.js';
 
-const TASK_EDITABLE_STATES = new Set(['draft', 'needs_input', 'plan_review', 'paused', 'attention']);
-const SOURCE_EDITABLE_STATES = new Set(['draft', 'needs_input', 'plan_review', 'paused', 'attention']);
+import {
+  SOURCE_EDITABLE_STATES,
+  TASK_EDITABLE_STATES,
+  assertVersion,
+  defaultBrief,
+  groundedScriptBaseline,
+  nextVersion,
+  refreshSocialTaskReferenceOutputs,
+  socialWeeklyPlan,
+  sourceCreatedByOperation,
+  taskCreatedByOperation,
+  type SocialTaskReferenceResolver,
+} from './socialContentTaskSupport.js';
+export { buildAuthoritativeSocialContentWorkflow, listSocialWeeklyPlans } from './socialContentTaskSupport.js';
+import { listSocialWeeklyPlans } from './socialContentTaskSupport.js';
 
-function nextVersion(record: StarterRecord): string {
-  const current = Number(record.version);
-  if (!Number.isSafeInteger(current) || current < 1) {
-    throw new SocialContentWorkflowError('social_content_task_record_invalid', 503);
-  }
-  return String(current + 1);
-}
-
-function assertVersion(record: StarterRecord, expectedVersion: string): void {
-  if (socialText(record.version) !== expectedVersion) {
-    throw new SocialContentWorkflowError('social_content_task_version_conflict', 409);
-  }
-}
-
-async function taskCreatedByOperation(input: {
+async function socialTaskSourcesEditable(input: {
   repository: Starter198Repository;
   tenantId: string;
-  idempotencyKey: string;
-}): Promise<StarterRecord | null> {
-  const result = await input.repository.list(STARTER_COLLECTIONS.socialContentTasks, input.tenantId, {
-    where: { create_idempotency_key: input.idempotencyKey }, perPage: 2,
-  });
-  if (result.totalItems > 1 || result.items.length > 1) {
-    throw new SocialContentWorkflowError('social_content_task_integrity_violation', 503);
-  }
-  return result.items[0] ?? null;
-}
-
-function socialWeeklyPlan(record: StarterRecord): SocialWeeklyPlan | null {
-  const value = socialObject(socialJson(record.plan));
-  if (!value || socialText(value.schemaVersion) !== 'social-content-weekly-plan.v1') return null;
-  const taskIds = socialJson(value.taskIds);
-  const status = socialText(record.status) as SocialWeeklyPlan['status'];
-  const weeklyPlanId = socialText(value.weeklyPlanId) || socialText(record.id);
-  if (!weeklyPlanId || !['draft', 'active', 'completed'].includes(status)
-    || !Array.isArray(taskIds) || taskIds.some(item => !socialText(item))) {
-    throw new SocialContentWorkflowError('social_weekly_plan_record_invalid', 503);
-  }
-  return {
-    weeklyPlanId,
-    title: socialText(value.title),
-    objective: socialText(value.objective),
-    productRef: socialText(value.productRef) || null,
-    audience: socialText(value.audience) || null,
-    taskIds: taskIds.map(socialText),
-    status,
-    version: socialText(value.version) || '1',
-    createdAt: socialText(record.created_at),
-    updatedAt: socialText(record.updated_at) || socialText(record.created_at),
-  };
-}
-
-export async function listSocialWeeklyPlans(input: {
-  repository: Starter198Repository;
-  tenantId: string;
-}): Promise<SocialWeeklyPlan[]> {
-  const first = await input.repository.list(STARTER_COLLECTIONS.plans, input.tenantId, {
-    sort: '-created_at', page: 1, perPage: 500,
-  });
-  if (first.totalItems > 10_000) throw new SocialContentWorkflowError('social_weekly_plan_scan_limit_exceeded', 503);
-  const rows = [...first.items];
-  for (let page = 2; page <= first.totalPages; page += 1) {
-    const next = await input.repository.list(STARTER_COLLECTIONS.plans, input.tenantId, {
-      sort: '-created_at', page, perPage: 500,
-    });
-    rows.push(...next.items);
-  }
-  if (rows.length !== first.totalItems) throw new SocialContentWorkflowError('social_weekly_plan_integrity_violation', 503);
-  return rows.map(socialWeeklyPlan).filter((item): item is SocialWeeklyPlan => Boolean(item));
-}
-
-async function sourceCreatedByOperation(input: {
-  repository: Starter198Repository;
-  tenantId: string;
-  operationId: string;
-}): Promise<StarterRecord | null> {
-  const result = await input.repository.list(STARTER_COLLECTIONS.socialTaskSources, input.tenantId, {
-    where: { created_operation_id: input.operationId }, perPage: 2,
-  });
-  if (result.totalItems > 1 || result.items.length > 1) {
-    throw new SocialContentWorkflowError('social_content_source_integrity_violation', 503);
-  }
-  return result.items[0] ?? null;
-}
-
-function defaultBrief(value: CreateSocialContentTaskInput) {
-  const themeDriven = Boolean(value.mode || value.themeId || value.customTopic || value.topic || value.weeklyPlanId);
-  return {
-    title: value.title,
-    objective: value.objective,
-    productRef: value.productRef ?? null,
-    audience: value.audience ?? null,
-    markets: value.markets ?? (themeDriven ? ['全球'] : []),
-    languages: value.languages ?? (themeDriven ? ['中文'] : []),
-    platforms: value.platforms ?? (themeDriven ? ['抖音'] : []),
-    formats: value.formats ?? (themeDriven ? ['短视频'] : []),
-    aspectRatio: value.aspectRatio ?? null,
-    cadence: value.cadence ?? null,
-    requestedOutputCount: value.mode === 'instant' ? 1 : value.requestedOutputCount ?? null,
-    weeklyBudgetCny: value.weeklyBudgetCny ?? null,
-    perItemBudgetCny: value.perItemBudgetCny ?? null,
-    retryReserveCny: value.retryReserveCny ?? null,
-    planningMode: value.planningMode ?? 'auto_adjust',
-    shootingWindowMinutes: value.shootingWindowMinutes ?? null,
-    specialRequirements: value.specialRequirements ?? null,
-    dueAt: value.dueAt ?? null,
-    brandNotes: value.brandNotes ?? null,
-    restrictions: value.restrictions ?? [],
-    callToAction: value.callToAction ?? null,
-    programRef: value.programRef ?? null,
-    targetAccountRef: value.targetAccountRef ?? null,
-    accountPlaybookRef: value.accountPlaybookRef ?? null,
-    ...(value.referenceMode ? { referenceMode: value.referenceMode } : {}),
-    primaryExperimentVariable: value.primaryExperimentVariable ?? null,
-    creationMode: value.creationMode
-      ?? (value.legacyCreationRoute === 'clone' ? 'viral_replication' : 'material_processing'),
-    assetAvailability: value.assetAvailability ?? 'none',
-    managementMode: value.managementMode ?? 'one_click_managed',
-    productionMode: value.productionMode ?? 'social_ready',
-  };
-}
-
-async function groundedScriptBaseline(input: {
-  tenantId: string;
-  brief: SocialContentTaskDetail['brief'];
-  theme: NonNullable<SocialContentTaskDetail['theme']>;
-  lockedAt: string;
-  previous?: StoredSocialScriptBaseline | null;
-}): Promise<StoredSocialScriptBaseline> {
-  const profile = await readTenantEnterpriseProfile(input.tenantId).catch(() => null);
-  const verifiedContext = profile
-    ? verifiedSocialScriptContext(profile, input.brief.productRef)
-    : { productName: null, facts: [], source: 'none' as const, confidence: 0 };
-  const inspiration = input.theme.themeId
-    ? await resolveSocialInspirationScript({ tenantId: input.tenantId, themeId: input.theme.themeId, verifiedContext })
-    : null;
-  return freezeSocialScriptBaseline({
-    brief: input.brief,
-    theme: input.theme,
-    inspiration,
-    verifiedContext,
-    lockedAt: input.lockedAt,
-    previous: input.previous,
-  });
-}
-
-type SocialTaskReferenceResolver = typeof resolveSocialTaskReferenceScript;
-
-async function refreshSocialTaskReferenceOutputs(input: {
-  repository: Starter198Repository;
-  tenantId: string;
-  userId: string;
   taskId: string;
-  operationId: string;
-  now?: Date;
-  referenceResolver?: SocialTaskReferenceResolver;
-}): Promise<StarterRecord> {
-  const task = await requireSocialTask(input);
-  if (socialText(task.last_operation_id) === `${input.operationId}:reference-analysis`) return task;
-  const summary = socialTaskSummary(task);
-  if (summary.brief.creationMode !== 'viral_replication' || !summary.theme?.themeId
-    || summary.theme.classificationStatus !== 'confirmed') return task;
-  const detail = await readSocialTaskDetail(input);
-  if (!detail) throw new SocialContentWorkflowError('social_content_task_not_found', 404);
-  const references = detail.sources.filter(source => source.status === 'active' && source.kind === 'reference_link');
-  const profile = await readTenantEnterpriseProfile(input.tenantId).catch(() => null);
-  const verifiedContext = profile
-    ? verifiedSocialScriptContext(profile, summary.brief.productRef)
-    : { productName: null, facts: [], source: 'none' as const, confidence: 0 };
-  let resolved: ResolvedSocialTaskReference | null = null;
-  if (references.length) {
-    resolved = await (input.referenceResolver ?? resolveSocialTaskReferenceScript)({
-      tenantId: input.tenantId,
-      themeId: summary.theme.themeId,
-      verifiedContext,
-      referenceSources: references,
-    });
-  } else {
-    resolved = await resolveSocialRecommendedReferenceScript({
-      tenantId: input.tenantId,
-      themeId: summary.theme.themeId,
-      verifiedContext,
-      createdAt: (input.now ?? new Date()).toISOString(),
-    });
-  }
-  const storedReplication = socialObject(socialJson(task.replication_script));
-  if (resolved
-    && socialText(storedReplication?.referenceAnalysisId) === resolved.referenceVideoAnalysis.analysisId
-    && socialText(storedReplication?.status) === 'confirmed') {
-    resolved = {
-      ...resolved,
-      replicationScript: { ...resolved.replicationScript, status: 'confirmed' },
-    };
-  }
-  const previous = parseStoredSocialScriptBaseline(task.script_baseline);
-  const baseline = resolved
-    ? freezeSocialScriptBaseline({
-        brief: summary.brief,
-        theme: summary.theme,
-        inspiration: resolved.match,
-        verifiedContext,
-        lockedAt: (input.now ?? new Date()).toISOString(),
-        previous,
-      })
-    : previous;
-  const newestReference = [...references].sort((left, right) => (
-    Date.parse(right.createdAt) - Date.parse(left.createdAt)
-    || right.sourceId.localeCompare(left.sourceId)
-  ))[0] ?? null;
-  const timestamp = (input.now ?? new Date()).toISOString();
-  await input.repository.update(STARTER_COLLECTIONS.socialContentTasks, input.tenantId, task.id, {
-    ...(baseline ? { script_baseline: baseline } : {}),
-    formula_reference: '',
-    director_plan: '',
-    reference_video_analysis: resolved?.referenceVideoAnalysis
-      ?? pendingSocialTaskReferenceAnalysis(newestReference ?? {
-        sourceId: 'system-reference:pending',
-        sourceRef: 'system-recommendation-pending',
-        createdAt: timestamp,
-      }),
-    replication_script: resolved?.replicationScript ?? '',
-    shot_material_map: resolved?.shotMaterialMap ?? [],
-    version: nextVersion(task),
-    last_operation_id: `${input.operationId}:reference-analysis`,
-    updated_by: input.userId,
-    updated_at: timestamp,
+}, task: StarterRecord): Promise<boolean> {
+  const status = socialText(task.status);
+  if (SOURCE_EDITABLE_STATES.has(status)) return true;
+  if (status !== 'asset_review') return false;
+  const artifacts = await input.repository.list(STARTER_COLLECTIONS.socialContentArtifacts, input.tenantId, {
+    where: { task_id: input.taskId }, perPage: 500,
   });
-  return requireSocialTask(input);
+  if (artifacts.totalItems !== artifacts.items.length) {
+    throw new SocialContentWorkflowError('social_content_task_children_truncated', 503);
+  }
+  return artifacts.items.every(item => ['changes_requested', 'superseded'].includes(socialText(item.status)));
+}
+
+async function socialTaskEditable(input: {
+  repository: Starter198Repository;
+  tenantId: string;
+  taskId: string;
+}, task: StarterRecord): Promise<boolean> {
+  if (TASK_EDITABLE_STATES.has(socialText(task.status))) return true;
+  return socialTaskSourcesEditable(input, task);
 }
 
 export async function createSocialContentTask(input: {
@@ -424,7 +238,7 @@ export async function updateSocialContentTask(input: {
         return { task: (await readSocialTaskDetail(input))! };
       }
       assertVersion(record, input.value.expectedVersion);
-      if (!TASK_EDITABLE_STATES.has(socialText(record.status))) {
+      if (!(await socialTaskEditable(input, record))) {
         throw new SocialContentWorkflowError('social_content_task_not_editable', 409);
       }
       const currentSummary = socialTaskSummary(record);
@@ -570,7 +384,7 @@ export async function addSocialTaskSource(input: {
         }
         return { source: socialTaskSource(existing), task: (await readSocialTaskDetail(input))! };
       }
-      if (!SOURCE_EDITABLE_STATES.has(socialText(task.status))) {
+      if (!await socialTaskSourcesEditable(input, task)) {
         throw new SocialContentWorkflowError('social_content_sources_not_editable', 409);
       }
       await assertSocialTaskChildCapacity({ ...input, kind: 'source' });
@@ -658,7 +472,7 @@ export async function removeSocialTaskSource(input: {
       const source = await sourceRecord();
       if (socialText(source.last_operation_id) !== operationId) {
         assertVersion(task, input.expectedTaskVersion);
-        if (!SOURCE_EDITABLE_STATES.has(socialText(task.status))) {
+        if (!await socialTaskSourcesEditable(input, task)) {
           throw new SocialContentWorkflowError('social_content_sources_not_editable', 409);
         }
         if (socialText(source.status) !== 'active') {
@@ -811,8 +625,6 @@ export async function startSocialContentTask(input: {
           if (socialTaskSummary(record).brief.managementMode !== 'one_click_managed') {
             throw new SocialContentWorkflowError('social_content_reference_review_required', 409);
           }
-          // Managed tasks retain the exact analysis/script identity and continue
-          // to the existing facts, rights, budget and Director review gates.
           record = await requireSocialTask(input);
         }
       }

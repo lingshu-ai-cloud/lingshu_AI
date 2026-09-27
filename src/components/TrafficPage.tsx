@@ -28,8 +28,10 @@ import {
   createPublishItem,
   createPublishItems,
   dateTimeLocalValue,
+  directPublishOutcome,
   mergePublishItems,
   nextScheduleValue,
+  pendingDirectPublishAccountIds,
   publishItemId,
   publishSourceRequestFields,
   publishStorageKey,
@@ -61,6 +63,7 @@ import { resolveInitialTrafficViewMode, resolveNavigationEventViewMode, resolveS
 import { useSocialContentNavigation } from './socialContent/useSocialContentNavigation';
 import { PAGE_REGISTRY } from '../pageRegistry';
 import { DouyinPublicationPackagePanel } from './publishing/DouyinPublicationPackagePanel';
+import { ExternalVideoApprovalPanel } from './publishing/ExternalVideoApprovalPanel';
 
 // 每个工作区都很重，按当前视图拆包，避免进入“内容创作”时同时解析灵感中心、
 // 账号动态和发布日历。外层 App 的 Suspense 会提供统一加载态。
@@ -186,7 +189,7 @@ const TRAFFIC_MODE_ORDER: ViewMode[] = ['materials', 'create', 'publish', 'accou
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, { ...init, headers: { ...authHeader(), ...(init?.headers ?? {}) } });
   const data = await response.json().catch(() => ({})) as T & { error?: string; message?: string };
-  if (!response.ok) throw new Error(data.message || data.error || '请求失败');
+  if (!response.ok) throw Object.assign(new Error(data.message || data.error || '请求失败'), { statusCode: response.status });
   return data;
 }
 
@@ -321,6 +324,50 @@ export default function TrafficPage({
       destination.searchParams.delete('project');
       window.history.replaceState(window.history.state, '', destination);
     } catch { /* ignore */ }
+    const kickoff = payload as {
+      source?: string;
+      productInfo?: string;
+      video?: {
+        id?: string;
+        title?: string;
+        platform?: string;
+        thumbnail?: string;
+        sourceUrl?: string;
+        videoUrl?: string;
+        contentFormat?: string;
+      };
+    };
+    if (kickoff.source === 'inspiration_analysis' && kickoff.video?.contentFormat !== 'image') {
+      const referenceUrl = kickoff.video?.sourceUrl || kickoff.video?.videoUrl || '';
+      window.dispatchEvent(new CustomEvent('lingshu:navigate', {
+        detail: {
+          page: 'smartAssets',
+          view: 'create',
+          contentCreationRequest: {
+            requestId: Date.now(),
+            themeId: 'product_value',
+            mode: 'instant',
+            creationPath: 'viral_replication',
+            materialInput: referenceUrl ? 'limited' : 'none',
+            managedMode: 'one_click_managed',
+            prefill: {
+              title: `${kickoff.video?.title || '灵感视频'} · 爆款裂变`,
+              topic: kickoff.video?.title || '',
+              productName: String(kickoff.productInfo || '').trim().slice(0, 160),
+              referenceLinks: referenceUrl ? [referenceUrl] : [],
+              platforms: kickoff.video?.platform ? [kickoff.video.platform] : undefined,
+            },
+            sourceContext: {
+              originLabel: '来自灵感中心',
+              referenceTitle: kickoff.video?.title || '已选参考视频',
+              referenceThumbnail: kickoff.video?.thumbnail,
+            },
+          },
+        },
+      }));
+      return;
+    }
+    try { localStorage.setItem('ow_video_kickoff', JSON.stringify(payload)); } catch { /* ignore */ }
     const targetPage = resolveWorkflowNavigationPage(initialView, showModeTabs);
     if (targetPage) {
       window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: { page: targetPage, view: 'create', studioEntry: true } }));
@@ -479,7 +526,7 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview, workflowCont
     setNotice('已从数字员工执行中心进入；新内容将单独归属当前任务，原有队列不受影响。');
   }, [workflowContext]);
 
-  const connectedAccounts = accounts.filter(account => account.status === 'connected');
+  const connectedAccounts = accounts.filter(account => account.status === 'connected' && account.platform !== 'tiktok');
   const activeItem = items.find(item => item.id === activeItemId) || items[0] || null;
   const activePreviewUrl = activeItem?.previewUrl || browserVideoUrl(activeItem?.videoPath);
   const activeCalendarPost = Boolean(activeItem?.calendarPostIds?.length);
@@ -817,11 +864,11 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview, workflowCont
       ];
       setAccounts(next);
       if (!pendingAccountTargetsSeededRef.current) {
-        setPendingTargetAccountIds(next.filter(account => account.status === 'connected').map(account => account.id));
+        setPendingTargetAccountIds(next.filter(account => account.status === 'connected' && account.platform !== 'tiktok').map(account => account.id));
         pendingAccountTargetsSeededRef.current = true;
       }
       if (!accountTargetsSeededRef.current) {
-        const connected = next.filter(account => account.status === 'connected');
+        const connected = next.filter(account => account.status === 'connected' && account.platform !== 'tiktok');
         setItems(prev => prev.map(item => {
           if (item.targetAccountIds.length) return item;
           const matchingSource = item.sourcePlatform
@@ -881,6 +928,8 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview, workflowCont
 
   const toggleAccount = (accountId: string) => {
     const next = new Set(selectedTargetAccountIds);
+    const target = accounts.find(account => account.id === accountId);
+    if (!target || target.status !== 'connected' || target.platform === 'tiktok') return;
     if (next.has(accountId)) next.delete(accountId);
     else next.add(accountId);
     if (activeItem) updateItem(activeItem.id, { targetAccountIds: Array.from(next), status: 'draft', error: undefined });
@@ -1170,7 +1219,8 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview, workflowCont
       let itemSuccesses = 0;
       let itemProcessing = 0;
       const deliveryResults = { ...item.deliveryResults };
-      for (const account of targets) {
+      const pendingAccountIds = new Set(pendingDirectPublishAccountIds(item, targets.map(account => account.id)));
+      for (const account of targets.filter(account => pendingAccountIds.has(account.id))) {
         const meta = PLATFORM_META[account.platform];
         const copy = item.platformCopy[account.platform];
         try {
@@ -1221,24 +1271,25 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview, workflowCont
           }
         } catch (e) {
           failedTargets += 1;
-          itemFailures.push(`${meta.label} · ${account.title}: ${e instanceof Error ? e.message : '发布失败'}`);
+          const statusCode = Number((e as { statusCode?: unknown } | null)?.statusCode);
+          const ambiguous = !statusCode || statusCode === 409 || statusCode >= 500;
+          if (ambiguous) deliveryResults[account.id] = { platform: account.platform, deliveryStatus: 'unknown' };
+          itemFailures.push(`${meta.label} · ${account.title}: ${e instanceof Error ? e.message : '发布失败'}${ambiguous ? '；结果不明，请先核对平台回执，禁止直接重发' : ''}`);
         }
         updateItem(item.id, {
           completedTargets: itemSuccesses + itemProcessing + itemFailures.length,
           deliveryResults,
         });
       }
+      const outcome = directPublishOutcome(targets.map(account => account.id), deliveryResults, itemFailures.length);
+      const hasUnknown = targets.some(account => deliveryResults[account.id]?.deliveryStatus === 'unknown');
       updateItem(item.id, {
-        status: itemProcessing
-          ? (itemFailures.length ? 'partial' : 'provider_processing')
-          : itemFailures.length
-            ? (itemSuccesses ? 'partial' : 'failed')
-            : 'published',
+        status: outcome.status,
         completedTargets: targets.length,
         deliveryResults,
-        error: itemFailures.length ? itemFailures.join('；') : undefined,
+        error: itemFailures.length ? itemFailures.join('；') : hasUnknown ? '存在结果不明的发布尝试，请先核对平台回执，禁止直接重发。' : undefined,
       });
-      if (!itemFailures.length && !itemProcessing && itemSuccesses > 0 && item.calendarPostIds?.length) {
+      if (outcome.allPublished && item.calendarPostIds?.length) {
         await Promise.all(item.calendarPostIds.map(postId =>
           fetch(`/api/overseas/publishing/calendar/${postId}`, {
             method: 'DELETE',
@@ -1253,7 +1304,7 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview, workflowCont
     const notices: string[] = [];
     if (successfulTargets) notices.push(`已确认 ${successfulTargets} 个账号完成发布，每条发布均生成独立追踪码。`);
     if (processingTargets) notices.push(`${processingTargets} 个账号已由平台受理，正在处理；收到最终公开视频回执前不会标记为已发布。`);
-    if (scheduledTargets) notices.push(`已将 ${scheduledTargets} 个账号任务加入内容日历；系统会在设定时间自动发布到已选账号。`);
+    if (scheduledTargets) notices.push(`已将 ${scheduledTargets} 个账号任务加入内容日历；系统会在用户已确认的设定时间提交到已选账号。`);
     if (notices.length) setNotice(notices.join(' '));
   };
 
@@ -1309,6 +1360,7 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview, workflowCont
 
         <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
           <section className="space-y-4">
+        <ExternalVideoApprovalPanel storageScope={storageScope} />
         <section data-lingshu-guide="publishing-workbench" className="rounded-2xl border border-emerald-200 bg-white p-4 shadow-sm ring-1 ring-emerald-50">
           <div>
             <div className="flex flex-wrap items-center justify-between gap-3">
@@ -1416,9 +1468,10 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview, workflowCont
               </div>
             ) : accounts.map(account => {
               const meta = PLATFORM_META[account.platform];
-              const active = selectedTargetAccountIds.includes(account.id);
+              const directPostUnavailable = account.platform === 'tiktok';
+              const active = !directPostUnavailable && selectedTargetAccountIds.includes(account.id);
               return (
-                <button key={account.id} type="button" onClick={() => toggleAccount(account.id)} disabled={account.status !== 'connected'} className={`rounded-xl border p-2.5 text-left transition-all disabled:cursor-not-allowed disabled:opacity-55 ${active ? 'border-accent bg-accent-glow shadow-sm' : 'border-border bg-surface hover:border-border-bright'}`}>
+                <button key={account.id} type="button" onClick={() => toggleAccount(account.id)} disabled={account.status !== 'connected' || directPostUnavailable} className={`rounded-xl border p-2.5 text-left transition-all disabled:cursor-not-allowed disabled:opacity-55 ${active ? 'border-accent bg-accent-glow shadow-sm' : 'border-border bg-surface hover:border-border-bright'}`}>
                   <div className="flex items-center justify-between gap-3">
                     {account.avatarUrl ? (
                       <img src={account.avatarUrl} alt={account.title} className="h-10 w-10 shrink-0 rounded-xl object-cover" />
@@ -1427,8 +1480,8 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview, workflowCont
                         <SocialPlatformIcon platform={account.platform} size={20} />
                       </span>
                     )}
-                    <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${account.status === 'connected' ? 'bg-green-50 text-green-700' : 'bg-slate-100 text-text-muted'}`}>
-                      {account.status === 'connected' ? '已连接' : '需重新授权'}
+                    <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${account.status === 'connected' && !directPostUnavailable ? 'bg-green-50 text-green-700' : 'bg-slate-100 text-text-muted'}`}>
+                      {directPostUnavailable ? '直发审核中' : account.status === 'connected' ? '已连接' : '需重新授权'}
                     </span>
                   </div>
                   <p className="mt-2 inline-flex items-center gap-1.5 text-sm font-bold text-text-primary"><SocialPlatformIcon platform={account.platform} size={16} /> {meta.label}</p>
@@ -1658,9 +1711,9 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview, workflowCont
                 <li>当前视频追踪链接：{activeItem?.trackWaLink ? '开启' : '关闭'}</li>
               </ul>
             </div>
-            {selectedPlatforms.includes('tiktok') && (
+            {accounts.some(account => account.platform === 'tiktok' && account.status === 'connected') && (
               <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-[10px] leading-5 text-amber-800">
-                TikTok 正式公开发布前，还需按平台要求读取创作者信息，并让用户确认可见范围、评论、合拍和拼接选项；应用未通过审核时通常只能私密发布。
+                TikTok Direct Post 正式审核尚未完成，当前账号不会作为直发目标；请先生成和核对内容，待平台批准且完整发布设置上线后再由用户主动提交。
               </div>
             )}
 
@@ -1687,7 +1740,7 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview, workflowCont
               </div>
               <div className="mt-4 grid grid-cols-2 gap-2">
                 <div className="rounded-xl border border-emerald-100 bg-emerald-50 p-3"><p className="text-[10px] font-bold text-emerald-700">立即真实发布</p><p className="mt-1 text-lg font-black text-emerald-900">{immediateItems.length} 条</p></div>
-                <div className="rounded-xl border border-violet-100 bg-violet-50 p-3"><p className="text-[10px] font-bold text-violet-700">定时自动发布</p><p className="mt-1 text-lg font-black text-violet-900">{scheduledItems.length} 条</p></div>
+                <div className="rounded-xl border border-violet-100 bg-violet-50 p-3"><p className="text-[10px] font-bold text-violet-700">已确认定时提交</p><p className="mt-1 text-lg font-black text-violet-900">{scheduledItems.length} 条</p></div>
               </div>
               <p className="mt-3 rounded-xl bg-surface px-3 py-2 text-[11px] leading-5 text-text-secondary">共 {publishableAssignments} 个账号目标。部分平台可能因审核、权限或素材规范拒绝发布，失败项会保留在队列中供修改后重试。</p>
               <div className="mt-5 flex justify-end gap-2">

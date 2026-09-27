@@ -24,6 +24,8 @@ import {
   verifyFrozenPublishSourceClaim,
   type FrozenPublishSourceClaim,
 } from './publishSourceClaim.js';
+import { boundedAuthorizationIssue, type BoundedPublishingAuthorizationSnapshot } from '../digitalEmployees/publishingExecution.js';
+import { externalVideoApprovalValid, externalVideoSha256 } from './externalVideoApproval.js';
 
 type LegacyEffectExecutor = <T>(tenantId: string, effect: () => Promise<T>) => Promise<T>;
 export interface ScheduledPublishLeaseGuard {
@@ -99,6 +101,7 @@ export function scheduledRetryDelay(attempt: number): number {
 
 export function isScheduledPostDue(post: PostRecord, now = Date.now()): boolean {
   const stats = statsOf(post);
+  if (!externalVideoApprovalValid(post)) return false;
   const status = text(stats.status);
   const continuingExistingDelivery = ['provider_processing', 'finalize_pending'].includes(status);
   // Digital-employee calendar entries require an explicit, version-frozen
@@ -106,6 +109,15 @@ export function isScheduledPostDue(post: PostRecord, now = Date.now()): boolean 
   // provider receipt exists, status recovery/local finalization is read-only
   // with respect to external delivery and must remain recoverable.
   if (text(stats.workflowRunId) && !continuingExistingDelivery && stats.realPublishingAuthorized !== true) return false;
+  if (text(stats.workflowRunId) && !continuingExistingDelivery && text(stats.authorizationMode) === 'bounded') {
+    const accounts = Array.isArray(stats.targetAccountIds) ? stats.targetAccountIds.map(String).filter(Boolean) : [];
+    const snapshot = stats.boundedAuthorization as BoundedPublishingAuthorizationSnapshot | undefined;
+    if (!accounts.length || accounts.some(accountId => boundedAuthorizationIssue(snapshot, {
+      accountId,
+      platform: text(post.platform) as PublishPlatform,
+      scheduledAt: text(post.published_at),
+    }))) return false;
+  }
   const scheduledAt = Date.parse(text(post.published_at));
   if (!Number.isFinite(scheduledAt) || scheduledAt > now) return false;
   if (Object.values(resultMap(stats)).some(result => result.status === 'unknown')) return false;
@@ -370,6 +382,15 @@ async function publishScheduledPost(
       await lease.beforeEffect();
       await assertManagedPublishingAuthorization(post, accountId);
       await (dependencies.verifySource ?? verifyFrozenPublishSourceClaim)(post.tenant_id, sourceClaim, videoPath);
+      if (initialStats.origin === 'authorized_external_video') {
+        const latest = await store.getById<PostRecord>('posts', post.id);
+        if (!latest || !externalVideoApprovalValid(latest)
+          || latest.title !== post.title || latest.published_at !== post.published_at
+          || statsOf(latest).externalApprovedContentHash !== initialStats.externalApprovedContentHash
+          || await externalVideoSha256(videoPath) !== initialStats.videoSha256) {
+          throw new PublishSourceVerificationError('external_video_approval_stale', 409, '获授权外部视频已变化，需要重新审批。');
+        }
+      }
       const publish = () => dependencies.publish({
         tenantId: post.tenant_id,
         accountId,

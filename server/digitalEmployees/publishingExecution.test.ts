@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { buildPublishingApprovalPackage, createPublishingCalendarEntries, invalidatePublishingApprovalForProject } from './publishingExecution.js';
+import { boundedAuthorizationIssue, buildBoundedPublishingAuthorization, buildPublishingApprovalPackage, createPublishingCalendarEntries, invalidatePublishingApprovalForProject, invalidatePublishingAuthorizationForRun } from './publishingExecution.js';
 import { store } from '../storage/index.js';
 
 const base = {
@@ -16,6 +16,34 @@ assert.equal(manual.allowRealPublishing, false);
 assert.ok(manual.contentHash);
 assert.notEqual(buildPublishingApprovalPackage({ ...base, projects: [{ ...base.projects[0], spec: { ...base.projects[0]!.spec, caption: '已修改' } }] }).contentHash, manual.contentHash);
 assert.notEqual(buildPublishingApprovalPackage({ ...base, allowRealPublishing: true }).contentHash, manual.contentHash);
+
+const boundedInput = {
+  packageRevision: 3,
+  authorizedBy: 'owner-1',
+  authorizedAt: '2026-09-06T01:00:00.000Z',
+  startsAt: '2026-09-04',
+  endsAt: '2026-09-12',
+  accountBindings: [{ accountId: 'account-1', platform: 'facebook' as const }],
+  maxPublishItems: 1,
+  businessBoundary: { products: 'A', markets: 'US', audience: 'brand buyers', languages: ['en'], platforms: ['facebook' as const], productionBudget: 100, paidMediaBudget: 0 },
+};
+const bounded = buildPublishingApprovalPackage({ ...base, allowRealPublishing: true, boundedAuthorization: boundedInput });
+assert.ok(bounded.authorizationSnapshot, 'bounded weekly approval must freeze its authorization snapshot');
+assert.equal(boundedAuthorizationIssue(bounded.authorizationSnapshot, { accountId: 'account-1', platform: 'facebook', scheduledAt: bounded.items[0]!.scheduledAt }), '');
+assert.equal(boundedAuthorizationIssue(bounded.authorizationSnapshot, { accountId: 'outside', platform: 'facebook', scheduledAt: bounded.items[0]!.scheduledAt }), 'bounded_authorization_account_mismatch');
+assert.equal(boundedAuthorizationIssue({ ...bounded.authorizationSnapshot!, schemaVersion: 2 as 1 }, { accountId: 'account-1', platform: 'facebook', scheduledAt: bounded.items[0]!.scheduledAt }), 'bounded_authorization_version_unsupported');
+assert.equal(boundedAuthorizationIssue({ ...bounded.authorizationSnapshot!, businessBoundary: null } as any, { accountId: 'account-1', platform: 'facebook', scheduledAt: bounded.items[0]!.scheduledAt }), 'bounded_authorization_malformed');
+assert.equal(boundedAuthorizationIssue({ ...bounded.authorizationSnapshot!, accountBindings: 'account-1' } as any, { accountId: 'account-1', platform: 'facebook', scheduledAt: bounded.items[0]!.scheduledAt }), 'bounded_authorization_malformed');
+assert.throws(() => buildPublishingApprovalPackage({ ...base, allowRealPublishing: true, boundedAuthorization: { ...boundedInput, accountBindings: [] } }), /bounded_authorization_account_mismatch/);
+assert.throws(() => buildPublishingApprovalPackage({
+  ...base,
+  targets: [...base.targets, { ...base.targets[0], accountId: 'account-2', accountLabel: '主页二' }],
+  allowRealPublishing: true,
+  boundedAuthorization: { ...boundedInput, accountBindings: [...boundedInput.accountBindings, { accountId: 'account-2', platform: 'facebook' as const }] },
+}), /bounded_authorization_item_limit_exceeded/, 'the limit counts actual account publish actions, including grouped legacy rows');
+const tampered = { ...bounded.authorizationSnapshot!, maxPublishItems: 2 };
+assert.equal(boundedAuthorizationIssue(tampered, { accountId: 'account-1', platform: 'facebook', scheduledAt: bounded.items[0]!.scheduledAt }), 'bounded_authorization_tampered');
+assert.notEqual(buildBoundedPublishingAuthorization({ ...boundedInput, businessBoundary: { ...boundedInput.businessBoundary, markets: 'EU' } }).snapshotHash, bounded.authorizationSnapshot!.snapshotHash, 'market changes must invalidate the frozen authorization');
 
 const versioned = buildPublishingApprovalPackage({ ...base, projects: [{ ...base.projects[0], spec: {
   automation: { managedBy: 'digital_employee', stage: 'completed', renderOutputPath: '/current-v3.mp4', quality: { passed: true, ruleVersion: 9 } },
@@ -99,6 +127,26 @@ try {
 } finally {
   Object.assign(store, original);
   store.create = originalCreate;
+}
+
+const queued = { id: 'queued', tenant_id: 'tenant-1', stats: { workflowRunId: 'run-2', status: 'scheduled', realPublishingAuthorized: true, publishResults: {} } };
+const accepted = { id: 'accepted', tenant_id: 'tenant-1', stats: { workflowRunId: 'run-2', status: 'provider_processing', realPublishingAuthorized: true, publishResults: { account: { status: 'provider_accepted' } } } };
+const otherRun = { id: 'other', tenant_id: 'tenant-1', stats: { workflowRunId: 'run-other', status: 'scheduled', realPublishingAuthorized: true, publishResults: {} } };
+const revocationRows: any[] = [queued, accepted, otherRun];
+store.list = (async () => ({ items: revocationRows, totalItems: revocationRows.length, totalPages: 1, page: 1, perPage: 500 })) as typeof store.list;
+store.update = (async (_collection: string, id: string, patch: Record<string, unknown>) => {
+  const row = revocationRows.find(item => item.id === id);
+  if (!row) return false;
+  Object.assign(row, patch); return true;
+}) as typeof store.update;
+try {
+  assert.equal(await invalidatePublishingAuthorizationForRun('tenant-1', 'run-2'), 1);
+  assert.equal(queued.stats.status, 'awaiting_reapproval', 'queued work must stop when the weekly package changes');
+  assert.equal(queued.stats.realPublishingAuthorized, false);
+  assert.equal(accepted.stats.status, 'provider_processing', 'accepted provider work must remain recoverable without resending');
+  assert.equal(otherRun.stats.status, 'scheduled', 'another run must remain untouched');
+} finally {
+  Object.assign(store, original);
 }
 
 console.log('publishing execution tests passed');

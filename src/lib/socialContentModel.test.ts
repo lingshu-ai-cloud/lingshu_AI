@@ -39,7 +39,8 @@ assert.equal(socialContentMaterialCanStart('limited', { hasVideo: false, imageCo
 assert.equal(socialContentMaterialCanStart('limited', { hasVideo: false, imageCount: 0, referenceLinkCount: 1 }), true);
 assert.equal(socialContentMaterialCanStart('ready', { hasVideo: false, imageCount: 1, referenceLinkCount: 0 }), false);
 assert.equal(socialShotFunctionLabel('hook'), '前三秒钩子');
-assert.equal(socialShotSourceStrategyLabel('authorized_digital_presenter'), '数字人口播');
+assert.equal(socialShotSourceStrategyLabel('authorized_digital_presenter'), '账号一致数字人口播');
+assert.equal(socialShotSourceStrategyLabel('aigc_product_scene_replication'), 'AIGC 产品场景复刻');
 assert.deepEqual(socialShotMaterialCountsLabel({
   customerAssetIds: ['customer-1'],
   generatedAssetIds: ['generated-1', 'generated-2'],
@@ -164,6 +165,8 @@ const validDraft = {
 };
 assert.deepEqual(validateSocialContentDraft(validDraft), {});
 assert.match(validateSocialContentDraft({ ...validDraft, referenceLinks: ['not-a-link'] })[1]?.[0] || '', /参考链接/);
+assert.equal(validateSocialContentDraft({ ...validDraft, referenceLinks: ['local://Download-1.mp4'] })[1], undefined,
+  'inspiration-center internal references remain valid through task creation');
 assert.deepEqual(validateSocialContentDraft({
   ...validDraft,
   selectedSources: validDraft.selectedSources.filter(source => source.kind === 'knowledge'),

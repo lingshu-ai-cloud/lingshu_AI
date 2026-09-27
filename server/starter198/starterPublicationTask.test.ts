@@ -79,6 +79,7 @@ const input = {
   approvalTaskId: 'approval-task-1',
   subjectVersion: '9',
   contentHash: 'frozen-content-hash',
+  now: new Date('2026-09-12T01:00:00.000Z'),
 };
 const first = await enqueueApprovedContentPublicationPackageTask(input, repository);
 const replay = await enqueueApprovedContentPublicationPackageTask(input, repository);

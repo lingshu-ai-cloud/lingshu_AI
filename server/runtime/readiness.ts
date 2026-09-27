@@ -1,5 +1,14 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { execFile } from 'node:child_process';
 import { getPbUrl, pbListStrict } from '../storage/pb.js';
 import { processRoleStartsBackgroundJobs, type ProcessRole } from './processRole.js';
+import {
+  assertSocialOperatingCollections,
+  inspectSocialOperatingSignals,
+  type SocialOperatingSignals,
+} from './socialOperatingObservability.js';
+import type { BackgroundJobRuntimeState } from './workerHeartbeat.js';
 
 export type RuntimeCapability =
   | 'text_generation'
@@ -7,6 +16,8 @@ export type RuntimeCapability =
   | 'tts'
   | 'video_generation'
   | 'digital_human'
+  | 'digital_human_quality'
+  | 'digital_human_auto_release'
   | 'starter_workers'
   | 'scheduled_publishing'
   | 'quote'
@@ -34,6 +45,8 @@ const KNOWN_CAPABILITIES: RuntimeCapability[] = [
   'tts',
   'video_generation',
   'digital_human',
+  'digital_human_quality',
+  'digital_human_auto_release',
   'starter_workers',
   'scheduled_publishing',
   'quote',
@@ -128,6 +141,71 @@ export function sentenceReplicationReadiness(env: NodeJS.ProcessEnv = process.en
   };
 }
 
+export interface DigitalHumanQualityRuntimeReadiness {
+  localVisual: CapabilityState;
+  semantic: CapabilityState;
+  lipSync: CapabilityState;
+  autoRelease: CapabilityState;
+}
+
+function digitalHumanQualityConfig(env: NodeJS.ProcessEnv): DigitalHumanQualityRuntimeReadiness {
+  const localVisual = envPresent(env, 'DIGITAL_HUMAN_VISUAL_QA_PYTHON')
+    ? { ready: true }
+    : { ready: false, reason: 'visual_qa_python_missing' };
+  const semanticReady = envEnabled(env, 'DIGITAL_HUMAN_SEMANTIC_QA_ENABLED')
+    && (envPresent(env, 'DASHSCOPE_API_KEY') || envPresent(env, 'DASHSCOPE_API_KEY_FILE'))
+    && envPresent(env, 'QWEN_DIGITAL_HUMAN_QA_MODEL');
+  const semantic: CapabilityState = semanticReady ? { ready: true } : { ready: false, reason: 'semantic_qa_disabled_or_unconfigured' };
+  const lipSyncReady = envEnabled(env, 'DIGITAL_HUMAN_SYNCNET_QA_ENABLED')
+    && envPresent(env, 'DIGITAL_HUMAN_SYNCNET_QA_PYTHON') && envPresent(env, 'DIGITAL_HUMAN_SYNCNET_DIR');
+  const lipSync: CapabilityState = lipSyncReady ? { ready: true } : { ready: false, reason: 'official_syncnet_disabled_or_unconfigured' };
+  const autoRelease: CapabilityState = localVisual.ready && semantic.ready && lipSync.ready
+    ? { ready: true }
+    : { ready: false, reason: 'automatic_release_requires_visual_semantic_and_official_syncnet' };
+  return { localVisual, semantic, lipSync, autoRelease };
+}
+
+/**
+ * Runtime self-check for independent QA. Local visual dependencies are
+ * executed, while paid semantic credentials are configuration-audited only.
+ * Every rendered cue must still produce its own evidence before release.
+ */
+export async function digitalHumanQualityRuntimeReadiness(
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<DigitalHumanQualityRuntimeReadiness> {
+  const report = digitalHumanQualityConfig(env);
+  const python = String(env.DIGITAL_HUMAN_VISUAL_QA_PYTHON || '').trim();
+  const script = path.resolve(process.cwd(), 'scripts/person_replacement_visual_qa.py');
+  if (python) {
+    if (!fs.existsSync(script)) report.localVisual = { ready: false, reason: 'visual_qa_script_missing' };
+    else {
+      try {
+        const stdout = await new Promise<string>((resolve, reject) => execFile(python, [script, '--self-check'], {
+          timeout: 20_000, maxBuffer: 1024 * 1024, encoding: 'utf8', env: { ...env, PYTHONNOUSERSITE: '1' },
+        }, (error, output, stderr) => error ? reject(new Error(String(stderr || error.message))) : resolve(output)));
+        const parsed = JSON.parse(stdout) as { ready?: boolean };
+        report.localVisual = parsed.ready === true ? { ready: true } : { ready: false, reason: 'visual_qa_self_check_failed' };
+      } catch (error) {
+        report.localVisual = { ready: false, reason: `visual_qa_self_check_failed:${error instanceof Error ? error.message.slice(0, 160) : 'unknown'}` };
+      }
+    }
+  }
+  if (report.lipSync.ready) {
+    const syncnetDir = String(env.DIGITAL_HUMAN_SYNCNET_DIR || '').trim();
+    const required = [
+      path.join(syncnetDir, 'data', 'syncnet_v2.model'),
+      path.join(syncnetDir, 'run_pipeline.py'),
+      path.join(syncnetDir, 'run_syncnet.py'),
+      path.resolve(process.cwd(), 'scripts/validate-syncnet.py'),
+    ];
+    if (required.some(file => !fs.existsSync(file))) report.lipSync = { ready: false, reason: 'official_syncnet_model_or_runner_missing' };
+  }
+  report.autoRelease = report.localVisual.ready && report.semantic.ready && report.lipSync.ready
+    ? { ready: true }
+    : { ready: false, reason: 'automatic_release_requires_visual_semantic_and_official_syncnet' };
+  return report;
+}
+
 function textGenerationCapability(): CapabilityState {
   const backend = String(process.env.OVERSEAS_LLM_BACKEND || 'qwen').trim().toLowerCase();
   if (backend === 'gemini') {
@@ -150,6 +228,7 @@ export function runtimeCapabilities(role: ProcessRole): Record<RuntimeCapability
     || (enabled('GEMINI_VIDEO_ENABLED') && present('GEMINI_API_KEY'));
   const digitalHumanProviders = digitalHumanProviderReadiness();
   const digitalHumanReady = Object.values(digitalHumanProviders).some(provider => provider.ready);
+  const quality = digitalHumanQualityConfig(process.env);
   const starterWorkersReady = background
     && enabled('STARTER_PUBLICATION_PACKAGE_WORKER_ENABLED')
     && enabled('STARTER_QUOTE_ARTIFACT_WORKER_ENABLED')
@@ -161,6 +240,8 @@ export function runtimeCapabilities(role: ProcessRole): Record<RuntimeCapability
     tts: { ready: ttsReady, reason: ttsReady ? undefined : 'no_tts_provider_configured' },
     video_generation: { ready: videoReady, reason: videoReady ? undefined : 'video_provider_disabled_or_unconfigured' },
     digital_human: { ready: digitalHumanReady, reason: digitalHumanReady ? undefined : 'digital_human_provider_disabled_or_unconfigured' },
+    digital_human_quality: quality.localVisual,
+    digital_human_auto_release: quality.autoRelease,
     starter_workers: { ready: starterWorkersReady, reason: starterWorkersReady ? undefined : background ? 'starter_workers_not_explicitly_enabled' : 'background_jobs_not_running_in_this_role' },
     scheduled_publishing: { ready: background && enabled('PUBLISH_SCHEDULER_ENABLED'), reason: background && enabled('PUBLISH_SCHEDULER_ENABLED') ? undefined : 'publishing_worker_not_enabled' },
     quote: { ready: process.env.NODE_ENV !== 'production' || enabled('QUOTE_SKILL_ENABLED'), reason: process.env.NODE_ENV !== 'production' || enabled('QUOTE_SKILL_ENABLED') ? undefined : 'quote_skill_not_enabled' },
@@ -190,9 +271,16 @@ export async function runtimeReadiness(input: {
   role: ProcessRole;
   startupIssues?: string[];
   checkPocketBase?: () => Promise<void>;
+  checkDigitalHumanQuality?: () => Promise<DigitalHumanQualityRuntimeReadiness>;
+  checkSocialOperating?: () => Promise<SocialOperatingSignals>;
+  localWorker?: BackgroundJobRuntimeState;
 }) {
   const capabilities = runtimeCapabilities(input.role);
+  const quality = await (input.checkDigitalHumanQuality || (() => digitalHumanQualityRuntimeReadiness()))();
+  capabilities.digital_human_quality = quality.localVisual;
+  capabilities.digital_human_auto_release = quality.autoRelease;
   const issues = [...(input.startupIssues || []), ...requiredCapabilityIssues(capabilities)];
+  let socialOperating: SocialOperatingSignals | null = null;
   try {
     if (input.checkPocketBase) {
       await input.checkPocketBase();
@@ -202,14 +290,30 @@ export async function runtimeReadiness(input: {
       // This collection is the product entitlement authority and proves the
       // starter migration set has reached the connected database.
       await pbListStrict('starter_198_access', { page: 1, perPage: 1 });
+      await assertSocialOperatingCollections();
     }
   } catch (error) {
     issues.push(`pocketbase_unavailable_or_unmigrated:${error instanceof Error ? error.message : 'unknown'}`);
+  }
+  try {
+    // Focused unit tests that inject only the dependency probe retain their
+    // narrow contract. Production probes always include worker and queue state.
+    if (input.checkSocialOperating) socialOperating = await input.checkSocialOperating();
+    else if (!input.checkPocketBase) socialOperating = await inspectSocialOperatingSignals({
+      role: input.role, localWorker: input.localWorker,
+    });
+    if (socialOperating && !socialOperating.worker.ready) {
+      issues.push(`social_operating_worker_unready:${socialOperating.worker.source}:${socialOperating.worker.state}`);
+    }
+  } catch (error) {
+    issues.push(`social_operating_observability_unavailable:${error instanceof Error ? error.message : 'unknown'}`);
   }
   return {
     status: issues.length ? 'degraded' as const : 'ready' as const,
     role: input.role,
     capabilities,
+    digitalHumanQuality: quality,
+    socialOperating,
     issues,
   };
 }
@@ -229,17 +333,30 @@ export function createRuntimeReadinessProbe(input: {
   role: ProcessRole;
   startupIssues?: string[];
   checkPocketBase?: () => Promise<void>;
+  checkDigitalHumanQuality?: () => Promise<DigitalHumanQualityRuntimeReadiness>;
+  checkSocialOperating?: () => Promise<SocialOperatingSignals>;
+  localWorker?: BackgroundJobRuntimeState;
   now?: () => number;
 }) {
   type Report = Awaited<ReturnType<typeof runtimeReadiness>>;
   const now = input.now ?? Date.now;
   let cached: { report: Report; expiresAt: number } | null = null;
   let inFlight: Promise<Report> | null = null;
+  // Image contents and process environment are immutable for the lifetime of
+  // a production container. Import MediaPipe once instead of on every load
+  // balancer probe; a failed self-check remains failed until the process is
+  // restarted with a corrected image/configuration.
+  let qualitySelfCheck: Promise<DigitalHumanQualityRuntimeReadiness> | null = null;
+  const runQualitySelfCheck = input.checkDigitalHumanQuality || (() => digitalHumanQualityRuntimeReadiness());
+  const checkDigitalHumanQuality = () => {
+    qualitySelfCheck ||= runQualitySelfCheck();
+    return qualitySelfCheck;
+  };
   return async (): Promise<Report> => {
     const timestamp = now();
     if (cached && cached.expiresAt > timestamp) return cached.report;
     if (inFlight) return inFlight;
-    const request = runtimeReadiness(input);
+    const request = runtimeReadiness({ ...input, checkDigitalHumanQuality });
     inFlight = request;
     try {
       const report = await request;
