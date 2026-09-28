@@ -5,7 +5,9 @@ import path from 'node:path';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const tests = [
   ...readdirSync(path.join(root, 'server/platformAds')).filter(name => name.endsWith('.test.ts')).sort().map(name => `server/platformAds/${name}`),
+  'shared/platformAdCapabilities.test.ts',
   'src/lib/adOverview.test.ts',
+  'src/lib/adManagedSummary.test.ts',
   'src/components/AdPerformanceOverview.test.tsx',
   'src/components/PlatformAdsPage.contract.test.ts',
 ];

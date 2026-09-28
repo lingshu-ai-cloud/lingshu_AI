@@ -109,6 +109,7 @@ export async function openSocialArtifactMedia(input: {
     tenantId: input.tenantId,
     taskId: input.taskId,
     fileRef: input.descriptor.fileRef,
+    backendFilePort: input.backendFilePort,
   });
   const actual = socialArtifactMediaDescriptor(input.descriptor.artifactId, resolved.file);
   if (actual.fileRef !== input.descriptor.fileRef
@@ -149,6 +150,7 @@ export async function openSocialArtifactPreviewMedia(input: {
     repository: input.repository,
     tenantId: input.tenantId,
     taskId: input.taskId,
+    backendFilePort: input.backendFilePort,
     value: {
       kind: artifact.kind,
       platform: artifact.platform,

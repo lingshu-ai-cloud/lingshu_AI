@@ -250,6 +250,16 @@ export function CalendarPlanner({
   onSchedulePending?: (id: string, scheduledAt: Date) => Promise<number>;
   refreshKey?: number;
 }) {
+  const [demoMode, setDemoMode] = useState(() => import.meta.env.DEV && (new URLSearchParams(window.location.search).get('mockCalendar') === '1' || window.sessionStorage.getItem('lingshu:calendar-demo') === '1'));
+  const [demoPost, setDemoPost] = useState<CalendarPost | null>(null);
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    window.sessionStorage.setItem('lingshu:calendar-demo', demoMode ? '1' : '0');
+    const url = new URL(window.location.href);
+    if (demoMode) url.searchParams.set('mockCalendar', '1');
+    else url.searchParams.delete('mockCalendar');
+    window.history.replaceState(window.history.state, '', url);
+  }, [demoMode]);
   const today = startOfDay(new Date());
   const [mode, setMode] = useState<ViewMode>('week');
   const [anchor, setAnchor] = useState(() => new Date());
@@ -273,7 +283,7 @@ export function CalendarPlanner({
   });
   const [loading, setLoading] = useState(false);
   const [recoveryPost, setRecoveryPost] = useState<CalendarPost | null>(null);
-  const openPost = (post: CalendarPost) => { if (post.status === 'needs_attention') { setHoveredContent(null); setRecoveryPost(post); } else onOpenPost?.(post); };
+  const openPost = (post: CalendarPost) => { if (post.id.startsWith("demo-calendar-")) { setHoveredContent(null); setDemoPost(post); return; } if (post.status === 'needs_attention') { setHoveredContent(null); setRecoveryPost(post); } else onOpenPost?.(post); };
   const [error, setError] = useState('');
   const [scoreSource, setScoreSource] = useState('平台参考');
   const calendarTopRef = useRef<HTMLDivElement>(null);
@@ -337,6 +347,23 @@ export function CalendarPlanner({
   }, [anchor, tideMonthDays]);
 
   const load = async (silent = false) => {
+    if (demoMode) {
+      calendarRequestRef.current?.abort();
+      calendarRequestRef.current = null;
+      const titles = ['30 秒认识灵枢数字员工', '从一条灵感到多平台成片', '工厂产品细节与应用展示', '采购常见问题：交付与定制', '客户案例：一周内容运营流程', '幕后揭秘：脚本如何变成视频', '本周精选与下周预告'];
+      const cadence = [
+        { platform: 'tiktok', weekdays: [1, 2, 3, 4, 5], hour: 8, account: '灵枢 · 北美品牌号' },
+        { platform: 'facebook', weekdays: [1, 2, 3, 4, 5], hour: 10, account: '灵枢 · 品牌主页' },
+        { platform: 'youtube', weekdays: [2, 4, 6], hour: 20, account: '灵枢 · 官方频道' },
+        { platform: 'instagram', weekdays: [1, 3, 5], hour: 14, account: '灵枢 · 产品展示号' },
+      ];
+      setItems(days.flatMap((day, index) => cadence.filter(entry => entry.weekdays.includes(day.getDay())).map(entry => {
+        const date = new Date(day); date.setHours(entry.hour, entry.platform === 'instagram' ? 30 : 0, 0, 0);
+        return { id: `demo-calendar-${index}-${entry.platform}`, title: titles[(index + cadence.indexOf(entry)) % titles.length], platform: entry.platform, publishedAt: date.toISOString(), status: 'scheduled', scheduleLocked: entry.platform === 'youtube', description: '演示内容：展示产品价值、应用场景与明确的咨询入口。此数据仅用于页面预览。', targetAccountLabels: [entry.account], duration: 30 + index * 5, inquiries: 0 };
+      })));
+      setError(''); setLoading(false);
+      return;
+    }
     if (calendarRequestRef.current) {
       if (silent) return;
       calendarRequestRef.current.abort();
@@ -404,7 +431,7 @@ export function CalendarPlanner({
       calendarRequestRef.current = null;
       controller?.abort();
     };
-  }, [range.from.toISOString(), range.to.toISOString(), mode, selectedPlatform, utcOffset, refreshKey]);
+  }, [range.from.toISOString(), range.to.toISOString(), mode, selectedPlatform, utcOffset, refreshKey, demoMode]);
 
   const itemsByDay = useMemo(() => {
     const groups: Record<string, CalendarPost[]> = {};
@@ -547,6 +574,7 @@ export function CalendarPlanner({
   };
 
   const reschedule = async (postId: string, day: Date) => {
+    if (postId.startsWith('demo-calendar-')) { setInteractionMessage('演示排期仅供预览，不会提交发布。'); return; }
     const current = items.find(item => item.id === postId);
     if (!current) return;
     if (current.scheduleLocked) {
@@ -681,6 +709,8 @@ export function CalendarPlanner({
           <div className="flex items-center gap-2">
             <CalendarDays size={15} className="text-emerald-600" />
             <h3 className="text-sm font-black text-text-primary">内容日历</h3>
+            {import.meta.env.DEV && <button type="button" onClick={() => setDemoMode(value => !value)} className="rounded-lg border border-border px-3 py-1 text-xs font-bold">{demoMode ? '退出演示数据' : '预览演示数据'}</button>}
+            {demoMode && <span className="text-xs text-amber-700">模拟数据 · TikTok / Facebook 各 5 条/周 · YouTube / Instagram 各 3 条/周</span>}
           </div>
         </div>
 
@@ -902,7 +932,7 @@ export function CalendarPlanner({
                                     key={item.id}
                                     type="button"
                                     data-calendar-post={item.id}
-                                    draggable={!item.platformPostId && !item.scheduleLocked && !['needs_attention', 'publishing', 'finalize_pending'].includes(item.status)}
+                                    draggable={!demoMode && !item.platformPostId && !item.scheduleLocked && !['needs_attention', 'publishing', 'finalize_pending'].includes(item.status)}
                                     title={item.scheduleLocked ? '定点排期已锁定；点击可编辑发布内容' : '拖动可调整日期，发布时间保持不变'}
                                     onDragStart={event => {
                                       setDragId(item.id);
@@ -964,12 +994,23 @@ export function CalendarPlanner({
         marketLabel={enterpriseMarketLabel}
         marketTimeZone={market.timeZone}
         utcOffset={utcOffset}
-        posts={items}
+        posts={demoMode ? [] : items}
         pendingItems={pendingItems}
         onOpenPending={onOpenPending}
         onArrangePending={arrangePendingContent}
       />
 
+      {demoPost && <div className="fixed inset-0 z-[170] flex items-center justify-center bg-black/40 p-4" role="dialog" aria-modal="true" aria-label="演示发布详情">
+        <div className="w-full max-w-md space-y-4 rounded-2xl bg-white p-6">
+          <p className="text-xs font-bold text-amber-700">模拟数据 · 不会实际发布</p>
+          <h3 className="text-lg font-bold">{demoPost.title}</h3>
+          <PlatformBadge platform={demoPost.platform} />
+          <p>{demoPost.targetAccountLabels?.join('、')}</p>
+          <p>{new Date(demoPost.publishedAt).toLocaleString('zh-CN')} · {statusMeta(demoPost).label}</p>
+          <p className="text-sm text-text-muted">{demoPost.description}</p>
+          <button type="button" autoFocus onClick={() => setDemoPost(null)} className="rounded-lg bg-accent px-4 py-2 text-white">关闭</button>
+        </div>
+      </div>}
       {pendingTimeSelection && (
         <div ref={pendingTimeDialogRef} tabIndex={-1} className="fixed inset-0 z-[170] flex items-center justify-center bg-slate-950/45 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="pending-time-title">
           <div className="w-full max-w-sm rounded-2xl border border-border bg-white p-5 shadow-2xl">

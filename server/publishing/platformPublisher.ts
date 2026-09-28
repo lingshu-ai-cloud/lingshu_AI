@@ -1,3 +1,4 @@
+import { assertManagedPublishingAuthorization } from './managedPublishingAuthorization.js';
 import {
   assertNoUnresolvedPublishing,
   withDirectPublishingLease,
@@ -120,6 +121,7 @@ function accountStatus(error: any): number {
 }
 
 async function revalidatePublishSource(input: PublishToAccountInput): Promise<void> {
+  if (input.trackingPost) await assertManagedPublishingAuthorization(input.trackingPost, input.accountId);
   if (!input.sourceClaim) throw publishError('发布来源校验记录缺失', 409);
   await verifyFrozenPublishSourceClaim(input.tenantId, input.sourceClaim, input.videoPath);
 }

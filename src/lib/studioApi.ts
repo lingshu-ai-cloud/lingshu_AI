@@ -715,7 +715,7 @@ export const studioApi = {
 
   // 素材库
   listMaterialLibrary: fetchMaterialLibrary,
-  listMaterials: async (): Promise<Material[]> => (await fetchMaterialLibrary()).items,
+  listMaterials: async (purpose: 'library' | 'reference' | 'all' = 'library'): Promise<Material[]> => (await fetchMaterialLibrary(purpose)).items,
   uploadMaterial: (b: { name: string; folder?: string; type: 'video' | 'image' | 'audio'; duration?: number; width?: number; height?: number; dataBase64: string; mimeType?: string; sourceType?: string }) =>
     post<{ ok: boolean; material: Material }>('materials', b, { ok: false, material: null as unknown as Material }),
   uploadMaterialFile: async (
@@ -1040,9 +1040,9 @@ export type MaterialLibraryState = { items?: Material[]; status: 'ready' | 'part
 let latestMaterialLibraryState: MaterialLibraryState | null = null;
 export const getMaterialLibraryState = () => latestMaterialLibraryState;
 function publishMaterialLibraryState(state: MaterialLibraryState) { latestMaterialLibraryState = state; window.dispatchEvent(new CustomEvent('lingshu:material-library-status', { detail: state })); }
-export async function fetchMaterialLibrary(): Promise<MaterialLibraryState & { items: Material[] }> {
+export async function fetchMaterialLibrary(purpose: 'library' | 'reference' | 'all' = 'library'): Promise<MaterialLibraryState & { items: Material[] }> {
   try {
-    const response = await fetch('/api/overseas/studio/materials?envelope=1', { headers: authHeader(), cache: 'no-store', signal: AbortSignal.timeout(15000) });
+    const response = await fetch(`/api/overseas/studio/materials?envelope=1&purpose=${purpose}`, { headers: authHeader(), cache: 'no-store', signal: AbortSignal.timeout(15000) });
     if (response.status === 401) throw Error('登录已失效，请重新登录后读取素材');
     const data = await response.json();
     if (!response.ok || !Array.isArray(data.items)) throw Error(data.error || '素材库暂时无法读取，请重试');

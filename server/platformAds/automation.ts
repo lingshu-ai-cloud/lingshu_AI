@@ -1,3 +1,6 @@
+import { isDeepStrictEqual } from 'node:util';
+import { buildDecisionEvidence } from './decisionEvidence.js';
+import { withAdWorkerEvidence } from './workerHealth.js';
 import { store } from '../storage/index.js';
 import { adReleasePolicy } from './releasePolicy.js';
 import { getPlatformAdTask, withPlatformAdTaskLock, PlatformAdTaskValidationError, PlatformAdTaskConflictError, type PlatformAdTask } from './tasks.js';
@@ -64,11 +67,15 @@ export async function runAdAutomationRule(rule: AdAutomationRule) {
   if (adReleasePolicy().mode !== 'full') return;
   return withPlatformAdTaskLock(rule.tenant_id, `automation-${rule.id}`, async () => {
     const fresh = await store.getById<AdAutomationRule>(AD_AUTOMATION_RULES, rule.id);
-    if (!fresh?.enabled) return;
+    if (!fresh?.enabled || fresh.tenant_id !== rule.tenant_id || fresh.taskId !== rule.taskId) return;
     const task = await getPlatformAdTask(rule.tenant_id, rule.taskId);
     if (!task || task.managementMode !== 'managed') return;
-    const writeRun = async (status: string, reason: string, metrics?: AdAutomationMetrics, receipt?: unknown) => {
-      if (!await store.create(AD_AUTOMATION_RUNS, { tenant_id: rule.tenant_id, taskId: rule.taskId, ruleId: rule.id, status, reason, metrics: metrics || null, receipt: receipt || null, createdAt: new Date().toISOString() })) throw new Error('自动运行记录保存失败');
+    const writeRun = async (status: string, reason: string, metrics?: AdAutomationMetrics, receipt?: { id?: string }, action: 'pause' | 'adjust_budget' | null = null, dailyBudget?: number) => {
+      const decision = buildDecisionEvidence(task, fresh, reason, metrics, action, dailyBudget, receipt?.id);
+      const created = await store.create(AD_AUTOMATION_RUNS, { tenant_id: rule.tenant_id, taskId: rule.taskId, ruleId: rule.id, status, reason, metrics: metrics || null, receipt: receipt || null, decision, createdAt: new Date().toISOString() });
+      if (!created) throw new Error('自动运行记录保存失败');
+      const persisted = await store.getById(AD_AUTOMATION_RUNS, created.id);
+      if (!persisted || persisted.tenant_id !== rule.tenant_id || !isDeepStrictEqual(persisted.decision, decision)) throw new Error('自动决策证据未完整持久化，停止执行');
     };
     try {
       const { connection, accessToken } = await getConnectionCredential(rule.tenant_id, fresh.connectionId);
@@ -89,6 +96,7 @@ export async function runAdAutomationRule(rule: AdAutomationRule) {
       if (!Array.isArray(recent.data) || recent.data.length !== 1 || !Array.isArray(lifetime.data) || lifetime.data.length !== 1) throw new Error('平台效果样本尚不可用');
       const linkClicks = recent.data[0].inline_link_clicks;
       if (linkClicks === undefined || linkClicks === null || linkClicks === '') throw new Error('平台未提供链接点击指标，停止优化');
+      if ([recent.data[0].spend, lifetime.data[0].spend, budget.daily_budget].some(value => value === undefined || value === null || value === '')) throw new Error('平台预算或消耗指标缺失，停止优化');
       const metrics: AdAutomationMetrics = { clicks: Number(linkClicks), spend: Number(recent.data[0].spend), lifetimeSpend: Number(lifetime.data[0].spend), dailyBudget: Number(budget.daily_budget) / 100, fetchedAt: new Date().toISOString(), status: String(campaign.status) };
       const baseline = receipts.find(r => r.connectionId === fresh.connectionId && r.resourceId === fresh.resourceId && r.status === 'VERIFIED' && ['create', 'adjust_budget'].includes(r.action));
       const baselineMinor = Number((baseline?.result as Record<string, unknown> | undefined)?.dailyBudgetMinor);
@@ -103,9 +111,9 @@ export async function runAdAutomationRule(rule: AdAutomationRule) {
       const decision = decideAdOptimization(task, fresh, metrics, last?.createdAt);
       if (!decision.action) { await writeRun('OBSERVING', decision.reason, metrics); return; }
       // An observation must be durable before submitting a real action.
-      await writeRun('PROPOSED', decision.reason, metrics);
+      await writeRun('PROPOSED', decision.reason, metrics, undefined, decision.action, decision.dailyBudget);
       const receipt = await executeAutomaticAdAction(rule.tenant_id, rule.taskId, { expectedVersion: task.version, requestId: `auto_${rule.id}_${Math.floor(Date.now() / 60_000)}`, connectionId: fresh.connectionId, resourceId: fresh.resourceId, action: decision.action, dailyBudget: decision.dailyBudget, expectedDailyBudget: metrics.dailyBudget, automationRuleId: fresh.id, automationRuleUpdatedAt: fresh.updatedAt });
-      await writeRun(receipt.status, decision.reason, metrics, receipt);
+      await writeRun(receipt.status, decision.reason, metrics, receipt, decision.action, decision.dailyBudget);
     } catch (error) { await writeRun('BLOCKED', error instanceof Error ? error.message : '自动优化失败'); }
   });
 }
@@ -120,7 +128,7 @@ export async function runAdAutomationOnce() {
     if (page >= rules.totalPages) break;
   }
   for (const rule of all) {
-    try { await runAdAutomationRule(rule); } catch (error) { console.error('[ad-automation]', error instanceof Error ? error.message : 'failed'); }
+    try { await withAdWorkerEvidence(rule.tenant_id, () => runAdAutomationRule(rule)); } catch (error) { console.error('[ad-automation]', error instanceof Error ? error.message : 'failed'); }
   }
 }
 export function startAdAutomationWorker() {

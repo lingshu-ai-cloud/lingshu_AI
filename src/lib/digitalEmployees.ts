@@ -1,3 +1,4 @@
+import type { ManagedPublishingGrant } from '../../shared/contracts/managedPublishingGrant';
 import type { MatrixAccountReview } from './weeklyMatrix';
 import type { ContinuationPolicy } from './continuationPolicy';
 import type { ReviewTodoBoard } from './reviewTodos';
@@ -31,6 +32,7 @@ export type DigitalEmployeeWorkflow =
 export type DataAvailability = "available" | "pending" | "unavailable";
 
 export interface DigitalEmployeeConfig {
+  managedPublishingGrant?: ManagedPublishingGrant;
   continuationPolicy?: ContinuationPolicy;
   operatingMaturity?: "starting" | "growing" | "established";
   operatingAssessment?: OperatingAssessment;

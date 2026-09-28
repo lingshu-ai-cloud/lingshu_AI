@@ -4,6 +4,7 @@ import type { Page } from '../../pageRegistry';
 import type { SocialPlatform, SocialProgramRoute } from '../../../shared/contracts/socialProgram';
 import { useSocialProgram } from '../../contexts/SocialProgramContext';
 import SocialProgramPageFrame from './SocialProgramPageFrame';
+import { authHeader } from '../../lib/auth';
 
 const PLATFORMS: Array<{ value: SocialPlatform; label: string }> = [
   { value: 'tiktok', label: 'TikTok' }, { value: 'instagram', label: 'Instagram' },
@@ -11,7 +12,7 @@ const PLATFORMS: Array<{ value: SocialPlatform; label: string }> = [
   { value: 'douyin', label: '抖音' }, { value: 'xiaohongshu', label: '小红书' },
 ];
 
-export default function SocialSetupPage({ onNavigate }: { onNavigate: (page: Page) => void }) {
+export default function SocialOperatingConfiguration({ onNavigate }: { onNavigate: (page: Page) => void }) {
   const { activeProgram, createProgram, updateActiveProgram, mutating, loading } = useSocialProgram();
   const [brandName, setBrandName] = useState('');
   const [businessLine, setBusinessLine] = useState('');
@@ -20,6 +21,24 @@ export default function SocialSetupPage({ onNavigate }: { onNavigate: (page: Pag
   const [route, setRoute] = useState<SocialProgramRoute>('cold_start');
   const [platforms, setPlatforms] = useState<SocialPlatform[]>([]);
   const [notice, setNotice] = useState('');
+  const [knowledgeNotice, setKnowledgeNotice] = useState('');
+  useEffect(() => {
+    if (activeProgram) return;
+    const controller = new AbortController();
+    void fetch('/api/overseas/enterprise/profile', { headers: authHeader(), signal: controller.signal })
+      .then(async response => { if (!response.ok) throw new Error('企业知识库暂时不可用'); return response.json(); })
+      .then(profile => {
+        if (controller.signal.aborted) return;
+        const field = (value: unknown) => typeof value === 'string' ? value : '';
+        setBrandName(current => current || field(profile.company?.name));
+        setBusinessLine(current => current || field(profile.company?.description));
+        setMarket(current => current || field(profile.company?.mainMarkets));
+        setTargetAudience(current => current || field(profile.customers?.targetProfiles));
+        setKnowledgeNotice('已复用企业知识库中的品牌、市场和受众资料，缺失项可在此补充。');
+      }).catch(() => { if (!controller.signal.aborted) setKnowledgeNotice('企业知识库暂时不可用，可填写真实业务信息或稍后重试。'); });
+    return () => controller.abort();
+  }, [activeProgram?.programId]);
+
 
   useEffect(() => {
     if (!activeProgram) return;
@@ -39,7 +58,7 @@ export default function SocialSetupPage({ onNavigate }: { onNavigate: (page: Pag
     setNotice('');
     try {
       await createProgram({ brandName, businessLine, market, targetAudience, route, candidatePlatforms: platforms });
-      setNotice('项目已保存到服务端。请继续确认基础资料和账号矩阵。');
+      setNotice('经营配置已保存，可直接开始创作或管理发布账号。');
     } catch { /* context shows the server error */ }
   };
 
@@ -55,7 +74,7 @@ export default function SocialSetupPage({ onNavigate }: { onNavigate: (page: Pag
         candidatePlatforms: platforms,
         ...(confirmFoundation ? { readiness: { foundationConfirmed: true } } : {}),
       });
-      setNotice(confirmFoundation ? '基础资料已由你确认。' : '项目设置已保存。');
+      setNotice(confirmFoundation ? '基础资料已由你确认。' : '经营配置已保存。');
     } catch { /* context shows the server error */ }
   };
 
@@ -69,15 +88,16 @@ export default function SocialSetupPage({ onNavigate }: { onNavigate: (page: Pag
   );
 
   return (
-    <SocialProgramPageFrame title="项目搭建" description="先建立社媒经营项目的事实边界，再进入对标、账号和计划阶段。">
+    <SocialProgramPageFrame title="业务配置" description="维护品牌、市场和受众背景，已有内容任务无需重复填写。">
       {!activeProgram ? (
         <form onSubmit={submitCreate} className="rounded-xl border border-border bg-white p-5 sm:p-6">
-          <h2 className="text-lg font-bold text-text-primary">创建真实经营项目</h2>
-          <p className="mt-1 text-sm text-text-muted">所有必填项都会写入项目 API；页面不会自动补充虚构品牌或平台。</p>
+          <h2 className="text-lg font-bold text-text-primary">补充业务背景</h2>
+          <p className="mt-1 text-sm text-text-muted">提供真实品牌和受众信息，供经营、编导与内容 Agent 共用。</p>
+          <p className="mt-2 text-xs text-text-muted" role="status">{knowledgeNotice}</p>
           <div className="mt-5 grid gap-4 sm:grid-cols-2">{fields}</div>
           <RouteAndPlatforms route={route} setRoute={setRoute} platforms={platforms} togglePlatform={togglePlatform} />
           <button type="submit" disabled={mutating || loading || !brandName.trim() || !market.trim() || !targetAudience.trim() || !platforms.length} className="btn-primary mt-6 inline-flex items-center gap-2 disabled:cursor-not-allowed disabled:opacity-50">
-            {mutating ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />}创建项目
+            {mutating ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />}保存业务配置
           </button>
         </form>
       ) : (
@@ -92,7 +112,7 @@ export default function SocialSetupPage({ onNavigate }: { onNavigate: (page: Pag
           <div className="mt-6 flex flex-wrap gap-2">
             <button type="button" onClick={() => void saveExisting(false)} disabled={mutating || !targetAudience.trim() || !platforms.length} className="btn-ghost inline-flex items-center gap-2 disabled:opacity-50"><Save size={15} />保存修改</button>
             {!activeProgram.readiness.foundationConfirmed && activeProgram.route === 'cold_start' && <button type="button" onClick={() => void saveExisting(true)} disabled={mutating || !targetAudience.trim() || !platforms.length} className="btn-primary inline-flex items-center gap-2 disabled:opacity-50"><CheckCircle2 size={15} />确认基础资料</button>}
-            <button type="button" onClick={() => onNavigate('socialAccounts')} className="btn-ghost inline-flex items-center gap-2">进入账号矩阵<ArrowRight size={15} /></button>
+            <button type="button" onClick={() => onNavigate('accountManagement')} className="btn-ghost inline-flex items-center gap-2">管理发布账号<ArrowRight size={15} /></button>
           </div>
         </section>
       )}
@@ -114,7 +134,7 @@ function RouteAndPlatforms({
   return (
     <div className="mt-6 space-y-5 border-t border-border pt-5">
       <fieldset><legend className="text-sm font-bold text-text-primary">经营路线</legend><div className="mt-3 grid gap-3 sm:grid-cols-2">
-        {([{ value: 'cold_start', label: '从零搭建', detail: '先确认基础资料，再建立账号矩阵。' }, { value: 'account_repair', label: '已有账号修复', detail: '先录入真实账号，再等待诊断结果。' }] as const).map(item => (
+        {([{ value: 'cold_start', label: '从零搭建', detail: '基于品牌资料规划内容方向。' }, { value: 'account_repair', label: '已有账号修复', detail: '先录入真实账号，再等待诊断结果。' }] as const).map(item => (
           <label key={item.value} className={`cursor-pointer rounded-lg border p-4 ${route === item.value ? 'border-accent bg-emerald-50' : 'border-border'}`}>
             <span className="flex items-center gap-2"><input type="radio" name="social-route" checked={route === item.value} onChange={() => setRoute(item.value)} /><strong className="text-sm text-text-primary">{item.label}</strong></span>
             <span className="mt-1 block pl-5 text-xs text-text-muted">{item.detail}</span>

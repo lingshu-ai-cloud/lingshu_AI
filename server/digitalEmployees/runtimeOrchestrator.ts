@@ -3,7 +3,7 @@ import { reviewTodoService } from './reviewTodos.js';
 import { store } from '../storage/index.js';
 import { normalizeDigitalEmployeeConfig, type DigitalEmployeeConfig } from './domain.js';
 import { beijingDate, latestDueReviewSlot, reviewScheduleFromCadence } from './runtimeSchedule.js';
-import { allocateReviewTodos, generateScheduledRunReview, reconcileDigitalEmployeeRun } from '../routes/digitalEmployees.js';
+import { allocateReviewTodos, continueManagedOperatingCycle, generateScheduledRunReview, reconcileDigitalEmployeeRun } from '../routes/digitalEmployees.js';
 
 type StoredRecord = { id: string; [key: string]: unknown };
 type RuntimeRun = StoredRecord & {
@@ -26,6 +26,7 @@ export interface RuntimeCycleResult {
   scanned: number;
   reconciled: number;
   reviewsGenerated: number;
+  cyclesContinued?: number;
   errors: Array<{ runId: string; tenantId: string; message: string }>;
 }
 
@@ -122,6 +123,35 @@ async function reviewIfDue(run: RuntimeRun, now: Date): Promise<boolean> {
   return generateScheduledRunReview({ tenantId: run.tenant_id, runId: run.id, scheduleSlot: slot.toISOString() });
 }
 
+/** Opted-in tenants are scanned independently of manual review-todo boards. */
+export async function runManagedOperatingContinuations(now = new Date()): Promise<{ continued: number; errors: RuntimeCycleResult['errors'] }> {
+  const result = { continued: 0, errors: [] as RuntimeCycleResult['errors'] };
+  for (let page = 1; page <= 20; page++) {
+    const configs = await store.list<RuntimeConfig>('digital_employee_configs', { where: { status: 'active' }, page, perPage: 100 });
+    for (const row of configs.items) {
+      const config = normalizeDigitalEmployeeConfig(jsonValue(row.config, {}));
+      if (!row.tenant_id || !config.managedPublishingGrant?.enabled) continue;
+      try {
+        const runs = await store.list<RuntimeRun>('workflow_runs', { where: { tenant_id: row.tenant_id }, sort: '-started_at', perPage: 100 });
+        const latest = runs.items.find(run => !DEDICATED_WORKFLOW_PROFILES.has(String(run.product_profile || '')));
+        if (!latest) continue;
+        let sourceRunId = latest.id;
+        if (latest.status === 'initializing') {
+          const goal = await tenantRecord<RuntimeGoal>('weekly_goals', latest.goal_id, row.tenant_id);
+          const scope = jsonValue<{ managedContinuation?: { sourceRunId?: string } }>(goal?.scope, {});
+          if (!scope.managedContinuation?.sourceRunId) continue;
+          sourceRunId = scope.managedContinuation.sourceRunId;
+        } else if (latest.status !== 'succeeded') continue;
+        if (await continueManagedOperatingCycle(row.tenant_id, sourceRunId, now)) result.continued += 1;
+      } catch (error) {
+        result.errors.push({ tenantId: row.tenant_id, runId: '', message: error instanceof Error ? error.message : String(error) });
+      }
+    }
+    if (!configs.items.length || page >= configs.totalPages) break;
+  }
+  return result;
+}
+
 /** One bounded, tenant-safe pass. Each run fails independently. */
 export async function runDigitalEmployeeRuntimeCycle(now = new Date()): Promise<RuntimeCycleResult> {
   const maxRuns = integerEnv('DIGITAL_EMPLOYEE_RUNTIME_MAX_RUNS', 200, 1, 1000);
@@ -146,6 +176,9 @@ export async function runDigitalEmployeeRuntimeCycle(now = new Date()): Promise<
       console.error(`[digital-employee-runtime] run ${run.id} failed:`, message);
     }
   }
+  const continuation = await runManagedOperatingContinuations(now);
+  result.cyclesContinued = continuation.continued;
+  result.errors.push(...continuation.errors);
   return result;
 }
 
@@ -158,8 +191,8 @@ async function guardedCycle(): Promise<void> {
   try {
     try { await reviewTodoService.runDue(allocateReviewTodos); } catch (error) { console.error('[review-todos] scheduler unavailable:', (error as Error).message); }
     const result = await runDigitalEmployeeRuntimeCycle();
-    if (result.reconciled || result.reviewsGenerated || result.errors.length) {
-      console.log(`[digital-employee-runtime] scanned=${result.scanned} reconciled=${result.reconciled} reviews=${result.reviewsGenerated} errors=${result.errors.length}`);
+    if (result.reconciled || result.reviewsGenerated || result.cyclesContinued || result.errors.length) {
+      console.log(`[digital-employee-runtime] scanned=${result.scanned} reconciled=${result.reconciled} reviews=${result.reviewsGenerated} cycles=${result.cyclesContinued || 0} errors=${result.errors.length}`);
     }
   } catch (error) {
     console.error('[digital-employee-runtime] cycle failed:', error instanceof Error ? error.message : error);

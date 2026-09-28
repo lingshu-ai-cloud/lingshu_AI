@@ -16,6 +16,8 @@ export type SocialChannelCapability = {
 export type MonitoredContent = {
   id: string;
   channelId: SocialChannelId;
+  accountId?: string;
+  linkedPackageId?: string;
   title: string;
   publishedAt?: string;
   platformUrl?: string;
@@ -128,6 +130,7 @@ type RawExternalContent = {
   accountId: string;
   externalContentId: string;
   title?: string;
+  linkedPackageId?: string;
   publishedAt?: string;
   publicUrl?: string;
   status?: string;
@@ -268,13 +271,20 @@ export async function getSocialMonitorOverview(): Promise<SocialMonitorOverview>
   const metricsByContent = new Map<string, RawMetricSnapshot>();
   for (const snapshot of snapshots) {
     const key = `${snapshot.channelId}:${snapshot.accountId}:${snapshot.externalContentId || ''}`;
-    if (!metricsByContent.has(key)) metricsByContent.set(key, snapshot);
+    const previous = metricsByContent.get(key);
+    const captured = Date.parse(snapshot.capturedAt || '');
+    const previousCaptured = Date.parse(previous?.capturedAt || '');
+    if (!previous || (Number.isFinite(captured) && (!Number.isFinite(previousCaptured) || captured > previousCaptured))) {
+      metricsByContent.set(key, snapshot);
+    }
   }
   const contents = (Array.isArray(raw.recentContents) ? raw.recentContents : []).map(content => {
     const metric = metricsByContent.get(`${content.channelId}:${content.accountId}:${content.externalContentId}`);
     return {
       id: `${content.channelId}:${content.accountId}:${content.externalContentId}`,
       channelId: content.channelId,
+      accountId: content.accountId,
+      linkedPackageId: content.linkedPackageId,
       title: content.title || '未命名内容',
       publishedAt: content.publishedAt,
       platformUrl: content.publicUrl,

@@ -1,0 +1,14 @@
+import assert from 'node:assert/strict';
+import { monitoringReviewCandidate } from './socialMonitoringReview';
+import type { MonitoredContent } from './socialChannels';
+const item: MonitoredContent = { id: 'youtube:account:video', accountId: 'account', channelId: 'youtube', title: '产品演示', platformUrl: 'https://youtube.com/watch?v=abc', capturedAt: '2026-09-27T04:00:00Z', freshness: 'fresh', source: 'official_api', metrics: { views: 0, likes: null } };
+const now = new Date('2026-09-27T05:00:00Z');
+const result = monitoringReviewCandidate(item, now);
+assert.match(result.objective!, /"views":0/);
+assert.doesNotMatch(result.objective!, /"likes":0/);
+assert.equal(result.id, monitoringReviewCandidate(item, now).id);
+assert.throws(() => monitoringReviewCandidate({ ...item, freshness: 'stale' }, now), /近期指标/);
+assert.throws(() => monitoringReviewCandidate({ ...item, metrics: { views: null } }, now), /可用指标/);
+assert.throws(() => monitoringReviewCandidate({ ...item, platformUrl: undefined }, now), /原内容链接/);
+assert.throws(() => monitoringReviewCandidate({ ...item, capturedAt: '2027-01-01' }, now), /近期指标/);
+console.log('social monitoring review tests passed');

@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import type { SocialContentTaskDetail } from '../../../shared/contracts/socialContentWorkflow';
+import type { VideoKickoff } from '../AiCreateStudio';
 import { socialContentApi } from '../../lib/socialContentApi';
 
 export type StudioContentTheme = 'product_proof' | 'use_case' | 'supplier_capability' | 'customization' | 'customer_case';
@@ -8,7 +9,8 @@ export interface StudioSocialTaskSeed {
   projectTitle: string;
   productReference: string;
   contentMode: 'video' | 'poster';
-  creationMode: 'material' | 'product';
+  creationMode: 'material' | 'product' | 'clone';
+  reference: VideoKickoff | null;
   platform: string;
   aspectRatio: string;
   languageCodes: string[];
@@ -85,9 +87,40 @@ function languageCode(value: string): string | null {
   return LANGUAGE_CODES[value.trim()] || LANGUAGE_CODES[normalized] || null;
 }
 
+export function socialTaskReferenceKickoff(task: SocialContentTaskDetail): VideoKickoff | null {
+  if (task.brief.creationMode !== 'viral_replication') return null;
+  const analysis = task.referenceVideoAnalysis;
+  const source = task.sources.find(item => item.status === 'active' && item.sourceId === analysis?.referenceSourceId)
+    || task.sources.find(item => item.status === 'active' && item.kind === 'reference_link');
+  if (!source) return null;
+  const replication = task.replicationScript as (typeof task.replicationScript & {
+    narrationSourceStatus?: 'asr_aligned' | 'missing_source_asr';
+    narrationLines?: Array<{
+      lineId: string; referenceText: string; draftText: string;
+      sourceStartSeconds: number; sourceEndSeconds: number;
+      narrationOwnerShotId: string; visualShotIds: string[];
+    }>;
+  }) | null | undefined;
+  const narrationLines = replication?.narrationLines || [];
+  return {
+    source: 'inspiration_analysis', scriptType: 'storyboard',
+    video: { title: source.label, sourceUrl: source.sourceRef, contentFormat: 'video', duration: analysis?.durationSeconds || undefined },
+    ...(analysis?.status === 'ready' ? { referenceAnalysis: { title: source.label,
+      narrationSourceStatus: replication?.narrationSourceStatus || 'missing_source_asr',
+      details: analysis.shots.map(shot => ({
+      shotId: shot.shotId,
+      time: `${shot.startSeconds}-${shot.endSeconds}s`, shot: shot.visualDescription, camera: shot.shotLanguage?.movement || '',
+      visual: shot.visualDescription, dialogue: shot.spokenText || '', subtitle: shot.captionText || '', audio: shot.audioDescription || '',
+      purpose: shot.purpose || undefined,
+      speechLines: narrationLines.filter(line => line.visualShotIds?.includes(shot.shotId)
+        || line.narrationOwnerShotId === shot.shotId),
+    })) } } : {}),
+  };
+}
+
 export function socialTaskToStudioSeed(task: SocialContentTaskDetail): StudioSocialTaskSeed {
   const brief = task.brief;
-  const contentMode = brief.formats.some(format => format === 'short_video' || format === 'long_video') ? 'video' : 'poster';
+  const contentMode = brief.creationMode === 'viral_replication' || brief.formats.some(format => format === 'short_video' || format === 'long_video') ? 'video' : 'poster';
   const languagePairs = brief.languages.map(language => ({ language, code: languageCode(language) }));
   const languageCodes = [...new Set(languagePairs.map(item => item.code).filter((code): code is string => Boolean(code)))];
   const selectedMaterialIds = [...new Set(task.sources
@@ -113,7 +146,8 @@ export function socialTaskToStudioSeed(task: SocialContentTaskDetail): StudioSoc
     projectTitle: clean(brief.title) || '社媒内容任务',
     productReference: clean(brief.productRef),
     contentMode,
-    creationMode: selectedMaterialIds.length ? 'material' : 'product',
+    creationMode: brief.creationMode === 'viral_replication' ? 'clone' : selectedMaterialIds.length ? 'material' : 'product',
+    reference: socialTaskReferenceKickoff(task),
     platform: clean(brief.platforms[0]).toLowerCase() || (contentMode === 'poster' ? 'facebook' : 'tiktok'),
     aspectRatio: clean(brief.aspectRatio) || (contentMode === 'poster' ? '1:1' : '9:16'),
     languageCodes: languageCodes.length ? languageCodes : ['zh'],
@@ -138,7 +172,10 @@ export function useStudioSocialTaskHydration(input: {
   taskId?: string | null;
   canApply: () => boolean;
   onHydrate: (seed: StudioSocialTaskSeed) => void;
+  onRefresh?: (task: SocialContentTaskDetail) => void;
 }): void {
+  const refreshRef = useRef(input.onRefresh);
+  refreshRef.current = input.onRefresh;
   const canApplyRef = useRef(input.canApply);
   const onHydrateRef = useRef(input.onHydrate);
   canApplyRef.current = input.canApply;
@@ -148,9 +185,17 @@ export function useStudioSocialTaskHydration(input: {
     const taskId = input.taskId?.trim();
     if (!taskId) return;
     const controller = new AbortController();
-    void socialContentApi.getTask(taskId, controller.signal).then(task => {
-      if (!controller.signal.aborted && canApplyRef.current()) onHydrateRef.current(socialTaskToStudioSeed(task));
-    }).catch(() => undefined);
-    return () => controller.abort();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const refresh = async () => {
+      try {
+        const task = await socialContentApi.getTask(taskId, controller.signal);
+        if (controller.signal.aborted) return;
+        if (canApplyRef.current()) onHydrateRef.current(socialTaskToStudioSeed(task));
+        refreshRef.current?.(task);
+      } catch { /* Preserve the loaded editor during a temporary read failure. */ }
+      if (!controller.signal.aborted) timer = setTimeout(refresh, 8000);
+    };
+    void refresh();
+    return () => { controller.abort(); clearTimeout(timer); };
   }, [input.taskId]);
 }

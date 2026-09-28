@@ -1,3 +1,4 @@
+import { normalizeManagedPublishingGrant, type ManagedPublishingGrant } from '../../shared/contracts/managedPublishingGrant.js';
 import { normalizeContinuationPolicy, type ContinuationPolicy } from '../../shared/contracts/continuationPolicy.js';
 import { normalizeAssessment, type OperatingAssessment } from '../../shared/contracts/operatingMaturity.js';
 import { VIDEO_LANGUAGES, normalizeVideoLanguage } from '../../shared/contracts/videoLanguages.js';
@@ -27,6 +28,7 @@ export type WorkflowTaskStatus =
   | 'cancelled';
 
 export interface DigitalEmployeeConfig {
+  managedPublishingGrant?: ManagedPublishingGrant;
   continuationPolicy?: ContinuationPolicy;
   operatingMaturity?: "starting" | "growing" | "established";
   operatingAssessment?: OperatingAssessment;
@@ -164,6 +166,7 @@ export function normalizeDigitalEmployeeConfig(input: Partial<DigitalEmployeeCon
     .filter(code => code in VIDEO_LANGUAGES)
     .slice(0, 5);
   return {
+    managedPublishingGrant: normalizeManagedPublishingGrant(input.managedPublishingGrant),
     continuationPolicy: normalizeContinuationPolicy(input.continuationPolicy),
     operatingMaturity: ["starting", "growing", "established"].includes(String(input.operatingMaturity)) ? input.operatingMaturity : "growing",
     operatingAssessment: normalizeAssessment(input.operatingAssessment),

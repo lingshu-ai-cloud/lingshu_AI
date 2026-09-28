@@ -1261,6 +1261,7 @@ export async function crawlVideosForTenant(input: CrawlVideosInput): Promise<Cra
           views: item.views || existingAnalysis.views,
           uploadedAt: item.uploadedAt || existingAnalysis.uploadedAt,
           dateEvidence: item.dateEvidence || existingAnalysis.dateEvidence,
+          author: item.author || existingAnalysis.author || (accountMode ? accountName : undefined),
           keyword,
           crawlRule,
           sourceAccount: accountMode ? accountUrl : existingAnalysis.sourceAccount,
@@ -1299,6 +1300,7 @@ export async function crawlVideosForTenant(input: CrawlVideosInput): Promise<Cra
         views: item.views,
         uploadedAt: item.uploadedAt,
         dateEvidence: item.dateEvidence,
+        author: item.author || (accountMode ? accountName : undefined),
         gemini: metadataFallbackAnalysis(item),
         analysisSource: 'metadata-fallback',
         analysisQuality: 'metadata',
@@ -2809,7 +2811,8 @@ export async function queueExactSourceAnalysisForTenant(input: {
     return 'already_ready';
   }
   if (String(previous.requestedAnalysisMode) === 'exact'
-    && ['queued', 'waiting_for_video', 'analyzing'].includes(String(previous.geminiStatus || ''))) {
+    && ['queued', 'waiting_for_video', 'analyzing'].includes(String(previous.geminiStatus || ''))
+    && !(previous.geminiStatus === 'waiting_for_video' && previous.analysisError)) {
     return 'queued';
   }
   const analysisRunId = randomUUID();

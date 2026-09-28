@@ -1,9 +1,7 @@
-import { useState } from 'react';
 import { Plus, Sparkles } from 'lucide-react';
 import type { SocialContentTaskDetail, SocialContentTaskSummary } from '../../shared/contracts/socialContentWorkflow';
-import SocialContentLanding, { type SocialContentLaunchOptions } from '../components/socialContent/SocialContentLanding';
+import SocialContentLanding from '../components/socialContent/SocialContentLanding';
 import SocialProductionProgressPanel from '../components/socialContent/SocialProductionProgressPanel';
-import SocialTaskEditorDialog from '../components/socialContent/SocialTaskEditorDialog';
 
 const previewTask = {
   taskId: 'preview-task',
@@ -67,19 +65,7 @@ const previewTasks: SocialContentTaskSummary[] = [
 ];
 
 export default function SocialContentPreview() {
-  const [launchOptions, setLaunchOptions] = useState<SocialContentLaunchOptions>({
-    creationPath: 'material_processing',
-    materialInput: 'none',
-    managedMode: 'one_click_managed',
-  });
-  const [open, setOpen] = useState(false);
-  const [sessionKey, setSessionKey] = useState('preview:0');
-
-  const start = (options: SocialContentLaunchOptions) => {
-    setLaunchOptions(options);
-    setSessionKey(`preview:${Date.now()}`);
-    setOpen(true);
-  };
+  const start = (_options?: unknown) => { window.location.assign('/?page=smartAssets'); };
 
   return (
     <div className="min-h-screen bg-[#f6f8f5]">
@@ -93,7 +79,6 @@ export default function SocialContentPreview() {
           </div>
         </section>
       </main>
-      <SocialTaskEditorDialog open={open} sessionKey={sessionKey} task={null} initialThemeId="product_value" initialMode="instant" initialCreationPath={launchOptions.creationPath} initialMaterialInput={launchOptions.materialInput} initialManagedMode={launchOptions.managedMode} lockMode catalog={[]} busy={false} onClose={() => setOpen(false)} onSubmit={async () => {}} />
     </div>
   );
 }

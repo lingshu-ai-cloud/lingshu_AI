@@ -21,7 +21,8 @@ import {
 } from '../routes/studio.js';
 import { analyzeProductionMaterial } from '../digitalEmployees/productionMaterialAnalysis.js';
 import { objectStorageEnabled, objectStorageSignedGetUrl } from '../storage/objectStorage.js';
-import { createSocialContentArtifact } from './socialContentOutputs.js';
+import { scheduleManagedSocialArtifact } from './socialContentManagedPublishing.js';
+import { createSocialContentArtifact, createSocialDeliveryPackage } from './socialContentOutputs.js';
 import {
   inspectTransientSocialContentFile,
   registerSocialContentFile,
@@ -51,6 +52,7 @@ import {
   type StoredSocialScriptBaseline,
 } from './socialContentScriptBaseline.js';
 import { resolveSocialContentFormulaReference } from './socialContentFormulas.js';
+import { withSocialContentSubjectLease } from './socialContentMutation.js';
 import { runOutsideSocialContentMutationScope } from './socialContentMutation.js';
 import { resolveSocialInspirationScript } from './socialContentScriptSources.js';
 import {
@@ -1001,17 +1003,55 @@ async function finishExecution(input: {
   tenantId: string;
   runId: string;
   artifactId: string;
+  backendFilePort?: SocialContentBackendFilePort;
+  taskId: string;
+  userId: string;
 }): Promise<void> {
+  // Resume from the persisted artifact; never re-render a completed version.
+  const detail = await readSocialTaskDetail(input);
+  const artifact = detail?.artifacts.find(item => item.artifactId === input.artifactId);
+  const managed = detail?.brief.managementMode === "one_click_managed";
+  const accepted = managed && artifact?.status === "approved";
+  if (detail && ["paused", "attention"].includes(detail.status)) return;
+  if (accepted && detail && !["paused", "attention"].includes(detail.status)
+    && !detail.deliveryPackages.some(item => item.artifactIds.includes(input.artifactId))) {
+    await createSocialDeliveryPackage({
+      ...input,
+      idempotencyKey: `social-auto-delivery:${input.artifactId}`,
+      value: { expectedTaskVersion: detail.version, artifactIds: [input.artifactId] },
+    });
+  }
+  const publication = accepted ? await scheduleManagedSocialArtifact(input).catch(error => ({
+    status: 'blocked' as const, reason: error instanceof Error ? error.message : 'managed_publishing_unavailable',
+  })) : null;
+  if (publication) await withSocialContentSubjectLease({
+    repository: input.repository, tenantId: input.tenantId, subjectId: input.taskId, action: async () => {
+      const current = await requireSocialTask(input);
+      const brief = socialObject(socialJson(current.brief)) || {};
+      await input.repository.update(STARTER_COLLECTIONS.socialContentTasks, input.tenantId, current.id, {
+        brief: { ...brief, _managedPublishing: { artifactId: input.artifactId,
+          status: publication.status, attempts: 1,
+          nextAttemptAt: new Date(Date.now() + 60_000).toISOString(),
+          ...(publication.status === 'blocked' ? { reason: publication.reason } : { postIds: publication.postIds }),
+        } }, version: safeNextVersion(current), updated_at: new Date().toISOString(),
+      });
+    },
+  });
   await writeExecutionStage({
     ...input,
-    stage: 'review_ready',
-    status: 'completed',
-    message: '成品视频已生成，等待用户验收。',
-    extra: { artifactId: input.artifactId },
+    stage: accepted ? 'ready_to_distribute' : managed ? 'automatic_review_blocked' : 'review_ready',
+    status: managed && !accepted ? 'waiting_external' : 'completed',
+    message: accepted
+      ? '内容 Agent 技术质检与编导 Agent 表达验收通过，成品已交回经营 Agent；发布仍需有效账号与发布授权。'
+      : managed ? '成品已保留，自动验收证据未满足，等待系统恢复检查。' : '成品视频已生成，等待用户验收。',
+    extra: { artifactId: input.artifactId, ...(publication ? { managedPublishing: publication } : {}) },
   });
   const run = await input.repository.get(STARTER_COLLECTIONS.runs, input.tenantId, input.runId);
   if (run) await input.repository.update(STARTER_COLLECTIONS.runs, input.tenantId, run.id, {
-    status: 'completed', current_controller: 'system', pause_reason: '', completed_at: new Date().toISOString(),
+    status: managed && !accepted ? 'waiting_external' : 'completed',
+    current_controller: managed ? 'agent' : 'system',
+    pause_reason: managed && !accepted ? 'automatic_acceptance_evidence_incomplete' : '',
+    completed_at: managed && !accepted ? '' : new Date().toISOString(),
   });
 }
 
@@ -1103,7 +1143,7 @@ export async function runSocialContentAutoProduction(input: {
     && socialText(artifact.content?.workflowSchema) === AUTO_SCHEMA
     && !['superseded', 'changes_requested'].includes(artifact.status));
   if (!revisionParent && existing) {
-    await finishExecution({ ...input, artifactId: existing.artifactId });
+    await finishExecution({ ...input, backendFilePort: input.runtime?.backendFilePort, artifactId: existing.artifactId });
     return;
   }
   const agentWorkflow = detail.agentWorkflow;
@@ -1788,7 +1828,7 @@ export async function runSocialContentAutoProduction(input: {
       },
     },
   });
-  await finishExecution({ ...input, artifactId: artifactResult.artifact.artifactId });
+  await finishExecution({ ...input, backendFilePort: input.runtime?.backendFilePort, artifactId: artifactResult.artifact.artifactId });
     } finally {
       if (transientVoicePath) {
         await Promise.all([

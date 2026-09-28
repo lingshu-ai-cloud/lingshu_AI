@@ -179,6 +179,11 @@ function defaultBrief(value: CreateSocialContentTaskInput) {
     brandNotes: value.brandNotes ?? null,
     restrictions: value.restrictions ?? [],
     callToAction: value.callToAction ?? null,
+    programRef: value.programRef ?? null,
+    targetAccountRef: value.targetAccountRef ?? null,
+    accountPlaybookRef: value.accountPlaybookRef ?? null,
+    ...(value.referenceMode ? { referenceMode: value.referenceMode } : {}),
+    primaryExperimentVariable: value.primaryExperimentVariable ?? null,
     creationMode: value.creationMode
       ?? (value.legacyCreationRoute === 'clone' ? 'viral_replication' : 'material_processing'),
     assetAvailability: value.assetAvailability ?? 'none',
@@ -745,6 +750,7 @@ export async function startSocialContentTask(input: {
       const projectionAlreadyApplied = [
         projectionOperationId,
         `${projectionOperationId}:reference-analysis`,
+        `${operationId}:reference-review`,
       ].includes(socialText(record.last_operation_id));
       if (!projectionAlreadyApplied) {
         assertVersion(record, input.expectedVersion);
@@ -768,6 +774,24 @@ export async function startSocialContentTask(input: {
         });
         const referenceAnalysis = socialObject(socialJson(record.reference_video_analysis));
         if (!referenceAnalysis || socialText(referenceAnalysis.status) !== 'ready') {
+          if (socialTaskSummary(record).brief.managementMode === 'one_click_managed') {
+            const brief = socialObject(socialJson(record.brief)) || {};
+            const previous = socialObject(brief._managedStart);
+            const attempts = previous?.status === 'queued' ? Number(previous.attempts || 0) + 1 : 0;
+            const exhausted = attempts >= 8;
+            const timestamp = (input.now ?? new Date()).toISOString();
+            await input.repository.update(STARTER_COLLECTIONS.socialContentTasks, input.tenantId, record.id, {
+              brief: { ...brief, _managedStart: { status: exhausted ? 'blocked' : 'queued',
+                requestId: previous?.status === 'queued' ? previous.requestId : operationId,
+                userId: input.userId, attempts, requestedAt: previous?.requestedAt || timestamp,
+                nextAttemptAt: new Date(Date.parse(timestamp) + Math.min(15 * 60_000, 30_000 * 2 ** attempts)).toISOString(),
+                reason: exhausted ? 'reference_analysis_retry_exhausted' : 'reference_analysis_pending',
+              } },
+              status: exhausted ? 'attention' : 'needs_input', version: nextVersion(record),
+              updated_by: input.userId, updated_at: timestamp,
+            });
+            return { task: (await readSocialTaskDetail(input))! };
+          }
           throw new SocialContentWorkflowError('social_content_reference_analysis_pending', 409);
         }
         const replicationScript = socialObject(socialJson(record.replication_script));
@@ -784,7 +808,12 @@ export async function startSocialContentTask(input: {
             updated_by: input.userId,
             updated_at: timestamp,
           });
-          throw new SocialContentWorkflowError('social_content_reference_review_required', 409);
+          if (socialTaskSummary(record).brief.managementMode !== 'one_click_managed') {
+            throw new SocialContentWorkflowError('social_content_reference_review_required', 409);
+          }
+          // Managed tasks retain the exact analysis/script identity and continue
+          // to the existing facts, rights, budget and Director review gates.
+          record = await requireSocialTask(input);
         }
       }
       const summary = socialTaskSummary(record);

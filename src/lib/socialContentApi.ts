@@ -66,8 +66,8 @@ function friendlyFailure(status: number, code = ''): string {
   if (code.includes('source_option_version_conflict')) return '资料已更新，请重新选择';
   if (code.includes('not_startable') || code.includes('not_editable')) return '当前阶段无法进行这项操作，请刷新任务状态';
   if (code.includes('orchestrator_not_configured') || code.includes('queue_unavailable')) return '内容制作服务正在准备中，请稍后重试';
-  if (code.includes('social_content_reference_analysis_pending')) return '编导 Agent 正在逐镜分析参考视频，完成后即可确认开头并开始制作';
-  if (code.includes('social_content_reference_review_required')) return '逐镜复刻方案和三个前三秒开头已准备好，请先查看并再次点击开始制作';
+  if (code.includes('social_content_reference_analysis_pending')) return '编导 Agent 正在逐镜分析参考视频，原任务已保留，可查看分析与制作进度';
+  if (code.includes('social_content_reference_review_required')) return '逐镜复刻方案已准备好，原任务需要检查执行模式后继续制作';
   if (code.includes('social_content_execution_facts_required')) return '缺少最少必要事实。请补充企业资料、产品资料或已确认参数；无需补拍图片和视频';
   if (code.includes('social_content_execution_rights_required')) return '参考视频或素材的使用权尚未确认，请先补充授权信息';
   if (code.includes('social_content_execution_budget_required')) return '当前制作方案超过预算，请调整预算或选择更轻量的制作路线';

@@ -1,3 +1,4 @@
+import { readReferencePreparation } from './socialContentScriptSources.js';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { Router, type NextFunction, type Request, type Response } from 'express';
@@ -339,6 +340,9 @@ export function createSocialContentRouter(dependencies: SocialContentRouterDepen
     const taskId = requireSocialId(req.params.taskId);
     const task = await readSocialTaskDetail({ repository, tenantId: identity.tenantId, taskId });
     if (!task) throw new SocialContentWorkflowError('social_content_task_not_found', 404);
+    if (task.brief.creationMode === 'viral_replication' && task.referenceVideoAnalysis?.status !== 'ready') {
+      task.referencePreparation = await readReferencePreparation(identity.tenantId, task.sources).catch(() => ({ status: 'blocked' as const, reason: 'reference_status_unavailable' }));
+    }
     res.json({ task });
   }));
 
@@ -543,6 +547,7 @@ export function createSocialContentRouter(dependencies: SocialContentRouterDepen
     bodyWithinLimit(req);
     const result = await createSocialContentArtifact({
       repository,
+      backendFilePort,
       accessResolver,
       ...identity,
       taskId: requireSocialId(req.params.taskId),
@@ -589,6 +594,7 @@ export function createSocialContentRouter(dependencies: SocialContentRouterDepen
     bodyWithinLimit(req);
     const result = await createSocialDeliveryPackage({
       repository,
+      backendFilePort,
       accessResolver,
       ...identity,
       taskId: requireSocialId(req.params.taskId),

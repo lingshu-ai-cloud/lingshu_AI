@@ -137,7 +137,8 @@
     "test:execution-gaps": "tsx server/digitalEmployees/publishingAccountSlots.integration.test.ts && tsx server/digitalEmployees/continuationIntegration.test.ts && tsx server/digitalEmployees/continuationPolicy.test.ts && tsx server/digitalEmployees/customerReentry.test.ts && tsx server/routes/orderLifecycle.test.ts && tsx server/publishing/receiptRecovery.test.ts && tsx server/lib/analysisLease.test.ts && tsx server/lib/sourceAnalysisExecution.test.ts && tsx server/publishing/pendingPublishGuard.test.ts && tsx server/publishing/directPublishLease.test.ts && tsx server/publishing/platformPublisherTikTok.test.ts && tsx src/components/publishing/PublishingReceiptRecovery.test.tsx",
     "test:production-quality": "tsx server/digitalEmployees/contentFinish.test.ts && tsx server/digitalEmployees/sceneEvidence.test.ts && tsx server/digitalEmployees/sceneRepair.render.test.ts && tsx server/digitalEmployees/productionQualityWorkflow.test.ts && tsx server/digitalEmployees/productionMaterialAnalysis.test.ts && tsx server/digitalEmployees/productionPreflight.test.ts && tsx server/lib/renderVisualQuality.test.ts",
     "dev:database": "tsx scripts/start-local-database.ts",
-    "test:material-library": "tsx server/lib/materialLibrary.test.ts"
+    "test:material-library": "tsx server/lib/materialLibrary.test.ts",
+    "test:social-managed": "tsx src/lib/socialInspirationTask.test.ts && tsx src/lib/socialMonitoringReview.test.ts && tsx src/lib/socialChannels.monitor.test.ts && tsx server/starter198/socialContentManagedReview.test.ts && tsx server/starter198/socialContentManagedRecovery.test.ts && tsx server/starter198/socialContentManagedPublishing.test.ts && tsx server/publishing/socialContentSourceClaim.test.ts && tsx server/publishing/managedPublishingAuthorization.test.ts && tsx server/publishing/managedSocialEffect.test.ts && tsx server/digitalEmployees/managedPublishingGrant.test.ts && tsx server/digitalEmployees/managedOperatingCycle.test.ts && tsx server/digitalEmployees/managedOperatingCycle.integration.test.ts && tsx server/digitalEmployees/managedPublishingCycleLease.test.ts"
   },
   "packageManager": "pnpm@11.19.0",
   "dependencies": {
@@ -162,6 +163,7 @@
     "motion": "^12.40.0",
     "node-cron": "^4.4.1",
     "openai": "^6.39.1",
+    "pdfjs-dist": "5.4.624",
     "playwright-core": "^1.63.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",

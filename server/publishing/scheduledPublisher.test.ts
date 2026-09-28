@@ -329,6 +329,25 @@ try {
   assert.equal(tiktokStatusChecks, 2);
   assert.equal((rows[0].stats as any).status, 'published');
   assert.equal((rows[0].stats as any).publishResults['tiktok-account'].platformPostId, 'tiktok-public-post-1');
+  // A previously queued automatic post must be stopped after its current consent disappears.
+  const callsBeforeRevocation = providerCalls;
+  rows = [post('scheduled', {}, {
+    managedPublishingGrantId: 'revoked-grant', workflowRunId: 'active-run',
+    realPublishingAuthorized: true, targetAccountIds: ['account-1'], videoPath: '/isolated.mp4',
+  })];
+  const previousList = store.list;
+  const previousGet = store.getById;
+  store.list = (async (collection: string, query: any) => collection === 'digital_employee_configs'
+    ? { items: [], totalItems: 0, totalPages: 0, page: 1, perPage: 1 }
+    : previousList(collection, query)) as typeof store.list;
+  store.getById = (async (collection: string, id: string) => collection === 'workflow_runs'
+    ? { id, tenant_id: 'tenant-1', status: 'running', plan_id: 'plan-1' }
+    : previousGet(collection, id)) as typeof store.getById;
+  await runScheduledPublishingCycle(now, localDependencies);
+  assert.equal(providerCalls, callsBeforeRevocation, 'revoked automatic authorization prevents all platform submissions');
+  assert.equal((rows[0].stats as any).status, 'awaiting_reapproval');
+  assert.equal((rows[0].stats as any).realPublishingAuthorized, false);
+  assert.deepEqual((rows[0].stats as any).publishResults, {}, 'pre-submit rejection is not an unknown external attempt');
 } finally {
   Object.assign(store, original);
 }

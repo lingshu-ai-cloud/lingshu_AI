@@ -790,6 +790,7 @@ export interface SocialAccountTrackingDecision {
 }
 
 export interface SocialCrawlStrategy {
+  keywordRecommendation?: import('../productDiscovery').ProductKeywordRecommendation;
   crawlStrategyId: string;
   version: string;
   businessGoal: string;
@@ -1492,6 +1493,12 @@ export interface SocialMetricSubmission {
 }
 
 export interface SocialContentTaskDetail extends SocialContentTaskSummary {
+  referencePreparation?: { status: 'pending' | 'blocked'; reason: string | null };
+  /** Read-only recovery checkpoints; no grant secrets or private binding data. */
+  managedExecution?: {
+    reference?: { status: string; attempts: number; nextAttemptAt: string | null; reason: string | null };
+    publishing?: { status: string; attempts: number; nextAttemptAt: string | null; reason: string | null; retryExhausted: boolean };
+  };
   sources: SocialTaskSource[];
   artifacts: SocialContentArtifact[];
   deliveryPackages: SocialDeliveryPackage[];

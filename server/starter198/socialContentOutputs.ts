@@ -54,6 +54,8 @@ import type { SocialContentAccessResolver } from './socialContentAccess.js';
 import type { Starter198OrchestratorQueuePort } from './runtimePorts.js';
 import { startSocialContentTask } from './socialContentTasks.js';
 
+import { socialManagedArtifactReview } from './socialContentManagedReview.js';
+
 const OUTPUT_EDITABLE_STATES = new Set(['producing', 'asset_review', 'attention']);
 const MAX_SOCIAL_DELIVERY_MANIFEST_BYTES = 2 * 1024 * 1024;
 
@@ -328,8 +330,21 @@ export async function createSocialContentArtifact(input: {
       }
       const timestamp = (input.now ?? new Date()).toISOString();
       const artifactId = socialPublicId('socialart');
+      const automaticReview = socialManagedArtifactReview({
+        brief: socialTaskSummary(task).brief,
+        trustedAgentOrigin: input.trustedAgentOrigin,
+        origin: input.value.origin,
+        kind: input.value.kind,
+        resourceRef: media?.file.fileRef ?? input.value.resourceRef,
+        content: input.value.content,
+      });
       const content = {
         ...(input.value.content ?? {}),
+        ...(automaticReview.approved ? { review: {
+          state: "automatically_approved", automatedChecksPassed: true,
+          reviewedBy: "director_agent", ruleVersion: "social-managed-review.v1",
+          reason: automaticReview.reason,
+        } } : {}),
         ...(media ? { media: socialArtifactMediaDescriptor(artifactId, media.file) } : {}),
       };
       const created = await input.repository.create(STARTER_COLLECTIONS.socialContentArtifacts, input.tenantId, {
@@ -339,13 +354,13 @@ export async function createSocialContentArtifact(input: {
         platform: input.value.platform ?? '',
         language: input.value.language ?? '',
         version: '1',
-        status: 'review_required',
+        status: automaticReview.approved ? 'approved' : 'review_required',
         origin: input.value.origin,
         resource_ref: media?.file.fileRef ?? input.value.resourceRef ?? '',
         content,
         content_hash: socialRequestHash({ resourceRef: media?.file.fileRef ?? input.value.resourceRef, content }),
         parent_artifact_id: input.value.parentArtifactId ?? '',
-        decision_note: '',
+        decision_note: automaticReview.approved ? automaticReview.reason : '',
         created_operation_id: operationId,
         last_operation_id: operationId,
         created_by: input.userId,
@@ -554,6 +569,7 @@ export async function createSocialDeliveryPackage(input: {
   idempotencyKey: string;
   value: CreateSocialDeliveryPackageInput;
   accessResolver?: SocialContentAccessResolver;
+  backendFilePort?: SocialContentBackendFilePort;
   now?: Date;
 }): Promise<{ deliveryPackage: SocialDeliveryPackage; task: SocialContentTaskDetail }> {
   const mutation = await executeSocialContentMutation<{ deliveryPackage: SocialDeliveryPackage; task: SocialContentTaskDetail }>({
@@ -599,6 +615,7 @@ export async function createSocialDeliveryPackage(input: {
           repository: input.repository,
           tenantId: input.tenantId,
           taskId: input.taskId,
+          backendFilePort: input.backendFilePort,
           value: {
             kind: artifact.kind,
             platform: artifact.platform,

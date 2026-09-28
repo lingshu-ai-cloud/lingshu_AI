@@ -3,6 +3,7 @@ import { initFollowupDispatchWorker } from '../digitalEmployees/followupDispatch
 import { initScheduledPublisher } from '../publishing/scheduledPublisher.js';
 import { initStarterPublicationPackageWorker } from '../starter198/publicationPackageWorker.js';
 import { initStarterQuoteArtifactWorker } from '../starter198/quoteArtifactWorker.js';
+import { initSocialContentManagedRecovery } from '../starter198/socialContentManagedRecovery.js';
 import { initStarter198OrchestratorWorker } from '../starter198/orchestratorWorker.js';
 import { initCrawlWorkerCloudFallback } from '../routes/crawlWorker.js';
 import { initScheduler } from '../routes/scheduler.js';
@@ -24,6 +25,7 @@ export async function startBackgroundJobs(): Promise<void> {
   initStarterPublicationPackageWorker();
   initStarterQuoteArtifactWorker();
   initStarter198OrchestratorWorker();
+  initSocialContentManagedRecovery();
   startAdAutomationWorker();
   initDigitalEmployeeRuntime();
   console.log('[runtime] background jobs started');

@@ -1,3 +1,5 @@
+import { withManagedPublishingCycleLease, managedPublishingCapacity } from './managedPublishingCycleLease.js';
+import { assertDurableOperationLease, type DurableOperationLease } from '../runtime/durableLease.js';
 import { boundedPublishingSlots } from './continuationPolicy.js';
 import { createHash } from 'node:crypto';
 import type { MatrixAccountPlan } from '../../src/lib/weeklyMatrix.js';
@@ -150,13 +152,44 @@ export async function createPublishingCalendarEntries(input: {
   approvalId: string;
   approvedContentHash: string;
   package: PublishingApprovalPackage;
+  managedPublishingGrantId?: string;
 }, dependencies: {
   verifySource: (tenantId: string, claim: unknown, videoPath?: unknown) => Promise<unknown>;
 } = { verifySource: verifyFrozenPublishSourceClaim }): Promise<Array<{ id: string; status: string }>> {
   if (input.package.contentHash !== input.approvedContentHash
     || contentFingerprint(input.package.items, input.package.allowRealPublishing) !== input.approvedContentHash) throw new Error('approval_subject_changed');
   return withDigitalEmployeeRunLock(input.tenantId, input.runId, async () => {
+  const materialize = async (lease?: DurableOperationLease) => {
   const existing = await tenantPosts(input.tenantId);
+  const matchesItem = (post: any, item: PublishingApprovalItem) => {
+    const stats = record(post.stats);
+    return text(stats.workflowRunId) === input.runId && text(stats.sourceProjectId) === item.sourceProjectId
+      && text(post.platform) === item.platform && text(stats.approvedContentHash) === input.approvedContentHash
+      && text(stats.videoPath) === item.videoPath && JSON.stringify(stats.publishSourceClaim) === JSON.stringify(item.sourceClaim)
+      && Array.isArray(stats.targetAccountIds) && JSON.stringify(stats.targetAccountIds.slice().sort()) === JSON.stringify([...item.accountIds].sort());
+  };
+  if (input.managedPublishingGrantId) {
+    const run = await store.getById<any>('workflow_runs', input.runId);
+    const plan = run && await store.getById<any>('weekly_plans', text(run.plan_id));
+    const body = record(plan?.plan), authorization = record(record(body.businessPackage).authorization);
+    const authorizedAccountIds = Array.isArray(authorization.accountIds) ? authorization.accountIds : null;
+    if (run?.tenant_id !== input.tenantId || plan?.tenant_id !== input.tenantId
+      || body.managedPublishingGrantId !== input.managedPublishingGrantId || authorization.mode !== 'bounded'
+      || !authorizedAccountIds || input.package.items.some(item => item.accountIds.some(id => !authorizedAccountIds.includes(id)))) {
+      throw new Error('managed_publishing_scope_changed');
+    }
+    const bindings: any[] = [];
+    for (let page = 1; ; page++) {
+      const result = await store.list<any>('run_events', { where: { tenant_id: input.tenantId, run_id: input.runId, type: 'social_content.publishing_bound' }, page, perPage: 100 });
+      bindings.push(...result.items);
+      if (!result.items.length || page >= result.totalPages) break;
+    }
+    const capacity = managedPublishingCapacity({ maxPublishItems: Number(authorization.maxPublishItems),
+      posts: existing.filter(post => text(record(post.stats).workflowRunId) === input.runId), bindings,
+      additions: input.package.items.filter(item => !existing.some(post => matchesItem(post, item))),
+    });
+    if (!capacity.allowed) throw new Error('managed_publishing_cycle_limit_exceeded');
+  }
   const result: Array<{ id: string; status: string }> = [];
   for (const item of input.package.items) {
     try { await dependencies.verifySource(input.tenantId, item.sourceClaim, item.videoPath); }
@@ -170,6 +203,7 @@ export async function createPublishingCalendarEntries(input: {
         && (!Array.isArray(stats.targetAccountIds) || JSON.stringify(stats.targetAccountIds.slice().sort()) === JSON.stringify([...item.accountIds].sort()));
     });
     if (found) { result.push({ id: found.id, status: text(record(found.stats).status) }); continue; }
+    if (lease) await assertDurableOperationLease({ dataStore: store, lease });
     const status = input.package.allowRealPublishing ? 'scheduled' : 'awaiting_manual_publish';
     // Save the approval identity and complete calendar subject in the same create.
     // A failed or ambiguously completed write can then be recovered by its identity.
@@ -183,12 +217,17 @@ export async function createPublishingCalendarEntries(input: {
         workflowRunId: input.runId, workflowTaskId: input.approvalTaskId, workflowTaskKey: 'content_release_approval',
         approvalId: input.approvalId, approvedContentHash: input.approvedContentHash,
         realPublishingAuthorized: input.package.allowRealPublishing,
+        ...(input.managedPublishingGrantId ? { managedPublishingGrantId: input.managedPublishingGrantId } : {}),
       },
     });
     existing.push(tracked);
     result.push({ id: tracked.id, status });
   }
   return result;
+  };
+  return input.managedPublishingGrantId
+    ? withManagedPublishingCycleLease({ tenantId: input.tenantId, runId: input.runId, dataStore: store }, materialize)
+    : materialize();
   });
 }
 
@@ -237,4 +276,36 @@ export async function invalidatePublishingApprovalForProject(
     });
   }
   return affected.length;
+}
+
+/** Bridge approved social artifacts into the existing approval/calendar worker.
+ * Callers must bind an explicit run/authorization and validate account scope;
+ * constructing this immutable package never authorizes or submits a post. */
+export async function buildSocialContentPublishingPackage(input: {
+  tenantId: string;
+  allowRealPublishing: boolean;
+  items: Array<{
+    taskId: string; artifactId: string; platform: PublishingPlatform;
+    accountId: string; accountLabel: string; title: string; description: string; scheduledAt: string;
+  }>;
+}, dependencies?: {
+  freezeSource: (input: { tenantId: string; taskId: string; artifactId: string }) => Promise<FrozenPublishSourceClaim>;
+}): Promise<PublishingApprovalPackage> {
+  const freezeSource = dependencies?.freezeSource
+    ?? (await import('../publishing/socialContentSourceClaim.js')).freezeSocialContentPublishSource;
+  const items: PublishingApprovalItem[] = [];
+  const seen = new Set<string>();
+  for (const item of input.items) {
+    if (!item.accountId || !item.taskId || !item.artifactId || !Number.isFinite(Date.parse(item.scheduledAt))) {
+      throw new Error('social_publishing_assignment_invalid');
+    }
+    const identity = JSON.stringify([item.taskId, item.artifactId, item.platform, item.accountId, item.scheduledAt]);
+    if (seen.has(identity)) continue;
+    seen.add(identity);
+    const sourceClaim = await freezeSource({ tenantId: input.tenantId, taskId: item.taskId, artifactId: item.artifactId });
+    items.push({ sourceProjectId: item.taskId, platform: item.platform, accountIds: [item.accountId],
+      accountLabels: [item.accountLabel], title: item.title, description: item.description,
+      videoPath: sourceClaim.deliveryVideoPath, scheduledAt: item.scheduledAt, sourceClaim });
+  }
+  return { schemaVersion: 1, contentHash: contentFingerprint(items, input.allowRealPublishing), allowRealPublishing: input.allowRealPublishing, items };
 }

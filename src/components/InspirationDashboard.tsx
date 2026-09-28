@@ -12,7 +12,6 @@ import {
 } from 'lucide-react';
 import { studioApi, type Material, type MaterialSegment, type VideoGenerationVersion } from '../lib/studioApi';
 import { authHeader } from '../lib/auth';
-import CompetitorAccountsModal from './CompetitorAccountsModal';
 import type { Page } from '../App';
 import { completeDemoStep, readDemoProgress } from '../lib/demoProgress';
 import { SocialPlatformIcon } from './SocialPlatformIcon';
@@ -25,6 +24,9 @@ import { useScriptGapTasks } from '../hooks/useScriptGapTasks';
 import InspirationEmptyState from './InspirationEmptyState';
 import { scoreSocialInspirationCandidate } from '../../shared/socialInspirationStrategy';
 import DiscoveryScopePanel from './inspiration/DiscoveryScopePanel';
+import { resumeOrCreateInspirationTask, soleInspirationCreationAccount } from '../lib/socialInspirationTask';
+import { useSocialProgram } from '../contexts/SocialProgramContext';
+import { setActiveSocialContentTaskId } from '../lib/socialContentContext';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 type Platform = 'all' | 'tiktok' | 'instagram' | 'youtube' | 'facebook';
@@ -1321,7 +1323,7 @@ function ImageBreakdownContent({ video, activeTab }: { video: TrendVideo; analys
         <div className="flex items-center justify-between"><div><p className="text-xs font-black text-text-primary">公开表现</p><p className="mt-1 text-[9px] text-text-muted">无公开值就留空，不把播放当曝光、不估算收藏与点击</p></div>{baseline?.status === 'usable' && baseline.relativeMultiple != null && <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-black text-emerald-700">账号基线 {baseline.relativeMultiple}×</span>}</div>
         <div className="mt-3 grid grid-cols-4 gap-1.5">{[['点赞', metrics?.likes || '—'], ['评论', metrics?.comments || '—'], ['分享', metrics?.shares || '—'], ['播放', metrics?.plays || '—']].map(([label, value]) => <div key={label} className="rounded-lg bg-surface-2 px-1.5 py-2 text-center"><p className="text-sm font-black text-text-primary">{value}</p><p className="text-[9px] text-text-muted">{label}</p></div>)}</div>
         <div className="mt-2 rounded-lg bg-surface-2 p-2 text-[9px] leading-relaxed text-text-secondary">
-          <p>账号：{video.aiAnalysis?.author || '未抓取'} · 粉丝：{metrics?.followers ? metrics.followers.toLocaleString() : '未公开/未抓取'}</p>
+          <p>账号：{video.aiAnalysis?.author || video.aiAnalysis?.sourceAccountName || '未抓取'} · 粉丝：{metrics?.followers ? metrics.followers.toLocaleString() : '未公开/未抓取'}</p>
           <p className="mt-1">投流信号：{adSignals?.isAd || adSignals?.isPaidPartnership ? '平台公开标记为广告/付费合作' : '未抓到公开标记（不代表未投流）'}</p>
         </div>
         <p className="mt-2 text-[9px] leading-relaxed text-text-muted">{baseline?.status === 'usable' ? `${baseline.sampleSize} 条同账号样本；${baseline.method}` : `同账号样本 ${baseline?.sampleSize || 0} 条，暂不足以确认相对爆款。`}</p>
@@ -2382,9 +2384,11 @@ interface VideoCardProps {
   onWatch: () => void;
   onFavoriteMaterial?: () => void;
   favoritingMaterial?: boolean;
+  createLabel?: string;
+  creating?: boolean;
 }
 
-function VideoCard({ video, index, isSelected, onSelect, onCreate, onWatch, onFavoriteMaterial, favoritingMaterial }: VideoCardProps) {
+function VideoCard({ video, index, isSelected, onSelect, onCreate, onWatch, onFavoriteMaterial, favoritingMaterial, createLabel, creating }: VideoCardProps) {
   const meta = getPlatformMeta(video.platform);
   const crawlRule = video.aiAnalysis?.crawlRule || '关键词检索';
   const inspirationScores = inspirationScoresForVideo(video);
@@ -2458,6 +2462,7 @@ function VideoCard({ video, index, isSelected, onSelect, onCreate, onWatch, onFa
       </div>
       <div className="flex flex-1 flex-col p-3">
         <p className="mb-2 min-h-9 text-sm font-bold leading-snug text-text-primary line-clamp-2">{video.title}</p>
+        {!video.id.startsWith('material-') && <p className="mb-2 truncate text-xs text-text-muted" title={video.aiAnalysis?.author || video.aiAnalysis?.sourceAccountName || '账号未抓取'}>账号：{video.aiAnalysis?.author || video.aiAnalysis?.sourceAccountName || '未抓取'}</p>}
         <div className="flex items-center justify-between mb-2">
           <span className={`text-[10px] font-mono font-bold ${trendColor}`}>{trendLabel}</span>
           <span className="flex items-center gap-1 text-[10px] text-text-muted">{isImagePost ? <Images size={9} /> : <Clock size={9} />}{isImagePost ? `${video.aiAnalysis?.imageCount || video.aiAnalysis?.imageUrls?.length || 1} 张` : `${video.views} views`}</span>
@@ -2472,9 +2477,9 @@ function VideoCard({ video, index, isSelected, onSelect, onCreate, onWatch, onFa
               className="inline-flex min-h-9 items-center justify-center gap-1.5 rounded-lg border border-border px-2 text-xs font-bold text-text-secondary transition hover:border-accent hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30">
               <Eye size={12} />查看详情
             </button>
-            <button type="button" onClick={onCreate}
+            <button type="button" onClick={onCreate} disabled={creating}
               className="inline-flex min-h-9 items-center justify-center gap-1.5 rounded-lg bg-accent px-2 text-xs font-bold text-white transition hover:brightness-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30">
-              <Sparkles size={12} />用于创作
+              <Sparkles size={12} />{createLabel || (isImagePost || video.id.startsWith('material-') ? '开始创作' : '爆款复刻')}
             </button>
           </div>
           <div className="mt-2 flex items-center justify-between text-[10px] font-semibold text-text-muted">
@@ -2492,7 +2497,7 @@ function VideoCard({ video, index, isSelected, onSelect, onCreate, onWatch, onFa
 }
 
 // ── Video List Item ───────────────────────────────────────────────────────────
-function VideoListItem({ video, isSelected, onSelect, onCreate, onWatch, onFavoriteMaterial, favoritingMaterial }: {
+function VideoListItem({ video, isSelected, onSelect, onCreate, onWatch, onFavoriteMaterial, favoritingMaterial, createLabel, creating }: {
   video: TrendVideo;
   isSelected: boolean;
   onSelect: () => void;
@@ -2500,6 +2505,8 @@ function VideoListItem({ video, isSelected, onSelect, onCreate, onWatch, onFavor
   onWatch: () => void;
   onFavoriteMaterial?: () => void;
   favoritingMaterial?: boolean;
+  createLabel?: string;
+  creating?: boolean;
 }) {
   const meta = getPlatformMeta(video.platform);
   const trendColor = video.trend === 'hot' ? 'text-accent' : video.trend === 'rising' ? 'text-green' : 'text-text-muted';
@@ -2525,6 +2532,7 @@ function VideoListItem({ video, isSelected, onSelect, onCreate, onWatch, onFavor
           <span className={`text-[10px] font-semibold ${trendColor}`}>{trendLabel}</span>
         </div>
         <p className="text-sm text-text-primary font-medium truncate">{video.title}</p>
+        {!video.id.startsWith('material-') && <p className="truncate text-xs text-text-muted">账号：{video.aiAnalysis?.author || video.aiAnalysis?.sourceAccountName || '未抓取'}</p>}
       </div>
       <div className="hidden lg:flex items-center gap-1 flex-shrink-0">
         {video.tags.slice(0, 2).map(tag => <span key={tag} className="tag text-[10px]">#{tag}</span>)}
@@ -2538,9 +2546,9 @@ function VideoListItem({ video, isSelected, onSelect, onCreate, onWatch, onFavor
         <p className="text-[10px] text-text-muted">{video.views}</p>
       </div>
       <div className="ml-auto flex w-full items-center justify-end gap-1.5 sm:ml-0 sm:w-auto">
-        <button type="button" onClick={onCreate}
+        <button type="button" onClick={onCreate} disabled={creating}
           className="inline-flex items-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-xs font-bold text-white transition hover:brightness-95">
-          <Sparkles size={12} />用此灵感创作
+          <Sparkles size={12} />{createLabel || (isImagePost || video.id.startsWith('material-') ? '开始创作' : '爆款复刻')}
         </button>
         <button type="button" onClick={onWatch} aria-label="预览内容" title="预览内容" className="rounded-lg p-2 text-text-muted transition hover:bg-surface hover:text-accent">
           {isImagePost ? <Images size={13} /> : <Play size={13} fill="currentColor" />}
@@ -3007,7 +3015,7 @@ function DirectorVideoDetailPanel({
             {!isImagePost && !exactQuality.ready && <button type="button" onClick={onExactAnalysis} disabled={pending} className="inline-flex min-h-10 items-center gap-1.5 rounded-lg border border-accent px-3 text-xs font-bold text-accent disabled:opacity-50">{pending ? <Loader2 size={13} className="animate-spin" /> : <BarChart2 size={13} />}全片精确分析</button>}
             {(payload?.analysisError || video.status === 'failed') && <button type="button" onClick={onRetry} disabled={analyzing} className="min-h-10 rounded-lg border border-border px-3 text-xs font-bold text-text-secondary disabled:opacity-50">重新分析</button>}
             <button type="button" onClick={onPreview} className="min-h-10 rounded-lg border border-border px-3 text-xs font-bold text-text-secondary">预览原内容</button>
-            <button type="button" onClick={onCreate} disabled={!analysis && !imageEvidence} className="ml-auto inline-flex min-h-10 items-center gap-1.5 rounded-lg bg-accent px-4 text-xs font-black text-white disabled:cursor-not-allowed disabled:opacity-45"><Sparkles size={14} />带分析进入内容制作</button>
+            <button type="button" onClick={onCreate} className="ml-auto inline-flex min-h-10 items-center gap-1.5 rounded-lg bg-accent px-4 text-xs font-black text-white disabled:cursor-not-allowed disabled:opacity-45"><Sparkles size={14} />{isImagePost || video.id.startsWith('material-') ? '开始创作' : '爆款复刻'}</button>
           </div>
         </footer>
       </motion.aside>
@@ -3039,6 +3047,14 @@ interface InspirationDashboardProps {
 }
 
 export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelClose, onNavigate, onEnterWorkflow }: InspirationDashboardProps) {
+  const { activeProgram, accounts } = useSocialProgram();
+  const [creationAccountId, setCreationAccountId] = useState('');
+  useEffect(() => {
+    setCreationAccountId(soleInspirationCreationAccount(accounts, activeProgram?.programId));
+  }, [activeProgram?.programId, accounts]);
+  const inspirationLaunches = useRef(new Set<string>());
+  const [replicationTasks, setReplicationTasks] = useState<Record<string, string>>({});
+  const [launchingReferences, setLaunchingReferences] = useState<string[]>([]);
   const [materialEntry] = useState(initialMaterialLibraryEntry);
   const [innerView, setInnerView] = useState<InspirationInnerView>(() => materialEntry.openLibrary ? 'library' : 'inspiration');
   const [platform, setPlatform] = useState<Platform>('all');
@@ -3099,7 +3115,6 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
   const { scriptGapTasks, shootingTaskError: _shootingTaskError } = useScriptGapTasks();
   const [uploadingScriptGapId, setUploadingScriptGapId] = useState('');
   const [classifyingMaterialId, setClassifyingMaterialId] = useState('');
-  const [showAccountsModal, setShowAccountsModal] = useState(false);
   const uploadInputRef = useRef<HTMLInputElement | null>(null);
   const videoRequestRef = useRef(0);
   const inventoryRequestRef = useRef(0);
@@ -3117,7 +3132,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
   const refreshMaterials = async () => {
     if (!localMaterials.length) setMaterialsLoading(true);
     try {
-      setLocalMaterials(await studioApi.listMaterials());
+      setLocalMaterials(await studioApi.listMaterials('all'));
     } catch { /* keep last successful items; show connection status */ } finally {
       setMaterialsLoading(false);
     }
@@ -3335,6 +3350,10 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
       };
     }), [localMaterials, crawledVideos]);
   const enterMaterialSmartGeneration = (material: Material) => {
+    if (material.usage === 'reference_only') {
+      setMaterialMessage('这条素材仅供参考；确认可用于成片后再调整使用权限。');
+      return;
+    }
     const platform: TrendVideo['platform'] = /facebook/i.test(material.name) ? 'facebook'
       : /youtube/i.test(material.name) ? 'youtube' : /instagram/i.test(material.name) ? 'instagram' : 'tiktok';
     const title = material.name.replace(/\.[a-z0-9]+$/i, '');
@@ -3652,27 +3671,52 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     }
   };
 
-  const enterInspirationWorkflow = (video: TrendVideo) => {
-    setMaterialMessage('');
-    if (!canProcessVideo(video)) {
-      setMaterialMessage('该内容缺少可用的时长或媒体信息，请先完成素材分析。');
+  const enterInspirationWorkflow = async (video: TrendVideo) => {
+    if (video.contentFormat === 'image' || video.id.startsWith('material-')) {
+      const analysis = getAnalysis(video);
+      onEnterWorkflow?.({
+        source: video.contentFormat === 'image' ? 'inspiration_image_post' : 'inspiration_analysis',
+        video, scriptType: 'storyboard',
+        referenceAnalysis: analysis ? { title: video.title, visualStyle: analysis.scriptSummary15s.visualStyle,
+          coreEmotion: analysis.scriptSummary15s.coreEmotion, details: analysis.scriptDetails15s } : undefined,
+      });
       return;
     }
-    if (needsVideoEnhancement(video)) void analyzeVideoOnly(video, true);
-    const analysis = getAnalysis(video);
-    onEnterWorkflow?.({
-      source: video.contentFormat === 'image' ? 'inspiration_image_post' : 'inspiration_analysis',
-      video,
-      scriptType: 'storyboard',
-      language: 'zh',
-      productInfo: '',
-      referenceAnalysis: analysis ? {
-        title: video.title,
-        visualStyle: analysis.scriptSummary15s.visualStyle,
-        coreEmotion: analysis.scriptSummary15s.coreEmotion,
-        details: analysis.scriptDetails15s,
-      } : undefined,
-    });
+    if (inspirationLaunches.current.has(video.id)) return;
+    const openTask = (taskId: string) => {
+      setActiveSocialContentTaskId(taskId);
+      window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: {
+        page: 'smartAssets', socialContentPage: 'smartAssets', socialContentTaskId: taskId, socialContentView: 'managed',
+      } }));
+    };
+    const candidateKey = `${video.id}:${creationAccountId}`;
+    const existing = replicationTasks[candidateKey];
+    if (existing) { openTask(existing); return; }
+    inspirationLaunches.current.add(video.id);
+    setLaunchingReferences(ids => [...ids, video.id]);
+    setMaterialMessage('正在关联参考与经营背景，交给编导 Agent 和内容 Agent 执行…');
+    try {
+      const program = activeProgram?.status === 'active' ? activeProgram : undefined;
+      const creationAccount = accounts.find(account => account.accountId === creationAccountId && account.status === 'active');
+      const result = await resumeOrCreateInspirationTask({
+        id: video.recordId || video.id, title: video.title,
+        sourceUrl: video.sourceUrl, crawledAt: video.crawledAt,
+        ...(creationAccount ? { context: {
+          targetAccountRef: { objectType: 'social_owned_account', id: creationAccount.accountId, version: String(creationAccount.version) },
+          platforms: [creationAccount.platform],
+        } } : {}),
+      }, program);
+      setReplicationTasks(tasks => ({ ...tasks, [candidateKey]: result.task.taskId }));
+      if (result.warning) {
+        setMaterialMessage(`${result.warning} 已保留原任务，点击“继续制作”查看和恢复。`);
+      }
+      openTask(result.task.taskId);
+    } catch (error) {
+      setMaterialMessage(error instanceof Error ? error.message : '复刻任务暂时无法创建，请重试。');
+    } finally {
+      inspirationLaunches.current.delete(video.id);
+      setLaunchingReferences(ids => ids.filter(id => id !== video.id));
+    }
   };
 
   const favoriteMaterial = async (video: TrendVideo, quiet = false) => {
@@ -4029,7 +4073,15 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                 {materialMessage}
               </div>
             )}
-            {innerView === 'inspiration' && <DiscoveryScopePanel />}
+            {innerView === 'inspiration' && <div className="mb-4 flex flex-wrap items-center gap-3 text-sm">
+              <label htmlFor="inspiration-creation-account" className="font-semibold">创作账号</label>
+              <select id="inspiration-creation-account" value={creationAccountId} onChange={event => setCreationAccountId(event.target.value)} className="rounded-lg border border-border bg-surface px-3 py-2">
+                <option value="">暂不指定，仅制作内容</option>
+                {accounts.filter(account => account.status === 'active').map(account => <option key={account.accountId} value={account.accountId}>{account.displayName} · {account.platform}</option>)}
+              </select>
+              <span className="text-xs text-text-muted">已授权账号的合格成片可进入托管发布；未指定账号不会自动发布。</span>
+            </div>}
+            {innerView === 'inspiration' && <DiscoveryScopePanel onAccountsCrawled={() => { setSortMode('crawlTime'); setPlatform('all'); setSearch(''); void refreshVideos(1, false); }} />}
             {innerView === 'inspiration' && <div className="mb-4 space-y-3 rounded-lg border border-border bg-surface p-3 sm:p-4">
               <div className="space-y-2.5">
                 <div className="relative w-full">
@@ -4176,7 +4228,9 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                     <div key={video.id} className="relative">
                       <VideoCard video={video} index={i} isSelected={false}
                         onSelect={() => openDirectorAnalysis(video)}
-                        onCreate={() => enterInspirationWorkflow(video)}
+                        onCreate={() => void enterInspirationWorkflow(video)}
+                        createLabel={launchingReferences.includes(video.id) ? '正在启动…' : replicationTasks[`${video.id}:${creationAccountId}`] ? '继续制作' : video.contentFormat === 'image' || video.id.startsWith('material-') ? '开始创作' : '爆款复刻'}
+                        creating={launchingReferences.includes(video.id)}
                         onWatch={() => handleWatch(video)}
                         onFavoriteMaterial={() => void favoriteMaterial(video)}
                         favoritingMaterial={favoritingMaterialIds.includes(video.id)} />
@@ -4195,7 +4249,9 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                   {filtered.map(video => (
                     <VideoListItem key={video.id} video={video} isSelected={false}
                       onSelect={() => openDirectorAnalysis(video)}
-                      onCreate={() => enterInspirationWorkflow(video)}
+                      onCreate={() => void enterInspirationWorkflow(video)}
+                        createLabel={launchingReferences.includes(video.id) ? '正在启动…' : replicationTasks[`${video.id}:${creationAccountId}`] ? '继续制作' : video.contentFormat === 'image' || video.id.startsWith('material-') ? '开始创作' : '爆款复刻'}
+                        creating={launchingReferences.includes(video.id)}
                       onWatch={() => handleWatch(video)}
                       onFavoriteMaterial={() => void favoriteMaterial(video)}
                       favoritingMaterial={favoritingMaterialIds.includes(video.id)} />
@@ -4409,38 +4465,16 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                     </div>
                     <div className="flex flex-1 flex-col p-3">
                       <p className="min-h-9 text-sm font-bold leading-snug text-text-primary line-clamp-2">{material.name}</p>
-                      <MaterialAnalysisStatus material={material} onRefresh={refreshMaterials} />
-                      <p className="mt-1 text-xs text-text-muted">{MATERIAL_SOURCE_LABELS[materialSourceOf(material)]} · {material.size || (material.duration > 0 ? `${material.duration}s` : '时长未知')}</p>
-                      {(material.sourceUrl || material.licenseName) && (
-                        <p className="mt-1 truncate text-[10px] text-text-muted">
-                          {material.licenseName ? `许可：${material.licenseName}` : '外部来源'}
-                          {material.sourceCreator ? ` · ${material.sourceCreator}` : ''}
-                          {material.sourceUrl && <> · <a href={material.sourceUrl} target="_blank" rel="noreferrer" onClick={event => event.stopPropagation()} className="font-semibold text-accent hover:underline">查看来源</a></>}
-                        </p>
-                      )}
                       <div className="mt-2 flex flex-wrap gap-1">
-                        <span className={`rounded-md px-1.5 py-0.5 text-[10px] font-semibold ${material.productName ? 'bg-emerald-50 text-emerald-700' : isEnterpriseCommonMaterial(material) ? 'bg-sky-50 text-sky-700' : 'bg-amber-50 text-amber-700'}`}>
-                          {material.productName ? `产品：${material.productName}` : isEnterpriseCommonMaterial(material) ? '企业通用素材' : '产品归属待确认'}
-                        </span>
-                        {[
-                          MATERIAL_SOURCE_LABELS[materialSourceOf(material)],
-                          material.industry ? MATERIAL_INDUSTRY_LABELS[material.industry] || material.industry : '',
-                          material.applicability ? MATERIAL_APPLICABILITY_LABELS[material.applicability] || material.applicability : '',
-                          ...String(material.shotFunction || '').split(',').slice(0, 2).map(value => MATERIAL_FUNCTION_LABELS[value] || value),
-                        ].filter(Boolean).map(label => <span key={label} className="rounded-md bg-accent-glow px-1.5 py-0.5 text-[10px] font-semibold text-accent">{label}</span>)}
-                        {!material.industry && !material.applicability && !material.shotFunction && material.type === 'video' && (
-                          <button type="button" disabled={Boolean(classifyingMaterialId)} onClick={() => void classifyMaterial(material)}
-                            className="rounded-md bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold text-text-muted hover:bg-accent-glow hover:text-accent disabled:opacity-60">
-                            {classifyingMaterialId === material.id ? '分类中…' : '点击智能分类'}
-                          </button>
-                        )}
+                        {material.usage === 'reference_only' && <span className="rounded-md bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700">仅供参考</span>}
+                        {visibleMaterialTags(material.tags).split(/[,，]/).map(tag => tag.trim()).filter(Boolean).map(tag => <span key={`tag-${tag}`} className="rounded-md bg-violet-50 px-1.5 py-0.5 text-[10px] font-semibold text-violet-700">{tag}</span>)}
                       </div>
                       <div className="mt-auto flex items-center gap-2 border-t border-border pt-3">
                         <button
                           type="button"
                           onClick={() => enterMaterialSmartGeneration(material)}
-                          disabled={material.type === 'audio' || (material.type === 'video' && (!Number.isFinite(material.duration) || material.duration <= 0))}
-                          title={material.type === 'image' || material.duration > 0 ? '把这条素材带入内容制作' : '当前素材缺少可用时长'}
+                          disabled={material.usage === 'reference_only' || material.type === 'audio' || (material.type === 'video' && (!Number.isFinite(material.duration) || material.duration <= 0))}
+                          title={material.usage === 'reference_only' ? '仅供参考，暂不能用于成片' : material.type === 'image' || material.duration > 0 ? '把这条素材带入内容制作' : '当前素材缺少可用时长'}
                           className="inline-flex min-h-9 flex-1 items-center justify-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-xs font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-45"
                         >
                           <Sparkles size={14} />用此素材生成
@@ -4590,17 +4624,6 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
       <AnimatePresence>
         {watchVideo && <WatchModal key={watchVideo.id} video={watchVideo} onClose={() => setWatchVideo(null)} />}
       </AnimatePresence>
-      <CompetitorAccountsModal
-        open={showAccountsModal}
-        onClose={() => setShowAccountsModal(false)}
-        onCrawled={() => {
-          setInnerView('inspiration');
-          setSortMode('crawlTime');
-          setPlatform('all');
-          setSearch('');
-          void refreshVideos(1, false);
-        }}
-      />
       {manageTarget && (
         <div ref={manageDialogRef} tabIndex={-1} className="fixed inset-0 z-[120] flex items-center justify-center bg-black/50 px-4" role="dialog" aria-modal="true" aria-labelledby="material-manage-title">
           <div className="w-full max-w-md rounded-lg border border-border bg-surface p-5 shadow-xl">

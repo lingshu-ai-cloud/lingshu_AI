@@ -121,6 +121,22 @@ vm.runInNewContext(migrationSource, {
 assert.ok(forward, 'migration must register a forward callback');
 assert.ok(backward, 'migration must register a rollback callback');
 
+const baseForward = forward!, baseBackward = backward!;
+let creativeForward: MigrationCallback | undefined, creativeBackward: MigrationCallback | undefined;
+vm.runInNewContext(fs.readFileSync(new URL('../../pb_migrations/1790640001_create_platform_ad_creatives.js', import.meta.url), 'utf8'), {
+  Collection: FakeCollection,
+  migrate: (up: MigrationCallback, down: MigrationCallback) => { creativeForward = up; creativeBackward = down; },
+});
+assert.ok(creativeForward && creativeBackward);
+let evidenceForward: MigrationCallback | undefined, evidenceBackward: MigrationCallback | undefined;
+vm.runInNewContext(fs.readFileSync(new URL('../../pb_migrations/1790640002_platform_ad_evidence.js', import.meta.url), 'utf8'), {
+  Collection: FakeCollection, Field: FakeField,
+  migrate: (up: MigrationCallback, down: MigrationCallback) => { evidenceForward = up; evidenceBackward = down; },
+});
+assert.ok(evidenceForward && evidenceBackward);
+forward = app => { baseForward(app); creativeForward!(app); evidenceForward!(app); };
+backward = app => { evidenceBackward!(app); creativeBackward!(app); baseBackward(app); };
+
 const expectedNames = Object.keys(AD_SCHEMA_REQUIREMENTS).sort();
 const runtimeSchemas = new Map<string, CollectionDefinition>();
 const previousFetch = globalThis.fetch;

@@ -1,3 +1,5 @@
+import { isManagedSocialPublication, assertManagedSocialPublication, withManagedSocialPublication } from './managedSocialEffect.js';
+import { assertManagedPublishingAuthorization, ManagedPublishingAuthorizationError } from './managedPublishingAuthorization.js';
 import { randomUUID } from 'node:crypto';
 import type { PublishPlatform } from '../lib/publishHistory.js';
 import { store } from '../storage/index.js';
@@ -228,7 +230,11 @@ async function publishScheduledPost(
     return;
   }
   if (!recoveringAcceptedReceipt && !localFinalizationOnly) {
-    await (dependencies.assertLegacyAccess ?? assertLegacyExternalEffectAllowed)(post.tenant_id);
+    if (isManagedSocialPublication(post)) {
+      const ids = Array.isArray(initialStats.targetAccountIds) ? initialStats.targetAccountIds : [];
+      if (!ids.length) throw new ManagedPublishingAuthorizationError('社媒发布没有明确目标账号');
+      for (const id of ids) await assertManagedSocialPublication(post, String(id));
+    } else await (dependencies.assertLegacyAccess ?? assertLegacyExternalEffectAllowed)(post.tenant_id);
   }
   const workflowRunId = text(initialStats.workflowRunId);
   if (workflowRunId && !recoveringAcceptedReceipt && !localFinalizationOnly
@@ -362,6 +368,7 @@ async function publishScheduledPost(
     if (!await store.update('posts', post.id, { stats: { ...lockedStats, publishResults: { ...results } } })) throw new Error('无法保存平台发送尝试，尚未调用平台');
     try {
       await lease.beforeEffect();
+      await assertManagedPublishingAuthorization(post, accountId);
       await (dependencies.verifySource ?? verifyFrozenPublishSourceClaim)(post.tenant_id, sourceClaim, videoPath);
       const publish = () => dependencies.publish({
         tenantId: post.tenant_id,
@@ -380,7 +387,9 @@ async function publishScheduledPost(
         publishAttemptId: attemptId,
         sourceClaim,
       });
-      const guardedPublish = () => (dependencies.executeLegacyEffect ?? withLegacyExternalEffectAllowed)(post.tenant_id, publish);
+      const guardedPublish = () => isManagedSocialPublication(post)
+        ? withManagedSocialPublication(post, accountId, publish)
+        : (dependencies.executeLegacyEffect ?? withLegacyExternalEffectAllowed)(post.tenant_id, publish);
       const result = workflowRunId
         ? await withDigitalEmployeeExternalAction(post.tenant_id, workflowRunId, guardedPublish)
         : await guardedPublish();
@@ -402,7 +411,7 @@ async function publishScheduledPost(
         };
       }
     } catch (error) {
-      if (error instanceof PublishSourceVerificationError) {
+      if (error instanceof PublishSourceVerificationError || error instanceof ManagedPublishingAuthorizationError) {
         delete results[accountId];
         await store.update('posts', post.id, { stats: {
           ...lockedStats,

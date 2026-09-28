@@ -5,10 +5,18 @@ export interface AdReport {
   daily?: Array<{ date: string; spend: number | null; clicks: number | null; impressions: number | null }>;
 }
 export type ReportEntry = { id: string; name: string; currency: string; budget: string | number; report?: AdReport; error?: string };
+// Always retain all current plans: a pending request is missing coverage, not a
+// reason to shrink the denominator or report a complete period prematurely.
+export function overviewEntries(tasks: Omit<ReportEntry, 'report' | 'error'>[], reports: ReportEntry[]): ReportEntry[] {
+  const byId = new Map(reports.map(entry => [entry.id, entry]));
+  return tasks.map(task => ({ ...task, report: byId.get(task.id)?.report, error: byId.get(task.id)?.error }));
+}
 export const validMetric = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n) && n >= 0;
 export function dayRange(since: string, until: string): string[] {
   const start = Date.parse(since + 'T00:00:00Z'), end = Date.parse(until + 'T00:00:00Z');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(since) || !/^\d{4}-\d{2}-\d{2}$/.test(until)) return [];
   if (!Number.isFinite(start) || !Number.isFinite(end) || end < start || end - start > 365 * 86400000) return [];
+  if (new Date(start).toISOString().slice(0, 10) !== since || new Date(end).toISOString().slice(0, 10) !== until) return [];
   return Array.from({ length: Math.round((end - start) / 86400000) + 1 }, (_, i) => new Date(start + i * 86400000).toISOString().slice(0, 10));
 }
 export function overviewData(entries: ReportEntry[], currency: string, since: string, until: string) {
