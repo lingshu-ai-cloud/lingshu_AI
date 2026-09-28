@@ -1,7 +1,8 @@
+import type { ReactNode } from 'react';
 import { cueFirstFrameTime, newDigitalHumanRequirements, referenceCues, type DigitalHumanReferenceCue, type DigitalHumanRequirements, type DigitalHumanPlan } from '../../lib/digitalHumanPlan';
 
-export default function DigitalHumanRequirementsEditor({ value, plan, referenceMaterials = [], toolCapabilities = [], onChange }: {
-  value?: DigitalHumanRequirements; plan: DigitalHumanPlan; referenceMaterials?: Array<{ id: string; name: string; url?: string }>;
+export default function DigitalHumanRequirementsEditor({ value, plan, compact = false, children, referenceMaterials = [], toolCapabilities = [], onChange }: {
+  children?: ReactNode; compact?: boolean; value?: DigitalHumanRequirements; plan: DigitalHumanPlan; referenceMaterials?: Array<{ id: string; name: string; url?: string }>;
   toolCapabilities?: Array<{ id: string; execution: boolean; reason: string }>;
   onChange: (value: DigitalHumanRequirements) => void;
 }) {
@@ -14,6 +15,29 @@ export default function DigitalHumanRequirementsEditor({ value, plan, referenceM
     const next = cues.map(cue => cue.id === id ? { ...cue, ...change } : cue);
     patchReference({ cues: next, start: Math.min(...next.map(cue => cue.start)), end: Math.max(...next.map(cue => cue.end)), originalText: next.map(cue => cue.originalText).filter(Boolean).join('\n') });
   };
+  if (compact) return <section className="space-y-4" aria-label="数字人镜头效果">
+    <div className="grid grid-cols-3 gap-2" role="group" aria-label="镜头效果">
+      {([
+        ['face_only', '人脸替换'],
+        ['person_keep_scene', '人物替换'],
+        ['person_and_scene', '人物与场景重构'],
+      ] as const).map(([scope, label]) => <button key={scope} type="button" aria-pressed={current.replacementScope === scope}
+        className={`min-h-12 rounded-lg border px-2 py-3 text-xs font-bold ${current.replacementScope === scope ? 'border-emerald-600 bg-emerald-50 text-emerald-800' : 'border-slate-200 bg-white'}`}
+        onClick={() => patch({ workflow: 'viral_replication', replacementScope: scope, method: scope === 'person_keep_scene' ? 'replace' : 'reenact', preferredProvider: scope === 'face_only' ? 'auto' : 'sd', targetEffect: scope === 'person_and_scene' ? 'flexible_scene' : 'reference_motion', ...(scope !== 'person_and_scene' ? { scene: '' } : {}) })}>{label}</button>)}
+    </div>
+    {current.replacementScope && <div className="space-y-3 border-t pt-4" aria-label="效果配置">
+      <p className="text-xs text-text-muted">{current.replacementScope === 'face_only'
+        ? 'HeyGen · 原分镜 + 企业人脸 → 人脸替换'
+        : current.replacementScope === 'person_keep_scene'
+          ? 'Seedream → Seedance · 保留原场景，重建人物首帧并生成视频'
+          : 'Seedream → Seedance · 重建人物与场景首帧，再生成视频'}</p>
+      {children}
+      {current.replacementScope === 'person_keep_scene' && <p className="text-xs text-text-muted">沿用原镜头场景与构图；生成后需检查背景一致性。</p>}
+      {current.replacementScope === 'person_and_scene' && <label className="block text-xs">场景要求<textarea aria-label="场景要求" placeholder="例如：企业展厅，人物站在产品陈列柜前" rows={2} className="mt-2 w-full rounded-lg border p-2" value={current.scene} onChange={event => patch({ scene: event.target.value })} /></label>}
+      {current.replacementScope === 'face_only' && <p role="status" className="text-xs text-amber-700">换脸接口尚待验证，可保存配置，暂不可生成。</p>}
+      <label className="flex gap-2 text-xs"><input type="checkbox" checked={current.contentConfirmed} onChange={event => onChange({ ...current, contentConfirmed: event.target.checked })} />确认应用此人物和效果</label>
+    </div>}
+  </section>;
   return <section className="space-y-3 rounded-xl border border-violet-200 bg-white p-3" aria-label="数字人镜头要求">
     <p className="text-xs text-text-muted">根据人物、口播及参考画面安排制作，生成结果将作为当前分镜的候选素材。</p>
     <label className="block text-xs">内容来源<select className="mt-1 w-full rounded-lg border p-2" value={current.workflow} onChange={e => patch({ workflow: e.target.value as DigitalHumanRequirements['workflow'] })}>

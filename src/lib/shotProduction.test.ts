@@ -104,10 +104,10 @@ test('shot commands are scoped, explicit and never execute supplier actions', ()
   assert.equal(productionSummary({}), '');
 });
 
-test('new shots inherit enterprise sound and layout defaults without changing historic callers', () => {
+test('new material shots mute source audio while inheriting enterprise layout', () => {
   const inherited = newShotProduction('hello', 'person-1', { defaultSound: 'source', defaultLayout: 'split' });
   assert.equal(inherited.presenterId, 'person-1');
-  assert.equal(inherited.sound, 'source');
+  assert.equal(inherited.sound, 'voiceover');
   assert.equal(inherited.layout, 'split');
   const legacy = newShotProduction('hello');
   assert.equal(legacy.sound, 'voiceover');

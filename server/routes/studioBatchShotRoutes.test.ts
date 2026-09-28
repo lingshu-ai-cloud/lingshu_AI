@@ -111,3 +111,21 @@ const userMaterials = planStudioBatchShotRoutes({ activeAssemblyId: 'a',
 }, { talkingExecutorReady: false, actionExecutorReady: false, authorizedPresenterIds: [] });
 assert.equal(userMaterials[0]?.route, 'local_material');
 assert.equal(userMaterials[0]?.status, 'matched', '全企业素材不要求任何数字人配置');
+
+const identityConflict = planStudioBatchShotRoutes({ activeAssemblyId: 'assembly',
+  shootingSlots: ['one','two'].map(id => ({ id, slotId: id, observedPresenterRole: 'sales_presenter' as const, personContinuityId: 'main' })),
+  shotProductions: { 'assembly:one': { presenterId: 'enterprise-one' }, 'assembly:two': { presenterId: 'enterprise-two' } } as any,
+}, { talkingExecutorReady: true, actionExecutorReady: true, authorizedPresenterIds: ['enterprise-one','enterprise-two'] });
+assert.ok(identityConflict.every(route => route.status === 'blocked' && route.reason.includes('同一个企业人物资产')));
+
+// A red, confirmed salesperson can use enterprise footage without any presenter asset.
+const materialSalesRoute = planStudioBatchShotRoutes({
+  activeAssemblyId: 'assembly', ratio: '9:16',
+  shootingSlots: [{ id: 'sales', slotId: 'sales-slot', detail: '销售对镜口播', salesPresenterConfirmed: true, duration: 3 }],
+  shotProductions: { 'assembly:sales': { source: 'avatar', sound: 'source', presenterId: '', narration: 'New speech' } as never },
+  storyboardSourcePlans: { 'sales-slot': { userSource: 'material' } },
+  storyboardAssignments: { 'sales-slot': 'owned' },
+  materialSnapshots: [{ id: 'owned', usage: 'enterprise', url: '/owned.mp4', type: 'video', duration: 5, width: 1080, height: 1920 }],
+}, { talkingExecutorReady: false, actionExecutorReady: false, authorizedPresenterIds: [] });
+assert.equal(materialSalesRoute[0].route, 'local_material');
+assert.equal(materialSalesRoute[0].status, 'matched');

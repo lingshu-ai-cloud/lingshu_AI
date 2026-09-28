@@ -87,7 +87,9 @@ function isImageAsset(value, declaredType) {
 
 /** 下载远端 url 到本地文件（桌面端与本机 express 同机，localhost 直连） */
 async function downloadTo(url, dest, options = {}) {
-  const source = String(url || '');
+  const rawSource = String(url || '');
+  const source = rawSource.startsWith('/') && options.assetOrigin
+    ? new URL(rawSource, options.assetOrigin).href : rawSource;
   const data = dataUrlParts(source);
   if (data) {
     if (!data.bytes.length) throw new Error('empty data URL');
@@ -107,7 +109,7 @@ async function downloadTo(url, dest, options = {}) {
   }
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 45_000);
-  const headers = options.assetOrigin && String(url).startsWith(options.assetOrigin)
+  const headers = options.assetOrigin && new URL(source).origin === new URL(options.assetOrigin).origin
     ? options.assetHeaders || {}
     : {};
   let res;
@@ -116,7 +118,12 @@ async function downloadTo(url, dest, options = {}) {
   } finally {
     clearTimeout(timer);
   }
-  if (!res.ok) throw new Error(`download ${source} -> ${res.status}`);
+  if (!res.ok) throw new Error(`素材读取失败（HTTP ${res.status}）`);
+  if ((res.headers.get('content-type') || '').includes('application/json')) {
+    const payload = await res.json();
+    if (typeof payload.url !== 'string' || options.resolvedMediaUrl) throw new Error('素材接口没有返回有效媒体地址');
+    return downloadTo(payload.url, dest, { ...options, resolvedMediaUrl: true });
+  }
   fs.writeFileSync(dest, Buffer.from(await res.arrayBuffer()));
   return dest;
 }

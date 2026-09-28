@@ -17,6 +17,7 @@ export interface TrustedPresenterRecord {
   id?: unknown;
   authorized?: unknown;
   assetVersion?: unknown;
+  referenceMaterialIds?: unknown;
   avatarId?: unknown;
   voiceId?: unknown;
   authorizationRef?: unknown;
@@ -93,7 +94,7 @@ export function validateHeyGenPresenterRecord(record: TrustedPresenterRecord, no
   const avatarId = String(mappings.heygen?.avatarId || record.avatarId || '').trim();
   const voiceId = String(mappings.heygen?.voiceId || record.voiceId || '').trim();
   const reasons = [...(record.authorized === true ? [] : ['presenter_not_authorized']),
-    ...(id ? [] : ['presenter_id_missing']), ...(avatarId ? [] : ['heygen_avatar_id_missing']),
+    ...(id ? [] : ['presenter_id_missing']), ...(avatarId || (Array.isArray(record.referenceMaterialIds) && record.referenceMaterialIds.length) ? [] : ['heygen_avatar_id_missing']),
     ...(voiceId ? [] : ['heygen_voice_id_missing'])];
   const rights = validatePresenterRightsEvidence(record.rightsEvidence, {
     provider: 'heygen', uses: ['digital_presenter', 'voice_synthesis'],

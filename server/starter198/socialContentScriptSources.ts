@@ -831,7 +831,7 @@ function publicShot(input: {
   return {
     shotId,
     personContinuityId: socialText(raw.personContinuityId) || null,
-    observedPresenterRole: ['sales_presenter', 'presenter_action', 'background', 'none', 'unknown'].includes(String(raw.observedPresenterRole)) ? raw.needsReview === true ? 'unknown' : raw.observedPresenterRole as SocialReferenceShotAnalysis['observedPresenterRole'] : undefined,
+    observedPresenterRole: ['sales_presenter', 'presenter_action', 'background', 'none', 'unknown'].includes(String(raw.observedPresenterRole)) ? raw.needsReview === true && raw.salesPresenterConfirmed !== true ? 'unknown' : raw.observedPresenterRole as SocialReferenceShotAnalysis['observedPresenterRole'] : undefined,
     startSeconds: structure.sourceTiming.startSeconds,
     endSeconds: structure.sourceTiming.endSeconds,
     visualDescription: observedVisual ? `${observedVisual}；${structure.shotScale}，${structure.cameraMovement}` : `${subject}；${structure.shotScale}，${structure.cameraMovement}`,

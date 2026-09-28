@@ -14,3 +14,15 @@ assert.equal(enterpriseMaterialIssue({ material, duration: 3, ratio: '9:16', sou
 assert.match(enterpriseMaterialIssue({ material, duration: 20 }) || '', /时长/);
 assert.match(enterpriseMaterialIssue({ material: { ...material, usage: 'reference_only' }, duration: 3 }) || '', /企业素材/);
 assert.match(enterpriseMaterialIssue({ material, duration: 3, sound: 'source', narration: 'Different words' }) || '', /原声/);
+
+const twin = { ...input, presenterMode: 'video_twin' as const, workflow: 'material_processing' as const, method: 'talking' as const, replacementScope: undefined, targetEffect: 'natural_talking' as const };
+assert.deepEqual(digitalHumanDecisionIssues(twin), []);
+const photo = { ...input, presenterMode: 'photo_talking' as const, workflow: 'viral_replication' as const, method: 'reenact' as const, preferredProvider: 'sd' as const, replicationMode: 'sentence_first_frame' as const };
+assert.deepEqual(digitalHumanDecisionIssues(photo), []);
+assert.ok(digitalHumanDecisionIssues({ ...photo, method: 'talking' }).some(reason => /Seedream/.test(reason)));
+assert.deepEqual(digitalHumanDecisionIssues({ ...photo, workflow: 'material_processing', method: 'talking' }), []);
+
+// Muted enterprise footage needs no speech recognition, even with different narration.
+assert.equal(enterpriseMaterialIssue({ material: { ...material, transcript: '' }, duration: 3, sound: 'voiceover', narration: 'Different words' }), null);
+assert.equal(enterpriseMaterialIssue({ material, duration: 3, sound: 'silent', narration: 'Different words' }), null);
+assert.equal(enterpriseMaterialIssue({ material: { ...material, transcript: '' }, duration: 3, sound: 'source', narration: 'Different words' }), '已开启素材原声，请确认素材台词');

@@ -82,13 +82,20 @@ export function planStudioBatchShotRoutes(spec: BatchShotSpec, options: {
       trimEnd: assigned && Number.isFinite(trimEnd) && trimEnd > trimStart ? trimEnd : null,
       generated: false as const };
     const choice = spec.storyboardSourcePlans?.[slotId]?.userSource;
-    const materialIssue = enterpriseMaterialIssue({ material: assigned ? snapshots.get(assigned) : undefined, duration: Number(slot.duration) || 0, ratio: spec.ratio, sound: shot?.sound, narration: shot?.narration });
+    if (!['material', 'shoot'].includes(choice || '') && slot.personContinuityId && salesPresenterRecognition(slot) === 'confirmed') {
+      const identityAssets = new Set(slots.filter(peer => peer.personContinuityId === slot.personContinuityId && salesPresenterRecognition(peer) === 'confirmed'
+        && !['material', 'shoot'].includes(spec.storyboardSourcePlans?.[String(peer.slotId || peer.id || '')]?.userSource || ''))
+        .map(peer => production[`${assemblyId}:${peer.id}`]?.presenterId).filter(Boolean));
+      if (identityAssets.size > 1) return { ...base, route: 'digital_human', status: 'blocked', reason: '同一销售主讲人的分镜必须使用同一个企业人物资产' };
+    }
+
+    const materialIssue = enterpriseMaterialIssue({ material: assigned ? snapshots.get(assigned) : undefined, duration: Number(slot.duration) || 0, ratio: spec.ratio, sound: (choice === 'material' || choice === 'shoot') && shot?.source === 'avatar' ? 'voiceover' : shot?.sound, narration: shot?.narration });
     if (choice === 'material' || choice === 'shoot') return { ...base, route: 'local_material', status: assigned && !materialIssue ? 'matched' : 'needs_material', reason: materialIssue || (assigned ? '采用用户选择的企业素材' : choice === 'shoot' ? '待拍任务尚未上传回填' : '请选择企业素材') };
     if ((shot?.source !== 'avatar' || spec.storyboardSourcePlans?.[slotId]?.confirmed) && assigned) return { ...base, route: 'local_material', status: materialIssue ? 'needs_material' : 'matched', reason: materialIssue || '采用已绑定的企业素材' };
     if (visualTopic === 'presenter' || choice === 'avatar') {
       const missing = digitalHumanDecisionIssues(shot?.digitalHuman);
       if (!shot?.presenterId) missing.unshift('请选择企业人物');
-      if (!shot?.digitalHuman?.replacementScope || !shot?.digitalHuman?.targetEffect) {
+      if (!shot?.digitalHuman?.presenterMode && (!shot?.digitalHuman?.replacementScope || !shot?.digitalHuman?.targetEffect)) {
         if (!missing.length) missing.push('请选择数字人替换范围和生成效果');
       }
       if (missing.length) return { ...base, route: 'digital_human', status: 'blocked', reason: missing.join('；') };

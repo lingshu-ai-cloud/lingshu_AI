@@ -95,13 +95,18 @@ test('production router persists jobs, never resubmits uncertain operations, iso
     assert.equal(capabilities.tools.find((item: any) => item.id === 'runway_seedance').execution, false);
     assert.match(capabilities.tools.find((item: any) => item.id === 'runway_seedance').reason, /通用 Seedance/);
     assert.match(capabilities.tools.find((item: any) => item.id === 'runway_act_two').reason, /对象存储、逐镜预算/);
-    const referenceOnlyDefaults = await request('/defaults', { preference: 'auto', defaultPresenterId: 'reference-person', presenters: [{ id: 'reference-person', name: 'Reference Person', avatarId: '', voiceId: '', authorized: true, supportsAlpha: false, referenceMaterialIds: ['photo-1', 'video-1', 'photo-1'] }] });
+    const referenceOnlyDefaults = await request('/defaults', { preference: 'auto', defaultPresenterId: 'reference-person', presenters: [{ id: 'reference-person', name: 'Reference Person', avatarId: '', voiceId: '', authorized: true, supportsAlpha: false, referenceMaterialIds: ['photo-1', 'video-1', 'photo-1'], authorizationConfirmation: { subjectAdultConfirmed: true, id: 'client-forged', recordedAt: '2000-01-01' } }] });
     assert.equal(referenceOnlyDefaults.status, 200);
     const referenceOnlyAsset = (await referenceOnlyDefaults.json()).presenters[0];
     assert.deepEqual(referenceOnlyAsset.referenceMaterialIds, ['photo-1', 'video-1']);
+    assert.notEqual(referenceOnlyAsset.authorizationConfirmation.id, 'client-forged');
+    assert.notEqual(referenceOnlyAsset.authorizationConfirmation.recordedAt, '2000-01-01');
+    assert.equal(referenceOnlyAsset.authorizationConfirmation.version, 'presenter-upload-authorization-v1');
+    assert.equal(referenceOnlyAsset.rightsEvidence, undefined, 'user declaration is not provider-reviewed consent');
     assert.deepEqual(referenceOnlyAsset.capabilities, ['reference_image', 'reference_video', 'person_replacement']);
     assert.deepEqual(referenceOnlyAsset.toolMappings.runway.referenceMaterialIds, ['photo-1', 'video-1']);
     const renamedReference = await (await request('/defaults', { preference: 'auto', defaultPresenterId: 'reference-person', presenters: [{ ...referenceOnlyAsset, name: 'Reference Person Renamed' }] })).json();
+    assert.deepEqual(renamedReference.presenters[0].authorizationConfirmation, referenceOnlyAsset.authorizationConfirmation);
     assert.equal(renamedReference.presenters[0].assetVersion, 1, 'display name does not invalidate generated media');
     const changedReference = await (await request('/defaults', { preference: 'auto', defaultPresenterId: 'reference-person', presenters: [{ ...renamedReference.presenters[0], referenceMaterialIds: ['photo-1', 'video-2'] }] })).json();
     assert.equal(changedReference.presenters[0].assetVersion, 2, 'generation input changes create a new presenter asset version');
@@ -451,4 +456,30 @@ test('batch preserves confirmed reconstruction and rejects inconsistent source-p
     const conflict = await request(); assert.equal(conflict.status, 400);
     assert.match((await conflict.json() as any).error, /同一原片人物/);
   } finally { await new Promise<void>(resolve => server.close(() => resolve())); }
+});
+
+test('photo talking first frame preparation is tenant scoped and never generates a video', async () => {
+  const rows = new Map<string, any>(); let seq = 0;
+  const store: DataStore = {
+    async getById<T>(collection: string, id: string) { return structuredClone(rows.get(`${collection}/${id}`) || null) as T | null; },
+    async create<T>(collection: string, value: Record<string, unknown>) { const row = { ...structuredClone(value), id: `draft-${++seq}` }; rows.set(`${collection}/${row.id}`, row); return structuredClone(row) as T; },
+    async update(collection, id, patch) { const key = `${collection}/${id}`; if (!rows.has(key)) return false; rows.set(key, { ...rows.get(key), ...structuredClone(patch) }); return true; },
+    async delete(collection, id) { return rows.delete(`${collection}/${id}`); },
+    async list<T>(collection: string, query = {}) { const where = (query as { where?: Record<string, unknown> }).where || {}; const items = [...rows.entries()].filter(([key, value]) => key.startsWith(`${collection}/`) && Object.entries(where).every(([field, expected]) => value[field] === expected)).map(([, value]) => structuredClone(value) as T); return { items, totalItems: items.length, totalPages: 1, page: 1, perPage: 500 }; },
+  };
+  const context = 'draft-context';
+  const shot = { ...newShotProduction('目标口播', 'person-1'), source: 'avatar' as const, digitalHuman: {
+    presenterMode:'photo_talking' as const, workflow: 'viral_replication' as const, method: 'reenact' as const, replicationMode: 'sentence_first_frame' as const, contentConfirmed: true, presenterSelected: true, replacementScope: 'person_and_scene' as const, targetEffect: 'flexible_scene' as const,
+    action: '复用动作意图', scene: '重建画面', preserve: '构图', reference: { videoUrl: '/source.mp4', start: 0, end: 2, originalText: '原片', derivativeAuthorized: false,
+      cues: [{ id: 'cue-1', start: 0, end: 2, originalText: '原片', targetText: '目标', shotIds: ['s1'], personShot: true, sourceFirstFrame: { time: 0, materialId: 'frame-1' } }] },
+  } };
+  rows.set('studio_projects/project-1', { id: 'project-1', tenant_id: 'tenant-a', status: 'draft', spec: { shotProductionContext: context, shotProductions: { 'assembly-1:shot-1': shot } } });
+  rows.set('studio_production_defaults/defaults-1', { id: 'defaults-1', tenant_id: 'tenant-a', payload: { presenters: [{ id: 'person-1', name: 'Person', authorized: true }] } });
+  let frameCalls=0, videoCalls=0;
+  const app=express(); app.use(express.json()); app.use((req,res,next)=>{res.locals.tenantId=req.headers['x-tenant']||'tenant-a';next();});
+  app.use(createProductionRouter(store,async()=>{videoCalls++;return 'unused';},{preparePhotoTalkingFirstFrames:async input=>{frameCalls++;assert.equal(input.tenantId,'tenant-a');return {cues:input.cues.map(cue=>({...cue,targetFirstFrame:{materialId:'target',imageUrl:'/target.jpg',state:'ready' as const}}))};}}));
+  const server=app.listen(0,'127.0.0.1');await new Promise<void>(resolve=>server.once('listening',resolve));
+  const url=`http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  const request=(tenant='tenant-a',confirmed=true,fingerprint=shotFingerprint(shot,context,'shot-1'))=>fetch(`${url}/photo-talking-first-frames`,{method:'POST',headers:{'Content-Type':'application/json','x-tenant':tenant},body:JSON.stringify({projectId:'project-1',assemblyId:'assembly-1',shotId:'shot-1',fingerprint,confirmed})});
+  try{assert.equal((await request('tenant-b')).status,400);assert.equal((await request('tenant-a',false)).status,400);assert.equal((await request('tenant-a',true,'stale')).status,400);assert.equal(frameCalls,0);const response=await request();assert.equal(response.status,200);const result=await response.json();assert.equal(result.cues[0].targetFirstFrame.state,'ready');assert.equal(frameCalls,1);assert.equal(videoCalls,0);}finally{await new Promise<void>(resolve=>server.close(()=>resolve()));}
 });

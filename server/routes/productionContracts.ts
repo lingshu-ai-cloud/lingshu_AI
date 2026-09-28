@@ -13,6 +13,7 @@ export type FirstFrameDraftJobRecord = { id: string; tenant_id: string; project_
 export type ImportedVideoResult = { materialId: string; objectKey?: string; localFile?: string; contentSha256?: string; objectEtag?: string };
 export type ReferenceImportResult = ImportedVideoResult & { technicalMetrics?: ReferenceTechnicalMetrics; visualMetrics?: ReferenceVisualMetrics };
 export interface ProductionRouterOptions {
+  preparePhotoTalkingFirstFrames?: (input:{tenantId:string;projectId:string;assemblyId:string;presenter:PresenterAsset;cues:DigitalHumanReferenceCue[]})=>Promise<{cues:DigitalHumanReferenceCue[]}>;
   client?: HeyGenClient; enabled?: () => boolean; lockRoot?: string; reserve?: (id: string) => Promise<void>;
   prepareAudio?: (ref: NonNullable<HeyGenInput['audioRef']>, tenantId: string) => Promise<Uint8Array | { bytes: Uint8Array; segmentId: string; checksumSha256: string; start: number; duration: number }>;
   adapters?: DigitalHumanExecutionAdapter[]; referenceBudgetLimitCny?: number; maxAttemptsPerShot?: number;

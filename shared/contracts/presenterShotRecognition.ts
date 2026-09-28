@@ -38,3 +38,13 @@ export function confirmedSalesPresenterRoute(shot: SalesPresenterEvidence): 'pre
   const route = recognizePresenterShot({ ...shot, observedPresenterRole: shot.observedPresenterRole === 'unknown' ? undefined : shot.observedPresenterRole });
   return route === 'motion' ? 'motion' : 'presenter';
 }
+
+/** Display the observed sales role even while cross-shot identity is pending.
+ * This label must never grant admission to a generation provider. */
+export function isSalesPresenterLabel(shot: SalesPresenterEvidence): boolean {
+  if (shot.salesPresenterConfirmed === false || (shot.needsReview && !shot.salesPresenterConfirmed) || shot.observedPresenterRole === 'background' || shot.observedPresenterRole === 'none') return false;
+  if (shot.salesPresenterConfirmed === true || shot.observedPresenterRole === 'sales_presenter') return true;
+  const visual = String(shot.detail || shot.title || '').split(/口播[：:]/)[0];
+  return /销售人员口播|销售.*(?:对镜口播|出镜讲解)|(?:讲师|主播|主持人).*(?:对镜口播|出镜讲解|面对镜头.*讲解)/.test(visual)
+    && !/路人|D\s*to\s*C|素人|背景人物/i.test(visual);
+}

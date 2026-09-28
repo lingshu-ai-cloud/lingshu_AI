@@ -26,6 +26,8 @@ export interface DigitalHumanReferenceCue {
 
 /** Provider-independent requirements shared by the editor and server admission checks. */
 export interface DigitalHumanRequirements {
+  targetFramesConfirmed?: boolean;
+  presenterMode?: 'video_twin' | 'photo_talking';
   workflow: 'material_processing' | 'viral_replication';
   method: 'talking' | 'replace' | 'reenact';
   preferredProvider?: 'auto' | 'kling' | 'sd' | 'runway' | 'self_hosted';

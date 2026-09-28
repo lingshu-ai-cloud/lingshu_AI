@@ -40,7 +40,19 @@ async function main() {
   assert.match(ass, /Style: Default,Source Han Sans SC,72,/, 'mobile font scales with canvas width');
   assert.match(ass, /,92,92,384,1/, 'captions sit below the face, above bottom UI');
   const audio = fs.readFileSync(path.join(__dirname, '../server/assets/bgm/tech-pulse.mp3'));
+  let servedImage;
   const server = http.createServer((req, res) => {
+    if (req.url === '/media-url') {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ url: '/owned.png' }));
+      return;
+    }
+    if (req.url === '/owned.png' && servedImage) {
+      assert.equal(req.headers.authorization, 'Bearer local-test');
+      res.writeHead(200, { 'content-type': 'image/png' });
+      res.end(servedImage);
+      return;
+    }
     if (req.url === '/voice.mp3' || req.url === '/bgm.mp3') {
       res.writeHead(200, { 'content-type': 'audio/mpeg', 'content-length': audio.length });
       res.end(audio);
@@ -64,6 +76,15 @@ async function main() {
     const productImage = path.join(outDir, 'owned-product.png');
     const imageBuild = spawnSync(ffmpegPath, ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'testsrc2=s=320x320:r=1', '-frames:v', '1', '-y', productImage], { encoding: 'utf8' });
     assert.equal(imageBuild.status, 0, imageBuild.stderr);
+    servedImage = fs.readFileSync(productImage);
+    const relativeVisual = await composite({
+      jobId: 'relative-media-url-regression', requireVisualAssets: true,
+      assetOrigin: origin, assetHeaders: { authorization: 'Bearer local-test' },
+      spec: { ratio: '1:1', duration: 1, bgmVol: 0, voiceVol: 0 },
+      timeline: [{ type: 'image', url: '/media-url', start: 0, duration: 1 }],
+      subtitles: { mode: 'off', cues: [] },
+    }, () => {}, outDir);
+    assert.equal(relativeVisual.ok, true, relativeVisual.error);
     const productDataUrl = `data:image/png;base64,${fs.readFileSync(productImage).toString('base64')}`;
     assert.equal(extensionForAsset(productDataUrl, 'image'), 'png', 'data URL extension must come from MIME instead of the base64 payload');
     assert.equal(isImageAsset(productDataUrl), true, 'image data URL must be bound as a still-image timeline input');

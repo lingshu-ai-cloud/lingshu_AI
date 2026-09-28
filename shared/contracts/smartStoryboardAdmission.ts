@@ -1,5 +1,14 @@
 import type { DigitalHumanRequirements } from '../../src/lib/digitalHumanPlan.js';
 export function digitalHumanDecisionIssues(requirements?: DigitalHumanRequirements): string[] {
+  if (requirements?.presenterMode) {
+    const issues: string[] = [];
+    if (!requirements.presenterSelected) issues.push('请选择企业人物');
+    if (!requirements.contentConfirmed) issues.push('请确认数字人方案');
+    const photoReplication = requirements.presenterMode === 'photo_talking' && requirements.workflow === 'viral_replication';
+    if (photoReplication && (requirements.method !== 'reenact' || requirements.preferredProvider !== 'sd' || requirements.replicationMode !== 'sentence_first_frame')) issues.push('爆款照片口播需要 Seedream 首帧重建路线');
+    if (!photoReplication && requirements.method !== 'talking') issues.push('视频分身与自由照片口播需要 HeyGen 口播路线');
+    return issues;
+  }
   if (!requirements || requirements.workflow !== 'viral_replication') return [];
   const issues: string[] = [];
   if (!requirements.presenterSelected) issues.push('请选择企业人物');
@@ -28,7 +37,8 @@ export function enterpriseMaterialIssue(input: {
   if (width && height && ((width / height < .9 && aspect > 1.1) || (width / height > 1.1 && aspect < .9))) return '素材画幅不符';
   if (input.sound === 'source' && input.narration?.trim() && !/^(无|none)$/i.test(input.narration.trim())) {
     const normalize = (text: string) => text.toLowerCase().replace(/[\p{P}\p{S}\s]/gu, '');
-    if (clip.type !== 'video' || !normalize(clip.transcript || '').includes(normalize(input.narration))) return '素材原声待校验或与口播不符';
+    if (clip.type !== 'video' || !clip.transcript?.trim()) return '已开启素材原声，请确认素材台词';
+    if (!normalize(clip.transcript).includes(normalize(input.narration))) return '素材原声台词与新口播不一致';
   }
   return null;
 }
