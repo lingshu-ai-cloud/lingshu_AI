@@ -20,4 +20,15 @@ test('downloaded competitor media is tenant-scoped and fail-closed for rights', 
   assert.equal(isReferenceOnlyMaterial(material), true);
   assert.match(material.url, /^\/media\/tenants\/tenant-a\//);
   assert.match(material.poster || '', /^\/media\/tenants\/tenant-a\//);
+  assert.equal(isReferenceOnlyMaterial({ ...material, usage: 'editable', commercialUseApproved: true,
+    derivativesApproved: true, rawLibraryUseApproved: true, mayUseInProduction: true }), true,
+    '显式仅供参考的原片不能通过添加授权字段绕过隔离');
+});
+
+test('locally imported video requires every production right before joining editable materials', () => {
+  const imported = { usage: 'editable', sourceType: 'tiktok_reference',
+    sourceUrl: 'https://www.tiktok.com/example', commercialUseApproved: true,
+    derivativesApproved: true, rawLibraryUseApproved: true, mayUseInProduction: true };
+  assert.equal(isReferenceOnlyMaterial(imported), false);
+  assert.equal(isReferenceOnlyMaterial({ ...imported, derivativesApproved: false }), true);
 });

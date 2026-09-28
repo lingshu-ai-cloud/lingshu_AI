@@ -299,7 +299,7 @@ export default function StarterWorkspacePage({
         )}
 
         <div>
-          <SocialContentWorkspace onNavigate={onNavigate} onNavigateWithTask={onNavigateWithTask} defaultCreateMode="weekly" />
+          <SocialContentWorkspace onNavigate={onNavigate} onNavigateWithTask={onNavigateWithTask} />
         </div>
 
         <div id="starter-workspace-tabs" className="mt-7 scroll-mt-4 flex items-center gap-1 rounded-xl border border-border bg-white p-1" role="tablist" aria-label="智能经营主视图">

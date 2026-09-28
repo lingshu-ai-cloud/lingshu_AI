@@ -1,4 +1,5 @@
 import SocialAccountStrategies from './socialProgram/SocialAccountStrategies';
+import type { SocialContentCreateRequest } from './socialContent/SocialContentWorkspace';
 import { lazy, useEffect, useRef, useState } from 'react';
 import {
   AlertCircle,
@@ -162,6 +163,7 @@ interface Props {
   storageScope?: string;
   workflowContextSignal?: DigitalEmployeeWorkflowContext | null;
   socialContentTaskId?: string | null;
+  studioCreateRequest?: SocialContentCreateRequest | null;
 }
 
 const PLATFORM_META: Record<PublishPlatform, { label: string; color: string; format: string }> = {
@@ -219,6 +221,7 @@ export default function TrafficPage({
   storageScope,
   workflowContextSignal,
   socialContentTaskId,
+  studioCreateRequest,
 }: Props) {
   const [viewMode, setViewMode] = useState<ViewMode>(() => {
     if (initialView) return initialView;
@@ -339,6 +342,10 @@ export default function TrafficPage({
     };
     if (kickoff.source === 'inspiration_analysis' && kickoff.video?.contentFormat !== 'image') {
       const referenceUrl = kickoff.video?.sourceUrl || kickoff.video?.videoUrl || '';
+      // The studio consumes the full verified reference payload on entry.
+      // Keep it alongside the navigation prefill so the storyboard is not
+      // reduced to a bare URL when the planning dialog is skipped.
+      try { localStorage.setItem('ow_video_kickoff', JSON.stringify(payload)); } catch { /* ignore */ }
       window.dispatchEvent(new CustomEvent('lingshu:navigate', {
         detail: {
           page: 'smartAssets',
@@ -429,7 +436,7 @@ export default function TrafficPage({
       <main className="relative min-h-0 flex-1 overflow-hidden">
         {(studioMounted || viewMode === 'create') && (
           <div ref={studioRootRef} id="traffic-panel-create" role={showModeTabs ? 'tabpanel' : undefined} aria-labelledby={showModeTabs ? 'traffic-tab-create' : undefined} className={viewMode === 'create' ? 'h-full' : 'hidden'} aria-hidden={viewMode !== 'create'}>
-            <AiCreateStudio key={socialContentTaskId || 'general-studio'} onNavigate={navigateWithinSocialTask} onGoPublish={handleGoPublish} openProjectsSignal={openProjectsSignal} workflowContext={(workflowContextSignal !== undefined ? workflowContextSignal : workflowContext) || undefined} publishStorageScope={storageScope} socialContentTaskId={socialContentTaskId} />
+            <AiCreateStudio key={socialContentTaskId || studioCreateRequest?.requestId || 'general-studio'} onNavigate={navigateWithinSocialTask} onGoPublish={handleGoPublish} openProjectsSignal={openProjectsSignal} workflowContext={(workflowContextSignal !== undefined ? workflowContextSignal : workflowContext) || undefined} publishStorageScope={storageScope} socialContentTaskId={socialContentTaskId} studioCreateRequest={studioCreateRequest} />
           </div>
         )}
         <AnimatePresence mode="wait">

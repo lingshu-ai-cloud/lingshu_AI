@@ -491,8 +491,8 @@ export function StudioStoryboardList({ items, selectedId, onSelect, onMore, empt
     return emptyState || (
       <div className="rounded-xl border border-dashed border-border bg-surface-2 p-5 text-center">
         <Clock3 size={22} className="mx-auto text-text-muted" aria-hidden="true" />
-        <p className="mt-2 text-xs font-bold text-text-primary">分镜尚未生成</p>
-        <p className="mt-1 text-[11px] leading-4 text-text-muted">完成创作设置并生成脚本后，分镜会显示在这里。</p>
+        <p className="mt-2 text-xs font-bold text-text-primary">分镜尚未准备</p>
+        <p className="mt-1 text-[11px] leading-4 text-text-muted">选择企业产品并生成逐句口播方案后，参考视频的分镜会显示在这里。</p>
       </div>
     );
   }

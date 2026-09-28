@@ -52,6 +52,7 @@ import {
   type SocialProductPolicySource,
   type SocialSceneVisualContract,
 } from '../../shared/sceneVisualContract.js';
+import type { SocialReferenceReviewHandoff } from './socialReferenceReviewHandoff.js';
 
 import {
   buildBusinessContext,
@@ -139,6 +140,24 @@ function shotLanguage(reference: SocialReferenceShotAnalysis | undefined) {
   };
 }
 
+function visualTopicFor(reference: SocialReferenceShotAnalysis | undefined, targetVisual: string, intent: string): NonNullable<SocialDirectorBriefScene['visualTopic']> {
+  const subject = reference?.semanticLabel?.content || targetVisual;
+  const description = [subject, reference?.visualDescription, ...(reference?.tags.sceneTypes ?? [])].filter(Boolean).join(' ');
+  const personIsForeground = /(?:女|男)?主播|人物|真人|女性|男性|口播|数字人|presenter|talking/i.test(description)
+    && !/背影|背景人物|远景人物|路人|人群|silhouette|background person/i.test(description);
+  const personHasAction = /手势|靠近|凑近|转身|敲门|gesture|approach/i.test(description);
+  const kind = personIsForeground && personHasAction ? 'presenter_talking'
+    : /工厂|车间|生产线|灌装|factory|manufactur/i.test(description) ? 'factory_footage'
+    : /竞品|对比|比较|before.?after|competitor|comparison/i.test(description) ? 'competitor_comparison'
+      : /产品|商品|包装|质地|瓶身|product|packaging/i.test(description) ? 'product_introduction'
+      : /口播|主播|人物|真人|数字人|女性|男性|女主播|男主播|presenter|talking/i.test(description) ? 'presenter_talking' : 'other';
+  const personRole = /背影|背景人物|远景人物|路人|人群|silhouette|background person/i.test(description) ? 'background'
+    : /手势|靠近|凑近|转身|敲门|双臂|手臂|动作|gesture|approach/i.test(description) && personIsForeground ? 'expressive_action'
+      : /口播|说话|对镜|口型|唇|talking|speaking/i.test(description) && personIsForeground ? 'visible_speech'
+        : personIsForeground ? 'visible_speech' : 'none';
+  return { kind, subject, intent: reference?.semanticLabel?.intent || intent, personRole };
+}
+
 function directorScene(input: {
   index: number;
   script: SocialReplicationScriptShot | null;
@@ -146,10 +165,18 @@ function directorScene(input: {
   reference: SocialReferenceShotAnalysis | undefined;
   replicationFactors: SocialReplicationFactorSpec[];
   productSelection: ReturnType<typeof sceneProductSelection>;
+  primaryHook: SocialReferenceVideoAnalysis['hookAnalysis'];
+  enterprisePresenterAssetRef: string | null;
 }): SocialDirectorBriefScene {
   const startSeconds = input.script?.startSeconds ?? input.reference?.startSeconds ?? input.index * 3;
   const endSeconds = input.script?.endSeconds ?? input.reference?.endSeconds ?? startSeconds + 3;
   const targetVisual = input.script?.visualInstruction || input.supply.requestedDescription || '用清楚、可验证的画面完成本镜头的信息作用';
+  // Each line can be associated with several visual cuts, but only its owner
+  // shot plays the narration. This avoids repeating one sentence at every cut.
+  const spokenText = input.script?.speechLines
+    ?.filter(line => !line.narrationOwnerShotId || line.narrationOwnerShotId === input.script?.shotId)
+    .map(line => line.draftText.trim()).filter(Boolean).join(' ')
+    || input.script?.spokenText || null;
   const boundary = safeBoundary(input.supply.truthBoundary);
   const evidence = requiredEvidence(boundary, input.supply.function);
   const visualContract = normalizeSceneVisualContract({
@@ -169,10 +196,54 @@ function directorScene(input: {
     },
     precision: startSeconds < 3 ? 'hook_high' : 'standard',
   });
+  const reference = input.reference;
+  const presenterVisible = Boolean(reference && /真人|人物|人像|口播|数字人|主播|女性|男性|模特|presenter|person|human|face|talking/i.test([
+    reference.visualDescription, reference.semanticLabel?.content, ...reference.tags.subjects,
+  ].filter(Boolean).join(' ')));
+  const isPrimaryHook = Boolean(reference && input.primaryHook?.referencePoints.includes(reference.shotId));
+  const needsExpressiveAction = Boolean(reference && /手势|指向|凑近|靠近|转身|拿起|展示|动作|gesture|approach|point|move/i.test([
+    reference.visualDescription, reference.action?.path, reference.semanticLabel?.content,
+  ].filter(Boolean).join(' ')));
+  const needsCameraOrCompositionReconstruction = Boolean(isPrimaryHook || (reference && /推进|拉远|运镜|构图|特写|镜头|camera|composition|zoom|pan/i.test([
+    reference.visualDescription, reference.shotLanguage?.movement, reference.shotLanguage?.composition,
+  ].filter(Boolean).join(' '))));
+  const personRole = visualTopicFor(reference, targetVisual, input.supply.function).personRole;
+  const visibleMouth = personRole === 'visible_speech' || (personRole === 'expressive_action'
+    && /口播|说话|对镜|唇|talking|speaking/i.test([
+      reference?.visualDescription, reference?.semanticLabel?.content,
+    ].filter(Boolean).join(' ')));
+  const needsPreciseLipSync = presenterVisible && visibleMouth && Boolean(spokenText || reference?.spokenText);
   return {
     sceneId: input.script?.shotId || input.supply.shotId,
     order: input.index + 1,
     referenceShotId: input.script?.referenceShotId ?? input.reference?.shotId ?? null,
+    visualTopic: visualTopicFor(input.reference, targetVisual, input.supply.function),
+    ...(reference ? {
+      referenceMaterial: {
+        semanticLabel: reference.semanticLabel ?? null,
+        sourceVideoRef: reference.materialEvidence?.sourceVideoRef ?? null,
+        clipRef: reference.materialEvidence?.clipRef ?? null,
+        firstFrameRef: reference.materialEvidence?.firstFrameRef ?? null,
+        firstFrameSeconds: reference.materialEvidence?.firstFrameSeconds ?? null,
+        extractionStatus: reference.materialEvidence?.extractionStatus ?? 'unavailable' as const,
+        isPrimaryHook,
+        hookDetail: isPrimaryHook ? input.primaryHook?.detailedAnalysis ?? null : null,
+      },
+      productionRouting: {
+        presenterVisible,
+        presenterIdentityReplacementRequired: presenterVisible && personRole !== 'background',
+        enterprisePresenterAssetRef: presenterVisible && personRole !== 'background' ? input.enterprisePresenterAssetRef : null,
+        needsPreciseLipSync,
+        needsExpressiveAction,
+        needsCameraOrCompositionReconstruction,
+        decisionReason: [
+          ...(presenterVisible ? ['人物镜头必须使用原分镜首帧作为构图证据，并替换为企业人物身份'] : []),
+          ...(needsPreciseLipSync ? ['镜头包含可见人物口播，需校验逐字口型同步'] : []),
+          ...(needsExpressiveAction ? ['镜头含动作或手势，需保留动作轨迹'] : []),
+          ...(needsCameraOrCompositionReconstruction ? ['镜头含钩子或明确镜头语言，需还原构图与运镜'] : []),
+        ],
+      },
+    } : {}),
     purpose: input.supply.function,
     targetVisual,
     visualContract,
@@ -188,17 +259,28 @@ function directorScene(input: {
       '动作方向、主体位置和环境关系不得无解释跳变',
     ],
     audioLayers: {
-      voiceover: input.script?.spokenText ?? null,
+      voiceover: spokenText,
       dialogue: null,
       captionIntent: input.script?.captionText ?? null,
       ambient: input.reference?.audioDescription ?? null,
       music: input.script?.audioAndTransition ?? null,
       soundEffects: null,
     },
-    ...(input.script?.spokenText ? {
+    ...(input.script?.speechLines?.length ? {
+      voiceoverLines: input.script.speechLines.map(line => ({
+        lineId: line.lineId || `${input.script?.shotId}:line:${line.sourceStartSeconds}`,
+        text: line.draftText,
+        sourceStartSeconds: line.sourceStartSeconds,
+        sourceEndSeconds: line.sourceEndSeconds,
+        narrationOwnerShotId: line.narrationOwnerShotId || input.script?.shotId || input.supply.shotId,
+        visualShotIds: [...(line.visualShotIds?.length ? line.visualShotIds : [input.script?.shotId || input.supply.shotId])],
+        isNarrationOwner: !line.narrationOwnerShotId || line.narrationOwnerShotId === input.script?.shotId,
+      })),
+    } : {}),
+    ...(spokenText ? {
       voiceoverAlignment: {
-        cueId: `${input.script.shotId}:voiceover`,
-        text: input.script.spokenText,
+        cueId: `${input.script?.shotId ?? input.supply.shotId}:voiceover`,
+        text: spokenText,
         startSeconds,
         endSeconds,
         matchMode: 'verbatim_semantic' as const,
@@ -228,6 +310,8 @@ function directorScene(input: {
         '前三秒钩子必须逐帧核对主体出现时间、动作峰值、构图、运镜、字幕与声音触发，不得用粗标签近似替代',
         '前三秒候选素材必须同时通过逐句口播语义、主体动作、节奏和清晰度高阈值',
       ] : []),
+      ...(presenterVisible ? ['必须提取该分镜的原始首帧，并以企业人物资产替换人物身份；全片人物身份保持一致'] : []),
+      ...(isPrimaryHook ? ['开场钩子须依据原分镜首帧、动作轨迹、构图与逐镜脚本做高精度复刻'] : []),
       ...evidence.map(item => `证据要求：${item}`),
       ...input.replicationFactors.map(factor => `裂变因素 ${factor.factorId}：${factor.target.metric} 达到目标并通过 ${factor.validator.detector}`),
       ...(boundary.mustNotImplyCustomerReality ? ['合成或通用画面不得被表述为客户真实证据'] : []),
@@ -277,6 +361,8 @@ function buildDirectorBrief(
         factor.referenceShotId === (script?.referenceShotId ?? input.referenceAnalysis?.shots[index]?.shotId ?? null)
       )) ?? [],
       productSelection,
+      primaryHook: input.referenceAnalysis?.hookAnalysis ?? null,
+      enterprisePresenterAssetRef: input.assetSupplyPlan.accountPresenterLock?.presenterAssetId ?? null,
     });
   }).filter((scene): scene is SocialDirectorBriefScene => Boolean(scene));
   const coverage = input.referenceAnalysis?.coverage;
@@ -408,6 +494,7 @@ function capabilityCandidates(input: {
   taskId: string;
   taskVersion: string;
   sceneId: string;
+  scene: SocialDirectorBriefScene;
   supply: SocialAssetSupplyShotPlan;
   capabilityRuntime?: SocialContentCapabilityRuntimeRegistration[];
   materialCandidates?: SocialWorkflowMaterialCandidate[];
@@ -424,18 +511,42 @@ function capabilityCandidates(input: {
   ];
   const finishedAssetRefs = generatedInputStrategies.includes(input.supply.sourceStrategy)
     ? [] : input.supply.sourceRefs;
-  const actualAssetRows = finishedAssetRefs.flatMap<{ sourceRef: string; material: SocialWorkflowMaterialCandidate | null }>(sourceRef => {
+  const explicitAssetRows = finishedAssetRefs.flatMap<{ sourceRef: string; material: SocialWorkflowMaterialCandidate | null }>(sourceRef => {
     const rows = input.materialCandidates?.filter(item => item.sourceRef === sourceRef || item.assetId === sourceRef) ?? [];
     return rows.length
       ? rows.map(material => ({ sourceRef, material }))
       : [{ sourceRef, material: null }];
   });
-  const cueId = `${input.sceneId}:voiceover`;
+  // Ordinary later shots can reuse owned clips when topic and purpose fit.
+  // Opening hooks retain their reference mechanism and are not auto-replaced.
+  const topic = input.scene.visualTopic;
+  const sceneCueIds = new Set([
+    `${input.sceneId}:voiceover`,
+    ...(input.scene.voiceoverLines ?? []).map(line => line.lineId),
+  ]);
+  const matchesSceneSpeech = (material: SocialWorkflowMaterialCandidate) =>
+    material.matchedVoiceoverCueIds.some(cueId => sceneCueIds.has(cueId));
+  const localAssetRows = (input.materialCandidates ?? [])
+    .filter(() => input.supply.function !== 'hook' && !input.scene.referenceMaterial?.isPrimaryHook)
+    .filter(material => material.origin === 'my_materials' && material.mediaType === 'video' && material.visualContract)
+    .filter(material => !input.scene.productionRouting?.presenterIdentityReplacementRequired)
+    .filter(material => topic?.kind !== 'competitor_comparison' || !input.supply.truthBoundary.customerEvidenceRequired)
+    .filter(material => (input.scene.visualContract ?? input.supply.visualContract)
+      && scoreSceneVisualCompatibility(input.scene.visualContract ?? input.supply.visualContract, material.visualContract) >= 0.8)
+    .filter(material => {
+      const subject = topic?.subject ?? '';
+      const words = subject.match(/[\u4e00-\u9fff]{2,4}|[a-z]{4,}/gi) ?? [];
+      return words.some(word => material.label.toLowerCase().includes(word.toLowerCase()))
+        || matchesSceneSpeech(material);
+    })
+    .map(material => ({ sourceRef: material.sourceRef, material }));
+  const actualAssetRows = [...explicitAssetRows, ...localAssetRows.filter(row =>
+    !explicitAssetRows.some(explicit => explicit.sourceRef === row.sourceRef))];
   const actualAssets = actualAssetRows.map(({ sourceRef, material }, index): SocialExecutionCandidate => {
-    const cueMatched = material?.matchedVoiceoverCueIds.includes(cueId) ?? false;
+    const cueMatched = material ? matchesSceneSpeech(material) : false;
     const normalizedMatch = material ? Math.max(0, Math.min(1, material.matchScore / 1_000)) : 0;
-    const visualScore = material?.visualContract && input.supply.visualContract
-      ? scoreSceneVisualCompatibility(input.supply.visualContract, material.visualContract)
+    const visualScore = material?.visualContract && (input.scene.visualContract ?? input.supply.visualContract)
+      ? scoreSceneVisualCompatibility(input.scene.visualContract ?? input.supply.visualContract, material.visualContract)
       : 0.65;
     const semanticScore = material
       ? Math.min(1, (cueMatched ? 0.82 : 0.55) + normalizedMatch * 0.18)
@@ -450,7 +561,7 @@ function capabilityCandidates(input: {
     kind: 'asset',
     label: material?.label || `已入库素材 ${index + 1}`,
     sourceRef,
-    sourceStrategy: input.supply.sourceStrategy,
+    sourceStrategy: material && !finishedAssetRefs.includes(sourceRef) ? 'customer_real_asset' : input.supply.sourceStrategy,
     evidenceStrength: input.supply.truthBoundary.customerEvidenceRequired ? 'strong' : 'supporting',
     rightsStatus: 'confirmed',
     enterpriseOwnershipScore: material?.origin === 'shared_library' ? 0.6 : 1,
@@ -546,12 +657,51 @@ function executionScene(input: {
   materialCandidates?: SocialWorkflowMaterialCandidate[];
 }): SocialContentExecutionScenePlan {
   const candidates = capabilityCandidates({ ...input, sceneId: input.scene.sceneId });
-  const preferred = candidates.find(candidate => candidate.kind === 'asset' && candidate.sourceStrategy === input.supply.sourceStrategy)
-    ?? candidates.find(candidate => candidate.sourceStrategy === input.supply.sourceStrategy)
-    ?? candidates[0];
+  const topic = input.scene.visualTopic;
+  const primaryHook = input.scene.referenceMaterial?.isPrimaryHook || input.supply.function === 'hook';
+  const expressivePerson = topic?.personRole === 'expressive_action' && input.scene.productionRouting?.presenterIdentityReplacementRequired;
+  const visibleSpeech = topic?.personRole === 'visible_speech' && input.scene.productionRouting?.needsPreciseLipSync;
+  const matchingAsset = candidates.find(candidate => candidate.kind === 'asset'
+    && candidate.sourceStrategy === 'customer_real_asset'
+    && candidate.actionAndShotScore >= 0.8 && candidate.semanticScore >= 0.72);
+  const capability = (strategy: SocialShotSourceStrategy) => candidates.find(candidate =>
+    candidate.kind === 'capability' && candidate.sourceStrategy === strategy);
+  // The Content Agent routes from observed purpose and available assets. A
+  // Director-side supply hint cannot silently turn an action hook into a
+  // talking avatar or a customer factory claim into generated evidence.
+  const policy = expressivePerson ? 'expressive_action'
+    : visibleSpeech ? 'visible_speech'
+      : primaryHook ? 'hook_fidelity'
+        : matchingAsset ? 'reuse_material'
+          : topic?.kind === 'product_introduction' ? 'product_scene' : 'needs_capability';
+  const ordinaryCapability = topic?.kind === 'factory_footage'
+    ? (input.supply.truthBoundary.customerEvidenceRequired ? undefined : capability('licensed_stock_asset'))
+    : topic?.kind === 'product_introduction'
+      ? capability('aigc_product_scene_replication') ?? capability('customer_product_image_animation')
+      : topic?.kind === 'competitor_comparison'
+        ? capability('verified_fact_card')
+        : input.supply.function === 'call_to_action'
+          ? capability('verified_fact_card') ?? capability('motion_graphics')
+          : capability('licensed_stock_asset') ?? capability('motion_graphics');
+  const preferred = expressivePerson ? undefined
+    : visibleSpeech ? capability('authorized_digital_presenter')
+      : primaryHook && topic?.kind === 'product_introduction'
+        ? capability('aigc_product_scene_replication') ?? capability('customer_product_image_animation') ?? matchingAsset
+        : primaryHook ? matchingAsset ?? candidates.find(candidate => candidate.sourceStrategy === input.supply.sourceStrategy)
+          : matchingAsset ?? ordinaryCapability;
   const fallback = candidates.find(candidate => candidate.sourceStrategy === input.supply.fallbackSourceStrategy && candidate.candidateId !== preferred?.candidateId);
   return {
     sceneId: input.scene.sceneId,
+    routeDecision: {
+      visualTopic: topic,
+      policy,
+      reason: expressivePerson ? '人物明显动作需要已验收的首帧动作能力；当前注册能力不满足，退回补能力或改镜'
+        : visibleSpeech ? '可见口播需要企业授权人物与逐句口型能力'
+          : primaryHook ? '开场钩子先保持参考表现机制，再核对可执行素材或能力'
+            : matchingAsset ? '现有素材满足视觉主题、表达目的与画面契约'
+              : '没有合格素材，按分镜目标检查可用能力',
+      source: 'content_agent',
+    },
     replicationFactorIds: (input.scene.replicationFactors ?? []).map(factor => factor.factorId),
     factorFeasibility: (input.scene.replicationFactors ?? []).map(factor => ({
       factorId: factor.factorId,
@@ -559,8 +709,8 @@ function executionScene(input: {
       reason: preferred ? `由推荐候选 ${preferred.label} 承担，并在成片后由 ${factor.validator.detector} 独立检测` : '当前没有可执行候选',
       plannedValidatorId: factor.validator.validatorId,
     })),
-    feasibility: input.supply.feasibility,
-    feasibilityReason: input.supply.feasibilityReason,
+    feasibility: preferred ? input.supply.feasibility : 'blocked_for_facts_or_rights',
+    feasibilityReason: preferred ? input.supply.feasibilityReason : '内容 Agent 未找到满足本镜头要求的可执行素材或能力',
     candidates,
     recommendedCandidateIds: preferred ? [preferred.candidateId] : [],
     alternativeCandidateGroups: fallback ? [[fallback.candidateId]] : [],
@@ -757,21 +907,27 @@ function buildReview(input: BuildSocialAgentWorkflowInput, directorBrief: Social
     })] : [];
   });
   const directorBlocked = directorBrief.status === 'blocked';
-  const approved = !directorBlocked && sceneResults.length === directorBrief.scenes.length && sceneResults.every(result => result.approved);
+  const referenceBlocked = input.brief.creationMode === 'viral_replication'
+    && input.referenceReviewHandoff?.productionExecutionAllowed !== true;
+  const approved = !directorBlocked && !referenceBlocked && sceneResults.length === directorBrief.scenes.length && sceneResults.every(result => result.approved);
   const failedCriteria = unique([
     ...(directorBlocked ? ['导演方案或参考分析尚未满足完整性要求'] : []),
+    ...(referenceBlocked ? ['参考视频的逐句时间码、分镜证据或授权尚未通过生产门禁'] : []),
     ...sceneResults.flatMap(result => result.failedCriteria),
   ]);
   const requiredRevision = unique([
     ...(directorBlocked ? ['补齐参考分析覆盖或导演方案后重新规划'] : []),
+    ...(referenceBlocked ? ['按参考交接物 issues 补齐证据并重新计算生产门禁'] : []),
     ...sceneResults.flatMap(result => result.requiredRevision),
   ]);
   const reasonCodes = unique([
     ...(directorBlocked ? ['expression_failed' as const] : []),
+    ...(referenceBlocked ? ['expression_failed' as const] : []),
     ...sceneResults.flatMap(result => result.reasonCodes),
   ]);
   return {
-    reviewId: stableId('execution_plan_review', { taskId: input.taskId, taskVersion: input.taskVersion, round: plan.reviewRound }),
+    reviewId: stableId('execution_plan_review', { taskId: input.taskId, taskVersion: input.taskVersion,
+      referenceHandoffVersion: input.referenceReviewHandoff?.versionHash ?? null, round: plan.reviewRound }),
     version: input.taskVersion,
     executionPlanId: plan.executionPlanId,
     executionPlanVersion: plan.version,
@@ -826,6 +982,8 @@ export interface BuildSocialAgentWorkflowInput {
   factSourceRefs: string[];
   assetSupplyPlan: SocialAssetSupplyPlan;
   referenceAnalysis: SocialReferenceVideoAnalysis | null;
+  /** Version-bound reference gate; Content may plan but cannot execute while false. */
+  referenceReviewHandoff?: Pick<SocialReferenceReviewHandoff, 'productionExecutionAllowed' | 'versionHash'> | null;
   replicationScript: SocialReplicationScriptVersion | null;
   /** Optional versioned account/content lineage; omitted on historic tasks. */
   replicationContext?: SocialReplicationJobContext;

@@ -1,6 +1,5 @@
 import { AlertTriangle, Bot, CheckCircle2, Clock3, Film, ReceiptText, Sparkles } from 'lucide-react';
 import type { SocialContentTaskDetail } from '../../../shared/contracts/socialContentWorkflow';
-import { socialShotFunctionLabel, socialShotSourceStrategyLabel } from '../../lib/socialContentModel';
 import { FORMAT_OPTIONS, optionLabel } from './socialContentUi';
 
 function money(value: number): string {
@@ -21,22 +20,6 @@ export default function SocialGenerationConfirmationCard({
 
   const plan = workflow.executionPlan;
   const scenes = plan.scenes;
-  const scriptShots = task.replicationScript?.shots || [];
-  const storyboard = scriptShots.length > 0
-    ? scriptShots.map(shot => ({
-      id: shot.shotId,
-      time: `${shot.startSeconds.toFixed(1)}–${shot.endSeconds.toFixed(1)}s`,
-      duration: Math.max(0.5, shot.endSeconds - shot.startSeconds),
-      label: socialShotFunctionLabel(shot.purpose),
-      visual: shot.visualInstruction,
-    }))
-    : workflow.directorBrief.scenes.map(scene => ({
-      id: scene.sceneId,
-      time: `镜头 ${scene.order}`,
-      duration: 1,
-      label: socialShotFunctionLabel(scene.purpose),
-      visual: scene.targetVisual,
-    }));
   const averageSuccess = scenes.length
     ? scenes.reduce((sum, scene) => sum + scene.estimatedSuccessRate, 0) / scenes.length
     : 0;
@@ -74,16 +57,6 @@ export default function SocialGenerationConfirmationCard({
           <p className="mt-1 text-xs text-text-muted">模型路线成功率约 {Math.round(averageSuccess * 100)}% · {riskCount ? `${riskCount} 项需留意` : '暂无阻断风险'}</p>
         </div>
       </div>
-
-      {storyboard.length > 0 && <div className="border-t border-border bg-[#f7faf8] p-4 sm:p-5">
-        <div className="flex flex-wrap items-center justify-between gap-2"><div><p className="text-[10px] font-black text-text-muted">低成本分镜预演 · 不调用模型</p><p className="mt-1 text-xs font-bold text-text-primary">生成前先看内容节奏与画面分布</p></div><span className="rounded-full bg-white px-2.5 py-1 text-[9px] font-bold text-text-muted">不是实际生成关键帧</span></div>
-        <div className="mt-3 flex min-w-0 gap-2 overflow-x-auto pb-1">
-          {storyboard.map((shot, index) => {
-            const execution = scenes.find(scene => scene.sceneId === shot.id) || scenes[index];
-            return <article key={shot.id} style={{ flexGrow: Math.min(3, shot.duration) }} className="min-w-[150px] flex-1 rounded-xl border border-border bg-white p-3"><div className="flex items-center justify-between gap-2"><span className="flex h-6 w-6 items-center justify-center rounded-lg bg-[#173d31] text-[9px] font-black text-white">{index + 1}</span><span className="text-[9px] font-bold text-text-muted">{shot.time}</span></div><p className="mt-3 text-xs font-black text-text-primary">{shot.label}</p><p className="mt-1 line-clamp-2 text-[10px] leading-4 text-text-muted">{shot.visual}</p>{execution && <p className="mt-2 truncate text-[9px] font-bold text-blue-700">{socialShotSourceStrategyLabel(execution.selectedSourceStrategy)} · {money(execution.estimatedCostCny)} · {Math.round(execution.estimatedSuccessRate * 100)}%</p>}</article>;
-          })}
-        </div>
-      </div>}
 
       <div className={`border-t px-4 py-3 text-[10px] font-semibold leading-4 sm:px-5 ${formalReplicationBlocked ? 'border-rose-200 bg-rose-50 text-rose-800' : 'border-blue-100 bg-blue-50/60 text-blue-900'}`}>
         {formalReplicationBlocked

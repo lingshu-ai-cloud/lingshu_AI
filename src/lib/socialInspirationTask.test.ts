@@ -7,6 +7,7 @@ assert.equal(inspirationTaskInput(candidate).creationMode, 'viral_replication');
 assert.equal(inspirationTaskInput(candidate).programRef, undefined, 'a project is not required');
 assert.equal(inspirationTaskInput({ ...candidate, context: { audience: '已验证受众' } }).audience, '已验证受众');
 assert.equal(inspirationTaskSource(candidate).sourceVersion, 'v1');
+assert.equal(inspirationTaskSource({ ...candidate, sourceUrl: 'local://trend_videos_sample' }).sourceRef, 'local://trend_videos_sample');
 assert.throws(() => inspirationTaskSource({ ...candidate, sourceUrl: 'javascript:alert(1)' }));
 const keys: string[] = [];
 let starts = 0;

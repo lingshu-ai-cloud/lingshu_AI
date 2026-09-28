@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { studioApi } from '../../lib/studioApi';
 export default function MaterialAnalysisStatus({ material, onRefresh }: { material: {
-  id: string; type: string; scope?: string; usage?: string; segmentAnalysisStatus?: string; segmentAnalysisError?: string; segments?: Array<{id:string;start:number;end:number;action?:string;needsReview?: boolean}>;
+  id: string; type: string; scope?: string; usage?: string; segmentAnalysisStatus?: string; segmentAnalysisError?: string; segments?: Array<{id:string;start:number;end:number;action?:string;visualTopic?:string;expressionPurpose?:string;needsReview?: boolean}>;
   scriptAnalysis?: { status?: string; hookCapability?: { score?: number }; shots?: unknown[] };
 }, onRefresh: () => Promise<unknown> }) {
   const [busy, setBusy] = useState(false);
@@ -17,6 +17,7 @@ export default function MaterialAnalysisStatus({ material, onRefresh }: { materi
       <button type="button" className="mt-1 font-semibold text-accent" onClick={event => {event.preventDefault();setExpanded(!expanded);}}>{expanded ? '收起片段' : `查看 ${material.segments.length} 个可用区间`}</button>
       {expanded && <div className="mt-2 space-y-2">{material.segments.map(segment => <div key={segment.id} className="rounded border border-border p-2">
         <p>{segment.start.toFixed(1)}–{segment.end.toFixed(1)} 秒 · {segment.action || '可见画面'}</p>
+        <p className="mt-1 text-text-muted">视觉主题：{segment.visualTopic || '待识别'} · 表达目的：{segment.expressionPurpose || '待识别'}</p>
         {segment.needsReview && material.scope !== 'shared' && <button type="button" disabled={busy} className="mt-1 text-accent" onClick={async event => {
           event.preventDefault();setBusy(true);setError('');
           try {const result=await studioApi.updateMaterialSegment(material.id,segment.id,{manualConfirmed:true});if(!result.ok)throw Error(result.error || '复核保存失败');await onRefresh();}
@@ -24,11 +25,11 @@ export default function MaterialAnalysisStatus({ material, onRefresh }: { materi
         }}>已查看原片，确认此区间</button>}
       </div>)}</div>}
     </>}
-    {!pending && status !== 'completed' && material.scope !== 'shared' && material.usage !== 'reference_only' && <button type="button" disabled={busy} className="mt-1 font-semibold text-accent disabled:opacity-50" onClick={async event => {
+    {status === 'failed' && material.scope !== 'shared' && material.usage !== 'reference_only' && <button type="button" disabled={busy} className="mt-1 font-semibold text-accent disabled:opacity-50" onClick={async event => {
       event.preventDefault(); setBusy(true); setError('');
       try { const result = await studioApi.startMaterialAnalysis(material.id, status === 'failed'); if (!result.ok) throw Error(result.error || '无法启动分析'); await onRefresh(); }
       catch (err) { setError(err instanceof Error ? err.message : '无法启动分析'); }
       finally { setBusy(false); }
-    }}>{busy ? '正在提交…' : status === 'failed' ? '重试分析' : '分析素材'}</button>}
+    }}>{busy ? '正在提交…' : '重试分析'}</button>}
   </div>;
 }

@@ -30,7 +30,7 @@ export function inspirationTaskInput(candidate: InspirationTaskCandidate, progra
 
 export function inspirationTaskSource(candidate: InspirationTaskCandidate): AddSocialTaskSourceInput {
   const url = candidate.sourceUrl?.trim() || '';
-  if (!/^https?:\/\//i.test(url)) throw new Error('该候选缺少可追溯的原始链接，请补充链接后发起复刻。');
+  if (!/^(?:https?:\/\/|local:\/\/[A-Za-z0-9._-]+$)/i.test(url)) throw new Error('该候选缺少可追溯的原始链接或本地入库记录，请补充来源后发起复刻。');
   return { kind: 'reference_link', sourceRef: url, sourceVersion: candidate.sourceVersion || candidate.crawledAt || null,
     label: candidate.title.slice(0, 160), purpose: '仅用于参考分析；参考内容不构成企业事实或素材使用授权。' };
 }

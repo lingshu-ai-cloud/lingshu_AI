@@ -82,7 +82,7 @@ function SceneRow({
         <div className="flex min-w-0 items-start gap-2.5">
           <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-[#173d31] text-[10px] font-black text-white">{scene.order}</span>
           <div className="min-w-0">
-            <p className="text-xs font-black text-text-primary">{socialShotFunctionLabel(scene.purpose)}</p>
+            <p className="text-xs font-black text-text-primary">{socialShotFunctionLabel(scene.purpose, scene.order - 1)}</p>
             <p className="mt-1 text-[10px] leading-4 text-text-secondary">{scene.targetVisual}</p>
           </div>
         </div>

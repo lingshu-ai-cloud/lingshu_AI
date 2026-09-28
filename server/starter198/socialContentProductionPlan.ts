@@ -118,6 +118,9 @@ export type SocialProductionPlan = {
   reasonCode: 'ready' | 'no_visual_material' | 'material_analysis_required' | 'insufficient_visual_coverage';
   message: string;
   scenes: PlannedProductionScene[];
+  /** Unmatched reference scenes remain in the locked script. They must be
+   * supplied before rendering rather than silently dropped from the edit. */
+  pendingScenes?: Array<{ sceneId: string; baselineSceneIndex: number; narration: string; reason: 'material_match_missing' }>;
   selectedAssetIds: string[];
   unusedAssets: Array<{ assetId: string; assetName: string; reason: string }>;
   narrationChanged: boolean;
@@ -436,10 +439,19 @@ export function buildSocialProductionPlan(input: {
   themeId?: SocialContentThemeId | null;
 }): SocialProductionPlan {
   const materialPolicy = socialContentMaterialPolicy(input.themeId ?? input.baseline.themeId ?? null);
+  const fullReplication = input.baseline.source === 'inspiration_script';
+  const pendingScenes = (assignedIndices: Iterable<number>) => {
+    if (!fullReplication) return undefined;
+    const assigned = new Set(assignedIndices);
+    return input.baseline.scenes.flatMap((scene, index) => assigned.has(index) ? [] : [{
+      sceneId: scene.sceneId, baselineSceneIndex: index, narration: frozenVoiceover(scene),
+      reason: 'material_match_missing' as const,
+    }]);
+  };
   if (!input.assets.length) return {
     ok: false, reasonCode: 'no_visual_material',
     message: '没有可读取的图片或视频素材，请至少补充一段清晰实拍视频或两张相关图片。',
-    scenes: [], selectedAssetIds: [], unusedAssets: [], narrationChanged: false,
+    scenes: [], pendingScenes: pendingScenes([]), selectedAssetIds: [], unusedAssets: [], narrationChanged: false,
     maxDuration: 0, sourceClipSeconds: 0, averageConfidence: 0, notes: [],
   };
   const seen = new Set<string>();
@@ -482,7 +494,7 @@ export function buildSocialProductionPlan(input: {
   if (!clips.length) return {
     ok: false, reasonCode: 'material_analysis_required',
     message: '上传素材暂时没有可确认的清晰画面，请重新分析或补充更清晰、与主题相关的素材。',
-    scenes: [], selectedAssetIds: [], unusedAssets, narrationChanged: false,
+    scenes: [], pendingScenes: pendingScenes([]), selectedAssetIds: [], unusedAssets, narrationChanged: false,
     maxDuration: 0, sourceClipSeconds: 0, averageConfidence: 0, notes: [],
   };
 
@@ -520,7 +532,7 @@ export function buildSocialProductionPlan(input: {
     message: associationSafe
       ? '至少需要 2 个可区分的真实画面区间；可以来自两份素材，也可以来自一支包含多个真实镜头的完整视频。'
       : `素材中与本次主题和脚本相符的可信镜头不足 2 个，${materialPolicy.insufficientMessage}。`,
-    scenes: [], selectedAssetIds: [], unusedAssets, narrationChanged: false,
+    scenes: [], pendingScenes: pendingScenes([]), selectedAssetIds: [], unusedAssets, narrationChanged: false,
     maxDuration: 0,
     sourceClipSeconds: relevantEvidenceShots.reduce((sum, clip) => sum + clip.sourceDuration, 0),
     averageConfidence: relevantEvidenceShots.reduce((sum, clip) => sum + clip.confidence, 0) / Math.max(1, relevantEvidenceShots.length),
@@ -529,9 +541,10 @@ export function buildSocialProductionPlan(input: {
       : ['独立镜头按真实分析片段计算；同一片段的切窗不会增加镜头数。', '不相关素材仅从本次剪辑中舍弃，不会从素材库删除。'],
   };
 
-  const maximumScenes = input.baseline.source === 'inspiration_script' ? 12 : 4;
+  const maximumScenes = fullReplication ? input.baseline.scenes.length : 4;
   const wanted = Math.min(maximumScenes, input.baseline.scenes.length, relevantEvidenceShots.length);
-  const indices = sceneOrder(input.baseline.scenes.length, wanted);
+  const indices = fullReplication ? Array.from({ length: input.baseline.scenes.length }, (_, index) => index)
+    : sceneOrder(input.baseline.scenes.length, wanted);
   const remaining = [...relevantClips];
   const assignments = indices.flatMap(sceneIndex => {
     const scene = input.baseline.scenes[sceneIndex]!;
@@ -587,9 +600,22 @@ export function buildSocialProductionPlan(input: {
   const dynamicSeconds = assignments.filter(item => item.clip.type === 'video')
     .reduce((sum, item) => sum + item.clip.sourceDuration, 0);
   const averageConfidence = assignments.reduce((sum, item) => sum + item.clip.confidence, 0) / Math.max(1, assignments.length);
-  const maxDuration = Math.min(20, assignments.reduce((sum, item) => (
+  const materialDuration = assignments.reduce((sum, item) => (
     sum + (item.clip.type === 'image' ? 2.8 : item.clip.sourceDuration / 0.82)
-  ), 0));
+  ), 0);
+  const referenceDuration = fullReplication ? Math.max(0, ...input.baseline.scenes.map(scene =>
+    Number(scene.referenceStructure?.sourceTiming.endSeconds) || 0)) : 0;
+  const maxDuration = fullReplication ? Math.max(materialDuration, referenceDuration) : Math.min(20, materialDuration);
+  const pending = pendingScenes(assignments.map(item => item.sceneIndex));
+  if (fullReplication && pending?.length) {
+    return {
+      ok: false, reasonCode: 'insufficient_visual_coverage',
+      message: `全片复刻仍有 ${pending.length} 个分镜待匹配素材；已冻结的逐句口播和镜头将保留，不会删镜进入制作。`,
+      scenes: [], pendingScenes: pending, selectedAssetIds: [], unusedAssets,
+      narrationChanged: false, maxDuration, sourceClipSeconds, averageConfidence,
+      notes: ['内容 Agent 需要为全部参考分镜匹配本地素材或完成授权生成，再按原片顺序制作。'],
+    };
+  }
   if (assignments.length < 2 || maxDuration < 5.5 || (!associationSafe && averageConfidence < 0.62)
     || (dynamicSeconds < 2.5 && assignments.filter(item => item.clip.type === 'image').length < 2)) {
     return {

@@ -60,3 +60,36 @@ test('approved collection calls CandidateEvidence worker and fills quota with qu
   assert.equal(result.run?.modeStats.momentum?.accepted, 2);
   assert.deepEqual(result.run?.evidenceOutcomes?.momentum?.acceptedCandidateIds, ['candidate-1', 'candidate-2']);
 });
+
+test('account discovery reads the current account library and forwards the saved name and date range', async () => {
+  const dataStore = new MemoryStore();
+  dataStore.rows.set('competitor_accounts', [{ id: 'account-1', tenantId: 'tenant-1', accountUrl: 'https://www.youtube.com/@demo', accountName: 'Demo Factory' }]);
+  dataStore.rows.set('social_discovery_scopes', [{
+    id: 'scope-1', tenant_id: 'tenant-1', keyword_set_id: 'keywords-1', version: 1, status: 'active',
+    payload: {
+      market: 'US', language: 'en', approval: { status: 'approved', scopeVersion: 1 },
+      discoveryBrief: {
+        discoveryBriefId: 'brief-1', keywordSetId: 'keywords-1', keywordSetVersion: 1, productRef: 'product', market: 'US', audience: 'buyer',
+        discoverySeedIds: [], trackedSceneIds: [], competitorAccounts: ['https://www.youtube.com/@old'], discoveryModes: ['account'],
+        platforms: ['youtube'], lookbackDays: 7, resultLimit: 3, budgetLimitCny: null, productionGap: null, createdBy: 'director_agent',
+        modePolicies: { account: { enabled: true, sourceRefs: ['https://www.youtube.com/@old'], platforms: ['youtube'], resultLimit: 3, refreshIntervalMinutes: 60, budgetLimitCny: null } },
+      },
+    },
+  }]);
+  const calls: Array<{ accountUrl?: string; accountName?: string; dateFrom?: string; dateTo?: string; limit?: number }> = [];
+  await executeApprovedDiscoveryRun({ tenantId: 'tenant-1', triggerType: 'manual' }, {
+    dataStore,
+    async crawl(input) {
+      calls.push(input);
+      return { platform: 'youtube', keyword: '', imported: 0, refreshed: 0, skipped: 0, skippedExisting: 0, returnedExisting: 0, requested: input.limit ?? 0, total: 0, source: 'test', message: '', candidateIds: [], items: [] };
+    },
+    candidateEvidenceAdapter: { async toEvidenceWorkItems() { return []; } },
+    async runCandidateEvidence() { return { accepted: [], suggestions: [], failed: [] }; },
+  });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0]?.accountUrl, 'https://www.youtube.com/@demo');
+  assert.equal(calls[0]?.accountName, 'Demo Factory');
+  assert.equal(calls[0]?.limit, 1);
+  assert.match(calls[0]?.dateFrom ?? '', /^\d{4}-\d{2}-\d{2}$/);
+  assert.match(calls[0]?.dateTo ?? '', /^\d{4}-\d{2}-\d{2}$/);
+});

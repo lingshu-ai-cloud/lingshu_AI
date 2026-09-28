@@ -50,6 +50,7 @@ import { createSocialProductSceneAdapter } from './socialContentProductSceneAdap
 import { createEnvironmentSeedanceProductScenePorts } from './socialContentSeedanceProductScene.js';
 import { createSocialDigitalPresenterAdapter } from './socialContentDigitalPresenterAdapter.js';
 import { createEnvironmentSocialHeyGenBridge } from './socialContentHeyGenBridge.js';
+import { replicationExecutionGaps, selectPresenterExecutions, verifyNamedPresenterLock, type PresenterExecutionSelection } from './socialContentPresenterExecutionPolicy.js';
 import { buildSocialDirectorPlan, parseStoredSocialDirectorPlan, publicSocialDirectorPlanSummary, reviseSocialDirectorPlanForVoiceoverFit, socialDirectorContentHandoff, socialDirectorCoverTimestamp, socialDirectorRenderTimeline, socialDirectorVoiceAlignedCaptionCues, socialDirectorScriptText, type SocialDirectorBgmSelection, type SocialDirectorBgmTrack, type SocialDirectorContentHandoff } from './socialContentDirectorPlan.js';
 import { latestSocialDirectorPlanVersion, persistSocialDirectorPlanVersion, resolveSocialDirectorArtifactLineage } from './socialContentDirectorPlanVersions.js';
 import type { InternalSocialContentFormula } from './socialContentThemes.js';
@@ -206,6 +207,17 @@ export async function runSocialContentAutoProduction(input: {
   const detail = await readSocialTaskDetail(input);
   if (!detail) throw new Error('社媒内容任务不存在');
   const productionApproach = detail.brief.productionApproach ?? 'ai_enhanced';
+  if (detail.brief.creationMode === 'viral_replication' && productionApproach !== 'shooting_plan') {
+    const gaps = replicationExecutionGaps(detail);
+    if (gaps.length) {
+      await writeExecutionStage({ ...input, stage: 'replication_handoff_gate',
+        message: '编导交接物缺少逐镜可执行证据，已停止成片制作和付费供应商调用。',
+        extra: { gateVersion: '1', gaps },
+      });
+      throw new Error(`user_input_required:replication_handoff_blocked:${gaps
+        .map(gap => `${gap.sceneId}:${gap.reasonCodes.join(',')}`).join(';')}`);
+    }
+  }
   const targetArtifactKind = productionApproach === 'shooting_plan' ? 'shooting_plan' : 'short_video';
   const targetWorkflowSchema = productionApproach === 'shooting_plan' ? SOCIAL_SHOOTING_PLAN_SCHEMA : AUTO_SCHEMA;
   const revisionParent = productionApproach === 'shooting_plan' ? undefined : [...detail.artifacts].reverse().find(artifact => artifact.kind === 'short_video'
@@ -227,6 +239,51 @@ export async function runSocialContentAutoProduction(input: {
     const required = agentWorkflow?.executionPlanReview.requiredRevision.join('；')
       || '内容执行方案尚未通过编导逐镜审核';
     throw new Error(`user_input_required:${required}`);
+  }
+  let presenterExecutions: PresenterExecutionSelection[] = [];
+  if (detail.brief.creationMode === 'viral_replication') {
+    if (agentWorkflow.directorBrief.scenes.some(scene => scene.productionRouting?.presenterVisible)) {
+      const namedPresenter = await verifyNamedPresenterLock({
+        store: input.repository.dataStore ?? null,
+        tenantId: input.tenantId,
+        name: detail.brief.requestedPresenterName,
+        requestedPresenterAssetId: detail.brief.requestedPresenterAssetId,
+        lock: agentWorkflow.directorBrief.accountPresenterLock,
+      });
+      if (!namedPresenter.ok) {
+        await writeExecutionStage({ ...input, stage: 'presenter_stack_selection',
+          message: '指定人物未能与已发布的账号人物版本唯一匹配，已停止自动付费调用。',
+          extra: { policyVersion: '1', reason: namedPresenter.reason },
+        });
+        throw new Error(`user_input_required:presenter_identity_blocked:${namedPresenter.reason}`);
+      }
+    }
+    const heygenBridge = input.repository.dataStore
+      ? createEnvironmentSocialHeyGenBridge(input.repository.dataStore)
+      : null;
+    presenterExecutions = selectPresenterExecutions({
+      detail,
+      heygenReady: productionApproach === 'ai_enhanced' && Boolean(heygenBridge?.readiness.ready && heygenBridge.ports),
+      // The currently registered social Seedance executor handles product
+      // scenes, not enterprise-presenter first-frame reenactment.
+      seedancePresenterReady: false,
+      budgetReady: productionApproach === 'ai_enhanced' && Boolean(heygenBridge?.readiness.ready),
+    });
+    if (presenterExecutions.length) {
+      await writeExecutionStage({
+        ...input,
+        stage: 'presenter_stack_selection',
+        message: presenterExecutions.every(item => item.executionStatus === 'ready')
+          ? '内容 Agent 已依据逐镜测量证据锁定人物技术栈。'
+          : '逐镜人物技术栈缺少可执行证据或能力，已停止自动付费调用。',
+        extra: { policyVersion: '1', presenterExecutions },
+      });
+      if (presenterExecutions.some(item => item.executionStatus === 'blocked')) {
+        throw new Error(`user_input_required:presenter_stack_blocked:${presenterExecutions
+          .filter(item => item.executionStatus === 'blocked')
+          .map(item => `${item.sceneId}:${item.reasonCodes.join(',')}`).join(';')}`);
+      }
+    }
   }
   await writeExecutionStage({
     ...input,
@@ -410,11 +467,18 @@ export async function runSocialContentAutoProduction(input: {
 	      tenantId: input.tenantId,
 	      taskId: input.taskId,
 	      outputDirectory: outputDir,
-	      plan: assetSupplyPlanWithExecutionSelections(detail.assetSupplyPlan, agentWorkflow),
+        plan: (() => {
+          const selected = assetSupplyPlanWithExecutionSelections(detail.assetSupplyPlan, agentWorkflow);
+          const heygenScenes = new Set(presenterExecutions.filter(item => item.providerId === 'heygen').map(item => item.sceneId));
+          return { ...selected, shots: selected.shots.map(shot => heygenScenes.has(shot.shotId)
+            ? { ...shot, sourceStrategy: 'authorized_digital_presenter' as const, fallbackSourceStrategy: null }
+            : shot) };
+        })(),
 	      baseline: activeBaseline,
 	      availableAssets: assets,
 	      adapters: paidVisualProvidersAllowed ? [
-	        ...(input.assetSupplyAdapters ?? []),
+	        ...(input.assetSupplyAdapters ?? []).filter(adapter => !presenterExecutions.length
+            || !adapter.sourceStrategies.includes('authorized_digital_presenter')),
 	        createSocialProductSceneAdapter(createEnvironmentSeedanceProductScenePorts()),
 	        ...(environmentPresenter?.ports ? [createSocialDigitalPresenterAdapter(environmentPresenter.ports)] : []),
 	        createConfiguredSocialAiVisualAdapter(),
@@ -424,13 +488,23 @@ export async function runSocialContentAutoProduction(input: {
 	    // Only assets selected by the Director's per-shot router enter the edit.
 	    assets = supplied.assets;
 	    assetSupplyExecution = supplied.execution;
+	    for (const selection of presenterExecutions) {
+        const receipt = assetSupplyExecution.shots.find(shot => shot.sceneId === selection.sceneId);
+        if (selection.providerId === 'heygen' && (!receipt || receipt.providerId !== 'heygen'
+          || receipt.sourceStrategy !== 'authorized_digital_presenter' || receipt.fallbackApplied)) {
+          throw new Error(`presenter_provider_receipt_mismatch:${selection.sceneId}`);
+        }
+      }
 	    await writeExecutionStage({
 	      ...input,
 	      stage: 'asset_supply_completed',
 	      message: paidVisualProvidersAllowed
 	        ? '内容 Agent 已逐镜完成素材库与高质量生成能力路由。'
 	        : '内容 Agent 已按逐句口播完成“我的素材”片段路由，未调用 Seedance 或数字人。',
-	      extra: { assetSupplyExecution },
+	      extra: { assetSupplyExecution, presenterExecutions: presenterExecutions.map(selection => ({
+          ...selection,
+          receipt: assetSupplyExecution?.shots.find(shot => shot.sceneId === selection.sceneId) ?? null,
+        })) },
 	    });
 	  }
   if (['knowledge_fallback', 'system_theme_baseline'].includes(activeBaseline.source)

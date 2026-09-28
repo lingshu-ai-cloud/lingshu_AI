@@ -85,7 +85,8 @@ export interface SocialAssetSupplyExecutionResult {
 
 function shotFunction(scene: StoredSocialScriptBaseline['scenes'][number], index: number, total: number) {
   const text = `${scene.shotFunction} ${scene.subject} ${scene.action}`.toLocaleLowerCase();
-  if (index === 0 || /hook|开场|开头|前三秒|吸引|钩子/.test(text)) return 'hook' as const;
+  if (index === 0) return 'hook' as const;
+  if (/d\s*to\s*c|吸睛|生活场景|hook|开场|开头|前三秒|吸引|钩子/.test(text)) return 'd_to_c' as const;
   if (index === total - 1 || /cta|行动|咨询|联系|转化|收尾/.test(text)) return 'call_to_action' as const;
   if (/痛点|问题|困扰|难题|problem/.test(text)) return 'problem' as const;
   if (/证明|证据|参数|数据|proof/.test(text)) return 'proof' as const;

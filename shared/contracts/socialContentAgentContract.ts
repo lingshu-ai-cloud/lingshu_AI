@@ -189,6 +189,34 @@ export interface SocialDirectorBriefScene {
   sceneId: string;
   order: number;
   referenceShotId: string | null;
+  /** Visual subject is decided before choosing an existing asset or a generation stack. */
+  visualTopic?: {
+    kind: 'factory_footage' | 'competitor_comparison' | 'product_introduction' | 'presenter_talking' | 'other';
+    subject: string;
+    intent: string;
+    personRole?: 'visible_speech' | 'expressive_action' | 'background' | 'none';
+  };
+  /** Exact analyzed segment and first-frame evidence for the Content Agent. */
+  referenceMaterial?: {
+    semanticLabel: { content: string; intent: string } | null;
+    sourceVideoRef: string | null;
+    clipRef: string | null;
+    firstFrameRef: string | null;
+    firstFrameSeconds: number | null;
+    extractionStatus: 'ready' | 'unavailable';
+    isPrimaryHook: boolean;
+    hookDetail: import('./socialContentReplication.js').SocialThreeSecondHook['detailedAnalysis'] | null;
+  };
+  /** Provider-neutral requirements; the Content Agent selects a capable stack. */
+  productionRouting?: {
+    presenterVisible: boolean;
+    presenterIdentityReplacementRequired: boolean;
+    enterprisePresenterAssetRef: string | null;
+    needsPreciseLipSync: boolean;
+    needsExpressiveAction: boolean;
+    needsCameraOrCompositionReconstruction: boolean;
+    decisionReason: string[];
+  };
   purpose: SocialShotFunction;
   targetVisual: string;
   /** Shared Director-to-Content visual contract. Optional on historic briefs. */
@@ -205,6 +233,17 @@ export interface SocialDirectorBriefScene {
     music: string | null;
     soundEffects: string | null;
   };
+  /** Every source sentence visually intersecting this scene. Narration is
+   * emitted once, by its owner shot, even when video cuts during the line. */
+  voiceoverLines?: Array<{
+    lineId: string;
+    text: string;
+    sourceStartSeconds: number;
+    sourceEndSeconds: number;
+    narrationOwnerShotId: string;
+    visualShotIds: string[];
+    isNarrationOwner: boolean;
+  }>;
   /** The Content Agent must retrieve material against this exact spoken line.
    * Subject/action tags are secondary filters, never the primary query. */
   voiceoverAlignment?: {
@@ -386,6 +425,13 @@ export interface SocialProductionOption {
 
 export interface SocialContentExecutionScenePlan {
   sceneId: string;
+  /** Content Agent's own decision, derived from the Director's goals and available resources. */
+  routeDecision?: {
+    visualTopic: SocialDirectorBriefScene['visualTopic'];
+    policy: 'hook_fidelity' | 'visible_speech' | 'expressive_action' | 'reuse_material' | 'product_scene' | 'needs_capability';
+    reason: string;
+    source: 'content_agent';
+  };
   /** Frozen Director-owned requirements this scene must realize. */
   replicationFactorIds?: string[];
   factorFeasibility?: Array<{

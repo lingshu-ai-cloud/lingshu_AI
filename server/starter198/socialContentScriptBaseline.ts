@@ -100,6 +100,18 @@ export interface StoredSocialScriptBaseline {
     /** Verbatim ASR/dialogue recovered from the selected reference before identity substitution. */
     referenceSpokenText?: string | null;
     voiceover?: string;
+    speechLines?: Array<{
+      lineId?: string;
+      referenceText: string;
+      draftText: string;
+      sourceStartSeconds: number;
+      sourceEndSeconds: number;
+      sourcePrecision: 'phrase' | 'coarse';
+      sourceProvenance: string;
+      replacedEntityTypes: Array<'company' | 'brand' | 'product'>;
+      narrationOwnerShotId?: string;
+      visualShotIds?: string[];
+    }>;
     /** New reference baselines may replace identities, never facts or phrasing. */
     voiceoverReplacement?: {
       mode: 'identity_only';
@@ -452,7 +464,7 @@ export function freezeSocialScriptBaseline(input: {
   const formulaReference = matchedFormula
     ? { formulaId: matchedFormula.formulaId, version: matchedFormula.version }
     : null;
-  const replicationShots = input.replicationScript?.shots?.slice(0, 12) ?? [];
+  const replicationShots = input.replicationScript?.shots ?? [];
   const scenes = replicationShots.length ? replicationShots.map((shot, index) => {
     const referenceStructure = input.inspiration?.nodes[index]?.referenceStructure;
     // A silent reference shot stays silent. Captions are not promoted to
@@ -476,6 +488,9 @@ export function freezeSocialScriptBaseline(input: {
       script: visualInstruction || narration,
       referenceSpokenText: shot.referenceSpokenText ?? null,
       voiceover: narration,
+      ...(shot.speechLines ? { speechLines: shot.speechLines.map(line => ({
+        ...line, replacedEntityTypes: [...line.replacedEntityTypes],
+      })) } : {}),
       ...(shot.voiceoverReplacement ? {
         voiceoverReplacement: {
           mode: 'identity_only' as const,
@@ -624,7 +639,7 @@ export function parseStoredSocialScriptBaseline(value: unknown): StoredSocialScr
     || row.createdBeforeMaterialAdaptation !== true
     || !Array.isArray(scenesValue)
     || scenesValue.length < 1
-    || scenesValue.length > 12) {
+    || scenesValue.length > 256) {
     throw new SocialContentWorkflowError('social_content_script_baseline_record_invalid', 503);
   }
   const formulaReference = formula
@@ -645,6 +660,7 @@ export function parseStoredSocialScriptBaseline(value: unknown): StoredSocialScr
     const scene = socialObject(value);
     const referenceStructure = socialObject(scene?.referenceStructure);
     const voiceoverReplacement = socialObject(scene?.voiceoverReplacement);
+    const speechLines = Array.isArray(scene?.speechLines) ? scene.speechLines.map(socialObject) : null;
     const sourceTiming = socialObject(referenceStructure?.sourceTiming);
     const parsedReferenceStructure: NonNullable<StoredSocialScriptBaseline['scenes'][number]['referenceStructure']> | null = referenceStructure && sourceTiming ? {
       sourceTiming: {
@@ -670,6 +686,32 @@ export function parseStoredSocialScriptBaseline(value: unknown): StoredSocialScr
         ? { referenceSpokenText: socialText(scene?.referenceSpokenText) || null }
         : {}),
       voiceover: socialText(scene?.voiceover) || socialText(scene?.narration),
+      ...(speechLines ? { speechLines: speechLines.map(rawLine => {
+        const line = rawLine ?? {};
+        const sourceStartSeconds = Number(line.sourceStartSeconds);
+        const sourceEndSeconds = Number(line.sourceEndSeconds);
+        const sourcePrecision = socialText(line.sourcePrecision);
+        const referenceText = socialText(line.referenceText);
+        const draftText = socialText(line.draftText);
+        const sourceProvenance = socialText(line.sourceProvenance);
+        const replacedEntityTypes = Array.isArray(line.replacedEntityTypes)
+          ? line.replacedEntityTypes.map(socialText)
+            .filter((type): type is 'company' | 'brand' | 'product' => ['company', 'brand', 'product'].includes(type))
+          : [];
+        if (!referenceText || !draftText || !sourceProvenance || !Number.isFinite(sourceStartSeconds)
+          || !Number.isFinite(sourceEndSeconds) || sourceStartSeconds < 0 || sourceEndSeconds <= sourceStartSeconds
+          || !['phrase', 'coarse'].includes(sourcePrecision)) {
+          throw new SocialContentWorkflowError('social_content_script_baseline_record_invalid', 503);
+        }
+        return { referenceText, draftText, sourceStartSeconds, sourceEndSeconds,
+          sourcePrecision: sourcePrecision as 'phrase' | 'coarse', sourceProvenance, replacedEntityTypes,
+          ...(socialText(line.lineId) ? { lineId: socialText(line.lineId) } : {}),
+          ...(socialText(line.narrationOwnerShotId)
+            ? { narrationOwnerShotId: socialText(line.narrationOwnerShotId) } : {}),
+          ...(Array.isArray(line.visualShotIds)
+            ? { visualShotIds: line.visualShotIds.map(socialText).filter(Boolean) } : {}),
+        };
+      }) } : {}),
       ...(socialText(voiceoverReplacement?.mode) === 'identity_only' ? {
         voiceoverReplacement: {
           mode: 'identity_only' as const,

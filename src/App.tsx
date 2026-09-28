@@ -413,7 +413,12 @@ export default function App() {
         if (nextPage === pageRef.current && detail.workflowTaskId) pushProductionLocation(nextPage);
         handleNavigate(incomingDetail.page === 'socialSetup' || incomingDetail.page === 'socialAccounts' || incomingDetail.page === 'accountManagement' ? incomingDetail.page : nextPage);
         if (nextPage === 'traffic') setTrafficEntryView(incomingDetail.view === 'accounts' || incomingDetail.page === 'socialAccounts' || incomingDetail.page === 'accountManagement' ? 'accounts' : 'publish');
-        window.history.replaceState({ ...window.history.state, productionDetail: detail }, '');
+        if (nextPage === 'smartAssets' && detail.studioEntry && detail.contentCreationRequest && !detail.socialContentTaskId) {
+          try { localStorage.removeItem('ow_studio_open_project'); } catch { /* ignore */ }
+          const freshUrl = new URL(window.location.href);
+          freshUrl.searchParams.delete('project');
+          window.history.replaceState({ ...window.history.state, productionDetail: detail }, '', freshUrl);
+        } else window.history.replaceState({ ...window.history.state, productionDetail: detail }, '');
         const socialTaskId = String(detail.socialContentTaskId || '').trim();
         if (socialTaskId && isSocialTaskContextPage(nextPage)
           && (!detail.socialContentPage || detail.socialContentPage === nextPage)) {
@@ -561,7 +566,7 @@ export default function App() {
   }
 
   const starterMode = starterAccess === 'starter_198';
-  const showSocialContentPlanning = page === 'smartAssets' && smartAssetsView === 'create' && !socialContentNavigation?.taskId && !smartAssetsWorkflowContext;
+  const showSocialContentPlanning = page === 'smartAssets' && smartAssetsView === 'create' && !socialContentNavigation?.taskId && !smartAssetsWorkflowContext && !smartAssetsCreateRequest;
   const activeSocialContentTaskId = isSocialTaskContextPage(page)
     && socialContentNavigation?.page === page
     ? socialContentNavigation.taskId
@@ -673,7 +678,6 @@ export default function App() {
                 <SocialContentPlanningPage
                   onNavigate={handleNavigate}
                   onNavigateWithTask={handleSocialContentNavigate}
-                  initialCreateRequest={smartAssetsCreateRequest}
                 />
               ) : (
                 <TrafficPage
@@ -688,6 +692,7 @@ export default function App() {
                   showModeTabs={false}
                   openProjectsSignal={openProjectsSignal}
                   pageTitle={PAGE_REGISTRY.smartAssets.canonicalTitle}
+                  studioCreateRequest={smartAssetsCreateRequest}
                   storageScope={session.tenant?.id || session.user.tenantId}
                   workflowContextSignal={smartAssetsWorkflowContext}
                   socialContentTaskId={activeSocialContentTaskId}

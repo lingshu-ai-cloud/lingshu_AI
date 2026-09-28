@@ -68,6 +68,8 @@ import {
   XCircle,
 } from "lucide-react";
 import { authHeader } from "../lib/auth";
+import { socialDiscoveryApi } from "../lib/socialDiscoveryApi";
+import type { SocialCrawlStrategy } from '../../shared/contracts/socialContentWorkflow';
 import EnterpriseProductMultiSelect, { splitSelectedProducts } from './EnterpriseProductMultiSelect';
 // EnterpriseProductMultiSelect owns the searchable listbox contract: aria-multiselectable="true" · 搜索企业知识库产品或型号.
 import { heuristicProductMapping, mapRowToProduct, parseWorkbook, prepareSheet } from "../lib/productImport";
@@ -606,6 +608,7 @@ function OnboardingPanel({
   activeRun = false,
   onSave,
   onOpenReadiness,
+  onNavigate,
 }: {
   initial: DigitalEmployeeConfig;
   readiness: BusinessReadinessItem[];
@@ -614,6 +617,7 @@ function OnboardingPanel({
   activeRun?: boolean;
   onSave: (config: DigitalEmployeeConfig) => void;
   onOpenReadiness: (item: BusinessReadinessItem) => void;
+  onNavigate?: (page: BusinessDestination) => void;
 }) {
   const restoredRules = useMemo(() => agentRuleFields(initial), [initial.socialCadence, initial.followupCadence, initial.reviewSchedule]);
   const [form, setForm] = useState(() => completeConfig(initial));
@@ -626,6 +630,8 @@ function OnboardingPanel({
   const [collectionLookback, setCollectionLookback] = useState(restoredRules.collectionLookback);
   const [collectionLimit, setCollectionLimit] = useState(restoredRules.collectionLimit);
   const [collectionTime, setCollectionTime] = useState(restoredRules.collectionTime);
+  const [approvedDiscoveryScope, setApprovedDiscoveryScope] = useState<SocialCrawlStrategy | null>(null);
+  const [discoveryScopeNotice, setDiscoveryScopeNotice] = useState("");
   const [publishCount, setPublishCount] = useState(restoredRules.publishCount);
   const [connectedPublishingAccounts, setConnectedPublishingAccounts] = useState<PublishingTarget[]>([]);
   const [publishingAccountsLoading, setPublishingAccountsLoading] = useState(true);
@@ -688,6 +694,15 @@ function OnboardingPanel({
     return next;
   }, [knowledgeProducts.length, profileConfirmed, readiness]);
   useEffect(() => setForm(completeConfig(initial)), [initial]);
+  useEffect(() => {
+    let active = true;
+    void socialDiscoveryApi.getScope().then(({ scope }) => {
+      if (!active) return;
+      setApprovedDiscoveryScope(scope.approval?.status === 'approved' ? scope : null);
+      setDiscoveryScopeNotice(scope.approval?.status === 'approved' ? '' : '尚无已批准的编导采集范围');
+    }).catch(() => { if (active) setDiscoveryScopeNotice('暂时无法读取当前编导采集范围'); });
+    return () => { active = false; };
+  }, []);
   useEffect(() => {
     setCollectionPlatforms(restoredRules.collectionPlatforms);
     setCollectionSources(restoredRules.collectionSources);
@@ -1150,7 +1165,7 @@ function OnboardingPanel({
       </div>
       <div className="mt-4 grid gap-4">
         {activeRuleAgent === "director" && <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
-          <div><p className="text-sm font-bold text-emerald-950">AI 推荐执行范围</p><p className="mt-1 text-xs text-emerald-700">根据行业、业务、重点产品和目标市场生成采集关键词与客户画像；推荐值仍需人工确认。</p></div>
+          <div><p className="text-sm font-bold text-emerald-950">AI 推荐经营需求</p><p className="mt-1 text-xs text-emerald-700">根据行业、业务、重点产品和目标市场生成给编导的采集建议；实际搜索范围以已批准的灵感范围为准。</p></div>
           <div className="text-right"><button type="button" disabled={!canGenerateRecommendation} onClick={applyAiRecommendation} className="inline-flex items-center gap-2 rounded-xl bg-emerald-700 px-4 py-2 text-xs font-bold text-white disabled:cursor-not-allowed disabled:bg-slate-300"><Sparkles size={14} />{recommendationApplied ? "已生成，可继续调整" : "填入基础关键词"}</button>{!canGenerateRecommendation&&<p role="status" className="mt-1 text-[10px] text-amber-700">请先补齐：{missingRecommendationFields.join("、")}</p>}</div>
         </div>}
         {activeRuleAgent === "common" && <section className="rounded-2xl border border-slate-200 bg-slate-50/45 p-4 sm:p-5">
@@ -1203,13 +1218,17 @@ function OnboardingPanel({
           </div>
         </section>}
         {activeRuleAgent === "director" && <section className="rounded-2xl border border-slate-200 p-4">
-          <p className="text-sm font-bold text-slate-900">爆款采集与导演规则</p>
-          <p className="mt-1 text-xs text-slate-500">先确定找什么，再设置多久跑一次；只采集公开内容。</p>
-          <div className="mt-4 space-y-4">
-            <div><p className="mb-2 text-[10px] font-black uppercase tracking-wider text-slate-400">1 · 采集范围</p><div className="space-y-3"><Field label="采集平台"><input className={inputClass} value={collectionPlatforms} onChange={e=>setCollectionPlatforms(e.target.value)} /></Field><Field label="来源类型"><input className={inputClass} value={collectionSources} onChange={e=>setCollectionSources(e.target.value)} /></Field><Field label="关键词"><input className={inputClass} value={collectionKeywords} onChange={e=>setCollectionKeywords(e.target.value)} placeholder="可使用上方 AI 推荐填入" /></Field></div></div>
-            <div><p className="mb-2 text-[10px] font-black uppercase tracking-wider text-slate-400">2 · 执行节奏</p><div className="grid gap-3 md:grid-cols-3"><Field label="采集时间"><input className={inputClass} value={collectionTime} onChange={e=>setCollectionTime(e.target.value)} /></Field><Field label="回看天数"><input className={inputClass} type="number" min={1} value={collectionLookback} onChange={e=>setCollectionLookback(Number(e.target.value))} /></Field><Field label="单次上限"><input className={inputClass} type="number" min={1} value={collectionLimit} onChange={e=>setCollectionLimit(Number(e.target.value))} /></Field></div></div>
+          <p className="text-sm font-bold text-slate-900">编导采集需求与导演规则</p>
+          <p className="mt-1 text-xs text-slate-500">这里记录经营 Agent 对编导的目标和建议。保存后不会直接覆盖正在执行的采集范围；编导采集以灵感大屏已批准的范围为准。</p>
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50 p-3">
+            <p className="text-xs font-semibold text-emerald-900">{approvedDiscoveryScope ? `当前生效：编导采集范围 v${approvedDiscoveryScope.approval?.scopeVersion ?? approvedDiscoveryScope.version} · ${approvedDiscoveryScope.discoveryBrief.lookbackDays} 天 · 滚动 7 天目标 ${approvedDiscoveryScope.discoveryBrief.resultLimit} 条` : discoveryScopeNotice || '正在读取当前编导采集范围…'}</p>
+            <button type="button" onClick={() => onNavigate?.('socialInspiration')} disabled={!onNavigate} className="rounded-lg bg-emerald-700 px-3 py-2 text-xs font-bold text-white disabled:opacity-50">到灵感大屏确认或调整</button>
           </div>
-          <p className="mt-3 rounded-xl bg-slate-50 p-3 text-xs text-slate-600">近 {collectionLookback} 天 · 每次最多 {collectionLimit} 条 · 链接与标题去重 30 天</p>
+          <div className="mt-4 space-y-4">
+            <div><p className="mb-2 text-[10px] font-black uppercase tracking-wider text-slate-400">1 · 建议采集范围</p><div className="space-y-3"><Field label="建议平台"><input className={inputClass} value={collectionPlatforms} onChange={e=>setCollectionPlatforms(e.target.value)} /></Field><Field label="建议来源"><input className={inputClass} value={collectionSources} onChange={e=>setCollectionSources(e.target.value)} /></Field><Field label="建议关键词"><input className={inputClass} value={collectionKeywords} onChange={e=>setCollectionKeywords(e.target.value)} placeholder="仅作为经营需求，实际词在灵感大屏确认" /></Field></div></div>
+            <div><p className="mb-2 text-[10px] font-black uppercase tracking-wider text-slate-400">2 · 建议执行节奏</p><div className="grid gap-3 md:grid-cols-3"><Field label="建议采集时间"><input className={inputClass} value={collectionTime} onChange={e=>setCollectionTime(e.target.value)} /></Field><Field label="建议回看天数"><input className={inputClass} type="number" min={1} value={collectionLookback} onChange={e=>setCollectionLookback(Number(e.target.value))} /></Field><Field label="建议单次上限"><input className={inputClass} type="number" min={1} value={collectionLimit} onChange={e=>setCollectionLimit(Number(e.target.value))} /></Field></div></div>
+          </div>
+          <p className="mt-3 rounded-xl bg-slate-50 p-3 text-xs text-slate-600">经营建议：近 {collectionLookback} 天 · 单次最多 {collectionLimit} 条。编导确认后才会成为采集参数。</p>
         </section>}
         {activeRuleAgent === "content" && <div className="md:col-span-2 grid gap-3 rounded-2xl border p-4 md:grid-cols-2">
           <div className="md:col-span-2 rounded-xl border border-blue-100 bg-blue-50/60 p-4">
@@ -3946,6 +3965,7 @@ export default function DigitalEmployeePage({
               readiness={data?.businessSnapshot?.readiness || []}
               busy={Boolean(busy)}
               onOpenReadiness={openReadiness}
+              onNavigate={(page) => openBusiness(page)}
               onSave={(config) => void saveConfig(config)}
             />
           </div>
@@ -4333,6 +4353,7 @@ export default function DigitalEmployeePage({
               mode="rules"
               activeRun={activeRun}
               onOpenReadiness={openReadiness}
+              onNavigate={(page) => openBusiness(page)}
               onSave={(config) => void saveConfig(config)}
             />
             <section className="rounded-3xl border border-slate-200 bg-white p-5">

@@ -102,18 +102,26 @@ export function decideShotRoute(
   const confidence = overallConfidence(requirements);
   const evidenceMissing = requirements.evidence.keyframeIds.length === 0 && !requirements.evidence.asrText
     && requirements.evidence.materialIds.length === 0;
+  // Every reference shot containing a person must retain its source first frame,
+  // including shots eventually rendered with a talking-avatar provider. The
+  // avatar route may use a canonical portrait for synthesis, but the source
+  // frame remains the composition and identity-replacement evidence.
+  const personFirstFrameMissing = requirements.identityRequirement === 'enterprise_presenter'
+    && requirements.evidence.keyframeIds.length === 0;
   const primaryBlockers = routeBlockers(preferredRoute, requirements, availability);
-  const executable = routeAvailable(preferredRoute, requirements, availability) && !evidenceMissing;
+  const executable = routeAvailable(preferredRoute, requirements, availability)
+    && !evidenceMissing && !personFirstFrameMissing;
   const requiresUserConfirmation = confidence < LOW_CONFIDENCE
-    || evidenceMissing
+    || evidenceMissing || personFirstFrameMissing
     || (requirements.identityRequirement === 'enterprise_presenter'
       && (requirements.backgroundRequirement !== 'flexible' || requirements.referenceUse !== 'structure_only'))
     || requirements.motionRequirement === 'authorized_reference_motion';
   const blockers = unique([
     ...primaryBlockers,
     ...(evidenceMissing ? ['缺少关键帧、ASR 或素材证据，不能自动执行'] : []),
+    ...(personFirstFrameMissing ? ['真人或数字人口播分镜缺少原镜首帧，不能验证企业人物替换'] : []),
   ]);
-  const status = blockers.length ? (evidenceMissing || primaryBlockers.some(item => item.startsWith('缺少')) ? 'needs_input' : 'blocked') : 'ready';
+  const status = blockers.length ? (evidenceMissing || personFirstFrameMissing || primaryBlockers.some(item => item.startsWith('缺少')) ? 'needs_input' : 'blocked') : 'ready';
   const reasons = [
     `镜头类型：${requirements.shotType}`,
     `叙事用途：${requirements.visualRole || '未说明'}`,

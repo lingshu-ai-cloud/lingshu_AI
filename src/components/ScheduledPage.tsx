@@ -258,9 +258,15 @@ const AGENT_GROUPS: { id: AgentTaskGroup; label: string; desc: string }[] = [
 ];
 
 function taskAgentGroup(taskType: string): AgentTaskGroup {
-  if (['video_keyword_crawl', 'image_post_crawl', 'competitor_account_crawl', 'trend_report', 'holiday_push'].includes(taskType)) return 'social';
+  if (['social_discovery_collection', 'video_keyword_crawl', 'image_post_crawl', 'competitor_account_crawl', 'trend_report', 'holiday_push'].includes(taskType)) return 'social';
   if (['crm_wakeup'].includes(taskType)) return 'customer';
   return 'conversion';
+}
+
+function nextDirectorCheckLabel(now = Date.now()): string {
+  const interval = 15 * 60 * 1000;
+  const next = new Date((Math.floor(now / interval) + 1) * interval);
+  return next.toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
 const TASK_TEMPLATES = [
@@ -889,6 +895,10 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
     return ('config' in t ? t.config?.platforms : '') === task.config.platforms;
   }) ?? null;
   const resultTemplate = resultTask ? templateForTask(resultTask) : null;
+
+  const openDiscoveryScope = () => {
+    window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: { page: 'socialInspiration' } }));
+  };
 
   const exportPdf = async (task: ScheduledTask) => {
     setExportingId(task.id);
@@ -1781,6 +1791,9 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
               <div className="grid grid-cols-1 items-stretch gap-3 sm:grid-cols-2 lg:grid-cols-3">
                 {filtered.map(task => {
                   const tmpl = templateForTask(task);
+                  const isDirectorTask = task.taskType === 'social_discovery_collection';
+                  const taskScope = isDirectorTask && discoveryScope && String(discoveryScope.approval?.scopeVersion) === task.config.discoveryScopeVersion
+                    ? discoveryScope : null;
                   const result = runResult[task.id];
                   const isExpanded = expandedId === task.id;
                   const crawlerTask = ['video_keyword_crawl', 'image_post_crawl', 'competitor_account_crawl'].includes(task.taskType);
@@ -1794,7 +1807,7 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
                   return (
                     <div key={task.id} className={`border rounded-xl p-4 min-h-[148px] h-full flex flex-col transition-all ${task.enabled ? 'border-gray-200' : 'border-gray-100 opacity-60'}`}>
                       <div className="flex items-start gap-3">
-                        <div className="text-2xl">{tmpl?.icon ?? '⚙️'}</div>
+                        <div className="text-2xl">{isDirectorTask ? '🎬' : tmpl?.icon ?? '⚙️'}</div>
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center justify-between">
                             <p className="text-sm font-medium text-gray-900 truncate">{task.name}</p>
@@ -1811,6 +1824,8 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
                           <p className="text-xs text-gray-500 mt-0.5 flex items-center gap-1.5">
                             <Clock size={10} /> {task.cronLabel}
                           </p>
+                          {isDirectorTask && <p className="mt-1 text-[11px] font-semibold text-emerald-700">编导 Agent 主采集 · 计划 v{task.config.discoveryScopeVersion || '待确认'}</p>}
+                          {!isDirectorTask && crawlerTask && <p className="mt-1 text-[11px] text-gray-500">{task.config.keywordSource === 'discovery_scope' ? '独立专项任务 · 借用编导关键词，单独计数' : '独立专项采集 · 单独执行'}</p>}
                           <span className={`mt-1.5 inline-flex rounded-full px-2 py-0.5 text-[10px] font-medium ${executionMeta.style}`}>
                             {executionMeta.label}
                           </span>
@@ -1821,6 +1836,15 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
                           )}
                         </div>
                       </div>
+
+                      {isDirectorTask && (
+                        <div className="mt-3 rounded-lg border border-emerald-100 bg-emerald-50/60 p-2.5 text-[11px] text-gray-700">
+                          <p>下次检查：{!task.enabled ? '已暂停' : task.cronExpr === '*/15 * * * *' ? `${nextDirectorCheckLabel()}（北京时间）` : task.cronLabel}；仅在编导计划到期时采集</p>
+                          {taskScope ? <p className="mt-1">采集范围：近 {taskScope.discoveryBrief.lookbackDays} 天发布 · 滚动 7 天目标 {taskScope.discoveryBrief.resultLimit} 条合格视频 · {discoveryKeywords(taskScope).length} 个关键词</p> : <p className="mt-1">计划详情暂未加载；任务执行时读取已批准的范围。</p>}
+                          {task.config.directorReviewRequired && <p className="mt-1 font-semibold text-amber-700">{task.config.directorReviewRequired}。当前任务仍按上一版已批准范围执行。</p>}
+                          <button type="button" onClick={openDiscoveryScope} className="mt-1.5 font-semibold text-emerald-700 hover:underline">前往灵感大屏调整采集范围</button>
+                        </div>
+                      )}
 
                       {task.taskType === 'video_keyword_crawl' && (
                         <div className="mt-3">
@@ -1873,7 +1897,7 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
                           disabled={agentProduction.active ? !agentProduction.action || agentProduction.busy : runningId === task.id}
                           className="h-9 px-3 rounded-lg bg-green-50 text-xs text-green-700 hover:bg-green-100 disabled:opacity-50 whitespace-nowrap"
                         >
-                          {runningId === task.id ? '执行中…' : '立即执行'}
+                          {runningId === task.id ? '执行中…' : isDirectorTask && executionState === 'failed' ? '重试执行' : '立即执行'}
                         </button>
                         <button
                           type="button"
@@ -1888,9 +1912,9 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
                         >
                           进入页面
                         </button>
-                        <button type="button" aria-label={`删除任务 ${task.name}`} onClick={e => { e.preventDefault(); e.stopPropagation(); void deleteTask(task.id); }} className="w-9 h-9 flex items-center justify-center border border-gray-200 rounded-lg text-gray-400 hover:text-red-400 hover:border-red-200 transition-colors flex-shrink-0">
+                        {!isDirectorTask && <button type="button" aria-label={`删除任务 ${task.name}`} onClick={e => { e.preventDefault(); e.stopPropagation(); void deleteTask(task.id); }} className="w-9 h-9 flex items-center justify-center border border-gray-200 rounded-lg text-gray-400 hover:text-red-400 hover:border-red-200 transition-colors flex-shrink-0">
                           <Trash2 size={12} />
-                        </button>
+                        </button>}
                       </div>
                       {runNotice?.taskId === task.id && (
                         <p role="status" className={`mt-2 text-[11px] ${runNotice.error ? 'text-red-600' : 'text-green-700'}`}>{runNotice.message}</p>
@@ -2004,7 +2028,7 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
                       <button type="button" onClick={() => setSelectedTemplateIds([])} className="text-[11px] text-green-700 hover:text-green-900">清空</button>
                     </div>
                   )}
-                  {discoveryScope && selectedTemplates.some(template => template.taskType === 'video_keyword_crawl') && <div className="mb-4 rounded-xl bg-green-50 p-3 text-xs text-green-900"><p>发现范围：{discoveryScope.keywordSet.name} · v{discoveryScope.keywordSet.version}</p><p className="mt-2">{discoveryKeywords(discoveryScope).join('、')}</p><p className="mt-2">每次执行读取灵感中心最新保存的范围。平台、时间和数量沿用本任务设置。</p></div>}
+                  {discoveryScope && selectedTemplates.some(template => template.taskType === 'video_keyword_crawl') && <div className="mb-4 rounded-xl bg-green-50 p-3 text-xs text-green-900"><p>发现范围：{discoveryScope.keywordSet.name} · v{discoveryScope.keywordSet.version}</p><p className="mt-2">{discoveryKeywords(discoveryScope).join('、')}</p><p className="mt-2">这是独立专项任务：每次读取灵感中心最新关键词，但平台、时间和数量按本任务单独执行、单独计数。</p></div>}
                   {keywordTemplates.length > 0 && (
                     <div className="mb-4">
                       <label className="block text-xs font-medium text-gray-700 mb-1.5">采集关键词</label>

@@ -33,6 +33,8 @@ export interface VideoSpatialContinuity {
 
 export interface VideoAiAnalysis {
   theme: string;
+  /** Raw ASR remains available for review; coarse chunks are never treated as shot dialogue. */
+  audioTranscript?: { text: string; segments: Array<{ start: number; end: number; text: string; timingPrecision: 'phrase' | 'coarse'; provenance?: string; needsReview?: boolean }> };
   /** Names explicitly visible/audible in the reference; never inferred. */
   identityEntities?: Array<{
     type: 'company' | 'brand' | 'product';
@@ -74,6 +76,8 @@ export interface VideoAiAnalysis {
     angle?: string;
     composition?: string;
     visual?: string;
+    /** Stable source-person ID shared by shots of the same visible person; empty when unverified. */
+    personContinuityId?: string;
     subtitle?: string;
     audio?: string;
     note?: string;

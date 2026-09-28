@@ -214,7 +214,7 @@ export interface TtsAudioResult {
   adjusted?: boolean;
   targetDuration?: number;
   cues?: SubCue[];
-  alignmentSource?: 'audio_ai' | 'proportional' | 'minimax_native';
+  alignmentSource?: 'audio_ai' | 'proportional' | 'minimax_native' | 'synthesized_sentence_audio' | 'pending_alignment';
   customVoiceStatus?: 'activated';
 }
 export interface StudioAudioCapabilities {
@@ -938,6 +938,8 @@ export interface VideoGenerationVersion {
 
 export interface MaterialSegment {
   id: string;
+  visualTopic?: string;
+  expressionPurpose?: string;
   start: number;
   end: number;
   duration: number;

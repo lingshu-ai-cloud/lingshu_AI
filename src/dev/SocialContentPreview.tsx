@@ -1,9 +1,7 @@
-import { useState } from 'react';
 import { Plus, Sparkles } from 'lucide-react';
 import type { SocialContentTaskDetail, SocialContentTaskSummary } from '../../shared/contracts/socialContentWorkflow';
-import SocialContentLanding, { type SocialContentLaunchOptions } from '../components/socialContent/SocialContentLanding';
+import SocialContentLanding from '../components/socialContent/SocialContentLanding';
 import SocialProductionProgressPanel from '../components/socialContent/SocialProductionProgressPanel';
-import SocialTaskEditorDialog from '../components/socialContent/SocialTaskEditorDialog';
 
 const previewTask = {
   taskId: 'preview-task',
@@ -67,19 +65,7 @@ const previewTasks: SocialContentTaskSummary[] = [
 ];
 
 export default function SocialContentPreview() {
-  const [launchOptions, setLaunchOptions] = useState<SocialContentLaunchOptions>({
-    creationPath: 'material_processing',
-    materialInput: 'none',
-    managedMode: 'one_click_managed',
-  });
-  const [open, setOpen] = useState(false);
-  const [sessionKey, setSessionKey] = useState('preview:0');
-
-  const start = (options: SocialContentLaunchOptions) => {
-    setLaunchOptions(options);
-    setSessionKey(`preview:${Date.now()}`);
-    setOpen(true);
-  };
+  const start = () => { window.location.assign('/?page=smartAssets'); };
 
   return (
     <div className="min-h-screen bg-[#f6f8f5]">
@@ -89,11 +75,10 @@ export default function SocialContentPreview() {
         <section className="rounded-xl border border-dashed border-border-bright bg-white px-4 py-4 sm:px-5">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div className="flex min-w-0 items-center gap-3"><span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-surface-2 text-accent"><Sparkles size={18} /></span><div><p className="text-sm font-black text-text-primary">还没有内容任务</p><p className="mt-1 text-xs text-text-muted">从上方选择素材加工或爆款裂变；没有素材也能开始。</p></div></div>
-            <button type="button" onClick={() => start({ creationPath: 'material_processing', materialInput: 'none', managedMode: 'one_click_managed' })} className="inline-flex items-center gap-2 rounded-lg border border-border bg-white px-4 py-2.5 text-xs font-black text-text-secondary transition hover:border-border-bright hover:bg-surface-2"><Plus size={14} />从空白创建</button>
+            <button type="button" onClick={start} className="inline-flex items-center gap-2 rounded-lg border border-border bg-white px-4 py-2.5 text-xs font-black text-text-secondary transition hover:border-border-bright hover:bg-surface-2"><Plus size={14} />从空白创建</button>
           </div>
         </section>
       </main>
-      <SocialTaskEditorDialog open={open} sessionKey={sessionKey} task={null} initialThemeId="product_value" initialMode="instant" initialCreationPath={launchOptions.creationPath} initialMaterialInput={launchOptions.materialInput} initialManagedMode={launchOptions.managedMode} lockMode catalog={[]} busy={false} onClose={() => setOpen(false)} onSubmit={async () => {}} />
     </div>
   );
 }

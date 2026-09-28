@@ -5,6 +5,7 @@ import type {
   SocialSceneProductionAdmission,
   SocialSceneVisualContract,
 } from '../sceneVisualContract.js';
+import type { PresenterShotMeasurements } from './presenterStackPolicy.js';
 
 export const SOCIAL_CONTENT_TASK_STATUSES = [
   'draft',
@@ -158,6 +159,7 @@ export type SocialAssetSupplyRoute = typeof SOCIAL_ASSET_SUPPLY_ROUTES[number];
 
 export const SOCIAL_SHOT_FUNCTIONS = [
   'hook',
+  'd_to_c',
   'problem',
   'value',
   'demonstration',
@@ -380,10 +382,41 @@ export interface SocialReferenceShotTags {
 /** A multimodal, shot-level reading of one reference video; never a reusable formula. */
 export interface SocialReferenceShotAnalysis {
   shotId: string;
+  /** Same verified source person across shots. Missing means identity continuity is unknown. */
+  personContinuityId?: string | null;
   startSeconds: number;
   endSeconds: number;
+  /** Server-verified inputs for deterministic presenter-stack routing. Null fields require more evidence. */
+  presenterMeasurements?: PresenterShotMeasurements;
+  /** User-facing content and communication intent of this exact source segment. */
+  semanticLabel?: { content: string; intent: string };
+  /** Extracted evidence, never a generated replacement or a claim of ownership. */
+  materialEvidence?: {
+    sourceVideoRef: string | null;
+    clipRef: string | null;
+    firstFrameRef: string | null;
+    firstFrameSeconds: number;
+    extractionStatus: 'ready' | 'unavailable';
+  };
   visualDescription: string;
   spokenText: string | null;
+  /** ASR/manual evidence for the original source sentence. A generated script
+   * cue alone is never proof of phrase-level timing. */
+  spokenTextTiming?: {
+    precision: 'phrase' | 'coarse' | 'none';
+    provenance: string | null;
+    startSeconds: number | null;
+    endSeconds: number | null;
+  };
+  /** Every original spoken sentence must carry its own source interval.
+   * A long physical shot may contain several lines; a summary span is not enough. */
+  spokenLines?: Array<{
+    text: string;
+    startSeconds: number;
+    endSeconds: number;
+    precision: 'phrase' | 'coarse';
+    provenance: string;
+  }>;
   captionText: string | null;
   audioDescription: string | null;
   rhythmDescription: string;

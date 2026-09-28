@@ -260,6 +260,7 @@ function parseScriptDetails15s(value: unknown): VideoAiAnalysis['scriptDetails15
       angle: String(item.angle ?? '').trim(),
       composition: String(item.composition ?? '').trim(),
       visual,
+      personContinuityId: String(item.personContinuityId ?? '').trim(),
       subtitle,
       audio: String(item.audio ?? '').trim(),
       note: String(item.note ?? '').trim(),
@@ -358,6 +359,7 @@ ${GEMINI_ANALYSIS_DIRECTOR_CONTRACT}
   - shot: string，景别，例如“特写”“中景”“近景”
   - camera: string，运镜，例如“固定镜头”“微推近”“手持晃动”“旋转运镜”
   - visual: string，具体画面人物/产品/动作/场景
+  - personContinuityId: string，同一个可确认出镜人物跨镜头使用同一个稳定 ID（如 person_1）；无人出镜或无法确认是否同一人时留空，不得仅凭性别推断
   - purpose: string，镜头营销功能，如“反常识钩子”“效果证明”“价格反差”“CTA”
   - dialogue: string，只填写可确认的人物口播/旁白原文，听不清留空
   - onScreenText: string，只填写画面真实可见字幕，不得与口播混写
@@ -424,6 +426,7 @@ ${GEMINI_ANALYSIS_DIRECTOR_CONTRACT}
   - shot: string，景别，例如“特写”“中景”“近景”
   - camera: string，运镜，例如“固定镜头”“微推近”“手持晃动”“旋转运镜”
   - visual: string，具体画面人物/产品/动作/场景
+  - personContinuityId: string，同一个可确认出镜人物跨镜头使用同一个稳定 ID（如 person_1）；无人出镜或无法确认是否同一人时留空，不得仅凭性别推断
   - subtitle: string，只填写画面中清晰可见的字幕或可确认的口播原句；看不清/听不清则填空字符串，禁止写“待补全”或猜测台词
   - audio: string，只填写可确认的配音、BGM、音效；无法确认则填空字符串，禁止写“可能有……”或猜测台词
   - note: string，可选，只记录确定可见的信息；禁止编造品牌、@账号、原台词或无法确认的提示

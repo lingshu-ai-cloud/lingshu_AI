@@ -92,6 +92,7 @@ export function VideoCard({ video, index, isSelected, onSelect, onCreate, onWatc
       </div>
       <div className="flex flex-1 flex-col p-3">
         <p className="mb-2 min-h-9 text-sm font-bold leading-snug text-text-primary line-clamp-2">{video.title}</p>
+        {!video.id.startsWith('material-') && <p className="mb-2 truncate text-xs text-text-muted">账号：{video.aiAnalysis?.author || video.aiAnalysis?.sourceAccountName || '未抓取'}</p>}
         <div className="flex items-center justify-between mb-2">
           <span className={`text-[10px] font-mono font-bold ${trendColor}`}>{trendLabel}</span>
           <span className="flex items-center gap-1 text-[10px] text-text-muted">{isImagePost ? <Images size={9} /> : <Clock size={9} />}{isImagePost ? `${video.aiAnalysis?.imageCount || video.aiAnalysis?.imageUrls?.length || 1} 张` : `${video.views} views`}</span>
@@ -161,6 +162,7 @@ export function VideoListItem({ video, isSelected, onSelect, onCreate, onWatch, 
           <span className={`text-[10px] font-semibold ${trendColor}`}>{trendLabel}</span>
         </div>
         <p className="text-sm text-text-primary font-medium truncate">{video.title}</p>
+        {!video.id.startsWith('material-') && <p className="truncate text-xs text-text-muted">账号：{video.aiAnalysis?.author || video.aiAnalysis?.sourceAccountName || '未抓取'}</p>}
       </div>
       <div className="hidden lg:flex items-center gap-1 flex-shrink-0">
         {video.tags.slice(0, 2).map(tag => <span key={tag} className="tag text-[10px]">#{tag}</span>)}

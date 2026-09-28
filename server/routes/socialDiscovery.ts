@@ -1,5 +1,5 @@
 import { discoveryCatalog } from '../lib/discoveryCatalog.js';
-import { discoveryPerspective, generateProductKeywords } from '../lib/productDiscovery.js';
+import { assertBroadTermsMatchPerspective, assertGenericSearchTerms, discoveryPerspective, generateProductKeywords } from '../lib/productDiscovery.js';
 import { fiveProductKeywords } from '../../shared/productDiscovery.js';
 import { Router } from 'express';
 import { recommendDiscoveryKeywords } from '../lib/discoveryRecommendations.js';
@@ -120,9 +120,10 @@ socialDiscoveryRouter.post('/product-keywords', async (req, res) => {
   }
   try {
     const profile = await readTenantEnterpriseProfile(tenantId);
-    const source = body.documentText?.trim() || JSON.stringify({ product: body.productRef, products: profile.products.items?.map(item => ({ name: item.name, category: item.category, highlights: item.highlights })) });
-    if (source.length < 10 || source.length > 80000) { res.status(400).json({ message: '请上传适量产品资料或补全企业产品信息。' }); return; }
-    const perspective = discoveryPerspective(String(body.companyRole || profile.company.companyType || ''), profile.socialStrategy?.enabledRoutes ?? []);
+    const catalogSource = (profile.products.items ?? []).map(item => [item.name, item.category, item.highlights, item.material].filter(Boolean).join(' · ')).join('\n');
+    const source = body.documentText?.trim() || catalogSource;
+    if (source.length < 10 || source.length > 80000) { res.status(400).json({ message: '企业知识库缺少可用产品资料，请上传企业手册、产品手册，或从知识库选择资料。' }); return; }
+    const perspective = discoveryPerspective(`${String(body.companyRole || '')} ${String(profile.company.companyType || '')}`, profile.socialStrategy?.enabledRoutes ?? []);
     let sourceRefs: string[] | undefined;
     if (Array.isArray(body.sourceRefs) && body.sourceRefs.length) {
       const catalog = discoveryCatalog(profile);
@@ -131,7 +132,7 @@ socialDiscoveryRouter.post('/product-keywords', async (req, res) => {
       if (refs.length !== body.sourceRefs.length || refs.some((id: string) => !allowed.has(id))) { res.status(400).json({ message: '所选产品资料已变化，请刷新目录重新选择。' }); return; }
       sourceRefs = refs;
     }
-    const result = await generateProductKeywords({ source, sourceName: String(body.sourceName || '企业产品资料').slice(0, 180), perspective, market: body.market.slice(0, 100), language: body.language.slice(0, 100), focus: String(body.focus || '').slice(0, 300) });
+    const result = await generateProductKeywords({ source, sourceName: String(body.sourceName || '企业知识库产品资料').slice(0, 180), perspective, market: body.market.slice(0, 100), language: body.language.slice(0, 100) });
     if (sourceRefs) result.sourceRefs = sourceRefs;
     res.json(result);
   } catch (error) {
@@ -195,6 +196,23 @@ socialDiscoveryRouter.put('/scope', async (req, res) => {
     try { approvedQueries = fiveProductKeywords(body.keywordRecommendation as import('../../shared/productDiscovery.js').ProductKeywordRecommendation); }
     catch { res.status(400).json({ message: '请确认2个大词和3个中词，搜索词不能为空或重复。' }); return; }
   }
+  const searchQueries = approvedQueries ?? unique(body.productQueries, 5);
+  if (!searchQueries.length) { res.status(400).json({ message: '请先生成或填写通用品类搜索词，不能直接用商品名称采集。' }); return; }
+  if (searchQueries.length) {
+    try {
+      const profile = await readTenantEnterpriseProfile(tenantId);
+      const productTitles = (profile.products.items ?? []).map(item => item.name).filter(Boolean);
+      const recommendation = body.keywordRecommendation as import('../../shared/productDiscovery.js').ProductKeywordRecommendation | undefined;
+      const quotes = recommendation
+        ? [...recommendation.broadTerms, ...recommendation.mediumTerms].map(row => row.sourceQuote || '') : [];
+      assertGenericSearchTerms(searchQueries, [...productTitles, ...quotes].join('\n'));
+      const perspective = discoveryPerspective(`${String(body.companyRole || '')} ${String(profile.company.companyType || '')}`, profile.socialStrategy?.enabledRoutes ?? []);
+      if (recommendation && recommendation.perspective !== perspective) throw new Error('企业身份已变化，请重新推荐搜索关键词');
+      if (searchQueries.length >= 2) assertBroadTermsMatchPerspective(searchQueries.slice(0, 2), perspective);
+    } catch (error) {
+      res.status(400).json({ message: error instanceof Error ? error.message : '搜索词校验失败' }); return;
+    }
+  }
   const previous = await latestScope(tenantId);
   const innovationExperimentShare = body.innovationExperimentShare === undefined ? 0.15 : Number(body.innovationExperimentShare);
   if (!Number.isFinite(innovationExperimentShare) || innovationExperimentShare < 0.1 || innovationExperimentShare > 0.2) {
@@ -218,7 +236,7 @@ socialDiscoveryRouter.put('/scope', async (req, res) => {
     productionGap: String(body.productionGap || '').trim() || null,
   });
   if (approvedQueries) strategy.keywordRecommendation = body.keywordRecommendation as import('../../shared/productDiscovery.js').ProductKeywordRecommendation;
-  const productQueries = approvedQueries ?? unique(body.productQueries, 5);
+  const productQueries = searchQueries;
   if (productQueries.length) {
     strategy.keywordSet.graph.discoverySeeds = strategy.keywordSet.graph.discoverySeeds.slice(0, 1);
     strategy.keywordSet.graph.discoverySeeds[0].queryVariants = productQueries;

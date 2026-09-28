@@ -1,39 +1,18 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
 import { AlertCircle, CheckCircle2, Loader2, RefreshCcw } from 'lucide-react';
 import type { Page } from '../../App';
 import type {
   RegisterSocialPublicationInput,
   SocialContentArtifact,
-  SocialContentTaskDetail,
-  SocialContentTaskMode,
   SocialContentThemeId,
   SubmitSocialMetricsInput,
 } from '../../../shared/contracts/socialContentWorkflow';
 import { attachSocialContentNavigationState } from '../../lib/socialContentContext';
-import {
-  socialContentCanRegisterPublication,
-  type SocialContentCreationPath,
-  type SocialContentDraft,
-  type SocialContentMaterialInput,
-} from '../../lib/socialContentModel';
+import { socialContentCanRegisterPublication, type SocialContentCreationPath, type SocialContentDraft, type SocialContentMaterialInput } from '../../lib/socialContentModel';
 import { ArtifactBatchChangesDialog, ArtifactChangesDialog, MetricsDialog, PublicationDialog } from './SocialTaskActionDialogs';
-import SocialTaskEditorDialog from './SocialTaskEditorDialog';
 import SocialTaskOverview from './SocialTaskOverview';
 import SocialManagedExecutionNotice from './SocialManagedExecutionNotice';
-import { useSocialContentWorkspace, type SocialContentSaveTarget } from './useSocialContentWorkspace';
-
-interface EditorSession {
-  task: SocialContentTaskDetail | null;
-  target: SocialContentSaveTarget;
-  initialThemeId?: SocialContentThemeId | '';
-  initialMode?: SocialContentTaskMode;
-  initialCreationPath?: SocialContentCreationPath;
-  initialMaterialInput?: SocialContentMaterialInput;
-  initialManagedMode?: 'one_click_managed';
-  initialDraftPatch?: Partial<Pick<SocialContentDraft, 'title' | 'topic' | 'productName' | 'referenceLinks' | 'platforms'>>;
-  sourceContext?: SocialContentSourceContext;
-  lockMode?: boolean;
-}
+import { useSocialContentWorkspace } from './useSocialContentWorkspace';
 
 export interface SocialContentSourceContext {
   originLabel: string;
@@ -44,7 +23,7 @@ export interface SocialContentSourceContext {
 export interface SocialContentCreateRequest {
   requestId: number;
   themeId: SocialContentThemeId | '';
-  mode?: SocialContentTaskMode;
+  mode?: 'instant' | 'weekly';
   creationPath?: SocialContentCreationPath;
   materialInput?: SocialContentMaterialInput;
   managedMode?: 'one_click_managed';
@@ -52,59 +31,26 @@ export interface SocialContentCreateRequest {
   sourceContext?: SocialContentSourceContext;
 }
 
-function editorAttemptId(): string {
-  return typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
-    ? `socialedit:${crypto.randomUUID()}`
-    : `socialedit:${Date.now()}`;
-}
-
 export default function SocialContentWorkspace({
   onNavigate,
   onNavigateWithTask,
-  defaultCreateMode,
-  createRequest,
 }: {
   onNavigate: (page: Page) => void;
   onNavigateWithTask?: (page: Page, taskId: string) => void;
-  defaultCreateMode?: SocialContentTaskMode;
-  createRequest?: SocialContentCreateRequest | null;
 }) {
   const state = useSocialContentWorkspace();
-  const [editor, setEditor] = useState<EditorSession | null>(null);
   const [publicationOpen, setPublicationOpen] = useState(false);
   const [metricsOpen, setMetricsOpen] = useState(false);
   const [changeArtifact, setChangeArtifact] = useState<SocialContentArtifact | null>(null);
   const [batchChangesOpen, setBatchChangesOpen] = useState(false);
   const task = state.workspace?.currentTask || null;
 
-  const openNewTask = useCallback((themeId?: SocialContentThemeId | '') => {
-    setEditor({
-      task: null,
-      target: { mode: 'new', taskId: null, expectedVersion: null, attemptId: editorAttemptId() },
-      initialThemeId: themeId,
-      initialMode: defaultCreateMode,
-      initialCreationPath: 'material_processing',
-      initialMaterialInput: 'none',
-      initialManagedMode: 'one_click_managed',
-      lockMode: Boolean(defaultCreateMode),
-    });
-  }, [defaultCreateMode]);
-
-  useEffect(() => {
-    if (!createRequest) return;
-    setEditor({
-      task: null,
-      target: { mode: 'new', taskId: null, expectedVersion: null, attemptId: editorAttemptId() },
-      initialThemeId: createRequest.themeId,
-      initialMode: createRequest.mode || defaultCreateMode,
-      initialCreationPath: createRequest.creationPath,
-      initialMaterialInput: createRequest.materialInput,
-      initialManagedMode: createRequest.managedMode,
-      initialDraftPatch: createRequest.prefill,
-      sourceContext: createRequest.sourceContext,
-      lockMode: Boolean(createRequest.mode || defaultCreateMode),
-    });
-  }, [createRequest, defaultCreateMode]);
+  const openNewTask = useCallback(() => {
+    window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: {
+      page: 'smartAssets', view: 'create', studioEntry: true,
+      contentCreationRequest: { requestId: Date.now(), themeId: 'product_value', mode: 'instant', creationPath: 'material_processing', materialInput: 'none', managedMode: 'one_click_managed' } satisfies SocialContentCreateRequest,
+    } }));
+  }, []);
 
   const navigateWithTask = useCallback((page: Page, explicitTaskId?: string) => {
     const taskId = explicitTaskId || task?.taskId;
@@ -132,30 +78,6 @@ export default function SocialContentWorkspace({
     );
   }
 
-  const submitTask = async (draft: Parameters<typeof state.saveDraft>[0], files: File[], start: boolean) => {
-    if (!editor) return;
-    let progressBoardOpened = false;
-    await state.saveDraft(draft, files, start, editor.target, nextTask => {
-      if (start) {
-        // The task exists from this point onward. Move to its progress board
-        // while sources upload and queueing continue so a slow network request
-        // never leaves the confirmation dialog looking frozen.
-        if (!progressBoardOpened) {
-          progressBoardOpened = true;
-          setEditor(null);
-        }
-        return;
-      }
-      setEditor({
-        task: nextTask,
-        target: { mode: 'edit', taskId: nextTask.taskId, expectedVersion: nextTask.version, attemptId: editor.target.attemptId },
-      });
-    });
-    setEditor(null);
-    // Keep the user on the task after it starts. Script adaptation, voice-over,
-    // subtitles and editing continue as one automated job; users return only
-    // for task input or result review.
-  };
   const submitPublication = async (input: RegisterSocialPublicationInput) => {
     await state.registerPublication(input);
     setPublicationOpen(false);
@@ -182,10 +104,9 @@ export default function SocialContentWorkspace({
         busy={state.busy}
         onSelectTask={state.selectTask}
         onLoadMoreTasks={() => void state.loadMoreTasks()}
-        createMode={defaultCreateMode}
         onCreate={() => openNewTask()}
-        onEdit={() => task && setEditor({ task, target: { mode: 'edit', taskId: task.taskId, expectedVersion: task.version, attemptId: editorAttemptId() }, initialMode: task.mode ?? defaultCreateMode, lockMode: true })}
-        onStart={() => void state.startTask().catch(() => {})}
+        onEdit={() => task && navigateWithTask('smartAssets', task.taskId)}
+        onStart={() => task && navigateWithTask('smartAssets', task.taskId)}
         onDownload={() => void state.downloadLatest().catch(() => {})}
         onOpenPublication={() => { if (task && socialContentCanRegisterPublication(task)) setPublicationOpen(true); }}
         onOpenMetrics={() => setMetricsOpen(true)}
@@ -202,23 +123,6 @@ export default function SocialContentWorkspace({
         onNavigate={navigateWithTask}
       />
 
-      <SocialTaskEditorDialog
-        open={Boolean(editor)}
-        sessionKey={editor?.target.attemptId || ''}
-        task={editor?.task || null}
-        initialThemeId={editor?.initialThemeId}
-        initialMode={editor?.initialMode}
-        initialCreationPath={editor?.initialCreationPath}
-        initialMaterialInput={editor?.initialMaterialInput}
-        initialManagedMode={editor?.initialManagedMode}
-        initialDraftPatch={editor?.initialDraftPatch}
-        sourceContext={editor?.sourceContext}
-        lockMode={editor?.lockMode}
-        catalog={state.workspace.catalog}
-        busy={state.busy}
-        onClose={() => { if (!state.busy) setEditor(null); }}
-        onSubmit={submitTask}
-      />
       {publicationOpen && task && socialContentCanRegisterPublication(task) && <PublicationDialog task={task} busy={state.busy} onClose={() => { if (!state.busy) setPublicationOpen(false); }} onSubmit={submitPublication} />}
       {metricsOpen && task && <MetricsDialog task={task} busy={state.busy} onClose={() => { if (!state.busy) setMetricsOpen(false); }} onSubmit={submitMetrics} />}
       {changeArtifact && <ArtifactChangesDialog artifact={changeArtifact} busy={state.busy} onClose={() => { if (!state.busy) setChangeArtifact(null); }} onSubmit={async note => { await state.decideArtifact(changeArtifact, 'changes_requested', note); setChangeArtifact(null); }} />}

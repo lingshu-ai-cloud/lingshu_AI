@@ -59,10 +59,32 @@ console.log('social task material upsert: SHA deduplication, task/product associ
 const { normalizeMaterialObservations } = await import('./materialObservation.js');
 const continuous = normalizeMaterialObservations('real',32,{segments:[{start:0,end:32,observedFacts:['绿色电路板上有银色焊点'],confidence:.9,needsReview:false}]});
 assert.equal(continuous.length,1); assert.equal(continuous[0].end,32);
+const labeled = normalizeMaterialObservations('real', 8, { segments: [
+  { start: 0, end: 4, observedFacts: ['可见工人操作灌装设备'], visualTopic: '工厂生产', expressionPurpose: '建立信任', confidence: .9, needsReview: false },
+  { start: 4, end: 8, observedFacts: ['可见瓶身特写'], visualTopic: '产品展示', expressionPurpose: '展示产品', confidence: .9, needsReview: false },
+] });
+assert.equal(labeled[0].visualTopic, '工厂生产');
+assert.equal(labeled[0].expressionPurpose, '建立信任');
+assert.deepEqual(labeled[0].recommendedFunctions, ['建立信任']);
+assert.equal(labeled[1].visualTopic, '产品展示');
+assert.equal(labeled[1].expressionPurpose, '展示产品');
+assert.deepEqual(continuous[0].recommendedFunctions, [], 'older analyses without purpose stay unlabeled');
 assert.throws(()=>normalizeMaterialObservations('real',10,{segments:[{start:0,end:20,observedFacts:['test']}]}));
 assert.throws(()=>normalizeMaterialObservations('real',10,{segments:[{start:0,end:8,observedFacts:['test']},{start:5,end:9,observedFacts:['test']}]}));
 assert.equal(normalizeMaterialObservations('real',10,{segments:[{start:0,end:8,observedFacts:['test']} ]})[0].needsReview,true);
 console.log('material observation: continuous take, invalid intervals, overlap and uncertainty passed');
+const { pendingLocalMaterialAnalysisIds, localMaterialMediaPath } = await import('./materialLibraryAnalysis.js');
+assert.equal(localMaterialMediaPath({ id: 'legacy', url: '/media/tenants/tenant-a/video.mp4' }, '/tmp/media'), '/tmp/media/tenants/tenant-a/video.mp4');
+assert.throws(() => localMaterialMediaPath({ id: 'unsafe', file: '../secret.mp4' }, '/tmp/media'));
+assert.deepEqual(pendingLocalMaterialAnalysisIds('tenant-a', [
+  { id: 'new-video', tenantId: 'tenant-a', type: 'video', usage: 'editable' },
+  { id: 'ready-video', tenantId: 'tenant-a', type: 'video', segmentAnalysisStatus: 'completed' },
+  { id: 'failed-video', tenantId: 'tenant-a', type: 'video', segmentAnalysisStatus: 'failed' },
+  { id: 'reference', tenantId: 'tenant-a', type: 'video', usage: 'reference_only' },
+  { id: 'other-tenant', tenantId: 'tenant-b', type: 'video' },
+  { id: 'photo', tenantId: 'tenant-a', type: 'image' },
+]), ['new-video']);
+console.log('legacy local video analysis: owner-only auto-start and completed-result reuse passed');
 const { KeyedWorkQueue } = await import('./keyedWorkQueue.js');
 const queue = new KeyedWorkQueue(2);
 let running=0, maxRunning=0, calls=0;
