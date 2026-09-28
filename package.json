@@ -55,6 +55,7 @@
     "fixture:beauty:export": "tsx scripts/beauty-showcase-fixture.ts export",
     "fixture:beauty:verify": "tsx scripts/beauty-showcase-fixture.ts verify",
     "fixture:beauty:import": "tsx scripts/beauty-showcase-fixture.ts import",
+    "fixture:beauty:import-pocketbase": "tsx scripts/import-beauty-showcase-pocketbase.ts",
     "demo:verify-external-customer-service": "tsx scripts/verify-external-customer-service-demo.ts",
     "import:trend-videos": "tsx scripts/import-trend-videos.ts",
     "import:materials": "tsx scripts/import-materials-to-pb.ts",

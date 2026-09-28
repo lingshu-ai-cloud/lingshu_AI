@@ -29,6 +29,7 @@ import { useSocialProgram } from '../contexts/SocialProgramContext';
 import { setActiveSocialContentTaskId } from '../lib/socialContentContext';
 import { VideoCard, VideoListItem } from './InspirationVideoCards';
 import { showActionFeedback, showActionSuccess } from '../lib/actionFeedback';
+import { resolveInspirationPlaybackUrl } from '../lib/inspirationVideoPlayback';
 import type { AccountSpecialRecommendation, ContentFormat, FirstTenSecondInsight, FrameMaterialMatch, GeminiVideoAnalysis, Platform, ScriptAnalysis, ScriptDetail15s, ScriptResultProvenance, ScriptSummary15s, ShootingNeed, StructureStep, TrendVideo, VideoAnalysisPayload } from '../lib/inspirationTypes';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -1094,27 +1095,95 @@ function AuthenticatedImage({ src, alt, className }: { src: string; alt: string;
     : <div className={`${className} animate-pulse bg-slate-200`} aria-label={alt} />;
 }
 
-export function AuthenticatedVideo({ apiUrl, poster, className, controls = false, autoPlay = false, hoverPlay = false, onReady, onError }: { apiUrl: string; poster?: string; className: string; controls?: boolean; autoPlay?: boolean; hoverPlay?: boolean; onReady?: () => void; onError?: () => void }) {
+export function AuthenticatedVideo({ apiUrl, poster, className, controls = false, autoPlay = false, hoverPlay = false, onReady, onError, onLoadingChange }: { apiUrl: string; poster?: string; className: string; controls?: boolean; autoPlay?: boolean; hoverPlay?: boolean; onReady?: () => void; onError?: (message?: string) => void; onLoadingChange?: (loading: boolean) => void }) {
   const [playbackUrl, setPlaybackUrl] = useState('');
-  const [loading, setLoading] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
-  const load = async () => {
-    if (playbackUrl || loading) return playbackUrl;
-    setLoading(true);
-    try {
-      const response = await fetch(apiUrl, { headers: authHeader() });
-      if (!response.ok) throw new Error(String(response.status));
-      const next = String(((await response.json()) as { url?: string }).url || '');
-      setPlaybackUrl(next);
-      return next;
-    } catch { return ''; } finally { setLoading(false); }
+  const requestRef = useRef<Promise<string> | null>(null);
+  const controllerRef = useRef<AbortController | null>(null);
+  const generationRef = useRef(0);
+  const mediaRetryRef = useRef(0);
+  const mediaReadyTimerRef = useRef<number | null>(null);
+
+  const clearMediaReadyTimer = () => {
+    if (mediaReadyTimerRef.current === null) return;
+    window.clearTimeout(mediaReadyTimerRef.current);
+    mediaReadyTimerRef.current = null;
   };
-  useEffect(() => { setPlaybackUrl(''); if (autoPlay) void load(); }, [apiUrl, autoPlay]);
+
+  const load = async (force = false) => {
+    if (playbackUrl && !force) return playbackUrl;
+    if (requestRef.current && !force) return requestRef.current;
+    if (force) controllerRef.current?.abort();
+    const generation = ++generationRef.current;
+    const controller = new AbortController();
+    controllerRef.current = controller;
+    onLoadingChange?.(true);
+    let resolverTimedOut = false;
+    const resolverTimer = window.setTimeout(() => {
+      resolverTimedOut = true;
+      controller.abort();
+    }, 15_000);
+    const request = resolveInspirationPlaybackUrl(apiUrl, { signal: controller.signal, headers: authHeader() })
+      .then(next => {
+        if (generation === generationRef.current) {
+          setPlaybackUrl(next);
+          clearMediaReadyTimer();
+          mediaReadyTimerRef.current = window.setTimeout(() => {
+            if (generation !== generationRef.current || (videoRef.current?.readyState || 0) >= HTMLMediaElement.HAVE_CURRENT_DATA) return;
+            onLoadingChange?.(false);
+            onError?.('视频加载超时，请重新获取播放地址');
+          }, 20_000);
+        }
+        return next;
+      })
+      .catch(error => {
+        if ((!resolverTimedOut && controller.signal.aborted) || generation !== generationRef.current) return '';
+        const message = resolverTimedOut ? '视频地址获取超时' : error instanceof Error ? error.message : '视频地址获取失败';
+        onLoadingChange?.(false);
+        onError?.(message);
+        return '';
+      })
+      .finally(() => {
+        window.clearTimeout(resolverTimer);
+        if (generation !== generationRef.current) return;
+        requestRef.current = null;
+      });
+    requestRef.current = request;
+    return request;
+  };
+  useEffect(() => {
+    generationRef.current += 1;
+    controllerRef.current?.abort();
+    controllerRef.current = null;
+    requestRef.current = null;
+    mediaRetryRef.current = 0;
+    clearMediaReadyTimer();
+    setPlaybackUrl('');
+    onLoadingChange?.(false);
+    if (autoPlay) void load(true);
+    return () => {
+      generationRef.current += 1;
+      controllerRef.current?.abort();
+      controllerRef.current = null;
+      requestRef.current = null;
+      clearMediaReadyTimer();
+    };
+  }, [apiUrl, autoPlay]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (autoPlay && playbackUrl) void videoRef.current?.play().catch(() => {}); }, [autoPlay, playbackUrl]);
   return <video ref={videoRef} src={playbackUrl || undefined} poster={poster} controls={controls} autoPlay={autoPlay} muted={!controls} playsInline loop={hoverPlay} preload="metadata" className={className}
-    onLoadedData={onReady}
-    onCanPlay={onReady}
-    onError={onError}
+    onLoadedData={() => { clearMediaReadyTimer(); mediaRetryRef.current = 0; onReady?.(); }}
+    onCanPlay={() => { clearMediaReadyTimer(); onReady?.(); }}
+    onError={() => {
+      if (!playbackUrl) return;
+      clearMediaReadyTimer();
+      if (mediaRetryRef.current < 1) {
+        mediaRetryRef.current += 1;
+        setPlaybackUrl('');
+        void load(true);
+        return;
+      }
+      onError?.('视频文件加载或解码失败');
+    }}
     onMouseEnter={async () => { if (!hoverPlay) return; await load(); setTimeout(() => void videoRef.current?.play().catch(() => {}), 0); }}
     onMouseLeave={() => { if (!hoverPlay || !videoRef.current) return; videoRef.current.pause(); videoRef.current.currentTime = 0; }} />;
 }
@@ -2458,6 +2527,16 @@ function sourceEmbedUrl(video: TrendVideo): string {
 function WatchModal({ video, onClose }: { video: TrendVideo; onClose: () => void }) {
   const embedUrl = sourceEmbedUrl(video);
   const dialogRef = useModalFocus<HTMLDivElement>({ open: true, onClose });
+  const [previewAttempt, setPreviewAttempt] = useState(0);
+  const [previewLoading, setPreviewLoading] = useState(Boolean(video.videoUrl));
+  const [previewError, setPreviewError] = useState('');
+  const [useEmbedPlayer, setUseEmbedPlayer] = useState(false);
+  const retryPreview = () => {
+    setPreviewError('');
+    setPreviewLoading(Boolean(video.videoUrl));
+    setUseEmbedPlayer(false);
+    setPreviewAttempt(value => value + 1);
+  };
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
       ref={dialogRef}
@@ -2488,8 +2567,36 @@ function WatchModal({ video, onClose }: { video: TrendVideo; onClose: () => void
           </div>
         </div>
         <div className="bg-black">
-          {video.videoUrl ? (
-            <AuthenticatedVideo apiUrl={video.videoUrl} poster={video.thumbnail} controls autoPlay className="w-full max-h-[72vh] bg-black" />
+          {video.videoUrl && !useEmbedPlayer ? (
+            <div className="relative flex min-h-64 items-center justify-center bg-black">
+              <AuthenticatedVideo
+                key={`${video.id}:${previewAttempt}`}
+                apiUrl={video.videoUrl}
+                poster={video.thumbnail}
+                controls
+                autoPlay
+                className="max-h-[72vh] w-full bg-black"
+                onReady={() => { setPreviewLoading(false); setPreviewError(''); }}
+                onLoadingChange={setPreviewLoading}
+                onError={message => { setPreviewLoading(false); setPreviewError(message || '视频预览失败'); }}
+              />
+              {previewLoading && !previewError && (
+                <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/45 text-white">
+                  <span className="inline-flex items-center gap-2 rounded-lg bg-black/65 px-3 py-2 text-xs font-semibold"><Loader2 size={14} className="animate-spin" />正在准备视频…</span>
+                </div>
+              )}
+              {previewError && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/80 px-6 text-center text-white">
+                  <Play size={28} className="opacity-70" />
+                  <p className="mt-3 text-sm font-semibold">视频预览暂时失败</p>
+                  <p className="mt-1 max-w-md text-xs leading-relaxed text-white/65">{previewError}</p>
+                  <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
+                    <button type="button" onClick={retryPreview} className="rounded-lg bg-white px-3 py-2 text-xs font-bold text-neutral-900">重新获取播放地址</button>
+                    {embedUrl && <button type="button" onClick={() => { setPreviewError(''); setUseEmbedPlayer(true); }} className="rounded-lg border border-white/25 bg-white/10 px-3 py-2 text-xs font-bold text-white">使用原站播放器</button>}
+                  </div>
+                </div>
+              )}
+            </div>
           ) : embedUrl ? (
             <iframe
               src={embedUrl}
@@ -2756,6 +2863,10 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
   const [uploadProductId, setUploadProductId] = useState(() => materialEntry.productId || '');
   const [manageBusy, setManageBusy] = useState(false);
   const [previewMaterial, setPreviewMaterial] = useState<Material | null>(null);
+  const [previewMaterialAttempt, setPreviewMaterialAttempt] = useState(0);
+  const [previewMaterialLoading, setPreviewMaterialLoading] = useState(false);
+  const [previewMaterialError, setPreviewMaterialError] = useState('');
+  const previewMaterialAutoRetryRef = useRef(0);
   const previewMaterialDialogRef = useModalFocus<HTMLDivElement>({
     open: Boolean(previewMaterial?.type === 'video' && previewMaterial.url),
     onClose: () => setPreviewMaterial(null),
@@ -2798,18 +2909,56 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
   // Clean up on unmount
   useEffect(() => () => { onScriptPanelClose?.(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const refreshMaterials = async () => {
+  const refreshMaterials = async (): Promise<Material[]> => {
     if (!localMaterials.length) setMaterialsLoading(true);
     try {
       // “我的素材”既是可编辑生产素材的入口，也是采集参考素材的可见库存。
-      setLocalMaterials(await studioApi.listMaterials('all'));
-    } catch { /* keep last successful items; show connection status */ } finally {
+      const items = await studioApi.listMaterials('all');
+      setLocalMaterials(items);
+      return items;
+    } catch {
+      // Keep last successful items; callers can still decide whether the stale
+      // signed media URL is usable.
+      return localMaterials;
+    } finally {
       setMaterialsLoading(false);
     }
   };
 
   useEffect(() => { void refreshMaterials(); }, []);
   useEffect(() => { if (innerView === 'library') void refreshMaterials(); }, [innerView]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    previewMaterialAutoRetryRef.current = 0;
+    setPreviewMaterialAttempt(0);
+    setPreviewMaterialError('');
+    setPreviewMaterialLoading(Boolean(previewMaterial));
+  }, [previewMaterial?.id]);
+
+  const refreshMaterialPreviewUrl = async () => {
+    const current = previewMaterial;
+    if (!current) return;
+    setPreviewMaterialLoading(true);
+    setPreviewMaterialError('');
+    const items = await refreshMaterials();
+    const fresh = items.find(item => item.id === current.id);
+    if (!fresh?.url) {
+      setPreviewMaterialLoading(false);
+      setPreviewMaterialError('素材文件暂时不可用，请稍后重试。');
+      return;
+    }
+    setPreviewMaterial(fresh);
+    setPreviewMaterialAttempt(value => value + 1);
+  };
+
+  const handleMaterialPreviewError = () => {
+    if (previewMaterialAutoRetryRef.current < 1) {
+      previewMaterialAutoRetryRef.current += 1;
+      void refreshMaterialPreviewUrl();
+      return;
+    }
+    setPreviewMaterialLoading(false);
+    setPreviewMaterialError('视频文件加载或解码失败，请重新获取播放地址。');
+  };
 
   useEffect(() => {
     let active = true;
@@ -2968,8 +3117,17 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
 
   const enterMaterialSmartGeneration = (material: Material) => {
     const usableUrl = String(material.url || material.poster || '').trim();
-    if (material.type === 'audio' || !usableUrl) {
-      showActionFeedback({ title: '当前素材无法直接创作', description: material.type === 'audio' ? '请选择视频或图片素材。' : '素材文件尚未准备好，请稍后重试。', tone: 'warning' });
+    const invalidVideo = material.type === 'video' && !canProcessVideo({ contentFormat: 'video', duration: material.duration });
+    if (material.type === 'audio' || invalidVideo || !usableUrl) {
+      showActionFeedback({
+        title: '当前素材无法直接创作',
+        description: material.type === 'audio'
+          ? '请选择视频或图片素材。'
+          : invalidVideo
+            ? '视频时长尚未识别完成，请等待素材分析后重试。'
+            : '素材文件尚未准备好，请稍后重试。',
+        tone: 'warning',
+      });
       return;
     }
     const platform: TrendVideo['platform'] = /facebook/i.test(material.name) ? 'facebook'
@@ -4200,8 +4358,8 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                         <button
                           type="button"
                           onClick={() => enterMaterialSmartGeneration(material)}
-                          disabled={material.type === 'audio' || !String(material.url || material.poster || '').trim()}
-                          title={material.type === 'audio' ? '音频素材不能单独进入画面创作' : '带入内容制作的自由创作'}
+                          disabled={material.type === 'audio' || (material.type === 'video' && !canProcessVideo({ contentFormat: 'video', duration: material.duration })) || !String(material.url || material.poster || '').trim()}
+                          title={material.type === 'audio' ? '音频素材不能单独进入画面创作' : material.type === 'video' && !canProcessVideo({ contentFormat: 'video', duration: material.duration }) ? '视频时长尚未识别完成' : '带入内容制作的自由创作'}
                           className="inline-flex min-h-9 items-center justify-center gap-1.5 rounded-lg bg-accent px-2 py-2 text-xs font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-45"
                         >
                           <Sparkles size={14} />自由创作
@@ -4233,18 +4391,25 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                     <X size={18} />
                   </button>
                 </div>
-                <video
-                  key={previewMaterial.id}
-                  src={previewMaterial.url}
-                  poster={previewMaterial.poster}
-                  controls
-                  autoPlay
-                  playsInline
-                  preload="metadata"
-                  className="max-h-[75vh] w-full bg-black object-contain"
-                >
-                  当前浏览器不支持视频播放。
-                </video>
+                <div className="relative flex min-h-64 items-center justify-center bg-black">
+                  <video
+                    key={`${previewMaterial.id}:${previewMaterial.url}:${previewMaterialAttempt}`}
+                    src={previewMaterial.url}
+                    poster={previewMaterial.poster}
+                    controls
+                    autoPlay
+                    playsInline
+                    preload="metadata"
+                    onLoadedData={() => { setPreviewMaterialLoading(false); setPreviewMaterialError(''); }}
+                    onCanPlay={() => { setPreviewMaterialLoading(false); setPreviewMaterialError(''); }}
+                    onError={handleMaterialPreviewError}
+                    className="max-h-[75vh] w-full bg-black object-contain"
+                  >
+                    当前浏览器不支持视频播放。
+                  </video>
+                  {previewMaterialLoading && !previewMaterialError && <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/40"><span className="inline-flex items-center gap-2 rounded-lg bg-black/65 px-3 py-2 text-xs font-semibold text-white"><Loader2 size={14} className="animate-spin" />正在准备视频…</span></div>}
+                  {previewMaterialError && <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/80 px-6 text-center text-white"><Play size={26} className="opacity-70" /><p className="mt-3 text-sm font-semibold">素材预览暂时失败</p><p className="mt-1 text-xs text-white/65">{previewMaterialError}</p><button type="button" onClick={() => { previewMaterialAutoRetryRef.current = 0; void refreshMaterialPreviewUrl(); }} className="mt-4 rounded-lg bg-white px-3 py-2 text-xs font-bold text-neutral-900">重新获取播放地址</button></div>}
+                </div>
               </div>
             </div>
           )}
@@ -4279,7 +4444,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                       ['时长', detailMaterial.type === 'video' || detailMaterial.type === 'audio' ? displayDuration(detailMaterial.duration) : '—'],
                       ['入库时间', detailMaterial.createdAt ? new Date(detailMaterial.createdAt).toLocaleString('zh-CN') : '—'],
                     ].map(([label, value]) => <div key={label} className="rounded-xl border border-border bg-surface px-3 py-2.5"><p className="text-[10px] font-bold text-text-muted">{label}</p><p className="mt-1 break-words font-bold leading-5 text-text-primary">{value}</p></div>)}
-                    <button type="button" onClick={() => { const material = detailMaterial; setDetailMaterial(null); enterMaterialSmartGeneration(material); }} disabled={detailMaterial.type === 'audio' || !String(detailMaterial.url || detailMaterial.poster || '').trim()} title="带入内容制作的自由创作" className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-accent px-4 py-3 font-black text-white disabled:cursor-not-allowed disabled:opacity-45"><Sparkles size={15} />自由创作</button>
+                    <button type="button" onClick={() => { const material = detailMaterial; setDetailMaterial(null); enterMaterialSmartGeneration(material); }} disabled={detailMaterial.type === 'audio' || (detailMaterial.type === 'video' && !canProcessVideo({ contentFormat: 'video', duration: detailMaterial.duration })) || !String(detailMaterial.url || detailMaterial.poster || '').trim()} title="带入内容制作的自由创作" className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-accent px-4 py-3 font-black text-white disabled:cursor-not-allowed disabled:opacity-45"><Sparkles size={15} />自由创作</button>
                   </div>
                 </div>
               </div>

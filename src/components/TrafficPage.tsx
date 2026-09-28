@@ -1,4 +1,4 @@
-import { lazy, useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import {
   AlertCircle,
   BarChart3,
@@ -63,6 +63,7 @@ import { resolveInitialTrafficViewMode, resolveNavigationEventViewMode, resolveS
 import { useSocialContentNavigation } from './socialContent/useSocialContentNavigation';
 import { PAGE_REGISTRY } from '../pageRegistry';
 import ContentLibrary from './ContentLibrary';
+import { PageLoading, WorkspaceErrorBoundary } from './AppPageBoundary';
 
 // 每个工作区都很重，按当前视图拆包，避免进入“内容创作”时同时解析灵感中心、
 // 账号动态和发布日历。外层 App 的 Suspense 会提供统一加载态。
@@ -472,31 +473,35 @@ export default function TrafficPage({
       </div>}
 
       <main className="relative min-h-0 flex-1 overflow-hidden">
-        {(studioMounted || viewMode === 'create') && (
-          <div ref={studioRootRef} id="traffic-panel-create" role={showModeTabs ? 'tabpanel' : undefined} aria-labelledby={showModeTabs ? 'traffic-tab-create' : undefined} className={viewMode === 'create' ? 'h-full' : 'hidden'} aria-hidden={viewMode !== 'create'}>
-            <AiCreateStudio key={socialContentTaskId || 'general-studio'} onNavigate={navigateWithinSocialTask} onGoPublish={handleGoPublish} openProjectsSignal={openProjectsSignal} workflowContext={(workflowContextSignal !== undefined ? workflowContextSignal : workflowContext) || undefined} publishStorageScope={storageScope} socialContentTaskId={socialContentTaskId} />
-          </div>
-        )}
-        <AnimatePresence mode="wait">
-          {viewMode === 'materials' ? (
-            <motion.div key="materials" id="traffic-panel-materials" role={showModeTabs ? 'tabpanel' : undefined} aria-labelledby={showModeTabs ? 'traffic-tab-materials' : undefined} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="h-full overflow-y-auto">
-              <InspirationDashboard
-                onScriptPanelOpen={onScriptPanelOpen}
-                onScriptPanelClose={onScriptPanelClose}
-                onNavigate={navigateWithinSocialTask}
-                onEnterWorkflow={handleEnterWorkflow}
-              />
-            </motion.div>
-          ) : viewMode === 'create' ? null : viewMode === 'publish' ? (
-            <motion.div key="publish" id="traffic-panel-publish" role={showModeTabs ? 'tabpanel' : undefined} aria-labelledby={showModeTabs ? 'traffic-tab-publish' : undefined} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="h-full overflow-y-auto">
-              <SocialPublishPanel onNavigate={onNavigate} draft={publishDraft} onReturnToPreview={handleReturnToPreview} workflowContext={workflowContext || undefined} storageScope={storageScope} />
-            </motion.div>
-          ) : (
-            <motion.div key="accounts" id="traffic-panel-accounts" role={showModeTabs ? 'tabpanel' : undefined} aria-labelledby={showModeTabs ? 'traffic-tab-accounts' : undefined} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="h-full overflow-y-auto">
-              <AccountActivity />
-            </motion.div>
-          )}
-        </AnimatePresence>
+        <WorkspaceErrorBoundary resetKey={viewMode} label={TRAFFIC_MODE_META[viewMode].label}>
+          <Suspense fallback={<PageLoading />}>
+            {(studioMounted || viewMode === 'create') && (
+              <div ref={studioRootRef} id="traffic-panel-create" role={showModeTabs ? 'tabpanel' : undefined} aria-labelledby={showModeTabs ? 'traffic-tab-create' : undefined} className={viewMode === 'create' ? 'h-full' : 'hidden'} aria-hidden={viewMode !== 'create'}>
+                <AiCreateStudio key={socialContentTaskId || 'general-studio'} onNavigate={navigateWithinSocialTask} onGoPublish={handleGoPublish} openProjectsSignal={openProjectsSignal} workflowContext={(workflowContextSignal !== undefined ? workflowContextSignal : workflowContext) || undefined} publishStorageScope={storageScope} socialContentTaskId={socialContentTaskId} />
+              </div>
+            )}
+            <AnimatePresence mode="wait">
+              {viewMode === 'materials' ? (
+                <motion.div key="materials" id="traffic-panel-materials" role={showModeTabs ? 'tabpanel' : undefined} aria-labelledby={showModeTabs ? 'traffic-tab-materials' : undefined} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="h-full overflow-y-auto">
+                  <InspirationDashboard
+                    onScriptPanelOpen={onScriptPanelOpen}
+                    onScriptPanelClose={onScriptPanelClose}
+                    onNavigate={navigateWithinSocialTask}
+                    onEnterWorkflow={handleEnterWorkflow}
+                  />
+                </motion.div>
+              ) : viewMode === 'create' ? null : viewMode === 'publish' ? (
+                <motion.div key="publish" id="traffic-panel-publish" role={showModeTabs ? 'tabpanel' : undefined} aria-labelledby={showModeTabs ? 'traffic-tab-publish' : undefined} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="h-full overflow-y-auto">
+                  <SocialPublishPanel onNavigate={onNavigate} draft={publishDraft} onReturnToPreview={handleReturnToPreview} workflowContext={workflowContext || undefined} storageScope={storageScope} />
+                </motion.div>
+              ) : (
+                <motion.div key="accounts" id="traffic-panel-accounts" role={showModeTabs ? 'tabpanel' : undefined} aria-labelledby={showModeTabs ? 'traffic-tab-accounts' : undefined} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="h-full overflow-y-auto">
+                  <AccountActivity />
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </Suspense>
+        </WorkspaceErrorBoundary>
       </main>
     </div>
   );
