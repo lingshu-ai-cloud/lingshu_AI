@@ -52,8 +52,9 @@ assert.equal((await enqueueAgentNotificationDomainEvent(event, dataStore)).creat
 await assert.rejects(enqueueAgentNotificationDomainEvent({ ...event, summary: 'conflicting payload' }, dataStore), /notification_outbox_event_conflict/);
 
 let crashed = false;
+const firstAttemptAt = new Date(Date.now() + 1_000);
 const first = await consumeAgentNotificationOutboxBatch({
-  dataStore, now: new Date('2026-09-28T00:00:01.000Z'),
+  dataStore, now: firstAttemptAt,
   consume: async (item, store) => {
     const result = await consumeAgentNotificationDomainEvent(item, store);
     crashed = true;
@@ -64,7 +65,10 @@ assert.equal(crashed, true);
 assert.equal(first.failed, 1);
 assert.equal(dataStore.rows.get('agent_notifications')?.length, 1, 'notification is durable before the simulated crash');
 
-const retried = await consumeAgentNotificationOutboxBatch({ dataStore, now: new Date('2026-09-28T00:00:10.000Z') });
+const retried = await consumeAgentNotificationOutboxBatch({
+  dataStore,
+  now: new Date(firstAttemptAt.getTime() + 10_000),
+});
 assert.equal(retried.delivered, 1);
 assert.equal(dataStore.rows.get('agent_notifications')?.length, 1, 'at-least-once delivery deduplicates at the notification event key');
 assert.equal(dataStore.rows.get('agent_notification_outbox')?.[0]?.status, 'delivered');
