@@ -46,38 +46,37 @@ const services = [
     name: 'frontend',
     args: [
       path.join(runtimeRoot, 'node_modules/vite/bin/vite.js'),
-      'preview',
-      '--outDir',
-      path.join(runtimeRoot, 'dist'),
       '--host',
       '0.0.0.0',
       '--port',
       '5177',
       '--strictPort',
+      '--force',
     ],
     env: { DEV_API_TARGET: 'http://127.0.0.1:8790' },
-    probe: { url: 'http://127.0.0.1:5177/', expectText: 'id="root"' },
+    // Serve source in the local workspace. A dist preview can keep an old HTML
+    // document while a build removes its hashed chunks, which Safari presents
+    // as an intermittent white screen.
+    probe: { url: 'http://127.0.0.1:5177/', expectText: 'id="root"', verifyModuleScripts: true },
   },
   {
     name: 'account-hub-frontend',
     args: [
       path.join(runtimeRoot, 'node_modules/vite/bin/vite.js'),
-      'preview',
       '--config',
       path.join(runtimeRoot, 'apps/account-hub/vite.config.ts'),
-      '--outDir',
-      path.join(runtimeRoot, 'dist-account-hub'),
       '--host',
       '127.0.0.1',
       '--port',
       '5178',
       '--strictPort',
+      '--force',
     ],
     env: {
       DEV_API_TARGET: 'http://127.0.0.1:8790',
       ACCOUNT_HUB_DEV_PORT: '5178',
     },
-    probe: { url: 'http://127.0.0.1:5178/', expectText: 'id="root"' },
+    probe: { url: 'http://127.0.0.1:5178/', expectText: 'id="root"', verifyModuleScripts: true },
   },
 ];
 
@@ -127,7 +126,25 @@ async function healthy(service) {
     if (!response.ok) return false;
     if (!service.probe.expectText) return true;
     const body = await response.text();
-    return body.includes(service.probe.expectText);
+    if (!body.includes(service.probe.expectText)) return false;
+    if (!service.probe.verifyModuleScripts) return true;
+    const moduleSources = [...body.matchAll(/<script\b[^>]*\btype=["']module["'][^>]*\bsrc=["']([^"']+)["']/gi)]
+      .map(match => match[1]);
+    if (!moduleSources.length) return false;
+    const modules = await Promise.all(moduleSources.map(source => fetch(new URL(source, service.probe.url), {
+      headers: service.probe.headers,
+      signal: controller.signal,
+    })));
+    if (!modules.every(module => module.ok)) return false;
+    const moduleBodies = await Promise.all(modules.map(module => module.text()));
+    const optimizedDependencies = [...new Set(moduleBodies.flatMap(source =>
+      [...source.matchAll(/["'](\/node_modules\/\.vite\/deps\/[^"']+)["']/g)].map(match => match[1]),
+    ))];
+    const dependencies = await Promise.all(optimizedDependencies.map(source => fetch(new URL(source, service.probe.url), {
+      headers: service.probe.headers,
+      signal: controller.signal,
+    })));
+    return dependencies.every(dependency => dependency.ok);
   } catch {
     return false;
   } finally {

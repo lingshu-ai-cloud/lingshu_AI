@@ -26,6 +26,11 @@ const factoryProofSlot = { id: 'factory-proof', start: 0, end: 3, title: '工厂
 assert.deepEqual(matchMaterialsToStoryboardLocally([taggedFactoryClip], [factoryProofSlot]), {}, '默认精确匹配仍要求分段证据');
 assert.equal(matchMaterialsToStoryboardLocally([taggedFactoryClip], [factoryProofSlot], [], { allowSemanticMetadata: true })[factoryProofSlot.id], taggedFactoryClip.id, '复刻任务可按视觉主题和表达目的标签匹配');
 assert.equal(matchMaterialsToStoryboardLocally([untaggedFactoryClip], [factoryProofSlot], [], { allowSemanticMetadata: true })[factoryProofSlot.id], untaggedFactoryClip.id, '仅视觉主题命中也可匹配');
+assert.deepEqual(
+  matchMaterialsToStoryboardLocally([taggedFactoryClip], [factoryProofSlot], [], { requireSegmentEvidence: true }),
+  {},
+  '成片自动匹配不能用文件夹和标签代替可定位的画面片段证据',
+);
 assert.equal(assessMaterialMatch(factoryProofSlot, taggedFactoryClip, '9:16').score, 100, '两项语义都匹配为满分');
 const inlineFactorySlot = { ...factoryProofSlot, detail: '画面：自动化灌装机正在向白色瓶口注液；中景，固定镜头 镜头功能：demonstration 口播：无' };
 const fillingClip = { ...untaggedFactoryClip, folder: 'social', duration: 6, segments: [{
@@ -35,6 +40,11 @@ const fillingClip = { ...untaggedFactoryClip, folder: 'social', duration: 6, seg
 }] } as any;
 assert.equal(assessMaterialMatch(inlineFactorySlot, fillingClip, '9:16').score, 100, '同一行分镜字段应提取镜头功能并匹配已标注的灌装素材');
 assert.equal(matchMaterialsToStoryboardLocally([fillingClip], [inlineFactorySlot], [], { allowSemanticMetadata: true })[inlineFactorySlot.id], fillingClip.id);
+assert.equal(
+  matchMaterialsToStoryboardLocally([fillingClip], [inlineFactorySlot], [], { requireSegmentEvidence: true })[inlineFactorySlot.id],
+  fillingClip.id,
+  '同一已分析片段同时命中画面主题和表达目的时才可进入成片自动匹配',
+);
 const factoryStaffSlot = { ...factoryProofSlot, id: 'factory-staff', detail: '画面：两人穿白大褂，左侧低头操作，右侧持小瓶指认；近景特写 镜头功能：demonstration 口播：无' };
 const singleWorkerClip = { ...fillingClip, id: 'single-worker', segments: [{
   ...fillingClip.segments[0], subject: ['工人'], action: '一名工人在工厂产线分拣产品',
@@ -92,6 +102,11 @@ assert.notEqual(distinctBest['factory-proof'], distinctBest['factory-proof-2'], 
 assert.equal(assessMaterialMatch(factoryProofSlot, { ...segmentedClip, segments: [
   { ...segmentedClip.segments[0], recommendedFunctions: ['建立信任'] },
 ] }, '9:16').score, 100, '同一片段内两项均匹配才能自动匹配');
+assert.deepEqual(
+  matchMaterialsToStoryboardLocally([segmentedClip], [factoryProofSlot], [], { requireSegmentEvidence: true }),
+  {},
+  '视觉主题与表达目的分散在不同片段时不能自动绑定到任一时间点',
+);
 assert.equal(detectSourceSpeechLanguageCode('Are you too smart with 慧妆 foundation? Let us show you the factory.'), 'en');
 const speechPlan = buildReferenceSpeechPlan({ referenceAnalysis: { narrationSourceStatus: 'asr_aligned', details: [
   { shotId: 'replication-a', time: '0-2s', shot: '工厂人物', camera: '', visual: '人物口播', speechLines: [{ lineId: 'line-1', referenceText: 'Original brand.', draftText: 'Enterprise brand.', sourceStartSeconds: 0.2, sourceEndSeconds: 2.4, narrationOwnerShotId: 'replication-a', visualShotIds: ['replication-a', 'replication-b'] }] },

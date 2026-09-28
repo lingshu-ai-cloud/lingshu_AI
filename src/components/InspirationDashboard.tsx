@@ -1119,7 +1119,7 @@ function AuthenticatedImage({ src, alt, className }: { src: string; alt: string;
     : <div className={`${className} animate-pulse bg-slate-200`} aria-label={alt} />;
 }
 
-export function AuthenticatedVideo({ apiUrl, poster, className, controls = false, autoPlay = false, hoverPlay = false, onReady, onError, onLoadingChange }: { apiUrl: string; poster?: string; className: string; controls?: boolean; autoPlay?: boolean; hoverPlay?: boolean; onReady?: () => void; onError?: (message?: string) => void; onLoadingChange?: (loading: boolean) => void }) {
+export function AuthenticatedVideo({ apiUrl, poster, className, controls = false, autoPlay = false, loadOnMount = autoPlay, hoverPlay = false, onReady, onError, onLoadingChange }: { apiUrl: string; poster?: string; className: string; controls?: boolean; autoPlay?: boolean; loadOnMount?: boolean; hoverPlay?: boolean; onReady?: () => void; onError?: (message?: string) => void; onLoadingChange?: (loading: boolean) => void }) {
   const [playbackUrl, setPlaybackUrl] = useState('');
   const videoRef = useRef<HTMLVideoElement>(null);
   const requestRef = useRef<Promise<string> | null>(null);
@@ -1184,7 +1184,7 @@ export function AuthenticatedVideo({ apiUrl, poster, className, controls = false
     clearMediaReadyTimer();
     setPlaybackUrl('');
     onLoadingChange?.(false);
-    if (autoPlay) void load(true);
+    if (loadOnMount) void load(true);
     return () => {
       generationRef.current += 1;
       controllerRef.current?.abort();
@@ -1192,7 +1192,7 @@ export function AuthenticatedVideo({ apiUrl, poster, className, controls = false
       requestRef.current = null;
       clearMediaReadyTimer();
     };
-  }, [apiUrl, autoPlay]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [apiUrl, loadOnMount]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (autoPlay && playbackUrl) void videoRef.current?.play().catch(() => {}); }, [autoPlay, playbackUrl]);
   return <video ref={videoRef} src={playbackUrl || undefined} poster={poster} controls={controls} autoPlay={autoPlay} muted={!controls} playsInline loop={hoverPlay} preload="metadata" className={className}
     onLoadedData={() => { clearMediaReadyTimer(); mediaRetryRef.current = 0; onReady?.(); }}
@@ -3223,14 +3223,14 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     setPreviewMaterialAttempt(value => value + 1);
   };
 
-  const handleMaterialPreviewError = () => {
+  const handleMaterialPreviewError = (message?: string) => {
     if (previewMaterialAutoRetryRef.current < 1) {
       previewMaterialAutoRetryRef.current += 1;
       void refreshMaterialPreviewUrl();
       return;
     }
     setPreviewMaterialLoading(false);
-    setPreviewMaterialError('视频文件加载或解码失败，请重新获取播放地址。');
+    setPreviewMaterialError(message || '视频文件加载或解码失败，请重新获取播放地址。');
   };
 
   useEffect(() => {
@@ -4686,11 +4686,8 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                       {material.type === 'video' ? (
                         <>
                           {material.poster
-                            // Fetch card posters immediately. These cards can stay mounted
-                            // below the fold; lazy loading used to defer the request until
-                            // after the short-lived signed URL had expired.
                             ? <AuthenticatedImage src={material.poster} alt={material.name} className="h-full w-full object-cover" />
-                            : <video src={`${material.url}#t=0.1`} muted playsInline preload="metadata" className="h-full w-full object-cover" />}
+                            : <div className="flex h-full flex-col items-center justify-center gap-2 bg-slate-950 text-white/65"><Film size={26} /><span className="text-[11px] font-semibold">点击播放预览</span></div>}
                           <button
                             type="button"
                             aria-label={`播放 ${material.name}`}
@@ -4759,21 +4756,17 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                   </button>
                 </div>
                 <div className="relative flex min-h-64 items-center justify-center bg-black">
-                  <video
+                  <AuthenticatedVideo
                     key={`${previewMaterial.id}:${previewMaterial.url}:${previewMaterialAttempt}`}
-                    src={previewMaterial.url}
+                    apiUrl={previewMaterial.url}
                     poster={previewMaterial.poster}
                     controls
-                    autoPlay
-                    playsInline
-                    preload="metadata"
-                    onLoadedData={() => { setPreviewMaterialLoading(false); setPreviewMaterialError(''); }}
-                    onCanPlay={() => { setPreviewMaterialLoading(false); setPreviewMaterialError(''); }}
+                    loadOnMount
+                    onReady={() => { setPreviewMaterialLoading(false); setPreviewMaterialError(''); }}
+                    onLoadingChange={setPreviewMaterialLoading}
                     onError={handleMaterialPreviewError}
                     className="max-h-[75vh] w-full bg-black object-contain"
-                  >
-                    当前浏览器不支持视频播放。
-                  </video>
+                  />
                   {previewMaterialLoading && !previewMaterialError && <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/40"><span className="inline-flex items-center gap-2 rounded-lg bg-black/65 px-3 py-2 text-xs font-semibold text-white"><Loader2 size={14} className="animate-spin" />正在准备视频…</span></div>}
                   {previewMaterialError && <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/80 px-6 text-center text-white"><Play size={26} className="opacity-70" /><p className="mt-3 text-sm font-semibold">素材预览暂时失败</p><p className="mt-1 text-xs text-white/65">{previewMaterialError}</p><button type="button" onClick={() => { previewMaterialAutoRetryRef.current = 0; void refreshMaterialPreviewUrl(); }} className="mt-4 rounded-lg bg-white px-3 py-2 text-xs font-bold text-neutral-900">重新获取播放地址</button></div>}
                 </div>
