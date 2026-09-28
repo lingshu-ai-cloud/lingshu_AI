@@ -3211,6 +3211,9 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onGoPub
   const [projectId, setProjectId] = useState<string | null>(null);
   const [socialTaskProjectLookupDone, setSocialTaskProjectLookupDone] = useState(() => !socialContentTaskId);
   const currentProjectRef = useRef(projectId); currentProjectRef.current = projectId;
+  const projectHydrationPendingRef = useRef(Boolean(
+    socialContentTaskId || new URLSearchParams(location.search).get('project'),
+  ));
   const managedProductionProjectRef = useRef(false);
   const agentProduction = useAgentProductionAction('studio');
   const [projectWorkflowContext, setProjectWorkflowContext] = useState<StudioWorkflowContext | null>(workflowContext || null);
@@ -5056,6 +5059,11 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onGoPub
   const prev = () => {
     if (mode === 'clone' && contentMode === 'video' && (step === 'material' || step === 'script')) {
       setStepIdx(activeSteps.findIndex(item => item.id === 'mode'));
+      return;
+    }
+    if (mode === 'clone' && contentMode === 'video' && (step === 'cover' || step === 'preview')) {
+      setStepIdx(activeSteps.findIndex(item => item.id === 'material'));
+      setCanvasView('creation');
       return;
     }
     if (contentMode === 'video' && step === 'script' && scriptStageTab === 'bgm') {
@@ -7969,9 +7977,13 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onGoPub
 
   const saveProject = async (
     status: 'draft' | 'ready_for_approval' | 'published' | 'template' = 'draft',
-    options: { silent?: boolean } = {},
+    options: { silent?: boolean; allowDuringModeAction?: boolean; specOverrides?: Record<string, unknown> } = {},
   ) => {
     const silent = options.silent === true;
+    if (projectHydrationPendingRef.current) {
+      if (!silent) setModeNotice('正在恢复项目数据，请稍候再保存。');
+      return false;
+    }
     if (managedProductionProjectRef.current) {
       if (!silent) setModeNotice('请使用下方“生产现场：修改配置并继续原任务”，按节点保存，避免覆盖后台结果。');
       return false;
@@ -7979,7 +7991,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onGoPub
     if (silent && (sourceDraftCheckPending || existingSourceDraftPrompt)) return false;
     if (silent && workflowProjectSelectionPending) return false;
     if (silent && (
-      modeActionLoading || scriptLoading || materialSelectLoading || coverLoading
+      (modeActionLoading && !options.allowDuringModeAction) || scriptLoading || materialSelectLoading || coverLoading
       || rendering || batchRenderingLangs || posterLoading || captionLoading
     )) return false;
     if (voiceDraftLoading || ttsLoading) {
@@ -7987,7 +7999,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onGoPub
       return false;
     }
     if (agentProduction.active) return false;
-    const nextSpec = collectSpec();
+    const nextSpec = { ...collectSpec(), ...options.specOverrides };
     if (!['draft', 'template'].includes(status)) {
       const invalidScript = modeScripts.find(item => {
         const provenance = String(item.generationProvenance || item.generationSource || '').toLowerCase();
@@ -8024,15 +8036,18 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onGoPub
     }
     else setSavingProj(true);
     try {
-      const { project } = await studioApi.saveProject({
-        id: status === 'template' ? undefined : projectId ?? undefined,
+      const saved = await studioApi.saveProject({
+        id: status === 'template' ? undefined : currentProjectRef.current ?? projectId ?? undefined,
         title: projectTitle.trim() || '未命名草稿',
         status,
         spec: nextSpec,
         thumbSeed: cover,
       });
+      const { project } = saved;
+      if (!saved.ok) throw new Error(saved.error || '草稿保存失败，请重试；当前编辑仍保留在页面中。');
       if (!project?.id) throw new Error('草稿保存失败，请重试；当前编辑仍保留在页面中。');
       if (project?.id && status !== 'template') {
+        currentProjectRef.current = project.id;
         setProjectId(project.id);
         setProjects(current => [project, ...current.filter(item => item.id !== project.id)]);
         if (socialDigitalHumanPlans.length) {
@@ -8483,6 +8498,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onGoPub
   };
 
   const loadProject = (p: StudioProject) => {
+    projectHydrationPendingRef.current = true;
     applySpec(p.status === 'template' ? withoutStudioWorkflowContext(p.spec) : p.spec);
     setProjectId(p.status === 'template' ? null : p.id);
     setProjectTitle(p.status === 'template' ? `${p.title} · 副本` : p.title);
@@ -8492,6 +8508,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onGoPub
     setPublished(false);
     if (incomingCreateRequest?.continueProjectId === p.id && incomingCreateRequest.replicationStep === 3) setCanvasView('creation');
     if (incomingCreateRequest?.continueProjectId === p.id) setStepIdx(incomingCreateRequest.replicationStep === 3 ? STEPS.findIndex(item => item.id === 'preview') : incomingCreateRequest.replicationStep === 2 ? STEPS.findIndex(item => item.id === 'material') : 0);
+    window.setTimeout(() => { projectHydrationPendingRef.current = false; }, 0);
   };
 
   useEffect(() => {
@@ -8513,7 +8530,10 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onGoPub
     }).catch(() => {
       if (!disposed) setModeNotice('上次制作进度读取失败，已重新载入任务资料。');
     }).finally(() => {
-      if (!disposed) setSocialTaskProjectLookupDone(true);
+      if (!disposed) {
+        setSocialTaskProjectLookupDone(true);
+        window.setTimeout(() => { projectHydrationPendingRef.current = false; }, 0);
+      }
     });
     return () => { disposed = true; };
   }, [socialContentTaskId]);
@@ -8565,16 +8585,15 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onGoPub
         const project = list.find(item => item.id === state.projectId && item.status !== 'template');
         if (!project) {
           setModeNotice('未找到该历史创作。');
+          projectHydrationPendingRef.current = false;
           return;
         }
-        applySpec(project.spec);
-        setProjectId(project.id);
-        setProjectTitle(project.title);
-        autoGen.current = true;
-        setShowProjects(false);
-        setPublished(false);
+        loadProject(project);
         setModeNotice(`已打开历史创作“${project.title}”。`);
-      }).catch(() => setModeNotice('历史创作读取失败，请稍后重试。'));
+      }).catch(() => {
+        projectHydrationPendingRef.current = false;
+        setModeNotice('历史创作读取失败，请稍后重试。');
+      });
     } catch {
       // Ignore malformed navigation payloads from older local builds.
     }
@@ -12338,6 +12357,21 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onGoPub
   const referenceSpeechPlan = useMemo(() => buildReferenceSpeechPlan(videoKickoff, referenceProductMappings,
     referenceBrandSourceTerm && referenceBrandLabel ? { sourceTerm: referenceBrandSourceTerm, brandLabel: speechNames.names[referenceBrandLabel] || referenceBrandLabel } : undefined),
   [videoKickoff, referenceProductMappings, referenceBrandSourceTerm, referenceBrandLabel, speechNames]);
+  const replicationSpeechConfirmationDraft = useMemo(() => {
+    const signature = JSON.stringify(referenceSpeechPlan.lines);
+    if (replicationSpeechDraft.signature === signature) return replicationSpeechDraft;
+
+    const confirmedAudio = voiceoverAudios[activeVoiceLang];
+    const confirmedCues = confirmedAudio?.alignmentSource === 'audio_ai' && !voiceoverStaleLangs.includes(activeVoiceLang)
+      ? confirmedAudio.cues || []
+      : [];
+    if (!confirmedAudio?.url || confirmedCues.length !== referenceSpeechPlan.lines.length) return replicationSpeechDraft;
+
+    return {
+      signature,
+      edits: Object.fromEntries(referenceSpeechPlan.lines.map((line, index) => [line.id, confirmedCues[index]?.text || line.draft])),
+    };
+  }, [activeVoiceLang, referenceSpeechPlan.lines, replicationSpeechDraft, voiceoverAudios, voiceoverStaleLangs]);
   const referenceSourceLanguage = useMemo(() => referenceSpeechPlan.lines.length
     ? detectSourceSpeechLanguageCode(referenceSpeechPlan.lines.map(line => line.source).join(' '))
     : '', [referenceSpeechPlan]);
@@ -12898,18 +12932,53 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onGoPub
         const language = detectSourceSpeechLanguageCode(plan.lines.map(line => line.source).join(' ')) || detectScriptLanguageCode(spoken);
         const settings = ttsLanguageSettings[language] || DEFAULT_TTS_SETTINGS;
         setModeActionStatus(`正在生成 ${plan.lines.length} 句配音并检查音频质量，请稍候…`);
-        const audio = replicationPreviewAudioRef.current?.text === spoken ? replicationPreviewAudioRef.current.audio : await studioApi.tts({ text: spoken, sentenceLines: plan.lines.map(line => line.draft), voice, language, style: {
+        let audio: Awaited<ReturnType<typeof studioApi.tts>> | undefined = replicationPreviewAudioRef.current?.text === spoken
+          ? replicationPreviewAudioRef.current.audio
+          : undefined;
+        const savedAudio = voiceoverAudios[language];
+        if (!audio && savedAudio?.text === spoken && savedAudio.url && savedAudio.duration > 0) {
+          audio = {
+            ok: true,
+            url: savedAudio.url,
+            duration: savedAudio.duration,
+            cues: savedAudio.cues,
+            alignmentSource: savedAudio.alignmentSource as Awaited<ReturnType<typeof studioApi.tts>>['alignmentSource'],
+          };
+          setModeActionStatus('已恢复上次生成的配音，正在继续对齐时间码…');
+        }
+        audio ??= await studioApi.tts({ text: spoken, sentenceLines: plan.lines.map(line => line.draft), voice, language, style: {
           preset: settings.preset, emotion: settings.emotion, emotionIntensity: settings.emotionIntensity,
           speed: replicationSpeechSpeed, pauseStyle: settings.pauseStyle,
           pronunciations: parsePronunciationRules(settings.pronunciationText),
         } });
         if (!audio.ok || !audio.url || !(audio.duration && audio.duration > 0)) throw new Error(audio.error || '配音未生成，请重试后再制作分镜。');
         replicationPreviewAudioRef.current = { text: spoken, audio };
+        const pendingAudio = { url: audio.url, duration: audio.duration, cues: audio.cues, text: spoken, alignmentSource: audio.alignmentSource || 'pending_alignment' };
+        const pendingAudios = { ...voiceoverAudios, [language]: pendingAudio };
+        setVoiceoverAudios(pendingAudios);
+        setVoiceoverUrl(audio.url);
+        setVoiceoverDur(audio.duration);
+        setActiveVoiceLang(language);
+        setLang(language);
+        // Persist the valid audio before the slower alignment call. Reloading
+        // or retrying from this point must resume alignment, not synthesize and
+        // charge for another voice track.
+        await saveProject('draft', { silent: true, allowDuringModeAction: true, specOverrides: {
+          script: plan.script,
+          activeStepId: 'material',
+          canvasView: 'creation',
+          activeVoiceLang: language,
+          lang: language,
+          voiceoverUrl: audio.url,
+          voiceoverDur: audio.duration,
+          voiceoverAudios: pendingAudios,
+        } });
         let cues = productionVoiceCues(audio.cues, audio.alignmentSource, audio.duration);
         let alignmentSource: string | undefined = audio.alignmentSource;
         if (!cues.length) {
           setModeActionStatus('配音已生成，正在对齐逐句时间码…');
           const aligned = await studioApi.alignTts({ text: spoken, url: audio.url, duration: audio.duration });
+          if (!aligned.ok) throw new Error(aligned.error || '配音时间码对齐失败，请重试。');
           cues = productionVoiceCues(aligned.cues, aligned.source, audio.duration);
           alignmentSource = aligned.source;
         }
@@ -12919,14 +12988,31 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onGoPub
         if (grouped.length !== plan.lines.length || grouped.some(item => !item)) throw new Error('实测时间码无法完整对应逐句口播，请修正口播后重试。');
         const sentenceCues: SubCue[] = grouped.map((item, index) => ({ start: item!.start, end: item!.end, text: plan.lines[index]!.draft }));
         setVoiceoverMode('ai');
-        setVoiceoverAudios(current => ({ ...current, [language]: { url: audio.url!, duration: audio.duration!, cues: sentenceCues, text: spoken, alignmentSource } }));
-        setAlignedCuesByLang(current => ({ ...current, [language]: sentenceCues }));
-        setVoiceoverStaleLangs(current => current.filter(code => code !== language));
+        const completedAudio = { url: audio.url!, duration: audio.duration!, cues: sentenceCues, text: spoken, alignmentSource };
+        const completedAudios = { ...voiceoverAudios, [language]: completedAudio };
+        const completedAlignedCues = { ...alignedCuesByLang, [language]: sentenceCues };
+        const completedStaleLangs = voiceoverStaleLangs.filter(code => code !== language);
+        setVoiceoverAudios(completedAudios);
+        setAlignedCuesByLang(completedAlignedCues);
+        setVoiceoverStaleLangs(completedStaleLangs);
         setVoiceoverUrl(audio.url);
         setVoiceoverDur(audio.duration);
         setActiveVoiceLang(language);
         setLang(language);
         setLastGeneratedSetupSignature(setupSignature);
+        await saveProject('draft', { silent: true, allowDuringModeAction: true, specOverrides: {
+          script: plan.script,
+          activeStepId: 'material',
+          canvasView: 'creation',
+          activeVoiceLang: language,
+          lang: language,
+          voiceoverUrl: audio.url,
+          voiceoverDur: audio.duration,
+          voiceoverAudios: completedAudios,
+          alignedCuesByLang: completedAlignedCues,
+          voiceoverStaleLangs: completedStaleLangs,
+          lastGeneratedSetupSignature: setupSignature,
+        } });
         setModeNotice(`已生成 ${plan.lines.length} 句口播配音并取得实测时间码；现在按配音时长逐镜匹配素材。`);
       } catch (error) {
         const message = error instanceof Error ? error.message : '口播准备失败，请重试。';
@@ -13422,6 +13508,11 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onGoPub
 
   if (socialViralTask && step === 'mode') return <ReplicationSpeechConfirmation
     projectTitle={projectTitle}
+    headerActions={<div className="hidden items-center gap-1.5 xl:flex">
+      <button type="button" onClick={() => openCreationHome(false)} className="inline-flex h-8 items-center gap-1 rounded-md border border-border bg-white px-2.5 text-[10px] font-bold text-text-secondary hover:bg-surface-2"><ChevronLeft size={13} />返回创作列表</button>
+      <button type="button" onClick={() => void openProjects().catch(error => setModeNotice(error.message))} className="inline-flex h-8 items-center gap-1 rounded-md border border-border bg-white px-2.5 text-[10px] font-bold text-text-secondary hover:bg-surface-2"><FolderOpen size={13} />查看其他制作</button>
+      <button type="button" onClick={() => openCreationHome(true)} className="inline-flex h-8 items-center gap-1 rounded-md bg-accent px-2.5 text-[10px] font-black text-white hover:bg-accent-dim"><Plus size={13} />新建任务</button>
+    </div>}
     voices={[...VOICES, ...customVoices.map(item => ({ id: item.voiceId, name: item.name }))]}
     selectedVoice={voice} speed={replicationSpeechSpeed}
     onSpeedChange={speed => { setReplicationSpeechSpeed(speed); replicationPreviewAudioRef.current = null; setTtsLanguageSettings(current => ({ ...current, [spokenNameLanguage]: { ...(current[spokenNameLanguage] || DEFAULT_TTS_SETTINGS), speed } })); }}
@@ -13431,7 +13522,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onGoPub
     videoUrl={videoKickoff?.video?.aiAnalysis?.materialUrl || videoKickoff?.video?.videoUrl}
     draftFrames={(videoKickoff?.referenceAnalysis?.details || []).map((detail, index) => { const slot = storyboardSlots.find(item => item.id === detail.shotId); const material = slot && materialById.get(storyboardAssignments[slot.id] || ''); return { id: detail.shotId || `shot-${index + 1}`, source: material?.url, type: material?.type, time: material && slot ? editForSlot(material, slot).trimStart : 0 }; })}
     poster={videoKickoff?.video?.thumbnail} shots={videoKickoff?.referenceAnalysis?.details || []}
-    lines={referenceSpeechPlan.lines} savedDraft={replicationSpeechDraft} onDraftChange={setReplicationSpeechDraft}
+    lines={referenceSpeechPlan.lines} savedDraft={replicationSpeechConfirmationDraft} onDraftChange={setReplicationSpeechDraft}
     productOptions={productOptions} selectedProductIds={selectedProductIds}
     productSlots={referenceProducts} productAssignments={referenceProductAssignments} productTerms={referenceProductTerms}
     brand={referenceBrandLabel}
@@ -13497,6 +13588,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onGoPub
         headerActions={(
           <div className="hidden items-center gap-1.5 xl:flex">
             <button type="button" onClick={() => openCreationHome(false)} className="inline-flex h-8 items-center gap-1 rounded-md border border-border bg-white px-2.5 text-[10px] font-bold text-text-secondary hover:bg-surface-2"><ChevronLeft size={13} />返回创作列表</button>
+            <button type="button" onClick={() => void openProjects().catch(error => setModeNotice(error.message))} className="inline-flex h-8 items-center gap-1 rounded-md border border-border bg-white px-2.5 text-[10px] font-bold text-text-secondary hover:bg-surface-2"><FolderOpen size={13} />查看其他制作</button>
             <button type="button" onClick={() => openCreationHome(true)} className="inline-flex h-8 items-center gap-1 rounded-md bg-accent px-2.5 text-[10px] font-black text-white hover:bg-accent-dim"><Plus size={13} />新建任务</button>
           </div>
         )}
@@ -13869,7 +13961,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onGoPub
             <input aria-label="整片时间轴" type="range" min="0" max={workbenchTimelineDuration} step="0.05" value={Math.min(workbenchTimelineTime, workbenchTimelineDuration)} onChange={event => seekWorkbenchTimeline(Number(event.target.value))} className="mt-2 h-2 w-full cursor-ew-resize accent-emerald-600" />
           </div>
         ) : socialContentTaskId ? <div role="status" className="rounded-lg border border-dashed border-border px-4 py-3 text-xs text-text-muted">00:00 · 等待参考分析与分镜脚本，完成后在这里显示逐镜时间戳。</div> : undefined}
-        previousAction={{ label: '上一步', onClick: prev, disabled: stepIdx === 0 || Boolean(socialViralTask && modeActionLoading) }}
+        previousAction={{ label: socialViralTask ? '返回上一步' : '上一步', onClick: prev, disabled: stepIdx === 0 || Boolean(socialViralTask && modeActionLoading) }}
         previewAction={{
           label: socialViralTask ? step === 'preview' ? '导出 MP4' : '进入成片设置' : '预览',
           onClick: () => {

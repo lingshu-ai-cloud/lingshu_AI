@@ -10,6 +10,7 @@ import { createStudioAsrRouter } from '../lib/studioAsrRouter.js';
 import type { AvatarMediaCheck } from '../lib/avatarMediaCheck.js';
 import { createStudioAvatarProductionRouter } from '../lib/studioAvatarProduction.js';
 import { refreshStudioProjectAssetUrls, studioProjectSpecForStorage } from '../lib/studioProjectAssets.js';
+import { studioProjectRevisionConflict } from '../lib/studioProjectRevision.js';
 export { refreshStudioProjectAssetUrls, studioProjectSpecForStorage } from '../lib/studioProjectAssets.js';
 import { matchedReferenceIndustryLeaks } from '../lib/referenceIndustryLeak.js';
 export { matchedReferenceIndustryLeaks } from '../lib/referenceIndustryLeak.js';
@@ -7099,7 +7100,7 @@ studioRouter.get('/projects', async (_req, res) => {
 // POST /studio/projects  Body: { id?, title?, status?, spec, thumbSeed? } → 新建或更新
 studioRouter.post('/projects', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
-  const { id, title, status = 'draft', spec: rawSpec = {}, thumbSeed } = req.body ?? {};
+  const { id, title, status = 'draft', spec: rawSpec = {}, thumbSeed, baseUpdatedAt } = req.body ?? {};
   const socialTaskId = socialProjectTaskId(res.locals);
   const spec = studioProjectSpecForStorage(bindSocialProjectSpec(rawSpec, socialTaskId));
   const automation = spec.automation && typeof spec.automation === 'object' && !Array.isArray(spec.automation)
@@ -7121,6 +7122,18 @@ studioRouter.post('/projects', async (req, res) => {
     const existing = await store.getById<any>('studio_projects', String(id));
     if (existing?.tenant_id === tenantId) {
       if (!socialProjectBelongs(existing, socialTaskId)) { res.status(404).json({ ok: false, error: 'Project not found' }); return; }
+      const currentUpdatedAt = String(existing.updated_at || existing.updated || '');
+      if (studioProjectRevisionConflict(baseUpdatedAt, currentUpdatedAt)) {
+        res.status(409).json({
+          ok: false,
+          code: 'studio_project_version_conflict',
+          error: baseUpdatedAt
+            ? '该创作已在其他页面更新，请刷新后继续；当前页面的旧数据未覆盖新版本。'
+            : '当前页面版本过旧，请刷新后继续；旧页面的自动保存已被拦截。',
+          project: projectFromRecord(existing, tenantId),
+        });
+        return;
+      }
       const storedSpec = typeof existing.spec === 'string' ? JSON.parse(existing.spec) : existing.spec;
       if (storedSpec?.workflowRunId && storedSpec?.automation?.managedBy === 'digital_employee') {
         res.status(409).json({ ok: false, error: '此项目由任务自动生产，请通过交付看板纠偏重跑，或复制为新草稿后编辑。', code: 'managed_production_project' });
