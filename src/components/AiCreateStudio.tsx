@@ -12310,6 +12310,20 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onGoPub
   };
 
   const socialViralTask = Boolean(mode === 'clone' && contentMode === 'video');
+  const replicationProductMappingSignature = JSON.stringify({
+    selectedProductIds,
+    referenceProductAssignments,
+    referenceProductTerms,
+  });
+  const replicationProductAutosaveDirtyRef = useRef(false);
+  useEffect(() => {
+    if (!replicationProductAutosaveDirtyRef.current || !socialViralTask || !projectId || !socialTaskProjectLookupDone) return;
+    const timer = window.setTimeout(() => {
+      replicationProductAutosaveDirtyRef.current = false;
+      void autosaveSnapshotRef.current();
+    }, 400);
+    return () => window.clearTimeout(timer);
+  }, [projectId, replicationProductMappingSignature, socialTaskProjectLookupDone, socialViralTask]);
   useEffect(() => {
     if (socialViralTask && (step === 'bgm' || step === 'cover')) {
       setStepIdx(activeSteps.findIndex(item => item.id === 'preview'));
@@ -13424,16 +13438,19 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onGoPub
     confirmationError={replicationConfirmationError}
     busy={modeActionLoading || speechNamesPending || ttsLoading} status={modeActionStatus} notice={speechNamesError || (speechNamesPending ? '正在统一产品名称的口播语种…' : ttsNotice || modeNotice)}
     onProductSelectionChange={productId => {
+      replicationProductAutosaveDirtyRef.current = true;
       setSelectedProductIds(productId ? [productId] : []);
       setReplicationConfirmationError('');
     }}
     onProductMappingChange={(shotId, productId) => {
+      replicationProductAutosaveDirtyRef.current = true;
       const nextAssignments = { ...referenceProductAssignments, [shotId]: productId };
       setReferenceProductAssignments(nextAssignments);
       setSelectedProductIds([...new Set(referenceProducts.map(slot => nextAssignments[slot.shotId]).filter((id): id is string => Boolean(id)))]);
       setReplicationConfirmationError('');
     }}
     onProductTermChange={(shotId, sourceTerm) => {
+      replicationProductAutosaveDirtyRef.current = true;
       setReferenceProductTerms(current => ({ ...current, [shotId]: sourceTerm }));
       setReplicationConfirmationError('');
     }}
