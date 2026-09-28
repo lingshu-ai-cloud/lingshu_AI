@@ -247,6 +247,8 @@ export function buildSocialProductionHandoff(input: {
       requiredEvidence: briefScene.requiredEvidence,
       action: briefScene.action,
       shotLanguage: briefScene.shotLanguage,
+      referenceMaterial: briefScene.referenceMaterial ?? null,
+      productionRouting: briefScene.productionRouting ?? null,
       spaceAndContinuity: briefScene.spaceAndContinuity,
       audioLayers: briefScene.audioLayers,
       duration: briefScene.duration,

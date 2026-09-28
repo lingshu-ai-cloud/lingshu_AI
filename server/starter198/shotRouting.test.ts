@@ -33,6 +33,15 @@ const presenterWithFlexibleScene = decideShotRoute(requirements({ backgroundRequ
 assert.equal(presenterWithFlexibleScene.route, 'presenter_talking');
 assert.equal(presenterWithFlexibleScene.requiresUserConfirmation, false);
 
+const talkingWithoutSourceFirstFrame = decideShotRoute(requirements({
+  backgroundRequirement: 'flexible', referenceUse: 'structure_only',
+  evidence: { sourceRange: { startSeconds: 0, endSeconds: 3 }, keyframeIds: [], asrText: '口播', materialIds: ['reference-1'] },
+}), available);
+assert.equal(talkingWithoutSourceFirstFrame.route, 'presenter_talking');
+assert.equal(talkingWithoutSourceFirstFrame.executable, false);
+assert.equal(talkingWithoutSourceFirstFrame.status, 'needs_input');
+assert.ok(talkingWithoutSourceFirstFrame.blockers.some(value => value.includes('原镜首帧')));
+
 const ugc = decideShotRoute(requirements({ shotType: 'ugc_actor', visualRole: '用户自拍表达痛点', identityRequirement: 'industry_role', speechRequirement: 'voiceover_ok', backgroundRequirement: 'flexible', motionRequirement: 'light_gesture', referenceUse: 'structure_only' }), available);
 assert.equal(ugc.route, 'ugc_actor');
 assert.match(ugc.reasons.join(' '), /不复刻参考人物身份/);

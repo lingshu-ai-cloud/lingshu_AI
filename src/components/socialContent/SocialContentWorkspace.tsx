@@ -1,168 +1,56 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useState } from 'react';
 import { AlertCircle, CheckCircle2, Loader2, RefreshCcw } from 'lucide-react';
 import type { Page } from '../../App';
 import type {
   RegisterSocialPublicationInput,
   SocialContentArtifact,
-  SocialContentTaskDetail,
-  SocialContentTaskMode,
   SocialContentThemeId,
   SubmitSocialMetricsInput,
 } from '../../../shared/contracts/socialContentWorkflow';
 import { attachSocialContentNavigationState } from '../../lib/socialContentContext';
-import {
-  socialContentCanRegisterPublication,
-  type SocialContentCreationPath,
-  type SocialContentDraft,
-  type SocialContentMaterialInput,
-} from '../../lib/socialContentModel';
+import { socialContentCanRegisterPublication, type SocialContentCreationPath, type SocialContentDraft, type SocialContentMaterialInput } from '../../lib/socialContentModel';
 import { ArtifactBatchChangesDialog, ArtifactChangesDialog, MetricsDialog, PublicationDialog } from './SocialTaskActionDialogs';
-import SocialTaskEditorDialog from './SocialTaskEditorDialog';
 import SocialTaskOverview from './SocialTaskOverview';
 import SocialManagedExecutionNotice from './SocialManagedExecutionNotice';
-import { isLiveSocialProduction } from './SocialTaskRunStatusPanel';
-import { useSocialContentWorkspace, type SocialContentSaveTarget } from './useSocialContentWorkspace';
-import { taskToDraft } from './socialContentUi';
-import type { SocialCreationWorkbenchSubmit } from './SocialCreationWorkbench';
-import { socialContentStageStrategy } from '../../lib/socialContentStage';
-import { showActionSuccess } from '../../lib/actionFeedback';
-
-interface EditorSession {
-  task: SocialContentTaskDetail | null;
-  target: SocialContentSaveTarget;
-  initialThemeId?: SocialContentThemeId | '';
-  initialMode?: SocialContentTaskMode;
-  initialCreationPath?: SocialContentCreationPath;
-  initialMaterialInput?: SocialContentMaterialInput;
-  initialManagedMode?: 'one_click_managed';
-  initialDraftPatch?: Partial<Pick<SocialContentDraft, 'title' | 'topic' | 'productId' | 'productName' | 'referenceLinks' | 'platforms'>>;
-  sourceContext?: SocialContentSourceContext;
-  lockMode?: boolean;
-}
+import { useSocialContentWorkspace } from './useSocialContentWorkspace';
 
 export interface SocialContentSourceContext {
   originLabel: string;
   referenceTitle: string;
   referenceThumbnail?: string;
-  referenceContentType?: 'video' | 'image';
 }
 
 export interface SocialContentCreateRequest {
   requestId: number;
   themeId: SocialContentThemeId | '';
-  mode?: SocialContentTaskMode;
+  mode?: 'instant' | 'weekly';
   creationPath?: SocialContentCreationPath;
   materialInput?: SocialContentMaterialInput;
   managedMode?: 'one_click_managed';
-  prefill?: Partial<Pick<SocialContentDraft, 'title' | 'topic' | 'productId' | 'productName' | 'referenceLinks' | 'platforms'>>;
+  prefill?: Partial<Pick<SocialContentDraft, 'title' | 'topic' | 'productName' | 'referenceLinks' | 'platforms'>>;
   sourceContext?: SocialContentSourceContext;
-}
-
-function editorAttemptId(): string {
-  return typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
-    ? `socialedit:${crypto.randomUUID()}`
-    : `socialedit:${Date.now()}`;
 }
 
 export default function SocialContentWorkspace({
   onNavigate,
   onNavigateWithTask,
-  defaultCreateMode,
-  createRequest,
-  quickStartRequest,
-  onQuickStartSettled,
-  onRequestCreate,
 }: {
   onNavigate: (page: Page) => void;
   onNavigateWithTask?: (page: Page, taskId: string) => void;
-  defaultCreateMode?: SocialContentTaskMode;
-  createRequest?: SocialContentCreateRequest | null;
-  quickStartRequest?: SocialCreationWorkbenchSubmit | null;
-  onQuickStartSettled?: () => void;
-  onRequestCreate?: () => void;
 }) {
   const state = useSocialContentWorkspace();
-  const [editor, setEditor] = useState<EditorSession | null>(null);
   const [publicationOpen, setPublicationOpen] = useState(false);
   const [metricsOpen, setMetricsOpen] = useState(false);
   const [changeArtifact, setChangeArtifact] = useState<SocialContentArtifact | null>(null);
   const [batchChangesOpen, setBatchChangesOpen] = useState(false);
-  const quickStartRequestId = useRef<number | null>(null);
   const task = state.workspace?.currentTask || null;
 
-  const openNewTask = useCallback((themeId?: SocialContentThemeId | '') => {
-    setEditor({
-      task: null,
-      target: { mode: 'new', taskId: null, expectedVersion: null, attemptId: editorAttemptId() },
-      initialThemeId: themeId,
-      initialMode: defaultCreateMode,
-      initialCreationPath: 'material_processing',
-      initialMaterialInput: 'none',
-      initialManagedMode: 'one_click_managed',
-      lockMode: Boolean(defaultCreateMode),
-    });
-  }, [defaultCreateMode]);
-
-  useEffect(() => {
-    if (!createRequest) return;
-    setEditor({
-      task: null,
-      target: { mode: 'new', taskId: null, expectedVersion: null, attemptId: editorAttemptId() },
-      initialThemeId: createRequest.themeId,
-      initialMode: createRequest.mode || defaultCreateMode,
-      initialCreationPath: createRequest.creationPath,
-      initialMaterialInput: createRequest.materialInput,
-      initialManagedMode: createRequest.managedMode,
-      initialDraftPatch: createRequest.prefill,
-      sourceContext: createRequest.sourceContext,
-      lockMode: Boolean(createRequest.mode || defaultCreateMode),
-    });
-  }, [createRequest, defaultCreateMode]);
-
-  useEffect(() => {
-    if (!quickStartRequest || !state.workspace || quickStartRequestId.current === quickStartRequest.requestId) return;
-    quickStartRequestId.current = quickStartRequest.requestId;
-    const base = taskToDraft(null, state.workspace.catalog);
-    const hasVideo = quickStartRequest.files.some(file => file.type.startsWith('video/'));
-    const imageCount = quickStartRequest.files.filter(file => file.type.startsWith('image/')).length;
-    const stageStrategy = socialContentStageStrategy(quickStartRequest.stageProfileId);
-    const materialInput: SocialContentMaterialInput = hasVideo || imageCount >= 2
-      ? 'ready'
-      : quickStartRequest.files.length || quickStartRequest.referenceLinks.length
-        ? 'limited'
-        : 'none';
-    const draft: SocialContentDraft = {
-      ...base,
-      mode: 'instant',
-      creationPath: quickStartRequest.creationPath,
-      materialInput,
-      // Both entry paths first present the promoted hybrid plan. The free
-      // material edit and shooting checklist remain explicit alternatives on
-      // the review card rather than being silently preselected by the entry.
-      // Free creation stays on the material-only route so it cannot invoke paid
-      // visual providers. Viral replication keeps the existing AI-enhanced stack.
-      productionApproach: quickStartRequest.creationPath === 'material_processing' ? 'material_cut' : 'ai_enhanced',
-      title: quickStartRequest.title,
-      productId: quickStartRequest.productId,
-      productName: quickStartRequest.productName,
-      primaryGoal: stageStrategy.preset.objective,
-      referenceLinks: quickStartRequest.referenceLinks,
-      callToAction: quickStartRequest.callToAction,
-      specialRequirements: [quickStartRequest.specialRequirements, stageStrategy.generationBrief].filter(Boolean).join('；'),
-    };
-    const target: SocialContentSaveTarget = {
-      mode: 'new',
-      taskId: null,
-      expectedVersion: null,
-      // React development remounts may replay effects. A deterministic
-      // idempotency scope guarantees one persisted task for this user action.
-      attemptId: `socialquick:${quickStartRequest.requestId}`,
-    };
-    void state.saveDraft(draft, quickStartRequest.files, true, target)
-      .then(() => showActionSuccess('成功开始生成 👏', '任务已进入“我的创作”，可以随时回来查看进度。'))
-      .catch(() => {})
-      .finally(() => onQuickStartSettled?.());
-  }, [onQuickStartSettled, quickStartRequest, state, state.workspace]);
+  const openNewTask = useCallback(() => {
+    window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: {
+      page: 'smartAssets', view: 'create', studioEntry: true,
+      contentCreationRequest: { requestId: Date.now(), themeId: 'product_value', mode: 'instant', creationPath: 'material_processing', materialInput: 'none', managedMode: 'one_click_managed' } satisfies SocialContentCreateRequest,
+    } }));
+  }, []);
 
   const navigateWithTask = useCallback((page: Page, explicitTaskId?: string) => {
     const taskId = explicitTaskId || task?.taskId;
@@ -190,55 +78,22 @@ export default function SocialContentWorkspace({
     );
   }
 
-  const submitTask = async (draft: Parameters<typeof state.saveDraft>[0], files: File[], start: boolean) => {
-    if (!editor) return;
-    let progressBoardOpened = false;
-    await state.saveDraft(draft, files, start, editor.target, nextTask => {
-      if (start) {
-        // The task exists from this point onward. Move to its progress board
-        // while sources upload and queueing continue so a slow network request
-        // never leaves the confirmation dialog looking frozen.
-        if (!progressBoardOpened) {
-          progressBoardOpened = true;
-          setEditor(null);
-        }
-        return;
-      }
-      setEditor({
-        task: nextTask,
-        target: { mode: 'edit', taskId: nextTask.taskId, expectedVersion: nextTask.version, attemptId: editor.target.attemptId },
-      });
-    });
-    setEditor(null);
-    if (start) showActionSuccess('成功开始生成 👏', '任务已进入“我的创作”，可以随时回来查看进度。');
-    // Keep the user on the task after it starts. Script adaptation, voice-over,
-    // subtitles and editing continue as one automated job; users return only
-    // for task input or result review.
-  };
   const submitPublication = async (input: RegisterSocialPublicationInput) => {
     await state.registerPublication(input);
     setPublicationOpen(false);
-    showActionSuccess('发布结果已登记', '这条内容的后续数据会继续汇总到复盘中。');
   };
   const submitMetrics = async (publicationId: string, input: SubmitSocialMetricsInput, files: File[]) => {
     await state.submitMetrics(publicationId, input, files);
     setMetricsOpen(false);
-    showActionSuccess('数据已回传', '最新表现已经纳入内容复盘。');
   };
-  const startTask = async (approach?: Parameters<typeof state.startTask>[0]) => {
-    await state.startTask(approach);
-    showActionSuccess('成功开始生成 👏', '脚本、配音、字幕和画面会按顺序推进。');
-  };
-
-  const taskRunning = Boolean(task && isLiveSocialProduction(task));
 
   return (
     <section aria-labelledby="social-content-workspace-title">
-      {(state.error || (!taskRunning && state.notice)) && <div role={state.error ? 'alert' : 'status'} className={`mb-4 flex items-center justify-between gap-3 rounded-xl border px-4 py-3 text-xs font-semibold ${state.error ? 'border-rose-200 bg-rose-50 text-rose-800' : 'border-emerald-200 bg-emerald-50 text-emerald-800'}`}><span className="flex items-center gap-2">{state.error ? <AlertCircle size={14} /> : <CheckCircle2 size={14} />}{state.error || state.notice}</span>{state.notice && <button type="button" onClick={state.dismissNotice} className="text-[10px] font-bold">关闭</button>}</div>}
+      {(state.error || state.notice) && <div role={state.error ? 'alert' : 'status'} className={`mb-4 flex items-center justify-between gap-3 rounded-xl border px-4 py-3 text-xs font-semibold ${state.error ? 'border-rose-200 bg-rose-50 text-rose-800' : 'border-emerald-200 bg-emerald-50 text-emerald-800'}`}><span className="flex items-center gap-2">{state.error ? <AlertCircle size={14} /> : <CheckCircle2 size={14} />}{state.error || state.notice}</span>{state.notice && <button type="button" onClick={state.dismissNotice} className="text-[10px] font-bold">关闭</button>}</div>}
 
-      <h1 id="social-content-workspace-title" className={taskRunning ? 'sr-only' : 'mb-4 text-lg font-bold text-text-primary'}>{task?.brief.title || '社媒内容任务'}</h1>
+      <h1 id="social-content-workspace-title" className="mb-4 text-lg font-bold text-text-primary">{task?.brief.title || '社媒内容任务'}</h1>
 
-      {!taskRunning && <SocialManagedExecutionNotice task={task} />}
+      <SocialManagedExecutionNotice task={task} />
 
       <SocialTaskOverview
         task={task}
@@ -249,43 +104,25 @@ export default function SocialContentWorkspace({
         busy={state.busy}
         onSelectTask={state.selectTask}
         onLoadMoreTasks={() => void state.loadMoreTasks()}
-        createMode={defaultCreateMode}
-        onCreate={() => onRequestCreate ? onRequestCreate() : openNewTask()}
-        onEdit={() => task && setEditor({ task, target: { mode: 'edit', taskId: task.taskId, expectedVersion: task.version, attemptId: editorAttemptId() }, initialMode: task.mode ?? defaultCreateMode, lockMode: true })}
-        onStart={approach => void startTask(approach).catch(() => {})}
+        onCreate={() => openNewTask()}
+        onEdit={() => task && navigateWithTask('smartAssets', task.taskId)}
+        onStart={() => task && navigateWithTask('smartAssets', task.taskId)}
         onDownload={() => void state.downloadLatest().catch(() => {})}
         onOpenPublication={() => { if (task && socialContentCanRegisterPublication(task)) setPublicationOpen(true); }}
         onOpenMetrics={() => setMetricsOpen(true)}
         onArtifactDecision={(artifact, decision) => {
           if (decision === 'changes_requested') { setChangeArtifact(artifact); return; }
-          void state.decideArtifact(artifact, decision).then(() => showActionSuccess('内容已确认', '验收结果已经保存。')).catch(() => {});
+          void state.decideArtifact(artifact, decision).catch(() => {});
         }}
         onBatchDecision={decision => {
           if (decision === 'changes_requested') { setBatchChangesOpen(true); return; }
-          void state.decideArtifactBatch('approved').then(() => showActionSuccess('本批内容已确认', '全部验收结果已经保存。')).catch(() => {});
+          void state.decideArtifactBatch('approved').catch(() => {});
         }}
         onCreateDeliveryPackage={() => void state.createDeliveryPackage().catch(() => {})}
         onRefresh={() => void state.refresh()}
         onNavigate={navigateWithTask}
       />
 
-      <SocialTaskEditorDialog
-        open={Boolean(editor)}
-        sessionKey={editor?.target.attemptId || ''}
-        task={editor?.task || null}
-        initialThemeId={editor?.initialThemeId}
-        initialMode={editor?.initialMode}
-        initialCreationPath={editor?.initialCreationPath}
-        initialMaterialInput={editor?.initialMaterialInput}
-        initialManagedMode={editor?.initialManagedMode}
-        initialDraftPatch={editor?.initialDraftPatch}
-        sourceContext={editor?.sourceContext}
-        lockMode={editor?.lockMode}
-        catalog={state.workspace.catalog}
-        busy={state.busy}
-        onClose={() => { if (!state.busy) setEditor(null); }}
-        onSubmit={submitTask}
-      />
       {publicationOpen && task && socialContentCanRegisterPublication(task) && <PublicationDialog task={task} busy={state.busy} onClose={() => { if (!state.busy) setPublicationOpen(false); }} onSubmit={submitPublication} />}
       {metricsOpen && task && <MetricsDialog task={task} busy={state.busy} onClose={() => { if (!state.busy) setMetricsOpen(false); }} onSubmit={submitMetrics} />}
       {changeArtifact && <ArtifactChangesDialog artifact={changeArtifact} busy={state.busy} onClose={() => { if (!state.busy) setChangeArtifact(null); }} onSubmit={async note => { await state.decideArtifact(changeArtifact, 'changes_requested', note); setChangeArtifact(null); }} />}

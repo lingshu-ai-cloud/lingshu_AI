@@ -27,6 +27,11 @@ import {
   type SocialSceneProductionAdmission,
   type SocialSceneVisualContract,
 } from '../../shared/sceneVisualContract.js';
+import { presenterShotMeasurements } from './presenterShotMeasurements.js';
+import { reviewShotMaterialRefs } from '../routes/referenceShotReview.js';
+import { validateVerifiedSpeechLines } from '../routes/verifiedReferenceSpeech.js';
+import { approximateSpeechLines } from '../routes/referenceApproxSpeech.js';
+import { hasCompletedExactVideoEvidence } from '../routes/videoAnalysisCodec.js';
 
 const THEME_TERMS: Record<SocialContentThemeId, readonly string[]> = {
   product_value: ['产品', '卖点', '细节', '成分', '材质', '性能', 'product', 'feature', 'detail'],
@@ -95,14 +100,14 @@ function timeSeconds(value: string): number {
   return parts.reduce((sum, part) => sum * 60 + part, 0);
 }
 
-function detailTiming(detail: Record<string, unknown>): ExactReferenceDetail['timing'] | null {
+function detailTiming(detail: Record<string, unknown>, minimumSeconds = 0.2): ExactReferenceDetail['timing'] | null {
   const value = socialText(detail.time) || socialText(detail.timestamp);
   const token = String.raw`(?:\d{1,2}:){1,2}\d{1,2}(?:\.\d+)?|\d+(?:\.\d+)?`;
   const match = value.match(new RegExp(`(${token})\\s*(?:s|秒)?\\s*(?:-|–|—|~|～|至|to)\\s*(${token})`, 'i'));
   if (!match) return null;
   const startSeconds = timeSeconds(match[1]!);
   const endSeconds = timeSeconds(match[2]!);
-  if (!Number.isFinite(startSeconds) || !Number.isFinite(endSeconds) || startSeconds < 0 || endSeconds - startSeconds < 0.2) return null;
+  if (!Number.isFinite(startSeconds) || !Number.isFinite(endSeconds) || startSeconds < 0 || endSeconds - startSeconds < minimumSeconds) return null;
   return {
     startSeconds: +startSeconds.toFixed(2),
     endSeconds: +endSeconds.toFixed(2),
@@ -114,16 +119,91 @@ function exactAnalysis(record: Record<string, unknown>): {
   analysis: Record<string, unknown>;
   gemini: Record<string, unknown>;
   details: ExactReferenceDetail[];
+  reviewedSpeech: Record<string, unknown>[] | null;
+  reviewedSpeechPrecision: 'phrase' | 'coarse' | null;
 } | null {
   const analysis = recordObject(record.aiAnalysis);
   const gemini = recordObject(analysis.gemini);
-  const rawDetails = Array.isArray(socialJson(gemini.scriptDetails15s))
+  let rawDetails = Array.isArray(socialJson(gemini.scriptDetails15s))
     ? (socialJson(gemini.scriptDetails15s) as unknown[]).map(recordObject).filter(item => Object.keys(item).length)
     : [];
+  let reviewedSpeech: Record<string, unknown>[] | null = null;
+  let reviewedSpeechPrecision: 'phrase' | 'coarse' | null = null;
+  const savedReview = recordObject(record.referenceShotReview);
+  // The automatic content path consumes exact video evidence directly. A
+  // partially saved director review must not become a prerequisite for the
+  // digital employee to draft speech from source ASR.
+  if (savedReview.reviewComplete === true) {
+    const review = savedReview;
+    const speech = recordObject(record.referenceVerifiedSpeech);
+    const recordId = socialText(record.id);
+    const runId = socialText(analysis.analysisRunId);
+    const sourceHash = socialText(analysis.contentSha256);
+    const sections = Array.isArray(review.sections) ? review.sections.map(recordObject) : [];
+    const reviewedShots = Array.isArray(review.shots) ? review.shots.map(recordObject) : [];
+    // A discarded cut remains in the review audit trail, but is not a
+    // production shot. The review endpoint validates those decisions before
+    // setting reviewComplete; projecting them here would resurrect flashes.
+    const retainedShots = reviewedShots.filter(shot => shot.reviewStatus !== 'discarded');
+    const manualLines = Array.isArray(speech.lines) ? speech.lines.map(recordObject) : [];
+    // A saved review is a versioned override. Never fall back to the original
+    // model output if it is incomplete or bound to an older upload/run.
+    const duration = Number(record.duration || record.durationSeconds || analysis.durationSeconds);
+    let validSpeech = false;
+    try {
+      validSpeech = validateVerifiedSpeechLines(manualLines, duration).length === manualLines.length;
+    } catch { /* A bad manual transcript must not be projected as phrase timing. */ }
+    const manualSpeech = socialText(speech.analysisRunId) === runId
+      && socialText(speech.sourceSha256) === sourceHash
+      && speech.coverageConfirmed === true && Boolean(socialText(speech.reviewerId))
+      && Boolean(socialText(speech.verifiedAt)) && validSpeech;
+    const approximateLines = approximateSpeechLines(recordObject(gemini.audioTranscript).segments);
+    const lines = manualSpeech ? manualLines : approximateLines.map(recordObject);
+    if (!recordId || !runId || !sourceHash || review.reviewComplete !== true
+      || socialText(review.referenceRecordId) !== recordId
+      || socialText(review.sourceAnalysisRunId) !== runId
+      || sections.length !== 6 || sections.some(section => section.confirmed !== true)
+      || !retainedShots.length || retainedShots.some(shot => shot.reviewStatus !== 'confirmed')
+      || !lines.length) return null;
+    const sourceDetails = rawDetails;
+    rawDetails = retainedShots.map(shot => {
+      const start = Number(shot.start), end = Number(shot.end);
+      const sourceIds = Array.isArray(shot.sourceShotIds) ? shot.sourceShotIds.map(socialText) : [];
+      const sourceIndex = sourceIds.length === 1 ? Number(sourceIds[0]?.replace(/^shot-/, '')) - 1 : -1;
+      const source = sourceDetails[sourceIndex] ?? {};
+      const original = detailTiming(source);
+      const sameRange = original && Math.abs(original.startSeconds - start) < .06 && Math.abs(original.endSeconds - end) < .06;
+      const refs = reviewShotMaterialRefs(record, { shotId: socialText(shot.shotId), start, end });
+      const evidenceRefs = Array.isArray(shot.evidenceRefs) ? shot.evidenceRefs.map(socialText) : [];
+      const generatedEvidence = refs.every(ref => evidenceRefs.includes(ref));
+      const originalEvidence = recordObject(source.materialEvidence);
+      const inheritedEvidence = sameRange && originalEvidence.extractionStatus === 'ready'
+        && [originalEvidence.clipRef, originalEvidence.firstFrameRef].every(ref => evidenceRefs.includes(socialText(ref)));
+      if (!Number.isFinite(start) || !Number.isFinite(end) || end - start < .15
+        || !socialText(shot.content) || !socialText(shot.purpose)
+        || !socialText(shot.shotId) || (!generatedEvidence && !inheritedEvidence)) return {};
+      return {
+        ...source, ...shot, time: `${start}-${end}`, visual: shot.content, purpose: shot.purpose,
+        dialogue: lines.filter(line => Number(line.start) < end && Number(line.end) > start)
+          .map(line => socialText(line.text)).join(' '),
+        needsReview: false,
+        materialEvidence: generatedEvidence
+          ? { sourceVideoRef: `/api/overseas/videos/${encodeURIComponent(recordId)}/media`, clipRef: refs[0], firstFrameRef: refs[1], extractionStatus: 'ready' }
+          : originalEvidence,
+      };
+    });
+    if (rawDetails.some(detail => !Object.keys(detail).length)) return null;
+    reviewedSpeech = lines;
+    reviewedSpeechPrecision = manualSpeech ? 'phrase' : 'coarse';
+  }
   const seenRanges = new Set<string>();
   const details = rawDetails.flatMap(detail => {
-    const timing = detailTiming(detail);
-    if (!timing || detail.needsReview === true) return [];
+    const timing = detailTiming(detail, reviewedSpeech ? 0.15 : 0.2);
+    const physicalEvidence = recordObject(detail.materialEvidence);
+    // A model uncertainty flag is advisory when the original video clip and
+    // first frame have already been extracted. It must not force a human
+    // reviewer into the autonomous creation path.
+    if (!timing || (detail.needsReview === true && physicalEvidence.extractionStatus !== 'ready')) return [];
     const key = `${timing.startSeconds.toFixed(2)}-${timing.endSeconds.toFixed(2)}`;
     if (seenRanges.has(key)) return [];
     seenRanges.add(key);
@@ -131,9 +211,9 @@ function exactAnalysis(record: Record<string, unknown>): {
   }).sort((left, right) => left.timing.startSeconds - right.timing.startSeconds
     || left.timing.endSeconds - right.timing.endSeconds);
   if (socialText(analysis.analysisMode) !== 'exact'
-    || socialText(analysis.analysisQuality) !== 'video'
+    || !['video', 'video_review_required'].includes(socialText(analysis.analysisQuality))
     || details.length < 2) return null;
-  return { analysis, gemini, details };
+  return { analysis, gemini, details, reviewedSpeech, reviewedSpeechPrecision };
 }
 
 function synthetic(record: Record<string, unknown>, analysis: Record<string, unknown>): boolean {
@@ -245,7 +325,7 @@ function safeReferenceNodes(
   themeId: SocialContentThemeId,
   details: ExactReferenceDetail[],
 ): SocialInspirationScriptMatch['nodes'] {
-  return details.slice(0, 12).map((row, index, nodes) => {
+  return details.map((row, index, nodes) => {
     const referenceStructure = safeReferenceStructure(row);
     return {
       nodeId: `inspiration-${index + 1}`,
@@ -276,6 +356,93 @@ function referenceNarrationLines(details: ExactReferenceDetail[]): string[] {
   });
 }
 
+function sourceSpeechTiming(
+  row: ExactReferenceDetail,
+  originalSpeech: string,
+  transcript: unknown,
+): SocialReferenceShotAnalysis['spokenTextTiming'] {
+  const segments = Array.isArray(recordObject(transcript).segments)
+    ? (recordObject(transcript).segments as unknown[]).map(recordObject)
+    : [];
+  const overlapping = segments.filter(segment => {
+    const start = Number(segment.start), end = Number(segment.end);
+    return Number.isFinite(start) && Number.isFinite(end) && end > start
+      && start < row.timing.endSeconds && end > row.timing.startSeconds;
+  });
+  const normalize = (value: unknown) => socialText(value).toLocaleLowerCase().replace(/[\s\p{P}\p{S}]+/gu, '');
+  const phrase = overlapping.filter(segment => segment.timingPrecision === 'phrase'
+    && Number(segment.start) >= row.timing.startSeconds - 0.05
+    && Number(segment.end) <= row.timing.endSeconds + 0.05
+    && socialText(segment.provenance));
+  const verifiedText = phrase.map(segment => socialText(segment.text)).join('');
+  if (originalSpeech && normalize(verifiedText) === normalize(originalSpeech) && phrase.length) {
+    return {
+      precision: 'phrase',
+      provenance: [...new Set(phrase.map(segment => socialText(segment.provenance)))].join(','),
+      startSeconds: Math.min(...phrase.map(segment => Number(segment.start))),
+      endSeconds: Math.max(...phrase.map(segment => Number(segment.end))),
+    };
+  }
+  if (overlapping.length) return {
+    precision: 'coarse',
+    provenance: [...new Set(overlapping.map(segment => socialText(segment.provenance)).filter(Boolean))].join(',') || null,
+    startSeconds: Math.min(...overlapping.map(segment => Number(segment.start))),
+    endSeconds: Math.max(...overlapping.map(segment => Number(segment.end))),
+  };
+  return { precision: 'none', provenance: null, startSeconds: null, endSeconds: null };
+}
+
+function verifiedSpokenLines(
+  row: ExactReferenceDetail,
+  originalSpeech: string,
+  transcript: unknown,
+): NonNullable<SocialReferenceShotAnalysis['spokenLines']> {
+  if (!originalSpeech) return [];
+  const raw = recordObject(transcript).segments;
+  const segments = Array.isArray(raw) ? raw.map(recordObject) : [];
+  const phrases = segments.filter(segment => segment.timingPrecision === 'phrase'
+    && socialText(segment.provenance)
+    && Number.isFinite(Number(segment.start)) && Number.isFinite(Number(segment.end))
+    && Number(segment.end) > Number(segment.start)
+    && Number(segment.start) >= row.timing.startSeconds - 0.05
+    && Number(segment.end) <= row.timing.endSeconds + 0.05);
+  const normalize = (value: unknown) => socialText(value).toLocaleLowerCase().replace(/[\s\p{P}\p{S}]+/gu, '');
+  if (!phrases.length || normalize(phrases.map(segment => socialText(segment.text)).join('')) !== normalize(originalSpeech)) return [];
+  return phrases.map(segment => ({
+    text: socialText(segment.text),
+    startSeconds: Number(segment.start),
+    endSeconds: Number(segment.end),
+    precision: 'phrase' as const,
+    provenance: socialText(segment.provenance),
+  }));
+}
+
+function reviewedShotSpeech(row: ExactReferenceDetail, lines: Record<string, unknown>[], runId: string,
+  precision: 'phrase' | 'coarse' = 'phrase'): {
+  spokenText: string;
+  timing: SocialReferenceShotAnalysis['spokenTextTiming'];
+  lines: NonNullable<SocialReferenceShotAnalysis['spokenLines']>;
+} {
+  const overlapping = lines.filter(line => Number(line.start) < row.timing.endSeconds
+    && Number(line.end) > row.timing.startSeconds);
+  const spokenLines = overlapping.map(line => ({
+    text: socialText(line.text),
+    startSeconds: Number(line.start),
+    endSeconds: Number(line.end),
+    precision,
+    provenance: socialText(line.provenance) || `${precision === 'phrase' ? 'human_verified' : 'approximate_asr'}:${runId}`,
+  }));
+  return {
+    spokenText: overlapping.map(line => socialText(line.text)).join(' '),
+    timing: overlapping.length ? {
+      precision, provenance: [...new Set(spokenLines.map(line => line.provenance))].join(','),
+      startSeconds: Math.min(...overlapping.map(line => Number(line.start))),
+      endSeconds: Math.max(...overlapping.map(line => Number(line.end))),
+    } : { precision: 'none', provenance: null, startSeconds: null, endSeconds: null },
+    lines: spokenLines,
+  };
+}
+
 function referenceCaptionLines(details: ExactReferenceDetail[]): string[] {
   return details.map(item => {
     const direct = [item.detail.captionText, item.detail.onScreenText, item.detail.subtitle]
@@ -292,6 +459,23 @@ function identityStrings(value: unknown): string[] {
   return values.flatMap(item => typeof item === 'string' ? [item] : []).filter(Boolean);
 }
 
+/** Model entity labels are proposals, not proof that a phrase is a name.
+ * Pain points and benefit headings such as "fake white shade" or "Three
+ * core perks" must never become product identity replacement tokens. */
+function isNamedIdentity(value: string, title: string): boolean {
+  const token = value.trim();
+  if (!token || token.length > 80) return false;
+  const titleContains = title.toLocaleLowerCase().includes(token.toLocaleLowerCase());
+  if (/^[\p{Script=Han}]+$/u.test(token)) return titleContains && token.length >= 2;
+  if (/^@[\p{L}\p{N}_.-]{2,40}$/u.test(token)) return true;
+  if (/^[A-Z0-9_-]{2,40}$/.test(token)) return titleContains;
+  if (/^[A-Za-z0-9_-]+$/.test(token) && /[A-Z].*[A-Z]/.test(token)) return titleContains;
+  // Multiword Latin names require name-like casing in every component and
+  // corroboration from the video's title, not just an ASR subtitle.
+  if (/^[A-Z][a-zA-Z0-9-]*(?:\s+[A-Z][a-zA-Z0-9-]*)+$/.test(token)) return titleContains;
+  return false;
+}
+
 function structuredIdentityTokens(
   type: IdentityEntityType,
   record: Record<string, unknown>,
@@ -302,8 +486,12 @@ function structuredIdentityTokens(
     : type === 'brand'
       ? ['brandName', 'brand']
       : ['productName', 'productRef', 'product'];
-  const containers = [record, exact.analysis, exact.gemini, ...exact.details.map(item => item.detail)];
-  const direct = containers.flatMap(container => keys.flatMap(key => identityStrings(container[key])));
+  // Per-shot `product` fields often describe a category, pain point or
+  // visual subject. They are not a product catalogue or named-entity source.
+  const containers = [record, exact.analysis, exact.gemini];
+  const title = socialText(record.title);
+  const direct = containers.flatMap(container => keys.flatMap(key => identityStrings(container[key])))
+    .filter(value => isNamedIdentity(value, title));
   const entityRows = containers.flatMap(container => {
     const value = container.identityEntities ?? container.namedEntities ?? container.entities;
     return Array.isArray(value) ? value.map(recordObject) : [];
@@ -313,7 +501,8 @@ function structuredIdentityTokens(
     const matches = type === 'company' ? /company|enterprise|企业|公司/.test(entityType)
       : type === 'brand' ? /brand|品牌/.test(entityType)
         : /product|sku|产品|商品/.test(entityType);
-    return matches ? identityStrings(entity.text ?? entity.value ?? entity.name) : [];
+    return matches ? identityStrings(entity.text ?? entity.value ?? entity.name)
+      .filter(value => isNamedIdentity(value, title)) : [];
   });
   return [...new Set([...direct, ...tagged].map(value => value.trim()).filter(Boolean))];
 }
@@ -408,11 +597,16 @@ export function recordReferenceIdentities(record: Record<string, unknown>): Set<
 
 export function sourceReferenceIdentities(source: Pick<SocialTaskSource, 'sourceRef'>): Set<string> {
   const reference = normalizedReferenceIdentity(source.sourceRef);
-  const suffix = reference.match(/^(?:trendvideo|trend_video|video):(.+)$/)?.[1] ?? '';
+  const suffix = reference.match(/^(?:trendvideo|trend_video|video):(.+)$/)?.[1]
+    ?? reference.match(/^local:\/\/([a-z0-9._-]+)$/)?.[1] ?? '';
   return new Set([reference, normalizedReferenceIdentity(suffix)].filter(Boolean));
 }
 
 function shotPurpose(detail: Record<string, unknown>, themeId: SocialContentThemeId): SocialShotFunction {
+  const explicitIntent = combinedText(detail, ['purpose', 'inferredIntent']);
+  if (/(?:D\s*to\s*C|吸睛|视觉冲击|真实生活|生活场景)/i.test(explicitIntent)) return 'd_to_c';
+  if (/(?:钩子|开场|吸引|hook|opening|attention)/i.test(explicitIntent)) return 'hook';
+  if (/(?:建立信任|增强信任|可信度|trust|credib)/i.test(explicitIntent)) return 'trust';
   const safe = safeShotFunction(detail, themeId);
   if (safe === '开场吸引') return 'hook';
   if (safe === '证据呈现') return 'proof';
@@ -528,7 +722,13 @@ function sceneContractForReference(input: {
     precision: input.row.timing.startSeconds < 3 ? 'hook_high' : 'standard',
     evidence: {
       sourceRange: { startSeconds: input.row.timing.startSeconds, endSeconds: input.row.timing.endSeconds },
-      keyframeIds: listText(raw.keyframeIds),
+      keyframeIds: [
+        ...new Set([
+          ...listText(raw.keyframeIds),
+          ...(socialText(recordObject(raw.materialEvidence).firstFrameRef)
+            ? [socialText(recordObject(raw.materialEvidence).firstFrameRef)] : []),
+        ]),
+      ],
       confidence: Number.isFinite(Number(raw.confidence)) ? Number(raw.confidence) : null,
     },
   });
@@ -591,10 +791,15 @@ function publicShot(input: {
   index: number;
   themeId: SocialContentThemeId;
   spokenText?: string;
+  spokenTextTiming?: SocialReferenceShotAnalysis['spokenTextTiming'];
+  spokenLines?: SocialReferenceShotAnalysis['spokenLines'];
   captionText?: string;
   productRef?: string | null;
 }): SocialReferenceShotAnalysis {
-  const purpose = shotPurpose(input.row.detail, input.themeId);
+  const raw = input.row.detail;
+  const inferredPurpose = shotPurpose(input.row.detail, input.themeId);
+  const purpose: SocialShotFunction = input.index === 0 ? 'hook'
+    : inferredPurpose === 'hook' ? 'd_to_c' : inferredPurpose;
   const subject = safeSubject(input.row.detail);
   const structure = safeReferenceStructure(input.row);
   const truth = truthBoundaryFor({ purpose, subject });
@@ -612,27 +817,49 @@ function publicShot(input: {
     productRef: input.productRef ?? null,
   });
   const strategy = productionStrategyFor(truth, purpose, visualContract);
+  const evidence = recordObject(raw.materialEvidence);
+  const observedVisual = socialText(raw.visual) || socialText(raw.observedFacts);
+  const observedIntent = socialText(raw.purpose) || socialText(raw.inferredIntent);
+  const shotId = socialText(raw.shotId) ? `reference-${socialText(raw.shotId)}` : `reference-shot-${input.index + 1}`;
+  const materialEvidence = {
+    sourceVideoRef: socialText(evidence.sourceVideoRef) || null,
+    clipRef: socialText(evidence.clipRef) || null,
+    firstFrameRef: socialText(evidence.firstFrameRef) || null,
+    firstFrameSeconds: Number.isFinite(Number(evidence.firstFrameSeconds)) ? Number(evidence.firstFrameSeconds) : input.row.timing.startSeconds,
+    extractionStatus: evidence.extractionStatus === 'ready' ? 'ready' as const : 'unavailable' as const,
+  };
   return {
-    shotId: `reference-shot-${input.index + 1}`,
+    shotId,
+    personContinuityId: socialText(raw.personContinuityId) || null,
     startSeconds: structure.sourceTiming.startSeconds,
     endSeconds: structure.sourceTiming.endSeconds,
-    visualDescription: `${subject}；${structure.shotScale}，${structure.cameraMovement}`,
+    visualDescription: observedVisual ? `${observedVisual}；${structure.shotScale}，${structure.cameraMovement}` : `${subject}；${structure.shotScale}，${structure.cameraMovement}`,
+    semanticLabel: { content: observedVisual || subject, intent: observedIntent || safeShotFunction(raw, input.themeId) },
+    materialEvidence,
+    presenterMeasurements: presenterShotMeasurements({
+      shotId,
+      startSeconds: structure.sourceTiming.startSeconds,
+      endSeconds: structure.sourceTiming.endSeconds,
+      materialEvidence,
+    }),
     spokenText: input.spokenText ?? null,
+    spokenTextTiming: input.spokenTextTiming,
+    spokenLines: input.spokenLines,
     captionText: input.captionText ?? null,
     audioDescription: '口播逐字逐句冻结并仅替换身份词；保留声画配合，重新制作配音、配乐和音效。',
     rhythmDescription: `${structure.pace}节奏，${structure.transition}`,
     purpose,
     action: {
-      startState: `${subject}处于本镜头的可见初始状态`,
-      path: purpose === 'demonstration' ? `主体完成可观察的操作过程` : `主体按${structure.cameraMovement}逐步揭示信息`,
-      endState: `${subject}停留在可与下一镜衔接的结束状态`,
+      startState: socialText(raw.startState) || `${subject}处于本镜头的可见初始状态`,
+      path: socialText(raw.action) || socialText(raw.interaction) || observedVisual || `${subject}按${structure.cameraMovement}逐步揭示信息`,
+      endState: socialText(raw.endState) || `${subject}停留在本镜头的可见结束状态`,
       spatialRelation: '只记录画面中可确认的主体位置和连续关系；无法确认的左右方向不补写',
     },
     shotLanguage: {
       shotSize: structure.shotScale,
-      cameraAngle: /俯拍|overhead|top.down/i.test(angleText) ? '俯拍' : /仰拍|low.angle/i.test(angleText) ? '仰拍' : /侧面|side/i.test(angleText) ? '侧面机位' : '未确认具体角度',
+      cameraAngle: socialText(raw.angle) || (/俯拍|overhead|top.down/i.test(angleText) ? '俯拍' : /仰拍|low.angle/i.test(angleText) ? '仰拍' : /侧面|side/i.test(angleText) ? '侧面机位' : '未确认具体角度'),
       movement: structure.cameraMovement,
-      composition: /对称|symmetr/i.test(compositionText) ? '对称构图' : /三分|third/i.test(compositionText) ? '三分构图' : /中心|center/i.test(compositionText) ? '中心构图' : '未确认具体构图',
+      composition: socialText(raw.composition) || (/对称|symmetr/i.test(compositionText) ? '对称构图' : /三分|third/i.test(compositionText) ? '三分构图' : /中心|center/i.test(compositionText) ? '中心构图' : '未确认具体构图'),
     },
     audioLayers: {
       voice: voiceDetected ? '检测到人声层；按原节奏保留并做产品关键词替换' : null,
@@ -642,8 +869,8 @@ function publicShot(input: {
       soundEffects: effectsDetected ? '检测到音效层' : null,
     },
     observation: {
-      observableFacts: [subject, structure.shotScale, structure.cameraMovement],
-      inferredIntent: [`推断镜头作用为：${purpose}`],
+      observableFacts: [observedVisual || subject, structure.shotScale, structure.cameraMovement],
+      inferredIntent: [observedIntent || `推断镜头作用为：${purpose}`],
       causalGaps: structure.transition === '自然衔接' ? [] : ['转场可能压缩真实过程，不能据此推断未展示的因果关系'],
       postProductionOverlays: captionDetected ? ['字幕或平台文字属于后期叠加层，不属于物理场景'] : [],
     },
@@ -714,7 +941,7 @@ function hookOption(input: {
         : '先看这个关键细节',
     sourceStrategy: input.strategy,
     truthBoundary,
-    referencePoints: input.firstShot.fidelityPoints.slice(0, 3),
+    referencePoints: [input.firstShot.shotId, ...input.firstShot.fidelityPoints.slice(0, 3)],
     mustDifferPoints: [...REQUIRED_DIFFERENCES],
     detailedAnalysis: {
       firstFrameComposition: input.firstShot.shotLanguage?.composition
@@ -797,8 +1024,28 @@ export function buildSocialTaskReferencePackage(input: {
     sourceRef: normalizedReferenceIdentity(input.source.sourceRef),
     recordId,
     analysis: input.record.aiAnalysis,
+    shotReview: input.record.referenceShotReview,
+    verifiedSpeech: input.record.referenceVerifiedSpeech,
   }).slice(0, 20)}`;
-  const referenceLines = referenceNarrationLines(exact.details);
+  const referenceLines = exact.reviewedSpeech
+    ? exact.details.map(row => reviewedShotSpeech(row, exact.reviewedSpeech!, socialText(exact.analysis.analysisRunId), exact.reviewedSpeechPrecision || 'phrase').spokenText)
+    : referenceNarrationLines(exact.details);
+  const transcript = recordObject(exact.gemini.audioTranscript);
+  const approximateLines = approximateSpeechLines(transcript.segments);
+  const rawTranscriptSegments = Array.isArray(transcript.segments) ? transcript.segments.map(recordObject) : [];
+  const phraseTranscript = rawTranscriptSegments.length > 0 && rawTranscriptSegments.every(segment =>
+    segment.timingPrecision === 'phrase' && Boolean(socialText(segment.provenance))
+    && Boolean(socialText(segment.text)) && Number(segment.end) > Number(segment.start));
+  const sourceSpeech = exact.reviewedSpeech ?? (phraseTranscript ? rawTranscriptSegments : approximateLines.map(line => recordObject(line)));
+  const sourcePrecision = exact.reviewedSpeechPrecision || (phraseTranscript ? 'phrase' : 'coarse');
+  const runId = socialText(exact.analysis.analysisRunId);
+  // ASR is the speech source of truth when present. Model-authored shot
+  // dialogue may paraphrase and must not replace the actual source wording.
+  if (!exact.reviewedSpeech && sourceSpeech.length) {
+    exact.details.forEach((row, index) => {
+      referenceLines[index] = reviewedShotSpeech(row, sourceSpeech, runId, sourcePrecision).spokenText;
+    });
+  }
   const referenceCaptions = referenceCaptionLines(exact.details);
   const replacements = identityPlan({
     record: input.record,
@@ -807,27 +1054,42 @@ export function buildSocialTaskReferencePackage(input: {
     verifiedContext: input.verifiedContext,
     replacements: input.identityReplacements,
   });
-  const shots = exact.details.slice(0, 12).map((row, index) => publicShot({
+  const shots = exact.details.map((row, index) => publicShot({
     row,
     index,
     themeId: input.themeId,
     spokenText: referenceLines[index],
+    spokenTextTiming: sourceSpeech.length
+      ? reviewedShotSpeech(row, sourceSpeech, runId, sourcePrecision).timing
+      : sourceSpeechTiming(row, referenceLines[index] || '', transcript),
+    spokenLines: sourceSpeech.length
+      ? reviewedShotSpeech(row, sourceSpeech, runId, sourcePrecision).lines
+      : verifiedSpokenLines(row, referenceLines[index] || '', transcript),
     captionText: referenceCaptions[index],
     productRef: input.identityReplacements?.productName || input.verifiedContext.productName,
   }));
+  // The default hook is the first substantive opening shot. A poster flash or
+  // transition cannot become the hook merely because it occupies frame zero.
+  const openingShot = (row: ExactReferenceDetail) => row.timing.startSeconds < 3
+    && row.timing.endSeconds > 0 && row.timing.durationSeconds >= 0.2;
+  const defaultHookIndex = exact.details.findIndex(openingShot);
+  if (defaultHookIndex < 0) return null;
+  const selectedHookIndex = defaultHookIndex;
+  const hookShot = shots[selectedHookIndex]!;
   const narrationStyle = deriveNarrationStyleProfile(exact.details.map(row => row.detail));
-  const hookVoiceover = replaceIdentityOnly(referenceLines[0] ?? '', replacements);
-  const hookCaption = replaceIdentityOnly(referenceCaptions[0] ?? '', replacements);
+  const hookVoiceover = replaceIdentityOnly(sourceSpeech.length
+    ? referenceLines[selectedHookIndex] ?? '' : '', replacements);
+  const hookCaption = replaceIdentityOnly(referenceCaptions[selectedHookIndex] ?? '', replacements);
   const primaryHook = {
     ...hookOption({
     analysisId,
     role: 'primary',
     index: 0,
-    firstShot: shots[0]!,
+    firstShot: hookShot,
     strategy: productionStrategyFor(
-      truthBoundaryFor({ purpose: 'hook', subject: shots[0]!.visualDescription }),
+      truthBoundaryFor({ purpose: 'hook', subject: hookShot.visualDescription }),
       'hook',
-      shots[0]!.visualContract,
+      hookShot.visualContract,
     ),
     productLabel: input.verifiedContext.productName || '这类产品',
     narrationStyle,
@@ -838,12 +1100,12 @@ export function buildSocialTaskReferencePackage(input: {
   const hookOptions: SocialThreeSecondHook[] = [
     primaryHook,
     {
-      ...hookOption({ analysisId, role: 'alternative', index: 1, firstShot: shots[0]!, strategy: 'authorized_digital_presenter', productLabel: input.verifiedContext.productName || '这类产品' }),
+      ...hookOption({ analysisId, role: 'alternative', index: 1, firstShot: hookShot, strategy: 'authorized_digital_presenter', productLabel: input.verifiedContext.productName || '这类产品' }),
       spokenLine: hookVoiceover.text || null,
       caption: hookCaption.text || null,
     },
     {
-      ...hookOption({ analysisId, role: 'alternative', index: 2, firstShot: shots[0]!, strategy: 'motion_graphics', productLabel: input.verifiedContext.productName || '这类产品' }),
+      ...hookOption({ analysisId, role: 'alternative', index: 2, firstShot: hookShot, strategy: 'motion_graphics', productLabel: input.verifiedContext.productName || '这类产品' }),
       spokenLine: hookVoiceover.text || null,
       caption: hookCaption.text || null,
     },
@@ -855,7 +1117,8 @@ export function buildSocialTaskReferencePackage(input: {
   const coverage = referenceCoverage({ record: input.record, exact, shots });
   const referenceVideoAnalysis: SocialReferenceVideoAnalysis = {
     analysisId,
-    version: socialRequestHash({ recordId, analysis: input.record.aiAnalysis }).slice(0, 12),
+    version: socialRequestHash({ recordId, analysis: input.record.aiAnalysis,
+      shotReview: input.record.referenceShotReview, verifiedSpeech: input.record.referenceVerifiedSpeech }).slice(0, 12),
     referenceSourceId: input.source.sourceId,
     referenceRecordId: recordId,
     status: 'ready',
@@ -873,19 +1136,59 @@ export function buildSocialTaskReferencePackage(input: {
     rightsNotice: '已入库的工厂、客户案例和企业通用素材可直接用于匹配与剪辑。口播按参考逐字逐句冻结，仅替换企业名、品牌名或产品名，不改写事实、句序、停顿与时长；画面、配乐、音效和字幕动效重新制作。',
     createdAt,
   };
+  // Speech is one ordered source timeline. Visual cuts only reference lines;
+  // they do not create another narration sentence when a line spans cuts.
+  const uniqueSourceLines = new Map<string, NonNullable<SocialReferenceShotAnalysis['spokenLines']>[number]>();
+  for (const shot of shots) for (const line of shot.spokenLines ?? []) {
+    const key = JSON.stringify([line.startSeconds, line.endSeconds, line.text, line.provenance]);
+    uniqueSourceLines.set(key, line);
+  }
+  const narrationLines = [...uniqueSourceLines.values()]
+    .sort((left, right) => left.startSeconds - right.startSeconds
+      || left.endSeconds - right.endSeconds)
+    .map((line, index) => {
+      const visualShotIds = shots
+        .filter(shot => line.startSeconds < shot.endSeconds && line.endSeconds > shot.startSeconds)
+        .map(shot => `replication-${shot.shotId}`);
+      const adjusted = replaceIdentityOnly(line.text, replacements);
+      return {
+        lineId: `line-${String(index + 1).padStart(3, '0')}`,
+        referenceText: line.text,
+        draftText: adjusted.text,
+        sourceStartSeconds: line.startSeconds,
+        sourceEndSeconds: line.endSeconds,
+        sourcePrecision: line.precision,
+        sourceProvenance: line.provenance,
+        replacedEntityTypes: adjusted.replacedEntityTypes,
+        narrationOwnerShotId: visualShotIds[0] ?? '',
+        visualShotIds,
+      };
+    });
   const scriptShots: SocialReplicationScriptShot[] = shots.map((shot, index) => {
+    const rawDetail = exact.details[index]!.detail;
     const referenceSpokenText = referenceLines[index] ?? '';
     const adjustedVoiceover = replaceIdentityOnly(referenceSpokenText, replacements);
     const adjustedCaption = replaceIdentityOnly(referenceCaptions[index] ?? '', replacements);
+    const shotId = `replication-${shot.shotId}`;
+    const speechLines = narrationLines.filter(line => line.visualShotIds.includes(shotId));
+    const ownedLines = speechLines.filter(line => line.narrationOwnerShotId === shotId);
+    const spokenText = ownedLines.map(line => line.draftText).join(' ');
+    const referenceText = ownedLines.map(line => line.referenceText).join(' ');
     return {
-    shotId: `replication-${shot.shotId}`,
+    shotId,
     referenceShotId: shot.shotId,
     startSeconds: shot.startSeconds,
     endSeconds: shot.endSeconds,
     purpose: shot.purpose,
-    visualInstruction: `按${shot.visualDescription}的镜头功能制作全新内容。`,
-    referenceSpokenText: referenceSpokenText || null,
-    spokenText: adjustedVoiceover.text || null,
+    visualInstruction: [
+      `按${shot.visualDescription}的镜头功能制作全新内容。`,
+      socialText(rawDetail.omniPrompt) ? `逐时段动作参考：${socialText(rawDetail.omniPrompt)}` : '',
+      socialText(rawDetail.omniNegativePrompt) ? `须避免：${socialText(rawDetail.omniNegativePrompt)}` : '',
+      shot.materialEvidence?.firstFrameRef ? `参考首帧：${shot.materialEvidence.firstFrameRef}` : '',
+    ].filter(Boolean).join(' '),
+    referenceSpokenText: referenceText || null,
+    spokenText: spokenText || null,
+    speechLines,
     voiceoverReplacement: {
       mode: 'identity_only',
       replacedEntityTypes: adjustedVoiceover.replacedEntityTypes,
@@ -908,6 +1211,8 @@ export function buildSocialTaskReferencePackage(input: {
     primaryHookId: primaryHook.hookId,
     hookOptions,
     shots: scriptShots,
+    narrationLines,
+    narrationSourceStatus: narrationLines.length ? 'asr_aligned' : 'missing_source_asr',
     structureFidelitySummary: '口播逐字逐句冻结，仅替换企业名、品牌名或产品名；同时保留句序、停顿、时长、前三秒机制、镜头功能与节奏关系。',
     originalityDifferenceSummary: '不做事实改写；画面按当前技术栈重制，音乐、音效、字幕动效和视觉包装使用全新版本。',
     createdAt,
@@ -989,16 +1294,36 @@ export {
   resolveSocialTaskReferenceScript,
 } from './socialContentScriptResolvers.js';
 /** Read-only projection: expose actionable codes, never provider logs or local paths. */
+export function referencePreparationForRecord(row: Record<string, unknown> | null):
+  { status: 'pending' | 'review_required' | 'blocked'; reason: string | null } {
+  const analysis = socialObject(socialJson(row?.aiAnalysis));
+  if (row && hasCompletedExactVideoEvidence(analysis ?? {})) {
+    return exactAnalysis(row)
+      ? { status: 'pending', reason: null }
+      : { status: 'review_required', reason: 'director_review_pending' };
+  }
+  const error = socialText(analysis?.analysisError);
+  if (error) return { status: 'blocked', reason: /Monthly usage hard limit|quota|额度/i.test(error) ? 'reference_provider_quota' : 'reference_download_failed' };
+  return { status: 'pending', reason: null };
+}
+
 export async function readReferencePreparation(tenantId: string, sources: SocialTaskSource[]) {
   const source = sources.find(item => item.status === 'active' && item.kind === 'reference_link');
   if (!source) return { status: 'blocked' as const, reason: 'reference_missing' };
   const tenants = [...new Set([tenantId, socialText(process.env.SOCIAL_SHARED_INSPIRATION_TENANT_ID) || 'demo-shared-video-pool'])];
+  const identities = sourceReferenceIdentities(source);
+  const directId = socialText(source.sourceRef).match(/^(?:local:\/\/|trendvideo:|trend_video:|video:)([a-z0-9._-]+)$/i)?.[1];
   for (const owner of tenants) {
-    const result = await store.list<Record<string, unknown>>('trend_videos', { where: { tenantId: owner, sourceUrl: source.sourceRef }, page: 1, perPage: 1 });
-    const row = result.items[0];
-    const analysis = socialObject(socialJson(row?.aiAnalysis));
-    const error = socialText(analysis?.analysisError);
-    if (error) return { status: 'blocked' as const, reason: /Monthly usage hard limit|quota|额度/i.test(error) ? 'reference_provider_quota' : 'reference_download_failed' };
+    const direct = directId ? await store.getById<Record<string, unknown>>('trend_videos', directId) : null;
+    const listed = direct && socialText(direct.tenantId) === owner ? null
+      : await store.list<Record<string, unknown>>('trend_videos', {
+        where: { tenantId: owner, ...(source.sourceRef.startsWith('http') ? { sourceUrl: source.sourceRef } : {}) },
+        page: 1, perPage: source.sourceRef.startsWith('http') ? 10 : 500,
+      });
+    const row = [direct, ...(listed?.items ?? [])].find(candidate => candidate
+      && socialText(candidate.tenantId) === owner
+      && [...identities].some(identity => recordReferenceIdentities(candidate).has(identity)));
+    if (row) return referencePreparationForRecord(row);
   }
   return { status: 'pending' as const, reason: null };
 }

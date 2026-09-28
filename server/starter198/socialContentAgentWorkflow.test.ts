@@ -5,7 +5,7 @@ import type {
   SocialReferenceVideoAnalysis,
   SocialReplicationScriptVersion,
 } from '../../shared/contracts/socialContentWorkflow';
-import { buildSocialAgentWorkflow, socialContentCapabilityRegistry } from './socialContentAgentWorkflow';
+import { buildSocialAgentWorkflow as buildWorkflowUnderTest, socialContentCapabilityRegistry } from './socialContentAgentWorkflow';
 import { alignSocialAssetSupplyPlanToBaseline } from './socialContentAssetSupplyExecution';
 
 const brief: SocialContentTaskBrief = {
@@ -35,6 +35,11 @@ const brief: SocialContentTaskBrief = {
   managementMode: 'one_click_managed',
   productionMode: 'social_ready',
 };
+
+// Most fixture cases exercise downstream planning with a ready reference.
+// Explicitly pass a review-only or missing handoff for gate coverage below.
+const buildSocialAgentWorkflow = (input: Parameters<typeof buildWorkflowUnderTest>[0]) =>
+  buildWorkflowUnderTest({ referenceReviewHandoff: { productionExecutionAllowed: true, versionHash: 'verified-reference-v1' }, ...input });
 
 const truthBoundary = {
   subject: 'none' as const,
@@ -173,6 +178,64 @@ assert.deepEqual(workflow.responsibilityBoundary?.finalGateOrder, ['content_agen
 assert.equal(workflow.responsibilityBoundary?.selfApprovalForbidden, true);
 assert.equal(workflow.directorBrief.scenes[0]?.voiceoverAlignment?.text, replicationScript.shots[0]?.spokenText);
 assert.equal(workflow.directorBrief.scenes[0]?.voiceoverAlignment?.matchMode, 'verbatim_semantic');
+const lineDrivenScript = structuredClone(replicationScript);
+lineDrivenScript.shots[0]!.spokenText = 'A stale generated storyboard sentence.';
+lineDrivenScript.shots[0]!.speechLines = [
+  { lineId: 'line-1', referenceText: 'Our old brand works.', draftText: 'Our new brand works.', sourceStartSeconds: 0, sourceEndSeconds: 1.5, sourcePrecision: 'coarse', sourceProvenance: 'asr', replacedEntityTypes: ['brand'], narrationOwnerShotId: 'scene-hook', visualShotIds: ['scene-hook'] },
+  { lineId: 'line-2', referenceText: 'See the result.', draftText: 'See the result.', sourceStartSeconds: 1.5, sourceEndSeconds: 3, sourcePrecision: 'coarse', sourceProvenance: 'asr', replacedEntityTypes: [], narrationOwnerShotId: 'scene-hook', visualShotIds: ['scene-hook', 'scene-cta'] },
+];
+lineDrivenScript.shots[1]!.spokenText = null;
+lineDrivenScript.shots[1]!.speechLines = [lineDrivenScript.shots[0]!.speechLines[1]!];
+const lineDrivenWorkflow = buildSocialAgentWorkflow({
+  taskId: 'task-line-driven', taskVersion: '1', taskStatus: 'plan_review', mode: 'instant', weeklyPlanId: null,
+  brief, sources: [], factSourceRefs: ['knowledge:product-1'], assetSupplyPlan: supply,
+  referenceAnalysis, replicationScript: lineDrivenScript,
+});
+assert.equal(lineDrivenWorkflow.directorBrief.scenes[0]?.voiceoverAlignment?.text,
+  'Our new brand works. See the result.');
+assert.equal(lineDrivenWorkflow.directorBrief.scenes[0]?.audioLayers.voiceover,
+  'Our new brand works. See the result.');
+assert.equal(lineDrivenWorkflow.directorBrief.scenes[1]?.audioLayers.voiceover, null,
+  'a sentence spanning two visual cuts must play narration only once');
+assert.equal(lineDrivenWorkflow.directorBrief.scenes[1]?.voiceoverLines?.[0]?.isNarrationOwner, false);
+const lineMatchedWorkflow = buildSocialAgentWorkflow({
+  taskId: 'task-line-material', taskVersion: '1', taskStatus: 'plan_review', mode: 'instant', weeklyPlanId: null,
+  brief, sources: [], factSourceRefs: ['knowledge:product-1'], assetSupplyPlan: supply,
+  referenceAnalysis, replicationScript: lineDrivenScript,
+  materialCandidates: [{
+    assetId: 'owned-line-2', sourceRef: 'owned-line-2', label: '行动引导素材', mediaType: 'video',
+    previewUrl: '/media/owned-line-2.mp4', origin: 'my_materials',
+    matchedVoiceoverCueIds: ['line-2'], matchScore: 950,
+    visualContract: lineDrivenWorkflow.directorBrief.scenes[1]!.visualContract,
+  }],
+});
+assert.equal(lineMatchedWorkflow.executionPlan.scenes[1]?.routeDecision?.policy, 'reuse_material');
+const personReference = structuredClone(referenceAnalysis);
+personReference.shots[0]!.visualDescription = '真人凑近摄像头摆出手势并口播';
+personReference.shots[0]!.tags.subjects = ['真人', '产品'];
+personReference.shots[0]!.semanticLabel = { content: '真人近景手势口播', intent: '开场吸引注意' };
+personReference.shots[0]!.materialEvidence = {
+  sourceVideoRef: 'reference-video:1', clipRef: 'reference-clip:1',
+  firstFrameRef: 'reference-first-frame:1', firstFrameSeconds: 0, extractionStatus: 'ready',
+};
+const personWorkflow = buildSocialAgentWorkflow({
+  taskId: 'task-person', taskVersion: '1', taskStatus: 'plan_review', mode: 'weekly', weeklyPlanId: 'weekly-1',
+  brief, sources: [], factSourceRefs: ['knowledge:product-1'],
+  assetSupplyPlan: { ...supply, accountPresenterLock: presenterLock },
+  referenceAnalysis: personReference, replicationScript,
+  now: new Date('2026-09-24T00:00:00.000Z'),
+});
+const personScene = personWorkflow.directorBrief.scenes[0]!;
+assert.equal(personScene.referenceMaterial?.clipRef, 'reference-clip:1');
+assert.equal(personScene.referenceMaterial?.firstFrameRef, 'reference-first-frame:1');
+assert.equal(personScene.referenceMaterial?.semanticLabel?.intent, '开场吸引注意');
+assert.equal(personScene.productionRouting?.presenterIdentityReplacementRequired, true);
+assert.equal(personScene.productionRouting?.enterprisePresenterAssetRef, presenterLock.presenterAssetId);
+assert.equal(personScene.productionRouting?.needsExpressiveAction, true);
+assert.equal(personScene.productionRouting?.needsPreciseLipSync, true);
+assert.equal(personWorkflow.executionPlan.scenes[0]?.routeDecision?.policy, 'expressive_action');
+assert.deepEqual(personWorkflow.executionPlan.scenes[0]?.recommendedCandidateIds, []);
+assert.ok(personScene.acceptanceCriteria.some(item => item.includes('企业人物资产替换')));
 assert.ok(workflow.directorBrief.scenes[0]?.acceptanceCriteria.some(item => item.includes('前三秒钩子必须逐帧核对')));
 assert.equal(workflow.directorBrief.contentRequirements?.product.required, true);
 assert.equal(workflow.directorBrief.contentRequirements?.product.productRef, 'product:verified-1');
@@ -243,6 +306,47 @@ assert.equal(localMaterialWorkflow.directorBrief.contentRequirements?.product.po
 assert.ok(localMaterialWorkflow.executionPlan.scenes.some(scene => scene.candidates.some(candidate => (
   candidate.sourceRef === 'owned-video-1' && candidate.matchedVoiceoverCueIds?.includes('scene-hook:voiceover')
 ))));
+
+// The Content Agent can reuse a matching owned clip even when upstream supply
+// suggested a generator; the Director's route hint is not an instruction.
+const contentSelectedMaterial = buildSocialAgentWorkflow({
+  taskId: 'task-content-selects-material', taskVersion: '1', taskStatus: 'plan_review', mode: 'instant', weeklyPlanId: null,
+  brief, sources: [], factSourceRefs: ['knowledge:product-1'], assetSupplyPlan: supply,
+  referenceAnalysis, replicationScript,
+  materialCandidates: [{
+    assetId: 'cta-owned-1', sourceRef: 'cta-owned-1', label: '行动引导素材', mediaType: 'video',
+    previewUrl: '/media/cta-owned-1.mp4', origin: 'my_materials',
+    matchedVoiceoverCueIds: ['scene-cta:voiceover'], matchScore: 950,
+    visualContract: workflow.directorBrief.scenes[1]!.visualContract,
+  }],
+});
+assert.equal(contentSelectedMaterial.executionPlan.scenes[1]?.routeDecision?.policy, 'reuse_material');
+assert.equal(contentSelectedMaterial.executionPlan.scenes[1]?.selectedSourceStrategy, 'customer_real_asset');
+
+const reviewOnlyWorkflow = buildSocialAgentWorkflow({
+  taskId: 'task-review-only', taskVersion: '1', taskStatus: 'plan_review', mode: 'instant', weeklyPlanId: null,
+  brief, sources: [], factSourceRefs: ['knowledge:product-1'], assetSupplyPlan: supply,
+  referenceAnalysis, replicationScript,
+  referenceReviewHandoff: { productionExecutionAllowed: false, versionHash: 'review-v1' },
+});
+assert.equal(reviewOnlyWorkflow.executionPlanReview.approved, false);
+assert.ok(reviewOnlyWorkflow.executionPlanReview.failedCriteria.some(item => item.includes('参考视频')));
+
+const missingHandoffWorkflow = buildWorkflowUnderTest({
+  taskId: 'task-missing-reference-handoff', taskVersion: '1', taskStatus: 'plan_review', mode: 'instant', weeklyPlanId: null,
+  brief, sources: [], factSourceRefs: ['knowledge:product-1'], assetSupplyPlan: supply,
+  referenceAnalysis, replicationScript,
+});
+assert.equal(missingHandoffWorkflow.executionPlanReview.approved, false,
+  'viral replication must fail closed when the Director handoff is absent');
+const revisedHandoffWorkflow = buildSocialAgentWorkflow({
+  taskId: 'task-1', taskVersion: '12', taskStatus: 'plan_review', mode: 'weekly', weeklyPlanId: 'weekly-1',
+  brief, sources: [], factSourceRefs: ['knowledge:product-1'], assetSupplyPlan: supply,
+  referenceAnalysis, replicationScript,
+  referenceReviewHandoff: { productionExecutionAllowed: true, versionHash: 'revised-source-sha' },
+});
+assert.notEqual(revisedHandoffWorkflow.executionPlanReview.reviewId, workflow.executionPlanReview.reviewId,
+  'a revised source handoff must invalidate the old execution review identity');
 
 const runtimeBlockedDigitalHuman = buildSocialAgentWorkflow({
   taskId: 'task-runtime-blocked', taskVersion: '1', taskStatus: 'plan_review', mode: 'instant', weeklyPlanId: null,

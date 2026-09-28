@@ -1,0 +1,1533 @@
+{
+  "schemaVersion": "sample-content-agent-trial/1",
+  "sourceHandoffVersionHash": "b511815bc8a09a9bbf96c780d371f15d8a63a957e47f5b5e75246f416ebd7375",
+  "sourceStatus": "review_only",
+  "sourceIssueCount": 85,
+  "planStatus": "blocked",
+  "planApproved": false,
+  "failedCriteria": [
+    "导演方案或参考分析尚未满足完整性要求",
+    "参考视频的逐句时间码、分镜证据或授权尚未通过生产门禁",
+    "没有可执行的推荐候选"
+  ],
+  "scenes": [
+    {
+      "sceneId": "shot-2",
+      "routeDecision": {
+        "visualTopic": {
+          "kind": "presenter_talking",
+          "subject": "女主播双手自然下垂，表情严肃，背景可见绿色瓶装产品及纸箱；逐帧动作：仅手臂/手靠近镜头，仅手臂/手靠近镜头，仅手臂/手靠近镜头，仅手臂/手靠近镜头，仅手臂/手靠近镜头，仅手臂/手远离镜头",
+          "intent": "强化场景真实感，建立行业权威印象",
+          "personRole": "expressive_action"
+        },
+        "policy": "expressive_action",
+        "reason": "人物明显动作需要已验收的首帧动作能力；当前注册能力不满足，退回补能力或改镜",
+        "source": "content_agent"
+      },
+      "selectedSourceStrategy": "authorized_digital_presenter",
+      "recommendedCandidateIds": [],
+      "feasibility": "blocked_for_facts_or_rights",
+      "candidates": [
+        {
+          "candidateId": "capability_d881933bb057f04656a8",
+          "kind": "capability",
+          "sourceStrategy": "verified_fact_card",
+          "label": "已确认事实卡片"
+        },
+        {
+          "candidateId": "capability_58ab837c05335f75c081",
+          "kind": "capability",
+          "sourceStrategy": "motion_graphics",
+          "label": "动态图文与示意动画"
+        },
+        {
+          "candidateId": "capability_4565bead571dbc221064",
+          "kind": "capability",
+          "sourceStrategy": "customer_product_image_animation",
+          "label": "产品图基础动效（兼容）"
+        },
+        {
+          "candidateId": "capability_3a52a161e60b0b895890",
+          "kind": "capability",
+          "sourceStrategy": "licensed_stock_asset",
+          "label": "商用授权素材库"
+        }
+      ]
+    },
+    {
+      "sceneId": "shot-3",
+      "routeDecision": {
+        "visualTopic": {
+          "kind": "presenter_talking",
+          "subject": "女主播双臂微张，眼神直视镜头，情绪由平静转为质问",
+          "intent": "增强话语说服力，配合字幕递进",
+          "personRole": "expressive_action"
+        },
+        "policy": "expressive_action",
+        "reason": "人物明显动作需要已验收的首帧动作能力；当前注册能力不满足，退回补能力或改镜",
+        "source": "content_agent"
+      },
+      "selectedSourceStrategy": "authorized_digital_presenter",
+      "recommendedCandidateIds": [],
+      "feasibility": "blocked_for_facts_or_rights",
+      "candidates": [
+        {
+          "candidateId": "capability_b031f8d6acc8b0fa3ab6",
+          "kind": "capability",
+          "sourceStrategy": "verified_fact_card",
+          "label": "已确认事实卡片"
+        },
+        {
+          "candidateId": "capability_89a4f4882e6875368ea7",
+          "kind": "capability",
+          "sourceStrategy": "motion_graphics",
+          "label": "动态图文与示意动画"
+        },
+        {
+          "candidateId": "capability_cc1b40ec023f3494df38",
+          "kind": "capability",
+          "sourceStrategy": "customer_product_image_animation",
+          "label": "产品图基础动效（兼容）"
+        },
+        {
+          "candidateId": "capability_8315f7bb11924a0b5aa1",
+          "kind": "capability",
+          "sourceStrategy": "licensed_stock_asset",
+          "label": "商用授权素材库"
+        }
+      ]
+    },
+    {
+      "sceneId": "shot-4",
+      "routeDecision": {
+        "visualTopic": {
+          "kind": "presenter_talking",
+          "subject": "女主播双臂向上扬起，面部表情惊讶，口型同步字幕",
+          "intent": "放大情绪张力，突出问题严重性",
+          "personRole": "expressive_action"
+        },
+        "policy": "expressive_action",
+        "reason": "人物明显动作需要已验收的首帧动作能力；当前注册能力不满足，退回补能力或改镜",
+        "source": "content_agent"
+      },
+      "selectedSourceStrategy": "authorized_digital_presenter",
+      "recommendedCandidateIds": [],
+      "feasibility": "blocked_for_facts_or_rights",
+      "candidates": [
+        {
+          "candidateId": "capability_c59ae995161f4bd03844",
+          "kind": "capability",
+          "sourceStrategy": "verified_fact_card",
+          "label": "已确认事实卡片"
+        },
+        {
+          "candidateId": "capability_3e733ff29e5d5ecc2c1e",
+          "kind": "capability",
+          "sourceStrategy": "motion_graphics",
+          "label": "动态图文与示意动画"
+        },
+        {
+          "candidateId": "capability_23ac372f8b91515aa802",
+          "kind": "capability",
+          "sourceStrategy": "customer_product_image_animation",
+          "label": "产品图基础动效（兼容）"
+        },
+        {
+          "candidateId": "capability_cc76f89cc9b1895f6ded",
+          "kind": "capability",
+          "sourceStrategy": "licensed_stock_asset",
+          "label": "商用授权素材库"
+        }
+      ]
+    },
+    {
+      "sceneId": "shot-6",
+      "routeDecision": {
+        "visualTopic": {
+          "kind": "presenter_talking",
+          "subject": "女主播双臂完全展开，身体后仰，表情略带无奈",
+          "intent": "重复情绪点，加强记忆锚定",
+          "personRole": "expressive_action"
+        },
+        "policy": "expressive_action",
+        "reason": "人物明显动作需要已验收的首帧动作能力；当前注册能力不满足，退回补能力或改镜",
+        "source": "content_agent"
+      },
+      "selectedSourceStrategy": "authorized_digital_presenter",
+      "recommendedCandidateIds": [],
+      "feasibility": "blocked_for_facts_or_rights",
+      "candidates": [
+        {
+          "candidateId": "capability_87f5693ea560798051f7",
+          "kind": "capability",
+          "sourceStrategy": "verified_fact_card",
+          "label": "已确认事实卡片"
+        },
+        {
+          "candidateId": "capability_165aa201996a016be67e",
+          "kind": "capability",
+          "sourceStrategy": "motion_graphics",
+          "label": "动态图文与示意动画"
+        },
+        {
+          "candidateId": "capability_ae25cbc22b3e42e35f88",
+          "kind": "capability",
+          "sourceStrategy": "customer_product_image_animation",
+          "label": "产品图基础动效（兼容）"
+        },
+        {
+          "candidateId": "capability_219e413900f581222f41",
+          "kind": "capability",
+          "sourceStrategy": "licensed_stock_asset",
+          "label": "商用授权素材库"
+        }
+      ]
+    },
+    {
+      "sceneId": "shot-7",
+      "routeDecision": {
+        "visualTopic": {
+          "kind": "presenter_talking",
+          "subject": "女性面部布满白色粉末状颗粒，尤其在鼻翼、额头、下巴处明显",
+          "intent": "展示卡粉问题，引发共情",
+          "personRole": "visible_speech"
+        },
+        "policy": "needs_capability",
+        "reason": "没有合格素材，按分镜目标检查可用能力",
+        "source": "content_agent"
+      },
+      "selectedSourceStrategy": "licensed_stock_asset",
+      "recommendedCandidateIds": [
+        "capability_b028cb1fd26946b10dec"
+      ],
+      "feasibility": "functional_equivalent",
+      "candidates": [
+        {
+          "candidateId": "capability_1f4f180cb11caba06095",
+          "kind": "capability",
+          "sourceStrategy": "verified_fact_card",
+          "label": "已确认事实卡片"
+        },
+        {
+          "candidateId": "capability_6d93b7795f5ca387276a",
+          "kind": "capability",
+          "sourceStrategy": "motion_graphics",
+          "label": "动态图文与示意动画"
+        },
+        {
+          "candidateId": "capability_3d9983d4ccdb69adce96",
+          "kind": "capability",
+          "sourceStrategy": "customer_product_image_animation",
+          "label": "产品图基础动效（兼容）"
+        },
+        {
+          "candidateId": "capability_b028cb1fd26946b10dec",
+          "kind": "capability",
+          "sourceStrategy": "licensed_stock_asset",
+          "label": "商用授权素材库"
+        }
+      ]
+    },
+    {
+      "sceneId": "shot-8",
+      "routeDecision": {
+        "visualTopic": {
+          "kind": "presenter_talking",
+          "subject": "女性戴粉色与白色拼接假发，面部有白色粉粒，眼影晕染不均，嘴唇边缘脱色",
+          "intent": "展示褪色问题，增强视觉冲击",
+          "personRole": "visible_speech"
+        },
+        "policy": "needs_capability",
+        "reason": "没有合格素材，按分镜目标检查可用能力",
+        "source": "content_agent"
+      },
+      "selectedSourceStrategy": "licensed_stock_asset",
+      "recommendedCandidateIds": [
+        "capability_57d35657b537b1633d1b"
+      ],
+      "feasibility": "functional_equivalent",
+      "candidates": [
+        {
+          "candidateId": "capability_6ce6f183f1466f5353bb",
+          "kind": "capability",
+          "sourceStrategy": "verified_fact_card",
+          "label": "已确认事实卡片"
+        },
+        {
+          "candidateId": "capability_60183403d6a2e612f7bc",
+          "kind": "capability",
+          "sourceStrategy": "motion_graphics",
+          "label": "动态图文与示意动画"
+        },
+        {
+          "candidateId": "capability_5bd99ac07b33c39bffd2",
+          "kind": "capability",
+          "sourceStrategy": "customer_product_image_animation",
+          "label": "产品图基础动效（兼容）"
+        },
+        {
+          "candidateId": "capability_57d35657b537b1633d1b",
+          "kind": "capability",
+          "sourceStrategy": "licensed_stock_asset",
+          "label": "商用授权素材库"
+        }
+      ]
+    },
+    {
+      "sceneId": "shot-10",
+      "routeDecision": {
+        "visualTopic": {
+          "kind": "product_introduction",
+          "subject": "水泥地上散落大量化妆品包装盒，部分已压扁；右侧可见一人脚穿黑鞋站立",
+          "intent": "呈现退货危机，制造紧迫感",
+          "personRole": "none"
+        },
+        "policy": "product_scene",
+        "reason": "没有合格素材，按分镜目标检查可用能力",
+        "source": "content_agent"
+      },
+      "selectedSourceStrategy": "customer_product_image_animation",
+      "recommendedCandidateIds": [
+        "capability_d8878d8275bcf0972c6b"
+      ],
+      "feasibility": "functional_equivalent",
+      "candidates": [
+        {
+          "candidateId": "capability_efc591133ab609d42c66",
+          "kind": "capability",
+          "sourceStrategy": "verified_fact_card",
+          "label": "已确认事实卡片"
+        },
+        {
+          "candidateId": "capability_03ee09702afa6eb2cd02",
+          "kind": "capability",
+          "sourceStrategy": "motion_graphics",
+          "label": "动态图文与示意动画"
+        },
+        {
+          "candidateId": "capability_d8878d8275bcf0972c6b",
+          "kind": "capability",
+          "sourceStrategy": "customer_product_image_animation",
+          "label": "产品图基础动效（兼容）"
+        },
+        {
+          "candidateId": "capability_0c03f4e6f42e938cc63e",
+          "kind": "capability",
+          "sourceStrategy": "licensed_stock_asset",
+          "label": "商用授权素材库"
+        }
+      ]
+    },
+    {
+      "sceneId": "shot-11",
+      "routeDecision": {
+        "visualTopic": {
+          "kind": "presenter_talking",
+          "subject": "工人戴蓝发网口罩，正将紫色膏体注入小罐；背景堆满成品瓶罐；金发蓝眼女性面部，粉底刷从颧骨向太阳穴扫动",
+          "intent": "展示品质保障，提供信任背书；突出产品使用过程",
+          "personRole": "visible_speech"
+        },
+        "policy": "needs_capability",
+        "reason": "没有合格素材，按分镜目标检查可用能力",
+        "source": "content_agent"
+      },
+      "selectedSourceStrategy": "licensed_stock_asset",
+      "recommendedCandidateIds": [
+        "capability_7c33b561db51c70a2e56"
+      ],
+      "feasibility": "functional_equivalent",
+      "candidates": [
+        {
+          "candidateId": "capability_d693fdf9f51b89b6eb13",
+          "kind": "capability",
+          "sourceStrategy": "verified_fact_card",
+          "label": "已确认事实卡片"
+        },
+        {
+          "candidateId": "capability_ab8bf56f33b788f424c9",
+          "kind": "capability",
+          "sourceStrategy": "motion_graphics",
+          "label": "动态图文与示意动画"
+        },
+        {
+          "candidateId": "capability_76390d7fad076707a6da",
+          "kind": "capability",
+          "sourceStrategy": "customer_product_image_animation",
+          "label": "产品图基础动效（兼容）"
+        },
+        {
+          "candidateId": "capability_7c33b561db51c70a2e56",
+          "kind": "capability",
+          "sourceStrategy": "licensed_stock_asset",
+          "label": "商用授权素材库"
+        }
+      ]
+    },
+    {
+      "sceneId": "shot-12",
+      "routeDecision": {
+        "visualTopic": {
+          "kind": "presenter_talking",
+          "subject": "穿白大褂男性背对镜头，穿黑外套白裙女性侧身持瓶观察",
+          "intent": "建立科研可信度",
+          "personRole": "visible_speech"
+        },
+        "policy": "needs_capability",
+        "reason": "没有合格素材，按分镜目标检查可用能力",
+        "source": "content_agent"
+      },
+      "selectedSourceStrategy": "licensed_stock_asset",
+      "recommendedCandidateIds": [
+        "capability_611120cfe6dd87070b96"
+      ],
+      "feasibility": "functional_equivalent",
+      "candidates": [
+        {
+          "candidateId": "capability_a31ff27716152eb8ac99",
+          "kind": "capability",
+          "sourceStrategy": "verified_fact_card",
+          "label": "已确认事实卡片"
+        },
+        {
+          "candidateId": "capability_32bfd2517f46cad07d48",
+          "kind": "capability",
+          "sourceStrategy": "motion_graphics",
+          "label": "动态图文与示意动画"
+        },
+        {
+          "candidateId": "capability_68ec8eeb17ff53bfea01",
+          "kind": "capability",
+          "sourceStrategy": "customer_product_image_animation",
+          "label": "产品图基础动效（兼容）"
+        },
+        {
+          "candidateId": "capability_611120cfe6dd87070b96",
+          "kind": "capability",
+          "sourceStrategy": "licensed_stock_asset",
+          "label": "商用授权素材库"
+        }
+      ]
+    },
+    {
+      "sceneId": "shot-13",
+      "routeDecision": {
+        "visualTopic": {
+          "kind": "product_introduction",
+          "subject": "双手持三瓶Bymon Tila粉底液，瓶身正对镜头，标签清晰可见",
+          "intent": "突出产品包装与品牌信息",
+          "personRole": "none"
+        },
+        "policy": "product_scene",
+        "reason": "没有合格素材，按分镜目标检查可用能力",
+        "source": "content_agent"
+      },
+      "selectedSourceStrategy": "customer_product_image_animation",
+      "recommendedCandidateIds": [
+        "capability_059135d2ba7ef07867b5"
+      ],
+      "feasibility": "functional_equivalent",
+      "candidates": [
+        {
+          "candidateId": "capability_081988db37e5365cc0f1",
+          "kind": "capability",
+          "sourceStrategy": "verified_fact_card",
+          "label": "已确认事实卡片"
+        },
+        {
+          "candidateId": "capability_333617c57ec1ac6a0a84",
+          "kind": "capability",
+          "sourceStrategy": "motion_graphics",
+          "label": "动态图文与示意动画"
+        },
+        {
+          "candidateId": "capability_059135d2ba7ef07867b5",
+          "kind": "capability",
+          "sourceStrategy": "customer_product_image_animation",
+          "label": "产品图基础动效（兼容）"
+        },
+        {
+          "candidateId": "capability_8328db396b895cd9039e",
+          "kind": "capability",
+          "sourceStrategy": "licensed_stock_asset",
+          "label": "商用授权素材库"
+        }
+      ]
+    },
+    {
+      "sceneId": "shot-14",
+      "routeDecision": {
+        "visualTopic": {
+          "kind": "presenter_talking",
+          "subject": "女性研究员递瓶给男性研究员，后者接住并查看",
+          "intent": "展现研发互动与产品开发过程",
+          "personRole": "visible_speech"
+        },
+        "policy": "needs_capability",
+        "reason": "没有合格素材，按分镜目标检查可用能力",
+        "source": "content_agent"
+      },
+      "selectedSourceStrategy": "licensed_stock_asset",
+      "recommendedCandidateIds": [
+        "capability_b912d5c8fd153251a940"
+      ],
+      "feasibility": "functional_equivalent",
+      "candidates": [
+        {
+          "candidateId": "capability_f9257e725c54aefb2ce9",
+          "kind": "capability",
+          "sourceStrategy": "verified_fact_card",
+          "label": "已确认事实卡片"
+        },
+        {
+          "candidateId": "capability_08abb8b7ba26949aa19a",
+          "kind": "capability",
+          "sourceStrategy": "motion_graphics",
+          "label": "动态图文与示意动画"
+        },
+        {
+          "candidateId": "capability_01d41a11ed23aa855a77",
+          "kind": "capability",
+          "sourceStrategy": "customer_product_image_animation",
+          "label": "产品图基础动效（兼容）"
+        },
+        {
+          "candidateId": "capability_b912d5c8fd153251a940",
+          "kind": "capability",
+          "sourceStrategy": "licensed_stock_asset",
+          "label": "商用授权素材库"
+        }
+      ]
+    },
+    {
+      "sceneId": "shot-15",
+      "routeDecision": {
+        "visualTopic": {
+          "kind": "presenter_talking",
+          "subject": "女性侧脸静态展示，皮肤光滑细腻，无明显瑕疵",
+          "intent": "强化视觉美感与肤质表现",
+          "personRole": "visible_speech"
+        },
+        "policy": "needs_capability",
+        "reason": "没有合格素材，按分镜目标检查可用能力",
+        "source": "content_agent"
+      },
+      "selectedSourceStrategy": "licensed_stock_asset",
+      "recommendedCandidateIds": [
+        "capability_a1881a9cd53e5ecfd28b"
+      ],
+      "feasibility": "functional_equivalent",
+      "candidates": [
+        {
+          "candidateId": "capability_93242468512b85b5676f",
+          "kind": "capability",
+          "sourceStrategy": "verified_fact_card",
+          "label": "已确认事实卡片"
+        },
+        {
+          "candidateId": "capability_08d1049cf474f2098ef8",
+          "kind": "capability",
+          "sourceStrategy": "motion_graphics",
+          "label": "动态图文与示意动画"
+        },
+        {
+          "candidateId": "capability_305846ac4ecb6cb890c2",
+          "kind": "capability",
+          "sourceStrategy": "customer_product_image_animation",
+          "label": "产品图基础动效（兼容）"
+        },
+        {
+          "candidateId": "capability_a1881a9cd53e5ecfd28b",
+          "kind": "capability",
+          "sourceStrategy": "licensed_stock_asset",
+          "label": "商用授权素材库"
+        }
+      ]
+    },
+    {
+      "sceneId": "shot-16",
+      "routeDecision": {
+        "visualTopic": {
+          "kind": "presenter_talking",
+          "subject": "男女研究员面对面站立，女性手势讲解，男性点头倾听",
+          "intent": "补充技术细节与信任背书",
+          "personRole": "expressive_action"
+        },
+        "policy": "expressive_action",
+        "reason": "人物明显动作需要已验收的首帧动作能力；当前注册能力不满足，退回补能力或改镜",
+        "source": "content_agent"
+      },
+      "selectedSourceStrategy": "motion_graphics",
+      "recommendedCandidateIds": [],
+      "feasibility": "blocked_for_facts_or_rights",
+      "candidates": [
+        {
+          "candidateId": "capability_42323144f8485c2c980e",
+          "kind": "capability",
+          "sourceStrategy": "motion_graphics",
+          "label": "动态图文与示意动画"
+        },
+        {
+          "candidateId": "capability_d7dec2de0c871d8f0df9",
+          "kind": "capability",
+          "sourceStrategy": "verified_fact_card",
+          "label": "已确认事实卡片"
+        },
+        {
+          "candidateId": "capability_152b5b61c4440310166f",
+          "kind": "capability",
+          "sourceStrategy": "customer_product_image_animation",
+          "label": "产品图基础动效（兼容）"
+        },
+        {
+          "candidateId": "capability_4460e5b62f27cb2a385c",
+          "kind": "capability",
+          "sourceStrategy": "licensed_stock_asset",
+          "label": "商用授权素材库"
+        }
+      ]
+    },
+    {
+      "sceneId": "shot-17",
+      "routeDecision": {
+        "visualTopic": {
+          "kind": "product_introduction",
+          "subject": "双手持三瓶Bymon Tila粉底液，瓶身标签清晰可见，叠加红色文字",
+          "intent": "再次强调定制服务优势",
+          "personRole": "none"
+        },
+        "policy": "product_scene",
+        "reason": "没有合格素材，按分镜目标检查可用能力",
+        "source": "content_agent"
+      },
+      "selectedSourceStrategy": "customer_product_image_animation",
+      "recommendedCandidateIds": [
+        "capability_5148ac815279d4f9b456"
+      ],
+      "feasibility": "functional_equivalent",
+      "candidates": [
+        {
+          "candidateId": "capability_d16b6f1f7175d9e2d1a3",
+          "kind": "capability",
+          "sourceStrategy": "verified_fact_card",
+          "label": "已确认事实卡片"
+        },
+        {
+          "candidateId": "capability_57b6b40c78ccece179d7",
+          "kind": "capability",
+          "sourceStrategy": "motion_graphics",
+          "label": "动态图文与示意动画"
+        },
+        {
+          "candidateId": "capability_5148ac815279d4f9b456",
+          "kind": "capability",
+          "sourceStrategy": "customer_product_image_animation",
+          "label": "产品图基础动效（兼容）"
+        },
+        {
+          "candidateId": "capability_1c6b2c7e76ec76520cb9",
+          "kind": "capability",
+          "sourceStrategy": "licensed_stock_asset",
+          "label": "商用授权素材库"
+        }
+      ]
+    },
+    {
+      "sceneId": "shot-18",
+      "routeDecision": {
+        "visualTopic": {
+          "kind": "product_introduction",
+          "subject": "多瓶Bymon Tila粉底液陈列于桌面，灯光聚焦瓶身",
+          "intent": "综合展示产品全貌与品牌调性",
+          "personRole": "none"
+        },
+        "policy": "product_scene",
+        "reason": "没有合格素材，按分镜目标检查可用能力",
+        "source": "content_agent"
+      },
+      "selectedSourceStrategy": "customer_product_image_animation",
+      "recommendedCandidateIds": [
+        "capability_19026eba5c9110e13b34"
+      ],
+      "feasibility": "functional_equivalent",
+      "candidates": [
+        {
+          "candidateId": "capability_910a7b38cdae32b42b9d",
+          "kind": "capability",
+          "sourceStrategy": "motion_graphics",
+          "label": "动态图文与示意动画"
+        },
+        {
+          "candidateId": "capability_d1414e568ef0418181e7",
+          "kind": "capability",
+          "sourceStrategy": "verified_fact_card",
+          "label": "已确认事实卡片"
+        },
+        {
+          "candidateId": "capability_19026eba5c9110e13b34",
+          "kind": "capability",
+          "sourceStrategy": "customer_product_image_animation",
+          "label": "产品图基础动效（兼容）"
+        },
+        {
+          "candidateId": "capability_8a0497a6ce704c5d0e5a",
+          "kind": "capability",
+          "sourceStrategy": "licensed_stock_asset",
+          "label": "商用授权素材库"
+        }
+      ]
+    },
+    {
+      "sceneId": "shot-19",
+      "routeDecision": {
+        "visualTopic": {
+          "kind": "product_introduction",
+          "subject": "单瓶Bymon Tila粉底液静置于桌面，灯光聚焦瓶身；穿白大褂男性低头称量粉末，右侧女性双手交叠观察",
+          "intent": "收尾强化品牌记忆点；建立专业形象，点题研发团队",
+          "personRole": "visible_speech"
+        },
+        "policy": "product_scene",
+        "reason": "没有合格素材，按分镜目标检查可用能力",
+        "source": "content_agent"
+      },
+      "selectedSourceStrategy": "customer_product_image_animation",
+      "recommendedCandidateIds": [
+        "capability_72cb6144775e4bccdfc3"
+      ],
+      "feasibility": "functional_equivalent",
+      "candidates": [
+        {
+          "candidateId": "capability_1f4dad00685c57afe2a2",
+          "kind": "capability",
+          "sourceStrategy": "verified_fact_card",
+          "label": "已确认事实卡片"
+        },
+        {
+          "candidateId": "capability_70847bcf378f904c8270",
+          "kind": "capability",
+          "sourceStrategy": "motion_graphics",
+          "label": "动态图文与示意动画"
+        },
+        {
+          "candidateId": "capability_72cb6144775e4bccdfc3",
+          "kind": "capability",
+          "sourceStrategy": "customer_product_image_animation",
+          "label": "产品图基础动效（兼容）"
+        },
+        {
+          "candidateId": "capability_e252f11fcaeb2877f4e2",
+          "kind": "capability",
+          "sourceStrategy": "licensed_stock_asset",
+          "label": "商用授权素材库"
+        }
+      ]
+    },
+    {
+      "sceneId": "shot-20",
+      "routeDecision": {
+        "visualTopic": {
+          "kind": "presenter_talking",
+          "subject": "男性左手倾倒白色粉末入烧杯，右手扶瓶，烧杯内已有浅色液体",
+          "intent": "强化定制化操作细节，呼应‘how you want it’",
+          "personRole": "visible_speech"
+        },
+        "policy": "needs_capability",
+        "reason": "没有合格素材，按分镜目标检查可用能力",
+        "source": "content_agent"
+      },
+      "selectedSourceStrategy": "licensed_stock_asset",
+      "recommendedCandidateIds": [
+        "capability_88056fe5b1b7915c6eb0"
+      ],
+      "feasibility": "functional_equivalent",
+      "candidates": [
+        {
+          "candidateId": "capability_870b003961eefd500a0c",
+          "kind": "capability",
+          "sourceStrategy": "verified_fact_card",
+          "label": "已确认事实卡片"
+        },
+        {
+          "candidateId": "capability_79f1d563dee60202fae2",
+          "kind": "capability",
+          "sourceStrategy": "motion_graphics",
+          "label": "动态图文与示意动画"
+        },
+        {
+          "candidateId": "capability_e84413a9aaf26660e955",
+          "kind": "capability",
+          "sourceStrategy": "customer_product_image_animation",
+          "label": "产品图基础动效（兼容）"
+        },
+        {
+          "candidateId": "capability_88056fe5b1b7915c6eb0",
+          "kind": "capability",
+          "sourceStrategy": "licensed_stock_asset",
+          "label": "商用授权素材库"
+        }
+      ]
+    },
+    {
+      "sceneId": "shot-21",
+      "routeDecision": {
+        "visualTopic": {
+          "kind": "product_introduction",
+          "subject": "工人戴蓝色手套，双手在传送带上放置/调整瓶身；背景两台蓝色电机设备运行",
+          "intent": "展现规模化生产流程，突出产能",
+          "personRole": "none"
+        },
+        "policy": "product_scene",
+        "reason": "没有合格素材，按分镜目标检查可用能力",
+        "source": "content_agent"
+      },
+      "selectedSourceStrategy": "customer_product_image_animation",
+      "recommendedCandidateIds": [
+        "capability_3de0659fdb323b6f12ea"
+      ],
+      "feasibility": "functional_equivalent",
+      "candidates": [
+        {
+          "candidateId": "capability_e633406e99f12ace91d7",
+          "kind": "capability",
+          "sourceStrategy": "verified_fact_card",
+          "label": "已确认事实卡片"
+        },
+        {
+          "candidateId": "capability_4c189bc042b62f0c76de",
+          "kind": "capability",
+          "sourceStrategy": "motion_graphics",
+          "label": "动态图文与示意动画"
+        },
+        {
+          "candidateId": "capability_3de0659fdb323b6f12ea",
+          "kind": "capability",
+          "sourceStrategy": "customer_product_image_animation",
+          "label": "产品图基础动效（兼容）"
+        },
+        {
+          "candidateId": "capability_9856ecd033eecb4a585d",
+          "kind": "capability",
+          "sourceStrategy": "licensed_stock_asset",
+          "label": "商用授权素材库"
+        }
+      ]
+    },
+    {
+      "sceneId": "shot-22",
+      "routeDecision": {
+        "visualTopic": {
+          "kind": "factory_footage",
+          "subject": "双头机械臂垂直下压，针头插入瓶口进行灌装，瓶内液体呈琥珀色",
+          "intent": "凸显技术精度与自动化水平",
+          "personRole": "none"
+        },
+        "policy": "needs_capability",
+        "reason": "没有合格素材，按分镜目标检查可用能力",
+        "source": "content_agent"
+      },
+      "selectedSourceStrategy": "licensed_stock_asset",
+      "recommendedCandidateIds": [
+        "capability_09858f0988b632697dec"
+      ],
+      "feasibility": "functional_equivalent",
+      "candidates": [
+        {
+          "candidateId": "capability_6fd99ac90b88bd950047",
+          "kind": "capability",
+          "sourceStrategy": "motion_graphics",
+          "label": "动态图文与示意动画"
+        },
+        {
+          "candidateId": "capability_3c46a554df37e23cfd58",
+          "kind": "capability",
+          "sourceStrategy": "verified_fact_card",
+          "label": "已确认事实卡片"
+        },
+        {
+          "candidateId": "capability_ce28f92b358b00c29961",
+          "kind": "capability",
+          "sourceStrategy": "customer_product_image_animation",
+          "label": "产品图基础动效（兼容）"
+        },
+        {
+          "candidateId": "capability_09858f0988b632697dec",
+          "kind": "capability",
+          "sourceStrategy": "licensed_stock_asset",
+          "label": "商用授权素材库"
+        }
+      ]
+    },
+    {
+      "sceneId": "shot-23",
+      "routeDecision": {
+        "visualTopic": {
+          "kind": "product_introduction",
+          "subject": "戴蓝手套工人右手拿起瓶身旋转查看，左手托底，瓶身反光明显",
+          "intent": "强化品控意识，建立信任闭环",
+          "personRole": "none"
+        },
+        "policy": "product_scene",
+        "reason": "没有合格素材，按分镜目标检查可用能力",
+        "source": "content_agent"
+      },
+      "selectedSourceStrategy": "customer_product_image_animation",
+      "recommendedCandidateIds": [
+        "capability_13042872c27526422de3"
+      ],
+      "feasibility": "functional_equivalent",
+      "candidates": [
+        {
+          "candidateId": "capability_77e2c17f7e5d4a010aae",
+          "kind": "capability",
+          "sourceStrategy": "verified_fact_card",
+          "label": "已确认事实卡片"
+        },
+        {
+          "candidateId": "capability_29b744667b7c8fa93a1a",
+          "kind": "capability",
+          "sourceStrategy": "motion_graphics",
+          "label": "动态图文与示意动画"
+        },
+        {
+          "candidateId": "capability_13042872c27526422de3",
+          "kind": "capability",
+          "sourceStrategy": "customer_product_image_animation",
+          "label": "产品图基础动效（兼容）"
+        },
+        {
+          "candidateId": "capability_3e0d2f31f61647f55e5b",
+          "kind": "capability",
+          "sourceStrategy": "licensed_stock_asset",
+          "label": "商用授权素材库"
+        }
+      ]
+    },
+    {
+      "sceneId": "shot-24",
+      "routeDecision": {
+        "visualTopic": {
+          "kind": "product_introduction",
+          "subject": "双手整理瓶身，瓶身含银色泵头，部分已套透明塑料袋",
+          "intent": "呈现最终交付成果，强化完成感",
+          "personRole": "none"
+        },
+        "policy": "product_scene",
+        "reason": "没有合格素材，按分镜目标检查可用能力",
+        "source": "content_agent"
+      },
+      "selectedSourceStrategy": "customer_product_image_animation",
+      "recommendedCandidateIds": [
+        "capability_b7312e06130963e45041"
+      ],
+      "feasibility": "functional_equivalent",
+      "candidates": [
+        {
+          "candidateId": "capability_7cef389a03bcf691cb42",
+          "kind": "capability",
+          "sourceStrategy": "verified_fact_card",
+          "label": "已确认事实卡片"
+        },
+        {
+          "candidateId": "capability_9cfc5971fd7d5cdb237a",
+          "kind": "capability",
+          "sourceStrategy": "motion_graphics",
+          "label": "动态图文与示意动画"
+        },
+        {
+          "candidateId": "capability_b7312e06130963e45041",
+          "kind": "capability",
+          "sourceStrategy": "customer_product_image_animation",
+          "label": "产品图基础动效（兼容）"
+        },
+        {
+          "candidateId": "capability_8b0ec1c426f57f77adb8",
+          "kind": "capability",
+          "sourceStrategy": "licensed_stock_asset",
+          "label": "商用授权素材库"
+        }
+      ]
+    },
+    {
+      "sceneId": "shot-25",
+      "routeDecision": {
+        "visualTopic": {
+          "kind": "other",
+          "subject": "五支透明瓶配银色泵头整齐排列于纯白台面，无其他干扰物；女主穿浅蓝西装+粉裙，戴眼镜，左手举两瓶棕褐色液体，右手举一奶白色液体",
+          "intent": "收尾凝固印象，提升品牌质感；建立产品可触达性与专业形象",
+          "personRole": "none"
+        },
+        "policy": "needs_capability",
+        "reason": "没有合格素材，按分镜目标检查可用能力",
+        "source": "content_agent"
+      },
+      "selectedSourceStrategy": "licensed_stock_asset",
+      "recommendedCandidateIds": [
+        "capability_9df3dc46aa4d93730b4c"
+      ],
+      "feasibility": "functional_equivalent",
+      "candidates": [
+        {
+          "candidateId": "capability_146bf08a27e18ceb0527",
+          "kind": "capability",
+          "sourceStrategy": "verified_fact_card",
+          "label": "已确认事实卡片"
+        },
+        {
+          "candidateId": "capability_42589044c100c9d44f7f",
+          "kind": "capability",
+          "sourceStrategy": "motion_graphics",
+          "label": "动态图文与示意动画"
+        },
+        {
+          "candidateId": "capability_43e39c14ed05627866c7",
+          "kind": "capability",
+          "sourceStrategy": "customer_product_image_animation",
+          "label": "产品图基础动效（兼容）"
+        },
+        {
+          "candidateId": "capability_9df3dc46aa4d93730b4c",
+          "kind": "capability",
+          "sourceStrategy": "licensed_stock_asset",
+          "label": "商用授权素材库"
+        }
+      ]
+    },
+    {
+      "sceneId": "shot-26",
+      "routeDecision": {
+        "visualTopic": {
+          "kind": "factory_footage",
+          "subject": "女主表情略显惊讶，嘴微张，双手仍持瓶，右后方出现穿白大褂男性正操作仪器；银色金属灌装头垂直向下压入中间罐盖，两侧各有一罐已封盖；背景为不锈钢设备外壳",
+          "intent": "延续讲解节奏，强化‘你能构建你的’理念；展示自动化生产能力与品牌背书",
+          "personRole": "visible_speech"
+        },
+        "policy": "needs_capability",
+        "reason": "没有合格素材，按分镜目标检查可用能力",
+        "source": "content_agent"
+      },
+      "selectedSourceStrategy": "licensed_stock_asset",
+      "recommendedCandidateIds": [
+        "capability_3e9d46ec3258fcab79d6"
+      ],
+      "feasibility": "functional_equivalent",
+      "candidates": [
+        {
+          "candidateId": "capability_80db500d1f010de39f66",
+          "kind": "capability",
+          "sourceStrategy": "motion_graphics",
+          "label": "动态图文与示意动画"
+        },
+        {
+          "candidateId": "capability_589a0e5a280f41926a86",
+          "kind": "capability",
+          "sourceStrategy": "verified_fact_card",
+          "label": "已确认事实卡片"
+        },
+        {
+          "candidateId": "capability_4af74d6b9e87aba04183",
+          "kind": "capability",
+          "sourceStrategy": "customer_product_image_animation",
+          "label": "产品图基础动效（兼容）"
+        },
+        {
+          "candidateId": "capability_3e9d46ec3258fcab79d6",
+          "kind": "capability",
+          "sourceStrategy": "licensed_stock_asset",
+          "label": "商用授权素材库"
+        }
+      ]
+    },
+    {
+      "sceneId": "shot-27",
+      "routeDecision": {
+        "visualTopic": {
+          "kind": "presenter_talking",
+          "subject": "一位黑衣女性正面向其他四人讲话，桌上放水瓶与绿植；其余人专注倾听，其中一男戴眼镜穿白T恤",
+          "intent": "呈现客户合作场景，强化商业价值",
+          "personRole": "visible_speech"
+        },
+        "policy": "needs_capability",
+        "reason": "没有合格素材，按分镜目标检查可用能力",
+        "source": "content_agent"
+      },
+      "selectedSourceStrategy": "licensed_stock_asset",
+      "recommendedCandidateIds": [
+        "capability_ff1653ca6985fd3fe540"
+      ],
+      "feasibility": "functional_equivalent",
+      "candidates": [
+        {
+          "candidateId": "capability_f17056b3b1979bfb92e3",
+          "kind": "capability",
+          "sourceStrategy": "motion_graphics",
+          "label": "动态图文与示意动画"
+        },
+        {
+          "candidateId": "capability_e93c1db1d56b43783b41",
+          "kind": "capability",
+          "sourceStrategy": "verified_fact_card",
+          "label": "已确认事实卡片"
+        },
+        {
+          "candidateId": "capability_b508f48721e09769d69f",
+          "kind": "capability",
+          "sourceStrategy": "customer_product_image_animation",
+          "label": "产品图基础动效（兼容）"
+        },
+        {
+          "candidateId": "capability_ff1653ca6985fd3fe540",
+          "kind": "capability",
+          "sourceStrategy": "licensed_stock_asset",
+          "label": "商用授权素材库"
+        }
+      ]
+    },
+    {
+      "sceneId": "shot-28",
+      "routeDecision": {
+        "visualTopic": {
+          "kind": "other",
+          "subject": "会议场景延续，右上角叠加红色上升折线图（10格网格背景），覆盖部分天花板区域",
+          "intent": "强化增长预期，连接会议与成果",
+          "personRole": "none"
+        },
+        "policy": "needs_capability",
+        "reason": "没有合格素材，按分镜目标检查可用能力",
+        "source": "content_agent"
+      },
+      "selectedSourceStrategy": "licensed_stock_asset",
+      "recommendedCandidateIds": [
+        "capability_32445d5f3e175dc4328d"
+      ],
+      "feasibility": "functional_equivalent",
+      "candidates": [
+        {
+          "candidateId": "capability_a8beacd5abbb012366a1",
+          "kind": "capability",
+          "sourceStrategy": "verified_fact_card",
+          "label": "已确认事实卡片"
+        },
+        {
+          "candidateId": "capability_baf1070280d0abd129fe",
+          "kind": "capability",
+          "sourceStrategy": "motion_graphics",
+          "label": "动态图文与示意动画"
+        },
+        {
+          "candidateId": "capability_19290f4855eddfb2a83b",
+          "kind": "capability",
+          "sourceStrategy": "customer_product_image_animation",
+          "label": "产品图基础动效（兼容）"
+        },
+        {
+          "candidateId": "capability_32445d5f3e175dc4328d",
+          "kind": "capability",
+          "sourceStrategy": "licensed_stock_asset",
+          "label": "商用授权素材库"
+        }
+      ]
+    },
+    {
+      "sceneId": "shot-29",
+      "routeDecision": {
+        "visualTopic": {
+          "kind": "presenter_talking",
+          "subject": "全黑画面，无任何可见元素；穿条纹衫女性手持橙色手机比划，前方蓝盒堆叠，背景人群走动",
+          "intent": "收尾过渡，引导观众进入行动环节；建立真实展会场景感",
+          "personRole": "background"
+        },
+        "policy": "needs_capability",
+        "reason": "没有合格素材，按分镜目标检查可用能力",
+        "source": "content_agent"
+      },
+      "selectedSourceStrategy": "licensed_stock_asset",
+      "recommendedCandidateIds": [
+        "capability_93fced4488ea76765f17"
+      ],
+      "feasibility": "functional_equivalent",
+      "candidates": [
+        {
+          "candidateId": "capability_fe84bfde2d72075c9b56",
+          "kind": "capability",
+          "sourceStrategy": "verified_fact_card",
+          "label": "已确认事实卡片"
+        },
+        {
+          "candidateId": "capability_7f2508d58d2089e52956",
+          "kind": "capability",
+          "sourceStrategy": "motion_graphics",
+          "label": "动态图文与示意动画"
+        },
+        {
+          "candidateId": "capability_8a429286c2bdae7c3651",
+          "kind": "capability",
+          "sourceStrategy": "customer_product_image_animation",
+          "label": "产品图基础动效（兼容）"
+        },
+        {
+          "candidateId": "capability_93fced4488ea76765f17",
+          "kind": "capability",
+          "sourceStrategy": "licensed_stock_asset",
+          "label": "商用授权素材库"
+        }
+      ]
+    },
+    {
+      "sceneId": "shot-30",
+      "routeDecision": {
+        "visualTopic": {
+          "kind": "presenter_talking",
+          "subject": "戴眼镜女主播穿浅蓝西装+粉短裤，双手展开持两瓶粉底液，背景墙有英文标语",
+          "intent": "突出专业产品陈列与技术背书",
+          "personRole": "visible_speech"
+        },
+        "policy": "needs_capability",
+        "reason": "没有合格素材，按分镜目标检查可用能力",
+        "source": "content_agent"
+      },
+      "selectedSourceStrategy": "verified_fact_card",
+      "recommendedCandidateIds": [
+        "capability_18d9f16a73b361fa8ad3"
+      ],
+      "feasibility": "functional_equivalent",
+      "candidates": [
+        {
+          "candidateId": "capability_18d9f16a73b361fa8ad3",
+          "kind": "capability",
+          "sourceStrategy": "verified_fact_card",
+          "label": "已确认事实卡片"
+        },
+        {
+          "candidateId": "capability_b97c40a9ef121184a61e",
+          "kind": "capability",
+          "sourceStrategy": "motion_graphics",
+          "label": "动态图文与示意动画"
+        },
+        {
+          "candidateId": "capability_0a2c4857ec3d74e20d0e",
+          "kind": "capability",
+          "sourceStrategy": "customer_product_image_animation",
+          "label": "产品图基础动效（兼容）"
+        },
+        {
+          "candidateId": "capability_1267f62cf8513a8b7f78",
+          "kind": "capability",
+          "sourceStrategy": "licensed_stock_asset",
+          "label": "商用授权素材库"
+        }
+      ]
+    },
+    {
+      "sceneId": "shot-31",
+      "routeDecision": {
+        "visualTopic": {
+          "kind": "presenter_talking",
+          "subject": "主播右手举单瓶粉底液，左手持另一瓶，左下角叠加带表格的价目表图示",
+          "intent": "强化价格透明与决策支持",
+          "personRole": "visible_speech"
+        },
+        "policy": "needs_capability",
+        "reason": "没有合格素材，按分镜目标检查可用能力",
+        "source": "content_agent"
+      },
+      "selectedSourceStrategy": "verified_fact_card",
+      "recommendedCandidateIds": [
+        "capability_e5e2ddc387ff55a881af"
+      ],
+      "feasibility": "functional_equivalent",
+      "candidates": [
+        {
+          "candidateId": "capability_e5e2ddc387ff55a881af",
+          "kind": "capability",
+          "sourceStrategy": "verified_fact_card",
+          "label": "已确认事实卡片"
+        },
+        {
+          "candidateId": "capability_7ee91bc204197e4599e6",
+          "kind": "capability",
+          "sourceStrategy": "motion_graphics",
+          "label": "动态图文与示意动画"
+        },
+        {
+          "candidateId": "capability_5e571e9a6de5c2b9ce70",
+          "kind": "capability",
+          "sourceStrategy": "customer_product_image_animation",
+          "label": "产品图基础动效（兼容）"
+        },
+        {
+          "candidateId": "capability_10674ecfd33093dae036",
+          "kind": "capability",
+          "sourceStrategy": "licensed_stock_asset",
+          "label": "商用授权素材库"
+        }
+      ]
+    },
+    {
+      "sceneId": "shot-32",
+      "routeDecision": {
+        "visualTopic": {
+          "kind": "product_introduction",
+          "subject": "主播双手各持一瓶粉底液，瓶身朝向镜头，瓶盖颜色不同（黑/银）",
+          "intent": "强化产品对比与选择多样性",
+          "personRole": "visible_speech"
+        },
+        "policy": "product_scene",
+        "reason": "没有合格素材，按分镜目标检查可用能力",
+        "source": "content_agent"
+      },
+      "selectedSourceStrategy": "customer_product_image_animation",
+      "recommendedCandidateIds": [
+        "capability_5e961518802d7c76cb05"
+      ],
+      "feasibility": "functional_equivalent",
+      "candidates": [
+        {
+          "candidateId": "capability_f4dceb27fcc78b5520a0",
+          "kind": "capability",
+          "sourceStrategy": "verified_fact_card",
+          "label": "已确认事实卡片"
+        },
+        {
+          "candidateId": "capability_12186aa15bffd3e236fd",
+          "kind": "capability",
+          "sourceStrategy": "motion_graphics",
+          "label": "动态图文与示意动画"
+        },
+        {
+          "candidateId": "capability_5e961518802d7c76cb05",
+          "kind": "capability",
+          "sourceStrategy": "customer_product_image_animation",
+          "label": "产品图基础动效（兼容）"
+        },
+        {
+          "candidateId": "capability_bdb25848e5ce57eee67d",
+          "kind": "capability",
+          "sourceStrategy": "licensed_stock_asset",
+          "label": "商用授权素材库"
+        }
+      ]
+    },
+    {
+      "sceneId": "shot-33",
+      "routeDecision": {
+        "visualTopic": {
+          "kind": "presenter_talking",
+          "subject": "主播站立于画面下方，背景墙大段英文标语清晰可见",
+          "intent": "植入技术背书，提升品牌可信度",
+          "personRole": "visible_speech"
+        },
+        "policy": "needs_capability",
+        "reason": "没有合格素材，按分镜目标检查可用能力",
+        "source": "content_agent"
+      },
+      "selectedSourceStrategy": "verified_fact_card",
+      "recommendedCandidateIds": [
+        "capability_0b1f5dd031cc3f2f7146"
+      ],
+      "feasibility": "functional_equivalent",
+      "candidates": [
+        {
+          "candidateId": "capability_0b1f5dd031cc3f2f7146",
+          "kind": "capability",
+          "sourceStrategy": "verified_fact_card",
+          "label": "已确认事实卡片"
+        },
+        {
+          "candidateId": "capability_a3ab7b35fd178989a976",
+          "kind": "capability",
+          "sourceStrategy": "motion_graphics",
+          "label": "动态图文与示意动画"
+        },
+        {
+          "candidateId": "capability_45ade48cb4a2151bfea8",
+          "kind": "capability",
+          "sourceStrategy": "customer_product_image_animation",
+          "label": "产品图基础动效（兼容）"
+        },
+        {
+          "candidateId": "capability_fb70d763e5f0f7c8ccc9",
+          "kind": "capability",
+          "sourceStrategy": "licensed_stock_asset",
+          "label": "商用授权素材库"
+        }
+      ]
+    },
+    {
+      "sceneId": "shot-34",
+      "routeDecision": {
+        "visualTopic": {
+          "kind": "presenter_talking",
+          "subject": "主播双臂向两侧展开，掌心向上，面带微笑注视镜头",
+          "intent": "传达开放合作态度，降低决策压力",
+          "personRole": "expressive_action"
+        },
+        "policy": "expressive_action",
+        "reason": "人物明显动作需要已验收的首帧动作能力；当前注册能力不满足，退回补能力或改镜",
+        "source": "content_agent"
+      },
+      "selectedSourceStrategy": "authorized_digital_presenter",
+      "recommendedCandidateIds": [],
+      "feasibility": "blocked_for_facts_or_rights",
+      "candidates": [
+        {
+          "candidateId": "capability_cf8ab61c11961fc0a5b9",
+          "kind": "capability",
+          "sourceStrategy": "verified_fact_card",
+          "label": "已确认事实卡片"
+        },
+        {
+          "candidateId": "capability_8cd8f2fb46d65d207104",
+          "kind": "capability",
+          "sourceStrategy": "motion_graphics",
+          "label": "动态图文与示意动画"
+        },
+        {
+          "candidateId": "capability_054ac5ab997be42dfb6a",
+          "kind": "capability",
+          "sourceStrategy": "customer_product_image_animation",
+          "label": "产品图基础动效（兼容）"
+        },
+        {
+          "candidateId": "capability_f92d4ddf68bc69a46dda",
+          "kind": "capability",
+          "sourceStrategy": "licensed_stock_asset",
+          "label": "商用授权素材库"
+        }
+      ]
+    },
+    {
+      "sceneId": "shot-35",
+      "routeDecision": {
+        "visualTopic": {
+          "kind": "presenter_talking",
+          "subject": "主播右手食指指向镜头，左手持瓶微抬，视线直视观众",
+          "intent": "聚焦动作与产品细节，强化行动指令",
+          "personRole": "visible_speech"
+        },
+        "policy": "needs_capability",
+        "reason": "没有合格素材，按分镜目标检查可用能力",
+        "source": "content_agent"
+      },
+      "selectedSourceStrategy": "verified_fact_card",
+      "recommendedCandidateIds": [
+        "capability_e06437cdaa7de5126fcf"
+      ],
+      "feasibility": "functional_equivalent",
+      "candidates": [
+        {
+          "candidateId": "capability_e06437cdaa7de5126fcf",
+          "kind": "capability",
+          "sourceStrategy": "verified_fact_card",
+          "label": "已确认事实卡片"
+        },
+        {
+          "candidateId": "capability_d670fb88b3a03e9ba9a9",
+          "kind": "capability",
+          "sourceStrategy": "motion_graphics",
+          "label": "动态图文与示意动画"
+        },
+        {
+          "candidateId": "capability_58932615e8dda493e7fb",
+          "kind": "capability",
+          "sourceStrategy": "customer_product_image_animation",
+          "label": "产品图基础动效（兼容）"
+        },
+        {
+          "candidateId": "capability_bae35a2bc248e149cecb",
+          "kind": "capability",
+          "sourceStrategy": "licensed_stock_asset",
+          "label": "商用授权素材库"
+        }
+      ]
+    },
+    {
+      "sceneId": "shot-36",
+      "routeDecision": {
+        "visualTopic": {
+          "kind": "product_introduction",
+          "subject": "主播双手各持一瓶粉底液，左下角叠加价目表图示，背景货架清晰；女性戴眼镜，穿灰蓝西装外套+粉格短裤，右手举黑色瓶身产品，背景墙有'care technology'字样",
+          "intent": "综合呈现产品+服务，完成闭环；建立产品-人-场景关联",
+          "personRole": "visible_speech"
+        },
+        "policy": "product_scene",
+        "reason": "没有合格素材，按分镜目标检查可用能力",
+        "source": "content_agent"
+      },
+      "selectedSourceStrategy": "customer_product_image_animation",
+      "recommendedCandidateIds": [
+        "capability_ceacd4fc2b7d10b1d6bd"
+      ],
+      "feasibility": "functional_equivalent",
+      "candidates": [
+        {
+          "candidateId": "capability_d57f959751f925640a70",
+          "kind": "capability",
+          "sourceStrategy": "verified_fact_card",
+          "label": "已确认事实卡片"
+        },
+        {
+          "candidateId": "capability_d0c548f9ab183e518ee5",
+          "kind": "capability",
+          "sourceStrategy": "motion_graphics",
+          "label": "动态图文与示意动画"
+        },
+        {
+          "candidateId": "capability_ceacd4fc2b7d10b1d6bd",
+          "kind": "capability",
+          "sourceStrategy": "customer_product_image_animation",
+          "label": "产品图基础动效（兼容）"
+        },
+        {
+          "candidateId": "capability_f78bc3df663789d9afe4",
+          "kind": "capability",
+          "sourceStrategy": "licensed_stock_asset",
+          "label": "商用授权素材库"
+        }
+      ]
+    },
+    {
+      "sceneId": "shot-37",
+      "routeDecision": {
+        "visualTopic": {
+          "kind": "presenter_talking",
+          "subject": "女性左手持另一黑瓶，右手仍举原瓶，胸前叠加白色价目表图层（含多行小图标与文字），图层右上角有绿色标签",
+          "intent": "强化价格透明承诺，制造决策触发点",
+          "personRole": "visible_speech"
+        },
+        "policy": "needs_capability",
+        "reason": "没有合格素材，按分镜目标检查可用能力",
+        "source": "content_agent"
+      },
+      "selectedSourceStrategy": "verified_fact_card",
+      "recommendedCandidateIds": [
+        "capability_d2ebe4b6d54d7f35d4e0"
+      ],
+      "feasibility": "functional_equivalent",
+      "candidates": [
+        {
+          "candidateId": "capability_d2ebe4b6d54d7f35d4e0",
+          "kind": "capability",
+          "sourceStrategy": "verified_fact_card",
+          "label": "已确认事实卡片"
+        },
+        {
+          "candidateId": "capability_af211c4fecf2640a9360",
+          "kind": "capability",
+          "sourceStrategy": "motion_graphics",
+          "label": "动态图文与示意动画"
+        },
+        {
+          "candidateId": "capability_47108f5838a988ebbd06",
+          "kind": "capability",
+          "sourceStrategy": "customer_product_image_animation",
+          "label": "产品图基础动效（兼容）"
+        },
+        {
+          "candidateId": "capability_978c41dd25dd504939b8",
+          "kind": "capability",
+          "sourceStrategy": "licensed_stock_asset",
+          "label": "商用授权素材库"
+        }
+      ]
+    }
+  ]
+}

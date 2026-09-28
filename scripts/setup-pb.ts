@@ -239,6 +239,8 @@ const COLLECTIONS: CollectionSpec[] = [
       { name: 'sourceUrl', type: 'text' },
       { name: 'tags', type: 'text' },
       { name: 'aiAnalysis', type: 'text' },
+      { name: 'referenceShotReview', type: 'text' },
+      { name: 'referenceVerifiedSpeech', type: 'text' },
       { name: 'status', type: 'text' },
       { name: 'crawledAt', type: 'text' },
       // The raw video blob — stored on PB disk, not in the SQLite row.

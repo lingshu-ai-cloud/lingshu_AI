@@ -414,6 +414,7 @@ export const socialContentApi = {
     return socialSourceOptionPage(await requestJson<unknown>(`/source-options?${params}`));
   },
   getTask: async (taskId: string, signal?: AbortSignal): Promise<SocialContentTaskDetail> => socialTaskEnvelope(await requestJson<unknown>(`/tasks/${encodeURIComponent(taskId)}`, { signal })),
+  refreshReference: async (taskId: string, expectedVersion: string): Promise<SocialContentTaskDetail> => socialTaskEnvelope(await requestJson<unknown>(`/tasks/${encodeURIComponent(taskId)}/refresh-reference`, { method: 'POST', body: JSON.stringify({ expectedVersion }) }, idempotencyKey())),
   createTask: async (input: CreateSocialContentTaskInput, operationKey?: string): Promise<SocialContentTaskDetail> => socialTaskEnvelope(await requestJson<unknown>('/tasks', { method: 'POST', body: JSON.stringify(input) }, operationKey)),
   createWeeklyPlan: async (input: CreateSocialWeeklyPlanInput, operationKey?: string): Promise<{ weeklyPlan: SocialWeeklyPlan; tasks: SocialContentTaskDetail[] }> => (
     socialWeeklyPlanEnvelope(await requestJson<unknown>('/weekly-plans', { method: 'POST', body: JSON.stringify(input) }, operationKey))

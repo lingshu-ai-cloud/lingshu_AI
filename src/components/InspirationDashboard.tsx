@@ -255,29 +255,45 @@ interface AnalysisQualityGate {
   actualFrames: number;
 }
 
+export function directorReviewAction(reason: string): { gap: string; next: string } {
+  if (/^repeated_full_dialogue_/.test(reason)) return { gap: '多段分镜重复了整段口播', next: '按原片逐句校时；只将有时间码证据的句子放入对应分镜。' };
+  if (/^repeated_visual_description_/.test(reason)) return { gap: '多段分镜的画面描述重复', next: '对照每段切片与首帧，重写该镜头实际人物、动作、场景和目的。' };
+  if (/^sub_200ms_shots_/.test(reason)) return { gap: '存在不足 0.2 秒的闪帧', next: '保留闪帧作证据；按 0–1 秒连续动作核对快速靠近与敲门手势，动作允许跨视觉切点。' };
+  if (/^opening_hook_no_substantive_shot$/.test(reason)) return { gap: '开场截流动作尚未定位', next: '复核 0–1 秒连续动作，排除不足 0.2 秒的闪帧后标记快速靠近与敲门手势。' };
+  if (/^opening_hook_(insufficient_temporal_observations|motion_incomplete|observation_uncertainty)$/.test(reason)) return { gap: '钩子的连续动作证据不足', next: '逐帧复核首帧、手势、人物距离与动作先后，再写复刻脚本。' };
+  if (reason === 'hook_action_unverified') return { gap: '钩子动作尚未逐帧确认', next: '核对 0–1 秒快速靠近、敲门手势和转入口播的时间点。' };
+  if (reason === 'hook_script_incomplete') return { gap: '钩子八项脚本未完成', next: '逐项核对运镜、画面、出镜主体、配乐、配音、音效、主体话术和主体动作；确实没有的填写“无”。' };
+  if (/^opening_frame_/.test(reason)) return { gap: '首帧场景与分镜描述冲突', next: '对照原片首帧和切片，确认场景与人物后更正镜头说明。' };
+  if (/^uncovered_scene_cuts_/.test(reason)) return { gap: '原片切点没有被分镜边界覆盖', next: '按真实画面切点调整分镜起止时间，并核对整片无缺口。' };
+  if (/^unverified_shots_/.test(reason)) return { gap: '多段镜头仍未核实', next: '逐镜核对画面、口播、首帧及素材用途；有产品宣称的镜头还需核实企业事实。' };
+  if (/^missing_exact_shots$/.test(reason)) return { gap: '没有可用的精确分镜', next: '重新提取分镜切片、首帧和全片时间线后再分析。' };
+  if (/presenter|identity|authorization|rights/i.test(reason)) return { gap: '人物资产或使用权待核验', next: '核对当前企业已录入的销售人物资产、发布状态、授权范围和版本。' };
+  return { gap: '存在尚未归类的分析缺口', next: `编导复核原始诊断 ${reason}，补齐对应视频证据后重新验收。` };
+}
+
 function exactAnalysisQuality(video: TrendVideo): AnalysisQualityGate {
   const payload = video.aiAnalysis;
   const details = payload?.gemini?.scriptDetails15s || [];
   const duration = Math.max(0, Number(video.duration || 0));
-  const requiredFrames = duration > 0 ? Math.max(2, Math.ceil(duration / 5)) : 2;
+  const requiredFrames = 1;
   const parsed = details.map(item => {
     const values = String(item.time || item.timestamp || '').match(/\d+(?:\.\d+)?/g)?.map(Number) || [];
     return { item, start: values[0], end: values[1] };
   });
   const valid = parsed.filter(item => Number.isFinite(item.start) && Number.isFinite(item.end) && item.end! > item.start!);
 
-  if (payload?.requestedAnalysisMode === 'exact') return { ready: false, reason: '全片精确分析正在排队或生成中', requiredFrames, actualFrames: valid.length };
+  if (payload?.geminiStatus === 'needs_review' || payload?.analysisQuality === 'video_review_required' || payload?.analysisReviewReasons?.length) return { ready: false, reason: `编导交接待复核：${payload?.analysisReviewReasons?.join('；') || '逐镜证据未通过质量校验'}`, requiredFrames, actualFrames: valid.length };
+  if (payload?.videoLevelFailureStatus || payload?.analysisError) return { ready: false, reason: '精确分析未完成或已失败，请重试', requiredFrames, actualFrames: valid.length };
+  if (payload?.requestedAnalysisMode === 'exact' && ['queued', 'waiting_for_video', 'analyzing'].includes(String(payload?.geminiStatus || ''))) return { ready: false, reason: '全片精确分析正在排队或生成中', requiredFrames, actualFrames: valid.length };
   if (payload?.analysisMode !== 'exact') return { ready: false, reason: '当前仅有策略级分析，需先完成全片精确分析', requiredFrames, actualFrames: valid.length };
-  if (payload.videoLevelFailureStatus || payload.analysisError) return { ready: false, reason: '精确分析未完成或已失败，请重试', requiredFrames, actualFrames: valid.length };
-  if (valid.length < requiredFrames) return { ready: false, reason: `分镜密度不足：需至少 ${requiredFrames} 段，当前 ${valid.length} 段`, requiredFrames, actualFrames: valid.length };
+  if (valid.length < requiredFrames) return { ready: false, reason: '缺少可用的实际画面分镜', requiredFrames, actualFrames: valid.length };
   if (valid.some(({ item }) => isUnusableAnalysisText(item.visual))) return { ready: false, reason: '存在不可用分镜，请重试精确分析', requiredFrames, actualFrames: valid.length };
   const ordered = [...valid].sort((a, b) => a.start! - b.start!);
-  if (ordered.some(item => item.end! - item.start! > 5.5)) return { ready: false, reason: '存在超过 5.5 秒的粗分镜，无法可靠按时间戳匹配', requiredFrames, actualFrames: valid.length };
   if (ordered[0]!.start! > 0.75 || ordered.some((item, index) => index > 0 && Math.abs(item.start! - ordered[index - 1]!.end!) > 0.75)) {
     return { ready: false, reason: '分镜时间线存在空档或重叠，请重试精确分析', requiredFrames, actualFrames: valid.length };
   }
   if (duration > 0 && ordered[ordered.length - 1]!.end! + 0.75 < duration) return { ready: false, reason: '分镜尚未覆盖视频结尾，请重试精确分析', requiredFrames, actualFrames: valid.length };
-  return { ready: true, reason: '精确分析已通过分镜密度与时间线校验', requiredFrames, actualFrames: valid.length };
+  return { ready: true, reason: '精确分析已通过实际画面时间线校验', requiredFrames, actualFrames: valid.length };
 }
 
 function isDisplayableVideoAnalysis(analysis?: VideoAnalysisPayload, status?: TrendVideo['status']): boolean {
@@ -400,6 +416,7 @@ function buildScriptDetails15s(gemini: GeminiVideoAnalysis, video: TrendVideo, s
       backgroundPriority: item.backgroundPriority, depthOfField: item.depthOfField, authenticity: cleanAnalysisText(item.authenticity),
       estimatedSpeechDuration: typeof item.estimatedSpeechDuration === 'number' ? item.estimatedSpeechDuration : undefined, dialogueFits: item.dialogueFits,
       confidence: typeof item.confidence === 'number' ? item.confidence : undefined, needsReview: Boolean(item.needsReview),
+      materialEvidence: item.materialEvidence,
       viralPotential: item.viralPotential && typeof item.viralPotential === 'object' ? {
         score: typeof item.viralPotential.score === 'number' ? item.viralPotential.score : undefined,
         mechanisms: Array.isArray(item.viralPotential.mechanisms) ? item.viralPotential.mechanisms.map(String).filter(Boolean) : [],
@@ -1220,7 +1237,7 @@ function ImageBreakdownContent({ video, activeTab }: { video: TrendVideo; analys
         <div className="flex items-center justify-between"><div><p className="text-xs font-black text-text-primary">公开表现</p><p className="mt-1 text-[9px] text-text-muted">无公开值就留空，不把播放当曝光、不估算收藏与点击</p></div>{baseline?.status === 'usable' && baseline.relativeMultiple != null && <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-black text-emerald-700">账号基线 {baseline.relativeMultiple}×</span>}</div>
         <div className="mt-3 grid grid-cols-4 gap-1.5">{[['点赞', metrics?.likes || '—'], ['评论', metrics?.comments || '—'], ['分享', metrics?.shares || '—'], ['播放', metrics?.plays || '—']].map(([label, value]) => <div key={label} className="rounded-lg bg-surface-2 px-1.5 py-2 text-center"><p className="text-sm font-black text-text-primary">{value}</p><p className="text-[9px] text-text-muted">{label}</p></div>)}</div>
         <div className="mt-2 rounded-lg bg-surface-2 p-2 text-[9px] leading-relaxed text-text-secondary">
-          <p>账号：{video.aiAnalysis?.author || '未抓取'} · 粉丝：{metrics?.followers ? metrics.followers.toLocaleString() : '未公开/未抓取'}</p>
+          <p>账号：{video.aiAnalysis?.author || video.aiAnalysis?.sourceAccountName || '未抓取'} · 粉丝：{metrics?.followers ? metrics.followers.toLocaleString() : '未公开/未抓取'}</p>
           <p className="mt-1">投流信号：{adSignals?.isAd || adSignals?.isPaidPartnership ? '平台公开标记为广告/付费合作' : '未抓到公开标记（不代表未投流）'}</p>
         </div>
         <p className="mt-2 text-[9px] leading-relaxed text-text-muted">{baseline?.status === 'usable' ? `${baseline.sampleSize} 条同账号样本；${baseline.method}` : `同账号样本 ${baseline?.sampleSize || 0} 条，暂不足以确认相对爆款。`}</p>
@@ -2618,6 +2635,226 @@ function WatchModal({ video, onClose }: { video: TrendVideo; onClose: () => void
   );
 }
 
+interface DirectorReviewHandoff {
+  status: 'review_only' | 'production_ready';
+  directorHandoffReady?: boolean;
+  selectedHookShotId?: string | null;
+  shots: Array<{ shotId: string; startSeconds: number; endSeconds: number; content: string; purpose: string; issues: string[]; evidence: { clipRef?: string | null; firstFrameRef?: string | null; extractionStatus?: string } }>;
+  issues: Array<{ code: string; shotId?: string | null; evidenceRefs?: string[]; action: string }>;
+  productionExecutionAllowed: boolean;
+}
+
+const hookScriptLabels = { camera: '运镜', visual: '画面', subject: '出镜主体', music: '配乐', voiceover: '配音', soundEffects: '音效', spokenWords: '主体话术', subjectAction: '主体动作' } as const;
+type HookScriptKey = keyof typeof hookScriptLabels;
+const hookScriptKeys = Object.keys(hookScriptLabels) as HookScriptKey[];
+
+interface DirectorShotReview {
+  referenceRecordId: string;
+  sourceAnalysisRunId: string | null;
+  version: string;
+  sections: Array<{ sectionId: string; title: string; start: number; end: number; purpose: string; confirmed: boolean }>;
+  shots: Array<{ shotId: string; start: number; end: number; content: string; purpose: string; sourceShotIds: string[]; reviewStatus: 'candidate' | 'confirmed' | 'discarded'; mixedScene: boolean; labels: string[]; evidenceRefs: string[]; hookAction: string; hookMotionConfirmed: boolean; hookScript?: Record<HookScriptKey, string>; hookScriptConfirmed?: boolean }>;
+  selectedHookShotId: string | null;
+  reviewComplete: boolean;
+  productionExecutionAllowed: false;
+}
+
+interface DirectorVerifiedSpeech {
+  analysisRunId: string | null;
+  sourceSha256: string | null;
+  duration: number;
+  status: string;
+  coverageConfirmed: boolean;
+  lines: Array<{ text: string; start: number; end: number; visibility: 'on_camera' | 'voiceover' | 'unknown'; speakerId?: string | null }>;
+}
+
+interface DirectorPhraseAsrJob {
+  ok: boolean;
+  status: 'needs_confirmation' | 'PENDING' | 'RUNNING' | 'SUCCEEDED' | 'FAILED' | 'uncertain' | 'submitting';
+  taskId?: string;
+  enabled: boolean;
+  candidateLines: Array<{ text: string; start: number; end: number; precision: 'phrase'; provenance: string; visibility: 'unknown' }>;
+}
+
+interface DirectorSpeechTimeline {
+  lines: Array<{ speechId: string; text: string; start: number; end: number; sectionIds: string[]; shotIds: string[]; visibility: string; timingPrecision: 'coarse' | 'phrase'; needsReview: boolean }>;
+  coarseWindows: Array<{ speechId: string; text: string; start: number; end: number; sectionIds: string[] }>;
+  sections: Array<{ sectionId: string; speechIds: string[]; coarseEvidenceIds: string[] }>;
+  reviewQuestions: string[];
+  productionReady: boolean;
+}
+
+const reviewSeconds = (value: number) => `${Number.isFinite(value) ? value.toFixed(2) : '—'}s`;
+
+export function splitDirectorReviewedShot(review: DirectorShotReview, shotId: string, cut: number): DirectorShotReview {
+  const current = review.shots.find(item => item.shotId === shotId);
+  if (!current || !Number.isFinite(cut) || cut - current.start < 0.15 || current.end - cut < 0.15) throw new Error('invalid_review_cut');
+  const left = { ...current, end: cut, reviewStatus: 'candidate' as const, mixedScene: false, evidenceRefs: [], hookMotionConfirmed: false, hookScriptConfirmed: false };
+  const right = { ...current, shotId: `review-${Date.now()}`, start: cut, reviewStatus: 'candidate' as const, mixedScene: false, evidenceRefs: [], hookAction: '', hookMotionConfirmed: false, hookScript: undefined, hookScriptConfirmed: false };
+  return { ...review, shots: review.shots.flatMap(item => item.shotId === shotId ? [left, right] : [item]), selectedHookShotId: review.selectedHookShotId === shotId ? null : review.selectedHookShotId };
+}
+
+export function reviseDirectorHookAction(review: DirectorShotReview, shotId: string, hookAction: string): DirectorShotReview {
+  return { ...review, shots: review.shots.map(item => item.shotId === shotId ? { ...item, hookAction, hookMotionConfirmed: false } : item) };
+}
+
+export function asrCandidatesToReviewDraft(speech: DirectorVerifiedSpeech, candidates: DirectorPhraseAsrJob['candidateLines']): DirectorVerifiedSpeech {
+  return { ...speech, coverageConfirmed: false, status: 'partial_review', lines: candidates.map(line => ({ text: line.text, start: line.start, end: line.end, visibility: 'unknown' })) };
+}
+
+function DirectorReviewWorkspace({ recordId, onPreview, handoff }: { recordId: string; onPreview: () => void; handoff: DirectorReviewHandoff | null }) {
+  const [review, setReview] = useState<DirectorShotReview | null>(null);
+  const [speech, setSpeech] = useState<DirectorVerifiedSpeech | null>(null);
+  const [timeline, setTimeline] = useState<DirectorSpeechTimeline | null>(null);
+  const [savedReview, setSavedReview] = useState('');
+  const [previewShotId, setPreviewShotId] = useState<string | null>(null);
+  const [asrJob, setAsrJob] = useState<DirectorPhraseAsrJob | null>(null);
+  const [asrConsent, setAsrConsent] = useState(false);
+  const [asrBusy, setAsrBusy] = useState(false);
+  const [asrPolling, setAsrPolling] = useState(false);
+  const [activeSection, setActiveSection] = useState(0);
+  const [showCandidates, setShowCandidates] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState('');
+
+  const refresh = async () => {
+    const [reviewResponse, speechResponse] = await Promise.all([
+      fetch(`/api/overseas/videos/${encodeURIComponent(recordId)}/shot-review`, { headers: authHeader() }),
+      fetch(`/api/overseas/videos/${encodeURIComponent(recordId)}/verified-speech`, { headers: authHeader() }),
+    ]);
+    if (!reviewResponse.ok) throw new Error('镜头审核记录读取失败');
+    if (!speechResponse.ok) throw new Error('逐句口播记录读取失败');
+    const nextReview = await reviewResponse.json() as DirectorShotReview;
+    const nextSpeech = await speechResponse.json() as DirectorVerifiedSpeech;
+    setReview(nextReview);
+    setSavedReview(JSON.stringify([nextReview.sections, nextReview.shots, nextReview.selectedHookShotId]));
+    setSpeech(nextSpeech);
+    return { nextReview, nextSpeech };
+  };
+  const loadTimeline = async (nextReview: DirectorShotReview) => {
+    const response = await fetch(`/api/overseas/videos/${encodeURIComponent(recordId)}/speech-timeline`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', ...authHeader() },
+      body: JSON.stringify({ sections: nextReview.sections.map(section => ({ sectionId: section.sectionId, title: section.title, start: section.start, end: section.end, purpose: section.purpose })) }),
+    });
+    if (!response.ok) throw new Error('口播与六段结构映射失败');
+    setTimeline(await response.json() as DirectorSpeechTimeline);
+  };
+  const readPhraseAsr = async (confirmed: boolean) => {
+    setAsrBusy(true);
+    try {
+      const response = await fetch(`/api/overseas/videos/${encodeURIComponent(recordId)}/phrase-asr`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', ...authHeader() },
+        body: JSON.stringify({ confirmed }),
+      });
+      const result = await response.json() as DirectorPhraseAsrJob & { error?: string };
+      if (!response.ok) throw new Error(result.error || `句级 ASR 请求失败（HTTP ${response.status}）`);
+      setAsrJob(result);
+      setAsrPolling(result.status === 'PENDING' || result.status === 'RUNNING' || result.status === 'submitting');
+      if (result.status === 'SUCCEEDED') setMessage('句级 ASR 候选已返回；请听原片逐句校对，并确认画内或画外音。');
+      else if (result.status === 'FAILED' || result.status === 'uncertain') setMessage('句级 ASR 任务需要人工排查，不会自动重复付费提交。');
+    } catch (error) { setAsrPolling(false); setMessage(error instanceof Error ? error.message : '句级 ASR 请求失败'); }
+    finally { setAsrBusy(false); }
+  };
+  useEffect(() => {
+    if (!asrPolling) return;
+    const timer = window.setTimeout(() => void readPhraseAsr(false), 5000);
+    return () => window.clearTimeout(timer);
+  }, [asrPolling, asrJob, recordId]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    let active = true;
+    void refresh().then(({ nextReview }) => { if (active) void loadTimeline(nextReview).catch(error => setMessage(String(error))); })
+      .catch(error => { if (active) setMessage(error instanceof Error ? error.message : '复核记录读取失败'); });
+    void readPhraseAsr(false);
+    return () => { active = false; };
+  }, [recordId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const saveReview = async () => {
+    if (!review) return;
+    setBusy(true); setMessage('');
+    try {
+      const response = await fetch(`/api/overseas/videos/${encodeURIComponent(recordId)}/shot-review`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json', ...authHeader() },
+        body: JSON.stringify({ expectedVersion: review.version, sections: review.sections, shots: review.shots, selectedHookShotId: review.selectedHookShotId }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || '保存镜头审核失败');
+      setReview(result as DirectorShotReview);
+      setSavedReview(JSON.stringify([(result as DirectorShotReview).sections, (result as DirectorShotReview).shots, (result as DirectorShotReview).selectedHookShotId]));
+      await loadTimeline(result as DirectorShotReview);
+      setMessage('六段结构与镜头审核已保存；仍需完成所有质量门槛才可交接制作。');
+    } catch (error) { setMessage(error instanceof Error ? error.message : '保存失败'); }
+    finally { setBusy(false); }
+  };
+  const saveSpeech = async () => {
+    if (!speech || !review) return;
+    if (speech.lines.some(line => line.visibility === 'unknown')) { setMessage('请逐句确认画内口播或画外音，再保存人工校时。'); return; }
+    setBusy(true); setMessage('');
+    try {
+      const response = await fetch(`/api/overseas/videos/${encodeURIComponent(recordId)}/verified-speech`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json', ...authHeader() },
+        body: JSON.stringify({ analysisRunId: speech.analysisRunId, sourceSha256: speech.sourceSha256, lines: speech.lines, coverageConfirmed: speech.coverageConfirmed }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || '保存逐句口播失败');
+      setSpeech(result as DirectorVerifiedSpeech);
+      await loadTimeline(review);
+      setMessage('逐句口播已保存，请核对六段归属与画内／画外音。');
+    } catch (error) { setMessage(error instanceof Error ? error.message : '保存失败'); }
+    finally { setBusy(false); }
+  };
+  if (!review || !speech) return <section className="mb-4 rounded-xl border border-border bg-white p-4 text-xs text-text-muted" aria-label="六段结构编导复核">{message || '正在读取六段结构、镜头和口播证据…'}</section>;
+  const changeSectionBoundary = (index: number, edge: 'start' | 'end', value: number) => {
+    setReview({ ...review, sections: review.sections.map((item, position) => {
+      if (position === index) return { ...item, [edge]: value, confirmed: false };
+      if (edge === 'start' && position === index - 1) return { ...item, end: value, confirmed: false };
+      if (edge === 'end' && position === index + 1) return { ...item, start: value, confirmed: false };
+      return item;
+    }) });
+  };
+  const splitShot = (shotId: string) => {
+    const current = review.shots.find(item => item.shotId === shotId);
+    if (!current || current.end - current.start < 0.30) { setMessage('镜头短于 0.30 秒，无法拆成两个至少 0.15 秒的镜头。'); return; }
+    const proposed = window.prompt(`在 ${reviewSeconds(current.start)}–${reviewSeconds(current.end)} 之间输入切点秒数`, String(Number(((current.start + current.end) / 2).toFixed(2))));
+    if (proposed === null) return;
+    const cut = Number(proposed);
+    if (!Number.isFinite(cut) || cut - current.start < 0.15 || current.end - cut < 0.15) { setMessage('切点无效；切分后每段至少 0.15 秒。'); return; }
+    setReview(splitDirectorReviewedShot(review, shotId, cut));
+    setMessage('已拆成两个候选镜头；请重新核对内容、目的、首帧和钩子。');
+  };
+  const materializeShot = async (shotId: string) => {
+    if (JSON.stringify([review.sections, review.shots, review.selectedHookShotId]) !== savedReview) { setMessage('请先保存镜头范围，再重新抽取切片和首帧。'); return; }
+    setBusy(true); setMessage('正在从原片重新抽取分镜切片和首帧…');
+    try {
+      const response = await fetch(`/api/overseas/videos/${encodeURIComponent(recordId)}/shot-review/${encodeURIComponent(shotId)}/materialize`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', ...authHeader() },
+        body: JSON.stringify({ expectedVersion: review.version }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || '重新抽取镜头素材失败');
+      const next = result as DirectorShotReview;
+      setReview(next);
+      setSavedReview(JSON.stringify([next.sections, next.shots, next.selectedHookShotId]));
+      setMessage(`${shotId} 的切片与真实首帧已按复核后的时间范围重新抽取。`);
+    } catch (error) { setMessage(error instanceof Error ? error.message : '重新抽取失败'); }
+    finally { setBusy(false); }
+  };
+  const section = review.sections[activeSection] || review.sections[0];
+  const sectionShots = section ? review.shots.filter(shot => shot.reviewStatus !== 'discarded' && shot.start < section.end && shot.end > section.start) : [];
+  const sectionLines = section ? (timeline?.lines || []).filter(line => line.sectionIds.includes(section.sectionId)) : [];
+  const sectionCoarse = section ? (timeline?.coarseWindows || []).filter(line => line.sectionIds.includes(section.sectionId)) : [];
+  return <section aria-label="六段结构编导复核" className="mb-4 rounded-xl border border-border bg-white p-4 text-xs">
+    <div className="flex flex-wrap items-center justify-between gap-2"><div><h3 className="font-black text-text-primary">六段内容结构与逐句口播</h3><p className="mt-1 text-text-muted">先确认叙事段，再复核分镜和原声逐句时间码。粗 ASR 可提供逐句大致时间码，界面会明确标记为估计；可按需人工修正。</p></div><span className={`rounded px-2 py-1 font-bold ${review.reviewComplete && timeline?.productionReady ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-800'}`}>{review.reviewComplete && timeline?.productionReady ? '待最终交接门槛' : '编导复核中'}</span></div>
+    <div className="mt-3 rounded-lg bg-amber-50 px-3 py-2 leading-5 text-amber-900"><strong>内容 Agent 制作门槛</strong><p>年限、功效、交期等经营事实暂不作为交接门槛；原片宣称保留待核验标记。逐镜、口播、开场动作和企业“销售”人物资产仍须满足制作证据要求。</p><ul className="mt-1 list-inside list-disc">{['hook_action_unverified', 'presenter_asset_unlocked'].filter(code => handoff?.issues.some(issue => issue.code === code)).map(code => <li key={code}>{directorReviewAction(code).gap}：{directorReviewAction(code).next}</li>)}</ul><p className="mt-1 font-semibold">当前制作状态：{handoff?.productionExecutionAllowed ? '已通过后端交接门槛' : '待补齐制作证据'}</p></div>
+    <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">{review.sections.map((item, index) => <button key={item.sectionId} type="button" onClick={() => setActiveSection(index)} className={`rounded-lg border px-2 py-2 text-left ${activeSection === index ? 'border-accent bg-accent-glow text-accent' : 'border-border text-text-secondary'}`}><strong className="block">{index + 1}. {item.title}</strong><span className="mt-1 block text-[10px]">{reviewSeconds(item.start)}–{reviewSeconds(item.end)} · {item.confirmed ? '已确认' : '待确认'}</span></button>)}</div>
+    {section && <div className="mt-4 rounded-lg border border-border p-3"><div className="grid gap-2 sm:grid-cols-[1fr_80px_80px]"><label className="font-semibold">结构段名称<input aria-label="结构段名称" className="mt-1 w-full rounded border border-border px-2 py-1" value={section.title} onChange={event => setReview({ ...review, sections: review.sections.map((item, index) => index === activeSection ? { ...item, title: event.target.value, confirmed: false } : item) })} /></label><label>开始秒<input aria-label="结构段开始秒" disabled={activeSection === 0} type="number" step="0.01" className="mt-1 w-full rounded border border-border px-2 py-1" value={section.start} onChange={event => changeSectionBoundary(activeSection, 'start', Number(event.target.value))} /></label><label>结束秒<input aria-label="结构段结束秒" disabled={activeSection === review.sections.length - 1} type="number" step="0.01" className="mt-1 w-full rounded border border-border px-2 py-1" value={section.end} onChange={event => changeSectionBoundary(activeSection, 'end', Number(event.target.value))} /></label></div><label className="mt-2 block">表达目的<input aria-label="结构段表达目的" className="mt-1 w-full rounded border border-border px-2 py-1" value={section.purpose} onChange={event => setReview({ ...review, sections: review.sections.map((item, index) => index === activeSection ? { ...item, purpose: event.target.value, confirmed: false } : item) })} /></label><label className="mt-2 inline-flex items-center gap-2 font-semibold"><input type="checkbox" checked={section.confirmed} onChange={event => setReview({ ...review, sections: review.sections.map((item, index) => index === activeSection ? { ...item, confirmed: event.target.checked } : item) })} />已对照原片确认本段边界与内容</label></div>}
+    <div className="mt-4"><div className="flex items-center justify-between"><h4 className="font-black">本段分镜</h4><button type="button" onClick={() => setShowCandidates(!showCandidates)} className="text-accent underline">{showCandidates ? '收起候选切点' : `展开 ${sectionShots.length} 个候选切点`}</button></div>{showCandidates && <div className="mt-2 max-h-72 space-y-2 overflow-y-auto">{sectionShots.map(shot => <div key={shot.shotId} className="rounded-lg border border-border p-2"><div className="flex flex-wrap items-center gap-2"><strong>{shot.shotId} · {reviewSeconds(shot.start)}–{reviewSeconds(shot.end)}</strong><select aria-label={`${shot.shotId} 复核状态`} value={shot.reviewStatus} onChange={event => setReview({ ...review, shots: review.shots.map(item => item.shotId === shot.shotId ? { ...item, reviewStatus: event.target.value as typeof item.reviewStatus } : item) })} className="ml-auto rounded border border-border px-1 py-0.5"><option value="candidate">待复核</option><option value="confirmed">已确认</option><option value="discarded">废弃</option></select></div><div className="mt-2 grid gap-2 sm:grid-cols-[72px_72px_1fr]"><input aria-label={`${shot.shotId} 开始秒`} type="number" step="0.01" value={shot.start} onChange={event => setReview({ ...review, shots: review.shots.map(item => item.shotId === shot.shotId ? { ...item, start: Number(event.target.value), hookMotionConfirmed: false, evidenceRefs: [] } : item) })} className="w-full rounded border border-border px-1 py-1" /><input aria-label={`${shot.shotId} 结束秒`} type="number" step="0.01" value={shot.end} onChange={event => setReview({ ...review, shots: review.shots.map(item => item.shotId === shot.shotId ? { ...item, end: Number(event.target.value), hookMotionConfirmed: false, evidenceRefs: [] } : item) })} className="w-full rounded border border-border px-1 py-1" /><input aria-label={`${shot.shotId} 内容`} value={shot.content} onChange={event => setReview({ ...review, shots: review.shots.map(item => item.shotId === shot.shotId ? { ...item, content: event.target.value } : item) })} className="w-full rounded border border-border px-2 py-1" /></div><input aria-label={`${shot.shotId} 表达目的`} value={shot.purpose} onChange={event => setReview({ ...review, shots: review.shots.map(item => item.shotId === shot.shotId ? { ...item, purpose: event.target.value } : item) })} className="mt-2 w-full rounded border border-border px-2 py-1" /><input aria-label={`${shot.shotId} 素材类型标签`} placeholder="素材类型标签，逗号分隔，如真人口播、工厂实拍" value={shot.labels.join(",")} onChange={event => setReview({ ...review, shots: review.shots.map(item => item.shotId === shot.shotId ? { ...item, labels: event.target.value.split(/[,，]/).map(label => label.trim()).filter(Boolean) } : item) })} className="mt-2 w-full rounded border border-border px-2 py-1" /><div className="mt-2 flex flex-wrap gap-2 text-[10px]"><label><input type="checkbox" checked={shot.mixedScene} onChange={event => setReview({ ...review, shots: review.shots.map(item => item.shotId === shot.shotId ? { ...item, mixedScene: event.target.checked } : item) })} /> 混镜待拆</label><button type="button" onClick={() => splitShot(shot.shotId)} className="text-accent underline">按秒数拆分</button><label><input type="radio" name="selectedHookShotId" disabled={shot.start >= 1 || shot.end <= 0 || shot.end - shot.start < 0.2} checked={review.selectedHookShotId === shot.shotId} onChange={() => setReview({ ...review, selectedHookShotId: shot.shotId, shots: review.shots.map(item => ({ ...item, hookMotionConfirmed: false })) })} /> 开场钩子</label><button type="button" disabled={busy || JSON.stringify([review.sections, review.shots, review.selectedHookShotId]) !== savedReview} onClick={() => void materializeShot(shot.shotId)} className="text-accent underline disabled:opacity-40">重新抽取切片和首帧</button>{shot.evidenceRefs.length > 0 && <button type="button" onClick={() => setPreviewShotId(previewShotId === shot.shotId ? null : shot.shotId)} className="text-accent underline">{previewShotId === shot.shotId ? '收起证据' : '查看证据'}</button>}</div>{review.selectedHookShotId === shot.shotId && <div className="mt-2 rounded bg-sky-50 p-2"><label className="block font-semibold">开场钩子动作脚本（至少 20 字）<textarea aria-label="开场钩子动作脚本" className="mt-1 w-full rounded border border-border px-2 py-1" rows={3} value={shot.hookAction} onChange={event => setReview(reviseDirectorHookAction(review, shot.shotId, event.target.value))} placeholder="按首帧、第一秒、动作峰值、手势轨迹、声音进入点、转场描述" /></label><label className="mt-1 inline-flex items-center gap-1"><input type="checkbox" checked={shot.hookMotionConfirmed} disabled={shot.hookAction.trim().length < 20} onChange={event => setReview({ ...review, shots: review.shots.map(item => item.shotId === shot.shotId ? { ...item, hookMotionConfirmed: event.target.checked } : item) })} />已逐帧核对钩子动作与原片一致</label><div className="mt-2 grid gap-2 sm:grid-cols-2">{hookScriptKeys.map(key => <label key={key} className="text-xs">{hookScriptLabels[key]}<input aria-label={`开场钩子${hookScriptLabels[key]}`} value={shot.hookScript?.[key] || ''} placeholder="请按原片填写；确实没有填“无”" onChange={event => setReview({ ...review, shots: review.shots.map(item => item.shotId === shot.shotId ? { ...item, hookScript: { camera: '', visual: '', subject: '', music: '', voiceover: '', soundEffects: '', spokenWords: '', subjectAction: '', ...item.hookScript, [key]: event.target.value }, hookScriptConfirmed: false } : item) })} className="mt-1 w-full rounded border border-border px-2 py-1" /></label>)}</div><label className="mt-2 inline-flex items-center gap-1 text-xs"><input type="checkbox" checked={shot.hookScriptConfirmed === true} disabled={hookScriptKeys.some(key => !shot.hookScript?.[key]?.trim())} onChange={event => setReview({ ...review, shots: review.shots.map(item => item.shotId === shot.shotId ? { ...item, hookScriptConfirmed: event.target.checked } : item) })} />已逐项对照原片确认八项钩子脚本</label></div>}{previewShotId === shot.shotId && <div className="mt-2 grid gap-2 sm:grid-cols-2">{shot.evidenceRefs.filter(ref => ref.includes('/clip')).map(ref => <AuthenticatedVideo key={ref} apiUrl={ref} controls className="max-h-48 w-full rounded bg-black" />)}{shot.evidenceRefs.filter(ref => ref.includes('first-frame')).map(ref => <AuthenticatedImage key={ref} src={ref} alt={`${shot.shotId} 原片首帧`} className="max-h-48 w-full rounded object-contain" />)}</div>}</div>)}</div>}</div>
+    <div className="mt-4 border-t border-border pt-3"><h4 className="font-black">本段口播 · {sectionLines.length} 句已定位</h4>{sectionLines.length ? <ul className="mt-2 space-y-1">{sectionLines.map(line => <li key={line.speechId} className="rounded bg-emerald-50 px-2 py-1">{reviewSeconds(line.start)}–{reviewSeconds(line.end)} · {line.text} <span className="text-text-muted">{line.timingPrecision === 'coarse' ? '估计时间码' : '人工校时'} · {line.visibility === 'voiceover' ? '画外音' : line.visibility === 'on_camera' ? '画内口播' : '声音来源待判'} · {line.shotIds.join('、')}</span></li>)}</ul> : <p className="mt-1 text-amber-800">尚无可用的逐句口播。</p>}{sectionCoarse.length > 0 && <details className="mt-2 rounded bg-amber-50 p-2"><summary className="cursor-pointer font-semibold">{sectionCoarse.length} 条粗 ASR 估计口播时间窗</summary><ul className="mt-2 space-y-1">{sectionCoarse.map(item => <li key={item.speechId}>{reviewSeconds(item.start)}–{reviewSeconds(item.end)} · {item.text}</li>)}</ul></details>}</div>
+    <div className="mt-4 rounded-lg border border-sky-200 bg-sky-50 p-3"><h4 className="font-black">获取句级时间码候选</h4><p className="mt-1 leading-5 text-text-secondary">该操作调用千问句级 ASR，可能产生供应商费用。候选仍须逐句听原片、核对起止秒数及画内／画外音；不会自动确认为编导交接物。</p><p className="mt-1 text-text-muted">服务状态：{asrJob ? (asrJob.enabled ? '已启用' : '未启用付费转写') : '查询中'} · 任务：{asrJob?.status || '读取中'}</p><label className="mt-2 flex items-center gap-2"><input type="checkbox" checked={asrConsent} onChange={event => setAsrConsent(event.target.checked)} disabled={!asrJob?.enabled || asrBusy} />我确认启动可能计费的句级 ASR 分析</label><div className="mt-2 flex gap-2"><button type="button" disabled={!asrConsent || !asrJob?.enabled || asrBusy || asrJob.status === 'PENDING' || asrJob.status === 'RUNNING' || asrJob.status === 'SUCCEEDED' || asrJob.status === 'uncertain'} onClick={() => void readPhraseAsr(true)} className="rounded bg-accent px-2 py-1 font-bold text-white disabled:opacity-40">{asrBusy ? '处理中…' : '获取句级时间码'}</button><button type="button" disabled={asrBusy} onClick={() => void readPhraseAsr(false)} className="rounded border border-border px-2 py-1">刷新任务状态</button></div>{asrJob?.candidateLines?.length ? <div className="mt-3"><p className="font-semibold">{asrJob.candidateLines.length} 条机器候选（未核对）</p><div className="mt-2 max-h-48 space-y-1 overflow-y-auto">{asrJob.candidateLines.map((line, index) => <p key={`${line.start}-${index}`} className="rounded bg-white px-2 py-1">{reviewSeconds(line.start)}–{reviewSeconds(line.end)} · {line.text}</p>)}</div><button type="button" onClick={() => setSpeech(asrCandidatesToReviewDraft(speech, asrJob.candidateLines))} className="mt-2 text-accent underline">载入人工校对草稿（不会保存或确认）</button></div> : null}</div>
+    <div className="mt-4 border-t border-border pt-3"><h4 className="font-black">可选：逐句口播人工修正</h4><p className="mt-1 text-text-muted">粗 ASR 的大致时间码已可用于交接；如发现错字、漏句或错位，可听原片修正并保存。</p><button type="button" onClick={onPreview} className="mt-1 text-accent underline">播放原片核对</button><div className="mt-2 max-h-64 space-y-2 overflow-y-auto">{speech.lines.map((line, index) => <div key={index} className="grid gap-1 sm:grid-cols-[70px_70px_1fr_90px_24px]"><input aria-label={`第 ${index + 1} 句开始秒`} type="number" step="0.01" value={line.start} onChange={event => setSpeech({ ...speech, coverageConfirmed: false, lines: speech.lines.map((item, i) => i === index ? { ...item, start: Number(event.target.value) } : item) })} className="rounded border border-border px-1" /><input aria-label={`第 ${index + 1} 句结束秒`} type="number" step="0.01" value={line.end} onChange={event => setSpeech({ ...speech, coverageConfirmed: false, lines: speech.lines.map((item, i) => i === index ? { ...item, end: Number(event.target.value) } : item) })} className="rounded border border-border px-1" /><input aria-label={`第 ${index + 1} 句原文`} value={line.text} onChange={event => setSpeech({ ...speech, coverageConfirmed: false, lines: speech.lines.map((item, i) => i === index ? { ...item, text: event.target.value } : item) })} className="rounded border border-border px-2" /><select aria-label={`第 ${index + 1} 句画内或画外`} value={line.visibility} onChange={event => setSpeech({ ...speech, coverageConfirmed: false, lines: speech.lines.map((item, i) => i === index ? { ...item, visibility: event.target.value as typeof item.visibility } : item) })} className="rounded border border-border px-1"><option value="unknown">待判断</option><option value="on_camera">画内</option><option value="voiceover">画外</option></select><button type="button" aria-label={`删除第 ${index + 1} 句`} onClick={() => setSpeech({ ...speech, coverageConfirmed: false, lines: speech.lines.filter((_, i) => i !== index) })}>×</button></div>)}</div><div className="mt-2 flex flex-wrap gap-2"><button type="button" onClick={() => setSpeech({ ...speech, coverageConfirmed: false, lines: [...speech.lines, { text: '', start: 0, end: 0, visibility: 'unknown' }] })} className="rounded border border-border px-2 py-1">添加一句</button><label className="inline-flex items-center gap-1"><input type="checkbox" checked={speech.coverageConfirmed} onChange={event => setSpeech({ ...speech, coverageConfirmed: event.target.checked })} />已听完整片并确认无漏句</label><button type="button" disabled={busy} onClick={() => void saveSpeech()} className="rounded bg-accent px-2 py-1 font-bold text-white disabled:opacity-50">保存逐句校时</button></div></div>
+    <div className="mt-3 flex flex-wrap items-center gap-2"><button type="button" disabled={busy} onClick={() => void saveReview()} className="rounded bg-accent px-3 py-2 font-bold text-white disabled:opacity-50">保存六段与镜头复核</button><span className="text-text-muted">{review.shots.filter(shot => shot.reviewStatus === 'candidate').length} 个候选镜头待复核 · {timeline?.coarseWindows.length || 0} 个粗 ASR 窗口</span></div>{message && <p role="status" className="mt-2 text-amber-800">{message}</p>}{timeline?.reviewQuestions.length ? <details className="mt-3"><summary className="cursor-pointer font-semibold">交接前还需处理 {timeline.reviewQuestions.length} 项</summary><ul className="mt-1 list-inside list-disc space-y-1 text-amber-800">{timeline.reviewQuestions.map((item, index) => <li key={index}>{item}</li>)}</ul></details> : null}
+  </section>;
+}
+
 function DirectorVideoDetailPanel({
   video,
   onClose,
@@ -2649,13 +2886,26 @@ function DirectorVideoDetailPanel({
   const analysis = getAnalysis(video);
   const exactQuality = exactAnalysisQuality(video);
   const payload = video.aiAnalysis;
+  const [reviewHandoff, setReviewHandoff] = useState<DirectorReviewHandoff | null>(null);
+  useEffect(() => {
+    const recordId = video.recordId;
+    if (!recordId || !['analyzed', 'needs_review'].includes(String(payload?.geminiStatus || ''))) { setReviewHandoff(null); return; }
+    let active = true;
+    void fetch(`/api/overseas/videos/${encodeURIComponent(recordId)}/review-handoff`, { headers: authHeader() })
+      .then(async response => response.ok ? await response.json() as DirectorReviewHandoff : null)
+      .then(result => { if (active) setReviewHandoff(result); })
+      .catch(() => { if (active) setReviewHandoff(null); });
+    return () => { active = false; };
+  }, [video.recordId, payload?.geminiStatus, payload?.analyzedAt, payload?.requestedAnalysisMode]);
+  const handoffReady = reviewHandoff?.status === 'production_ready' && reviewHandoff.productionExecutionAllowed === true;
+  const draftReady = reviewHandoff?.directorHandoffReady === true;
   const imageEvidence = payload?.imageEvidence;
   const isImagePost = video.contentFormat === 'image';
   const imageEvidenceCount = imageEvidence?.observedFacts?.length || imageEvidence?.carouselFlow?.length || 0;
   const terminalAnalysisState = Boolean(payload?.analysisError)
-    || ['paused', 'video_failed', 'failed'].includes(String(payload?.geminiStatus || ''));
+    || ['paused', 'video_failed', 'failed', 'needs_review', 'analysis_retryable', 'analyzed'].includes(String(payload?.geminiStatus || ''));
   const pending = analyzing
-    || payload?.requestedAnalysisMode === 'exact'
+    || (payload?.requestedAnalysisMode === 'exact' && !terminalAnalysisState)
     || (video.status === 'pending' && !terminalAnalysisState);
   const statusLabel = pending
     ? '编导 Agent 分析中'
@@ -2663,6 +2913,8 @@ function DirectorVideoDetailPanel({
       ? '图文证据分析已完成'
       : exactQuality.ready
       ? '全片精确分析已完成'
+      : payload?.geminiStatus === 'needs_review'
+        ? '逐镜分析待复核'
       : analysis
         ? '策略分析已完成'
         : payload?.analysisError || video.status === 'failed'
@@ -2704,6 +2956,11 @@ function DirectorVideoDetailPanel({
         </header>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
+          {!isImagePost && <section aria-label="编导到内容 Agent 交接状态" className="mb-4 rounded-xl border border-border bg-white p-4">
+            <div className="flex flex-wrap items-center gap-2 text-xs font-black"><span className="rounded bg-emerald-50 px-2 py-1 text-emerald-700">原片入库</span><ChevronRight size={13} className="text-text-muted" /><span className={`rounded px-2 py-1 ${pending ? 'bg-amber-50 text-amber-700' : draftReady ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>{pending ? '编导分析中' : draftReady ? '可交接内容起稿' : '编导证据不足'}</span><ChevronRight size={13} className="text-text-muted" /><span className={`rounded px-2 py-1 ${draftReady ? 'bg-emerald-50 text-emerald-700' : 'bg-surface-2 text-text-muted'}`}>{handoffReady ? '可制作成片' : draftReady ? '可生成口播草稿' : '内容起稿未开放'}</span></div>
+            {!handoffReady && !pending && <p className="mt-2 text-[11px] leading-5 text-amber-800">系统将使用带估计时间码的原片口播，并继续检查镜头切片、钩子动作和企业“销售”人物资产。如需继续，编导 Agent 会按清单补证，无需人工逐句校时或逐镜勾选。</p>}
+          </section>}
+          {!isImagePost && reviewHandoff && <details className="mb-4 rounded-xl border border-amber-200 bg-white p-4 text-xs"><summary className="cursor-pointer font-black text-text-primary">编导 Agent 待补证据 · {reviewHandoff.issues.length} 项</summary><ul className="mt-3 max-h-64 space-y-2 overflow-y-auto">{reviewHandoff.issues.map((issue, index) => <li key={`${issue.shotId || 'global'}-${issue.code}-${index}`}><strong>{issue.shotId || '全片'} · {directorReviewAction(issue.code).gap}</strong><p className="mt-0.5 text-text-secondary">{issue.action || directorReviewAction(issue.code).next}</p></li>)}</ul></details>}
           <section className="grid gap-4 rounded-xl border border-border bg-white p-4 sm:grid-cols-[150px_minmax(0,1fr)]">
             <button type="button" onClick={onPreview} className="group relative aspect-[9/16] overflow-hidden rounded-lg bg-surface-2 text-left">
               <VideoThumbnail platform={video.platform} title={video.title} />
@@ -2720,6 +2977,7 @@ function DirectorVideoDetailPanel({
                 <div className="rounded-lg bg-surface-2 px-3 py-2"><span className="block text-text-muted">{isImagePost ? '证据覆盖' : '分镜覆盖'}</span><strong className="mt-1 block text-text-primary">{isImagePost ? `${imageEvidenceCount} 条` : `${exactQuality.actualFrames} / ${exactQuality.requiredFrames} 段`}</strong></div>
               </div>
               <p className={`mt-3 rounded-lg px-3 py-2 text-[11px] font-semibold leading-5 ${(isImagePost && imageEvidence) || exactQuality.ready ? 'bg-emerald-50 text-emerald-800' : 'bg-amber-50 text-amber-800'}`}>{isImagePost ? (imageEvidence ? '已按原图证据完成视觉、文案与轮播节奏拆解。' : '等待编导 Agent 提取图文证据。') : exactQuality.reason}</p>
+              {payload?.analysisReviewReasons?.length ? <div role="alert" className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] leading-5 text-amber-900"><strong>镜头级缺口与下一步</strong><ul className="mt-2 space-y-2">{payload.analysisReviewReasons.map(reason => { const action = directorReviewAction(reason); return <li key={reason}><span className="font-black">{action.gap}</span><span className="block">{action.next}</span><code className="text-[9px] opacity-60">{reason}</code></li>; })}</ul></div> : null}
             </div>
           </section>
 
@@ -2756,8 +3014,9 @@ function DirectorVideoDetailPanel({
                     <p className="mt-2 text-xs font-semibold leading-5 text-text-primary">{detail.purpose || '镜头作用待编导确认'}</p>
                     <p className="mt-1 text-xs leading-5 text-text-secondary">{detail.visual}</p>
                     {(detail.dialogue || detail.onScreenText || detail.subtitle) && <p className="mt-2 rounded bg-white px-2.5 py-2 text-[11px] leading-5 text-text-secondary">音画信息：{detail.dialogue || detail.onScreenText || detail.subtitle}</p>}
+                    {detail.materialEvidence && <p className="mt-2 text-[10px] font-semibold text-text-muted">原片证据：{detail.materialEvidence.extractionStatus === 'ready' ? '分镜切片与首帧已提取' : '切片或首帧缺失，待复核'}{typeof detail.materialEvidence.firstFrameSeconds === 'number' ? ` · 首帧 ${detail.materialEvidence.firstFrameSeconds.toFixed(2)}s` : ''}</p>}
                     {detail.viralPotential?.whyEffective && <p className="mt-2 text-[11px] leading-5 text-amber-800">为什么有效：{detail.viralPotential.whyEffective}</p>}
-                    {(detail.needsReview || detail.authenticity) && <p className="mt-2 text-[10px] font-semibold text-text-muted">{detail.needsReview ? '需人工复核 · ' : ''}{detail.authenticity}</p>}
+                    {(detail.needsReview || detail.authenticity) && <p className="mt-2 text-[10px] font-semibold text-text-muted">{detail.needsReview ? '待编导 Agent 自动核验 · ' : ''}{detail.authenticity}</p>}
                   </article>)}
                 </div>
               </section>
@@ -2784,7 +3043,7 @@ function DirectorVideoDetailPanel({
               : <button type="button" onClick={onExactAnalysis} className="inline-flex min-h-10 items-center gap-1.5 rounded-lg border border-accent px-3 text-xs font-bold text-accent"><BarChart2 size={13} />全片精确分析</button>)}
             {(payload?.analysisError || video.status === 'failed') && <button type="button" onClick={onRetry} disabled={analyzing} className="min-h-10 rounded-lg border border-border px-3 text-xs font-bold text-text-secondary disabled:opacity-50">重新分析</button>}
             <button type="button" onClick={onPreview} className="min-h-10 rounded-lg border border-border px-3 text-xs font-bold text-text-secondary">预览原内容</button>
-            <button type="button" onClick={onCreate} className="ml-auto inline-flex min-h-10 items-center gap-1.5 rounded-lg bg-accent px-4 text-xs font-black text-white disabled:cursor-not-allowed disabled:opacity-45"><Sparkles size={14} />{isImagePost || video.id.startsWith('material-') ? '开始创作' : '爆款复刻'}</button>
+            <button type="button" onClick={onCreate} disabled={!isImagePost && !draftReady} className="ml-auto inline-flex min-h-10 items-center gap-1.5 rounded-lg bg-accent px-4 text-xs font-black text-white disabled:cursor-not-allowed disabled:opacity-45"><Sparkles size={14} />{isImagePost || video.id.startsWith('material-') ? '开始创作' : '爆款复刻'}</button>
           </div>
         </footer>
       </motion.aside>
@@ -2892,6 +3151,8 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
   const [materialFiltersOpen, setMaterialFiltersOpen] = useState(false);
   const [materialsLoading, setMaterialsLoading] = useState(false);
   const [uploadingMaterial, setUploadingMaterial] = useState(false);
+  const [importingReference, setImportingReference] = useState(false);
+  const referenceUploadInputRef = useRef<HTMLInputElement | null>(null);
   const [generatingNeedId, setGeneratingNeedId] = useState('');
   const { scriptGapTasks, shootingTaskError: _shootingTaskError } = useScriptGapTasks();
   const [uploadingScriptGapId, setUploadingScriptGapId] = useState('');
@@ -3056,6 +3317,66 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
       }
     } finally {
       if (requestId === videoRequestRef.current && !quiet) setVideosLoading(false);
+    }
+  };
+
+  const importReferenceVideo = async (file: File | undefined) => {
+    if (!file) return;
+    if (file.type !== 'video/mp4' && !/\.mp4$/i.test(file.name)) {
+      setMaterialMessage('对标视频请使用 MP4 文件');
+      return;
+    }
+    if (file.size > 32 * 1024 * 1024) {
+      setMaterialMessage('对标视频不能超过 32 MB');
+      return;
+    }
+    setImportingReference(true);
+    setMaterialMessage(`正在导入对标视频：${file.name}`);
+    try {
+      const params = new URLSearchParams({ title: file.name.replace(/\.mp4$/i, ''), platform: 'tiktok' });
+      const response = await fetch(`/api/overseas/videos/import-reference-file?${params}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'video/mp4', ...authHeader() },
+        body: file,
+      });
+      const result = await response.json().catch(() => ({})) as { id?: string; error?: string; deduplicated?: boolean };
+      if (!response.ok || !result.id) throw new Error(result.error || `导入失败（HTTP ${response.status}）`);
+      const recordId = result.id;
+      const readRecord = async (open = false) => {
+        const latestResponse = await fetch(`/api/overseas/videos/${encodeURIComponent(recordId)}`, { headers: authHeader() });
+        if (!latestResponse.ok) throw new Error('对标视频记录读取失败');
+        const record = await latestResponse.json() as CrawlerRecord;
+        const video = recordsToVideos([record])[0];
+        if (!video) throw new Error('对标视频记录格式异常');
+        setCrawledVideos(items => [video, ...items.filter(item => item.id !== video.id)]);
+        setSelectedVideo(current => open || current?.id === video.id ? video : current);
+        return video;
+      };
+      await readRecord(true);
+      setMaterialMessage(result.deduplicated ? '已找到相同对标视频，正在打开分析记录。' : '对标视频已入库，正在进行全片逐镜分析。');
+      void refreshInventory();
+      void (async () => {
+        for (let attempt = 0; attempt < 120; attempt += 1) {
+          await new Promise(resolve => window.setTimeout(resolve, 3000));
+          try {
+            const latest = await readRecord();
+            const status = latest.aiAnalysis?.geminiStatus;
+            if (status === 'analyzed' || status === 'needs_review' || status === 'analysis_retryable' || latest.status === 'failed') {
+              setMaterialMessage(status === 'analyzed' ? '逐镜分析完成，请检查编导交接结果。' : '逐镜分析需要复核，请查看记录中的具体原因。');
+              void refreshVideos(1, true);
+              return;
+            }
+          } catch {
+            // A brief backend reload must not discard a queued import.
+          }
+        }
+        setMaterialMessage('分析仍在后台运行，请稍后刷新灵感大屏查看结果。');
+      })();
+    } catch (error) {
+      setMaterialMessage(error instanceof Error ? error.message : '对标视频导入失败');
+    } finally {
+      setImportingReference(false);
+      if (referenceUploadInputRef.current) referenceUploadInputRef.current.value = '';
     }
   };
 
@@ -3451,7 +3772,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
       const creationAccount = accounts.find(account => account.accountId === creationAccountId && account.status === 'active');
       const result = await resumeOrCreateInspirationTask({
         id: video.recordId || video.id, title: video.title,
-        sourceUrl: video.sourceUrl, crawledAt: video.crawledAt,
+        sourceUrl: video.sourceUrl || (video.recordId ? `local://${video.recordId}` : undefined), crawledAt: video.crawledAt,
         ...(creationAccount ? { context: {
           targetAccountRef: { objectType: 'social_owned_account', id: creationAccount.accountId, version: String(creationAccount.version) },
           platforms: [creationAccount.platform],
@@ -3941,7 +4262,12 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
               </select>
               <span className="text-xs text-text-muted">已授权账号的合格成片可进入托管发布；未指定账号不会自动发布。</span>
             </div>}
-            {innerView === 'inspiration' && <DiscoveryScopePanel />}
+            {innerView === 'inspiration' && <DiscoveryScopePanel onAccountsCrawled={() => { setSortMode('crawlTime'); setPlatform('all'); setSearch(''); void refreshVideos(1, false); }} />}
+            {innerView === 'inspiration' && <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-accent/25 bg-accent/5 px-4 py-3">
+              <div><p className="text-sm font-black text-text-primary">导入对标视频并分析</p><p className="mt-1 text-xs text-text-muted">上传本地 MP4，系统自动入库、全片逐镜拆解，再显示编导交接结果。对标原片仅用于分析，不进入企业可剪辑素材。</p></div>
+              <input ref={referenceUploadInputRef} aria-label="选择对标视频 MP4" type="file" accept="video/mp4,.mp4" className="sr-only" onChange={event => void importReferenceVideo(event.currentTarget.files?.[0])} />
+              <button type="button" onClick={() => referenceUploadInputRef.current?.click()} disabled={importingReference} className="inline-flex min-h-10 items-center gap-2 rounded-lg bg-accent px-4 py-2 text-xs font-black text-white disabled:cursor-wait disabled:opacity-60">{importingReference ? <Loader2 size={15} className="animate-spin" /> : <Upload size={15} />}{importingReference ? '正在导入…' : '导入 MP4 并分析'}</button>
+            </div>}
             {innerView === 'inspiration' && <div className="mb-4 space-y-3 rounded-lg border border-border bg-surface p-3 sm:p-4">
               <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 xl:grid-cols-4">
                 <div className="relative w-full">
@@ -4347,6 +4673,9 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                     <div className="flex flex-1 flex-col p-3">
                       <p className="min-h-9 text-sm font-bold leading-snug text-text-primary line-clamp-2">{material.name}</p>
                       <p className="mt-1 line-clamp-1 min-h-5 text-xs font-semibold leading-5 text-text-muted" title={materialSemanticLabel(material)}>{materialSemanticLabel(material)}</p>
+                      <div className="mt-1 flex min-h-5 flex-wrap gap-1">
+                        {visibleMaterialTags(material.tags).split(/[,，]/).map(tag => tag.trim()).filter(Boolean).map(tag => <span key={`tag-${tag}`} className="rounded-md bg-violet-50 px-1.5 py-0.5 text-[10px] font-semibold text-violet-700">{tag}</span>)}
+                      </div>
                       <div className="mt-auto grid grid-cols-2 gap-2 pt-3">
                         <button
                           type="button"

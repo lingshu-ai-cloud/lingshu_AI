@@ -1101,16 +1101,19 @@ async function observeTaskProof(tenantId: string, run: RunRecord, task: TaskReco
     });
     const matching = scheduled.items.filter(item => {
       const config = jsonObject<Record<string, unknown>>(item.config, {});
-      return String(config.workflowTaskId || '') === task.id && item.enabled !== false;
+      if (item.task_type !== 'social_discovery_collection') return false;
+      let workflowRefs: Array<{ workflowTaskId?: string }> = [];
+      try { workflowRefs = JSON.parse(String(config.workflowRefs || '[]')); } catch { /* older task */ }
+      return Array.isArray(workflowRefs) && workflowRefs.some(ref => ref.workflowTaskId === task.id);
     });
     const persistedRefs = jsonObject<Array<Record<string, unknown>>>(task.business_refs, [])
       .filter(ref => ref.type === 'scheduled_task');
     const businessRefs = matching.length
       ? matching.map(item => ({ type: 'scheduled_task', id: String(item.task_id || item.id), recordId: item.id }))
-      : persistedRefs;
+      : persistedRefs.filter(ref => matching.length || !String(ref.id || '').startsWith('task_de_'));
     return {
       ready: businessRefs.length > 0,
-      proof: { metricKey: 'scheduledAutomations', value: businessRefs.length, status: businessRefs.length ? 'available' : snapshot.content.scheduledAutomations.status, source: 'scheduled_tasks.config.workflowTaskId + workflow_tasks.business_refs', scope: 'workflow_task' },
+      proof: { metricKey: 'scheduledAutomations', value: businessRefs.length, status: businessRefs.length ? 'available' : 'awaiting_director_approval', source: 'scheduled_tasks.config.workflowRefs + workflow_tasks.business_refs', scope: 'workflow_task' },
       businessRefs,
     };
   }
@@ -1253,10 +1256,16 @@ async function prepareObserveBusinessResource(input: {
   if (browserExecutionEnabled() && input.task.task_key === 'scheduled_source_collection'
     && !jsonObject<Array<Record<string, unknown>>>(input.task.business_refs, []).some(ref => ref.type === 'scheduled_task')) {
     const schedule = socialScheduleFromCadence(input.config.socialCadence);
-    const ensured = ensureDigitalEmployeeSocialCollectionTask({ tenantId: input.tenantId,
+    const ensured = await ensureDigitalEmployeeSocialCollectionTask({ tenantId: input.tenantId,
       workflowRunId: input.run.id, workflowTaskId: input.task.id,
       keywords: input.config.focusProducts || goalInput(input.goal).scope || input.config.primaryBusiness,
       ...schedule });
+    if (!ensured || ensured.pendingReason) {
+      const reason = ensured?.pendingReason || '待编导确认采集范围';
+      await store.update(COLLECTION.tasks, input.task.id, { blocked_reason: reason, updated_at: new Date().toISOString() });
+      input.task.blocked_reason = reason;
+      return false;
+    }
     const refs = [{ type: 'scheduled_task', id: ensured.task.id, taskType: ensured.task.taskType, cronExpr: ensured.task.cronExpr }];
     await store.update(COLLECTION.tasks, input.task.id, { business_refs: refs, updated_at: new Date().toISOString() });
     input.task.business_refs = refs;
@@ -1286,7 +1295,7 @@ async function prepareObserveBusinessResourceDirect(input: {
   const actorId = goal.owner_id || 'digital_employee_agent';
   if (task.task_key === 'scheduled_source_collection') {
     const collectionSchedule = socialScheduleFromCadence(config.socialCadence);
-    const ensured = ensureDigitalEmployeeSocialCollectionTask({
+    const ensured = await ensureDigitalEmployeeSocialCollectionTask({
       tenantId,
       workflowRunId: run.id,
       workflowTaskId: task.id,
@@ -1298,6 +1307,13 @@ async function prepareObserveBusinessResourceDirect(input: {
       dateWindowDays: collectionSchedule.dateWindowDays,
       dedupeWindowDays: collectionSchedule.dedupeWindowDays,
     });
+    if (!ensured || ensured.pendingReason) {
+      const reason = ensured?.pendingReason || '待编导确认采集范围';
+      await store.update(COLLECTION.tasks, task.id, { blocked_reason: reason, updated_at: new Date().toISOString() });
+      task.blocked_reason = reason;
+      await appendEvent({ tenantId, runId: run.id, taskId: task.id, type: 'business.resource.awaiting_director_approval', level: 'warning', summary: reason, payload: { externalPublishPerformed: false } });
+      return false;
+    }
     const refs = [{ type: 'scheduled_task', id: ensured.task.id, taskType: ensured.task.taskType, cronExpr: ensured.task.cronExpr }];
     await store.update(COLLECTION.tasks, task.id, { business_refs: refs, updated_at: new Date().toISOString() });
     task.business_refs = refs;
@@ -1306,7 +1322,7 @@ async function prepareObserveBusinessResourceDirect(input: {
       await appendEvent({ tenantId, runId: run.id, taskId: task.id, type: `business.resource.${action}`, level: 'success', summary: `已${ensured.created ? '创建' : '更新'}社媒内容采集计划：${ensured.task.cronLabel}`, payload: { businessRefs: refs, schedule: collectionSchedule, externalPublishPerformed: false } });
       await appendAudit({ tenantId, userId: actorId, action: `digital_employee.scheduler.${action}`, targetType: 'scheduled_task', targetId: ensured.task.id, metadata: { runId: run.id, taskId: task.id, schedule: collectionSchedule } });
     }
-    if (ensured.created || ensured.updated || !ensured.task.lastRun) {
+    if (ensured.task.enabled && (ensured.created || ensured.updated || !ensured.task.lastRun)) {
       try {
         const firstRun = await runScheduledTaskNow({ tenantId, taskId: ensured.task.id });
         const nextRefs = refs.map(ref => ({ ...ref, firstRunState: firstRun.state, lastRun: firstRun.lastRun || '' }));

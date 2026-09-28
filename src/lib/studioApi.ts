@@ -214,7 +214,7 @@ export interface TtsAudioResult {
   adjusted?: boolean;
   targetDuration?: number;
   cues?: SubCue[];
-  alignmentSource?: 'audio_ai' | 'proportional' | 'minimax_native';
+  alignmentSource?: 'audio_ai' | 'proportional' | 'minimax_native' | 'synthesized_sentence_audio' | 'pending_alignment';
   customVoiceStatus?: 'activated';
 }
 export interface StudioAudioCapabilities {
@@ -554,7 +554,7 @@ export const studioApi = {
     post<{ ok: boolean; source?: 'ai' | 'ai_rejected' | 'ai_failed'; provenance?: StudioGenerationProvenance | string; publishable?: boolean; selectedIds: string[]; reason: string; error?: string }>('select', b, { ok: false, selectedIds: [], reason: '' }),
 
   // 配音 TTS
-  tts: (b: { script?: string; text?: string; voice: string; language: string; style?: Partial<TtsStyleOptions> }) =>
+  tts: (b: { script?: string; text?: string; sentenceLines?: string[]; voice: string; language: string; style?: Partial<TtsStyleOptions> }) =>
     post<TtsAudioResult>('tts', b, { ok: false }),
   ttsBatch: (b: { voice: string; items: { code: string; text: string; language?: string }[]; style?: Partial<TtsStyleOptions> }) =>
     post<{ ok: boolean; audios: Record<string, TtsAudioResult>; error?: string }>('tts/batch', b, { ok: false, audios: {} }),
@@ -951,6 +951,8 @@ export interface VideoGenerationVersion {
 
 export interface MaterialSegment {
   id: string;
+  visualTopic?: string;
+  expressionPurpose?: string;
   start: number;
   end: number;
   duration: number;

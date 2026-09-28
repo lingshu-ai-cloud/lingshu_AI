@@ -1,0 +1,666 @@
+{
+  "schemaVersion": "sample-speech-evidence/1",
+  "referenceVideo": {
+    "path": "/Users/julia_chen/Documents/ChatGPT/LINGSHU数字人runway/downloads/tiktok_7648939405557697806.mp4",
+    "durationSeconds": 63.72,
+    "sha256": "07077ad27840e771a63c2b844e0492aced38905655bc529d8aa2399ce7f19d7e",
+    "rights": "reference_only"
+  },
+  "method": {
+    "source": "existing local 3-second and 8-second ASR slices plus prior human-readable sentence report",
+    "newASRRun": false,
+    "reason": "No local ffmpeg or Whisper executable/library available in this agent environment; existing ASR segment timestamps are zero and not forced-aligned",
+    "estimatedBoundaryErrorSeconds": 1.5,
+    "meaning": "Sentence windows are useful for editorial review, not reliable enough to assert phrase-timed production readiness."
+  },
+  "speechLines": [
+    {
+      "id": "V01",
+      "startSecondsApprox": 0.1,
+      "endSecondsApprox": 3.5,
+      "boundaryUncertaintySeconds": 1.5,
+      "referenceWordsProvisional": "Are you too stuck with slow-selling foundation?",
+      "status": "coarse_asr_crosschecked_not_phrase_verified",
+      "shotIdsListed": [
+        "S02",
+        "S01"
+      ],
+      "visualType": "真人对镜口播＋手势钩子；车间背景",
+      "expressionPurpose": "抛出滞销痛点。原音 `stuck` 与画面字幕的 `smart` 不一致，词项待人工听辨；动作和构图详见下节。",
+      "disputes": [
+        "stuck vs smart: 3s/8s ASR report stuck; Gemini frame analysis and subtitle report smart; human audio adjudication needed"
+      ]
+    },
+    {
+      "id": "V02",
+      "startSecondsApprox": 3.5,
+      "endSecondsApprox": 7.6,
+      "boundaryUncertaintySeconds": 1.5,
+      "referenceWordsProvisional": "Customers complaining about caking, fading, and fake white shade?",
+      "status": "coarse_asr_crosschecked_not_phrase_verified",
+      "shotIdsListed": [
+        "S03",
+        "S08"
+      ],
+      "visualType": "多位不同人物面部近景、遮罩拼贴",
+      "expressionPurpose": "连续列举消费者痛点。画面人物不是同一企业销售，也不能因有旁白就判为数字人口播。`caking/fading/fake white shade` 为原片诉求，企业版须有真实产品事实。",
+      "disputes": []
+    },
+    {
+      "id": "V03",
+      "startSecondsApprox": 7.6,
+      "endSecondsApprox": 12.1,
+      "boundaryUncertaintySeconds": 1.5,
+      "referenceWordsProvisional": "Returns piling up non-stop.",
+      "status": "coarse_asr_crosschecked_not_phrase_verified",
+      "shotIdsListed": [
+        "S09",
+        "S11"
+      ],
+      "visualType": "杂乱退货／仓储画面＋爆炸贴纸",
+      "expressionPurpose": "把痛点升级为商业损失。退货量并无可核验证据，不能当企业真实经营事实。",
+      "disputes": [
+        "returns vs orders: earlier report says returns, 8s ASR says Orders; human audio adjudication needed"
+      ]
+    },
+    {
+      "id": "V04",
+      "startSecondsApprox": 11.0,
+      "endSecondsApprox": 13.6,
+      "boundaryUncertaintySeconds": 1.5,
+      "referenceWordsProvisional": "We're a 15-year foundation factory from China.",
+      "status": "coarse_asr_crosschecked_not_phrase_verified",
+      "shotIdsListed": [
+        "S11",
+        "S13"
+      ],
+      "visualType": "建筑外景、设备和车间实拍",
+      "expressionPurpose": "转入供应商可信度。`15-year` 和工厂归属须用当前企业资料核验；原片厂房不能冒充当前企业。",
+      "disputes": []
+    },
+    {
+      "id": "V05",
+      "startSecondsApprox": 13.6,
+      "endSecondsApprox": 16.3,
+      "boundaryUncertaintySeconds": 1.5,
+      "referenceWordsProvisional": "Three core perks: 12-hour long wear, no oxidation.",
+      "status": "coarse_asr_crosschecked_not_phrase_verified",
+      "shotIdsListed": [
+        "S13",
+        "S14"
+      ],
+      "visualType": "车间流程转真人上妆演示",
+      "expressionPurpose": "从厂景切到效果演示。`12-hour`、`no oxidation` 属效果宣称，须用企业检测或适用素材核验。",
+      "disputes": []
+    },
+    {
+      "id": "V06",
+      "startSecondsApprox": 16.3,
+      "endSecondsApprox": 20.2,
+      "boundaryUncertaintySeconds": 1.5,
+      "referenceWordsProvisional": "Ultra-fine powder, no caking, no fake white cast.",
+      "status": "coarse_asr_crosschecked_not_phrase_verified",
+      "shotIdsListed": [
+        "S15",
+        "S17"
+      ],
+      "visualType": "真人面部近景、粉底刷接触脸部",
+      "expressionPurpose": "用上妆过程可视化效果。涉及人物与真实产品接触；首帧替换不能保证涂抹动作可信。",
+      "disputes": []
+    },
+    {
+      "id": "V07",
+      "startSecondsApprox": 20.2,
+      "endSecondsApprox": 23.3,
+      "boundaryUncertaintySeconds": 1.5,
+      "referenceWordsProvisional": "We have over 6,000 ready-made formulas.",
+      "status": "coarse_asr_crosschecked_not_phrase_verified",
+      "shotIdsListed": [
+        "S18"
+      ],
+      "visualType": "配方／样品陈列，工作人员取看样品",
+      "expressionPurpose": "建立研发选择面。`6,000` 是原片宣称，不能直接移植。",
+      "disputes": []
+    },
+    {
+      "id": "V08",
+      "startSecondsApprox": 23.3,
+      "endSecondsApprox": 26.9,
+      "boundaryUncertaintySeconds": 1.5,
+      "referenceWordsProvisional": "Whether you want OEM, private label, or copy market bestsellers,",
+      "status": "coarse_asr_crosschecked_not_phrase_verified",
+      "shotIdsListed": [
+        "S19",
+        "S20"
+      ],
+      "visualType": "手持多瓶产品特写，人物面部近景",
+      "expressionPurpose": "展示可定制品类。企业版应改为已证实的 OEM／品牌合作能力；不复制竞品瓶型、包装或“copy”承诺。",
+      "disputes": []
+    },
+    {
+      "id": "V09",
+      "startSecondsApprox": 26.9,
+      "endSecondsApprox": 32.1,
+      "boundaryUncertaintySeconds": 1.5,
+      "referenceWordsProvisional": "our professional formula engineers can customize the formula exactly how you want it.",
+      "status": "coarse_asr_crosschecked_not_phrase_verified",
+      "shotIdsListed": [
+        "S21",
+        "S22"
+      ],
+      "visualType": "实验室人员操作、多人会议",
+      "expressionPurpose": "展示研发与需求沟通。使用当前企业真实研发／咨询素材，不能把原片工程师归为本企业。",
+      "disputes": []
+    },
+    {
+      "id": "V10",
+      "startSecondsApprox": 32.1,
+      "endSecondsApprox": 34.3,
+      "boundaryUncertaintySeconds": 1.5,
+      "referenceWordsProvisional": "Sample ready in three days.",
+      "status": "coarse_asr_crosschecked_not_phrase_verified",
+      "shotIdsListed": [
+        "S23"
+      ],
+      "visualType": "配料桶搅拌过程",
+      "expressionPurpose": "展示打样速度。`3 days` 须以企业交期政策验证。",
+      "disputes": []
+    },
+    {
+      "id": "V11",
+      "startSecondsApprox": 34.3,
+      "endSecondsApprox": 36.9,
+      "boundaryUncertaintySeconds": 1.5,
+      "referenceWordsProvisional": "Bulk order delivered in 30 days.",
+      "status": "coarse_asr_crosschecked_not_phrase_verified",
+      "shotIdsListed": [
+        "S24",
+        "S25"
+      ],
+      "visualType": "灌装与包装流水线",
+      "expressionPurpose": "展示交付能力。`30 days` 须按订单条件、产能与合同核验。",
+      "disputes": []
+    },
+    {
+      "id": "V12",
+      "startSecondsApprox": 36.9,
+      "endSecondsApprox": 39.5,
+      "boundaryUncertaintySeconds": 1.5,
+      "referenceWordsProvisional": "We now support small-batch customization.",
+      "status": "coarse_asr_crosschecked_not_phrase_verified",
+      "shotIdsListed": [
+        "S26"
+      ],
+      "visualType": "真人销售在实验室／车间举瓶口播",
+      "expressionPurpose": "将工厂能力落到低门槛服务。需改用本企业已录入的“销售”人物资产；人物同时持瓶，属于产品接触镜头。",
+      "disputes": []
+    },
+    {
+      "id": "V13",
+      "startSecondsApprox": 39.5,
+      "endSecondsApprox": 44.0,
+      "boundaryUncertaintySeconds": 1.5,
+      "referenceWordsProvisional": "Just 2,000 bottles, you can build your own foundation brand.",
+      "status": "coarse_asr_crosschecked_not_phrase_verified",
+      "shotIdsListed": [
+        "S26"
+      ],
+      "visualType": "同一销售连续举瓶、指示产品",
+      "expressionPurpose": "MOQ 与创业利益点。`2,000` 需企业报价资料核验；持续人物／产品接触不可用普通 HeyGen 口播冒充。",
+      "disputes": []
+    },
+    {
+      "id": "V14",
+      "startSecondsApprox": 44.0,
+      "endSecondsApprox": 46.6,
+      "boundaryUncertaintySeconds": 1.5,
+      "referenceWordsProvisional": "Full certifications, real factory direct.",
+      "status": "coarse_asr_crosschecked_not_phrase_verified",
+      "shotIdsListed": [
+        "S27",
+        "S28"
+      ],
+      "visualType": "证书陈列、机器运转",
+      "expressionPurpose": "资质与工厂证据。证书内容需逐份验证，不能沿用原画面。",
+      "disputes": []
+    },
+    {
+      "id": "V15",
+      "startSecondsApprox": 46.6,
+      "endSecondsApprox": 49.8,
+      "boundaryUncertaintySeconds": 1.5,
+      "referenceWordsProvisional": "We've partnered with over 500 brands.",
+      "status": "coarse_asr_crosschecked_not_phrase_verified",
+      "shotIdsListed": [
+        "S29"
+      ],
+      "visualType": "产品陈列墙",
+      "expressionPurpose": "社会证明。`500 brands` 待企业客户资料核验。",
+      "disputes": []
+    },
+    {
+      "id": "V16",
+      "startSecondsApprox": 49.8,
+      "endSecondsApprox": 53.1,
+      "boundaryUncertaintySeconds": 1.5,
+      "referenceWordsProvisional": "70%+ repeat order rate.",
+      "status": "coarse_asr_crosschecked_not_phrase_verified",
+      "shotIdsListed": [
+        "S30",
+        "S31"
+      ],
+      "visualType": "商务会谈、上升图标叠加",
+      "expressionPurpose": "用复购数字强化可信度。`70%+` 待有口径和数据证明；动态图标并非统计证据。",
+      "disputes": []
+    },
+    {
+      "id": "V17",
+      "startSecondsApprox": 53.1,
+      "endSecondsApprox": 55.7,
+      "boundaryUncertaintySeconds": 1.5,
+      "referenceWordsProvisional": "Help you start your brand with zero risk.",
+      "status": "coarse_asr_crosschecked_not_phrase_verified",
+      "shotIdsListed": [
+        "S32",
+        "S33"
+      ],
+      "visualType": "展会／客户洽谈画面",
+      "expressionPurpose": "降低顾虑。`zero risk` 绝对化承诺不得直接复用。",
+      "disputes": []
+    },
+    {
+      "id": "V18",
+      "startSecondsApprox": 55.7,
+      "endSecondsApprox": 58.4,
+      "boundaryUncertaintySeconds": 1.5,
+      "referenceWordsProvisional": "Want to make a bestseller foundation?",
+      "status": "coarse_asr_crosschecked_not_phrase_verified",
+      "shotIdsListed": [
+        "S34",
+        "S35"
+      ],
+      "visualType": "真人销售举瓶对镜口播",
+      "expressionPurpose": "CTA 再次激发目标。当前企业“销售”人物资产锁定；原片产品需替换。",
+      "disputes": []
+    },
+    {
+      "id": "V19",
+      "startSecondsApprox": 58.4,
+      "endSecondsApprox": 60.5,
+      "boundaryUncertaintySeconds": 1.5,
+      "referenceWordsProvisional": "Reply ‘Foundation,’",
+      "status": "coarse_asr_crosschecked_not_phrase_verified",
+      "shotIdsListed": [
+        "S36"
+      ],
+      "visualType": "同一销售对镜举瓶、价格表图层",
+      "expressionPurpose": "明确互动关键词。企业版 CTA 关键词由运营确认；原片价格表不可直接使用。",
+      "disputes": []
+    },
+    {
+      "id": "V20",
+      "startSecondsApprox": 60.5,
+      "endSecondsApprox": 62.8,
+      "boundaryUncertaintySeconds": 1.5,
+      "referenceWordsProvisional": "and I'll send you the price list.",
+      "status": "coarse_asr_crosschecked_not_phrase_verified",
+      "shotIdsListed": [
+        "S36"
+      ],
+      "visualType": "同一镜头延续，手势与价格表图层",
+      "expressionPurpose": "说明互动回报。企业版必须接真实可发送的企业报价资料。",
+      "disputes": []
+    }
+  ],
+  "rawEvidence": {
+    "asr3s": [
+      {
+        "index": 0,
+        "text": "Are you too stuck with slow selling foundation?",
+        "segments": [
+          {
+            "start": 0,
+            "end": 0,
+            "text": "Are you too stuck with slow selling foundation?"
+          }
+        ]
+      },
+      {
+        "index": 1,
+        "text": "Customers complaining about caking, fading.",
+        "segments": [
+          {
+            "start": 0,
+            "end": 0,
+            "text": "Customers complaining about caking, fading."
+          }
+        ]
+      },
+      {
+        "index": 2,
+        "text": "And fake white shade returns piling up non-stop.",
+        "segments": [
+          {
+            "start": 0,
+            "end": 0,
+            "text": "And fake white shade returns piling up non-stop."
+          }
+        ]
+      },
+      {
+        "index": 3,
+        "text": "We're a 15-year foundation factory from China.",
+        "segments": [
+          {
+            "start": 0,
+            "end": 0,
+            "text": "We're a 15-year foundation factory from China."
+          }
+        ]
+      },
+      {
+        "index": 4,
+        "text": "Three core perks, twelve age long wear.",
+        "segments": [
+          {
+            "start": 0,
+            "end": 0,
+            "text": "Three core perks, twelve age long wear."
+          }
+        ]
+      },
+      {
+        "index": 5,
+        "text": "No oxidation, ultra fine powder. No.",
+        "segments": [
+          {
+            "start": 0,
+            "end": 0,
+            "text": "No oxidation, ultra fine powder. No."
+          }
+        ]
+      },
+      {
+        "index": 6,
+        "text": "Caking no fake white cast. We have over.",
+        "segments": [
+          {
+            "start": 0,
+            "end": 0,
+            "text": "Caking no fake white cast. We have over."
+          }
+        ]
+      },
+      {
+        "index": 7,
+        "text": "Six thousand ready-made formulas. Whether you want.",
+        "segments": [
+          {
+            "start": 0,
+            "end": 0,
+            "text": "Six thousand ready-made formulas. Whether you want."
+          }
+        ]
+      },
+      {
+        "index": 8,
+        "text": "OEM private label or copy market bestsellers.",
+        "segments": [
+          {
+            "start": 0,
+            "end": 0,
+            "text": "OEM private label or copy market bestsellers."
+          }
+        ]
+      },
+      {
+        "index": 9,
+        "text": "Our professional formula engineers can customize the.",
+        "segments": [
+          {
+            "start": 0,
+            "end": 0,
+            "text": "Our professional formula engineers can customize the."
+          }
+        ]
+      },
+      {
+        "index": 10,
+        "text": "Exactly how you want it. Sample ready.",
+        "segments": [
+          {
+            "start": 0,
+            "end": 0,
+            "text": "Exactly how you want it. Sample ready."
+          }
+        ]
+      },
+      {
+        "index": 11,
+        "text": "In three days, bulk order delivered.",
+        "segments": [
+          {
+            "start": 0,
+            "end": 0,
+            "text": "In three days, bulk order delivered."
+          }
+        ]
+      },
+      {
+        "index": 12,
+        "text": "Thirty days. We now support small batches custom.",
+        "segments": [
+          {
+            "start": 0,
+            "end": 0,
+            "text": "Thirty days. We now support small batches custom."
+          }
+        ]
+      },
+      {
+        "index": 13,
+        "text": "Just 2000 bottles, you can.",
+        "segments": [
+          {
+            "start": 0,
+            "end": 0,
+            "text": "Just 2000 bottles, you can."
+          }
+        ]
+      },
+      {
+        "index": 14,
+        "text": "Build your own foundation brand, full certificate.",
+        "segments": [
+          {
+            "start": 0,
+            "end": 0,
+            "text": "Build your own foundation brand, full certificate."
+          }
+        ]
+      },
+      {
+        "index": 15,
+        "text": "Real factory direct. We've partnered with over.",
+        "segments": [
+          {
+            "start": 0,
+            "end": 0,
+            "text": "Real factory direct. We've partnered with over."
+          }
+        ]
+      },
+      {
+        "index": 16,
+        "text": "Over 500 brands, 70 % .",
+        "segments": [
+          {
+            "start": 0,
+            "end": 0,
+            "text": "Over 500 brands, 70 % ."
+          }
+        ]
+      },
+      {
+        "index": 17,
+        "text": "Plus repeat order rate help you start your.",
+        "segments": [
+          {
+            "start": 0,
+            "end": 0,
+            "text": "Plus repeat order rate help you start your."
+          }
+        ]
+      },
+      {
+        "index": 18,
+        "text": "Brand with zero risk. Want to make a big.",
+        "segments": [
+          {
+            "start": 0,
+            "end": 0,
+            "text": "Brand with zero risk. Want to make a big."
+          }
+        ]
+      },
+      {
+        "index": 19,
+        "text": "Round the foundation, replace foundation.",
+        "segments": [
+          {
+            "start": 0,
+            "end": 0,
+            "text": "Round the foundation, replace foundation."
+          }
+        ]
+      },
+      {
+        "index": 20,
+        "text": "And I will send you the price list.",
+        "segments": [
+          {
+            "start": 0,
+            "end": 0,
+            "text": "And I will send you the price list."
+          }
+        ]
+      },
+      {
+        "index": 21,
+        "text": "Thank you.",
+        "segments": [
+          {
+            "start": 0,
+            "end": 0,
+            "text": "Thank you."
+          }
+        ]
+      }
+    ],
+    "asr8s": [
+      {
+        "index": 0,
+        "text": "Are you too stuck with slow selling foundation? Customers complaining about caking, fading and fake white shade?",
+        "segments": [
+          {
+            "start": 0,
+            "end": 0,
+            "text": "Are you too stuck with slow selling foundation? Customers complaining about caking, fading and fake white shade?"
+          }
+        ]
+      },
+      {
+        "index": 1,
+        "text": "Orders piling up non-stop. We're a 15-year foundation factory from China. Three core perks: 12h long wear, no oxidation.",
+        "segments": [
+          {
+            "start": 0,
+            "end": 0,
+            "text": "Orders piling up non-stop. We're a 15-year foundation factory from China. Three core perks: 12h long wear, no oxidation."
+          }
+        ]
+      },
+      {
+        "index": 2,
+        "text": "Ultra fine powder, no caking, no fake white cast. We have over 6000 ready made formulas. Whether you want.",
+        "segments": [
+          {
+            "start": 0,
+            "end": 0,
+            "text": "Ultra fine powder, no caking, no fake white cast. We have over 6000 ready made formulas. Whether you want."
+          }
+        ]
+      },
+      {
+        "index": 3,
+        "text": "OEM private label or copy market bestsellers. Our professional formula engineers can customize the formula exactly how you want it.",
+        "segments": [
+          {
+            "start": 0,
+            "end": 0,
+            "text": "OEM private label or copy market bestsellers. Our professional formula engineers can customize the formula exactly how you want it."
+          }
+        ]
+      },
+      {
+        "index": 4,
+        "text": "Sample ready in three days. Bulk order delivered in 30 days. We now support small batches customization.",
+        "segments": [
+          {
+            "start": 0,
+            "end": 0,
+            "text": "Sample ready in three days. Bulk order delivered in 30 days. We now support small batches customization."
+          }
+        ]
+      },
+      {
+        "index": 5,
+        "text": "Two thousand bottles, you can build your own foundation brand. Full certifications, real factory direct. We've partnered with over.",
+        "segments": [
+          {
+            "start": 0,
+            "end": 0,
+            "text": "Two thousand bottles, you can build your own foundation brand. Full certifications, real factory direct. We've partnered with over."
+          }
+        ]
+      },
+      {
+        "index": 6,
+        "text": "Over 500 brands, 70 % plus repeat order rate. Help you start your brand with zero risk.",
+        "segments": [
+          {
+            "start": 0,
+            "end": 0,
+            "text": "Over 500 brands, 70 % plus repeat order rate. Help you start your brand with zero risk."
+          }
+        ]
+      },
+      {
+        "index": 7,
+        "text": "To make a best seller foundation, reply foundation, and I will send you the price list.",
+        "segments": [
+          {
+            "start": 0,
+            "end": 0,
+            "text": "To make a best seller foundation, reply foundation, and I will send you the price list."
+          }
+        ]
+      }
+    ],
+    "shotManifestPath": "data/analysis-output/tiktok_7648939405557697806/shot-manifest.json",
+    "priorReportPath": "docs/爆款视频7648939405557697806逐句口播与Agent交接.md"
+  },
+  "unresolved": [
+    "Word-level and phrase-boundary audio alignment",
+    "V01 stuck/smart",
+    "V03 returns/orders",
+    "Possible terminal Thank you detected only in final 3s ASR slice",
+    "Visual cut candidates and speech intervals require editorial confirmation"
+  ],
+  "readiness": {
+    "allSpokenLinesPhraseTimed": false,
+    "safeAsDirectorProductionReadySpeechEvidence": false,
+    "speechLineCountProvisional": 20,
+    "shotCandidateCount": 37
+  }
+}

@@ -77,6 +77,10 @@ import {
 } from "lucide-react";
 import { authHeader } from "../lib/auth";
 import { showActionSuccess } from "../lib/actionFeedback";
+import { socialDiscoveryApi } from "../lib/socialDiscoveryApi";
+import type { SocialCrawlStrategy } from '../../shared/contracts/socialContentWorkflow';
+import EnterpriseProductMultiSelect, { splitSelectedProducts } from './EnterpriseProductMultiSelect';
+// EnterpriseProductMultiSelect owns the searchable listbox contract: aria-multiselectable="true" · 搜索企业知识库产品或型号.
 import { heuristicProductMapping, mapRowToProduct, parseWorkbook, prepareSheet } from "../lib/productImport";
 import {
   buildTaskDeepLink,
@@ -608,6 +612,7 @@ function OnboardingPanel({
   restartFromBeginning = false,
   onSave,
   onOpenReadiness,
+  onNavigate,
 }: {
   initial: DigitalEmployeeConfig;
   readiness: BusinessReadinessItem[];
@@ -617,6 +622,7 @@ function OnboardingPanel({
   restartFromBeginning?: boolean;
   onSave: (config: DigitalEmployeeConfig & { minimalOnboarding?: true; brandName?: string }) => void | boolean | Promise<void | boolean>;
   onOpenReadiness: (item: BusinessReadinessItem) => void;
+  onNavigate?: (page: BusinessDestination) => void;
 }) {
   const restoredRules = useMemo(() => agentRuleFields(initial), [initial.socialCadence, initial.followupCadence, initial.reviewSchedule]);
   const [form, setForm] = useState(() => completeConfig(initial));
@@ -630,6 +636,8 @@ function OnboardingPanel({
   const [collectionLookback, setCollectionLookback] = useState(restoredRules.collectionLookback);
   const [collectionLimit, setCollectionLimit] = useState(restoredRules.collectionLimit);
   const [collectionTime, setCollectionTime] = useState(restoredRules.collectionTime);
+  const [approvedDiscoveryScope, setApprovedDiscoveryScope] = useState<SocialCrawlStrategy | null>(null);
+  const [discoveryScopeNotice, setDiscoveryScopeNotice] = useState("");
   const [publishCount, setPublishCount] = useState(restoredRules.publishCount);
   const [selectedPublishPlatforms, setSelectedPublishPlatforms] = useState<Array<PublishingTarget["platform"]>>(() => {
     const savedPlatforms = [...new Set(initial.publishingTargets.map((target) => target.platform))];
@@ -698,6 +706,15 @@ function OnboardingPanel({
     return next;
   }, [knowledgeProducts.length, profileConfirmed, readiness]);
   useEffect(() => setForm(completeConfig(initial)), [initial]);
+  useEffect(() => {
+    let active = true;
+    void socialDiscoveryApi.getScope().then(({ scope }) => {
+      if (!active) return;
+      setApprovedDiscoveryScope(scope.approval?.status === 'approved' ? scope : null);
+      setDiscoveryScopeNotice(scope.approval?.status === 'approved' ? '' : '尚无已批准的编导采集范围');
+    }).catch(() => { if (active) setDiscoveryScopeNotice('暂时无法读取当前编导采集范围'); });
+    return () => { active = false; };
+  }, []);
   useEffect(() => {
     setCollectionPlatforms(restoredRules.collectionPlatforms);
     setCollectionSources(restoredRules.collectionSources);
@@ -1143,20 +1160,21 @@ function OnboardingPanel({
       </div>
       <div className="mt-4 grid gap-4">
         {activeRuleAgent === "director" && <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
-          <div><p className="text-sm font-bold text-emerald-950">AI 推荐执行范围</p><p className="mt-1 text-xs text-emerald-700">根据行业、业务、重点产品和目标市场生成采集关键词与客户画像；推荐值仍需人工确认。</p></div>
+          <div><p className="text-sm font-bold text-emerald-950">AI 推荐经营需求</p><p className="mt-1 text-xs text-emerald-700">根据行业、业务、重点产品和目标市场生成给编导的采集建议；实际搜索范围以已批准的灵感范围为准。</p></div>
           <div className="text-right"><button type="button" disabled={!canGenerateRecommendation} onClick={applyAiRecommendation} className="inline-flex items-center gap-2 rounded-xl bg-emerald-700 px-4 py-2 text-xs font-bold text-white disabled:cursor-not-allowed disabled:bg-slate-300"><Sparkles size={14} />{recommendationApplied ? "已生成，可继续调整" : "填入基础关键词"}</button>{!canGenerateRecommendation&&<p role="status" className="mt-1 text-[10px] text-amber-700">请先补齐：{missingRecommendationFields.join("、")}</p>}</div>
         </div>}
         {activeRuleAgent === "director" && <section className="rounded-2xl border border-slate-200 p-4">
-          <p className="text-sm font-bold text-slate-900">关键词采集与验收</p>
-          <p className="mt-1 text-xs text-slate-500">规则与灵感大屏保持一致；定时任务负责执行，编导 Agent 负责验收采集结果。</p>
-          <div className="mt-4 grid gap-4 md:grid-cols-2">
-            <Field label="关键词语言"><select className={inputClass} value={collectionLanguage} onChange={event => setCollectionLanguage(event.target.value)}><option value="英语">英语</option><option value="中文">中文</option><option value="西班牙语">西班牙语</option><option value="法语">法语</option><option value="德语">德语</option></select><p className="mt-1 text-[10px] text-emerald-700">默认同步企业中心产品手册语言。</p></Field>
-            <Field label="关键词"><input className={inputClass} value={collectionKeywords} onChange={event => setCollectionKeywords(event.target.value)} placeholder="产品名、买家痛点、应用场景" /></Field>
-            <div className="md:col-span-2"><p className="text-xs font-semibold text-slate-600">采集平台（可多选）</p><div className="mt-2 grid gap-2 sm:grid-cols-4">{publishingPlatforms.map(platform => { const label=contentPlatformLabel[platform]; const selected=collectionPlatforms.toLowerCase().includes(platform) || collectionPlatforms.includes(label); return <label key={platform} className={`flex items-center gap-2 rounded-xl border px-3 py-2.5 text-xs font-bold ${selected?'border-blue-300 bg-blue-50 text-blue-800':'border-slate-200 bg-white text-slate-500'}`}><input type="checkbox" checked={selected} onChange={event => { const active=publishingPlatforms.filter(item => { const itemLabel=contentPlatformLabel[item]; const already=collectionPlatforms.toLowerCase().includes(item) || collectionPlatforms.includes(itemLabel); return item === platform ? event.target.checked : already; }); setCollectionPlatforms(active.map(item => contentPlatformLabel[item]).join('、')); }} />{label}</label>; })}</div></div>
-            <Field label="定时采集时间"><input className={inputClass} value={collectionTime} onChange={event=>setCollectionTime(event.target.value)} /></Field>
-            <div className="grid grid-cols-2 gap-3"><Field label="回看天数"><input className={inputClass} type="number" min={1} value={collectionLookback} onChange={event=>setCollectionLookback(Number(event.target.value))} /></Field><Field label="单次上限"><input className={inputClass} type="number" min={1} value={collectionLimit} onChange={event=>setCollectionLimit(Number(event.target.value))} /></Field></div>
+          <p className="text-sm font-bold text-slate-900">编导采集需求与导演规则</p>
+          <p className="mt-1 text-xs text-slate-500">这里记录经营 Agent 对编导的目标和建议。保存后不会直接覆盖正在执行的采集范围；编导采集以灵感大屏已批准的范围为准。</p>
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50 p-3">
+            <p className="text-xs font-semibold text-emerald-900">{approvedDiscoveryScope ? `当前生效：编导采集范围 v${approvedDiscoveryScope.approval?.scopeVersion ?? approvedDiscoveryScope.version} · ${approvedDiscoveryScope.discoveryBrief.lookbackDays} 天 · 滚动 7 天目标 ${approvedDiscoveryScope.discoveryBrief.resultLimit} 条` : discoveryScopeNotice || '正在读取当前编导采集范围…'}</p>
+            <button type="button" onClick={() => onNavigate?.('socialInspiration')} disabled={!onNavigate} className="rounded-lg bg-emerald-700 px-3 py-2 text-xs font-bold text-white disabled:opacity-50">到灵感大屏确认或调整</button>
           </div>
-          <p className="mt-4 rounded-xl bg-slate-50 p-3 text-xs leading-5 text-slate-600">定时任务按上述规则采集公开内容；编导 Agent 验收后，合格结果进入灵感中心。近 {collectionLookback} 天 · 每次最多 {collectionLimit} 条。</p>
+          <div className="mt-4 space-y-4">
+            <div><p className="mb-2 text-[10px] font-black uppercase tracking-wider text-slate-400">1 · 建议采集范围</p><div className="space-y-3"><Field label="建议平台"><input className={inputClass} value={collectionPlatforms} onChange={e=>setCollectionPlatforms(e.target.value)} /></Field><Field label="建议来源"><input className={inputClass} value={collectionSources} onChange={e=>setCollectionSources(e.target.value)} /></Field><Field label="建议关键词"><input className={inputClass} value={collectionKeywords} onChange={e=>setCollectionKeywords(e.target.value)} placeholder="仅作为经营需求，实际词在灵感大屏确认" /></Field></div></div>
+            <div><p className="mb-2 text-[10px] font-black uppercase tracking-wider text-slate-400">2 · 建议执行节奏</p><div className="grid gap-3 md:grid-cols-3"><Field label="建议采集时间"><input className={inputClass} value={collectionTime} onChange={e=>setCollectionTime(e.target.value)} /></Field><Field label="建议回看天数"><input className={inputClass} type="number" min={1} value={collectionLookback} onChange={e=>setCollectionLookback(Number(e.target.value))} /></Field><Field label="建议单次上限"><input className={inputClass} type="number" min={1} value={collectionLimit} onChange={e=>setCollectionLimit(Number(e.target.value))} /></Field></div></div>
+          </div>
+          <p className="mt-3 rounded-xl bg-slate-50 p-3 text-xs text-slate-600">经营建议：近 {collectionLookback} 天 · 单次最多 {collectionLimit} 条。编导确认后才会成为采集参数。</p>
         </section>}
         {activeRuleAgent === "content" && <section className="rounded-2xl border border-slate-200 p-4">
           <p className="text-sm font-bold text-slate-900">输出内容语言</p>
@@ -3966,6 +3984,7 @@ export default function DigitalEmployeePage({
               readiness={data?.businessSnapshot?.readiness || []}
               busy={Boolean(busy)}
               onOpenReadiness={openReadiness}
+              onNavigate={(page) => openBusiness(page)}
               onSave={saveConfig}
             />
           </div>
@@ -4353,6 +4372,7 @@ export default function DigitalEmployeePage({
               mode="rules"
               activeRun={activeRun}
               onOpenReadiness={openReadiness}
+              onNavigate={(page) => openBusiness(page)}
               onSave={(config) => void saveConfig(config)}
             />
             <section className="rounded-3xl border border-slate-200 bg-white p-5">

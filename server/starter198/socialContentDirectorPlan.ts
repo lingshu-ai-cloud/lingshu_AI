@@ -627,6 +627,11 @@ export function reviseSocialDirectorPlanForVoiceoverFit(input: {
   if (!Number.isFinite(measured) || measured <= target) {
     throw new SocialContentWorkflowError('social_content_director_revision_not_required', 409);
   }
+  if (input.previous.scriptSource.kind === 'inspiration_script') {
+    // Viral replication keeps the reference wording intact. A duration drift
+    // needs more visual coverage or a new asset match, never shortened copy.
+    throw new SocialContentWorkflowError('social_content_reference_voiceover_requires_more_material', 409);
+  }
   const ratio = clamp((target / measured) * 0.82, 0.28, 0.82);
   let changed = false;
   const scenes = input.previous.scenes.map(scene => {

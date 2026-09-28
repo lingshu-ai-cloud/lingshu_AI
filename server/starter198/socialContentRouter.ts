@@ -94,6 +94,7 @@ import {
   type SocialContentAccessResolver,
 } from './socialContentAccess.js';
 import { readSocialProductionState } from './socialContentProductionHandoff.js';
+import { refreshSocialTaskReferenceOutputs } from './socialContentTaskSupport.js';
 
 type AccessLevel = 'read' | 'write' | 'start';
 
@@ -345,6 +346,18 @@ export function createSocialContentRouter(dependencies: SocialContentRouterDepen
       task.referencePreparation = await readReferencePreparation(identity.tenantId, task.sources).catch(() => ({ status: 'blocked' as const, reason: 'reference_status_unavailable' }));
     }
     res.json({ task });
+  }));
+
+  router.post('/tasks/:taskId/refresh-reference', asyncRoute(async (req, res) => {
+    const identity = await authorize(req, res, 'write');
+    const taskId = requireSocialId(req.params.taskId);
+    const current = await readSocialTaskDetail({ repository, tenantId: identity.tenantId, taskId });
+    if (!current) throw new SocialContentWorkflowError('social_content_task_not_found', 404);
+    if (current.brief.creationMode !== 'viral_replication') throw new SocialContentWorkflowError('social_content_reference_invalid', 400);
+    if (socialText(req.body?.expectedVersion) !== current.version) throw new SocialContentWorkflowError('social_content_version_conflict', 409);
+    await refreshSocialTaskReferenceOutputs({ repository, ...identity, taskId,
+      operationId: requireIdempotencyKey(req.headers['idempotency-key']), now: now() });
+    res.json({ task: await readSocialTaskDetail({ repository, tenantId: identity.tenantId, taskId }) });
   }));
 
   router.get('/tasks/:taskId/production-state', asyncRoute(async (req, res) => {

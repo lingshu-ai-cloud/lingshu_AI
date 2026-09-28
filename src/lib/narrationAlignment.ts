@@ -20,7 +20,7 @@ export function validateSpeechCues(cues: SpeechCue[], transcript: string, durati
 /** Match complete cues in order. Never split a sentence by guessed character ratios. */
 export function mapNarrationCues(narrations: string[], cues: SpeechCue[], duration: number, source?: string) {
   const texts = narrations.map(spokenText);
-  if (!['audio_ai', 'minimax_native', 'manual_confirmed', 'qwen_asr'].includes(source || '')) throw new Error('配音仍为估算时间，请在分镜与声音页逐句试听、调整并确认时间轴');
+  if (!['audio_ai', 'minimax_native', 'synthesized_sentence_audio', 'manual_confirmed', 'qwen_asr'].includes(source || '')) throw new Error('配音仍为估算时间，请在分镜与声音页逐句试听、调整并确认时间轴');
   if (source === 'qwen_asr') {
     const words = cues.flatMap(cue => cue.words || []);
     if (!validateSpeechCues(words, cues.map(cue => cue.text).join(''), duration)) throw new Error('千问字词时间戳无效');

@@ -12,8 +12,9 @@ import { matchedReferenceIndustryLeaks } from '../lib/referenceIndustryLeak.js';
 export { matchedReferenceIndustryLeaks } from '../lib/referenceIndustryLeak.js';
 import { materialRoleFromFolder, safeMaterialScenes, safeMaterialVoicePlan } from '../lib/studioMaterialPresentation.js';
 import { productIdentity } from '../digitalEmployees/contentProduction.js';
-import { requestMaterialAnalysis, waitForMaterialAnalysis, isMaterialAnalysisActive, saveMaterialSegmentsWithScriptAnalysis } from '../lib/materialLibraryAnalysis.js';
+import { requestMaterialAnalysis, waitForMaterialAnalysis, isMaterialAnalysisActive, saveMaterialSegmentsWithScriptAnalysis, startPendingLocalMaterialAnalyses } from '../lib/materialLibraryAnalysis.js';
 import { readMaterialLibrary, readLocalMaterials, saveLocalMaterials, updateLocalMaterial } from '../lib/materialLibrary.js';
+import { currentDataAuthority } from '../storage/dataAuthority.js';
 import { mixedStoryboardRules, mixedStoryboardIssues } from './mixedStoryboardContract.js';
 import { alignQwenFile } from '../integrations/qwenAlignment.js';
 import { contentLibraryRouter } from './contentLibrary.js';
@@ -199,13 +200,12 @@ function referenceTimelineQuality(referenceAnalysis: unknown, requestedDuration:
   if (ranges.length && ranges[0]!.start > 0.75) issues.push(`时间线未从片头开始（首段 ${ranges[0]!.start.toFixed(1)}s）`);
   for (let index = 0; index < ranges.length; index += 1) {
     const item = ranges[index]!;
-    if (item.end - item.start > 5.5) issues.push(`存在过长分镜 [${item.start}-${item.end}s]`);
     const next = ranges[index + 1];
     if (next && next.start - item.end > 0.75) issues.push(`时间线存在空档 ${item.end.toFixed(1)}-${next.start.toFixed(1)}s`);
     if (next && item.end - next.start > 0.75) issues.push(`时间线存在重叠 ${next.start.toFixed(1)}-${item.end.toFixed(1)}s`);
   }
-  const minShots = duration > 0 ? Math.ceil(duration / 5) : 1;
-  if (ranges.length < minShots) issues.push(`分镜密度不足（${ranges.length} 段，至少需要 ${minShots} 段）`);
+  // Physical visual cuts define shots. A continuous shot can last longer than
+  // five seconds, and speech cadence must not create artificial picture cuts.
   // A review flag records honest uncertainty about names, prices, handedness
   // or ASR and does not make the visual timeline incomplete. Only genuine
   // timeout/missing-evidence placeholders should block storyboard generation.
@@ -3959,6 +3959,8 @@ interface MaterialSegment {
   end: number;
   duration: number;
   poster?: string;
+  visualTopic?: string;
+  expressionPurpose?: string;
   subject: string[];
   action: string;
   productVisible: boolean;
@@ -4556,6 +4558,9 @@ studioRouter.get('/materials', async (req, res) => {
   const scope = req.query.scope as string | undefined;
   const purpose = String(req.query.purpose || 'library');
   const inventory = await readMaterialLibrary(tenantId);
+  // Legacy local imports wrote materials.json directly. Start their visual
+  // indexing when the owner opens the library; the response stays immediate.
+  if (currentDataAuthority() === 'local') startPendingLocalMaterialAnalyses(tenantId, inventory.items);
   let list = inventory.items as Material[];
   if (scope === 'shared') list = list.filter(canAppearInSharedLibrary);
   else if (scope === 'own') list = list.filter(m => (m.scope ?? 'own') === 'own');
@@ -6281,7 +6286,7 @@ async function alignTtsAudio(transcript: string, url: string | undefined, durati
   const file = path.join(tenantAssetDir(TTS_ROOT, tenantId), path.basename(new URL(url, 'http://local').pathname));
   try {
     const cached = JSON.parse(fs.readFileSync(file + '.alignment.json', 'utf8'));
-    if (cached.text === transcript && cached.cues?.length) return { cues: cached.cues, source: 'audio_ai' };
+    if (cached.text === transcript && cached.source === 'audio_ai' && cached.cues?.length) return { cues: cached.cues, source: 'audio_ai' };
   } catch {}
   if (!objectStorageEnabled()) throw Error('该音频需要真实对齐。请重新生成句级配音，或配置私有对象存储后使用千问音频对齐');
   await persistPrivateStudioAsset('tts', tenantId, file);
@@ -6452,7 +6457,7 @@ export function splitStudioNarrationSentences(spoken: string): string[] {
 
 export async function synthesizeStudioVoiceForAutomation(input: {
   tenantId: string; text: string; language?: string; voice?: string; targetDuration?: number;
-  style?: TtsStyleOptions;
+  style?: TtsStyleOptions; sentenceLines?: string[];
 }): Promise<{ ok: boolean; source?: string; url?: string; localPath?: string; duration?: number; text?: string; error?: string; cues?: AlignedCue[]; alignmentSource?: string; qualityReport?: VoiceQualityReport }> {
   return studioTenantContext.run(input.tenantId, async () => {
     const spoken = String(input.text || '').trim();
@@ -6461,7 +6466,11 @@ export async function synthesizeStudioVoiceForAutomation(input: {
     // sentence separately resets pitch and emotion four times and makes a
     // natural recommendation sound like stitched system prompts. Keep longer
     // automation scripts on the measured per-sentence path below.
-    const lines = splitStudioNarrationSentences(spoken);
+    const requestedLines = Array.isArray(input.sentenceLines) ? input.sentenceLines.map(line => String(line).trim()).filter(Boolean) : [];
+    if (requestedLines.length && requestedLines.join(' ').replace(/\s+/g, '') !== spoken.replace(/\s+/g, '')) {
+      return { ok: false, error: '逐句口播与完整口播不一致' };
+    }
+    const lines = requestedLines.length ? requestedLines : splitStudioNarrationSentences(spoken);
     const dir = tenantAssetDir(TTS_ROOT, input.tenantId); fs.mkdirSync(dir, { recursive: true });
     const files: string[] = [], cues: AlignedCue[] = [];
     const providers = new Set<string>();
@@ -6490,7 +6499,8 @@ export async function synthesizeStudioVoiceForAutomation(input: {
         cueCursor = end;
         return { start, end, text: line };
       });
-      const outputCues = audio.cues?.length ? audio.cues.map(cue => ({
+      const hasNativeTiming = audio.alignmentSource === 'minimax_native' && Boolean(audio.cues?.length);
+      const outputCues = hasNativeTiming ? audio.cues!.map(cue => ({
         ...cue,
         start: Math.max(0, Math.min(spokenDuration, cue.start / speed)),
         end: Math.max(0, Math.min(spokenDuration, cue.end / speed)),
@@ -6499,8 +6509,11 @@ export async function synthesizeStudioVoiceForAutomation(input: {
       const result = await persistTtsResult({ ok: true, url: scopedStudioAssetUrl('tts', path.basename(joined)), duration }, input.tenantId);
       const qualityReport = await inspectGeneratedVoice({ filePath: joined, expectedText: spoken, language: input.language || 'en' });
       if (!qualityReport.passed) return { ok: false, source: audio.source, error: `口播质量未通过：${qualityReport.failures.join('；')}`, qualityReport };
-      fs.writeFileSync(joined + '.alignment.json', JSON.stringify({ text: spoken, cues: outputCues }));
-      return { ...result, localPath: joined, text: spoken, cues: outputCues, source: audio.source, alignmentSource: audio.alignmentSource || 'synthesized_sentence_audio', qualityReport };
+      // Proportional sentence splits of one continuous performance are useful
+      // for subtitle preview, but they are not measured audio boundaries.
+      // Never cache them as an ASR alignment or pass them to production as exact.
+      if (hasNativeTiming) fs.writeFileSync(joined + '.alignment.json', JSON.stringify({ text: spoken, cues: outputCues, source: 'minimax_native' }));
+      return { ...result, localPath: joined, text: spoken, cues: outputCues, source: audio.source, alignmentSource: hasNativeTiming ? 'minimax_native' : 'pending_alignment', qualityReport };
     }
     // Longer scripts retain independently measured sentence boundaries.
     for (const line of lines) {
@@ -6524,7 +6537,7 @@ export async function synthesizeStudioVoiceForAutomation(input: {
     const result = await persistTtsResult({ ok: true, url: scopedStudioAssetUrl('tts', path.basename(joined)), duration: cursor }, input.tenantId);
     const qualityReport = await inspectGeneratedVoice({ filePath: joined, expectedText: spoken, language: input.language || 'en' });
     if (!qualityReport.passed) return { ok: false, source: [...providers].join('+'), error: `口播质量未通过：${qualityReport.failures.join('；')}`, qualityReport };
-    fs.writeFileSync(joined + '.alignment.json', JSON.stringify({ text: spoken, cues }));
+    fs.writeFileSync(joined + '.alignment.json', JSON.stringify({ text: spoken, cues, source: 'synthesized_sentence_audio' }));
     for (const file of files) fs.unlinkSync(file);
     return { ...result, localPath: joined, text: spoken, cues, source: [...providers].join('+'), alignmentSource: 'synthesized_sentence_audio', qualityReport };
   });
@@ -6534,13 +6547,13 @@ export async function synthesizeStudioVoiceForAutomation(input: {
 studioRouter.post('/tts', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   if (!await consumeDemoQuota(req, res, 'generation')) return;
-  const { script = '', text = '', voice = 'v1', language = 'zh', style = {} } = req.body ?? {};
+  const { script = '', text = '', voice = 'v1', language = 'zh', style = {}, sentenceLines } = req.body ?? {};
   const spoken = (text || spokenText(script)).trim();
   if (!spoken) { res.status(400).json({ ok: false, error: 'no spoken text' }); return; }
 
   try {
     if (!spokenLanguageMatches(spoken, language)) { res.status(400).json({ ok: false, error: '口播与目标语言不一致，请先修改脚本；配音不会自动翻译。' }); return; }
-    const output = await synthesizeStudioVoiceForAutomation({ tenantId, text: spoken, voice, language, style: normalizeTtsStyle(style) });
+    const output = await synthesizeStudioVoiceForAutomation({ tenantId, text: spoken, voice, language, style: normalizeTtsStyle(style), sentenceLines });
     const payload = JSON.stringify(output);
     res.statusCode = 200;
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
@@ -7132,7 +7145,7 @@ studioRouter.get('/projects/:id/evidence', async (req, res) => {
     const tenantId = res.locals.tenantId as string;
     const project = await store.getById<any>('studio_projects', req.params.id);
     if (!project || project.tenant_id !== tenantId || !socialProjectBelongs(project, socialProjectTaskId(res.locals))) { res.status(404).json({ error: '草稿不存在' }); return; }
-    const gaps = auditShotEvidence(project.spec || {}, loadMaterials().filter(item => !isReferenceOnlyMaterial(item)), tenantId);
+    const gaps = auditShotEvidence(project.spec || {}, loadMaterials(), tenantId);
     res.setHeader('Cache-Control', 'private, no-store');
     res.json({ ok: true, projectId: project.id, revision: project.updated_at, gaps, status: gaps.length ? 'needs_review' : 'range_checked', note: '范围和动作文本校验，不代表视觉或产品功效已验证；未读取到的云端素材需人工核对。' });
   } catch { res.status(503).json({ error: '素材依据检查失败，请稍后重试' }); }

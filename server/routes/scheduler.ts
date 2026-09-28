@@ -1,5 +1,6 @@
 import { readSavedDiscoveryScope } from '../lib/socialDiscoveryScope.js';
 import { discoveryKeywords } from '../../shared/socialDiscoveryKeywords.js';
+import { hasLegacyProductTitleQueries } from '../../shared/productDiscovery.js';
 import { Router, type Request, type Response } from 'express';
 import fs from 'fs';
 import os from 'os';
@@ -888,7 +889,11 @@ function normalizedKeywordList(value: string | undefined, platform: Platform, fa
 async function executeVideoKeywordCrawl(task: ScheduledTask): Promise<string> {
   const tenantId = await resolveSchedulerTenantId(task);
   const requestedKeywords = task.config.keywordSource ? (task.config.keywordInput || '') : (task.config.keywords || task.config.keyword || '');
-  const savedScope = await readSavedDiscoveryScope(tenantId);
+  const scopeLinked = task.config.keywordSource === 'discovery_scope' || task.config.managedBy === 'digital_employee' || task.id.startsWith('task_de_');
+  const savedScope = scopeLinked ? await readSavedDiscoveryScope(tenantId) : null;
+  if (savedScope && !savedScope.keywordRecommendation && hasLegacyProductTitleQueries(savedScope.keywordSet.graph.discoverySeeds)) {
+    throw new Error('已保存范围仍是旧版商品全名关键词，请在灵感大屏重新生成通用品类词');
+  }
   const enterpriseProfile = savedScope ? {} : await readTenantEnterpriseProfile(tenantId);
   const selection = savedScope ? { keywords: discoveryKeywords(savedScope), source: 'discovery_scope', evidence: [savedScope.keywordSet.name] } : resolveCrawlKeywords(requestedKeywords, enterpriseProfile);
   const resolvedKeywords = selection.keywords.join(', ');
@@ -1030,6 +1035,7 @@ async function executeCompetitorAccountCrawl(task: ScheduledTask): Promise<strin
   const tenantId = await resolveSchedulerTenantId(task);
   const platform = resolveCrawlerPlatform(task.config.platforms) as Platform;
   const limit = Math.max(1, Math.min(30, Number(task.config.limit || 10) || 10));
+  const { dateFrom, dateTo } = beijingDateRange(task.config.dateWindowDays);
   const accounts = await store.list<Record<string, unknown>>('competitor_accounts', {
     where: { tenantId, platform }, page: 1, perPage: 200, sort: '-createdAt',
   });
@@ -1053,6 +1059,8 @@ async function executeCompetitorAccountCrawl(task: ScheduledTask): Promise<strin
           accountUrl,
           accountName,
           limit,
+          dateFrom,
+          dateTo,
         });
         if (!job) throw new Error('Mac 本地采集任务创建失败');
         queued += 1;
@@ -1066,10 +1074,12 @@ async function executeCompetitorAccountCrawl(task: ScheduledTask): Promise<strin
         accountUrl,
         accountName,
         limit,
+        dateFrom,
+        dateTo,
         cloudFallback: true,
         disableBackfill: task.config.smokeTest === '1',
       });
-      await createCrawlWorkerJob({ tenantId, requestedBy: workerBatch, platform, mode: 'account', accountUrl, accountName, limit,
+      await createCrawlWorkerJob({ tenantId, requestedBy: workerBatch, platform, mode: 'account', accountUrl, accountName, limit, dateFrom, dateTo,
         completed: { result: { ...result, items: undefined } } });
       imported += result.imported;
       succeeded += 1;
@@ -1077,7 +1087,7 @@ async function executeCompetitorAccountCrawl(task: ScheduledTask): Promise<strin
       lines.push(`${accountName}: 返回 ${result.items.length} 条，新增 ${result.imported} 条`);
     } catch (e) {
       failed += 1;
-      await createCrawlWorkerJob({ tenantId, requestedBy: workerBatch, platform, mode: 'account', accountUrl, accountName, limit,
+      await createCrawlWorkerJob({ tenantId, requestedBy: workerBatch, platform, mode: 'account', accountUrl, accountName, limit, dateFrom, dateTo,
         completed: { error: e instanceof Error ? e.message : String(e) } });
       lines.push(`${accountName}: 执行失败 - ${e instanceof Error ? e.message : String(e)}`);
     }
@@ -1140,6 +1150,10 @@ export function scheduledCrawlBatchResult(jobs: Record<string, any>[], requested
 }
 
 async function executeTask(task: ScheduledTask): Promise<string> {
+  if (task.taskType === 'video_keyword_crawl' &&
+    (task.config.managedBy === 'digital_employee' || task.id.startsWith('task_de_'))) {
+    return '编导旧采集任务已停用，请使用已批准的连续发现采集计划。';
+  }
   if (task.taskType === 'social_discovery_collection') {
     const { executeApprovedDiscoveryRun } = await import('../socialDiscovery/service.js');
     const result = await executeApprovedDiscoveryRun({
@@ -1175,6 +1189,7 @@ export function ensureSocialDiscoveryCollectionTask(input: {
   const tasks = load();
   const existing = tasks.find(task => task.tenantId === input.tenantId && task.taskType === 'social_discovery_collection');
   const config: Record<string, string> = {
+    ...(existing?.config || {}),
     tenantId: input.tenantId,
     discoveryScopeId: input.discoveryScopeId,
     discoveryScopeVersion: String(input.discoveryScopeVersion),
@@ -1185,7 +1200,7 @@ export function ensureSocialDiscoveryCollectionTask(input: {
     name: '连续发现采集',
     cronExpr: '*/15 * * * *',
     cronLabel: '每15分钟检查到期供给',
-    enabled: true,
+    enabled: existing.enabled,
     config,
   } : {
     id: `task_social_discovery_${randomUUID()}`,
@@ -1199,6 +1214,9 @@ export function ensureSocialDiscoveryCollectionTask(input: {
     config,
     createdAt: new Date().toISOString(),
   };
+  if (existing && JSON.stringify(task) === JSON.stringify(existing)) {
+    return { task: existing, created: false, updated: false };
+  }
   if (existing) tasks[tasks.indexOf(existing)] = task;
   else tasks.push(task);
   save(tasks);
@@ -1208,6 +1226,17 @@ export function ensureSocialDiscoveryCollectionTask(input: {
 
 /** Backfill managed schedules for approved scopes created before scheduler wiring existed. */
 export async function reconcileSocialDiscoveryCollectionTasks(): Promise<number> {
+  const legacyTasks = load();
+  let retiredLegacy = false;
+  for (const task of legacyTasks) {
+    if (task.taskType !== 'video_keyword_crawl' ||
+      !(task.config.managedBy === 'digital_employee' || task.id.startsWith('task_de_')) || !task.enabled) continue;
+    task.enabled = false;
+    activeJobs.get(task.id)?.stop();
+    activeJobs.delete(task.id);
+    retiredLegacy = true;
+  }
+  if (retiredLegacy) save(legacyTasks);
   let page = 1;
   let reconciled = 0;
   while (page <= 50) {
@@ -1311,7 +1340,8 @@ function scheduleTask(task: ScheduledTask) {
   activeJobs.set(task.id, job);
 }
 
-export function ensureDigitalEmployeeSocialCollectionTask(input: {
+/** Bind the director workflow to the one approved discovery collector. Never create a second keyword crawl. */
+export async function ensureDigitalEmployeeSocialCollectionTask(input: {
   tenantId: string;
   workflowRunId: string;
   workflowTaskId: string;
@@ -1322,73 +1352,54 @@ export function ensureDigitalEmployeeSocialCollectionTask(input: {
   limit?: number;
   dateWindowDays?: number;
   dedupeWindowDays?: number;
-}): { task: ScheduledTask; created: boolean; updated: boolean } {
+}): Promise<{ task: ScheduledTask; created: boolean; updated: boolean; pendingReason?: string } | null> {
   const tasks = load();
-  const exact = tasks.find(task => (
-    task.tenantId === input.tenantId &&
-    task.config.workflowTaskId === input.workflowTaskId
-  ));
-  const cronExpr = String(input.cronExpr || '0 1 * * *');
-  if (!cron.validate(cronExpr)) throw new Error('invalid_social_collection_schedule');
-  const platforms = (input.platforms || ['youtube'])
-    .map(platform => String(platform).toLowerCase())
-    .filter(platform => ['youtube', 'tiktok', 'facebook', 'instagram'].includes(platform));
-  const config: Record<string, string> = {
-    tenantId: input.tenantId,
-    platforms: [...new Set(platforms.length ? platforms : ['youtube'])].join(','),
-    keywords: String(input.keywords || ''),
-    limit: normalizeCrawlerLimit(input.limit ?? 20),
-    dateWindowDays: String(Math.max(1, Math.min(30, Number(input.dateWindowDays || 7)))),
-    dedupeWindowDays: String(Math.max(1, Math.min(365, Number(input.dedupeWindowDays || 30)))),
-    workflowRunId: input.workflowRunId,
-    workflowTaskId: input.workflowTaskId,
-    managedBy: 'digital_employee',
-  };
-  // One tenant has one managed collector. A new weekly run rebinds the same
-  // scheduler instead of leaving an additional enabled cron job behind.
-  const existing = exact || tasks.find(task => (
-    task.tenantId === input.tenantId &&
-    task.taskType === 'video_keyword_crawl' &&
-    (task.config.managedBy === 'digital_employee' || task.id.startsWith('task_de_'))
-  ));
-  if (existing) {
-    // Keep the evidence-derived query until the plan's requested product changes.
-    if (existing.config.keywordSource && existing.config.keywordInput === config.keywords) {
-      for (const key of ['keywords', 'keywordInput', 'keywordSource', 'keywordEvidence']) config[key] = existing.config[key] || '';
-    }
-    const next: ScheduledTask = {
-      ...existing,
-      name: '数字员工 · 社媒内容采集',
-      cronExpr,
-      cronLabel: input.cronLabel || '每天 01:00（北京时间）',
-      enabled: true,
-      config,
-    };
-    const changed = JSON.stringify({ cronExpr: existing.cronExpr, cronLabel: existing.cronLabel, enabled: existing.enabled, config: existing.config })
-      !== JSON.stringify({ cronExpr: next.cronExpr, cronLabel: next.cronLabel, enabled: next.enabled, config: next.config });
-    if (changed) {
-      tasks[tasks.findIndex(task => task.id === existing.id)] = next;
-      save(tasks);
-      scheduleTask(next);
-    }
-    return { task: changed ? next : existing, created: false, updated: changed };
+  let retiredLegacy = false;
+  for (const legacy of tasks) {
+    if (legacy.tenantId !== input.tenantId || legacy.taskType !== 'video_keyword_crawl' ||
+      !(legacy.config.managedBy === 'digital_employee' || legacy.id.startsWith('task_de_')) || !legacy.enabled) continue;
+    legacy.enabled = false;
+    activeJobs.get(legacy.id)?.stop();
+    activeJobs.delete(legacy.id);
+    retiredLegacy = true;
   }
-  const task: ScheduledTask = {
-    id: `task_de_${input.workflowTaskId}`,
-    name: '数字员工 · 每日社媒爆款采集',
-    category: 'automation',
-    taskType: 'video_keyword_crawl',
-    cronExpr,
-    cronLabel: input.cronLabel || '每天 01:00（北京时间）',
-    enabled: true,
-    config,
-    tenantId: input.tenantId,
-    createdAt: new Date().toISOString(),
-  };
-  tasks.push(task);
-  save(tasks);
-  scheduleTask(task);
-  return { task, created: true, updated: false };
+  if (retiredLegacy) save(tasks); // Keep the record and last-run history for audit.
+  const result = await store.list<Record<string, any>>('social_discovery_scopes', {
+    where: { tenant_id: input.tenantId, status: 'active' }, sort: '-updated_at', page: 1, perPage: 20,
+  });
+  const scope = result.items.find(item => {
+    const approval = item.payload?.approval;
+    return approval?.status === 'approved' && Number(approval.scopeVersion || 0) === Number(item.version || 0);
+  });
+  if (!scope?.id) return null;
+  const brief = scope.payload?.discoveryBrief || {};
+  const differences: string[] = [];
+  const requestedPlatforms = [...new Set((input.platforms || []).map(value => String(value).toLowerCase()))].sort();
+  const approvedPlatforms = [...new Set((brief.platforms || []).map((value: unknown) => String(value).toLowerCase()))].sort();
+  if (requestedPlatforms.length && approvedPlatforms.length && requestedPlatforms.join(',') !== approvedPlatforms.join(',')) differences.push('采集平台');
+  if (input.dateWindowDays && Number(brief.lookbackDays || 7) !== input.dateWindowDays) differences.push('视频发布时间范围');
+  // The operating agent's per-run request limit and the director's rolling seven-day
+  // qualified-content target have different units. Preserve both for review.
+  const pendingReason = differences.length ? `经营建议与编导已批准范围的${differences.join('、')}不一致，待编导确认` : undefined;
+  const ensured = ensureSocialDiscoveryCollectionTask({
+    tenantId: input.tenantId, discoveryScopeId: String(scope.id), discoveryScopeVersion: Number(scope.version),
+  });
+  const latest = load();
+  const canonical = latest.find(task => task.id === ensured.task.id && task.tenantId === input.tenantId)!;
+  const refs: Array<{ workflowRunId: string; workflowTaskId: string }> = (() => {
+    try { const parsed = JSON.parse(canonical.config.workflowRefs || '[]'); return Array.isArray(parsed) ? parsed : []; }
+    catch { return []; }
+  })();
+  if (!refs.some(ref => ref.workflowTaskId === input.workflowTaskId)) {
+    refs.push({ workflowRunId: input.workflowRunId, workflowTaskId: input.workflowTaskId });
+    canonical.config = { ...canonical.config, workflowRefs: JSON.stringify(refs.slice(-100)) };
+    save(latest);
+  }
+  const restConfig = { ...canonical.config };
+  delete restConfig.directorReviewRequired;
+  canonical.config = { ...restConfig, operatingRequest: JSON.stringify({ platforms: input.platforms, dateWindowDays: input.dateWindowDays, perRunLimit: input.limit, cronExpr: input.cronExpr, keywords: input.keywords }), ...(pendingReason ? { directorReviewRequired: pendingReason } : {}) };
+  save(latest);
+  return { task: canonical, created: ensured.created, updated: ensured.updated, pendingReason };
 }
 
 // Boot: restore active tasks

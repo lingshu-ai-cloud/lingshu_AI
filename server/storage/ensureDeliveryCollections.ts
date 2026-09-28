@@ -460,11 +460,15 @@ export async function ensureTrendVideoAnalysisCapacity(): Promise<void> {
   if (fields) {
     const analysis = fields.find(field => field.name === 'aiAnalysis');
     const hasContentFormat = fields.some(field => field.name === 'contentFormat');
+    const hasShotReview = fields.some(field => field.name === 'referenceShotReview');
+    const hasVerifiedSpeech = fields.some(field => field.name === 'referenceVerifiedSpeech');
     const needsAnalysisExpansion = Boolean(analysis && Number(analysis.max || 0) < requiredMax);
-    if (!needsAnalysisExpansion && hasContentFormat) return;
+    if (!needsAnalysisExpansion && hasContentFormat && hasShotReview && hasVerifiedSpeech) return;
     const nextFields = fields
       .map(field => field.name === 'aiAnalysis' && needsAnalysisExpansion ? { ...field, max: requiredMax } : field)
-      .concat(hasContentFormat ? [] : [newField({ name: 'contentFormat', type: 'select', values: ['video', 'image'] })]);
+      .concat(hasContentFormat ? [] : [newField({ name: 'contentFormat', type: 'select', values: ['video', 'image'] })])
+      .concat(hasShotReview ? [] : [{ ...newField({ name: 'referenceShotReview', type: 'text' }), max: 1_000_000 }])
+      .concat(hasVerifiedSpeech ? [] : [{ ...newField({ name: 'referenceVerifiedSpeech', type: 'text' }), max: 1_000_000 }]);
     const patch = await adminFetch('/api/collections/trend_videos', {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ fields: nextFields }),
@@ -476,11 +480,15 @@ export async function ensureTrendVideoAnalysisCapacity(): Promise<void> {
   const schema = collection.schema ?? [];
   const analysis = schema.find(field => field.name === 'aiAnalysis');
   const hasContentFormat = schema.some(field => field.name === 'contentFormat');
+  const hasShotReview = schema.some(field => field.name === 'referenceShotReview');
+  const hasVerifiedSpeech = schema.some(field => field.name === 'referenceVerifiedSpeech');
   const needsAnalysisExpansion = Boolean(analysis && Number(analysis.options?.max || 0) < requiredMax);
-  if (!needsAnalysisExpansion && hasContentFormat) return;
+  if (!needsAnalysisExpansion && hasContentFormat && hasShotReview && hasVerifiedSpeech) return;
   const nextSchema = schema
     .map(field => field.name === 'aiAnalysis' && needsAnalysisExpansion ? { ...field, options: { ...(field.options ?? {}), max: requiredMax } } : field)
-    .concat(hasContentFormat ? [] : [oldSchemaField({ name: 'contentFormat', type: 'select', values: ['video', 'image'] })]);
+    .concat(hasContentFormat ? [] : [oldSchemaField({ name: 'contentFormat', type: 'select', values: ['video', 'image'] })])
+    .concat(hasShotReview ? [] : [{ ...oldSchemaField({ name: 'referenceShotReview', type: 'text' }), options: { max: 1_000_000 } }])
+    .concat(hasVerifiedSpeech ? [] : [{ ...oldSchemaField({ name: 'referenceVerifiedSpeech', type: 'text' }), options: { max: 1_000_000 } }]);
   const patch = await adminFetch('/api/collections/trend_videos', {
     method: 'PATCH', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ schema: nextSchema }),

@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import type { VideoKickoff } from '../AiCreateStudio';
 import type { SocialAccountPresenterLock, SocialContentTaskDetail } from '../../../shared/contracts/socialContentWorkflow';
 import { socialContentApi } from '../../lib/socialContentApi';
+import { localReferenceMediaUrl } from '../studio/studioReferenceMedia';
 
 export type StudioContentTheme = 'product_proof' | 'use_case' | 'supplier_capability' | 'customization' | 'customer_case';
 
@@ -94,12 +95,28 @@ export function socialTaskReferenceKickoff(task: SocialContentTaskDetail): Video
   const source = task.sources.find(item => item.status === 'active' && item.sourceId === analysis?.referenceSourceId)
     || task.sources.find(item => item.status === 'active' && item.kind === 'reference_link');
   if (!source) return null;
+  const replication = task.replicationScript as (typeof task.replicationScript & {
+    narrationSourceStatus?: 'asr_aligned' | 'missing_source_asr';
+    narrationLines?: Array<{ lineId: string; referenceText: string; draftText: string; sourceStartSeconds: number; sourceEndSeconds: number; narrationOwnerShotId: string; visualShotIds: string[] }>;
+  }) | null | undefined;
+  const narrationLines = replication?.narrationLines || [];
+  const storedReferenceUrl = analysis?.referenceRecordId
+    ? localReferenceMediaUrl(`local://${analysis.referenceRecordId}`) : '';
   return {
     source: 'inspiration_analysis', scriptType: 'storyboard',
-    video: { title: source.label, sourceUrl: source.sourceRef, contentFormat: 'video', duration: analysis?.durationSeconds || undefined },
-    ...(analysis?.status === 'ready' ? { referenceAnalysis: { title: source.label, details: analysis.shots.map(shot => ({
+    video: { title: source.label, sourceUrl: source.sourceRef, referenceRecordId: analysis?.referenceRecordId || undefined,
+      videoUrl: storedReferenceUrl || localReferenceMediaUrl(source.sourceRef) || undefined,
+      contentFormat: 'video', duration: analysis?.durationSeconds || undefined },
+    ...(analysis?.status === 'ready' ? { referenceAnalysis: { title: source.label,
+      narrationSourceStatus: replication?.narrationSourceStatus || 'missing_source_asr',
+      details: analysis.shots.map(shot => ({
+      shotId: `replication-${shot.shotId}`,
       time: `${shot.startSeconds}-${shot.endSeconds}s`, shot: shot.visualDescription, camera: shot.shotLanguage?.movement || '',
       visual: shot.visualDescription, dialogue: shot.spokenText || '', subtitle: shot.captionText || '', audio: shot.audioDescription || '',
+      purpose: shot.purpose || undefined,
+      personContinuityId: shot.personContinuityId || undefined,
+      speechLines: narrationLines.filter(line => line.visualShotIds?.includes(`replication-${shot.shotId}`)
+        || line.narrationOwnerShotId === `replication-${shot.shotId}`),
     })) } } : {}),
   };
 }

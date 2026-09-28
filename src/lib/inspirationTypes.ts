@@ -67,6 +67,7 @@ export interface GeminiVideoAnalysis {
     persistentState?: string; startState?: string; endState?: string; transitionToNext?: string;
     backgroundPriority?: 'low' | 'medium' | 'high'; depthOfField?: 'shallow' | 'moderate' | 'deep';
     authenticity?: string; estimatedSpeechDuration?: number; dialogueFits?: boolean; confidence?: number; needsReview?: boolean;
+    materialEvidence?: { sourceVideoRef?: string; clipRef?: string | null; firstFrameRef?: string | null; firstFrameSeconds?: number; extractionStatus?: 'ready' | 'unavailable' };
     viralPotential?: { score?: number; mechanisms?: string[]; whyEffective?: string };
   }>;
   recommendedScriptType?: 'voiceover' | 'storyboard';
@@ -94,6 +95,7 @@ export interface VideoAnalysisPayload {
   downloadError?: string;
   analysisSource?: string;
   analysisQuality?: string;
+  analysisReviewReasons?: string[];
   analysisMode?: 'strategy' | 'exact';
   requestedAnalysisMode?: 'strategy' | 'exact';
   analysisError?: string;
@@ -141,7 +143,7 @@ export interface AccountSpecialRecommendation {
 
 export interface StructureStep { time: string; label: string; desc: string }
 export interface FirstTenSecondInsight { dimension: string; detail: string }
-export interface ScriptDetail15s { time: string; environment: string; shot: string; camera: string; angle?: string; composition?: string; visual: string; subtitle: string; audio: string; note?: string; purpose?: string; dialogue?: string; onScreenText?: string; ambientSound?: string; bgm?: string; soundEffects?: string[]; beats?: Array<{ time?: string; action?: string; dialogue?: string; onScreenText?: string }>; persistentState?: string; startState?: string; endState?: string; transitionToNext?: string; backgroundPriority?: 'low' | 'medium' | 'high'; depthOfField?: 'shallow' | 'moderate' | 'deep'; authenticity?: string; estimatedSpeechDuration?: number; dialogueFits?: boolean; confidence?: number; needsReview?: boolean; viralPotential?: { score?: number; mechanisms?: string[]; whyEffective?: string } }
+export interface ScriptDetail15s { time: string; environment: string; shot: string; camera: string; angle?: string; composition?: string; visual: string; subtitle: string; audio: string; note?: string; purpose?: string; dialogue?: string; onScreenText?: string; ambientSound?: string; bgm?: string; soundEffects?: string[]; beats?: Array<{ time?: string; action?: string; dialogue?: string; onScreenText?: string }>; persistentState?: string; startState?: string; endState?: string; transitionToNext?: string; backgroundPriority?: 'low' | 'medium' | 'high'; depthOfField?: 'shallow' | 'moderate' | 'deep'; authenticity?: string; estimatedSpeechDuration?: number; dialogueFits?: boolean; confidence?: number; needsReview?: boolean; materialEvidence?: { sourceVideoRef?: string; clipRef?: string | null; firstFrameRef?: string | null; firstFrameSeconds?: number; extractionStatus?: 'ready' | 'unavailable' }; viralPotential?: { score?: number; mechanisms?: string[]; whyEffective?: string } }
 export interface ScriptSummary15s { visualStyle: string; coreEmotion: string; competitors: string[] }
 export interface ScriptAnalysis {
   videoType: string;

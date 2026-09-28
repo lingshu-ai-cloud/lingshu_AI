@@ -19,6 +19,7 @@ import { buildSocialAgentWorkflow, type BuildSocialAgentWorkflowInput } from './
 import type { Starter198OrchestratorQueuePort } from './runtimePorts.js';
 import { Starter198RuntimePortError } from './runtimePorts.js';
 import { readTenantEnterpriseProfile } from '../lib/socialContentLegacyPorts.js';
+import { enterpriseProductIdentity } from '../lib/enterpriseProductIdentity.js';
 import { STARTER_COLLECTIONS, type Starter198Repository, type StarterRecord } from './repository.js';
 import { executeSocialContentMutation } from './socialContentMutation.js';
 import {
@@ -253,6 +254,28 @@ export async function updateSocialContentTask(input: {
         legacyCreationRoute,
         ...briefChanges
       } = input.value.changes;
+      // The workbench may switch the target product before generating the
+      // narration draft. Resolve only an actual Enterprise Center ID and use
+      // its canonical name; a client-supplied label cannot invent a product.
+      if (Object.prototype.hasOwnProperty.call(briefChanges, 'productId')
+        && (briefChanges.productId || briefChanges.productRef)) {
+        const profile = await readTenantEnterpriseProfile(input.tenantId).catch(() => null);
+        const matches = (profile?.products.items ?? []).flatMap((item, index) => {
+          const selectedId = socialText(briefChanges.productId);
+          const selectedName = socialText(briefChanges.productRef);
+          const canonicalId = enterpriseProductIdentity(item, index);
+          return selectedId
+            ? canonicalId === selectedId ? [{ item, canonicalId }] : []
+            : selectedName && [socialText(item.name), socialText(item.sku)].includes(selectedName)
+              ? [{ item, canonicalId }] : [];
+        });
+        const product = matches.length === 1 ? matches[0]?.item : null;
+        if (!product || !socialText(product.name)) {
+          throw new SocialContentWorkflowError('social_content_product_not_found', 400);
+        }
+        briefChanges.productId = matches[0]!.canonicalId;
+        briefChanges.productRef = socialText(product.name);
+      }
       const nextMode = mode ?? currentSummary.mode ?? 'weekly';
       const hasThemeInput = ['themeId', 'customTopic', 'topic'].some(key => Object.prototype.hasOwnProperty.call(input.value.changes, key));
       const theme = hasThemeInput

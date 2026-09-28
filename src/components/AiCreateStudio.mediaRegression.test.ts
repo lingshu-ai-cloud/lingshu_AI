@@ -1,12 +1,120 @@
 import assert from 'node:assert/strict';
 import {
+  assessMaterialMatch,
   automaticStoryboardTrim,
+  buildReferenceSpeechPlan,
+  detectSourceSpeechLanguageCode,
   fitStoryboardSlotsToDuration,
   fitTimelineToVoiceover,
   fitTimelineToVoiceoverCues,
   matchMaterialsToStoryboardLocally,
+  referenceProductSlots,
   resolveWorkbenchSeekTime,
+  visualShotRoute,
 } from './AiCreateStudio.js';
+
+assert.equal(visualShotRoute({ title: '工厂人物', detail: '画面：工厂工人背影巡检\n口播：销售介绍产品' }), 'material', 'B-roll 画外音不应强制数字人');
+assert.equal(visualShotRoute({ title: '销售口播', detail: '画面：销售正面面对镜头说话\n口播：欢迎了解' }), 'presenter', '正面销售口播保持数字人身份');
+assert.equal(visualShotRoute({ title: '首镜', detail: '画面：销售转身走向产品\n口播：欢迎了解' }), 'motion', '动作镜头应进入动作路线');
+assert.equal(visualShotRoute({ title: '女性左手举至镜头前', detail: '画面：女性左手举至镜头前\n口播：今天看看这款产品' }), 'motion', '首镜举手动作须显示 Seedance 入口');
+assert.equal(visualShotRoute({ title: '第 27 镜', detail: '画面：女性正面面对镜头讲解\n口播：这款产品值得试试' }), 'presenter', '第 27 镜正面人物承接口播须显示 HeyGen 入口');
+
+const taggedFactoryClip = { id: 'tagged-factory', name: '工厂实拍', folder: 'factory', type: 'video', duration: 4, width: 1080, height: 1920, tags: '工厂实拍', shotFunction: '建立信任' } as any;
+const untaggedFactoryClip = { ...taggedFactoryClip, id: 'untagged-factory', tags: '', shotFunction: '展示产品' } as any;
+const factoryProofSlot = { id: 'factory-proof', start: 0, end: 3, title: '工厂产线', detail: '画面：工厂产线实拍\n镜头功能：建立信任\n口播：无' } as any;
+assert.deepEqual(matchMaterialsToStoryboardLocally([taggedFactoryClip], [factoryProofSlot]), {}, '默认精确匹配仍要求分段证据');
+assert.equal(matchMaterialsToStoryboardLocally([taggedFactoryClip], [factoryProofSlot], [], { allowSemanticMetadata: true })[factoryProofSlot.id], taggedFactoryClip.id, '复刻任务可按视觉主题和表达目的标签匹配');
+assert.equal(matchMaterialsToStoryboardLocally([untaggedFactoryClip], [factoryProofSlot], [], { allowSemanticMetadata: true })[factoryProofSlot.id], untaggedFactoryClip.id, '仅视觉主题命中也可匹配');
+assert.equal(assessMaterialMatch(factoryProofSlot, taggedFactoryClip, '9:16').score, 100, '两项语义都匹配为满分');
+const inlineFactorySlot = { ...factoryProofSlot, detail: '画面：自动化灌装机正在向白色瓶口注液；中景，固定镜头 镜头功能：demonstration 口播：无' };
+const fillingClip = { ...untaggedFactoryClip, folder: 'social', duration: 6, segments: [{
+  id: 'filling', start: 0, end: 6, duration: 6, quality: 98, confidence: 0.98,
+  subject: ['工人', '灌装设备'], action: '灌装设备向瓶中灌装', environment: '工厂',
+  visualTopic: '产品灌装工序', expressionPurpose: '展示自动化生产环节', recommendedFunctions: [],
+}] } as any;
+assert.equal(assessMaterialMatch(inlineFactorySlot, fillingClip, '9:16').score, 100, '同一行分镜字段应提取镜头功能并匹配已标注的灌装素材');
+assert.equal(matchMaterialsToStoryboardLocally([fillingClip], [inlineFactorySlot], [], { allowSemanticMetadata: true })[inlineFactorySlot.id], fillingClip.id);
+const factoryStaffSlot = { ...factoryProofSlot, id: 'factory-staff', detail: '画面：两人穿白大褂，左侧低头操作，右侧持小瓶指认；近景特写 镜头功能：demonstration 口播：无' };
+const singleWorkerClip = { ...fillingClip, id: 'single-worker', segments: [{
+  ...fillingClip.segments[0], subject: ['工人'], action: '一名工人在工厂产线分拣产品',
+  visualTopic: '工厂包装流水线作业', expressionPurpose: '展示生产流程与人工参与',
+}] };
+assert.equal(assessMaterialMatch(factoryStaffSlot, singleWorkerClip, '9:16').score, 100,
+  '工厂人员工作场景不要求与参考镜头人数和动作相同');
+assert.equal(matchMaterialsToStoryboardLocally([singleWorkerClip], [factoryStaffSlot], [], { allowSemanticMetadata: true })[factoryStaffSlot.id], singleWorkerClip.id);
+assert.equal(assessMaterialMatch(factoryStaffSlot, { ...singleWorkerClip, segments: [{ ...singleWorkerClip.segments[0],
+  subject: ['瓶罐'], action: '产品静态摆放', visualTopic: '产品陈列', environment: '展台' }] }, '9:16').score, 50,
+  '产品静物不能仅因表达目的相同冒充工厂人员工作画面');
+const displaySlot = { ...factoryProofSlot, id: 'product-display', detail: '画面：蓝黑系瓶罐整齐摆放在瓷砖台面，前方有绿植 镜头功能：value 口播：无' };
+const pumpClip = { ...singleWorkerClip, segments: [{ ...singleWorkerClip.segments[0],
+  subject: ['人', '泵头瓶'], action: '按压泵头向掌心滴液', visualTopic: '产品使用演示',
+  expressionPurpose: '展示产品使用方式', environment: '室内' }] };
+assert.equal(assessMaterialMatch(displaySlot, pumpClip, '9:16').score, 50,
+  '产品陈列分镜不能把泵头使用画面认作同主题');
+const fillingSlot = { ...factoryProofSlot, id: 'filling-line', detail: '画面：自动化灌装机向白色瓶口注液 镜头功能：demonstration 口播：无' };
+assert.equal(assessMaterialMatch(fillingSlot, singleWorkerClip, '9:16').score, 50,
+  '灌装主题不要求瓶子颜色，但必须看到灌装而非普通工人分拣');
+assert.equal(assessMaterialMatch(factoryProofSlot, untaggedFactoryClip, '9:16').score, 50, '只匹配视觉主题为半分');
+assert.equal(assessMaterialMatch(factoryProofSlot, taggedFactoryClip, '16:9').score, 100, '画幅不能改变语义评级');
+assert.equal(assessMaterialMatch(factoryProofSlot, { ...taggedFactoryClip, duration: 40 }, '9:16').score, 100, '时长不能改变语义评级');
+const purposeOnlyClip = { ...taggedFactoryClip, id: 'purpose-only', folder: 'scene', name: '未识别画面', tags: '', shotFunction: '建立信任' } as any;
+const unrelatedClip = { ...purposeOnlyClip, id: 'unrelated', shotFunction: '展示产品' } as any;
+assert.deepEqual(
+  [purposeOnlyClip, unrelatedClip].map(clip => assessMaterialMatch(factoryProofSlot, clip, '9:16').score),
+  [50, 0],
+  '只匹配表达目的为 50 分，均不匹配为 0 分',
+);
+assert.equal(assessMaterialMatch(factoryProofSlot, purposeOnlyClip, '9:16').level, 'review');
+assert.equal(assessMaterialMatch(factoryProofSlot, unrelatedClip, '9:16').level, 'missing');
+const segmentedClip = {
+  ...unrelatedClip, id: 'split-evidence', duration: 8,
+  segments: [
+    { id: 'production', start: 0, end: 3, duration: 3, quality: 85, confidence: 0.9,
+      subject: ['工厂产线'], action: '工厂生产', environment: '车间', shot: '中景', recommendedFunctions: ['展示工艺'] },
+    { id: 'trust', start: 3, end: 6, duration: 3, quality: 85, confidence: 0.9,
+      subject: ['产品'], action: '产品陈列', environment: '展厅', shot: '中景', recommendedFunctions: ['建立信任'] },
+  ],
+} as any;
+assert.equal(assessMaterialMatch(factoryProofSlot, segmentedClip, '9:16').score, 50, '视觉主题和表达目的分属两个片段时不能拼成满分');
+assert.equal(matchMaterialsToStoryboardLocally([segmentedClip], [factoryProofSlot], [], { allowSemanticMetadata: true })[factoryProofSlot.id], segmentedClip.id, '单项命中可匹配，但不能跨片段拼成满分');
+assert.equal(matchMaterialsToStoryboardLocally([purposeOnlyClip], [factoryProofSlot], [], { allowSemanticMetadata: true })[factoryProofSlot.id], purposeOnlyClip.id, '仅表达目的命中也可匹配');
+assert.deepEqual(matchMaterialsToStoryboardLocally([unrelatedClip], [factoryProofSlot], [], { allowSemanticMetadata: true }), {}, '两项均不命中仍不可匹配');
+assert.equal(matchMaterialsToStoryboardLocally([untaggedFactoryClip, taggedFactoryClip], [factoryProofSlot], [], { allowSemanticMetadata: true })[factoryProofSlot.id], taggedFactoryClip.id, '双项命中优先于单项命中');
+const reusedBest = matchMaterialsToStoryboardLocally([taggedFactoryClip, untaggedFactoryClip], [factoryProofSlot, { ...factoryProofSlot, id: 'factory-proof-2' }], [], { allowSemanticMetadata: true });
+assert.equal(reusedBest['factory-proof-2'], untaggedFactoryClip.id, '相邻分镜有其他合格候选时避免连续复用同一素材');
+const nonAdjacentReuse = matchMaterialsToStoryboardLocally([taggedFactoryClip, untaggedFactoryClip], [factoryProofSlot,
+  { id: 'unrelated-middle', start: 3, end: 4, title: '不相关', detail: '画面：完全不同的内容 镜头功能：另一目的' } as any,
+  { ...factoryProofSlot, id: 'factory-proof-3' }], [], { allowSemanticMetadata: true });
+assert.equal(nonAdjacentReuse['factory-proof-3'], taggedFactoryClip.id, '非相邻镜头仍优先双项命中素材');
+const distinctBest = matchMaterialsToStoryboardLocally([taggedFactoryClip, { ...taggedFactoryClip, id: 'another-factory' }], [factoryProofSlot, { ...factoryProofSlot, id: 'factory-proof-2' }], [], { allowSemanticMetadata: true });
+assert.notEqual(distinctBest['factory-proof'], distinctBest['factory-proof-2'], '同等匹配质量时相邻分镜不连续复用同一素材');
+assert.equal(assessMaterialMatch(factoryProofSlot, { ...segmentedClip, segments: [
+  { ...segmentedClip.segments[0], recommendedFunctions: ['建立信任'] },
+] }, '9:16').score, 100, '同一片段内两项均匹配才能自动匹配');
+assert.equal(detectSourceSpeechLanguageCode('Are you too smart with 慧妆 foundation? Let us show you the factory.'), 'en');
+const speechPlan = buildReferenceSpeechPlan({ referenceAnalysis: { narrationSourceStatus: 'asr_aligned', details: [
+  { shotId: 'replication-a', time: '0-2s', shot: '工厂人物', camera: '', visual: '人物口播', speechLines: [{ lineId: 'line-1', referenceText: 'Original brand.', draftText: 'Enterprise brand.', sourceStartSeconds: 0.2, sourceEndSeconds: 2.4, narrationOwnerShotId: 'replication-a', visualShotIds: ['replication-a', 'replication-b'] }] },
+  { shotId: 'replication-b', time: '2-4s', shot: '产品展示', camera: '', visual: '产品展示', speechLines: [{ lineId: 'line-1', referenceText: 'Original brand.', draftText: 'Enterprise brand.', sourceStartSeconds: 0.2, sourceEndSeconds: 2.4, narrationOwnerShotId: 'replication-a', visualShotIds: ['replication-a', 'replication-b'] }] },
+] } } as any);
+assert.equal(speechPlan.lines.length, 1, '跨镜口播只朗读一次');
+assert.deepEqual(speechPlan.lines[0]?.visuals.map(item => item.label), ['人物口播', '产品展示'], '一条口播跨两个实际画面时两个分镜都必须呈现');
+assert.equal((speechPlan.script.match(/口播：Enterprise brand\./g) || []).length, 1);
+
+const multiProductReference = { referenceAnalysis: { narrationSourceStatus: 'asr_aligned', details: [
+  { shotId: 'intro', time: '0-1s', subtitle: '', visual: '销售人物口播', speechLines: [{ lineId: 'products', referenceText: 'Try cream and oil.', sourceStartSeconds: 0, sourceEndSeconds: 3, narrationOwnerShotId: 'intro' }] },
+  { shotId: 'cream-shot', time: '1-2s', subtitle: 'cream', visual: '产品瓶身近景', speechLines: [] },
+  { shotId: 'oil-shot', time: '2-3s', subtitle: 'oil', visual: '产品滴管近景', speechLines: [] },
+] } } as any;
+assert.deepEqual(referenceProductSlots(multiProductReference).map(item => item.shotId), ['cream-shot', 'oil-shot'], '相邻短产品画面应分别成为可映射分镜');
+const mappedSpeech = buildReferenceSpeechPlan(multiProductReference, [
+  { shotId: 'cream-shot', sourceTerm: 'cream', productId: 'enterprise-cream', productLabel: 'Beauty Cream' },
+  { shotId: 'oil-shot', sourceTerm: 'oil', productId: 'enterprise-oil', productLabel: 'Skin Oil' },
+]);
+assert.equal(mappedSpeech.error, undefined);
+assert.equal(mappedSpeech.lines[0]?.source, 'Try cream and oil.', '原片口播必须保留');
+assert.equal(mappedSpeech.lines[0]?.draft, 'Try Beauty Cream and Skin Oil.', '按原片出现顺序逐个替换产品词');
+assert.match(mappedSpeech.script, /目标产品：Beauty Cream/);
+assert.match(mappedSpeech.script, /目标产品：Skin Oil/);
 
 const clips = [
   { id: 'portrait-1', name: '产品全景', folder: 'product', type: 'video', duration: 5, width: 1080, height: 1920 },

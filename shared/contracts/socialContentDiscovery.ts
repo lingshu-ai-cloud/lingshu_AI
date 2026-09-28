@@ -370,6 +370,22 @@ export interface SocialReplicationScriptShot {
   /** Verbatim line recovered from the reference video before tenant identity substitution. */
   referenceSpokenText?: string | null;
   spokenText: string | null;
+  /** Source speech cues remain approximate until synthesized narration returns
+   * precise alignment. Keep both original and identity-substituted wording. */
+  speechLines?: Array<{
+    /** Stable identity across visual cuts. One spoken sentence can reference several shots. */
+    lineId?: string;
+    referenceText: string;
+    draftText: string;
+    sourceStartSeconds: number;
+    sourceEndSeconds: number;
+    sourcePrecision: 'phrase' | 'coarse';
+    sourceProvenance: string;
+    replacedEntityTypes: Array<'company' | 'brand' | 'product'>;
+    /** Exactly one shot owns narration; every intersecting visual shot is listed. */
+    narrationOwnerShotId?: string;
+    visualShotIds?: string[];
+  }>;
   /** New replication tasks only replace identity tokens; all other wording and timing stay frozen. */
   voiceoverReplacement?: {
     mode: 'identity_only';
@@ -391,6 +407,10 @@ export interface SocialReplicationScriptVersion {
   primaryHookId: string;
   hookOptions: SocialThreeSecondHook[];
   shots: SocialReplicationScriptShot[];
+  /** Canonical ordered narration, deduplicated across physical visual cuts. */
+  narrationLines?: NonNullable<SocialReplicationScriptShot['speechLines']>;
+  /** A legacy model dialogue guess must never be mistaken for source ASR. */
+  narrationSourceStatus?: 'asr_aligned' | 'missing_source_asr';
   structureFidelitySummary: string;
   originalityDifferenceSummary: string;
   createdAt: string;

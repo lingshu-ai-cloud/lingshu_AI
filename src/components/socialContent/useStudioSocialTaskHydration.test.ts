@@ -105,3 +105,31 @@ assert.equal(replication.contentMode, 'video', 'an unanalyzed replication is sti
 assert.equal(replication.reference?.video?.sourceUrl, 'https://www.youtube.com/watch?v=current');
 assert.equal(replication.reference?.referenceAnalysis, undefined, 'pending analysis must not fabricate shots');
 assert.deepEqual(replication.selectedMaterialIds, [], 'reference video is not an authorized output material');
+
+const localReplication = socialTaskToStudioSeed({
+  ...task,
+  brief: { ...task.brief, creationMode: 'viral_replication', formats: [] },
+  sources: [{ ...task.sources[0], kind: 'reference_link', sourceRef: 'local://tiktok_7648939405557697806', label: '本地参考' }],
+});
+assert.equal(localReplication.reference?.video?.videoUrl, '/api/overseas/videos/tiktok_7648939405557697806/media-url');
+
+const speechTask = {
+  ...task,
+  brief: { ...task.brief, creationMode: 'viral_replication', formats: [] },
+  sources: [{ ...task.sources[0], kind: 'reference_link', sourceRef: 'local://reference-speech', label: '口播参考' }],
+  referenceVideoAnalysis: {
+    status: 'ready', referenceSourceId: 'source_1', referenceRecordId: 'trend_videos_reference_speech', durationSeconds: 3,
+    shots: [{ shotId: 'ref-1', startSeconds: 0, endSeconds: 3, visualDescription: '工厂口播', spokenText: '旧品牌口播' }],
+  },
+  replicationScript: {
+    narrationLines: [{ referenceText: '旧品牌口播', draftText: '新品牌口播', sourceStartSeconds: 0.2, sourceEndSeconds: 2.8, sourcePrecision: 'coarse', sourceProvenance: 'reference_asr', replacedEntityTypes: ['brand'], narrationOwnerShotId: 'replication-ref-1', visualShotIds: ['replication-ref-1'] }],
+    shots: [{ referenceShotId: 'ref-1', speechLines: [{ referenceText: '旧品牌口播', draftText: '新品牌口播', sourceStartSeconds: 0.2, sourceEndSeconds: 2.8, sourcePrecision: 'coarse', sourceProvenance: 'reference_asr', replacedEntityTypes: ['brand'] }] }],
+  },
+} as unknown as SocialContentTaskDetail;
+assert.equal(socialTaskToStudioSeed(speechTask).reference?.video?.videoUrl,
+  '/api/overseas/videos/trend_videos_reference_speech/media-url',
+  '外站来源仍须使用已入库原片的本地播放地址');
+assert.deepEqual(socialTaskToStudioSeed(speechTask).reference?.referenceAnalysis?.details?.[0]?.speechLines, [{
+  referenceText: '旧品牌口播', draftText: '新品牌口播', sourceStartSeconds: 0.2, sourceEndSeconds: 2.8,
+  sourcePrecision: 'coarse', sourceProvenance: 'reference_asr', replacedEntityTypes: ['brand'], narrationOwnerShotId: 'replication-ref-1', visualShotIds: ['replication-ref-1'],
+}]);

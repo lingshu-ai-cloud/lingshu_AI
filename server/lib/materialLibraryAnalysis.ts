@@ -9,6 +9,33 @@ import type { AssetCandidate } from '../digitalEmployees/contentProduction.js';
 import { buildMaterialScriptAnalysis, reusableMaterialScriptAnalysis, type MaterialScriptAnalysis } from '../../shared/materialScriptAnalysis.js';
 const jobs = new KeyedWorkQueue(2);
 export const isMaterialAnalysisActive = (tenantId: string, id: string) => jobs.has(`${tenantId}:${id}`);
+export function localMaterialMediaPath(record: MaterialRecord, mediaRoot = path.resolve(process.cwd(), 'data/media')): string {
+  const relative = String(record.file || '').trim()
+    || (/^\/media\/tenants\/[^?#]+$/.test(String(record.url || '')) ? String(record.url).slice('/media/'.length) : '');
+  if (!relative) return '';
+  const resolved = path.resolve(mediaRoot, relative);
+  if (!resolved.startsWith(mediaRoot + path.sep)) throw Error('素材路径不属于素材目录');
+  return resolved;
+}
+/** Older local imports bypassed the browser upload endpoint. Index them when
+ * their owner next opens the library, without blocking the library response. */
+export function pendingLocalMaterialAnalysisIds(tenantId: string, records: MaterialRecord[]): string[] {
+  return records.filter(record =>
+    record.type === 'video'
+    && String(record.tenantId || record.tenant_id || '') === tenantId
+    && record.scope !== 'shared'
+    && record.usage !== 'reference_only'
+    && !record.id.startsWith('pb-')
+    && !['pending', 'analyzing', 'completed', 'failed'].includes(String(record.segmentAnalysisStatus || ''))
+    && !isMaterialAnalysisActive(tenantId, record.id)
+  ).map(record => record.id);
+}
+export function startPendingLocalMaterialAnalyses(tenantId: string, records: MaterialRecord[]): void {
+  for (const id of pendingLocalMaterialAnalysisIds(tenantId, records)) {
+    void requestMaterialAnalysis(tenantId, id).catch(error =>
+      console.warn('[material-analysis] local auto-start failed', error instanceof Error ? error.message : 'failed'));
+  }
+}
 function scriptAnalysisForRecord(record: MaterialRecord, revision: string): MaterialScriptAnalysis | null {
   if (record.segmentAnalysisStatus !== 'completed' || record.analysisSourceRevision !== revision) return null;
   return reusableMaterialScriptAnalysis(record.scriptAnalysis, revision) || buildMaterialScriptAnalysis({
@@ -24,8 +51,7 @@ function scriptAnalysisForRecord(record: MaterialRecord, revision: string): Mate
 export function libraryCandidate(record: MaterialRecord): AssetCandidate {
   const cloud = record.id.startsWith('pb-');
   const mediaRoot = path.resolve(process.cwd(), 'data/media');
-  const local = record.file && !cloud ? path.resolve(mediaRoot, record.file) : '';
-  if (local && !local.startsWith(mediaRoot + path.sep)) throw Error('素材路径不属于素材目录');
+  const local = !cloud ? localMaterialMediaPath(record, mediaRoot) : '';
   return { id: record.id, name: String(record.name || ''), type: record.type, duration: Number(record.duration || 0),
     ...(local && fs.existsSync(local) ? { localPath: local } : {}), ...(record.objectKey ? { objectKey: String(record.objectKey) } : {}),
     ...(cloud ? { cloudRecordId: record.id.slice(3) } : {}), url: String(record.url || ''),
@@ -41,8 +67,7 @@ export function libraryCandidate(record: MaterialRecord): AssetCandidate {
 }
 export function analysisFileRevision(record: MaterialRecord): string {
   const cloud = record.id.startsWith('pb-');
-  const mediaRoot = path.resolve(process.cwd(), 'data/media');
-  const localPath = record.file && !cloud ? path.resolve(mediaRoot, record.file) : '';
+  const localPath = !cloud ? localMaterialMediaPath(record) : '';
   const stat = localPath && fs.existsSync(localPath) ? fs.statSync(localPath) : undefined;
   return crypto.createHash('sha256').update(JSON.stringify([record.id, record.file, record.objectKey, record.sourceRevision || '', stat?.size, stat?.mtimeMs])).digest('hex');
 }

@@ -277,6 +277,7 @@ export const SOCIAL_CONTENT_MATERIAL_INPUT_LABEL: Record<SocialContentMaterialIn
 
 const SOCIAL_SHOT_FUNCTION_LABEL: Record<SocialShotFunction, string> = {
   hook: '前三秒钩子',
+  d_to_c: 'D to C',
   problem: '提出问题',
   value: '说明价值',
   demonstration: '使用演示',
@@ -297,7 +298,9 @@ const SOCIAL_SHOT_SOURCE_STRATEGY_LABEL: Record<SocialShotSourceStrategy, string
   verified_fact_card: '已确认信息卡片',
 };
 
-export function socialShotFunctionLabel(value: SocialShotFunction): string {
+export function socialShotFunctionLabel(value: SocialShotFunction, index?: number): string {
+  // Older saved analyses may still call later attention shots "hook".
+  if (value === 'hook' && index !== undefined && index > 0) return SOCIAL_SHOT_FUNCTION_LABEL.d_to_c;
   return SOCIAL_SHOT_FUNCTION_LABEL[value];
 }
 

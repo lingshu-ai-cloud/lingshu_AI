@@ -17,6 +17,19 @@ export function videoAnalysisOf(record: Record<string, unknown>): Record<string,
   if (!parsed.imageEvidence && compressed) try { parsed.imageEvidence = JSON.parse(gunzipSync(Buffer.from(compressed, 'base64')).toString('utf8')); } catch { /* explicitly unavailable */ }
   delete parsed.imageEvidenceGzip; delete parsed.imageEvidenceEncoding; return parsed;
 }
+/** A review-required exact analysis is completed evidence, not an invitation
+ * to fetch the reference again. Review completion is a separate gate. */
+export function hasCompletedExactVideoEvidence(analysis: Record<string, unknown>): boolean {
+  if (analysis.analysisMode !== 'exact'
+    || !['video', 'video_review_required'].includes(String(analysis.analysisQuality || ''))) return false;
+  const gemini = objectRecord(parseJsonRecord(analysis.gemini, {}));
+  const details = Array.isArray(gemini.scriptDetails15s) ? gemini.scriptDetails15s : [];
+  return details.length > 0 && details.every(detail => {
+    const row = objectRecord(detail);
+    const range = parseAnalysisTimeRange(String(row.time || row.timestamp || ''));
+    return Boolean(range && range.end > range.start);
+  });
+}
 export function serializeImagePostAnalysis(analysis: Record<string, unknown>): string {
   const clean = analysis.contentFormat === 'image' ? { ...analysis, gemini: undefined } : analysis; const plain = JSON.stringify(clean);
   if (Buffer.byteLength(plain, 'utf8') <= 4_500 || !clean.imageEvidence) return plain;
@@ -40,6 +53,73 @@ export function analysisTimelineQualityError(analysis: VideoAiAnalysis, duration
   if (details[0].range.start > boundaryTolerance) return `timeline_starts_at_${details[0].range.start.toFixed(2)}s`;
   for (let index = 0; index < details.length; index += 1) { const { start, end } = details[index].range; if (end <= start) return `invalid_segment_${index + 1}`; if (end - start > maxSegmentSeconds) return `segment_${index + 1}_too_long_${(end - start).toFixed(2)}s`; if (index > 0) { const previousEnd = details[index - 1].range.end; if (start - previousEnd > boundaryTolerance) return `timeline_gap_at_${previousEnd.toFixed(2)}s`; if (previousEnd - start > boundaryTolerance) return `timeline_overlap_at_${start.toFixed(2)}s`; } }
   const analyzedUntil = details.at(-1)!.range.end; return duration > 0 && analyzedUntil + boundaryTolerance < duration ? `timeline_ends_at_${analyzedUntil.toFixed(2)}s_of_${duration.toFixed(2)}s` : null;
+}
+
+/** Flags evidence that is structurally valid JSON but unsafe to hand to the
+ * production agents as an exact, per-shot reading of the source video. These
+ * checks deliberately target strong contradictions; normal refrains and
+ * recurring product shots are not enough by themselves. */
+export function exactVideoReviewReasons(
+  analysis: VideoAiAnalysis,
+  duration = 0,
+  sceneCuts: number[] = [],
+  openingFrame?: { scene: string; confidence: number } | null,
+): string[] {
+  const rows = (analysis.scriptDetails15s || []).map(detail => ({
+    detail,
+    range: parseAnalysisTimeRange(String(detail.time || detail.timestamp || '')),
+  })).filter((row): row is { detail: NonNullable<VideoAiAnalysis['scriptDetails15s']>[number]; range: { start: number; end: number } } => Boolean(row.range));
+  if (!rows.length) return ['missing_exact_shots'];
+  const reasons: string[] = [];
+  const fullDuration = duration > 0 ? duration : Math.max(...rows.map(row => row.range.end));
+  const reviewCount = rows.filter(row => row.detail.needsReview === true).length;
+  if (reviewCount >= Math.max(2, Math.ceil(rows.length * 0.5))) reasons.push(`unverified_shots_${reviewCount}_of_${rows.length}`);
+  const shortRows = rows.filter(row => row.range.end - row.range.start < 0.2);
+  if (shortRows.length) reasons.push(`sub_200ms_shots_${shortRows.length}`);
+  const normalized = (value: unknown): string => typeof value === 'string'
+    ? value.toLocaleLowerCase().replace(/[\s\p{P}\p{S}]+/gu, '') : '';
+  const repeatedAcrossTimeline = (field: 'dialogue' | 'visual', minimumLength: number, minimumRows: number): number => {
+    const groups = new Map<string, Array<{ start: number; end: number }>>();
+    for (const row of rows) {
+      const value = normalized(row.detail[field]);
+      if (value.length < minimumLength) continue;
+      groups.set(value, [...(groups.get(value) || []), row.range]);
+    }
+    for (const matches of groups.values()) {
+      if (matches.length < minimumRows) continue;
+      const span = Math.max(...matches.map(match => match.end)) - Math.min(...matches.map(match => match.start));
+      if (span >= Math.min(8, fullDuration * 0.3)) return matches.length;
+    }
+    return 0;
+  };
+  const duplicateDialogue = repeatedAcrossTimeline('dialogue', 18, Math.max(3, Math.ceil(rows.length * 0.2)));
+  if (duplicateDialogue) reasons.push(`repeated_full_dialogue_${duplicateDialogue}_shots`);
+  const duplicateVisual = repeatedAcrossTimeline('visual', 18, Math.max(4, Math.ceil(rows.length * 0.45)));
+  if (duplicateVisual) reasons.push(`repeated_visual_description_${duplicateVisual}_shots`);
+  const meaningfulCuts = sceneCuts.filter(cut => cut > 0.2 && cut < fullDuration - 0.2);
+  const boundaries = rows.flatMap(row => [row.range.start, row.range.end]);
+  const uncovered = meaningfulCuts.filter(cut => !boundaries.some(boundary => Math.abs(boundary - cut) <= 0.45));
+  if (meaningfulCuts.length >= 3 && uncovered.length >= Math.max(2, Math.ceil(meaningfulCuts.length * 0.3))) {
+    reasons.push(`uncovered_scene_cuts_${uncovered.length}_of_${meaningfulCuts.length}`);
+  }
+  const shortSequenceCuts = meaningfulCuts.filter((cut, index) =>
+    (index > 0 && cut - meaningfulCuts[index - 1]! <= 2.5)
+    || (index < meaningfulCuts.length - 1 && meaningfulCuts[index + 1]! - cut <= 2.5));
+  const missingShortSequenceCuts = shortSequenceCuts.filter(cut => !boundaries.some(boundary => Math.abs(boundary - cut) <= 0.12));
+  if (shortSequenceCuts.length >= 3 && missingShortSequenceCuts.length) {
+    reasons.push(`uncovered_short_sequence_cuts_${missingShortSequenceCuts.length}_of_${shortSequenceCuts.length}`);
+  }
+  if (openingFrame && openingFrame.confidence >= 0.8 && rows[0]!.range.start <= 0.3) {
+    const openingText = [rows[0]!.detail.visual, rows[0]!.detail.environment, rows[0]!.detail.observedFacts]
+      .filter(textPresent).join(' ').toLocaleLowerCase();
+    if (openingFrame.scene === 'showroom' && /工厂|车间|产线|生产线|factory|workshop|assembly.line/i.test(openingText)) {
+      reasons.push('opening_frame_factory_showroom_conflict');
+    }
+    if (openingFrame.scene === 'factory' && /展厅|陈列室|门店|showroom|retail.store/i.test(openingText)) {
+      reasons.push('opening_frame_showroom_factory_conflict');
+    }
+  }
+  return reasons;
 }
 export function canPromoteExistingAnalysisToExact(gemini: unknown, duration = 0): boolean {
   if (!hasCompleteVideoGeminiAnalysis(gemini, 0)) return false; const analysis = objectRecord(gemini); const details = Array.isArray(analysis.scriptDetails15s) ? analysis.scriptDetails15s : [];

@@ -58,6 +58,7 @@ import {
   parseStoredSocialShotMaterialMap,
 } from './socialContentScriptSources.js';
 import { buildSocialAgentWorkflow, type SocialWorkflowMaterialCandidate } from './socialContentAgentWorkflow.js';
+import { buildSocialReferenceReviewHandoff } from './socialReferenceReviewHandoff.js';
 import { readMaterialLibrary, type MaterialRecord } from '../lib/materialLibrary.js';
 import {
   AUTO_TASK_KEY,
@@ -233,6 +234,8 @@ export function parseSocialTaskBrief(value: unknown): SocialContentTaskBrief {
     objective,
     productId: nullable(record.productId),
     productRef: nullable(record.productRef),
+    requestedPresenterName: nullable(record.requestedPresenterName),
+    requestedPresenterAssetId: nullable(record.requestedPresenterAssetId),
     audience: nullable(record.audience),
     markets: strings(record.markets, 'social_content_task_record_invalid'),
     languages: strings(record.languages, 'social_content_task_record_invalid'),
@@ -920,6 +923,19 @@ export async function readSocialTaskDetail(input: {
     })),
     rightsConfirmationRequired: false,
   });
+  const presenterLock = presenterInventory.accountPresenterLock;
+  const referenceReviewHandoff = summary.brief.creationMode === 'viral_replication'
+    ? referenceRecord ? buildSocialReferenceReviewHandoff({
+      record: referenceRecord as unknown as Record<string, unknown>,
+      presenter: presenterLock ? {
+        assetId: presenterLock.presenterAssetId,
+        assetVersion: presenterLock.presenterProfileVersion,
+        rightsVerified: presenterLock.commercialRightsStatus === 'cleared' && presenterLock.status === 'published',
+        rightsEvidenceRef: presenterLock.consentRef,
+      } : null,
+      verifiedEnterpriseFactRefs: confirmedFactRefs,
+    }) : { productionExecutionAllowed: false as const, versionHash: 'reference-record-unavailable' }
+    : null;
   const agentWorkflow = buildSocialAgentWorkflow({
     taskId: summary.taskId,
     taskVersion: summary.version,
@@ -931,6 +947,7 @@ export async function readSocialTaskDetail(input: {
     factSourceRefs: confirmedFactRefs,
     assetSupplyPlan,
     referenceAnalysis: referenceVideoAnalysis,
+    referenceReviewHandoff,
     replicationScript,
     materialCandidates,
     inferredProductRef: candidateSet.productPolicy === 'preferred' ? primaryProductRef : null,

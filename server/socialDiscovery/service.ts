@@ -2,6 +2,7 @@ import { store } from '../storage/index.js';
 import { crawlVideosForTenant, inferPlatformFromUrl } from '../routes/videos.js';
 import { dueDiscoveryModes, nextDiscoveryRunAt, validateDiscoveryBrief } from './domain.js';
 import { planRollingSevenDayQuotas } from './qualityOrchestration.js';
+import { hasLegacyProductTitleQueries } from '../../shared/productDiscovery.js';
 import { runCandidateEvidenceWorker, type CandidateEvidenceWorkResult } from './candidateEvidenceWorker.js';
 import { createR3CandidateEvidenceAdapter, type R3CandidateEvidenceAdapter } from './r3CandidateEvidenceAdapter.js';
 import type { CrawlVideosInput, CrawlVideosResult } from '../routes/videos.js';
@@ -91,6 +92,14 @@ export async function executeApprovedDiscoveryRun(input: {
   }
 
   const brief = structuredClone(scope.payload.discoveryBrief);
+  // The account library is the user's current source of truth. A saved scope
+  // snapshot must not keep collecting an account after it is removed there.
+  const savedAccounts = await dependencies.dataStore.list<{ accountUrl: string; accountName?: string }>('competitor_accounts', {
+    where: { tenantId: input.tenantId }, page: 1, perPage: 200,
+  });
+  const accountNameByUrl = new Map(savedAccounts.items.map(account => [account.accountUrl, account.accountName || account.accountUrl]));
+  brief.competitorAccounts = [...accountNameByUrl.keys()];
+  if (brief.modePolicies?.account) brief.modePolicies.account.sourceRefs = brief.competitorAccounts;
   if (input.productionGapContext) {
     brief.productionGap = input.productionGapContext.description;
     brief.budgetLimitCny = Math.max(0, input.productionGapContext.remainingBudgetCny);
@@ -101,6 +110,8 @@ export async function executeApprovedDiscoveryRun(input: {
   const candidates = input.triggerType === 'scheduled'
     ? dueDiscoveryModes(brief, previousRuns)
     : input.requestedModes ?? brief.discoveryModes;
+  const legacyProductTitles = !scope.payload.keywordRecommendation
+    && hasLegacyProductTitleQueries(scope.payload.keywordSet?.graph?.discoverySeeds ?? []);
   const configuredShare = Number((brief as SocialDiscoveryBriefWithQuality).innovationExperimentShare ?? 0.15);
   const quotaPlan = planRollingSevenDayQuotas(previousRuns, {
     totalAcceptedTarget: brief.resultLimit,
@@ -108,6 +119,8 @@ export async function executeApprovedDiscoveryRun(input: {
   });
   const requestedModes = [...new Set(candidates)].filter(mode => brief.discoveryModes.includes(mode)
     && brief.modePolicies?.[mode]?.enabled
+    && (mode === 'account' || !legacyProductTitles)
+    && (mode !== 'account' || brief.competitorAccounts.length > 0)
     && (input.triggerType === 'production_gap' || quotaPlan.remainingByMode[mode] > 0));
   if (!requestedModes.length) return { skipped: true, reason: 'no_discovery_mode_due', nextRunAt: nextDiscoveryRunAt(brief, previousRuns) };
   brief.discoveryModes = requestedModes;
@@ -116,7 +129,7 @@ export async function executeApprovedDiscoveryRun(input: {
 
   const startedAt = new Date().toISOString();
   const runId = `discovery_run_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
-  const queryBasis = Object.fromEntries(requestedModes.map(mode => [mode, modeRefs(scope, mode)])) as Partial<Record<SocialDiscoveryMode, string[]>>;
+  const queryBasis = Object.fromEntries(requestedModes.map(mode => [mode, mode === 'account' ? brief.competitorAccounts : modeRefs(scope, mode)])) as Partial<Record<SocialDiscoveryMode, string[]>>;
   const initial: SocialInspirationCollectionRun & { tenant_id: string } = {
     tenant_id: input.tenantId, runId, planId: brief.discoveryBriefId, keywordSetId: brief.keywordSetId, keywordSetVersion: brief.keywordSetVersion,
     discoveryScopeId: scope.id, discoveryScopeVersion: scope.version, status: 'running', triggerType: input.triggerType,
@@ -160,7 +173,7 @@ export async function executeApprovedDiscoveryRun(input: {
           tenantId: input.tenantId,
           platform: target.platform,
           mode: mode === 'account' ? 'account' : 'keyword',
-          ...(mode === 'account' ? { accountUrl: target.ref, accountName: target.ref } : { keyword: target.ref }),
+          ...(mode === 'account' ? { accountUrl: target.ref, accountName: accountNameByUrl.get(target.ref) || target.ref } : { keyword: target.ref }),
           limit: perSourceLimit,
           dateFrom,
           dateTo,

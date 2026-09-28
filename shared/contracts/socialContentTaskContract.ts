@@ -195,6 +195,9 @@ export interface SocialContentTaskBrief {
   productId?: string | null;
   /** Human-readable product label retained for review and legacy records. */
   productRef: string | null;
+  /** Optional explicit identity selection for this task; never used as a fuzzy lookup. */
+  requestedPresenterName?: string | null;
+  requestedPresenterAssetId?: string | null;
   audience: string | null;
   markets: string[];
   languages: string[];
@@ -410,7 +413,7 @@ export interface SocialMetricSubmission {
 }
 
 export interface SocialContentTaskDetail extends SocialContentTaskSummary {
-  referencePreparation?: { status: 'pending' | 'blocked'; reason: string | null };
+  referencePreparation?: { status: 'pending' | 'review_required' | 'blocked'; reason: string | null };
   /** Read-only recovery checkpoints; no grant secrets or private binding data. */
   managedExecution?: {
     reference?: { status: string; attempts: number; nextAttemptAt: string | null; reason: string | null };
@@ -493,6 +496,8 @@ export interface CreateSocialContentTaskInput {
   objective: string;
   productId?: string | null;
   productRef?: string | null;
+  requestedPresenterName?: string | null;
+  requestedPresenterAssetId?: string | null;
   audience?: string | null;
   markets?: string[];
   languages?: string[];

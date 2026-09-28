@@ -95,6 +95,73 @@ function parseJson<T>(raw: string, fallback: T): T {
   }
 }
 
+/** Independent, deliberately narrow observation of the opening frame. It is
+ * compared with the storyboard after generation to catch scene hallucinations
+ * without asking the same model to approve its own narrative. */
+export async function inspectVideoOpeningFrameWithQwen(frame: { base64: string; mimeType: string }): Promise<{
+  scene: 'factory' | 'showroom' | 'studio' | 'home' | 'outdoor' | 'other' | 'unknown';
+  hasPerson: boolean | null;
+  hasProduct: boolean | null;
+  confidence: number;
+}> {
+  const completion = await client().chat.completions.create({
+    model: QWEN_EXACT_VL_MODEL(),
+    messages: [{ role: 'user', content: [
+      { type: 'text', text: '仅观察这一张视频首帧，不看标题或上下文。只输出 JSON：scene 必须为 factory/showroom/studio/home/outdoor/other/unknown 之一；hasPerson 和 hasProduct 为布尔值，不确定为 null；confidence 为 0 到 1。factory 只指可见生产设备或生产线，产品陈列和展厅不算工厂。不要推断口播或镜头后续内容。' },
+      { type: 'image_url', image_url: { url: `data:${frame.mimeType};base64,${frame.base64}` } },
+    ] as any }],
+    response_format: { type: 'json_object' },
+    max_tokens: 180,
+  }, { signal: AbortSignal.timeout(20_000) });
+  const parsed = parseJson<Record<string, unknown>>(completion.choices[0]?.message?.content || '', {});
+  const allowed = new Set(['factory', 'showroom', 'studio', 'home', 'outdoor', 'other', 'unknown']);
+  return {
+    scene: allowed.has(String(parsed.scene)) ? parsed.scene as 'factory' | 'showroom' | 'studio' | 'home' | 'outdoor' | 'other' | 'unknown' : 'unknown',
+    hasPerson: typeof parsed.hasPerson === 'boolean' ? parsed.hasPerson : null,
+    hasProduct: typeof parsed.hasProduct === 'boolean' ? parsed.hasProduct : null,
+    confidence: Number.isFinite(Number(parsed.confidence)) ? Math.max(0, Math.min(1, Number(parsed.confidence))) : 0,
+  };
+}
+
+/** A separate, time-ordered observation of the first substantial shot. The
+ * opening still is insufficient evidence for a gesture or camera movement. */
+export async function inspectOpeningHookMotionWithQwen(opts: {
+  frames: Array<{ base64: string; mimeType: string; timeLabel: string }>;
+  start: number;
+  end: number;
+  signal?: AbortSignal;
+}): Promise<{
+  observations: Array<{ time: number; visibleState: string; confidence: number }>;
+  transitions: Array<{ from: number; to: number; action: string; evidence: string; confidence: number }>;
+  uncertainties: string[];
+}> {
+  const selected = opts.frames.filter(frame => {
+    const seconds = Number.parseFloat(frame.timeLabel);
+    return Number.isFinite(seconds) && seconds >= opts.start - 0.1 && seconds <= opts.end + 0.1;
+  }).slice(0, 16);
+  if (selected.length < 3) return { observations: [], transitions: [], uncertainties: ['opening_hook_insufficient_frames'] };
+  const completion = await client().chat.completions.create({
+    model: QWEN_EXACT_VL_MODEL(),
+    messages: [{ role: 'user', content: [
+      { type: 'text', text: `以下图片按时间排列，时间为 ${selected.map(frame => frame.timeLabel).join(', ')}。仅分析 ${opts.start.toFixed(2)}-${opts.end.toFixed(2)} 秒这个完整镜头。只输出 JSON {"observations":[{"time":0,"visibleState":"","confidence":0}],"transitions":[{"from":0,"to":0,"action":"","evidence":"","confidence":0}],"uncertainties":[]}。每张图分别写实际可见的人物位置、手部姿态、面向和构图。transitions 只记录至少两张图可互相证明的状态变化（例如手向镜头伸出、人物后退、双臂张开）；单张图不能证明运动方向。没有足够证据就留空并写入 uncertainties。不得推断声音、口播、目的、身份或画外动作。` },
+      ...selected.map(frame => ({ type: 'image_url', image_url: { url: `data:${frame.mimeType};base64,${frame.base64}` } })),
+    ] as any }],
+    response_format: { type: 'json_object' },
+    max_tokens: 2400,
+  } as any, opts.signal ? { signal: opts.signal } : { signal: AbortSignal.timeout(45_000) });
+  const parsed = parseJson<Record<string, unknown>>(completion.choices[0]?.message?.content || '', {});
+  const finite = (value: unknown) => Number.isFinite(Number(value)) ? Number(value) : NaN;
+  const clamp = (value: unknown) => Number.isFinite(finite(value)) ? Math.max(0, Math.min(1, finite(value))) : 0;
+  const observations = Array.isArray(parsed.observations) ? parsed.observations.map(row => ({
+    time: finite(row?.time), visibleState: String(row?.visibleState || '').trim(), confidence: clamp(row?.confidence),
+  })).filter(row => Number.isFinite(row.time) && row.time >= opts.start - 0.1 && row.time <= opts.end + 0.1 && row.visibleState) : [];
+  const transitions = Array.isArray(parsed.transitions) ? parsed.transitions.map(row => ({
+    from: finite(row?.from), to: finite(row?.to), action: String(row?.action || '').trim(),
+    evidence: String(row?.evidence || '').trim(), confidence: clamp(row?.confidence),
+  })).filter(row => Number.isFinite(row.from) && Number.isFinite(row.to) && row.to > row.from && row.from >= opts.start - 0.1 && row.to <= opts.end + 0.1 && row.action && row.evidence) : [];
+  return { observations, transitions, uncertainties: Array.isArray(parsed.uncertainties) ? parsed.uncertainties.map(String).filter(Boolean) : [] };
+}
+
 export async function classifyMaterialFramesWithQwen(opts: {
   name: string;
   frames: Array<{ base64: string; mimeType: string; timeLabel: string }>;
@@ -207,7 +274,7 @@ ${modeInstruction}
 - firstTenSeconds: object，详细分析视频前 10 秒，包含中文字段 atmosphere、audioVisual、camera、visuals、voiceMusic
 - coarseStructure: array，覆盖原视频完整时长，按内容结构变化拆解；每项包含 time、label、description
 - scriptSummary15s: object，15 秒脚本详析摘要，包含 visualStyle、coreEmotion、competitors
-  - scriptDetails15s: array（字段名仅为历史兼容），必须覆盖原视频完整时长，不得在15秒处截断；按导演镜头详析；每项包含 time（start-end区间，最多两位小数）、environment、shot、camera、purpose、visual、dialogue、onScreenText、ambientSound、bgm、soundEffects、beats、persistentState、authenticity、observedFacts、inferredIntent、causalGap、omniPrompt、omniNegativePrompt、confidence、needsReview、viralPotential（object：score 为 0-100 且必须拉开差距，锚点 85以上=强钩子或强证据、70-84=有明确记忆点、50-69=功能性过渡、50以下=信息稀薄；mechanisms 最多4项只写本镜头真实成立的机制，没有就空数组；whyEffective 一句话说明理由并引用本镜头具体画面或台词，低于50分要说明弱在哪里。禁止套用通用话术）、subtitle、audio、note。observedFacts 只写可见事实；inferredIntent 明确标注推断的表达意图；causalGap 写意图中存在但视频未展示的因果动作；omniPrompt 用英文写可直接交给视频模型的逐时段动作提示，必须复现可见动作，不得擅自补 causalGap；omniNegativePrompt 用英文列出最容易生成错的动作、物理关系和 UI。主体动作/对象/运镜/营销功能改变才切镜；长镜头用 beats 记录镜头内 time/action/dialogue/onScreenText。口播、画面字幕、环境声、BGM和音效必须分开；无法确认留空，专名/价格/左右方向/ASR不确定需 needsReview=true
+  - scriptDetails15s: array（字段名仅为历史兼容），必须覆盖原视频完整时长，不得在15秒处截断；按导演镜头详析；每项包含 time（start-end区间，最多两位小数）、environment、shot、camera、purpose、visual、personContinuityId、dialogue、onScreenText、ambientSound、bgm、soundEffects、beats、persistentState、authenticity、observedFacts、inferredIntent、causalGap、omniPrompt、omniNegativePrompt、confidence、needsReview、viralPotential（object：score 为 0-100 且必须拉开差距，锚点 85以上=强钩子或强证据、70-84=有明确记忆点、50-69=功能性过渡、50以下=信息稀薄；mechanisms 最多4项只写本镜头真实成立的机制，没有就空数组；whyEffective 一句话说明理由并引用本镜头具体画面或台词，低于50分要说明弱在哪里。禁止套用通用话术）、subtitle、audio、note。personContinuityId 对可确认的同一出镜人物跨镜头保持相同稳定 ID，无人物或身份不能确认时留空，不能只凭性别推断。observedFacts 只写可见事实；inferredIntent 明确标注推断的表达意图；causalGap 写意图中存在但视频未展示的因果动作；omniPrompt 用英文写可直接交给视频模型的逐时段动作提示，必须复现可见动作，不得擅自补 causalGap；omniNegativePrompt 用英文列出最容易生成错的动作、物理关系和 UI。主体动作/对象/运镜/营销功能改变才切镜；长镜头用 beats 记录镜头内 time/action/dialogue/onScreenText。口播、画面字幕、环境声、BGM和音效必须分开；无法确认留空，专名/价格/左右方向/ASR不确定需 needsReview=true
 - recommendedScriptType: "voiceover" | "storyboard"`;
 
   const externalEvidence = untrustedPromptData('video_metadata_and_asr', JSON.stringify({
@@ -319,6 +386,31 @@ export async function analyzeVideoTimelineDetailsWithQwen(opts: {
   signal?: AbortSignal;
 }): Promise<VideoAiAnalysis> {
   const boundaries = opts.timeline.boundaries.map(item => ({ id: item.id, start: item.start, end: item.end, evidence: item.evidence }));
+  // Dense product montages can contain nine or more shots in one 12-second
+  // chunk. One VL response sometimes drops a row despite valid JSON. Ask for
+  // a few server-owned windows at a time and preserve every physical cut.
+  if (boundaries.length > 4) {
+    const parts: VideoAiAnalysis[] = [];
+    for (let offset = 0; offset < boundaries.length; offset += 4) {
+      const batch = boundaries.slice(offset, offset + 4);
+      const frames = batch.flatMap(boundary => {
+        const middle = (boundary.start + boundary.end) / 2;
+        const within = opts.frames.filter(frame => {
+          const time = Number.parseFloat(frame.timeLabel);
+          return Number.isFinite(time) && time >= boundary.start && time < boundary.end;
+        }).sort((left, right) => Math.abs(Number.parseFloat(left.timeLabel) - middle) - Math.abs(Number.parseFloat(right.timeLabel) - middle));
+        // One true midpoint frame per short product shot prevents captions
+        // from the preceding or following product leaking into this window.
+        return within.slice(0, boundary.end - boundary.start <= 2.5 ? 1 : 3);
+      }).sort((left, right) => Number.parseFloat(left.timeLabel) - Number.parseFloat(right.timeLabel));
+      parts.push(await analyzeVideoTimelineDetailsWithQwen({
+        ...opts,
+        frames: frames.length ? frames : opts.frames,
+        timeline: { ...opts.timeline, boundaries: opts.timeline.boundaries.slice(offset, offset + 4) },
+      }));
+    }
+    return { ...parts[0]!, scriptDetails15s: parts.flatMap(part => part.scriptDetails15s || []) };
+  }
   const completion = await client().chat.completions.create({
     model: QWEN_EXACT_VL_MODEL(),
     messages: [{ role: 'user', content: [
@@ -326,9 +418,12 @@ export async function analyzeVideoTimelineDetailsWithQwen(opts: {
 时间窗口：${JSON.stringify(boundaries)}
 ${opts.transcript?.segments.length ? `独立ASR：${JSON.stringify(opts.transcript.segments)}` : '无可靠ASR，dialogue留空。'}
 summary字段：theme、identityEntities（仅提取明确可见或可听的企业名、品牌名和产品名，每项含type/text/evidence/confidence，不确定时不输出）、hooks、sellingPoints、mood、structure、baseRequirements、firstTenSeconds（atmosphere/audioVisual/camera/visuals/voiceMusic）、coarseStructure（time/label/description）、scriptSummary15s（visualStyle/coreEmotion/competitors）、recommendedScriptType。
-shots每项字段：boundaryId、environment、shot、camera、angle、composition、purpose、visual、dialogue、onScreenText、ambientSound、bgm、soundEffects、beats、persistentState、startState、endState、transitionToNext、authenticity、observedFacts、inferredIntent、causalGap、omniPrompt、omniNegativePrompt、confidence、needsReview、viralPotential、subtitle、audio、note。每个字符串简洁、具体、尽量不超过24个汉字。shots必须完整返回${boundaries.length}项；无法确认时也必须保留对应boundaryId，用needsReview=true和较低confidence表达不确定，禁止省略分镜。
+shots每项字段：boundaryId、environment、shot、camera、angle、composition、purpose、visual、dialogue、onScreenText、ambientSound、bgm、soundEffects、beats、persistentState、startState、endState、transitionToNext、authenticity、observedFacts、inferredIntent、causalGap、omniPrompt、omniNegativePrompt、confidence、needsReview、viralPotential、subtitle、audio、note。每个字符串简洁、具体、尽量不超过24个汉字。shots必须完整返回${boundaries.length}项；无法确认时也必须保留对应boundaryId，用needsReview=true和较低confidence表达不确定，禁止省略分镜。连续报出多个产品名且画面逐个切换时，每个窗口只写本窗口实际可见的那个产品及字幕，不能把整段产品清单合成一个人物或产品镜头。
 observedFacts仅写真实可见内容；推断只写inferredIntent；缺失因果只写causalGap，不得进入visual或omniPrompt。分别记录口播、屏幕文字、环境声、BGM、音效。动作写初态、接触/路径、终态；运镜、角度、构图分开。专名、价格、型号、左右方向或ASR不确定时needsReview=true，禁止猜测。omni字段使用英文。` },
-      ...opts.frames.map(frame => ({ type: 'image_url', image_url: { url: `data:${frame.mimeType};base64,${frame.base64}` } })),
+      ...opts.frames.flatMap(frame => [
+        { type: 'text', text: `以下画面采样时间为 ${frame.timeLabel}；只把画面中的产品、字幕归入包含该时间点的窗口，不能沿用邻镜内容。` },
+        { type: 'image_url', image_url: { url: `data:${frame.mimeType};base64,${frame.base64}` } },
+      ]),
     ] as any }],
     response_format: { type: 'json_object' },
     // A shot carries director, continuity, audio and evidence fields. The old
@@ -436,7 +531,7 @@ export async function analyzeMaterialFramesWithQwen(opts: {
   const completion = await client().chat.completions.create({
     model: (process.env.QWEN_MATERIAL_VL_MODEL || QWEN_EXACT_VL_MODEL()).trim(),
     messages: [
-      { role: 'system', content: `你是素材库视觉索引员。仅记录采样帧中可见事实，供后续剪辑选择原片区间。不要写广告脚本，不推断产品性能、材质、品牌、型号、认证、音频或隐藏动作。文件名不作为证据。相邻采样点之间不确定的动作不要补写。输出简体中文 JSON：{"segments":[{"start":0,"end":10,"subject":["主体"],"observedFacts":["可见事实"],"action":"可观察到的变化或静止","shot":"景别","angle":"角度","camera":"可观察到的运镜","composition":"构图","environment":"可见背景","motionLevel":"static|low|medium|high|unknown","actionStart":0.4,"actionPeak":1.5,"actionEnd":2.6,"cleanStart":0.2,"cleanEnd":2.9,"cleanEntry":true,"cleanExit":true,"boundaryConfidence":0.86,"confidence":0.9,"needsReview":false}]}。时间单位秒，位于给定真实时长内、按时间递增、不可重叠。start/end 是语义镜头边界；actionStart/actionEnd 只包住画面中确实可见的完整动作，actionPeak 是动作或信息最清楚的时刻；cleanStart/cleanEnd 是没有半截动作、明显转场、黑帧或强烈抖动的安全剪切区。无法从采样帧确认时让它们等于 start/end、boundaryConfidence 不得高于0.55且 cleanEntry/cleanExit=false。motionLevel仅描述可见运动强度。只在主体、状态、构图或运镜明显改变时切段；连续长镜头可以只有一段，绝不能为了数量拆假镜头。不能判断的区间可跳过。confidence 是视觉事实可信度；boundaryConfidence 是剪切边界可信度，二者不得混用；模糊、遮挡、主体无法识别的片段 needsReview=true。画面清晰且可观察事实可靠可设为false；没有音频不影响纯视觉事实可信度。` },
+      { role: 'system', content: `你是素材库视觉索引员。仅记录采样帧中可见事实，供后续剪辑选择原片区间。不要写广告脚本，不推断产品性能、材质、品牌、型号、认证、音频或隐藏动作。文件名不作为证据。相邻采样点之间不确定的动作不要补写。输出简体中文 JSON：{"segments":[{"start":0,"end":10,"subject":["主体"],"observedFacts":["可见事实"],"visualTopic":"画面实际呈现的主题，如工厂生产、产品展示、使用场景；不能判断则留空","expressionPurpose":"这段画面可以支持的表达目的，如建立信任、展示产品、演示使用；不能判断则留空","action":"可观察到的变化或静止","shot":"景别","angle":"角度","camera":"可观察到的运镜","composition":"构图","environment":"可见背景","motionLevel":"static|low|medium|high|unknown","actionStart":0.4,"actionPeak":1.5,"actionEnd":2.6,"cleanStart":0.2,"cleanEnd":2.9,"cleanEntry":true,"cleanExit":true,"boundaryConfidence":0.86,"confidence":0.9,"needsReview":false}]}。visualTopic 和 expressionPurpose 是供素材匹配的编辑标签，只能根据同一时间段内的可见事实给出，不得引用标题、文件名或其他片段；不确定时留空，不能编造功效和资质。时间单位秒，位于给定真实时长内、按时间递增、不可重叠。start/end 是语义镜头边界；actionStart/actionEnd 只包住画面中确实可见的完整动作，actionPeak 是动作或信息最清楚的时刻；cleanStart/cleanEnd 是没有半截动作、明显转场、黑帧或强烈抖动的安全剪切区。无法从采样帧确认时让它们等于 start/end、boundaryConfidence 不得高于0.55且 cleanEntry/cleanExit=false。motionLevel仅描述可见运动强度。只在主体、状态、构图或运镜明显改变时切段；连续长镜头可以只有一段，绝不能为了数量拆假镜头。不能判断的区间可跳过。confidence 是视觉事实可信度；boundaryConfidence 是剪切边界可信度，二者不得混用；模糊、遮挡、主体无法识别的片段 needsReview=true。画面清晰且可观察事实可靠可设为false；没有音频不影响纯视觉事实可信度。` },
       { role: 'user', content: [
         { type:'text', text:`原视频时长 ${opts.duration} 秒。下列每张图片前标明它的原片时间。识别可安全剪辑的视觉区间。` },
         ...opts.frames.flatMap(frame => [{type:'text',text:frame.timeLabel}, {type:'image_url',image_url:{url:`data:${frame.mimeType};base64,${frame.base64}`}}]),
@@ -453,7 +548,7 @@ export async function verifyMaterialFramesWithQwen(opts: {
 }): Promise<unknown> {
   const completion = await client().chat.completions.create({
     model: (process.env.QWEN_MATERIAL_VL_MODEL || QWEN_EXACT_VL_MODEL()).trim(),
-    messages:[{role:'system',content:`你是严格的视觉事实与剪切边界复核员。对照原片采样帧审查素材索引。保持输入 segments 的语义时间区间和数量，不增加任何细节。逐条删除不能直接从画面证实的 observedFacts，修正错误的物体命名为保守外观描述（颜色、形状、位置、可见运动）。反光、虚焦、焊点不等于液体；不能凭外观推断性能、用途、物质成分或隐藏结构。不确定的运动方向应改成“缓慢移动”或留空。不要把景深变化写成物体变化。删除同样不受支持的subject/action/environment/camera内容。复核 actionStart/actionPeak/actionEnd、cleanStart/cleanEnd：必须位于 start/end 内并保持顺序；只有采样帧能支持完整动作和干净进出点时才保留高 boundaryConfidence，否则退回 start/end、cleanEntry/cleanExit=false且 boundaryConfidence不高于0.55。只有保留的事实都清楚可见才 needsReview=false，否则true并降低confidence。返回同一 JSON 结构 {segments:[{start,end,subject,observedFacts,action,shot,angle,camera,composition,environment,motionLevel,actionStart,actionPeak,actionEnd,cleanStart,cleanEnd,cleanEntry,cleanExit,boundaryConfidence,confidence,needsReview}]}。observedFacts至少包含一条确定可见的宽泛外观；若整段无法确认则needsReview=true。`},
+    messages:[{role:'system',content:`你是严格的视觉事实与剪切边界复核员。对照原片采样帧审查素材索引。保持输入 segments 的语义时间区间和数量，不增加任何细节。逐条删除不能直接从画面证实的 observedFacts，修正错误的物体命名为保守外观描述（颜色、形状、位置、可见运动）。反光、虚焦、焊点不等于液体；不能凭外观推断性能、用途、物质成分或隐藏结构。不确定的运动方向应改成“缓慢移动”或留空。不要把景深变化写成物体变化。删除同样不受支持的subject/action/environment/camera内容。visualTopic（视觉主题）和 expressionPurpose（表达目的）仅是这一段的可用编辑标签；若剩余可见事实不足以支持标签，就置空，不能借用文件名、标题、其他片段或推断功效资质。复核 actionStart/actionPeak/actionEnd、cleanStart/cleanEnd：必须位于 start/end 内并保持顺序；只有采样帧能支持完整动作和干净进出点时才保留高 boundaryConfidence，否则退回 start/end、cleanEntry/cleanExit=false且 boundaryConfidence不高于0.55。只有保留的事实都清楚可见才 needsReview=false，否则true并降低confidence。返回同一 JSON 结构 {segments:[{start,end,subject,observedFacts,visualTopic,expressionPurpose,action,shot,angle,camera,composition,environment,motionLevel,actionStart,actionPeak,actionEnd,cleanStart,cleanEnd,cleanEntry,cleanExit,boundaryConfidence,confidence,needsReview}]}。observedFacts至少包含一条确定可见的宽泛外观；若整段无法确认则needsReview=true。`},
       {role:'user',content:[{type:'text',text:`真实时长${opts.duration}秒。待复核索引：${JSON.stringify(opts.draft)}`}, ...opts.frames.flatMap(frame=>[{type:'text',text:frame.timeLabel},{type:'image_url',image_url:{url:`data:${frame.mimeType};base64,${frame.base64}`}}])] as any}],
     response_format:{type:'json_object'},max_tokens:2400,
   },{signal:AbortSignal.timeout(120000),maxRetries:0});

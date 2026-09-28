@@ -1,4 +1,11 @@
-import { ArrowRight, Scissors, TrendingUp, X, type LucideIcon } from 'lucide-react';
+import { useState, type ComponentType } from 'react';
+import {
+  ArrowRight,
+  Check,
+  Scissors,
+  Sparkles,
+  TrendingUp,
+} from 'lucide-react';
 import type {
   SocialContentCreationPath,
   SocialContentMaterialInput,
@@ -14,80 +21,81 @@ interface CreationPathCard {
   id: SocialContentCreationPath;
   title: string;
   description: string;
-  icon: LucideIcon;
+  result: string;
+  icon: ComponentType<{ size?: number; className?: string; strokeWidth?: number }>;
   tint: string;
-  iconTint: string;
 }
 
 const CREATION_PATHS: CreationPathCard[] = [
   {
     id: 'material_processing',
-    title: '自由创作',
-    description: '系统从“我的素材”和企业中心自动组织内容，你只需选择要宣传的产品。',
+    title: '素材加工',
+    description: '把你现有的视频、图片或商品信息，加工成口播、字幕、特效完整的成片。',
+    result: '适合：有自己的产品或品牌内容，想直接做成高质量视频',
     icon: Scissors,
-    tint: 'border-emerald-200 bg-gradient-to-br from-emerald-50 via-white to-[#e8f4ed] hover:border-emerald-300',
-    iconTint: 'text-emerald-800',
+    tint: 'border-emerald-200 bg-gradient-to-br from-emerald-50 via-white to-[#e8f4ed]',
   },
   {
     id: 'viral_replication',
     title: '爆款裂变',
-    description: '沿用爆款口播与结构，仅替换企业、品牌和产品名称，再自动匹配制作。',
+    description: '提供一条参考视频，系统逐镜分析前三秒、节奏和结构，再换成你的产品重新制作。',
+    result: '适合：已经看到想参考的爆款，希望快速做出自己的版本',
     icon: TrendingUp,
-    tint: 'border-orange-200 bg-gradient-to-br from-orange-50 via-white to-[#f7eadb] hover:border-orange-300',
-    iconTint: 'text-orange-800',
+    tint: 'border-amber-200 bg-gradient-to-br from-amber-50 via-white to-[#f7eadb]',
   },
 ];
 
-export default function SocialContentLanding({
-  onStart,
-  onSelectViralReplication,
-  onClose = () => {},
-}: {
-  onStart: (options: SocialContentLaunchOptions) => void;
-  onSelectViralReplication?: () => void;
-  onClose?: () => void;
-}) {
-  return (
-    <div className="fixed inset-0 z-[175] flex items-center justify-center bg-slate-950/35 p-4 backdrop-blur-[2px]" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) onClose(); }}>
-      <section role="dialog" aria-modal="true" aria-labelledby="social-creation-path-title" className="ui-modal-frame ui-modal-frame--compact">
-        <div className="flex items-start justify-between gap-4 border-b border-slate-100 bg-gradient-to-r from-[#f2fbf7] via-white to-[#f6f3ff] p-5 sm:p-6">
-          <div>
-            <p className="text-[11px] font-black tracking-[0.12em] text-text-muted">第一步</p>
-            <h2 id="social-creation-path-title" className="mt-2 text-2xl font-black text-[#173d31]">你想怎么制作？</h2>
-            <p className="mt-2 text-xs leading-5 text-text-muted">选择一种方式，进入逐句口播与画面制作台。</p>
-          </div>
-          <button type="button" aria-label="收起制作方式" title="收起" onClick={onClose} className="rounded-xl p-2 text-text-muted hover:bg-surface-2 hover:text-text-primary"><X size={19} /></button>
-        </div>
+export default function SocialContentLanding({ onStart }: { onStart: (options: SocialContentLaunchOptions) => void }) {
+  const [creationPath, setCreationPath] = useState<SocialContentCreationPath | null>(null);
 
-        <div className="ui-modal-body ui-choice-grid p-5 sm:p-6">
+  return (
+    <>
+      <header className="rounded-xl border border-border bg-white px-4 py-4 sm:px-5">
+        <h1 className="flex items-start gap-2 text-sm font-black leading-6 text-text-primary sm:text-base">
+          <Sparkles size={17} className="mt-0.5 shrink-0 text-accent" aria-hidden="true" />
+          <span>不会拍、不会剪也能做视频。选择一种制作方式，剩下的交给编导 Agent 和内容 Agent。</span>
+        </h1>
+        <p className="mt-2 pl-6 text-xs leading-5 text-text-muted">默认使用一键托管：系统准备脚本、画面、口播、字幕和剪辑，你只需确认关键信息并审核成片。</p>
+      </header>
+
+      <section aria-labelledby="social-creation-path-title" className="rounded-xl border border-border bg-white p-4 sm:p-5">
+        <div>
+          <p className="text-[10px] font-black uppercase tracking-[0.12em] text-text-muted">第一步</p>
+          <h2 id="social-creation-path-title" className="mt-1 text-lg font-black text-text-primary">你想怎么制作？</h2>
+        </div>
+        <div className="mt-4 grid gap-3 md:grid-cols-2">
           {CREATION_PATHS.map(path => {
             const Icon = path.icon;
+            const active = creationPath === path.id;
             return (
               <button
                 key={path.id}
                 type="button"
-                onClick={() => {
-                  if (path.id === 'viral_replication' && onSelectViralReplication) {
-                    onSelectViralReplication();
-                    return;
-                  }
-                  onStart({ creationPath: path.id, materialInput: path.id === 'viral_replication' ? 'ready' : 'none', managedMode: 'one_click_managed' });
-                }}
-                className={`group rounded-2xl border p-5 text-left transition hover:-translate-y-0.5 hover:shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/30 ${path.tint}`}
+                aria-pressed={active}
+                onClick={() => setCreationPath(path.id)}
+                className={`relative rounded-xl border p-5 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 ${path.tint} ${active ? 'shadow-[0_0_0_2px_var(--color-accent),0_12px_30px_rgba(17,127,81,0.12)]' : 'hover:-translate-y-0.5 hover:shadow-md'}`}
               >
                 <span className="flex items-start gap-4">
-                  <span className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-full border border-current/15 bg-white/80 ${path.iconTint}`}><Icon size={22} /></span>
+                  <span className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-xl ${active ? 'bg-accent text-white' : 'bg-white text-text-secondary shadow-sm'}`}><Icon size={22} /></span>
                   <span className="min-w-0 flex-1">
-                    <strong className="text-lg font-black text-[#173d31]">{path.title}</strong>
+                    <span className="flex items-center justify-between gap-2"><strong className="text-base font-black text-text-primary">{path.title}</strong>{active && <span className="flex h-6 w-6 items-center justify-center rounded-full bg-accent text-white"><Check size={13} strokeWidth={3} /></span>}</span>
                     <span className="mt-2 block text-xs leading-5 text-text-secondary">{path.description}</span>
-                    <span className="mt-4 inline-flex items-center gap-1.5 text-xs font-black text-[#173d31]">进入制作 <ArrowRight size={14} className="transition group-hover:translate-x-1"/></span>
+                    <span className="mt-3 block text-[10px] font-semibold leading-4 text-text-muted">{path.result}</span>
                   </span>
                 </span>
               </button>
             );
           })}
         </div>
+
+        {creationPath && (
+          <div className="mt-6 border-t border-border pt-5">
+            <div className="mt-4 flex justify-end">
+              <button type="button" onClick={() => onStart({ creationPath, materialInput: 'none', managedMode: 'one_click_managed' })} className="inline-flex items-center gap-2 rounded-xl bg-accent px-5 py-3 text-xs font-black text-white shadow-sm hover:bg-accent-dim">一键托管生成<ArrowRight size={15} /></button>
+            </div>
+          </div>
+        )}
       </section>
-    </div>
+    </>
   );
 }

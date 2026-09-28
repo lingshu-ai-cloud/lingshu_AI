@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
-import { ExternalLink, Film, Image as ImageIcon, Play, X } from 'lucide-react';
+import { ExternalLink, Film, Image as ImageIcon, Play, Volume2, VolumeX, X } from 'lucide-react';
 import type { LeadContentPackageResult } from '../../lib/studioApi';
 import { authHeader } from '../../lib/auth';
 import type { VideoKickoff } from '../AiCreateStudio';
 import { playVideoWithAuthenticatedFallback } from './studioAuthenticatedMedia';
+import { localReferenceMediaUrl } from './studioReferenceMedia';
 
 const leadPackageRoleLabels: Record<string, string> = {
   buyer_attention: '第 1 组 · 吸引目标买家',
@@ -52,12 +53,18 @@ export function LeadContentPackagePreview({ value, imageUrl }: { value: LeadCont
   );
 }
 
-export function BenchmarkVideoPreview({ kickoff, embedded = false }: { kickoff: VideoKickoff | null; embedded?: boolean }) {
+export function BenchmarkVideoPreview({ kickoff, embedded = false, seekRequest, onTimeUpdate }: {
+  kickoff: VideoKickoff | null;
+  embedded?: boolean;
+  seekRequest?: { seconds: number; requestId: number } | null;
+  onTimeUpdate?: (seconds: number) => void;
+}) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const playRequestRef = useRef(0);
   const [playbackUrl, setPlaybackUrl] = useState('');
   const [loading, setLoading] = useState(false);
   const [playing, setPlaying] = useState(false);
+  const [muted, setMuted] = useState(false);
   const [playbackError, setPlaybackError] = useState('');
   const video = kickoff?.video;
   const declaredAspectRatio = Number(video?.aspectRatio || kickoff?.generatedVideo?.aspectRatio)
@@ -66,8 +73,9 @@ export function BenchmarkVideoPreview({ kickoff, embedded = false }: { kickoff: 
   const [mediaAspectRatio, setMediaAspectRatio] = useState(declaredAspectRatio || 9 / 16);
   const isImageReference = video?.contentFormat === 'image';
   const poster = video?.thumbnail || video?.aiAnalysis?.materialPoster || kickoff?.generatedVideo?.poster || '';
-  const rawUrl = video?.videoUrl || video?.aiAnalysis?.materialUrl || kickoff?.generatedVideo?.url || '';
+  const rawUrl = video?.videoUrl || video?.aiAnalysis?.materialUrl || kickoff?.generatedVideo?.url || localReferenceMediaUrl(video?.sourceUrl);
   const apiUrl = rawUrl.replace(/\/media(?=\?|$)/, '/media-url');
+  const originalPageUrl = video?.sourceUrl && !video.sourceUrl.startsWith('local://') ? video.sourceUrl : '';
 
   useEffect(() => {
     playRequestRef.current += 1;
@@ -90,6 +98,27 @@ export function BenchmarkVideoPreview({ kickoff, embedded = false }: { kickoff: 
       return next;
     } finally { setLoading(false); }
   };
+  useEffect(() => {
+    if (!seekRequest || isImageReference) return;
+    let cancelled = false;
+    void ensurePlaybackUrl().then(url => {
+      if (cancelled || !url || !videoRef.current) return;
+      const element = videoRef.current;
+      const seek = () => {
+        if (cancelled) return;
+        const maximum = Number.isFinite(element.duration) && element.duration > 0
+          ? Math.max(0, element.duration - 0.05) : seekRequest.seconds;
+        element.currentTime = Math.min(Math.max(0, seekRequest.seconds), maximum);
+      };
+      if (!element.currentSrc || element.currentSrc !== new URL(url, window.location.href).href) {
+        element.src = url;
+        element.load();
+      }
+      if (element.readyState >= 1) seek();
+      else element.addEventListener('loadedmetadata', seek, { once: true });
+    });
+    return () => { cancelled = true; };
+  }, [seekRequest?.requestId, apiUrl]);
 
   const play = async () => {
     const requestId = ++playRequestRef.current;
@@ -119,17 +148,19 @@ export function BenchmarkVideoPreview({ kickoff, embedded = false }: { kickoff: 
   const metadata = (element: HTMLVideoElement) => {
     if (element.videoWidth > 0 && element.videoHeight > 0) setMediaAspectRatio(element.videoWidth / element.videoHeight);
   };
-  const videoElement = (className: string) => <video ref={videoRef} poster={poster || undefined} muted playsInline loop preload="metadata" className={className}
+  const videoElement = (className: string) => <video ref={videoRef} poster={poster || undefined} muted={muted} playsInline loop preload="metadata" className={className}
     onLoadedMetadata={event => metadata(event.currentTarget)} onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)}
+    onTimeUpdate={event => onTimeUpdate?.(event.currentTarget.currentTime)}
     onError={() => { setPlaying(false); setPlaybackError('视频加载或解码失败，可点击右上角“原站”查看'); }} />;
   const playbackLayers = <>
     <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/10 transition group-hover:bg-transparent">{!playing && <span className="flex h-11 w-11 items-center justify-center rounded-full bg-black/55 text-white backdrop-blur"><Play size={18} fill="currentColor" /></span>}</div>
+    <button type="button" aria-label={muted ? '开启原片声音' : '静音原片'} title={muted ? '开启原片声音' : '静音原片'} className="absolute bottom-3 right-3 z-20 flex h-9 w-9 items-center justify-center rounded-full bg-black/65 text-white" onClick={event => { event.stopPropagation(); setMuted(value => !value); }}>{muted ? <VolumeX size={18} /> : <Volume2 size={18} />}</button>
     {loading && <span className="absolute right-3 top-3 rounded-md bg-black/55 px-2 py-1 text-[9px] text-white">加载中…</span>}
     {playbackError && <span className="absolute inset-x-3 bottom-3 rounded-md bg-black/70 px-3 py-2 text-center text-[10px] leading-4 text-white">{playbackError}</span>}
   </>;
 
   if (embedded) return <div className="relative flex h-full min-h-0 w-full items-center justify-center overflow-hidden bg-black">
-    {video?.sourceUrl && <a href={video.sourceUrl} target="_blank" rel="noreferrer" className="absolute right-3 top-3 z-20 flex items-center gap-1 rounded-md bg-black/55 px-2 py-1 text-[10px] font-bold text-white backdrop-blur">原站 <ExternalLink size={11} /></a>}
+    {originalPageUrl && <a href={originalPageUrl} target="_blank" rel="noreferrer" className="absolute right-3 top-3 z-20 flex items-center gap-1 rounded-md bg-black/55 px-2 py-1 text-[10px] font-bold text-white backdrop-blur">原站 <ExternalLink size={11} /></a>}
     {!video ? <div className="flex flex-col items-center justify-center px-8 text-center text-white/65"><Film size={28} className="opacity-50" /><p className="mt-3 text-xs font-bold">尚未载入对标内容</p></div>
       : isImageReference ? poster ? <img src={poster} alt="竞品图文首图" className="h-full w-full object-contain" /> : <ImageIcon size={32} className="text-white/35" />
       : <div className="group relative flex h-full w-full cursor-pointer items-center justify-center overflow-hidden bg-black" onClick={togglePlayback}>{videoElement('h-full w-full object-contain')}{playbackLayers}</div>}
@@ -138,7 +169,7 @@ export function BenchmarkVideoPreview({ kickoff, embedded = false }: { kickoff: 
   return <aside className="sticky top-0 overflow-hidden rounded-2xl border border-border bg-surface shadow-sm">
     <div className="flex items-center justify-between border-b border-border px-4 py-3">
       <div className="min-w-0"><p className="text-sm font-black text-text-primary">{isImageReference ? '对标图文' : '对标视频'}</p><p className="mt-0.5 truncate text-[10px] text-text-muted">{video?.platform || '尚未载入'} · {isImageReference ? '完整轮播证据' : '悬浮播放'}</p></div>
-      {video?.sourceUrl && <a href={video.sourceUrl} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-[10px] font-bold text-accent">原站 <ExternalLink size={11} /></a>}
+      {originalPageUrl && <a href={originalPageUrl} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-[10px] font-bold text-accent">原站 <ExternalLink size={11} /></a>}
     </div>
     {video ? <div className="p-4">
       {isImageReference ? <div className="relative mx-auto aspect-[4/5] max-h-[600px] overflow-hidden rounded-xl bg-surface-2">{poster ? <img src={poster} alt="竞品图文首图" className="h-full w-full object-contain" /> : <div className="flex h-full items-center justify-center text-text-muted"><ImageIcon size={28} className="opacity-35" /></div>}<span className="absolute left-2 top-2 rounded-md bg-black/55 px-2 py-1 text-[9px] font-bold text-white backdrop-blur">首图参考</span></div>

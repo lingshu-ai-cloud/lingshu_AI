@@ -1,38 +1,84 @@
-import { useEffect, useState } from 'react';
-import { CheckCircle2, ImagePlus, Loader2 } from 'lucide-react';
-import SocialContentLanding, { type SocialContentLaunchOptions } from '../components/socialContent/SocialContentLanding';
-import SocialCreationWorkbench, { type SocialCreationWorkbenchSubmit } from '../components/socialContent/SocialCreationWorkbench';
-import { loadSocialContentStage, readSocialContentStage, type SocialContentStageProfile } from '../lib/socialContentStage';
+import { Plus, Sparkles } from 'lucide-react';
+import type { SocialContentTaskDetail, SocialContentTaskSummary } from '../../shared/contracts/socialContentWorkflow';
+import SocialContentLanding from '../components/socialContent/SocialContentLanding';
+import SocialProductionProgressPanel from '../components/socialContent/SocialProductionProgressPanel';
+
+const previewTask = {
+  taskId: 'preview-task',
+  version: '1',
+  status: 'producing',
+  mode: 'instant',
+  brief: {
+    title: '面膜新品使用场景短视频', objective: '新品介绍', productRef: '补水修护面膜', audience: '美妆品牌采购负责人',
+    markets: ['中国'], languages: ['简体中文'], platforms: ['douyin'], formats: ['short_video'], aspectRatio: '9:16',
+    cadence: null, requestedOutputCount: 1, dueAt: null, brandNotes: null, restrictions: [], callToAction: '咨询打样',
+  },
+  packageSelection: [], readiness: { complete: true, missing: [] }, runId: 'preview-run',
+  sourceCount: 2, knowledgeSourceCount: 1, materialSourceCount: 1, artifactCount: 0, approvedArtifactCount: 0,
+  deliveryPackageCount: 0, publicationCount: 0, metricSubmissionCount: 0,
+  createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+  sources: [], artifacts: [], deliveryPackages: [], publications: [], metricSubmissions: [],
+} satisfies SocialContentTaskDetail;
+
+const previewTaskSummary: SocialContentTaskSummary = {
+  taskId: previewTask.taskId,
+  brief: previewTask.brief,
+  status: previewTask.status,
+  version: previewTask.version,
+  packageSelection: previewTask.packageSelection,
+  readiness: previewTask.readiness,
+  runId: previewTask.runId,
+  sourceCount: previewTask.sourceCount,
+  knowledgeSourceCount: previewTask.knowledgeSourceCount,
+  materialSourceCount: previewTask.materialSourceCount,
+  artifactCount: previewTask.artifactCount,
+  approvedArtifactCount: previewTask.approvedArtifactCount,
+  deliveryPackageCount: previewTask.deliveryPackageCount,
+  publicationCount: previewTask.publicationCount,
+  metricSubmissionCount: previewTask.metricSubmissionCount,
+  createdAt: previewTask.createdAt,
+  updatedAt: previewTask.updatedAt,
+  mode: previewTask.mode,
+};
+
+const previewTasks: SocialContentTaskSummary[] = [
+  previewTaskSummary,
+  {
+    ...previewTaskSummary,
+    taskId: 'preview-review-task',
+    status: 'asset_review',
+    brief: { ...previewTask.brief, title: '工厂生产实力展示' },
+    artifactCount: 2,
+    approvedArtifactCount: 0,
+    updatedAt: new Date(Date.now() - 15 * 60_000).toISOString(),
+  },
+  {
+    ...previewTaskSummary,
+    taskId: 'preview-complete-task',
+    status: 'delivered',
+    brief: { ...previewTask.brief, title: '面膜使用场景演示' },
+    artifactCount: 1,
+    approvedArtifactCount: 1,
+    deliveryPackageCount: 1,
+    updatedAt: new Date(Date.now() - 60 * 60_000).toISOString(),
+  },
+];
 
 export default function SocialContentPreview() {
-  const cachedStage = readSocialContentStage();
-  const [chooserOpen, setChooserOpen] = useState(true);
-  const [stageProfile, setStageProfile] = useState<SocialContentStageProfile | null>(cachedStage);
-  const [launch, setLaunch] = useState<SocialContentLaunchOptions | null>(null);
-  const [submitted, setSubmitted] = useState<SocialCreationWorkbenchSubmit | null>(null);
-
-  useEffect(() => {
-    let active = true;
-    void loadSocialContentStage().then(profile => {
-      if (!active) return;
-      setStageProfile(profile);
-    });
-    return () => { active = false; };
-  }, []);
-
-  if (submitted) {
-    return (
-      <main className="min-h-screen bg-[#f6f8f5] p-6">
-          <header className="mx-auto flex max-w-5xl items-center justify-between gap-4"><div><p className="text-[10px] font-black uppercase tracking-[0.14em] text-accent">内容制作</p><h1 className="mt-1 text-xl font-black text-text-primary">我的创作</h1></div><button type="button" onClick={() => { setSubmitted(null); setChooserOpen(true); }} className="inline-flex items-center gap-2 rounded-xl bg-[#173d31] px-4 py-2.5 text-xs font-black text-white"><ImagePlus size={15} />新建内容</button></header>
-          <section className="mx-auto mt-6 max-w-5xl rounded-2xl border border-border bg-white p-6 shadow-sm"><div className="flex items-start gap-3"><span className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-50 text-emerald-700"><Loader2 size={18} className="animate-spin" /></span><div><p className="text-sm font-black text-text-primary">{submitted.title}</p><p className="mt-1 text-xs text-text-muted">已进入生成队列 · 正在解析口播与画面</p><div className="mt-4 flex items-center gap-2 text-[10px] font-bold text-emerald-700"><CheckCircle2 size={13} />输入已确认</div></div></div></section>
-        </main>
-    );
-  }
+  const start = () => { window.location.assign('/?page=smartAssets'); };
 
   return (
-    <div className="h-screen min-h-0 bg-[#f6f8f5]">
-      {launch ? <SocialCreationWorkbench mode={launch.creationPath} stageProfile={stageProfile || undefined} seed={launch.creationPath === 'viral_replication' ? { referenceTitle: '爆款参考视频' } : undefined} onOpenChooser={() => setChooserOpen(true)} onShowCreations={() => setSubmitted({ requestId: Date.now(), creationPath: launch.creationPath, title: '我的创作', productId: '', productName: '', files: [], referenceLinks: [], callToAction: '', specialRequirements: '', stageProfileId: stageProfile?.id || 'b2b_launch', stageLabel: stageProfile?.name || 'B2B 起步验证', strategyPresetId: stageProfile?.presetId || 'b2b_starting' })} onGenerate={setSubmitted} /> : <div className="flex h-full items-center justify-center text-sm text-text-muted">请选择一种制作方式</div>}
-      {chooserOpen && <SocialContentLanding onStart={options => { setLaunch(options); setChooserOpen(false); }} onClose={() => setChooserOpen(false)} />}
+    <div className="min-h-screen bg-[#f6f8f5]">
+      <main className="mx-auto max-w-[1440px] space-y-5 px-4 py-5 sm:px-8 sm:py-7">
+        <SocialContentLanding onStart={start} />
+        <SocialProductionProgressPanel task={previewTask} tasks={previewTasks} taskTotalItems={previewTasks.length} busy={false} onRefresh={() => undefined} onSelectTask={() => undefined} onStart={() => undefined} onEdit={() => undefined} onReview={() => undefined} />
+        <section className="rounded-xl border border-dashed border-border-bright bg-white px-4 py-4 sm:px-5">
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div className="flex min-w-0 items-center gap-3"><span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-surface-2 text-accent"><Sparkles size={18} /></span><div><p className="text-sm font-black text-text-primary">还没有内容任务</p><p className="mt-1 text-xs text-text-muted">从上方选择素材加工或爆款裂变；没有素材也能开始。</p></div></div>
+            <button type="button" onClick={start} className="inline-flex items-center gap-2 rounded-lg border border-border bg-white px-4 py-2.5 text-xs font-black text-text-secondary transition hover:border-border-bright hover:bg-surface-2"><Plus size={14} />从空白创建</button>
+          </div>
+        </section>
+      </main>
     </div>
   );
 }

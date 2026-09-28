@@ -1,72 +1,21 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type {
-  CreateSocialContentTaskInput,
   RegisterSocialPublicationInput,
   SocialContentArtifact,
   SocialContentFile,
   SocialContentTaskPage,
   SocialContentTaskDetail,
   SocialContentWorkspace,
-  SocialProductionApproach,
   SocialWorkPackageKind,
   SubmitSocialMetricsInput,
 } from '../../../shared/contracts/socialContentWorkflow';
 import { SocialContentRequestError, socialContentApi, type SocialContentUploadResult } from '../../lib/socialContentApi';
 import { SOCIAL_CONTENT_NAVIGATION_EVENT, readActiveSocialContentTaskId, setActiveSocialContentTaskId } from '../../lib/socialContentContext';
-import type { SocialContentDraft } from '../../lib/socialContentModel';
 import { mergeSocialContentTaskSummaries, restoreSavedSocialContentTask } from '../../lib/socialContentTaskPagination';
 import { socialArtifactGenerationDisclosure } from '../../lib/socialArtifactGeneration';
-import { splitBusinessList, splitLines } from './socialContentUi';
-
-export type SocialContentSaveTarget =
-  | { mode: 'new'; taskId: null; expectedVersion: null; attemptId: string }
-  | { mode: 'edit'; taskId: string; expectedVersion: string; attemptId: string };
-
-function requestInput(draft: SocialContentDraft): CreateSocialContentTaskInput {
-  return {
-    title: draft.title.trim(),
-    objective: draft.primaryGoal.trim(),
-    productId: draft.productId.trim() || null,
-    productRef: draft.productName.trim() || null,
-    audience: draft.audience.trim() || null,
-    markets: splitBusinessList(draft.market),
-    languages: splitBusinessList(draft.language),
-    platforms: draft.platforms,
-    formats: draft.formats,
-    aspectRatio: draft.aspectRatio || null,
-    cadence: draft.cadence.trim() || null,
-    requestedOutputCount: draft.mode === 'instant'
-      ? 1
-      : Number.isInteger(draft.quantity) && draft.quantity > 0 ? draft.quantity : null,
-    weeklyBudgetCny: draft.weeklyBudgetCny,
-    perItemBudgetCny: draft.perItemBudgetCny,
-    retryReserveCny: draft.retryReserveCny,
-    planningMode: draft.planningMode,
-    shootingWindowMinutes: draft.shootingWindowMinutes,
-    specialRequirements: draft.specialRequirements.trim() || null,
-    dueAt: draft.desiredDeliveryAt ? new Date(`${draft.desiredDeliveryAt}T12:00:00`).toISOString() : null,
-    brandNotes: draft.keyFacts.trim() || null,
-    restrictions: splitLines(draft.prohibitedClaims),
-    callToAction: draft.callToAction.trim() || null,
-    creationMode: draft.creationPath,
-    assetAvailability: draft.materialInput,
-    managementMode: draft.managedMode,
-    productionMode: draft.productionMode,
-    productionApproach: draft.productionApproach,
-    mode: draft.mode,
-    themeId: draft.themeId || null,
-    customTopic: draft.customTopic.trim() || null,
-    topic: draft.topic.trim() || null,
-  };
-}
 
 function taskListWith(workspace: SocialContentWorkspace, task: SocialContentTaskDetail) {
   return mergeSocialContentTaskSummaries(workspace.tasks, [task]);
-}
-
-function referenceLabel(value: string): string {
-  try { return new URL(value).hostname.replace(/^www\./, ''); }
-  catch { return '参考链接'; }
 }
 
 function operationSuffix(value: string): string {
@@ -252,9 +201,7 @@ export function useSocialContentWorkspace() {
       }
     };
     const onVisible = () => { if (document.visibilityState === 'visible') void refreshTask(); };
-    const pollIntervalMs = ['producing', 'packaging', 'attention'].includes(task.status) ? 5_000 : 15_000;
-    void refreshTask();
-    const timer = window.setInterval(() => { void refreshTask(); }, pollIntervalMs);
+    const timer = window.setInterval(() => { void refreshTask(); }, 30_000 + Math.floor(Math.random() * 5_000));
     window.addEventListener('focus', refreshTask);
     document.addEventListener('visibilitychange', onVisible);
     return () => {
@@ -265,166 +212,11 @@ export function useSocialContentWorkspace() {
     };
   }, [workspace?.currentTask?.taskId, workspace?.currentTask?.status, workspace?.currentTask?.managedExecution?.reference?.status, workspace?.currentTask?.managedExecution?.publishing?.status, busy, applyTask]);
 
-  const saveDraft = useCallback(async (
-    draft: SocialContentDraft,
-    files: File[],
-    start: boolean,
-    target: SocialContentSaveTarget,
-    onTaskProgress?: (task: SocialContentTaskDetail) => void,
-  ) => run(async () => {
-    let task: SocialContentTaskDetail;
-    let recoverTaskId = target.taskId;
-    const applyProgress = (next: SocialContentTaskDetail) => {
-      task = next;
-      recoverTaskId = next.taskId;
-      applyTask(next);
-      onTaskProgress?.(next);
-    };
-    try {
-      if (target.mode === 'edit') {
-        task = await socialContentApi.updateTask(target.taskId, {
-          expectedVersion: target.expectedVersion,
-          changes: requestInput(draft),
-        }, `${target.attemptId}:brief:${target.expectedVersion}`);
-      } else if (draft.mode === 'weekly') {
-        const planned = await socialContentApi.createWeeklyPlan({
-          title: draft.title.trim(),
-          objective: draft.primaryGoal.trim(),
-          productId: draft.productId.trim() || null,
-          productRef: draft.productName.trim() || null,
-          audience: draft.audience.trim() || null,
-          items: [{
-            title: draft.title.trim(),
-            objective: draft.primaryGoal.trim(),
-            themeId: draft.themeId || null,
-            customTopic: draft.customTopic.trim() || null,
-            topic: draft.topic.trim() || null,
-          }],
-        }, `${target.attemptId}:weekly-plan`);
-        task = planned.tasks[0];
-        if (!task) throw new Error('周计划未生成内容任务，请重试');
-        task = await socialContentApi.updateTask(task.taskId, {
-          expectedVersion: task.version,
-          changes: requestInput(draft),
-        }, `${target.attemptId}:brief:${task.version}`);
-      } else {
-        task = await socialContentApi.createTask(requestInput(draft), `${target.attemptId}:create`);
-      }
-      applyProgress(task);
-
-      const sourceIdsToRemove = new Set(draft.removedSourceIds);
-      if (!draft.keyFacts.trim()) {
-        task.sources.filter(source => source.status === 'active' && source.kind === 'text_note' && source.sourceRef === 'brief:brand-notes')
-          .forEach(source => sourceIdsToRemove.add(source.sourceId));
-      }
-      for (const sourceId of sourceIdsToRemove) {
-        const source = task.sources.find(item => item.sourceId === sourceId && item.status === 'active');
-        if (!source) continue;
-        const result = await socialContentApi.removeSource(task.taskId, source.sourceId, task.version, `${target.attemptId}:source:remove:${operationSuffix(source.sourceId)}`);
-        applyProgress(result.task);
-      }
-
-      const existingRefs = new Set(task.sources.filter(source => source.status === 'active').map(source => `${source.kind}:${source.sourceRef}`));
-      for (const source of draft.selectedSources) {
-        if (existingRefs.has(`${source.kind}:${source.sourceRef}`)) continue;
-        const result = await socialContentApi.addSource(task.taskId, {
-          kind: source.kind,
-          sourceRef: source.sourceRef,
-          sourceVersion: source.sourceVersion,
-          label: source.label,
-          purpose: '本次内容任务',
-        }, `${target.attemptId}:source:selected:${operationSuffix(`${source.kind}:${source.sourceRef}:${source.sourceVersion || ''}`)}`);
-        existingRefs.add(`${source.kind}:${source.sourceRef}`);
-        applyProgress(result.task);
-      }
-      if (draft.keyFacts.trim() && !existingRefs.has('text_note:brief:brand-notes')) {
-        const result = await socialContentApi.addSource(task.taskId, {
-          kind: 'text_note',
-          sourceRef: 'brief:brand-notes',
-          label: '企业与产品关键信息',
-          purpose: '本次内容任务',
-        }, `${target.attemptId}:source:brand-notes`);
-        existingRefs.add('text_note:brief:brand-notes');
-        applyProgress(result.task);
-      }
-      for (const link of draft.referenceLinks) {
-        if (existingRefs.has(`reference_link:${link}`)) continue;
-        const result = await socialContentApi.addSource(task.taskId, {
-          kind: 'reference_link',
-          sourceRef: link,
-          label: referenceLabel(link),
-          purpose: '内容参考',
-        }, `${target.attemptId}:source:link:${operationSuffix(link)}`);
-        existingRefs.add(`reference_link:${link}`);
-        applyProgress(result.task);
-      }
-      for (const file of files) {
-        const fileKey = fileOperationKey(file);
-        const cached = uploadedFiles.current.get(file);
-        const upload = cached?.taskId === task.taskId && cached.usage === 'source'
-          ? cached.upload
-          : await socialContentApi.uploadFile(task.taskId, file, 'source', `${target.attemptId}:file:${fileKey}`);
-        uploadedFiles.current.set(file, { taskId: task.taskId, usage: 'source', upload });
-        const sourceRef = upload.material?.sourceRef || upload.file.fileRef;
-        const sourceVersion = upload.material?.sourceVersion || upload.file.sha256;
-        if (existingRefs.has(`material:${sourceRef}`)) continue;
-        const result = await socialContentApi.addSource(task.taskId, {
-          kind: 'material',
-          sourceRef,
-          sourceVersion,
-          label: file.name,
-          purpose: '本次内容任务',
-        }, `${target.attemptId}:source:file:${fileKey}`);
-        existingRefs.add(`material:${sourceRef}`);
-        applyProgress(result.task);
-      }
-
-      const selections = (['industry_launch', 'content_rocket', 'task_express'] as SocialWorkPackageKind[]).map(kind => {
-        const packageKey = draft.packageSelection[kind];
-        const card = workspace?.catalog.find(item => item.kind === kind && item.packageKey === packageKey && item.available);
-        if (!card) throw new Error('本次作业方案暂时不可用，请重新选择');
-        return { kind, packageKey: card.packageKey, version: card.version };
-      });
-      task = await socialContentApi.selectPackages(task.taskId, { expectedVersion: task.version, selections }, `${target.attemptId}:packages:${task.version}`);
-      applyProgress(task);
-      if (start) {
-        task = await socialContentApi.startTask(task.taskId, task.version, `${target.attemptId}:start:${task.version}`);
-        applyProgress(task);
-      }
-      return task;
-    } catch (error) {
-      if (recoverTaskId) {
-        try {
-          const latest = await socialContentApi.getTask(recoverTaskId);
-          applyProgress(latest);
-          if (start && ['producing', 'asset_review', 'packaging', 'delivered', 'awaiting_publish', 'awaiting_metrics', 'reviewed'].includes(latest.status)) {
-            return latest;
-          }
-        } catch {
-          // Keep the last confirmed task version so the editor remains recoverable.
-        }
-      }
-      throw error;
-    }
-  }, start
-    ? (result: SocialContentTaskDetail) => result.status === 'attention'
-      ? '任务已保留，系统会继续切换可用素材方案；如需确认事实或版权，会明确列出'
-      : '内容生产任务已进入执行队列'
-    : '草稿已保存'), [workspace, run, applyTask, fileOperationKey]);
-
-  const startTask = useCallback(async (approach?: SocialProductionApproach) => {
-    const currentTask = workspace?.currentTask;
-    if (!currentTask) return;
+  const startTask = useCallback(async () => {
+    const task = workspace?.currentTask;
+    if (!task) return;
     return run(async () => {
-      let task = currentTask;
       try {
-        if (approach && approach !== task.brief.productionApproach) {
-          task = await socialContentApi.updateTask(task.taskId, {
-            expectedVersion: task.version,
-            changes: { productionApproach: approach },
-          }, `social:approach:${operationSuffix(`${task.taskId}:${task.version}:${approach}`)}`);
-          applyTask(task);
-        }
         const next = await socialContentApi.startTask(task.taskId, task.version, `social:start:${operationSuffix(`${task.taskId}:${task.version}`)}`);
         applyTask(next);
         return next;
@@ -550,7 +342,6 @@ export function useSocialContentWorkspace() {
     refresh: load,
     loadMoreTasks,
     selectTask,
-    saveDraft,
     startTask,
     decideArtifact,
     decideArtifactBatch,
