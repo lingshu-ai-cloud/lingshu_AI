@@ -32,10 +32,10 @@ const services = [
     env: {
       PORT: '8790',
       NODE_USE_ENV_PROXY: '1',
-      // Local preview must never start the analysis/queue workers. Keeping the
-      // backend web-only makes the preview stable and preserves paused jobs.
-      PROCESS_ROLE_SPLIT_ENABLED: 'true',
-      PROCESS_ROLE: 'web',
+      // The preview exercises the real task lifecycle, including queue recovery
+      // after a backend restart. Use the combined role until the persistent
+      // queue/scheduler migration makes a split local worker safe.
+      PROCESS_ROLE: 'all',
     },
     // Health monitoring must stay cheap and independent of business data.
     // Business queries can be temporarily slow while background jobs are busy;

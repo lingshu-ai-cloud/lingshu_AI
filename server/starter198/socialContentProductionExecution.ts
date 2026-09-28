@@ -55,6 +55,7 @@ import { buildSocialDirectorPlan, parseStoredSocialDirectorPlan, publicSocialDir
 import { latestSocialDirectorPlanVersion, persistSocialDirectorPlanVersion, resolveSocialDirectorArtifactLineage } from './socialContentDirectorPlanVersions.js';
 import type { InternalSocialContentFormula } from './socialContentThemes.js';
 import { socialProductionCollaborationFailures, socialProductionCollaborationTrace, socialProductionExecutionSceneForFinal } from './socialContentProductionCollaboration.js';
+import { socialContentReviewAdmissionAllowed } from './socialContentTestBypass.js';
 import { voiceLearningReadiness } from '../videoProduction/voiceQualityLearning.js';
 const require = createRequire(import.meta.url);
 const { composite } = require('../../desktop/render.cjs') as { composite: (manifest: unknown, onProgress?: (progress: number) => void, outputDir?: string) => Promise<{ ok: boolean; outputPath?: string; error?: string }> };
@@ -235,7 +236,10 @@ export async function runSocialContentAutoProduction(input: {
     return;
   }
   const agentWorkflow = detail.agentWorkflow;
-  if (!agentWorkflow?.executionPlanReview.approved) {
+  if (!agentWorkflow || !socialContentReviewAdmissionAllowed({
+    approved: agentWorkflow.executionPlanReview.approved,
+    reasonCodes: agentWorkflow.executionPlanReview.reasonCodes,
+  })) {
     const required = agentWorkflow?.executionPlanReview.requiredRevision.join('；')
       || '内容执行方案尚未通过编导逐镜审核';
     throw new Error(`user_input_required:${required}`);
@@ -346,9 +350,7 @@ export async function runSocialContentAutoProduction(input: {
   }
   const reviewDirective = revisionParent ? socialReviewRevisionDirective(revisionNote) : null;
   const profile = await readTenantEnterpriseProfile(input.tenantId).catch(() => null);
-  const verifiedContext = profile
-    ? verifiedSocialScriptContext(profile, detail.brief.productRef)
-    : { productName: null, facts: [], source: 'none' as const, confidence: 0 };
+  const verifiedContext = verifiedSocialScriptContext(profile, detail.brief.productRef);
   let baseline = parseStoredSocialScriptBaseline(taskRecord.script_baseline);
   let directorFormula: InternalSocialContentFormula | null = null;
   let staleFormulaReference = false;

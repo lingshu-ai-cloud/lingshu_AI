@@ -5,6 +5,13 @@ const SAFETY_BLOCKERS = new Set<SocialExecutionPlanReviewReason>([
   'rights_missing',
 ]);
 
+// Local preview may ignore a budget ceiling so a walkthrough can continue,
+// but anything that can lower the quality, factual accuracy or rights safety
+// of the finished video remains fail-closed.
+const DEMO_BYPASSABLE_BLOCKERS = new Set<SocialExecutionPlanReviewReason>([
+  'budget_exceeded',
+]);
+
 function explicitlyDisabled(value: unknown): boolean {
   return ['0', 'false', 'no', 'off'].includes(String(value ?? '').trim().toLowerCase());
 }
@@ -70,5 +77,8 @@ export function contentCreationReviewAdmissionAllowed(input: {
   reasonCodes?: readonly SocialExecutionPlanReviewReason[] | null;
 }): boolean {
   if (input.approved) return true;
-  return contentCreationTestBypassEnabled();
+  const reasons = input.reasonCodes || [];
+  return contentCreationTestBypassEnabled()
+    && reasons.length > 0
+    && reasons.every(reason => DEMO_BYPASSABLE_BLOCKERS.has(reason));
 }

@@ -367,7 +367,7 @@ try {
   assert.equal(sourceOptions.body.items[0].sourceVersion, `profile-${tenant}`);
 
   const durableCreated = await request('/api/default-social-content/tasks', {
-    idempotencyKey: 'social-durable-create', body: { ...completeBrief, title: '默认调度路径', referenceMode: 'single_source_fidelity', programRef: { objectType: 'social_program', id: 'program-1', version: '2' } },
+    idempotencyKey: 'social-durable-create', body: { ...completeBrief, title: '默认调度路径', themeId: 'product_value', referenceMode: 'single_source_fidelity', programRef: { objectType: 'social_program', id: 'program-1', version: '2' } },
   });
   assert.equal(durableCreated.status, 201);
   assert.equal(durableCreated.body.task.brief.referenceMode, 'single_source_fidelity');
@@ -388,9 +388,28 @@ try {
   assert.equal(durableKnowledge.status, 201);
   assert.equal(durableKnowledge.body.task.status, 'plan_review',
     'the default customer route stays startable while real material remains optional');
-  const durableUpload = await request(`/api/default-social-content/tasks/${durableTaskId}/files?usage=source&name=durable-source.txt`, {
-    idempotencyKey: 'social-durable-file', rawBody: Buffer.from('durable production material'), contentType: 'text/plain',
+  const durableUpload = await request(`/api/default-social-content/tasks/${durableTaskId}/files?usage=source&name=durable-source.png`, {
+    idempotencyKey: 'social-durable-file', rawBody: Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 1, 2, 3, 4]), contentType: 'image/png',
   });
+  const durablePlannerMaterial = {
+    ...durableUpload.body.material,
+    tenantId: tenant,
+    type: 'video',
+    url: '/media/durable-source.mp4',
+    duration: 8,
+    productRef: completeBrief.productRef,
+    productName: completeBrief.productRef,
+    productRefs: [completeBrief.productRef],
+    segments: [{
+      id: 'durable-hook', start: 0, end: 3, confidence: 0.95,
+      observedFacts: ['产品椅子特写', '产品介绍', '开场钩子', '展示产品价值'],
+      subject: ['产品椅子'], action: '展示产品', shot: '产品特写', recommendedFunctions: ['hook'],
+    }],
+    visualObservations: ['产品椅子特写', '产品介绍', '开场钩子', '展示产品价值'],
+    tags: 'product,hook,产品,开场',
+  };
+  fs.mkdirSync(path.join(temporaryRoot, 'data'), { recursive: true });
+  fs.writeFileSync(path.join(temporaryRoot, 'data', 'materials.json'), JSON.stringify([durablePlannerMaterial]));
   const durableMaterial = await request(`/api/default-social-content/tasks/${durableTaskId}/sources`, {
     idempotencyKey: 'social-durable-material',
     body: {
@@ -404,7 +423,7 @@ try {
     idempotencyKey: 'social-durable-start',
     body: { expectedVersion: durableMaterial.body.task.version },
   });
-  assert.equal(durableStarted.status, 202, 'automatic production is durably queued after admission');
+  assert.equal(durableStarted.status, 202, `${durableStarted.raw}\n${JSON.stringify(durableMaterial.body.task.agentWorkflow?.executionPlanReview)}`);
   assert.equal(durableStarted.body.task.status, 'producing');
   assert.match(durableStarted.body.task.runId, /^[a-f0-9]{15}$/,
     'automatic production receives a durable, recoverable run identity');
@@ -648,6 +667,7 @@ try {
   assert.equal(pdfUpload.status, 201);
   assert.equal(pdfUpload.body.material, undefined, 'PDF evidence remains task-only');
 
+  fs.rmSync(path.join(temporaryRoot, 'data'), { recursive: true, force: true });
   const productImage = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 1, 2, 3, 4]);
   const imageUpload = await request(`/api/overseas/starter-198/social-content/tasks/${taskId}/files?usage=source&name=chair.png`, {
     idempotencyKey: 'social-file-image1', rawBody: productImage, contentType: 'image/png',
@@ -660,7 +680,7 @@ try {
     'task upload returns the same canonical material revision used by the source picker');
   assert.equal(imageUpload.body.material.productId, null, 'free-text task productRef is never forged into a stable product id');
   assert.equal(imageUpload.body.material.productRef, completeBrief.productRef);
-  assert.deepEqual(imageUpload.body.material.sourceTaskIds, [taskId]);
+  assert.deepEqual([...imageUpload.body.material.sourceTaskIds].sort(), [durableTaskId, taskId].sort());
   const bridgedImageRead = await request(`/api/overseas/starter-198/social-content/files/${imageUpload.body.file.fileId}`);
   assert.deepEqual(bridgedImageRead.bytes, productImage, 'task file remains readable after entering My Materials');
   assert.equal(materialRows.size, 1);
@@ -673,6 +693,8 @@ try {
     'task uploads no longer create an application-server material index');
   assert.equal(fs.existsSync(path.join(temporaryRoot, 'data', 'media')), false,
     'task uploads no longer mirror media bytes into the application server');
+  fs.mkdirSync(path.join(temporaryRoot, 'data'), { recursive: true });
+  fs.writeFileSync(path.join(temporaryRoot, 'data', 'materials.json'), JSON.stringify([durablePlannerMaterial]));
 
   const duplicateImage = await request(`/api/overseas/starter-198/social-content/tasks/${taskId}/files?usage=source&name=chair-copy.png`, {
     idempotencyKey: 'social-file-image2', rawBody: productImage, contentType: 'image/png',
@@ -1220,6 +1242,7 @@ try {
   assert.equal(pendingTheme.status, 200);
   assert.equal(pendingTheme.body.theme.classificationStatus, 'pending_confirmation');
 
+  fs.rmSync(path.join(temporaryRoot, 'data'), { recursive: true, force: true });
   const zeroInputTask = await request('/api/overseas/starter-198/social-content/tasks', {
     idempotencyKey: 'social-zero-input-create-001',
     body: {
@@ -1244,7 +1267,7 @@ try {
     idempotencyKey: 'social-zero-input-start-001',
     body: { expectedVersion: zeroInputTask.body.task.version },
   });
-  assert.equal(zeroInputStarted.status, 202, zeroInputStarted.raw);
+  assert.equal(zeroInputStarted.status, 202, `${zeroInputStarted.raw}\n${JSON.stringify(zeroInputTask.body.task.agentWorkflow?.executionPlanReview)}`);
   assert.equal(zeroInputStarted.body.task.status, 'producing',
     '内容制作不再因用户未手工补填事实而阻塞；企业中心信息由系统自动读取');
 
@@ -1376,6 +1399,12 @@ try {
       analysisMode: 'exact', analysisQuality: 'video',
       gemini: {
         theme: '产品卖点',
+        audioTranscript: { segments: [
+          {
+            start: 0, end: 2.8, text: 'ACME 全网第一',
+            timingPrecision: 'phrase', provenance: 'qwen3-asr-flash-filetrans',
+          },
+        ] },
         scriptDetails15s: [
           {
             time: '0-2.8', purpose: '前三秒产品钩子', visual: '张女士拿着 ACME 产品说全网第一',
@@ -1481,7 +1510,7 @@ try {
       return { queueItemId: 'viral-reference-queue-item', runId: 'viral-reference-run', disposition: 'queued' as const };
     },
   };
-  const autoStartedReference = await startSocialContentTask({
+  await assert.rejects(() => startSocialContentTask({
     repository,
     orchestratorQueue: referenceQueue,
     tenantId: tenant,
@@ -1491,26 +1520,18 @@ try {
     idempotencyKey: 'social-viral-reference-review-001',
     referenceResolver: exactReferenceResolver,
     now: new Date('2026-09-14T08:01:00.000Z'),
-  });
-  assert.equal(autoStartedReference.status, 'producing');
-  assert.equal(referenceQueueCalls, 1, 'managed admission starts production when the Director review approves the sanitized plan');
+  }), (error: unknown) => (
+    error instanceof Error
+    && 'code' in error
+    && error.code === 'social_content_execution_director_review_required'
+  ));
+  assert.equal(referenceQueueCalls, 0,
+    'managed admission must not enqueue a reference that lacks reviewed shot media, hook evidence and presenter authorization');
   const reviewedReference = await request(`/api/overseas/starter-198/social-content/tasks/${viralReferenceTask.body.task.taskId}`);
   assert.equal(reviewedReference.status, 200, reviewedReference.raw);
   assert.equal(reviewedReference.body.task.replicationScript.status, 'confirmed');
-  assert.equal(reviewedReference.body.task.agentWorkflow.executionPlanReview.approved, true);
-  const startedReference = await startSocialContentTask({
-    repository,
-    orchestratorQueue: referenceQueue,
-    tenantId: tenant,
-    userId: `${tenant}-user`,
-    taskId: viralReferenceTask.body.task.taskId,
-    expectedVersion: referenceKnowledge.body.task.version,
-    idempotencyKey: 'social-viral-reference-review-001',
-    referenceResolver: exactReferenceResolver,
-    now: new Date('2026-09-14T08:02:00.000Z'),
-  });
-  assert.equal(startedReference.status, 'producing');
-  assert.equal(referenceQueueCalls, 1, 'replay does not enqueue another production');
+  assert.equal(reviewedReference.body.task.agentWorkflow.executionPlanReview.approved, false,
+    'confirming the visible copy does not bypass the production evidence gate');
 
   const conceptPreviewTask = await request('/api/overseas/starter-198/social-content/tasks', {
     idempotencyKey: 'social-zero-input-preview-create-001',

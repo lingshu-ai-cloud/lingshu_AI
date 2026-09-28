@@ -14,6 +14,7 @@ const studio = fs.readFileSync(new URL('../AiCreateStudio.tsx', import.meta.url)
 const preview = fs.readFileSync(new URL('./SocialArtifactPreviewDialog.tsx', import.meta.url), 'utf8');
 const presentation = fs.readFileSync(new URL('./socialContentUi.ts', import.meta.url), 'utf8');
 const planning = fs.readFileSync(new URL('./SocialContentPlanningPage.tsx', import.meta.url), 'utf8');
+const historyHome = fs.readFileSync(new URL('./SocialContentHistoryHome.tsx', import.meta.url), 'utf8');
 const landing = fs.readFileSync(new URL('./SocialContentLanding.tsx', import.meta.url), 'utf8');
 const themeCards = fs.readFileSync(new URL('./SocialThemeCards.tsx', import.meta.url), 'utf8');
 const agentWorkflowPanel = fs.readFileSync(new URL('./SocialAgentWorkflowPanel.tsx', import.meta.url), 'utf8');
@@ -51,10 +52,17 @@ assert.match(workspace, /const taskId = explicitTaskId \|\| task\?\.taskId/,
   'a newly-created task must open Studio with its returned id instead of a stale render closure');
 assert.match(workspace, /hasMoreTasks=\{state\.workspace\.taskList\.page < state\.workspace\.taskList\.totalPages\}/);
 assert.match(workspace, /onLoadMoreTasks=\{\(\) => void state\.loadMoreTasks\(\)\}/);
-assert.match(planning, /contentCreationRequest: \{ requestId: Date\.now\(\)/);
-assert.match(landing, /素材加工/);
-assert.match(landing, /爆款裂变/);
-assert.match(landing, /默认使用一键托管/);
+assert.match(planning, /<SocialContentHistoryHome/);
+assert.match(planning, /useState\(false\)/, 'the creation chooser must not cover the history home by default');
+assert.match(historyHome, /爆款复刻/);
+assert.match(historyHome, /自由创作/);
+assert.match(historyHome, /PAGE_SIZE = 8/);
+assert.match(historyHome, /最新待验收成片/);
+assert.match(historyHome, /languageRenderOutputs/);
+assert.match(historyHome, /status !== 'template'/);
+assert.match(landing, /自由创作/);
+assert.match(landing, /爆款复刻/);
+assert.match(landing, /进入逐句口播与画面制作台/);
 assert.match(landing, /managedMode: 'one_click_managed'/);
 assert.doesNotMatch(landing, /SOCIAL_THEME_OPTIONS|选好视频主题|这条视频想讲什么/,
   'the content landing must expose two creation paths instead of five topic cards');
@@ -141,7 +149,7 @@ assert.match(studio, /canvasView === 'reference' && mode === 'clone' \? '爆款�
 assert.match(studio, /<StudioStoryboardList items=\{referenceStoryboardItems\}/);
 assert.match(studio, /<StudioStoryboardList items=\{workbenchStoryboardItems\}/);
 assert.match(studio, /setVideoKickoff\(seed\.reference\); setCanvasView\('creation'\)/,
-  '爆款裂变任务默认必须进入新建视频工作台');
+  '爆款复刻任务默认必须进入新建视频工作台');
 assert.match(studio, /loadProject\(project\);\s*setCanvasView\('creation'\);/,
   '恢复已保存的爆款任务时也必须默认回到新建视频工作台');
 assert.match(studio, /socialShotMaterialBindings\.forEach\(\(\{ shotIndex, materialId \}\)/,

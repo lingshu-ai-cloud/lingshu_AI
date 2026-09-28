@@ -3423,6 +3423,18 @@ export default function DigitalEmployeePage({
   const presentedData = data;
   const initialLoadRef = useRef<Promise<DigitalEmployeeOverview | undefined> | null>(null);
 
+  useEffect(() => {
+    const openGuide = () => setApplicationGuideOpen(true);
+    window.addEventListener('lingshu:open-digital-employee-guide', openGuide);
+    try {
+      if (sessionStorage.getItem('lingshu:open-digital-employee-guide') === 'true') {
+        sessionStorage.removeItem('lingshu:open-digital-employee-guide');
+        openGuide();
+      }
+    } catch { /* storage can be unavailable */ }
+    return () => window.removeEventListener('lingshu:open-digital-employee-guide', openGuide);
+  }, []);
+
   const load = async (goalId = viewGoalId) => {
     const requestVersion = ++overviewRequestVersionRef.current;
     try {
@@ -3845,9 +3857,8 @@ export default function DigitalEmployeePage({
       <>
       <div className="h-full overflow-y-auto bg-[#f7f8f6]">
         <div className="mx-auto w-full max-w-[1500px] px-4 py-5 sm:px-6 lg:px-8">
-          <header className="flex flex-wrap items-end justify-between gap-4">
+          <header>
             <div><p className="text-xs font-bold tracking-[0.2em] text-emerald-700">ALWAYS ON</p><h1 className="mt-1 text-3xl font-black tracking-tight text-slate-950">智能经营</h1><p className="mt-1 text-sm text-slate-500">查看经营结果、内容队列和 Agent 的实时工作。</p></div>
-            <div className="flex flex-wrap items-center gap-2"><button type="button" onClick={()=>setPlanHistoryOpen(true)} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-xs font-black text-slate-700 shadow-sm hover:border-emerald-300"><History size={15}/>历史计划</button><button type="button" aria-label={goal && !canCreateNextGoal ? "查看本周计划" : "周计划生成"} onClick={()=>{ if (!goal || canCreateNextGoal) setNewGoal(true); else setNewGoal(false); setWeeklyPlanOpen(true); }} className="inline-flex items-center gap-2 rounded-xl bg-emerald-700 px-5 py-3 text-sm font-black text-white shadow-[0_8px_24px_rgba(4,120,87,.24)] hover:bg-emerald-800"><CalendarRange size={17}/>{goal && !canCreateNextGoal ? "查看本周计划" : "周计划生成"}</button><button type="button" onClick={()=>setApplicationGuideOpen(true)} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-xs font-black text-slate-700 shadow-sm hover:border-emerald-300"><Sparkles size={15}/>新手引导</button><button type="button" onClick={()=>setWorkspaceView("rules")} className={`inline-flex items-center gap-2 rounded-xl border px-4 py-2.5 text-xs font-black shadow-sm ${workspaceView==="rules"?"border-slate-950 bg-slate-950 text-white":"border-slate-200 bg-white text-slate-700 hover:border-emerald-300"}`}><Settings2 size={15}/>Agent 设置</button></div>
           </header>
           <section aria-label="当前周计划" className="mt-5 overflow-hidden rounded-2xl border border-emerald-200 bg-gradient-to-r from-emerald-50 via-white to-cyan-50 shadow-sm">
             {goal ? <div className="flex flex-col gap-4 px-5 py-4 lg:flex-row lg:items-center lg:justify-between">
@@ -3858,10 +3869,11 @@ export default function DigitalEmployeePage({
               </div>
               <div className="flex shrink-0 flex-wrap items-center gap-2 lg:justify-end">
                 <div className="mr-2 flex items-center gap-4 text-center"><div><p className="text-lg font-black text-slate-950">{currentVideoPlans.length}</p><p className="text-[10px] text-slate-400">内容</p></div><div><p className="text-lg font-black text-slate-950">{currentMatrix.length || data.config.publishingTargets.length}</p><p className="text-[10px] text-slate-400">账号</p></div><div><p className="text-lg font-black text-slate-950">{Object.keys(assignmentCounts).length}</p><p className="text-[10px] text-slate-400">Agent</p></div></div>
-                <button type="button" onClick={()=>setWorkspaceView("overview")} className="rounded-xl border border-emerald-200 bg-white px-4 py-2.5 text-xs font-black text-emerald-800 hover:bg-emerald-50">查看内容队列</button>
-                <button type="button" onClick={()=>{ setNewGoal(false); setWeeklyPlanOpen(true); }} className="inline-flex items-center gap-2 rounded-xl bg-slate-950 px-4 py-2.5 text-xs font-black text-white hover:bg-slate-800"><CalendarRange size={14}/>查看完整周计划</button>
+                <button type="button" onClick={()=>{ setNewGoal(false); setWeeklyPlanOpen(true); }} className="inline-flex items-center gap-2 rounded-xl bg-emerald-700 px-4 py-2.5 text-xs font-black text-white hover:bg-emerald-800"><CalendarRange size={14}/>查看本周计划</button>
+                <button type="button" onClick={()=>setWorkspaceView("rules")} className={`inline-flex items-center gap-2 rounded-xl border px-4 py-2.5 text-xs font-black ${workspaceView==="rules"?"border-slate-950 bg-slate-950 text-white":"border-slate-200 bg-white text-slate-700 hover:border-emerald-300"}`}><Settings2 size={14}/>Agent 设置</button>
+                <button type="button" onClick={()=>setPlanHistoryOpen(true)} className="inline-flex items-center gap-2 rounded-xl border border-emerald-200 bg-white px-4 py-2.5 text-xs font-black text-emerald-800 hover:bg-emerald-50"><History size={14}/>历史计划</button>
               </div>
-            </div> : <div className="flex flex-wrap items-center justify-between gap-4 px-5 py-4"><div><p className="text-xs font-black text-emerald-800">当前周计划</p><p className="mt-1 text-sm font-bold text-slate-800">本周还没有可执行计划</p><p className="mt-1 text-xs text-slate-500">生成后，计划会固定显示在这里，并同步到账号矩阵和内容队列。</p></div><button type="button" onClick={()=>{ setNewGoal(true); setWeeklyPlanOpen(true); }} className="inline-flex items-center gap-2 rounded-xl bg-emerald-700 px-4 py-2.5 text-xs font-black text-white hover:bg-emerald-800"><CalendarRange size={14}/>生成本周计划</button></div>}
+            </div> : <div className="flex flex-wrap items-center justify-between gap-4 px-5 py-4"><div><p className="text-xs font-black text-emerald-800">当前周计划</p><p className="mt-1 text-sm font-bold text-slate-800">本周还没有可执行计划</p><p className="mt-1 text-xs text-slate-500">生成后，计划会固定显示在这里，并同步到账号矩阵和内容队列。</p></div><div className="flex flex-wrap items-center gap-2"><button type="button" onClick={()=>{ setNewGoal(true); setWeeklyPlanOpen(true); }} className="inline-flex items-center gap-2 rounded-xl bg-emerald-700 px-4 py-2.5 text-xs font-black text-white hover:bg-emerald-800"><CalendarRange size={14}/>生成本周计划</button><button type="button" onClick={()=>setWorkspaceView("rules")} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-xs font-black text-slate-700 hover:border-emerald-300"><Settings2 size={14}/>Agent 设置</button><button type="button" onClick={()=>setPlanHistoryOpen(true)} className="inline-flex items-center gap-2 rounded-xl border border-emerald-200 bg-white px-4 py-2.5 text-xs font-black text-emerald-800 hover:bg-emerald-50"><History size={14}/>历史计划</button></div></div>}
           </section>
           <nav aria-label="智能经营视图" className="mt-6 flex gap-7 overflow-x-auto border-b border-slate-200">
             {views.map((view)=><button type="button" key={view.id} onClick={()=>setWorkspaceView(view.id)} aria-current={workspaceView===view.id?"page":undefined} className={`shrink-0 border-b-2 pb-3 text-left ${workspaceView===view.id?"border-emerald-700":"border-transparent"}`}><span className={`block text-sm font-black ${workspaceView===view.id?"text-emerald-800":"text-slate-500"}`}>{view.label}</span><span className="mt-0.5 block text-[10px] text-slate-400">{view.caption}</span></button>)}

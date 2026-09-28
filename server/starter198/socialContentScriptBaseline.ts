@@ -263,15 +263,15 @@ function compactFactValue(value: unknown, maximum = 72): string {
 /** Resolve only facts already persisted in Enterprise Knowledge. Free-form task
  * text is deliberately never promoted to a product fact. */
 export function verifiedSocialScriptContext(
-  profile: EnterpriseProfile,
+  profile: EnterpriseProfile | null,
   productRef: string | null,
 ): VerifiedSocialScriptContext {
   const identityContext = {
-    enterpriseName: compactFactValue(profile.company.name, 80) || null,
-    brandName: compactFactValue(profile.brand?.name, 80) || null,
+    enterpriseName: compactFactValue(profile?.company.name, 80) || null,
+    brandName: compactFactValue(profile?.brand?.name, 80) || null,
   };
   const reference = socialText(productRef).toLocaleLowerCase();
-  const products = profile.products.items ?? [];
+  const products = profile?.products.items ?? [];
   const exact = reference
     ? products.find((item, index) => [enterpriseProductIdentity(item, index), item.name, item.sku]
       .some(value => socialText(value).toLocaleLowerCase() === reference))
@@ -303,8 +303,8 @@ export function verifiedSocialScriptContext(
     return { ...identityContext, productName: compactFactValue(productRef, 48) || null, facts: [], source: 'none', confidence: 0.5 };
   }
   const profileFacts: Array<{ key: string; label: string; value: string }> = [
-    { key: 'company_industry', label: '所属行业', value: compactFactValue(profile.company.industry) },
-    { key: 'product_categories', label: '产品类别', value: compactFactValue(profile.products.categories) },
+    { key: 'company_industry', label: '所属行业', value: compactFactValue(profile?.company.industry) },
+    { key: 'product_categories', label: '产品类别', value: compactFactValue(profile?.products.categories) },
   ].filter(item => item.value);
   return {
     ...identityContext,

@@ -26,10 +26,11 @@ import AgentRoleIcon from "./ui/AgentRoleIcon";
 import WeeklyMatrixEditor from "./WeeklyMatrixEditor";
 import type { WeeklyPackage } from "../lib/weeklyPackage";
 import { defaultMatrixPlan, fillMatrixVideos } from "../lib/weeklyMatrix";
-import { socialOperatingProfile } from "../../shared/contracts/socialOperatingProfile";
+import { SOCIAL_PLATFORM_EXECUTION_RULES, socialOperatingProfile } from "../../shared/contracts/socialOperatingProfile";
 import { loadConnectedSocialPerformance, type ConnectedSocialPerformance } from "../lib/socialPerformance";
 import { starterWorkspaceApi, type StarterAgentRole } from "../lib/starterWorkspace";
 import { foreignTradeBusinessMock, isLocalForeignTradeMockEnabled } from "../mocks/foreignTradeOperations";
+import { authHeader } from "../lib/auth";
 
 export type SmartBusinessView = "home" | "matrix" | "queue" | "review";
 
@@ -101,6 +102,7 @@ function relatedTasks(data: DigitalEmployeeOverview, role: AgentCard["role"]) {
 function AgentMonitor({ data, agent: agentCard, onClose }: { data: DigitalEmployeeOverview; agent: AgentCard; onClose: () => void }) {
   const [settledUsage, setSettledUsage] = useState<{ value: number; updatedAt: string | null; count: number; source: string } | null>(null);
   const [usageLoading, setUsageLoading] = useState(true);
+  const localMock = isLocalForeignTradeMockEnabled();
   const tasks = relatedTasks(data, agentCard.role);
   const taskIds = new Set(tasks.map((task) => task.id));
   const agentStatus = data.agents.find((item) => roleAliases[agentCard.role].includes(item.role));
@@ -120,6 +122,10 @@ function AgentMonitor({ data, agent: agentCard, onClose }: { data: DigitalEmploy
     .filter((event) => taskIds.has(event.task_id))
     .sort((left, right) => right.sequence - left.sequence)
     .slice(0, 10);
+  const mockProgress = [[4, 6], [7, 9], [5, 8], [6, 8]][agentCards.findIndex(item => item.role === agentCard.role)] || [0, 0];
+  const completed = localMock ? mockProgress[0] : agentStatus?.completed || 0;
+  const total = localMock ? mockProgress[1] : agentStatus?.total || 0;
+  const currentTask = localMock ? foreignTradeBusinessMock.agentTasks[agentCard.role] : agentStatus?.currentTask || "当前没有运行中的任务";
 
   useEffect(() => {
     const close = (event: KeyboardEvent) => event.key === "Escape" && onClose();
@@ -158,16 +164,16 @@ function AgentMonitor({ data, agent: agentCard, onClose }: { data: DigitalEmploy
     <div className="fixed inset-0 z-[190] flex items-center justify-center bg-slate-950/35 p-4" onMouseDown={onClose}>
       <section role="dialog" aria-modal="true" aria-label={`${agentCard.name} 生产实况`} className="ui-modal-frame ui-modal-frame--compact" onMouseDown={(event) => event.stopPropagation()}>
         <header className="flex items-start justify-between gap-4 border-b border-slate-100 px-6 py-5">
-          <div><p className="text-xs font-bold tracking-[0.18em] text-emerald-700">AGENT LIVE</p><h2 className="mt-1 text-xl font-black text-slate-950">{agentCard.name} · 生产实况</h2><p className="mt-1 text-sm text-slate-500">{agentStatus?.currentTask || "当前没有运行中的任务"}</p></div>
+          <div><p className="text-xs font-bold tracking-[0.18em] text-emerald-700">AGENT LIVE</p><h2 className="mt-1 text-xl font-black text-slate-950">{agentCard.name} · 生产实况</h2><p className="mt-1 text-sm text-slate-500">{currentTask}</p></div>
           <button type="button" aria-label="关闭生产实况" onClick={onClose} className="rounded-full border border-slate-200 p-2 text-slate-500 hover:bg-slate-50"><X size={18}/></button>
         </header>
         <div className="ui-modal-body px-6 py-5">
           <div className="rounded-2xl bg-slate-950 p-4 text-white">
             <div className="grid gap-4 sm:grid-cols-2">
-              <div><p className="text-[10px] font-bold text-slate-400">当前进度</p><p className="mt-1 text-xl font-black">{agentStatus?.completed || 0} / {agentStatus?.total || 0}</p></div>
+              <div><p className="text-[10px] font-bold text-slate-400">当前进度</p><p className="mt-1 text-xl font-black">{completed} / {total}</p></div>
               <div><p className="text-[10px] font-bold text-slate-400">过去已核算消耗</p><p className="mt-1 text-xl font-black">{usageLoading && !hasActualSpend ? "读取中…" : hasActualSpend ? `¥${actualSpend.toFixed(2)}` : "暂无核算"}</p><p className="mt-1 text-[10px] text-slate-400">{settledUsage ? `${settledUsage.source} · ${settledUsage.count} 条${settledUsage.updatedAt ? ` · ${dateLabel(settledUsage.updatedAt)}` : ""}` : fallbackReceiptCount ? `${fallbackReceiptCount} 条真实费用记录` : "仅在服务返回真实结算后计入"}</p></div>
             </div>
-            <div className="mt-4 h-1.5 overflow-hidden rounded-full bg-white/15"><div className="h-full rounded-full bg-emerald-400" style={{ width: `${agentStatus?.total ? Math.min(100, agentStatus.completed / agentStatus.total * 100) : 0}%` }}/></div>
+            <div className="mt-4 h-1.5 overflow-hidden rounded-full bg-white/15"><div className="h-full rounded-full bg-emerald-400" style={{ width: `${total ? Math.min(100, completed / total * 100) : 0}%` }}/></div>
           </div>
           <div className="mt-6 space-y-0">
             {(events.length ? events : tasks.slice().sort((left, right) => Date.parse(right.updated_at) - Date.parse(left.updated_at))).map((item, index) => {
@@ -177,7 +183,8 @@ function AgentMonitor({ data, agent: agentCard, onClose }: { data: DigitalEmploy
               const status = event ? item.level : item.status;
               return <div key={item.id} className="relative flex gap-4 pb-5"><div className="relative z-10 mt-1.5 h-3 w-3 shrink-0 rounded-full border-2 border-emerald-600 bg-white"/>{index < (events.length ? events.length : tasks.length) - 1 && <span className="absolute left-[5px] top-4 h-full w-px bg-slate-200"/>}<div className="min-w-0 flex-1"><div className="flex flex-wrap items-center justify-between gap-2"><p className="truncate text-sm font-bold text-slate-900">{title}</p><span className="text-[10px] text-slate-400">{dateLabel(time)}</span></div><p className="mt-1 text-xs text-slate-500">{status || "已记录"}</p></div></div>;
             })}
-            {!events.length && !tasks.length && <div className="py-10 text-center text-sm text-slate-400">还没有可展示的生产记录</div>}
+            {!events.length && !tasks.length && localMock && <div className="flex gap-4 pb-5"><div className="mt-1.5 h-3 w-3 shrink-0 rounded-full border-2 border-emerald-600 bg-white"/><div><p className="text-sm font-bold text-slate-900">{currentTask}</p><p className="mt-1 text-xs text-emerald-700">运行中 · 已完成 {completed}/{total}</p></div></div>}
+            {!events.length && !tasks.length && !localMock && <div className="py-10 text-center text-sm text-slate-400">还没有可展示的生产记录</div>}
           </div>
         </div>
       </section>
@@ -217,10 +224,9 @@ function HomeView({ data, onRefresh }: { data: DigitalEmployeeOverview; onRefres
   ];
 
   return <>
-    {localMock && <div className="mb-5 flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-xs text-emerald-900"><span><strong>本地模拟 · {foreignTradeBusinessMock.factory}</strong>　经营、投放、客户和订单使用同一套外贸工厂数据。</span><span className="rounded-full bg-white px-2.5 py-1 font-bold">仅用于本地预览</span></div>}
     <section className="visual-card overflow-hidden p-5 sm:p-7">
       <div className="flex flex-wrap items-start justify-between gap-4"><div><p className="text-xs font-bold tracking-[0.16em] text-emerald-700">过去业绩</p><h2 className="mt-2 text-2xl font-black text-slate-950">经营结果一眼看清</h2><p className="mt-1 text-sm text-slate-500">{localMock ? '模拟一家出口智能装备工厂从内容获客到订单履约的完整经营链路。' : '仅展示业务系统已经回传的真实数据。'}</p></div>{onRefresh&&<button type="button" onClick={onRefresh} className="inline-flex items-center gap-2 rounded-xl border border-emerald-200 bg-white px-3 py-2 text-xs font-bold text-emerald-800"><RefreshCcw size={14}/>刷新</button>}</div>
-      <div className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{metrics.map(({ label, value, note, icon: Icon }, index)=><article key={label} className="relative overflow-hidden rounded-2xl border border-[#10244a]/10 bg-white/90 p-4 shadow-[0_4px_0_rgba(16,36,74,.04)]"><span aria-hidden="true" className={`absolute -right-5 -top-5 h-20 w-20 rounded-full ${index%2?'bg-[#8b7cf6]/10':'bg-[#2fd1c5]/12'}`}/><div className="relative flex items-center justify-between"><span className="text-xs font-bold text-slate-500">{label}</span><span className={`flex h-8 w-8 items-center justify-center rounded-xl border-2 border-[#10244a] ${index%2?'bg-[#dcd7ff]':'bg-[#baf2e8]'}`}><Icon size={15} className="text-[#10244a]" strokeWidth={2.5}/></span></div><p className="relative mt-3 text-3xl font-black tracking-tight text-[#10244a]">{value}</p><p className="relative mt-1 truncate text-[11px] text-slate-400">{note}</p><div aria-hidden="true" className="relative mt-4 flex h-5 items-end gap-1">{[0.35,0.58,0.46,0.78,0.68].map((height, barIndex)=><span key={barIndex} className={`w-2 rounded-t-sm ${index%2?'bg-[#8b7cf6]/35':'bg-[#2fd1c5]/40'}`} style={{height:`${height*100}%`}}/>)}</div></article>)}</div>
+      <div className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{metrics.map(({ label, value, note, icon: Icon }, index)=><article key={label} className="relative overflow-hidden rounded-2xl border border-[#10244a]/10 bg-white/90 p-4 shadow-[0_4px_0_rgba(16,36,74,.04)]"><span aria-hidden="true" className={`absolute -right-5 -top-5 h-20 w-20 rounded-full ${index%2?'bg-[#8b7cf6]/10':'bg-[#2fd1c5]/12'}`}/><div className="relative flex items-center justify-between"><span className="text-xs font-bold text-slate-500">{label}</span><span className={`flex h-8 w-8 items-center justify-center rounded-xl border-2 border-[#10244a] ${index%2?'bg-[#dcd7ff]':'bg-[#baf2e8]'}`}><Icon size={15} className="text-[#10244a]" strokeWidth={2.5}/></span></div><p className={`relative mt-3 font-black tracking-tight text-[#10244a] ${index===3?'text-2xl':'text-3xl'}`}>{value}</p><p className="relative mt-1 truncate text-[11px] text-slate-400">{note}</p><div aria-hidden="true" className="relative mt-4 flex h-5 items-end gap-1">{[0.35,0.58,0.46,0.78,0.68].map((height, barIndex)=><span key={barIndex} className={`w-2 rounded-t-sm ${index%2?'bg-[#8b7cf6]/35':'bg-[#2fd1c5]/40'}`} style={{height:`${height*100}%`}}/>)}</div></article>)}</div>
       <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1.35fr)_minmax(18rem,.65fr)]">
         <article className="rounded-2xl border border-[#10244a]/10 bg-white/82 p-5">
           <div className="flex items-center justify-between gap-4"><div><p className="visual-kicker">经营脉冲</p><h3 className="mt-1 text-base font-black text-[#10244a]">内容与执行状态</h3></div><span className="text-[10px] font-bold text-slate-400">{localMock ? '本地联动数据' : '实时业务记录'}</span></div>
@@ -243,7 +249,7 @@ function HomeView({ data, onRefresh }: { data: DigitalEmployeeOverview; onRefres
 
     <section className="mt-6">
       <div><p className="text-xs font-bold tracking-[0.16em] text-slate-400">数字员工</p><h2 className="mt-1 text-xl font-black text-slate-950">我的 4 个 Agent 现在在做什么</h2></div>
-      <div className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">{agentCards.map((item,index)=>{const status=data.agents.find(agent=>roleAliases[item.role].includes(agent.role));const tasks=relatedTasks(data,item.role);const live=localMock||Boolean(status&&runningStatuses.has(status.status))||tasks.some(task=>runningStatuses.has(task.status));const mockProgress=[[4,6],[7,9],[5,8],[6,8]][index];return <button type="button" key={item.role} onClick={()=>localMock?undefined:setMonitor(item)} className={`group relative min-h-52 overflow-hidden rounded-3xl border p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-lg ${live?'border-emerald-300':'border-slate-200'} bg-gradient-to-br ${item.tint}`}>
+      <div className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">{agentCards.map((item,index)=>{const status=data.agents.find(agent=>roleAliases[item.role].includes(agent.role));const tasks=relatedTasks(data,item.role);const live=localMock||Boolean(status&&runningStatuses.has(status.status))||tasks.some(task=>runningStatuses.has(task.status));const mockProgress=[[4,6],[7,9],[5,8],[6,8]][index];return <button type="button" key={item.role} aria-label={`查看${item.name}详情`} onClick={()=>setMonitor(item)} className={`group relative min-h-52 cursor-pointer overflow-hidden rounded-3xl border p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 ${live?'border-emerald-300':'border-slate-200'} bg-gradient-to-br ${item.tint}`}>
         {live&&<span className="absolute right-4 top-4 h-11 w-11 animate-spin rounded-full border-2 border-emerald-500 border-t-transparent"/>}
         <AgentRoleIcon role={item.role} active={live} size="md" label={item.name}/>
         <h3 className="mt-7 text-lg font-black text-slate-950">{item.name}</h3><p className="mt-1 text-xs text-slate-500">{item.description}</p>
@@ -261,6 +267,64 @@ const matrixRoleLabel: Record<string, string> = {
   brand_combined: "品牌综合账号",
 };
 
+const matrixSystemLayers = [
+  {
+    label: '账号矩阵',
+    headline: '谁来建立信任',
+    detail: '品牌官方号 1 个、区域/垂类号 2 个、销售个人 IP 3–5 个、工厂实拍号 1 个。',
+    rule: '同一产品用不同账号角色表达，账号定位不混用。',
+  },
+  {
+    label: '内容矩阵',
+    headline: '每个账号持续讲什么',
+    detail: '每个账号固定 3–5 个内容栏目；70% 延续有效表达、20% 增加信任内容、10% 做新方向测试。',
+    rule: '标题前三词放核心关键词，描述前两行先写痛点。',
+  },
+  {
+    label: '运营矩阵',
+    headline: '怎样稳定运转',
+    detail: '冷启动 2–3 周、爬升 5–6 周、约 2 个月争取破圈，2–3 个月形成稳定复盘周期。',
+    rule: '按平台、账号、栏目和周排期进入统一内容队列。',
+  },
+  {
+    label: '获客矩阵',
+    headline: '流量如何变成询盘',
+    detail: '每条内容配置唯一询盘钩子，统一承接到网站、WhatsApp、邮箱、目录或表单。',
+    rule: '评论/私信 → 资格判断 → 销售跟进 → 结果回收。',
+  },
+] as const;
+
+const matrixCalendarPhases = [
+  { label: "冷启动", detail: "定位 · 测试", start: 1, span: 3, color: "bg-cyan-300 text-slate-950" },
+  { label: "爬升", detail: "复用 · 放大", start: 4, span: 4, color: "bg-emerald-300 text-slate-950" },
+  { label: "破圈", detail: "冲刺 · 验证", start: 8, span: 2, color: "bg-amber-300 text-slate-950" },
+  { label: "稳定复盘", detail: "迭代 · 沉淀", start: 10, span: 3, color: "bg-violet-300 text-slate-950" },
+] as const;
+
+const contentFormatLabels: Record<string, string> = {
+  native_short_video: "原生短视频",
+  reel: "Reels",
+  buyer_article: "采购说明",
+  carousel: "轮播图",
+  short: "Shorts",
+};
+
+type MatrixBenchmarkAccount = {
+  id: string;
+  platform: string;
+  accountName: string;
+  handle?: string;
+  accountUrl?: string;
+};
+
+type MatrixMessengerPage = {
+  id: string;
+  providerAccountId?: string;
+  title?: string;
+  status?: string;
+  messengerSubscribed?: boolean;
+};
+
 function MatrixView({ data, onRefresh, onNavigate, onGeneratePlan }: {
   data: DigitalEmployeeOverview;
   onRefresh?: () => void;
@@ -275,6 +339,13 @@ function MatrixView({ data, onRefresh, onNavigate, onGeneratePlan }: {
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
   const [projects, setProjects] = useState<Array<{ id: string; title: string }>>([]);
+  const [selectedPlatform, setSelectedPlatform] = useState<Platform>("tiktok");
+  const [benchmarkAccounts, setBenchmarkAccounts] = useState<MatrixBenchmarkAccount[]>([]);
+  const [connectionStatus, setConnectionStatus] = useState<{
+    loaded: boolean;
+    whatsapp: boolean;
+    messengerPages: MatrixMessengerPage[];
+  }>({ loaded: false, whatsapp: false, messengerPages: [] });
   useEffect(() => { if (!editing) setDraft(saved || null); }, [saved, editing]);
   useEffect(() => {
     if (!editing) return;
@@ -289,6 +360,64 @@ function MatrixView({ data, onRefresh, onNavigate, onGeneratePlan }: {
   const rows = saved?.matrixPlan?.length ? saved.matrixPlan : defaultRows;
   const profile = socialOperatingProfile(config?.socialOperatingProfile);
   const editable = Boolean(saved && goal && !data.run && goal.status === "draft");
+  const productionPlans = saved?.tasks.find(task => task.templateId === "production")?.videoPlans || [];
+  const accountRows = useMemo(() => rows.length ? rows.map(row => ({
+    ...row,
+    connected: true,
+    accountLabel: config?.publishingTargets.find(item => item.accountId === row.accountId)?.accountLabel || row.accountId,
+  })) : profile.accounts.map((row, index) => ({
+    accountId: `default-${row.platform}-${row.accountRole}-${index}`,
+    accountRole: row.accountRole,
+    formats: row.formats,
+    platform: row.platform,
+    audience: config?.customerProfile || "待补充目标受众",
+    productName: config?.focusProducts || "待选择主推产品",
+    language: config?.videoDefaults?.language || "en",
+    objective: row.purpose,
+    contentDirection: row.purpose,
+    cta: SOCIAL_PLATFORM_EXECUTION_RULES[row.platform].ctaRule,
+    weeklyCount: row.weeklyVideoCount,
+    sourceProjectIds: [] as string[],
+    connected: false,
+    accountLabel: `${platformLabels[row.platform]} · ${matrixRoleLabel[row.accountRole]}`,
+  })), [config, profile.accounts, rows]);
+  const visiblePlatforms = useMemo(() => platformOptions.filter(platform => accountRows.some(row => row.platform === platform)), [accountRows]);
+  const selectedAccounts = accountRows.filter(row => row.platform === selectedPlatform);
+
+  useEffect(() => {
+    if (visiblePlatforms.length && !visiblePlatforms.includes(selectedPlatform)) setSelectedPlatform(visiblePlatforms[0]);
+  }, [selectedPlatform, visiblePlatforms]);
+  useEffect(() => {
+    let active = true;
+    void (async () => {
+      const [benchmarkResult, whatsappResult, messengerResult] = await Promise.allSettled([
+        fetch("/api/overseas/competitor-accounts", { headers: authHeader() }),
+        fetch("/api/oauth/whatsapp/config", { headers: authHeader() }),
+        fetch("/api/overseas/social/accounts?platform=facebook", { headers: authHeader() }),
+      ]);
+      if (!active) return;
+      let accounts: MatrixBenchmarkAccount[] = [];
+      let whatsapp = false;
+      let messengerPages: MatrixMessengerPage[] = [];
+      if (benchmarkResult.status === "fulfilled" && benchmarkResult.value.ok) {
+        const body = await benchmarkResult.value.json().catch(() => ({})) as { items?: MatrixBenchmarkAccount[] };
+        accounts = Array.isArray(body.items) ? body.items : [];
+      }
+      if (whatsappResult.status === "fulfilled" && whatsappResult.value.ok) {
+        const body = await whatsappResult.value.json().catch(() => ({})) as { connected?: boolean };
+        whatsapp = body.connected === true;
+      }
+      if (messengerResult.status === "fulfilled" && messengerResult.value.ok) {
+        const body = await messengerResult.value.json().catch(() => ({})) as { items?: MatrixMessengerPage[] };
+        messengerPages = Array.isArray(body.items) ? body.items : [];
+      }
+      if (active) {
+        setBenchmarkAccounts(accounts);
+        setConnectionStatus({ loaded: true, whatsapp, messengerPages });
+      }
+    })();
+    return () => { active = false; };
+  }, []);
 
   const applyRows = (pack: WeeklyPackage, matrixRows = pack.matrixPlan || []) => {
     if (!config || !goal) return pack;
@@ -322,23 +451,85 @@ function MatrixView({ data, onRefresh, onNavigate, onGeneratePlan }: {
   };
 
   return <div className="space-y-5">
+    <section className="overflow-hidden rounded-3xl border border-emerald-200 bg-[#102d25] text-white shadow-sm">
+      <div className="border-b border-white/10 px-5 py-5 sm:px-6">
+        <p className="text-[10px] font-black tracking-[0.14em] text-emerald-300">多平台社媒矩阵 · 经营蓝图</p>
+        <h2 className="mt-1 text-2xl font-black">从账号、内容、运营到获客的完整系统</h2>
+        <p className="mt-2 max-w-4xl text-sm leading-6 text-emerald-50/70">经营 Agent 负责目标、平台、账号数量与预算；编导 Agent 固化账号表达宪法；内容 Agent 再按栏目、素材和质量标准生产。</p>
+      </div>
+      <div className="grid gap-px bg-white/10 sm:grid-cols-2 xl:grid-cols-4">
+        {matrixSystemLayers.map((layer, index) => <article key={layer.label} className={`bg-[#102d25] p-5 xl:col-span-2 ${layer.label === "运营矩阵" || layer.label === "获客矩阵" ? "sm:col-span-2" : ""}`}>
+          <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-400/15 text-xs font-black text-emerald-300">0{index + 1}</span>
+          <p className="mt-4 text-[10px] font-black text-emerald-300">{layer.label}</p>
+          <h3 className="mt-1 text-base font-black">{layer.headline}</h3>
+          <p className="mt-2 text-xs leading-5 text-emerald-50/70">{layer.detail}</p>
+          {layer.label === "运营矩阵" && <div className="mt-4 rounded-xl border border-white/10 bg-white/5 p-3" aria-label="12 周运营日历">
+            <div className="flex items-center justify-between gap-3"><div className="flex items-center gap-2 text-[10px] font-black text-emerald-200"><CalendarRange size={13}/>运营日历 · 12 周</div><span className="text-[9px] text-emerald-50/55">每周选题 → 制作 → 发布 → 复盘</span></div>
+            <div className="mt-3 grid grid-cols-12 gap-1">{Array.from({ length: 12 }, (_, week) => <span key={week} className="text-center text-[8px] font-bold text-emerald-50/45">W{week + 1}</span>)}</div>
+            <div className="mt-1 grid grid-cols-12 gap-x-1 gap-y-1.5">{matrixCalendarPhases.map(phase => <div key={phase.label} className={`min-w-0 rounded-md px-2 py-1.5 ${phase.color}`} style={{ gridColumn: `${phase.start} / span ${phase.span}` }}><p className="truncate text-[9px] font-black">{phase.label}</p><p className="truncate text-[8px] opacity-70">{phase.detail}</p></div>)}</div>
+          </div>}
+          <p className="mt-3 rounded-lg bg-white/5 px-3 py-2 text-[10px] leading-4 text-emerald-100/75">规则：{layer.rule}</p>
+        </article>)}
+      </div>
+      <div className="grid gap-px border-t border-white/10 bg-white/10 lg:grid-cols-[1.1fr_1.2fr]">
+        <div className="bg-[#173d31] px-5 py-4"><p className="text-[9px] font-black text-emerald-300">平台优先级</p><p className="mt-1 text-xs font-bold leading-5 text-white">LinkedIn：B2B 主阵地 · Facebook：定向广告与行业群组 · YouTube：长效信任 · TikTok / Instagram：触达与测试</p></div>
+        <div className="bg-[#173d31] px-5 py-4"><p className="text-[9px] font-black text-emerald-300">线索闭环</p><p className="mt-1 text-xs font-bold leading-5 text-white">评论 “Quote” / 私信 → 官网、WhatsApp、邮箱或目录 → 客服 Agent 分级 → 销售跟进 → 周复盘</p></div>
+      </div>
+    </section>
     <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div><p className="text-xs font-bold tracking-[0.16em] text-emerald-700">账号矩阵</p><h2 className="mt-1 text-2xl font-black text-slate-950">本周账号职责与内容配置</h2><p className="mt-1 text-sm text-slate-500">按已确认的经营阶段、已连接账号和平台规则生成；修改后会同步更新内容队列。</p></div>
         <div className="flex flex-wrap gap-2"><button type="button" onClick={() => onNavigate?.("accountManagement")} className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-xs font-black text-slate-700">管理连接账号</button>{editable&&<button type="button" onClick={() => { setDraft(saved || null); setEditing(true); }} className="inline-flex items-center gap-2 rounded-xl bg-slate-950 px-4 py-2.5 text-xs font-black text-white"><Pencil size={14}/>修改矩阵</button>}</div>
       </div>
       {message&&<p role="status" className="mt-4 rounded-xl bg-emerald-50 px-4 py-3 text-xs font-bold text-emerald-800">{message}</p>}
-      {rows.length > 0 ? <div className="mt-5 grid gap-3 lg:grid-cols-2">{rows.map(row => {
-        const account = config?.publishingTargets.find(item => item.accountId === row.accountId);
-        const planned = saved?.tasks.find(task => task.templateId === "production")?.videoPlans?.filter(plan => plan.matrix?.accountId === row.accountId).length || 0;
-        return <article key={row.accountId} className="rounded-2xl border border-slate-200 bg-slate-50/60 p-4">
-          <div className="flex items-start justify-between gap-3"><div className="flex items-center gap-3"><span className="flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200 bg-white"><SocialPlatformIcon platform={row.platform} size={20}/></span><div><p className="text-sm font-black text-slate-950">{account?.accountLabel || row.accountId}</p><p className="mt-0.5 text-[10px] font-bold text-emerald-700">{platformLabels[row.platform]} · {matrixRoleLabel[row.accountRole || "brand_combined"]}</p></div></div><span className="rounded-full bg-white px-2.5 py-1 text-[10px] font-black text-slate-700">本周 {row.weeklyCount} 条</span></div>
-          <dl className="mt-4 grid gap-3 text-xs sm:grid-cols-2"><div><dt className="font-bold text-slate-400">目标受众</dt><dd className="mt-1 line-clamp-2 font-semibold text-slate-700">{row.audience}</dd></div><div><dt className="font-bold text-slate-400">主推产品</dt><dd className="mt-1 line-clamp-2 font-semibold text-slate-700">{row.productName}</dd></div><div><dt className="font-bold text-slate-400">内容方向</dt><dd className="mt-1 line-clamp-2 font-semibold text-slate-700">{row.contentDirection}</dd></div><div><dt className="font-bold text-slate-400">内容清单</dt><dd className="mt-1 font-semibold text-slate-700">已配置 {planned || row.weeklyCount} 条</dd></div></dl>
+      {!rows.length&&<p className="mt-5 rounded-xl border border-dashed border-amber-200 bg-amber-50 px-4 py-3 text-xs font-bold text-amber-800">还没有已连接账号，当前展示可直接配置的默认账号矩阵。</p>}
+      <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4" aria-label="按平台查看账号">
+        {visiblePlatforms.map(platform => {
+          const count = accountRows.filter(row => row.platform === platform).length;
+          const selected = selectedPlatform === platform;
+          return <button key={platform} type="button" aria-pressed={selected} onClick={() => setSelectedPlatform(platform)} className={`rounded-2xl border p-4 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 ${selected ? "border-emerald-500 bg-emerald-50 shadow-sm" : "border-slate-200 bg-white hover:border-emerald-200 hover:bg-emerald-50/40"}`}>
+            <div className="flex items-center justify-between gap-3"><span className={`flex h-10 w-10 items-center justify-center rounded-xl ${selected ? "bg-white" : "bg-slate-50"}`}><SocialPlatformIcon platform={platform} size={21}/></span><span className={`rounded-full px-2.5 py-1 text-[10px] font-black ${selected ? "bg-emerald-700 text-white" : "bg-slate-100 text-slate-500"}`}>{count} 个账号</span></div>
+            <p className="mt-3 text-sm font-black text-slate-950">{platformLabels[platform]}</p><p className="mt-1 text-[10px] text-slate-500">点击查看账号详情与内容</p>
+          </button>;
+        })}
+      </div>
+      <div className="mt-4 space-y-4">{selectedAccounts.map(row => {
+        const plans = productionPlans.filter(plan => plan.matrix?.accountId === row.accountId);
+        const benchmarks = benchmarkAccounts.filter(item => item.platform === row.platform);
+        const matchedMessenger = row.platform === "facebook" && connectionStatus.messengerPages.some(page => page.status === "connected" && page.messengerSubscribed && (!row.connected || page.id === row.accountId || page.providerAccountId === row.accountId || page.title === row.accountLabel));
+        const formatCount = row.formats?.length || 0;
+        const buyerProblem = plans.find(plan => plan.buyerProblem?.trim())?.buyerProblem?.trim() || "";
+        const presenter = plans.find(plan => plan.presenter)?.presenter;
+        const evidenceReady = plans.some(plan => Boolean(plan.evidenceRequirement?.trim()) || Boolean(plan.materialIds?.length));
+        const defaultCta = SOCIAL_PLATFORM_EXECUTION_RULES[row.platform].ctaRule.trim();
+        const exactCta = Boolean(row.cta?.trim()) && row.cta.trim() !== defaultCta;
+        const checklist = [
+          { label: "受众定位", value: row.audience ? "已定义" : "待补充", done: Boolean(row.audience) },
+          { label: "永久买家问题", value: buyerProblem ? "已锁定" : "待锁定", done: Boolean(buyerProblem) },
+          { label: "3–5 个栏目", value: formatCount >= 3 && formatCount <= 5 ? `${formatCount} 个` : `${formatCount} 个，需补齐`, done: formatCount >= 3 && formatCount <= 5 },
+          { label: "出镜方式", value: presenter ? presenter === "material" ? "纯素材" : presenter === "heygen" ? "数字人混剪" : "数字人口播" : "待定义", done: Boolean(presenter) },
+          { label: "事实证据", value: evidenceReady ? "已绑定" : "待绑定", done: evidenceReady },
+          { label: "语气与视觉", value: "待定义", done: false },
+          { label: "账号禁区", value: config?.constraints?.length ? `${config.constraints.length} 条` : "待定义", done: Boolean(config?.constraints?.length) },
+          { label: "唯一 CTA", value: exactCta ? "已锁定" : "待锁定", done: exactCta },
+          { label: "WhatsApp", value: connectionStatus.loaded ? connectionStatus.whatsapp ? "已挂载" : "未挂载" : "读取中", done: connectionStatus.whatsapp },
+          { label: "Messenger", value: row.platform === "facebook" ? connectionStatus.loaded ? matchedMessenger ? "已挂载" : "未挂载" : "读取中" : "不适用", done: matchedMessenger, neutral: row.platform !== "facebook" },
+          { label: "对标账号", value: benchmarks.length ? `${benchmarks.length} 个` : "待配置", done: benchmarks.length > 0 },
+        ];
+        return <article key={row.accountId} className="overflow-hidden rounded-2xl border border-slate-200 bg-slate-50/60">
+          <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-200 bg-white p-4"><div className="flex items-center gap-3"><span className="flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200 bg-white"><SocialPlatformIcon platform={row.platform} size={20}/></span><div><p className="text-sm font-black text-slate-950">{row.accountLabel}</p><p className="mt-0.5 text-[10px] font-bold text-emerald-700">{platformLabels[row.platform]} · {matrixRoleLabel[row.accountRole || "brand_combined"]} · {row.connected ? "已连接" : "待连接"}</p></div></div><span className="rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-black text-slate-700">本周 {row.weeklyCount} 条</span></div>
+          <div className="grid gap-px bg-slate-200 xl:grid-cols-[minmax(0,1.05fr)_minmax(0,1fr)]">
+            <div className="bg-white p-4"><p className="text-[10px] font-black tracking-[0.12em] text-slate-400">账号详情</p><dl className="mt-3 grid gap-3 text-xs sm:grid-cols-2"><div><dt className="font-bold text-slate-400">目标受众</dt><dd className="mt-1 font-semibold leading-5 text-slate-700">{row.audience}</dd></div><div><dt className="font-bold text-slate-400">主推产品</dt><dd className="mt-1 font-semibold leading-5 text-slate-700">{row.productName}</dd></div><div><dt className="font-bold text-slate-400">内容方向</dt><dd className="mt-1 font-semibold leading-5 text-slate-700">{row.contentDirection}</dd></div><div><dt className="font-bold text-slate-400">内容栏目</dt><dd className="mt-1 font-semibold leading-5 text-slate-700">{row.formats?.length ? row.formats.map(format => contentFormatLabels[format] || format).join(" · ") : "待配置"}</dd></div></dl>
+              <div className="mt-4"><div className="flex items-center justify-between gap-3"><p className="text-[10px] font-black tracking-[0.12em] text-slate-400">账号宪法完成项</p><span className="text-[10px] font-bold text-emerald-700">{checklist.filter(item => item.done).length}/{checklist.filter(item => !item.neutral).length}</span></div><div className="mt-2 grid gap-2 sm:grid-cols-2">{checklist.map(item => <div key={item.label} className="flex items-center justify-between gap-2 rounded-lg border border-slate-100 bg-slate-50 px-3 py-2"><span className="flex items-center gap-1.5 text-[10px] font-bold text-slate-600">{item.done ? <CheckCircle2 size={13} className="text-emerald-600"/> : <span className={`h-3 w-3 rounded-full border ${item.neutral ? "border-slate-300 bg-slate-100" : "border-amber-400 bg-amber-50"}`}/>} {item.label}</span><span className={`text-[9px] font-black ${item.done ? "text-emerald-700" : item.neutral ? "text-slate-400" : "text-amber-700"}`}>{item.value}</span></div>)}</div></div>
+              <div className={`mt-4 rounded-xl border p-3 ${exactCta ? "border-emerald-100 bg-emerald-50/60" : "border-amber-200 bg-amber-50"}`}><p className={`text-[10px] font-black ${exactCta ? "text-emerald-800" : "text-amber-800"}`}>{exactCta ? "唯一 CTA 已锁定" : "唯一 CTA 待锁定"}</p><p className={`mt-1 text-[11px] leading-5 ${exactCta ? "text-emerald-950/75" : "text-amber-900/75"}`}>{exactCta ? row.cta : row.cta ? `当前只有平台承接规则：${row.cta}` : "尚未明确 CTA，不能进入发布。"}</p></div>
+              <div className="mt-4"><div className="flex items-center justify-between gap-3"><p className="text-[10px] font-black tracking-[0.12em] text-slate-400">对标账号</p><button type="button" onClick={() => onNavigate?.("socialInspiration")} className="text-[10px] font-black text-emerald-700">管理对标账号 →</button></div>{benchmarks.length ? <div className="mt-2 flex flex-wrap gap-2">{benchmarks.map(item => <span key={item.id} className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[10px] font-bold text-slate-700">{item.accountName || item.handle || "未命名账号"}</span>)}</div> : <p className="mt-2 text-[11px] text-slate-400">该平台尚未配置对标账号。</p>}</div>
+            </div>
+            <div className="bg-white p-4"><div className="flex items-center justify-between gap-3"><div><p className="text-[10px] font-black tracking-[0.12em] text-slate-400">账号内容</p><p className="mt-1 text-xs font-black text-slate-900">{plans.length ? `${plans.length} 条已进入本周清单` : `${row.weeklyCount} 个待编排内容位`}</p></div><span className="rounded-full bg-slate-100 px-2.5 py-1 text-[9px] font-black text-slate-600">{platformLabels[row.platform]}</span></div>
+              <div className="mt-3 space-y-2">{plans.length ? plans.map((plan, index) => <div key={plan.contentId || index} className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-3"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="truncate text-[11px] font-black text-slate-800">{plan.buyerProblem || plan.theme || `内容 ${index + 1}`}</p><p className="mt-1 truncate text-[10px] text-slate-500">{plan.productName || row.productName} · {plan.plannedPublishDate || "待排期"}</p></div><span className="shrink-0 text-[9px] font-bold text-emerald-700">{plan.directorStatus === "approved" ? "已通过" : plan.directorStatus === "in_production" ? "制作中" : "待编导"}</span></div></div>) : Array.from({ length: Math.min(row.weeklyCount, 5) }, (_, index) => <div key={index} className="flex items-center justify-between gap-3 rounded-xl border border-dashed border-slate-200 px-3 py-2.5"><div className="min-w-0"><p className="truncate text-[11px] font-bold text-slate-700">内容位 {index + 1} · {row.contentDirection}</p><p className="mt-0.5 text-[9px] text-slate-400">等待编导 Agent 确认具体买家问题与排期</p></div><span className="shrink-0 text-[9px] font-bold text-amber-700">待编排</span></div>)}</div>{!plans.length && row.weeklyCount > 5 && <p className="mt-2 text-[10px] text-slate-400">另有 {row.weeklyCount - 5} 个内容位，将在周计划中继续展开。</p>}
+            </div>
+          </div>
         </article>;
-      })}</div> : <div className="mt-5 rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-6">
-        <p className="text-sm font-black text-slate-800">还没有已连接账号，先展示确定性的默认矩阵</p>
-        <div className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">{profile.accounts.map((row, index) => <div key={`${row.platform}-${row.accountRole}-${index}`} className="rounded-xl border border-slate-200 bg-white p-3"><div className="flex items-center gap-2"><SocialPlatformIcon platform={row.platform} size={17}/><strong className="text-xs text-slate-800">{platformLabels[row.platform]} · {matrixRoleLabel[row.accountRole]}</strong></div><p className="mt-2 text-[11px] leading-5 text-slate-500">每周 {row.weeklyVideoCount} 条 · {row.purpose}</p><span className="mt-2 inline-block text-[10px] font-bold text-amber-700">待连接账号</span></div>)}</div>
-      </div>}
+      })}</div>
       {!saved&&<div className="mt-5 flex justify-end"><button type="button" onClick={onGeneratePlan} className="inline-flex items-center gap-2 rounded-xl bg-emerald-700 px-4 py-2.5 text-xs font-black text-white"><CalendarRange size={14}/>生成周计划并应用矩阵</button></div>}
       {saved&&!saved.matrixPlan?.length&&defaultRows.length>0&&editable&&<div className="mt-5 flex justify-end"><button type="button" disabled={saving} onClick={() => void save({ ...saved, matrixPlan: defaultRows })} className="inline-flex items-center gap-2 rounded-xl bg-emerald-700 px-4 py-2.5 text-xs font-black text-white disabled:opacity-50"><LayoutGrid size={14}/>应用默认矩阵</button></div>}
     </section>

@@ -2,7 +2,7 @@ import { type ReactNode, useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   ChevronRight, LogOut, Loader2, RefreshCcw, X, ShieldCheck, ListTree, PanelLeftClose, PanelLeftOpen, Coins, Settings,
-  PanelRightOpen,
+  PanelRightOpen, Sparkles,
 } from 'lucide-react';
 import type { Page, ConversationContext, Conversation, AgentAction } from '../App';
 import { PAGE_REGISTRY, PRIMARY_SOCIAL_NAV_PAGES } from '../pageRegistry';
@@ -345,6 +345,15 @@ export default function Layout({ page, onNavigate, conversation, children, sessi
     if (mobileViewport) setMobileSidebarExpanded(false);
     onNavigate(nextPage);
   };
+  const openDigitalEmployeeGuide = () => {
+    if (mobileViewport) setMobileSidebarExpanded(false);
+    if (page === 'digitalEmployees') {
+      window.dispatchEvent(new CustomEvent('lingshu:open-digital-employee-guide'));
+      return;
+    }
+    try { sessionStorage.setItem('lingshu:open-digital-employee-guide', 'true'); } catch { /* storage can be unavailable */ }
+    onNavigate('digitalEmployees');
+  };
   const toggleSidebar = () => {
     if (mobileViewport) setMobileSidebarExpanded(value => !value);
     else setDesktopSidebarCollapsed(value => !value);
@@ -397,6 +406,16 @@ export default function Layout({ page, onNavigate, conversation, children, sessi
             onClick={() => navigateFromSidebar(homeNavItem.id)}
             collapsed={sidebarCollapsed}
           />
+          <button
+            type="button"
+            onClick={openDigitalEmployeeGuide}
+            title={sidebarCollapsed ? '新手引导' : undefined}
+            aria-label={sidebarCollapsed ? '新手引导' : undefined}
+            className={`relative mt-1 flex w-full items-center border-l-2 border-transparent py-1 text-sm font-medium text-text-secondary transition-colors hover:bg-[#f1f5f2] hover:text-text-primary ${sidebarCollapsed ? 'justify-center px-2' : 'gap-2.5 px-3'}`}
+          >
+            <span aria-hidden="true" className="relative flex-shrink-0"><Sparkles size={19} /></span>
+            {!sidebarCollapsed && <span className="relative flex-1 text-left">新手引导</span>}
+          </button>
         </nav>
 
         <div className="min-h-0 flex-1 overflow-y-auto pb-2">

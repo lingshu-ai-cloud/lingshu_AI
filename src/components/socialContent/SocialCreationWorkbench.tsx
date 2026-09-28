@@ -19,7 +19,6 @@ import { studioApi, type HeyGenAvatarOption, type Material } from '../../lib/stu
 import { productionApi } from '../../lib/productionApi';
 import { EMPTY_DEFAULTS, type PresenterAsset, type ProductionDefaults } from '../../lib/shotProduction';
 import type { SocialContentStageProfile } from '../../lib/socialContentStage';
-import { contentCreationTestBypassEnabled } from '../../lib/contentCreationTestBypass';
 import { resolveInspirationPlaybackUrl } from '../../lib/inspirationVideoPlayback';
 import { authHeader } from '../../lib/auth';
 
@@ -167,7 +166,6 @@ export default function SocialCreationWorkbench({
   const [presenterNotice, setPresenterNotice] = useState('');
   const uploadRef = useRef<HTMLInputElement>(null);
   const isReplication = mode === 'viral_replication';
-  const localGateBypass = contentCreationTestBypassEnabled();
   const script = isReplication ? replicationScript : freeScript;
   const previewUrl = useMemo(() => files[0] ? URL.createObjectURL(files[0]) : '', [files]);
 
@@ -220,8 +218,8 @@ export default function SocialCreationWorkbench({
   const persistSelectedPresenter = async (): Promise<string> => {
     if (!useDigitalPresenter) return '';
     if (!presenterSelection) throw new Error('请选择一个数字人资产');
-    if (!localGateBypass && !presenterConsent) throw new Error('请先确认人物、声音和商业使用授权');
-    if (!localGateBypass && presenterOrientation !== 'portrait') throw new Error('社媒视频默认为竖屏，请先核验该数字人的原生画幅为竖屏');
+    if (!presenterConsent) throw new Error('请先确认人物、声音和商业使用授权');
+    if (presenterOrientation !== 'portrait') throw new Error('社媒视频默认为竖屏，请先核验该数字人的原生画幅为竖屏');
     const now = new Date().toISOString();
     const savedId = presenterSelection.startsWith('saved:') ? presenterSelection.slice('saved:'.length) : '';
     const providerId = presenterSelection.startsWith('heygen:') ? presenterSelection.slice('heygen:'.length) : '';
@@ -265,7 +263,7 @@ export default function SocialCreationWorkbench({
   };
 
   const startGeneration = async () => {
-    if (submitting || (!localGateBypass && productsLoading)) return;
+    if (submitting || productsLoading) return;
     setSubmitting(true); setPresenterNotice('');
     try {
       const presenterAssetId = await persistSelectedPresenter();
@@ -284,7 +282,7 @@ export default function SocialCreationWorkbench({
         requestId: Date.now(),
         creationPath: mode,
         title: isReplication
-          ? `${productName || seed?.productName || '自动选品'} · 爆款裂变`
+          ? `${productName || seed?.productName || '自动选品'} · 爆款复刻`
           : `${productName || '自由创作'} · 新内容`,
         productId: selected?.id || '',
         productName,
@@ -309,7 +307,7 @@ export default function SocialCreationWorkbench({
       <header className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-border bg-white px-5 py-3">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
-            <span className={`rounded-full px-2.5 py-1 text-[10px] font-black ${isReplication ? 'bg-orange-50 text-orange-700' : 'bg-emerald-50 text-emerald-700'}`}>{isReplication ? '爆款裂变' : '自由创作'}</span>
+            <span className={`rounded-full px-2.5 py-1 text-[10px] font-black ${isReplication ? 'bg-orange-50 text-orange-700' : 'bg-emerald-50 text-emerald-700'}`}>{isReplication ? '爆款复刻' : '自由创作'}</span>
             <span className="text-[10px] font-bold text-text-muted">逐句口播与画面制作台</span>
             {stageProfile&&<span className="rounded-full bg-slate-100 px-2 py-1 text-[9px] font-black text-slate-500">{stageProfile.name}</span>}
           </div>
@@ -366,7 +364,7 @@ export default function SocialCreationWorkbench({
 
         <aside className="flex min-h-0 flex-col border-t border-border bg-white lg:border-l lg:border-t-0">
           <div className="min-h-0 flex-1 overflow-y-auto p-4">
-            <div className="flex items-start justify-between gap-3"><div><p className="text-sm font-black text-text-primary">生成设置</p><p className="mt-1 text-[11px] leading-5 text-text-muted">{isReplication ? '爆款裂变沿用原片设置，选项只读。' : '每一步都由你确认后再生成。'}</p></div>{isReplication && <span className="rounded-full bg-slate-100 px-2 py-1 text-[9px] font-black text-slate-500">已锁定</span>}</div>
+            <div className="flex items-start justify-between gap-3"><div><p className="text-sm font-black text-text-primary">生成设置</p><p className="mt-1 text-[11px] leading-5 text-text-muted">{isReplication ? '爆款复刻沿用原片设置，选项只读。' : '每一步都由你确认后再生成。'}</p></div>{isReplication && <span className="rounded-full bg-slate-100 px-2 py-1 text-[9px] font-black text-slate-500">已锁定</span>}</div>
 
             {isReplication && <div className="mt-4">
               <label htmlFor="replication-product" className="text-xs font-black text-text-primary">主推产品</label>
@@ -381,7 +379,7 @@ export default function SocialCreationWorkbench({
               {creationOptions.map(item => {
                 const Icon = item.icon;
                 const checked = enabledOptions.has(item.id);
-                const locked = isReplication && !localGateBypass;
+                const locked = isReplication;
                 return <button key={item.id} type="button" disabled={locked} onClick={() => setEnabledOptions(current => { const next = new Set(current); if (next.has(item.id)) next.delete(item.id); else next.add(item.id); return next; })} className={`flex w-full items-center gap-3 rounded-xl border p-3 text-left ${locked ? 'cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400' : checked ? 'border-emerald-200 bg-emerald-50/55' : 'border-border bg-white'}`}>
                   <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${locked ? 'bg-white text-slate-400' : 'bg-white text-emerald-700'}`}><Icon size={15} /></span>
                   <span className="min-w-0 flex-1"><span className="block text-xs font-black">{item.label}</span><span className="mt-0.5 block truncate text-[10px] opacity-75">{item.detail}</span></span>
@@ -391,12 +389,12 @@ export default function SocialCreationWorkbench({
             </div>
 
             <div className={`mt-4 rounded-xl border p-3 ${useDigitalPresenter ? 'border-emerald-300 bg-emerald-50/70' : 'border-border bg-white'}`}>
-              <button type="button" disabled={isReplication && !localGateBypass} onClick={() => { setUseDigitalPresenter(value => !value); setPresenterNotice(''); }} className="flex w-full items-center gap-3 text-left disabled:cursor-not-allowed disabled:opacity-55">
+              <button type="button" disabled={isReplication} onClick={() => { setUseDigitalPresenter(value => !value); setPresenterNotice(''); }} className="flex w-full items-center gap-3 text-left disabled:cursor-not-allowed disabled:opacity-55">
                 <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white text-emerald-700"><UserRound size={15} /></span>
                 <span className="min-w-0 flex-1"><span className="block text-xs font-black text-text-primary">数字人</span><span className="mt-0.5 block text-[10px] text-text-muted">从 HeyGen 账号资产选择出镜人物</span></span>
                 <span className={`h-5 w-9 rounded-full p-0.5 ${useDigitalPresenter ? 'bg-emerald-600' : 'bg-slate-200'}`}><span className={`block h-4 w-4 rounded-full bg-white transition ${useDigitalPresenter ? 'translate-x-4' : ''}`} /></span>
               </button>
-              {useDigitalPresenter && (!isReplication || localGateBypass) && (
+              {useDigitalPresenter && !isReplication && (
                 <div className="mt-3 space-y-2 border-t border-emerald-200 pt-3">
                   <label className="block text-[10px] font-black text-text-primary">数字人资产
                     <select value={presenterSelection} disabled={presentersLoading || submitting} onChange={event => {
@@ -419,7 +417,7 @@ export default function SocialCreationWorkbench({
                   {!presentersLoading && !productionDefaults.presenters.length && !heygenAvatars.length && <p className="text-[10px] leading-4 text-amber-700">暂未读取到数字人资产，请检查测试服 HeyGen Key 与私有资产开关。</p>}
                 </div>
               )}
-              {isReplication && <p className="mt-2 text-[10px] leading-4 text-text-muted">爆款裂变的人物替换需先完成参考视频分析，进入任务后逐镜确认。</p>}
+              {isReplication && <p className="mt-2 text-[10px] leading-4 text-text-muted">爆款复刻的人物替换需先完成参考视频分析，进入任务后逐镜确认。</p>}
               {presenterNotice && <p role="status" className="mt-2 text-[10px] leading-4 text-amber-700">{presenterNotice}</p>}
             </div>
 
@@ -434,7 +432,7 @@ export default function SocialCreationWorkbench({
             {/* GENERATION_INTEGRATION_GAP: the server calculates estimatedCostCny only
                 after a task plan exists; there is no preflight quote endpoint yet. */}
             {isReplication && <div className="mb-3 flex items-center justify-between text-[11px]"><span className="text-text-muted">预计消耗</span><span className="font-black text-text-primary" title="生成任务建立后由服务端返回真实预估">待生成服务核算</span></div>}
-            <button type="button" disabled={submitting || (!localGateBypass && (productsLoading || (isReplication && !productId && products.length > 0)))} onClick={() => void startGeneration()} className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#173d31] px-4 py-3 text-sm font-black text-white shadow-sm hover:bg-[#245644] disabled:cursor-not-allowed disabled:bg-slate-300">
+            <button type="button" disabled={submitting || productsLoading || (isReplication && !productId && products.length > 0)} onClick={() => void startGeneration()} className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#173d31] px-4 py-3 text-sm font-black text-white shadow-sm hover:bg-[#245644] disabled:cursor-not-allowed disabled:bg-slate-300">
               {submitting ? <Loader2 size={16} className="animate-spin" /> : <Film size={16} />}{submitting ? '正在创建任务' : '开始生成'}
             </button>
           </div>

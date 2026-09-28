@@ -123,6 +123,12 @@ whatsappOAuthRouter.get('/config', requireAuth, async (req, res) => {
     appId,
     configId,
     configured: Boolean(appId && configId && decryptSecret(app?.app_secret)),
+    connected: Boolean(
+      app?.status === 'active'
+      && text(app?.waba_id)
+      && text(app?.phone_number_id)
+      && decryptSecret(app?.access_token),
+    ),
     missing: {
       appId: !appId,
       appSecret: !decryptSecret(app?.app_secret),

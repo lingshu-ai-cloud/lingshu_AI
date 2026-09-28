@@ -34,6 +34,7 @@ for (const url of [refreshed.voiceoverUrl, (refreshed.voiceoverAudios as any).zh
 assert.equal(refreshed.unrelated, source.unrelated, 'public URLs must remain unchanged');
 
 const studioUi = readFileSync(new URL('../../src/components/AiCreateStudio.tsx', import.meta.url), 'utf8');
+const studioMediaPreviewsUi = readFileSync(new URL('../../src/components/StudioMediaPreviews.tsx', import.meta.url), 'utf8');
 const previewBlock = studioUi.slice(studioUi.indexOf('const startPreview = async'), studioUi.indexOf('// 离开预览步时停止播放'));
 assert.match(previewBlock, /authenticatedAudioBlobUrl\(requestedVoiceUrl\)/, 'preview must authenticate and validate voiceover media before playback');
 assert.match(previewBlock, /waitForStudioMediaReady\(voiceEl/, 'preview must wait for the voice track to become playable');
@@ -58,7 +59,7 @@ const previewUi = studioUi.slice(studioUi.indexOf('/* ⑥ 成片预览 */'));
 assert.match(previewUi, /RenderedVideoPlayer key=\{formalPreviewUrl\}/);
 assert.match(previewUi, /onActivate=\{stopPreview\}/, 'rendered playback stops simulated narration and BGM');
 assert.match(previewUi, /!formalPreviewUrl && previewIdx !== null && activePreviewCue/);
-assert.match(studioUi, /failedCover !== coverUrl/, 'broken uploaded covers must fall back to source media');
+assert.match(studioMediaPreviewsUi, /failedCover !== coverUrl/, 'broken uploaded covers must fall back to source media');
 assert.match(studioUi, /assigned\.length \? assigned : selectedClips/, 'cover selection must prefer actual shot assignments over stale selected references');
 assert.match(previewUi, /setRenderOutputPath\(generation\.status === 'done' \? generation\.path \|\| null : null\)/, 'failed output selection must clear the previous file path');
 assert.match(previewUi, /downloadMp4\(activeOutputVersion\?\.output\?\.status === 'done'/, 'reopened drafts must reuse the selected export instead of rendering again');

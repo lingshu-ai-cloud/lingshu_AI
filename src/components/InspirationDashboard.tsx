@@ -3754,6 +3754,9 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     const openTask = (taskId: string) => {
       window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: {
         page: 'smartAssets', view: 'create',
+        directStudio: true,
+        socialContentTaskId: taskId,
+        socialContentPage: 'smartAssets',
         contentCreationRequest: {
           requestId: Date.now(),
           themeId: 'product_value',
