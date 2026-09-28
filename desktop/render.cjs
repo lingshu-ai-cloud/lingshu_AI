@@ -17,6 +17,7 @@ const path = require('node:path');
 const { fileURLToPath } = require('node:url');
 const { layoutFilters, tempoFilters, muteIntervals } = require('./shot-composition.cjs');
 const { normalizeEffectPlan, sceneEffectFilters, joinSceneFilters, audioEventFilters } = require('./effect-composition.cjs');
+const { automaticSubtitleText, verifySubtitleFonts, fontsDirectory, template: subtitleTemplate } = require('./automatic-subtitles.cjs');
 
 let ffmpegPath = null;
 try { ffmpegPath = require('ffmpeg-static'); } catch { ffmpegPath = null; }
@@ -175,7 +176,8 @@ function subtitlePages(value, maxUnitsPerLine = 15, maxLines = 2) {
       const left = join(words.slice(0, split)), right = join(words.slice(split));
       const lw = subtitleUnits(left), rw = subtitleUnits(right);
       if (lw > maxUnitsPerLine || rw > maxUnitsPerLine) continue;
-      const score = (lw - rw) ** 2 + (badEnd.test(left) ? 25 : 0);
+      const score = (lw - rw) ** 2 + (badEnd.test(left) ? 25 : 0)
+        - (/[，。！？；：、,;:!?]$/.test(left) ? 30 : 0);
       if (score < bestCost) { bestCost = score; best = [left, right]; }
     }
     return best;
@@ -277,7 +279,8 @@ function cuesToAss(cues, width, height, disclaimer = '', duration = 0, style = {
     const prefix = cue.screen
       ? `{\\an8\\pos(${Math.round(width / 2)},${Math.round(height * 0.12)})}`
       : '';
-    return `Dialogue: ${cue.screen ? 1 : 0},${assTime(cue.start)},${assTime(cue.end)},Default,,0,0,0,,${prefix}${cue.text}`;
+    const text = cue.screen ? cue.text : automaticSubtitleText(cue.text, style);
+    return `Dialogue: ${cue.screen ? 1 : 0},${assTime(cue.start)},${assTime(cue.end)},Default,,0,0,0,,${prefix}${text}`;
   });
   if (disclaimer && duration > 0) events.push(`Dialogue: 1,0:00:00.00,${assTime(duration)},Default,,0,0,0,,{\\an8\\pos(${Math.round(width / 2)},${Math.round(height * 0.08)})\\fs${Math.round(width * 0.035)}}${assText(disclaimer).replace(/[{}]/g, '')}`);
   return [
@@ -290,7 +293,7 @@ function cuesToAss(cues, width, height, disclaimer = '', duration = 0, style = {
     '',
     '[V4+ Styles]',
     'Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding',
-    `Style: Default,Arial,${fontSize},&H00FFFFFF,&H00FFFFFF,&HAA000000,&H66000000,-1,0,0,0,100,100,0,0,1,${outline},1,2,${marginX},${marginX},${marginV},1`,
+    `Style: Default,${subtitleTemplate.body.font},${fontSize},&H00FFFFFF,&H00FFFFFF,&HAA000000,&H66000000,-1,0,0,0,100,100,0,0,1,${outline},1,2,${marginX},${marginX},${marginV},1`,
     '',
     '[Events]',
     'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text',
@@ -492,9 +495,10 @@ async function composite(manifest, onProgress = () => {}, outDir) {
       : [];
     const ass = cuesToAss(subtitleCues, w, h, manifest.disclaimer || '', duration, manifest.subtitles?.style || {});
     if (ass) {
+      verifySubtitleFonts();
       const assFile = path.join(tmp, 'subtitles.ass');
       fs.writeFileSync(assFile, ass, 'utf8');
-      filters.push(`${vlabel}subtitles='${filterPath(assFile)}'[vout]`);
+      filters.push(`${vlabel}subtitles='${filterPath(assFile)}':fontsdir='${filterPath(fontsDirectory)}'[vout]`);
     } else {
       filters.push(`${vlabel}null[vout]`);
     }

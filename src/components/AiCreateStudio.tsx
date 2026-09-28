@@ -4732,7 +4732,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
       effectPlan,
       subtitles: subtitlesOn ? {
         mode: subMode,
-        style: { font: coverStyle.font, color: coverStyle.color, weight: coverStyle.weight, fontFamily: coverStyle.fontFamily },
+        style: { productNames: selectedProductOptions.length ? selectedProductOptions.map(option => option.label) : activeProductLabel ? [activeProductLabel] : [] },
         cues: [...(subMode === 'bilingual' && outputLanguage === activeVoiceLang && cueZh.length === outputCues.length
           ? outputCues.map((c, i) => ({ ...c, zh: cueZh[i] }))
           : outputCues), ...outputTimeline.flatMap(item => {

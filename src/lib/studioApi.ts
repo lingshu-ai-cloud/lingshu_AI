@@ -251,7 +251,7 @@ export interface StudioAudioCapabilities {
 export interface SubtitleSpec {
   mode: 'off' | 'target' | 'bilingual';
   cues: SubCue[];
-  style: Partial<CoverStyle>;     // 沿用封面样式体系（字体 / 颜色 / 粗细）
+  style: Partial<CoverStyle> & { productNames?: string[]; autoEmphasis?: boolean; fontScale?: number; bottomRatio?: number };
 }
 
 export interface RenderSpec {

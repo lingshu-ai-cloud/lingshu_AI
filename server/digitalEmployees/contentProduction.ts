@@ -1409,7 +1409,7 @@ export async function advanceOneProject(input: {
       const result = await composite({ jobId: `de-${input.record.id}-v${Number(automation.contentVersion || 1)}`, requireVisualAssets: true, disclaimer,
         spec: { ratio: text(spec.ratio) || '9:16', resolution: (spec.exportSpec as any)?.resolution || '1080p', duration, platform: routePlan.platform, language: brief.language, bgmVol: musicVolume, voiceVol: 100 },
         timeline, ...(effectPlan ? { effectPlan } : {}), bgm: music, voiceover: { url: `data:${mimeFromFile(voicePath)};base64,${fs.readFileSync(voicePath).toString('base64')}` },
-        subtitles: { mode: 'target', cues: presenterCues, style: spec.subtitleStyle || {} },
+        subtitles: { mode: 'target', cues: presenterCues, style: { ...(spec.subtitleStyle as Record<string, unknown> || {}), productNames: routePlan.productName ? [routePlan.productName] : [] } },
       }, undefined, outputDir);
       if (!result.ok || !result.outputPath) return block('heygen', result.error || '数字人混剪合成失败');
       await updateProject(input.record, { ...spec, ...(effectPlan ? { effectPlan } : {}), duration, disclaimer, alignedCuesByLang: { [brief.language]: presenterCues }, subtitleAlignmentSource: spec.subtitleAlignmentSource === 'human_reviewed' ? 'human_reviewed' : 'heygen_audio', presenterMode: 'digital', selectedMaterialIds: [...new Set([job.outputMaterialId, ...middleAssets.map(asset => asset.id)])],
@@ -1467,7 +1467,7 @@ export async function advanceOneProject(input: {
         })(),
         voiceover: { voice: 'automation', url: `data:${mimeFromFile(voicePath)};base64,${fs.readFileSync(voicePath).toString('base64')}` },
         cover: { id: null, title: input.record.title || '', url: null }, bgm: music,
-        subtitles: { mode: 'target', cues: json<Record<string, unknown>>(spec.alignedCuesByLang, {})[brief.language] || [], style: spec.subtitleStyle || {} },
+        subtitles: { mode: 'target', cues: json<Record<string, unknown>>(spec.alignedCuesByLang, {})[brief.language] || [], style: { ...(spec.subtitleStyle as Record<string, unknown> || {}), productNames: routePlan.productName ? [routePlan.productName] : [] } },
       };
       const outputDir = path.resolve(process.cwd(), 'data', 'publishing-uploads', input.tenantId.replace(/[^\w.-]+/g, '-'));
       const result = await composite(manifest, undefined, outputDir);
