@@ -1,7 +1,9 @@
+import { StoryboardFirstFrame } from '../studio/StoryboardFirstFrame';
+export { StoryboardFirstFrame } from '../studio/StoryboardFirstFrame';
+import ReplicationWorkbenchHeader from './ReplicationWorkbenchHeader';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Captions,
-  Check,
   ChevronRight,
   CircleAlert,
   Film,
@@ -11,16 +13,15 @@ import {
   Music2,
   Sparkles,
   Upload,
-  UserRound,
   Volume2,
 } from 'lucide-react';
 import type { SocialContentCreationPath } from '../../lib/socialContentModel';
-import { studioApi, type HeyGenAvatarOption, type Material } from '../../lib/studioApi';
-import { productionApi } from '../../lib/productionApi';
-import { EMPTY_DEFAULTS, type PresenterAsset, type ProductionDefaults } from '../../lib/shotProduction';
+import { studioApi, type Material } from '../../lib/studioApi';
+import { socialContentApi } from '../../lib/socialContentApi';
 import type { SocialContentStageProfile } from '../../lib/socialContentStage';
 import { resolveInspirationPlaybackUrl } from '../../lib/inspirationVideoPlayback';
 import { authHeader } from '../../lib/auth';
+import { referenceBrandTerm, referenceProductMentions, referenceProductTerms } from '../../lib/referenceIdentityMapping';
 
 interface EnterpriseProductOption {
   id: string;
@@ -28,21 +29,29 @@ interface EnterpriseProductOption {
 }
 
 export interface SocialCreationWorkbenchSeed {
+  continueTaskId?: string;
   referenceTitle?: string;
   referenceThumbnail?: string;
   referenceMediaUrl?: string;
   referenceContentType?: 'video' | 'image';
+  referenceShots?: Array<{ time: string; dialogue?: string; subtitle?: string; visual?: string; firstFrameRef?: string; firstFrameSeconds?: number; startSeconds?: number; endSeconds?: number }>;
   referenceLinks?: string[];
   productId?: string;
   productName?: string;
+  selectedProductIds?: string[];
+  selectedProductNames?: string[];
+  productMappings?: Array<{ sourceTerm: string; productId: string; productName: string }>;
 }
 
 export interface SocialCreationWorkbenchSubmit {
+  replicationStep?: 1 | 2 | 3;
   requestId: number;
   creationPath: SocialContentCreationPath;
   title: string;
   productId: string;
   productName: string;
+  productMappings: Array<{ sourceTerm: string; productId: string; productName: string }>;
+  brandMapping?: { sourceTerm: string; brandName: string };
   presenterAssetId: string;
   files: File[];
   uploadedMaterials: Material[];
@@ -61,12 +70,17 @@ const freeScript = [
   '确认口播、字幕和音乐后，就能生成一条完整内容。',
 ];
 
-const replicationScript = [
-  '这条爆款的前三秒先用一个明确问题抓住注意力。',
-  '随后快速给出产品使用场景和核心价值。',
-  '中段用连续画面证明效果，并保持原片节奏。',
-  '结尾保留行动引导，替换成企业自己的承接方式。',
-];
+function shotStart(time: string): number {
+  const start = String(time || '').split(/[–—-]/)[0];
+  const clock = start.match(/(\d+):(\d+(?:\.\d+)?)/);
+  if (clock) return Number(clock[1]) * 60 + Number(clock[2]);
+  const match = start.match(/\d+(?:\.\d+)?/);
+  return match ? Number(match[0]) : 0;
+}
+
+function splitShotSpeech(value: string): string[] {
+  return String(value || '').split(/(?<=[。！？!?])\s*|\n+/).map(line => line.trim()).filter(Boolean);
+}
 
 const creationOptions = [
   { id: 'voice', label: '口播', detail: '生成或沿用逐句口播', icon: Megaphone },
@@ -76,11 +90,31 @@ const creationOptions = [
   { id: 'effect', label: '画面特效', detail: '添加转场与重点强调', icon: Sparkles },
 ] as const;
 
-function WorkbenchVideoPreview({ source, poster, title }: { source: string; poster?: string; title: string }) {
+export function WorkbenchVideoPreview({ source, poster, title, seekSeconds, seekRequestId, onResolved, onPlaybackTime }: { source: string; poster?: string; title: string; seekSeconds?: number; seekRequestId?: number; onResolved?: (url: string) => void; onPlaybackTime?: (seconds: number) => void }) {
   const [attempt, setAttempt] = useState(0);
   const [playbackUrl, setPlaybackUrl] = useState('');
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const [message, setMessage] = useState('');
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const playbackCallback = useRef(onPlaybackTime);
+  playbackCallback.current = onPlaybackTime;
+  useEffect(() => {
+    let frame = 0;
+    const tick = () => {
+      const video = videoRef.current;
+      if (video && !video.paused) playbackCallback.current?.(video.currentTime);
+      frame = window.requestAnimationFrame(tick);
+    };
+    frame = window.requestAnimationFrame(tick);
+    return () => window.cancelAnimationFrame(frame);
+  }, [playbackUrl]);
+
+
+  useEffect(() => {
+    if (videoRef.current && Number.isFinite(seekSeconds)) {
+      try { videoRef.current.currentTime = Math.max(0, seekSeconds || 0); } catch { /* metadata pending */ }
+    }
+  }, [seekSeconds, seekRequestId, playbackUrl]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -92,6 +126,7 @@ function WorkbenchVideoPreview({ source, poster, title }: { source: string; post
       .then(url => {
         if (controller.signal.aborted) return;
         setPlaybackUrl(url);
+        onResolved?.(url);
       })
       .catch(error => {
         if (controller.signal.aborted) {
@@ -106,17 +141,22 @@ function WorkbenchVideoPreview({ source, poster, title }: { source: string; post
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [attempt, source]);
+  }, [attempt, source]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="relative h-full w-full overflow-hidden bg-[#e9eeeb]">
       {poster && status !== 'ready' && <img src={poster} alt={`${title}封面`} className="absolute inset-0 h-full w-full object-contain" />}
       {playbackUrl && <video
+        ref={videoRef}
         src={playbackUrl}
         poster={poster}
         controls
         playsInline
         preload="metadata"
+        onTimeUpdate={event => onPlaybackTime?.(event.currentTarget.currentTime)}
+        onSeeking={event => onPlaybackTime?.(event.currentTarget.currentTime)}
+        onSeeked={event => onPlaybackTime?.(event.currentTarget.currentTime)}
+        onLoadedMetadata={event => { if (seekSeconds) event.currentTarget.currentTime = seekSeconds; }}
         aria-label={title}
         className={`h-full w-full object-contain transition-opacity ${status === 'ready' ? 'opacity-100' : 'opacity-0'}`}
         onLoadedData={() => setStatus('ready')}
@@ -149,162 +189,233 @@ export default function SocialCreationWorkbench({
 }) {
   const [products, setProducts] = useState<EnterpriseProductOption[]>([]);
   const [productId, setProductId] = useState('');
+  const [selectedProductIds, setSelectedProductIds] = useState<string[]>([]);
+  const [productAssignments, setProductAssignments] = useState<Record<string, string>>({});
+  const [productSelectorOpen, setProductSelectorOpen] = useState(false);
+  const [manualProductTerms, setManualProductTerms] = useState<string[]>([]);
+  const [newProductTerm, setNewProductTerm] = useState('');
+  const [brandSourceTerm, setBrandSourceTerm] = useState('');
+  const [enterpriseBrandName, setEnterpriseBrandName] = useState('');
+  const [enterpriseCtas, setEnterpriseCtas] = useState<string[]>([]);
+  const [enterpriseProfileState, setEnterpriseProfileState] = useState<'loading' | 'ready' | 'error'>('loading');
   const [productsLoading, setProductsLoading] = useState(true);
   const [productsUnavailable, setProductsUnavailable] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [files, setFiles] = useState<File[]>([]);
-  const [selectedLines, setSelectedLines] = useState<number[]>([0]);
   const [activeLine, setActiveLine] = useState(0);
+  const [requestedSeek, setRequestedSeek] = useState(0);
+  const [seekRequestId, setSeekRequestId] = useState(0);
+  const cardsRef = useRef<Array<HTMLLIElement | null>>([]);
+  const cardListRef = useRef<HTMLOListElement>(null);
+  useEffect(() => {
+    const card = cardsRef.current[activeLine];
+    const panel = cardListRef.current?.parentElement;
+    if (!card || !panel) return;
+    const cardBox = card.getBoundingClientRect();
+    const panelBox = panel.getBoundingClientRect();
+    // Scroll only the storyboard panel; preserve the video and page position.
+    if (cardBox.top < panelBox.top + 85 || cardBox.bottom > panelBox.bottom) {
+      panel.scrollTo({ top: panel.scrollTop + cardBox.top - panelBox.top - 90, behavior: 'smooth' });
+    }
+  }, [activeLine]);
   const [enabledOptions, setEnabledOptions] = useState(() => new Set(creationOptions.map(item => item.id)));
-  const [productionDefaults, setProductionDefaults] = useState<ProductionDefaults>(EMPTY_DEFAULTS);
-  const [heygenAvatars, setHeygenAvatars] = useState<HeyGenAvatarOption[]>([]);
-  const [presenterSelection, setPresenterSelection] = useState('');
-  const [presenterOrientation, setPresenterOrientation] = useState<NonNullable<PresenterAsset['nativeOrientation']>>('unknown');
-  const [useDigitalPresenter, setUseDigitalPresenter] = useState(false);
-  const [presenterConsent, setPresenterConsent] = useState(false);
-  const [presentersLoading, setPresentersLoading] = useState(true);
-  const [presenterNotice, setPresenterNotice] = useState('');
+  const [resolvedReferenceUrl, setResolvedReferenceUrl] = useState('');
+  const [taskProductTerms, setTaskProductTerms] = useState<string[] | undefined>();
+  const [taskReferenceShots, setTaskReferenceShots] = useState<SocialCreationWorkbenchSeed['referenceShots']>(undefined);
+  const [generationNotice, setGenerationNotice] = useState('');
   const uploadRef = useRef<HTMLInputElement>(null);
   const isReplication = mode === 'viral_replication';
-  const script = isReplication ? replicationScript : freeScript;
+  const referenceShots = isReplication ? taskReferenceShots || seed?.referenceShots || [] : [];
+  const referenceLines = referenceShots.flatMap(shot => {
+    const sentences = splitShotSpeech(String(shot.dialogue || shot.subtitle || ''));
+    return (sentences.length ? sentences : ['']).map(text => ({ ...shot, text }));
+  });
+  useEffect(() => {
+    const detected = referenceBrandTerm(referenceLines.map(line => line.text));
+    if (detected) setBrandSourceTerm(current => current || detected);
+  }, [taskReferenceShots, seed?.referenceShots]); // eslint-disable-line react-hooks/exhaustive-deps
+  const script = isReplication ? referenceLines.map(line => line.text) : freeScript;
+  const detectedProductSlots = referenceProductTerms(referenceLines.map(line => ({ text: line.text, time: line.time, visual: line.visual })), taskProductTerms);
+  const productSlots = [...detectedProductSlots, ...manualProductTerms.filter(term => !detectedProductSlots.some(slot => slot.sourceLabel.toLocaleLowerCase() === term.toLocaleLowerCase()))
+    .map((term, index) => ({ shotId: `manual-product-${index}`, sourceLabel: term, time: '', visual: '' }))];
+  const productMentions = referenceProductMentions(referenceLines, productSlots.map(slot => slot.sourceLabel));
+  useEffect(() => {
+    if (!seed?.productMappings?.length || !products.length) return;
+    setProductAssignments(current => {
+      const next = { ...current };
+      for (const slot of productSlots) {
+        if (Object.prototype.hasOwnProperty.call(next, slot.shotId)) continue;
+        const mapping = seed.productMappings!.find(item => (item.sourceTerm.toLocaleLowerCase() === slot.sourceLabel.toLocaleLowerCase() || slot.sourceLabel.toLocaleLowerCase().endsWith(item.sourceTerm.toLocaleLowerCase())));
+        const product = products.find(item => item.id === mapping?.productId || item.name === mapping?.productName);
+        if (product) next[slot.shotId] = product.id;
+      }
+      return JSON.stringify(next) === JSON.stringify(current) ? current : next;
+    });
+  }, [seed?.productMappings, products, JSON.stringify(productSlots)]);
+  useEffect(() => {
+    if (!seed?.productMappings?.length || !products.length) return;
+    const mapped = seed.productMappings.map(mapping => products.find(item => item.id === mapping.productId || item.name === mapping.productName)?.id).filter((id): id is string => Boolean(id));
+    setSelectedProductIds(current => [...new Set([...current, ...mapped])]);
+  }, [seed?.productMappings, products]);
+  const productMappings = productSlots.map((slot, index) => {
+    const assigned = productAssignments[slot.shotId];
+    const product = products.find(item => item.id === (Object.prototype.hasOwnProperty.call(productAssignments, slot.shotId) ? (selectedProductIds.includes(assigned) ? assigned : '') : seed?.productMappings?.length ? '' : selectedProductIds[index]));
+    return { sourceTerm: slot.sourceLabel, productId: product?.id || '', productName: product?.name || '' };
+  });
+  const productsReady = productMappings.length === selectedProductIds.length
+    && productMappings.every(mapping => mapping.productId && mapping.sourceTerm.trim())
+    && new Set(productMappings.map(mapping => mapping.productId)).size === productMappings.length;
+  const syncPlaybackCard = (seconds: number) => {
+    let next = -1;
+    let latestStart = -Infinity;
+    referenceLines.forEach((line, index) => {
+      const start = line.startSeconds ?? shotStart(line.time);
+      const end = line.endSeconds ?? Infinity;
+      if (seconds >= start && seconds < end && start > latestStart) {
+        next = index;
+        latestStart = start;
+      }
+    });
+    if (next >= 0) setActiveLine(current => current === next ? current : next);
+  };
   const previewUrl = useMemo(() => files[0] ? URL.createObjectURL(files[0]) : '', [files]);
 
   useEffect(() => () => { if (previewUrl) URL.revokeObjectURL(previewUrl); }, [previewUrl]);
 
   useEffect(() => {
+    if (!isReplication || !seed?.continueTaskId) return;
     let active = true;
-    setProductsLoading(true);
-    setProductsUnavailable(false);
-    void studioApi.materialProducts()
-      .then(result => {
+    let timer = 0;
+    let refreshed = false;
+    const load = () => void socialContentApi.getTask(seed.continueTaskId!).then(async initial => {
+      let task = initial;
+      if (!refreshed) { refreshed = true; task = await socialContentApi.refreshReference(initial.taskId, initial.version).catch(() => initial); }
+      if (!active || task.referenceVideoAnalysis?.status !== 'ready') return;
+      window.clearInterval(timer);
+      setTaskProductTerms(task.referenceVideoAnalysis.narrationProducts);
+      setTaskReferenceShots(task.referenceVideoAnalysis.shots.flatMap(shot => {
+        const base = { startSeconds: shot.startSeconds, endSeconds: shot.endSeconds, visual: shot.visualDescription, firstFrameRef: shot.materialEvidence?.firstFrameRef || undefined,
+          firstFrameSeconds: shot.materialEvidence?.firstFrameSeconds ?? shot.startSeconds };
+        if (shot.spokenLines?.length) return shot.spokenLines.map(line => ({ ...base,
+          time: `${line.startSeconds.toFixed(2)}–${line.endSeconds.toFixed(2)}s`, dialogue: line.text }));
+        return [{ ...base, time: `${shot.startSeconds.toFixed(2)}–${shot.endSeconds.toFixed(2)}s`,
+          dialogue: shot.spokenText || '', subtitle: shot.captionText || '' }];
+      }));
+    }).catch(() => undefined);
+    load();
+    timer = window.setInterval(load, 10_000);
+    return () => { active = false; window.clearInterval(timer); };
+  }, [isReplication, seed?.continueTaskId]);
+
+  useEffect(() => {
+    let active = true;
+    const load = () => {
+      setProductsLoading(true);
+      setProductsUnavailable(false);
+      void fetch('/api/overseas/enterprise/profile', { headers: authHeader(), credentials: 'same-origin' })
+        .then(response => { if (!response.ok) throw new Error(`enterprise_products_${response.status}`); return response.json(); })
+        .then(async result => {
+          const profile = result.profile || result;
+          const items = await Promise.all((profile.products?.items || []).map(async (item: { id?: string; productId?: string; sku?: string; name?: string }, index: number) => {
+            const name = String(item.name || '').trim().slice(0, 200);
+            let id = [item.id, item.productId].map(value => String(value || '').trim().slice(0, 200)).find(Boolean) || String(item.sku || '').trim().slice(0, 160);
+            if (!id) {
+              const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(name || `legacy-empty-row:${index}`));
+              id = `product-${Array.from(new Uint8Array(digest)).map(value => value.toString(16).padStart(2, '0')).join('').slice(0, 16)}`;
+            }
+            return { id, name };
+          }));
+          return { items };
+        }).then(result => {
         if (!active) return;
         const items = (Array.isArray(result.items) ? result.items : [])
           .filter(item => item && typeof item.id === 'string' && typeof item.name === 'string');
         setProducts(items);
         const seeded = items.find(item => item.id === seed?.productId || item.name === seed?.productName);
-        setProductId(seeded?.id || '');
-      })
-      .catch(() => {
-        if (!active) return;
-        setProducts([]);
-        setProductId('');
-        setProductsUnavailable(true);
-      })
-      .finally(() => { if (active) setProductsLoading(false); });
-    return () => { active = false; };
-  }, [seed?.productId, seed?.productName]);
+        setProductId(current => items.some(item => item.id === current) ? current : seeded?.id || '');
+        setSelectedProductIds(current => {
+          const retained = current.filter(id => items.some(item => item.id === id));
+          const mapped = [...items.filter(item => seed?.selectedProductIds?.includes(item.id) || seed?.selectedProductNames?.includes(item.name)).map(item => item.id), ...(seed?.productMappings || []).map(mapping => items.find(item => item.id === mapping.productId || item.name === mapping.productName)?.id || '').filter(Boolean)];
+          return retained.length ? retained : mapped.length ? [...new Set(mapped)] : seeded ? [seeded.id] : [];
+        });
+      }).catch(() => { if (active) setProductsUnavailable(true); })
+        .finally(() => { if (active) setProductsLoading(false); });
+    };
+    load();
+    window.addEventListener('focus', load);
+    return () => { active = false; window.removeEventListener('focus', load); };
+  }, [seed?.productId, seed?.productName, productSelectorOpen]);
 
   useEffect(() => {
     let active = true;
-    setPresentersLoading(true);
-    void Promise.all([productionApi.defaults(), studioApi.digitalHumanAvatars()])
-      .then(([defaults, avatars]) => {
-        if (!active) return;
-        setProductionDefaults(defaults);
-        setHeygenAvatars(avatars.items);
-      })
-      .catch(() => { if (active) setPresenterNotice('数字人资产暂时无法读取，请稍后刷新。'); })
-      .finally(() => { if (active) setPresentersLoading(false); });
-    return () => { active = false; };
+    const load = () => {
+      setEnterpriseProfileState('loading');
+      void fetch('/api/overseas/enterprise/profile', { headers: authHeader(), credentials: 'same-origin' })
+        .then(response => { if (!response.ok) throw new Error('enterprise_profile_unavailable'); return response.json(); })
+        .then(result => {
+          if (!active) return;
+          const profile = result.profile || result;
+          setEnterpriseBrandName(String(profile.brand?.name || '').trim());
+          const strategy = profile.socialStrategy;
+          const routes: string[] = Array.isArray(strategy?.enabledRoutes) ? strategy.enabledRoutes : [];
+          const strategies = strategy?.routeStrategies || {};
+          const ctas = (routes.length ? routes : Object.keys(strategies))
+            .map(route => String(strategies[route]?.primaryCta || '').trim()).filter(Boolean);
+          setEnterpriseCtas([...new Set<string>(ctas)]);
+          setEnterpriseProfileState('ready');
+        }).catch(() => { if (active) setEnterpriseProfileState('error'); });
+    };
+    load();
+    window.addEventListener('focus', load);
+    return () => { active = false; window.removeEventListener('focus', load); };
   }, []);
 
-  const toggleLine = (index: number) => {
-    setActiveLine(index);
-    setSelectedLines(current => current.includes(index)
-      ? current.length === 1 ? current : current.filter(item => item !== index)
-      : [...current, index].sort((left, right) => left - right));
-  };
-
-  const persistSelectedPresenter = async (): Promise<string> => {
-    if (!useDigitalPresenter) return '';
-    if (!presenterSelection) throw new Error('请选择一个数字人资产');
-    if (!presenterConsent) throw new Error('请先确认人物、声音和商业使用授权');
-    if (presenterOrientation !== 'portrait') throw new Error('社媒视频默认为竖屏，请先核验该数字人的原生画幅为竖屏');
-    const now = new Date().toISOString();
-    const savedId = presenterSelection.startsWith('saved:') ? presenterSelection.slice('saved:'.length) : '';
-    const providerId = presenterSelection.startsWith('heygen:') ? presenterSelection.slice('heygen:'.length) : '';
-    const existing = savedId
-      ? productionDefaults.presenters.find(item => item.id === savedId)
-      : productionDefaults.presenters.find(item => (item.toolMappings?.heygen?.avatarId || item.avatarId) === providerId);
-    const avatar = providerId ? heygenAvatars.find(item => item.id === providerId) : null;
-    const avatarId = avatar?.id || existing?.toolMappings?.heygen?.avatarId || existing?.avatarId || '';
-    const voiceId = avatar?.defaultVoiceId || existing?.toolMappings?.heygen?.voiceId || existing?.voiceId || '';
-    if (!avatarId || !voiceId) throw new Error('该数字人缺少 HeyGen 人物或默认声音，请先在 HeyGen 中补齐');
-    const presenterId = existing?.id || crypto.randomUUID();
-    const safeAvatarRef = encodeURIComponent(avatarId);
-    const presenter: PresenterAsset = {
-      ...(existing || {}),
-      id: presenterId,
-      name: avatar?.name || existing?.name || 'HeyGen 数字人',
-      avatarId,
-      voiceId,
-      authorized: true,
-      supportsAlpha: existing?.supportsAlpha === true,
-      nativeOrientation: presenterOrientation,
-      commercialRightsStatus: 'cleared',
-      rightsEvidence: existing?.rightsEvidence || {
-        authorizationRef: `rights://heygen-account-asset/${safeAvatarRef}`,
-        consentRef: `consent://studio-operator-confirmation/${encodeURIComponent(now)}`,
-        grantedAt: now,
-        subjectAdultConfirmed: true,
-        permittedProviders: ['heygen'],
-        permittedUses: ['digital_presenter', 'voice_synthesis'],
-        providerScopes: [{ provider: 'heygen', uses: ['digital_presenter', 'voice_synthesis'] }],
-      },
-      toolMappings: { ...(existing?.toolMappings || {}), heygen: { avatarId, voiceId } },
-    };
-    const presenters = existing
-      ? productionDefaults.presenters.map(item => item.id === existing.id ? presenter : item)
-      : [...productionDefaults.presenters, presenter];
-    const saved = await productionApi.saveDefaults({ ...productionDefaults, preference: 'avatar', presenters, defaultPresenterId: presenterId });
-    setProductionDefaults(saved);
-    if (!saved.presenters.some(item => item.id === presenterId)) throw new Error('数字人资产保存后未能回填，请刷新后重试');
-    return presenterId;
-  };
-
-  const startGeneration = async () => {
-    if (submitting || productsLoading) return;
-    setSubmitting(true); setPresenterNotice('');
+  const startGeneration = async (replicationStep: 1 | 2 | 3 = 1, navigationOnly = false) => {
+    if (submitting || productsLoading || (!navigationOnly && isReplication && !productsReady)) return;
+    setSubmitting(true); setGenerationNotice('');
     try {
-      const presenterAssetId = await persistSelectedPresenter();
+      const presenterAssetId = '';
       const uploadedMaterials: Material[] = [];
-      for (const file of files) {
+      for (const file of navigationOnly ? [] : files) {
         const type: Material['type'] = file.type.startsWith('video/') ? 'video' : file.type.startsWith('audio/') ? 'audio' : 'image';
         const result = await studioApi.uploadMaterialFile(file, { folder: 'upload', type, sourceType: 'content-workbench' });
         if (!result.ok || !result.material?.id) throw new Error(result.error || `「${file.name}」上传失败`);
         uploadedMaterials.push(result.material);
       }
       const selected = products.find(item => item.id === productId);
-      const productName = selected?.name || '';
+      const productName = isReplication ? productMappings[0]?.productName || (navigationOnly ? seed?.productName || '' : '') : selected?.name || '';
       // GENERATION_INTEGRATION_GAP: the current task contract accepts shared files plus
       // selected sentence indexes, but not a durable sentence-to-asset mapping yet.
       onGenerate({
+        replicationStep: isReplication ? replicationStep : undefined,
         requestId: Date.now(),
         creationPath: mode,
         title: isReplication
           ? `${productName || seed?.productName || '自动选品'} · 爆款复刻`
           : `${productName || '自由创作'} · 新内容`,
-        productId: selected?.id || '',
+        productId: isReplication ? productMappings[0]?.productId || '' : selected?.id || '',
         productName,
+        productMappings: isReplication ? productMappings : [],
+        brandMapping: enterpriseBrandName ? { sourceTerm: brandSourceTerm.trim(), brandName: enterpriseBrandName } : undefined,
         presenterAssetId,
         files,
         uploadedMaterials,
         referenceLinks: [...new Set([...(seed?.referenceLinks || []), ...uploadedMaterials.map(item => item.url).filter(Boolean)])],
         callToAction: '',
-        specialRequirements: `口播段落：${selectedLines.map(index => index + 1).join('、')}；生成项：${[...enabledOptions, ...(presenterAssetId ? ['digital_presenter'] : [])].join('、')}`,
+        specialRequirements: `生成项：${[...enabledOptions].join('、')}`,
         stageProfileId: stageProfile?.id || 'b2b_launch',
         stageLabel: stageProfile?.name || 'B2B 起步验证',
         strategyPresetId: stageProfile?.presetId || 'b2b_starting',
       });
     } catch (error) {
-      setPresenterNotice(error instanceof Error ? error.message : '数字人资产绑定失败');
+      setGenerationNotice(error instanceof Error ? error.message : '创建任务失败');
       setSubmitting(false);
     }
   };
 
   return (
-    <section className="flex h-full min-h-0 flex-col bg-[#f3f5f2]">
-      <header className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-border bg-white px-5 py-3">
+    <section className="flex h-full min-h-0 flex-col bg-[#f2f7f4]">
+      {isReplication ? <ReplicationWorkbenchHeader activeStep={0} onStepChange={index => { if (index > 0) void startGeneration(index as 1 | 2 | 3, true); }} navigationDisabled={submitting || productsLoading} title={seed?.referenceTitle} actions={<><button type="button" onClick={onShowCreations} className="rounded-lg border border-border px-3 py-2 text-xs font-bold">我的创作</button><button type="button" onClick={onOpenChooser} className="rounded-lg bg-[#173d31] px-3 py-2 text-xs font-bold text-white">切换制作方式</button></>} /> : (      <header className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-border bg-white px-5 py-3">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
             <span className={`rounded-full px-2.5 py-1 text-[10px] font-black ${isReplication ? 'bg-orange-50 text-orange-700' : 'bg-emerald-50 text-emerald-700'}`}>{isReplication ? '爆款复刻' : '自由创作'}</span>
@@ -317,22 +428,24 @@ export default function SocialCreationWorkbench({
           <button type="button" onClick={onShowCreations} className="rounded-lg border border-border bg-white px-3 py-2 text-xs font-bold text-text-secondary hover:bg-surface-2">我的创作</button>
           <button type="button" onClick={onOpenChooser} className="inline-flex items-center gap-1.5 rounded-lg bg-[#173d31] px-3 py-2 text-xs font-black text-white hover:bg-[#245644]"><ImagePlus size={14} />切换制作方式</button>
         </div>
-      </header>
+      </header>)}
+
 
       <div className="social-creation-workbench-layout grid min-h-0 flex-1 grid-cols-1 overflow-y-auto lg:overflow-hidden">
         <aside className="min-h-0 border-b border-border bg-white lg:overflow-y-auto lg:border-b-0 lg:border-r">
           <div className="sticky top-0 z-10 border-b border-border bg-white px-4 py-4">
             <p className="text-sm font-black text-text-primary">口播内容</p>
-            <p className="mt-1 text-[11px] leading-5 text-text-muted">点击句子跳到对应画面；可多选后统一更换素材。</p>
+            <p className="mt-1 text-[11px] leading-5 text-text-muted">逐句对应原片分镜，点击定位主视频的对应画面。</p>
           </div>
-          <ol className="space-y-2 p-3">
+          <ol ref={cardListRef} className="space-y-2 p-3">
+            {isReplication && !referenceShots.length && <li className="rounded-xl border border-dashed border-border p-4 text-xs leading-5 text-text-muted">原片分镜和口播尚未完成分析。完成后会在这里逐句显示真实口播与素材首帧。</li>}
             {script.map((line, index) => {
-              const selected = selectedLines.includes(index);
               const active = activeLine === index;
-              return <li key={line}>
-                <button type="button" onClick={() => toggleLine(index)} className={`flex w-full items-start gap-3 rounded-xl border p-3 text-left transition ${active ? 'border-emerald-400 bg-emerald-50 shadow-sm' : selected ? 'border-emerald-200 bg-emerald-50/50' : 'border-border bg-white hover:border-emerald-200'}`}>
-                  <span className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-md border text-[10px] font-black ${selected ? 'border-emerald-600 bg-emerald-600 text-white' : 'border-border text-text-muted'}`}>{selected ? <Check size={12} /> : index + 1}</span>
-                  <span className="min-w-0 flex-1"><span className="block text-xs font-bold leading-5 text-text-primary">{line}</span><span className="mt-1 flex items-center gap-1 text-[10px] font-semibold text-text-muted">00:{String(index * 4).padStart(2, '0')}–00:{String((index + 1) * 4).padStart(2, '0')}<ChevronRight size={11} /></span></span>
+              return <li ref={element => { cardsRef.current[index] = element; }} key={`${index}:${line}`}>
+                <button type="button" aria-current={active ? 'step' : undefined} onClick={() => { setActiveLine(index); setSeekRequestId(current => current + 1); setRequestedSeek((referenceLines[index]?.startSeconds ?? shotStart(referenceLines[index]?.time || '')) + 0.05); }} className={`flex w-full items-start gap-3 rounded-xl border p-3 text-left transition ${active ? 'border-emerald-400 bg-emerald-50 shadow-sm' : 'border-border bg-white hover:border-emerald-200'}`}>
+                  {isReplication && <StoryboardFirstFrame source={resolvedReferenceUrl || seed?.referenceMediaUrl} firstFrameRef={referenceLines[index]?.firstFrameRef} time={referenceLines[index]?.firstFrameSeconds ?? shotStart(referenceLines[index]?.time || '')} label={`口播 ${index + 1}`} />}
+                  <span className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-md border text-[10px] font-black ${active ? 'border-emerald-600 bg-emerald-600 text-white' : 'border-border text-text-muted'}`}>{index + 1}</span>
+                  <span className="min-w-0 flex-1"><span className="block text-xs font-bold leading-5 text-text-primary">{line || '该分镜暂无可识别口播'}</span><span className="mt-1 flex items-center gap-1 text-[10px] font-semibold text-text-muted">{isReplication ? referenceLines[index]?.time : `00:${String(index * 4).padStart(2, '0')}–00:${String((index + 1) * 4).padStart(2, '0')}`}<ChevronRight size={11} /></span>{isReplication && referenceLines[index]?.visual && <span className="mt-1 line-clamp-2 text-[10px] leading-4 text-text-muted">画面：{referenceLines[index].visual}</span>}</span>
                 </button>
               </li>;
             })}
@@ -341,25 +454,24 @@ export default function SocialCreationWorkbench({
 
         <main className="flex min-h-[560px] min-w-0 flex-col bg-[#f5f8f5] lg:min-h-0">
           <div className="flex items-center justify-between border-b border-black/5 px-5 py-3">
-            <div><p className="text-xs font-black text-text-primary">画面预览</p><p className="mt-0.5 text-[10px] text-text-muted">当前对应第 {activeLine + 1} 句 · 已选 {selectedLines.length} 句</p></div>
+            <div><p className="text-xs font-black text-text-primary">画面预览</p><p className="mt-0.5 text-[10px] text-text-muted">当前对应第 {activeLine + 1} 个分镜</p></div>
             {!isReplication && <button type="button" onClick={() => uploadRef.current?.click()} className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-white px-3 py-2 text-xs font-black text-text-secondary shadow-sm"><Upload size={14} />上传素材</button>}
           </div>
           <input ref={uploadRef} type="file" multiple accept="video/*,image/*" className="hidden" onChange={event => setFiles(Array.from(event.currentTarget.files || []))} />
-          <div className="flex flex-1 items-stretch justify-center p-4 sm:p-5">
-            <div className="relative flex min-h-[460px] w-full overflow-hidden rounded-xl border border-[#dfe5e1] bg-[#eef0f3] shadow-[0_2px_12px_rgba(23,61,49,0.06)]">
+          <div className="flex min-h-0 flex-1 items-center justify-center overflow-hidden p-4 sm:p-5">
+            <div className="relative flex h-full min-h-0 max-h-full w-full items-center justify-center overflow-hidden rounded-xl border border-[#dfe5e1] bg-[#eef0f3] shadow-[0_2px_12px_rgba(23,61,49,0.06)]">
               {previewUrl && files[0]?.type.startsWith('video/') ? <video src={previewUrl} controls playsInline preload="metadata" className="h-full w-full object-contain" />
                 : previewUrl ? <img src={previewUrl} alt="用户上传素材预览" className="h-full w-full object-contain" />
-                : seed?.referenceContentType === 'video' && seed.referenceMediaUrl ? <WorkbenchVideoPreview source={seed.referenceMediaUrl} poster={seed.referenceThumbnail} title={seed.referenceTitle || '爆款视频预览'} />
+                : seed?.referenceContentType === 'video' && seed.referenceMediaUrl ? <WorkbenchVideoPreview source={seed.referenceMediaUrl} poster={seed.referenceThumbnail} title={seed.referenceTitle || '爆款视频预览'} seekSeconds={requestedSeek} seekRequestId={seekRequestId} onPlaybackTime={syncPlaybackCard} onResolved={setResolvedReferenceUrl} />
                 : seed?.referenceThumbnail ? <img src={seed.referenceThumbnail} alt={isReplication ? '爆款视频预览' : '已选素材预览'} className="h-full w-full object-contain" />
                 : <div className="flex h-full w-full flex-col items-center justify-center gap-4 px-8 text-center text-[#294c40]">
                     <span className="flex h-16 w-16 items-center justify-center rounded-full bg-white text-[#607b71] shadow-sm"><Film size={27} /></span>
                     <div><p className="text-base font-black">{isReplication ? '等待爆款视频' : '暂无预览'}</p><p className="mt-2 text-xs leading-5 text-[#789087]">{isReplication ? '从灵感中心选择爆款后，会在这里显示原视频。' : '先从素材库选择画面，或上传本地视频与图片。'}</p></div>
                     {!isReplication && <div className="flex items-center gap-3"><button type="button" onClick={() => window.dispatchEvent(new CustomEvent('lingshu:open-material-library'))} className="rounded-lg border border-white bg-white px-4 py-2.5 text-xs font-black text-[#38594d] shadow-sm">选择素材</button><button type="button" onClick={() => uploadRef.current?.click()} className="rounded-lg bg-[#173d31] px-4 py-2.5 text-xs font-black text-white shadow-sm">上传素材</button></div>}
                   </div>}
-              {(previewUrl || seed?.referenceThumbnail || seed?.referenceMediaUrl) && <div className="pointer-events-none absolute inset-x-6 bottom-5 rounded-lg bg-black/55 px-3 py-2 text-center text-xs font-bold leading-5 text-white backdrop-blur-sm">{script[activeLine]}</div>}
             </div>
           </div>
-          <div className="flex items-center justify-between border-t border-black/5 px-5 py-3 text-[11px] text-text-muted"><span>{files.length ? `已上传 ${files.length} 个素材` : isReplication ? '沿用爆款原片素材' : '尚未上传素材'}</span><button type="button" onClick={()=>uploadRef.current?.click()} className="font-black text-emerald-700">为所选口播更换素材</button></div>
+          <div className="flex items-center justify-between border-t border-black/5 px-5 py-3 text-[11px] text-text-muted"><span>{files.length ? `已上传 ${files.length} 个素材` : isReplication ? '沿用爆款原片素材' : '尚未上传素材'}</span>{!isReplication && <button type="button" onClick={()=>uploadRef.current?.click()} className="font-black text-emerald-700">上传素材</button>}</div>
         </main>
 
         <aside className="flex min-h-0 flex-col border-t border-border bg-white lg:border-l lg:border-t-0">
@@ -367,12 +479,40 @@ export default function SocialCreationWorkbench({
             <div className="flex items-start justify-between gap-3"><div><p className="text-sm font-black text-text-primary">生成设置</p><p className="mt-1 text-[11px] leading-5 text-text-muted">{isReplication ? '爆款复刻沿用原片设置，选项只读。' : '每一步都由你确认后再生成。'}</p></div>{isReplication && <span className="rounded-full bg-slate-100 px-2 py-1 text-[9px] font-black text-slate-500">已锁定</span>}</div>
 
             {isReplication && <div className="mt-4">
-              <label htmlFor="replication-product" className="text-xs font-black text-text-primary">主推产品</label>
-              <select id="replication-product" value={productId} disabled={productsLoading || submitting} onChange={event => setProductId(event.target.value)} className="mt-2 h-11 w-full rounded-xl border border-border bg-white px-3 text-xs font-bold text-text-primary disabled:bg-slate-100">
-                <option value="">{productsLoading ? '正在读取企业产品表…' : '请选择主推产品'}</option>
-                {products.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
-              </select>
-              {productsUnavailable && <p className="mt-2 flex items-center gap-1 text-[10px] text-amber-700"><CircleAlert size={11} />企业产品表暂时无法读取</p>}
+              <p className="text-xs font-black text-text-primary">主推产品 · 多选</p>
+              <p className="mt-1 text-[10px] leading-4 text-text-muted">原口播产品词共出现 {productMentions.length} 次，去重后有 {productSlots.length} 个替换对象。同一产品重复出现沿用同一映射；请选择 {productSlots.length} 款企业产品。</p>
+              <details className="mt-2 text-[10px] text-text-secondary"><summary className="cursor-pointer font-bold">查看识别依据与出现次数</summary><div className="mt-1 space-y-1">{productMentions.map((mention, index) => <p key={`${mention.time}:${index}`}>{index + 1}. {mention.time} · 「{mention.sourceLabel}」：{mention.text}</p>)}<p className="text-text-muted">按口播文本统计；画面中的瓶数、配方数量、重复分镜不计为不同口播产品。产品类别词不能证明具体 SKU 数量。</p></div></details>
+              <button type="button" aria-expanded={productSelectorOpen} aria-label="选择企业知识库产品" disabled={productsLoading || submitting} onClick={() => setProductSelectorOpen(value => !value)} className="mt-2 flex h-11 w-full items-center justify-between rounded-xl border border-border bg-white px-3 text-left text-xs font-bold text-text-primary disabled:bg-slate-100">
+                <span>{productsLoading ? '正在读取企业产品目录…' : selectedProductIds.length ? `已选 ${selectedProductIds.length}/${productSlots.length} 款产品` : '请选择主推产品'}</span><ChevronRight size={15} className={productSelectorOpen ? 'rotate-90' : ''} />
+              </button>
+              {productSelectorOpen && <div className="mt-2 max-h-56 space-y-1 overflow-y-auto rounded-xl border border-border bg-white p-2 shadow-sm">
+                {products.map(item => <label key={item.id} className="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-2 text-xs hover:bg-emerald-50">
+                  <input type="checkbox" checked={selectedProductIds.includes(item.id)} disabled={submitting || (!selectedProductIds.includes(item.id) && selectedProductIds.length >= productSlots.length)} onChange={event => setSelectedProductIds(current => event.target.checked ? [...current, item.id] : current.filter(id => id !== item.id))} className="accent-emerald-700" />
+                  <span className="min-w-0 truncate">{item.name}</span>
+                </label>)}
+                {!products.length && <div className="px-2 py-3 text-xs text-text-muted">企业知识库暂无产品。<button type="button" onClick={() => { try { sessionStorage.setItem('lingshu:enterprise-focus', 'products'); } catch { /* optional storage */ } window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: { page: 'enterprise' } })); }} className="ml-1 font-bold text-emerald-700 underline">前往录入产品</button></div>}
+              </div>}
+              {productsUnavailable && <p className="mt-2 flex items-center gap-1 text-[10px] text-amber-700"><CircleAlert size={11} />企业产品目录暂时无法读取</p>}
+              {productSlots.length > 0 && <section className="mt-3" aria-label="产品映射设置">
+                <div className="mb-2 flex items-center justify-between text-[10px] text-text-muted"><span className="font-bold">产品映射 · {productSlots.length} 项</span>{productSlots.length > 2 && <span>上下滚动查看全部</span>}</div>
+                <div role="region" aria-label="产品映射列表" tabIndex={0} style={{ maxHeight: 160, overflowY: 'auto', flexShrink: 0 }} className="space-y-2 overscroll-contain pr-1 [scrollbar-gutter:stable]">
+              {productSlots.map((slot, index) => <label key={slot.shotId} className="block min-h-[76px] rounded-lg border border-border bg-surface-2 p-2 text-[10px] font-bold text-text-secondary">
+                {index + 1}. 原口播「{slot.sourceLabel}」→ 企业产品
+                <select aria-label={`原口播产品 ${slot.sourceLabel} 对应企业产品`} value={productMappings[index]?.productId || ''} onChange={event => {
+                  const id = event.target.value;
+                  const assignments = Object.fromEntries(productSlots.map((item, slotIndex) => [item.shotId, item.shotId === slot.shotId ? id : productMappings[slotIndex]?.productId || '']));
+                  setProductAssignments(assignments);
+                  setSelectedProductIds([...new Set(Object.values(assignments).filter(Boolean))]);
+                }} className="mt-1 w-full rounded-md border border-border bg-white px-2 py-2 text-xs text-text-primary">
+                  <option value="">请选择对应产品</option>{products.map(item => <option key={item.id} value={item.id} disabled={productMappings.some((mapping, mappingIndex) => mappingIndex !== index && mapping.productId === item.id)}>{item.name}</option>)}
+                </select>
+              </label>)}
+                </div>
+              </section>}
+              {!productSlots.length && <p className="mt-2 text-[10px] leading-4 text-amber-700">未从原口播识别到产品词。若原片确有产品名，请在下方补充原词后再选择对应产品。</p>}
+              <div className="mt-2 flex gap-1.5"><input aria-label="补充原口播产品词" value={newProductTerm} onChange={event => setNewProductTerm(event.target.value)} placeholder="补充未识别的原产品词" className="min-w-0 flex-1 rounded-md border border-border px-2 py-1.5 text-[10px]" /><button type="button" disabled={!newProductTerm.trim()} onClick={() => { const term = newProductTerm.trim(); if (!script.join(' ').toLocaleLowerCase().includes(term.toLocaleLowerCase())) { setGenerationNotice('补充的产品词必须出现在原片口播中。'); return; } if (!productSlots.some(slot => slot.sourceLabel.toLocaleLowerCase() === term.toLocaleLowerCase())) setManualProductTerms(current => [...current, term]); setNewProductTerm(''); setGenerationNotice(''); }} className="rounded-md border border-border bg-white px-2 text-[10px] font-bold disabled:opacity-40">添加</button></div>
+              {productSlots.length > 0 && !productsReady && <p role="status" className="mt-2 text-[10px] font-bold text-amber-700">需选择 {productSlots.length} 款不同的企业产品，并完成一一对应。</p>}
+              <div className="mt-3 rounded-lg border border-border bg-surface-2 p-2.5"><p className="text-[10px] font-bold text-text-secondary">企业品牌 · 自动读取</p><p className="mt-1 text-xs text-text-primary">{enterpriseBrandName || '企业知识库尚未填写品牌名称'}</p><p className="mt-1 text-[10px] text-text-muted">新口播使用企业知识库中的品牌信息，无需填写原片品牌名。</p></div>
             </div>}
 
             <div className="mt-4 space-y-2">
@@ -388,56 +528,30 @@ export default function SocialCreationWorkbench({
               })}
             </div>
 
-            <div className={`mt-4 rounded-xl border p-3 ${useDigitalPresenter ? 'border-emerald-300 bg-emerald-50/70' : 'border-border bg-white'}`}>
-              <button type="button" disabled={isReplication} onClick={() => { setUseDigitalPresenter(value => !value); setPresenterNotice(''); }} className="flex w-full items-center gap-3 text-left disabled:cursor-not-allowed disabled:opacity-55">
-                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white text-emerald-700"><UserRound size={15} /></span>
-                <span className="min-w-0 flex-1"><span className="block text-xs font-black text-text-primary">数字人</span><span className="mt-0.5 block text-[10px] text-text-muted">从 HeyGen 账号资产选择出镜人物</span></span>
-                <span className={`h-5 w-9 rounded-full p-0.5 ${useDigitalPresenter ? 'bg-emerald-600' : 'bg-slate-200'}`}><span className={`block h-4 w-4 rounded-full bg-white transition ${useDigitalPresenter ? 'translate-x-4' : ''}`} /></span>
-              </button>
-              {useDigitalPresenter && !isReplication && (
-                <div className="mt-3 space-y-2 border-t border-emerald-200 pt-3">
-                  <label className="block text-[10px] font-black text-text-primary">数字人资产
-                    <select value={presenterSelection} disabled={presentersLoading || submitting} onChange={event => {
-                      const value = event.target.value;
-                      setPresenterSelection(value); setPresenterConsent(false); setPresenterNotice('');
-                      const presenter = value.startsWith('saved:') ? productionDefaults.presenters.find(item => item.id === value.slice(6)) : null;
-                      setPresenterOrientation(presenter?.nativeOrientation || 'unknown');
-                    }} className="mt-1.5 h-10 w-full rounded-lg border border-emerald-200 bg-white px-2 text-[10px] font-bold text-text-primary">
-                      <option value="">{presentersLoading ? '正在读取数字人资产…' : '请选择数字人'}</option>
-                      {productionDefaults.presenters.length > 0 && <optgroup label="已绑定企业人物">{productionDefaults.presenters.filter(item => Boolean((item.toolMappings?.heygen?.avatarId || item.avatarId) && (item.toolMappings?.heygen?.voiceId || item.voiceId))).map(item => <option key={item.id} value={`saved:${item.id}`}>{item.name}</option>)}</optgroup>}
-                      {heygenAvatars.length > 0 && <optgroup label="HeyGen 账号">{heygenAvatars.map(item => <option key={item.id} value={`heygen:${item.id}`}>{item.ownership === 'private' ? '账号资产' : '公共人物'} · {item.name}</option>)}</optgroup>}
-                    </select>
-                  </label>
-                  <label className="block text-[10px] font-black text-text-primary">原生画幅
-                    <select value={presenterOrientation} disabled={submitting} onChange={event => setPresenterOrientation(event.target.value as NonNullable<PresenterAsset['nativeOrientation']>)} className="mt-1.5 h-10 w-full rounded-lg border border-emerald-200 bg-white px-2 text-[10px] font-bold text-text-primary">
-                      <option value="unknown">未核验</option><option value="portrait">竖屏</option><option value="landscape">横屏</option><option value="square">方形</option>
-                    </select>
-                  </label>
-                  <label className="flex cursor-pointer items-start gap-2 text-[10px] leading-4 text-text-secondary"><input type="checkbox" checked={presenterConsent} disabled={submitting} onChange={event => setPresenterConsent(event.target.checked)} className="mt-0.5 accent-emerald-700" /><span>我确认已取得该成年出镜人物的肖像、声音和商业使用授权。</span></label>
-                  {!presentersLoading && !productionDefaults.presenters.length && !heygenAvatars.length && <p className="text-[10px] leading-4 text-amber-700">暂未读取到数字人资产，请检查测试服 HeyGen Key 与私有资产开关。</p>}
-                </div>
-              )}
-              {isReplication && <p className="mt-2 text-[10px] leading-4 text-text-muted">爆款复刻的人物替换需先完成参考视频分析，进入任务后逐镜确认。</p>}
-              {presenterNotice && <p role="status" className="mt-2 text-[10px] leading-4 text-amber-700">{presenterNotice}</p>}
-            </div>
-
-            <div className="mt-4 rounded-xl border border-dashed border-amber-200 bg-amber-50/60 p-3">
-              <div className="flex items-center gap-2"><Megaphone size={14} className="text-amber-700" /><p className="text-xs font-black text-amber-950">CTA</p></div>
-              <p className="mt-1 text-[10px] leading-5 text-amber-800">CTA 从企业中心的社媒策略读取，填写一次后后续内容自动复用。</p>
+            {enterpriseProfileState === 'ready' && enterpriseCtas.length > 0 && <div className="mt-4 rounded-xl border border-border bg-surface-2 p-3">
+              <div className="flex items-center gap-2"><Megaphone size={14} /><p className="text-xs font-black text-text-primary">CTA · 已从企业知识库读取</p></div>
+              {enterpriseCtas.map(cta => <p key={cta} className="mt-1 text-[10px] leading-5 text-text-secondary">{cta}</p>)}
+            </div>}
+            {enterpriseProfileState === 'ready' && !enterpriseCtas.length && <div className="mt-4 rounded-xl border border-dashed border-amber-200 bg-amber-50/60 p-3">
+              <div className="flex items-center gap-2"><Megaphone size={14} className="text-amber-700" /><p className="text-xs font-black text-amber-950">尚未设置 CTA</p></div>
+              <p className="mt-1 text-[10px] leading-5 text-amber-800">企业社媒策略尚未保存 CTA，填写后后续内容自动复用。</p>
               <button type="button" onClick={() => { try { sessionStorage.setItem('lingshu:enterprise-focus', 'social-strategy'); } catch { /* optional storage */ } window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: { page: 'enterprise' } })); }} className="mt-2 text-[10px] font-black text-amber-800 underline underline-offset-2">前往企业中心填写</button>
-            </div>
+            </div>}
+            {enterpriseProfileState !== 'ready' && <p className="mt-4 text-[10px] text-text-muted">{enterpriseProfileState === 'loading' ? '正在读取企业 CTA…' : '企业 CTA 暂时无法读取，请稍后重试。'}</p>}
+
           </div>
 
-          <div className="shrink-0 border-t border-border bg-white p-4">
-            {/* GENERATION_INTEGRATION_GAP: the server calculates estimatedCostCny only
-                after a task plan exists; there is no preflight quote endpoint yet. */}
-            {isReplication && <div className="mb-3 flex items-center justify-between text-[11px]"><span className="text-text-muted">预计消耗</span><span className="font-black text-text-primary" title="生成任务建立后由服务端返回真实预估">待生成服务核算</span></div>}
-            <button type="button" disabled={submitting || productsLoading || (isReplication && !productId && products.length > 0)} onClick={() => void startGeneration()} className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#173d31] px-4 py-3 text-sm font-black text-white shadow-sm hover:bg-[#245644] disabled:cursor-not-allowed disabled:bg-slate-300">
-              {submitting ? <Loader2 size={16} className="animate-spin" /> : <Film size={16} />}{submitting ? '正在创建任务' : '开始生成'}
-            </button>
-          </div>
         </aside>
       </div>
+      <footer className="min-h-[76px] shrink-0 border-t border-border bg-white px-5 py-3"><div className="flex w-full items-center justify-end gap-6">
+            {generationNotice && <p role="alert" className="mb-3 text-xs text-amber-700">{generationNotice}</p>}
+            {/* GENERATION_INTEGRATION_GAP: the server calculates estimatedCostCny only
+                after a task plan exists; there is no preflight quote endpoint yet. */}
+            {isReplication && <div className="flex items-center gap-3 text-[11px]"><span className="text-text-muted">预计消耗</span><span className="font-black text-text-primary" title="生成任务建立后由服务端返回真实预估">待生成服务核算</span></div>}
+            <button type="button" disabled={submitting || productsLoading || (isReplication && !productsReady)} onClick={() => void startGeneration()} className="flex min-w-[220px] items-center justify-center gap-2 rounded-xl bg-[#173d31] px-4 py-3 text-sm font-black text-white shadow-sm hover:bg-[#245644] disabled:cursor-not-allowed disabled:bg-slate-300">
+              {submitting ? <Loader2 size={16} className="animate-spin" /> : <Film size={16} />}{submitting ? '正在进入创作' : isReplication ? '生成新口播' : '开始生成'}
+            </button>
+          </div></footer>
     </section>
   );
 }

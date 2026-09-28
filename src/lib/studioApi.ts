@@ -251,7 +251,7 @@ export interface StudioAudioCapabilities {
 export interface SubtitleSpec {
   mode: 'off' | 'target' | 'bilingual';
   cues: SubCue[];
-  style: Partial<CoverStyle>;     // 沿用封面样式体系（字体 / 颜色 / 粗细）
+  style: Partial<CoverStyle> & { productNames?: string[]; autoEmphasis?: boolean; fontScale?: number; bottomRatio?: number };
 }
 
 export interface RenderSpec {
@@ -563,6 +563,7 @@ export const studioApi = {
   select: (b: SelectInput, _fb: string[]) =>
     post<{ ok: boolean; source?: 'ai' | 'ai_rejected' | 'ai_failed'; provenance?: StudioGenerationProvenance | string; publishable?: boolean; selectedIds: string[]; reason: string; error?: string }>('select', b, { ok: false, selectedIds: [], reason: '' }),
 
+  speechNames: (b: { names: string[]; language: string }) => post<{ ok: boolean; names: Record<string,string>; error?: string }>('speech-names', b, { ok: false, names: {} }),
   // 配音 TTS
   tts: (b: { script?: string; text?: string; sentenceLines?: string[]; voice: string; language: string; style?: Partial<TtsStyleOptions> }) =>
     post<TtsAudioResult>('tts', b, { ok: false }),

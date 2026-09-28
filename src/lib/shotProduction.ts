@@ -27,9 +27,12 @@ export interface PresenterAsset {
   id: string; name: string;
   /** Legacy aliases retained while existing HeyGen records migrate to toolMappings. */
   avatarId: string; voiceId: string;
+  imageUrl?: string; videoUrl?: string; creationMode?: 'quick' | 'expert';
   authorized: boolean; supportsAlpha: boolean; nativeOrientation?: 'unknown' | 'portrait' | 'landscape' | 'square';
   assetVersion?: number;
   /** Machine-readable retained consent evidence. A bare `authorized` flag is not sufficient for supplier submission. */
+  /** User declaration retained at ingestion; does not replace provider identity verification. */
+  authorizationConfirmation?: { id?: string; recordedAt?: string; version?: string; subjectAdultConfirmed: boolean; arkProcessingAuthorized?: boolean; heygenProcessingAuthorized?: boolean };
   rightsEvidence?: {
     authorizationRef: string; consentRef: string; grantedAt: string; expiresAt?: string; revokedAt?: string;
     subjectAdultConfirmed: boolean; permittedProviders: Array<'heygen' | 'volcengine_ark' | 'dashscope'>;
@@ -57,6 +60,7 @@ export interface ProductionDefaults {
 }
 export interface ShotCandidate { id: string; materialId: string; fingerprint: string; createdAt: string; source: ShotSource; jobId?: string }
 export interface ShotProduction {
+  materialSourceAudioEnabled?: boolean;
   digitalHuman?: DigitalHumanRequirements;
   /** Older saved shots omit this and are treated as enterprise presenters only when their source is avatar. */
   contentType?: ShotContentType;
@@ -75,7 +79,7 @@ export function presenterCapabilities(asset: PresenterAsset): PresenterCapabilit
   const avatarId = asset.toolMappings?.heygen?.avatarId || asset.avatarId;
   const voiceId = asset.toolMappings?.heygen?.voiceId || asset.voiceId;
   const referenceMaterialIds = asset.toolMappings?.runway?.referenceMaterialIds || asset.toolMappings?.seedance?.referenceMaterialIds || asset.toolMappings?.sd?.referenceMaterialIds || asset.referenceMaterialIds || [];
-  if (avatarId && voiceId) inferred.push('talking');
+  if ((avatarId || referenceMaterialIds.length) && voiceId) inferred.push('talking');
   if (referenceMaterialIds.length) inferred.push('reference_image', 'reference_video', 'person_replacement');
   return [...new Set(inferred)];
 }
@@ -101,7 +105,7 @@ export function presenterAssetFingerprint(asset: PresenterAsset): string {
     supportsAlpha: Boolean(asset.supportsAlpha), nativeOrientation: asset.nativeOrientation || 'unknown' });
 }
 export const newShotProduction = (narration = '', presenterId = '', defaults?: Pick<ProductionDefaults, 'defaultSound' | 'defaultLayout'>): ShotProduction => ({
-  source: 'material', sound: defaults?.defaultSound || 'voiceover', layout: defaults?.defaultLayout || 'full', presenterId, productId: '', productMaterialId: '', backgroundMaterialId: '',
+  source: 'material', sound: 'voiceover', layout: defaults?.defaultLayout || 'full', presenterId, productId: '', productMaterialId: '', backgroundMaterialId: '',
   backgroundMode: 'independent', transparent: false, narration, locked: false, factsConfirmed: false, candidates: [], adoptedId: '', revision: 1,
 });
 
@@ -151,10 +155,15 @@ export function shotFingerprint(shot: ShotProduction, context: string, shotId?: 
     background: shot.backgroundMode === 'baked' ? shot.backgroundMaterialId : '', context: normalizedContext,
     ...(shot.source === 'avatar' && digitalHuman ? { digitalHuman } : {}) });
 }
+export function normalizeMaterialAudio(shot: ShotProduction): ShotProduction {
+  return shot.source !== 'avatar' && shot.sound === 'source' && shot.materialSourceAudioEnabled !== true
+    ? { ...shot, sound: 'voiceover' } : shot;
+}
+
 export function patchShot(current: ShotProduction, patch: Partial<ShotProduction>): ShotProduction {
   if (current.locked && patch.locked !== false) throw new Error('请先解锁镜头');
   const changesFacts = patch.productId !== undefined && patch.productId !== current.productId;
-  const next = { ...current, ...patch, ...(changesFacts ? { factsConfirmed: false } : {}), revision: current.revision + 1 };
+  const next = { ...current, ...patch, ...(patch.sound !== undefined ? { materialSourceAudioEnabled: patch.sound === 'source' } : {}), ...(changesFacts ? { factsConfirmed: false } : {}), revision: current.revision + 1 };
   if (next.digitalHuman && (next.narration !== current.narration || next.presenterId !== current.presenterId
     || (patch.digitalHuman && JSON.stringify({ ...patch.digitalHuman, contentConfirmed: false }) !== JSON.stringify({ ...current.digitalHuman, contentConfirmed: false })))) {
     next.digitalHuman = { ...next.digitalHuman, contentConfirmed: false };

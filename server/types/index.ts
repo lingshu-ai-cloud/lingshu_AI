@@ -78,6 +78,7 @@ export interface VideoAiAnalysis {
     visual?: string;
     /** Stable source-person ID shared by shots of the same visible person; empty when unverified. */
     personContinuityId?: string;
+    observedPresenterRole?: 'sales_presenter' | 'presenter_action' | 'background' | 'none' | 'unknown';
     subtitle?: string;
     audio?: string;
     note?: string;

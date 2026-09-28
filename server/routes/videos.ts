@@ -1,3 +1,4 @@
+import { prepareReferenceNarration } from '../lib/referenceNarration.js';
 import { AnalysisAlreadyRunningError, AnalysisLeaseRegistry } from '../lib/analysisLease.js';
 import { DownloadBudget, RecordWorkRegistry, terminalDownloadFailure } from '../lib/downloadExecution.js';
 import { Router, type Request, type Response } from 'express';
@@ -20,6 +21,8 @@ import type { Platform, VideoAiAnalysis, VideoStatus } from '../types/index.js';
 import type { SocialDiscoveryMode } from '../../shared/contracts/socialContentWorkflow.js';
 import { isDemoMode } from '../lib/demo.js';
 import { buildSocialReferenceReviewHandoff } from '../starter198/socialReferenceReviewHandoff.js';
+import { assertSalesPresenterQwenConfigured, reviewSalesPresenterFramesWithQwen } from '../agents/qwen.js';
+import { salesReviewKey, validateSalesReview, SALES_REVIEW_VERSION, type SalesShot } from '../lib/salesPresenterReview.js';
 import { resolveReferenceSalesPresenter } from './referencePresenterLock.js';
 import { buildReferenceSpeechTimeline, type ReferenceStructureInput } from './referenceSpeechTimeline.js';
 import { approximateSpeechLines } from './referenceApproxSpeech.js';
@@ -2317,6 +2320,88 @@ videosRouter.put('/:id/verified-speech', async (req, res) => {
 
 /** Poll an existing Qwen task with confirmed=false. A new paid submission
  * requires confirmed=true and still passes service feature flag and budget. */
+const salesReviewRunning = new Map<string, Promise<unknown>>();
+videosRouter.post('/:id/sales-presenter-review', async (req, res) => {
+  const { tenantId } = res.locals as AuthLocals;
+  const record = await store.getById<Record<string, unknown>>(COL, req.params.id);
+  if (!record || String(record.tenantId || '') !== tenantId) { res.status(404).json({ error: 'Not found' }); return; }
+  const analysis = parseJsonRecord<Record<string, any>>(record.aiAnalysis, {});
+  const shots = (analysis.gemini?.scriptDetails15s || analysis.scriptDetails15s) as SalesShot[];
+  if (!Array.isArray(shots) || !shots.length || shots.length > 60 || !analysis.contentSha256) { res.status(422).json({ error: '销售识别需要完整原片分镜及视频指纹，最多支持60个分镜' }); return; }
+  const key = createHash('sha256').update(salesReviewKey(String(analysis.contentSha256), shots)).digest('hex');
+  const previous = analysis.salesPresenterReview;
+  if (previous?.key === key && previous.submitted !== false) {
+    if (previous.state === 'completed') { res.json({ ok: true, cached: true, ...previous, rows: previous.rows.map((row: any) => ({ ...row, sourceVisual: shots[row.index]?.visual || '' })) }); return; }
+    res.status(409).json({ error: previous.error || '该销售识别请求未完成，请核对原任务，未再次提交付费识别' }); return;
+  }
+  try { assertSalesPresenterQwenConfigured(); } catch { res.status(503).json({ error: '销售识别服务未配置千问凭证，未提交模型请求' }); return; }
+  const filename = String(record.videoFileId || '');
+  const videoPath = localReferenceVideoPath(filename, tenantId);
+  if (!videoPath || !fs.existsSync(videoPath) || !ffmpegBin) { res.status(422).json({ error: '原片文件不可用，未提交销售识别' }); return; }
+  const lock = `${tenantId}:${record.id}:${key}`;
+  let pending = salesReviewRunning.get(lock);
+  if (!pending) {
+    pending = durableAnalysisRecords.run(`sales:${lock}`, async () => {
+      const freshRecord = await store.getById<Record<string, unknown>>(COL, req.params.id);
+      const freshAnalysis = parseJsonRecord<Record<string, any>>(freshRecord?.aiAnalysis, {});
+      if (freshAnalysis.salesPresenterReview?.key === key && freshAnalysis.salesPresenterReview.submitted !== false) {
+        if (freshAnalysis.salesPresenterReview.state === 'completed') return freshAnalysis.salesPresenterReview;
+        throw new Error('销售识别尚未确认完成，未重复提交付费请求');
+      }
+      fs.mkdirSync(ANALYSIS_DIR, { recursive: true });
+      const dir = fs.mkdtempSync(path.join(ANALYSIS_DIR, 'sales-review-'));
+      try {
+        const probedDuration = await probeDuration(videoPath!);
+        const videoDuration = Math.min(probedDuration, Number(record.duration) > 0 ? Number(record.duration) : probedDuration - .5);
+        if (!Number.isFinite(videoDuration) || videoDuration <= 0) throw new Error('原片时长不可读取');
+        const frames = [];
+        for (let index = 0; index < shots.length; index++) {
+          const range = parseAnalysisTimeRange(shots[index].time);
+          if (!range || range.end <= range.start || range.start >= videoDuration) throw new Error('原片分镜时间无效');
+          const clipEnd = Math.min(range.end, videoDuration - .05);
+          const images: string[] = [];
+          for (const fraction of [.55, .85]) {
+            const target = path.join(dir, `${index}-${fraction}.jpg`);
+            await execFileAsync(ffmpegBin!, ['-hide_banner', '-loglevel', 'error', '-ss', String(range.start + (clipEnd-range.start)*fraction), '-i', videoPath!, '-frames:v', '1', '-vf', 'scale=384:-2', '-q:v', '5', '-y', target], { timeout: 15000 });
+            images.push(fs.readFileSync(target).toString('base64'));
+          }
+          frames.push({ index, images, dialogue: shots[index].dialogue || '', visual: shots[index].visual || '' });
+        }
+        // Persist before paid submission. Unknown/failure never silently retries.
+        const latest = await store.getById<Record<string, unknown>>(COL, req.params.id);
+        const before = parseJsonRecord<Record<string, any>>(latest?.aiAnalysis, {});
+        if (createHash('sha256').update(salesReviewKey(String(before.contentSha256), before.gemini?.scriptDetails15s || before.scriptDetails15s || [])).digest('hex') !== key) throw new Error('原片分析已变化，请重新打开草稿');
+        await store.update(COL, req.params.id, { aiAnalysis: JSON.stringify({ ...before, salesPresenterReview: { key, version: SALES_REVIEW_VERSION, state: 'running', provider: 'qwen', submitted: true, startedAt: new Date().toISOString() } }) });
+        const recognition = await reviewSalesPresenterFramesWithQwen({ frames });
+        const rows = validateSalesReview(recognition, shots.length);
+        const current = await store.getById<Record<string, unknown>>(COL, req.params.id);
+        const saved = parseJsonRecord<Record<string, any>>(current?.aiAnalysis, {});
+        if (saved.salesPresenterReview?.key !== key || createHash('sha256').update(salesReviewKey(String(saved.contentSha256), saved.gemini?.scriptDetails15s || saved.scriptDetails15s || [])).digest('hex') !== key) throw new Error('原片分析已变化，识别结果未覆盖新分析');
+        const review = { key, version: SALES_REVIEW_VERSION, provider: 'qwen', model: recognition.model, usage: recognition.usage, state: 'completed', rows: rows.map(row => ({ ...row, time: shots[row.index].time, sourceVisual: shots[row.index].visual || '' })), digitalHumanShotIndexes: rows.filter(row => row.observedPresenterRole === 'sales_presenter' && !row.needsReview).map(row => row.index), presenterGroups: [...new Set(rows.filter(row => row.observedPresenterRole === 'sales_presenter' && !row.needsReview).map(row => row.personContinuityId))].map(personId => ({ personId, shotIndexes: rows.filter(row => row.observedPresenterRole === 'sales_presenter' && !row.needsReview && row.personContinuityId === personId).map(row => row.index) })), frameCount: frames.length * 2, completedAt: new Date().toISOString() };
+        const reviewedShots = (saved.gemini?.scriptDetails15s || saved.scriptDetails15s).map((shot: any, index: number) => ({ ...shot,
+          observedPresenterRole: rows[index].observedPresenterRole, personContinuityId: rows[index].personContinuityId,
+          salesPresenterConfirmed: rows[index].observedPresenterRole === 'sales_presenter' && !rows[index].needsReview,
+          presenterRecognition: rows[index] }));
+        await store.update(COL, req.params.id, { aiAnalysis: JSON.stringify({ ...saved, salesPresenterReview: review,
+          ...(saved.gemini?.scriptDetails15s ? { gemini: { ...saved.gemini, scriptDetails15s: reviewedShots } } : { scriptDetails15s: reviewedShots }) }) });
+        return review;
+      } catch (error) {
+        const failedRecord = await store.getById<Record<string, unknown>>(COL, req.params.id);
+        const failedAnalysis = parseJsonRecord<Record<string, any>>(failedRecord?.aiAnalysis, {});
+        if (failedAnalysis.salesPresenterReview?.key === key && failedAnalysis.salesPresenterReview.state === 'running') {
+          await store.update(COL, req.params.id, { aiAnalysis: JSON.stringify({ ...failedAnalysis,
+            salesPresenterReview: { ...failedAnalysis.salesPresenterReview, state: 'failed', failedAt: new Date().toISOString(), error: error instanceof Error ? error.message : '销售识别失败' } }) });
+        }
+        throw error;
+      } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+    });
+    salesReviewRunning.set(lock, pending);
+    pending.finally(() => salesReviewRunning.delete(lock)).catch(() => {});
+  }
+  try { res.json({ ok: true, cached: false, ...(await pending as object) }); }
+  catch (error) { res.status(422).json({ error: error instanceof Error ? error.message : '销售识别失败' }); }
+});
+
 videosRouter.post('/:id/phrase-asr', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   const record = await store.getById<Record<string, unknown>>(COL, req.params.id);
@@ -6050,7 +6135,7 @@ function isRetryableAnalysisFailure(error: unknown): boolean {
 /** Only phrase-aligned ASR may populate a shot's dialogue. The current Qwen
  * ASR returns text without timestamps; its 30s chunk must never be copied to
  * every overlapping shot as if each shot contained the entire speech. */
-type VideoAsrSegment = { start: number; end: number; text: string; timingPrecision?: 'phrase' | 'coarse'; provenance?: string; needsReview?: boolean };
+type VideoAsrSegment = { words?: Array<{start: number; end: number; text: string}>; start: number; end: number; text: string; timingPrecision?: 'phrase' | 'coarse'; provenance?: string; needsReview?: boolean };
 
 /** Qwen's inline ASR supplies text but no word clock. Preserve each sentence as
  * a reviewable interval within its actual extraction window; never invent a
@@ -6068,8 +6153,8 @@ export function lockAsrTimeline(analysis: VideoAiAnalysis, transcript?: { text: 
   if (!transcript?.segments.length || !analysis.scriptDetails15s?.length) return analysis;
   return {
     ...analysis,
-    audioTranscript: { text: transcript.text, segments: transcript.segments.map(segment => ({
-      start: segment.start, end: segment.end, text: segment.text,
+    audioTranscript: { ...transcript, text: transcript.text, segments: transcript.segments.map(segment => ({
+      start: segment.start, end: segment.end, text: segment.text, words: segment.words,
       timingPrecision: segment.timingPrecision === 'phrase' ? 'phrase' as const : 'coarse' as const,
       provenance: segment.provenance, needsReview: segment.needsReview ?? segment.timingPrecision !== 'phrase',
     })) },
@@ -6520,6 +6605,9 @@ export async function analyzeDownloadedVideoWithFallback(opts: {
     try {
       if (ffmpegBin) {
         fs.mkdirSync(asrDir, { recursive: true });
+        if (Number(opts.duration) > 0 && Number(opts.duration) <= 180) {
+          transcript = await prepareReferenceNarration(opts.filePath, Number(opts.duration));
+        } else {
         const pattern = path.join(asrDir, 'chunk-%03d.mp3');
         // Exact analysis needs a narrow, honest interval for each spoken line.
         // Inline Qwen ASR has no word timestamps, so these remain coarse even
@@ -6559,6 +6647,7 @@ export async function analyzeDownloadedVideoWithFallback(opts: {
           segments.push(...results.flat());
         }
         transcript = { text: segments.map(item => item.text).join(''), segments };
+        }
       }
     } catch (error) { console.warn('[videos] Qwen ASR unavailable, continuing with frames:', error instanceof Error ? error.message : error); }
     finally { try { for (const file of fs.readdirSync(asrDir)) fs.unlinkSync(path.join(asrDir, file)); fs.rmdirSync(asrDir); } catch { /* best effort */ } }

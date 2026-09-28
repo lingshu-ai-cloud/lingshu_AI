@@ -17,6 +17,7 @@ const path = require('node:path');
 const { fileURLToPath } = require('node:url');
 const { layoutFilters, tempoFilters, muteIntervals } = require('./shot-composition.cjs');
 const { normalizeEffectPlan, sceneEffectFilters, joinSceneFilters, audioEventFilters } = require('./effect-composition.cjs');
+const { automaticSubtitleText, verifySubtitleFonts, fontsDirectory, template: subtitleTemplate } = require('./automatic-subtitles.cjs');
 
 let ffmpegPath = null;
 try { ffmpegPath = require('ffmpeg-static'); } catch { ffmpegPath = null; }
@@ -86,7 +87,9 @@ function isImageAsset(value, declaredType) {
 
 /** 下载远端 url 到本地文件（桌面端与本机 express 同机，localhost 直连） */
 async function downloadTo(url, dest, options = {}) {
-  const source = String(url || '');
+  const rawSource = String(url || '');
+  const source = rawSource.startsWith('/') && options.assetOrigin
+    ? new URL(rawSource, options.assetOrigin).href : rawSource;
   const data = dataUrlParts(source);
   if (data) {
     if (!data.bytes.length) throw new Error('empty data URL');
@@ -106,7 +109,7 @@ async function downloadTo(url, dest, options = {}) {
   }
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 45_000);
-  const headers = options.assetOrigin && String(url).startsWith(options.assetOrigin)
+  const headers = options.assetOrigin && new URL(source).origin === new URL(options.assetOrigin).origin
     ? options.assetHeaders || {}
     : {};
   let res;
@@ -115,7 +118,12 @@ async function downloadTo(url, dest, options = {}) {
   } finally {
     clearTimeout(timer);
   }
-  if (!res.ok) throw new Error(`download ${source} -> ${res.status}`);
+  if (!res.ok) throw new Error(`素材读取失败（HTTP ${res.status}）`);
+  if ((res.headers.get('content-type') || '').includes('application/json')) {
+    const payload = await res.json();
+    if (typeof payload.url !== 'string' || options.resolvedMediaUrl) throw new Error('素材接口没有返回有效媒体地址');
+    return downloadTo(payload.url, dest, { ...options, resolvedMediaUrl: true });
+  }
   fs.writeFileSync(dest, Buffer.from(await res.arrayBuffer()));
   return dest;
 }
@@ -175,7 +183,8 @@ function subtitlePages(value, maxUnitsPerLine = 15, maxLines = 2) {
       const left = join(words.slice(0, split)), right = join(words.slice(split));
       const lw = subtitleUnits(left), rw = subtitleUnits(right);
       if (lw > maxUnitsPerLine || rw > maxUnitsPerLine) continue;
-      const score = (lw - rw) ** 2 + (badEnd.test(left) ? 25 : 0);
+      const score = (lw - rw) ** 2 + (badEnd.test(left) ? 25 : 0)
+        - (/[，。！？；：、,;:!?]$/.test(left) ? 30 : 0);
       if (score < bestCost) { bestCost = score; best = [left, right]; }
     }
     return best;
@@ -277,7 +286,8 @@ function cuesToAss(cues, width, height, disclaimer = '', duration = 0, style = {
     const prefix = cue.screen
       ? `{\\an8\\pos(${Math.round(width / 2)},${Math.round(height * 0.12)})}`
       : '';
-    return `Dialogue: ${cue.screen ? 1 : 0},${assTime(cue.start)},${assTime(cue.end)},Default,,0,0,0,,${prefix}${cue.text}`;
+    const text = cue.screen ? cue.text : automaticSubtitleText(cue.text, style);
+    return `Dialogue: ${cue.screen ? 1 : 0},${assTime(cue.start)},${assTime(cue.end)},Default,,0,0,0,,${prefix}${text}`;
   });
   if (disclaimer && duration > 0) events.push(`Dialogue: 1,0:00:00.00,${assTime(duration)},Default,,0,0,0,,{\\an8\\pos(${Math.round(width / 2)},${Math.round(height * 0.08)})\\fs${Math.round(width * 0.035)}}${assText(disclaimer).replace(/[{}]/g, '')}`);
   return [
@@ -290,7 +300,7 @@ function cuesToAss(cues, width, height, disclaimer = '', duration = 0, style = {
     '',
     '[V4+ Styles]',
     'Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding',
-    `Style: Default,Arial,${fontSize},&H00FFFFFF,&H00FFFFFF,&HAA000000,&H66000000,-1,0,0,0,100,100,0,0,1,${outline},1,2,${marginX},${marginX},${marginV},1`,
+    `Style: Default,${subtitleTemplate.body.font},${fontSize},&H00FFFFFF,&H00FFFFFF,&HAA000000,&H66000000,-1,0,0,0,100,100,0,0,1,${outline},1,2,${marginX},${marginX},${marginV},1`,
     '',
     '[Events]',
     'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text',
@@ -492,9 +502,10 @@ async function composite(manifest, onProgress = () => {}, outDir) {
       : [];
     const ass = cuesToAss(subtitleCues, w, h, manifest.disclaimer || '', duration, manifest.subtitles?.style || {});
     if (ass) {
+      verifySubtitleFonts();
       const assFile = path.join(tmp, 'subtitles.ass');
       fs.writeFileSync(assFile, ass, 'utf8');
-      filters.push(`${vlabel}subtitles='${filterPath(assFile)}'[vout]`);
+      filters.push(`${vlabel}subtitles='${filterPath(assFile)}':fontsdir='${filterPath(fontsDirectory)}'[vout]`);
     } else {
       filters.push(`${vlabel}null[vout]`);
     }

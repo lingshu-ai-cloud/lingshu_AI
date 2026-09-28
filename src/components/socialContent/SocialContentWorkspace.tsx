@@ -20,6 +20,7 @@ export interface SocialContentSourceContext {
   referenceThumbnail?: string;
   referenceMediaUrl?: string;
   referenceContentType?: 'video' | 'image';
+  referenceShots?: Array<{ time: string; dialogue?: string; subtitle?: string; visual?: string; firstFrameRef?: string; firstFrameSeconds?: number }>;
 }
 
 export interface SocialContentCreateRequest {
@@ -32,8 +33,16 @@ export interface SocialContentCreateRequest {
   prefill?: Partial<Pick<SocialContentDraft, 'title' | 'topic' | 'productId' | 'productName' | 'referenceLinks' | 'platforms'>>;
   sourceContext?: SocialContentSourceContext;
   continueTaskId?: string;
+  continueProjectId?: string;
+  replicationStep?: 1 | 2 | 3;
   presenterAssetId?: string;
   specialRequirements?: string;
+  identityMappings?: {
+    selectedProductIds?: string[];
+    selectedProductNames?: string[];
+    products: Array<{ sourceTerm: string; productId: string; productName: string }>;
+    brand?: { sourceTerm: string; brandName: string };
+  };
 }
 
 export default function SocialContentWorkspace({

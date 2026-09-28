@@ -3083,7 +3083,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
   const [replicationTasks, setReplicationTasks] = useState<Record<string, string>>({});
   const [launchingReferences, setLaunchingReferences] = useState<string[]>([]);
   const [materialEntry] = useState(initialMaterialLibraryEntry);
-  const [innerView, setInnerView] = useState<InspirationInnerView>(() => materialEntry.openLibrary ? 'library' : 'inspiration');
+  const [innerView, setInnerView] = useState<InspirationInnerView>(() => typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('view') === 'shooting' ? 'shooting' : materialEntry.openLibrary ? 'library' : 'inspiration');
   const [platform, setPlatform] = useState<Platform>('all');
   const [search, setSearch] = useState('');
   // 搜索改为服务端执行：此前只在已加载的那一页做前端过滤，翻页之外的记录搜不到。
@@ -3156,6 +3156,11 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
   const { scriptGapTasks, shootingTaskError: _shootingTaskError } = useScriptGapTasks();
   const [uploadingScriptGapId, setUploadingScriptGapId] = useState('');
   const uploadInputRef = useRef<HTMLInputElement | null>(null);
+  useEffect(() => {
+    const taskId = new URLSearchParams(window.location.search).get('task');
+    if (taskId) document.getElementById(`shooting-task-${taskId}`)?.scrollIntoView({ block: 'center' });
+  }, [scriptGapTasks]);
+  const shootingCameraInputRef = useRef<HTMLInputElement | null>(null);
   const videoRequestRef = useRef(0);
   const inventoryRequestRef = useRef(0);
   const platformLabel = PLATFORM_FILTERS.find(f => f.id === platform)?.label ?? '全部平台';
@@ -3609,7 +3614,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
       setMaterialMessage(uploadedVideos.length ? `已上传，正在分析 ${uploadedVideos.length} 个视频的可用片段…` : `已上传 ${files.length} 个素材到社媒素材库`);
       await refreshMaterials();
       window.dispatchEvent(new Event('lingshu:materials-updated'));
-      if (uploadingScriptGapId && uploadedIds.length) updateScriptGapTask(uploadingScriptGapId, { uploadedMaterialIds: uploadedIds });
+      if (uploadingScriptGapId && uploadedIds.length) await updateScriptGapTask(uploadingScriptGapId, { uploadedMaterialIds: uploadedIds });
       setMaterialMessage(uploadedVideos.length
         ? `已上传 ${files.length} 个素材，视频已进入分析队列，可在素材卡片查看进度`
         : `已上传 ${files.length} 个素材到社媒素材库`);
@@ -3777,6 +3782,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
             referenceThumbnail: video.thumbnail,
             referenceMediaUrl: video.videoUrl || undefined,
             referenceContentType: 'video',
+            referenceShots: getAnalysis(video)?.scriptDetails15s.map(detail => ({ time: detail.time, dialogue: detail.dialogue, subtitle: detail.subtitle, visual: detail.visual, firstFrameRef: detail.materialEvidence?.firstFrameRef || undefined, firstFrameSeconds: detail.materialEvidence?.firstFrameSeconds })) || [],
           },
         },
       } }));
@@ -4803,11 +4809,12 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
           {innerView === 'shooting' && (
             <div className="space-y-4">
               {scriptGapTasks.length > 0 && <div className="space-y-3">
-                <p className="text-xs font-black text-text-secondary">脚本缺口</p>
-                {scriptGapTasks.map(task => <article key={task.id} className="rounded-lg border border-amber/25 bg-amber-dim p-4">
+                <input ref={shootingCameraInputRef} aria-label="拍摄待拍任务素材" type="file" accept="video/*" capture="environment" className="hidden" onChange={event => { void handleUploadMaterials(event.currentTarget.files); event.currentTarget.value = ''; }}/>
+                <p className="text-xs font-black text-text-secondary">待拍清单</p>
+                {scriptGapTasks.map(task => <article key={task.id} id={`shooting-task-${task.id}`} className={`rounded-lg border p-4 ${typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('task') === task.id ? 'border-amber-600 bg-amber-50 ring-2 ring-amber-300' : 'border-amber/25 bg-amber-dim'}`}>
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div><span className="border-l-2 border-amber px-2 py-0.5 text-[10px] font-bold text-amber">脚本缺口</span><h3 className="mt-2 text-sm font-bold text-text-primary">{task.title}</h3><p className="mt-1 text-xs text-text-secondary">{task.shotBrief}</p><p className="mt-2 text-[11px] text-text-muted">{task.productLabel} · {task.themeTitle} · 建议 {task.suggestedDurationSec} 秒</p></div>
-                    <div className="flex gap-2"><button type="button" onClick={() => requestMaterialUpload(task.id)} className="rounded-lg border border-amber-300 bg-white px-3 py-2 text-xs font-bold text-amber-800">上传补拍素材</button>{task.uploadedMaterialIds.length > 0 && <button type="button" onClick={() => window.dispatchEvent(new CustomEvent('lingshu:script-gap-refill', { detail: task }))} className="rounded-lg bg-amber-600 px-3 py-2 text-xs font-bold text-white">一键回填</button>}</div>
+                    <div className="flex flex-wrap gap-2"><button type="button" disabled={uploadingMaterial} onClick={() => { setUploadingScriptGapId(task.id); shootingCameraInputRef.current?.click(); }} className="rounded-lg bg-amber-600 px-3 py-2 text-xs font-bold text-white">拍摄并上传</button><button type="button" onClick={() => requestMaterialUpload(task.id)} className="rounded-lg border border-amber-300 bg-white px-3 py-2 text-xs font-bold text-amber-800">上传补拍素材</button>{task.uploadedMaterialIds.length > 0 && task.sourceProjectId && <a href={`?page=smartAssets&project=${encodeURIComponent(task.sourceProjectId)}`} className="rounded-lg bg-amber-600 px-3 py-2 text-xs font-bold text-white">返回分镜查看回填</a>}</div>
                   </div>
                 </article>)}
               </div>}

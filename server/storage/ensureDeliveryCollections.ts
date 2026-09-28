@@ -354,6 +354,12 @@ async function ensureCollection(name: string, fields: FieldDef[]): Promise<void>
 }
 
 export async function ensureDeliveryCollections(): Promise<void> {
+  await ensureCollection('studio_presenter_assets', [
+    { name: 'tenant_id', type: 'text', required: true },
+    { name: 'request_id', type: 'text', required: true },
+    { name: 'kind', type: 'text', required: true },
+    { name: 'payload', type: 'json', required: true },
+  ]);
   await ensureCollection('platform_ad_worker_health', [
     ...'tenant_id workerId state lastStartedAt lastCompletedAt lastFailedAt nextCheckAt updatedAt'.split(' ').map(name => ({ name, type: 'text' as const })),
   ]);

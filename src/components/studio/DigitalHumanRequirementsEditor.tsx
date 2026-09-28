@@ -1,7 +1,8 @@
+import type { ReactNode } from 'react';
 import { cueFirstFrameTime, newDigitalHumanRequirements, referenceCues, type DigitalHumanReferenceCue, type DigitalHumanRequirements, type DigitalHumanPlan } from '../../lib/digitalHumanPlan';
 
-export default function DigitalHumanRequirementsEditor({ value, plan, referenceMaterials = [], toolCapabilities = [], onChange }: {
-  value?: DigitalHumanRequirements; plan: DigitalHumanPlan; referenceMaterials?: Array<{ id: string; name: string; url?: string }>;
+export default function DigitalHumanRequirementsEditor({ value, plan, compact = false, children, referenceMaterials = [], toolCapabilities = [], onChange }: {
+  children?: ReactNode; compact?: boolean; value?: DigitalHumanRequirements; plan: DigitalHumanPlan; referenceMaterials?: Array<{ id: string; name: string; url?: string }>;
   toolCapabilities?: Array<{ id: string; execution: boolean; reason: string }>;
   onChange: (value: DigitalHumanRequirements) => void;
 }) {
@@ -14,23 +15,48 @@ export default function DigitalHumanRequirementsEditor({ value, plan, referenceM
     const next = cues.map(cue => cue.id === id ? { ...cue, ...change } : cue);
     patchReference({ cues: next, start: Math.min(...next.map(cue => cue.start)), end: Math.max(...next.map(cue => cue.end)), originalText: next.map(cue => cue.originalText).filter(Boolean).join('\n') });
   };
+  if (compact) return <section className="space-y-4" aria-label="数字人镜头效果">
+    <div className="grid grid-cols-3 gap-2" role="group" aria-label="镜头效果">
+      {([
+        ['face_only', '人脸替换'],
+        ['person_keep_scene', '人物替换'],
+        ['person_and_scene', '人物与场景重构'],
+      ] as const).map(([scope, label]) => <button key={scope} type="button" aria-pressed={current.replacementScope === scope}
+        className={`min-h-12 rounded-lg border px-2 py-3 text-xs font-bold ${current.replacementScope === scope ? 'border-emerald-600 bg-emerald-50 text-emerald-800' : 'border-slate-200 bg-white'}`}
+        onClick={() => patch({ workflow: 'viral_replication', replacementScope: scope, method: scope === 'person_keep_scene' ? 'replace' : 'reenact', preferredProvider: scope === 'face_only' ? 'auto' : 'sd', targetEffect: scope === 'person_and_scene' ? 'flexible_scene' : 'reference_motion', ...(scope !== 'person_and_scene' ? { scene: '' } : {}) })}>{label}</button>)}
+    </div>
+    {current.replacementScope && <div className="space-y-3 border-t pt-4" aria-label="效果配置">
+      <p className="text-xs text-text-muted">{current.replacementScope === 'face_only'
+        ? 'HeyGen · 原分镜 + 企业人脸 → 人脸替换'
+        : current.replacementScope === 'person_keep_scene'
+          ? 'Seedream → Seedance · 保留原场景，重建人物首帧并生成视频'
+          : 'Seedream → Seedance · 重建人物与场景首帧，再生成视频'}</p>
+      {children}
+      {current.replacementScope === 'person_keep_scene' && <p className="text-xs text-text-muted">沿用原镜头场景与构图；生成后需检查背景一致性。</p>}
+      {current.replacementScope === 'person_and_scene' && <label className="block text-xs">场景要求<textarea aria-label="场景要求" placeholder="例如：企业展厅，人物站在产品陈列柜前" rows={2} className="mt-2 w-full rounded-lg border p-2" value={current.scene} onChange={event => patch({ scene: event.target.value })} /></label>}
+      {current.replacementScope === 'face_only' && <p role="status" className="text-xs text-amber-700">换脸接口尚待验证，可保存配置，暂不可生成。</p>}
+      <label className="flex gap-2 text-xs"><input type="checkbox" checked={current.contentConfirmed} onChange={event => onChange({ ...current, contentConfirmed: event.target.checked })} />确认应用此人物和效果</label>
+    </div>}
+  </section>;
   return <section className="space-y-3 rounded-xl border border-violet-200 bg-white p-3" aria-label="数字人镜头要求">
     <p className="text-xs text-text-muted">根据人物、口播及参考画面安排制作，生成结果将作为当前分镜的候选素材。</p>
     <label className="block text-xs">内容来源<select className="mt-1 w-full rounded-lg border p-2" value={current.workflow} onChange={e => patch({ workflow: e.target.value as DigitalHumanRequirements['workflow'] })}>
       <option value="material_processing">素材加工 · 人物与口播驱动</option><option value="viral_replication">爆款裂变 · 原片逐句与人物驱动</option>
     </select></label>
-    <label className="block text-xs">本镜头希望如何呈现<select className="mt-1 w-full rounded-lg border p-2" value={current.method} onChange={e => patch({ method: e.target.value as DigitalHumanRequirements['method'], ...(e.target.value === 'talking' ? { action: '', scene: '', preserve: '' } : {}) })}>
-      <option value="talking">人物讲解口播</option><option value="replace">保留原镜头替换人物</option><option value="reenact">参考原片重新演绎</option>
-    </select></label>
-    {current.method !== 'talking' && <label className="block text-xs">生成模型<select aria-label="数字人生成模型" className="mt-1 w-full rounded-lg border p-2" value={current.preferredProvider || 'auto'} onChange={e => patch({ preferredProvider: e.target.value as DigitalHumanRequirements['preferredProvider'] })}>
-      <option value="auto">自动选择可用模型</option><option value="kling">Kling</option><option value="sd">Seedance（SD）</option><option value="runway">Runway</option><option value="self_hosted">自有模型</option>
-    </select></label>}
+    {current.workflow === 'viral_replication' && <>
+      <label className="block text-xs">替换范围<select aria-label="替换范围" className="mt-1 w-full rounded-lg border p-2" value={current.replacementScope || ''} onChange={event => patch({ replacementScope: event.target.value as DigitalHumanRequirements['replacementScope'], method: event.target.value === 'person_keep_scene' ? 'replace' : 'reenact', targetEffect: undefined })}><option value="">请选择替换范围</option><option value="face_only" disabled>仅替换脸部（尚未接入）</option><option value="person_keep_scene" disabled={!toolCapabilities.some(tool => tool.id === 'local_head_pipeline' && tool.execution)}>整个人物替换，保留场景</option><option value="person_and_scene">重建人物与场景</option></select></label>
+      <label className="block text-xs">目标效果<select aria-label="目标效果" className="mt-1 w-full rounded-lg border p-2" value={current.targetEffect || ''} onChange={event => { const targetEffect = event.target.value as DigitalHumanRequirements['targetEffect']; patch({ targetEffect, method: targetEffect === 'natural_talking' ? 'talking' : current.replacementScope === 'person_keep_scene' ? 'replace' : 'reenact' }); }}><option value="">请选择目标效果</option><option value="natural_talking" disabled={current.replacementScope === 'person_and_scene'}>自然口播</option><option value="reference_motion">尽量还原动作与构图</option><option value="flexible_scene">自由调整场景与产品</option></select></label>
+    </>}
+    {current.workflow !== 'viral_replication' && <label className="block text-xs">目标效果<select className="mt-1 w-full rounded-lg border p-2" value={current.method} onChange={e => patch({ method: e.target.value as DigitalHumanRequirements['method'] })}><option value="talking">自然口播</option><option value="replace">替换人物</option><option value="reenact">重新演绎</option></select></label>}
+    {current.method !== 'talking' && <details><summary className="cursor-pointer text-xs">高级设置 · 模型</summary><label className="block text-xs">生成模型<select aria-label="数字人生成模型" className="mt-1 w-full rounded-lg border p-2" value={current.preferredProvider || 'auto'} onChange={e => patch({ preferredProvider: e.target.value as DigitalHumanRequirements['preferredProvider'] })}>
+      <option value="auto">自动选择可用模型</option><option value="kling" disabled={!toolCapabilities.some(tool => tool.id === 'runway_kling_motion' && tool.execution)}>Kling</option><option value="sd" disabled={!toolCapabilities.some(tool => tool.id === 'runway_seedance' && tool.execution)}>Seedance（SD）</option><option value="runway" disabled={!toolCapabilities.some(tool => tool.id === 'runway_act_two' && tool.execution)}>Runway</option><option value="self_hosted" disabled={!toolCapabilities.some(tool => ['local_head_pipeline', 'self_hosted_video'].includes(tool.id) && tool.execution)}>自有模型</option>
+    </select></label></details>}
     {current.method !== 'talking' && current.preferredProvider !== 'auto' && (() => {
       const ids = current.preferredProvider === 'kling' ? ['runway_kling_motion'] : current.preferredProvider === 'sd' ? ['runway_seedance'] : current.preferredProvider === 'runway' ? ['runway_act_two'] : ['local_head_pipeline', 'self_hosted_video'];
       const matches = toolCapabilities.filter(item => ids.includes(item.id)); const ready = matches.some(item => item.execution);
       return <p className={`text-xs ${ready ? 'text-emerald-700' : 'text-amber-700'}`}>{ready ? '该模型已注册执行能力；保存方案后仍需通过镜头约束和预算校验。' : matches.map(item => item.reason).filter(Boolean).join('；') || '该模型尚未注册真实执行适配器，仅可保存选择与制作要求。'}</p>;
     })()}
-    {current.method === 'talking' && <p className="text-xs text-text-muted">人物讲解只使用人物与口播；切换到此方式会清除自定义动作、场景和保留要求，需要重新确认内容。</p>}
+    {current.method === 'talking' && <p className="text-xs text-text-muted">HeyGen 侧重自然口播，沿用人物资产的场景。需要调整背景或产品时选择重新演绎；切换到此方式会清除自定义动作、场景和保留要求，需要重新确认内容。</p>}
     {current.workflow === 'viral_replication' && current.method === 'reenact' && <label className="block text-xs">复刻生成方式<select aria-label="爆款复刻生成方式" className="mt-1 w-full rounded-lg border p-2" value={current.replicationMode || 'sentence_first_frame'} onChange={e => patch({ replicationMode: e.target.value as DigitalHumanRequirements['replicationMode'] })}>
       <option value="sentence_first_frame">逐句首帧重建 · 默认</option><option value="direct_reference">整段原片动作参考 · 需授权</option>
     </select></label>}

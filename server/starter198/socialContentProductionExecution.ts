@@ -781,6 +781,7 @@ export async function runSocialContentAutoProduction(input: {
       style: {
         fontScale: contentHandoff.direction.subtitles.fontScale,
         bottomRatio: contentHandoff.direction.subtitles.bottomRatio,
+        productNames: verifiedContext.productName ? [verifiedContext.productName] : [],
       },
     },
   }, undefined, outputDir);

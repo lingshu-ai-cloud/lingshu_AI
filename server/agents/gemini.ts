@@ -261,6 +261,7 @@ function parseScriptDetails15s(value: unknown): VideoAiAnalysis['scriptDetails15
       composition: String(item.composition ?? '').trim(),
       visual,
       personContinuityId: String(item.personContinuityId ?? '').trim(),
+      observedPresenterRole: (['sales_presenter', 'presenter_action', 'background', 'none', 'unknown'].includes(String(item.observedPresenterRole)) ? item.observedPresenterRole : undefined) as NonNullable<VideoAiAnalysis['scriptDetails15s']>[number]['observedPresenterRole'],
       subtitle,
       audio: String(item.audio ?? '').trim(),
       note: String(item.note ?? '').trim(),
@@ -359,6 +360,7 @@ ${GEMINI_ANALYSIS_DIRECTOR_CONTRACT}
   - shot: string，景别，例如“特写”“中景”“近景”
   - camera: string，运镜，例如“固定镜头”“微推近”“手持晃动”“旋转运镜”
   - visual: string，具体画面人物/产品/动作/场景
+  - observedPresenterRole: sales_presenter（已确认贯穿视频的固定销售主讲者对镜说话，须绑定稳定人物 ID；单独的动作演员、路人、D to C 插镜人物不属于此类）、presenter_action（同一主讲者动作展示但未确认说话）、background（工人/路人/会议背景人物）、none（无人）、unknown（证据不足）。必须依赖可见口型、面向镜头及讲话证据；画外音不算真人口播；工厂背景或手持产品不能排除前景销售。与 personContinuityId 联合记录，身份或角色不确定时 needsReview=true。
   - personContinuityId: string，同一个可确认出镜人物跨镜头使用同一个稳定 ID（如 person_1）；无人出镜或无法确认是否同一人时留空，不得仅凭性别推断
   - purpose: string，镜头营销功能，如“反常识钩子”“效果证明”“价格反差”“CTA”
   - dialogue: string，只填写可确认的人物口播/旁白原文，听不清留空
@@ -426,6 +428,7 @@ ${GEMINI_ANALYSIS_DIRECTOR_CONTRACT}
   - shot: string，景别，例如“特写”“中景”“近景”
   - camera: string，运镜，例如“固定镜头”“微推近”“手持晃动”“旋转运镜”
   - visual: string，具体画面人物/产品/动作/场景
+  - observedPresenterRole: sales_presenter（已确认贯穿视频的固定销售主讲者对镜说话，须绑定稳定人物 ID；单独的动作演员、路人、D to C 插镜人物不属于此类）、presenter_action（同一主讲者动作展示但未确认说话）、background（工人/路人/会议背景人物）、none（无人）、unknown（证据不足）。必须依赖可见口型、面向镜头及讲话证据；画外音不算真人口播；工厂背景或手持产品不能排除前景销售。与 personContinuityId 联合记录，身份或角色不确定时 needsReview=true。
   - personContinuityId: string，同一个可确认出镜人物跨镜头使用同一个稳定 ID（如 person_1）；无人出镜或无法确认是否同一人时留空，不得仅凭性别推断
   - subtitle: string，只填写画面中清晰可见的字幕或可确认的口播原句；看不清/听不清则填空字符串，禁止写“待补全”或猜测台词
   - audio: string，只填写可确认的配音、BGM、音效；无法确认则填空字符串，禁止写“可能有……”或猜测台词
@@ -696,3 +699,8 @@ Write a Stable Diffusion / Imagen prompt (≤100 words) that would produce a com
 
   return withRetry(() => generateText({ contents: userPrompt, systemInstruction }));
 }
+
+export async function proofreadReferenceNarrationWithGemini(transcript: string): Promise<string> {
+  return generateText({ contents: transcript, jsonMode: true, systemInstruction: REFERENCE_NARRATION_PROOFREAD_PROMPT });
+}
+import { REFERENCE_NARRATION_PROOFREAD_PROMPT } from '../prompts/referenceNarrationProofread.js';

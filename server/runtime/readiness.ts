@@ -115,24 +115,27 @@ export function digitalHumanProviderReadiness(
   };
 }
 
-export function sentenceReplicationReadiness(env: NodeJS.ProcessEnv = process.env): SentenceReplicationReadiness {
+export function sentenceReplicationReadiness(env: NodeJS.ProcessEnv = process.env, videoProvider: 'seedance' | 'heygen' = 'seedance'): SentenceReplicationReadiness {
   const configured = (name: string) => Boolean(String(env[name] || '').trim());
   const switchedOn = (name: string) => String(env[name] || '').trim().toLowerCase() === 'true';
   const objectEndpoint = configured('OBJECT_STORAGE_ENDPOINT') || configured('R2_ACCOUNT_ID') || configured('COS_ENDPOINT') || configured('COS_REGION');
   const objectAccessKey = configured('OBJECT_STORAGE_ACCESS_KEY_ID') || configured('R2_ACCESS_KEY_ID') || configured('COS_SECRET_ID');
   const objectSecret = configured('OBJECT_STORAGE_SECRET_ACCESS_KEY') || configured('R2_SECRET_ACCESS_KEY') || configured('COS_SECRET_KEY');
   const objectBucket = configured('OBJECT_STORAGE_BUCKET_NAME') || configured('R2_BUCKET_NAME') || configured('COS_BUCKET');
+  const localPhotoStorage = videoProvider === 'heygen' && (!env.OBJECT_STORAGE_DRIVER || env.OBJECT_STORAGE_DRIVER === 'local');
   const missing = [
-    !switchedOn('SEEDANCE_SENTENCE_ENABLED') && 'SEEDANCE_SENTENCE_ENABLED=true',
-    !configured('SEEDANCE_API_KEY') && 'SEEDANCE_API_KEY',
-    !configured('SEEDANCE_MODEL') && 'SEEDANCE_MODEL',
+    videoProvider === 'heygen' && !switchedOn('HEYGEN_GENERATION_ENABLED') && 'HEYGEN_GENERATION_ENABLED=true',
+    videoProvider === 'heygen' && !configured('HEYGEN_API_KEY') && 'HEYGEN_API_KEY',
+    videoProvider === 'seedance' && !switchedOn('SEEDANCE_SENTENCE_ENABLED') && 'SEEDANCE_SENTENCE_ENABLED=true',
+    videoProvider === 'seedance' && !configured('SEEDANCE_API_KEY') && 'SEEDANCE_API_KEY',
+    videoProvider === 'seedance' && !configured('SEEDANCE_MODEL') && 'SEEDANCE_MODEL',
     !(configured('SEEDREAM_API_KEY') || configured('SEEDANCE_API_KEY')) && 'SEEDREAM_API_KEY 或 SEEDANCE_API_KEY（Seedream 目标人物首帧生成）',
     switchedOn('DIGITAL_HUMAN_SEMANTIC_QA_ENABLED') && !(configured('DASHSCOPE_API_KEY') || configured('DASHSCOPE_API_KEY_FILE')) && 'DASHSCOPE_API_KEY 或 DASHSCOPE_API_KEY_FILE（独立语义质检）',
     switchedOn('DIGITAL_HUMAN_SEMANTIC_QA_ENABLED') && !configured('QWEN_DIGITAL_HUMAN_QA_MODEL') && 'QWEN_DIGITAL_HUMAN_QA_MODEL',
-    !objectEndpoint && '对象存储 endpoint/account',
-    !objectAccessKey && '对象存储 access key',
-    !objectSecret && '对象存储 secret key',
-    !objectBucket && '对象存储 bucket',
+    !localPhotoStorage && !objectEndpoint && '对象存储 endpoint/account',
+    !localPhotoStorage && !objectAccessKey && '对象存储 access key',
+    !localPhotoStorage && !objectSecret && '对象存储 secret key',
+    !localPhotoStorage && !objectBucket && '对象存储 bucket',
   ].filter(Boolean) as string[];
   return {
     ready: missing.length === 0,

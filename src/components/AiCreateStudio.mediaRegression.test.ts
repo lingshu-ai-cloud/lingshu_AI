@@ -3,6 +3,7 @@ import {
   assessMaterialMatch,
   automaticStoryboardTrim,
   buildReferenceSpeechPlan,
+  confirmReferenceSpeechEdits,
   detectSourceSpeechLanguageCode,
   fitStoryboardSlotsToDuration,
   fitTimelineToVoiceover,
@@ -116,6 +117,25 @@ assert.equal(mappedSpeech.lines[0]?.draft, 'Try Beauty Cream and Skin Oil.', '�
 assert.match(mappedSpeech.script, /目标产品：Beauty Cream/);
 assert.match(mappedSpeech.script, /目标产品：Skin Oil/);
 
+const approvedSpeech = confirmReferenceSpeechEdits(mappedSpeech, [{ ...mappedSpeech.lines[0]!, draft: 'My approved narration.' }]);
+assert.equal(approvedSpeech.lines[0]?.draft, 'My approved narration.');
+assert.match(approvedSpeech.script, /口播：My approved narration\./);
+assert.equal((approvedSpeech.script.match(/画面：/g) || []).length, 3, '确认口播不能丢失原片视觉切点');
+assert.match(approvedSpeech.script, /目标产品：Skin Oil/, '确认后产品交接仍保留');
+assert.equal(mappedSpeech.lines[0]?.draft, 'Try Beauty Cream and Skin Oil.', '保留自动生成版本以供重置');
+assert.throws(() => confirmReferenceSpeechEdits(mappedSpeech, [{ ...mappedSpeech.lines[0]!, source: 'Changed source', draft: 'Edited' }]), /口播来源已变化/);
+
+const deletionPlan = { script: '[0s-2s]\n画面：保留画面\n口播：Keep.\n\n[2s-4s]\n画面：删除画面\n口播：Drop.', lines: [
+  { id: 'keep', source: 'Keep.', draft: 'Keep.', time: '0–2s', visuals: [{ time: '0–2s', label: '保留画面' }] },
+  { id: 'drop', source: 'Drop.', draft: 'Drop.', time: '2–4s', visuals: [{ time: '2–4s', label: '删除画面' }] },
+] };
+const deletedSpeech = confirmReferenceSpeechEdits(deletionPlan, [deletionPlan.lines[0]!]);
+assert.equal(deletedSpeech.lines.length, 1);
+assert.ok(!deletedSpeech.script.includes('删除画面'));
+assert.ok(!deletedSpeech.script.includes('Drop.'));
+assert.match(deletedSpeech.script, /保留画面/);
+assert.throws(() => confirmReferenceSpeechEdits(deletionPlan, []), /没有可确认/);
+
 const clips = [
   { id: 'portrait-1', name: '产品全景', folder: 'product', type: 'video', duration: 5, width: 1080, height: 1920 },
   { id: 'portrait-2', name: '工厂产线', folder: 'factory', type: 'video', duration: 6, width: 1080, height: 1920 },
@@ -203,3 +223,14 @@ assert.equal(alignedTimeline[1]?.targetStart, 2.46, '镜头和口播必须共享
 assert.equal(alignedTimeline.at(-1)?.targetEnd, 5.89, '各语言成片应结束于该语言真实音频结尾');
 
 console.log('studio material matching regression passed');
+
+const montageLines = [{ lineId: 'montage-speech', referenceText: 'Cream, foundation, essence and oil.', draftText: 'Cream, foundation, essence and oil.', sourceStartSeconds: 5, sourceEndSeconds: 9, sourcePrecision: 'phrase' as const, narrationOwnerShotId: 'cut-0', visualShotIds: ['cut-0','cut-1','cut-2','cut-3'] }];
+const montagePlan = buildReferenceSpeechPlan({referenceAnalysis:{details:[5,6,7,8].map((start,index)=>({shotId:`cut-${index}`,time:`${start}-${start+1}s`,shot:'Product close-up',camera:'fixed',visual:`Product ${index}`,speechLines:montageLines}))}});
+assert.equal(montagePlan.lines.length,1);
+assert.equal(montagePlan.lines[0].visuals.length,4);
+assert.equal((montagePlan.script.match(/画面：/g)||[]).length,4);
+assert.equal((montagePlan.script.match(/口播：Cream/g)||[]).length,1);
+const montageEdit = confirmReferenceSpeechEdits(montagePlan,[{...montagePlan.lines[0],draft:'Our products.',excludedShotIds:['cut-1']}]);
+assert.equal((montageEdit.script.match(/画面：/g)||[]).length,3);
+assert.equal(montageEdit.lines.length,1);
+assert.ok(montageEdit.script.includes('口播：Our products.'));

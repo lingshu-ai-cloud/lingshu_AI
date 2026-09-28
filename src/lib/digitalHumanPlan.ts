@@ -1,3 +1,4 @@
+import { digitalHumanDecisionIssues } from '../../shared/contracts/smartStoryboardAdmission.js';
 import { planPersonShotClusters } from './personShotClustering.js';
 
 export interface DigitalHumanReferenceCue {
@@ -25,11 +26,16 @@ export interface DigitalHumanReferenceCue {
 
 /** Provider-independent requirements shared by the editor and server admission checks. */
 export interface DigitalHumanRequirements {
+  targetFramesConfirmed?: boolean;
+  presenterMode?: 'video_twin' | 'photo_talking';
   workflow: 'material_processing' | 'viral_replication';
   method: 'talking' | 'replace' | 'reenact';
   preferredProvider?: 'auto' | 'kling' | 'sd' | 'runway' | 'self_hosted';
   /** Viral reenactment defaults to local sentence/frame decomposition; direct reference is opt-in. */
   replicationMode?: 'sentence_first_frame' | 'direct_reference';
+  presenterSelected?: boolean;
+  replacementScope?: 'face_only' | 'person_keep_scene' | 'person_and_scene';
+  targetEffect?: 'natural_talking' | 'reference_motion' | 'flexible_scene';
   contentConfirmed: boolean;
   action: string;
   scene: string;
@@ -264,7 +270,7 @@ export function planDigitalHumanShot(input: {
   presenterCapabilities?: Array<'talking' | 'reference_image' | 'reference_video' | 'person_replacement'>;
 }): DigitalHumanPlan {
   const r = input.requirements;
-  const reasons: string[] = [];
+  const reasons: string[] = digitalHumanDecisionIssues(r);
   if (!input.hasAuthorizedPresenter) reasons.push('请选择已授权的企业人物');
   if (input.presenterCapabilities && r?.method === 'talking' && !input.presenterCapabilities.includes('talking')) reasons.push('所选人物缺少口播能力，请补充人物与声音映射');
   if (input.presenterCapabilities && r && r.method !== 'talking' && !input.presenterCapabilities.some(item => ['reference_image', 'reference_video', 'person_replacement'].includes(item))) reasons.push('所选人物缺少参考图片或视频资产');

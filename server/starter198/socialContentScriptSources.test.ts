@@ -212,6 +212,7 @@ const detailedRows = Array.from({ length: 14 }, (_, index) => ({
   purpose: index === 1 ? '开场钩子：人物伸手靠近镜头' : '产品信息',
   visual: index === 1 ? '人物近景伸手靠近镜头' : `第 ${index + 1} 镜产品画面`,
   personContinuityId: index < 3 ? 'person_1' : '',
+  observedPresenterRole: index < 3 ? 'sales_presenter' : 'none',
   startState: index === 1 ? '人物站在镜头后方' : '',
   action: index === 1 ? '手掌快速伸向镜头' : '',
   endState: index === 1 ? '手掌占据画面中心' : '',
@@ -249,6 +250,7 @@ assert.equal(longResolved?.referenceVideoAnalysis.hookAnalysis?.referencePoints[
 assert.equal(longResolved?.referenceVideoAnalysis.shots[0]?.purpose, 'hook');
 assert.equal(longResolved?.referenceVideoAnalysis.shots[1]?.purpose, 'd_to_c', '后续吸睛镜头应归为 D to C');
 assert.equal(longResolved?.referenceVideoAnalysis.shots[1]?.personContinuityId, 'person_1', '跨镜同一人物身份必须进入编导分析结果');
+assert.equal(longResolved?.referenceVideoAnalysis.shots[1]?.observedPresenterRole, 'unknown', '需复核的角色证据不能自动路由至人物生成');
 assert.equal(longResolved?.replicationScript.shots[1]?.purpose, 'd_to_c', 'D to C 分类须传入内容 Agent 交接物');
 assert.equal(longResolved?.referenceVideoAnalysis.shots[1]?.semanticLabel?.intent, '开场钩子：人物伸手靠近镜头');
 assert.equal(longResolved?.referenceVideoAnalysis.shots[1]?.action?.path, '手掌快速伸向镜头');

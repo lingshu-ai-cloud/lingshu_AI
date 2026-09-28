@@ -1,0 +1,16 @@
+import assert from 'node:assert/strict';
+import { groupSpeechShots } from './speechShotGroups';
+const line = { id: 'speech-products', source: 'Cream, foundation, essence and oil.', draft: 'Our cream, foundation, essence and oil.', time: '5–9s' };
+const cuts = [5,6,7,8].map((start,index) => ({shotId:`cut-${index}`, time:`${start}–${start+1}s`,visual:`Product ${index}`}));
+const result = groupSpeechShots([line], [...cuts,{shotId:'after',time:'9–11s'}]);
+assert.equal(result.length,1);
+assert.equal(result[0].shots.length,4);
+assert.equal(result[0].draft,line.draft,'The spoken sentence stays whole; cuts must not duplicate synthesis.');
+assert.deepEqual(groupSpeechShots([line],cuts,['cut-1'])[0].shots.map(s=>s.id),['cut-0','cut-2','cut-3']);
+assert.equal(groupSpeechShots([{...line,time:'bad'}],cuts)[0].shots.length,0,'Never manufacture a cut for missing timing.');
+console.log('speech group / independent picture cut regression passed');
+const withWords = groupSpeechShots([{...line,sourcePrecision:'phrase',words:[{start:5.8,end:6.2,text:'foundation'},{start:6.4,end:6.7,text:'oil'}]}],cuts);
+assert.equal(withWords[0].shots[0].spokenFragment,'');
+assert.equal(withWords[0].shots[1].spokenFragment,'foundation oil','A cut through a word must not split or repeat the word.');
+const entity = groupSpeechShots([{...line,sourcePrecision:'phrase',productTerms:['liquid foundation'],words:[{start:5.8,end:5.95,text:'liquid'},{start:5.96,end:6.2,text:'foundation'}]}],cuts);
+assert.equal(entity[0].shots[1].spokenFragment,'liquid foundation','Keep a complete product name together across a cut.');

@@ -19,11 +19,16 @@ function creationPathFromRequest(request: SocialContentCreateRequest): SocialCon
 function seedFromRequest(request?: SocialContentCreateRequest | null): SocialCreationWorkbenchSeed | undefined {
   if (!request) return undefined;
   return {
+    continueTaskId: request.continueTaskId,
     referenceTitle: request.sourceContext?.referenceTitle,
     referenceThumbnail: request.sourceContext?.referenceThumbnail,
     referenceMediaUrl: request.sourceContext?.referenceMediaUrl,
     referenceContentType: request.sourceContext?.referenceContentType,
+    referenceShots: request.sourceContext?.referenceShots,
     referenceLinks: request.prefill?.referenceLinks,
+    productMappings: request.identityMappings?.products,
+    selectedProductIds: request.identityMappings?.selectedProductIds,
+    selectedProductNames: request.identityMappings?.selectedProductNames,
     productId: request.prefill?.productId,
     productName: request.prefill?.productName,
   };
@@ -110,6 +115,7 @@ export default function SocialContentPlanningPage({
     onLaunchStudio({
       ...(sourceRequest || {}),
       requestId: request.requestId,
+      replicationStep: request.replicationStep,
       themeId: sourceRequest?.themeId || 'product_value',
       mode: 'instant',
       creationPath: request.creationPath,
@@ -124,6 +130,7 @@ export default function SocialContentPlanningPage({
         referenceLinks: request.referenceLinks,
       },
       sourceContext: sourceRequest?.sourceContext,
+      identityMappings: { products: request.productMappings, brand: request.brandMapping },
       presenterAssetId: request.presenterAssetId || undefined,
       specialRequirements: request.specialRequirements,
     });
@@ -149,7 +156,7 @@ export default function SocialContentPlanningPage({
         <SocialCreationWorkbench
           key={`${launch.creationPath}:${seed?.referenceTitle || 'new'}`}
           mode={launch.creationPath}
-          seed={seed}
+          seed={sourceRequest ? { ...seed, ...seedFromRequest(sourceRequest) } : seed}
           stageProfile={stageProfile || undefined}
           onOpenChooser={() => setChooserOpen(true)}
           onShowCreations={() => setView('creations')}

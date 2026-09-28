@@ -1,0 +1,25 @@
+import { store } from '../server/storage/index.js';
+import { runWithDataAuthority } from '../server/storage/dataAuthority.js';
+import { prepareReferenceNarration } from '../server/lib/referenceNarration.js';
+import '../server/loadEnvironment.js';
+import fs from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
+import dotenv from 'dotenv';
+const savedConfig = dotenv.parse(fs.readFileSync(path.join(os.homedir(), '.config/lingshu-ai/.env.local')));
+if (savedConfig.DASHSCOPE_API_KEY) process.env.DASHSCOPE_API_KEY = savedConfig.DASHSCOPE_API_KEY;
+if (savedConfig.DASHSCOPE_BASE_URL) process.env.DASHSCOPE_BASE_URL = savedConfig.DASHSCOPE_BASE_URL;
+await runWithDataAuthority('local', async () => {
+  const id = 'trend_videos_192e76d4b21244c4a2922e60672c95f2';
+  const record = await store.getById<any>('trend_videos', id);
+  if (!record || record.tenantId !== 'local_tenant_customer_1b2913131e2c46deab66172228c4df0a') throw new Error('Wrong local record');
+  const analysis = typeof record.aiAnalysis === 'string' ? JSON.parse(record.aiAnalysis) : record.aiAnalysis;
+  const media = path.resolve('data', String(analysis.materialUrl).replace(/^\//,''));
+  const folder = 'output/narration-quality-20260928'; fs.mkdirSync(folder,{recursive:true});
+  const backup = path.join(folder,'reference-before.json'); if (!fs.existsSync(backup)) fs.writeFileSync(backup,JSON.stringify(record,null,2));
+  const result = await prepareReferenceNarration(media, Number(record.duration || record.durationSeconds || analysis.durationSeconds || 35.58));
+  fs.writeFileSync(path.join(folder,'corrected-narration.json'),JSON.stringify(result,null,2));
+  const updated = { ...analysis, gemini: { ...analysis.gemini, audioTranscript: result } };
+  if (!await store.update('trend_videos',id,{aiAnalysis:JSON.stringify(updated)})) throw new Error('Local save failed');
+  console.log(JSON.stringify({text:result.text,products:result.products,brands:result.brands,uncertainties:result.uncertainties,provider:result.provider}));
+});

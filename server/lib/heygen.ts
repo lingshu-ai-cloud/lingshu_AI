@@ -1,5 +1,5 @@
 /** HeyGen v3 adapter. Never retries a generation with a different idempotency key. */
-export interface HeyGenInput { avatarId: string; voiceId: string; script: string; ratio: string; transparent: boolean; title: string; audioAssetId?: string; audioRef?: { url: string; start: number; duration: number } }
+export interface HeyGenInput { avatarId: string; voiceId: string; script: string; ratio: string; transparent: boolean; title: string; imageAssetId?: string; imageUrl?: string; audioAssetId?: string; audioRef?: { url: string; start: number; duration: number } }
 export class HeyGenClient {
   constructor(private key: string, private transport: typeof fetch = fetch) {}
   private async call(path: string, body?: unknown, requestId?: string) {
@@ -15,11 +15,19 @@ export class HeyGenClient {
     return value.data;
   }
   async create(input: HeyGenInput, requestId: string): Promise<string> {
-    if (!input.avatarId || !input.voiceId || !input.script.trim()) throw new Error('数字人、声音和台词不能为空');
-    const data = await this.call('', { type: 'avatar', avatar_id: input.avatarId, ...(input.audioAssetId ? { audio_asset_id: input.audioAssetId } : { voice_id: input.voiceId, script: input.script }),
+    if ((!input.avatarId && !input.imageAssetId && !input.imageUrl) || !input.voiceId || !input.script.trim()) throw new Error('数字人、声音和台词不能为空');
+    const data = await this.call('', { type: 'avatar', ...(input.imageAssetId ? { image_asset_id: input.imageAssetId } : input.imageUrl ? { image_url: input.imageUrl } : { avatar_id: input.avatarId }), ...(input.audioAssetId ? { audio_asset_id: input.audioAssetId } : { voice_id: input.voiceId, script: input.script }),
       aspect_ratio: input.ratio, resolution: '720p', title: input.title, output_format: input.transparent ? 'webm' : 'mp4' }, requestId);
     if (typeof data.video_id !== 'string') throw new Error('提交结果未知：未返回video_id，请检查供应商任务，不要重复付费提交');
     return data.video_id;
+  }
+  async uploadImage(bytes: Uint8Array, mimeType: string, requestId: string): Promise<string> {
+    if (!this.key || !bytes.length || bytes.length > 32 * 1024 * 1024 || !['image/jpeg', 'image/png', 'image/webp'].includes(mimeType)) throw new Error('人物图片格式无效或超过32MB');
+    const form = new FormData(); form.append('file', new Blob([new Uint8Array(bytes)], { type: mimeType }), mimeType === 'image/png' ? 'presenter.png' : mimeType === 'image/webp' ? 'presenter.webp' : 'presenter.jpg');
+    const response = await this.transport('https://api.heygen.com/v3/assets', { method: 'POST', body: form, signal: AbortSignal.timeout(45000), headers: { 'x-api-key': this.key, 'Idempotency-Key': requestId } });
+    const value = await response.json().catch(() => ({})) as { data?: { asset_id?: string } };
+    if (!response.ok || !value.data?.asset_id) throw new Error(`HeyGen人物图片上传失败 (${response.status})`);
+    return value.data.asset_id;
   }
   async uploadAudio(bytes: Uint8Array, requestId: string): Promise<string> {
     if (!this.key || !bytes.length || bytes.length > 32 * 1024 * 1024) throw new Error('音频不可用或超过32MB');

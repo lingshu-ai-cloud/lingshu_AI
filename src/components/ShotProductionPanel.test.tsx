@@ -1,3 +1,4 @@
+import { newDigitalHumanRequirements } from '../lib/digitalHumanPlan';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { renderToStaticMarkup } from 'react-dom/server';
@@ -276,4 +277,27 @@ test('adopted execution shows its durable storyboard assembly version', () => {
   }]} shot={{ ...newShotProduction('目标口播'), source: 'avatar' }} />);
   assert.match(html, /已完成 · 确认候选并填入分镜/);
   assert.match(html, /已填入分镜 · 候选 candidate-1 · 装配版本 assembly-version-1/);
+});
+
+test('digital human modal offers only video twin and photo talking before mode selection', () => {
+  const html = renderToStaticMarkup(<ShotProductionPanel {...props} salesConfiguration shot={{ ...newShotProduction('口播'), source: 'avatar', contentType: 'enterprise_presenter' }} />);
+  assert.match(html, /视频分身/); assert.match(html, /照片口播/);
+  assert.doesNotMatch(html, /人脸替换|人物替换|人物与场景重构|企业人物资产|创建并绑定/);
+});
+
+test('viral photo talking exposes Ark binding while free photo talking uses HeyGen', () => {
+  const shot = { ...newShotProduction('口播'), digitalHuman: { ...newDigitalHumanRequirements(), presenterMode: 'photo_talking' as const, workflow: 'viral_replication' as const, method: 'reenact' as const } };
+  const viral = renderToStaticMarkup(<ShotProductionPanel {...props} onCreatePresenter={async () => ({id:'test',name:'test',avatarId:'',voiceId:'',authorized:true,supportsAlpha:false})} salesConfiguration viralReplication shot={shot} />);
+  assert.match(viral, /Seedream/); assert.match(viral, /上传企业人物照片/); assert.doesNotMatch(viral, /换脸接口尚待验证/);
+  const free = renderToStaticMarkup(<ShotProductionPanel {...props} salesConfiguration viralReplication={false} shot={shot} />);
+  assert.match(free, /HeyGen/); assert.doesNotMatch(free, /上传照片并创建口播形象|创建并绑定/); assert.doesNotMatch(free, /方舟人物认证|Seedream/);
+});
+
+test('viral photo preview remains disabled until the target frame and script are confirmed',()=>{
+  const shot={...newShotProduction('Hello','photo'),source:'avatar' as const,digitalHuman:{...newDigitalHumanRequirements(),presenterMode:'photo_talking' as const,workflow:'viral_replication' as const,method:'reenact' as const,contentConfirmed:true,reference:{videoUrl:'/source.mp4',start:0,end:2,originalText:'Hello',derivativeAuthorized:false,cues:[{id:'cue',start:0,end:2,originalText:'Hello',targetText:'Hello',shotIds:['s1'],personShot:true,targetFirstFrame:{materialId:'target',imageUrl:'/target.jpg',state:'ready' as const}}]}}};
+  const defaults={...EMPTY_DEFAULTS,presenters:[{id:'photo',name:'Photo',avatarId:'',voiceId:'voice',authorized:true,supportsAlpha:false,authorizationConfirmation:{subjectAdultConfirmed:true,heygenProcessingAuthorized:true},arkCertification:{projectName:'default',materialId:'portrait',assetUri:'asset://asset-test',assetType:'image' as const,status:'active' as const}}]};
+  const before=renderToStaticMarkup(<ShotProductionPanel {...props} defaults={defaults} shot={shot} salesConfiguration viralReplication />);
+  assert.match(before,/alt="目标人物首帧"/);assert.match(before,/<button[^>]*disabled=""[^>]*>生成照片口播素材/);
+  const after=renderToStaticMarkup(<ShotProductionPanel {...props} defaults={defaults} shot={{...shot,digitalHuman:{...shot.digitalHuman,targetFramesConfirmed:true}}} salesConfiguration viralReplication />);
+  assert.doesNotMatch(after,/<button[^>]*disabled=""[^>]*>生成照片口播素材/);
 });
