@@ -12832,15 +12832,13 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onGoPub
         setModeNotice(message);
       };
       if (referenceProducts.length && (!selectedProductOptions.length || !activeProductLabel)) {
-        setProductSelectorOpen(true);
-        reportConfirmationError('请先从企业中心选择本次复刻的产品。');
+        reportConfirmationError('请在右侧选择本次复刻的企业产品。');
         return;
       }
       if (referenceProducts.length && (selectedProductOptions.length !== referenceProducts.length
         || referenceProductMappings.some(mapping => !mapping.productId || !mapping.sourceTerm.trim())
         || new Set(referenceProductMappings.map(mapping => mapping.productId)).size !== referenceProducts.length)) {
-        setProductSelectorOpen(true);
-        reportConfirmationError(`原片有 ${referenceProducts.length} 个产品位，当前已选择 ${selectedProductOptions.length} 个企业产品，已完成 ${referenceProductMappings.filter(mapping => mapping.productId && mapping.sourceTerm.trim()).length} 个映射。请返回修改产品映射，补齐后再确认口播。`);
+        reportConfirmationError(`原片有 ${referenceProducts.length} 个产品位，当前已选择 ${selectedProductOptions.length} 个企业产品，已完成 ${referenceProductMappings.filter(mapping => mapping.productId && mapping.sourceTerm.trim()).length} 个映射。请在右侧补齐产品映射后再确认口播。`);
         return;
       }
       const plan = buildReferenceSpeechPlan(videoKickoff, referenceProductMappings,
@@ -12857,6 +12855,8 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onGoPub
       try {
         setReplicationPreparationError('');
         setModeActionLoading(true);
+        setModeActionStatus('正在保存产品映射…');
+        if (!await saveProject('draft')) throw new Error('产品映射尚未保存，请稍后重试。');
         applyTimestampScript(plan.script);
         // Show the storyboard immediately; measured timing replaces reference timing below.
         const materialIndex = activeSteps.findIndex(item => item.id === 'material');
@@ -13393,31 +13393,17 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onGoPub
 
   const navigateReplicationStep = async (index: number) => {
     if (modeActionLoading || ttsLoading || savingProj || batchShotBusy) return;
-    if (index !== 0) {
-      try {
-        if (projectId) await saveProject('draft');
-        setStepIdx(index === 1 ? 0 : activeSteps.findIndex(item => item.id === (index === 3 ? 'preview' : 'material')));
-        if (index === 3) setCanvasView('creation');
-        if (index === 2) setCanvasView('reference');
-      } catch (error) { setModeNotice(error instanceof Error ? error.message : '保存失败，请重试。'); }
-      return;
+    try {
+      if (projectId) await saveProject('draft');
+      const target = index === 0 ? 'mode' : index === 1 ? 'material' : 'preview';
+      const targetIndex = activeSteps.findIndex(item => item.id === target);
+      if (targetIndex >= 0) setStepIdx(targetIndex);
+      setCanvasView(index === 1 ? 'reference' : 'creation');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '保存失败，请重试。';
+      if (index === 0) setReplicationConfirmationError(message);
+      else setModeNotice(message);
     }
-      if (projectId) {
-        try { await saveProject('draft'); } catch (error) { setReplicationConfirmationError(error instanceof Error ? error.message : '保存失败，请重试。'); return; }
-      }
-      const request: SocialContentCreateRequest = {
-        ...(studioCreateRequest || { themeId: 'product_value', creationPath: 'viral_replication', mode: 'instant' }),
-        requestId: Date.now(), continueTaskId: socialContentTaskId || undefined, continueProjectId: projectId || undefined,
-        identityMappings: { selectedProductIds, selectedProductNames: selectedProductOptions.map(item => item.label), products: referenceProductMappings.map(item => ({ sourceTerm: item.sourceTerm, productId: item.productId, productName: item.productLabel })),
-          brand: referenceBrandLabel ? { sourceTerm: referenceBrandSourceTerm, brandName: referenceBrandLabel } : undefined },
-        sourceContext: studioCreateRequest?.sourceContext || {
-          originLabel: '灵感中心 · 爆款视频分析', referenceTitle: videoKickoff?.video?.title || projectTitle,
-          referenceMediaUrl: videoKickoff?.video?.videoUrl || videoKickoff?.video?.aiAnalysis?.materialUrl,
-          referenceThumbnail: videoKickoff?.video?.thumbnail, referenceContentType: 'video',
-          referenceShots: (videoKickoff?.referenceAnalysis?.details || []).map(shot => ({ time: shot.time, dialogue: (shot.speechLines || []).map(line => line.referenceText).join(' '), visual: shot.visual })),
-        },
-      };
-      window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: { page: 'smartAssets', view: 'create', contentCreationRequest: request } }));
   };
 
   if (socialViralTask && step === 'mode') return <ReplicationSpeechConfirmation
@@ -13432,11 +13418,25 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onGoPub
     draftFrames={(videoKickoff?.referenceAnalysis?.details || []).map((detail, index) => { const slot = storyboardSlots.find(item => item.id === detail.shotId); const material = slot && materialById.get(storyboardAssignments[slot.id] || ''); return { id: detail.shotId || `shot-${index + 1}`, source: material?.url, type: material?.type, time: material && slot ? editForSlot(material, slot).trimStart : 0 }; })}
     poster={videoKickoff?.video?.thumbnail} shots={videoKickoff?.referenceAnalysis?.details || []}
     lines={referenceSpeechPlan.lines} savedDraft={replicationSpeechDraft} onDraftChange={setReplicationSpeechDraft}
-    products={selectedProductOptions.map(item => item.label)} brand={referenceBrandLabel}
+    productOptions={productOptions} selectedProductIds={selectedProductIds}
+    productSlots={referenceProducts} productAssignments={referenceProductAssignments} productTerms={referenceProductTerms}
+    brand={referenceBrandLabel}
     confirmationError={replicationConfirmationError}
     busy={modeActionLoading || speechNamesPending || ttsLoading} status={modeActionStatus} notice={speechNamesError || (speechNamesPending ? '正在统一产品名称的口播语种…' : ttsNotice || modeNotice)}
-    onBack={() => void navigateReplicationStep(0)}
-    onStepChange={index => void navigateReplicationStep(index)}
+    onProductSelectionChange={productId => {
+      setSelectedProductIds(productId ? [productId] : []);
+      setReplicationConfirmationError('');
+    }}
+    onProductMappingChange={(shotId, productId) => {
+      const nextAssignments = { ...referenceProductAssignments, [shotId]: productId };
+      setReferenceProductAssignments(nextAssignments);
+      setSelectedProductIds([...new Set(referenceProducts.map(slot => nextAssignments[slot.shotId]).filter((id): id is string => Boolean(id)))]);
+      setReplicationConfirmationError('');
+    }}
+    onProductTermChange={(shotId, sourceTerm) => {
+      setReferenceProductTerms(current => ({ ...current, [shotId]: sourceTerm }));
+      setReplicationConfirmationError('');
+    }}
     onPreview={async lines => {
       const text = lines.map(line => line.draft.trim()).join(' ');
       const language = referenceSourceLanguage || detectScriptLanguageCode(text);
@@ -13472,7 +13472,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onGoPub
       <StudioWorkbenchFrame
         className="h-full min-h-0 rounded-none border-0 shadow-none lg:h-full lg:min-h-0"
         replicationWorkflow={socialViralTask}
-        replicationActiveStep={step === 'preview' || step === 'bgm' || step === 'cover' ? 3 : 2}
+        replicationActiveStep={step === 'preview' || step === 'bgm' || step === 'cover' ? 2 : 1}
         onReplicationStepChange={index => void navigateReplicationStep(index)}
         replicationNavigationDisabled={modeActionLoading || ttsLoading || savingProj || batchShotBusy}
         projectTitle={projectTitle}

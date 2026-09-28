@@ -415,7 +415,7 @@ export default function SocialCreationWorkbench({
 
   return (
     <section className="flex h-full min-h-0 flex-col bg-[#f2f7f4]">
-      {isReplication ? <ReplicationWorkbenchHeader activeStep={0} onStepChange={index => { if (index > 0) void startGeneration(index as 1 | 2 | 3, true); }} navigationDisabled={submitting || productsLoading} title={seed?.referenceTitle} actions={<><button type="button" onClick={onShowCreations} className="rounded-lg border border-border px-3 py-2 text-xs font-bold">我的创作</button><button type="button" onClick={onOpenChooser} className="rounded-lg bg-[#173d31] px-3 py-2 text-xs font-bold text-white">切换制作方式</button></>} /> : (      <header className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-border bg-white px-5 py-3">
+      {isReplication ? <ReplicationWorkbenchHeader activeStep={0} maxNavigableStep={0} navigationDisabled={submitting || productsLoading} title={seed?.referenceTitle} actions={<><button type="button" onClick={onShowCreations} className="rounded-lg border border-border px-3 py-2 text-xs font-bold">我的创作</button><button type="button" onClick={onOpenChooser} className="rounded-lg bg-[#173d31] px-3 py-2 text-xs font-bold text-white">切换制作方式</button></>} /> : (      <header className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-border bg-white px-5 py-3">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
             <span className={`rounded-full px-2.5 py-1 text-[10px] font-black ${isReplication ? 'bg-orange-50 text-orange-700' : 'bg-emerald-50 text-emerald-700'}`}>{isReplication ? '爆款复刻' : '自由创作'}</span>
