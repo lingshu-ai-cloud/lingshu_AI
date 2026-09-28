@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import assert from 'node:assert/strict';
+import './contentQueue.test.js';
 import { buildDeliveryResources, draftDelivery, projectDelivery } from './deliveryResources.js';
 import { fallbackDelivery, filterDeliveries, isDeliveryStale, safeDeliveryUrl } from '../../src/lib/delivery.js';
 import type { WorkflowTask } from '../../src/lib/digitalEmployees.js';

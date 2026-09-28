@@ -23,6 +23,7 @@ import { spokenLanguageMatches } from '../../shared/contracts/videoCreationPlan.
 import { invalidatePublishingApprovalForProject, invalidatePublishingAuthorizationForRun } from '../digitalEmployees/publishingExecution.js';
 import { contentAcceptanceHash, contentAccepted } from '../digitalEmployees/contentAcceptance.js';
 import { buildDeliveryResources } from '../digitalEmployees/deliveryResources.js';
+import { buildContentQueueProjection } from '../digitalEmployees/contentQueue.js';
 import { buildTaskDeepLink, type WorkflowTask } from '../../src/lib/digitalEmployees.js';
 import { Router, type Request, type Response } from 'express';
 import fs from 'node:fs';
@@ -45,6 +46,7 @@ const buildBusinessSnapshot: typeof defaultBuildBusinessSnapshot = (tenantId, ra
 import { freezeStoryboardNarration, CONTENT_SCRIPT_QUALITY_RULE_VERSION, advanceAutomatedContentProduction, generateDirectorScriptContracts, productIdentity, resolveEnterpriseAssetLocation, resumeContentProjectForTaskControl } from '../digitalEmployees/contentProduction.js';
 import { contentProjectLineageFields } from '../digitalEmployees/contentProjectLineage.js';
 import { buildContentBatchPlan, contentPlanCoverage, enterpriseAssetStableId, type ContentBatchPlanDraft } from '../digitalEmployees/contentBatchPlan.js';
+import { enrichPackageWithContentSignals } from '../digitalEmployees/contentPlanRecommendation.js';
 import { summarizeContentFeedback } from '../digitalEmployees/contentReview.js';
 import { summarizeWeeklyMatrix } from '../digitalEmployees/weeklyMatrixReview.js';
 import {
@@ -317,6 +319,21 @@ async function contentRoutingEvidence(tenantId: string, config: DigitalEmployeeC
       ...materialRows.filter(item => selectedProducts.some(product => String(item.productId || '') === stableProductId(product, rawProducts.indexOf(product)))).map(item => item.id),
     ],
   };
+}
+
+async function recommendPackageWithTenantEvidence(
+  tenantId: string,
+  goal: ReturnType<typeof goalInput>,
+  config: DigitalEmployeeConfig,
+  ownerId = '',
+  ownerName = '',
+): Promise<WeeklyPackage> {
+  const pack = recommendPackage(goal, config, ownerId, ownerName);
+  const [videos, benchmarks] = await Promise.all([
+    store.list<StoredRecord>('trend_videos', { where: { tenantId }, sort: '-updatedAt', perPage: 500 }).catch(() => ({ items: [] })),
+    store.list<StoredRecord>('competitor_accounts', { where: { tenantId }, sort: '-createdAt', perPage: 200 }).catch(() => ({ items: [] })),
+  ]);
+  return enrichPackageWithContentSignals({ pack, goal, config, videos: videos.items, benchmarks: benchmarks.items });
 }
 
 async function prepareContentBatchPlan(input: { tenantId: string; goal: GoalRecord; run: RunRecord; task: TaskRecord; plan: PlanRecord | null; config: DigitalEmployeeConfig }) {
@@ -622,7 +639,7 @@ async function buildOverview(tenantId: string, requestedGoalId = '', requestedRa
   const resolvedConfiguration = await resolveCurrentConfiguration(tenantId, configRecord);
   if (!goal) {
     const businessSnapshot = await buildBusinessSnapshot(tenantId, requestedRange);
-    return { config: resolvedConfiguration?.config || null, configuration: publicConfigurationMetadata(resolvedConfiguration), goals: [], goal: null, plan: null, run: null, tasks: [], events: [], approvals: [], handoffs: [], review: null, liveReview: null, agents: publicAgentStatuses([]), businessSnapshot };
+    return { config: resolvedConfiguration?.config || null, configuration: publicConfigurationMetadata(resolvedConfiguration), goals: [], goal: null, plan: null, run: null, tasks: [], contentQueue: { generatedAt: new Date().toISOString(), sourceStatus: 'unavailable', sourceNote: '当前没有周计划', items: [] }, events: [], approvals: [], handoffs: [], review: null, liveReview: null, agents: publicAgentStatuses([]), businessSnapshot };
   }
   const [plan, run, businessSnapshot] = await Promise.all([
     first<PlanRecord>(COLLECTION.plans, { tenant_id: tenantId, goal_id: goal.id }),
@@ -640,16 +657,22 @@ async function buildOverview(tenantId: string, requestedGoalId = '', requestedRa
   const taskItems = tasks?.items || [];
   const normalizedTasks = taskItems.map(task => ({ ...task, agent_role: visibleAgentRole(task.agent_role, task.task_key) }));
   const agents = publicAgentStatuses(normalizedTasks);
-  const deliveryData = await buildDeliveryResources(tenantId, normalizedTasks.map(task => ({ ...task, business_refs: jsonObject(task.business_refs, []), depends_on: jsonObject(task.depends_on, []), output: jsonObject(task.output, {}) })) as WorkflowTask[], goal.title)
-    .then(deliveries => ({ deliveries, deliveryNotice: '' }))
-    .catch(() => ({ deliveries: undefined, deliveryNotice: '业务产物暂时无法读取，当前展示任务记录。请刷新重试。' }));
+  const publicTasks = normalizedTasks.map(task => ({ ...task, business_refs: jsonObject(task.business_refs, []), depends_on: jsonObject(task.depends_on, []), output: jsonObject(task.output, {}) })) as WorkflowTask[];
+  const planBody = plan ? jsonObject<Record<string, unknown>>(plan.plan, {}) : {};
+  const [deliveryData, contentQueue] = await Promise.all([
+    buildDeliveryResources(tenantId, publicTasks, goal.title)
+      .then(deliveries => ({ deliveries, deliveryNotice: '' }))
+      .catch(() => ({ deliveries: undefined, deliveryNotice: '业务产物暂时无法读取，当前展示任务记录。请刷新重试。' })),
+    buildContentQueueProjection({ tenantId, runId, planBody, tasks: publicTasks })
+      .catch(() => ({ generatedAt: new Date().toISOString(), sourceStatus: 'unavailable' as const, sourceNote: '内容队列暂时无法读取，请刷新重试', items: [] })),
+  ]);
   return {
     config: resolvedConfiguration?.config || null,
     configuration: publicConfigurationMetadata(resolvedConfiguration),
     goals: operatingGoals.map(publicGoal),
     goal: publicGoal(goal),
     plan: plan ? (() => {
-      const body = jsonObject<Record<string, unknown>>(plan.plan, {});
+      const body = planBody;
       const publicTasks = Array.isArray(body.tasks)
         ? body.tasks.map(item => {
           const task = jsonObject<Record<string, unknown>>(item, {});
@@ -671,6 +694,7 @@ async function buildOverview(tenantId: string, requestedGoalId = '', requestedRa
     run,
     tasks: normalizedTasks.map(task => ({ ...task, depends_on: jsonObject(task.depends_on, []), output: jsonObject(task.output, {}) })),
     ...deliveryData,
+    contentQueue,
     events: events?.items.slice().reverse().map(event => ({ ...event, payload: jsonObject(event.payload, {}) })) || [],
     approvals: approvals?.items.map(approval => {
       const approvalTask = taskItems.find(task => task.id === approval.task_id);
@@ -1515,7 +1539,7 @@ async function advanceRunUnlocked(tenantId: string, runId: string): Promise<void
     reopened = await reopenNoDataCustomerBranch({ tenantId, run, tasks: taskResult.items, startsAt: goal.starts_at, endsAt: goal.ends_at, customerIds: eligibleFollowupCustomerIds(getWhatsAppCustomers(tenantId), criteria), onReopened: async customerIds => { await appendEvent({tenantId,runId:run.id,type:'customer.no_data_reopened',summary:`新增 ${customerIds.length} 位符合条件客户，重新生成分层与草稿，发送仍需审批`,payload:{customerIds,messagesSent:0}}); } });
   }
   if (run.status === 'succeeded' && !reopened) return;
-  await store.update(COLLECTION.runs, run.id, { status: 'running', current_controller: 'agent', pause_reason: '' });
+  await store.update(COLLECTION.runs, run.id, { status: 'running', current_controller: 'business', pause_reason: '' });
   let businessSnapshot: BusinessSnapshot | null = null;
   for (const task of taskResult.items) {
     if (['succeeded', 'skipped', 'cancelled', 'handed_off'].includes(task.status)) continue;
@@ -2288,7 +2312,7 @@ digitalEmployeesRouter.post('/goals/:goalId/package/recommend', async (req, res)
   const current = plan ? jsonObject<{ businessPackage?: WeeklyPackage }>(plan.plan, {}).businessPackage : undefined;
   const members = await listTenantEmployees(res.locals as AuthLocals, req.headers.authorization);
   const member = members.find(m => m.id === userId);
-  const proposal = recommendPackage(goalInput(goal), { ...config, operatingMaturity: current?.maturity || config.operatingMaturity, operatingAssessment: current?.operatingAssessment || config.operatingAssessment, defaultParticipation: current?.participation || config.defaultParticipation }, userId, member?.name);
+  const proposal = await recommendPackageWithTenantEvidence(tenantId, goalInput(goal), { ...config, operatingMaturity: current?.maturity || config.operatingMaturity, operatingAssessment: current?.operatingAssessment || config.operatingAssessment, defaultParticipation: current?.participation || config.defaultParticipation }, userId, member?.name);
   proposal.revision = current?.revision || 0;
   res.json(proposal);
 });
@@ -2361,11 +2385,12 @@ digitalEmployeesRouter.post('/goals', async (req, res) => {
     updated_at: now,
   });
   const planDraft = buildWeeklyPlan(goal, config);
+  const recommendedPackage = await recommendPackageWithTenantEvidence(tenantId, goal, config, userId);
   const plan = await requiredCreate<PlanRecord>(COLLECTION.plans, {
     tenant_id: tenantId,
     goal_id: created.id,
     status: 'draft',
-    plan: { ...planDraft, ...configurationSnapshot(resolvedConfiguration), businessPackage: recommendPackage(goal, config, userId) },
+    plan: { ...planDraft, ...configurationSnapshot(resolvedConfiguration), businessPackage: recommendedPackage },
     created_at: now,
   });
   await appendAudit({ tenantId, userId, action: 'weekly_goal.created', targetType: 'weekly_goal', targetId: created.id, metadata: { metric: goal.metric, target: goal.target, draftPlanId: plan.id } });
@@ -2502,7 +2527,7 @@ export async function approveGoalForReview(tenantId: string, userId: string, goa
     goal_id: goal.id,
     plan_id: plan.id,
     status: 'initializing',
-    current_controller: 'agent',
+    current_controller: 'business',
     pause_reason: '',
     started_at: now,
     completed_at: '',
@@ -2510,6 +2535,15 @@ export async function approveGoalForReview(tenantId: string, userId: string, goa
   await ensureReviewRunTasks(tenantId, goal, plan, run, planDraft.tasks, pack);
   if (!await store.update(COLLECTION.runs, run.id, { status: 'planning' })) throw Error('任务初始化状态保存失败');
   await appendEvent({ tenantId, runId: run.id, type: 'plan.generated', level: 'success', summary: `计划 Agent 已生成 ${planDraft.tasks.length} 个任务`, payload: { strategy: planDraft.strategy } });
+  const contentCount = pack?.tasks.find(task => task.templateId === 'production')?.videoPlans?.length || 0;
+  await appendEvent({
+    tenantId,
+    runId: run.id,
+    type: 'business.orchestration.started',
+    level: 'success',
+    summary: `经营 Agent 已接管本周执行，并向编导、内容与客服 Agent 下发任务${contentCount ? `；内容队列共 ${contentCount} 条` : ''}`,
+    payload: { controller: 'business', delegatedRoles: ['director', 'content', 'customer'], contentCount, packageRevision: pack?.revision || 0 },
+  });
   await appendEvent({ tenantId, runId: run.id, type: 'workflow.started', summary: '数字员工已开始执行本周计划' });
   await appendAudit({ tenantId, userId, action: 'weekly_goal.approved', targetType: 'weekly_goal', targetId: goal.id, metadata: { planId: plan.id, runId: run.id } });
   await advanceRun(tenantId, run.id);

@@ -1,6 +1,7 @@
 import { assessMaturity, normalizeAssessment, assessmentQuestions, type OperatingAssessment } from '../../src/lib/operatingMaturity.js';
 import { planConfigForDisplay, type DigitalEmployeeConfig as ClientConfig } from '../../src/lib/digitalEmployees.js';
 import assert from 'node:assert/strict';
+import './contentPlanRecommendation.test.js';
 import { recommendPackage, compilePackage, normalizePackage, validatePackage, grantCovers, packageConfig, criticalBusinessConfigChanges } from './weeklyPackage.js';
 import { normalizeDigitalEmployeeConfig, normalizeWeeklyGoal } from './domain.js';
 const config = normalizeDigitalEmployeeConfig({ companyName: 'Test', industry: 'Tools', focusProducts: 'A', operatingMaturity: 'starting', publishingTargets: [{ platform: 'youtube', accountId: 'account-a', accountLabel: 'A' }] });

@@ -100,7 +100,8 @@ assert.match(studioSource, /resolveStudioWorkflowProjectEntry\(nextProjects, wor
 assert.match(studioSource, /if \(workflowContext \|\| socialContentTaskId\) \{[\s\S]{0,180}removeItem\(STUDIO_OPEN_PROJECT_KEY\)/, 'workflow or social-task context must override and consume a remembered browser draft');
 assert.match(studioSource, /silent && !projectId && !studioSpecHasMeaningfulContent\(nextSpec\)/, 'background autosave must not create empty unnamed drafts');
 assert.match(studioSource, /onCreatePresenter=\{async input => \{/,'the current shot must expose inline presenter completion');
-assert.match(studioSource, /uploadMaterialFile\(input\.file,\{folder:'presenter',type:'image',sourceType:'presenter-inline-upload'\}\)/,'inline completion must upload the selected portrait');
+assert.match(studioSource, /const mediaType = input\.file\.type\.startsWith\('video\/'\)[\s\S]{0,180}请选择人物图片或视频/, 'inline completion must validate the selected presenter asset type');
+assert.match(studioSource, /presenterApi\.uploadPhotoMaterial\(input\.file, input\.name\)[\s\S]{0,180}uploadMaterialFile\(input\.file,\{folder:'presenter',type:mediaType,sourceType:'presenter-inline-upload'\}\)/, 'inline completion must use the provider photo route when available and otherwise upload the selected image or video');
 assert.match(studioSource, /setProductionDefaults\(saved\);await refreshMaterials\(\)/,'inline completion must refresh enterprise presenters and Studio materials before returning');
 assert.match(studioSource, /defaultPresenterId:productionDefaults\.defaultPresenterId\|\|presenterId/, 'the first inline presenter becomes the enterprise default while remaining selected in the originating shot');
 assert.doesNotMatch(studioSource, /showProjects \|\| linkedProductionContext/, 'a linked Agent task must not hide the three-column Studio behind a status scene');
@@ -109,9 +110,9 @@ assert.match(studioSource, /className=\{showProjects \? 'hidden' : 'flex min-h-0
 assert.match(studioSource, /digitalHumanJob\?\.status === 'review'[\s\S]{0,180}<video/, 'generated digital-human candidates must be directly previewable before approval');
 assert.match(studioSource, /<RenderedVideoPlayer[^>]+src=\{formalPreviewUrl\}/, 'formal AIGC output must be directly playable in the final preview step');
 assert.match(studioSource, /<DigitalHumanProductionOverview/, 'the production page must retain per-shot digital-human progress and settlement UI');
-assert.match(studioSource, /HeyGen 账号资产/, 'the material workbench sidebar must expose the HeyGen asset selector');
+assert.match(studioSource, /HeyGen 数字人口播生成/, 'the material workbench must expose the HeyGen asset selector');
 assert.match(studioSource, /studioApi\.digitalHumanAvatars\(\)/, 'the Studio must load provider avatar assets instead of rendering an empty selector');
-assert.match(studioSource, /bindHeygenAvatarToShot\(activeWorkbenchSlot\)/, 'an account avatar must be bindable to the active storyboard shot');
+assert.match(studioSource, /onDigitalHuman=\{\(\) => \{[\s\S]{0,1200}openProduction\(salesSlot\)/, 'the material decision panel must open the selected storyboard shot in digital-human production');
 assert.match(studioSource, /avatar\.defaultVoiceId/, 'provider-owned avatars must carry their default voice into production defaults');
 
 const trafficSource = readFileSync(new URL('./TrafficPage.tsx', import.meta.url), 'utf8');
