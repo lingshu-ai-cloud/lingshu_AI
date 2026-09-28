@@ -2,12 +2,17 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { applyMaterialAnalysis, materialRevision, analyzeProductionMaterial } from './productionMaterialAnalysis.js';
+import { applyMaterialAnalysis, materialFrameBatches, materialRevision, analyzeProductionMaterial } from './productionMaterialAnalysis.js';
 import { resolvePresentationMaterials } from './contentProduction.js';
 import type { AssetCandidate } from './contentProduction.js';
 import { normalizeVideoPlan } from '../../src/lib/videoCreationPlan.js';
 const root=fs.mkdtempSync(path.join(os.tmpdir(),'material-cache-test-'));
 try {
+  const batches = materialFrameBatches(Array.from({ length: 48 }, (_, index) => ({
+    base64: '', mimeType: 'image/jpeg', timeLabel: `${index}s`,
+  })), 48, 20);
+  assert.deepEqual(batches.map(item => item.frames.length), [20, 20, 8]);
+  assert.deepEqual(batches.map(item => [item.start, item.end]), [[0, 19.5], [19.5, 39.5], [39.5, 48]], 'analysis windows must be contiguous and non-overlapping');
   const file=path.join(root,'asset.png');fs.writeFileSync(file,'before');
   const asset: AssetCandidate = {id:'asset',name:'not evidence',type:'image',duration:0,localPath:file,observations:[],visualObservations:[],segments:[],tags:[],source:'enterprise_product',productId:'product',synthetic:false,authorization:{status:'owned',scope:'tenant',evidence:'upload'}};
   const cache={revision:materialRevision(asset),observations:['正面电路板'],segments:[],duration:0};
