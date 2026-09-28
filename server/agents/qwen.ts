@@ -526,6 +526,14 @@ Schema:
 }
 
 /** Small, grounded contract for reusable footage, independent of viral-reference scoring. */
+export function materialAnalysisTokenBudget(frameCount: number): number {
+  // A 20–30 second factory reel can contain many real physical cuts. The old
+  // fixed 2,400-token ceiling routinely stopped valid JSON halfway through,
+  // which left the whole uploaded video unusable even though frame extraction
+  // had succeeded.
+  return Math.min(7200, Math.max(2400, Math.ceil(Math.max(0, frameCount)) * 140));
+}
+
 export async function analyzeMaterialFramesWithQwen(opts: {
   frames: Array<{ base64: string; mimeType: string; timeLabel: string }>; duration: number;
 }): Promise<unknown> {
@@ -538,8 +546,8 @@ export async function analyzeMaterialFramesWithQwen(opts: {
         { type:'text', text:`原视频时长 ${opts.duration} 秒。下列每张图片前标明它的原片时间。识别可安全剪辑的视觉区间。` },
         ...opts.frames.flatMap(frame => [{type:'text',text:frame.timeLabel}, {type:'image_url',image_url:{url:`data:${frame.mimeType};base64,${frame.base64}`}}]),
       ] as any },
-    ], response_format: {type:'json_object'}, max_tokens:2400,
-  }, {signal: AbortSignal.timeout(120000), maxRetries:0});
+    ], response_format: {type:'json_object'}, max_tokens:materialAnalysisTokenBudget(opts.frames.length),
+  }, {signal: AbortSignal.timeout(120000), maxRetries:1});
   if (completion.choices[0]?.finish_reason === 'length') throw Error('素材分析输出被截断，请分段分析');
   const raw = completion.choices[0]?.message?.content || '';
   try { return JSON.parse(raw); } catch { throw Error('素材分析返回格式无效，请重试'); }
@@ -552,8 +560,8 @@ export async function verifyMaterialFramesWithQwen(opts: {
     model: (process.env.QWEN_MATERIAL_VL_MODEL || QWEN_EXACT_VL_MODEL()).trim(),
     messages:[{role:'system',content:`你是严格的视觉事实与剪切边界复核员。对照原片采样帧审查素材索引。保持输入 segments 的语义时间区间和数量，不增加任何细节。逐条删除不能直接从画面证实的 observedFacts，修正错误的物体命名为保守外观描述（颜色、形状、位置、可见运动）。反光、虚焦、焊点不等于液体；不能凭外观推断性能、用途、物质成分或隐藏结构。不确定的运动方向应改成“缓慢移动”或留空。不要把景深变化写成物体变化。删除同样不受支持的subject/action/environment/camera内容。visualTopic（视觉主题）和 expressionPurpose（表达目的）仅是这一段的可用编辑标签；若剩余可见事实不足以支持标签，就置空，不能借用文件名、标题、其他片段或推断功效资质。复核 actionStart/actionPeak/actionEnd、cleanStart/cleanEnd：必须位于 start/end 内并保持顺序；只有采样帧能支持完整动作和干净进出点时才保留高 boundaryConfidence，否则退回 start/end、cleanEntry/cleanExit=false且 boundaryConfidence不高于0.55。只有保留的事实都清楚可见才 needsReview=false，否则true并降低confidence。返回同一 JSON 结构 {segments:[{start,end,subject,observedFacts,visualTopic,expressionPurpose,action,shot,angle,camera,composition,environment,motionLevel,actionStart,actionPeak,actionEnd,cleanStart,cleanEnd,cleanEntry,cleanExit,boundaryConfidence,confidence,needsReview}]}。observedFacts至少包含一条确定可见的宽泛外观；若整段无法确认则needsReview=true。`},
       {role:'user',content:[{type:'text',text:`真实时长${opts.duration}秒。待复核索引：${JSON.stringify(opts.draft)}`}, ...opts.frames.flatMap(frame=>[{type:'text',text:frame.timeLabel},{type:'image_url',image_url:{url:`data:${frame.mimeType};base64,${frame.base64}`}}])] as any}],
-    response_format:{type:'json_object'},max_tokens:2400,
-  },{signal:AbortSignal.timeout(120000),maxRetries:0});
+    response_format:{type:'json_object'},max_tokens:materialAnalysisTokenBudget(opts.frames.length),
+  },{signal:AbortSignal.timeout(120000),maxRetries:1});
   if(completion.choices[0]?.finish_reason==='length') throw Error('素材事实复核被截断，请重试');
   try { return JSON.parse(completion.choices[0]?.message?.content || ''); } catch {throw Error('素材事实复核格式无效');}
 }
