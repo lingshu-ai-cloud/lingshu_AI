@@ -2,13 +2,16 @@ import assert from 'node:assert/strict';
 import {
   buildYtDlpArgs,
   describeVideoAnalysisRecovery,
+  exactAnalysisDuration,
   filterCrawlerOpsTasksForRecordIds,
   platformReferer,
   recoverInterruptedCrawlerOpsTask,
   resetCrawlerOpsTaskForExplicitRetryState,
   selectPendingCrawlerOpsTasks,
+  shouldResumeReferenceAnalysis,
   terminalizeExhaustedCrawlerOpsTask,
 } from './videos.js';
+import { analysisTimelineQualityError } from './videoAnalysisCodec.js';
 
 const chineseSearch = 'ytsearch5:工业视觉 爆款';
 assert.equal(platformReferer(chineseSearch), 'https://www.youtube.com/');
@@ -106,5 +109,43 @@ assert.equal(explicitRetry.status, 'resolved', 'the old task must retire so it c
 assert.equal(explicitRetry.attempts, 0);
 assert.equal(explicitRetry.lastError, undefined);
 assert.equal(explicitRetry.retryResetBy, 'user-b');
+
+assert.equal(shouldResumeReferenceAnalysis({
+  usage: 'reference_only',
+  requestedAnalysisMode: undefined,
+  geminiStatus: 'video_failed',
+  analysisError: 'exact_analysis_stalled',
+}), true, '重复上传必须恢复已停滞的本地精准分析');
+assert.equal(shouldResumeReferenceAnalysis({
+  usage: 'reference_only',
+  requestedAnalysisMode: 'exact',
+  geminiStatus: 'analyzing',
+}), false, '重复上传不能并发启动第二次正在运行的精准分析');
+assert.equal(shouldResumeReferenceAnalysis({
+  analysisMode: 'exact',
+  analysisQuality: 'video',
+  gemini: { scriptDetails15s: [{ time: '0-5', visual: '产品开场' }] },
+}), false, '已有完整精准证据时不得无谓重跑');
+assert.equal(shouldResumeReferenceAnalysis({
+  analysisMode: 'exact',
+  analysisQuality: 'video',
+  gemini: { scriptDetails15s: [
+    { time: '0-4', visual: '开场' }, { time: '4-8', visual: '展示' },
+    { time: '8-12', visual: '生产' }, { time: '12-16', visual: '质检' },
+    { time: '16-20', visual: '收尾' }, { time: '20-24.1', visual: '账号页' },
+  ] },
+}, 22.1), true, '重复上传必须重跑越过真实片尾的历史精准分析');
+assert.equal(exactAnalysisDuration(22.1, [0, 12, 21.1]), 22.1, '已知真实时长必须覆盖“末帧 + 3 秒”的估算值');
+assert.equal(exactAnalysisDuration(0, [0, 6.5]), 9.5, '只有缺少真实时长时才允许按末帧估算');
+assert.equal(analysisTimelineQualityError({
+  scriptDetails15s: [
+    { time: '0-4', visual: '开场' },
+    { time: '4-8', visual: '展示' },
+    { time: '8-12', visual: '生产' },
+    { time: '12-16', visual: '质检' },
+    { time: '16-20', visual: '收尾' },
+    { time: '20-24.1', visual: '账号页' },
+  ],
+} as never, 22.1, 'exact'), 'timeline_exceeds_24.10s_of_22.10s', '精准分析门禁必须拒绝超过真实视频结尾的时间轴');
 
 console.log('video pipeline recovery tests passed');

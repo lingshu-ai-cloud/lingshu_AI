@@ -292,10 +292,18 @@ function exactAnalysisQuality(video: TrendVideo): AnalysisQualityGate {
     return { ready: false, reason: '分镜时间线存在空档或重叠，请重试精确分析', requiredFrames, actualFrames: valid.length };
   }
   if (duration > 0 && ordered[ordered.length - 1]!.end! + 0.75 < duration) return { ready: false, reason: '分镜尚未覆盖视频结尾，请重试精确分析', requiredFrames, actualFrames: valid.length };
+  if (duration > 0 && ordered[ordered.length - 1]!.end! - 0.75 > duration) return { ready: false, reason: '分镜时间轴超出原视频结尾，请重试精确分析', requiredFrames, actualFrames: valid.length };
   return { ready: true, reason: '精确分析已通过实际画面时间线校验', requiredFrames, actualFrames: valid.length };
 }
 
-function isDisplayableVideoAnalysis(analysis?: VideoAnalysisPayload, status?: TrendVideo['status']): boolean {
+export function isDisplayableVideoAnalysis(analysis?: VideoAnalysisPayload, status?: TrendVideo['status']): boolean {
+  // A manually uploaded benchmark remains part of the user's library even
+  // when exact analysis fails. Hiding it made a deduplicated re-upload look
+  // lost and also removed the only UI from which the Director run could be
+  // inspected or retried.
+  if (analysis?.usage === 'reference_only'
+    && Boolean(analysis.contentSha256)
+    && analysis.userVisible !== false) return true;
   if (status === 'failed') return false;
   // Collection results are useful before full-video analysis completes. The
   // card can already show verified platform metadata and a processing state.
@@ -3343,7 +3351,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
         headers: { 'Content-Type': 'video/mp4', ...authHeader() },
         body: file,
       });
-      const result = await response.json().catch(() => ({})) as { id?: string; error?: string; deduplicated?: boolean };
+      const result = await response.json().catch(() => ({})) as { id?: string; error?: string; deduplicated?: boolean; analysisQueued?: boolean };
       if (!response.ok || !result.id) throw new Error(result.error || `导入失败（HTTP ${response.status}）`);
       const recordId = result.id;
       const readRecord = async (open = false) => {
@@ -3357,7 +3365,11 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
         return video;
       };
       await readRecord(true);
-      setMaterialMessage(result.deduplicated ? '已找到相同对标视频，正在打开分析记录。' : '对标视频已入库，正在进行全片逐镜分析。');
+      setMaterialMessage(result.deduplicated
+        ? result.analysisQueued
+          ? '已找到相同对标视频，并已重新提交全片逐镜分析。'
+          : '已找到相同对标视频，正在打开分析记录。'
+        : '对标视频已入库，正在进行全片逐镜分析。');
       void refreshInventory();
       void (async () => {
         for (let attempt = 0; attempt < 120; attempt += 1) {
@@ -3365,7 +3377,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
           try {
             const latest = await readRecord();
             const status = latest.aiAnalysis?.geminiStatus;
-            if (status === 'analyzed' || status === 'needs_review' || status === 'analysis_retryable' || latest.status === 'failed') {
+            if (status === 'analyzed' || status === 'needs_review' || status === 'analysis_retryable' || status === 'video_failed' || latest.status === 'failed') {
               setMaterialMessage(status === 'analyzed' ? '逐镜分析完成，请检查编导交接结果。' : '逐镜分析需要复核，请查看记录中的具体原因。');
               void refreshVideos(1, true);
               return;

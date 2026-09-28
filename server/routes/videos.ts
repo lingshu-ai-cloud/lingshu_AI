@@ -1642,7 +1642,16 @@ videosRouter.post('/import-reference-file', async (req, res) => {
     const sha256 = hash.digest('hex');
     const result = await referenceImportRegistry.run(`${tenantId}:${sha256}`, async () => {
       const existing = await findTenantReferenceByHash(tenantId, sha256);
-      if (existing) return { id: String(existing.id), deduplicated: true };
+      if (existing) {
+        const recovered = await recoverExistingReferenceImport({
+          record: existing,
+          tenantId,
+          incomingPath,
+          duration,
+          size,
+        });
+        return { ...recovered, deduplicated: true };
+      }
       const title = String(req.query.title || '本地参考视频').trim().slice(0, 160) || '本地参考视频';
       const platform = req.query.platform === 'instagram' || req.query.platform === 'facebook' || req.query.platform === 'youtube'
         ? req.query.platform : 'tiktok';
@@ -1681,13 +1690,13 @@ videosRouter.post('/import-reference-file', async (req, res) => {
         };
         void analyzeDownloadedMaterial(record.id, destination, material, 'exact', initialAnalysis.analysisRunId)
           .catch(error => console.error('[videos] reference analysis failed:', error));
-        return { id: record.id, deduplicated: false };
+        return { id: record.id, deduplicated: false, analysisQueued: true };
       } catch (error) {
         await store.update(COL, record.id, { status: 'failed', aiAnalysis: JSON.stringify({ ...initialAnalysis, geminiStatus: 'analysis_retryable', analysisQuality: 'pending', analysisError: compactVideoPipelineError(error) }) });
         throw error;
       }
-    }) as { id: string; deduplicated: boolean };
-    res.status(result.deduplicated ? 200 : 202).json({ ...result, status: result.deduplicated ? 'existing' : 'pending', analysisUrl: `/api/overseas/videos/${result.id}`, sourceVideoRef: `/api/overseas/videos/${result.id}/media` });
+    }) as { id: string; deduplicated: boolean; analysisQueued: boolean };
+    res.status(result.deduplicated ? 200 : 202).json({ ...result, status: result.analysisQueued ? 'pending' : 'existing', analysisUrl: `/api/overseas/videos/${result.id}`, sourceVideoRef: `/api/overseas/videos/${result.id}/media` });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'reference_upload_failed';
     res.status(message === 'reference_upload_too_large' ? 413
@@ -1728,6 +1737,102 @@ async function findTenantReferenceByHash(tenantId: string, sha256: string): Prom
     page += 1;
   } while (page <= totalPages);
   return null;
+}
+
+export function shouldResumeReferenceAnalysis(analysis: Record<string, unknown>, duration = 0): boolean {
+  if (hasCompletedExactVideoEvidence(analysis)) {
+    if (duration <= 0) return false;
+    const gemini = parseJsonRecord<VideoAiAnalysis>(analysis.gemini, {} as VideoAiAnalysis);
+    return Boolean(analysisTimelineQualityError(gemini, duration, 'exact'));
+  }
+  const status = String(analysis.geminiStatus || '');
+  const activelyRunning = analysis.requestedAnalysisMode === 'exact'
+    && ['queued', 'waiting_for_video', 'analyzing'].includes(status)
+    && !analysis.analysisError;
+  return !activelyRunning;
+}
+
+async function recoverExistingReferenceImport(input: {
+  record: Record<string, unknown>;
+  tenantId: string;
+  incomingPath: string;
+  duration: number;
+  size: number;
+}): Promise<{ id: string; analysisQueued: boolean }> {
+  const recordId = String(input.record.id || '');
+  if (!recordId) throw new Error('reference_record_invalid');
+  const now = new Date().toISOString();
+  const previous = videoAnalysisOf(input.record);
+  const canonicalFileId = path.posix.join('tenants', input.tenantId, 'reference-videos', `${recordId}.mp4`);
+  const canonicalPath = path.join(tenantAssetDir(MEDIA_DIR, input.tenantId), 'reference-videos', `${recordId}.mp4`);
+  const savedPath = localReferenceVideoPath(String(input.record.videoFileId || ''), input.tenantId);
+  if (!fs.existsSync(canonicalPath)) {
+    fs.mkdirSync(path.dirname(canonicalPath), { recursive: true });
+    fs.copyFileSync(savedPath && fs.existsSync(savedPath) ? savedPath : input.incomingPath, canonicalPath);
+  }
+
+  const commonAnalysis = {
+    ...previous,
+    usage: 'reference_only',
+    mayAnalyze: true,
+    mayUseInProduction: false,
+    userVisible: true,
+    downloadStatus: previous.downloadStatus || 'uploaded',
+    videoFetchStatus: previous.videoFetchStatus || 'manual_upload',
+  };
+  const shouldResume = shouldResumeReferenceAnalysis(commonAnalysis, Number(input.record.duration || input.duration));
+  const analysisRunId = shouldResume ? randomUUID() : String(previous.analysisRunId || randomUUID());
+  const nextAnalysis = shouldResume ? {
+    ...commonAnalysis,
+    requestedAnalysisMode: 'exact',
+    analysisMode: 'exact',
+    analysisRunId,
+    analysisRunMode: 'exact',
+    geminiStatus: 'queued',
+    downloadStatus: 'uploaded',
+    videoFetchStatus: 'manual_upload',
+    analysisQuality: 'pending',
+    analysisError: undefined,
+    downloadError: undefined,
+    videoLevelFailureStatus: undefined,
+    analysisRetryable: undefined,
+    analysisFailureKind: undefined,
+    analysisQueuedAt: now,
+    reanalyzeQueuedAt: now,
+  } : commonAnalysis;
+  await store.update(COL, recordId, {
+    tenantId: input.tenantId,
+    contentFormat: 'video',
+    videoFileId: canonicalFileId,
+    thumbnailUrl: `/api/overseas/videos/${recordId}/thumbnail`,
+    duration: Number(input.record.duration || input.duration),
+    status: shouldResume ? 'pending' as VideoStatus : input.record.status,
+    aiAnalysis: JSON.stringify(nextAnalysis),
+  });
+  testTenantVisibleListCache.clear();
+
+  if (shouldResume) {
+    const material: Material = {
+      id: recordId,
+      name: String(input.record.title || '本地参考视频'),
+      folder: 'hot',
+      type: 'video',
+      duration: Number(input.record.duration || input.duration),
+      size: humanSize(input.size),
+      file: canonicalFileId,
+      url: `/api/overseas/videos/${recordId}/media`,
+      tenantId: input.tenantId,
+      scope: 'own',
+      usage: 'reference_only',
+      mayAnalyze: true,
+      mayUseInProduction: false,
+      contentSha256: String(previous.contentSha256 || ''),
+      createdAt: String(input.record.created || now),
+    };
+    void analyzeDownloadedMaterial(recordId, canonicalPath, material, 'exact', analysisRunId)
+      .catch(error => console.error('[videos] recovered reference analysis failed:', error));
+  }
+  return { id: recordId, analysisQueued: shouldResume };
 }
 
 // ─── POST /videos/ingest ──────────────────────────────────────────────────────
@@ -6433,7 +6538,7 @@ async function analyzeExactLongVideoChunks(input: {
   // default put nearly all 42 exact frames into the first request of a 50s
   // video, which repeatedly hit the 90s request timeout.
   const chunkSeconds = Math.max(10, Math.min(30, Number(process.env.VIDEO_EXACT_CHUNK_SECONDS || 12)));
-  const inferredDuration = Math.max(input.duration, ...input.frames.map(frame => qwenFrameSeconds(frame.timeLabel) + 3), 3);
+  const inferredDuration = exactAnalysisDuration(input.duration, input.frames.map(frame => qwenFrameSeconds(frame.timeLabel)));
   const chunks = Array.from({ length: Math.ceil(inferredDuration / chunkSeconds) }, (_, index) => ({
     start: index * chunkSeconds,
     end: Math.min(inferredDuration, (index + 1) * chunkSeconds),
@@ -6572,6 +6677,11 @@ async function analyzeExactLongVideoChunks(input: {
     coarseStructure: results.flatMap(result => result.coarseStructure || []),
     scriptDetails15s: results.flatMap(result => result.scriptDetails15s || []),
   };
+}
+
+export function exactAnalysisDuration(duration: number, frameTimes: number[]): number {
+  if (Number.isFinite(duration) && duration > 0) return duration;
+  return Math.max(...frameTimes.filter(Number.isFinite).map(time => time + 3), 3);
 }
 
 export async function analyzeDownloadedVideoWithFallback(opts: {

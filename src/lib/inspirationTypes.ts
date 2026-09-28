@@ -74,6 +74,9 @@ export interface GeminiVideoAnalysis {
 }
 
 export interface VideoAnalysisPayload {
+  usage?: 'editable' | 'reference_only';
+  contentSha256?: string;
+  userVisible?: boolean;
   source?: string;
   contentFormat?: ContentFormat;
   views?: string;
