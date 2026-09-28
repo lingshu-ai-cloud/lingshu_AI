@@ -10,6 +10,8 @@ import type { DigitalEmployeeConfig } from './digitalEmployees';
 
 export interface MatrixAccountPlan {
   accountId: string;
+  /** Planned accounts can exist before a publishing connection is authorized. */
+  connected?: boolean;
   accountRole?: SocialAccountRole;
   formats?: string[];
   platform: VideoCreationPlan['platform'];
@@ -37,7 +39,9 @@ export interface MatrixAccountReview {
 /**
  * Build the same deterministic account matrix everywhere the weekly plan is
  * shown. It uses the operating profile selected during setup and only includes
- * accounts that are already connected and in the plan's platform scope.
+ * connected accounts first, then fills the remaining configured account roles
+ * with stable planning-only accounts. Planning is therefore complete before
+ * publishing authorization is granted.
  */
 export function defaultMatrixPlan(
   config: Pick<DigitalEmployeeConfig, 'socialOperatingProfile' | 'publishingTargets' | 'customerProfile' | 'focusProducts' | 'videoDefaults'>,
@@ -47,16 +51,20 @@ export function defaultMatrixPlan(
   const profile = socialOperatingProfile(config.socialOperatingProfile);
   const usedByPlatform = new Map<VideoCreationPlan['platform'], number>();
   const productName = config.focusProducts.split(/[、，,；;\n]/).map(item => item.trim()).filter(Boolean)[0] || '';
-  return config.publishingTargets
-    .filter(target => platforms.includes(target.platform))
-    .map(target => {
-      const candidates = profile.accounts.filter(item => item.platform === target.platform);
-      const used = usedByPlatform.get(target.platform) || 0;
-      usedByPlatform.set(target.platform, used + 1);
-      const strategy = candidates[used % Math.max(1, candidates.length)];
-      return {
-        accountId: target.accountId,
-        platform: target.platform,
+  const rows: MatrixAccountPlan[] = [];
+  for (const platform of platforms) {
+    const candidates = profile.accounts.filter(item => item.platform === platform);
+    const targets = config.publishingTargets.filter(target => target.platform === platform);
+    const count = Math.max(candidates.length, targets.length);
+    for (let index = 0; index < count; index += 1) {
+      const target = targets[index];
+      const strategy = candidates[index % Math.max(1, candidates.length)];
+      const used = usedByPlatform.get(platform) || 0;
+      usedByPlatform.set(platform, used + 1);
+      rows.push({
+        accountId: target?.accountId || `planned:${platform}:${strategy?.accountRole || 'brand_combined'}:${used + 1}`,
+        connected: Boolean(target),
+        platform,
         accountRole: strategy?.accountRole || 'brand_combined',
         formats: [...(strategy?.formats || [])],
         audience: config.customerProfile || '本期目标买家',
@@ -64,18 +72,20 @@ export function defaultMatrixPlan(
         language: normalizeVideoLanguage(config.videoDefaults?.language || 'en'),
         objective: objective || strategy?.purpose || '验证本周内容方向并获得有效询盘',
         contentDirection: strategy?.purpose || '围绕买家问题展示产品证据与采购价值',
-        cta: SOCIAL_PLATFORM_EXECUTION_RULES[target.platform].ctaRule,
+        cta: SOCIAL_PLATFORM_EXECUTION_RULES[platform].ctaRule,
         weeklyCount: Math.max(1, strategy?.weeklyVideoCount || 1),
         sourceProjectIds: [],
-      };
-    });
+      });
+    }
+  }
+  return rows;
 }
 const clean = (v: unknown, limit = 500) => String(v ?? '').trim().slice(0, limit);
 export function normalizeMatrixPlan(value: unknown): MatrixAccountPlan[] {
   if (!Array.isArray(value) || value.length > 30) throw Error('矩阵安排最多支持 30 个账号');
   return value.map(raw => {
     if (!raw || typeof raw !== 'object') throw Error('矩阵账号安排格式无效');
-    return { accountId: clean(raw.accountId, 160), platform: clean(raw.platform) as MatrixAccountPlan['platform'],
+    return { accountId: clean(raw.accountId, 160), ...(raw.connected === false ? { connected: false } : raw.connected === true ? { connected: true } : {}), platform: clean(raw.platform) as MatrixAccountPlan['platform'],
       accountRole: ['brand_capability', 'buyer_advisor', 'brand_combined'].includes(clean(raw.accountRole)) ? clean(raw.accountRole) as SocialAccountRole : 'brand_combined',
       formats: Array.isArray(raw.formats) ? [...new Set<string>(raw.formats.map((item: unknown) => clean(item, 80)).filter(Boolean))].slice(0, 8) : [],
       audience: clean(raw.audience), productName: clean(raw.productName, 180), language: normalizeVideoLanguage(raw.language),
@@ -88,20 +98,23 @@ export function bindMatrixVideo(plan: VideoCreationPlan, row?: MatrixAccountPlan
     ...(plan.productName !== row.productName ? { materialIds: [], scenePlan: plan.scenePlan?.map(scene => ({ ...scene, materialId: '' })) } : {}) } : {}),
     matrix: row ? { accountId: row.accountId, audience: row.audience, objective: row.objective, cta: row.cta, accountRole: row.accountRole || 'brand_combined', formats: row.formats || [] } : { accountId: '', audience: '', objective: '', cta: '', accountRole: 'brand_combined', formats: [] } });
 }
-/** Preserve user-authored themes, sources and scenes; only add missing deliverables. */
+/** Preserve in-scope authored content while making deliverables exactly match the matrix. */
 export function fillMatrixVideos(pack: WeeklyPackage, defaults: Partial<VideoCreationPlan>, dueAt: string): WeeklyPackage {
   const rows = pack.matrixPlan || [];
   const existing = pack.tasks.find(t => t.templateId === 'production');
-  const plans = (existing?.videoPlans || []).map(plan => bindMatrixVideo(plan, rows.find(row => row.accountId === plan.matrix?.accountId)));
+  const sourcePlans = existing?.videoPlans || [];
+  const assignedByAccount = new Map(rows.map(row => [row.accountId, sourcePlans.filter(plan => plan.matrix?.accountId === row.accountId)]));
+  const unassigned = sourcePlans.filter(plan => !plan.matrix?.accountId);
+  const plans: VideoCreationPlan[] = [];
   for (const row of rows) {
-    let assigned = plans.filter(plan => plan.matrix?.accountId === row.accountId).length;
-    while (assigned < row.weeklyCount) {
-      const unassignedIndex = plans.findIndex(plan => !plan.matrix?.accountId);
-      if (unassignedIndex < 0) break;
-      plans[unassignedIndex] = bindMatrixVideo(plans[unassignedIndex], row);
-      assigned += 1;
+    const targetCount = Math.max(0, row.weeklyCount - row.sourceProjectIds.length);
+    const authored = (assignedByAccount.get(row.accountId) || []).slice(0, targetCount);
+    for (const plan of authored) plans.push(bindMatrixVideo(plan, row));
+    while (plans.filter(plan => plan.matrix?.accountId === row.accountId).length < targetCount && unassigned.length) {
+      plans.push(bindMatrixVideo(unassigned.shift()!, row));
     }
-    const missing = row.weeklyCount - row.sourceProjectIds.length - assigned;
+    const assigned = plans.filter(plan => plan.matrix?.accountId === row.accountId).length;
+    const missing = targetCount - assigned;
     for (let i = 0; i < missing && plans.length < 30; i++) {
       const slot = assigned + i;
       const theme = row.weeklyCount === 1 && row.contentDirection ? row.contentDirection : `待编导确认的买家问题 ${slot + 1}`;
@@ -115,7 +128,7 @@ export function fillMatrixVideos(pack: WeeklyPackage, defaults: Partial<VideoCre
   return { ...pack, tasks };
 }
 export function matrixScopeIssues(pack: WeeklyPackage, targets: Array<{ accountId: string; platform: string }>, platforms: string[]): string[] {
-  return pack.matrixPlan?.some(row => !targets.some(target => target.accountId === row.accountId && target.platform === row.platform) || !platforms.includes(row.platform)) ? ['矩阵账号必须属于本计划及本周平台范围'] : [];
+  return pack.matrixPlan?.some(row => !platforms.includes(row.platform) || (row.connected !== false && !targets.some(target => target.accountId === row.accountId && target.platform === row.platform))) ? ['矩阵账号必须属于本计划及本周平台范围'] : [];
 }
 export function matrixIssues(pack: WeeklyPackage): string[] {
   if (!pack.matrixPlan) return [];
@@ -130,7 +143,7 @@ export function matrixIssues(pack: WeeklyPackage): string[] {
     if (!Number.isInteger(row.weeklyCount) || row.weeklyCount < 1 || row.weeklyCount > 30) issues.push('每个账号本周计划条数须为 1–30');
     const assigned = plans.filter(plan => plan.matrix?.accountId === row.accountId);
     if (assigned.length + row.sourceProjectIds.length !== row.weeklyCount) issues.push(`${row.platform} 账号的内容数量与本周计划不一致，请补齐视频计划或调整条数`);
-    if (publishing && !pack.authorization.accountIds.includes(row.accountId)) issues.push('矩阵账号不在本周允许发布的账号范围内');
+    if (publishing && row.connected !== false && !pack.authorization.accountIds.includes(row.accountId)) issues.push('已连接矩阵账号不在本周允许发布的账号范围内');
     if (assigned.some(plan => plan.platform !== row.platform || plan.productName !== row.productName || plan.language !== row.language || plan.matrix?.audience !== row.audience || plan.matrix?.objective !== row.objective || plan.matrix?.cta !== row.cta)) issues.push('账号策略已修改，请同步视频计划后再执行');
   }
   if (plans.some(plan => plan.matrix?.accountId && !rows.some(row => row.accountId === plan.matrix?.accountId))) issues.push('视频绑定的账号已从矩阵移除，请重新选择账号');

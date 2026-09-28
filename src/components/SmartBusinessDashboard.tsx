@@ -343,6 +343,68 @@ type MatrixMessengerPage = {
   messengerSubscribed?: boolean;
 };
 
+type MatrixEnterpriseProfile = {
+  socialStrategy?: {
+    enabledRoutes?: string[];
+    routeStrategies?: Record<string, { primaryCta?: string }>;
+  };
+};
+
+function matrixDate(value: string | undefined, fallback = new Date()) {
+  const date = value ? new Date(`${value}T00:00:00`) : fallback;
+  return Number.isNaN(date.getTime()) ? fallback : date;
+}
+
+function addMatrixDays(date: Date, days: number) {
+  const next = new Date(date);
+  next.setDate(next.getDate() + days);
+  return next;
+}
+
+function dateKey(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function MatrixContentCalendar({ startsAt, plans, onOpenPublishing }: {
+  startsAt?: string;
+  plans: Array<{ plannedPublishDate?: string; platform: string }>;
+  onOpenPublishing?: () => void;
+}) {
+  const anchor = matrixDate(startsAt);
+  const today = dateKey(new Date());
+  const weeks = Array.from({ length: 12 }, (_, index) => {
+    const start = addMatrixDays(anchor, index * 7);
+    const end = addMatrixDays(start, 6);
+    const startKey = dateKey(start);
+    const endKey = dateKey(end);
+    return {
+      index,
+      start,
+      end,
+      current: today >= startKey && today <= endKey,
+      plans: plans.filter(plan => Boolean(plan.plannedPublishDate) && plan.plannedPublishDate! >= startKey && plan.plannedPublishDate! <= endKey),
+    };
+  });
+  const lastDay = weeks[11]?.end || anchor;
+  return <section className="overflow-hidden rounded-3xl border border-emerald-100 bg-white shadow-sm" aria-label="12 周内容运营日历">
+    <div className="flex flex-wrap items-start justify-between gap-4 border-b border-slate-100 px-5 py-5 sm:px-6">
+      <div className="flex items-start gap-3"><span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-700"><CalendarRange size={19}/></span><div><p className="text-[10px] font-black tracking-[0.16em] text-emerald-700">内容运营日历</p><h2 className="mt-1 text-xl font-black text-slate-950">12 周从冷启动到稳定复盘</h2><p className="mt-1 text-xs text-slate-500">每周按照选题 → 制作 → 发布 → 复盘推进，已编排内容会落到对应周。</p></div></div>
+      <div className="flex items-center gap-2"><span className="rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-2 text-[10px] font-black text-emerald-800">{anchor.toLocaleDateString("zh-CN", { month: "numeric", day: "numeric" })} — {lastDay.toLocaleDateString("zh-CN", { month: "numeric", day: "numeric" })}</span>{onOpenPublishing&&<button type="button" onClick={onOpenPublishing} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-[10px] font-black text-slate-700 hover:border-emerald-200 hover:text-emerald-700">打开发布日历 →</button>}</div>
+    </div>
+    <div className="overflow-x-auto px-5 py-5 sm:px-6">
+      <div className="min-w-[920px]">
+        <div className="grid grid-cols-12 gap-2">{weeks.map(week => <div key={week.index} className={`rounded-xl border px-2 py-2.5 ${week.current ? "border-emerald-500 bg-emerald-50 shadow-sm" : "border-slate-100 bg-slate-50/70"}`}><div className="flex items-center justify-between"><span className={`text-[9px] font-black ${week.current ? "text-emerald-700" : "text-slate-400"}`}>W{week.index + 1}</span>{week.current&&<span className="h-1.5 w-1.5 rounded-full bg-emerald-500 motion-safe:animate-pulse"/>}</div><p className="mt-1 text-[10px] font-black text-slate-700">{week.start.toLocaleDateString("zh-CN", { month: "numeric", day: "numeric" })}</p><p className="mt-1 text-[8px] text-slate-400">{week.plans.length ? `${week.plans.length} 条已排期` : "等待排期"}</p></div>)}</div>
+        <div className="mt-3 grid grid-cols-12 gap-2">{matrixCalendarPhases.map(phase => <div key={phase.label} className={`rounded-xl px-3 py-3 ${phase.color}`} style={{ gridColumn: `${phase.start} / span ${phase.span}` }}><p className="text-[11px] font-black">{phase.label}</p><p className="mt-0.5 text-[9px] opacity-70">{phase.detail}</p></div>)}</div>
+        <div className="mt-3 grid grid-cols-12 gap-2">{weeks.map(week => <div key={week.index} className="grid grid-cols-4 gap-1" aria-label={`第 ${week.index + 1} 周工作流`}>{["选题", "制作", "发布", "复盘"].map((step, stepIndex) => <span key={step} title={step} className={`h-1.5 rounded-full ${stepIndex === 0 ? "bg-emerald-500" : stepIndex === 1 ? "bg-sky-400" : stepIndex === 2 ? "bg-violet-400" : "bg-amber-400"}`}/>)}</div>)}</div>
+        <div className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-2 border-t border-slate-100 pt-4 text-[9px] font-bold text-slate-500"><span>运营阶段</span>{matrixCalendarPhases.map(phase => <span key={phase.label} className="inline-flex items-center gap-1.5"><span className={`h-2.5 w-2.5 rounded ${phase.color.split(" ")[0]}`}/>{phase.label}</span>)}<span className="ml-auto text-slate-400">日历只展示计划；实际发布仍需账号连接、质量验收与授权。</span></div>
+      </div>
+    </div>
+  </section>;
+}
+
 function MatrixView({ data, onRefresh, onNavigate, onGeneratePlan }: {
   data: DigitalEmployeeOverview;
   onRefresh?: () => void;
@@ -359,6 +421,7 @@ function MatrixView({ data, onRefresh, onNavigate, onGeneratePlan }: {
   const [projects, setProjects] = useState<Array<{ id: string; title: string }>>([]);
   const [selectedPlatform, setSelectedPlatform] = useState<Platform>("tiktok");
   const [benchmarkAccounts, setBenchmarkAccounts] = useState<MatrixBenchmarkAccount[]>([]);
+  const [enterprisePrimaryCta, setEnterprisePrimaryCta] = useState("");
   const [connectionStatus, setConnectionStatus] = useState<{
     loaded: boolean;
     whatsapp: boolean;
@@ -379,11 +442,14 @@ function MatrixView({ data, onRefresh, onNavigate, onGeneratePlan }: {
   const profile = socialOperatingProfile(config?.socialOperatingProfile);
   const editable = Boolean(saved && goal && !data.run && goal.status === "draft");
   const productionPlans = saved?.tasks.find(task => task.templateId === "production")?.videoPlans || [];
-  const accountRows = useMemo(() => rows.length ? rows.map(row => ({
+  const accountRows = useMemo(() => rows.length ? rows.map(row => {
+    const target = config?.publishingTargets.find(item => item.accountId === row.accountId && item.platform === row.platform);
+    return {
     ...row,
-    connected: true,
-    accountLabel: config?.publishingTargets.find(item => item.accountId === row.accountId)?.accountLabel || row.accountId,
-  })) : profile.accounts.map((row, index) => ({
+    cta: enterprisePrimaryCta || row.cta,
+    connected: row.connected !== false && Boolean(target),
+    accountLabel: target?.accountLabel || `${platformLabels[row.platform]} · ${matrixRoleLabel[row.accountRole || "brand_combined"]}`,
+  };}) : profile.accounts.map((row, index) => ({
     accountId: `default-${row.platform}-${row.accountRole}-${index}`,
     accountRole: row.accountRole,
     formats: row.formats,
@@ -393,12 +459,12 @@ function MatrixView({ data, onRefresh, onNavigate, onGeneratePlan }: {
     language: config?.videoDefaults?.language || "en",
     objective: row.purpose,
     contentDirection: row.purpose,
-    cta: SOCIAL_PLATFORM_EXECUTION_RULES[row.platform].ctaRule,
+    cta: enterprisePrimaryCta || SOCIAL_PLATFORM_EXECUTION_RULES[row.platform].ctaRule,
     weeklyCount: row.weeklyVideoCount,
     sourceProjectIds: [] as string[],
     connected: false,
     accountLabel: `${platformLabels[row.platform]} · ${matrixRoleLabel[row.accountRole]}`,
-  })), [config, profile.accounts, rows]);
+  })), [config, enterprisePrimaryCta, profile.accounts, rows]);
   const visiblePlatforms = useMemo(() => platformOptions.filter(platform => accountRows.some(row => row.platform === platform)), [accountRows]);
   const selectedAccounts = accountRows.filter(row => row.platform === selectedPlatform);
 
@@ -408,15 +474,17 @@ function MatrixView({ data, onRefresh, onNavigate, onGeneratePlan }: {
   useEffect(() => {
     let active = true;
     void (async () => {
-      const [benchmarkResult, whatsappResult, messengerResult] = await Promise.allSettled([
+      const [benchmarkResult, whatsappResult, messengerResult, enterpriseResult] = await Promise.allSettled([
         fetch("/api/overseas/competitor-accounts", { headers: authHeader() }),
         fetch("/api/oauth/whatsapp/config", { headers: authHeader() }),
         fetch("/api/overseas/social/accounts?platform=facebook", { headers: authHeader() }),
+        fetch("/api/overseas/enterprise/profile", { headers: authHeader() }),
       ]);
       if (!active) return;
       let accounts: MatrixBenchmarkAccount[] = [];
       let whatsapp = false;
       let messengerPages: MatrixMessengerPage[] = [];
+      let primaryCta = "";
       if (benchmarkResult.status === "fulfilled" && benchmarkResult.value.ok) {
         const body = await benchmarkResult.value.json().catch(() => ({})) as { items?: MatrixBenchmarkAccount[] };
         accounts = Array.isArray(body.items) ? body.items : [];
@@ -429,8 +497,17 @@ function MatrixView({ data, onRefresh, onNavigate, onGeneratePlan }: {
         const body = await messengerResult.value.json().catch(() => ({})) as { items?: MatrixMessengerPage[] };
         messengerPages = Array.isArray(body.items) ? body.items : [];
       }
+      if (enterpriseResult.status === "fulfilled" && enterpriseResult.value.ok) {
+        const body = await enterpriseResult.value.json().catch(() => ({})) as MatrixEnterpriseProfile;
+        const routes = body.socialStrategy?.enabledRoutes || [];
+        const strategies = body.socialStrategy?.routeStrategies || {};
+        primaryCta = routes.map(route => strategies[route]?.primaryCta?.trim() || "").find(Boolean)
+          || Object.values(strategies).map(strategy => strategy?.primaryCta?.trim() || "").find(Boolean)
+          || "";
+      }
       if (active) {
         setBenchmarkAccounts(accounts);
+        setEnterprisePrimaryCta(primaryCta);
         setConnectionStatus({ loaded: true, whatsapp, messengerPages });
       }
     })();
@@ -439,13 +516,14 @@ function MatrixView({ data, onRefresh, onNavigate, onGeneratePlan }: {
 
   const applyRows = (pack: WeeklyPackage, matrixRows = pack.matrixPlan || []) => {
     if (!config || !goal) return pack;
+    const effectiveRows = matrixRows.map(row => ({ ...row, cta: enterprisePrimaryCta || row.cta }));
     const filled = fillMatrixVideos({
       ...pack,
-      matrixPlan: matrixRows,
+      matrixPlan: effectiveRows,
       authorization: {
         ...pack.authorization,
-        accountIds: matrixRows.map(row => row.accountId),
-        maxPublishItems: Math.max(1, matrixRows.reduce((sum, row) => sum + row.weeklyCount, 0)),
+        accountIds: effectiveRows.filter(row => row.connected !== false && config.publishingTargets.some(target => target.accountId === row.accountId && target.platform === row.platform)).map(row => row.accountId),
+        maxPublishItems: Math.max(1, effectiveRows.reduce((sum, row) => sum + row.weeklyCount, 0)),
       },
     }, config.videoDefaults || {}, goal.endsAt);
     const contentCount = filled.tasks.find(task => task.templateId === "production")?.videoPlans?.length || 0;
@@ -468,6 +546,19 @@ function MatrixView({ data, onRefresh, onNavigate, onGeneratePlan }: {
     } finally { setSaving(false); }
   };
 
+  const synchronizePackage = async () => {
+    if (!goal) return;
+    setSaving(true); setMessage("");
+    try {
+      const recommended = await digitalEmployeeApi.recommendPackage(goal.id);
+      await digitalEmployeeApi.savePackage(goal.id, recommended);
+      setMessage("周任务包已按视频矩阵、周频次、对标账号与爆款匹配结果重新编排。");
+      onRefresh?.();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "周任务包同步失败");
+    } finally { setSaving(false); }
+  };
+
   return <div className="space-y-5">
     <section className="overflow-hidden rounded-3xl border border-emerald-200 bg-[#102d25] text-white shadow-sm">
       <div className="border-b border-white/10 px-5 py-5 sm:px-6">
@@ -481,11 +572,6 @@ function MatrixView({ data, onRefresh, onNavigate, onGeneratePlan }: {
           <p className="mt-4 text-[10px] font-black text-emerald-300">{layer.label}</p>
           <h3 className="mt-1 text-base font-black">{layer.headline}</h3>
           <p className="mt-2 text-xs leading-5 text-emerald-50/70">{layer.detail}</p>
-          {layer.label === "运营矩阵" && <div className="mt-4 rounded-xl border border-white/10 bg-white/5 p-3" aria-label="12 周运营日历">
-            <div className="flex items-center justify-between gap-3"><div className="flex items-center gap-2 text-[10px] font-black text-emerald-200"><CalendarRange size={13}/>运营日历 · 12 周</div><span className="text-[9px] text-emerald-50/55">每周选题 → 制作 → 发布 → 复盘</span></div>
-            <div className="mt-3 grid grid-cols-12 gap-1">{Array.from({ length: 12 }, (_, week) => <span key={week} className="text-center text-[8px] font-bold text-emerald-50/45">W{week + 1}</span>)}</div>
-            <div className="mt-1 grid grid-cols-12 gap-x-1 gap-y-1.5">{matrixCalendarPhases.map(phase => <div key={phase.label} className={`min-w-0 rounded-md px-2 py-1.5 ${phase.color}`} style={{ gridColumn: `${phase.start} / span ${phase.span}` }}><p className="truncate text-[9px] font-black">{phase.label}</p><p className="truncate text-[8px] opacity-70">{phase.detail}</p></div>)}</div>
-          </div>}
           <p className="mt-3 rounded-lg bg-white/5 px-3 py-2 text-[10px] leading-4 text-emerald-100/75">规则：{layer.rule}</p>
         </article>)}
       </div>
@@ -494,10 +580,11 @@ function MatrixView({ data, onRefresh, onNavigate, onGeneratePlan }: {
         <div className="bg-[#173d31] px-5 py-4"><p className="text-[9px] font-black text-emerald-300">线索闭环</p><p className="mt-1 text-xs font-bold leading-5 text-white">评论 “Quote” / 私信 → 官网、WhatsApp、邮箱或目录 → 客服 Agent 分级 → 销售跟进 → 周复盘</p></div>
       </div>
     </section>
+    <MatrixContentCalendar startsAt={goal?.startsAt} plans={productionPlans} onOpenPublishing={() => onNavigate?.("traffic")}/>
     <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div><p className="text-xs font-bold tracking-[0.16em] text-emerald-700">账号矩阵</p><h2 className="mt-1 text-2xl font-black text-slate-950">本周账号职责与内容配置</h2><p className="mt-1 text-sm text-slate-500">按已确认的经营阶段、已连接账号和平台规则生成；修改后会同步更新内容队列。</p></div>
-        <div className="flex flex-wrap gap-2"><button type="button" onClick={() => onNavigate?.("accountManagement")} className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-xs font-black text-slate-700">管理连接账号</button>{editable&&<button type="button" onClick={() => { setDraft(saved || null); setEditing(true); }} className="inline-flex items-center gap-2 rounded-xl bg-slate-950 px-4 py-2.5 text-xs font-black text-white"><Pencil size={14}/>修改矩阵</button>}</div>
+        <div className="flex flex-wrap gap-2"><button type="button" onClick={() => onNavigate?.("accountManagement")} className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-xs font-black text-slate-700">管理连接账号</button>{editable&&<button type="button" disabled={saving} onClick={() => void synchronizePackage()} className="inline-flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-xs font-black text-emerald-800 disabled:opacity-50"><RefreshCcw size={14} className={saving ? "animate-spin" : ""}/>按矩阵同步周任务包</button>}{editable&&<button type="button" onClick={() => { setDraft(saved || null); setEditing(true); }} className="inline-flex items-center gap-2 rounded-xl bg-slate-950 px-4 py-2.5 text-xs font-black text-white"><Pencil size={14}/>修改矩阵</button>}</div>
       </div>
       {message&&<p role="status" className="mt-4 rounded-xl bg-emerald-50 px-4 py-3 text-xs font-bold text-emerald-800">{message}</p>}
       {!rows.length&&<p className="mt-5 rounded-xl border border-dashed border-amber-200 bg-amber-50 px-4 py-3 text-xs font-bold text-amber-800">还没有已连接账号，当前展示可直接配置的默认账号矩阵。</p>}
@@ -515,35 +602,22 @@ function MatrixView({ data, onRefresh, onNavigate, onGeneratePlan }: {
         const plans = productionPlans.filter(plan => plan.matrix?.accountId === row.accountId);
         const benchmarks = benchmarkAccounts.filter(item => item.platform === row.platform);
         const matchedMessenger = row.platform === "facebook" && connectionStatus.messengerPages.some(page => page.status === "connected" && page.messengerSubscribed && (!row.connected || page.id === row.accountId || page.providerAccountId === row.accountId || page.title === row.accountLabel));
-        const formatCount = row.formats?.length || 0;
-        const buyerProblem = plans.find(plan => plan.buyerProblem?.trim())?.buyerProblem?.trim() || "";
-        const presenter = plans.find(plan => plan.presenter)?.presenter;
-        const evidenceReady = plans.some(plan => Boolean(plan.evidenceRequirement?.trim()) || Boolean(plan.materialIds?.length));
-        const defaultCta = SOCIAL_PLATFORM_EXECUTION_RULES[row.platform].ctaRule.trim();
-        const exactCta = Boolean(row.cta?.trim()) && row.cta.trim() !== defaultCta;
         const checklist = [
-          { label: "受众定位", value: row.audience ? "已定义" : "待补充", done: Boolean(row.audience) },
-          { label: "永久买家问题", value: buyerProblem ? "已锁定" : "待锁定", done: Boolean(buyerProblem) },
-          { label: "3–5 个栏目", value: formatCount >= 3 && formatCount <= 5 ? `${formatCount} 个` : `${formatCount} 个，需补齐`, done: formatCount >= 3 && formatCount <= 5 },
-          { label: "出镜方式", value: presenter ? presenter === "material" ? "纯素材" : presenter === "heygen" ? "数字人混剪" : "数字人口播" : "待定义", done: Boolean(presenter) },
-          { label: "事实证据", value: evidenceReady ? "已绑定" : "待绑定", done: evidenceReady },
-          { label: "语气与视觉", value: "待定义", done: false },
-          { label: "账号禁区", value: config?.constraints?.length ? `${config.constraints.length} 条` : "待定义", done: Boolean(config?.constraints?.length) },
-          { label: "唯一 CTA", value: exactCta ? "已锁定" : "待锁定", done: exactCta },
           { label: "WhatsApp", value: connectionStatus.loaded ? connectionStatus.whatsapp ? "已挂载" : "未挂载" : "读取中", done: connectionStatus.whatsapp },
           { label: "Messenger", value: row.platform === "facebook" ? connectionStatus.loaded ? matchedMessenger ? "已挂载" : "未挂载" : "读取中" : "不适用", done: matchedMessenger, neutral: row.platform !== "facebook" },
+          { label: "企业默认 CTA", value: enterprisePrimaryCta ? "已继承" : "待在企业中心配置", done: Boolean(enterprisePrimaryCta) },
           { label: "对标账号", value: benchmarks.length ? `${benchmarks.length} 个` : "待配置", done: benchmarks.length > 0 },
         ];
         return <article key={row.accountId} className="overflow-hidden rounded-2xl border border-slate-200 bg-slate-50/60">
           <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-200 bg-white p-4"><div className="flex items-center gap-3"><span className="flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200 bg-white"><SocialPlatformIcon platform={row.platform} size={20}/></span><div><p className="text-sm font-black text-slate-950">{row.accountLabel}</p><p className="mt-0.5 text-[10px] font-bold text-emerald-700">{platformLabels[row.platform]} · {matrixRoleLabel[row.accountRole || "brand_combined"]} · {row.connected ? "已连接" : "待连接"}</p></div></div><span className="rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-black text-slate-700">本周 {row.weeklyCount} 条</span></div>
           <div className="grid gap-px bg-slate-200 xl:grid-cols-[minmax(0,1.05fr)_minmax(0,1fr)]">
             <div className="bg-white p-4"><p className="text-[10px] font-black tracking-[0.12em] text-slate-400">账号详情</p><dl className="mt-3 grid gap-3 text-xs sm:grid-cols-2"><div><dt className="font-bold text-slate-400">目标受众</dt><dd className="mt-1 font-semibold leading-5 text-slate-700">{row.audience}</dd></div><div><dt className="font-bold text-slate-400">主推产品</dt><dd className="mt-1 font-semibold leading-5 text-slate-700">{row.productName}</dd></div><div><dt className="font-bold text-slate-400">内容方向</dt><dd className="mt-1 font-semibold leading-5 text-slate-700">{row.contentDirection}</dd></div><div><dt className="font-bold text-slate-400">内容栏目</dt><dd className="mt-1 font-semibold leading-5 text-slate-700">{row.formats?.length ? row.formats.map(format => contentFormatLabels[format] || format).join(" · ") : "待配置"}</dd></div></dl>
-              <div className="mt-4"><div className="flex items-center justify-between gap-3"><p className="text-[10px] font-black tracking-[0.12em] text-slate-400">账号宪法完成项</p><span className="text-[10px] font-bold text-emerald-700">{checklist.filter(item => item.done).length}/{checklist.filter(item => !item.neutral).length}</span></div><div className="mt-2 grid gap-2 sm:grid-cols-2">{checklist.map(item => <div key={item.label} className="flex items-center justify-between gap-2 rounded-lg border border-slate-100 bg-slate-50 px-3 py-2"><span className="flex items-center gap-1.5 text-[10px] font-bold text-slate-600">{item.done ? <CheckCircle2 size={13} className="text-emerald-600"/> : <span className={`h-3 w-3 rounded-full border ${item.neutral ? "border-slate-300 bg-slate-100" : "border-amber-400 bg-amber-50"}`}/>} {item.label}</span><span className={`text-[9px] font-black ${item.done ? "text-emerald-700" : item.neutral ? "text-slate-400" : "text-amber-700"}`}>{item.value}</span></div>)}</div></div>
-              <div className={`mt-4 rounded-xl border p-3 ${exactCta ? "border-emerald-100 bg-emerald-50/60" : "border-amber-200 bg-amber-50"}`}><p className={`text-[10px] font-black ${exactCta ? "text-emerald-800" : "text-amber-800"}`}>{exactCta ? "唯一 CTA 已锁定" : "唯一 CTA 待锁定"}</p><p className={`mt-1 text-[11px] leading-5 ${exactCta ? "text-emerald-950/75" : "text-amber-900/75"}`}>{exactCta ? row.cta : row.cta ? `当前只有平台承接规则：${row.cta}` : "尚未明确 CTA，不能进入发布。"}</p></div>
+              <div className="mt-4"><div className="flex items-center justify-between gap-3"><p className="text-[10px] font-black tracking-[0.12em] text-slate-400">账号连接与对标完成项</p><span className="text-[10px] font-bold text-emerald-700">{checklist.filter(item => item.done || item.neutral).length}/{checklist.length}</span></div><div className="mt-2 grid gap-2 sm:grid-cols-2">{checklist.map(item => <div key={item.label} className="flex items-center justify-between gap-2 rounded-lg border border-slate-100 bg-slate-50 px-3 py-2"><span className="flex items-center gap-1.5 text-[10px] font-bold text-slate-600">{item.done ? <CheckCircle2 size={13} className="text-emerald-600"/> : <span className={`h-3 w-3 rounded-full border ${item.neutral ? "border-slate-300 bg-slate-100" : "border-amber-400 bg-amber-50"}`}/>} {item.label}</span><span className={`text-[9px] font-black ${item.done ? "text-emerald-700" : item.neutral ? "text-slate-400" : "text-amber-700"}`}>{item.value}</span></div>)}</div></div>
               <div className="mt-4"><div className="flex items-center justify-between gap-3"><p className="text-[10px] font-black tracking-[0.12em] text-slate-400">对标账号</p><button type="button" onClick={() => onNavigate?.("socialInspiration")} className="text-[10px] font-black text-emerald-700">管理对标账号 →</button></div>{benchmarks.length ? <div className="mt-2 flex flex-wrap gap-2">{benchmarks.map(item => <span key={item.id} className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[10px] font-bold text-slate-700">{item.accountName || item.handle || "未命名账号"}</span>)}</div> : <p className="mt-2 text-[11px] text-slate-400">该平台尚未配置对标账号。</p>}</div>
             </div>
             <div className="bg-white p-4"><div className="flex items-center justify-between gap-3"><div><p className="text-[10px] font-black tracking-[0.12em] text-slate-400">账号内容</p><p className="mt-1 text-xs font-black text-slate-900">{plans.length ? `${plans.length} 条已进入本周清单` : `${row.weeklyCount} 个待编排内容位`}</p></div><span className="rounded-full bg-slate-100 px-2.5 py-1 text-[9px] font-black text-slate-600">{platformLabels[row.platform]}</span></div>
-              <div className="mt-3 space-y-2">{plans.length ? plans.map((plan, index) => <div key={plan.contentId || index} className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-3"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="truncate text-[11px] font-black text-slate-800">{plan.buyerProblem || plan.theme || `内容 ${index + 1}`}</p><p className="mt-1 truncate text-[10px] text-slate-500">{plan.productName || row.productName} · {plan.plannedPublishDate || "待排期"}</p></div><span className="shrink-0 text-[9px] font-bold text-emerald-700">{plan.directorStatus === "approved" ? "已通过" : plan.directorStatus === "in_production" ? "制作中" : "待编导"}</span></div></div>) : Array.from({ length: Math.min(row.weeklyCount, 5) }, (_, index) => <div key={index} className="flex items-center justify-between gap-3 rounded-xl border border-dashed border-slate-200 px-3 py-2.5"><div className="min-w-0"><p className="truncate text-[11px] font-bold text-slate-700">内容位 {index + 1} · {row.contentDirection}</p><p className="mt-0.5 text-[9px] text-slate-400">等待编导 Agent 确认具体买家问题与排期</p></div><span className="shrink-0 text-[9px] font-bold text-amber-700">待编排</span></div>)}</div>{!plans.length && row.weeklyCount > 5 && <p className="mt-2 text-[10px] text-slate-400">另有 {row.weeklyCount - 5} 个内容位，将在周计划中继续展开。</p>}
+              <p className="mt-3 rounded-xl bg-emerald-50 px-3 py-2 text-[9px] font-bold leading-4 text-emerald-800">编排顺序：账号周频次 → 对标账号与爆款匹配 → 买家问题 → 产品事实证据 → 发布日期</p>
+              <div className="mt-3 space-y-2">{plans.length ? plans.map((plan, index) => { const evidence = plan.planningEvidence; return <div key={plan.contentId || index} className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-3"><div className="flex flex-wrap items-center gap-1.5"><span className="rounded-full bg-white px-2 py-1 text-[8px] font-black text-emerald-700">{plan.route === "clone" ? "爆款复刻" : plan.route === "material" ? "素材生成" : "产品生成"}</span><span className="text-[9px] font-bold text-slate-400">{plan.plannedPublishDate || "待排期"}</span>{evidence?.matchScore ? <span className="rounded-full bg-emerald-100 px-2 py-1 text-[8px] font-black text-emerald-800">匹配 {evidence.matchScore}</span> : null}<span className="ml-auto shrink-0 text-[9px] font-bold text-emerald-700">{plan.directorStatus === "approved" ? "已通过" : plan.directorStatus === "in_production" ? "制作中" : "待编导"}</span></div><p className="mt-2 text-[11px] font-black leading-5 text-slate-800">{plan.theme || `内容 ${index + 1}`}</p><p className="mt-1 text-[10px] leading-4 text-slate-600"><strong>买家问题：</strong>{plan.buyerProblem || row.contentDirection}</p><p className="mt-1 text-[10px] leading-4 text-slate-500"><strong>证据：</strong>{plan.evidenceRequirement || "使用企业资料与素材库中的可核验画面"}</p>{(evidence?.benchmarkAccount || evidence?.referenceTitle)&&<p className="mt-1 truncate text-[9px] text-violet-700">参考：{[evidence.benchmarkAccount, evidence.referenceTitle].filter(Boolean).join(" · ")}</p>}</div>; }) : Array.from({ length: Math.min(row.weeklyCount, 5) }, (_, index) => <div key={index} className="flex items-center justify-between gap-3 rounded-xl border border-dashed border-slate-200 px-3 py-2.5"><div className="min-w-0"><p className="truncate text-[11px] font-bold text-slate-700">内容位 {index + 1} · {row.contentDirection}</p><p className="mt-0.5 text-[9px] text-slate-400">点击“按矩阵同步周任务包”生成具体买家问题、匹配参考与排期</p></div><span className="shrink-0 text-[9px] font-bold text-amber-700">待同步</span></div>)}</div>{!plans.length && row.weeklyCount > 5 && <p className="mt-2 text-[10px] text-slate-400">另有 {row.weeklyCount - 5} 个内容位，将在周计划中继续展开。</p>}
             </div>
           </div>
         </article>;
@@ -558,6 +632,11 @@ function MatrixView({ data, onRefresh, onNavigate, onGeneratePlan }: {
 function QueueView({ data, onOpenContent }: { data: DigitalEmployeeOverview; onOpenContent?: (taskId?: string) => void }) {
   const projection = data.contentQueue;
   const items = projection?.items || [];
+  const pageSize = 6;
+  const [page, setPage] = useState(1);
+  const totalPages = Math.max(1, Math.ceil(items.length / pageSize));
+  const pageItems = items.slice((page - 1) * pageSize, page * pageSize);
+  useEffect(() => setPage(current => Math.min(current, totalPages)), [totalPages]);
   const costs = items.map(item => item.settledCostCny).filter((value): value is number => value !== null);
   const average = costs.length ? costs.reduce((total, value) => total + value, 0) / costs.length : null;
   const recent = costs.slice(0, Math.max(1, Math.ceil(costs.length / 2)));
@@ -577,7 +656,7 @@ function QueueView({ data, onOpenContent }: { data: DigitalEmployeeOverview; onO
       <div className="mt-5 grid gap-3 sm:grid-cols-4">{[["计划总数",items.length],["制作中",producing],["待验收",waiting],["已完成",completed]].map(([label,value])=><div key={String(label)} className="rounded-2xl border border-slate-200 bg-white px-4 py-3"><p className="text-[10px] font-bold text-slate-400">{label}</p><p className="mt-1 text-xl font-black text-slate-950">{value}</p></div>)}</div>
       <div className={`mt-4 rounded-xl border px-4 py-3 text-xs ${projection?.sourceStatus === 'available' ? 'border-emerald-100 bg-emerald-50 text-emerald-800' : 'border-amber-200 bg-amber-50 text-amber-800'}`}><strong>{projection?.sourceStatus === 'available' ? '真实链路已连接' : '队列等待数据'}</strong><span className="ml-2">{projection?.sourceNote || "当前没有可读取的内容计划"}</span></div>
       <section className="mt-4 overflow-hidden rounded-3xl border border-slate-200 bg-white">
-        {items.map((item,index)=><article key={item.id} className={`p-5 ${index?'border-t border-slate-100':''}`}>
+        {pageItems.map((item,index)=><article key={item.id} className={`p-5 ${index?'border-t border-slate-100':''}`}>
           <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_220px_180px] lg:items-center">
             <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><SocialPlatformIcon platform={item.platform} size={16}/><span className="text-[10px] font-black text-emerald-700">{platformLabels[item.platform]}</span><span className="rounded-full bg-slate-100 px-2 py-1 text-[9px] font-bold text-slate-600">{routeLabel[item.route]}</span><span className={`rounded-full px-2 py-1 text-[9px] font-black ${statusTone[item.status]}`}>{statusLabel[item.status]}</span><span className="text-[10px] text-slate-400">{item.plannedPublishDate || "待排期"}</span></div><h3 className="mt-2 text-sm font-black text-slate-950">{item.title}</h3><p className="mt-1 text-xs text-slate-500">{item.productName || "待绑定产品"} · {item.accountLabel || data.config?.publishingTargets.find(target=>target.accountId===item.accountId)?.accountLabel || "仅制作"}{item.languages.length?` · ${item.languages.join(" / ").toUpperCase()}`:""}</p>{item.reason&&<p className="mt-2 text-[10px] font-bold text-red-600">{item.reason}</p>}</div>
             <div><div className="flex items-center justify-between text-[10px]"><span className="font-bold text-slate-400">{item.stage}</span><strong className="text-slate-800">{item.progress}%</strong></div><div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-100"><div className={`h-full rounded-full ${item.status==='blocked'?'bg-red-500':item.status==='completed'?'bg-emerald-500':'bg-blue-500'}`} style={{width:`${item.progress}%`}}/></div><div className="mt-2 flex gap-1">{item.steps.map(step=><span key={step.label} title={`${step.label}：${step.state}`} className={`h-1.5 flex-1 rounded-full ${step.state==='done'?'bg-emerald-500':step.state==='active'?'bg-blue-500 motion-safe:animate-pulse':'bg-slate-200'}`}/>)}</div></div>
@@ -586,6 +665,7 @@ function QueueView({ data, onOpenContent }: { data: DigitalEmployeeOverview; onO
           <div className="mt-4 rounded-2xl border border-emerald-100 bg-emerald-50/45 px-4 py-3"><div className="flex flex-wrap items-center gap-2"><span className="text-[10px] font-black text-emerald-800">计划依据</span>{item.matchScore!==null&&<span className="rounded-full bg-white px-2 py-1 text-[9px] font-black text-emerald-700">匹配度 {item.matchScore}</span>}{item.benchmarkAccount&&<span className="rounded-full bg-white px-2 py-1 text-[9px] font-bold text-slate-700">对标账号：{item.benchmarkAccount}</span>}{item.referenceTitle&&<span className="max-w-full truncate rounded-full bg-white px-2 py-1 text-[9px] font-bold text-slate-700">参考：{item.referenceTitle}</span>}</div><p className="mt-2 text-[10px] leading-5 text-slate-600">{item.planningFactors.length?item.planningFactors.join(" · "):"依据账号矩阵、产品资料与平台规则生成；当前没有可用的爆款精确分析。"}</p></div>
         </article>)}
         {!items.length&&<div className="px-5 py-16 text-center"><Clapperboard size={28} className="mx-auto text-slate-300"/><p className="mt-3 text-sm font-bold text-slate-600">还没有内容进入生产队列</p><p className="mt-1 text-xs text-slate-400">生成并确认周计划后，经营 Agent 会冻结每条订单并依次调度制作。</p></div>}
+        {totalPages > 1 && <nav aria-label="内容队列分页" className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 px-5 py-4"><p className="text-[10px] font-bold text-slate-400">第 {page} / {totalPages} 页 · 共 {items.length} 条</p><div className="flex items-center gap-1.5"><button type="button" disabled={page === 1} onClick={() => setPage(current => Math.max(1, current - 1))} className="rounded-lg border border-slate-200 px-3 py-2 text-[10px] font-black text-slate-600 disabled:cursor-not-allowed disabled:opacity-40">上一页</button>{Array.from({ length: totalPages }, (_, index) => index + 1).map(value => <button key={value} type="button" aria-current={value === page ? "page" : undefined} onClick={() => setPage(value)} className={`h-8 w-8 rounded-lg text-[10px] font-black ${value === page ? "bg-emerald-700 text-white" : "border border-slate-200 text-slate-600 hover:border-emerald-200 hover:text-emerald-700"}`}>{value}</button>)}<button type="button" disabled={page === totalPages} onClick={() => setPage(current => Math.min(totalPages, current + 1))} className="rounded-lg border border-slate-200 px-3 py-2 text-[10px] font-black text-slate-600 disabled:cursor-not-allowed disabled:opacity-40">下一页</button></div></nav>}
       </section>
     </section>
     <aside className="h-fit rounded-3xl border border-violet-100 bg-violet-50/60 p-5"><Sparkles size={20} className="text-violet-700"/><h3 className="mt-4 text-base font-black text-slate-950">成本建议</h3>{average===null?<><p className="mt-3 text-sm font-bold text-slate-700">等待真实供应商结算</p><p className="mt-2 text-xs leading-6 text-slate-500">这里只统计与具体制作项目绑定、且已经对账的供应商费用；预计金额不会冒充实际花费。</p></>:<><p className="mt-3 text-3xl font-black text-violet-950">¥{average.toFixed(2)}</p><p className="mt-1 text-xs text-slate-500">已结算内容平均成本</p><p className="mt-4 text-sm font-bold text-slate-800">{trend===null?'暂缺企业成本基线':trend>0?'近期成本正在上升':'近期成本正在下降'}</p><p className="mt-2 text-xs leading-6 text-slate-500">{trend===null?'继续积累至少两个结算周期，再决定提高预算或调整生成策略。':trend>0?'建议先优化内容生成策略，再考虑追加预算。':'当前策略有成本优势，可把预算优先给高匹配内容。'}</p></>}</aside>

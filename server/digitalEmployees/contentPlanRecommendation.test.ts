@@ -32,6 +32,8 @@ assert.ok(plans.every(plan => plan.planningEvidence?.requiredCount === plans.len
 assert.equal(plans[0]?.route, 'clone');
 assert.equal(plans[0]?.referenceId, 'viral-1');
 assert.equal(plans[0]?.planningEvidence?.generatedFrom, 'matrix_benchmark_viral');
+assert.equal(plans.filter(plan => plan.referenceId === 'viral-1').length, 1, 'one analyzed reference must not be looped across the full weekly quota');
+assert.ok(new Set(plans.map(plan => plan.theme)).size > 1, 'unfilled slots must use distinct content angles after unique references are exhausted');
 assert.ok(plans[0]?.buyerProblem);
 assert.ok(plans[0]?.plannedPublishDate);
 

@@ -346,6 +346,7 @@ export default function Layout({ page, onNavigate, conversation, children, sessi
     onNavigate(nextPage);
   };
   const openDigitalEmployeeGuide = () => {
+    setAccountMenuOpen(false);
     if (mobileViewport) setMobileSidebarExpanded(false);
     if (page === 'digitalEmployees') {
       window.dispatchEvent(new CustomEvent('lingshu:open-digital-employee-guide'));
@@ -406,16 +407,6 @@ export default function Layout({ page, onNavigate, conversation, children, sessi
             onClick={() => navigateFromSidebar(homeNavItem.id)}
             collapsed={sidebarCollapsed}
           />
-          <button
-            type="button"
-            onClick={openDigitalEmployeeGuide}
-            title={sidebarCollapsed ? '新手引导' : undefined}
-            aria-label={sidebarCollapsed ? '新手引导' : undefined}
-            className={`relative mt-1 flex w-full items-center border-l-2 border-transparent py-1 text-sm font-medium text-text-secondary transition-colors hover:bg-[#f1f5f2] hover:text-text-primary ${sidebarCollapsed ? 'justify-center px-2' : 'gap-2.5 px-3'}`}
-          >
-            <span aria-hidden="true" className="relative flex-shrink-0"><Sparkles size={19} /></span>
-            {!sidebarCollapsed && <span className="relative flex-1 text-left">新手引导</span>}
-          </button>
         </nav>
 
         <div className="min-h-0 flex-1 overflow-y-auto pb-2">
@@ -575,6 +566,7 @@ export default function Layout({ page, onNavigate, conversation, children, sessi
                 </div>
                 <div className="pt-2">
                   {!starterMode && <button onClick={openQuota} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold text-text-secondary hover:bg-surface-2"><Coins size={17} /><span className="flex-1 text-left">积分管理</span><ChevronRight size={14} className="text-text-muted" /></button>}
+                  <button onClick={openDigitalEmployeeGuide} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold text-text-secondary hover:bg-surface-2"><Sparkles size={17} /><span className="flex-1 text-left">新手引导</span><ChevronRight size={14} className="text-text-muted" /></button>
                   <button onClick={() => { setAccountMenuOpen(false); setAccountSettingsOpen(true); }} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold text-text-secondary hover:bg-surface-2"><Settings size={17} /><span className="flex-1 text-left">账号设置</span><ChevronRight size={14} className="text-text-muted" /></button>
                   {onLogout && <button onClick={onLogout} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold text-text-secondary hover:bg-red-50 hover:text-red-600"><LogOut size={17} /><span className="flex-1 text-left">退出登录</span></button>}
                   <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 border-t border-border px-3 pt-2 text-[10px] font-semibold text-text-muted">

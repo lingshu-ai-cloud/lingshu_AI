@@ -16,6 +16,7 @@ import { analysisWait, basicTaskWait, collectionWait, followupComplete, followup
 import { listTenantEmployees } from './auth.js';
 import { recommendPackage, normalizePackage, validatePackage, compilePackage, packageConfig, packageTaskForKey, grantCovers, criticalBusinessConfigChanges } from '../digitalEmployees/weeklyPackage.js';
 import { TASK_TEMPLATES, type WeeklyPackage } from '../../src/lib/weeklyPackage.js';
+import { fillMatrixVideos } from '../../src/lib/weeklyMatrix.js';
 import { applyDirectorDecision, DIRECTOR_DECISION_LABELS, DIRECTOR_REASON_LABELS, type DirectorDecision, type DirectorDecisionReason } from '../../src/lib/directorDecision.js';
 import { reviseContent } from '../digitalEmployees/contentRevision.js';
 import { automationBgmCatalog } from './studio.js';
@@ -329,11 +330,22 @@ async function recommendPackageWithTenantEvidence(
   ownerName = '',
 ): Promise<WeeklyPackage> {
   const pack = recommendPackage(goal, config, ownerId, ownerName);
-  const [videos, benchmarks] = await Promise.all([
+  const [videos, benchmarks, enterpriseProfile] = await Promise.all([
     store.list<StoredRecord>('trend_videos', { where: { tenantId }, sort: '-updatedAt', perPage: 500 }).catch(() => ({ items: [] })),
     store.list<StoredRecord>('competitor_accounts', { where: { tenantId }, sort: '-createdAt', perPage: 200 }).catch(() => ({ items: [] })),
+    readTenantEnterpriseProfile(tenantId),
   ]);
-  return enrichPackageWithContentSignals({ pack, goal, config, videos: videos.items, benchmarks: benchmarks.items });
+  const enabledRoutes = enterpriseProfile.socialStrategy?.enabledRoutes || [];
+  const enterprisePrimaryCta = enabledRoutes
+    .map(route => enterpriseProfile.socialStrategy?.routeStrategies?.[route]?.primaryCta?.trim() || '')
+    .find(Boolean) || Object.values(enterpriseProfile.socialStrategy?.routeStrategies || {})
+      .map(strategy => strategy?.primaryCta?.trim() || '')
+      .find(Boolean) || '';
+  const matrixPlan = pack.matrixPlan?.map(row => ({ ...row, cta: enterprisePrimaryCta || row.cta }));
+  const matrixBound = matrixPlan?.length
+    ? fillMatrixVideos({ ...pack, matrixPlan }, config.videoDefaults || {}, goal.endsAt)
+    : pack;
+  return enrichPackageWithContentSignals({ pack: matrixBound, goal, config, videos: videos.items, benchmarks: benchmarks.items });
 }
 
 async function prepareContentBatchPlan(input: { tenantId: string; goal: GoalRecord; run: RunRecord; task: TaskRecord; plan: PlanRecord | null; config: DigitalEmployeeConfig }) {
@@ -2339,7 +2351,7 @@ digitalEmployeesRouter.put('/goals/:goalId/package', async (req, res) => {
     for (const task of pack.tasks) task.ownerName = members.find(m => m.id === task.ownerId)?.name || '';
     const config = configSnapshotForPlan(plan, publicConfig(await configForTenant(tenantId))!);
     if (pack.authorization.accountIds.some(id => !config.publishingTargets.some(t => t.accountId === id))) { res.status(400).json({ error: 'invalid_account_scope', message: '请选择本计划绑定的发布账号。' }); return; }
-    if (pack.matrixPlan?.some(row => !config.publishingTargets.some(target => target.accountId === row.accountId && target.platform === row.platform) || !goalInput(goal).contentPlatforms.includes(row.platform))) { res.status(400).json({ error: 'invalid_matrix_account', message: '矩阵账号必须属于本计划及本周平台范围。' }); return; }
+    if (pack.matrixPlan?.some(row => !goalInput(goal).contentPlatforms.includes(row.platform) || (row.connected !== false && !config.publishingTargets.some(target => target.accountId === row.accountId && target.platform === row.platform)))) { res.status(400).json({ error: 'invalid_matrix_account', message: '矩阵账号必须属于本计划及本周平台范围。' }); return; }
     const customerIds = new Set(getWhatsAppCustomers(tenantId).map(c => c.id));
     if (pack.authorization.customerIds.some(id => !customerIds.has(id))) { res.status(400).json({ error: 'invalid_customer_scope' }); return; }
     for (const id of [...new Set([...pack.tasks.flatMap(t => t.sourceProjectIds), ...(pack.matrixPlan || []).flatMap(row => row.sourceProjectIds)])]) {

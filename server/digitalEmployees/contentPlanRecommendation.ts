@@ -26,6 +26,7 @@ export interface RankedContentReference {
 }
 
 const text = (value: unknown, limit = 500) => String(value ?? '').trim().slice(0, limit);
+const contentAngles = ['买家决策问题', '产品实测演示', '工艺与过程证据', '选型避坑', '使用场景验证'] as const;
 const record = (value: unknown): Record<string, any> => {
   if (typeof value === 'string') {
     try { return record(JSON.parse(value)); } catch { return {}; }
@@ -155,11 +156,13 @@ export function enrichPackageWithContentSignals(input: {
       audience: row?.audience || plan.matrix?.audience || input.config.customerProfile,
       direction: row?.contentDirection || plan.theme,
     });
-    const reference = ranked.find(item => item.exact && !used.has(item.id)) || ranked.find(item => item.exact) || ranked[0];
-    if (reference?.exact) used.add(reference.id);
+    const reference = ranked.find(item => !used.has(item.id));
+    if (reference) used.add(reference.id);
     const placeholder = !plan.referenceId && !plan.buyerProblem
       && (plan.theme === '介绍产品的用途与特点' || /待编导确认/.test(plan.theme));
     const mayClone = placeholder && reference?.exact && input.config.enabledWorkflows.includes('viral_clone');
+    const angle = contentAngles[(slot - 1) % contentAngles.length];
+    const matrixTheme = row ? `${row.contentDirection.replace(/[。；;\s]+$/u, '')}｜${angle}` : `${plan.theme}｜${angle}`;
     const generatedFrom = reference?.benchmarkAccount && reference.exact
       ? 'matrix_benchmark_viral' as const
       : reference?.exact ? 'matrix_viral' as const : 'matrix_product' as const;
@@ -167,9 +170,9 @@ export function enrichPackageWithContentSignals(input: {
       ...plan,
       contentId: plan.contentId || `weekly-${input.goal.startsAt}-${index + 1}`,
       plannedPublishDate: plan.plannedPublishDate || publishDate(input.goal.startsAt, input.goal.endsAt, index, all.length),
-      buyerProblem: plan.buyerProblem || reference?.hook || row?.contentDirection || plan.theme,
+      buyerProblem: plan.buyerProblem || reference?.hook || matrixTheme,
       evidenceRequirement: plan.evidenceRequirement || reference?.evidenceRequirement || '必须使用企业资料或素材库中的可核验事实与画面',
-      theme: placeholder ? reference?.theme || row?.contentDirection || plan.theme : plan.theme,
+      theme: placeholder ? reference?.theme || matrixTheme : plan.theme,
       route: mayClone ? 'clone' : plan.route,
       referenceId: mayClone ? reference!.id : plan.referenceId,
       planningEvidence: {

@@ -104,8 +104,9 @@ assert.match(appSource, /page === 'traffic'[\s\S]{0,1200}initialView="publish"[\
 assert.match(appSource, /page === 'socialMonitoring'[\s\S]{0,800}<TrafficPage[\s\S]{0,500}initialView="accounts"[\s\S]{0,300}visibleModes=\{\['accounts'\]\}/, 'Content Monitoring must host the account activity surface');
 for (const label of ['经营总览', '账号矩阵', '内容队列', '数据复盘']) assert.match(pageSource, new RegExp(label), `Smart Business must expose ${label}`);
 assert.doesNotMatch(pageSource, /id: "live", label: "周计划"/, 'the repetitive standalone weekly-plan tab must be removed');
-assert.match(layoutSource, /aria-label="主导航"[\s\S]{0,1600}新手引导/, 'the beginner guide must live in the application sidebar');
-assert.match(layoutSource, /lingshu:open-digital-employee-guide/, 'the sidebar guide entry must open the Digital Employee guide');
+assert.match(layoutSource, /\{accountMenuOpen && \([\s\S]{0,1800}新手引导/, 'the beginner guide must live in the expanded user menu');
+assert.doesNotMatch(layoutSource, /aria-label="主导航"[\s\S]{0,900}新手引导/, 'the beginner guide must not remain in the primary navigation');
+assert.match(layoutSource, /lingshu:open-digital-employee-guide/, 'the user-menu guide entry must open the Digital Employee guide');
 assert.match(pageSource, /addEventListener\('lingshu:open-digital-employee-guide'/, 'Smart Business must respond to the sidebar guide entry');
 assert.match(currentPlanSource, /查看本周计划[\s\S]{0,500}Agent 设置[\s\S]{0,500}历史计划/, 'the current-plan card must keep history as the rightmost management action');
 assert.doesNotMatch(currentPlanSource, /查看内容队列|查看完整周计划|新手引导/, 'the current-plan card must not keep duplicate queue, full-plan, or guide buttons');
@@ -128,15 +129,19 @@ assert.match(smartBusinessSource, /costCny\.settlementStatus === "settled"[\s\S]
 assert.match(smartBusinessSource, /过去已核算消耗/, 'Agent detail must expose historical settled spend');
 assert.match(smartBusinessSource, /账号真实结算账本/, 'Agent detail must identify the persisted account ledger as its source');
 assert.match(smartBusinessSource, /<MatrixView data=\{data\}/, 'the account matrix tab must use the deterministic editable weekly matrix');
-assert.match(smartBusinessSource, /运营日历 · 12 周/, 'the operating matrix must expose a 12-week calendar instead of only prose');
+assert.match(smartBusinessSource, /aria-label="12 周内容运营日历"[\s\S]{0,1000}12 周从冷启动到稳定复盘/, 'the content calendar must be a standalone 12-week operating surface instead of an embedded strip');
 assert.match(smartBusinessSource, /aria-label="按平台查看账号"/, 'the account matrix must expose clickable platform filters');
-for (const item of ['明确 CTA', 'WhatsApp', 'Messenger', '对标账号', '账号内容']) {
+for (const item of ['企业默认 CTA', 'WhatsApp', 'Messenger', '对标账号', '账号内容']) {
   assert.match(smartBusinessSource, new RegExp(item), `account details must expose ${item}`);
 }
+assert.doesNotMatch(smartBusinessSource, /账号宪法完成项|唯一 CTA 待锁定|当前只有平台承接规则/, 'account completion must hide unrelated constitution fields and the duplicate CTA warning');
+assert.match(smartBusinessSource, /按矩阵同步周任务包/, 'draft weekly packages must expose an explicit matrix synchronization action');
 assert.match(smartBusinessSource, /\/api\/overseas\/competitor-accounts/, 'account details must use the persisted benchmark-account library');
 assert.match(smartBusinessSource, /\/api\/oauth\/whatsapp\/config/, 'account details must read the real WhatsApp connection state');
 assert.match(smartBusinessSource, /messengerSubscribed/, 'Facebook account details must read the real Messenger subscription state');
 assert.match(smartBusinessSource, /账号矩阵与对标视频/, 'the queue must state that weekly content comes from the matrix and benchmark references');
+assert.match(smartBusinessSource, /const pageSize = 6/, 'long content queues must use a bounded page size');
+assert.match(smartBusinessSource, /aria-label="内容队列分页"/, 'long content queues must expose pagination controls');
 assert.match(smartBusinessSource, /本周待生成内容/, 'the queue must expose the weekly generation list');
 assert.match(smartBusinessSource, /查看制作进度 →[\s\S]{0,4500}进入制作台 →/, 'planned and running content must link directly to detailed production progress');
 assert.match(pageSource, /onOpenContent=\{openContentProduction\}/, 'Smart Business content links must preserve the current Agent task when opening Studio');
