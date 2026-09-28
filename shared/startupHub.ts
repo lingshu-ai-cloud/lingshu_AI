@@ -22,6 +22,16 @@ export interface StartupCompanyProfile {
   vatFilingCycle?: string;
   incomeTaxFilingCycle?: string;
   employeeStatus?: string;
+  bankName?: string;
+  bankBranch?: string;
+  bankCustomerNumber?: string;
+  bankOperatorNumber?: string;
+  bankAccount?: string;
+  basicDepositAccountNumber?: string;
+  bankAccountOpenedDate?: string;
+  onlineBankingSecurityStatus?: string;
+  bankAccountTaxReportStatus?: string;
+  taxPaymentAgreementStatus?: string;
   updatedAt: string;
   updatedBy: string;
 }

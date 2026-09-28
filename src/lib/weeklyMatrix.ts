@@ -1,7 +1,12 @@
 import { normalizeVideoPlan, type VideoCreationPlan } from './videoCreationPlan';
 import { VIDEO_LANGUAGES, normalizeVideoLanguage } from './videoLanguages';
 import type { WeeklyPackage } from './weeklyPackage';
-import type { SocialAccountRole } from '../../shared/contracts/socialOperatingProfile';
+import {
+  SOCIAL_PLATFORM_EXECUTION_RULES,
+  socialOperatingProfile,
+  type SocialAccountRole,
+} from '../../shared/contracts/socialOperatingProfile';
+import type { DigitalEmployeeConfig } from './digitalEmployees';
 
 export interface MatrixAccountPlan {
   accountId: string;
@@ -28,6 +33,43 @@ export interface MatrixAccountReview {
   inquiries: number | null;
   recommendation: string;
 }
+
+/**
+ * Build the same deterministic account matrix everywhere the weekly plan is
+ * shown. It uses the operating profile selected during setup and only includes
+ * accounts that are already connected and in the plan's platform scope.
+ */
+export function defaultMatrixPlan(
+  config: Pick<DigitalEmployeeConfig, 'socialOperatingProfile' | 'publishingTargets' | 'customerProfile' | 'focusProducts' | 'videoDefaults'>,
+  platforms: VideoCreationPlan['platform'][],
+  objective: string,
+): MatrixAccountPlan[] {
+  const profile = socialOperatingProfile(config.socialOperatingProfile);
+  const usedByPlatform = new Map<VideoCreationPlan['platform'], number>();
+  const productName = config.focusProducts.split(/[、，,；;\n]/).map(item => item.trim()).filter(Boolean)[0] || '';
+  return config.publishingTargets
+    .filter(target => platforms.includes(target.platform))
+    .map(target => {
+      const candidates = profile.accounts.filter(item => item.platform === target.platform);
+      const used = usedByPlatform.get(target.platform) || 0;
+      usedByPlatform.set(target.platform, used + 1);
+      const strategy = candidates[used % Math.max(1, candidates.length)];
+      return {
+        accountId: target.accountId,
+        platform: target.platform,
+        accountRole: strategy?.accountRole || 'brand_combined',
+        formats: [...(strategy?.formats || [])],
+        audience: config.customerProfile || '本期目标买家',
+        productName,
+        language: normalizeVideoLanguage(config.videoDefaults?.language || 'en'),
+        objective: objective || strategy?.purpose || '验证本周内容方向并获得有效询盘',
+        contentDirection: strategy?.purpose || '围绕买家问题展示产品证据与采购价值',
+        cta: SOCIAL_PLATFORM_EXECUTION_RULES[target.platform].ctaRule,
+        weeklyCount: Math.max(1, strategy?.weeklyVideoCount || 1),
+        sourceProjectIds: [],
+      };
+    });
+}
 const clean = (v: unknown, limit = 500) => String(v ?? '').trim().slice(0, limit);
 export function normalizeMatrixPlan(value: unknown): MatrixAccountPlan[] {
   if (!Array.isArray(value) || value.length > 30) throw Error('矩阵安排最多支持 30 个账号');
@@ -52,7 +94,13 @@ export function fillMatrixVideos(pack: WeeklyPackage, defaults: Partial<VideoCre
   const existing = pack.tasks.find(t => t.templateId === 'production');
   const plans = (existing?.videoPlans || []).map(plan => bindMatrixVideo(plan, rows.find(row => row.accountId === plan.matrix?.accountId)));
   for (const row of rows) {
-    const assigned = plans.filter(plan => plan.matrix?.accountId === row.accountId).length;
+    let assigned = plans.filter(plan => plan.matrix?.accountId === row.accountId).length;
+    while (assigned < row.weeklyCount) {
+      const unassignedIndex = plans.findIndex(plan => !plan.matrix?.accountId);
+      if (unassignedIndex < 0) break;
+      plans[unassignedIndex] = bindMatrixVideo(plans[unassignedIndex], row);
+      assigned += 1;
+    }
     const missing = row.weeklyCount - row.sourceProjectIds.length - assigned;
     for (let i = 0; i < missing && plans.length < 30; i++) {
       const slot = assigned + i;

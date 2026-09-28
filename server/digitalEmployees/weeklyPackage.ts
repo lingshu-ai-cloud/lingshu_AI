@@ -1,7 +1,7 @@
 import { normalizeTodo } from '../../src/lib/reviewTodos.js';
 import { normalizeAssessment, maturityProfiles, taskGuidance } from '../../shared/contracts/operatingMaturity.js';
 import { normalizeVideoPlan, videoPlanErrors } from '../../shared/contracts/videoCreationPlan.js';
-import { normalizeMatrixPlan, matrixScopeIssues } from '../../src/lib/weeklyMatrix.js';
+import { defaultMatrixPlan, fillMatrixVideos, normalizeMatrixPlan, matrixScopeIssues } from '../../src/lib/weeklyMatrix.js';
 import { LEGACY_TASK_TEMPLATE_IDS, TASK_TEMPLATES, packageIssues, type WeeklyPackage, type PackageTask, type TemplateId } from '../../src/lib/weeklyPackage.js';
 import { defaultDirectorPlan, normalizeDirectorPlan } from '../../src/lib/contentDirector.js';
 import { connectedAccountIssues } from '../../shared/contracts/socialOperatingProfile.js';
@@ -18,15 +18,25 @@ export function recommendPackage(goal: WeeklyGoalInput, config: DigitalEmployeeC
     ownerName: participation === 'team' && ownerId ? ownerName : '', dueAt: goal.endsAt, notes: taskGuidance(maturity, template.id, config.operatingAssessment), sourceProjectIds: [],
     ...(template.id === 'production' ? { videoPlans: goal.videoPlans?.length ? goal.videoPlans : [normalizeVideoPlan({ ...config.videoDefaults, productName: config.focusProducts.split(/[、，,；;]/)[0], theme: '介绍产品的用途与特点', platform: goal.contentPlatforms[0] })] } : {}),
   }));
-  const contentCount = tasks.find(t => t.templateId === 'production')?.videoPlans?.length || 0;
-  const publishAccountCount = config.publishingTargets.filter(target => goal.contentPlatforms.includes(target.platform)).length;
-  const defaultPublishActions = contentCount * Math.max(1, publishAccountCount);
-  return { revision: 1, maturity, operatingAssessment: normalizeAssessment(config.operatingAssessment), participation, tasks,
-    directorPlan: defaultDirectorPlan(contentCount),
+  const matrixPlan = goal.businessLine === 'customer_conversion' ? [] : defaultMatrixPlan(config, goal.contentPlatforms, goal.objective);
+  const baseContentCount = tasks.find(t => t.templateId === 'production')?.videoPlans?.length || 0;
+  let recommended: WeeklyPackage = { revision: 1, maturity, operatingAssessment: normalizeAssessment(config.operatingAssessment), participation, tasks,
+    ...(matrixPlan.length ? { matrixPlan } : {}),
+    directorPlan: defaultDirectorPlan(baseContentCount),
     // Approving the weekly package is the single human authorization event.
     // Every actual publish still has to pass the frozen account/week/count/hash
     // boundary and the existing quality, connection and receipt safeguards.
-    authorization: { mode: 'bounded', accountIds: config.publishingTargets.map(t => t.accountId), maxPublishItems: Math.max(1, defaultPublishActions), customerIds: [], maxCustomerMessages: 1 } };
+    authorization: { mode: 'bounded', accountIds: config.publishingTargets.map(t => t.accountId), maxPublishItems: 1, customerIds: [], maxCustomerMessages: 1 } };
+  if (matrixPlan.length) recommended = fillMatrixVideos(recommended, config.videoDefaults || {}, goal.endsAt);
+  const contentCount = recommended.tasks.find(t => t.templateId === 'production')?.videoPlans?.length || 0;
+  const defaultPublishActions = matrixPlan.length
+    ? matrixPlan.reduce((sum, row) => sum + row.weeklyCount, 0)
+    : contentCount * Math.max(1, config.publishingTargets.filter(target => goal.contentPlatforms.includes(target.platform)).length);
+  return {
+    ...recommended,
+    directorPlan: defaultDirectorPlan(contentCount),
+    authorization: { ...recommended.authorization, maxPublishItems: Math.max(1, defaultPublishActions) },
+  };
 }
 
 export function normalizePackage(raw: WeeklyPackage): WeeklyPackage {

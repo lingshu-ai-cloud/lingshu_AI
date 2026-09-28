@@ -50,13 +50,17 @@ const NAVIGATION: Array<{
 
 function countOpen(snapshot: StartupHubSnapshot) {
   return {
-    tasks: snapshot.tasks.filter(item => item.status !== 'completed').length,
+    tasks: snapshot.tasks.filter(item => item.status !== 'completed' && isCollaborationTask(item.area)).length,
     taxes: snapshot.taxRecords.filter(item => !['filed', 'paid'].includes(item.status)).length,
     issues: snapshot.issues.filter(item => item.status !== 'closed').length,
     resources: snapshot.resources.filter(item => item.status === 'warning' || item.status === 'offline').length,
     blockedSops: snapshot.sopRuns.filter(item => item.status === 'blocked').length,
     decisionReviews: snapshot.decisions.filter(item => item.status === 'active' && isPastDate(item.reviewDate)).length,
   };
+}
+
+function isCollaborationTask(area: string) {
+  return !['税务助手', '公司治理', '财务与资金', '财税'].includes(area);
 }
 
 function isPastDate(value?: string) {
@@ -88,7 +92,7 @@ function Overview({ snapshot, onNavigate }: { snapshot: StartupHubSnapshot; onNa
     { view: 'infrastructure' as const, label: '服务器与设置', value: `${snapshot.resources.length} 项资源`, detail: `${snapshot.deployments.filter(item => item.status === 'running').length} 个部署运行中 · ${counts.resources} 项告警`, icon: ServerCog },
   ];
   const risks = [
-    ...snapshot.tasks.filter(item => item.status === 'open' && isPastDate(item.dueDate)).map(item => ({ id: `task-${item.id}`, title: item.title, meta: `任务逾期 · ${item.owner} · 截止 ${item.dueDate}`, level: item.priority === 'high' ? 0 : 1, view: 'collaboration' as const })),
+    ...snapshot.tasks.filter(item => item.status === 'open' && isPastDate(item.dueDate)).map(item => ({ id: `task-${item.id}`, title: item.title, meta: `${isCollaborationTask(item.area) ? '协作任务' : '公司事项'}逾期 · ${item.owner} · 截止 ${item.dueDate}`, level: item.priority === 'high' ? 0 : 1, view: isCollaborationTask(item.area) ? 'collaboration' as const : 'company' as const })),
     ...snapshot.taxRecords.filter(item => !['filed', 'paid'].includes(item.status) && isPastDate(item.dueDate)).map(item => ({ id: `tax-${item.id}`, title: item.title, meta: `报税逾期 · ${item.owner} · 截止 ${item.dueDate}`, level: 0, view: 'company' as const })),
     ...snapshot.issues.filter(item => item.status !== 'closed' && ['critical', 'high'].includes(item.severity)).map(item => ({ id: `issue-${item.id}`, title: item.title, meta: `${item.severity === 'critical' ? '严重事故' : '高优问题'} · ${item.assignee}`, level: item.severity === 'critical' ? 0 : 1, view: 'product' as const })),
     ...snapshot.resources.filter(item => ['warning', 'offline'].includes(item.status)).map(item => ({ id: `resource-${item.id}`, title: item.name, meta: `${item.status === 'offline' ? '资源离线' : '资源告警'} · ${item.owner} · ${item.environment}`, level: item.status === 'offline' ? 0 : 1, view: 'infrastructure' as const })),
@@ -110,7 +114,7 @@ function Overview({ snapshot, onNavigate }: { snapshot: StartupHubSnapshot; onNa
     { label: '生产日志可以追踪', passed: snapshot.logSources.some(item => item.status === 'connected') },
   ];
   const activity = [
-    ...snapshot.tasks.map(item => ({ id: item.id, title: item.title, meta: `任务 · ${item.owner}`, updatedAt: item.updatedAt, view: 'collaboration' as const })),
+    ...snapshot.tasks.map(item => ({ id: item.id, title: item.title, meta: `${isCollaborationTask(item.area) ? '协作任务' : '公司事项'} · ${item.owner}`, updatedAt: item.updatedAt, view: isCollaborationTask(item.area) ? 'collaboration' as const : 'company' as const })),
     ...snapshot.taxRecords.map(item => ({ id: item.id, title: item.title, meta: `税务 · ${item.owner}`, updatedAt: item.updatedAt, view: 'company' as const })),
     ...snapshot.documents.map(item => ({ id: item.id, title: item.name, meta: '公司文件', updatedAt: item.uploadedAt, view: 'company' as const })),
     ...snapshot.announcements.map(item => ({ id: item.id, title: item.title, meta: `团队同步 · ${item.audience}`, updatedAt: item.updatedAt, view: 'collaboration' as const })),

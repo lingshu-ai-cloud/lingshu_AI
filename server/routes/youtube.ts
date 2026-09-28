@@ -572,9 +572,22 @@ youtubeRouter.get('/accounts/:id/channel-info', async (req, res) => {
     const config = accountYouTubeConfig(record);
 
     const info = await getMyChannelInfo(config);
+    await store.update(COL, req.params.id, {
+      channelId: info.id,
+      channelTitle: info.title,
+      channelDescription: info.description,
+      customUrl: info.customUrl || '',
+      subscriberCount: info.subscriberCount,
+      videoCount: info.videoCount,
+      viewCount: info.viewCount,
+      thumbnailUrl: info.thumbnailUrl || '',
+      lastSyncAt: new Date().toISOString(),
+      status: 'connected',
+    });
     res.json(info);
   } catch (error) {
     console.error('Error fetching channel info:', error);
+    await store.update(COL, req.params.id, { status: 'error' });
     res.status(500).json({ error: 'Failed to fetch channel info' });
   }
 });
@@ -596,11 +609,37 @@ youtubeRouter.get('/accounts/:id/videos', async (req, res) => {
 
   try {
     const config = accountYouTubeConfig(record);
-
-    const videos = await getMyVideos(config, Number(maxResults));
+    const [videos, channel] = await Promise.all([
+      getMyVideos(config, Number(maxResults)),
+      getMyChannelInfo(config),
+    ]);
+    const capturedAt = new Date().toISOString();
+    await Promise.all(videos.map(video => saveSocialMetricSnapshot({
+      tenantId,
+      platform: 'youtube',
+      accountId: req.params.id,
+      contentId: video.id,
+      capturedAt,
+      valueKind: 'cumulative',
+      metrics: { views: video.viewCount, likes: video.likeCount, comments: video.commentCount },
+      rawMetrics: { source: 'youtube_video_list' },
+    })));
+    await store.update(COL, req.params.id, {
+      channelId: channel.id,
+      channelTitle: channel.title,
+      channelDescription: channel.description,
+      customUrl: channel.customUrl || '',
+      subscriberCount: channel.subscriberCount,
+      videoCount: channel.videoCount,
+      viewCount: channel.viewCount,
+      thumbnailUrl: channel.thumbnailUrl || '',
+      lastSyncAt: capturedAt,
+      status: 'connected',
+    });
     res.json({ videos });
   } catch (error) {
     console.error('Error fetching videos:', error);
+    await store.update(COL, req.params.id, { status: 'error' });
     res.status(500).json({ error: 'Failed to fetch videos' });
   }
 });

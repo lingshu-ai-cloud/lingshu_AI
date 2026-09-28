@@ -97,12 +97,18 @@ assert.match(
 );
 assert.match(studioSource, /withoutStudioWorkflowContext\([\s\S]{0,180}JSON\.parse/, 'reusing a historical project must not inherit the historical workflow task');
 assert.match(studioSource, /resolveStudioWorkflowProjectEntry\(nextProjects, workflowContext\)/, 'a content-production handoff must resolve exact task projects before entering Studio');
-assert.match(studioSource, /if \(workflowContext\) \{[\s\S]{0,180}removeItem\(STUDIO_OPEN_PROJECT_KEY\)/, 'workflow context must override and consume a remembered browser draft');
+assert.match(studioSource, /if \(workflowContext \|\| socialContentTaskId\) \{[\s\S]{0,180}removeItem\(STUDIO_OPEN_PROJECT_KEY\)/, 'workflow or social-task context must override and consume a remembered browser draft');
 assert.match(studioSource, /silent && !projectId && !studioSpecHasMeaningfulContent\(nextSpec\)/, 'background autosave must not create empty unnamed drafts');
 assert.match(studioSource, /onCreatePresenter=\{async input => \{/,'the current shot must expose inline presenter completion');
 assert.match(studioSource, /uploadMaterialFile\(input\.file,\{folder:'presenter',type:'image',sourceType:'presenter-inline-upload'\}\)/,'inline completion must upload the selected portrait');
 assert.match(studioSource, /setProductionDefaults\(saved\);await refreshMaterials\(\)/,'inline completion must refresh enterprise presenters and Studio materials before returning');
 assert.match(studioSource, /defaultPresenterId:productionDefaults\.defaultPresenterId\|\|presenterId/, 'the first inline presenter becomes the enterprise default while remaining selected in the originating shot');
+assert.doesNotMatch(studioSource, /showProjects \|\| linkedProductionContext/, 'a linked Agent task must not hide the three-column Studio behind a status scene');
+assert.doesNotMatch(studioSource, /<ProductionTaskScene/, 'content task handoffs must render inside Studio instead of replacing it with the simple run box');
+assert.match(studioSource, /className=\{showProjects \? 'hidden' : 'flex min-h-0 flex-1 flex-col'\}/, 'the Studio is hidden only while its project chooser is open');
+assert.match(studioSource, /digitalHumanJob\?\.status === 'review'[\s\S]{0,180}<video/, 'generated digital-human candidates must be directly previewable before approval');
+assert.match(studioSource, /<RenderedVideoPlayer[^>]+src=\{formalPreviewUrl\}/, 'formal AIGC output must be directly playable in the final preview step');
+assert.match(studioSource, /<DigitalHumanProductionOverview/, 'the production page must retain per-shot digital-human progress and settlement UI');
 
 const trafficSource = readFileSync(new URL('./TrafficPage.tsx', import.meta.url), 'utf8');
 assert.match(trafficSource, /digitalEmployee\.businessDeepLink/, 'the content workspace must consume the persisted Digital Employee handoff');

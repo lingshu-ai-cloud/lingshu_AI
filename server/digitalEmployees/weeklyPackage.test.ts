@@ -6,8 +6,12 @@ import { normalizeDigitalEmployeeConfig, normalizeWeeklyGoal } from './domain.js
 const config = normalizeDigitalEmployeeConfig({ companyName: 'Test', industry: 'Tools', focusProducts: 'A', operatingMaturity: 'starting', publishingTargets: [{ platform: 'youtube', accountId: 'account-a', accountLabel: 'A' }] });
 const goal = normalizeWeeklyGoal({ objective: '跑通首条发布', startsAt: '2026-09-06', endsAt: '2026-09-12', contentPlatforms: ['youtube'] }, config);
 const pack = recommendPackage(goal, config);
+assert.equal(pack.matrixPlan?.length, 1, 'recommended packages create the deterministic account matrix immediately');
+assert.equal(pack.matrixPlan?.[0].accountId, 'account-a');
+assert.equal(pack.matrixPlan?.[0].platform, 'youtube');
+assert.equal(pack.tasks.find(task => task.templateId === 'production')?.videoPlans?.filter(plan => plan.matrix?.accountId === 'account-a').length, pack.matrixPlan?.[0].weeklyCount, 'weekly content is filled to the matrix target');
 assert.equal(pack.authorization.mode, 'bounded', 'weekly package approval is the default bounded publish authorization');
-assert.equal(pack.authorization.maxPublishItems, 1);
+assert.equal(pack.authorization.maxPublishItems, pack.matrixPlan?.reduce((sum, row) => sum + row.weeklyCount, 0));
 const twoAccounts = recommendPackage(goal, normalizeDigitalEmployeeConfig({
   ...config,
   publishingTargets: [
@@ -15,7 +19,7 @@ const twoAccounts = recommendPackage(goal, normalizeDigitalEmployeeConfig({
     { platform: 'youtube', accountId: 'account-b', accountLabel: 'B' },
   ],
 }));
-assert.equal(twoAccounts.authorization.maxPublishItems, 2, 'the default bound covers actual account publish assignments');
+assert.equal(twoAccounts.authorization.maxPublishItems, twoAccounts.matrixPlan?.reduce((sum, row) => sum + row.weeklyCount, 0), 'the default bound covers actual account publish assignments');
 assert.deepEqual(criticalBusinessConfigChanges(config, config), []);
 assert.deepEqual(criticalBusinessConfigChanges(config, {
   ...config,
@@ -24,11 +28,11 @@ assert.deepEqual(criticalBusinessConfigChanges(config, {
 }), ['products', 'markets', 'audience', 'languages', 'platforms', 'accounts', 'realPublishingPermission']);
 assert.deepEqual(pack.tasks.map(t => t.templateId), ['readiness', 'director', 'production', 'publishing', 'customers', 'followup', 'review']);
 assert.ok(pack.directorPlan, 'recommended packages include a director plan');
-assert.equal(pack.directorPlan?.originalTarget, 1);
+assert.equal(pack.directorPlan?.originalTarget, pack.tasks.find(task => task.templateId === 'production')?.videoPlans?.length);
 assert.ok(packageConfig(pack, config).enabledWorkflows.includes('scheduled_social'));
 assert.ok(packageConfig(pack, config).enabledWorkflows.includes('viral_clone'));
 assert.equal(validatePackage(pack, goal).length, 0);
-const withoutProduction = normalizePackage({ ...pack, tasks: pack.tasks.filter(t => t.templateId !== 'production') });
+const withoutProduction = normalizePackage({ ...pack, matrixPlan: undefined, directorPlan: undefined, tasks: pack.tasks.filter(t => t.templateId !== 'production') });
 assert.ok(validatePackage(withoutProduction, goal).some(s => s.includes('已有作品')));
 withoutProduction.tasks.find(t => t.templateId === 'publishing')!.sourceProjectIds = ['real-project'];
 assert.equal(validatePackage(withoutProduction, goal).length, 0);
@@ -46,7 +50,7 @@ assert.ok(validatePackage(costly, goal).some(issue => issue.includes('预计费�
 const wrongTarget = structuredClone(pack); wrongTarget.directorPlan!.originalTarget = 2; wrongTarget.directorPlan!.platformVersionTarget = 2; wrongTarget.directorPlan!.publishTarget = 2;
 assert.ok(validatePackage(wrongTarget, goal).some(issue => issue.includes('与编导目标')));
 const multilingual = structuredClone(pack); multilingual.directorPlan!.platformVersionTarget = 1; multilingual.directorPlan!.publishTarget = 2;
-assert.ok(validatePackage(multilingual, goal, { ...config, videoLanguages: ['en', 'es'] }).some(issue => issue.includes('将生成 2 个版本')), 'business targets must match the versions handed to the director');
+assert.ok(validatePackage(multilingual, goal, { ...config, videoLanguages: ['en', 'es'] }).some(issue => issue.includes(`将生成 ${pack.directorPlan?.originalTarget || 0} 个版本`)), 'business targets must match the versions handed to the director');
 assert.ok(grantCovers(scoped, 'publish', ['account-a'], 2, '2026-09-08', goal.endsAt));
 assert.ok(!grantCovers(scoped, 'publish', ['account-b'], 1, '2026-09-08', goal.endsAt));
 assert.ok(!grantCovers(scoped, 'publish', ['account-a'], 3, '2026-09-08', goal.endsAt));
@@ -84,7 +88,7 @@ assert.equal(display.allowRealCustomerMessages, false);
 assert.deepEqual(planConfigForDisplay(undefined, current).publishingTargets, current.publishingTargets);
 console.log('Legacy plan configuration compatibility tests passed');
 
-const noDeliveryAccounts = normalizePackage({ ...pack, authorization: { mode: 'bounded', accountIds: [], customerIds: [], maxPublishItems: 0, maxCustomerMessages: 0 } });
+const noDeliveryAccounts = normalizePackage({ ...pack, matrixPlan: undefined, authorization: { mode: 'bounded', accountIds: [], customerIds: [], maxPublishItems: 0, maxCustomerMessages: 0 } });
 assert.deepEqual(validatePackage(noDeliveryAccounts, goal), [], 'missing delivery accounts must not block package start');
 assert.equal(grantCovers(noDeliveryAccounts, 'publish', ['unknown'], 1, '2026-09-08', goal.endsAt), false, 'missing scope still cannot authorize a real publication');
 const full = recommendPackage(goal, { ...config, operatingMaturity: 'established' });

@@ -44,7 +44,14 @@ try {
     taxpayerType: '一般纳税人',
     taxRegion: '上海',
     taxContact: '财务负责人',
+    bankCustomerNumber: '305348276',
+    bankOperatorNumber: '0001',
+    onlineBankingSecurityStatus: '初始密码待修改',
   });
+  const savedCompany = (await readStartupHubSnapshot('tenant-a')).company;
+  assert.equal(savedCompany?.bankCustomerNumber, '305348276');
+  assert.equal(savedCompany?.bankOperatorNumber, '0001');
+  assert.equal(savedCompany?.onlineBankingSecurityStatus, '初始密码待修改');
   const product = await createStartupHubRecord('tenant-a', 'owner-a', 'products', {
     name: '真实产品',
     owner: '产品负责人',

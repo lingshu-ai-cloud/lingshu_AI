@@ -273,7 +273,7 @@ export default function SocialTaskOverview(props: SocialTaskOverviewProps) {
         onReview={() => document.getElementById('social-task-artifacts')?.scrollIntoView({ behavior: 'smooth', block: 'center' })}
       />
       <div className="min-w-0 space-y-4">
-        {running && <SocialTaskRunStatusPanel task={task} />}
+        {running && <SocialTaskRunStatusPanel task={task} onOpenWorkbench={() => props.onNavigate('smartAssets')} />}
         {!running && task.status === 'plan_review' && <SocialGenerationConfirmationCard task={task} busy={props.busy} onConfirm={props.onStart} />}
         {!running && preparing && <ReadinessPanel task={task} busy={props.busy} onStart={props.onStart} onEdit={props.onEdit} />}
         {!running && preparing && task.mode !== 'weekly' && <PreparationRoadmap />}

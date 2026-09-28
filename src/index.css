@@ -483,26 +483,31 @@
     border-radius: 0;
   }
 
-  .duotone-glyph {
+  .sidebar-glyph {
     display: inline-flex;
     flex: 0 0 auto;
     align-items: center;
     justify-content: center;
-    border: 0;
-    border-radius: 0;
+    border: 1px solid transparent;
+    border-radius: 0.4375rem;
     background: transparent;
     box-shadow: none;
-    transition: transform 160ms ease, opacity 160ms ease;
+    color: #5f6f69;
+    transition: color 140ms ease, background-color 140ms ease, border-color 140ms ease, box-shadow 140ms ease;
   }
 
-  [aria-current='page'] .duotone-glyph {
-    background: transparent;
-    box-shadow: none;
+  [aria-current='page'] .sidebar-glyph,
+  .sidebar-glyph--active {
+    border-color: #d8e3dc;
+    background: #fff;
+    box-shadow: 0 1px 2px rgba(23, 61, 49, 0.08);
+    color: #173d31;
   }
 
-  button:hover .duotone-glyph {
-    transform: translateY(-1px);
-    opacity: .82;
+  button:hover .sidebar-glyph {
+    border-color: #e0e8e2;
+    background: #f7f9f7;
+    color: #244d40;
   }
 
   .visual-card {

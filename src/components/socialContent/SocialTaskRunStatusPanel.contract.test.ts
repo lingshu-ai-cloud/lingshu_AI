@@ -11,6 +11,8 @@ assert.match(source, /task\.productionProgress\?\.estimatedRemainingSeconds/, '�
 assert.match(source, /task\.productionProgress\?\.step/, '当前步骤必须读取实时进度');
 assert.doesNotMatch(source, /task\.productionProgress\?\.activity/, '系统动作不得直接暴露后端技术性消息');
 assert.match(source, /if \(step === '剪辑合成'\) return '正在剪辑并合成成片'/, '系统动作必须跟随实时步骤显示用户可读文案');
+assert.match(source, /进入三栏制作台/, '运行中的爆款裂变必须可以直接进入完整三栏制作台');
+assert.match(source, /onOpenWorkbench/, '三栏制作台入口必须由任务页注入并保留当前任务上下文');
 assert.doesNotMatch(source, /编导 Agent|内容 Agent|模型|供应商|队列编号|任务 ID|运行 ID/, '普通运行页不得暴露技术实现');
 
 console.log('social task run status frontend contract passed');

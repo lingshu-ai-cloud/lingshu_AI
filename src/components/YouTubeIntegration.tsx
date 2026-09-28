@@ -945,6 +945,10 @@ export function ChannelOverview() {
       if (result.status === 'fulfilled') next[platforms[index]] = result.value.length;
     });
     setCounts(next);
+    if (next[currentPlatform] === 0) {
+      const firstConnected = platforms.find(item => next[item] > 0);
+      if (firstConnected) setPlatform(firstConnected);
+    }
   };
 
   const loadAccounts = async (target: OverviewPlatform = currentPlatform) => {

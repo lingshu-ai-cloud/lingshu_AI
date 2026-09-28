@@ -817,9 +817,31 @@ socialRouter.get('/accounts/:id/videos', async (req, res) => {
   const maxResults = Number(req.query.maxResults ?? 25);
   try {
     let videos: unknown[] = []; const accessToken = socialAccessToken(account as unknown as Record<string, unknown>);
-    if (account.platform === 'tiktok') videos = await getTikTokVideos(accessToken, maxResults);
-    if (account.platform === 'facebook') videos = await getFacebookVideos(account.providerAccountId, accessToken, graphVersion(), maxResults);
-    if (account.platform === 'instagram') videos = await getInstagramMedia(account.providerAccountId, accessToken, graphVersion(), maxResults);
+    let profilePatch: Partial<SocialAccountRecord> = {};
+    if (account.platform === 'tiktok') {
+      const [profile, items] = await Promise.all([getTikTokUser(accessToken), getTikTokVideos(accessToken, maxResults)]);
+      videos = items;
+      profilePatch = { title: profile.displayName, handle: profile.displayName, avatarUrl: profile.avatarUrl || account.avatarUrl,
+        followerCount: profile.followerCount, videoCount: profile.videoCount, likeCount: profile.likeCount };
+    }
+    if (account.platform === 'facebook') {
+      const [profile, items] = await Promise.all([
+        getFacebookPage(accessToken, graphVersion(), account.providerAccountId),
+        getFacebookVideos(account.providerAccountId, accessToken, graphVersion(), maxResults),
+      ]);
+      videos = items;
+      profilePatch = { title: profile.name, handle: profile.name, avatarUrl: profile.pictureUrl || account.avatarUrl, followerCount: profile.fanCount || 0 };
+    }
+    if (account.platform === 'instagram') {
+      const [profile, items] = await Promise.all([
+        getInstagramAccount(account.providerAccountId, accessToken, graphVersion()),
+        getInstagramMedia(account.providerAccountId, accessToken, graphVersion(), maxResults),
+      ]);
+      videos = items;
+      profilePatch = { title: profile.username, handle: `@${profile.username}`, avatarUrl: profile.profilePictureUrl || account.avatarUrl,
+        followerCount: profile.followersCount, videoCount: profile.mediaCount };
+    }
+    const capturedAt = new Date().toISOString();
     await Promise.all((videos as Array<Record<string, unknown>>).map(video => {
       const metrics: Record<string, number> = {
         likes: Number(video.likeCount || 0),
@@ -839,9 +861,21 @@ socialRouter.get('/accounts/:id/videos', async (req, res) => {
         rawMetrics: { source: 'platform_video_list' },
       });
     }));
+    const knownViews = (videos as Array<Record<string, unknown>>).reduce((sum, video) => sum + (typeof video.viewCount === 'number' ? video.viewCount : 0), 0);
+    const knownLikes = (videos as Array<Record<string, unknown>>).reduce((sum, video) => sum + (typeof video.likeCount === 'number' ? video.likeCount : 0), 0);
+    await store.update(COL, account.id, {
+      ...profilePatch,
+      videoCount: Math.max(Number(profilePatch.videoCount ?? account.videoCount ?? 0), videos.length),
+      viewCount: Math.max(Number(account.viewCount || 0), knownViews),
+      likeCount: Math.max(Number(profilePatch.likeCount ?? account.likeCount ?? 0), knownLikes),
+      lastSyncAt: capturedAt,
+      status: 'connected',
+    });
     res.json({ videos });
   } catch (error: any) {
     console.error(`${account.platform} videos error:`, error?.response?.data ?? error?.message ?? error);
+    if ([401, 403].includes(Number(error?.response?.status))) await store.update(COL, account.id, { status: 'expired' });
+    else await store.update(COL, account.id, { status: 'error' });
     res.status(error?.response?.status || 500).json({ error: readableSocialError(error) });
   }
 });

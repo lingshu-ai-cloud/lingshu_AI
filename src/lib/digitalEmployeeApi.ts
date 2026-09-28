@@ -47,6 +47,7 @@ export const digitalEmployeeApi = {
     request<{ items: Array<PublishingTarget & { status: "connected" }> }>(
       "/publishing-accounts",
     ),
+  agentUsageCosts: () => request<{ roles: Record<'business' | 'director' | 'content' | 'customer', { settledCny: number; entryCount: number; updatedAt: string | null; source: string } | null> }>("/agent-usage-costs"),
   overview: (goalId = "", range?: { startsAt: string; endsAt: string }) =>
     request<DigitalEmployeeOverview>(
       `/overview?${new URLSearchParams({ ...(goalId ? { goalId } : {}), ...(range || {}) }).toString()}`,

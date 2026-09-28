@@ -23,6 +23,7 @@ import {
 import DeliveryBoard from "./DeliveryBoard";
 import ProductionTaskScene from "./ProductionTaskScene";
 import SmartBusinessDashboard from "./SmartBusinessDashboard";
+import PlanHistoryDialog from "./PlanHistoryDialog";
 import SocialContentStageOnboarding from "./socialContent/SocialContentStageOnboarding";
 import {
   saveSocialContentStage,
@@ -37,6 +38,7 @@ import {
   BarChart3,
   Bot,
   BrainCircuit,
+  CalendarRange,
   Check,
   CheckCircle2,
   Circle,
@@ -1099,7 +1101,7 @@ function OnboardingPanel({
           </div>
           <span className="rounded-full bg-emerald-50 px-3 py-1.5 text-[10px] font-black text-emerald-700">推荐设置已就绪</span>
         </div>
-        <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
           {agentRoleGroups.filter(agent => agent.id !== "orchestrator").map(agent => {
             const Icon = agent.id === "business" ? BarChart3 : agent.id === "director" ? Search : agent.id === "content" ? Sparkles : MessageSquare;
             const detail = agent.id === "business" ? "统筹发布、数据与复盘" : agent.id === "director" ? "采集灵感并完成编导方案" : agent.id === "content" ? "按方案制作并检查成片" : "整理客户并生成跟进草稿";
@@ -1254,6 +1256,7 @@ function GoalPanel({
     scope: config.targetMarkets,
   }));
   const [submitted, setSubmitted] = useState(false);
+  const estimatedPlanCost = (form.videoPlans || []).reduce((sum, plan) => sum + Number(plan.estimatedCost || 0), 0);
   const set = <K extends keyof GoalDraft>(key: K, value: GoalDraft[K]) =>
     setForm((current) => ({ ...current, [key]: value }));
   const errors = {
@@ -1308,10 +1311,24 @@ function GoalPanel({
           <div className="rounded-xl bg-slate-50 p-4"><p className="text-[10px] font-bold text-slate-400">本周产出</p><p className="mt-1 text-sm font-black text-slate-900">{form.target} {form.unit}</p></div>
           <div className="rounded-xl bg-slate-50 p-4"><p className="text-[10px] font-bold text-slate-400">执行平台</p><p className="mt-1 text-sm font-black text-slate-900">{form.contentPlatforms.map(platform => contentPlatformLabel[platform]).join('、') || '待确认'}</p></div>
           <div className="rounded-xl bg-slate-50 p-4"><p className="text-[10px] font-bold text-slate-400">业务范围</p><p className="mt-1 truncate text-sm font-black text-slate-900">{form.scope || '按企业默认市场'}</p></div>
+          <div className="rounded-xl bg-slate-50 p-4"><p className="text-[10px] font-bold text-slate-400">预计成本</p><p className="mt-1 text-sm font-black text-slate-900">{estimatedPlanCost > 0 ? `¥${estimatedPlanCost.toFixed(2)}` : '待真实核算'}</p><p className="mt-1 text-[9px] text-slate-400">实际以服务费用回执为准</p></div>
         </div>
         <div className="mt-4 rounded-xl border border-emerald-100 bg-emerald-50/55 px-4 py-3"><p className="text-xs font-black text-emerald-950">本周重点结果</p><p className="mt-1 text-xs leading-5 text-emerald-800">{form.objective}</p></div>
+        {businessLine !== 'customer_conversion' && Boolean(form.videoPlans?.length) && <section aria-label="社媒视频矩阵" className="mt-4 rounded-xl border border-slate-200 bg-slate-50/60 p-4">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div><p className="text-sm font-black text-slate-900">社媒视频矩阵</p><p className="mt-1 text-xs text-slate-500">已按平台拆成 {form.videoPlans?.length || 0} 条视频任务，确认前仍可逐条调整。</p></div>
+            <button type="button" onClick={() => setGoalEditorOpen(true)} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:border-emerald-300">编辑完整矩阵</button>
+          </div>
+          <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+            {form.videoPlans?.map((plan, index) => <div key={`${plan.platform}-${index}`} className="rounded-lg border border-slate-200 bg-white p-3">
+              <div className="flex items-center justify-between gap-2"><span className="text-[10px] font-black uppercase tracking-[0.12em] text-emerald-700">{contentPlatformLabel[plan.platform]}</span><span className="text-[10px] font-semibold text-slate-400">{plan.duration} 秒 · {plan.language}</span></div>
+              <p className="mt-2 truncate text-xs font-black text-slate-900">{plan.productName || '待选择产品'}</p>
+              <p className="mt-1 line-clamp-2 text-[11px] leading-5 text-slate-500">{plan.theme || '待补充视频主题'}</p>
+            </div>)}
+          </div>
+        </section>}
         {submitted && hasErrors && <p role="alert" className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs font-bold text-amber-800">默认方案还缺少少量基础信息，已为你打开调整窗口。</p>}
-        <div className="mt-5 flex flex-wrap justify-end gap-2"><button type="button" onClick={() => setGoalEditorOpen(true)} className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-50">调整本周设置</button><button type="button" disabled={busy} onClick={submit} className="inline-flex items-center gap-2 rounded-xl bg-blue-700 px-5 py-2.5 text-sm font-bold text-white hover:bg-blue-800 disabled:opacity-50">{busy ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />}确认并生成周任务</button></div>
+        <div className="mt-5 flex flex-wrap justify-end gap-2"><button type="button" onClick={() => setGoalEditorOpen(true)} className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-50">调整本周设置</button><button type="button" disabled={busy} onClick={submit} className="inline-flex items-center gap-2 rounded-xl bg-emerald-700 px-5 py-2.5 text-sm font-black text-white hover:bg-emerald-800 disabled:opacity-50">{busy ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />}确认周计划</button></div>
       </section>
       {goalEditorOpen && <div className="fixed inset-0 z-[170] flex items-center justify-center bg-slate-950/45 p-4 backdrop-blur-sm" onMouseDown={event => { if (event.target === event.currentTarget && !busy) setGoalEditorOpen(false); }}>
     <section role="dialog" aria-modal="true" aria-label="调整本周设置" className="ui-modal-frame ui-modal-frame--wide relative overflow-y-auto p-4 sm:p-5">
@@ -1479,7 +1496,7 @@ function GoalPanel({
           ) : (
             <Check size={16} />
           )}{" "}
-          保存设置并生成周任务
+          保存设置并确认周计划
         </button>
       </div>
     </section>
@@ -3378,6 +3395,8 @@ export default function DigitalEmployeePage({
   const [navigationNotice, setNavigationNotice] = useState("");
   const [applicationGuideOpen, setApplicationGuideOpen] = useState(false);
   const [onboardingWelcomeOpen, setOnboardingWelcomeOpen] = useState(false);
+  const [weeklyPlanOpen, setWeeklyPlanOpen] = useState(false);
+  const [planHistoryOpen, setPlanHistoryOpen] = useState(false);
   const goalPanelRef = useRef<HTMLDivElement>(null);
   const overviewRequestVersionRef = useRef(0);
   const [productionPeriod, setProductionPeriod] = useState<OverviewPeriod>("week");
@@ -3696,13 +3715,35 @@ export default function DigitalEmployeePage({
     }
   };
 
+  const confirmGeneratedWeeklyPlan = async (goalInput: GoalDraft) => {
+    setBusy("confirm-weekly-plan");
+    setError("");
+    try {
+      const created = await digitalEmployeeApi.createGoal(goalInput);
+      if (!created.goal) throw new Error("周计划未能创建，请重试。");
+      const approved = await digitalEmployeeApi.approveGoal(created.goal.id, created.plan?.businessPackage?.revision);
+      overviewRequestVersionRef.current += 1;
+      setData(approved);
+      setNewGoal(false);
+      setWeeklyPlanOpen(false);
+      setWorkspaceView("today");
+      showActionSuccess("周计划已确认", "账号矩阵、内容清单与 Agent 工作状态已经同步更新。");
+    } catch (actionError) {
+      setError(actionError instanceof Error ? actionError.message : "周计划确认失败");
+      await load();
+    } finally {
+      setBusy("");
+    }
+  };
+
   const approveCurrentGoal = async () => {
     if (!goal || approvalBlocked) return;
     const next = await act("approve-goal", () =>
-      digitalEmployeeApi.approveGoal(goal.id),
+      digitalEmployeeApi.approveGoal(goal.id, data?.plan?.businessPackage?.revision),
     );
     if (next) {
-      setWorkspaceView("live");
+      setWorkspaceView("today");
+      setWeeklyPlanOpen(false);
       setSelectedTaskId(
         next.tasks.find((task) =>
           ["running", "waiting_external", "waiting_approval"].includes(
@@ -3758,13 +3799,28 @@ export default function DigitalEmployeePage({
       { id: "overview", label: "内容队列", caption: "进度、验收与成本" },
       { id: "review", label: "数据复盘", caption: "热度排行与下周待办" },
     ];
+    const currentVideoPlans = data.plan?.businessPackage?.tasks.find(task => task.templateId === "production")?.videoPlans || goal?.videoPlans || [];
+    const currentMatrix = data.plan?.businessPackage?.matrixPlan || [];
+    const currentEstimatedCost = currentVideoPlans.reduce((sum, plan) => sum + Number(plan.estimatedCost || 0), 0) || Number(data.plan?.estimatedCost || 0);
+    const assignmentCounts = (data.plan?.tasks || []).reduce<Record<string, number>>((counts, task) => ({ ...counts, [task.agentRole]: (counts[task.agentRole] || 0) + 1 }), {});
+    const openContentProduction = (taskId?: string) => {
+      const task = data.tasks.find(item => item.id === taskId)
+        || data.tasks.find(item => item.task_key === "content_production")
+        || data.tasks.find(item => item.task_key === "content_quality_gate");
+      if (!task) {
+        onNavigate?.("smartAssets");
+        return;
+      }
+      const planTask = data.plan?.tasks.find(item => item.key === task.task_key);
+      dispatchDigitalEmployeeDeepLink(buildTaskDeepLink(task, planTask, data.run?.id || task.run_id));
+    };
     return (
       <>
       <div className="h-full overflow-y-auto bg-[#f7f8f6]">
         <div className="mx-auto w-full max-w-[1500px] px-4 py-5 sm:px-6 lg:px-8">
           <header className="flex flex-wrap items-end justify-between gap-4">
             <div><p className="text-xs font-bold tracking-[0.2em] text-emerald-700">ALWAYS ON</p><h1 className="mt-1 text-3xl font-black tracking-tight text-slate-950">智能经营</h1><p className="mt-1 text-sm text-slate-500">查看经营结果、内容队列和 Agent 的实时工作。</p></div>
-            <div className="flex items-center gap-2"><button type="button" onClick={()=>setApplicationGuideOpen(true)} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-xs font-black text-slate-700 shadow-sm hover:border-emerald-300"><Sparkles size={15}/>新手引导</button><button type="button" onClick={()=>setWorkspaceView("rules")} className={`inline-flex items-center gap-2 rounded-xl border px-4 py-2.5 text-xs font-black shadow-sm ${workspaceView==="rules"?"border-slate-950 bg-slate-950 text-white":"border-slate-200 bg-white text-slate-700 hover:border-emerald-300"}`}><Settings2 size={15}/>Agent 设置</button></div>
+            <div className="flex flex-wrap items-center gap-2"><button type="button" onClick={()=>setPlanHistoryOpen(true)} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-xs font-black text-slate-700 shadow-sm hover:border-emerald-300"><History size={15}/>历史计划</button><button type="button" onClick={()=>{ if (!goal || canCreateNextGoal) setNewGoal(true); setWeeklyPlanOpen(true); }} className="inline-flex items-center gap-2 rounded-xl bg-emerald-700 px-5 py-3 text-sm font-black text-white shadow-[0_8px_24px_rgba(4,120,87,.24)] hover:bg-emerald-800"><CalendarRange size={17}/>周计划生成</button><button type="button" onClick={()=>setApplicationGuideOpen(true)} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-xs font-black text-slate-700 shadow-sm hover:border-emerald-300"><Sparkles size={15}/>新手引导</button><button type="button" onClick={()=>setWorkspaceView("rules")} className={`inline-flex items-center gap-2 rounded-xl border px-4 py-2.5 text-xs font-black shadow-sm ${workspaceView==="rules"?"border-slate-950 bg-slate-950 text-white":"border-slate-200 bg-white text-slate-700 hover:border-emerald-300"}`}><Settings2 size={15}/>Agent 设置</button></div>
           </header>
           <nav aria-label="智能经营视图" className="mt-6 flex gap-7 overflow-x-auto border-b border-slate-200">
             {views.map((view)=><button type="button" key={view.id} onClick={()=>setWorkspaceView(view.id)} aria-current={workspaceView===view.id?"page":undefined} className={`shrink-0 border-b-2 pb-3 text-left ${workspaceView===view.id?"border-emerald-700":"border-transparent"}`}><span className={`block text-sm font-black ${workspaceView===view.id?"text-emerald-800":"text-slate-500"}`}>{view.label}</span><span className="mt-0.5 block text-[10px] text-slate-400">{view.caption}</span></button>)}
@@ -3773,7 +3829,14 @@ export default function DigitalEmployeePage({
           <main className="py-6">
             {workspaceView === "rules"
               ? <OnboardingPanel initial={data.config} readiness={data.businessSnapshot?.readiness || []} busy={Boolean(busy)} mode="rules" activeRun={activeRun} onOpenReadiness={openReadiness} onSave={(config) => void saveConfig(config)} />
-              : <SmartBusinessDashboard data={data} view={dashboardView} onRefresh={() => void load()} onNavigate={page => onNavigate?.(page === "socialInspiration" ? "socialInspiration" : "smartAssets")} />}
+              : <SmartBusinessDashboard data={data} view={dashboardView} onRefresh={() => void load()} onOpenContent={openContentProduction} onGeneratePlan={() => { if (!goal || canCreateNextGoal) setNewGoal(true); setWeeklyPlanOpen(true); }} onNavigate={page => {
+                  if (page === "socialPlanning") {
+                    if (!goal || canCreateNextGoal) setNewGoal(true);
+                    setWeeklyPlanOpen(true);
+                    return;
+                  }
+                  if (["enterprise", "accountManagement", "scheduled", "socialInspiration", "scriptLibrary", "smartAssets", "conversion", "digitalEmployees"].includes(page)) onNavigate?.(page as BusinessDestination);
+                }} />}
           </main>
         </div>
       </div>
@@ -3783,6 +3846,22 @@ export default function DigitalEmployeePage({
           <OnboardingPanel initial={data.config} readiness={data.businessSnapshot?.readiness || []} busy={Boolean(busy)} restartFromBeginning onOpenReadiness={openReadiness} onSave={async () => { setApplicationGuideOpen(false); return true; }} />
         </section>
       </div>}
+      {weeklyPlanOpen && <div className="fixed inset-0 z-[200] flex items-center justify-center bg-slate-950/45 p-4 backdrop-blur-sm" onMouseDown={event => { if (event.target === event.currentTarget && !busy) setWeeklyPlanOpen(false); }}>
+        <section role="dialog" aria-modal="true" aria-label="周计划生成" className="ui-modal-frame ui-modal-frame--wide overflow-hidden bg-white">
+          <header className="flex items-start justify-between gap-4 border-b border-slate-100 px-5 py-5 sm:px-7"><div><p className="text-xs font-black uppercase tracking-[0.16em] text-emerald-700">Weekly Plan</p><h2 className="mt-1 text-xl font-black text-slate-950">周计划生成</h2><p className="mt-1 text-xs text-slate-500">确认后，计划会直接写入经营总览、账号矩阵、内容队列和数据复盘。</p></div><button type="button" aria-label="关闭周计划生成" disabled={Boolean(busy)} onClick={()=>setWeeklyPlanOpen(false)} className="rounded-full border border-slate-200 p-2 text-slate-500 hover:bg-slate-50 disabled:opacity-40"><X size={18}/></button></header>
+          <div className="ui-modal-body px-5 py-5 sm:px-7">
+            {(!goal || newGoal) && !activeRun ? <GoalPanel config={data.config} busy={Boolean(busy)} businessLine={businessLine} contentPlatform={contentPlatform} onSave={goalInput => void confirmGeneratedWeeklyPlan(goalInput)}/>
+              : goal ? <div className="space-y-5">
+                <section className="rounded-2xl border border-slate-200 p-5"><div className="flex flex-wrap items-start justify-between gap-3"><div><h3 className="text-lg font-black text-slate-950">{goal.title}</h3><p className="mt-1 text-xs text-slate-500">{goal.startsAt} 至 {goal.endsAt}</p></div><span className={`rounded-full px-3 py-1 text-[10px] font-black ${activeRun?"bg-emerald-50 text-emerald-700":"bg-amber-50 text-amber-700"}`}>{activeRun?"执行中":"待确认"}</span></div><p className="mt-4 text-sm leading-6 text-slate-600">{goal.objective}</p></section>
+                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4"><div className="rounded-xl bg-slate-50 p-4"><p className="text-[10px] font-bold text-slate-400">本周内容</p><p className="mt-1 text-xl font-black text-slate-950">{currentVideoPlans.length} 条</p></div><div className="rounded-xl bg-slate-50 p-4"><p className="text-[10px] font-bold text-slate-400">账号矩阵</p><p className="mt-1 text-xl font-black text-slate-950">{currentMatrix.length || data.config.publishingTargets.length} 个账号</p></div><div className="rounded-xl bg-slate-50 p-4"><p className="text-[10px] font-bold text-slate-400">Agent 分工</p><p className="mt-1 text-xl font-black text-slate-950">{Object.keys(assignmentCounts).length} 位</p></div><div className="rounded-xl bg-slate-50 p-4"><p className="text-[10px] font-bold text-slate-400">预计成本</p><p className="mt-1 text-xl font-black text-slate-950">{currentEstimatedCost>0?`¥${currentEstimatedCost.toFixed(2)}`:"待真实核算"}</p></div></div>
+                <section className="overflow-hidden rounded-2xl border border-slate-200"><div className="border-b border-slate-100 bg-slate-50 px-4 py-3"><h3 className="text-xs font-black text-slate-800">本周待生成内容</h3></div>{currentVideoPlans.slice(0,8).map((plan,index)=><div key={plan.contentId||`${plan.platform}-${index}`} className={`grid gap-2 px-4 py-3 text-xs sm:grid-cols-[80px_minmax(0,1fr)_110px] ${index?"border-t border-slate-100":""}`}><strong className="text-emerald-700">{contentPlatformLabel[plan.platform]}</strong><span className="truncate font-bold text-slate-800">{plan.buyerProblem||plan.theme||plan.productName}</span><span className="text-slate-500 sm:text-right">{plan.estimatedCost?`¥${plan.estimatedCost.toFixed(2)}`:"成本待核算"}</span></div>)}{!currentVideoPlans.length&&<p className="px-4 py-8 text-center text-xs text-slate-400">计划内容正在生成，稍后刷新即可查看。</p>}</section>
+                {!activeRun && <div className="flex items-center justify-between gap-4"><p className="text-xs text-slate-500">确认后会按上方内容与账号配置启动 Agent；真实发布仍遵守审批规则。</p><button type="button" disabled={Boolean(busy)||approvalBlocked} onClick={()=>void approveCurrentGoal()} className="shrink-0 rounded-xl bg-emerald-700 px-5 py-2.5 text-sm font-black text-white disabled:opacity-40">{busy?"确认中…":"确认周计划"}</button></div>}
+                {activeRun&&<div className="flex justify-end"><button type="button" onClick={()=>{setWeeklyPlanOpen(false);setWorkspaceView("overview");}} className="rounded-xl bg-slate-950 px-5 py-2.5 text-sm font-black text-white">查看内容队列</button></div>}
+              </div> : null}
+          </div>
+        </section>
+      </div>}
+      {planHistoryOpen&&<PlanHistoryDialog goals={data.goals} onClose={()=>setPlanHistoryOpen(false)}/>}
       {onboardingWelcomeOpen && <OnboardingWelcome onClose={()=>setOnboardingWelcomeOpen(false)} />}
       </>
     );

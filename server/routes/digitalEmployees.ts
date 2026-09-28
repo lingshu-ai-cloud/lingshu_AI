@@ -31,6 +31,8 @@ import { agentBrowserSessions, browserExecutionEnabled, type BrowserScope, type 
 import { listRunEventsAfter } from '../digitalEmployees/runEventReplay.js';
 import { enforceSupportSessionReadOnly, requireAuth, type AuthLocals } from '../middleware/auth.js';
 import { store } from '../storage/index.js';
+import { settledSeedanceUsageForTenant } from '../lib/seedanceBudget.js';
+import type { ExecutionStoreRecord } from './productionContracts.js';
 import { currentDataAuthority } from '../storage/dataAuthority.js';
 import { signAssetUrl } from '../lib/assetAccess.js';
 import { getWhatsAppCustomers as defaultGetWhatsAppCustomers } from '../whatsapp/historyImport.js';
@@ -104,6 +106,36 @@ digitalEmployeesRouter.use(enforceSupportSessionReadOnly);
 digitalEmployeesRouter.get('/publishing-accounts', async (_req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   res.json({ items: await listConnectedPublishingAccounts(tenantId) });
+});
+
+digitalEmployeesRouter.get('/agent-usage-costs', async (_req, res) => {
+  const { tenantId } = res.locals as AuthLocals;
+  const seedance = settledSeedanceUsageForTenant(tenantId);
+  let otherSettledCny = 0;
+  let otherCount = 0;
+  let otherUpdatedAt: string | null = null;
+  try {
+    const executions = await store.list<ExecutionStoreRecord>('studio_digital_human_executions', { where: { tenant_id: tenantId }, perPage: 500 });
+    for (const record of executions.items) {
+      const execution = record.payload;
+      if (execution.costStatus !== 'reconciled' || execution.actualCostCny === null) continue;
+      if (/seedance/i.test(`${execution.tool} ${execution.provider} ${execution.model || ''}`)) continue;
+      otherSettledCny += execution.actualCostCny;
+      otherCount += 1;
+      if (!otherUpdatedAt || execution.updatedAt > otherUpdatedAt) otherUpdatedAt = execution.updatedAt;
+    }
+  } catch { /* A tenant with no digital-human collection still has valid Seedance account usage. */ }
+  const contentCount = (seedance?.entryCount || 0) + otherCount;
+  const contentSettled = (seedance?.settledCny || 0) + otherSettledCny;
+  const contentUpdatedAt = [seedance?.updatedAt || null, otherUpdatedAt].filter((value): value is string => Boolean(value)).sort().at(-1) || null;
+  res.json({
+    roles: {
+      business: null,
+      director: null,
+      content: contentCount ? { settledCny: Number(contentSettled.toFixed(4)), entryCount: contentCount, updatedAt: contentUpdatedAt, source: '账号真实供应商结算账本' } : null,
+      customer: null,
+    },
+  });
 });
 
 const streamClients = new Map<string, Set<Response>>();

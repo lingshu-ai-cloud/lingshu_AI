@@ -1,4 +1,4 @@
-import { Loader2 } from 'lucide-react';
+import { ArrowRight, Loader2 } from 'lucide-react';
 import type { SocialContentTaskDetail } from '../../../shared/contracts/socialContentWorkflow';
 
 function estimatedTime(task: SocialContentTaskDetail): string {
@@ -39,7 +39,7 @@ export function isLiveSocialProduction(task: SocialContentTaskDetail): boolean {
     || (task.status === 'attention' && Boolean(task.productionProgress));
 }
 
-export default function SocialTaskRunStatusPanel({ task }: { task: SocialContentTaskDetail }) {
+export default function SocialTaskRunStatusPanel({ task, onOpenWorkbench }: { task: SocialContentTaskDetail; onOpenWorkbench?: () => void }) {
   if (!isLiveSocialProduction(task)) return null;
   const rows = [
     ['预计生成耗时', estimatedTime(task)],
@@ -65,6 +65,7 @@ export default function SocialTaskRunStatusPanel({ task }: { task: SocialContent
           </div>
         ))}
       </dl>
+      {onOpenWorkbench && <button type="button" onClick={onOpenWorkbench} className="mx-auto mt-5 flex items-center justify-center gap-2 rounded-xl bg-[#10244a] px-5 py-3 text-sm font-black text-white shadow-[0_5px_0_#8b7cf6] transition hover:-translate-y-0.5">进入三栏制作台 <ArrowRight size={15}/></button>}
     </section>
   );
 }

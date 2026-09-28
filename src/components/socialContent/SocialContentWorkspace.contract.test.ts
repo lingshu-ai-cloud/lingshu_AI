@@ -211,8 +211,8 @@ assert.match(productionProgress, /onSelectTask\?\.\(taskId\)/);
 assert.match(productionProgress, /loadingMoreTasks \? '正在加载任务' : `加载更多任务/);
 assert.doesNotMatch(productionProgress + runStatus, /style=\{\{\s*width|\d+%/, 'production status must not invent a percentage');
 assert.doesNotMatch(commandPanel + overview + productionProgress, /继续制作|请继续完成脚本|进入内容创作|Studio|旧路线/);
-assert.doesNotMatch(productionProgress + overview, /onNavigate\('smartAssets'\)/,
-  'production status must not send the user into the old production route');
+assert.match(overview, /<SocialTaskRunStatusPanel task=\{task\} onOpenWorkbench=\{\(\) => props\.onNavigate\('smartAssets'\)\}/,
+  'running production must preserve the task id while opening the complete three-column Studio');
 for (const action of ['查看方案与费用', '继续处理', '审核成片']) assert.match(productionProgress, new RegExp(action));
 assert.match(editor, /保存并查看制作方案/);
 assert.match(editor, /onClick=\{\(\) => void submit\(\)\}/,
