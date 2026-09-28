@@ -144,7 +144,7 @@ export async function inspectGeneratedVoice(input: {
   let accuracy: number | null = null;
   if (asrEnabled) {
     try {
-      const result = await transcribeAudioWithQwen({ audio: fs.readFileSync(input.filePath), fileName: `voice${path.extname(input.filePath) || '.wav'}` });
+      const result = await transcribeAudioWithQwen({ audio: fs.readFileSync(input.filePath), fileName: `voice${path.extname(input.filePath) || '.wav'}`, signal: AbortSignal.timeout(Math.max(10000, Number(process.env.TTS_ASR_QA_TIMEOUT_MS || 30000))) });
       accuracy = transcriptAccuracy(input.expectedText, result.text, input.language);
       if (accuracy < .9) failures.push(`口播ASR回听一致度仅${Math.round(accuracy * 100)}%`);
     } catch (error) {

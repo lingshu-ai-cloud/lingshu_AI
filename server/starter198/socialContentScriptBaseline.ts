@@ -107,6 +107,7 @@ export interface StoredSocialScriptBaseline {
       sourceStartSeconds: number;
       sourceEndSeconds: number;
       sourcePrecision: 'phrase' | 'coarse';
+      sourceWords?: Array<{start: number; end: number; text: string}>;
       sourceProvenance: string;
       replacedEntityTypes: Array<'company' | 'brand' | 'product'>;
       narrationOwnerShotId?: string;
@@ -705,6 +706,7 @@ export function parseStoredSocialScriptBaseline(value: unknown): StoredSocialScr
         }
         return { referenceText, draftText, sourceStartSeconds, sourceEndSeconds,
           sourcePrecision: sourcePrecision as 'phrase' | 'coarse', sourceProvenance, replacedEntityTypes,
+          ...(Array.isArray(line.sourceWords) ? { sourceWords: line.sourceWords.map(word => socialObject(word) || {}).filter(word => Number.isFinite(Number(word.start)) && Number(word.end) > Number(word.start) && socialText(word.text)).map(word => ({start: Number(word.start), end: Number(word.end), text: socialText(word.text)})) } : {}),
           ...(socialText(line.lineId) ? { lineId: socialText(line.lineId) } : {}),
           ...(socialText(line.narrationOwnerShotId)
             ? { narrationOwnerShotId: socialText(line.narrationOwnerShotId) } : {}),

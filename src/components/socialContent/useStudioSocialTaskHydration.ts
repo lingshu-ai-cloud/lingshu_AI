@@ -127,6 +127,7 @@ export function socialTaskReferenceKickoff(task: SocialContentTaskDetail): Video
       videoUrl: storedReferenceUrl || localReferenceMediaUrl(source.sourceRef) || undefined,
       contentFormat: 'video', duration: analysis?.durationSeconds || undefined },
     ...(analysis?.status === 'ready' ? { referenceAnalysis: { title: source.label,
+      narrationProducts: analysis.narrationProducts, narrationBrands: analysis.narrationBrands,
       narrationSourceStatus: replication?.narrationSourceStatus || 'missing_source_asr',
       details: analysis.shots.map(shot => ({
       shotId: `replication-${shot.shotId}`,
@@ -134,6 +135,9 @@ export function socialTaskReferenceKickoff(task: SocialContentTaskDetail): Video
       visual: shot.visualDescription, dialogue: shot.spokenText || '', subtitle: shot.captionText || '', audio: shot.audioDescription || '',
       purpose: shot.purpose || undefined,
       personContinuityId: shot.personContinuityId || undefined,
+      observedPresenterRole: shot.observedPresenterRole,
+      firstFrameRef: shot.materialEvidence?.firstFrameRef || undefined,
+      firstFrameSeconds: shot.materialEvidence?.firstFrameSeconds ?? shot.startSeconds,
       speechLines: narrationLines.filter(line => line.visualShotIds?.includes(`replication-${shot.shotId}`)
         || line.narrationOwnerShotId === `replication-${shot.shotId}`),
     })) } } : {}),

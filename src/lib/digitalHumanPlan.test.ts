@@ -6,7 +6,7 @@ import { newShotProduction, patchShot, shotFingerprint } from './shotProduction'
 
 const base = { narration: '介绍产品', hasAuthorizedPresenter: true, talkingAvailable: true };
 const reference: DigitalHumanRequirements = {
-  ...newDigitalHumanRequirements(), workflow: 'viral_replication', method: 'replace', contentConfirmed: true,
+  ...newDigitalHumanRequirements(), workflow: 'viral_replication', method: 'replace', contentConfirmed: true, presenterSelected: true, replacementScope: 'person_keep_scene', targetEffect: 'reference_motion',
   action: '举起产品', scene: '展厅', preserve: '产品、背景、动作',
   reference: { videoUrl: '/reference.mp4', start: 1, end: 4, originalText: '介绍产品', derivativeAuthorized: true, derivativeAuthorizationEvidence: '企业自有拍摄 AUTH-1' },
 };

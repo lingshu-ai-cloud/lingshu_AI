@@ -384,6 +384,7 @@ export interface SocialReferenceShotAnalysis {
   shotId: string;
   /** Same verified source person across shots. Missing means identity continuity is unknown. */
   personContinuityId?: string | null;
+    observedPresenterRole?: 'sales_presenter' | 'presenter_action' | 'background' | 'none' | 'unknown';
   startSeconds: number;
   endSeconds: number;
   /** Server-verified inputs for deterministic presenter-stack routing. Null fields require more evidence. */
@@ -559,6 +560,8 @@ export interface SocialThreeSecondHook {
 }
 
 export interface SocialReferenceVideoAnalysis {
+  narrationProducts?: string[];
+  narrationBrands?: string[];
   analysisId: string;
   /** Incrementing analysis version. Optional only on historic records. */
   version?: string;

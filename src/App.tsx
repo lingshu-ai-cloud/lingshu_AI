@@ -605,7 +605,8 @@ export default function App() {
       attachSocialContentNavigationState(continueTaskId, 'smartAssets');
     }
     const freshUrl = new URL(window.location.href);
-    freshUrl.searchParams.delete('project');
+    if (request.continueProjectId) freshUrl.searchParams.set('project', request.continueProjectId);
+    else freshUrl.searchParams.delete('project');
     window.history.replaceState({
       ...window.history.state,
       ...(continueTaskId ? { socialContentTaskId: continueTaskId, socialContentPage: 'smartAssets' } : {}),

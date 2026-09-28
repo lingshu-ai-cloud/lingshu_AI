@@ -14,6 +14,7 @@ async function main() {
   assert.ok(pages.length >= 2, 'long subtitles must be split into multiple timed pages');
   assert.ok(pages.every(page => page.length <= 2), 'every subtitle page must contain no more than two lines');
   assert.ok(pages.flat().every(line => Array.from(line).length <= 16), 'Chinese subtitle lines must remain inside the mobile safe width');
+  assert.equal(subtitlePages('为日常通勤设计，轻巧便携。', 12.45)[0][0], '为日常通勤设计，', 'prefer punctuation over breaking a Chinese phrase');
   const normalizedCues = normalizeSubtitleCues([{ start: 0, end: 4, text: longSubtitle }]);
   assert.equal(normalizedCues[0].start, 0);
   assert.equal(normalizedCues.at(-1).end, 4);
@@ -36,7 +37,7 @@ async function main() {
   assert.equal(mobileCues.map(cue => cue.text.replace(/\\N/g, ' ')).join(' '), spokenCues.map(cue => cue.text).join(' '));
   assert.ok(subtitlePages('product specifications separately', 12.45).flat().join(' ').includes('specifications'), 'English words are never split');
   assert.equal(subtitlePages('한국어 문장을 유지합니다', 12.45).flat().join(' '), '한국어 문장을 유지합니다', 'Korean word spacing survives layout');
-  assert.match(ass, /Style: Default,Arial,72,/, 'mobile font scales with canvas width');
+  assert.match(ass, /Style: Default,Source Han Sans SC,72,/, 'mobile font scales with canvas width');
   assert.match(ass, /,92,92,384,1/, 'captions sit below the face, above bottom UI');
   const audio = fs.readFileSync(path.join(__dirname, '../server/assets/bgm/tech-pulse.mp3'));
   const server = http.createServer((req, res) => {

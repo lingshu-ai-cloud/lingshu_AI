@@ -70,9 +70,10 @@ export function normalizeQwenQualityScore(value: unknown): number {
   return Math.max(0, Math.min(100, score <= 10 ? score * 10 : score));
 }
 export async function transcribeAudioWithQwen(opts: { audio: Buffer; fileName?: string; signal?: AbortSignal }): Promise<{ text: string; segments: QwenAsrSegment[] }> {
+  const audioMime = opts.audio.subarray(0,4).toString() === 'RIFF' ? 'audio/wav' : /\.m4a$/i.test(opts.fileName || '') ? 'audio/mp4' : 'audio/mpeg';
   const completion = await client().chat.completions.create({
     model: process.env.QWEN_ASR_MODEL || 'qwen3-asr-flash',
-    messages: [{ role: 'user', content: [{ type: 'input_audio', input_audio: { data: `data:audio/mpeg;base64,${opts.audio.toString('base64')}` } }] as any }],
+    messages: [{ role: 'user', content: [{ type: 'input_audio', input_audio: { data: `data:${audioMime};base64,${opts.audio.toString('base64')}` } }] as any }],
     stream: false,
     asr_options: { enable_itn: true },
   } as any, opts.signal ? { signal: opts.signal } : undefined);
@@ -274,7 +275,7 @@ ${modeInstruction}
 - firstTenSeconds: object，详细分析视频前 10 秒，包含中文字段 atmosphere、audioVisual、camera、visuals、voiceMusic
 - coarseStructure: array，覆盖原视频完整时长，按内容结构变化拆解；每项包含 time、label、description
 - scriptSummary15s: object，15 秒脚本详析摘要，包含 visualStyle、coreEmotion、competitors
-  - scriptDetails15s: array（字段名仅为历史兼容），必须覆盖原视频完整时长，不得在15秒处截断；按导演镜头详析；每项包含 time（start-end区间，最多两位小数）、environment、shot、camera、purpose、visual、personContinuityId、dialogue、onScreenText、ambientSound、bgm、soundEffects、beats、persistentState、authenticity、observedFacts、inferredIntent、causalGap、omniPrompt、omniNegativePrompt、confidence、needsReview、viralPotential（object：score 为 0-100 且必须拉开差距，锚点 85以上=强钩子或强证据、70-84=有明确记忆点、50-69=功能性过渡、50以下=信息稀薄；mechanisms 最多4项只写本镜头真实成立的机制，没有就空数组；whyEffective 一句话说明理由并引用本镜头具体画面或台词，低于50分要说明弱在哪里。禁止套用通用话术）、subtitle、audio、note。personContinuityId 对可确认的同一出镜人物跨镜头保持相同稳定 ID，无人物或身份不能确认时留空，不能只凭性别推断。observedFacts 只写可见事实；inferredIntent 明确标注推断的表达意图；causalGap 写意图中存在但视频未展示的因果动作；omniPrompt 用英文写可直接交给视频模型的逐时段动作提示，必须复现可见动作，不得擅自补 causalGap；omniNegativePrompt 用英文列出最容易生成错的动作、物理关系和 UI。主体动作/对象/运镜/营销功能改变才切镜；长镜头用 beats 记录镜头内 time/action/dialogue/onScreenText。口播、画面字幕、环境声、BGM和音效必须分开；无法确认留空，专名/价格/左右方向/ASR不确定需 needsReview=true
+  - scriptDetails15s: array（字段名仅为历史兼容），必须覆盖原视频完整时长，不得在15秒处截断；按导演镜头详析；每项包含 time（start-end区间，最多两位小数）、environment、shot、camera、purpose、visual、personContinuityId、observedPresenterRole、dialogue、onScreenText、ambientSound、bgm、soundEffects、beats、persistentState、authenticity、observedFacts、inferredIntent、causalGap、omniPrompt、omniNegativePrompt、confidence、needsReview、viralPotential（object：score 为 0-100 且必须拉开差距，锚点 85以上=强钩子或强证据、70-84=有明确记忆点、50-69=功能性过渡、50以下=信息稀薄；mechanisms 最多4项只写本镜头真实成立的机制，没有就空数组；whyEffective 一句话说明理由并引用本镜头具体画面或台词，低于50分要说明弱在哪里。禁止套用通用话术）、subtitle、audio、note。personContinuityId 对可确认的同一出镜人物跨镜头保持相同稳定 ID，无人物或身份不能确认时留空，不能只凭性别推断。observedPresenterRole 取 sales_presenter（确认贯穿视频的固定销售主讲者对镜说话并绑定稳定人物 ID；路人、D to C 插镜演员不得归入）、presenter_action（主讲人物动作展示）、background（背景人物）、none（无人）、unknown（证据不足）；画外音不能当口播人物，工厂或产品背景不能排除前景销售。observedFacts 只写可见事实；inferredIntent 明确标注推断的表达意图；causalGap 写意图中存在但视频未展示的因果动作；omniPrompt 用英文写可直接交给视频模型的逐时段动作提示，必须复现可见动作，不得擅自补 causalGap；omniNegativePrompt 用英文列出最容易生成错的动作、物理关系和 UI。主体动作/对象/运镜/营销功能改变才切镜；长镜头用 beats 记录镜头内 time/action/dialogue/onScreenText。口播、画面字幕、环境声、BGM和音效必须分开；无法确认留空，专名/价格/左右方向/ASR不确定需 needsReview=true
 - recommendedScriptType: "voiceover" | "storyboard"`;
 
   const externalEvidence = untrustedPromptData('video_metadata_and_asr', JSON.stringify({
@@ -555,3 +556,11 @@ export async function verifyMaterialFramesWithQwen(opts: {
   if(completion.choices[0]?.finish_reason==='length') throw Error('素材事实复核被截断，请重试');
   try { return JSON.parse(completion.choices[0]?.message?.content || ''); } catch {throw Error('素材事实复核格式无效');}
 }
+
+export async function proofreadReferenceNarrationWithQwen(transcript: string): Promise<string> {
+  const result = await client().chat.completions.create({ model: process.env.QWEN_TEXT_MODEL || 'qwen-plus',
+    messages: [{ role: 'system', content: REFERENCE_NARRATION_PROOFREAD_PROMPT }, { role: 'user', content: transcript }],
+    temperature: 0, response_format: { type: 'json_object' }, max_tokens: 1800 });
+  return String(result.choices[0]?.message?.content || '');
+}
+import { REFERENCE_NARRATION_PROOFREAD_PROMPT } from '../prompts/referenceNarrationProofread.js';

@@ -243,11 +243,8 @@ export function createProductionRouter(store: DataStore, importVideo: (url: stri
     } catch (error) { res.status(404).json({ error: error instanceof Error ? error.message : '逐句生产作业读取失败' }); }
   });
 
-  router.post('/sentence-replication-jobs', async (req, res) => {
-    try {
-      const tenantId = res.locals.tenantId as string; const b = req.body || {};
-      if (b.confirmed !== true || !/^[A-Za-z0-9_:.-]{1,150}$/.test(String(b.requestId || ''))) throw new Error('请确认逐句视频生成及供应商计费，并提供有效请求标识');
-      const result = await exclusive(`sentence-replication:${tenantId}:${b.requestId}`, async () => {
+  async function submitSentenceReplication(tenantId: string, b: { projectId: string; assemblyId: string; shotId: string; fingerprint: string; requestId: string }) {
+    return await exclusive(`sentence-replication:${tenantId}:${b.requestId}`, async () => {
         const requestId = String(b.requestId);
         const existing = (await store.list<SentenceJobRecord>('studio_sentence_replication_jobs', { where: { tenant_id: tenantId, request_id: requestId }, perPage: 1 })).items[0];
         if (existing) {
@@ -265,6 +262,7 @@ export function createProductionRouter(store: DataStore, importVideo: (url: stri
         const defaults = (await readDefaults(tenantId))?.payload as ProductionDefaults | undefined;
         const presenter = defaults?.presenters.find(item => item.id === shot.presenterId && item.authorized);
         if (!presenter) throw new Error('请选择已授权企业人物');
+        if (shot.digitalHuman.preferredProvider && !['auto', 'sd'].includes(shot.digitalHuman.preferredProvider)) throw new Error('逐句首帧流水线当前使用 Seedance；所选模型需走对应执行接口，不能自动替换模型');
         const cues = referenceCues(shot.digitalHuman);
         const clusterPlan = planPersonShotClusters(cues, Math.max(1, Number(process.env.DIGITAL_HUMAN_MAX_FIRST_FRAMES_PER_VIDEO) || 3));
         if (clusterPlan.state !== 'ready') throw new Error(clusterPlan.blockers.join('；'));
@@ -303,7 +301,12 @@ export function createProductionRouter(store: DataStore, importVideo: (url: stri
           throw error;
         }
       });
-      res.json(result);
+  }
+  router.post('/sentence-replication-jobs', async (req, res) => {
+    try {
+      const b = req.body || {};
+      if (b.confirmed !== true || !/^[A-Za-z0-9_:.-]{1,150}$/.test(String(b.requestId || ''))) throw new Error('请确认逐句视频生成及供应商计费，并提供有效请求标识');
+      res.json(await submitSentenceReplication(res.locals.tenantId as string, b));
     } catch (error) { res.status(400).json({ error: error instanceof Error ? error.message : '逐句爆款复刻失败' }); }
   });
   router.post('/sentence-replication-jobs/:id/cue-quality', async (req,res)=>{
@@ -611,19 +614,51 @@ export function createProductionRouter(store: DataStore, importVideo: (url: stri
       const defaults = (await readDefaults(tenantId))?.payload as ProductionDefaults | undefined;
       const authorizedPresenters = (defaults?.presenters ?? []).filter(item => validateHeyGenPresenterRecord(item).ok);
       const salesPresenter = uniqueAuthorizedSalesPresenter(authorizedPresenters);
-      const routes = planStudioBatchShotRoutes(project.spec ?? {}, {
+      let routes = planStudioBatchShotRoutes(project.spec ?? {}, {
         talkingExecutorReady: enabled() && studioPaidBudget.status('heygen').allowed,
         actionExecutorReady: executableReferenceAdapters().length > 0,
         authorizedPresenterIds: authorizedPresenters.map(item => item.id),
         defaultSalesPresenterId: salesPresenter?.id ?? null,
       });
+      if (req.body.slotIds !== undefined) {
+        if (!Array.isArray(req.body.slotIds) || !req.body.slotIds.length || req.body.slotIds.length > 100 || req.body.slotIds.some((id: unknown) => typeof id !== 'string')) throw new Error('请选择有效的分镜');
+        const selected = new Set<string>(req.body.slotIds);
+        if ([...selected].some(id => !routes.some(route => route.slotId === id))) throw new Error('所选分镜不属于当前草稿');
+        routes = routes.filter(route => selected.has(route.slotId));
+      }
       if (!routes.length || routes.length > 100) throw new Error('批量分镜数量必须为 1–100');
+      const blocked = routes.filter(route => route.status === 'blocked' || route.status === 'needs_material');
+      if (blocked.length) throw new Error(blocked.map(route => `分镜 ${route.order}：${route.reason}`).join('；'));
       const assemblyId = String(project.spec?.activeAssemblyId || '');
+      const identities = new Map<string, string>();
+      for (const slot of project.spec?.shootingSlots || []) {
+        const sourcePerson = String(slot.personContinuityId || '').trim();
+        if (!sourcePerson) continue;
+        const route = routes.find(item => item.shotId === slot.id);
+        if (!route || route.route === 'local_material') continue;
+        const target = project.spec?.shotProductions?.[`${assemblyId}:${slot.id}`]?.presenterId;
+        if (!target) continue;
+        if (identities.has(sourcePerson) && identities.get(sourcePerson) !== target) throw new Error(`同一原片人物 ${sourcePerson} 选择了不同企业数字人，请在工作面板统一人物后再批量制作`);
+        identities.set(sourcePerson, target);
+      }
       const results: Array<{ shotId: string; slotId: string; state: 'submitted' | 'matched' | 'needs_material' | 'blocked'; jobId: string | null; reason: string }> = [];
       for (const route of routes) {
         if (route.route === 'local_material') {
           results.push({ shotId: route.shotId, slotId: route.slotId,
             state: route.status === 'matched' ? 'matched' : 'needs_material', jobId: null, reason: route.reason });
+          continue;
+        }
+        const configuredShot = project.spec?.shotProductions?.[`${assemblyId}:${route.shotId}`] as ShotProduction | undefined;
+        if (configuredShot?.digitalHuman?.contentConfirmed && configuredShot.digitalHuman.method === 'reenact' && route.visualTopic === 'presenter') {
+          try {
+            if (configuredShot.locked) throw new Error('镜头已锁定，请先解锁');
+            const fingerprint = shotFingerprint(configuredShot, String(project.spec?.shotProductionContext || ''), route.shotId);
+            const requestId = batchShotRequestId({ projectId, batchId, assemblyId, shotId: route.shotId, fingerprint });
+            const generated = await submitSentenceReplication(tenantId, { projectId, assemblyId, shotId: route.shotId, fingerprint, requestId });
+            results.push({ shotId: route.shotId, slotId: route.slotId, state: 'submitted', jobId: generated.sentenceJobId || null, reason: '场景重建候选已生成，等待逐镜验收' });
+          } catch (error) {
+            results.push({ shotId: route.shotId, slotId: route.slotId, state: 'blocked', jobId: null, reason: error instanceof Error ? error.message : '场景重建失败' });
+          }
           continue;
         }
         if (route.route !== 'digital_human' || route.status === 'blocked') {
@@ -636,36 +671,10 @@ export function createProductionRouter(store: DataStore, importVideo: (url: stri
             reason: '人物口播镜头不存在或已锁定，未提交供应商' });
           continue;
         }
-        if (!shot.presenterId && !salesPresenter) {
+        if (!shot.presenterId) {
           results.push({ shotId: route.shotId, slotId: route.slotId, state: 'blocked', jobId: null,
             reason: '企业出镜设置中没有唯一且已授权的“销售”人物资产' });
           continue;
-        }
-        // Imported Director hints can mark every reference cut as reenact.
-        // Only the observed on-screen talking shots selected above are changed
-        // to HeyGen talking, with the user's locked sales identity.
-        const normalizedShot: ShotProduction = {
-          ...shot,
-          source: 'avatar',
-          contentType: 'enterprise_presenter',
-          presenterId: shot.presenterId || salesPresenter!.id,
-          digitalHuman: {
-            ...(shot.digitalHuman || { workflow: 'viral_replication', preferredProvider: 'auto', replicationMode: 'sentence_first_frame',
-              action: '', scene: '', preserve: '' }),
-            workflow: 'viral_replication', method: 'talking', contentConfirmed: true,
-            reference: undefined,
-          },
-        };
-        const shotKey = `${assemblyId}:${route.shotId}`;
-        if (JSON.stringify(normalizedShot) !== JSON.stringify(shot)) {
-          const nextSpec = { ...project.spec, shotProductions: { ...project.spec.shotProductions, [shotKey]: normalizedShot } };
-          if (!await store.update('studio_projects', project.id, { spec: nextSpec })) {
-            results.push({ shotId: route.shotId, slotId: route.slotId, state: 'blocked', jobId: null,
-              reason: '销售人物计划写入草稿失败，未提交供应商' });
-            continue;
-          }
-          project.spec = nextSpec;
-          shot = normalizedShot;
         }
         const fingerprint = shotFingerprint(shot, String(project.spec?.shotProductionContext || ''), route.shotId);
         try {

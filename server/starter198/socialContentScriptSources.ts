@@ -831,6 +831,7 @@ function publicShot(input: {
   return {
     shotId,
     personContinuityId: socialText(raw.personContinuityId) || null,
+    observedPresenterRole: ['sales_presenter', 'presenter_action', 'background', 'none', 'unknown'].includes(String(raw.observedPresenterRole)) ? raw.needsReview === true ? 'unknown' : raw.observedPresenterRole as SocialReferenceShotAnalysis['observedPresenterRole'] : undefined,
     startSeconds: structure.sourceTiming.startSeconds,
     endSeconds: structure.sourceTiming.endSeconds,
     visualDescription: observedVisual ? `${observedVisual}；${structure.shotScale}，${structure.cameraMovement}` : `${subject}；${structure.shotScale}，${structure.cameraMovement}`,
@@ -1116,6 +1117,7 @@ export function buildSocialTaskReferencePackage(input: {
     || input.source.createdAt;
   const coverage = referenceCoverage({ record: input.record, exact, shots });
   const referenceVideoAnalysis: SocialReferenceVideoAnalysis = {
+    narrationProducts: listText(transcript.products), narrationBrands: listText(transcript.brands),
     analysisId,
     version: socialRequestHash({ recordId, analysis: input.record.aiAnalysis,
       shotReview: input.record.referenceShotReview, verifiedSpeech: input.record.referenceVerifiedSpeech }).slice(0, 12),
@@ -1158,6 +1160,7 @@ export function buildSocialTaskReferencePackage(input: {
         sourceStartSeconds: line.startSeconds,
         sourceEndSeconds: line.endSeconds,
         sourcePrecision: line.precision,
+        sourceWords: line.precision === 'phrase' ? rawTranscriptSegments.filter(segment => Number(segment.start) === line.startSeconds && Number(segment.end) === line.endSeconds).flatMap(segment => Array.isArray(segment.words) ? segment.words.map(recordObject).map(word => ({start: Number(word.start), end: Number(word.end), text: socialText(word.text)})).filter(word => Number.isFinite(word.start) && word.end > word.start && word.text) : []) : [],
         sourceProvenance: line.provenance,
         replacedEntityTypes: adjusted.replacedEntityTypes,
         narrationOwnerShotId: visualShotIds[0] ?? '',

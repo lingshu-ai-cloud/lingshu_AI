@@ -39,7 +39,7 @@ test('Qwen first-frame draft route persists its receipt, reuses the same request
   };
   const context = 'draft-context';
   const shot = { ...newShotProduction('目标口播', 'person-1'), source: 'avatar' as const, digitalHuman: {
-    workflow: 'viral_replication' as const, method: 'reenact' as const, replicationMode: 'sentence_first_frame' as const, contentConfirmed: true,
+    workflow: 'viral_replication' as const, method: 'reenact' as const, replicationMode: 'sentence_first_frame' as const, contentConfirmed: true, presenterSelected: true, replacementScope: 'person_and_scene' as const, targetEffect: 'flexible_scene' as const,
     action: '复用动作意图', scene: '重建画面', preserve: '构图', reference: { videoUrl: '/source.mp4', start: 0, end: 2, originalText: '原片', derivativeAuthorized: false,
       cues: [{ id: 'cue-1', start: 0, end: 2, originalText: '原片', targetText: '目标', shotIds: ['s1'], personShot: true, sourceFirstFrame: { time: 0, materialId: 'frame-1' } }] },
   } };
@@ -125,7 +125,7 @@ test('production router persists jobs, never resubmits uncertain operations, iso
     assert.equal((await request('/jobs', input)).status, 400); assert.equal(calls.length, 0);
     rows.get('studio_production_defaults/defaults').payload.presenters[0].nativeOrientation = 'portrait';
     const referenceShot = { ...shot, digitalHuman: {
-      workflow: 'viral_replication' as const, method: 'replace' as const, contentConfirmed: true,
+      workflow: 'viral_replication' as const, method: 'replace' as const, contentConfirmed: true, presenterSelected: true, replacementScope: 'person_keep_scene' as const, targetEffect: 'reference_motion' as const,
       action: '展示产品', scene: '展厅', preserve: '背景与产品',
       reference: { videoUrl: '/original.mp4', start: 0, end: 3, originalText: 'hello', derivativeAuthorized: true, derivativeAuthorizationEvidence: 'enterprise-owned source AUTH-1' },
     } };
@@ -257,7 +257,7 @@ test('reference adapter uses durable idempotent execution records and refreshes 
   };
   const context = 'reference-context';
   const shot = { ...newShotProduction('这是本片口播', 'person-1'), source: 'avatar' as const, digitalHuman: {
-    workflow: 'viral_replication' as const, method: 'replace' as const, contentConfirmed: true,
+    workflow: 'viral_replication' as const, method: 'replace' as const, contentConfirmed: true, presenterSelected: true, replacementScope: 'person_keep_scene' as const, targetEffect: 'reference_motion' as const,
     action: '按参考视频展示产品', scene: '原展厅', preserve: '产品、背景和构图',
     reference: { materialId: 'source-material-1', videoUrl: '/source.mp4', start: 0, end: 3, originalText: 'source line', derivativeAuthorized: true, derivativeAuthorizationEvidence: 'enterprise-owned source AUTH-REF-1' },
   } };
@@ -410,5 +410,45 @@ test('reference adapter uses durable idempotent execution records and refreshes 
     const capped = await request('/reference-jobs', { ...input, requestId: 'reference-request-over-cap' });
     assert.equal(capped.status, 400); assert.match(String((await capped.json()).error), /达到 2 次生成上限/);
     assert.equal(submitCalls, 3); assert.equal(reserves, 3); assert.equal(releases, 1);
+  } finally { await new Promise<void>(resolve => server.close(() => resolve())); }
+});
+
+test('batch preserves confirmed reconstruction and rejects inconsistent source-person identities before generation', async () => {
+  const rows = new Map<string, any>();
+  const store: DataStore = {
+    async getById<T>(collection: string, id: string) { return structuredClone(rows.get(`${collection}/${id}`) || null) as T | null; },
+    async list<T>(collection: string) { const items = [...rows.entries()].filter(([key]) => key.startsWith(`${collection}/`)).map(([, value]) => structuredClone(value) as T); return { items, totalItems: items.length, totalPages: 1, page: 1, perPage: 500 }; },
+    async create<T>() { throw new Error('Incomplete input must not create a provider job'); return null as T | null; },
+    async update() { throw new Error('Batch must not rewrite confirmed model selection'); },
+    async delete() { return false; },
+  };
+  const shot = { ...newShotProduction('Hello', 'person-1'), source: 'avatar' as const,
+    digitalHuman: { workflow: 'viral_replication' as const, method: 'reenact' as const, preferredProvider: 'sd' as const,
+      contentConfirmed: true, presenterSelected: true, replacementScope: 'person_and_scene' as const, targetEffect: 'flexible_scene' as const, action: '', scene: 'Factory', preserve: '' } };
+  const project = { id: 'project', tenant_id: 'tenant-a', status: 'draft', spec: { activeAssemblyId: 'assembly',
+    shootingSlots: [{ id: 'shot', slotId: 'slot', detail: '画面：销售正面说话 口播：Hello', observedPresenterRole: 'sales_presenter', personContinuityId: 'source-person' }],
+    shotProductions: { 'assembly:shot': shot } as Record<string, unknown> } };
+  rows.set('studio_projects/project', project);
+  rows.set('studio_production_defaults/defaults', { tenant_id: 'tenant-a', payload: { presenters: [{ id: 'person-1', name: '销售', authorized: true }] } });
+  const app = express(); app.use(express.json()); app.use((_req, res, next) => { res.locals.tenantId = 'tenant-a'; next(); });
+  app.use(createProductionRouter(store, async () => 'unused'));
+  const server = app.listen(0, '127.0.0.1'); await new Promise<void>(resolve => server.once('listening', resolve));
+  const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/batch-shot-jobs`;
+  const request = (slotIds?: string[]) => fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ projectId: 'project', batchId: 'batch-test', confirmed: true, slotIds }) });
+  try {
+    const first = await request(); assert.equal(first.status, 200);
+    const result = await first.json() as any;
+    assert.equal(result.results[0].state, 'blocked');
+    assert.equal(project.spec.shotProductions['assembly:shot'], shot);
+    assert.equal(shot.digitalHuman.method, 'reenact');
+    project.spec.shootingSlots.push({ ...project.spec.shootingSlots[0], id: 'shot-2', slotId: 'slot-2' });
+    const selected = await request(['slot']); assert.equal(selected.status, 200);
+    assert.deepEqual((await selected.json() as any).results.map((item: any) => item.slotId), ['slot']);
+    const unknown = await request(['another-project-slot']); assert.equal(unknown.status, 400);
+    assert.match((await unknown.json() as any).error, /不属于当前草稿/);
+    const empty = await request([]); assert.equal(empty.status, 400);
+    project.spec.shotProductions['assembly:shot-2'] = { ...shot, presenterId: 'person-2' };
+    const conflict = await request(); assert.equal(conflict.status, 400);
+    assert.match((await conflict.json() as any).error, /同一原片人物/);
   } finally { await new Promise<void>(resolve => server.close(() => resolve())); }
 });

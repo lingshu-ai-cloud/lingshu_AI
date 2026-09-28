@@ -380,6 +380,7 @@ export interface SocialReplicationScriptShot {
     sourceStartSeconds: number;
     sourceEndSeconds: number;
     sourcePrecision: 'phrase' | 'coarse';
+    sourceWords?: Array<{start: number; end: number; text: string}>;
     sourceProvenance: string;
     replacedEntityTypes: Array<'company' | 'brand' | 'product'>;
     /** Exactly one shot owns narration; every intersecting visual shot is listed. */

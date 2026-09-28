@@ -1,3 +1,4 @@
+import { prepareReferenceNarration } from '../lib/referenceNarration.js';
 import { AnalysisAlreadyRunningError, AnalysisLeaseRegistry } from '../lib/analysisLease.js';
 import { DownloadBudget, RecordWorkRegistry, terminalDownloadFailure } from '../lib/downloadExecution.js';
 import { Router, type Request, type Response } from 'express';
@@ -6050,7 +6051,7 @@ function isRetryableAnalysisFailure(error: unknown): boolean {
 /** Only phrase-aligned ASR may populate a shot's dialogue. The current Qwen
  * ASR returns text without timestamps; its 30s chunk must never be copied to
  * every overlapping shot as if each shot contained the entire speech. */
-type VideoAsrSegment = { start: number; end: number; text: string; timingPrecision?: 'phrase' | 'coarse'; provenance?: string; needsReview?: boolean };
+type VideoAsrSegment = { words?: Array<{start: number; end: number; text: string}>; start: number; end: number; text: string; timingPrecision?: 'phrase' | 'coarse'; provenance?: string; needsReview?: boolean };
 
 /** Qwen's inline ASR supplies text but no word clock. Preserve each sentence as
  * a reviewable interval within its actual extraction window; never invent a
@@ -6068,8 +6069,8 @@ export function lockAsrTimeline(analysis: VideoAiAnalysis, transcript?: { text: 
   if (!transcript?.segments.length || !analysis.scriptDetails15s?.length) return analysis;
   return {
     ...analysis,
-    audioTranscript: { text: transcript.text, segments: transcript.segments.map(segment => ({
-      start: segment.start, end: segment.end, text: segment.text,
+    audioTranscript: { ...transcript, text: transcript.text, segments: transcript.segments.map(segment => ({
+      start: segment.start, end: segment.end, text: segment.text, words: segment.words,
       timingPrecision: segment.timingPrecision === 'phrase' ? 'phrase' as const : 'coarse' as const,
       provenance: segment.provenance, needsReview: segment.needsReview ?? segment.timingPrecision !== 'phrase',
     })) },
@@ -6520,6 +6521,9 @@ export async function analyzeDownloadedVideoWithFallback(opts: {
     try {
       if (ffmpegBin) {
         fs.mkdirSync(asrDir, { recursive: true });
+        if (Number(opts.duration) > 0 && Number(opts.duration) <= 180) {
+          transcript = await prepareReferenceNarration(opts.filePath, Number(opts.duration));
+        } else {
         const pattern = path.join(asrDir, 'chunk-%03d.mp3');
         // Exact analysis needs a narrow, honest interval for each spoken line.
         // Inline Qwen ASR has no word timestamps, so these remain coarse even
@@ -6559,6 +6563,7 @@ export async function analyzeDownloadedVideoWithFallback(opts: {
           segments.push(...results.flat());
         }
         transcript = { text: segments.map(item => item.text).join(''), segments };
+        }
       }
     } catch (error) { console.warn('[videos] Qwen ASR unavailable, continuing with frames:', error instanceof Error ? error.message : error); }
     finally { try { for (const file of fs.readdirSync(asrDir)) fs.unlinkSync(path.join(asrDir, file)); fs.rmdirSync(asrDir); } catch { /* best effort */ } }
