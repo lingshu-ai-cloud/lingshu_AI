@@ -23,7 +23,7 @@ import { useAgentProductionAction } from '../lib/agentProductionSession';
 import { VIDEO_PRESENTATIONS, type VideoCreationPlan } from '../lib/videoCreationPlan';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { LayoutGrid, Film, FileText, Music, Image as ImageIcon, Play, Send, Check, ChevronLeft, ChevronRight, Folder, Search, Volume2, Mic, Download, Loader2, Sparkles, Wand2, Copy, RefreshCw, Clock, Upload, X, Plus, List, Save, FolderOpen, Trash2, Pause, ChevronDown, Heart, ExternalLink, Languages } from 'lucide-react';
+import { LayoutGrid, Film, FileText, Music, Image as ImageIcon, Play, Send, Check, ChevronLeft, ChevronRight, Folder, Search, Volume2, Mic, Download, Loader2, Sparkles, Wand2, Copy, RefreshCw, Clock, Upload, X, Plus, Save, FolderOpen, Trash2, Pause, ChevronDown, Heart, ExternalLink, Languages } from 'lucide-react';
 import { studioApi, getDesktopRender, type StudioProject, type VariationBatch, type Material, type MaterialSegment, type BgmTrack, type CoverStyle, type SubCue, type TtsStyleOptions, type StudioAudioCapabilities, type FbPosterResult, type LeadContentPackageResult, type StoryboardQualityResult, type VideoGenerationVersion, type StudioScriptResult, type StudioScriptQualityStatus, type StudioScriptQualityChecks, type StudioGenerationProvenance, type DigitalHumanCapabilities, type DigitalHumanJob, type HeyGenAvatarOption } from '../lib/studioApi';
 import { isMeasuredVoiceAlignment, matchVoiceCuesToShots, productionVoiceCues, retimeVisualShotsToVoiceover } from '../lib/voiceoverAlignment';
 import { createPresetEffectPlan, type EffectIntensity, type EffectPresetId } from '../../shared/contracts/effectPlan';
@@ -1164,11 +1164,6 @@ const ACCOUNTS: SocialAccount[] = [
 ];
 
 type ModeCard = { id: 'material' | 'clone' | 'product'; icon: typeof Film; title: string; desc: string };
-const MODES: ModeCard[] = [
-  { id: 'material', icon: Film,    title: '使用素材', desc: '先选真实素材，脚本只写画面真正能承接的内容' },
-  { id: 'clone',    icon: Wand2,   title: '参考爆款', desc: '拆解参考片的钩子与节奏，再换成企业真实内容' },
-  { id: 'product',  icon: Sparkles,title: '使用产品生成', desc: '先用产品事实生成内容方案，再补齐画面素材' },
-] as const;
 const POSTER_MODES: ModeCard[] = [
   { id: 'material', icon: Film,    title: '使用素材', desc: '编辑素材库中的图片内容' },
   { id: 'clone',    icon: Wand2,   title: '参考爆款', desc: '参考版式，用企业内容重制' },
@@ -8677,7 +8672,6 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onGoPub
     switch (step) {
       /* ① 选模式 */
       case 'mode':
-        const visibleModes = contentMode === 'poster' ? POSTER_MODES : MODES;
         return (
           <div className="w-full min-w-0 overflow-x-hidden">
             <input ref={fileInputRef} type="file" multiple accept="video/*,image/*" className="hidden" onChange={event => { void handleUpload(event.target.files); event.target.value = ''; }} />
@@ -8718,53 +8712,6 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onGoPub
               </div>
               )}
             </div>
-            <p className="text-[10px] font-black uppercase tracking-[0.12em] text-text-muted">制作设置</p>
-            {socialContentTaskId ? (
-              <div className="mb-5 mt-2 rounded-xl border border-emerald-200 bg-emerald-50/70 px-3.5 py-3">
-                <div className="flex items-start gap-2.5">
-                  <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-emerald-600 text-white"><Check size={14} /></span>
-                  <div className="min-w-0">
-                    <p className="text-xs font-black text-emerald-950">任务资料已带入统一制作工作台</p>
-                    <p className="mt-1 text-[10px] leading-4 text-emerald-800">主题、产品和素材沿用已确认任务；这里直接继续脚本、素材匹配和成片制作，不再选择旧制作路线。</p>
-                  </div>
-                </div>
-              </div>
-            ) : (
-            <div className="mb-5 mt-2 divide-y divide-border/70 border-y border-border/70">
-              {visibleModes.map(m => {
-                const on = mode === m.id;
-                return (
-                  <button key={m.id} onClick={() => {
-                    if (m.id !== mode) {
-                      setScriptStageTab('theme');
-                      setVoiceoverMode('unselected');
-                      setScript('');
-                      setVoiceoverLines('');
-                      setVoiceDrafts({});
-                      setVoiceoverAudios({});
-                      setAlignedCuesByLang({});
-                      setVoiceoverUrl(null);
-                      setVoiceoverDur(0);
-                      setModeNotice('');
-                    }
-                    setMode(m.id);
-                  }}
-                    className={`min-h-[62px] w-full min-w-0 overflow-hidden px-1 py-2.5 text-left transition ${on ? 'bg-emerald-50/60' : 'hover:bg-surface-2/70'}`}>
-                    <div className="flex items-center gap-3">
-                      <div className="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0"
-                        style={{ background: on ? TRAFFIC_GREEN : 'var(--color-surface-2)', color: on ? '#fff' : 'var(--color-text-muted)' }}>
-                        <m.icon size={14} />
-                      </div>
-                      <div className="min-w-0">
-                        <p className="text-xs font-bold text-text-primary">{m.title}</p>
-                        <p className="mt-0.5 line-clamp-2 text-[10px] leading-4 text-text-muted">{m.desc}</p>
-                      </div>
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-            )}
             <p className="mb-2 text-[10px] font-black uppercase tracking-[0.12em] text-text-muted">内容信息</p>
             <div className="space-y-4">
               {socialContentTaskId ? (
@@ -13506,7 +13453,6 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onGoPub
 
   return (
     <div className="flex flex-col h-full relative" onPointerDownCapture={() => { studioSettingsEditedRef.current = true; }}>
-      {localGateBypass && !socialViralTask && <div role="status" className="shrink-0 border-b border-sky-200 bg-sky-50 px-4 py-2 text-xs font-semibold text-sky-900">本地演示模式：仅预算上限可放行；脚本、口播、素材覆盖、匹配确认、事实权利与成片质检仍严格执行。内容 Agent 会优先考虑最近上传素材，并从本地素材库选择不同素材补齐分镜。</div>}
       {referenceRecoveryMessage && <div role="alert" className="shrink-0 border-b border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900"><span>{referenceRecoveryMessage}</span>{!referenceNeedsDirectorReview && <button type="button" disabled={retryingReference} onClick={() => void retryReference()} className="ml-3 font-bold underline disabled:opacity-50">{retryingReference ? '正在重试…' : '重试参考分析'}</button>}<button type="button" onClick={() => onNavigate?.('socialInspiration')} className="ml-3 font-bold underline">{referenceNeedsDirectorReview ? '前往编导复核' : '更换参考视频'}</button></div>}
       {!socialContentTaskId && !agentProduction.active && <DirectorTaskContext page="smartAssets" runtimeContext={workflowContext || projectWorkflowContext || undefined} />}
       {!socialContentTaskId && !socialViralTask && !agentProduction.active && !workflowContext?.runId && !projectWorkflowContext?.runId && projectId && <div className="shrink-0 border-b border-slate-200 bg-slate-50 px-4 py-3 text-xs text-slate-700">当前作品未关联智能员工任务，这是手动创作工作台。<button type="button" onClick={() => onNavigate?.('agentMonitor')} className="ml-3 font-semibold text-emerald-700">前往员工监控查看真实任务 →</button></div>}
@@ -13534,12 +13480,10 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onGoPub
         headerActions={(
           <div className="hidden items-center gap-1.5 xl:flex">
             <button type="button" onClick={() => openCreationHome(false)} className="inline-flex h-8 items-center gap-1 rounded-md border border-border bg-white px-2.5 text-[10px] font-bold text-text-secondary hover:bg-surface-2"><ChevronLeft size={13} />返回创作列表</button>
-            <button type="button" onClick={() => openCreationHome(false)} className="inline-flex h-8 items-center gap-1 rounded-md border border-border bg-white px-2.5 text-[10px] font-bold text-text-secondary hover:bg-surface-2"><List size={13} />查看其他任务</button>
             <button type="button" onClick={() => openCreationHome(true)} className="inline-flex h-8 items-center gap-1 rounded-md bg-accent px-2.5 text-[10px] font-black text-white hover:bg-accent-dim"><Plus size={13} />新建任务</button>
           </div>
         )}
         onProjectTitleChange={title => { setProjectTitle(title); setAutosaveStatus('idle'); }}
-        onSave={!agentProduction.active && !managedProductionProjectRef.current ? () => void saveProject('draft').catch(error => setModeNotice(error.message)) : undefined}
         saveStatus={{
           state: savingProj ? 'saving' : autosaveStatus,
           savedAt: lastAutosavedAt?.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }),
@@ -13580,7 +13524,6 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onGoPub
                 { id: 'materials', label: '本次素材', value: selectedVisualClips.length ? `${selectedVisualClips.length} 项已选择` : '', emptyLabel: '待选择', thumbnailUrl: selectedVisualClips[0]?.poster || (selectedVisualClips[0]?.type === 'image' ? selectedVisualClips[0]?.url : undefined) },
                 ...(mode === 'clone' && videoKickoff ? [{ id: 'reference', label: '参考视频', value: videoKickoff.video?.title || '已带入对标视频', thumbnailUrl: videoKickoff.video?.thumbnail || videoKickoff.video?.aiAnalysis?.materialPoster }] : []),
               ]}
-              emptyAction={<button type="button" onClick={() => setShowSetupMaterialPicker(true)} className="rounded-lg border border-border px-3 py-2 text-[11px] font-bold text-text-secondary">选择素材</button>}
             />
           )
         )}

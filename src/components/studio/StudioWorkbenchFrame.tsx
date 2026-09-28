@@ -342,7 +342,6 @@ export function StudioWorkbenchFrame({
         </div>
         <div className="flex items-center gap-3 justify-self-end">
           {headerActions}
-          <SaveStatusView status={saveStatus} compact />
           {onSave && <button type="button" onClick={onSave} disabled={saveStatus.state === 'saving'} className="rounded-md border border-border bg-white px-3 py-1 text-xs font-bold text-text-primary transition-colors hover:bg-surface-2 disabled:opacity-50">保存草稿</button>}
         </div>
       </header>
