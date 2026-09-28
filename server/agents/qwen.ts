@@ -375,6 +375,31 @@ export async function analyzeVideoTimelineDetailsWithQwen(opts: {
   signal?: AbortSignal;
 }): Promise<VideoAiAnalysis> {
   const boundaries = opts.timeline.boundaries.map(item => ({ id: item.id, start: item.start, end: item.end, evidence: item.evidence }));
+  // Dense product montages can contain nine or more shots in one 12-second
+  // chunk. One VL response sometimes drops a row despite valid JSON. Ask for
+  // a few server-owned windows at a time and preserve every physical cut.
+  if (boundaries.length > 4) {
+    const parts: VideoAiAnalysis[] = [];
+    for (let offset = 0; offset < boundaries.length; offset += 4) {
+      const batch = boundaries.slice(offset, offset + 4);
+      const frames = batch.flatMap(boundary => {
+        const middle = (boundary.start + boundary.end) / 2;
+        const within = opts.frames.filter(frame => {
+          const time = Number.parseFloat(frame.timeLabel);
+          return Number.isFinite(time) && time >= boundary.start && time < boundary.end;
+        }).sort((left, right) => Math.abs(Number.parseFloat(left.timeLabel) - middle) - Math.abs(Number.parseFloat(right.timeLabel) - middle));
+        // One true midpoint frame per short product shot prevents captions
+        // from the preceding or following product leaking into this window.
+        return within.slice(0, boundary.end - boundary.start <= 2.5 ? 1 : 3);
+      }).sort((left, right) => Number.parseFloat(left.timeLabel) - Number.parseFloat(right.timeLabel));
+      parts.push(await analyzeVideoTimelineDetailsWithQwen({
+        ...opts,
+        frames: frames.length ? frames : opts.frames,
+        timeline: { ...opts.timeline, boundaries: opts.timeline.boundaries.slice(offset, offset + 4) },
+      }));
+    }
+    return { ...parts[0]!, scriptDetails15s: parts.flatMap(part => part.scriptDetails15s || []) };
+  }
   const completion = await client().chat.completions.create({
     model: QWEN_EXACT_VL_MODEL(),
     messages: [{ role: 'user', content: [
@@ -382,9 +407,12 @@ export async function analyzeVideoTimelineDetailsWithQwen(opts: {
 时间窗口：${JSON.stringify(boundaries)}
 ${opts.transcript?.segments.length ? `独立ASR：${JSON.stringify(opts.transcript.segments)}` : '无可靠ASR，dialogue留空。'}
 summary字段：theme、identityEntities（仅提取明确出现的企业名、品牌名和产品名，每项含type/text/evidence/confidence）、hooks、sellingPoints、mood、structure、baseRequirements、firstTenSeconds（atmosphere/audioVisual/camera/visuals/voiceMusic）、coarseStructure（time/label/description）、scriptSummary15s（visualStyle/coreEmotion/competitors）、recommendedScriptType。
-shots每项字段：boundaryId、environment、shot、camera、angle、composition、purpose、visual、dialogue、onScreenText、ambientSound、bgm、soundEffects、beats、persistentState、startState、endState、transitionToNext、authenticity、observedFacts、inferredIntent、causalGap、omniPrompt、omniNegativePrompt、confidence、needsReview、viralPotential、subtitle、audio、note。每个字符串简洁、具体、尽量不超过24个汉字。shots必须完整返回${boundaries.length}项；无法确认时也必须保留对应boundaryId，用needsReview=true和较低confidence表达不确定，禁止省略分镜。
+shots每项字段：boundaryId、environment、shot、camera、angle、composition、purpose、visual、dialogue、onScreenText、ambientSound、bgm、soundEffects、beats、persistentState、startState、endState、transitionToNext、authenticity、observedFacts、inferredIntent、causalGap、omniPrompt、omniNegativePrompt、confidence、needsReview、viralPotential、subtitle、audio、note。每个字符串简洁、具体、尽量不超过24个汉字。shots必须完整返回${boundaries.length}项；无法确认时也必须保留对应boundaryId，用needsReview=true和较低confidence表达不确定，禁止省略分镜。连续报出多个产品名且画面逐个切换时，每个窗口只写本窗口实际可见的那个产品及字幕，不能把整段产品清单合成一个人物或产品镜头。
 observedFacts仅写真实可见内容；推断只写inferredIntent；缺失因果只写causalGap，不得进入visual或omniPrompt。分别记录口播、屏幕文字、环境声、BGM、音效。动作写初态、接触/路径、终态；运镜、角度、构图分开。专名、价格、型号、左右方向或ASR不确定时needsReview=true，禁止猜测。omni字段使用英文。` },
-      ...opts.frames.map(frame => ({ type: 'image_url', image_url: { url: `data:${frame.mimeType};base64,${frame.base64}` } })),
+      ...opts.frames.flatMap(frame => [
+        { type: 'text', text: `以下画面采样时间为 ${frame.timeLabel}；只把画面中的产品、字幕归入包含该时间点的窗口，不能沿用邻镜内容。` },
+        { type: 'image_url', image_url: { url: `data:${frame.mimeType};base64,${frame.base64}` } },
+      ]),
     ] as any }],
     response_format: { type: 'json_object' },
     // A shot carries director, continuity, audio and evidence fields. The old

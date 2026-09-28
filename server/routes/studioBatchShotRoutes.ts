@@ -75,7 +75,7 @@ export function planStudioBatchShotRoutes(spec: BatchShotSpec, options: {
         : /使用|试用|上脸|涂抹|妆效|粉底覆盖|usage/i.test(description) ? 'usage_scene'
           : /产品|包装|瓶身|质地|粉底液|product/i.test(description) ? 'product' : 'other';
     const assignedId = String(assignments[slotId] || '').trim();
-    const assigned = assignedId && snapshots.get(assignedId)?.usage !== 'reference_only' ? assignedId : null;
+    const assigned = assignedId && snapshots.has(assignedId) ? assignedId : null;
     const edit = assigned ? spec.clipEdits?.[`${slotId}:${assigned}`] : undefined;
     const trimStart = Number(edit?.trimStart);
     const trimEnd = Number(edit?.trimEnd);

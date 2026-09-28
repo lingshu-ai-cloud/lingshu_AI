@@ -6458,7 +6458,7 @@ export function splitStudioNarrationSentences(spoken: string): string[] {
 
 export async function synthesizeStudioVoiceForAutomation(input: {
   tenantId: string; text: string; language?: string; voice?: string; targetDuration?: number;
-  style?: TtsStyleOptions;
+  style?: TtsStyleOptions; sentenceLines?: string[];
 }): Promise<{ ok: boolean; source?: string; url?: string; localPath?: string; duration?: number; text?: string; error?: string; cues?: AlignedCue[]; alignmentSource?: string; qualityReport?: VoiceQualityReport }> {
   return studioTenantContext.run(input.tenantId, async () => {
     const spoken = String(input.text || '').trim();
@@ -6467,7 +6467,11 @@ export async function synthesizeStudioVoiceForAutomation(input: {
     // sentence separately resets pitch and emotion four times and makes a
     // natural recommendation sound like stitched system prompts. Keep longer
     // automation scripts on the measured per-sentence path below.
-    const lines = splitStudioNarrationSentences(spoken);
+    const requestedLines = Array.isArray(input.sentenceLines) ? input.sentenceLines.map(line => String(line).trim()).filter(Boolean) : [];
+    if (requestedLines.length && requestedLines.join(' ').replace(/\s+/g, '') !== spoken.replace(/\s+/g, '')) {
+      return { ok: false, error: '逐句口播与完整口播不一致' };
+    }
+    const lines = requestedLines.length ? requestedLines : splitStudioNarrationSentences(spoken);
     const dir = tenantAssetDir(TTS_ROOT, input.tenantId); fs.mkdirSync(dir, { recursive: true });
     const files: string[] = [], cues: AlignedCue[] = [];
     const providers = new Set<string>();
@@ -6544,13 +6548,13 @@ export async function synthesizeStudioVoiceForAutomation(input: {
 studioRouter.post('/tts', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   if (!await consumeDemoQuota(req, res, 'generation')) return;
-  const { script = '', text = '', voice = 'v1', language = 'zh', style = {} } = req.body ?? {};
+  const { script = '', text = '', voice = 'v1', language = 'zh', style = {}, sentenceLines } = req.body ?? {};
   const spoken = (text || spokenText(script)).trim();
   if (!spoken) { res.status(400).json({ ok: false, error: 'no spoken text' }); return; }
 
   try {
     if (!spokenLanguageMatches(spoken, language)) { res.status(400).json({ ok: false, error: '口播与目标语言不一致，请先修改脚本；配音不会自动翻译。' }); return; }
-    const output = await synthesizeStudioVoiceForAutomation({ tenantId, text: spoken, voice, language, style: normalizeTtsStyle(style) });
+    const output = await synthesizeStudioVoiceForAutomation({ tenantId, text: spoken, voice, language, style: normalizeTtsStyle(style), sentenceLines });
     const payload = JSON.stringify(output);
     res.statusCode = 200;
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
@@ -7142,7 +7146,7 @@ studioRouter.get('/projects/:id/evidence', async (req, res) => {
     const tenantId = res.locals.tenantId as string;
     const project = await store.getById<any>('studio_projects', req.params.id);
     if (!project || project.tenant_id !== tenantId || !socialProjectBelongs(project, socialProjectTaskId(res.locals))) { res.status(404).json({ error: '草稿不存在' }); return; }
-    const gaps = auditShotEvidence(project.spec || {}, loadMaterials().filter(item => !isReferenceOnlyMaterial(item)), tenantId);
+    const gaps = auditShotEvidence(project.spec || {}, loadMaterials(), tenantId);
     res.setHeader('Cache-Control', 'private, no-store');
     res.json({ ok: true, projectId: project.id, revision: project.updated_at, gaps, status: gaps.length ? 'needs_review' : 'range_checked', note: '范围和动作文本校验，不代表视觉或产品功效已验证；未读取到的云端素材需人工核对。' });
   } catch { res.status(503).json({ error: '素材依据检查失败，请稍后重试' }); }

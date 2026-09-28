@@ -29,7 +29,7 @@ const routes = planStudioBatchShotRoutes({
 assert.deepEqual(routes.map(item => [item.visualTopic, item.route, item.status]), [
   ['presenter', 'digital_human', 'needs_plan'],
   ['factory', 'local_material', 'matched'],
-  ['product', 'local_material', 'needs_material'],
+  ['product', 'local_material', 'matched'],
   ['presenter', 'seedance_action', 'blocked'],
 ]);
 assert.ok(routes.every(item => item.generated === false));

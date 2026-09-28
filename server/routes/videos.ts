@@ -2909,6 +2909,7 @@ videosRouter.patch('/:id/reanalyze', async (req, res) => {
   const fileId = record.videoFileId as string | undefined;
   const recordTenantId = String(record.tenantId || tenantId);
   if (analysisMode === 'exact'
+    && req.body?.force !== true
     && Boolean(fileId)
     && previous.analysisQuality === 'video'
     && canPromoteExistingAnalysisToExact(previous.gemini, Number(record.duration || 0))) {
@@ -2949,7 +2950,7 @@ videosRouter.patch('/:id/reanalyze', async (req, res) => {
     const queuedRecord = { ...record, aiAnalysis: JSON.stringify({ ...previous, requestedAnalysisMode: analysisMode, analysisRunId, analysisRunMode: analysisMode, analysisPausedAt: undefined, analysisPausedBy: undefined, analysisError: undefined, downloadError: undefined, crawlerOpsLastError: undefined, crawlerOpsReason: 'explicit_reanalyze_started', crawlerOpsStatus: 'processing', crawlerOpsAttempt: 0, crawlerOpsRetryResetAt: retryResetAt, crawlerOpsRetryResetBy: userId }) };
     await store.update(COL, req.params.id, { aiAnalysis: queuedRecord.aiAnalysis });
     await queueAnalyzeSource(queuedRecord);
-    res.json({ status: 'pending' });
+    res.json({ status: 'pending', analysisRunId });
     return;
   }
 
@@ -2978,7 +2979,7 @@ videosRouter.patch('/:id/reanalyze', async (req, res) => {
     void triggerVideoAnalysis(req.params.id, fileId, undefined, userId, analysisRunId);
   }
 
-  res.json({ status: 'pending' });
+  res.json({ status: 'pending', analysisRunId });
 });
 
 // ─── Internal: async AI analysis ─────────────────────────────────────────────
@@ -5975,7 +5976,30 @@ export function lockAsrTimeline(analysis: VideoAiAnalysis, transcript?: { text: 
   };
 }
 
-export async function extractQwenAnalysisFrames(filePath: string, maxFrames = 30, duration = 0, analysisMode: 'strategy' | 'exact' = 'exact'): Promise<Array<{ base64: string; mimeType: string; timeLabel: string }>> {
+export function selectFramesForPhysicalCuts<T extends { timeLabel: string }>(
+  frames: T[], cuts: number[], start: number, end: number, limit: number,
+): T[] {
+  if (frames.length <= limit) return frames;
+  const boundaries = [start, ...cuts.filter(cut => cut > start && cut < end), end];
+  const required: T[] = [];
+  for (let index = 0; index < boundaries.length - 1; index += 1) {
+    const from = boundaries[index]!, to = boundaries[index + 1]!;
+    if (to - from < 0.35 || to - from > 2.5) continue;
+    const middle = (from + to) / 2;
+    const candidate = frames.filter(frame => {
+      const time = qwenFrameSeconds(frame.timeLabel);
+      return time >= from && time < to;
+    }).sort((a, b) => Math.abs(qwenFrameSeconds(a.timeLabel) - middle) - Math.abs(qwenFrameSeconds(b.timeLabel) - middle))[0];
+    if (candidate && !required.includes(candidate)) required.push(candidate);
+  }
+  const available = frames.filter(frame => !required.includes(frame));
+  const room = Math.max(0, limit - required.length);
+  const context = available.length <= room ? available : Array.from({ length: room }, (_, index) =>
+    available[Math.round(index * (available.length - 1) / Math.max(1, room - 1))]!);
+  return [...required.slice(0, limit), ...context].sort((a, b) => qwenFrameSeconds(a.timeLabel) - qwenFrameSeconds(b.timeLabel));
+}
+
+export async function extractQwenAnalysisFrames(filePath: string, maxFrames = 30, duration = 0, analysisMode: 'strategy' | 'exact' = 'exact', physicalCuts: number[] = []): Promise<Array<{ base64: string; mimeType: string; timeLabel: string }>> {
   if (!ffmpegBin) throw new Error('ffmpeg is not available for Qwen frame analysis');
   if (!fs.existsSync(ANALYSIS_DIR)) fs.mkdirSync(ANALYSIS_DIR, { recursive: true });
 
@@ -6021,9 +6045,31 @@ export async function extractQwenAnalysisFrames(filePath: string, maxFrames = 30
     try {
       if (analysisMode !== 'exact') throw new Error('scene extraction disabled for strategy analysis');
       const sceneCount = Math.max(6, maxFrames - denseCount - uniformCount);
-      const sceneRun = await execFileAsync(ffmpegBin, ['-hide_banner', '-loglevel', 'info', '-i', filePath, '-vf', "select='gt(scene,0.16)',showinfo,scale=384:-1", '-fps_mode', 'vfr', '-frames:v', String(sceneCount), '-q:v', '4', scenePattern], { timeout: 90_000, maxBuffer: 8 * 1024 * 1024 });
+      const sceneRun = await execFileAsync(ffmpegBin, ['-hide_banner', '-loglevel', 'info', '-i', filePath, '-vf', "select='gt(scene,0.12)',showinfo,scale=384:-1", '-fps_mode', 'vfr', '-frames:v', String(sceneCount), '-q:v', '4', scenePattern], { timeout: 90_000, maxBuffer: 8 * 1024 * 1024 });
       sceneTimes = Array.from(sceneRun.stderr.matchAll(/pts_time:([0-9.]+)/g)).map(match => Number(match[1])).filter(Number.isFinite).slice(0, sceneCount);
     } catch { /* retain uniform frames */ }
+    // A transition frame can be blurred or show both products. Observe the
+    // middle of each short physical shot so the product label and item survive
+    // the handoff as one distinct visual requirement.
+    const cutCandidates = physicalCuts.length ? physicalCuts : sceneTimes;
+    const distinctCuts = cutCandidates.filter((time, index) => index === 0 || time - cutCandidates[index - 1]! >= 0.18);
+    const cutBounds = [0, ...distinctCuts, duration].filter(value => Number.isFinite(value));
+    const midpointRows: Array<{ file: string; time: number; dense: boolean }> = [];
+    if (analysisMode === 'exact') {
+      const shortIntervals = Array.from({ length: Math.max(0, cutBounds.length - 1) }, (_, index) => index)
+        .filter(index => cutBounds[index + 1]! - cutBounds[index]! >= 0.35 && cutBounds[index + 1]! - cutBounds[index]! <= 2.5);
+      const sampledIntervals = shortIntervals.length <= 24 ? shortIntervals : Array.from({ length: 24 }, (_, index) => shortIntervals[Math.round(index * (shortIntervals.length - 1) / 23)]!);
+      for (const index of sampledIntervals) {
+        const start = cutBounds[index]!, end = cutBounds[index + 1]!;
+        const time = +(start + (end - start) / 2).toFixed(2);
+        const file = `midpoint-${String(index).padStart(3, '0')}.jpg`;
+        try {
+          await execFileAsync(ffmpegBin, ['-hide_banner', '-loglevel', 'error', '-ss', String(time), '-i', filePath,
+            '-frames:v', '1', '-vf', 'scale=384:-1', '-q:v', '4', path.join(frameDir, file)], { timeout: 15_000 });
+          midpointRows.push({ file, time, dense: false });
+        } catch { /* keep the other sampled frames */ }
+      }
+    }
     const denseRows = fs.readdirSync(frameDir)
       .filter(file => /^dense-\d+\.jpg$/i.test(file))
       .sort()
@@ -6033,8 +6079,9 @@ export async function extractQwenAnalysisFrames(filePath: string, maxFrames = 30
       ...fs.readdirSync(frameDir).filter(file => /^scene-\d+\.jpg$/i.test(file)).sort().map((file, index) => ({ file, time: sceneTimes[index] ?? index * 3, dense: false })),
     ].sort((a, b) => a.time - b.time)
       .filter(row => !denseRows.some(dense => Math.abs(dense.time - row.time) < 0.45))
+      .filter(row => !midpointRows.some(midpoint => Math.abs(midpoint.time - row.time) < 0.35))
       .filter((row, index, all) => index === 0 || Math.abs(row.time - all[index - 1].time) >= 0.45);
-    const rows = [...denseRows, ...supplementalRows.slice(0, Math.max(0, maxFrames - denseRows.length))]
+    const rows = [...denseRows, ...midpointRows, ...supplementalRows.slice(0, Math.max(0, maxFrames - denseRows.length - midpointRows.length))]
       .sort((a, b) => a.time - b.time)
       .slice(0, maxFrames);
     return rows.map(row => ({ base64: fs.readFileSync(path.join(frameDir, row.file)).toString('base64'), mimeType: 'image/jpeg', timeLabel: `${row.time.toFixed(2)}s` }));
@@ -6157,10 +6204,14 @@ async function detectVideoSceneCuts(filePath: string): Promise<number[]> {
   try {
     const result = await execFileAsync(ffmpegBin, [
       '-hide_banner', '-loglevel', 'info', '-i', filePath,
-      '-vf', "select='gt(scene,0.18)',showinfo", '-fps_mode', 'vfr', '-f', 'null', '-',
+      // Product montages often use wipes over similar bright backgrounds.
+      // A stricter threshold swallowed the individual product shots in a
+      // real six-item sequence; nearby transition frames are collapsed below.
+      '-vf', "select='gt(scene,0.12)',showinfo", '-fps_mode', 'vfr', '-f', 'null', '-',
     ], { timeout: 90_000, maxBuffer: 16 * 1024 * 1024 });
-    return [...new Set(Array.from(result.stderr.matchAll(/pts_time:([0-9.]+)/g), match => Number(match[1]))
-      .filter(value => Number.isFinite(value) && value > 0.02).map(value => +value.toFixed(2)))].sort((a, b) => a - b);
+    const candidates = [...new Set(Array.from(result.stderr.matchAll(/pts_time:([0-9.]+)/g), match => Number(match[1]))
+      .filter(value => Number.isFinite(value) && value > 0.2).map(value => +value.toFixed(2)))].sort((a, b) => a - b);
+    return candidates.filter((value, index) => index === 0 || value - candidates[index - 1]! >= 0.18);
   } catch (error) {
     console.warn('[videos] scene cut detection unavailable; retaining continuous observation windows:', error instanceof Error ? error.message : error);
     return [];
@@ -6187,10 +6238,6 @@ async function analyzeExactLongVideoChunks(input: {
     start: index * chunkSeconds,
     end: Math.min(inferredDuration, (index + 1) * chunkSeconds),
   }));
-  const sampleFrames = <T,>(values: T[], limit: number): T[] => {
-    if (values.length <= limit) return values;
-    return Array.from({ length: limit }, (_, index) => values[Math.round(index * (values.length - 1) / Math.max(1, limit - 1))]!);
-  };
   const timelinePlanError = (plan: QwenTimelinePlan, duration: number): string | null => {
     const rows = plan.boundaries;
     if (!plan.theme.trim()) return 'missing_theme';
@@ -6220,7 +6267,7 @@ async function analyzeExactLongVideoChunks(input: {
         Math.abs(qwenFrameSeconds(frame.timeLabel) - chunk.start) < Math.abs(qwenFrameSeconds(nearest.timeLabel) - chunk.start) ? frame : nearest
       )];
     }
-    selected = sampleFrames(selected, frameLimit);
+    selected = selectFramesForPhysicalCuts(selected, input.sceneCuts || [], chunk.start, chunk.end, frameLimit);
     const localFrames = selected.map(frame => ({ ...frame, timeLabel: `${Math.max(0, qwenFrameSeconds(frame.timeLabel) - chunk.start).toFixed(2)}s` }));
     const localSegments = (input.transcript?.segments || [])
       .filter(segment => segment.timingPrecision === 'phrase' && segment.end > chunk.start && segment.start < chunk.end)
@@ -6345,11 +6392,13 @@ export async function analyzeDownloadedVideoWithFallback(opts: {
     // evidence across the full duration, small enough for a reliable request.
     const exactFrameCount = Math.max(24, Math.min(72, Number(process.env.VIDEO_QWEN_EXACT_FRAME_COUNT || 42)));
     const strategyFrameCount = Math.max(3, Math.min(24, Number(process.env.VIDEO_QWEN_FRAME_COUNT || Math.ceil(Math.max(Number(opts.duration || 0), 10) / 5) + 1)));
+    const detectedSceneCuts = opts.analysisMode === 'exact' ? await detectVideoSceneCuts(opts.filePath) : [];
     const frames = await extractQwenAnalysisFrames(
       opts.filePath,
       opts.analysisMode === 'exact' ? exactFrameCount : strategyFrameCount,
       Number(opts.duration || 0),
       opts.analysisMode === 'exact' ? 'exact' : 'strategy',
+      detectedSceneCuts,
     );
     let transcript: { text: string; segments: VideoAsrSegment[] } | undefined;
     const asrDir = path.join(ANALYSIS_DIR, `qwen-asr-${Date.now()}-${randomUUID()}`);
@@ -6402,7 +6451,6 @@ export async function analyzeDownloadedVideoWithFallback(opts: {
     // mode also chunks longer clips so each request stays bounded. Missing or
     // low-quality timelines now fail as retryable instead of being padded with
     // invented tail segments.
-    const detectedSceneCuts = opts.analysisMode === 'exact' ? await detectVideoSceneCuts(opts.filePath) : [];
     const qwenAnalysis = opts.analysisMode === 'exact' || Number(opts.duration || 0) > 15
       ? await analyzeExactLongVideoChunks({ frames, title: opts.title, platform: opts.platform, duration: Number(opts.duration), views: opts.views, tags: opts.tags, transcript, analysisMode: opts.analysisMode || 'strategy', sceneCuts: detectedSceneCuts })
       : await analyzeVideoFramesWithQwen({

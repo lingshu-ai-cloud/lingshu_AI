@@ -102,6 +102,13 @@ export function exactVideoReviewReasons(
   if (meaningfulCuts.length >= 3 && uncovered.length >= Math.max(2, Math.ceil(meaningfulCuts.length * 0.3))) {
     reasons.push(`uncovered_scene_cuts_${uncovered.length}_of_${meaningfulCuts.length}`);
   }
+  const shortSequenceCuts = meaningfulCuts.filter((cut, index) =>
+    (index > 0 && cut - meaningfulCuts[index - 1]! <= 2.5)
+    || (index < meaningfulCuts.length - 1 && meaningfulCuts[index + 1]! - cut <= 2.5));
+  const missingShortSequenceCuts = shortSequenceCuts.filter(cut => !boundaries.some(boundary => Math.abs(boundary - cut) <= 0.12));
+  if (shortSequenceCuts.length >= 3 && missingShortSequenceCuts.length) {
+    reasons.push(`uncovered_short_sequence_cuts_${missingShortSequenceCuts.length}_of_${shortSequenceCuts.length}`);
+  }
   if (openingFrame && openingFrame.confidence >= 0.8 && rows[0]!.range.start <= 0.3) {
     const openingText = [rows[0]!.detail.visual, rows[0]!.detail.environment, rows[0]!.detail.observedFacts]
       .filter(textPresent).join(' ').toLocaleLowerCase();

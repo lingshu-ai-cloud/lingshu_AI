@@ -37,6 +37,16 @@ const distinct = Array.from({ length: 8 }, (_, index) => ({
 }));
 assert.deepEqual(exactVideoReviewReasons(analysis(distinct), 16, [2, 4, 6, 8, 10, 12]), [],
   '真实逐镜台词与覆盖切点的脚本应通过保守门槛');
+assert.ok(exactVideoReviewReasons(analysis([
+  { time: '0-5.1s', visual: '人物引入产品' },
+  { time: '5.1-7.17s', visual: '把修护面膜和美白霜误并为一镜' },
+  { time: '7.17-8.63s', visual: '粉底液' },
+  { time: '8.63-10s', visual: '抗皱精华' },
+  { time: '10-11s', visual: '按摩油' },
+  { time: '11-12.57s', visual: '洗发水' },
+]), 12.57, [5.1, 5.97, 7.17, 8.63, 10, 11])
+  .some(reason => reason.startsWith('uncovered_short_sequence_cuts_')),
+  '产品连切少拆一镜也不能作为合格编导交接物');
 
 const noCutBoundaries = [{ time: '0-5s', visual: '工厂全景' }, { time: '5-10s', visual: '产品特写' }, { time: '10-15s', visual: '人物口播' }];
 assert.ok(exactVideoReviewReasons(analysis(noCutBoundaries), 15, [1, 3, 6, 8, 11, 13])

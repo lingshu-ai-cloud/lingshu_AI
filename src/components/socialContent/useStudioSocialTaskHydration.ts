@@ -104,7 +104,7 @@ export function socialTaskReferenceKickoff(task: SocialContentTaskDetail): Video
     ? localReferenceMediaUrl(`local://${analysis.referenceRecordId}`) : '';
   return {
     source: 'inspiration_analysis', scriptType: 'storyboard',
-    video: { title: source.label, sourceUrl: source.sourceRef,
+    video: { title: source.label, sourceUrl: source.sourceRef, referenceRecordId: analysis?.referenceRecordId || undefined,
       videoUrl: storedReferenceUrl || localReferenceMediaUrl(source.sourceRef) || undefined,
       contentFormat: 'video', duration: analysis?.durationSeconds || undefined },
     ...(analysis?.status === 'ready' ? { referenceAnalysis: { title: source.label,

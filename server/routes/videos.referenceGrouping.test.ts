@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { groupExactObservationWindows } from './videos.js';
+import { groupExactObservationWindows, selectFramesForPhysicalCuts } from './videos.js';
 import type { VideoAiAnalysis } from '../types/index.js';
 
 const base: VideoAiAnalysis = {
@@ -27,4 +27,12 @@ const nearChunkEdge = groupExactObservationWindows({ ...base, scriptDetails15s: 
 ] }, [12.10]);
 assert.equal(nearChunkEdge.scriptDetails15s?.length, 2, '模型的 12 秒分块边界不能冒充附近的 12.10 秒真实切点');
 assert.equal(nearChunkEdge.scriptDetails15s?.[0]?.time, '8.73s–12.10s');
+const montageFrames = Array.from({ length: 26 }, (_, index) => ({ timeLabel: `${(index / 2).toFixed(2)}s` }));
+const montageCuts = [5.1, 5.97, 7.17, 8.63, 10, 11, 12.53];
+const montageSample = selectFramesForPhysicalCuts(montageFrames, montageCuts, 0, 13, 12);
+for (let index = 0; index < montageCuts.length - 1; index += 1) {
+  const from = montageCuts[index]!, to = montageCuts[index + 1]!;
+  assert.ok(montageSample.some(frame => Number.parseFloat(frame.timeLabel) >= from && Number.parseFloat(frame.timeLabel) < to),
+    `短产品镜头 ${from}–${to} 必须保留一帧供视觉标注`);
+}
 console.log('reference observation grouping tests passed');
