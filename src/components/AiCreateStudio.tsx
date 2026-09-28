@@ -5376,7 +5376,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onGoPub
       return clip && assessMaterialMatch(slot, clip, ratio).level !== 'missing';
     }).length;
     const fallbackCount = Object.keys(assignments).length - strictCount;
-    setModeNotice(`内容 Agent 已用 ${selectedIds.length} 条不同的本地素材覆盖 ${Object.keys(assignments).length}/${storyboardSlots.length} 个分镜：${strictCount} 个语义强匹配，${fallbackCount} 个按名称、分类、标签、时长和画幅补位并等待确认${recentNames.length ? `；已优先采用最近上传的 ${recentNames.join('、')}` : ''}。`);
+    setModeNotice(`内容 Agent 已完成本地素材候选排序：初筛 ${Object.keys(assignments).length}/${storyboardSlots.length} 个分镜，其中 ${strictCount} 个语义候选、${fallbackCount} 个低置信候选；系统会继续按逐片段画面证据剔除不符合项，最终缺口以分镜状态为准${recentNames.length ? `；已优先检查最近上传的 ${recentNames.join('、')}` : ''}。`);
     return {
       storyboardAssignments: assignments,
       storyboardSourcePlans: { ...storyboardSourcePlans, ...nextPlans },
