@@ -6,6 +6,16 @@ import { fetchMaterialLibrary, type MaterialLibraryPurpose } from './studioDigit
 import type { MaterialScriptAnalysis } from '../../shared/materialScriptAnalysis';
 import { normalizeEffectPlan, type EffectPlanV1 } from '../../shared/contracts/effectPlan';
 
+export interface HeyGenAvatarOption {
+  id: string;
+  name: string;
+  gender?: string;
+  ownership: 'private' | 'public';
+  avatarType?: string;
+  defaultVoiceId?: string;
+  status?: string;
+}
+
 const VERIFIED_AI_GENERATION_PATHS = new Set([
   'script',
   'covers',
@@ -810,7 +820,7 @@ export const studioApi = {
     }
   },
 
-  digitalHumanAvatars: () => get<{ items: Array<{ id: string; name: string }> }>('digital-human/avatars', { items: [] }),
+  digitalHumanAvatars: () => get<{ items: HeyGenAvatarOption[] }>('digital-human/avatars', { items: [] }),
   approveDigitalHumanJob: (id: string) => post<{ ok: boolean; job?: DigitalHumanJob }>(`digital-human/jobs/${encodeURIComponent(id)}/approve`, { reviewed: true }, { ok: false }),
   digitalHumanCapabilities: () => get<DigitalHumanCapabilities>('digital-human/capabilities', {
     available: false, provider: 'unconfigured', modes: [{ id: 'fast', label: '极速模式' }, { id: 'quality', label: '高质量模式' }],

@@ -122,7 +122,7 @@ function safeRecord(value: unknown, code: string, maxBytes: number): Record<stri
 }
 
 const BRIEF_KEYS = [
-  'title', 'objective', 'productId', 'productRef', 'requestedPresenterName', 'requestedPresenterAssetId', 'audience', 'markets', 'languages', 'platforms', 'formats',
+  'title', 'objective', 'productId', 'productRef', 'requestedPresenterName', 'requestedPresenterAssetId', 'presenterAssetId', 'audience', 'markets', 'languages', 'platforms', 'formats',
   'aspectRatio', 'cadence', 'requestedOutputCount', 'weeklyBudgetCny', 'perItemBudgetCny',
   'retryReserveCny', 'planningMode', 'shootingWindowMinutes', 'specialRequirements', 'dueAt',
   'brandNotes', 'restrictions', 'callToAction', 'mode', 'weeklyPlanId', 'themeId',
@@ -226,6 +226,7 @@ export function parseCreateSocialTask(value: unknown): CreateSocialContentTaskIn
     productRef: optionalText(source.productRef, 'social_content_product_ref_invalid', 200),
     requestedPresenterName: optionalText(source.requestedPresenterName, 'social_content_presenter_name_invalid', 120),
     requestedPresenterAssetId: optionalText(source.requestedPresenterAssetId, 'social_content_presenter_id_invalid', 200),
+    presenterAssetId: optionalText(source.presenterAssetId, 'social_content_presenter_asset_id_invalid', 200),
     audience: optionalText(source.audience, 'social_content_audience_invalid', 500),
     markets: textList(source.markets, 'social_content_markets_invalid', 10, 80),
     languages: textList(source.languages, 'social_content_languages_invalid', 10, 40),

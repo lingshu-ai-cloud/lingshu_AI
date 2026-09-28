@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { authHeader } from '../lib/auth';
 import type { CustomerProfile, TimelineEvent } from '../types/customer';
+import { isLocalForeignTradeMockEnabled } from '../mocks/foreignTradeOperations';
 
 const MOCK_STORAGE_KEY = 'lingshu:mock-customer-conversations:v5';
 const LEGACY_MOCK_STORAGE_KEYS = [
@@ -14,7 +15,7 @@ function mockStorageKey(scope: string): string {
 }
 
 async function storedMockCustomers(storageKey: string): Promise<CustomerProfile[]> {
-  if (!import.meta.env.DEV) return [];
+  if (!isLocalForeignTradeMockEnabled()) return [];
   if (new URLSearchParams(window.location.search).get('mock') === 'quote') {
     const { createQuoteMockCustomers } = await import('../mocks/quoteCustomerProfiles');
     const seeds = createQuoteMockCustomers();
@@ -42,7 +43,7 @@ async function storedMockCustomers(storageKey: string): Promise<CustomerProfile[
       localStorage.removeItem(storageKey);
       return seededCustomers();
     }
-    const expectsForeignCustomers = scope === 'wenlantianxia-test@local.test' || scope === 'kzw14f0w3dl0ujl' || scope === 'ajcht1koyhwp4lf';
+    const expectsForeignCustomers = scope === 'wenlantianxia-test@local.test' || scope === 'kzw14f0w3dl0ujl' || scope === 'ajcht1koyhwp4lf' || scope === 'local-foreign-trade-factory';
     const hasForeignCustomers = stored.some(customer => String(customer.id || '').startsWith('mock-export-'));
     if (expectsForeignCustomers !== hasForeignCustomers) {
       localStorage.removeItem(storageKey);
@@ -94,7 +95,7 @@ export function useCustomers(refreshKey = 0, includeMockCustomers = false, mockC
 } {
   const [customers, setCustomers] = useState<CustomerProfile[]>([]);
   const [loading, setLoading] = useState(false);
-  const scopedMockStorageKey = includeMockCustomers ? mockStorageKey(mockCustomerScope + (import.meta.env.DEV && new URLSearchParams(window.location.search).get('mock') === 'quote' ? ':quote-debug' : '')) : null;
+  const scopedMockStorageKey = includeMockCustomers ? mockStorageKey(mockCustomerScope + (isLocalForeignTradeMockEnabled() && new URLSearchParams(window.location.search).get('mock') === 'quote' ? ':quote-debug' : '')) : null;
 
   useEffect(() => {
     if (!includeMockCustomers) {

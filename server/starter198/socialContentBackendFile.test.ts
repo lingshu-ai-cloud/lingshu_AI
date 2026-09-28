@@ -14,6 +14,8 @@ import {
   storeSocialContentFile,
   type SocialContentBackendFilePort,
 } from './socialContentFiles.js';
+import { readLocalMaterials } from '../lib/materialLibrary.js';
+import { runWithDataAuthority } from '../storage/dataAuthority.js';
 
 const directory = await fsp.mkdtemp(path.join(os.tmpdir(), 'social-backend-file-test-'));
 try {
@@ -73,14 +75,29 @@ try {
     '/api/overseas/starter-198/social-content/files/socialfile_123',
   );
 
+  const isolatedStorageEnvironment = [
+    'OBJECT_STORAGE_DRIVER', 'COS_REGION', 'OBJECT_STORAGE_REGION',
+    'COS_BUCKET', 'OBJECT_STORAGE_BUCKET_NAME', 'COS_SECRET_ID',
+    'OBJECT_STORAGE_ACCESS_KEY_ID', 'COS_SECRET_KEY', 'OBJECT_STORAGE_SECRET_ACCESS_KEY',
+  ] as const;
+  const previousStorageEnvironment = Object.fromEntries(
+    isolatedStorageEnvironment.map(key => [key, process.env[key]]),
+  );
   const previousForceBackend = process.env.SOCIAL_CONTENT_FORCE_BACKEND_FILES;
   process.env.SOCIAL_CONTENT_FORCE_BACKEND_FILES = 'true';
+  process.env.OBJECT_STORAGE_DRIVER = 'cos';
+  for (const key of isolatedStorageEnvironment.slice(1)) delete process.env[key];
   const upload = await storeSocialContentFile({
     stream: Readable.from(bytes), tenantId: 'tenant-a', name: '客户原片.mp4',
     mimeType: 'video/mp4', declaredLength: bytes.length, materialLibrary: true,
   }).finally(() => {
     if (previousForceBackend === undefined) delete process.env.SOCIAL_CONTENT_FORCE_BACKEND_FILES;
     else process.env.SOCIAL_CONTENT_FORCE_BACKEND_FILES = previousForceBackend;
+    for (const key of isolatedStorageEnvironment) {
+      const previous = previousStorageEnvironment[key];
+      if (previous === undefined) delete process.env[key];
+      else process.env[key] = previous;
+    }
   });
   assert.equal(upload.storageKind, 'backend_file', 'no R2 configuration falls back to the backend file field, not data/media');
   assert.ok(upload.transientPath);
@@ -108,6 +125,54 @@ try {
   assert.equal(material?.id, 'pb-material-a');
   assert.equal(bridgedInput?.media.path, upload.transientPath);
   assert.equal(bridgedInput?.sha256, upload.sha256);
+
+  const localMaterialRoot = await fsp.mkdtemp(path.join(os.tmpdir(), 'social-local-material-test-'));
+  const originalCwd = process.cwd();
+  const previousNodeEnv = process.env.NODE_ENV;
+  try {
+    process.chdir(localMaterialRoot);
+    const localMaterial = await runWithDataAuthority('local', () => registerSocialTaskCreativeMaterial({
+      tenantId: 'tenant-local', taskId: 'task-local', productId: 'product-local', productRef: '本地产品',
+      file: {
+        fileId: 'file-local', taskId: 'task-local', usage: 'source', fileRef: 'socialfile:file-local',
+        name: upload.name, mimeType: upload.mimeType, size: upload.byteSize, sha256: upload.sha256,
+        createdAt: new Date(0).toISOString(), downloadUrl: '/api/overseas/starter-198/social-content/files/file-local',
+      },
+      stored: durable,
+      transientPath: upload.transientPath,
+      materialPort: { async upsert() { throw new Error('PocketBase unavailable'); } },
+    }));
+    assert.equal(localMaterial?.sourceType, 'social_task_upload');
+    assert.equal(localMaterial?.usage, 'editable');
+    assert.equal(localMaterial?.productId, 'product-local');
+    assert.equal(localMaterial?.productRef, '本地产品');
+    assert.equal(localMaterial?.url, '/api/overseas/starter-198/social-content/files/file-local');
+    assert.deepEqual(localMaterial?.sourceTaskIds, ['task-local']);
+    assert.equal(readLocalMaterials().length, 1, 'local authority indexes the durable task file in data/materials.json');
+
+    process.env.NODE_ENV = 'production';
+    await assert.rejects(
+      () => runWithDataAuthority('local', () => registerSocialTaskCreativeMaterial({
+        tenantId: 'tenant-production', taskId: 'task-production',
+        file: {
+          fileId: 'file-production', taskId: 'task-production', usage: 'source', fileRef: 'socialfile:file-production',
+          name: upload.name, mimeType: upload.mimeType, size: upload.byteSize, sha256: upload.sha256,
+          createdAt: new Date(0).toISOString(), downloadUrl: '/test-production',
+        },
+        stored: durable,
+        transientPath: upload.transientPath,
+        materialPort: { async upsert() { throw new Error('PocketBase unavailable in production'); } },
+      })),
+      /PocketBase unavailable in production/,
+      'production never silently falls back to the application-server material index',
+    );
+    assert.equal(readLocalMaterials().length, 1, 'failed production registration did not mutate the local index');
+  } finally {
+    process.chdir(originalCwd);
+    if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = previousNodeEnv;
+    await fsp.rm(localMaterialRoot, { recursive: true, force: true });
+  }
   await cleanupTransientSocialContentUpload(upload);
   await assert.rejects(() => fsp.stat(upload.transientPath!), /ENOENT/);
 

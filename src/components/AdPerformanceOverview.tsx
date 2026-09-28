@@ -4,6 +4,7 @@ import { platformAdsRequest } from '../lib/platformAds';
 import { dayRange, overviewData, overviewEntries, percentChange, type AdReport, type ReportEntry } from '../lib/adOverview';
 import './adPerformanceOverview.css';
 import AdMetricHistoryPanel from './AdMetricHistoryPanel';
+import { foreignTradeMockAdReport, isForeignTradeMockId, isLocalForeignTradeMockEnabled } from '../mocks/foreignTradeOperations';
 
 type Task = { id: string; name: string; currency: string; budget: string | number };
 const day = (offset = 0) => new Date(Date.now() + offset * 86400000).toISOString().slice(0, 10);
@@ -27,6 +28,8 @@ export default function AdPerformanceOverview({ tasks, loading, onOpen }: { task
       const results: ReportEntry[] = [];
       for (let i = 0; i < tasks.length; i += 3) {
         const batch = await Promise.all(tasks.slice(i, i + 3).map(async task => {
+          const localMockReport = isLocalForeignTradeMockEnabled() ? foreignTradeMockAdReport(task.id) : null;
+          if (localMockReport) return { ...task, report: localMockReport };
           try { return { ...task, report: await platformAdsRequest<AdReport>(`/tasks/${encodeURIComponent(task.id)}/metrics`, { signal: abort.signal }) }; }
           catch (error) { return { ...task, error: error instanceof Error ? error.message : '读取失败' }; }
         }));
@@ -48,11 +51,34 @@ export default function AdPerformanceOverview({ tasks, loading, onOpen }: { task
   const priorUntil = new Date(Date.parse(since + 'T00:00:00Z') - 86400000);
   const previous = Number.isFinite(priorUntil.getTime()) ? overviewData(scopedEntries, chosen, new Date(priorUntil.getTime() - Math.max(0, dates.length - 1) * 86400000).toISOString().slice(0, 10), priorUntil.toISOString().slice(0, 10)) : null;
   const hasData = data.daily.some(row => row.spend !== null || row[series] !== null);
+  const hasLocalMockData = isLocalForeignTradeMockEnabled() && scopedEntries.some(entry => entry.currency === chosen && isForeignTradeMockId(entry.id));
+  const mockFunnel = { conversations: 31, qualified: 12, quotes: 5, orders: 2, revenue: 522000 };
   const cards = [
     { label: '广告花费', value: `${chosen} ${format(data.spend, 2)}`, note: percentChange(data.spend, previous?.spend ?? null, data.complete && !!previous?.complete) },
-    { label: '询盘 / 单条询盘成本', value: '未接通', note: '点击、播放量不等于询盘' },
-    { label: '有效询盘 / 有效询盘成本', value: '未接通', note: '待建立客服质量判定与广告归因' },
-    { label: '归因成交金额 / ROAS', value: '未接通', note: '不使用未归因订单计算广告回报' },
+    hasLocalMockData
+      ? { label: '询盘 / 单条询盘成本', value: `${mockFunnel.conversations} / ${chosen} ${format(data.spend === null ? null : data.spend / mockFunnel.conversations, 2)}`, note: '来自广告来源会话模拟归因' }
+      : { label: '询盘 / 单条询盘成本', value: '未接通', note: '点击、播放量不等于询盘' },
+    hasLocalMockData
+      ? { label: '有效询盘 / 有效询盘成本', value: `${mockFunnel.qualified} / ${chosen} ${format(data.spend === null ? null : data.spend / mockFunnel.qualified, 2)}`, note: '已完成需求与采购角色判定' }
+      : { label: '有效询盘 / 有效询盘成本', value: '未接通', note: '待建立客服质量判定与广告归因' },
+    hasLocalMockData
+      ? { label: '归因成交金额 / ROAS', value: `USD ${format(mockFunnel.revenue)} / ${data.spend ? (mockFunnel.revenue / data.spend).toFixed(1) : '—'}x`, note: '模拟归因：沙特首期订单 + 德国试点订单' }
+      : { label: '归因成交金额 / ROAS', value: '未接通', note: '不使用未归因订单计算广告回报' },
+  ];
+  const funnelRows = hasLocalMockData ? [
+    ['广告花费', `${chosen} ${format(data.spend, 2)}`, '近 7 天模拟平台快照'],
+    ['点击', format(data.clicks), 'Meta / YouTube 平台点击'],
+    ['进入会话', String(mockFunnel.conversations), '带广告来源参数的 WhatsApp 会话'],
+    ['有效询盘', String(mockFunnel.qualified), '需求、预算或采购角色已确认'],
+    ['报价', String(mockFunnel.quotes), '已发正式方案或 PI'],
+    ['成交', String(mockFunnel.orders), '已登记付款凭证'],
+  ] : [
+    ['广告花费', `${chosen} ${format(data.spend, 2)}`, '平台已返回小计'],
+    ['点击', format(data.clicks), '平台点击，非独立客户'],
+    ['进入会话', '未接通', '待关联广告来源'],
+    ['有效询盘', '未接通', '待客服质量判定'],
+    ['报价', '未接通', '待报价记录归因'],
+    ['成交', '未接通', '待订单归因'],
   ];
   return <div className="ad-performance">
     <section className="ads-card ad-summary">
@@ -70,14 +96,15 @@ export default function AdPerformanceOverview({ tasks, loading, onOpen }: { task
       </div>
       <div className="ad-kpis">{cards.map(c => <article key={c.label}><span>{c.label}</span><strong>{c.value}</strong><small>{c.note}</small></article>)}</div>
     </section>
-    <section className="ads-card"><div className="ads-section-title"><div><h2>从投放到成交</h2><p className="ads-muted">前两步来自平台报告；后四步尚未归因，不连线、不推算转化率。</p></div></div><div className="ad-funnel">{[
-      ['广告花费', `${chosen} ${format(data.spend, 2)}`, '平台已返回小计'], ['点击', format(data.clicks), '平台点击，非独立客户'], ['进入会话', '未接通', '待关联广告来源'], ['有效询盘', '未接通', '待客服质量判定'], ['报价', '未接通', '待报价记录归因'], ['成交', '未接通', '待订单归因'],
-    ].map(([label, value, note], i) => <article key={label} className={i > 1 ? 'ad-stage-missing' : ''}><small>0{i + 1}</small><h3>{label}</h3><strong>{value}</strong><span>{note}</span><div className="ad-stage-line" /></article>)}</div><p className="ads-muted">广告点击 → 会话转化率：未接通。已有客户和聊天记录不会自动计为广告带来的询盘。</p></section>
+    <section className="ads-card"><div className="ads-section-title"><div><h2>从投放到成交</h2><p className="ads-muted">{hasLocalMockData ? '本地模拟链路与客户、订单页使用同一组外贸工厂数据。' : '前两步来自平台报告；后四步尚未归因，不连线、不推算转化率。'}</p></div></div><div className="ad-funnel">
+      {funnelRows.map(([label, value, note], i) => <article key={label} className={!hasLocalMockData && i > 1 ? 'ad-stage-missing' : ''}><small>0{i + 1}</small><h3>{label}</h3><strong>{value}</strong><span>{note}</span><div className="ad-stage-line" /></article>)}</div><p className="ads-muted">{hasLocalMockData ? '模拟链路：广告点击 → WhatsApp 会话 → 有效询盘 → 正式报价 → 付款订单。' : '广告点击 → 会话转化率：未接通。已有客户和聊天记录不会自动计为广告带来的询盘。'}</p></section>
     <section className="ads-card"><div className="ads-section-title"><div><h2>花费与触达趋势</h2><p className="ads-muted">同一日期对照花费和平台结果，断点表示缺失，不是零。</p></div><label>对照指标<select value={series} onChange={e => setSeries(e.target.value as typeof series)}><option value="clicks">点击次数</option><option value="impressions">曝光次数</option></select></label></div>
       <div className="ad-chart" role="img" aria-label={`每日花费（${chosen}）与${series === 'clicks' ? '点击' : '曝光'}趋势；下方可展开原始数值表`}>{hasData ? <ResponsiveContainer width="100%" height={290}><ComposedChart data={data.daily} margin={{ top: 12, right: 24, left: 16, bottom: 8 }}><CartesianGrid strokeDasharray="3 3" vertical={false}/><XAxis dataKey="date" tickFormatter={v => v.slice(5)} minTickGap={24}/><YAxis yAxisId="money" width={66} label={{ value: chosen, position: 'insideTopLeft' }}/><YAxis yAxisId="count" orientation="right" width={50} allowDecimals={false}/><Tooltip labelFormatter={v => `${v}`} /><Legend/><Bar yAxisId="money" dataKey="spend" name={`花费 (${chosen})`} fill="#16886b" maxBarSize={28}/><Line yAxisId="count" dataKey={series} name={series === 'clicks' ? '点击 (次)' : '曝光 (次)'} stroke="#b97928" strokeWidth={2} dot={{ r: 4 }} connectNulls={false} isAnimationActive={false}/></ComposedChart></ResponsiveContainer> : <div className="ad-chart-empty">暂无可绘制的日数据<br/><small>现有接口仅返回其报告窗口；选择更长周期不会自动补齐历史。</small></div>}</div>
       <details><summary>数据核对：逐日数值与覆盖范围</summary><div className="ad-table-scroll"><table><caption>仅汇总当前币种已返回日数据；空值为“—”。</caption><thead><tr><th>日期</th><th>花费 ({chosen})</th><th>点击</th><th>曝光</th><th>有日记录的计划</th></tr></thead><tbody>{data.daily.map(r => <tr key={r.date}><td>{r.date}</td><td>{format(r.spend, 2)}</td><td>{format(r.clicks)}</td><td>{format(r.impressions)}</td><td>{r.reportingTasks}/{data.selected.length}</td></tr>)}</tbody></table></div></details>
     </section>
-    <section className="ads-card"><h2>报告来源与核对</h2><p className="ads-muted">保留平台原始报告口径，与上方日期筛选小计分开显示。未建立跨计划资源去重口径；请勿将重复映射的计划合计当作账户总账。</p><div className="ad-table-scroll"><table><thead><tr><th>计划</th><th>来源 / 状态</th><th>报告窗口</th><th>原报告花费</th><th>更新时间</th></tr></thead><tbody>{scopedEntries.map(e => <tr key={e.id}><td><button className="ads-text-button" onClick={() => onOpen(e.id)}>{e.name}</button></td><td>{e.error ? `读取失败：${e.error}` : e.report?.stale || e.report?.source === 'provider_snapshot' ? '历史快照 · 非实时' : e.report?.source === 'provider' ? '平台报告' : e.report?.reason || '数据未就绪'}</td><td>{e.report?.window ? `${e.report.window.since} — ${e.report.window.until}` : '—'}</td><td>{e.report?.currency || e.currency} {format(e.report?.spend ?? null, 2)}</td><td>{e.report?.reportedAt ? new Date(e.report.reportedAt).toLocaleString('zh-CN') : '—'}</td></tr>)}</tbody></table></div></section>
-    <AdMetricHistoryPanel tasks={tasks} />
+    <section className="ads-card"><h2>报告来源与核对</h2><p className="ads-muted">保留平台原始报告口径，与上方日期筛选小计分开显示。未建立跨计划资源去重口径；请勿将重复映射的计划合计当作账户总账。</p><div className="ad-table-scroll"><table><thead><tr><th>计划</th><th>来源 / 状态</th><th>报告窗口</th><th>原报告花费</th><th>更新时间</th></tr></thead><tbody>{scopedEntries.map(e => <tr key={e.id}><td><button className="ads-text-button" onClick={() => onOpen(e.id)}>{e.name}</button></td><td>{isForeignTradeMockId(e.id) ? '本地演示快照' : e.error ? `读取失败：${e.error}` : e.report?.stale || e.report?.source === 'provider_snapshot' ? '历史快照 · 非实时' : e.report?.source === 'provider' ? '平台报告' : e.report?.reason || '数据未就绪'}</td><td>{e.report?.window ? `${e.report.window.since} — ${e.report.window.until}` : '—'}</td><td>{e.report?.currency || e.currency} {format(e.report?.spend ?? null, 2)}</td><td>{e.report?.reportedAt ? new Date(e.report.reportedAt).toLocaleString('zh-CN') : '—'}</td></tr>)}</tbody></table></div></section>
+    {tasks.some(task => !isForeignTradeMockId(task.id))
+      ? <AdMetricHistoryPanel tasks={tasks.filter(task => !isForeignTradeMockId(task.id))} />
+      : <section className="ads-card"><h2>投放绩效历史表</h2><p className="ads-muted">当前为本地外贸工厂演示数据。连接真实广告账户后，这里会按广告资源展示可核验的逐日历史指标。</p></section>}
   </div>;
 }

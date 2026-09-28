@@ -1,4 +1,6 @@
-# 单台 Ubuntu 服务器部署说明
+# 单台 Ubuntu 服务器部署说明（当前唯一部署路径）
+
+本仓库默认只维护这条路径：交互式 SSH 登录现有 Ubuntu 服务器，在服务器内通过 GitHub HTTPS 更新现有 checkout，再执行 `bash deploy/update.sh`。除非用户在当前任务明确改口，不要切换到 CloudBase、GitHub Actions 发布、GHCR/release、PM2、scp 或 rsync。
 
 这份文档适合 Linux 小白照着做。目标是把整个工具部署到你自己的 Ubuntu 服务器上，让客户打开一个链接就能使用。
 
@@ -74,7 +76,7 @@ ssh root@43.159.41.222
 ## 第 3 步：下载项目代码
 
 ```bash
-git clone https://github.com/boooppppiiii-cloud/lingshu_AI.git
+git clone https://github.com/lingshu-ai-cloud/lingshu_AI.git
 cd lingshu_AI
 ```
 
@@ -86,6 +88,8 @@ cd lingshu_AI
 cd lingshu_AI
 git pull --ff-only
 ```
+
+私有仓库拉取时，必须把凭据提示留在 SSH 终端中由用户亲自输入：`Username` 填 GitHub 用户名，`Password` 填 GitHub Personal Access Token（PAT），不是 GitHub 账户密码。不得把凭据写进命令、远端 URL、聊天、脚本或凭据缓存。
 
 ## 第 4 步：生成线上配置
 

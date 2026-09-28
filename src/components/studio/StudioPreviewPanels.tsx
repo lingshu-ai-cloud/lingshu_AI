@@ -99,6 +99,21 @@ export function BenchmarkVideoPreview({ kickoff, embedded = false, seekRequest, 
     } finally { setLoading(false); }
   };
   useEffect(() => {
+    if (!apiUrl || isImageReference) return undefined;
+    let cancelled = false;
+    void ensurePlaybackUrl().then(url => {
+      const element = videoRef.current;
+      if (cancelled || !url || !element) return;
+      const absoluteUrl = new URL(url, window.location.href).href;
+      if (element.currentSrc === absoluteUrl || element.src === absoluteUrl) return;
+      element.src = url;
+      element.load();
+    }).catch(error => {
+      if (!cancelled) setPlaybackError(error instanceof Error ? `视频加载失败：${error.message}` : '视频加载失败，请重试');
+    });
+    return () => { cancelled = true; };
+  }, [apiUrl, isImageReference]);
+  useEffect(() => {
     if (!seekRequest || isImageReference) return;
     let cancelled = false;
     void ensurePlaybackUrl().then(url => {
@@ -148,8 +163,11 @@ export function BenchmarkVideoPreview({ kickoff, embedded = false, seekRequest, 
   const metadata = (element: HTMLVideoElement) => {
     if (element.videoWidth > 0 && element.videoHeight > 0) setMediaAspectRatio(element.videoWidth / element.videoHeight);
   };
-  const videoElement = (className: string) => <video ref={videoRef} poster={poster || undefined} muted={muted} playsInline loop preload="metadata" className={className}
-    onLoadedMetadata={event => metadata(event.currentTarget)} onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)}
+  const videoElement = (className: string) => <video ref={videoRef} poster={poster || undefined} muted={muted} playsInline loop preload="auto" className={className}
+    onLoadedMetadata={event => metadata(event.currentTarget)} onLoadedData={event => {
+      const element = event.currentTarget;
+      if (element.currentTime === 0 && Number.isFinite(element.duration) && element.duration > 0.05) element.currentTime = 0.05;
+    }} onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)}
     onTimeUpdate={event => onTimeUpdate?.(event.currentTarget.currentTime)}
     onError={() => { setPlaying(false); setPlaybackError('视频加载或解码失败，可点击右上角“原站”查看'); }} />;
   const playbackLayers = <>

@@ -49,6 +49,16 @@ assert.deepEqual(presenterDrivenPlan.shots[0]?.digitalHumanPlan, {
 });
 assert.equal(presenterDrivenPlan.accountPresenterLock?.consistencyKey, presenterLock.consistencyKey);
 
+const explicitlySelectedPresenterPlan = createSocialAssetSupplyPlan({
+  creationMode: 'material_processing',
+  inventory: { presenterAssetIds: ['presenter-explicit'] },
+  presenterSelectionConfirmed: true,
+  shots: [{ shotId: 'presenter-explicit-shot', function: 'value', requestedDescription: '说明产品价值' }],
+});
+assert.equal(explicitlySelectedPresenterPlan.shots[0]?.digitalHumanPlan?.executionState, 'ready_for_capability_check');
+assert.deepEqual(explicitlySelectedPresenterPlan.shots[0]?.digitalHumanPlan?.presenterAssetIds, ['presenter-explicit']);
+assert.deepEqual(explicitlySelectedPresenterPlan.shots[0]?.sourceRefs, ['presenter-explicit']);
+
 const viralPresenterPlan = createSocialAssetSupplyPlan({
   creationMode: 'viral_replication',
   confirmedFactRefs: ['fact-product-name'],

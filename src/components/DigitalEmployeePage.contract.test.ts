@@ -100,7 +100,12 @@ assert.match(appSource, /page === 'socialMonitoring'[\s\S]{0,800}<TrafficPage[\s
 for (const label of ['经营总览', '账号矩阵', '内容队列', '数据复盘']) assert.match(pageSource, new RegExp(label), `Smart Business must expose ${label}`);
 assert.doesNotMatch(pageSource, /id: "live", label: "周计划"/, 'the repetitive standalone weekly-plan tab must be removed');
 assert.match(pageSource, /周计划生成[\s\S]{0,800}新手引导/, 'Smart Business must expose the prominent weekly-plan action in its header');
-assert.match(pageSource, /aria-label="周计划生成"[\s\S]{0,800}经营总览、账号矩阵、内容队列和数据复盘/, 'weekly-plan creation must explain how the confirmed plan feeds all four business views');
+assert.match(pageSource, /aria-label="当前周计划"[\s\S]{0,2200}查看完整周计划/, 'Smart Business must keep the current weekly plan visible and directly inspectable');
+assert.match(pageSource, /goal && !canCreateNextGoal \? "查看本周计划" : "周计划生成"/, 'the weekly-plan header action must change from creation to inspection when a current plan exists');
+assert.match(pageSource, /查看内容队列[\s\S]{0,400}查看完整周计划/, 'the current-plan summary must link to both execution detail and the full plan');
+assert.match(pageSource, /aria-label=\{goal && !newGoal \? "本周计划详情" : "周计划生成"\}/, 'the weekly-plan dialog must distinguish inspecting the current plan from generating a new one');
+assert.match(pageSource, /这里汇总本周目标、内容清单、账号矩阵与 Agent 分工。/, 'the current weekly-plan detail must explain exactly what users can inspect');
+assert.match(pageSource, /确认后，计划会直接写入经营总览、账号矩阵、内容队列和数据复盘。/, 'weekly-plan creation must explain how the confirmed plan feeds all four business views');
 assert.match(pageSource, /confirmGeneratedWeeklyPlan[\s\S]{0,900}createGoal[\s\S]{0,500}approveGoal/, 'a single confirmation must create and approve the weekly plan');
 assert.match(pageSource, /aria-label="社媒视频矩阵"[\s\S]{0,2500}编辑完整矩阵/, 'the default weekly proposal must visibly restore the social video matrix');
 assert.match(pageSource, /page === "socialPlanning"[\s\S]{0,240}setWeeklyPlanOpen\(true\)/, 'the account matrix next step must open weekly-plan generation inside Smart Business');

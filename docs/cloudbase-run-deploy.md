@@ -1,5 +1,7 @@
 # CloudBase Run 部署说明
 
+> 历史备选方案，当前已停用。默认部署必须遵循仓库根目录 `AGENTS.md` 的交互式 SSH 路径；除非用户在当前任务明确要求 CloudBase，否则不要执行本文步骤。
+
 目标：把当前工具部署成客户可直接访问的线上链接。当前项目是 React + Express + PocketBase，不是纯静态网页，所以应部署到 CloudBase 云托管 / CloudBase Run。
 
 ## 推荐架构

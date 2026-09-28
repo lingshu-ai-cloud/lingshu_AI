@@ -33,6 +33,10 @@ import SocialAgentWorkflowPanel from './SocialAgentWorkflowPanel';
 import SocialGenerationConfirmationCard from './SocialGenerationConfirmationCard';
 import SocialWeeklySummary from './SocialWeeklySummary';
 import { socialArtifactGenerationDisclosure } from '../../lib/socialArtifactGeneration';
+import {
+  contentCreationReviewAdmissionAllowed,
+  contentCreationTestBypassEnabled,
+} from '../../lib/contentCreationTestBypass';
 import { PLATFORM_OPTIONS, artifactKindLabel, contentLanguageLabel, optionLabel, packageVersionLabel } from './socialContentUi';
 
 const ARTIFACT_STATUS: Record<SocialContentArtifact['status'], string> = {
@@ -90,10 +94,13 @@ function ReadinessPanel({ task }: { task: SocialContentTaskDetail }) {
   const sources = task.sources.filter(item => item.status === 'active');
   const hasKnowledge = sources.some(item => item.kind === 'knowledge');
   const hasMaterial = sources.some(item => item.kind === 'material');
-  const workflowReady = task.agentWorkflow?.executionPlanReview.approved ?? true;
+  const testBypass = contentCreationTestBypassEnabled();
+  const workflowReady = task.agentWorkflow
+    ? contentCreationReviewAdmissionAllowed(task.agentWorkflow.executionPlanReview)
+    : true;
   const managedWithoutShoot = workflowReady && (task.assetSupplyPlan?.overallFeasibility === 'full_fidelity'
     || task.assetSupplyPlan?.overallFeasibility === 'functional_equivalent');
-  const canStart = task.readiness.complete && workflowReady;
+  const canStart = (task.readiness.complete || testBypass) && workflowReady;
   const explicitReferenceCount = sources.filter(item => item.kind === 'reference_link').length;
   const analyzedReferenceCount = task.referenceVideoAnalysis ? 1 : 0;
   const handoffReferenceCount = task.agentWorkflow?.inspirationHandoffs.length ?? 0;
@@ -119,6 +126,7 @@ function ReadinessPanel({ task }: { task: SocialContentTaskDetail }) {
   ];
   return (
     <section className="rounded-2xl border border-border bg-white p-5 shadow-sm">
+      {testBypass && <div className="mb-4 rounded-xl border border-sky-200 bg-sky-50 px-3 py-2 text-[10px] font-semibold leading-4 text-sky-900">本地节点测试模式已开启：资料、预算、质量、事实与素材权利门禁全部放行。</div>}
       <div className="flex items-center justify-between gap-3"><div><p className="text-[11px] font-bold text-text-muted">准备情况</p><h3 className="mt-1 text-base font-black text-text-primary">{readinessTitle}</h3>{canStart && !hasKnowledge && <p className="mt-1 text-[10px] text-text-muted">企业资料可选；未提供时系统不会编造参数或功效。</p>}{managedWithoutShoot && <p className="mt-1 text-[10px] text-emerald-700">系统已逐镜确认可以完整实现或功能等价实现；补充实拍只作为可选增强。</p>}{task.assetSupplyPlan?.overallFeasibility === 'blocked_for_facts_or_rights' && <p className="mt-1 text-[10px] text-amber-800">部分镜头缺少不可替代的事实或权利信息，系统不会用生成画面冒充真实证据。</p>}</div><span className={`flex h-10 w-10 items-center justify-center rounded-xl ${canStart ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>{canStart ? <CheckCircle2 size={20} /> : <Clock3 size={20} />}</span></div>
       <div className="mt-4 grid grid-cols-3 gap-2">{sourceStats.map(item => <div key={item.label} className="rounded-xl bg-surface-2 px-3 py-2.5"><item.icon size={14} className="text-text-muted" /><strong className="mt-2 block text-lg text-text-primary">{item.value}</strong><span className="text-[10px] font-semibold text-text-muted">{item.label}</span></div>)}</div>
       {task.materialRequirements && task.materialRequirements.length > 0 && <div className="mt-4 space-y-2"><div><p className="text-[11px] font-black text-text-secondary">可选的拍摄与素材建议</p><p className="mt-1 text-[10px] text-text-muted">不会影响开始制作；编导 Agent 会结合现有素材安排导演方案。</p></div>{task.materialRequirements.map(item => <div key={item.requirementId} className="rounded-xl border border-border bg-white px-3 py-2.5"><div className="flex items-start justify-between gap-3"><div><p className="text-xs font-bold text-text-primary">{item.shotFunction}</p><p className="mt-1 text-[10px] leading-4 text-text-muted">可补充 {item.subject} · {item.action}{item.environment ? ` · ${item.environment}` : ''}</p></div><span className={`shrink-0 rounded-full px-2 py-1 text-[9px] font-black ${item.status === 'satisfied' ? 'bg-emerald-50 text-emerald-700' : item.status === 'unusable' ? 'bg-rose-50 text-rose-700' : 'bg-slate-100 text-slate-600'}`}>{item.status === 'satisfied' ? '已有素材' : '可选补充'}</span></div></div>)}</div>}

@@ -1,4 +1,4 @@
-import { orderStatuses, orderTransitions, paidOrder, type OrderStatus, type AfterSales } from '../../shared/orderLifecycle';
+import { orderStatuses, orderTransitions, paidOrder, transitionOrder, updateAfterSales, type OrderStatus, type AfterSales, type OrderAudit } from '../../shared/orderLifecycle';
 import { useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle,
@@ -28,6 +28,7 @@ import {
 import { authHeader } from '../lib/auth';
 import { CHART_CURSOR_STYLE, CHART_TOOLTIP_STYLE } from '../lib/uiStyles';
 import { normalizeSocialBrand, SocialPlatformIcon } from './SocialPlatformIcon';
+import { createForeignTradeMockOrders, isForeignTradeMockId, isLocalForeignTradeMockEnabled } from '../mocks/foreignTradeOperations';
 
 
 
@@ -50,7 +51,7 @@ interface OrderRecord {
   idempotencyKey?: string;
   customerSyncStatus?: string;
   customerId?: string;
-  audit?: unknown[];
+  audit?: OrderAudit[];
   afterSales?: AfterSales;
   importedAt?: string;
   updatedAt?: string;
@@ -91,7 +92,13 @@ const money = (value: number) => `$${Math.round(value).toLocaleString('en-US')}`
 const pct = (value: number) => `${value.toFixed(1)}%`;
 const tooltipNumber = (value: unknown) => Number(value ?? 0);
 
-function loadOrders(): OrderRecord[] { return []; }
+function withLocalMockOrders(items: OrderRecord[]): OrderRecord[] {
+  if (!isLocalForeignTradeMockEnabled()) return items;
+  const realIds = new Set(items.map(item => item.id));
+  return [...items, ...createForeignTradeMockOrders().filter(item => !realIds.has(item.id))];
+}
+
+function loadOrders(): OrderRecord[] { return withLocalMockOrders([]); }
 
 
 export default function OrderManagementPage() {
@@ -107,8 +114,8 @@ export default function OrderManagementPage() {
   useEffect(() => {
     fetch('/api/overseas/enterprise/orders', { headers: authHeader() })
       .then(r => r.json())
-      .then((data: { items?: OrderRecord[] }) => setOrders(Array.isArray(data.items) ? data.items : []))
-      .catch(() => setOrders([]))
+      .then((data: { items?: OrderRecord[] }) => setOrders(withLocalMockOrders(Array.isArray(data.items) ? data.items : [])))
+      .catch(() => setOrders(withLocalMockOrders([])))
       .finally(() => setLoading(false));
   }, []);
 
@@ -186,6 +193,13 @@ export default function OrderManagementPage() {
   const setOrderStatus = async (id: string, nextStatus: OrderStatus) => {
     const evidence = ['已付款', '退款'].includes(nextStatus) ? window.prompt('填写付款/退款凭证（仅登记已发生的交易，不会扣款或退款）') : '';
     if (evidence === null) return;
+    if (isForeignTradeMockId(id)) {
+      try {
+        setOrders(prev => prev.map(order => order.id === id ? transitionOrder(order, nextStatus, evidence || '本地演示状态更新') as OrderRecord : order));
+        setFeedback('本地模拟订单状态已更新');
+      } catch (error) { setFeedback((error as Error).message); }
+      return;
+    }
     try {
     const updated = await fetch(`/api/overseas/enterprise/orders/${id}/status`, {
       method: 'PATCH',
@@ -201,6 +215,13 @@ export default function OrderManagementPage() {
     const status = order.afterSales?.status === 'open' ? 'resolved' : 'open';
     const text = window.prompt(status === 'open' ? '填写售后原因' : '填写售后处理结果（退款需另行登记凭证）');
     if (!text?.trim()) return;
+    if (isForeignTradeMockId(order.id)) {
+      try {
+        setOrders(prev => prev.map(item => item.id === order.id ? updateAfterSales(item, status, text) as OrderRecord : item));
+        setFeedback(status === 'open' ? '已登记本地模拟售后' : '已保存本地模拟售后结果');
+      } catch (error) { setFeedback((error as Error).message); }
+      return;
+    }
     try {
       const response = await fetch(`/api/overseas/enterprise/orders/${encodeURIComponent(order.id)}/aftersales`, {
         method: 'PATCH', headers: { 'Content-Type': 'application/json', ...authHeader() }, body: JSON.stringify({ status, text }),
@@ -214,6 +235,11 @@ export default function OrderManagementPage() {
 
   const removeOrder = async (order: OrderRecord) => {
     if (!window.confirm(`确认删除订单 ${order.orderNo}？此操作用于纠正误录数据，删除后无法恢复。`)) return;
+    if (isForeignTradeMockId(order.id)) {
+      setOrders(prev => prev.filter(item => item.id !== order.id));
+      setFeedback(`已从当前预览移除模拟订单 ${order.orderNo}`);
+      return;
+    }
     const resp = await fetch(`/api/overseas/enterprise/orders/${encodeURIComponent(order.id)}`, {
       method: 'DELETE',
       headers: authHeader(),
@@ -253,6 +279,10 @@ export default function OrderManagementPage() {
     <div className="flex h-full flex-col bg-white" data-lingshu-guide="orders-workbench">
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto max-w-6xl px-6 py-5">
+        {isLocalForeignTradeMockEnabled() && <div className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-xs text-emerald-900">
+          <span><strong>本地模拟 · 外贸工厂订单</strong>　客户、市场、金额与来源内容和客户管理演示数据保持一致。</span>
+          <span className="rounded-full bg-white px-2.5 py-1 font-semibold">不影响真实订单</span>
+        </div>}
         <div className="mb-4 flex min-h-9 items-center justify-end gap-3">
           <span aria-live="polite" className="text-xs font-semibold text-text-muted">{feedback}</span>
           <button type="button" onClick={exportCsv} className="btn-ghost flex items-center gap-2 !px-3 !py-2">
@@ -433,7 +463,7 @@ export default function OrderManagementPage() {
 
         <div className="mt-4 flex flex-wrap items-center gap-2 text-[11px] text-text-muted">
           <CheckCircle2 size={12} />
-          订单仅展示当前企业空间已导入或手工录入的真实记录；后续可继续接入 Shopify、ERP、支付和履约系统自动同步。
+          {isLocalForeignTradeMockEnabled() ? '当前本地预览同时展示外贸工厂模拟订单；真实订单仍来自当前企业空间。' : '订单仅展示当前企业空间已导入或手工录入的真实记录；后续可继续接入 Shopify、ERP、支付和履约系统自动同步。'}
         </div>
         </div>
       </div>

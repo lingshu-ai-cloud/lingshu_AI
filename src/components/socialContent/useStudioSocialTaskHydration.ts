@@ -24,6 +24,7 @@ export interface StudioSocialTaskSeed {
   themeTopic: string;
   factVerificationNotice: string;
   selectedMaterialIds: string[];
+  shotMaterialBindings: StudioSocialShotMaterialBinding[];
   unsupportedLanguages: string[];
   digitalHumanShotPlans: Array<{
     shotId: string;
@@ -40,6 +41,11 @@ export interface StudioSocialTaskSeed {
     sourceTaskId: string;
     sourceTaskVersion: string;
   }>;
+}
+
+export interface StudioSocialShotMaterialBinding {
+  shotIndex: number;
+  materialId: string;
 }
 
 const STUDIO_THEME_BY_SOCIAL_THEME = {
@@ -87,6 +93,19 @@ function materialId(sourceRef: string): string | null {
 function languageCode(value: string): string | null {
   const normalized = value.trim().toLowerCase();
   return LANGUAGE_CODES[value.trim()] || LANGUAGE_CODES[normalized] || null;
+}
+
+export function socialTaskShotMaterialBindings(
+  task: Pick<SocialContentTaskDetail, 'shotMaterialMap'>,
+): StudioSocialShotMaterialBinding[] {
+  return (task.shotMaterialMap || []).flatMap((shot, shotIndex) => {
+    const materialId = [
+      ...shot.customerAssetIds,
+      ...shot.generatedAssetIds,
+      ...shot.licensedAssetIds,
+    ].map(clean).find(Boolean);
+    return materialId ? [{ shotIndex, materialId }] : [];
+  });
 }
 
 export function socialTaskReferenceKickoff(task: SocialContentTaskDetail): VideoKickoff | null {
@@ -167,6 +186,7 @@ export function socialTaskToStudioSeed(task: SocialContentTaskDetail): StudioSoc
       ? `${pendingFacts.join('和')}未作为已确认企业事实导入；请在企业中心选择并核对产品资料后再生成。`
       : '',
     selectedMaterialIds,
+    shotMaterialBindings: socialTaskShotMaterialBindings(task),
     unsupportedLanguages: languagePairs.filter(item => !item.code).map(item => item.language),
     digitalHumanShotPlans,
   };

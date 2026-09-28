@@ -104,7 +104,7 @@ if (runtimeSchemaRepairRequested && process.env.NODE_ENV === 'production') {
   }
 }
 
-const PORT = Number(process.env.PORT ?? 8788);
+const PORT = Number(process.env.LINGSHU_LOCAL_PORT ?? process.env.PORT ?? 8788);
 const app = express();
 const limits = jsonBodyLimits();
 const trustProxyHops = Number(process.env.TRUST_PROXY_HOPS || 0);

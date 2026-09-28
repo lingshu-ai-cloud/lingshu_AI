@@ -18,6 +18,8 @@ export interface SocialContentSourceContext {
   originLabel: string;
   referenceTitle: string;
   referenceThumbnail?: string;
+  referenceMediaUrl?: string;
+  referenceContentType?: 'video' | 'image';
 }
 
 export interface SocialContentCreateRequest {
@@ -27,16 +29,21 @@ export interface SocialContentCreateRequest {
   creationPath?: SocialContentCreationPath;
   materialInput?: SocialContentMaterialInput;
   managedMode?: 'one_click_managed';
-  prefill?: Partial<Pick<SocialContentDraft, 'title' | 'topic' | 'productName' | 'referenceLinks' | 'platforms'>>;
+  prefill?: Partial<Pick<SocialContentDraft, 'title' | 'topic' | 'productId' | 'productName' | 'referenceLinks' | 'platforms'>>;
   sourceContext?: SocialContentSourceContext;
+  continueTaskId?: string;
+  presenterAssetId?: string;
+  specialRequirements?: string;
 }
 
 export default function SocialContentWorkspace({
   onNavigate,
   onNavigateWithTask,
+  onRequestCreate,
 }: {
   onNavigate: (page: Page) => void;
   onNavigateWithTask?: (page: Page, taskId: string) => void;
+  onRequestCreate?: () => void;
 }) {
   const state = useSocialContentWorkspace();
   const [publicationOpen, setPublicationOpen] = useState(false);
@@ -46,11 +53,15 @@ export default function SocialContentWorkspace({
   const task = state.workspace?.currentTask || null;
 
   const openNewTask = useCallback(() => {
+    if (onRequestCreate) {
+      onRequestCreate();
+      return;
+    }
     window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: {
       page: 'smartAssets', view: 'create', studioEntry: true,
       contentCreationRequest: { requestId: Date.now(), themeId: 'product_value', mode: 'instant', creationPath: 'material_processing', materialInput: 'none', managedMode: 'one_click_managed' } satisfies SocialContentCreateRequest,
     } }));
-  }, []);
+  }, [onRequestCreate]);
 
   const navigateWithTask = useCallback((page: Page, explicitTaskId?: string) => {
     const taskId = explicitTaskId || task?.taskId;
@@ -102,7 +113,7 @@ export default function SocialContentWorkspace({
         hasMoreTasks={state.workspace.taskList.page < state.workspace.taskList.totalPages}
         loadingMoreTasks={state.loadingMoreTasks}
         busy={state.busy}
-        onSelectTask={state.selectTask}
+        onSelectTask={taskId => navigateWithTask('smartAssets', taskId)}
         onLoadMoreTasks={() => void state.loadMoreTasks()}
         onCreate={() => openNewTask()}
         onEdit={() => task && navigateWithTask('smartAssets', task.taskId)}

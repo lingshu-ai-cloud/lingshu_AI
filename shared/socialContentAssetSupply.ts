@@ -62,6 +62,8 @@ export interface CreateSocialAssetSupplyPlanInput {
   planVersion?: string;
   inventory?: SocialAssetInventory;
   accountPresenterLock?: SocialAccountPresenterLock | null;
+  /** True only when the customer explicitly selected the single presenter stored on this task. */
+  presenterSelectionConfirmed?: boolean;
   referenceShots?: SocialReferenceShotAnalysis[];
   confirmedFactRefs?: string[];
   rightsConfirmationRequired?: boolean;
@@ -458,8 +460,12 @@ function generalStrategy(
   if (shot.function === 'hook' || shot.function === 'value' || shot.function === 'call_to_action') {
     return {
       strategy: 'authorized_digital_presenter',
-      refs: [],
-      instruction: '优先创建或绑定当前社媒账号的已发布数字人身份版本后完成口播；不要求用户拍摄真人视频，身份未锁定前不得提交生成',
+      refs: presenterLockReady(accountPresenterLock)
+        ? [accountPresenterLock.presenterAssetId]
+        : inventory.presenterAssetIds,
+      instruction: inventory.presenterAssetIds.length || presenterLockReady(accountPresenterLock)
+        ? '使用本任务已确认的授权数字人完成口播；不得静默替换人物或声音'
+        : '优先创建或绑定当前社媒账号的已发布数字人身份版本后完成口播；不要求用户拍摄真人视频，身份未锁定前不得提交生成',
     };
   }
   return {
@@ -497,6 +503,7 @@ function planShot(
   accountPresenterLock: SocialAccountPresenterLock | null | undefined,
   referenceShots?: SocialReferenceShotAnalysis[],
   productionApproach: SocialProductionApproach = 'ai_enhanced',
+  presenterSelectionConfirmed = false,
 ): SocialAssetSupplyShotPlan {
   const subject = shot.truthSensitiveSubject ?? 'none';
   const canonicalVisualContract = shot.visualContract ?? referenceShot(shot, referenceShots)?.visualContract;
@@ -606,7 +613,9 @@ function planShot(
           ? creationMode === 'viral_replication'
             ? inventory.referenceVideoIds.length ? 'preview_only' as const : 'needs_confirmation' as const
             : 'ready_for_capability_check' as const
-          : 'needs_presenter' as const,
+          : presenterSelectionConfirmed && inventory.presenterAssetIds.length === 1 && creationMode !== 'viral_replication'
+            ? 'ready_for_capability_check' as const
+            : 'needs_presenter' as const,
         accountPresenterLock: presenterLockReady(accountPresenterLock)
           ? structuredClone(accountPresenterLock)
           : null,
@@ -634,6 +643,7 @@ export function createSocialAssetSupplyPlan(input: CreateSocialAssetSupplyPlanIn
     input.accountPresenterLock,
     input.referenceShots,
     input.productionApproach ?? 'ai_enhanced',
+    input.presenterSelectionConfirmed === true,
   ));
   const overallFeasibility = shots.some(shot => shot.feasibility === 'goal_degraded')
       ? 'goal_degraded'

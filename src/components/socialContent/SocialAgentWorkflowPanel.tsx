@@ -8,6 +8,7 @@ import type {
   SocialProductionFeasibility,
 } from '../../../shared/contracts/socialContentWorkflow';
 import { socialShotFunctionLabel, socialShotSourceStrategyLabel } from '../../lib/socialContentModel';
+import { contentCreationTestBypassEnabled } from '../../lib/contentCreationTestBypass';
 
 const STAGE_LABEL: Record<SocialAgentWorkflowStage, string> = {
   planned: '经营目标已建立',
@@ -119,6 +120,7 @@ function SceneRow({
 }
 
 export default function SocialAgentWorkflowPanel({ task }: { task: SocialContentTaskDetail }) {
+  const localGateBypass = contentCreationTestBypassEnabled();
   const workflow = task.agentWorkflow;
   if (!workflow) return null;
   const context = workflow.weeklyPackage ?? workflow.adHocBusinessContext;
@@ -196,7 +198,7 @@ export default function SocialAgentWorkflowPanel({ task }: { task: SocialContent
         </div>
       </details>
 
-      {blocked && <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3"><p className="text-[10px] font-black text-amber-900">当前不能静默继续</p><p className="mt-1 text-[10px] leading-4 text-amber-800">{workflow.executionPlanReview.requiredRevision.join('；') || '需要补齐事实、权利或可执行候选后重新审核。'}</p></div>}
+      {blocked && <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3"><p className="text-[10px] font-black text-amber-900">{localGateBypass ? '风险已记录，本地测试仍可继续' : '当前不能静默继续'}</p><p className="mt-1 text-[10px] leading-4 text-amber-800">{workflow.executionPlanReview.requiredRevision.join('；') || '需要补齐事实、权利或可执行候选后重新审核。'}</p></div>}
     </section>
   );
 }

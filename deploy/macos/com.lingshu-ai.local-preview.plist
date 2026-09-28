@@ -11,6 +11,15 @@
   </array>
   <key>WorkingDirectory</key>
   <string>/Users/jiejie/Documents/lingshu-AI</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>LINGSHU_PREVIEW_ROOT</key>
+    <string>/Users/jiejie/Documents/lingshu-AI</string>
+    <key>NO_PROXY</key>
+    <string>127.0.0.1,localhost,::1</string>
+    <key>no_proxy</key>
+    <string>127.0.0.1,localhost,::1</string>
+  </dict>
   <key>RunAtLoad</key>
   <true/>
   <key>KeepAlive</key>

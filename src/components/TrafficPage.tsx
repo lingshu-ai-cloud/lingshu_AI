@@ -357,7 +357,7 @@ export default function TrafficPage({
     if (kickoff.source === 'material_library' && kickoff.generatedVideo?.material) {
       const material = kickoff.generatedVideo.material;
       const materialUrl = String(material.url || kickoff.generatedVideo.url || '').trim();
-      const previewUrl = String(material.poster || kickoff.generatedVideo.poster || materialUrl).trim();
+      const previewUrl = String(material.poster || kickoff.generatedVideo.poster || '').trim();
       window.dispatchEvent(new CustomEvent('lingshu:navigate', {
         detail: {
           page: 'smartAssets',
@@ -380,7 +380,8 @@ export default function TrafficPage({
               originLabel: '来自我的素材',
               referenceTitle: material.name || kickoff.generatedVideo.title || '已选素材',
               referenceThumbnail: previewUrl || undefined,
-              referenceContentType: material.poster || kickoff.generatedVideo.poster ? 'image' : material.type === 'video' ? 'video' : 'image',
+              referenceMediaUrl: materialUrl || undefined,
+              referenceContentType: material.type === 'video' ? 'video' : 'image',
             },
           },
         },
@@ -388,7 +389,8 @@ export default function TrafficPage({
       return;
     }
     if (kickoff.source === 'inspiration_analysis' && kickoff.video?.contentFormat !== 'image') {
-      const referenceUrl = kickoff.video?.sourceUrl || kickoff.video?.videoUrl || '';
+      const playbackUrl = String(kickoff.video?.videoUrl || '').trim();
+      const referenceUrl = String(kickoff.video?.sourceUrl || playbackUrl).trim();
       // The studio consumes the full verified reference payload on entry.
       // Keep it alongside the navigation prefill so the storyboard is not
       // reduced to a bare URL when the planning dialog is skipped.
@@ -415,6 +417,8 @@ export default function TrafficPage({
               originLabel: '来自灵感中心',
               referenceTitle: kickoff.video?.title || '已选参考视频',
               referenceThumbnail: kickoff.video?.thumbnail,
+              referenceMediaUrl: playbackUrl || undefined,
+              referenceContentType: 'video',
             },
           },
         },

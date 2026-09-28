@@ -7,12 +7,14 @@ import { Transform, type Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import type { SocialContentFile } from '../../shared/contracts/socialContentWorkflow.js';
 import { upsertSocialTaskCloudMaterial, type UpsertSocialTaskCloudMaterialInput } from '../lib/cloudMaterials.js';
+import { upsertSocialTaskMaterial, type MaterialRecord } from '../lib/materialLibrary.js';
 import {
   materialAssetObjectKey,
   materialAssetTenantKey,
   materialAssetTypeAllowed,
   tenantPrivateObjectKey,
 } from '../storage/materialAssets.js';
+import { currentDataAuthority } from '../storage/dataAuthority.js';
 import { objectStorageEnabled, objectStorageDownload, objectStorageGetObject, objectStorageHead, objectStorageUploadFile } from '../storage/objectStorage.js';
 import { attachFileFromPath, fetchFile } from '../storage/files.js';
 import {
@@ -413,6 +415,68 @@ function creativeMaterialType(mimeType: string): 'video' | 'image' | 'audio' | n
   return null;
 }
 
+function humanFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function upsertLocalSocialTaskCreativeMaterial(input: {
+  tenantId: string;
+  taskId: string;
+  productId?: string | null;
+  productRef?: string | null;
+  file: SocialContentFile;
+  stored: StoredSocialContentFile;
+  type: 'video' | 'image' | 'audio';
+}): MaterialRecord {
+  const timestamp = input.file.createdAt || new Date().toISOString();
+  const productId = String(input.productId || '').trim();
+  const productRef = String(input.productRef || '').trim();
+  const record: MaterialRecord = {
+    id: `social-${createHash('sha256').update(`${input.tenantId}\0${input.file.sha256}`).digest('hex').slice(0, 32)}`,
+    name: input.file.name,
+    folder: '任务素材',
+    type: input.type,
+    duration: 0,
+    size: humanFileSize(input.file.size),
+    sizeBytes: input.file.size,
+    file: path.basename(input.stored.storageKey),
+    url: input.file.downloadUrl,
+    ...(input.type === 'image' ? { poster: input.file.downloadUrl } : {}),
+    ...(input.stored.storageKind === 'object' ? {
+      objectKey: input.stored.storageKey,
+      ...(input.type === 'image' ? { posterObjectKey: input.stored.storageKey } : {}),
+    } : {}),
+    scope: 'own',
+    tenantId: input.tenantId,
+    usage: 'editable',
+    sourceType: 'social_task_upload',
+    sourceName: input.file.name,
+    sourceProvider: 'tenant',
+    licenseEvidence: 'tenant_upload_unverified',
+    sourceTaskId: input.taskId,
+    sourceFileRef: input.file.fileRef,
+    contentSha256: input.file.sha256,
+    sha256: input.file.sha256,
+    sourceRevision: input.file.sha256,
+    productId,
+    ...(productRef ? { productRef, productName: productRef } : {}),
+    createdAt: timestamp,
+  };
+  return upsertSocialTaskMaterial({
+    id: record.id,
+    tenantId: input.tenantId,
+    taskId: input.taskId,
+    taskFileRef: input.file.fileRef,
+    contentSha256: input.file.sha256,
+    productId,
+    productRef,
+    productName: productRef,
+    record,
+  });
+}
+
 async function sha256File(file: string): Promise<string> {
   const hash = createHash('sha256');
   for await (const chunk of fs.createReadStream(file)) hash.update(chunk as Buffer);
@@ -458,7 +522,7 @@ export async function registerSocialTaskCreativeMaterial(input: {
     }
     media = { name: path.basename(input.stored.storageKey), contentType: input.file.mimeType, path: source };
   }
-  return (input.materialPort ?? defaultSocialTaskMaterialPort).upsert({
+  const materialInput: UpsertSocialTaskCloudMaterialInput = {
     tenantId: input.tenantId,
     taskId: input.taskId,
     taskFileRef: input.file.fileRef,
@@ -474,7 +538,17 @@ export async function registerSocialTaskCreativeMaterial(input: {
     // product text.
     productId: input.productId || '',
     media,
-  });
+  };
+  try {
+    return await (input.materialPort ?? defaultSocialTaskMaterialPort).upsert(materialInput);
+  } catch (error) {
+    // Local-authenticated development requests are intentionally forbidden
+    // from touching PocketBase. Keep the already-durable task file canonical
+    // and index it in the local material library instead. Production must stay
+    // fail-closed so an unavailable material database is never hidden.
+    if (process.env.NODE_ENV === 'production' || currentDataAuthority() !== 'local') throw error;
+    return upsertLocalSocialTaskCreativeMaterial({ ...input, type });
+  }
 }
 
 export function socialContentFileView(record: StarterRecord): SocialContentFile {

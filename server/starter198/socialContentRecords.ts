@@ -68,6 +68,7 @@ import {
   materialTenantId,
 } from './socialContentProductionMaterials.js';
 import { visualEvidenceScore } from '../digitalEmployees/sceneEvidence.js';
+import { socialContentTestBypassEnabled } from './socialContentTestBypass.js';
 import {
   buildMaterialScriptAnalysis,
   type MaterialScriptAnalysis,
@@ -92,7 +93,7 @@ type StoredPresenter = Record<string, unknown> & {
   referenceMaterialIds?: unknown[];
 };
 
-export async function readAuthorizedPresenterInventory(repository: Starter198Repository, tenantId: string, socialAccountId?: string | null): Promise<{
+export async function readAuthorizedPresenterInventory(repository: Starter198Repository, tenantId: string, socialAccountId?: string | null, requestedPresenterAssetId?: string | null): Promise<{
   assetIds: string[];
   accountPresenterLock: SocialAccountPresenterLock | null;
 }> {
@@ -107,8 +108,10 @@ export async function readAuthorizedPresenterInventory(repository: Starter198Rep
         || Boolean(String(mappings.heygen?.avatarId || '').trim() && String(mappings.heygen?.voiceId || '').trim())
         || (Array.isArray(mappings.runway?.referenceMaterialIds) && mappings.runway.referenceMaterialIds.some(Boolean)));
     });
-    if (!socialAccountId) return { assetIds: usable.map(item => String(item.id)), accountPresenterLock: null };
-    const profiles = usable.flatMap(item => {
+    const requested = String(requestedPresenterAssetId || '').trim();
+    const selected = requested ? usable.filter(item => String(item.id) === requested) : usable;
+    if (!socialAccountId) return { assetIds: selected.map(item => String(item.id)), accountPresenterLock: null };
+    const profiles = selected.flatMap(item => {
       const avatarId = String(item.toolMappings?.heygen?.avatarId || item.avatarId || '').trim();
       const voiceProfileId = String(item.toolMappings?.heygen?.voiceId || item.voiceId || '').trim();
       const presenterProfileId = String(item.presenterProfileId || '').trim();
@@ -236,6 +239,7 @@ export function parseSocialTaskBrief(value: unknown): SocialContentTaskBrief {
     productRef: nullable(record.productRef),
     requestedPresenterName: nullable(record.requestedPresenterName),
     requestedPresenterAssetId: nullable(record.requestedPresenterAssetId),
+    presenterAssetId: nullable(record.presenterAssetId),
     audience: nullable(record.audience),
     markets: strings(record.markets, 'social_content_task_record_invalid'),
     languages: strings(record.languages, 'social_content_task_record_invalid'),
@@ -256,7 +260,7 @@ export function parseSocialTaskBrief(value: unknown): SocialContentTaskBrief {
     callToAction: nullable(record.callToAction),
     ...parseSocialReplicationContext(record),
     programRef: versionedObjectRef(record.programRef),
-    targetAccountRef: versionedObjectRef(record.targetAccountRef, 'owned_social_account'),
+    targetAccountRef: versionedObjectRef(record.targetAccountRef, 'social_owned_account'),
     accountPlaybookRef: accountPlaybookRef(record.accountPlaybookRef),
     ...(referenceMode ? { referenceMode: referenceMode as NonNullable<SocialContentTaskBrief['referenceMode']> } : {}),
     primaryExperimentVariable: nullable(record.primaryExperimentVariable),
@@ -324,7 +328,11 @@ export function socialTaskReadiness(
     // fast-start fallback applies only to the new theme-driven workflow.
     missing.push(...personalizationGaps);
   }
-  return { complete: missing.length === 0, missing, personalizationGaps };
+  // Local walkthroughs must be able to reach every production node without
+  // fabricating setup data. Production remains fail-closed; the local switch
+  // intentionally opens every workflow-admission gate for node-by-node checks.
+  const blockingMissing = socialContentTestBypassEnabled() ? [] : missing;
+  return { complete: blockingMissing.length === 0, missing: blockingMissing, personalizationGaps };
 }
 
 export function parseSocialTaskThemeSelection(value: unknown): SocialContentThemeSelection | null {
@@ -827,6 +835,7 @@ export async function readSocialTaskDetail(input: {
     input.repository,
     input.tenantId,
     summary.brief.targetAccountRef?.id,
+    summary.brief.presenterAssetId,
   );
   const confirmedFactRefs = [
     ...activeSources.filter(source => source.kind === 'knowledge').map(source => source.sourceId),
@@ -913,6 +922,7 @@ export async function readSocialTaskDetail(input: {
       licensedStockAssetIds },
     confirmedFactRefs,
     accountPresenterLock: presenterInventory.accountPresenterLock,
+    presenterSelectionConfirmed: Boolean(summary.brief.presenterAssetId && presenterInventory.assetIds.length === 1),
     referenceShots: referenceVideoAnalysis?.shots,
     shots: replicationScript?.shots.map(shot => ({
       shotId: shot.shotId,

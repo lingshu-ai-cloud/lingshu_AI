@@ -57,6 +57,7 @@ export type StudioWorkbenchFrameProps = {
   steps?: StudioWorkbenchStep[];
   activeStepId: StudioWorkbenchStep['id'];
   onStepChange?: (stepId: StudioWorkbenchStep['id']) => void;
+  allowForwardStepNavigation?: boolean;
   objectTitle?: string;
   objectDescription?: string;
   objectPanel: ReactNode;
@@ -163,7 +164,8 @@ export function StudioStepProgress({
   steps = defaultSteps,
   activeStepId,
   onStepChange,
-}: Pick<StudioWorkbenchFrameProps, 'steps' | 'activeStepId' | 'onStepChange'>) {
+  allowForwardStepNavigation = false,
+}: Pick<StudioWorkbenchFrameProps, 'steps' | 'activeStepId' | 'onStepChange' | 'allowForwardStepNavigation'>) {
   const activeIndex = Math.max(0, steps.findIndex(step => step.id === activeStepId));
 
   return (
@@ -174,7 +176,7 @@ export function StudioStepProgress({
           const active = step.status === 'active' || step.id === activeStepId;
           const blocked = step.status === 'blocked';
           const upcoming = step.status === 'upcoming' || index > activeIndex;
-          const canNavigate = Boolean(onStepChange) && !blocked && !upcoming;
+          const canNavigate = Boolean(onStepChange) && !blocked && (!upcoming || allowForwardStepNavigation);
           return (
             <li key={step.id} className="relative min-w-0">
               <button
@@ -263,6 +265,7 @@ export function StudioWorkbenchFrame({
   steps = defaultSteps,
   activeStepId,
   onStepChange,
+  allowForwardStepNavigation = false,
   objectTitle = '创作内容',
   objectDescription,
   objectPanel,
@@ -288,7 +291,7 @@ export function StudioWorkbenchFrame({
   return (
     <section
       className={joinClassNames(
-        'flex min-h-[calc(100dvh-7rem)] flex-col overflow-hidden bg-surface xl:h-[calc(100dvh-7rem)] xl:min-h-[640px]',
+        'flex h-full min-h-0 flex-col overflow-hidden bg-surface',
         className,
       )}
       aria-label="内容创作工作台"
@@ -309,7 +312,7 @@ export function StudioWorkbenchFrame({
           {projectSubtitle && <p className="truncate px-1.5 text-[10px] text-text-muted">{projectSubtitle}</p>}
         </div>
         <div className="hidden min-w-0 xl:block">
-          <StudioStepProgress steps={steps} activeStepId={activeStepId} onStepChange={onStepChange} />
+          <StudioStepProgress steps={steps} activeStepId={activeStepId} onStepChange={onStepChange} allowForwardStepNavigation={allowForwardStepNavigation} />
         </div>
         <div className="flex items-center gap-3 justify-self-end">
           <SaveStatusView status={saveStatus} compact />
@@ -318,7 +321,7 @@ export function StudioWorkbenchFrame({
       </header>
 
       <div className="border-b border-border bg-surface px-3 py-2 xl:hidden">
-        <StudioStepProgress steps={steps} activeStepId={activeStepId} onStepChange={onStepChange} />
+        <StudioStepProgress steps={steps} activeStepId={activeStepId} onStepChange={onStepChange} allowForwardStepNavigation={allowForwardStepNavigation} />
       </div>
 
       <MobilePanelTabs active={mobilePanel} onChange={setMobilePanel} />

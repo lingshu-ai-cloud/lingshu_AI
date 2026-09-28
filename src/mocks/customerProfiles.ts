@@ -5,6 +5,7 @@ const FOREIGN_TRADE_DEMO_SCOPES = new Set([
   'wenlantianxia-test@local.test',
   'kzw14f0w3dl0ujl',
   'ajcht1koyhwp4lf',
+  'local-foreign-trade-factory',
 ]);
 
 export function isForeignTradeDemoScope(scope = ''): boolean {

@@ -24,6 +24,10 @@ import {
   socialContentCurrentArtifacts,
   socialContentStatusLabel,
 } from '../../lib/socialContentModel';
+import {
+  contentCreationReviewAdmissionAllowed,
+  contentCreationTestBypassEnabled,
+} from '../../lib/contentCreationTestBypass';
 
 interface SocialProductionProgressPanelProps {
   task: SocialContentTaskDetail;
@@ -279,6 +283,10 @@ export default function SocialProductionProgressPanel({
   const active = ACTIVE_STATUSES.has(task.status) || Boolean(task.runId && counts.generated === 0);
   const remainingTaskCount = Math.max(0, taskTotalItems - tasks.length);
   const taskItems: TaskListItem[] = [task, ...tasks.filter(item => item.taskId !== task.taskId)];
+  const testBypass = contentCreationTestBypassEnabled();
+  const testStartAllowed = testBypass
+    && (!task.agentWorkflow
+      || contentCreationReviewAdmissionAllowed(task.agentWorkflow.executionPlanReview));
 
   useEffect(() => {
     if (!open) return undefined;
@@ -310,7 +318,7 @@ export default function SocialProductionProgressPanel({
   }, [open]);
 
   const selectTask = (taskId: string) => {
-    if (taskId !== task.taskId) onSelectTask?.(taskId);
+    onSelectTask?.(taskId);
   };
 
   const currentAction = (() => {
@@ -318,6 +326,9 @@ export default function SocialProductionProgressPanel({
       return onEdit ? { label: '查看原因并补充素材', icon: <ChevronRight size={14} />, action: onEdit } : null;
     }
     if (task.status === 'draft' || task.status === 'needs_input') {
+      if (testStartAllowed && onStart) {
+        return { label: '测试下一生产节点', icon: <Bot size={14} />, action: onStart };
+      }
       return onEdit ? { label: canProduceWithoutCustomerShoot(task) ? '确认任务信息' : '补充任务资料', icon: <ChevronRight size={14} />, action: onEdit } : null;
     }
     if (task.status === 'plan_review') {

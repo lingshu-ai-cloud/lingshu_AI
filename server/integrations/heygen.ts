@@ -2,6 +2,16 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 export const heygenConfigured = () => Boolean(String(process.env.HEYGEN_API_KEY || '').trim());
+export const heygenPrivateAvatarsEnabled = () => String(process.env.HEYGEN_PRIVATE_AVATARS_ENABLED || '').trim().toLowerCase() === 'true';
+export interface HeyGenAvatar {
+  id: string;
+  name: string;
+  gender?: string;
+  ownership: 'private' | 'public';
+  avatarType?: string;
+  defaultVoiceId?: string;
+  status?: string;
+}
 export async function heygenRequest(route: string, init: RequestInit = {}, idempotencyKey?: string): Promise<any> {
   const key = String(process.env.HEYGEN_API_KEY || '').trim();
   if (!key) throw Error('尚未配置 HeyGen API Key，请在服务端配置 HEYGEN_API_KEY');
@@ -13,17 +23,35 @@ export async function heygenRequest(route: string, init: RequestInit = {}, idemp
   if (!response.ok) throw Error(`HeyGen ${response.status}: ${String(payload.error?.message || '服务请求失败').slice(0, 240)}`);
   return payload;
 }
-export async function listHeygenAvatars(): Promise<Array<{ id: string; name: string; gender?: string }>> {
-  // Platform-shared key may expose stock avatars only; private tenant avatars need tenant credentials.
-  const items: Array<{ id: string; name: string; gender?: string }> = [];
-  let token = '';
-  for (let page = 0; page < 20; page++) {
-    const result = await heygenRequest(`avatars/looks?ownership=public&limit=50${token ? '&token=' + encodeURIComponent(token) : ''}`);
-    items.push(...(Array.isArray(result.data) ? result.data : []).filter((avatar: any) => !avatar.status || avatar.status === 'completed').map((avatar: any) => ({ id: String(avatar.id), name: String(avatar.name || avatar.id), gender: String(avatar.gender || '').toLowerCase() })));
-    if (!result.has_more || !result.next_token || result.next_token === token) break;
-    token = String(result.next_token);
-  }
-  return items;
+export async function listHeygenAvatars(): Promise<HeyGenAvatar[]> {
+  const listOwnership = async (ownership: HeyGenAvatar['ownership']): Promise<HeyGenAvatar[]> => {
+    const items: HeyGenAvatar[] = [];
+    let token = '';
+    for (let page = 0; page < 20; page++) {
+      const result = await heygenRequest(`avatars/looks?ownership=${ownership}&limit=50${token ? '&token=' + encodeURIComponent(token) : ''}`);
+      items.push(...(Array.isArray(result.data) ? result.data : [])
+        .filter((avatar: any) => !avatar.status || avatar.status === 'completed')
+        .map((avatar: any) => ({
+          id: String(avatar.id),
+          name: String(avatar.name || avatar.id),
+          gender: String(avatar.gender || '').toLowerCase() || undefined,
+          ownership,
+          avatarType: String(avatar.avatar_type || '') || undefined,
+          defaultVoiceId: String(avatar.default_voice_id || '') || undefined,
+          status: String(avatar.status || '') || undefined,
+        })));
+      if (!result.has_more || !result.next_token || result.next_token === token) break;
+      token = String(result.next_token);
+    }
+    return items;
+  };
+  // Private account assets are opt-in because a platform-shared key otherwise exposes
+  // the service account's private inventory to every tenant using this deployment.
+  const combined = [
+    ...(heygenPrivateAvatarsEnabled() ? await listOwnership('private') : []),
+    ...await listOwnership('public'),
+  ];
+  return [...new Map(combined.map(item => [item.id, item])).values()];
 }
 export async function submitHeygenVideo(input: { id: string; avatarId: string; audioPath: string; title: string }): Promise<string> {
   if (!fs.existsSync(input.audioPath)) throw Error('当前企业的口播音频不存在');

@@ -138,6 +138,7 @@ export function taskToDraft(task: SocialContentTaskDetail | SocialContentTaskSum
     title: task.brief.title,
     productId: task.brief.productId || '',
     productName: task.brief.productRef || '',
+    presenterAssetId: task.brief.presenterAssetId || '',
     primaryGoal: task.brief.objective,
     audience: task.brief.audience || '',
     market: task.brief.markets.join('、'),

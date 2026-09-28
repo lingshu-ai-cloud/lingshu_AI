@@ -198,6 +198,8 @@ export interface SocialContentTaskBrief {
   /** Optional explicit identity selection for this task; never used as a fuzzy lookup. */
   requestedPresenterName?: string | null;
   requestedPresenterAssetId?: string | null;
+  /** Explicit tenant presenter selected in the content-creation workbench. */
+  presenterAssetId?: string | null;
   audience: string | null;
   markets: string[];
   languages: string[];
@@ -498,6 +500,7 @@ export interface CreateSocialContentTaskInput {
   productRef?: string | null;
   requestedPresenterName?: string | null;
   requestedPresenterAssetId?: string | null;
+  presenterAssetId?: string | null;
   audience?: string | null;
   markets?: string[];
   languages?: string[];

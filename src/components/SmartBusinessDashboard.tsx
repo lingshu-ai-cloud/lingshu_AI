@@ -29,6 +29,7 @@ import { defaultMatrixPlan, fillMatrixVideos } from "../lib/weeklyMatrix";
 import { socialOperatingProfile } from "../../shared/contracts/socialOperatingProfile";
 import { loadConnectedSocialPerformance, type ConnectedSocialPerformance } from "../lib/socialPerformance";
 import { starterWorkspaceApi, type StarterAgentRole } from "../lib/starterWorkspace";
+import { foreignTradeBusinessMock, isLocalForeignTradeMockEnabled } from "../mocks/foreignTradeOperations";
 
 export type SmartBusinessView = "home" | "matrix" | "queue" | "review";
 
@@ -186,11 +187,12 @@ function AgentMonitor({ data, agent: agentCard, onClose }: { data: DigitalEmploy
 
 function HomeView({ data, onRefresh }: { data: DigitalEmployeeOverview; onRefresh?: () => void }) {
   const [monitor, setMonitor] = useState<AgentCard | null>(null);
+  const localMock = isLocalForeignTradeMockEnabled();
   const snapshot = data.businessSnapshot;
   const deliveries = data.deliveries || [];
   const agentLiveState = Object.fromEntries(agentCards.map(item => {
     const status = data.agents.find(agent => roleAliases[item.role].includes(agent.role));
-    const live = Boolean(status && runningStatuses.has(status.status)) || relatedTasks(data, item.role).some(task => runningStatuses.has(task.status));
+    const live = localMock || Boolean(status && runningStatuses.has(status.status)) || relatedTasks(data, item.role).some(task => runningStatuses.has(task.status));
     return [item.role, live];
   })) as Record<AgentCard["role"], boolean>;
   const activeAgentCount = agentCards.filter(item => agentLiveState[item.role]).length;
@@ -198,29 +200,30 @@ function HomeView({ data, onRefresh }: { data: DigitalEmployeeOverview; onRefres
   const completedCount = deliveries.filter(card => card.column === "done").length;
   const platformCoverage = platformOptions.map(platform => ({
     platform,
-    count: deliveries.filter(card => deliveryPlatform(card) === platform).length,
+    count: localMock ? foreignTradeBusinessMock.platformCoverage[platform] : deliveries.filter(card => deliveryPlatform(card) === platform).length,
   }));
   const pulse = [
-    { label: "已进入内容队列", value: deliveries.length, color: "#2fd1c5" },
-    { label: "已完成交付", value: completedCount, color: "#8b7cf6" },
-    { label: "等待验收", value: waitingCount, color: "#ff8e72" },
-    { label: "正在工作的 Agent", value: activeAgentCount, color: "#10244a" },
+    { label: "已进入内容队列", value: localMock ? foreignTradeBusinessMock.queue : deliveries.length, color: "#2fd1c5" },
+    { label: "已完成交付", value: localMock ? foreignTradeBusinessMock.completed : completedCount, color: "#8b7cf6" },
+    { label: "等待验收", value: localMock ? foreignTradeBusinessMock.waiting : waitingCount, color: "#ff8e72" },
+    { label: "正在工作的 Agent", value: localMock ? foreignTradeBusinessMock.activeAgents : activeAgentCount, color: "#10244a" },
   ];
   const pulseMax = Math.max(1, ...pulse.map(item => item.value));
   const metrics = [
-    { label: "运营平台账号", value: metricValue(snapshot?.social.accountCount.value), note: snapshot?.social.accountCount.note || "已接入账号", icon: Users },
-    { label: "获得询盘", value: metricValue(snapshot?.content.inquiries.value), note: snapshot?.content.inquiries.note || "当前统计周期", icon: MessageSquareText },
-    { label: "实际增长", value: metricValue(snapshot?.customer.won.value), note: "按成交客户记录", icon: TrendingUp },
-    { label: "投流消耗", value: "—", note: "投流消耗数据未接入", icon: CircleDollarSign },
+    { label: "运营平台账号", value: localMock ? String(foreignTradeBusinessMock.accountCount) : metricValue(snapshot?.social.accountCount.value), note: localMock ? "4 个平台 · 8 个外贸账号" : snapshot?.social.accountCount.note || "已接入账号", icon: Users },
+    { label: "获得询盘", value: localMock ? String(foreignTradeBusinessMock.inquiries) : metricValue(snapshot?.content.inquiries.value), note: localMock ? "近 30 天 · 12 个有效询盘" : snapshot?.content.inquiries.note || "当前统计周期", icon: MessageSquareText },
+    { label: "实际增长", value: localMock ? String(foreignTradeBusinessMock.wonCustomers) : metricValue(snapshot?.customer.won.value), note: localMock ? "新增成交客户 · 订单额 US$522k" : "按成交客户记录", icon: TrendingUp },
+    { label: "投流消耗", value: localMock ? `US$${foreignTradeBusinessMock.adSpend.toLocaleString('en-US')}` : "—", note: localMock ? "近 30 天 · 3 个主要市场" : "投流消耗数据未接入", icon: CircleDollarSign },
   ];
 
   return <>
+    {localMock && <div className="mb-5 flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-xs text-emerald-900"><span><strong>本地模拟 · {foreignTradeBusinessMock.factory}</strong>　经营、投放、客户和订单使用同一套外贸工厂数据。</span><span className="rounded-full bg-white px-2.5 py-1 font-bold">仅用于本地预览</span></div>}
     <section className="visual-card overflow-hidden p-5 sm:p-7">
-      <div className="flex flex-wrap items-start justify-between gap-4"><div><p className="text-xs font-bold tracking-[0.16em] text-emerald-700">过去业绩</p><h2 className="mt-2 text-2xl font-black text-slate-950">经营结果一眼看清</h2><p className="mt-1 text-sm text-slate-500">仅展示业务系统已经回传的真实数据。</p></div>{onRefresh&&<button type="button" onClick={onRefresh} className="inline-flex items-center gap-2 rounded-xl border border-emerald-200 bg-white px-3 py-2 text-xs font-bold text-emerald-800"><RefreshCcw size={14}/>刷新</button>}</div>
+      <div className="flex flex-wrap items-start justify-between gap-4"><div><p className="text-xs font-bold tracking-[0.16em] text-emerald-700">过去业绩</p><h2 className="mt-2 text-2xl font-black text-slate-950">经营结果一眼看清</h2><p className="mt-1 text-sm text-slate-500">{localMock ? '模拟一家出口智能装备工厂从内容获客到订单履约的完整经营链路。' : '仅展示业务系统已经回传的真实数据。'}</p></div>{onRefresh&&<button type="button" onClick={onRefresh} className="inline-flex items-center gap-2 rounded-xl border border-emerald-200 bg-white px-3 py-2 text-xs font-bold text-emerald-800"><RefreshCcw size={14}/>刷新</button>}</div>
       <div className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{metrics.map(({ label, value, note, icon: Icon }, index)=><article key={label} className="relative overflow-hidden rounded-2xl border border-[#10244a]/10 bg-white/90 p-4 shadow-[0_4px_0_rgba(16,36,74,.04)]"><span aria-hidden="true" className={`absolute -right-5 -top-5 h-20 w-20 rounded-full ${index%2?'bg-[#8b7cf6]/10':'bg-[#2fd1c5]/12'}`}/><div className="relative flex items-center justify-between"><span className="text-xs font-bold text-slate-500">{label}</span><span className={`flex h-8 w-8 items-center justify-center rounded-xl border-2 border-[#10244a] ${index%2?'bg-[#dcd7ff]':'bg-[#baf2e8]'}`}><Icon size={15} className="text-[#10244a]" strokeWidth={2.5}/></span></div><p className="relative mt-3 text-3xl font-black tracking-tight text-[#10244a]">{value}</p><p className="relative mt-1 truncate text-[11px] text-slate-400">{note}</p><div aria-hidden="true" className="relative mt-4 flex h-5 items-end gap-1">{[0.35,0.58,0.46,0.78,0.68].map((height, barIndex)=><span key={barIndex} className={`w-2 rounded-t-sm ${index%2?'bg-[#8b7cf6]/35':'bg-[#2fd1c5]/40'}`} style={{height:`${height*100}%`}}/>)}</div></article>)}</div>
       <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1.35fr)_minmax(18rem,.65fr)]">
         <article className="rounded-2xl border border-[#10244a]/10 bg-white/82 p-5">
-          <div className="flex items-center justify-between gap-4"><div><p className="visual-kicker">经营脉冲</p><h3 className="mt-1 text-base font-black text-[#10244a]">内容与执行状态</h3></div><span className="text-[10px] font-bold text-slate-400">实时业务记录</span></div>
+          <div className="flex items-center justify-between gap-4"><div><p className="visual-kicker">经营脉冲</p><h3 className="mt-1 text-base font-black text-[#10244a]">内容与执行状态</h3></div><span className="text-[10px] font-bold text-slate-400">{localMock ? '本地联动数据' : '实时业务记录'}</span></div>
           <div className="mt-5 grid gap-x-6 gap-y-4 sm:grid-cols-2">{pulse.map(item => <div key={item.label}><div className="flex items-center justify-between text-[11px]"><span className="font-bold text-slate-600">{item.label}</span><strong className="text-[#10244a]">{item.value}</strong></div><div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full" style={{background:item.color,width:`${item.value === 0 ? 0 : Math.max(12,item.value/pulseMax*100)}%`}}/></div></div>)}</div>
           <div className="mt-5 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-4"><span className="mr-1 text-[10px] font-bold text-slate-400">内容覆盖</span>{platformCoverage.map(item => <span key={item.platform} title={`${platformLabels[item.platform]} ${item.count} 条`} className={`inline-flex h-8 min-w-8 items-center justify-center gap-1 rounded-xl border px-2 ${item.count?'border-[#10244a]/15 bg-white':'border-slate-200 bg-slate-50 opacity-45'}`}><SocialPlatformIcon platform={item.platform} size={16}/><span className="text-[10px] font-black text-[#10244a]">{item.count}</span></span>)}</div>
         </article>
@@ -240,12 +243,12 @@ function HomeView({ data, onRefresh }: { data: DigitalEmployeeOverview; onRefres
 
     <section className="mt-6">
       <div><p className="text-xs font-bold tracking-[0.16em] text-slate-400">数字员工</p><h2 className="mt-1 text-xl font-black text-slate-950">我的 4 个 Agent 现在在做什么</h2></div>
-      <div className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">{agentCards.map((item)=>{const status=data.agents.find(agent=>roleAliases[item.role].includes(agent.role));const tasks=relatedTasks(data,item.role);const live=Boolean(status&&runningStatuses.has(status.status))||tasks.some(task=>runningStatuses.has(task.status));return <button type="button" key={item.role} onClick={()=>setMonitor(item)} className={`group relative min-h-52 overflow-hidden rounded-3xl border p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-lg ${live?'border-emerald-300':'border-slate-200'} bg-gradient-to-br ${item.tint}`}>
+      <div className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">{agentCards.map((item,index)=>{const status=data.agents.find(agent=>roleAliases[item.role].includes(agent.role));const tasks=relatedTasks(data,item.role);const live=localMock||Boolean(status&&runningStatuses.has(status.status))||tasks.some(task=>runningStatuses.has(task.status));const mockProgress=[[4,6],[7,9],[5,8],[6,8]][index];return <button type="button" key={item.role} onClick={()=>localMock?undefined:setMonitor(item)} className={`group relative min-h-52 overflow-hidden rounded-3xl border p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-lg ${live?'border-emerald-300':'border-slate-200'} bg-gradient-to-br ${item.tint}`}>
         {live&&<span className="absolute right-4 top-4 h-11 w-11 animate-spin rounded-full border-2 border-emerald-500 border-t-transparent"/>}
         <AgentRoleIcon role={item.role} active={live} size="md" label={item.name}/>
         <h3 className="mt-7 text-lg font-black text-slate-950">{item.name}</h3><p className="mt-1 text-xs text-slate-500">{item.description}</p>
-        <div className="mt-5 flex items-center justify-between gap-2"><span className={`text-xs font-bold ${live?'text-emerald-700':'text-slate-400'}`}>{live?'运行中':'静默'}</span><span className="text-[10px] text-slate-400">{status?.completed||0}/{status?.total||0}</span></div>
-        <p className="mt-2 truncate text-[11px] text-slate-500">{status?.currentTask||tasks[0]?.title||"等待下一项任务"}</p>
+        <div className="mt-5 flex items-center justify-between gap-2"><span className={`text-xs font-bold ${live?'text-emerald-700':'text-slate-400'}`}>{live?'运行中':'静默'}</span><span className="text-[10px] text-slate-400">{localMock?`${mockProgress[0]}/${mockProgress[1]}`:`${status?.completed||0}/${status?.total||0}`}</span></div>
+        <p className="mt-2 truncate text-[11px] text-slate-500">{localMock?foreignTradeBusinessMock.agentTasks[item.role]:status?.currentTask||tasks[0]?.title||"等待下一项任务"}</p>
       </button>})}</div>
     </section>
     {monitor&&<AgentMonitor data={data} agent={monitor} onClose={()=>setMonitor(null)}/>} 

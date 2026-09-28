@@ -43,6 +43,8 @@ assert.doesNotMatch(workspace, /SocialTaskEditorDialog|setEditor|submitTask/,
   'task creation and editing must not open the removed modal');
 assert.match(workspace, /onEdit=\{\(\) => task && navigateWithTask\('smartAssets', task\.taskId\)\}/);
 assert.match(workspace, /onStart=\{\(\) => task && navigateWithTask\('smartAssets', task\.taskId\)\}/);
+assert.match(workspace, /onSelectTask=\{taskId => navigateWithTask\('smartAssets', taskId\)\}/,
+  '最近任务点击必须直接进入带任务上下文的制作工作台');
 assert.match(workspace, /contentCreationRequest:/,
   'new task entry must navigate straight to the content workbench');
 assert.match(workspace, /const taskId = explicitTaskId \|\| task\?\.taskId/,
@@ -113,6 +115,8 @@ assert.match(productionProgress, /plan\?\.status === 'ready'/);
 assert.doesNotMatch(productionProgress, /formulaId|formula_reference|内部模板|系统提示词/,
   'customer progress must not expose internal formula identifiers or prompts');
 assert.match(productionProgress, /onSelectTask\?\.\(taskId\)/);
+assert.doesNotMatch(productionProgress, /if \(taskId !== task\.taskId\) onSelectTask/,
+  '当前项也必须可点击进入制作工作台');
 assert.match(productionProgress, /loadingMoreTasks \? '正在加载任务' : `加载更多任务/);
 assert.match(productionProgress, /task\.runId/);
 assert.doesNotMatch(productionProgress, /style=\{\{\s*width|\d+%/, 'production progress must not invent a percentage');
@@ -136,6 +140,12 @@ assert.doesNotMatch(generationConfirmation, /低成本分镜预演|不是实际�
 assert.match(studio, /canvasView === 'reference' && mode === 'clone' \? '爆款视频分镜'/);
 assert.match(studio, /<StudioStoryboardList items=\{referenceStoryboardItems\}/);
 assert.match(studio, /<StudioStoryboardList items=\{workbenchStoryboardItems\}/);
+assert.match(studio, /setVideoKickoff\(seed\.reference\); setCanvasView\('creation'\)/,
+  '爆款裂变任务默认必须进入新建视频工作台');
+assert.match(studio, /loadProject\(project\);\s*setCanvasView\('creation'\);/,
+  '恢复已保存的爆款任务时也必须默认回到新建视频工作台');
+assert.match(studio, /socialShotMaterialBindings\.forEach\(\(\{ shotIndex, materialId \}\)/,
+  '任务已绑定素材必须按分镜序号回填到 Studio');
 for (const field of ['estimatedTotalCostCny', 'estimatedSuccessRate', 'budgetLimitCny', 'executionPlanReview']) {
   assert.match(generationConfirmation, new RegExp(field));
 }

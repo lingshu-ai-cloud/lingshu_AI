@@ -14,6 +14,7 @@ test('Content Agent reads only authorized usable tenant presenter assets', async
     ] } }] };
   } } };
   assert.deepEqual(await readAuthorizedPresenterAssetIds(repository, 'tenant-a'), ['talker', 'reference']);
+  assert.deepEqual((await readAuthorizedPresenterInventory(repository, 'tenant-a', null, 'talker')).assetIds, ['talker']);
 });
 
 test('Content Agent fails closed when presenter inventory cannot be read', async () => {
@@ -55,8 +56,9 @@ test('Content Agent rejects multiple published identities for one social account
 test('task persistence retains the account lineage needed for presenter locking', () => {
   const stored = defaultBrief({
     title: '账号视频', objective: '获取询盘',
+    presenterAssetId: 'account-presenter',
     programRef: { objectType: 'social_program', id: 'program-1', version: '2' },
-    targetAccountRef: { objectType: 'owned_social_account', id: 'account-tiktok', version: '4' },
+    targetAccountRef: { objectType: 'social_owned_account', id: 'account-tiktok', version: '4' },
     accountPlaybookRef: { objectType: 'account_playbook', id: 'playbook-1', version: '5', accountRef: 'account-tiktok' },
     referenceMode: 'single_source_fidelity', primaryExperimentVariable: '前三秒钩子',
   });
@@ -64,4 +66,5 @@ test('task persistence retains the account lineage needed for presenter locking'
   assert.equal(parsed.targetAccountRef?.id, 'account-tiktok');
   assert.equal(parsed.accountPlaybookRef?.accountRef, 'account-tiktok');
   assert.equal(parsed.referenceMode, 'single_source_fidelity');
+  assert.equal(parsed.presenterAssetId, 'account-presenter');
 });

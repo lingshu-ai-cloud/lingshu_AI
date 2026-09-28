@@ -26,7 +26,6 @@ import { scoreSocialInspirationCandidate } from '../../shared/socialInspirationS
 import DiscoveryScopePanel from './inspiration/DiscoveryScopePanel';
 import { resumeOrCreateInspirationTask, soleInspirationCreationAccount } from '../lib/socialInspirationTask';
 import { useSocialProgram } from '../contexts/SocialProgramContext';
-import { setActiveSocialContentTaskId } from '../lib/socialContentContext';
 import { VideoCard, VideoListItem } from './InspirationVideoCards';
 import { showActionFeedback, showActionSuccess } from '../lib/actionFeedback';
 import { resolveInspirationPlaybackUrl } from '../lib/inspirationVideoPlayback';
@@ -3518,12 +3517,9 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     .map(material => String(material.sourceUrl || '').trim())
     .filter(Boolean)), [localMaterials]);
   const filtered = useMemo(() => {
-    const lastCrawlIds = new Set(lastCrawlVideoIds);
-    const limitToLastCrawl = lastCrawlIds.size >= 10;
     const q = search.trim().toLowerCase();
     return visibleVideos
       .filter(v =>
-        (!limitToLastCrawl || lastCrawlIds.has(v.id)) &&
         (platform === 'all' || v.platform === platform) &&
         (inspirationFavoriteFilter === 'all' || favoritedVideoIds.includes(v.id) || favoriteSourceUrls.has(String(v.sourceUrl || '').trim())) &&
         (!q || v.title.toLowerCase().includes(q) || v.tags.some(t => t.toLowerCase().includes(q)))
@@ -3542,7 +3538,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
           || scoreB.sourcePriority - scoreA.sourcePriority
           || timeValue(b.crawledAt) - timeValue(a.crawledAt);
       });
-  }, [visibleVideos, lastCrawlVideoIds, platform, inspirationFavoriteFilter, favoritedVideoIds, favoriteSourceUrls, search, sortMode, contentFormat]);
+  }, [visibleVideos, platform, inspirationFavoriteFilter, favoritedVideoIds, favoriteSourceUrls, search, sortMode, contentFormat]);
 
   const recentThreeDayUploads = visibleVideos.filter(v => {
     const t = v.crawledAt ? new Date(v.crawledAt).getTime() : 0;
@@ -3756,9 +3752,30 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     }
     if (inspirationLaunches.current.has(video.id)) return;
     const openTask = (taskId: string) => {
-      setActiveSocialContentTaskId(taskId);
       window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: {
-        page: 'smartAssets', socialContentPage: 'smartAssets', socialContentTaskId: taskId, socialContentView: 'managed',
+        page: 'smartAssets', view: 'create',
+        contentCreationRequest: {
+          requestId: Date.now(),
+          themeId: 'product_value',
+          mode: 'instant',
+          creationPath: 'viral_replication',
+          materialInput: video.videoUrl ? 'ready' : 'limited',
+          managedMode: 'one_click_managed',
+          continueTaskId: taskId,
+          prefill: {
+            title: `${video.title || '灵感视频'} · 爆款裂变`,
+            topic: video.title || '',
+            referenceLinks: [video.sourceUrl || video.videoUrl || ''].filter(Boolean),
+            platforms: video.platform ? [video.platform] : undefined,
+          },
+          sourceContext: {
+            originLabel: '来自灵感中心',
+            referenceTitle: video.title || '已选参考视频',
+            referenceThumbnail: video.thumbnail,
+            referenceMediaUrl: video.videoUrl || undefined,
+            referenceContentType: 'video',
+          },
+        },
       } }));
     };
     const candidateKey = `${video.id}:${creationAccountId}`;

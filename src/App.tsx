@@ -6,6 +6,7 @@ import Layout from './components/Layout';
 import AuthScreen from './components/AuthScreen';
 import { authApi, getToken, type AuthSession } from './lib/auth';
 import { isEnterpriseHomepageDemoAccount } from './mocks/enterpriseHomepageDemo';
+import { isLocalForeignTradeMockEnabled } from './mocks/foreignTradeOperations';
 import { completeDemoStep, setDemoProgressScope } from './lib/demoProgress';
 import AssistLinkPage from './components/AssistLinkPage';
 import LegalPages from './components/LegalPages';
@@ -14,6 +15,7 @@ import {
   SOCIAL_CONTENT_NAVIGATION_EVENT,
   attachSocialContentNavigationState,
   readSocialContentNavigationTaskId,
+  setActiveSocialContentTaskId,
   type SocialContentNavigationEventDetail,
 } from './lib/socialContentContext';
 import { StarterWorkspaceRequestError, shouldBypassStarter198Probe, starterWorkspaceApi } from './lib/starterWorkspace';
@@ -23,38 +25,144 @@ import { PageErrorBoundary, PageLoading } from './components/AppPageBoundary';
 import type { SocialContentCreateRequest } from './components/socialContent/SocialContentWorkspace';
 import { AGENT_PAGES, ROLE_PAGE_ACCESS, customerUnifiedAgent, firstUserText, isAdminSession, isExternalCustomerServiceDemoSession, isLocalCustomerReplyLab, loadConvs, loadPage, pagePreferenceScope, type AgentAction, type AgentType, type Conversation, type ConversationContext, type KickoffSignal, type Message, type RestoreSignal, type StarterAccessState } from './appSession';
 
-// 业务页面体积较大（尤其智能素材与灵感大屏），仅在用户真正进入时下载和解析。
-// 避免登录后一次性解析所有页面造成主线程长任务，表现为浏览器“页面无响应”。
-const PlatformAdsPage = lazy(() => import('./components/PlatformAdsPage'));
-const StrategyPage = lazy(() => import('./components/StrategyPage'));
-const TrafficPage = lazy(() => import('./components/TrafficPage'));
-const ConversionPage = lazy(() => import('./components/ConversionPage'));
-const OrderManagementPage = lazy(() => import('./components/OrderManagementPage'));
-const EnterprisePage = lazy(() => import('./components/EnterprisePage'));
-const IntegrationsPage = lazy(() => import('./components/IntegrationsPage'));
-const ScheduledPage = lazy(() => import('./components/ScheduledPage'));
-const AdminDashboard = lazy(() => import('./components/AdminDashboard'));
-const AdminDeliveryPage = lazy(() => import('./components/AdminDeliveryPage'));
-const GlobalAssistant = lazy(() => import('./components/GlobalAssistant'));
-const AgentMemoryPage = lazy(() => import('./components/WorkspaceManagementPages').then(module => ({ default: module.AgentMemoryPage })));
-const OrganizationPermissionsPage = lazy(() => import('./components/WorkspaceManagementPages').then(module => ({ default: module.OrganizationPermissionsPage })));
-const ScriptLibraryPage = lazy(() => import('./components/WorkspaceManagementPages').then(module => ({ default: module.ScriptLibraryPage })));
-const DigitalEmployeePage = lazy(() => import('./components/DigitalEmployeePage'));
-const AgentMonitorPage = lazy(() => import('./components/AgentMonitorPage'));
-const StarterWorkspacePage = lazy(() => import('./components/starter/StarterWorkspacePage'));
-const SocialContentPlanningPage = lazy(() => import('./components/socialContent/SocialContentPlanningPage'));
-const SocialTaskContextBar = lazy(() => import('./components/starter/SocialTaskContextBar'));
-const StarterWorkflowContextBar = lazy(() => import('./components/starter/StarterWorkflowContextBar'));
+// 页面仍然拆包，但本地预览会在浏览器空闲时逐个预热这些模块。显式 loader
+// 既供 React.lazy 使用，也让预加载和真正进入页面共享同一份浏览器模块缓存。
+const loadPlatformAdsPage = () => import('./components/PlatformAdsPage');
+const loadStrategyPage = () => import('./components/StrategyPage');
+const loadTrafficPage = () => import('./components/TrafficPage');
+const loadConversionPage = () => import('./components/ConversionPage');
+const loadOrderManagementPage = () => import('./components/OrderManagementPage');
+const loadEnterprisePage = () => import('./components/EnterprisePage');
+const loadIntegrationsPage = () => import('./components/IntegrationsPage');
+const loadScheduledPage = () => import('./components/ScheduledPage');
+const loadAdminDashboard = () => import('./components/AdminDashboard');
+const loadAdminDeliveryPage = () => import('./components/AdminDeliveryPage');
+const loadGlobalAssistant = () => import('./components/GlobalAssistant');
+const loadWorkspaceManagementPages = () => import('./components/WorkspaceManagementPages');
+const loadDigitalEmployeePage = () => import('./components/DigitalEmployeePage');
+const loadAgentMonitorPage = () => import('./components/AgentMonitorPage');
+const loadStarterWorkspacePage = () => import('./components/starter/StarterWorkspacePage');
+const loadSocialContentPlanningPage = () => import('./components/socialContent/SocialContentPlanningPage');
+const loadSocialTaskContextBar = () => import('./components/starter/SocialTaskContextBar');
+const loadStarterWorkflowContextBar = () => import('./components/starter/StarterWorkflowContextBar');
+
+const PlatformAdsPage = lazy(loadPlatformAdsPage);
+const StrategyPage = lazy(loadStrategyPage);
+const TrafficPage = lazy(loadTrafficPage);
+const ConversionPage = lazy(loadConversionPage);
+const OrderManagementPage = lazy(loadOrderManagementPage);
+const EnterprisePage = lazy(loadEnterprisePage);
+const IntegrationsPage = lazy(loadIntegrationsPage);
+const ScheduledPage = lazy(loadScheduledPage);
+const AdminDashboard = lazy(loadAdminDashboard);
+const AdminDeliveryPage = lazy(loadAdminDeliveryPage);
+const GlobalAssistant = lazy(loadGlobalAssistant);
+const AgentMemoryPage = lazy(() => loadWorkspaceManagementPages().then(module => ({ default: module.AgentMemoryPage })));
+const OrganizationPermissionsPage = lazy(() => loadWorkspaceManagementPages().then(module => ({ default: module.OrganizationPermissionsPage })));
+const ScriptLibraryPage = lazy(() => loadWorkspaceManagementPages().then(module => ({ default: module.ScriptLibraryPage })));
+const DigitalEmployeePage = lazy(loadDigitalEmployeePage);
+const AgentMonitorPage = lazy(loadAgentMonitorPage);
+const StarterWorkspacePage = lazy(loadStarterWorkspacePage);
+const SocialContentPlanningPage = lazy(loadSocialContentPlanningPage);
+const SocialTaskContextBar = lazy(loadSocialTaskContextBar);
+const StarterWorkflowContextBar = lazy(loadStarterWorkflowContextBar);
 const DesignPrototype = lazy(() => import('./dev/DesignPrototype'));
 const SocialContentPreview = lazy(() => import('./dev/SocialContentPreview'));
 const SmartBusinessPreview = lazy(() => import('./dev/SmartBusinessPreview'));
 const StartupHubPage = lazy(() => import('./components/StartupHubPage'));
+
+type PageModuleLoader = () => Promise<unknown>;
+const ADS_PAGES: Page[] = ['adsOverview', 'adsPlans', 'adsCreatives', 'adsManaged'];
+const INTEGRATION_PAGES: Page[] = ['plugins', 'channels', 'youtube'];
+
+const LOCAL_PREVIEW_PAGE_LOADERS: PageModuleLoader[] = [
+  loadDigitalEmployeePage,
+  loadTrafficPage,
+  () => import('./components/AiCreateStudio'),
+  () => import('./components/InspirationDashboard'),
+  () => import('./components/publishing/CalendarPlanner'),
+  loadStrategyPage,
+  loadPlatformAdsPage,
+  loadConversionPage,
+  loadOrderManagementPage,
+  loadEnterprisePage,
+  loadWorkspaceManagementPages,
+  loadIntegrationsPage,
+  loadScheduledPage,
+  loadAgentMonitorPage,
+  loadGlobalAssistant,
+  loadAdminDashboard,
+  loadAdminDeliveryPage,
+  loadStarterWorkspacePage,
+  loadSocialContentPlanningPage,
+  loadSocialTaskContextBar,
+  loadStarterWorkflowContextBar,
+];
+
+const isLocalPreviewHost = () => window.location.hostname === '127.0.0.1' || window.location.hostname === 'localhost';
+
+function scheduleLocalPreviewPreload(preferredPage: Page) {
+  if (!isLocalPreviewHost()) return () => {};
+  const preferredLoaders: Partial<Record<Page, PageModuleLoader[]>> = {
+    digitalEmployees: [loadDigitalEmployeePage],
+    agentMonitor: [loadAgentMonitorPage],
+    strategy: [loadStrategyPage],
+    traffic: [loadTrafficPage, () => import('./components/publishing/CalendarPlanner')],
+    socialInspiration: [loadTrafficPage, () => import('./components/InspirationDashboard')],
+    smartAssets: [loadTrafficPage, () => import('./components/AiCreateStudio'), loadSocialContentPlanningPage],
+    socialMonitoring: [loadTrafficPage, () => import('./components/AccountActivity')],
+    scriptLibrary: [loadWorkspaceManagementPages],
+    adsOverview: [loadPlatformAdsPage],
+    adsPlans: [loadPlatformAdsPage],
+    adsCreatives: [loadPlatformAdsPage],
+    adsManaged: [loadPlatformAdsPage],
+    conversion: [loadConversionPage],
+    orders: [loadOrderManagementPage],
+    enterprise: [loadEnterprisePage],
+    agentMemory: [loadWorkspaceManagementPages],
+    organizationPermissions: [loadWorkspaceManagementPages],
+    plugins: [loadIntegrationsPage],
+    channels: [loadIntegrationsPage],
+    youtube: [loadIntegrationsPage],
+    scheduled: [loadScheduledPage],
+    admin: [loadAdminDashboard],
+    adminDelivery: [loadAdminDeliveryPage],
+  };
+  const queue = [...(preferredLoaders[preferredPage] || []), ...LOCAL_PREVIEW_PAGE_LOADERS];
+  const uniqueQueue = queue.filter((loader, index) => queue.indexOf(loader) === index);
+  let cancelled = false;
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  let idleId: number | null = null;
+  let index = 0;
+
+  const scheduleNext = () => {
+    if (cancelled || index >= uniqueQueue.length) return;
+    const run = () => {
+      if (cancelled) return;
+      const loader = uniqueQueue[index++];
+      void loader().catch(() => {}).finally(scheduleNext);
+    };
+    if ('requestIdleCallback' in window) {
+      idleId = window.requestIdleCallback(run, { timeout: 1_500 });
+    } else {
+      timeoutId = globalThis.setTimeout(run, 160);
+    }
+  };
+
+  scheduleNext();
+  return () => {
+    cancelled = true;
+    if (idleId !== null && 'cancelIdleCallback' in window) window.cancelIdleCallback(idleId);
+    if (timeoutId !== null) globalThis.clearTimeout(timeoutId);
+  };
+}
 
 export type { Page } from './pageRegistry';
 export type { AgentAction, AgentType, Conversation, ConversationContext, KickoffSignal, Message, RestoreSignal, Source } from './appSession';
 
 export default function App() {
   const publicPath = window.location.pathname.replace(/\/+$/, '') || '/';
+  const localForeignTradeMock = isLocalForeignTradeMockEnabled();
   if (publicPath === '/startup-hub-preview') {
     return (
       <Suspense fallback={<PageLoading />}>
@@ -92,6 +200,25 @@ export default function App() {
   const [page, setPage] = useState<Page>(loadPage);
   const pageRef = useRef(page);
   pageRef.current = page;
+  const [mountedPages, setMountedPages] = useState<Set<Page>>(() => new Set<Page>(['digitalEmployees', loadPage()]));
+  const mountedPagesRef = useRef(mountedPages);
+  mountedPagesRef.current = mountedPages;
+  const [lastAdsPage, setLastAdsPage] = useState<Page>(() => {
+    const initialPage = loadPage();
+    return ADS_PAGES.includes(initialPage) ? initialPage : 'adsOverview';
+  });
+  useEffect(() => {
+    setMountedPages(previous => {
+      if (previous.has(page)) return previous;
+      const next = new Set(previous);
+      next.add(page);
+      return next;
+    });
+  }, [page]);
+  useEffect(() => {
+    if (ADS_PAGES.includes(page)) setLastAdsPage(page);
+  }, [page]);
+  useEffect(() => scheduleLocalPreviewPreload(pageRef.current), []);
   const [socialContentNavigation, setSocialContentNavigation] = useState<{
     page: Page;
     taskId: string;
@@ -101,8 +228,6 @@ export default function App() {
     const taskId = readSocialContentNavigationTaskId(initialPage, window.history.state);
     return taskId ? { page: initialPage, taskId } : null;
   });
-  const [monitorMounted, setMonitorMounted] = useState(() => loadPage() === 'agentMonitor');
-  useEffect(() => { if (page === 'agentMonitor') setMonitorMounted(true); }, [page]);
   useEffect(() => {
     document.title = `${PAGE_REGISTRY[page].canonicalTitle} · 灵枢 AI`;
   }, [page]);
@@ -177,7 +302,14 @@ export default function App() {
     const taskId = String(detail.workflowTaskId || '');
     return runId && taskId || detail.businessRef?.entityId ? { runId, taskId, taskKey: String(detail.businessRef?.taskKey || ''), entityId: detail.businessRef?.entityId, contentId: detail.businessRef?.contentId, referenceId: detail.businessRef?.referenceId } : null;
   });
-  const [smartAssetsCreateRequest, setSmartAssetsCreateRequest] = useState<SocialContentCreateRequest | null>(null);
+  const [smartAssetsCreateRequest, setSmartAssetsCreateRequest] = useState<SocialContentCreateRequest | null>(() => {
+    const detail = window.history.state?.productionDetail;
+    return loadPage() === 'smartAssets' && detail?.page === 'smartAssets' ? detail.contentCreationRequest || null : null;
+  });
+  const [smartAssetsStudioOpen, setSmartAssetsStudioOpen] = useState(() => {
+    const detail = window.history.state?.productionDetail;
+    return Boolean(new URLSearchParams(window.location.search).get('project') || detail?.directStudio);
+  });
 
   useEffect(() => {
     if (page === 'smartAssets' && (
@@ -355,12 +487,16 @@ export default function App() {
       socialContentTaskId: undefined,
       socialContentPage: undefined,
     }, '');
-    setSocialContentNavigation(null);
+    // 普通侧栏切页不清除当前内容任务绑定。绑定只在对应页面生效，离开时不会
+    // 泄漏到其他页面；回来后则可恢复同一个制作任务和最后操作节点。
     setConversation(null); setRestore(null); setKickoff(null);
     activeIdRef.current = null; setActiveConvId(null);
-    if (next === 'smartAssets') {
+    // 首次进入内容制作时使用默认入口；已经操作过的制作页再次点开时，
+    // 保留项目、制作节点和右栏状态，不再被侧栏导航清回初始页。
+    if (next === 'smartAssets' && !mountedPagesRef.current.has('smartAssets')) {
       setSmartAssetsWorkflowContext(null);
       setSmartAssetsCreateRequest(null);
+      setSmartAssetsStudioOpen(false);
       setSmartAssetsView('create');
       try {
         if (localStorage.getItem('ow_video_kickoff') || localStorage.getItem('ow_seedance_kickoff')) {
@@ -387,6 +523,7 @@ export default function App() {
     activeIdRef.current = null; setActiveConvId(null);
     if (next === 'smartAssets') {
       setSmartAssetsWorkflowContext(null);
+      setSmartAssetsStudioOpen(true);
       setSmartAssetsView('create');
     }
     setPage(next);
@@ -406,6 +543,7 @@ export default function App() {
         socialContentPage?: string;
         socialContentView?: 'managed';
         studioEntry?: boolean;
+        directStudio?: boolean;
         businessRef?: { taskKey?: string; preview?: boolean; entityId?: string; contentId?: string; referenceId?: string };
         contentCreationRequest?: SocialContentCreateRequest;
       }>).detail;
@@ -417,12 +555,23 @@ export default function App() {
       if (!detail.restoreHistory) {
         if (nextPage === pageRef.current && detail.workflowTaskId) pushProductionLocation(nextPage);
         handleNavigate(incomingDetail.page === 'socialSetup' || incomingDetail.page === 'socialAccounts' || incomingDetail.page === 'accountManagement' ? incomingDetail.page : nextPage);
-        if (nextPage === 'smartAssets' && detail.studioEntry && detail.contentCreationRequest && !detail.socialContentTaskId) {
+        const opensCreationWorkbench = nextPage === 'smartAssets'
+          && Boolean(detail.contentCreationRequest)
+          && !detail.socialContentTaskId
+          && detail.directStudio !== true;
+        const nextHistoryState = { ...window.history.state };
+        if (opensCreationWorkbench) {
+          setSocialContentNavigation(null);
+          setActiveSocialContentTaskId(null);
+          delete nextHistoryState.socialContentTaskId;
+          delete nextHistoryState.socialContentPage;
+        }
+        if (nextPage === 'smartAssets' && detail.contentCreationRequest && !detail.socialContentTaskId) {
           try { localStorage.removeItem('ow_studio_open_project'); } catch { /* ignore */ }
           const freshUrl = new URL(window.location.href);
           freshUrl.searchParams.delete('project');
-          window.history.replaceState({ ...window.history.state, productionDetail: detail }, '', freshUrl);
-        } else window.history.replaceState({ ...window.history.state, productionDetail: detail }, '');
+          window.history.replaceState({ ...nextHistoryState, productionDetail: detail }, '', freshUrl);
+        } else window.history.replaceState({ ...nextHistoryState, productionDetail: detail }, '');
         const socialTaskId = String(detail.socialContentTaskId || '').trim();
         if (socialTaskId && isSocialTaskContextPage(nextPage)
           && (!detail.socialContentPage || detail.socialContentPage === nextPage)) {
@@ -432,6 +581,7 @@ export default function App() {
       if (nextPage === 'smartAssets') {
         setSmartAssetsView(detail.view === 'publish' ? 'publish' : 'create');
         setSmartAssetsCreateRequest(detail.contentCreationRequest || null);
+        setSmartAssetsStudioOpen(detail.studioPanel === 'projects' || detail.directStudio === true);
         if (detail.studioPanel === 'projects') setOpenProjectsSignal(current => current + 1);
         const runId = String(detail.workflowRunId || '').trim();
         const taskId = String(detail.workflowTaskId || '').trim();
@@ -445,6 +595,30 @@ export default function App() {
     window.addEventListener('lingshu:navigate', handler);
     return () => window.removeEventListener('lingshu:navigate', handler);
   }, [handleNavigate]);
+  const handleLaunchContentStudio = useCallback((request: SocialContentCreateRequest) => {
+    const continueTaskId = String(request.continueTaskId || '').trim();
+    setSmartAssetsCreateRequest(request);
+    setSmartAssetsStudioOpen(true);
+    setSmartAssetsView('create');
+    if (continueTaskId) {
+      setSocialContentNavigation({ page: 'smartAssets', taskId: continueTaskId });
+      attachSocialContentNavigationState(continueTaskId, 'smartAssets');
+    }
+    const freshUrl = new URL(window.location.href);
+    freshUrl.searchParams.delete('project');
+    window.history.replaceState({
+      ...window.history.state,
+      ...(continueTaskId ? { socialContentTaskId: continueTaskId, socialContentPage: 'smartAssets' } : {}),
+      productionDetail: {
+        page: 'smartAssets',
+        view: 'create',
+        studioEntry: true,
+        directStudio: true,
+        contentCreationRequest: request,
+        ...(continueTaskId ? { socialContentTaskId: continueTaskId, socialContentPage: 'smartAssets' } : {}),
+      },
+    }, '', freshUrl);
+  }, []);
   const restoreFor = (a: AgentType) => (restore && restore.agent === a ? restore : undefined);
   const kickoffFor = (a: AgentType) => (kickoff && kickoff.agent === a ? { text: kickoff.text, key: kickoff.key } : undefined);
 
@@ -574,7 +748,12 @@ export default function App() {
     && socialContentNavigation?.page === page
     ? socialContentNavigation.taskId
     : null;
-  const showSocialContentPlanning = page === 'smartAssets' && smartAssetsView === 'create' && !activeSocialContentTaskId && !smartAssetsWorkflowContext && !smartAssetsCreateRequest;
+  const smartAssetsContentTaskId = socialContentNavigation?.page === 'smartAssets'
+    ? socialContentNavigation.taskId
+    : null;
+  // 这个判断不能依赖当前是否正显示 smartAssets；否则切去别页时会在隐藏状态下
+  // 把“我的创作”和制作工作台互换并卸载，回来后就丢失最后操作位置。
+  const showSocialContentPlanning = smartAssetsView === 'create' && !smartAssetsContentTaskId && !smartAssetsWorkflowContext && !smartAssetsStudioOpen;
 
 
   return (
@@ -619,8 +798,9 @@ export default function App() {
               ? <StarterWorkspacePage onNavigate={handleNavigate} onNavigateWithTask={handleSocialContentNavigate} />
               : <DigitalEmployeePage onViewResults={() => handleNavigate('strategy')} onNavigate={handleNavigate} onOpenMonitor={() => handleNavigate('agentMonitor')} />}
           </Activity>
-          {monitorMounted && <Activity key={`monitor-${pagePreferenceScope(session)}`} mode={page === 'agentMonitor' ? 'visible' : 'hidden'}><AgentMonitorPage onBack={requestProductionBack} /></Activity>}
-          {page === 'strategy' && (
+          {(page === 'agentMonitor' || mountedPages.has('agentMonitor')) && <Activity key={`monitor-${pagePreferenceScope(session)}`} mode={page === 'agentMonitor' ? 'visible' : 'hidden'}><AgentMonitorPage onBack={requestProductionBack} /></Activity>}
+          {(page === 'strategy' || mountedPages.has('strategy')) && (
+            <Activity mode={page === 'strategy' ? 'visible' : 'hidden'}>
             <StrategyPage
               onEnterConversation={enterConversation}
               onLeaveConversation={leaveConversation}
@@ -630,12 +810,16 @@ export default function App() {
               onAction={startAgentTask}
               onNavigate={handleNavigate}
               onSessionRefresh={() => void refreshSession()}
-              includeMockCustomers={import.meta.env.DEV && new URLSearchParams(window.location.search).get('mock') === 'quote'}
-              mockCustomerScope={session.user.email || session.user.id || session.tenant?.id || 'admin'}
+              includeMockCustomers={localForeignTradeMock}
+              mockCustomerScope={localForeignTradeMock && new URLSearchParams(window.location.search).get('mock') !== 'quote'
+                ? 'local-foreign-trade-factory'
+                : session.user.email || session.user.id || session.tenant?.id || 'admin'}
               enterpriseHomepageDemo={isEnterpriseHomepageDemoAccount(session.user.email)}
             />
+            </Activity>
           )}
-          {page === 'traffic' && (
+          {(page === 'traffic' || mountedPages.has('traffic')) && (
+            <Activity mode={page === 'traffic' ? 'visible' : 'hidden'}>
             <TrafficPage
               key="legacy-traffic"
               onEnterConversation={enterConversation}
@@ -655,8 +839,10 @@ export default function App() {
               storageScope={session.tenant?.id || session.user.tenantId}
               socialContentTaskId={activeSocialContentTaskId}
             />
+            </Activity>
           )}
-          {page === 'socialInspiration' && (
+          {(page === 'socialInspiration' || mountedPages.has('socialInspiration')) && (
+            <Activity mode={page === 'socialInspiration' ? 'visible' : 'hidden'}>
             <TrafficPage
               key="social-inspiration"
               onEnterConversation={enterConversation}
@@ -671,13 +857,17 @@ export default function App() {
               storageScope={session.tenant?.id || session.user.tenantId}
               socialContentTaskId={activeSocialContentTaskId}
             />
+            </Activity>
           )}
-          {(page === 'smartAssets' || smartAssetsMounted) && (
-            <div className={page === 'smartAssets' ? 'h-full min-h-0' : 'hidden'} aria-hidden={page !== 'smartAssets'}>
+          {(page === 'smartAssets' || mountedPages.has('smartAssets') || smartAssetsMounted) && (
+            <Activity mode={page === 'smartAssets' ? 'visible' : 'hidden'}>
+            <div className="h-full min-h-0">
               {showSocialContentPlanning ? (
                 <SocialContentPlanningPage
                   onNavigate={handleNavigate}
                   onNavigateWithTask={handleSocialContentNavigate}
+                  initialCreateRequest={smartAssetsCreateRequest}
+                  onLaunchStudio={handleLaunchContentStudio}
                 />
               ) : (
                 <TrafficPage
@@ -695,12 +885,14 @@ export default function App() {
                   studioCreateRequest={smartAssetsCreateRequest}
                   storageScope={session.tenant?.id || session.user.tenantId}
                   workflowContextSignal={smartAssetsWorkflowContext}
-                  socialContentTaskId={activeSocialContentTaskId}
+                  socialContentTaskId={smartAssetsContentTaskId}
                 />
               )}
             </div>
+            </Activity>
           )}
-          {page === 'socialMonitoring' && (
+          {(page === 'socialMonitoring' || mountedPages.has('socialMonitoring')) && (
+            <Activity mode={page === 'socialMonitoring' ? 'visible' : 'hidden'}>
             <TrafficPage
               key="social-monitoring-accounts"
               onEnterConversation={enterConversation}
@@ -714,10 +906,12 @@ export default function App() {
               storageScope={session.tenant?.id || session.user.tenantId}
               socialContentTaskId={activeSocialContentTaskId}
             />
+            </Activity>
           )}
-          {page === 'scriptLibrary' && <ScriptLibraryPage socialContentTaskId={activeSocialContentTaskId} />}
-          {(['adsOverview', 'adsPlans', 'adsCreatives', 'adsManaged'] as Page[]).includes(page) && <PlatformAdsPage page={page} onNavigate={handleNavigate} />}
-          {page === 'conversion' && (
+          {(page === 'scriptLibrary' || mountedPages.has('scriptLibrary')) && <Activity mode={page === 'scriptLibrary' ? 'visible' : 'hidden'}><ScriptLibraryPage socialContentTaskId={activeSocialContentTaskId} /></Activity>}
+          {(ADS_PAGES.includes(page) || ADS_PAGES.some(item => mountedPages.has(item))) && <Activity mode={ADS_PAGES.includes(page) ? 'visible' : 'hidden'}><PlatformAdsPage page={ADS_PAGES.includes(page) ? page : lastAdsPage} onNavigate={handleNavigate} /></Activity>}
+          {(page === 'conversion' || mountedPages.has('conversion')) && (
+            <Activity mode={page === 'conversion' ? 'visible' : 'hidden'}>
             <ConversionPage
               onEnterConversation={enterConversation}
               onLeaveConversation={leaveConversation}
@@ -727,24 +921,28 @@ export default function App() {
               onAction={startAgentTask}
               onSessionRefresh={() => void refreshSession()}
               isDemo={false}
-              includeMockCustomers={import.meta.env.DEV && new URLSearchParams(window.location.search).get('mock') === 'quote'}
-              mockCustomerScope={session.user.email || session.user.id || session.tenant?.id || 'admin'}
+              includeMockCustomers={localForeignTradeMock}
+              mockCustomerScope={localForeignTradeMock && new URLSearchParams(window.location.search).get('mock') !== 'quote'
+                ? 'local-foreign-trade-factory'
+                : session.user.email || session.user.id || session.tenant?.id || 'admin'}
             />
+            </Activity>
           )}
-          {page === 'orders' && <OrderManagementPage />}
-          {page === 'enterprise' && <EnterprisePage />}
-          {page === 'agentMemory' && (
+          {(page === 'orders' || mountedPages.has('orders')) && <Activity mode={page === 'orders' ? 'visible' : 'hidden'}><OrderManagementPage /></Activity>}
+          {(page === 'enterprise' || mountedPages.has('enterprise')) && <Activity mode={page === 'enterprise' ? 'visible' : 'hidden'}><EnterprisePage /></Activity>}
+          {(page === 'agentMemory' || mountedPages.has('agentMemory')) && (
+            <Activity mode={page === 'agentMemory' ? 'visible' : 'hidden'}>
             <AgentMemoryPage
               includeMockCustomers={import.meta.env.DEV && new URLSearchParams(window.location.search).get('mock') === 'quote'}
               mockCustomerScope={session.user.email || session.user.id || session.tenant?.id || 'admin'}
             />
+            </Activity>
           )}
-          {page === 'plugins' && <IntegrationsPage />}
-          {page === 'organizationPermissions' && <OrganizationPermissionsPage />}
-          {page === 'scheduled' && <ScheduledPage onAction={startAgentTask} />}
-          {page === 'admin' && <AdminDashboard onSupportSessionStarted={handleSupportSessionStarted} />}
-          {page === 'adminDelivery' && <AdminDeliveryPage />}
-          {(page === 'channels' || page === 'youtube') && <IntegrationsPage />}
+          {(INTEGRATION_PAGES.includes(page) || INTEGRATION_PAGES.some(item => mountedPages.has(item))) && <Activity mode={INTEGRATION_PAGES.includes(page) ? 'visible' : 'hidden'}><IntegrationsPage /></Activity>}
+          {(page === 'organizationPermissions' || mountedPages.has('organizationPermissions')) && <Activity mode={page === 'organizationPermissions' ? 'visible' : 'hidden'}><OrganizationPermissionsPage /></Activity>}
+          {(page === 'scheduled' || mountedPages.has('scheduled')) && <Activity mode={page === 'scheduled' ? 'visible' : 'hidden'}><ScheduledPage onAction={startAgentTask} /></Activity>}
+          {(page === 'admin' || mountedPages.has('admin')) && <Activity mode={page === 'admin' ? 'visible' : 'hidden'}><AdminDashboard onSupportSessionStarted={handleSupportSessionStarted} /></Activity>}
+          {(page === 'adminDelivery' || mountedPages.has('adminDelivery')) && <Activity mode={page === 'adminDelivery' ? 'visible' : 'hidden'}><AdminDeliveryPage /></Activity>}
           </Suspense>
         </PageErrorBoundary>
       </div>

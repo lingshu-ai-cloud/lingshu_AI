@@ -1,33 +1,169 @@
+import { useEffect, useState } from 'react';
+import { ImagePlus } from 'lucide-react';
 import type { Page } from '../../App';
 import SocialContentWorkspace, { type SocialContentCreateRequest } from './SocialContentWorkspace';
 import SocialContentLanding, { type SocialContentLaunchOptions } from './SocialContentLanding';
+import SocialCreationWorkbench, {
+  type SocialCreationWorkbenchSeed,
+  type SocialCreationWorkbenchSubmit,
+} from './SocialCreationWorkbench';
+import { loadSocialContentStage, readSocialContentStage, type SocialContentStageProfile } from '../../lib/socialContentStage';
+
+type PlanningView = 'workbench' | 'creations';
+
+function creationPathFromRequest(request: SocialContentCreateRequest): SocialContentLaunchOptions['creationPath'] {
+  return request.creationPath || (request.sourceContext ? 'viral_replication' : 'material_processing');
+}
+
+function seedFromRequest(request?: SocialContentCreateRequest | null): SocialCreationWorkbenchSeed | undefined {
+  if (!request) return undefined;
+  return {
+    referenceTitle: request.sourceContext?.referenceTitle,
+    referenceThumbnail: request.sourceContext?.referenceThumbnail,
+    referenceMediaUrl: request.sourceContext?.referenceMediaUrl,
+    referenceContentType: request.sourceContext?.referenceContentType,
+    referenceLinks: request.prefill?.referenceLinks,
+    productId: request.prefill?.productId,
+    productName: request.prefill?.productName,
+  };
+}
 
 export default function SocialContentPlanningPage({
   onNavigate,
   onNavigateWithTask,
+  onLaunchStudio,
   taskOnly = false,
+  initialCreateRequest,
 }: {
   taskOnly?: boolean;
   onNavigate: (page: Page) => void;
   onNavigateWithTask: (page: Page, taskId: string) => void;
+  onLaunchStudio: (request: SocialContentCreateRequest) => void;
+  initialCreateRequest?: SocialContentCreateRequest | null;
 }) {
+  const [view, setView] = useState<PlanningView>(initialCreateRequest ? 'workbench' : 'creations');
+  const [chooserOpen, setChooserOpen] = useState(!taskOnly && !initialCreateRequest);
+  const [stageProfile, setStageProfile] = useState<SocialContentStageProfile | null>(() => readSocialContentStage());
+  const [launch, setLaunch] = useState<SocialContentLaunchOptions | null>(() => initialCreateRequest ? {
+    creationPath: creationPathFromRequest(initialCreateRequest),
+    materialInput: initialCreateRequest.materialInput || 'ready',
+    managedMode: initialCreateRequest.managedMode || 'one_click_managed',
+  } : null);
+  const [seed, setSeed] = useState<SocialCreationWorkbenchSeed | undefined>(() => seedFromRequest(initialCreateRequest));
+  const [sourceRequest, setSourceRequest] = useState<SocialContentCreateRequest | null>(initialCreateRequest || null);
+
+  useEffect(() => {
+    if (taskOnly) return;
+    let active = true;
+    void loadSocialContentStage().then(profile => { if (active) setStageProfile(profile); });
+    return () => { active = false; };
+  }, [taskOnly]);
+
+  useEffect(() => {
+    if (!initialCreateRequest) return;
+    setLaunch({
+      creationPath: creationPathFromRequest(initialCreateRequest),
+      materialInput: initialCreateRequest.materialInput || 'ready',
+      managedMode: initialCreateRequest.managedMode || 'one_click_managed',
+    });
+    setSeed(seedFromRequest(initialCreateRequest));
+    setSourceRequest(initialCreateRequest);
+    setChooserOpen(false);
+    setView('workbench');
+  }, [initialCreateRequest]);
+
   const startCreation = (options: SocialContentLaunchOptions) => {
-    window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: {
-      page: 'smartAssets', view: 'create', studioEntry: true,
-      contentCreationRequest: { requestId: Date.now(), themeId: 'product_value', mode: 'instant', ...options } satisfies SocialContentCreateRequest,
-    } }));
+    setLaunch(options);
+    setSeed(undefined);
+    setSourceRequest(null);
+    setChooserOpen(false);
+    setView('workbench');
   };
 
-  return (
-    <div className="h-full min-h-0 overflow-y-auto bg-[#f6f8f5]">
-      <main className="mx-auto max-w-[1440px] space-y-5 px-4 py-5 sm:px-8 sm:py-7">
-        {!taskOnly && <SocialContentLanding onStart={startCreation} />}
+  const startGeneration = (request: SocialCreationWorkbenchSubmit) => {
+    const primaryMaterial = request.uploadedMaterials[0];
+    if (primaryMaterial && request.creationPath === 'material_processing') {
+      try {
+        localStorage.setItem('ow_video_kickoff', JSON.stringify({
+          source: 'material_library',
+          productInfo: request.productName,
+          generatedVideo: {
+            id: primaryMaterial.id,
+            title: primaryMaterial.name,
+            url: primaryMaterial.url,
+            poster: primaryMaterial.poster,
+            duration: primaryMaterial.duration,
+            material: primaryMaterial,
+          },
+        }));
+      } catch { /* local handoff is optional */ }
+    }
 
-        <SocialContentWorkspace
-          onNavigate={onNavigate}
-          onNavigateWithTask={onNavigateWithTask}
+    onLaunchStudio({
+      ...(sourceRequest || {}),
+      requestId: request.requestId,
+      themeId: sourceRequest?.themeId || 'product_value',
+      mode: 'instant',
+      creationPath: request.creationPath,
+      materialInput: primaryMaterial ? 'ready' : launch?.materialInput || 'none',
+      managedMode: 'one_click_managed',
+      prefill: {
+        ...(sourceRequest?.prefill || {}),
+        title: request.title,
+        topic: sourceRequest?.prefill?.topic || request.title,
+        productId: request.productId,
+        productName: request.productName,
+        referenceLinks: request.referenceLinks,
+      },
+      sourceContext: sourceRequest?.sourceContext,
+      presenterAssetId: request.presenterAssetId || undefined,
+      specialRequirements: request.specialRequirements,
+    });
+  };
+
+  const selectViralReplication = () => {
+    setChooserOpen(false);
+    const url = new URL(window.location.href);
+    url.searchParams.delete('view');
+    url.searchParams.delete('productId');
+    url.searchParams.delete('productRef');
+    window.history.replaceState(window.history.state, '', url);
+    onNavigate('socialInspiration');
+  };
+
+  if (taskOnly) {
+    return <SocialContentWorkspace onNavigate={onNavigate} onNavigateWithTask={onNavigateWithTask} />;
+  }
+
+  return (
+    <div className="h-full min-h-0 bg-[#f6f8f5]">
+      {view === 'workbench' && launch ? (
+        <SocialCreationWorkbench
+          key={`${launch.creationPath}:${seed?.referenceTitle || 'new'}`}
+          mode={launch.creationPath}
+          seed={seed}
+          stageProfile={stageProfile || undefined}
+          onOpenChooser={() => setChooserOpen(true)}
+          onShowCreations={() => setView('creations')}
+          onGenerate={startGeneration}
         />
-      </main>
+      ) : (
+        <div className="h-full min-h-0 overflow-y-auto">
+          <main className="mx-auto max-w-[1440px] px-4 py-5 sm:px-8 sm:py-7">
+            <header className="mb-5 flex flex-wrap items-center justify-between gap-4">
+              <div><p className="text-[10px] font-black uppercase tracking-[0.14em] text-accent">内容制作</p><h1 className="mt-1 text-xl font-black text-text-primary">我的创作</h1><p className="mt-1 text-xs text-text-muted">查看正在生成的任务、制作进度和待验收内容。</p></div>
+              <button type="button" onClick={() => setChooserOpen(true)} className="inline-flex items-center gap-2 rounded-xl bg-[#173d31] px-4 py-2.5 text-xs font-black text-white shadow-sm hover:bg-[#245644]"><ImagePlus size={15} />新建内容</button>
+            </header>
+            <SocialContentWorkspace
+              onNavigate={onNavigate}
+              onNavigateWithTask={onNavigateWithTask}
+              onRequestCreate={() => setChooserOpen(true)}
+            />
+          </main>
+        </div>
+      )}
+
+      {chooserOpen && <SocialContentLanding onStart={startCreation} onSelectViralReplication={selectViralReplication} onClose={() => setChooserOpen(false)} />}
     </div>
   );
 }

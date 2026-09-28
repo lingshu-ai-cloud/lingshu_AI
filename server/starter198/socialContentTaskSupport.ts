@@ -215,6 +215,7 @@ export function defaultBrief(value: CreateSocialContentTaskInput) {
     productRef: value.productRef ?? null,
     requestedPresenterName: value.requestedPresenterName ?? null,
     requestedPresenterAssetId: value.requestedPresenterAssetId ?? null,
+    presenterAssetId: value.presenterAssetId ?? null,
     audience: value.audience ?? null,
     markets: value.markets ?? (themeDriven ? ['全球'] : []),
     languages: value.languages ?? (themeDriven ? ['中文'] : []),

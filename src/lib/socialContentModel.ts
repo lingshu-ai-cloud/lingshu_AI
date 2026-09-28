@@ -346,6 +346,8 @@ export interface SocialContentDraft {
   productId: string;
   /** Display-only product label retained for task titles and historic data. */
   productName: string;
+  /** Explicit authorized presenter selected for this production task. */
+  presenterAssetId: string;
   primaryGoal: string;
   audience: string;
   market: string;
@@ -384,6 +386,7 @@ export const EMPTY_SOCIAL_CONTENT_DRAFT: SocialContentDraft = {
   title: '',
   productId: '',
   productName: '',
+  presenterAssetId: '',
   primaryGoal: '',
   audience: '',
   market: '',

@@ -30,6 +30,7 @@ import AdPerformanceOverview from './AdPerformanceOverview';
 import AdManagedWorkspace from './AdManagedWorkspace';
 import { PlatformAdsManagedPreview, PlatformAdsPerformancePreview } from './PlatformAdsPreviewSections';
 import { SocialPlatformIcon } from './SocialPlatformIcon';
+import { createForeignTradeMockAdTasks, isForeignTradeMockId, isLocalForeignTradeMockEnabled } from '../mocks/foreignTradeOperations';
 
 const channels = [
   {
@@ -67,6 +68,16 @@ type Draft = AdManagement & Pick<PlatformAdTask, 'currency' | 'status' | 'versio
   createdAt?: string;
 };
 const taskToDraft = (task: PlatformAdTask): Draft => ({ ...task, currency: task.currency || 'USD', budget: String(task.budget) });
+const mockCreativePerformance: Record<string, { spend: string; inquiries: number; cpl: string; hook: string; advice: string }> = {
+  'mock-ft-ad-saudi-packaging': { spend: 'USD 1,280', inquiries: 6, cpl: 'USD 213', hook: '工厂现场 + “6 条线如何回本”阿语首屏', advice: '首屏停留最好；保留 ROI 钩子，补一版当地安装与培训镜头。' },
+  'mock-ft-ad-germany-battery': { spend: 'USD 1,041', inquiries: 4, cpl: 'USD 260', hook: '55 分钟换型降至 12 分钟的前后对比', advice: '工程师受众点击稳定；下一版强化 OPC UA 与 CE 文件边界。' },
+  'mock-ft-ad-mexico-medical': { spend: 'USD 800', inquiries: 2, cpl: 'USD 400', hook: '西语工程师演示 FAT 数据追溯字段', advice: '有效询盘率高但量小；复制西语口播，测试质量经理受众。' },
+};
+const withLocalMockAdTasks = (tasks: PlatformAdTask[]) => {
+  if (!isLocalForeignTradeMockEnabled()) return tasks;
+  const ids = new Set(tasks.map(task => task.id));
+  return [...tasks, ...createForeignTradeMockAdTasks().filter(task => !ids.has(task.id))];
+};
 const toLocalDateTime = (value: string) => { if (!value) return ''; const date = new Date(value); return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16); };
 
 export default function PlatformAdsPage({
@@ -124,8 +135,12 @@ export default function PlatformAdsPage({
     if (previewMode) { setLoadingTasks(false); return; }
     let active = true;
     platformAdsApi.listTasks()
-      .then((items) => { if (active) setDrafts(items.map(taskToDraft)); })
-      .catch((error: Error) => { if (active) setNotice(`草稿加载失败：${error.message}`); })
+      .then((items) => { if (active) setDrafts(withLocalMockAdTasks(items).map(taskToDraft)); })
+      .catch((error: Error) => {
+        if (!active) return;
+        setDrafts(withLocalMockAdTasks([]).map(taskToDraft));
+        if (!import.meta.env.DEV) setNotice(`草稿加载失败：${error.message}`);
+      })
       .finally(() => { if (active) setLoadingTasks(false); });
     return () => { active = false; };
   }, [previewMode]);
@@ -217,6 +232,7 @@ export default function PlatformAdsPage({
   return (
     <div className="ads-workspace">
       <main className="ads-main">
+        {isLocalForeignTradeMockEnabled() && <div className="ads-notice" role="status"><Check size={16}/><span><strong>本地模拟 · 外贸工厂投放</strong>　展示中东、欧洲和拉美市场的跨平台计划与近 7 天效果，不会触发真实广告操作。</span></div>}
         <div className="ads-page-purpose">
           <strong>{page === 'adsManaged' ? 'AI 托管' : page === 'adsPlans' ? '投放计划' : '投放总览'}</strong>
           <p>{page === 'adsManaged' ? '查看 Agent 建议、审批与授权边界，追踪执行依据和异常。' : page === 'adsPlans' ? '配置目标、素材与预算，审阅方案并追踪平台执行回执。' : '查看花费、效果与数据覆盖，定位需要处理的投放计划。'}</p>
@@ -498,7 +514,12 @@ export default function PlatformAdsPage({
                 <ArrowRight size={15} />
               </button>
             </div>
-            <section className="ads-card ads-empty">
+            {isLocalForeignTradeMockEnabled() && drafts.some(draft => isForeignTradeMockId(draft.id)) ? <section className="ads-card">
+              <div className="ads-section-title"><div><h2>外贸素材表现</h2><p className="ads-muted">近 7 天本地模拟数据，与整体表现中的中东、欧洲和拉美投放计划对应。</p></div></div>
+              <div className="ads-table-wrap"><table><thead><tr><th>素材 / 开头钩子</th><th>渠道 / 市场</th><th>花费</th><th>有效询盘</th><th>单条成本</th><th>Agent 建议</th></tr></thead><tbody>
+                {drafts.filter(draft => isForeignTradeMockId(draft.id)).map(draft => { const metric = mockCreativePerformance[draft.id]; return <tr key={draft.id}><td><strong>{draft.video}</strong><small>{metric?.hook}</small></td><td><span className="inline-flex items-center gap-1.5">{draft.channels.map(name => <span key={name} title={name}><PlatformLogoGroup value={name} size={18}/></span>)}</span><small>{draft.market}</small></td><td>{metric?.spend}</td><td>{metric?.inquiries}</td><td>{metric?.cpl}</td><td>{metric?.advice}</td></tr>; })}
+              </tbody></table></div>
+            </section> : <section className="ads-card ads-empty">
               <Layers3 size={40} />
               <h3>还没有关联投放的素材</h3>
               <p>
@@ -512,7 +533,7 @@ export default function PlatformAdsPage({
               >
                 前往内容创作 <ArrowRight size={15} />
               </button>
-            </section>
+            </section>}
           </>
         )}
 

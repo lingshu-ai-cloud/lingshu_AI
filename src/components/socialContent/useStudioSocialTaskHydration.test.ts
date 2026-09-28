@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import type { SocialContentTaskDetail } from '../../../shared/contracts/socialContentWorkflow.js';
-import { socialTaskToStudioSeed, socialThemeToStudioTheme } from './useStudioSocialTaskHydration.js';
+import { socialTaskShotMaterialBindings, socialTaskToStudioSeed, socialThemeToStudioTheme } from './useStudioSocialTaskHydration.js';
 import { createSocialAssetSupplyPlan } from '../../../shared/socialContentAssetSupply.js';
 
 const task = {
@@ -30,6 +30,23 @@ assert.equal(seed.sellingPoints, '', 'free-text brandNotes must not hydrate Stud
 assert.match(seed.factVerificationNotice, /未作为已确认企业事实导入/);
 assert.doesNotMatch(seed.productInfo, /户外便携储能电源|容量与认证|不得承诺/);
 assert.equal(seed.audience, '户外露营家庭；目标市场：德国、法国');
+assert.deepEqual(seed.shotMaterialBindings, []);
+
+const shotMaterialTask = {
+  ...task,
+  shotMaterialMap: [
+    { shotId: 'shot-1', customerAssetIds: ['material-first'], generatedAssetIds: [], licensedAssetIds: [], sourceStrategy: 'customer_asset', truthBoundary: {}, functionalEquivalentReplacement: {} },
+    { shotId: 'shot-2', customerAssetIds: [], generatedAssetIds: ['material-second'], licensedAssetIds: [], sourceStrategy: 'generated_asset', truthBoundary: {}, functionalEquivalentReplacement: {} },
+  ],
+} as unknown as SocialContentTaskDetail;
+assert.deepEqual(socialTaskShotMaterialBindings(shotMaterialTask), [
+  { shotIndex: 0, materialId: 'material-first' },
+  { shotIndex: 1, materialId: 'material-second' },
+]);
+assert.deepEqual(socialTaskToStudioSeed(shotMaterialTask).shotMaterialBindings, [
+  { shotIndex: 0, materialId: 'material-first' },
+  { shotIndex: 1, materialId: 'material-second' },
+]);
 
 const poster = socialTaskToStudioSeed({ ...task, brief: { ...task.brief, formats: ['image_post'], languages: ['未支持语言'], platforms: ['instagram'], aspectRatio: null }, sources: [] });
 assert.equal(poster.contentMode, 'poster');
