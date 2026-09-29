@@ -57,9 +57,14 @@ assert.match(planning, /useState\(false\)/, 'the creation chooser must not cover
 assert.match(historyHome, /爆款复刻/);
 assert.match(historyHome, /自由创作/);
 assert.match(historyHome, /PAGE_SIZE = 8/);
-assert.match(historyHome, /最新待验收成片/);
+assert.match(historyHome, /最新成片/);
 assert.match(historyHome, /languageRenderOutputs/);
 assert.match(historyHome, /status !== 'template'/);
+assert.match(historyHome, /feishu-20260929-final\.mp4/);
+assert.match(historyHome, /setPreviewVideoOpen\(true\)/,
+  'the completed video must open a direct preview instead of navigating into the editor');
+assert.match(historyHome, /<video autoPlay controls playsInline preload="auto"/,
+  'the direct completed-video preview must open as a playable video');
 assert.match(landing, /自由创作/);
 assert.match(landing, /爆款复刻/);
 assert.match(landing, /进入逐句口播与画面制作台/);
