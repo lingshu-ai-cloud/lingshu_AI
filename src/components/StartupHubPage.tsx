@@ -30,6 +30,7 @@ type HubView = 'overview' | 'company' | 'collaboration' | 'customers' | 'product
 
 const EMPTY_SNAPSHOT: StartupHubSnapshot = {
   company: null, tasks: [], taxRecords: [], announcements: [], products: [],
+  productDocuments: [], productReviews: [], developmentTasks: [],
   apiEndpoints: [], logSources: [], issues: [], resources: [], deployments: [], members: [], documents: [],
   decisions: [], sops: [], sopRuns: [], capabilities: [], leads: [], leadActivities: [], leadChatImports: [], updatedAt: null,
 };
@@ -83,17 +84,20 @@ function formatUpdatedAt(value: string | null) {
 
 function Overview({ snapshot, onNavigate }: { snapshot: StartupHubSnapshot; onNavigate: (view: HubView) => void }) {
   const counts = countOpen(snapshot);
-  const totalRecords = snapshot.tasks.length + snapshot.taxRecords.length + snapshot.announcements.length + snapshot.products.length + snapshot.apiEndpoints.length + snapshot.logSources.length + snapshot.issues.length + snapshot.resources.length + snapshot.deployments.length + snapshot.members.length + snapshot.documents.length + snapshot.decisions.length + snapshot.sops.length + snapshot.sopRuns.length + snapshot.capabilities.length + snapshot.leads.length + snapshot.leadActivities.length + snapshot.leadChatImports.length;
+  const totalRecords = snapshot.tasks.length + snapshot.taxRecords.length + snapshot.announcements.length + snapshot.products.length + snapshot.productDocuments.length + snapshot.productReviews.length + snapshot.developmentTasks.length + snapshot.apiEndpoints.length + snapshot.logSources.length + snapshot.issues.length + snapshot.resources.length + snapshot.deployments.length + snapshot.members.length + snapshot.documents.length + snapshot.decisions.length + snapshot.sops.length + snapshot.sopRuns.length + snapshot.capabilities.length + snapshot.leads.length + snapshot.leadActivities.length + snapshot.leadChatImports.length;
   const cards = [
     { view: 'company' as const, label: '公司中心', value: snapshot.company ? snapshot.company.name : '未配置', detail: counts.taxes ? `${counts.taxes} 项财税事项待处理` : `${snapshot.documents.length} 份公司文件`, icon: Building2 },
     { view: 'collaboration' as const, label: '协作中心', value: `${counts.tasks} 项待办`, detail: `${snapshot.sopRuns.filter(item => item.status === 'running').length} 个流程执行中 · ${counts.blockedSops} 个受阻`, icon: Users },
     { view: 'customers' as const, label: '客户资源', value: `${snapshot.leads.filter(item => !['won', 'lost'].includes(item.stage)).length} 条推进中`, detail: `${snapshot.leads.filter(item => item.intention === 'high').length} 条高意向 · ${snapshot.leads.filter(item => isPastInstant(item.nextFollowUpDate) && !['won', 'lost'].includes(item.stage)).length} 条逾期跟进`, icon: Handshake },
-    { view: 'product' as const, label: '产品', value: `${snapshot.products.length} 个产品`, detail: `${snapshot.apiEndpoints.length} 个接口 · ${counts.issues} 个未关闭问题`, icon: Boxes },
+    { view: 'product' as const, label: '产品', value: `${snapshot.products.length} 个产品`, detail: `${snapshot.developmentTasks.filter(item => item.status !== 'done').length} 个开发任务 · ${counts.issues} 个 Bug`, icon: Boxes },
     { view: 'infrastructure' as const, label: '服务器与设置', value: `${snapshot.resources.length} 项资源`, detail: `${snapshot.deployments.filter(item => item.status === 'running').length} 个部署运行中 · ${counts.resources} 项告警`, icon: ServerCog },
   ];
   const risks = [
     ...snapshot.tasks.filter(item => item.status === 'open' && isPastDate(item.dueDate)).map(item => ({ id: `task-${item.id}`, title: item.title, meta: `${isCollaborationTask(item.area) ? '协作任务' : '公司事项'}逾期 · ${item.owner} · 截止 ${item.dueDate}`, level: item.priority === 'high' ? 0 : 1, view: isCollaborationTask(item.area) ? 'collaboration' as const : 'company' as const })),
     ...snapshot.taxRecords.filter(item => !['filed', 'paid'].includes(item.status) && isPastDate(item.dueDate)).map(item => ({ id: `tax-${item.id}`, title: item.title, meta: `报税逾期 · ${item.owner} · 截止 ${item.dueDate}`, level: 0, view: 'company' as const })),
+    ...snapshot.developmentTasks.filter(item => item.status === 'blocked').map(item => ({ id: `development-blocked-${item.id}`, title: item.title, meta: `开发任务阻塞 · ${item.assignee}${item.blockedReason ? ` · ${item.blockedReason}` : ''}`, level: 1, view: 'product' as const })),
+    ...snapshot.developmentTasks.filter(item => item.status !== 'done' && item.status !== 'blocked' && isPastDate(item.dueDate)).map(item => ({ id: `development-overdue-${item.id}`, title: item.title, meta: `开发任务逾期 · ${item.assignee} · 截止 ${item.dueDate}`, level: item.priority === 'critical' ? 0 : 1, view: 'product' as const })),
+    ...snapshot.productReviews.filter(item => item.status === 'changes_requested').map(item => ({ id: `review-${item.id}`, title: item.title, meta: `${item.type === 'requirements' ? '需求评审' : '技术评审'}要求修改 · ${item.owner}`, level: 2, view: 'product' as const })),
     ...snapshot.issues.filter(item => item.status !== 'closed' && ['critical', 'high'].includes(item.severity)).map(item => ({ id: `issue-${item.id}`, title: item.title, meta: `${item.severity === 'critical' ? '严重事故' : '高优问题'} · ${item.assignee}`, level: item.severity === 'critical' ? 0 : 1, view: 'product' as const })),
     ...snapshot.resources.filter(item => ['warning', 'offline'].includes(item.status)).map(item => ({ id: `resource-${item.id}`, title: item.name, meta: `${item.status === 'offline' ? '资源离线' : '资源告警'} · ${item.owner} · ${item.environment}`, level: item.status === 'offline' ? 0 : 1, view: 'infrastructure' as const })),
     ...snapshot.resources.filter(item => { const days = daysUntil(item.renewalDate); return days !== null && days <= 30; }).map(item => { const days = daysUntil(item.renewalDate) || 0; return ({ id: `renewal-${item.id}`, title: item.name, meta: days < 0 ? `订阅已逾期 ${Math.abs(days)} 天 · ${item.owner}` : `${days} 天后需要续费 · ${item.owner}`, level: days < 0 ? 0 : 2, view: 'infrastructure' as const }); }),
@@ -109,6 +113,7 @@ function Overview({ snapshot, onNavigate }: { snapshot: StartupHubSnapshot; onNa
     { label: '公司主体资料已确认', passed: Boolean(snapshot.company) },
     { label: '团队责任人可分配', passed: snapshot.members.some(item => item.status === 'active') },
     { label: '产品有问题定义和成功指标', passed: snapshot.products.length > 0 && snapshot.products.every(item => Boolean(item.customerProblem && item.successMetric)) },
+    { label: '研发有 PRD、评审与明确分工', passed: snapshot.products.length > 0 && snapshot.productDocuments.length > 0 && snapshot.productReviews.length > 0 && snapshot.developmentTasks.length > 0 },
     { label: '关键工作已有可执行 SOP', passed: snapshot.sops.some(item => item.status === 'active') },
     { label: '客户推进都有下一步动作', passed: snapshot.leads.length > 0 && snapshot.leads.filter(item => !['won', 'lost'].includes(item.stage)).every(item => Boolean(item.nextAction && item.nextFollowUpDate)) },
     { label: '生产日志可以追踪', passed: snapshot.logSources.some(item => item.status === 'connected') },
@@ -119,6 +124,9 @@ function Overview({ snapshot, onNavigate }: { snapshot: StartupHubSnapshot; onNa
     ...snapshot.documents.map(item => ({ id: item.id, title: item.name, meta: '公司文件', updatedAt: item.uploadedAt, view: 'company' as const })),
     ...snapshot.announcements.map(item => ({ id: item.id, title: item.title, meta: `团队同步 · ${item.audience}`, updatedAt: item.updatedAt, view: 'collaboration' as const })),
     ...snapshot.products.map(item => ({ id: item.id, title: item.name, meta: `产品 · ${item.owner}`, updatedAt: item.updatedAt, view: 'product' as const })),
+    ...snapshot.productDocuments.map(item => ({ id: item.id, title: item.title, meta: `PRD ${item.version} · ${item.owner}`, updatedAt: item.updatedAt, view: 'product' as const })),
+    ...snapshot.productReviews.map(item => ({ id: item.id, title: item.title, meta: `${item.type === 'requirements' ? '需求评审' : '技术评审'} · ${item.owner}`, updatedAt: item.updatedAt, view: 'product' as const })),
+    ...snapshot.developmentTasks.map(item => ({ id: item.id, title: item.title, meta: `开发任务 · ${item.assignee}`, updatedAt: item.updatedAt, view: 'product' as const })),
     ...snapshot.issues.map(item => ({ id: item.id, title: item.title, meta: `问题 · ${item.assignee}`, updatedAt: item.updatedAt, view: 'product' as const })),
     ...snapshot.logSources.map(item => ({ id: item.id, title: item.name, meta: `日志源 · ${item.environment}`, updatedAt: item.updatedAt, view: 'product' as const })),
     ...snapshot.resources.map(item => ({ id: item.id, title: item.name, meta: `基础设施 · ${item.environment}`, updatedAt: item.updatedAt, view: 'infrastructure' as const })),

@@ -1,4 +1,4 @@
-export type StartupHubRecordKind = 'tasks' | 'taxRecords' | 'announcements' | 'products' | 'apiEndpoints' | 'logSources' | 'issues' | 'resources' | 'deployments' | 'members' | 'decisions' | 'sops' | 'sopRuns' | 'capabilities' | 'leads' | 'leadActivities';
+export type StartupHubRecordKind = 'tasks' | 'taxRecords' | 'announcements' | 'products' | 'productDocuments' | 'productReviews' | 'developmentTasks' | 'apiEndpoints' | 'logSources' | 'issues' | 'resources' | 'deployments' | 'members' | 'decisions' | 'sops' | 'sopRuns' | 'capabilities' | 'leads' | 'leadActivities';
 
 export interface StartupHubBaseRecord {
   id: string;
@@ -75,6 +75,46 @@ export interface StartupProduct extends StartupHubBaseRecord {
   targetDate?: string;
 }
 
+export interface StartupProductDocument extends StartupHubBaseRecord {
+  productId: string;
+  title: string;
+  owner: string;
+  reviewers: string[];
+  status: 'draft' | 'review' | 'approved' | 'archived';
+  version: string;
+  content: string;
+}
+
+export interface StartupProductReview extends StartupHubBaseRecord {
+  productId: string;
+  documentId?: string;
+  type: 'requirements' | 'technical';
+  title: string;
+  owner: string;
+  reviewers: string[];
+  status: 'pending' | 'in_review' | 'approved' | 'changes_requested';
+  scheduledAt?: string;
+  checklist: string[];
+  decision?: string;
+  notes?: string;
+}
+
+export interface StartupDevelopmentTask extends StartupHubBaseRecord {
+  productId: string;
+  documentId?: string;
+  title: string;
+  type: 'frontend' | 'backend' | 'fullstack' | 'design' | 'qa' | 'devops' | 'other';
+  assignee: string;
+  reviewer?: string;
+  status: 'backlog' | 'ready' | 'in_progress' | 'in_review' | 'blocked' | 'done';
+  priority: 'critical' | 'high' | 'medium' | 'low';
+  dueDate?: string;
+  estimatePoints?: number;
+  acceptanceCriteria: string;
+  branch?: string;
+  blockedReason?: string;
+}
+
 export interface StartupApiEndpoint extends StartupHubBaseRecord {
   name: string;
   method: string;
@@ -95,6 +135,14 @@ export interface StartupIssue extends StartupHubBaseRecord {
   apiEndpointId?: string;
   resourceId?: string;
   dueDate?: string;
+  reportedBy?: string;
+  environment?: string;
+  reproductionSteps?: string;
+  expectedBehavior?: string;
+  actualBehavior?: string;
+  rootCause?: string;
+  resolution?: string;
+  linkedTaskId?: string;
 }
 
 export interface StartupLogSource extends StartupHubBaseRecord {
@@ -255,6 +303,9 @@ export interface StartupHubSnapshot {
   taxRecords: StartupTaxRecord[];
   announcements: StartupAnnouncement[];
   products: StartupProduct[];
+  productDocuments: StartupProductDocument[];
+  productReviews: StartupProductReview[];
+  developmentTasks: StartupDevelopmentTask[];
   apiEndpoints: StartupApiEndpoint[];
   logSources: StartupLogSource[];
   issues: StartupIssue[];
@@ -277,6 +328,9 @@ export type StartupHubRecordMap = {
   taxRecords: StartupTaxRecord;
   announcements: StartupAnnouncement;
   products: StartupProduct;
+  productDocuments: StartupProductDocument;
+  productReviews: StartupProductReview;
+  developmentTasks: StartupDevelopmentTask;
   apiEndpoints: StartupApiEndpoint;
   logSources: StartupLogSource;
   issues: StartupIssue;

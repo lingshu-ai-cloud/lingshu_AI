@@ -2625,14 +2625,27 @@ videosRouter.get('/:id/media', async (req, res) => {
   if (!record) { res.status(404).json({ error: 'Not found' }); return; }
   if (record.tenantId !== tenantId && !await requireAdminUser(req)) { res.status(404).json({ error: 'Not found' }); return; }
   const analysis = parseJsonRecord<Record<string, unknown>>(record.aiAnalysis, {});
-  const cosKey = String(analysis.videoObjectKey || '');
-  if (cosKey) {
-    if (!await streamCrawlerCosObject(res, cosKey, req.headers.range)) res.status(404).json({ error: 'COS video not found' });
+  const filename = String(record.videoFileId || '');
+  const localReference = localReferenceVideoPath(filename, String(record.tenantId || ''));
+  // Imports are mirrored locally before object-storage upload. Prefer that durable
+  // local copy so a temporary COS outage cannot break preview or stop the server.
+  if (localReference && fs.existsSync(localReference)) {
+    res.setHeader('Cache-Control', 'private, max-age=3600');
+    res.type('mp4').sendFile(localReference);
     return;
   }
-  const filename = String(record.videoFileId || '');
+  const cosKey = String(analysis.videoObjectKey || '');
+  if (cosKey) {
+    try {
+      if (!await streamCrawlerCosObject(res, cosKey, req.headers.range)) res.status(404).json({ error: 'COS video not found' });
+    } catch (error) {
+      console.warn('[videos] object storage preview unavailable:', error instanceof Error ? error.message : error);
+      if (!res.headersSent) res.status(502).json({ error: 'video_storage_temporarily_unavailable' });
+      else res.end();
+    }
+    return;
+  }
   if (!filename) { res.status(404).json({ error: 'Video not stored' }); return; }
-  const localReference = localReferenceVideoPath(filename, String(record.tenantId || ''));
   if (localReference) {
     if (!fs.existsSync(localReference)) { res.status(404).json({ error: 'Video not stored' }); return; }
     res.setHeader('Cache-Control', 'private, max-age=3600');

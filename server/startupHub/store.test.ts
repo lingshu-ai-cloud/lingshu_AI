@@ -28,6 +28,9 @@ try {
   const empty = await readStartupHubSnapshot('tenant-a');
   assert.equal(empty.company, null);
   assert.deepEqual(empty.products, []);
+  assert.deepEqual(empty.productDocuments, []);
+  assert.deepEqual(empty.productReviews, []);
+  assert.deepEqual(empty.developmentTasks, []);
   assert.deepEqual(empty.members, []);
   assert.deepEqual(empty.documents, []);
   assert.deepEqual(empty.decisions, []);
@@ -60,6 +63,58 @@ try {
     successMetric: '由真实使用结果验证',
     targetDate: '2027-01-31',
   });
+  const productDocument = await createStartupHubRecord('tenant-a', 'owner-a', 'productDocuments', {
+    productId: product.id,
+    title: '协作中台 PRD',
+    owner: '产品负责人',
+    reviewers: ['技术负责人'],
+    status: 'review',
+    version: 'v0.2',
+    content: '# 协作中台\n\n## 验收标准\n\n- 团队任务可追踪',
+  });
+  const productReview = await createStartupHubRecord('tenant-a', 'owner-a', 'productReviews', {
+    productId: product.id,
+    documentId: productDocument.id,
+    type: 'requirements',
+    title: '协作中台需求评审',
+    owner: '产品负责人',
+    reviewers: ['技术负责人', '测试负责人'],
+    status: 'in_review',
+    checklist: ['范围明确', '验收标准可测试'],
+  });
+  const developmentTask = await createStartupHubRecord('tenant-a', 'owner-a', 'developmentTasks', {
+    productId: product.id,
+    documentId: productDocument.id,
+    title: '实现 PRD 文档管理',
+    type: 'fullstack',
+    assignee: '开发负责人',
+    reviewer: '产品负责人',
+    status: 'in_progress',
+    priority: 'high',
+    estimatePoints: 5,
+    acceptanceCriteria: 'Markdown 文档可以新建、修改、导入和导出',
+    branch: 'feature/product-collaboration',
+  });
+  const productIssue = await createStartupHubRecord('tenant-a', 'owner-a', 'issues', {
+    title: 'Markdown 导入后换行异常',
+    severity: 'medium',
+    status: 'investigating',
+    source: '测试',
+    assignee: '开发负责人',
+    productId: product.id,
+    linkedTaskId: developmentTask.id,
+    reportedBy: '测试负责人',
+    environment: '测试',
+    reproductionSteps: '导入包含多级标题的 Markdown 文档',
+    expectedBehavior: '保留原始换行',
+    actualBehavior: '部分换行丢失',
+  });
+  const updatedIssue = await updateStartupHubRecord('tenant-a', 'owner-a', 'issues', productIssue.id, {
+    status: 'fixing',
+    rootCause: '读取时错误压缩空白字符',
+    resolution: '按原始文本读取并增加回归测试',
+  });
+  assert.equal(updatedIssue.status, 'fixing');
   const member = await createStartupHubRecord('tenant-a', 'owner-a', 'members', {
     name: '协作者',
     email: 'member@example.com',
@@ -163,6 +218,11 @@ try {
   assert.equal(populated.company?.name, '测试公司');
   assert.equal(populated.products[0]?.id, product.id);
   assert.equal(populated.products[0]?.customerProblem, '减少创业团队在多个工具间切换的成本');
+  assert.equal(populated.productDocuments[0]?.id, productDocument.id);
+  assert.equal(populated.productDocuments[0]?.content.includes('验收标准'), true);
+  assert.equal(populated.productReviews[0]?.id, productReview.id);
+  assert.equal(populated.developmentTasks[0]?.id, developmentTask.id);
+  assert.equal(populated.issues[0]?.rootCause, '读取时错误压缩空白字符');
   assert.deepEqual(populated.announcements[0]?.acknowledgedBy, ['member-a']);
   assert.equal(populated.documents[0]?.id, document.id);
   assert.equal(populated.decisions[0]?.id, decision.id);

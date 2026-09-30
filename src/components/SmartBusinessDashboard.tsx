@@ -561,11 +561,6 @@ function MatrixView({ data, onRefresh, onNavigate, onGeneratePlan }: {
 
   return <div className="space-y-5">
     <section className="overflow-hidden rounded-3xl border border-emerald-200 bg-[#102d25] text-white shadow-sm">
-      <div className="border-b border-white/10 px-5 py-5 sm:px-6">
-        <p className="text-[10px] font-black tracking-[0.14em] text-emerald-300">多平台社媒矩阵 · 经营蓝图</p>
-        <h2 className="mt-1 text-2xl font-black">从账号、内容、运营到获客的完整系统</h2>
-        <p className="mt-2 max-w-4xl text-sm leading-6 text-emerald-50/70">经营 Agent 负责目标、平台、账号数量与预算；编导 Agent 固化账号表达宪法；内容 Agent 再按栏目、素材和质量标准生产。</p>
-      </div>
       <div className="grid gap-px bg-white/10 sm:grid-cols-2 xl:grid-cols-4">
         {matrixSystemLayers.map((layer, index) => <article key={layer.label} className={`bg-[#102d25] p-5 xl:col-span-2 ${layer.label === "运营矩阵" || layer.label === "获客矩阵" ? "sm:col-span-2" : ""}`}>
           <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-400/15 text-xs font-black text-emerald-300">0{index + 1}</span>

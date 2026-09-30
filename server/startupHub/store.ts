@@ -21,6 +21,9 @@ import type {
   StartupLeadChatImport,
   StartupMember,
   StartupProduct,
+  StartupProductDocument,
+  StartupProductReview,
+  StartupDevelopmentTask,
   StartupResource,
   StartupSop,
   StartupSopRun,
@@ -32,7 +35,7 @@ interface StoredDocument extends StartupHubSnapshot {
   schemaVersion: 1;
 }
 
-const COLLECTIONS = new Set<StartupHubRecordKind>(['tasks', 'taxRecords', 'announcements', 'products', 'apiEndpoints', 'logSources', 'issues', 'resources', 'deployments', 'members', 'decisions', 'sops', 'sopRuns', 'capabilities', 'leads', 'leadActivities']);
+const COLLECTIONS = new Set<StartupHubRecordKind>(['tasks', 'taxRecords', 'announcements', 'products', 'productDocuments', 'productReviews', 'developmentTasks', 'apiEndpoints', 'logSources', 'issues', 'resources', 'deployments', 'members', 'decisions', 'sops', 'sopRuns', 'capabilities', 'leads', 'leadActivities']);
 const SENSITIVE_KEY = /(password|passwd|passphrase|cookie|token|secret|credential|api[_-]?key|authorization|private[_-]?key|session[_-]?key)/i;
 const queues = new Map<string, Promise<void>>();
 
@@ -52,6 +55,9 @@ function emptyDocument(): StoredDocument {
     taxRecords: [],
     announcements: [],
     products: [],
+    productDocuments: [],
+    productReviews: [],
+    developmentTasks: [],
     apiEndpoints: [],
     logSources: [],
     issues: [],
@@ -160,11 +166,20 @@ function sanitizeInput<K extends StartupHubRecordKind>(kind: K, value: unknown):
     case 'products':
       result = { name: text(input.name, 'name'), owner: text(input.owner, 'owner', 120), status: enumValue(input.status, 'status', ['planning', 'active', 'paused', 'archived']), version: optionalText(input.version, 'version', 80), description: optionalText(input.description, 'description', 1000), customerProblem: optionalText(input.customerProblem, 'customerProblem', 1000), successMetric: optionalText(input.successMetric, 'successMetric', 500), targetDate: optionalDate(input.targetDate, 'targetDate') } satisfies Omit<StartupProduct, 'id' | 'createdAt' | 'updatedAt' | 'createdBy'>;
       break;
+    case 'productDocuments':
+      result = { productId: text(input.productId, 'productId', 100), title: text(input.title, 'title'), owner: text(input.owner, 'owner', 120), reviewers: stringArray(input.reviewers, 'reviewers', 10, 120), status: enumValue(input.status, 'status', ['draft', 'review', 'approved', 'archived']), version: text(input.version, 'version', 40), content: text(input.content, 'content', 100000) } satisfies Omit<StartupProductDocument, 'id' | 'createdAt' | 'updatedAt' | 'createdBy'>;
+      break;
+    case 'productReviews':
+      result = { productId: text(input.productId, 'productId', 100), documentId: optionalText(input.documentId, 'documentId', 100), type: enumValue(input.type, 'type', ['requirements', 'technical']), title: text(input.title, 'title'), owner: text(input.owner, 'owner', 120), reviewers: stringArray(input.reviewers, 'reviewers', 10, 120), status: enumValue(input.status, 'status', ['pending', 'in_review', 'approved', 'changes_requested']), scheduledAt: optionalDate(input.scheduledAt, 'scheduledAt'), checklist: stringArray(input.checklist, 'checklist', 30, 500), decision: optionalText(input.decision, 'decision', 5000), notes: optionalText(input.notes, 'notes', 5000) } satisfies Omit<StartupProductReview, 'id' | 'createdAt' | 'updatedAt' | 'createdBy'>;
+      break;
+    case 'developmentTasks':
+      result = { productId: text(input.productId, 'productId', 100), documentId: optionalText(input.documentId, 'documentId', 100), title: text(input.title, 'title'), type: enumValue(input.type, 'type', ['frontend', 'backend', 'fullstack', 'design', 'qa', 'devops', 'other']), assignee: text(input.assignee, 'assignee', 120), reviewer: optionalText(input.reviewer, 'reviewer', 120), status: enumValue(input.status, 'status', ['backlog', 'ready', 'in_progress', 'in_review', 'blocked', 'done']), priority: enumValue(input.priority, 'priority', ['critical', 'high', 'medium', 'low']), dueDate: optionalDate(input.dueDate, 'dueDate'), estimatePoints: optionalNumber(input.estimatePoints, 'estimatePoints', 1000), acceptanceCriteria: text(input.acceptanceCriteria, 'acceptanceCriteria', 5000), branch: optionalText(input.branch, 'branch', 200), blockedReason: optionalText(input.blockedReason, 'blockedReason', 2000) } satisfies Omit<StartupDevelopmentTask, 'id' | 'createdAt' | 'updatedAt' | 'createdBy'>;
+      break;
     case 'apiEndpoints':
       result = { name: text(input.name, 'name'), method: text(input.method, 'method', 12).toUpperCase(), path: text(input.path, 'path', 500), environment: text(input.environment, 'environment', 80), owner: text(input.owner, 'owner', 120), productId: optionalText(input.productId, 'productId', 100), status: enumValue(input.status, 'status', ['designing', 'developing', 'testing', 'production', 'deprecated']) } satisfies Omit<StartupApiEndpoint, 'id' | 'createdAt' | 'updatedAt' | 'createdBy'>;
       break;
     case 'issues':
-      result = { title: text(input.title, 'title'), severity: enumValue(input.severity, 'severity', ['critical', 'high', 'medium', 'low']), status: enumValue(input.status, 'status', ['open', 'investigating', 'fixing', 'verifying', 'closed']), source: text(input.source, 'source', 120), assignee: text(input.assignee, 'assignee', 120), productId: optionalText(input.productId, 'productId', 100), apiEndpointId: optionalText(input.apiEndpointId, 'apiEndpointId', 100), resourceId: optionalText(input.resourceId, 'resourceId', 100), dueDate: optionalDate(input.dueDate, 'dueDate') } satisfies Omit<StartupIssue, 'id' | 'createdAt' | 'updatedAt' | 'createdBy'>;
+      result = { title: text(input.title, 'title'), severity: enumValue(input.severity, 'severity', ['critical', 'high', 'medium', 'low']), status: enumValue(input.status, 'status', ['open', 'investigating', 'fixing', 'verifying', 'closed']), source: text(input.source, 'source', 120), assignee: text(input.assignee, 'assignee', 120), productId: optionalText(input.productId, 'productId', 100), apiEndpointId: optionalText(input.apiEndpointId, 'apiEndpointId', 100), resourceId: optionalText(input.resourceId, 'resourceId', 100), dueDate: optionalDate(input.dueDate, 'dueDate'), reportedBy: optionalText(input.reportedBy, 'reportedBy', 120), environment: optionalText(input.environment, 'environment', 80), reproductionSteps: optionalText(input.reproductionSteps, 'reproductionSteps', 5000), expectedBehavior: optionalText(input.expectedBehavior, 'expectedBehavior', 3000), actualBehavior: optionalText(input.actualBehavior, 'actualBehavior', 3000), rootCause: optionalText(input.rootCause, 'rootCause', 5000), resolution: optionalText(input.resolution, 'resolution', 5000), linkedTaskId: optionalText(input.linkedTaskId, 'linkedTaskId', 100) } satisfies Omit<StartupIssue, 'id' | 'createdAt' | 'updatedAt' | 'createdBy'>;
       break;
     case 'logSources':
       result = { name: text(input.name, 'name'), provider: text(input.provider, 'provider', 120), environment: text(input.environment, 'environment', 80), owner: text(input.owner, 'owner', 120), status: enumValue(input.status, 'status', ['connected', 'disconnected', 'error']), queryUrl: optionalText(input.queryUrl, 'queryUrl', 500) } satisfies Omit<StartupLogSource, 'id' | 'createdAt' | 'updatedAt' | 'createdBy'>;
@@ -210,6 +225,27 @@ function validateRelations(document: StoredDocument, kind: StartupHubRecordKind,
     const deployment = candidate as Pick<StartupDeployment, 'resourceId'>;
     if (!document.resources.some(item => item.id === deployment.resourceId)) throw new Error('Resource not found');
   }
+  if (kind === 'productDocuments') {
+    const record = candidate as Pick<StartupProductDocument, 'productId'>;
+    if (!document.products.some(item => item.id === record.productId)) throw new Error('Product not found');
+  }
+  if (kind === 'productReviews') {
+    const record = candidate as Pick<StartupProductReview, 'productId' | 'documentId'>;
+    if (!document.products.some(item => item.id === record.productId)) throw new Error('Product not found');
+    if (record.documentId && !document.productDocuments.some(item => item.id === record.documentId && item.productId === record.productId)) throw new Error('Product document not found');
+  }
+  if (kind === 'developmentTasks') {
+    const record = candidate as Pick<StartupDevelopmentTask, 'productId' | 'documentId'>;
+    if (!document.products.some(item => item.id === record.productId)) throw new Error('Product not found');
+    if (record.documentId && !document.productDocuments.some(item => item.id === record.documentId && item.productId === record.productId)) throw new Error('Product document not found');
+  }
+  if (kind === 'issues') {
+    const record = candidate as Pick<StartupIssue, 'productId' | 'apiEndpointId' | 'resourceId' | 'linkedTaskId'>;
+    if (record.productId && !document.products.some(item => item.id === record.productId)) throw new Error('Product not found');
+    if (record.apiEndpointId && !document.apiEndpoints.some(item => item.id === record.apiEndpointId)) throw new Error('API endpoint not found');
+    if (record.resourceId && !document.resources.some(item => item.id === record.resourceId)) throw new Error('Resource not found');
+    if (record.linkedTaskId && !document.developmentTasks.some(item => item.id === record.linkedTaskId && (!record.productId || item.productId === record.productId))) throw new Error('Development task not found');
+  }
   if (kind === 'leadActivities') {
     const activity = candidate as Pick<StartupLeadActivity, 'leadId'>;
     if (!document.leads.some(item => item.id === activity.leadId)) throw new Error('Lead not found');
@@ -237,6 +273,9 @@ async function readDocument(tenantId: string): Promise<StoredDocument> {
       taxRecords: Array.isArray(parsed.taxRecords) ? parsed.taxRecords : [],
       announcements: Array.isArray(parsed.announcements) ? parsed.announcements : [],
       products: Array.isArray(parsed.products) ? parsed.products : [],
+      productDocuments: Array.isArray(parsed.productDocuments) ? parsed.productDocuments : [],
+      productReviews: Array.isArray(parsed.productReviews) ? parsed.productReviews : [],
+      developmentTasks: Array.isArray(parsed.developmentTasks) ? parsed.developmentTasks : [],
       apiEndpoints: Array.isArray(parsed.apiEndpoints) ? parsed.apiEndpoints : [],
       logSources: Array.isArray(parsed.logSources) ? parsed.logSources : [],
       issues: Array.isArray(parsed.issues) ? parsed.issues : [],
