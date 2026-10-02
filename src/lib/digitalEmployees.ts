@@ -441,6 +441,25 @@ export interface AgentStatus {
 }
 
 export type ContentQueueStatus = "planned" | "queued" | "producing" | "waiting_review" | "completed" | "blocked";
+export type ContentQueueOrigin = "manual" | "weekly_plan";
+export interface ContentTaskLineage {
+  goalId: string;
+  objective: string;
+  accountId: string;
+  accountLabel: string;
+  budgetCny: number | null;
+  planId: string;
+  planVersion: string;
+  factsVersion: string;
+  cycleStart: string;
+  cycleEnd: string;
+  authorizationMode: "each" | "bounded" | "manual";
+}
+export interface ContentTaskOutputSummary {
+  count: number;
+  durationSeconds: number | null;
+  formats: string[];
+}
 export interface ContentQueueItem {
   id: string;
   contentId: string;
@@ -448,6 +467,10 @@ export interface ContentQueueItem {
   batchPlanId: string;
   projectIds: string[];
   taskId: string;
+  socialContentTaskId: string;
+  origin: ContentQueueOrigin;
+  lineage: ContentTaskLineage;
+  outputSummary: ContentTaskOutputSummary;
   title: string;
   productName: string;
   platform: PublishingPlatform;

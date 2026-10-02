@@ -13,6 +13,15 @@ assert.equal(pack.matrixPlan?.[0].platform, 'youtube');
 assert.equal(pack.tasks.find(task => task.templateId === 'production')?.videoPlans?.filter(plan => plan.matrix?.accountId === 'account-a').length, pack.matrixPlan?.[0].weeklyCount, 'weekly content is filled to the matrix target');
 assert.equal(pack.authorization.mode, 'bounded', 'weekly package approval is the default bounded publish authorization');
 assert.equal(pack.authorization.maxPublishItems, pack.matrixPlan?.reduce((sum, row) => sum + row.weeklyCount, 0));
+assert.equal(pack.operatingContext?.objective, goal.objective, 'weekly package exposes the confirmed business objective');
+assert.deepEqual(pack.operatingContext?.cycle, { startsAt: goal.startsAt, endsAt: goal.endsAt });
+assert.equal(pack.operatingContext?.accounts[0]?.accountLabel, 'A', 'account assignment stays visible in the operating context');
+assert.equal(pack.operatingContext?.accounts[0]?.contentCount, pack.matrixPlan?.[0].weeklyCount);
+assert.equal(pack.operatingContext?.cadence.contentCount, pack.tasks.find(task => task.templateId === 'production')?.videoPlans?.length);
+assert.equal(pack.operatingContext?.outputs.count, pack.operatingContext?.cadence.contentCount);
+assert.ok(pack.operatingContext?.outputs.formats.length, 'the package states its primary output formats');
+assert.equal(pack.operatingContext?.authorization.mode, 'bounded');
+assert.deepEqual(pack.operatingContext?.authorization.accountIds, ['account-a']);
 const twoAccounts = recommendPackage(goal, normalizeDigitalEmployeeConfig({
   ...config,
   publishingTargets: [
@@ -48,6 +57,9 @@ const overBudget = normalizePackage({ ...pack, directorPlan: { ...pack.directorP
 assert.ok(validatePackage(overBudget, goal).some(issue => issue.includes('超过生产预算')));
 const costly = structuredClone(pack); costly.directorPlan!.productionBudget = 10; costly.tasks.find(t => t.templateId === 'production')!.videoPlans![0].estimatedCost = 20;
 assert.ok(validatePackage(costly, goal).some(issue => issue.includes('预计费用')));
+const optimizedContext = compilePackage(costly, goal, config).businessPackage.operatingContext!;
+assert.equal(optimizedContext.accounts.reduce((sum, account) => sum + (account.budgetCny || 0), 0), 10, 'account budgets exhaust the confirmed production budget');
+assert.equal(optimizedContext.accounts[0]?.allocationBasis, 'estimated_cost', 'known per-item costs drive account budget optimization');
 const wrongTarget = structuredClone(pack); wrongTarget.directorPlan!.originalTarget = 2; wrongTarget.directorPlan!.platformVersionTarget = 2; wrongTarget.directorPlan!.publishTarget = 2;
 assert.ok(validatePackage(wrongTarget, goal).some(issue => issue.includes('与编导目标')));
 const multilingual = structuredClone(pack); multilingual.directorPlan!.platformVersionTarget = 1; multilingual.directorPlan!.publishTarget = 2;

@@ -37,10 +37,10 @@ compose=(env -u COMPOSE_FILE -u COMPOSE_PROJECT_NAME
   docker compose --project-directory "$ROOT_DIR" -f "$ROOT_DIR/docker-compose.yml" --env-file "$ENV_FILE")
 
 echo "==> Building changed layers (Docker cache is preserved)"
-"${compose[@]}" build app pocketbase
+"${compose[@]}" build app worker pocketbase
 
 echo "==> Pausing application traffic for migrations"
-"${compose[@]}" stop caddy app
+"${compose[@]}" stop caddy app worker
 
 echo "==> Applying PocketBase migrations"
 "${compose[@]}" up -d --force-recreate --wait --wait-timeout 180 pocketbase
@@ -49,7 +49,7 @@ echo "==> Bootstrapping the workbench administrator"
 "${compose[@]}" run --rm --no-deps -T app node scripts/bootstrap-workbench-admin.mjs
 
 echo "==> Updating application services"
-"${compose[@]}" up -d --no-build --wait --wait-timeout 180 app caddy
+"${compose[@]}" up -d --no-build --wait --wait-timeout 180 worker app caddy
 
 curl -fsS "http://127.0.0.1:${app_host_port}/api/overseas/ready" >/dev/null
 "${compose[@]}" ps

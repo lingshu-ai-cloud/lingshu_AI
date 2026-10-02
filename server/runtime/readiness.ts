@@ -9,6 +9,7 @@ import {
   type SocialOperatingSignals,
 } from './socialOperatingObservability.js';
 import type { BackgroundJobRuntimeState } from './workerHeartbeat.js';
+import { checkBullMq, selectedQueueBackend } from '../queues/bullmq.js';
 
 export type RuntimeCapability =
   | 'text_generation'
@@ -297,6 +298,11 @@ export async function runtimeReadiness(input: {
     }
   } catch (error) {
     issues.push(`pocketbase_unavailable_or_unmigrated:${error instanceof Error ? error.message : 'unknown'}`);
+  }
+  try {
+    if (!input.checkPocketBase && selectedQueueBackend() === 'bullmq') await checkBullMq();
+  } catch (error) {
+    issues.push(`queue_backend_unavailable:${error instanceof Error ? error.message : 'unknown'}`);
   }
   try {
     // Focused unit tests that inject only the dependency probe retain their

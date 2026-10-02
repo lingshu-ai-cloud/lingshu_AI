@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import {
+  enterpriseProfileCompleteness,
   normalizeEnterpriseProfile,
   profileSnapshot,
   sectionCompletion,
@@ -74,6 +75,24 @@ const placeholderWithMedia = {
   },
 };
 assert.equal(sectionCompletion(placeholderWithMedia).products, false, '占位产品名不能靠历史媒体记录反向补全产品事实');
+
+const completeness = enterpriseProfileCompleteness(normalized);
+assert.equal(completeness.percentage, 50);
+assert.deepEqual(completeness.todos.map(todo => todo.kind), ['product_image', 'price']);
+assert.equal(completeness.todos[0]?.productIndex, 0, '产品图待办必须直达实际缺图产品，而不是过滤后的错误索引');
+assert.equal(completeness.todos[1]?.id, 'price-0');
+const completeProfile = {
+  ...normalized,
+  products: {
+    ...normalized.products,
+    priceRange: 'USD 100-200',
+    items: [{
+      ...normalized.products.items![0],
+      images: [{ name: 'servo.jpg', type: 'image/jpeg', size: 1, updatedAt: new Date(0).toISOString() }],
+    }],
+  },
+};
+assert.deepEqual(enterpriseProfileCompleteness(completeProfile), { percentage: 100, completed: 4, total: 4, todos: [] });
 
 const baseSocial = profileSnapshot(profile({
   socialStrategy: { enabledRoutes: [], routeStrategies: {}, manuallyEditedFields: [] },

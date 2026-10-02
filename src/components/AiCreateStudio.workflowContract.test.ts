@@ -99,6 +99,12 @@ assert.match(studioSource, /withoutStudioWorkflowContext\([\s\S]{0,180}JSON\.par
 assert.match(studioSource, /resolveStudioWorkflowProjectEntry\(nextProjects, workflowContext\)/, 'a content-production handoff must resolve exact task projects before entering Studio');
 assert.match(studioSource, /if \(workflowContext \|\| socialContentTaskId\) \{[\s\S]{0,180}removeItem\(STUDIO_OPEN_PROJECT_KEY\)/, 'workflow or social-task context must override and consume a remembered browser draft');
 assert.match(studioSource, /silent && !projectId && !studioSpecHasMeaningfulContent\(nextSpec\)/, 'background autosave must not create empty unnamed drafts');
+assert.match(studioSource, /schemaVersion:\s*'studio-analysis\.v1'/, 'storyboard, voiceover and shot analysis must have an explicit durable recovery bundle');
+for (const persistedField of ['reference', 'storyboard', 'voiceover', 'shots']) {
+  assert.match(studioSource, new RegExp(`analysisResults[\\s\\S]{0,900}${persistedField}`), `${persistedField} analysis must be persisted with the project`);
+}
+assert.match(studioSource, /Analysis output is expensive[\s\S]{0,700}setTimeout[\s\S]{0,160}autosaveSnapshotRef\.current/, 'analysis changes must be saved without waiting for the ten-second checkpoint');
+assert.match(studioSource, /analysisResults is the durable, versioned recovery bundle/, 'project hydration must recover from the versioned analysis bundle');
 assert.match(studioSource, /onCreatePresenter=\{async input => \{/,'the current shot must expose inline presenter completion');
 assert.match(studioSource, /const mediaType = input\.file\.type\.startsWith\('video\/'\)[\s\S]{0,180}请选择人物图片或视频/, 'inline completion must validate the selected presenter asset type');
 assert.match(studioSource, /presenterApi\.uploadPhotoMaterial\(input\.file, input\.name\)[\s\S]{0,180}uploadMaterialFile\(input\.file,\{folder:'presenter',type:mediaType,sourceType:'presenter-inline-upload'\}\)/, 'inline completion must use the provider photo route when available and otherwise upload the selected image or video');

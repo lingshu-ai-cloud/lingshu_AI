@@ -5,7 +5,7 @@ import { Router } from 'express';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { randomBytes, randomUUID } from 'crypto';
+import { createHash, randomBytes, randomUUID } from 'crypto';
 import { enterpriseProductIdentity, mergeEnterpriseProductIdentity } from '../lib/enterpriseProductIdentity.js';
 import type { Request } from 'express';
 import { store } from '../storage/index.js';
@@ -157,6 +157,19 @@ export interface OrderRecord {
 const ORDER_STATUSES: readonly OrderStatus[] = orderStatuses;
 
 export interface EnterpriseProfile {
+  /**
+   * Immutable identity of the currently confirmed enterprise facts. Every
+   * consumer receives this version together with the profile so content,
+   * customer service, quotation, ads and digital employees cannot silently
+   * mix facts from different saves.
+   */
+  factVersion?: {
+    id: string;
+    revision: number;
+    contentHash: string;
+    confirmedAt: string;
+    confirmedBy: string;
+  };
   digitalEmployeeOnboarding?: {
     profileConfirmedAt?: string;
     productSelectionConfirmedAt?: string;
@@ -818,6 +831,17 @@ function normalizeProfile(profile: EnterpriseProfile): EnterpriseProfile {
     : undefined;
   const presetByStage = { b2b_launch: 'b2b_starting', b2b_growth: 'b2b_growing', d2c_brand: 'dtc_sales' } as const;
   const weeklyTaskPackagePreset = contentStage ? presetByStage[contentStage] : undefined;
+  const factVersionInput = profile.factVersion;
+  const factVersion = factVersionInput && Number.isInteger(Number(factVersionInput.revision))
+    && Number(factVersionInput.revision) > 0 && text(factVersionInput.contentHash)
+    ? {
+      id: text(factVersionInput.id),
+      revision: Number(factVersionInput.revision),
+      contentHash: text(factVersionInput.contentHash),
+      confirmedAt: text(factVersionInput.confirmedAt),
+      confirmedBy: text(factVersionInput.confirmedBy),
+    }
+    : undefined;
   return {
     ...profile,
     company,
@@ -834,7 +858,53 @@ function normalizeProfile(profile: EnterpriseProfile): EnterpriseProfile {
     dataGovernance,
     digitalEmployeeOnboarding,
     socialStrategy: { enabledRoutes, routeStrategies, manuallyEditedFields: Array.isArray(socialInput.manuallyEditedFields) ? socialInput.manuallyEditedFields.map(text).filter(Boolean) : [], contentStage, weeklyTaskPackagePreset },
+    ...(factVersion ? { factVersion } : {}),
   };
+}
+
+function stableFactJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableFactJson).join(',')}]`;
+  if (value && typeof value === 'object') {
+    return `{${Object.entries(value as Record<string, unknown>)
+      .filter(([key]) => key !== 'factVersion' && key !== 'lastSavedAt' && key !== 'lastSavedSource' && key !== 'lastSavedBy')
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, child]) => `${JSON.stringify(key)}:${stableFactJson(child)}`).join(',')}}`;
+  }
+  return JSON.stringify(value ?? null);
+}
+
+export function enterpriseFactContentHash(profile: EnterpriseProfile): string {
+  return createHash('sha256').update(stableFactJson(normalizeProfile(profile))).digest('hex');
+}
+
+function confirmedFactVersion(
+  profile: EnterpriseProfile,
+  previous?: EnterpriseProfile | null,
+  confirmedBy = 'system',
+  now = new Date(),
+): NonNullable<EnterpriseProfile['factVersion']> {
+  const contentHash = enterpriseFactContentHash(profile);
+  const prior = previous?.factVersion;
+  if (prior?.contentHash === contentHash && prior.id && prior.revision > 0) return prior;
+  const revision = Math.max(0, Number(prior?.revision || 0)) + 1;
+  return {
+    id: `enterprise-facts-v${revision}-${contentHash.slice(0, 12)}`,
+    revision,
+    contentHash,
+    confirmedAt: now.toISOString(),
+    confirmedBy: text(confirmedBy) || 'system',
+  };
+}
+
+function withConfirmedFactVersion(
+  profile: EnterpriseProfile,
+  previous?: EnterpriseProfile | null,
+  confirmedBy = 'system',
+  now = new Date(),
+): EnterpriseProfile {
+  const normalized = normalizeProfile(profile);
+  normalized.factVersion = confirmedFactVersion(normalized, previous, confirmedBy, now);
+  return normalized;
 }
 
 function mergeEnterpriseProfile(current: EnterpriseProfile, patch: Partial<EnterpriseProfile>): EnterpriseProfile {
@@ -1007,12 +1077,34 @@ async function readTenantProfile(tenantId: string): Promise<EnterpriseProfile> {
     where: { tenant_id: tenantId }, page: 1, perPage: 1,
   });
   const profile = storedProfile(result.items[0]?.profile);
-  if (profile) return profile;
-  return process.env.DEMO_MODE === 'true' ? readProfile() : normalizeProfile({} as EnterpriseProfile);
+  if (profile) return withConfirmedFactVersion(
+    profile,
+    profile,
+    profile.factVersion?.confirmedBy || 'legacy_migration',
+    new Date(profile.factVersion?.confirmedAt || profile.dataGovernance?.lastSavedAt || 0),
+  );
+  const fallback = process.env.DEMO_MODE === 'true' ? readProfile() : normalizeProfile({} as EnterpriseProfile);
+  return withConfirmedFactVersion(
+    fallback,
+    fallback,
+    fallback.factVersion?.confirmedBy || 'system',
+    new Date(fallback.factVersion?.confirmedAt || fallback.dataGovernance?.lastSavedAt || 0),
+  );
 }
 
 export async function readTenantEnterpriseProfile(tenantId: string): Promise<EnterpriseProfile> {
   return readTenantProfile(tenantId);
+}
+
+export interface ConfirmedEnterpriseFacts {
+  version: NonNullable<EnterpriseProfile['factVersion']>;
+  profile: EnterpriseProfile;
+  context: string;
+}
+
+export async function readTenantEnterpriseFacts(tenantId: string): Promise<ConfirmedEnterpriseFacts> {
+  const profile = await readTenantProfile(tenantId);
+  return { version: profile.factVersion!, profile, context: buildEnterpriseContext(profile) };
 }
 
 export async function updateTenantEnterpriseProfile(
@@ -1026,13 +1118,58 @@ export async function updateTenantEnterpriseProfile(
   return next;
 }
 
-async function writeTenantProfile(tenantId: string, profile: EnterpriseProfile, userId: string): Promise<void> {
-  const clean = normalizeProfile(profile) as EnterpriseProfile & { integrations?: unknown };
-  delete clean.integrations;
+class EnterpriseFactVersionConflictError extends Error {
+  constructor(readonly current: NonNullable<EnterpriseProfile['factVersion']>) {
+    super('enterprise_fact_version_conflict');
+  }
+}
+
+const enterpriseProfileWriteQueues = new Map<string, Promise<void>>();
+
+function normalizeExpectedFactVersion(value: string | undefined): string {
+  return String(value || '').trim().replace(/^W\//, '').replace(/^"|"$/g, '');
+}
+
+async function writeTenantProfile(
+  tenantId: string,
+  profile: EnterpriseProfile,
+  userId: string,
+  expectedFactVersion = '',
+): Promise<void> {
+  const previousWrite = enterpriseProfileWriteQueues.get(tenantId) || Promise.resolve();
+  const currentWrite = previousWrite.catch(() => undefined).then(async () => {
+    await writeTenantProfileUnlocked(tenantId, profile, userId, expectedFactVersion);
+  });
+  enterpriseProfileWriteQueues.set(tenantId, currentWrite);
+  try { await currentWrite; }
+  finally { if (enterpriseProfileWriteQueues.get(tenantId) === currentWrite) enterpriseProfileWriteQueues.delete(tenantId); }
+}
+
+async function writeTenantProfileUnlocked(
+  tenantId: string,
+  profile: EnterpriseProfile,
+  userId: string,
+  expectedFactVersion = '',
+): Promise<void> {
   const result = await store.list<Record<string, unknown>>('tenant_profiles', {
     where: { tenant_id: tenantId }, page: 1, perPage: 1,
   });
   const existing = result.items[0];
+  const previous = storedProfile(existing?.profile);
+  if (expectedFactVersion) {
+    const current = withConfirmedFactVersion(
+      previous || ({} as EnterpriseProfile),
+      previous,
+      previous?.factVersion?.confirmedBy || 'system',
+      new Date(previous?.factVersion?.confirmedAt || previous?.dataGovernance?.lastSavedAt || 0),
+    );
+    if (expectedFactVersion !== current.factVersion?.contentHash && expectedFactVersion !== current.factVersion?.id) {
+      throw new EnterpriseFactVersionConflictError(current.factVersion!);
+    }
+  }
+  const clean = withConfirmedFactVersion(profile, previous, userId) as EnterpriseProfile & { integrations?: unknown };
+  delete clean.integrations;
+  profile.factVersion = clean.factVersion;
   const ok = existing?.id
     ? await store.update('tenant_profiles', String(existing.id), { profile: clean, updated_by: userId })
     : Boolean(await store.create('tenant_profiles', { tenant_id: tenantId, profile: clean, updated_by: userId }));
@@ -1048,6 +1185,22 @@ export type KnowledgeSectionKey = 'products' | 'materials' | 'bizRules' | 'faq' 
 export interface KnowledgeCompletion {
   completed: number;
   total: 6;
+  profileCompleteness: {
+    percentage: number;
+    completed: number;
+    total: 4;
+    checks: Record<'productImage' | 'price' | 'certificate' | 'market', boolean>;
+  };
+  todos: Array<{
+    id: string;
+    kind: 'product_image' | 'price' | 'certificate' | 'market';
+    label: string;
+    description: string;
+    view: 'products' | 'company';
+    anchor: string;
+    productId?: string;
+    productIndex?: number;
+  }>;
   sections: Record<KnowledgeSectionKey, { completed: boolean; label: string }>;
   notificationsReady: boolean;
   capabilities: {
@@ -1074,6 +1227,7 @@ function hasTestedNotificationTarget(profile: EnterpriseProfile): boolean {
 
 export function knowledgeCompletion(profile: EnterpriseProfile): KnowledgeCompletion {
   const normalized = normalizeProfile(profile);
+  const productItems = normalized.products.items ?? [];
   const counts = assetCounts(normalized);
   const totalAssets = counts.images + counts.videos + counts.documents;
   const hasProductVideo = (normalized.products.items ?? []).some(item => (item.videos?.length ?? 0) >= 1);
@@ -1091,9 +1245,47 @@ export function knowledgeCompletion(profile: EnterpriseProfile): KnowledgeComple
     },
     company: { label: '公司介绍', completed: text(normalized.company.description).length >= 50 },
   };
+  const productImageReady = productItems.length > 0 && productItems.every(item => Boolean(
+    text(item.imageUrl) || (item.images?.length ?? 0) > 0,
+  ));
+  const priceReady = Boolean(text(normalized.products.priceRange) || text(normalized.bizRules?.priceRange))
+    || (productItems.length > 0 && productItems.every(item => Boolean(text(item.priceRange) || text(item.retailPrice) || text(item.tagPrice))));
+  const certificateReady = Boolean(text(normalized.products.certifications))
+    || (productItems.length > 0 && productItems.every(item => Boolean(
+      text(item.certifications) || (item.certificateImages?.length ?? 0) > 0 || (item.documents?.length ?? 0) > 0,
+    )));
+  const marketReady = Boolean(text(normalized.company.mainMarkets) && text(normalized.company.primaryLanguages));
+  const checks = { productImage: productImageReady, price: priceReady, certificate: certificateReady, market: marketReady };
+  const incompleteImage = productItems.findIndex(item => !(text(item.imageUrl) || (item.images?.length ?? 0) > 0));
+  const incompletePrice = productItems.findIndex(item => !(text(item.priceRange) || text(item.retailPrice) || text(item.tagPrice)));
+  const incompleteCertificate = productItems.findIndex(item => !(text(item.certifications) || (item.certificateImages?.length ?? 0) > 0 || (item.documents?.length ?? 0) > 0));
+  const todos: KnowledgeCompletion['todos'] = [];
+  if (!productImageReady) todos.push({
+    id: `product-image-${Math.max(0, incompleteImage)}`, kind: 'product_image', label: '补产品图',
+    description: productItems[incompleteImage]?.name ? `${productItems[incompleteImage]!.name} 缺少可用于内容与投放的产品图` : '先添加产品并上传一张产品图',
+    view: 'products', anchor: 'product-image',
+    ...(incompleteImage >= 0 ? { productId: enterpriseProductIdentity(productItems[incompleteImage]!, incompleteImage), productIndex: incompleteImage } : {}),
+  });
+  if (!priceReady) todos.push({
+    id: `price-${Math.max(0, incompletePrice)}`, kind: 'price', label: '补价格',
+    description: productItems[incompletePrice]?.name ? `${productItems[incompletePrice]!.name} 缺少参考价格` : '补充产品或内部参考价格',
+    view: 'products', anchor: 'product-price', ...(incompletePrice >= 0 ? { productId: enterpriseProductIdentity(productItems[incompletePrice]!, incompletePrice), productIndex: incompletePrice } : {}),
+  });
+  if (!certificateReady) todos.push({
+    id: `certificate-${Math.max(0, incompleteCertificate)}`, kind: 'certificate', label: '补证书',
+    description: productItems[incompleteCertificate]?.name ? `${productItems[incompleteCertificate]!.name} 缺少认证或资质凭证` : '补充认证名称或上传资质凭证',
+    view: 'products', anchor: 'product-certificate', ...(incompleteCertificate >= 0 ? { productId: enterpriseProductIdentity(productItems[incompleteCertificate]!, incompleteCertificate), productIndex: incompleteCertificate } : {}),
+  });
+  if (!marketReady) todos.push({
+    id: 'market', kind: 'market', label: '补市场信息', description: '补充目标市场和主要沟通语言',
+    view: 'company', anchor: 'enterprise-language-settings',
+  });
+  const completedChecks = Object.values(checks).filter(Boolean).length;
   return {
     completed: Object.values(sections).filter(section => section.completed).length,
     total: 6,
+    profileCompleteness: { percentage: completedChecks * 25, completed: completedChecks, total: 4, checks },
+    todos,
     sections,
     notificationsReady: hasTestedNotificationTarget(normalized),
     capabilities: {
@@ -1256,6 +1448,7 @@ function upsertProductItems(existing: NonNullable<EnterpriseProfile['products'][
 export function buildEnterpriseContext(profile: EnterpriseProfile): string {
   if (profile.dataGovernance?.aiAccessEnabled === false) return '';
   const parts: string[] = [];
+  if (profile.factVersion) parts.push(`企业事实版本：${profile.factVersion.id}`);
   if (profile.company.name) parts.push(`公司名称：${profile.company.name}`);
   if (profile.company.industry) parts.push(`行业类目：${profile.company.industry}`);
   if (profile.company.companyType) parts.push(`企业类型：${profile.company.companyType}`);
@@ -1479,7 +1672,17 @@ async function customerServiceRuntimeStatus(tenantId: string, profile: Enterpris
 
 enterpriseRouter.get('/profile', async (_req, res) => {
   const { tenantId } = res.locals as AuthLocals;
-  res.json(await readTenantProfile(tenantId));
+  const profile = await readTenantProfile(tenantId);
+  res.setHeader('ETag', `"${profile.factVersion!.contentHash}"`);
+  res.json(profile);
+});
+
+enterpriseRouter.get('/facts', async (_req, res) => {
+  const { tenantId } = res.locals as AuthLocals;
+  const facts = await readTenantEnterpriseFacts(tenantId);
+  res.setHeader('Cache-Control', 'private, no-store');
+  res.setHeader('ETag', `"${facts.version.contentHash}"`);
+  res.json(facts);
 });
 
 enterpriseRouter.get('/customer-service/status', async (_req, res) => {
@@ -2130,17 +2333,34 @@ enterpriseRouter.get('/assets/:file', async (req, res) => {
   res.sendFile(filePath);
 });
 
+function enterpriseFactVersionMatchesRequest(req: Request, current: EnterpriseProfile): boolean {
+  const expected = normalizeExpectedFactVersion(req.header('if-match'));
+  return !expected || expected === current.factVersion?.contentHash || expected === current.factVersion?.id;
+}
+
 enterpriseRouter.post('/profile', async (req, res) => {
   const { tenantId, userId } = res.locals as AuthLocals;
   try {
     const current = await readTenantProfile(tenantId);
+    if (!enterpriseFactVersionMatchesRequest(req, current)) {
+      res.status(409).json({
+        error: 'enterprise_fact_version_conflict',
+        message: '企业资料已由其他页面更新，请刷新后再保存。',
+        factVersion: current.factVersion,
+      });
+      return;
+    }
     const profile = markProfileSaved(normalizeProfile({
       ...(req.body as EnterpriseProfile),
       customerService: current.customerService,
     }), 'enterprise_center');
-    await writeTenantProfile(tenantId, profile, userId);
+    await writeTenantProfile(tenantId, profile, userId, normalizeExpectedFactVersion(req.header('if-match')));
     res.json({ ok: true, profile });
   } catch (error) {
+    if (error instanceof EnterpriseFactVersionConflictError) {
+      res.status(409).json({ error: error.message, message: '企业资料已由其他页面更新，请刷新后再保存。', factVersion: error.current });
+      return;
+    }
     console.error('[enterprise] profile save failed', error);
     res.status(503).json({ error: 'tenant_profile_storage_unavailable', message: '企业资料暂时无法保存，请稍后重试' });
   }
@@ -2151,13 +2371,25 @@ enterpriseRouter.patch('/profile', async (req, res) => {
   const source = req.header('x-enterprise-save-source') === 'diagnosis' ? 'diagnosis' : 'enterprise_center';
   try {
     const current = await readTenantProfile(tenantId);
+    if (!enterpriseFactVersionMatchesRequest(req, current)) {
+      res.status(409).json({
+        error: 'enterprise_fact_version_conflict',
+        message: '企业资料已由其他页面更新，请刷新后再保存。',
+        factVersion: current.factVersion,
+      });
+      return;
+    }
     const profile = markProfileSaved(normalizeProfile({
       ...mergeEnterpriseProfile(current, req.body as Partial<EnterpriseProfile>),
       customerService: current.customerService,
     }), source);
-    await writeTenantProfile(tenantId, profile, userId);
+    await writeTenantProfile(tenantId, profile, userId, normalizeExpectedFactVersion(req.header('if-match')));
     res.json({ ok: true, profile });
   } catch (error) {
+    if (error instanceof EnterpriseFactVersionConflictError) {
+      res.status(409).json({ error: error.message, message: '企业资料已由其他页面更新，请刷新后再保存。', factVersion: error.current });
+      return;
+    }
     console.error('[enterprise] profile patch failed', error);
     res.status(503).json({ error: 'tenant_profile_storage_unavailable', message: '企业资料暂时无法保存，请稍后重试' });
   }
@@ -2165,8 +2397,8 @@ enterpriseRouter.patch('/profile', async (req, res) => {
 
 enterpriseRouter.get('/context', async (_req, res) => {
   const { tenantId } = res.locals as AuthLocals;
-  const profile = await readTenantProfile(tenantId);
-  res.json({ context: buildEnterpriseContext(profile) });
+  const facts = await readTenantEnterpriseFacts(tenantId);
+  res.json({ context: facts.context, factVersion: facts.version });
 });
 
 export const productApiRouter = Router();

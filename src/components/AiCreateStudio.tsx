@@ -3465,6 +3465,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onGoPub
   const [autosaveStatus, setAutosaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [lastAutosavedAt, setLastAutosavedAt] = useState<Date | null>(null);
   const autosaveInFlightRef = useRef(false);
+  const autosavePendingRef = useRef(false);
   const autosaveSnapshotRef = useRef<() => Promise<void>>(async () => undefined);
   const [videoKickoff, setVideoKickoff] = useState<VideoKickoff | null>(null);
   const salesReviewAttempted = useRef(new Set<string>());
@@ -7822,6 +7823,27 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onGoPub
       const key = productionKey(slot.id);
       if (!savedShotProductions[key]) savedShotProductions = { ...savedShotProductions, [key]: newProductionFor(slot) };
     }
+    const analysisResults = {
+      schemaVersion: 'studio-analysis.v1',
+      reference: videoKickoff?.referenceAnalysis ?? null,
+      storyboard: {
+        slots: storyboardSlots,
+        script,
+        assignments: storyboardAssignments,
+        sourcePlans: storyboardSourcePlans,
+        assemblies: assembliesForSave,
+      },
+      voiceover: {
+        text: voiceoverLines,
+        drafts: voiceDrafts,
+        audios: voiceoverAudios,
+        alignedCuesByLang,
+      },
+      shots: {
+        shootingSlots,
+        productions: savedShotProductions,
+      },
+    };
     return ({
     mode, contentMode, posterStyle, platform, ratio, duration, lang, provider,
     workflowRunId: projectWorkflowContext?.runId || '', workflowTaskId: projectWorkflowContext?.taskId || '', workflowTaskKey: projectWorkflowContext?.taskKey || '',
@@ -7840,11 +7862,40 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onGoPub
     storyboardVideoVersions, productVideoVersions,
     variationStrategy, variationPeople, variationScenes, variationLanguages, variationHooks, variationMax,
     shootingSlots, shotProductions: savedShotProductions, shotProductionContext, socialDigitalHumanPlans,
+    analysisResults,
     posterDraft, leadContentPackage, posterJsonText, posterImageUrl,
     });
   };
 
-  const applySpec = (s: Record<string, unknown>) => {
+  const applySpec = (savedSpec: Record<string, unknown>) => {
+    const analysisResults = savedSpec.analysisResults && typeof savedSpec.analysisResults === 'object'
+      ? savedSpec.analysisResults as Record<string, unknown>
+      : {};
+    const storyboardResults = analysisResults.storyboard && typeof analysisResults.storyboard === 'object'
+      ? analysisResults.storyboard as Record<string, unknown>
+      : {};
+    const voiceoverResults = analysisResults.voiceover && typeof analysisResults.voiceover === 'object'
+      ? analysisResults.voiceover as Record<string, unknown>
+      : {};
+    const shotResults = analysisResults.shots && typeof analysisResults.shots === 'object'
+      ? analysisResults.shots as Record<string, unknown>
+      : {};
+    // analysisResults is the durable, versioned recovery bundle. Keep the
+    // historical top-level fields for compatibility, but recover from the
+    // bundle when a future migration or partial save omitted one of them.
+    const s: Record<string, unknown> = {
+      ...(storyboardResults.script !== undefined ? { script: storyboardResults.script } : {}),
+      ...(storyboardResults.assignments !== undefined ? { storyboardAssignments: storyboardResults.assignments } : {}),
+      ...(storyboardResults.sourcePlans !== undefined ? { storyboardSourcePlans: storyboardResults.sourcePlans } : {}),
+      ...(storyboardResults.assemblies !== undefined ? { storyboardAssemblies: storyboardResults.assemblies } : {}),
+      ...(voiceoverResults.text !== undefined ? { voiceoverLines: voiceoverResults.text } : {}),
+      ...(voiceoverResults.drafts !== undefined ? { voiceDrafts: voiceoverResults.drafts } : {}),
+      ...(voiceoverResults.audios !== undefined ? { voiceoverAudios: voiceoverResults.audios } : {}),
+      ...(voiceoverResults.alignedCuesByLang !== undefined ? { alignedCuesByLang: voiceoverResults.alignedCuesByLang } : {}),
+      ...(shotResults.shootingSlots !== undefined ? { shootingSlots: shotResults.shootingSlots } : {}),
+      ...(shotResults.productions !== undefined ? { shotProductions: shotResults.productions } : {}),
+      ...savedSpec,
+    };
     appliedCreateRequestRef.current = s.studioCreateRequest && typeof s.studioCreateRequest === 'object' ? (s.studioCreateRequest as SocialContentCreateRequest).requestId : null;
     setRestoredSocialTaskId(typeof s.socialContentTaskId === 'string' ? s.socialContentTaskId : null);
     setRestoredCreateRequest(s.studioCreateRequest && typeof s.studioCreateRequest === 'object' ? s.studioCreateRequest as SocialContentCreateRequest : null);
@@ -8199,7 +8250,10 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onGoPub
       }
     }
     if (silent && !projectId && !studioSpecHasMeaningfulContent(nextSpec)) return false;
-    if (silent && autosaveInFlightRef.current) return false;
+    if (silent && autosaveInFlightRef.current) {
+      autosavePendingRef.current = true;
+      return false;
+    }
     if (silent) {
       autosaveInFlightRef.current = true;
       setAutosaveStatus('saving');
@@ -8247,7 +8301,13 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onGoPub
       console.warn('[AiCreateStudio] autosave failed', error);
       return false;
     } finally {
-      if (silent) autosaveInFlightRef.current = false;
+      if (silent) {
+        autosaveInFlightRef.current = false;
+        if (autosavePendingRef.current) {
+          autosavePendingRef.current = false;
+          queueMicrotask(() => { void autosaveSnapshotRef.current(); });
+        }
+      }
       else setSavingProj(false);
     }
   };
@@ -8584,6 +8644,28 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onGoPub
     }, 10_000);
     return () => window.clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    // Analysis output is expensive and must survive navigation. Persist it
+    // shortly after every meaningful change instead of waiting for the
+    // periodic full-draft checkpoint.
+    const timer = window.setTimeout(() => {
+      void autosaveSnapshotRef.current();
+    }, 700);
+    return () => window.clearTimeout(timer);
+  }, [
+    videoKickoff,
+    script,
+    voiceoverLines,
+    voiceDrafts,
+    voiceoverAudios,
+    alignedCuesByLang,
+    storyboardAssignments,
+    storyboardSourcePlans,
+    storyboardAssemblies,
+    shootingSlots,
+    shotProductions,
+  ]);
 
   const openProjects = async () => {
     setShowProjects(true);

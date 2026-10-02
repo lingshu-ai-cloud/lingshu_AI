@@ -25,13 +25,24 @@ try {
         contentOrder: { ...order, id: 'content_order_1::en', sourceContentOrderId: 'content_order_1' },
         automation: { managedBy: 'digital_employee', stage: 'render', status: 'queued', quality: {} },
       },
+    }, {
+      id: 'project-manual', tenant_id: 'tenant-1', updated_at: '2026-09-29T09:30:00Z',
+      spec: { socialContentTaskId: 'social-manual-1' },
     }];
     if (collection === 'studio_digital_human_executions') items = [{ id: 'execution-1', tenant_id: 'tenant-1', project_id: 'project-1', job_id: 'job-1', plan_id: 'plan-1', payload: { costStatus: 'reconciled', actualCostCny: 1.25 } }];
+    if (collection === 'starter_social_content_tasks') items = [{
+      id: 'social-row-1', task_id: 'social-manual-1', tenant_id: 'tenant-1', task_mode: 'instant', status: 'asset_review', version: 'v3',
+      created_at: '2026-09-29T09:00:00Z', updated_at: '2026-09-29T09:30:00Z',
+      brief: { title: '手动创建的展会短视频', objective: '为展会获得询盘', productRef: '检测设备', platforms: ['youtube'], languages: ['en'], formats: ['Shorts'], requestedOutputCount: 2, weeklyBudgetCny: 80, dueAt: '2026-10-03' },
+    }];
     return { items, page: 1, perPage: 500, totalItems: items.length, totalPages: 1 } as any;
   }) as typeof store.list;
-  const queue = await buildContentQueueProjection({ tenantId: 'tenant-1', runId: 'run-1', planBody: {}, tasks: [productionTask] });
+  const queue = await buildContentQueueProjection({
+    tenantId: 'tenant-1', runId: 'run-1', planBody: {}, tasks: [productionTask], planId: 'weekly-plan-1',
+    goal: { id: 'goal-1', objective: '本周获得 10 条询盘', startsAt: '2026-09-28', endsAt: '2026-10-04', version: 2 },
+  });
   assert.equal(queue.sourceStatus, 'available');
-  assert.equal(queue.items.length, 1, 'every frozen order must have exactly one queue row');
+  assert.equal(queue.items.length, 2, 'manual and weekly-plan content must share the same queue projection');
   assert.equal(queue.items[0]?.status, 'producing');
   assert.equal(queue.items[0]?.progress, 67);
   assert.equal(queue.items[0]?.settledCostCny, 1.25, 'only project-scoped reconciled supplier cost is actual spend');
@@ -39,6 +50,18 @@ try {
   assert.equal(queue.items[0]?.matchScore, 92);
   assert.equal(queue.items[0]?.benchmarkAccount, 'Benchmark Factory');
   assert.deepEqual(queue.items[0]?.projectIds, ['project-1']);
+  assert.equal(queue.items[0]?.origin, 'weekly_plan');
+  assert.equal(queue.items[0]?.lineage.goalId, 'goal-1');
+  assert.equal(queue.items[0]?.lineage.planId, 'weekly-plan-1');
+  assert.equal(queue.items[0]?.lineage.factsVersion, 'f1');
+  assert.equal(queue.items[0]?.outputSummary.durationSeconds, 30);
+  assert.equal(queue.items[1]?.origin, 'manual');
+  assert.equal(queue.items[1]?.socialContentTaskId, 'social-manual-1');
+  assert.equal(queue.items[1]?.status, 'waiting_review');
+  assert.equal(queue.items[1]?.lineage.objective, '为展会获得询盘');
+  assert.equal(queue.items[1]?.lineage.budgetCny, 40);
+  assert.deepEqual(queue.items[1]?.projectIds, ['project-manual']);
+  assert.deepEqual(queue.items[1]?.outputSummary, { count: 2, durationSeconds: null, formats: ['Shorts'] });
 } finally {
   store.list = originalList;
 }

@@ -22,6 +22,7 @@ import {
 } from '../lib/weeklyTaskPackagePresets';
 import DeliveryBoard from "./DeliveryBoard";
 import ProductionTaskScene from "./ProductionTaskScene";
+import AgentDecisionCard, { type AgentDecisionKind } from "./AgentDecisionCard";
 import SmartBusinessDashboard from "./SmartBusinessDashboard";
 import PlanHistoryDialog from "./PlanHistoryDialog";
 import SocialContentStageOnboarding from "./socialContent/SocialContentStageOnboarding";
@@ -3586,6 +3587,15 @@ export default function DigitalEmployeePage({
   const pendingPublishingPackage = pendingApproval?.evidence.find(
     item => item.type === "publishing_approval_package",
   );
+  const approvalDecisionKind: AgentDecisionKind = approvalTask?.task_key === "followup_batch_approval"
+    ? "customer_outreach"
+    : ["content_release_approval", "publishing_calendar", "platform_publish"].includes(approvalTask?.task_key || "")
+      ? "publish_confirmation"
+      : "content_approval";
+  const approvalOutputCount = pendingPublishingPackage && Array.isArray(pendingPublishingPackage.items)
+    ? pendingPublishingPackage.items.length
+    : (data?.deliveries || []).filter(card => approvalTask && card.taskIds.includes(approvalTask.id)).length;
+  const approvalBudget = data?.plan?.businessPackage?.operatingContext?.budget.totalCny;
   const activeHandoff = data?.handoffs.find((item) => item.status === "active");
   const activeHandoffTask = data?.tasks.find(
     (item) => item.id === activeHandoff?.task_id,
@@ -3607,6 +3617,23 @@ export default function DigitalEmployeePage({
     activeTask ||
     visibleTasks.find((task) => task.status === "succeeded") ||
     visibleTasks[0];
+  const selectedPlanTask = selectedTask
+    ? data?.plan?.tasks.find(item => item.key === selectedTask.task_key)
+    : undefined;
+  const selectedTaskSource = selectedTask
+    ? selectedTask.status_source || selectedPlanTask?.statusSource || String(selectedTask.output?.statusSource || "") || (selectedTask.business_refs?.length ? `${selectedTask.business_refs.length} 条业务记录` : "周计划任务包")
+    : "等待任务";
+  const selectedTaskResult = selectedTask ? outputSummary(selectedTask) || "结果生成后会持久化到对应业务页面" : "等待任务";
+  const nextRuntimeTask = selectedTask
+    ? [...visibleTasks].sort((left, right) => left.sequence - right.sequence).find(item => item.sequence > selectedTask.sequence)
+    : undefined;
+  const selectedTaskNext = selectedTask?.status === "waiting_approval"
+    ? "完成当前决策后继续执行"
+    : ["failed", "waiting_human", "handed_off"].includes(selectedTask?.status || "")
+      ? "处理阻塞、重试或交还 Agent"
+      : nextRuntimeTask
+        ? `下一节点：${nextRuntimeTask.title}`
+        : "前往对应业务页面查看最终结果";
   const terminal = Boolean(
     data?.run && ["succeeded", "failed", "cancelled"].includes(data.run.status),
   );
@@ -3831,7 +3858,10 @@ export default function DigitalEmployeePage({
     ];
     const currentVideoPlans = data.plan?.businessPackage?.tasks.find(task => task.templateId === "production")?.videoPlans || goal?.videoPlans || [];
     const currentMatrix = data.plan?.businessPackage?.matrixPlan || [];
-    const currentEstimatedCost = currentVideoPlans.reduce((sum, plan) => sum + Number(plan.estimatedCost || 0), 0) || Number(data.plan?.estimatedCost || 0);
+    const operatingContext = data.plan?.businessPackage?.operatingContext;
+    const currentEstimatedCost = operatingContext?.budget.totalCny || currentVideoPlans.reduce((sum, plan) => sum + Number(plan.estimatedCost || 0), 0) || Number(data.plan?.estimatedCost || 0);
+    const plannedDurationSeconds = operatingContext?.outputs.totalDurationSeconds || currentVideoPlans.reduce((sum, plan) => sum + Number(plan.duration || 0), 0);
+    const plannedFormats = operatingContext?.outputs.formats || ["短视频"];
     const assignmentCounts = (data.plan?.tasks || []).reduce<Record<string, number>>((counts, task) => ({ ...counts, [task.agentRole]: (counts[task.agentRole] || 0) + 1 }), {});
     const currentPlanStatusLabel = viewGoalId
       ? "历史计划"
@@ -3842,7 +3872,14 @@ export default function DigitalEmployeePage({
           : terminal || goal?.status === "completed"
             ? "已完成"
             : "已确认";
-    const openContentProduction = (taskId?: string) => {
+    const openContentProduction = (taskId?: string, socialContentTaskId?: string) => {
+      if (socialContentTaskId) {
+        window.dispatchEvent(new CustomEvent("lingshu:navigate", { detail: {
+          page: "smartAssets", view: "create", directStudio: true,
+          socialContentTaskId, socialContentPage: "smartAssets",
+        } }));
+        return;
+      }
       const task = data.tasks.find(item => item.id === taskId)
         || data.tasks.find(item => item.task_key === "content_production")
         || data.tasks.find(item => item.task_key === "content_quality_gate");
@@ -3865,10 +3902,10 @@ export default function DigitalEmployeePage({
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2"><span className="text-[10px] font-black uppercase tracking-[0.16em] text-emerald-700">{viewGoalId ? "历史周计划" : "当前周计划"}</span><span className="rounded-full bg-emerald-700 px-2.5 py-1 text-[10px] font-black text-white">{currentPlanStatusLabel}</span><span className="text-xs font-bold text-slate-500">{goal.startsAt} 至 {goal.endsAt}</span></div>
                 <h2 className="mt-2 truncate text-lg font-black text-slate-950">{goal.title}</h2>
-                <p className="mt-1 line-clamp-2 text-xs leading-5 text-slate-500">{goal.objective}</p>
+                <p className="mt-1 line-clamp-2 text-xs leading-5 text-slate-500">{goal.objective}</p><p className="mt-1 text-[10px] font-bold text-slate-500">{(operatingContext?.markets || []).join(" / ") || data.config.targetMarkets || "市场待确认"} · {operatingContext?.cadence.description || data.config.socialCadence || "频次待确认"} · {data.plan?.businessPackage?.authorization.mode === "bounded" ? "范围授权" : "逐次确认"}</p>
               </div>
               <div className="flex shrink-0 flex-wrap items-center gap-2 lg:justify-end">
-                <div className="mr-2 flex items-center gap-4 text-center"><div><p className="text-lg font-black text-slate-950">{currentVideoPlans.length}</p><p className="text-[10px] text-slate-400">内容</p></div><div><p className="text-lg font-black text-slate-950">{currentMatrix.length || data.config.publishingTargets.length}</p><p className="text-[10px] text-slate-400">账号</p></div><div><p className="text-lg font-black text-slate-950">{Object.keys(assignmentCounts).length}</p><p className="text-[10px] text-slate-400">Agent</p></div></div>
+                <div className="mr-2 flex items-center gap-4 text-center"><div><p className="text-lg font-black text-slate-950">{currentVideoPlans.length}</p><p className="text-[10px] text-slate-400">内容</p></div><div><p className="text-lg font-black text-slate-950">{currentMatrix.length || data.config.publishingTargets.length}</p><p className="text-[10px] text-slate-400">账号</p></div><div><p className="text-lg font-black text-slate-950">{currentEstimatedCost>0?`¥${currentEstimatedCost.toFixed(0)}`:"—"}</p><p className="text-[10px] text-slate-400">计划预算</p></div></div>
                 <button type="button" onClick={()=>{ setNewGoal(false); setWeeklyPlanOpen(true); }} className="inline-flex items-center gap-2 rounded-xl bg-emerald-700 px-4 py-2.5 text-xs font-black text-white hover:bg-emerald-800"><CalendarRange size={14}/>查看本周计划</button>
                 <button type="button" onClick={()=>setWorkspaceView("rules")} className={`inline-flex items-center gap-2 rounded-xl border px-4 py-2.5 text-xs font-black ${workspaceView==="rules"?"border-slate-950 bg-slate-950 text-white":"border-slate-200 bg-white text-slate-700 hover:border-emerald-300"}`}><Settings2 size={14}/>Agent 设置</button>
                 <button type="button" onClick={()=>setPlanHistoryOpen(true)} className="inline-flex items-center gap-2 rounded-xl border border-emerald-200 bg-white px-4 py-2.5 text-xs font-black text-emerald-800 hover:bg-emerald-50"><History size={14}/>历史计划</button>
@@ -3906,7 +3943,7 @@ export default function DigitalEmployeePage({
             {(!goal || newGoal) && !activeRun ? <GoalPanel config={data.config} busy={Boolean(busy)} businessLine={businessLine} contentPlatform={contentPlatform} onSave={goalInput => void confirmGeneratedWeeklyPlan(goalInput)}/>
               : goal ? <div className="space-y-5">
                 <section className="rounded-2xl border border-slate-200 p-5"><div className="flex flex-wrap items-start justify-between gap-3"><div><h3 className="text-lg font-black text-slate-950">{goal.title}</h3><p className="mt-1 text-xs text-slate-500">{goal.startsAt} 至 {goal.endsAt}</p></div><span className={`rounded-full px-3 py-1 text-[10px] font-black ${activeRun?"bg-emerald-50 text-emerald-700":"bg-amber-50 text-amber-700"}`}>{activeRun?"执行中":"待确认"}</span></div><p className="mt-4 text-sm leading-6 text-slate-600">{goal.objective}</p></section>
-                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4"><div className="rounded-xl bg-slate-50 p-4"><p className="text-[10px] font-bold text-slate-400">本周内容</p><p className="mt-1 text-xl font-black text-slate-950">{currentVideoPlans.length} 条</p></div><div className="rounded-xl bg-slate-50 p-4"><p className="text-[10px] font-bold text-slate-400">账号矩阵</p><p className="mt-1 text-xl font-black text-slate-950">{currentMatrix.length || data.config.publishingTargets.length} 个账号</p></div><div className="rounded-xl bg-slate-50 p-4"><p className="text-[10px] font-bold text-slate-400">Agent 分工</p><p className="mt-1 text-xl font-black text-slate-950">{Object.keys(assignmentCounts).length} 位</p></div><div className="rounded-xl bg-slate-50 p-4"><p className="text-[10px] font-bold text-slate-400">预计成本</p><p className="mt-1 text-xl font-black text-slate-950">{currentEstimatedCost>0?`¥${currentEstimatedCost.toFixed(2)}`:"待真实核算"}</p></div></div>
+                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-6"><div className="rounded-xl bg-slate-50 p-4"><p className="text-[10px] font-bold text-slate-400">本周内容</p><p className="mt-1 text-xl font-black text-slate-950">{currentVideoPlans.length} 条</p></div><div className="rounded-xl bg-slate-50 p-4"><p className="text-[10px] font-bold text-slate-400">主要形式</p><p className="mt-1 truncate text-sm font-black text-slate-950">{plannedFormats.join(" / ")}</p></div><div className="rounded-xl bg-slate-50 p-4"><p className="text-[10px] font-bold text-slate-400">预计总时长</p><p className="mt-1 text-xl font-black text-slate-950">{plannedDurationSeconds>0?`${plannedDurationSeconds} 秒`:"待确认"}</p></div><div className="rounded-xl bg-slate-50 p-4"><p className="text-[10px] font-bold text-slate-400">账号矩阵</p><p className="mt-1 text-xl font-black text-slate-950">{currentMatrix.length || data.config.publishingTargets.length} 个</p></div><div className="rounded-xl bg-slate-50 p-4"><p className="text-[10px] font-bold text-slate-400">Agent 分工</p><p className="mt-1 text-xl font-black text-slate-950">{Object.keys(assignmentCounts).length} 位</p></div><div className="rounded-xl bg-slate-50 p-4"><p className="text-[10px] font-bold text-slate-400">计划预算</p><p className="mt-1 text-xl font-black text-slate-950">{currentEstimatedCost>0?`¥${currentEstimatedCost.toFixed(2)}`:"待核算"}</p></div></div>
                 <section className="overflow-hidden rounded-2xl border border-slate-200"><div className="border-b border-slate-100 bg-slate-50 px-4 py-3"><h3 className="text-xs font-black text-slate-800">本周待生成内容</h3></div>{currentVideoPlans.slice(0,8).map((plan,index)=><div key={plan.contentId||`${plan.platform}-${index}`} className={`grid gap-2 px-4 py-3 text-xs sm:grid-cols-[80px_minmax(0,1fr)_110px] ${index?"border-t border-slate-100":""}`}><strong className="text-emerald-700">{contentPlatformLabel[plan.platform]}</strong><span className="truncate font-bold text-slate-800">{plan.buyerProblem||plan.theme||plan.productName}</span><span className="text-slate-500 sm:text-right">{plan.estimatedCost?`¥${plan.estimatedCost.toFixed(2)}`:"成本待核算"}</span></div>)}{!currentVideoPlans.length&&<p className="px-4 py-8 text-center text-xs text-slate-400">计划内容正在生成，稍后刷新即可查看。</p>}</section>
                 {!activeRun && <div className="flex items-center justify-between gap-4"><p className="text-xs text-slate-500">确认后会按上方内容与账号配置启动 Agent；真实发布仍遵守审批规则。</p><button type="button" disabled={Boolean(busy)||approvalBlocked} onClick={()=>void approveCurrentGoal()} className="shrink-0 rounded-xl bg-emerald-700 px-5 py-2.5 text-sm font-black text-white disabled:opacity-40">{busy?"确认中…":"确认周计划"}</button></div>}
                 {activeRun&&<div className="flex justify-end"><button type="button" onClick={()=>{setWeeklyPlanOpen(false);setWorkspaceView("overview");}} className="rounded-xl bg-slate-950 px-5 py-2.5 text-sm font-black text-white">查看内容队列</button></div>}
@@ -4224,75 +4261,37 @@ export default function DigitalEmployeePage({
               <div className="grid gap-5">
                 <div className="space-y-5">
                   <div id="task-production-scene" className="relative scroll-mt-6">
-                    {selectedTask ? <ProductionTaskScene runId={data.run.id} taskId={selectedTask.id} embedded /> : <div className="rounded-2xl border border-dashed border-slate-200 bg-white p-12 text-center text-sm text-slate-400">请选择上方 Agent 查看生产进度</div>}
+                    {selectedTask ? <div className="space-y-3">
+                      <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm" aria-label="数字员工任务轨迹"><div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-[10px] font-black tracking-[.14em] text-emerald-700">任务轨迹</p><h3 className="mt-1 text-sm font-black text-slate-950">{selectedTask.title}</h3></div><button type="button" onClick={() => dispatchDigitalEmployeeDeepLink(buildTaskDeepLink(selectedTask, selectedPlanTask, data.run!.id))} className="inline-flex items-center gap-1.5 rounded-lg bg-slate-950 px-3 py-2 text-[10px] font-black text-white">下钻业务页面 <ArrowRight size={12}/></button></div><dl className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">{[{label:"当前节点",value:humanizeValue(selectedTask.status)},{label:"来源",value:selectedTaskSource},{label:"结果",value:selectedTaskResult},{label:"下一步",value:selectedTaskNext}].map(item=><div key={item.label} className="rounded-xl bg-slate-50 px-3 py-3"><dt className="text-[9px] font-bold text-slate-400">{item.label}</dt><dd className="mt-1 line-clamp-2 text-[11px] font-bold leading-5 text-slate-800">{item.value}</dd></div>)}</dl></section>
+                      <ProductionTaskScene runId={data.run.id} taskId={selectedTask.id} embedded />
+                    </div> : <div className="rounded-2xl border border-dashed border-slate-200 bg-white p-12 text-center text-sm text-slate-400">请选择上方 Agent 查看生产进度</div>}
                   </div>
                 </div>
                 <aside className="space-y-5">
                   {!viewGoalId && pendingApproval && approvalTask && (
-                    <section id="delivery-approval" className="scroll-mt-6 rounded-3xl border border-amber-200 bg-amber-50 p-5">
-                      <div className="flex items-center gap-2 text-amber-800">
-                        <ShieldCheck size={19} />
-                        <h2 className="font-bold">待我审批</h2>
-                      </div>
-                      <p className="mt-3 text-sm font-bold text-slate-900">
-                        {approvalTask.title}
-                      </p>
-                      <p className="mt-2 text-xs text-slate-600">
-                        {pendingApproval.action_summary}
-                      </p>
+                    <section id="delivery-approval" className="scroll-mt-6">
+                      <AgentDecisionCard
+                        kind={approvalDecisionKind}
+                        title={approvalTask.title}
+                        summary={pendingApproval.action_summary}
+                        cost={approvalBudget !== undefined ? `本周预算 ¥${approvalBudget.toFixed(2)}` : "等待预算分配"}
+                        outputs={{
+                          count: approvalOutputCount,
+                          format: approvalDecisionKind === "customer_outreach" ? "逐客消息" : approvalDecisionKind === "publish_confirmation" ? "平台发布" : "内容成品",
+                          duration: data.plan?.businessPackage?.operatingContext?.outputs.totalDurationSeconds
+                            ? `${data.plan.businessPackage.operatingContext.outputs.totalDurationSeconds} 秒`
+                            : undefined,
+                        }}
+                        facts={[{ label: "计划版本", value: data.plan?.businessPackage ? `v${data.plan.businessPackage.revision}` : "当前任务" }, { label: "授权", value: data.plan?.businessPackage?.operatingContext?.authorization.mode === "bounded" ? "本周范围授权" : "逐次确认" }]}
+                        note={approvalNote}
+                        onNoteChange={setApprovalNote}
+                        primary={{ label: "批准并继续", disabled: Boolean(busy), onClick: () => void act("approve", () => digitalEmployeeApi.decideApproval(pendingApproval.id, "approved", approvalNote)) }}
+                        secondary={{ label: "退回修改", disabled: Boolean(busy), onClick: () => void act("reject", () => digitalEmployeeApi.decideApproval(pendingApproval.id, "rejected", approvalNote)) }}
+                        tertiary={{ label: "人工完整接管", disabled: Boolean(busy), onClick: () => void act("handoff", () => digitalEmployeeApi.handoffTask(approvalTask.id)) }}
+                      >
                       {approvalTask.task_key === "followup_batch_approval" && <div className="mt-3 max-h-80 space-y-2 overflow-auto rounded-xl border border-amber-200 bg-white p-3"><p className="text-xs font-bold text-amber-900">本次审批覆盖整个批次，请核对以下逐客草稿</p>{(data.deliveries || []).filter(card => card.kind === "客服草稿" && card.taskIds.includes(approvalTask.id)).map(card => <details key={card.id} className="rounded-lg bg-slate-50 p-3"><summary className="cursor-pointer text-xs font-bold text-slate-800">{card.subject} · {card.stage}</summary><p className="mt-2 whitespace-pre-wrap text-xs leading-6 text-slate-600">{card.artifacts.find(artifact => artifact.id === "draft")?.text || "草稿尚未就绪"}</p>{card.reason && <p className="mt-2 text-xs text-amber-700">{card.reason}</p>}</details>)}</div>}
                       {pendingPublishingPackage && Array.isArray(pendingPublishingPackage.items) && <div className="mt-3 max-h-72 space-y-2 overflow-auto rounded-xl border border-amber-200 bg-white p-2">{(pendingPublishingPackage.items as Array<Record<string, unknown>>).map((item,index)=><div key={`${String(item.sourceProjectId)}-${String(item.platform)}-${index}`} className="rounded-lg bg-slate-50 p-3"><div className="flex items-center justify-between gap-2"><p className="text-xs font-black text-slate-900">{String(item.title||`发布项 ${index+1}`)}</p><span className="rounded-md bg-blue-50 px-2 py-1 text-[9px] font-bold text-blue-700">{contentPlatformLabel[String(item.platform) as ContentPlatform]||String(item.platform)}</span></div><dl className="mt-2 grid gap-1 text-[10px] text-slate-600"><div><dt className="inline font-bold">账号：</dt><dd className="inline">{Array.isArray(item.accountLabels)?item.accountLabels.map(String).join("、"):"未绑定"}</dd></div><div><dt className="inline font-bold">文案：</dt><dd className="inline line-clamp-2">{String(item.description||"暂无文案")}</dd></div><div><dt className="inline font-bold">成片：</dt><dd className="inline break-all">{String(item.videoPath||"缺失")}</dd></div><div><dt className="inline font-bold">时间：</dt><dd className="inline">{String(item.scheduledAt||"")}</dd></div></dl></div>)}</div>}
-                      <textarea
-                        value={approvalNote}
-                        onChange={(event) =>
-                          setApprovalNote(event.target.value)
-                        }
-                        className="mt-3 min-h-20 w-full rounded-xl border border-amber-200 bg-white px-3 py-2 text-xs"
-                        placeholder="审批意见（可选）"
-                      />
-                      <div className="mt-3 grid grid-cols-2 gap-2">
-                        <button
-                          disabled={Boolean(busy)}
-                          onClick={() =>
-                            void act("approve", () =>
-                              digitalEmployeeApi.decideApproval(
-                                pendingApproval.id,
-                                "approved",
-                                approvalNote,
-                              ),
-                            )
-                          }
-                          className="rounded-xl bg-emerald-600 px-3 py-2.5 text-xs font-bold text-white"
-                        >
-                          批准并继续
-                        </button>
-                        <button
-                          disabled={Boolean(busy)}
-                          onClick={() =>
-                            void act("reject", () =>
-                              digitalEmployeeApi.decideApproval(
-                                pendingApproval.id,
-                                "rejected",
-                                approvalNote,
-                              ),
-                            )
-                          }
-                          className="rounded-xl border border-red-200 bg-white px-3 py-2.5 text-xs font-bold text-red-700"
-                        >
-                          退回修改
-                        </button>
-                      </div>
-                      <button
-                        disabled={Boolean(busy)}
-                        onClick={() =>
-                          void act("handoff", () =>
-                            digitalEmployeeApi.handoffTask(approvalTask.id),
-                          )
-                        }
-                        className="mt-2 w-full rounded-xl border border-violet-200 bg-white px-3 py-2.5 text-xs font-bold text-violet-700"
-                      >
-                        人工完整接管
-                      </button>
+                      </AgentDecisionCard>
                     </section>
                   )}
                   {!viewGoalId && activeHandoff && activeHandoffTask && (

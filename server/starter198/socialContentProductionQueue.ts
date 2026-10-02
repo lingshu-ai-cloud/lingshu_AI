@@ -21,6 +21,8 @@ import {
 } from '../lib/socialContentLegacyPorts.js';
 import { analyzeProductionMaterial } from '../digitalEmployees/productionMaterialAnalysis.js';
 import { objectStorageEnabled, objectStorageSignedGetUrl } from '../storage/objectStorage.js';
+import { store } from '../storage/index.js';
+import { enqueueBullJob, selectedQueueBackend, startBullWorker } from '../queues/bullmq.js';
 import { createSocialContentArtifact } from './socialContentOutputs.js';
 import {
   inspectTransientSocialContentFile,
@@ -35,7 +37,7 @@ import {
 } from './socialContentMaterialAccess.js';
 import { withSocialContentRenderWorkspace } from './socialContentRenderWorkspace.js';
 import { readSocialTaskDetail, requireSocialTask } from './socialContentRecords.js';
-import { STARTER_COLLECTIONS, type Starter198Repository, type StarterRecord } from './repository.js';
+import { createStarter198Repository, STARTER_COLLECTIONS, type Starter198Repository, type StarterRecord } from './repository.js';
 import {
   SocialContentWorkflowError,
   socialJson,
@@ -142,6 +144,17 @@ export function enqueueSocialContentAutoProduction(input: {
   taskId: string;
   runId: string;
 }): void {
+  if (selectedQueueBackend() === 'bullmq') {
+    const data = { tenantId: input.tenantId, userId: input.userId, taskId: input.taskId, runId: input.runId };
+    const jobId = createHash('sha256').update(`${data.tenantId}\0${data.taskId}\0${data.runId}`).digest('hex');
+    void enqueueBullJob({
+      queue: 'social-content-production',
+      name: 'render',
+      data,
+      jobId,
+    }).catch(error => failExecution({ ...input, error }));
+    return;
+  }
   const key = `${input.tenantId}\u0000${input.taskId}`;
   const current = activeProductions.get(key);
   if (current?.runId === input.runId) return;
@@ -156,6 +169,28 @@ export function enqueueSocialContentAutoProduction(input: {
       })
   ));
   activeProductions.set(key, { runId: input.runId, promise: pending });
+}
+
+export function initSocialContentProductionBullWorker(): void {
+  startBullWorker<{
+    tenantId: string;
+    userId: string;
+    taskId: string;
+    runId: string;
+  }>({
+    queue: 'social-content-production',
+    concurrency: Number(process.env.SOCIAL_CONTENT_PRODUCTION_CONCURRENCY || 1),
+    processor: async job => {
+      const repository = createStarter198Repository(store);
+      const input = { repository, ...job.data };
+      try {
+        await runSocialContentAutoProductionWithRetry(input);
+      } catch (error) {
+        await failExecution({ ...input, error });
+        throw error;
+      }
+    },
+  });
 }
 
 export function socialContentAutoProductionActive(tenantId: string, taskId: string): boolean {

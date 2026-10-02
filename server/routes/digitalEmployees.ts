@@ -650,8 +650,14 @@ async function buildOverview(tenantId: string, requestedGoalId = '', requestedRa
     : operatingGoals.find(item => ['active', 'paused'].includes(item.status)) ?? operatingGoals[0] ?? null;
   const resolvedConfiguration = await resolveCurrentConfiguration(tenantId, configRecord);
   if (!goal) {
-    const businessSnapshot = await buildBusinessSnapshot(tenantId, requestedRange);
-    return { config: resolvedConfiguration?.config || null, configuration: publicConfigurationMetadata(resolvedConfiguration), goals: [], goal: null, plan: null, run: null, tasks: [], contentQueue: { generatedAt: new Date().toISOString(), sourceStatus: 'unavailable', sourceNote: '当前没有周计划', items: [] }, events: [], approvals: [], handoffs: [], review: null, liveReview: null, agents: publicAgentStatuses([]), businessSnapshot };
+    const [businessSnapshot, contentQueue] = await Promise.all([
+      buildBusinessSnapshot(tenantId, requestedRange),
+      buildContentQueueProjection({
+        tenantId, runId: '', planBody: {}, tasks: [],
+        publishingTargets: resolvedConfiguration?.config.publishingTargets || [],
+      }).catch(() => ({ generatedAt: new Date().toISOString(), sourceStatus: 'unavailable' as const, sourceNote: '内容队列暂时无法读取，请刷新重试', items: [] })),
+    ]);
+    return { config: resolvedConfiguration?.config || null, configuration: publicConfigurationMetadata(resolvedConfiguration), goals: [], goal: null, plan: null, run: null, tasks: [], contentQueue, events: [], approvals: [], handoffs: [], review: null, liveReview: null, agents: publicAgentStatuses([]), businessSnapshot };
   }
   const [plan, run, businessSnapshot] = await Promise.all([
     first<PlanRecord>(COLLECTION.plans, { tenant_id: tenantId, goal_id: goal.id }),
@@ -675,7 +681,15 @@ async function buildOverview(tenantId: string, requestedGoalId = '', requestedRa
     buildDeliveryResources(tenantId, publicTasks, goal.title)
       .then(deliveries => ({ deliveries, deliveryNotice: '' }))
       .catch(() => ({ deliveries: undefined, deliveryNotice: '业务产物暂时无法读取，当前展示任务记录。请刷新重试。' })),
-    buildContentQueueProjection({ tenantId, runId, planBody, tasks: publicTasks })
+    buildContentQueueProjection({
+      tenantId,
+      runId,
+      planBody,
+      tasks: publicTasks,
+      planId: plan?.id || '',
+      goal: { id: goal.id, objective: goal.objective, startsAt: goal.starts_at, endsAt: goal.ends_at, version: Number(goal.version || 1) },
+      publishingTargets: resolvedConfiguration?.config.publishingTargets || [],
+    })
       .catch(() => ({ generatedAt: new Date().toISOString(), sourceStatus: 'unavailable' as const, sourceNote: '内容队列暂时无法读取，请刷新重试', items: [] })),
   ]);
   return {

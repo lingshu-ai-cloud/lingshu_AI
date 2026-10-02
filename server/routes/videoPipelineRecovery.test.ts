@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import {
+  activeAnalysisRequest,
   buildYtDlpArgs,
   describeVideoAnalysisRecovery,
   exactAnalysisDuration,
@@ -46,6 +47,13 @@ const hidden = describeVideoAnalysisRecovery({ userVisible: false, geminiStatus:
 assert.equal(hidden.code, 'candidate_hidden');
 assert.equal(hidden.hidden, true);
 assert.match(hidden.reason, /暂未展示/);
+
+assert.equal(activeAnalysisRequest({
+  requestedAnalysisMode: 'exact', analysisQueueState: 'queued', geminiStatus: 'queued', analysisRunId: 'run-1',
+}, 'exact'), true, 'a repeated exact-analysis click must reuse the durable queued run');
+assert.equal(activeAnalysisRequest({
+  requestedAnalysisMode: undefined, analysisQueueState: 'paused', geminiStatus: 'paused',
+}), false, 'a paused analysis must be resumable instead of being deduplicated as active');
 
 const opsTasks = [
   { id: 'ops-a', recordId: 'video-a', tenantId: 'tenant-a', platform: 'youtube' as const, sourceUrl: 'https://youtube.com/watch?v=a', title: 'A', status: 'queued' as const, reason: 'retry', attempts: 1, createdAt: '', updatedAt: '' },

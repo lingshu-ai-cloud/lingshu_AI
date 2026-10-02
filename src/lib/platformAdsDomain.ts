@@ -21,6 +21,8 @@ export type AdProposal = {
   assumptions: string[];
   expectedOutcome: string;
   generatedAt: string;
+  /** Canonical Enterprise Center facts used when this proposal was generated. */
+  enterpriseFactVersion?: string;
 };
 export type AdSourceContext = { runId: string; taskId: string; goalId?: string; objective: string; evidence: string; expectedOutcome: string; constraints: string };
 export const creationSourceLabels: Record<AdCreationSource, string> = {

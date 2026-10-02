@@ -36,6 +36,45 @@ export interface PackageAuthorization {
   customerIds: string[];
   maxCustomerMessages: number;
 }
+export interface WeeklyOperatingContext {
+  objective: string;
+  metric: string;
+  markets: string[];
+  cycle: { startsAt: string; endsAt: string };
+  accounts: Array<{
+    accountId: string;
+    platform: string;
+    accountLabel: string;
+    positioning: string;
+    contentCount: number;
+    budgetCny: number | null;
+    allocationBasis: 'estimated_cost' | 'content_load';
+  }>;
+  budget: {
+    currency: string;
+    productionCny: number;
+    paidMediaCny: number;
+    totalCny: number;
+  };
+  cadence: {
+    contentCount: number;
+    description: string;
+    reviewSchedule: string;
+  };
+  authorization: {
+    mode: 'each' | 'bounded';
+    allowRealPublishing: boolean;
+    allowRealCustomerMessages: boolean;
+    accountIds: string[];
+    maxPublishItems: number;
+    maxCustomerMessages: number;
+  };
+  outputs: {
+    count: number;
+    formats: string[];
+    totalDurationSeconds: number;
+  };
+}
 export interface WeeklyPackage {
   directorPlan?: ContentDirectorPlan;
   matrixPlan?: MatrixAccountPlan[];
@@ -46,6 +85,8 @@ export interface WeeklyPackage {
   participation: Participation;
   tasks: PackageTask[];
   authorization: PackageAuthorization;
+  /** Frozen, user-readable projection of goal, scope, cost, output and authority. */
+  operatingContext?: WeeklyOperatingContext;
 }
 export function packageIssues(pack: WeeklyPackage, startsAt: string, endsAt: string): string[] {
   const issues: string[] = [];

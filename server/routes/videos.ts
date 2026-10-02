@@ -402,6 +402,8 @@ function videoLevelSuccessPatch(input: {
     // earlier run on an otherwise healthy, user-visible record.
     analysisError: undefined,
     downloadError: undefined,
+    analysisQueueState: 'completed',
+    analysisCompletedAt: new Date().toISOString(),
     ...videoSuccessVisibilityPatch(),
     analyzedAt: new Date().toISOString(),
     ...(input.extra ?? {}),
@@ -820,8 +822,23 @@ async function createAndAnalyzeFreshBackfillVideo(input: {
 const DEFAULT_CRAWL_KEYWORDS = 'amazon gadgets product review';
 let crawlerOpsWorkerTimer: NodeJS.Timeout | null = null;
 let crawlerOpsWorkerActive = false;
+let localAnalysisWorkerActive = false;
 let stalledExactSweepTimer: NodeJS.Timeout | null = null;
 let runtimeCrawlerProxy = '';
+const analysisQueueMutations = new Set<string>();
+
+function analysisRunsInWorkerProcess(): boolean {
+  return process.env.PROCESS_ROLE_SPLIT_ENABLED === 'true' && process.env.PROCESS_ROLE === 'web';
+}
+
+export function activeAnalysisRequest(analysis: Record<string, unknown>, mode?: 'strategy' | 'exact'): boolean {
+  if (!analysis.requestedAnalysisMode) return false;
+  if (mode && String(analysis.requestedAnalysisMode) !== mode) return false;
+  const activeStatuses = ['queued', 'waiting_for_video', 'analyzing', 'downloading', 'download_retrying', 'ops_queued', 'ops_processing'];
+  return [analysis.geminiStatus, analysis.downloadStatus, analysis.videoFetchStatus]
+    .some(status => activeStatuses.includes(String(status || '')))
+    || ['queued', 'running'].includes(String(analysis.analysisQueueState || ''));
+}
 
 export interface CrawlVideosInput {
   tenantId: string;
@@ -1501,14 +1518,11 @@ async function queueTestTenantVideoLevelAnalysis(record: Record<string, unknown>
     }),
   });
 
-  void analyzeSourceVideoJob({
+  await queueAnalyzeSource(latest, {
     record: latest,
     sourceUrl,
     title: String(latest.title || `${platform}-video`),
     platform,
-    suppressVisibleBackfill: true,
-  }).catch((e) => {
-    console.warn('[videos] test tenant async video-level analysis failed:', e instanceof Error ? e.message : e);
   });
 }
 
@@ -1648,7 +1662,6 @@ videosRouter.post('/import-reference-file', async (req, res) => {
           tenantId,
           incomingPath,
           duration,
-          size,
         });
         return { ...recovered, deduplicated: true };
       }
@@ -1661,6 +1674,7 @@ videosRouter.post('/import-reference-file', async (req, res) => {
         usage: 'reference_only', mayAnalyze: true, mayUseInProduction: false,
         contentSha256: sha256, originalBytes: size, requestedAnalysisMode: 'exact',
         analysisMode: 'exact', analysisRunId: randomUUID(), analysisRunMode: 'exact',
+        analysisQueueKind: 'stored_video', analysisQueueState: 'queued',
         geminiStatus: 'queued', downloadStatus: 'uploaded', videoFetchStatus: 'manual_upload',
         analysisQuality: 'pending', userVisible: true, importedAt: now,
       };
@@ -1681,15 +1695,7 @@ videosRouter.post('/import-reference-file', async (req, res) => {
           thumbnailUrl: `/api/overseas/videos/${record.id}/thumbnail`,
         });
         testTenantVisibleListCache.clear();
-        const material: Material = {
-          id: record.id, name: title, folder: 'hot', type: 'video', duration,
-          size: humanSize(size), file: videoFileId,
-          url: `/api/overseas/videos/${record.id}/media`,
-          tenantId, scope: 'own', usage: 'reference_only', mayAnalyze: true,
-          mayUseInProduction: false, contentSha256: sha256, createdAt: now,
-        };
-        void analyzeDownloadedMaterial(record.id, destination, material, 'exact', initialAnalysis.analysisRunId)
-          .catch(error => console.error('[videos] reference analysis failed:', error));
+        if (!analysisRunsInWorkerProcess()) startQueuedLocalAnalysis(record.id);
         return { id: record.id, deduplicated: false, analysisQueued: true };
       } catch (error) {
         await store.update(COL, record.id, { status: 'failed', aiAnalysis: JSON.stringify({ ...initialAnalysis, geminiStatus: 'analysis_retryable', analysisQuality: 'pending', analysisError: compactVideoPipelineError(error) }) });
@@ -1757,7 +1763,6 @@ async function recoverExistingReferenceImport(input: {
   tenantId: string;
   incomingPath: string;
   duration: number;
-  size: number;
 }): Promise<{ id: string; analysisQueued: boolean }> {
   const recordId = String(input.record.id || '');
   if (!recordId) throw new Error('reference_record_invalid');
@@ -1799,6 +1804,8 @@ async function recoverExistingReferenceImport(input: {
     analysisFailureKind: undefined,
     analysisQueuedAt: now,
     reanalyzeQueuedAt: now,
+    analysisQueueKind: 'stored_video',
+    analysisQueueState: 'queued',
   } : commonAnalysis;
   await store.update(COL, recordId, {
     tenantId: input.tenantId,
@@ -1812,25 +1819,7 @@ async function recoverExistingReferenceImport(input: {
   testTenantVisibleListCache.clear();
 
   if (shouldResume) {
-    const material: Material = {
-      id: recordId,
-      name: String(input.record.title || '本地参考视频'),
-      folder: 'hot',
-      type: 'video',
-      duration: Number(input.record.duration || input.duration),
-      size: humanSize(input.size),
-      file: canonicalFileId,
-      url: `/api/overseas/videos/${recordId}/media`,
-      tenantId: input.tenantId,
-      scope: 'own',
-      usage: 'reference_only',
-      mayAnalyze: true,
-      mayUseInProduction: false,
-      contentSha256: String(previous.contentSha256 || ''),
-      createdAt: String(input.record.created || now),
-    };
-    void analyzeDownloadedMaterial(recordId, canonicalPath, material, 'exact', analysisRunId)
-      .catch(error => console.error('[videos] recovered reference analysis failed:', error));
+    if (!analysisRunsInWorkerProcess()) startQueuedLocalAnalysis(recordId);
   }
   return { id: recordId, analysisQueued: shouldResume };
 }
@@ -1838,7 +1827,7 @@ async function recoverExistingReferenceImport(input: {
 // ─── POST /videos/ingest ──────────────────────────────────────────────────────
 // Body: { platform, title?, tags?, sourceUrl?, videoBase64?, mimeType? }
 videosRouter.post('/ingest', async (req, res) => {
-  const { userId, tenantId } = res.locals as AuthLocals;
+  const { tenantId } = res.locals as AuthLocals;
   const { platform, title, tags, sourceUrl, videoBase64, mimeType } = req.body as {
     platform?: Platform;
     title?: string;
@@ -1886,11 +1875,29 @@ videosRouter.post('/ingest', async (req, res) => {
       res.status(500).json({ error: 'Video upload failed' });
       return;
     }
-    await store.update(COL, record.id, { videoFileId: filename, aiAnalysis: JSON.stringify({ videoStorage: 'cos', videoObjectKey: filename }) });
+    const analysisRunId = randomUUID();
+    await store.update(COL, record.id, {
+      videoFileId: filename,
+      aiAnalysis: JSON.stringify({
+        videoStorage: 'cos', videoObjectKey: filename,
+        requestedAnalysisMode: 'exact', analysisRunId, analysisRunMode: 'exact',
+        analysisQueueKind: 'stored_video', analysisQueueState: 'queued',
+        analysisQueuedAt: new Date().toISOString(), geminiStatus: 'queued',
+      }),
+    });
+    if (!analysisRunsInWorkerProcess()) startQueuedLocalAnalysis(record.id);
+  } else if (/^https?:\/\//i.test(String(sourceUrl || ''))) {
+    const analysisRunId = randomUUID();
+    const queuedRecord = {
+      ...record,
+      sourceUrl,
+      aiAnalysis: JSON.stringify({ requestedAnalysisMode: 'exact', analysisRunId, analysisRunMode: 'exact' }),
+    };
+    await store.update(COL, record.id, { aiAnalysis: queuedRecord.aiAnalysis });
+    await queueAnalyzeSource(queuedRecord);
+  } else {
+    await store.update(COL, record.id, { status: 'failed' as VideoStatus });
   }
-
-  // Trigger analysis async (fire and forget)
-  void triggerVideoAnalysis(record.id, filename || undefined, filename ? 'video/mp4' : mimeType, userId);
 
   res.status(201).json({ id: record.id, status: 'pending' });
 });
@@ -2948,6 +2955,7 @@ videosRouter.post('/:id/analysis-pause', async (req, res) => {
       ...previous,
       analysisRunId: randomUUID(),
       requestedAnalysisMode: undefined,
+      analysisQueueState: 'paused',
       geminiStatus: 'paused',
       downloadStatus: activeStatuses.has(downloadStatus) ? 'paused' : previous.downloadStatus,
       videoFetchStatus: activeStatuses.has(videoFetchStatus) ? 'paused' : previous.videoFetchStatus,
@@ -2956,7 +2964,96 @@ videosRouter.post('/:id/analysis-pause', async (req, res) => {
       analysisError: undefined,
     }),
   });
+  resolveCrawlerOpsTasksForRecord(req.params.id, 'paused_by_user');
   res.json({ ok: true, id: req.params.id, status: 'paused', pausedAt });
+});
+
+videosRouter.post('/:id/analysis-cancel', async (req, res) => {
+  const { tenantId, userId } = res.locals as AuthLocals;
+  const record = await store.getById<Record<string, unknown>>(COL, req.params.id);
+  if (!record || (record.tenantId !== tenantId && !await requireAdminUser(req))) {
+    res.status(404).json({ error: 'Video record not found' });
+    return;
+  }
+  const previous = parseJsonRecord<Record<string, unknown>>(record.aiAnalysis, {});
+  if (!activeAnalysisRequest(previous) && !['paused', 'queued', 'running'].includes(String(previous.analysisQueueState || ''))) {
+    res.status(409).json({ error: '当前视频没有可取消的分析任务' });
+    return;
+  }
+  const cancelledAt = new Date().toISOString();
+  await store.update(COL, req.params.id, {
+    status: previous.gemini || previous.analysisQuality === 'video' ? 'analyzed' as VideoStatus : 'failed' as VideoStatus,
+    aiAnalysis: JSON.stringify({
+      ...previous,
+      analysisRunId: randomUUID(),
+      requestedAnalysisMode: undefined,
+      analysisQueueState: 'cancelled',
+      geminiStatus: 'cancelled',
+      downloadStatus: previous.downloadStatus === 'analyzed' ? 'analyzed' : 'cancelled',
+      videoFetchStatus: previous.videoFetchStatus === 'fetched' ? 'fetched' : 'cancelled',
+      analysisCancelledAt: cancelledAt,
+      analysisCancelledBy: userId,
+      analysisPausedAt: undefined,
+      analysisPausedBy: undefined,
+      analysisError: undefined,
+    }),
+  });
+  resolveCrawlerOpsTasksForRecord(req.params.id, 'cancelled_by_user');
+  res.json({ ok: true, id: req.params.id, status: 'cancelled', cancelledAt });
+});
+
+videosRouter.post('/:id/analysis-resume', async (req, res) => {
+  const { tenantId, userId } = res.locals as AuthLocals;
+  const record = await store.getById<Record<string, unknown>>(COL, req.params.id);
+  if (!record || (record.tenantId !== tenantId && !await requireAdminUser(req))) {
+    res.status(404).json({ error: 'Video record not found' });
+    return;
+  }
+  const previous = parseJsonRecord<Record<string, unknown>>(record.aiAnalysis, {});
+  const mutationKey = `${String(record.tenantId || tenantId)}:record:${req.params.id}`;
+  if (analysisQueueMutations.has(mutationKey) || activeAnalysisRequest(previous)) {
+    res.status(202).json({ status: 'pending', analysisRunId: previous.analysisRunId, deduplicated: true });
+    return;
+  }
+  analysisQueueMutations.add(mutationKey);
+  res.once('finish', () => analysisQueueMutations.delete(mutationKey));
+  const fileId = String(record.videoFileId || '');
+  const sourceUrl = String(record.sourceUrl || '').trim();
+  const materialId = String(previous.materialId || '').trim();
+  if (!fileId && !materialId && !/^https?:\/\//i.test(sourceUrl)) {
+    res.status(400).json({ error: '没有可恢复的源视频或素材' });
+    return;
+  }
+  const analysisMode = req.body?.analysisMode === 'strategy'
+    ? 'strategy'
+    : String(previous.analysisRunMode || previous.analysisMode) === 'strategy' ? 'strategy' : 'exact';
+  const analysisRunId = randomUUID();
+  const queuedAt = new Date().toISOString();
+  const analysisQueueKind = materialId ? 'material' : fileId ? 'stored_video' : 'source_url';
+  const nextAnalysis = {
+    ...previous,
+    requestedAnalysisMode: analysisMode,
+    analysisRunId,
+    analysisRunMode: analysisMode,
+    analysisQueueKind,
+    analysisQueueState: 'queued',
+    analysisQueuedAt: queuedAt,
+    reanalyzeQueuedAt: queuedAt,
+    geminiStatus: fileId || materialId ? 'queued' : 'waiting_for_video',
+    analysisPausedAt: undefined,
+    analysisPausedBy: undefined,
+    analysisCancelledAt: undefined,
+    analysisCancelledBy: undefined,
+    analysisError: undefined,
+    downloadError: undefined,
+    analysisResumedAt: queuedAt,
+    analysisResumedBy: userId,
+  };
+  const queuedRecord = { ...record, aiAnalysis: JSON.stringify(nextAnalysis) };
+  await store.update(COL, req.params.id, { status: 'pending' as VideoStatus, aiAnalysis: queuedRecord.aiAnalysis });
+  if (analysisQueueKind === 'source_url') await queueAnalyzeSource(queuedRecord);
+  else if (!analysisRunsInWorkerProcess()) startQueuedLocalAnalysis(req.params.id);
+  res.status(202).json({ status: 'pending', analysisRunId, resumed: true });
 });
 
 // Pinned studio materials are not trend_videos records, so the regular
@@ -2972,6 +3069,13 @@ videosRouter.post('/material-exact-analysis', async (req, res) => {
     ? req.body.platform : 'tiktok') as Platform;
   const duration = Math.max(0, Number(req.body?.duration || 0));
   if (!materialId) { res.status(400).json({ error: 'materialId is required' }); return; }
+  const mutationKey = `${tenantId}:material:${materialId}`;
+  if (analysisQueueMutations.has(mutationKey)) {
+    res.status(202).json({ status: 'pending', deduplicated: true });
+    return;
+  }
+  analysisQueueMutations.add(mutationKey);
+  res.once('finish', () => analysisQueueMutations.delete(mutationKey));
 
   let material: Material | null = null;
   let cloudRecord: Record<string, unknown> | null = null;
@@ -3008,6 +3112,16 @@ videosRouter.post('/material-exact-analysis', async (req, res) => {
     const analysis = parseJsonRecord<Record<string, unknown>>(item.aiAnalysis, {});
     return String(analysis.materialId || '') === materialId;
   });
+  const existingAnalysis = existing ? parseJsonRecord<Record<string, unknown>>(existing.aiAnalysis, {}) : {};
+  if (existing && activeAnalysisRequest(existingAnalysis, 'exact')) {
+    res.status(202).json({
+      status: 'pending',
+      id: String(existing.id),
+      analysisRunId: existingAnalysis.analysisRunId,
+      deduplicated: true,
+    });
+    return;
+  }
   const analysisRunId = randomUUID();
   const queuedAt = new Date().toISOString();
   const queueAnalysis = {
@@ -3026,6 +3140,8 @@ videosRouter.post('/material-exact-analysis', async (req, res) => {
     videoFetchStatus: 'fetched',
     analysisQueuedAt: queuedAt,
     reanalyzeQueuedAt: queuedAt,
+    analysisQueueKind: 'material',
+    analysisQueueState: 'queued',
     analysisError: undefined,
     videoLevelFailureStatus: undefined,
     userVisible: true,
@@ -3052,45 +3168,9 @@ videosRouter.post('/material-exact-analysis', async (req, res) => {
   const recordId = String(record?.id || existing?.id || '');
   if (!recordId) { res.status(500).json({ error: 'Failed to create analysis task' }); return; }
 
-  void (async () => {
-    fs.mkdirSync(ANALYSIS_DIR, { recursive: true });
-    const tempPath = path.join(ANALYSIS_DIR, `studio-material-${recordId}-${analysisRunId}.mp4`);
-    try {
-      if (materialId.startsWith('pb-')) {
-        const response = await fetchCloudMaterial(rawMaterialId, 'videoFile', undefined, tenantId);
-        if (!response?.ok) throw new Error('云端素材文件不可读');
-        fs.writeFileSync(tempPath, Buffer.from(await response.arrayBuffer()));
-      } else if (material!.objectKey) {
-        const downloaded = await objectStorageDownload(material!.objectKey);
-        if (!downloaded?.buf.length) throw new Error('COS 素材文件不可读');
-        fs.writeFileSync(tempPath, downloaded.buf);
-      } else {
-        const localPath = path.join(MEDIA_DIR, material!.file);
-        if (!fs.existsSync(localPath)) throw new Error('本地素材文件不存在');
-        fs.copyFileSync(localPath, tempPath);
-      }
-      await analyzeDownloadedMaterial(recordId, tempPath, material!, 'exact', analysisRunId);
-    } catch (error) {
-      const latest = await store.getById<Record<string, unknown>>(COL, recordId);
-      const previous = parseJsonRecord<Record<string, unknown>>(latest?.aiAnalysis, {});
-      if (String(previous.analysisRunId || '') === analysisRunId) {
-        await store.update(COL, recordId, {
-          status: 'failed' as VideoStatus,
-          aiAnalysis: JSON.stringify({
-            ...previous,
-            requestedAnalysisMode: undefined,
-            geminiStatus: 'video_failed',
-            analysisError: compactVideoPipelineError(error instanceof Error ? error.message : String(error)),
-            videoLevelFailureStatus: '全片精确分析失败，可重试',
-          }),
-        });
-      }
-    } finally {
-      try { fs.unlinkSync(tempPath); } catch { /* best effort */ }
-    }
-  })();
+  if (!analysisRunsInWorkerProcess()) startQueuedLocalAnalysis(recordId);
 
-  res.status(202).json({ status: 'pending', id: recordId, queuedAt });
+  res.status(202).json({ status: 'pending', id: recordId, analysisRunId, queuedAt });
 });
 
 // ─── PATCH /videos/:id/reanalyze ─────────────────────────────────────────────
@@ -3109,6 +3189,17 @@ videosRouter.patch('/:id/reanalyze', async (req, res) => {
 
   const analysisMode = req.body?.analysisMode === 'exact' ? 'exact' : 'strategy';
   const previous = parseJsonRecord<Record<string, unknown>>(record.aiAnalysis, {});
+  const mutationKey = `${String(record.tenantId || tenantId)}:record:${req.params.id}`;
+  if (analysisQueueMutations.has(mutationKey) || (req.body?.force !== true && activeAnalysisRequest(previous, analysisMode))) {
+    res.status(202).json({
+      status: 'pending',
+      analysisRunId: previous.analysisRunId,
+      deduplicated: true,
+    });
+    return;
+  }
+  analysisQueueMutations.add(mutationKey);
+  res.once('finish', () => analysisQueueMutations.delete(mutationKey));
   const analysisRunId = randomUUID();
   const fileId = record.videoFileId as string | undefined;
   const recordTenantId = String(record.tenantId || tenantId);
@@ -3144,6 +3235,31 @@ videosRouter.patch('/:id/reanalyze', async (req, res) => {
     return;
   }
   if (!fileId) {
+    if (previous.materialId) {
+      const retryResetAt = new Date().toISOString();
+      await store.update(COL, req.params.id, {
+        status: 'pending' as VideoStatus,
+        aiAnalysis: JSON.stringify({
+          ...previous,
+          requestedAnalysisMode: analysisMode,
+          analysisRunId,
+          analysisRunMode: analysisMode,
+          analysisQueueKind: 'material',
+          analysisQueueState: 'queued',
+          analysisQueuedAt: retryResetAt,
+          reanalyzeQueuedAt: retryResetAt,
+          geminiStatus: 'queued',
+          analysisPausedAt: undefined,
+          analysisPausedBy: undefined,
+          analysisCancelledAt: undefined,
+          analysisCancelledBy: undefined,
+          analysisError: undefined,
+        }),
+      });
+      if (!analysisRunsInWorkerProcess()) startQueuedLocalAnalysis(req.params.id);
+      res.status(202).json({ status: 'pending', analysisRunId });
+      return;
+    }
     const sourceUrl = String(record.sourceUrl || '').trim();
     if (!/^https?:\/\//i.test(sourceUrl)) {
       res.status(400).json({ error: 'No video file or public sourceUrl attached to this record' });
@@ -3151,7 +3267,7 @@ videosRouter.patch('/:id/reanalyze', async (req, res) => {
     }
     const retryResetAt = new Date().toISOString();
     resetCrawlerOpsTaskForExplicitRetry({ recordId: req.params.id, tenantId: recordTenantId, userId, usesSourceQueue: true, now: retryResetAt });
-    const queuedRecord = { ...record, aiAnalysis: JSON.stringify({ ...previous, requestedAnalysisMode: analysisMode, analysisRunId, analysisRunMode: analysisMode, analysisPausedAt: undefined, analysisPausedBy: undefined, analysisError: undefined, downloadError: undefined, crawlerOpsLastError: undefined, crawlerOpsReason: 'explicit_reanalyze_started', crawlerOpsStatus: 'processing', crawlerOpsAttempt: 0, crawlerOpsRetryResetAt: retryResetAt, crawlerOpsRetryResetBy: userId }) };
+    const queuedRecord = { ...record, aiAnalysis: JSON.stringify({ ...previous, requestedAnalysisMode: analysisMode, analysisRunId, analysisRunMode: analysisMode, analysisQueueKind: 'source_url', analysisQueueState: 'queued', analysisPausedAt: undefined, analysisPausedBy: undefined, analysisCancelledAt: undefined, analysisCancelledBy: undefined, analysisError: undefined, downloadError: undefined, crawlerOpsLastError: undefined, crawlerOpsReason: 'explicit_reanalyze_started', crawlerOpsStatus: 'queued', crawlerOpsAttempt: 0, crawlerOpsRetryResetAt: retryResetAt, crawlerOpsRetryResetBy: userId }) };
     await store.update(COL, req.params.id, { aiAnalysis: queuedRecord.aiAnalysis });
     await queueAnalyzeSource(queuedRecord);
     res.json({ status: 'pending', analysisRunId });
@@ -3162,28 +3278,11 @@ videosRouter.patch('/:id/reanalyze', async (req, res) => {
   resetCrawlerOpsTaskForExplicitRetry({ recordId: req.params.id, tenantId: recordTenantId, userId, usesSourceQueue: false, now: retryResetAt });
   await store.update(COL, req.params.id, {
     status: 'pending',
-    aiAnalysis: JSON.stringify({ ...previous, requestedAnalysisMode: analysisMode, analysisRunId, analysisRunMode: analysisMode, analysisError: undefined, downloadError: undefined, crawlerOpsLastError: undefined, crawlerOpsReason: 'explicit_reanalyze_uses_local_file', crawlerOpsStatus: 'resolved', crawlerOpsAttempt: 0, analysisPausedAt: undefined, analysisPausedBy: undefined, reanalyzeQueuedAt: retryResetAt, crawlerOpsRetryResetAt: retryResetAt, crawlerOpsRetryResetBy: userId }),
+    aiAnalysis: JSON.stringify({ ...previous, requestedAnalysisMode: analysisMode, analysisRunId, analysisRunMode: analysisMode, analysisQueueKind: 'stored_video', analysisQueueState: 'queued', analysisQueuedAt: retryResetAt, geminiStatus: 'queued', analysisError: undefined, downloadError: undefined, crawlerOpsLastError: undefined, crawlerOpsReason: 'explicit_reanalyze_uses_local_file', crawlerOpsStatus: 'resolved', crawlerOpsAttempt: 0, analysisPausedAt: undefined, analysisPausedBy: undefined, analysisCancelledAt: undefined, analysisCancelledBy: undefined, reanalyzeQueuedAt: retryResetAt, crawlerOpsRetryResetAt: retryResetAt, crawlerOpsRetryResetBy: userId }),
   });
-  const localPath = localReferenceVideoPath(fileId, recordTenantId) || path.join(MEDIA_DIR, fileId);
-  if (fs.existsSync(localPath)) {
-    void analyzeDownloadedMaterial(req.params.id, localPath, {
-      id: String(previous.materialId || path.parse(fileId).name),
-      name: String(record.title || fileId),
-      folder: 'hot',
-      type: 'video',
-      duration: Number(record.duration || 0),
-      size: humanSize(fs.statSync(localPath).size),
-      file: fileId,
-      url: `/media/${fileId}`,
-      poster: String(previous.materialPoster || record.thumbnailUrl || '') || undefined,
-      scope: 'own',
-      createdAt: new Date().toISOString(),
-    }, analysisMode, analysisRunId);
-  } else {
-    void triggerVideoAnalysis(req.params.id, fileId, undefined, userId, analysisRunId);
-  }
+  if (!analysisRunsInWorkerProcess()) startQueuedLocalAnalysis(req.params.id);
 
-  res.json({ status: 'pending', analysisRunId });
+  res.status(202).json({ status: 'pending', analysisRunId });
 });
 
 // ─── Internal: async AI analysis ─────────────────────────────────────────────
@@ -3204,6 +3303,10 @@ async function triggerVideoAnalysis(
   try {
     const record = await store.getById<Record<string, unknown>>(COL, recordId);
     const previousRecordAnalysis = parseJsonRecord<Record<string, unknown>>(record?.aiAnalysis, {});
+    if (expectedRunId && String(previousRecordAnalysis.analysisRunId || '') !== expectedRunId) {
+      console.warn(`[videos] stale queued analysis skipped for ${recordId}: ${expectedRunId}`);
+      return;
+    }
     const localReference = localReferenceVideoPath(filename, String(record?.tenantId || ''));
     let dl = localReference && fs.existsSync(localReference)
       ? { buf: fs.readFileSync(localReference), contentType: 'video/mp4' }
@@ -3222,10 +3325,17 @@ async function triggerVideoAnalysis(
     }
     if (!dl) throw new Error('video file fetch failed');
 
+    const latestBeforeStart = await store.getById<Record<string, unknown>>(COL, recordId);
+    const latestBeforeStartAnalysis = parseJsonRecord<Record<string, unknown>>(latestBeforeStart?.aiAnalysis, {});
+    if (expectedRunId && String(latestBeforeStartAnalysis.analysisRunId || '') !== expectedRunId) {
+      console.warn(`[videos] stale fetched analysis skipped for ${recordId}: ${expectedRunId}`);
+      return;
+    }
+
     if (!fs.existsSync(ANALYSIS_DIR)) fs.mkdirSync(ANALYSIS_DIR, { recursive: true });
     tempPath = path.join(ANALYSIS_DIR, `upload-${recordId}-${Date.now()}.${mimeFromPath(filename).split('/').pop() || 'mp4'}`);
     fs.writeFileSync(tempPath, dl.buf);
-    const previous = parseJsonRecord<Record<string, unknown>>(record?.aiAnalysis, {});
+    const previous = latestBeforeStartAnalysis;
     runId = runId || String(previous.analysisRunId || randomUUID());
     await store.update(COL, recordId, {
       status: 'pending' as VideoStatus,
@@ -3305,6 +3415,7 @@ async function triggerVideoAnalysis(
         videoFetchStatus: 'manual_upload',
         geminiStatus: 'video_failed',
         requestedAnalysisMode: undefined,
+        analysisQueueState: 'failed',
         analysisError: compactError,
         videoLevelFailureStatus: '视频级失败/需人工处理',
         manualRequiredReason: 'manual_upload_analysis_failed',
@@ -3342,6 +3453,7 @@ export async function attachManualVideoUploadAndQueue(input: {
   if (!storedFilename) throw new Error('Video upload failed');
 
   const previous = parseJsonRecord<Record<string, unknown>>(record.aiAnalysis, {});
+  const analysisRunId = randomUUID();
   await store.update(COL, input.recordId, {
     videoFileId: storedFilename,
     status: 'pending' as VideoStatus,
@@ -3352,6 +3464,12 @@ export async function attachManualVideoUploadAndQueue(input: {
       manualVideoUploadedAt: new Date().toISOString(),
       manualVideoUploadedBy: input.uploadedBy,
       manualVideoUploadStatus: 'queued',
+      requestedAnalysisMode: 'exact',
+      analysisRunId,
+      analysisRunMode: 'exact',
+      analysisQueueKind: 'stored_video',
+      analysisQueueState: 'queued',
+      analysisQueuedAt: new Date().toISOString(),
       downloadStatus: 'uploaded',
       videoFetchStatus: 'manual_upload',
       geminiStatus: 'queued',
@@ -3373,9 +3491,7 @@ export async function attachManualVideoUploadAndQueue(input: {
     error: '缺失视频已补充，等待 Gemini 视频级分析。',
   });
 
-  void triggerVideoAnalysis(input.recordId, storedFilename, mimeType, input.uploadedBy || 'admin').catch((e) => {
-    console.warn('[videos] manual upload analysis failed:', e instanceof Error ? e.message : e);
-  });
+  if (!analysisRunsInWorkerProcess()) startQueuedLocalAnalysis(input.recordId);
 
   return { recordId: input.recordId, filename: storedFilename, status: 'queued' };
 }
@@ -3433,6 +3549,7 @@ async function queueAnalyzeSource(
   const remoteUrl = String(job?.sourceUrl || record.sourceUrl || '').trim();
   const platform = (job?.platform || record.platform || inferPlatformFromUrl(remoteUrl)) as Platform;
   const analysis = parseJsonRecord(record.aiAnalysis, {});
+  const queuedAt = new Date().toISOString();
   await store.update(COL, String(record.id), {
     status: 'pending' as VideoStatus,
     aiAnalysis: JSON.stringify({
@@ -3443,9 +3560,21 @@ async function queueAnalyzeSource(
       analysisSource: 'gemini-temp-video',
       analysisError: undefined,
       downloadError: undefined,
-      analysisQueuedAt: new Date().toISOString(),
+      analysisQueueKind: 'source_url',
+      analysisQueueState: 'queued',
+      analysisQueuedAt: queuedAt,
     }),
   });
+  enqueueCrawlerOpsTask({
+    recordId: String(record.id),
+    tenantId: String(record.tenantId || '').trim() || undefined,
+    platform,
+    sourceUrl: remoteUrl,
+    title: String(job?.title || record.title || `${platform}-video`),
+    reason: 'analysis_requested',
+    forceQueue: true,
+  });
+  if (analysisRunsInWorkerProcess()) return;
   void analyzeSourceVideoJob(job || {
     record,
     sourceUrl: remoteUrl,
@@ -3780,6 +3909,10 @@ async function releaseStalledExactAnalysis(forceInterrupted = false, tenantId?: 
     const recordId = String(record.id || '');
     if (!recordId || inFlight.has(recordId) || activeAnalysisRecords.has(recordId) || durableAnalysisRecords.has(recordId)) continue;
     const analysis = parseJsonRecord<Record<string, unknown>>(record.aiAnalysis, {});
+    // Durable local/material jobs are owned by the analysis worker and must be
+    // resumed after a restart, not released back to a terminal retry state.
+    if (['queued', 'running'].includes(String(analysis.analysisQueueState || ''))
+      && ['material', 'stored_video'].includes(String(analysis.analysisQueueKind || ''))) continue;
     const startedAt = Date.parse(String(analysis.reanalyzeQueuedAt || record.updated || ''));
     // The durable ownership check above also protects work in sibling local
     // processes. Only ownerless work can be released immediately on startup.
@@ -4256,8 +4389,10 @@ async function analyzeSourceVideoJobInner(input: {
   };
   let tempPath = '';
   try {
+    if (!await stillOwnsRun()) return null;
     if (analysisMode !== 'exact' && input.platform === 'youtube' && !input.skipYoutubeUrlAnalysis && (input.forceManualFailure || !shouldUseQwenFirst())) {
-      const direct = await tryAnalyzeYouTubeUrl(input);
+      const direct = await tryAnalyzeYouTubeUrl(input, analysisRunId);
+      if (!await stillOwnsRun()) return null;
       if (direct) return direct;
       if (input.forceManualFailure) {
         return persistMetadataFallbackAnalysis(input, 'youtube_url_failed', {
@@ -4281,7 +4416,7 @@ async function analyzeSourceVideoJobInner(input: {
     if (recordId) {
       const latest = await store.getById(COL, recordId);
       const analysis: Record<string, unknown> = parseJsonRecord(latest?.aiAnalysis ?? input.record?.aiAnalysis, {} as Record<string, unknown>);
-      if (analysis.analysisRunId && String(analysis.analysisRunId) !== analysisRunId && analysis.analysisRunMode === 'exact') {
+      if (analysis.analysisRunId && String(analysis.analysisRunId) !== analysisRunId) {
         console.warn(`[videos] stale source analysis skipped for ${recordId}: ${analysisRunId}`);
         return analysis.gemini || null;
       }
@@ -4357,7 +4492,7 @@ async function analyzeSourceVideoJobInner(input: {
     if (recordId) {
       if (!await stillOwnsRun()) return null;
       const latest = await store.getById(COL, recordId);
-      const analysis = parseJsonRecord(latest?.aiAnalysis ?? input.record?.aiAnalysis, {});
+      const analysis = parseJsonRecord<Record<string, unknown>>(latest?.aiAnalysis ?? input.record?.aiAnalysis, {});
       await store.update(COL, recordId, {
         status: 'pending' as VideoStatus,
         aiAnalysis: JSON.stringify({
@@ -4652,6 +4787,7 @@ function scheduleYouTubeDownloadFallback(input: {
     if (!latest) return;
     const analysis = parseJsonRecord<Record<string, unknown>>(latest.aiAnalysis, {});
     if (analysis.analysisQuality === 'video') return;
+    if (['paused', 'cancelled'].includes(String(analysis.analysisQueueState || analysis.geminiStatus || ''))) return;
     await analyzeSourceVideoJob({
       record: latest,
       sourceUrl: input.sourceUrl,
@@ -4679,12 +4815,13 @@ async function tryAnalyzeYouTubeUrl(input: {
   sourceUrl: string;
   title: string;
   platform: Platform;
-}): Promise<unknown | null> {
+}, expectedRunId: string): Promise<unknown | null> {
   const recordId = input.record?.id ? String(input.record.id) : '';
   try {
     if (recordId) {
       const latest = await store.getById(COL, recordId);
-      const analysis = parseJsonRecord(latest?.aiAnalysis ?? input.record?.aiAnalysis, {});
+      const analysis = parseJsonRecord<Record<string, unknown>>(latest?.aiAnalysis ?? input.record?.aiAnalysis, {});
+      if (analysis.analysisRunId && String(analysis.analysisRunId) !== expectedRunId) return null;
       await store.update(COL, recordId, {
         status: 'pending' as VideoStatus,
         aiAnalysis: JSON.stringify({
@@ -4694,6 +4831,8 @@ async function tryAnalyzeYouTubeUrl(input: {
           geminiStatus: 'analyzing',
           analysisSource: 'gemini-youtube-url',
           geminiStartedAt: new Date().toISOString(),
+          analysisRunId: expectedRunId,
+          analysisRunMode: 'strategy',
         }),
       });
     }
@@ -4701,6 +4840,7 @@ async function tryAnalyzeYouTubeUrl(input: {
     if (recordId) {
       const latest = await store.getById(COL, recordId);
       const previous = parseJsonRecord<Record<string, unknown>>(latest?.aiAnalysis ?? input.record?.aiAnalysis, {});
+      if (String(previous.analysisRunId || '') !== expectedRunId) return null;
       await store.update(COL, recordId, {
         status: 'analyzed' as VideoStatus,
         aiAnalysis: JSON.stringify({
@@ -4718,6 +4858,7 @@ async function tryAnalyzeYouTubeUrl(input: {
     if (recordId) {
       const latest = await store.getById(COL, recordId);
       const previous = parseJsonRecord<Record<string, unknown>>(latest?.aiAnalysis ?? input.record?.aiAnalysis, {});
+      if (String(previous.analysisRunId || '') !== expectedRunId) return null;
       await store.update(COL, recordId, {
         status: 'pending' as VideoStatus,
         aiAnalysis: JSON.stringify({
@@ -4735,6 +4876,14 @@ async function tryAnalyzeYouTubeUrl(input: {
 
 async function analyzeDownloadedMaterial(recordId: string, filePath: string, material: Material, analysisMode: 'strategy' | 'exact' = 'exact', expectedRunId?: string): Promise<void> {
   try {
+    if (expectedRunId) {
+      const current = await store.getById<Record<string, unknown>>(COL, recordId);
+      const currentAnalysis = parseJsonRecord<Record<string, unknown>>(current?.aiAnalysis, {});
+      if (String(currentAnalysis.analysisRunId || '') !== expectedRunId) {
+        console.warn(`[videos] stale material analysis skipped for ${recordId}: ${expectedRunId}`);
+        return;
+      }
+    }
     await store.update(COL, recordId, { status: 'pending' as VideoStatus });
     const videoAnalysis = await analyzeDownloadedVideoWithFallback({
       filePath,
@@ -4786,6 +4935,7 @@ async function analyzeDownloadedMaterial(recordId: string, filePath: string, mat
         aiAnalysis: JSON.stringify({
           ...previous,
           requestedAnalysisMode: undefined,
+          analysisQueueState: 'failed',
           geminiStatus: 'analysis_retryable',
           analysisRetryable: true,
           analysisFailureKind: 'quality_or_timeout',
@@ -4815,11 +4965,161 @@ async function analyzeDownloadedMaterial(recordId: string, filePath: string, mat
         aiAnalysis: JSON.stringify({
           ...previous,
           analysisSource: 'gemini-video',
+          requestedAnalysisMode: undefined,
+          analysisQueueState: 'failed',
           analysisError: compactVideoPipelineError(e instanceof Error ? e.message : 'Gemini analysis failed'),
         }),
       });
     }
   }
+}
+
+function startQueuedLocalAnalysis(recordId: string): void {
+  void executeQueuedLocalAnalysisRecord(recordId).catch(error => {
+    if (error instanceof AnalysisAlreadyRunningError) return;
+    console.warn(`[videos] queued local analysis failed for ${recordId}:`, error instanceof Error ? error.message : error);
+  });
+}
+
+async function materialForQueuedAnalysis(
+  record: Record<string, unknown>,
+  analysis: Record<string, unknown>,
+): Promise<{ material: Material; filePath: string; temporary: boolean }> {
+  const recordId = String(record.id || '');
+  const tenantId = String(record.tenantId || '');
+  const materialId = String(analysis.materialId || '');
+  if (!materialId) throw new Error('queued_material_id_missing');
+  fs.mkdirSync(ANALYSIS_DIR, { recursive: true });
+  const tempPath = path.join(ANALYSIS_DIR, `queued-material-${recordId}-${String(analysis.analysisRunId || randomUUID())}.mp4`);
+  if (materialId.startsWith('pb-')) {
+    const rawMaterialId = materialId.replace(/^pb-/, '');
+    const cloudRecord = await getCloudMaterialRecord(rawMaterialId, tenantId);
+    if (!cloudRecord) throw new Error('queued_cloud_material_not_found');
+    const response = await fetchCloudMaterial(rawMaterialId, 'videoFile', undefined, tenantId);
+    if (!response?.ok) throw new Error('queued_cloud_material_unreadable');
+    fs.writeFileSync(tempPath, Buffer.from(await response.arrayBuffer()));
+    return {
+      material: {
+        id: materialId,
+        name: String(cloudRecord.title || cloudRecord.sourceName || record.title || '置顶素材'),
+        folder: String(cloudRecord.folder || 'upload'),
+        type: 'video',
+        duration: Number(cloudRecord.duration || record.duration || 0),
+        size: humanSize(Number(cloudRecord.sizeBytes || fs.statSync(tempPath).size)),
+        file: String(cloudRecord.videoFile || ''),
+        url: String(analysis.materialUrl || `/api/overseas/studio/materials/pb/${rawMaterialId}/media`),
+        poster: String(analysis.materialPoster || record.thumbnailUrl || '') || undefined,
+        scope: String(cloudRecord.scope || 'own') === 'shared' ? 'shared' : 'own',
+        tenantId,
+        createdAt: String(cloudRecord.created || new Date().toISOString()),
+      },
+      filePath: tempPath,
+      temporary: true,
+    };
+  }
+  const material = loadMaterials().find(item => item.id === materialId
+    && (item.scope === 'shared' || item.tenantId === tenantId));
+  if (!material) throw new Error('queued_material_not_found');
+  if (material.objectKey) {
+    const downloaded = await objectStorageDownload(material.objectKey);
+    if (!downloaded?.buf.length) throw new Error('queued_object_material_unreadable');
+    fs.writeFileSync(tempPath, downloaded.buf);
+    return { material, filePath: tempPath, temporary: true };
+  }
+  const localPath = path.join(MEDIA_DIR, material.file);
+  if (!fs.existsSync(localPath)) throw new Error('queued_local_material_missing');
+  return { material, filePath: localPath, temporary: false };
+}
+
+async function executeQueuedLocalAnalysisRecord(recordId: string): Promise<boolean> {
+  return await activeAnalysisRecords.run(recordId, () => durableAnalysisRecords.run(recordId, async () => {
+    const record = await store.getById<Record<string, unknown>>(COL, recordId);
+    if (!record) return false;
+    const analysis = parseJsonRecord<Record<string, unknown>>(record.aiAnalysis, {});
+    const queueState = String(analysis.analysisQueueState || 'queued');
+    if (!analysis.requestedAnalysisMode || ['paused', 'cancelled', 'completed'].includes(queueState)) return false;
+    const analysisRunId = String(analysis.analysisRunId || randomUUID());
+    const analysisMode = analysis.requestedAnalysisMode === 'strategy' ? 'strategy' : 'exact';
+    await store.update(COL, recordId, {
+      status: 'pending' as VideoStatus,
+      aiAnalysis: JSON.stringify({
+        ...analysis,
+        analysisRunId,
+        analysisRunMode: analysisMode,
+        analysisQueueState: 'running',
+        analysisWorkerStartedAt: new Date().toISOString(),
+        analysisWorkerAttempt: Number(analysis.analysisWorkerAttempt || 0) + 1,
+        geminiStatus: 'analyzing',
+      }),
+    });
+    try {
+      if (String(analysis.analysisQueueKind || '') === 'material' || (!record.videoFileId && analysis.materialId)) {
+        const resolved = await materialForQueuedAnalysis(record, analysis);
+        try {
+          await analyzeDownloadedMaterial(recordId, resolved.filePath, resolved.material, analysisMode, analysisRunId);
+        } finally {
+          if (resolved.temporary) { try { fs.unlinkSync(resolved.filePath); } catch { /* best effort */ } }
+        }
+      } else {
+        const filename = String(record.videoFileId || '');
+        if (!filename) throw new Error('queued_video_file_missing');
+        const tenantId = String(record.tenantId || '');
+        const localPath = localReferenceVideoPath(filename, tenantId) || path.join(MEDIA_DIR, filename);
+        if (fs.existsSync(localPath)) {
+          await analyzeDownloadedMaterial(recordId, localPath, {
+            id: String(analysis.materialId || path.parse(filename).name),
+            name: String(record.title || filename),
+            folder: 'hot',
+            type: 'video',
+            duration: Number(record.duration || 0),
+            size: humanSize(fs.statSync(localPath).size),
+            file: filename,
+            url: `/api/overseas/videos/${recordId}/media`,
+            poster: String(analysis.materialPoster || record.thumbnailUrl || '') || undefined,
+            scope: 'own',
+            tenantId,
+            createdAt: new Date().toISOString(),
+          }, analysisMode, analysisRunId);
+        } else {
+          await triggerVideoAnalysis(recordId, filename, undefined, 'analysis-worker', analysisRunId);
+        }
+      }
+      const finished = await store.getById<Record<string, unknown>>(COL, recordId);
+      const finishedAnalysis = parseJsonRecord<Record<string, unknown>>(finished?.aiAnalysis, {});
+      if (String(finishedAnalysis.analysisRunId || '') === analysisRunId
+        && finishedAnalysis.analysisQueueState === 'running') {
+        const succeeded = !finishedAnalysis.requestedAnalysisMode
+          && ['analyzed', 'needs_review'].includes(String(finishedAnalysis.geminiStatus || ''))
+          && ['video', 'video_review_required'].includes(String(finishedAnalysis.analysisQuality || ''));
+        await store.update(COL, recordId, {
+          aiAnalysis: JSON.stringify({
+            ...finishedAnalysis,
+            analysisQueueState: succeeded ? 'completed' : 'failed',
+            ...(succeeded ? { analysisCompletedAt: new Date().toISOString() } : {}),
+          }),
+        });
+      }
+      return true;
+    } catch (error) {
+      const latest = await store.getById<Record<string, unknown>>(COL, recordId);
+      const latestAnalysis = parseJsonRecord<Record<string, unknown>>(latest?.aiAnalysis, {});
+      if (String(latestAnalysis.analysisRunId || '') === analysisRunId) {
+        await store.update(COL, recordId, {
+          status: 'failed' as VideoStatus,
+          aiAnalysis: JSON.stringify({
+            ...latestAnalysis,
+            requestedAnalysisMode: undefined,
+            analysisQueueState: 'failed',
+            geminiStatus: 'analysis_retryable',
+            analysisRetryable: true,
+            analysisError: compactVideoPipelineError(error instanceof Error ? error.message : error),
+            videoLevelFailureStatus: '后台分析中断，可重试或恢复',
+          }),
+        });
+      }
+      throw error;
+    }
+  })) as boolean;
 }
 
 async function crawlSocialUrlOrFallback(platform: Platform, keyword: string, limit: number, dateFrom = '', dateTo = ''): Promise<CrawledVideo[]> {
@@ -8820,6 +9120,18 @@ function resetCrawlerOpsTaskForExplicitRetry(input: {
   return updated;
 }
 
+function resolveCrawlerOpsTasksForRecord(recordId: string, reason: string): void {
+  const now = new Date().toISOString();
+  const tasks = loadCrawlerOpsTasks();
+  let changed = false;
+  const next = tasks.map(task => {
+    if (task.recordId !== recordId || task.status === 'resolved') return task;
+    changed = true;
+    return { ...task, status: 'resolved' as const, reason, updatedAt: now };
+  });
+  if (changed) persistCrawlerOpsTasks(next);
+}
+
 function enqueueCrawlerOpsTask(input: {
   recordId: string;
   tenantId?: string;
@@ -8868,6 +9180,68 @@ function enqueueCrawlerOpsTask(input: {
   return task;
 }
 
+export async function runQueuedLocalAnalysisWorkerOnce(options: { recoverInterrupted?: boolean; tenantId?: string } = {}): Promise<{
+  picked: number;
+  completed: number;
+  failed: number;
+  skipped: number;
+}> {
+  if (localAnalysisWorkerActive) return { picked: 0, completed: 0, failed: 0, skipped: 0 };
+  localAnalysisWorkerActive = true;
+  let picked = 0;
+  let completed = 0;
+  let failed = 0;
+  let skipped = 0;
+  try {
+    const records: Record<string, unknown>[] = [];
+    for (let page = 1; ; page += 1) {
+      const result = await store.list<Record<string, unknown>>(COL, {
+        where: options.tenantId ? { tenantId: options.tenantId } : undefined,
+        sort: 'updated',
+        page,
+        perPage: 300,
+      });
+      records.push(...result.items);
+      if (page >= result.totalPages || !result.items.length || page >= 20) break;
+    }
+    const now = Date.now();
+    const staleMs = Math.max(5 * 60_000, Number(process.env.LOCAL_ANALYSIS_RECOVERY_MS || 15 * 60_000));
+    const candidates = records.filter(record => {
+      const analysis = parseJsonRecord<Record<string, unknown>>(record.aiAnalysis, {});
+      if (!analysis.requestedAnalysisMode) return false;
+      const kind = String(analysis.analysisQueueKind || '');
+      if (kind === 'source_url') return false;
+      if (!['material', 'stored_video'].includes(kind) && !record.videoFileId && !analysis.materialId) return false;
+      const state = String(analysis.analysisQueueState || 'queued');
+      if (state === 'queued') return true;
+      if (state !== 'running') return false;
+      if (options.recoverInterrupted) return true;
+      const startedAt = Date.parse(String(analysis.analysisWorkerStartedAt || record.updated || ''));
+      return Number.isFinite(startedAt) && now - startedAt >= staleMs;
+    }).slice(0, Math.max(1, Number(process.env.LOCAL_ANALYSIS_WORKER_BATCH || 2)));
+
+    for (const record of candidates) {
+      const recordId = String(record.id || '');
+      if (!recordId || activeAnalysisRecords.has(recordId)
+        || (!options.recoverInterrupted && durableAnalysisRecords.has(recordId))) {
+        skipped += 1;
+        continue;
+      }
+      picked += 1;
+      try {
+        if (await executeQueuedLocalAnalysisRecord(recordId)) completed += 1;
+        else skipped += 1;
+      } catch (error) {
+        if (error instanceof AnalysisAlreadyRunningError) skipped += 1;
+        else failed += 1;
+      }
+    }
+  } finally {
+    localAnalysisWorkerActive = false;
+  }
+  return { picked, completed, failed, skipped };
+}
+
 export function initCrawlerOpsWorker(): void {
   const workerFlag = process.env.CRAWLER_OPS_WORKER_ENABLED;
   const intervalMs = Math.max(5_000, Number(process.env.CRAWLER_OPS_WORKER_INTERVAL_MS || 30_000));
@@ -8889,12 +9263,20 @@ export function initCrawlerOpsWorker(): void {
     void runCrawlerOpsWorkerOnce().then(logCrawlerOpsWorkerResult).catch((e) => {
       console.warn('[crawler-ops] worker tick failed:', e instanceof Error ? e.message : e);
     });
+    void runQueuedLocalAnalysisWorkerOnce().then(result => {
+      if (result.picked) console.log(`[video-analysis-worker] picked=${result.picked} completed=${result.completed} failed=${result.failed} skipped=${result.skipped}`);
+    }).catch((e) => {
+      console.warn('[video-analysis-worker] tick failed:', e instanceof Error ? e.message : e);
+    });
   }, intervalMs);
   // No analysis job survives a process restart. Recover records persisted as
   // downloading/analyzing immediately on the first tick instead of waiting for
   // the normal active-job stall timeout.
   void runCrawlerOpsWorkerOnce({ recoverInterrupted: true }).then(logCrawlerOpsWorkerResult).catch((e) => {
     console.warn('[crawler-ops] initial tick failed:', e instanceof Error ? e.message : e);
+  });
+  void runQueuedLocalAnalysisWorkerOnce({ recoverInterrupted: true }).catch((e) => {
+    console.warn('[video-analysis-worker] initial recovery failed:', e instanceof Error ? e.message : e);
   });
   console.log(`[crawler-ops] worker enabled, interval=${intervalMs}ms`);
 }
@@ -8948,8 +9330,14 @@ export async function runCrawlerOpsWorkerOnce(options: { recoverInterrupted?: bo
         skipped += 1;
         continue;
       }
-      if (activeAnalysisRecords.has(task.recordId) || durableAnalysisRecords.has(task.recordId)) { skipped += 1; continue; }
+      if (activeAnalysisRecords.has(task.recordId)
+        || (!options.recoverInterrupted && durableAnalysisRecords.has(task.recordId))) { skipped += 1; continue; }
       const previous = parseJsonRecord<Record<string, unknown>>(record.aiAnalysis, {});
+      if (!previous.requestedAnalysisMode && ['paused', 'cancelled'].includes(String(previous.analysisQueueState || previous.geminiStatus || ''))) {
+        updateCrawlerOpsTask(task.id, { status: 'resolved', reason: String(previous.analysisQueueState || previous.geminiStatus) });
+        skipped += 1;
+        continue;
+      }
       if (previous.analysisQuality === 'video' && previous.requestedAnalysisMode !== 'exact') {
         updateCrawlerOpsTask(task.id, { status: 'resolved', lastStrategy: 'already_video' });
         resolved += 1;
@@ -9080,7 +9468,8 @@ async function enqueueOpsTasksFromRecords(recoverInterrupted = false, tenantId?:
   }
   const now = Date.now();
   for (const record of records) {
-    if (activeAnalysisRecords.has(String(record.id || '')) || durableAnalysisRecords.has(String(record.id || ''))) continue;
+    if (activeAnalysisRecords.has(String(record.id || ''))
+      || (!recoverInterrupted && durableAnalysisRecords.has(String(record.id || '')))) continue;
     const analysis = parseJsonRecord<Record<string, unknown>>(record.aiAnalysis, {});
     if (analysis.analysisQuality === 'video' && analysis.requestedAnalysisMode !== 'exact') continue;
     const downloadStatus = String(analysis.downloadStatus || '');
@@ -9293,6 +9682,7 @@ export async function getVideoPipelineStats(tenantId?: string): Promise<Record<s
     const gemini = String(analysis.geminiStatus || '');
     const fetchStatus = String(analysis.downloadStatus || analysis.videoFetchStatus || '');
     const paused = Boolean(analysis.analysisPausedAt) || gemini === 'paused';
+    const cancelled = Boolean(analysis.analysisCancelledAt) || gemini === 'cancelled' || analysis.analysisQueueState === 'cancelled';
     const failed = String(record.status || '') === 'failed'
       || Boolean(analysis.analysisError || analysis.videoLevelFailureStatus)
       || ['video_failed', 'analysis_retryable', 'ops_failed', 'url_failed', 'unavailable'].includes(gemini)
@@ -9300,7 +9690,7 @@ export async function getVideoPipelineStats(tenantId?: string): Promise<Record<s
     const analyzing = Boolean(analysis.requestedAnalysisMode)
       || ['queued', 'analyzing', 'waiting_for_video', 'downloading', 'download_retrying'].includes(gemini)
       || ['queued', 'downloading', 'download_retrying', 'ops_queued', 'ops_processing'].includes(fetchStatus);
-    const itemStatus = paused ? 'paused' : failed ? 'failed' : analyzing ? 'analyzing' : 'analyzed';
+    const itemStatus = cancelled ? 'cancelled' : paused ? 'paused' : failed ? 'failed' : analyzing ? 'analyzing' : 'analyzed';
     const recovery = describeVideoAnalysisRecovery(analysis, String(record.status || ''));
     return {
       id: String(record.id || ''),
@@ -9312,8 +9702,12 @@ export async function getVideoPipelineStats(tenantId?: string): Promise<Record<s
       analysisMode: String(analysis.requestedAnalysisMode || analysis.analysisMode || 'strategy'),
       updatedAt: String(record.updated || record.crawledAt || ''),
       error: failed ? publicVideoPipelineError(analysis.analysisError || analysis.videoLevelFailureStatus) : '',
-      statusReason: recovery.reason,
-      recoveryAction: recovery.recoveryAction,
+      statusReason: cancelled ? '任务已取消，旧运行结果不会再写回。'
+        : paused ? '任务已暂停，当前结果和进度已保留。'
+          : recovery.reason,
+      recoveryAction: cancelled ? '点击“恢复”会创建新的运行版本并从持久队列继续。'
+        : paused ? '点击“恢复”继续，或点击“取消”终止本次任务。'
+          : recovery.recoveryAction,
       failureCode: recovery.code,
       provider: recovery.provider,
       visibility: recovery.hidden ? 'hidden' : 'visible',
