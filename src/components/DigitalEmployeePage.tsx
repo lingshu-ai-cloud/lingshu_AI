@@ -3890,6 +3890,12 @@ export default function DigitalEmployeePage({
       const planTask = data.plan?.tasks.find(item => item.key === task.task_key);
       dispatchDigitalEmployeeDeepLink(buildTaskDeepLink(task, planTask, data.run?.id || task.run_id));
     };
+    const openProductionProgress = (taskId: string) => {
+      if (!data.run || !data.tasks.some(item => item.id === taskId)) return;
+      setSelectedTaskId(taskId);
+      setWorkspaceView("live");
+      window.setTimeout(() => document.getElementById("task-production-scene")?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
+    };
     return (
       <>
       <div className="h-full overflow-y-auto bg-[#f7f8f6]">
@@ -3919,7 +3925,7 @@ export default function DigitalEmployeePage({
           <main className="py-6">
             {workspaceView === "rules"
               ? <OnboardingPanel initial={data.config} readiness={data.businessSnapshot?.readiness || []} busy={Boolean(busy)} mode="rules" activeRun={activeRun} onOpenReadiness={openReadiness} onSave={(config) => void saveConfig(config)} />
-              : <SmartBusinessDashboard data={data} view={dashboardView} onRefresh={() => void load()} onOpenContent={openContentProduction} onGeneratePlan={() => { if (!goal || canCreateNextGoal) setNewGoal(true); setWeeklyPlanOpen(true); }} onNavigate={page => {
+              : <SmartBusinessDashboard data={data} view={dashboardView} onRefresh={() => void load()} onOpenContent={openContentProduction} onOpenProductionProgress={openProductionProgress} onGeneratePlan={() => { if (!goal || canCreateNextGoal) setNewGoal(true); setWeeklyPlanOpen(true); }} onNavigate={page => {
                   if (page === "socialPlanning") {
                     if (!goal || canCreateNextGoal) setNewGoal(true);
                     setWeeklyPlanOpen(true);

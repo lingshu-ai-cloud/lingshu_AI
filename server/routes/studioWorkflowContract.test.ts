@@ -8,7 +8,7 @@ assert.match(source, /scriptStageTab === 'theme'[\s\S]*setScriptStageTab\('voice
 assert.match(source, /scriptStageTab === 'voiceover'[\s\S]*setScriptStageTab\('audio'\)/);
 assert.match(source, /storyboardSlots\.length > 0 && assignedCount === storyboardSlots\.length/);
 assert.match(source, /voiceoverMode === 'unselected'[\s\S]*请先选择声音策略/);
-assert.match(source, /if \(m\.id !== mode\)[\s\S]*setScriptStageTab\('theme'\)[\s\S]*setVoiceoverMode\('unselected'\)/);
+assert.match(source, /appliedCreateRequestRef\.current = studioCreateRequest\.requestId;[\s\S]{0,250}setScriptStageTab\('theme'\);[\s\S]{0,120}setVoiceoverMode\('unselected'\);/, 'a fresh creation request must clear the previous script and voice strategy');
 
 const apiSource = readFileSync(new URL('../../src/lib/studioApi.ts', import.meta.url), 'utf8');
 const routeSource = readFileSync(new URL('./studio.ts', import.meta.url), 'utf8');

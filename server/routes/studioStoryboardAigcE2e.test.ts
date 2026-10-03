@@ -126,7 +126,8 @@ let projectSpec: any = {
     productIds: item.scene === 'factory' ? [] : ['product-1'], videoResolution: '480p', videoResolutionPinned: true }])),
   storyboardAssignments: {},
 };
-let project = { id: projectId, tenant_id: tenantId, title: 'AIGC E2E', status: 'draft', spec: projectSpec };
+let project = { id: projectId, tenant_id: tenantId, title: 'AIGC E2E', status: 'draft', spec: projectSpec,
+  updated_at: '2026-10-01T00:00:00.000Z' };
 const presenter = { id: 'authorized-presenter', name: '企业人物', authorized: true,
   referenceMaterialIds: [characterMaterialId], rightsEvidence: {
     authorizationRef: 'rights://e2e/presenter', consentRef: 'consent://e2e/presenter',
@@ -167,8 +168,11 @@ await new Promise<void>(resolve => server.once('listening', resolve));
 const address = server.address();
 assert.ok(address && typeof address !== 'string');
 const post = async (url: string, body: unknown) => {
+  const payload = url === '/projects' && body && typeof body === 'object'
+    ? { ...body, baseUpdatedAt: project.updated_at }
+    : body;
   const response = await originals.fetch(`http://127.0.0.1:${address.port}/studio${url}`, {
-    method: 'POST', headers: { authorization: 'Bearer storyboard-e2e', 'content-type': 'application/json' }, body: JSON.stringify(body),
+    method: 'POST', headers: { authorization: 'Bearer storyboard-e2e', 'content-type': 'application/json' }, body: JSON.stringify(payload),
   });
   return { status: response.status, body: await response.json() as any };
 };
@@ -187,7 +191,8 @@ try {
         ...(shot.scene === 'usage' ? { actionStartState: '吊灯尚未安装，人物手持吊灯', actionEndState: '吊灯固定在天花板上',
           actionBeats: '将吊灯对准天花板固定位置' } : {}) } },
       storyboardAssignments: {} };
-    project = { id: projectId, tenant_id: tenantId, title: 'AIGC E2E', status: 'draft', spec: projectSpec };
+    project = { id: projectId, tenant_id: tenantId, title: 'AIGC E2E', status: 'draft', spec: projectSpec,
+      updated_at: '2026-10-01T00:00:00.000Z' };
     const productIds = shot.id === 'free-factory' ? [] : shot.id === 'clone-multiple' ? ['product-1', 'product-2'] : ['product-1'];
     const sourceFirstFrameUrl = shot.mode === 'clone'
       ? `/api/overseas/videos/trend-${suffix}/shot/1/first-frame` : undefined;

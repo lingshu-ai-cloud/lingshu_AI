@@ -32,7 +32,7 @@ const noProvider = resolveCustomerMessagingAuthorization({ ...base, providerRead
 assert.equal(noProvider.inboundAutoSendAllowed, false);
 assert.equal(noProvider.manualFollowupSendAllowed, false);
 assert.equal(noProvider.scheduledFollowupSendAllowed, false);
-assert.ok(noProvider.reasons.includes('whatsapp_provider_not_ready'));
+assert.ok(noProvider.reasons.includes('messenger_provider_not_ready'));
 
 const workerStopped = resolveCustomerMessagingAuthorization({ ...base, backgroundWorkerEnabled: false });
 assert.equal(workerStopped.inboundAutoSendAllowed, true, 'the follow-up kill switch must not disable signed inbound webhook replies');

@@ -95,9 +95,8 @@ assert.match(pageSource, /useState<"business" \| "director" \| "content" \| "cus
 assert.match(pageSource, /每周生成的草稿条数/, 'business Agent settings must expose the editable weekly draft count');
 assert.match(pageSource, /默认向所有已连接账号和平台发布/, 'business Agent settings must default to every connected account and platform');
 assert.match(pageSource, /每周发布/, 'business Agent settings must expose per-platform publishing counts');
-assert.match(pageSource, /关键词语言[\s\S]{0,400}默认同步企业中心产品手册语言/, 'director collection language must follow the product-manual language');
-assert.match(pageSource, /采集平台（可多选）/, 'director collection platforms must use a multi-select control');
-assert.match(pageSource, /定时任务负责执行，编导 Agent 负责验收/, 'director settings must explain the shared Inspiration collection pipeline');
+assert.match(pageSource, /建议平台[\s\S]{0,500}建议来源[\s\S]{0,500}建议关键词/, 'director settings must collect platform, source and keyword recommendations');
+assert.match(pageSource, /实际搜索范围以已批准的灵感范围为准/, 'director recommendations must defer to the approved discovery scope');
 assert.match(pageSource, /输出内容语言/, 'content Agent settings must retain only its output-language requirement');
 assert.doesNotMatch(appSource, /SocialOperatingSummary/, 'Smart Business must not render the redundant social-operation background bar');
 assert.match(appSource, /page === 'traffic'[\s\S]{0,1200}initialView="publish"[\s\S]{0,300}visibleModes=\{\['publish'\]\}[\s\S]{0,200}showModeTabs=\{false\}/, 'publishing must not keep the redundant publish/account top-level tabs');
@@ -139,10 +138,10 @@ assert.match(smartBusinessSource, /按矩阵同步周任务包/, 'draft weekly p
 assert.match(smartBusinessSource, /\/api\/overseas\/competitor-accounts/, 'account details must use the persisted benchmark-account library');
 assert.match(smartBusinessSource, /\/api\/oauth\/whatsapp\/config/, 'account details must read the real WhatsApp connection state');
 assert.match(smartBusinessSource, /messengerSubscribed/, 'Facebook account details must read the real Messenger subscription state');
-assert.match(smartBusinessSource, /账号矩阵与对标视频/, 'the queue must state that weekly content comes from the matrix and benchmark references');
+assert.match(smartBusinessSource, /按平台、账号、栏目和周排期进入统一内容队列/, 'the account matrix must feed the unified weekly content queue');
 assert.match(smartBusinessSource, /const pageSize = 6/, 'long content queues must use a bounded page size');
 assert.match(smartBusinessSource, /aria-label="内容队列分页"/, 'long content queues must expose pagination controls');
-assert.match(smartBusinessSource, /本周待生成内容/, 'the queue must expose the weekly generation list');
+assert.match(smartBusinessSource, /内容队列[\s\S]{0,500}计划、制作、验收与成本在同一条链路/, 'the queue must expose planned content and its production states');
 assert.match(smartBusinessSource, /查看制作进度 →[\s\S]{0,4500}进入制作台 →/, 'planned and running content must link directly to detailed production progress');
 assert.match(pageSource, /onOpenContent=\{openContentProduction\}/, 'Smart Business content links must preserve the current Agent task when opening Studio');
 assert.match(smartBusinessSource, /成本待核算|成本建议/, 'the content queue must expose per-item cost truth and advice');

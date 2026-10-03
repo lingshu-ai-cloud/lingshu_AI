@@ -3548,6 +3548,16 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onGoPub
     appliedCreateRequestRef.current = studioCreateRequest.requestId;
     const prefill = studioCreateRequest.prefill;
     setProjectId(null);
+    setScriptStageTab('theme');
+    setVoiceoverMode('unselected');
+    setScript('');
+    setVoiceoverLines('');
+    setVoiceDrafts({});
+    setVoiceoverAudios({});
+    setAlignedCuesByLang({});
+    setVoiceoverUrl(null);
+    setVoiceoverDur(0);
+    setModeNotice('');
     if (studioCreateRequest.replicationStep === 3) setCanvasView('creation');
     setStepIdx(studioCreateRequest.replicationStep === 3 ? STEPS.findIndex(item => item.id === 'preview') : studioCreateRequest.replicationStep === 2 ? STEPS.findIndex(item => item.id === 'material') : 0);
     setMode(studioCreateRequest.creationPath === 'viral_replication' ? 'clone' : 'material');
