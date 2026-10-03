@@ -1,4 +1,4 @@
-import type { DigitalHumanRequirements } from '../../src/lib/digitalHumanPlan.js';
+import type { DigitalHumanRequirements } from './digitalHumanRequirements.js';
 export function digitalHumanDecisionIssues(requirements?: DigitalHumanRequirements): string[] {
   if (requirements?.presenterMode) {
     const issues: string[] = [];
