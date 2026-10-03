@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { approximateSpeechLines } from './referenceApproxSpeech.js';
+import { approximateSpeechLines } from '../lib/referenceApproxSpeech.js';
 
 test('splits a coarse ASR window into estimated sentences without claiming exact timing', () => {
   const lines = approximateSpeechLines([{ start: 2, end: 6, text: 'First sentence. Second sentence?', provenance: 'source-asr' }]);

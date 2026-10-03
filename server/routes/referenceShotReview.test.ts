@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { attachReviewShotMaterials, initialReferenceShotReview, updateReferenceShotReview } from './referenceShotReview.js';
+import { attachReviewShotMaterials, initialReferenceShotReview, updateReferenceShotReview } from '../lib/referenceShotReview.js';
 
 const record = {id:'video-1',aiAnalysis:JSON.stringify({analysisRunId:'run-1',durationSeconds:60,gemini:{scriptDetails15s:[
   {time:'0-0.10',visual:'flash',purpose:'transition'},

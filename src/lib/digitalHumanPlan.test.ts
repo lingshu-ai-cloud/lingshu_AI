@@ -63,6 +63,13 @@ test('reference cues preserve many-to-many sentence and shot mappings while lega
   const invalid = { ...mapped, reference: { ...mapped.reference, cues: [{ ...mapped.reference.cues[0], end: 0 }] } };
   assert.equal(planDigitalHumanShot({ ...base, requirements: invalid }).state, 'needs_input');
 });
+test('manually split physical shots require explicit classification and person speech', () => {
+  const cue = { id: 'shot-1', start: 1, end: 2, originalText: '原句', targetText: '', shotIds: ['shot-a'], splitFromCueId: 'sentence-1' };
+  const requirements = { ...reference, reference: { ...reference.reference!, cues: [cue] } };
+  assert.match(planDigitalHumanShot({ ...base, requirements }).reasons.join('；'), /指定类型/);
+  assert.match(planDigitalHumanShot({ ...base, requirements: { ...requirements, reference: { ...requirements.reference, cues: [{ ...cue, personShot: true }] } } }).reasons.join('；'), /填写本片对应语句/);
+  assert.doesNotMatch(planDigitalHumanShot({ ...base, requirements: { ...requirements, reference: { ...requirements.reference, cues: [{ ...cue, personShot: false }] } } }).reasons.join('；'), /拆分后的每个物理镜头/);
+});
 test('changed reference, identity or narration revokes content approval and invalidates old candidates', () => {
   const shot = { ...newShotProduction('介绍产品', 'person-1'), source: 'avatar' as const, digitalHuman: reference };
   for (const change of [{ narration: '新台词' }, { presenterId: 'person-2' }, { digitalHuman: { ...reference, preserve: '新保留要求' } }]) {

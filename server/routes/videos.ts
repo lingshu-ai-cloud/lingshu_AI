@@ -25,9 +25,9 @@ import { assertSalesPresenterQwenConfigured, reviewSalesPresenterFramesWithQwen 
 import { salesReviewKey, validateSalesReview, SALES_REVIEW_VERSION, type SalesShot } from '../lib/salesPresenterReview.js';
 import { resolveReferenceSalesPresenter } from './referencePresenterLock.js';
 import { buildReferenceSpeechTimeline, type ReferenceStructureInput } from './referenceSpeechTimeline.js';
-import { approximateSpeechLines } from './referenceApproxSpeech.js';
-import { attachReviewShotMaterials, loadReferenceShotReview, reviewShotMaterialFingerprint, updateReferenceShotReview } from './referenceShotReview.js';
-import { currentVerifiedSpeech, validateVerifiedSpeechLines, verifiedSpeechStatus, type VerifiedReferenceSpeech } from './verifiedReferenceSpeech.js';
+import { approximateSpeechLines } from '../lib/referenceApproxSpeech.js';
+import { attachReviewShotMaterials, loadReferenceShotReview, reviewShotMaterialFingerprint, updateReferenceShotReview } from '../lib/referenceShotReview.js';
+import { currentVerifiedSpeech, validateVerifiedSpeechLines, verifiedSpeechStatus, type VerifiedReferenceSpeech } from '../lib/verifiedReferenceSpeech.js';
 import { QwenAsrService, qwenAsrCues } from '../lib/qwenAsr.js';
 import { recordVideoAdminAlert, updateVideoAdminAlertByRecordId } from '../lib/videoAdminAlerts.js';
 import { requireAdminUser } from '../lib/demoAccounts.js';
@@ -37,7 +37,7 @@ import { resolvePublicVideoSource, validatePublicVideoSourceUrl, type ValidatedP
 import { fetchCloudMaterial, getCloudMaterialRecord } from '../lib/cloudMaterials.js';
 import { localFallbacksEnabled } from '../lib/localFallbackPolicy.js';
 import { currentDataAuthority, runWithDataAuthority } from '../storage/dataAuthority.js';
-import { analysisTimelineQualityError, canPromoteExistingAnalysisToExact, exactVideoReviewReasons, hasCompleteVideoGeminiAnalysis, hasCompletedExactVideoEvidence, isAutoSeededVideo, isVideoLevelAnalysis, parseAnalysisTimeRange, serializeImagePostAnalysis, videoAnalysisOf } from './videoAnalysisCodec.js';
+import { analysisTimelineQualityError, canPromoteExistingAnalysisToExact, exactVideoReviewReasons, hasCompleteVideoGeminiAnalysis, hasCompletedExactVideoEvidence, isAutoSeededVideo, isVideoLevelAnalysis, parseAnalysisTimeRange, serializeImagePostAnalysis, videoAnalysisOf } from '../lib/videoAnalysisCodec.js';
 import { applyOpeningHookMotionEvidence, firstSubstantiveOpeningShot } from './hookMotionEvidence.js';
 
 export const videosRouter = Router();

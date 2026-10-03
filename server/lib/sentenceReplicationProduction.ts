@@ -19,6 +19,7 @@ import { inspectSentenceLipSyncQuality } from './sentenceLipSyncQuality.js';
 import { validatePresenterRightsEvidence } from './presenterAssetTrust.js';
 import { estimateSeedanceCostCny } from './seedanceBudget.js';
 import { photoTalkingBudget } from './photoTalkingBudget.js';
+import { assertPersonCueShotBoundaries, assertSeedanceCueDurations, assertSplitCueAssignments, hardSceneCutTimes } from './sentenceCueSceneCuts.js';
 
 const MEDIA_ROOT = path.resolve(process.cwd(), 'data/media');
 const run = promisify(execFile);
@@ -30,6 +31,8 @@ export async function runProductionSentenceReplication(input: { tenantId: string
   const readiness = sentenceReplicationReadiness(process.env, photoTalking ? 'heygen' : 'seedance');
   if (photoTalking) { const rights = validatePresenterRightsEvidence(input.presenter.rightsEvidence, {provider: 'heygen', uses: ['digital_presenter', 'voice_synthesis']}); if (!rights.ok) throw new Error(`HeyGen人物授权未完成：${rights.reasons.join('、')}`); if (!input.presenter.voiceId) throw new Error('请选择 HeyGen 口播声音'); }
   if (!readiness.ready) throw new Error(readiness.reason);
+  assertSplitCueAssignments(input.cues);
+  if (!photoTalking) assertSeedanceCueDurations(input.cues);
   if (!photoTalking && !objectStorageSupplierDeliveryReady()) throw new Error('本地系统存储已启用，但 Seedance 无法访问 localhost；真实出片需生产 COS 签名地址或显式配置 HTTPS 开发地址');
   const materials = readLocalMaterials(); const byId = new Map(materials.map(item => [String(item.id), item])); const presenterIds = [...new Set([...(input.presenter.toolMappings?.seedance?.referenceMaterialIds || []), ...(input.presenter.toolMappings?.sd?.referenceMaterialIds || []), ...(input.presenter.toolMappings?.runway?.referenceMaterialIds || []), ...(input.presenter.referenceMaterialIds || [])])];
   if (!presenterIds.length) throw new Error('企业人物缺少可用于首帧重建的参考图片');
@@ -71,7 +74,8 @@ export async function runProductionSentenceReplication(input: { tenantId: string
   const referenceMaterial=byId.get(String(input.shot.digitalHuman?.reference?.materialId||'')); if(!referenceMaterial||referenceMaterial.type!=='video')throw new Error('逐句质检缺少可读取的参考视频'); const referenceBytes=await readTenantMaterialBytes(referenceMaterial,input.tenantId); const referencePath=path.join(work,'reference-video'); fs.writeFileSync(referencePath,referenceBytes.bytes,{mode:0o600});
   const sourceSegmentFor=async(cue:DigitalHumanReferenceCue)=>{const filePath=path.join(work,`reference-${createHash('sha256').update(cue.id).digest('hex').slice(0,12)}.mp4`); await run(String(ffmpegStatic||''),['-hide_banner','-loglevel','error','-nostdin','-ss',String(cue.start),'-i',referencePath,'-t',String(cue.end-cue.start),'-c:v','libx264','-pix_fmt','yuv420p','-c:a','aac','-movflags','+faststart','-y',filePath],{timeout:120_000}); return filePath;};
   const firstFrameGenerator = new SeedreamFirstFrameGenerator(); const frameByComposition = new Map<string, Promise<{ materialId: string; filePath: string; url: string }>>();
-  try { const result = await runSentenceReplicationPipeline({ cues: input.cues, outputPath:path.join(work,'joined.mp4'), ffmpegPath:String(ffmpegStatic || ''),
+  try { assertPersonCueShotBoundaries(input.cues, await hardSceneCutTimes(String(ffmpegStatic || ''), referencePath));
+    const result = await runSentenceReplicationPipeline({ cues: input.cues, outputPath:path.join(work,'joined.mp4'), ffmpegPath:String(ffmpegStatic || ''),
       reuseCompletedClip: async cue=>{ const materialId=String(input.reuseCueMaterialIds?.[cue.id]||''); if(!materialId) return null; const material=byId.get(materialId); if(!material || material.type!=='video') throw new Error(`已通过镜头 ${cue.id} 的复用素材不存在`); const loaded=await readTenantMaterialBytes(material,input.tenantId); const filePath=path.join(work,`reuse-${createHash('sha256').update(`${cue.id}:${materialId}`).digest('hex').slice(0,16)}.mp4`); fs.writeFileSync(filePath,loaded.bytes,{mode:0o600}); return {materialId,filePath,url:String(material.url||'')}; },
       createTargetFrame: async cue => { if (photoTalking) {
         const material = byId.get(String(cue.targetFirstFrame?.materialId || ''));

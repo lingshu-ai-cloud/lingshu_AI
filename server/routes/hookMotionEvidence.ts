@@ -1,5 +1,5 @@
 import type { VideoAiAnalysis } from '../types/index.js';
-import { parseAnalysisTimeRange } from './videoAnalysisCodec.js';
+import { parseAnalysisTimeRange } from '../lib/videoAnalysisCodec.js';
 
 export interface HookMotionEvidence {
   observations: Array<{ time: number; visibleState: string; confidence: number }>;

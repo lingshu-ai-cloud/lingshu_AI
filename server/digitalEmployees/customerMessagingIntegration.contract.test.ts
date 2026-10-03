@@ -17,7 +17,7 @@ assert.match(worker, /customer_message_send_not_authorized/, 'missing real-send 
 assert.match(routes, /customerAgentEnabled[\s\S]*?customerService:\s*\{[\s\S]*?enabled:\s*customerAgentEnabled/, 'onboarding customer Agent selection must activate the real inbound service path');
 assert.match(routes, /code\.startsWith\('customer_message_send_not_authorized:'\)/, 'policy denials must be returned as actionable conflicts, not fake provider failures');
 assert.match(enterpriseRoutes, /autoReplyReady:\s*status\.autoReplyReady\s*&&\s*messagingAuthorization\.inboundAutoSendAllowed/, 'customer-service UI status must not claim auto reply readiness before real-send authorization and provider readiness');
-assert.match(customerRoutes, /outboxId:\s*providerReceipts\[0\]\?\.messageId/, 'the customer workbench must return an actual provider message id instead of a fabricated outbox id');
-assert.match(customerRoutes, /providerMessageIds:\s*providerReceipts\.map/, 'manual customer sends must expose real provider receipts to the UI');
+assert.match(customerRoutes, /outboxId:\s*receipt\.messageId/, 'the customer workbench must return the actual Messenger message id');
+assert.match(customerRoutes, /providerMessageIds:\s*\[receipt\.messageId\]/, 'manual customer sends must expose the Messenger provider receipt to the UI');
 
 console.log('customer messaging integration contract tests passed');

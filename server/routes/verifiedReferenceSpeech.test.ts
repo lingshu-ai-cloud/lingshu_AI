@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { currentVerifiedSpeech, validateVerifiedSpeechLines, verifiedSpeechStatus } from './verifiedReferenceSpeech.js';
+import { currentVerifiedSpeech, validateVerifiedSpeechLines, verifiedSpeechStatus } from '../lib/verifiedReferenceSpeech.js';
 
 test('manual sentence verification enforces ordered, bounded lines and screen visibility', () => {
   const lines = validateVerifiedSpeechLines([

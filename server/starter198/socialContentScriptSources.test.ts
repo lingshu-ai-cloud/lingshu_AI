@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { freezeSocialScriptBaseline, parseStoredSocialScriptBaseline } from './socialContentScriptBaseline.js';
 import { buildSocialTaskReferencePackage, referencePreparationForRecord } from './socialContentScriptSources.js';
-import { reviewShotMaterialRefs } from '../routes/referenceShotReview.js';
+import { reviewShotMaterialRefs } from '../lib/referenceShotReview.js';
 
 const source = {
   sourceId: 'source-reference-1',

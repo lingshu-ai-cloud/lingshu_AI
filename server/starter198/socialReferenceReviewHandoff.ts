@@ -1,9 +1,9 @@
 import { createHash } from 'node:crypto';
-import { parseAnalysisTimeRange } from '../routes/videoAnalysisCodec.js';
-import { reviewShotMaterialRefs } from '../routes/referenceShotReview.js';
-import { hookScriptFields, type HookScript } from '../routes/referenceShotReview.js';
-import { validateVerifiedSpeechLines } from '../routes/verifiedReferenceSpeech.js';
-import { approximateSpeechLines } from '../routes/referenceApproxSpeech.js';
+import { parseAnalysisTimeRange } from '../lib/videoAnalysisCodec.js';
+import { reviewShotMaterialRefs } from '../lib/referenceShotReview.js';
+import { hookScriptFields, type HookScript } from '../lib/referenceShotReview.js';
+import { validateVerifiedSpeechLines } from '../lib/verifiedReferenceSpeech.js';
+import { approximateSpeechLines } from '../lib/referenceApproxSpeech.js';
 
 type UnknownRecord = Record<string, unknown>;
 const object = (value: unknown): UnknownRecord => value && typeof value === 'object' && !Array.isArray(value) ? value as UnknownRecord : {};

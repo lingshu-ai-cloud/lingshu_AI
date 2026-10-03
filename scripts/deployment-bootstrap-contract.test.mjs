@@ -80,7 +80,7 @@ for (const [name, source] of [['start', start], ['update', update]]) {
   assert.match(source, /PB_DATA_VOLUME_NAME=\$pb_data_volume_name["']?\s+"APP_HOST_PORT=\$app_host_port"\s+"ENV_FILE_PATH=\$ENV_FILE"/, `${name} must pin validated topology values against ambient overrides`);
 }
 for (const [name, source] of [['start', start], ['update', update]]) {
-  assert.match(source, /build app pocketbase[\s\S]*stop caddy app[\s\S]*up -d --force-recreate --wait --wait-timeout 180 pocketbase/, `${name} must stop old traffic before applying database migrations`);
+  assert.match(source, /build app worker pocketbase[\s\S]*stop caddy app worker[\s\S]*up -d --force-recreate --wait --wait-timeout 180 pocketbase/, `${name} must stop old traffic and the worker before applying database migrations`);
 }
 assert.doesNotMatch(setup, /WORKBENCH_ADMIN|ensureWorkbenchAdmin/, 'full schema repair must not own application-account creation');
 assert.doesNotMatch(bootstrap, /method:\s*['"](?:PUT|PATCH|POST)['"][\s\S]{0,160}\/api\/collections(?:['"`?]|\$\{baseUrl\}\/?['"`])/, 'account bootstrap must not write a collection schema endpoint');

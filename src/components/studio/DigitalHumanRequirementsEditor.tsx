@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import { cueFirstFrameTime, newDigitalHumanRequirements, referenceCues, type DigitalHumanReferenceCue, type DigitalHumanRequirements, type DigitalHumanPlan } from '../../lib/digitalHumanPlan';
 
 export default function DigitalHumanRequirementsEditor({ value, plan, compact = false, children, referenceMaterials = [], toolCapabilities = [], onChange }: {
@@ -6,6 +6,7 @@ export default function DigitalHumanRequirementsEditor({ value, plan, compact = 
   toolCapabilities?: Array<{ id: string; execution: boolean; reason: string }>;
   onChange: (value: DigitalHumanRequirements) => void;
 }) {
+  const [splitTimes, setSplitTimes] = useState<Record<string, string>>({});
   const current = value || newDigitalHumanRequirements();
   const reference = current.reference || { videoUrl: '', start: 0, end: 0, originalText: '', derivativeAuthorized: false };
   const patch = (change: Partial<DigitalHumanRequirements>) => onChange({ ...current, ...change, contentConfirmed: false });
@@ -14,6 +15,19 @@ export default function DigitalHumanRequirementsEditor({ value, plan, compact = 
   const patchCue = (id: string, change: Partial<DigitalHumanReferenceCue>) => {
     const next = cues.map(cue => cue.id === id ? { ...cue, ...change } : cue);
     patchReference({ cues: next, start: Math.min(...next.map(cue => cue.start)), end: Math.max(...next.map(cue => cue.end)), originalText: next.map(cue => cue.originalText).filter(Boolean).join('\n') });
+  };
+  const splitCue = (cue: DigitalHumanReferenceCue) => {
+    const at = Number(splitTimes[cue.id]);
+    if (!Number.isFinite(at) || at <= cue.start + 0.05 || at >= cue.end - 0.05) return;
+    const id = `${cue.id}-shot-${Date.now()}`;
+    const clearOutput = { sourceFirstFrame: undefined, targetFirstFrame: undefined, draftFirstFrame: undefined, generatedClip: undefined, nonPersonMaterialId: undefined, compositionClusterId: undefined, composition: undefined };
+    const parts: DigitalHumanReferenceCue[] = [
+      { ...cue, ...clearOutput, end: at, originalText: '', targetText: '', personShot: undefined, classificationSource: 'manual', splitFromCueId: cue.splitFromCueId || cue.id },
+      { ...cue, ...clearOutput, id, start: at, originalText: '', targetText: '', personShot: undefined, classificationSource: 'manual', splitFromCueId: cue.splitFromCueId || cue.id },
+    ];
+    const next = cues.flatMap(item => item.id === cue.id ? parts : [item]);
+    patchReference({ cues: next, originalText: next.map(item => item.originalText).filter(Boolean).join('\n') });
+    setSplitTimes(previous => ({ ...previous, [cue.id]: '' }));
   };
   if (compact) return <section className="space-y-4" aria-label="数字人镜头效果">
     <div className="grid grid-cols-3 gap-2" role="group" aria-label="镜头效果">
@@ -71,7 +85,10 @@ export default function DigitalHumanRequirementsEditor({ value, plan, compact = 
         <p className="text-xs font-bold">逐句与分镜映射</p>
         {cues.map((cue, index) => <article key={cue.id} className="rounded-lg border bg-white p-2">
           <p className="text-[10px] font-bold text-text-muted">句 {index + 1} · {cue.start.toFixed(1)}–{cue.end.toFixed(1)} 秒 · 关联 {cue.shotIds.length || 1} 个分镜</p>
-          <p className="mt-1 text-xs">原片：{cue.originalText}</p>
+          <label className="mt-1 block text-xs">原片对应语句<textarea rows={2} className="mt-1 w-full rounded-lg border p-2" value={cue.originalText} onChange={e => patchCue(cue.id, { originalText: e.target.value })} placeholder="填写当前物理镜头中的原片语句" /></label>
+          <div className="mt-2 flex items-end gap-2"><label className="text-xs">物理镜头切点（秒）<input type="number" min={cue.start + 0.05} max={cue.end - 0.05} step="0.01" aria-label={`句 ${index + 1} 物理镜头切点`} className="mt-1 w-28 rounded-lg border p-2" value={splitTimes[cue.id] || ''} onChange={e => setSplitTimes(previous => ({ ...previous, [cue.id]: e.target.value }))} /></label><button type="button" className="rounded-lg border px-3 py-2 text-xs" disabled={!Number.isFinite(Number(splitTimes[cue.id])) || Number(splitTimes[cue.id]) <= cue.start + 0.05 || Number(splitTimes[cue.id]) >= cue.end - 0.05} onClick={() => splitCue(cue)}>按物理镜头拆分</button></div>
+          {cue.splitFromCueId && <p className="mt-1 text-xs text-amber-700">拆分后请分别填写原片语句、选择人物或非人物镜头；人物镜头必须填写本片对应语句，避免整段口播重复。</p>}
+          {current.method === 'reenact' && current.presenterMode !== 'photo_talking' && cue.personShot === true && (cue.end - cue.start < 4 || cue.end - cue.start > 15) && <p role="alert" className="mt-1 text-xs text-amber-700">当前 Seedance 人物逐句镜头仅支持 4–15 秒；本段 {Math.max(0, cue.end - cue.start).toFixed(2)} 秒不会提交付费生成，请调整制作路径。</p>}
           <div className="mt-2 grid gap-2 sm:grid-cols-2"><label className="text-xs">镜头类型<select aria-label={`句 ${index + 1} 镜头类型`} value={cue.personShot === true ? 'person' : cue.personShot === false ? 'non_person' : 'unknown'} onChange={e => patchCue(cue.id, { personShot:e.target.value==='person'?true:e.target.value==='non_person'?false:undefined, classificationSource:'manual', ...(e.target.value==='person'?{nonPersonMaterialId:undefined}:{compositionClusterId:undefined,composition:undefined}) })} className="mt-1 w-full rounded-lg border p-2"><option value="unknown">待确认</option><option value="person">人物镜头 · 需要换人首帧</option><option value="non_person">产品／工厂／B-roll · 不生人物首帧</option></select></label>
           {cue.personShot===true?<label className="text-xs">构图簇<select aria-label={`句 ${index + 1} 构图簇`} value={cue.compositionClusterId || ''} onChange={e=>patchCue(cue.id,{compositionClusterId:e.target.value})} className="mt-1 w-full rounded-lg border p-2"><option value="">请选择</option><option value="front-close">正面近景</option><option value="front-medium">正面中景</option><option value="side-medium">侧面中景</option></select></label>:cue.personShot===false?<label className="text-xs">替换视频素材<select aria-label={`句 ${index + 1} 非人物替换素材`} value={cue.nonPersonMaterialId || ''} onChange={e=>patchCue(cue.id,{nonPersonMaterialId:e.target.value})} className="mt-1 w-full rounded-lg border p-2"><option value="">请选择本企业视频</option>{referenceMaterials.map(item=><option key={item.id} value={item.id}>{item.name}</option>)}</select></label>:null}</div>
           {current.method === 'reenact' && (current.replicationMode || 'sentence_first_frame') === 'sentence_first_frame' && <div className="mt-1 flex items-center gap-2 text-[10px] text-violet-700">

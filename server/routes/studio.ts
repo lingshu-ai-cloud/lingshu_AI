@@ -5,7 +5,7 @@ import { finalizeMaterialScript } from '../lib/materialScriptFinalizer.js';
 import { createShootingTasksRouter } from './shootingTasks.js';
 import { auditShotEvidence } from '../lib/shotEvidenceAudit.js';
 import { validateSpeechCues } from '../../src/lib/narrationAlignment.js';
-import { studioRenderMediaRouter } from '../lib/studioRenderMedia.js';
+import { safeStudioRenderOutputPath, studioRenderMediaRouter } from '../lib/studioRenderMedia.js';
 import { createStudioAsrRouter } from '../lib/studioAsrRouter.js';
 import type { AvatarMediaCheck } from '../lib/avatarMediaCheck.js';
 import { createStudioAvatarProductionRouter } from '../lib/studioAvatarProduction.js';
@@ -77,7 +77,7 @@ import { storyboardAigcProjectBudget } from '../lib/storyboardAigcProjectBudget.
 import { buildStoryboardQaReport, inspectStoryboardTechnicalFrames, reviewStoryboardQaReport, type StoryboardQaReport } from '../lib/storyboardAigcQuality.js';
 import { studioAigcBudgetConfigFromEnv, studioAigcBudgetPreviewForSpec } from './studioAigcBatchBudget.js';
 import { enterpriseAssetObjectKey, enterpriseAssetTenantKey } from '../storage/enterpriseAssets.js';
-import { videoAnalysisOf } from './videoAnalysisCodec.js';
+import { videoAnalysisOf } from '../lib/videoAnalysisCodec.js';
 import { getPublicOrigin } from '../lib/oauthConfig.js';
 import { estimateSeedanceCostCny, releaseSeedanceBudget, reserveSeedanceBudget, type SeedanceBudgetReservation } from '../lib/seedanceBudget.js';
 import { storyboardAigcMetrics } from '../lib/storyboardAigcMetrics.js';
@@ -4951,6 +4951,7 @@ interface RenderSpec {
 
 interface RenderManifest {
   jobId: string;
+  requireVisualAssets: true;
   spec: { ratio: string; resolution?: string; duration: number; platform: string; language: string; bgmVol: number; voiceVol: number };
   script: string;
   timeline: {
@@ -4994,6 +4995,7 @@ function buildManifest(jobId: string, spec: RenderSpec, base: string): RenderMan
   }))) : undefined;
   return {
     jobId,
+    requireVisualAssets: true,
     spec: {
       ratio: spec.ratio || '9:16',
       duration: spec.duration ?? 20,
@@ -5052,6 +5054,7 @@ studioRouter.post('/render/local', async (req, res) => {
     fs.mkdirSync(outputDir, { recursive: true });
     const result = await composite({
       ...(req.body || {}),
+      requireVisualAssets: true,
       assetOrigin: origin,
       assetHeaders: {
         ...(req.get('authorization') ? { authorization: req.get('authorization') } : {}),
@@ -5081,8 +5084,8 @@ studioRouter.post('/render/open-output', async (req, res) => {
     res.status(400).json({ ok: false, error: '缺少本地文件路径' });
     return;
   }
-  const filePath = path.isAbsolute(rawPath) ? rawPath : path.resolve(rawPath);
-  if (!fs.existsSync(filePath)) {
+  const filePath = safeStudioRenderOutputPath(path.resolve(process.cwd(), 'data/publishing-uploads'), String(res.locals.tenantId || ''), rawPath);
+  if (!filePath) {
     res.status(404).json({ ok: false, error: '本地成片文件不存在，请重新导出。' });
     return;
   }

@@ -151,6 +151,7 @@ async function migrationDrill(): Promise<{ instance: RunningPocketBase; dataDir:
   let fresh = await startPocketBase(freshData);
   const freshNames = await collectionNames(fresh.url, await adminToken(fresh.url));
   for (const name of SOCIAL_OPERATING_REQUIRED_COLLECTIONS) assert.ok(freshNames.includes(name), `fresh migration missing ${name}`);
+  assert.ok(freshNames.includes('publishing_schedules'), 'fresh migration must create posting schedules before its updated-field migration');
   await stopPocketBase(fresh);
 
   const baselineMigrations = path.join(root, 'baseline-migrations');

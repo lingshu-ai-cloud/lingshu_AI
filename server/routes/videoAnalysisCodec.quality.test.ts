@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import type { VideoAiAnalysis } from '../types/index.js';
-import { exactVideoReviewReasons, hasCompletedExactVideoEvidence } from './videoAnalysisCodec.js';
+import { exactVideoReviewReasons, hasCompletedExactVideoEvidence } from '../lib/videoAnalysisCodec.js';
 
 const storedExact = { analysisMode: 'exact', analysisQuality: 'video_review_required', geminiStatus: 'waiting_for_video',
   gemini: { scriptDetails15s: [{ time: '0-1s', visual: '真人靠近镜头' }, { time: '1-3s', visual: '站立口播' }] } };

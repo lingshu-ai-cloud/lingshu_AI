@@ -348,13 +348,19 @@ async function composite(manifest, onProgress = () => {}, outDir) {
     }
     const localClips = [];
     const clipErrors = [];
+    const downloadedTimelineAssets = new Map();
     for (let i = 0; i < timeline.length; i++) {
       const u = timeline[i].url;
       const ext = extensionForAsset(u, timeline[i].type);
       const dest = path.join(tmp, `clip${i}.${ext}`);
       try {
-        await downloadTo(u, dest, downloadOptions);
-        localClips.push({ ...timeline[i], file: dest, image: isImageAsset(u, timeline[i].type) });
+        const cacheKey = `${String(u)}\0${ext}`;
+        const file = downloadedTimelineAssets.get(cacheKey) || dest;
+        if (!downloadedTimelineAssets.has(cacheKey)) {
+          await downloadTo(u, dest, downloadOptions);
+          downloadedTimelineAssets.set(cacheKey, dest);
+        }
+        localClips.push({ ...timeline[i], file, image: isImageAsset(u, timeline[i].type) });
       } catch (error) {
         clipErrors.push(`片段 ${i + 1}（${String(timeline[i].name || '未命名素材')}）: ${error && error.message || error}`);
       }

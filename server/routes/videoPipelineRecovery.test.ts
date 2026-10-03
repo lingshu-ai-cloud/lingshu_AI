@@ -12,7 +12,7 @@ import {
   shouldResumeReferenceAnalysis,
   terminalizeExhaustedCrawlerOpsTask,
 } from './videos.js';
-import { analysisTimelineQualityError } from './videoAnalysisCodec.js';
+import { analysisTimelineQualityError } from '../lib/videoAnalysisCodec.js';
 
 const chineseSearch = 'ytsearch5:工业视觉 爆款';
 assert.equal(platformReferer(chineseSearch), 'https://www.youtube.com/');

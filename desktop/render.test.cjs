@@ -41,6 +41,7 @@ async function main() {
   assert.match(ass, /,92,92,384,1/, 'captions sit below the face, above bottom UI');
   const audio = fs.readFileSync(path.join(__dirname, '../server/assets/bgm/tech-pulse.mp3'));
   let servedImage;
+  let ownedImageRequests = 0;
   const server = http.createServer((req, res) => {
     if (req.url === '/media-url') {
       res.writeHead(200, { 'content-type': 'application/json' });
@@ -48,6 +49,7 @@ async function main() {
       return;
     }
     if (req.url === '/owned.png' && servedImage) {
+      ownedImageRequests++;
       assert.equal(req.headers.authorization, 'Bearer local-test');
       res.writeHead(200, { 'content-type': 'image/png' });
       res.end(servedImage);
@@ -85,6 +87,19 @@ async function main() {
       subtitles: { mode: 'off', cues: [] },
     }, () => {}, outDir);
     assert.equal(relativeVisual.ok, true, relativeVisual.error);
+    const beforeRepeated = ownedImageRequests;
+    const repeatedVisual = await composite({
+      jobId: 'reused-visual-download', requireVisualAssets: true,
+      assetOrigin: origin, assetHeaders: { authorization: 'Bearer local-test' },
+      spec: { ratio: '1:1', duration: 2, bgmVol: 0, voiceVol: 0 },
+      timeline: [
+        { type: 'image', url: '/owned.png', targetDuration: 1 },
+        { type: 'image', url: '/owned.png', targetDuration: 1 },
+      ],
+      subtitles: { mode: 'off', cues: [] },
+    }, () => {}, outDir);
+    assert.equal(repeatedVisual.ok, true, repeatedVisual.error);
+    assert.equal(ownedImageRequests - beforeRepeated, 1, 'the same read-only source must be downloaded once per render');
     const productDataUrl = `data:image/png;base64,${fs.readFileSync(productImage).toString('base64')}`;
     assert.equal(extensionForAsset(productDataUrl, 'image'), 'png', 'data URL extension must come from MIME instead of the base64 payload');
     assert.equal(isImageAsset(productDataUrl), true, 'image data URL must be bound as a still-image timeline input');
@@ -139,6 +154,17 @@ async function main() {
     }, () => {}, outDir);
     assert.equal(missingVisual.ok, false, 'a declared owned timeline must not silently render the blue fallback');
     assert.match(String(missingVisual.error), /时间线素材全部读取失败/);
+    const partialVisual = await composite({
+      jobId: 'partial-owned-visual-regression', requireVisualAssets: true,
+      spec: { ratio: '1:1', duration: 2 },
+      timeline: [
+        { name: '已绑定产品图', type: 'image', url: productDataUrl, targetDuration: 1 },
+        { name: '丢失的第二镜', type: 'image', url: path.join(outDir, 'missing-second-shot.png'), targetDuration: 1 },
+      ],
+      bgm: { url: null }, voiceover: { url: null }, subtitles: { mode: 'off', cues: [] },
+    }, () => {}, outDir);
+    assert.equal(partialVisual.ok, false, 'one playable shot must not hide a missing second shot');
+    assert.match(String(partialVisual.error), /时间线素材不完整.*片段 2/);
   } finally {
     server.close();
     fs.rmSync(outDir, { recursive: true, force: true });

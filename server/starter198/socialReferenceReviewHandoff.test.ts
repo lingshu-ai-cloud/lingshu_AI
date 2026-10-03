@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { buildSocialReferenceReviewHandoff } from './socialReferenceReviewHandoff.js';
-import { reviewShotMaterialRefs } from '../routes/referenceShotReview.js';
+import { reviewShotMaterialRefs } from '../lib/referenceShotReview.js';
 
 const record = {
   id: 'trend_videos_1954d63792ac44259b32556090d71457',
