@@ -19,6 +19,7 @@ import { inspectSentenceLipSyncQuality } from './sentenceLipSyncQuality.js';
 import { validatePresenterRightsEvidence } from './presenterAssetTrust.js';
 import { estimateSeedanceCostCny } from './seedanceBudget.js';
 import { photoTalkingBudget } from './photoTalkingBudget.js';
+import { assertPersonCueShotBoundaries, hardSceneCutTimes } from './sentenceCueSceneCuts.js';
 
 const MEDIA_ROOT = path.resolve(process.cwd(), 'data/media');
 const run = promisify(execFile);
@@ -71,7 +72,8 @@ export async function runProductionSentenceReplication(input: { tenantId: string
   const referenceMaterial=byId.get(String(input.shot.digitalHuman?.reference?.materialId||'')); if(!referenceMaterial||referenceMaterial.type!=='video')throw new Error('逐句质检缺少可读取的参考视频'); const referenceBytes=await readTenantMaterialBytes(referenceMaterial,input.tenantId); const referencePath=path.join(work,'reference-video'); fs.writeFileSync(referencePath,referenceBytes.bytes,{mode:0o600});
   const sourceSegmentFor=async(cue:DigitalHumanReferenceCue)=>{const filePath=path.join(work,`reference-${createHash('sha256').update(cue.id).digest('hex').slice(0,12)}.mp4`); await run(String(ffmpegStatic||''),['-hide_banner','-loglevel','error','-nostdin','-ss',String(cue.start),'-i',referencePath,'-t',String(cue.end-cue.start),'-c:v','libx264','-pix_fmt','yuv420p','-c:a','aac','-movflags','+faststart','-y',filePath],{timeout:120_000}); return filePath;};
   const firstFrameGenerator = new SeedreamFirstFrameGenerator(); const frameByComposition = new Map<string, Promise<{ materialId: string; filePath: string; url: string }>>();
-  try { const result = await runSentenceReplicationPipeline({ cues: input.cues, outputPath:path.join(work,'joined.mp4'), ffmpegPath:String(ffmpegStatic || ''),
+  try { assertPersonCueShotBoundaries(input.cues, await hardSceneCutTimes(String(ffmpegStatic || ''), referencePath));
+    const result = await runSentenceReplicationPipeline({ cues: input.cues, outputPath:path.join(work,'joined.mp4'), ffmpegPath:String(ffmpegStatic || ''),
       reuseCompletedClip: async cue=>{ const materialId=String(input.reuseCueMaterialIds?.[cue.id]||''); if(!materialId) return null; const material=byId.get(materialId); if(!material || material.type!=='video') throw new Error(`已通过镜头 ${cue.id} 的复用素材不存在`); const loaded=await readTenantMaterialBytes(material,input.tenantId); const filePath=path.join(work,`reuse-${createHash('sha256').update(`${cue.id}:${materialId}`).digest('hex').slice(0,16)}.mp4`); fs.writeFileSync(filePath,loaded.bytes,{mode:0o600}); return {materialId,filePath,url:String(material.url||'')}; },
       createTargetFrame: async cue => { if (photoTalking) {
         const material = byId.get(String(cue.targetFirstFrame?.materialId || ''));

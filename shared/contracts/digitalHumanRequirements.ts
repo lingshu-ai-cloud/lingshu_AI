@@ -5,6 +5,8 @@ export interface DigitalHumanReferenceCue {
   originalText: string;
   targetText: string;
   shotIds: string[];
+  /** Manual physical-shot split: both source wording and person speech must be reassigned. */
+  splitFromCueId?: string;
   /** Only person shots enter the paid first-frame replacement chain. */
   personShot?: boolean;
   classificationSource?: 'analysis' | 'manual';

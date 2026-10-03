@@ -232,6 +232,7 @@ export function planDigitalHumanShot(input: {
     if (!ref?.originalText?.trim()) reasons.push('请补齐原片对应语句');
     const cues = referenceCues(r);
     if (!cues.length || cues.some(cue => !cue.id?.trim() || !Number.isFinite(cue.start) || !Number.isFinite(cue.end) || cue.start < 0 || cue.end <= cue.start || !cue.originalText?.trim())) reasons.push('原片逐句时间轴不完整');
+    if (cues.some(cue => cue.splitFromCueId && (cue.personShot === undefined || (cue.personShot === true && !cue.targetText.trim())))) reasons.push('拆分后的每个物理镜头须指定类型，并为人物镜头填写本片对应语句');
     if (cues.some(cue => !Array.isArray(cue.shotIds))) reasons.push('原片语句与分镜映射无效');
     if (r.method === 'reenact' && (r.replicationMode || 'sentence_first_frame') === 'sentence_first_frame' && cues.length) reasons.push(...planPersonShotClusters(cues,3).blockers);
     if (r.method !== 'talking' && (!r.action?.trim() || !r.scene?.trim())) reasons.push('请补齐人物动作与场景要求');

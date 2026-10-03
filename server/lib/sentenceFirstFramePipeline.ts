@@ -8,6 +8,7 @@ import { cueFirstFrameTime, type DigitalHumanReferenceCue } from '../../src/lib/
 import { readLocalMaterials, saveLocalMaterials, type MaterialRecord } from './materialLibrary.js';
 import { tenantAssetDir, tenantAssetRelativePath } from './assetAccess.js';
 import { objectStorageDownload } from '../storage/objectStorage.js';
+import { assertPersonCueShotBoundaries, hardSceneCutTimes } from './sentenceCueSceneCuts.js';
 
 const run = promisify(execFile);
 
@@ -50,6 +51,7 @@ export async function extractSentenceFirstFrames(input: {
   }
   const ffmpeg = input.ffmpegPath || String(ffmpegStatic || '');
   if (!ffmpeg) throw new Error('逐句首帧提取缺少 FFmpeg');
+  assertPersonCueShotBoundaries(input.cues, await hardSceneCutTimes(ffmpeg, sourcePath));
   const created: MaterialRecord[] = [];
     const next: DigitalHumanReferenceCue[] = [];
     for (const cue of input.cues) {

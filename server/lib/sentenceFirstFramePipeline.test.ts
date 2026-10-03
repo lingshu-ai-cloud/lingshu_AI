@@ -40,3 +40,27 @@ test('bridged trend video verifies its bytes before extracting a reference frame
     await assert.rejects(call, /文件版本/);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
+
+test('cross-cut person cue is rejected before first-frame persistence', async () => {
+  assert.ok(ffmpegStatic);
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cross-cut-sentence-'));
+  try {
+    const tenantRoot = path.join(root, 'tenants', 'tenant-a');
+    fs.mkdirSync(tenantRoot, { recursive: true });
+    const source = path.join(tenantRoot, 'source.mp4');
+    execFileSync(String(ffmpegStatic), [
+      '-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'color=red:s=160x240:r=25:d=0.5',
+      '-f', 'lavfi', '-i', 'color=blue:s=160x240:r=25:d=0.5',
+      '-filter_complex', '[0:v][1:v]concat=n=2:v=1:a=0', '-pix_fmt', 'yuv420p', '-y', source,
+    ]);
+    let persisted = false;
+    await assert.rejects(extractSentenceFirstFrames({
+      tenantId: 'tenant-a', referenceMaterialId: 'source', mediaRoot: root, ffmpegPath: String(ffmpegStatic),
+      sourceMaterial: { id: 'source', scope: 'own', tenantId: 'tenant-a', type: 'video', file: 'tenants/tenant-a/source.mp4' } as any,
+      materials: () => [], saveMaterials: () => { persisted = true; },
+      cues: [{ id: 'whole-sentence', start: 0, end: 1, originalText: 'Hello', targetText: 'Hi', shotIds: ['s1'], personShot: true }],
+    }), /硬切.*未调用供应商/);
+    assert.equal(persisted, false);
+    assert.equal(fs.readdirSync(tenantRoot).filter(name => name.startsWith('sentence-frame-')).length, 0);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
