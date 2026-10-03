@@ -41,6 +41,7 @@ async function main() {
   assert.match(ass, /,92,92,384,1/, 'captions sit below the face, above bottom UI');
   const audio = fs.readFileSync(path.join(__dirname, '../server/assets/bgm/tech-pulse.mp3'));
   let servedImage;
+  let ownedImageRequests = 0;
   const server = http.createServer((req, res) => {
     if (req.url === '/media-url') {
       res.writeHead(200, { 'content-type': 'application/json' });
@@ -48,6 +49,7 @@ async function main() {
       return;
     }
     if (req.url === '/owned.png' && servedImage) {
+      ownedImageRequests++;
       assert.equal(req.headers.authorization, 'Bearer local-test');
       res.writeHead(200, { 'content-type': 'image/png' });
       res.end(servedImage);
@@ -85,6 +87,19 @@ async function main() {
       subtitles: { mode: 'off', cues: [] },
     }, () => {}, outDir);
     assert.equal(relativeVisual.ok, true, relativeVisual.error);
+    const beforeRepeated = ownedImageRequests;
+    const repeatedVisual = await composite({
+      jobId: 'reused-visual-download', requireVisualAssets: true,
+      assetOrigin: origin, assetHeaders: { authorization: 'Bearer local-test' },
+      spec: { ratio: '1:1', duration: 2, bgmVol: 0, voiceVol: 0 },
+      timeline: [
+        { type: 'image', url: '/owned.png', targetDuration: 1 },
+        { type: 'image', url: '/owned.png', targetDuration: 1 },
+      ],
+      subtitles: { mode: 'off', cues: [] },
+    }, () => {}, outDir);
+    assert.equal(repeatedVisual.ok, true, repeatedVisual.error);
+    assert.equal(ownedImageRequests - beforeRepeated, 1, 'the same read-only source must be downloaded once per render');
     const productDataUrl = `data:image/png;base64,${fs.readFileSync(productImage).toString('base64')}`;
     assert.equal(extensionForAsset(productDataUrl, 'image'), 'png', 'data URL extension must come from MIME instead of the base64 payload');
     assert.equal(isImageAsset(productDataUrl), true, 'image data URL must be bound as a still-image timeline input');
