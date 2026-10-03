@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import ffmpegStatic from 'ffmpeg-static';
-import { assertPersonCueShotBoundaries, hardSceneCutTimes } from './sentenceCueSceneCuts.js';
+import { assertPersonCueShotBoundaries, assertSeedanceCueDurations, hardSceneCutTimes } from './sentenceCueSceneCuts.js';
 
 test('a physical cut inside a person cue blocks generation while shot-aligned cues remain valid', async () => {
   assert.ok(ffmpegStatic);
@@ -30,4 +30,11 @@ test('a physical cut inside a person cue blocks generation while shot-aligned cu
     assert.throws(() => assertPersonCueShotBoundaries([{ ...cue, splitFromCueId: cue.id, personShot: undefined }], []), /指定镜头类型/);
     assert.doesNotThrow(() => assertPersonCueShotBoundaries([{ ...cue, splitFromCueId: cue.id, personShot: false, targetText: '' }], []));
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('Seedance rejects sub-four-second and over-fifteen-second person cues before billing', () => {
+  const cue = { id: 'short', start: 0.1, end: 1, originalText: 'Hi boss', targetText: '你好', shotIds: [], personShot: true };
+  assert.throws(() => assertSeedanceCueDurations([cue]), /仅支持 4–15s.*未调用供应商/);
+  assert.throws(() => assertSeedanceCueDurations([{ ...cue, end: 16 }]), /仅支持 4–15s.*未调用供应商/);
+  assert.doesNotThrow(() => assertSeedanceCueDurations([{ ...cue, end: 4.1 }, { ...cue, personShot: false }]));
 });

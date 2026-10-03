@@ -40,8 +40,8 @@ test('Qwen first-frame draft route persists its receipt, reuses the same request
   const context = 'draft-context';
   const shot = { ...newShotProduction('目标口播', 'person-1'), source: 'avatar' as const, digitalHuman: {
     workflow: 'viral_replication' as const, method: 'reenact' as const, replicationMode: 'sentence_first_frame' as const, contentConfirmed: true, presenterSelected: true, replacementScope: 'person_and_scene' as const, targetEffect: 'flexible_scene' as const,
-    action: '复用动作意图', scene: '重建画面', preserve: '构图', reference: { videoUrl: '/source.mp4', start: 0, end: 2, originalText: '原片', derivativeAuthorized: false,
-      cues: [{ id: 'cue-1', start: 0, end: 2, originalText: '原片', targetText: '目标', shotIds: ['s1'], personShot: true, compositionClusterId: 'front-medium', sourceFirstFrame: { time: 0, materialId: 'frame-1' } }] },
+    action: '复用动作意图', scene: '重建画面', preserve: '构图', reference: { videoUrl: '/source.mp4', start: 0, end: 4, originalText: '原片', derivativeAuthorized: false,
+      cues: [{ id: 'cue-1', start: 0, end: 4, originalText: '原片', targetText: '目标', shotIds: ['s1'], personShot: true, compositionClusterId: 'front-medium', sourceFirstFrame: { time: 0, materialId: 'frame-1' } }] },
   } };
   rows.set('studio_projects/project-1', { id: 'project-1', tenant_id: 'tenant-a', status: 'draft', spec: { shotProductionContext: context, shotProductions: { 'assembly-1:shot-1': shot } } });
   rows.set('studio_production_defaults/defaults-1', { id: 'defaults-1', tenant_id: 'tenant-a', payload: { presenters: [{ id: 'person-1', name: 'Person', authorized: true }] } });
@@ -59,6 +59,11 @@ test('Qwen first-frame draft route persists its receipt, reuses the same request
     assert.equal((await request('tenant-b')).status, 400);
     const receipts = await store.list<any>('studio_first_frame_draft_jobs', { where: { tenant_id: 'tenant-a', request_id: 'qwen-draft-request-1' } });
     assert.equal(receipts.items.length, 1); assert.equal(receipts.items[0].payload.state, 'completed'); assert.deepEqual(receipts.items[0].payload.result.operationIds, ['op-1']);
+    const shortShot = structuredClone(shot); shortShot.digitalHuman.reference.end = 1; shortShot.digitalHuman.reference.cues[0].end = 1;
+    rows.set('studio_projects/project-1', { id: 'project-1', tenant_id: 'tenant-a', status: 'draft', spec: { shotProductionContext: context, shotProductions: { 'assembly-1:shot-1': shortShot } } });
+    const shortResponse = await fetch(`${url}/sentence-first-frame-drafts`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-tenant': 'tenant-a' }, body: JSON.stringify({ projectId: 'project-1', assemblyId: 'assembly-1', shotId: 'shot-1', fingerprint: shotFingerprint(shortShot, context, 'shot-1'), requestId: 'short-qwen-draft', confirmed: true }) });
+    assert.equal(shortResponse.status, 400); assert.match((await shortResponse.json()).error, /仅支持 4–15s.*未调用供应商/);
+    assert.equal(generationCalls, 1); assert.equal((await store.list('studio_first_frame_draft_jobs')).totalItems, 1);
   } finally { await new Promise<void>(resolve => server.close(() => resolve())); }
 });
 

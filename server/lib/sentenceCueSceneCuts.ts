@@ -33,3 +33,14 @@ export function assertPersonCueShotBoundaries(cues: DigitalHumanReferenceCue[], 
     }
   }
 }
+
+/** Seedance's current image-video adapter requests 4–15 seconds per person cue. */
+export function assertSeedanceCueDurations(cues: DigitalHumanReferenceCue[]): void {
+  for (const cue of cues) {
+    if (cue.personShot === false) continue;
+    const duration = cue.end - cue.start;
+    if (!Number.isFinite(duration) || duration < 4 - 1e-6 || duration > 15 + 1e-6) {
+      throw new Error(`人物镜头 ${cue.id} 为 ${duration.toFixed(2)}s，当前 Seedance 逐句视频仅支持 4–15s；请改用已验收的短镜头制作路径或调整方案，未调用供应商`);
+    }
+  }
+}
