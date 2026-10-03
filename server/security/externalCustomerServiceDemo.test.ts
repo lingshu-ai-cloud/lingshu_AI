@@ -41,9 +41,11 @@ assert.ok(foreignCustomers.some(customer => customer.language === '西语'), 'th
 assert.ok(foreignCustomers.some(customer => customer.language === '阿语'), 'the foreign-trade lab must include Arabic conversations');
 
 const app = fs.readFileSync(path.join(root, 'src/App.tsx'), 'utf8');
-assert.match(app, /customer-demo@lingshu\.site/, 'the original external account must keep access to the simulation lab');
-assert.match(app, /wenlantianxia-test@local\.test/, 'the new external account must also be allowed to see the simulation lab');
-assert.match(app, /isExternalCustomerServiceDemoSession/, 'simulation visibility must be scoped to the dedicated account');
+const appSession = fs.readFileSync(path.join(root, 'src/appSession.ts'), 'utf8');
+assert.match(appSession, /customer-demo@lingshu\.site/, 'the original external account must keep access to the simulation lab');
+assert.match(appSession, /wenlantianxia-test@local\.test/, 'the new external account must also be allowed to see the simulation lab');
+assert.match(appSession, /EXTERNAL_CUSTOMER_SERVICE_DEMO_EMAILS\.has\(session\.user\.email\.trim\(\)\.toLowerCase\(\)\)/, 'simulation visibility must be scoped to the dedicated accounts');
+assert.match(app, /isExternalCustomerServiceDemoSession/, 'the application must use the scoped simulation policy');
 
 const seedScript = fs.readFileSync(path.join(root, 'scripts/seed-external-customer-service-demo.ts'), 'utf8');
 assert.match(seedScript, /ensureExternalDemoAccount\(\)/, 'the demo account must be provisioned idempotently');

@@ -53,11 +53,11 @@ compose=(env -u COMPOSE_FILE -u COMPOSE_PROJECT_NAME
   "PB_DATA_VOLUME_NAME=$pb_data_volume_name" "APP_HOST_PORT=$app_host_port" "ENV_FILE_PATH=$ENV_FILE"
   docker compose --project-directory "$ROOT_DIR" -f "$ROOT_DIR/docker-compose.yml" --env-file "$ENV_FILE")
 
-"${compose[@]}" build app pocketbase
-"${compose[@]}" stop caddy app
+"${compose[@]}" build app worker pocketbase
+"${compose[@]}" stop caddy app worker
 "${compose[@]}" up -d --force-recreate --wait --wait-timeout 180 pocketbase
 "${compose[@]}" run --rm --no-deps -T app node scripts/bootstrap-workbench-admin.mjs
-"${compose[@]}" up -d --no-build --wait --wait-timeout 180 app caddy
+"${compose[@]}" up -d --no-build --wait --wait-timeout 180 worker app caddy
 curl -fsS "http://127.0.0.1:${app_host_port}/api/overseas/ready" >/dev/null
 "${compose[@]}" ps
 echo "All containers are running and the application readiness gate passed."

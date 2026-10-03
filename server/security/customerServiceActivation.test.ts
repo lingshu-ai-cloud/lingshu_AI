@@ -83,7 +83,7 @@ assert.match(drafts, /manualRequest = body\.manualRequest === true[\s\S]*?!custo
 
 const outbox = read('server/routes/customerSuggestions.ts');
 assert.match(outbox, /req\.body\?\.auto === true[\s\S]*?customerServiceStatus[\s\S]*?!status\.autoReplyReady/, 'all automatic outbox sends must pass the activation gate');
-assert.match(outbox, /get\('\/:id\/suggestions'[\s\S]*?customer_service_disabled/, 'customer suggestions must stay off with the master switch');
+assert.match(outbox, /get\('\/:id\/suggestions'[\s\S]*?conversation_suggestions_disabled/, 'customer suggestions must stay off when conversation suggestions are disabled');
 
 const ui = read('src/components/ConversionPage.tsx');
 assert.match(ui, /aria-label="智能客服总开关"/, 'the customer workbench must expose a clear master switch');
