@@ -289,6 +289,7 @@ export interface RenderSpec {
 
 export interface RenderManifest {
   jobId: string;
+  requireVisualAssets?: boolean;
   spec: { ratio: string; duration: number; platform: string; language: string; bgmVol: number; voiceVol: number };
   script: string;
   timeline: {
@@ -341,6 +342,7 @@ function localManifest(spec: RenderSpec): RenderManifest {
     : (spec.materials ?? []).map(name => ({ name }));
   return {
     jobId: `local-${Date.now()}`,
+    requireVisualAssets: true,
     spec: {
       ratio: spec.ratio || '9:16',
       duration: spec.duration ?? 20,

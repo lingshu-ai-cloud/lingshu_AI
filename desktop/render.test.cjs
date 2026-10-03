@@ -139,6 +139,17 @@ async function main() {
     }, () => {}, outDir);
     assert.equal(missingVisual.ok, false, 'a declared owned timeline must not silently render the blue fallback');
     assert.match(String(missingVisual.error), /时间线素材全部读取失败/);
+    const partialVisual = await composite({
+      jobId: 'partial-owned-visual-regression', requireVisualAssets: true,
+      spec: { ratio: '1:1', duration: 2 },
+      timeline: [
+        { name: '已绑定产品图', type: 'image', url: productDataUrl, targetDuration: 1 },
+        { name: '丢失的第二镜', type: 'image', url: path.join(outDir, 'missing-second-shot.png'), targetDuration: 1 },
+      ],
+      bgm: { url: null }, voiceover: { url: null }, subtitles: { mode: 'off', cues: [] },
+    }, () => {}, outDir);
+    assert.equal(partialVisual.ok, false, 'one playable shot must not hide a missing second shot');
+    assert.match(String(partialVisual.error), /时间线素材不完整.*片段 2/);
   } finally {
     server.close();
     fs.rmSync(outDir, { recursive: true, force: true });

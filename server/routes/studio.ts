@@ -4951,6 +4951,7 @@ interface RenderSpec {
 
 interface RenderManifest {
   jobId: string;
+  requireVisualAssets: true;
   spec: { ratio: string; resolution?: string; duration: number; platform: string; language: string; bgmVol: number; voiceVol: number };
   script: string;
   timeline: {
@@ -4994,6 +4995,7 @@ function buildManifest(jobId: string, spec: RenderSpec, base: string): RenderMan
   }))) : undefined;
   return {
     jobId,
+    requireVisualAssets: true,
     spec: {
       ratio: spec.ratio || '9:16',
       duration: spec.duration ?? 20,
@@ -5052,6 +5054,7 @@ studioRouter.post('/render/local', async (req, res) => {
     fs.mkdirSync(outputDir, { recursive: true });
     const result = await composite({
       ...(req.body || {}),
+      requireVisualAssets: true,
       assetOrigin: origin,
       assetHeaders: {
         ...(req.get('authorization') ? { authorization: req.get('authorization') } : {}),
