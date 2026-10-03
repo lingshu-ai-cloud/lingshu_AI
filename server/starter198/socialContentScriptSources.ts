@@ -28,10 +28,10 @@ import {
   type SocialSceneVisualContract,
 } from '../../shared/sceneVisualContract.js';
 import { presenterShotMeasurements } from './presenterShotMeasurements.js';
-import { reviewShotMaterialRefs } from '../routes/referenceShotReview.js';
-import { validateVerifiedSpeechLines } from '../routes/verifiedReferenceSpeech.js';
-import { approximateSpeechLines } from '../routes/referenceApproxSpeech.js';
-import { hasCompletedExactVideoEvidence } from '../routes/videoAnalysisCodec.js';
+import { reviewShotMaterialRefs } from '../lib/referenceShotReview.js';
+import { validateVerifiedSpeechLines } from '../lib/verifiedReferenceSpeech.js';
+import { approximateSpeechLines } from '../lib/referenceApproxSpeech.js';
+import { hasCompletedExactVideoEvidence } from '../lib/videoAnalysisCodec.js';
 
 const THEME_TERMS: Record<SocialContentThemeId, readonly string[]> = {
   product_value: ['产品', '卖点', '细节', '成分', '材质', '性能', 'product', 'feature', 'detail'],

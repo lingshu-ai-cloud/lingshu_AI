@@ -77,7 +77,7 @@ import { storyboardAigcProjectBudget } from '../lib/storyboardAigcProjectBudget.
 import { buildStoryboardQaReport, inspectStoryboardTechnicalFrames, reviewStoryboardQaReport, type StoryboardQaReport } from '../lib/storyboardAigcQuality.js';
 import { studioAigcBudgetConfigFromEnv, studioAigcBudgetPreviewForSpec } from './studioAigcBatchBudget.js';
 import { enterpriseAssetObjectKey, enterpriseAssetTenantKey } from '../storage/enterpriseAssets.js';
-import { videoAnalysisOf } from './videoAnalysisCodec.js';
+import { videoAnalysisOf } from '../lib/videoAnalysisCodec.js';
 import { getPublicOrigin } from '../lib/oauthConfig.js';
 import { estimateSeedanceCostCny, releaseSeedanceBudget, reserveSeedanceBudget, type SeedanceBudgetReservation } from '../lib/seedanceBudget.js';
 import { storyboardAigcMetrics } from '../lib/storyboardAigcMetrics.js';
