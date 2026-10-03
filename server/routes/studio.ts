@@ -5,7 +5,7 @@ import { finalizeMaterialScript } from '../lib/materialScriptFinalizer.js';
 import { createShootingTasksRouter } from './shootingTasks.js';
 import { auditShotEvidence } from '../lib/shotEvidenceAudit.js';
 import { validateSpeechCues } from '../../src/lib/narrationAlignment.js';
-import { studioRenderMediaRouter } from '../lib/studioRenderMedia.js';
+import { safeStudioRenderOutputPath, studioRenderMediaRouter } from '../lib/studioRenderMedia.js';
 import { createStudioAsrRouter } from '../lib/studioAsrRouter.js';
 import type { AvatarMediaCheck } from '../lib/avatarMediaCheck.js';
 import { createStudioAvatarProductionRouter } from '../lib/studioAvatarProduction.js';
@@ -5081,8 +5081,8 @@ studioRouter.post('/render/open-output', async (req, res) => {
     res.status(400).json({ ok: false, error: '缺少本地文件路径' });
     return;
   }
-  const filePath = path.isAbsolute(rawPath) ? rawPath : path.resolve(rawPath);
-  if (!fs.existsSync(filePath)) {
+  const filePath = safeStudioRenderOutputPath(path.resolve(process.cwd(), 'data/publishing-uploads'), String(res.locals.tenantId || ''), rawPath);
+  if (!filePath) {
     res.status(404).json({ ok: false, error: '本地成片文件不存在，请重新导出。' });
     return;
   }

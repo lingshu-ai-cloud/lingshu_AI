@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { once } from 'node:events';
-import { studioRenderMediaRouter } from './studioRenderMedia.js';
+import { safeStudioRenderOutputPath, studioRenderMediaRouter } from './studioRenderMedia.js';
 
 test('local exports support range/HEAD, isolate tenants, and reject traversal/symlinks', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'studio-render-media-'));
@@ -13,6 +13,11 @@ test('local exports support range/HEAD, isolate tenants, and reject traversal/sy
   fs.mkdirSync(path.join(root, 'tenant_b'));
   fs.writeFileSync(path.join(root, 'tenant_a', 'sample.mp4'), '0123456789');
   fs.symlinkSync(path.join(root, 'tenant_a', 'sample.mp4'), path.join(root, 'tenant_b', 'linked.mp4'));
+  assert.equal(safeStudioRenderOutputPath(root, 'tenant_a', path.join(root, 'tenant_a', 'sample.mp4')), fs.realpathSync(path.join(root, 'tenant_a', 'sample.mp4')));
+  assert.equal(safeStudioRenderOutputPath(root, 'tenant_b', path.join(root, 'tenant_a', 'sample.mp4')), null);
+  assert.equal(safeStudioRenderOutputPath(root, 'tenant_b', path.join(root, 'tenant_b', 'linked.mp4')), null);
+  assert.equal(safeStudioRenderOutputPath(root, 'tenant_a', '/etc/hosts'), null);
+  assert.equal(safeStudioRenderOutputPath(root, 'tenant_a', 'sample.mp4'), null);
   const app = express();
   app.use((req, res, next) => { res.locals.tenantId = req.headers['x-test-tenant'] || ''; next(); });
   app.use('/media', studioRenderMediaRouter(root));

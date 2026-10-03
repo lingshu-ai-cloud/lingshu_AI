@@ -65,6 +65,8 @@ assert.match(previewUi, /setRenderOutputPath\(generation\.status === 'done' \? g
 assert.match(previewUi, /downloadMp4\(activeOutputVersion\?\.output\?\.status === 'done'/, 'reopened drafts must reuse the selected export instead of rendering again');
 
 const studioBackend = readFileSync(new URL('./studio.ts', import.meta.url), 'utf8');
+const openOutputRoute = studioBackend.slice(studioBackend.indexOf("studioRouter.post('/render/open-output'"), studioBackend.indexOf('/* ── 素材库', studioBackend.indexOf("studioRouter.post('/render/open-output'")));
+assert.match(openOutputRoute, /safeStudioRenderOutputPath\(/, 'opening a render folder must enforce the tenant output boundary');
 const avatarImport = readFileSync(new URL('../lib/studioAvatarProduction.ts', import.meta.url), 'utf8');
 assert.match(studioBackend, /studioRouter\.use\('\/production', createStudioAvatarProductionRouter\(store\)\)/, 'studio route must mount the validated avatar production service');
 assert.ok(avatarImport.indexOf('await checkAvatarMedia(') < avatarImport.indexOf('await objectStorageUpload('), 'validate bytes before publishing them into the material store');
