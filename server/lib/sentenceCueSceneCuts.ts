@@ -21,11 +21,17 @@ export async function hardSceneCutTimes(ffmpegPath: string, sourcePath: string):
     .filter(Number.isFinite);
 }
 
-export function assertPersonCueShotBoundaries(cues: DigitalHumanReferenceCue[], cuts: number[]): void {
+export function assertSplitCueAssignments(cues: DigitalHumanReferenceCue[]): void {
   for (const cue of cues) {
-    if (cue.splitFromCueId && (cue.personShot === undefined || (cue.personShot === true && !cue.targetText.trim()))) {
-      throw new Error(`拆分镜头 ${cue.id} 须指定镜头类型并为人物镜头填写本片对应语句，未调用供应商`);
+    if (cue.splitFromCueId && (!cue.originalText.trim() || cue.personShot === undefined || (cue.personShot === true && !cue.targetText.trim()))) {
+      throw new Error(`拆分镜头 ${cue.id} 须填写原片语句、指定镜头类型，并为人物镜头填写本片对应语句，未调用供应商`);
     }
+  }
+}
+
+export function assertPersonCueShotBoundaries(cues: DigitalHumanReferenceCue[], cuts: number[]): void {
+  assertSplitCueAssignments(cues);
+  for (const cue of cues) {
     if (cue.personShot === false) continue;
     const cut = cuts.find(time => time > cue.start + 0.05 && time < cue.end - 0.05);
     if (cut !== undefined) {

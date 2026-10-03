@@ -28,6 +28,7 @@ test('a physical cut inside a person cue blocks generation while shot-aligned cu
     ], cuts));
     assert.throws(() => assertPersonCueShotBoundaries([{ ...cue, splitFromCueId: cue.id, targetText: '' }], []), /填写本片对应语句/);
     assert.throws(() => assertPersonCueShotBoundaries([{ ...cue, splitFromCueId: cue.id, personShot: undefined }], []), /指定镜头类型/);
+    assert.throws(() => assertPersonCueShotBoundaries([{ ...cue, splitFromCueId: cue.id, originalText: '' }], []), /填写原片语句/);
     assert.doesNotThrow(() => assertPersonCueShotBoundaries([{ ...cue, splitFromCueId: cue.id, personShot: false, targetText: '' }], []));
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });

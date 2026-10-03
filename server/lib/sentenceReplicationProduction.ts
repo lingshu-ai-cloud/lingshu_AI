@@ -19,7 +19,7 @@ import { inspectSentenceLipSyncQuality } from './sentenceLipSyncQuality.js';
 import { validatePresenterRightsEvidence } from './presenterAssetTrust.js';
 import { estimateSeedanceCostCny } from './seedanceBudget.js';
 import { photoTalkingBudget } from './photoTalkingBudget.js';
-import { assertPersonCueShotBoundaries, assertSeedanceCueDurations, hardSceneCutTimes } from './sentenceCueSceneCuts.js';
+import { assertPersonCueShotBoundaries, assertSeedanceCueDurations, assertSplitCueAssignments, hardSceneCutTimes } from './sentenceCueSceneCuts.js';
 
 const MEDIA_ROOT = path.resolve(process.cwd(), 'data/media');
 const run = promisify(execFile);
@@ -31,6 +31,7 @@ export async function runProductionSentenceReplication(input: { tenantId: string
   const readiness = sentenceReplicationReadiness(process.env, photoTalking ? 'heygen' : 'seedance');
   if (photoTalking) { const rights = validatePresenterRightsEvidence(input.presenter.rightsEvidence, {provider: 'heygen', uses: ['digital_presenter', 'voice_synthesis']}); if (!rights.ok) throw new Error(`HeyGen人物授权未完成：${rights.reasons.join('、')}`); if (!input.presenter.voiceId) throw new Error('请选择 HeyGen 口播声音'); }
   if (!readiness.ready) throw new Error(readiness.reason);
+  assertSplitCueAssignments(input.cues);
   if (!photoTalking) assertSeedanceCueDurations(input.cues);
   if (!photoTalking && !objectStorageSupplierDeliveryReady()) throw new Error('本地系统存储已启用，但 Seedance 无法访问 localhost；真实出片需生产 COS 签名地址或显式配置 HTTPS 开发地址');
   const materials = readLocalMaterials(); const byId = new Map(materials.map(item => [String(item.id), item])); const presenterIds = [...new Set([...(input.presenter.toolMappings?.seedance?.referenceMaterialIds || []), ...(input.presenter.toolMappings?.sd?.referenceMaterialIds || []), ...(input.presenter.toolMappings?.runway?.referenceMaterialIds || []), ...(input.presenter.referenceMaterialIds || [])])];

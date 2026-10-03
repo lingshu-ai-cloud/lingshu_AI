@@ -494,6 +494,9 @@ test('photo talking first frame preparation is tenant scoped and never generates
     const unapproved=structuredClone(shot);unapproved.digitalHuman.reference.modelInputAuthorized=false;
     rows.set('studio_projects/project-1',{...rows.get('studio_projects/project-1'),spec:{...rows.get('studio_projects/project-1').spec,shotProductions:{'assembly-1:shot-1':unapproved}}});
     const blocked=await request('tenant-a',true,shotFingerprint(unapproved,context,'shot-1'));assert.equal(blocked.status,400);assert.match(await blocked.text(),/授权依据/);assert.equal(frameCalls,0);
+    const unassigned=structuredClone(shot);Object.assign(unassigned.digitalHuman.reference.cues[0],{splitFromCueId:'sentence-1',targetText:''});
+    rows.set('studio_projects/project-1',{...rows.get('studio_projects/project-1'),spec:{...rows.get('studio_projects/project-1').spec,shotProductions:{'assembly-1:shot-1':unassigned}}});
+    const invalidSpeech=await request('tenant-a',true,shotFingerprint(unassigned,context,'shot-1'));assert.equal(invalidSpeech.status,400);assert.match(await invalidSpeech.text(),/填写本片对应语句/);assert.equal(frameCalls,0);
     rows.set('studio_projects/project-1',{...rows.get('studio_projects/project-1'),spec:{...rows.get('studio_projects/project-1').spec,shotProductions:{'assembly-1:shot-1':shot}}});
     const response=await request();assert.equal(response.status,200,await response.clone().text());const result=await response.json();assert.equal(result.cues[0].targetFirstFrame.state,'ready');assert.equal(frameCalls,1);assert.equal(videoCalls,0);
   }finally{await new Promise<void>(resolve=>server.close(()=>resolve())); if (previousHeygenReserve === undefined) delete process.env.STUDIO_HEYGEN_RESERVE_CNY; else process.env.STUDIO_HEYGEN_RESERVE_CNY = previousHeygenReserve; if(previousPhotoRate===undefined)delete process.env.HEYGEN_PHOTO_ESTIMATED_CNY_PER_SECOND;else process.env.HEYGEN_PHOTO_ESTIMATED_CNY_PER_SECOND=previousPhotoRate;}
