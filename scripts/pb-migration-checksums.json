@@ -88,6 +88,8 @@
     "1790553600_create_social_discovery_foundation.js": "70a135784cfb8921f6d890e92c828ec5bb39de7aa259f6ff5a896cec479feaf5",
     "1790553601_add_social_discovery_runs.js": "b66a16450265ecac4acca798e967dce7aa74c8a7912582ff2766a9342c3e8766",
     "1790640000_create_social_program_foundation.js": "8f8f0802cfe528e4a23b3078d2b4ead932fe7bd8b7739f8ad54cda8482b531c2",
+    "1790640001_create_platform_ad_creatives.js": "74d1001683e4f6b75505025563d3afe0e31b3f334060ac36c7754358ef7e2722",
+    "1790640002_platform_ad_evidence.js": "e4e2e62d4e6bdefa6e37a651355c1a1bd422f2795ae496cb265177070c7b8f92",
     "1790726400_create_agent_notifications.js": "4f9b7841ca5f136b4614fd3fd6f8167f420dfc550eb8cc4150ab6935603f0c4b",
     "1790726400_create_social_interaction_review.js": "51556e22bf823ee7a5846c96e52a489bacbc3895f99db357dd41283e90b1a6c8",
     "1790726400_create_social_production_handoffs.js": "7a431e27e1b229e856a09bafb62ee6a7e773383b749cc5e7ac2ddf3e9fac2e7e",
@@ -104,6 +106,8 @@
     "1791072003_harden_social_discovery_lineage.js": "06f2b7d6baa1c6a6a460005c1a31e04ba215d73925314adc93f85649fe112871",
     "1791072004_create_publication_engagement_runtime.js": "76a1b3ad1d0d00ce2665535b270af2c426548641f82ad13b7d76f9ac901d076f",
     "1791072005_connect_social_weekly_review_loop.js": "c1d10030aa1d7c28f3b318221ebf3b2a560ff880591217d99ee01b756401c993",
-    "1791072006_create_social_operating_runtime.js": "83538773230c88eed508da645c4d01ae6aabb9e3a8c698355c5eacf8d8721a12"
+    "1791072006_create_social_operating_runtime.js": "83538773230c88eed508da645c4d01ae6aabb9e3a8c698355c5eacf8d8721a12",
+    "1791072006_ensure_publishing_schedules.js": "7af3e6889270a7e4f9988cb480a2c60971e83ea033b8cef9ed21d11a566bf81a",
+    "1791072007_fix_publishing_schedule_and_messenger_status.js": "159426312d27bb9c162696fe033dc279df17f90a2aecc1c674e969b0fe61d710"
   }
 }
