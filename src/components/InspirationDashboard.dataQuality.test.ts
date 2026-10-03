@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import {
   canProcessVideo,
   displayDuration,
+  isDisplayableVideoAnalysis,
   materialSemanticLabel,
   resultEmptyState,
   trendFromEvidence,
@@ -31,6 +32,14 @@ assert.equal(materialSemanticLabel({
 assert.equal(resultEmptyState(0, '', false), 'no-data');
 assert.equal(resultEmptyState(12, 'not-found', false), 'no-match');
 assert.equal(resultEmptyState(12, '', true), 'no-match');
+assert.equal(isDisplayableVideoAnalysis({
+  usage: 'reference_only',
+  contentSha256: 'sha256',
+  userVisible: true,
+  geminiStatus: 'video_failed',
+  analysisError: 'exact_analysis_stalled',
+}, 'analyzed'), true, '精准分析失败的手动对标视频必须留在爆款库供查看和重试');
+assert.equal(isDisplayableVideoAnalysis({ geminiStatus: 'video_failed' }, 'analyzed'), false, '普通采集视频仍遵守失败隐藏规则');
 
 const componentSource = readFileSync(fileURLToPath(new URL('./InspirationDashboard.tsx', import.meta.url)), 'utf8');
 assert.match(componentSource, /aria-label={`播放 \${material\.name}`}[^]*?event\.stopPropagation\(\); setPreviewMaterial\(material\);[^]*?z-20/, '播放按钮应稳定置于 hover 操作层之上且只打开预览');

@@ -9,6 +9,9 @@ allowBuilds:
   # reject every unreviewed dependency lifecycle script by default.
   esbuild: true
   ffmpeg-static: true
+  # BullMQ's msgpack transport has a pure-JS fallback; do not execute the
+  # optional native extractor build in CI or production images.
+  msgpackr-extract: false
   protobufjs: true
 
 # Keep pnpm's local/test graph aligned with npm's production package-lock.

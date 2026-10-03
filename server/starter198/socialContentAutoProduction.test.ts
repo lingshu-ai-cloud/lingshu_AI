@@ -232,7 +232,7 @@ try {
   assert.equal(automaticSocialMaterialEligible({
     id: 'shared-reference-only', type: 'video', scope: 'shared', usage: 'reference_only', commercialUseApproved: true,
     derivativesApproved: true, licenseEvidence: 'license-record-2',
-  } as never, 'tenant-a'), true, 'legacy reference_only metadata no longer disables production use');
+  } as never, 'tenant-a'), false, 'analysis-only reference media must never enter production output');
 
   const associationBrief = {
     title: forbiddenUserText, objective: forbiddenUserText, productRef: 'Meno Moso 损伤发质洗护', audience: null,

@@ -118,6 +118,10 @@ try {
     id: 'item-1', tenant_id: tenantId, batch_id: 'batch-1', customer_name: '客户 A', status: 'approved',
     scheduled_at: '2026-09-03T03:00:00.000Z', created_at: '2026-09-03T00:00:00.000Z',
   }]);
+  fixtures.set('platform_ad_metric_snapshots', [
+    { id: 'ad-usd', tenant_id: tenantId, date: '2026-09-03', currency: 'USD', values: { spend: 12.5 }, reportedAt: '2026-09-03T04:00:00.000Z' },
+    { id: 'ad-eur', tenant_id: tenantId, date: '2026-09-03', currency: 'EUR', values: { spend: 8 }, reportedAt: '2026-09-03T04:01:00.000Z' },
+  ]);
 
   const scheduled = await buildBusinessSnapshot(tenantId, { startsAt: '2026-08-31', endsAt: '2026-09-06' }, now);
   assert.deepEqual(
@@ -135,6 +139,7 @@ try {
   assert.equal(scheduled.interactionReview.unknownSourceInquiries, 1, 'unknown inquiry sources remain explicit instead of receiving invented content attribution');
   assert.equal(scheduled.interactionReview.creativeLearnings, 1);
   assert.equal(scheduled.interactionReview.deadline, '2026-09-06T15:59:59.000Z', 'weekly snapshot deadline preserves the inclusive Asia/Shanghai reporting boundary');
+  assert.deepEqual(scheduled.ads?.spendByCurrency, [{ currency: 'EUR', amount: 8, rows: 1 }, { currency: 'USD', amount: 12.5, rows: 1 }], 'paid-media spend must use stored provider snapshots without merging currencies');
   assert.deepEqual(scheduled.interactionReview.breakdown.find(item => item.businessDirectionRef === 'E2'), {
     businessDirectionRef: 'E2', accountId: 'account-connected', contentId: 'post-receipt', comments: 0, inquiries: 1, qualifiedInquiries: 0,
   });

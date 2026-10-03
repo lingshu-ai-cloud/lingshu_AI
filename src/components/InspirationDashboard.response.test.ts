@@ -32,5 +32,7 @@ assert.match(source, /if \(shouldAdvanceDemo\)[^]*?completeDemoStep\('traffic'\)
 assert.doesNotMatch(source, /(?:GMP|FDA-ready|Low MOQ|Fast Turnaround|Export-ready)/, '本地脚本模板不得内置未核实商业承诺');
 assert.match(source, /disabled=\{!isImagePost && !draftReady\}/, '逐句口播起稿由编导交接状态控制，成片执行另行验收');
 assert.match(source, /review-handoff/, '编导分析抽屉必须读取服务端复核工作单');
+assert.match(source, /<AuthenticatedVideo[^]*?apiUrl=\{previewMaterial\.url\}[^]*?loadOnMount/, '素材弹窗必须走带超时和重试的统一视频播放器');
+assert.doesNotMatch(source, /<video src=\{`\$\{material\.url\}#t=0\.1`\}/, '素材卡片不能同时预加载整页视频并耗尽 Safari 媒体资源');
 
 console.log('InspirationDashboard exact-analysis response tests passed');

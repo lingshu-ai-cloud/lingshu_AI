@@ -52,7 +52,10 @@ export function analysisTimelineQualityError(analysis: VideoAiAnalysis, duration
   const boundaryTolerance = mode === 'exact' ? 0.75 : 1.25; const maxSegmentSeconds = mode === 'exact' ? 5.5 : 6.25;
   if (details[0].range.start > boundaryTolerance) return `timeline_starts_at_${details[0].range.start.toFixed(2)}s`;
   for (let index = 0; index < details.length; index += 1) { const { start, end } = details[index].range; if (end <= start) return `invalid_segment_${index + 1}`; if (end - start > maxSegmentSeconds) return `segment_${index + 1}_too_long_${(end - start).toFixed(2)}s`; if (index > 0) { const previousEnd = details[index - 1].range.end; if (start - previousEnd > boundaryTolerance) return `timeline_gap_at_${previousEnd.toFixed(2)}s`; if (previousEnd - start > boundaryTolerance) return `timeline_overlap_at_${start.toFixed(2)}s`; } }
-  const analyzedUntil = details.at(-1)!.range.end; return duration > 0 && analyzedUntil + boundaryTolerance < duration ? `timeline_ends_at_${analyzedUntil.toFixed(2)}s_of_${duration.toFixed(2)}s` : null;
+  const analyzedUntil = details.at(-1)!.range.end;
+  if (duration > 0 && analyzedUntil + boundaryTolerance < duration) return `timeline_ends_at_${analyzedUntil.toFixed(2)}s_of_${duration.toFixed(2)}s`;
+  if (duration > 0 && analyzedUntil - boundaryTolerance > duration) return `timeline_exceeds_${analyzedUntil.toFixed(2)}s_of_${duration.toFixed(2)}s`;
+  return null;
 }
 
 /** Flags evidence that is structurally valid JSON but unsafe to hand to the

@@ -17,16 +17,16 @@ import { adjustProductPlacement, productPlacementPreset, validProductPlacement, 
 import { ensureMaterialAnalysis } from '../lib/studioApi';
 import MaterialAnalysisStatus from './studio/MaterialAnalysisStatus';
 import MaterialLibraryStatus from './studio/MaterialLibraryStatus';
-import ProductionTaskScene from './ProductionTaskScene';
 import DirectorTaskContext from './DirectorTaskContext';
 import { requestProductionBack } from '../lib/productionNavigation';
 import ContentLibrary from './ContentLibrary';
 import ProductionRevisionPanel from './ProductionRevisionPanel';
+import ProductionTaskScene from './ProductionTaskScene';
 import { useAgentProductionAction } from '../lib/agentProductionSession';
 import { VIDEO_PRESENTATIONS, type VideoCreationPlan } from '../lib/videoCreationPlan';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { LayoutGrid, Film, FileText, Music, Image as ImageIcon, Play, Send, Check, ChevronLeft, ChevronRight, Folder, Search, Volume2, Mic, Download, Loader2, Sparkles, Wand2, Copy, RefreshCw, Clock, Upload, X, Plus, List, Save, FolderOpen, Trash2, Pause, ChevronDown, Heart, ExternalLink, Languages } from 'lucide-react';
+import { LayoutGrid, Film, FileText, Music, Image as ImageIcon, Play, Send, Check, ChevronLeft, ChevronRight, Folder, Search, Volume2, Mic, Download, Loader2, Sparkles, Wand2, Copy, RefreshCw, Clock, Upload, X, Plus, Save, FolderOpen, Trash2, Pause, ChevronDown, Heart, ExternalLink, Languages } from 'lucide-react';
 import { studioApi, getDesktopRender, type StudioProject, type VariationBatch, type Material, type MaterialSegment, type BgmTrack, type CoverStyle, type SubCue, type TtsStyleOptions, type StudioAudioCapabilities, type FbPosterResult, type LeadContentPackageResult, type StoryboardQualityResult, type VideoGenerationVersion, type StudioScriptResult, type StudioScriptQualityStatus, type StudioScriptQualityChecks, type StudioGenerationProvenance, type DigitalHumanCapabilities, type DigitalHumanJob, type HeyGenAvatarOption } from '../lib/studioApi';
 import { isMeasuredVoiceAlignment, matchVoiceCuesToShots, productionVoiceCues, retimeVisualShotsToVoiceover } from '../lib/voiceoverAlignment';
 import { createPresetEffectPlan, type EffectIntensity, type EffectPresetId } from '../../shared/contracts/effectPlan';
@@ -137,6 +137,7 @@ const probeClipAspect = (clip: Clip) => new Promise<{ width: number; height: num
 const materialToClip = (m: Material): Clip => ({
   id: m.id, name: m.name, folder: m.folder, type: m.type, duration: m.duration, width: m.width, height: m.height, aspectRatio: m.aspectRatio, size: m.size, url: m.url, poster: m.poster, scope: m.scope ?? 'own',
   usage: m.usage, sourceType: m.sourceType, industry: m.industry, shotFunction: m.shotFunction, applicability: m.applicability, tags: m.tags,
+  productId: m.productId, productName: m.productName,
   segmentAnalysisStatus: m.segmentAnalysisStatus, segmentAnalysisError: m.segmentAnalysisError, segments: m.segments, visualObservations: m.visualObservations,
 });
 
@@ -286,6 +287,8 @@ export interface Clip {
   shotFunction?: string;
   applicability?: string;
   tags?: string;
+  productId?: string;
+  productName?: string;
   segmentAnalysisStatus?: 'pending' | 'analyzing' | 'completed' | 'failed';
   segmentAnalysisError?: string;
   visualObservations?: string[];
@@ -534,9 +537,97 @@ function materialSemanticDimensions(clip: Clip, slot: StoryboardSlot): { topic: 
   return candidates.sort((a, b) => Number(b.topic) + Number(b.purpose) - Number(a.topic) - Number(a.purpose))[0]!;
 }
 
+const factoryVisualPattern = /工厂|车间|产线|生产|质检|灌装|输送|传送带|流水线|工人|防尘服|发网|手套|分拣|设备|机械|注塑机|振动盘|加工位|夹具|factory|workshop|production|inspection|filling|conveyor|worker|machine|assembly/i;
+const productVisualPattern = /产品|瓶身|瓶罐|包装|质地|成分|玻璃瓶|磨砂|精华|面霜|乳液|product|bottle|package|texture|packshot/i;
+const factorySpecificRules: Array<{ id: string; pattern: RegExp }> = [
+  { id: 'worker', pattern: /工人|人员|白大褂|防尘服|发网|手套|分拣|装配|worker|staff|sorting|assembly/i },
+  { id: 'conveyor', pattern: /传送带|输送线|流水线|conveyor/i },
+  { id: 'filling', pattern: /灌装|填充|注液|filling/i },
+  { id: 'cap', pattern: /瓶盖|盖子|泵头|cap|lid/i },
+  { id: 'container', pattern: /瓶胚|瓶罐|罐体|瓶口|容器|bottle|container|canister/i },
+  { id: 'pick-place', pattern: /抓取|定位|夹具|机械手|pick.?and.?place|gripper|fixture/i },
+  { id: 'vibratory', pattern: /振动盘|环形盘|送料盘|vibratory|bowl feeder/i },
+  { id: 'lab', pattern: /移液|称重|烧杯|实验|研发|化验|pipette|laboratory/i },
+];
+const productAttributeRules: Array<{ id: string; pattern: RegExp }> = [
+  { id: 'blue', pattern: /蓝|blue/i }, { id: 'silver', pattern: /银|silver/i },
+  { id: 'gold', pattern: /金色|金白|gold/i }, { id: 'white', pattern: /白|乳白|white/i },
+  { id: 'clear', pattern: /透明|clear|transparent/i }, { id: 'frosted', pattern: /磨砂|frosted/i },
+  { id: 'glass', pattern: /玻璃|glass/i }, { id: 'metal', pattern: /金属|metal/i },
+  { id: 'gradient', pattern: /渐变|gradient/i }, { id: 'pump', pattern: /泵头|滴管|pump|dropper/i },
+  { id: 'jar', pattern: /罐|jar/i }, { id: 'bottle', pattern: /瓶|bottle/i },
+];
+
+function storyboardVisualText(slot: StoryboardSlot): string {
+  return storyboardSlotScript(slot.detail).visual || slot.title || '';
+}
+
+function materialSegmentText(segment: MaterialSegment): string {
+  const observedFacts = (segment as MaterialSegment & { observedFacts?: string[] }).observedFacts || [];
+  return [segment.visualTopic, segment.subject.join(' '), segment.action, segment.environment,
+    segment.shot, segment.composition, ...observedFacts, ...(segment.recommendedFunctions || [])]
+    .filter(Boolean).join(' ');
+}
+
+function matchingRuleIds(text: string, rules: Array<{ id: string; pattern: RegExp }>): Set<string> {
+  return new Set(rules.filter(rule => rule.pattern.test(text)).map(rule => rule.id));
+}
+
+function segmentStoryboardEvidence(segment: MaterialSegment, slot: StoryboardSlot): { eligible: boolean; score: number; reason: string } {
+  const wanted = storyboardVisualText(slot);
+  const observed = materialSegmentText(segment);
+  const wantsFactory = factoryVisualPattern.test(wanted);
+  const wantsProduct = !wantsFactory && productVisualPattern.test(wanted);
+  if (wantsFactory) {
+    if (!factoryVisualPattern.test(observed)) return { eligible: false, score: 0, reason: '片段不是工厂实拍' };
+    const wantedKinds = matchingRuleIds(wanted, factorySpecificRules);
+    const observedKinds = matchingRuleIds(observed, factorySpecificRules);
+    const overlap = [...wantedKinds].filter(kind => observedKinds.has(kind));
+    if (wantedKinds.size && !overlap.length) return { eligible: false, score: 0, reason: '工序或主体与目标分镜不一致' };
+    return {
+      eligible: true,
+      score: 80 + Math.min(20, overlap.length * 7),
+      reason: overlap.length ? `已分析片段命中工厂主体/工序：${overlap.join('、')}` : '已分析片段为可定位的工厂实拍',
+    };
+  }
+  if (wantsProduct) {
+    if (!segment.productVisible || !['medium', 'high'].includes(segment.productClarity)) {
+      return { eligible: false, score: 0, reason: '片段没有清晰可见的产品' };
+    }
+    const wantedAttributes = matchingRuleIds(wanted, productAttributeRules);
+    const observedAttributes = matchingRuleIds(observed, productAttributeRules);
+    const overlap = [...wantedAttributes].filter(kind => observedAttributes.has(kind));
+    // Product replacement must not substitute a generic packshot for a visually
+    // distinctive bottle. At least two observable attributes need to agree.
+    if (wantedAttributes.size >= 2 && overlap.length < 2) {
+      return { eligible: false, score: 0, reason: '产品外观属性不足以证明是高匹配素材' };
+    }
+    return { eligible: true, score: 85 + Math.min(15, overlap.length * 5), reason: '产品清晰可见且外观属性匹配' };
+  }
+  const dimensions = materialSemanticDimensions({
+    id: 'segment-evidence', name: '', folder: '', type: 'video', duration: segment.end,
+    size: '', segments: [segment],
+  }, slot);
+  return dimensions.topic && dimensions.purpose
+    ? { eligible: true, score: 100, reason: '视觉主题和表达目的均匹配' }
+    : { eligible: false, score: 0, reason: '片段证据不足' };
+}
+
 function matchStoryboardMetadata(clip: Clip, slot: StoryboardSlot): boolean {
   const dimensions = materialSemanticDimensions(clip, slot);
   return dimensions.topic || dimensions.purpose;
+}
+
+/** A production match must be grounded in one time-addressable segment.
+ * Clip-level folders/tags are useful for ranking, but cannot prove that the
+ * requested action is visible at the trim point used by the storyboard. */
+function verifiedStoryboardSegment(clip: Clip, slot: StoryboardSlot): MaterialSegment | undefined {
+  const targetDuration = Math.max(0.5, slot.end - slot.start);
+  return (clip.segments || []).filter(segment => usableEvidenceSegment(segment, clip.duration))
+    .filter(segment => segment.end - segment.start >= targetDuration)
+    .map(segment => ({ segment, evidence: segmentStoryboardEvidence(segment, slot) }))
+    .filter(item => item.evidence.eligible)
+    .sort((left, right) => right.evidence.score - left.evidence.score || left.segment.start - right.segment.start)[0]?.segment;
 }
 
 export function matchMaterialsToStoryboardLocally(
@@ -548,6 +639,7 @@ export function matchMaterialsToStoryboardLocally(
     previousAssignments?: Array<Record<string, string>>;
     targetRatio?: string;
     allowSemanticMetadata?: boolean;
+    requireSegmentEvidence?: boolean;
     requireEvidence?: boolean;
     allowReuse?: boolean;
     preferredBoost?: number;
@@ -597,8 +689,10 @@ export function matchMaterialsToStoryboardLocally(
     const freshStillNeeded = Math.max(0, minimumFreshCount - freshAssignedCount);
     const supportedPool = allowLegacyTitleOnlyMatching || options.requireEvidence === false
       ? pool
-      : pool.filter(clip => options.allowSemanticMetadata
-        ? matchStoryboardMetadata(clip, slot) : Boolean(matchEvidenceSegment(clip, slot)));
+      : pool.filter(clip => options.requireSegmentEvidence
+        ? Boolean(verifiedStoryboardSegment(clip, slot))
+        : options.allowSemanticMetadata
+          ? matchStoryboardMetadata(clip, slot) : Boolean(matchEvidenceSegment(clip, slot)));
     const unusedSupported = supportedPool.filter(clip => unused.has(clip.id));
     const uniquePool = unusedSupported.length
       ? unusedSupported
@@ -627,6 +721,8 @@ export function matchMaterialsToStoryboardLocally(
       if (unused.has(clip.id)) score += 18;
       if (preferred.has(clip.id)) score += options.preferredBoost ?? 7;
       if (clip.type === 'video') score += 5;
+      const verified = options.requireSegmentEvidence ? verifiedStoryboardSegment(clip, slot) : undefined;
+      if (verified) score += segmentStoryboardEvidence(verified, slot).score;
       // 横竖方向只作为排序偏好，不作为硬拦截；渲染器会统一居中裁切。
       score += clipRatioPreferenceScore(clip, options.targetRatio);
       if (folderKeywords[clip.folder]?.test(slotText)) score += 28;
@@ -703,7 +799,18 @@ type MaterialMatchAssessment = {
 };
 
 export function assessMaterialMatch(slot: StoryboardSlot, clip: Clip, _targetRatio: string): MaterialMatchAssessment {
+  const verified = verifiedStoryboardSegment(clip, slot);
+  if (verified) {
+    const evidence = segmentStoryboardEvidence(verified, slot);
+    return { score: 100, level: 'direct', reason: evidence.reason, difference: `使用 ${verified.start.toFixed(1)}–${verified.end.toFixed(1)}s 的已分析片段` };
+  }
   const { topic, purpose } = materialSemanticDimensions(clip, slot);
+  const visual = storyboardVisualText(slot);
+  if (!factoryVisualPattern.test(visual) && productVisualPattern.test(visual)) {
+    return topic
+      ? { score: 50, level: 'review', reason: '产品类型相关，但缺少同一片段内的清晰外观证据', difference: '产品颜色、材质或包装外观尚未达到高匹配标准' }
+      : { score: 0, level: 'missing', reason: '没有可核验的产品外观匹配证据', difference: '请上传对应产品实拍或手动指定' };
+  }
   const score = (topic ? 50 : 0) + (purpose ? 50 : 0);
   const level = score === 100 ? 'direct' : score === 50 ? 'review' : 'missing';
   const reason = score === 100 ? '视觉主题和表达目的均匹配'
@@ -1195,11 +1302,6 @@ const ACCOUNTS: SocialAccount[] = [
 ];
 
 type ModeCard = { id: 'material' | 'clone' | 'product'; icon: typeof Film; title: string; desc: string };
-const MODES: ModeCard[] = [
-  { id: 'material', icon: Film,    title: '使用素材', desc: '先选真实素材，脚本只写画面真正能承接的内容' },
-  { id: 'clone',    icon: Wand2,   title: '参考爆款', desc: '拆解参考片的钩子与节奏，再换成企业真实内容' },
-  { id: 'product',  icon: Sparkles,title: '使用产品生成', desc: '先用产品事实生成内容方案，再补齐画面素材' },
-] as const;
 const POSTER_MODES: ModeCard[] = [
   { id: 'material', icon: Film,    title: '使用素材', desc: '编辑素材库中的图片内容' },
   { id: 'clone',    icon: Wand2,   title: '参考爆款', desc: '参考版式，用企业内容重制' },
@@ -1214,7 +1316,7 @@ const POSTER_STYLES = [
 
 const VIDEO_MODE_DRAFT_TITLES: Record<ModeCard['id'], string> = {
   material: '素材库智能生成',
-  clone: '爆款裂变',
+  clone: '爆款复刻',
   product: '产品信息生成',
 };
 const draftTitleForMode = (mode: ModeCard['id'], sourceTitle = '') =>
@@ -1453,7 +1555,7 @@ function normalizedSourceToken(value?: string): string {
   const raw = String(value || '').trim();
   if (!raw) return '';
   try {
-    const url = new URL(raw, window.location.origin);
+    const url = new URL(raw, typeof window === 'undefined' ? 'http://localhost' : window.location.origin);
     url.search = '';
     url.hash = '';
     return `${url.origin}${url.pathname}`.replace(/\/$/, '').toLowerCase();
@@ -1473,6 +1575,16 @@ function kickoffSourceTokens(kickoff: VideoKickoff | null): string[] {
     kickoff.generatedVideo?.url,
   ];
   return [...new Set(values.map(normalizedSourceToken).filter(Boolean))];
+}
+
+export function isProductionEligibleClip(clip: Clip, kickoff: VideoKickoff | null): boolean {
+  if (clip.usage === 'reference_only' || clip.sourceType === 'historical-kickoff') return false;
+  const referenceTokens = new Set(kickoffSourceTokens(kickoff));
+  return ![clip.id, clip.url].map(normalizedSourceToken).filter(Boolean).some(token => referenceTokens.has(token));
+}
+
+export function isAutomaticViralMaterialCandidate(clip: Clip, kickoff: VideoKickoff | null): boolean {
+  return isProductionEligibleClip(clip, kickoff) && clip.sourceType !== 'digital_human';
 }
 
 function projectMatchesKickoff(project: StudioProject, kickoff: VideoKickoff): boolean {
@@ -1525,6 +1637,8 @@ function normalizeClipSnapshot(value: unknown): Clip | null {
     shotFunction: item.shotFunction,
     applicability: item.applicability,
     tags: item.tags,
+    productId: item.productId,
+    productName: item.productName,
     segmentAnalysisStatus: item.segmentAnalysisStatus,
     segments: item.segments,
   };
@@ -2675,7 +2789,7 @@ async function runVoiceTranslationWithTimeout<T>(
 }
 
 /* ── 缩略图与不可预览状态 ──────────────────────────────────────────────── */
-export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSignal = 0, workflowContext, publishStorageScope, socialContentTaskId: incomingSocialTaskId, studioCreateRequest: incomingCreateRequest }: { onNavigate?: (p: Page) => void; onGoPublish?: (payload: StudioPublishPayload) => void; openProjectsSignal?: number; workflowContext?: StudioWorkflowContext; publishStorageScope?: string; socialContentTaskId?: string | null; studioCreateRequest?: SocialContentCreateRequest | null } = {}) {
+export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onGoPublish, openProjectsSignal = 0, workflowContext, publishStorageScope, socialContentTaskId: incomingSocialTaskId, studioCreateRequest: incomingCreateRequest }: { onNavigate?: (p: Page) => void; onOpenCreationHome?: (openChooser?: boolean) => void; onGoPublish?: (payload: StudioPublishPayload) => void; openProjectsSignal?: number; workflowContext?: StudioWorkflowContext; publishStorageScope?: string; socialContentTaskId?: string | null; studioCreateRequest?: SocialContentCreateRequest | null } = {}) {
   const localGateBypass = contentCreationTestBypassEnabled();
   const [stepIdx, setStepIdx] = useState(0);
   const [speechNames, setSpeechNames] = useState<{key: string; names: Record<string,string>}>({key:'',names:{}});
@@ -2796,7 +2910,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     setVariationBatchState('idle');
     try {
       const result = await studioApi.createVariationBatch({
-        title: projectTitle.trim() || '爆款裂变批次', templateProjectId: projectId || undefined, duration, maxItems: variationMax,
+        title: projectTitle.trim() || '爆款复刻批次', templateProjectId: projectId || undefined, duration, maxItems: variationMax,
         dimensions: {
           strategy: [variationStrategy],
           product: selectedProductIds.length ? selectedProductIds : ['当前产品'],
@@ -3249,6 +3363,9 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   const [projectId, setProjectId] = useState<string | null>(null);
   const [socialTaskProjectLookupDone, setSocialTaskProjectLookupDone] = useState(() => !socialContentTaskId);
   const currentProjectRef = useRef(projectId); currentProjectRef.current = projectId;
+  const projectHydrationPendingRef = useRef(Boolean(
+    socialContentTaskId || new URLSearchParams(location.search).get('project'),
+  ));
   const managedProductionProjectRef = useRef(false);
   const agentProduction = useAgentProductionAction('studio');
   const [projectWorkflowContext, setProjectWorkflowContext] = useState<StudioWorkflowContext | null>(workflowContext || null);
@@ -3313,7 +3430,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     // that empty shell from the authoritative task instead of trapping the user
     // in a manual draft with no reference or enabled script action.
     canApply: () => (!projectId && !autoGen.current && !studioSettingsEditedRef.current)
-      || Boolean(projectId && socialContentTaskId && !videoKickoff && !hasTimestampScript),
+      || Boolean(projectId && socialContentTaskId && !hasTimestampScript),
     onRefresh: task => {
       rememberSocialShotMaterialBindings(socialTaskShotMaterialBindings(task));
       const reference = socialTaskReferenceKickoff(task);
@@ -3324,18 +3441,27 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
       setReferenceRecoveryMessage(needsReview ? '参考视频的全片分析已完成，正在等待编导复核逐镜与逐句证据。请到灵感中心打开原片的编导分析，完成复核后再生成脚本。' : failure?.status === 'blocked' ? (failure.reason === 'reference_provider_quota'
         ? '参考视频下载失败：采集服务额度已耗尽，备用下载也未成功。恢复下载服务后可重试，或返回灵感中心更换参考视频。'
         : '参考视频暂不可分析，请检查原视频与下载服务后重试，或返回灵感中心更换参考视频。') : '');
-      if (reference?.referenceAnalysis || failure?.status === 'blocked' || needsReview) setModeNotice('');
+      if (reference?.referenceAnalysis || failure?.status === 'blocked' || needsReview) {
+        setModeNotice(current => /参考视频|参考分析|对标视频/.test(current) ? '' : current);
+      }
     },
     onHydrate: seed => {
       studioSettingsEditedRef.current = true;
       autoGen.current = true;
       setSocialTaskProductReference(seed.productReference);
       rememberSocialShotMaterialBindings(seed.shotMaterialBindings);
+      const localStoryboardScript = localGateBypass && seed.creationMode === 'clone'
+        ? buildReferenceSpeechPlan(seed.reference).script
+        : '';
       if (seed.reference) {
         setVideoKickoff(seed.reference); setCanvasView('creation');
         setScriptView('timestamp'); setStepIdx(0);
         if (seed.reference.video?.duration) setDuration(seed.reference.video.duration);
         setModeNotice(seed.reference.referenceAnalysis ? '已载入当前复刻任务的参考分析。' : '参考视频尚未完成分析；工作台已打开，分析完成后可继续脚本与口播制作。');
+      }
+      if (localStoryboardScript) {
+        setScript(localStoryboardScript);
+        setVoiceoverLines(extractVoiceoverText(localStoryboardScript));
       }
       setProjectTitle(seed.projectTitle); setContentMode(seed.contentMode); setMode(seed.creationMode);
       if (seed.creationMode === 'clone') setProductSelectMode('multi');
@@ -3353,6 +3479,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
       if (seed.selectedMaterialIds.length) setSelected(seed.selectedMaterialIds);
       setSocialDigitalHumanPlans(seed.digitalHumanShotPlans);
       const hydrationNotices = [
+        localStoryboardScript ? `本地演示已从参考分析建立 ${parseStoryboardSlots(localStoryboardScript, seed.reference?.video?.duration || 0).length} 个分镜；内容 Agent 将直接匹配本地素材，不触发付费配音。` : '',
         seed.factVerificationNotice,
         seed.unsupportedLanguages.length ? `本次任务中的${seed.unsupportedLanguages.join('、')}暂不在创作语言列表中，请先选择可用语言。` : '',
       ].filter(Boolean);
@@ -3371,6 +3498,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   const [autosaveStatus, setAutosaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [lastAutosavedAt, setLastAutosavedAt] = useState<Date | null>(null);
   const autosaveInFlightRef = useRef(false);
+  const autosavePendingRef = useRef(false);
   const autosaveSnapshotRef = useRef<() => Promise<void>>(async () => undefined);
   const [videoKickoff, setVideoKickoff] = useState<VideoKickoff | null>(null);
   const salesReviewAttempted = useRef(new Set<string>());
@@ -4618,7 +4746,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     && Boolean(activeScriptQualityItem?.id);
   const activeScriptQualityBlocked = activeScriptQualityApplies
     && (activeScriptQualityStatus === 'rejected' || activeScriptQualityStatus === 'failed');
-  const canNext = localGateBypass || (contentMode === 'video' && step === 'script'
+  const canNext = contentMode === 'video' && step === 'script'
     ? scriptStageTab === 'theme'
       ? hasTimestampScript && !activeScriptQualityBlocked
       : scriptStageTab === 'voiceover'
@@ -4630,7 +4758,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
           : hasTimestampScript && !activeScriptQualityBlocked && hasRequestedVoiceDrafts && hasRequestedSubtitles
     : contentMode === 'video' && step === 'material'
       ? storyboardSlots.length > 0 && assignedCount === storyboardSlots.length && storyboardMatchReviewPendingCount === 0
-    : true);
+    : true;
   useEffect(() => {
     if (!assignedOrderedIds.length) return;
     setSelected(current => {
@@ -4864,11 +4992,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   };
   const defaultEditForSlot = (clip: Clip, slot: StoryboardSlot): ClipEdit => {
     const targetDuration = slot.end - slot.start;
-    const matchedSegment = (clip.segments || []).find(segment => {
-      if (!usableEvidenceSegment(segment, clip.duration)) return false;
-      const dimensions = materialSemanticDimensions({ ...clip, folder: '', tags: '', shotFunction: '', applicability: '', segments: [segment] }, slot);
-      return dimensions.topic && dimensions.purpose && segment.end - segment.start >= targetDuration;
-    });
+    const matchedSegment = verifiedStoryboardSegment(clip, slot);
     const evidenceTrim = matchedSegment ? {
       segmentId: matchedSegment.id, trimStart: matchedSegment.start,
       trimEnd: +(matchedSegment.start + targetDuration).toFixed(3), targetDuration,
@@ -5162,7 +5286,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
 
   const goPreview = async (scriptOverride?: string, renderOverride?: { language?: string; voiceoverUrl?: string; voiceoverDur?: number; cues?: SubCue[]; outputOnly?: boolean; timeline?: typeof renderTimeline; bgmId?: string; serverPreviewRequired?: boolean }) => {
     const blockers = storyboardSlots.flatMap(slot => shotBlockers(productionFor(slot), shotProductionContext).map(message => `${slot.title}：${message}`));
-    if (!localGateBypass && blockers.length) { const message = '部分分镜尚未具备成片条件，请完成对应分镜的配置后再渲染。'; setModeNotice(message); throw new Error(message); }
+    if (blockers.length) { const message = '部分分镜尚未具备成片条件，请完成对应分镜的配置后再渲染。'; setModeNotice(message); throw new Error(message); }
     setStepIdx(STEPS.findIndex(s => s.id === 'preview'));
     setRendered(false);
     setRendering(true);
@@ -5350,7 +5474,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
         || (requirement === 'factory' && !materials.some(item => item.folder === 'factory') && !/工厂|产线|质检|产能|factory|production line|quality control/i.test(activeProductInfo))
         || (requirement === 'case' && !/客户案例|合作案例|案例结果|customer case|case study/i.test(activeProductInfo))
       ));
-      if (!localGateBypass && (unsupportedClaims.length || missingThemeEvidence)) {
+      if (unsupportedClaims.length || missingThemeEvidence) {
         alert([
           '分镜质量校验未通过，请修改后重试。',
           ...unsupportedClaims.map(item => `未获企业资料支持：${item}`),
@@ -5358,7 +5482,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
         ].join('\n'));
         return;
       }
-      if (hasTimestampScript || localGateBypass) setScriptStageTab('voiceover');
+      if (hasTimestampScript) setScriptStageTab('voiceover');
       return;
     }
     if (contentMode === 'video' && step === 'script' && scriptStageTab === 'voiceover') {
@@ -5382,7 +5506,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
         return [];
       });
       const blockers = [...qualityBlockers, ...personContinuityConflicts, ...validateStudioTimeline(renderTimeline)];
-      if (!localGateBypass && blockers.length) {
+      if (blockers.length) {
         alert(`无法进入配乐：\n${blockers.join('\n')}`);
         return;
       }
@@ -5392,7 +5516,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     setStepIdx(i => Math.min(i + 1, activeSteps.length - 1));
   };
   const renderSelectedLanguageVersion = async (selectedKey?: string, serverPreviewRequired = false) => {
-    if (!localGateBypass && personContinuityConflicts.length) {
+    if (personContinuityConflicts.length) {
       alert(`人物连续性未通过：\n${personContinuityConflicts.join('\n')}`);
       return;
     }
@@ -5465,6 +5589,11 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
       setStepIdx(activeSteps.findIndex(item => item.id === 'mode'));
       return;
     }
+    if (mode === 'clone' && contentMode === 'video' && (step === 'cover' || step === 'preview')) {
+      setStepIdx(activeSteps.findIndex(item => item.id === 'material'));
+      setCanvasView('creation');
+      return;
+    }
     if (contentMode === 'video' && step === 'script' && scriptStageTab === 'bgm') {
       setScriptStageTab('subtitle');
       return;
@@ -5485,7 +5614,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   };
 
   const regenScript = async (type: 'voiceover' | 'storyboard' = scriptType) => {
-    if (!localGateBypass && (!activeProductInfo.trim() || !activeProductLabel)) {
+    if (!activeProductInfo.trim() || !activeProductLabel) {
       alert('请先在第一步选择企业中心产品，再生成脚本。');
       setStepIdx(0);
       return;
@@ -5525,9 +5654,13 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   };
 
   const fillLocalDemoMaterials = (preferredMaterialIds: string[]) => {
+    const activeReferenceUrls = new Set([
+      videoKickoff?.video?.videoUrl,
+      videoKickoff?.video?.aiAnalysis?.materialUrl,
+    ].filter((url): url is string => Boolean(url)));
     const editablePool = materials.filter(item => item.type !== 'audio'
       && item.scope !== 'shared'
-      && item.usage !== 'reference_only'
+      && !activeReferenceUrls.has(item.url || '')
       && Boolean(item.url || item.poster));
     const assignments: Record<string, string> = {};
     // Explicit task bindings remain authoritative, including an already
@@ -5565,6 +5698,48 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     );
     Object.assign(assignments, fallbackAssignments);
     const fallbackSlotIds = new Set(Object.keys(fallbackAssignments));
+    const boundSlotIds = new Set(socialShotMaterialBindings
+      .map(({ shotIndex }) => storyboardSlots[shotIndex]?.id)
+      .filter((id): id is string => Boolean(id)));
+    const preferredSet = new Set(preferredMaterialIds);
+    const forcedPreferredSlotIds = new Set<string>();
+    const preferredFitFolders: Record<string, RegExp> = {
+      presenter: /人物|主播|口播|出镜|真人|presenter|host|talking/i,
+      detail: /开场|钩子|细节|特写|质地|滴落|材质|纹理|hook|detail|close.?up|texture/i,
+      product: /产品|外观|瓶身|结构|展示|样品|product|packshot|sample/i,
+      scene: /使用|场景|体验|操作|应用|代入|use|scene|lifestyle|application/i,
+      model: /模特|上脸|试用|穿戴|效果|model|try.?on|beauty/i,
+      factory: /工厂|生产|产线|供应|交付|实力|仓库|factory|production|supply|warehouse/i,
+      packaging: /包装|彩盒|logo|定制|品牌|packaging|custom|branding/i,
+      certificate: /证书|认证|检测|资质|ce|rohs|certificate|test report/i,
+    };
+    // The operator explicitly asked to include the latest uploads. Place any
+    // preferred item not selected by the strict pass into its best remaining
+    // shot using the same semantic, lexical, duration and ratio signals.
+    for (const preferredId of preferredMaterialIds) {
+      if (Object.values(assignments).includes(preferredId)) continue;
+      const clip = editablePool.find(item => item.id === preferredId);
+      if (!clip) continue;
+      const candidate = storyboardSlots
+        .filter(slot => !boundSlotIds.has(slot.id)
+          && !forcedPreferredSlotIds.has(slot.id)
+          && !preferredSet.has(assignments[slot.id] || ''))
+        .map(slot => {
+          const slotText = `${slot.title} ${slot.detail}`.toLowerCase();
+          const clipText = `${clip.name} ${clip.folder} ${clip.industry || ''} ${clip.shotFunction || ''} ${clip.applicability || ''} ${clip.tags || ''}`.toLowerCase();
+          const slotTerms = slotText.match(/[\u4e00-\u9fff]{2,4}|[a-z]{3,}/gi) || [];
+          const lexicalHits = slotTerms.filter(term => clipText.includes(term.toLowerCase())).length;
+          const semantic = assessMaterialMatch(slot, clip, ratio).score;
+          const durationFit = Math.max(0, 12 - Math.abs(effectiveClipDuration(clip) - Math.max(0.5, slot.end - slot.start)) * 2);
+          const folderFit = preferredFitFolders[clip.folder]?.test(slotText) ? 28 : 0;
+          return { slot, score: semantic * 10 + Math.min(24, lexicalHits * 6) + durationFit + folderFit + clipRatioPreferenceScore(clip, ratio) };
+        })
+        .sort((left, right) => right.score - left.score)[0];
+      if (!candidate) continue;
+      assignments[candidate.slot.id] = preferredId;
+      forcedPreferredSlotIds.add(candidate.slot.id);
+      if (assessMaterialMatch(candidate.slot, clip, ratio).level === 'missing') fallbackSlotIds.add(candidate.slot.id);
+    }
     const nextEdits: Record<string, ClipEdit> = {};
     const nextPlans: Record<string, StoryboardSourcePlan> = {};
     storyboardSlots.forEach(slot => {
@@ -5576,7 +5751,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
           score: 50,
           level: 'review',
           reason: '名称、分类、标签、时长和画幅综合排序命中',
-          difference: '素材缺少完整语义标注，演示模式已按内容相关性采用',
+          difference: '素材缺少完整语义标注，已按内容相关性列为候选，需人工确认',
         }
         : assessed;
       nextEdits[slotClipEditKey(slot.id, clip.id)] = defaultEditForSlot(clip, slot);
@@ -5585,7 +5760,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
         ...currentPlan,
         mode: clipSourceMode(clip),
         decided: true,
-        confirmed: true,
+        confirmed: assessment.level === 'direct',
         error: '',
         qualityError: '',
         matchScore: assessment.score,
@@ -5607,9 +5782,12 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     setPresenterMode('real');
     const recentUsed = preferredMaterialIds.filter(id => orderedIds.includes(id));
     const recentNames = recentUsed.map(id => materialById.get(id)?.name).filter(Boolean);
-    const strictCount = Object.keys(strictAssignments).length;
-    const fallbackCount = Object.keys(fallbackAssignments).length;
-    setModeNotice(`内容 Agent 已用 ${new Set(orderedIds).size} 条不同的本地素材覆盖 ${Object.keys(assignments).length}/${storyboardSlots.length} 个分镜：${strictCount} 个语义强匹配，${fallbackCount} 个按名称、分类、标签、时长和画幅补位${recentNames.length ? `；已采用最近上传的 ${recentNames.join('、')}` : ''}。`);
+    const strictCount = storyboardSlots.filter(slot => {
+      const clip = materialById.get(assignments[slot.id] || '');
+      return clip && assessMaterialMatch(slot, clip, ratio).level !== 'missing';
+    }).length;
+    const fallbackCount = Object.keys(assignments).length - strictCount;
+    setModeNotice(`内容 Agent 已完成本地素材候选排序：初筛 ${Object.keys(assignments).length}/${storyboardSlots.length} 个分镜，其中 ${strictCount} 个语义候选、${fallbackCount} 个低置信候选；系统会继续按逐片段画面证据剔除不符合项，最终缺口以分镜状态为准${recentNames.length ? `；已优先检查最近上传的 ${recentNames.join('、')}` : ''}。`);
     return {
       storyboardAssignments: assignments,
       storyboardSourcePlans: { ...storyboardSourcePlans, ...nextPlans },
@@ -5620,11 +5798,56 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
 
   const smartSelectMaterialsFast = async () => {
     if (materialSelectLoading || (socialViralTask && (replicationPreparationRef.current || replicationPreparationError))) return;
+    if (socialViralTask && (!voiceoverAudios[activeVoiceLang]?.url
+      || voiceoverStaleLangs.includes(activeVoiceLang)
+      || !productionVoiceCues(voiceoverAudios[activeVoiceLang]?.cues, voiceoverAudios[activeVoiceLang]?.alignmentSource, voiceoverAudios[activeVoiceLang]?.duration || 0).length)) {
+      setModeNotice('请先生成口播配音并取得实测逐句时间码，再匹配分镜素材。');
+      return;
+    }
     setMaterialSelectLoading(true);
-    setModeNotice(socialViralTask ? '正在按主题和表达意图匹配企业素材…' : '正在按分镜语义、镜头角色和有效时长快速匹配…');
+    setModeNotice(socialViralTask ? '正在按已分析片段的画面证据匹配企业素材…' : '正在按分镜语义、镜头角色和有效时长快速匹配…');
     try {
       await new Promise<void>(resolve => window.requestAnimationFrame(() => resolve()));
-      const allVisuals = materials.filter(item => item.type !== 'audio');
+      // Analysis-only benchmark videos are visible in the library but are not
+      // licensed production assets. They must never be assigned to output shots.
+      let allVisuals = materials.filter(item => item.type !== 'audio'
+        && (socialViralTask ? isAutomaticViralMaterialCandidate(item, videoKickoff) : isProductionEligibleClip(item, videoKickoff))
+        && Boolean(item.url || item.poster));
+      const analysisFailures: string[] = [];
+      if (socialViralTask) {
+        const missingEvidenceIds = allVisuals.filter(item => item.type === 'video'
+          && item.scope !== 'shared'
+          && !item.segments?.some(segment => usableEvidenceSegment(segment, item.duration)))
+          .map(item => item.id);
+        if (missingEvidenceIds.length) {
+          setModeNotice(`正在分析 ${missingEvidenceIds.length} 条企业视频，完成后按真实画面一键匹配…`);
+          let processed = 0;
+          const analyzed: Material[] = [];
+          // Vision requests are intentionally serialized. Launching several
+          // long video analyses together made the local proxy/provider drop all
+          // but the first connection, leaving perfectly valid factory footage
+          // in a permanent failed state.
+          for (const id of missingEvidenceIds) {
+            try {
+              const [record] = await ensureMaterialAnalysis([id], () => true, () => {
+                const name = allVisuals.find(item => item.id === id)?.name || '企业视频';
+                setModeNotice(`正在逐条分析企业视频 ${processed}/${missingEvidenceIds.length}：${name}`);
+              });
+              if (record) analyzed.push(record);
+            } catch (error) {
+              const name = allVisuals.find(item => item.id === id)?.name || id;
+              analysisFailures.push(`${name}：${error instanceof Error ? error.message.replace(/^「[^」]+」分析失败：/, '') : '分析失败'}`);
+            } finally {
+              processed += 1;
+              setModeNotice(`已处理 ${processed}/${missingEvidenceIds.length} 条企业视频，正在继续…`);
+            }
+          }
+          const refreshed = new Map(analyzed.map(item => [item.id, materialToClip(item)]));
+          allVisuals = allVisuals.map(item => refreshed.get(item.id) || item);
+          if (refreshed.size) setMaterials(current => current.map(item => refreshed.get(item.id) || item));
+        }
+      }
+      const matchingMaterialById = new Map(allVisuals.map(item => [item.id, item]));
       const compatiblePool = allVisuals.filter(item => isClipCompatibleWithRatio(item, ratio));
       if (!allVisuals.length) {
         setModeNotice('素材库暂无可匹配的视频或图片，请先上传素材。');
@@ -5640,7 +5863,10 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
         return;
       }
 
-
+      if (localGateBypass && mode === 'clone') {
+        const preferredIds = contentCreationDemoMaterialIds(allVisuals);
+        if (preferredIds.length) return fillLocalDemoMaterials(preferredIds);
+      }
 
       const savedCurrent: StoryboardAssembly = {
         id: activeAssemblyId,
@@ -5660,8 +5886,11 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
       const usesCropFallback = compatiblePool.length < Math.min(storyboardSlots.length, allVisuals.length);
       const lockedAssignments = Object.fromEntries(Object.entries(storyboardAssignments).filter(([slotId, clipId]) => (
         storyboardSlots.some(slot => slot.id === slotId && (() => {
-          const clip = materialById.get(clipId);
-          return Boolean(clip && (storyboardSourcePlans[slotId]?.confirmed || assessMaterialMatch(slot, clip, ratio).level === 'direct'));
+          const clip = matchingMaterialById.get(clipId);
+          return Boolean(clip && isProductionEligibleClip(clip, videoKickoff)
+            && (socialViralTask
+              ? storyboardSourcePlans[slotId]?.userSource === 'material' && storyboardSourcePlans[slotId]?.confirmed
+              : storyboardSourcePlans[slotId]?.confirmed || assessMaterialMatch(slot, clip, ratio).level === 'direct'));
         })())
       )));
       const lockedClipIds = new Set(Object.values(lockedAssignments));
@@ -5669,10 +5898,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
         if (lockedAssignments[slot.id]) return false;
         if (productionFor(slot).locked || storyboardSourcePlans[slot.id]?.mode === 'ai' || storyboardSourcePlans[slot.id]?.mode === 'hybrid') return false;
         if (!socialViralTask) return true;
-        const visual = storyboardSlotScript(slot.detail).visual || slot.title;
-        const foregroundIdentity = /人物|女性|男性|销售|主播|主讲|presenter|speaker/i.test(visual)
-          && /镜头|正面|面部|目光|嘴|口播|手势|手指|手臂|双臂|迈步|前行|讲解/i.test(visual)
-          && !/^(?:背景人物|远景人物|路人|人群)|(?:人物|女性|男性).{0,8}背影/i.test(visual);
+        const foregroundIdentity = salesPresenterRecognition(presenterEvidenceFor(slot)) === 'confirmed';
         return shotRouteFor(slot) === 'material' && (!foregroundIdentity || storyboardSourcePlans[slot.id]?.userSource === 'material');
       });
       if (!slotsToMatch.length) {
@@ -5685,7 +5911,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
         variantIndex,
         previousAssignments,
         targetRatio: ratio,
-        allowSemanticMetadata: socialViralTask,
+        requireSegmentEvidence: socialViralTask,
       });
       // Identity is a cross-shot constraint. A semantic match of three
       // different faces cannot fill three cuts of the same source person.
@@ -5701,8 +5927,9 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
           (!lockedIds.length || clip.id === lockedIds[0])
           && clip.type === 'video'
           && effectiveClipDuration(clip) >= group.reduce((sum, slot) => sum + slot.end - slot.start, 0)
-          && group.every(slot => assessMaterialMatch(slot, clip, ratio).level !== 'missing'
-            && (!socialViralTask || Boolean(matchEvidenceSegment(clip, slot) || matchStoryboardMetadata(clip, slot)))));
+          && group.every(slot => socialViralTask
+            ? Boolean(verifiedStoryboardSegment(clip, slot))
+            : assessMaterialMatch(slot, clip, ratio).level !== 'missing'));
         group.forEach(slot => {
           if (lockedAssignments[slot.id]) return;
           if (common) candidateAssignments[slot.id] = common.id;
@@ -5712,18 +5939,19 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
       const assessmentBySlot: Record<string, MaterialMatchAssessment> = {};
       const matchedAssignments = Object.fromEntries(Object.entries(candidateAssignments).filter(([slotId, clipId]) => {
         const slot = storyboardSlots.find(item => item.id === slotId);
-        const clip = materialById.get(clipId);
+        const clip = matchingMaterialById.get(clipId);
         if (!slot || !clip) return false;
         const assessment = assessMaterialMatch(slot, clip, ratio);
         assessmentBySlot[slotId] = assessment;
         // Below 60 points the material is only a visual placeholder, not a
         // trustworthy match. Leave the shot open instead of silently filling it.
-        return assessment.level !== 'missing' && (!socialViralTask
-          || Boolean(matchEvidenceSegment(clip, slot) || matchStoryboardMetadata(clip, slot)));
+        return socialViralTask
+          ? Boolean(verifiedStoryboardSegment(clip, slot))
+          : assessment.level !== 'missing';
       }));
       const assignments = { ...lockedAssignments, ...matchedAssignments };
       storyboardSlots.forEach(slot => {
-        const clip = materialById.get(assignments[slot.id] || '');
+        const clip = matchingMaterialById.get(assignments[slot.id] || '');
         if (clip && !assessmentBySlot[slot.id]) assessmentBySlot[slot.id] = assessMaterialMatch(slot, clip, ratio);
       });
       const orderedIds = storyboardSlots.map(slot => assignments[slot.id]).filter((id): id is string => Boolean(id));
@@ -5731,8 +5959,18 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
       const nextPlans: Record<string, StoryboardSourcePlan> = {};
       slotsToMatch.forEach(slot => {
         const clipId = matchedAssignments[slot.id];
-        const clip = clipId ? materialById.get(clipId) : undefined;
-        if (!clip) return;
+        const clip = clipId ? matchingMaterialById.get(clipId) : undefined;
+        if (!clip) {
+          nextPlans[slot.id] = {
+            ...sourcePlanFor(slot),
+            confirmed: false,
+            matchScore: 0,
+            matchLevel: 'missing',
+            matchReason: '企业素材库中没有通过逐片段画面校验的高匹配素材',
+            matchDifference: '保留为空，等待上传、拍摄或手动指定',
+          };
+          return;
+        }
         nextEdits[slotClipEditKey(slot.id, clip.id)] = defaultEditForSlot(clip, slot);
         const detectedSource = clipSourceMode(clip);
         nextPlans[slot.id] = {
@@ -5758,7 +5996,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
       setActiveStoryboardSlotId(storyboardSlots.find(slot => !assignments[slot.id])?.id || storyboardSlots[0]?.id || '');
       const reviewCount = storyboardSlots.filter(slot => assessmentBySlot[slot.id]?.level === 'review' && assignments[slot.id]).length;
       const missingCount = storyboardSlots.filter(slot => !assignments[slot.id]).length;
-      setModeNotice(`已为 ${Object.keys(matchedAssignments).length} 个空分镜补充本地素材；当前 ${orderedIds.length}/${storyboardSlots.length} 个分镜已匹配${missingCount ? `，${missingCount} 个分镜将进入数字人生成或待拍流程` : ''}${usesCropFallback ? '。不同画幅会在预览中居中适配' : ''}。`);
+      setModeNotice(`已为 ${Object.keys(matchedAssignments).length} 个空分镜补充企业素材；当前 ${orderedIds.length}/${storyboardSlots.length} 个分镜已匹配${missingCount ? `，${missingCount} 个分镜保持为空并等待补拍或手动选择` : ''}${usesCropFallback ? '。不同画幅会在预览中居中适配' : ''}${analysisFailures.length ? `；${analysisFailures.length} 条视频分析失败，未阻塞其他素材匹配：${analysisFailures.slice(0, 2).join('；')}` : ''}。`);
       // Return the same snapshot to batch submission; React state updates are
       // asynchronous and collectSpec() in this click still sees old assignments.
       return {
@@ -5793,7 +6031,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   }, [contentMode, existingSourceDraftPrompt, localGateBypass, materials, mode, projectId, socialContentTaskId, socialShotMaterialBindings, sourceDraftCheckPending, storyboardSlots]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const generateFromMaterialLibrary = async () => {
-    if (!localGateBypass && !enterpriseScriptLanguage) {
+    if (!enterpriseScriptLanguage) {
       setModeNotice('企业中心尚未配置首选输出语言或主要业务语言，请先完成企业中心语言配置。');
       return false;
     }
@@ -5805,7 +6043,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     setModeNotice('');
     try {
       let pool = selectedVisualClips;
-      if (!localGateBypass && pool.length === 0) {
+      if (pool.length === 0) {
         setModeNotice('请先在创作设置中明确选择本次要使用的视频或图片，再生成脚本。');
         setShowSetupMaterialPicker(true);
         return false;
@@ -6076,7 +6314,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
       hasReferenceAnalysis: Boolean(videoKickoff?.referenceAnalysis?.details?.length),
       duration,
     });
-    if (!localGateBypass && !validation.ok) {
+    if (!validation.ok) {
       setModeNotice(`已停止生成：${validation.message}`);
       if (validation.code === 'product_required') setStepIdx(0);
       if (validation.code === 'material_required') setShowSetupMaterialPicker(true);
@@ -6090,11 +6328,11 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     }
     // Retain an explicit guard here as well as the shared validator so the
     // clone branch is statically narrowed before reading its reference data.
-    if (!localGateBypass && !videoKickoff?.referenceAnalysis?.details?.length) {
+    if (!videoKickoff?.referenceAnalysis?.details?.length) {
       setModeNotice('已停止生成：当前草稿缺少真实对标逐镜分析，请返回灵感中心完成全片分析后再生成。');
       return false;
     }
-    if (!localGateBypass && hasIncompleteReferenceAnalysis(videoKickoff)) {
+    if (hasIncompleteReferenceAnalysis(videoKickoff)) {
       const analyzedUntil = referenceAnalysisEnd(videoKickoff);
       setModeNotice(`已停止生成：当前逐镜结构覆盖到 ${analyzedUntil.toFixed(1)} 秒，但时间线存在明显缺口、重叠或未分析片段。请返回灵感中心补全原片证据。`);
       return false;
@@ -6104,7 +6342,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
       || script.trim()
       || '当前爆款复刻脚本';
     const cloneProductLabel = activeProductLabel || selectedProductLabel(cloneProductInfo);
-    if (!localGateBypass && mode === 'clone' && !activeProductInfo.trim()) {
+    if (mode === 'clone' && !activeProductInfo.trim()) {
       setModeNotice('已停止生成：未读取到企业中心产品信息。请先在第一步选择产品，再生成真实复刻脚本。');
       return false;
     }
@@ -7977,11 +8215,13 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     poster: item.poster,
     scope: item.scope,
     usage: item.usage,
-    sourceType: 'project-snapshot',
+    sourceType: item.sourceType || 'project-snapshot',
     industry: item.industry,
     shotFunction: item.shotFunction,
     applicability: item.applicability,
     tags: item.tags,
+    productId: item.productId,
+    productName: item.productName,
     segmentAnalysisStatus: item.segmentAnalysisStatus,
     segments: item.segments,
     transcript: item.transcript,
@@ -7995,6 +8235,27 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
       const key = productionKey(slot.id);
       if (!savedShotProductions[key]) savedShotProductions = { ...savedShotProductions, [key]: newProductionFor(slot) };
     }
+    const analysisResults = {
+      schemaVersion: 'studio-analysis.v1',
+      reference: videoKickoff?.referenceAnalysis ?? null,
+      storyboard: {
+        slots: storyboardSlots,
+        script,
+        assignments: storyboardAssignments,
+        sourcePlans: storyboardSourcePlans,
+        assemblies: assembliesForSave,
+      },
+      voiceover: {
+        text: voiceoverLines,
+        drafts: voiceDrafts,
+        audios: voiceoverAudios,
+        alignedCuesByLang,
+      },
+      shots: {
+        shootingSlots,
+        productions: savedShotProductions,
+      },
+    };
     return ({
     mode, contentMode, posterStyle, platform, ratio, duration, lang, provider,
     workflowRunId: projectWorkflowContext?.runId || '', workflowTaskId: projectWorkflowContext?.taskId || '', workflowTaskKey: projectWorkflowContext?.taskKey || '',
@@ -8013,11 +8274,40 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     storyboardVideoVersions, productVideoVersions,
     variationStrategy, variationPeople, variationScenes, variationLanguages, variationHooks, variationMax,
     shootingSlots, shotProductions: savedShotProductions, shotProductionContext, socialDigitalHumanPlans,
+    analysisResults,
     posterDraft, leadContentPackage, posterJsonText, posterImageUrl,
     });
   };
 
-  const applySpec = (s: Record<string, unknown>) => {
+  const applySpec = (savedSpec: Record<string, unknown>) => {
+    const analysisResults = savedSpec.analysisResults && typeof savedSpec.analysisResults === 'object'
+      ? savedSpec.analysisResults as Record<string, unknown>
+      : {};
+    const storyboardResults = analysisResults.storyboard && typeof analysisResults.storyboard === 'object'
+      ? analysisResults.storyboard as Record<string, unknown>
+      : {};
+    const voiceoverResults = analysisResults.voiceover && typeof analysisResults.voiceover === 'object'
+      ? analysisResults.voiceover as Record<string, unknown>
+      : {};
+    const shotResults = analysisResults.shots && typeof analysisResults.shots === 'object'
+      ? analysisResults.shots as Record<string, unknown>
+      : {};
+    // analysisResults is the durable, versioned recovery bundle. Keep the
+    // historical top-level fields for compatibility, but recover from the
+    // bundle when a future migration or partial save omitted one of them.
+    const s: Record<string, unknown> = {
+      ...(storyboardResults.script !== undefined ? { script: storyboardResults.script } : {}),
+      ...(storyboardResults.assignments !== undefined ? { storyboardAssignments: storyboardResults.assignments } : {}),
+      ...(storyboardResults.sourcePlans !== undefined ? { storyboardSourcePlans: storyboardResults.sourcePlans } : {}),
+      ...(storyboardResults.assemblies !== undefined ? { storyboardAssemblies: storyboardResults.assemblies } : {}),
+      ...(voiceoverResults.text !== undefined ? { voiceoverLines: voiceoverResults.text } : {}),
+      ...(voiceoverResults.drafts !== undefined ? { voiceDrafts: voiceoverResults.drafts } : {}),
+      ...(voiceoverResults.audios !== undefined ? { voiceoverAudios: voiceoverResults.audios } : {}),
+      ...(voiceoverResults.alignedCuesByLang !== undefined ? { alignedCuesByLang: voiceoverResults.alignedCuesByLang } : {}),
+      ...(shotResults.shootingSlots !== undefined ? { shootingSlots: shotResults.shootingSlots } : {}),
+      ...(shotResults.productions !== undefined ? { shotProductions: shotResults.productions } : {}),
+      ...savedSpec,
+    };
     appliedCreateRequestRef.current = s.studioCreateRequest && typeof s.studioCreateRequest === 'object' ? (s.studioCreateRequest as SocialContentCreateRequest).requestId : null;
     setRestoredSocialTaskId(typeof s.socialContentTaskId === 'string' ? s.socialContentTaskId : null);
     setRestoredCreateRequest(s.studioCreateRequest && typeof s.studioCreateRequest === 'object' ? s.studioCreateRequest as SocialContentCreateRequest : null);
@@ -8111,7 +8401,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
       ? s.videoKickoff as VideoKickoff
       : null;
     const restoredMaterialSnapshots = [
-      ...(Array.isArray(s.materialSnapshots) ? s.materialSnapshots.map(normalizeClipSnapshot).filter((item): item is Clip => Boolean(item)).map(item => ({ ...item, sourceType: 'project-snapshot' })) : []),
+      ...(Array.isArray(s.materialSnapshots) ? s.materialSnapshots.map(normalizeClipSnapshot).filter((item): item is Clip => Boolean(item)) : []),
       kickoffClipSnapshot(restoredVideoKickoff),
     ].filter((item): item is Clip => Boolean(item));
     if (restoredMaterialSnapshots.length) {
@@ -8320,9 +8610,13 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
 
   const saveProject = async (
     status: 'draft' | 'ready_for_approval' | 'published' | 'template' = 'draft',
-    options: { silent?: boolean } = {},
+    options: { silent?: boolean; allowDuringModeAction?: boolean; specOverrides?: Record<string, unknown> } = {},
   ) => {
     const silent = options.silent === true;
+    if (projectHydrationPendingRef.current) {
+      if (!silent) setModeNotice('正在恢复项目数据，请稍候再保存。');
+      return false;
+    }
     if (managedProductionProjectRef.current) {
       if (!silent) setModeNotice('请使用下方“生产现场：修改配置并继续原任务”，按节点保存，避免覆盖后台结果。');
       return false;
@@ -8330,7 +8624,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     if (silent && (sourceDraftCheckPending || existingSourceDraftPrompt)) return false;
     if (silent && workflowProjectSelectionPending) return false;
     if (silent && (
-      modeActionLoading || scriptLoading || materialSelectLoading || coverLoading
+      (modeActionLoading && !options.allowDuringModeAction) || scriptLoading || materialSelectLoading || coverLoading
       || rendering || batchRenderingLangs || posterLoading || captionLoading
     )) return false;
     if (voiceDraftLoading || ttsLoading) {
@@ -8338,7 +8632,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
       return false;
     }
     if (agentProduction.active) return false;
-    const nextSpec = collectSpec();
+    const nextSpec = { ...collectSpec(), ...options.specOverrides };
     if (!['draft', 'template'].includes(status)) {
       const invalidScript = modeScripts.find(item => {
         const provenance = String(item.generationProvenance || item.generationSource || '').toLowerCase();
@@ -8368,22 +8662,28 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
       }
     }
     if (silent && !projectId && !studioSpecHasMeaningfulContent(nextSpec)) return false;
-    if (silent && autosaveInFlightRef.current) return false;
+    if (silent && autosaveInFlightRef.current) {
+      autosavePendingRef.current = true;
+      return false;
+    }
     if (silent) {
       autosaveInFlightRef.current = true;
       setAutosaveStatus('saving');
     }
     else setSavingProj(true);
     try {
-      const { project } = await studioApi.saveProject({
-        id: status === 'template' ? undefined : projectId ?? undefined,
+      const saved = await studioApi.saveProject({
+        id: status === 'template' ? undefined : currentProjectRef.current ?? projectId ?? undefined,
         title: projectTitle.trim() || '未命名草稿',
         status,
         spec: nextSpec,
         thumbSeed: cover,
       });
+      const { project } = saved;
+      if (!saved.ok) throw new Error(saved.error || '草稿保存失败，请重试；当前编辑仍保留在页面中。');
       if (!project?.id) throw new Error('草稿保存失败，请重试；当前编辑仍保留在页面中。');
       if (project?.id && status !== 'template') {
+        currentProjectRef.current = project.id;
         setProjectId(project.id);
         setProjects(current => [project, ...current.filter(item => item.id !== project.id)]);
         if (socialDigitalHumanPlans.length) {
@@ -8413,7 +8713,13 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
       console.warn('[AiCreateStudio] autosave failed', error);
       return false;
     } finally {
-      if (silent) autosaveInFlightRef.current = false;
+      if (silent) {
+        autosaveInFlightRef.current = false;
+        if (autosavePendingRef.current) {
+          autosavePendingRef.current = false;
+          queueMicrotask(() => { void autosaveSnapshotRef.current(); });
+        }
+      }
       else setSavingProj(false);
     }
   };
@@ -8780,6 +9086,28 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     return () => window.clearInterval(timer);
   }, []);
 
+  useEffect(() => {
+    // Analysis output is expensive and must survive navigation. Persist it
+    // shortly after every meaningful change instead of waiting for the
+    // periodic full-draft checkpoint.
+    const timer = window.setTimeout(() => {
+      void autosaveSnapshotRef.current();
+    }, 700);
+    return () => window.clearTimeout(timer);
+  }, [
+    videoKickoff,
+    script,
+    voiceoverLines,
+    voiceDrafts,
+    voiceoverAudios,
+    alignedCuesByLang,
+    storyboardAssignments,
+    storyboardSourcePlans,
+    storyboardAssemblies,
+    shootingSlots,
+    shotProductions,
+  ]);
+
   const openProjects = async () => {
     setShowProjects(true);
     const [nextProjects, nextBatches] = await Promise.all([studioApi.listProjects(), studioApi.listVariationBatches()]);
@@ -8863,6 +9191,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   };
 
   const loadProject = (p: StudioProject) => {
+    projectHydrationPendingRef.current = true;
     applySpec(p.status === 'template' ? withoutStudioWorkflowContext(p.spec) : p.spec);
     setProjectId(p.status === 'template' ? null : p.id);
     setProjectTitle(p.status === 'template' ? `${p.title} · 副本` : p.title);
@@ -8897,7 +9226,10 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     }).catch(() => {
       if (!disposed) setModeNotice('上次制作进度读取失败，已重新载入任务资料。');
     }).finally(() => {
-      if (!disposed) setSocialTaskProjectLookupDone(true);
+      if (!disposed) {
+        setSocialTaskProjectLookupDone(true);
+        window.setTimeout(() => { projectHydrationPendingRef.current = false; }, 0);
+      }
     });
     return () => { disposed = true; };
   }, [socialContentTaskId]);
@@ -8946,19 +9278,18 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
       void studioApi.listProjects().then(list => {
         if (disposed) return;
         setProjects(list);
-        const project = list.find(item => item.id === state.projectId && item.status === 'draft');
+        const project = list.find(item => item.id === state.projectId && item.status !== 'template');
         if (!project) {
-          setModeNotice('未找到该历史创作草稿。');
+          setModeNotice('未找到该历史创作。');
+          projectHydrationPendingRef.current = false;
           return;
         }
-        applySpec(project.spec);
-        setProjectId(project.id);
-        setProjectTitle(project.title);
-        autoGen.current = true;
-        setShowProjects(false);
-        setPublished(false);
-        setModeNotice(`已恢复历史创作草稿“${project.title}”。`);
-      }).catch(() => setModeNotice('历史创作草稿读取失败，请稍后重试。'));
+        loadProject(project);
+        setModeNotice(`已打开历史创作“${project.title}”。`);
+      }).catch(() => {
+        projectHydrationPendingRef.current = false;
+        setModeNotice('历史创作读取失败，请稍后重试。');
+      });
     } catch {
       // Ignore malformed navigation payloads from older local builds.
     }
@@ -9056,7 +9387,6 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     switch (step) {
       /* ① 选模式 */
       case 'mode':
-        const visibleModes = contentMode === 'poster' ? POSTER_MODES : MODES;
         return (
           <div className="w-full min-w-0 overflow-x-hidden">
             <input ref={fileInputRef} type="file" multiple accept="video/*,image/*" className="hidden" onChange={event => { void handleUpload(event.target.files); event.target.value = ''; }} />
@@ -9097,53 +9427,6 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
               </div>
               )}
             </div>
-            <p className="text-[10px] font-black uppercase tracking-[0.12em] text-text-muted">制作设置</p>
-            {socialContentTaskId ? (
-              <div className="mb-5 mt-2 rounded-xl border border-emerald-200 bg-emerald-50/70 px-3.5 py-3">
-                <div className="flex items-start gap-2.5">
-                  <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-emerald-600 text-white"><Check size={14} /></span>
-                  <div className="min-w-0">
-                    <p className="text-xs font-black text-emerald-950">任务资料已带入统一制作工作台</p>
-                    <p className="mt-1 text-[10px] leading-4 text-emerald-800">主题、产品和素材沿用已确认任务；这里直接继续脚本、素材匹配和成片制作，不再选择旧制作路线。</p>
-                  </div>
-                </div>
-              </div>
-            ) : (
-            <div className="mb-5 mt-2 divide-y divide-border/70 border-y border-border/70">
-              {visibleModes.map(m => {
-                const on = mode === m.id;
-                return (
-                  <button key={m.id} onClick={() => {
-                    if (m.id !== mode) {
-                      setScriptStageTab('theme');
-                      setVoiceoverMode('unselected');
-                      setScript('');
-                      setVoiceoverLines('');
-                      setVoiceDrafts({});
-                      setVoiceoverAudios({});
-                      setAlignedCuesByLang({});
-                      setVoiceoverUrl(null);
-                      setVoiceoverDur(0);
-                      setModeNotice('');
-                    }
-                    setMode(m.id);
-                  }}
-                    className={`min-h-[62px] w-full min-w-0 overflow-hidden px-1 py-2.5 text-left transition ${on ? 'bg-emerald-50/60' : 'hover:bg-surface-2/70'}`}>
-                    <div className="flex items-center gap-3">
-                      <div className="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0"
-                        style={{ background: on ? TRAFFIC_GREEN : 'var(--color-surface-2)', color: on ? '#fff' : 'var(--color-text-muted)' }}>
-                        <m.icon size={14} />
-                      </div>
-                      <div className="min-w-0">
-                        <p className="text-xs font-bold text-text-primary">{m.title}</p>
-                        <p className="mt-0.5 line-clamp-2 text-[10px] leading-4 text-text-muted">{m.desc}</p>
-                      </div>
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-            )}
             <p className="mb-2 text-[10px] font-black uppercase tracking-[0.12em] text-text-muted">内容信息</p>
             <div className="space-y-4">
               {socialContentTaskId ? (
@@ -9265,7 +9548,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
                 <p className="text-xs font-black text-text-primary">原片产品位映射 · {referenceProducts.length} 个</p>
                 <p className="mt-1 text-[11px] text-text-muted">按原口播首次出现顺序选择同样数量的企业产品；相同产品词再次出现时沿用同一替换。</p>
                 <div className="mt-3 rounded-lg border border-border bg-white p-2.5 text-[10px] text-text-secondary"><p className="font-bold">企业品牌 · 自动读取</p><p className="mt-1">{referenceBrandLabel || '企业知识库尚未填写品牌名称'}</p></div>
-                {selectedProductOptions.length !== referenceProducts.length && <p role="status" className={`mt-2 text-[11px] font-bold ${localGateBypass ? 'text-sky-700' : 'text-amber-700'}`}>{localGateBypass ? `已选 ${selectedProductOptions.length} 款；本地测试已放行，可跳过产品位映射。` : `已选 ${selectedProductOptions.length} 款，还需选满 ${referenceProducts.length} 款后逐项映射。`}</p>}
+                {selectedProductOptions.length !== referenceProducts.length && <p role="status" className="mt-2 text-[11px] font-bold text-amber-700">已选 {selectedProductOptions.length} 款，还需选满 {referenceProducts.length} 款后逐项映射。</p>}
                 <div className="mt-3 space-y-2">{referenceProducts.map((slot, index) => <div key={slot.shotId} className="grid gap-2 rounded-lg border border-border bg-white p-2.5 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
                   <div><p className="text-[11px] font-bold text-text-primary">{index + 1}. {slot.time} · {slot.sourceLabel}</p><label className="mt-1 block text-[10px] text-text-muted">原口播中的产品词<input aria-label={`原片产品 ${index + 1} 的口播词`} value={referenceProductTerms[slot.shotId] ?? slot.sourceLabel} onChange={event => { invalidateShotsForReferenceProduct(referenceProductTerms[slot.shotId] || slot.sourceLabel, referenceProductAssignments[slot.shotId]); setReferenceProductTerms(current => ({ ...current, [slot.shotId]: event.target.value })); }} className="mt-1 h-8 w-full rounded-md border border-border px-2 text-xs text-text-primary" /></label></div>
                   <label className="block text-[10px] text-text-muted">替换为企业产品<select aria-label={`原片产品 ${index + 1} 对应企业产品`} value={referenceProductAssignments[slot.shotId] || ''} onChange={event => { invalidateShotsForReferenceProduct(referenceProductTerms[slot.shotId] || slot.sourceLabel, referenceProductAssignments[slot.shotId]); setReferenceProductAssignments(current => ({ ...current, [slot.shotId]: event.target.value })); }} className="mt-1 h-8 w-full rounded-md border border-border bg-white px-2 text-xs text-text-primary"><option value="">请选择</option>{selectedProductOptions.map(option => <option key={option.id} value={option.id}>{option.label}</option>)}</select></label>
@@ -9277,7 +9560,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
                     <div><p className="text-xs font-black text-emerald-950">原片逐句口播</p><p className="mt-1 text-[10px] text-emerald-800">只替换交接物已识别的品牌、产品等关键词；分镜按原片画面切点生成。</p></div>
                     <span className="shrink-0 rounded-full bg-white px-2 py-1 text-[10px] font-black text-emerald-800">{referenceSpeechPlan.lines.length} 句</span>
                   </div>
-                  {referenceSpeechPlan.error && <p role="status" className={`mt-3 rounded-lg bg-white p-3 text-[11px] ${localGateBypass ? 'text-sky-800' : 'text-amber-800'}`}>{localGateBypass && referenceSpeechPlan.lines.length ? `${referenceSpeechPlan.error.replace('；请核对产品词后再生成配音。', '。')} 本地测试已放行，可以继续生成配音。` : referenceSpeechPlan.error}</p>}
+                  {referenceSpeechPlan.error && <p role="status" className="mt-3 rounded-lg bg-white p-3 text-[11px] text-amber-800">{referenceSpeechPlan.error}</p>}
                   {referenceSpeechPlan.lines.length > 0 && (
                     <ol className="mt-3 max-h-72 space-y-2 overflow-y-auto pr-1">
                       {referenceSpeechPlan.lines.map((line, index) => <li key={line.id} className="rounded-lg border border-emerald-100 bg-white p-2.5 text-[11px] leading-5">
@@ -9515,7 +9798,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
                         </div>
                       ) : <div className="py-16 text-center text-xs text-text-muted">暂无可用素材，请先上传视频或图片。</div>}
                     </div>
-                    <footer className="flex items-center justify-between gap-3 border-t border-border px-5 py-4"><p className="text-xs font-bold text-text-secondary">已选择 {selectedVisualClips.length} 项 · 已即时保存</p><button type="button" onClick={() => setShowSetupMaterialPicker(false)} disabled={!localGateBypass && mode === 'material' && !selectedVisualClips.length} className="rounded-xl bg-accent px-5 py-2.5 text-xs font-black text-white disabled:opacity-40">{selectedVisualClips.length ? '完成选择' : '暂不选择'}</button></footer>
+                    <footer className="flex items-center justify-between gap-3 border-t border-border px-5 py-4"><p className="text-xs font-bold text-text-secondary">已选择 {selectedVisualClips.length} 项 · 已即时保存</p><button type="button" onClick={() => setShowSetupMaterialPicker(false)} disabled={mode === 'material' && !selectedVisualClips.length} className="rounded-xl bg-accent px-5 py-2.5 text-xs font-black text-white disabled:opacity-40">{selectedVisualClips.length ? '完成选择' : '暂不选择'}</button></footer>
                   </div>
                 </div>
               )}
@@ -9594,7 +9877,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
                       const recommended = migrationRecommendation.mode === value;
                       const risky = value === 'fidelity' && migrationRecommendation.mode !== 'fidelity';
                       return (
-                        <button key={value} type="button" disabled={!localGateBypass && risky}
+                        <button key={value} type="button" disabled={risky}
                           onClick={() => setMigrationMode(value)}
                           title={risky ? '当前对标视频与企业产品不兼容，禁止直接高保真替换' : undefined}
                           className={`rounded-lg border px-3 py-1.5 text-[11px] font-bold transition ${migrationMode === value ? 'border-slate-400 bg-slate-100 text-text-primary' : 'border-border bg-white text-text-secondary'} disabled:cursor-not-allowed disabled:opacity-40`}>
@@ -9969,6 +10252,10 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
           const clip = materialById.get(clipId);
           const slot = storyboardSlots.find(item => item.id === slotId);
           if (!clip || !slot) return;
+          if (!isProductionEligibleClip(clip, videoKickoff)) {
+            setModeNotice('该视频仅供爆款分析，不能进入成片。请改选企业可编辑素材。');
+            return;
+          }
           if (!isClipCompatibleWithRatio(clip, ratio)) {
             setModeNotice(`“${clip.name}”与当前 ${ratio} 方向不同，已加入分镜；成片时会自动居中裁切，可在预览页检查主体是否完整。`);
           }
@@ -10046,7 +10333,9 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
           setActiveStoryboardSlotId(storyboardSlots[0]?.id || '');
         };
         const createMatchedAssembly = () => {
-          const allVisuals = materials.filter(item => item.type !== 'audio');
+          const allVisuals = materials.filter(item => item.type !== 'audio'
+            && isProductionEligibleClip(item, videoKickoff)
+            && Boolean(item.url || item.poster));
           if (!storyboardSlots.length) {
             setModeNotice('请先生成分镜脚本，再创建不同的素材组合版本。');
             return;
@@ -10071,7 +10360,12 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
             matchPool,
             slotsToMatch,
             selected.filter(id => id !== hookMaterialId),
-            { variantIndex: savedPlans.length, previousAssignments, targetRatio: ratio },
+            {
+              variantIndex: savedPlans.length,
+              previousAssignments,
+              targetRatio: ratio,
+              requireSegmentEvidence: socialViralTask,
+            },
           );
           const nextAssignments: Record<string, string> = hookSlot && hookClip ? { [hookSlot.id]: hookClip.id } : {};
           const nextSourcePlans: Record<string, StoryboardSourcePlan> = {};
@@ -10095,7 +10389,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
             const clip = materialById.get(clipId);
             if (!slot || !clip) return;
             const assessment = assessMaterialMatch(slot, clip, ratio);
-            if (assessment.score < 60) return;
+            if (socialViralTask ? !verifiedStoryboardSegment(clip, slot) : assessment.score < 60) return;
             const detectedSource = clipSourceMode(clip);
             nextAssignments[slotId] = clipId;
             nextSourcePlans[slotId] = {
@@ -11161,7 +11455,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
             <>
             {videoKickoff?.source === 'inspiration_person_replace' && (
               <div className="mb-4 rounded-xl border border-violet-200 bg-violet-50 p-4 text-xs">
-                <p className="font-bold">爆款裂变 · 分镜人物制作</p>
+                <p className="font-bold">爆款复刻 · 分镜人物制作</p>
                 <p className="mt-2">原片分析已带入。请在具体分镜的「选择数字人」中核对原句、人物、动作与场景，再确认制作要求。</p>
                 <p className="mt-1 text-text-muted">参考人物制作当前仅支持方案预览；人物口播沿用已接通的生成能力。</p>
               </div>
@@ -11487,7 +11781,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
                   </div>
                   {mode === 'clone' && referenceVoice.available && (
                     <div className="mb-3 flex flex-wrap items-center gap-2 rounded-xl border border-accent/20 bg-accent/5 px-3 py-2">
-                      <span className="text-[10px] font-bold text-text-primary">爆款裂变专属</span>
+                      <span className="text-[10px] font-bold text-text-primary">爆款复刻专属</span>
                       <button type="button" onClick={toggleReferenceVoiceStyle}
                         className={`rounded-lg px-2.5 py-1 text-[10px] font-bold ${useReferenceVoiceStyle ? 'bg-accent text-white' : 'border border-border bg-white text-text-muted'}`}>
                         沿用对标口播节奏
@@ -12859,6 +13153,20 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   };
 
   const socialViralTask = Boolean(mode === 'clone' && contentMode === 'video');
+  const replicationProductMappingSignature = JSON.stringify({
+    selectedProductIds,
+    referenceProductAssignments,
+    referenceProductTerms,
+  });
+  const replicationProductAutosaveDirtyRef = useRef(false);
+  useEffect(() => {
+    if (!replicationProductAutosaveDirtyRef.current || !socialViralTask || !projectId || !socialTaskProjectLookupDone) return;
+    const timer = window.setTimeout(() => {
+      replicationProductAutosaveDirtyRef.current = false;
+      void autosaveSnapshotRef.current();
+    }, 400);
+    return () => window.clearTimeout(timer);
+  }, [projectId, replicationProductMappingSignature, socialTaskProjectLookupDone, socialViralTask]);
   useEffect(() => {
     if (socialViralTask && (step === 'bgm' || step === 'cover')) {
       setStepIdx(activeSteps.findIndex(item => item.id === 'preview'));
@@ -12873,6 +13181,21 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   const referenceSpeechPlan = useMemo(() => buildReferenceSpeechPlan(videoKickoff, referenceProductMappings,
     referenceBrandSourceTerm && referenceBrandLabel ? { sourceTerm: referenceBrandSourceTerm, brandLabel: speechNames.names[referenceBrandLabel] || referenceBrandLabel } : undefined),
   [videoKickoff, referenceProductMappings, referenceBrandSourceTerm, referenceBrandLabel, speechNames]);
+  const replicationSpeechConfirmationDraft = useMemo(() => {
+    const signature = JSON.stringify(referenceSpeechPlan.lines);
+    if (replicationSpeechDraft.signature === signature) return replicationSpeechDraft;
+
+    const confirmedAudio = voiceoverAudios[activeVoiceLang];
+    const confirmedCues = confirmedAudio?.alignmentSource === 'audio_ai' && !voiceoverStaleLangs.includes(activeVoiceLang)
+      ? confirmedAudio.cues || []
+      : [];
+    if (!confirmedAudio?.url || confirmedCues.length !== referenceSpeechPlan.lines.length) return replicationSpeechDraft;
+
+    return {
+      signature,
+      edits: Object.fromEntries(referenceSpeechPlan.lines.map((line, index) => [line.id, confirmedCues[index]?.text || line.draft])),
+    };
+  }, [activeVoiceLang, referenceSpeechPlan.lines, replicationSpeechDraft, voiceoverAudios, voiceoverStaleLangs]);
   const referenceSourceLanguage = useMemo(() => referenceSpeechPlan.lines.length
     ? detectSourceSpeechLanguageCode(referenceSpeechPlan.lines.map(line => line.source).join(' '))
     : '', [referenceSpeechPlan]);
@@ -13006,9 +13329,55 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
       status: missing.length ? 'blocked' as const : review ? 'adjustable' as const : 'ready' as const,
     };
   }, [materialById, ratio, selectedVisualClips, storyboardAssignments, storyboardSlots]);
+  useEffect(() => {
+    const invalidIds = new Set(materials.filter(item => !isProductionEligibleClip(item, videoKickoff)).map(item => item.id));
+    setStoryboardAssignments(current => {
+      const next = Object.fromEntries(Object.entries(current).filter(([slotId, id]) => {
+        if (invalidIds.has(id)) return false;
+        const clip = materialById.get(id);
+        const slot = storyboardSlots.find(item => item.id === slotId);
+        if (socialViralTask && clip && slot && sourcePlanFor(slot).userSource !== 'material'
+          && !verifiedStoryboardSegment(clip, slot)) return false;
+        return !(socialViralTask && clip?.sourceType === 'digital_human' && slot
+          && salesPresenterRecognition(presenterEvidenceFor(slot)) !== 'confirmed');
+      }));
+      return Object.keys(next).length === Object.keys(current).length ? current : next;
+    });
+    setSelected(current => current.some(id => invalidIds.has(id)) ? current.filter(id => !invalidIds.has(id)) : current);
+    if (socialViralTask) {
+      const nonPresenterSlotIds = new Set(storyboardSlots
+        .filter(slot => salesPresenterRecognition(presenterEvidenceFor(slot)) !== 'confirmed')
+        .map(slot => slot.id));
+      // Older drafts could retain an avatar decision made by the previous loose
+      // person detector. Once visual evidence says the person is only a worker
+      // or background figure, remove that stale decision as well as the clip.
+      setStoryboardSourcePlans(current => {
+        let changed = false;
+        const next = Object.fromEntries(Object.entries(current).map(([slotId, plan]) => {
+          if (!nonPresenterSlotIds.has(slotId) || plan.userSource !== 'avatar') return [slotId, plan];
+          changed = true;
+          return [slotId, { ...plan, userSource: undefined, decided: false, confirmed: false, error: '' }];
+        }));
+        return changed ? next : current;
+      });
+      setShotProductions(current => {
+        let changed = false;
+        const next = { ...current };
+        for (const slotId of nonPresenterSlotIds) {
+          const key = productionKey(slotId);
+          const shot = next[key];
+          if (!shot || shot.source !== 'avatar' || shot.locked) continue;
+          next[key] = patchShot(shot, { source: 'material', contentType: 'broll', sound: 'voiceover' });
+          changed = true;
+        }
+        return changed ? next : current;
+      });
+    }
+  }, [materialById, materials, socialViralTask, storyboardSlots, videoKickoff]);
   const activeWorkbenchSlot = storyboardSlots.find(item => item.id === activeStoryboardSlotId) || storyboardSlots[0];
+  const assignedWorkbenchClip = activeWorkbenchSlot ? materialById.get(storyboardAssignments[activeWorkbenchSlot.id] || '') : undefined;
   const activeWorkbenchClip = activeWorkbenchSlot
-    ? materialById.get(storyboardAssignments[activeWorkbenchSlot.id] || '')
+    ? assignedWorkbenchClip && isProductionEligibleClip(assignedWorkbenchClip, videoKickoff) ? assignedWorkbenchClip : undefined
     : previewClip || selectedClips[0];
   const activeMaterialPlan = activeWorkbenchSlot ? sourcePlanFor(activeWorkbenchSlot) : null;
   const activeMaterialAssessment = activeWorkbenchSlot && activeWorkbenchClip
@@ -13017,14 +13386,23 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   const activeMaterialCandidates = useMemo(() => {
     if (!activeWorkbenchSlot) return [] as Array<{ clip: Clip; assessment: MaterialMatchAssessment }>;
     return materials
-      .filter(clip => clip.type === 'video' || clip.type === 'image')
+      .filter(clip => (clip.type === 'video' || clip.type === 'image') && isProductionEligibleClip(clip, videoKickoff))
       .map(clip => ({ clip, assessment: assessMaterialMatch(activeWorkbenchSlot, clip, ratio) }))
       .sort((a, b) => b.assessment.score - a.assessment.score)
       .slice(0, 6);
-  }, [activeWorkbenchSlot, materials, ratio]);
+  }, [activeWorkbenchSlot, materials, ratio, videoKickoff]);
   const assignWorkbenchMaterial = (clip: Clip, targetSlotId?: string) => {
     const slot = targetSlotId ? storyboardSlots.find(item => item.id === targetSlotId) : activeWorkbenchSlot;
     if (!slot) return;
+    if (!isProductionEligibleClip(clip, videoKickoff)) {
+      setModeNotice('该视频仅供爆款分析，不能进入成片。请改选企业可编辑素材。');
+      return;
+    }
+    if (socialViralTask && clip.sourceType === 'digital_human'
+      && salesPresenterRecognition(presenterEvidenceFor(slot)) !== 'confirmed') {
+      setModeNotice('当前分镜不是已确认的销售主讲人物镜头，不能使用数字人成片作为匹配素材。');
+      return;
+    }
     if (productionFor(slot).locked) { setModeNotice('镜头已锁定，请先解锁。'); return; }
     const assessment = assessMaterialMatch(slot, clip, ratio);
     const detectedSource = clipSourceMode(clip);
@@ -13054,6 +13432,18 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     const nextSlot = storyboardSlots.slice(currentIndex + 1).find(item => !storyboardAssignments[item.id]);
     if (nextSlot) setActiveStoryboardSlotId(nextSlot.id);
     setModeNotice(`已为分镜 ${currentIndex + 1} 选择“${clip.name}”，将从素材第一帧起按分镜时长自动裁切。`);
+  };
+  const clearWorkbenchMaterial = (slotId: string) => {
+    setStoryboardAssignments(current => {
+      const next = { ...current };
+      delete next[slotId];
+      return next;
+    });
+    setStoryboardSourcePlans(current => ({
+      ...current,
+      [slotId]: { ...current[slotId], confirmed: false, matchScore: 0, matchLevel: 'missing', matchReason: '尚未选择素材' },
+    }));
+    setModeNotice(`已移除分镜 ${storyboardSlots.findIndex(item => item.id === slotId) + 1} 的素材，可重新一键匹配或手动选择。`);
   };
   const workbenchFormalPreviewUrl = languageRenderOutputs[activeRenderCombinationKey]?.previewUrl
     || renderOutputPreviewUrl
@@ -13253,7 +13643,8 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     applyTimestampScript(rebuilt);
   };
   const workbenchStoryboardItems = storyboardSlots.map((slot, index) => {
-    const material = materialById.get(storyboardAssignments[slot.id] || '');
+    const assignedMaterial = materialById.get(storyboardAssignments[slot.id] || '');
+    const material = assignedMaterial && isProductionEligibleClip(assignedMaterial, videoKickoff) ? assignedMaterial : undefined;
     const materialAssessment = material ? assessMaterialMatch(slot, material, ratio) : null;
 
     const slotScript = storyboardSlotScript(slot.detail);
@@ -13284,7 +13675,9 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
       frameSource: material?.type === 'video' ? material.url : undefined,
       frameTime: material?.type === 'video' ? editForSlot(material, slot).trimStart : 0,
       firstFrameRef: undefined,
-      frameLabel: material ? '所选素材首帧' : salesPresenterRecognition(presenterEvidenceFor(slot)) === 'confirmed' ? '数字人待生成' : '待拍摄补充',
+      frameLabel: material
+        ? `${material.name} · ${editForSlot(material, slot).trimStart.toFixed(1)}–${editForSlot(material, slot).trimEnd.toFixed(1)}s`
+        : salesPresenterRecognition(presenterEvidenceFor(slot)) === 'confirmed' ? '数字人待生成' : '待拍摄补充',
       duration: `${Math.max(0.1, slot.end - slot.start).toFixed(1)}s`,
       voiceover: slotScript.voice || slotScript.visual || slotScript.fallback,
       status: working ? 'working' as const : warning ? 'warning' as const : stageStatus.status,
@@ -13380,21 +13773,19 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
         setReplicationConfirmationError(message);
         setModeNotice(message);
       };
-      if (!localGateBypass && referenceProducts.length && (!selectedProductOptions.length || !activeProductLabel)) {
-        setProductSelectorOpen(true);
-        reportConfirmationError('请先从企业中心选择本次复刻的产品。');
+      if (referenceProducts.length && (!selectedProductOptions.length || !activeProductLabel)) {
+        reportConfirmationError('请在右侧选择本次复刻的企业产品。');
         return;
       }
-      if (!localGateBypass && referenceProducts.length && (selectedProductOptions.length !== referenceProducts.length
+      if (referenceProducts.length && (selectedProductOptions.length !== referenceProducts.length
         || referenceProductMappings.some(mapping => !mapping.productId || !mapping.sourceTerm.trim())
         || new Set(referenceProductMappings.map(mapping => mapping.productId)).size !== referenceProducts.length)) {
-        setProductSelectorOpen(true);
-        reportConfirmationError(`原片有 ${referenceProducts.length} 个产品位，当前已选择 ${selectedProductOptions.length} 个企业产品，已完成 ${referenceProductMappings.filter(mapping => mapping.productId && mapping.sourceTerm.trim()).length} 个映射。请返回修改产品映射，补齐后再确认口播。`);
+        reportConfirmationError(`原片有 ${referenceProducts.length} 个产品位，当前已选择 ${selectedProductOptions.length} 个企业产品，已完成 ${referenceProductMappings.filter(mapping => mapping.productId && mapping.sourceTerm.trim()).length} 个映射。请在右侧补齐产品映射后再确认口播。`);
         return;
       }
       const plan = buildReferenceSpeechPlan(videoKickoff, referenceProductMappings,
         referenceBrandSourceTerm && referenceBrandLabel ? { sourceTerm: referenceBrandSourceTerm, brandLabel: speechNames.names[referenceBrandLabel] || referenceBrandLabel } : undefined);
-      if (plan.error && !(localGateBypass && plan.lines.length > 0)) { reportConfirmationError(plan.error); return; }
+      if (plan.error) { reportConfirmationError(plan.error); return; }
       try {
         if (confirmedLines) Object.assign(plan, confirmReferenceSpeechEdits(plan, confirmedLines));
       } catch (error) {
@@ -13406,6 +13797,8 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
       try {
         setReplicationPreparationError('');
         setModeActionLoading(true);
+        setModeActionStatus('正在保存产品映射…');
+        if (!await saveProject('draft')) throw new Error('产品映射尚未保存，请稍后重试。');
         applyTimestampScript(plan.script);
         // Show the storyboard immediately; measured timing replaces reference timing below.
         const materialIndex = activeSteps.findIndex(item => item.id === 'material');
@@ -13445,7 +13838,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
       }
       return;
     }
-    if (!localGateBypass && mode === 'material' && !selectedVisualClips.length) {
+    if (mode === 'material' && !selectedVisualClips.length) {
       setModeNotice('请先选择本次创作要使用的素材。脚本会根据你明确选择的画面规划分镜。');
       setShowSetupMaterialPicker(true);
       return;
@@ -13486,7 +13879,8 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     const shot = productionFor(slot);
     const choice = storyboardSourcePlans[slot.id]?.userSource;
     const clip = materialById.get(storyboardAssignments[slot.id] || '');
-    const digital = choice === 'avatar' || (choice !== 'material' && choice !== 'shoot' && salesPresenterRecognition(presenterEvidenceFor(slot)) === 'confirmed' && !clip);
+    const presenterConfirmed = salesPresenterRecognition(presenterEvidenceFor(slot)) === 'confirmed';
+    const digital = presenterConfirmed && (choice === 'avatar' || (choice !== 'material' && choice !== 'shoot' && !clip));
     if (digital) {
       const missing = digitalHumanDecisionIssues(shot.digitalHuman);
       if (!shot.presenterId) missing.unshift('请选择企业人物');
@@ -13601,7 +13995,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     }
   };
   const runPrimaryAction = () => {
-    if (!localGateBypass && step === 'script' && scriptStageTab !== 'theme' && !hasTimestampScript) {
+    if (step === 'script' && scriptStageTab !== 'theme' && !hasTimestampScript) {
       setScriptStageTab('theme');
       setModeNotice('请先生成并确认分镜脚本，再继续口播、翻译和配音。');
       return;
@@ -13692,7 +14086,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
               : step === 'preview' && workbenchHasFormalVideo
                 ? '进入内容发布'
                 : '下一步';
-  const primaryActionBlockedReason = localGateBypass ? undefined : primaryGeneratesSetupScript && mode === 'material' && !selectedVisualClips.length
+  const primaryActionBlockedReason = primaryGeneratesSetupScript && mode === 'material' && !selectedVisualClips.length
     ? '先选择本次创作素材，脚本才会按真实画面生成。'
     : primaryGeneratesSetupScript && socialViralTask && referenceSpeechPlan.error
     ? referenceSpeechPlan.error
@@ -13719,7 +14113,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
         : undefined;
   const primaryActionLoading = primarySubmitsSocialArtifact ? socialArtifactSubmitting : primaryGeneratesPoster ? posterLoading : primaryGeneratesSetupScript || primaryGeneratesStoryboard ? modeActionLoading : primaryGeneratesCopy ? voiceDraftLoading : primaryGeneratesSubtitles ? subtitleGenerating : ttsLoading || rendering || batchRenderingLangs;
   const replicationTimingBlocked = Boolean(socialViralTask && (modeActionLoading || replicationPreparationError));
-  const primaryActionDisabled = replicationTimingBlocked || (localGateBypass ? primaryActionLoading : primarySubmitsSocialArtifact ? socialArtifactSubmitting : primaryGeneratesPoster
+  const primaryActionDisabled = replicationTimingBlocked || (primarySubmitsSocialArtifact ? socialArtifactSubmitting : primaryGeneratesPoster
     ? posterLoading
     : primaryGeneratesSetupScript || primaryGeneratesStoryboard
       ? storyboardGenerationBlocked || (primaryGeneratesSetupScript && mode === 'material' && !selectedVisualClips.length)
@@ -13944,6 +14338,18 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     </section>
   ) : null;
 
+  const openCreationHome = (openChooser = false) => {
+    const url = new URL(window.location.href);
+    url.searchParams.delete('project');
+    window.history.replaceState(window.history.state, '', url);
+    try { localStorage.removeItem(STUDIO_OPEN_PROJECT_KEY); } catch { /* optional storage */ }
+    if (onOpenCreationHome) onOpenCreationHome(openChooser);
+    else {
+      onNavigate?.('smartAssets');
+      if (openChooser) window.setTimeout(() => window.dispatchEvent(new CustomEvent('lingshu:open-content-creation')), 0);
+    }
+  };
+
   const linkedProductionContext = !agentProduction.active
     ? workflowContext?.runId && workflowContext.taskId
       ? workflowContext
@@ -13998,15 +14404,15 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
       </details>}
       {localGateBypass && !socialViralTask && <div role="status" className="shrink-0 border-b border-sky-200 bg-sky-50 px-4 py-2 text-xs font-semibold text-sky-900">本地演示模式：内容制作门禁已放行；内容 Agent 会优先考虑最近上传素材，并从本地素材库选择不同素材补齐分镜。</div>}
       {referenceRecoveryMessage && <div role="alert" className="shrink-0 border-b border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900"><span>{referenceRecoveryMessage}</span>{!referenceNeedsDirectorReview && <button type="button" disabled={retryingReference} onClick={() => void retryReference()} className="ml-3 font-bold underline disabled:opacity-50">{retryingReference ? '正在重试…' : '重试参考分析'}</button>}<button type="button" onClick={() => onNavigate?.('socialInspiration')} className="ml-3 font-bold underline">{referenceNeedsDirectorReview ? '前往编导复核' : '更换参考视频'}</button></div>}
-      {!socialContentTaskId && !linkedProductionContext && !agentProduction.active && <DirectorTaskContext page="smartAssets" runtimeContext={workflowContext || projectWorkflowContext || undefined} />}
-      {!socialContentTaskId && !socialViralTask && !linkedProductionContext && !agentProduction.active && !workflowContext?.runId && !projectWorkflowContext?.runId && projectId && <div className="shrink-0 border-b border-slate-200 bg-slate-50 px-4 py-3 text-xs text-slate-700">当前作品未关联智能员工任务，这是手动创作工作台。<button type="button" onClick={() => onNavigate?.('agentMonitor')} className="ml-3 font-semibold text-emerald-700">前往员工监控查看真实任务 →</button></div>}
+      {!socialContentTaskId && !agentProduction.active && <DirectorTaskContext page="smartAssets" runtimeContext={workflowContext || projectWorkflowContext || undefined} />}
+      {!socialContentTaskId && !socialViralTask && !agentProduction.active && !workflowContext?.runId && !projectWorkflowContext?.runId && projectId && <div className="shrink-0 border-b border-slate-200 bg-slate-50 px-4 py-3 text-xs text-slate-700">当前作品未关联智能员工任务，这是手动创作工作台。<button type="button" onClick={() => onNavigate?.('agentMonitor')} className="ml-3 font-semibold text-emerald-700">前往员工监控查看真实任务 →</button></div>}
 
       {modeNotice && <div role="status" className="flex shrink-0 items-start gap-3 border-b border-amber-200 bg-amber-50 px-4 py-2 text-xs leading-5 text-amber-950"><span className="min-w-0 flex-1">{modeNotice}</span><button type="button" aria-label="关闭创作提示" onClick={() => setModeNotice('')} className="shrink-0 underline">关闭</button></div>}
       {!linkedProductionContext && managedProductionProjectRef.current && <div role="status" className="flex shrink-0 items-center justify-between gap-3 border-b border-blue-200 bg-blue-50 px-4 py-2 text-xs text-blue-900">
         <span>自动生产项目 · 请使用“生产现场：修改配置并继续原任务”保存配音、素材、字幕等修改。</span>
         <button type="button" className="shrink-0 font-semibold underline" onClick={requestProductionBack}>返回上一页</button>
       </div>}
-      {!linkedProductionContext && managedProductionProjectRef.current && projectId && ((workflowContext?.taskKey || projectWorkflowContext?.taskKey) === 'content_quality_gate'
+      {managedProductionProjectRef.current && projectId && ((workflowContext?.taskKey || projectWorkflowContext?.taskKey) === 'content_quality_gate'
         ? <section className="mx-4 mt-3 shrink-0 rounded border bg-white p-3"><h3 className="font-bold">生产现场：修改配置并继续原任务</h3><ProductionRevisionPanel projectId={projectId}/></section>
         : <details className="mx-4 mt-3 shrink-0 rounded border bg-white p-3"><summary className="cursor-pointer font-bold">生产现场：修改配置并继续原任务</summary><ProductionRevisionPanel projectId={projectId}/></details>)}
       {/* BGM 试听用的隐藏音频元素 */}
@@ -14021,8 +14427,14 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
         replicationNavigationDisabled={modeActionLoading || ttsLoading || savingProj || batchShotBusy}
         projectTitle={projectTitle}
         projectSubtitle={`${contentMode === 'video' ? '视频' : '图文'} · ${platform} · ${ratio}`}
+        headerActions={(
+          <div className="hidden items-center gap-1.5 xl:flex">
+            <button type="button" onClick={() => openCreationHome(false)} className="inline-flex h-8 items-center gap-1 rounded-md border border-border bg-white px-2.5 text-[10px] font-bold text-text-secondary hover:bg-surface-2"><ChevronLeft size={13} />返回创作列表</button>
+            <button type="button" onClick={() => void openProjects().catch(error => setModeNotice(error.message))} className="inline-flex h-8 items-center gap-1 rounded-md border border-border bg-white px-2.5 text-[10px] font-bold text-text-secondary hover:bg-surface-2"><FolderOpen size={13} />查看其他制作</button>
+            <button type="button" onClick={() => openCreationHome(true)} className="inline-flex h-8 items-center gap-1 rounded-md bg-accent px-2.5 text-[10px] font-black text-white hover:bg-accent-dim"><Plus size={13} />新建任务</button>
+          </div>
+        )}
         onProjectTitleChange={title => { setProjectTitle(title); setAutosaveStatus('idle'); }}
-        onSave={!agentProduction.active && !managedProductionProjectRef.current ? () => void saveProject('draft').catch(error => setModeNotice(error.message)) : undefined}
         saveStatus={{
           state: savingProj ? 'saving' : autosaveStatus,
           savedAt: lastAutosavedAt?.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }),
@@ -14030,10 +14442,10 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
         }}
         steps={workbenchSteps}
         activeStepId={workbenchStageId}
-        allowForwardStepNavigation={localGateBypass}
+        allowForwardStepNavigation={false}
         onStepChange={targetId => {
           const targetStageIndex = targetId === 'settings' ? 0 : targetId === 'script' ? 1 : 2;
-          if (!localGateBypass && targetStageIndex > stageIdx) return;
+          if (targetStageIndex > stageIdx) return;
           const anchor = activeSteps.findIndex(item => activeStages[targetStageIndex]?.steps.includes(item.id));
           if (anchor >= 0) setStepIdx(anchor);
         }}
@@ -14063,7 +14475,6 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
                 { id: 'materials', label: '本次素材', value: selectedVisualClips.length ? `${selectedVisualClips.length} 项已选择` : '', emptyLabel: '待选择', thumbnailUrl: selectedVisualClips[0]?.poster || (selectedVisualClips[0]?.type === 'image' ? selectedVisualClips[0]?.url : undefined) },
                 ...(mode === 'clone' && videoKickoff ? [{ id: 'reference', label: '参考视频', value: videoKickoff.video?.title || '已带入对标视频', thumbnailUrl: videoKickoff.video?.thumbnail || videoKickoff.video?.aiAnalysis?.materialPoster }] : []),
               ]}
-              emptyAction={<button type="button" onClick={() => setShowSetupMaterialPicker(true)} className="rounded-lg border border-border px-3 py-2 text-[11px] font-bold text-text-secondary">选择素材</button>}
             />
           )
         )}
@@ -14103,6 +14514,25 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
                 {!aigcBudgetPreview.budgetEnoughFor480p && <p className="font-bold text-amber-800">预算不足以覆盖全部智能生成镜头，请逐镜选择或调整预算。</p>}
               </div>
             )}
+            {socialViralTask && step === 'material' && activeWorkbenchSlot && (
+              <section aria-label="当前匹配素材" className={`rounded-xl border p-3 ${activeWorkbenchClip ? 'border-emerald-200 bg-emerald-50/60' : 'border-amber-200 bg-amber-50/60'}`}>
+                <div className="flex items-start justify-between gap-2">
+                  <div><p className="text-[10px] font-black uppercase tracking-[0.1em] text-emerald-700">分镜 {storyboardSlots.findIndex(item => item.id === activeWorkbenchSlot.id) + 1} · 当前素材</p><p className="mt-1 text-xs font-black text-text-primary">{activeWorkbenchClip?.name || '尚未匹配高置信素材'}</p></div>
+                  <span className={`shrink-0 rounded-full px-2 py-1 text-[9px] font-black ${activeWorkbenchClip ? activeMaterialAssessment?.level === 'direct' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700' : 'bg-white text-amber-700'}`}>{activeWorkbenchClip ? activeMaterialAssessment?.level === 'direct' ? '高匹配' : '需确认' : '素材缺口'}</span>
+                </div>
+                {activeWorkbenchClip ? <>
+                  <div className="mt-3 flex gap-3 rounded-lg border border-white/80 bg-white p-2">
+                    <div className="h-16 w-24 shrink-0 overflow-hidden rounded-md bg-slate-950"><RealThumb clip={activeWorkbenchClip} /></div>
+                    <dl className="min-w-0 flex-1 space-y-1 text-[10px] leading-4">
+                      <div><dt className="inline text-text-muted">来源：</dt><dd className="inline font-bold text-text-primary">{activeWorkbenchClip.folder}</dd></div>
+                      <div><dt className="inline text-text-muted">使用片段：</dt><dd className="inline font-bold text-text-primary">{editForSlot(activeWorkbenchClip, activeWorkbenchSlot).trimStart.toFixed(1)}–{editForSlot(activeWorkbenchClip, activeWorkbenchSlot).trimEnd.toFixed(1)}s</dd></div>
+                      <div><dt className="inline text-text-muted">匹配依据：</dt><dd className="inline text-text-secondary">{activeMaterialPlan?.matchReason || activeMaterialAssessment?.reason || '手动指定'}</dd></div>
+                    </dl>
+                  </div>
+                  <div className="mt-2 grid grid-cols-3 gap-1.5"><button type="button" onClick={() => { setCanvasView('creation'); setPreviewClip(activeWorkbenchClip); }} className="rounded-lg border border-border bg-white px-2 py-2 text-[10px] font-bold text-text-secondary">预览素材</button><button type="button" onClick={() => { setShotLibraryError(''); setShotLibrarySlotId(activeWorkbenchSlot.id); }} className="rounded-lg border border-border bg-white px-2 py-2 text-[10px] font-bold text-text-secondary">更换素材</button><button type="button" onClick={() => clearWorkbenchMaterial(activeWorkbenchSlot.id)} className="rounded-lg border border-red-200 bg-white px-2 py-2 text-[10px] font-bold text-red-700">移除</button></div>
+                </> : <><p className="mt-2 text-[10px] leading-4 text-amber-900">系统没有用低相关素材顶替。可一键分析并匹配企业视频，或手动选择、补拍。</p><div className="mt-2 grid grid-cols-2 gap-1.5"><button type="button" disabled={materialSelectLoading} onClick={() => void smartSelectMaterialsFast()} className="rounded-lg bg-emerald-700 px-3 py-2 text-[10px] font-bold text-white disabled:opacity-50">{materialSelectLoading ? '正在分析匹配…' : '一键分析并匹配'}</button><button type="button" onClick={() => { setShotLibraryError(''); setShotLibrarySlotId(activeWorkbenchSlot.id); }} className="rounded-lg border border-amber-300 bg-white px-3 py-2 text-[10px] font-bold text-amber-800">选择企业素材</button></div></>}
+              </section>
+            )}
             {socialViralTask && step === 'material' && (batchShotSummary || batchShotResults.length > 0) && (
               <div className="rounded-xl border border-emerald-200 bg-emerald-50/70 p-3">
                 {batchShotSummary && <p role="status" className="mt-2 text-[10px] leading-4 text-emerald-950">已提交 {batchShotSummary.submitted} · 复用素材 {batchShotSummary.matched} · 待补素材 {batchShotSummary.needsMaterial} · 阻塞 {batchShotSummary.blocked}。已提交的数字人任务需等待候选生成和验收。</p>}
@@ -14117,6 +14547,13 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
                 </ol>}
               </div>
             )}
+            <section aria-label="本次创作信息" className="rounded-xl border border-sky-100 bg-sky-50/60 p-3">
+              <p className="text-[10px] font-black uppercase tracking-[0.1em] text-sky-700">本次创作信息</p>
+              <dl className="mt-2 space-y-1.5 text-[10px] leading-4">
+                <div className="flex gap-2"><dt className="shrink-0 text-text-muted">创作方式</dt><dd className="min-w-0 break-words font-bold text-text-primary">{agentSourceContext}</dd></div>
+                <div className="flex gap-2"><dt className="shrink-0 text-text-muted">焦点产品</dt><dd className="min-w-0 break-words font-bold text-text-primary">{focusProductContext}</dd></div>
+              </dl>
+            </section>
             {contentMode === 'video' && step === 'mode' && (
               <section className={`rounded-xl border p-3 ${setupReadiness.status === 'ready' ? 'border-emerald-200 bg-emerald-50/60' : setupReadiness.status === 'adjustable' ? 'border-amber-200 bg-amber-50/60' : 'border-red-200 bg-red-50/60'}`}>
                 <div className="flex items-start justify-between gap-2">
@@ -14168,7 +14605,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
                   { id: 'subtitle' as const, label: '字幕文案' },
                   { id: 'bgm' as const, label: '配乐' },
                 ]).map(item => {
-                  const unavailable = !localGateBypass && item.id !== 'theme' && (!hasTimestampScript
+                  const unavailable = item.id !== 'theme' && (!hasTimestampScript
                     || (item.id === 'audio' && !hasRequestedVoiceDrafts)
                     || (item.id === 'subtitle' && (!hasRequestedVoiceDrafts || !hasReadyVoiceStrategy))
                     || (item.id === 'bgm' && (!hasRequestedVoiceDrafts || !hasRequestedSubtitles)));
@@ -14303,6 +14740,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
             )}
             {step === 'material' && activeWorkbenchSlot && <ShotSourceDecisionPanel
               disabled={productionFor(activeWorkbenchSlot).locked}
+              digitalHumanAvailable={salesPresenterRecognition(presenterEvidenceFor(activeWorkbenchSlot)) === 'confirmed'}
               shootingBusy={shootingBusy}
               shootingScheduled={shootingTasks.some(task => task.sourceProjectId === projectId && task.sourceAssemblyId === activeAssemblyId && task.sourceShotId === shootingSlots.find(item => item.slotId === activeWorkbenchSlot.id)?.id)}
               error={shootingError}
@@ -14412,7 +14850,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
             <input aria-label="整片时间轴" type="range" min="0" max={workbenchTimelineDuration} step="0.05" value={Math.min(workbenchTimelineTime, workbenchTimelineDuration)} onChange={event => seekWorkbenchTimeline(Number(event.target.value))} className="mt-2 h-2 w-full cursor-ew-resize accent-emerald-600" />
           </div>
         ) : socialContentTaskId ? <div role="status" className="rounded-lg border border-dashed border-border px-4 py-3 text-xs text-text-muted">00:00 · 等待参考分析与分镜脚本，完成后在这里显示逐镜时间戳。</div> : undefined}
-        previousAction={{ label: '上一步', onClick: prev, disabled: stepIdx === 0 || Boolean(socialViralTask && modeActionLoading) }}
+        previousAction={{ label: socialViralTask ? '返回上一步' : '上一步', onClick: prev, disabled: stepIdx === 0 || Boolean(socialViralTask && modeActionLoading) }}
         previewAction={{
           label: socialViralTask ? step === 'preview' ? '导出 MP4' : '进入成片设置' : '预览',
           onClick: () => {
@@ -14557,7 +14995,14 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
       </StudioWorkbenchFrame>
 
       {shotLibrarySlotId && <ShotMaterialLibraryDialog
-        items={materials.filter(clip => (clip.type === 'video' || clip.type === 'image') && clip.usage !== 'reference_only' && Boolean(clip.url)).map(clip => ({ id: clip.id, name: clip.name, type: clip.type, url: clip.url! }))}
+        items={materials.filter(clip => {
+          const targetSlot = storyboardSlots.find(slot => slot.id === shotLibrarySlotId);
+          const presenterConfirmed = targetSlot && salesPresenterRecognition(presenterEvidenceFor(targetSlot)) === 'confirmed';
+          return (clip.type === 'video' || clip.type === 'image')
+            && isProductionEligibleClip(clip, videoKickoff)
+            && Boolean(clip.url)
+            && (!socialViralTask || clip.sourceType !== 'digital_human' || presenterConfirmed);
+        }).map(clip => ({ id: clip.id, name: clip.name, type: clip.type, url: clip.url!, folder: clip.folder, analysisStatus: clip.segmentAnalysisStatus }))}
         shotTitle={`分镜 ${storyboardSlots.findIndex(slot => slot.id === shotLibrarySlotId) + 1}`}
         selectedId={storyboardAssignments[shotLibrarySlotId]}
         busy={shotLibraryBusy} error={shotLibraryError}

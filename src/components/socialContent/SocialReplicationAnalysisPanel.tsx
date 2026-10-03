@@ -105,7 +105,7 @@ export default function SocialReplicationAnalysisPanel({ task }: { task: SocialC
   if (analysis?.status !== 'ready' || !script) {
     return (
       <section data-social-replication-analysis className="rounded-2xl border border-border bg-white p-5 shadow-sm">
-        <div className="flex items-start gap-3"><span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-emerald-700"><Clock3 size={19} /></span><div><p className="text-[10px] font-black tracking-[0.08em] text-text-muted">爆款裂变</p><h3 className="mt-1 text-base font-black text-text-primary">编导分析中</h3><p className="mt-1 text-xs leading-5 text-text-muted">正在分析前三秒、逐镜结构和素材替换方式。分析完成后，这里会显示真实结果。</p></div></div>
+        <div className="flex items-start gap-3"><span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-emerald-700"><Clock3 size={19} /></span><div><p className="text-[10px] font-black tracking-[0.08em] text-text-muted">爆款复刻</p><h3 className="mt-1 text-base font-black text-text-primary">编导分析中</h3><p className="mt-1 text-xs leading-5 text-text-muted">正在分析前三秒、逐镜结构和素材替换方式。分析完成后，这里会显示真实结果。</p></div></div>
       </section>
     );
   }
@@ -120,7 +120,7 @@ export default function SocialReplicationAnalysisPanel({ task }: { task: SocialC
   return (
     <section data-social-replication-analysis className="rounded-2xl border border-border bg-white p-5 shadow-sm" aria-labelledby="social-replication-analysis-title">
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <div><p className="text-[10px] font-black tracking-[0.08em] text-accent">爆款裂变 · 编导方案</p><h3 id="social-replication-analysis-title" className="mt-1 text-base font-black text-text-primary">参考视频和新视频逐镜对照</h3><p className="mt-1 text-xs leading-5 text-text-muted">保留有效结构和节奏，同时更换真实内容与表达，避免机械复制。</p></div>
+        <div><p className="text-[10px] font-black tracking-[0.08em] text-accent">爆款复刻 · 编导方案</p><h3 id="social-replication-analysis-title" className="mt-1 text-base font-black text-text-primary">参考视频和新视频逐镜对照</h3><p className="mt-1 text-xs leading-5 text-text-muted">保留有效结构和节奏，同时更换真实内容与表达，避免机械复制。</p></div>
         <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-1.5 text-[10px] font-black text-emerald-800"><CheckCircle2 size={13} />编导分析完成</span>
       </div>
 

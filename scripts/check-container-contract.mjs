@@ -21,6 +21,9 @@ assert.match(dockerfile, /AS build[\s\S]*pnpm prune --prod[\s\S]*AS runtime/, 'r
 assert.doesNotMatch(dockerfile, /\bnpm ci|\bnpm run|setup:pb/, 'the app image must use the same dependency graph and leave schema writes to PB migrations');
 assert.doesNotMatch(dockerignore, /^\*\.(?:png|gif)$/m, 'runtime UI images must not be globally excluded');
 assert.match(compose, /api\/overseas\/ready/, 'container health must exercise dependency readiness');
+assert.match(compose, /app:[\s\S]*PROCESS_ROLE:\s*web/, 'the HTTP service must run with the web-only process role');
+assert.match(compose, /worker:[\s\S]*PROCESS_ROLE:\s*worker/, 'background production must run in an independent worker service');
+assert.match(compose, /PROCESS_ROLE_SPLIT_ENABLED:\s*"true"/, 'the durable web/worker split must be explicitly enabled');
 assert.match(releaseCompose, /api\/overseas\/ready/, 'release container health must exercise dependency readiness');
 assert.match(dockerfile, /person-replacement-qa-requirements\.txt[\s\S]*person_replacement_visual_qa\.py/, 'runtime image must copy the independent visual QA dependencies and script');
 assert.match(dockerfile, /person_replacement_visual_qa\.py --self-check/, 'runtime image build must execute the visual QA self-check');

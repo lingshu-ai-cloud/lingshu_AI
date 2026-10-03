@@ -201,9 +201,11 @@ export function useSocialContentWorkspace() {
       }
     };
     const onVisible = () => { if (document.visibilityState === 'visible') void refreshTask(); };
-    const timer = window.setInterval(() => { void refreshTask(); }, 30_000 + Math.floor(Math.random() * 5_000));
+    const activeProduction = ['producing', 'asset_review', 'packaging', 'attention'].includes(task.status);
+    const timer = window.setInterval(() => { void refreshTask(); }, activeProduction ? 5_000 : 15_000);
     window.addEventListener('focus', refreshTask);
     document.addEventListener('visibilitychange', onVisible);
+    void refreshTask();
     return () => {
       disposed = true;
       window.clearInterval(timer);

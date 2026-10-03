@@ -5,6 +5,10 @@ const SAFETY_BLOCKERS = new Set<SocialExecutionPlanReviewReason>([
   'rights_missing',
 ]);
 
+const DEMO_BYPASSABLE_BLOCKERS = new Set<SocialExecutionPlanReviewReason>([
+  'budget_exceeded',
+]);
+
 function enabled(value: string | undefined): boolean | null {
   const normalized = String(value ?? '').trim().toLowerCase();
   if (['1', 'true', 'yes', 'on'].includes(normalized)) return true;
@@ -13,9 +17,9 @@ function enabled(value: string | undefined): boolean | null {
 }
 
 /**
- * Lets a local operator exercise every content-production node without first
- * satisfying product/theme/budget/quality convenience gates. Production is
- * always fail-closed, even if the environment variable is accidentally set.
+ * Lets a local operator ignore only the budget ceiling during a walkthrough.
+ * Product facts, rights, capability, duration and generation quality stay
+ * fail-closed, and the production environment never enables the bypass.
  *
  * Local development defaults to enabled for the current test workflow. Set
  * CONTENT_CREATION_TEST_BYPASS=false to restore normal local admission.
@@ -42,5 +46,8 @@ export function socialContentReviewAdmissionAllowed(input: {
   environment?: NodeJS.ProcessEnv;
 }): boolean {
   if (input.approved) return true;
-  return socialContentTestBypassEnabled(input.environment);
+  const reasons = input.reasonCodes || [];
+  return socialContentTestBypassEnabled(input.environment)
+    && reasons.length > 0
+    && reasons.every(reason => DEMO_BYPASSABLE_BLOCKERS.has(reason));
 }

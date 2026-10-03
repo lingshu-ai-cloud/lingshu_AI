@@ -39,6 +39,35 @@ try {
   assert.equal(companyPayload.company.name, '最小公司草稿');
   assert.equal(companyPayload.company.taxRegion, '');
 
+  const productResponse = await fetch(`${base}/products`, {
+    method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: '开发协作中台', owner: '产品负责人', status: 'active', customerProblem: '统一研发协作信息' }),
+  });
+  assert.equal(productResponse.status, 201);
+  const productPayload = await productResponse.json() as { record: { id: string } };
+  const prdResponse = await fetch(`${base}/productDocuments`, {
+    method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ productId: productPayload.record.id, title: '开发协作 PRD', owner: '产品负责人', reviewers: ['技术负责人'], status: 'review', version: 'v0.1', content: '# 开发协作\n\n## 验收标准' }),
+  });
+  assert.equal(prdResponse.status, 201);
+  const prdPayload = await prdResponse.json() as { record: { id: string } };
+  const reviewResponse = await fetch(`${base}/productReviews`, {
+    method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ productId: productPayload.record.id, documentId: prdPayload.record.id, type: 'technical', title: '技术评审', owner: '技术负责人', reviewers: ['开发负责人'], status: 'pending', checklist: ['接口边界明确'] }),
+  });
+  assert.equal(reviewResponse.status, 201);
+  const taskResponse = await fetch(`${base}/developmentTasks`, {
+    method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ productId: productPayload.record.id, documentId: prdPayload.record.id, title: '实现协作看板', type: 'fullstack', assignee: '开发负责人', reviewer: '产品负责人', status: 'ready', priority: 'high', acceptanceCriteria: '任务状态可修改' }),
+  });
+  assert.equal(taskResponse.status, 201);
+  const taskPayload = await taskResponse.json() as { record: { id: string } };
+  const issueResponse = await fetch(`${base}/issues`, {
+    method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title: '看板状态未刷新', severity: 'high', status: 'open', source: '测试', assignee: '开发负责人', productId: productPayload.record.id, linkedTaskId: taskPayload.record.id, reproductionSteps: '修改任务状态', expectedBehavior: '立即刷新', actualBehavior: '仍显示旧状态' }),
+  });
+  assert.equal(issueResponse.status, 201);
+
   const createdSopResponse = await fetch(`${base}/sops`, {
     method: 'POST',
     headers: { ...headers, 'Content-Type': 'application/json' },
@@ -128,7 +157,11 @@ try {
 
   const snapshotResponse = await fetch(`${base}/snapshot`, { headers });
   assert.equal(snapshotResponse.status, 200);
-  const snapshot = await snapshotResponse.json() as { snapshot: { documents: Array<{ id: string }>; sops: Array<{ id: string }>; sopRuns: Array<{ id: string; completedSteps: number[] }>; resources: Array<{ id: string }>; deployments: Array<{ id: string }>; leads: Array<{ id: string }>; leadActivities: Array<{ id: string }>; leadChatImports: Array<{ id: string }> } };
+  const snapshot = await snapshotResponse.json() as { snapshot: { productDocuments: Array<{ id: string }>; productReviews: Array<{ id: string }>; developmentTasks: Array<{ id: string }>; issues: Array<{ id: string; linkedTaskId?: string }>; documents: Array<{ id: string }>; sops: Array<{ id: string }>; sopRuns: Array<{ id: string; completedSteps: number[] }>; resources: Array<{ id: string }>; deployments: Array<{ id: string }>; leads: Array<{ id: string }>; leadActivities: Array<{ id: string }>; leadChatImports: Array<{ id: string }> } };
+  assert.equal(snapshot.snapshot.productDocuments[0]?.id, prdPayload.record.id);
+  assert.equal(snapshot.snapshot.productReviews.length, 1);
+  assert.equal(snapshot.snapshot.developmentTasks[0]?.id, taskPayload.record.id);
+  assert.equal(snapshot.snapshot.issues[0]?.linkedTaskId, taskPayload.record.id);
   assert.equal(snapshot.snapshot.documents[0]?.id, uploaded.document.id);
   assert.equal(snapshot.snapshot.sops[0]?.id, createdSopPayload.record.id);
   assert.deepEqual(snapshot.snapshot.sopRuns[0]?.completedSteps, [0]);

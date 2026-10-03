@@ -20,6 +20,13 @@ export default defineConfig(({ mode }) => {
 
   return {
     plugins: [react(), tailwindcss()],
+    // xlsx is installed from the vendored tarball. Vite 8 can invalidate its
+    // optimized hash after the initial page graph has already been served,
+    // making the default DigitalEmployeePage lazy import fail with a 504 and
+    // leaving Safari on a white screen. Serve this ESM dependency directly.
+    optimizeDeps: {
+      exclude: ['xlsx'],
+    },
     resolve: {
       alias: { '@': path.resolve(import.meta.dirname, 'src') },
     },

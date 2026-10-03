@@ -79,6 +79,23 @@ function nodeProgress(task?: WorkflowTask): string {
   return '打开可查看输入、执行记录和下一步';
 }
 
+function nodeSource(planned?: PlanTask, task?: WorkflowTask): string {
+  const declared = task?.status_source || planned?.statusSource || String(task?.output?.statusSource || '');
+  if (declared) return declared;
+  const refs = task?.business_refs || [];
+  if (refs.length) return `${refs.length} 条业务记录`;
+  return planned ? '周计划任务包' : '等待业务来源';
+}
+
+function nodeNext(task: WorkflowTask | undefined, destination: string): string {
+  if (!task) return '等待前置节点后自动启动';
+  if (task.status === 'waiting_approval') return `完成当前确认，再前往${destination}`;
+  if (['failed', 'waiting_human', 'handed_off'].includes(task.status)) return '处理阻塞、重试或交还 Agent';
+  if (task.status === 'succeeded') return `前往${destination}查看结果与业务记录`;
+  if (task.status === 'running') return `等待结果写回，随后进入${destination}`;
+  return `前往${destination}继续处理`;
+}
+
 export function groupedWeeklyExecutionNodes(data: DigitalEmployeeOverview) {
   const nodes = weeklyExecutionNodes(data).map((node, index) => ({ ...node, number: index + 1 }));
   const groups = nodeGroups.map(group => ({ ...group, nodes: nodes.filter(node => group.keys.includes(node.key)) }));
@@ -115,8 +132,8 @@ export default function WeeklyExecutionNodes({ data, onOpen, onDetails, onConfig
             return <li key={key} value={number} data-node-key={key} className="relative rounded-md border border-border bg-surface transition-colors hover:border-border-bright">
               <button type="button" aria-label={`${number}. ${title}，前往${destination}`} onClick={() => onOpen(link)} className="group h-full w-full rounded-md p-3 text-left hover:bg-surface-2/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/25">
                 <div className="flex items-start gap-2"><span className="pt-0.5 text-xs font-semibold tabular-nums text-text-muted">{String(number).padStart(2, '0')}</span><h4 className="min-w-0 flex-1 text-sm font-semibold leading-5 text-text-primary">{title}</h4><ArrowRight size={14} className="mt-0.5 shrink-0 text-text-muted group-hover:text-accent"/></div>
-                <div className={`mt-2 flex flex-wrap items-center justify-between gap-2 ${runtime ? 'pr-6' : ''}`}><span className={`rounded-sm px-1.5 py-0.5 text-[11px] ${state.tone}`}>{state.label}</span><span className="text-xs text-text-secondary">{destination}</span></div>
-                <p className="mt-2 line-clamp-2 text-xs leading-5 text-text-muted">{nodeProgress(runtime)}</p>
+                <div className={`mt-2 flex flex-wrap items-center justify-between gap-2 ${runtime ? 'pr-6' : ''}`}><span className={`rounded-sm px-1.5 py-0.5 text-[11px] ${state.tone}`}>当前节点 · {state.label}</span><span className="text-xs text-text-secondary">{destination}</span></div>
+                <dl className="mt-3 space-y-1.5 border-t border-border pt-2.5 text-xs leading-5"><div className="grid grid-cols-[34px_1fr] gap-2"><dt className="text-text-muted">来源</dt><dd className="line-clamp-1 text-text-secondary">{nodeSource(planned, runtime)}</dd></div><div className="grid grid-cols-[34px_1fr] gap-2"><dt className="text-text-muted">结果</dt><dd className="line-clamp-2 text-text-secondary">{nodeProgress(runtime)}</dd></div><div className="grid grid-cols-[34px_1fr] gap-2"><dt className="text-text-muted">下一步</dt><dd className="line-clamp-2 font-medium text-text-primary">{nodeNext(runtime, destination)}</dd></div></dl>
               </button>
               {runtime && <button type="button" onClick={() => onDetails(runtime.id)} aria-label={`执行详情：${title}`} title="执行详情" className="absolute bottom-3 right-2 rounded-sm p-0.5 text-text-muted hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/25"><FileText size={14}/></button>}
             </li>;

@@ -68,7 +68,6 @@ import {
   materialTenantId,
 } from './socialContentProductionMaterials.js';
 import { visualEvidenceScore } from '../digitalEmployees/sceneEvidence.js';
-import { socialContentTestBypassEnabled } from './socialContentTestBypass.js';
 import {
   buildMaterialScriptAnalysis,
   type MaterialScriptAnalysis,
@@ -331,7 +330,9 @@ export function socialTaskReadiness(
   // Local walkthroughs must be able to reach every production node without
   // fabricating setup data. Production remains fail-closed; the local switch
   // intentionally opens every workflow-admission gate for node-by-node checks.
-  const blockingMissing = socialContentTestBypassEnabled() ? [] : missing;
+  // Theme confirmation affects the final script and must not be skipped by the
+  // local budget-only walkthrough allowance.
+  const blockingMissing = missing;
   return { complete: blockingMissing.length === 0, missing: blockingMissing, personalizationGaps };
 }
 

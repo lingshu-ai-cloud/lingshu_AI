@@ -23,7 +23,7 @@ import {
 import type { StartupCompanyDocumentCategory, StartupHubRecordKind } from '../../shared/startupHub.js';
 
 export const startupHubRouter = Router();
-const KINDS = new Set<StartupHubRecordKind>(['tasks', 'taxRecords', 'announcements', 'products', 'apiEndpoints', 'logSources', 'issues', 'resources', 'deployments', 'members', 'decisions', 'sops', 'sopRuns', 'capabilities', 'leads', 'leadActivities']);
+const KINDS = new Set<StartupHubRecordKind>(['tasks', 'taxRecords', 'announcements', 'products', 'productDocuments', 'productReviews', 'developmentTasks', 'apiEndpoints', 'logSources', 'issues', 'resources', 'deployments', 'members', 'decisions', 'sops', 'sopRuns', 'capabilities', 'leads', 'leadActivities']);
 const DOCUMENT_CATEGORIES = new Set<StartupCompanyDocumentCategory>(['license', 'articles', 'tax', 'bank', 'contract', 'hr', 'ip', 'other']);
 const MAX_DOCUMENT_BYTES = 20 * 1024 * 1024;
 const MAX_CHAT_IMPORT_BYTES = 10 * 1024 * 1024;

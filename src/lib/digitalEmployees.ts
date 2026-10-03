@@ -305,6 +305,13 @@ export interface BusinessSnapshot {
     platformBreakdown: Array<{ platform: string; accounts: number; views: number | null; likes: number | null; comments: number | null; shares: number | null; status: DataAvailability }>;
     dailyTrend: Array<{ date: string; views: number | null; interactions: number | null }>;
   };
+  ads?: {
+    status: DataAvailability;
+    source: string;
+    note: string;
+    latestReportedAt: string | null;
+    spendByCurrency: Array<{ currency: string; amount: number; rows: number }>;
+  };
   running?: SnapshotTaskReference[];
   needsDecision?: SnapshotTaskReference[];
   completedToday?: SnapshotTaskReference[];
@@ -433,6 +440,68 @@ export interface AgentStatus {
   total: number;
 }
 
+export type ContentQueueStatus = "planned" | "queued" | "producing" | "waiting_review" | "completed" | "blocked";
+export type ContentQueueOrigin = "manual" | "weekly_plan";
+export interface ContentTaskLineage {
+  goalId: string;
+  objective: string;
+  accountId: string;
+  accountLabel: string;
+  budgetCny: number | null;
+  planId: string;
+  planVersion: string;
+  factsVersion: string;
+  cycleStart: string;
+  cycleEnd: string;
+  authorizationMode: "each" | "bounded" | "manual";
+}
+export interface ContentTaskOutputSummary {
+  count: number;
+  durationSeconds: number | null;
+  formats: string[];
+}
+export interface ContentQueueItem {
+  id: string;
+  contentId: string;
+  orderId: string;
+  batchPlanId: string;
+  projectIds: string[];
+  taskId: string;
+  socialContentTaskId: string;
+  origin: ContentQueueOrigin;
+  lineage: ContentTaskLineage;
+  outputSummary: ContentTaskOutputSummary;
+  title: string;
+  productName: string;
+  platform: PublishingPlatform;
+  accountId: string;
+  accountLabel: string;
+  route: "clone" | "product" | "material";
+  languages: string[];
+  plannedPublishDate: string;
+  referenceId: string;
+  referenceTitle: string;
+  benchmarkAccount: string;
+  matchScore: number | null;
+  planningFactors: string[];
+  status: ContentQueueStatus;
+  stage: string;
+  progress: number;
+  reason: string;
+  updatedAt: string;
+  estimatedCostCny: number | null;
+  settledCostCny: number | null;
+  costStatus: "estimated" | "awaiting_settlement" | "settled" | "unavailable";
+  steps: Array<{ label: string; state: "pending" | "active" | "done" }>;
+}
+
+export interface ContentQueueProjection {
+  generatedAt: string;
+  sourceStatus: "available" | "pending" | "unavailable";
+  sourceNote: string;
+  items: ContentQueueItem[];
+}
+
 export interface WeeklyReview {
   id: string;
   status: string;
@@ -491,6 +560,7 @@ export interface DigitalEmployeeOverview {
   run: WorkflowRun | null;
   tasks: WorkflowTask[];
   deliveries?: import("./delivery").DeliveryResource[];
+  contentQueue?: ContentQueueProjection;
   deliveryNotice?: string;
   events: RunEvent[];
   approvals: ApprovalRequest[];

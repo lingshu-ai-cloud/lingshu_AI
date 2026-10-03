@@ -20,7 +20,6 @@ import type { SocialContentCreationPath } from '../../lib/socialContentModel';
 import { studioApi, type Material } from '../../lib/studioApi';
 import { socialContentApi } from '../../lib/socialContentApi';
 import type { SocialContentStageProfile } from '../../lib/socialContentStage';
-import { contentCreationTestBypassEnabled } from '../../lib/contentCreationTestBypass';
 import { resolveInspirationPlaybackUrl } from '../../lib/inspirationVideoPlayback';
 import { authHeader } from '../../lib/auth';
 import { referenceBrandTerm, referenceProductMentions, referenceProductTerms, replaceReferenceIdentities, spokenIdentityLabel } from '../../lib/referenceIdentityMapping';
@@ -236,7 +235,6 @@ export default function SocialCreationWorkbench({
   }, [seed?.confirmedSpeech]);
   const uploadRef = useRef<HTMLInputElement>(null);
   const isReplication = mode === 'viral_replication';
-  const localGateBypass = contentCreationTestBypassEnabled();
   const referenceShots = isReplication ? taskReferenceShots || seed?.referenceShots || [] : [];
   const referenceLines = referenceSpeechLines(referenceShots);
   useEffect(() => {
@@ -445,7 +443,7 @@ export default function SocialCreationWorkbench({
         requestId: Date.now(),
         creationPath: mode,
         title: isReplication
-          ? `${productName || seed?.productName || '自动选品'} · 爆款裂变`
+          ? `${productName || seed?.productName || '自动选品'} · 爆款复刻`
           : `${productName || '自由创作'} · 新内容`,
         productId: isReplication ? productMappings[0]?.productId || '' : selected?.id || '',
         productName,
@@ -472,7 +470,7 @@ export default function SocialCreationWorkbench({
       {isReplication ? <ReplicationWorkbenchHeader activeStep={0} onStepChange={index => { if (index > 0 && speechGenerated) void startGeneration(); }} navigationDisabled={submitting || productsLoading || !speechGenerated} title={seed?.referenceTitle} actions={<><button type="button" onClick={onShowCreations} className="rounded-lg border border-border px-3 py-2 text-xs font-bold">我的创作</button><button type="button" onClick={onOpenChooser} className="rounded-lg bg-[#173d31] px-3 py-2 text-xs font-bold text-white">切换制作方式</button></>} /> : (      <header className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-border bg-white px-5 py-3">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
-            <span className={`rounded-full px-2.5 py-1 text-[10px] font-black ${isReplication ? 'bg-orange-50 text-orange-700' : 'bg-emerald-50 text-emerald-700'}`}>{isReplication ? '爆款裂变' : '自由创作'}</span>
+            <span className={`rounded-full px-2.5 py-1 text-[10px] font-black ${isReplication ? 'bg-orange-50 text-orange-700' : 'bg-emerald-50 text-emerald-700'}`}>{isReplication ? '爆款复刻' : '自由创作'}</span>
             <span className="text-[10px] font-bold text-text-muted">逐句口播与画面制作台</span>
             {stageProfile&&<span className="rounded-full bg-slate-100 px-2 py-1 text-[9px] font-black text-slate-500">{stageProfile.name}</span>}
           </div>
@@ -596,7 +594,7 @@ export default function SocialCreationWorkbench({
               {creationOptions.map(item => {
                 const Icon = item.icon;
                 const checked = enabledOptions.has(item.id);
-                const locked = isReplication && !localGateBypass;
+                const locked = isReplication;
                 return <button key={item.id} type="button" disabled={locked} onClick={() => setEnabledOptions(current => { const next = new Set(current); if (next.has(item.id)) next.delete(item.id); else next.add(item.id); return next; })} className={`flex w-full items-center gap-3 rounded-xl border p-3 text-left ${locked ? 'cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400' : checked ? 'border-emerald-200 bg-emerald-50/55' : 'border-border bg-white'}`}>
                   <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${locked ? 'bg-white text-slate-400' : 'bg-white text-emerald-700'}`}><Icon size={15} /></span>
                   <span className="min-w-0 flex-1"><span className="block text-xs font-black">{item.label}</span><span className="mt-0.5 block truncate text-[10px] opacity-75">{item.detail}</span></span>
@@ -617,7 +615,6 @@ export default function SocialCreationWorkbench({
             {enterpriseProfileState !== 'ready' && <p className="mt-4 text-[10px] text-text-muted">{enterpriseProfileState === 'loading' ? '正在读取企业 CTA…' : '企业 CTA 暂时无法读取，请稍后重试。'}</p>}
 
           </div>
-
 
         </aside>
       </div>

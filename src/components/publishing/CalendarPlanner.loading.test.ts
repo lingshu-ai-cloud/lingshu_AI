@@ -20,7 +20,7 @@ function harness() {
   let effect: () => () => void;
   const context: any = {
     AbortController, range: { from: new Date(), to: new Date() }, mode: 'week', refreshKey: 0,
-    calendarRequestRef: { current: null }, selectedPlatform: 'tiktok', utcOffset: 0,
+    calendarRequestRef: { current: null }, selectedPlatform: 'tiktok', utcOffset: 0, demoMode: false,
     iso: (date: Date) => date.toISOString(), calendarErrorMessage: (error: Error) => error.message,
     setError: (value: string) => { state.error = value; },
     setItems: (value: any[]) => { state.items = value; },

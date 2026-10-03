@@ -21,6 +21,8 @@ assert.match(
 );
 assert.match(traffic, /kickoff\.source === 'inspiration_analysis'[\s\S]*?contentCreationRequest:[\s\S]*?creationPath: 'viral_replication'/,
   'an inspiration video must open the viral-replication task instead of dropping users on the generic content homepage');
+assert.match(traffic, /kickoff\.source === 'inspiration_analysis'[\s\S]*?resumeOrCreateInspirationTask\([\s\S]*?directStudio: true,[\s\S]*?socialContentTaskId: taskId/,
+  'an analyzed inspiration must create or resume its authoritative task before opening Studio');
 assert.match(traffic, /referenceLinks: referenceUrl \? \[referenceUrl\] : \[\]/,
   'the inspiration handoff must preserve the selected reference URL');
 assert.match(app, /setSmartAssetsCreateRequest\(detail\.contentCreationRequest \|\| null\)/);

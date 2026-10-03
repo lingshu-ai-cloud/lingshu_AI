@@ -30,7 +30,7 @@ const CREATION_PATHS: CreationPathCard[] = [
   },
   {
     id: 'viral_replication',
-    title: '爆款裂变',
+    title: '爆款复刻',
     description: '沿用爆款口播与结构，仅替换企业、品牌和产品名称，再自动匹配制作。',
     icon: TrendingUp,
     tint: 'border-orange-200 bg-gradient-to-br from-orange-50 via-white to-[#f7eadb] hover:border-orange-300',

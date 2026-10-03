@@ -10,6 +10,7 @@ import { createStudioAsrRouter } from '../lib/studioAsrRouter.js';
 import type { AvatarMediaCheck } from '../lib/avatarMediaCheck.js';
 import { createStudioAvatarProductionRouter } from '../lib/studioAvatarProduction.js';
 import { refreshStudioProjectAssetUrls, studioProjectSpecForStorage } from '../lib/studioProjectAssets.js';
+import { studioProjectRevisionConflict } from '../lib/studioProjectRevision.js';
 export { refreshStudioProjectAssetUrls, studioProjectSpecForStorage } from '../lib/studioProjectAssets.js';
 import { matchedReferenceIndustryLeaks } from '../lib/referenceIndustryLeak.js';
 export { matchedReferenceIndustryLeaks } from '../lib/referenceIndustryLeak.js';
@@ -8472,7 +8473,7 @@ async function storyboardEnvironmentFrameVersionIssues(tenantId: string, project
 // POST /studio/projects  Body: { id?, title?, status?, spec, thumbSeed? } → 新建或更新
 studioRouter.post('/projects', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
-  const { id, title, status = 'draft', spec: rawSpec = {}, thumbSeed } = req.body ?? {};
+  const { id, title, status = 'draft', spec: rawSpec = {}, thumbSeed, baseUpdatedAt } = req.body ?? {};
   const socialTaskId = socialProjectTaskId(res.locals);
   const spec = studioProjectSpecForStorage(bindSocialProjectSpec(rawSpec, socialTaskId));
   const automation = spec.automation && typeof spec.automation === 'object' && !Array.isArray(spec.automation)
@@ -8501,6 +8502,18 @@ studioRouter.post('/projects', async (req, res) => {
       const kbIssues = await storyboardKbAssignmentIssuesForSpec(tenantId, spec, loadMaterials());
       if (kbIssues.length) {
         res.status(409).json({ ok: false, code: 'STORYBOARD_AIGC_KB_IMAGE_CHANGED', error: '企业产品或指定人物参考图已变化，AI 分镜候选需重做', reasons: kbIssues }); return;
+      }
+      const currentUpdatedAt = String(existing.updated_at || existing.updated || '');
+      if (studioProjectRevisionConflict(baseUpdatedAt, currentUpdatedAt)) {
+        res.status(409).json({
+          ok: false,
+          code: 'studio_project_version_conflict',
+          error: baseUpdatedAt
+            ? '该创作已在其他页面更新，请刷新后继续；当前页面的旧数据未覆盖新版本。'
+            : '当前页面版本过旧，请刷新后继续；旧页面的自动保存已被拦截。',
+          project: projectFromRecord(existing, tenantId),
+        });
+        return;
       }
       const storedSpec = typeof existing.spec === 'string' ? JSON.parse(existing.spec) : existing.spec;
       if (storedSpec?.workflowRunId && storedSpec?.automation?.managedBy === 'digital_employee') {

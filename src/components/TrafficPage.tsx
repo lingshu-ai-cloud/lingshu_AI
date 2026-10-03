@@ -63,6 +63,7 @@ import { useModalFocus } from '../hooks/useModalFocus';
 import { SocialPlatformIcon } from './SocialPlatformIcon';
 import { resolveInitialTrafficViewMode, resolveNavigationEventViewMode, resolveSignalViewMode, resolveWorkflowNavigationPage, type TrafficViewMode } from './trafficViewMode';
 import { useSocialContentNavigation } from './socialContent/useSocialContentNavigation';
+import { resumeOrCreateInspirationTask } from '../lib/socialInspirationTask';
 import { PAGE_REGISTRY } from '../pageRegistry';
 import ContentLibrary from './ContentLibrary';
 import { PageLoading, WorkspaceErrorBoundary } from './AppPageBoundary';
@@ -165,6 +166,7 @@ interface Props {
   workflowContextSignal?: DigitalEmployeeWorkflowContext | null;
   socialContentTaskId?: string | null;
   studioCreateRequest?: SocialContentCreateRequest | null;
+  onOpenCreationHome?: (openChooser?: boolean) => void;
 }
 
 const PLATFORM_META: Record<PublishPlatform, { label: string; color: string; format: string }> = {
@@ -223,6 +225,7 @@ export default function TrafficPage({
   workflowContextSignal,
   socialContentTaskId,
   studioCreateRequest,
+  onOpenCreationHome,
 }: Props) {
   const [viewMode, setViewMode] = useState<ViewMode>(() => {
     if (initialView) return initialView;
@@ -236,6 +239,7 @@ export default function TrafficPage({
   });
   const [studioMounted, setStudioMounted] = useState(() => initialView === 'create');
   const [publishDraft, setPublishDraft] = useState<PublishDraft | null>(null);
+  const [inspirationLaunchError, setInspirationLaunchError] = useState('');
   const [workflowContext, setWorkflowContext] = useState<DigitalEmployeeWorkflowContext | null>(consumeDigitalEmployeeWorkflowContext);
   const studioRootRef = useRef<HTMLDivElement | null>(null);
   const modeItems = TRAFFIC_MODE_ORDER
@@ -320,7 +324,7 @@ export default function TrafficPage({
     }));
   }, [pageTitle, showModeTabs, viewMode]);
 
-  const handleEnterWorkflow = (payload: unknown) => {
+  const handleEnterWorkflow = async (payload: unknown) => {
     try {
       localStorage.setItem('ow_video_kickoff', JSON.stringify(payload));
       localStorage.removeItem('ow_studio_open_project');
@@ -346,12 +350,14 @@ export default function TrafficPage({
       };
       video?: {
         id?: string;
+        recordId?: string;
         title?: string;
         platform?: string;
         thumbnail?: string;
         sourceUrl?: string;
         videoUrl?: string;
         contentFormat?: string;
+        crawledAt?: string;
       };
     };
     if (kickoff.source === 'material_library' && kickoff.generatedVideo?.material) {
@@ -395,34 +401,51 @@ export default function TrafficPage({
       // Keep it alongside the navigation prefill so the storyboard is not
       // reduced to a bare URL when the planning dialog is skipped.
       try { localStorage.setItem('ow_video_kickoff', JSON.stringify(payload)); } catch { /* ignore */ }
-      window.dispatchEvent(new CustomEvent('lingshu:navigate', {
-        detail: {
-          page: 'smartAssets',
-          view: 'create',
-          contentCreationRequest: {
-            requestId: Date.now(),
-            themeId: 'product_value',
-            mode: 'instant',
-            creationPath: 'viral_replication',
-            materialInput: referenceUrl ? 'limited' : 'none',
-            managedMode: 'one_click_managed',
-            prefill: {
-              title: `${kickoff.video?.title || '灵感视频'} · 爆款裂变`,
-              topic: kickoff.video?.title || '',
-              productName: String(kickoff.productInfo || '').trim().slice(0, 160),
-              referenceLinks: referenceUrl ? [referenceUrl] : [],
-              platforms: kickoff.video?.platform ? [kickoff.video.platform] : undefined,
-            },
-            sourceContext: {
-              originLabel: '来自灵感中心',
-              referenceTitle: kickoff.video?.title || '已选参考视频',
-              referenceThumbnail: kickoff.video?.thumbnail,
-              referenceMediaUrl: playbackUrl || undefined,
-              referenceContentType: 'video',
+      setInspirationLaunchError('');
+      try {
+        const result = await resumeOrCreateInspirationTask({
+          id: String(kickoff.video?.recordId || kickoff.video?.id || referenceUrl),
+          title: kickoff.video?.title || '灵感视频',
+          sourceUrl: String(kickoff.video?.sourceUrl
+            || (kickoff.video?.recordId ? `local://${kickoff.video.recordId}` : playbackUrl)).trim(),
+          crawledAt: kickoff.video?.crawledAt,
+        });
+        const taskId = result.task.taskId;
+        window.dispatchEvent(new CustomEvent('lingshu:navigate', {
+          detail: {
+            page: 'smartAssets',
+            view: 'create',
+            directStudio: true,
+            socialContentTaskId: taskId,
+            socialContentPage: 'smartAssets',
+            contentCreationRequest: {
+              requestId: Date.now(),
+              themeId: 'product_value',
+              mode: 'instant',
+              creationPath: 'viral_replication',
+              materialInput: referenceUrl ? 'limited' : 'none',
+              managedMode: 'one_click_managed',
+              continueTaskId: taskId,
+              prefill: {
+                title: `${kickoff.video?.title || '灵感视频'} · 爆款复刻`,
+                topic: kickoff.video?.title || '',
+                productName: String(kickoff.productInfo || '').trim().slice(0, 160),
+                referenceLinks: referenceUrl ? [referenceUrl] : [],
+                platforms: kickoff.video?.platform ? [kickoff.video.platform] : undefined,
+              },
+              sourceContext: {
+                originLabel: '来自灵感中心',
+                referenceTitle: kickoff.video?.title || '已选参考视频',
+                referenceThumbnail: kickoff.video?.thumbnail,
+                referenceMediaUrl: playbackUrl || undefined,
+                referenceContentType: 'video',
+              },
             },
           },
-        },
-      }));
+        }));
+      } catch (error) {
+        setInspirationLaunchError(error instanceof Error ? error.message : '复刻任务暂时无法创建，请重试。');
+      }
       return;
     }
     try { localStorage.setItem('ow_video_kickoff', JSON.stringify(payload)); } catch { /* ignore */ }
@@ -452,6 +475,7 @@ export default function TrafficPage({
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
+      {inspirationLaunchError && <div role="alert" className="shrink-0 border-b border-rose-200 bg-rose-50 px-4 py-2 text-xs font-semibold text-rose-800">{inspirationLaunchError}</div>}
       {showModeTabs && <div className="flex-shrink-0 bg-white px-3 sm:px-6">
         <div
           role="tablist"
@@ -489,7 +513,7 @@ export default function TrafficPage({
           <Suspense fallback={<PageLoading />}>
             {(studioMounted || viewMode === 'create') && (
               <div ref={studioRootRef} id="traffic-panel-create" role={showModeTabs ? 'tabpanel' : undefined} aria-labelledby={showModeTabs ? 'traffic-tab-create' : undefined} className={viewMode === 'create' ? 'h-full' : 'hidden'} aria-hidden={viewMode !== 'create'}>
-                <AiCreateStudio key={socialContentTaskId || studioCreateRequest?.requestId || 'general-studio'} onNavigate={navigateWithinSocialTask} onGoPublish={handleGoPublish} openProjectsSignal={openProjectsSignal} workflowContext={(workflowContextSignal !== undefined ? workflowContextSignal : workflowContext) || undefined} publishStorageScope={storageScope} socialContentTaskId={socialContentTaskId} studioCreateRequest={studioCreateRequest} />
+                <AiCreateStudio key={socialContentTaskId || studioCreateRequest?.requestId || 'general-studio'} onNavigate={navigateWithinSocialTask} onOpenCreationHome={onOpenCreationHome} onGoPublish={handleGoPublish} openProjectsSignal={openProjectsSignal} workflowContext={(workflowContextSignal !== undefined ? workflowContextSignal : workflowContext) || undefined} publishStorageScope={storageScope} socialContentTaskId={socialContentTaskId} studioCreateRequest={studioCreateRequest} />
               </div>
             )}
             <AnimatePresence mode="wait">

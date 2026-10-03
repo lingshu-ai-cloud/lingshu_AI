@@ -292,10 +292,18 @@ function exactAnalysisQuality(video: TrendVideo): AnalysisQualityGate {
     return { ready: false, reason: '分镜时间线存在空档或重叠，请重试精确分析', requiredFrames, actualFrames: valid.length };
   }
   if (duration > 0 && ordered[ordered.length - 1]!.end! + 0.75 < duration) return { ready: false, reason: '分镜尚未覆盖视频结尾，请重试精确分析', requiredFrames, actualFrames: valid.length };
+  if (duration > 0 && ordered[ordered.length - 1]!.end! - 0.75 > duration) return { ready: false, reason: '分镜时间轴超出原视频结尾，请重试精确分析', requiredFrames, actualFrames: valid.length };
   return { ready: true, reason: '精确分析已通过实际画面时间线校验', requiredFrames, actualFrames: valid.length };
 }
 
-function isDisplayableVideoAnalysis(analysis?: VideoAnalysisPayload, status?: TrendVideo['status']): boolean {
+export function isDisplayableVideoAnalysis(analysis?: VideoAnalysisPayload, status?: TrendVideo['status']): boolean {
+  // A manually uploaded benchmark remains part of the user's library even
+  // when exact analysis fails. Hiding it made a deduplicated re-upload look
+  // lost and also removed the only UI from which the Director run could be
+  // inspected or retried.
+  if (analysis?.usage === 'reference_only'
+    && Boolean(analysis.contentSha256)
+    && analysis.userVisible !== false) return true;
   if (status === 'failed') return false;
   // Collection results are useful before full-video analysis completes. The
   // card can already show verified platform metadata and a processing state.
@@ -1115,7 +1123,7 @@ function AuthenticatedImage({ src, alt, className }: { src: string; alt: string;
     : <div className={`${className} animate-pulse bg-slate-200`} aria-label={alt} />;
 }
 
-export function AuthenticatedVideo({ apiUrl, poster, className, controls = false, autoPlay = false, hoverPlay = false, onReady, onError, onLoadingChange }: { apiUrl: string; poster?: string; className: string; controls?: boolean; autoPlay?: boolean; hoverPlay?: boolean; onReady?: () => void; onError?: (message?: string) => void; onLoadingChange?: (loading: boolean) => void }) {
+export function AuthenticatedVideo({ apiUrl, poster, className, controls = false, autoPlay = false, loadOnMount = autoPlay, hoverPlay = false, onReady, onError, onLoadingChange }: { apiUrl: string; poster?: string; className: string; controls?: boolean; autoPlay?: boolean; loadOnMount?: boolean; hoverPlay?: boolean; onReady?: () => void; onError?: (message?: string) => void; onLoadingChange?: (loading: boolean) => void }) {
   const [playbackUrl, setPlaybackUrl] = useState('');
   const videoRef = useRef<HTMLVideoElement>(null);
   const requestRef = useRef<Promise<string> | null>(null);
@@ -1180,7 +1188,7 @@ export function AuthenticatedVideo({ apiUrl, poster, className, controls = false
     clearMediaReadyTimer();
     setPlaybackUrl('');
     onLoadingChange?.(false);
-    if (autoPlay) void load(true);
+    if (loadOnMount) void load(true);
     return () => {
       generationRef.current += 1;
       controllerRef.current?.abort();
@@ -1188,7 +1196,7 @@ export function AuthenticatedVideo({ apiUrl, poster, className, controls = false
       requestRef.current = null;
       clearMediaReadyTimer();
     };
-  }, [apiUrl, autoPlay]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [apiUrl, loadOnMount]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (autoPlay && playbackUrl) void videoRef.current?.play().catch(() => {}); }, [autoPlay, playbackUrl]);
   return <video ref={videoRef} src={playbackUrl || undefined} poster={poster} controls={controls} autoPlay={autoPlay} muted={!controls} playsInline loop={hoverPlay} preload="metadata" className={className}
     onLoadedData={() => { clearMediaReadyTimer(); mediaRetryRef.current = 0; onReady?.(); }}
@@ -3219,14 +3227,14 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     setPreviewMaterialAttempt(value => value + 1);
   };
 
-  const handleMaterialPreviewError = () => {
+  const handleMaterialPreviewError = (message?: string) => {
     if (previewMaterialAutoRetryRef.current < 1) {
       previewMaterialAutoRetryRef.current += 1;
       void refreshMaterialPreviewUrl();
       return;
     }
     setPreviewMaterialLoading(false);
-    setPreviewMaterialError('视频文件加载或解码失败，请重新获取播放地址。');
+    setPreviewMaterialError(message || '视频文件加载或解码失败，请重新获取播放地址。');
   };
 
   useEffect(() => {
@@ -3347,7 +3355,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
         headers: { 'Content-Type': 'video/mp4', ...authHeader() },
         body: file,
       });
-      const result = await response.json().catch(() => ({})) as { id?: string; error?: string; deduplicated?: boolean };
+      const result = await response.json().catch(() => ({})) as { id?: string; error?: string; deduplicated?: boolean; analysisQueued?: boolean };
       if (!response.ok || !result.id) throw new Error(result.error || `导入失败（HTTP ${response.status}）`);
       const recordId = result.id;
       const readRecord = async (open = false) => {
@@ -3361,7 +3369,11 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
         return video;
       };
       await readRecord(true);
-      setMaterialMessage(result.deduplicated ? '已找到相同对标视频，正在打开分析记录。' : '对标视频已入库，正在进行全片逐镜分析。');
+      setMaterialMessage(result.deduplicated
+        ? result.analysisQueued
+          ? '已找到相同对标视频，并已重新提交全片逐镜分析。'
+          : '已找到相同对标视频，正在打开分析记录。'
+        : '对标视频已入库，正在进行全片逐镜分析。');
       void refreshInventory();
       void (async () => {
         for (let attempt = 0; attempt < 120; attempt += 1) {
@@ -3369,7 +3381,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
           try {
             const latest = await readRecord();
             const status = latest.aiAnalysis?.geminiStatus;
-            if (status === 'analyzed' || status === 'needs_review' || status === 'analysis_retryable' || latest.status === 'failed') {
+            if (status === 'analyzed' || status === 'needs_review' || status === 'analysis_retryable' || status === 'video_failed' || latest.status === 'failed') {
               setMaterialMessage(status === 'analyzed' ? '逐镜分析完成，请检查编导交接结果。' : '逐镜分析需要复核，请查看记录中的具体原因。');
               void refreshVideos(1, true);
               return;
@@ -3763,6 +3775,9 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     const openTask = (taskId: string) => {
       window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: {
         page: 'smartAssets', view: 'create',
+        directStudio: true,
+        socialContentTaskId: taskId,
+        socialContentPage: 'smartAssets',
         contentCreationRequest: {
           requestId: Date.now(),
           themeId: 'product_value',
@@ -4675,11 +4690,8 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                       {material.type === 'video' ? (
                         <>
                           {material.poster
-                            // Fetch card posters immediately. These cards can stay mounted
-                            // below the fold; lazy loading used to defer the request until
-                            // after the short-lived signed URL had expired.
                             ? <AuthenticatedImage src={material.poster} alt={material.name} className="h-full w-full object-cover" />
-                            : <video src={`${material.url}#t=0.1`} muted playsInline preload="metadata" className="h-full w-full object-cover" />}
+                            : <div className="flex h-full flex-col items-center justify-center gap-2 bg-slate-950 text-white/65"><Film size={26} /><span className="text-[11px] font-semibold">点击播放预览</span></div>}
                           <button
                             type="button"
                             aria-label={`播放 ${material.name}`}
@@ -4748,21 +4760,17 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                   </button>
                 </div>
                 <div className="relative flex min-h-64 items-center justify-center bg-black">
-                  <video
+                  <AuthenticatedVideo
                     key={`${previewMaterial.id}:${previewMaterial.url}:${previewMaterialAttempt}`}
-                    src={previewMaterial.url}
+                    apiUrl={previewMaterial.url}
                     poster={previewMaterial.poster}
                     controls
-                    autoPlay
-                    playsInline
-                    preload="metadata"
-                    onLoadedData={() => { setPreviewMaterialLoading(false); setPreviewMaterialError(''); }}
-                    onCanPlay={() => { setPreviewMaterialLoading(false); setPreviewMaterialError(''); }}
+                    loadOnMount
+                    onReady={() => { setPreviewMaterialLoading(false); setPreviewMaterialError(''); }}
+                    onLoadingChange={setPreviewMaterialLoading}
                     onError={handleMaterialPreviewError}
                     className="max-h-[75vh] w-full bg-black object-contain"
-                  >
-                    当前浏览器不支持视频播放。
-                  </video>
+                  />
                   {previewMaterialLoading && !previewMaterialError && <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/40"><span className="inline-flex items-center gap-2 rounded-lg bg-black/65 px-3 py-2 text-xs font-semibold text-white"><Loader2 size={14} className="animate-spin" />正在准备视频…</span></div>}
                   {previewMaterialError && <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/80 px-6 text-center text-white"><Play size={26} className="opacity-70" /><p className="mt-3 text-sm font-semibold">素材预览暂时失败</p><p className="mt-1 text-xs text-white/65">{previewMaterialError}</p><button type="button" onClick={() => { previewMaterialAutoRetryRef.current = 0; void refreshMaterialPreviewUrl(); }} className="mt-4 rounded-lg bg-white px-3 py-2 text-xs font-bold text-neutral-900">重新获取播放地址</button></div>}
                 </div>

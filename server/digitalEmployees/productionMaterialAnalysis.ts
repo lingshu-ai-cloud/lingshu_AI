@@ -28,6 +28,42 @@ export function applyMaterialAnalysis(asset: AssetCandidate, cached?: MaterialAn
     observations: cached.observations, segments: cached.segments } : asset;
 }
 const MAX_BYTES = 110 * 1024 * 1024;
+type MaterialAnalysisFrame = { base64: string; mimeType: string; timeLabel: string };
+function materialFrameSeconds(label: string): number {
+  const value = Number.parseFloat(String(label || '').replace(/s$/i, ''));
+  return Number.isFinite(value) ? value : 0;
+}
+
+export function materialFrameBatches(frames: MaterialAnalysisFrame[], duration: number, limit = 20): Array<{
+  frames: MaterialAnalysisFrame[]; start: number; end: number;
+}> {
+  const ordered = [...frames].sort((left, right) => materialFrameSeconds(left.timeLabel) - materialFrameSeconds(right.timeLabel));
+  if (!ordered.length) return [];
+  const size = Math.max(4, Math.floor(limit));
+  const groups: MaterialAnalysisFrame[][] = [];
+  for (let index = 0; index < ordered.length; index += size) groups.push(ordered.slice(index, index + size));
+  return groups.map((group, index) => {
+    const previous = groups[index - 1];
+    const next = groups[index + 1];
+    const first = materialFrameSeconds(group[0]!.timeLabel);
+    const last = materialFrameSeconds(group.at(-1)!.timeLabel);
+    const start = previous ? (materialFrameSeconds(previous.at(-1)!.timeLabel) + first) / 2 : 0;
+    const end = next ? (last + materialFrameSeconds(next[0]!.timeLabel)) / 2 : duration;
+    return { frames: group, start: Math.max(0, start), end: Math.max(start + 0.05, Math.min(duration, end)) };
+  });
+}
+
+function boundMaterialAnalysisToWindow(raw: unknown, start: number, end: number): unknown {
+  if (!raw || typeof raw !== 'object' || !Array.isArray((raw as { segments?: unknown[] }).segments)) return raw;
+  const segments = (raw as { segments: Array<Record<string, unknown>> }).segments.flatMap(item => {
+    const boundedStart = Math.max(start, Number(item.start));
+    const boundedEnd = Math.min(end, Number(item.end));
+    if (!Number.isFinite(boundedStart) || !Number.isFinite(boundedEnd) || boundedEnd - boundedStart < 0.08) return [];
+    return [{ ...item, start: boundedStart, end: boundedEnd }];
+  });
+  return { ...(raw as Record<string, unknown>), segments };
+}
+
 export async function readMaterialBytes(body: AsyncIterable<Uint8Array>, options: { limit?: number; timeoutMs?: number; cancel?: () => void | Promise<unknown> } = {}): Promise<Buffer> {
   const iterator = body[Symbol.asyncIterator]();
   const chunks: Buffer[] = [];
@@ -102,10 +138,21 @@ export async function analyzeProductionMaterial(asset: AssetCandidate, tenantId:
       // action boundaries instead of asking every production task to re-analyse.
       const frameBudget = Math.max(18, Math.min(48, Math.ceil(resolved.duration * 2)));
       const frames = await extractQwenAnalysisFrames(proxy, frameBudget, resolved.duration);
-      const draft = await analyzeMaterialFramesWithQwen({frames,duration:resolved.duration});
-      normalizeMaterialObservations(asset.id,resolved.duration,draft);
-      const reviewed = await verifyMaterialFramesWithQwen({frames,duration:resolved.duration,draft});
-      segments = normalizeMaterialObservations(asset.id,resolved.duration,reviewed);
+      const batches = materialFrameBatches(frames, resolved.duration);
+      const reviewedSegments: Array<Record<string, unknown>> = [];
+      for (const batch of batches) {
+        const draftRaw = await analyzeMaterialFramesWithQwen({ frames: batch.frames, duration: resolved.duration,
+          windowStart: batch.start, windowEnd: batch.end });
+        const draft = boundMaterialAnalysisToWindow(draftRaw, batch.start, batch.end);
+        normalizeMaterialObservations(asset.id, resolved.duration, draft);
+        const reviewedRaw = await verifyMaterialFramesWithQwen({ frames: batch.frames, duration: resolved.duration, draft,
+          windowStart: batch.start, windowEnd: batch.end });
+        const reviewed = boundMaterialAnalysisToWindow(reviewedRaw, batch.start, batch.end);
+        reviewedSegments.push(...normalizeMaterialObservations(asset.id, resolved.duration, reviewed));
+      }
+      segments = reviewedSegments
+        .sort((left, right) => Number(left.start) - Number(right.start))
+        .map((segment, index) => ({ ...segment, id: `${asset.id}-segment-${index + 1}` }));
     } else segments = productionAnalysisSegments(asset.id, resolved.duration, await analyzeMaterialVideo(proxy, fs.readFileSync(proxy), resolved.duration));
     segments = await enrichMaterialSegmentsWithEditBoundaries({ inputPath: file, duration: resolved.duration, segments });
     if (!allowReview && !evidenceClips({ ...asset, duration: resolved.duration, segments }).length) throw Error('production_input_required:视频分析缺少已确认的可用片段，请复核素材分析');

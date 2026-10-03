@@ -376,6 +376,7 @@ export interface StudioProject {
   createdAt: string;
   updatedAt: string;
 }
+const studioProjectRevisions = new Map<string, string>();
 export interface VariationBatch {
   id: string;
   title: string;
@@ -768,13 +769,23 @@ export const studioApi = {
       const r = await fetch('/api/overseas/studio/projects', { headers: authHeader() });
       if (!r.ok) throw new Error(String(r.status));
       const data = await r.json();
-      return Array.isArray(data) ? (data as StudioProject[]) : [];
+      const projects = Array.isArray(data) ? (data as StudioProject[]) : [];
+      projects.forEach(project => studioProjectRevisions.set(project.id, project.updatedAt));
+      return projects;
     } catch {
       return [];
     }
   },
-  saveProject: (b: { id?: string; title: string; status: 'draft' | 'ready_for_approval' | 'published' | 'template'; spec: Record<string, unknown>; thumbSeed?: string }) =>
-    post<{ ok: boolean; project: StudioProject }>('projects', b, { ok: false, project: null as unknown as StudioProject }),
+  saveProject: async (b: { id?: string; title: string; status: 'draft' | 'ready_for_approval' | 'published' | 'template'; spec: Record<string, unknown>; thumbSeed?: string; baseUpdatedAt?: string }) => {
+    const baseUpdatedAt = b.id ? b.baseUpdatedAt || studioProjectRevisions.get(b.id) : undefined;
+    const result = await post<{ ok: boolean; project: StudioProject; error?: string; code?: string }>(
+      'projects',
+      { ...b, ...(baseUpdatedAt ? { baseUpdatedAt } : {}) },
+      { ok: false, project: null as unknown as StudioProject },
+    );
+    if (result.ok && result.project?.id) studioProjectRevisions.set(result.project.id, result.project.updatedAt);
+    return result;
+  },
   deleteProject: (id: string) => del(`projects/${id}`),
   createVariationBatch: (b: { title: string; templateProjectId?: string; duration: number; maxItems: number; dimensions: Record<string, string[]>; plan?: VariationBatch['plan'] }) =>
     post<{ ok: boolean; batch: VariationBatch }>('variation-batches', b, { ok: false, batch: null as unknown as VariationBatch }),

@@ -581,7 +581,9 @@ export default function App() {
       if (nextPage === 'smartAssets') {
         setSmartAssetsView(detail.view === 'publish' ? 'publish' : 'create');
         setSmartAssetsCreateRequest(detail.contentCreationRequest || null);
-        setSmartAssetsStudioOpen(detail.studioPanel === 'projects' || detail.directStudio === true);
+        setSmartAssetsStudioOpen(detail.studioPanel === 'projects'
+          || detail.directStudio === true
+          || Boolean(detail.contentCreationRequest));
         if (detail.studioPanel === 'projects') setOpenProjectsSignal(current => current + 1);
         const runId = String(detail.workflowRunId || '').trim();
         const taskId = String(detail.workflowTaskId || '').trim();
@@ -620,6 +622,25 @@ export default function App() {
       },
     }, '', freshUrl);
   }, []);
+  const handleOpenContentCreationHome = useCallback((openChooser = false) => {
+    setSocialContentNavigation(null);
+    setActiveSocialContentTaskId(null);
+    setSmartAssetsWorkflowContext(null);
+    setSmartAssetsCreateRequest(null);
+    setSmartAssetsStudioOpen(false);
+    setSmartAssetsView('create');
+    handleNavigate('smartAssets');
+    const freshUrl = new URL(window.location.href);
+    freshUrl.searchParams.delete('project');
+    const nextHistoryState = { ...window.history.state };
+    delete nextHistoryState.socialContentTaskId;
+    delete nextHistoryState.socialContentPage;
+    window.history.replaceState({
+      ...nextHistoryState,
+      productionDetail: { page: 'smartAssets', view: 'create' },
+    }, '', freshUrl);
+    if (openChooser) window.setTimeout(() => window.dispatchEvent(new CustomEvent('lingshu:open-content-creation')), 0);
+  }, [handleNavigate]);
   const restoreFor = (a: AgentType) => (restore && restore.agent === a ? restore : undefined);
   const kickoffFor = (a: AgentType) => (kickoff && kickoff.agent === a ? { text: kickoff.text, key: kickoff.key } : undefined);
 
@@ -754,7 +775,12 @@ export default function App() {
     : null;
   // 这个判断不能依赖当前是否正显示 smartAssets；否则切去别页时会在隐藏状态下
   // 把“我的创作”和制作工作台互换并卸载，回来后就丢失最后操作位置。
-  const showSocialContentPlanning = smartAssetsView === 'create' && !smartAssetsContentTaskId && !smartAssetsWorkflowContext && !smartAssetsStudioOpen;
+  const showSocialContentPlanning = page === 'smartAssets'
+    && smartAssetsView === 'create'
+    && !smartAssetsContentTaskId
+    && !smartAssetsWorkflowContext
+    && !smartAssetsCreateRequest
+    && !smartAssetsStudioOpen;
 
 
   return (
@@ -887,6 +913,7 @@ export default function App() {
                   storageScope={session.tenant?.id || session.user.tenantId}
                   workflowContextSignal={smartAssetsWorkflowContext}
                   socialContentTaskId={smartAssetsContentTaskId}
+                  onOpenCreationHome={handleOpenContentCreationHome}
                 />
               )}
             </div>

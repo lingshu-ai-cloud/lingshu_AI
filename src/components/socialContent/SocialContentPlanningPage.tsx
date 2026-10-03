@@ -7,6 +7,7 @@ import SocialCreationWorkbench, {
   type SocialCreationWorkbenchSeed,
   type SocialCreationWorkbenchSubmit,
 } from './SocialCreationWorkbench';
+import SocialContentHistoryHome from './SocialContentHistoryHome';
 import { loadSocialContentStage, readSocialContentStage, type SocialContentStageProfile } from '../../lib/socialContentStage';
 
 type PlanningView = 'workbench' | 'creations';
@@ -48,7 +49,7 @@ export default function SocialContentPlanningPage({
   initialCreateRequest?: SocialContentCreateRequest | null;
 }) {
   const [view, setView] = useState<PlanningView>(initialCreateRequest ? 'workbench' : 'creations');
-  const [chooserOpen, setChooserOpen] = useState(!taskOnly && !initialCreateRequest);
+  const [chooserOpen, setChooserOpen] = useState(false);
   const [stageProfile, setStageProfile] = useState<SocialContentStageProfile | null>(() => readSocialContentStage());
   const [launch, setLaunch] = useState<SocialContentLaunchOptions | null>(() => initialCreateRequest ? {
     creationPath: creationPathFromRequest(initialCreateRequest),
@@ -77,6 +78,13 @@ export default function SocialContentPlanningPage({
     setChooserOpen(false);
     setView('workbench');
   }, [initialCreateRequest]);
+
+  useEffect(() => {
+    if (taskOnly) return undefined;
+    const openChooser = () => setChooserOpen(true);
+    window.addEventListener('lingshu:open-content-creation', openChooser);
+    return () => window.removeEventListener('lingshu:open-content-creation', openChooser);
+  }, [taskOnly]);
 
   const startCreation = (options: SocialContentLaunchOptions) => {
     setLaunch(options);
@@ -163,11 +171,7 @@ export default function SocialContentPlanningPage({
               <div><p className="text-[10px] font-black uppercase tracking-[0.14em] text-accent">内容制作</p><h1 className="mt-1 text-xl font-black text-text-primary">我的创作</h1><p className="mt-1 text-xs text-text-muted">查看正在生成的任务、制作进度和待验收内容。</p></div>
               <button type="button" onClick={() => setChooserOpen(true)} className="inline-flex items-center gap-2 rounded-xl bg-[#173d31] px-4 py-2.5 text-xs font-black text-white shadow-sm hover:bg-[#245644]"><ImagePlus size={15} />新建内容</button>
             </header>
-            <SocialContentWorkspace
-              onNavigate={onNavigate}
-              onNavigateWithTask={onNavigateWithTask}
-              onRequestCreate={() => setChooserOpen(true)}
-            />
+            <SocialContentHistoryHome onRequestCreate={() => setChooserOpen(true)} />
           </main>
         </div>
       )}

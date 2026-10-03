@@ -255,9 +255,9 @@ for (const [page, component] of [
   ['socialInspiration', 'TrafficPage'],
   ['conversion', 'ConversionPage'],
 ] as const) {
-  assert.match(appSource, new RegExp(`\\{page === '${page}' && \\([\\s\\S]*?<${component}`), `starter mode must keep the original ${page} product page`);
+  assert.match(appSource, new RegExp(`\\{\\(page === '${page}' \\|\\| mountedPages\\.has\\('${page}'\\)\\) && \\([\\s\\S]*?<${component}`), `starter mode must keep the original ${page} product page`);
 }
-assert.match(appSource, /\{\(page === 'smartAssets' \|\| smartAssetsMounted\) && \(/, 'starter mode must keep the original content studio');
+assert.match(appSource, /\{\(page === 'smartAssets' \|\| mountedPages\.has\('smartAssets'\) \|\| smartAssetsMounted\) && \(/, 'starter mode must keep the original content studio');
 assert.doesNotMatch(appSource, /StarterProductionSitePage/, 'starter pages must no longer replace the original product UI with a simplified projection');
 assert.match(appSource, /starterMode && page !== 'digitalEmployees'[\s\S]*?<StarterWorkflowContextBar/, 'restored pages must explain their position in the AI workflow');
 assert.match(appSource, /!starterMode && !isAgentProductionSession\(\) && <GlobalAssistant/, 'starter mode must remove the parallel chat launcher');

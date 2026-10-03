@@ -10,12 +10,15 @@ import {
   fitTimelineToVoiceover,
   fitTimelineToVoiceoverCues,
   matchMaterialsToStoryboardLocally,
+  isProductionEligibleClip,
+  isAutomaticViralMaterialCandidate,
   referenceProductSlots,
   resolveWorkbenchSeekTime,
   visualShotRoute,
 } from './AiCreateStudio.js';
 
 assert.equal(visualShotRoute({ title: '工厂人物', detail: '画面：工厂工人背影巡检\n口播：销售介绍产品' }), 'material', 'B-roll 画外音不应强制数字人');
+assert.equal(visualShotRoute({ title: '工厂实拍', detail: '画面：穿蓝色防护服女性在车间中央行走，身后有多名工人操作设备；近景特写，固定镜头\n口播：We support packaging.' }), 'material', '背景或工序人物不是对镜口播主体，不能路由到数字人');
 assert.equal(visualShotRoute({ title: '销售口播', detail: '画面：销售正面面对镜头说话\n口播：欢迎了解' }), 'presenter', '正面销售口播保持数字人身份');
 assert.equal(visualShotRoute({ title: '首镜', detail: '画面：销售转身走向产品\n口播：欢迎了解' }), 'motion', '动作镜头应进入动作路线');
 assert.equal(visualShotRoute({ title: '女性左手举至镜头前', detail: '画面：女性左手举至镜头前\n口播：今天看看这款产品' }), 'motion', '首镜举手动作须显示 Seedance 入口');
@@ -31,6 +34,11 @@ assert.equal(storyboardFactoryReferenceRequired(specificFactorySlot.detail), tru
 assert.equal(matchMaterialsToStoryboardLocally([taggedFactoryClip], [specificFactorySlot], [], { allowSemanticMetadata: true })[specificFactorySlot.id],
   taggedFactoryClip.id, '没有工厂图片时，本地工厂视频仍可在匹配素材模式直接选用');
 assert.equal(matchMaterialsToStoryboardLocally([untaggedFactoryClip], [factoryProofSlot], [], { allowSemanticMetadata: true })[factoryProofSlot.id], untaggedFactoryClip.id, '仅视觉主题命中也可匹配');
+assert.deepEqual(
+  matchMaterialsToStoryboardLocally([taggedFactoryClip], [factoryProofSlot], [], { requireSegmentEvidence: true }),
+  {},
+  '成片自动匹配不能用文件夹和标签代替可定位的画面片段证据',
+);
 assert.equal(assessMaterialMatch(factoryProofSlot, taggedFactoryClip, '9:16').score, 100, '两项语义都匹配为满分');
 const inlineFactorySlot = { ...factoryProofSlot, detail: '画面：自动化灌装机正在向白色瓶口注液；中景，固定镜头 镜头功能：demonstration 口播：无' };
 const fillingClip = { ...untaggedFactoryClip, folder: 'social', duration: 6, segments: [{
@@ -40,6 +48,11 @@ const fillingClip = { ...untaggedFactoryClip, folder: 'social', duration: 6, seg
 }] } as any;
 assert.equal(assessMaterialMatch(inlineFactorySlot, fillingClip, '9:16').score, 100, '同一行分镜字段应提取镜头功能并匹配已标注的灌装素材');
 assert.equal(matchMaterialsToStoryboardLocally([fillingClip], [inlineFactorySlot], [], { allowSemanticMetadata: true })[inlineFactorySlot.id], fillingClip.id);
+assert.equal(
+  matchMaterialsToStoryboardLocally([fillingClip], [inlineFactorySlot], [], { requireSegmentEvidence: true })[inlineFactorySlot.id],
+  fillingClip.id,
+  '工厂实拍按同一已分析片段里的主体和工序证据进入成片匹配',
+);
 const factoryStaffSlot = { ...factoryProofSlot, id: 'factory-staff', detail: '画面：两人穿白大褂，左侧低头操作，右侧持小瓶指认；近景特写 镜头功能：demonstration 口播：无' };
 const singleWorkerClip = { ...fillingClip, id: 'single-worker', segments: [{
   ...fillingClip.segments[0], subject: ['工人'], action: '一名工人在工厂产线分拣产品',
@@ -55,7 +68,7 @@ const displaySlot = { ...factoryProofSlot, id: 'product-display', detail: '画�
 const pumpClip = { ...singleWorkerClip, segments: [{ ...singleWorkerClip.segments[0],
   subject: ['人', '泵头瓶'], action: '按压泵头向掌心滴液', visualTopic: '产品使用演示',
   expressionPurpose: '展示产品使用方式', environment: '室内' }] };
-assert.equal(assessMaterialMatch(displaySlot, pumpClip, '9:16').score, 50,
+assert.equal(assessMaterialMatch(displaySlot, pumpClip, '9:16').score, 0,
   '产品陈列分镜不能把泵头使用画面认作同主题');
 const fillingSlot = { ...factoryProofSlot, id: 'filling-line', detail: '画面：自动化灌装机向白色瓶口注液 镜头功能：demonstration 口播：无' };
 assert.equal(assessMaterialMatch(fillingSlot, singleWorkerClip, '9:16').score, 50,
@@ -81,7 +94,7 @@ const segmentedClip = {
       subject: ['产品'], action: '产品陈列', environment: '展厅', shot: '中景', recommendedFunctions: ['建立信任'] },
   ],
 } as any;
-assert.equal(assessMaterialMatch(factoryProofSlot, segmentedClip, '9:16').score, 50, '视觉主题和表达目的分属两个片段时不能拼成满分');
+assert.equal(assessMaterialMatch(factoryProofSlot, segmentedClip, '9:16').score, 100, '通用工厂实拍不应因表达目的标签缺失而被误判');
 assert.equal(matchMaterialsToStoryboardLocally([segmentedClip], [factoryProofSlot], [], { allowSemanticMetadata: true })[factoryProofSlot.id], segmentedClip.id, '单项命中可匹配，但不能跨片段拼成满分');
 assert.equal(matchMaterialsToStoryboardLocally([purposeOnlyClip], [factoryProofSlot], [], { allowSemanticMetadata: true })[factoryProofSlot.id], purposeOnlyClip.id, '仅表达目的命中也可匹配');
 assert.deepEqual(matchMaterialsToStoryboardLocally([unrelatedClip], [factoryProofSlot], [], { allowSemanticMetadata: true }), {}, '两项均不命中仍不可匹配');
@@ -97,6 +110,24 @@ assert.notEqual(distinctBest['factory-proof'], distinctBest['factory-proof-2'], 
 assert.equal(assessMaterialMatch(factoryProofSlot, { ...segmentedClip, segments: [
   { ...segmentedClip.segments[0], recommendedFunctions: ['建立信任'] },
 ] }, '9:16').score, 100, '同一片段内两项均匹配才能自动匹配');
+assert.equal(
+  matchMaterialsToStoryboardLocally([segmentedClip], [factoryProofSlot], [], { requireSegmentEvidence: true })[factoryProofSlot.id],
+  segmentedClip.id,
+  '可定位的工厂片段只需画面主体/工序相符，表达目的用于排序而非硬拦截',
+);
+const exactBottleSlot = { ...factoryProofSlot, id: 'exact-bottle', detail: '画面：蓝银渐变玻璃瓶罐，透明磨砂质感，银色金属环装饰 镜头功能：hook 口播：无' };
+const genericProductClip = { ...fillingClip, id: 'generic-product', segments: [{ ...fillingClip.segments[0],
+  subject: ['护肤产品'], action: '多件护肤产品组合陈列', visualTopic: '产品展示', expressionPurpose: '开场吸引',
+  environment: '展台', productVisible: true, productClarity: 'high', recommendedFunctions: ['hook'],
+}] };
+assert.equal(assessMaterialMatch(exactBottleSlot, genericProductClip, '9:16').level, 'review', '通用产品陈列不能冒充特定颜色、材质和瓶型');
+assert.deepEqual(matchMaterialsToStoryboardLocally([genericProductClip], [exactBottleSlot], [], { requireSegmentEvidence: true }), {}, '产品外观证据不足时一键匹配必须留空');
+const kickoff = { video: { videoUrl: '/api/overseas/videos/reference/media-url?token=old' } } as any;
+assert.equal(isProductionEligibleClip({ ...fillingClip, id: 'reference', url: '/api/overseas/videos/reference/media-url?token=new' }, kickoff), false, '当前爆款原片不能被当作企业生产素材');
+assert.equal(isProductionEligibleClip({ ...fillingClip, id: 'licensed', url: '/media/factory.mp4', usage: 'reference_only' }, null), false, '仅供分析素材不能进入成片');
+assert.equal(isProductionEligibleClip({ ...fillingClip, id: 'owned', url: '/media/owned-factory.mp4', usage: 'editable' }, kickoff), true, '企业可编辑素材仍可参与匹配');
+assert.equal(isAutomaticViralMaterialCandidate({ ...fillingClip, id: 'avatar-output', sourceType: 'digital_human', usage: 'editable' }, kickoff), false, '普通爆款 B-roll 一键匹配不能复用历史数字人视频');
+assert.equal(isAutomaticViralMaterialCandidate({ ...fillingClip, id: 'owned-factory', sourceType: 'tenant_upload', usage: 'editable' }, kickoff), true, '企业上传的工厂实拍可以参与爆款 B-roll 匹配');
 assert.equal(detectSourceSpeechLanguageCode('Are you too smart with 慧妆 foundation? Let us show you the factory.'), 'en');
 const speechPlan = buildReferenceSpeechPlan({ referenceAnalysis: { narrationSourceStatus: 'asr_aligned', details: [
   { shotId: 'replication-a', time: '0-2s', shot: '工厂人物', camera: '', visual: '人物口播', speechLines: [{ lineId: 'line-1', referenceText: 'Original brand.', draftText: 'Enterprise brand.', sourceStartSeconds: 0.2, sourceEndSeconds: 2.4, narrationOwnerShotId: 'replication-a', visualShotIds: ['replication-a', 'replication-b'] }] },

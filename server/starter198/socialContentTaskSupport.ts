@@ -256,9 +256,7 @@ export async function groundedScriptBaseline(input: {
   previous?: StoredSocialScriptBaseline | null;
 }): Promise<StoredSocialScriptBaseline> {
   const profile = await readTenantEnterpriseProfile(input.tenantId).catch(() => null);
-  const verifiedContext = profile
-    ? verifiedSocialScriptContext(profile, input.brief.productId || input.brief.productRef)
-    : { productName: null, facts: [], source: 'none' as const, confidence: 0 };
+  const verifiedContext = verifiedSocialScriptContext(profile, input.brief.productId || input.brief.productRef);
   const inspiration = input.theme.themeId
     ? await resolveSocialInspirationScript({ tenantId: input.tenantId, themeId: input.theme.themeId, verifiedContext })
     : null;
@@ -292,9 +290,7 @@ export async function refreshSocialTaskReferenceOutputs(input: {
   if (!detail) throw new SocialContentWorkflowError('social_content_task_not_found', 404);
   const references = detail.sources.filter(source => source.status === 'active' && source.kind === 'reference_link');
   const profile = await readTenantEnterpriseProfile(input.tenantId).catch(() => null);
-  const verifiedContext = profile
-    ? verifiedSocialScriptContext(profile, summary.brief.productId || summary.brief.productRef)
-    : { productName: null, facts: [], source: 'none' as const, confidence: 0 };
+  const verifiedContext = verifiedSocialScriptContext(profile, summary.brief.productId || summary.brief.productRef);
   let resolved: ResolvedSocialTaskReference | null = null;
   if (references.length) {
     resolved = await (input.referenceResolver ?? resolveSocialTaskReferenceScript)({

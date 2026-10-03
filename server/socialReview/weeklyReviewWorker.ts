@@ -326,7 +326,13 @@ export function initSocialWeeklyReviewWorker(): void {
   const tick = () => {
     if (running) return;
     running = true;
-    void runSocialWeeklyReviewScan().finally(() => { running = false; });
+    void runSocialWeeklyReviewScan()
+      .catch(error => {
+        // Preview data may be temporarily unavailable during startup or schema
+        // migration. A background review scan must never terminate the API.
+        console.error('[social-weekly-review] scan unavailable:', text(error instanceof Error ? error.message : error).slice(0, 300));
+      })
+      .finally(() => { running = false; });
   };
   timer = setInterval(tick, intervalMs);
   timer.unref?.();

@@ -77,6 +77,13 @@ export interface BusinessSnapshot {
     platformBreakdown: Array<{ platform: string; accounts: number; views: number | null; likes: number | null; comments: number | null; shares: number | null; status: DataAvailability }>;
     dailyTrend: Array<{ date: string; views: number | null; interactions: number | null }>;
   };
+  ads?: {
+    status: DataAvailability;
+    source: string;
+    note: string;
+    latestReportedAt: string | null;
+    spendByCurrency: Array<{ currency: string; amount: number; rows: number }>;
+  };
   next24Hours: Array<{
     id: string;
     kind: 'automation' | 'publish' | 'followup';
@@ -287,7 +294,7 @@ export async function buildBusinessSnapshot(
   const nowMs = now.getTime();
   const nextDay = nowMs + 24 * 60 * 60 * 1000;
 
-  const [profile, scheduledResult, videoResult, projectResult, postResult, socialResult, youtubeResult, segmentResult, batchResult, recipientResult, interactionResult, qualificationResult, learningResult, socialMetricSnapshots, orderResult] = await Promise.all([
+  const [profile, scheduledResult, videoResult, projectResult, postResult, socialResult, youtubeResult, segmentResult, batchResult, recipientResult, interactionResult, qualificationResult, learningResult, socialMetricSnapshots, orderResult, adMetricResult] = await Promise.all([
     readTenantEnterpriseProfile(tenantId).catch(() => null),
     store.list<GenericRecord>('scheduled_tasks', { where: { tenant_id: tenantId }, perPage: 500 }).catch(() => ({ items: [] } as { items: GenericRecord[] })),
     store.list<GenericRecord>('trend_videos', { where: { tenantId }, perPage: 500, sort: '-crawledAt' }).catch(() => ({ items: [] } as { items: GenericRecord[] })),
@@ -303,6 +310,7 @@ export async function buildBusinessSnapshot(
     store.list<GenericRecord>('social_creative_learnings', { where: { tenant_id: tenantId }, perPage: 500, sort: '-created_at' }).then(result => ({ ...result, failed: false })).catch(() => ({ items: [], failed: true } as { items: GenericRecord[]; failed: boolean })),
     listSocialMetricSnapshots(tenantId).catch(() => []),
     readOrders(tenantId).then(items => ({ items, failed: false })).catch(() => ({ items: [], failed: true })),
+    store.list<GenericRecord>('platform_ad_metric_snapshots', { where: { tenant_id: tenantId }, perPage: 1000, sort: '-date' }).then(result => ({ ...result, failed: false })).catch(() => ({ items: [], failed: true } as { items: GenericRecord[]; failed: boolean })),
   ]);
 
   const customers = getWhatsAppCustomers(tenantId);
@@ -401,6 +409,22 @@ export async function buildBusinessSnapshot(
     for (const point of buildDailyTotals(connectedMetricSnapshots, key).filter(point => point.date >= startDay && point.date <= endDay)) interactionPoints.set(point.date, (interactionPoints.get(point.date) || 0) + point.value);
   }
   const dailyTrend = [...new Set([...viewPoints.keys(), ...interactionPoints.keys()])].sort().map(date => ({ date, views: viewPoints.get(date) ?? null, interactions: interactionPoints.get(date) ?? null }));
+  const adRows = adMetricResult.items.filter(item => {
+    const date = String(item.date || '');
+    return date >= startDay && date <= endDay && !syntheticRecord(item, jsonObject(item.values));
+  });
+  const spendByCurrency = [...adRows.reduce((totals, item) => {
+    const currency = String(item.currency || '').toUpperCase();
+    const spend = Number(jsonObject(item.values).spend);
+    if (!/^[A-Z]{3}$/.test(currency) || !Number.isFinite(spend) || spend < 0) return totals;
+    const current = totals.get(currency) || { currency, amount: 0, rows: 0 };
+    current.amount += spend;
+    current.rows += 1;
+    totals.set(currency, current);
+    return totals;
+  }, new Map<string, { currency: string; amount: number; rows: number }>()).values()]
+    .map(item => ({ ...item, amount: Math.round(item.amount * 100) / 100 }))
+    .sort((left, right) => left.currency.localeCompare(right.currency));
 
   const readiness: BusinessReadinessItem[] = [
     { key: 'enterprise', label: '企业资料', status: enterpriseReady ? 'ready' : 'incomplete', count: null, page: 'enterprise', note: enterpriseReady ? '企业与行业信息可用于任务上下文' : '需要补齐企业名称和行业' },
@@ -444,6 +468,8 @@ export async function buildBusinessSnapshot(
   if (interactionResult.failed) dataGaps.push('互动回写存储不可用，评论和询盘复盘指标暂不可用');
   else if (!weekInteractions.length) dataGaps.push('本周期尚无忠实回写的评论、私信、表单或询盘记录');
   if (!learningResult.failed && !learningResult.items.length) dataGaps.push('尚未形成带样本边界和证据引用的 CreativeLearning');
+  if (adMetricResult.failed) dataGaps.push('投放指标快照读取失败，投流消耗暂不可用');
+  else if (!adRows.length) dataGaps.push('本周期尚无已同步的平台投放指标快照，不把缺失消耗显示为 0');
 
   const attributedCustomers = customers.filter(customer => customer.sourcePostId || customer.sourceTrackCode || String(customer.source || '').startsWith('whatsapp_from_')).length;
   const customersWithVerifiedAiReply = customers.filter(customer => (
@@ -506,6 +532,15 @@ export async function buildBusinessSnapshot(
       profileViews: socialMetric('profileViews'),
       platformBreakdown,
       dailyTrend,
+    },
+    ads: {
+      status: adMetricResult.failed ? 'unavailable' : adRows.length ? 'available' : 'pending',
+      source: 'platform_ad_metric_snapshots.values.spend',
+      note: adMetricResult.failed
+        ? '投放指标快照读取失败'
+        : adRows.length ? '来自 Meta / TikTok 已同步的平台日指标；不同币种不合并' : '本周期尚无已同步投放指标，不补零',
+      latestReportedAt: adRows.map(item => String(item.reportedAt || item.updatedAt || '')).filter(Boolean).sort().at(-1) || null,
+      spendByCurrency,
     },
     next24Hours,
     attribution: { attributedCustomers, postsWithInquiries, status: posts.length && customers.length ? 'available' : 'pending' },

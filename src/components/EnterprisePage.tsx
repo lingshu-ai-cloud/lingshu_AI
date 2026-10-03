@@ -1,7 +1,7 @@
 import { useState, useEffect, useId, useRef } from 'react';
 import EnterprisePresenters from './enterprise/EnterprisePresenters';
 import { motion } from 'motion/react';
-import { Building2, Package, Megaphone, BookOpen, Save, CheckCircle2, Loader2, Compass, Zap, MessageSquare, RotateCcw, Plus, Upload, X, Image, FileText, FileSpreadsheet, Bell, ChevronDown, ChevronLeft, ChevronRight, Globe2, ShieldCheck, type LucideIcon } from 'lucide-react';
+import { Building2, Package, Megaphone, BookOpen, Save, CheckCircle2, Loader2, Compass, Zap, MessageSquare, RotateCcw, Plus, Upload, X, Image, FileText, FileSpreadsheet, Bell, ChevronDown, ChevronLeft, ChevronRight, Globe2, ShieldCheck, ArrowRight, type LucideIcon } from 'lucide-react';
 import { authHeader } from '../lib/auth';
 import { completeDemoStep } from '../lib/demoProgress';
 import {
@@ -136,6 +136,7 @@ type CooperationRoute = 'oem_odm' | 'wholesale_distribution' | 'consumer_retail'
 type SocialStrategy = { enabledRoutes: CooperationRoute[]; routeStrategies: Partial<Record<CooperationRoute, { targetBuyerRoles: string[]; primaryCta: string }>>; manuallyEditedFields?: string[] };
 
 interface Profile {
+  factVersion?: { id: string; revision: number; contentHash: string; confirmedAt: string; confirmedBy: string };
   company: { name: string; industry: string; companyType?: string; mainMarkets: string; primaryLanguages?: string; socialPlatformExperience?: string; founded: string; description: string };
   socialStrategy?: SocialStrategy;
   products: { categories: string; searchKeywords?: string; priceRange: string; moq: string; certifications: string; highlights: string; items?: ProductItem[] };
@@ -256,6 +257,14 @@ const CHANNEL_OPTIONS: Array<{ value: NotificationChannel; label: string }> = [
 ];
 
 type SectionKey = 'products' | 'materials' | 'bizRules' | 'faq' | 'market' | 'company';
+type EnterpriseCompletenessTodo = {
+  id: string;
+  kind: 'product_image' | 'price' | 'certificate' | 'market';
+  label: string;
+  description: string;
+  view: 'products' | 'company';
+  productIndex?: number;
+};
 
 function splitTokens(value?: string): string[] {
   return String(value ?? '').split(/[、,，;；\n]+/).map(item => item.trim()).filter(Boolean);
@@ -431,6 +440,35 @@ export function sectionCompletion(profile: Profile): Record<SectionKey, boolean>
     market: Boolean(profile.company.mainMarkets.trim() && profile.company.primaryLanguages?.trim()),
     company: profile.company.description.trim().length >= 50,
   };
+}
+
+export function enterpriseProfileCompleteness(profile: Profile): {
+  percentage: number;
+  completed: number;
+  total: 4;
+  todos: EnterpriseCompletenessTodo[];
+} {
+  const namedProducts = normalizeProductItems(profile.products)
+    .map((item, index) => ({ item, index }))
+    .filter(({ item, index }) => Boolean(item.name.trim() && item.name.trim() !== `产品${index + 1}`));
+  const missingImage = namedProducts.find(({ item }) => !(item.imageUrl?.trim() || (item.images?.length ?? 0) > 0));
+  const missingPrice = namedProducts.find(({ item }) => !(item.priceRange?.trim() || item.retailPrice?.trim() || item.tagPrice?.trim()));
+  const missingCertificate = namedProducts.find(({ item }) => !(
+    item.certifications?.trim() || (item.certificateImages?.length ?? 0) > 0 || (item.documents?.length ?? 0) > 0
+  ));
+  const imageReady = namedProducts.length > 0 && !missingImage;
+  const priceReady = Boolean(profile.products.priceRange.trim() || profile.bizRules?.priceRange?.trim())
+    || (namedProducts.length > 0 && !missingPrice);
+  const certificateReady = Boolean(profile.products.certifications.trim())
+    || (namedProducts.length > 0 && !missingCertificate);
+  const marketReady = Boolean(profile.company.mainMarkets.trim() && profile.company.primaryLanguages?.trim());
+  const todos: EnterpriseCompletenessTodo[] = [];
+  if (!imageReady) todos.push({ id: `image-${missingImage?.index ?? 0}`, kind: 'product_image', label: '补产品图', description: missingImage?.item.name ? `${missingImage.item.name} 缺少产品图` : '先添加产品并上传产品图', view: 'products', ...(missingImage ? { productIndex: missingImage.index } : {}) });
+  if (!priceReady) todos.push({ id: `price-${missingPrice?.index ?? 0}`, kind: 'price', label: '补价格', description: missingPrice?.item.name ? `${missingPrice.item.name} 缺少参考价格` : '补充产品或内部参考价格', view: 'products', ...(missingPrice ? { productIndex: missingPrice.index } : {}) });
+  if (!certificateReady) todos.push({ id: `certificate-${missingCertificate?.index ?? 0}`, kind: 'certificate', label: '补证书', description: missingCertificate?.item.name ? `${missingCertificate.item.name} 缺少认证或资质凭证` : '补充认证或上传资质凭证', view: 'products', ...(missingCertificate ? { productIndex: missingCertificate.index } : {}) });
+  if (!marketReady) todos.push({ id: 'market', kind: 'market', label: '补市场信息', description: '补充目标市场和主要沟通语言', view: 'company' });
+  const completed = 4 - todos.length;
+  return { percentage: completed * 25, completed, total: 4, todos };
 }
 
 function Toggle({ checked, onChange, disabled }: { checked: boolean; onChange: (checked: boolean) => void; disabled?: boolean }) {
@@ -919,6 +957,7 @@ export default function EnterprisePage() {
   const visibleFaqs = faqItems.slice((faqPage - 1) * PAGE_SIZE, faqPage * PAGE_SIZE);
   const assetStats = productAssetStats(products);
   const completions = sectionCompletion(profile);
+  const profileCompleteness = enterpriseProfileCompleteness(profile);
   const notificationCompleted = Boolean((profile.notifications?.receivers ?? []).length >= 1 && profile.notifications?.lastTestAt);
   const approvedFaqCount = (profile.faq ?? []).filter(item => item.approvedForAuto && item.question.trim() && item.answer.trim()).length;
   const customerServiceEnabled = profile.customerService?.enabled === true;
@@ -1305,7 +1344,12 @@ export default function EnterprisePage() {
       const profileToSave = normalizeEnterpriseProfile(profile);
       const response = await fetch('/api/overseas/enterprise/profile', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-enterprise-save-source': 'enterprise_center', ...authHeader() },
+        headers: {
+          'Content-Type': 'application/json',
+          'x-enterprise-save-source': 'enterprise_center',
+          ...(profile.factVersion?.contentHash ? { 'If-Match': `"${profile.factVersion.contentHash}"` } : {}),
+          ...authHeader(),
+        },
         body: JSON.stringify(profileToSave),
       });
       const result = await response.json().catch(() => ({}));
@@ -1320,8 +1364,9 @@ export default function EnterprisePage() {
       if (expectedProducts.length !== verifiedProducts.length || expectedProducts.some(item => !verifiedProductNames.has(item.name.trim()))) {
         throw new Error('产品资料保存后校验失败，请重试');
       }
-      persistedProfileRef.current = profileSnapshot(profileToSave);
-      setProfile(profileToSave);
+      const confirmedProfile = normalizeEnterpriseProfile(verified as Profile);
+      persistedProfileRef.current = profileSnapshot(confirmedProfile);
+      setProfile(confirmedProfile);
       setSaved(true);
       setTimeout(() => setSaved(false), 2500);
     } catch (error) {
@@ -1332,10 +1377,10 @@ export default function EnterprisePage() {
   };
 
   useEffect(() => {
-    if (loading || saving || !hasUnsavedChanges) return;
+    if (loading || saving || !hasUnsavedChanges || saveError) return;
     const timer = window.setTimeout(() => { void handleSave(); }, 900);
     return () => window.clearTimeout(timer);
-  }, [profile, loading, saving, hasUnsavedChanges]);
+  }, [profile, loading, saving, hasUnsavedChanges, saveError]);
 
   const importOrderCsv = async (file: File | null) => {
     if (!file) return;
@@ -1474,6 +1519,27 @@ export default function EnterprisePage() {
     url.searchParams.set('productId', params.productId);
     url.searchParams.set('productRef', params.productRef);
     window.history.replaceState({ ...window.history.state, productionDetail: detail }, '', url);
+  };
+
+  const openCompletenessTodo = (todo: EnterpriseCompletenessTodo) => {
+    setEnterpriseArea('facts');
+    if (todo.kind === 'product_image' && todo.productIndex !== undefined && products[todo.productIndex]) {
+      openProductMaterials(products[todo.productIndex]!);
+      return;
+    }
+    setKnowledgeView(todo.view);
+    if (todo.productIndex !== undefined) {
+      setProductPage(Math.floor(todo.productIndex / PAGE_SIZE) + 1);
+      setExpandedProductIndexes(previous => new Set(previous).add(todo.productIndex!));
+    }
+    window.setTimeout(() => {
+      const target = todo.kind === 'market'
+        ? document.getElementById('enterprise-language-settings')
+        : document.getElementById(`enterprise-product-${todo.productIndex ?? 0}-${todo.kind}`)
+          || document.getElementById(`enterprise-product-${todo.productIndex ?? 0}`);
+      target?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      target?.querySelector<HTMLElement>('input,button,textarea,select')?.focus({ preventScroll: true });
+    }, 100);
   };
 
   const aiAutonomySection = (
@@ -1830,6 +1896,23 @@ export default function EnterprisePage() {
 
       <div className="flex-1 overflow-y-auto">
         <div className="mx-auto max-w-5xl space-y-5 px-6 py-5">
+          <section className="rounded-xl border border-emerald-200 bg-gradient-to-r from-emerald-50 to-white p-4" aria-label="企业资料完整度">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex items-center gap-3">
+                <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full border-4 border-emerald-100 bg-white text-sm font-black text-emerald-700">{profileCompleteness.percentage}%</div>
+                <div>
+                  <div className="flex flex-wrap items-center gap-2"><h2 className="text-sm font-black text-text-primary">企业资料完整度</h2>{profile.factVersion && <span className="rounded-full bg-white px-2 py-1 text-[10px] font-bold text-emerald-700">事实版本 v{profile.factVersion.revision}</span>}</div>
+                  <p className="mt-1 text-xs text-text-muted">产品图、价格、证书和市场信息统一供内容、客服、报价、投放与数字员工使用。</p>
+                </div>
+              </div>
+              <span className="text-xs font-bold text-emerald-800">已完成 {profileCompleteness.completed}/{profileCompleteness.total}</span>
+            </div>
+            {profileCompleteness.todos.length > 0 ? <div className="mt-4 grid gap-2 sm:grid-cols-2">
+              {profileCompleteness.todos.map(todo => <button key={todo.id} type="button" onClick={() => openCompletenessTodo(todo)} className="flex items-center justify-between gap-3 rounded-lg border border-amber-200 bg-white px-3 py-2.5 text-left hover:border-amber-300 hover:bg-amber-50">
+                <span className="min-w-0"><span className="block text-xs font-black text-amber-900">{todo.label}</span><span className="mt-0.5 block truncate text-[11px] text-text-muted">{todo.description}</span></span><ArrowRight size={14} className="shrink-0 text-amber-700" />
+              </button>)}
+            </div> : <p className="mt-3 rounded-lg bg-emerald-100/70 px-3 py-2 text-xs font-bold text-emerald-800">关键资料已补齐，所有 Agent 将读取同一已确认版本。</p>}
+          </section>
           {enterpriseArea !== 'social' && (
             <div className="overflow-x-auto pb-0.5">
               <div className={`flex gap-6 border-b border-border ${enterpriseArea === 'facts' ? 'min-w-[360px]' : 'min-w-[680px]'}`}>
@@ -1911,6 +1994,7 @@ export default function EnterprisePage() {
                 return (
                 <details
                   key={index}
+                  id={`enterprise-product-${index}`}
                   className="group relative rounded-lg border border-border bg-surface-2/50 p-4"
                   open={expandedProductIndexes.has(index)}
                   onToggle={event => {
@@ -1940,9 +2024,9 @@ export default function EnterprisePage() {
                     <Field label="产品类目">
                       <OptionSelector value={product.category ?? ''} options={CATEGORY_OPTIONS} multiple={false} onChange={value => updateProduct(index, { category: value })} placeholder="选择产品类目" />
                     </Field>
-                    <Field label="参考价或标签价">
+                    <div id={`enterprise-product-${index}-price`}><Field label="参考价或标签价">
                       <input className={inputCls} value={product.priceRange ?? product.retailPrice ?? product.tagPrice ?? ''} onChange={e => updateProduct(index, { priceRange: e.target.value })} placeholder="$5 - $500 USD" />
-                    </Field>
+                    </Field></div>
                     <Field label="起订量">
                       <input className={inputCls} value={product.moq ?? ''} onChange={e => updateProduct(index, { moq: e.target.value })} placeholder="50 件起，支持混批" />
                     </Field>
@@ -1960,7 +2044,7 @@ export default function EnterprisePage() {
                         <Image size={13} />去我的素材
                       </button>
                     </div>
-                    <div className="rounded-lg border border-border bg-white p-3">
+                    <div id={`enterprise-product-${index}-certificate`} className="rounded-lg border border-border bg-white p-3">
                       <div className="mb-2 flex items-center justify-between gap-2">
                         <span className="inline-flex items-center gap-1.5 text-[11px] font-bold text-text-secondary"><FileText size={12} />资质凭证</span>
                         <span className="text-[10px] text-text-muted">{product.documents?.length ?? 0}/{MAX_PRODUCT_DOCUMENTS}</span>

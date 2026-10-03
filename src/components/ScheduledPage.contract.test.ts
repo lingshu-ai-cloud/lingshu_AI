@@ -78,5 +78,9 @@ assert.match(
 );
 assert.match(source, /error instanceof Error && error\.name === 'AbortError'\) return;/, 'intentional StrictMode aborts must not be presented as production failures');
 assert.match(source, /crawlTasks\.map\(task => `\$\{task\.name\} · \$\{task\.cronLabel\}`\)/, 'the social summary must use each persisted task schedule instead of a hard-coded preset');
+assert.match(source, /action: 'pause' \| 'cancel' \| 'resume' \| 'reanalyze'/, 'video analysis controls must support pause, cancel, resume and retry');
+assert.match(source, /analysis-\$\{action\}/, 'pause, cancel and resume must use the durable task-control API');
+assert.match(source, /item\.status === 'analyzing'[\s\S]{0,1400}updateVideoAnalysis\(item, 'cancel'\)/, 'a running analysis must be cancellable');
+assert.match(source, /item\.status === 'paused'[\s\S]{0,1400}updateVideoAnalysis\(item, 'resume'\)/, 'a paused analysis must be resumable');
 
 console.log('scheduled workspace contract tests passed');

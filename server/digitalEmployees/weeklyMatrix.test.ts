@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { bindMatrixVideo, fillMatrixVideos, matrixIssues, matrixScopeIssues, normalizeMatrixPlan, type MatrixAccountPlan } from '../../src/lib/weeklyMatrix.js';
+import { bindMatrixVideo, defaultMatrixPlan, fillMatrixVideos, matrixIssues, matrixScopeIssues, normalizeMatrixPlan, type MatrixAccountPlan } from '../../src/lib/weeklyMatrix.js';
 import { normalizeVideoPlan } from '../../src/lib/videoCreationPlan.js';
 import type { WeeklyPackage } from '../../src/lib/weeklyPackage.js';
 import { normalizePackage, validatePackage } from './weeklyPackage.js';
@@ -24,6 +24,8 @@ assert.deepEqual(matrixIssues(filled), []);
 assert.deepEqual(fillMatrixVideos(filled, {}, '2026-09-20'), filled, 'repeated sync must not duplicate deliverables');
 const multiple = fillMatrixVideos({ ...base, matrixPlan: [row('a', { weeklyCount: 3 })] }, {}, '2026-09-20');
 assert.equal(new Set(multiple.tasks.find(t => t.templateId === 'production')!.videoPlans!.map(plan => plan.theme)).size, 3, 'several videos for one account need distinct editable theme directions');
+const trimmed = fillMatrixVideos({ ...multiple, matrixPlan: [row('a', { weeklyCount: 1 })] }, {}, '2026-09-20');
+assert.equal(trimmed.tasks.find(t => t.templateId === 'production')!.videoPlans!.length, 1, 'matrix sync must remove surplus content slots after the weekly count is reduced');
 const pack = normalizePackage(JSON.parse(JSON.stringify(filled)));
 const plans = pack.tasks.find(t => t.templateId === 'production')!.videoPlans!;
 assert.deepEqual(plans.map(p => [p.matrix?.accountId, p.language]), [['a', 'en'], ['b', 'es']]);
@@ -39,6 +41,13 @@ assert.deepEqual(bindMatrixVideo(edited, row('a', { productName: '产品 B' })).
 assert.equal(bindMatrixVideo(edited).matrix?.accountId, '', 'unbinding explicitly makes content production-only');
 
 const config = normalizeDigitalEmployeeConfig({ companyName: '测试公司', focusProducts: '产品 A', enabledWorkflows: ['product_content', 'content_publish'], publishingTargets: targets, videoLanguages: ['en', 'zh'], socialCadence: '' });
+const planningOnly = defaultMatrixPlan({ ...config, publishingTargets: [] }, ['tiktok'], '验证短视频需求');
+assert.equal(planningOnly.length, 1, 'the video matrix must still produce a planning row before an account is connected');
+assert.equal(planningOnly[0]?.weeklyCount, 5, 'planning rows must use the real matrix weekly cadence');
+assert.equal(planningOnly[0]?.connected, false);
+const planningOnlyPack = fillMatrixVideos({ ...base, matrixPlan: planningOnly, authorization: { ...base.authorization, accountIds: [] } }, {}, '2026-09-20');
+assert.equal(planningOnlyPack.tasks.find(task => task.templateId === 'production')?.videoPlans?.length, 5);
+assert.deepEqual(matrixScopeIssues(planningOnlyPack, [], ['tiktok']), [], 'planning-only rows are valid content scope without granting publishing access');
 const goal = normalizeWeeklyGoal({ contentPlatforms: ['facebook'], videoPlans: plans, startsAt: '2026-09-14', endsAt: '2026-09-20' }, config);
 assert.deepEqual(validatePackage(pack, goal, config), []);
 const batch = buildContentBatchPlan({ goalId: 'goal', goal, config, evidence: { products: [{ id: 'prod', name: '产品 A', materialIds: ['material'] }], exactAnalysisIds: [], materialIds: ['material'] }, versions: { configVersion: 1, policyVersion: '1', factsVersion: '1' } });

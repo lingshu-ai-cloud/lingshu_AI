@@ -12,6 +12,7 @@ import type {
 } from '../../shared/contracts/socialContentWorkflow.js';
 import { inspectRenderedScenes, inspectRenderedVisuals, runVisualFfmpeg } from '../lib/renderVisualQuality.js';
 import { readMaterialLibrary, type MaterialRecord } from '../lib/materialLibrary.js';
+import { isReferenceOnlyMaterial } from '../lib/materialPolicy.js';
 import { resolveSourceDurations } from '../lib/videoSourcePlan.js';
 import {
   automationBgmAudio,
@@ -154,12 +155,13 @@ export function materialTenantId(record: MaterialRecord): string {
   return socialText(record.tenantId || record.tenant_id);
 }
 
-/** Every non-synthetic visual that is visible in the current tenant's material
- * library is production-ready. `readMaterialLibrary` remains the tenant
- * isolation boundary; legacy `reference_only` and rights-review labels are
- * metadata for the Director, not a second usability gate. */
+/** Tenant-visible visuals are production-ready unless they are explicitly
+ * analysis-only references. Missing legacy rights metadata does not block a
+ * tenant-owned material, but an inspiration/competitor source may never be
+ * promoted into an output merely because it is visible in the library. */
 export function automaticSocialMaterialEligible(record: MaterialRecord, tenantId: string): boolean {
   if (!['video', 'image'].includes(socialText(record.type))) return false;
+  if (isReferenceOnlyMaterial(record)) return false;
   return socialText(record.scope) === 'shared' || materialTenantId(record) === tenantId;
 }
 

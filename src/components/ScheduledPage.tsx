@@ -109,7 +109,7 @@ interface VideoAnalysisItem {
   platform: string;
   thumbnailUrl?: string;
   duration?: number;
-  status: 'analyzing' | 'analyzed' | 'failed' | 'paused';
+  status: 'analyzing' | 'analyzed' | 'failed' | 'paused' | 'cancelled';
   analysisMode?: string;
   updatedAt?: string;
   error?: string;
@@ -610,24 +610,29 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
     }
   }
 
-  async function updateVideoAnalysis(item: VideoAnalysisItem, action: 'pause' | 'reanalyze') {
+  async function updateVideoAnalysis(item: VideoAnalysisItem, action: 'pause' | 'cancel' | 'resume' | 'reanalyze') {
     setAnalysisActionId(item.id);
     setAnalysisActionError('');
     try {
+      const endpoint = action === 'reanalyze'
+        ? `/api/overseas/videos/${item.id}/reanalyze`
+        : `/api/overseas/videos/${item.id}/analysis-${action}`;
       const response = await fetch(
-        action === 'pause'
-          ? `/api/overseas/videos/${item.id}/analysis-pause`
-          : `/api/overseas/videos/${item.id}/reanalyze`,
+        endpoint,
         {
-          method: action === 'pause' ? 'POST' : 'PATCH',
+          method: action === 'reanalyze' ? 'PATCH' : 'POST',
           headers: { 'Content-Type': 'application/json', ...authHeader() },
-          body: action === 'reanalyze'
+          body: action === 'reanalyze' || action === 'resume'
             ? JSON.stringify({ analysisMode: item.analysisMode === 'exact' ? 'exact' : 'strategy' })
             : JSON.stringify({}),
         },
       );
       const payload = await response.json().catch(() => ({})) as { error?: string };
-      if (!response.ok) throw new Error(safeAnalysisActionMessage(payload.error, action === 'pause' ? '暂停分析失败，请稍后重试。' : '重新分析失败，请稍后重试。'));
+      const fallback = action === 'pause' ? '暂停分析失败，请稍后重试。'
+        : action === 'cancel' ? '取消分析失败，请稍后重试。'
+          : action === 'resume' ? '恢复分析失败，请稍后重试。'
+            : '重新分析失败，请稍后重试。';
+      if (!response.ok) throw new Error(safeAnalysisActionMessage(payload.error, fallback));
       await fetchVideoStats();
     } catch (error) {
       setAnalysisActionError(error instanceof Error ? error.message : '操作失败');
@@ -1680,7 +1685,9 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
                                 ? { label: '已分析', style: 'bg-green-50 text-green-700' }
                                 : item.status === 'failed'
                                   ? { label: '分析失败', style: 'bg-red-50 text-red-700' }
-                                  : { label: '已暂停', style: 'bg-amber-50 text-amber-700' };
+                                  : item.status === 'cancelled'
+                                    ? { label: '已取消', style: 'bg-gray-100 text-gray-600' }
+                                    : { label: '已暂停', style: 'bg-amber-50 text-amber-700' };
                             const actionPending = analysisActionId === item.id;
                             return (
                               <article key={item.id} data-testid={`video-analysis-row-${item.id}`} className="flex items-center gap-3 rounded-xl border border-gray-100 bg-gray-50/60 p-3">
@@ -1705,17 +1712,50 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
                                 <span className={`flex-shrink-0 rounded-full px-2.5 py-1 text-[11px] font-medium ${statusMeta.style}`}>{statusMeta.label}</span>
                                 <div className="flex flex-shrink-0 items-center gap-2">
                                   {item.status === 'analyzing' && (
+                                    <>
+                                      <button
+                                        type="button"
+                                        aria-label={`暂停分析 ${item.title}`}
+                                        disabled={actionPending}
+                                        onClick={() => void updateVideoAnalysis(item, 'pause')}
+                                        className="rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-[11px] text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+                                      >
+                                        {actionPending ? '处理中…' : '暂停'}
+                                      </button>
+                                      <button
+                                        type="button"
+                                        aria-label={`取消分析 ${item.title}`}
+                                        disabled={actionPending}
+                                        onClick={() => void updateVideoAnalysis(item, 'cancel')}
+                                        className="rounded-lg border border-red-100 bg-white px-2.5 py-1.5 text-[11px] text-red-600 hover:bg-red-50 disabled:opacity-50"
+                                      >
+                                        取消
+                                      </button>
+                                    </>
+                                  )}
+                                  {(item.status === 'paused' || item.status === 'failed' || item.status === 'cancelled') && (
                                     <button
                                       type="button"
-                                      aria-label={`暂停分析 ${item.title}`}
+                                      aria-label={`恢复分析 ${item.title}`}
                                       disabled={actionPending}
-                                      onClick={() => void updateVideoAnalysis(item, 'pause')}
-                                      className="rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-[11px] text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+                                      onClick={() => void updateVideoAnalysis(item, 'resume')}
+                                      className="rounded-lg border border-green-200 bg-white px-2.5 py-1.5 text-[11px] text-green-700 hover:bg-green-50 disabled:opacity-50"
                                     >
-                                      {actionPending ? '处理中…' : '暂停分析'}
+                                      {actionPending ? '提交中…' : item.status === 'failed' ? '重试' : '恢复'}
                                     </button>
                                   )}
-                                  {item.status !== 'analyzing' && (
+                                  {item.status === 'paused' && (
+                                    <button
+                                      type="button"
+                                      aria-label={`取消分析 ${item.title}`}
+                                      disabled={actionPending}
+                                      onClick={() => void updateVideoAnalysis(item, 'cancel')}
+                                      className="rounded-lg border border-red-100 bg-white px-2.5 py-1.5 text-[11px] text-red-600 hover:bg-red-50 disabled:opacity-50"
+                                    >
+                                      取消
+                                    </button>
+                                  )}
+                                  {item.status === 'analyzed' && (
                                     <button
                                       type="button"
                                       aria-label={`重新分析 ${item.title}`}

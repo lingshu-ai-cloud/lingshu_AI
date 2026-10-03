@@ -24,6 +24,18 @@ assert.equal(selectedSegments([{id:'a',type:'video',duration:8}],[4],[{trimStart
 const raw={transcripts:[{sentences:[{words:[{begin_time:100,end_time:500,text:'Hello'},{begin_time:600,end_time:1100,text:'world',punctuation:'.'}]}]}]};
 assert.equal(verifiedAudioCues(raw,'Hello world.',2)[1].start,.6);
 assert.throws(()=>verifiedAudioCues(raw,'Different content.',2));
+const qwenSentenceTiming={transcripts:[{text:'Need a cloud foam cleansing honey? We support packaging, formula and design in one place. Choose your bottle, match your formula, add your brand design. Nolik starts from ten thousand pieces. Send us your project today.',sentences:[
+  {begin_time:80,end_time:1440,text:'Need a cloud foam cleansing honey?',words:[{begin_time:80,end_time:400,text:'Need '},{begin_time:400,end_time:400,text:'a '},{begin_time:400,end_time:1440,text:'cloud foam cleansing honey',punctuation:'?'}]},
+  {begin_time:1760,end_time:4160,text:'We support packaging, formula and design in one place.'},
+  {begin_time:4640,end_time:7440,text:'Choose your bottle, match your formula, add your brand design.'},
+  {begin_time:7760,end_time:9200,text:'Nolik starts from ten thousand pieces.'},
+  {begin_time:9520,end_time:10400,text:'Send us your project today.'},
+]}]};
+const expectedVoice='Need a Cloud Foam Cleansing Honey? We support packaging, formula, and design in one place. Choose your bottle, match your formula, add your brand design. NOQ starts from 10,000 pieces. Send us your project today.';
+const recoveredCues=verifiedAudioCues(qwenSentenceTiming,expectedVoice,13.52);
+assert.equal(recoveredCues.length,5);
+assert.deepEqual(recoveredCues[3],{start:7.76,end:9.2,text:'NOQ starts from 10,000 pieces.'});
+assert.throws(()=>verifiedAudioCues(qwenSentenceTiming,'This is unrelated audio.',13.52));
 const tenant='test-lifecycle-'+Date.now(),dir=path.resolve('data/publishing-uploads',tenant);fs.mkdirSync(dir,{recursive:true});
 const file=path.join(dir,'video.mp4');fs.writeFileSync(file,'fixture');
 assert.equal(safeContentFile(tenant,file),file);assert.equal(safeContentFile('foreign',file),'');

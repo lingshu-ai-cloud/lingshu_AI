@@ -26,7 +26,6 @@ import {
 } from '../../lib/socialContentModel';
 import {
   contentCreationReviewAdmissionAllowed,
-  contentCreationTestBypassEnabled,
 } from '../../lib/contentCreationTestBypass';
 
 interface SocialProductionProgressPanelProps {
@@ -120,6 +119,68 @@ function automaticStep(task: TaskListItem): string {
   if (task.status === 'delivered' || task.status === 'awaiting_publish') return '成品与发布包已经准备完成';
   if (task.status === 'awaiting_metrics') return '等待发布数据回收';
   return '本轮内容任务已经完成';
+}
+
+type ProductionChainState = 'pending' | 'current' | 'complete' | 'blocked';
+
+const PRODUCTION_CHAIN = [
+  '脚本分析',
+  '口播生成',
+  '语音生成',
+  '素材匹配',
+  '字幕生成',
+  '音乐与音效',
+  '特效与剪辑',
+  '成片质检',
+  '验收',
+] as const;
+
+function productionChainCurrentIndex(task: TaskListItem): number {
+  if (COMPLETE_STATUSES.has(task.status)) return PRODUCTION_CHAIN.length;
+  if (task.status === 'packaging') return PRODUCTION_CHAIN.length;
+  if (task.status === 'asset_review') return 8;
+  if (task.status === 'draft' || task.status === 'needs_input' || task.status === 'plan_review') return 0;
+  if (!directorPlanComplete(task)) return 0;
+  if (!isTaskDetail(task)) return task.artifactCount > 0 ? 8 : 3;
+  const progress = `${task.productionProgress?.step || ''} ${task.productionProgress?.activity || ''}`.toLowerCase();
+  if (/quality|质检|审核|evaluate|review/.test(progress)) return 7;
+  if (/render|合成|剪辑|特效|effect/.test(progress)) return 6;
+  if (/music|bgm|sound|音乐|配乐|音效/.test(progress)) return 5;
+  if (/subtitle|caption|字幕/.test(progress)) return 4;
+  if (/material|asset|match|素材|匹配/.test(progress)) return 3;
+  if (/audio|tts|voice|语音|配音/.test(progress)) return 2;
+  if (/copy|口播|文案/.test(progress)) return 1;
+  return 3;
+}
+
+function ProductionChain({ task }: { task: TaskListItem }) {
+  const currentIndex = productionChainCurrentIndex(task);
+  const interrupted = Boolean(workflowInterruption(task)) || task.status === 'attention' || task.status === 'paused';
+  return (
+    <span className="mt-3 block rounded-xl border border-slate-100 bg-slate-50/70 px-3 py-3">
+      <span className="mb-2 block text-[9px] font-black tracking-[0.08em] text-slate-500">完整制作链路</span>
+      <span className="block">
+        {PRODUCTION_CHAIN.map((label, index) => {
+          const state: ProductionChainState = currentIndex >= PRODUCTION_CHAIN.length || index < currentIndex
+            ? 'complete'
+            : index === currentIndex
+              ? interrupted ? 'blocked' : 'current'
+              : 'pending';
+          return (
+            <span key={label} className="relative flex min-h-7 items-center gap-2.5 last:min-h-5">
+              {index < PRODUCTION_CHAIN.length - 1 && <span className={`absolute bottom-[-2px] left-[7px] top-[15px] w-px ${state === 'complete' ? 'bg-emerald-300' : 'bg-slate-200'}`} />}
+              <span className={`relative z-10 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border ${state === 'complete' ? 'border-emerald-500 bg-emerald-500 text-white' : state === 'current' ? 'border-blue-500 bg-blue-50 text-blue-600' : state === 'blocked' ? 'border-amber-500 bg-amber-50 text-amber-700' : 'border-slate-300 bg-white text-slate-300'}`}>
+                {state === 'complete' ? <CheckCircle2 size={11} /> : state === 'current' ? <Loader2 size={10} className="animate-spin motion-reduce:animate-none" /> : <span className="h-1.5 w-1.5 rounded-full bg-current" />}
+              </span>
+              <span className={`text-[10px] font-bold ${state === 'complete' ? 'text-emerald-700' : state === 'current' ? 'text-blue-700' : state === 'blocked' ? 'text-amber-800' : 'text-slate-400'}`}>{label}</span>
+              {state === 'current' && <span className="ml-auto text-[9px] font-black text-blue-600">运行中</span>}
+              {state === 'blocked' && <span className="ml-auto text-[9px] font-black text-amber-700">需处理</span>}
+            </span>
+          );
+        })}
+      </span>
+    </span>
+  );
 }
 
 function compactHeadline(task: SocialContentTaskDetail): string {
@@ -283,8 +344,7 @@ export default function SocialProductionProgressPanel({
   const active = ACTIVE_STATUSES.has(task.status) || Boolean(task.runId && counts.generated === 0);
   const remainingTaskCount = Math.max(0, taskTotalItems - tasks.length);
   const taskItems: TaskListItem[] = [task, ...tasks.filter(item => item.taskId !== task.taskId)];
-  const testBypass = contentCreationTestBypassEnabled();
-  const testStartAllowed = testBypass
+  const taskStartAllowed = task.readiness.complete
     && (!task.agentWorkflow
       || contentCreationReviewAdmissionAllowed(task.agentWorkflow.executionPlanReview));
 
@@ -326,8 +386,8 @@ export default function SocialProductionProgressPanel({
       return onEdit ? { label: '查看原因并补充素材', icon: <ChevronRight size={14} />, action: onEdit } : null;
     }
     if (task.status === 'draft' || task.status === 'needs_input') {
-      if (testStartAllowed && onStart) {
-        return { label: '测试下一生产节点', icon: <Bot size={14} />, action: onStart };
+      if (taskStartAllowed && onStart) {
+        return { label: '开始自动制作', icon: <Bot size={14} />, action: onStart };
       }
       return onEdit ? { label: canProduceWithoutCustomerShoot(task) ? '确认任务信息' : '补充任务资料', icon: <ChevronRight size={14} />, action: onEdit } : null;
     }
@@ -434,6 +494,8 @@ export default function SocialProductionProgressPanel({
                             <span className="mt-0.5 block text-xs font-bold leading-5 text-slate-800">{automaticStep(item)}</span>
                           </span>
                         </span>
+
+                        <ProductionChain task={item} />
 
                         <span className="mt-3 grid grid-cols-2 gap-2">
                           <span className="rounded-xl border border-slate-100 px-3 py-2.5">

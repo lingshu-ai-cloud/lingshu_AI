@@ -9,6 +9,18 @@ export interface VideoCreationPlan {
   evidenceRequirement?: string;
   directorStatus?: 'candidate' | 'script_draft' | 'script_approved' | 'in_production' | 'review' | 'approved' | 'blocked';
   estimatedCost?: number;
+  /** Auditable evidence used by the Business Agent when it proposed this slot. */
+  planningEvidence?: {
+    generatedFrom: 'matrix_benchmark_viral' | 'matrix_viral' | 'matrix_product';
+    matrixAccountId: string;
+    requiredCount: number;
+    slot: number;
+    referenceTitle: string;
+    referenceViews: string;
+    benchmarkAccount: string;
+    matchScore: number;
+    factors: string[];
+  };
   matrix?: { accountId: string; audience: string; objective: string; cta: string; accountRole?: SocialAccountRole; formats?: string[] };
   reviewRequirements?: Array<{ todoId: string; reference: string; scene: number; startsAt: number; endsAt: number; requirements: string; materials: string; acceptance: string }>;
   route: 'clone' | 'material' | 'product';
@@ -57,6 +69,21 @@ export function normalizeVideoPlan(value: Partial<VideoCreationPlan>): VideoCrea
     evidenceRequirement: String(value.evidenceRequirement || '').trim().slice(0, 1000),
     directorStatus: ['candidate', 'script_draft', 'script_approved', 'in_production', 'review', 'approved', 'blocked'].includes(String(value.directorStatus)) ? value.directorStatus : 'candidate',
     estimatedCost: Math.max(0, Math.round((Number(value.estimatedCost) || 0) * 100) / 100),
+    ...(value.planningEvidence && typeof value.planningEvidence === 'object' ? { planningEvidence: {
+      generatedFrom: ['matrix_benchmark_viral', 'matrix_viral', 'matrix_product'].includes(String(value.planningEvidence.generatedFrom))
+        ? value.planningEvidence.generatedFrom
+        : 'matrix_product',
+      matrixAccountId: String(value.planningEvidence.matrixAccountId || '').trim().slice(0, 160),
+      requiredCount: Math.max(1, Math.min(30, Math.floor(Number(value.planningEvidence.requiredCount) || 1))),
+      slot: Math.max(1, Math.min(30, Math.floor(Number(value.planningEvidence.slot) || 1))),
+      referenceTitle: String(value.planningEvidence.referenceTitle || '').trim().slice(0, 500),
+      referenceViews: String(value.planningEvidence.referenceViews || '').trim().slice(0, 80),
+      benchmarkAccount: String(value.planningEvidence.benchmarkAccount || '').trim().slice(0, 300),
+      matchScore: Math.max(0, Math.min(100, Math.round(Number(value.planningEvidence.matchScore) || 0))),
+      factors: Array.isArray(value.planningEvidence.factors)
+        ? [...new Set(value.planningEvidence.factors.map(item => String(item || '').trim()).filter(Boolean))].slice(0, 8).map(item => item.slice(0, 160))
+        : [],
+    } } : {}),
     ...(value.matrix && typeof value.matrix === 'object' ? { matrix: {
       accountId: String(value.matrix.accountId || '').trim().slice(0, 160), audience: String(value.matrix.audience || '').trim().slice(0, 500), objective: String(value.matrix.objective || '').trim().slice(0, 500), cta: String(value.matrix.cta || '').trim().slice(0, 500),
       accountRole: ['brand_capability', 'buyer_advisor', 'brand_combined'].includes(String(value.matrix.accountRole)) ? value.matrix.accountRole : 'brand_combined',

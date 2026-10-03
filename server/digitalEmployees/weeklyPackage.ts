@@ -2,10 +2,78 @@ import { normalizeTodo } from '../../src/lib/reviewTodos.js';
 import { normalizeAssessment, maturityProfiles, taskGuidance } from '../../shared/contracts/operatingMaturity.js';
 import { normalizeVideoPlan, videoPlanErrors } from '../../shared/contracts/videoCreationPlan.js';
 import { defaultMatrixPlan, fillMatrixVideos, normalizeMatrixPlan, matrixScopeIssues } from '../../src/lib/weeklyMatrix.js';
-import { LEGACY_TASK_TEMPLATE_IDS, TASK_TEMPLATES, packageIssues, type WeeklyPackage, type PackageTask, type TemplateId } from '../../src/lib/weeklyPackage.js';
+import { LEGACY_TASK_TEMPLATE_IDS, TASK_TEMPLATES, packageIssues, type WeeklyPackage, type PackageTask, type TemplateId, type WeeklyOperatingContext } from '../../src/lib/weeklyPackage.js';
 import { defaultDirectorPlan, normalizeDirectorPlan } from '../../src/lib/contentDirector.js';
 import { connectedAccountIssues } from '../../shared/contracts/socialOperatingProfile.js';
 import { buildWeeklyPlan, type DigitalEmployeeConfig, type WeeklyGoalInput, type WeeklyPlanDraft } from './domain.js';
+
+const splitMarkets = (value: string): string[] => [...new Set(value.split(/[、，,；;\n]/).map(item => item.trim()).filter(Boolean))];
+
+export function buildWeeklyOperatingContext(
+  pack: WeeklyPackage,
+  goal: WeeklyGoalInput,
+  config: DigitalEmployeeConfig,
+): WeeklyOperatingContext {
+  const videos = pack.tasks.find(task => task.templateId === 'production')?.videoPlans || [];
+  const rows = pack.matrixPlan || [];
+  const productionCny = Number(pack.directorPlan?.productionBudget || 0);
+  const paidMediaCny = Number(pack.directorPlan?.paidMediaBudget || 0);
+  const accountWeights = rows.map(row => {
+    const plannedCost = videos
+      .filter(video => video.matrix?.accountId === row.accountId)
+      .reduce((sum, video) => sum + Math.max(0, Number(video.estimatedCost) || 0), 0);
+    return { accountId: row.accountId, platform: row.platform, weight: plannedCost > 0 ? plannedCost : Math.max(1, row.weeklyCount), basedOnCost: plannedCost > 0 };
+  });
+  const totalWeight = Math.max(1, accountWeights.reduce((sum, item) => sum + item.weight, 0));
+  const accounts = rows.map(row => {
+    const connected = config.publishingTargets.find(target => target.accountId === row.accountId && target.platform === row.platform);
+    const allocation = accountWeights.find(item => item.accountId === row.accountId && item.platform === row.platform)!;
+    return {
+      accountId: row.accountId,
+      platform: row.platform,
+      accountLabel: connected?.accountLabel || row.accountId,
+      positioning: row.contentDirection || row.objective || row.accountRole || '本周内容账号',
+      contentCount: row.weeklyCount,
+      budgetCny: productionCny > 0 ? Math.round((productionCny * allocation.weight / totalWeight) * 100) / 100 : null,
+      allocationBasis: allocation.basedOnCost ? 'estimated_cost' as const : 'content_load' as const,
+    };
+  });
+  const formats = [...new Set([
+    ...rows.flatMap(row => row.formats || []),
+    ...videos.map(video => video.route === 'clone' ? '爆款复刻短视频' : video.route === 'material' ? '素材加工短视频' : '产品短视频'),
+  ].filter(Boolean))];
+  return {
+    objective: goal.objective,
+    metric: `${goal.metric}：${goal.baseline} → ${goal.target} ${goal.unit}`,
+    markets: splitMarkets(config.targetMarkets),
+    cycle: { startsAt: goal.startsAt, endsAt: goal.endsAt },
+    accounts,
+    budget: {
+      currency: pack.directorPlan?.currency || 'CNY',
+      productionCny,
+      paidMediaCny,
+      totalCny: Math.round((productionCny + paidMediaCny) * 100) / 100,
+    },
+    cadence: {
+      contentCount: videos.length || rows.reduce((sum, row) => sum + row.weeklyCount, 0),
+      description: config.socialCadence || `${videos.length} 条 / 周`,
+      reviewSchedule: config.reviewSchedule,
+    },
+    authorization: {
+      mode: pack.authorization.mode,
+      allowRealPublishing: config.allowRealPublishing,
+      allowRealCustomerMessages: config.allowRealCustomerMessages,
+      accountIds: [...pack.authorization.accountIds],
+      maxPublishItems: pack.authorization.maxPublishItems,
+      maxCustomerMessages: pack.authorization.maxCustomerMessages,
+    },
+    outputs: {
+      count: videos.length || rows.reduce((sum, row) => sum + row.weeklyCount, 0),
+      formats: formats.length ? formats : ['短视频'],
+      totalDurationSeconds: videos.reduce((sum, video) => sum + Math.max(0, Number(video.duration) || 0), 0),
+    },
+  };
+}
 
 export function recommendPackage(goal: WeeklyGoalInput, config: DigitalEmployeeConfig, ownerId = '', ownerName = ''): WeeklyPackage {
   const base = buildWeeklyPlan(goal, config);
@@ -32,11 +100,12 @@ export function recommendPackage(goal: WeeklyGoalInput, config: DigitalEmployeeC
   const defaultPublishActions = matrixPlan.length
     ? matrixPlan.reduce((sum, row) => sum + row.weeklyCount, 0)
     : contentCount * Math.max(1, config.publishingTargets.filter(target => goal.contentPlatforms.includes(target.platform)).length);
-  return {
+  const result: WeeklyPackage = {
     ...recommended,
     directorPlan: defaultDirectorPlan(contentCount),
     authorization: { ...recommended.authorization, maxPublishItems: Math.max(1, defaultPublishActions) },
   };
+  return { ...result, operatingContext: buildWeeklyOperatingContext(result, goal, config) };
 }
 
 export function normalizePackage(raw: WeeklyPackage): WeeklyPackage {
@@ -126,7 +195,7 @@ export function compilePackage(pack: WeeklyPackage, goal: WeeklyGoalInput, confi
   }
   const review = tasks.find(t => t.key === 'weekly_review');
   for (const task of tasks.filter(t => t.key.startsWith('review_todo_'))) { included.add(task.key); if (review) review.dependsOn = [...new Set([...review.dependsOn, task.key])]; }
-  return { ...base, businessPackage: pack,
+  return { ...base, businessPackage: { ...pack, operatingContext: buildWeeklyOperatingContext(pack, goal, config) },
     strategy: maturityProfiles[pack.maturity].strategy,
     successCriteria: [...base.successCriteria, maturityProfiles[pack.maturity].criteria],
     tasks: tasks.map((t, index) => ({ ...t, description: [t.description, packageTaskForKey(pack, t.key)?.notes].filter(Boolean).join('\n本周工作说明：'), sequence: index + 1, dependsOn: t.dependsOn.filter(k => included.has(k)) })),

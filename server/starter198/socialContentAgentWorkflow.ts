@@ -659,6 +659,8 @@ function executionScene(input: {
   const candidates = capabilityCandidates({ ...input, sceneId: input.scene.sceneId });
   const topic = input.scene.visualTopic;
   const primaryHook = input.scene.referenceMaterial?.isPrimaryHook || input.supply.function === 'hook';
+  const referenceHook = Boolean(input.scene.referenceMaterial?.isPrimaryHook
+    || (input.scene.replicationFactors?.length ?? 0) > 0);
   const expressivePerson = topic?.personRole === 'expressive_action' && input.scene.productionRouting?.presenterIdentityReplacementRequired;
   const visibleSpeech = topic?.personRole === 'visible_speech' && input.scene.productionRouting?.needsPreciseLipSync;
   const matchingAsset = candidates.find(candidate => candidate.kind === 'asset'
@@ -683,11 +685,14 @@ function executionScene(input: {
         : input.supply.function === 'call_to_action'
           ? capability('verified_fact_card') ?? capability('motion_graphics')
           : capability('licensed_stock_asset') ?? capability('motion_graphics');
+  const safeOriginalHookFallback = referenceHook
+    ? undefined
+    : capability('licensed_stock_asset') ?? capability('motion_graphics');
   const preferred = expressivePerson ? undefined
     : visibleSpeech ? capability('authorized_digital_presenter')
       : primaryHook && topic?.kind === 'product_introduction'
-        ? capability('aigc_product_scene_replication') ?? capability('customer_product_image_animation') ?? matchingAsset
-        : primaryHook ? matchingAsset ?? candidates.find(candidate => candidate.sourceStrategy === input.supply.sourceStrategy)
+        ? capability('aigc_product_scene_replication') ?? capability('customer_product_image_animation') ?? matchingAsset ?? safeOriginalHookFallback
+        : primaryHook ? matchingAsset ?? candidates.find(candidate => candidate.sourceStrategy === input.supply.sourceStrategy) ?? safeOriginalHookFallback
           : matchingAsset ?? ordinaryCapability;
   const fallback = candidates.find(candidate => candidate.sourceStrategy === input.supply.fallbackSourceStrategy && candidate.candidateId !== preferred?.candidateId);
   return {
