@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { storyboardFactoryReferenceRequired } from '../../shared/storyboardFactoryReference.js';
 import {
   assessMaterialMatch,
   automaticStoryboardTrim,
@@ -25,6 +26,10 @@ const untaggedFactoryClip = { ...taggedFactoryClip, id: 'untagged-factory', tags
 const factoryProofSlot = { id: 'factory-proof', start: 0, end: 3, title: '工厂产线', detail: '画面：工厂产线实拍\n镜头功能：建立信任\n口播：无' } as any;
 assert.deepEqual(matchMaterialsToStoryboardLocally([taggedFactoryClip], [factoryProofSlot]), {}, '默认精确匹配仍要求分段证据');
 assert.equal(matchMaterialsToStoryboardLocally([taggedFactoryClip], [factoryProofSlot], [], { allowSemanticMetadata: true })[factoryProofSlot.id], taggedFactoryClip.id, '复刻任务可按视觉主题和表达目的标签匹配');
+const specificFactorySlot = { ...factoryProofSlot, id: 'specific-factory', detail: '画面：本厂指定产线设备近景 镜头功能：建立信任 口播：无' };
+assert.equal(storyboardFactoryReferenceRequired(specificFactorySlot.detail), true);
+assert.equal(matchMaterialsToStoryboardLocally([taggedFactoryClip], [specificFactorySlot], [], { allowSemanticMetadata: true })[specificFactorySlot.id],
+  taggedFactoryClip.id, '没有工厂图片时，本地工厂视频仍可在匹配素材模式直接选用');
 assert.equal(matchMaterialsToStoryboardLocally([untaggedFactoryClip], [factoryProofSlot], [], { allowSemanticMetadata: true })[factoryProofSlot.id], untaggedFactoryClip.id, '仅视觉主题命中也可匹配');
 assert.equal(assessMaterialMatch(factoryProofSlot, taggedFactoryClip, '9:16').score, 100, '两项语义都匹配为满分');
 const inlineFactorySlot = { ...factoryProofSlot, detail: '画面：自动化灌装机正在向白色瓶口注液；中景，固定镜头 镜头功能：demonstration 口播：无' };

@@ -122,7 +122,8 @@ export function sentenceReplicationReadiness(env: NodeJS.ProcessEnv = process.en
   const objectAccessKey = configured('OBJECT_STORAGE_ACCESS_KEY_ID') || configured('R2_ACCESS_KEY_ID') || configured('COS_SECRET_ID');
   const objectSecret = configured('OBJECT_STORAGE_SECRET_ACCESS_KEY') || configured('R2_SECRET_ACCESS_KEY') || configured('COS_SECRET_KEY');
   const objectBucket = configured('OBJECT_STORAGE_BUCKET_NAME') || configured('R2_BUCKET_NAME') || configured('COS_BUCKET');
-  const localPhotoStorage = videoProvider === 'heygen' && (!env.OBJECT_STORAGE_DRIVER || env.OBJECT_STORAGE_DRIVER === 'local');
+  const storageDriver = String(env.OBJECT_STORAGE_DRIVER || (env.NODE_ENV === 'production' ? 'cos' : 'local')).trim().toLowerCase();
+  const localPhotoStorage = videoProvider === 'heygen' && storageDriver === 'local';
   const missing = [
     videoProvider === 'heygen' && !switchedOn('HEYGEN_GENERATION_ENABLED') && 'HEYGEN_GENERATION_ENABLED=true',
     videoProvider === 'heygen' && !configured('HEYGEN_API_KEY') && 'HEYGEN_API_KEY',
@@ -136,6 +137,8 @@ export function sentenceReplicationReadiness(env: NodeJS.ProcessEnv = process.en
     !localPhotoStorage && !objectAccessKey && '对象存储 access key',
     !localPhotoStorage && !objectSecret && '对象存储 secret key',
     !localPhotoStorage && !objectBucket && '对象存储 bucket',
+    videoProvider === 'seedance' && storageDriver === 'local' && !/^https:\/\//i.test(String(env.LOCAL_OBJECT_STORAGE_PUBLIC_BASE_URL || '').trim())
+      && 'OBJECT_STORAGE_DRIVER=cos 或 LOCAL_OBJECT_STORAGE_PUBLIC_BASE_URL（公网 HTTPS）',
   ].filter(Boolean) as string[];
   return {
     ready: missing.length === 0,

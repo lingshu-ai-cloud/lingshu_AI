@@ -84,7 +84,7 @@ assert.doesNotMatch(
   '切换创作模式不能改写用户的项目名',
 );
 assert.match(studioSource, /validateStudioScriptGenerationInput\(\{/);
-assert.match(studioSource, /本次创作信息/);
+assert.match(studioSource, /<StudioInputSummary[\s\S]{0,300}title="已确认内容"/, 'the Studio must summarize the inputs used for this creation');
 assert.doesNotMatch(studioSource, />Agent 任务上下文<|label: 'Agent 来源'|`Agent 任务 · \$\{normalized\}`/, 'Studio must not expose internal workflow labels or raw source codes');
 assert.match(studioSource, /sourceWorkflowContext\.preview \? '制作方案预览' : '灵小图'/, 'Studio must distinguish draft-plan preview from an executing content task');
 assert.match(studioSource, /焦点产品/);
@@ -100,11 +100,11 @@ assert.match(studioSource, /resolveStudioWorkflowProjectEntry\(nextProjects, wor
 assert.match(studioSource, /if \(workflowContext \|\| socialContentTaskId\) \{[\s\S]{0,180}removeItem\(STUDIO_OPEN_PROJECT_KEY\)/, 'workflow or social-task context must override and consume a remembered browser draft');
 assert.match(studioSource, /silent && !projectId && !studioSpecHasMeaningfulContent\(nextSpec\)/, 'background autosave must not create empty unnamed drafts');
 assert.match(studioSource, /onCreatePresenter=\{async input => \{/,'the current shot must expose inline presenter completion');
-assert.match(studioSource, /uploadMaterialFile\(input\.file,\{folder:'presenter',type:'image',sourceType:'presenter-inline-upload'\}\)/,'inline completion must upload the selected portrait');
+assert.match(studioSource, /presenterApi\.uploadPhotoMaterial\(input\.file, input\.name\)[\s\S]{0,140}studioApi\.uploadMaterialFile\(input\.file,\{folder:'presenter',type:mediaType,sourceType:'presenter-inline-upload'\}\)/,'inline completion must upload the selected person asset through the available provider path');
 assert.match(studioSource, /setProductionDefaults\(saved\);await refreshMaterials\(\)/,'inline completion must refresh enterprise presenters and Studio materials before returning');
 assert.match(studioSource, /defaultPresenterId:productionDefaults\.defaultPresenterId\|\|presenterId/, 'the first inline presenter becomes the enterprise default while remaining selected in the originating shot');
 assert.doesNotMatch(studioSource, /showProjects \|\| linkedProductionContext/, 'a linked Agent task must not hide the three-column Studio behind a status scene');
-assert.doesNotMatch(studioSource, /<ProductionTaskScene/, 'content task handoffs must render inside Studio instead of replacing it with the simple run box');
+assert.match(studioSource, /<details[^>]*>[\s\S]{0,450}<ProductionTaskScene[^>]*embedded/, 'the linked task status must stay collapsible while the Studio workbench remains accessible');
 assert.match(studioSource, /className=\{showProjects \? 'hidden' : 'flex min-h-0 flex-1 flex-col'\}/, 'the Studio is hidden only while its project chooser is open');
 assert.match(studioSource, /digitalHumanJob\?\.status === 'review'[\s\S]{0,180}<video/, 'generated digital-human candidates must be directly previewable before approval');
 assert.match(studioSource, /<RenderedVideoPlayer[^>]+src=\{formalPreviewUrl\}/, 'formal AIGC output must be directly playable in the final preview step');

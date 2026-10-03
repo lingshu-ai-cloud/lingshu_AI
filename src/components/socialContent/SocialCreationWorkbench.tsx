@@ -4,6 +4,7 @@ import ReplicationWorkbenchHeader from './ReplicationWorkbenchHeader';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Captions,
+  ChevronDown,
   ChevronRight,
   CircleAlert,
   Film,
@@ -22,7 +23,8 @@ import type { SocialContentStageProfile } from '../../lib/socialContentStage';
 import { contentCreationTestBypassEnabled } from '../../lib/contentCreationTestBypass';
 import { resolveInspirationPlaybackUrl } from '../../lib/inspirationVideoPlayback';
 import { authHeader } from '../../lib/auth';
-import { referenceBrandTerm, referenceProductMentions, referenceProductTerms } from '../../lib/referenceIdentityMapping';
+import { referenceBrandTerm, referenceProductMentions, referenceProductTerms, replaceReferenceIdentities, spokenIdentityLabel } from '../../lib/referenceIdentityMapping';
+import { referenceSpeechLines } from './referenceSpeechLines';
 
 interface EnterpriseProductOption {
   id: string;
@@ -42,10 +44,12 @@ export interface SocialCreationWorkbenchSeed {
   selectedProductIds?: string[];
   selectedProductNames?: string[];
   productMappings?: Array<{ sourceTerm: string; productId: string; productName: string }>;
+  confirmedSpeech?: Array<{ source: string; draft: string; time: string }>;
 }
 
 export interface SocialCreationWorkbenchSubmit {
   replicationStep?: 1 | 2 | 3;
+  confirmedSpeech?: Array<{ source: string; draft: string; time: string }>;
   requestId: number;
   creationPath: SocialContentCreationPath;
   title: string;
@@ -77,10 +81,6 @@ function shotStart(time: string): number {
   if (clock) return Number(clock[1]) * 60 + Number(clock[2]);
   const match = start.match(/\d+(?:\.\d+)?/);
   return match ? Number(match[0]) : 0;
-}
-
-function splitShotSpeech(value: string): string[] {
-  return String(value || '').split(/(?<=[。！？!?])\s*|\n+/).map(line => line.trim()).filter(Boolean);
 }
 
 const creationOptions = [
@@ -202,8 +202,10 @@ export default function SocialCreationWorkbench({
   const [productsLoading, setProductsLoading] = useState(true);
   const [productsUnavailable, setProductsUnavailable] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [generatingSpeech, setGeneratingSpeech] = useState(false);
   const [files, setFiles] = useState<File[]>([]);
   const [activeLine, setActiveLine] = useState(0);
+  const [expandedSpeechLines, setExpandedSpeechLines] = useState<Set<number>>(() => new Set());
   const [requestedSeek, setRequestedSeek] = useState(0);
   const [seekRequestId, setSeekRequestId] = useState(0);
   const cardsRef = useRef<Array<HTMLLIElement | null>>([]);
@@ -224,14 +226,19 @@ export default function SocialCreationWorkbench({
   const [taskProductTerms, setTaskProductTerms] = useState<string[] | undefined>();
   const [taskReferenceShots, setTaskReferenceShots] = useState<SocialCreationWorkbenchSeed['referenceShots']>(undefined);
   const [generationNotice, setGenerationNotice] = useState('');
+  const [speechEdits, setSpeechEdits] = useState<Record<number, string>>({});
+  const [generatedSpeech, setGeneratedSpeech] = useState<string[] | null>(null);
+  const [generatedMappingKey, setGeneratedMappingKey] = useState<string | null>(null);
+  const [spokenNames, setSpokenNames] = useState<Record<string, string>>({});
+  useEffect(() => {
+    if (!seed?.confirmedSpeech?.length) return;
+    setSpeechEdits(Object.fromEntries(seed.confirmedSpeech.map((line, index) => [index, line.draft])));
+  }, [seed?.confirmedSpeech]);
   const uploadRef = useRef<HTMLInputElement>(null);
   const isReplication = mode === 'viral_replication';
   const localGateBypass = contentCreationTestBypassEnabled();
   const referenceShots = isReplication ? taskReferenceShots || seed?.referenceShots || [] : [];
-  const referenceLines = referenceShots.flatMap(shot => {
-    const sentences = splitShotSpeech(String(shot.dialogue || shot.subtitle || ''));
-    return (sentences.length ? sentences : ['']).map(text => ({ ...shot, text }));
-  });
+  const referenceLines = referenceSpeechLines(referenceShots);
   useEffect(() => {
     const detected = referenceBrandTerm(referenceLines.map(line => line.text));
     if (detected) setBrandSourceTerm(current => current || detected);
@@ -261,12 +268,56 @@ export default function SocialCreationWorkbench({
   }, [seed?.productMappings, products]);
   const productMappings = productSlots.map((slot, index) => {
     const assigned = productAssignments[slot.shotId];
-    const product = products.find(item => item.id === (Object.prototype.hasOwnProperty.call(productAssignments, slot.shotId) ? (selectedProductIds.includes(assigned) ? assigned : '') : seed?.productMappings?.length ? '' : selectedProductIds[index]));
+    const product = products.find(item => item.id === (Object.prototype.hasOwnProperty.call(productAssignments, slot.shotId) ? (selectedProductIds.includes(assigned) ? assigned : '') : selectedProductIds[index]));
     return { sourceTerm: slot.sourceLabel, productId: product?.id || '', productName: product?.name || '' };
   });
   const productsReady = productMappings.length === selectedProductIds.length
     && productMappings.every(mapping => mapping.productId && mapping.sourceTerm.trim())
     && new Set(productMappings.map(mapping => mapping.productId)).size === productMappings.length;
+  const spokenLabel = (sourceTerm: string, catalogName: string, line: string, names = spokenNames) =>
+    names[catalogName] || spokenIdentityLabel(sourceTerm, catalogName, line);
+  const mappingKey = JSON.stringify({ products: productMappings, brandSourceTerm, enterpriseBrandName, lines: referenceLines.map(line => line.text) });
+  const speechGenerated = productsReady && generatedSpeech !== null && generatedMappingKey === mappingKey;
+  const confirmedSpeech = referenceLines.map((line, index) => ({ source: line.text, time: line.time, draft: speechEdits[index] ?? generatedSpeech?.[index] ?? '' })).filter(line => line.source.trim());
+  const generateSpeech = async () => {
+    if (!productsReady || !referenceLines.some(line => line.text.trim())) return;
+    setGeneratingSpeech(true);
+    setGenerationNotice('');
+    try {
+      const englishSpeech = referenceLines.some(line => /[A-Za-z]/.test(line.text))
+        && !referenceLines.some(line => /[\p{Script=Han}]/u.test(line.text));
+      const namesToTranslate = englishSpeech ? [...new Set([...productMappings.map(mapping => mapping.productName), enterpriseBrandName]
+        .filter(name => /[\p{Script=Han}]/u.test(name)))] : [];
+      const result = namesToTranslate.length ? await studioApi.speechNames({ language: 'en', names: namesToTranslate }) : { ok: true, names: {} };
+      if (!result.ok || namesToTranslate.some(name => !result.names[name] || /[\p{Script=Han}]/u.test(result.names[name]))) {
+        throw new Error('产品英文口播名生成失败，请重试。');
+      }
+      const names = result.names;
+      const drafts = referenceLines.map(line => replaceReferenceIdentities(line.text,
+        productMappings.map(mapping => ({ sourceTerm: mapping.sourceTerm, productLabel: spokenLabel(mapping.sourceTerm, mapping.productName, line.text, names) })),
+        brandSourceTerm && enterpriseBrandName ? { sourceTerm: brandSourceTerm, brandLabel: spokenLabel(brandSourceTerm, enterpriseBrandName, line.text, names) } : undefined));
+      setSpokenNames(names);
+      setSpeechEdits({});
+      setGeneratedSpeech(drafts);
+      setGeneratedMappingKey(mappingKey);
+      setGenerationNotice('口播已生成，请检查左侧高亮的产品词，必要时修改后再确认。');
+      const firstChanged = referenceLines.findIndex((line, index) => line.text !== drafts[index]);
+      if (firstChanged >= 0) setActiveLine(firstChanged);
+    } catch (error) {
+      setGenerationNotice(error instanceof Error ? error.message : '口播生成失败，请重试。');
+    } finally {
+      setGeneratingSpeech(false);
+    }
+  };
+  const highlightSpeech = (speech: string, line: string) => {
+    const labels = productMappings.map(mapping => spokenLabel(mapping.sourceTerm, mapping.productName, line))
+      .filter(Boolean).sort((a, b) => b.length - a.length);
+    if (!labels.length) return speech;
+    const escaped = labels.map(label => label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+    const parts = speech.split(new RegExp(`(${escaped.join('|')})`, 'gi'));
+    return parts.map((part, index) => labels.some(label => label.toLocaleLowerCase() === part.toLocaleLowerCase())
+      ? <mark key={index} className="rounded bg-yellow-200 px-0.5 text-emerald-950">{part}</mark> : part);
+  };
   const syncPlaybackCard = (seconds: number) => {
     let next = -1;
     let latestStart = -Infinity;
@@ -373,7 +424,7 @@ export default function SocialCreationWorkbench({
   }, []);
 
   const startGeneration = async (replicationStep: 1 | 2 | 3 = 1, navigationOnly = false) => {
-    if (submitting || productsLoading || (!navigationOnly && isReplication && !productsReady)) return;
+    if (submitting || productsLoading || (!navigationOnly && isReplication && (!productsReady || !speechGenerated || confirmedSpeech.some(line => !line.draft.trim())))) return;
     setSubmitting(true); setGenerationNotice('');
     try {
       const presenterAssetId = '';
@@ -390,6 +441,7 @@ export default function SocialCreationWorkbench({
       // selected sentence indexes, but not a durable sentence-to-asset mapping yet.
       onGenerate({
         replicationStep: isReplication ? replicationStep : undefined,
+        confirmedSpeech: isReplication && !navigationOnly ? confirmedSpeech : undefined,
         requestId: Date.now(),
         creationPath: mode,
         title: isReplication
@@ -404,7 +456,7 @@ export default function SocialCreationWorkbench({
         uploadedMaterials,
         referenceLinks: [...new Set([...(seed?.referenceLinks || []), ...uploadedMaterials.map(item => item.url).filter(Boolean)])],
         callToAction: '',
-        specialRequirements: `生成项：${[...enabledOptions].join('、')}`,
+        specialRequirements: isReplication ? '已确认口播文本；分镜匹配时制作数字人口播镜头，成片渲染时生成统一配音。' : `生成项：${[...enabledOptions].join('、')}`,
         stageProfileId: stageProfile?.id || 'b2b_launch',
         stageLabel: stageProfile?.name || 'B2B 起步验证',
         strategyPresetId: stageProfile?.presetId || 'b2b_starting',
@@ -417,7 +469,7 @@ export default function SocialCreationWorkbench({
 
   return (
     <section className="flex h-full min-h-0 flex-col bg-[#f2f7f4]">
-      {isReplication ? <ReplicationWorkbenchHeader activeStep={0} onStepChange={index => { if (index > 0) void startGeneration(index as 1 | 2 | 3, true); }} navigationDisabled={submitting || productsLoading} title={seed?.referenceTitle} actions={<><button type="button" onClick={onShowCreations} className="rounded-lg border border-border px-3 py-2 text-xs font-bold">我的创作</button><button type="button" onClick={onOpenChooser} className="rounded-lg bg-[#173d31] px-3 py-2 text-xs font-bold text-white">切换制作方式</button></>} /> : (      <header className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-border bg-white px-5 py-3">
+      {isReplication ? <ReplicationWorkbenchHeader activeStep={0} onStepChange={index => { if (index > 0 && speechGenerated) void startGeneration(); }} navigationDisabled={submitting || productsLoading || !speechGenerated} title={seed?.referenceTitle} actions={<><button type="button" onClick={onShowCreations} className="rounded-lg border border-border px-3 py-2 text-xs font-bold">我的创作</button><button type="button" onClick={onOpenChooser} className="rounded-lg bg-[#173d31] px-3 py-2 text-xs font-bold text-white">切换制作方式</button></>} /> : (      <header className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-border bg-white px-5 py-3">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
             <span className={`rounded-full px-2.5 py-1 text-[10px] font-black ${isReplication ? 'bg-orange-50 text-orange-700' : 'bg-emerald-50 text-emerald-700'}`}>{isReplication ? '爆款裂变' : '自由创作'}</span>
@@ -436,8 +488,8 @@ export default function SocialCreationWorkbench({
       <div className="social-creation-workbench-layout grid min-h-0 flex-1 grid-cols-1 overflow-y-auto lg:overflow-hidden">
         <aside className="min-h-0 border-b border-border bg-white lg:overflow-y-auto lg:border-b-0 lg:border-r">
           <div className="sticky top-0 z-10 border-b border-border bg-white px-4 py-4">
-            <p className="text-sm font-black text-text-primary">口播内容</p>
-            <p className="mt-1 text-[11px] leading-5 text-text-muted">逐句对应原片分镜，点击定位主视频的对应画面。</p>
+            <p className="text-sm font-black text-text-primary">{isReplication ? '口播替换与确认' : '口播内容'}</p>
+            <p className="mt-1 text-[11px] leading-5 text-text-muted">{isReplication ? '先在右侧完成产品映射并生成口播，再检查高亮产品词、修改并确认。' : '逐句对应原片分镜，点击定位主视频的对应画面。'}</p>
           </div>
           <ol ref={cardListRef} className="space-y-2 p-3">
             {isReplication && !referenceShots.length && <li className="rounded-xl border border-dashed border-border p-4 text-xs leading-5 text-text-muted">原片分镜和口播尚未完成分析。完成后会在这里逐句显示真实口播与素材首帧。</li>}
@@ -447,8 +499,31 @@ export default function SocialCreationWorkbench({
                 <button type="button" aria-current={active ? 'step' : undefined} onClick={() => { setActiveLine(index); setSeekRequestId(current => current + 1); setRequestedSeek((referenceLines[index]?.startSeconds ?? shotStart(referenceLines[index]?.time || '')) + 0.05); }} className={`flex w-full items-start gap-3 rounded-xl border p-3 text-left transition ${active ? 'border-emerald-400 bg-emerald-50 shadow-sm' : 'border-border bg-white hover:border-emerald-200'}`}>
                   {isReplication && <StoryboardFirstFrame source={resolvedReferenceUrl || seed?.referenceMediaUrl} firstFrameRef={referenceLines[index]?.firstFrameRef} time={referenceLines[index]?.firstFrameSeconds ?? shotStart(referenceLines[index]?.time || '')} label={`口播 ${index + 1}`} />}
                   <span className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-md border text-[10px] font-black ${active ? 'border-emerald-600 bg-emerald-600 text-white' : 'border-border text-text-muted'}`}>{index + 1}</span>
-                  <span className="min-w-0 flex-1"><span className="block text-xs font-bold leading-5 text-text-primary">{line || '该分镜暂无可识别口播'}</span><span className="mt-1 flex items-center gap-1 text-[10px] font-semibold text-text-muted">{isReplication ? referenceLines[index]?.time : `00:${String(index * 4).padStart(2, '0')}–00:${String((index + 1) * 4).padStart(2, '0')}`}<ChevronRight size={11} /></span>{isReplication && referenceLines[index]?.visual && <span className="mt-1 line-clamp-2 text-[10px] leading-4 text-text-muted">画面：{referenceLines[index].visual}</span>}</span>
+                  <span className="min-w-0 flex-1"><span className="block text-xs font-bold leading-5 text-text-primary">{line || '该分镜暂无可识别口播'}</span><span className="mt-1 flex items-center gap-1 text-[10px] font-semibold text-text-muted">{isReplication ? referenceLines[index]?.time : `00:${String(index * 4).padStart(2, '0')}–00:${String((index + 1) * 4).padStart(2, '0')}`}<ChevronRight size={11} /></span>{isReplication && referenceLines[index]?.visuals.length > 0 && <span className="mt-1 line-clamp-2 text-[10px] leading-4 text-text-muted">画面：{referenceLines[index].visuals[0]}</span>}</span>
                 </button>
+                {isReplication && referenceLines[index]?.visualShotCount > 1 && <>
+                  <button type="button" aria-expanded={expandedSpeechLines.has(index)} aria-controls={`speech-visual-shots-${index}`} onClick={() => setExpandedSpeechLines(current => {
+                    const next = new Set(current);
+                    if (next.has(index)) next.delete(index); else next.add(index);
+                    return next;
+                  })} className="mt-1 flex w-full items-center justify-between rounded-lg border border-emerald-100 bg-emerald-50/60 px-3 py-2 text-left text-[11px] font-bold text-emerald-800">
+                    覆盖 {referenceLines[index].visualShotCount} 个分镜
+                    <ChevronDown size={14} className={`transition-transform ${expandedSpeechLines.has(index) ? 'rotate-180' : ''}`} />
+                  </button>
+                  {expandedSpeechLines.has(index) && <ol id={`speech-visual-shots-${index}`} className="mt-1 space-y-1.5 border-l-2 border-emerald-100 pl-3">
+                    {referenceLines[index].shots.map((shot, shotIndex) => {
+                      const shotTime = Number.isFinite(shot.startSeconds) && Number.isFinite(shot.endSeconds)
+                        ? `${shot.startSeconds!.toFixed(2)}–${shot.endSeconds!.toFixed(2)}s` : shot.time;
+                      return <li key={`${shotIndex}:${shot.firstFrameRef || shot.visual || ''}`}>
+                        <button type="button" onClick={() => { setActiveLine(index); setSeekRequestId(current => current + 1); setRequestedSeek((shot.startSeconds ?? shot.firstFrameSeconds ?? shotStart(shot.time)) + 0.05); }} className="flex w-full items-start gap-2 rounded-lg border border-border bg-white p-2 text-left hover:border-emerald-300">
+                          <StoryboardFirstFrame source={resolvedReferenceUrl || seed?.referenceMediaUrl} firstFrameRef={shot.firstFrameRef} time={shot.firstFrameSeconds ?? shot.startSeconds ?? shotStart(shot.time)} label={`分镜 ${shotIndex + 1}`} />
+                          <span className="min-w-0 flex-1"><span className="block text-[10px] font-bold text-emerald-800">分镜 {shotIndex + 1} · {shotTime}</span><span className="mt-1 line-clamp-3 text-[10px] leading-4 text-text-secondary">{shot.visual || '画面待分析'}</span></span>
+                        </button>
+                      </li>;
+                    })}
+                  </ol>}
+                </>}
+                {isReplication && line.trim() && speechGenerated && <div className={`mt-2 rounded-lg border p-2 ${productMappings.some(mapping => mapping.sourceTerm && line.toLocaleLowerCase().includes(mapping.sourceTerm.toLocaleLowerCase())) ? 'border-amber-400 bg-amber-50 ring-1 ring-amber-200' : 'border-emerald-100 bg-emerald-50/40'}`}><p className="text-[10px] font-bold text-emerald-800">替换后口播 · 请检查</p><p className="mt-1 whitespace-pre-wrap text-xs leading-5 text-text-primary">{highlightSpeech(speechEdits[index] ?? generatedSpeech?.[index] ?? '', line)}</p><label className="mt-2 block text-[10px] font-bold text-emerald-800">编辑口播<textarea aria-label={`第 ${index + 1} 句新口播`} value={speechEdits[index] ?? generatedSpeech?.[index] ?? ''} onChange={event => setSpeechEdits(current => ({ ...current, [index]: event.target.value }))} rows={3} className="mt-1 w-full resize-y rounded-md border border-border bg-white p-2 text-xs font-normal leading-5 text-text-primary" /></label></div>}
               </li>;
             })}
           </ol>
@@ -456,7 +531,7 @@ export default function SocialCreationWorkbench({
 
         <main className="flex min-h-[560px] min-w-0 flex-col bg-[#f5f8f5] lg:min-h-0">
           <div className="flex items-center justify-between border-b border-black/5 px-5 py-3">
-            <div><p className="text-xs font-black text-text-primary">画面预览</p><p className="mt-0.5 text-[10px] text-text-muted">当前对应第 {activeLine + 1} 个分镜</p></div>
+            <div><p className="text-xs font-black text-text-primary">画面预览</p><p className="mt-0.5 text-[10px] text-text-muted">{isReplication ? `当前对应第 ${activeLine + 1} 句口播` : `当前对应第 ${activeLine + 1} 个分镜`}</p></div>
             {!isReplication && <button type="button" onClick={() => uploadRef.current?.click()} className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-white px-3 py-2 text-xs font-black text-text-secondary shadow-sm"><Upload size={14} />上传素材</button>}
           </div>
           <input ref={uploadRef} type="file" multiple accept="video/*,image/*" className="hidden" onChange={event => setFiles(Array.from(event.currentTarget.files || []))} />
@@ -478,7 +553,7 @@ export default function SocialCreationWorkbench({
 
         <aside className="flex min-h-0 flex-col border-t border-border bg-white lg:border-l lg:border-t-0">
           <div className="min-h-0 flex-1 overflow-y-auto p-4">
-            <div className="flex items-start justify-between gap-3"><div><p className="text-sm font-black text-text-primary">生成设置</p><p className="mt-1 text-[11px] leading-5 text-text-muted">{isReplication ? '爆款裂变沿用原片设置，选项只读。' : '每一步都由你确认后再生成。'}</p></div>{isReplication && <span className="rounded-full bg-slate-100 px-2 py-1 text-[9px] font-black text-slate-500">已锁定</span>}</div>
+            <div className="flex items-start justify-between gap-3"><div><p className="text-sm font-black text-text-primary">{isReplication ? '产品与品牌替换' : '生成设置'}</p><p className="mt-1 text-[11px] leading-5 text-text-muted">{isReplication ? '确认企业产品映射后，在左侧逐句检查新口播。' : '每一步都由你确认后再生成。'}</p></div></div>
 
             {isReplication && <div className="mt-4">
               <p className="text-xs font-black text-text-primary">主推产品 · 多选</p>
@@ -517,7 +592,7 @@ export default function SocialCreationWorkbench({
               <div className="mt-3 rounded-lg border border-border bg-surface-2 p-2.5"><p className="text-[10px] font-bold text-text-secondary">企业品牌 · 自动读取</p><p className="mt-1 text-xs text-text-primary">{enterpriseBrandName || '企业知识库尚未填写品牌名称'}</p><p className="mt-1 text-[10px] text-text-muted">新口播使用企业知识库中的品牌信息，无需填写原片品牌名。</p></div>
             </div>}
 
-            <div className="mt-4 space-y-2">
+            {!isReplication && <div className="mt-4 space-y-2">
               {creationOptions.map(item => {
                 const Icon = item.icon;
                 const checked = enabledOptions.has(item.id);
@@ -528,7 +603,7 @@ export default function SocialCreationWorkbench({
                   <span className={`h-5 w-9 rounded-full p-0.5 ${checked ? locked ? 'bg-slate-300' : 'bg-emerald-600' : 'bg-slate-200'}`}><span className={`block h-4 w-4 rounded-full bg-white transition ${checked ? 'translate-x-4' : ''}`} /></span>
                 </button>;
               })}
-            </div>
+            </div>}
 
             {enterpriseProfileState === 'ready' && enterpriseCtas.length > 0 && <div className="mt-4 rounded-xl border border-border bg-surface-2 p-3">
               <div className="flex items-center gap-2"><Megaphone size={14} /><p className="text-xs font-black text-text-primary">CTA · 已从企业知识库读取</p></div>
@@ -551,8 +626,8 @@ export default function SocialCreationWorkbench({
             {/* GENERATION_INTEGRATION_GAP: the server calculates estimatedCostCny only
                 after a task plan exists; there is no preflight quote endpoint yet. */}
             {isReplication && <div className="flex items-center gap-3 text-[11px]"><span className="text-text-muted">预计消耗</span><span className="font-black text-text-primary" title="生成任务建立后由服务端返回真实预估">待生成服务核算</span></div>}
-            <button type="button" disabled={submitting || productsLoading || (isReplication && !productsReady)} onClick={() => void startGeneration()} className="flex min-w-[220px] items-center justify-center gap-2 rounded-xl bg-[#173d31] px-4 py-3 text-sm font-black text-white shadow-sm hover:bg-[#245644] disabled:cursor-not-allowed disabled:bg-slate-300">
-              {submitting ? <Loader2 size={16} className="animate-spin" /> : <Film size={16} />}{submitting ? '正在进入创作' : isReplication ? '生成新口播' : '开始生成'}
+            <button type="button" disabled={submitting || generatingSpeech || productsLoading || (isReplication && (!productsReady || !confirmedSpeech.length || (speechGenerated && confirmedSpeech.some(line => !line.draft.trim()))))} onClick={() => { if (isReplication && !speechGenerated) void generateSpeech(); else void startGeneration(); }} className="flex min-w-[220px] items-center justify-center gap-2 rounded-xl bg-[#173d31] px-4 py-3 text-sm font-black text-white shadow-sm hover:bg-[#245644] disabled:cursor-not-allowed disabled:bg-slate-300">
+              {submitting || generatingSpeech ? <Loader2 size={16} className="animate-spin" /> : <Film size={16} />}{submitting ? '正在进入创作' : generatingSpeech ? '正在生成英文口播' : isReplication ? speechGenerated ? '确认口播，进入分镜匹配' : '生成口播' : '开始生成'}
             </button>
           </div></footer>
     </section>

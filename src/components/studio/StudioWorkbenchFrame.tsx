@@ -277,7 +277,7 @@ export function StudioWorkbenchFrame({
   onProjectTitleChange,
   projectTitlePlaceholder = '未命名项目',
   replicationWorkflow = false,
-  replicationActiveStep = 2,
+  replicationActiveStep = 1,
   onReplicationStepChange,
   replicationNavigationDisabled = false,
   saveStatus,

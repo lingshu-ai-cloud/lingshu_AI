@@ -659,17 +659,21 @@ function replicabilityForFrame(detail: ScriptDetail15s, dna: FrameMaterialMatch[
   return { score: Math.max(0, Math.min(100, score)), localCoverage, aiFeasibility, recommendedExecution, blockers: uniqueBlockers.slice(0, 4) };
 }
 
-function normalizedOverlap(left: string, right: string): number {
-  const tokens = tokenizeForMatch(left);
+function normalizedOverlap(left: unknown, right: unknown): number {
+  const tokens = tokenizeForMatch(String(left ?? ''));
   if (!tokens.length) return 0;
-  const haystack = right.toLowerCase();
+  const haystack = String(right ?? '').toLowerCase();
   return Math.min(100, Math.round(tokens.filter(token => haystack.includes(token)).length / tokens.length * 100));
 }
 
 function scoreSegmentForFrame(material: Material, segment: MaterialSegment, detail: ScriptDetail15s, used: Set<string>) {
   const dna = viralDnaForFrame(detail);
+  // Older saved segment analyses may predate these array fields. Treat missing
+  // evidence as empty instead of crashing the entire inspiration dashboard.
+  const functions = Array.isArray(segment.recommendedFunctions) ? segment.recommendedFunctions : [];
+  const subjects = Array.isArray(segment.subject) ? segment.subject : [];
+  const logoText = Array.isArray(segment.logoText) ? segment.logoText : [];
   const frameText = `${detail.purpose} ${detail.visual} ${detail.beats?.map(item => item.action).join(' ')} ${detail.shot} ${detail.angle} ${detail.composition} ${detail.camera}`;
-  const segmentText = `${segment.recommendedFunctions.join(' ')} ${segment.subject.join(' ')} ${segment.action} ${segment.shot} ${segment.angle} ${segment.composition} ${segment.camera} ${segment.environment}`;
   const needsProduct = /产品|包装|瓶|罐|质地|product|package|bottle|texture/i.test(frameText);
   const needsPerson = /人物|真人|男性|女性|脸|眼|皮肤|手|person|face|eye|skin|hand/i.test(frameText);
   const risks: string[] = [];
@@ -677,11 +681,11 @@ function scoreSegmentForFrame(material: Material, segment: MaterialSegment, deta
   if (needsProduct && /完整|正面|清晰|特写|reveal/i.test(frameText) && segment.productClarity !== 'high') risks.push('硬条件不满足：产品揭晓需要清晰完整产品');
   if (needsPerson && !segment.hasPerson) risks.push('硬条件不满足：分镜要求真人/手部动作');
   if (dna.authenticityRequired && segment.needsReview && !segment.manualConfirmed) risks.push('真实性镜头尚未人工确认');
-  if (segment.hasLogo && segment.logoText.length) risks.push(`检测到文字/品牌：${segment.logoText.join('、')}`);
+  if (segment.hasLogo && logoText.length) risks.push(`检测到文字/品牌：${logoText.join('、')}`);
 
-  const functionScore = normalizedOverlap(detail.purpose || '', segment.recommendedFunctions.join(' '));
+  const functionScore = normalizedOverlap(detail.purpose || '', functions.join(' '));
   const action = normalizedOverlap(`${detail.visual} ${detail.beats?.map(item => item.action).join(' ')}`, segment.action);
-  const subject = normalizedOverlap(detail.visual, `${segment.subject.join(' ')} ${segment.action}`);
+  const subject = normalizedOverlap(detail.visual, `${subjects.join(' ')} ${segment.action}`);
   const composition = normalizedOverlap(`${detail.shot} ${detail.angle} ${detail.composition}`, `${segment.shot} ${segment.angle} ${segment.composition}`);
   const camera = normalizedOverlap(detail.camera, segment.camera);
   const frameDuration = parseFrameTimeRange(detail.time).duration;

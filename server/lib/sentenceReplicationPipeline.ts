@@ -21,7 +21,7 @@ export async function runSentenceReplicationPipeline(input: {
   if (!input.cues.length || input.cues.some(cue => cue.personShot !== false && !cue.sourceFirstFrame?.materialId)) throw new Error('所有人物镜头的逐句源首帧必须先完成提取');
   let cues = input.cues.map(cue => structuredClone(cue)); const clips: string[] = [];
   for (let index = 0; index < cues.length; index += 1) {
-    const cue = cues[index]!; if (cue.personShot !== false) cue.targetFirstFrame = { ...cue.targetFirstFrame, state: 'pending' }; await input.onProgress?.(cues);
+    const cue = cues[index]!; if (cue.personShot !== false && cue.targetFirstFrame?.state !== 'ready') cue.targetFirstFrame = { ...cue.targetFirstFrame, state: 'pending' }; await input.onProgress?.(cues);
     try {
       let clip: SentencePipelineArtifact;
       const reused = await input.reuseCompletedClip?.(cue);

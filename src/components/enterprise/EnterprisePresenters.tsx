@@ -16,6 +16,7 @@ export default function EnterprisePresenters() {
   const [editingId, setEditingId] = useState('');
   const [materials, setMaterials] = useState<Material[]>([]); const [materialStatus, setMaterialStatus] = useState('正在读取人物素材…');
   const [loaded, setLoaded] = useState(false); const [busy, setBusy] = useState(false); const [message, setMessage] = useState('');
+  const [portraitPreview, setPortraitPreview] = useState('');
   useEffect(() => { let live = true; void productionApi.defaults().then(result => { if (live) { setValue(result); setLoaded(true); } }).catch(error => { if (live) setMessage(String(error)); }); return () => { live = false; }; }, []);
   useEffect(() => { let live = true; void fetchMaterialLibrary().then(result => { if (!live) return; setMaterials(result.items.filter(item => item.type === 'image' || item.type === 'video')); setMaterialStatus(result.status === 'ready' ? '' : '部分素材源暂不可用，仅显示当前可用素材'); }).catch(() => { if (live) setMaterialStatus('人物素材库暂不可用，请先到素材库上传并稍后重试'); }); return () => { live = false; }; }, []);
   const save = async (next: ProductionDefaults) => { if (!loaded || busy) return false; setBusy(true); setMessage(''); try { setValue(await productionApi.saveDefaults(next)); setMessage('已保存到企业，新的创作草稿会继承'); return true; } catch (error) { setMessage(String(error)); return false; } finally { setBusy(false); } };
@@ -48,6 +49,19 @@ export default function EnterprisePresenters() {
             </label>;
           })}</div> : !materialStatus && <p className="mt-2 text-xs text-text-muted">素材库中还没有图片或视频，请先上传人物资产。</p>}
           {(draft.referenceMaterialIds || []).some(id => !materials.some(material => material.id === id)) && <p className="mt-2 text-xs text-amber-700">已有绑定中包含当前素材库不可见的历史资产；保存前请重新选择，避免后续生成失败。</p>}
+          {editingId && (draft.referenceMaterialIds || []).some(id => materials.some(item => item.id === id && item.type === 'video')) &&
+            <button type="button" className="mt-2 rounded-lg border px-3 py-2 text-xs" onClick={async () => { try {
+              const video = (draft.referenceMaterialIds || []).find(id => materials.some(item => item.id === id && item.type === 'video'));
+              if (!video) return;
+              setBusy(true);
+              const result = await productionApi.portraitFromVideo(editingId, video);
+              setPortraitPreview(result.previewUrl);
+              const library = await fetchMaterialLibrary();
+              setMaterials(library.items.filter(item => item.type === 'image' || item.type === 'video'));
+              setDraft(current => ({ ...current, referenceMaterialIds: [...new Set([...(current.referenceMaterialIds || []), result.materialId])] }));
+              setMessage(`已从人物视频 ${result.atSeconds.toFixed(2)} 秒提取候选图片并入库；请检查下方预览是否为清晰正面人像，保存人物后可用于首帧参考。方舟 Active 认证仍需单独核验。`);
+            } catch (error) { setMessage(String(error)); } finally { setBusy(false); } }}>从已选人物视频提取清晰图片</button>}
+          {portraitPreview && <img src={portraitPreview} alt="从人物视频提取的候选人像，请人工检查" className="mt-2 max-h-48 rounded-lg border object-contain" />}
         </fieldset>
         <fieldset className="mt-3 rounded-lg border border-border p-3"><legend className="px-1 text-xs font-bold">主体授权证据</legend>
           <p className="text-xs text-text-muted">本地上传、主体授权和方舟认证分别记录。只有三项都完成，人物图片才可外发。</p>

@@ -6,7 +6,7 @@ import type { PresenterAsset } from '../../src/lib/shotProduction.js';
 import type { DigitalHumanReferenceCue } from '../../src/lib/digitalHumanPlan.js';
 import { planPersonShotClusters, clusterSourceFirstFrameMaterialId } from '../../src/lib/personShotClustering.js';
 import { readLocalMaterials, saveLocalMaterials } from './materialLibrary.js';
-import { acceptSeedancePortrait } from './presenterAssetAcceptance.js';
+import { acceptPresenterPortraitReference } from './presenterAssetAcceptance.js';
 import { readTenantMaterialBytes } from './sentenceReplicationProduction.js';
 import { SeedreamFirstFrameGenerator } from './seedreamFirstFrameGenerator.js';
 import { firstFrameInputFingerprint, type FirstFrameReference } from './firstFrameGenerator.js';
@@ -16,7 +16,7 @@ export async function preparePhotoTalkingFirstFrames(input: {tenantId:string; pr
   const materials = readLocalMaterials(); const clusterPlan = planPersonShotClusters(input.cues, Math.max(1, Number(process.env.DIGITAL_HUMAN_MAX_FIRST_FRAMES_PER_VIDEO) || 3));
   if (clusterPlan.state !== 'ready') throw new Error(clusterPlan.blockers.join('；'));
   const portrait = materials.find(item => input.presenter.referenceMaterialIds?.includes(String(item.id)) && item.type === 'image');
-  if (!portrait) throw new Error('请选择企业人物照片'); acceptSeedancePortrait({tenantId:input.tenantId,presenter:input.presenter,material:portrait});
+  if (!portrait) throw new Error('请选择企业人物照片'); acceptPresenterPortraitReference({tenantId:input.tenantId,presenter:input.presenter,material:portrait,provider:'volcengine_ark',uses:['person_replacement']});
   const reference = async (material: typeof portrait, role: FirstFrameReference['role']): Promise<FirstFrameReference> => { const loaded = await readTenantMaterialBytes(material,input.tenantId); return {role,bytes:loaded.bytes,mimeType:/png/i.test(loaded.mimeType)?'image/png':/webp/i.test(loaded.mimeType)?'image/webp':'image/jpeg',sha256:createHash('sha256').update(loaded.bytes).digest('hex')}; };
   const identity = await reference(portrait,'authorized_presenter'); const generator = new SeedreamFirstFrameGenerator(); const frames = new Map<string,{materialId:string;imageUrl:string;state:'ready'}>();
   for (const cluster of clusterPlan.clusters) {

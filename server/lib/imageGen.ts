@@ -10,6 +10,11 @@ export interface GeneratedImage {
   model: string;
 }
 
+/** A definitive client-side provider rejection: no image task was accepted. */
+export class ImageProviderRejectedError extends Error {
+  constructor(public readonly statusCode: number, message: string) { super(message); }
+}
+
 function normalizeMime(mimeType?: string): string {
   if (!mimeType) return 'image/png';
   if (mimeType.includes('jpeg') || mimeType.includes('jpg')) return 'image/jpeg';
@@ -65,7 +70,11 @@ async function generateQwenImage(input: {
     signal: AbortSignal.timeout(90_000),
   });
   const payload = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(`Qwen Image ${response.status}: ${String(payload?.message || payload?.error?.message || response.statusText).slice(0, 500)}`);
+  if (!response.ok) {
+    const message = `Qwen Image ${response.status}: ${String(payload?.message || payload?.error?.message || response.statusText).slice(0, 500)}`;
+    if ([400, 401, 403, 404, 422].includes(response.status)) throw new ImageProviderRejectedError(response.status, message);
+    throw new Error(message);
+  }
   const url = qwenImageUrl(payload);
   const image = await fetch(url, { signal: AbortSignal.timeout(90_000) });
   if (!image.ok) throw new Error(`Qwen Image 产物下载失败：HTTP ${image.status}`);

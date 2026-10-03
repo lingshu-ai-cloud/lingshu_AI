@@ -61,6 +61,14 @@ export function referenceBrandTerm(lines: string[]): string {
   return /^(?:your|our|the|自己的|你的|我们)$/i.test(afterBrand) ? '' : afterBrand;
 }
 
+/** Keep an English source narration in English when the catalog only has a Chinese name. */
+export function spokenIdentityLabel(sourceTerm: string, catalogName: string, sourceSpeech: string): string {
+  if (!/[A-Za-z]/.test(sourceSpeech) || /[\p{Script=Han}]/u.test(sourceSpeech)) return catalogName;
+  const english = catalogName.match(/[A-Za-z][A-Za-z0-9\s'&+.-]*/g)
+    ?.map(part => part.trim()).find(part => /[A-Za-z]{2}/.test(part));
+  return english || sourceTerm;
+}
+
 export function replaceReferenceIdentities(source: string, products: Array<{ sourceTerm: string; productLabel: string }>, brand?: { sourceTerm: string; brandLabel: string }): string {
   const replacements = [
     ...products.map(item => ({ source: item.sourceTerm.trim(), target: item.productLabel.trim() })),

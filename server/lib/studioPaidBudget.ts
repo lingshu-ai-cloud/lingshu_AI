@@ -23,6 +23,11 @@ function environmentConfig(): Config {
  */
 export class StudioPaidBudget {
   constructor(private root: string, private config: () => Config = environmentConfig) {}
+  private amount(config: Config, provider: PaidProvider, overrideCny?: number): number {
+    if (overrideCny === undefined) return config.reserve[provider];
+    if (!Number.isFinite(overrideCny) || overrideCny <= 0 || overrideCny > config.reserve[provider] / 1e6) throw new Error('单任务预占金额无效或超过管理员上限');
+    return units(String(overrideCny));
+  }
   private read(config: Config): Ledger {
     const file = path.join(this.root, 'ledger.json');
     const ledger: Ledger = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : { version: 1, limit: config.limit, openingUsed: config.openingUsed, entries: {} };
@@ -37,22 +42,39 @@ export class StudioPaidBudget {
     if (!Number.isSafeInteger(value)) throw new Error('预算账本金额异常');
     return value;
   }
-  status(provider: PaidProvider) {
+  status(provider: PaidProvider, overrideCny?: number) {
     try {
-      const config = this.config(), used = this.used(this.read(config));
-      return { allowed: used + config.reserve[provider] <= config.limit,
-        remainingCny: Math.max(0, config.limit - used) / 1e6, reservationCny: config.reserve[provider] / 1e6,
-        reason: used + config.reserve[provider] <= config.limit ? '' : '预算余额不足，已禁止新付费任务；已有任务仍可刷新' };
+      const config = this.config(), used = this.used(this.read(config)), amount = this.amount(config, provider, overrideCny);
+      return { allowed: used + amount <= config.limit,
+        remainingCny: Math.max(0, config.limit - used) / 1e6, reservationCny: amount / 1e6,
+        reason: used + amount <= config.limit ? '' : '预算余额不足，已禁止新付费任务；已有任务仍可刷新' };
     } catch (error) { return { allowed: false, remainingCny: null, reservationCny: null, reason: error instanceof Error ? error.message : '预算不可用' }; }
   }
-  async reserve(provider: PaidProvider, operationId: string) {
+  async reserve(provider: PaidProvider, operationId: string, overrideCny?: number) {
     return withPaidOperationLock(path.join(this.root, '.locks'), 'budget', async () => {
       const config = this.config(), ledger = this.read(config);
       const id = createHash('sha256').update(`${provider}:${operationId}`).digest('hex');
-      if (ledger.entries[id]) return; // Same logical operation never consumes a second allocation.
-      const amount = config.reserve[provider];
+      const amount = this.amount(config, provider, overrideCny);
+      if (ledger.entries[id]) {
+        if (ledger.entries[id].amount !== amount) throw new Error('同一请求的预算预占已变化，请核对原任务');
+        return;
+      }
       if (this.used(ledger) + amount > config.limit) throw new Error('预算余额不足，未调用供应商');
       ledger.entries[id] = { provider, amount, at: new Date().toISOString() };
+      const temp = path.join(this.root, `ledger.${randomUUID()}.tmp`);
+      fs.writeFileSync(temp, JSON.stringify(ledger), { mode: 0o600 });
+      fs.renameSync(temp, path.join(this.root, 'ledger.json'));
+    });
+  }
+
+  /** Release only after the provider explicitly rejected a request before creating a task. */
+  async releaseRejected(provider: PaidProvider, operationId: string) {
+    return withPaidOperationLock(path.join(this.root, '.locks'), 'budget', async () => {
+      const config = this.config(), ledger = this.read(config);
+      const id = createHash('sha256').update(`${provider}:${operationId}`).digest('hex');
+      if (!ledger.entries[id]) return;
+      if (ledger.entries[id].provider !== provider) throw new Error('预算预占供应商不一致');
+      delete ledger.entries[id];
       const temp = path.join(this.root, `ledger.${randomUUID()}.tmp`);
       fs.writeFileSync(temp, JSON.stringify(ledger), { mode: 0o600 });
       fs.renameSync(temp, path.join(this.root, 'ledger.json'));

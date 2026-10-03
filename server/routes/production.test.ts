@@ -41,7 +41,7 @@ test('Qwen first-frame draft route persists its receipt, reuses the same request
   const shot = { ...newShotProduction('目标口播', 'person-1'), source: 'avatar' as const, digitalHuman: {
     workflow: 'viral_replication' as const, method: 'reenact' as const, replicationMode: 'sentence_first_frame' as const, contentConfirmed: true, presenterSelected: true, replacementScope: 'person_and_scene' as const, targetEffect: 'flexible_scene' as const,
     action: '复用动作意图', scene: '重建画面', preserve: '构图', reference: { videoUrl: '/source.mp4', start: 0, end: 2, originalText: '原片', derivativeAuthorized: false,
-      cues: [{ id: 'cue-1', start: 0, end: 2, originalText: '原片', targetText: '目标', shotIds: ['s1'], personShot: true, sourceFirstFrame: { time: 0, materialId: 'frame-1' } }] },
+      cues: [{ id: 'cue-1', start: 0, end: 2, originalText: '原片', targetText: '目标', shotIds: ['s1'], personShot: true, compositionClusterId: 'front-medium', sourceFirstFrame: { time: 0, materialId: 'frame-1' } }] },
   } };
   rows.set('studio_projects/project-1', { id: 'project-1', tenant_id: 'tenant-a', status: 'draft', spec: { shotProductionContext: context, shotProductions: { 'assembly-1:shot-1': shot } } });
   rows.set('studio_production_defaults/defaults-1', { id: 'defaults-1', tenant_id: 'tenant-a', payload: { presenters: [{ id: 'person-1', name: 'Person', authorized: true }] } });
@@ -459,6 +459,10 @@ test('batch preserves confirmed reconstruction and rejects inconsistent source-p
 });
 
 test('photo talking first frame preparation is tenant scoped and never generates a video', async () => {
+  const previousHeygenReserve = process.env.STUDIO_HEYGEN_RESERVE_CNY;
+  const previousPhotoRate = process.env.HEYGEN_PHOTO_ESTIMATED_CNY_PER_SECOND;
+  process.env.STUDIO_HEYGEN_RESERVE_CNY = '10';
+  process.env.HEYGEN_PHOTO_ESTIMATED_CNY_PER_SECOND = '0.8';
   const rows = new Map<string, any>(); let seq = 0;
   const store: DataStore = {
     async getById<T>(collection: string, id: string) { return structuredClone(rows.get(`${collection}/${id}`) || null) as T | null; },
@@ -470,8 +474,8 @@ test('photo talking first frame preparation is tenant scoped and never generates
   const context = 'draft-context';
   const shot = { ...newShotProduction('目标口播', 'person-1'), source: 'avatar' as const, digitalHuman: {
     presenterMode:'photo_talking' as const, workflow: 'viral_replication' as const, method: 'reenact' as const, replicationMode: 'sentence_first_frame' as const, contentConfirmed: true, presenterSelected: true, replacementScope: 'person_and_scene' as const, targetEffect: 'flexible_scene' as const,
-    action: '复用动作意图', scene: '重建画面', preserve: '构图', reference: { videoUrl: '/source.mp4', start: 0, end: 2, originalText: '原片', derivativeAuthorized: false,
-      cues: [{ id: 'cue-1', start: 0, end: 2, originalText: '原片', targetText: '目标', shotIds: ['s1'], personShot: true, sourceFirstFrame: { time: 0, materialId: 'frame-1' } }] },
+    action: '复用动作意图', scene: '重建画面', preserve: '构图', reference: { videoUrl: '/source.mp4', start: 0, end: 2, originalText: '原片', derivativeAuthorized: false, modelInputAuthorized: true, modelInputAuthorizationEvidence: 'contract-1',
+      cues: [{ id: 'cue-1', start: 0, end: 2, originalText: '原片', targetText: '目标', shotIds: ['s1'], personShot: true, compositionClusterId: 'front-medium', sourceFirstFrame: { time: 0, materialId: 'frame-1' } }] },
   } };
   rows.set('studio_projects/project-1', { id: 'project-1', tenant_id: 'tenant-a', status: 'draft', spec: { shotProductionContext: context, shotProductions: { 'assembly-1:shot-1': shot } } });
   rows.set('studio_production_defaults/defaults-1', { id: 'defaults-1', tenant_id: 'tenant-a', payload: { presenters: [{ id: 'person-1', name: 'Person', authorized: true }] } });
@@ -480,6 +484,12 @@ test('photo talking first frame preparation is tenant scoped and never generates
   app.use(createProductionRouter(store,async()=>{videoCalls++;return 'unused';},{preparePhotoTalkingFirstFrames:async input=>{frameCalls++;assert.equal(input.tenantId,'tenant-a');return {cues:input.cues.map(cue=>({...cue,targetFirstFrame:{materialId:'target',imageUrl:'/target.jpg',state:'ready' as const}}))};}}));
   const server=app.listen(0,'127.0.0.1');await new Promise<void>(resolve=>server.once('listening',resolve));
   const url=`http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-  const request=(tenant='tenant-a',confirmed=true,fingerprint=shotFingerprint(shot,context,'shot-1'))=>fetch(`${url}/photo-talking-first-frames`,{method:'POST',headers:{'Content-Type':'application/json','x-tenant':tenant},body:JSON.stringify({projectId:'project-1',assemblyId:'assembly-1',shotId:'shot-1',fingerprint,confirmed})});
-  try{assert.equal((await request('tenant-b')).status,400);assert.equal((await request('tenant-a',false)).status,400);assert.equal((await request('tenant-a',true,'stale')).status,400);assert.equal(frameCalls,0);const response=await request();assert.equal(response.status,200);const result=await response.json();assert.equal(result.cues[0].targetFirstFrame.state,'ready');assert.equal(frameCalls,1);assert.equal(videoCalls,0);}finally{await new Promise<void>(resolve=>server.close(()=>resolve()));}
+  const request=(tenant='tenant-a',confirmed=true,fingerprint=shotFingerprint(shot,context,'shot-1'),maxCostCny=5)=>fetch(`${url}/photo-talking-first-frames`,{method:'POST',headers:{'Content-Type':'application/json','x-tenant':tenant},body:JSON.stringify({projectId:'project-1',assemblyId:'assembly-1',shotId:'shot-1',fingerprint,confirmed,maxCostCny})});
+  try{assert.equal((await request('tenant-b')).status,400);assert.equal((await request('tenant-a',false)).status,400);assert.equal((await request('tenant-a',true,'stale')).status,400);assert.equal((await request('tenant-a',true,shotFingerprint(shot,context,'shot-1'),0.01)).status,400);assert.equal((await request('tenant-a',true,shotFingerprint(shot,context,'shot-1'),1)).status,400);assert.equal(frameCalls,0);
+    const unapproved=structuredClone(shot);unapproved.digitalHuman.reference.modelInputAuthorized=false;
+    rows.set('studio_projects/project-1',{...rows.get('studio_projects/project-1'),spec:{...rows.get('studio_projects/project-1').spec,shotProductions:{'assembly-1:shot-1':unapproved}}});
+    const blocked=await request('tenant-a',true,shotFingerprint(unapproved,context,'shot-1'));assert.equal(blocked.status,400);assert.match(await blocked.text(),/授权依据/);assert.equal(frameCalls,0);
+    rows.set('studio_projects/project-1',{...rows.get('studio_projects/project-1'),spec:{...rows.get('studio_projects/project-1').spec,shotProductions:{'assembly-1:shot-1':shot}}});
+    const response=await request();assert.equal(response.status,200,await response.clone().text());const result=await response.json();assert.equal(result.cues[0].targetFirstFrame.state,'ready');assert.equal(frameCalls,1);assert.equal(videoCalls,0);
+  }finally{await new Promise<void>(resolve=>server.close(()=>resolve())); if (previousHeygenReserve === undefined) delete process.env.STUDIO_HEYGEN_RESERVE_CNY; else process.env.STUDIO_HEYGEN_RESERVE_CNY = previousHeygenReserve; if(previousPhotoRate===undefined)delete process.env.HEYGEN_PHOTO_ESTIMATED_CNY_PER_SECOND;else process.env.HEYGEN_PHOTO_ESTIMATED_CNY_PER_SECOND=previousPhotoRate;}
 });

@@ -10,11 +10,13 @@ for (const action of ['applyTimestampScript(plan.script)', 'setStepIdx(materialI
 }
 assert.equal(handler.split('setStepIdx(materialIndex)').length - 1, 1, 'completion must not interrupt user navigation');
 assert.ok(handler.includes('if (replicationPreparationRef.current) return;'), 'prevent duplicate paid requests');
-assert.ok(handler.indexOf('replicationPreviewAudioRef.current = { text: spoken, audio }') < handler.indexOf('await studioApi.alignTts'), 'retain valid audio for alignment retries');
+assert.ok(handler.includes('成片渲染时再生成配音'), 'replication preparation defers voiceover generation until final render');
+assert.ok(!handler.includes('await studioApi.alignTts'), 'navigating to storyboards must not submit an alignment request');
 assert.ok(handler.includes('setReplicationPreparationError(message)'), 'failures remain actionable on the storyboard page');
 assert.ok(handler.includes('replicationPreparationRef.current = false;'), 'release request guard after failure or success');
-assert.ok(source.includes('disabled={replicationTimingBlocked || batchShotBusy || materialSelectLoading}'));
 assert.ok(source.includes('const primaryActionDisabled = replicationTimingBlocked ||'));
-assert.ok(source.includes('disabled: replicationTimingBlocked ||'));
+assert.ok(source.includes('|| batchShotBusy || savingProj || replicationTimingBlocked'), 'material step action uses the same preparation gate');
+assert.ok(source.includes('batchShotBusy || savingProj || replicationTimingBlocked'), 'material step remains blocked while replication preparation is pending');
 assert.ok(source.includes('generateSetupScriptAndContinue(replicationConfirmedLinesRef.current)'), 'retry uses confirmed edits');
+assert.ok(source.includes('重试口播准备'), 'retry text describes the deferred voiceover workflow');
 console.log('Replication preparation navigation and production gates passed');

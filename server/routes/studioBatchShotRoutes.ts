@@ -20,7 +20,7 @@ export interface StudioBatchShotRoute {
   order: number;
   visualTopic: 'presenter' | 'factory' | 'product' | 'usage_scene' | 'other';
   expressionPurpose: string;
-  route: 'digital_human' | 'local_material' | 'seedance_action' | 'unresolved';
+  route: 'digital_human' | 'local_material' | 'seedance_action' | 'aigc_first_frame' | 'unresolved';
   status: 'matched' | 'needs_material' | 'needs_plan' | 'blocked';
   matchedMaterialId: string | null;
   matchedSegmentId: string | null;
@@ -32,12 +32,13 @@ export interface StudioBatchShotRoute {
 }
 
 interface BatchShotSpec {
+  mode?: string;
   activeAssemblyId?: string;
   ratio?: string;
   shootingSlots?: Array<{ id?: string; slotId?: string; detail?: string; duration?: number; requirements?: string; observedPresenterRole?: import('../../shared/contracts/presenterShotRecognition.js').ObservedPresenterRole; personContinuityId?: string; salesPresenterConfirmed?: boolean }>;
   shotProductions?: Record<string, ShotProduction>;
   storyboardAssignments?: Record<string, string>;
-  storyboardSourcePlans?: Record<string, { userSource?: string; confirmed?: boolean }>;
+  storyboardSourcePlans?: Record<string, { userSource?: string; mode?: string; sceneType?: 'product' | 'factory' | 'usage'; confirmed?: boolean; firstFrameMaterialId?: string; firstFrameConfirmed?: boolean; generatedClipId?: string; videoResolution?: '480p' | '720p'; videoResolutionPinned?: boolean }>;
   clipEdits?: Record<string, { segmentId?: string; trimStart?: number; trimEnd?: number }>;
   materialSnapshots?: Array<{ id?: string; usage?: string; name?: string; type?: string; url?: string; duration?: number; width?: number; height?: number; aspectRatio?: number; transcript?: string }>;
 }
@@ -64,13 +65,14 @@ export function planStudioBatchShotRoutes(spec: BatchShotSpec, options: {
     // every reference cut. Neither is reliable evidence of what is on screen.
     const description = String(slot.detail || '').split('镜头功能：')[0] || String(slot.detail || '');
     const purpose = String(slot.detail || '').match(/镜头功能：([^\s]+)/)?.[1] || String(slot.requirements || '').slice(0, 120);
+    const explicitScene = spec.storyboardSourcePlans?.[slotId]?.sceneType;
     const recognition = confirmedSalesPresenterRoute(slot);
     const spokenOnScreen = recognition === 'presenter' || spec.storyboardSourcePlans?.[slotId]?.userSource === 'avatar';
     const action = recognition === 'motion';
     const visualTopic: StudioBatchShotRoute['visualTopic'] = action || spokenOnScreen ? 'presenter'
-      : /工厂|车间|生产线|流水线|灌装|工人|factory|manufactur/i.test(description) ? 'factory'
-        : /使用|试用|上脸|涂抹|妆效|粉底覆盖|usage/i.test(description) ? 'usage_scene'
-          : /产品|包装|瓶身|质地|粉底液|product/i.test(description) ? 'product' : 'other';
+      : explicitScene === 'factory' || /工厂|车间|生产线|流水线|灌装|工人|factory|manufactur/i.test(description) ? 'factory'
+        : explicitScene === 'usage' || /使用|试用|安装|操作|涂抹|喷涂|上脸|妆效|粉底覆盖|usage/i.test(description) ? 'usage_scene'
+          : explicitScene === 'product' || /产品|包装|瓶身|质地|粉底液|product/i.test(description) ? 'product' : 'other';
     const assignedId = String(assignments[slotId] || '').trim();
     const assigned = assignedId && snapshots.has(assignedId) && snapshots.get(assignedId)?.usage !== 'reference_only' ? assignedId : null;
     const edit = assigned ? spec.clipEdits?.[`${slotId}:${assigned}`] : undefined;
@@ -82,6 +84,7 @@ export function planStudioBatchShotRoutes(spec: BatchShotSpec, options: {
       trimEnd: assigned && Number.isFinite(trimEnd) && trimEnd > trimStart ? trimEnd : null,
       generated: false as const };
     const choice = spec.storyboardSourcePlans?.[slotId]?.userSource;
+    const sourcePlan = spec.storyboardSourcePlans?.[slotId];
     if (!['material', 'shoot'].includes(choice || '') && slot.personContinuityId && salesPresenterRecognition(slot) === 'confirmed') {
       const identityAssets = new Set(slots.filter(peer => peer.personContinuityId === slot.personContinuityId && salesPresenterRecognition(peer) === 'confirmed'
         && !['material', 'shoot'].includes(spec.storyboardSourcePlans?.[String(peer.slotId || peer.id || '')]?.userSource || ''))
@@ -90,7 +93,21 @@ export function planStudioBatchShotRoutes(spec: BatchShotSpec, options: {
     }
 
     const materialIssue = enterpriseMaterialIssue({ material: assigned ? snapshots.get(assigned) : undefined, duration: Number(slot.duration) || 0, ratio: spec.ratio, sound: (choice === 'material' || choice === 'shoot') && shot?.source === 'avatar' ? 'voiceover' : shot?.sound, narration: shot?.narration });
+    if (shot?.locked) return { ...base, route: assigned ? 'local_material' : 'unresolved',
+      status: assigned ? (materialIssue ? 'needs_material' : 'matched') : 'blocked',
+      reason: assigned ? materialIssue || '镜头已锁定，保留已绑定素材' : '镜头已锁定，未提交智能生成' };
     if (choice === 'material' || choice === 'shoot') return { ...base, route: 'local_material', status: assigned && !materialIssue ? 'matched' : 'needs_material', reason: materialIssue || (assigned ? '采用用户选择的企业素材' : choice === 'shoot' ? '待拍任务尚未上传回填' : '请选择企业素材') };
+    // An assigned image may be a generation reference. It is not a finished
+    // matched clip when the user explicitly chose the intelligent route.
+    if (choice !== 'avatar' && !spokenOnScreen && !action
+      && (sourcePlan?.mode === 'ai' || sourcePlan?.mode === 'hybrid' || shot?.source === 'ai')) {
+      if (sourcePlan?.generatedClipId && sourcePlan.confirmed && assignedId === sourcePlan.generatedClipId) {
+        return { ...base, route: 'local_material', status: 'matched', reason: '采用已确认的 AIGC 分镜候选' };
+      }
+      return { ...base, route: 'aigc_first_frame', status: 'needs_plan', reason: sourcePlan?.firstFrameConfirmed && sourcePlan.firstFrameMaterialId
+        ? '目标首帧已确认，等待生成视频候选并逐镜验收'
+        : '需要先生成并确认目标首帧；批量入口不得跳过确认直接提交视频' };
+    }
     if ((shot?.source !== 'avatar' || spec.storyboardSourcePlans?.[slotId]?.confirmed) && assigned) return { ...base, route: 'local_material', status: materialIssue ? 'needs_material' : 'matched', reason: materialIssue || '采用已绑定的企业素材' };
     if (visualTopic === 'presenter' || choice === 'avatar') {
       const missing = digitalHumanDecisionIssues(shot?.digitalHuman);

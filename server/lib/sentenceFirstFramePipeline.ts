@@ -20,17 +20,21 @@ export async function extractSentenceFirstFrames(input: {
   materials?: () => MaterialRecord[];
   saveMaterials?: (items: MaterialRecord[]) => void;
   downloadObject?: typeof objectStorageDownload;
+  sourceMaterial?: MaterialRecord;
 }): Promise<DigitalHumanReferenceCue[]> {
   if (!input.cues.length) throw new Error('逐句首帧提取缺少口播时间轴');
   const materials = (input.materials || readLocalMaterials)();
-  const source = materials.find(item => item.id === input.referenceMaterialId
+  const source = (input.sourceMaterial?.id === input.referenceMaterialId ? input.sourceMaterial : undefined)
+    || materials.find(item => item.id === input.referenceMaterialId
     && (item.scope === 'shared' || String(item.tenantId || item.tenant_id || '') === input.tenantId));
-  if (!source || source.type !== 'video') throw new Error('爆款参考视频不存在或不属于当前企业');
+  if (!source || source.type !== 'video' || (source.scope !== 'shared' && String(source.tenantId || source.tenant_id || '') !== input.tenantId)) throw new Error('爆款参考视频不存在或不属于当前企业');
   const root = path.resolve(input.mediaRoot || path.join(process.cwd(), 'data/media'));
   const tenantRoot = tenantAssetDir(root, input.tenantId);
   fs.mkdirSync(tenantRoot, { recursive: true });
   let sourcePath = source.file ? path.resolve(root, String(source.file)) : '';
+  if (source.verifyContentSha256 && sourcePath && (!sourcePath.startsWith(`${path.resolve(tenantRoot)}${path.sep}`) || (fs.existsSync(sourcePath) && !fs.realpathSync(sourcePath).startsWith(`${fs.realpathSync(tenantRoot)}${path.sep}`)))) throw new Error('爆款参考视频路径不属于当前企业');
   let temporary = '';
+  try {
   if (!sourcePath || !fs.existsSync(sourcePath)) {
     if (!source.objectKey) throw new Error('爆款参考视频没有可读取的本地文件或对象');
     const object = await (input.downloadObject || objectStorageDownload)(String(source.objectKey));
@@ -38,10 +42,15 @@ export async function extractSentenceFirstFrames(input: {
     temporary = path.join(tenantRoot, `.source-${createHash('sha256').update(String(source.objectKey)).digest('hex').slice(0, 16)}.mp4`);
     fs.writeFileSync(temporary, object.buf, { mode: 0o600 }); sourcePath = temporary;
   }
+  if (source.verifyContentSha256) {
+    const digest = createHash('sha256');
+    for await (const chunk of fs.createReadStream(sourcePath)) digest.update(chunk);
+    const actual = digest.digest('hex');
+    if (actual !== source.contentSha256) throw new Error('爆款参考视频文件版本与入库记录不一致');
+  }
   const ffmpeg = input.ffmpegPath || String(ffmpegStatic || '');
   if (!ffmpeg) throw new Error('逐句首帧提取缺少 FFmpeg');
   const created: MaterialRecord[] = [];
-  try {
     const next: DigitalHumanReferenceCue[] = [];
     for (const cue of input.cues) {
       if (cue.personShot === false) { next.push({ ...cue, sourceFirstFrame: undefined, targetFirstFrame: undefined }); continue; }

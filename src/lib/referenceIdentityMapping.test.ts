@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { referenceBrandTerm, referenceProductMentions, referenceProductTerms, replaceReferenceIdentities } from './referenceIdentityMapping.js';
+import { referenceBrandTerm, referenceProductMentions, referenceProductTerms, replaceReferenceIdentities, spokenIdentityLabel } from './referenceIdentityMapping.js';
 
 const slots = referenceProductTerms([
   { text: 'Try foundation and serum from OldBrand.', time: '0–3s' },
@@ -30,4 +30,7 @@ assert.equal(referenceProductMentions(sourceSpeech).length, 5);
 assert.equal(referenceProductMentions([...sourceSpeech, sourceSpeech[0]]).length, 5, 'visual shot duplicates must not inflate audio mention count');
 assert.equal(referenceProductTerms([{ text: 'foundation, concealer, lipstick, serum, sunscreen and mascara' }]).length, 6, 'six genuinely different products must produce six mappings');
 assert.equal(referenceProductMentions([{ text: 'face cream and facial oil' }]).length, 2);
+assert.equal(spokenIdentityLabel('liquid foundation', '紫苏控油去黑头泥膜2.0', 'Try liquid foundation today.'), 'liquid foundation');
+assert.equal(spokenIdentityLabel('liquid foundation', '紫苏 Liquid Foundation', 'Try liquid foundation today.'), 'Liquid Foundation');
+assert.equal(spokenIdentityLabel('粉底液', '紫苏控油去黑头泥膜2.0', '试试粉底液。'), '紫苏控油去黑头泥膜2.0');
 console.log('Product identity regression checks passed');

@@ -129,3 +129,37 @@ const materialSalesRoute = planStudioBatchShotRoutes({
 }, { talkingExecutorReady: false, actionExecutorReady: false, authorizedPresenterIds: [] });
 assert.equal(materialSalesRoute[0].route, 'local_material');
 assert.equal(materialSalesRoute[0].status, 'matched');
+
+const aigcReference = planStudioBatchShotRoutes({ activeAssemblyId: 'a',
+  shootingSlots: [{ id: 'factory', slotId: 'factory-slot', detail: '画面：工厂流水线，工人工作' }],
+  shotProductions: { 'a:factory': { source: 'ai' } as never },
+  storyboardSourcePlans: { 'factory-slot': { mode: 'hybrid', confirmed: false } },
+  storyboardAssignments: { 'factory-slot': 'reference-image' },
+  materialSnapshots: [{ id: 'reference-image', usage: 'reference_only', type: 'image', url: '/reference.png' }],
+}, { talkingExecutorReady: false, actionExecutorReady: false, authorizedPresenterIds: [] });
+assert.equal(aigcReference[0]?.route, 'aigc_first_frame', '参考图不能被视为已完成的镜头');
+assert.equal(aigcReference[0]?.status, 'needs_plan');
+assert.match(aigcReference[0]!.reason, /首帧/);
+const lockedAigc = planStudioBatchShotRoutes({ activeAssemblyId: 'a',
+  shootingSlots: [{ id: 'product', slotId: 'product-slot', detail: '产品手持特写', duration: 4 }],
+  shotProductions: { 'a:product': { source: 'ai', locked: true } as never },
+  storyboardSourcePlans: { 'product-slot': { mode: 'ai' } },
+  storyboardAssignments: { 'product-slot': 'owned-video' },
+  materialSnapshots: [{ id: 'owned-video', usage: 'enterprise', type: 'video', url: '/owned.mp4', duration: 4, width: 1080, height: 1920 }],
+}, { talkingExecutorReady: false, actionExecutorReady: false, authorizedPresenterIds: [] });
+assert.equal(lockedAigc[0]?.route, 'local_material');
+assert.equal(lockedAigc[0]?.status, 'matched');
+const lockedUnassigned = planStudioBatchShotRoutes({ activeAssemblyId: 'a',
+  shootingSlots: [{ id: 'product', slotId: 'product-slot', detail: '产品手持特写' }],
+  shotProductions: { 'a:product': { source: 'ai', locked: true } as never },
+  storyboardSourcePlans: { 'product-slot': { mode: 'ai' } },
+}, { talkingExecutorReady: false, actionExecutorReady: false, authorizedPresenterIds: [] });
+assert.equal(lockedUnassigned[0]?.route, 'unresolved');
+assert.equal(lockedUnassigned[0]?.status, 'blocked');
+const installation = planStudioBatchShotRoutes({ activeAssemblyId: 'a',
+  shootingSlots: [{ id: 'install', slotId: 'install-slot', detail: '在客厅安装吊灯', duration: 18 }],
+  shotProductions: { 'a:install': { source: 'ai' } as never },
+  storyboardSourcePlans: { 'install-slot': { mode: 'ai', sceneType: 'usage' } },
+}, { talkingExecutorReady: false, actionExecutorReady: false, authorizedPresenterIds: [] });
+assert.equal(installation[0]?.visualTopic, 'usage_scene');
+assert.equal(installation[0]?.route, 'aigc_first_frame');

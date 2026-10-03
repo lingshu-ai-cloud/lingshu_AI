@@ -27,6 +27,26 @@ test('persistent budget pools providers, reuses reservations, blocks overspend a
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
+test('short photo job reserves its explicit estimate while preserving the administrator ceiling', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'studio-photo-budget-test-'));
+  const config = { limit: 5_000_000, openingUsed: 0, reserve: { heygen: 10_000_000, qwen_asr: 1_000_000 } };
+  const budget = new StudioPaidBudget(root, () => config);
+  try {
+    assert.equal(budget.status('heygen').allowed, false);
+    assert.equal(budget.status('heygen', 4).allowed, true);
+    await budget.reserve('heygen', 'one-second', 4);
+    assert.equal(budget.status('heygen', 4).remainingCny, 1);
+    await budget.reserve('heygen', 'one-second', 4);
+    await assert.rejects(budget.reserve('heygen', 'one-second', 3), /已变化/);
+    await assert.rejects(budget.reserve('heygen', 'another', 4), /余额不足/);
+    await assert.rejects(budget.reserve('heygen', 'oversize', 11), /超过管理员上限/);
+    await budget.releaseRejected('heygen', 'one-second');
+    assert.equal(budget.status('heygen', 4).remainingCny, 5);
+    await budget.releaseRejected('heygen', 'one-second');
+    await budget.reserve('heygen', 'another', 4);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
 test('unconfigured budget fails closed without creating a ledger', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'studio-budget-empty-'));
   try {

@@ -6,6 +6,7 @@ import type { VideoAiAnalysis } from '../types/index.js';
 import { normalizeVideoAnalysis } from './gemini.js';
 import { hasOnCameraSpeechEvidence } from '../lib/salesPresenterReview.js';
 import { untrustedPromptData } from '../lib/untrustedPromptData.js';
+import type { StoryboardQaPhase, StoryboardQaScene, StoryboardQaObservation } from '../lib/storyboardAigcQuality.js';
 
 const QWEN_VL_MODEL = () => (process.env.QWEN_VL_MODEL ?? 'qwen-vl-max').trim();
 const QWEN_EXACT_VL_MODEL = () => (process.env.QWEN_EXACT_VL_MODEL ?? 'qwen3-vl-flash').trim();
@@ -238,6 +239,43 @@ export async function qualityCheckStoryboardFramesWithQwen(opts: {
     recommendation: String(parsed.recommendation || ''),
     checks,
   };
+}
+
+/** Visual observations only. The deterministic gate in storyboardAigcQuality
+ * decides what can be used; the model's own score is never a pass decision. */
+export async function inspectStoryboardAigcFramesWithQwen(opts: {
+  phase: StoryboardQaPhase;
+  sceneType: StoryboardQaScene;
+  frames: Array<{ base64: string; mimeType: string; timeLabel: string }>;
+  productReferences?: Array<{ base64: string; mimeType: string; timeLabel: string }>;
+  personReferences?: Array<{ base64: string; mimeType: string; timeLabel: string }>;
+  environmentReferences?: Array<{ base64: string; mimeType: string; timeLabel: string }>;
+  previousTerminalFrame?: { base64: string; mimeType: string; timeLabel: string };
+  storyboard: string;
+  productInfo: string;
+  startState?: string;
+  beats?: string[];
+  endState?: string;
+}): Promise<StoryboardQaObservation[]> {
+  if (!opts.frames.length) throw new Error('AIGC 逐镜质检缺少候选画面');
+  const references = [...(opts.productReferences || []), ...(opts.personReferences || []), ...(opts.environmentReferences || [])];
+  const availableFrames = Math.max(2, 12 - references.length - (opts.previousTerminalFrame ? 1 : 0));
+  const selectedFrames = opts.frames.length <= availableFrames ? opts.frames
+    : Array.from({ length: availableFrames }, (_, index) => opts.frames[Math.round(index * (opts.frames.length - 1) / (availableFrames - 1))]);
+  const images = [...references, ...(opts.previousTerminalFrame ? [opts.previousTerminalFrame] : []), ...selectedFrames];
+  const expected = opts.phase === 'first_frame'
+    ? 'product_identity, person_identity, environment_fidelity, layout, contact, start_state, visual_integrity'
+    : `product_identity, person_identity, environment_fidelity, layout_continuity, contact_continuity, ${opts.previousTerminalFrame ? 'seam_continuity, ' : ''}action_order, end_state, visual_integrity`;
+  const request = {
+    model: QWEN_VL_MODEL(),
+    messages: [{ role: 'user', content: [
+      { type: 'text', text: `你是逐镜视觉质检员。产品和指定人物参考图只用于身份；环境参考图只用于直接可见的设备外观、工位布局与产线方向，不证明工厂归属、产能或资质。候选图才是质检对象。若有环境参考图，environment_fidelity 必须对照可见空间与设备；没有环境参考图则标 uncertain。${opts.previousTerminalFrame ? '上一段合格末帧仅用于与当前候选第一帧比较交界处；seam_continuity 必须同时引用「上一段合格末帧」和当前候选起始帧，检查产品、接触关系、人物、背景和机位是否连续，突变则 fail，无法判断则 uncertain。' : ''}不得根据参考图推定候选中已完成动作。对于静态首帧，只判断起始状态，不声称动作完成；对于视频帧，按时间顺序判断动作顺序与终点。看不到或证据不足时写 uncertain，不得猜测通过。无法通过稀疏抽帧确认的闪烁、短暂变形、隐藏标签和精确接触写 uncertain。\n镜头类型：${opts.sceneType}；质检阶段：${opts.phase}\n分镜要求：${opts.storyboard.slice(0, 1800)}\n企业产品资料：${opts.productInfo.slice(0, 1200)}\n动作起点：${String(opts.startState || '').slice(0, 500)}\n动作步骤：${(opts.beats || []).slice(0, 8).join(' → ').slice(0, 800)}\n动作终点：${String(opts.endState || '').slice(0, 500)}\n图像时间与角色：${images.map(item => item.timeLabel).join('、')}\n逐项输出 ${expected}。没有相关人物身份或接触时仍可标 uncertain，由调用方决定是否必检。每项 verdict 只能为 pass/fail/uncertain，evidenceFrames 只能引用上列标签，action 只能为 retry_first_frame/retry_video/needs_assets/manual_review。产品身份失败若因参考角度或图片不足，选 needs_assets；候选画面失真选对应重做。只输出 JSON：{"observations":[{"key":"product_identity","verdict":"uncertain","evidenceFrames":["候选0s"],"note":"可见证据","action":"manual_review"}]}。` },
+      ...images.map(frame => ({ type: 'image_url', image_url: { url: `data:${frame.mimeType};base64,${frame.base64}` } })),
+    ] as any }], response_format: { type: 'json_object' }, max_tokens: 1800,
+  } as any;
+  const completion = await client().chat.completions.create(request);
+  const parsed = parseJson<Record<string, unknown>>(String(completion.choices[0]?.message?.content || ''), {});
+  return Array.isArray(parsed.observations) ? parsed.observations as StoryboardQaObservation[] : [];
 }
 
 export async function analyzeVideoFramesWithQwen(opts: {

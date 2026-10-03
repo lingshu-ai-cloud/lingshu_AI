@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "description": "Section 7 evaluation matrix. Local assets are input examples, not generated outputs or proof of rights/quality.",
+  "fixtureRoot": "../beauty-showcase/media/tenants/local_tenant_customer_aurelia_beauty",
+  "fixtureManifest": "../beauty-showcase/manifest.json",
+  "cases": [
+    { "id": "product-clone-tabletop", "scene": "product", "mode": "clone", "variant": "tabletop", "products": ["rongshang-product-01.png"], "references": ["tiktok-reference-1.jpg"], "requiredChecks": ["product_identity", "layout_continuity", "contact_continuity", "visual_integrity"] },
+    { "id": "product-free-tabletop-multiple", "scene": "product", "mode": "free", "variant": "tabletop", "products": ["rongshang-product-01.png", "rongshang-product-02.png"], "references": ["open-beauty-pink-cosmetic-jar.jpg"], "requiredChecks": ["product_identity", "layout_continuity", "contact_continuity", "visual_integrity"] },
+    { "id": "product-clone-handheld", "scene": "product", "mode": "clone", "variant": "handheld", "products": ["rongshang-product-03.png"], "references": ["tiktok-reference-2.jpg", "open-beauty-holding-skincare-jar.jpg"], "requiredChecks": ["product_identity", "contact_continuity", "visual_integrity"] },
+    { "id": "product-free-conveyor", "scene": "product", "mode": "free", "variant": "conveyor", "products": ["rongshang-product-03.png"], "references": ["real-crawl-30/b2b-clips/beauty-b2b-10-capping-7s.mp4"], "requiredChecks": ["product_identity", "contact_continuity", "layout_continuity", "visual_integrity"] },
+    { "id": "factory-clone-equipment", "scene": "factory", "mode": "clone", "variant": "equipment", "products": [], "references": ["real-crawl-30/b2b-clips/beauty-b2b-01-pamasol-0s.mp4"], "requiredChecks": ["layout_continuity", "action_order", "end_state", "visual_integrity"] },
+    { "id": "factory-free-line", "scene": "factory", "mode": "free", "variant": "production_line", "products": [], "references": ["real-crawl-30/b2b-clips/beauty-b2b-15-packaging-20s.mp4"], "requiredChecks": ["layout_continuity", "action_order", "end_state", "visual_integrity"] },
+    { "id": "factory-clone-worker", "scene": "factory", "mode": "clone", "variant": "worker", "products": [], "references": ["real-crawl-30/b2b-clips/beauty-b2b-20-fanuc-0s.mp4"], "requiredChecks": ["layout_continuity", "contact_continuity", "action_order", "end_state", "visual_integrity"] },
+    { "id": "factory-free-worker", "scene": "factory", "mode": "free", "variant": "worker", "products": [], "references": ["real-crawl-30/b2b-clips/beauty-b2b-12-packaging-2s.mp4"], "requiredChecks": ["layout_continuity", "contact_continuity", "action_order", "end_state", "visual_integrity"] },
+    { "id": "usage-clone-single-step", "scene": "usage", "mode": "clone", "variant": "single_step", "products": ["rongshang-product-03.png"], "references": ["tiktok-reference-3.jpg"], "requiredChecks": ["product_identity", "contact_continuity", "action_order", "end_state", "visual_integrity"] },
+    { "id": "usage-free-multi-step", "scene": "usage", "mode": "free", "variant": "multi_step", "products": ["rongshang-product-03.png"], "references": ["open-beauty-holding-skincare-jar.jpg"], "requiredChecks": ["product_identity", "contact_continuity", "action_order", "end_state", "visual_integrity"] }
+  ]
+}

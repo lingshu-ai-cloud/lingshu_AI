@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { acceptSeedancePortrait } from './presenterAssetAcceptance.js';
+import { acceptPresenterPortraitReference, acceptSeedancePortrait } from './presenterAssetAcceptance.js';
 
 const rightsEvidence = { authorizationRef: 'rights://tenant-a/person-a/v1', consentRef: 'consent://tenant-a/person-a/v1',
   grantedAt: '2026-09-01T00:00:00Z', subjectAdultConfirmed: true,
@@ -37,4 +37,15 @@ test('rejects cross-tenant, inactive, unbound, or unconsented portraits', () => 
     seedanceTrustedAsset: { ...material.seedanceTrustedAsset, status: 'pending' } }, now: new Date('2026-09-25') }), /seedance_trusted_asset_missing_or_inactive/);
   assert.throws(() => acceptSeedancePortrait({ tenantId: 'tenant-a', presenter, material: { ...material,
     objectKey: 'materials/tenants/dGVuYW50LWI/a.jpg' }, now: new Date('2026-09-25') }), /portrait_object_storage_not_tenant_scoped/);
+});
+
+test('photo talking accepts an owned still as a Seedream reference without Ark image certification', () => {
+  const localPortrait = { ...material, seedanceTrustedAsset: undefined };
+  const bound = { ...presenter, referenceMaterialIds: ['portrait-a'] };
+  assert.doesNotThrow(() => acceptPresenterPortraitReference({ tenantId: 'tenant-a', presenter: bound, material: localPortrait,
+    provider: 'volcengine_ark', uses: ['person_replacement'], now: new Date('2026-09-25') }));
+  assert.throws(() => acceptSeedancePortrait({ tenantId: 'tenant-a', presenter: bound, material: localPortrait,
+    now: new Date('2026-09-25') }), /seedance_trusted_asset_missing_or_inactive/);
+  assert.throws(() => acceptPresenterPortraitReference({ tenantId: 'tenant-b', presenter: bound, material: localPortrait,
+    provider: 'volcengine_ark', uses: ['person_replacement'], now: new Date('2026-09-25') }), /portrait_not_owned_by_tenant/);
 });

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { generatePosterImage } from './imageGen.js';
+import { generatePosterImage, ImageProviderRejectedError } from './imageGen.js';
 
 test('Qwen Image rebuilds a poster from ordered reference images and downloads the returned result', async () => {
   const previous = { ...process.env };
@@ -67,7 +67,8 @@ test('poster generation never falls back to another supplier after a Qwen failur
     process.env.DASHSCOPE_IMAGE_BASE_URL = 'https://dashscope.example/compatible-mode/v1';
     process.env.SEEDREAM_IMAGE_ENABLED = 'true';
     globalThis.fetch = (async () => { calls++; return Response.json({ message: 'rejected' }, { status: 400 }); }) as typeof fetch;
-    await assert.rejects(() => generatePosterImage({ prompt: 'test', ratio: '1:1' }), /Qwen Image 400: rejected/);
+    await assert.rejects(() => generatePosterImage({ prompt: 'test', ratio: '1:1' }),
+      error => error instanceof ImageProviderRejectedError && error.statusCode === 400 && /Qwen Image 400: rejected/.test(error.message));
     assert.equal(calls, 1);
   } finally {
     globalThis.fetch = previousFetch;

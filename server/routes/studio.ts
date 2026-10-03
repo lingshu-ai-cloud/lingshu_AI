@@ -34,12 +34,18 @@ import path from 'path';
 import os from 'node:os';
 import { fileURLToPath } from 'url';
 import { randomUUID, createHash } from 'node:crypto';
+import { validatePresenterRightsEvidence } from '../lib/presenterAssetTrust.js';
+import { storyboardFactoryProductRequired, storyboardFactoryReferenceRequired } from '../../shared/storyboardFactoryReference.js';
+import { isTenantPrivateObjectKey } from '../storage/materialAssets.js';
 import { createRequire } from 'node:module';
 import { execFile, spawn } from 'node:child_process';
 import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { lookup } from 'node:dns/promises';
+import { isIP } from 'node:net';
 import ffmpegStatic from 'ffmpeg-static';
+import sharp from 'sharp';
 import { callLLM } from '../agents/llm.js';
 import { SCRIPT_CREATIVE_QUALITY_RULES, SCRIPT_FACT_TO_VALUE_EXAMPLES, scriptUnusedFacts, scriptSelectedFactPhrase, scriptSelectedFactProductName, scriptNarrationLinesFromPlan, scriptNarrationBudget, scriptEndingRules, scriptCreativeModeRule, scriptVariantDirection } from '../prompts/scriptCreativeQuality.js';
 import { buildEnterpriseContext, readTenantEnterpriseProfile } from './enterprise.js';
@@ -52,9 +58,31 @@ import {
 } from '../middleware/subscription.js';
 import { signRenderToken } from '../lib/renderToken.js';
 import { consumeDemoQuota, isDemoMode } from '../lib/demo.js';
-import { generatePosterImage, imageExt, type ReferenceImage } from '../lib/imageGen.js';
+import { generatePosterImage, ImageProviderRejectedError, imageExt, type ReferenceImage } from '../lib/imageGen.js';
+import { buildStoryboardFirstFramePrompt, buildStoryboardVideoActionPrompt, STORYBOARD_FIRST_FRAME_PROMPT_VERSION, type StoryboardSceneType, type StoryboardMode } from '../lib/storyboardAigcPrompt.js';
+import { compileStoryboardShotSpec, type StoryboardShotSpec } from '../../shared/storyboardShotSpec.js';
+import { prepareProductIdentityLayer, verifiedTransparentCutoutGeometry } from '../lib/productIdentityPreparation.js';
+import { compositeProductIdentityLayer } from '../lib/productIdentityLayer.js';
+import { storyboardMultiProductViewSheet, storyboardProductReferenceSheet } from '../lib/storyboardProductReferenceSheet.js';
+import { storyboardMissingProductViews } from '../lib/storyboardProductViewCapability.js';
+import { storyboardPersonEnvironmentSheet } from '../lib/storyboardPersonEnvironmentSheet.js';
+import { storyboardReferenceCapacity } from '../lib/storyboardReferenceCapacity.js';
+import { planStoryboardExactProductGeometry, type StoryboardGeometryPlan } from '../lib/storyboardGeometryPlanner.js';
+import { createStoryboardGeometryQwenObserver } from '../lib/storyboardGeometryQwen.js';
+import { planStoryboardActionSegments } from '../../shared/storyboardActionSegments.js';
+import type { StoryboardKeyState } from '../../shared/storyboardActionSegments.js';
+import { assembleStoryboardActionSegments } from '../lib/storyboardActionAssembly.js';
+import { storyboardAigcProjectBudget } from '../lib/storyboardAigcProjectBudget.js';
+import { buildStoryboardQaReport, inspectStoryboardTechnicalFrames, reviewStoryboardQaReport, type StoryboardQaReport } from '../lib/storyboardAigcQuality.js';
+import { studioAigcBudgetConfigFromEnv, studioAigcBudgetPreviewForSpec } from './studioAigcBatchBudget.js';
+import { enterpriseAssetObjectKey, enterpriseAssetTenantKey } from '../storage/enterpriseAssets.js';
+import { videoAnalysisOf } from './videoAnalysisCodec.js';
 import { getPublicOrigin } from '../lib/oauthConfig.js';
-import { releaseSeedanceBudget, reserveSeedanceBudget, type SeedanceBudgetReservation } from '../lib/seedanceBudget.js';
+import { estimateSeedanceCostCny, releaseSeedanceBudget, reserveSeedanceBudget, type SeedanceBudgetReservation } from '../lib/seedanceBudget.js';
+import { storyboardAigcMetrics } from '../lib/storyboardAigcMetrics.js';
+import { matchStoryboardProducts } from '../lib/storyboardProductMatch.js';
+import { storyboardProjectShotInput, storyboardProjectShotRequestIssue } from '../lib/storyboardProjectShotInput.js';
+import { storyboardAigcAssignmentIssues, storyboardAigcCurrentKbIssues } from '../lib/storyboardAigcAssignment.js';
 import { runVeoWorker } from '../lib/generativeVideoGateway.js';
 import { createLinkedAbort } from '../lib/abort.js';
 import { invalidatePublishingApprovalForProject } from '../digitalEmployees/publishingExecution.js';
@@ -97,6 +125,7 @@ import { analyzeVideo } from '../agents/gemini.js';
 import {
   analyzeVideoFramesWithQwen,
   classifyMaterialFramesWithQwen,
+  inspectStoryboardAigcFramesWithQwen,
   qualityCheckStoryboardFramesWithQwen,
   transcribeAudioWithQwen,
 } from '../agents/qwen.js';
@@ -309,7 +338,7 @@ async function createGeneratedVideoMaterial(input: {
     fs.rmSync(filePath, { force: true });
     fs.rmSync(posterPath, { force: true });
   }
-  const list = loadMaterials().filter(item => item.url !== material.url);
+  const list = loadMaterials().filter(item => item.id !== material.id);
   list.push(material);
   persistMaterials(list);
   return material;
@@ -351,7 +380,7 @@ async function createGeneratedImageMaterial(input: {
     material.poster = undefined;
     fs.rmSync(filePath, { force: true });
   }
-  const list = loadMaterials().filter(item => item.url !== material.url);
+  const list = loadMaterials().filter(item => item.id !== material.id);
   list.push(material);
   persistMaterials(list);
   console.log(`[studio] generated poster image material ${material.id} via ${input.source || 'image-model'}`);
@@ -372,7 +401,9 @@ async function seedanceFetchJson(url: string, apiKey: string, init?: RequestInit
   try { json = text ? JSON.parse(text) : null; } catch {}
   if (!response.ok) {
     const detail = json?.error?.message || json?.message || json?.error || text || response.statusText;
-    throw new Error(`Seedance API ${response.status}: ${String(detail).slice(0, 500)}`);
+    const failure = new Error(`Seedance API ${response.status}: ${String(detail).slice(0, 500)}`) as Error & { providerRejected?: boolean };
+    failure.providerRejected = [400, 401, 403, 404, 422].includes(response.status);
+    throw failure;
   }
   return json;
 }
@@ -1568,6 +1599,938 @@ studioRouter.use('/shooting-tasks', createShootingTasksRouter(store, async (id, 
 
 studioRouter.use('/production', createStudioAvatarProductionRouter(store));
 
+function storyboardImageMime(file: string): string {
+  const ext = path.extname(file).toLowerCase();
+  return ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg' : ext === '.webp' ? 'image/webp' : 'image/png';
+}
+
+studioRouter.post('/storyboard-product-match', async (req, res) => {
+  const { tenantId } = res.locals as AuthLocals;
+  const projectId = String(req.body?.projectId || '').trim();
+  const shotId = String(req.body?.shotId || '').trim();
+  const project = projectId ? await store.getById<any>('studio_projects', projectId) : null;
+  if (!project || project.tenant_id !== tenantId) { res.status(404).json({ ok: false, error: '本片制作项目不存在' }); return; }
+  const slot = (Array.isArray(project.spec?.shootingSlots) ? project.spec.shootingSlots : []).find((item: any) => item.slotId === shotId || item.id === shotId);
+  if (!slot) { res.status(404).json({ ok: false, error: '当前分镜不在本片项目中' }); return; }
+  const selectedIds: string[] = Array.isArray(project.spec?.selectedProductIds) ? project.spec.selectedProductIds.map(String) : [];
+  const profile = await readTenantEnterpriseProfile(tenantId);
+  const all = profile.products.items || [];
+  const products = selectedIds.flatMap(id => {
+    let product = all.find((item, index) => productIdentity(item, index) === id);
+    if (!product) {
+      const legacy = id.match(/^product-(\d+)-(.+)$/);
+      const candidate = legacy ? all[Number(legacy[1])] : undefined;
+      if (candidate && candidate.name === legacy?.[2] && all.filter(item => item.name === candidate.name).length === 1) product = candidate;
+    }
+    const details = product as Record<string, unknown> | undefined;
+    return product ? [{ id, name: String(product.name || ''), context: String(details?.description || details?.category || '') }] : [];
+  });
+  if (products.length !== selectedIds.length) { res.status(422).json({ ok: false, error: '本片已选产品与企业知识库不一致，请刷新产品选择' }); return; }
+  const description = String(slot.detail || req.body?.shotDescription || '').slice(0, 2000);
+  const match = await matchStoryboardProducts({ shotDescription: description, products,
+    selectWithModel: products.length > 1 ? prompt => callLLM(prompt, { backend: 'qwen', model: 'qwen-plus', timeoutMs: 30_000 }) : undefined });
+  res.json({ ok: true, projectId, shotId, ...match, needsReview: match.source === 'unresolved' || match.confidence < 0.7 });
+});
+
+function storyboardImageUrlPath(raw: string): string {
+  try { return new URL(raw, 'http://local.invalid').pathname; } catch { return ''; }
+}
+
+async function storyboardEnterpriseImage(url: string, tenantId: string): Promise<ReferenceImage | null> {
+  const route = storyboardImageUrlPath(url);
+  const match = route.match(/^\/api\/overseas\/enterprise\/assets\/([\w.-]+)$/);
+  if (!match) {
+    // Some enterprise products are imported with an external image URL. Only
+    // read the URL stored on the authenticated tenant's product record.
+    if (!/^https:\/\//i.test(url)) return null;
+    const target = new URL(url);
+    if (target.username || target.password || target.port || isIP(target.hostname)) return null;
+    const addresses = await lookup(target.hostname, { all: true }).catch(() => []);
+    if (!addresses.length || addresses.some(item => {
+      const ip = item.address;
+      return item.family === 4
+        ? /^(?:0|10|127|169\.254|172\.(?:1[6-9]|2\d|3[01])|192\.168|224|23\d|24\d|25[0-5])\./.test(ip)
+        : ip === '::1' || ip === '::' || /^f[cd]/i.test(ip) || /^fe[89ab]/i.test(ip) || /^::ffff:(?:10|127|192\.168|172\.)/i.test(ip);
+    })) return null;
+    const response = await fetch(url, { redirect: 'error', signal: AbortSignal.timeout(15_000) }).catch(() => null);
+    if (!response?.ok) return null;
+    const mimeType = String(response.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
+    if (!['image/png', 'image/jpeg', 'image/webp'].includes(mimeType)) return null;
+    const length = Number(response.headers.get('content-length') || 0);
+    if (length > 10 * 1024 * 1024) return null;
+    const bytes = Buffer.from(await response.arrayBuffer());
+    return bytes.length > 0 && bytes.length <= 10 * 1024 * 1024
+      ? { mimeType, base64: bytes.toString('base64') } : null;
+  }
+  const file = path.basename(match[1]);
+  const local = path.join(process.cwd(), 'data', 'enterprise-assets', enterpriseAssetTenantKey(tenantId), file);
+  if (fs.existsSync(local)) return { mimeType: storyboardImageMime(file), base64: fs.readFileSync(local).toString('base64') };
+  if (objectStorageEnabled()) {
+    const object = await objectStorageDownload(enterpriseAssetObjectKey(tenantId, file));
+    if (object?.buf?.length) return { mimeType: object.contentType || storyboardImageMime(file), base64: object.buf.toString('base64') };
+  }
+  return null;
+}
+
+async function storyboardMaterialImage(id: string, tenantId: string): Promise<ReferenceImage | null> {
+  const material = loadMaterials().find(item => item.id === id && item.tenantId === tenantId && item.scope === 'own');
+  if (!material) return null;
+  if (material.objectKey) {
+    const key = material.type === 'image' ? material.objectKey : material.posterObjectKey;
+    if (!key) return null;
+    const object = await objectStorageDownload(key);
+    return object?.buf?.length ? { mimeType: object.contentType, base64: object.buf.toString('base64') } : null;
+  }
+  const local = materialLocalFile(material);
+  return local && fs.existsSync(local) ? { mimeType: storyboardImageMime(local), base64: fs.readFileSync(local).toString('base64') } : null;
+}
+
+async function storyboardPersonAssetImage(id: string, tenantId: string): Promise<ReferenceImage | null> {
+  const material = loadMaterials().find(item => item.id === id && item.tenantId === tenantId
+    && item.scope === 'own' && item.type === 'image');
+  return material ? storyboardMaterialImage(id, tenantId) : null;
+}
+
+/** Only a current, authorized presenter whose portrait is bound to this
+ * material may supply a recognisable person to Qwen generation and QA. */
+async function storyboardCharacterMaterialAuthorizationIssue(tenantId: string, materialId: string): Promise<string | null> {
+  const material = loadMaterials().find(item => item.id === materialId && item.tenantId === tenantId
+    && item.scope === 'own' && item.type === 'image');
+  if (!material) return '指定人物图片已不属于当前企业，或不是图片素材';
+  if (!isTenantPrivateObjectKey(String(material.objectKey || ''), tenantId))
+    return '指定人物图片缺少本企业私有存储凭据，请重新上传企业人物照片';
+  let records: Awaited<ReturnType<typeof store.list<any>>>;
+  try { records = await store.list<any>('studio_production_defaults', { where: { tenant_id: tenantId }, perPage: 1 }); }
+  catch { return '企业人物授权记录暂不可读取'; }
+  const presenters = Array.isArray(records.items[0]?.payload?.presenters) ? records.items[0].payload.presenters : [];
+  const bound = presenters.filter((presenter: any) => presenter?.authorized === true
+    && Array.isArray(presenter.referenceMaterialIds) && presenter.referenceMaterialIds.map(String).includes(materialId));
+  if (!bound.length) return '这张图片未绑定到已授权的企业人物，请先在企业人物中绑定并确认使用权';
+  if (!bound.some((presenter: any) => validatePresenterRightsEvidence(presenter.rightsEvidence,
+    { provider: 'dashscope', uses: ['person_replacement', 'quality_inspection'] }).ok))
+    return '人物授权缺少千问生图和质量检查用途，或授权已过期、撤销；请更新企业人物授权';
+  return null;
+}
+
+async function storyboardUrlImage(raw: string, tenantId: string): Promise<ReferenceImage | null> {
+  const route = storyboardImageUrlPath(raw);
+  const shot = route.match(/^\/api\/overseas\/videos\/([\w-]+)\/shot\/(\d+)\/first-frame$/);
+  if (shot) {
+    const record = await store.getById<any>('trend_videos', shot[1]);
+    if (!record || record.tenantId !== tenantId) return null;
+    const index = Number(shot[2]) - 1;
+    if (!Number.isSafeInteger(index) || index < 0) return null;
+    const analysis = videoAnalysisOf(record);
+    let gemini: Record<string, unknown> = {};
+    if (analysis.gemini && typeof analysis.gemini === 'object') gemini = analysis.gemini as Record<string, unknown>;
+    else if (typeof analysis.gemini === 'string') {
+      try { gemini = JSON.parse(analysis.gemini) as Record<string, unknown>; } catch { /* no verified details */ }
+    }
+    const details = Array.isArray(gemini.scriptDetails15s) ? gemini.scriptDetails15s : [];
+    const detail = details[index] as { materialEvidence?: { extractionStatus?: string; firstFrameObjectKey?: string } } | undefined;
+    const evidence = detail?.materialEvidence;
+    if (evidence?.extractionStatus !== 'ready') return null;
+    if (objectStorageEnabled()) {
+      if (!evidence.firstFrameObjectKey) return null;
+      const object = await objectStorageDownload(evidence.firstFrameObjectKey);
+      return object?.buf?.length ? { mimeType: object.contentType || 'image/jpeg', base64: object.buf.toString('base64') } : null;
+    }
+    const file = path.join(tenantAssetDir(MEDIA_DIR, tenantId), 'trend-shots', String(record.id), `shot-${index + 1}.jpg`);
+    return fs.existsSync(file) ? { mimeType: 'image/jpeg', base64: fs.readFileSync(file).toString('base64') } : null;
+  }
+  const privateMaterialFile = route.match(/^\/api\/overseas\/studio\/private-assets\/materials\/([\w.-]+)$/)?.[1];
+  const material = loadMaterials().find(item => item.tenantId === tenantId && item.scope === 'own' &&
+    ([item.url, item.poster].some(url => url && storyboardImageUrlPath(url) === route) ||
+      (privateMaterialFile && [item.objectKey, item.posterObjectKey].some(key => key && path.basename(key) === privateMaterialFile))));
+  return material ? storyboardMaterialImage(material.id, tenantId)
+    : route.startsWith('/api/overseas/enterprise/assets/') ? storyboardEnterpriseImage(raw, tenantId) : null;
+}
+
+function storyboardIdentityNotice(layer: unknown, hasProduct: boolean): string | undefined {
+  if (!hasProduct) return undefined;
+  if (!layer || typeof layer !== 'object') return undefined;
+  const value = layer as { strategy?: string; fallbackReason?: string };
+  if (value.strategy === 'exact_source_pixels') return '已使用企业产品原图保留包装外观；请核对摆放、接触和光影。';
+  if (value.strategy !== 'generative' || !value.fallbackReason) return undefined;
+  if (value.fallbackReason === 'hand_foreground_missing') return '手持产品缺少可对齐的手部前景，已生成普通首帧草稿；请重点核对握持接触，失败时补充真实手持参考。';
+  if (/cutout|transparent|view/i.test(value.fallbackReason)) return '当前产品图缺少适合此角度的透明产品层，已生成普通首帧草稿；请核对包装文字和外观，必要时补产品图后重做。';
+  if (/GEOMETRY|layout|contact_surface|observer/i.test(value.fallbackReason)) return '当前镜头的产品位置或接触面尚不够明确，已生成普通首帧草稿；请核对构图，必要时调整本镜产品位置后重做。';
+  if (value.fallbackReason === 'usage_scene_requires_action') return '使用场景已生成动作起始首帧草稿；请重点核对产品与人体、工具或安装面的起始接触关系。';
+  if (value.fallbackReason === 'named_person_requires_generation') return '指定人物与产品需共同生成；请核对人物身份、产品外观及两者的接触关系。';
+  return '已生成普通首帧草稿；请重点核对企业产品外观与当前分镜的接触关系。';
+}
+
+// POST /studio/storyboard-first-frame creates a versioned, tenant-scoped first-frame candidate.
+studioRouter.post('/storyboard-first-frame', async (req, res) => {
+  const { tenantId } = res.locals as AuthLocals;
+  const body = req.body ?? {};
+  const shotId = String(body.shotId || '').trim().slice(0, 160);
+  const shotDescription = String(body.shotDescription || '').trim();
+  const mode: StoryboardMode = body.mode === 'replication' ? 'replication' : 'free_creation';
+  const sceneType: StoryboardSceneType = ['product', 'factory', 'usage'].includes(body.sceneType) ? body.sceneType : 'product';
+  const ratio = ['9:16', '16:9', '1:1'].includes(body.ratio) ? body.ratio : '9:16';
+  if (!shotId || !shotDescription || shotDescription.length > 4000) {
+    res.status(400).json({ ok: false, error: '分镜 ID 和画面要求不能为空，且画面要求不能超过 4000 字' }); return;
+  }
+  let selectedProjectProductIds: string[] | null = null;
+  let firstFrameProject: any = null;
+  let firstFrameProjectShotId = '';
+  let firstFrameProjectSlotId = '';
+  if (body.projectId) {
+    const project = await store.getById<any>('studio_projects', String(body.projectId));
+    if (!project || project.tenant_id !== tenantId) { res.status(404).json({ ok: false, error: '当前企业的制作项目不存在' }); return; }
+    const slot = (Array.isArray(project.spec?.shootingSlots) ? project.spec.shootingSlots : [])
+      .find((item: any) => String(item.id) === shotId || String(item.slotId) === shotId);
+    if (!slot || project.spec?.shotProductions?.[`${String(project.spec?.activeAssemblyId || '')}:${String(slot.id)}`]?.locked) {
+      res.status(409).json({ ok: false, code: 'STORYBOARD_SHOT_UNAVAILABLE', error: '当前项目分镜不存在或已锁定，未调用供应商' }); return;
+    }
+    firstFrameProject = project;
+    firstFrameProjectShotId = String(slot.id);
+    firstFrameProjectSlotId = String(slot.slotId || slot.id);
+    selectedProjectProductIds = Array.isArray(project.spec?.selectedProductIds) ? project.spec.selectedProductIds.map(String) : [];
+  }
+  const requestedProductIds: string[] = Array.isArray(body.productIds) ? body.productIds.map((id: unknown) => String(id || '').trim()).filter(Boolean) : [];
+  const productIds: string[] = [...new Set<string>(requestedProductIds.length ? requestedProductIds : [String(body.productId || '').trim()].filter(Boolean))];
+  if (selectedProjectProductIds && productIds.some(id => !selectedProjectProductIds?.includes(id))) {
+    res.status(422).json({ ok: false, code: 'PRODUCT_NOT_SELECTED_FOR_VIDEO', error: '当前分镜产品必须来自内容创作第一步已选的本片产品' }); return;
+  }
+  if (productIds.length > 3) { res.status(422).json({ ok: false, code: 'TOO_MANY_PRODUCTS', error: '单镜最多支持三个产品身份参考，请拆分镜头' }); return; }
+  if (sceneType === 'factory' && !productIds.length && storyboardFactoryProductRequired(shotDescription)) {
+    res.status(422).json({ ok: false, code: 'FACTORY_PRODUCT_REQUIRED',
+      error: '当前工厂镜头明确出现产品，请先从本片已选企业产品中绑定对应产品' }); return;
+  }
+  const productReferences: Array<{ id: string; name: string; imageUrl: string; image: ReferenceImage;
+    views: Array<{ index: number; imageUrl: string; image: ReferenceImage }> }> = [];
+  if (productIds.length) {
+    const profile = await readTenantEnterpriseProfile(tenantId);
+    const products = profile.products.items || [];
+    for (const productId of productIds) {
+      let product = products.find((item, index) => productIdentity(item, index) === productId);
+      if (!product) {
+      // The legacy Studio selector uses product-${index}-${name}. Accept it
+      // only when the embedded index/name agree and that name is unique.
+        const legacy = productId.match(/^product-(\d+)-(.+)$/);
+        const legacyIndex = legacy ? Number(legacy[1]) : -1;
+        const candidate = products[legacyIndex];
+        if (candidate && candidate.name === legacy?.[2] && products.filter(item => item.name === candidate.name).length === 1) product = candidate;
+      }
+      if (!product) { res.status(400).json({ ok: false, error: '所选产品不在当前企业知识库中' }); return; }
+      const imageUrl = String(product.images?.[0]?.url || product.imageUrl || '');
+      const image = imageUrl ? await storyboardEnterpriseImage(imageUrl, tenantId) : null;
+      if (!image) { res.status(422).json({ ok: false, code: 'PRODUCT_IMAGE_REQUIRED', error: `企业知识库中的产品「${String(product.name || '')}」缺少可读取的图片` }); return; }
+      const views = [{ index: 0, imageUrl, image }];
+      {
+        for (const [index, productImage] of (product.images || []).slice(1, 3).entries()) {
+          const viewUrl = String(productImage?.url || '');
+          if (!viewUrl || views.some(view => view.imageUrl === viewUrl)) continue;
+          const viewImage = await storyboardEnterpriseImage(viewUrl, tenantId);
+          if (!viewImage) { res.status(422).json({ ok: false, code: 'PRODUCT_VIEW_UNAVAILABLE', error: `产品「${String(product.name || '')}」的第 ${index + 2} 张参考图不可读取` }); return; }
+          views.push({ index: index + 1, imageUrl: viewUrl, image: viewImage });
+        }
+      }
+      productReferences.push({ id: productId, name: String(product.name || ''), imageUrl, image, views });
+    }
+  } else if (sceneType !== 'factory') {
+    res.status(422).json({ ok: false, code: 'PRODUCT_REQUIRED', error: '请先选择企业知识库中的目标产品' }); return;
+  }
+  const missingProductViews = storyboardMissingProductViews({ description: shotDescription,
+    action: body.action && typeof body.action === 'object' ? body.action : undefined,
+    layout: body.layout && typeof body.layout === 'object' && !Array.isArray(body.layout) ? body.layout : undefined,
+    products: productReferences.map(item => ({ id: item.id, viewCount: item.views.length })) });
+  if (missingProductViews.length) {
+    res.status(422).json({ ok: false, code: 'PRODUCT_ADDITIONAL_VIEW_REQUIRED',
+      error: '当前镜头要求展示产品未提供的背面、侧面或大幅翻转；请补充对应产品视角图，或改为接近现有图片角度的轻微运镜', productIds: missingProductViews }); return;
+  }
+  const sourceFrame = body.sourceFirstFrameUrl ? await storyboardUrlImage(String(body.sourceFirstFrameUrl), tenantId) : null;
+  if (mode === 'replication' && !sourceFrame) {
+    res.status(422).json({ ok: false, code: 'SOURCE_FRAME_REQUIRED', error: '爆款复刻需要当前分镜可读取的原片首帧' }); return;
+  }
+  const characterMaterialId = String(body.characterMaterialId || '').trim();
+  if (body.characterImageUrl) {
+    res.status(422).json({ ok: false, code: 'CHARACTER_MATERIAL_REQUIRED', error: '指定人物请使用已授权企业人物图片素材，不能直接传入图片地址' }); return;
+  }
+  if (characterMaterialId && !loadMaterials().some(item => item.id === characterMaterialId && item.tenantId === tenantId
+      && item.scope === 'own' && item.type === 'image')) {
+    res.status(422).json({ ok: false, code: 'CHARACTER_MATERIAL_UNAVAILABLE', error: '指定人物必须来自本企业图片素材' }); return;
+  }
+  if (characterMaterialId) {
+    const authIssue = await storyboardCharacterMaterialAuthorizationIssue(tenantId, characterMaterialId);
+    if (authIssue) { res.status(422).json({ ok: false, code: 'CHARACTER_MATERIAL_NOT_AUTHORIZED', error: authIssue }); return; }
+  }
+  const characterAssetId = characterMaterialId;
+  const characterImage = characterAssetId ? await storyboardPersonAssetImage(characterAssetId, tenantId) : null;
+  if (characterAssetId && !characterImage) {
+    res.status(422).json({ ok: false, code: 'CHARACTER_IMAGE_UNAVAILABLE', error: '指定人物图片无法读取' }); return;
+  }
+  const environmentMaterialId = String(body.environmentMaterialId || '').trim();
+  let environmentImage: ReferenceImage | null = null;
+  if (environmentMaterialId) {
+    const selectedIds = Array.isArray(firstFrameProject?.spec?.selected)
+      ? firstFrameProject.spec.selected.map(String) : [];
+    const material = loadMaterials().find(item => item.id === environmentMaterialId && item.tenantId === tenantId
+      && item.scope === 'own' && item.type === 'image');
+    if (!selectedIds.includes(environmentMaterialId) || !material
+      || (material.objectKey && !isTenantPrivateObjectKey(material.objectKey, tenantId))) {
+      res.status(422).json({ ok: false, code: 'ENVIRONMENT_MATERIAL_NOT_SELECTED', error: '环境参考图必须是当前项目已选的本企业图片素材' }); return;
+    }
+    environmentImage = await storyboardMaterialImage(environmentMaterialId, tenantId);
+    if (!environmentImage) {
+      res.status(422).json({ ok: false, code: 'ENVIRONMENT_IMAGE_UNAVAILABLE', error: '当前项目已选的环境参考图无法读取' }); return;
+    }
+  }
+  if (sceneType === 'factory' && storyboardFactoryReferenceRequired(`${shotDescription} ${String(body.layout?.environment || '')}`) && !environmentImage) {
+    res.status(422).json({ ok: false, code: 'FACTORY_REFERENCE_REQUIRED',
+      error: '当前镜头要求还原本企业指定工厂或设备，请先选择对应企业场景图，或调整为通用工厂画面' }); return;
+  }
+  const referenceCapacity = storyboardReferenceCapacity({ source: !!sourceFrame, products: productReferences.length,
+    person: !!characterImage, environment: !!environmentImage });
+  if (!referenceCapacity.fits) {
+    res.status(422).json({ ok: false, code: 'FIRST_FRAME_REFERENCE_LIMIT', error: '首帧模型最多支持 3 张参考图；当前原片、产品、指定人物和环境参考图无法同时输入，请减少产品或移除可选环境图' }); return;
+  }
+  const requiresProductSheet = referenceCapacity.useProductSheet;
+  const hasProductViewSheet = productReferences.length === 1 && productReferences[0]!.views.length > 1;
+  const hasMultiProductViews = productReferences.length > 1 && productReferences.some(item => item.views.length > 1);
+  const productModelReferences = hasMultiProductViews
+    ? [await storyboardMultiProductViewSheet(productReferences.map(item => item.views.map(view => view.image)))]
+    : requiresProductSheet ? [await storyboardProductReferenceSheet(productReferences.map(item => item.image))]
+    : hasProductViewSheet ? [await storyboardProductReferenceSheet(productReferences[0]!.views.map(view => view.image))]
+      : productReferences.map(item => item.image);
+  const personEnvironmentModelReferences = referenceCapacity.usePersonEnvironmentSheet && characterImage && environmentImage
+    ? [await storyboardPersonEnvironmentSheet(characterImage, environmentImage)]
+    : [characterImage, environmentImage].filter(Boolean) as ReferenceImage[];
+  const references = [sourceFrame, ...productModelReferences, ...personEnvironmentModelReferences].filter(Boolean) as ReferenceImage[];
+  if (references.length > 3) {
+    res.status(422).json({ ok: false, code: 'FIRST_FRAME_REFERENCE_LIMIT', error: '首帧模型最多支持 3 张参考图；当前原片、产品、指定人物和环境参考图无法同时输入，请减少产品或移除可选环境图' }); return;
+  }
+  const sourceCutout = productReferences.length === 1 ? productReferences[0] : undefined;
+  const sourceCutoutVersion = sourceCutout ? createHash('sha256').update(sourceCutout.image.base64).digest('hex') : '';
+  const sourceCutoutGeometry = sourceCutout
+    ? await verifiedTransparentCutoutGeometry(Buffer.from(sourceCutout.image.base64, 'base64')) : null;
+  const verifiedSourceCutout = !!sourceCutoutGeometry;
+  const requestedLayout = body.layout && typeof body.layout === 'object' && !Array.isArray(body.layout) ? body.layout as Record<string, any> : {};
+  const savedPlacement = (firstFrameProject?.spec?.storyboardSourcePlans?.[firstFrameProjectSlotId]
+    || firstFrameProject?.spec?.storyboardSourcePlans?.[firstFrameProjectShotId])?.placementOverride;
+  const confirmedVisual = String(firstFrameProject?.spec?.shootingSlots?.find((item: any) =>
+    String(item.slotId || item.id) === shotId || String(item.id) === shotId)?.detail || shotDescription);
+  const descriptor = `${confirmedVisual} ${String(requestedLayout.environment || '')}`;
+  const hasConveyor = /传送带|流水线|产线|conveyor/i.test(descriptor);
+  const hasTabletop = /桌面|桌上|台面|摄影台|tabletop|on (?:a |the )?table/i.test(descriptor);
+  const geometryScene = savedPlacement?.contactScene === 'tabletop' || savedPlacement?.contactScene === 'conveyor'
+    ? savedPlacement.contactScene as 'tabletop' | 'conveyor'
+    : hasConveyor !== hasTabletop ? (hasConveyor ? 'conveyor' : 'tabletop') : null;
+  let geometryPlan: StoryboardGeometryPlan | null = null;
+  if (mode === 'free_creation' && verifiedSourceCutout && sourceCutout && geometryScene) {
+    geometryPlan = await planStoryboardExactProductGeometry({ shotId, mode, scene: geometryScene,
+      confirmedVisual, product: { assetId: sourceCutout.id, version: sourceCutoutVersion, view: 'source',
+        cutoutAspectRatio: sourceCutoutGeometry!.aspectRatio },
+      ...(savedPlacement ? { confirmedLayout: { shotId, scene: geometryScene,
+        productBox: savedPlacement.productBox, contactSurfaceY: savedPlacement.contactSurfaceY,
+        productView: String(savedPlacement.productView || 'source'),
+        foregroundOcclusion: (savedPlacement.foregroundOcclusion || 'none') as 'none' | 'required',
+        foregroundOccluderAssetId: savedPlacement.foregroundOccluderAssetId } } : {}),
+    });
+  }
+  const resolvedLayout = geometryPlan?.status === 'ready' ? { ...requestedLayout, ...geometryPlan.layout } : requestedLayout;
+  let shotSpec: StoryboardShotSpec;
+  try {
+    shotSpec = compileStoryboardShotSpec({
+      shotId, mode, scene: sceneType, description: shotDescription, ratio,
+      startSeconds: body.startSeconds, endSeconds: body.endSeconds,
+      assets: [
+        ...(sourceFrame ? [{ role: 'composition' as const, id: String(body.sourceFirstFrameUrl), version: createHash('sha256').update(sourceFrame.base64).digest('hex'), source: 'reference_video' as const }] : []),
+        ...productReferences.map(item => ({ role: 'product' as const, id: item.id, version: createHash('sha256').update(item.image.base64).digest('hex'), source: 'knowledge_base' as const, label: item.name })),
+        ...productReferences.flatMap(item => item.views.slice(1).map(view => ({ role: 'product_view' as const,
+          id: `${item.id}:view:${view.index}`, version: createHash('sha256').update(view.image.base64).digest('hex'),
+          source: 'knowledge_base' as const, derivedFromAssetId: item.id, view: String(view.index) }))),
+        ...(verifiedSourceCutout && sourceCutout ? [{ role: 'product_cutout' as const, id: sourceCutout.imageUrl,
+          version: sourceCutoutVersion, source: 'knowledge_base' as const, derivedFromAssetId: sourceCutout.id,
+          derivedFromVersion: sourceCutoutVersion, view: 'source' }] : []),
+        ...(characterImage ? [{ role: 'person' as const, id: characterAssetId, version: createHash('sha256').update(characterImage.base64).digest('hex'), source: 'enterprise_asset' as const }] : []),
+        ...(environmentImage ? [{ role: 'environment' as const, id: environmentMaterialId, version: createHash('sha256').update(environmentImage.base64).digest('hex'), source: 'enterprise_asset' as const }] : []),
+      ],
+      layout: resolvedLayout,
+      action: body.action && typeof body.action === 'object' && !Array.isArray(body.action) ? body.action : undefined,
+    });
+  } catch (error) {
+    res.status(422).json({ ok: false, code: 'INVALID_SHOT_SPEC', error: error instanceof Error ? error.message : '分镜输入不完整' }); return;
+  }
+  // An exact source-pixel layer is currently supported only for a single
+  // tabletop or conveyor product in its knowledge-base image's own view.
+  // Handheld needs a verified aligned foreground hand mask and stays on the
+  // generative route until that asset exists.
+  const identityPreflight = mode === 'replication'
+    ? { status: 'generative_fallback' as const, reason: 'clone_geometry_observer_not_budgeted' }
+    : !geometryPlan || geometryPlan.status !== 'ready'
+      ? { status: 'generative_fallback' as const,
+        reason: geometryPlan?.status === 'blocked' ? geometryPlan.code : 'contact_scene_or_cutout_unavailable' }
+      : shotSpec.scene === 'usage'
+    ? { status: 'generative_fallback' as const, reason: 'usage_scene_requires_action' }
+    : characterImage
+      ? { status: 'generative_fallback' as const, reason: 'named_person_requires_generation' }
+      : shotSpec.layout.contactScene === 'handheld'
+    ? { status: 'generative_fallback' as const, reason: 'hand_foreground_missing' }
+    : await prepareProductIdentityLayer({ spec: shotSpec, cleanPlate: true,
+      background: await sharp({ create: { width: 64, height: 64, channels: 4, background: '#ffffff' } }).png().toBuffer(),
+      assetBytes: new Map(productReferences.map(item => [item.imageUrl, Buffer.from(item.image.base64, 'base64')])) });
+  let useExactProductLayer = identityPreflight.status === 'eligible';
+  let identityFallbackReason = identityPreflight.status === 'generative_fallback' ? identityPreflight.reason : '';
+  if (firstFrameProject) {
+    const issue = storyboardProjectShotRequestIssue({ projectSpec: firstFrameProject.spec ?? {}, shotId,
+      shotDescription, mode, ratio, sceneType, productIds, targetDurationSeconds: shotSpec.targetDurationSeconds,
+      sourceFirstFrameUrl: String(body.sourceFirstFrameUrl || ''),
+      environmentMaterialId,
+      characterMaterialId,
+      action: body.action,
+      keyStates: Array.isArray(body.keyStates) ? body.keyStates : [],
+      placement: { contactScene: shotSpec.layout.contactScene, productBox: shotSpec.layout.productBox,
+        contactSurfaceY: shotSpec.layout.contactSurfaceY } });
+    if (issue) { res.status(409).json({ ok: false, code: 'STORYBOARD_PROJECT_INPUT_MISMATCH', error: issue }); return; }
+  }
+  const rawKeyStates = Array.isArray(body.keyStates) ? body.keyStates : [];
+  const validKeyStateSources = mode === 'replication'
+    ? ['confirmed_reference_analysis', 'confirmed_storyboard'] : ['confirmed_storyboard'];
+  if (rawKeyStates.some((item: any) => !item || !validKeyStateSources.includes(item.source) || !Number.isInteger(item.afterBeat)
+      || typeof item.description !== 'string' || item.description.trim().length < 4 || item.description.length > 400 || item.imageAssetId)) {
+    res.status(422).json({ ok: false, code: 'ACTION_KEY_STATE_INVALID', error: '动作关键状态必须来自已确认分镜，且不能指定未经核验的外部图片' }); return;
+  }
+  const actionKeyStates: StoryboardKeyState[] = rawKeyStates.map((item: any) => ({ afterBeat: Number(item.afterBeat),
+    description: item.description.trim(), source: item.source }));
+  const actionBeatDurations = Array.isArray(body.beatDurationsSeconds) ? body.beatDurationsSeconds.map(Number) : undefined;
+  if (sceneType === 'usage' && shotSpec.targetDurationSeconds > 15) {
+    const draftPlan = planStoryboardActionSegments({ shot: shotSpec,
+      capability: { minDurationSeconds: 4, maxDurationSeconds: 15, integerDurationSeconds: true, supportsFirstFrame: true, supportsEndFrame: false },
+      keyStates: actionKeyStates, beatDurationsSeconds: actionBeatDurations });
+    if (draftPlan.status === 'blocked' || !draftPlan.requiresSequentialGeneration) {
+      res.status(422).json({ ok: false, code: 'ACTION_SEGMENT_PLAN_NOT_READY', error: '长使用动作缺少可验收的中间关键状态，未提交首帧生成', actionPlan: draftPlan }); return;
+    }
+  }
+  const fingerprint = createHash('sha256').update(JSON.stringify({
+    projectId: String(body.projectId || ''), shotSpec, actionKeyStates, actionBeatDurations,
+    productIds, productImageIdentities: productReferences.flatMap(item => item.views.map(view => view.imageUrl)),
+    sourceFrameHash: sourceFrame ? createHash('sha256').update(sourceFrame.base64).digest('hex') : '',
+    characterImageHash: characterImage ? createHash('sha256').update(characterImage.base64).digest('hex') : '',
+    environmentImageHash: environmentImage ? createHash('sha256').update(environmentImage.base64).digest('hex') : '',
+    promptVersion: STORYBOARD_FIRST_FRAME_PROMPT_VERSION,
+  })).digest('hex');
+  const requestId = String(body.requestId || '').trim().slice(0, 160);
+  if (!requestId) {
+    res.status(400).json({ ok: false, code: 'STORYBOARD_OPERATION_ID_REQUIRED', error: '分镜首帧需要稳定请求标识，未调用供应商' }); return;
+  }
+  if (requestId) {
+    const previous = loadMaterials().find(item => item.tenantId === tenantId && item.sourceType === 'ai-storyboard-first-frame' &&
+      item.provenance?.requestId === requestId);
+    if (previous) {
+      if (previous.provenance?.fingerprint !== fingerprint) {
+        res.status(409).json({ ok: false, code: 'FIRST_FRAME_REQUEST_CONFLICT', error: '该请求 ID 已用于不同的分镜输入' }); return;
+      }
+      const currentProjectShot = firstFrameProject ? storyboardProjectShotInput(firstFrameProject.spec ?? {}, shotId) : null;
+      if (!currentProjectShot || previous.provenance?.projectShotFingerprint !== currentProjectShot.fingerprint) {
+        res.status(409).json({ ok: false, code: 'STORYBOARD_PROJECT_INPUT_CHANGED', error: '当前分镜输入版本已变化，请发起新的首帧请求' }); return;
+      }
+      res.json({ ok: true, material: await materialResponse(previous, tenantId), fingerprint, promptVersion: STORYBOARD_FIRST_FRAME_PROMPT_VERSION, firstFrameQuality: previous.provenance?.firstFrameQuality,
+        identityNotice: storyboardIdentityNotice(previous.provenance?.identityLayer, !!(previous.provenance?.productIds as string[] | undefined)?.length), reused: true }); return;
+    }
+  }
+  const prompt = buildStoryboardFirstFramePrompt({ mode, sceneType, shotDescription,
+    productName: productReferences.map(item => item.name).join('、'), productNames: productReferences.map(item => item.name),
+    hasSourceFrame: !!sourceFrame, hasProductImage: productReferences.length > 0, productImageCount: productReferences.length,
+    productReferenceMode: hasMultiProductViews ? 'multi_product_view_sheet' : requiresProductSheet ? 'contact_sheet' : hasProductViewSheet ? 'multi_view_sheet' : 'individual',
+    productViewCount: hasProductViewSheet ? productReferences[0]!.views.length : undefined,
+    hasCharacterImage: !!characterImage, hasEnvironmentImage: !!environmentImage,
+    personEnvironmentReferenceMode: referenceCapacity.usePersonEnvironmentSheet ? 'contact_sheet' : 'individual', ratio, spec: shotSpec });
+  if (!firstFrameProject || !firstFrameProjectShotId) {
+    res.status(400).json({ ok: false, code: 'STORYBOARD_PROJECT_REQUIRED', error: '分镜首帧需要当前项目，未调用供应商' }); return;
+  }
+  const projectShotInput = storyboardProjectShotInput(firstFrameProject.spec ?? {}, shotId);
+  if (!projectShotInput || !['ai', 'hybrid'].includes(projectShotInput.input.source.mode)) {
+    res.status(409).json({ ok: false, code: 'STORYBOARD_PROJECT_INPUT_CHANGED', error: '当前分镜制作要求已变化，未调用供应商' }); return;
+  }
+  const budgetPlan = studioAigcBudgetPreviewForSpec(firstFrameProject?.spec ?? {}, studioAigcBudgetConfigFromEnv());
+  const planned = budgetPlan.shotPlans.find(item => item.shotId === firstFrameProjectShotId);
+  if (!planned || planned.status !== 'ready') {
+    res.status(409).json({ ok: false, code: 'STORYBOARD_BUDGET_PLAN_UNAVAILABLE', error: '当前分镜未进入智能生成预算计划，未调用供应商', plan: planned }); return;
+  }
+  if (!String(process.env.DASHSCOPE_API_KEY || '').trim()) {
+    res.status(423).json({ ok: false, code: 'STORYBOARD_IMAGE_PROVIDER_UNAVAILABLE', error: '首帧模型尚未配置，未调用供应商' }); return;
+  }
+  if (!await consumeDemoQuota(req, res, 'generation')) return;
+  const frameOperationId = `firstframe:${createHash('sha256').update(`${tenantId}:${String(body.projectId)}:${shotId}:${requestId}`).digest('hex')}`;
+  try {
+    const admission = await storyboardAigcProjectBudget.reserve({ tenantId, projectId: String(body.projectId), shotId,
+      stage: 'first_frame', operationId: frameOperationId,
+      estimatedCostCny: planned.estimatedFirstFrameCostCny, inputFingerprint: fingerprint });
+    if (admission.existing) {
+      const recovered = admission.entry.status === 'completed' && admission.entry.output?.materialId
+        ? loadMaterials().find(item => item.id === String(admission.entry.output?.materialId) && item.tenantId === tenantId
+          && item.sourceType === 'ai-storyboard-first-frame' && item.provenance?.fingerprint === fingerprint
+          && item.provenance?.projectShotFingerprint === projectShotInput.fingerprint)
+        : null;
+      if (recovered) {
+        res.json({ ok: true, material: await materialResponse(recovered, tenantId), fingerprint,
+          promptVersion: STORYBOARD_FIRST_FRAME_PROMPT_VERSION, firstFrameQuality: recovered.provenance?.firstFrameQuality,
+          identityNotice: storyboardIdentityNotice(recovered.provenance?.identityLayer, !!(recovered.provenance?.productIds as string[] | undefined)?.length), reused: true }); return;
+      }
+      res.status(admission.entry.status === 'reserved' ? 202 : 409).json({ ok: false,
+        code: admission.entry.status === 'completed' ? 'STORYBOARD_OPERATION_RECOVERY_REQUIRED'
+          : admission.entry.status === 'reserved' ? 'STORYBOARD_OPERATION_IN_PROGRESS' : 'STORYBOARD_OPERATION_RESULT_UNCERTAIN',
+        error: admission.entry.status === 'completed'
+          ? '首帧请求已完成但产物暂不可读取，请核对原任务；未重复调用供应商'
+          : admission.entry.status === 'reserved' ? '首帧任务仍在处理，请稍后刷新原请求；未重复调用供应商'
+            : '首帧请求结果待核对，请勿重复提交', operationId: frameOperationId }); return;
+    }
+  } catch (error) {
+    res.status(429).json({ ok: false, code: 'STORYBOARD_PROJECT_BUDGET_EXCEEDED',
+      error: error instanceof Error ? error.message : '项目 AIGC 预算不足，未调用供应商' }); return;
+  }
+  const generationStartedAt = Date.now();
+  let geometryObserverAttempted = false;
+  try {
+    if (mode === 'replication' && firstFrameProject.spec?.mode === 'clone'
+      && process.env.STORYBOARD_CLONE_GEOMETRY_QWEN_ENABLED === 'true') {
+      const currentSourceFrameUrl = String(projectShotInput.input.reference?.firstFrameRef || '');
+      const sourceMime = String(sourceFrame?.mimeType || '');
+      if (!sourceCutoutGeometry || !sourceCutout || !geometryScene || sceneType === 'usage' || characterImage) {
+        identityFallbackReason = 'clone_exact_layer_prerequisites_missing';
+      } else if (!/^\/api\/overseas\/videos\/[\w-]+\/shot\/\d+\/first-frame$/.test(storyboardImageUrlPath(currentSourceFrameUrl))
+        || currentSourceFrameUrl !== String(body.sourceFirstFrameUrl || '')) {
+        identityFallbackReason = 'clone_source_frame_not_bound_to_current_shot';
+      } else if (!sourceFrame || !['image/png', 'image/jpeg', 'image/webp'].includes(sourceMime)) {
+        identityFallbackReason = 'clone_source_frame_unreadable';
+      } else if (!(Number(planned.estimatedGeometryObservationCostCny) > 0)) {
+        identityFallbackReason = 'clone_geometry_observer_not_budgeted';
+      } else {
+        geometryObserverAttempted = true;
+        geometryPlan = await planStoryboardExactProductGeometry({ shotId, mode, scene: geometryScene,
+          confirmedVisual, product: { assetId: sourceCutout.id, version: sourceCutoutVersion, view: 'source',
+            cutoutAspectRatio: sourceCutoutGeometry.aspectRatio },
+          sourceFrame: { assetId: currentSourceFrameUrl,
+            version: createHash('sha256').update(sourceFrame.base64).digest('hex'),
+            mimeType: sourceMime as 'image/png' | 'image/jpeg' | 'image/webp', base64: sourceFrame.base64 },
+        }, createStoryboardGeometryQwenObserver());
+        if (geometryPlan.status === 'ready') {
+          shotSpec.layout = { ...shotSpec.layout, ...geometryPlan.layout };
+          const prepared = await prepareProductIdentityLayer({ spec: shotSpec, cleanPlate: true,
+            background: await sharp({ create: { width: 64, height: 64, channels: 4, background: '#ffffff' } }).png().toBuffer(),
+            assetBytes: new Map([[sourceCutout.imageUrl, Buffer.from(sourceCutout.image.base64, 'base64')]]) });
+          useExactProductLayer = prepared.status === 'eligible';
+          identityFallbackReason = prepared.status === 'eligible' ? '' : prepared.reason;
+        } else identityFallbackReason = geometryPlan.code;
+      }
+    }
+    const cleanPlatePrompt = [
+      `Create exactly one photorealistic ${ratio} EMPTY environment plate for a continuous commercial video shot.`,
+      `Scene and spatial layout: ${shotDescription}. ${shotSpec.layout.environment}. ${shotSpec.layout.cameraAngle}.`,
+      `Leave the product slot empty: normalized box x=${shotSpec.layout.productBox?.x}, y=${shotSpec.layout.productBox?.y}, width=${shotSpec.layout.productBox?.width}, height=${shotSpec.layout.productBox?.height}.`,
+      `The empty slot sits on the ${shotSpec.layout.contactScene === 'conveyor' ? 'conveyor belt' : 'tabletop'} at normalized height ${shotSpec.layout.contactSurfaceY}. Keep its contact plane and realistic light direction visible.`,
+      mode === 'replication' ? 'Reference image 1 is the current source shot first frame for composition ONLY. Preserve camera angle and spatial layout; remove its product, brand, packaging, caption and watermark.' : '',
+      environmentImage ? 'Use the selected environment reference only for directly visible spatial appearance. Do not infer factory ownership, equipment capabilities, certifications or other business claims.' : '',
+      'Do not draw any product, package, hand, extra prop, brand, readable label, subtitle or watermark in or over the empty product slot. A separate exact knowledge-base product cutout will be inserted after this plate is generated.',
+    ].filter(Boolean).join('\n');
+    const providerGenerated = await generatePosterImage({ prompt: useExactProductLayer ? cleanPlatePrompt : prompt,
+      ratio, references: useExactProductLayer ? [sourceFrame, environmentImage].filter(Boolean) as ReferenceImage[] : references });
+    let generated = providerGenerated;
+    let identityLayer: Record<string, unknown> = { strategy: 'generative', fallbackReason: identityFallbackReason };
+    if (useExactProductLayer) {
+      const prepared = await prepareProductIdentityLayer({ spec: shotSpec, cleanPlate: true,
+        background: Buffer.from(providerGenerated.bytes),
+        assetBytes: new Map(productReferences.map(item => [item.imageUrl, Buffer.from(item.image.base64, 'base64')])) });
+      if (prepared.status !== 'eligible') throw new Error(`product_identity_preparation_changed:${prepared.reason}`);
+      const composite = await compositeProductIdentityLayer(prepared.composite);
+      generated = { ...providerGenerated, bytes: composite.bytes, mimeType: 'image/png' };
+      identityLayer = { strategy: 'exact_source_pixels', ...prepared.provenance, productBox: composite.productBox,
+        occludedProductFraction: composite.occludedProductFraction, cleanPlateModel: providerGenerated.model };
+    }
+    let firstFrameObservations: unknown = [];
+    try {
+      firstFrameObservations = await inspectStoryboardAigcFramesWithQwen({
+        phase: 'first_frame', sceneType,
+        frames: [{ base64: Buffer.from(generated.bytes).toString('base64'), mimeType: generated.mimeType, timeLabel: '候选首帧' }],
+        productReferences: productReferences.flatMap((item, index) => item.views.map(view => ({ ...view.image,
+          timeLabel: `企业产品参考${index + 1}视角${view.index + 1}：${item.name}` }))),
+        personReferences: characterImage ? [{ ...characterImage, timeLabel: '企业人物参考' }] : [],
+        environmentReferences: environmentImage ? [{ ...environmentImage, timeLabel: '企业工厂环境参考' }] : [],
+        storyboard: shotDescription, productInfo: productReferences.map(item => item.name).join('、'),
+        startState: shotSpec.action.startState, beats: shotSpec.action.beats, endState: shotSpec.action.endState,
+      });
+    } catch (qualityError) {
+      console.warn('[studio] first-frame automated QA unavailable:', qualityError);
+    }
+    const technicalFrameObservations = await inspectStoryboardTechnicalFrames('first_frame', [{ bytes: Buffer.from(generated.bytes), timeLabel: '候选首帧' }]);
+    const firstFrameQuality = buildStoryboardQaReport({
+      phase: 'first_frame', sceneType, hasProduct: productReferences.length > 0, hasNamedPerson: !!characterImage,
+      hasEnvironmentReference: !!environmentImage,
+      hasContact: shotSpec.constraints.includes('physical_contact'),
+      hasAction: !!(shotSpec.action.startState || shotSpec.action.beats.length),
+      observations: [...(Array.isArray(firstFrameObservations) ? firstFrameObservations : []).filter(item => !technicalFrameObservations.some(technical => technical.key === item?.key)), ...technicalFrameObservations],
+      evidenceFrameLabels: ['候选首帧'],
+    });
+    const material = await createGeneratedImageMaterial({ title: `分镜首帧 · ${shotId}`.slice(0, 120), bytes: generated.bytes, mimeType: generated.mimeType, source: generated.source, tenantId });
+    material.sourceType = 'ai-storyboard-first-frame';
+    material.productId = productReferences[0]?.id;
+    material.productName = productReferences.map(item => item.name).join('、') || undefined;
+    material.provenance = { projectId: String(body.projectId || ''), shotId, fingerprint, projectShotFingerprint: projectShotInput.fingerprint, requestId, promptVersion: STORYBOARD_FIRST_FRAME_PROMPT_VERSION, sceneType, mode, shotSpec, geometryPlan, actionKeyStates, actionBeatDurations, productIds, identityLayer, firstFrameQuality, confirmed: false, model: generated.model,
+      estimatedCostCny: studioAigcBudgetConfigFromEnv().firstFrameCostCny
+        + (geometryObserverAttempted ? Number(planned.estimatedGeometryObservationCostCny || 0) : 0),
+      generationLatencyMs: Date.now() - generationStartedAt };
+    const list = loadMaterials();
+    const index = list.findIndex(item => item.id === material.id);
+    if (index >= 0) { list[index] = material; persistMaterials(list); }
+    if (!geometryObserverAttempted && Number(planned.estimatedGeometryObservationCostCny || 0) > 0) {
+      await storyboardAigcProjectBudget.settlePartial(tenantId, String(body.projectId), frameOperationId,
+        planned.estimatedFirstFrameCostCny - Number(planned.estimatedGeometryObservationCostCny), { materialId: material.id });
+    } else {
+      await storyboardAigcProjectBudget.mark(tenantId, String(body.projectId), frameOperationId, 'completed', { materialId: material.id });
+    }
+    res.json({ ok: true, material: await materialResponse(material, tenantId), fingerprint, promptVersion: STORYBOARD_FIRST_FRAME_PROMPT_VERSION,
+      model: generated.model, firstFrameQuality, identityNotice: storyboardIdentityNotice(identityLayer, productReferences.length > 0) });
+  } catch (error) {
+    if (error instanceof ImageProviderRejectedError) {
+      if (geometryObserverAttempted) {
+        await storyboardAigcProjectBudget.settlePartial(tenantId, String(body.projectId), frameOperationId,
+          Number(planned.estimatedGeometryObservationCostCny || 0)).catch(markError =>
+          console.error('[studio] first-frame geometry partial settlement unavailable:', markError));
+      } else {
+        await storyboardAigcProjectBudget.releaseRejected(tenantId, String(body.projectId), frameOperationId).catch(markError =>
+          console.error('[studio] first-frame rejected budget release unavailable:', markError));
+      }
+    } else {
+      await storyboardAigcProjectBudget.mark(tenantId, String(body.projectId), frameOperationId, 'uncertain').catch(markError =>
+        console.error('[studio] first-frame budget state unavailable:', markError));
+    }
+    res.status(502).json(upstreamGenerationFailure(error, '分镜首帧'));
+  }
+});
+
+studioRouter.post('/storyboard-first-frame/:id/confirm', async (req, res) => {
+  const { tenantId, userId } = res.locals as AuthLocals;
+  const list = loadMaterials();
+  const material = list.find(item => item.id === req.params.id && item.tenantId === tenantId && item.sourceType === 'ai-storyboard-first-frame');
+  if (!material) { res.status(404).json({ ok: false, error: '首帧候选不存在' }); return; }
+  const fingerprint = String(req.body?.fingerprint || '');
+  const shotId = String(req.body?.shotId || '');
+  if (!fingerprint || material.provenance?.fingerprint !== fingerprint || material.provenance?.shotId !== shotId) {
+    res.status(409).json({ ok: false, error: '首帧输入已变化，请重新生成并确认' }); return;
+  }
+  const currentProject = await store.getById<any>('studio_projects', String(material.provenance?.projectId || ''));
+  const currentInput = currentProject?.tenant_id === tenantId ? storyboardProjectShotInput(currentProject.spec ?? {}, shotId) : null;
+  if (!currentInput || currentInput.fingerprint !== material.provenance?.projectShotFingerprint) {
+    res.status(409).json({ ok: false, code: 'STORYBOARD_PROJECT_INPUT_CHANGED', error: '当前分镜输入已变化，请重新生成首帧' }); return;
+  }
+  const kbIssues = await storyboardKbFrameVersionIssues(tenantId, material.provenance?.shotSpec as StoryboardShotSpec | undefined);
+  if (kbIssues.length) { res.status(409).json({ ok: false, code: 'STORYBOARD_PRODUCT_IMAGE_CHANGED', error: kbIssues.join('；') }); return; }
+  const personIssues = await storyboardPersonFrameVersionIssues(tenantId, material.provenance?.shotSpec as StoryboardShotSpec | undefined);
+  if (personIssues.length) { res.status(409).json({ ok: false, code: 'STORYBOARD_PERSON_IMAGE_CHANGED', error: personIssues.join('；') }); return; }
+  const environmentIssues = await storyboardEnvironmentFrameVersionIssues(tenantId, currentProject.spec ?? {}, material.provenance?.shotSpec as StoryboardShotSpec | undefined);
+  if (environmentIssues.length) { res.status(409).json({ ok: false, code: 'STORYBOARD_ENVIRONMENT_IMAGE_CHANGED', error: environmentIssues.join('；') }); return; }
+  if (material.provenance?.confirmed === true) {
+    res.json({ ok: true, materialId: material.id, fingerprint, firstFrameQuality: material.provenance.firstFrameQuality }); return;
+  }
+  const firstFrameQuality = material.provenance?.firstFrameQuality as StoryboardQaReport | undefined;
+  if (!firstFrameQuality) { res.status(409).json({ ok: false, error: '首帧缺少质检报告，请重新生成' }); return; }
+  let reviewed: StoryboardQaReport;
+  try {
+    reviewed = reviewStoryboardQaReport(firstFrameQuality, { decision: 'accept', reviewedBy: userId });
+  } catch (error) {
+    res.status(409).json({ ok: false, code: 'FIRST_FRAME_QA_FAILED', error: error instanceof Error ? error.message : '首帧质检未通过', firstFrameQuality }); return;
+  }
+  material.provenance = { ...material.provenance, firstFrameQuality: reviewed, confirmed: true, confirmationSource: 'user', qualityStatus: 'manual_confirmed_after_automated_review', confirmedAt: new Date().toISOString() };
+  persistMaterials(list);
+  res.json({ ok: true, materialId: material.id, fingerprint });
+});
+
+/** Multi-step usage shots are generated one segment at a time. The next
+ * segment is never submitted until the previous visible end state passes QA. */
+studioRouter.post('/storyboard-action-video', async (req, res) => {
+  const { tenantId } = res.locals as AuthLocals;
+  const body = req.body ?? {};
+  const firstFrameMaterialId = String(body.firstFrameMaterialId || '');
+  const firstFrameFingerprint = String(body.firstFrameFingerprint || '');
+  const shotId = String(body.shotId || '');
+  const requestId = String(body.requestId || '').trim();
+  const resolution = String(body.resolution || '720p');
+  const materials = loadMaterials();
+  const firstFrame = materials.find(item => item.id === firstFrameMaterialId && item.tenantId === tenantId && item.sourceType === 'ai-storyboard-first-frame');
+  const shotSpec = firstFrame?.provenance?.shotSpec as StoryboardShotSpec | undefined;
+  if (!firstFrame || !shotSpec || !firstFrameFingerprint || !shotId || firstFrame.provenance?.confirmed !== true
+      || firstFrame.provenance?.fingerprint !== firstFrameFingerprint || firstFrame.provenance?.shotId !== shotId) {
+    res.status(409).json({ ok: false, code: 'FIRST_FRAME_NOT_CONFIRMED', error: '当前分镜首帧未确认或输入已变化' }); return;
+  }
+  if (shotSpec.scene !== 'usage' || shotSpec.shotId !== shotId || String(body.ratio || shotSpec.layout.ratio) !== shotSpec.layout.ratio
+      || !['480p', '720p'].includes(resolution)) {
+    res.status(422).json({ ok: false, code: 'ACTION_VIDEO_INPUT_INVALID', error: '多步动作视频的镜头、画幅或清晰度无效' }); return;
+  }
+  if (!/^[A-Za-z0-9_:.-]{8,180}$/.test(requestId)) {
+    res.status(400).json({ ok: false, code: 'ACTION_REQUEST_ID_REQUIRED', error: '请为本次多段生成提供稳定请求 ID' }); return;
+  }
+  const rawStates = Array.isArray(body.keyStates) ? body.keyStates : [];
+  const validKeyStateSources = shotSpec.mode === 'replication'
+    ? ['confirmed_reference_analysis', 'confirmed_storyboard'] : ['confirmed_storyboard'];
+  if (rawStates.some((item: any) => !item || !validKeyStateSources.includes(item.source) || typeof item.description !== 'string'
+      || item.description.trim().length < 4 || item.description.length > 400 || !Number.isInteger(item.afterBeat)
+      || item.imageAssetId)) {
+    res.status(422).json({ ok: false, code: 'ACTION_KEY_STATE_INVALID', error: '中间关键状态须来自已确认分镜，且不能直接指定未经核验的外部首帧' }); return;
+  }
+  const keyStates: StoryboardKeyState[] = rawStates.map((item: any) => ({
+    afterBeat: Number(item.afterBeat), description: item.description.trim(), source: item.source,
+  }));
+  const beatDurationsSeconds = Array.isArray(body.beatDurationsSeconds) ? body.beatDurationsSeconds.map(Number) : undefined;
+  if (JSON.stringify(keyStates) !== JSON.stringify(firstFrame.provenance?.actionKeyStates || [])
+      || JSON.stringify(beatDurationsSeconds || null) !== JSON.stringify(firstFrame.provenance?.actionBeatDurations || null)) {
+    res.status(409).json({ ok: false, code: 'ACTION_KEY_STATES_CHANGED', error: '动作关键状态与已确认首帧不一致，请重做首帧' }); return;
+  }
+  const actionPlan = planStoryboardActionSegments({ shot: shotSpec,
+    capability: { minDurationSeconds: 4, maxDurationSeconds: 15, integerDurationSeconds: true, supportsFirstFrame: true, supportsEndFrame: false },
+    firstFrameAssetId: firstFrame.id, keyStates, beatDurationsSeconds, requireKeyStateSegments: true });
+  if (actionPlan.status === 'blocked' || !actionPlan.requiresSequentialGeneration) {
+    res.status(422).json({ ok: false, code: 'ACTION_SEGMENT_PLAN_NOT_READY', error: '当前动作缺少可验收的分段关键状态，或可使用单段生成', actionPlan }); return;
+  }
+  const config = seedanceVideoConfig();
+  if (!isSeedanceVideoEnabled() || !config.apiKey || !ffmpegStatic) {
+    res.status(423).json({ ok: false, code: 'ACTION_VIDEO_PROVIDER_UNAVAILABLE', error: '当前分段视频生成或本地视频组件不可用' }); return;
+  }
+  const projectId = String(firstFrame.provenance?.projectId || '');
+  if (!projectId) { res.status(422).json({ ok: false, code: 'ACTION_PROJECT_REQUIRED', error: '多段动作须绑定本片制作项目' }); return; }
+  const project = await store.getById<any>('studio_projects', projectId);
+  if (!project || project.tenant_id !== tenantId) { res.status(404).json({ ok: false, code: 'ACTION_PROJECT_UNAVAILABLE', error: '当前分镜项目不存在' }); return; }
+  const currentShotInput = storyboardProjectShotInput(project.spec ?? {}, shotId);
+  if (!currentShotInput || currentShotInput.fingerprint !== firstFrame.provenance?.projectShotFingerprint) {
+    res.status(409).json({ ok: false, code: 'STORYBOARD_PROJECT_INPUT_CHANGED', error: '当前分镜输入已变化，请重新生成并确认首帧' }); return;
+  }
+  const kbIssues = await storyboardKbFrameVersionIssues(tenantId, shotSpec);
+  if (kbIssues.length) { res.status(409).json({ ok: false, code: 'STORYBOARD_PRODUCT_IMAGE_CHANGED', error: kbIssues.join('；') }); return; }
+  const personIssues = await storyboardPersonFrameVersionIssues(tenantId, shotSpec);
+  if (personIssues.length) { res.status(409).json({ ok: false, code: 'STORYBOARD_PERSON_IMAGE_CHANGED', error: personIssues.join('；') }); return; }
+  const environmentIssues = await storyboardEnvironmentFrameVersionIssues(tenantId, project.spec ?? {}, shotSpec);
+  if (environmentIssues.length) { res.status(409).json({ ok: false, code: 'STORYBOARD_ENVIRONMENT_IMAGE_CHANGED', error: environmentIssues.join('；') }); return; }
+  const currentSourcePlan = project.spec?.storyboardSourcePlans?.[shotId];
+  const savedActionKeyStates = String(currentSourcePlan?.actionKeyStates || '').split(/[；;\n]+/).map(item => item.trim()).filter(Boolean);
+  if (JSON.stringify(keyStates.map(item => item.description)) !== JSON.stringify(savedActionKeyStates)) {
+    res.status(409).json({ ok: false, code: 'STORYBOARD_ACTION_KEY_STATES_CHANGED', error: '镜内拆段的中间状态未在当前分镜确认，请重新确认后制作首帧' }); return;
+  }
+  const plannedProductIds = Array.isArray(currentSourcePlan?.productIds) ? currentSourcePlan.productIds.map(String) : [];
+  const frameProductIds = Array.isArray(firstFrame.provenance?.productIds) ? firstFrame.provenance.productIds.map(String) : [];
+  if (plannedProductIds.length && JSON.stringify(plannedProductIds) !== JSON.stringify(frameProductIds)) {
+    res.status(409).json({ ok: false, code: 'STORYBOARD_PRODUCT_CHANGED', error: '本镜头已选产品变化，请重新生成首帧' }); return;
+  }
+  if (currentSourcePlan && (String(currentSourcePlan.actionStartState || '') !== shotSpec.action.startState
+      || String(currentSourcePlan.actionEndState || '') !== shotSpec.action.endState)) {
+    res.status(409).json({ ok: false, code: 'STORYBOARD_ACTION_CHANGED', error: '本镜头动作关键状态变化，请重新生成首帧' }); return;
+  }
+  const budgetPreview = studioAigcBudgetPreviewForSpec(project.spec ?? {}, studioAigcBudgetConfigFromEnv());
+  const budgetShotId = String((Array.isArray(project.spec?.shootingSlots) ? project.spec.shootingSlots : [])
+    .find((slot: any) => String(slot.slotId || slot.id || '') === shotId || String(slot.id || '') === shotId)?.id || shotId);
+  const budgetPlan = budgetPreview.shotPlans.find(item => item.shotId === budgetShotId);
+  const plannedCost = actionPlan.segments.reduce((sum, segment) => sum + estimateSeedanceCostCny(segment.providerDurationSeconds, resolution), 0);
+  if (!budgetPlan || budgetPlan.status !== 'ready' || budgetPlan.resolutionTier !== resolution || budgetPlan.modelId !== config.model
+      || Math.abs(budgetPlan.targetDurationSeconds - Math.ceil(shotSpec.targetDurationSeconds)) > .01 || plannedCost > budgetPlan.estimatedVideoCostCny + .01) {
+    res.status(409).json({ ok: false, code: 'STORYBOARD_BUDGET_PLAN_CHANGED', error: '多段生成成本超出当前分镜预算方案，请刷新预算计划', budgetPlan }); return;
+  }
+  const productImages: Array<ReferenceImage & { timeLabel: string }> = [];
+  if (frameProductIds.length) {
+    const profile = await readTenantEnterpriseProfile(tenantId);
+    const profileProducts = profile.products.items || [];
+    for (const [index, productId] of frameProductIds.entries()) {
+      let product = profileProducts.find((item, productIndex) => productIdentity(item, productIndex) === productId);
+      if (!product) {
+        const legacy = productId.match(/^product-(\d+)-(.+)$/);
+        const candidate = legacy ? profileProducts[Number(legacy[1])] : undefined;
+        if (candidate && candidate.name === legacy?.[2] && profileProducts.filter(item => item.name === candidate.name).length === 1) product = candidate;
+      }
+      const imageUrl = String(product?.images?.[0]?.url || product?.imageUrl || '');
+      const image = imageUrl ? await storyboardEnterpriseImage(imageUrl, tenantId) : null;
+      if (image) productImages.push({ ...image, timeLabel: `企业产品参考${index + 1}` });
+    }
+  }
+  if (shotSpec.constraints.includes('product_identity') && productImages.length !== frameProductIds.length) {
+    res.status(422).json({ ok: false, code: 'PRODUCT_REFERENCE_UNAVAILABLE', error: '知识库产品参考图不可读取，未提交付费生成' }); return;
+  }
+  const actionViewAssets = shotSpec.assets.filter(asset => asset.role === 'product_view');
+  const actionViewReferences = await storyboardKbProductViewReferences(tenantId, shotSpec);
+  if (actionViewReferences.length !== actionViewAssets.length) {
+    res.status(422).json({ ok: false, code: 'PRODUCT_VIEW_CHANGED', error: '产品多角度参考图已变化，未提交付费生成' }); return;
+  }
+  productImages.push(...actionViewReferences);
+  const personAsset = shotSpec.assets.find(asset => asset.role === 'person');
+  const personReference = personAsset ? await storyboardPersonAssetImage(personAsset.id, tenantId) : null;
+  if (personAsset && !personReference) {
+    res.status(422).json({ ok: false, code: 'PERSON_REFERENCE_UNAVAILABLE', error: '指定人物参考图不可读取，未提交付费生成' }); return;
+  }
+  const environmentAsset = shotSpec.assets.find(asset => asset.role === 'environment');
+  const environmentReference = environmentAsset ? await storyboardMaterialImage(environmentAsset.id, tenantId) : null;
+  if (environmentAsset && !environmentReference) {
+    res.status(422).json({ ok: false, code: 'ENVIRONMENT_REFERENCE_UNAVAILABLE', error: '工厂环境参考图不可读取，未提交付费生成' }); return;
+  }
+  if (!await consumeDemoQuota(req, res, 'videoGeneration')) return;
+
+  const operationId = `storyboard-action:${requestId}`;
+  try {
+    const reserved = await storyboardAigcProjectBudget.reserve({ tenantId, projectId, shotId, stage: 'video', operationId, estimatedCostCny: plannedCost });
+    if (reserved.existing) {
+      const completedMaterialId = reserved.entry.status === 'completed' ? String(reserved.entry.output?.materialId || '') : '';
+      const completedMaterial = completedMaterialId ? loadMaterials().find(item => item.id === completedMaterialId
+        && item.tenantId === tenantId && item.provenance?.projectId === projectId && item.provenance?.shotId === shotId) : null;
+      if (completedMaterial) {
+        const visible = await materialResponse(completedMaterial, tenantId);
+        res.json({ ok: true, reused: true, source: 'seedance', id: visible.id, url: visible.url, poster: visible.poster,
+          duration: visible.duration, material: visible,
+          quality: { status: 'needs_review', requiresHumanReview: true },
+          segments: completedMaterial.provenance?.segmentTasks || [] }); return;
+      }
+      res.status(reserved.entry.status === 'reserved' ? 202 : 409).json({ ok: false,
+        code: reserved.entry.status === 'reserved' ? 'ACTION_REQUEST_IN_PROGRESS' : 'ACTION_REQUEST_NEEDS_RECONCILIATION',
+        error: reserved.entry.status === 'reserved' ? '相同请求正在执行或等待核查，请稍后重试同一请求 ID'
+          : '相同请求已被供应商受理或结果未能核验，需核对任务记录，未重复提交', operationId }); return;
+    }
+  } catch (error) {
+    res.status(429).json({ ok: false, code: 'ACTION_PROJECT_BUDGET_EXCEEDED', error: error instanceof Error ? error.message : '项目预算不足' }); return;
+  }
+  const subscription = await getTenantSubscription(tenantId);
+  const isFormalTenant = subscription?.status === 'active' && !['admin', 'local', 'trial'].includes(String(subscription?.plan || '').toLowerCase());
+  const temporaryFiles: string[] = [];
+  const accepted: Array<{ taskId: string; path: string; quality: StoryboardQaReport; duration: number }> = [];
+  let currentFrame = firstFrame;
+  let previousTerminalFrame: ReferenceImage | null = null;
+  let uncertainSubmission = false;
+  try {
+    for (const segment of actionPlan.segments) {
+      const frameUrl = (await materialResponse(currentFrame, tenantId)).url;
+      const referenceUrl = frameUrl.startsWith('/') ? `${getPublicOrigin(req)}${signAssetUrl(frameUrl, tenantId)}` : frameUrl;
+      if (!referenceUrl) throw new Error('分段起始帧不可读取');
+      const prompt = [
+        `Create one continuous ${segment.providerDurationSeconds}-second realistic, silent product-use B-roll shot.`,
+        `Aspect ratio ${shotSpec.layout.ratio}; resolution ${resolution}.`,
+        `Opening state: ${segment.startState}.`,
+        `Only these action steps, in order: ${segment.beats.join(' → ')}.`,
+        `Visible final state: ${segment.endState}. Finish the action by ${segment.targetDurationSeconds} seconds and hold that stable completed state afterward.`,
+        `Camera: ${shotSpec.action.cameraMotion || 'stable, continuous shot'}.`,
+        `Preserve all selected enterprise products, their packaging, the environment and any designated person across the whole shot.`,
+        ...shotSpec.assets.filter(asset => asset.role === 'product'
+          && !shotSpec.assets.some(view => view.role === 'product_view' && view.derivedFromAssetId === asset.id))
+          .map(asset => `Keep product ${asset.id} near its only supplied view; do not invent unseen back or side details.`),
+        `Forbidden changes: ${shotSpec.action.forbiddenChanges.join('; ') || 'no product distortion, no extra product, no scene jump, no impossible hand contact'}.`,
+        'No dialogue, narration, subtitles, invented packaging text, watermarks or cuts.',
+      ].join('\n');
+      let monthlyBudget: SeedanceBudgetReservation | null = null;
+      if (isFormalTenant) {
+        monthlyBudget = reserveSeedanceBudget({ tenantId, duration: segment.providerDurationSeconds, resolution });
+        if (!monthlyBudget.ok) throw new Error(`本月 Seedance 额度不足：第 ${segment.index + 1} 段未提交`);
+      }
+      let taskId = '';
+      try {
+        const created = await seedanceFetchJson(`${config.baseUrl}/contents/generations/tasks`, config.apiKey, {
+          method: 'POST', body: JSON.stringify({ model: config.model,
+            content: [{ type: 'text', text: prompt }, { type: 'image_url', image_url: { url: referenceUrl }, role: 'first_frame' }],
+            ratio: shotSpec.layout.ratio, duration: segment.providerDurationSeconds, resolution,
+            generate_audio: false, watermark: false }),
+        });
+        taskId = seedanceTaskId(created);
+        if (!taskId) throw new Error('供应商未返回分段任务 ID，需核查是否受理');
+        accepted.push({ taskId, path: '', quality: null as unknown as StoryboardQaReport, duration: segment.providerDurationSeconds });
+      } catch (error) {
+        // A transport error after POST may mean the supplier accepted the call.
+        uncertainSubmission = true;
+        if (monthlyBudget?.reservationId) { /* retain uncertain supplier budget */ }
+        throw error;
+      }
+      const task = await waitForSeedanceTask(config, taskId);
+      const remoteUrl = findUrlDeep(task);
+      if (!remoteUrl) throw new Error('供应商未返回可下载的分段视频');
+      const fileName = `storyboard-action-${randomUUID()}.mp4`;
+      await downloadGeneratedVideo(remoteUrl, fileName, tenantId);
+      const localVideo = path.join(tenantAssetDir(MEDIA_DIR, tenantId), fileName);
+      temporaryFiles.push(localVideo);
+      const frameDir = fs.mkdtempSync(path.join(tenantAssetDir(MEDIA_DIR, tenantId), 'storyboard-action-frames-'));
+      temporaryFiles.push(frameDir);
+      const labels: string[] = [];
+      const frames: Array<ReferenceImage & { timeLabel: string }> = [];
+      const sampleTimes = [0.04, .25, .5, .75, 1].map(fraction => fraction < 1
+        ? Math.min(segment.targetDurationSeconds - .04, Math.max(.04, segment.targetDurationSeconds * fraction))
+        : Math.max(.04, segment.targetDurationSeconds - .04));
+      for (const [frameIndex, seconds] of sampleTimes.entries()) {
+        const file = path.join(frameDir, `frame-${frameIndex}.jpg`);
+        await execFileAsync(String(ffmpegStatic), ['-hide_banner', '-loglevel', 'error', '-nostdin', '-ss', String(seconds), '-i', localVideo,
+          '-frames:v', '1', '-q:v', '3', '-y', file], 30_000);
+        const label = `${seconds.toFixed(2)}s`;
+        labels.push(label);
+        frames.push({ base64: fs.readFileSync(file).toString('base64'), mimeType: 'image/jpeg', timeLabel: label });
+      }
+      const observations = await inspectStoryboardAigcFramesWithQwen({
+        phase: 'video', sceneType: 'usage', frames, productReferences: productImages,
+        previousTerminalFrame: previousTerminalFrame ? { ...previousTerminalFrame, timeLabel: '上一段合格末帧' } : undefined,
+        personReferences: personReference ? [{ ...personReference, timeLabel: '企业人物参考' }] : [],
+        environmentReferences: environmentReference ? [{ ...environmentReference, timeLabel: '企业工厂环境参考' }] : [],
+        storyboard: shotSpec.description, productInfo: firstFrame.productName || '',
+        startState: segment.startState, beats: segment.beats, endState: segment.endState,
+      });
+      const technical = await inspectStoryboardTechnicalFrames('video', frames.map(frame => ({
+        bytes: Buffer.from(frame.base64, 'base64'), timeLabel: frame.timeLabel,
+      })));
+      const quality = buildStoryboardQaReport({
+        phase: 'video', sceneType: 'usage', hasProduct: shotSpec.constraints.includes('product_identity'),
+        hasNamedPerson: shotSpec.constraints.includes('person_identity'), hasContact: true, hasAction: true,
+        hasSeam: !!previousTerminalFrame,
+        hasEnvironmentReference: !!environmentReference,
+        observations: [...(Array.isArray(observations) ? observations : []).filter(item => !technical.some(check => check.key === item?.key)), ...technical],
+        evidenceFrameLabels: previousTerminalFrame ? ['上一段合格末帧', ...labels] : labels,
+      });
+      accepted[accepted.length - 1] = { taskId, path: localVideo, quality, duration: segment.providerDurationSeconds };
+      if (!quality.automatedPassed || quality.checks.end_state?.verdict !== 'pass') {
+        const error = new Error('分段动作或产品一致性质检未通过') as Error & { quality?: StoryboardQaReport; segmentIndex?: number };
+        error.quality = quality; error.segmentIndex = segment.index;
+        throw error;
+      }
+      if (segment.index < actionPlan.segments.length - 1) {
+        const terminal = fs.readFileSync(path.join(frameDir, `frame-${frames.length - 1}.jpg`));
+        previousTerminalFrame = { base64: terminal.toString('base64'), mimeType: 'image/jpeg' };
+        currentFrame = await createGeneratedImageMaterial({ title: `分镜 ${shotId} 第 ${segment.index + 1} 段末帧`,
+          bytes: terminal, mimeType: 'image/jpeg', source: 'storyboard-action-continuation', tenantId });
+      }
+    }
+    const finalFile = `storyboard-action-${randomUUID()}.mp4`;
+    const finalPath = path.join(tenantAssetDir(MEDIA_DIR, tenantId), finalFile);
+    const assembled = await assembleStoryboardActionSegments({
+      segments: accepted.map((item, index) => ({ plan: actionPlan.segments[index]!, videoPath: item.path,
+        qualityPassed: true as const, terminalStateVerified: item.quality.checks.end_state?.verdict === 'pass' })),
+      outputPath: finalPath,
+    });
+    const material = await createGeneratedVideoMaterial({ title: String(body.title || '多步使用场景'), filename: finalFile,
+      duration: assembled.durationSeconds, tenantId, sourceType: 'ai-seedance' });
+    if (!material) throw new Error('分段合成视频素材保存失败');
+    material.provenance = {
+      ...material.provenance, storyboardAigc: true, projectId, shotId, shotSpec,
+      firstFrameMaterialId: firstFrame.id, firstFrameFingerprint, generatedAt: new Date().toISOString(),
+      providerModel: config.model, resolution, durationSeconds: assembled.durationSeconds,
+      segmentTasks: accepted.map((item, index) => ({ taskId: item.taskId, durationSeconds: item.duration,
+        targetDurationSeconds: actionPlan.segments[index]!.targetDurationSeconds, quality: item.quality })),
+      estimatedCostCny: plannedCost, requiresFinalHumanReview: true,
+    };
+    const currentMaterials = loadMaterials();
+    const materialIndex = currentMaterials.findIndex(item => item.id === material.id);
+    if (materialIndex >= 0) { currentMaterials[materialIndex] = material; persistMaterials(currentMaterials); }
+    await storyboardAigcProjectBudget.mark(tenantId, projectId, operationId, 'completed', { materialId: material.id,
+      segmentTaskIds: accepted.map(item => item.taskId), estimatedCostCny: plannedCost });
+    const visible = await materialResponse(material, tenantId);
+    res.json({ ok: true, source: 'seedance', id: material.id, url: visible.url, poster: visible.poster,
+      duration: assembled.durationSeconds, material: visible, quality: { status: 'needs_review', requiresHumanReview: true },
+      segments: accepted.map((item, index) => ({ index, taskId: item.taskId, quality: item.quality })) });
+  } catch (error) {
+    const acceptedCost = accepted.reduce((sum, item) => sum + estimateSeedanceCostCny(item.duration, resolution), 0);
+    if (uncertainSubmission) {
+      await storyboardAigcProjectBudget.mark(tenantId, projectId, operationId, 'uncertain', { acceptedTaskIds: accepted.map(item => item.taskId) }).catch(() => undefined);
+    } else {
+      await storyboardAigcProjectBudget.settlePartial(tenantId, projectId, operationId, acceptedCost,
+        { acceptedTaskIds: accepted.map(item => item.taskId) }).catch(() => undefined);
+    }
+    const failure = error as Error & { quality?: StoryboardQaReport; segmentIndex?: number };
+    res.status(failure.quality ? 422 : 502).json({ ok: false,
+      code: failure.quality ? 'STORYBOARD_SEGMENT_QA_FAILED' : 'STORYBOARD_ACTION_VIDEO_FAILED',
+      error: failure.message || '分段生成失败', segmentIndex: failure.segmentIndex, quality: failure.quality,
+      acceptedSegmentCount: accepted.length });
+  } finally {
+    for (const item of temporaryFiles.reverse()) fs.rmSync(item, { recursive: true, force: true });
+  }
+});
+
 /* ── Seedance 视频生成 ─────────────────────────────────────────────────── */
 // POST /studio/seedance-video  Body: { script, productInfo, language, ratio, duration, resolution, title? }
 studioRouter.post('/seedance-video', async (req, res) => {
@@ -1586,21 +2549,132 @@ studioRouter.post('/seedance-video', async (req, res) => {
     productInfo = '',
     language = 'en',
     ratio = '9:16',
-    duration: rawDuration = 8,
+    duration: rawDuration,
     resolution = '720p',
     title = 'Seedance 生成视频',
     referenceImageUrl = '',
+    firstFrameMaterialId = '',
+    firstFrameFingerprint = '',
+    shotId = '',
     generationGroupKey = '',
     generationContext = {},
     parentVersionId = '',
+    requestId = '',
   } = req.body ?? {};
-  const duration = normalizeSeedanceVideoDuration(rawDuration);
+  const duration = normalizeSeedanceVideoDuration(rawDuration ?? (firstFrameMaterialId ? 4 : 8));
+  const firstFrame = firstFrameMaterialId
+    ? loadMaterials().find(item => item.id === String(firstFrameMaterialId) && item.tenantId === tenantId && item.sourceType === 'ai-storyboard-first-frame')
+    : undefined;
+  const storyboardShotSpec = firstFrame?.provenance?.shotSpec as StoryboardShotSpec | undefined;
+  if (firstFrameMaterialId && (Number(rawDuration ?? 4) < 4 || Number(rawDuration ?? 4) > 15 || !Number.isInteger(Number(rawDuration ?? 4)))) {
+    res.status(400).json({ ok: false, code: 'UNSUPPORTED_STORYBOARD_DURATION', error: '分镜视频候选时长须为 4–15 秒整数；长镜头请先拆镜' }); return;
+  }
+  if (firstFrameMaterialId && (!firstFrame || !shotId || !firstFrameFingerprint || firstFrame.provenance?.confirmed !== true ||
+    firstFrame.provenance?.shotId !== String(shotId) ||
+    firstFrame.provenance?.fingerprint !== String(firstFrameFingerprint) ||
+    (generationContext && typeof generationContext === 'object' && !Array.isArray(generationContext) &&
+      'projectId' in generationContext && String((generationContext as Record<string, unknown>).projectId || '') !== String(firstFrame.provenance?.projectId || '')))) {
+    res.status(409).json({ ok: false, code: 'FIRST_FRAME_NOT_CONFIRMED', error: '当前分镜首帧未确认或输入已变化' }); return;
+  }
+  if (firstFrameMaterialId && !['480p', '720p'].includes(String(resolution))) {
+    res.status(400).json({ ok: false, code: 'UNSUPPORTED_RESOLUTION', error: '分镜视频仅支持 480p 或 720p' }); return;
+  }
+  if (storyboardShotSpec && (String(ratio) !== storyboardShotSpec.layout.ratio || duration < Math.ceil(storyboardShotSpec.targetDurationSeconds))) {
+    res.status(409).json({ ok: false, code: 'STORYBOARD_SHOT_SPEC_CHANGED', error: '视频画幅或时长与已确认首帧的分镜规格不一致，请重新确认' }); return;
+  }
+  if (storyboardShotSpec?.scene === 'usage' && (!storyboardShotSpec.action.startState || !storyboardShotSpec.action.endState || !storyboardShotSpec.action.beats.length)) {
+    res.status(422).json({ ok: false, code: 'USAGE_ACTION_STATES_REQUIRED', error: '使用场景需明确动作起点、步骤和可见终点，填写后重新生成并确认首帧' }); return;
+  }
+  if (firstFrame && storyboardShotSpec?.scene === 'usage') {
+    const actionPlan = planStoryboardActionSegments({ shot: storyboardShotSpec,
+      capability: { minDurationSeconds: 4, maxDurationSeconds: 15, integerDurationSeconds: true, supportsFirstFrame: true, supportsEndFrame: false },
+      firstFrameAssetId: firstFrame.id });
+    if (actionPlan.status === 'blocked' || !actionPlan.readyForSubmission || actionPlan.requiresSequentialGeneration) {
+      res.status(422).json({ ok: false, code: 'USAGE_ACTION_PLAN_NOT_READY', error: '当前使用动作需要补关键状态或拆成可逐段验收的短镜头', actionPlan }); return;
+    }
+  }
   const config = seedanceVideoConfig();
+  let storyboardProjectId = '';
+  let storyboardOperationId = '';
+  const storyboardEstimatedCostCny = estimateSeedanceCostCny(duration, String(resolution));
+  if (firstFrame && !/^[A-Za-z0-9_:.-]{8,180}$/.test(String(requestId))) {
+    res.status(400).json({ ok: false, code: 'STORYBOARD_VIDEO_REQUEST_ID_REQUIRED', error: '分镜视频需要稳定请求 ID，未调用供应商' }); return;
+  }
+  if (firstFrame && firstFrame.provenance?.projectId) {
+    storyboardProjectId = String(firstFrame.provenance.projectId);
+    storyboardOperationId = `storyboard-video:${createHash('sha256').update(`${tenantId}:${storyboardProjectId}:${shotId}:${requestId}`).digest('hex')}`;
+    const project = await store.getById<any>('studio_projects', String(firstFrame.provenance.projectId));
+    if (!project || project.tenant_id !== tenantId) {
+      res.status(404).json({ ok: false, code: 'STORYBOARD_PROJECT_UNAVAILABLE', error: '分镜项目已不存在或不可访问' }); return;
+    }
+    const currentShotInput = storyboardProjectShotInput(project.spec ?? {}, String(shotId));
+    if (!currentShotInput || currentShotInput.fingerprint !== firstFrame.provenance?.projectShotFingerprint) {
+      res.status(409).json({ ok: false, code: 'STORYBOARD_PROJECT_INPUT_CHANGED', error: '当前分镜输入已变化，请重新生成并确认首帧' }); return;
+    }
+    const kbIssues = await storyboardKbFrameVersionIssues(tenantId, storyboardShotSpec);
+    if (kbIssues.length) { res.status(409).json({ ok: false, code: 'STORYBOARD_PRODUCT_IMAGE_CHANGED', error: kbIssues.join('；') }); return; }
+    const personIssues = await storyboardPersonFrameVersionIssues(tenantId, storyboardShotSpec);
+    if (personIssues.length) { res.status(409).json({ ok: false, code: 'STORYBOARD_PERSON_IMAGE_CHANGED', error: personIssues.join('；') }); return; }
+    const environmentIssues = await storyboardEnvironmentFrameVersionIssues(tenantId, project.spec ?? {}, storyboardShotSpec);
+    if (environmentIssues.length) { res.status(409).json({ ok: false, code: 'STORYBOARD_ENVIRONMENT_IMAGE_CHANGED', error: environmentIssues.join('；') }); return; }
+    const currentSourcePlan = project.spec?.storyboardSourcePlans?.[String(shotId)];
+    const plannedProductIds = Array.isArray(currentSourcePlan?.productIds) ? currentSourcePlan.productIds.map(String) : [];
+    const frameProductIds = Array.isArray(firstFrame.provenance?.productIds) ? firstFrame.provenance.productIds.map(String) : [];
+    if (plannedProductIds.length && JSON.stringify(plannedProductIds) !== JSON.stringify(frameProductIds)) {
+      res.status(409).json({ ok: false, code: 'STORYBOARD_PRODUCT_CHANGED', error: '当前镜头选择的企业产品已变化，请重新生成首帧' }); return;
+    }
+    if (storyboardShotSpec?.scene === 'usage' && currentSourcePlan &&
+      (String(currentSourcePlan.actionStartState || '') !== storyboardShotSpec.action.startState
+        || String(currentSourcePlan.actionEndState || '') !== storyboardShotSpec.action.endState)) {
+      res.status(409).json({ ok: false, code: 'STORYBOARD_ACTION_CHANGED', error: '使用动作关键状态已变化，请重新生成首帧' }); return;
+    }
+    const preview = studioAigcBudgetPreviewForSpec(project.spec ?? {}, studioAigcBudgetConfigFromEnv());
+    const persistedShotId = String((Array.isArray(project.spec?.shootingSlots) ? project.spec.shootingSlots : [])
+      .find((slot: any) => String(slot.slotId || slot.id || '') === String(shotId) || String(slot.id || '') === String(shotId))?.id || shotId);
+    const plan = preview.shotPlans.find(item => item.shotId === persistedShotId);
+    if (!plan || plan.status !== 'ready') {
+      res.status(409).json({ ok: false, code: 'STORYBOARD_BUDGET_PLAN_UNAVAILABLE', error: '当前镜头未进入智能生成预算计划，请刷新分镜计划', plan }); return;
+    }
+    if (plan.targetDurationSeconds !== duration || plan.resolutionTier !== String(resolution) || plan.modelId !== config.model) {
+      res.status(409).json({ ok: false, code: 'STORYBOARD_BUDGET_PLAN_CHANGED', error: '视频时长、清晰度或模型与当前预算计划不一致，请刷新后重试', plan }); return;
+    }
+  }
   if (!config.apiKey) {
     res.json({ ok: false, source: 'seedance', error: 'SEEDANCE_API_KEY not set' });
     return;
   }
   if (!await consumeDemoQuota(req, res, 'videoGeneration')) return;
+
+  if (firstFrame) {
+    if (!storyboardProjectId || !storyboardOperationId) {
+      res.status(422).json({ ok: false, code: 'STORYBOARD_PROJECT_REQUIRED', error: '分镜视频需要当前项目，未调用供应商' }); return;
+    }
+    try {
+      const reserved = await storyboardAigcProjectBudget.reserve({ tenantId, projectId: storyboardProjectId,
+        shotId: String(shotId), stage: 'video', operationId: storyboardOperationId,
+        estimatedCostCny: storyboardEstimatedCostCny });
+      if (reserved.existing) {
+        const materialId = reserved.entry.status === 'completed' ? String(reserved.entry.output?.materialId || '') : '';
+        const recovered = materialId ? loadMaterials().find(item => item.id === materialId && item.tenantId === tenantId
+          && item.provenance?.storyboardAigc === true && item.provenance?.firstFrameMaterialId === firstFrame.id
+          && item.provenance?.firstFrameFingerprint === firstFrameFingerprint && item.provenance?.shotId === shotId
+          && item.provenance?.resolution === String(resolution) && item.provenance?.durationSeconds === duration) : null;
+        if (recovered) {
+          const visible = await materialResponse(recovered, tenantId);
+          res.json({ ok: true, reused: true, source: 'seedance', id: visible.id, url: visible.url,
+            poster: visible.poster, duration: visible.duration, material: visible }); return;
+        }
+        res.status(reserved.entry.status === 'reserved' ? 202 : 409).json({ ok: false,
+          code: reserved.entry.status === 'reserved' ? 'STORYBOARD_VIDEO_IN_PROGRESS' : 'STORYBOARD_VIDEO_RECONCILIATION_REQUIRED',
+          error: reserved.entry.status === 'reserved' ? '原视频请求仍在处理，请稍后查询；未重复调用供应商'
+            : '原视频请求已提交但产物暂不可核验，请核对任务记录；未重复调用供应商',
+          operationId: storyboardOperationId }); return;
+      }
+    } catch (error) {
+      res.status(429).json({ ok: false, code: 'STORYBOARD_PROJECT_BUDGET_EXCEEDED',
+        error: error instanceof Error ? error.message : '项目 AIGC 预算不足，未调用供应商' }); return;
+    }
+  }
 
   const subscription = await getTenantSubscription(tenantId);
   const plan = String(subscription?.plan || '').toLowerCase();
@@ -1609,6 +2683,7 @@ studioRouter.post('/seedance-video', async (req, res) => {
   if (isFormalTenant) {
     budget = reserveSeedanceBudget({ tenantId, duration, resolution: String(resolution) });
     if (!budget.ok) {
+      if (storyboardOperationId) await storyboardAigcProjectBudget.releaseRejected(tenantId, storyboardProjectId, storyboardOperationId);
       res.status(429).json({
         ok: false,
         code: 'seedance_monthly_budget_exceeded',
@@ -1623,19 +2698,22 @@ studioRouter.post('/seedance-video', async (req, res) => {
   const prompt = [
     `Create a ${duration}-second vertical commercial social video in ${langName(language)}.`,
     `Aspect ratio: ${ratio}. Resolution: ${resolution}.`,
-    `Use this script/storyboard as the primary direction:\n${String(script).slice(0, 4000)}`,
+    `Use this script/storyboard as the primary direction:\n${firstFrame && storyboardShotSpec ? buildStoryboardVideoActionPrompt(storyboardShotSpec) : String(script).slice(0, 4000)}`,
     productInfo ? `Product and brand context:\n${String(productInfo).slice(0, 1800)}` : '',
     'Style: realistic UGC product video, clear product focus, clean lighting, smooth camera movement, high conversion pacing.',
-    'Generate synchronized natural audio. Dialogue or voiceover lines should follow the quoted script language.',
-    '固定提示词：全程不要出现任何文字、符号、标识。',
-    'No text, symbols, logos, captions, subtitles, labels, UI, watermarks, brand marks, written characters, numbers, or signage may appear at any point in the video.',
-    'Keep visual actions aligned with the spoken lines.',
+    firstFrame ? 'This is non-presenter B-roll. No dialogue, narration, lip sync or generated voiceover.' : 'Generate synchronized natural audio. Dialogue or voiceover lines should follow the quoted script language.',
+    firstFrame ? 'Preserve the confirmed first frame exactly as the opening composition. Keep the target product identity, shape, color and visible packaging stable across the shot. Complete one clear action without changing the scene or adding objects.' : '固定提示词：全程不要出现任何文字、符号、标识。',
+    firstFrame ? 'Do not add captions, subtitles, UI, watermarks or invented labels. Existing target product packaging may remain visible.' : 'No text, symbols, logos, captions, subtitles, labels, UI, watermarks, brand marks, written characters, numbers, or signage may appear at any point in the video.',
+    firstFrame ? 'Keep the visible action aligned with the storyboard description.' : 'Keep visual actions aligned with the spoken lines.',
   ].filter(Boolean).join('\n\n');
 
   let taskAccepted = false;
+  const generationStartedAt = Date.now();
   try {
     const content: any[] = [{ type: 'text', text: prompt }];
-    const rawReferenceImageUrl = String(referenceImageUrl).trim();
+    const rawReferenceImageUrl = firstFrame
+      ? (await materialResponse(firstFrame, tenantId)).url
+      : String(referenceImageUrl).trim();
     const resolvedReferenceImageUrl = rawReferenceImageUrl.startsWith('/')
       ? `${getPublicOrigin(req)}${signAssetUrl(rawReferenceImageUrl, tenantId)}`
       : rawReferenceImageUrl;
@@ -1643,6 +2721,7 @@ studioRouter.post('/seedance-video', async (req, res) => {
       content.push({
         type: 'image_url',
         image_url: { url: resolvedReferenceImageUrl },
+        ...(firstFrame ? { role: 'first_frame' } : {}),
       });
     }
     const created = await seedanceFetchJson(`${config.baseUrl}/contents/generations/tasks`, config.apiKey, {
@@ -1653,7 +2732,7 @@ studioRouter.post('/seedance-video', async (req, res) => {
         ratio,
         duration,
         resolution,
-        generate_audio: true,
+        generate_audio: !firstFrame,
         watermark: false,
       }),
     });
@@ -1669,9 +2748,31 @@ studioRouter.post('/seedance-video', async (req, res) => {
     try {
       url = await downloadGeneratedVideo(remoteUrl, filename, tenantId);
       material = await createGeneratedVideoMaterial({ title, filename, duration, tenantId, sourceType: 'ai-seedance' });
+      if (firstFrame && material) {
+        material.provenance = {
+          ...material.provenance,
+          storyboardAigc: true,
+          firstFrameMaterialId: firstFrame.id,
+          firstFrameFingerprint: String(firstFrameFingerprint),
+          shotId: String(shotId),
+          projectId: String(firstFrame.provenance?.projectId || ''),
+          shotSpec: storyboardShotSpec,
+          providerTaskId: taskId,
+          providerModel: config.model,
+          resolution: String(resolution),
+          durationSeconds: duration,
+          generatedAt: new Date().toISOString(),
+          estimatedCostCny: estimateSeedanceCostCny(duration, String(resolution)),
+          generationLatencyMs: Date.now() - generationStartedAt,
+        };
+        const materialList = loadMaterials();
+        const materialIndex = materialList.findIndex(item => item.id === material?.id);
+        if (materialIndex >= 0) { materialList[materialIndex] = material; persistMaterials(materialList); }
+      }
     } catch (downloadError) {
       console.warn('[studio] Seedance video download failed, returning remote url:', downloadError);
     }
+    if (firstFrame && !material) throw new Error('分镜视频已由供应商生成，但本地素材保存失败，请核对任务记录；未重复提交供应商');
     const version = String(generationGroupKey).trim()
       ? appendVideoVersion({
           tenantId,
@@ -1688,11 +2789,16 @@ studioRouter.post('/seedance-video', async (req, res) => {
           promptSnapshot: {
             script: String(script), productInfo: String(productInfo), language: String(language),
             ratio: String(ratio), resolution: String(resolution),
+            firstFrameMaterialId: String(firstFrameMaterialId || ''),
           },
           context: generationContext && typeof generationContext === 'object' && !Array.isArray(generationContext)
             ? generationContext as Record<string, unknown> : {},
         })
       : undefined;
+    if (storyboardOperationId && material) {
+      await storyboardAigcProjectBudget.mark(tenantId, storyboardProjectId, storyboardOperationId, 'completed',
+        { materialId: material.id, providerTaskId: taskId, estimatedCostCny: storyboardEstimatedCostCny });
+    }
     res.json({
       ok: true,
       source: 'seedance',
@@ -1709,7 +2815,12 @@ studioRouter.post('/seedance-video', async (req, res) => {
       createdAt: new Date().toISOString(),
     });
   } catch (e: any) {
-    if (!taskAccepted && budget?.reservationId) {
+    const definitelyRejected = !taskAccepted && e?.providerRejected === true;
+    if (storyboardOperationId) {
+      if (definitelyRejected) await storyboardAigcProjectBudget.releaseRejected(tenantId, storyboardProjectId, storyboardOperationId).catch(() => undefined);
+      else await storyboardAigcProjectBudget.mark(tenantId, storyboardProjectId, storyboardOperationId, 'uncertain').catch(() => undefined);
+    }
+    if (!taskAccepted && budget?.reservationId && (!storyboardOperationId || definitelyRejected)) {
       releaseSeedanceBudget(tenantId, budget.reservationId);
     }
     const reason = summarizeSeedanceError(e);
@@ -1741,17 +2852,107 @@ studioRouter.post('/storyboard-quality-check', async (req, res) => {
   }
   const tempDir = fs.mkdtempSync(path.join(GENERATED_MEDIA_DIR, 'quality-'));
   try {
+    const isStoryboardAigc = material.tenantId === tenantId && material.provenance?.storyboardAigc === true;
+    const sampleCount = isStoryboardAigc ? 8 : 5;
+    const sampleInterval = isStoryboardAigc ? Math.max(4, material.duration || 4) / sampleCount : 2;
     const framePattern = path.join(tempDir, 'frame-%02d.jpg');
     await execFileAsync(String(ffmpegStatic), [
       '-hide_banner', '-loglevel', 'error', '-i', filePath,
-      '-vf', 'fps=1/2,scale=640:-2', '-frames:v', '5', '-q:v', '4', framePattern,
+      '-vf', `fps=${1 / sampleInterval},scale=640:-2`, '-frames:v', String(sampleCount), '-q:v', '4', framePattern,
     ], 90_000);
-    const frames = fs.readdirSync(tempDir)
+    const frameNames = fs.readdirSync(tempDir)
       .filter(name => /^frame-\d+\.jpg$/i.test(name))
       .sort()
-      .slice(0, 5)
-      .map((name, index) => ({ base64: fs.readFileSync(path.join(tempDir, name)).toString('base64'), mimeType: 'image/jpeg', timeLabel: `${index * 2}s` }));
+      .slice(0, sampleCount);
+    const frames = frameNames.map((name, index) => ({ base64: fs.readFileSync(path.join(tempDir, name)).toString('base64'), mimeType: 'image/jpeg', timeLabel: `${Number((index * sampleInterval).toFixed(2))}s` }));
     if (!frames.length) throw new Error('没有提取到可分析画面');
+    if (isStoryboardAigc) {
+      const shotSpec = material.provenance?.shotSpec as StoryboardShotSpec | undefined;
+      const firstFrame = loadMaterials().find(item => item.id === material.provenance?.firstFrameMaterialId && item.tenantId === tenantId && item.sourceType === 'ai-storyboard-first-frame');
+      if (!shotSpec || !firstFrame || material.provenance?.firstFrameFingerprint !== firstFrame.provenance?.fingerprint) {
+        res.status(409).json({ ok: false, code: 'STORYBOARD_SOURCE_CHANGED', error: '首帧版本或分镜规格无法核验，请重新生成候选' }); return;
+      }
+      const currentProject = await store.getById<any>('studio_projects', String(material.provenance?.projectId || ''));
+      const currentInput = currentProject?.tenant_id === tenantId
+        ? storyboardProjectShotInput(currentProject.spec ?? {}, String(material.provenance?.shotId || '')) : null;
+      if (!currentInput || currentInput.fingerprint !== firstFrame.provenance?.projectShotFingerprint) {
+        res.status(409).json({ ok: false, code: 'STORYBOARD_PROJECT_INPUT_CHANGED', error: '当前分镜输入已变化，请重新生成候选' }); return;
+      }
+      const productImages: Array<ReferenceImage & { timeLabel: string }> = [];
+      const qaProductIds = Array.isArray(firstFrame.provenance?.productIds)
+        ? firstFrame.provenance.productIds.map(String) : firstFrame.productId ? [firstFrame.productId] : [];
+      if (qaProductIds.length) {
+        const profile = await readTenantEnterpriseProfile(tenantId);
+        for (const [index, productId] of qaProductIds.entries()) {
+          const profileProducts = profile.products.items || [];
+          let item = profileProducts.find((product, productIndex) => productIdentity(product, productIndex) === productId);
+          if (!item) {
+            const legacy = productId.match(/^product-(\d+)-(.+)$/);
+            const candidate = legacy ? profileProducts[Number(legacy[1])] : undefined;
+            if (candidate && candidate.name === legacy?.[2] && profileProducts.filter(product => product.name === candidate.name).length === 1) item = candidate;
+          }
+          const imageUrl = String(item?.images?.[0]?.url || item?.imageUrl || '');
+          const image = imageUrl ? await storyboardEnterpriseImage(imageUrl, tenantId) : null;
+          if (image) productImages.push({ ...image, timeLabel: `企业产品参考${index + 1}：${String(item?.name || '')}` });
+        }
+      }
+      if (shotSpec.constraints.includes('product_identity') && productImages.length !== qaProductIds.length) {
+        res.status(422).json({ ok: false, code: 'PRODUCT_REFERENCE_UNAVAILABLE', error: '知识库产品参考图已失效，请补充资产后重新质检' }); return;
+      }
+      const qaViewAssets = shotSpec.assets.filter(asset => asset.role === 'product_view');
+      const qaViewReferences = await storyboardKbProductViewReferences(tenantId, shotSpec);
+      if (qaViewReferences.length !== qaViewAssets.length) {
+        res.status(422).json({ ok: false, code: 'PRODUCT_VIEW_CHANGED', error: '产品多角度参考图已变化，请重新生成候选' }); return;
+      }
+      productImages.push(...qaViewReferences);
+      const personAsset = shotSpec.assets.find(asset => asset.role === 'person');
+      const personIssues = await storyboardPersonFrameVersionIssues(tenantId, shotSpec);
+      if (personIssues.length) {
+        res.status(409).json({ ok: false, code: 'STORYBOARD_PERSON_IMAGE_CHANGED', error: personIssues.join('；') }); return;
+      }
+      const personReference = personAsset ? await storyboardPersonAssetImage(personAsset.id, tenantId) : null;
+      if (personAsset && !personReference) {
+        res.status(422).json({ ok: false, code: 'PERSON_REFERENCE_UNAVAILABLE', error: '指定人物参考图已失效，请补充资产后重新质检' }); return;
+      }
+      const environmentIssues = await storyboardEnvironmentFrameVersionIssues(tenantId, currentProject.spec ?? {}, shotSpec);
+      if (environmentIssues.length) {
+        res.status(409).json({ ok: false, code: 'STORYBOARD_ENVIRONMENT_IMAGE_CHANGED', error: environmentIssues.join('；') }); return;
+      }
+      const environmentAsset = shotSpec.assets.find(asset => asset.role === 'environment');
+      const environmentReference = environmentAsset ? await storyboardMaterialImage(environmentAsset.id, tenantId) : null;
+      if (environmentAsset && !environmentReference) {
+        res.status(422).json({ ok: false, code: 'ENVIRONMENT_REFERENCE_UNAVAILABLE', error: '工厂环境参考图已失效，请补充资产后重新质检' }); return;
+      }
+      const evidenceFrameLabels = frames.map(item => item.timeLabel);
+      let observations: unknown = [];
+      try {
+        observations = await inspectStoryboardAigcFramesWithQwen({
+          phase: 'video', sceneType: shotSpec.scene, frames,
+          productReferences: productImages,
+          personReferences: personReference ? [{ ...personReference, timeLabel: '企业人物参考' }] : [],
+          environmentReferences: environmentReference ? [{ ...environmentReference, timeLabel: '企业工厂环境参考' }] : [],
+          storyboard: shotSpec.description, productInfo: firstFrame.productName || '',
+          startState: shotSpec.action.startState, beats: shotSpec.action.beats, endState: shotSpec.action.endState,
+        });
+      } catch (qualityError) {
+        console.warn('[studio] storyboard video automated QA unavailable:', qualityError);
+      }
+      const technical = await inspectStoryboardTechnicalFrames('video', frameNames.map((name, index) => ({ bytes: fs.readFileSync(path.join(tempDir, name)), timeLabel: evidenceFrameLabels[index] })));
+      const quality = buildStoryboardQaReport({
+        phase: 'video', sceneType: shotSpec.scene,
+        hasProduct: shotSpec.constraints.includes('product_identity'),
+        hasNamedPerson: shotSpec.constraints.includes('person_identity'),
+        hasEnvironmentReference: !!environmentReference,
+        hasContact: shotSpec.constraints.includes('physical_contact'),
+        hasAction: !!(shotSpec.action.beats.length || shotSpec.action.endState),
+        observations: [...(Array.isArray(observations) ? observations : []).filter(item => !technical.some(check => check.key === item?.key)), ...technical],
+        evidenceFrameLabels,
+      });
+      const materials = loadMaterials();
+      const own = materials.find(item => item.id === material.id && item.tenantId === tenantId);
+      if (own) { own.provenance = { ...own.provenance, storyboardQualityReport: quality }; persistMaterials(materials); }
+      res.json({ ok: true, quality }); return;
+    }
     const parsed = await qualityCheckStoryboardFramesWithQwen({
       frames,
       storyboard: String(storyboard),
@@ -1780,6 +2981,44 @@ studioRouter.post('/storyboard-quality-check', async (req, res) => {
     } catch { /* best effort */ }
     if (cosTempPath) fs.rmSync(cosTempPath, { force: true });
   }
+});
+
+studioRouter.post('/storyboard-quality-check/:materialId/review', async (req, res) => {
+  const { tenantId, userId } = res.locals as AuthLocals;
+  const { shotId, reportId, decision } = req.body ?? {};
+  if (decision !== 'accept' && decision !== 'reject') { res.status(400).json({ ok: false, error: '复核决定无效' }); return; }
+  const materials = loadMaterials();
+  const material = materials.find(item => item.id === req.params.materialId && item.tenantId === tenantId && item.provenance?.storyboardAigc === true);
+  const report = material?.provenance?.storyboardQualityReport as StoryboardQaReport | undefined;
+  if (!material || !report || report.reportId !== String(reportId) || material.provenance?.shotId !== String(shotId)) {
+    res.status(409).json({ ok: false, error: '视频候选或质检报告已变化，请重新检查' }); return;
+  }
+  const firstFrame = materials.find(item => item.id === material.provenance?.firstFrameMaterialId && item.tenantId === tenantId);
+  const currentProject = await store.getById<any>('studio_projects', String(material.provenance?.projectId || ''));
+  const currentInput = currentProject?.tenant_id === tenantId ? storyboardProjectShotInput(currentProject.spec ?? {}, String(shotId)) : null;
+  if (!firstFrame || !currentInput || currentInput.fingerprint !== firstFrame.provenance?.projectShotFingerprint) {
+    res.status(409).json({ ok: false, code: 'STORYBOARD_PROJECT_INPUT_CHANGED', error: '当前分镜输入已变化，请重新生成候选' }); return;
+  }
+  if (report.reviewDecision === decision) { res.json({ ok: true, quality: report }); return; }
+  try {
+    const quality = reviewStoryboardQaReport(report, { decision, reviewedBy: userId });
+    material.provenance = { ...material.provenance, storyboardQualityReport: quality };
+    persistMaterials(materials);
+    res.json({ ok: true, quality });
+  } catch (error) {
+    res.status(409).json({ ok: false, error: error instanceof Error ? error.message : '质检复核失败', quality: report });
+  }
+});
+
+studioRouter.get('/storyboard-aigc-metrics', async (req, res) => {
+  const { tenantId } = res.locals as AuthLocals;
+  const projectId = String(req.query.projectId || '').trim();
+  if (!projectId) { res.status(400).json({ ok: false, error: '缺少分镜项目 ID' }); return; }
+  const project = await store.getById<any>('studio_projects', projectId);
+  if (!project || project.tenant_id !== tenantId) { res.status(404).json({ ok: false, error: '分镜项目不存在' }); return; }
+  const materials = loadMaterials().filter(item => item.tenantId === tenantId && item.provenance?.projectId === projectId);
+  const adopted = Object.values(project.spec?.storyboardAssignments || {}).map(String);
+  res.json({ ok: true, projectId, metrics: storyboardAigcMetrics(materials, adopted) });
 });
 
 /* ── Gemini / Veo 视频生成 ──────────────────────────────────────────────── */
@@ -3888,6 +5127,7 @@ interface VideoGenerationVersion {
     language: string;
     ratio: string;
     resolution: string;
+    firstFrameMaterialId?: string;
   };
   context?: Record<string, unknown>;
   isSelected: boolean;
@@ -7096,6 +8336,139 @@ studioRouter.get('/projects', async (_req, res) => {
     .map(project => projectFromRecord(project, tenantId)));
 });
 
+async function storyboardKbAssignmentIssuesForSpec(tenantId: string, spec: Record<string, unknown>, materials: Material[]) {
+  let profilePromise: ReturnType<typeof readTenantEnterpriseProfile> | null = null;
+  const productIssues = await storyboardAigcCurrentKbIssues({ spec, materials, readCurrentProductImage: async productId => {
+    profilePromise ||= readTenantEnterpriseProfile(tenantId);
+    const profile = await profilePromise;
+    const products = profile.products.items || [];
+    let product = products.find((item, index) => productIdentity(item, index) === productId);
+    if (!product) {
+      const legacy = productId.match(/^product-(\d+)-(.+)$/);
+      const candidate = legacy ? products[Number(legacy[1])] : undefined;
+      if (candidate && candidate.name === legacy?.[2] && products.filter(item => item.name === candidate.name).length === 1) product = candidate;
+    }
+    const imageUrl = String(product?.images?.[0]?.url || product?.imageUrl || '');
+    const image = imageUrl ? await storyboardEnterpriseImage(imageUrl, tenantId) : null;
+    return image?.base64 || null;
+  } });
+  const byId = new Map(materials.map(item => [item.id, item]));
+  const assignments = [spec.storyboardAssignments,
+    ...(Array.isArray(spec.storyboardAssemblies) ? spec.storyboardAssemblies.map((item: any) => item?.assignments) : [])];
+  const personAssets = new Map<string, StoryboardShotSpec['assets'][number]>();
+  const environmentAssets = new Map<string, StoryboardShotSpec['assets'][number]>();
+  const viewSpecs: StoryboardShotSpec[] = [];
+  for (const set of assignments) {
+    if (!set || typeof set !== 'object' || Array.isArray(set)) continue;
+    for (const rawId of Object.values(set)) {
+      const video = byId.get(String(rawId || ''));
+      if (video?.provenance?.storyboardAigc !== true) continue;
+      const frame = byId.get(String(video.provenance.firstFrameMaterialId || ''));
+      const shotSpec = frame?.provenance?.shotSpec as StoryboardShotSpec | undefined;
+      if (shotSpec?.assets.some(asset => asset.role === 'product_view')) viewSpecs.push(shotSpec);
+      for (const asset of shotSpec?.assets || []) {
+        if (asset.role === 'person' && asset.source === 'enterprise_asset') personAssets.set(`${asset.id}:${asset.version}`, asset);
+        if (asset.role === 'environment' && asset.source === 'enterprise_asset') environmentAssets.set(`${asset.id}:${asset.version}`, asset);
+      }
+    }
+  }
+  const personIssues = (await Promise.all([...personAssets.values()].map(asset => storyboardPersonFrameVersionIssues(tenantId,
+    { assets: [asset] })))).flat();
+  const environmentIssues = (await Promise.all([...environmentAssets.values()].map(asset => storyboardEnvironmentFrameVersionIssues(tenantId,
+    spec, { assets: [asset] })))).flat();
+  const viewIssues = (await Promise.all(viewSpecs.map(shotSpec => storyboardKbFrameVersionIssues(tenantId,
+    { ...shotSpec, assets: shotSpec.assets.filter(asset => asset.role === 'product_view') })))).flat();
+  return [...new Set([...productIssues, ...viewIssues, ...personIssues, ...environmentIssues])].sort();
+}
+
+/** A confirmed first frame is tied to the exact knowledge-base image bytes.
+ * Recheck them before a paid video task, since a product can change without a
+ * storyboard project edit. */
+async function storyboardKbFrameVersionIssues(tenantId: string, shotSpec: StoryboardShotSpec | undefined): Promise<string[]> {
+  const assets = (shotSpec?.assets || []).filter(asset => (asset.role === 'product' || asset.role === 'product_view') && asset.source === 'knowledge_base');
+  if (!assets.length) return [];
+  let profile: Awaited<ReturnType<typeof readTenantEnterpriseProfile>>;
+  try { profile = await readTenantEnterpriseProfile(tenantId); }
+  catch { return ['企业知识库产品资料暂不可读取']; }
+  const products = profile.products.items || [];
+  const issues: string[] = [];
+  for (const asset of assets) {
+    const productId = asset.role === 'product_view' ? String(asset.derivedFromAssetId || '') : asset.id;
+    let product = products.find((item, index) => productIdentity(item, index) === productId);
+    if (!product) {
+      const legacy = productId.match(/^product-(\d+)-(.+)$/);
+      const candidate = legacy ? products[Number(legacy[1])] : undefined;
+      if (candidate && candidate.name === legacy?.[2] && products.filter(item => item.name === candidate.name).length === 1) product = candidate;
+    }
+    const viewIndex = asset.role === 'product_view' ? Number(asset.view) : 0;
+    const imageUrl = Number.isInteger(viewIndex) && viewIndex >= 0 && viewIndex <= 2
+      ? String(product?.images?.[viewIndex]?.url || (viewIndex === 0 ? product?.imageUrl : '') || '') : '';
+    let image: Awaited<ReturnType<typeof storyboardEnterpriseImage>> = null;
+    try { image = imageUrl ? await storyboardEnterpriseImage(imageUrl, tenantId) : null; }
+    catch { /* unreadable current image is a stale input, never a pass */ }
+    if (!image || createHash('sha256').update(image.base64).digest('hex') !== asset.version)
+      issues.push(`企业知识库产品 ${productId} 的第 ${viewIndex + 1} 张参考图已变化或无法读取`);
+  }
+  return issues;
+}
+
+async function storyboardKbProductViewReferences(tenantId: string, shotSpec: StoryboardShotSpec | undefined): Promise<Array<ReferenceImage & { timeLabel: string }>> {
+  const assets = (shotSpec?.assets || []).filter(asset => asset.role === 'product_view' && asset.source === 'knowledge_base');
+  if (!assets.length) return [];
+  const profile = await readTenantEnterpriseProfile(tenantId);
+  const products = profile.products.items || [];
+  const references: Array<ReferenceImage & { timeLabel: string }> = [];
+  for (const asset of assets) {
+    const productId = String(asset.derivedFromAssetId || '');
+    let product = products.find((item, index) => productIdentity(item, index) === productId);
+    if (!product) {
+      const legacy = productId.match(/^product-(\d+)-(.+)$/);
+      const candidate = legacy ? products[Number(legacy[1])] : undefined;
+      if (candidate && candidate.name === legacy?.[2] && products.filter(item => item.name === candidate.name).length === 1) product = candidate;
+    }
+    const index = Number(asset.view);
+    const url = Number.isInteger(index) && index > 0 && index <= 2 ? String(product?.images?.[index]?.url || '') : '';
+    const image = url ? await storyboardEnterpriseImage(url, tenantId) : null;
+    if (image && createHash('sha256').update(image.base64).digest('hex') === asset.version)
+      references.push({ ...image, timeLabel: `企业产品 ${productId} 视角${index + 1}` });
+  }
+  return references;
+}
+
+async function storyboardPersonFrameVersionIssues(tenantId: string, shotSpec: Pick<StoryboardShotSpec, 'assets'> | undefined): Promise<string[]> {
+  const people = (shotSpec?.assets || []).filter(asset => asset.role === 'person' && asset.source === 'enterprise_asset');
+  const issues: string[] = [];
+  for (const asset of people) {
+    if (!/^https?:\/\//i.test(asset.id) && !asset.id.startsWith('/')) {
+      const authIssue = await storyboardCharacterMaterialAuthorizationIssue(tenantId, asset.id);
+      if (authIssue) { issues.push(`指定企业人物 ${asset.id} 的使用授权已变化：${authIssue}`); continue; }
+    }
+    let current: Awaited<ReturnType<typeof storyboardUrlImage>> = null;
+    try { current = await storyboardPersonAssetImage(asset.id, tenantId); }
+    catch { /* missing or inaccessible identity asset must invalidate the frame */ }
+    if (!current || createHash('sha256').update(current.base64).digest('hex') !== asset.version)
+      issues.push(`指定企业人物 ${asset.id} 的参考图已变化或无法读取`);
+  }
+  return issues;
+}
+
+async function storyboardEnvironmentFrameVersionIssues(tenantId: string, projectSpec: Record<string, any>, shotSpec: Pick<StoryboardShotSpec, 'assets'> | undefined): Promise<string[]> {
+  const selected = new Set(Array.isArray(projectSpec.selected) ? projectSpec.selected.map(String) : []);
+  const environments = (shotSpec?.assets || []).filter(asset => asset.role === 'environment' && asset.source === 'enterprise_asset');
+  const issues: string[] = [];
+  for (const asset of environments) {
+    const material = loadMaterials().find(item => item.id === asset.id && item.tenantId === tenantId
+      && item.scope === 'own' && item.type === 'image'
+      && (!item.objectKey || isTenantPrivateObjectKey(item.objectKey, tenantId)));
+    let current: ReferenceImage | null = null;
+    try { current = material && selected.has(asset.id) ? await storyboardMaterialImage(asset.id, tenantId) : null; }
+    catch { /* inaccessible material invalidates the confirmed frame */ }
+    if (!current || createHash('sha256').update(current.base64).digest('hex') !== asset.version)
+      issues.push(`环境参考图 ${asset.id} 已变化、未选中或无法读取`);
+  }
+  return issues;
+}
+
 // POST /studio/projects  Body: { id?, title?, status?, spec, thumbSeed? } → 新建或更新
 studioRouter.post('/projects', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
@@ -7121,6 +8494,14 @@ studioRouter.post('/projects', async (req, res) => {
     const existing = await store.getById<any>('studio_projects', String(id));
     if (existing?.tenant_id === tenantId) {
       if (!socialProjectBelongs(existing, socialTaskId)) { res.status(404).json({ ok: false, error: 'Project not found' }); return; }
+      const assignmentIssues = storyboardAigcAssignmentIssues({ tenantId, projectId: String(id), spec, materials: loadMaterials() });
+      if (assignmentIssues.length) {
+        res.status(409).json({ ok: false, code: 'STORYBOARD_AIGC_ASSIGNMENT_UNVERIFIED', error: 'AI 分镜候选尚未通过当前项目验收', reasons: assignmentIssues }); return;
+      }
+      const kbIssues = await storyboardKbAssignmentIssuesForSpec(tenantId, spec, loadMaterials());
+      if (kbIssues.length) {
+        res.status(409).json({ ok: false, code: 'STORYBOARD_AIGC_KB_IMAGE_CHANGED', error: '企业产品或指定人物参考图已变化，AI 分镜候选需重做', reasons: kbIssues }); return;
+      }
       const storedSpec = typeof existing.spec === 'string' ? JSON.parse(existing.spec) : existing.spec;
       if (storedSpec?.workflowRunId && storedSpec?.automation?.managedBy === 'digital_employee') {
         res.status(409).json({ ok: false, error: '此项目由任务自动生产，请通过交付看板纠偏重跑，或复制为新草稿后编辑。', code: 'managed_production_project' });
@@ -7146,6 +8527,14 @@ studioRouter.post('/projects', async (req, res) => {
     createdAt: now,
     updatedAt: now,
   };
+  const assignmentIssues = storyboardAigcAssignmentIssues({ tenantId, projectId: '', spec, materials: loadMaterials() });
+  if (assignmentIssues.length) {
+    res.status(409).json({ ok: false, code: 'STORYBOARD_AIGC_ASSIGNMENT_UNVERIFIED', error: 'AI 分镜候选尚未通过当前项目验收', reasons: assignmentIssues }); return;
+  }
+  const kbIssues = await storyboardKbAssignmentIssuesForSpec(tenantId, spec, loadMaterials());
+  if (kbIssues.length) {
+    res.status(409).json({ ok: false, code: 'STORYBOARD_AIGC_KB_IMAGE_CHANGED', error: '企业产品或指定人物参考图已变化，AI 分镜候选需重做', reasons: kbIssues }); return;
+  }
   const created = await store.create<any>('studio_projects', { tenant_id: tenantId, title: project.title, status, spec, thumb_seed: thumbSeed || '', created_at: now, updated_at: now });
   if (!created) { res.status(503).json({ ok: false, error: 'project storage unavailable' }); return; }
   res.status(201).json({ ok: true, project: projectFromRecord(created, tenantId) });

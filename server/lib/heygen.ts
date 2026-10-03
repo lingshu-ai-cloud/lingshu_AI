@@ -1,5 +1,10 @@
 /** HeyGen v3 adapter. Never retries a generation with a different idempotency key. */
 export interface HeyGenInput { avatarId: string; voiceId: string; script: string; ratio: string; transparent: boolean; title: string; imageAssetId?: string; imageUrl?: string; audioAssetId?: string; audioRef?: { url: string; start: number; duration: number } }
+export class HeyGenRequestError extends Error {
+  constructor(readonly status: number, readonly code: string, message?: string) {
+    super(`HeyGen ${status}: ${code}${message ? ` (${message.slice(0, 180)})` : ''}`);
+  }
+}
 export class HeyGenClient {
   constructor(private key: string, private transport: typeof fetch = fetch) {}
   private async call(path: string, body?: unknown, requestId?: string) {
@@ -10,13 +15,14 @@ export class HeyGenClient {
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     });
     const value = await response.json() as { data?: Record<string, any>; error?: { code?: string; message?: string } };
-    if (!response.ok || value.error) throw new Error(`HeyGen ${response.status}: ${value.error?.code || 'request_failed'}`);
+    if (!response.ok || value.error) throw new HeyGenRequestError(response.status, value.error?.code || 'request_failed', value.error?.message);
     if (!value.data) throw new Error('HeyGen未返回有效任务数据');
     return value.data;
   }
   async create(input: HeyGenInput, requestId: string): Promise<string> {
     if ((!input.avatarId && !input.imageAssetId && !input.imageUrl) || !input.voiceId || !input.script.trim()) throw new Error('数字人、声音和台词不能为空');
-    const data = await this.call('', { type: 'avatar', ...(input.imageAssetId ? { image_asset_id: input.imageAssetId } : input.imageUrl ? { image_url: input.imageUrl } : { avatar_id: input.avatarId }), ...(input.audioAssetId ? { audio_asset_id: input.audioAssetId } : { voice_id: input.voiceId, script: input.script }),
+    const image = input.imageAssetId ? { type: 'asset_id', asset_id: input.imageAssetId } : input.imageUrl ? { type: 'url', url: input.imageUrl } : null;
+    const data = await this.call('', { ...(image ? { type: 'image', image } : { type: 'avatar', avatar_id: input.avatarId }), ...(input.audioAssetId ? { audio_asset_id: input.audioAssetId } : { voice_id: input.voiceId, script: input.script }),
       aspect_ratio: input.ratio, resolution: '720p', title: input.title, output_format: input.transparent ? 'webm' : 'mp4' }, requestId);
     if (typeof data.video_id !== 'string') throw new Error('提交结果未知：未返回video_id，请检查供应商任务，不要重复付费提交');
     return data.video_id;

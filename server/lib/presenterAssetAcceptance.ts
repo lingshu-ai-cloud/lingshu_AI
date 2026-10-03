@@ -11,6 +11,28 @@ export interface AcceptedSeedancePortrait {
   consentRef: string;
 }
 
+/** A tenant-owned still can be used as a Seedream identity reference without an Ark Assets ID.
+ * Ark Active image certification is only needed when submitting asset:// to Seedance video generation. */
+export function acceptPresenterPortraitReference(input: {
+  tenantId: string;
+  presenter: TrustedPresenterRecord & { referenceMaterialIds?: unknown; toolMappings?: unknown };
+  material: MaterialRecord & Record<string, unknown>;
+  provider: 'volcengine_ark' | 'heygen';
+  uses: Array<'person_replacement' | 'digital_presenter' | 'voice_synthesis'>;
+  now?: Date;
+}): void {
+  const reasons: string[] = [];
+  if (input.presenter.authorized !== true) reasons.push('presenter_not_authorized');
+  if (String(input.material.tenantId || '') !== input.tenantId || input.material.scope !== 'own') reasons.push('portrait_not_owned_by_tenant');
+  if (input.material.type !== 'image') reasons.push('portrait_material_must_be_image');
+  if (!isTenantPrivateObjectKey(String(input.material.objectKey || ''), input.tenantId)) reasons.push('portrait_object_storage_not_tenant_scoped');
+  const references = Array.isArray(input.presenter.referenceMaterialIds) ? input.presenter.referenceMaterialIds.map(String) : [];
+  if (!references.includes(String(input.material.id))) reasons.push('portrait_not_bound_to_presenter');
+  const rights = validatePresenterRightsEvidence(input.presenter.rightsEvidence, { provider: input.provider, uses: input.uses }, input.now);
+  if (!rights.ok) reasons.push(...rights.reasons);
+  if (reasons.length) throw new Error(`presenter_asset_rejected:${[...new Set(reasons)].join(',')}`);
+}
+
 /**
  * Binds an authorized presenter, a tenant-owned image, and the provider-issued
  * asset:// identifier. The provider URI cannot be accepted independently of

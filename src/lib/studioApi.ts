@@ -406,16 +406,36 @@ export interface SeedanceVideoResult {
   version?: VideoGenerationVersion;
   error?: string;
   createdAt?: string;
+  quality?: StoryboardQualityResult;
+  segments?: Array<Record<string, unknown>>;
+  code?: string;
+  segmentIndex?: number;
+}
+
+export interface StoryboardFirstFrameResult {
+  ok: boolean;
+  material?: Material;
+  fingerprint?: string;
+  promptVersion?: string;
+  firstFrameQuality?: StoryboardQualityResult;
+  identityNotice?: string;
+  error?: string;
 }
 
 export interface StoryboardQualityResult {
-  score: number;
+  score?: number;
   passed: boolean;
-  issues: string[];
-  strengths: string[];
-  recommendation: string;
-  checks: Record<string, number>;
+  issues?: string[];
+  strengths?: string[];
+  recommendation?: string;
+  checks: Record<string, unknown>;
   checkedAt: string;
+  reportId?: string;
+  status?: 'passed' | 'needs_review' | 'retry_first_frame' | 'retry_video' | 'needs_assets';
+  reasonCodes?: string[];
+  findings?: Array<{ key?: string; verdict?: string; note?: string; code: string; severity: 'hard_failure' | 'review'; evidenceFrames?: Array<{ seconds?: number; url?: string } | number | string>; action?: string; message: string }>;
+  requiresHumanReview?: boolean;
+  automatedPassed?: boolean;
 }
 
 export interface FbPosterBrief {
@@ -615,7 +635,33 @@ export const studioApi = {
     post<{ ok: boolean; translations: Record<string, string>; error?: string }>('translate/batch', b, { ok: false, translations: {} }, options?.signal),
 
   // Seedance 视频生成
+  storyboardFirstFrame: (b: {
+    projectId?: string;
+    requestId: string;
+    keyStates?: Array<{ afterBeat: number; description: string; source: 'confirmed_reference_analysis' | 'confirmed_storyboard' }>;
+    shotId: string;
+    mode: 'replication' | 'free_creation';
+    shotDescription: string;
+    startSeconds?: number;
+    endSeconds?: number;
+    layout?: Record<string, unknown>;
+    action?: { startState?: string; beats?: string[]; endState?: string; cameraMotion?: string; forbiddenChanges?: string[]; evidence?: string };
+    sourceFirstFrameUrl?: string;
+    productId?: string;
+    productIds?: string[];
+    productImageUrl?: string;
+    productName?: string;
+    characterMaterialId?: string;
+    environmentMaterialId?: string;
+    sceneType: 'product' | 'factory' | 'usage';
+    ratio?: string;
+  }) => post<StoryboardFirstFrameResult>('storyboard-first-frame', b, { ok: false }),
+  storyboardProductMatch: (b: { projectId: string; shotId: string }) =>
+    post<{ ok: boolean; productIds?: string[]; confidence?: number; reason?: string; source?: string; needsReview?: boolean; error?: string }>('storyboard-product-match', b, { ok: false }),
+  confirmStoryboardFirstFrame: (id: string, b: { fingerprint: string; shotId: string }) =>
+    post<StoryboardFirstFrameResult>(`storyboard-first-frame/${encodeURIComponent(id)}/confirm`, b, { ok: false }),
   seedanceVideo: (b: {
+    requestId?: string;
     script: string;
     productInfo?: string;
     language: string;
@@ -624,11 +670,25 @@ export const studioApi = {
     resolution?: string;
     title?: string;
     referenceImageUrl?: string;
+    firstFrameMaterialId?: string;
+    firstFrameFingerprint?: string;
+    shotId?: string;
     generationGroupKey?: string;
     generationContext?: Record<string, unknown>;
     parentVersionId?: string;
   }) =>
     postSeedanceVideo(b),
+  storyboardActionVideo: (b: {
+    requestId: string;
+    firstFrameMaterialId: string;
+    firstFrameFingerprint: string;
+    shotId: string;
+    ratio?: string;
+    resolution: '480p' | '720p';
+    title?: string;
+    keyStates: Array<{ afterBeat: number; description: string; source: 'confirmed_reference_analysis' | 'confirmed_storyboard' }>;
+    beatDurationsSeconds?: number[];
+  }) => post<SeedanceVideoResult>('storyboard-action-video', b, { ok: false }),
 
   listVideoVersions: async (groupKey: string): Promise<VideoGenerationVersion[]> => {
     try {
@@ -645,6 +705,8 @@ export const studioApi = {
 
   storyboardQualityCheck: (b: { materialId: string; storyboard: string; productInfo?: string; critical?: boolean }) =>
     post<{ ok: boolean; quality?: StoryboardQualityResult; error?: string }>('storyboard-quality-check', b, { ok: false }),
+  reviewStoryboardQuality: (materialId: string, b: { shotId: string; reportId: string; decision: 'accept' | 'reject' }) =>
+    post<{ ok: boolean; quality?: StoryboardQualityResult; error?: string }>(`storyboard-quality-check/${encodeURIComponent(materialId)}/review`, b, { ok: false }),
 
   // 数据看板 AI 结论
   insight: (b: { scope: string; metrics: Record<string, unknown> }) =>

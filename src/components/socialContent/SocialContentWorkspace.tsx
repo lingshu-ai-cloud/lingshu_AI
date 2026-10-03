@@ -35,6 +35,7 @@ export interface SocialContentCreateRequest {
   continueTaskId?: string;
   continueProjectId?: string;
   replicationStep?: 1 | 2 | 3;
+  confirmedSpeech?: Array<{ source: string; draft: string; time: string }>;
   presenterAssetId?: string;
   specialRequirements?: string;
   identityMappings?: {

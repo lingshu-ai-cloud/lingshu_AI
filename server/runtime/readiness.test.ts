@@ -37,24 +37,43 @@ try {
   assert.deepEqual(sentenceBlocked.missing, [
     'SEEDANCE_SENTENCE_ENABLED=true', 'SEEDANCE_API_KEY', 'SEEDANCE_MODEL', 'SEEDREAM_API_KEY 或 SEEDANCE_API_KEY（Seedream 目标人物首帧生成）',
     '对象存储 endpoint/account', '对象存储 access key', '对象存储 secret key',
+    'OBJECT_STORAGE_DRIVER=cos 或 LOCAL_OBJECT_STORAGE_PUBLIC_BASE_URL（公网 HTTPS）',
   ]);
   const sentenceReady = sentenceReplicationReadiness({
     SEEDANCE_SENTENCE_ENABLED: 'true', SEEDANCE_API_KEY: 'configured-for-test', SEEDANCE_MODEL: 'seedance-test',
+    OBJECT_STORAGE_DRIVER: 'cos',
     OBJECT_STORAGE_ENDPOINT: 'https://object.example.test', OBJECT_STORAGE_ACCESS_KEY_ID: 'configured-for-test', OBJECT_STORAGE_SECRET_ACCESS_KEY: 'configured-for-test', OBJECT_STORAGE_BUCKET_NAME: 'assets',
   });
   assert.deepEqual(sentenceReady, { ready: true, missing: [] });
+  const localStorageWithCosCredentials = sentenceReplicationReadiness({
+    SEEDANCE_SENTENCE_ENABLED: 'true', SEEDANCE_API_KEY: 'configured-for-test', SEEDANCE_MODEL: 'seedance-test',
+    OBJECT_STORAGE_DRIVER: 'local', COS_REGION: 'ap-shanghai', COS_BUCKET: 'assets',
+    COS_SECRET_ID: 'configured-for-test', COS_SECRET_KEY: 'configured-for-test',
+  });
+  assert.deepEqual(localStorageWithCosCredentials.missing, [
+    'OBJECT_STORAGE_DRIVER=cos 或 LOCAL_OBJECT_STORAGE_PUBLIC_BASE_URL（公网 HTTPS）',
+  ]);
   const semanticBlocked = sentenceReplicationReadiness({
     SEEDANCE_SENTENCE_ENABLED: 'true', SEEDANCE_API_KEY: 'configured-for-test', SEEDANCE_MODEL: 'seedance-test', DIGITAL_HUMAN_SEMANTIC_QA_ENABLED: 'true',
+    OBJECT_STORAGE_DRIVER: 'cos',
     OBJECT_STORAGE_ENDPOINT: 'https://object.example.test', OBJECT_STORAGE_ACCESS_KEY_ID: 'configured-for-test', OBJECT_STORAGE_SECRET_ACCESS_KEY: 'configured-for-test', OBJECT_STORAGE_BUCKET_NAME: 'assets',
   });
   assert.deepEqual(semanticBlocked.missing, ['DASHSCOPE_API_KEY 或 DASHSCOPE_API_KEY_FILE（独立语义质检）', 'QWEN_DIGITAL_HUMAN_QA_MODEL']);
   assert.deepEqual(sentenceReplicationReadiness({
     SEEDANCE_SENTENCE_ENABLED: 'true', SEEDANCE_API_KEY: 'configured-for-test', SEEDANCE_MODEL: 'seedance-test', DIGITAL_HUMAN_SEMANTIC_QA_ENABLED: 'true', DASHSCOPE_API_KEY_FILE: '/secret/key', QWEN_DIGITAL_HUMAN_QA_MODEL: 'qwen-test',
+    OBJECT_STORAGE_DRIVER: 'cos',
     OBJECT_STORAGE_ENDPOINT: 'https://object.example.test', OBJECT_STORAGE_ACCESS_KEY_ID: 'configured-for-test', OBJECT_STORAGE_SECRET_ACCESS_KEY: 'configured-for-test', OBJECT_STORAGE_BUCKET_NAME: 'assets',
   }), { ready: true, missing: [] });
   assert.deepEqual(sentenceReplicationReadiness({
     SEEDANCE_SENTENCE_ENABLED: 'true', SEEDANCE_API_KEY: 'configured-for-test', SEEDANCE_MODEL: 'seedance-test',
+    OBJECT_STORAGE_DRIVER: 'cos',
     COS_REGION: 'ap-shanghai', COS_BUCKET: 'assets', COS_SECRET_ID: 'configured-for-test', COS_SECRET_KEY: 'configured-for-test',
+  }), { ready: true, missing: [] });
+  assert.deepEqual(sentenceReplicationReadiness({
+    SEEDANCE_SENTENCE_ENABLED: 'true', SEEDANCE_API_KEY: 'configured-for-test', SEEDANCE_MODEL: 'seedance-test',
+    OBJECT_STORAGE_DRIVER: 'local', LOCAL_OBJECT_STORAGE_PUBLIC_BASE_URL: 'https://assets.example.test',
+    OBJECT_STORAGE_ENDPOINT: 'https://object.example.test', OBJECT_STORAGE_ACCESS_KEY_ID: 'configured-for-test',
+    OBJECT_STORAGE_SECRET_ACCESS_KEY: 'configured-for-test', OBJECT_STORAGE_BUCKET_NAME: 'assets',
   }), { ready: true, missing: [] });
 
   const providerBlocked = digitalHumanProviderReadiness({

@@ -1,9 +1,15 @@
 import { preparePhotoTalkingFirstFrames } from '../lib/photoTalkingFirstFrames.js';
+import { photoTalkingBudget } from '../lib/photoTalkingBudget.js';
+import { selectPresenterPortraitFrame } from '../lib/presenterPortraitFromVideo.js';
+import { readTenantMaterialBytes } from '../lib/sentenceReplicationProduction.js';
+import { readLocalMaterials, saveLocalMaterials } from '../lib/materialLibrary.js';
+import { materialAssetObjectKey } from '../storage/materialAssets.js';
+import { objectStorageHead, objectStorageSignedGetUrl, objectStorageUpload } from '../storage/objectStorage.js';
 import { resolveHeyGenPresenterPhoto } from '../lib/heygenPresenterPhoto.js';
 import { sentenceReplicationReadiness as photoSentenceReadiness } from '../runtime/readiness.js';
 import { createPresenterAssetsRouter } from './presenterAssets.js';
 import { Router } from 'express';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { studioPaidBudget } from '../lib/studioPaidBudget.js';
 import type { DataStore } from '../storage/datastore.js';
 import { HeyGenClient, type HeyGenInput } from '../lib/heygen.js';
@@ -18,6 +24,8 @@ import { planPersonShotClusters } from '../../src/lib/personShotClustering.js';
 import type { ExecutionStoreRecord, FirstFrameDraftJobRecord, ImportedVideoResult, JobRecord, PlanStoreRecord, ProductionRouterOptions, ReferenceImportResult, SentenceJobRecord } from './productionContracts.js';
 import { candidateOutputFromImport, createProductionRuntime, createProductionStoreRuntime } from './productionRuntime.js';
 import { batchShotRequestId, planStudioBatchShotRoutes, uniqueAuthorizedSalesPresenter } from './studioBatchShotRoutes.js';
+import { studioAigcBatchBudgetPreview, studioAigcBudgetConfigFromEnv } from './studioAigcBatchBudget.js';
+import { productionTrendReference } from '../lib/productionTrendReference.js';
 export { candidateOutputFromImport } from './productionRuntime.js';
 
 export function createProductionRouter(store: DataStore, importVideo: (url: string, duration: number, job: AvatarJob, input: HeyGenInput, tenantId: string) => Promise<string | ImportedVideoResult>, options: ProductionRouterOptions = {}) {
@@ -25,6 +33,36 @@ export function createProductionRouter(store: DataStore, importVideo: (url: stri
   const { exclusive, enabled, client, executableReferenceAdapters, referenceBudgetLimitCny, maxAttemptsPerShot, sentenceReadiness, releaseReferenceReservation, assertCandidateOutputCurrent } = createProductionRuntime(options);
   const { assertAttemptAvailable, readDefaults } = createProductionStoreRuntime(store, maxAttemptsPerShot);
   router.use('/presenters', createPresenterAssetsRouter(store, exclusive));
+  router.post('/presenters/portrait-from-video', async (req, res) => {
+    try {
+      const tenantId = res.locals.tenantId as string;
+      const presenterId = String(req.body?.presenterId || '');
+      const videoMaterialId = String(req.body?.videoMaterialId || '');
+      const result = await exclusive(`presenter-portrait:${tenantId}:${presenterId}:${videoMaterialId}`, async () => {
+        const defaults = (await readDefaults(tenantId))?.payload as ProductionDefaults | undefined;
+        const presenter = defaults?.presenters.find(item => item.id === presenterId && item.authorized);
+        if (!presenter || !presenter.referenceMaterialIds?.includes(videoMaterialId)) throw new Error('请选择已绑定且授权的企业人物视频');
+        const video = readLocalMaterials().find(item => item.id === videoMaterialId && item.type === 'video' && item.scope === 'own' && item.tenantId === tenantId);
+        if (!video) throw new Error('企业人物视频不存在或不属于当前企业');
+        const source = await readTenantMaterialBytes(video, tenantId);
+        const portrait = await selectPresenterPortraitFrame(source.bytes);
+        const id = `presenter-frame-${createHash('sha256').update(`${tenantId}:${presenterId}:${videoMaterialId}:${portrait.sha256}`).digest('hex').slice(0, 24)}`;
+        const existing = readLocalMaterials().find(item => item.id === id);
+        if (existing) return { materialId: id, atSeconds: portrait.atSeconds, sharpness: portrait.sharpness, previewUrl: await objectStorageSignedGetUrl(String(existing.objectKey), 900), alreadyExists: true };
+        const key = materialAssetObjectKey(tenantId, `${id}.jpg`);
+        await objectStorageUpload({ key, body: portrait.bytes, contentType: 'image/jpeg' });
+        const head = await objectStorageHead(key);
+        if (!head?.etag) throw new Error('人像帧入库后缺少对象版本');
+        const material = { id, name: `${presenter.name} · 视频清晰帧`, folder: 'presenter', type: 'image', scope: 'own', tenantId,
+          size: `${Math.ceil(portrait.bytes.length / 1024)} KB`, duration: 0, file: '', url: '', objectKey: key, objectEtag: head.etag,
+          contentSha256: portrait.sha256, sourceType: 'presenter-video-frame', sourceMaterialId: videoMaterialId,
+          frameAtSeconds: portrait.atSeconds, frameSharpness: portrait.sharpness, presenterAssetId: presenterId, createdAt: new Date().toISOString() };
+        saveLocalMaterials([...readLocalMaterials(), material]);
+        return { materialId: id, atSeconds: portrait.atSeconds, sharpness: portrait.sharpness, previewUrl: await objectStorageSignedGetUrl(key, 900), alreadyExists: false };
+      });
+      res.json(result);
+    } catch (error) { res.status(400).json({ error: error instanceof Error ? error.message : '人物视频取帧失败' }); }
+  });
   const persistPlan = async (input: { tenantId: string; project: any; assemblyId: string; shotId: string; fingerprint: string; origin?: 'manual' | 'content_agent'; sourceTaskId?: string; sourceTaskVersion?: string }) => {
     const { tenantId, project, assemblyId, shotId, fingerprint } = input;
     const shot = project.spec?.shotProductions?.[`${assemblyId}:${shotId}`] as ShotProduction | undefined;
@@ -124,9 +162,20 @@ export function createProductionRouter(store: DataStore, importVideo: (url: stri
         authorizedPresenterIds: authorizedPresenters.map(item => item.id),
         defaultSalesPresenterId: salesPresenter?.id ?? null,
       });
-      res.json({ projectId, planningOnly: true, routes, counts: {
+      const aigcBudgetPreview = studioAigcBatchBudgetPreview(routes, {
+        ...studioAigcBudgetConfigFromEnv(),
+        creationMode: String(project.spec?.mode || ''),
+        slots: Array.isArray(project.spec?.shootingSlots) ? project.spec.shootingSlots : [],
+        requestedResolutions: Object.fromEntries(Object.entries(project.spec?.storyboardSourcePlans || {}).map(([id, value]) => {
+          const plan = value as { videoResolution?: string; videoResolutionPinned?: boolean };
+          return [id, plan?.videoResolutionPinned && (plan.videoResolution === '480p' || plan.videoResolution === '720p')
+            ? plan.videoResolution : undefined];
+        })),
+      });
+      res.json({ projectId, planningOnly: true, routes, aigcBudgetPreview, counts: {
         matched: routes.filter(item => item.status === 'matched').length,
         needsPlan: routes.filter(item => item.status === 'needs_plan').length,
+        aigcFirstFrame: routes.filter(item => item.route === 'aigc_first_frame').length,
         needsMaterial: routes.filter(item => item.status === 'needs_material').length,
         blocked: routes.filter(item => item.status === 'blocked').length,
       } });
@@ -220,23 +269,42 @@ export function createProductionRouter(store: DataStore, importVideo: (url: stri
       if (!shot?.digitalHuman || shot.digitalHuman.workflow !== 'viral_replication' || shot.digitalHuman.method !== 'reenact'
         || usesDirectReferenceVideo(shot.digitalHuman)) throw new Error('当前分镜不是逐句首帧重建路线');
       if (shotFingerprint(shot, String(project.spec?.shotProductionContext || ''), String(b.shotId || '')) !== String(b.fingerprint || '')) throw new Error('数字人参数与已保存草稿不一致，请保存后重试');
-      const materialId = String(shot.digitalHuman.reference?.materialId || ''); const cues = referenceCues(shot.digitalHuman);
-      if (!materialId || !cues.length) throw new Error('请先绑定爆款参考视频并完成逐句分析');
+      const materialId = String(shot.digitalHuman.reference?.materialId || '');
+      const originalCues = referenceCues(shot.digitalHuman);
+      const slot = (Array.isArray(project.spec?.shootingSlots) ? project.spec.shootingSlots : []).find((item: any) => String(item.id) === String(b.shotId || ''));
+      const confirmedWholePersonShot = originalCues.length === 1 && slot?.salesPresenterConfirmed === true
+        && slot?.observedPresenterRole === 'sales_presenter'
+        && Math.abs(Number(slot.duration) - (originalCues[0]!.end - originalCues[0]!.start)) < 0.2;
+      const cues = confirmedWholePersonShot && originalCues[0]!.personShot === undefined
+        ? [{ ...originalCues[0]!, personShot: true, classificationSource: 'manual' as const,
+          compositionClusterId: originalCues[0]!.compositionClusterId || `${b.shotId}:confirmed-sales-presenter`,
+          targetText: originalCues[0]!.targetText || String(shot.narration || '').trim() }]
+        : originalCues;
+      if (!cues.length) throw new Error('请先完成爆款参考视频逐句分析');
+      const sourceMaterial = materialId ? undefined : await productionTrendReference({ store, tenantId, projectSpec: project.spec,
+        shotReference: shot.digitalHuman.reference || {} });
+      const resolvedMaterialId = materialId || sourceMaterial!.id;
       const clusterPlan = planPersonShotClusters(cues, Math.max(1, Number(process.env.DIGITAL_HUMAN_MAX_FIRST_FRAMES_PER_VIDEO) || 3));
       if (clusterPlan.state !== 'ready') throw new Error(clusterPlan.blockers.join('；'));
       if (!options.prepareSentenceFirstFrames) throw new Error('逐句首帧提取服务尚未配置');
-      res.json({ cues: await options.prepareSentenceFirstFrames({ tenantId, referenceMaterialId: materialId, cues }), clusterPlan });
+      res.json({ cues: await options.prepareSentenceFirstFrames({ tenantId, referenceMaterialId: resolvedMaterialId, cues, sourceMaterial }), clusterPlan });
     } catch (error) { res.status(400).json({ error: error instanceof Error ? error.message : '逐句首帧提取失败' }); }
   });
 
   router.post('/photo-talking-first-frames', async (req,res) => {
     try { const tenantId=res.locals.tenantId as string; const b=req.body||{}; if(b.confirmed!==true) throw new Error('请确认目标首帧生成及供应商计费');
+      const maxCostCny=Number(b.maxCostCny); if(!Number.isFinite(maxCostCny)||maxCostCny<=0) throw new Error('请填写本次照片口播费用上限');
       const project=await store.getById<any>('studio_projects',String(b.projectId||'')); if(!project||project.tenant_id!==tenantId||project.status!=='draft') throw new Error('创作草稿不存在');
       const shot=project.spec?.shotProductions?.[`${b.assemblyId}:${b.shotId}`] as ShotProduction|undefined;
       if(shot?.digitalHuman?.presenterMode!=='photo_talking'||shot.digitalHuman.workflow!=='viral_replication') throw new Error('当前分镜不是爆款照片口播');
       if(shotFingerprint(shot,String(project.spec?.shotProductionContext||''),String(b.shotId))!==b.fingerprint) throw new Error('请先保存当前人物配置');
+      const sourceAuthorization=shot.digitalHuman.reference;
+      if(sourceAuthorization?.modelInputAuthorized!==true||!String(sourceAuthorization.modelInputAuthorizationEvidence||'').trim()) throw new Error('请先确认原片首帧可作为方舟构图参考，并填写授权依据；未调用供应商');
       const defaults=(await readDefaults(tenantId))?.payload as ProductionDefaults|undefined; const presenter=defaults?.presenters.find(item=>item.id===shot.presenterId&&item.authorized); if(!presenter) throw new Error('请选择企业人物照片');
-      const result=await exclusive(`photo-first-frames:${tenantId}:${b.projectId}`,()=>(options.preparePhotoTalkingFirstFrames || preparePhotoTalkingFirstFrames)({tenantId,projectId:project.id,assemblyId:String(b.assemblyId),presenter,cues:referenceCues(shot.digitalHuman)}));res.json(result);
+      const cues=referenceCues(shot.digitalHuman);const clusters=planPersonShotClusters(cues,Math.max(1,Number(process.env.DIGITAL_HUMAN_MAX_FIRST_FRAMES_PER_VIDEO)||3));if(clusters.state!=='ready')throw new Error(clusters.blockers.join('；'));
+      const quote=photoTalkingBudget({cues,frameCount:clusters.clusters.length,fixedHeygenReserveCny:Number(process.env.STUDIO_HEYGEN_RESERVE_CNY)});
+      if(quote.totalCny>maxCostCny)throw new Error(`首帧与口播合计预估费用 ¥${quote.totalCny.toFixed(2)} 超过本次上限 ¥${maxCostCny.toFixed(2)}，未调用供应商`);
+      const result=await exclusive(`photo-first-frames:${tenantId}:${b.projectId}`,()=>(options.preparePhotoTalkingFirstFrames || preparePhotoTalkingFirstFrames)({tenantId,projectId:project.id,assemblyId:String(b.assemblyId),presenter,cues}));res.json(result);
     } catch(error) {res.status(400).json({error:error instanceof Error?error.message:'目标首帧生成失败'});}
   });
   router.post('/sentence-first-frame-drafts',async(req,res)=>{
@@ -258,11 +326,39 @@ export function createProductionRouter(store: DataStore, importVideo: (url: stri
     } catch (error) { res.status(404).json({ error: error instanceof Error ? error.message : '逐句生产作业读取失败' }); }
   });
 
-  async function submitSentenceReplication(tenantId: string, b: { projectId: string; assemblyId: string; shotId: string; fingerprint: string; requestId: string }) {
+  router.get('/sentence-replication-jobs/:id/status', async (req, res) => {
+    try {
+      const record = await store.getById<SentenceJobRecord>('studio_sentence_replication_jobs', req.params.id);
+      if (!record || record.tenant_id !== res.locals.tenantId) throw new Error('逐句生产作业不存在');
+      res.json({ id: record.id, state: record.payload.state, providerTasks: record.payload.providerTasks || {}, error: record.payload.error || '', updatedAt: record.payload.updatedAt });
+    } catch (error) { res.status(404).json({ error: error instanceof Error ? error.message : '逐句生产状态读取失败' }); }
+  });
+  router.get('/sentence-replication-requests/:requestId/status', async (req, res) => {
+    try {
+      const tenantId = res.locals.tenantId as string;
+      const record = (await store.list<SentenceJobRecord>('studio_sentence_replication_jobs', { where: { tenant_id: tenantId, request_id: req.params.requestId }, perPage: 1 })).items[0];
+      if (!record) throw new Error('逐句生产请求不存在');
+      res.json({ id: record.id, state: record.payload.state, providerTasks: record.payload.providerTasks || {}, error: record.payload.error || '', updatedAt: record.payload.updatedAt });
+    } catch (error) { res.status(404).json({ error: error instanceof Error ? error.message : '逐句生产状态读取失败' }); }
+  });
+  router.get('/sentence-replication-pending', async (req, res) => {
+    try {
+      const tenantId = res.locals.tenantId as string; const projectId = String(req.query.projectId || '');
+      const project = await store.getById<any>('studio_projects', projectId);
+      if (!project || project.tenant_id !== tenantId) throw new Error('创作草稿不存在');
+      const jobs = (await store.list<SentenceJobRecord>('studio_sentence_replication_jobs', { where: { tenant_id: tenantId, project_id: projectId }, perPage: 500 })).items;
+      const matches = jobs.filter(item => item.payload.assemblyId === req.query.assemblyId && item.payload.shotId === req.query.shotId && item.payload.fingerprint === req.query.fingerprint && item.payload.state === 'uncertain' && Object.keys(item.payload.providerTasks || {}).length);
+      matches.sort((a, b) => b.payload.updatedAt.localeCompare(a.payload.updatedAt));
+      const record = matches[0]; res.json(record ? { id: record.id, state: record.payload.state, providerTasks: record.payload.providerTasks, error: record.payload.error, updatedAt: record.payload.updatedAt } : null);
+    } catch (error) { res.status(404).json({ error: error instanceof Error ? error.message : '待核实逐句任务读取失败' }); }
+  });
+
+  async function submitSentenceReplication(tenantId: string, b: { projectId: string; assemblyId: string; shotId: string; fingerprint: string; requestId: string; maxCostCny?: number }, resumeJobId?: string) {
     return await exclusive(`sentence-replication:${tenantId}:${b.requestId}`, async () => {
         const requestId = String(b.requestId);
         const existing = (await store.list<SentenceJobRecord>('studio_sentence_replication_jobs', { where: { tenant_id: tenantId, request_id: requestId }, perPage: 1 })).items[0];
-        if (existing) {
+        if (resumeJobId && (!existing || existing.id !== resumeJobId || existing.payload.state !== 'uncertain')) throw new Error('原作业不在可恢复状态，请核对状态');
+        if (existing && !resumeJobId) {
           if (existing.payload.state === 'completed' && existing.payload.result) return existing.payload.result;
           throw new Error(existing.payload.state === 'failed'
             ? `该请求已失败并已留档：${existing.payload.error || '原因未知'}。修正输入后请发起新请求，勿复用请求标识`
@@ -274,27 +370,34 @@ export function createProductionRouter(store: DataStore, importVideo: (url: stri
         if (!shot?.digitalHuman || shot.digitalHuman.workflow !== 'viral_replication' || shot.digitalHuman.method !== 'reenact' || usesDirectReferenceVideo(shot.digitalHuman)) throw new Error('当前分镜不是逐句首帧重建路线');
         const fingerprint = String(b.fingerprint || '');
         if (shotFingerprint(shot, String(project.spec?.shotProductionContext || ''), String(b.shotId || '')) !== fingerprint) throw new Error('数字人参数与已保存草稿不一致，请保存后重试');
+        if (!resumeJobId) {
+          const priorJobs = (await store.list<SentenceJobRecord>('studio_sentence_replication_jobs', { where: { tenant_id: tenantId, project_id: project.id }, perPage: 500 })).items;
+          if (priorJobs.some(item => item.payload.assemblyId === b.assemblyId && item.payload.shotId === b.shotId && item.payload.fingerprint === fingerprint && ['running','uncertain'].includes(item.payload.state))) throw new Error('当前分镜已有未核实的逐句任务，请查询并恢复原任务，勿重新提交计费');
+        }
         const defaults = (await readDefaults(tenantId))?.payload as ProductionDefaults | undefined;
         const presenter = defaults?.presenters.find(item => item.id === shot.presenterId && item.authorized);
         if (!presenter) throw new Error('请选择已授权企业人物');
-        if (shot.digitalHuman.preferredProvider && !['auto', 'sd'].includes(shot.digitalHuman.preferredProvider)) throw new Error('逐句首帧流水线当前使用 Seedance；所选模型需走对应执行接口，不能自动替换模型');
+        if (shot.digitalHuman.presenterMode !== 'photo_talking' && shot.digitalHuman.preferredProvider && !['auto', 'sd'].includes(shot.digitalHuman.preferredProvider)) throw new Error('逐句首帧视频路线当前使用 Seedance；所选模型需走对应执行接口，不能自动替换模型');
         const cues = referenceCues(shot.digitalHuman);
+        if (resumeJobId && (shot.digitalHuman.presenterMode !== 'photo_talking' || cues.some(cue => cue.personShot !== false && !existing?.payload.providerTasks?.[cue.id]))) throw new Error('原作业缺少完整 HeyGen 任务 ID，需人工核对，不能重新提交计费');
         if (shot.digitalHuman.presenterMode === 'photo_talking' && (!shot.digitalHuman.targetFramesConfirmed || cues.some(cue => cue.personShot !== false && cue.targetFirstFrame?.state !== 'ready'))) throw new Error('请先重建并确认目标人物首帧');
         const clusterPlan = planPersonShotClusters(cues, Math.max(1, Number(process.env.DIGITAL_HUMAN_MAX_FIRST_FRAMES_PER_VIDEO) || 3));
         if (clusterPlan.state !== 'ready') throw new Error(clusterPlan.blockers.join('；'));
-        if (!clusterPlan.personCueIds.length) throw new Error('当前视频没有人物镜头，不应调用人物首帧或 Seedance 人物生成；请按普通素材混剪路线制作');
+        if (!clusterPlan.personCueIds.length) throw new Error('当前视频没有人物镜头，不应调用人物首帧或数字人口播生成；请按普通素材混剪路线制作');
         if (!cues.length || cues.some(cue => cue.personShot !== false && !cue.sourceFirstFrame?.materialId)) throw new Error('请先完成全部人物镜头的逐句源首帧提取');
         if (!options.runSentenceReplication) throw new Error('逐句目标人物首帧与视频编排器尚未配置');
         const readiness = shot.digitalHuman.presenterMode === 'photo_talking' ? photoSentenceReadiness(process.env, 'heygen') : sentenceReadiness();
         if (!readiness.ready) throw new Error(readiness.reason);
+        if (shot.digitalHuman.presenterMode === 'photo_talking' && (!Number.isFinite(Number(b.maxCostCny)) || Number(b.maxCostCny) <= 0)) throw new Error('请填写本次照片口播费用上限');
         const savedPlan = await persistPlan({ tenantId, project, assemblyId: String(b.assemblyId), shotId: String(b.shotId), fingerprint });
         const now = new Date().toISOString();
-        const record = await store.create<SentenceJobRecord>('studio_sentence_replication_jobs', { tenant_id: tenantId, project_id: project.id, request_id: requestId,
+        const record = existing || await store.create<SentenceJobRecord>('studio_sentence_replication_jobs', { tenant_id: tenantId, project_id: project.id, request_id: requestId,
           payload: { state: 'running', fingerprint, assemblyId: String(b.assemblyId), shotId: String(b.shotId), createdAt: now, updatedAt: now } });
         if (!record) throw new Error('逐句生成请求记录保存失败，尚未调用供应商');
+        if (resumeJobId) { record.payload = { ...record.payload, state: 'running', error: '', updatedAt: now }; if (!await store.update('studio_sentence_replication_jobs', record.id, { payload: record.payload })) throw new Error('原作业恢复状态保存失败'); }
         try {
-          const generated = await options.runSentenceReplication({ tenantId, projectId: project.id, assemblyId: String(b.assemblyId), shotId: String(b.shotId), fingerprint, shot, presenter, cues, requestId,
-            onProviderTaskSubmitted: async (cueId,taskId)=>{ const providerTasks={...(record.payload.providerTasks||{}),[cueId]:taskId}; record.payload={...record.payload,providerTasks,updatedAt:new Date().toISOString()}; if(!await store.update('studio_sentence_replication_jobs',record.id,{payload:record.payload})) throw new Error('Seedance 已受理任务但任务 ID 持久化失败；请核对原任务，勿重复提交'); } });
+          const generated = await options.runSentenceReplication({ tenantId, projectId: project.id, assemblyId: String(b.assemblyId), shotId: String(b.shotId), fingerprint, shot, presenter, cues, requestId, maxCostCny: b.maxCostCny, existingProviderTasks: resumeJobId ? record.payload.providerTasks : undefined,
+            onProviderTaskSubmitted: async (cueId,taskId)=>{ const providerTasks={...(record.payload.providerTasks||{}),[cueId]:taskId}; record.payload={...record.payload,providerTasks,updatedAt:new Date().toISOString()}; if(!await store.update('studio_sentence_replication_jobs',record.id,{payload:record.payload})) throw new Error('供应商已受理任务但任务 ID 持久化失败；请核对原任务，勿重复提交'); } });
           if (!generated.candidateOutput) throw new Error('逐句拼接候选缺少可复核的对象版本与内容哈希');
           let quality = initialDigitalHumanQuality(shot.digitalHuman);
           quality = recordDigitalHumanMediaCheck(quality, { passed: true, evidence: `material:${generated.materialId}` });
@@ -312,7 +415,8 @@ export function createProductionRouter(store: DataStore, importVideo: (url: stri
           return completed;
         } catch (error) {
           const message = error instanceof Error ? error.message : '逐句生成失败';
-          const uncertain = /未知|超时|核对原任务|已完成但/.test(message);
+          const hasSubmittedTask = Object.keys(record.payload.providerTasks || {}).length > 0;
+          const uncertain = !/任务明确失败/.test(message) && (hasSubmittedTask || /未知|超时|核对原任务|已完成但/.test(message));
           await store.update('studio_sentence_replication_jobs', record.id, { payload: { ...record.payload, state: uncertain ? 'uncertain' : 'failed', error: message, updatedAt: new Date().toISOString() } });
           throw error;
         }
@@ -324,6 +428,14 @@ export function createProductionRouter(store: DataStore, importVideo: (url: stri
       if (b.confirmed !== true || !/^[A-Za-z0-9_:.-]{1,150}$/.test(String(b.requestId || ''))) throw new Error('请确认逐句视频生成及供应商计费，并提供有效请求标识');
       res.json(await submitSentenceReplication(res.locals.tenantId as string, b));
     } catch (error) { res.status(400).json({ error: error instanceof Error ? error.message : '逐句爆款复刻失败' }); }
+  });
+  router.post('/sentence-replication-jobs/:id/resume', async (req, res) => {
+    try {
+      if (req.body?.confirmed !== true) throw new Error('请确认查询原 HeyGen 任务并继续本地验收');
+      const record = await store.getById<SentenceJobRecord>('studio_sentence_replication_jobs', req.params.id);
+      if (!record || record.tenant_id !== res.locals.tenantId) throw new Error('逐句生产作业不存在');
+      res.json(await submitSentenceReplication(record.tenant_id, { projectId: record.project_id, assemblyId: record.payload.assemblyId, shotId: record.payload.shotId, fingerprint: record.payload.fingerprint, requestId: record.request_id, maxCostCny: Number(req.body?.maxCostCny) }, record.id));
+    } catch (error) { res.status(400).json({ error: error instanceof Error ? error.message : '逐句生产原任务恢复失败' }); }
   });
   router.post('/sentence-replication-jobs/:id/cue-quality', async (req,res)=>{
     try { const tenantId=res.locals.tenantId as string; const record=await store.getById<SentenceJobRecord>('studio_sentence_replication_jobs',req.params.id);
@@ -686,6 +798,11 @@ export function createProductionRouter(store: DataStore, importVideo: (url: stri
         if (route.route === 'local_material') {
           results.push({ shotId: route.shotId, slotId: route.slotId,
             state: route.status === 'matched' ? 'matched' : 'needs_material', jobId: null, reason: route.reason });
+          continue;
+        }
+        if (route.route === 'aigc_first_frame') {
+          results.push({ shotId: route.shotId, slotId: route.slotId,
+            state: 'blocked', jobId: null, reason: route.reason });
           continue;
         }
         const configuredShot = project.spec?.shotProductions?.[`${assemblyId}:${route.shotId}`] as ShotProduction | undefined;
