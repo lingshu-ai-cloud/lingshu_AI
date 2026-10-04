@@ -5,7 +5,7 @@ const matrix = JSON.parse(fs.readFileSync('fixtures/storyboard-aigc-acceptance/m
 const account = JSON.parse(fs.readFileSync('fixtures/beauty-showcase/account-data.json', 'utf8'));
 const records = [
   ...account.materials.map(item => ({ kind: 'material', id: item.id, path: item.file || item.url, usage: item.usage || 'unknown', sourceType: item.sourceType || 'unknown', licenseName: item.licenseName || '' })),
-  ...account.collections.trend_videos.map(item => ({ kind: 'trend_video', id: item.id, path: item.thumbnailUrl || item.videoFileId, usage: 'reference_only', sourceType: item.sourceType || 'unknown', licenseName: '' })),
+  ...account.collections.trend_videos.flatMap(item => [item.thumbnailUrl, item.videoFileId].filter(Boolean).map(file => ({ kind: 'trend_video', id: item.id, path: file, usage: 'reference_only', sourceType: item.sourceType || 'unknown', licenseName: '' }))),
 ];
 const cases = matrix.cases.map(item => ({
   caseId: item.id,
