@@ -22,9 +22,13 @@ const sharedCueHtml = renderToStaticMarkup(<SocialCreationWorkbench
     { time: '5.60–11.19s', dialogue: 'Repairing masks.', visual: '包装' },
     { time: '5.60–11.19s', dialogue: 'Repairing masks.', visual: '粉体' },
     { time: '5.60–11.19s', dialogue: 'Repairing masks.', visual: '瓶身' },
+    { time: '5.60–11.19s', dialogue: 'Repairing masks.', visual: '灌装' },
+    { time: '5.60–11.19s', dialogue: 'Repairing masks.', visual: '封口' },
+    { time: '5.60–11.19s', dialogue: 'Repairing masks.', visual: '成品' },
   ] }}
   onOpenChooser={() => {}} onShowCreations={() => {}} onGenerate={() => {}}
 />);
 assert.equal(sharedCueHtml.match(/text-text-primary">Repairing masks\.<\/span>/g)?.length, 1, 'one voice cue must render as one editable card');
-assert.ok(sharedCueHtml.includes('覆盖 3 个分镜'));
+assert.ok(sharedCueHtml.includes('覆盖 6 个分镜'));
+assert.ok(sharedCueHtml.includes('aria-expanded="false"'), 'the six picture cuts start collapsed');
 console.log('Replication speech is edited and confirmed on the first page');
