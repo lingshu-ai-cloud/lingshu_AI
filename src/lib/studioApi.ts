@@ -1,4 +1,5 @@
 import { formatDemoQuotaError } from './studioQuotaMessage';
+import { failedAiGeneration } from './studioAiFailure';
 /* 混剪工作台 AI 接口封装 */
 import { authHeader } from './auth';
 import type { DigitalHumanCapabilities, DigitalHumanJob, TransformationAssessment, TransformationAssessmentInput } from './studioDigitalHuman';
@@ -25,38 +26,6 @@ const VERIFIED_AI_GENERATION_PATHS = new Set([
   'insight',
   'select',
 ]);
-
-function failedAiGeneration<T>(path: string, payload: Record<string, unknown> = {}, fallbackError = 'AI generation request failed'): T & { source?: string } {
-  const common = {
-    ok: false,
-    source: payload.source === 'ai_rejected' ? 'ai_rejected' : 'ai_failed',
-    provenance: payload.source === 'ai_rejected' ? 'ai_rejected' : 'ai_failed',
-    publishable: false,
-    qualityStatus: payload.source === 'ai_rejected' ? 'rejected' : 'failed',
-    error: String(payload.error || fallbackError),
-    ...(payload.code ? { code: String(payload.code) } : {}),
-    ...(typeof payload.retryable === 'boolean' ? { retryable: payload.retryable } : {}),
-    ...(Array.isArray(payload.validationIssues) ? { validationIssues: payload.validationIssues.map(String) } : {}),
-    ...(Array.isArray(payload.validationWarnings) ? { validationWarnings: payload.validationWarnings.map(String) } : {}),
-    ...(Array.isArray(payload.fieldsToConfirm) ? { fieldsToConfirm: payload.fieldsToConfirm.map(String) } : {}),
-  };
-  const emptyPayload: Record<string, unknown> = path === 'script'
-    ? { script: '' }
-    : path === 'covers'
-      ? { covers: [] }
-      : path === 'caption'
-        ? { caption: '', hashtags: [] }
-        : path === 'fb-poster'
-          ? { caption: '', hashtags: [], commentCta: '', dmOpening: '', fieldsToConfirm: [], imagePrompt: '' }
-          : path === 'lead-content-package'
-            ? { strategySummary: '', referenceModulesUsed: [], items: [], fieldsToConfirm: [] }
-            : path === 'insight'
-              ? { summary: '', actions: [] }
-              : path === 'select'
-                ? { selectedIds: [], reason: '' }
-                : {};
-  return { ...emptyPayload, ...common } as unknown as T & { source?: string };
-}
 
 async function post<T>(path: string, body: unknown, fallback: T, signal?: AbortSignal): Promise<T & { source?: string }> {
   const retryablePaths = new Set(['script', 'translate', 'translate/batch', 'tts', 'tts/batch']);
