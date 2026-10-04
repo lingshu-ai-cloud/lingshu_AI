@@ -479,8 +479,8 @@ test('photo talking first frame preparation is tenant scoped and never generates
   const context = 'draft-context';
   const shot = { ...newShotProduction('目标口播', 'person-1'), source: 'avatar' as const, digitalHuman: {
     presenterMode:'photo_talking' as const, workflow: 'viral_replication' as const, method: 'reenact' as const, replicationMode: 'sentence_first_frame' as const, contentConfirmed: true, presenterSelected: true, replacementScope: 'person_and_scene' as const, targetEffect: 'flexible_scene' as const,
-    action: '复用动作意图', scene: '重建画面', preserve: '构图', reference: { videoUrl: '/source.mp4', start: 0, end: 2, originalText: '原片', derivativeAuthorized: false, modelInputAuthorized: true, modelInputAuthorizationEvidence: 'contract-1',
-      cues: [{ id: 'cue-1', start: 0, end: 2, originalText: '原片', targetText: '目标', shotIds: ['s1'], personShot: true, compositionClusterId: 'front-medium', sourceFirstFrame: { time: 0, materialId: 'frame-1' } }] },
+    action: '复用动作意图', scene: '重建画面', preserve: '构图', reference: { videoUrl: '/source.mp4', start: 0.1, end: 1, originalText: '原片', derivativeAuthorized: false, modelInputAuthorized: true, modelInputAuthorizationEvidence: 'contract-1',
+      cues: [{ id: 'cue-1', splitFromCueId: 'original-cue', start: 0.1, end: 1, originalText: '原片', targetText: '目标', shotIds: ['s1'], personShot: true, compositionClusterId: 'front-medium', sourceFirstFrame: { time: 0.1, materialId: 'frame-1' } }] },
   } };
   rows.set('studio_projects/project-1', { id: 'project-1', tenant_id: 'tenant-a', status: 'draft', spec: { shotProductionContext: context, shotProductions: { 'assembly-1:shot-1': shot } } });
   rows.set('studio_production_defaults/defaults-1', { id: 'defaults-1', tenant_id: 'tenant-a', payload: { presenters: [{ id: 'person-1', name: 'Person', authorized: true }] } });
