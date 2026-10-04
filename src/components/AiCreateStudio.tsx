@@ -14730,8 +14730,6 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
       else onLaunchContentStudio?.(request);
   };
 
-  const generateStoryboardStrategy = () => void runBatchShotJobs();
-
   const chooseReplicationShotMode = (slot: StoryboardSlot, mode: 'video_twin' | 'photo_talking' | 'local' | 'smart' | 'shoot') => {
     if (productionFor(slot).locked) return;
     if (mode === 'video_twin' || mode === 'photo_talking') {
@@ -15365,13 +15363,11 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
               <div className="flex h-12 w-12 items-center justify-center rounded-full bg-slate-900 text-white/70"><Film size={20} /></div>
               <p className="mt-3 text-sm font-black text-text-primary">分镜 {storyboardSlots.findIndex(item => item.id === activeWorkbenchSlot.id) + 1} 暂无画面</p>
               <p className="mt-1 max-w-xs truncate text-[11px]">{activeWorkbenchSlot.title}</p>
-              <button
+              {!socialViralTask && <button
                 type="button"
-                onClick={socialViralTask && step === 'material' ? generateStoryboardStrategy : () => { const materialIndex = activeSteps.findIndex(item => item.id === 'material'); if (materialIndex >= 0) setStepIdx(materialIndex); }}
+                onClick={() => { const materialIndex = activeSteps.findIndex(item => item.id === 'material'); if (materialIndex >= 0) setStepIdx(materialIndex); }}
                 className="mt-4 rounded-md bg-slate-900 px-3 py-2 text-[11px] font-bold text-white hover:bg-slate-800"
-              >
-                {socialViralTask && step === 'material' ? '一键生成分镜' : '匹配素材'}
-              </button>
+              >匹配素材</button>}
             </div>
           ) : (
             <div className="flex max-w-sm flex-col items-center text-center text-text-muted">
