@@ -27,6 +27,7 @@ import { starterWorkerRuntimeIssue, type StarterWorkerEnabledFlag } from './work
 import { starterWorkerDataStore } from './workerStorage.js';
 
 type Row = Record_ & Record<string, unknown>;
+const fixtureNow = new Date('2026-09-12T12:00:00.000Z');
 
 class MemoryStore implements DataStore {
   private sequence = 0;
@@ -337,7 +338,7 @@ test('unapproved quote cannot produce a downloadable artifact', async () => {
   await assert.rejects(() => ensureStarterQuoteArtifact({
     tenantId, userId: `owner-${tenantId}`, draftId: draft.id,
     expectedInputHash: draft.inputHash, idempotencyKey: 'quote-artifact-unapproved',
-    dataStore: store, quotationService: service,
+    dataStore: store, quotationService: service, now: fixtureNow,
   }), runtimeError('starter_198_quote_artifact_not_approved', 409));
   assert.equal(store.collection(STARTER_COLLECTIONS.quoteArtifacts).length, 0);
 });
@@ -348,7 +349,7 @@ test('a changed displayed input hash is rejected before artifact creation', asyn
   await assert.rejects(() => ensureStarterQuoteArtifact({
     tenantId, userId: `owner-${tenantId}`, draftId: draft.id,
     expectedInputHash: '0'.repeat(64), idempotencyKey: 'quote-artifact-changed',
-    dataStore: store, quotationService: service,
+    dataStore: store, quotationService: service, now: fixtureNow,
   }), runtimeError('quote_draft_changed', 409));
   assert.equal(store.collection(STARTER_COLLECTIONS.quoteArtifacts).length, 0);
 });
@@ -361,7 +362,7 @@ test('artifact reads and creation remain tenant scoped', async () => {
   const created = await ensureStarterQuoteArtifact({
     tenantId: victimTenant, userId: `owner-${victimTenant}`, draftId: draft.id,
     expectedInputHash: draft.inputHash, idempotencyKey: 'quote-artifact-victim',
-    dataStore: store, quotationService: service,
+    dataStore: store, quotationService: service, now: fixtureNow,
   });
   const repository = createStarter198Repository(store);
   assert.equal(await readStarterQuoteArtifact({
@@ -373,7 +374,7 @@ test('artifact reads and creation remain tenant scoped', async () => {
   await assert.rejects(() => ensureStarterQuoteArtifact({
     tenantId: attackerTenant, userId: `owner-${attackerTenant}`, draftId: draft.id,
     expectedInputHash: draft.inputHash, idempotencyKey: 'quote-artifact-attacker',
-    dataStore: store, repository, quotationService: service,
+    dataStore: store, repository, quotationService: service, now: fixtureNow,
   }), (error: unknown) => (
     error instanceof Starter198RuntimePortError
     && error.code === 'quote_draft_not_found'
@@ -389,7 +390,7 @@ test('non-starter tenant is rejected even when it has an approved quote', async 
   await assert.rejects(() => ensureStarterQuoteArtifact({
     tenantId, userId: `owner-${tenantId}`, draftId: draft.id,
     expectedInputHash: draft.inputHash, idempotencyKey: 'quote-artifact-nonstarter',
-    dataStore: store, quotationService: service,
+    dataStore: store, quotationService: service, now: fixtureNow,
   }), runtimeError('starter_198_not_provisioned', 403));
   assert.equal(store.collection(STARTER_COLLECTIONS.quoteArtifacts).length, 0);
 });
@@ -402,7 +403,7 @@ test('artifact repair worker cannot create starter artifacts for non-starter quo
   await quoteFixture({
     tenantId: 'advanced-worker-tenant', approved: true, provisioned: false, store,
   });
-  const result = await runStarterQuoteArtifactCycle({ dataStore: store, maxDrafts: 10 });
+  const result = await runStarterQuoteArtifactCycle({ dataStore: store, maxDrafts: 10, now: fixtureNow });
   const artifacts = store.collection(STARTER_COLLECTIONS.quoteArtifacts);
   assert.equal(result.created, 1);
   assert.equal(artifacts.length, 1);
@@ -414,7 +415,7 @@ test('artifact repair worker fails closed when the supplier profile dependency i
   const tenantId = 'starter-worker-missing-profile';
   const fixture = await quoteFixture({ tenantId, approved: true });
   fixture.store.rows.set('tenant_profiles', []);
-  const result = await runStarterQuoteArtifactCycle({ dataStore: fixture.store, maxDrafts: 10 });
+  const result = await runStarterQuoteArtifactCycle({ dataStore: fixture.store, maxDrafts: 10, now: fixtureNow });
   assert.equal(result.created, 0);
   assert.deepEqual(result.failed, [{
     tenantId,
@@ -494,14 +495,14 @@ test('artifact repair worker does not starve later approved drafts behind an exi
   await ensureStarterQuoteArtifact({
     tenantId: 'starter-worker-aaa-existing', userId: 'owner-starter-worker-aaa-existing', draftId: older.draft.id,
     expectedInputHash: older.draft.inputHash, idempotencyKey: 'quote-artifact-worker-old',
-    dataStore: store, quotationService: older.service,
+    dataStore: store, quotationService: older.service, now: fixtureNow,
   });
   const later = await quoteFixture({ tenantId: 'starter-worker-zzz-later', approved: true, store });
 
-  const first = await runStarterQuoteArtifactCycle({ dataStore: store, maxDrafts: 1 });
+  const first = await runStarterQuoteArtifactCycle({ dataStore: store, maxDrafts: 1, now: fixtureNow });
   assert.equal(first.existing, 1);
   assert.ok(first.nextCursor);
-  await runStarterQuoteArtifactCycle({ dataStore: store, maxDrafts: 1, cursor: first.nextCursor });
+  await runStarterQuoteArtifactCycle({ dataStore: store, maxDrafts: 1, cursor: first.nextCursor, now: fixtureNow });
 
   const laterArtifact = await currentStarterQuoteArtifact({
     tenantId: 'starter-worker-zzz-later',
@@ -529,7 +530,7 @@ test('artifact repair cursor advances beyond 500 approved rows with a hard per-c
   let totalScanned = 0;
   for (let cycle = 0; cycle < 6; cycle += 1) {
     const result = await runStarterQuoteArtifactCycle({
-      dataStore: store, maxDrafts: 100, maxTenants: 1, cursor,
+      dataStore: store, maxDrafts: 100, maxTenants: 1, cursor, now: fixtureNow,
     });
     assert.ok(result.scanned <= 100, 'one cycle must never exceed its draft budget');
     assert.ok(result.tenantsScanned <= 1, 'one cycle must never exceed its tenant budget');

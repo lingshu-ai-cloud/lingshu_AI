@@ -2789,7 +2789,7 @@ async function runVoiceTranslationWithTimeout<T>(
 }
 
 /* ── 缩略图与不可预览状态 ──────────────────────────────────────────────── */
-export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onGoPublish, openProjectsSignal = 0, workflowContext, publishStorageScope, socialContentTaskId: incomingSocialTaskId, studioCreateRequest: incomingCreateRequest }: { onNavigate?: (p: Page) => void; onOpenCreationHome?: (openChooser?: boolean) => void; onGoPublish?: (payload: StudioPublishPayload) => void; openProjectsSignal?: number; workflowContext?: StudioWorkflowContext; publishStorageScope?: string; socialContentTaskId?: string | null; studioCreateRequest?: SocialContentCreateRequest | null } = {}) {
+export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunchContentStudio, onGoPublish, openProjectsSignal = 0, workflowContext, publishStorageScope, socialContentTaskId: incomingSocialTaskId, studioCreateRequest: incomingCreateRequest }: { onNavigate?: (p: Page) => void; onOpenCreationHome?: (openChooser?: boolean) => void; onLaunchContentStudio?: (request: SocialContentCreateRequest) => void; onGoPublish?: (payload: StudioPublishPayload) => void; openProjectsSignal?: number; workflowContext?: StudioWorkflowContext; publishStorageScope?: string; socialContentTaskId?: string | null; studioCreateRequest?: SocialContentCreateRequest | null } = {}) {
   const localGateBypass = contentCreationTestBypassEnabled();
   const [stepIdx, setStepIdx] = useState(0);
   const [speechNames, setSpeechNames] = useState<{key: string; names: Record<string,string>}>({key:'',names:{}});
@@ -14395,7 +14395,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onGoPub
           referenceShots: (videoKickoff?.referenceAnalysis?.details || []).map(shot => ({ time: shot.time, dialogue: (shot.speechLines || []).map(line => line.referenceText).join(' '), visual: shot.visual })),
         },
       };
-      window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: { page: 'smartAssets', view: 'create', contentCreationRequest: request } }));
+      onLaunchContentStudio?.(request);
   };
 
   if (socialViralTask && step === 'mode') return <div className="flex h-full flex-col bg-[#f2f7f4]">
@@ -14408,6 +14408,9 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onGoPub
 
   return (
     <div className="flex flex-col h-full relative" onPointerDownCapture={() => { studioSettingsEditedRef.current = true; }}>
+      {socialContentTaskId && <div role="status" className="shrink-0 border-b border-emerald-200 bg-emerald-50 px-4 py-2 text-xs text-emerald-950">
+        任务资料已带入统一制作工作台，继续当前任务即可，不再选择旧制作路线。
+      </div>}
       {linkedProductionContext && <details className="shrink-0 border-b border-emerald-200 bg-emerald-50 px-4 py-2 text-xs text-emerald-950">
         <summary className="cursor-pointer font-bold">关联任务进度 · 点击查看制作状态</summary>
         <div className="mt-2 max-h-80 overflow-y-auto"><ProductionTaskScene key={`${linkedProductionContext.runId}:${linkedProductionContext.taskId}`} runId={linkedProductionContext.runId!} taskId={linkedProductionContext.taskId!} directorContext={linkedProductionContext} embedded /></div>

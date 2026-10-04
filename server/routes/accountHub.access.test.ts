@@ -467,11 +467,12 @@ try {
     method: 'POST', body: JSON.stringify({ resourceLogs: [] }),
   })).status, 401, 'the connector token must not submit OTLP logs');
   const hiddenOtlpCredential = 'cookie=session=opaque-otlp-secret';
+  const sampleTimeUnixNano = BigInt(Date.now()) * 1_000_000n;
   const maliciousTelemetry = await request('/telemetry/v1/logs', ingestToken, {
     method: 'POST',
     body: JSON.stringify({
       resourceLogs: [{ scopeLogs: [{ logRecords: [{
-        timeUnixNano: '1790063999000000000',
+        timeUnixNano: String(sampleTimeUnixNano - 1_000_000_000n),
         attributes: [
           { key: 'model', value: { stringValue: hiddenOtlpCredential } },
           { key: 'gen_ai.usage.input_tokens', value: { intValue: '1' } },
@@ -487,7 +488,7 @@ try {
     method: 'POST',
     body: JSON.stringify({
       resourceLogs: [{ scopeLogs: [{ logRecords: [{
-        timeUnixNano: '1790064000000000000',
+        timeUnixNano: String(sampleTimeUnixNano),
         attributes: [
           { key: 'gen_ai.usage.input_tokens', value: { intValue: '100' } },
           { key: 'gen_ai.usage.output_tokens', value: { intValue: '20' } },

@@ -914,6 +914,7 @@ export default function App() {
                   workflowContextSignal={smartAssetsWorkflowContext}
                   socialContentTaskId={smartAssetsContentTaskId}
                   onOpenCreationHome={handleOpenContentCreationHome}
+                  onLaunchContentStudio={handleLaunchContentStudio}
                 />
               )}
             </div>

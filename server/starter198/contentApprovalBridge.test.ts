@@ -313,7 +313,7 @@ try {
     appendEvent: async () => undefined,
     continueRun: async () => undefined,
     enqueueStarterPublicationPackageTask: input => enqueueApprovedContentPublicationPackageTask(
-      input,
+      { ...input, now },
       integratedRepository,
     ),
     now: () => now,

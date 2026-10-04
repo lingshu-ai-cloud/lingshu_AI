@@ -178,6 +178,7 @@ try {
     approvalTaskId: 'approval-task',
     subjectVersion: '1',
     contentHash: canonical.subject.contentHash,
+    now,
   }, repository);
   approval.status = 'approved';
   const approvalTask = rows.get(STARTER_COLLECTIONS.tasks)!.find(row => row.id === 'approval-task')!;

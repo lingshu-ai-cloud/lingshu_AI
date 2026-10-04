@@ -199,6 +199,7 @@ export async function runSocialContentAutoProduction(input: {
   userId: string;
   taskId: string;
   runId: string;
+  now?: Date;
   /** Optional providers are explicitly registered by the deployment. Missing
    * digital-human/stock/AI providers remain visible fallback attempts. */
   assetSupplyAdapters?: SocialAssetSupplyProviderAdapter[];
@@ -324,6 +325,7 @@ export async function runSocialContentAutoProduction(input: {
       taskId: input.taskId,
       idempotencyKey: `social-shooting-plan:${input.runId}`,
       trustedAgentOrigin: true,
+      now: input.now,
       backendFilePort: input.runtime?.backendFilePort,
       value: {
         kind: 'shooting_plan',
@@ -963,6 +965,7 @@ export async function runSocialContentAutoProduction(input: {
     taskId: input.taskId,
     idempotencyKey: `social-auto-artifact:${input.runId}`,
     trustedAgentOrigin: true,
+    now: input.now,
 	backendFilePort: input.runtime?.backendFilePort,
     value: {
       kind: 'short_video',

@@ -216,7 +216,11 @@ const socialTaskMaterialPort = {
     return row;
   },
 };
-const productionQueue = createStarter198OrchestratorQueue({ repository, dataStore });
+const productionQueue = createStarter198OrchestratorQueue({
+  repository,
+  dataStore,
+  now: () => new Date('2026-09-14T08:00:00.000Z'),
+});
 const productionQueueInputs: Parameters<typeof productionQueue.enqueue>[0][] = [];
 let interruptNextProductionQueue = false;
 const observedProductionQueue = {
@@ -1276,6 +1280,7 @@ try {
   fs.writeFileSync(fakeVoicePath, Buffer.from('RIFF0000WAVEfmt '));
   await runSocialContentAutoProduction({
     repository,
+    now: new Date('2026-09-14T08:00:00.000Z'),
     tenantId: tenant,
     userId: 'operator-user',
     taskId: zeroInputTaskId,
@@ -1670,7 +1675,8 @@ try {
     artifactRows.push({ id: `limit-artifact-${artifactRows.length}`, tenant_id: tenant, task_id: taskId });
   }
   await assert.rejects(
-    assertSocialTaskChildCapacity({ repository, tenantId: tenant, taskId, kind: 'artifact' }),
+    assertSocialTaskChildCapacity({ repository, tenantId: tenant, taskId, kind: 'artifact',
+      now: new Date('2026-09-14T08:00:00.000Z') }),
     (error: any) => error?.code === 'social_content_artifact_limit_reached',
   );
 

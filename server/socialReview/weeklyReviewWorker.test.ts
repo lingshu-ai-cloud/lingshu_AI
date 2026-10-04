@@ -83,7 +83,7 @@ assert.equal(replay.snapshot?.contents[0]?.metrics.views?.value, 180, 'post-free
 assert.equal(dataStore.rows.get('social_creative_learnings')?.length, 1, 'learning replay is idempotent');
 assert.equal(dataStore.rows.get('social_weekly_promotion_decisions')?.length, 1, 'decision replay is idempotent');
 assert.equal(dataStore.rows.get('agent_notification_outbox')?.length, 1, 'review replay produces one durable notification event');
-assert.equal((await consumeAgentNotificationOutboxBatch({ dataStore, now: new Date('2026-09-29T00:02:00Z') })).delivered, 1);
+assert.equal((await consumeAgentNotificationOutboxBatch({ dataStore, now: new Date(Date.now() + 1_000) })).delivered, 1);
 
 const planned = await createWeeklyOperatingPackageService(dataStore).create('tenant-a', 'owner', 'program-a', {
   weekStart: '2026-09-28', objective: 'next week', successCriteria: ['use promoted quota'],

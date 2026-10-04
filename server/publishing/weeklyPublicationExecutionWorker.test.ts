@@ -119,7 +119,11 @@ for (const platform of ['youtube', 'instagram', 'facebook'] as const) {
     async publish() { platformPublishCalls += 1; return { status: 'published', providerReceiptId: `${platform}-post-1`, platformPostId: `${platform}-post-1` }; },
     async reconcile() { return { status: 'unknown' }; },
   };
-  const platformScan = await runWeeklyPublicationExecutionScan({ dataStore: platformStore, adapterFactory: async () => platformAdapter });
+  const platformScan = await runWeeklyPublicationExecutionScan({
+    dataStore: platformStore,
+    now: new Date('2026-09-25T00:04:00Z'),
+    adapterFactory: async () => platformAdapter,
+  });
   assert.equal(platformScan.published, 1, `${platform} assignment must execute through the weekly worker: ${JSON.stringify(platformScan)}`);
   assert.equal(platformPublishCalls, 1);
 }

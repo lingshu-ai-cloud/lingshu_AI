@@ -120,6 +120,7 @@ export async function runStarterQuoteArtifactCycle(input: {
   maxDrafts?: number;
   maxTenants?: number;
   cursor?: string | null;
+  now?: Date;
 } = {}): Promise<StarterQuoteArtifactCycleResult> {
   const dataStore = starterWorkerDataStore(input.dataStore ?? store);
   const repository = createStarter198Repository(dataStore);
@@ -169,7 +170,7 @@ export async function runStarterQuoteArtifactCycle(input: {
     }
     try {
       const access = await repository.access(tenantId);
-      const manifest = buildStarter198CapabilityManifest(access);
+      const manifest = buildStarter198CapabilityManifest(access, input.now ?? new Date());
       if (!starter198CapabilityAllowed(manifest, 'quotation.calculate')) {
         nextTenant(cursor);
         continue;
@@ -213,6 +214,7 @@ export async function runStarterQuoteArtifactCycle(input: {
             idempotencyKey: `quote-artifact-worker:${draft.id}:${inputHash.slice(0, 24)}`,
             dataStore,
             repository,
+            now: input.now,
           });
           if (ensured.created) result.created += 1;
           else result.existing += 1;
