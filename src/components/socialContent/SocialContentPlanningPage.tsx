@@ -132,7 +132,12 @@ export default function SocialContentPlanningPage({
         referenceLinks: request.referenceLinks,
       },
       sourceContext: sourceRequest?.sourceContext,
-      identityMappings: { products: request.productMappings, brand: request.brandMapping },
+      identityMappings: {
+        selectedProductIds: request.productMappings.map(mapping => mapping.productId).filter(Boolean),
+        selectedProductNames: request.productMappings.map(mapping => mapping.productName).filter(Boolean),
+        products: request.productMappings,
+        brand: request.brandMapping,
+      },
       presenterAssetId: request.presenterAssetId || undefined,
       specialRequirements: request.specialRequirements,
     });

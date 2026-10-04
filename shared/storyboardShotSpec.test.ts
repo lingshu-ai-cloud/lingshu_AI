@@ -23,6 +23,9 @@ const freeFactory = compileStoryboardShotSpec({ shotId: 'factory', mode: 'free_c
 assert.equal(freeFactory.targetDurationSeconds, 4);
 assert.equal(freeFactory.layout.preserveSourceComposition, false);
 assert.deepEqual(freeFactory.constraints, ['factory_space']);
+const general = compileStoryboardShotSpec({ shotId: 'ambient', mode: 'free_creation', scene: 'general', description: '人物走过走廊', ratio: '9:16', assets: [] });
+assert.equal(general.layout.subject, 'subject described by the storyboard');
+assert.ok(!general.constraints.includes('product_identity'));
 const twoProducts = compileStoryboardShotSpec({ ...base, assets: [sourceFrame, product, { ...product, id: 'kb-product-2', version: 'image-hash-2' }] });
 assert.equal(twoProducts.assets.filter(item => item.role === 'product').length, 2);
 assert.throws(() => compileStoryboardShotSpec({ ...base, assets: [sourceFrame, product, product] }), /duplicate_asset/);

@@ -38,7 +38,7 @@ interface BatchShotSpec {
   shootingSlots?: Array<{ id?: string; slotId?: string; detail?: string; duration?: number; requirements?: string; observedPresenterRole?: import('../../shared/contracts/presenterShotRecognition.js').ObservedPresenterRole; personContinuityId?: string; salesPresenterConfirmed?: boolean }>;
   shotProductions?: Record<string, ShotProduction>;
   storyboardAssignments?: Record<string, string>;
-  storyboardSourcePlans?: Record<string, { userSource?: string; mode?: string; sceneType?: 'product' | 'factory' | 'usage'; confirmed?: boolean; firstFrameMaterialId?: string; firstFrameConfirmed?: boolean; generatedClipId?: string; videoResolution?: '480p' | '720p'; videoResolutionPinned?: boolean }>;
+  storyboardSourcePlans?: Record<string, { userSource?: string; mode?: string; shotTopic?: 'presenter' | 'factory' | 'product' | 'general'; sceneType?: 'product' | 'factory' | 'usage' | 'general'; confirmed?: boolean; firstFrameMaterialId?: string; firstFrameConfirmed?: boolean; generatedClipId?: string; videoResolution?: '480p' | '720p'; videoResolutionPinned?: boolean }>;
   clipEdits?: Record<string, { segmentId?: string; trimStart?: number; trimEnd?: number }>;
   materialSnapshots?: Array<{ id?: string; usage?: string; name?: string; type?: string; url?: string; duration?: number; width?: number; height?: number; aspectRatio?: number; transcript?: string }>;
 }
@@ -67,10 +67,12 @@ export function planStudioBatchShotRoutes(spec: BatchShotSpec, options: {
     const purpose = String(slot.detail || '').match(/镜头功能：([^\s]+)/)?.[1] || String(slot.requirements || '').slice(0, 120);
     const explicitScene = spec.storyboardSourcePlans?.[slotId]?.sceneType;
     const recognition = confirmedSalesPresenterRoute(slot);
-    const spokenOnScreen = recognition === 'presenter' || spec.storyboardSourcePlans?.[slotId]?.userSource === 'avatar';
-    const action = recognition === 'motion';
-    const visualTopic: StudioBatchShotRoute['visualTopic'] = action || spokenOnScreen ? 'presenter'
-      : explicitScene === 'factory' || /工厂|车间|生产线|流水线|灌装|工人|factory|manufactur/i.test(description) ? 'factory'
+    const selectedTopic = spec.storyboardSourcePlans?.[slotId]?.shotTopic;
+    const factoryScene = selectedTopic === 'factory' || (!selectedTopic && recognition !== 'presenter' && (explicitScene === 'factory' || /工厂|车间|生产线|流水线|灌装|工人|factory|manufactur/i.test(description)));
+    const spokenOnScreen = !factoryScene && (recognition === 'presenter' || spec.storyboardSourcePlans?.[slotId]?.userSource === 'avatar');
+    const action = !factoryScene && recognition === 'motion';
+    const visualTopic: StudioBatchShotRoute['visualTopic'] = factoryScene ? 'factory' : action || spokenOnScreen ? 'presenter'
+      : explicitScene === 'general' ? 'other'
         : explicitScene === 'usage' || /使用|试用|安装|操作|涂抹|喷涂|上脸|妆效|粉底覆盖|usage/i.test(description) ? 'usage_scene'
           : explicitScene === 'product' || /产品|包装|瓶身|质地|粉底液|product/i.test(description) ? 'product' : 'other';
     const assignedId = String(assignments[slotId] || '').trim();
@@ -108,7 +110,11 @@ export function planStudioBatchShotRoutes(spec: BatchShotSpec, options: {
         ? '目标首帧已确认，等待生成视频候选并逐镜验收'
         : '需要先生成并确认目标首帧；批量入口不得跳过确认直接提交视频' };
     }
-    if ((shot?.source !== 'avatar' || spec.storyboardSourcePlans?.[slotId]?.confirmed) && assigned) return { ...base, route: 'local_material', status: materialIssue ? 'needs_material' : 'matched', reason: materialIssue || '采用已绑定的企业素材' };
+    // An unusable association is not a reason to make the user choose between
+    // shooting and AIGC. Only an explicitly selected material/shooting route
+    // keeps the material task open; otherwise non-presenter shots generate.
+    if ((shot?.source !== 'avatar' || spec.storyboardSourcePlans?.[slotId]?.confirmed) && assigned && !materialIssue)
+      return { ...base, route: 'local_material', status: 'matched', reason: '采用已绑定的企业素材' };
     if (visualTopic === 'presenter' || choice === 'avatar') {
       const missing = digitalHumanDecisionIssues(shot?.digitalHuman);
       if (!shot?.presenterId) missing.unshift('请选择企业人物');
@@ -134,7 +140,9 @@ export function planStudioBatchShotRoutes(spec: BatchShotSpec, options: {
         return { ...base, route: 'digital_human', status: 'blocked', reason: '该镜缺少逐句口播文案' };
       return { ...base, route: 'digital_human', status: 'needs_plan', reason: '可在保存草稿后逐镜创建数字人计划，执行器预检通过才可提交生成' };
     }
-    if (assigned) return { ...base, route: 'local_material', status: materialIssue ? 'needs_material' : 'matched', reason: materialIssue || '已有本地素材关联' };
-    return { ...base, route: 'local_material', status: 'needs_material', reason: '需按视觉主题与表达目的从企业素材库匹配；当前没有已关联素材' };
+    if (assigned && !materialIssue) return { ...base, route: 'local_material', status: 'matched', reason: '已有可用本地素材关联' };
+    return { ...base, route: 'aigc_first_frame', status: 'needs_plan', reason: assigned
+      ? `已关联本地素材不可用（${materialIssue}），自动准备目标首帧`
+      : '没有可用本地素材，自动准备目标首帧' };
   });
 }

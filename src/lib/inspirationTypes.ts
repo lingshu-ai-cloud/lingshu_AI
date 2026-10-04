@@ -208,6 +208,8 @@ export interface FrameMaterialMatch {
 
 export interface ShootingNeed {
   id: string;
+  /** Earliest source video's crawl time: when this derived need first appeared. */
+  createdAt?: string;
   priority: '高' | '中' | '低';
   title: string;
   suggestion: string;

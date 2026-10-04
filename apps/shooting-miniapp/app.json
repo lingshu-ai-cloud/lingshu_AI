@@ -1,0 +1,5 @@
+{
+  "pages": ["pages/index/index"],
+  "window": { "navigationBarTitleText": "拍摄任务", "navigationBarBackgroundColor": "#0f8054", "navigationBarTextStyle": "white", "backgroundColor": "#f5f8f5" },
+  "style": "v2"
+}

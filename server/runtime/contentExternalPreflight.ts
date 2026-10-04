@@ -63,6 +63,8 @@ export function staticContentExternalPreflight(env: Env = process.env): ContentE
     !(value(env, 'SEEDREAM_API_KEY') || value(env, 'SEEDANCE_API_KEY')) && 'SEEDREAM_API_KEY_or_SEEDANCE_API_KEY（Seedream 首帧生成）',
     enabled(env, 'DIGITAL_HUMAN_SEMANTIC_QA_ENABLED') && !(value(env, 'DASHSCOPE_API_KEY') || value(env, 'DASHSCOPE_API_KEY_FILE')) && 'DASHSCOPE_API_KEY_or_DASHSCOPE_API_KEY_FILE（独立语义质检）',
     enabled(env, 'DIGITAL_HUMAN_SEMANTIC_QA_ENABLED') && !value(env, 'QWEN_DIGITAL_HUMAN_QA_MODEL') && 'QWEN_DIGITAL_HUMAN_QA_MODEL',
+    storage.driver === 'local' && !/^https:\/\//i.test(value(env, 'LOCAL_OBJECT_STORAGE_PUBLIC_BASE_URL'))
+      && 'LOCAL_OBJECT_STORAGE_PUBLIC_BASE_URL（公网 HTTPS）',
   ].filter(Boolean);
   const checks = {
     objectStorage: invalidStorageDriver

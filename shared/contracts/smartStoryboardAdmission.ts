@@ -31,10 +31,6 @@ export function enterpriseMaterialIssue(input: {
   const clip = input.material;
   if (!clip?.url || clip.usage === 'reference_only') return '请选择或上传企业素材';
   if (clip.type === 'video' && (!Number.isFinite(clip.duration) || Number(clip.duration) + .05 < input.duration)) return '素材时长不足';
-  const aspect = Number(clip.aspectRatio) || (Number(clip.width) > 0 && Number(clip.height) > 0 ? Number(clip.width) / Number(clip.height) : 0);
-  const [width, height] = (input.ratio || '').split(':').map(Number);
-  if (width && height && !aspect) return '素材画幅尚未确认';
-  if (width && height && ((width / height < .9 && aspect > 1.1) || (width / height > 1.1 && aspect < .9))) return '素材画幅不符';
   if (input.sound === 'source' && input.narration?.trim() && !/^(无|none)$/i.test(input.narration.trim())) {
     const normalize = (text: string) => text.toLowerCase().replace(/[\p{P}\p{S}\s]/gu, '');
     if (clip.type !== 'video' || !clip.transcript?.trim()) return '已开启素材原声，请确认素材台词';

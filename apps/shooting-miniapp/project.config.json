@@ -1,0 +1,12 @@
+{
+  "description": "灵枢拍摄任务移动端",
+  "miniprogramRoot": "./",
+  "projectname": "lingshu-shooting",
+  "appid": "wxe47d8e0f74fe1403",
+  "setting": {
+    "es6": true,
+    "enhance": true,
+    "minified": true
+  },
+  "compileType": "miniprogram"
+}

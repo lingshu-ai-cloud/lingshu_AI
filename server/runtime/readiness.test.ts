@@ -36,7 +36,6 @@ try {
   assert.equal(sentenceBlocked.ready, false);
   assert.deepEqual(sentenceBlocked.missing, [
     'SEEDANCE_SENTENCE_ENABLED=true', 'SEEDANCE_API_KEY', 'SEEDANCE_MODEL', 'SEEDREAM_API_KEY 或 SEEDANCE_API_KEY（Seedream 目标人物首帧生成）',
-    '对象存储 endpoint/account', '对象存储 access key', '对象存储 secret key',
     'OBJECT_STORAGE_DRIVER=cos 或 LOCAL_OBJECT_STORAGE_PUBLIC_BASE_URL（公网 HTTPS）',
   ]);
   const sentenceReady = sentenceReplicationReadiness({
@@ -72,8 +71,6 @@ try {
   assert.deepEqual(sentenceReplicationReadiness({
     SEEDANCE_SENTENCE_ENABLED: 'true', SEEDANCE_API_KEY: 'configured-for-test', SEEDANCE_MODEL: 'seedance-test',
     OBJECT_STORAGE_DRIVER: 'local', LOCAL_OBJECT_STORAGE_PUBLIC_BASE_URL: 'https://assets.example.test',
-    OBJECT_STORAGE_ENDPOINT: 'https://object.example.test', OBJECT_STORAGE_ACCESS_KEY_ID: 'configured-for-test',
-    OBJECT_STORAGE_SECRET_ACCESS_KEY: 'configured-for-test', OBJECT_STORAGE_BUCKET_NAME: 'assets',
   }), { ready: true, missing: [] });
 
   const providerBlocked = digitalHumanProviderReadiness({

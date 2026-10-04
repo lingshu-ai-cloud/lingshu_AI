@@ -124,7 +124,7 @@ export function sentenceReplicationReadiness(env: NodeJS.ProcessEnv = process.en
   const objectSecret = configured('OBJECT_STORAGE_SECRET_ACCESS_KEY') || configured('R2_SECRET_ACCESS_KEY') || configured('COS_SECRET_KEY');
   const objectBucket = configured('OBJECT_STORAGE_BUCKET_NAME') || configured('R2_BUCKET_NAME') || configured('COS_BUCKET');
   const storageDriver = String(env.OBJECT_STORAGE_DRIVER || (env.NODE_ENV === 'production' ? 'cos' : 'local')).trim().toLowerCase();
-  const localPhotoStorage = videoProvider === 'heygen' && storageDriver === 'local';
+  const cloudStorage = storageDriver !== 'local';
   const missing = [
     videoProvider === 'heygen' && !switchedOn('HEYGEN_GENERATION_ENABLED') && 'HEYGEN_GENERATION_ENABLED=true',
     videoProvider === 'heygen' && !configured('HEYGEN_API_KEY') && 'HEYGEN_API_KEY',
@@ -134,10 +134,10 @@ export function sentenceReplicationReadiness(env: NodeJS.ProcessEnv = process.en
     !(configured('SEEDREAM_API_KEY') || configured('SEEDANCE_API_KEY')) && 'SEEDREAM_API_KEY 或 SEEDANCE_API_KEY（Seedream 目标人物首帧生成）',
     switchedOn('DIGITAL_HUMAN_SEMANTIC_QA_ENABLED') && !(configured('DASHSCOPE_API_KEY') || configured('DASHSCOPE_API_KEY_FILE')) && 'DASHSCOPE_API_KEY 或 DASHSCOPE_API_KEY_FILE（独立语义质检）',
     switchedOn('DIGITAL_HUMAN_SEMANTIC_QA_ENABLED') && !configured('QWEN_DIGITAL_HUMAN_QA_MODEL') && 'QWEN_DIGITAL_HUMAN_QA_MODEL',
-    !localPhotoStorage && !objectEndpoint && '对象存储 endpoint/account',
-    !localPhotoStorage && !objectAccessKey && '对象存储 access key',
-    !localPhotoStorage && !objectSecret && '对象存储 secret key',
-    !localPhotoStorage && !objectBucket && '对象存储 bucket',
+    cloudStorage && !objectEndpoint && '对象存储 endpoint/account',
+    cloudStorage && !objectAccessKey && '对象存储 access key',
+    cloudStorage && !objectSecret && '对象存储 secret key',
+    cloudStorage && !objectBucket && '对象存储 bucket',
     videoProvider === 'seedance' && storageDriver === 'local' && !/^https:\/\//i.test(String(env.LOCAL_OBJECT_STORAGE_PUBLIC_BASE_URL || '').trim())
       && 'OBJECT_STORAGE_DRIVER=cos 或 LOCAL_OBJECT_STORAGE_PUBLIC_BASE_URL（公网 HTTPS）',
   ].filter(Boolean) as string[];

@@ -625,7 +625,7 @@ export const studioApi = {
     productName?: string;
     characterMaterialId?: string;
     environmentMaterialId?: string;
-    sceneType: 'product' | 'factory' | 'usage';
+    sceneType: 'product' | 'factory' | 'usage' | 'general';
     ratio?: string;
   }) => post<StoryboardFirstFrameResult>('storyboard-first-frame', b, { ok: false }),
   storyboardProductMatch: (b: { projectId: string; shotId: string }) =>

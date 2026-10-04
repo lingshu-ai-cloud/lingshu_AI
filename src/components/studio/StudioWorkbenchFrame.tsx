@@ -113,6 +113,7 @@ export type StudioStoryboardItem = {
   voiceover?: string;
   status?: StudioStoryboardStatus;
   statusLabel?: string;
+  topicLabel?: string;
   livePresenter?: boolean;
   presenterCandidate?: boolean;
   presenterDecision?: boolean;
@@ -560,6 +561,7 @@ export function StudioStoryboardList({ items, selectedId, onSelect, onMore, onPr
                     <span className="line-clamp-1 text-[11px] font-black text-text-primary">{item.title || `分镜 ${String(item.index).padStart(2, '0')}`}</span>
                     {item.duration && <span className="shrink-0 text-[9px] font-bold text-text-muted">{item.duration}</span>}
                   </span>
+                  {item.topicLabel && <span className="mt-1 inline-flex rounded-full bg-emerald-50 px-2 py-0.5 text-[9px] font-bold text-emerald-800">题材：{item.topicLabel}</span>}
                   {item.frameLabel && <span className="mt-1 block text-[9px] text-text-muted">{item.frameLabel}</span>}
                   {item.presenterCandidate && <span className="mt-1 block text-[10px] font-bold text-amber-700">人物待确认 · 暂不生成数字人</span>}
                   {item.livePresenter && <span className="mt-1 block text-[10px] font-bold text-red-600">销售人物已确认 · 数字人复刻</span>}

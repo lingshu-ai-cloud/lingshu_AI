@@ -78,10 +78,8 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       assert.equal(payload.image?.length, 3, 'source, enterprise product and person/environment sheet fit the model limit');
       assert.match(payload.prompt, /two-panel contact sheet/);
     }
-    if (String(payload.prompt || '').includes('工厂流水线设备近景')) {
-      assert.equal(payload.image?.length, 1, 'factory shot receives the selected environment image');
-      assert.match(payload.prompt, /environment/i);
-    }
+    if (String(payload.prompt || '').includes('工厂流水线设备近景') && payload.image?.length)
+      assert.match(payload.prompt, /environment/i, 'selected factory image remains an optional reference');
     return json({ data: [{ url: 'https://mock.storyboard/candidate.png' }] });
   }
   if (url === 'https://mock.storyboard/candidate.png') return new Response(image, { headers: { 'content-type': 'image/png' } });
@@ -222,27 +220,18 @@ try {
     }
     if (shot.id === 'free-factory') {
       const beforeSpecific = supplierImagePosts;
-      const missingFactoryProduct = await post('/storyboard-first-frame', { ...frameRequest,
-        shotDescription: '产品在传送带上移动的特写', productIds: [] });
-      assert.equal(missingFactoryProduct.status, 422);
-      assert.equal(missingFactoryProduct.body.code, 'FACTORY_PRODUCT_REQUIRED');
-      assert.equal(supplierImagePosts, beforeSpecific);
+      delete projectSpec.storyboardSourcePlans[shot.id].environmentMaterialId;
       const missingSpecificReference = await post('/storyboard-first-frame', { ...frameRequest,
-        shotDescription: '展示本厂流水线设备近景', environmentMaterialId: '' });
-      assert.equal(missingSpecificReference.status, 422);
-      assert.equal(missingSpecificReference.body.code, 'FACTORY_REFERENCE_REQUIRED');
-      assert.equal(supplierImagePosts, beforeSpecific, 'specific factory shot cannot submit without an enterprise environment image');
-      const specificInLayout = await post('/storyboard-first-frame', { ...frameRequest,
-        layout: { environment: '本厂指定产线' }, environmentMaterialId: '' });
-      assert.equal(specificInLayout.status, 422);
-      assert.equal(specificInLayout.body.code, 'FACTORY_REFERENCE_REQUIRED');
-      assert.equal(supplierImagePosts, beforeSpecific);
+        environmentMaterialId: '', layout: { environment: '本厂指定产线' }, requestId: `factory-without-reference-${suffix}` });
+      assert.equal(missingSpecificReference.status, 200, 'factory shot can generate without an environment image');
+      assert.equal(supplierImagePosts, beforeSpecific + 1);
+      projectSpec.storyboardSourcePlans[shot.id].environmentMaterialId = environmentMaterialId;
       saveLocalMaterials(readLocalMaterials().map(item => item.id === environmentMaterialId
         ? { ...item, objectKey: sourceObjectKey } : item));
       const unsafeEnvironment = await post('/storyboard-first-frame', frameRequest);
       assert.equal(unsafeEnvironment.status, 422);
       assert.equal(unsafeEnvironment.body.code, 'ENVIRONMENT_MATERIAL_NOT_SELECTED');
-      assert.equal(supplierImagePosts, beforeSpecific);
+      assert.equal(supplierImagePosts, beforeSpecific + 1);
       saveLocalMaterials(readLocalMaterials().map(item => item.id === environmentMaterialId
         ? { ...item, objectKey: environmentObjectKey } : item));
     }
@@ -438,7 +427,7 @@ try {
     const adopted = await post('/projects', { id: projectId, status: 'draft', spec: unreviewedSpec });
     assert.equal(adopted.status, 200, `${shot.id} adopt: ${JSON.stringify(adopted.body)}`);
   }
-  assert.equal(supplierImagePosts, shots.length);
+  assert.equal(supplierImagePosts, shots.length + 1, 'factory without a reference also reaches image generation');
   assert.equal(supplierVideoPosts, shots.length);
   console.log('storyboard AIGC mocked e2e passed: six shot cases, QA, review, adoption, idempotent video retry');
 } finally {

@@ -36,7 +36,6 @@ import os from 'node:os';
 import { fileURLToPath } from 'url';
 import { randomUUID, createHash } from 'node:crypto';
 import { validatePresenterRightsEvidence } from '../lib/presenterAssetTrust.js';
-import { storyboardFactoryProductRequired, storyboardFactoryReferenceRequired } from '../../shared/storyboardFactoryReference.js';
 import { isTenantPrivateObjectKey } from '../storage/materialAssets.js';
 import { createRequire } from 'node:module';
 import { execFile, spawn } from 'node:child_process';
@@ -1768,7 +1767,7 @@ studioRouter.post('/storyboard-first-frame', async (req, res) => {
   const shotId = String(body.shotId || '').trim().slice(0, 160);
   const shotDescription = String(body.shotDescription || '').trim();
   const mode: StoryboardMode = body.mode === 'replication' ? 'replication' : 'free_creation';
-  const sceneType: StoryboardSceneType = ['product', 'factory', 'usage'].includes(body.sceneType) ? body.sceneType : 'product';
+  const sceneType: StoryboardSceneType = ['product', 'factory', 'usage', 'general'].includes(body.sceneType) ? body.sceneType : 'product';
   const ratio = ['9:16', '16:9', '1:1'].includes(body.ratio) ? body.ratio : '9:16';
   if (!shotId || !shotDescription || shotDescription.length > 4000) {
     res.status(400).json({ ok: false, error: '分镜 ID 和画面要求不能为空，且画面要求不能超过 4000 字' }); return;
@@ -1796,10 +1795,6 @@ studioRouter.post('/storyboard-first-frame', async (req, res) => {
     res.status(422).json({ ok: false, code: 'PRODUCT_NOT_SELECTED_FOR_VIDEO', error: '当前分镜产品必须来自内容创作第一步已选的本片产品' }); return;
   }
   if (productIds.length > 3) { res.status(422).json({ ok: false, code: 'TOO_MANY_PRODUCTS', error: '单镜最多支持三个产品身份参考，请拆分镜头' }); return; }
-  if (sceneType === 'factory' && !productIds.length && storyboardFactoryProductRequired(shotDescription)) {
-    res.status(422).json({ ok: false, code: 'FACTORY_PRODUCT_REQUIRED',
-      error: '当前工厂镜头明确出现产品，请先从本片已选企业产品中绑定对应产品' }); return;
-  }
   const productReferences: Array<{ id: string; name: string; imageUrl: string; image: ReferenceImage;
     views: Array<{ index: number; imageUrl: string; image: ReferenceImage }> }> = [];
   if (productIds.length) {
@@ -1831,7 +1826,7 @@ studioRouter.post('/storyboard-first-frame', async (req, res) => {
       }
       productReferences.push({ id: productId, name: String(product.name || ''), imageUrl, image, views });
     }
-  } else if (sceneType !== 'factory') {
+  } else if (sceneType === 'product' || sceneType === 'usage') {
     res.status(422).json({ ok: false, code: 'PRODUCT_REQUIRED', error: '请先选择企业知识库中的目标产品' }); return;
   }
   const missingProductViews = storyboardMissingProductViews({ description: shotDescription,
@@ -1878,10 +1873,6 @@ studioRouter.post('/storyboard-first-frame', async (req, res) => {
     if (!environmentImage) {
       res.status(422).json({ ok: false, code: 'ENVIRONMENT_IMAGE_UNAVAILABLE', error: '当前项目已选的环境参考图无法读取' }); return;
     }
-  }
-  if (sceneType === 'factory' && storyboardFactoryReferenceRequired(`${shotDescription} ${String(body.layout?.environment || '')}`) && !environmentImage) {
-    res.status(422).json({ ok: false, code: 'FACTORY_REFERENCE_REQUIRED',
-      error: '当前镜头要求还原本企业指定工厂或设备，请先选择对应企业场景图，或调整为通用工厂画面' }); return;
   }
   const referenceCapacity = storyboardReferenceCapacity({ source: !!sourceFrame, products: productReferences.length,
     person: !!characterImage, environment: !!environmentImage });
@@ -8519,6 +8510,30 @@ studioRouter.post('/projects', async (req, res) => {
         return;
       }
       const storedSpec = typeof existing.spec === 'string' ? JSON.parse(existing.spec) : existing.spec;
+      // A remounted editor can briefly hold an empty draft while hydration is
+      // still in flight. Never let that snapshot erase an established storyboard.
+      const savedAssignments = Object.keys(storedSpec?.storyboardAssignments || {}).length;
+      const incomingAssignments = Object.keys(spec.storyboardAssignments || {}).length;
+      const savedSnapshots = Array.isArray(storedSpec?.materialSnapshots) ? storedSpec.materialSnapshots.length : 0;
+      const incomingSnapshots = Array.isArray(spec.materialSnapshots) ? spec.materialSnapshots.length : 0;
+      if (savedAssignments > 1 && incomingAssignments === 0 && savedSnapshots > 1 && incomingSnapshots <= 1) {
+        res.status(409).json({ ok: false, code: 'STORYBOARD_HYDRATION_INCOMPLETE', error: '项目分镜尚未完整载入，已阻止空草稿覆盖原有素材关联。请刷新页面后重试。' });
+        return;
+      }
+      // Pending avatar jobs can have neither a URL nor a poster yet. The editor
+      // cannot turn those snapshots into visual clips, but their candidates
+      // still refer to them, so retain the saved metadata during autosave.
+      const candidateMaterialIds = new Set<string>(Object.values(spec.shotProductions || {})
+        .flatMap((production: any) => Array.isArray(production?.candidates)
+          ? production.candidates.map((candidate: any) => String(candidate?.materialId || ''))
+          : [])
+        .filter(Boolean));
+      if (candidateMaterialIds.size && Array.isArray(storedSpec?.materialSnapshots)) {
+        const snapshots = Array.isArray(spec.materialSnapshots) ? spec.materialSnapshots : [];
+        const incomingIds = new Set(snapshots.map((snapshot: any) => String(snapshot?.id || '')));
+        spec.materialSnapshots = [...snapshots, ...storedSpec.materialSnapshots.filter((snapshot: any) =>
+          candidateMaterialIds.has(String(snapshot?.id || '')) && !incomingIds.has(String(snapshot?.id || '')))];
+      }
       if (storedSpec?.workflowRunId && storedSpec?.automation?.managedBy === 'digital_employee') {
         res.status(409).json({ ok: false, error: '此项目由任务自动生产，请通过交付看板纠偏重跑，或复制为新草稿后编辑。', code: 'managed_production_project' });
         return;

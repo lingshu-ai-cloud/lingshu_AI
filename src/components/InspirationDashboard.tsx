@@ -784,12 +784,14 @@ function buildShootingNeeds(videos: TrendVideo[], materials: Material[]): Shooti
       const sourceTitle = shortenText(video.title, 42);
       if (existing) {
         existing.count += 1;
+        if (video.crawledAt && (!existing.createdAt || Date.parse(video.crawledAt) < Date.parse(existing.createdAt))) existing.createdAt = video.crawledAt;
         if (!existing.sourceVideos.includes(sourceTitle)) existing.sourceVideos.push(sourceTitle);
         if (frameStartsEarly(match.detail.time)) existing.priority = '高';
         continue;
       }
       grouped.set(key, {
         id: key,
+        createdAt: video.crawledAt,
         priority: frameStartsEarly(match.detail.time) ? '高' : '中',
         title,
         suggestion: match.suggestion,
@@ -803,11 +805,13 @@ function buildShootingNeeds(videos: TrendVideo[], materials: Material[]): Shooti
   }
   return Array.from(grouped.values())
     .map((item): ShootingNeed => ({ ...item, priority: item.priority === '高' || item.count >= 3 ? '高' : item.count >= 2 ? '中' : '低' }))
-    .sort((a, b) => {
-      const rank = { '高': 3, '中': 2, '低': 1 };
-      return rank[b.priority] - rank[a.priority] || b.count - a.count;
-    })
+    .sort((a, b) => (Date.parse(b.createdAt || '') || 0) - (Date.parse(a.createdAt || '') || 0))
     .slice(0, 30);
+}
+
+function shootingCreationDate(value?: string): string {
+  const timestamp = Date.parse(value || '');
+  return Number.isFinite(timestamp) ? new Date(timestamp).toLocaleDateString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' }) : '待补录';
 }
 
 function conciseLines(text: string, maxLines = 6, maxChars = 34): string[] {
@@ -3096,6 +3100,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
   const [launchingReferences, setLaunchingReferences] = useState<string[]>([]);
   const [materialEntry] = useState(initialMaterialLibraryEntry);
   const [innerView, setInnerView] = useState<InspirationInnerView>(() => typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('view') === 'shooting' ? 'shooting' : materialEntry.openLibrary ? 'library' : 'inspiration');
+  const [shootingFilter, setShootingFilter] = useState<'all' | 'storyboard' | 'common'>('all');
   const [platform, setPlatform] = useState<Platform>('all');
   const [search, setSearch] = useState('');
   // 搜索改为服务端执行：此前只在已加载的那一页做前端过滤，翻页之外的记录搜不到。
@@ -3567,6 +3572,14 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
   }).length;
 
   const shootingNeeds = useMemo(() => buildShootingNeeds(visibleVideos, localMaterials), [visibleVideos, localMaterials]);
+  const shootingCards = useMemo(() => [
+    ...scriptGapTasks.map(task => ({ id: task.id, kind: 'storyboard' as const, createdAt: task.createdAt, task })),
+    ...shootingNeeds.map(need => ({ id: need.id, kind: 'common' as const, createdAt: need.createdAt, need })),
+  ].sort((a, b) => (Date.parse(b.createdAt || '') || 0) - (Date.parse(a.createdAt || '') || 0) || a.id.localeCompare(b.id)), [scriptGapTasks, shootingNeeds]);
+  const latestShootingCardIds = useMemo(() => new Set(shootingCards.slice(0, 3).map(card => card.id)), [shootingCards]);
+  const visibleShootingCards = shootingCards.filter(card => shootingFilter === 'all'
+    || (shootingFilter === 'storyboard' && card.kind === 'storyboard')
+    || (shootingFilter === 'common' && card.kind === 'common'));
   const materialFunctionOptions = useMemo(() => {
     const values = new Set<string>();
     localMaterials.forEach(material => String(material.shotFunction || '').split(',').map(item => item.trim()).filter(Boolean).forEach(item => values.add(item)));
@@ -3650,22 +3663,26 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     window.setTimeout(() => uploadInputRef.current?.click(), 50);
   };
 
-  const generateNeedMaterial = async (need: ShootingNeed) => {
-    setGeneratingNeedId(need.id);
-    setMaterialMessage(`正在生成“${need.title}”，通常需要几分钟；可以留在本页等待结果。`);
+  const generateNeedMaterial = async (item: ShootingNeed | ScriptGapTask) => {
+    const title = item.title;
+    const ratio = item.ratio || '9:16';
+    setGeneratingNeedId(item.id);
+    setMaterialMessage(`正在生成“${title}”，通常需要几分钟；可以留在本页等待结果。`);
     try {
       const output = await studioApi.seedanceVideo({
-        script: `${need.title}\n${need.suggestion}\n参考分镜：${need.example?.visual || ''}\n输出 ${need.ratio} 社媒短视频素材。`,
-        productInfo: need.suggestion,
+        script: 'origin' in item
+          ? `${item.title}\n拍摄要求：${item.shotBrief}\n产品：${item.productLabel}\n主题：${item.themeTitle}\n输出 ${ratio} 视频素材。`
+          : `${item.title}\n${item.suggestion}\n参考分镜：${item.example?.visual || ''}\n输出 ${ratio} 社媒短视频素材。`,
+        productInfo: 'origin' in item ? item.productLabel : item.suggestion,
         language: 'zh',
-        ratio: need.ratio,
+        ratio,
         duration: 5,
         resolution: '720p',
-        title: `Seedance 2.0 待拍素材 · ${need.title}`,
+        title: `Seedance 2.0 待拍素材 · ${title}`,
       });
       if (!output.ok) throw new Error(output.error || 'Seedance 2.0 生成失败');
       await refreshMaterials();
-      setMaterialMessage(`Seedance 2.0 已生成素材：${need.title}`);
+      setMaterialMessage(`Seedance 2.0 已生成素材：${title}`);
       setTimeout(() => setMaterialMessage(''), 2800);
     } catch (e) {
       setMaterialMessage(e instanceof Error ? e.message : 'Seedance 2.0 生成失败');
@@ -3775,7 +3792,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     const openTask = (taskId: string) => {
       window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: {
         page: 'smartAssets', view: 'create',
-        directStudio: true,
+        directStudio: false,
         socialContentTaskId: taskId,
         socialContentPage: 'smartAssets',
         contentCreationRequest: {
@@ -4817,20 +4834,10 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
 
           {innerView === 'shooting' && (
             <div className="space-y-4">
-              {scriptGapTasks.length > 0 && <div className="space-y-3">
-                <input ref={shootingCameraInputRef} aria-label="拍摄待拍任务素材" type="file" accept="video/*" capture="environment" className="hidden" onChange={event => { void handleUploadMaterials(event.currentTarget.files); event.currentTarget.value = ''; }}/>
-                <p className="text-xs font-black text-text-secondary">待拍清单</p>
-                {scriptGapTasks.map(task => <article key={task.id} id={`shooting-task-${task.id}`} className={`rounded-lg border p-4 ${typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('task') === task.id ? 'border-amber-600 bg-amber-50 ring-2 ring-amber-300' : 'border-amber/25 bg-amber-dim'}`}>
-                  <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div><span className="border-l-2 border-amber px-2 py-0.5 text-[10px] font-bold text-amber">脚本缺口</span><h3 className="mt-2 text-sm font-bold text-text-primary">{task.title}</h3><p className="mt-1 text-xs text-text-secondary">{task.shotBrief}</p><p className="mt-2 text-[11px] text-text-muted">{task.productLabel} · {task.themeTitle} · 建议 {task.suggestedDurationSec} 秒</p></div>
-                    <div className="flex flex-wrap gap-2"><button type="button" disabled={uploadingMaterial} onClick={() => { setUploadingScriptGapId(task.id); shootingCameraInputRef.current?.click(); }} className="rounded-lg bg-amber-600 px-3 py-2 text-xs font-bold text-white">拍摄并上传</button><button type="button" onClick={() => requestMaterialUpload(task.id)} className="rounded-lg border border-amber-300 bg-white px-3 py-2 text-xs font-bold text-amber-800">上传补拍素材</button>{task.uploadedMaterialIds.length > 0 && task.sourceProjectId && <a href={`?page=smartAssets&project=${encodeURIComponent(task.sourceProjectId)}`} className="rounded-lg bg-amber-600 px-3 py-2 text-xs font-bold text-white">返回分镜查看回填</a>}</div>
-                  </div>
-                </article>)}
-              </div>}
               <div className="grid gap-3 md:grid-cols-3">
                 {[
-                  { label: '待拍摄缺口', value: shootingNeeds.length, color: 'text-accent' },
-                  { label: '高优先级', value: shootingNeeds.filter(item => item.priority === '高').length, color: 'text-red-500' },
+                  { label: '待拍摄缺口', value: shootingNeeds.length + scriptGapTasks.length, color: 'text-accent' },
+                  { label: '高频需求', value: shootingNeeds.length, color: 'text-accent' },
                   { label: '已入库素材', value: localMaterials.length, color: 'text-accent' },
                 ].map(item => (
                   <div key={item.label} className="card p-4">
@@ -4839,51 +4846,56 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                   </div>
                 ))}
               </div>
-
-              {shootingNeeds.length === 0 ? (
+              <div className="grid grid-cols-3 gap-2" role="group" aria-label="筛选待拍清单">
+                {([
+                  ['all', '全部', shootingNeeds.length + scriptGapTasks.length],
+                  ['storyboard', '分镜补拍', scriptGapTasks.length],
+                  ['common', '高频需求', shootingNeeds.length],
+                ] as const).map(([key, label, count]) => (
+                  <button key={key} type="button" aria-pressed={shootingFilter === key} onClick={() => setShootingFilter(key)}
+                    className={`min-w-0 rounded-lg border px-2 py-2.5 text-xs font-bold transition-colors sm:text-sm ${shootingFilter === key ? 'border-accent bg-accent text-white' : 'border-border bg-surface text-text-secondary hover:border-accent hover:text-accent'}`}>
+                    <span className="truncate">{label}</span><span className="ml-1 opacity-70">{count}</span>
+                  </button>
+                ))}
+              </div>
+              <input ref={shootingCameraInputRef} aria-label="拍摄待拍任务素材" type="file" accept="video/*" capture="environment" className="hidden" onChange={event => { void handleUploadMaterials(event.currentTarget.files); event.currentTarget.value = ''; }}/>
+              {visibleShootingCards.length === 0 ? (
                 <div className="rounded-lg border border-dashed border-border bg-surface px-6 py-16 text-center">
                   <Check size={30} className="mx-auto mb-3 text-accent" />
-                  <p className="text-sm font-bold text-text-primary">当前没有明显待拍摄缺口</p>
-                  <p className="mt-1 text-xs text-text-muted">素材库已能覆盖当前抓取视频的主要分镜。</p>
+                  <p className="text-sm font-bold text-text-primary">当前筛选下没有待拍摄缺口</p>
+                  <p className="mt-1 text-xs text-text-muted">可以切换上方筛选查看其他需求。</p>
                 </div>
               ) : (
                 <div className="space-y-3">
-                  {shootingNeeds.map(need => (
-                    <article key={need.id} className="rounded-lg border border-border bg-surface p-4">
+                  {visibleShootingCards.map(card => {
+                    const task = card.kind === 'storyboard' ? card.task : null;
+                    const need = card.kind === 'common' ? card.need : null;
+                    const focused = task && typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('task') === task.id;
+                    return <article key={card.id} id={task ? `shooting-task-${task.id}` : undefined} className={`rounded-lg border border-border bg-white p-4 ${focused ? 'ring-2 ring-amber-400' : ''}`}>
                       <div className="flex flex-wrap items-start justify-between gap-3">
                         <div className="min-w-0 flex-1">
                           <div className="flex flex-wrap items-center gap-2">
-                            <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
-                              need.priority === '高' ? 'bg-red/5 text-red' : need.priority === '中' ? 'bg-amber-dim text-amber' : 'bg-surface-2 text-text-muted'
-                            }`}>{need.priority}优先级</span>
-                            <span className="rounded-full bg-surface-2 px-2 py-0.5 text-[10px] font-bold text-text-secondary">{need.ratio}</span>
-                            <span title={getPlatformMeta(need.platform).label} className="inline-flex items-center gap-1 rounded-full bg-surface-2 px-2 py-0.5 text-[10px] font-bold text-text-secondary"><SocialPlatformIcon platform={need.platform} size={12} /><span className="sr-only">{getPlatformMeta(need.platform).label}</span></span>
+                            <span className="rounded-full bg-accent/10 px-2 py-0.5 text-[10px] font-bold text-accent">{task ? '分镜补拍' : '高频需求'}</span>
+                            <span className="rounded-full bg-surface-2 px-2 py-0.5 text-[10px] font-bold text-text-secondary">{need?.ratio || task?.ratio || '9:16'}</span>
+                            <span className="inline-flex items-center gap-1 rounded-full bg-surface-2 px-2 py-0.5 text-[10px] font-bold text-text-secondary">{need ? <><SocialPlatformIcon platform={need.platform} size={12} />{getPlatformMeta(need.platform).label}</> : '内容制作'}</span>
                           </div>
-                          <h3 className="mt-2 text-sm font-bold text-text-primary">{need.title}</h3>
-                          <p className="mt-1 text-xs leading-relaxed text-text-secondary">{need.suggestion}</p>
-                          <p className="mt-2 text-[11px] text-text-muted">出现 {need.count} 次 · 来源：{need.sourceVideos.slice(0, 3).join(' / ')}</p>
+                          <h3 className="mt-2 text-sm font-bold text-text-primary">{task?.title || need?.title}</h3>
+                          <p className="mt-1 text-xs leading-relaxed text-text-secondary">{task?.shotBrief || need?.suggestion}</p>
+                          <p className="mt-2 text-[11px] text-text-muted">{task ? `${task.productLabel} · ${task.themeTitle} · 建议 ${task.suggestedDurationSec} 秒` : `出现 ${need?.count} 次 · 来源：${need?.sourceVideos.slice(0, 3).join(' / ')}`}</p>
+                          <p className="mt-1 text-[11px] text-text-muted">创建日期：{shootingCreationDate(card.createdAt)}</p>
                         </div>
-                        <div className="flex flex-shrink-0 gap-2">
-                          <button
-                            type="button"
-                            onClick={() => requestMaterialUpload()}
-                            className="rounded-lg border border-border px-3 py-2 text-xs font-bold text-text-secondary hover:text-text-primary"
-                          >
-                            上传已拍素材
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => void generateNeedMaterial(need)}
-                            disabled={generatingNeedId === need.id}
-                            className="inline-flex items-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-xs font-bold text-white disabled:opacity-60"
-                          >
-                            {generatingNeedId === need.id ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
-                            {generatingNeedId === need.id ? '生成中，请勿关闭' : 'AI生成素材'}
-                          </button>
+                        <div className="flex shrink-0 flex-col items-end gap-2">
+                          {latestShootingCardIds.has(card.id) && <span role="img" aria-label="最新待拍任务" title="最新待拍任务" className="text-sm leading-none">❗</span>}
+                          <div className="flex flex-wrap justify-end gap-2">
+                            <button type="button" disabled={uploadingMaterial} onClick={() => { setUploadingScriptGapId(task?.id || ''); shootingCameraInputRef.current?.click(); }} className="rounded-lg bg-accent px-3 py-2 text-xs font-bold text-white disabled:opacity-50">去拍摄</button>
+                            <button type="button" onClick={() => requestMaterialUpload(task?.id || '')} className="rounded-lg border border-border bg-white px-3 py-2 text-xs font-bold text-text-secondary hover:text-text-primary">去上传</button>
+                            <button type="button" onClick={() => void generateNeedMaterial(task || need!)} disabled={generatingNeedId === card.id} className="inline-flex items-center gap-1 rounded-lg border border-accent/30 bg-white px-3 py-2 text-xs font-bold text-accent disabled:opacity-50">{generatingNeedId === card.id ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}{generatingNeedId === card.id ? '生成中' : 'AI生成素材'}</button>
+                            {task && task.uploadedMaterialIds.length > 0 && task.sourceProjectId && <a href={`?page=smartAssets&project=${encodeURIComponent(task.sourceProjectId)}`} className="rounded-lg border border-border bg-white px-3 py-2 text-xs font-bold text-text-secondary">返回分镜</a>}
+                          </div>
                         </div>
                       </div>
-                    </article>
-                  ))}
+                    </article>;
+                  })}
                 </div>
               )}
             </div>

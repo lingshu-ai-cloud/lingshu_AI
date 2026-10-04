@@ -23,7 +23,8 @@ import type { SocialContentStageProfile } from '../../lib/socialContentStage';
 import { resolveInspirationPlaybackUrl } from '../../lib/inspirationVideoPlayback';
 import { authHeader } from '../../lib/auth';
 import { referenceBrandTerm, referenceProductMentions, referenceProductTerms, replaceReferenceIdentities, spokenIdentityLabel } from '../../lib/referenceIdentityMapping';
-import { referenceSpeechLines } from './referenceSpeechLines';
+import { referenceSpeechLines, type ReferenceSpeechLine } from './referenceSpeechLines';
+import { groupSpeechShots, type SpeechGroup, timeRange } from './speechShotGroups';
 
 interface EnterpriseProductOption {
   id: string;
@@ -224,10 +225,12 @@ export default function SocialCreationWorkbench({
   const [resolvedReferenceUrl, setResolvedReferenceUrl] = useState('');
   const [taskProductTerms, setTaskProductTerms] = useState<string[] | undefined>();
   const [taskReferenceShots, setTaskReferenceShots] = useState<SocialCreationWorkbenchSeed['referenceShots']>(undefined);
+  const [taskSpeechLines, setTaskSpeechLines] = useState<SpeechGroup[]>([]);
   const [generationNotice, setGenerationNotice] = useState('');
   const [speechEdits, setSpeechEdits] = useState<Record<number, string>>({});
   const [generatedSpeech, setGeneratedSpeech] = useState<string[] | null>(null);
   const [generatedMappingKey, setGeneratedMappingKey] = useState<string | null>(null);
+  const restoredSpeechRef = useRef<string>('');
   const [spokenNames, setSpokenNames] = useState<Record<string, string>>({});
   useEffect(() => {
     if (!seed?.confirmedSpeech?.length) return;
@@ -236,7 +239,21 @@ export default function SocialCreationWorkbench({
   const uploadRef = useRef<HTMLInputElement>(null);
   const isReplication = mode === 'viral_replication';
   const referenceShots = isReplication ? taskReferenceShots || seed?.referenceShots || [] : [];
-  const referenceLines = referenceSpeechLines(referenceShots);
+  const referenceLines: ReferenceSpeechLine[] = taskSpeechLines.length
+    ? groupSpeechShots(taskSpeechLines, referenceShots).map(group => {
+      const range = timeRange(group.time);
+      return {
+        time: group.time, text: group.source, dialogue: group.source,
+        startSeconds: range?.start, endSeconds: range?.end,
+        firstFrameRef: group.shots[0]?.firstFrameRef,
+        firstFrameSeconds: group.shots[0]?.firstFrameSeconds,
+        visual: group.shots[0]?.visual,
+        visuals: group.shots.map(shot => shot.visual || '').filter(Boolean),
+        visualShotCount: group.shots.length,
+        shots: group.shots.map(shot => ({ ...shot, startSeconds: shot.start, endSeconds: shot.end })),
+      };
+    })
+    : referenceSpeechLines(referenceShots);
   useEffect(() => {
     const detected = referenceBrandTerm(referenceLines.map(line => line.text));
     if (detected) setBrandSourceTerm(current => current || detected);
@@ -264,9 +281,15 @@ export default function SocialCreationWorkbench({
     const mapped = seed.productMappings.map(mapping => products.find(item => item.id === mapping.productId || item.name === mapping.productName)?.id).filter((id): id is string => Boolean(id));
     setSelectedProductIds(current => [...new Set([...current, ...mapped])]);
   }, [seed?.productMappings, products]);
-  const productMappings = productSlots.map((slot, index) => {
+  const explicitlyAssignedIds = new Set(productSlots.map(slot => productAssignments[slot.shotId]).filter(Boolean));
+  const availableSelectedIds = selectedProductIds.filter(id => !explicitlyAssignedIds.has(id));
+  let nextSelectedIndex = 0;
+  const productMappings = productSlots.map(slot => {
     const assigned = productAssignments[slot.shotId];
-    const product = products.find(item => item.id === (Object.prototype.hasOwnProperty.call(productAssignments, slot.shotId) ? (selectedProductIds.includes(assigned) ? assigned : '') : selectedProductIds[index]));
+    const selectedId = Object.prototype.hasOwnProperty.call(productAssignments, slot.shotId)
+      ? (selectedProductIds.includes(assigned) ? assigned : '')
+      : availableSelectedIds[nextSelectedIndex++] || '';
+    const product = products.find(item => item.id === selectedId);
     return { sourceTerm: slot.sourceLabel, productId: product?.id || '', productName: product?.name || '' };
   });
   const productsReady = productMappings.length === selectedProductIds.length
@@ -275,6 +298,16 @@ export default function SocialCreationWorkbench({
   const spokenLabel = (sourceTerm: string, catalogName: string, line: string, names = spokenNames) =>
     names[catalogName] || spokenIdentityLabel(sourceTerm, catalogName, line);
   const mappingKey = JSON.stringify({ products: productMappings, brandSourceTerm, enterpriseBrandName, lines: referenceLines.map(line => line.text) });
+  useEffect(() => {
+    const saved = seed?.confirmedSpeech;
+    if (!isReplication || !saved?.length || enterpriseProfileState === 'loading' || !productsReady || !referenceLines.length) return;
+    const restoreKey = JSON.stringify([saved, mappingKey]);
+    if (restoredSpeechRef.current === restoreKey) return;
+    if (saved.length !== referenceLines.length || saved.some((line, index) => line.source.trim() !== referenceLines[index]?.text.trim())) return;
+    restoredSpeechRef.current = restoreKey;
+    setGeneratedSpeech(saved.map(line => line.draft));
+    setGeneratedMappingKey(mappingKey);
+  }, [isReplication, seed?.confirmedSpeech, enterpriseProfileState, productsReady, mappingKey, referenceLines]);
   const speechGenerated = productsReady && generatedSpeech !== null && generatedMappingKey === mappingKey;
   const confirmedSpeech = referenceLines.map((line, index) => ({ source: line.text, time: line.time, draft: speechEdits[index] ?? generatedSpeech?.[index] ?? '' })).filter(line => line.source.trim());
   const generateSpeech = async () => {
@@ -344,14 +377,26 @@ export default function SocialCreationWorkbench({
       if (!active || task.referenceVideoAnalysis?.status !== 'ready') return;
       window.clearInterval(timer);
       setTaskProductTerms(task.referenceVideoAnalysis.narrationProducts);
-      setTaskReferenceShots(task.referenceVideoAnalysis.shots.flatMap(shot => {
+      setTaskReferenceShots(task.referenceVideoAnalysis.shots.map(shot => {
         const base = { startSeconds: shot.startSeconds, endSeconds: shot.endSeconds, visual: shot.visualDescription, firstFrameRef: shot.materialEvidence?.firstFrameRef || undefined,
           firstFrameSeconds: shot.materialEvidence?.firstFrameSeconds ?? shot.startSeconds };
-        if (shot.spokenLines?.length) return shot.spokenLines.map(line => ({ ...base,
-          time: `${line.startSeconds.toFixed(2)}–${line.endSeconds.toFixed(2)}s`, dialogue: line.text }));
-        return [{ ...base, time: `${shot.startSeconds.toFixed(2)}–${shot.endSeconds.toFixed(2)}s`,
-          dialogue: shot.spokenText || '', subtitle: shot.captionText || '' }];
+        return { ...base, shotId: shot.shotId, time: `${shot.startSeconds.toFixed(2)}–${shot.endSeconds.toFixed(2)}s`,
+          dialogue: shot.spokenText || '', subtitle: shot.captionText || '' };
       }));
+      const uniqueLines = new Map<string, SpeechGroup>();
+      for (const shot of task.referenceVideoAnalysis.shots) {
+        for (const line of shot.spokenLines || []) {
+          const text = line.text.trim();
+          if (!text) continue;
+          const key = `${line.startSeconds.toFixed(2)}:${line.endSeconds.toFixed(2)}:${text}`;
+          if (!uniqueLines.has(key)) uniqueLines.set(key, {
+            id: key, source: text, draft: text,
+            time: `${line.startSeconds.toFixed(2)}–${line.endSeconds.toFixed(2)}s`,
+            sourcePrecision: line.precision,
+          });
+        }
+      }
+      setTaskSpeechLines([...uniqueLines.values()].sort((a, b) => shotStart(a.time) - shotStart(b.time)));
     }).catch(() => undefined);
     load();
     timer = window.setInterval(load, 10_000);
@@ -499,7 +544,7 @@ export default function SocialCreationWorkbench({
                   <span className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-md border text-[10px] font-black ${active ? 'border-emerald-600 bg-emerald-600 text-white' : 'border-border text-text-muted'}`}>{index + 1}</span>
                   <span className="min-w-0 flex-1"><span className="block text-xs font-bold leading-5 text-text-primary">{line || '该分镜暂无可识别口播'}</span><span className="mt-1 flex items-center gap-1 text-[10px] font-semibold text-text-muted">{isReplication ? referenceLines[index]?.time : `00:${String(index * 4).padStart(2, '0')}–00:${String((index + 1) * 4).padStart(2, '0')}`}<ChevronRight size={11} /></span>{isReplication && referenceLines[index]?.visuals.length > 0 && <span className="mt-1 line-clamp-2 text-[10px] leading-4 text-text-muted">画面：{referenceLines[index].visuals[0]}</span>}</span>
                 </button>
-                {isReplication && referenceLines[index]?.visualShotCount > 1 && <>
+                {isReplication && referenceLines[index]?.visualShotCount > 0 && <>
                   <button type="button" aria-expanded={expandedSpeechLines.has(index)} aria-controls={`speech-visual-shots-${index}`} onClick={() => setExpandedSpeechLines(current => {
                     const next = new Set(current);
                     if (next.has(index)) next.delete(index); else next.add(index);

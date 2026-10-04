@@ -1,4 +1,4 @@
-export type StoryboardSceneType = 'product' | 'factory' | 'usage';
+export type StoryboardSceneType = 'product' | 'factory' | 'usage' | 'general';
 export type StoryboardMode = 'replication' | 'free_creation';
 import type { StoryboardShotSpec } from '../../shared/storyboardShotSpec.js';
 
@@ -44,7 +44,9 @@ export function buildStoryboardFirstFramePrompt(input: {
     ? 'Create a realistic product filming setup. Keep the product supported by the hand, table or conveyor as described. Preserve plausible grip, contact and scale.'
     : input.sceneType === 'factory'
       ? 'Create a realistic factory filming setup. Keep equipment, conveyor direction, workers and workstations spatially coherent. Do not invent readable equipment labels.'
-      : 'Create the stable START state of the real product use action. Establish the product, user or tool, target surface, and contact relationship in the stated environment. Do not show the action already complete.';
+      : input.sceneType === 'usage'
+        ? 'Create the stable START state of the real product use action. Establish the product, user or tool, target surface, and contact relationship in the stated environment. Do not show the action already complete.'
+        : 'Create a realistic general storyboard scene matching the visual action and setting. No enterprise product is assigned to this shot; do not invent a branded product, packaging or logo.';
   const singleViewProductIds = (input.spec?.assets || []).filter(asset => asset.role === 'product'
     && !input.spec?.assets.some(view => view.role === 'product_view' && view.derivedFromAssetId === asset.id)).map(asset => asset.id);
   return [

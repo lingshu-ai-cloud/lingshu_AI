@@ -29,7 +29,7 @@ const routes = planStudioBatchShotRoutes({
 assert.deepEqual(routes.map(item => [item.visualTopic, item.route, item.status]), [
   ['presenter', 'digital_human', 'blocked'],
   ['factory', 'local_material', 'matched'],
-  ['product', 'local_material', 'needs_material'],
+  ['product', 'aigc_first_frame', 'needs_plan'],
   ['presenter', 'digital_human', 'blocked'],
 ]);
 assert.ok(routes.every(item => item.generated === false));
@@ -57,9 +57,18 @@ const importedPlaceholder = planStudioBatchShotRoutes({
 }, { talkingExecutorReady: false, actionExecutorReady: false, authorizedPresenterIds: [] });
 assert.equal(importedPlaceholder[0]?.route, 'digital_human');
 assert.equal(importedPlaceholder[0]?.status, 'blocked');
-assert.equal(importedPlaceholder[1]?.route, 'local_material',
+assert.equal(importedPlaceholder[1]?.route, 'aigc_first_frame',
   'stale avatar placeholders cannot classify factory footage as a presenter');
-assert.equal(importedPlaceholder[1]?.status, 'needs_material');
+assert.equal(importedPlaceholder[1]?.status, 'needs_plan');
+
+const taggedNonProduct = planStudioBatchShotRoutes({ activeAssemblyId: 'a', shootingSlots: [
+  { id: 'worker', slotId: 'worker', detail: '画面：工人操作流水线，产品瓶身经过传送带', observedPresenterRole: 'presenter_action' },
+  { id: 'usage', slotId: 'usage', detail: '画面：双手轻触脸颊，卧室自然光' },
+], storyboardSourcePlans: {
+  worker: { shotTopic: 'factory', sceneType: 'factory', mode: 'ai' },
+  usage: { shotTopic: 'general', sceneType: 'general', mode: 'ai' },
+} }, { talkingExecutorReady: false, actionExecutorReady: false, authorizedPresenterIds: [] });
+assert.deepEqual(taggedNonProduct.map(item => [item.visualTopic, item.route]), [['factory', 'aigc_first_frame'], ['other', 'aigc_first_frame']]);
 
 const salesDefault = planStudioBatchShotRoutes({
   activeAssemblyId: 'video-1', shootingSlots: [{ id: 'talk', slotId: 'slot-talk', detail: '画面：销售对镜口播 镜头功能：value 口播：Hello', salesPresenterConfirmed: true }],
@@ -80,7 +89,7 @@ const voicedBroll = planStudioBatchShotRoutes({
     source: 'avatar', presenterId: '', narration: 'Voiceover.', digitalHuman: { method: 'reenact' },
   }])) as never,
 }, { talkingExecutorReady: true, actionExecutorReady: false, authorizedPresenterIds: ['sales'], defaultSalesPresenterId: 'sales' });
-assert.deepEqual(voicedBroll.map(item => item.route), ['local_material', 'local_material', 'digital_human', 'local_material', 'local_material']);
+assert.deepEqual(voicedBroll.map(item => item.route), ['aigc_first_frame', 'aigc_first_frame', 'digital_human', 'aigc_first_frame', 'aigc_first_frame']);
 
 const factoryPresenter = planStudioBatchShotRoutes({
   activeAssemblyId: 'a', shootingSlots: [{ id: 'speaker', detail: '画面：女性正面面对镜头说话，手举产品，背景工人正在工厂灌装。\n口播：欢迎了解我们的产品', salesPresenterConfirmed: true }],

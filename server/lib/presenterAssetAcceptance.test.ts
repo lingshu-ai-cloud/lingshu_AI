@@ -39,13 +39,13 @@ test('rejects cross-tenant, inactive, unbound, or unconsented portraits', () => 
     objectKey: 'materials/tenants/dGVuYW50LWI/a.jpg' }, now: new Date('2026-09-25') }), /portrait_object_storage_not_tenant_scoped/);
 });
 
-test('photo talking accepts an owned still as a Seedream reference without Ark image certification', () => {
+test('Seedream accepts an owned still for sentence reenactment without Ark image certification', () => {
   const localPortrait = { ...material, seedanceTrustedAsset: undefined };
   const bound = { ...presenter, referenceMaterialIds: ['portrait-a'] };
   assert.doesNotThrow(() => acceptPresenterPortraitReference({ tenantId: 'tenant-a', presenter: bound, material: localPortrait,
-    provider: 'volcengine_ark', uses: ['person_replacement'], now: new Date('2026-09-25') }));
+    provider: 'volcengine_ark', uses: ['digital_presenter', 'person_replacement'], now: new Date('2026-09-25') }));
   assert.throws(() => acceptSeedancePortrait({ tenantId: 'tenant-a', presenter: bound, material: localPortrait,
     now: new Date('2026-09-25') }), /seedance_trusted_asset_missing_or_inactive/);
   assert.throws(() => acceptPresenterPortraitReference({ tenantId: 'tenant-b', presenter: bound, material: localPortrait,
-    provider: 'volcengine_ark', uses: ['person_replacement'], now: new Date('2026-09-25') }), /portrait_not_owned_by_tenant/);
+    provider: 'volcengine_ark', uses: ['digital_presenter', 'person_replacement'], now: new Date('2026-09-25') }), /portrait_not_owned_by_tenant/);
 });

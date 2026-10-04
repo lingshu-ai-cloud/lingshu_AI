@@ -1,0 +1,75 @@
+<view class="page {{loggedIn ? 'with-tabs' : ''}}">
+  <view wx:if="{{!loggedIn}}" class="login card">
+    <view class="title">灵枢拍摄任务</view>
+    <view class="muted">使用与网页端相同的账号登录</view>
+    <input class="field" type="text" placeholder="邮箱或账号" value="{{email}}" bindinput="inputEmail" />
+    <input class="field" type="password" password placeholder="密码" value="{{password}}" bindinput="inputPassword" />
+    <button class="primary" loading="{{loading}}" bindtap="signIn">登录</button>
+  </view>
+  <block wx:else>
+    <view wx:if="{{!selected}}">
+      <view class="header"><view><view class="title">拍摄任务</view><view class="muted">{{userName}}</view></view><text class="link" bindtap="signOut">退出</text></view>
+      <view wx:if="{{filter === 'create'}}" class="card create-form">
+        <view class="section-title">创建拍摄任务</view>
+        <view class="muted">填写拍摄要求，创建后即可拍摄或上传视频</view>
+        <view class="label">任务标题 <text class="required">*</text></view>
+        <input class="field" placeholder="例如：产品包装近景" maxlength="200" value="{{draft.title}}" data-field="title" bindinput="inputDraft" disabled="{{creating}}" />
+        <view class="label">拍摄要求 <text class="required">*</text></view>
+        <textarea class="field brief-input" placeholder="描述拍什么、如何构图、动作和需要注意的细节" maxlength="10000" value="{{draft.shotBrief}}" data-field="shotBrief" bindinput="inputDraft" disabled="{{creating}}" />
+        <view class="label">企业知识库产品（多选，选填）</view>
+        <view class="field picker-value" bindtap="toggleProducts"><text>{{selectedProductText || '请选择产品'}}</text><text>{{productsOpen ? '▴' : '▾'}}</text></view>
+        <view wx:if="{{productsOpen}}" class="product-dropdown">
+          <view wx:if="{{productsLoading}}" class="muted">正在加载企业产品…</view>
+          <view wx:elif="{{productsError}}"><view class="message">{{productsError}}</view><button size="mini" bindtap="loadProducts">重新加载</button></view>
+          <view wx:elif="{{!products.length}}" class="muted">企业知识库暂无产品，请先在网页端添加产品。</view>
+          <checkbox-group wx:else bindchange="selectProducts">
+            <scroll-view scroll-y class="product-options"><label wx:for="{{products}}" wx:key="id" class="product-option"><checkbox value="{{item.id}}" checked="{{item.checked}}" disabled="{{creating}}" color="#0f8054"/><text>{{item.name}}</text></label></scroll-view>
+          </checkbox-group>
+          <view class="link product-done" bindtap="toggleProducts">完成选择</view>
+        </view>
+        <view class="label">主题（选填）</view>
+        <input class="field" placeholder="例如：新品展示" maxlength="300" value="{{draft.themeTitle}}" data-field="themeTitle" bindinput="inputDraft" disabled="{{creating}}" />
+        <view class="label">建议时长（秒） <text class="required">*</text></view>
+        <input class="field" type="digit" placeholder="0.5–600 秒" value="{{draft.duration}}" data-field="duration" bindinput="inputDraft" disabled="{{creating}}" />
+        <view class="label">画面比例</view>
+        <picker range="{{ratios}}" value="{{draft.ratioIndex}}" bindchange="changeRatio" disabled="{{creating}}"><view class="field picker-value">{{ratios[draft.ratioIndex]}} <text>选择 ▾</text></view></picker>
+        <button class="primary" loading="{{creating}}" disabled="{{creating}}" bindtap="createTask">{{creating ? '正在创建' : '创建任务'}}</button>
+      </view>
+      <block wx:else>
+      <view wx:for="{{visibleTasks}}" wx:key="id" class="card task" data-id="{{item.id}}" bindtap="selectTask">
+        <view class="task-head"><text class="task-title">{{item.title}}</text><text class="badge">{{item.done ? '已上传' : '待拍摄'}}</text></view>
+        <view class="muted">{{item.productLabel}} {{item.themeTitle}}</view>
+        <view class="brief">{{item.shotBrief}}</view>
+        <view class="meta">建议 {{item.durationText}} · {{item.soundText}}</view>
+      </view>
+      <view wx:if="{{!visibleTasks.length && !loading}}" class="empty">当前筛选下没有拍摄任务</view>
+      <button class="secondary" loading="{{loading}}" bindtap="refresh">刷新任务</button>
+      </block>
+    </view>
+    <view wx:else>
+      <view class="back" bindtap="back">‹ 返回任务</view>
+      <view class="card detail">
+        <view class="title">{{selected.title}}</view>
+        <view class="muted">{{selected.productLabel}} {{selected.themeTitle}}</view>
+        <view class="section-title">画面要求</view><view class="detail-text">{{selected.shotBrief}}</view>
+        <view class="meta">建议时长：{{selected.durationText}}</view>
+        <view wx:if="{{selected.ratio}}" class="meta">画面比例：{{selected.ratio}}</view>
+        <view class="meta">声音：{{selected.soundText}}</view>
+        <view wx:if="{{selected.expectedNarration}}" class="detail-text">口播：{{selected.expectedNarration}}</view>
+        <view wx:if="{{selected.done}}" class="success">已有 {{selected.uploadedMaterialIds.length}} 个视频关联此任务</view>
+      </view>
+      <button class="primary" disabled="{{busy}}" bindtap="shoot">拍摄并上传</button>
+      <button class="secondary" disabled="{{busy}}" bindtap="chooseExisting">上传已有视频</button>
+      <view wx:if="{{busy}}" class="progress">{{progress < 30 ? '正在读取视频' : '正在上传并保存视频'}} · {{progress}}%</view>
+      <button wx:if="{{pendingMaterialId && !busy}}" class="secondary" bindtap="retryAttach">重试关联已上传的视频</button>
+    </view>
+  </block>
+  <view wx:if="{{message}}" class="message">{{message}}</view>
+</view>
+
+<view wx:if="{{loggedIn}}" class="bottom-tabs">
+  <view class="tab {{filter === 'pending' ? 'tab-active' : ''}}" data-filter="pending" bindtap="setFilter"><text class="tab-icon">◷</text><text>待拍摄</text></view>
+  <view class="tab {{filter === 'done' ? 'tab-active' : ''}}" data-filter="done" bindtap="setFilter"><text class="tab-icon">✓</text><text>已上传</text></view>
+  <view class="tab {{filter === 'all' ? 'tab-active' : ''}}" data-filter="all" bindtap="setFilter"><text class="tab-icon">☷</text><text>全部任务</text></view>
+  <view class="tab {{filter === 'create' ? 'tab-active' : ''}}" data-filter="create" bindtap="setFilter"><text class="tab-icon">＋</text><text>我要创建</text></view>
+</view>

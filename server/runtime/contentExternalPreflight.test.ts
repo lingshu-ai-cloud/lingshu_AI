@@ -11,13 +11,19 @@ assert.equal(JSON.stringify(incomplete).includes(secret), false);
 const localConfigured = staticContentExternalPreflight({
   OBJECT_STORAGE_DRIVER: 'local', SEEDANCE_SENTENCE_ENABLED: 'true', SEEDANCE_API_KEY: secret, SEEDANCE_MODEL: 'seedance-model',
 });
-assert.equal(localConfigured.ready, true);
+assert.equal(localConfigured.ready, false);
 assert.equal(localConfigured.checks.objectStorage.code, 'local_object_storage_configured');
+assert.match(localConfigured.checks.seedanceSentence.detail, /LOCAL_OBJECT_STORAGE_PUBLIC_BASE_URL/);
 const localConnectivity = await contentExternalConnectivityPreflight({ env: {
   OBJECT_STORAGE_DRIVER: 'local', SEEDANCE_SENTENCE_ENABLED: 'true', SEEDANCE_API_KEY: secret, SEEDANCE_MODEL: 'seedance-model',
 }, headBucket: async () => { throw new Error('local mode must not call cloud storage'); }, listSeedanceModels: async () => ['seedance-model'] });
-assert.equal(localConnectivity.ready, true);
+assert.equal(localConnectivity.ready, false);
 assert.equal(localConnectivity.checks.objectStorage.code, 'local_object_storage_available');
+const localPublic = staticContentExternalPreflight({
+  OBJECT_STORAGE_DRIVER: 'local', LOCAL_OBJECT_STORAGE_PUBLIC_BASE_URL: 'https://assets.example.test',
+  SEEDANCE_SENTENCE_ENABLED: 'true', SEEDANCE_API_KEY: secret, SEEDANCE_MODEL: 'seedance-model',
+});
+assert.equal(localPublic.ready, true);
 
 const invalidDriver = staticContentExternalPreflight({ OBJECT_STORAGE_DRIVER: 'other' });
 assert.equal(invalidDriver.checks.objectStorage.code, 'object_storage_driver_invalid');

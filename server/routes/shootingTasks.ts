@@ -51,6 +51,7 @@ export function createShootingTasksRouter(store: DataStore, ownsVideo: (id: stri
         id: '', origin: 'script_gap', title: input.title.trim().slice(0, 200),
         productLabel: String(input.productLabel || '').slice(0, 300), themeTitle: String(input.themeTitle || '').slice(0, 300),
         shotBrief: input.shotBrief.trim().slice(0, 10000), suggestedDurationSec: input.suggestedDurationSec,
+        ...(typeof input.ratio === 'string' && ['9:16', '16:9', '1:1', '4:5'].includes(input.ratio) ? { ratio: input.ratio } : {}),
         ...(input.sourceProjectId ? { sourceProjectId: String(input.sourceProjectId), sourceStoryboardSlotId: String(input.sourceStoryboardSlotId || ''),
           sourceAssemblyId: String(input.sourceAssemblyId), sourceShotId: String(input.sourceShotId), requirements: String(input.requirements), soundMode: input.soundMode === 'source' ? 'source' as const : input.soundMode === 'silent' ? 'silent' as const : 'voiceover' as const,
           expectedNarration: String(input.expectedNarration || '').slice(0, 5000) } : {}),

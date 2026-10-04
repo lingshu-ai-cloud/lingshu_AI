@@ -168,6 +168,7 @@ interface Props {
   studioCreateRequest?: SocialContentCreateRequest | null;
   onOpenCreationHome?: (openChooser?: boolean) => void;
   onLaunchContentStudio?: (request: SocialContentCreateRequest) => void;
+  onReturnToContentPlanning?: (request: SocialContentCreateRequest) => void;
 }
 
 const PLATFORM_META: Record<PublishPlatform, { label: string; color: string; format: string }> = {
@@ -228,6 +229,7 @@ export default function TrafficPage({
   studioCreateRequest,
   onOpenCreationHome,
   onLaunchContentStudio,
+  onReturnToContentPlanning,
 }: Props) {
   const [viewMode, setViewMode] = useState<ViewMode>(() => {
     if (initialView) return initialView;
@@ -515,7 +517,7 @@ export default function TrafficPage({
           <Suspense fallback={<PageLoading />}>
             {(studioMounted || viewMode === 'create') && (
               <div ref={studioRootRef} id="traffic-panel-create" role={showModeTabs ? 'tabpanel' : undefined} aria-labelledby={showModeTabs ? 'traffic-tab-create' : undefined} className={viewMode === 'create' ? 'h-full' : 'hidden'} aria-hidden={viewMode !== 'create'}>
-                <AiCreateStudio key={socialContentTaskId || studioCreateRequest?.requestId || 'general-studio'} onNavigate={navigateWithinSocialTask} onOpenCreationHome={onOpenCreationHome} onLaunchContentStudio={onLaunchContentStudio} onGoPublish={handleGoPublish} openProjectsSignal={openProjectsSignal} workflowContext={(workflowContextSignal !== undefined ? workflowContextSignal : workflowContext) || undefined} publishStorageScope={storageScope} socialContentTaskId={socialContentTaskId} studioCreateRequest={studioCreateRequest} />
+                <AiCreateStudio key={socialContentTaskId || studioCreateRequest?.requestId || 'general-studio'} onNavigate={navigateWithinSocialTask} onOpenCreationHome={onOpenCreationHome} onLaunchContentStudio={onLaunchContentStudio} onReturnToContentPlanning={onReturnToContentPlanning} onGoPublish={handleGoPublish} openProjectsSignal={openProjectsSignal} workflowContext={(workflowContextSignal !== undefined ? workflowContextSignal : workflowContext) || undefined} publishStorageScope={storageScope} socialContentTaskId={socialContentTaskId} studioCreateRequest={studioCreateRequest} />
               </div>
             )}
             <AnimatePresence mode="wait">

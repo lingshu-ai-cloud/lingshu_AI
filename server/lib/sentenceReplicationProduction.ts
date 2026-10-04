@@ -5,7 +5,7 @@ import { generateSeedanceSentenceVideo } from './seedanceImageVideo.js'; import 
 import { readLocalMaterials, saveLocalMaterials, type MaterialRecord } from './materialLibrary.js'; import { tenantAssetDir, tenantAssetRelativePath } from './assetAccess.js'; import { materialAssetContentType, materialAssetObjectKey } from '../storage/materialAssets.js'; import { objectStorageDownload, objectStorageHead, objectStorageSignedGetUrl, objectStorageSupplierDeliveryReady, objectStorageUpload } from '../storage/objectStorage.js';
 import { sentenceReplicationReadiness } from '../runtime/readiness.js';
 import type { PresenterAsset, ShotProduction } from '../../src/lib/shotProduction.js'; import type { DigitalHumanReferenceCue, SentenceCueQuality, SentenceReplicationResult } from '../../src/lib/digitalHumanPlan.js';
-import { acceptPresenterPortraitReference, acceptSeedancePortrait } from './presenterAssetAcceptance.js';
+import { acceptPresenterPortraitReference } from './presenterAssetAcceptance.js';
 import { SeedreamFirstFrameGenerator } from './seedreamFirstFrameGenerator.js';
 import { firstFrameInputFingerprint, type FirstFrameReference } from './firstFrameGenerator.js';
 import { produceFirstFrame } from './firstFrameProduction.js';
@@ -39,7 +39,7 @@ export async function runProductionSentenceReplication(input: { tenantId: string
   let presenterReference: FirstFrameReference | null = null; for (const id of presenterIds) { const material = byId.get(id); if (!material || material.type !== 'image') continue;
     // Fail closed before any portrait bytes are read or sent to an external model.
     if (photoTalking) acceptPresenterPortraitReference({ tenantId: input.tenantId, presenter: input.presenter, material, provider: 'heygen', uses: ['digital_presenter', 'voice_synthesis'] });
-    else acceptSeedancePortrait({ tenantId: input.tenantId, presenter: input.presenter, material });
+    else acceptPresenterPortraitReference({ tenantId: input.tenantId, presenter: input.presenter, material, provider: 'volcengine_ark', uses: ['digital_presenter', 'person_replacement'] });
     const loaded = await readTenantMaterialBytes(material,input.tenantId); presenterReference = { role: 'authorized_presenter', bytes: loaded.bytes,
       mimeType: /png/i.test(loaded.mimeType) ? 'image/png' : /webp/i.test(loaded.mimeType) ? 'image/webp' : 'image/jpeg',
       sha256: createHash('sha256').update(loaded.bytes).digest('hex') }; break; }

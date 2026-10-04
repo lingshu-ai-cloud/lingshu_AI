@@ -566,7 +566,8 @@ export default function App() {
           delete nextHistoryState.socialContentTaskId;
           delete nextHistoryState.socialContentPage;
         }
-        if (nextPage === 'smartAssets' && detail.contentCreationRequest && !detail.socialContentTaskId) {
+        if (nextPage === 'smartAssets' && detail.contentCreationRequest
+          && (!detail.socialContentTaskId || (detail.contentCreationRequest.creationPath === 'viral_replication' && detail.directStudio === false))) {
           try { localStorage.removeItem('ow_studio_open_project'); } catch { /* ignore */ }
           const freshUrl = new URL(window.location.href);
           freshUrl.searchParams.delete('project');
@@ -583,7 +584,7 @@ export default function App() {
         setSmartAssetsCreateRequest(detail.contentCreationRequest || null);
         setSmartAssetsStudioOpen(detail.studioPanel === 'projects'
           || detail.directStudio === true
-          || Boolean(detail.contentCreationRequest));
+          || Boolean(detail.contentCreationRequest && detail.contentCreationRequest.creationPath !== 'viral_replication'));
         if (detail.studioPanel === 'projects') setOpenProjectsSignal(current => current + 1);
         const runId = String(detail.workflowRunId || '').trim();
         const taskId = String(detail.workflowTaskId || '').trim();
@@ -619,6 +620,23 @@ export default function App() {
         directStudio: true,
         contentCreationRequest: request,
         ...(continueTaskId ? { socialContentTaskId: continueTaskId, socialContentPage: 'smartAssets' } : {}),
+      },
+    }, '', freshUrl);
+  }, []);
+  const handleReturnToContentPlanning = useCallback((request: SocialContentCreateRequest) => {
+    const planningRequest = { ...request, replicationStep: 1 as const };
+    try { localStorage.removeItem('ow_studio_open_project'); } catch { /* ignore */ }
+    setSmartAssetsCreateRequest(planningRequest);
+    setSmartAssetsView('create');
+    setSmartAssetsStudioOpen(false);
+    const freshUrl = new URL(window.location.href);
+    freshUrl.searchParams.delete('project');
+    window.history.replaceState({
+      ...window.history.state,
+      productionDetail: {
+        page: 'smartAssets', view: 'create', directStudio: false,
+        contentCreationRequest: planningRequest,
+        ...(request.continueTaskId ? { socialContentTaskId: request.continueTaskId, socialContentPage: 'smartAssets' } : {}),
       },
     }, '', freshUrl);
   }, []);
@@ -777,10 +795,9 @@ export default function App() {
   // 把“我的创作”和制作工作台互换并卸载，回来后就丢失最后操作位置。
   const showSocialContentPlanning = page === 'smartAssets'
     && smartAssetsView === 'create'
-    && !smartAssetsContentTaskId
-    && !smartAssetsWorkflowContext
-    && !smartAssetsCreateRequest
-    && !smartAssetsStudioOpen;
+    && !smartAssetsStudioOpen
+    && (smartAssetsCreateRequest?.creationPath === 'viral_replication'
+      || (!smartAssetsContentTaskId && !smartAssetsWorkflowContext && !smartAssetsCreateRequest));
 
 
   return (
@@ -915,6 +932,7 @@ export default function App() {
                   socialContentTaskId={smartAssetsContentTaskId}
                   onOpenCreationHome={handleOpenContentCreationHome}
                   onLaunchContentStudio={handleLaunchContentStudio}
+                  onReturnToContentPlanning={handleReturnToContentPlanning}
                 />
               )}
             </div>

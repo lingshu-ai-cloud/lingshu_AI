@@ -11,6 +11,8 @@ assert.ok(digitalHumanDecisionIssues({ ...input, targetEffect: undefined }).some
 
 const material = { type: 'video', url: '/owned.mp4', duration: 10, width: 1080, height: 1920, transcript: 'Contact us now.' };
 assert.equal(enterpriseMaterialIssue({ material, duration: 3, ratio: '9:16', sound: 'source', narration: 'Contact us' }), null);
+assert.equal(enterpriseMaterialIssue({ material, duration: 3, ratio: '16:9', sound: 'silent' }), null, '不同画幅可在渲染时适配，不阻断素材');
+assert.equal(enterpriseMaterialIssue({ material: { ...material, width: 0, height: 0 }, duration: 3, ratio: '9:16', sound: 'silent' }), null, '缺少画幅元数据也不阻断素材');
 assert.match(enterpriseMaterialIssue({ material, duration: 20 }) || '', /时长/);
 assert.match(enterpriseMaterialIssue({ material: { ...material, usage: 'reference_only' }, duration: 3 }) || '', /企业素材/);
 assert.match(enterpriseMaterialIssue({ material, duration: 3, sound: 'source', narration: 'Different words' }) || '', /原声/);

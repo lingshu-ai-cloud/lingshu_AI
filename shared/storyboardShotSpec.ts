@@ -1,7 +1,7 @@
 /** Versioned, provider-independent input for one non-presenter storyboard shot. */
 export const STORYBOARD_SHOT_SPEC_VERSION = 'storyboard-shot-spec-v2';
 
-export type StoryboardShotScene = 'product' | 'factory' | 'usage';
+export type StoryboardShotScene = 'product' | 'factory' | 'usage' | 'general';
 export type StoryboardShotMode = 'replication' | 'free_creation';
 export type StoryboardAssetRole = 'composition' | 'product' | 'product_view' | 'product_cutout' | 'foreground_occluder' | 'person' | 'environment' | 'motion';
 
@@ -98,7 +98,9 @@ export function compileStoryboardShotSpec(input: {
   const contactSurfaceY = input.layout?.contactSurfaceY;
   if (contactSurfaceY !== undefined && !normalized(contactSurfaceY)) throw new Error('shot_spec_invalid_contact_surface_y');
   if (input.mode === 'replication' && !assets.some(asset => asset.role === 'composition' && asset.source === 'reference_video')) throw new Error('shot_spec_missing_source_frame');
-  if (input.scene !== 'factory' && !assets.some(asset => asset.role === 'product' && asset.source === 'knowledge_base')) throw new Error('shot_spec_missing_product');
+  if (input.scene === 'product' || input.scene === 'usage') {
+    if (!assets.some(asset => asset.role === 'product' && asset.source === 'knowledge_base')) throw new Error('shot_spec_missing_product');
+  }
   const action = input.action || {};
   const beats = cleanList(action.beats, 8, 240);
   const startState = clean(action.startState, 400);
@@ -117,7 +119,7 @@ export function compileStoryboardShotSpec(input: {
     startSeconds, endSeconds, targetDurationSeconds, assets,
     layout: {
       ratio: input.ratio,
-      subject: clean(input.layout?.subject, 300) || (input.scene === 'factory' ? 'factory equipment or worker' : 'selected enterprise product'),
+      subject: clean(input.layout?.subject, 300) || (input.scene === 'factory' ? 'factory equipment or worker' : input.scene === 'general' ? 'subject described by the storyboard' : 'selected enterprise product'),
       productPosition: clean(input.layout?.productPosition, 300),
       environment: clean(input.layout?.environment, 300),
       contactSurface: clean(input.layout?.contactSurface, 300),

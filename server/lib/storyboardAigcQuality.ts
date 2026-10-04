@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import sharp from 'sharp';
 
 export type StoryboardQaPhase = 'first_frame' | 'video';
-export type StoryboardQaScene = 'product' | 'factory' | 'usage';
+export type StoryboardQaScene = 'product' | 'factory' | 'usage' | 'general';
 export type StoryboardQaVerdict = 'pass' | 'fail' | 'uncertain';
 export type StoryboardQaStatus = 'passed' | 'needs_review' | 'retry_first_frame' | 'retry_video' | 'needs_assets';
 export type StoryboardQaAction = 'retry_first_frame' | 'retry_video' | 'needs_assets' | 'manual_review';

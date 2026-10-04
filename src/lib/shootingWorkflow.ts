@@ -15,6 +15,7 @@ export interface ScriptGapTask {
   themeTitle: string;
   shotBrief: string;
   suggestedDurationSec: number;
+  ratio?: string;
   sourceProjectId?: string;
   sourceStoryboardSlotId?: string;
   sourceAssemblyId?: string;
