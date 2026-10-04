@@ -3446,7 +3446,35 @@ ${presentationMode === 'heygen' ? '混剪禁止补拍建议，缺少素材证明
       ? safeMaterialScenes(normalizedMaterialInfos)
       : generatedVisualScenes;
 
-    const prompt = generationMode === 'material'
+    const prompt = openingHookOnly
+      ? `你是自由创作分镜导演。根据企业中心已确认资料，重新生成逐句口播，严格输出纯文本分镜。不要 JSON、代码块、数组、标题或解释。
+
+产品和企业已确认事实：
+${confirmedProductEnterprise || product}
+指定开场钩子素材名：${normalizedMaterialInfos[0]?.name}
+开场仅可见：${normalizedMaterialInfos[0]?.observations?.join('；') || '无可靠观察'}
+目标语言：${lang}；台词和字幕都用该语言，其他字段用简体中文。
+目标时长：${productDuration} 秒。唯一结尾行动：${primaryCta}。
+
+严格写五段，时间戳依次为 [0-3s]、[3-7s]、[7-11s]、[11-15s]、[15-${productDuration}s]；如果目标时长不是 20 秒，则均匀调整中间四段，但第一段结束不得晚于 ${Number(normalizedMaterialInfos[0]?.targetEnd || 3)} 秒，最后一段结束必须等于 ${productDuration} 秒。各段连续且不重叠。第一段素材必须逐字写“${normalizedMaterialInfos[0]?.name}”，其余四段素材必须逐字写“待匹配素材”。
+第一段画面只描述已观察内容；后续四段画面均以“建议补拍：”开头，只拍产品实物整体、工件、缺陷样本、现场布局等资料允许且可核实的对象。不得出现未证实的设备屏幕、界面、检测结果、报告、Logo、硬件结构、性能或承诺。不得把建议画面说成已有素材。
+每段台词是一句能在该时间段自然说完的买家口播，首句构成停留理由，末句仅使用唯一行动；字幕与台词逐字相同。时间戳是制作时间，不是产品数字。不要在正文中重复时间数字。
+
+只按以下十个字段格式逐段输出，不要 JSON：
+[0-3s]
+素材：${normalizedMaterialInfos[0]?.name}
+环境：工厂
+景别：中景
+运镜：固定
+构图：工件居中
+镜头功能：买家钩子
+画面：工件沿输送带移动
+配乐：轻节奏
+台词：<一句短口播>
+字幕：<与台词逐字相同>
+
+继续按相同字段输出其余四段。`
+      : generationMode === 'material'
       ? `${materialScriptRules}
 
 ${creativeRules}

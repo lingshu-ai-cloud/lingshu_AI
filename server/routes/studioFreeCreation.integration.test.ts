@@ -79,7 +79,7 @@ try {
   assert.match(body.script || '', /^素材：开场输送带$/m);
   assert.ok((body.script?.match(/^素材：待匹配素材$/gm) || []).length >= 1, 'later scenes must remain unassigned until shot production');
   assert.ok(geminiCalls > 0, 'the free creation script must call Gemini');
-  assert.ok(geminiRequests.some(request => request.includes('用户仅指定了开场钩子视频')), 'the special opening-hook prompt must be used');
+  assert.ok(geminiRequests.some(request => request.includes('指定开场钩子素材名')), 'the special opening-hook prompt must be used');
 
   modelScript = script.replace('[0-3s]', '[0-4s]');
   const invalidResponse = await submit();
