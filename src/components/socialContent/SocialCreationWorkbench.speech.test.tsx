@@ -32,3 +32,13 @@ assert.equal(sharedCueHtml.match(/text-text-primary">Repairing masks\.<\/span>/g
 assert.ok(sharedCueHtml.includes('覆盖 6 个分镜'));
 assert.ok(sharedCueHtml.includes('aria-expanded="false"'), 'the six picture cuts start collapsed');
 console.log('Replication speech is edited and confirmed on the first page');
+
+const freeHtml = renderToStaticMarkup(<SocialCreationWorkbench
+  mode="material_processing"
+  onOpenChooser={() => {}} onShowCreations={() => {}} onGenerate={() => {}}
+/>);
+assert.ok(freeHtml.includes('上传指定开场钩子'));
+assert.ok(freeHtml.includes('Gemini 生成逐句口播与分镜'));
+assert.ok(!freeHtml.includes('还在为内容拍摄和剪辑反复返工吗'));
+assert.ok(!freeHtml.includes('可选的一句话要求'));
+assert.ok(!freeHtml.includes('生成或沿用逐句口播'));

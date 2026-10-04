@@ -13,9 +13,9 @@ assert.match(source, /appliedCreateRequestRef\.current = studioCreateRequest\.re
 const apiSource = readFileSync(new URL('../../src/lib/studioApi.ts', import.meta.url), 'utf8');
 const routeSource = readFileSync(new URL('./studio.ts', import.meta.url), 'utf8');
 const scriptRoute = routeSource.slice(routeSource.indexOf("studioRouter.post('/script'"), routeSource.indexOf("studioRouter.post('/covers'"));
-assert.match(apiSource, /\('script', \{ \.\.\.b, provider: 'qwen' \}/, 'script requests must override legacy Gemini preferences');
-assert.match(scriptRoute, /const providerOpt = 'qwen' as const;/, 'server script generation must stay on Qwen');
-assert.doesNotMatch(scriptRoute, /provider === 'gemini'|backend: 'gemini'/, 'script generation must not switch to Gemini');
-assert.match(source, /分镜生成模型：千问（固定）/, 'UI must identify the actual fixed script backend');
+assert.match(apiSource, /post<StudioScriptResult>\('script', b,/, 'script requests must preserve the selected backend');
+assert.match(scriptRoute, /generationMode !== 'clone' && provider === 'gemini' \? 'gemini' : 'qwen'/, 'free creation must use the requested Gemini backend while clone remains on Qwen');
+assert.match(source, /provider: 'gemini'/, 'free creation must request Gemini');
+assert.match(source, /mode === 'material' \? 'Gemini' : '千问'/, 'UI must identify the actual script backend');
 
 console.log('studio workflow contract passed');

@@ -3167,7 +3167,7 @@ studioRouter.post('/script', async (req, res) => {
   const forbiddenLine = forbiddenTerms.length
     ? `${forbiddenTermEvidence}\nDo not output any exact term listed in the evidence above, nor reference-video hashtags, brand names, original captions, or original product claims.`
     : 'Do not output reference-video brand names, hashtags, original captions, or original product claims.';
-  const providerOpt = 'qwen' as const;
+  const providerOpt: 'gemini' | 'qwen' = generationMode !== 'clone' && provider === 'gemini' ? 'gemini' : 'qwen';
   const hasNarrationDraft = voiceoverMode === 'ai' || voiceoverMode === 'unselected';
   const selectedProductBrief = productBrief(productInfo);
   const selectedProductCategory = selectedProductBrief.category || compactBriefCategory(selectedProductBrief);
@@ -3939,8 +3939,12 @@ ${script}`, { backend: providerOpt, systemPrompt: confirmedProductEnterprise || 
       });
       return;
     }
+    const openingHookOnly = generationMode === 'material' && normalizedMaterialInfos.length === 1
+      && /用户指定开场钩子/.test(String(normalizedMaterialInfos[0]?.role || ''));
     const qualityStatus = generationMode === 'material'
-      ? materialQualityV2?.qualityStatus === 'needs_material'
+      ? openingHookOnly
+        ? 'passed'
+        : materialQualityV2?.qualityStatus === 'needs_material'
         ? 'needs_material'
         : validationWarnings.length
           ? 'warning'

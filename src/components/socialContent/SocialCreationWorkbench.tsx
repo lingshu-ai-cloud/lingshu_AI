@@ -3,21 +3,16 @@ export { StoryboardFirstFrame } from '../studio/StoryboardFirstFrame';
 import ReplicationWorkbenchHeader from './ReplicationWorkbenchHeader';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Captions,
   ChevronDown,
   ChevronRight,
   CircleAlert,
   Film,
-  ImagePlus,
   Loader2,
   Megaphone,
-  Music2,
-  Sparkles,
   Upload,
-  Volume2,
 } from 'lucide-react';
 import type { SocialContentCreationPath } from '../../lib/socialContentModel';
-import { studioApi, type Material } from '../../lib/studioApi';
+import { studioApi, type Material, type StudioScriptResult } from '../../lib/studioApi';
 import { socialContentApi } from '../../lib/socialContentApi';
 import type { SocialContentStageProfile } from '../../lib/socialContentStage';
 import { resolveInspirationPlaybackUrl } from '../../lib/inspirationVideoPlayback';
@@ -50,6 +45,8 @@ export interface SocialCreationWorkbenchSeed {
 export interface SocialCreationWorkbenchSubmit {
   replicationStep?: 1 | 2 | 3;
   confirmedSpeech?: Array<{ source: string; draft: string; time: string }>;
+  initialScript?: string;
+  initialGeneration?: StudioScriptResult;
   requestId: number;
   creationPath: SocialContentCreationPath;
   title: string;
@@ -68,13 +65,6 @@ export interface SocialCreationWorkbenchSubmit {
   strategyPresetId: SocialContentStageProfile['presetId'];
 }
 
-const freeScript = [
-  '还在为内容拍摄和剪辑反复返工吗？',
-  '把你的产品素材放进来，我们会逐句匹配最合适的画面。',
-  '你可以随时替换某一句对应的素材，也可以一次选择多句统一调整。',
-  '确认口播、字幕和音乐后，就能生成一条完整内容。',
-];
-
 function shotStart(time: string): number {
   const start = String(time || '').split(/[–—-]/)[0];
   const clock = start.match(/(\d+):(\d+(?:\.\d+)?)/);
@@ -82,14 +72,6 @@ function shotStart(time: string): number {
   const match = start.match(/\d+(?:\.\d+)?/);
   return match ? Number(match[0]) : 0;
 }
-
-const creationOptions = [
-  { id: 'voice', label: '口播', detail: '生成或沿用逐句口播', icon: Megaphone },
-  { id: 'caption', label: '字幕', detail: '自动对齐口播字幕', icon: Captions },
-  { id: 'sound', label: '音效', detail: '在转场和重点处补充音效', icon: Volume2 },
-  { id: 'music', label: '音乐', detail: '匹配内容节奏与情绪', icon: Music2 },
-  { id: 'effect', label: '画面特效', detail: '添加转场与重点强调', icon: Sparkles },
-] as const;
 
 export function WorkbenchVideoPreview({ source, poster, title, seekSeconds, seekRequestId, onResolved, onPlaybackTime }: { source: string; poster?: string; title: string; seekSeconds?: number; seekRequestId?: number; onResolved?: (url: string) => void; onPlaybackTime?: (seconds: number) => void }) {
   const [attempt, setAttempt] = useState(0);
@@ -204,6 +186,9 @@ export default function SocialCreationWorkbench({
   const [submitting, setSubmitting] = useState(false);
   const [generatingSpeech, setGeneratingSpeech] = useState(false);
   const [files, setFiles] = useState<File[]>([]);
+  const [freeScriptText, setFreeScriptText] = useState('');
+  const [freeGeneration, setFreeGeneration] = useState<StudioScriptResult | null>(null);
+  const [freeHookMaterial, setFreeHookMaterial] = useState<Material | null>(null);
   const [activeLine, setActiveLine] = useState(0);
   const [expandedSpeechLines, setExpandedSpeechLines] = useState<Set<number>>(() => new Set());
   const [requestedSeek, setRequestedSeek] = useState(0);
@@ -221,7 +206,6 @@ export default function SocialCreationWorkbench({
       panel.scrollTo({ top: panel.scrollTop + cardBox.top - panelBox.top - 90, behavior: 'smooth' });
     }
   }, [activeLine]);
-  const [enabledOptions, setEnabledOptions] = useState(() => new Set(creationOptions.map(item => item.id)));
   const [resolvedReferenceUrl, setResolvedReferenceUrl] = useState('');
   const [taskProductTerms, setTaskProductTerms] = useState<string[] | undefined>();
   const [taskReferenceShots, setTaskReferenceShots] = useState<SocialCreationWorkbenchSeed['referenceShots']>(undefined);
@@ -258,7 +242,7 @@ export default function SocialCreationWorkbench({
     const detected = referenceBrandTerm(referenceLines.map(line => line.text));
     if (detected) setBrandSourceTerm(current => current || detected);
   }, [taskReferenceShots, seed?.referenceShots]); // eslint-disable-line react-hooks/exhaustive-deps
-  const script = isReplication ? referenceLines.map(line => line.text) : freeScript;
+  const script = isReplication ? referenceLines.map(line => line.text) : [];
   const detectedProductSlots = referenceProductTerms(referenceLines.map(line => ({ text: line.text, time: line.time, visual: line.visual })), taskProductTerms);
   const productSlots = [...detectedProductSlots, ...manualProductTerms.filter(term => !detectedProductSlots.some(slot => slot.sourceLabel.toLocaleLowerCase() === term.toLocaleLowerCase()))
     .map((term, index) => ({ shotId: `manual-product-${index}`, sourceLabel: term, time: '', visual: '' }))];
@@ -467,24 +451,53 @@ export default function SocialCreationWorkbench({
   }, []);
 
   const startGeneration = async (replicationStep: 1 | 2 | 3 = 1, navigationOnly = false) => {
-    if (submitting || productsLoading || (!navigationOnly && isReplication && (!productsReady || !speechGenerated || confirmedSpeech.some(line => !line.draft.trim())))) return;
+    if (submitting || productsLoading || (!isReplication && (!productId || files.length !== 1 || !files[0]?.type.startsWith('video/'))) || (!navigationOnly && isReplication && (!productsReady || !speechGenerated || confirmedSpeech.some(line => !line.draft.trim())))) return;
     setSubmitting(true); setGenerationNotice('');
     try {
       const presenterAssetId = '';
-      const uploadedMaterials: Material[] = [];
-      for (const file of navigationOnly ? [] : files) {
+      const uploadedMaterials: Material[] = freeHookMaterial && !isReplication ? [freeHookMaterial] : [];
+      for (const file of navigationOnly || (freeHookMaterial && !isReplication) ? [] : files) {
         const type: Material['type'] = file.type.startsWith('video/') ? 'video' : file.type.startsWith('audio/') ? 'audio' : 'image';
         const result = await studioApi.uploadMaterialFile(file, { folder: 'upload', type, sourceType: 'content-workbench' });
         if (!result.ok || !result.material?.id) throw new Error(result.error || `「${file.name}」上传失败`);
         uploadedMaterials.push(result.material);
       }
       const selected = products.find(item => item.id === productId);
+      if (!isReplication && !freeScriptText.trim()) {
+        const hook = uploadedMaterials[0];
+        if (!hook || !selected) throw new Error('请先选择企业产品并上传开场钩子。');
+        setFreeHookMaterial(hook);
+        setGenerationNotice('正在分析开场画面并由 Gemini 生成逐句口播…');
+        const analysis = await studioApi.analyzeMaterialSegments(hook.id);
+        if (!analysis.ok || !analysis.material) throw new Error(analysis.error || '开场钩子画面分析失败，请重试。');
+        const analyzed = analysis.material;
+        const observations = [
+          ...(analyzed.visualObservations || []),
+          ...(analyzed.segments || []).filter(segment => !segment.needsReview).map(segment => [segment.action, segment.shot, segment.environment].filter(Boolean).join('；')),
+        ].filter(Boolean);
+        if (!observations.length) throw new Error('尚未识别出开场钩子的画面内容，请更换清晰视频后重试。');
+        const duration = Math.min(3, Math.max(0.5, analyzed.duration || 3));
+        const result = await studioApi.script({
+          materials: [analyzed.name],
+          materialInfos: [{ name: analyzed.name, type: 'video', folder: analyzed.folder, duration: analyzed.duration, effectiveDuration: duration, role: '用户指定开场钩子', targetStart: 0, targetEnd: duration, observations }],
+          productInfo: selected.name, language: 'zh', platform: 'tiktok', duration: 20,
+          scriptType: 'storyboard', generationMode: 'material', voiceoverMode: 'ai', provider: 'gemini',
+        }, '');
+        if (!result.ok || !result.script?.trim() || result.publishable === false) throw new Error(result.error || 'Gemini 未生成可用的逐句口播，请重试。');
+        setFreeHookMaterial(analyzed);
+        setFreeScriptText(result.script);
+        setFreeGeneration(result);
+        setGenerationNotice('逐句口播与分镜已生成，请在左侧检查，确认后进入分镜制作。');
+        return;
+      }
       const productName = isReplication ? productMappings[0]?.productName || (navigationOnly ? seed?.productName || '' : '') : selected?.name || '';
       // GENERATION_INTEGRATION_GAP: the current task contract accepts shared files plus
       // selected sentence indexes, but not a durable sentence-to-asset mapping yet.
       onGenerate({
         replicationStep: isReplication ? replicationStep : undefined,
         confirmedSpeech: isReplication && !navigationOnly ? confirmedSpeech : undefined,
+        initialScript: !isReplication ? freeScriptText : undefined,
+        initialGeneration: !isReplication ? freeGeneration || undefined : undefined,
         requestId: Date.now(),
         creationPath: mode,
         title: isReplication
@@ -499,7 +512,7 @@ export default function SocialCreationWorkbench({
         uploadedMaterials,
         referenceLinks: [...new Set([...(seed?.referenceLinks || []), ...uploadedMaterials.map(item => item.url).filter(Boolean)])],
         callToAction: '',
-        specialRequirements: isReplication ? '已确认口播文本；分镜匹配时制作数字人口播镜头，成片渲染时生成统一配音。' : `生成项：${[...enabledOptions].join('、')}`,
+        specialRequirements: isReplication ? '已确认口播文本；分镜匹配时制作数字人口播镜头，成片渲染时生成统一配音。' : '用户上传指定开场钩子；由 Gemini 依据企业产品资料和开场画面重新生成逐句口播及后续分镜。',
         stageProfileId: stageProfile?.id || 'b2b_launch',
         stageLabel: stageProfile?.name || 'B2B 起步验证',
         strategyPresetId: stageProfile?.presetId || 'b2b_starting',
@@ -512,29 +525,18 @@ export default function SocialCreationWorkbench({
 
   return (
     <section className="flex h-full min-h-0 flex-col bg-[#f2f7f4]">
-      {isReplication ? <ReplicationWorkbenchHeader activeStep={0} onStepChange={index => { if (index > 0 && speechGenerated) void startGeneration(); }} navigationDisabled={submitting || productsLoading || !speechGenerated} title={seed?.referenceTitle} actions={<><button type="button" onClick={onShowCreations} className="rounded-lg border border-border px-3 py-2 text-xs font-bold">我的创作</button><button type="button" onClick={onOpenChooser} className="rounded-lg bg-[#173d31] px-3 py-2 text-xs font-bold text-white">切换制作方式</button></>} /> : (      <header className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-border bg-white px-5 py-3">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            <span className={`rounded-full px-2.5 py-1 text-[10px] font-black ${isReplication ? 'bg-orange-50 text-orange-700' : 'bg-emerald-50 text-emerald-700'}`}>{isReplication ? '爆款复刻' : '自由创作'}</span>
-            <span className="text-[10px] font-bold text-text-muted">逐句口播与画面制作台</span>
-            {stageProfile&&<span className="rounded-full bg-slate-100 px-2 py-1 text-[9px] font-black text-slate-500">{stageProfile.name}</span>}
-          </div>
-          <h1 className="mt-1 truncate text-base font-black text-text-primary">{isReplication ? seed?.referenceTitle || '从爆款参考开始制作' : '创建一条新内容'}</h1>
-        </div>
-        <div className="flex items-center gap-2">
-          <button type="button" onClick={onShowCreations} className="rounded-lg border border-border bg-white px-3 py-2 text-xs font-bold text-text-secondary hover:bg-surface-2">我的创作</button>
-          <button type="button" onClick={onOpenChooser} className="inline-flex items-center gap-1.5 rounded-lg bg-[#173d31] px-3 py-2 text-xs font-black text-white hover:bg-[#245644]"><ImagePlus size={14} />切换制作方式</button>
-        </div>
-      </header>)}
+      <ReplicationWorkbenchHeader activeStep={0} stepLabels={isReplication ? undefined : ['确认自由创作口播', '分镜匹配与制作', '成片渲染和导出']} onStepChange={index => { if (index > 0 && (isReplication ? speechGenerated : Boolean(freeScriptText))) void startGeneration(); }} navigationDisabled={submitting || productsLoading || (isReplication ? !speechGenerated : !freeScriptText)} title={isReplication ? seed?.referenceTitle : products.find(item => item.id === productId)?.name || '自由创作'} actions={<><button type="button" onClick={onShowCreations} className="rounded-lg border border-border px-3 py-2 text-xs font-bold">我的创作</button><button type="button" onClick={onOpenChooser} className="rounded-lg bg-[#173d31] px-3 py-2 text-xs font-bold text-white">切换制作方式</button></>} />
 
 
       <div className="social-creation-workbench-layout grid min-h-0 flex-1 grid-cols-1 overflow-y-auto lg:overflow-hidden">
         <aside className="min-h-0 border-b border-border bg-white lg:overflow-y-auto lg:border-b-0 lg:border-r">
           <div className="sticky top-0 z-10 border-b border-border bg-white px-4 py-4">
-            <p className="text-sm font-black text-text-primary">{isReplication ? '口播替换与确认' : '口播内容'}</p>
-            <p className="mt-1 text-[11px] leading-5 text-text-muted">{isReplication ? '先在右侧完成产品映射并生成口播，再检查高亮产品词、修改并确认。' : '逐句对应原片分镜，点击定位主视频的对应画面。'}</p>
+            <p className="text-sm font-black text-text-primary">{isReplication ? '口播替换与确认' : '创作准备'}</p>
+            <p className="mt-1 text-[11px] leading-5 text-text-muted">{isReplication ? '先在右侧完成产品映射并生成口播，再检查高亮产品词、修改并确认。' : '选择企业产品并上传指定开场钩子，Gemini 会生成新片逐句口播。'}</p>
           </div>
           <ol ref={cardListRef} className="space-y-2 p-3">
+            {!isReplication && !freeScriptText && <li className="rounded-xl border border-dashed border-emerald-200 bg-emerald-50/50 p-4 text-xs leading-5 text-emerald-900">上传一段指定开场视频作为首镜。Gemini 将分析画面并生成新片逐句口播；这里不使用示例口播。</li>}
+            {!isReplication && freeScriptText && <li className="rounded-xl border border-emerald-200 bg-emerald-50 p-3"><p className="text-xs font-bold text-emerald-900">Gemini 生成的逐句口播与分镜</p><pre className="mt-2 whitespace-pre-wrap rounded-lg border border-emerald-200 bg-white p-3 text-xs leading-6 text-text-primary">{freeScriptText}</pre><button type="button" onClick={() => { setFreeScriptText(''); setFreeGeneration(null); setGenerationNotice(''); }} className="mt-2 text-xs font-bold text-emerald-800 underline">重新生成一版</button></li>}
             {isReplication && !referenceShots.length && <li className="rounded-xl border border-dashed border-border p-4 text-xs leading-5 text-text-muted">原片分镜和口播尚未完成分析。完成后会在这里逐句显示真实口播与素材首帧。</li>}
             {script.map((line, index) => {
               const active = activeLine === index;
@@ -575,9 +577,9 @@ export default function SocialCreationWorkbench({
         <main className="flex min-h-[560px] min-w-0 flex-col bg-[#f5f8f5] lg:min-h-0">
           <div className="flex items-center justify-between border-b border-black/5 px-5 py-3">
             <div><p className="text-xs font-black text-text-primary">画面预览</p><p className="mt-0.5 text-[10px] text-text-muted">{isReplication ? `当前对应第 ${activeLine + 1} 句口播` : `当前对应第 ${activeLine + 1} 个分镜`}</p></div>
-            {!isReplication && <button type="button" onClick={() => uploadRef.current?.click()} className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-white px-3 py-2 text-xs font-black text-text-secondary shadow-sm"><Upload size={14} />上传素材</button>}
+            {!isReplication && <button type="button" onClick={() => uploadRef.current?.click()} className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-white px-3 py-2 text-xs font-black text-text-secondary shadow-sm"><Upload size={14} />上传指定开场钩子</button>}
           </div>
-          <input ref={uploadRef} type="file" multiple accept="video/*,image/*" className="hidden" onChange={event => setFiles(Array.from(event.currentTarget.files || []))} />
+          <input ref={uploadRef} type="file" accept="video/*" className="hidden" onChange={event => { setFiles(Array.from(event.currentTarget.files || [])); setFreeScriptText(''); setFreeGeneration(null); setFreeHookMaterial(null); }} />
           <div className="flex min-h-0 flex-1 items-center justify-center overflow-hidden p-4 sm:p-5">
             <div className="relative flex h-full min-h-0 max-h-full w-full items-center justify-center overflow-hidden rounded-xl border border-[#dfe5e1] bg-[#eef0f3] shadow-[0_2px_12px_rgba(23,61,49,0.06)]">
               {previewUrl && files[0]?.type.startsWith('video/') ? <video src={previewUrl} controls playsInline preload="metadata" className="h-full w-full object-contain" />
@@ -586,12 +588,12 @@ export default function SocialCreationWorkbench({
                 : seed?.referenceThumbnail ? <img src={seed.referenceThumbnail} alt={isReplication ? '爆款视频预览' : '已选素材预览'} className="h-full w-full object-contain" />
                 : <div className="flex h-full w-full flex-col items-center justify-center gap-4 px-8 text-center text-[#294c40]">
                     <span className="flex h-16 w-16 items-center justify-center rounded-full bg-white text-[#607b71] shadow-sm"><Film size={27} /></span>
-                    <div><p className="text-base font-black">{isReplication ? '等待爆款视频' : '暂无预览'}</p><p className="mt-2 text-xs leading-5 text-[#789087]">{isReplication ? '从灵感中心选择爆款后，会在这里显示原视频。' : '先从素材库选择画面，或上传本地视频与图片。'}</p></div>
-                    {!isReplication && <div className="flex items-center gap-3"><button type="button" onClick={() => window.dispatchEvent(new CustomEvent('lingshu:open-material-library'))} className="rounded-lg border border-white bg-white px-4 py-2.5 text-xs font-black text-[#38594d] shadow-sm">选择素材</button><button type="button" onClick={() => uploadRef.current?.click()} className="rounded-lg bg-[#173d31] px-4 py-2.5 text-xs font-black text-white shadow-sm">上传素材</button></div>}
+                    <div><p className="text-base font-black">{isReplication ? '等待爆款视频' : '等待开场钩子'}</p><p className="mt-2 text-xs leading-5 text-[#789087]">{isReplication ? '从灵感中心选择爆款后，会在这里显示原视频。' : '上传指定开场视频，作为自由创作的第一镜。'}</p></div>
+                    {!isReplication && <button type="button" onClick={() => uploadRef.current?.click()} className="rounded-lg bg-[#173d31] px-4 py-2.5 text-xs font-black text-white shadow-sm">上传指定开场钩子</button>}
                   </div>}
             </div>
           </div>
-          <div className="flex items-center justify-between border-t border-black/5 px-5 py-3 text-[11px] text-text-muted"><span>{files.length ? `已上传 ${files.length} 个素材` : isReplication ? '沿用爆款原片素材' : '尚未上传素材'}</span>{!isReplication && <button type="button" onClick={()=>uploadRef.current?.click()} className="font-black text-emerald-700">上传素材</button>}</div>
+          <div className="flex items-center justify-between border-t border-black/5 px-5 py-3 text-[11px] text-text-muted"><span>{files.length ? `已选择开场钩子：${files[0]?.name}` : isReplication ? '原片仅供分析' : '尚未上传开场钩子'}</span>{!isReplication && <button type="button" onClick={()=>uploadRef.current?.click()} className="font-black text-emerald-700">更换钩子</button>}</div>
         </main>
 
         <aside className="flex min-h-0 flex-col border-t border-border bg-white lg:border-l lg:border-t-0">
@@ -635,19 +637,13 @@ export default function SocialCreationWorkbench({
               <div className="mt-3 rounded-lg border border-border bg-surface-2 p-2.5"><p className="text-[10px] font-bold text-text-secondary">企业品牌 · 自动读取</p><p className="mt-1 text-xs text-text-primary">{enterpriseBrandName || '企业知识库尚未填写品牌名称'}</p><p className="mt-1 text-[10px] text-text-muted">新口播使用企业知识库中的品牌信息，无需填写原片品牌名。</p></div>
             </div>}
 
-            {!isReplication && <div className="mt-4 space-y-2">
-              {creationOptions.map(item => {
-                const Icon = item.icon;
-                const checked = enabledOptions.has(item.id);
-                const locked = isReplication;
-                return <button key={item.id} type="button" disabled={locked} onClick={() => setEnabledOptions(current => { const next = new Set(current); if (next.has(item.id)) next.delete(item.id); else next.add(item.id); return next; })} className={`flex w-full items-center gap-3 rounded-xl border p-3 text-left ${locked ? 'cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400' : checked ? 'border-emerald-200 bg-emerald-50/55' : 'border-border bg-white'}`}>
-                  <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${locked ? 'bg-white text-slate-400' : 'bg-white text-emerald-700'}`}><Icon size={15} /></span>
-                  <span className="min-w-0 flex-1"><span className="block text-xs font-black">{item.label}</span><span className="mt-0.5 block truncate text-[10px] opacity-75">{item.detail}</span></span>
-                  <span className={`h-5 w-9 rounded-full p-0.5 ${checked ? locked ? 'bg-slate-300' : 'bg-emerald-600' : 'bg-slate-200'}`}><span className={`block h-4 w-4 rounded-full bg-white transition ${checked ? 'translate-x-4' : ''}`} /></span>
-                </button>;
-              })}
-            </div>}
-
+            {!isReplication && <label className="mt-4 block text-xs font-black text-text-primary">本次宣传产品
+              <select aria-label="自由创作产品" value={productId} disabled={productsLoading || submitting} onChange={event => { setProductId(event.target.value); setFreeScriptText(''); setFreeGeneration(null); }} className="mt-2 h-11 w-full rounded-xl border border-border bg-white px-3 text-xs font-bold text-text-primary">
+                <option value="">{productsLoading ? '正在读取企业产品…' : '请选择企业产品'}</option>
+                {products.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
+              </select>
+              {!productsLoading && !products.length && <span className="mt-2 block text-[10px] font-normal text-amber-700">请先在企业中心录入产品。</span>}
+            </label>}
             {enterpriseProfileState === 'ready' && enterpriseCtas.length > 0 && <div className="mt-4 rounded-xl border border-border bg-surface-2 p-3">
               <div className="flex items-center gap-2"><Megaphone size={14} /><p className="text-xs font-black text-text-primary">CTA · 已从企业知识库读取</p></div>
               {enterpriseCtas.map(cta => <p key={cta} className="mt-1 text-[10px] leading-5 text-text-secondary">{cta}</p>)}
@@ -668,8 +664,8 @@ export default function SocialCreationWorkbench({
             {/* GENERATION_INTEGRATION_GAP: the server calculates estimatedCostCny only
                 after a task plan exists; there is no preflight quote endpoint yet. */}
             {isReplication && <div className="flex items-center gap-3 text-[11px]"><span className="text-text-muted">预计消耗</span><span className="font-black text-text-primary" title="生成任务建立后由服务端返回真实预估">待生成服务核算</span></div>}
-            <button type="button" disabled={submitting || generatingSpeech || productsLoading || (isReplication && (!productsReady || !confirmedSpeech.length || (speechGenerated && confirmedSpeech.some(line => !line.draft.trim()))))} onClick={() => { if (isReplication && !speechGenerated) void generateSpeech(); else void startGeneration(); }} className="flex min-w-[220px] items-center justify-center gap-2 rounded-xl bg-[#173d31] px-4 py-3 text-sm font-black text-white shadow-sm hover:bg-[#245644] disabled:cursor-not-allowed disabled:bg-slate-300">
-              {submitting || generatingSpeech ? <Loader2 size={16} className="animate-spin" /> : <Film size={16} />}{submitting ? '正在进入创作' : generatingSpeech ? '正在生成英文口播' : isReplication ? speechGenerated ? '确认口播，进入分镜匹配' : '生成口播' : '开始生成'}
+            <button type="button" disabled={submitting || generatingSpeech || productsLoading || (!isReplication && (!productId || files.length !== 1 || !files[0]?.type.startsWith('video/'))) || (isReplication && (!productsReady || !confirmedSpeech.length || (speechGenerated && confirmedSpeech.some(line => !line.draft.trim()))))} onClick={() => { if (isReplication && !speechGenerated) void generateSpeech(); else void startGeneration(); }} className="flex min-w-[220px] items-center justify-center gap-2 rounded-xl bg-[#173d31] px-4 py-3 text-sm font-black text-white shadow-sm hover:bg-[#245644] disabled:cursor-not-allowed disabled:bg-slate-300">
+              {submitting || generatingSpeech ? <Loader2 size={16} className="animate-spin" /> : <Film size={16} />}{submitting ? '正在处理…' : generatingSpeech ? '正在生成英文口播' : isReplication ? speechGenerated ? '确认口播，进入分镜匹配' : '生成口播' : freeScriptText ? '确认口播，进入分镜制作' : 'Gemini 生成逐句口播与分镜'}
             </button>
           </div></footer>
     </section>
