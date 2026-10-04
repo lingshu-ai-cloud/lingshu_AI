@@ -3513,7 +3513,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
   const autosavePendingRef = useRef(false);
   const autosaveSnapshotRef = useRef<() => Promise<void>>(async () => undefined);
   const [videoKickoff, setVideoKickoff] = useState<VideoKickoff | null>(null);
-  const freeThreeStep = mode === 'material' && contentMode === 'video' && videoKickoff?.source === 'material_library' && Boolean(videoKickoff.script?.trim());
+  const freeThreeStep = mode === 'material' && contentMode === 'video' && videoKickoff?.source === 'material_library' && videoKickoff.initialGeneration?.ok === true && Boolean(videoKickoff.script?.trim());
   const salesReviewAttempted = useRef(new Set<string>());
   const salesReviewResults = useRef(new Map<string, any[]>());
   const [salesReviewMessage, setSalesReviewMessage] = useState('');
@@ -4573,8 +4573,11 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     const identity = studioCreateRequest?.identityMappings;
     if (!identity || !productOptions.length || (socialContentTaskId && !socialTaskProjectLookupDone)
       || appliedIdentityRequestRef.current === studioCreateRequest?.requestId) return;
-    const selected = identity.products.map(mapping => productOptions.find(option => option.id === mapping.productId || option.label === mapping.productName)?.id || '').filter(Boolean);
-    if (selected.length !== identity.products.length) return;
+    const requestedProducts = identity.products.length
+      ? identity.products.map(mapping => ({ id: mapping.productId, name: mapping.productName }))
+      : (identity.selectedProductIds || []).map((id, index) => ({ id, name: identity.selectedProductNames?.[index] || '' }));
+    const selected = requestedProducts.map(requested => productOptions.find(option => option.id === requested.id || option.label === requested.name)?.id || '').filter(Boolean);
+    if (selected.length !== requestedProducts.length) return;
     setSelectedProductIds(selected);
     setReferenceProductAssignments(Object.fromEntries(referenceProducts.map(slot => {
       const mapping = identity.products.find(item => slot.sourceLabel.toLocaleLowerCase().endsWith(item.sourceTerm.toLocaleLowerCase()));
@@ -6371,7 +6374,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
 
   const appliedFreeScriptRef = useRef('');
   useEffect(() => {
-    if (mode !== 'material' || videoKickoff?.source !== 'material_library' || !videoKickoff.script?.trim()) return;
+    if (mode !== 'material' || videoKickoff?.source !== 'material_library' || !videoKickoff.initialGeneration?.ok || !videoKickoff.script?.trim()) return;
     const signature = JSON.stringify([videoKickoff.generatedVideo?.id, videoKickoff.script]);
     if (appliedFreeScriptRef.current === signature) return;
     const generation = videoKickoff.initialGeneration;
@@ -6381,6 +6384,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     }
     appliedFreeScriptRef.current = signature;
     applyTimestampScript(videoKickoff.script, activeProductInfo, false);
+    setVoiceoverMode('ai');
     const itemId = `material-${videoKickoff.generatedVideo?.id || Date.now()}`;
     setModeScripts([{ id: itemId, title: 'Gemini 自由创作脚本', script: videoKickoff.script, mode: 'material', ...qualityFields(generation) }]);
     setActiveModeScriptId(itemId);

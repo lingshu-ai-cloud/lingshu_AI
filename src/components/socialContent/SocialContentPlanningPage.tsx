@@ -136,8 +136,8 @@ export default function SocialContentPlanningPage({
       },
       sourceContext: sourceRequest?.sourceContext,
       identityMappings: {
-        selectedProductIds: request.productMappings.map(mapping => mapping.productId).filter(Boolean),
-        selectedProductNames: request.productMappings.map(mapping => mapping.productName).filter(Boolean),
+        selectedProductIds: request.creationPath === 'material_processing' ? [request.productId].filter(Boolean) : request.productMappings.map(mapping => mapping.productId).filter(Boolean),
+        selectedProductNames: request.creationPath === 'material_processing' ? [request.productName].filter(Boolean) : request.productMappings.map(mapping => mapping.productName).filter(Boolean),
         products: request.productMappings,
         brand: request.brandMapping,
       },

@@ -483,11 +483,12 @@ export default function SocialCreationWorkbench({
           productInfo: selected.name, language: 'zh', platform: 'tiktok', duration: 20,
           scriptType: 'storyboard', generationMode: 'material', voiceoverMode: 'ai', provider: 'gemini',
         }, '');
-        if (!result.ok || !result.script?.trim() || result.publishable === false) throw new Error(result.error || 'Gemini 未生成可用的逐句口播，请重试。');
+        if (!result.ok || !result.script?.trim() || result.publishable !== true || result.qualityStatus !== 'passed') throw new Error(result.error || 'Gemini 未生成通过质量核验的逐句口播，请重试。');
         setFreeHookMaterial(analyzed);
         setFreeScriptText(result.script);
         setFreeGeneration(result);
         setGenerationNotice('逐句口播与分镜已生成，请在左侧检查，确认后进入分镜制作。');
+        setSubmitting(false);
         return;
       }
       const productName = isReplication ? productMappings[0]?.productName || (navigationOnly ? seed?.productName || '' : '') : selected?.name || '';
