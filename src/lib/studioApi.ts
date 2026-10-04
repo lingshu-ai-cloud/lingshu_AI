@@ -491,6 +491,7 @@ export const studioApi = {
   script: (b: {
     materials: string[];
     productInfo?: string;
+    selectedProductId?: string;
     language: string;
     platform: string;
     duration: number;

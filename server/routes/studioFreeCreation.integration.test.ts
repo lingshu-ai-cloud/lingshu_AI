@@ -42,7 +42,7 @@ auth.verifyToken = async () => {
 store.list = (async collection => collection === 'tenant_profiles'
   ? ({ items: [{ id: 'free-creation-profile', profile: {
       company: { name: 'LX 测试制造企业', companyType: '制造工厂' },
-      products: { items: [{ name: productName, category: '工厂自动化', highlights: '可根据工件、节拍、缺陷样本或现场布局开展方案诊断' }] },
+      products: { items: [{ id: 'real-enterprise-product-1', name: productName, category: '工厂自动化', highlights: '可根据工件、节拍、缺陷样本或现场布局开展方案诊断' }] },
       socialStrategy: { enabledRoutes: ['oem_odm'] },
     } }], page: 1, perPage: 20, totalItems: 1, totalPages: 1 })
   : ({ items: [], page: 1, perPage: 20, totalItems: 0, totalPages: 0 })) as typeof store.list;
@@ -62,7 +62,7 @@ try {
     materials: ['开场输送带'], materialInfos: [{ name: '开场输送带', type: 'video', folder: 'upload', duration: 8,
       effectiveDuration: 3, targetStart: 0, targetEnd: 3, role: '用户指定开场钩子',
       observations: ['工件沿输送带移动；中景；固定；工厂'] }],
-    productInfo: productName, language: 'zh', platform: 'tiktok', duration: 20, scriptType: 'storyboard',
+    selectedProductId: 'real-enterprise-product-1', productInfo: productName, language: 'zh', platform: 'tiktok', duration: 20, scriptType: 'storyboard',
     generationMode: 'material', voiceoverMode: 'ai', provider: 'gemini', cooperationRoute: 'oem_odm',
   };
   const submit = () => originalFetch(`http://127.0.0.1:${address.port}/studio/script`, {
@@ -80,6 +80,15 @@ try {
   assert.ok((body.script?.match(/^素材：待匹配素材$/gm) || []).length >= 1, 'later scenes must remain unassigned until shot production');
   assert.ok(geminiCalls > 0, 'the free creation script must call Gemini');
   assert.ok(geminiRequests.some(request => request.includes('指定开场钩子素材名')), 'the special opening-hook prompt must be used');
+  assert.ok(geminiRequests.some(request => request.includes('可根据工件、节拍、缺陷样本或现场布局开展方案诊断')), 'Gemini must receive the product record read from enterprise center');
+
+  const callsBeforeInvalidProduct = geminiCalls;
+  const unknownProductResponse = await originalFetch(`http://127.0.0.1:${address.port}/studio/script`, {
+    method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer free-creation-test' },
+    body: JSON.stringify({ ...request, selectedProductId: 'missing-enterprise-product' }),
+  });
+  assert.equal(unknownProductResponse.status, 422);
+  assert.equal(geminiCalls, callsBeforeInvalidProduct, 'unknown enterprise products must be rejected before calling Gemini');
 
   modelScript = script.replace('[0-3s]', '[0-4s]');
   const invalidResponse = await submit();

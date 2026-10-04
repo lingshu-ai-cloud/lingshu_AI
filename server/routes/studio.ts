@@ -3080,7 +3080,8 @@ studioRouter.post('/script', async (req, res) => {
   if (!await consumeDemoQuota(req, res, 'generation')) return;
   const {
     materials = [],
-    productInfo = '',
+    productInfo: submittedProductInfo = '',
+    selectedProductId = '',
     language = 'en',
     platform = 'tiktok',
     duration = 20,
@@ -3105,6 +3106,35 @@ studioRouter.post('/script', async (req, res) => {
   const normalizedMaterialInfos = normalizeMaterialInfos(materialInfos, materials, Number(duration) || 20);
   const openingHookOnly = generationMode === 'material' && normalizedMaterialInfos.length === 1
     && /用户指定开场钩子/.test(String(normalizedMaterialInfos[0]?.role || ''));
+  let productInfo = String(submittedProductInfo || '');
+  if (openingHookOnly) {
+    const tenantId = (res.locals as AuthLocals).tenantId;
+    const profile = await readTenantEnterpriseProfile(tenantId);
+    const items = profile.products?.items || [];
+    const selectedId = String(selectedProductId || '').trim();
+    const selected = items.find((item, index) => {
+      const name = String(item.name || '').trim().slice(0, 200);
+      const id = [item.id, item.productId].map(value => String(value || '').trim().slice(0, 200)).find(Boolean)
+        || String(item.sku || '').trim().slice(0, 160)
+        || `product-${createHash('sha256').update(name || `legacy-empty-row:${index}`).digest('hex').slice(0, 16)}`;
+      return id === selectedId;
+    });
+    if (!selectedId || !selected?.name || (productInfo.trim() && productInfo.trim() !== selected.name.trim())) {
+      res.status(422).json({ ok: false, source: 'ai_rejected', provenance: 'ai_rejected', publishable: false,
+        qualityStatus: 'rejected', code: 'ENTERPRISE_PRODUCT_REQUIRED', script: '',
+        error: '所选产品与当前企业中心记录不一致，请重新选择产品后生成。' });
+      return;
+    }
+    productInfo = [
+      `产品名称：${selected.name}`,
+      selected.sku ? `产品SKU：${selected.sku}` : '',
+      selected.category ? `所属类目：${selected.category}` : '',
+      selected.highlights ? `产品卖点：${selected.highlights}` : '',
+      selected.priceRange ? `价格区间：${selected.priceRange}` : '',
+      selected.moq ? `起订量：${selected.moq}` : '',
+      selected.certifications ? `认证资质：${selected.certifications}` : '',
+    ].filter(Boolean).join('\n');
+  }
   const structuredMaterials = materialInfoLines(normalizedMaterialInfos);
   const selectedClipEvidence = untrustedPromptData('selected_material_names', clips, 4_000);
   const materialObservationEvidence = untrustedPromptData(

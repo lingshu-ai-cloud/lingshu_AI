@@ -480,7 +480,7 @@ export default function SocialCreationWorkbench({
         const result = await studioApi.script({
           materials: [analyzed.name],
           materialInfos: [{ name: analyzed.name, type: 'video', folder: analyzed.folder, duration: analyzed.duration, effectiveDuration: duration, role: '用户指定开场钩子', targetStart: 0, targetEnd: duration, observations }],
-          productInfo: selected.name, language: 'zh', platform: 'tiktok', duration: 20,
+          selectedProductId: selected.id, productInfo: selected.name, language: 'zh', platform: 'tiktok', duration: 20,
           scriptType: 'storyboard', generationMode: 'material', voiceoverMode: 'ai', provider: 'gemini',
         }, '');
         if (!result.ok || !result.script?.trim() || result.publishable !== true || result.qualityStatus !== 'passed') throw new Error(result.error || 'Gemini 未生成通过质量核验的逐句口播，请重试。');
