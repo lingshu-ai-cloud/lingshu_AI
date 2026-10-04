@@ -171,6 +171,11 @@ try {
   assert.deepEqual(workerMissing.issues, ['social_operating_worker_unready:heartbeat:missing']);
   assert.equal(workerMissing.socialOperating?.queueBacklog.count, 3);
 
+  const { classifyWorkerHeartbeat } = await import('./socialOperatingObservability.js');
+  const heartbeatNow = new Date('2026-10-04T10:00:00.000Z');
+  assert.deepEqual(classifyWorkerHeartbeat('2026-10-04T09:58:00.000Z', heartbeatNow, 60_000), { ready: false, state: 'stale' });
+  assert.deepEqual(classifyWorkerHeartbeat('2026-10-04T09:59:30.000Z', heartbeatNow, 60_000), { ready: true, state: 'ready' });
+
   const workerReady = await runtimeReadiness({
     role: 'all',
     checkPocketBase: async () => {},

@@ -69,6 +69,15 @@ function workerMaxAgeMs(): number {
   return Number.isFinite(configured) ? Math.min(Math.max(Math.floor(configured), 10_000), 10 * 60_000) : 60_000;
 }
 
+export function classifyWorkerHeartbeat(lastSeenAt: string | null, now: Date, maxAgeMs = workerMaxAgeMs()): { ready: boolean; state: string } {
+  if (!lastSeenAt) return { ready: false, state: 'missing' };
+  const ageMs = now.getTime() - Date.parse(lastSeenAt);
+  if (!Number.isFinite(ageMs)) return { ready: false, state: 'invalid_timestamp' };
+  if (ageMs < 0) return { ready: false, state: 'clock_skew' };
+  if (ageMs > maxAgeMs) return { ready: false, state: 'stale' };
+  return { ready: true, state: 'ready' };
+}
+
 export async function inspectSocialOperatingSignals(input: {
   role: ProcessRole;
   now?: Date;
@@ -93,10 +102,10 @@ export async function inspectSocialOperatingSignals(input: {
     });
     const heartbeat = heartbeats.items[0];
     const lastSeen = typeof heartbeat?.last_seen_at === 'string' ? heartbeat.last_seen_at : null;
-    const age = lastSeen ? now.getTime() - Date.parse(lastSeen) : Number.POSITIVE_INFINITY;
+    const freshness = classifyWorkerHeartbeat(lastSeen, now);
     worker = {
-      ready: Number.isFinite(age) && age >= 0 && age <= workerMaxAgeMs(),
-      source: 'heartbeat', state: heartbeat?.state || 'missing', lastSeenAt: lastSeen,
+      ready: freshness.ready,
+      source: 'heartbeat', state: freshness.state, lastSeenAt: lastSeen,
     };
   }
   return {
