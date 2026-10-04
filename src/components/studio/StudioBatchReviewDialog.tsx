@@ -25,6 +25,7 @@ export type StudioBatchReviewDialogProps = {
   totalShots: number;
   readyShots: number;
   generatingShots?: number;
+  pendingShots?: number;
   estimatedCostCny?: number;
   busy?: boolean;
   error?: string;
@@ -36,7 +37,7 @@ export type StudioBatchReviewDialogProps = {
 
 /** A single lightweight review stop before the batch of approved first frames is submitted. */
 export default function StudioBatchReviewDialog({
-  issues, frames, totalShots, readyShots, generatingShots = 0, estimatedCostCny,
+  issues, frames, totalShots, readyShots, generatingShots = 0, pendingShots = 0, estimatedCostCny,
   busy = false, error, canSubmit, onSelectIssueOption, onSubmit, onClose,
 }: StudioBatchReviewDialogProps) {
   const dialogRef = useModalFocus<HTMLDivElement>({ open: true, onClose, closeOnEscape: !busy });
@@ -56,6 +57,7 @@ export default function StudioBatchReviewDialog({
           <span className="rounded-full bg-emerald-50 px-3 py-1.5 text-emerald-800">已就绪 {readyShots}/{totalShots} 镜</span>
           {generatingShots > 0 && <span className="rounded-full bg-sky-50 px-3 py-1.5 text-sky-800">生成中 {generatingShots} 镜</span>}
           {pendingCount > 0 && <span className="rounded-full bg-amber-50 px-3 py-1.5 text-amber-800">需你确认 {pendingCount} 镜</span>}
+          {pendingShots > 0 && <span className="rounded-full bg-slate-100 px-3 py-1.5 text-slate-700">待制作 {pendingShots} 镜</span>}
         </div>
 
         {issues.length > 0 && <section aria-labelledby="studio-review-issues-title">
@@ -81,7 +83,7 @@ export default function StudioBatchReviewDialog({
       </div>
 
       <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-border bg-white px-5 py-4 sm:px-6">
-        <div className="text-xs text-text-muted">{estimatedCostCny !== undefined && <p>本批预计费用 ¥{estimatedCostCny.toFixed(2)}</p>}{pendingCount > 0 && <p className="mt-1 text-amber-700">请先处理 {pendingCount} 镜待确认事项</p>}{error && <p role="alert" className="mt-1 text-red-700">{error}</p>}</div>
+        <div className="text-xs text-text-muted">{estimatedCostCny !== undefined && <p>本批预计费用 ¥{estimatedCostCny.toFixed(2)}</p>}{pendingCount > 0 && <p className="mt-1 text-amber-700">请先处理 {pendingCount} 镜待确认事项</p>}{pendingShots > 0 && <p className="mt-1">其余 {pendingShots} 镜可返回步骤二继续制作。</p>}{error && <p role="alert" className="mt-1 text-red-700">{error}</p>}</div>
         <button type="button" data-modal-initial-focus onClick={onSubmit} disabled={!canSubmit || busy || pendingCount > 0} className="ml-auto rounded-xl bg-emerald-700 px-5 py-3 text-sm font-black text-white shadow-sm hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-50">{busy ? '正在提交视频生成…' : '确认首帧并生成视频'}</button>
       </footer>
     </div>

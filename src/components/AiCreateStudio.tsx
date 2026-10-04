@@ -3020,6 +3020,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
   const [batchReviewBusy, setBatchReviewBusy] = useState(false);
   const [batchReviewError, setBatchReviewError] = useState('');
   const [batchDigitalRetrySlotId, setBatchDigitalRetrySlotId] = useState('');
+  const [renderAfterVoiceoverLanguage, setRenderAfterVoiceoverLanguage] = useState('');
   const [effectSoundsOn, setEffectSoundsOn] = useState(true);
   const [batchShotSummary, setBatchShotSummary] = useState<{ submitted: number; matched: number; needsMaterial: number; blocked: number } | null>(null);
   const [aigcBudgetPreview, setAigcBudgetPreview] = useState<{ aigcShots: number; totalShots: number; aigcShotRatio: number; estimate480pCny: number; estimate720pCny: number; batchBudgetCny: number; recommendedResolution: '480p' | '720p'; budgetEnoughFor480p: boolean; shotPlans?: Array<{ shotId: string; status: 'ready' | 'unsupported' | 'budget_excluded'; targetDurationSeconds: number; resolutionTier?: '480p' | '720p'; modelId?: string; estimatedCostCny: number }>; readyShots?: number; excludedShots?: number; estimatedCostCny?: number } | null>(null);
@@ -5580,6 +5581,11 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     setStepIdx(i => Math.min(i + 1, activeSteps.length - 1));
   };
   const renderSelectedLanguageVersion = async (selectedKey?: string, serverPreviewRequired = false) => {
+    if (socialViralTask && !renderReadiness.ready) {
+      setModeNotice(`还有 ${renderReadiness.unreadyShots.length} 个分镜未就绪：${renderReadiness.issues[0]?.message || '请返回分镜制作检查'}`);
+      setBatchReviewOpen(true);
+      return;
+    }
     if (personContinuityConflicts.length) {
       alert(`人物连续性未通过：\n${personContinuityConflicts.join('\n')}`);
       return;
@@ -7170,11 +7176,16 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     return true;
   };
 
-  const downloadMp4 = async (filePath = renderOutputPath) => {
+  const downloadMp4 = async (filePath?: string | null) => {
     if (rendering) return;
     setRenderDownloadMessage('');
     try {
-      const outputPath = filePath || await goPreview();
+      const selectedOutputPath = socialViralTask
+        ? filePath || languageRenderOutputs[activeRenderCombinationKey]?.path
+          || Object.values(languageRenderOutputs).find(output => output.status === 'done' && output.path)?.path
+          || renderOutputPath
+        : filePath || renderOutputPath;
+      const outputPath = selectedOutputPath || (socialViralTask ? null : await goPreview());
       if (!outputPath) throw Error('成片尚未生成');
       const response = await fetch('/api/overseas/studio/library/download-file', { method: 'POST', headers: { ...authHeader(), 'Content-Type': 'application/json' }, body: JSON.stringify({ path: outputPath }) });
       if (!response.ok) throw Error('文件不可下载，请检查文件是否存在或已同步到服务器');
@@ -13822,7 +13833,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     && Boolean(projectId)
     && socialVideoMediaReady;
   const primaryGeneratesVideo = contentMode === 'video' && step === 'preview' && (!workbenchHasFormalVideo || Boolean(socialContentTaskId && !socialVideoMediaReady));
-  const workbenchRenderableVersionCount = primaryGeneratesVideo ? buildRenderableVideoVersions().length : 0;
+  const workbenchRenderableVersionCount = (primaryGeneratesVideo || socialViralTask && step === 'preview') ? buildRenderableVideoVersions().length : 0;
   const { ready: primarySubmitsSocialArtifact, submitting: socialArtifactSubmitting, submit: submitCurrentSocialArtifact } = useStudioSocialArtifactSubmission({
     enabled: Boolean(socialContentTaskId && (contentMode === 'poster' ? step === 'poster' && socialPosterArtifactReady : step === 'preview' && socialVideoArtifactReady)),
     taskId: socialContentTaskId,
@@ -13993,8 +14004,11 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
         qualityError: route === 'ai' ? plan.qualityError : undefined,
         qualityChecking: Boolean(storyboardQualityChecking[slot.id]),
         productRequired: route === 'ai' && storyboardIsProductShot(slot), productIds: plan.productIds,
-        productionBlockers: route === 'local' && clip ? [enterpriseMaterialIssue({ material: clip,
-          duration: slot.end - slot.start, ratio, sound: shot.sound, narration: shot.narration })].filter((item): item is string => Boolean(item)) : [],
+        productionBlockers: [
+          ...shotBlockers(shot, shotProductionContext),
+          ...(route === 'local' && clip ? [enterpriseMaterialIssue({ material: clip,
+            duration: slot.end - slot.start, ratio, sound: shot.sound, narration: shot.narration })].filter((item): item is string => Boolean(item)) : []),
+        ],
       };
     }),
     scriptReady: Boolean(storyboardSlots.length && hasTimestampScript),
@@ -14015,6 +14029,33 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     && renderReadiness.unreadyShots.every(item => item.issues.every(issue =>
       finalReviewCandidateIds.has(item.slotId) && ['material_missing', 'video_not_accepted', 'quality_failed'].includes(issue.code)))
     && renderReadiness.issues.every(issue => issue.slotId || !['script_missing', 'voiceover_missing', 'no_shots'].includes(issue.code)));
+  const replicationNeedsVoiceover = voiceoverMode === 'ai'
+    && (!voiceoverAudios[activeVoiceLang]?.url || voiceoverStaleLangs.includes(activeVoiceLang));
+  const startReplicationRender = () => {
+    if (!renderReadiness.ready) {
+      setModeNotice(renderReadiness.issues[0]?.message || '请先完成全部分镜');
+      setStepIdx(activeSteps.findIndex(item => item.id === 'material'));
+      if (batchShotSummary) setBatchReviewOpen(true);
+      return;
+    }
+    if (replicationNeedsVoiceover) {
+      setRenderAfterVoiceoverLanguage(activeVoiceLang);
+      void genTts(activeVoiceLang);
+      return;
+    }
+    void renderSelectedLanguageVersion(undefined, Boolean(socialContentTaskId));
+  };
+  useEffect(() => {
+    if (!renderAfterVoiceoverLanguage || ttsLoading) return;
+    if (voiceoverMode === 'ai' && voiceoverAudios[renderAfterVoiceoverLanguage]?.url
+      && !voiceoverStaleLangs.includes(renderAfterVoiceoverLanguage)) {
+      setRenderAfterVoiceoverLanguage('');
+      void renderSelectedLanguageVersion(undefined, Boolean(socialContentTaskId));
+    } else if (ttsFailuresByLang[renderAfterVoiceoverLanguage]) {
+      setModeNotice(`成片配音失败：${ttsFailuresByLang[renderAfterVoiceoverLanguage]}`);
+      setRenderAfterVoiceoverLanguage('');
+    }
+  }, [renderAfterVoiceoverLanguage, ttsLoading, voiceoverMode, voiceoverAudios, voiceoverStaleLangs, ttsFailuresByLang, socialContentTaskId]);
   const finalizeBatchAndEnterRender = async () => {
     if (batchReviewBusy || (!renderReadiness.ready && !canFinalizeAndRender)) return;
     if (renderReadiness.ready) { void navigateReplicationStep(2); return; }
@@ -14104,6 +14145,13 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
       ? [{ id: slot.id, shotNumber: index + 1, title: slot.title,
       imageUrl: plan.firstFrameUrl }] : [];
   });
+  const batchReviewGeneratingShots = Object.values(storyboardGenerating).filter(Boolean).length;
+  const batchReviewIssueIds = new Set(batchReviewIssues.map(issue => issue.id));
+  const batchReviewReadyShots = Math.min(storyboardSlots.length, renderReadiness.readyCount
+    + batchReviewFrames.filter(frame => !batchReviewIssueIds.has(frame.id)
+      && renderReadiness.unreadyShots.some(item => item.slotId === frame.id)).length);
+  const batchReviewPendingShots = Math.max(0, storyboardSlots.length - batchReviewReadyShots
+    - batchReviewGeneratingShots - batchReviewIssueIds.size);
   const selectBatchReviewIssue = (slotId: string, optionId: string) => {
     const slot = storyboardSlots.find(item => item.id === slotId);
     if (!slot) return;
@@ -14614,7 +14662,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     </section>
   ) : step === 'preview' ? (
     <section className="space-y-3">
-      <div className={`rounded-xl border p-3 ${workbenchHasFormalVideo ? 'border-emerald-200 bg-emerald-50' : 'border-border bg-surface-2'}`}><p className="text-xs font-black text-text-primary">{workbenchHasFormalVideo ? '成片已生成' : '等待生成成片'}</p><p className="mt-1 text-[10px] leading-4 text-text-muted">{workbenchHasFormalVideo ? '正式成片在中间播放器查看，确认后可进入发布。' : '确认素材、配乐和封面后，点击底部“生成成片”。'}</p></div>
+      <div className={`rounded-xl border p-3 ${workbenchHasFormalVideo ? 'border-emerald-200 bg-emerald-50' : 'border-border bg-surface-2'}`}><p className="text-xs font-black text-text-primary">{workbenchHasFormalVideo ? '成片已生成' : '等待渲染成片'}</p><p className="mt-1 text-[10px] leading-4 text-text-muted">{workbenchHasFormalVideo ? '可在中间播放器检查成片；修改设置后可重新渲染。' : replicationNeedsVoiceover ? '点击底部按钮，系统会先生成本语言配音，再渲染成片。' : '确认配乐和字幕后，点击底部“渲染成片”。'}</p></div>
       <div className="space-y-2 rounded-xl border border-border bg-white p-3 text-[10px]">
         <div className="flex justify-between gap-3"><span className="text-text-muted">内容版本</span><span className="truncate font-bold text-text-primary">{assemblyName}</span></div>
         <div className="flex justify-between gap-3"><span className="text-text-muted">语言</span><span className="truncate font-bold text-text-primary">{activeLanguageLabel}</span></div>
@@ -14653,15 +14701,14 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     }
     if (index === 2 && !renderReadiness.ready) {
       setModeNotice(`还有 ${renderReadiness.unreadyShots.length} 个分镜未就绪：${renderReadiness.issues[0]?.message || '请先完成逐镜制作'}`);
-      setBatchReviewOpen(true);
+      if (batchShotSummary) setBatchReviewOpen(true);
       return;
     }
     if (index !== 0) {
       try {
         if (projectId) await saveProject('draft');
         setStepIdx(activeSteps.findIndex(item => item.id === (index === 2 ? 'preview' : 'material')));
-        if (index === 2) setCanvasView('creation');
-        if (index === 1) setCanvasView('reference');
+        if (index === 2 || index === 1) setCanvasView('creation');
       } catch (error) { setModeNotice(error instanceof Error ? error.message : '保存失败，请重试。'); }
       return;
     }
@@ -15134,12 +15181,12 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
             {socialViralTask && step === 'preview' ? <section className="space-y-2" aria-label="成片设置">
       {socialViralTask && <div className="rounded-xl border border-border bg-white p-3">
         <p className="text-xs font-black text-text-primary">成片配音口播</p>
-        <p className="mt-1 text-[10px] leading-4 text-text-muted">分镜已按确认的文本匹配；在这里生成成片配音。</p>
+        <p className="mt-1 text-[10px] leading-4 text-text-muted">点击底部渲染按钮会自动生成缺少的配音；也可先在这里生成并试听。</p>
         <p role="status" className="mt-2 text-[10px] leading-4 text-text-secondary">{voiceoverStaleLangs.includes(activeVoiceLang)
           ? '口播文本或音色已变化，请重新生成配音后渲染。'
-          : activeVoiceoverUrl ? '成片配音已生成，可试听并渲染。' : '成片配音尚未生成；请先生成并试听。'}</p>
-        <label className="mt-3 block text-[10px] font-bold text-text-secondary">配音音色<select aria-label="配音音色" value={voice} onChange={event => { setVoice(event.target.value); setTtsLanguageSettings(current => ({ ...current, [activeVoiceLang]: { ...(current[activeVoiceLang] || DEFAULT_TTS_SETTINGS), voiceId: event.target.value } })); setVoiceoverStaleLangs(current => [...new Set([...current, activeVoiceLang])]); }} className="mt-1 w-full rounded-lg border border-border bg-white p-2 text-xs">{[...VOICES, ...customVoices.map(item => ({ id: item.voiceId, name: item.name }))].map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
-        <label className="mt-3 block text-[10px] font-bold text-text-secondary">配音语速 · {replicationSpeechSpeed.toFixed(2)} 倍<input aria-label="配音语速" type="range" min="0.85" max="1.30" step="0.05" value={replicationSpeechSpeed} onChange={event => { const speed = Number(event.target.value); setReplicationSpeechSpeed(speed); setTtsLanguageSettings(current => ({ ...current, [activeVoiceLang]: { ...(current[activeVoiceLang] || DEFAULT_TTS_SETTINGS), speed } })); setVoiceoverStaleLangs(current => [...new Set([...current, activeVoiceLang])]); }} className="mt-2 w-full accent-emerald-700" /></label>
+          : activeVoiceoverUrl ? '成片配音已生成，可试听并渲染。' : '成片配音尚未生成，渲染时会自动生成。'}</p>
+        <label className="mt-3 block text-[10px] font-bold text-text-secondary">配音音色<select aria-label="配音音色" value={voice} onChange={event => { setVoice(event.target.value); setTtsLanguageSettings(current => ({ ...current, [activeVoiceLang]: { ...(current[activeVoiceLang] || DEFAULT_TTS_SETTINGS), voiceId: event.target.value } })); setVoiceoverStaleLangs(current => [...new Set([...current, activeVoiceLang])]); invalidateMusicRender(); }} className="mt-1 w-full rounded-lg border border-border bg-white p-2 text-xs">{[...VOICES, ...customVoices.map(item => ({ id: item.voiceId, name: item.name }))].map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+        <label className="mt-3 block text-[10px] font-bold text-text-secondary">配音语速 · {replicationSpeechSpeed.toFixed(2)} 倍<input aria-label="配音语速" type="range" min="0.85" max="1.30" step="0.05" value={replicationSpeechSpeed} onChange={event => { const speed = Number(event.target.value); setReplicationSpeechSpeed(speed); setTtsLanguageSettings(current => ({ ...current, [activeVoiceLang]: { ...(current[activeVoiceLang] || DEFAULT_TTS_SETTINGS), speed } })); setVoiceoverStaleLangs(current => [...new Set([...current, activeVoiceLang])]); invalidateMusicRender(); }} className="mt-2 w-full accent-emerald-700" /></label>
         <label className="mt-3 block text-[10px] font-bold text-text-secondary">上传个人声音样本<input aria-label="上传个人声音样本" type="file" accept=".mp3,.wav,.m4a,audio/mpeg,audio/wav,audio/mp4" onChange={event => { void handleVoiceSampleUpload(event.target.files); event.target.value = ''; }} className="mt-1 block w-full text-[10px]" /></label>
         <button type="button" disabled={ttsLoading || !storyboardSlots.length} onClick={() => void genTts(activeVoiceLang)} className="mt-3 w-full rounded-lg border border-emerald-500 bg-emerald-50 px-3 py-2 text-xs font-bold text-emerald-800 disabled:opacity-50">{ttsLoading ? '正在生成配音…' : activeVoiceoverUrl ? '重新生成成片配音' : '生成成片配音'}</button>
         {activeVoiceoverUrl && <audio src={activeVoiceoverUrl} controls aria-label="成片配音试听" className="mt-3 w-full" />}
@@ -15194,7 +15241,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
             <input aria-label="整片时间轴" type="range" min="0" max={workbenchTimelineDuration} step="0.05" value={Math.min(workbenchTimelineTime, workbenchTimelineDuration)} onChange={event => seekWorkbenchTimeline(Number(event.target.value))} className="mt-2 h-2 w-full cursor-ew-resize accent-emerald-600" />
           </div>
         ) : socialContentTaskId ? <div role="status" className="rounded-lg border border-dashed border-border px-4 py-3 text-xs text-text-muted">00:00 · 等待参考分析与分镜脚本，完成后在这里显示逐镜时间戳。</div> : undefined}
-        previousAction={{ label: socialViralTask ? '返回上一步' : '上一步', onClick: socialViralTask && step === 'material' ? () => void navigateReplicationStep(0) : prev, disabled: stepIdx === 0 || Boolean(socialViralTask && modeActionLoading) }}
+        previousAction={{ label: socialViralTask ? '返回上一步' : '上一步', onClick: socialViralTask && step === 'material' ? () => void navigateReplicationStep(0) : socialViralTask && step === 'preview' ? () => void navigateReplicationStep(1) : prev, disabled: stepIdx === 0 || Boolean(socialViralTask && modeActionLoading) }}
         previewAction={{
           label: socialViralTask ? step === 'preview' ? '导出 MP4' : '查看成片设置' : '预览',
           onClick: () => {
@@ -15211,9 +15258,9 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
             : !posterJsonText),
         }}
         primaryAction={{
-          label: socialViralTask && step === 'material' ? renderReadiness.ready || canFinalizeAndRender ? '渲染成片' : batchShotSummary ? '查看首帧审核' : '一键生成分镜' : socialViralTask && step === 'preview' ? '渲染成片' : agentProduction.action?.label || primaryActionLabel,
-          onClick: socialViralTask && step === 'material' ? renderReadiness.ready || canFinalizeAndRender ? () => void navigateReplicationStep(2) : batchShotSummary ? () => setBatchReviewOpen(true) : () => void runBatchShotJobs() : socialViralTask && step === 'preview' ? () => void renderSelectedLanguageVersion(undefined, Boolean(socialContentTaskId)) : agentProduction.active ? () => void agentProduction.execute().catch(error => setModeNotice(error.message)) : runPrimaryAction,
-          disabled: socialViralTask && step === 'material' ? smartBatchTodos.some(todo => todo.target === 'system') || batchShotBusy || savingProj || replicationTimingBlocked : socialViralTask && step === 'preview' ? rendering || batchRenderingLangs || workbenchRenderableVersionCount === 0 || replicationTimingBlocked : agentProduction.active ? !agentProduction.action || agentProduction.busy || Boolean(window.__agentProductionTarget?.projectId && projectId !== window.__agentProductionTarget.projectId) : primaryActionDisabled,
+          label: socialViralTask && step === 'material' ? renderReadiness.ready || canFinalizeAndRender ? '渲染成片' : batchShotSummary ? '查看首帧审核' : '一键生成分镜' : socialViralTask && step === 'preview' ? workbenchHasFormalVideo ? '重新渲染成片' : replicationNeedsVoiceover ? '生成配音并渲染成片' : '渲染成片' : agentProduction.action?.label || primaryActionLabel,
+          onClick: socialViralTask && step === 'material' ? renderReadiness.ready || canFinalizeAndRender ? () => void navigateReplicationStep(2) : batchShotSummary ? () => setBatchReviewOpen(true) : () => void runBatchShotJobs() : socialViralTask && step === 'preview' ? startReplicationRender : agentProduction.active ? () => void agentProduction.execute().catch(error => setModeNotice(error.message)) : runPrimaryAction,
+          disabled: socialViralTask && step === 'material' ? smartBatchTodos.some(todo => todo.target === 'system') || batchShotBusy || savingProj || replicationTimingBlocked : socialViralTask && step === 'preview' ? rendering || batchRenderingLangs || ttsLoading || !renderReadiness.ready || workbenchRenderableVersionCount === 0 && !replicationNeedsVoiceover || replicationTimingBlocked : agentProduction.active ? !agentProduction.action || agentProduction.busy || Boolean(window.__agentProductionTarget?.projectId && projectId !== window.__agentProductionTarget.projectId) : primaryActionDisabled,
           loading: agentProduction.busy || primaryActionLoading,
           loadingLabel: socialArtifactSubmitting ? '正在提交成品' : modeActionStatus || (rendering ? `正在生成 ${renderPct}%` : undefined),
           blockReason: agentProduction.active ? undefined : primaryActionBlockedReason,
@@ -15343,12 +15390,13 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
         issues={batchReviewIssues}
         frames={batchReviewFrames}
         totalShots={storyboardSlots.length}
-        readyShots={Math.min(storyboardSlots.length, renderReadiness.readyCount + batchReviewFrames.filter(frame => renderReadiness.unreadyShots.some(item => item.slotId === frame.id)).length)}
-        generatingShots={Object.values(storyboardGenerating).filter(Boolean).length}
+        readyShots={batchReviewReadyShots}
+        generatingShots={batchReviewGeneratingShots}
+        pendingShots={batchReviewPendingShots}
         estimatedCostCny={aigcBudgetPreview?.estimatedCostCny}
         busy={batchReviewBusy || Object.values(storyboardGenerating).some(Boolean)}
         error={batchReviewError}
-        canSubmit={!batchReviewIssues.length && !Object.values(storyboardGenerating).some(Boolean)}
+        canSubmit={batchReviewFrames.length > 0 && !batchReviewIssues.length && !batchReviewGeneratingShots}
         onSelectIssueOption={selectBatchReviewIssue}
         onSubmit={() => void confirmBatchFirstFrames()}
         onClose={() => setBatchReviewOpen(false)}
