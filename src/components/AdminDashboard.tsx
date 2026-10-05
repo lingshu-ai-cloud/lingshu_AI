@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Loader2, LogIn, RefreshCcw, ShieldCheck, UserCheck } from 'lucide-react';
+import { Loader2, LogIn, RefreshCcw, Settings2, ShieldCheck, UserCheck, X } from 'lucide-react';
 import {
   authApi,
   authHeader,
@@ -60,6 +60,19 @@ interface StyleAdoptionTrend {
   rate: number;
 }
 
+interface ContentExecutionLimitView {
+  scope: 'tenant' | 'account' | 'task_type';
+  scopeKey: string;
+  maxRunning: number;
+}
+
+interface ContentLimitDraft {
+  tenantMaxRunning: string;
+  accountDefaultMaxRunning: string;
+  weeklyMaxRunning: string;
+  instantMaxRunning: string;
+}
+
 const fmtDate = (value?: string | null) => value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '-';
 const fmtTokens = (value: number) => value.toLocaleString('en-US');
 const credentialStateLabel = (value: string) => ({
@@ -80,6 +93,12 @@ export default function AdminDashboard({ onSupportSessionStarted }: { onSupportS
   const [supportError, setSupportError] = useState<{ tenantId: string; message: string } | null>(null);
   const [promotingTenantId, setPromotingTenantId] = useState<string | null>(null);
   const [notice, setNotice] = useState('');
+  const [limitTenant, setLimitTenant] = useState<CustomerAccount | null>(null);
+  const [limitDraft, setLimitDraft] = useState<ContentLimitDraft>({
+    tenantMaxRunning: '2', accountDefaultMaxRunning: '1', weeklyMaxRunning: '2', instantMaxRunning: '2',
+  });
+  const [limitBusy, setLimitBusy] = useState(false);
+  const [limitError, setLimitError] = useState('');
   const loadInFlightRef = useRef(false);
   const loadControllerRef = useRef<AbortController | null>(null);
 
@@ -218,6 +237,59 @@ export default function AdminDashboard({ onSupportSessionStarted }: { onSupportS
     }
   };
 
+  const openContentLimits = async (account: CustomerAccount) => {
+    setLimitTenant(account);
+    setLimitBusy(true);
+    setLimitError('');
+    try {
+      const response = await fetch(`/api/overseas/admin/content-execution-limits/${encodeURIComponent(account.tenantId)}`, {
+        headers: authHeader(), cache: 'no-store',
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || '读取并发上限失败');
+      const limits = Array.isArray(data.limits) ? data.limits as ContentExecutionLimitView[] : [];
+      const value = (scope: ContentExecutionLimitView['scope'], scopeKey: string, fallback: number) => String(
+        limits.find(item => item.scope === scope && item.scopeKey === scopeKey)?.maxRunning ?? fallback,
+      );
+      setLimitDraft({
+        tenantMaxRunning: value('tenant', '*', Number(data.defaults?.tenantMaxRunning) || 2),
+        accountDefaultMaxRunning: value('account', '*', Number(data.defaults?.accountMaxRunning) || 1),
+        weeklyMaxRunning: value('task_type', 'social_content_weekly', Number(data.defaults?.taskTypeMaxRunning) || 2),
+        instantMaxRunning: value('task_type', 'social_content_instant', Number(data.defaults?.taskTypeMaxRunning) || 2),
+      });
+    } catch (cause) {
+      setLimitError(cause instanceof Error ? cause.message : '读取并发上限失败');
+    } finally {
+      setLimitBusy(false);
+    }
+  };
+
+  const saveContentLimits = async () => {
+    if (!limitTenant || limitBusy) return;
+    const values = Object.values(limitDraft).map(Number);
+    if (values.some(value => !Number.isInteger(value) || value < 1 || value > 100)) {
+      setLimitError('并发上限必须是 1–100 的整数');
+      return;
+    }
+    setLimitBusy(true);
+    setLimitError('');
+    try {
+      const response = await fetch(`/api/overseas/admin/content-execution-limits/${encodeURIComponent(limitTenant.tenantId)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', ...authHeader() },
+        body: JSON.stringify(Object.fromEntries(Object.entries(limitDraft).map(([key, value]) => [key, Number(value)]))),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || '保存并发上限失败');
+      setNotice(`已更新 ${limitTenant.companyName} 的内容任务并发上限。`);
+      setLimitTenant(null);
+    } catch (cause) {
+      setLimitError(cause instanceof Error ? cause.message : '保存并发上限失败');
+    } finally {
+      setLimitBusy(false);
+    }
+  };
+
   return (
     <div className="h-full flex flex-col bg-white">
       <header className="flex min-h-[68px] flex-shrink-0 items-center justify-between border-b border-border px-5 py-3 sm:px-6">
@@ -326,7 +398,7 @@ export default function AdminDashboard({ onSupportSessionStarted }: { onSupportS
         <section id="admin-customer-accounts" className="mt-6 scroll-mt-5">
           <div className="mb-2 flex items-center justify-between"><div><h2 className="text-sm font-semibold text-text-primary">客户账号表</h2><p className="mt-0.5 text-xs text-text-muted">客户密码仅由认证系统哈希校验；后台只显示凭据状态与重置动作，不保存初始密码。</p></div><span className="text-xs text-text-muted">{accountsLoaded ? `${customerAccounts.length} 个客户` : loading ? '读取中' : '读取失败'}</span></div>
           <div className="overflow-auto border border-border rounded-lg">
-            <table className="min-w-[1700px] w-full text-xs">
+            <table className="min-w-[1810px] w-full text-xs">
               <thead className="bg-surface-2 text-text-muted">
                 <tr className="text-left">
                   <th className="px-3 py-2 font-semibold">客户主体</th>
@@ -342,11 +414,12 @@ export default function AdminDashboard({ onSupportSessionStarted }: { onSupportS
                   <th className="px-3 py-2 font-semibold">注册时间</th>
                   <th className="px-3 py-2 font-semibold">到期时间</th>
                   <th className="px-3 py-2 font-semibold">租户 ID</th>
+                  <th className="px-3 py-2 font-semibold">内容任务并发</th>
                   <th className="px-3 py-2 font-semibold">租户后台</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
-                {loading && !accountsLoaded && <tr><td colSpan={14} className="px-3 py-8 text-center text-text-muted">读取中...</td></tr>}
+                {loading && !accountsLoaded && <tr><td colSpan={15} className="px-3 py-8 text-center text-text-muted">读取中...</td></tr>}
                 {(!loading || accountsLoaded) && customerAccounts.map(account => {
                   const busy = supportBusyTenantId === account.tenantId;
                   const registered = account.emails.length > 0;
@@ -368,6 +441,15 @@ export default function AdminDashboard({ onSupportSessionStarted }: { onSupportS
                       <td className="px-3 py-2 whitespace-nowrap">
                         <button
                           type="button"
+                          onClick={() => void openContentLimits(account)}
+                          className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-white px-2.5 py-1.5 font-semibold text-text-secondary hover:bg-surface-2 hover:text-text-primary"
+                        >
+                          <Settings2 size={12} /> 设置上限
+                        </button>
+                      </td>
+                      <td className="px-3 py-2 whitespace-nowrap">
+                        <button
+                          type="button"
                           onClick={() => void enterTenant({ tenantId: account.tenantId, tenantName: account.companyName })}
                           disabled={busy || !registered}
                           title={registered ? `进入 ${account.companyName} 后台` : '客户注册后可进入后台'}
@@ -381,7 +463,7 @@ export default function AdminDashboard({ onSupportSessionStarted }: { onSupportS
                     </tr>
                   );
                 })}
-                {accountsLoaded && !customerAccounts.length && <tr><td colSpan={14} className="px-3 py-8 text-center text-text-muted">暂无客户账号</td></tr>}
+                {accountsLoaded && !customerAccounts.length && <tr><td colSpan={15} className="px-3 py-8 text-center text-text-muted">暂无客户账号</td></tr>}
               </tbody>
             </table>
           </div>
@@ -392,6 +474,47 @@ export default function AdminDashboard({ onSupportSessionStarted }: { onSupportS
           <div className="overflow-auto border border-border rounded-lg"><table className="min-w-[840px] w-full text-xs"><thead className="bg-surface-2 text-text-muted"><tr className="text-left"><th className="px-3 py-2 font-semibold">行业</th><th className="px-3 py-2 font-semibold">客户数</th><th className="px-3 py-2 font-semibold">登录账号数</th><th className="px-3 py-2 font-semibold">已开通客户</th><th className="px-3 py-2 font-semibold">客户主体</th></tr></thead><tbody className="divide-y divide-border">{loading ? <tr><td colSpan={5} className="px-3 py-8 text-center text-text-muted">读取中...</td></tr> : industryAccounts.map(account => <tr key={account.industry} className="hover:bg-surface-2/60"><td className="px-3 py-2 font-semibold text-text-primary whitespace-nowrap">{account.industry}</td><td className="px-3 py-2 text-text-secondary whitespace-nowrap">{account.customerCount}</td><td className="px-3 py-2 text-text-secondary whitespace-nowrap">{account.accountCount}</td><td className="px-3 py-2 text-text-secondary whitespace-nowrap">{account.activeCount}</td><td className="px-3 py-2 text-text-secondary">{account.customers.join('、')}</td></tr>)}{!loading && !industryAccounts.length && <tr><td colSpan={5} className="px-3 py-8 text-center text-text-muted">暂无客户行业资料</td></tr>}</tbody></table></div>
         </section>
       </div>
+
+      {limitTenant && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4" role="dialog" aria-modal="true" aria-label="内容任务并发上限">
+          <div className="w-full max-w-lg rounded-2xl border border-border bg-white shadow-2xl">
+            <div className="flex items-start justify-between border-b border-border px-5 py-4">
+              <div>
+                <h2 className="text-base font-semibold text-text-primary">内容任务并发上限</h2>
+                <p className="mt-1 text-xs text-text-muted">{limitTenant.companyName} · 大批量任务会在数据库队列中等待，不挤占其他客户。</p>
+              </div>
+              <button type="button" onClick={() => setLimitTenant(null)} disabled={limitBusy} className="rounded-lg p-1.5 text-text-muted hover:bg-surface-2"><X size={16} /></button>
+            </div>
+            <div className="grid gap-4 p-5 sm:grid-cols-2">
+              {([
+                ['tenantMaxRunning', '客户总并发', '该客户所有内容任务合计'],
+                ['accountDefaultMaxRunning', '单账号并发', '避免一个账号占满客户额度'],
+                ['weeklyMaxRunning', '周计划任务并发', '智能经营生成的内容任务'],
+                ['instantMaxRunning', '单次任务并发', '用户手动创建的单个任务'],
+              ] as const).map(([key, label, help]) => (
+                <label key={key} className="block">
+                  <span className="text-xs font-semibold text-text-primary">{label}</span>
+                  <input
+                    type="number" min={1} max={100} step={1}
+                    value={limitDraft[key]}
+                    onChange={event => setLimitDraft(current => ({ ...current, [key]: event.target.value }))}
+                    disabled={limitBusy}
+                    className="mt-1.5 w-full rounded-lg border border-border px-3 py-2 text-sm text-text-primary outline-none focus:border-accent"
+                  />
+                  <span className="mt-1 block text-[10px] leading-4 text-text-muted">{help}</span>
+                </label>
+              ))}
+            </div>
+            {limitError && <p className="mx-5 mb-3 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">{limitError}</p>}
+            <div className="flex justify-end gap-2 border-t border-border px-5 py-4">
+              <button type="button" onClick={() => setLimitTenant(null)} disabled={limitBusy} className="rounded-lg border border-border px-3 py-2 text-xs font-semibold text-text-secondary disabled:opacity-50">取消</button>
+              <button type="button" onClick={() => void saveContentLimits()} disabled={limitBusy} className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white disabled:opacity-50">
+                {limitBusy && <Loader2 size={13} className="animate-spin" />}{limitBusy ? '处理中' : '保存上限'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

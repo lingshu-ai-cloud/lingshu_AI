@@ -25,6 +25,103 @@ const stageLabels: Record<string, string> = {
   script: '脚本生成', material_match: '素材匹配', voice_subtitles: '配音与字幕', heygen: '数字人口播', render: '成片渲染', quality: '质量检查', completed: '成片完成', blocked: '制作受阻',
 };
 
+function confidenceDimension(input: {
+  evidence: string[];
+  gaps: string[];
+  blocked?: boolean;
+  maximum?: 'high' | 'medium';
+}): NonNullable<ContentQueueItem['confidence']>['production'] {
+  const evidence = input.evidence.filter(Boolean);
+  const gaps = input.gaps.filter(Boolean);
+  const level = input.blocked ? 'low'
+    : evidence.length === 0 ? 'insufficient'
+      : gaps.length === 0 && input.maximum !== 'medium' ? 'high'
+        : evidence.length >= 2 ? 'medium' : 'low';
+  return {
+    level,
+    label: level === 'high' ? '高' : level === 'medium' ? '中' : level === 'low' ? '低' : '数据不足',
+    evidence,
+    gaps,
+  };
+}
+
+function taskConfidence(input: {
+  status: ContentQueueItem['status'];
+  productName: string;
+  languages: string[];
+  formats: string[];
+  projectCount: number;
+  accountId: string;
+  accountConnected: boolean;
+  publishDate: string;
+  authorizationMode: ContentQueueItem['lineage']['authorizationMode'];
+  objective: string;
+  referenceTitle: string;
+  referenceViews: string;
+  benchmarkAccount: string;
+  matchScore: number | null;
+}): NonNullable<ContentQueueItem['confidence']> {
+  const production = confidenceDimension({
+    blocked: input.status === 'blocked',
+    evidence: [
+      input.productName ? '已绑定产品或制作主题' : '',
+      input.languages.length ? `已确认语言：${input.languages.join(' / ')}` : '',
+      input.formats.length ? `已确认形式：${input.formats.join(' / ')}` : '',
+      input.projectCount ? `已有 ${input.projectCount} 个正式制作项目` : '',
+      ['waiting_review', 'completed'].includes(input.status) ? '已经产出可验收结果' : '',
+    ],
+    gaps: [
+      !input.productName ? '缺产品或制作主题' : '',
+      !input.languages.length ? '缺语言要求' : '',
+      input.status === 'blocked' ? '当前存在制作卡点' : '',
+    ],
+  });
+  const publishing = confidenceDimension({
+    evidence: [
+      input.accountConnected ? '目标账号已连接' : input.accountId ? '已指定目标账号' : '',
+      input.publishDate ? `已安排日期：${input.publishDate}` : '',
+      input.authorizationMode === 'bounded' ? '已获得范围授权' : input.authorizationMode === 'each' ? '采用逐次确认' : '',
+    ],
+    gaps: [
+      !input.accountId ? '缺发布账号' : '',
+      !input.accountConnected && input.accountId ? '账号连接状态待确认' : '',
+      !input.publishDate ? '缺发布时间' : '',
+      input.authorizationMode !== 'bounded' ? '发布前仍需确认' : '',
+    ],
+  });
+  const businessEvidenceReady = Boolean(input.objective && (input.referenceTitle || input.benchmarkAccount));
+  const businessBase = confidenceDimension({
+    maximum: 'medium',
+    evidence: [
+      input.objective ? `已绑定经营目标：${input.objective}` : '',
+      input.benchmarkAccount ? `已绑定对标账号：${input.benchmarkAccount}` : '',
+      input.referenceTitle ? `已有可核对参考：${input.referenceTitle}` : '',
+      input.referenceViews ? `已有参考播放证据：${input.referenceViews}` : '',
+      input.matchScore !== null ? `内容匹配度：${input.matchScore}` : '',
+    ],
+    gaps: [
+      !input.objective ? '缺经营目标' : '',
+      !input.referenceTitle && !input.benchmarkAccount ? '缺可核对的参考内容' : '',
+      '发布后的真实播放、互动、询盘或成交数据尚未回传',
+    ],
+  });
+  const business = businessEvidenceReady ? businessBase : {
+    ...businessBase,
+    level: 'insufficient' as const,
+    label: '数据不足',
+  };
+  const dimensions = [production, publishing, business];
+  const dataSufficiency = dimensions.some(item => item.level === 'insufficient') ? 'insufficient'
+    : dimensions.some(item => item.gaps.length > 0) ? 'partial' : 'complete';
+  return {
+    production,
+    publishing,
+    business,
+    dataSufficiency,
+    note: '这是基于现有证据的数据充分度与执行把握，不是承诺播放、询盘或成交的成功概率。',
+  };
+}
+
 function planOrder(plan: VideoCreationPlan, index: number): ContentOrder {
   return {
     id: `planned:${plan.contentId || index + 1}`,
@@ -167,6 +264,7 @@ function manualTaskItem(input: {
   const platforms = array<unknown>(brief.platforms);
   const formats = array<unknown>(brief.formats).map(text).filter(Boolean);
   const languages = array<unknown>(brief.languages).map(text).filter(Boolean);
+  const state = manualState(input.record);
   return {
     id: `social:${taskId}`,
     contentId: taskId,
@@ -186,6 +284,7 @@ function manualTaskItem(input: {
     plannedPublishDate: text(brief.dueAt),
     referenceId: '',
     referenceTitle: '',
+    referenceViews: '',
     benchmarkAccount: '',
     matchScore: null,
     planningFactors: [
@@ -211,7 +310,23 @@ function manualTaskItem(input: {
       durationSeconds: null,
       formats: formats.length ? formats : ['短视频'],
     },
-    ...manualState(input.record),
+    confidence: taskConfidence({
+      status: state.status,
+      productName: text(brief.productRef) || title,
+      languages,
+      formats: formats.length ? formats : ['短视频'],
+      projectCount: relatedProjects.length,
+      accountId,
+      accountConnected: input.accountLabels.has(accountId),
+      publishDate: text(brief.dueAt),
+      authorizationMode: 'manual',
+      objective: text(brief.objective),
+      referenceTitle: '',
+      referenceViews: '',
+      benchmarkAccount: '',
+      matchScore: null,
+    }),
+    ...state,
     ...costState(relatedProjects, input.executions, estimated),
   };
 }
@@ -248,6 +363,9 @@ export async function buildContentQueueProjection(input: {
     const evidence = plan?.planningEvidence;
     const state = queueState(relatedProjects, productionTask);
     const estimated = money(plan?.estimatedCost);
+    const accountId = order.accountId || plan?.matrix?.accountId || '';
+    const languages = [...new Set(relatedProjects.map(project => text(object(project.spec).lang)).filter(Boolean).concat(order.languages || plan?.language || []))];
+    const authorizationMode = pack?.authorization.mode || 'each';
     return {
       id: order.id,
       contentId: plan?.contentId || order.id,
@@ -260,34 +378,51 @@ export async function buildContentQueueProjection(input: {
       title: plan?.buyerProblem || order.theme?.label || plan?.theme || `内容 ${index + 1}`,
       productName: order.productName || plan?.productName || '',
       platform: order.platform,
-      accountId: order.accountId || plan?.matrix?.accountId || '',
+      accountId,
       accountLabel: order.accountLabel || '',
       route: order.route,
-      languages: [...new Set(relatedProjects.map(project => text(object(project.spec).lang)).filter(Boolean).concat(order.languages || plan?.language || []))],
+      languages,
       plannedPublishDate: plan?.plannedPublishDate || '',
       referenceId: plan?.referenceId || '',
       referenceTitle: evidence?.referenceTitle || '',
+      referenceViews: evidence?.referenceViews || '',
       benchmarkAccount: evidence?.benchmarkAccount || '',
       matchScore: evidence ? evidence.matchScore : null,
       planningFactors: evidence?.factors || [],
       lineage: {
         goalId: order.goalId || input.goal?.id || '',
         objective: input.goal?.objective || '',
-        accountId: order.accountId || plan?.matrix?.accountId || '',
-        accountLabel: order.accountLabel || accountLabels.get(order.accountId || plan?.matrix?.accountId || '') || '',
+        accountId,
+        accountLabel: order.accountLabel || accountLabels.get(accountId) || '',
         budgetCny: estimated && estimated > 0 ? estimated : null,
         planId: input.planId || '',
         planVersion: String(pack?.revision || input.goal?.version || ''),
         factsVersion: text(order.configurationSnapshot?.factsVersion),
         cycleStart: input.goal?.startsAt || '',
         cycleEnd: input.goal?.endsAt || '',
-        authorizationMode: pack?.authorization.mode || 'each',
+        authorizationMode,
       },
       outputSummary: {
         count: 1,
         durationSeconds: Number.isFinite(Number(plan?.duration)) && Number(plan?.duration) > 0 ? Number(plan?.duration) : null,
         formats: ['短视频'],
       },
+      confidence: taskConfidence({
+        status: state.status,
+        productName: order.productName || plan?.productName || '',
+        languages,
+        formats: ['短视频'],
+        projectCount: relatedProjects.length,
+        accountId,
+        accountConnected: accountLabels.has(accountId),
+        publishDate: plan?.plannedPublishDate || '',
+        authorizationMode,
+        objective: input.goal?.objective || '',
+        referenceTitle: evidence?.referenceTitle || '',
+        referenceViews: evidence?.referenceViews || '',
+        benchmarkAccount: evidence?.benchmarkAccount || '',
+        matchScore: evidence ? evidence.matchScore : null,
+      }),
       ...state,
       ...costState(relatedProjects, executionResult.items, estimated && estimated > 0 ? estimated : null),
     };

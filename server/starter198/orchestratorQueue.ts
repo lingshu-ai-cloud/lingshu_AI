@@ -650,7 +650,9 @@ export function createStarter198OrchestratorQueue(dependencies: {
   repository?: Starter198Repository;
   dataStore?: DataStore;
   socialContentAccessResolver?: SocialContentAccessResolver;
-  socialContentProductionRunner?: typeof enqueueSocialContentAutoProduction;
+  socialContentProductionRunner?: (
+    input: Parameters<typeof enqueueSocialContentAutoProduction>[0],
+  ) => void | Promise<void>;
   now?: () => Date;
 } = {}): Starter198OrchestratorQueuePort {
   const repository = dependencies.repository ?? starter198Repository;

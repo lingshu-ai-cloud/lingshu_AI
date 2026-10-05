@@ -101,6 +101,7 @@
     "1790985600_create_social_operating_evidence.js": "a2227a71afa8c7ed82ce8fb75cb44a89d3d1892759ec6a07a6a4433a28819a65",
     "1790985601_lock_social_operating_rules.js": "53565f0441d7bda06c405c9ba457bfe8d2b6b3bc340e6bc5e6469376aa4ed9cf",
     "1791072000_create_social_weekly_workflow_events.js": "102af4e6ad49b283f9fea961332f3b0f31c251c00c7b9872db82b0f50c9cfc05",
+    "1791072000_move_material_bytes_to_object_storage.js": "a247b670a49fb5cbc271254836a847e40dc51b3ef7321981c8095e28d0375bff",
     "1791072001_create_social_operating_orchestration.js": "e68217f885b3380c04e1a70b5f399874824bfbcb27132065874e8ff285689461",
     "1791072002_create_social_weekly_execution_tasks.js": "805b800220d279c35456d69cae61f14a703353b7acc3b271a3491e7daa4fc329",
     "1791072003_harden_social_discovery_lineage.js": "06f2b7d6baa1c6a6a460005c1a31e04ba215d73925314adc93f85649fe112871",
@@ -108,6 +109,7 @@
     "1791072005_connect_social_weekly_review_loop.js": "c1d10030aa1d7c28f3b318221ebf3b2a560ff880591217d99ee01b756401c993",
     "1791072006_create_social_operating_runtime.js": "83538773230c88eed508da645c4d01ae6aabb9e3a8c698355c5eacf8d8721a12",
     "1791072006_ensure_publishing_schedules.js": "7af3e6889270a7e4f9988cb480a2c60971e83ea033b8cef9ed21d11a566bf81a",
-    "1791072007_fix_publishing_schedule_and_messenger_status.js": "159426312d27bb9c162696fe033dc279df17f90a2aecc1c674e969b0fe61d710"
+    "1791072007_fix_publishing_schedule_and_messenger_status.js": "159426312d27bb9c162696fe033dc279df17f90a2aecc1c674e969b0fe61d710",
+    "1791072008_create_content_execution_queue.js": "17082ecdb5a6228182507d1d2a01f55c6aac48922cd376c489fecce8c8fb2f07"
   }
 }

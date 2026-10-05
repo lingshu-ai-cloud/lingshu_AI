@@ -22,9 +22,9 @@ export class DownloadBudget {
 export class RecordWorkRegistry {
   private readonly work = new Map<string, Promise<unknown>>();
   has(key: string): boolean { return this.work.has(key); }
-  run(key: string, action: () => Promise<unknown>): Promise<unknown> {
+  run<T>(key: string, action: () => Promise<T>): Promise<T> {
     const existing = this.work.get(key);
-    if (existing) return existing;
+    if (existing) return existing as Promise<T>;
     const promise = Promise.resolve().then(action).finally(() => {
       if (this.work.get(key) === promise) this.work.delete(key);
     });

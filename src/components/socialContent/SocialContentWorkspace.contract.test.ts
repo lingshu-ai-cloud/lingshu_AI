@@ -19,6 +19,8 @@ const landing = fs.readFileSync(new URL('./SocialContentLanding.tsx', import.met
 const themeCards = fs.readFileSync(new URL('./SocialThemeCards.tsx', import.meta.url), 'utf8');
 const agentWorkflowPanel = fs.readFileSync(new URL('./SocialAgentWorkflowPanel.tsx', import.meta.url), 'utf8');
 const generationConfirmation = fs.readFileSync(new URL('./SocialGenerationConfirmationCard.tsx', import.meta.url), 'utf8');
+const productionExperience = fs.readFileSync(new URL('./ContentProductionExperiencePanel.tsx', import.meta.url), 'utf8');
+const productionExperienceModel = fs.readFileSync(new URL('../../lib/contentProductionExperience.ts', import.meta.url), 'utf8');
 
 assert.match(api, /\/tasks\/\$\{encodeURIComponent\(taskId\)\}\/files\?\$\{query\}/);
 assert.match(api, /body: file/);
@@ -115,9 +117,14 @@ assert.match(productionProgress, /role="dialog"[^]*?aria-modal="true"[^]*?inset-
   'task details must open in an accessible right-side drawer');
 assert.match(productionProgress, /taskItems\.map\(item =>/,
   'the drawer must render multiple tasks instead of only the selected task');
-for (const detail of ['当前自动步骤', '已完成产物', '待用户审核', '编导 Agent 定方案，内容 Agent 生成视频']) {
+for (const detail of ['当前自动步骤', '提交时间', '结果与预计', '编导 Agent 定方案，内容 Agent 生成视频']) {
   assert.match(productionProgress, new RegExp(detail));
 }
+for (const detail of ['任务已提交', '制作准备', '脚本与口播', '逐镜制作', '剪辑合成', '成片质检', '完成与验收']) {
+  assert.match(productionExperienceModel, new RegExp(detail));
+}
+assert.match(productionProgress, /contentProgressNodes\(task\)/,
+  'the drawer rail and task pages must read the same persisted task status adapter');
 for (const detail of ['自动制作接力', '编导 Agent', '内容 Agent', '查看导演方案摘要', '脚本', '口播', '字幕', '镜头与节奏']) {
   assert.match(productionProgress, new RegExp(detail));
 }
@@ -145,9 +152,22 @@ for (const detail of ['经营 Agent', '编导 Agent', '内容 Agent', 'DirectorB
 for (const field of ['weeklyPackage', 'adHocBusinessContext', 'directorBrief', 'executionPlan', 'executionPlanReview', 'precisionIntervals', 'overallConfidence']) {
   assert.match(agentWorkflowPanel, new RegExp(field));
 }
-for (const detail of ['这次会产出', '预计费用', '效果预判', '确认逐镜方案', '开始生成']) {
+for (const detail of ['这次会产出', '预计费用', '效果预判', '确认逐镜方案', '开始制作']) {
   assert.match(generationConfirmation, new RegExp(detail));
 }
+for (const detail of ['开始前确认', '素材、账号、预算和时间一眼看清', '缺账号不会阻止制作']) {
+  assert.match(generationConfirmation, new RegExp(detail));
+}
+for (const detail of ['任务概览', '逐镜进度', '异常任务', '排队中', '制作中', '质检中', '返工中', '已完成', '制作失败']) {
+  assert.match(productionExperience, new RegExp(detail));
+}
+for (const detail of ['影响范围', '系统已经做了什么', '需要你做什么', '完成后从哪里继续']) {
+  assert.match(productionExperience, new RegExp(detail));
+}
+assert.match(overview, /<ContentProductionExperiencePanel/);
+assert.match(productionExperience, /contentAchievementSummary\(task\)/);
+assert.doesNotMatch(productionExperience, /积分|勋章|连续签到|排行榜/,
+  'achievement feedback must come from real production results instead of invented gamification');
 assert.doesNotMatch(generationConfirmation, /低成本分镜预演|不是实际生成关键帧|storyboard\.map/,
   '方案确认页不再横排展示爆款分镜；分镜随视频预览切换在操作台左侧展示');
 assert.match(studio, /canvasView === 'reference' && mode === 'clone' \? '爆款视频分镜'/);

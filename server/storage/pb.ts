@@ -5,6 +5,14 @@
 
 import { createHash } from 'node:crypto';
 import { assertPocketBaseDataAuthority } from './dataAuthority.js';
+import { postgresListWithPocketBaseFilter, postgresStore, selectedDataBackend } from './postgres.js';
+
+function recordsUsePostgres(collection: string): boolean {
+  // Password hashes and refresh-token semantics stay in PocketBase until all
+  // active users have exchanged their sessions. All other business records can
+  // cut over to PostgreSQL immediately.
+  return selectedDataBackend() === 'postgres' && collection !== 'users' && collection !== '_superusers';
+}
 
 export function getPbUrl(): string {
   return (process.env.PB_URL ?? 'http://localhost:8090').replace(/\/$/, '');
@@ -208,6 +216,7 @@ export async function pbGet(
   collection: string,
   id: string,
 ): Promise<Record<string, unknown> | null> {
+  if (recordsUsePostgres(collection)) return postgresStore.getById(collection, id);
   const res = await adminFetch(
     `/api/collections/${encodeURIComponent(collection)}/records/${encodeURIComponent(id)}`,
   );
@@ -220,6 +229,7 @@ export async function pbGetStrict(
   collection: string,
   id: string,
 ): Promise<Record<string, unknown> | null> {
+  if (recordsUsePostgres(collection)) return postgresStore.getById(collection, id);
   const res = await adminFetch(
     `/api/collections/${encodeURIComponent(collection)}/records/${encodeURIComponent(id)}`,
   );
@@ -236,6 +246,7 @@ export async function pbCreate(
   collection: string,
   data: Record<string, unknown>,
 ): Promise<Record<string, unknown> | null> {
+  if (recordsUsePostgres(collection)) return postgresStore.create(collection, data);
   const res = await adminFetch(
     `/api/collections/${encodeURIComponent(collection)}/records`,
     {
@@ -255,6 +266,11 @@ export async function pbCreateStrict(
   collection: string,
   data: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
+  if (recordsUsePostgres(collection)) {
+    const created = await postgresStore.create(collection, data);
+    if (!created) throw new Error(`${collection} create failed (409): duplicate id`);
+    return created;
+  }
   const res = await adminFetch(
     `/api/collections/${encodeURIComponent(collection)}/records`,
     {
@@ -276,6 +292,7 @@ export async function pbPatch(
   id: string,
   data: Record<string, unknown>,
 ): Promise<boolean> {
+  if (recordsUsePostgres(collection)) return postgresStore.update(collection, id, data);
   const res = await adminFetch(
     `/api/collections/${encodeURIComponent(collection)}/records/${encodeURIComponent(id)}`,
     {
@@ -295,6 +312,7 @@ export async function pbPatchStrict(
   id: string,
   data: Record<string, unknown>,
 ): Promise<boolean> {
+  if (recordsUsePostgres(collection)) return postgresStore.update(collection, id, data);
   const res = await adminFetch(
     `/api/collections/${encodeURIComponent(collection)}/records/${encodeURIComponent(id)}`,
     {
@@ -313,6 +331,7 @@ export async function pbPatchStrict(
 
 /** DELETE /api/collections/:col/records/:id */
 export async function pbDelete(collection: string, id: string): Promise<boolean> {
+  if (recordsUsePostgres(collection)) return postgresStore.delete(collection, id);
   const res = await adminFetch(
     `/api/collections/${encodeURIComponent(collection)}/records/${encodeURIComponent(id)}`,
     { method: 'DELETE' },
@@ -321,6 +340,7 @@ export async function pbDelete(collection: string, id: string): Promise<boolean>
 }
 
 export async function pbDeleteStrict(collection: string, id: string): Promise<boolean> {
+  if (recordsUsePostgres(collection)) return postgresStore.delete(collection, id);
   const res = await adminFetch(
     `/api/collections/${encodeURIComponent(collection)}/records/${encodeURIComponent(id)}`,
     { method: 'DELETE' },
@@ -354,6 +374,7 @@ export async function pbList<T = Record<string, unknown>>(
   collection: string,
   opts: PbListOptions = {},
 ): Promise<PbListResult<T>> {
+  if (recordsUsePostgres(collection)) return postgresListWithPocketBaseFilter<T>(collection, opts);
   const params = new URLSearchParams();
   if (opts.filter) params.set('filter', opts.filter);
   if (opts.sort) params.set('sort', opts.sort);
@@ -387,6 +408,7 @@ export async function pbListStrict<T = Record<string, unknown>>(
   collection: string,
   opts: PbListOptions = {},
 ): Promise<PbListResult<T>> {
+  if (recordsUsePostgres(collection)) return postgresListWithPocketBaseFilter<T>(collection, opts);
   const params = new URLSearchParams();
   if (opts.filter) params.set('filter', opts.filter);
   if (opts.sort) params.set('sort', opts.sort);

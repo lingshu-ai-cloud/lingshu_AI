@@ -55,6 +55,9 @@ try {
   assert.equal(queue.items[0]?.lineage.planId, 'weekly-plan-1');
   assert.equal(queue.items[0]?.lineage.factsVersion, 'f1');
   assert.equal(queue.items[0]?.outputSummary.durationSeconds, 30);
+  assert.equal(queue.items[0]?.confidence?.production.level, 'high');
+  assert.equal(queue.items[0]?.confidence?.business.level, 'medium', 'reference match is evidence, not a promised business success rate');
+  assert.match(queue.items[0]?.confidence?.note || '', /不是.*成功概率/);
   assert.equal(queue.items[1]?.origin, 'manual');
   assert.equal(queue.items[1]?.socialContentTaskId, 'social-manual-1');
   assert.equal(queue.items[1]?.status, 'waiting_review');
@@ -62,6 +65,7 @@ try {
   assert.equal(queue.items[1]?.lineage.budgetCny, 40);
   assert.deepEqual(queue.items[1]?.projectIds, ['project-manual']);
   assert.deepEqual(queue.items[1]?.outputSummary, { count: 2, durationSeconds: null, formats: ['Shorts'] });
+  assert.equal(queue.items[1]?.confidence?.business.level, 'insufficient');
 } finally {
   store.list = originalList;
 }

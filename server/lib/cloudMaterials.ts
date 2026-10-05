@@ -1,13 +1,31 @@
 import { openAsBlob } from 'node:fs';
+import { Readable } from 'node:stream';
 import { adminFetch } from '../storage/pb.js';
 import { createFilePlaybackUrl } from '../storage/files.js';
+import { objectStorageGetObject } from '../storage/objectStorage.js';
+import { postgresListWithPocketBaseFilter, postgresStore, selectedDataBackend } from '../storage/postgres.js';
 
-export interface CloudMaterialRecord extends Record<string, unknown> { id: string; videoFile?: string; posterFile?: string }
+export interface CloudMaterialRecord extends Record<string, unknown> {
+  id: string;
+  videoFile?: string;
+  posterFile?: string;
+  objectKey?: string;
+  posterObjectKey?: string;
+  objectEtag?: string;
+  posterObjectEtag?: string;
+  storageBackend?: string;
+}
 
 export type CloudMaterialFileInput = {
   name: string;
   contentType: string;
 } & ({ path: string; buf?: never } | { buf: Buffer; path?: never });
+
+export type CloudMaterialObjectInput = {
+  key: string;
+  etag?: string;
+  contentType: string;
+};
 
 export interface CreateCloudMaterialInput {
   tenantId: string;
@@ -40,8 +58,8 @@ export interface CreateCloudMaterialInput {
   derivativesApproved?: boolean;
   rawLibraryUseApproved?: boolean;
   provenance?: Record<string, unknown>;
-  media: CloudMaterialFileInput;
-  poster?: CloudMaterialFileInput;
+  media: CloudMaterialFileInput | CloudMaterialObjectInput;
+  poster?: CloudMaterialFileInput | CloudMaterialObjectInput;
 }
 
 const FALLBACK_POSTER_PNG = Buffer.from(
@@ -64,10 +82,18 @@ async function cloudMaterialBlob(file: CloudMaterialFileInput): Promise<Blob> {
     : new Blob([file.buf!], { type: file.contentType });
 }
 
+function isObjectInput(file: CloudMaterialFileInput | CloudMaterialObjectInput): file is CloudMaterialObjectInput {
+  return 'key' in file;
+}
+
+function usePostgresMaterials(request: typeof adminFetch): boolean {
+  return request === adminFetch && selectedDataBackend() === 'postgres';
+}
+
 /**
- * Create one material and both of its backend-owned files atomically through
- * PocketBase multipart create. The application server only supplies transient
- * input paths/buffers; it never becomes the durable owner of the media bytes.
+ * Create one material metadata record. New uploads may keep their bytes in
+ * object storage while legacy callers can still attach PocketBase file fields.
+ * The application server only supplies transient paths, buffers or object keys.
  *
  * `videoFile` is the historical collection field name. It stores the original
  * media for video, image and audio records; `type` remains the media authority.
@@ -80,6 +106,9 @@ export async function createCloudMaterial(
   if (!/^[a-f0-9]{64}$/i.test(input.sha256)) throw new Error('material sha256 is invalid');
   if (!Number.isSafeInteger(input.sizeBytes) || input.sizeBytes < 1) throw new Error('material size is invalid');
 
+  if (!('path' in input.media) && !('buf' in input.media) && !isObjectInput(input.media)) {
+    throw new Error('material media reference is invalid');
+  }
   const form = new FormData();
   const fields: Record<string, unknown> = {
     tenantId: input.tenantId,
@@ -112,15 +141,33 @@ export async function createCloudMaterial(
     derivativesApproved: input.derivativesApproved,
     rawLibraryUseApproved: input.rawLibraryUseApproved,
     provenance: input.provenance,
+    ...(isObjectInput(input.media) ? {
+      objectKey: input.media.key,
+      objectEtag: input.media.etag,
+      storageBackend: 'object_storage',
+    } : {}),
+    ...(input.poster && isObjectInput(input.poster) ? {
+      posterObjectKey: input.poster.key,
+      posterObjectEtag: input.poster.etag,
+    } : {}),
   };
   for (const [key, value] of Object.entries(fields)) appendCloudMaterialField(form, key, value);
-  form.append('videoFile', await cloudMaterialBlob(input.media), input.media.name);
+  if (!isObjectInput(input.media)) form.append('videoFile', await cloudMaterialBlob(input.media), input.media.name);
   const poster = input.poster || {
     name: `${input.sha256.slice(0, 16)}.poster.png`,
     contentType: 'image/png',
     buf: FALLBACK_POSTER_PNG,
   };
-  form.append('posterFile', await cloudMaterialBlob(poster), poster.name);
+  if (!isObjectInput(poster)) form.append('posterFile', await cloudMaterialBlob(poster), poster.name);
+
+  if (usePostgresMaterials(request)) {
+    if (!isObjectInput(input.media) || !isObjectInput(poster)) {
+      throw new Error('PostgreSQL material metadata requires media and poster bytes to be stored in COS first');
+    }
+    const record = await postgresStore.create<CloudMaterialRecord>('materials', fields);
+    if (!record?.id || materialTenantId(record) !== input.tenantId) throw new Error('material database returned an invalid tenant record');
+    return record;
+  }
 
   const response = await request('/api/collections/materials/records', { method: 'POST', body: form });
   if (!response.ok) {
@@ -152,9 +199,13 @@ async function resolveCloudMaterialPlaybackUrl(
   if (pending) return pending;
 
   const request = (async () => {
-    const response = await adminFetch(`/api/collections/materials/records/${encodeURIComponent(id)}`);
-    if (!response.ok) return null;
-    const record = await response.json() as CloudMaterialRecord;
+    const record = selectedDataBackend() === 'postgres'
+      ? await postgresStore.getById<CloudMaterialRecord>('materials', id)
+      : await (async () => {
+        const response = await adminFetch(`/api/collections/materials/records/${encodeURIComponent(id)}`);
+        return response.ok ? response.json() as Promise<CloudMaterialRecord> : null;
+      })();
+    if (!record) return null;
     if (tenantId && !canAccessCloudMaterial(record, tenantId)) return null;
     const filename = String(record[field] || '');
     if (!filename) return null;
@@ -186,7 +237,7 @@ export function cloudMaterialView(item: CloudMaterialRecord): Record<string, unk
     folder: String(item.folder || 'upload'), type: String(item.type || 'video'), duration: Number(item.duration || 0),
     width: width || undefined, height: height || undefined,
     aspectRatio: width > 0 && height > 0 ? +(width / height).toFixed(4) : undefined,
-    size: humanSize(Number(item.sizeBytes || 0)), sizeBytes: Number(item.sizeBytes || 0), file: String(item.videoFile || ''),
+    size: humanSize(Number(item.sizeBytes || 0)), sizeBytes: Number(item.sizeBytes || 0), file: String(item.videoFile || item.objectKey || ''),
     url: `/studio-media/${item.id}/media.mp4`, poster: `/studio-media/${item.id}/poster.jpg`,
     scope: String(item.scope || 'own'), tenantId: materialTenantId(item), usage: String(item.usage || 'editable'),
     sourceType: String(item.sourceType || 'licensed_upload'), sourceName: String(item.sourceName || ''),
@@ -208,7 +259,7 @@ export function cloudMaterialView(item: CloudMaterialRecord): Record<string, unk
     industry: String(item.industry || ''), shotFunction: String(item.shotFunction || ''),
     applicability: String(item.applicability || ''), tags: String(item.tags || ''),
     createdAt: String(item.created || ''), updatedAt: String(item.updated || ''),
-    analysisSourceRevision: String(item.analysisSourceRevision || ''), sourceRevision: String(item.sha256 || item.videoFile || ''),
+    analysisSourceRevision: String(item.analysisSourceRevision || ''), sourceRevision: String(item.sha256 || item.objectEtag || item.videoFile || ''),
     pinned: Boolean(item.pinned), segmentAnalysisStatus: item.segmentAnalysisStatus ? String(item.segmentAnalysisStatus) : undefined,
     segmentAnalysisError: item.segmentAnalysisError ? String(item.segmentAnalysisError) : undefined,
     visualObservations: parseSegments(item.visualObservations), segments: parseSegments(item.segments),
@@ -220,6 +271,15 @@ export type MaterialSourceStatus = { source: 'server' | 'database'; state: 'read
 export async function readCloudMaterialLibrary(tenantId: string, request: typeof adminFetch = adminFetch): Promise<{ items: Array<Record<string, unknown>>; source: MaterialSourceStatus }> {
   try {
     const rows: CloudMaterialRecord[] = [];
+    if (usePostgresMaterials(request)) {
+      for (let page = 1; ; page += 1) {
+        const data = await postgresStore.list<CloudMaterialRecord>('materials', { page, perPage: 500 });
+        rows.push(...data.items.filter(item => canAccessCloudMaterial(item, tenantId)));
+        if (page >= data.totalPages) break;
+        if (page >= 100) throw Error('material_pagination_limit');
+      }
+      return { items: rows.map(cloudMaterialView), source: { source: 'database', state: 'ready', message: '素材数据库已连接' } };
+    }
     const signal = AbortSignal.timeout(8000);
     for (let page = 1; ; page++) {
       const response = await request(`/api/collections/materials/records?perPage=500&page=${page}`, { signal });
@@ -243,6 +303,10 @@ export async function listCloudMaterials(tenantId: string): Promise<Array<Record
 }
 
 export async function getCloudMaterialRecord(id: string, tenantId?: string): Promise<Record<string, unknown> | null> {
+  if (selectedDataBackend() === 'postgres') {
+    const record = await postgresStore.getById<CloudMaterialRecord>('materials', id);
+    return record && (!tenantId || canAccessCloudMaterial(record, tenantId)) ? record : null;
+  }
   const response = await adminFetch(`/api/collections/materials/records/${encodeURIComponent(id)}`);
   if (!response.ok) return null;
   const record = await response.json() as Record<string, unknown>;
@@ -251,10 +315,32 @@ export async function getCloudMaterialRecord(id: string, tenantId?: string): Pro
 
 /** 写操作只能落在当前租户自己的私有素材上；共享素材对普通租户只读。 */
 export async function getOwnedCloudMaterialRecord(id: string, tenantId: string): Promise<Record<string, unknown> | null> {
+  if (selectedDataBackend() === 'postgres') {
+    const record = await postgresStore.getById<CloudMaterialRecord>('materials', id);
+    return record && String(record.scope || 'own') !== 'shared' && materialTenantId(record) === tenantId ? record : null;
+  }
   const response = await adminFetch(`/api/collections/materials/records/${encodeURIComponent(id)}`);
   if (!response.ok) return null;
   const record = await response.json() as Record<string, unknown>;
   return String(record.scope || 'own') !== 'shared' && materialTenantId(record) === tenantId ? record : null;
+}
+
+export async function findOwnedCloudMaterialByHash(
+  tenantId: string,
+  sha256: string,
+  request: typeof adminFetch = adminFetch,
+): Promise<CloudMaterialRecord | null> {
+  if (!tenantId.trim() || !/^[a-f0-9]{64}$/i.test(sha256)) return null;
+  const filter = `tenantId="${pocketBaseFilterValue(tenantId)}" && scope="own" && sha256="${sha256.toLowerCase()}"`;
+  if (usePostgresMaterials(request)) {
+    const result = await postgresListWithPocketBaseFilter<CloudMaterialRecord>('materials', { filter, page: 1, perPage: 1 });
+    return result.items[0] || null;
+  }
+  const response = await request(`/api/collections/materials/records?perPage=1&page=1&filter=${encodeURIComponent(filter)}`);
+  if (!response.ok) throw new Error(`material database lookup failed (${response.status})`);
+  const result = await response.json() as { items?: CloudMaterialRecord[] };
+  const record = result.items?.[0];
+  return record && materialTenantId(record) === tenantId && String(record.scope || 'own') !== 'shared' ? record : null;
 }
 
 function pocketBaseFilterValue(value: string): string {
@@ -267,6 +353,11 @@ async function ownedCloudMaterialByHash(
   request: typeof adminFetch,
 ): Promise<CloudMaterialRecord | null> {
   const filter = `tenantId = "${pocketBaseFilterValue(tenantId)}" && sha256 = "${sha256.toLowerCase()}" && scope != "shared"`;
+  if (usePostgresMaterials(request)) {
+    const result = await postgresListWithPocketBaseFilter<CloudMaterialRecord>('materials', { filter, page: 1, perPage: 2 });
+    if (result.totalItems > 1) throw new Error('duplicate tenant material hash records');
+    return result.items[0] || null;
+  }
   const response = await request(`/api/collections/materials/records?perPage=2&filter=${encodeURIComponent(filter)}`);
   if (!response.ok) throw new Error(`material database lookup failed (${response.status})`);
   const payload = await response.json() as { items?: CloudMaterialRecord[] };
@@ -314,6 +405,13 @@ export async function upsertSocialTaskCloudMaterial(
       ].map(String).filter(Boolean))),
       ...(productRef ? { productRef } : {}),
     };
+    if (usePostgresMaterials(request)) {
+      const updated = await postgresStore.update('materials', existing.id, { provenance: merged, ...(productId ? { productId } : {}) });
+      if (!updated) throw new Error('material association update failed (404)');
+      const record = await postgresStore.getById<CloudMaterialRecord>('materials', existing.id);
+      if (!record) throw new Error('material association update returned no record');
+      return cloudMaterialView(record);
+    }
     const response = await request(`/api/collections/materials/records/${encodeURIComponent(existing.id)}`, {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ provenance: merged, ...(productId ? { productId } : {}) }),
@@ -349,6 +447,15 @@ export async function deleteOwnedCloudMaterial(
   tenantId: string,
   request: typeof adminFetch = adminFetch,
 ): Promise<'deleted' | 'not_found'> {
+  if (usePostgresMaterials(request)) {
+    const record = await postgresStore.getById<CloudMaterialRecord>('materials', id);
+    if (!record || String(record.scope || 'own') === 'shared' || materialTenantId(record) !== tenantId) return 'not_found';
+    const deleted = await postgresStore.delete('materials', id);
+    if (!deleted) return 'not_found';
+    playbackUrlCache.delete(`${tenantId}:${id}:videoFile`);
+    playbackUrlCache.delete(`${tenantId}:${id}:posterFile`);
+    return 'deleted';
+  }
   const response = await request(`/api/collections/materials/records/${encodeURIComponent(id)}`);
   if (response.status === 404) return 'not_found';
   if (!response.ok) throw new Error(`material database read failed (${response.status})`);
@@ -363,6 +470,7 @@ export async function deleteOwnedCloudMaterial(
 }
 
 export async function updateCloudMaterial(id: string, fields: Record<string, unknown>): Promise<boolean> {
+  if (selectedDataBackend() === 'postgres') return postgresStore.update('materials', id, fields);
   const response = await adminFetch(`/api/collections/materials/records/${encodeURIComponent(id)}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
@@ -398,7 +506,38 @@ function parseObject(value: unknown): Record<string, unknown> | undefined {
   return undefined;
 }
 
-export async function fetchCloudMaterial(id: string, field: 'videoFile' | 'posterFile', range?: string, tenantId?: string): Promise<Response | null> {
+export async function fetchCloudMaterial(
+  id: string,
+  field: 'videoFile' | 'posterFile',
+  range?: string,
+  tenantId?: string,
+  request: typeof adminFetch = adminFetch,
+): Promise<Response | null> {
+  const record = usePostgresMaterials(request)
+    ? await postgresStore.getById<CloudMaterialRecord>('materials', id)
+    : await (async () => {
+      const recordResponse = await request(`/api/collections/materials/records/${encodeURIComponent(id)}`);
+      return recordResponse.ok ? recordResponse.json() as Promise<CloudMaterialRecord> : null;
+    })();
+  if (!record) return null;
+  if (tenantId && !canAccessCloudMaterial(record, tenantId)) return null;
+  const objectKey = field === 'videoFile' ? String(record.objectKey || '') : String(record.posterObjectKey || '');
+  if (objectKey) {
+    const object = await objectStorageGetObject(objectKey, range);
+    if (!object) return null;
+    const headers = new Headers({
+      'content-type': object.contentType,
+      'content-length': String(object.contentLength ?? object.size),
+      ...(object.contentRange ? { 'content-range': object.contentRange } : {}),
+      ...(object.acceptRanges ? { 'accept-ranges': object.acceptRanges } : { 'accept-ranges': 'bytes' }),
+      ...(object.etag ? { etag: object.etag } : {}),
+      ...(object.lastModified ? { 'last-modified': object.lastModified.toUTCString() } : {}),
+    });
+    return new Response(Readable.toWeb(Readable.from(object.body)) as ReadableStream, {
+      status: object.contentRange ? 206 : 200,
+      headers,
+    });
+  }
   let url = await resolveCloudMaterialPlaybackUrl(id, field, tenantId);
   if (!url) return null;
   let upstream = await fetch(url, { headers: range ? { Range: range } : undefined });

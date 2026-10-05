@@ -1,5 +1,5 @@
 import type { DataStore, ListQuery, ListResult } from '../storage/datastore.js';
-import { store } from '../storage/index.js';
+import { dataBackend, store } from '../storage/index.js';
 import { pbListStrict } from '../storage/pb.js';
 import { parseStarter198AccessRecord, type Starter198AccessSnapshot } from './profile.js';
 
@@ -123,7 +123,7 @@ export function createStarter198Repository(dataStore: DataStore = store): Starte
     // tenant boundary through an accidentally forwarded `where.tenant_id`.
     const where = { ...(query.where ?? {}), tenant_id: tenantId };
     try {
-      const result = process.env.NODE_ENV === 'production' && dataStore === store
+      const result = process.env.NODE_ENV === 'production' && dataStore === store && dataBackend === 'pocketbase'
         ? await pbListStrict<StarterRecord>(collection, {
           filter: pbFilter(where), sort: query.sort, page: query.page ?? 1, perPage,
         })

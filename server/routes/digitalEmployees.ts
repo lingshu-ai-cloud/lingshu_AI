@@ -25,6 +25,7 @@ import { invalidatePublishingApprovalForProject, invalidatePublishingAuthorizati
 import { contentAcceptanceHash, contentAccepted } from '../digitalEmployees/contentAcceptance.js';
 import { buildDeliveryResources } from '../digitalEmployees/deliveryResources.js';
 import { buildContentQueueProjection } from '../digitalEmployees/contentQueue.js';
+import { buildContentExecutionRuntime, unavailableContentExecutionRuntime } from '../digitalEmployees/contentExecutionRuntime.js';
 import { buildTaskDeepLink, type WorkflowTask } from '../../src/lib/digitalEmployees.js';
 import { Router, type Request, type Response } from 'express';
 import fs from 'node:fs';
@@ -650,14 +651,16 @@ async function buildOverview(tenantId: string, requestedGoalId = '', requestedRa
     : operatingGoals.find(item => ['active', 'paused'].includes(item.status)) ?? operatingGoals[0] ?? null;
   const resolvedConfiguration = await resolveCurrentConfiguration(tenantId, configRecord);
   if (!goal) {
-    const [businessSnapshot, contentQueue] = await Promise.all([
+    const [businessSnapshot, contentQueue, executionRuntime] = await Promise.all([
       buildBusinessSnapshot(tenantId, requestedRange),
       buildContentQueueProjection({
         tenantId, runId: '', planBody: {}, tasks: [],
         publishingTargets: resolvedConfiguration?.config.publishingTargets || [],
       }).catch(() => ({ generatedAt: new Date().toISOString(), sourceStatus: 'unavailable' as const, sourceNote: '内容队列暂时无法读取，请刷新重试', items: [] })),
+      buildContentExecutionRuntime({ dataStore: store, tenantId })
+        .catch(() => unavailableContentExecutionRuntime()),
     ]);
-    return { config: resolvedConfiguration?.config || null, configuration: publicConfigurationMetadata(resolvedConfiguration), goals: [], goal: null, plan: null, run: null, tasks: [], contentQueue, events: [], approvals: [], handoffs: [], review: null, liveReview: null, agents: publicAgentStatuses([]), businessSnapshot };
+    return { config: resolvedConfiguration?.config || null, configuration: publicConfigurationMetadata(resolvedConfiguration), goals: [], goal: null, plan: null, run: null, tasks: [], contentQueue, executionRuntime, events: [], approvals: [], handoffs: [], review: null, liveReview: null, agents: publicAgentStatuses([]), businessSnapshot };
   }
   const [plan, run, businessSnapshot] = await Promise.all([
     first<PlanRecord>(COLLECTION.plans, { tenant_id: tenantId, goal_id: goal.id }),
@@ -677,7 +680,7 @@ async function buildOverview(tenantId: string, requestedGoalId = '', requestedRa
   const agents = publicAgentStatuses(normalizedTasks);
   const publicTasks = normalizedTasks.map(task => ({ ...task, business_refs: jsonObject(task.business_refs, []), depends_on: jsonObject(task.depends_on, []), output: jsonObject(task.output, {}) })) as WorkflowTask[];
   const planBody = plan ? jsonObject<Record<string, unknown>>(plan.plan, {}) : {};
-  const [deliveryData, contentQueue] = await Promise.all([
+  const [deliveryData, contentQueue, executionRuntime] = await Promise.all([
     buildDeliveryResources(tenantId, publicTasks, goal.title)
       .then(deliveries => ({ deliveries, deliveryNotice: '' }))
       .catch(() => ({ deliveries: undefined, deliveryNotice: '业务产物暂时无法读取，当前展示任务记录。请刷新重试。' })),
@@ -691,6 +694,8 @@ async function buildOverview(tenantId: string, requestedGoalId = '', requestedRa
       publishingTargets: resolvedConfiguration?.config.publishingTargets || [],
     })
       .catch(() => ({ generatedAt: new Date().toISOString(), sourceStatus: 'unavailable' as const, sourceNote: '内容队列暂时无法读取，请刷新重试', items: [] })),
+    buildContentExecutionRuntime({ dataStore: store, tenantId })
+      .catch(() => unavailableContentExecutionRuntime()),
   ]);
   return {
     config: resolvedConfiguration?.config || null,
@@ -721,6 +726,7 @@ async function buildOverview(tenantId: string, requestedGoalId = '', requestedRa
     tasks: normalizedTasks.map(task => ({ ...task, depends_on: jsonObject(task.depends_on, []), output: jsonObject(task.output, {}) })),
     ...deliveryData,
     contentQueue,
+    executionRuntime,
     events: events?.items.slice().reverse().map(event => ({ ...event, payload: jsonObject(event.payload, {}) })) || [],
     approvals: approvals?.items.map(approval => {
       const approvalTask = taskItems.find(task => task.id === approval.task_id);

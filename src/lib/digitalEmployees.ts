@@ -460,6 +460,20 @@ export interface ContentTaskOutputSummary {
   durationSeconds: number | null;
   formats: string[];
 }
+export type ContentConfidenceLevel = "high" | "medium" | "low" | "insufficient";
+export interface ContentConfidenceDimension {
+  level: ContentConfidenceLevel;
+  label: string;
+  evidence: string[];
+  gaps: string[];
+}
+export interface ContentTaskConfidence {
+  production: ContentConfidenceDimension;
+  publishing: ContentConfidenceDimension;
+  business: ContentConfidenceDimension;
+  dataSufficiency: "complete" | "partial" | "insufficient";
+  note: string;
+}
 export interface ContentQueueItem {
   id: string;
   contentId: string;
@@ -471,6 +485,7 @@ export interface ContentQueueItem {
   origin: ContentQueueOrigin;
   lineage: ContentTaskLineage;
   outputSummary: ContentTaskOutputSummary;
+  confidence?: ContentTaskConfidence;
   title: string;
   productName: string;
   platform: PublishingPlatform;
@@ -481,6 +496,7 @@ export interface ContentQueueItem {
   plannedPublishDate: string;
   referenceId: string;
   referenceTitle: string;
+  referenceViews: string;
   benchmarkAccount: string;
   matchScore: number | null;
   planningFactors: string[];
@@ -500,6 +516,49 @@ export interface ContentQueueProjection {
   sourceStatus: "available" | "pending" | "unavailable";
   sourceNote: string;
   items: ContentQueueItem[];
+}
+
+export type ContentExecutionRuntimeStatus =
+  | "queued"
+  | "running"
+  | "retry_wait"
+  | "reconciling"
+  | "blocked"
+  | "succeeded"
+  | "cancelled"
+  | "dead_letter";
+
+export interface ContentExecutionRuntimeJob {
+  id: string;
+  taskId: string;
+  runId: string;
+  accountId: string;
+  taskType: string;
+  status: ContentExecutionRuntimeStatus;
+  attempt: number;
+  maxAttempts: number;
+  nextAttemptAt: string | null;
+  retryClass: string | null;
+  publicReason: string;
+  queuePosition: number | null;
+  waitingOn: "tenant" | "account" | "task_type" | "worker" | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ContentExecutionRuntime {
+  generatedAt: string;
+  sourceStatus: "available" | "unavailable";
+  sourceNote: string;
+  capacity: {
+    tenant: { active: number; max: number };
+    accountDefaultMaxRunning: number;
+    workerMaxRunning: number;
+    accounts: Array<{ accountId: string; active: number; max: number }>;
+    taskTypes: Array<{ taskType: string; active: number; max: number }>;
+  };
+  counts: Record<ContentExecutionRuntimeStatus, number>;
+  jobs: ContentExecutionRuntimeJob[];
 }
 
 export interface WeeklyReview {
@@ -561,6 +620,7 @@ export interface DigitalEmployeeOverview {
   tasks: WorkflowTask[];
   deliveries?: import("./delivery").DeliveryResource[];
   contentQueue?: ContentQueueProjection;
+  executionRuntime?: ContentExecutionRuntime;
   deliveryNotice?: string;
   events: RunEvent[];
   approvals: ApprovalRequest[];

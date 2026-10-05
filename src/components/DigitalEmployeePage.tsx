@@ -3405,6 +3405,7 @@ export default function DigitalEmployeePage({
   const [newGoal, setNewGoal] = useState(false);
   const [approvalNote, setApprovalNote] = useState("");
   const [selectedTaskId, setSelectedTaskId] = useState("");
+  const [selectedContentItemId, setSelectedContentItemId] = useState("");
   const [deliveryFocus, setDeliveryFocus] = useState<{ id: string; request: number }>();
   const [viewGoalId, setViewGoalId] = useState("");
   const [showHistory, setShowHistory] = useState(false);
@@ -3849,7 +3850,13 @@ export default function DigitalEmployeePage({
     );
 
   if (data?.config) {
-    const dashboardView = workspaceView === "matrix" ? "matrix" : workspaceView === "overview" ? "queue" : workspaceView === "review" ? "review" : "home";
+    const dashboardView = workspaceView === "matrix"
+      ? "matrix"
+      : workspaceView === "overview"
+        ? "queue"
+        : workspaceView === "live"
+          ? selectedContentItemId ? "production" : "queue"
+          : workspaceView === "review" ? "review" : "home";
     const views: Array<{ id: "today" | "matrix" | "overview" | "review"; label: string; caption: string }> = [
       { id: "today", label: "经营总览", caption: "业绩与 Agent 实况" },
       { id: "matrix", label: "账号矩阵", caption: "职责、策略与连接" },
@@ -3890,11 +3897,11 @@ export default function DigitalEmployeePage({
       const planTask = data.plan?.tasks.find(item => item.key === task.task_key);
       dispatchDigitalEmployeeDeepLink(buildTaskDeepLink(task, planTask, data.run?.id || task.run_id));
     };
-    const openProductionProgress = (taskId: string) => {
-      if (!data.run || !data.tasks.some(item => item.id === taskId)) return;
-      setSelectedTaskId(taskId);
+    const openProductionProgress = (taskId: string, contentItemId: string) => {
+      if (taskId) setSelectedTaskId(taskId);
+      setSelectedContentItemId(contentItemId);
       setWorkspaceView("live");
-      window.setTimeout(() => document.getElementById("task-production-scene")?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
+      window.setTimeout(() => document.querySelector('[data-testid="production-task-scene"]')?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
     };
     return (
       <>
@@ -3919,13 +3926,13 @@ export default function DigitalEmployeePage({
             </div> : <div className="flex flex-wrap items-center justify-between gap-4 px-5 py-4"><div><p className="text-xs font-black text-emerald-800">当前周计划</p><p className="mt-1 text-sm font-bold text-slate-800">本周还没有可执行计划</p><p className="mt-1 text-xs text-slate-500">生成后，计划会固定显示在这里，并同步到账号矩阵和内容队列。</p></div><div className="flex flex-wrap items-center gap-2"><button type="button" onClick={()=>{ setNewGoal(true); setWeeklyPlanOpen(true); }} className="inline-flex items-center gap-2 rounded-xl bg-emerald-700 px-4 py-2.5 text-xs font-black text-white hover:bg-emerald-800"><CalendarRange size={14}/>生成本周计划</button><button type="button" onClick={()=>setWorkspaceView("rules")} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-xs font-black text-slate-700 hover:border-emerald-300"><Settings2 size={14}/>Agent 设置</button><button type="button" onClick={()=>setPlanHistoryOpen(true)} className="inline-flex items-center gap-2 rounded-xl border border-emerald-200 bg-white px-4 py-2.5 text-xs font-black text-emerald-800 hover:bg-emerald-50"><History size={14}/>历史计划</button></div></div>}
           </section>
           <nav aria-label="智能经营视图" className="mt-6 flex gap-7 overflow-x-auto border-b border-slate-200">
-            {views.map((view)=><button type="button" key={view.id} onClick={()=>setWorkspaceView(view.id)} aria-current={workspaceView===view.id?"page":undefined} className={`shrink-0 border-b-2 pb-3 text-left ${workspaceView===view.id?"border-emerald-700":"border-transparent"}`}><span className={`block text-sm font-black ${workspaceView===view.id?"text-emerald-800":"text-slate-500"}`}>{view.label}</span><span className="mt-0.5 block text-[10px] text-slate-400">{view.caption}</span></button>)}
+            {views.map((view)=>{const active=workspaceView===view.id||(view.id==="overview"&&workspaceView==="live");return <button type="button" key={view.id} onClick={()=>{setWorkspaceView(view.id);if(view.id!=="overview")setSelectedContentItemId("");}} aria-current={active?"page":undefined} className={`shrink-0 border-b-2 pb-3 text-left ${active?"border-emerald-700":"border-transparent"}`}><span className={`block text-sm font-black ${active?"text-emerald-800":"text-slate-500"}`}>{view.label}</span><span className="mt-0.5 block text-[10px] text-slate-400">{view.caption}</span></button>;})}
           </nav>
           {error&&<div role="alert" className="mt-5 flex items-center justify-between gap-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-xs font-bold text-red-700"><span>{error}</span><button type="button" aria-label="关闭错误提示" onClick={()=>setError("")}><X size={15}/></button></div>}
           <main className="py-6">
             {workspaceView === "rules"
               ? <OnboardingPanel initial={data.config} readiness={data.businessSnapshot?.readiness || []} busy={Boolean(busy)} mode="rules" activeRun={activeRun} onOpenReadiness={openReadiness} onSave={(config) => void saveConfig(config)} />
-              : <SmartBusinessDashboard data={data} view={dashboardView} onRefresh={() => void load()} onOpenContent={openContentProduction} onOpenProductionProgress={openProductionProgress} onGeneratePlan={() => { if (!goal || canCreateNextGoal) setNewGoal(true); setWeeklyPlanOpen(true); }} onNavigate={page => {
+              : <SmartBusinessDashboard data={data} view={dashboardView} selectedContentItemId={selectedContentItemId} onRefresh={() => void load()} onOpenContent={openContentProduction} onOpenProductionProgress={openProductionProgress} onBackToQueue={()=>{setSelectedContentItemId("");setWorkspaceView("overview");}} onRetryTask={async taskId => Boolean(await act(`retry:${taskId}`, () => digitalEmployeeApi.retryTask(taskId)))} onGeneratePlan={() => { if (!goal || canCreateNextGoal) setNewGoal(true); setWeeklyPlanOpen(true); }} onNavigate={page => {
                   if (page === "socialPlanning") {
                     if (!goal || canCreateNextGoal) setNewGoal(true);
                     setWeeklyPlanOpen(true);

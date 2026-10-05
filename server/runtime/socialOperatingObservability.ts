@@ -1,4 +1,6 @@
 import { pbListStrict } from '../storage/pb.js';
+import { dataBackend, store } from '../storage/index.js';
+import type { ListResult } from '../storage/datastore.js';
 import type { ProcessRole } from './processRole.js';
 import { processRoleStartsBackgroundJobs } from './processRole.js';
 import { backgroundJobRuntimeState, SOCIAL_OPERATING_WORKER_HEARTBEATS, type BackgroundJobRuntimeState } from './workerHeartbeat.js';
@@ -26,6 +28,32 @@ type GapRow = {
 type PostRow = { stats?: unknown };
 type PackageRow = { status?: string; payload?: unknown };
 type HeartbeatRow = { state?: string; last_seen_at?: string; instance_id?: string };
+
+async function listOperatingRows<T>(
+  collection: string,
+  options: {
+    where?: Record<string, string | number | boolean>;
+    pocketBaseFilter?: string;
+    sort?: string;
+    page?: number;
+    perPage?: number;
+  } = {},
+): Promise<ListResult<T>> {
+  if (process.env.NODE_ENV === 'production' && dataBackend === 'pocketbase') {
+    return pbListStrict<T>(collection, {
+      filter: options.pocketBaseFilter,
+      sort: options.sort,
+      page: options.page,
+      perPage: options.perPage,
+    });
+  }
+  return store.list<T>(collection, {
+    where: options.where,
+    sort: options.sort,
+    page: options.page,
+    perPage: options.perPage,
+  });
+}
 
 export interface SocialOperatingSignals {
   queueBacklog: { count: number; oldestAt: string | null };
@@ -85,10 +113,10 @@ export async function inspectSocialOperatingSignals(input: {
 }): Promise<SocialOperatingSignals> {
   const now = input.now ?? new Date();
   const [backlog, blocked, posts, packages] = await Promise.all([
-    pbListStrict<GapRow>('social_discovery_gap_tasks', { filter: 'status = "collecting"', sort: 'createdAt', page: 1, perPage: 1 }),
-    pbListStrict<GapRow>('social_discovery_gap_tasks', { filter: 'status = "blocked"', page: 1, perPage: 200 }),
-    pbListStrict<PostRow>('posts', { sort: '-published_at', page: 1, perPage: 200 }),
-    pbListStrict<PackageRow>('social_weekly_operating_packages', { sort: '-updated_at', page: 1, perPage: 200 }),
+    listOperatingRows<GapRow>('social_discovery_gap_tasks', { where: { status: 'collecting' }, pocketBaseFilter: 'status = "collecting"', sort: 'createdAt', page: 1, perPage: 1 }),
+    listOperatingRows<GapRow>('social_discovery_gap_tasks', { where: { status: 'blocked' }, pocketBaseFilter: 'status = "blocked"', page: 1, perPage: 200 }),
+    listOperatingRows<PostRow>('posts', { sort: '-published_at', page: 1, perPage: 200 }),
+    listOperatingRows<PackageRow>('social_weekly_operating_packages', { sort: '-updated_at', page: 1, perPage: 200 }),
   ]);
   const exhaustedBudgets = blocked.items.filter(row => row.stopReason === 'budget_exhausted'
     || (Number.isFinite(Number(row.budgetLimitCny)) && Number(row.spentCny) >= Number(row.budgetLimitCny))).length;
@@ -97,8 +125,8 @@ export async function inspectSocialOperatingSignals(input: {
   if (processRoleStartsBackgroundJobs(input.role)) {
     worker = { ready: local.state === 'ready', source: 'local', state: local.state, lastSeenAt: local.readyAt };
   } else {
-    const heartbeats = await pbListStrict<HeartbeatRow>(SOCIAL_OPERATING_WORKER_HEARTBEATS, {
-      filter: 'state = "ready"', sort: '-last_seen_at', page: 1, perPage: 1,
+    const heartbeats = await listOperatingRows<HeartbeatRow>(SOCIAL_OPERATING_WORKER_HEARTBEATS, {
+      where: { state: 'ready' }, pocketBaseFilter: 'state = "ready"', sort: '-last_seen_at', page: 1, perPage: 1,
     });
     const heartbeat = heartbeats.items[0];
     const lastSeen = typeof heartbeat?.last_seen_at === 'string' ? heartbeat.last_seen_at : null;
@@ -119,6 +147,6 @@ export async function inspectSocialOperatingSignals(input: {
 
 export async function assertSocialOperatingCollections(): Promise<void> {
   await Promise.all(SOCIAL_OPERATING_REQUIRED_COLLECTIONS.map(collection => (
-    pbListStrict(collection, { page: 1, perPage: 1 }).then(() => undefined)
+    listOperatingRows(collection, { page: 1, perPage: 1 }).then(() => undefined)
   )));
 }

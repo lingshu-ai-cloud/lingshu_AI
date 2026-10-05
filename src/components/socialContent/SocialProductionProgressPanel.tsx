@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import {
+  AlertTriangle,
   Bot,
   CheckCircle2,
   ChevronRight,
@@ -13,6 +14,7 @@ import {
   RotateCcw,
   Subtitles,
   X,
+  XCircle,
 } from 'lucide-react';
 import type {
   SocialContentTaskDetail,
@@ -27,6 +29,11 @@ import {
 import {
   contentCreationReviewAdmissionAllowed,
 } from '../../lib/contentCreationTestBypass';
+import {
+  contentProgressNodes,
+  formatContentDuration,
+  type ContentProgressNodeState,
+} from '../../lib/contentProductionExperience';
 
 interface SocialProductionProgressPanelProps {
   task: SocialContentTaskDetail;
@@ -41,6 +48,8 @@ interface SocialProductionProgressPanelProps {
   onStart?: () => void;
   onPlanReview?: () => void;
   onEdit?: () => void;
+  onOpenShots?: () => void;
+  onOpenExceptions?: () => void;
   onReview?: () => void;
 }
 
@@ -121,60 +130,59 @@ function automaticStep(task: TaskListItem): string {
   return '本轮内容任务已经完成';
 }
 
-type ProductionChainState = 'pending' | 'current' | 'complete' | 'blocked';
-
-const PRODUCTION_CHAIN = [
-  '脚本分析',
-  '口播生成',
-  '语音生成',
-  '素材匹配',
-  '字幕生成',
-  '音乐与音效',
-  '特效与剪辑',
-  '成片质检',
-  '验收',
-] as const;
-
-function productionChainCurrentIndex(task: TaskListItem): number {
-  if (COMPLETE_STATUSES.has(task.status)) return PRODUCTION_CHAIN.length;
-  if (task.status === 'packaging') return PRODUCTION_CHAIN.length;
-  if (task.status === 'asset_review') return 8;
-  if (task.status === 'draft' || task.status === 'needs_input' || task.status === 'plan_review') return 0;
-  if (!directorPlanComplete(task)) return 0;
-  if (!isTaskDetail(task)) return task.artifactCount > 0 ? 8 : 3;
-  const progress = `${task.productionProgress?.step || ''} ${task.productionProgress?.activity || ''}`.toLowerCase();
-  if (/quality|质检|审核|evaluate|review/.test(progress)) return 7;
-  if (/render|合成|剪辑|特效|effect/.test(progress)) return 6;
-  if (/music|bgm|sound|音乐|配乐|音效/.test(progress)) return 5;
-  if (/subtitle|caption|字幕/.test(progress)) return 4;
-  if (/material|asset|match|素材|匹配/.test(progress)) return 3;
-  if (/audio|tts|voice|语音|配音/.test(progress)) return 2;
-  if (/copy|口播|文案/.test(progress)) return 1;
-  return 3;
+function milestoneTone(state: ContentProgressNodeState): string {
+  if (state === 'complete') return 'border-emerald-500 bg-emerald-500 text-white';
+  if (state === 'active') return 'border-blue-500 bg-blue-50 text-blue-700';
+  if (state === 'blocked') return 'border-amber-500 bg-amber-50 text-amber-700';
+  if (state === 'failed') return 'border-rose-500 bg-rose-50 text-rose-700';
+  return 'border-slate-300 bg-white text-slate-300';
 }
 
-function ProductionChain({ task }: { task: TaskListItem }) {
-  const currentIndex = productionChainCurrentIndex(task);
-  const interrupted = Boolean(workflowInterruption(task)) || task.status === 'attention' || task.status === 'paused';
+function milestoneTextTone(state: ContentProgressNodeState): string {
+  if (state === 'complete') return 'text-emerald-800';
+  if (state === 'active') return 'text-blue-800';
+  if (state === 'blocked') return 'text-amber-900';
+  if (state === 'failed') return 'text-rose-800';
+  return 'text-slate-400';
+}
+
+function milestoneStateLabel(state: ContentProgressNodeState): string {
+  if (state === 'complete') return '已完成';
+  if (state === 'active') return '进行中';
+  if (state === 'blocked') return '需处理';
+  if (state === 'failed') return '失败';
+  return '等待中';
+}
+
+function TaskMilestoneRail({ task }: { task: TaskListItem }) {
+  const milestones = contentProgressNodes(task);
   return (
-    <span className="mt-3 block rounded-xl border border-slate-100 bg-slate-50/70 px-3 py-3">
-      <span className="mb-2 block text-[9px] font-black tracking-[0.08em] text-slate-500">完整制作链路</span>
+    <span className="mt-3 block rounded-xl border border-slate-100 bg-slate-50/70 px-3 py-3" data-content-milestone-rail>
+      <span className="mb-3 flex items-center justify-between gap-3">
+        <span className="text-[9px] font-black tracking-[0.08em] text-slate-500">任务进度 · 自动保存</span>
+        <span className="text-[9px] font-bold text-slate-400">共 7 个节点</span>
+      </span>
       <span className="block">
-        {PRODUCTION_CHAIN.map((label, index) => {
-          const state: ProductionChainState = currentIndex >= PRODUCTION_CHAIN.length || index < currentIndex
-            ? 'complete'
-            : index === currentIndex
-              ? interrupted ? 'blocked' : 'current'
-              : 'pending';
+        {milestones.map((milestone, index) => {
+          const nextState = milestones[index + 1]?.state;
+          const completedConnector = milestone.state === 'complete' && nextState === 'complete';
           return (
-            <span key={label} className="relative flex min-h-7 items-center gap-2.5 last:min-h-5">
-              {index < PRODUCTION_CHAIN.length - 1 && <span className={`absolute bottom-[-2px] left-[7px] top-[15px] w-px ${state === 'complete' ? 'bg-emerald-300' : 'bg-slate-200'}`} />}
-              <span className={`relative z-10 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border ${state === 'complete' ? 'border-emerald-500 bg-emerald-500 text-white' : state === 'current' ? 'border-blue-500 bg-blue-50 text-blue-600' : state === 'blocked' ? 'border-amber-500 bg-amber-50 text-amber-700' : 'border-slate-300 bg-white text-slate-300'}`}>
-                {state === 'complete' ? <CheckCircle2 size={11} /> : state === 'current' ? <Loader2 size={10} className="animate-spin motion-reduce:animate-none" /> : <span className="h-1.5 w-1.5 rounded-full bg-current" />}
+            <span key={milestone.id} className="relative flex min-h-14 items-start gap-3 last:min-h-0">
+              {index < milestones.length - 1 && <span className={`absolute bottom-0 left-[9px] top-[20px] w-0.5 ${completedConnector ? 'bg-emerald-300' : 'bg-slate-200'}`} />}
+              <span className={`relative z-10 mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border ${milestoneTone(milestone.state)}`}>
+                {milestone.state === 'complete' ? <CheckCircle2 size={12} />
+                  : milestone.state === 'active' ? <Loader2 size={11} className="animate-spin motion-reduce:animate-none" />
+                    : milestone.state === 'blocked' ? <AlertTriangle size={11} />
+                      : milestone.state === 'failed' ? <XCircle size={11} />
+                        : <span className="h-1.5 w-1.5 rounded-full bg-current" />}
               </span>
-              <span className={`text-[10px] font-bold ${state === 'complete' ? 'text-emerald-700' : state === 'current' ? 'text-blue-700' : state === 'blocked' ? 'text-amber-800' : 'text-slate-400'}`}>{label}</span>
-              {state === 'current' && <span className="ml-auto text-[9px] font-black text-blue-600">运行中</span>}
-              {state === 'blocked' && <span className="ml-auto text-[9px] font-black text-amber-700">需处理</span>}
+              <span className="min-w-0 flex-1 pb-3">
+                <span className="flex items-start justify-between gap-2">
+                  <span className={`text-[10px] font-black ${milestoneTextTone(milestone.state)}`}>{milestone.label}</span>
+                  <span className={`shrink-0 text-[9px] font-black ${milestoneTextTone(milestone.state)}`}>{milestoneStateLabel(milestone.state)}</span>
+                </span>
+                <span className={`mt-0.5 block text-[9px] leading-4 ${milestone.state === 'pending' ? 'text-slate-400' : 'text-slate-600'}`}>{milestone.result}</span>
+              </span>
             </span>
           );
         })}
@@ -333,6 +341,8 @@ export default function SocialProductionProgressPanel({
   onStart,
   onPlanReview,
   onEdit,
+  onOpenShots,
+  onOpenExceptions,
   onReview,
 }: SocialProductionProgressPanelProps) {
   const [open, setOpen] = useState(false);
@@ -340,6 +350,7 @@ export default function SocialProductionProgressPanel({
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const closeButtonRef = useRef<HTMLButtonElement | null>(null);
   const drawerRef = useRef<HTMLElement | null>(null);
+  const previousStatusRef = useRef<SocialContentTaskStatus>(task.status);
   const counts = taskCounts(task);
   const active = ACTIVE_STATUSES.has(task.status) || Boolean(task.runId && counts.generated === 0);
   const remainingTaskCount = Math.max(0, taskTotalItems - tasks.length);
@@ -347,6 +358,12 @@ export default function SocialProductionProgressPanel({
   const taskStartAllowed = task.readiness.complete
     && (!task.agentWorkflow
       || contentCreationReviewAdmissionAllowed(task.agentWorkflow.executionPlanReview));
+
+  useEffect(() => {
+    const previousStatus = previousStatusRef.current;
+    previousStatusRef.current = task.status;
+    if (previousStatus === 'plan_review' && ['producing', 'attention', 'paused'].includes(task.status)) setOpen(true);
+  }, [task.status]);
 
   useEffect(() => {
     if (!open) return undefined;
@@ -383,7 +400,8 @@ export default function SocialProductionProgressPanel({
 
   const currentAction = (() => {
     if (workflowInterruption(task)) {
-      return onEdit ? { label: '查看原因并补充素材', icon: <ChevronRight size={14} />, action: onEdit } : null;
+      const action = onOpenExceptions || onEdit;
+      return action ? { label: '查看异常与恢复位置', icon: <ChevronRight size={14} />, action } : null;
     }
     if (task.status === 'draft' || task.status === 'needs_input') {
       if (taskStartAllowed && onStart) {
@@ -396,7 +414,8 @@ export default function SocialProductionProgressPanel({
       return onPlanReview ? { label: typeof estimate === 'number' ? `查看费用与效果 · 预计 ¥${estimate.toFixed(2)}` : '查看费用与效果', icon: <Bot size={14} />, action: onPlanReview } : null;
     }
     if (task.status === 'attention') {
-      return onEdit ? { label: '查看需确认事项', icon: <ChevronRight size={14} />, action: onEdit } : null;
+      const action = onOpenExceptions || onEdit;
+      return action ? { label: '查看需确认事项', icon: <ChevronRight size={14} />, action } : null;
     }
     if (task.status === 'paused') {
       return onStart ? { label: '继续自动处理', icon: <RotateCcw size={14} />, action: onStart } : null;
@@ -406,6 +425,9 @@ export default function SocialProductionProgressPanel({
         return onEdit ? { label: '继续修改并补充素材', icon: <ChevronRight size={14} />, action: onEdit } : null;
       }
       return onReview ? { label: '审核生成结果', icon: <CheckCircle2 size={14} />, action: onReview } : null;
+    }
+    if (task.status === 'producing' && onOpenShots) {
+      return { label: '查看逐镜制作进度', icon: <Film size={14} />, action: onOpenShots };
     }
     return null;
   })();
@@ -495,16 +517,20 @@ export default function SocialProductionProgressPanel({
                           </span>
                         </span>
 
-                        <ProductionChain task={item} />
+                        <TaskMilestoneRail task={item} />
 
                         <span className="mt-3 grid grid-cols-2 gap-2">
                           <span className="rounded-xl border border-slate-100 px-3 py-2.5">
-                            <span className="flex items-center gap-1 text-[9px] font-bold text-slate-500"><FileCheck2 size={11} />已完成产物</span>
-                            <strong className="mt-1 block text-xs text-slate-900">{itemCounts.generated > 0 ? `${itemCounts.generated} 项` : '生成中'}</strong>
+                            <span className="flex items-center gap-1 text-[9px] font-bold text-slate-500"><Clock3 size={11} />提交时间</span>
+                            <strong className="mt-1 block text-[10px] text-slate-900">{new Date(item.createdAt).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</strong>
                           </span>
                           <span className="rounded-xl border border-slate-100 px-3 py-2.5">
-                            <span className="flex items-center gap-1 text-[9px] font-bold text-slate-500"><Clock3 size={11} />待用户审核</span>
-                            <strong className={`mt-1 block text-xs ${itemCounts.pendingReview > 0 ? 'text-amber-700' : 'text-slate-900'}`}>{itemCounts.pendingReview > 0 ? `${itemCounts.pendingReview} 项` : '暂无'}</strong>
+                            <span className="flex items-center gap-1 text-[9px] font-bold text-slate-500"><FileCheck2 size={11} />结果与预计</span>
+                            <strong className={`mt-1 block text-[10px] ${itemCounts.pendingReview > 0 ? 'text-amber-700' : 'text-slate-900'}`}>
+                              {isTaskDetail(item) && item.productionProgress?.estimatedRemainingSeconds != null
+                                ? `剩余 ${formatContentDuration(item.productionProgress.estimatedRemainingSeconds)}`
+                                : itemCounts.generated > 0 ? `${itemCounts.generated} 项成果` : '等待实时估算'}
+                            </strong>
                           </span>
                         </span>
                       </button>

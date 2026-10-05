@@ -1,17 +1,70 @@
-/**
- * PocketBase-backed file storage.
- *
- * Replaces the R2/S3 dependency for local + self-hosted deploys: video blobs
- * live in a PocketBase file field on their own record, served from PB's disk
- * (not inside the SQLite row). Files attach to an existing record, so the
- * caller must create the record first, then attach.
- *
- * If you later want external object storage (R2/S3) in production, swap these
- * two functions for an implementation against `r2.ts` — callers only use
- * `attachFile` / `fetchFile`.
- */
+/** PocketBase files locally; PostgreSQL metadata plus COS objects in production. */
 import { openAsBlob } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { createReadStream } from 'node:fs';
+import { stat } from 'node:fs/promises';
+import path from 'node:path';
 import { getPbAdminToken, getPbUrl } from './pb.js';
+import { objectStorageDownload, objectStorageEnsureFile, objectStorageHead, objectStorageSignedGetUrl, objectStorageUpload } from './objectStorage.js';
+import { postgresStore, selectedDataBackend, updatePostgresObjectFileReference } from './postgres.js';
+
+type ObjectFileReference = {
+  key: string;
+  etag?: string;
+  size: number;
+  sha256: string;
+  contentType: string;
+  originalName: string;
+};
+
+function safeSegment(value: string): string {
+  return value.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 180) || 'file';
+}
+
+function fileObjectKey(collection: string, recordId: string, field: string, sha256: string, filename: string): string {
+  return ['records', safeSegment(collection), safeSegment(recordId), safeSegment(field), `${sha256.slice(0, 16)}-${safeSegment(filename)}`].join('/');
+}
+
+function objectFileMap(record: Record<string, unknown>): Record<string, ObjectFileReference[]> {
+  const value = record._objectFiles;
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, ObjectFileReference[]>
+    : {};
+}
+
+function findObjectFile(record: Record<string, unknown>, filename: string): ObjectFileReference | null {
+  for (const references of Object.values(objectFileMap(record))) {
+    const match = Array.isArray(references) ? references.find(reference => reference?.originalName === filename) : undefined;
+    if (match?.key) return match;
+  }
+  return null;
+}
+
+async function hashFile(filePath: string): Promise<string> {
+  const hash = createHash('sha256');
+  await new Promise<void>((resolve, reject) => {
+    const stream = createReadStream(filePath);
+    stream.on('data', chunk => hash.update(chunk));
+    stream.once('error', reject);
+    stream.once('end', resolve);
+  });
+  return hash.digest('hex');
+}
+
+async function patchObjectFileReference(input: {
+  collection: string;
+  recordId: string;
+  field: string;
+  reference: ObjectFileReference;
+}): Promise<string | null> {
+  const patched = await updatePostgresObjectFileReference({
+    collection: input.collection,
+    recordId: input.recordId,
+    field: input.field,
+    reference: input.reference,
+  });
+  return patched ? input.reference.originalName : null;
+}
 
 async function patchFileField(
   collection: string,
@@ -47,6 +100,11 @@ export async function createFilePlaybackUrl(
   recordId: string,
   filename: string,
 ): Promise<string | null> {
+  if (selectedDataBackend() === 'postgres') {
+    const record = await postgresStore.getById<Record<string, unknown> & { id: string }>(collection, recordId);
+    const reference = record ? findObjectFile(record, filename) : null;
+    return reference ? objectStorageSignedGetUrl(reference.key) : null;
+  }
   const token = await getPbAdminToken();
   if (!token) return null;
   const response = await fetch(`${getPbUrl()}/api/files/token`, {
@@ -66,6 +124,19 @@ export async function attachFile(
   field: string,
   file: { name: string; buf: Buffer; contentType: string },
 ): Promise<string | null> {
+  if (selectedDataBackend() === 'postgres') {
+    const sha256 = createHash('sha256').update(file.buf).digest('hex');
+    const key = fileObjectKey(collection, recordId, field, sha256, file.name);
+    await objectStorageUpload({ key, body: file.buf, contentType: file.contentType });
+    const head = await objectStorageHead(key);
+    if (!head || head.size !== file.buf.length) throw new Error('COS attachment verification failed');
+    return patchObjectFileReference({
+      collection,
+      recordId,
+      field,
+      reference: { key, etag: head.etag, size: head.size, sha256, contentType: file.contentType, originalName: file.name },
+    });
+  }
   return patchFileField(collection, recordId, field, {
     name: file.name,
     blob: new Blob([file.buf], { type: file.contentType }),
@@ -74,8 +145,8 @@ export async function attachFile(
 
 /**
  * Upload a local render without loading a potentially 100+ MiB video into the
- * Node heap. The path is only a transient producer input; PocketBase owns the
- * durable bytes after this call succeeds.
+ * Node heap. The path is only a transient producer input; the configured
+ * durable storage owns the bytes after this call succeeds.
  */
 export async function attachFileFromPath(
   collection: string,
@@ -83,6 +154,18 @@ export async function attachFileFromPath(
   field: string,
   file: { name: string; path: string; contentType: string },
 ): Promise<string | null> {
+  if (selectedDataBackend() === 'postgres') {
+    const sha256 = await hashFile(file.path);
+    const fileStat = await stat(file.path);
+    const key = fileObjectKey(collection, recordId, field, sha256, file.name || path.basename(file.path));
+    const stored = await objectStorageEnsureFile({ key, filePath: file.path, contentType: file.contentType, contentLength: fileStat.size });
+    return patchObjectFileReference({
+      collection,
+      recordId,
+      field,
+      reference: { key, etag: stored.head.etag, size: fileStat.size, sha256, contentType: file.contentType, originalName: file.name },
+    });
+  }
   const blob = await openAsBlob(file.path, { type: file.contentType });
   return patchFileField(collection, recordId, field, { name: file.name, blob });
 }
@@ -93,6 +176,11 @@ export async function fetchFile(
   recordId: string,
   filename: string,
 ): Promise<{ buf: Buffer; contentType: string } | null> {
+  if (selectedDataBackend() === 'postgres') {
+    const record = await postgresStore.getById<Record<string, unknown> & { id: string }>(collection, recordId);
+    const reference = record ? findObjectFile(record, filename) : null;
+    return reference ? objectStorageDownload(reference.key) : null;
+  }
   const token = await getPbAdminToken();
   if (!token) return null;
 

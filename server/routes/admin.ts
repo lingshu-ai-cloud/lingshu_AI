@@ -62,6 +62,12 @@ import { disconnectTenantPlatformAccounts } from '../lib/socialAccountCleanup.js
 import { localFallbacksEnabled } from '../lib/localFallbackPolicy.js';
 import { createAdminDeliveryStarterRouter } from './adminDeliveryStarter.js';
 import { accountStage, trialDay } from './adminAccountPresentation.js';
+import {
+  contentExecutionDefaults,
+  listContentExecutionLimits,
+  setContentExecutionLimit,
+  type ContentExecutionLimitScope,
+} from '../contentExecution/durableQueue.js';
 
 export const adminRouter = Router();
 adminRouter.use(requireInternalAdmin);
@@ -619,6 +625,70 @@ function oauthConfigFailure(res: Response, error: unknown): void {
   console.error('[oauth-config]', { errorType: error instanceof Error ? error.name : 'UnknownError' });
   res.status(unavailable ? 503 : 500).json({ error: unavailable ? 'oauth_config_unavailable' : 'oauth_config_failed' });
 }
+
+function adminContentLimitValue(value: unknown): number | null {
+  if (value === null || value === undefined || value === '') return null;
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 1 || parsed > 100) throw new Error('content_execution_limit_value_invalid');
+  return parsed;
+}
+
+adminRouter.get('/content-execution-limits/:tenantId', async (req, res) => {
+  const admin = await requireAdminUser(req);
+  if (!admin) { res.status(403).json({ error: 'admin_required' }); return; }
+  const tenantId = bodyText(req.params.tenantId);
+  if (!tenantId) { res.status(400).json({ error: 'tenant_id_required' }); return; }
+  try {
+    const limits = await listContentExecutionLimits(store, tenantId);
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({ tenantId, defaults: contentExecutionDefaults(), limits });
+  } catch (error) {
+    console.error('[admin] content execution limits read failed', error instanceof Error ? error.message : error);
+    res.status(503).json({ error: 'content_execution_limits_unavailable' });
+  }
+});
+
+adminRouter.put('/content-execution-limits/:tenantId', async (req, res) => {
+  const admin = await requireAdminUser(req);
+  if (!admin) { res.status(403).json({ error: 'admin_required' }); return; }
+  const tenantId = bodyText(req.params.tenantId);
+  if (!tenantId) { res.status(400).json({ error: 'tenant_id_required' }); return; }
+  const fixed: Array<{ scope: ContentExecutionLimitScope; scopeKey: string; value: unknown }> = [
+    { scope: 'tenant', scopeKey: '*', value: req.body?.tenantMaxRunning },
+    { scope: 'account', scopeKey: '*', value: req.body?.accountDefaultMaxRunning },
+    { scope: 'task_type', scopeKey: 'social_content_weekly', value: req.body?.weeklyMaxRunning },
+    { scope: 'task_type', scopeKey: 'social_content_instant', value: req.body?.instantMaxRunning },
+  ];
+  const overrides = Array.isArray(req.body?.accountOverrides) ? req.body.accountOverrides : [];
+  try {
+    for (const item of [
+      ...fixed,
+      ...overrides.map((item: unknown) => {
+        const row = item && typeof item === 'object' && !Array.isArray(item) ? item as Record<string, unknown> : {};
+        const accountId = bodyText(row.accountId);
+        if (!accountId) throw new Error('content_execution_account_override_invalid');
+        return { scope: 'account' as const, scopeKey: accountId, value: row.maxRunning };
+      }),
+    ]) {
+      await setContentExecutionLimit({
+        dataStore: store, tenantId, scope: item.scope, scopeKey: item.scopeKey,
+        maxRunning: adminContentLimitValue(item.value), updatedBy: admin.userId,
+      });
+    }
+    const limits = await listContentExecutionLimits(store, tenantId);
+    await writeAuditLog({
+      tenantId, actorUserId: admin.userId, actorEmail: admin.email,
+      action: 'content_execution_limits.updated', targetType: 'tenant', targetId: tenantId,
+      metadata: { limits: limits.map(item => ({ scope: item.scope, scopeKey: item.scopeKey, maxRunning: item.maxRunning })) },
+    });
+    res.json({ tenantId, defaults: contentExecutionDefaults(), limits });
+  } catch (error) {
+    const code = error instanceof Error ? error.message : 'content_execution_limits_update_failed';
+    const invalid = code.includes('_invalid');
+    res.status(invalid ? 400 : 503).json({ error: invalid ? code : 'content_execution_limits_update_failed' });
+  }
+});
+
 adminRouter.get('/demo-accounts', async (req, res) => {
   const admin = await requireAdminUser(req);
   if (!admin) {

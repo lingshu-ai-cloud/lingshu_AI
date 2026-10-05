@@ -9,7 +9,9 @@ import {
   type SocialOperatingSignals,
 } from './socialOperatingObservability.js';
 import type { BackgroundJobRuntimeState } from './workerHeartbeat.js';
+import { checkPostgres, selectedDataBackend } from '../storage/postgres.js';
 import { checkBullMq, selectedQueueBackend } from '../queues/bullmq.js';
+import { store } from '../storage/index.js';
 
 export type RuntimeCapability =
   | 'text_generation'
@@ -19,6 +21,7 @@ export type RuntimeCapability =
   | 'digital_human'
   | 'digital_human_quality'
   | 'digital_human_auto_release'
+  | 'material_cleanup'
   | 'starter_workers'
   | 'scheduled_publishing'
   | 'quote'
@@ -48,6 +51,7 @@ const KNOWN_CAPABILITIES: RuntimeCapability[] = [
   'digital_human',
   'digital_human_quality',
   'digital_human_auto_release',
+  'material_cleanup',
   'starter_workers',
   'scheduled_publishing',
   'quote',
@@ -213,6 +217,28 @@ export async function digitalHumanQualityRuntimeReadiness(
   return report;
 }
 
+export async function materialCleanupRuntimeReadiness(env: NodeJS.ProcessEnv = process.env): Promise<CapabilityState> {
+  const python = String(env.MATERIAL_CLEANUP_PYTHON || '').trim();
+  const configuredScript = String(env.MATERIAL_CLEANUP_SCRIPT || '').trim();
+  if (!python || !configuredScript) return { ready: false, reason: 'material_cleanup_worker_unconfigured' };
+  const script = path.resolve(configuredScript);
+  if (!fs.existsSync(script)) return { ready: false, reason: 'material_cleanup_script_missing' };
+  try {
+    const stdout = await new Promise<string>((resolve, reject) => execFile(python, [script, '--self-check'], {
+      timeout: 30_000,
+      maxBuffer: 1024 * 1024,
+      encoding: 'utf8',
+      env: { ...env, PYTHONNOUSERSITE: '1' },
+    }, (error, output, stderr) => error ? reject(new Error(String(stderr || error.message))) : resolve(output)));
+    const parsed = JSON.parse(stdout) as { ready?: boolean; toolchain?: { seedanceUsed?: boolean } };
+    return parsed.ready === true && parsed.toolchain?.seedanceUsed === false
+      ? { ready: true }
+      : { ready: false, reason: 'material_cleanup_self_check_failed' };
+  } catch (error) {
+    return { ready: false, reason: `material_cleanup_self_check_failed:${error instanceof Error ? error.message.slice(0, 160) : 'unknown'}` };
+  }
+}
+
 function textGenerationCapability(): CapabilityState {
   const backend = String(process.env.OVERSEAS_LLM_BACKEND || 'qwen').trim().toLowerCase();
   if (backend === 'gemini') {
@@ -249,6 +275,7 @@ export function runtimeCapabilities(role: ProcessRole): Record<RuntimeCapability
     digital_human: { ready: digitalHumanReady, reason: digitalHumanReady ? undefined : 'digital_human_provider_disabled_or_unconfigured' },
     digital_human_quality: quality.localVisual,
     digital_human_auto_release: quality.autoRelease,
+    material_cleanup: { ready: present('MATERIAL_CLEANUP_PYTHON') && present('MATERIAL_CLEANUP_SCRIPT'), reason: present('MATERIAL_CLEANUP_PYTHON') && present('MATERIAL_CLEANUP_SCRIPT') ? undefined : 'material_cleanup_worker_unconfigured' },
     starter_workers: { ready: starterWorkersReady, reason: starterWorkersReady ? undefined : background ? 'starter_workers_not_explicitly_enabled' : 'background_jobs_not_running_in_this_role' },
     scheduled_publishing: { ready: background && enabled('PUBLISH_SCHEDULER_ENABLED'), reason: background && enabled('PUBLISH_SCHEDULER_ENABLED') ? undefined : 'publishing_worker_not_enabled' },
     quote: { ready: process.env.NODE_ENV !== 'production' || enabled('QUOTE_SKILL_ENABLED'), reason: process.env.NODE_ENV !== 'production' || enabled('QUOTE_SKILL_ENABLED') ? undefined : 'quote_skill_not_enabled' },
@@ -279,6 +306,7 @@ export async function runtimeReadiness(input: {
   startupIssues?: string[];
   checkPocketBase?: () => Promise<void>;
   checkDigitalHumanQuality?: () => Promise<DigitalHumanQualityRuntimeReadiness>;
+  checkMaterialCleanup?: () => Promise<CapabilityState>;
   checkSocialOperating?: () => Promise<SocialOperatingSignals>;
   localWorker?: BackgroundJobRuntimeState;
 }) {
@@ -286,21 +314,31 @@ export async function runtimeReadiness(input: {
   const quality = await (input.checkDigitalHumanQuality || (() => digitalHumanQualityRuntimeReadiness()))();
   capabilities.digital_human_quality = quality.localVisual;
   capabilities.digital_human_auto_release = quality.autoRelease;
+  capabilities.material_cleanup = await (input.checkMaterialCleanup || (() => materialCleanupRuntimeReadiness()))();
   const issues = [...(input.startupIssues || []), ...requiredCapabilityIssues(capabilities)];
   let socialOperating: SocialOperatingSignals | null = null;
   try {
     if (input.checkPocketBase) {
       await input.checkPocketBase();
     } else {
+      const backend = selectedDataBackend();
+      if (backend === 'postgres') await checkPostgres();
+      // Authentication remains on PocketBase during the token-exchange
+      // window, so its health is still required even after business records
+      // switch to PostgreSQL.
       const health = await fetch(`${getPbUrl()}/api/health`, { signal: AbortSignal.timeout(2_000) });
       if (!health.ok) throw new Error(`health_${health.status}`);
       // This collection is the product entitlement authority and proves the
       // starter migration set has reached the connected database.
-      await pbListStrict('starter_198_access', { page: 1, perPage: 1 });
+      if (backend === 'postgres') await store.list('starter_198_access', { page: 1, perPage: 1 });
+      else await pbListStrict('starter_198_access', { page: 1, perPage: 1 });
       await assertSocialOperatingCollections();
     }
   } catch (error) {
-    issues.push(`pocketbase_unavailable_or_unmigrated:${error instanceof Error ? error.message : 'unknown'}`);
+    const prefix = selectedDataBackend() === 'postgres'
+      ? 'data_backend_unavailable_or_unmigrated'
+      : 'pocketbase_unavailable_or_unmigrated';
+    issues.push(`${prefix}:${error instanceof Error ? error.message : 'unknown'}`);
   }
   try {
     if (!input.checkPocketBase && selectedQueueBackend() === 'bullmq') await checkBullMq();
@@ -359,16 +397,22 @@ export function createRuntimeReadinessProbe(input: {
   // balancer probe; a failed self-check remains failed until the process is
   // restarted with a corrected image/configuration.
   let qualitySelfCheck: Promise<DigitalHumanQualityRuntimeReadiness> | null = null;
+  let materialCleanupSelfCheck: Promise<CapabilityState> | null = null;
   const runQualitySelfCheck = input.checkDigitalHumanQuality || (() => digitalHumanQualityRuntimeReadiness());
+  const runMaterialCleanupSelfCheck = () => materialCleanupRuntimeReadiness();
   const checkDigitalHumanQuality = () => {
     qualitySelfCheck ||= runQualitySelfCheck();
     return qualitySelfCheck;
+  };
+  const checkMaterialCleanup = () => {
+    materialCleanupSelfCheck ||= runMaterialCleanupSelfCheck();
+    return materialCleanupSelfCheck;
   };
   return async (): Promise<Report> => {
     const timestamp = now();
     if (cached && cached.expiresAt > timestamp) return cached.report;
     if (inFlight) return inFlight;
-    const request = runtimeReadiness({ ...input, checkDigitalHumanQuality });
+    const request = runtimeReadiness({ ...input, checkDigitalHumanQuality, checkMaterialCleanup });
     inFlight = request;
     try {
       const report = await request;

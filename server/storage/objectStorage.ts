@@ -1,4 +1,15 @@
-import { DeleteObjectCommand, GetObjectCommand, HeadObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import {
+  AbortMultipartUploadCommand,
+  CompleteMultipartUploadCommand,
+  CreateMultipartUploadCommand,
+  DeleteObjectCommand,
+  GetObjectCommand,
+  HeadObjectCommand,
+  ListObjectsV2Command,
+  PutObjectCommand,
+  S3Client,
+  UploadPartCommand,
+} from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { createReadStream, promises as fs } from 'node:fs';
 import path from 'node:path';
@@ -6,6 +17,8 @@ import path from 'node:path';
 export type ObjectStorageDriver = 'local' | 'cos';
 export interface StoredObjectHead { size: number; contentType: string; etag?: string }
 export interface ObjectStorageStream extends StoredObjectHead { body: AsyncIterable<Uint8Array>; contentLength?: number; contentRange?: string; acceptRanges?: string; lastModified?: Date }
+export interface StoredObjectSummary { key: string; size: number; etag?: string; lastModified?: Date }
+export interface StoredObjectPage { items: StoredObjectSummary[]; cursor?: string }
 
 const localRoot = () => path.resolve(process.env.LOCAL_OBJECT_STORAGE_ROOT || 'data/media/object-storage');
 const driver = (): ObjectStorageDriver => {
@@ -68,7 +81,77 @@ export async function objectStorageUploadFile(input: { key: string; filePath: st
     const destination = safeLocalPath(input.key); await fs.mkdir(path.dirname(destination), { recursive: true }); await fs.copyFile(input.filePath, destination); await fs.chmod(destination, 0o600);
     await fs.writeFile(`${destination}.meta.json`, JSON.stringify({ contentType: input.contentType }), { mode: 0o600 }); return;
   }
-  const { client, bucket } = cosClient(); await client.send(new PutObjectCommand({ Bucket: bucket, Key: input.key, Body: createReadStream(input.filePath), ContentType: input.contentType, ContentLength: input.contentLength }));
+  const { client, bucket } = cosClient();
+  const configuredThreshold = Number(process.env.OBJECT_STORAGE_MULTIPART_THRESHOLD_BYTES || 20 * 1024 * 1024);
+  const threshold = Number.isFinite(configuredThreshold) ? Math.max(5 * 1024 * 1024, configuredThreshold) : 20 * 1024 * 1024;
+  if (input.contentLength < threshold) {
+    await client.send(new PutObjectCommand({ Bucket: bucket, Key: input.key, Body: createReadStream(input.filePath), ContentType: input.contentType, ContentLength: input.contentLength }));
+    return;
+  }
+
+  // COS supports the S3 multipart protocol. Keep at most one part in memory so
+  // video ingestion remains stable on the small API nodes. The AWS SDK retries
+  // individual UploadPart requests; any caught failure explicitly aborts the
+  // upload so fragments do not accumulate in the bucket.
+  const partSize = Math.max(8 * 1024 * 1024, Math.ceil(input.contentLength / 9_999));
+  const created = await client.send(new CreateMultipartUploadCommand({
+    Bucket: bucket,
+    Key: input.key,
+    ContentType: input.contentType,
+  }));
+  if (!created.UploadId) throw new Error('对象存储未返回分块上传 ID');
+  const file = await fs.open(input.filePath, 'r');
+  try {
+    const parts: Array<{ ETag: string; PartNumber: number }> = [];
+    let offset = 0;
+    let partNumber = 1;
+    while (offset < input.contentLength) {
+      const length = Math.min(partSize, input.contentLength - offset);
+      const buffer = Buffer.allocUnsafe(length);
+      const { bytesRead } = await file.read(buffer, 0, length, offset);
+      if (bytesRead !== length) throw new Error('读取待上传文件时意外结束');
+      const uploaded = await client.send(new UploadPartCommand({
+        Bucket: bucket,
+        Key: input.key,
+        UploadId: created.UploadId,
+        PartNumber: partNumber,
+        Body: buffer,
+        ContentLength: bytesRead,
+      }));
+      if (!uploaded.ETag) throw new Error(`对象存储分块 ${partNumber} 缺少 ETag`);
+      parts.push({ ETag: uploaded.ETag, PartNumber: partNumber });
+      offset += bytesRead;
+      partNumber += 1;
+    }
+    await client.send(new CompleteMultipartUploadCommand({
+      Bucket: bucket,
+      Key: input.key,
+      UploadId: created.UploadId,
+      MultipartUpload: { Parts: parts },
+    }));
+  } catch (error) {
+    await client.send(new AbortMultipartUploadCommand({
+      Bucket: bucket,
+      Key: input.key,
+      UploadId: created.UploadId,
+    })).catch(() => undefined);
+    throw error;
+  } finally {
+    await file.close();
+  }
+}
+
+/** Upload a content-addressed file once and verify the resulting object. */
+export async function objectStorageEnsureFile(input: { key: string; filePath: string; contentType: string; contentLength: number }): Promise<{ head: StoredObjectHead; reused: boolean }> {
+  const existing = await objectStorageHead(input.key);
+  if (existing) {
+    if (existing.size !== input.contentLength) throw new Error('对象存储内容地址冲突：同一 key 的文件大小不同');
+    return { head: existing, reused: true };
+  }
+  await objectStorageUploadFile(input);
+  const head = await objectStorageHead(input.key);
+  if (!head || head.size !== input.contentLength) throw new Error('对象存储上传后的完整性检查失败');
+  return { head, reused: false };
 }
 async function localContentType(file: string): Promise<string> { try { return String(JSON.parse(await fs.readFile(`${file}.meta.json`, 'utf8')).contentType || 'application/octet-stream'); } catch { return 'application/octet-stream'; } }
 export async function objectStorageHead(key: string): Promise<StoredObjectHead | null> {
@@ -93,6 +176,49 @@ export async function objectStorageGetObject(key: string, range?: string): Promi
 export async function objectStorageDelete(key: string): Promise<void> {
   if (driver() === 'local') { const file = safeLocalPath(key); await fs.rm(file, { force: true }); await fs.rm(`${file}.meta.json`, { force: true }); return; }
   const { client, bucket } = cosClient(); await client.send(new DeleteObjectCommand({ Bucket: bucket, Key: key }));
+}
+
+/** Read-only inventory primitive used by maintenance dry-runs. */
+export async function objectStorageList(input: { prefix?: string; cursor?: string; limit?: number } = {}): Promise<StoredObjectPage> {
+  const prefix = String(input.prefix || '').replaceAll('\\', '/').replace(/^\/+/, '');
+  const limit = Math.max(1, Math.min(1_000, Math.round(input.limit || 500)));
+  if (driver() === 'local') {
+    const root = localRoot();
+    const base = prefix ? safeLocalPath(prefix) : root;
+    const items: StoredObjectSummary[] = [];
+    const visit = async (directory: string): Promise<void> => {
+      let entries: import('node:fs').Dirent[];
+      try { entries = await fs.readdir(directory, { withFileTypes: true }); } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+        throw error;
+      }
+      for (const entry of entries) {
+        const file = path.join(directory, entry.name);
+        if (entry.isDirectory()) await visit(file);
+        else if (entry.isFile() && !entry.name.endsWith('.meta.json')) {
+          const stat = await fs.stat(file);
+          items.push({ key: path.relative(root, file).split(path.sep).join('/'), size: stat.size, lastModified: stat.mtime });
+        }
+      }
+    };
+    await visit(base);
+    items.sort((a, b) => a.key.localeCompare(b.key));
+    const cursorIndex = input.cursor ? items.findIndex(item => item.key > input.cursor!) : 0;
+    const start = cursorIndex < 0 ? items.length : cursorIndex;
+    const page = items.slice(start, start + limit);
+    return { items: page, ...(start + limit < items.length && page.length ? { cursor: page.at(-1)!.key } : {}) };
+  }
+  const { client, bucket } = cosClient();
+  const response = await client.send(new ListObjectsV2Command({
+    Bucket: bucket,
+    Prefix: prefix || undefined,
+    ContinuationToken: input.cursor || undefined,
+    MaxKeys: limit,
+  }));
+  return {
+    items: (response.Contents || []).flatMap(item => item.Key ? [{ key: item.Key, size: item.Size || 0, etag: item.ETag, lastModified: item.LastModified }] : []),
+    ...(response.IsTruncated && response.NextContinuationToken ? { cursor: response.NextContinuationToken } : {}),
+  };
 }
 export async function objectStorageSignedGetUrl(key: string, expiresIn = 900): Promise<string> {
   if (driver() === 'local') { const base = String(process.env.LOCAL_OBJECT_STORAGE_PUBLIC_BASE_URL || '').replace(/\/$/, ''); const relative = `/media/object-storage/${key.split('/').map(encodeURIComponent).join('/')}`; return base ? `${base}${relative}` : relative; }
