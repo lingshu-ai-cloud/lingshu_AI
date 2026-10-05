@@ -395,7 +395,7 @@ async function composite(manifest, onProgress = () => {}, outDir) {
         extraClips.push({
           file,
           image: isImageAsset(url, clip[`${kind}Type`]),
-          target: Math.max(0.5, finiteNumber(clip.targetDuration, duration / Math.max(1, localClips.length))),
+          target: Math.max(1 / 30, finiteNumber(clip.targetDuration, duration / Math.max(1, localClips.length))),
         });
       }
     }
@@ -426,7 +426,7 @@ async function composite(manifest, onProgress = () => {}, outDir) {
 
     if (n > 0) {
       localClips.forEach(c => {
-        const target = Math.max(0.5, finiteNumber(c.targetDuration, duration / n));
+        const target = Math.max(1 / 30, finiteNumber(c.targetDuration, duration / n));
         if (c.image) args.push('-loop', '1', '-t', target.toFixed(3), '-i', c.file);
         else { if (c.production?.transparent && /\.webm$/i.test(c.file)) args.push('-c:v', 'libvpx-vp9'); args.push('-i', c.file); }
       });
@@ -435,7 +435,7 @@ async function composite(manifest, onProgress = () => {}, outDir) {
         else args.push('-i', c.file);
       });
       localClips.forEach((c, i) => {
-        const target = Math.max(0.5, finiteNumber(c.targetDuration, duration / n));
+        const target = Math.max(1 / 30, finiteNumber(c.targetDuration, duration / n));
         const trimStart = Math.max(0, finiteNumber(c.trimStart, 0));
         const rawTrimEnd = finiteNumber(c.trimEnd, trimStart + target);
         const trimEnd = Math.max(trimStart + 0.1, rawTrimEnd);
@@ -475,7 +475,7 @@ async function composite(manifest, onProgress = () => {}, outDir) {
       const effectLabels = [];
       const targets = [];
       localClips.forEach((clip, index) => {
-        const target = Math.max(0.5, finiteNumber(clip.targetDuration, duration / n));
+        const target = Math.max(.03, finiteNumber(clip.targetDuration, duration / n));
         const output = `ve${index}`;
         filters.push(...sceneEffectFilters({
           source: `[v${index}]`, output,
@@ -538,7 +538,7 @@ async function composite(manifest, onProgress = () => {}, outDir) {
         filters.push(`[${voIdx}:a]asplit=${voiceClips.length}${voiceClips.map(({ i }) => `[voiceInput${i}]`).join('')}`);
         voiceClips.forEach(({ c, i }) => {
           const start = Number(c.voiceStart ?? c.targetStart) || 0;
-          const target = Math.max(0.5, Number(c.targetDuration) || 3);
+          const target = Math.max(1 / 30, Number(c.targetDuration) || 3);
           const end = Math.max(start + 0.1, Number(c.voiceEnd) || start + target);
           if (c.voiceAligned && (!Number.isFinite(c.voiceStart) || !Number.isFinite(c.voiceEnd) || c.voiceStart < 0 || c.voiceEnd <= c.voiceStart || c.voiceEnd - c.voiceStart > target + 0.01)) {
             throw new Error('已对齐口播时间无效或超过镜头时长，不自动加速声音');
@@ -557,7 +557,7 @@ async function composite(manifest, onProgress = () => {}, outDir) {
     const sourceLabels = [];
     let audioCursor = 0;
     localClips.forEach((clip, i) => {
-      const target = Math.max(0.5, finiteNumber(clip.targetDuration, duration / Math.max(1, n)));
+      const target = Math.max(1 / 30, finiteNumber(clip.targetDuration, duration / Math.max(1, n)));
       if (clip.production?.sound === 'source') {
         if (clip.image) throw new Error('图片没有原声音轨，请改用旁白或无声');
         const start = Math.max(0, Number(clip.trimStart) || 0);

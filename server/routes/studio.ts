@@ -7806,7 +7806,7 @@ export function splitStudioNarrationSentences(spoken: string): string[] {
 
 export async function synthesizeStudioVoiceForAutomation(input: {
   tenantId: string; text: string; language?: string; voice?: string; targetDuration?: number;
-  style?: TtsStyleOptions; sentenceLines?: string[];
+  style?: TtsStyleOptions; sentenceLines?: string[]; measuredSentenceTiming?: boolean;
 }): Promise<{ ok: boolean; source?: string; url?: string; localPath?: string; duration?: number; text?: string; error?: string; cues?: AlignedCue[]; alignmentSource?: string; qualityReport?: VoiceQualityReport }> {
   return studioTenantContext.run(input.tenantId, async () => {
     const spoken = String(input.text || '').trim();
@@ -7826,7 +7826,7 @@ export async function synthesizeStudioVoiceForAutomation(input: {
     const providers = new Set<string>();
     let cursor = 0;
     const speed = Math.max(.75, Math.min(1.35, Number(input.style?.speed) || 1));
-    if (lines.length > 1 && lines.length <= 100 && spoken.length <= 5000) {
+    if (!input.measuredSentenceTiming && lines.length > 1 && lines.length <= 100 && spoken.length <= 5000) {
       const audio = await generateTtsAudio(spoken, input.voice || 'v1', input.language || 'en', normalizeTtsStyle(input.style || { preset: 'authentic_review' }), true);
       if (!audio.ok || !audio.url) return { ok: false, error: audio.error || '配音生成失败' };
       const trustedProvider = ['qwen_tts', 'minimax', 'xtts_clone'].includes(audio.source);
@@ -7897,13 +7897,13 @@ export async function synthesizeStudioVoiceForAutomation(input: {
 studioRouter.post('/tts', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   if (!await consumeDemoQuota(req, res, 'generation')) return;
-  const { script = '', text = '', voice = 'v1', language = 'zh', style = {}, sentenceLines } = req.body ?? {};
+  const { script = '', text = '', voice = 'v1', language = 'zh', style = {}, sentenceLines, measuredSentenceTiming } = req.body ?? {};
   const spoken = (text || spokenText(script)).trim();
   if (!spoken) { res.status(400).json({ ok: false, error: 'no spoken text' }); return; }
 
   try {
     if ((!['zh', 'ja'].includes(normalizeTtsLanguage(language)) && /[\u4e00-\u9fff]/.test(spoken)) || !spokenLanguageMatches(spoken, language)) { res.status(400).json({ ok: false, error: '口播与目标语言不一致，请先修改脚本；配音不会自动翻译。' }); return; }
-    const output = await synthesizeStudioVoiceForAutomation({ tenantId, text: spoken, voice, language, style: normalizeTtsStyle(style), sentenceLines });
+    const output = await synthesizeStudioVoiceForAutomation({ tenantId, text: spoken, voice, language, style: normalizeTtsStyle(style), sentenceLines, measuredSentenceTiming: measuredSentenceTiming === true });
     const payload = JSON.stringify(output);
     res.statusCode = 200;
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
@@ -7996,7 +7996,8 @@ studioRouter.post('/tts/batch', async (req, res) => {
     }
     try {
       if (!spokenLanguageMatches(spoken, language)) throw Error('口播与目标语言不一致，请先修改脚本');
-      audios[code] = await synthesizeStudioVoiceForAutomation({ tenantId, text: spoken, voice, language, style: normalizeTtsStyle(style) });
+      audios[code] = await synthesizeStudioVoiceForAutomation({ tenantId, text: spoken, voice, language, style: normalizeTtsStyle(style),
+        sentenceLines: item?.sentenceLines, measuredSentenceTiming: item?.measuredSentenceTiming === true });
     } catch (error) {
       audios[code] = {
         ok: false,
