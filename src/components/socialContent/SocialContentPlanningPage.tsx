@@ -101,6 +101,8 @@ export default function SocialContentPlanningPage({
         localStorage.setItem('ow_video_kickoff', JSON.stringify({
           source: 'material_library',
           productInfo: request.productName,
+          script: request.initialScript,
+          initialGeneration: request.initialGeneration,
           generatedVideo: {
             id: primaryMaterial.id,
             title: primaryMaterial.name,
@@ -109,6 +111,7 @@ export default function SocialContentPlanningPage({
             duration: primaryMaterial.duration,
             material: primaryMaterial,
           },
+          materialRole: 'hook',
         }));
       } catch { /* local handoff is optional */ }
     }
@@ -133,8 +136,8 @@ export default function SocialContentPlanningPage({
       },
       sourceContext: sourceRequest?.sourceContext,
       identityMappings: {
-        selectedProductIds: request.productMappings.map(mapping => mapping.productId).filter(Boolean),
-        selectedProductNames: request.productMappings.map(mapping => mapping.productName).filter(Boolean),
+        selectedProductIds: request.creationPath === 'material_processing' ? [request.productId].filter(Boolean) : request.productMappings.map(mapping => mapping.productId).filter(Boolean),
+        selectedProductNames: request.creationPath === 'material_processing' ? [request.productName].filter(Boolean) : request.productMappings.map(mapping => mapping.productName).filter(Boolean),
         products: request.productMappings,
         brand: request.brandMapping,
       },

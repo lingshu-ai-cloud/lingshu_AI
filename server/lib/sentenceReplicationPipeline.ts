@@ -5,13 +5,14 @@ import { promisify } from 'node:util';
 import type { DigitalHumanReferenceCue } from '../../src/lib/digitalHumanPlan.js';
 
 const run = promisify(execFile);
-export interface SentencePipelineArtifact { materialId: string; filePath: string; url?: string }
+export interface SentencePipelineArtifact { materialId: string; filePath: string; url?: string; duration?: number }
 
 /** Provider-neutral durable orchestration: source frames never become video-provider inputs. */
 export async function runSentenceReplicationPipeline(input: {
   cues: DigitalHumanReferenceCue[];
   outputPath: string;
   ffmpegPath: string;
+  useGeneratedDuration?: boolean;
   createTargetFrame: (cue: DigitalHumanReferenceCue) => Promise<SentencePipelineArtifact>;
   createSentenceVideo: (cue: DigitalHumanReferenceCue, targetFrame: SentencePipelineArtifact) => Promise<SentencePipelineArtifact>;
   createNonPersonClip?: (cue: DigitalHumanReferenceCue) => Promise<SentencePipelineArtifact>;
@@ -36,7 +37,8 @@ export async function runSentenceReplicationPipeline(input: {
         const frame = await input.createTargetFrame(cue); cue.targetFirstFrame = { materialId: frame.materialId, imageUrl: frame.url, state: 'ready' };
         cue.generatedClip = { state: 'pending' }; await input.onProgress?.(cues); clip = await input.createSentenceVideo(cue, frame);
       }
-      const duration = Number((cue.end - cue.start).toFixed(3));
+      const duration = Number((input.useGeneratedDuration && clip.duration !== undefined ? clip.duration : cue.end - cue.start).toFixed(3));
+      if (!Number.isFinite(duration) || duration <= 0) throw new Error(`句 ${cue.id} 生成素材时长无效`);
       if (!fs.existsSync(clip.filePath) || fs.statSync(clip.filePath).size < 100) throw new Error(`句 ${cue.id} 视频产物不存在`);
       const normalized = path.join(path.dirname(input.outputPath), `.sentence-${index + 1}-${cue.id.replace(/[^a-z0-9_-]+/gi, '-')}.mp4`);
       await run(input.ffmpegPath, ['-hide_banner', '-loglevel', 'error', '-nostdin', '-i', clip.filePath,

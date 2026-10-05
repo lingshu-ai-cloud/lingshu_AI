@@ -491,6 +491,7 @@ export const studioApi = {
   script: (b: {
     materials: string[];
     productInfo?: string;
+    selectedProductId?: string;
     language: string;
     platform: string;
     duration: number;
@@ -510,7 +511,7 @@ export const studioApi = {
     existingScripts?: string[];
     variantSeed?: number;
   }, _fb: string, options?: { signal?: AbortSignal }) =>
-    post<StudioScriptResult>('script', { ...b, provider: 'qwen' }, { script: '' }, options?.signal),
+    post<StudioScriptResult>('script', b, { script: '' }, options?.signal),
 
   covers: (b: { script?: string; productInfo?: string; language: string; provider?: 'gemini' | 'qwen'; tone?: string }, _fb: string[] = []) =>
     post<{ ok: boolean; source?: 'ai' | 'ai_rejected' | 'ai_failed'; provenance?: StudioGenerationProvenance | string; publishable?: boolean; covers: string[]; error?: string }>('covers', b, { ok: false, covers: [] }),

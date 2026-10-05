@@ -14,6 +14,20 @@ test('rebuilds target frames, generates every sentence clip and concatenates the
   fs.rmSync(dir,{recursive:true,force:true});
 });
 
+test('photo talking keeps the generated clip duration instead of padding to the reference cue', async () => {
+  assert.ok(ffmpegStatic); const dir=fs.mkdtempSync(path.join(os.tmpdir(),'sentence-actual-duration-'));
+  try {
+    const source=path.join(dir,'provider.mp4');
+    execFileSync(String(ffmpegStatic),['-hide_banner','-loglevel','error','-f','lavfi','-i','color=red:s=180x320:d=1.4','-f','lavfi','-i','anullsrc=r=44100:cl=stereo','-t','1.4','-c:v','libx264','-pix_fmt','yuv420p','-c:a','aac','-shortest','-y',source]);
+    const cues:any[]=[{id:'photo',start:27.98,end:33.58,originalText:'reference',targetText:'generated',shotIds:['s'],personShot:true,compositionClusterId:'front',sourceFirstFrame:{time:27.98,materialId:'source'}}];
+    const result=await runSentenceReplicationPipeline({cues,outputPath:path.join(dir,'joined.mp4'),ffmpegPath:String(ffmpegStatic),useGeneratedDuration:true,createTargetFrame:async()=>({materialId:'frame',filePath:source}),createSentenceVideo:async()=>({materialId:'video',filePath:source,duration:1.4})});
+    assert.equal(result.cues[0]?.generatedClip?.duration,1.4);
+    const inspected=spawnSync(String(ffmpegStatic),['-hide_banner','-i',result.outputPath,'-f','null','-'],{encoding:'utf8'});
+    const match=String(inspected.stderr).match(/Duration:\s+(\d+):(\d+):([\d.]+)/); assert.ok(match);
+    const duration=Number(match[1])*3600+Number(match[2])*60+Number(match[3]); assert.ok(duration>=1.35&&duration<1.6,`expected about 1.4s, got ${duration}s`);
+  } finally { fs.rmSync(dir,{recursive:true,force:true}); }
+});
+
 test('non-person cues bypass first-frame and video generation suppliers', async () => {
   assert.ok(ffmpegStatic); const dir=fs.mkdtempSync(path.join(os.tmpdir(),'sentence-mixed-')); let firstFrames=0; let generatedVideos=0; let broll=0;
   const makeVideo=(filePath:string,color:string)=>execFileSync(String(ffmpegStatic),['-hide_banner','-loglevel','error','-f','lavfi','-i',`color=${color}:s=180x320:d=2`,'-f','lavfi','-i','anullsrc=r=44100:cl=stereo','-t','2','-c:v','libx264','-pix_fmt','yuv420p','-c:a','aac','-shortest','-y',filePath]);

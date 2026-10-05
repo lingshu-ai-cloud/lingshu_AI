@@ -43,7 +43,7 @@ test('unconfigured enterprise presenter cannot be billed and keeps only presente
   assert.match(html, /<button[^>]*disabled=""[^>]*>生成新候选/);
   assert.match(html, /role="dialog" aria-modal="true"/);
   assert.match(html, /全片数字人默认设置/);
-  assert.match(html, /人物授权、供应商映射、参考图片／视频和资产版本统一在企业设置维护/);
+  assert.match(html, /人物授权、供应商映射和参考资产可在当前内容制作页完成/);
   assert.doesNotMatch(html, /人物参考素材ID|HeyGen人物\/Look ID|保存人物资产|\+新增人物/);
 });
 
@@ -53,6 +53,26 @@ test('missing presenter can be completed inside the current shot and returns to 
   assert.match(html, /保存后会自动回填本镜头/);
   assert.match(html, /企业知识库仅用于后续集中管理/);
   assert.doesNotMatch(html, /请先到企业设置/);
+});
+
+test('existing presenter can reuse its uploaded photo in the Ark enrollment flow', () => {
+  const presenter = { id:'person-1',name:'销售',avatarId:'',voiceId:'',authorized:true,supportsAlpha:false,referenceMaterialIds:['portrait-1'],authorizationConfirmation:{subjectAdultConfirmed:true,arkProcessingAuthorized:true} };
+  const html = renderToStaticMarkup(<ShotProductionPanel {...props} onEnrollArkPresenter={async()=>({id:'e1',presenterId:'person-1',state:'needs_verification',verificationUrl:'',error:'',assetUri:''})} defaults={{...EMPTY_DEFAULTS,presenters:[presenter]}} materials={[{id:'portrait-1',name:'销售正脸',type:'image',url:'/photo.jpg'}]} shot={{...newShotProduction('请联系我'),source:'avatar',presenterId:'person-1',digitalHuman:{workflow:'viral_replication',method:'reenact',contentConfirmed:false,action:'挥手',scene:'工厂',preserve:'人物身份'}}} />);
+  assert.match(html,/销售正脸/);
+  assert.match(html,/选择已有本人人物照片/);
+  assert.match(html,/提交人物资料并开始认证/);
+  assert.doesNotMatch(html,/方舟图片 Asset ID/);
+  assert.match(html,/人物图片尚未完成方舟 Active 认证/);
+  assert.match(html,/<button[^>]*disabled=""[^>]*>生成新候选/);
+});
+
+test('new reenact presenter starts with one video, one photo and explicit Ark consent', () => {
+  const html = renderToStaticMarkup(<ShotProductionPanel {...props} onEnrollArkPresenter={async()=>({id:'e1',presenterId:'person-1',state:'needs_verification',verificationUrl:'',error:'',assetUri:''})} shot={{...newShotProduction('请联系我'),source:'avatar',digitalHuman:{workflow:'viral_replication',method:'reenact',contentConfirmed:false,action:'挥手',scene:'工厂',preserve:'人物身份'}}} />);
+  assert.match(html,/人物认证视频/);
+  assert.match(html,/人物认证照片/);
+  assert.match(html,/方舟进行真人验证/);
+  assert.doesNotMatch(html,/方舟图片 Asset ID/);
+  assert.match(html,/<button[^>]*disabled=""[^>]*>提交人物资料并开始认证/);
 });
 
 test('UGC and product shots expose their own routes without enterprise digital-human controls', () => {
@@ -300,6 +320,8 @@ test('viral photo talking uses Seedream and HeyGen without Ark Assets binding', 
   const shot = { ...newShotProduction('口播'), digitalHuman: { ...newDigitalHumanRequirements(), presenterMode: 'photo_talking' as const, workflow: 'viral_replication' as const, method: 'reenact' as const } };
   const viral = renderToStaticMarkup(<ShotProductionPanel {...props} onCreatePresenter={async () => ({id:'test',name:'test',avatarId:'',voiceId:'',authorized:true,supportsAlpha:false})} salesConfiguration viralReplication shot={shot} />);
   assert.match(viral, /Seedream/); assert.match(viral, /上传企业人物照片/); assert.doesNotMatch(viral, /方舟人物认证|asset:\/\/asset-/);
+  assert.match(viral, /创建或导入 HeyGen 照片形象/);
+  assert.match(viral, /在这里管理企业人物资产/);
   const free = renderToStaticMarkup(<ShotProductionPanel {...props} salesConfiguration viralReplication={false} shot={shot} />);
   assert.match(free, /HeyGen/); assert.doesNotMatch(free, /上传照片并创建口播形象|创建并绑定/); assert.doesNotMatch(free, /方舟人物认证|Seedream/);
 });
@@ -313,6 +335,7 @@ test('viral photo preview requires target frame, script, and an explicit cost li
   assert.match(after,/<button[^>]*disabled=""[^>]*>生成照片口播素材/);
   const withoutArk = renderToStaticMarkup(<ShotProductionPanel {...props} defaults={{...defaults,presenters:defaults.presenters.map(({arkCertification, ...item})=>item)}} shot={{...shot,digitalHuman:{...shot.digitalHuman,targetFramesConfirmed:true}}} salesConfiguration viralReplication />);
   assert.match(withoutArk,/照片口播费用上限/);assert.doesNotMatch(withoutArk,/方舟人物认证/);
+  assert.doesNotMatch(withoutArk,/确认已获成年本人授权/);
 });
 
 test('uncertain photo talking shows original-task recovery and disables a fresh submission', () => {
@@ -320,4 +343,16 @@ test('uncertain photo talking shows original-task recovery and disables a fresh 
   const html=renderToStaticMarkup(<ShotProductionPanel {...props} shot={shot} viralReplication pendingPhotoSentenceJob />);
   assert.match(html,/查询原 HeyGen 任务并恢复拼接/);
   assert.match(html,/<button[^>]*disabled=""[^>]*>生成 HeyGen 照片口播并拼接<\/button>/);
+});
+
+test('photo talking hides internal shot type and composition inputs', () => {
+  const shot={...newShotProduction('Hello','photo'),source:'avatar' as const,digitalHuman:{...newDigitalHumanRequirements(),presenterMode:'photo_talking' as const,workflow:'viral_replication' as const,method:'reenact' as const,reference:{videoUrl:'/source.mp4',start:0,end:2,originalText:'Hello',derivativeAuthorized:false,cues:[{id:'cue',start:0,end:2,originalText:'Hello',targetText:'Hello',shotIds:['s1'],personShot:true,classificationSource:'analysis' as const,compositionClusterId:'女性正面讲话|产品陈列室'}]}}};
+  const defaults={...EMPTY_DEFAULTS,presenters:[{id:'photo',name:'Photo',avatarId:'',voiceId:'voice',authorized:true,supportsAlpha:false}]};
+  const html=renderToStaticMarkup(<ShotProductionPanel {...props} defaults={defaults} shot={{...shot,presenterId:'photo'}} salesConfiguration viralReplication />);
+  assert.doesNotMatch(html,/原片镜头类型/);
+  assert.doesNotMatch(html,/人物构图|原片分析 · 女性正面讲话/);
+  for (const section of ['人物与声音', '口播内容', '授权与目标首帧', '费用与生成']) assert.match(html, new RegExp(section));
+  assert.match(html,/确认本镜头口播文案/);
+  assert.match(html,/待生成，可生成后预览确认/);
+  assert.match(html,/高级设置 · 原片取帧范围/);
 });

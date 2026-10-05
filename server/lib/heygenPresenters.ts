@@ -51,10 +51,21 @@ export class HeyGenPresenterClient {
     if (!Array.isArray(result.data)) throw new Error('人物列表格式异常');
     return { items: result.data.map(presenterLook), nextToken: result.has_more ? String(result.next_token || '') : '' };
   }
-  async voices(token = '', language = ''): Promise<PresenterPage<PresenterVoice>> {
-    const result = await this.call(`voices?type=public&limit=100${token ? `&token=${encodeURIComponent(token)}` : ''}${language ? `&language=${encodeURIComponent(language)}` : ''}`);
+  async voices(token = '', language = '', scope: 'public' | 'private' = 'public'): Promise<PresenterPage<PresenterVoice>> {
+    const result = await this.call(`voices?type=${scope}&limit=100${token ? `&token=${encodeURIComponent(token)}` : ''}${language ? `&language=${encodeURIComponent(language)}` : ''}`);
     if (!Array.isArray(result.data)) throw new Error('声音列表格式异常');
     return { items: result.data.map((v: any) => ({ id: String(v.voice_id), name: String(v.name), language: String(v.language || ''), previewUrl: mediaUrl(v.preview_audio_url) })), nextToken: result.has_more ? String(result.next_token || '') : '' };
+  }
+  async voice(id: string): Promise<{ id: string; name: string; language: string; status: string; previewUrl?: string; type: string }> {
+    const result = await this.call(`voices/${encodeURIComponent(id)}`);
+    const voice = result.data || {};
+    return { id: String(voice.voice_id || ''), name: String(voice.name || ''), language: String(voice.language || ''), status: String(voice.status || ''), previewUrl: mediaUrl(voice.preview_audio_url), type: String(voice.type || '') };
+  }
+  async cloneVoice(name: string, bytes: Buffer, mime: string, language: string, requestId: string): Promise<string> {
+    const result = await this.call('voices/clone', { voice_name: name, audio: { type: 'base64', media_type: mime, data: bytes.toString('base64') }, ...(language ? { language } : {}) }, requestId);
+    const id = String(result.data?.voice_clone_id || '');
+    if (!id) throw new Error('HeyGen 已受理录音但未返回音色任务 ID，请核查原任务');
+    return id;
   }
   async upload(bytes: Buffer, mime: string, requestId: string): Promise<string> {
     const ext = { 'image/png': 'png', 'image/jpeg': 'jpg', 'video/mp4': 'mp4', 'video/quicktime': 'mov', 'video/webm': 'webm' }[mime];
@@ -76,8 +87,8 @@ export class HeyGenPresenterClient {
     if (!result.data?.asset_id) throw new Error('素材上传结果未知，请重新选择文件');
     return String(result.data.asset_id);
   }
-  async create(type: 'photo' | 'digital_twin', name: string, assetId: string, requestId: string) {
-    return (await this.call('avatars', { type, name, file: { type: 'asset_id', asset_id: assetId } }, requestId)).data;
+  async create(type: 'photo' | 'digital_twin', name: string, assetId: string, requestId: string, groupId?: string) {
+    return (await this.call('avatars', { type, name, file: { type: 'asset_id', asset_id: assetId }, ...(groupId ? { avatar_group_id: groupId } : {}) }, requestId)).data;
   }
   async group(id: string) { return (await this.call(`avatars/${encodeURIComponent(id)}`)).data; }
   async look(id: string) { return presenterLook((await this.call(`avatars/looks/${encodeURIComponent(id)}`)).data); }

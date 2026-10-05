@@ -15,5 +15,6 @@ export interface PresenterCreation {
 }
 export interface PresenterCapabilities {
   localPhotoUpload?: boolean; configured: boolean; creationEnabled: boolean; directConsent: boolean; privateCatalog: boolean; reason: string;
+  photoCreationEnabled?: boolean; digitalTwinCreationEnabled?: boolean; photoCreationReason?: string; digitalTwinCreationReason?: string;
   reservationCny: number | null; photoReservationCny?: number | null; digitalTwinReservationCny?: number | null;
 }

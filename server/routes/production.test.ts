@@ -120,6 +120,18 @@ test('production router persists jobs, never resubmits uncertain operations, iso
     const talkingDefaultsValue = await talkingDefaults.json();
     assert.deepEqual(talkingDefaultsValue.presenters[0].capabilities, ['talking']);
     assert.equal(talkingDefaultsValue.defaultSound, 'source'); assert.equal(talkingDefaultsValue.defaultLayout, 'split');
+    const untrustedPlan = await (await request('/plans', { projectId: 'draft', assemblyId: 'video-1', shotId: 'shot1', fingerprint: shotFingerprint(shot, context) })).json();
+    assert.equal(untrustedPlan.state, 'needs_input');
+    assert.match(untrustedPlan.reasons.join('；'), /授权预检未通过/);
+    const missingRights = await request('/jobs', input);
+    assert.equal(missingRights.status, 400);
+    assert.match((await missingRights.json()).error, /授权预检未通过/);
+    assert.equal(calls.length, 0, 'missing person and voice rights cannot reach HeyGen');
+    rows.get('studio_production_defaults/defaults').payload.presenters[0].rightsEvidence = {
+      authorizationRef: 'document://unit-test/alice', consentRef: 'consent://heygen/unit-test-alice',
+      grantedAt: new Date(Date.now() - 1000).toISOString(), subjectAdultConfirmed: true,
+      permittedProviders: ['heygen'], permittedUses: ['digital_presenter', 'voice_synthesis'],
+    };
     const savedPlan = await (await request('/plans', { projectId: 'draft', assemblyId: 'video-1', shotId: 'shot1', fingerprint: shotFingerprint(shot, context) })).json();
     assert.equal(savedPlan.state, 'ready'); assert.deepEqual(savedPlan.candidateTools, ['heygen']); assert.equal(savedPlan.presenterAssetVersion, 1);
     assert.equal(savedPlan.routeSteps.find((step: any) => step.id === 'generation').status, 'ready');
@@ -217,6 +229,15 @@ test('production router persists jobs, never resubmits uncertain operations, iso
     const changedCandidate = await request(`/executions/${acceptedForAdoption.id}/adopt`, { candidateId: adoptionCandidate.id, materialId: adoptionCandidate.materialId });
     assert.equal(changedCandidate.status, 400); assert.match(String((await changedCandidate.json()).error), /对象版本已变化/);
     candidateCurrent = true;
+    const adoptionPresenter = rows.get('studio_production_defaults/defaults').payload.presenters[0];
+    adoptionPresenter.assetVersion = 2;
+    const stalePerson = await request(`/executions/${acceptedForAdoption.id}/adopt`, { candidateId: adoptionCandidate.id, materialId: adoptionCandidate.materialId });
+    assert.equal(stalePerson.status, 400); assert.match(String((await stalePerson.json()).error), /人物或音色资产版本已变化/);
+    adoptionPresenter.assetVersion = 1;
+    adoptionPresenter.rightsEvidence.revokedAt = new Date().toISOString();
+    const revokedPerson = await request(`/executions/${acceptedForAdoption.id}/adopt`, { candidateId: adoptionCandidate.id, materialId: adoptionCandidate.materialId });
+    assert.equal(revokedPerson.status, 400); assert.match(String((await revokedPerson.json()).error), /授权已失效/);
+    delete adoptionPresenter.rightsEvidence.revokedAt;
     const adopted = await (await request(`/executions/${acceptedForAdoption.id}/adopt`, { candidateId: adoptionCandidate.id, materialId: adoptionCandidate.materialId })).json();
     assert.equal(adopted.adoption.candidateId, adoptionCandidate.id); assert.ok(adopted.adoption.assemblyVersion);
     assert.equal(adopted.adoption.planId, acceptedForAdoption.planId); assert.equal(adopted.adoption.fingerprint, input.fingerprint);

@@ -3080,7 +3080,8 @@ studioRouter.post('/script', async (req, res) => {
   if (!await consumeDemoQuota(req, res, 'generation')) return;
   const {
     materials = [],
-    productInfo = '',
+    productInfo: submittedProductInfo = '',
+    selectedProductId = '',
     language = 'en',
     platform = 'tiktok',
     duration = 20,
@@ -3103,6 +3104,37 @@ studioRouter.post('/script', async (req, res) => {
   const lang = langName(language);
   const clips = (materials as string[]).join(', ') || '(generic product clips)';
   const normalizedMaterialInfos = normalizeMaterialInfos(materialInfos, materials, Number(duration) || 20);
+  const openingHookOnly = generationMode === 'material' && normalizedMaterialInfos.length === 1
+    && /用户指定开场钩子/.test(String(normalizedMaterialInfos[0]?.role || ''));
+  let productInfo = String(submittedProductInfo || '');
+  if (openingHookOnly) {
+    const tenantId = (res.locals as AuthLocals).tenantId;
+    const profile = await readTenantEnterpriseProfile(tenantId);
+    const items = profile.products?.items || [];
+    const selectedId = String(selectedProductId || '').trim();
+    const selected = items.find((item, index) => {
+      const name = String(item.name || '').trim().slice(0, 200);
+      const id = [item.id, item.productId].map(value => String(value || '').trim().slice(0, 200)).find(Boolean)
+        || String(item.sku || '').trim().slice(0, 160)
+        || `product-${createHash('sha256').update(name || `legacy-empty-row:${index}`).digest('hex').slice(0, 16)}`;
+      return id === selectedId;
+    });
+    if (!selectedId || !selected?.name || (productInfo.trim() && productInfo.trim() !== selected.name.trim())) {
+      res.status(422).json({ ok: false, source: 'ai_rejected', provenance: 'ai_rejected', publishable: false,
+        qualityStatus: 'rejected', code: 'ENTERPRISE_PRODUCT_REQUIRED', script: '',
+        error: '所选产品与当前企业中心记录不一致，请重新选择产品后生成。' });
+      return;
+    }
+    productInfo = [
+      `产品名称：${selected.name}`,
+      selected.sku ? `产品SKU：${selected.sku}` : '',
+      selected.category ? `所属类目：${selected.category}` : '',
+      selected.highlights ? `产品卖点：${selected.highlights}` : '',
+      selected.priceRange ? `价格区间：${selected.priceRange}` : '',
+      selected.moq ? `起订量：${selected.moq}` : '',
+      selected.certifications ? `认证资质：${selected.certifications}` : '',
+    ].filter(Boolean).join('\n');
+  }
   const structuredMaterials = materialInfoLines(normalizedMaterialInfos);
   const selectedClipEvidence = untrustedPromptData('selected_material_names', clips, 4_000);
   const materialObservationEvidence = untrustedPromptData(
@@ -3167,7 +3199,7 @@ studioRouter.post('/script', async (req, res) => {
   const forbiddenLine = forbiddenTerms.length
     ? `${forbiddenTermEvidence}\nDo not output any exact term listed in the evidence above, nor reference-video hashtags, brand names, original captions, or original product claims.`
     : 'Do not output reference-video brand names, hashtags, original captions, or original product claims.';
-  const providerOpt = 'qwen' as const;
+  const providerOpt: 'gemini' | 'qwen' = generationMode !== 'clone' && provider === 'gemini' ? 'gemini' : 'qwen';
   const hasNarrationDraft = voiceoverMode === 'ai' || voiceoverMode === 'unselected';
   const selectedProductBrief = productBrief(productInfo);
   const selectedProductCategory = selectedProductBrief.category || compactBriefCategory(selectedProductBrief);
@@ -3303,7 +3335,12 @@ ${forbiddenLine}
 台词：<连贯口播片段，可有多句，或无>
 字幕：<有口播时逐字相同>`;
 
-  const materialScriptRules = `你是在把“已选素材库片段”剪成一条有销售情绪的社媒带货/外贸留资视频。素材约束留在画面说明中，人物口播必须始终面向潜在买家，不能说后台审核语言。
+  const materialScriptRules = openingHookOnly
+    ? `你正在自由创作一条约 ${productDuration} 秒的产品视频。用户仅指定了开场钩子视频，其余镜头尚无素材；请用 Gemini 重新创作逐句口播和 4 至 5 段连续分镜。
+第一段必须从 0 秒开始，使用素材《${normalizedMaterialInfos[0]?.name}》，只描述以下已观察画面：${normalizedMaterialInfos[0]?.observations?.join('；') || '无可靠观察'}。第一段结束不晚于 ${Number(normalizedMaterialInfos[0]?.targetEnd || 3)} 秒，不得把开场钩子复制到后续镜头。
+后续每段的“素材”字段写“待匹配素材”，画面写清需要拍摄或匹配的主体、动作和结果，并以“建议补拍：”开头；不得声称这些画面已经存在。后续分镜用企业已确认的产品事实构思，未知的功能、数字、效果、认证和服务一律不编造。
+逐段输出完整且连续的 [start-end s] 时间戳；总时长约 ${productDuration} 秒。口播面向买家，第一句形成停留理由，后续逐句推进，最后只保留一个企业资料支持的行动。每句要能在对应镜头自然说完；字幕与口播一致。只输出分镜成稿，每段包含且只包含：素材、环境、景别、运镜、构图、镜头功能、画面、配乐、台词、字幕。`
+    : `你是在把“已选素材库片段”剪成一条有销售情绪的社媒带货/外贸留资视频。素材约束留在画面说明中，人物口播必须始终面向潜在买家，不能说后台审核语言。
 
 核心原则：
 0. 输入优先级固定为：素材分段观察决定“画面里真实有什么和能怎么剪”；本条视频主题决定“爆款模板与证明顺序”；主推产品信息决定“允许出现的产品名、卖点、数字和商业事实”。三者冲突时不得猜测，画面服从素材、事实服从产品资料。
@@ -3439,7 +3476,35 @@ ${presentationMode === 'heygen' ? '混剪禁止补拍建议，缺少素材证明
       ? safeMaterialScenes(normalizedMaterialInfos)
       : generatedVisualScenes;
 
-    const prompt = generationMode === 'material'
+    const prompt = openingHookOnly
+      ? `你是自由创作分镜导演。根据企业中心已确认资料，重新生成逐句口播，严格输出纯文本分镜。不要 JSON、代码块、数组、标题或解释。
+
+产品和企业已确认事实：
+${confirmedProductEnterprise || product}
+指定开场钩子素材名：${normalizedMaterialInfos[0]?.name}
+开场仅可见：${normalizedMaterialInfos[0]?.observations?.join('；') || '无可靠观察'}
+目标语言：${lang}；台词和字幕都用该语言，其他字段用简体中文。
+目标时长：${productDuration} 秒。唯一结尾行动：${primaryCta}。
+
+严格写五段，时间戳依次为 [0-3s]、[3-7s]、[7-11s]、[11-15s]、[15-${productDuration}s]；如果目标时长不是 20 秒，则均匀调整中间四段，但第一段结束不得晚于 ${Number(normalizedMaterialInfos[0]?.targetEnd || 3)} 秒，最后一段结束必须等于 ${productDuration} 秒。各段连续且不重叠。第一段素材必须逐字写“${normalizedMaterialInfos[0]?.name}”，其余四段素材必须逐字写“待匹配素材”。
+第一段画面只描述已观察内容；后续四段画面均以“建议补拍：”开头，只拍产品实物整体、工件、缺陷样本、现场布局等资料允许且可核实的对象。不得出现未证实的设备屏幕、界面、检测结果、报告、Logo、硬件结构、性能或承诺。不得把建议画面说成已有素材。
+每段台词是一句能在该时间段自然说完的买家口播，首句构成停留理由，末句仅使用唯一行动；字幕与台词逐字相同。时间戳是制作时间，不是产品数字。不要在正文中重复时间数字。
+
+只按以下十个字段格式逐段输出，不要 JSON：
+[0-3s]
+素材：${normalizedMaterialInfos[0]?.name}
+环境：工厂
+景别：中景
+运镜：固定
+构图：工件居中
+镜头功能：买家钩子
+画面：工件沿输送带移动
+配乐：轻节奏
+台词：<一句短口播>
+字幕：<与台词逐字相同>
+
+继续按相同字段输出其余四段。`
+      : generationMode === 'material'
       ? `${materialScriptRules}
 
 ${creativeRules}
@@ -3781,7 +3846,7 @@ ${script}`, { backend: providerOpt, systemPrompt: confirmedProductEnterprise || 
       // are reported by the final gate instead of replacing the entire concept.
       script = stripStoryboardReferenceLeaks(script, forbiddenTerms, forbiddenIndustryTerms);
     }
-    if (generationMode === 'material' && voiceoverMode === 'ai') {
+    if (generationMode === 'material' && voiceoverMode === 'ai' && !openingHookOnly) {
       script = await finalizeMaterialScript({script,facts:confirmedProductEnterprise,language,infos:normalizedMaterialInfos.map(info=>({...info,name:info.name || ''}))});
     }
     let materialQualityV2: ReturnType<typeof assessScriptQualityV2> | null = null;
@@ -3806,6 +3871,20 @@ ${script}`, { backend: providerOpt, systemPrompt: confirmedProductEnterprise || 
     // “秒”及时间戳是视频制作参数，不是产品主张，不能触发“资料外数字”风险。
     const unsupportedNumberClaims = unsupportedNumericClaims(script, confirmedProductEnterprise);
     const commercialAudit = auditCommercialClaims(script, confirmedProductEnterprise);
+    const hookContractIssues: string[] = [];
+    if (openingHookOnly) {
+      const sceneTimes = [...script.matchAll(/^\[(\d+(?:\.\d+)?)\s*[-–—]\s*(\d+(?:\.\d+)?)s\]/gm)];
+      const firstScene = sceneTimes[0];
+      const firstBlock = firstScene ? script.slice(firstScene.index, sceneTimes[1]?.index ?? script.length) : '';
+      const hook = normalizedMaterialInfos[0]!;
+      if (!firstScene || Number(firstScene[1]) !== 0 || Number(firstScene[2]) > Number(hook.targetEnd || hook.effectiveDuration || 3) + 0.05
+        || !firstBlock.split('\n').some(line => line.trim() === `素材：${hook.name}`)) {
+        hookContractIssues.push('开场第一镜必须从 0 秒开始使用指定钩子，且时长不能超过该钩子的有效画面');
+      }
+      if (sceneTimes.length < 4 || Number(sceneTimes.at(-1)?.[2] || 0) < productDuration * 0.8) {
+        hookContractIssues.push('自由创作脚本需要覆盖完整成片时长，并保留至少四个分镜');
+      }
+    }
     const missingProduct = !String(productInfo || '').trim();
     const normalizedScriptIdentity = normalizeProductIdentity(script);
     const missingSelectedProduct = selectedNames.length > 0
@@ -3856,6 +3935,7 @@ ${script}`, { backend: providerOpt, systemPrompt: confirmedProductEnterprise || 
     const mixedIssues = mixedStoryboardIssues(script, presentationMode, normalizedMaterialInfos);
     const validationIssues = [
       ...mixedIssues,
+      ...hookContractIssues,
       missingProduct ? '缺少产品信息' : '',
       missingSelectedProduct ? `脚本未完整覆盖选定产品名称：${selectedNames.join('、')}` : '',
       unsupportedNumberClaims.length ? `出现产品资料未提供的数字：${unsupportedNumberClaims.join('、')}` : '',
@@ -3881,6 +3961,7 @@ ${script}`, { backend: providerOpt, systemPrompt: confirmedProductEnterprise || 
     const materialStrictHardIssues = strictCommercialIssues.filter(issue => !isNonBlockingScriptQualityIssue(issue));
     const materialHardIssues = Array.from(new Set([
       ...mixedIssues,
+      ...hookContractIssues,
       voiceoverMode !== 'none' && !spokenLanguageMatches(spokenText(script), language) ? '口播语言与所选目标语言不一致，请重新生成' : '',
       ...(materialQualityV2?.hardIssues || []),
       missingProduct ? '缺少产品信息' : '',
@@ -3940,7 +4021,9 @@ ${script}`, { backend: providerOpt, systemPrompt: confirmedProductEnterprise || 
       return;
     }
     const qualityStatus = generationMode === 'material'
-      ? materialQualityV2?.qualityStatus === 'needs_material'
+      ? openingHookOnly
+        ? 'passed'
+        : materialQualityV2?.qualityStatus === 'needs_material'
         ? 'needs_material'
         : validationWarnings.length
           ? 'warning'

@@ -10,6 +10,14 @@ test('presenter settings request a separate DashScope quality-inspection consent
   assert.match(html,/身份、产品／品牌／文字项目保留为人工验收/);
   assert.match(html,/允许阿里云百炼使用授权人物图生成构图草稿/);
   assert.match(html,/产生生图费用/);
-  assert.match(html,/控制台已显示 Active/);
+  assert.match(html,/控制台显示状态为 Active/);
+  assert.match(html,/该资产与上方选中的本地照片属于同一位授权人物/);
+  assert.match(html,/保存人工核验结果/);
   assert.match(html,/没有 Assets API 权限的 Entry 流程/);
+});
+
+test('content production manages people without asking users to copy a HeyGen look ID', () => {
+  const html = renderToStaticMarkup(<EnterprisePresenters contentProduction />);
+  assert.match(html, /创建或导入 HeyGen 人物/);
+  assert.doesNotMatch(html, /HeyGen人物\/Look ID|添加授权人物/);
 });

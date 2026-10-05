@@ -62,8 +62,8 @@ assert.match(studio, /socialContentTaskId \? \([\s\S]{0,500}已从任务带入[\
   'a bound task must keep the confirmed content type instead of asking the user to choose it again');
 assert.match(studio, /socialContentTaskId \? \([\s\S]{0,500}任务产品[\s\S]{0,500}我的素材/,
   'a bound task must show its product binding instead of a second product selector');
-assert.match(studio, /socialTaskProjectLookupDone[\s\S]*?studioApi\.listProjects\(\)[\s\S]*?list\.find\(item => item\.status !== 'template' && item\.spec\?\.socialContentTaskId === taskId\)[\s\S]*?loadProject\(project\)/,
-  'refreshing a bound task must restore its latest saved production project before hydrating a fresh seed');
+assert.match(studio, /socialTaskProjectLookupDone[\s\S]*?studioApi\.listProjects\(\)[\s\S]*?list\.filter\(item => item\.status !== 'template' && item\.spec\?\.socialContentTaskId === taskId\)[\s\S]*?taskProjects\.find\(item => Object\.keys\(item\.spec\?\.storyboardAssignments \|\| \{\}\)\.length > 0\)[\s\S]*?loadProject\(project\)/,
+  'refreshing a bound task must restore a task-scoped production project with saved storyboard progress before hydrating a fresh seed');
 assert.match(studio, /outputUrl:\s*contentMode === 'poster' \? posterImageUrl : workbenchFormalPreviewUrl/,
   'video submission must use the resolved readable preview rather than a local output path');
 assert.match(studio, /generationProvenance:\s*contentMode === 'poster'[\s\S]{0,500}generationRecordId:/,

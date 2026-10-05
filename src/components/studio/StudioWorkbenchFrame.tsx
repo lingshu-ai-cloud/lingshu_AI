@@ -51,6 +51,7 @@ export type StudioWorkbenchAction = {
 
 export type StudioWorkbenchFrameProps = {
   replicationWorkflow?: boolean;
+  replicationStepLabels?: readonly string[];
   replicationActiveStep?: number;
   onReplicationStepChange?: (step: number) => void;
   replicationNavigationDisabled?: boolean;
@@ -279,6 +280,7 @@ export function StudioWorkbenchFrame({
   onProjectTitleChange,
   projectTitlePlaceholder = '未命名项目',
   replicationWorkflow = false,
+  replicationStepLabels,
   replicationActiveStep = 1,
   onReplicationStepChange,
   replicationNavigationDisabled = false,
@@ -323,7 +325,7 @@ export function StudioWorkbenchFrame({
       )}
       aria-label="内容创作工作台"
     >
-      {replicationWorkflow ? <ReplicationWorkbenchHeader activeStep={replicationActiveStep} onStepChange={onReplicationStepChange} navigationDisabled={replicationNavigationDisabled} title={projectTitle} actions={<>{headerActions}<SaveStatusView status={saveStatus} compact />{onSave && <button type="button" onClick={onSave} disabled={saveStatus.state === 'saving'} className="rounded-lg border border-border px-3 py-2 text-xs font-bold">保存草稿</button>}</>} /> : <>      <header className="grid shrink-0 items-center gap-3 border-b border-border bg-surface px-4 py-2.5 xl:grid-cols-[minmax(180px,1fr)_minmax(320px,460px)_minmax(160px,1fr)] xl:px-5">
+      {replicationWorkflow ? <ReplicationWorkbenchHeader activeStep={replicationActiveStep} stepLabels={replicationStepLabels} onStepChange={onReplicationStepChange} navigationDisabled={replicationNavigationDisabled} title={projectTitle} actions={<>{headerActions}<SaveStatusView status={saveStatus} compact />{onSave && <button type="button" onClick={onSave} disabled={saveStatus.state === 'saving'} className="rounded-lg border border-border px-3 py-2 text-xs font-bold">保存草稿</button>}</>} /> : <>      <header className="grid shrink-0 items-center gap-3 border-b border-border bg-surface px-4 py-2.5 xl:grid-cols-[minmax(180px,1fr)_minmax(320px,460px)_minmax(160px,1fr)] xl:px-5">
         <div className="min-w-0">
           {projectTitleIsEditable ? (
             <input
