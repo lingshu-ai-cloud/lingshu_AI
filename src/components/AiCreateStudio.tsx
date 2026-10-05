@@ -3179,6 +3179,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
   const [renderOutputPath, setRenderOutputPath] = useState<string | null>(null); // 桌面端合成产物路径
   const [renderOutputPreviewUrl, setRenderOutputPreviewUrl] = useState<string | null>(null);
   const [renderDownloadMessage, setRenderDownloadMessage] = useState('');
+  const [reviewedRenderPath, setReviewedRenderPath] = useState('');
   const [languageRenderOutputs, setLanguageRenderOutputs] = useState<Record<string, LanguageRenderOutput>>({});
   const [languageRenderVersions, setLanguageRenderVersions] = useState<Record<string, LanguageRenderGeneration[]>>({});
   const [activeRenderCombinationKey, setActiveRenderCombinationKey] = useState('');
@@ -7221,6 +7222,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
         : filePath || renderOutputPath;
       const outputPath = selectedOutputPath || (socialViralTask ? null : await goPreview());
       if (!outputPath) throw Error('成片尚未生成');
+      if (threeStepWorkflow && reviewedRenderPath !== outputPath) throw Error('请先完整检查并确认当前成片');
       const response = await fetch('/api/overseas/studio/library/download-file', { method: 'POST', headers: { ...authHeader(), 'Content-Type': 'application/json' }, body: JSON.stringify({ path: outputPath }) });
       if (!response.ok) throw Error('文件不可下载，请检查文件是否存在或已同步到服务器');
       const url = URL.createObjectURL(await response.blob()), link = document.createElement('a');
@@ -13857,6 +13859,10 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
   const workbenchHasFormalVideo = Boolean(
     renderOutputPath || Object.values(languageRenderOutputs).some(output => output.status === 'done' && output.path),
   );
+  const currentReviewedOutputPath = languageRenderOutputs[activeRenderCombinationKey]?.path
+    || Object.values(languageRenderOutputs).find(output => output.status === 'done' && output.path)?.path
+    || renderOutputPath || '';
+  const currentRenderReviewed = Boolean(currentReviewedOutputPath && reviewedRenderPath === currentReviewedOutputPath);
   const socialVideoMediaReady = isSocialArtifactMediaSourceEligible({ source: workbenchFormalPreviewUrl, contentMode: 'video' });
   const socialVideoArtifactReady = activeScriptGenerationIsVerified
     && Boolean(projectId)
@@ -14065,6 +14071,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
   const freeVisualReady = freeThreeStep && renderReadiness.unreadyShots.length === 0
     && renderReadiness.issues.every(issue => issue.code === 'voiceover_missing');
   const startReplicationRender = () => {
+    setReviewedRenderPath('');
     if (freeCanGenerateVoiceover) {
       setRenderAfterVoiceoverLanguage(activeVoiceLang);
       void genTts(activeVoiceLang);
@@ -14700,6 +14707,11 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     </section>
   ) : step === 'preview' ? (
     <section className="space-y-3">
+      {threeStepWorkflow && !renderReadiness.ready && <div className="rounded-xl border border-amber-300 bg-amber-50 p-3" role="status">
+        <p className="text-xs font-black text-amber-950">成片前还需处理 {renderReadiness.issues.length} 项</p>
+        <p className="mt-1 text-[10px] text-amber-900">已就绪 {renderReadiness.readyCount}/{renderReadiness.totalCount} 镜。点击问题返回对应分镜。</p>
+        <div className="mt-2 max-h-44 space-y-1 overflow-y-auto">{renderReadiness.issues.map((issue, index) => <button key={`${issue.code}-${issue.slotId || 'global'}-${index}`} type="button" onClick={() => { if (issue.slotId) setActiveStoryboardSlotId(issue.slotId); setStepIdx(activeSteps.findIndex(item => item.id === (issue.code === 'script_missing' ? 'mode' : 'material'))); setCanvasView('creation'); }} className="block w-full rounded-lg bg-white px-2 py-1.5 text-left text-[10px] text-amber-950 hover:bg-amber-100">{issue.message} →</button>)}</div>
+      </div>}
       <div className={`rounded-xl border p-3 ${workbenchHasFormalVideo ? 'border-emerald-200 bg-emerald-50' : 'border-border bg-surface-2'}`}><p className="text-xs font-black text-text-primary">{workbenchHasFormalVideo ? '成片已生成' : '等待渲染成片'}</p><p className="mt-1 text-[10px] leading-4 text-text-muted">{workbenchHasFormalVideo ? '可在中间播放器检查成片；修改设置后可重新渲染。' : replicationNeedsVoiceover ? '点击底部按钮，系统会先生成本语言配音，再渲染成片。' : '确认配乐和字幕后，点击底部“渲染成片”。'}</p></div>
       <div className="space-y-2 rounded-xl border border-border bg-white p-3 text-[10px]">
         <div className="flex justify-between gap-3"><span className="text-text-muted">内容版本</span><span className="truncate font-bold text-text-primary">{assemblyName}</span></div>
@@ -14707,7 +14719,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
         <div className="flex justify-between gap-3"><span className="text-text-muted">配乐</span><span className="truncate font-bold text-text-primary">{selectedBgmTrack?.name || '不配乐'}</span></div>
         <div className="flex justify-between gap-3"><span className="text-text-muted">封面</span><span className="truncate font-bold text-text-primary">{coverClip?.name || '沿用首帧'}</span></div>
       </div>
-      <p className="rounded-lg border border-border bg-surface-2 px-3 py-2 text-[10px] leading-4 text-text-muted">此处不再重复放置播放器，所有预览统一在中间区域完成。</p>
+      {threeStepWorkflow && workbenchHasFormalVideo && <label className="flex items-start gap-2 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-[11px] leading-5 text-emerald-950"><input type="checkbox" className="mt-1" checked={currentRenderReviewed} onChange={event => setReviewedRenderPath(event.target.checked ? currentReviewedOutputPath : '')} /><span>我已检查中间播放器中的画面、口播、字幕、配乐和结尾，同意导出当前版本。</span></label>}
     </section>
   ) : null;
 
@@ -14735,11 +14747,6 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     if (modeActionLoading || ttsLoading || savingProj || batchShotBusy) return;
     if (index === 2 && canFinalizeAndRender && !renderReadiness.ready) {
       await finalizeBatchAndEnterRender();
-      return;
-    }
-    if (index === 2 && !renderReadiness.ready) {
-      setModeNotice(`还有 ${renderReadiness.unreadyShots.length} 个分镜未就绪：${renderReadiness.issues[0]?.message || '请先完成逐镜制作'}`);
-      if (batchShotSummary) setBatchReviewOpen(true);
       return;
     }
     if (index !== 0) {
@@ -15306,7 +15313,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
             const previewIndex = activeSteps.findIndex(item => item.id === (contentMode === 'poster' ? 'poster' : 'preview'));
             if (previewIndex >= 0) setStepIdx(previewIndex);
           },
-          disabled: threeStepWorkflow && step === 'preview' ? !workbenchHasFormalVideo : replicationTimingBlocked || (localGateBypass ? false : socialViralTask && contentMode === 'video'
+          disabled: threeStepWorkflow && step === 'preview' ? !currentRenderReviewed || rendering || batchRenderingLangs : threeStepWorkflow && step === 'material' ? !storyboardSlots.length : replicationTimingBlocked || (localGateBypass ? false : socialViralTask && contentMode === 'video'
             ? !storyboardSlots.length
             : contentMode === 'video'
             ? !storyboardSlots.length || !(voiceoverMode === 'none' || (voiceoverMode === 'upload' && Boolean(voiceoverUrl)) || (voiceoverMode === 'ai' && hasAnyVoiceover))
