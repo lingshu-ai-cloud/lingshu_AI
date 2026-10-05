@@ -558,9 +558,9 @@ export const studioApi = {
 
   speechNames: (b: { names: string[]; language: string }) => post<{ ok: boolean; names: Record<string,string>; error?: string }>('speech-names', b, { ok: false, names: {} }),
   // 配音 TTS
-  tts: (b: { script?: string; text?: string; sentenceLines?: string[]; voice: string; language: string; style?: Partial<TtsStyleOptions> }) =>
+  tts: (b: { script?: string; text?: string; sentenceLines?: string[]; measuredSentenceTiming?: boolean; voice: string; language: string; style?: Partial<TtsStyleOptions> }) =>
     post<TtsAudioResult>('tts', b, { ok: false }),
-  ttsBatch: (b: { voice: string; items: { code: string; text: string; language?: string }[]; style?: Partial<TtsStyleOptions> }) =>
+  ttsBatch: (b: { voice: string; items: { code: string; text: string; language?: string; sentenceLines?: string[]; measuredSentenceTiming?: boolean }[]; style?: Partial<TtsStyleOptions> }) =>
     post<{ ok: boolean; audios: Record<string, TtsAudioResult>; error?: string }>('tts/batch', b, { ok: false, audios: {} }),
   alignTts: (b: { text: string; url: string; duration: number }) =>
     post<{ ok: boolean; cues: SubCue[]; source?: 'audio_ai' | 'proportional' | 'qwen_asr'; error?: string }>('tts/align', b, { ok: false, cues: [] }),
