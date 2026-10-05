@@ -43,6 +43,9 @@ test('presenter creation, consent, import, tenant isolation, pagination and unce
   const upload = (requestId: string, bytes = Buffer.from([137,80,78,71,13,10,26,10,0,0,0,0])) => fetch(`${root}/uploads?mime=image/png&requestId=${requestId}`, { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: bytes });
   const creates = () => calls.filter(c => c.url === 'https://api.heygen.com/v3/avatars').length;
   try {
+    const capabilities = await (await request('/capabilities')).json();
+    assert.equal(capabilities.photoCreationEnabled, true);
+    assert.equal(capabilities.digitalTwinCreationEnabled, true);
     const voices = await (await request('/voices?token=abc')).json(); assert.equal(voices.nextToken, 'page2'); assert.equal(voices.items[0].id, 'voice1');
     assert.match(calls.at(-1)!.url, /type=public/); assert.match(calls.at(-1)!.url, /token=abc/);
     const beforePrivate = calls.length;
@@ -90,14 +93,31 @@ test('presenter creation, consent, import, tenant isolation, pagination and unce
     assert.equal((await request('/import', { lookId: 'private-other', authorized: true, reviewed: true })).status, 400);
     const catalog = await (await request('/catalog')).json(); assert.equal(catalog.items[0].id, 'public1'); assert.equal(catalog.nextToken, 'page2');
     const stock = await (await request('/import', { lookId: 'public1', authorized: true, reviewed: true })).json(); assert.equal(stock.presenters.length, 2);
+    const previousPrivateTenant = process.env.HEYGEN_PRIVATE_ASSET_TENANT_ID;
+    try {
+      process.env.HEYGEN_PRIVATE_ASSET_TENANT_ID = 'A';
+      const samePersonAsset = await (await upload('same-person-new-look', Buffer.from([137,80,78,71,13,10,26,10,0,0,0,2]))).json();
+      const reuseInput = { ...input, uploadId: samePersonAsset.id, requestId: 'same-person-reuse', reusePresenterId: saved.presenters[0].id, samePersonConfirmed: true };
+      assert.equal((await request('/creations', { ...reuseInput, samePersonConfirmed: false })).status, 400);
+      assert.equal((await request('/creations', reuseInput, 'B')).status, 400);
+      assert.equal(creates(), 1, 'invalid reuse cannot call the paid provider endpoint');
+      const reused = await (await request('/creations', reuseInput)).json();
+      assert.equal(reused.status, 'completed', 'accepted consent on the same group is reused');
+      assert.equal(creates(), 2);
+      assert.equal(calls.filter(c => c.url === 'https://api.heygen.com/v3/avatars').at(-1)?.body.avatar_group_id, 'created-group');
+      assert.equal(calls.filter(c => c.url.endsWith('/created-group/consent')).length, 1, 'no second HeyGen consent request');
+    } finally {
+      if (previousPrivateTenant === undefined) delete process.env.HEYGEN_PRIVATE_ASSET_TENANT_ID;
+      else process.env.HEYGEN_PRIVATE_ASSET_TENANT_ID = previousPrivateTenant;
+    }
     budgetBlocked = true;
     const secondAsset = await (await upload('upload2', Buffer.from([137,80,78,71,13,10,26,10,0,0,0,1]))).json();
-    assert.equal((await request('/creations', { ...input, uploadId: secondAsset.id, requestId: 'budget-denied' })).status, 400); assert.equal(creates(), 1); budgetBlocked = false;
+    assert.equal((await request('/creations', { ...input, uploadId: secondAsset.id, requestId: 'budget-denied' })).status, 400); assert.equal(creates(), 2); budgetBlocked = false;
     lost = true;
     const uncertainInput = { ...input, uploadId: secondAsset.id, requestId: 'lost-response' };
-    const uncertain = await (await request('/creations', uncertainInput)).json(); assert.equal(uncertain.status, 'uncertain'); assert.equal(creates(), 2);
+    const uncertain = await (await request('/creations', uncertainInput)).json(); assert.equal(uncertain.status, 'uncertain'); assert.equal(creates(), 3);
     assert.equal((await (await request('/creations', uncertainInput)).json()).id, uncertain.id);
-    assert.equal((await request(`/creations/${uncertain.id}/refresh`, {})).status, 400); assert.equal(creates(), 2);
+    assert.equal((await request(`/creations/${uncertain.id}/refresh`, {})).status, 400); assert.equal(creates(), 3);
     assert.equal((await request('/creations', { ...uncertainInput, requestId: 'new-id-same-file' })).status, 400);
     assert.ok(calls.every(c => c.init.redirect === 'error'));
   } finally { await new Promise<void>(resolve => server.close(() => resolve())); }

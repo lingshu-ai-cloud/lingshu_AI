@@ -8,6 +8,19 @@ async function request<T>(path: string, body?: unknown): Promise<T> {
   return value;
 }
 export const productionApi = {
+  arkEnrollmentCapabilities: () => request<{ ready: boolean; reason: string }>('/presenters/ark-enrollments/capabilities'),
+  uploadArkMaterial: async (file: File, type: 'image' | 'video') => {
+    const fallbackMime = type === 'video' ? /\.mov$/i.test(file.name) ? 'video/quicktime' : /\.webm$/i.test(file.name) ? 'video/webm' : 'video/mp4' : 'application/octet-stream';
+    const response = await fetch(`/api/overseas/studio/production/presenters/ark-enrollments/materials?type=${type}&mime=${encodeURIComponent(file.type || fallbackMime)}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/octet-stream', ...authHeader() }, body: file,
+    });
+    const value = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(value.error || '人物资料上传失败');
+    return value as { id: string; type: 'image' | 'video'; name: string };
+  },
+  startArkEnrollment: (value: { requestId: string; presenterId: string; videoMaterialId: string; photoMaterialId: string; subjectAdultConfirmed: true; arkProcessingAuthorized: true }) => request<{ id: string; presenterId: string; state: string; verificationUrl: string; error: string; assetUri: string }>('/presenters/ark-enrollments', value),
+  arkEnrollments: (presenterId: string) => request<Array<{ id: string; presenterId: string; state: string; verificationUrl: string; error: string; assetUri: string }>>(`/presenters/ark-enrollments?presenterId=${encodeURIComponent(presenterId)}`),
+  refreshArkEnrollment: (id: string) => request<{ id: string; presenterId: string; state: string; verificationUrl: string; error: string; assetUri: string }>(`/presenters/ark-enrollments/${encodeURIComponent(id)}/refresh`, {}),
   batchShotRoutes: (projectId: string) => request<{ projectId: string; planningOnly: true; routes: Array<{ shotId: string; slotId: string; order: number; visualTopic: string; expressionPurpose: string; route: string; status: string; matchedMaterialId: string | null; matchedSegmentId: string | null; trimStart: number | null; trimEnd: number | null; reason: string; generated: false }>; counts: Record<string, number>; aigcBudgetPreview?: { planningOnly: true; modelId: string; totalShots: number; aigcShots: number; aigcShotRatio: number; candidateDurationSeconds: 4; maxRetries: number; estimate480pCny: number; estimate720pCny: number; batchBudgetCny: number; recommendedResolution: '480p' | '720p'; budgetEnoughFor480p: boolean; shotPlans?: Array<{ shotId: string; status: 'ready' | 'unsupported' | 'budget_excluded'; targetDurationSeconds: number; resolutionTier?: '480p' | '720p'; modelId?: string; estimatedCostCny: number }>; readyShots?: number; excludedShots?: number; estimatedCostCny?: number; budgetRemainingCny?: number } }>(`/batch-shot-routes?projectId=${encodeURIComponent(projectId)}`),
   batchShotJobs: (body: { projectId: string; batchId: string; confirmed: true; slotIds?: string[] }) => request<{ projectId: string; batchId: string; results: Array<{ shotId: string; slotId: string; state: 'submitted' | 'matched' | 'needs_material' | 'blocked'; jobId?: string; reason: string }>; counts: { submitted: number; matched: number; needsMaterial: number; blocked: number } }>('/batch-shot-jobs', body),
   defaults: () => request<ProductionDefaults>('/defaults'),
@@ -31,6 +44,7 @@ export const productionApi = {
   sentenceReplicationRequestStatus: (requestId:string) => request<{id:string;state:'running'|'completed'|'failed'|'uncertain';providerTasks:Record<string,string>;error:string;updatedAt:string}>(`/sentence-replication-requests/${encodeURIComponent(requestId)}/status`),
   pendingSentenceReplication: (projectId:string,assemblyId:string,shotId:string,fingerprint:string) => request<{id:string;state:'uncertain';providerTasks:Record<string,string>;error:string;updatedAt:string}|null>(`/sentence-replication-pending?projectId=${encodeURIComponent(projectId)}&assemblyId=${encodeURIComponent(assemblyId)}&shotId=${encodeURIComponent(shotId)}&fingerprint=${encodeURIComponent(fingerprint)}`),
   resumeSentenceReplication: (jobId:string,maxCostCny:number) => request<import('./digitalHumanPlan').SentenceReplicationResult>(`/sentence-replication-jobs/${encodeURIComponent(jobId)}/resume`,{confirmed:true,maxCostCny}),
+  reprocessSentenceReplication: (jobId:string,maxCostCny:number) => request<import('./digitalHumanPlan').SentenceReplicationResult>(`/sentence-replication-jobs/${encodeURIComponent(jobId)}/reprocess`,{maxCostCny}),
   reviewSentenceCueQuality: (jobId:string,decisions:Record<string,Record<string,{passed:boolean;evidence:string}>>) => request<import('./digitalHumanPlan').SentenceReplicationResult>(`/sentence-replication-jobs/${encodeURIComponent(jobId)}/cue-quality`,{decisions}),
   retryFailedSentenceCues: (jobId:string,requestId:string,confirmed:boolean) => request<import('./digitalHumanPlan').SentenceReplicationResult>(`/sentence-replication-jobs/${encodeURIComponent(jobId)}/retry-failed`,{requestId,confirmed}),
   syncAgentPlans: (projectId: string) => request<DigitalHumanPlanRecord[]>('/plans/sync-agent', { projectId }),

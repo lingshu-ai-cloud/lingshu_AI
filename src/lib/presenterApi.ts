@@ -12,7 +12,18 @@ async function request<T>(path: string, body?: unknown): Promise<T> {
 export const presenterApi = {
   capabilities: () => request<PresenterCapabilities>('/capabilities'),
   catalog: (token = '', scope: 'public' | 'private' = 'public') => request<PresenterPage<PresenterLook>>(`/catalog?token=${encodeURIComponent(token)}&scope=${scope}`),
-  voices: (token = '', language = '') => request<PresenterPage<PresenterVoice>>(`/voices?token=${encodeURIComponent(token)}&language=${encodeURIComponent(language)}`),
+  voices: (token = '', language = '', scope: 'public' | 'private' = 'public') => request<PresenterPage<PresenterVoice>>(`/voices?token=${encodeURIComponent(token)}&language=${encodeURIComponent(language)}&scope=${scope}`),
+  async cloneVoice(file: File | Blob, name: string, language: string, requestId: string): Promise<{ id: string; status: string; voiceId: string }> {
+    const response = await fetch(`${root}/voices/clones?name=${encodeURIComponent(name)}&language=${encodeURIComponent(language)}&requestId=${encodeURIComponent(requestId)}&consent=true`, {
+      method: 'POST', headers: { ...authHeader(), 'Content-Type': file.type || 'audio/webm' }, body: file,
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(result.error || '音色克隆提交失败');
+    return result;
+  },
+  cloneStatus: (id: string) => request<{ id: string; status: string; error?: string; voice?: PresenterVoice }>(`/voices/clones/${encodeURIComponent(id)}`),
+  cloneJobs: () => request<Array<{ id: string; name: string; status: string; voiceId: string; createdAt: string }>>('/voices/clones'),
+  bindVoice: (presenterId: string, voiceId: string) => request<{ defaults: ProductionDefaults; voice: PresenterVoice }>('/voices/bind', { presenterId, voiceId, voiceAuthorized: true }),
   creations: () => request<PresenterCreation[]>('/creations'),
   async uploadPhotoMaterial(file: File, name: string): Promise<{ok: boolean; material?: {id: string}; error?: string}> {
     if (!['image/jpeg','image/png'].includes(file.type) || !file.size || file.size > 32 * 1024 * 1024) throw new Error('请选择32MB以内的 JPG 或 PNG 人物照片');
@@ -26,7 +37,7 @@ export const presenterApi = {
     if (!response.ok) throw new Error(data.error || `人物素材上传失败 (${response.status})`);
     return data;
   },
-  create: (body: { name: string; type: 'photo' | 'digital_twin'; voiceId?: string; uploadId: string; requestId: string; authorized: boolean; confirmed: boolean }) => request<PresenterCreation>('/creations', body),
+  create: (body: { name: string; type: 'photo' | 'digital_twin'; voiceId?: string; uploadId: string; requestId: string; authorized: boolean; confirmed: boolean; reusePresenterId?: string; samePersonConfirmed?: boolean }) => request<PresenterCreation>('/creations', body),
   refresh: (id: string) => request<PresenterCreation>(`/creations/${encodeURIComponent(id)}/refresh`, {}),
   consent: (id: string, requestId: string, uploadId?: string) => request<PresenterCreation>(`/creations/${encodeURIComponent(id)}/consent`, { requestId, uploadId }),
   import: (body: { lookId?: string; creationId?: string; name?: string; voiceId?: string; authorized: boolean; reviewed: boolean }) => request<ProductionDefaults>('/import', body),

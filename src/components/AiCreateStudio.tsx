@@ -903,7 +903,7 @@ function parseCueRange(value: string): { start: number; end: number } | null {
 
 function inferPersonShot(value: string): boolean | undefined {
   const text=String(value||'').toLowerCase();
-  if(/人物|真人|口播|讲解|主持|主播|模特|面部|半身|全身|woman|man|person|presenter|speaker|talking/.test(text)) return true;
+  if(/人物|真人|女性|男性|女人|男人|女士|男士|出镜|口播|讲解|主持|主播|模特|面部|半身|全身|woman|man|person|presenter|speaker|talking/.test(text)) return true;
   if(/产品|机器|设备|工厂|车间|包装|细节|特写|信息图|文字卡|场景空镜|b-?roll|product|factory|machine|diagram/.test(text)) return false;
   return undefined;
 }
@@ -3353,7 +3353,6 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
   const workbenchVideoRef = useRef<HTMLVideoElement | null>(null);
   const [workbenchTimelineTime, setWorkbenchTimelineTime] = useState(0);
   const [workbenchPlaying, setWorkbenchPlaying] = useState(false);
-  const [workbenchSourceAudioOn, setWorkbenchSourceAudioOn] = useState(false);
   const [workbenchPlaybackError, setWorkbenchPlaybackError] = useState('');
   const workbenchImageTimerRef = useRef<number | null>(null);
   const workbenchLoopOffsetRef = useRef(0);
@@ -3808,7 +3807,9 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
         derivativeAuthorized: false,
         cues: matching.map((item, index) => {
           const range = parseCueRange(item.time)!;
-          const personShot=inferPersonShot(`${item.visual || ''} ${item.environment || ''}`);
+          const personShot=item.salesPresenterConfirmed === true || item.observedPresenterRole === 'sales_presenter' || item.observedPresenterRole === 'presenter_action'
+            ? true : item.observedPresenterRole === 'none' || item.observedPresenterRole === 'background'
+              ? false : inferPersonShot(`${item.visual || ''} ${item.environment || ''}`);
           return { id: `${slot.id}:reference:${index}:${range.start}-${range.end}`, start: range.start, end: range.end,
             originalText: item.dialogue || '', targetText: '', shotIds: storyboardSlots.filter(candidate => range.start < candidate.end && range.end > candidate.start).map(candidate => candidate.id),
             ...(personShot===undefined?{}:{personShot,classificationSource:'analysis' as const}),
@@ -3933,11 +3934,14 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
   };
   useEffect(() => {
     let live = true;
-    void Promise.all([productionApi.defaults(), productionApi.capabilities(), studioApi.digitalHumanAvatars(), studioApi.digitalHumanCapabilities()]).then(([defaults, capability, avatars, digitalCapability]) => {
+    void productionApi.defaults().then(defaults => { if (live) setProductionDefaults(defaults); }).catch(error => { if (live) setProductionError(String(error)); });
+    void productionApi.capabilities().then(capability => { if (live) setProductionCapability(capability); }).catch(error => { if (live) setProductionError(String(error)); });
+    void studioApi.digitalHumanAvatars().then(avatars => {
       if (!live) return;
-      setProductionDefaults(defaults); setProductionCapability(capability); setHeygenAvatars(avatars.items); setDigitalHumanCapabilities(digitalCapability);
+      setHeygenAvatars(avatars.items);
       setHeygenAvatarId(current => current || avatars.items.find(item => item.ownership === 'private')?.id || '');
     }).catch(error => { if (live) setProductionError(String(error)); });
+    void studioApi.digitalHumanCapabilities().then(digitalCapability => { if (live) setDigitalHumanCapabilities(digitalCapability); }).catch(error => { if (live) setProductionError(String(error)); });
     return () => { live = false; };
   }, []);
   useEffect(() => {
@@ -9070,6 +9074,23 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     finally { setProductionBusy(false); }
   };
 
+  const reprocessProductionSentenceReplication = async (maxCostCny:number) => {
+    const slot=storyboardSlots.find(item=>item.id===productionEditorId); if(!slot||productionBusy)return;
+    const shot=productionFor(slot); const fingerprint=productionFingerprint(slot,shot);
+    const execution=productionExecutions.filter(item=>`${item.assemblyId}:${item.shotId}`===productionKey(slot.id)&&item.fingerprint===fingerprint&&item.provider.startsWith('sentence_first_frame')).sort((a,b)=>b.updatedAt.localeCompare(a.updatedAt))[0];
+    const previous=execution?productionSentenceResults[execution.jobId]:undefined;
+    if(!previous?.sentenceJobId){setProductionError('原 HeyGen 作业记录不存在，不能重整候选');return;}
+    setProductionBusy(true);setProductionError('');
+    try{
+      const result=await productionApi.reprocessSentenceReplication(previous.sentenceJobId,maxCostCny);
+      if(result.sentenceJobId)setProductionSentenceResults(current=>({...current,[result.sentenceJobId!]:result}));
+      await refreshMaterials();if(projectId)setProductionExecutions(await productionApi.executions(projectId));
+      setShotProductions(current=>{const key=productionKey(slot.id);const currentShot=current[key]||shot;return{...current,[key]:{...currentShot,candidates:[...currentShot.candidates,{id:`sentence-${crypto.randomUUID()}`,materialId:result.materialId,source:'avatar',fingerprint,jobId:result.executionId,createdAt:new Date().toISOString()}]}};});
+      setDigitalHumanNotice('已复用原 HeyGen 视频，按素材实际时长生成新候选；请预览和验收。');
+    }catch(error){setProductionError(error instanceof Error?error.message:'原 HeyGen 候选重整失败');}
+    finally{setProductionBusy(false);}
+  };
+
   const generateProductionSentenceDrafts=async()=>{const slot=storyboardSlots.find(item=>item.id===productionEditorId);if(!slot||productionBusy)return;const shot=productionFor(slot);const persistedShot=shootingSlots.find(item=>item.slotId===slot.id);if(!persistedShot){setProductionError('当前分镜尚未建立制作时间段，请先保存分镜脚本');return;}setProductionBusy(true);setProductionError('');autosaveInFlightRef.current=true;try{const fingerprint=productionFingerprint(slot,shot);const saved=await studioApi.saveProject({id:projectId||undefined,title:projectTitle,status:'draft',spec:collectSpec()});if(!saved.ok||!saved.project?.id)throw new Error('草稿保存失败，未启动千问首帧草稿');projectRevisionRef.current=saved.project.updatedAt;setProjectId(saved.project.id);const result=await productionApi.generateSentenceFirstFrameDrafts({projectId:saved.project.id,assemblyId:activeAssemblyId,shotId:persistedShot.id,fingerprint,requestId:crypto.randomUUID(),confirmed:true});setShotProductions(current=>{const key=productionKey(slot.id);const currentShot=current[key]||shot;if(!currentShot.digitalHuman?.reference)return current;return{...current,[key]:{...currentShot,digitalHuman:{...currentShot.digitalHuman,contentConfirmed:false,reference:{...currentShot.digitalHuman.reference,cues:result.cues}},revision:currentShot.revision+1}};});await refreshMaterials();setDigitalHumanNotice(`已生成 ${result.operationIds.length} 张千问构图草稿，预计费用 ¥${result.estimatedCostCny.toFixed(2)}。草稿不会直接交给 Seedance。`);}catch(error){setProductionError(error instanceof Error?error.message:'千问首帧草稿生成失败');}finally{autosaveInFlightRef.current=false;setProductionBusy(false);}};
 
   const reviewProductionSentenceCue = async (cueId:string, decisionsByKey:Record<string,boolean>, evidence:string) => {
@@ -13567,29 +13588,6 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     setActiveStoryboardSlotId(next.id);
     setWorkbenchTimelineTime(next.start);
   };
-  const toggleWorkbenchPlayback = () => {
-    if (workbenchPlaying) {
-      workbenchVideoRef.current?.pause();
-      setWorkbenchPlaying(false);
-      return;
-    }
-    const first = playableWorkbenchSlots[0];
-    if (!first) { setWorkbenchPlaybackError('当前没有可播放的分镜素材。'); return; }
-    setWorkbenchPlaybackError('');
-    workbenchLoopOffsetRef.current = 0;
-    workbenchAdvanceLockRef.current = false;
-    setCanvasView('creation');
-    setActiveStoryboardSlotId(first.id);
-    setWorkbenchTimelineTime(first.start);
-    setWorkbenchPlaying(true);
-    if (activeWorkbenchSlot?.id === first.id && activeWorkbenchClip?.type === 'video') {
-      const video = workbenchVideoRef.current;
-      if (video) {
-        try { video.currentTime = editForSlot(activeWorkbenchClip, first).trimStart; } catch { /* metadata will seek */ }
-        void video.play().catch(error => setWorkbenchPlaybackError(`素材播放失败：${error instanceof Error ? error.message : String(error)}`));
-      }
-    }
-  };
   useEffect(() => {
     if (workbenchImageTimerRef.current !== null) window.clearTimeout(workbenchImageTimerRef.current);
     workbenchImageTimerRef.current = null;
@@ -15325,15 +15323,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
         }}
       >
         <div className={`relative flex h-full min-h-0 w-full items-center justify-center overflow-hidden ${canvasView === 'reference' && mode === 'clone' && videoKickoff ? 'bg-black' : 'rounded-xl border border-border bg-[#e7ece9]'}`}>
-          {canvasView !== 'reference' && step !== 'preview' && storyboardSlots.length > 0 && <div className="absolute right-4 top-4 z-30 flex items-center gap-2">
-            {workbenchPlaybackError && <span role="alert" className="max-w-56 rounded-md bg-rose-950/90 px-2 py-1 text-[10px] text-white">{workbenchPlaybackError}</span>}
-            <button type="button" onClick={toggleWorkbenchPlayback} disabled={!playableWorkbenchSlots.length} className="rounded-lg border border-emerald-200 bg-white px-3 py-2 text-[11px] font-bold text-emerald-800 disabled:opacity-50">
-              {workbenchPlaying ? '暂停联播' : `联播素材（${playableWorkbenchSlots.length}）`}
-            </button>
-            <button type="button" aria-pressed={workbenchSourceAudioOn} onClick={() => setWorkbenchSourceAudioOn(value => !value)} className="rounded-lg border border-border bg-white px-3 py-2 text-[11px] font-bold text-text-secondary">
-              {workbenchSourceAudioOn ? '试听素材原声：开' : '试听素材原声：关'}
-            </button>
-          </div>}
+          {canvasView !== 'reference' && step !== 'preview' && storyboardSlots.length > 0 && workbenchPlaybackError && <span role="alert" className="absolute right-4 top-4 z-30 max-w-56 rounded-md bg-rose-950/90 px-2 py-1 text-[10px] text-white">{workbenchPlaybackError}</span>}
           {canvasView === 'reference' && mode === 'clone' && videoKickoff && step !== 'preview' ? (
             <BenchmarkVideoPreview kickoff={videoKickoff} embedded seekRequest={referenceSeekRequest} onTimeUpdate={setReferenceTimelineTime} />
           ) : step === 'cover' && !coverTimelineCaptureMode ? (
@@ -15382,7 +15372,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                 poster={activeWorkbenchClip.poster}
                 controls
                 playsInline
-                muted={!workbenchSourceAudioOn}
+                muted
                 preload="metadata"
                 onPlay={() => { if (!workbenchPlaying) setWorkbenchPlaying(true); }}
                 onPause={event => { if (event.currentTarget.isConnected && !event.currentTarget.ended && !workbenchAdvanceLockRef.current && workbenchPlaying) setWorkbenchPlaying(false); }}
@@ -15545,6 +15535,22 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
           onClose={() => { setProductionEditorId(''); setProductionError(''); setDigitalHumanNotice(''); }}
           onNarration={applyProductionNarration}
           onDefaults={async value => { const saved = await productionApi.saveDefaults(value); setProductionDefaults(saved); }}
+          onEnrollArkPresenter={async input => {
+            const existing=productionDefaults.presenters.find(item=>item.id===input.presenterId);
+            if(input.presenterId&&!existing)throw new Error('人物资料已变化，请刷新后重试');
+            if(!existing&&!input.name.trim())throw new Error('请填写人物名称');
+            const upload=async(file:File,type:'image'|'video')=>(await productionApi.uploadArkMaterial(file,type)).id;
+            const photoMaterialId=input.photo?await upload(input.photo,'image'):input.photoMaterialId||'';
+            const videoMaterialId=input.video?await upload(input.video,'video'):input.videoMaterialId||'';
+            if(!photoMaterialId||!videoMaterialId)throw new Error('请上传或选择本人视频和正面照片');
+            const presenterId=existing?.id||crypto.randomUUID();
+            const updated:import('../lib/shotProduction').PresenterAsset=existing?{...existing,referenceMaterialIds:[...new Set([...(existing.referenceMaterialIds||[]),photoMaterialId,videoMaterialId])]}:{id:presenterId,name:input.name.trim(),avatarId:'',voiceId:'',authorized:true,supportsAlpha:false,referenceMaterialIds:[photoMaterialId,videoMaterialId]};
+            const saved=await productionApi.saveDefaults({...productionDefaults,presenters:existing?productionDefaults.presenters.map(item=>item.id===presenterId?updated:item):[...productionDefaults.presenters,updated],defaultPresenterId:productionDefaults.defaultPresenterId||presenterId});
+            setProductionDefaults(saved);
+            await refreshMaterials();
+            return productionApi.startArkEnrollment({requestId:input.requestId,presenterId,photoMaterialId,videoMaterialId,subjectAdultConfirmed:true,arkProcessingAuthorized:true});
+          }}
+          onPresenterAssetsChanged={async()=>{setProductionDefaults(await productionApi.defaults());await refreshMaterials();}}
           onCreatePresenter={async input => {
             const existing = input.presenterId ? productionDefaults.presenters.find(item => item.id === input.presenterId) : undefined;
             if (input.presenterId && !existing) throw new Error('当前人物资产已变化，请刷新后重试');
@@ -15569,6 +15575,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
           onRunSentenceReplication={maxCostCny => void runProductionSentenceReplication(maxCostCny)}
           pendingPhotoSentenceJob={Boolean(pendingPhotoSentenceJob && pendingPhotoSentenceJob.shotKey === productionKey(productionEditorSlot.id))}
           onResumeSentenceReplication={maxCostCny => void resumeProductionSentenceReplication(maxCostCny)}
+          onReprocessSentenceReplication={maxCostCny => void reprocessProductionSentenceReplication(maxCostCny)}
           onReviewSentenceCue={(cueId,decisions,evidence)=>void reviewProductionSentenceCue(cueId,decisions,evidence)}
           onRetryFailedSentenceCues={()=>void retryProductionFailedSentenceCues()}
           onGenerate={() => void generateProductionAvatar()}

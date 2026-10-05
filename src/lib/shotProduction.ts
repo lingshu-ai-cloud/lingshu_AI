@@ -22,11 +22,13 @@ export interface ArkPresenterCertification {
   syncedAt?: string;
   failureReason?: string;
   verificationSource?: 'ark_api' | 'manual_console';
+  manualConfirmation?: { imageTypeConfirmed: boolean; activeConfirmed: boolean; samePersonConfirmed: boolean; confirmedAt: string };
 }
 export interface PresenterAsset {
   id: string; name: string;
   /** Legacy aliases retained while existing HeyGen records migrate to toolMappings. */
   avatarId: string; voiceId: string;
+  voiceAuthorization?: { voiceId: string; recordedAt: string; source: 'user_confirmation' };
   imageUrl?: string; videoUrl?: string; creationMode?: 'quick' | 'expert';
   authorized: boolean; supportsAlpha: boolean; nativeOrientation?: 'unknown' | 'portrait' | 'landscape' | 'square';
   assetVersion?: number;
@@ -100,8 +102,8 @@ export function presenterAssetFingerprint(asset: PresenterAsset): string {
   } : null;
   const ark = asset.arkCertification ? { projectName: asset.arkCertification.projectName, groupId: asset.arkCertification.groupId || '', assetUri: asset.arkCertification.assetUri,
     assetType: asset.arkCertification.assetType, status: asset.arkCertification.status, materialId: asset.arkCertification.materialId,
-    syncedAt: asset.arkCertification.syncedAt || '', verificationSource: asset.arkCertification.verificationSource || '' } : null;
-  return JSON.stringify({ avatarId, voiceId, runway: [...new Set(runway.map(String))].sort(), sd: [...new Set(sd.map(String))].sort(), rights, ark,
+    syncedAt: asset.arkCertification.syncedAt || '', verificationSource: asset.arkCertification.verificationSource || '', manualConfirmation: asset.arkCertification.manualConfirmation || null } : null;
+  return JSON.stringify({ avatarId, voiceId, voiceAuthorization: asset.voiceAuthorization || null, runway: [...new Set(runway.map(String))].sort(), sd: [...new Set(sd.map(String))].sort(), rights, ark,
     supportsAlpha: Boolean(asset.supportsAlpha), nativeOrientation: asset.nativeOrientation || 'unknown' });
 }
 export const newShotProduction = (narration = '', presenterId = '', defaults?: Pick<ProductionDefaults, 'defaultSound' | 'defaultLayout'>): ShotProduction => ({
