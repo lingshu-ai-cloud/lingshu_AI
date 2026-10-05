@@ -71,6 +71,7 @@ export const digitalEmployeeApi = {
       body: JSON.stringify(goal),
     }),
   recommendPackage: (goalId: string) => request<WeeklyPackage>(`/goals/${encodeURIComponent(goalId)}/package/recommend`, { method: "POST" }),
+  generatePackageDetails: (goalId: string) => request<DigitalEmployeeOverview>(`/goals/${encodeURIComponent(goalId)}/package/details`, { method: "POST" }),
   savePackage: (goalId: string, pack: WeeklyPackage) => request<DigitalEmployeeOverview>(`/goals/${encodeURIComponent(goalId)}/package`, { method: "PUT", body: JSON.stringify(pack) }),
   linkTaskProject: (runId: string, taskId: string, projectId: string) => request<DigitalEmployeeOverview>(`/runs/${encodeURIComponent(runId)}/tasks/${encodeURIComponent(taskId)}/link-project`, { method: "POST", body: JSON.stringify({ projectId }) }),
   packageOptions: () => request<{ members: Array<{ id: string; name: string }>; projects: Array<{ id: string; title: string }>; customers: Array<{ id: string; name: string }> }>("/package-options"),

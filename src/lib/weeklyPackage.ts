@@ -79,6 +79,16 @@ export interface WeeklyPackage {
   directorPlan?: ContentDirectorPlan;
   matrixPlan?: MatrixAccountPlan[];
   reviewTodos?: ReviewTodo[];
+  detailGeneration?: {
+    status: 'generating' | 'ready' | 'blocked';
+    startedAt: string;
+    generatedAt: string;
+    estimatedMinutes: number;
+    usageCostCny: number | null;
+    readyCount: number;
+    blockedCount: number;
+    blockers: string[];
+  };
   revision: number;
   maturity: Maturity;
   operatingAssessment?: OperatingAssessment;

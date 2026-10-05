@@ -41,6 +41,8 @@ export interface DigitalEmployeeConfig {
   videoDefaults?: Partial<VideoCreationPlan>;
   /** Languages generated autonomously for every content order. */
   videoLanguages?: string[];
+  /** Stops future smart-operation planning without cancelling active work. */
+  smartOperationsEnabled: boolean;
   companyName: string;
   industry: string;
   primaryBusiness: string;
@@ -486,6 +488,7 @@ export interface ContentQueueItem {
   lineage: ContentTaskLineage;
   outputSummary: ContentTaskOutputSummary;
   confidence?: ContentTaskConfidence;
+  preproduction?: import('../../shared/contracts/videoCreationPlan').VideoPreproductionPreview;
   title: string;
   productName: string;
   platform: PublishingPlatform;

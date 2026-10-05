@@ -423,6 +423,7 @@ export async function buildContentQueueProjection(input: {
         benchmarkAccount: evidence?.benchmarkAccount || '',
         matchScore: evidence ? evidence.matchScore : null,
       }),
+      ...(plan?.preproduction ? { preproduction: plan.preproduction } : {}),
       ...state,
       ...costState(relatedProjects, executionResult.items, estimated && estimated > 0 ? estimated : null),
     };

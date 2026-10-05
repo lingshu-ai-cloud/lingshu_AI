@@ -40,6 +40,20 @@ assert.deepEqual(digitalEmployeeOperatingGoals([socialContentBridgeGoal, weeklyO
 const createGoal = routeBlock("digitalEmployeesRouter.post('/goals'");
 assert.match(createGoal, /business_line:\s*goal\.businessLine/, 'weekly goals must persist their business line');
 assert.match(createGoal, /content_platforms:\s*goal\.contentPlatforms/, 'content goals must persist their platform scope');
+assert.match(createGoal, /smartOperationsEnabled === false/, 'the global Smart Operations switch must stop future outlines without cancelling historical work');
+
+const packageDetailsRoute = routeBlock("digitalEmployeesRouter.post('/goals/:goalId/package/details'");
+assert.match(packageDetailsRoute, /withLocalQueue\(goalApprovalQueues/, 'double-clicks on paid detail generation must serialize on one goal lock');
+assert.match(packageDetailsRoute, /acquireDurableOperationLease/, 'detail generation must also use a database lease across web instances');
+assert.match(packageDetailsRoute, /assertDurableOperationLease/, 'only the active detail-generation lease may persist Agent output');
+assert.match(packageDetailsRoute, /releaseDurableOperationLease/, 'completed detail generation must release its database lease');
+assert.match(packageDetailsRoute, /detailGeneration\?\.status === 'ready'/, 'a repeated request must reuse an already persisted ready preview');
+assert.match(packageDetailsRoute, /status: 'generating'/, 'detail generation must persist an in-progress checkpoint before calling Agents');
+assert.match(packageDetailsRoute, /generateWeeklyTaskPreviews/, 'step 2 must run the Director and Content pre-production analysis');
+assert.match(packageDetailsRoute, /status: 'blocked'/, 'a failed detail generation must preserve a retryable blocked state');
+const packageUpdateRoute = routeBlock("digitalEmployeesRouter.put('/goals/:goalId/package'");
+assert.match(packageUpdateRoute, /delete pack\.detailGeneration/, 'editing an outline must invalidate stale pre-production status');
+assert.match(packageUpdateRoute, /delete videoPlan\.preproduction/, 'editing an outline must invalidate every stale task preview');
 
 const goalApprovalRoute = routeBlock("digitalEmployeesRouter.post('/goals/:goalId/approve'");
 assert.match(goalApprovalRoute, /approveGoalForReview/, 'manual approval must call the same validated activation as review scheduling');
@@ -60,6 +74,7 @@ assert.match(approveGoal, /correction_version:\s*0/, 'new workflow tasks must st
 assert.doesNotMatch(approveGoal, /missingGoalResources/, 'missing delivery resources must not block independent branches from starting');
 assert.doesNotMatch(approveGoal, /missing_required_resources|publishing_accounts_invalid/, 'delivery checks belong to runtime tasks, not whole-plan activation');
 assert.match(approveGoal, /active_goal_exists/, 'a tenant must not start overlapping active weekly goals');
+assert.match(approveGoal, /package_details_blocked/, 'a generated-but-blocked preview must never be approved into production');
 
 const streamRoute = routeBlock("digitalEmployeesRouter.get('/runs/:runId/stream'");
 assert.match(streamRoute, /tenantRecord<RunRecord>/, 'SSE subscriptions must verify run ownership before streaming');

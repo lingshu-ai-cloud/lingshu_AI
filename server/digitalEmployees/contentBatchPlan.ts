@@ -98,6 +98,7 @@ export function buildContentBatchPlan(input: {
       if (plan.route === 'clone' && !input.evidence.exactAnalysisIds.includes(plan.referenceId)) referenceErrors.push(prefix + '参考视频尚无有效精确分析');
       const account = input.config.publishingTargets.find(target => target.platform === plan.platform && (!plan.matrix || target.accountId === plan.matrix.accountId));
       if (!input.goal.contentPlatforms.includes(plan.platform)) errors.push(prefix + '制作平台不在本周目标范围中');
+      const frozenScript = plan.preproduction?.directorScript;
       orders.push({ id: `content_order_${index + 1}`, goalId: input.goalId, productId: product.id, productName: product.name,
         languages: plan.matrix ? [plan.language] : input.config.videoLanguages,
         theme: { key: 'user_selected', label: plan.theme }, platform: plan.platform, accountId: account?.accountId || '', accountLabel: account?.accountLabel || (enabled.has('content_publish') ? '发布前待绑定账号' : '仅内容生产，不分发'),
@@ -110,7 +111,12 @@ export function buildContentBatchPlan(input: {
           ...(plan.matrix?.accountRole ? [`账号定位：${plan.matrix.accountRole === 'brand_capability' ? '品牌与供应能力' : plan.matrix.accountRole === 'buyer_advisor' ? '买家顾问与采购教育' : '品牌综合账号'}`] : []),
           ...(plan.matrix?.formats?.length ? [`平台内容形式：${plan.matrix.formats.join('、')}`] : []),
           ...(plan.reviewRequirements || []).map(r => `复盘分镜约束【${r.todoId}】：第1镜0–3秒；参考：${r.reference}；保留：${r.requirements}；素材：${r.materials}；验收：${r.acceptance}`)])],
-        evidenceRefs: [...ids.map(id => ({ type: 'enterprise_material' as const, id })), ...(plan.route === 'clone' ? [{ type: 'exact_analysis' as const, id: plan.referenceId }] : [])], status: 'planned' });
+        evidenceRefs: [...ids.map(id => ({ type: 'enterprise_material' as const, id })), ...(plan.route === 'clone' ? [{ type: 'exact_analysis' as const, id: plan.referenceId }] : [])], status: 'planned',
+        ...(frozenScript && plan.preproduction?.readiness.canStart ? {
+          contractVersion: 1 as const,
+          scripts: { [frozenScript.language]: frozenScript },
+        } : {}),
+      });
     });
     // A mixed batch keeps each requested route. Missing clone evidence blocks
     // that project in production; it must never substitute a product route.

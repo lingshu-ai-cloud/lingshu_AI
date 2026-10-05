@@ -53,6 +53,8 @@ for (const task of compiled.tasks) for (const dep of task.dependsOn) assert.ok(c
 assert.ok(packageConfig(pack, config).enabledWorkflows.includes('batch_followup'), 'starting stage must retain eligible customer followup');
 const scoped = normalizePackage({ ...pack, authorization: { mode: 'bounded', accountIds: ['account-a'], maxPublishItems: 2, customerIds: ['customer-a'], maxCustomerMessages: 1 } });
 assert.deepEqual(scoped.directorPlan, pack.directorPlan, 'director budgets and targets persist through normalization');
+const unknownDetailCost = normalizePackage({ ...pack, detailGeneration: { status: 'ready', startedAt: '2026-10-05T00:00:00Z', generatedAt: '2026-10-05T00:01:00Z', estimatedMinutes: 2, usageCostCny: null, readyCount: 1, blockedCount: 0, blockers: [] } });
+assert.equal(unknownDetailCost.detailGeneration?.usageCostCny, null, 'unknown Agent usage must not normalize into a fabricated zero cost');
 const overBudget = normalizePackage({ ...pack, directorPlan: { ...pack.directorPlan!, productionBudget: 100, productionSpent: 70, productionReserved: 40 } });
 assert.ok(validatePackage(overBudget, goal).some(issue => issue.includes('超过生产预算')));
 const costly = structuredClone(pack); costly.directorPlan!.productionBudget = 10; costly.tasks.find(t => t.templateId === 'production')!.videoPlans![0].estimatedCost = 20;

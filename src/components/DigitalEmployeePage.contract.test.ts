@@ -13,6 +13,7 @@ import { nodeDeepLink } from './WeeklyExecutionNodes.js';
 
 const pageSource = fs.readFileSync('src/components/DigitalEmployeePage.tsx', 'utf8');
 const smartBusinessSource = fs.readFileSync('src/components/SmartBusinessDashboard.tsx', 'utf8');
+const accountRailSource = fs.readFileSync('src/components/SmartOperationsAccountRail.tsx', 'utf8');
 const planHistorySource = fs.readFileSync('src/components/PlanHistoryDialog.tsx', 'utf8');
 const socialPerformanceSource = fs.readFileSync('src/lib/socialPerformance.ts', 'utf8');
 const inspirationSource = fs.readFileSync('src/components/InspirationDashboard.tsx', 'utf8');
@@ -46,6 +47,19 @@ const currentPlanSource = pageSource.slice(
   pageSource.indexOf('<section aria-label="当前周计划"'),
   pageSource.indexOf('<nav aria-label="智能经营视图"'),
 );
+
+for (const label of ['智能经营', '生成免费任务总纲', '步骤 1 · 免费', '步骤 2 · Agent 预分析']) {
+  assert.match(pageSource, new RegExp(label), `Smart Operations must expose the approved two-step flow: ${label}`);
+}
+for (const label of ['全部账号', 'YouTube', 'Instagram', 'Facebook', 'TikTok']) {
+  assert.match(accountRailSource, new RegExp(label), `the Smart Operations account rail must expose ${label}`);
+}
+for (const label of ['爆款视频预览', '素材组合预览', '效果置信度', '任务不能开始']) {
+  assert.match(smartBusinessSource, new RegExp(label), `content task cards must expose ${label}`);
+}
+assert.match(smartBusinessSource, /当前节点[\s\S]{0,1000}来源[\s\S]{0,1000}结果[\s\S]{0,1000}下一步/, 'the existing four-Agent section must expose node, source, result, and next step');
+assert.doesNotMatch(smartBusinessSource, /数字员工协作状态|四位数字员工协作状态/, 'the dashboard must not create a separate Digital Employee section');
+assert.match(pageSource, /role="switch"[\s\S]{0,300}aria-checked=\{smartOperationsEnabled\}/, 'Smart Operations must have an explicit global switch');
 
 const assistantOrbitSource = assistantSource.slice(
   assistantSource.indexOf('const SKILL_AGENTS'),
@@ -110,9 +124,11 @@ assert.match(pageSource, /addEventListener\('lingshu:open-digital-employee-guide
 assert.match(currentPlanSource, /查看本周计划[\s\S]{0,500}Agent 设置[\s\S]{0,500}历史计划/, 'the current-plan card must keep history as the rightmost management action');
 assert.doesNotMatch(currentPlanSource, /查看内容队列|查看完整周计划|新手引导/, 'the current-plan card must not keep duplicate queue, full-plan, or guide buttons');
 assert.match(pageSource, /aria-label=\{goal && !newGoal \? "本周计划详情" : "周计划生成"\}/, 'the weekly-plan dialog must distinguish inspecting the current plan from generating a new one');
-assert.match(pageSource, /这里汇总本周目标、内容清单、账号矩阵与 Agent 分工。/, 'the current weekly-plan detail must explain exactly what users can inspect');
-assert.match(pageSource, /确认后，计划会直接写入经营总览、账号矩阵、内容队列和数据复盘。/, 'weekly-plan creation must explain how the confirmed plan feeds all four business views');
-assert.match(pageSource, /confirmGeneratedWeeklyPlan[\s\S]{0,900}createGoal[\s\S]{0,500}approveGoal/, 'a single confirmation must create and approve the weekly plan');
+assert.match(pageSource, /先确认免费总纲，再单独启动 Agent 生成爆款与素材预览。/, 'the weekly-plan detail must explain the approved two-step generation flow');
+const outlineFlowSource = pageSource.slice(pageSource.indexOf('const createWeeklyOutline'), pageSource.indexOf('const generateCurrentPlanDetails'));
+assert.match(outlineFlowSource, /digitalEmployeeApi\.createGoal/, 'step 1 must persist the free weekly outline');
+assert.doesNotMatch(outlineFlowSource, /approveGoal/, 'step 1 must not silently approve or start the weekly plan');
+assert.match(pageSource, /generateCurrentPlanDetails[\s\S]{0,600}generatePackageDetails/, 'step 2 must explicitly call the persisted Agent-detail endpoint');
 assert.match(pageSource, /aria-label="社媒视频矩阵"[\s\S]{0,2500}编辑完整矩阵/, 'the default weekly proposal must visibly restore the social video matrix');
 assert.match(pageSource, /page === "socialPlanning"[\s\S]{0,240}setWeeklyPlanOpen\(true\)/, 'the account matrix next step must open weekly-plan generation inside Smart Business');
 assert.match(currentPlanSource, /历史计划/, 'Smart Business must expose plan history from the current-plan card');
@@ -376,6 +392,7 @@ assert.match(assistantSource, /page === 'digitalEmployees'[\s\S]{0,100}mode === 
 
 const fingerprintConfig: DigitalEmployeeConfig = {
   companyName: '灵枢', industry: '制造', primaryBusiness: '设备', targetMarkets: '美国', customerProfile: '经销商',
+  smartOperationsEnabled: true,
   autonomyMode: 'managed', approvalOwner: '负责人', constraints: ['真实发布必须审批'], team: ['planner'],
   primaryGoal: 'leads', focusProducts: '产品 A', enabledWorkflows: ['scheduled_social'], socialCadence: '每天 09:00',
   followupCadence: '每周五', reviewSchedule: '每周五 17:30',

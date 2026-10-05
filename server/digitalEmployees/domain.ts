@@ -44,6 +44,8 @@ export interface DigitalEmployeeConfig {
   videoDefaults?: Partial<VideoCreationPlan>;
   /** Languages generated autonomously for every content order. */
   videoLanguages: string[];
+  /** Future-cycle switch; active runs keep their frozen configuration. */
+  smartOperationsEnabled: boolean;
   companyName: string;
   industry: string;
   primaryBusiness: string;
@@ -182,6 +184,7 @@ export function normalizeDigitalEmployeeConfig(input: Partial<DigitalEmployeeCon
     defaultParticipation: input.defaultParticipation === "team" ? "team" : "agent",
     videoDefaults: normalizeVideoPlan(input.videoDefaults || {}),
     videoLanguages: videoLanguages.length ? videoLanguages : [defaultVideoLanguage in VIDEO_LANGUAGES ? defaultVideoLanguage : 'en'],
+    smartOperationsEnabled: input.smartOperationsEnabled !== false,
     companyName: text(input.companyName, 120),
     industry: text(input.industry, 120),
     primaryBusiness: text(input.primaryBusiness, 500),
