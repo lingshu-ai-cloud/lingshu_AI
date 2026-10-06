@@ -527,6 +527,7 @@ export type ContentExecutionRuntimeStatus =
   | "retry_wait"
   | "reconciling"
   | "blocked"
+  | "paused"
   | "succeeded"
   | "cancelled"
   | "dead_letter";

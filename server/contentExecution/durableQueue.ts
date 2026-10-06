@@ -23,6 +23,7 @@ export type ContentExecutionJobStatus =
   | 'retry_wait'
   | 'reconciling'
   | 'blocked'
+  | 'paused'
   | 'succeeded'
   | 'cancelled'
   | 'dead_letter';
@@ -98,7 +99,7 @@ function stableId(...parts: string[]): string {
 
 function jobFromRow(row: JobRow): ContentExecutionJob {
   const status = text(row.status, 40) as ContentExecutionJobStatus;
-  if (!row.id || !['queued', 'running', 'retry_wait', 'reconciling', 'blocked', 'succeeded', 'cancelled', 'dead_letter'].includes(status)) {
+  if (!row.id || !['queued', 'running', 'retry_wait', 'reconciling', 'blocked', 'paused', 'succeeded', 'cancelled', 'dead_letter'].includes(status)) {
     throw new Error('content_execution_job_record_invalid');
   }
   return {
@@ -387,6 +388,14 @@ async function claimNextJob(input: {
 }
 
 async function finishSucceeded(dataStore: DataStore, job: ContentExecutionJob, now: Date): Promise<void> {
+  const currentRow = await dataStore.getById<JobRow>(CONTENT_EXECUTION_JOB_COLLECTION, job.id);
+  const current = currentRow ? jobFromRow(currentRow) : job;
+  if (current.status === 'paused' || current.status === 'cancelled') {
+    if (!await dataStore.update(CONTENT_EXECUTION_JOB_COLLECTION, job.id, {
+      worker_id: '', lease_expires_at: '', updated_at: now.toISOString(),
+    })) throw new Error('content_execution_job_control_settlement_failed');
+    return;
+  }
   if (!await dataStore.update(CONTENT_EXECUTION_JOB_COLLECTION, job.id, {
     status: 'succeeded', next_attempt_at: '', worker_id: '', lease_expires_at: '', retry_class: '', last_error: '',
     completed_at: now.toISOString(), updated_at: now.toISOString(),
@@ -402,6 +411,15 @@ async function finishFailed(input: {
 }): Promise<ContentExecutionRetryDecision> {
   const currentRow = await input.dataStore.getById<JobRow>(CONTENT_EXECUTION_JOB_COLLECTION, input.job.id);
   const current = currentRow ? jobFromRow(currentRow) : input.job;
+  if (current.status === 'paused' || current.status === 'cancelled') {
+    await input.dataStore.update(CONTENT_EXECUTION_JOB_COLLECTION, current.id, {
+      worker_id: '', lease_expires_at: '', updated_at: input.now.toISOString(),
+    });
+    return {
+      failureClass: 'system_fault', disposition: 'block', retryDelayMs: null,
+      maxAttempts: 1, publicReason: current.status === 'paused' ? '任务已暂停' : '任务已取消',
+    };
+  }
   const providerPending = hasProviderWork(current);
   const reconcileAttempt = Math.max(1, current.reconciliationAttempt);
   const decision = classifyContentExecutionFailure(input.error, {
@@ -539,4 +557,62 @@ export async function readContentExecutionJob(
   });
   if (rows.totalItems > 1 || rows.items.length > 1) throw new Error('content_execution_job_integrity_violation');
   return rows.items[0] ? jobFromRow(rows.items[0]) : null;
+}
+
+export type ContentExecutionControlAction = 'pause' | 'cancel' | 'resume' | 'retry';
+
+/**
+ * Applies customer-visible controls to the durable job itself. A running paid
+ * provider call cannot always be interrupted, so pause/cancel prevents later
+ * queue stages from being claimed and finish handlers preserve that decision.
+ * Resuming the same job keeps its provider receipts and idempotency identity.
+ */
+export async function controlContentExecutionJob(input: {
+  dataStore: DataStore;
+  tenantId: string;
+  jobId: string;
+  action: ContentExecutionControlAction;
+  now?: Date;
+}): Promise<ContentExecutionJob> {
+  const tenantId = requiredIdentity(input.tenantId, 'tenant');
+  const jobId = requiredIdentity(input.jobId, 'job');
+  const row = await input.dataStore.getById<JobRow>(CONTENT_EXECUTION_JOB_COLLECTION, jobId);
+  if (!row) throw new Error('content_execution_job_not_found');
+  const current = jobFromRow(row);
+  if (current.tenantId !== tenantId) throw new Error('content_execution_job_not_found');
+  const now = (input.now ?? new Date()).toISOString();
+  let patch: Record<string, unknown>;
+  if (input.action === 'pause') {
+    if (['succeeded', 'cancelled'].includes(current.status)) throw new Error('content_execution_job_not_pauseable');
+    if (current.status === 'paused') return current;
+    patch = { status: 'paused', next_attempt_at: '', updated_at: now };
+  } else if (input.action === 'cancel') {
+    if (current.status === 'succeeded') throw new Error('content_execution_job_not_cancellable');
+    if (current.status === 'cancelled') return current;
+    patch = { status: 'cancelled', next_attempt_at: '', completed_at: now, updated_at: now };
+  } else if (input.action === 'resume') {
+    if (!['paused', 'cancelled'].includes(current.status)) throw new Error('content_execution_job_not_resumable');
+    const reconcile = hasProviderWork(current);
+    patch = {
+      status: reconcile ? 'reconciling' : 'queued',
+      retry_class: reconcile ? 'provider_reconciliation' : '',
+      next_attempt_at: now, worker_id: '', lease_expires_at: '', completed_at: '', updated_at: now,
+    };
+  } else {
+    if (!['blocked', 'dead_letter'].includes(current.status)) throw new Error('content_execution_job_not_retryable');
+    const reconcile = hasProviderWork(current);
+    patch = {
+      status: reconcile ? 'reconciling' : 'queued',
+      retry_class: reconcile ? 'provider_reconciliation' : '',
+      next_attempt_at: now, worker_id: '', lease_expires_at: '', last_error: '', completed_at: '',
+      ...(reconcile ? {} : { attempt: 0, reconciliation_attempt: 0 }),
+      updated_at: now,
+    };
+  }
+  if (!await input.dataStore.update(CONTENT_EXECUTION_JOB_COLLECTION, current.id, patch)) {
+    throw new Error('content_execution_job_control_failed');
+  }
+  const saved = await input.dataStore.getById<JobRow>(CONTENT_EXECUTION_JOB_COLLECTION, current.id);
+  if (!saved) throw new Error('content_execution_job_control_readback_failed');
+  return jobFromRow(saved);
 }

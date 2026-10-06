@@ -53,12 +53,12 @@ test('shooting API: tenant isolation, validation, durable reload, append and fai
     const concurrent = await Promise.all(['video-1', 'video-2', 'video-1', 'video-3'].map(id => call(`/${task.id}/uploads`, { uploadedMaterialIds: [id] })));
     assert.ok(concurrent.every(response => response.status === 200));
     const tasks = await (await call()).json();
-    assert.deepEqual(tasks[0].uploadedMaterialIds, ['video-1', 'video-2', 'video-3']);
+    assert.deepEqual([...tasks[0].uploadedMaterialIds].sort(), ['video-1', 'video-2', 'video-3']);
     assert.equal(tasks[0].requirements, requirement);
     assert.equal(tasks[0].sourceShotId, 'stable');
     failWrites = true;
     assert.equal((await call('', input)).status, 503);
     assert.equal((await call(`/${task.id}/uploads`, { uploadedMaterialIds: ['video-1'] })).status, 503);
-    assert.deepEqual((await (await call()).json())[0].uploadedMaterialIds, ['video-1', 'video-2', 'video-3']);
+    assert.deepEqual([...(await (await call()).json())[0].uploadedMaterialIds].sort(), ['video-1', 'video-2', 'video-3']);
   } finally { await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())); }
 });

@@ -9,6 +9,7 @@ import {
 import {
   admitContentExecutionJob,
   DurableContentExecutionWorker,
+  controlContentExecutionJob,
   readContentExecutionJob,
   setContentExecutionLimit,
 } from './durableQueue.js';
@@ -161,6 +162,32 @@ test('customer runtime projection explains capacity, queue position and retry wi
   assert.match(retry?.publicReason || '', /分级重试/);
   assert.equal(JSON.stringify(runtime).includes('private socket address'), false);
   assert.equal(JSON.stringify(runtime).includes('private-worker'), false);
+});
+
+test('pause, cancel, resume and manual retry preserve the same durable job identity', async () => {
+  const store = new MemoryStore();
+  const job = await admitContentExecutionJob({
+    dataStore: store, tenantId: 'tenant-a', userId: 'user-a', taskId: 'task-control', runId: 'run-control',
+    accountId: 'account-a', taskType: 'social_content_weekly', now: new Date('2026-10-04T00:00:00Z'),
+  });
+  const paused = await controlContentExecutionJob({ dataStore: store, tenantId: 'tenant-a', jobId: job.id, action: 'pause' });
+  assert.equal(paused.status, 'paused');
+  const resumed = await controlContentExecutionJob({ dataStore: store, tenantId: 'tenant-a', jobId: job.id, action: 'resume' });
+  assert.equal(resumed.status, 'queued');
+  const cancelled = await controlContentExecutionJob({ dataStore: store, tenantId: 'tenant-a', jobId: job.id, action: 'cancel' });
+  assert.equal(cancelled.status, 'cancelled');
+  const recovered = await controlContentExecutionJob({ dataStore: store, tenantId: 'tenant-a', jobId: job.id, action: 'resume' });
+  assert.equal(recovered.status, 'queued');
+  await store.update(CONTENT_EXECUTION_JOB_COLLECTION, job.id, { status: 'blocked', attempt: 3, last_error: 'private failure' });
+  const retried = await controlContentExecutionJob({ dataStore: store, tenantId: 'tenant-a', jobId: job.id, action: 'retry' });
+  assert.equal(retried.status, 'queued');
+  assert.equal(retried.attempt, 0);
+  assert.equal(retried.lastError, null);
+  assert.equal(retried.id, job.id);
+  await assert.rejects(
+    controlContentExecutionJob({ dataStore: store, tenantId: 'tenant-b', jobId: job.id, action: 'pause' }),
+    /content_execution_job_not_found/,
+  );
 });
 
 test('worker enforces tenant and account caps while allowing another customer to run', async () => {

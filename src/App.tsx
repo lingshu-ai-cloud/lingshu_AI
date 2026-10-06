@@ -23,6 +23,7 @@ import { PAGE_REGISTRY, resolveNavigationPage, resolvePage, type LegacyTrafficVi
 import { SocialProgramProvider } from './contexts/SocialProgramContext';
 import { PageErrorBoundary, PageLoading } from './components/AppPageBoundary';
 import type { SocialContentCreateRequest } from './components/socialContent/SocialContentWorkspace';
+import RuntimeVersionBanner from './components/RuntimeVersionBanner';
 import { AGENT_PAGES, ROLE_PAGE_ACCESS, customerUnifiedAgent, firstUserText, isAdminSession, isExternalCustomerServiceDemoSession, isLocalCustomerReplyLab, loadConvs, loadPage, pagePreferenceScope, type AgentAction, type AgentType, type Conversation, type ConversationContext, type KickoffSignal, type Message, type RestoreSignal, type StarterAccessState } from './appSession';
 
 // 页面仍然拆包，但本地预览会在浏览器空闲时逐个预热这些模块。显式 loader
@@ -66,9 +67,9 @@ const StarterWorkspacePage = lazy(loadStarterWorkspacePage);
 const SocialContentPlanningPage = lazy(loadSocialContentPlanningPage);
 const SocialTaskContextBar = lazy(loadSocialTaskContextBar);
 const StarterWorkflowContextBar = lazy(loadStarterWorkflowContextBar);
-const DesignPrototype = lazy(() => import('./dev/DesignPrototype'));
-const SocialContentPreview = lazy(() => import('./dev/SocialContentPreview'));
-const SmartBusinessPreview = lazy(() => import('./dev/SmartBusinessPreview'));
+const DesignPrototype = import.meta.env.DEV ? lazy(() => import('./dev/DesignPrototype')) : null;
+const SocialContentPreview = import.meta.env.DEV ? lazy(() => import('./dev/SocialContentPreview')) : null;
+const SmartBusinessPreview = import.meta.env.DEV ? lazy(() => import('./dev/SmartBusinessPreview')) : null;
 const StartupHubPage = lazy(() => import('./components/StartupHubPage'));
 
 type PageModuleLoader = () => Promise<unknown>;
@@ -170,21 +171,21 @@ export default function App() {
       </Suspense>
     );
   }
-  if (publicPath === '/design-prototype') {
+  if (import.meta.env.DEV && DesignPrototype && publicPath === '/design-prototype') {
     return (
       <Suspense fallback={<PageLoading />}>
         <DesignPrototype />
       </Suspense>
     );
   }
-  if (import.meta.env.DEV && publicPath === '/social-content-preview') {
+  if (import.meta.env.DEV && SocialContentPreview && publicPath === '/social-content-preview') {
     return (
       <Suspense fallback={<PageLoading />}>
         <SocialContentPreview />
       </Suspense>
     );
   }
-  if (import.meta.env.DEV && publicPath === '/smart-business-preview') {
+  if (import.meta.env.DEV && SmartBusinessPreview && publicPath === '/smart-business-preview') {
     return (
       <Suspense fallback={<PageLoading />}>
         <SmartBusinessPreview />
@@ -212,6 +213,14 @@ export default function App() {
       if (previous.has(page)) return previous;
       const next = new Set(previous);
       next.add(page);
+      // Keep the home and production workbench warm, but cap other retained
+      // pages so a long session does not accumulate every heavy workspace.
+      const sticky = new Set<Page>(['digitalEmployees', 'smartAssets']);
+      while (next.size > 6) {
+        const removable = [...next].find(item => item !== page && !sticky.has(item));
+        if (!removable) break;
+        next.delete(removable);
+      }
       return next;
     });
   }, [page]);
@@ -819,6 +828,7 @@ export default function App() {
           onSessionRefresh={() => void refreshSession()}
         />}
       </Suspense>
+      <RuntimeVersionBanner />
       {sessionRefreshError && <div role="status" className="shrink-0 border-b border-amber-200 bg-amber-50 px-5 py-2 text-sm text-amber-900">{sessionRefreshError} <button type="button" className="ml-2 font-semibold underline" onClick={() => void refreshSession()}>立即重试</button></div>}
       {starterMode && isSocialTaskContextPage(page) && (
         <Suspense fallback={null}>

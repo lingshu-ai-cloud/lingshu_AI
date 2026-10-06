@@ -12,6 +12,7 @@ import type { BackgroundJobRuntimeState } from './workerHeartbeat.js';
 import { checkPostgres, selectedDataBackend } from '../storage/postgres.js';
 import { checkBullMq, selectedQueueBackend } from '../queues/bullmq.js';
 import { store } from '../storage/index.js';
+import { runtimeBuildInfo } from './buildInfo.js';
 
 export type RuntimeCapability =
   | 'text_generation'
@@ -284,7 +285,9 @@ export function runtimeCapabilities(role: ProcessRole): Record<RuntimeCapability
 }
 
 export function requiredCapabilityIssues(capabilities: Record<RuntimeCapability, CapabilityState>): string[] {
-  const required = String(process.env.REQUIRED_CAPABILITIES || '')
+  const configured = String(process.env.REQUIRED_CAPABILITIES || '').trim();
+  const defaultProductionCapabilities = 'text_generation,qwen_generation,tts,video_generation,digital_human';
+  const required = String(configured || (process.env.NODE_ENV === 'production' ? defaultProductionCapabilities : ''))
     .split(/[\s,;]+/)
     .map(value => value.trim())
     .filter(Boolean);
@@ -360,6 +363,7 @@ export async function runtimeReadiness(input: {
   }
   return {
     status: issues.length ? 'degraded' as const : 'ready' as const,
+    build: runtimeBuildInfo(),
     role: input.role,
     capabilities,
     digitalHumanQuality: quality,

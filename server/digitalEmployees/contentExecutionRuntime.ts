@@ -15,6 +15,7 @@ const STATUSES: ContentExecutionRuntimeStatus[] = [
   'retry_wait',
   'reconciling',
   'blocked',
+  'paused',
   'succeeded',
   'cancelled',
   'dead_letter',
@@ -48,6 +49,9 @@ function publicReason(job: ContentExecutionJob): string {
   if (job.status === 'running') return '后台正在制作，结果会持续保存';
   if (job.status === 'succeeded') return '后台制作已完成';
   if (job.status === 'cancelled') return '任务已取消';
+  if (job.status === 'paused') return hasUnsettledProviderWork(job)
+    ? '已暂停后续步骤；供应商当前任务仍会对账，恢复时不会重复提交'
+    : '任务已暂停，进度和已完成结果已保留';
   if (job.status === 'dead_letter') return '自动恢复已停止，需要人工处理';
   const reasonByClass: Record<string, string> = {
     network_timeout: job.status === 'blocked' ? '网络重试已用尽，需要人工恢复' : '网络异常，正在分级重试',
@@ -58,6 +62,10 @@ function publicReason(job: ContentExecutionJob): string {
     input_required: '需要补充素材或人工修改',
   };
   return reasonByClass[job.retryClass || ''] || (job.status === 'blocked' ? '任务需要人工处理' : '等待自动恢复');
+}
+
+function hasUnsettledProviderWork(job: ContentExecutionJob): boolean {
+  return job.providerReceipts.some(receipt => ['submitting', 'accepted', 'unknown'].includes(receipt.state));
 }
 
 function waitingOn(input: {

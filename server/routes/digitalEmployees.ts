@@ -26,6 +26,7 @@ import { contentAcceptanceHash, contentAccepted } from '../digitalEmployees/cont
 import { buildDeliveryResources } from '../digitalEmployees/deliveryResources.js';
 import { buildContentQueueProjection } from '../digitalEmployees/contentQueue.js';
 import { buildContentExecutionRuntime, unavailableContentExecutionRuntime } from '../digitalEmployees/contentExecutionRuntime.js';
+import { controlContentExecutionJob, type ContentExecutionControlAction } from '../contentExecution/durableQueue.js';
 import { buildTaskDeepLink, type WorkflowTask } from '../../src/lib/digitalEmployees.js';
 import { Router, type Request, type Response } from 'express';
 import fs from 'node:fs';
@@ -3772,6 +3773,26 @@ digitalEmployeesRouter.post('/tasks/:taskId/director-decision', async (req, res)
 digitalEmployeesRouter.post('/tasks/:taskId/retry', async (req, res) => handleTaskControl(req, res, 'retry'));
 digitalEmployeesRouter.post('/tasks/:taskId/skip', async (req, res) => handleTaskControl(req, res, 'skip'));
 digitalEmployeesRouter.post('/tasks/:taskId/complete', async (req, res) => handleTaskControl(req, res, 'manual_complete'));
+
+digitalEmployeesRouter.post('/execution-jobs/:jobId/:action', async (req, res) => {
+  const { tenantId } = res.locals as AuthLocals;
+  const action = String(req.params.action || '') as ContentExecutionControlAction;
+  if (!['pause', 'cancel', 'resume', 'retry'].includes(action)) {
+    res.status(400).json({ error: 'content_execution_control_invalid' });
+    return;
+  }
+  try {
+    await controlContentExecutionJob({
+      dataStore: store, tenantId, jobId: String(req.params.jobId || ''), action,
+    });
+    res.json(await buildOverview(tenantId));
+  } catch (error) {
+    const code = error instanceof Error ? error.message : 'content_execution_job_control_failed';
+    const status = code === 'content_execution_job_not_found' ? 404
+      : code.includes('not_') || code.endsWith('_invalid') ? 409 : 500;
+    res.status(status).json({ error: code });
+  }
+});
 
 async function canonicalEvidenceRef(tenantId: string, raw: Record<string, unknown>): Promise<Record<string, unknown> | null> {
   const type = String(raw.type || '').trim();

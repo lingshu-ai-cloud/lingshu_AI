@@ -15,6 +15,7 @@ import {
   RefreshCcw,
   Sparkles,
   TrendingUp,
+  Trophy,
   Users,
   X,
 } from "lucide-react";
@@ -218,6 +219,7 @@ const executionStatusLabel: Record<ContentExecutionRuntimeJob["status"], string>
   retry_wait: "等待重试",
   reconciling: "供应商对账",
   blocked: "需要处理",
+  paused: "已暂停",
   succeeded: "已完成",
   cancelled: "已取消",
   dead_letter: "恢复已停止",
@@ -229,6 +231,7 @@ const executionStatusTone: Record<ContentExecutionRuntimeJob["status"], string> 
   retry_wait: "bg-amber-50 text-amber-700",
   reconciling: "bg-violet-50 text-violet-700",
   blocked: "bg-red-50 text-red-700",
+  paused: "bg-amber-50 text-amber-800",
   succeeded: "bg-emerald-50 text-emerald-700",
   cancelled: "bg-slate-100 text-slate-500",
   dead_letter: "bg-red-100 text-red-800",
@@ -254,15 +257,39 @@ function executionWaitingLabel(job: ContentExecutionRuntimeJob) {
   return job.publicReason;
 }
 
-function ExecutionRuntimePanel({ data, onRefresh, compact = false }: { data: DigitalEmployeeOverview; onRefresh?: () => void; compact?: boolean }) {
+type ExecutionControlAction = "pause" | "cancel" | "resume" | "retry";
+
+function ExecutionRuntimePanel({ data, onRefresh, onControlJob, compact = false }: { data: DigitalEmployeeOverview; onRefresh?: () => void; onControlJob?: (jobId: string, action: ExecutionControlAction) => Promise<boolean>; compact?: boolean }) {
   const runtime = data.executionRuntime;
+  const [controlling, setControlling] = useState("");
+  const [controlError, setControlError] = useState("");
   if (!runtime) return null;
-  const activeJobs = runtime.jobs.filter(job => ["running", "queued", "retry_wait", "reconciling", "blocked", "dead_letter"].includes(job.status));
+  const activeJobs = runtime.jobs.filter(job => ["running", "queued", "retry_wait", "reconciling", "blocked", "paused", "cancelled", "dead_letter"].includes(job.status));
   const visibleJobs = [...activeJobs].sort((left, right) => {
-    const priority = (status: ContentExecutionRuntimeJob["status"]) => status === "blocked" || status === "dead_letter" ? 0 : status === "reconciling" ? 1 : status === "retry_wait" ? 2 : status === "running" ? 3 : 4;
+    const priority = (status: ContentExecutionRuntimeJob["status"]) => status === "blocked" || status === "dead_letter" ? 0 : status === "paused" ? 1 : status === "reconciling" ? 2 : status === "retry_wait" ? 3 : status === "running" ? 4 : status === "queued" ? 5 : 6;
     return priority(left.status) - priority(right.status) || Date.parse(right.updatedAt) - Date.parse(left.updatedAt);
   }).slice(0, compact ? 4 : 6);
   const accountLabel = (accountId: string) => data.config?.publishingTargets.find(target => target.accountId === accountId)?.accountLabel || (accountId === "_unassigned" ? "未指定账号" : accountId);
+  const controlsFor = (job: ContentExecutionRuntimeJob): Array<{ action: ExecutionControlAction; label: string; tone?: string }> => {
+    if (["blocked", "dead_letter"].includes(job.status)) return [{ action: "retry", label: "重新生成", tone: "bg-amber-400 text-amber-950" }, { action: "cancel", label: "取消" }];
+    if (["paused", "cancelled"].includes(job.status)) return [{ action: "resume", label: job.status === "cancelled" ? "恢复为新一轮" : "继续任务", tone: "bg-emerald-700 text-white" }];
+    if (["queued", "running", "retry_wait", "reconciling"].includes(job.status)) return [{ action: "pause", label: "暂停" }, { action: "cancel", label: "取消" }];
+    return [];
+  };
+  const control = async (job: ContentExecutionRuntimeJob, action: ExecutionControlAction) => {
+    if (!onControlJob || controlling) return;
+    if (action === "cancel" && !window.confirm("取消后会停止后续节点；已经提交给供应商的当前步骤可能仍需完成对账。确定取消吗？")) return;
+    setControlling(`${job.id}:${action}`);
+    setControlError("");
+    try {
+      const ok = await onControlJob(job.id, action);
+      if (ok) showActionSuccess(action === "pause" ? "任务已暂停" : action === "cancel" ? "任务已取消" : action === "resume" ? "任务已恢复" : "任务已重新排队", "进度与已完成结果均已保留。");
+    } catch (error) {
+      setControlError(error instanceof Error ? error.message : "任务操作失败，请重试");
+    } finally {
+      setControlling("");
+    }
+  };
 
   return <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6" aria-labelledby="execution-runtime-title">
     <div className="flex flex-wrap items-start justify-between gap-4">
@@ -275,17 +302,18 @@ function ExecutionRuntimePanel({ data, onRefresh, compact = false }: { data: Dig
         { label: "单账号上限", value: runtime.capacity.accountDefaultMaxRunning, note: "同账号默认同时运行" },
         { label: "后台工作槽", value: runtime.capacity.workerMaxRunning, note: "单个后台进程上限" },
         { label: "自动恢复中", value: runtime.counts.retry_wait + runtime.counts.reconciling, note: `重试 ${runtime.counts.retry_wait} · 对账 ${runtime.counts.reconciling}` },
-        { label: "需要处理", value: runtime.counts.blocked + runtime.counts.dead_letter, note: "补素材、改内容或恢复任务" },
+        { label: "需要处理", value: runtime.counts.blocked + runtime.counts.dead_letter + runtime.counts.paused, note: `阻断 ${runtime.counts.blocked + runtime.counts.dead_letter} · 暂停 ${runtime.counts.paused}` },
       ].map(item => <article key={item.label} className="rounded-2xl border border-slate-100 bg-slate-50/70 px-4 py-3"><p className="text-[9px] font-bold text-slate-400">{item.label}</p><p className="mt-1 text-xl font-black text-slate-950">{item.value}</p><p className="mt-1 text-[9px] leading-4 text-slate-500">{item.note}</p></article>)}
     </div>
     <div className="mt-4 overflow-hidden rounded-2xl border border-slate-100">
-      {visibleJobs.map((job,index) => <article key={job.id} className={`grid gap-2 px-4 py-3 lg:grid-cols-[minmax(0,1fr)_160px_170px] lg:items-center ${index ? "border-t border-slate-100" : ""}`}>
+      {visibleJobs.map((job,index) => <article key={job.id} className={`grid gap-2 px-4 py-3 lg:grid-cols-[minmax(0,1fr)_130px_minmax(170px,auto)] lg:items-center ${index ? "border-t border-slate-100" : ""}`}>
         <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><span className={`rounded-full px-2 py-1 text-[9px] font-black ${executionStatusTone[job.status]}`}>{executionStatusLabel[job.status]}</span><span className="truncate text-xs font-black text-slate-800">{accountLabel(job.accountId)}</span></div><p className="mt-1 truncate text-[10px] text-slate-500">{job.publicReason}</p></div>
         <div><p className="text-[9px] font-bold text-slate-400">尝试次数</p><p className="mt-1 text-[10px] font-black text-slate-700">{job.attempt}/{job.maxAttempts}{job.retryClass === "provider_reconciliation" ? " · 对账优先" : ""}</p></div>
-        <div className="lg:text-right"><p className="text-[9px] font-bold text-slate-400">当前调度</p><p className="mt-1 text-[10px] font-black leading-4 text-slate-700">{executionWaitingLabel(job)}</p></div>
+        <div className="lg:text-right"><p className="text-[9px] font-bold text-slate-400">当前调度</p><p className="mt-1 text-[10px] font-black leading-4 text-slate-700">{executionWaitingLabel(job)}</p>{onControlJob&&controlsFor(job).length>0&&<div className="mt-2 flex flex-wrap gap-1.5 lg:justify-end">{controlsFor(job).map(item=><button key={item.action} type="button" disabled={Boolean(controlling)} onClick={()=>void control(job,item.action)} className={`rounded-lg border border-slate-200 px-2 py-1 text-[9px] font-black disabled:opacity-40 ${item.tone||"bg-white text-slate-600"}`}>{controlling===`${job.id}:${item.action}`?<Loader2 size={10} className="animate-spin"/>:item.label}</button>)}</div>}</div>
       </article>)}
-      {!visibleJobs.length&&<p className="px-4 py-8 text-center text-xs text-slate-400">当前没有排队、执行或异常任务。</p>}
+      {!visibleJobs.length&&<p className="px-4 py-8 text-center text-xs text-slate-400">后台队列当前没有正在执行或等待处理的任务；内容卡片上的缺素材等问题可能尚未进入制作队列。</p>}
     </div>
+    {controlError&&<p role="alert" className="mt-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-[10px] font-bold text-red-700">{controlError}</p>}
     {!compact&&<p className="mt-3 text-[10px] leading-5 text-slate-500">网络超时会自动分级重试；余额不足、内容拒绝和缺素材会停止并等待处理；供应商已经受理的任务先对账，不会盲目重复提交。</p>}
   </section>;
 }
@@ -333,6 +361,16 @@ function HomeView({ data, onRefresh, selectedAccountId = "" }: { data: DigitalEm
   const activeAgentCount = agentCards.filter(item => agentLiveState[item.role]).length;
   const waitingCount = contentQueue.filter(item => item.status === "waiting_review").length;
   const completedCount = contentQueue.filter(item => item.status === "completed").length;
+  const cycleProgress = contentQueue.length ? Math.round((completedCount / contentQueue.length) * 100) : 0;
+  const nextMilestone = weeklyStatusCounts.blocked > 0
+    ? `先处理 ${weeklyStatusCounts.blocked} 条卡点任务`
+    : weeklyStatusCounts.review > 0
+      ? `验收 ${weeklyStatusCounts.review} 条内容即可继续发布`
+      : weeklyStatusCounts.producing > 0
+        ? `${weeklyStatusCounts.producing} 条内容正在制作，完成后进入验收`
+        : completedCount > 0
+          ? "本轮内容已完成，等待数据回流生成复盘"
+          : "确认周计划后开始第一条内容";
   const platformCoverage = platformOptions.map(platform => ({
     platform,
     count: contentQueue.filter(item => item.platform === platform).length,
@@ -379,6 +417,12 @@ function HomeView({ data, onRefresh, selectedAccountId = "" }: { data: DigitalEm
         ].map(([label, value, tone]) => <span key={String(label)} className={`rounded-full px-3 py-1.5 text-[10px] font-black ${tone}`}>{label} {value}</span>)}
         <span className="ml-auto self-center text-[10px] font-bold text-slate-400">统一队列共 {contentQueue.length} 条，其中周计划 {weeklyQueue.length} 条</span>
       </div>
+    </section>
+
+    <section className="mt-4 grid gap-3 rounded-3xl border border-amber-200 bg-gradient-to-r from-amber-50 via-white to-emerald-50 p-4 shadow-sm sm:grid-cols-[auto_minmax(0,1fr)_auto] sm:items-center sm:p-5" aria-label="本周成果与下一里程碑">
+      <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-amber-400 text-amber-950"><Trophy size={21}/></span>
+      <div><p className="text-[10px] font-black uppercase tracking-[.16em] text-amber-700">本周成果</p><h3 className="mt-1 text-sm font-black text-slate-950">已完成 {completedCount} 条内容、{cycleCompleted} 个经营节点</h3><p className="mt-1 text-xs text-slate-600">下一里程碑：{nextMilestone}</p></div>
+      <div className="min-w-32"><div className="flex items-center justify-between text-[10px] font-bold text-slate-500"><span>内容完成度</span><strong className="text-emerald-800">{cycleProgress}%</strong></div><div className="mt-2 h-2 overflow-hidden rounded-full bg-white"><div className="h-full rounded-full bg-emerald-600 transition-[width]" style={{width:`${cycleProgress}%`}}/></div></div>
     </section>
 
     <div className="mt-6"><ExecutionRuntimePanel data={data} onRefresh={onRefresh}/></div>
@@ -717,7 +761,7 @@ function MatrixView({ data, onRefresh, onNavigate, onGeneratePlan, selectedAccou
         </article>)}
       </div>
       <div className="grid gap-px border-t border-white/10 bg-white/10 lg:grid-cols-[1.1fr_1.2fr]">
-        <div className="bg-[#173d31] px-5 py-4"><p className="text-[9px] font-black text-emerald-300">平台优先级</p><p className="mt-1 text-xs font-bold leading-5 text-white">LinkedIn：B2B 主阵地 · Facebook：定向广告与行业群组 · YouTube：长效信任 · TikTok / Instagram：触达与测试</p></div>
+        <div className="bg-[#173d31] px-5 py-4"><p className="text-[9px] font-black text-emerald-300">平台优先级</p><p className="mt-1 text-xs font-bold leading-5 text-white">YouTube：产品证据与长效信任 · Facebook：行业触达与询盘承接 · TikTok / Instagram：短视频测试与增量触达</p></div>
         <div className="bg-[#173d31] px-5 py-4"><p className="text-[9px] font-black text-emerald-300">线索闭环</p><p className="mt-1 text-xs font-bold leading-5 text-white">评论 “Quote” / 私信 → 官网、WhatsApp、邮箱或目录 → 客服 Agent 分级 → 销售跟进 → 周复盘</p></div>
       </div>
     </section>
@@ -820,15 +864,25 @@ function TaskPreviewCards({ item, onNavigate, onGenerateDetails }: {
   </div>;
 }
 
-function QueueView({ data, onRefresh, onNavigate, onGenerateDetails, selectedAccountId = "", onOpenContent, onOpenProductionProgress }: { data: DigitalEmployeeOverview; onRefresh?: () => void; onNavigate?: (page: Page) => void; onGenerateDetails?: () => void; selectedAccountId?: string; onOpenContent?: (taskId?: string, socialContentTaskId?: string) => void; onOpenProductionProgress?: (taskId: string, contentItemId: string) => void }) {
+function QueueView({ data, onRefresh, onNavigate, onGenerateDetails, selectedAccountId = "", onOpenContent, onOpenProductionProgress, onControlJob, onRetryTask }: { data: DigitalEmployeeOverview; onRefresh?: () => void; onNavigate?: (page: Page) => void; onGenerateDetails?: () => void; selectedAccountId?: string; onOpenContent?: (taskId?: string, socialContentTaskId?: string) => void; onOpenProductionProgress?: (taskId: string, contentItemId: string) => void; onControlJob?: (jobId: string, action: ExecutionControlAction) => Promise<boolean>; onRetryTask?: (taskId: string) => Promise<boolean> }) {
   const projection = data.contentQueue;
   const items = (projection?.items || []).filter(item => !selectedAccountId || item.accountId === selectedAccountId);
   const [statusFilter, setStatusFilter] = useState<"all" | "active" | "waiting_review" | "blocked" | "completed">("all");
+  const [retryingTaskId, setRetryingTaskId] = useState("");
   const filteredItems = items.filter(item => statusFilter === "all"
     || statusFilter === "active" && ["planned", "queued", "producing"].includes(item.status)
     || item.status === statusFilter);
   const pageSize = 6;
   const [page, setPage] = useState(1);
+  const retryBlockedTask = async (item: ContentQueueItem) => {
+    if (!onRetryTask || !item.taskId || retryingTaskId) return;
+    setRetryingTaskId(item.taskId);
+    try {
+      if (await onRetryTask(item.taskId)) showActionSuccess("任务已从失败节点重新生成", "已完成的素材和结果不会被覆盖。");
+    } finally {
+      setRetryingTaskId("");
+    }
+  };
   const totalPages = Math.max(1, Math.ceil(filteredItems.length / pageSize));
   const pageItems = filteredItems.slice((page - 1) * pageSize, page * pageSize);
   useEffect(() => setPage(current => Math.min(current, totalPages)), [totalPages]);
@@ -858,13 +912,13 @@ function QueueView({ data, onRefresh, onNavigate, onGenerateDetails, selectedAcc
         { id:"completed",label:"已完成",count:completed },
       ] as const).map(filter=><button key={filter.id} type="button" aria-pressed={statusFilter===filter.id} onClick={()=>setStatusFilter(filter.id)} className={`rounded-full border px-3 py-1.5 text-[10px] font-black ${statusFilter===filter.id?"border-slate-950 bg-slate-950 text-white":"border-slate-200 bg-white text-slate-600 hover:border-emerald-300"}`}>{filter.label} {filter.count}</button>)}</nav>
       <div className={`mt-4 rounded-xl border px-4 py-3 text-xs ${projection?.sourceStatus === 'available' ? 'border-emerald-100 bg-emerald-50 text-emerald-800' : 'border-amber-200 bg-amber-50 text-amber-800'}`}><strong>{projection?.sourceStatus === 'available' ? '真实链路已连接' : '队列等待数据'}</strong><span className="ml-2">{projection?.sourceNote || "当前没有可读取的内容计划"}</span></div>
-      <div className="mt-4"><ExecutionRuntimePanel data={data} onRefresh={onRefresh} compact/></div>
+      <div className="mt-4"><ExecutionRuntimePanel data={data} onRefresh={onRefresh} onControlJob={onControlJob} compact/></div>
       <section className="mt-4 space-y-3">
         {pageItems.map((item)=><article key={item.id} className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
           <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_220px_180px] lg:items-center">
-            <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><SocialPlatformIcon platform={item.platform} size={16}/><span className="text-[10px] font-black text-emerald-700">{platformLabels[item.platform]}</span><span className={`rounded-full px-2 py-1 text-[9px] font-black ${item.origin==='manual'?'bg-violet-50 text-violet-700':'bg-emerald-50 text-emerald-700'}`}>{item.origin==='manual'?'手动单项':'周计划任务'}</span><span className="rounded-full bg-slate-100 px-2 py-1 text-[9px] font-bold text-slate-600">{routeLabel[item.route]}</span><span className={`rounded-full px-2 py-1 text-[9px] font-black ${statusTone[item.status]}`}>{statusLabel[item.status]}</span><span className="text-[10px] text-slate-400">{item.plannedPublishDate || "待排期"}</span></div><h3 className="mt-2 text-sm font-black text-slate-950">{item.title}</h3><p className="mt-1 text-xs text-slate-500">{item.productName || "待绑定产品"} · {item.accountLabel || data.config?.publishingTargets.find(target=>target.accountId===item.accountId)?.accountLabel || "仅制作"}{item.languages.length?` · ${item.languages.join(" / ").toUpperCase()}`:""}</p><p className="mt-1 text-[10px] font-bold text-slate-500">预计输出 {item.outputSummary.count} 条 · {item.outputSummary.formats.join(" / ") || "待确认形式"}{item.outputSummary.durationSeconds!==null?` · 每条约 ${item.outputSummary.durationSeconds} 秒`:" · 时长待编导确认"}</p>{item.confidence&&<div className="mt-2 flex flex-wrap gap-1.5">{([["制作把握",item.confidence.production],["发布把握",item.confidence.publishing],["经营把握",item.confidence.business]] as const).map(([label,dimension])=><span key={label} title={[...dimension.evidence,...dimension.gaps].join("；")} className={`rounded-full px-2 py-1 text-[9px] font-black ${confidenceTone[dimension.level]}`}>{label}：{dimension.label}</span>)}</div>}{item.reason&&<p className="mt-2 text-[10px] font-bold text-red-600">{item.reason}</p>}</div>
+            <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><SocialPlatformIcon platform={item.platform} size={16}/><span className="text-[10px] font-black text-emerald-700">{platformLabels[item.platform]}</span><span className={`rounded-full px-2 py-1 text-[9px] font-black ${item.origin==='manual'?'bg-violet-50 text-violet-700':'bg-emerald-50 text-emerald-700'}`}>{item.origin==='manual'?'手动单项':'周计划任务'}</span><span className="rounded-full bg-slate-100 px-2 py-1 text-[9px] font-bold text-slate-600">{routeLabel[item.route]}</span><span className={`rounded-full px-2 py-1 text-[9px] font-black ${statusTone[item.status]}`}>{statusLabel[item.status]}</span><span className="text-[10px] text-slate-400">{item.plannedPublishDate || "待排期"}</span></div><h3 className="mt-2 text-sm font-black text-slate-950">{item.title}</h3><p className="mt-1 text-xs text-slate-500">{item.productName || "待绑定产品"} · {item.accountLabel || data.config?.publishingTargets.find(target=>target.accountId===item.accountId)?.accountLabel || "仅制作"}{item.languages.length?` · ${item.languages.join(" / ").toUpperCase()}`:""}</p><p className="mt-1 text-[10px] font-bold text-slate-500">预计输出 {item.outputSummary.count} 条 · {item.outputSummary.formats.join(" / ") || "待确认形式"}{item.outputSummary.durationSeconds!==null?` · 每条约 ${item.outputSummary.durationSeconds} 秒`:" · 时长待编导确认"}</p>{item.confidence&&item.status!=="blocked"&&<div className="mt-2 flex flex-wrap gap-1.5">{([["制作把握",item.confidence.production],["发布把握",item.confidence.publishing],["经营把握",item.confidence.business]] as const).map(([label,dimension])=><span key={label} title={[...dimension.evidence,...dimension.gaps].join("；")} className={`rounded-full px-2 py-1 text-[9px] font-black ${confidenceTone[dimension.level]}`}>{label}：{dimension.label}</span>)}</div>}{item.status==="blocked"&&<span className="mt-2 inline-flex rounded-full bg-amber-100 px-2 py-1 text-[9px] font-black text-amber-800">制作把握：待补齐素材后评估</span>}{item.reason&&<p className="mt-2 text-[10px] font-bold text-red-600">{item.reason}</p>}</div>
             <div><div className="flex items-center justify-between text-[10px]"><span className="font-bold text-slate-400">{item.stage}</span><strong className="text-slate-800">{item.progress}%</strong></div><div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-100"><div className={`h-full rounded-full ${item.status==='blocked'?'bg-red-500':item.status==='completed'?'bg-emerald-500':'bg-blue-500'}`} style={{width:`${item.progress}%`}}/></div><div className="mt-2 flex gap-1">{item.steps.map(step=><span key={step.label} title={`${step.label}：${step.state}`} className={`h-1.5 flex-1 rounded-full ${step.state==='done'?'bg-emerald-500':step.state==='active'?'bg-blue-500 motion-safe:animate-pulse':'bg-slate-200'}`}/>)}</div></div>
-            <div className="flex flex-wrap items-center justify-between gap-3 lg:justify-end"><div className="lg:text-right"><p className="text-[10px] font-bold text-slate-400">本条成本</p><p className="mt-1 text-sm font-black text-slate-950">{item.settledCostCny!==null?`¥${item.settledCostCny.toFixed(2)}`:item.costStatus==='awaiting_settlement'?"供应商待结算":item.estimatedCostCny!==null?`预算 ¥${item.estimatedCostCny.toFixed(2)}`:"暂无预算/结算"}</p><p className="mt-1 text-[9px] text-slate-400">{item.settledCostCny!==null?"真实供应商结算":item.estimatedCostCny!==null?"计划预计，不等于实付":"尚无可核算数据"}</p></div>{onOpenProductionProgress && <button type="button" onClick={() => onOpenProductionProgress(item.taskId, item.id)} className="shrink-0 rounded-lg border border-slate-200 bg-white px-3 py-2 text-[10px] font-black text-slate-700 hover:border-emerald-300">查看制作进度 →</button>}<button type="button" onClick={() => onOpenContent?.(item.taskId || undefined, item.socialContentTaskId || undefined)} className="shrink-0 rounded-lg bg-slate-950 px-3 py-2 text-[10px] font-black text-white hover:bg-slate-800">进入制作台 →</button></div>
+            <div className="flex flex-wrap items-center justify-between gap-3 lg:justify-end"><div className="lg:text-right"><p className="text-[10px] font-bold text-slate-400">本条成本</p><p className="mt-1 text-sm font-black text-slate-950">{item.settledCostCny!==null?`¥${item.settledCostCny.toFixed(2)}`:item.costStatus==='awaiting_settlement'?"供应商待结算":item.estimatedCostCny!==null?`预算 ¥${item.estimatedCostCny.toFixed(2)}`:"暂无预算/结算"}</p><p className="mt-1 text-[9px] text-slate-400">{item.settledCostCny!==null?"真实供应商结算":item.estimatedCostCny!==null?"计划预计，不等于实付":"尚无可核算数据"}</p></div>{item.status==="blocked"&&onRetryTask&&item.taskId&&<button type="button" disabled={retryingTaskId===item.taskId} onClick={()=>void retryBlockedTask(item)} className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-amber-400 px-3 py-2 text-[10px] font-black text-amber-950 disabled:opacity-40">{retryingTaskId===item.taskId&&<Loader2 size={11} className="animate-spin"/>}重新生成</button>}{onOpenProductionProgress && <button type="button" onClick={() => onOpenProductionProgress(item.taskId, item.id)} className="shrink-0 rounded-lg border border-slate-200 bg-white px-3 py-2 text-[10px] font-black text-slate-700 hover:border-emerald-300">查看制作进度 →</button>}<button type="button" onClick={() => onOpenContent?.(item.taskId || undefined, item.socialContentTaskId || undefined)} className="shrink-0 rounded-lg bg-slate-950 px-3 py-2 text-[10px] font-black text-white hover:bg-slate-800">进入制作台 →</button></div>
           </div>
           <TaskPreviewCards item={item} onNavigate={onNavigate} onGenerateDetails={item.origin==='weekly_plan'?onGenerateDetails:undefined}/>
           <div className="mt-4 grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(280px,.75fr)]"><div className="rounded-2xl border border-emerald-100 bg-emerald-50/45 px-4 py-3"><div className="flex flex-wrap items-center gap-2"><span className="text-[10px] font-black text-emerald-800">计划依据</span>{item.matchScore!==null&&<span className="rounded-full bg-white px-2 py-1 text-[9px] font-black text-emerald-700">匹配度 {item.matchScore}</span>}{item.benchmarkAccount&&<span className="rounded-full bg-white px-2 py-1 text-[9px] font-bold text-slate-700">对标账号：{item.benchmarkAccount}</span>}{item.referenceTitle&&<span className="max-w-full truncate rounded-full bg-white px-2 py-1 text-[9px] font-bold text-slate-700">参考：{item.referenceTitle}</span>}{item.referenceViews&&<span className="rounded-full bg-white px-2 py-1 text-[9px] font-bold text-violet-700">参考播放 {item.referenceViews}</span>}{item.referenceId&&onNavigate&&<button type="button" onClick={() => onNavigate("socialInspiration")} className="rounded-full border border-emerald-200 bg-white px-2 py-1 text-[9px] font-black text-emerald-800">核对参考 →</button>}</div><p className="mt-2 text-[10px] leading-5 text-slate-600">{item.planningFactors.length?item.planningFactors.join(" · "):"依据账号矩阵、产品资料与平台规则生成；当前没有可用的爆款精确分析。"}</p></div><div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3"><p className="text-[10px] font-black text-slate-700">业务血缘</p><dl className="mt-2 grid grid-cols-[68px_1fr] gap-x-2 gap-y-1 text-[10px]"><dt className="text-slate-400">目标</dt><dd className="truncate font-bold text-slate-700">{item.lineage.objective || "单项内容交付"}</dd><dt className="text-slate-400">账号</dt><dd className="truncate font-bold text-slate-700">{item.lineage.accountLabel || "仅制作"}</dd><dt className="text-slate-400">预算</dt><dd className="font-bold text-slate-700">{item.lineage.budgetCny!==null?`¥${item.lineage.budgetCny.toFixed(2)}`:"未单独分配"}</dd><dt className="text-slate-400">计划版本</dt><dd className="font-bold text-slate-700">{item.lineage.planId?`${item.lineage.planId} · v${item.lineage.planVersion || "1"}`:"手动单项任务"}</dd></dl></div></div>
@@ -947,7 +1001,7 @@ function ProductionDetailView({ data, contentItemId, onBack, onNavigate, onOpenC
   </div>;
 }
 
-function ReviewView({ data, selectedAccountId = "" }: { data: DigitalEmployeeOverview; selectedAccountId?: string }) {
+function ReviewView({ data, selectedAccountId = "", onNavigate }: { data: DigitalEmployeeOverview; selectedAccountId?: string; onNavigate?: (page: Page) => void }) {
   const selectedTarget = data.config?.publishingTargets.find(target => target.accountId === selectedAccountId);
   const [platform, setPlatform] = useState<Platform>(selectedTarget?.platform || "youtube");
   const [accountId, setAccountId] = useState(selectedAccountId || "all");
@@ -1040,7 +1094,7 @@ function ReviewView({ data, selectedAccountId = "" }: { data: DigitalEmployeeOve
       <div className="rounded-3xl border border-slate-200 bg-white p-5"><div className="flex items-center justify-between gap-3"><div><p className="text-[10px] font-black tracking-[.14em] text-slate-400">本周复盘</p><h3 className="mt-1 text-base font-black text-slate-950">计划完成与业务回流</h3></div><span className={`rounded-full px-2.5 py-1 text-[10px] font-black ${review?.status==='generated'?'bg-emerald-50 text-emerald-700':'bg-slate-100 text-slate-600'}`}>{review?.status==='generated'?'复盘已生成':'等待完整数据'}</span></div><div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">{[{label:"完成率",value:reviewSummary?`${Math.round(reviewSummary.completionRate)}%`:liveReview?.completionRate!==undefined?`${Math.round(liveReview.completionRate)}%`:"—"},{label:"已完成",value:reviewSummary?`${reviewSummary.completedTasks}/${reviewSummary.totalTasks}`:liveReview?.totalTasks!==undefined?`${liveReview.completedTasks||0}/${liveReview.totalTasks}`:"—"},{label:"阻塞项",value:liveReview?.blockedTasks.length??reviewSummary?.failedTasks??"—"},{label:"数据缺口",value:liveReview?.dataGaps.length??"—"}].map(item=><div key={item.label} className="rounded-xl bg-slate-50 px-3 py-3"><p className="text-[9px] font-bold text-slate-400">{item.label}</p><p className="mt-1 text-lg font-black text-slate-900">{item.value}</p></div>)}</div>{liveReview?.dataGaps.length?<p className="mt-3 text-[10px] leading-5 text-amber-700">仍需补齐：{liveReview.dataGaps.slice(0,3).join("；")}</p>:<p className="mt-3 text-[10px] text-slate-400">复盘只采用工作流结果与已连接账号回传，不用模拟指标补齐。</p>}</div>
       <div className="rounded-3xl border border-violet-100 bg-violet-50/65 p-5"><p className="text-[10px] font-black tracking-[.14em] text-violet-700">下一轮建议</p><h3 className="mt-2 text-base font-black text-slate-950">目标、账号与预算怎样调整</h3><p className="mt-3 text-sm font-bold leading-6 text-slate-800">{nextRoundSuggestion}</p><p className="mt-2 text-xs font-bold leading-5 text-violet-900">{allocationSuggestion}</p><div className="mt-3 grid grid-cols-3 gap-2">{[{label:"周计划完成",value:`${completedReviewItems.length}/${reviewQueue.length}`},{label:"真实账号样本",value:`${performanceByAccount.reduce((sum,item)=>sum+item.videos,0)} 条`},{label:"已结算制作费",value:settledReviewItems.length?`¥${settledReviewCost.toFixed(2)}`:"待回传"}].map(item=><div key={item.label} className="rounded-xl bg-white/75 px-2 py-2.5"><p className="text-[8px] font-bold text-slate-400">{item.label}</p><p className="mt-1 text-[11px] font-black text-slate-800">{item.value}</p></div>)}</div><p className="mt-2 text-[10px] leading-5 text-slate-500">建议仅引用本周完成记录、真实账号回传与供应商结算；确认后才形成新计划版本，不会直接改写当前周期。</p></div>
     </section>
-    {(performanceError||performance?.unavailable.length)&&<div role="status" className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs leading-5 text-amber-800">{performanceError||`${performance?.unavailable.length} 个账号暂时无法同步；已保留其他账号的真实数据。`}</div>}
+    {(performanceError||performance?.unavailable.length)&&<div role="status" className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs leading-5 text-amber-800"><span>{performanceError||`${performance?.unavailable.length} 个账号暂时无法同步；已保留其他账号的真实数据。`}</span><button type="button" onClick={()=>onNavigate?.("accountManagement")} className="rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-[10px] font-black text-amber-900">检查账号授权 →</button></div>}
     <div className="mt-5 flex flex-wrap items-end justify-between gap-3 border-b border-slate-200"><div className="flex gap-3 overflow-x-auto">{platformOptions.map((item)=><button type="button" key={item} title={platformLabels[item]} aria-label={platformLabels[item]} onClick={()=>setPlatform(item)} aria-pressed={platform===item} className={`flex h-11 w-12 shrink-0 items-center justify-center border-b-2 pb-2 ${platform===item?'border-emerald-700':'border-transparent opacity-45 hover:opacity-75'}`}><SocialPlatformIcon platform={item} size={21}/></button>)}</div><select aria-label="复盘账号" value={accountId} onChange={event=>setAccountId(event.target.value)} className="mb-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700"><option value="all">全部账号</option>{connectedAccounts.map(account=><option key={account.id} value={account.id}>{account.title}</option>)}</select></div>
     <div className="mt-5 grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
       <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white">{ranking.map((card,index)=><article key={card.id} className={`grid grid-cols-[44px_minmax(0,1fr)_auto] items-center gap-4 p-5 ${index?'border-t border-slate-100':''}`}><span className={`flex h-9 w-9 items-center justify-center rounded-xl text-sm font-black ${index===0?'bg-amber-100 text-amber-800':'bg-slate-100 text-slate-500'}`}>{index+1}</span><div className="min-w-0"><h3 className="truncate text-sm font-black text-slate-950">{card.title}</h3><p className="mt-1 truncate text-xs text-slate-400">{card.subject}</p>{(card.likes!==null||card.comments!==null)&&<p className="mt-1 text-[10px] text-slate-400">点赞 {card.likes??"—"} · 评论 {card.comments??"—"}</p>}</div><div className="text-right"><p className="flex items-center gap-1 text-sm font-black text-slate-900"><Eye size={13}/>{card.views.toLocaleString("zh-CN")}</p><p className="mt-1 text-[10px] text-slate-400">播放量</p></div></article>)}{performanceBusy&&!ranking.length?<div className="flex items-center justify-center gap-2 px-5 py-20 text-sm text-slate-400"><Loader2 size={17} className="animate-spin"/>正在同步账号内容数据</div>:!ranking.length&&<div className="px-5 py-20 text-center"><Eye size={28} className="mx-auto text-slate-300"/><p className="mt-3 text-sm font-bold text-slate-600">{platformLabels[platform]} 暂无内容播放量</p><p className="mt-1 text-xs text-slate-400">请确认账号授权包含内容读取权限，然后点击“同步账号数据”。</p></div>}</section>
@@ -1050,10 +1104,10 @@ function ReviewView({ data, selectedAccountId = "" }: { data: DigitalEmployeeOve
   </div>;
 }
 
-export default function SmartBusinessDashboard({ data, view, selectedAccountId, selectedContentItemId, onRefresh, onNavigate, onGeneratePlan, onGenerateDetails, onOpenContent, onOpenProductionProgress, onBackToQueue, onRetryTask }: { data: DigitalEmployeeOverview; view: SmartBusinessView; selectedAccountId?: string; selectedContentItemId?: string; onRefresh?: () => void; onNavigate?: (page: Page) => void; onGeneratePlan?: () => void; onGenerateDetails?: () => void; onOpenContent?: (taskId?: string, socialContentTaskId?: string) => void; onOpenProductionProgress?: (taskId: string, contentItemId: string) => void; onBackToQueue?: () => void; onRetryTask?: (taskId: string) => Promise<boolean> }) {
+export default function SmartBusinessDashboard({ data, view, selectedAccountId, selectedContentItemId, onRefresh, onNavigate, onGeneratePlan, onGenerateDetails, onOpenContent, onOpenProductionProgress, onBackToQueue, onRetryTask, onControlJob }: { data: DigitalEmployeeOverview; view: SmartBusinessView; selectedAccountId?: string; selectedContentItemId?: string; onRefresh?: () => void; onNavigate?: (page: Page) => void; onGeneratePlan?: () => void; onGenerateDetails?: () => void; onOpenContent?: (taskId?: string, socialContentTaskId?: string) => void; onOpenProductionProgress?: (taskId: string, contentItemId: string) => void; onBackToQueue?: () => void; onRetryTask?: (taskId: string) => Promise<boolean>; onControlJob?: (jobId: string, action: ExecutionControlAction) => Promise<boolean> }) {
   if (view === "matrix") return <MatrixView data={data} selectedAccountId={selectedAccountId} onRefresh={onRefresh} onNavigate={onNavigate} onGeneratePlan={onGeneratePlan}/>;
-  if (view === "queue") return <QueueView data={data} selectedAccountId={selectedAccountId} onRefresh={onRefresh} onNavigate={onNavigate} onGenerateDetails={onGenerateDetails} onOpenContent={onOpenContent} onOpenProductionProgress={onOpenProductionProgress}/>;
+  if (view === "queue") return <QueueView data={data} selectedAccountId={selectedAccountId} onRefresh={onRefresh} onNavigate={onNavigate} onGenerateDetails={onGenerateDetails} onOpenContent={onOpenContent} onOpenProductionProgress={onOpenProductionProgress} onControlJob={onControlJob} onRetryTask={onRetryTask}/>;
   if (view === "production") return <ProductionDetailView data={data} contentItemId={selectedContentItemId} onBack={onBackToQueue} onNavigate={onNavigate} onOpenContent={onOpenContent} onRetryTask={onRetryTask}/>;
-  if (view === "review") return <ReviewView data={data} selectedAccountId={selectedAccountId}/>;
+  if (view === "review") return <ReviewView data={data} selectedAccountId={selectedAccountId} onNavigate={onNavigate}/>;
   return <HomeView data={data} selectedAccountId={selectedAccountId} onRefresh={onRefresh}/>;
 }

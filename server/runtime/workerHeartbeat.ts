@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { DataStore } from '../storage/datastore.js';
 import { store } from '../storage/index.js';
 import type { ProcessRole } from './processRole.js';
+import { runtimeBuildInfo } from './buildInfo.js';
 
 export const SOCIAL_OPERATING_WORKER_HEARTBEATS = 'social_operating_worker_heartbeats';
 
@@ -58,6 +59,7 @@ export async function writeWorkerHeartbeat(
       readyAt: runtimeState.readyAt,
       error: runtimeState.error,
       pid: process.pid,
+      build: runtimeBuildInfo(),
     },
   };
   if (heartbeatRecordId) {

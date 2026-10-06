@@ -2,6 +2,18 @@ import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
 import { defineConfig, loadEnv, type ServerOptions } from 'vite';
+import { execFileSync } from 'node:child_process';
+
+function resolveBuildSha() {
+  const configured = String(process.env.VITE_APP_BUILD_SHA || process.env.APP_BUILD_SHA || '').trim();
+  if (/^[a-f0-9]{7,64}$/i.test(configured)) return configured.toLowerCase();
+  try {
+    const value = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8', timeout: 2_000, stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+    return /^[a-f0-9]{7,64}$/i.test(value) ? value.toLowerCase() : 'unknown';
+  } catch {
+    return 'unknown';
+  }
+}
 
 function resolveHmr(): ServerOptions['hmr'] {
   if (process.env.DISABLE_HMR === 'true') return false;
@@ -17,9 +29,11 @@ function resolveHmr(): ServerOptions['hmr'] {
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
   const devApiTarget = process.env.DEV_API_TARGET ?? env.DEV_API_TARGET ?? 'http://127.0.0.1:8790';
+  const buildSha = resolveBuildSha();
 
   return {
     plugins: [react(), tailwindcss()],
+    define: { __APP_BUILD_SHA__: JSON.stringify(buildSha) },
     // xlsx is installed from the vendored tarball. Vite 8 can invalidate its
     // optimized hash after the initial page graph has already been served,
     // making the default DigitalEmployeePage lazy import fail with a 504 and

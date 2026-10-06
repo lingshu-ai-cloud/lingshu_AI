@@ -27,6 +27,7 @@ window.fetch = async (input, init) => {
     { id: 'self_hosted_video', label: '自有数字人模型', execution: false, reason: '自有模型尚未注册真实执行适配器' },
   ] });
   if (path.includes('/production/defaults')) { if (init?.method === 'POST') defaults = body; return json(defaults); }
+  if (path.includes('/studio/digital-human/avatars')) return json({ items: [] });
   if (path.includes('/production/jobs')) return json([]);
   if (path.endsWith('/projects')) { if (init?.method === 'POST') { Object.assign(project, body); return json({ ok: true, project }); } return json([project]); }
   if (path.endsWith('/shooting-tasks')) { if (init?.method === 'POST') { const task = { ...body, id: crypto.randomUUID(), origin: 'script_gap', uploadedMaterialIds: [], createdAt: new Date().toISOString() }; tasks.push(task); return json(task); } return json(tasks); }

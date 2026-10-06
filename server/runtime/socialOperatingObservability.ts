@@ -4,6 +4,7 @@ import type { ListResult } from '../storage/datastore.js';
 import type { ProcessRole } from './processRole.js';
 import { processRoleStartsBackgroundJobs } from './processRole.js';
 import { backgroundJobRuntimeState, SOCIAL_OPERATING_WORKER_HEARTBEATS, type BackgroundJobRuntimeState } from './workerHeartbeat.js';
+import { runtimeBuildInfo } from './buildInfo.js';
 
 export const SOCIAL_OPERATING_REQUIRED_COLLECTIONS = [
   'social_programs',
@@ -27,7 +28,7 @@ type GapRow = {
 };
 type PostRow = { stats?: unknown };
 type PackageRow = { status?: string; payload?: unknown };
-type HeartbeatRow = { state?: string; last_seen_at?: string; instance_id?: string };
+type HeartbeatRow = { state?: string; last_seen_at?: string; instance_id?: string; details?: unknown };
 
 async function listOperatingRows<T>(
   collection: string,
@@ -60,7 +61,7 @@ export interface SocialOperatingSignals {
   unknownReceipts: { count: number };
   exhaustedBudgets: { count: number };
   invalidAuthorizations: { count: number };
-  worker: { ready: boolean; source: 'local' | 'heartbeat'; state: string; lastSeenAt: string | null };
+  worker: { ready: boolean; source: 'local' | 'heartbeat'; state: string; lastSeenAt: string | null; buildSha?: string | null; expectedBuildSha?: string | null };
 }
 
 function object(value: unknown): Record<string, unknown> {
@@ -126,14 +127,22 @@ export async function inspectSocialOperatingSignals(input: {
     worker = { ready: local.state === 'ready', source: 'local', state: local.state, lastSeenAt: local.readyAt };
   } else {
     const heartbeats = await listOperatingRows<HeartbeatRow>(SOCIAL_OPERATING_WORKER_HEARTBEATS, {
-      where: { state: 'ready' }, pocketBaseFilter: 'state = "ready"', sort: '-last_seen_at', page: 1, perPage: 1,
+      where: { state: 'ready' }, pocketBaseFilter: 'state = "ready"', sort: '-last_seen_at', page: 1, perPage: 20,
     });
-    const heartbeat = heartbeats.items[0];
+    const expectedBuildSha = runtimeBuildInfo().commitSha;
+    const heartbeat = expectedBuildSha === 'unknown'
+      ? heartbeats.items[0]
+      : heartbeats.items.find(item => String(object(item.details).build && object(object(item.details).build).commitSha || '') === expectedBuildSha);
+    const latestHeartbeat = heartbeats.items[0];
     const lastSeen = typeof heartbeat?.last_seen_at === 'string' ? heartbeat.last_seen_at : null;
     const freshness = classifyWorkerHeartbeat(lastSeen, now);
+    const latestBuildSha = String(object(object(latestHeartbeat?.details).build).commitSha || '') || null;
+    const versionMismatch = !heartbeat && Boolean(latestHeartbeat) && expectedBuildSha !== 'unknown';
     worker = {
-      ready: freshness.ready,
-      source: 'heartbeat', state: freshness.state, lastSeenAt: lastSeen,
+      ready: !versionMismatch && freshness.ready,
+      source: 'heartbeat', state: versionMismatch ? 'version_mismatch' : freshness.state, lastSeenAt: lastSeen,
+      buildSha: versionMismatch ? latestBuildSha : (expectedBuildSha === 'unknown' ? latestBuildSha : expectedBuildSha),
+      expectedBuildSha,
     };
   }
   return {
