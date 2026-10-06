@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { arrangeShotsWithinNarration, durationForUnfixedNarration, narrationForUnfixedShots, type NarrationTimelineShot } from './narrationTimeline';
+import { arrangeShotsWithinNarration, durationForUnfixedNarration, narrationForUnfixedShots, shotsMissingSourceCues, sourceCuesForShot, voiceoverMatchesNarrationSources, type NarrationTimelineShot } from './narrationTimeline';
 
 test('four visual shots follow four spoken lines split into eight measured subtitle cues', () => {
   const lines = ['第一句前半，第一句后半。', '第二句前半，第二句后半。', '第三句前半，第三句后半。', '第四句前半，第四句后半。'];
@@ -122,7 +122,9 @@ test('a spoken paragraph may span a fixed avatar and rough B-roll without blocki
   assert.deepEqual(result.paragraphs.map(item => item.source), ['mixed', 'ai']);
   assert.deepEqual(result.timeline.map(item => [item.targetStart, item.targetEnd]), [[0, 2], [2, 3.5], [3.5, 5.5]]);
   assert.equal(result.timeline[0]?.speed, 1);
-  assert.ok(result.warnings.some(item => item.includes('粗排')));
+  assert.equal(result.timeline[1]?.voiceAligned, true);
+  assert.deepEqual([result.timeline[1]?.voiceStart, result.timeline[1]?.voiceEnd], [0, 0]);
+  assert.ok(result.warnings.some(item => item.includes('分镜 2 没有口播音轨')));
 });
 
 test('AI speech ends at the start of a mixed paragraph whose avatar is its second shot', () => {
@@ -137,4 +139,58 @@ test('AI speech ends at the start of a mixed paragraph whose avatar is its secon
     [{ text: lines[0], start: 0, end: 2 }], 2, 'minimax_native');
   assert.deepEqual(result.timeline.map(item => [item.targetStart, item.targetEnd]), [[0, 2], [2, 3], [3, 5], [5, 6]]);
   assert.equal(result.timeline[2]?.voiceStart, undefined);
+  assert.deepEqual([result.timeline[1]?.voiceStart, result.timeline[1]?.voiceEnd], [0, 0]);
+  assert.deepEqual([result.timeline[3]?.voiceStart, result.timeline[3]?.voiceEnd], [0, 0]);
+});
+
+test('source clip captions move with its shot and do not inherit AI audio timestamps', () => {
+  const lines = ['配音开场', '数字人原声', '后续配音'];
+  const shots: NarrationTimelineShot[] = [
+    { narration: lines[0], targetDuration: 2 },
+    { narration: lines[1], targetDuration: 3, lockedSourceVoice: true, lockedDuration: 3,
+      sourceCues: [{ text: '数字人第一句', start: 0.2, end: 1.2 }, { text: '数字人第二句', start: 1.3, end: 2.8 }] },
+    { narration: lines[2], targetDuration: 2 },
+  ];
+  const result = arrangeShotsWithinNarration(shots, lines,
+    [{ text: lines[0], start: 0, end: 2 }, { text: lines[2], start: 2, end: 4 }], 4, 'minimax_native');
+  assert.deepEqual(result.cues.map(cue => [cue.text, cue.start, cue.end]), [
+    ['配音开场', 0, 2], ['数字人第一句', 2.2, 3.2], ['数字人第二句', 3.3, 4.8], ['后续配音', 5, 7],
+  ]);
+  assert.deepEqual(shotsMissingSourceCues(shots), []);
+});
+
+test('mixed source and B-roll use clip-local captions only on the original audio shot', () => {
+  const shots: NarrationTimelineShot[] = [
+    { narration: '混剪原声', targetDuration: 2, lockedSourceVoice: true, lockedDuration: 2,
+      sourceCues: [{ text: '原声第一句', start: 0, end: 1.5 }] },
+    { narration: '', targetDuration: 1.5 },
+    { narration: '配音结尾', targetDuration: 1 },
+  ];
+  const result = arrangeShotsWithinNarration(shots, ['混剪原声', '配音结尾'],
+    [{ text: '配音结尾', start: 0, end: 1 }], 1, 'synthesized_sentence_audio');
+  assert.deepEqual(result.cues.map(cue => [cue.text, cue.start, cue.end]),
+    [['原声第一句', 0, 1.5], ['配音结尾', 3.5, 4.5]]);
+});
+
+test('invalid or missing source timing is reported instead of borrowing AI timing', () => {
+  assert.deepEqual(sourceCuesForShot([{ text: '超出素材', start: 0, end: 4 }], 3), []);
+  const shots: NarrationTimelineShot[] = [
+    { narration: '数字人原声', targetDuration: 3, lockedSourceVoice: true, lockedDuration: 3,
+      sourceCues: [{ text: '超出素材', start: 0, end: 4 }] },
+    { narration: '配音', targetDuration: 1 },
+  ];
+  assert.deepEqual(shotsMissingSourceCues(shots), [1]);
+  const result = arrangeShotsWithinNarration(shots, ['数字人原声', '配音'],
+    [{ text: '配音', start: 0, end: 1 }], 1, 'minimax_native');
+  assert.deepEqual(result.cues.map(cue => cue.text), ['配音']);
+  assert.ok(result.warnings.some(warning => warning.includes('缺少有效的独立字幕时间码')));
+});
+
+test('an adopted source shot invalidates old TTS that still speaks its line', () => {
+  const lines = ['第一段口播。', '数字人收尾。'];
+  const before: NarrationTimelineShot[] = lines.map(narration => ({ narration, targetDuration: 2 }));
+  const after: NarrationTimelineShot[] = [{ ...before[0]! }, { ...before[1]!, lockedSourceVoice: true, lockedDuration: 2 }];
+  assert.equal(voiceoverMatchesNarrationSources(before, lines, lines.join(' ')), true);
+  assert.equal(voiceoverMatchesNarrationSources(after, lines, lines.join(' ')), false);
+  assert.equal(voiceoverMatchesNarrationSources(after, lines, lines[0]!), true);
 });

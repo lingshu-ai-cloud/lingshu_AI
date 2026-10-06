@@ -10,7 +10,9 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 const DEFAULT_TTL_SEC = 600; // 10 分钟
 
 function secret(): string {
-  return process.env.RENDER_TOKEN_SECRET || 'dev-insecure-render-secret-change-me';
+  const configured = process.env.RENDER_TOKEN_SECRET || process.env.ASSET_ACCESS_SECRET || process.env.SUPPORT_ACCESS_SECRET;
+  if (!configured && process.env.NODE_ENV === 'production') throw new Error('RENDER_TOKEN_SECRET is required in production');
+  return configured || 'dev-insecure-render-secret-change-me';
 }
 
 function b64url(input: Buffer | string): string {
@@ -50,7 +52,7 @@ export function signRenderToken(
 
 /** 校验渲染令牌；无效或过期返回 null */
 export function verifyRenderToken(token: string | undefined): RenderTokenPayload | null {
-  if (!token) return null;
+  if (!token || token.length > 8192) return null;
   const parts = token.split('.');
   if (parts.length !== 3) return null;
   const [head, body, sig] = parts;
@@ -62,7 +64,7 @@ export function verifyRenderToken(token: string | undefined): RenderTokenPayload
 
   try {
     const payload = JSON.parse(Buffer.from(body, 'base64url').toString('utf8')) as RenderTokenPayload;
-    if (payload.exp && payload.exp < Math.floor(Date.now() / 1000)) return null;
+    if (payload.scope !== 'render' || !Number.isFinite(payload.exp) || payload.exp <= Math.floor(Date.now() / 1000)) return null;
     return payload;
   } catch {
     return null;

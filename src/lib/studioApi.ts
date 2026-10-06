@@ -5,7 +5,7 @@ import { authHeader } from './auth';
 import type { DigitalHumanCapabilities, DigitalHumanJob, TransformationAssessment, TransformationAssessmentInput } from './studioDigitalHuman';
 import { fetchMaterialLibrary, type MaterialLibraryPurpose } from './studioDigitalHuman';
 import type { MaterialScriptAnalysis } from '../../shared/materialScriptAnalysis';
-import { normalizeEffectPlan, type EffectPlanV1 } from '../../shared/contracts/effectPlan';
+import { type EffectPlanV1 } from '../../shared/contracts/effectPlan';
 
 export interface HeyGenAvatarOption {
   id: string;
@@ -302,40 +302,6 @@ declare global {
 /** 取桌面端本机合成桥（仅 Electron 客户端有） */
 export function getDesktopRender(): DesktopRenderBridge | undefined {
   return typeof window !== 'undefined' ? window.desktopRender : undefined;
-}
-
-/** 离线 / 未授权时的本地兜底 manifest，桥接服务端 buildManifest 的结构 */
-function localManifest(spec: RenderSpec): RenderManifest {
-  const timeline: NonNullable<RenderSpec['timeline']> = spec.timeline?.length
-    ? spec.timeline
-    : (spec.materials ?? []).map(name => ({ name }));
-  return {
-    jobId: `local-${Date.now()}`,
-    requireVisualAssets: true,
-    spec: {
-      ratio: spec.ratio || '9:16',
-      duration: spec.duration ?? 20,
-      platform: spec.platform || 'tiktok',
-      language: spec.language || 'en',
-      bgmVol: spec.bgmVol ?? 35,
-      voiceVol: spec.voiceVol ?? 100,
-    },
-    script: spec.script ?? '',
-    timeline: timeline
-      .map((item, index) => {
-        const candidateUrl = Reflect.get(item, 'url');
-        return { index, ...item, url: typeof candidateUrl === 'string' ? candidateUrl : null };
-      }),
-    voiceover: { voice: spec.voice ?? null, url: spec.voiceoverUrl ?? null },
-    cover: { id: spec.coverId ?? null, title: spec.coverTitle ?? '', url: spec.coverUrl ?? null },
-    bgm: { id: spec.bgm ?? null, url: null },
-    subtitles: spec.subtitles,
-    effectPlan: spec.effectPlan ? normalizeEffectPlan(spec.effectPlan, timeline.map((item, index) => ({
-      sceneId: item.sceneId || item.clipId || String(index),
-      clipId: item.clipId,
-      targetDuration: item.targetDuration,
-    }))) : undefined,
-  };
 }
 
 export interface StudioProject {
@@ -700,17 +666,17 @@ export const studioApi = {
       if (!r.ok) throw new Error(String(r.status));
       return (await r.json()) as RenderAuthorization;
     } catch (err: any) {
-      if (String(err?.message || '').includes('Demo')) throw err;
-      return { source: 'local', token: null, expiresAt: null, manifest: localManifest(spec) };
+      throw err instanceof Error ? err : new Error('渲染授权服务不可用，请稍后重试');
     }
   },
 
-  renderLocal: async (manifest: RenderManifest): Promise<{ ok: boolean; outputPath?: string; previewUrl?: string; error?: string }> => {
+  renderLocal: async (manifest: RenderManifest, token: string | null): Promise<{ ok: boolean; outputPath?: string; previewUrl?: string; error?: string }> => {
+    if (!token) return { ok: false, error: '缺少服务端签发的渲染授权，请重试' };
     try {
       const r = await fetch('/api/overseas/studio/render/local', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...authHeader() },
-        body: JSON.stringify(manifest),
+        body: JSON.stringify({ manifest, token }),
       });
       const data = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(data?.error || String(r.status));
@@ -938,6 +904,7 @@ export interface CoverStyle {
 export interface Material {
   transcript?: string;
   transcriptCues?: SubCue[];
+  transcriptCuesProvenance?: string;
   id: string;
   name: string;
   folder: string;

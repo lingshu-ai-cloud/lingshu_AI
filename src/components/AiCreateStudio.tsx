@@ -29,7 +29,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { LayoutGrid, Film, FileText, Music, Image as ImageIcon, Play, Send, Check, ChevronLeft, ChevronRight, Folder, Search, Volume2, Mic, Download, Loader2, Sparkles, Wand2, Copy, RefreshCw, Clock, Upload, X, Plus, Save, FolderOpen, Trash2, Pause, ChevronDown, Heart, ExternalLink, Languages } from 'lucide-react';
 import { studioApi, getDesktopRender, type StudioProject, type VariationBatch, type Material, type MaterialSegment, type BgmTrack, type CoverStyle, type SubCue, type TtsStyleOptions, type StudioAudioCapabilities, type FbPosterResult, type LeadContentPackageResult, type StoryboardQualityResult, type VideoGenerationVersion, type StudioScriptResult, type StudioScriptQualityStatus, type StudioScriptQualityChecks, type StudioGenerationProvenance, type DigitalHumanCapabilities, type DigitalHumanJob, type HeyGenAvatarOption } from '../lib/studioApi';
 import { isMeasuredVoiceAlignment, matchVoiceCuesToShots, productionVoiceCues, retimeVisualShotsToVoiceover } from '../lib/voiceoverAlignment';
-import { arrangeShotsWithinNarration, durationForUnfixedNarration, narrationForUnfixedShots } from '../lib/narrationTimeline';
+import { arrangeShotsWithinNarration, durationForUnfixedNarration, narrationForUnfixedShots, shotsMissingSourceCues, sourceCuesForShot, voiceoverMatchesNarrationSources } from '../lib/narrationTimeline';
 import { createPresetEffectPlan, type EffectIntensity, type EffectPresetId } from '../../shared/contracts/effectPlan';
 import type { Page } from '../App';
 import type { SocialContentCreateRequest } from './socialContent/SocialContentWorkspace';
@@ -144,6 +144,7 @@ const materialToClip = (m: Material): Clip => ({
   id: m.id, name: m.name, folder: m.folder, type: m.type, duration: m.duration, width: m.width, height: m.height, aspectRatio: m.aspectRatio, size: m.size, url: m.url, poster: m.poster, scope: m.scope ?? 'own',
   usage: m.usage, sourceType: m.sourceType, industry: m.industry, shotFunction: m.shotFunction, applicability: m.applicability, tags: m.tags,
   productId: m.productId, productName: m.productName,
+  transcript: m.transcript, transcriptCues: m.transcriptCues, transcriptCuesProvenance: m.transcriptCuesProvenance,
   segmentAnalysisStatus: m.segmentAnalysisStatus, segmentAnalysisError: m.segmentAnalysisError, segments: m.segments, visualObservations: m.visualObservations,
 });
 
@@ -275,6 +276,7 @@ const POSTER_MATERIAL_GROUPS = [
 export interface Clip {
   transcript?: string;
   transcriptCues?: SubCue[];
+  transcriptCuesProvenance?: string;
   id: string;
   name: string;
   folder: string;
@@ -1649,6 +1651,9 @@ function normalizeClipSnapshot(value: unknown): Clip | null {
     productName: item.productName,
     segmentAnalysisStatus: item.segmentAnalysisStatus,
     segments: item.segments,
+    transcript: item.transcript,
+    transcriptCues: item.transcriptCues,
+    transcriptCuesProvenance: item.transcriptCuesProvenance,
   };
 }
 
@@ -3070,6 +3075,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
   const [showSubtitleAdvanced, setShowSubtitleAdvanced] = useState(false);
   const [subtitleGenerating, setSubtitleGenerating] = useState(false);
   const [subtitleNotice, setSubtitleNotice] = useState('');
+  const [avatarCaptionBusy, setAvatarCaptionBusy] = useState(false);
   const [lastGeneratedSetupSignature, setLastGeneratedSetupSignature] = useState('');
   const autoGen = useRef(false); // 标记是否已由入口生成脚本，避免覆盖用户编辑
 
@@ -5128,10 +5134,59 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
   const hasAvatarSourceVoice = (slot: StoryboardSlot) => {
     const production = productionFor(slot);
     const materialId = storyboardAssignments[slot.id] || '';
+    const persistedShotId = shootingSlots.find(item => item.slotId === slot.id)?.id || slot.id;
     const adoptedAvatar = production.candidates.some(candidate => candidate.id === production.adoptedId
       && candidate.source === 'avatar' && candidate.materialId === materialId);
+    const adoptedExecution = productionExecutions.some(execution => execution.assemblyId === activeAssemblyId
+      && execution.shotId === persistedShotId && execution.adoption?.materialId === materialId
+      && execution.quality.state === 'accepted');
     return production.source === 'avatar' && production.sound === 'source'
-      && Boolean(materialId) && (materialId.startsWith('avatar-') || adoptedAvatar);
+      && Boolean(materialId) && (adoptedAvatar || adoptedExecution);
+  };
+  const sourceCuesForMaterial = (clip: Clip | undefined) => {
+    if (!clip) return [];
+    // A HeyGen job's cues belong only to its own output material. Never use
+    // the separately synthesized B-roll voiceover as avatar subtitles.
+    const jobCues = digitalHumanJob?.outputMaterialId === clip.id && digitalHumanJob.subtitleCues?.length;
+    const trustedStoredCues = ['heygen:source_video_srt', 'qwen_filetrans:source_material'].includes(clip.transcriptCuesProvenance || '');
+    const source = jobCues ? digitalHumanJob!.subtitleCues : trustedStoredCues ? clip.transcriptCues : undefined;
+    return sourceCuesForShot(source, clip.duration);
+  };
+  const missingAvatarSourceCues = storyboardSlots.flatMap((slot, index) => {
+    if (!hasAvatarSourceVoice(slot)) return [];
+    const materialId = storyboardAssignments[slot.id];
+    return sourceCuesForMaterial(materialById.get(materialId || '')).length ? []
+      : [{ slot, index, materialId: materialId || '' }];
+  });
+  const refreshAvatarSourceCaptions = async () => {
+    if (!projectId || avatarCaptionBusy) return;
+    setAvatarCaptionBusy(true);
+    try {
+      const refreshed: Array<{ materialId: string; transcript: string; cues: SubCue[]; provenance: string }> = [];
+      for (const missing of missingAvatarSourceCues) {
+        const input = { projectId, assemblyId: activeAssemblyId,
+          shotId: shootingSlots.find(item => item.slotId === missing.slot.id)?.id || missing.slot.id,
+          slotId: missing.slot.id, materialId: missing.materialId };
+        let result;
+        try { result = await productionApi.avatarSourceCaptions(input); }
+        catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          if (!message.includes('将产生 ASR 费用')) throw error;
+          if (!window.confirm(`数字人分镜 ${missing.index + 1} 的原 HeyGen 字幕不可用。改用千问实测转写源片会产生 ASR 费用，确认继续？`)) throw new Error('已取消付费转写；此分镜仍需补齐源片字幕');
+          result = await productionApi.avatarSourceCaptions({ ...input, confirmedPaidAsr: true });
+        }
+        refreshed.push(result);
+      }
+      setMaterials(current => current.map(item => {
+        const result = refreshed.find(value => value.materialId === item.id);
+        return result ? { ...item, transcript: result.transcript, transcriptCues: result.cues, transcriptCuesProvenance: result.provenance } : item;
+      }));
+      setSubtitleNotice(`已从 ${refreshed.length} 个数字人源片取得独立实测字幕时间码。`);
+    } catch (error) {
+      setSubtitleNotice(error instanceof Error ? error.message : '数字人源片字幕补取失败');
+    } finally {
+      setAvatarCaptionBusy(false);
+    }
   };
   const renderTimeline = useMemo(() => {
     let timelineCursor = 0;
@@ -5186,10 +5241,30 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     voiceoverAudios[activeVoiceLang]?.alignmentSource,
     voiceoverAudios[activeVoiceLang]?.duration || 0,
   );
+  const voiceoverMatchesCurrentShotSources = (code: string) => {
+    const audio = voiceoverAudios[code];
+    if (!audio?.url) return true;
+    const lines = stripVoiceoverTimestamps(code === activeVoiceLang ? activeSpokenScript : voiceDrafts[code] || '')
+      .split(/\n+/).map(line => line.trim()).filter(Boolean);
+    const referenceLines = code === masterSourceLanguage ? undefined
+      : stripVoiceoverTimestamps(masterSourceVoiceover).split(/\n+/).map(line => line.trim()).filter(Boolean);
+    const sourceText = audio.text || audio.cues?.map(cue => cue.text).join(' ') || '';
+    return voiceoverMatchesNarrationSources(storyboardSlots.map(slot => ({
+        narration: storyboardSlotScript(slot.detail).voice, targetDuration: slot.end - slot.start,
+        lockedSourceVoice: hasAvatarSourceVoice(slot),
+      })), lines, sourceText, referenceLines);
+  };
+  const activeVoiceoverSourceMismatch = voiceoverMode === 'ai' && Boolean(voiceoverAudios[activeVoiceLang]?.url)
+    && !voiceoverMatchesCurrentShotSources(activeVoiceLang);
+  useEffect(() => {
+    if (activeVoiceoverSourceMismatch) setVoiceoverStaleLangs(current => current.includes(activeVoiceLang)
+      ? current : [...current, activeVoiceLang]);
+  }, [activeVoiceoverSourceMismatch, activeVoiceLang]);
   const narrationArrangementPreview = (() => {
     const audio = voiceoverAudios[activeVoiceLang];
     const measured = narrationMeasuredCues;
     if (voiceoverMode !== 'ai' || !measured.length || !storyboardSlots.length || presentationMode !== 'material') return null;
+    if (activeVoiceoverSourceMismatch) return { result: null, error: '数字人原声分镜归属已变化，现有配音仍包含旧台词，请重新生成非数字人口播' };
     try {
       return { result: arrangeShotsWithinNarration(storyboardSlots.map(slot => {
         const clip = materialById.get(storyboardAssignments[slot.id] || '');
@@ -5201,7 +5276,8 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
           trimEnd: lockedSourceVoice ? clip?.duration || slot.end - slot.start : edit?.trimEnd || slot.end - slot.start,
           narration: storyboardSlotScript(slot.detail).voice,
           lockedSourceVoice,
-          lockedDuration: lockedSourceVoice ? clip?.duration || slot.end - slot.start : undefined };
+          lockedDuration: lockedSourceVoice ? clip?.duration || slot.end - slot.start : undefined,
+          sourceCues: lockedSourceVoice ? sourceCuesForMaterial(clip) : undefined };
       }), stripVoiceoverTimestamps(activeSpokenScript).split(/\n+/).map(line => line.trim()).filter(Boolean),
       measured, audio!.duration, audio!.alignmentSource || '',
       activeVoiceLang === masterSourceLanguage ? undefined : stripVoiceoverTimestamps(masterSourceVoiceover).split(/\n+/).map(line => line.trim()).filter(Boolean)), error: '' };
@@ -5428,6 +5504,8 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     const requestedTimeline = renderOverride?.timeline ?? renderTimeline;
     const measuredOutputCues = productionVoiceCues(renderOverride?.cues ?? alignedCuesByLang[outputLanguage] ?? voiceoverAudios[outputLanguage]?.cues,
       voiceoverAudios[outputLanguage]?.alignmentSource, outputVoiceoverDur);
+    if (voiceoverMode === 'ai' && !voiceoverMatchesCurrentShotSources(outputLanguage))
+      throw new Error('数字人原声分镜归属已变化，请重新生成非数字人口播后再导出');
     if (voiceoverMode === 'ai' && presentationMode === 'material' && outputVoiceoverUrl && !measuredOutputCues.length) {
       throw new Error('当前配音缺少实测时间码，请先完成音频字幕对齐后再渲染成片');
     }
@@ -5445,6 +5523,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
           narration: storyboardSlotScript(storyboardSlots[index]!.detail).voice,
           lockedSourceVoice,
           lockedDuration,
+          sourceCues: lockedSourceVoice ? sourceCuesForMaterial(sourceClip) : undefined,
           trimStart: lockedSourceVoice ? 0 : item.trimStart,
           trimEnd: lockedSourceVoice ? lockedDuration || item.trimEnd : item.trimEnd,
         };
@@ -5452,10 +5531,20 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
       voiceoverAudios[outputLanguage]?.alignmentSource || '',
       outputLanguage === masterSourceLanguage ? undefined : stripVoiceoverTimestamps(masterSourceVoiceover).split(/\n+/).map(line => line.trim()).filter(Boolean))
       : null;
+    if (subtitlesOn && arrangedNarration) {
+      const missing = shotsMissingSourceCues(arrangedNarration.timeline);
+      if (missing.length) throw new Error(`分镜 ${missing.join('、')} 的数字人原声缺少当前素材的有效字幕时间码；请补齐原声字幕后再开启字幕导出`);
+    }
     if (arrangedNarration?.warnings.length) setModeNotice(`口播段落已校准；${arrangedNarration.warnings.join('；')}`);
     let outputTimeline: (typeof requestedTimeline)[number][] = voiceoverMode === 'none'
       ? requestedTimeline
       : arrangedNarration?.timeline || fitTimelineToVoiceoverCues<(typeof requestedTimeline)[number]>(requestedTimeline, outputVoiceoverDur, measuredOutputCues);
+    if (arrangedNarration) outputTimeline = outputTimeline.map((item, index) => {
+      const aligned = arrangedNarration.timeline[index] as { voiceAligned?: boolean; voiceStart?: number; voiceEnd?: number } | undefined;
+      if (!aligned?.voiceAligned || aligned.voiceStart !== 0 || aligned.voiceEnd !== 0
+        || !('production' in item) || !item.production) return item;
+      return { ...item, production: { ...item.production, sound: 'silent' as const } };
+    });
     const usesAdoptedShotAvatar = storyboardSlots.some(slot => {
       const production = productionFor(slot);
       return production.source === 'avatar' && production.candidates.some(item => item.id === production.adoptedId && item.source === 'avatar');
@@ -5490,10 +5579,16 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
       : defaultVoiceover.cues.length
         ? defaultVoiceover.cues
         : buildCues(outputScript, outputVoiceoverDur || timelineDuration || totalDur);
-    const outputCues = renderSafeCues(rawOutputCues, Math.min(
+    const maxOutputCueDuration = Math.min(
       timelineDuration || duration,
       arrangedNarration ? timelineDuration || duration : outputVoiceoverDur > 0 ? outputVoiceoverDur : timelineDuration || duration,
-    ));
+    );
+    // The arranged cues already have measured positions. Do not push a short
+    // source-video cue forward to satisfy the generic 0.25 s caption minimum.
+    const outputCues = arrangedNarration
+      ? rawOutputCues.filter(cue => cue.text?.trim() && Number.isFinite(cue.start) && Number.isFinite(cue.end)
+        && cue.start >= 0 && cue.end > cue.start && cue.end <= maxOutputCueDuration + 0.05)
+      : renderSafeCues(rawOutputCues, maxOutputCueDuration);
     const effectTimeline = outputTimeline.map((item, index) => ({
       sceneId: 'sceneId' in item && typeof item.sceneId === 'string'
         ? item.sceneId
@@ -5581,7 +5676,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
       if (renderToken.current !== token) return;
       setRenderPct(current => Math.min(90, current + (current < 60 ? 6 : 2)));
     }, 1200);
-    const localOut = await studioApi.renderLocal(auth.manifest).finally(() => window.clearInterval(progressTimer));
+    const localOut = await studioApi.renderLocal(auth.manifest, auth.token).finally(() => window.clearInterval(progressTimer));
     if (renderToken.current !== token) return;
     if (!localOut.ok) throw new Error(localOut.error || '本地 MP4 导出失败');
     if (localOut.outputPath) setRenderProductionSignatures(current => ({ ...current, [localOut.outputPath!]: productionSignature }));
@@ -8419,6 +8514,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     segments: item.segments,
     transcript: item.transcript,
     transcriptCues: item.transcriptCues,
+    transcriptCuesProvenance: item.transcriptCuesProvenance,
   }));
   const collectSpec = () => {
     let savedShotProductions = shotProductions;
@@ -15322,6 +15418,11 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
             {threeStepWorkflow && step === 'preview' ? <section className="space-y-2" aria-label="成片渲染与导出">
       <div className="rounded-lg border border-border bg-white p-3 text-xs" aria-label="口播段落与镜头编排">
         <p className="font-black text-text-primary">口播段落与镜头编排</p>
+        {missingAvatarSourceCues.length > 0 && <div className="mt-2 rounded border border-amber-200 bg-amber-50 px-2 py-2 text-amber-900">
+          <p>数字人分镜 {missingAvatarSourceCues.map(item => item.index + 1).join('、')} 缺少当前源片的实测字幕时间码。开启字幕导出前请补取；不会借用另一次 AI 配音的时间码。</p>
+          <button type="button" disabled={avatarCaptionBusy || !projectId} onClick={() => void refreshAvatarSourceCaptions()} className="mt-1 rounded border border-amber-400 px-2 py-1 font-bold disabled:opacity-50">{avatarCaptionBusy ? '正在提取源片字幕…' : '补取原字幕（无原字幕时需确认付费 ASR）'}</button>
+          {subtitleNotice && <p className="mt-1">{subtitleNotice}</p>}
+        </div>}
         {(!narrationArrangementPreview || narrationArrangementPreview.error) ? <>
           {narrationArrangementPreview?.error && <p className="mt-1 rounded border border-amber-200 bg-amber-50 px-2 py-1.5 leading-5 text-amber-800">口播编排尚未完成：{narrationArrangementPreview.error}。下方保留粗排，方便继续调整。</p>}
           <p className="mt-1 leading-5 text-text-muted">{activeVoiceoverUrl
@@ -15346,9 +15447,9 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
           </div>)}</div> : <p className="mt-2 text-amber-700">口播与分镜的段落归属尚未完全匹配，请先在分镜列表确认。</p>}
         </> : <>
           <p className="mt-1 text-text-muted">数字人沿用已生成素材的原声和固定时长，起点随前段口播顺延；其他分镜按新配音的实测时间码校准。成片约 {narrationArrangementPreview.result!.duration.toFixed(1)} 秒。</p>
-          <p className="mt-1 text-text-muted">同一段内按各镜头目标时长分配切点；在分镜素材中修改目标时长即可调整快切比例，口播保持连续。</p>
+          <p className="mt-1 text-text-muted">AI 配音段内按各镜头目标时长分配切点；在分镜素材中修改目标时长即可调整快切比例。与数字人原声同段的普通镜头不会借用其他段配音，请查看下方静音提示。</p>
           <div className="mt-2 max-h-44 space-y-2 overflow-y-auto">{narrationArrangementPreview.result!.paragraphs.map((paragraph, index) => <div key={index} className="rounded bg-surface-2 px-2 py-1.5 text-text-secondary">
-            <p><strong>{paragraph.source === 'avatar' ? '数字人原声 · 时长锁定' : paragraph.source === 'mixed' ? '原声与素材混剪 · 镜头粗排' : 'AI 配音'}</strong> · {paragraph.start.toFixed(1)}–{paragraph.end.toFixed(1)} 秒 · 分镜 {paragraph.firstShot}{paragraph.lastShot > paragraph.firstShot ? `–${paragraph.lastShot}` : ''}</p>
+            <p><strong>{paragraph.source === 'avatar' ? '数字人原声 · 时长锁定' : paragraph.source === 'mixed' ? '数字人原声与静音素材 · 镜头粗排' : 'AI 配音'}</strong> · {paragraph.start.toFixed(1)}–{paragraph.end.toFixed(1)} 秒 · 分镜 {paragraph.firstShot}{paragraph.lastShot > paragraph.firstShot ? `–${paragraph.lastShot}` : ''}</p>
             <p className="truncate text-text-muted">{paragraph.text}</p>
             {paragraph.source === 'ai' && paragraph.lastShot > paragraph.firstShot && Array.from({ length: paragraph.lastShot - paragraph.firstShot + 1 }, (_, offset) => paragraph.firstShot - 1 + offset).map(shotIndex => {
               const slot = storyboardSlots[shotIndex];

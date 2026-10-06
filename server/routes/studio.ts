@@ -56,7 +56,9 @@ import {
   isEntitled,
   isSubscriptionEnforced,
 } from '../middleware/subscription.js';
-import { signRenderToken } from '../lib/renderToken.js';
+import { signRenderToken, verifyRenderToken } from '../lib/renderToken.js';
+import { secureStudioRenderManifest, studioRenderAssetPath, studioRenderManifestHash, MAX_STUDIO_RENDER_ASSET_BYTES, MAX_STUDIO_RENDER_TOTAL_BYTES } from '../lib/studioRenderSecurity.js';
+import { studioBgmMediaPath, studioBgmObjectKey } from '../lib/studioBgmAccess.js';
 import { consumeDemoQuota, isDemoMode } from '../lib/demo.js';
 import { generatePosterImage, ImageProviderRejectedError, imageExt, type ReferenceImage } from '../lib/imageGen.js';
 import { buildStoryboardFirstFramePrompt, buildStoryboardVideoActionPrompt, STORYBOARD_FIRST_FRAME_PROMPT_VERSION, type StoryboardSceneType, type StoryboardMode } from '../lib/storyboardAigcPrompt.js';
@@ -5093,7 +5095,7 @@ function buildManifest(jobId: string, spec: RenderSpec, base: string): RenderMan
     cover: { id: spec.coverId ?? null, title: spec.coverTitle ?? '', url: absoluteAssetUrl(base, spec.coverUrl) },
     bgm: (() => {
       const track = spec.bgm && tenantId ? withRecommendedBgmNames(userBgms(tenantId)).find(t => t.id === spec.bgm) : null;
-      return { id: spec.bgm ?? null, url: track ? `${base}${track.url}` : null };
+      return { id: spec.bgm ?? null, url: track && tenantId ? absoluteAssetUrl(base, studioBgmMediaPath(track, tenantId)) : null };
     })(),
     subtitles: spec.subtitles && spec.subtitles.mode !== 'off' ? spec.subtitles : undefined,
     effectPlan: normalizedEffectPlan,
@@ -5102,13 +5104,22 @@ function buildManifest(jobId: string, spec: RenderSpec, base: string): RenderMan
 
 // POST /studio/render  Body: RenderSpec → { ok, token, expiresAt, manifest }
 studioRouter.post('/render', async (req, res) => {
-  if (!await consumeDemoQuota(req, res, 'render')) return;
   const spec = (req.body ?? {}) as RenderSpec;
   const jobId = randomUUID();
   const base = `${req.protocol}://${req.get('host')}`;
   const manifest = buildManifest(jobId, spec, base);
-
-  const { token, payload } = signRenderToken({ jti: jobId, ratio: manifest.spec.ratio, duration: manifest.spec.duration });
+  const { tenantId } = res.locals as AuthLocals;
+  if (spec.bgm && !manifest.bgm.url) {
+    res.status(400).json({ ok: false, error: '所选配乐已不可用，请重新选择' }); return;
+  }
+  try {
+    secureStudioRenderManifest(manifest, tenantId, base, 'http://127.0.0.1');
+  } catch (error) {
+    res.status(400).json({ ok: false, error: error instanceof Error ? error.message : '渲染清单无效' });
+    return;
+  }
+  if (!await consumeDemoQuota(req, res, 'render')) return;
+  const { token, payload } = signRenderToken({ jti: jobId, tenantId, origin: base, manifestSha256: studioRenderManifestHash(manifest) });
 
   res.status(201).json({
     ok: true,
@@ -5118,18 +5129,64 @@ studioRouter.post('/render', async (req, res) => {
   });
 });
 
-// POST /studio/render/local  Body: RenderManifest → { ok, outputPath }
+// POST /studio/render/local  Body: { manifest, token } → { ok, outputPath }
 // 网页端兜底：没有 Electron 桥时，直接让本机后端调用同一套 ffmpeg 合成器导出 MP4。
+const activeStudioRenders = new Map<string, number>();
+const consumedStudioRenderJobs = new Map<string, number>();
 studioRouter.post('/render/local', async (req, res) => {
+  const { tenantId } = res.locals as AuthLocals;
+  const manifest = req.body?.manifest;
+  const claim = verifyRenderToken(req.body?.token);
+  if (!manifest || !req.body?.token) {
+    res.status(400).json({ ok: false, error: '导出接口已更新，请刷新页面后重新发起渲染授权' }); return;
+  }
+  if (!claim || claim.scope !== 'render' || claim.tenantId !== tenantId || !/^[\w-]{1,80}$/.test(String(claim.jti || '')) || claim.jti !== manifest?.jobId
+    || claim.manifestSha256 !== studioRenderManifestHash(manifest)) {
+    res.status(403).json({ ok: false, error: '渲染授权无效，请重新发起导出' }); return;
+  }
+  const now = Date.now();
+  for (const [job, expiry] of consumedStudioRenderJobs) if (expiry <= now) consumedStudioRenderJobs.delete(job);
+  const replayKey = `${tenantId}:${claim.jti}`;
+  if (consumedStudioRenderJobs.has(replayKey)) { res.status(409).json({ ok: false, error: '渲染授权已使用' }); return; }
+  if ((activeStudioRenders.get(tenantId) || 0) >= 2 || [...activeStudioRenders.values()].reduce((sum, n) => sum + n, 0) >= 4) {
+    res.status(429).json({ ok: false, error: '渲染任务繁忙，请稍后重试' }); return;
+  }
+  let safeManifest: Record<string, unknown>;
+  const localPort = req.socket.localPort;
   try {
-    const { tenantId } = res.locals as AuthLocals;
-    const origin = `${req.protocol}://${req.get('host')}`;
-    const outputDir = publishingRenderDir(tenantId);
+    if (!localPort) throw new Error('无法确认本机渲染服务端口');
+    safeManifest = secureStudioRenderManifest(manifest, tenantId, String(claim.origin), `http://127.0.0.1:${localPort}`);
+  } catch (error) {
+    res.status(400).json({ ok: false, error: error instanceof Error ? error.message : '渲染清单无效' }); return;
+  }
+  const outputDir = publishingRenderDir(tenantId);
+  const claimDir = path.join(outputDir, '.render-claims', new Date().toISOString().slice(0, 10));
+  try {
+    fs.mkdirSync(claimDir, { recursive: true });
+    const storedBytes = fs.readdirSync(outputDir, { withFileTypes: true })
+      .filter(entry => entry.isFile() && /^studio-[\w-]+\.mp4$/.test(entry.name))
+      .reduce((total, entry) => total + fs.statSync(path.join(outputDir, entry.name)).size, 0);
+    if (storedBytes >= 5 * 1024 * 1024 * 1024) {
+      res.status(429).json({ ok: false, error: '当前工作区成片存储已达 5 GiB 上限，请先清理旧成片' }); return;
+    }
+    if (fs.readdirSync(claimDir).length >= 20) {
+      res.status(429).json({ ok: false, error: '今日导出次数已用完，请明天再试' }); return;
+    }
+    fs.writeFileSync(path.join(claimDir, `${claim.jti}.claim`), '', { flag: 'wx', mode: 0o600 });
+  } catch (error) {
+    res.status((error as NodeJS.ErrnoException)?.code === 'EEXIST' ? 409 : 500).json({ ok: false, error: '渲染授权已使用或无法记录导出任务' }); return;
+  }
+  consumedStudioRenderJobs.set(replayKey, Number(claim.exp) * 1000);
+  activeStudioRenders.set(tenantId, (activeStudioRenders.get(tenantId) || 0) + 1);
+  try {
     fs.mkdirSync(outputDir, { recursive: true });
     const result = await composite({
-      ...(req.body || {}),
+      ...safeManifest,
       requireVisualAssets: true,
-      assetOrigin: origin,
+      assetOrigin: `http://127.0.0.1:${localPort}`,
+      serverStrictAssets: true,
+      maxAssetBytes: MAX_STUDIO_RENDER_ASSET_BYTES,
+      maxTotalAssetBytes: MAX_STUDIO_RENDER_TOTAL_BYTES,
       assetHeaders: {
         ...(req.get('authorization') ? { authorization: req.get('authorization') } : {}),
         ...(req.get('cookie') ? { cookie: req.get('cookie') } : {}),
@@ -5147,6 +5204,10 @@ studioRouter.post('/render/local', async (req, res) => {
     });
   } catch (err) {
     res.status(500).json({ ok: false, error: err instanceof Error ? err.message : '本地 MP4 导出失败' });
+  } finally {
+    const remaining = (activeStudioRenders.get(tenantId) || 1) - 1;
+    if (remaining) activeStudioRenders.set(tenantId, remaining);
+    else activeStudioRenders.delete(tenantId);
   }
 });
 
@@ -8255,6 +8316,36 @@ export async function automationBgmAudio(tenantId: string, id: string): Promise<
   if (!file.startsWith(root + path.sep) || !fs.existsSync(file)) throw Error('配乐文件缺失，请在生产现场更换');
   return 'data:audio/mpeg;base64,' + fs.readFileSync(file).toString('base64');
 }
+
+// Same-origin, authenticated BGM stream for rendering. Never expose object keys or signed COS URLs to ffmpeg.
+studioRouter.get('/bgm/media/:id', async (req, res) => {
+  const { tenantId } = res.locals as AuthLocals;
+  const track = userBgms(tenantId).find(item => item.id === req.params.id);
+  if (!studioBgmMediaPath(track, tenantId)) { res.status(404).end(); return; }
+  if (track?.objectKey) {
+    const key = studioBgmObjectKey(track, tenantId);
+    if (!key) { res.status(404).end(); return; }
+    const object = await objectStorageGetObject(key, req.headers.range);
+    if (!object) { res.status(404).end(); return; }
+    res.setHeader('Content-Type', object.contentType);
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.setHeader('Accept-Ranges', object.acceptRanges || 'bytes');
+    if (object.contentLength !== undefined) res.setHeader('Content-Length', String(object.contentLength));
+    if (object.contentRange) { res.status(206); res.setHeader('Content-Range', object.contentRange); }
+    for await (const chunk of object.body) res.write(chunk);
+    res.end();
+    return;
+  }
+  let sourcePath: string;
+  try { sourcePath = studioRenderAssetPath(new URL(String(track?.url || ''), 'http://local').pathname, tenantId); }
+  catch { res.status(404).end(); return; }
+  if (!sourcePath.startsWith('/bgm/')) { res.status(404).end(); return; }
+  const file = path.resolve(BGM_ROOT, sourcePath.replace(/^\/bgm\//, ''));
+  const root = path.resolve(BGM_ROOT);
+  if (!file.startsWith(`${root}${path.sep}`) || !fs.existsSync(file) || !fs.statSync(file).isFile()) { res.status(404).end(); return; }
+  res.setHeader('Cache-Control', 'private, no-store');
+  res.sendFile(file);
+});
 
 // GET /studio/bgm → BgmTrack[]（仅用户上传音乐）
 studioRouter.get('/bgm', async (_req, res) => {

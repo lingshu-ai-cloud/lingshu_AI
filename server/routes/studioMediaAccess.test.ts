@@ -66,7 +66,12 @@ assert.match(previewUi, /downloadMp4\(activeOutputVersion\?\.output\?\.status ==
 
 const studioBackend = readFileSync(new URL('./studio.ts', import.meta.url), 'utf8');
 const localRenderRoute = studioBackend.slice(studioBackend.indexOf("studioRouter.post('/render/local'"), studioBackend.indexOf("// POST /studio/render/open-output"));
-assert.match(localRenderRoute, /\.\.\.\(req\.body \|\| \{\}\),\s*requireVisualAssets: true/, 'authenticated local exports must require every declared visual even if the request disables the flag');
+assert.match(localRenderRoute, /verifyRenderToken\(req\.body\?\.token\)/, 'local export must verify a server-issued token');
+assert.match(localRenderRoute, /studioRenderManifestHash\(manifest\)/, 'local export must bind token to the exact manifest');
+assert.match(localRenderRoute, /secureStudioRenderManifest\(manifest, tenantId/, 'local export must normalize and scope media before rendering');
+assert.match(localRenderRoute, /requireVisualAssets: true/, 'local export must require every declared visual');
+assert.match(studioBackend, /absoluteAssetUrl\(base, studioBgmMediaPath\(track, tenantId\)\)/, 'render manifest must use a tenant-scoped BGM stream URL');
+assert.match(studioBackend, /studioRouter\.get\('\/bgm\/media\/:id'[\s\S]*?objectStorageGetObject\(key, req\.headers\.range\)/, 'cloud BGM must stream from storage through the authenticated route');
 const openOutputRoute = studioBackend.slice(studioBackend.indexOf("studioRouter.post('/render/open-output'"), studioBackend.indexOf('/* ── 素材库', studioBackend.indexOf("studioRouter.post('/render/open-output'")));
 assert.match(openOutputRoute, /safeStudioRenderOutputPath\(/, 'opening a render folder must enforce the tenant output boundary');
 const avatarImport = readFileSync(new URL('../lib/studioAvatarProduction.ts', import.meta.url), 'utf8');

@@ -15,6 +15,8 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { fileURLToPath } = require('node:url');
+const { Readable, Transform } = require('node:stream');
+const { pipeline } = require('node:stream/promises');
 const { layoutFilters, tempoFilters, muteIntervals } = require('./shot-composition.cjs');
 const { normalizeEffectPlan, sceneEffectFilters, joinSceneFilters, audioEventFilters } = require('./effect-composition.cjs');
 const { automaticSubtitleText, verifySubtitleFonts, fontsDirectory, template: subtitleTemplate } = require('./automatic-subtitles.cjs');
@@ -90,19 +92,30 @@ async function downloadTo(url, dest, options = {}) {
   const rawSource = String(url || '');
   const source = rawSource.startsWith('/') && options.assetOrigin
     ? new URL(rawSource, options.assetOrigin).href : rawSource;
+  if (options.serverStrictAssets) {
+    let parsed;
+    try { parsed = new URL(source); } catch { throw new Error('invalid server render asset URL'); }
+    if (!options.assetOrigin || parsed.origin !== new URL(options.assetOrigin).origin || parsed.username || parsed.password
+      || !/^\/(?:media|tts|covers|bgm|studio-media|api\/overseas\/studio\/)/.test(parsed.pathname)) {
+      throw new Error('server render asset source is not allowed');
+    }
+  }
   const data = dataUrlParts(source);
   if (data) {
+    if (options.serverStrictAssets) throw new Error('data URL is not allowed for server render');
     if (!data.bytes.length) throw new Error('empty data URL');
     fs.writeFileSync(dest, data.bytes);
     return dest;
   }
   if (source.startsWith('file://')) {
+    if (options.serverStrictAssets) throw new Error('file URL is not allowed for server render');
     const localPath = fileURLToPath(source);
     if (!fs.existsSync(localPath) || fs.statSync(localPath).size <= 0) throw new Error(`missing local file ${localPath}`);
     fs.copyFileSync(localPath, dest);
     return dest;
   }
   if (!/^[a-z][a-z0-9+.-]*:/i.test(source) && fs.existsSync(source)) {
+    if (options.serverStrictAssets) throw new Error('local path is not allowed for server render');
     if (fs.statSync(source).size <= 0) throw new Error(`empty local file ${source}`);
     fs.copyFileSync(source, dest);
     return dest;
@@ -114,17 +127,40 @@ async function downloadTo(url, dest, options = {}) {
     : {};
   let res;
   try {
-    res = await fetch(source, { headers, signal: controller.signal });
+    res = await fetch(source, { headers, signal: controller.signal, redirect: options.serverStrictAssets ? 'manual' : 'follow' });
   } finally {
     clearTimeout(timer);
   }
   if (!res.ok) throw new Error(`素材读取失败（HTTP ${res.status}）`);
   if ((res.headers.get('content-type') || '').includes('application/json')) {
+    if (options.serverStrictAssets) throw new Error('server render media route returned JSON instead of media');
     const payload = await res.json();
     if (typeof payload.url !== 'string' || options.resolvedMediaUrl) throw new Error('素材接口没有返回有效媒体地址');
     return downloadTo(payload.url, dest, { ...options, resolvedMediaUrl: true });
   }
-  fs.writeFileSync(dest, Buffer.from(await res.arrayBuffer()));
+  if (options.serverStrictAssets) {
+    const declared = Number(res.headers.get('content-length') || 0);
+    if (declared > options.maxAssetBytes) throw new Error('render asset exceeds size limit');
+    if (!res.body) throw new Error('render asset has no response body');
+    let bytes = 0;
+    const meter = new Transform({ transform(chunk, _encoding, done) {
+      bytes += chunk.length;
+      options.totalBytes.value += chunk.length;
+      if (bytes > options.maxAssetBytes || options.totalBytes.value > options.maxTotalAssetBytes) done(new Error('render asset exceeds size limit'));
+      else done(null, chunk);
+    } });
+    const streamTimer = setTimeout(() => controller.abort(), 45_000);
+    try {
+      await pipeline(Readable.fromWeb(res.body), meter, fs.createWriteStream(dest, { mode: 0o600 }));
+    } catch (error) {
+      try { fs.rmSync(dest, { force: true }); } catch { /* noop */ }
+      throw error;
+    } finally {
+      clearTimeout(streamTimer);
+    }
+  } else {
+    fs.writeFileSync(dest, Buffer.from(await res.arrayBuffer()));
+  }
   return dest;
 }
 
@@ -334,6 +370,10 @@ async function composite(manifest, onProgress = () => {}, outDir) {
   const downloadOptions = {
     assetOrigin: String(manifest && manifest.assetOrigin || ''),
     assetHeaders: manifest && manifest.assetHeaders && typeof manifest.assetHeaders === 'object' ? manifest.assetHeaders : {},
+    serverStrictAssets: Boolean(manifest && manifest.serverStrictAssets),
+    maxAssetBytes: Number(manifest && manifest.maxAssetBytes) || 100 * 1024 * 1024,
+    maxTotalAssetBytes: Number(manifest && manifest.maxTotalAssetBytes) || 1024 * 1024 * 1024,
+    totalBytes: { value: 0 },
   };
 
   try {
@@ -593,11 +633,20 @@ async function composite(manifest, onProgress = () => {}, outDir) {
       // stdin 忽略（双保险防挂起）、stdout 忽略、只读 stderr 解析进度
       const proc = spawn(ffmpegPath, args, { stdio: ['ignore', 'ignore', 'pipe'] });
       let stderr = '';
+      let exceededOutputLimit = false;
       const maxRenderMs = Math.max(120_000, duration * 15_000);
       const killTimer = setTimeout(() => proc.kill('SIGKILL'), maxRenderMs);
+      const sizeTimer = downloadOptions.serverStrictAssets ? setInterval(() => {
+        try {
+          if (fs.statSync(outputPath).size > 1024 * 1024 * 1024) {
+            exceededOutputLimit = true;
+            proc.kill('SIGKILL');
+          }
+        } catch { /* output not created yet */ }
+      }, 1000) : null;
       proc.stderr.on('data', chunk => {
         const s = chunk.toString();
-        stderr += s;
+        stderr = (stderr + s).slice(-4096);
         const m = s.match(/time=(\d+):(\d+):(\d+(?:\.\d+)?)/);
         if (m) {
           const secs = (+m[1]) * 3600 + (+m[2]) * 60 + parseFloat(m[3]);
@@ -607,12 +656,15 @@ async function composite(manifest, onProgress = () => {}, outDir) {
       proc.on('error', err => resolve({ ok: false, error: String(err) }));
       proc.on('close', (code, signal) => {
         clearTimeout(killTimer);
+        if (sizeTimer) clearInterval(sizeTimer);
         try { fs.rmSync(tmp, { recursive: true, force: true }); } catch { /* noop */ }
-        if (code === 0) {
+        const finalBytes = (() => { try { return fs.statSync(outputPath).size; } catch { return 0; } })();
+        if (code === 0 && (!downloadOptions.serverStrictAssets || finalBytes <= 1024 * 1024 * 1024)) {
           onProgress(100);
           resolve({ ok: true, outputPath });
         } else {
-          resolve({ ok: false, error: code === null ? `ffmpeg 被信号 ${signal || 'unknown'} 中止\n${stderr.slice(-1200)}` : `ffmpeg exited ${code}\n${stderr.slice(-1200)}` });
+          if (downloadOptions.serverStrictAssets) try { fs.rmSync(outputPath, { force: true }); } catch { /* noop */ }
+          resolve({ ok: false, error: exceededOutputLimit || finalBytes > 1024 * 1024 * 1024 ? '成片文件超出 1 GiB 限制' : code === null ? `ffmpeg 被信号 ${signal || 'unknown'} 中止\n${stderr.slice(-1200)}` : `ffmpeg exited ${code}\n${stderr.slice(-1200)}` });
         }
       });
     });
@@ -622,4 +674,4 @@ async function composite(manifest, onProgress = () => {}, outDir) {
   }
 }
 
-module.exports = { composite, resolution, ffmpegPath, dataUrlParts, extensionForAsset, isImageAsset, subtitlePages, groupSpokenCues, normalizeSubtitleCues, cuesToAss };
+module.exports = { composite, downloadTo, resolution, ffmpegPath, dataUrlParts, extensionForAsset, isImageAsset, subtitlePages, groupSpokenCues, normalizeSubtitleCues, cuesToAss };
