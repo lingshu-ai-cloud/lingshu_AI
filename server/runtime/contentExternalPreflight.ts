@@ -1,4 +1,7 @@
 import { HeadBucketCommand, S3Client } from '@aws-sdk/client-s3';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 export type ExternalPreflightState = 'ready' | 'blocked';
 
@@ -13,6 +16,7 @@ export interface ContentExternalPreflightReport {
   checks: {
     objectStorage: ExternalPreflightCheck;
     seedanceSentence: ExternalPreflightCheck;
+    avatarSourceCaptions: ExternalPreflightCheck;
   };
 }
 
@@ -23,6 +27,18 @@ const value = (env: Env, ...names: string[]) => names
   .find(Boolean) || '';
 
 const enabled = (env: Env, name: string) => value(env, name).toLowerCase() === 'true';
+
+function dashscopeKeyConfigured(env: Env): boolean {
+  if (value(env, 'DASHSCOPE_API_KEY')) return true;
+  const file = value(env, 'DASHSCOPE_API_KEY_FILE')
+    || (env === process.env ? path.join(os.homedir(), '.config/lingshu/dashscope.key') : '');
+  try {
+    if (!file) return false;
+    const stat = fs.statSync(file);
+    return stat.isFile() && stat.size > 0 && stat.size <= 16_384 && Boolean(fs.readFileSync(file, 'utf8').trim());
+  }
+  catch { return false; }
+}
 
 function safeFailure(error: unknown): string {
   const candidate = error as { name?: string; $metadata?: { httpStatusCode?: number } };
@@ -66,6 +82,12 @@ export function staticContentExternalPreflight(env: Env = process.env): ContentE
     storage.driver === 'local' && !/^https:\/\//i.test(value(env, 'LOCAL_OBJECT_STORAGE_PUBLIC_BASE_URL'))
       && 'LOCAL_OBJECT_STORAGE_PUBLIC_BASE_URL（公网 HTTPS）',
   ].filter(Boolean);
+  const avatarCaptionMissing = [
+    !dashscopeKeyConfigured(env) && 'DASHSCOPE_API_KEY_or_DASHSCOPE_API_KEY_FILE',
+    storage.driver === 'local' && !/^https:\/\//i.test(value(env, 'LOCAL_OBJECT_STORAGE_PUBLIC_BASE_URL'))
+      && 'LOCAL_OBJECT_STORAGE_PUBLIC_BASE_URL（公网 HTTPS）',
+    storage.driver !== 'local' && (invalidStorageDriver || storageMissing.length > 0) && 'object_storage',
+  ].filter(Boolean);
   const checks = {
     objectStorage: invalidStorageDriver
       ? { state: 'blocked' as const, code: 'object_storage_driver_invalid', detail: 'OBJECT_STORAGE_DRIVER must be local or cos' }
@@ -77,8 +99,11 @@ export function staticContentExternalPreflight(env: Env = process.env): ContentE
     seedanceSentence: seedanceMissing.length
       ? { state: 'blocked' as const, code: 'seedance_sentence_config_missing', detail: `missing:${seedanceMissing.join(',')}` }
       : { state: 'ready' as const, code: 'seedance_sentence_configured', detail: 'required settings are present' },
+    avatarSourceCaptions: avatarCaptionMissing.length
+      ? { state: 'blocked' as const, code: 'avatar_source_captions_config_missing', detail: `missing:${avatarCaptionMissing.join(',')}` }
+      : { state: 'ready' as const, code: 'avatar_source_captions_configured', detail: 'source-audio alignment requirements are present' },
   };
-  return { ready: checks.objectStorage.state === 'ready' && checks.seedanceSentence.state === 'ready', checks };
+  return { ready: Object.values(checks).every(check => check.state === 'ready'), checks };
 }
 
 export async function contentExternalConnectivityPreflight(input: {
@@ -137,6 +162,6 @@ export async function contentExternalConnectivityPreflight(input: {
       report.checks.seedanceSentence = { state: 'blocked', code: 'seedance_model_unreachable', detail: safeFailure(error) };
     }
   }
-  report.ready = report.checks.objectStorage.state === 'ready' && report.checks.seedanceSentence.state === 'ready';
+  report.ready = Object.values(report.checks).every(check => check.state === 'ready');
   return report;
 }
