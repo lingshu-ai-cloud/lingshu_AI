@@ -129,6 +129,40 @@ export function verifiedAudioCues(raw: any, transcript: string, duration: number
   return words;
 }
 
+/** DashScope returns a signed result URL on an OSS regional endpoint. */
+export function trustedQwenTranscriptionUrl(value: unknown): URL {
+  if (typeof value !== 'string') throw new Error('音频字幕下载地址不可信');
+  let url: URL;
+  try { url = new URL(value); } catch { throw new Error('音频字幕下载地址不可信'); }
+  if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.hash
+    || !/^(?:[a-z0-9][a-z0-9-]*\.)?oss-[a-z0-9-]+\.aliyuncs\.com$/i.test(url.hostname)) {
+    throw new Error('音频字幕下载地址不可信');
+  }
+  url.protocol = 'https:';
+  return url;
+}
+
+async function downloadQwenTranscription(url: URL): Promise<unknown> {
+  const response = await fetch(url, { signal: AbortSignal.timeout(20_000), redirect: 'error' });
+  if (!response.ok || !response.body) throw new Error('音频字幕下载失败');
+  const parts: Uint8Array[] = [];
+  let size = 0;
+  const reader = response.body.getReader();
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.length;
+      if (size > 8 * 1024 * 1024) throw new Error('音频字幕文件过大');
+      parts.push(value);
+    }
+  } finally {
+    await reader.cancel().catch(() => {});
+  }
+  try { return JSON.parse(Buffer.concat(parts).toString('utf8')); }
+  catch { throw new Error('音频字幕格式无效'); }
+}
+
 export async function alignQwenFile(url: string, transcript: string, duration: number, cacheFile: string) {
   const base = (process.env.DASHSCOPE_ASR_BASE_URL || 'https://dashscope.aliyuncs.com/api/v1').replace(/\/$/, '');
   const headers = {
@@ -167,12 +201,8 @@ export async function alignQwenFile(url: string, transcript: string, duration: n
     const state = await call(`/tasks/${encodeURIComponent(cache.taskId)}`);
     if (state.output?.task_status === 'FAILED') throw new Error(`音频对齐失败：${String(state.output.code || '请重新生成音频')}`);
     if (state.output?.task_status === 'SUCCEEDED') {
-      const target = new URL(state.output.result.transcription_url);
-      if (!/(^|\.)oss-[a-z0-9-]+\.aliyuncs\.com$/i.test(target.hostname)) throw new Error('音频字幕下载地址不可信');
-      target.protocol = 'https:';
-      const response = await fetch(target, { signal: AbortSignal.timeout(20_000), redirect: 'error' });
-      if (!response.ok) throw new Error('音频字幕下载失败');
-      const result = await response.json();
+      const target = trustedQwenTranscriptionUrl(state.output.result?.transcription_url);
+      const result = await downloadQwenTranscription(target);
       fs.writeFileSync(cacheFile, JSON.stringify({ ...cache, result }));
       return verifiedAudioCues(result, transcript, duration);
     }
