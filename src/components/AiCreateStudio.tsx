@@ -5147,8 +5147,13 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
       && assignedMaterial.type === 'video'
       && assignedMaterial.sourceType === 'digital-human-sentence-video'
       && Boolean(assignedMaterial.providerTaskId && assignedMaterial.contentSha256);
+    const legacyPrivateFile = /^\/api\/overseas\/studio\/private-assets\/materials\/([\w.-]+\.mp4)$/.exec(
+      String(assignedMaterial?.url || '').split('?', 1)[0]);
+    const legacyHeygenVideo = assignedMaterial?.scope === 'own'
+      && assignedMaterial.type === 'video' && assignedMaterial.sourceType === 'heygen'
+      && Boolean(legacyPrivateFile?.[1]?.startsWith(`${materialId}-`));
     return production.source === 'avatar' && production.sound === 'source'
-      && Boolean(materialId) && (adoptedAvatar || adoptedExecution || reusableSentenceVideo);
+      && Boolean(materialId) && (adoptedAvatar || adoptedExecution || reusableSentenceVideo || legacyHeygenVideo);
   };
   const sourceCuesForMaterial = (clip: Clip | undefined) => {
     if (!clip) return [];
