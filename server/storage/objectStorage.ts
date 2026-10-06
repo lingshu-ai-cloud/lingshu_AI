@@ -10,6 +10,7 @@ export interface StoredObjectHead { size: number; contentType: string; etag?: st
 export interface ObjectStorageStream extends StoredObjectHead { body: AsyncIterable<Uint8Array>; contentLength?: number; contentRange?: string; acceptRanges?: string; lastModified?: Date }
 
 const localRoot = () => path.resolve(process.env.LOCAL_OBJECT_STORAGE_ROOT || 'data/media/object-storage');
+export function objectStorageLocalRoot(): string { return localRoot(); }
 const driver = (): ObjectStorageDriver => {
   const configured = String(process.env.OBJECT_STORAGE_DRIVER || '').trim().toLowerCase();
   if (configured === 'local' || configured === 'cos') return configured;

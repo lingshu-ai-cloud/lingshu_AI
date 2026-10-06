@@ -73,7 +73,7 @@ import {
 } from './runtime/httpSafety.js';
 import { createRuntimeReadinessProbe, runtimeCapabilities } from './runtime/readiness.js';
 import { dataAuthorityRequestScope } from './storage/dataAuthority.js';
-import { objectStorageConfigurationIssues } from './storage/objectStorage.js';
+import { objectStorageConfigurationIssues, objectStorageDriver, objectStorageLocalRoot } from './storage/objectStorage.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const processRole = parseProcessRole(process.env.PROCESS_ROLE);
@@ -259,9 +259,12 @@ const privateAssetHeaders = (res: express.Response) => {
 app.use('/cloud-files', cloudMaterialMediaRouter);
 // Neutral alias for browsers/extensions that block paths containing "cloud-files".
 app.use('/studio-media', cloudMaterialMediaRouter);
-app.use('/media', requireScopedAsset, express.static(mediaDir, {
-  setHeaders: privateAssetHeaders,
-}));
+const mediaRouter = express.Router();
+if (objectStorageDriver() === 'local') {
+  mediaRouter.use('/object-storage', express.static(objectStorageLocalRoot(), { setHeaders: privateAssetHeaders }));
+}
+mediaRouter.use(express.static(mediaDir, { setHeaders: privateAssetHeaders }));
+app.use('/media', requireScopedAsset, mediaRouter);
 
 // BGM 鏇插簱鏈湴鏂囦欢鎵樼锛圥OST /studio/bgm 涓婁紶锛?
 const bgmDir = path.join(__dirname, '..', 'data', 'bgm');

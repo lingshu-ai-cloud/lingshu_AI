@@ -15,6 +15,7 @@ import {
   objectStorageEnabled,
   objectStorageGetObject,
   objectStorageHead,
+  objectStorageLocalRoot,
   objectStorageSignedGetUrl,
   objectStorageSupplierDeliveryReady,
   objectStorageUpload,
@@ -58,7 +59,9 @@ test('supplier can fetch only a signed tenant-local object over the media route'
   auth.verifyToken = async () => null;
   const key = materialAssetObjectKey('tenant-a', 'voice.mp3');
   const app = express();
-  app.use('/media', requireScopedAsset, express.static(temp));
+  const mediaRouter = express.Router();
+  mediaRouter.use('/object-storage', express.static(objectStorageLocalRoot()));
+  app.use('/media', requireScopedAsset, mediaRouter);
   const server = app.listen(0, '127.0.0.1');
   await new Promise<void>(resolve => server.once('listening', resolve));
   const address = server.address();
