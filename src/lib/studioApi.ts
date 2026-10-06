@@ -921,6 +921,8 @@ export interface Material {
   usage?: 'editable' | 'reference_only';
   canManage?: boolean;
   sourceType?: string;
+  providerTaskId?: string;
+  contentSha256?: string;
   sourceName?: string;
   sourceProvider?: string;
   sourceCreator?: string;

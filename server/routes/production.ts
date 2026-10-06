@@ -79,7 +79,10 @@ export function createProductionRouter(store: DataStore, importVideo: (url: stri
           transcriptCues: cloudProvenance.avatarSourceCues,
           transcriptCuesProvenance: cloudProvenance.avatarSourceCuesProvenance } : snapshot);
         if (!source || source.type !== 'video') throw new Error('数字人源片不存在或不属于当前企业');
-        if (!adopted && !verifiedHeygenJob && !verifiedAdoption) throw new Error('所选素材缺少数字人生成与采纳记录');
+        const reusableSentenceVideo = Boolean(material && material.sourceType === 'digital-human-sentence-video'
+          && material.providerTaskId && material.contentSha256);
+        if (!adopted && !verifiedHeygenJob && !verifiedAdoption && !reusableSentenceVideo)
+          throw new Error('所选素材缺少数字人生成与采纳记录');
         const trustedStoredCues = ['heygen:source_video_srt', 'qwen_filetrans:source_material'].includes(String(source.transcriptCuesProvenance || ''));
         const existing = trustedStoredCues ? sourceCuesForShot(source.transcriptCues, Number(source.duration)) : [];
         if (existing.length) return { materialId, transcript: String(source.transcript || ''), cues: existing,

@@ -142,7 +142,7 @@ const probeClipAspect = (clip: Clip) => new Promise<{ width: number; height: num
 
 const materialToClip = (m: Material): Clip => ({
   id: m.id, name: m.name, folder: m.folder, type: m.type, duration: m.duration, width: m.width, height: m.height, aspectRatio: m.aspectRatio, size: m.size, url: m.url, poster: m.poster, scope: m.scope ?? 'own',
-  usage: m.usage, sourceType: m.sourceType, industry: m.industry, shotFunction: m.shotFunction, applicability: m.applicability, tags: m.tags,
+  usage: m.usage, sourceType: m.sourceType, providerTaskId: m.providerTaskId, contentSha256: m.contentSha256, industry: m.industry, shotFunction: m.shotFunction, applicability: m.applicability, tags: m.tags,
   productId: m.productId, productName: m.productName,
   transcript: m.transcript, transcriptCues: m.transcriptCues, transcriptCuesProvenance: m.transcriptCuesProvenance,
   segmentAnalysisStatus: m.segmentAnalysisStatus, segmentAnalysisError: m.segmentAnalysisError, segments: m.segments, visualObservations: m.visualObservations,
@@ -291,6 +291,8 @@ export interface Clip {
   scope?: 'shared' | 'own'; // 公共库 / 我的（缺省按 own）
   usage?: 'editable' | 'reference_only';
   sourceType?: string;
+  providerTaskId?: string;
+  contentSha256?: string;
   industry?: string;
   shotFunction?: string;
   applicability?: string;
@@ -5140,8 +5142,13 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     const adoptedExecution = productionExecutions.some(execution => execution.assemblyId === activeAssemblyId
       && execution.shotId === persistedShotId && execution.adoption?.materialId === materialId
       && execution.quality.state === 'accepted');
+    const assignedMaterial = materialById.get(materialId);
+    const reusableSentenceVideo = assignedMaterial?.scope === 'own'
+      && assignedMaterial.type === 'video'
+      && assignedMaterial.sourceType === 'digital-human-sentence-video'
+      && Boolean(assignedMaterial.providerTaskId && assignedMaterial.contentSha256);
     return production.source === 'avatar' && production.sound === 'source'
-      && Boolean(materialId) && (adoptedAvatar || adoptedExecution);
+      && Boolean(materialId) && (adoptedAvatar || adoptedExecution || reusableSentenceVideo);
   };
   const sourceCuesForMaterial = (clip: Clip | undefined) => {
     if (!clip) return [];
