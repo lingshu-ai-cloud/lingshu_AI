@@ -5486,7 +5486,8 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
   };
 
   const goPreview = async (scriptOverride?: string, renderOverride?: { language?: string; voiceoverUrl?: string; voiceoverDur?: number; cues?: SubCue[]; outputOnly?: boolean; timeline?: typeof renderTimeline; bgmId?: string; serverPreviewRequired?: boolean }) => {
-    const blockers = storyboardSlots.flatMap(slot => shotBlockers(productionFor(slot), shotProductionContext).map(message => `${slot.title}：${message}`));
+    const blockers = storyboardSlots.flatMap(slot => shotBlockers(productionFor(slot), shotProductionContext,
+      undefined, { sourceMaterialVerified: hasAvatarSourceVoice(slot) }).map(message => `${slot.title}：${message}`));
     if (blockers.length) { const message = '部分分镜尚未具备成片条件，请完成对应分镜的配置后再渲染。'; setModeNotice(message); throw new Error(message); }
     setStepIdx(STEPS.findIndex(s => s.id === 'preview'));
     setRendered(false);
@@ -14205,7 +14206,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
       const ready = shot.digitalHuman?.method === 'talking' ? productionCapability.configured : productionCapability.tools.some(tool => tool.execution && tool.methods.includes(shot.digitalHuman?.method || ''));
       if (!ready) missing.push('该数字人路线暂不可用');
       if (missing.length) smartBatchTodos.push({ slotId: slot.id, label: `分镜 ${storyboardSlots.indexOf(slot) + 1} · ${missing[0]}`, target: 'digital' });
-    } else if (enterpriseMaterialIssue({ material: clip, duration: slot.end - slot.start, ratio, sound: shot.sound, narration: shot.narration })) {
+    } else if (!hasAvatarSourceVoice(slot) && enterpriseMaterialIssue({ material: clip, duration: slot.end - slot.start, ratio, sound: shot.sound, narration: shot.narration })) {
       smartBatchTodos.push({ slotId: slot.id, label: `分镜 ${storyboardSlots.indexOf(slot) + 1} · ${choice === 'shoot' && !clip ? '待上传拍摄素材' : enterpriseMaterialIssue({ material: clip, duration: slot.end - slot.start, ratio, sound: shot.sound, narration: shot.narration })}`, target: choice === 'shoot' ? 'shoot' : 'material' });
     }
   }
@@ -14214,22 +14215,26 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
       const plan = sourcePlanFor(slot);
       const shot = productionFor(slot);
       const clip = materialById.get(storyboardAssignments[slot.id] || '');
+      const boundLocalMaterial = Boolean(clip && shot.source !== 'avatar' && (plan.userSource === 'material'
+        || (!plan.userSource && !plan.generatedClipId && !plan.quality)));
       const presenter = storyboardTopicFor(slot) === 'presenter' && salesPresenterRecognition(presenterEvidenceFor(slot)) === 'confirmed'
-        && plan.userSource !== 'material' && plan.userSource !== 'shoot';
+        && !boundLocalMaterial && plan.userSource !== 'material' && plan.userSource !== 'shoot';
       const route = presenter ? 'presenter' : plan.userSource === 'shoot' ? 'shoot'
-        : plan.mode === 'ai' || plan.mode === 'hybrid' ? 'ai' : 'local';
+        : boundLocalMaterial ? 'local' : plan.mode === 'ai' || plan.mode === 'hybrid' ? 'ai' : 'local';
       const adopted = shot.candidates.find(candidate => candidate.id === shot.adoptedId && candidate.materialId === clip?.id);
-      return { id: slot.id, index: index + 1, title: slot.title, duration: slot.end - slot.start, route,
+      const verifiedSource = hasAvatarSourceVoice(slot);
+      return { id: slot.id, index: index + 1, title: slot.title,
+        duration: verifiedSource && clip?.duration ? clip.duration : slot.end - slot.start, route,
         material: clip ? { id: clip.id, url: clip.url, type: clip.type, usableDuration: clip.type === 'video' ? clip.duration : undefined } : undefined,
         generatedVideoAccepted: route === 'ai' && Boolean(adopted?.source === 'ai' && plan.generatedClipId === clip?.id && plan.quality?.passed),
-        digitalHumanAccepted: route === 'presenter' && Boolean(adopted?.source === 'avatar'),
+        digitalHumanAccepted: route === 'presenter' && Boolean(adopted?.source === 'avatar' || verifiedSource),
         quality: route === 'ai' && plan.quality ? { passed: Boolean(plan.quality.passed) } : undefined,
         qualityError: route === 'ai' ? plan.qualityError : undefined,
         qualityChecking: Boolean(storyboardQualityChecking[slot.id]),
         productRequired: route === 'ai' && storyboardIsProductShot(slot), productIds: plan.productIds,
         productionBlockers: [
-          ...shotBlockers(shot, shotProductionContext),
-          ...(route === 'local' && clip ? [enterpriseMaterialIssue({ material: clip,
+          ...shotBlockers(shot, shotProductionContext, undefined, { sourceMaterialVerified: verifiedSource }),
+          ...(route === 'local' && clip && !verifiedSource ? [enterpriseMaterialIssue({ material: clip,
             duration: slot.end - slot.start, ratio, sound: shot.sound, narration: shot.narration })].filter((item): item is string => Boolean(item)) : []),
         ],
       };

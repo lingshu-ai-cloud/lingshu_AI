@@ -182,10 +182,10 @@ export function recommendShot(input: { detail: string; preference: AppearancePre
   if ((input.preference === 'avatar' || /口播|讲解|解释|FAQ|presenter|talking/i.test(input.detail)) && input.hasPresenter) return { source: 'avatar', reason: '使用授权人物讲解，按确认台词生成新口型' };
   return { source: 'material', reason: '优先补充产品素材；创意场景可手动选择AI生成' };
 }
-export function shotBlockers(shot: ShotProduction, context: string, shotId?: string): string[] {
+export function shotBlockers(shot: ShotProduction, context: string, shotId?: string, options?: { sourceMaterialVerified?: boolean }): string[] {
   const result: string[] = [];
   const candidate = shot.candidates.find(item => item.id === shot.adoptedId);
-  if (shot.source === 'avatar' && (!candidate || candidate.source !== 'avatar')) result.push('请生成并采用当前数字人镜头候选，不能将原素材视为已生成数字人');
+  if (shot.source === 'avatar' && !options?.sourceMaterialVerified && (!candidate || candidate.source !== 'avatar')) result.push('请生成并采用当前数字人镜头候选，不能将原素材视为已生成数字人');
   if (candidate && candidate.fingerprint !== shotFingerprint(shot, context, shotId)) result.push('已采用画面与当前人物/台词/产品要求不一致，请生成或采用匹配候选');
   if (shot.productId && !shot.factsConfirmed) result.push('更换产品后，请核对并确认台词中的产品事实');
   if (shot.layout !== 'full' && !shot.productMaterialId) result.push('分屏或画中画缺少产品素材');
