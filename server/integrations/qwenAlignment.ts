@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { dashscopeApiKey } from '../agents/qwen.js';
 
 export type TimedCue = { start: number; end: number; text: string };
 
@@ -131,7 +132,7 @@ export function verifiedAudioCues(raw: any, transcript: string, duration: number
 export async function alignQwenFile(url: string, transcript: string, duration: number, cacheFile: string) {
   const base = (process.env.DASHSCOPE_ASR_BASE_URL || 'https://dashscope.aliyuncs.com/api/v1').replace(/\/$/, '');
   const headers = {
-    Authorization: `Bearer ${String(process.env.DASHSCOPE_API_KEY || '')}`,
+    Authorization: `Bearer ${dashscopeApiKey()}`,
     'Content-Type': 'application/json',
     'X-DashScope-Async': 'enable',
   };

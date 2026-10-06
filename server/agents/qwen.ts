@@ -12,12 +12,19 @@ const QWEN_VL_MODEL = () => (process.env.QWEN_VL_MODEL ?? 'qwen-vl-max').trim();
 const QWEN_EXACT_VL_MODEL = () => (process.env.QWEN_EXACT_VL_MODEL ?? 'qwen3-vl-flash').trim();
 const BASE_URL = () => (process.env.DASHSCOPE_BASE_URL ?? 'https://dashscope.aliyuncs.com/compatible-mode/v1').trim();
 
-function client(): OpenAI {
+export function dashscopeApiKey(): string {
+  const envKey = process.env.DASHSCOPE_API_KEY?.trim();
+  if (envKey) return envKey;
   const keyFile = (process.env.DASHSCOPE_API_KEY_FILE || path.join(os.homedir(), '.config/lingshu/dashscope.key')).trim();
-  let fileKey = '';
-  try { fileKey = fs.readFileSync(keyFile, 'utf8').trim(); } catch { /* optional local secret file */ }
-  const apiKey = process.env.DASHSCOPE_API_KEY?.trim() || fileKey;
-  if (!apiKey) throw new Error('DASHSCOPE_API_KEY is not set');
+  try {
+    const fileKey = fs.readFileSync(keyFile, 'utf8').trim();
+    if (fileKey) return fileKey;
+  } catch { /* optional local secret file */ }
+  throw new Error('DASHSCOPE_API_KEY is not set');
+}
+
+function client(): OpenAI {
+  const apiKey = dashscopeApiKey();
   return new OpenAI({
     apiKey,
     baseURL: BASE_URL(),
