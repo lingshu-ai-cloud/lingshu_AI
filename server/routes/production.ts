@@ -141,14 +141,16 @@ export function createProductionRouter(store: DataStore, importVideo: (url: stri
           const nextSpec = structuredClone(project.spec || {});
           nextSpec.materialSnapshots = (nextSpec.materialSnapshots || []).map((item: any) => item.id === materialId
             ? { ...item, transcript: measured.transcript, transcriptCues: measured.cues,
-              transcriptCuesProvenance: measured.provenance, transcriptSourceHash: measured.sourceHash } : item);
+              transcriptCuesProvenance: measured.provenance, transcriptSourceHash: measured.sourceHash,
+              contentSha256: measured.sourceHash || item.contentSha256 } : item);
           if (!await store.update('studio_projects', project.id, { spec: nextSpec })) throw new Error('旧数字人源片字幕写回草稿失败');
         } else {
           const latest = readLocalMaterials();
           const index = latest.findIndex(item => item.id === materialId && item.tenantId === tenantId);
           if (index < 0) throw new Error('字幕生成完成后原素材已不可用');
           latest[index] = { ...latest[index], transcript: measured.transcript, transcriptCues: measured.cues,
-            transcriptCuesProvenance: measured.provenance, transcriptSourceHash: measured.sourceHash };
+            transcriptCuesProvenance: measured.provenance, transcriptSourceHash: measured.sourceHash,
+            contentSha256: measured.sourceHash || latest[index].contentSha256 };
           saveLocalMaterials(latest);
         }
         return { materialId, transcript: measured.transcript, cues: measured.cues,

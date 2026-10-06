@@ -8,6 +8,7 @@ test('measured avatar captions are invalidated when the source material changes'
   assert.equal(sourceCaptionCacheMatchesContent('qwen_filetrans:source_material', first, first), true);
   assert.equal(sourceCaptionCacheMatchesContent('qwen_filetrans:source_material', first, replacement), false);
   assert.equal(sourceCaptionCacheMatchesContent('qwen_filetrans:source_material', undefined, replacement), false);
+  assert.equal(sourceCaptionCacheMatchesContent('qwen_filetrans:source_material', first, undefined), false);
   assert.equal(sourceCaptionCacheMatchesContent('heygen:source_video_srt', undefined, replacement), true);
 });
 

@@ -47,7 +47,7 @@ export function sourceCaptionCacheMatchesContent(provenance: string | undefined,
   if (!['heygen:source_video_srt', 'qwen_filetrans:source_material'].includes(provenance || '')) return false;
   if (provenance !== 'qwen_filetrans:source_material') return true;
   const current = String(contentHash || '').toLowerCase();
-  if (!/^[a-f0-9]{64}$/.test(current)) return true;
+  if (!/^[a-f0-9]{64}$/.test(current)) return false;
   return String(sourceHash || '').toLowerCase() === current;
 }
 
