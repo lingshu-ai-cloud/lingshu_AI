@@ -12,7 +12,7 @@ export function studioRenderManifestHash(manifest: unknown): string {
 
 function safePath(pathname: string, tenantId: string): boolean {
   const escaped = tenantId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const scoped = new RegExp(`^/(?:media|tts|covers|bgm)/tenants/${escaped}/[\\w.-]+$`);
+  const scoped = new RegExp(`^/(?:media|tts|covers|bgm)/tenants/${escaped}/[\\w.-]+(?:/[\\w.-]+){0,3}$`);
   const shared = /^\/(?:media|tts|covers|bgm)\/shared\/[\w.-]+$/;
   const legacy = /^\/(?:media|tts|covers|bgm)\/[\w.-]+$/;
   const privateAsset = /^\/api\/overseas\/studio\/private-assets\/(?:materials|tts|covers)\/[\w.-]+$/;
@@ -27,6 +27,7 @@ function safePath(pathname: string, tenantId: string): boolean {
 /** Only server-controlled media routes are eligible for web rendering. */
 export function studioRenderAssetPath(value: unknown, tenantId: string): string {
   if (typeof value !== 'string' || !value.trim() || value.length > 4096) throw new Error('渲染素材地址无效');
+  if (/%|\\|\.\./.test(value.split('?', 1)[0])) throw new Error('渲染素材必须来自当前租户的受控素材库');
   let parsed: URL;
   try { parsed = new URL(value, 'http://render.local'); } catch { throw new Error('渲染素材地址无效'); }
   if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password || parsed.hash

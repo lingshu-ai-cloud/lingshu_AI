@@ -23,6 +23,13 @@ const manifest = {
 };
 const safe = secureStudioRenderManifest(manifest, tenant, origin, internal);
 assert.equal(safe.timeline[0].url, `${internal}${signed}`);
+const nestedOwned = '/media/tenants/tenant_a/owned-inspiration-imports/owned-material.mp4';
+assert.equal(secureStudioRenderManifest({ ...manifest, timeline: [{ ...manifest.timeline[0], url: `${origin}${nestedOwned}` }] }, tenant, origin, internal).timeline[0].url,
+  `${internal}${nestedOwned}`);
+assert.throws(() => secureStudioRenderManifest({ ...manifest, timeline: [{ ...manifest.timeline[0],
+  url: `${origin}/media/tenants/tenant_b/owned-inspiration-imports/owned-material.mp4` }] }, tenant, origin, internal));
+assert.throws(() => secureStudioRenderManifest({ ...manifest, timeline: [{ ...manifest.timeline[0],
+  url: `${origin}/media/tenants/tenant_a/owned-inspiration-imports/%2e%2e/owned-material.mp4` }] }, tenant, origin, internal));
 assert.equal(safe.voiceover.url, `${internal}/tts/tenants/tenant_a/voice.wav`);
 assert.equal((safe as Record<string, unknown>).requireVisualAssets, true);
 const claim = signRenderToken({ jti: manifest.jobId, tenantId: tenant, origin, manifestSha256: studioRenderManifestHash(manifest) });
