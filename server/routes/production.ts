@@ -7,7 +7,7 @@ import { readLocalMaterials, saveLocalMaterials } from '../lib/materialLibrary.j
 import { fetchCloudMaterial, getOwnedCloudMaterialRecord, updateCloudMaterial } from '../lib/cloudMaterials.js';
 import { legacyAvatarSourceObjectKey, measureAvatarSourceCaptions } from '../lib/avatarSourceCaptions.js';
 import { downloadHeygenSubtitles, heygenRequest } from '../integrations/heygen.js';
-import { sourceCuesForShot } from '../../src/lib/narrationTimeline.js';
+import { sourceCaptionCacheMatchesContent, sourceCuesForShot } from '../../src/lib/narrationTimeline.js';
 import { materialAssetObjectKey } from '../storage/materialAssets.js';
 import { objectStorageDownload, objectStorageHead, objectStorageSignedGetUrl, objectStorageSupplierDeliveryReady, objectStorageUpload } from '../storage/objectStorage.js';
 import { resolveHeyGenPresenterPhoto } from '../lib/heygenPresenterPhoto.js';
@@ -77,16 +77,20 @@ export function createProductionRouter(store: DataStore, importVideo: (url: stri
           duration: cloud.duration, sourceType: cloud.sourceType,
           transcript: cloudProvenance.avatarSourceTranscript,
           transcriptCues: cloudProvenance.avatarSourceCues,
-          transcriptCuesProvenance: cloudProvenance.avatarSourceCuesProvenance } : snapshot);
+          transcriptCuesProvenance: cloudProvenance.avatarSourceCuesProvenance,
+          transcriptSourceHash: cloudProvenance.avatarSourceHash,
+          contentSha256: cloud.sha256 } : snapshot);
         if (!source || source.type !== 'video') throw new Error('数字人源片不存在或不属于当前企业');
         const reusableSentenceVideo = Boolean(material && material.sourceType === 'digital-human-sentence-video'
           && material.providerTaskId && material.contentSha256);
         if (!adopted && !verifiedHeygenJob && !verifiedAdoption && !reusableSentenceVideo)
           throw new Error('所选素材缺少数字人生成与采纳记录');
-        const trustedStoredCues = ['heygen:source_video_srt', 'qwen_filetrans:source_material'].includes(String(source.transcriptCuesProvenance || ''));
+        const trustedStoredCues = sourceCaptionCacheMatchesContent(
+          source.transcriptCuesProvenance, source.transcriptSourceHash, source.contentSha256);
         const existing = trustedStoredCues ? sourceCuesForShot(source.transcriptCues, Number(source.duration)) : [];
         if (existing.length) return { materialId, transcript: String(source.transcript || ''), cues: existing,
-          provenance: String(source.transcriptCuesProvenance || 'material_source'), cached: true };
+          provenance: String(source.transcriptCuesProvenance || 'material_source'),
+          sourceHash: String(source.transcriptSourceHash || ''), cached: true };
         let legacyObjectKey = '';
         if (snapshot) {
           legacyObjectKey = legacyAvatarSourceObjectKey(String(snapshot.url || ''), materialId, tenantId);
@@ -147,7 +151,8 @@ export function createProductionRouter(store: DataStore, importVideo: (url: stri
             transcriptCuesProvenance: measured.provenance, transcriptSourceHash: measured.sourceHash };
           saveLocalMaterials(latest);
         }
-        return { materialId, transcript: measured.transcript, cues: measured.cues, provenance: measured.provenance, cached: false };
+        return { materialId, transcript: measured.transcript, cues: measured.cues,
+          provenance: measured.provenance, sourceHash: measured.sourceHash, cached: false };
       });
       res.json(result);
     } catch (error) {

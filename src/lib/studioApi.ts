@@ -905,6 +905,7 @@ export interface Material {
   transcript?: string;
   transcriptCues?: SubCue[];
   transcriptCuesProvenance?: string;
+  transcriptSourceHash?: string;
   id: string;
   name: string;
   folder: string;

@@ -42,6 +42,15 @@ export function sourceCuesForShot(cues: SpeechCue[] | undefined, duration: numbe
   return valid.map(cue => ({ ...cue, end: Math.min(duration, cue.end) }));
 }
 
+/** A measured transcript belongs only to the source file from which it was derived. */
+export function sourceCaptionCacheMatchesContent(provenance: string | undefined, sourceHash: string | undefined, contentHash: string | undefined): boolean {
+  if (!['heygen:source_video_srt', 'qwen_filetrans:source_material'].includes(provenance || '')) return false;
+  if (provenance !== 'qwen_filetrans:source_material') return true;
+  const current = String(contentHash || '').toLowerCase();
+  if (!/^[a-f0-9]{64}$/.test(current)) return true;
+  return String(sourceHash || '').toLowerCase() === current;
+}
+
 export function shotsMissingSourceCues(shots: NarrationTimelineShot[]): number[] {
   return shots.flatMap((shot, index) => shot.lockedSourceVoice
     && !sourceCuesForShot(shot.sourceCues, Number(shot.lockedDuration || shot.targetDuration)).length ? [index + 1] : []);

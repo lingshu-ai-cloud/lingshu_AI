@@ -1,6 +1,15 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { arrangeShotsWithinNarration, durationForUnfixedNarration, narrationForUnfixedShots, shotsMissingSourceCues, sourceCuesForShot, voiceoverMatchesNarrationSources, type NarrationTimelineShot } from './narrationTimeline';
+import { arrangeShotsWithinNarration, durationForUnfixedNarration, narrationForUnfixedShots, shotsMissingSourceCues, sourceCaptionCacheMatchesContent, sourceCuesForShot, voiceoverMatchesNarrationSources, type NarrationTimelineShot } from './narrationTimeline';
+
+test('measured avatar captions are invalidated when the source material changes', () => {
+  const first = 'a'.repeat(64);
+  const replacement = 'b'.repeat(64);
+  assert.equal(sourceCaptionCacheMatchesContent('qwen_filetrans:source_material', first, first), true);
+  assert.equal(sourceCaptionCacheMatchesContent('qwen_filetrans:source_material', first, replacement), false);
+  assert.equal(sourceCaptionCacheMatchesContent('qwen_filetrans:source_material', undefined, replacement), false);
+  assert.equal(sourceCaptionCacheMatchesContent('heygen:source_video_srt', undefined, replacement), true);
+});
 
 test('four visual shots follow four spoken lines split into eight measured subtitle cues', () => {
   const lines = ['第一句前半，第一句后半。', '第二句前半，第二句后半。', '第三句前半，第三句后半。', '第四句前半，第四句后半。'];

@@ -29,7 +29,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { LayoutGrid, Film, FileText, Music, Image as ImageIcon, Play, Send, Check, ChevronLeft, ChevronRight, Folder, Search, Volume2, Mic, Download, Loader2, Sparkles, Wand2, Copy, RefreshCw, Clock, Upload, X, Plus, Save, FolderOpen, Trash2, Pause, ChevronDown, Heart, ExternalLink, Languages } from 'lucide-react';
 import { studioApi, getDesktopRender, type StudioProject, type VariationBatch, type Material, type MaterialSegment, type BgmTrack, type CoverStyle, type SubCue, type TtsStyleOptions, type StudioAudioCapabilities, type FbPosterResult, type LeadContentPackageResult, type StoryboardQualityResult, type VideoGenerationVersion, type StudioScriptResult, type StudioScriptQualityStatus, type StudioScriptQualityChecks, type StudioGenerationProvenance, type DigitalHumanCapabilities, type DigitalHumanJob, type HeyGenAvatarOption } from '../lib/studioApi';
 import { isMeasuredVoiceAlignment, matchVoiceCuesToShots, productionVoiceCues, retimeVisualShotsToVoiceover } from '../lib/voiceoverAlignment';
-import { arrangeShotsWithinNarration, durationForUnfixedNarration, narrationForUnfixedShots, shotsMissingSourceCues, sourceCuesForShot, voiceoverMatchesNarrationSources } from '../lib/narrationTimeline';
+import { arrangeShotsWithinNarration, durationForUnfixedNarration, narrationForUnfixedShots, shotsMissingSourceCues, sourceCaptionCacheMatchesContent, sourceCuesForShot, voiceoverMatchesNarrationSources } from '../lib/narrationTimeline';
 import { createPresetEffectPlan, type EffectIntensity, type EffectPresetId } from '../../shared/contracts/effectPlan';
 import type { Page } from '../App';
 import type { SocialContentCreateRequest } from './socialContent/SocialContentWorkspace';
@@ -145,6 +145,7 @@ const materialToClip = (m: Material): Clip => ({
   usage: m.usage, sourceType: m.sourceType, providerTaskId: m.providerTaskId, contentSha256: m.contentSha256, industry: m.industry, shotFunction: m.shotFunction, applicability: m.applicability, tags: m.tags,
   productId: m.productId, productName: m.productName,
   transcript: m.transcript, transcriptCues: m.transcriptCues, transcriptCuesProvenance: m.transcriptCuesProvenance,
+  transcriptSourceHash: m.transcriptSourceHash,
   segmentAnalysisStatus: m.segmentAnalysisStatus, segmentAnalysisError: m.segmentAnalysisError, segments: m.segments, visualObservations: m.visualObservations,
 });
 
@@ -277,6 +278,7 @@ export interface Clip {
   transcript?: string;
   transcriptCues?: SubCue[];
   transcriptCuesProvenance?: string;
+  transcriptSourceHash?: string;
   id: string;
   name: string;
   folder: string;
@@ -1645,6 +1647,7 @@ function normalizeClipSnapshot(value: unknown): Clip | null {
     scope: item.scope === 'shared' ? 'shared' : 'own',
     usage: item.usage,
     sourceType: typeof item.sourceType === 'string' && item.sourceType.trim() ? item.sourceType : 'project-snapshot',
+    contentSha256: item.contentSha256,
     industry: item.industry,
     shotFunction: item.shotFunction,
     applicability: item.applicability,
@@ -1656,6 +1659,7 @@ function normalizeClipSnapshot(value: unknown): Clip | null {
     transcript: item.transcript,
     transcriptCues: item.transcriptCues,
     transcriptCuesProvenance: item.transcriptCuesProvenance,
+    transcriptSourceHash: item.transcriptSourceHash,
   };
 }
 
@@ -5160,7 +5164,8 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     // A HeyGen job's cues belong only to its own output material. Never use
     // the separately synthesized B-roll voiceover as avatar subtitles.
     const jobCues = digitalHumanJob?.outputMaterialId === clip.id && digitalHumanJob.subtitleCues?.length;
-    const trustedStoredCues = ['heygen:source_video_srt', 'qwen_filetrans:source_material'].includes(clip.transcriptCuesProvenance || '');
+    const trustedStoredCues = sourceCaptionCacheMatchesContent(
+      clip.transcriptCuesProvenance, clip.transcriptSourceHash, clip.contentSha256);
     const source = jobCues ? digitalHumanJob!.subtitleCues : trustedStoredCues ? clip.transcriptCues : undefined;
     return sourceCuesForShot(source, clip.duration);
   };
@@ -5174,7 +5179,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     if (!projectId || avatarCaptionBusy) return;
     setAvatarCaptionBusy(true);
     try {
-      const refreshed: Array<{ materialId: string; transcript: string; cues: SubCue[]; provenance: string }> = [];
+      const refreshed: Array<{ materialId: string; transcript: string; cues: SubCue[]; provenance: string; sourceHash?: string }> = [];
       for (const missing of missingAvatarSourceCues) {
         const input = { projectId, assemblyId: activeAssemblyId,
           shotId: shootingSlots.find(item => item.slotId === missing.slot.id)?.id || missing.slot.id,
@@ -5191,7 +5196,8 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
       }
       setMaterials(current => current.map(item => {
         const result = refreshed.find(value => value.materialId === item.id);
-        return result ? { ...item, transcript: result.transcript, transcriptCues: result.cues, transcriptCuesProvenance: result.provenance } : item;
+        return result ? { ...item, transcript: result.transcript, transcriptCues: result.cues,
+          transcriptCuesProvenance: result.provenance, transcriptSourceHash: result.sourceHash } : item;
       }));
       setSubtitleNotice(`已从 ${refreshed.length} 个数字人源片取得独立实测字幕时间码。`);
     } catch (error) {
@@ -8517,6 +8523,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     scope: item.scope,
     usage: item.usage,
     sourceType: item.sourceType || 'project-snapshot',
+    contentSha256: item.contentSha256,
     industry: item.industry,
     shotFunction: item.shotFunction,
     applicability: item.applicability,
@@ -8528,6 +8535,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     transcript: item.transcript,
     transcriptCues: item.transcriptCues,
     transcriptCuesProvenance: item.transcriptCuesProvenance,
+    transcriptSourceHash: item.transcriptSourceHash,
   }));
   const collectSpec = () => {
     let savedShotProductions = shotProductions;

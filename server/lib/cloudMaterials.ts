@@ -208,6 +208,7 @@ export function cloudMaterialView(item: CloudMaterialRecord): Record<string, unk
     transcript: String(provenance?.avatarSourceTranscript || ''),
     transcriptCues: parseSegments(provenance?.avatarSourceCues),
     transcriptCuesProvenance: String(provenance?.avatarSourceCuesProvenance || ''),
+    transcriptSourceHash: String(provenance?.avatarSourceHash || ''),
     industry: String(item.industry || ''), shotFunction: String(item.shotFunction || ''),
     applicability: String(item.applicability || ''), tags: String(item.tags || ''),
     createdAt: String(item.created || ''), updatedAt: String(item.updated || ''),
