@@ -109,7 +109,6 @@ export function createProductionRouter(store: DataStore, importVideo: (url: stri
           if (req.body?.confirmedPaidAsr !== true) throw new Error('HeyGen 原字幕不可用；如需用千问从数字人源片实测转写，将产生 ASR 费用，请确认后重试');
           if (!options.measureAvatarSourceCaptions && !objectStorageSupplierDeliveryReady())
             throw new Error('数字人原声字幕需先配置可供千问读取的 HTTPS 对象存储地址');
-          await studioPaidBudget.reserve('qwen_asr', `avatar-source-captions:${tenantId}:${projectId}:${materialId}`);
           let sourceBytes: Buffer | undefined;
           if (cloudId) {
             const cloudMedia = await fetchCloudMaterial(cloudId, 'videoFile', undefined, tenantId);
@@ -119,7 +118,14 @@ export function createProductionRouter(store: DataStore, importVideo: (url: stri
             const object = await objectStorageDownload(legacyObjectKey);
             if (!object?.buf.length) throw new Error('旧数字人源片文件不可读取');
             sourceBytes = object.buf;
+          } else if (material) {
+            sourceBytes = (await readTenantMaterialBytes(material, tenantId)).bytes;
           }
+          if (!sourceBytes?.length) throw new Error('数字人源片文件不可读取');
+          const reservationId = `avatar-source-captions:${tenantId}:${projectId}:${materialId}`;
+          await (options.reserveAvatarSourceAsr
+            ? options.reserveAvatarSourceAsr(reservationId)
+            : studioPaidBudget.reserve('qwen_asr', reservationId));
           measured = await (options.measureAvatarSourceCaptions || measureAvatarSourceCaptions)(source, tenantId, sourceBytes);
         }
         if (cloudId) {

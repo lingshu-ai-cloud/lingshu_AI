@@ -16,6 +16,7 @@ export type ReferenceImportResult = ImportedVideoResult & { technicalMetrics?: R
 export interface ProductionRouterOptions {
   recoverAvatarSourceCaptions?: (remoteId: string, duration: number, script: string) => Promise<Array<{ text: string; start: number; end: number }>>;
   measureAvatarSourceCaptions?: (material: MaterialRecord, tenantId: string, bytes?: Buffer) => Promise<{ transcript: string; cues: Array<{ text: string; start: number; end: number }>; provenance: string; sourceHash: string }>;
+  reserveAvatarSourceAsr?: (operationId: string) => Promise<void>;
   preparePhotoTalkingFirstFrames?: (input:{tenantId:string;projectId:string;assemblyId:string;presenter:PresenterAsset;cues:DigitalHumanReferenceCue[]})=>Promise<{cues:DigitalHumanReferenceCue[]}>;
   client?: HeyGenClient; enabled?: () => boolean; lockRoot?: string; reserve?: (id: string) => Promise<void>;
   prepareAudio?: (ref: NonNullable<HeyGenInput['audioRef']>, tenantId: string) => Promise<Uint8Array | { bytes: Uint8Array; segmentId: string; checksumSha256: string; start: number; duration: number }>;

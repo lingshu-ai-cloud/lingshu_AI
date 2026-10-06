@@ -42,6 +42,7 @@ test('legacy avatar snapshot restores measured provider SRT for its own tenant a
     input: { script: 'Hello world.' } });
   let supplierCalls = 0;
   let failCaption = false;
+  let paidReservations = 0;
   const app = express(); app.use(express.json()); app.use((req, res, next) => { res.locals.tenantId = req.headers['x-tenant']; next(); });
   app.use(createProductionRouter(store, async () => 'unused', {
     recoverAvatarSourceCaptions: async (remoteId, duration, script) => {
@@ -50,10 +51,12 @@ test('legacy avatar snapshot restores measured provider SRT for its own tenant a
       return parseHeygenSubtitles('1\n00:00:00,100 --> 00:00:01,900\nHello world.\n', duration,
         failCaption ? 'Different words.' : script);
     },
+    reserveAvatarSourceAsr: async () => { paidReservations++; },
+    measureAvatarSourceCaptions: async () => { throw new Error('missing source must not reach ASR'); },
   }));
   const server = app.listen(0, '127.0.0.1'); await new Promise<void>(resolve => server.once('listening', resolve));
   const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-  const post = (tenant: string, body: Record<string, string>) => fetch(`${url}/avatar-source-captions`, {
+  const post = (tenant: string, body: Record<string, unknown>) => fetch(`${url}/avatar-source-captions`, {
     method: 'POST', headers: { 'Content-Type': 'application/json', 'x-tenant': tenant }, body: JSON.stringify(body),
   });
   const body = { projectId: 'project-1', assemblyId: 'assembly-1', shotId: 'shot-1', slotId: 'slot-1', materialId };
@@ -75,5 +78,8 @@ test('legacy avatar snapshot restores measured provider SRT for its own tenant a
     failCaption = true;
     assert.equal((await post('tenant-a', body)).status, 422, 'mismatched provider SRT cannot become source captions');
     assert.equal(rows.get('studio_projects/project-1').spec.materialSnapshots[0].transcriptCues, undefined);
+    assert.equal((await post('tenant-a', { ...body, confirmedPaidAsr: true })).status, 422,
+      'missing legacy source must be rejected before the paid ASR reservation');
+    assert.equal(paidReservations, 0);
   } finally { await new Promise<void>(resolve => server.close(() => resolve())); }
 });
