@@ -80,10 +80,15 @@ test('supplier can fetch only a signed tenant-local object over the media route'
   }
 });
 
-test('local storage only becomes supplier-deliverable with an explicit HTTPS base', () => {
+test('local storage gives suppliers a signed HTTPS URL only with an explicit public base', async () => {
   const previous = process.env.LOCAL_OBJECT_STORAGE_PUBLIC_BASE_URL;
   process.env.OBJECT_STORAGE_DRIVER = 'local'; process.env.LOCAL_OBJECT_STORAGE_PUBLIC_BASE_URL = 'https://dev-assets.example';
-  try { assert.equal(objectStorageSupplierDeliveryReady(), true); }
+  try {
+    assert.equal(objectStorageSupplierDeliveryReady(), true);
+    const signed = new URL(await objectStorageSignedGetUrl(materialAssetObjectKey('tenant-a', 'voice.mp3')));
+    assert.equal(signed.origin, 'https://dev-assets.example');
+    assert.equal(verifyAssetToken(signed.searchParams.get('assetToken'), signed.pathname)?.tenantId, 'tenant-a');
+  }
   finally { if (previous === undefined) delete process.env.LOCAL_OBJECT_STORAGE_PUBLIC_BASE_URL; else process.env.LOCAL_OBJECT_STORAGE_PUBLIC_BASE_URL = previous; }
 });
 
