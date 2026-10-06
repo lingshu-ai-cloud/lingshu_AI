@@ -140,7 +140,7 @@ interface Profile {
   company: { name: string; industry: string; companyType?: string; mainMarkets: string; primaryLanguages?: string; socialPlatformExperience?: string; founded: string; description: string };
   socialStrategy?: SocialStrategy;
   products: { categories: string; searchKeywords?: string; priceRange: string; moq: string; certifications: string; highlights: string; items?: ProductItem[] };
-  brand: { tone: string; style: string; taboos: string; usp: string; preferredLanguages?: string };
+  brand: { name?: string; tone: string; style: string; taboos: string; usp: string; preferredLanguages?: string };
   strategy?: { currentGoal?: string; focusProducts?: string; focusMarkets?: string; excludedMarkets?: string; pricingStrategy?: string; minMargin?: string; agentAutonomy?: string; aiAutonomy?: AutonomyLevel };
   customers?: { targetProfiles?: string; highValueSignals?: string; lowQualitySignals?: string; commonQuestions?: string; followupStyle?: string };
   operations?: { leadTime?: string; customization?: string; logistics?: string; paymentTerms?: string; riskNotes?: string };
@@ -167,7 +167,7 @@ const DEFAULT: Profile = {
     highlights: '',
     items: [],
   },
-  brand: { tone: '', style: '', taboos: '', usp: '', preferredLanguages: '' },
+  brand: { name: '', tone: '', style: '', taboos: '', usp: '', preferredLanguages: '' },
   strategy: { currentGoal: '', focusProducts: '', focusMarkets: '', excludedMarkets: '', pricingStrategy: '', minMargin: '', agentAutonomy: '', aiAutonomy: 'draft' },
   customers: { targetProfiles: '', highValueSignals: '', lowQualitySignals: '', commonQuestions: '', followupStyle: '' },
   operations: { leadTime: '', customization: '', logistics: '', paymentTerms: '', riskNotes: '' },
@@ -2347,6 +2347,7 @@ export default function EnterprisePage() {
                 <div className="rounded-lg border border-border bg-surface-2/40 p-4">
                   <div className="mb-3 flex items-center gap-2"><Megaphone size={14} className="text-text-secondary" /><h3 className="text-sm font-black text-text-primary">品牌调性</h3></div>
                   <div className="grid grid-cols-2 gap-4">
+                    <Field label="品牌名称"><input className={inputCls} value={profile.brand.name ?? ''} onChange={e => set('brand')('name', e.target.value)} /></Field>
                     <Field label="品牌调性关键词"><OptionSelector value={profile.brand.tone} options={BRAND_TONE_OPTIONS} onChange={value => set('brand')('tone', value)} placeholder="选择品牌调性" /></Field>
                     <Field label="沟通风格"><OptionSelector value={profile.brand.style} options={COMMUNICATION_STYLE_OPTIONS} multiple={false} onChange={value => set('brand')('style', value)} placeholder="选择沟通风格" /></Field>
                     <Field label="首选输出语言"><OptionSelector value={profile.brand.preferredLanguages ?? ''} options={LANGUAGE_OPTIONS} onChange={value => set('brand')('preferredLanguages', value)} placeholder="选择首选输出语言" /></Field>
