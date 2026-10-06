@@ -2,6 +2,8 @@ import { DeleteObjectCommand, GetObjectCommand, HeadObjectCommand, PutObjectComm
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { createReadStream, promises as fs } from 'node:fs';
 import path from 'node:path';
+import { signAssetUrl, safeAssetTenantId } from '../lib/assetAccess.js';
+import { materialAssetTenantKey } from './materialAssets.js';
 
 export type ObjectStorageDriver = 'local' | 'cos';
 export interface StoredObjectHead { size: number; contentType: string; etag?: string }
@@ -95,7 +97,18 @@ export async function objectStorageDelete(key: string): Promise<void> {
   const { client, bucket } = cosClient(); await client.send(new DeleteObjectCommand({ Bucket: bucket, Key: key }));
 }
 export async function objectStorageSignedGetUrl(key: string, expiresIn = 900): Promise<string> {
-  if (driver() === 'local') { const base = String(process.env.LOCAL_OBJECT_STORAGE_PUBLIC_BASE_URL || '').replace(/\/$/, ''); const relative = `/media/object-storage/${key.split('/').map(encodeURIComponent).join('/')}`; return base ? `${base}${relative}` : relative; }
+  if (driver() === 'local') {
+    const parts = String(key).split('/');
+    const relative = `/media/object-storage/${parts.map(encodeURIComponent).join('/')}`;
+    const base = String(process.env.LOCAL_OBJECT_STORAGE_PUBLIC_BASE_URL || '').replace(/\/$/, '');
+    if (parts.length === 4 && parts[1] === 'tenants') {
+      const tenantId = safeAssetTenantId(Buffer.from(parts[2] || '', 'base64url').toString('utf8'));
+      if (materialAssetTenantKey(tenantId) !== parts[2]) throw new Error('对象存储租户路径无效');
+      const signed = signAssetUrl(relative, tenantId, Math.max(60, Math.min(3600, Math.round(expiresIn))) * 1000);
+      return base ? `${base}${signed}` : signed;
+    }
+    return base ? `${base}${relative}` : relative;
+  }
   const { client, bucket } = cosClient(); return getSignedUrl(client, new GetObjectCommand({ Bucket: bucket, Key: key }), { expiresIn: Math.max(60, Math.min(3600, Math.round(expiresIn))) });
 }
 export function objectStoragePublicUrl(key: string): string {
