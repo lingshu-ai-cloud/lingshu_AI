@@ -371,6 +371,10 @@ function cuesToAss(cues, width, height, disclaimer = '', duration = 0, style = {
   const outline = Math.max(0, Math.min(style.boxed === true ? 24 : 8,
     Number(style.outlineWidth ?? Math.round(width * .003))));
   const borderStyle = style.boxed === true ? 3 : 1;
+  // The base caption owns the optional background plate. Drawing a second
+  // boxed border around the active word would cover adjacent words and lines.
+  const highlightOutline = Math.max(0, Math.min(4,
+    Number(style.highlightOutlineWidth ?? Math.round(width * .002))));
   const events = valid.flatMap(cue => {
     const prefix = cue.screen
       ? `{\\an8\\pos(${Math.round(width / 2)},${Math.round(height * 0.12)})}`
@@ -407,7 +411,7 @@ function cuesToAss(cues, width, height, disclaimer = '', duration = 0, style = {
     '[V4+ Styles]',
     'Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding',
     `Style: Default,${font},${fontSize},${primaryColor},${primaryColor},${outlineColor},&H66000000,-1,0,0,0,100,100,0,0,${borderStyle},${outline},1,2,${marginX},${marginX},${marginV},1`,
-    `Style: WordHighlight,${font},${fontSize},${assColor(style.karaokeColor || subtitleTemplate.body.color, '&H0066DFFF&')},${primaryColor},${outlineColor},&H66000000,-1,0,0,0,100,100,0,0,${borderStyle},${outline},1,2,${marginX},${marginX},${marginV},1`,
+    `Style: WordHighlight,${font},${fontSize},${assColor(style.karaokeColor || subtitleTemplate.body.color, '&H0066DFFF&')},${primaryColor},${outlineColor},&H00000000,-1,0,0,0,100,100,0,0,1,${highlightOutline},0,2,${marginX},${marginX},${marginV},1`,
     `Style: Emphasis,${subtitleTemplate.emphasis.font},${Math.round(width * .05)},&H00FFFFFF&,&H00FFFFFF&,&H00101010&,&HAA101010&,-1,0,0,0,100,100,0,0,3,2,1,8,${marginX},${marginX},${Math.round(height * .08)},1`,
     '',
     '[Events]',

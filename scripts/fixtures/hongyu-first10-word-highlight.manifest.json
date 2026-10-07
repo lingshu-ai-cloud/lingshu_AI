@@ -1,5 +1,5 @@
 {
-  "jobId": "hongyu-first10-word-highlight-v7",
+  "jobId": "hongyu-first10-word-highlight-v8",
   "spec": {
     "ratio": "9:16",
     "duration": 10,
@@ -27,7 +27,7 @@
     "mode": "auto",
     "style": {
       "font": "sans",
-      "fontScale": 1.1,
+      "fontScale": 1.2,
       "bottomRatio": 0.24,
       "outlineWidth": 18,
       "outlineColor": "#000000",
