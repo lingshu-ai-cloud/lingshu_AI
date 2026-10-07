@@ -29,15 +29,34 @@ export type EmphasisAssetFamily = typeof EMPHASIS_ASSET_FAMILIES[number];
 export type NormalizedPoint = { x: number; y: number };
 export type NormalizedBox = { x: number; y: number; width: number; height: number };
 
-export interface CaptionSegment {
+export interface CaptionWord {
+  id?: string;
+  startMs: number;
+  endMs: number;
+  text: string;
+  /** ASR/forced-alignment token IDs retained when display tokens are merged. */
+  alignmentTokenIds?: string[];
+  /** Exact text inserted before this word. Usually ` ` or an empty string. */
+  separatorBefore: string;
+  confidence?: number;
+}
+
+export interface CaptionCue {
   id: string;
   startMs: number;
   endMs: number;
   text: string;
+  /** Canonical BCP 47 language tag when supplied by transcription. */
+  language?: string;
+  /** Optional word alignment. Legacy cues remain valid without this field. */
+  words?: CaptionWord[];
   speakerId?: string;
   /** Inline emphasis only. Keywords do not create EmphasisEvents. */
   keywords?: string[];
 }
+
+/** Historical name retained for renderer and manifest compatibility. */
+export interface CaptionSegment extends CaptionCue {}
 
 export interface ShotWindow {
   id: string;
@@ -213,6 +232,86 @@ export function emphasisBudgetForDuration(durationMs: number): EmphasisBudget {
   return { min: Math.ceil(seconds / 30) * 2, max: Math.ceil(seconds / 20) * 4 };
 }
 
+export function normalizeCaptionLanguage(value: unknown): string | undefined {
+  const candidate = String(value || '').trim().replace(/_/g, '-');
+  if (!candidate || candidate.length > 64) return undefined;
+  try { return Intl.getCanonicalLocales(candidate)[0]; } catch { return undefined; }
+}
+
+const NO_SPACE_BEFORE = /^[\p{P}\p{S}]+$/u;
+const OPENING_PUNCTUATION = /[([{«“‘‹]$/u;
+const JOINER_ONLY = /^(?:['’ʼ\-‐‑‒–—]+)$/u;
+const CJK_LANGUAGE = /^(?:zh|ja|ko)(?:-|$)/i;
+
+function inferredCaptionSeparator(previous: string, current: string, language?: string): string {
+  if (!previous) return '';
+  if (CJK_LANGUAGE.test(language || '')) return '';
+  if (JOINER_ONLY.test(current) || JOINER_ONLY.test(previous)
+    || /['’ʼ\-‐‑‒–—]$/u.test(previous) || /^['’ʼ\-‐‑‒–—]/u.test(current)) return '';
+  if (NO_SPACE_BEFORE.test(current) || OPENING_PUNCTUATION.test(previous)) return '';
+  return ' ';
+}
+
+export function normalizeCaptionWords(
+  input: unknown,
+  cueStartMs: number,
+  cueEndMs: number,
+  language?: string,
+): CaptionWord[] {
+  if (!Array.isArray(input) || cueEndMs <= cueStartMs) return [];
+  let previousText = '';
+  return input.slice(0, 2_000).flatMap((value): CaptionWord[] => {
+    const raw = asRecord(value);
+    const text = cleanText(raw.text, 120);
+    const startMs = Math.round(clamp(raw.startMs, cueStartMs, cueEndMs, cueStartMs));
+    const endMs = Math.round(clamp(raw.endMs, startMs, cueEndMs, startMs));
+    if (!text || endMs <= startMs) return [];
+    const explicitSeparator = typeof raw.separatorBefore === 'string'
+      ? String(raw.separatorBefore).replace(/[^\s'’ʼ\-‐‑‒–—]/gu, '').slice(0, 4)
+      : raw.separatorBefore === false ? '' : raw.separatorBefore === true ? ' ' : undefined;
+    const separatorBefore = explicitSeparator ?? inferredCaptionSeparator(previousText, text, language);
+    const alignmentTokenIds = [...new Set((Array.isArray(raw.alignmentTokenIds) ? raw.alignmentTokenIds : [])
+      .map(item => cleanId(item, '')).filter(Boolean))].slice(0, 64);
+    const id = cleanId(raw.id, '');
+    const confidence = Number.isFinite(Number(raw.confidence))
+      ? Number(clamp(raw.confidence, 0, 1, 0).toFixed(4)) : undefined;
+    previousText = text;
+    return [{ ...(id ? { id } : {}), startMs, endMs, text, separatorBefore,
+      ...(alignmentTokenIds.length ? { alignmentTokenIds } : {}),
+      ...(confidence !== undefined ? { confidence } : {}) }];
+  });
+}
+
+function mergeWordPair(left: CaptionWord, right: CaptionWord): CaptionWord {
+  const ids = [...new Set([...(left.alignmentTokenIds || []), ...(right.alignmentTokenIds || [])])];
+  const confidences = [left.confidence, right.confidence].filter((value): value is number => value !== undefined);
+  return {
+    startMs: Math.min(left.startMs, right.startMs), endMs: Math.max(left.endMs, right.endMs),
+    text: `${left.text}${right.separatorBefore}${right.text}`, separatorBefore: left.separatorBefore,
+    ...(ids.length ? { alignmentTokenIds: ids } : {}),
+    ...(confidences.length ? { confidence: Number((confidences.reduce((sum, value) => sum + value, 0) / confidences.length).toFixed(4)) } : {}),
+  };
+}
+
+/** Groups display tokens without assuming that every language separates words with spaces. */
+export function mergeCaptionWordsForDisplay(words: CaptionWord[], language?: string): CaptionWord[] {
+  const merged: CaptionWord[] = [];
+  for (const word of words) {
+    const previous = merged.at(-1);
+    const attaches = Boolean(previous) && (word.separatorBefore === '' && (
+      NO_SPACE_BEFORE.test(word.text) || JOINER_ONLY.test(word.text) || JOINER_ONLY.test(previous!.text)
+      || /['’ʼ\-‐‑‒–—]$/u.test(previous!.text) || /^['’ʼ\-‐‑‒–—]/u.test(word.text)
+    ));
+    if (attaches) merged[merged.length - 1] = mergeWordPair(previous!, word);
+    else merged.push({ ...word, separatorBefore: merged.length ? word.separatorBefore : '' });
+  }
+  return merged;
+}
+
+export function captionWordsToText(words: CaptionWord[], language?: string): string {
+  return mergeCaptionWordsForDisplay(words, language).map(word => `${word.separatorBefore}${word.text}`).join('');
+}
+
 export function normalizeCaptionSegments(input: unknown, durationMs: number): CaptionSegment[] {
   const duration = Math.max(0, finite(durationMs, 0));
   return (Array.isArray(input) ? input : []).slice(0, 2_000).map((value, index) => {
@@ -224,14 +323,19 @@ export function normalizeCaptionSegments(input: unknown, durationMs: number): Ca
     const keywords = [...new Set((Array.isArray(raw.keywords) ? raw.keywords : [])
       .map(item => cleanText(item, 40)).filter(Boolean))].filter(item => text.includes(item)).slice(0, 12);
     const speakerId = cleanId(raw.speakerId, '');
+    const language = normalizeCaptionLanguage(raw.language);
+    const words = normalizeCaptionWords(raw.words, startMs, endMs, language);
     return {
       id: cleanId(raw.id, `caption-${index + 1}`),
       startMs: Math.round(startMs), endMs: Math.round(endMs), text,
+      ...(language ? { language } : {}), ...(words.length ? { words } : {}),
       ...(speakerId ? { speakerId } : {}), ...(keywords.length ? { keywords } : {}),
     } satisfies CaptionSegment;
   }).filter((item): item is CaptionSegment => Boolean(item))
     .sort((left, right) => left.startMs - right.startMs || left.endMs - right.endMs);
 }
+
+export const normalizeCaptionCues = normalizeCaptionSegments;
 
 const normalizedBox = (value: unknown): NormalizedBox | undefined => {
   const raw = asRecord(value);

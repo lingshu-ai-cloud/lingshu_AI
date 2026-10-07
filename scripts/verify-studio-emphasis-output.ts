@@ -52,17 +52,59 @@ for (const [index, cue] of normalizedCues.entries()) {
 const ass = cuesToAss(cues, width, height, '', duration, style, plan);
 const defaultStyle = ass.split('\n').find((line: string) => line.startsWith('Style: Default,'));
 if (!defaultStyle || Number(defaultStyle.split(',')[2]) !== fontSize) failures.push({ check: 'subtitle_font_size', detail: 'Default ASS style font size does not match the single manifest-derived size' });
+const styleSizes = new Map(ass.split('\n').filter((line: string) => line.startsWith('Style: ')).map((line: string) => {
+  const fields = line.split(',');
+  return [fields[0]!.slice('Style: '.length), Number(fields[2])] as const;
+}));
+const subtitleDialogues = ass.split('\n').filter((entry: string) => /^Dialogue: 0,/.test(entry));
 for (const line of ass.split('\n').filter((entry: string) => /^Dialogue: [01],/.test(entry))) {
   if (/\\fs\d+/.test(line)) failures.push({ check: 'subtitle_font_consistency', detail: 'A primary/screen subtitle overrides the global font size' });
 }
+for (const line of subtitleDialogues) {
+  const dialogueStyle = line.split(',')[3];
+  if (styleSizes.get(dialogueStyle) !== fontSize) failures.push({ check: 'subtitle_font_consistency', detail: `spoken subtitle style ${dialogueStyle} does not use the global ${fontSize}px size` });
+}
+
+const timedWords = spoken.flatMap((cue: any, cueIndex: number) => (Array.isArray(cue?.words) ? cue.words : []).flatMap((word: any, wordIndex: number) => {
+  const start = Number.isFinite(Number(word?.startMs)) ? Number(word.startMs) / 1_000 : Number(word?.start);
+  const end = Number.isFinite(Number(word?.endMs)) ? Number(word.endMs) / 1_000 : Number(word?.end);
+  if (!String(word?.text || '').trim() || !Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
+    failures.push({ check: 'word_timing_valid', detail: `cue ${cueIndex + 1} word ${wordIndex + 1} has invalid timing` });
+    return [];
+  }
+  if (start < Number(cue.start) - .001 || end > Number(cue.end) + .001) failures.push({ check: 'word_timing_bounds', detail: `cue ${cueIndex + 1} word ${wordIndex + 1} falls outside its cue` });
+  return [{ text: String(word.text).trim(), start, end }];
+}));
+const karaokeTags = subtitleDialogues.flatMap((line: string) => [...line.matchAll(/\{\\kf(\d+)\}/g)]);
+if (timedWords.length && karaokeTags.length !== timedWords.length) failures.push({ check: 'word_highlight_coverage', detail: `expected ${timedWords.length} timed word highlights, found ${karaokeTags.length} ASS karaoke tags` });
+const dialogueKeys = subtitleDialogues.map((line: string) => {
+  const fields = line.split(',');
+  return `${fields[1]}:${fields[2]}:${fields.slice(9).join(',').replace(/\{[^}]*\}/g, '').replace(/\\N/g, ' ').trim().toLocaleLowerCase()}`;
+});
+if (new Set(dialogueKeys).size !== dialogueKeys.length) failures.push({ check: 'duplicate_subtitle_dialogue', detail: 'ASS contains duplicate spoken subtitle dialogues' });
+if (subtitleDialogues.length !== normalizedCues.length) failures.push({ check: 'subtitle_dialogue_count', detail: `expected one spoken Dialogue per normalized cue page (${normalizedCues.length}), found ${subtitleDialogues.length}` });
+const sourceHasBurnedCaptions = manifest.acceptance?.sourceHasBurnedCaptions === true;
+if (sourceHasBurnedCaptions && timedWords.length
+  && manifest.acceptance?.burnedCaptionsRemoved !== true
+  && manifest.acceptance?.burnedCaptionsCovered !== true) failures.push({
+  check: 'source_burned_caption_duplication',
+  detail: 'source contains moving burned-in captions; a global-position karaoke subtitle layer cannot guarantee a single visible subtitle track',
+});
+if (manifest.acceptance?.burnedCaptionCleanupReviewRequired === true
+  && manifest.acceptance?.burnedCaptionCleanupAccepted !== true) failures.push({
+  check: 'burned_caption_cleanup_visual_review',
+  detail: 'burned-caption cleanup requires visual review and has not been accepted',
+});
 
 const inside = (box: Box) => box.x >= 0 && box.y >= 0 && box.x + box.width <= 1 && box.y + box.height <= .71;
 const subtitleReserve: Box = { x: .04, y: .72, width: .92, height: .26 };
 for (const event of events) {
-  for (const [kind, box] of Object.entries(event.layout || {}) as Array<[string, Box]>) {
-    if (kind === 'mode') continue;
-    if (!inside(box)) failures.push({ check: 'overlay_bounds', detail: `${event.id}.${kind} is outside the upper safe frame` });
-    if (intersects(box, subtitleReserve)) failures.push({ check: 'overlay_subtitle_overlap', detail: `${event.id}.${kind} overlaps the subtitle reserve` });
+  for (const [kind, value] of Object.entries(event.layout || {})) {
+    const box = value as Partial<Box>;
+    if (![box.x, box.y, box.width, box.height].every(item => Number.isFinite(Number(item)))) continue;
+    const normalizedBox = box as Box;
+    if (!inside(normalizedBox)) failures.push({ check: 'overlay_bounds', detail: `${event.id}.${kind} is outside the upper safe frame` });
+    if (intersects(normalizedBox, subtitleReserve)) failures.push({ check: 'overlay_subtitle_overlap', detail: `${event.id}.${kind} overlaps the subtitle reserve` });
   }
   if (intersects(event.layout.asset, event.layout.label, .006)) failures.push({ check: 'asset_text_overlap', detail: `${event.id} asset overlaps its label` });
 }
@@ -129,7 +171,15 @@ if (previousPath) {
   if (inputsChanged && previous.cache?.signature === cacheSignature) failures.push({ check: 'cache_version_change', detail: 'inputs changed but overlay cache signature did not' });
 }
 const bestEvidenceTimes = assetEvidence.map((evidence: any) => evidence.bestEvidence.at);
-const frameTimes = [...new Set([...events.flatMap((event: any) => [event.startMs / 1_000 + .12, (event.startMs + event.endMs) / 2_000, event.endMs / 1_000 - .12]), ...bestEvidenceTimes]
+const wordEvidenceTimes = spoken.flatMap((cue: any) => {
+  const words = Array.isArray(cue?.words) ? cue.words : [];
+  const word = words[Math.floor(words.length / 2)];
+  if (!word) return [];
+  const start = Number.isFinite(Number(word.startMs)) ? Number(word.startMs) / 1_000 : Number(word.start);
+  const end = Number.isFinite(Number(word.endMs)) ? Number(word.endMs) / 1_000 : Number(word.end);
+  return Number.isFinite(start) && Number.isFinite(end) && end > start ? [(start + end) / 2] : [];
+});
+const frameTimes = [...new Set([...events.flatMap((event: any) => [event.startMs / 1_000 + .12, (event.startMs + event.endMs) / 2_000, event.endMs / 1_000 - .12]), ...bestEvidenceTimes, ...wordEvidenceTimes]
   .map(value => Math.max(.05, Math.min(duration - .05, Number(value.toFixed(3))))))].sort((a, b) => a - b);
 const extractDir = value('--extract-dir');
 if (extractDir) {
@@ -142,7 +192,9 @@ if (extractDir) {
 }
 const inputHash = crypto.createHash('sha256').update(JSON.stringify({ plan: manifest.emphasisPlan, style, cues })).digest('hex');
 const report = { schemaVersion: 'studio-emphasis-output-acceptance.v1', passed: failures.length === 0, manifest: path.resolve(manifestPath), video,
-  subtitle: { fontSize, cueCount: normalizedCues.length, maxLines: 2, maxUnitsPerLine }, overlay: { eventCount: events.length, assetEvidence },
+  subtitle: { fontSize, cueCount: normalizedCues.length, maxLines: 2, maxUnitsPerLine,
+    timedWordCount: timedWords.length, karaokeTagCount: karaokeTags.length, dialogueCount: subtitleDialogues.length,
+    generatedDialogueUnique: new Set(dialogueKeys).size === dialogueKeys.length, sourceHasBurnedCaptions }, overlay: { eventCount: events.length, assetEvidence },
   cache: { rendererVersion: RENDERER_VERSION, sourceHash: cacheSourceHash, signature: cacheSignature, inputHash }, frameTimes, failures };
 const reportPath = value('--report');
 if (reportPath) fs.writeFileSync(path.resolve(reportPath), `${JSON.stringify(report, null, 2)}\n`);
