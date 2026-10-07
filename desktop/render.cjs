@@ -306,26 +306,28 @@ function normalizeSubtitleCues(cues, options = {}) {
   });
 }
 
-function karaokeSubtitleText(value, words, cueStart, cueEnd) {
+function wordHighlightOverlays(value, words, cueStart, cueEnd) {
   const text = String(value || '').replace(/[{}]/g, '');
   const timed = (Array.isArray(words) ? words : []).filter(word => word && word.text
     && Number.isFinite(word.start) && Number.isFinite(word.end) && word.end > word.start)
     .sort((left, right) => left.start - right.start);
-  if (!timed.length) return null;
-  let cursor = 0, output = '';
-  for (let index = 0; index < timed.length; index++) {
-    const word = timed[index];
+  if (!timed.length) return [];
+  let cursor = 0;
+  return timed.flatMap(word => {
     const found = text.toLocaleLowerCase().indexOf(String(word.text).toLocaleLowerCase(), cursor);
-    if (found < 0) continue;
-    output += text.slice(cursor, found);
-    const next = timed[index + 1];
-    const until = Math.min(cueEnd, next ? next.start : word.end);
-    const centiseconds = Math.max(1, Math.round((until - Math.max(cueStart, word.start)) * 100));
-    output += `{\\kf${centiseconds}}${text.slice(found, found + String(word.text).length)}`;
-    cursor = found + String(word.text).length;
-  }
-  if (!output.includes('\\kf')) return null;
-  return output + text.slice(cursor);
+    if (found < 0) return [];
+    let end = found + String(word.text).length;
+    // Closing punctuation belongs to the spoken word and never gets its own
+    // color event. Preserve spaces and line breaks outside the highlighted span.
+    while (end < text.length && /[.,!?;:…。，！？；：”’»)]/u.test(text[end])) end++;
+    cursor = end;
+    const start = Math.max(cueStart, word.start), finish = Math.min(cueEnd, word.end);
+    if (!(finish > start)) return [];
+    return [{
+      start, end: finish,
+      text: `{\\alpha&HFF&}${text.slice(0, found)}{\\alpha&H00&}${text.slice(found, end)}{\\alpha&HFF&}${text.slice(end)}`,
+    }];
+  });
 }
 
 function filterPath(value) {
@@ -365,18 +367,23 @@ function cuesToAss(cues, width, height, disclaimer = '', duration = 0, style = {
     .filter(cue => cue.text && cue.end > cue.start);
   if (!valid.length && !disclaimer && !(emphasisPlan && emphasisPlan.events && emphasisPlan.events.length)) return '';
 
-  const marginV = Math.round(height * Math.max(.08, Math.min(.35, Number(style.bottomRatio) || .20)));
+  const marginV = Math.round(height * Math.max(.08, Math.min(.35, Number(style.bottomRatio) || .24)));
   const outline = Math.max(0, Math.min(style.boxed === true ? 24 : 8,
     Number(style.outlineWidth ?? Math.round(width * .003))));
   const borderStyle = style.boxed === true ? 3 : 1;
-  const events = valid.map(cue => {
+  const events = valid.flatMap(cue => {
     const prefix = cue.screen
       ? `{\\an8\\pos(${Math.round(width / 2)},${Math.round(height * 0.12)})}`
       : '';
-    const karaoke = cue.screen ? null : karaokeSubtitleText(cue.text, cue.words, cue.start, cue.end);
-    const text = cue.screen ? cue.text : karaoke || automaticSubtitleText(cue.text, style);
+    const overlays = cue.screen ? [] : wordHighlightOverlays(cue.text, cue.words, cue.start, cue.end);
+    // Timed-word captions keep the base sentence in the manifest color; the
+    // WordHighlight layer is the only span allowed to use the accent color.
+    const text = cue.screen ? cue.text : overlays.length ? cue.text : automaticSubtitleText(cue.text, style);
     const emphasis = cue.screen ? '' : captionEmphasisTags(emphasisPlan, cue.start, cue.end, width);
-    return `Dialogue: ${cue.screen ? 1 : 0},${assTime(cue.start)},${assTime(cue.end)},${karaoke ? 'Karaoke' : 'Default'},,0,0,0,,${prefix}${emphasis}${text}`;
+    return [
+      `Dialogue: ${cue.screen ? 1 : 0},${assTime(cue.start)},${assTime(cue.end)},Default,,0,0,0,,${prefix}${emphasis}${text}`,
+      ...overlays.map(overlay => `Dialogue: 1,${assTime(overlay.start)},${assTime(overlay.end)},WordHighlight,,0,0,0,,${overlay.text}`),
+    ];
   });
   if (disclaimer && duration > 0) events.push(`Dialogue: 1,0:00:00.00,${assTime(duration)},Default,,0,0,0,,{\\an8\\pos(${Math.round(width / 2)},${Math.round(height * 0.08)})\\fs${Math.round(width * 0.035)}}${assText(disclaimer).replace(/[{}]/g, '')}`);
   if (emphasisPlan) {
@@ -400,7 +407,7 @@ function cuesToAss(cues, width, height, disclaimer = '', duration = 0, style = {
     '[V4+ Styles]',
     'Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding',
     `Style: Default,${font},${fontSize},${primaryColor},${primaryColor},${outlineColor},&H66000000,-1,0,0,0,100,100,0,0,${borderStyle},${outline},1,2,${marginX},${marginX},${marginV},1`,
-    `Style: Karaoke,${font},${fontSize},${assColor(style.karaokeColor || subtitleTemplate.body.color, '&H0066DFFF&')},${primaryColor},${outlineColor},&H66000000,-1,0,0,0,100,100,0,0,${borderStyle},${outline},1,2,${marginX},${marginX},${marginV},1`,
+    `Style: WordHighlight,${font},${fontSize},${assColor(style.karaokeColor || subtitleTemplate.body.color, '&H0066DFFF&')},${primaryColor},${outlineColor},&H66000000,-1,0,0,0,100,100,0,0,${borderStyle},${outline},1,2,${marginX},${marginX},${marginV},1`,
     `Style: Emphasis,${subtitleTemplate.emphasis.font},${Math.round(width * .05)},&H00FFFFFF&,&H00FFFFFF&,&H00101010&,&HAA101010&,-1,0,0,0,100,100,0,0,3,2,1,8,${marginX},${marginX},${Math.round(height * .08)},1`,
     '',
     '[Events]',

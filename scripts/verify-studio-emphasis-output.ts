@@ -75,8 +75,10 @@ const timedWords = spoken.flatMap((cue: any, cueIndex: number) => (Array.isArray
   if (start < Number(cue.start) - .001 || end > Number(cue.end) + .001) failures.push({ check: 'word_timing_bounds', detail: `cue ${cueIndex + 1} word ${wordIndex + 1} falls outside its cue` });
   return [{ text: String(word.text).trim(), start, end }];
 }));
-const karaokeTags = subtitleDialogues.flatMap((line: string) => [...line.matchAll(/\{\\kf(\d+)\}/g)]);
-if (timedWords.length && karaokeTags.length !== timedWords.length) failures.push({ check: 'word_highlight_coverage', detail: `expected ${timedWords.length} timed word highlights, found ${karaokeTags.length} ASS karaoke tags` });
+const wordHighlightDialogues = ass.split('\n').filter((entry: string) => /^Dialogue: 1,[^,]+,[^,]+,WordHighlight,,/.test(entry));
+if (/\\(?:kf|ko|K)\d+/.test(ass)) failures.push({ check: 'word_highlight_mode', detail: 'letter-sweep karaoke tags are forbidden; highlights must switch whole words' });
+if (timedWords.length && wordHighlightDialogues.length !== timedWords.length) failures.push({ check: 'word_highlight_coverage', detail: `expected ${timedWords.length} whole-word highlights, found ${wordHighlightDialogues.length} WordHighlight events` });
+if (wordHighlightDialogues.some((line: string) => !line.includes('{\\alpha&H00&}'))) failures.push({ check: 'word_highlight_visibility', detail: 'a word highlight event does not expose exactly one visible span' });
 const dialogueKeys = subtitleDialogues.map((line: string) => {
   const fields = line.split(',');
   return `${fields[1]}:${fields[2]}:${fields.slice(9).join(',').replace(/\{[^}]*\}/g, '').replace(/\\N/g, ' ').trim().toLocaleLowerCase()}`;
@@ -88,7 +90,7 @@ if (sourceHasBurnedCaptions && timedWords.length
   && manifest.acceptance?.burnedCaptionsRemoved !== true
   && manifest.acceptance?.burnedCaptionsCovered !== true) failures.push({
   check: 'source_burned_caption_duplication',
-  detail: 'source contains moving burned-in captions; a global-position karaoke subtitle layer cannot guarantee a single visible subtitle track',
+  detail: 'source contains moving burned-in captions; a project word-highlight layer cannot guarantee a single visible subtitle track',
 });
 if (manifest.acceptance?.burnedCaptionCleanupReviewRequired === true
   && manifest.acceptance?.burnedCaptionCleanupAccepted !== true) failures.push({
@@ -193,7 +195,7 @@ if (extractDir) {
 const inputHash = crypto.createHash('sha256').update(JSON.stringify({ plan: manifest.emphasisPlan, style, cues })).digest('hex');
 const report = { schemaVersion: 'studio-emphasis-output-acceptance.v1', passed: failures.length === 0, manifest: path.resolve(manifestPath), video,
   subtitle: { fontSize, cueCount: normalizedCues.length, maxLines: 2, maxUnitsPerLine,
-    timedWordCount: timedWords.length, karaokeTagCount: karaokeTags.length, dialogueCount: subtitleDialogues.length,
+    timedWordCount: timedWords.length, wordHighlightCount: wordHighlightDialogues.length, dialogueCount: subtitleDialogues.length,
     generatedDialogueUnique: new Set(dialogueKeys).size === dialogueKeys.length, sourceHasBurnedCaptions }, overlay: { eventCount: events.length, assetEvidence },
   cache: { rendererVersion: RENDERER_VERSION, sourceHash: cacheSourceHash, signature: cacheSignature, inputHash }, frameTimes, failures };
 const reportPath = value('--report');

@@ -38,7 +38,7 @@ async function main() {
   assert.ok(subtitlePages('product specifications separately', 12.45).flat().join(' ').includes('specifications'), 'English words are never split');
   assert.equal(subtitlePages('한국어 문장을 유지합니다', 12.45).flat().join(' '), '한국어 문장을 유지합니다', 'Korean word spacing survives layout');
   assert.match(ass, /Style: Default,Source Han Sans SC,60,/, 'subtitle font scales with the canvas short edge');
-  assert.match(ass, /,92,92,384,1/, 'captions sit below the face, above bottom UI');
+  assert.match(ass, /,92,92,461,1/, 'captions sit at the 76% reading line above bottom UI');
   const emphasisOnlyAss = cuesToAss([], 1080, 1920, '', 3, {}, {
     profile: 'talking_head',
     events: [{ type: 'hook', text: '核心卖点', startMs: 0, endMs: 1200, strength: 'strong', anchor: { x: .5, y: .18 } }],
