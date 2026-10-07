@@ -33,6 +33,20 @@ export type StudioEmphasisPlanInput = {
 
 const text = (value: unknown): string => String(value || '').replace(/\s+/g, ' ').trim();
 
+const metadataField = /(?:环境|景别|运镜|构图|镜头功能|画面|配乐|台词|字幕)[：:]/;
+
+function shortTimelineLabel(value: unknown): string {
+  const raw = text(value);
+  if (!raw) return '';
+  const subtitle = raw.match(/字幕[：:]\s*(.+)$/)?.[1]?.trim();
+  if (subtitle) return subtitle.slice(0, 48);
+  const overlay = raw.match(/(?:后期)?叠加文字[‘'“"]([^’'”"]{2,48})[’'”"]/)?.[1]?.trim();
+  if (overlay) return overlay;
+  const purpose = raw.match(/镜头功能[：:]\s*(.+?)(?=\s+(?:环境|景别|运镜|构图|画面|配乐|台词|字幕)[：:]|$)/)?.[1]?.trim();
+  if (purpose) return purpose.slice(0, 32);
+  return raw.length <= 48 && !metadataField.test(raw) ? raw : '';
+}
+
 export function recommendStudioSubtitleProfile(input: { script?: unknown; cues?: Cue[]; timeline?: TimelineShot[] }): EmphasisProfile {
   const corpus = [text(input.script), ...(input.cues || []).map(cue => text(cue.text)), ...(input.timeline || []).map(shot => text(shot.name))].join(' ');
   if (/工厂|厂区|车间|产线|流水线|设备|加工|质检|仓库|机械|machine|factory|production line/i.test(corpus)) return 'factory_process';
@@ -84,7 +98,7 @@ function timelineCandidates(shots: TimelineShot[]): EmphasisEvent[] {
     const durationMs = Number.isFinite(Number(shot.targetDuration)) ? Number(shot.targetDuration) * 1_000 : 2_000;
     const endMs = Number.isFinite(Number(shot.targetEnd)) ? Number(shot.targetEnd) * 1_000 : startMs + durationMs;
     cursorMs = Math.max(cursorMs, endMs);
-    const label = text(shot.caption || shot.purpose);
+    const label = shortTimelineLabel(shot.caption || shot.purpose);
     const visual = text(shot.targetVisual || shot.action || shot.name);
     const events: EmphasisEvent[] = [];
     if (label && !/^(无|none)$/i.test(label)) events.push({
