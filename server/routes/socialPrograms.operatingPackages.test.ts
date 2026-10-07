@@ -4,6 +4,9 @@ import test from 'node:test';
 import express from 'express';
 import type { DataStore, ListQuery, ListResult, Record_ } from '../storage/datastore.js';
 import { createSocialProgramService } from '../socialPrograms/service.js';
+import { advanceWeeklyPlanning } from '../../src/lib/weeklyPlanningActions.js';
+import { socialProgramApi, SocialProgramRequestError } from '../../src/lib/socialProgramApi.js';
+import type { WeeklyAgentPlanningState } from '../../shared/contracts/socialProgram.js';
 import { createSocialProgramsRouter } from './socialPrograms.js';
 
 function memoryStore(): DataStore {
@@ -131,6 +134,79 @@ test('social program routes expose the weekly operating package lifecycle', asyn
   const listResponse = await fetch(`${base}/operating-packages?weekStart=2026-10-05`);
   assert.equal(listResponse.status, 200);
   assert.equal((await listResponse.json()).items.length, 1);
+
+  await dataStore.create('social_discovery_scopes', {
+    tenant_id: 'tenant-a', program_id: program.programId, status: 'active', keyword_set_id: 'set-1', version: 1,
+    payload: { approval: { status: 'approved', scopeVersion: 1 }, keywordSet: { scope: { audienceRole: 'brand_buyer' }, graph: { sceneClusters: [] } } },
+  });
+  await dataStore.create('social_candidate_evidence', {
+    tenant_id: 'tenant-a', evidenceId: 'evidence-video-1', version: 1, tenantId: 'tenant-a', candidateId: 'video-1', inputFingerprint: 'fp',
+    evidence: {
+      inspirationId: 'video-1', discoveryPath: ['keyword'], sceneIds: [], relevance: { level: 'high', reasons: [] }, momentum: { level: 'high_performance', reasons: [], confidence: 0.8 },
+      transferability: { level: 'high', mechanisms: ['demo'], limitations: [] }, evidenceRefs: ['source'],
+      qualityScore: { ruleVersion: 'discovery-score-v1', overall: 90, dimensions: { relevance: 90, transferability: 90, momentum: 75, evidence: 80, platformPriority: 100, businessModelFit: 100 }, decision: 'accepted', reasons: ['B2B'], blockers: [], scoredAt: '2026-10-01T00:00:00Z' },
+      classification: { businessModel: 'b2b', platform: 'tiktok', keywordTier: 'medium' },
+    },
+    g1: { sourceUrl: 'https://www.tiktok.com/video-1' }, completeness: 'complete', createdAt: '2026-10-01T00:00:00Z', supersedesEvidenceId: null,
+  });
+  await dataStore.create('trend_videos', { id: 'video-1', tenantId: 'tenant-a', platform: 'tiktok', title: 'OEM factory capability proof', sourceUrl: 'https://www.tiktok.com/video-1' });
+  await dataStore.create('social_tracked_accounts', {
+    tenant_id: 'tenant-a', accountId: 'https://www.tiktok.com/@oem_factory', decision: 'track', status: 'tracked', accountRole: 'brand_factory', reasons: ['OEM factory wholesale supplier'],
+    evidenceVideoIds: ['video-1', 'video-2', 'video-3'], relatedSceneIds: [], missingEvidence: [], confidence: 0.95,
+    businessConfirmation: { status: 'confirmed', confirmedBy: 'business_agent', decisionRef: 'decision-1', reason: null, confirmedAt: '2026-10-01T00:00:00Z' },
+  });
+
+  // Drive the exact action used by the React workbench through its API and real router.
+  const originalFetch = globalThis.fetch;
+  const previousStorage = globalThis.localStorage;
+  Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: { getItem: () => null } });
+  const origin = new URL(base).origin;
+  globalThis.fetch = (input, init) => originalFetch(new URL(String(input), origin), init);
+  try {
+    let state: WeeklyAgentPlanningState = created.agentPlanning;
+    const outline = state;
+    const path = `${base}/operating-packages/${created.packageId}/agent-planning`;
+    for (const body of [{ expectedVersion: 1 }, { expectedPackageVersion: 1 }, { expectedPackageVersion: 1, expectedPlanningVersion: 0 }]) {
+      const invalid = await fetch(`${path}/director-analysis`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+      assert.equal(invalid.status, 400, 'both explicit versions are mandatory');
+    }
+    // A merge failure must preserve completed analysis and resume without re-analysis.
+    globalThis.fetch = (input, init) => String(input).endsWith('/agent-planning/merge')
+      ? Promise.resolve(Response.json({ error: 'temporary_unavailable', message: '临时不可用' }, { status: 503 }))
+      : originalFetch(new URL(String(input), origin), init);
+    await assert.rejects(advanceWeeklyPlanning(program.programId, created.packageId, created.version, state, next => { state = next; }),
+      (error: unknown) => error instanceof SocialProgramRequestError && error.status === 503);
+    assert.equal(state.status, 'director_analyzing');
+    assert.equal(state.version, 2);
+    globalThis.fetch = (input, init) => originalFetch(new URL(String(input), origin), init);
+    state = await advanceWeeklyPlanning(program.programId, created.packageId, created.version, state, next => { state = next; });
+    assert.equal(state.status, 'awaiting_confirmation');
+    assert.equal(state.version, 3);
+    assert.equal(state.packageVersion, 1, 'package version must not advance with Agent analysis');
+    const merged = state;
+    for (const action of ['director-analysis', 'merge', 'confirm', 'dispatch']) {
+      const stale = await fetch(`${path}/${action}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ expectedPackageVersion: 1, expectedPlanningVersion: outline.version }) });
+      assert.equal(stale.status, 409);
+      assert.equal((await stale.json()).error, 'weekly_agent_planning_version_conflict');
+    }
+    await assert.rejects(socialProgramApi.confirmAgentSchedule(program.programId, created.packageId, { expectedPackageVersion: 2, expectedPlanningVersion: state.version }),
+      (error: unknown) => error instanceof SocialProgramRequestError && error.status === 409 && error.code === 'weekly_package_version_conflict');
+    assert.deepEqual(await socialProgramApi.getAgentPlanning(program.programId, created.packageId, 1), merged, 'rejected mutations preserve the plan');
+    state = await advanceWeeklyPlanning(program.programId, created.packageId, 1, state, () => {});
+    assert.equal(state.status, 'confirmed');
+    assert.equal(state.userConfirmation?.confirmedBy, 'owner');
+    state = await advanceWeeklyPlanning(program.programId, created.packageId, 1, state, () => {});
+    assert.equal(state.status, 'dispatched');
+    assert.equal(state.version, 5);
+    assert.equal(state.dispatch?.scheduleItems.length, 26);
+    assert.equal(state.dispatch?.assignedTo, 'content_agent');
+    const tasks = await socialProgramApi.listExecutionTasks(program.programId, created.packageId, 1);
+    assert.ok(tasks.some(item => (item.inputSnapshot.dispatchRef as { id?: string } | undefined)?.id === state.dispatch?.dispatchId));
+    assert.ok(tasks.every(item => item.status !== 'succeeded'), 'dispatch is not completed production');
+  } finally {
+    globalThis.fetch = originalFetch;
+    Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: previousStorage });
+  }
 
   const activatedResponse = await fetch(`${base}/operating-packages/${created.packageId}/activate`, {
     method: 'POST', headers: { 'content-type': 'application/json' },

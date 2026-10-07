@@ -243,6 +243,12 @@ export interface WeeklyBusinessContentDispatch {
   issuedAt: string;
 }
 
+/** Both identities are required for planning mutations; neither version substitutes for the other. */
+export interface WeeklyAgentPlanningMutation {
+  expectedPackageVersion: number;
+  expectedPlanningVersion: number;
+}
+
 export interface WeeklyAgentPlanningState {
   planningId: string;
   version: number;

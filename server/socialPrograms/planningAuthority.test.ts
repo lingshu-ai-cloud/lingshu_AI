@@ -67,18 +67,18 @@ test('business outline → director evidence → business schedule → user conf
   const outline = await service.initialize('tenant-1', pkg());
   assert.equal(outline.skeleton.generatedBy, 'business_agent');
   assert.equal(outline.skeleton.tokenCost, 0);
-  const analyzed = await service.runDirectorAnalysis({ tenantId: 'tenant-1', programId: 'program-1', packageId: 'package-1', packageVersion: 1, actor: 'director_agent' });
+  const analyzed = await service.runDirectorAnalysis({ tenantId: 'tenant-1', programId: 'program-1', packageId: 'package-1', packageVersion: 1, expectedPlanningVersion: outline.version, actor: 'director_agent' });
   assert.equal(analyzed.directorAnalyses[0]?.analyzedBy, 'director_agent');
   assert.equal(analyzed.directorAnalyses[0]?.benchmarkVideoRefs[0]?.id, 'video-1');
-  const merged = await service.mergeDetailedSchedule({ tenantId: 'tenant-1', programId: 'program-1', package: pkg(), actor: 'business_agent' });
+  const merged = await service.mergeDetailedSchedule({ tenantId: 'tenant-1', programId: 'program-1', package: pkg(), expectedPlanningVersion: analyzed.version, actor: 'business_agent' });
   assert.equal(merged.detailedSchedule?.mergedBy, 'business_agent');
   assert.equal(merged.detailedSchedule?.items[0]?.qualityTier, 'premium');
   await assert.rejects(
-    service.dispatch({ tenantId: 'tenant-1', programId: 'program-1', packageId: 'package-1', packageVersion: 1, actor: 'business_agent' }),
+    service.dispatch({ tenantId: 'tenant-1', programId: 'program-1', packageId: 'package-1', packageVersion: 1, expectedPlanningVersion: merged.version, actor: 'business_agent' }),
     (error: unknown) => error instanceof SocialProgramError && error.code === 'confirmed_detailed_schedule_required',
   );
-  await service.confirm({ tenantId: 'tenant-1', programId: 'program-1', packageId: 'package-1', packageVersion: 1, userId: 'owner' });
-  const dispatched = await service.dispatch({ tenantId: 'tenant-1', programId: 'program-1', packageId: 'package-1', packageVersion: 1, actor: 'business_agent' });
+  const confirmed = await service.confirm({ tenantId: 'tenant-1', programId: 'program-1', packageId: 'package-1', packageVersion: 1, expectedPlanningVersion: merged.version, userId: 'owner' });
+  const dispatched = await service.dispatch({ tenantId: 'tenant-1', programId: 'program-1', packageId: 'package-1', packageVersion: 1, expectedPlanningVersion: confirmed.version, actor: 'business_agent' });
   assert.equal(dispatched.dispatch?.issuedBy, 'business_agent');
   assert.equal(dispatched.dispatch?.assignedTo, 'content_agent');
   assert.ok(dispatched.dispatch?.detailedScheduleRef.id);

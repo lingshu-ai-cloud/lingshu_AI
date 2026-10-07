@@ -6,6 +6,7 @@ import type {
   SocialProgram,
   SocialWeeklyPlan,
   WeeklyAgentPlanningState,
+  WeeklyAgentPlanningMutation,
   WeeklyExecutionTask,
   WeeklyOperatingPackage,
 } from '../../shared/contracts/socialProgram';
@@ -128,17 +129,17 @@ export const socialProgramApi = {
     const query = version ? `?version=${version}` : '';
     return (await request<{ item: WeeklyAgentPlanningState }>(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/agent-planning${query}`)).item;
   },
-  async runDirectorPlanning(programId: string, packageId: string, expectedVersion: number): Promise<WeeklyAgentPlanningState> {
-    return (await request<{ item: WeeklyAgentPlanningState }>(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/agent-planning/director-analysis`, { method: 'POST', ...json({ expectedVersion }) })).item;
+  async runDirectorPlanning(programId: string, packageId: string, versions: WeeklyAgentPlanningMutation): Promise<WeeklyAgentPlanningState> {
+    return (await request<{ item: WeeklyAgentPlanningState }>(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/agent-planning/director-analysis`, { method: 'POST', ...json(versions) })).item;
   },
-  async mergeAgentSchedule(programId: string, packageId: string, expectedVersion: number): Promise<WeeklyAgentPlanningState> {
-    return (await request<{ item: WeeklyAgentPlanningState }>(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/agent-planning/merge`, { method: 'POST', ...json({ expectedVersion }) })).item;
+  async mergeAgentSchedule(programId: string, packageId: string, versions: WeeklyAgentPlanningMutation): Promise<WeeklyAgentPlanningState> {
+    return (await request<{ item: WeeklyAgentPlanningState }>(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/agent-planning/merge`, { method: 'POST', ...json(versions) })).item;
   },
-  async confirmAgentSchedule(programId: string, packageId: string, expectedVersion: number): Promise<WeeklyAgentPlanningState> {
-    return (await request<{ item: WeeklyAgentPlanningState }>(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/agent-planning/confirm`, { method: 'POST', ...json({ expectedVersion }) })).item;
+  async confirmAgentSchedule(programId: string, packageId: string, versions: WeeklyAgentPlanningMutation): Promise<WeeklyAgentPlanningState> {
+    return (await request<{ item: WeeklyAgentPlanningState }>(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/agent-planning/confirm`, { method: 'POST', ...json(versions) })).item;
   },
-  async dispatchAgentSchedule(programId: string, packageId: string, expectedVersion: number): Promise<WeeklyAgentPlanningState> {
-    return (await request<{ item: WeeklyAgentPlanningState }>(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/agent-planning/dispatch`, { method: 'POST', ...json({ expectedVersion }) })).item;
+  async dispatchAgentSchedule(programId: string, packageId: string, versions: WeeklyAgentPlanningMutation): Promise<WeeklyAgentPlanningState> {
+    return (await request<{ item: WeeklyAgentPlanningState }>(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/agent-planning/dispatch`, { method: 'POST', ...json(versions) })).item;
   },
   async listExecutionTasks(programId: string, packageId: string, version: number): Promise<WeeklyExecutionTask[]> {
     return (await request<{ items: WeeklyExecutionTask[] }>(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/execution-tasks?version=${version}`)).items;

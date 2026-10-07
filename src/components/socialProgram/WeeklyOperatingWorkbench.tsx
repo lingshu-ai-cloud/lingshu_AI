@@ -9,6 +9,7 @@ import type {
   WeeklyProductionStepKind,
   WeeklyResponsibleActor,
 } from '../../../shared/contracts/socialProgram';
+import { advanceWeeklyPlanning } from '../../lib/weeklyPlanningActions';
 import { socialProgramApi } from '../../lib/socialProgramApi';
 import { projectWeeklyWorkbench, type WorkbenchEvidenceKind } from './weeklyWorkbenchModel';
 
@@ -138,17 +139,7 @@ export default function WeeklyOperatingWorkbench({ pkg, loading, error, selected
     setPlanningBusy(true);
     setPlanningError('');
     try {
-      let next = planning;
-      if (planning.status === 'outline_ready') {
-        const analyzed = await socialProgramApi.runDirectorPlanning(pkg.programId, pkg.packageId, planning.version);
-        next = await socialProgramApi.mergeAgentSchedule(pkg.programId, pkg.packageId, analyzed.version);
-      } else if (planning.status === 'director_analyzing') {
-        next = await socialProgramApi.mergeAgentSchedule(pkg.programId, pkg.packageId, planning.version);
-      } else if (planning.status === 'awaiting_confirmation') {
-        next = await socialProgramApi.confirmAgentSchedule(pkg.programId, pkg.packageId, planning.version);
-      } else if (planning.status === 'confirmed') {
-        next = await socialProgramApi.dispatchAgentSchedule(pkg.programId, pkg.packageId, planning.version);
-      }
+      const next = await advanceWeeklyPlanning(pkg.programId, pkg.packageId, pkg.version, planning, setPlanning);
       setPlanning(next);
       await refreshExecutionTasks(pkg);
       onRefresh();
