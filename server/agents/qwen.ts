@@ -300,7 +300,7 @@ export async function analyzeVideoFramesWithQwen(opts: {
   if (opts.frames.length === 0) throw new Error('Qwen frame analysis requires at least one frame');
 
   const modeInstruction = opts.analysisMode === 'exact'
-    ? '当前为全片精确分析：逐张比较全片高密度关键帧，主体动作、对象、构图、运镜、台词或营销功能变化时必须新建镜头，不得合并有效动作。'
+    ? '当前为全片精确分析：逐张比较全片高密度关键帧，主体动作、对象、构图、运镜、台词或营销功能变化时必须新建镜头，不得合并有效动作。必须覆盖0秒到视频结尾，单项时间区间不得超过5秒；稳定长镜头分段记录并保持同一人物和镜头状态。每项说明简洁，优先保证全片完整覆盖。'
     : '当前为全片策略分析：必须覆盖从 0 秒到结尾，但镜头密度跟随真实内容变化；重复或稳定画面合并为区间并用 beats 记录变化，禁止无意义逐秒拆分。';
   const systemPrompt = `你是一个面向出海电商营销的短视频内容分析专家。
 ${modeInstruction}
@@ -350,8 +350,8 @@ ${BENCHMARK_ANALYSIS_CONTRACT}
       image_url: { url: `data:${frame.mimeType};base64,${frame.base64}` },
     })),
   ];
-  const outputTokens = opts.analysisMode === 'exact' && Number(opts.duration || 0) <= 15
-    ? 3000
+  const outputTokens = opts.analysisMode === 'exact'
+    ? Math.min(24_000, Math.max(8_000, Math.ceil(Number(opts.duration || 15) / 5) * 1_200 + 2_000))
     : Number(opts.duration || 0) > 60 ? 8000 : 4500;
 
   const completion = await client().chat.completions.create({
