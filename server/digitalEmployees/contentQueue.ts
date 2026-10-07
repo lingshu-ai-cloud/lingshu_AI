@@ -207,7 +207,11 @@ function queueState(projects: Stored[], task?: WorkflowTask): Pick<ContentQueueI
   const approved = complete && projects.every(project => contentAccepted(object(project.spec)));
   const indexes = projects.map(project => Math.max(0, stageOrder.indexOf(projectStage(project) as typeof stageOrder[number])));
   const currentIndex = Math.min(...indexes);
-  const progress = complete ? 100 : Math.round(Math.max(0, currentIndex) / (stageOrder.length - 1) * 100);
+  // A rendered/quality-passed file still needs the explicit user acceptance
+  // step. Reserve 100% for an accepted deliverable so a blocked or
+  // waiting-review item can never display a contradictory full completion.
+  const stageProgress = Math.round(Math.max(0, currentIndex) / (stageOrder.length - 1) * 100);
+  const progress = approved ? 100 : complete ? 90 : Math.min(90, stageProgress);
   const currentStage = complete ? 'completed' : stageOrder[currentIndex] || 'script';
   return {
     status: blockedProject ? 'blocked' : approved ? 'completed' : complete ? 'waiting_review' : 'producing',

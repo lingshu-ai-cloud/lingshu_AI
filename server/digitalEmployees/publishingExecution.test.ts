@@ -4,7 +4,7 @@ import { store } from '../storage/index.js';
 
 const base = {
   tenantId: 'tenant-1',
-  projects: [{ id: 'project-1', title: '成片一', status: 'ready_for_approval', spec: { caption: '正文', automation: { managedBy: 'digital_employee', stage: 'completed', renderOutputPath: '/safe/final.mp4', quality: { passed: true, ruleVersion: 9 } } } }],
+  projects: [{ id: 'project-1', title: '成片一', status: 'ready_for_approval', spec: { caption: '正文', contentOrder: { videoPlan: { publication: { title: '未来发布标题', caption: '未来发布正文', tags: ['ProductA', 'B2B'] } } }, automation: { managedBy: 'digital_employee', stage: 'completed', renderOutputPath: '/safe/final.mp4', quality: { passed: true, ruleVersion: 9 } } } }],
   targets: [{ platform: 'facebook' as const, accountId: 'account-1', accountLabel: '主页一' }],
   goalPlatforms: ['facebook' as const], allowRealPublishing: false,
   now: new Date('2026-09-04T02:00:00.000Z'),
@@ -12,9 +12,12 @@ const base = {
 const manual = buildPublishingApprovalPackage(base);
 assert.equal(manual.items.length, 1);
 assert.deepEqual(manual.items[0]?.accountLabels, ['主页一']);
+assert.equal(manual.items[0]?.title, '未来发布标题');
+assert.equal(manual.items[0]?.description, '未来发布正文');
+assert.deepEqual(manual.items[0]?.tags, ['ProductA', 'B2B']);
 assert.equal(manual.allowRealPublishing, false);
 assert.ok(manual.contentHash);
-assert.notEqual(buildPublishingApprovalPackage({ ...base, projects: [{ ...base.projects[0], spec: { ...base.projects[0]!.spec, caption: '已修改' } }] }).contentHash, manual.contentHash);
+assert.notEqual(buildPublishingApprovalPackage({ ...base, projects: [{ ...base.projects[0], spec: { ...base.projects[0]!.spec, contentOrder: { videoPlan: { publication: { title: '未来发布标题', caption: '已修改', tags: ['ProductA', 'B2B'] } } } } }] }).contentHash, manual.contentHash);
 assert.notEqual(buildPublishingApprovalPackage({ ...base, allowRealPublishing: true }).contentHash, manual.contentHash);
 
 const boundedInput = {

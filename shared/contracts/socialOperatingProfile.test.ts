@@ -36,5 +36,20 @@ assert.ok(platformExecutionConstraints('youtube').some(rule => rule.includes('�
 assert.ok(SOCIAL_AGENT_BOUNDARIES.business.mustNot.some(rule => rule.includes('镜头参考')));
 assert.ok(SOCIAL_AGENT_BOUNDARIES.director.mustNot.some(rule => rule.includes('账号数量')));
 assert.deepEqual(socialDiscoveryMixIssues(SOCIAL_DISCOVERY_BASELINE), []);
+assert.deepEqual(socialDiscoveryMixIssues([
+  { mode: 'momentum', percent: 33.3 },
+  { mode: 'account', percent: 33.3 },
+  { mode: 'innovation', percent: 33.4 },
+]), [], 'decimal percentages that total 100 must pass');
+assert.deepEqual(socialDiscoveryMixIssues([
+  { mode: 'momentum', percent: '50' as unknown as number },
+  { mode: 'account', percent: '35' as unknown as number },
+  { mode: 'innovation', percent: '15' as unknown as number },
+]), [], 'HTML number values serialized as strings must still validate');
+assert.match(socialDiscoveryMixIssues([
+  { mode: 'momentum', percent: 50 },
+  { mode: 'account', percent: 30 },
+  { mode: 'innovation', percent: 10 },
+]).join('；'), /当前 90/, 'an invalid total must show the actual percentage');
 
 console.log('Social operating profiles, platform rules and Agent boundaries passed');

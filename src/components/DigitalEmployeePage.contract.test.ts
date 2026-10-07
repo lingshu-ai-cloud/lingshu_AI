@@ -44,16 +44,21 @@ const productTableOnboardingSource = pageSource.slice(
   pageSource.indexOf('if (mode === "first" && profileConfirmed && productConfirmed)'),
 );
 const currentPlanSource = pageSource.slice(
-  pageSource.indexOf('<section aria-label="当前周计划"'),
+  pageSource.indexOf('<div aria-label="当前周计划"'),
   pageSource.indexOf('<nav aria-label="智能经营视图"'),
 );
 
-for (const label of ['智能经营', '生成免费任务总纲', '步骤 1 · 免费', '步骤 2 · Agent 预分析']) {
-  assert.match(pageSource, new RegExp(label), `Smart Operations must expose the approved two-step flow: ${label}`);
+for (const label of ['智能经营', '制定本周目标', '爆款视频裂变计划', '确认周计划并开始工作', '数字员工工作排期']) {
+  assert.match(pageSource, new RegExp(label), `Smart Operations must expose the confirmed weekly workflow: ${label}`);
+}
+for (const deprecated of ['生成免费任务总纲', '免费的周任务总纲', '步骤 1 · 免费', '步骤 2 · Agent 预分析']) {
+  assert.doesNotMatch(pageSource, new RegExp(deprecated), `Smart Operations must remove the deprecated free/paid two-step copy: ${deprecated}`);
 }
 for (const label of ['全部账号', 'YouTube', 'Instagram', 'Facebook', 'TikTok']) {
   assert.match(accountRailSource, new RegExp(label), `the Smart Operations account rail must expose ${label}`);
 }
+assert.match(accountRailSource, /targets\.map\(account =>/, 'the account rail must render one flat list of real or planned accounts');
+assert.doesNotMatch(accountRailSource, /platforms\.map\(/, 'the account rail must not group accounts into duplicate platform sections');
 for (const label of ['爆款视频预览', '素材组合预览', '效果置信度', '任务不能开始']) {
   assert.match(smartBusinessSource, new RegExp(label), `content task cards must expose ${label}`);
 }
@@ -122,14 +127,27 @@ assert.doesNotMatch(layoutSource, /aria-label="主导航"[\s\S]{0,900}新手引�
 assert.match(layoutSource, /lingshu:open-digital-employee-guide/, 'the user-menu guide entry must open the Digital Employee guide');
 assert.match(pageSource, /addEventListener\('lingshu:open-digital-employee-guide'/, 'Smart Business must respond to the sidebar guide entry');
 assert.match(currentPlanSource, /查看本周计划[\s\S]{0,500}Agent 设置[\s\S]{0,500}历史计划/, 'the current-plan card must keep history as the rightmost management action');
+assert.match(currentPlanSource, /WeeklyCommandCenter/, 'the full weekly command center must replace the simplified current-plan summary');
+assert.match(currentPlanSource, /开始周任务工作/, 'the current weekly plan must expose one prominent start-work action');
+assert.match(pageSource, /const startWeeklyWork[\s\S]{0,900}setWeeklyPlanOpen\(true\)/, 'the prominent start-work action must open the persisted plan confirmation workflow');
 assert.doesNotMatch(currentPlanSource, /查看内容队列|查看完整周计划|新手引导/, 'the current-plan card must not keep duplicate queue, full-plan, or guide buttons');
 assert.match(pageSource, /aria-label=\{goal && !newGoal \? "本周计划详情" : "周计划生成"\}/, 'the weekly-plan dialog must distinguish inspecting the current plan from generating a new one');
-assert.match(pageSource, /先确认免费总纲，再单独启动 Agent 生成爆款与素材预览。/, 'the weekly-plan detail must explain the approved two-step generation flow');
+assert.match(pageSource, /每条计划由一条真实爆款视频裂变；选择产品后一次确认并启动。/, 'the weekly-plan detail must explain the one-to-one viral mutation workflow');
 const outlineFlowSource = pageSource.slice(pageSource.indexOf('const createWeeklyOutline'), pageSource.indexOf('const generateCurrentPlanDetails'));
-assert.match(outlineFlowSource, /digitalEmployeeApi\.createGoal/, 'step 1 must persist the free weekly outline');
-assert.doesNotMatch(outlineFlowSource, /approveGoal/, 'step 1 must not silently approve or start the weekly plan');
-assert.match(pageSource, /generateCurrentPlanDetails[\s\S]{0,600}generatePackageDetails/, 'step 2 must explicitly call the persisted Agent-detail endpoint');
+assert.match(outlineFlowSource, /digitalEmployeeApi\.createGoal/, 'weekly goal creation must persist before product confirmation');
+assert.match(pageSource, /const confirmWeeklyPlan[\s\S]{0,2400}generatePackageDetails[\s\S]{0,1600}approveGoal/, 'one confirmation must prepare persisted details and then approve the same plan revision');
+assert.match(pageSource, /publication\?\.title[\s\S]{0,800}publication\?\.caption[\s\S]{0,400}publication!\.tags/, 'weekly cards must preview future title, caption and tags');
+assert.match(pageSource, /planningEvidence\?\.referenceThumbnailUrl/, 'weekly cards must render persisted viral thumbnails');
+assert.match(pageSource, /updateWeeklyPlanProduct[\s\S]{0,1000}savePackage/, 'product selection must persist product-bound material ids in the weekly package');
+assert.match(pageSource, /refreshWeeklyViralPlan[\s\S]{0,900}recommendPackage[\s\S]{0,400}savePackage/, 'persisted legacy drafts must support rebuilding the one-to-one viral plan from the current weekly target');
+assert.match(pageSource, /按本周目标重新匹配爆款/, 'a weekly plan with missing references must expose an actionable repair instead of a dead-end warning');
+assert.match(pageSource, /1080p 最高档 AIGC 单价估算/, 'per-video estimates must explain their planning basis and distinguish it from settlement');
+assert.match(pageSource, /Agent To Do List[\s\S]{0,1800}expectedMinutes/, 'confirmed weekly plans must show Agent ownership and expected duration');
 assert.match(pageSource, /aria-label="社媒视频矩阵"[\s\S]{0,2500}编辑完整矩阵/, 'the default weekly proposal must visibly restore the social video matrix');
+assert.match(pageSource, /workspaceView === "matrix" && <SmartOperationsAccountRail/, 'the account rail must only appear inside the account-matrix tab');
+assert.match(pageSource, /账号视频产量分配[\s\S]{0,1500}weeklyCount/, 'the weekly goal must expose conserved video totals per account');
+assert.match(pageSource, /视频 \+ 发布标题 \/ 文案 \/ Tag/, 'the weekly output promise must remain video-only while clearly including publication metadata');
+assert.match(pageSource, /具体缺少/, 'weekly-plan validation must name the missing business fields instead of showing a generic warning');
 assert.match(pageSource, /page === "socialPlanning"[\s\S]{0,240}setWeeklyPlanOpen\(true\)/, 'the account matrix next step must open weekly-plan generation inside Smart Business');
 assert.match(currentPlanSource, /历史计划/, 'Smart Business must expose plan history from the current-plan card');
 assert.match(planHistorySource, /按周查看[\s\S]{0,200}按月查看/, 'plan history must support weekly and monthly views');
@@ -144,17 +162,19 @@ assert.match(smartBusinessSource, /costCny\.settlementStatus === "settled"[\s\S]
 assert.match(smartBusinessSource, /过去已核算消耗/, 'Agent detail must expose historical settled spend');
 assert.match(smartBusinessSource, /账号真实结算账本/, 'Agent detail must identify the persisted account ledger as its source');
 assert.match(smartBusinessSource, /<MatrixView data=\{data\}/, 'the account matrix tab must use the deterministic editable weekly matrix');
-assert.match(smartBusinessSource, /aria-label="12 周内容运营日历"[\s\S]{0,1000}12 周从冷启动到稳定复盘/, 'the content calendar must be a standalone 12-week operating surface instead of an embedded strip');
-assert.match(smartBusinessSource, /aria-label="按平台查看账号"/, 'the account matrix must expose clickable platform filters');
-for (const item of ['企业默认 CTA', 'WhatsApp', 'Messenger', '对标账号', '账号内容']) {
+assert.match(smartBusinessSource, /aria-label="数字员工工作排期"[\s\S]{0,1500}账号内容日历 · 甘特排期/, 'the account matrix must expose an account-level calendar and Gantt schedule');
+assert.match(smartBusinessSource, /编导分析[\s\S]{0,500}编导 Agent[\s\S]{0,1000}内容制作[\s\S]{0,500}内容 Agent[\s\S]{0,1000}质检与发布/, 'the work schedule must make every production owner and stage explicit');
+assert.doesNotMatch(smartBusinessSource, /matrixSystemLayers|谁来建立信任|aria-label="按平台查看账号"/, 'the deleted dark explainer and duplicate platform cards must not remain');
+for (const item of ['企业默认 CTA', 'WhatsApp', 'Messenger', '对标账号']) {
   assert.match(smartBusinessSource, new RegExp(item), `account details must expose ${item}`);
 }
+assert.match(smartBusinessSource, /内容任务已统一放入上方工作排期/, 'account content must live in the calendar instead of a duplicate detail column');
 assert.doesNotMatch(smartBusinessSource, /账号宪法完成项|唯一 CTA 待锁定|当前只有平台承接规则/, 'account completion must hide unrelated constitution fields and the duplicate CTA warning');
 assert.match(smartBusinessSource, /按矩阵同步周任务包/, 'draft weekly packages must expose an explicit matrix synchronization action');
 assert.match(smartBusinessSource, /\/api\/overseas\/competitor-accounts/, 'account details must use the persisted benchmark-account library');
 assert.match(smartBusinessSource, /\/api\/oauth\/whatsapp\/config/, 'account details must read the real WhatsApp connection state');
 assert.match(smartBusinessSource, /messengerSubscribed/, 'Facebook account details must read the real Messenger subscription state');
-assert.match(smartBusinessSource, /按平台、账号、栏目和周排期进入统一内容队列/, 'the account matrix must feed the unified weekly content queue');
+assert.match(smartBusinessSource, /排期规则：编导结论先完成，经营 Agent 再派发内容任务/, 'the account matrix must feed the unified weekly content queue with the approved Agent handoff');
 assert.match(smartBusinessSource, /const pageSize = 6/, 'long content queues must use a bounded page size');
 assert.match(smartBusinessSource, /aria-label="内容队列分页"/, 'long content queues must expose pagination controls');
 assert.match(smartBusinessSource, /内容队列[\s\S]{0,500}计划、制作、验收与成本在同一条链路/, 'the queue must expose planned content and its production states');
@@ -335,7 +355,7 @@ assert.match(libSource, /CustomEvent\(["']lingshu:navigate["'],\s*\{\s*detail:\s
 assert.match(appSource, /setSmartAssetsView\(detail\.view === ["']publish["'] \? ["']publish["'] : ["']create["']\)/, 'the application shell must honor create versus publish deep links');
 
 assert.match(pageSource, /allowGeneratedVisuals:\s*false/, 'generated visuals must default to fail-closed');
-assert.match(pageSource, /setWorkspaceView\(["']today["']\)[\s\S]{0,500}setSelectedTaskId/, 'approving a plan must return to the integrated business overview while preserving task focus');
+assert.match(pageSource, /setWorkspaceView\(["']matrix["']\)[\s\S]{0,500}setSelectedTaskId/, 'approving a plan must open the account work schedule while preserving task focus');
 assert.match(pageSource, /scrollIntoView\([\s\S]{0,120}behavior:\s*["']smooth["']/, 'first-run transitions must focus the next required panel');
 assert.match(pageSource, /digitalEmployeeOnboarding:\s*\{\s*profileConfirmedAt:/, 'the first-step confirmation must be persisted instead of living only in component memory');
 assert.match(pageSource, /setProductConfirmed\(true\)/, 'confirming the product table must advance to the social-stage step');

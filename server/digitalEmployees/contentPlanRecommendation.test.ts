@@ -10,14 +10,21 @@ const config = normalizeDigitalEmployeeConfig({
   publishingTargets: [{ platform: 'tiktok', accountId: 'tt-1', accountLabel: '德国采购号' }],
 });
 const goal = normalizeWeeklyGoal({ startsAt: '2026-09-28', endsAt: '2026-10-04', contentPlatforms: ['tiktok'], objective: '获得德国采购询盘' }, config);
-const videos = [{
-  id: 'viral-1', platform: 'tiktok', title: 'How buyers inspect a machine', views: '1.2M',
+const video = (id: string, title: string, hook: string, views: string) => ({
+  id, platform: 'tiktok', title, views, thumbnailUrl: `https://cdn.example.com/${id}.jpg`, sourceUrl: `https://tiktok.com/@benchmark/video/${id}`,
   aiAnalysis: {
     analysisMode: 'exact', analysisQuality: 'video', sourceAccount: 'https://tiktok.com/@benchmark', sourceAccountName: 'Benchmark Factory', relativeViewMultiple: 4.2,
     candidateEvidence: { relevance: { level: 'high' }, momentum: { level: 'high_performance' }, transferability: { level: 'high' } },
-    gemini: { theme: '采购验机三步法', hooks: ['设备到厂前，采购最容易漏掉哪一步？'], sellingPoints: ['验机流程与检测证据'] },
+    gemini: { theme: title, hooks: [hook], sellingPoints: ['验机流程与检测证据'] },
   },
-}];
+});
+const videos = [
+  video('viral-1', '采购验机三步法', '设备到厂前，采购最容易漏掉哪一步？', '1.2M'),
+  video('viral-2', '出厂检测清单', '一台设备出厂前要核对什么？', '980K'),
+  video('viral-3', '工厂采购避坑', '采购经理如何识别关键风险？', '860K'),
+  video('viral-4', '产品精度怎么验证', '不要只看参数表，现场这样验证精度', '720K'),
+  video('viral-5', '供应商交付能力判断', '交付前先看这三个工厂证据', '650K'),
+];
 const benchmarks = [{ id: 'benchmark-1', platform: 'tiktok', accountUrl: 'https://tiktok.com/@benchmark', accountName: 'Benchmark Factory', handle: '@benchmark' }];
 
 const ranked = rankContentReferences({ videos, benchmarks, platform: 'tiktok', productName: '工业检测设备', audience: '工厂采购负责人', direction: '采购教育' });
@@ -33,15 +40,18 @@ assert.equal(plans[0]?.route, 'clone');
 assert.equal(plans[0]?.referenceId, 'viral-1');
 assert.equal(plans[0]?.planningEvidence?.generatedFrom, 'matrix_benchmark_viral');
 assert.equal(plans.filter(plan => plan.referenceId === 'viral-1').length, 1, 'one analyzed reference must not be looped across the full weekly quota');
-assert.ok(new Set(plans.map(plan => plan.theme)).size > 1, 'unfilled slots must use distinct content angles after unique references are exhausted');
+assert.equal(new Set(plans.map(plan => plan.referenceId)).size, plans.length, 'weekly output must select exactly one unique viral video per planned video');
+assert.ok(plans.every(plan => plan.route === 'clone' && plan.referenceId), 'weekly plan is composed only from executable viral-video mutations');
+assert.match(plans[0]?.planningEvidence?.referenceThumbnailUrl || '', /viral-1\.jpg/);
+assert.ok(plans.every(plan => plan.publication?.title && plan.publication.caption && plan.publication.tags.length), 'each planned video must carry future title, caption and tags into production');
+assert.ok(plans.every(plan => Number(plan.estimatedCost) > 0), 'each video must carry the production stack highest-tier estimate');
+assert.equal(enriched.directorPlan?.productionBudget, plans.reduce((sum, plan) => sum + Number(plan.estimatedCost || 0), 0), 'weekly budget must equal the sum of per-video estimates');
+assert.equal(enriched.operatingContext?.budget.productionCny, enriched.directorPlan?.productionBudget, 'weekly goal and account allocation must read the same production budget');
 assert.ok(plans[0]?.buyerProblem);
 assert.ok(plans[0]?.plannedPublishDate);
 
-const authored = structuredClone(enriched);
-const first = authored.tasks.find(task => task.templateId === 'production')!.videoPlans![0]!;
-first.route = 'product'; first.referenceId = ''; first.theme = '用户明确指定的产品演示'; first.buyerProblem = '如何确认检测精度？';
-const preserved = enrichPackageWithContentSignals({ pack: authored, goal, config, videos, benchmarks }).tasks.find(task => task.templateId === 'production')!.videoPlans![0]!;
-assert.equal(preserved.route, 'product', 'evidence enrichment must not override an explicit user-authored route');
-assert.equal(preserved.theme, '用户明确指定的产品演示');
+const shortage = enrichPackageWithContentSignals({ pack: recommendPackage(goal, config), goal, config, videos: videos.slice(0, 1), benchmarks });
+const shortagePlans = shortage.tasks.find(task => task.templateId === 'production')?.videoPlans || [];
+assert.equal(shortagePlans.filter(plan => !plan.referenceId).length, shortagePlans.length - 1, 'viral shortages must remain explicit blockers rather than falling back to another route');
 
 console.log('content plan recommendation tests passed');

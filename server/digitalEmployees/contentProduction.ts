@@ -1803,12 +1803,15 @@ export async function advanceAutomatedContentProduction(input: {
         reference: referenceEvidence,
         hash: stableHash({ productId: routePlan.productId || '', assets: routeAssets.map(evidenceAssetSnapshot), reference: referenceEvidence }),
       };
+      const normalizedPlan = normalizeVideoPlan(frozenOrder?.videoPlan || input.config.videoDefaults || {});
+      const publication = normalizedPlan.publication;
       const spec = {
         mode: route, contentMode: 'video', platform: routePlan.platform, platformBrief: routePlan.platformBrief, ratio: '9:16', exportSpec: { ratio: '9:16', resolution: '1080p', fps: 30 }, duration: normalizeVideoPlan(frozenOrder?.videoPlan || input.config.videoDefaults || {}).duration, lang: normalizeVideoPlan(frozenOrder?.videoPlan || input.config.videoDefaults || {}).language,
         workflowRunId: input.runId, workflowTaskId: input.taskId, workflowTaskKey: 'content_production', productInfo: productFacts(profile, input.config, routePlan.productId),
         ...(input.batchPlanId ? { batchPlanId: input.batchPlanId } : {}), ...(frozenOrder?.id ? { contentOrderId: frozenOrder.id, contentOrder: frozenOrder } : {}),
         presenterMode: Boolean(frozenOrder?.videoPlan && usesDigitalPresenter(frozenOrder.videoPlan)) ? 'digital' : 'real',
         audience: input.config.customerProfile, selectedMaterialIds: [], script: '', subtitlesOn: true,
+        caption: publication?.caption || '', hashtags: publication?.tags || [], publicationTitle: publication?.title || '',
         evidenceSnapshot: snapshot,
         automation: {
           schemaVersion: CONTENT_PRODUCTION_SCHEMA_VERSION, managedBy: 'digital_employee', route, slot: slot + 1,
@@ -1821,7 +1824,7 @@ export async function advanceAutomatedContentProduction(input: {
       };
       const record = await store.create<StoredRecord>('studio_projects', {
         tenant_id: input.tenantId,
-        title: `${routeTitle(route)} · ${input.goal.title} · ${normalizeVideoPlan(frozenOrder?.videoPlan || input.config.videoDefaults || {}).language.toUpperCase()} · ${slot + 1}`,
+        title: publication?.title || `${routeTitle(route)} · ${input.goal.title} · ${normalizedPlan.language.toUpperCase()} · ${slot + 1}`,
         status: 'draft',
         spec,
         ...contentProjectLineageFields({ tenantId: input.tenantId, spec }),

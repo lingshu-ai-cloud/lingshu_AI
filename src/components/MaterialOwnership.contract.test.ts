@@ -61,13 +61,15 @@ assert.doesNotMatch(enterpriseSource, /MAX_PRODUCT_ASSETS|实拍视频|产品主
 assert.doesNotMatch(enterpriseSource, /accept=['"](?:image|video)\/\*/, '企业知识页不得再提供图片或视频创作素材上传');
 
 const inspirationSource = readFileSync(fileURLToPath(new URL('./InspirationDashboard.tsx', import.meta.url)), 'utf8');
-assert.match(inspirationSource, /本次上传关联产品（可选）/, '上传可选关联具体产品');
-assert.match(inspirationSource, /不指定（系统自动匹配）/, '上传和编辑都必须允许系统自动匹配');
+const studioRouteSource = readFileSync(fileURLToPath(new URL('../../server/routes/studio.ts', import.meta.url)), 'utf8');
+assert.match(inspirationSource, /本次上传必须关联产品/, '上传必须关联具体产品');
+assert.match(inspirationSource, /选择关联产品（必选）/, '产品素材上传必须明确强绑定要求');
 assert.match(inspirationSource, /aria-label="本次上传素材归属"/, '紧凑上传入口仍必须有清晰的无障碍名称');
 assert.match(inspirationSource, /updateMaterial\(result\.material\.id,[^]*?productId: uploadProductId/, '前端 P0 上传后必须保存产品归属');
 assert.match(inspirationSource, /material\.productId === filter\.productId/, '产品 ID 存在时必须按 ID 精确筛选');
 assert.doesNotMatch(inspirationSource, /manageTarget\.kind === 'material' && manageProductId === null/, '旧素材未关联产品不得成为保存卡点');
-assert.doesNotMatch(inspirationSource, /请先选择本次素材属于哪个产品|请先在“我的素材”顶部选择产品/, '产品归属不得阻塞素材上传');
+assert.match(inspirationSource, /请先选择素材对应的产品；产品素材必须与产品表中的产品一一绑定。/, '未选择产品时必须阻止产生无法追溯的产品素材');
+for (const label of ['产品素材', '云素材']) assert.match(inspirationSource, new RegExp(label), `我的素材必须提供${label}分类`);
 assert.doesNotMatch(inspirationSource, /系统已按创作主题整理素材|项可匹配|主题待确认/, '素材库不得残留旧主题卡片和派生主题标签');
 assert.doesNotMatch(inspirationSource, /任务中上传的图片、视频和音频也会归入这里/, '上传入口不得再使用大段说明文字');
 assert.match(inspirationSource, /<span className="text-xs font-bold">音频素材<\/span>/, '音频素材必须用专属占位画面识别，不得继续误标为图片');
@@ -82,5 +84,8 @@ assert.match(inspirationSource, /<Eye size=\{14\} \/>查看详情/, '每张素�
 assert.match(inspirationSource, /<Sparkles size=\{14\} \/>自由创作/, '每张素材卡必须提供自由创作入口');
 assert.match(inspirationSource, /\{ id: 'library' as const[\s\S]{0,220}\{ id: 'accounts' as const/, '对标账号必须排列在我的素材之后');
 assert.match(inspirationSource, /aria-label=\{`\$\{isFavoriteMaterial\(material\) \? '取消收藏' : '收藏'\} \$\{material\.name\}`\}/, '素材卡必须提供可持久化的收藏按钮');
+assert.match(studioRouteSource, /function enterpriseProductMaterials[\s\S]{0,5000}sourceType: 'enterprise_product_table'/, '产品表图片必须自动投影到正式素材接口并保留来源');
+assert.match(studioRouteSource, /enterpriseAssetStableId/, '产品表素材必须使用稳定 ID，保证周计划和制作工程引用同一条素材');
+assert.match(studioRouteSource, /enterpriseProductMaterials\(tenantId, enterpriseProfile\)[\s\S]{0,500}inventory\.items/, '素材接口必须合并产品表素材与用户素材，而不是仅在前端伪造分类');
 
 console.log('material ownership frontend contracts passed');

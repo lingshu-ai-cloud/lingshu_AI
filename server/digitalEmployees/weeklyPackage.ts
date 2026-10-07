@@ -38,10 +38,11 @@ export function buildWeeklyOperatingContext(
       allocationBasis: allocation.basedOnCost ? 'estimated_cost' as const : 'content_load' as const,
     };
   });
-  const formats = [...new Set([
-    ...rows.flatMap(row => row.formats || []),
-    ...videos.map(video => video.route === 'clone' ? '爆款复刻短视频' : video.route === 'material' ? '素材加工短视频' : '产品短视频'),
-  ].filter(Boolean))];
+  // Smart Operations currently delivers video only. Matrix strategy formats
+  // may still contain legacy carousel/article labels, but those must not leak
+  // into the weekly output promise. Title, caption and tags are publication
+  // metadata attached to each video rather than independent content outputs.
+  const formats = [...new Set(videos.map(video => video.route === 'clone' ? '爆款复刻短视频' : video.route === 'material' ? '素材加工短视频' : '产品短视频'))];
   return {
     objective: goal.objective,
     metric: `${goal.metric}：${goal.baseline} → ${goal.target} ${goal.unit}`,

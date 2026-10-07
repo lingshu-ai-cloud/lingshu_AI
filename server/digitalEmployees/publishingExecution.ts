@@ -24,6 +24,7 @@ export interface PublishingApprovalItem {
   accountLabels: string[];
   title: string;
   description: string;
+  tags?: string[];
   videoPath: string;
   scheduledAt: string;
   sourceClaim: FrozenPublishSourceClaim;
@@ -244,18 +245,22 @@ export function buildPublishingApprovalPackage(input: {
     const spec = record(project.spec);
     if (!input.matrixPlan) {
       for (const videoPath of currentPublishableVideoPaths(spec)) {
+        const publication = record(record(spec.contentOrder).videoPlan && record(record(spec.contentOrder).videoPlan).publication);
         let sourceClaim: FrozenPublishSourceClaim;
         try { sourceClaim = dependencies.sourceClaim(input.tenantId, project, videoPath); }
         catch { continue; }
         for (const [platform, targets] of targetsByPlatform.entries()) items.push({
           sourceProjectId: project.id, platform, accountIds: targets.map(target => target.accountId), accountLabels: targets.map(target => target.accountLabel),
-          title: text(project.title) || `内容作品 ${project.id}`, description: text(spec.caption) || text(spec.script) || '', videoPath,
+          title: text(publication.title) || text(spec.publicationTitle) || text(project.title) || `内容作品 ${project.id}`,
+          description: text(publication.caption) || text(spec.caption) || text(spec.script) || '',
+          tags: Array.isArray(publication.tags) ? publication.tags.map(text).filter(Boolean).slice(0, 20) : [], videoPath,
           scheduledAt: nextDailySlot(items.length, now), sourceClaim,
         });
       }
       continue;
     }
     const videoPlan = record(record(spec.contentOrder).videoPlan);
+    const publication = record(videoPlan.publication);
     const binding = record(videoPlan.matrix);
     const matrixRows = input.matrixPlan?.filter(row => row.sourceProjectIds.includes(project.id) || row.accountId === binding.accountId);
     const boundIds = matrixRows ? new Set(matrixRows.map(row => row.accountId)) : videoPlan.matrix ? new Set(binding.accountId ? [text(binding.accountId)] : []) : null;
@@ -280,8 +285,9 @@ export function buildPublishingApprovalPackage(input: {
           items.push({
             sourceProjectId: project.id, platform,
             accountIds: group.map(target => target.accountId), accountLabels: group.map(target => target.accountLabel),
-            title: text(project.title) || `内容作品 ${project.id}`,
-            description: text(spec.caption) || text(spec.script) || '', videoPath,
+            title: text(publication.title) || text(spec.publicationTitle) || text(project.title) || `内容作品 ${project.id}`,
+            description: text(publication.caption) || text(spec.caption) || text(spec.script) || '',
+            tags: Array.isArray(publication.tags) ? publication.tags.map(text).filter(Boolean).slice(0, 20) : [], videoPath,
             scheduledAt: nextDailySlot(items.length, now), sourceClaim,
             ...(text(videoPlan.plannedPublishDate) ? { plannedPublishDate: text(videoPlan.plannedPublishDate) } : {}),
           });
@@ -399,7 +405,7 @@ export async function createPublishingCalendarEntries(input: {
     const tracked = await createTrackedPostDraft(input.tenantId, { contentId: item.sourceProjectId, platform: item.platform, title: item.title, enabled: true }, {
       published_at: item.scheduledAt,
       stats: {
-        status, description: item.description, videoPath: item.videoPath,
+        status, description: item.description, hashtags: item.tags || [], videoPath: item.videoPath,
         targetAccountIds: item.accountIds, targetAccountLabels: item.accountLabels,
         publishAttempts: 0, publishResults: {}, warnings: [], sourceProjectId: item.sourceProjectId,
         publishSourceClaim: item.sourceClaim,

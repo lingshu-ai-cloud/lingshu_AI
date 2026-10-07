@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { publishingTargetPlatforms } from './publishingTargets.js';
+import { localPublishingAccountMocksEnabled, publishingTargetPlatforms } from './publishingTargets.js';
 
 assert.deepEqual(
   publishingTargetPlatforms([
@@ -9,5 +9,8 @@ assert.deepEqual(
   ]),
   ['facebook', 'youtube'],
 );
+
+assert.equal(localPublishingAccountMocksEnabled({ LINGSHU_LOCAL_PREVIEW: '1' }), true, 'the supervised local preview must receive one usable account per platform');
+assert.equal(localPublishingAccountMocksEnabled({}), false, 'mock accounts must remain disabled outside local authority or the explicit preview supervisor');
 
 console.log('publishing target tests passed');

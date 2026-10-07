@@ -9,6 +9,14 @@ export interface VideoCreationPlan {
   evidenceRequirement?: string;
   directorStatus?: 'candidate' | 'script_draft' | 'script_approved' | 'in_production' | 'review' | 'approved' | 'blocked';
   estimatedCost?: number;
+  /** Frozen publication copy produced together with the video brief. */
+  publication?: {
+    title: string;
+    caption: string;
+    tags: string[];
+    status: 'planned' | 'generated' | 'confirmed';
+    generatedBy: 'business_agent' | 'content_agent';
+  };
   /** Auditable evidence used by the Business Agent when it proposed this slot. */
   planningEvidence?: {
     generatedFrom: 'matrix_benchmark_viral' | 'matrix_viral' | 'matrix_product';
@@ -17,15 +25,13 @@ export interface VideoCreationPlan {
     slot: number;
     referenceTitle: string;
     referenceViews: string;
+    referenceThumbnailUrl: string;
+    referenceSourceUrl: string;
     benchmarkAccount: string;
     matchScore: number;
     factors: string[];
   };
-  /**
-   * Persisted result of the paid pre-production step. The outline intentionally
-   * omits this object so a free weekly outline can never masquerade as an Agent
-   * analysis or a material check.
-   */
+  /** Persisted pre-production result reused across refreshes and production. */
   preproduction?: VideoPreproductionPreview;
   matrix?: { accountId: string; audience: string; objective: string; cta: string; accountRole?: SocialAccountRole; formats?: string[] };
   reviewRequirements?: Array<{ todoId: string; reference: string; scene: number; startsAt: number; endsAt: number; requirements: string; materials: string; acceptance: string }>;
@@ -137,6 +143,13 @@ export function normalizeVideoPlan(value: Partial<VideoCreationPlan>): VideoCrea
     evidenceRequirement: String(value.evidenceRequirement || '').trim().slice(0, 1000),
     directorStatus: ['candidate', 'script_draft', 'script_approved', 'in_production', 'review', 'approved', 'blocked'].includes(String(value.directorStatus)) ? value.directorStatus : 'candidate',
     estimatedCost: Math.max(0, Math.round((Number(value.estimatedCost) || 0) * 100) / 100),
+    ...(value.publication && typeof value.publication === 'object' ? { publication: {
+      title: String(value.publication.title || '').trim().slice(0, 300),
+      caption: String(value.publication.caption || '').trim().slice(0, 2_000),
+      tags: cleanList(value.publication.tags, 20, 80).map(item => item.replace(/^#+/, '')),
+      status: ['planned', 'generated', 'confirmed'].includes(String(value.publication.status)) ? value.publication.status : 'planned',
+      generatedBy: value.publication.generatedBy === 'content_agent' ? 'content_agent' as const : 'business_agent' as const,
+    } } : {}),
     ...(value.planningEvidence && typeof value.planningEvidence === 'object' ? { planningEvidence: {
       generatedFrom: ['matrix_benchmark_viral', 'matrix_viral', 'matrix_product'].includes(String(value.planningEvidence.generatedFrom))
         ? value.planningEvidence.generatedFrom
@@ -146,6 +159,8 @@ export function normalizeVideoPlan(value: Partial<VideoCreationPlan>): VideoCrea
       slot: Math.max(1, Math.min(30, Math.floor(Number(value.planningEvidence.slot) || 1))),
       referenceTitle: String(value.planningEvidence.referenceTitle || '').trim().slice(0, 500),
       referenceViews: String(value.planningEvidence.referenceViews || '').trim().slice(0, 80),
+      referenceThumbnailUrl: cleanPreviewUrl(value.planningEvidence.referenceThumbnailUrl),
+      referenceSourceUrl: cleanPreviewUrl(value.planningEvidence.referenceSourceUrl),
       benchmarkAccount: String(value.planningEvidence.benchmarkAccount || '').trim().slice(0, 300),
       matchScore: Math.max(0, Math.min(100, Math.round(Number(value.planningEvidence.matchScore) || 0))),
       factors: Array.isArray(value.planningEvidence.factors)

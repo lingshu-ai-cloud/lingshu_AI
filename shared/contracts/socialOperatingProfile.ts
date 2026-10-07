@@ -136,9 +136,11 @@ export const SOCIAL_DISCOVERY_BASELINE = [
 
 export function socialDiscoveryMixIssues(mix: ReadonlyArray<{ mode: string; percent: number }>): string[] {
   const issues: string[] = [];
+  const percentages = mix.map(item => Number(item.percent));
   if (new Set(mix.map(item => item.mode)).size !== mix.length) issues.push('发现模式不可重复');
-  if (mix.some(item => !Number.isFinite(item.percent) || item.percent < 0 || item.percent > 100)) issues.push('发现模式比例须为 0–100');
-  if (mix.reduce((sum, item) => sum + item.percent, 0) !== 100) issues.push('发现模式比例合计须为 100');
+  if (percentages.some(percent => !Number.isFinite(percent) || percent < 0 || percent > 100)) issues.push('发现模式比例须为 0–100');
+  const total = percentages.reduce((sum, percent) => sum + (Number.isFinite(percent) ? percent : 0), 0);
+  if (Math.abs(total - 100) > 0.01) issues.push(`发现模式比例合计须为 100（当前 ${Number(total.toFixed(2))}）`);
   return issues;
 }
 
