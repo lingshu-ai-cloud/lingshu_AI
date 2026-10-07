@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Gif } from '@remotion/gif';
 import { Img, interpolate, staticFile, useCurrentFrame, useVideoConfig } from 'remotion';
 import cropData from './asset-crops.json';
+import playbackData from './asset-playback.json';
 
 export type SemanticAssetKind = 'key_fact' | 'reveal' | 'warning' | 'urgency' | 'cta';
 export type MotionRole = 'surround' | 'point_to' | 'adjacent' | 'caption_companion' | 'corner_badge';
@@ -79,6 +80,8 @@ const FILES: Record<SemanticAssetKind, { file: string; animated: boolean }> = {
 };
 type Crop = { x: number; y: number; width: number; height: number };
 const CROPS = cropData.assets as Record<string, Crop>;
+type Playback = { frameCount: number; frameDelayMs: number; effectiveStartFrame: number; effectiveEndFrame: number; holdFrame: number; holdAsset: string; durationMs: number; alphaCoverage: number[] };
+const PLAYBACK = playbackData.assets as Record<string, Playback>;
 
 const SvgFallback: React.FC<{ kind: SemanticAssetKind; progress: number }> = ({ kind, progress }) => {
   const frame = useCurrentFrame();
@@ -97,19 +100,27 @@ const SvgFallback: React.FC<{ kind: SemanticAssetKind; progress: number }> = ({ 
  * deliberately mounted only after an asset load error. @remotion/gif selects
  * the image from the current video frame, so rendering does not depend on the
  * browser's wall clock. */
-export const SemanticAsset: React.FC<{ kind: SemanticAssetKind; role: MotionRole; progress: number; text?: string; direction?: string }> = ({ kind, role, progress, text = '', direction = 'right' }) => {
+export const SemanticAsset: React.FC<{ kind: SemanticAssetKind; progress: number; role: MotionRole; text?: string; direction?: string; eventDurationFrames: number }> = ({ kind, role, progress, eventDurationFrames, text = '', direction = 'right' }) => {
   const [failed, setFailed] = useState(false);
+  const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
   if (role !== 'surround') return <RoleGraphic role={role} progress={progress} text={text} direction={direction} />;
   const asset = FILES[kind];
   if (failed) return <SvgFallback kind={kind} progress={progress} />;
   const crop = CROPS[asset.file] || { x: 0, y: 0, width: 1, height: 1 };
+  const playback = PLAYBACK[asset.file];
+  const playbackRate = Math.max(1, (playback?.durationMs || 1000) / Math.max(1, eventDurationFrames / fps * 1000 * .72));
+  const effectiveStartOffset = Math.round((playback?.effectiveStartFrame || 0) * (playback?.frameDelayMs || 0) / 1000 * fps / playbackRate);
+  const playFrames = Math.max(1, Math.ceil((playback?.durationMs || 1000) / 1000 * fps / playbackRate));
   const style: React.CSSProperties = {
     position: 'absolute', left: `${-crop.x / crop.width * 100}%`, top: `${-crop.y / crop.height * 100}%`,
     width: `${100 / crop.width}%`, height: `${100 / crop.height}%`, objectFit: 'fill', opacity: progress,
   };
   return <div style={{ position: 'absolute', inset: 0, overflow: 'hidden' }}>
-    {asset.animated
-      ? <Gif src={staticFile(asset.file)} fit="fill" loopBehavior="loop" style={style} onError={() => setFailed(true)} />
-      : <Img src={staticFile(asset.file)} style={style} onError={() => setFailed(true)} />}
+    {asset.animated && frame < playFrames
+      ? <Gif src={staticFile(asset.file)} fit="fill" loopBehavior="pause-after-finish"
+        from={-effectiveStartOffset} playbackRate={playbackRate}
+        style={style} onError={() => setFailed(true)} />
+      : <Img src={staticFile(asset.animated ? playback.holdAsset : asset.file)} style={style} onError={() => setFailed(true)} />}
   </div>;
 };

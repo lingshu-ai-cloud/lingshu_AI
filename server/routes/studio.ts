@@ -30,6 +30,9 @@ import { buildMaterialScriptAnalysis, type MaterialScriptAnalysis } from '../../
 import { normalizeVideoLanguage, VIDEO_LANGUAGES } from '../../shared/contracts/videoLanguages.js';
 import { normalizeEffectPlan, type EffectPlanV1 } from '../../shared/contracts/effectPlan.js';
 import { buildStudioEmphasisPlan, type StudioEmphasisPlan, type StudioEmphasisPlanInput } from '../lib/studioEmphasisManifest.js';
+import { runStudioEmphasisPrepass } from '../lib/studioEmphasisPrepass.js';
+import type { StudioEmphasisPreanalysis } from '../lib/studioEmphasisAlignment.js';
+import { eligibleStudioEmphasisSource } from '../lib/studioRenderEmphasisPrepass.js';
 import { inspectRenderedVisuals } from '../lib/renderVisualQuality.js';
 import { dashscopeCredentialConfigured, inspectGeneratedVoice, type VoiceQualityReport } from '../lib/voiceQuality.js';
 import { downloadHeygenSubtitles, heygenConfigured, heygenRequest, listHeygenAvatars, submitHeygenVideo, downloadHeygenOutput } from '../integrations/heygen.js';
@@ -5223,7 +5226,7 @@ function absoluteAssetUrl(base: string, value?: string | null): string | null {
   return `${base}${raw.startsWith('/') ? raw : `/${raw}`}`;
 }
 
-function buildManifest(jobId: string, spec: RenderSpec, base: string): RenderManifest {
+function buildManifest(jobId: string, spec: RenderSpec, base: string, emphasisPreanalysis?: StudioEmphasisPreanalysis): RenderManifest {
   // 选中素材按名称映射到素材库的真实 URL（已上传的给绝对地址，ffmpeg 可直接拉取）
   const tenantId = studioTenantContext.getStore();
   const urlByName = new Map(loadMaterials()
@@ -5243,6 +5246,7 @@ function buildManifest(jobId: string, spec: RenderSpec, base: string): RenderMan
     subtitles: spec.subtitles,
     timeline: rawTimeline,
     emphasisPlan: spec.emphasisPlan,
+    emphasisPreanalysis,
   });
   return {
     jobId,
@@ -5283,7 +5287,7 @@ studioRouter.post('/render', async (req, res) => {
   const spec = (req.body ?? {}) as RenderSpec;
   const jobId = randomUUID();
   const base = `${req.protocol}://${req.get('host')}`;
-  const manifest = buildManifest(jobId, spec, base);
+  let manifest = buildManifest(jobId, spec, base);
   const { tenantId } = res.locals as AuthLocals;
   if (spec.bgm && !manifest.bgm.url) {
     res.status(400).json({ ok: false, error: '所选配乐已不可用，请重新选择' }); return;
@@ -5295,6 +5299,25 @@ studioRouter.post('/render', async (req, res) => {
     return;
   }
   if (!await consumeDemoQuota(req, res, 'render')) return;
+  if (process.env.LINGSHU_EMPHASIS_PREPASS !== 'off' && manifest.emphasisPlan.events.length) {
+    const sourcePath = eligibleStudioEmphasisSource({
+      timeline: manifest.timeline,
+      durationSeconds: manifest.spec.duration,
+      mediaRoot: MEDIA_DIR,
+    });
+    if (sourcePath) {
+      try {
+        const emphasisPreanalysis = await runStudioEmphasisPrepass({
+          sourcePath,
+          durationMs: Math.round(manifest.spec.duration * 1000),
+          storyboard: spec.timeline,
+          candidateEvents: manifest.emphasisPlan.events,
+        });
+        manifest = buildManifest(jobId, spec, base, emphasisPreanalysis);
+        secureStudioRenderManifest(manifest, tenantId, base, 'http://127.0.0.1');
+      } catch { /* Visual preanalysis is best effort and must not block export. */ }
+    }
+  }
   const { token, payload } = signRenderToken({ jti: jobId, tenantId, origin: base, manifestSha256: studioRenderManifestHash(manifest) });
 
   res.status(201).json({

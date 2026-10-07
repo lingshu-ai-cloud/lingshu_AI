@@ -13,6 +13,10 @@ export const EMPHASIS_ASSET_INTENTS = ['product_marker', 'attention_marker', 'ur
 export const VISUAL_ROLES = ['surround', 'point_to', 'adjacent', 'caption_companion', 'corner_badge'] as const;
 export const VISUAL_TARGET_KINDS = ['person', 'product', 'machine', 'action', 'caption', 'frame'] as const;
 export const SEMANTIC_ANCHOR_BOUNDARIES = ['start', 'center', 'end'] as const;
+export const EMPHASIS_PRESENTATION_MODES = ['caption_emphasis', 'graphic_only', 'label', 'none'] as const;
+export const EMPHASIS_TARGET_RELATIONS = ['surround', 'point_to', 'adjacent', 'none'] as const;
+export const EMPHASIS_PREFERRED_SIDES = ['left', 'right', 'top', 'bottom', 'auto'] as const;
+export const EMPHASIS_ASSET_FAMILIES = ['rays', 'corner_marker'] as const;
 export const EMPHASIS_TIMELINE_SCHEMA_VERSION = 1 as const;
 
 export type EmphasisEventType = typeof EMPHASIS_EVENT_TYPES[number];
@@ -24,21 +28,33 @@ export type EmphasisAssetIntent = typeof EMPHASIS_ASSET_INTENTS[number];
 export type VisualRole = typeof VISUAL_ROLES[number];
 export type VisualTargetKind = typeof VISUAL_TARGET_KINDS[number];
 export type SemanticAnchorBoundary = typeof SEMANTIC_ANCHOR_BOUNDARIES[number];
+export type EmphasisPresentationMode = typeof EMPHASIS_PRESENTATION_MODES[number];
+export type EmphasisTargetRelation = typeof EMPHASIS_TARGET_RELATIONS[number];
+export type EmphasisPreferredSide = typeof EMPHASIS_PREFERRED_SIDES[number];
+export type EmphasisAssetFamily = typeof EMPHASIS_ASSET_FAMILIES[number];
 export type NormalizedPoint = { x: number; y: number };
 export type NormalizedBox = { x: number; y: number; width: number; height: number };
 
 export interface CaptionWord {
-  id: string;
+  id?: string;
   startMs: number;
   endMs: number;
   text: string;
+  /** ASR/forced-alignment token IDs retained when display tokens are merged. */
+  alignmentTokenIds?: string[];
+  /** Exact text inserted before this word. Usually ` ` or an empty string. */
+  separatorBefore?: string;
+  confidence?: number;
 }
 
-export interface CaptionSegment {
+export interface CaptionCue {
   id: string;
   startMs: number;
   endMs: number;
   text: string;
+  /** Canonical BCP 47 language tag when supplied by transcription. */
+  language?: string;
+  /** Optional word alignment. Legacy cues remain valid without this field. */
   words?: CaptionWord[];
   speakerId?: string;
   /** Inline emphasis only. Keywords do not create EmphasisEvents. */
@@ -76,6 +92,45 @@ export interface MotionEvent {
   soundCueId?: string;
 }
 
+/** Historical name retained for renderer and manifest compatibility. */
+export interface CaptionSegment extends CaptionCue {}
+
+export interface ShotWindow {
+  id: string;
+  startMs: number;
+  endMs: number;
+  confidence: number;
+  source: 'ffmpeg_scene' | 'storyboard' | 'fallback';
+}
+
+export interface CaptionOccupancy {
+  id: string;
+  startMs: number;
+  endMs: number;
+  text?: string;
+  boxes: NormalizedBox[];
+  confidence: number;
+  source: 'subtitle' | 'ocr';
+  /** Project subtitles can be emphasized in place; OCR text is immutable. */
+  editable: boolean;
+}
+
+export interface VisualEvidence {
+  shotId: string;
+  /** Optional scope for a local subject inside a wider shot. */
+  eventId?: string;
+  targetId?: string;
+  subjectType: 'person' | 'product' | 'machine' | 'process' | 'unknown';
+  subjectBox?: NormalizedBox;
+  subjectAnchor?: NormalizedPoint;
+  safeZones: Array<NormalizedBox & { clarity: number }>;
+  captionBoxes: NormalizedBox[];
+  captionText?: string;
+  confidence: number;
+  preferredSide?: EmphasisPreferredSide;
+  targetRelation?: EmphasisTargetRelation;
+}
+
 export interface EmphasisEvent {
   id: string;
   type: EmphasisEventType;
@@ -85,12 +140,23 @@ export interface EmphasisEvent {
   importance: EmphasisImportance;
   confidence: number;
   source: EmphasisEventSource;
+  shotId?: string;
+  evidenceStartMs?: number;
+  evidenceEndMs?: number;
+  presentationMode?: EmphasisPresentationMode;
+  targetRelation?: EmphasisTargetRelation;
+  /** Preferred side for label/asset placement; renderer still applies collision checks. */
+  preferredSide?: EmphasisPreferredSide;
+  /** Subtitle/OCR rectangles the renderer must treat as occupied. */
+  occupiedBoxes?: NormalizedBox[];
   /** Semantic/visual subject used to find the best placement window. */
   targetId?: string;
   /** Semantic goal used to choose a suitable asset family; never a filename. */
   visualIntent?: EmphasisVisualIntent;
   /** Abstract asset category. Rendering resolves the concrete approved asset. */
   assetIntent?: EmphasisAssetIntent;
+  /** Relationship-safe asset family. `rays` is signed only by shot alignment. */
+  assetFamily?: EmphasisAssetFamily;
   /** Subject geometry copied only from a trusted matching visual window. */
   subjectAnchor?: NormalizedPoint;
   subjectBox?: NormalizedBox;
@@ -268,6 +334,86 @@ export function emphasisBudgetForDuration(durationMs: number): EmphasisBudget {
   return { min: Math.ceil(seconds / 30) * 2, max: Math.ceil(seconds / 20) * 4 };
 }
 
+export function normalizeCaptionLanguage(value: unknown): string | undefined {
+  const candidate = String(value || '').trim().replace(/_/g, '-');
+  if (!candidate || candidate.length > 64) return undefined;
+  try { return Intl.getCanonicalLocales(candidate)[0]; } catch { return undefined; }
+}
+
+const NO_SPACE_BEFORE = /^[\p{P}\p{S}]+$/u;
+const OPENING_PUNCTUATION = /[([{«“‘‹]$/u;
+const JOINER_ONLY = /^(?:['’ʼ\-‐‑‒–—]+)$/u;
+const CJK_LANGUAGE = /^(?:zh|ja|ko)(?:-|$)/i;
+
+function inferredCaptionSeparator(previous: string, current: string, language?: string): string {
+  if (!previous) return '';
+  if (CJK_LANGUAGE.test(language || '')) return '';
+  if (JOINER_ONLY.test(current) || JOINER_ONLY.test(previous)
+    || /['’ʼ\-‐‑‒–—]$/u.test(previous) || /^['’ʼ\-‐‑‒–—]/u.test(current)) return '';
+  if (NO_SPACE_BEFORE.test(current) || OPENING_PUNCTUATION.test(previous)) return '';
+  return ' ';
+}
+
+export function normalizeCaptionWords(
+  input: unknown,
+  cueStartMs: number,
+  cueEndMs: number,
+  language?: string,
+): CaptionWord[] {
+  if (!Array.isArray(input) || cueEndMs <= cueStartMs) return [];
+  let previousText = '';
+  return input.slice(0, 2_000).flatMap((value): CaptionWord[] => {
+    const raw = asRecord(value);
+    const text = cleanText(raw.text, 120);
+    const startMs = Math.round(clamp(raw.startMs, cueStartMs, cueEndMs, cueStartMs));
+    const endMs = Math.round(clamp(raw.endMs, startMs, cueEndMs, startMs));
+    if (!text || endMs <= startMs) return [];
+    const explicitSeparator = typeof raw.separatorBefore === 'string'
+      ? String(raw.separatorBefore).replace(/[^\s'’ʼ\-‐‑‒–—]/gu, '').slice(0, 4)
+      : raw.separatorBefore === false ? '' : raw.separatorBefore === true ? ' ' : undefined;
+    const separatorBefore = explicitSeparator ?? inferredCaptionSeparator(previousText, text, language);
+    const alignmentTokenIds = [...new Set((Array.isArray(raw.alignmentTokenIds) ? raw.alignmentTokenIds : [])
+      .map(item => cleanId(item, '')).filter(Boolean))].slice(0, 64);
+    const id = cleanId(raw.id, '');
+    const confidence = Number.isFinite(Number(raw.confidence))
+      ? Number(clamp(raw.confidence, 0, 1, 0).toFixed(4)) : undefined;
+    previousText = text;
+    return [{ ...(id ? { id } : {}), startMs, endMs, text, separatorBefore,
+      ...(alignmentTokenIds.length ? { alignmentTokenIds } : {}),
+      ...(confidence !== undefined ? { confidence } : {}) }];
+  });
+}
+
+function mergeWordPair(left: CaptionWord, right: CaptionWord): CaptionWord {
+  const ids = [...new Set([...(left.alignmentTokenIds || []), ...(right.alignmentTokenIds || [])])];
+  const confidences = [left.confidence, right.confidence].filter((value): value is number => value !== undefined);
+  return {
+    startMs: Math.min(left.startMs, right.startMs), endMs: Math.max(left.endMs, right.endMs),
+    text: `${left.text}${right.separatorBefore ?? ' '}${right.text}`, separatorBefore: left.separatorBefore,
+    ...(ids.length ? { alignmentTokenIds: ids } : {}),
+    ...(confidences.length ? { confidence: Number((confidences.reduce((sum, value) => sum + value, 0) / confidences.length).toFixed(4)) } : {}),
+  };
+}
+
+/** Groups display tokens without assuming that every language separates words with spaces. */
+export function mergeCaptionWordsForDisplay(words: CaptionWord[], language?: string): CaptionWord[] {
+  const merged: CaptionWord[] = [];
+  for (const word of words) {
+    const previous = merged.at(-1);
+    const attaches = Boolean(previous) && (word.separatorBefore === '' && (
+      NO_SPACE_BEFORE.test(word.text) || JOINER_ONLY.test(word.text) || JOINER_ONLY.test(previous!.text)
+      || /['’ʼ\-‐‑‒–—]$/u.test(previous!.text) || /^['’ʼ\-‐‑‒–—]/u.test(word.text)
+    ));
+    if (attaches) merged[merged.length - 1] = mergeWordPair(previous!, word);
+    else merged.push({ ...word, separatorBefore: merged.length ? word.separatorBefore : '' });
+  }
+  return merged;
+}
+
+export function captionWordsToText(words: CaptionWord[], language?: string): string {
+  return mergeCaptionWordsForDisplay(words, language).map(word => `${word.separatorBefore ?? ' '}${word.text}`).join('');
+}
+
 export function normalizeCaptionSegments(input: unknown, durationMs: number): CaptionSegment[] {
   const duration = Math.max(0, finite(durationMs, 0));
   return (Array.isArray(input) ? input : []).slice(0, 2_000).map((value, index) => {
@@ -279,21 +425,96 @@ export function normalizeCaptionSegments(input: unknown, durationMs: number): Ca
     const keywords = [...new Set((Array.isArray(raw.keywords) ? raw.keywords : [])
       .map(item => cleanText(item, 40)).filter(Boolean))].filter(item => text.includes(item)).slice(0, 12);
     const speakerId = cleanId(raw.speakerId, '');
-    const words = (Array.isArray(raw.words) ? raw.words : []).slice(0, 500).flatMap((item, wordIndex): CaptionWord[] => {
-      const word = asRecord(item);
-      const wordText = cleanText(word.text, 80);
-      const wordStartMs = Math.round(clamp(word.startMs, startMs, endMs, startMs));
-      const wordEndMs = Math.round(clamp(word.endMs, wordStartMs, endMs, wordStartMs));
-      if (!wordText || wordEndMs <= wordStartMs) return [];
-      return [{ id: cleanId(word.id, `word-${index + 1}-${wordIndex + 1}`), startMs: wordStartMs, endMs: wordEndMs, text: wordText }];
-    });
+    const language = normalizeCaptionLanguage(raw.language);
+    const words = normalizeCaptionWords(raw.words, startMs, endMs, language);
     return {
       id: cleanId(raw.id, `caption-${index + 1}`),
       startMs: Math.round(startMs), endMs: Math.round(endMs), text,
-      ...(words.length ? { words } : {}), ...(speakerId ? { speakerId } : {}), ...(keywords.length ? { keywords } : {}),
+      ...(language ? { language } : {}), ...(words.length ? { words } : {}),
+      ...(speakerId ? { speakerId } : {}), ...(keywords.length ? { keywords } : {}),
     } satisfies CaptionSegment;
   }).filter((item): item is CaptionSegment => Boolean(item))
     .sort((left, right) => left.startMs - right.startMs || left.endMs - right.endMs);
+}
+
+export const normalizeCaptionCues = normalizeCaptionSegments;
+
+const normalizedBox = (value: unknown): NormalizedBox | undefined => {
+  const raw = asRecord(value);
+  if (![raw.x, raw.y, raw.width, raw.height].every(item => Number.isFinite(Number(item)))) return undefined;
+  const box = { x: Number(raw.x), y: Number(raw.y), width: Number(raw.width), height: Number(raw.height) };
+  if (box.x < 0 || box.y < 0 || box.width <= 0 || box.height <= 0 || box.x + box.width > 1 || box.y + box.height > 1) return undefined;
+  return Object.fromEntries(Object.entries(box).map(([key, item]) => [key, Number(item.toFixed(4))])) as NormalizedBox;
+};
+
+export function normalizeShotWindows(input: unknown, durationMs: number): ShotWindow[] {
+  const duration = Math.max(0, finite(durationMs, 0));
+  return (Array.isArray(input) ? input : []).slice(0, 500).map((value, index): ShotWindow | null => {
+    const raw = asRecord(value);
+    const startMs = Math.round(clamp(raw.startMs, 0, duration, 0));
+    const endMs = Math.round(clamp(raw.endMs, startMs, duration, startMs));
+    const source = ['ffmpeg_scene', 'storyboard', 'fallback'].includes(String(raw.source))
+      ? raw.source as ShotWindow['source'] : null;
+    if (!source || endMs <= startMs) return null;
+    return { id: cleanId(raw.id, `shot-${index + 1}`), startMs, endMs,
+      confidence: Number(clamp(raw.confidence, 0, 1, source === 'fallback' ? .5 : 0).toFixed(4)), source };
+  }).filter((item): item is ShotWindow => Boolean(item))
+    .sort((left, right) => left.startMs - right.startMs || left.endMs - right.endMs);
+}
+
+export function normalizeCaptionOccupancy(input: unknown, durationMs: number): CaptionOccupancy[] {
+  const duration = Math.max(0, finite(durationMs, 0));
+  return (Array.isArray(input) ? input : []).slice(0, 2_000).map((value, index): CaptionOccupancy | null => {
+    const raw = asRecord(value);
+    const source = raw.source === 'subtitle' || raw.source === 'ocr' ? raw.source : null;
+    const startMs = Math.round(clamp(raw.startMs, 0, duration, 0));
+    const endMs = Math.round(clamp(raw.endMs, startMs, duration, startMs));
+    if (!source || endMs <= startMs) return null;
+    const boxes = (Array.isArray(raw.boxes) ? raw.boxes : []).map(normalizedBox).filter((box): box is NormalizedBox => Boolean(box));
+    const occupancyText = cleanText(raw.text, 500);
+    return { id: cleanId(raw.id, `occupancy-${index + 1}`), startMs, endMs,
+      ...(occupancyText ? { text: occupancyText } : {}), boxes,
+      confidence: Number(clamp(raw.confidence, 0, 1, source === 'subtitle' ? 1 : 0).toFixed(4)),
+      source, editable: source === 'subtitle' && raw.editable !== false };
+  }).filter((item): item is CaptionOccupancy => Boolean(item));
+}
+
+export function normalizeVisualEvidence(input: unknown): VisualEvidence[] {
+  return (Array.isArray(input) ? input : []).slice(0, 500).map((value): VisualEvidence | null => {
+    const raw = asRecord(value);
+    const shotId = cleanId(raw.shotId, '');
+    const eventId = cleanId(raw.eventId, '');
+    const targetId = cleanId(raw.targetId, '');
+    const subjectType = ['person', 'product', 'machine', 'process', 'unknown'].includes(String(raw.subjectType))
+      ? raw.subjectType as VisualEvidence['subjectType'] : 'unknown';
+    const confidence = clamp(raw.confidence, 0, 1, 0);
+    if (!shotId || confidence < .68) return null;
+    const normalizedSubjectBox = normalizedBox(raw.subjectBox);
+    // A nearly full-frame box describes the scene instead of a bindable
+    // subject. Preserve the anchor so layout can derive a local proxy.
+    const subjectBox = normalizedSubjectBox && normalizedSubjectBox.width * normalizedSubjectBox.height <= .72
+      ? normalizedSubjectBox : undefined;
+    const point = asRecord(raw.subjectAnchor);
+    const subjectAnchor = Number.isFinite(Number(point.x)) && Number.isFinite(Number(point.y))
+      && Number(point.x) >= 0 && Number(point.x) <= 1 && Number(point.y) >= 0 && Number(point.y) <= 1
+      ? { x: Number(Number(point.x).toFixed(4)), y: Number(Number(point.y).toFixed(4)) } : undefined;
+    const safeZones = (Array.isArray(raw.safeZones) ? raw.safeZones : []).flatMap(value => {
+      const box = normalizedBox(value);
+      if (!box) return [];
+      return [{ ...box, clarity: Number(clamp(asRecord(value).clarity, 0, 1, 0).toFixed(4)) }];
+    });
+    const captionBoxes = (Array.isArray(raw.captionBoxes) ? raw.captionBoxes : []).map(normalizedBox).filter((box): box is NormalizedBox => Boolean(box));
+    const captionText = String(raw.captionText || '').trim().slice(0, 500);
+    const preferredSide = EMPHASIS_PREFERRED_SIDES.includes(String(raw.preferredSide) as EmphasisPreferredSide)
+      ? raw.preferredSide as EmphasisPreferredSide : undefined;
+    const targetRelation = EMPHASIS_TARGET_RELATIONS.includes(String(raw.targetRelation) as EmphasisTargetRelation)
+      ? raw.targetRelation as EmphasisTargetRelation : undefined;
+    return { shotId, ...(eventId ? { eventId } : {}), ...(targetId ? { targetId } : {}), subjectType,
+      ...(subjectBox ? { subjectBox } : {}), ...(subjectAnchor ? { subjectAnchor } : {}),
+      safeZones, captionBoxes, confidence: Number(confidence.toFixed(4)),
+      ...(captionText ? { captionText } : {}),
+      ...(preferredSide ? { preferredSide } : {}), ...(targetRelation ? { targetRelation } : {}) };
+  }).filter((item): item is VisualEvidence => Boolean(item));
 }
 
 export function normalizeEmphasisCandidates(input: unknown, durationMs: number): EmphasisEvent[] {
@@ -310,6 +531,22 @@ export function normalizeEmphasisCandidates(input: unknown, durationMs: number):
     if (endMs <= startMs) return null;
     const text = cleanText(raw.text);
     const targetId = cleanId(raw.targetId, '');
+    const shotId = cleanId(raw.shotId, '');
+    const evidenceStartMs = Math.round(clamp(raw.evidenceStartMs, 0, duration, startMs));
+    const evidenceEndMs = Math.round(clamp(raw.evidenceEndMs, evidenceStartMs, duration, endMs));
+    const presentationMode = EMPHASIS_PRESENTATION_MODES.includes(String(raw.presentationMode) as EmphasisPresentationMode)
+      ? raw.presentationMode as EmphasisPresentationMode : undefined;
+    const targetRelation = EMPHASIS_TARGET_RELATIONS.includes(String(raw.targetRelation) as EmphasisTargetRelation)
+      ? raw.targetRelation as EmphasisTargetRelation : undefined;
+    const preferredSide = EMPHASIS_PREFERRED_SIDES.includes(String(raw.preferredSide) as EmphasisPreferredSide)
+      ? raw.preferredSide as EmphasisPreferredSide : undefined;
+    const requestedAssetFamily = EMPHASIS_ASSET_FAMILIES.includes(String(raw.assetFamily) as EmphasisAssetFamily)
+      ? raw.assetFamily as EmphasisAssetFamily : undefined;
+    // Persisted or authored input cannot self-authorize a surround-only asset.
+    // Alignment may upgrade this to rays after validating local visual evidence.
+    const assetFamily = requestedAssetFamily === 'rays' ? 'corner_marker' : requestedAssetFamily;
+    const occupiedBoxes = (Array.isArray(raw.occupiedBoxes) ? raw.occupiedBoxes : [])
+      .map(normalizedBox).filter((box): box is NormalizedBox => Boolean(box)).slice(0, 24);
     const strength = raw.strength === 'weak' || raw.strength === 'strong' ? raw.strength : undefined;
     const anchor = asRecord(raw.anchor);
     const hasAnchor = Number.isFinite(Number(anchor.x)) && Number.isFinite(Number(anchor.y));
@@ -331,6 +568,14 @@ export function normalizeEmphasisCandidates(input: unknown, durationMs: number):
       importance: Math.round(clamp(raw.importance, 1, 3, 1)) as EmphasisImportance,
       confidence: Number(confidence.toFixed(4)), source,
       ...(targetId ? { targetId } : {}),
+      ...(shotId ? { shotId } : {}),
+      ...(Number.isFinite(Number(raw.evidenceStartMs)) ? { evidenceStartMs } : {}),
+      ...(Number.isFinite(Number(raw.evidenceEndMs)) ? { evidenceEndMs } : {}),
+      ...(presentationMode ? { presentationMode } : {}),
+      ...(targetRelation ? { targetRelation } : {}),
+      ...(preferredSide ? { preferredSide } : {}),
+      ...(assetFamily ? { assetFamily } : {}),
+      ...(occupiedBoxes.length ? { occupiedBoxes } : {}),
       visualIntent,
       assetIntent,
       ...(strength ? { strength } : {}),
