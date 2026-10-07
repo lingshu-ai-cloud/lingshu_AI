@@ -48,6 +48,14 @@ const currentPlanSource = pageSource.slice(
   pageSource.indexOf('<div aria-label="当前周计划"'),
   pageSource.indexOf('<nav aria-label="智能经营视图"'),
 );
+const weeklyCommandCenterSource = smartBusinessSource.slice(
+  smartBusinessSource.indexOf('export function WeeklyCommandCenter'),
+  smartBusinessSource.indexOf('function HomeView'),
+);
+const weeklyPlanControlsSource = pageSource.slice(
+  pageSource.indexOf('const weeklyPlanControls'),
+  pageSource.indexOf('return (', pageSource.indexOf('const weeklyPlanControls')),
+);
 
 for (const label of ['智能经营', '制定本周目标', '爆款视频裂变计划', '确认周计划并开始工作', '数字员工工作排期']) {
   assert.match(pageSource, new RegExp(label), `Smart Operations must expose the confirmed weekly workflow: ${label}`);
@@ -70,7 +78,7 @@ assert.doesNotMatch(matrixScheduleSource, /账号与内容任务|gridTemplateCol
 assert.match(matrixScheduleSource, /group-hover:max-h-64/, 'calendar preview cards must reveal details on hover');
 assert.match(smartBusinessSource, /当前节点[\s\S]{0,1000}来源[\s\S]{0,1000}结果[\s\S]{0,1000}下一步/, 'the existing four-Agent section must expose node, source, result, and next step');
 assert.doesNotMatch(smartBusinessSource, /数字员工协作状态|四位数字员工协作状态/, 'the dashboard must not create a separate Digital Employee section');
-assert.match(pageSource, /role="switch"[\s\S]{0,300}aria-checked=\{smartOperationsEnabled\}/, 'Smart Operations must have an explicit global switch');
+assert.doesNotMatch(pageSource, /aria-label="开启或关闭智能经营"|智能经营已开启|已停止新计划/, 'the redundant Smart Operations switch must not remain beside the weekly task control');
 
 const assistantOrbitSource = assistantSource.slice(
   assistantSource.indexOf('const SKILL_AGENTS'),
@@ -132,9 +140,14 @@ assert.match(layoutSource, /\{accountMenuOpen && \([\s\S]{0,1800}新手引导/, 
 assert.doesNotMatch(layoutSource, /aria-label="主导航"[\s\S]{0,900}新手引导/, 'the beginner guide must not remain in the primary navigation');
 assert.match(layoutSource, /lingshu:open-digital-employee-guide/, 'the user-menu guide entry must open the Digital Employee guide');
 assert.match(pageSource, /addEventListener\('lingshu:open-digital-employee-guide'/, 'Smart Business must respond to the sidebar guide entry');
-assert.match(currentPlanSource, /查看本周计划[\s\S]{0,500}Agent 设置[\s\S]{0,500}历史计划/, 'the current-plan card must keep history as the rightmost management action');
+assert.doesNotMatch(pageSource, /SMART OPERATIONS/, 'the redundant Smart Operations masthead must be removed');
+assert.match(weeklyPlanControlsSource, /查看本周计划[\s\S]{0,900}Agent 设置[\s\S]{0,900}历史计划/, 'the current-plan controls must retain all weekly-plan management actions');
+assert.match(currentPlanSource, /actions=\{weeklyPlanControls\}/, 'the current-plan header must receive the weekly-plan controls');
+assert.match(weeklyCommandCenterSource, /周经营计划[\s\S]{0,500}aria-label="智能经营控制"/, 'the weekly-plan title must own the management controls on its right');
 assert.match(currentPlanSource, /WeeklyCommandCenter/, 'the full weekly command center must replace the simplified current-plan summary');
-assert.match(currentPlanSource, /开始周任务工作/, 'the current weekly plan must expose one prominent start-work action');
+for (const label of ['开始周任务', '暂停周任务', '继续周任务']) assert.match(pageSource, new RegExp(label), `the merged weekly control must support ${label}`);
+assert.match(pageSource, /controlWeeklyWork[\s\S]{0,900}pauseRun[\s\S]{0,400}resumeRun|controlWeeklyWork[\s\S]{0,900}resumeRun[\s\S]{0,400}pauseRun/, 'the merged weekly control must pause and resume the persisted run');
+assert.match(weeklyPlanControlsSource, /controlWeeklyWork[\s\S]{0,900}weeklyControlLabel/, 'the weekly-plan header must own the merged start and pause control');
 assert.match(pageSource, /const startWeeklyWork[\s\S]{0,900}setWeeklyPlanOpen\(true\)/, 'the prominent start-work action must open the persisted plan confirmation workflow');
 assert.doesNotMatch(currentPlanSource, /查看内容队列|查看完整周计划|新手引导/, 'the current-plan card must not keep duplicate queue, full-plan, or guide buttons');
 assert.match(pageSource, /aria-label=\{goal && !newGoal \? "本周计划详情" : "周计划生成"\}/, 'the weekly-plan dialog must distinguish inspecting the current plan from generating a new one');
@@ -155,7 +168,8 @@ assert.match(pageSource, /账号视频产量分配[\s\S]{0,1500}weeklyCount/, 't
 assert.match(pageSource, /视频 \+ 发布标题 \/ 文案 \/ Tag/, 'the weekly output promise must remain video-only while clearly including publication metadata');
 assert.match(pageSource, /具体缺少/, 'weekly-plan validation must name the missing business fields instead of showing a generic warning');
 assert.match(pageSource, /page === "socialPlanning"[\s\S]{0,240}setWeeklyPlanOpen\(true\)/, 'the account matrix next step must open weekly-plan generation inside Smart Business');
-assert.match(currentPlanSource, /历史计划/, 'Smart Business must expose plan history from the current-plan card');
+assert.match(weeklyPlanControlsSource, /历史计划/, 'Smart Business must expose plan history from the weekly-plan header controls');
+assert.doesNotMatch(smartBusinessSource, /后台并发与异常中心|Background operations/, 'the overview must not expose the deleted background-operations panel');
 assert.match(planHistorySource, /按周查看[\s\S]{0,200}按月查看/, 'plan history must support weekly and monthly views');
 assert.match(planHistorySource, /completion[\s\S]{0,350}completed/, 'plan history completion must come from persisted task statuses');
 for (const label of ['运营平台账号', '获得询盘', '实际增长', '投流消耗', '经营 Agent', '编导 Agent', '内容 Agent', '客服 Agent', '生产实况']) assert.match(smartBusinessSource, new RegExp(label), `Smart Business overview must expose ${label}`);
@@ -183,14 +197,16 @@ assert.match(smartBusinessSource, /messengerSubscribed/, 'Facebook account detai
 assert.match(smartBusinessSource, /排期规则：编导结论先完成，经营 Agent 再派发内容任务/, 'the account matrix must feed the unified weekly content queue with the approved Agent handoff');
 assert.match(smartBusinessSource, /const pageSize = 6/, 'long content queues must use a bounded page size');
 assert.match(smartBusinessSource, /aria-label="内容队列分页"/, 'long content queues must expose pagination controls');
-assert.match(smartBusinessSource, /内容队列[\s\S]{0,500}计划、制作、验收与成本在同一条链路/, 'the queue must expose planned content and its production states');
+assert.match(smartBusinessSource, /内容队列[\s\S]{0,900}视频内容数据概览/, 'the queue must open with video-specific performance data');
 assert.match(smartBusinessSource, /查看制作进度 →[\s\S]{0,4500}进入制作台 →/, 'planned and running content must link directly to detailed production progress');
 assert.match(pageSource, /onOpenContent=\{openContentProduction\}/, 'Smart Business content links must preserve the current Agent task when opening Studio');
-assert.match(smartBusinessSource, /成本待核算|成本建议/, 'the content queue must expose per-item cost truth and advice');
+assert.match(smartBusinessSource, /分平台数据[\s\S]{0,500}各平台的视频表现/, 'the content queue must expose platform performance filters');
+assert.match(smartBusinessSource, /视频热度榜单/, 'the content queue must expose a video heat ranking');
+assert.doesNotMatch(smartBusinessSource, /成本建议/, 'the content queue must not show cost advice');
 for (const platform of ['YouTube', 'TikTok', 'Instagram', 'Facebook']) assert.match(smartBusinessSource, new RegExp(platform), `review ranking must expose ${platform}`);
 assert.match(smartBusinessSource, /loadConnectedSocialPerformance/, 'review must read the same connected-account performance source as Content Monitoring');
 assert.match(socialPerformanceSource, /\/api\/overseas\/youtube\/accounts[\s\S]{0,500}\/api\/overseas\/social\/accounts/, 'performance loading must use the real account endpoints shared with Content Monitoring');
-assert.match(smartBusinessSource, /纳入下周待办[\s\S]{0,1000}下周待办/, 'Agent advice must feed the simplified next-week todo list');
+assert.match(smartBusinessSource, /(?:纳入下周待办|加入 1 条验证任务)[\s\S]{0,1000}下周待办/, 'Agent advice must feed the simplified next-week todo list');
 assert.match(inspirationSource, /对标账号/, 'Inspiration Center must expose benchmark accounts as its own page');
 assert.match(competitorAccountsSource, /embedded/, 'benchmark accounts must support an embedded standalone page instead of only a modal');
 for (const role of ['orchestrator', 'business', 'director', 'content', 'customer']) {

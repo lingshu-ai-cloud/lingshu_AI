@@ -576,22 +576,97 @@ export interface ContentExecutionRuntime {
   jobs: ContentExecutionRuntimeJob[];
 }
 
+export interface ContentPerformanceReview {
+  orderId: string;
+  projectId: string;
+  route: string;
+  platform: string;
+  productId: string;
+  productName?: string;
+  title?: string;
+  hook?: string;
+  framework?: string[];
+  publishedTags?: string[];
+  sourceUrl?: string;
+  productionStatus: string;
+  publicationStatus: string;
+  performance: {
+    status: 'available' | 'pending';
+    views: number;
+    likes: number;
+    comments: number;
+    shares: number;
+    leads: number;
+  };
+}
+
+export interface NextRoundRecommendations {
+  contentInheritance: {
+    status: 'ready' | 'waiting';
+    sourceContentId: string;
+    title: string;
+    platform: string;
+    hook: string;
+    framework: string[];
+    tags: string[];
+    sourceUrl: string;
+    reason: string;
+    paidBoost: { status: 'recommended_for_review' | 'not_enough_data'; reason: string };
+    systemActions: string[];
+  };
+  tagAdaptation: {
+    status: 'changed' | 'baseline' | 'waiting';
+    publishedTags: string[];
+    hotTags: string[];
+    newTags: string[];
+    droppedTags: string[];
+    requiresConfirmation: boolean;
+    systemActions: string[];
+  };
+  industryTrends: {
+    status: 'available' | 'waiting';
+    signals: Array<{
+      id: string;
+      title: string;
+      platform: string;
+      summary: string;
+      sourceUrl: string;
+      observedAt: string;
+      tags: string[];
+    }>;
+    systemActions: string[];
+  };
+}
+
+export interface WeeklyReviewSummary {
+  matrixPerformance?: MatrixAccountReview[];
+  completionRate: number;
+  automationRate: number;
+  approvalRate: number;
+  handoffRate: number;
+  completedTasks: number;
+  totalTasks: number;
+  failedTasks: number;
+  highlights: string[];
+  nextGoalSuggestion: string;
+  knowledgeCandidates: string[];
+  contentPerformance?: ContentPerformanceReview[];
+  approvalFeedback?: Array<{ decision: string; note: string }>;
+  nextPlanRecommendations?: string[];
+  nextRoundRecommendations?: NextRoundRecommendations;
+  routingEvidence?: {
+    priorRouteDistribution?: Record<string, number>;
+    approvalFeedback?: Array<{ decision?: string; note?: string }>;
+    contentInheritance?: NextRoundRecommendations['contentInheritance'];
+    tagAdaptation?: NextRoundRecommendations['tagAdaptation'];
+    industryTrends?: NextRoundRecommendations['industryTrends'];
+  };
+}
+
 export interface WeeklyReview {
   id: string;
   status: string;
-  summary: {
-    matrixPerformance?: MatrixAccountReview[];
-    completionRate: number;
-    automationRate: number;
-    approvalRate: number;
-    handoffRate: number;
-    completedTasks: number;
-    totalTasks: number;
-    failedTasks: number;
-    highlights: string[];
-    nextGoalSuggestion: string;
-    knowledgeCandidates: string[];
-  };
+  summary: WeeklyReviewSummary;
   created_at: string;
 }
 

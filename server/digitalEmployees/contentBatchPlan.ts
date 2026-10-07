@@ -51,6 +51,27 @@ export interface ContentBatchPlanDraft {
   disabledRoutes: Array<{ route: ContentRoute; reason: string }>;
 }
 
+interface PriorReviewRoutingEvidence {
+  priorRouteDistribution?: Partial<Record<ContentRoute, number>>;
+  approvalFeedback?: Array<{ note?: string }>;
+  contentInheritance?: {
+    status?: string;
+    title?: string;
+    hook?: string;
+    framework?: string[];
+  };
+  tagAdaptation?: {
+    status?: string;
+    newTags?: string[];
+    droppedTags?: string[];
+    requiresConfirmation?: boolean;
+  };
+  industryTrends?: {
+    status?: string;
+    signals?: Array<{ title?: string; sourceUrl?: string }>;
+  };
+}
+
 const themes = [
   { key: 'buyer_problem', label: '客户痛点与解法' },
   { key: 'use_case', label: '应用场景与选择建议' },
@@ -80,18 +101,39 @@ function ctaFor(goal: DigitalEmployeeConfig['primaryGoal']): string {
   return '私信说说当前选型需求，不承诺提供额外资料或方案';
 }
 
+function priorReviewConstraints(evidence?: PriorReviewRoutingEvidence): string[] {
+  if (!evidence) return [];
+  const constraints: string[] = [];
+  const inheritance = evidence.contentInheritance;
+  if (inheritance?.status === 'ready') {
+    if (String(inheritance.title || '').trim()) constraints.push(`上轮优秀内容继承：复用「${String(inheritance.title).trim()}」的内容框架与钩子，但必须重新表达并更换镜头组合`);
+    if (String(inheritance.hook || '').trim()) constraints.push(`上轮有效钩子候选：${String(inheritance.hook).trim()}`);
+    if (Array.isArray(inheritance.framework) && inheritance.framework.length) constraints.push(`上轮有效结构候选：${inheritance.framework.slice(0, 8).join(' → ')}`);
+  }
+  const tags = evidence.tagAdaptation;
+  if (tags?.status === 'changed' && Array.isArray(tags.newTags) && tags.newTags.length) {
+    constraints.push(`热门 Tag 变化候选：${tags.newTags.slice(0, 8).map(tag => `#${String(tag).replace(/^#+/, '')}`).join(' ')}；用于验证新卖点关键词和选题，不得改写已确认产品事实`);
+    if (tags.requiresConfirmation) constraints.push('采集范围变化需要人工确认；内容 Agent 只能先生成候选方案，不得静默扩大采集范围');
+  }
+  const signals = evidence.industryTrends?.status === 'available' && Array.isArray(evidence.industryTrends.signals)
+    ? evidence.industryTrends.signals : [];
+  if (signals.length) constraints.push(`行业热点候选：${signals.slice(0, 3).map(signal => String(signal.title || '').trim()).filter(Boolean).join('；')}；仅基于可追溯来源用于下一轮编导判断`);
+  return constraints;
+}
+
 export function buildContentBatchPlan(input: {
   goalId: string;
   goal: WeeklyGoalInput;
   config: DigitalEmployeeConfig;
   evidence: ContentRoutingEvidence;
   versions: { configVersion: number; policyVersion: string; factsVersion: string };
-  priorRoutingEvidence?: { priorRouteDistribution?: Partial<Record<ContentRoute, number>>; approvalFeedback?: Array<{ note?: string }> };
+  priorRoutingEvidence?: PriorReviewRoutingEvidence;
 }): ContentBatchPlanDraft {
   const disabledRoutes: ContentBatchPlanDraft['disabledRoutes'] = [];
   const eligibleRoutes: ContentRoute[] = [];
   const enabled = new Set(input.config.enabledWorkflows);
   const productsWithMaterial = input.evidence.products.filter(product => product.materialIds.length > 0);
+  const reviewConstraints = priorReviewConstraints(input.priorRoutingEvidence);
   if (input.goal.videoPlans?.length) {
     const orders: ContentOrder[] = [];
     const errors: string[] = [];
@@ -133,7 +175,7 @@ export function buildContentBatchPlan(input: {
         languages: plan.matrix ? [plan.language] : input.config.videoLanguages,
         theme: { key: 'user_selected', label: plan.theme }, platform: plan.platform, accountId: account?.accountId || '', accountLabel: account?.accountLabel || (enabled.has('content_publish') ? '发布前待绑定账号' : '仅内容生产，不分发'),
         route: plan.route, videoPlan: plan, deliveryVariants, configurationSnapshot: input.versions, cta: plan.matrix?.cta || ctaFor(input.config.primaryGoal),
-        constraints: [...new Set([...input.config.constraints, ...input.goal.constraints,
+        constraints: [...new Set([...input.config.constraints, ...input.goal.constraints, ...reviewConstraints,
           ...familyVariants.flatMap(variant => platformExecutionConstraints(variant.platform).map(rule => `${variant.platform} 平台改编：${rule}`)),
           `本订单只生产 1 条原创母版；${deliveryVariants.length} 个平台发布版本共用母版，不得重复提交完整 AIGC 生成`,
           ...(plan.buyerProblem ? [`必须回答的买家问题：${plan.buyerProblem}`] : []),
@@ -208,6 +250,7 @@ export function buildContentBatchPlan(input: {
         ...input.goal.constraints,
         ...input.goal.contentPlatforms.flatMap(platform => platformExecutionConstraints(platform).map(rule => `${platform} 平台改编：${rule}`)),
         ...feedbackConstraints,
+        ...reviewConstraints,
       ])],
       evidenceRefs,
       status: 'planned',

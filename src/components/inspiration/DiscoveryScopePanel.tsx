@@ -325,6 +325,7 @@ export default function DiscoveryScopePanel({ onAccountsCrawled }: { onAccountsC
         </section>
         <section className="mt-4 rounded-xl border border-border bg-surface-2 p-3 text-xs leading-5 text-text-secondary" aria-label="当前视频采集规则">
           <h4 className="font-bold text-text-primary">当前视频采集规则</h4>
+          <p className="mt-1 font-bold text-amber-800">视频硬规则：只采集 1–60 秒的视频；YouTube 只采集 Shorts。超时长、时长未知或普通 YouTube 视频不会入池，也不会进入智能经营周计划。</p>
           <div className="mt-3 grid gap-3 sm:grid-cols-2">
             <label className="font-bold text-text-secondary">视频发布时间范围（近几天）
               <input type="number" min={1} max={30} step={1} value={editor.lookbackDays} onChange={event => setEditor(current => ({ ...current, lookbackDays: Math.max(1, Math.min(30, Math.floor(Number(event.target.value) || 1))) }))} className="mt-1 block h-10 w-full rounded-lg border border-border bg-white px-3 text-sm text-text-primary" />

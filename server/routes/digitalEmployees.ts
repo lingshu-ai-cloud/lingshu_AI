@@ -643,6 +643,9 @@ async function prepareContentBatchPlan(input: { tenantId: string; goal: GoalReco
     priorRoutingEvidence: {
       priorRouteDistribution: jsonObject(priorRoutingEvidence.priorRouteDistribution, {}),
       approvalFeedback: jsonObject(priorRoutingEvidence.approvalFeedback, []),
+      contentInheritance: jsonObject(priorRoutingEvidence.contentInheritance, {}),
+      tagAdaptation: jsonObject(priorRoutingEvidence.tagAdaptation, {}),
+      industryTrends: jsonObject(priorRoutingEvidence.industryTrends, {}),
     },
   });
   return { existing, draft, planBody };
@@ -1160,14 +1163,16 @@ async function completeReview(tenantId: string, goal: GoalRecord, run: RunRecord
   const weeklyPlan = await tenantRecord<PlanRecord>(COLLECTION.plans, run.plan_id, tenantId);
   const reviewPackage = jsonObject<{ businessPackage?: WeeklyPackage }>(weeklyPlan?.plan, {}).businessPackage;
   const matrixPlan = reviewPackage?.matrixPlan;
-  const existing = await first<StoredRecord & { tenant_id: string }>(COLLECTION.reviews, { tenant_id: tenantId, run_id: run.id });
-  const [approvals, handoffs, businessSnapshot, batchPlans, projects, posts] = await Promise.all([
+  const existing = await first<StoredRecord & { tenant_id: string; run_id: string; summary: unknown }>(COLLECTION.reviews, { tenant_id: tenantId, run_id: run.id });
+  const [approvals, handoffs, businessSnapshot, batchPlans, projects, posts, trendVideos, reviewHistory] = await Promise.all([
     store.list<ApprovalRecord>(COLLECTION.approvals, { where: { tenant_id: tenantId, run_id: run.id }, perPage: 100 }),
     store.list<HandoffRecord>(COLLECTION.handoffs, { where: { tenant_id: tenantId, run_id: run.id }, perPage: 100 }),
     buildBusinessSnapshot(tenantId, { startsAt: goal.starts_at, endsAt: goal.ends_at }),
     store.list<ContentBatchPlanRecord>(COLLECTION.contentBatchPlans, { where: { tenant_id: tenantId, run_id: run.id }, perPage: 20 }),
     store.list<StoredRecord>('studio_projects', { where: { tenant_id: tenantId }, perPage: 500 }),
     store.list<StoredRecord>('posts', { where: { tenant_id: tenantId }, perPage: 500 }),
+    store.list<StoredRecord>('trend_videos', { where: { tenantId }, sort: '-updatedAt', perPage: 100 }).catch(() => ({ items: [] })),
+    store.list<StoredRecord & { run_id?: string; summary?: unknown }>(COLLECTION.reviews, { where: { tenant_id: tenantId }, sort: '-created_at', perPage: 20 }),
   ]);
   const taskReview = buildWeeklyReview({
     goal: goalInput(goal),
@@ -1186,11 +1191,16 @@ async function completeReview(tenantId: string, goal: GoalRecord, run: RunRecord
       .filter(Boolean))),
   };
   const contentApprovalTaskIds = new Set(tasks.filter(task => task.task_key === 'content_release_approval').map(task => task.id));
+  const previousReview = reviewHistory.items.find(item => String(item.run_id || '') !== run.id);
+  const previousRound = jsonObject<Record<string, unknown>>(jsonObject<Record<string, unknown>>(previousReview?.summary, {}).nextRoundRecommendations, {});
+  const previousTagAdaptation = jsonObject<Record<string, unknown>>(previousRound.tagAdaptation, {});
   const contentFeedback = summarizeContentFeedback({
     orders: batchPlans.items.flatMap(item => jsonObject(item.orders, [])),
     projects: projects.items.filter(item => recordBelongsToTask(item, run, reviewScope)),
     approvals: approvals.items.filter(approval => contentApprovalTaskIds.has(String(approval.task_id || ''))),
     posts: posts.items.filter(item => recordBelongsToTask(item, run, reviewScope)),
+    trendVideos: trendVideos.items,
+    previousHotTags: jsonObject<string[]>(previousTagAdaptation.hotTags, []),
   });
   const matrixPerformance = matrixPlan ? summarizeWeeklyMatrix(matrixPlan, projects.items.filter(item => recordBelongsToTask(item, run, reviewScope)), posts.items.filter(item => recordBelongsToTask(item, run, reviewScope)), reviewPackage?.tasks.some(task => task.templateId === 'publishing')) : undefined;
   const summary = {
@@ -1200,7 +1210,14 @@ async function completeReview(tenantId: string, goal: GoalRecord, run: RunRecord
     contentPerformance: contentFeedback.items,
     approvalFeedback: contentFeedback.approvalFeedback,
     nextPlanRecommendations: [...contentFeedback.nextPlanRecommendations, ...(matrixPerformance || []).map(row => `${row.platform} · ${row.accountId}：${row.recommendation}`)],
-    routingEvidence: { priorRouteDistribution: contentFeedback.routeCounts, approvalFeedback: contentFeedback.approvalFeedback },
+    nextRoundRecommendations: contentFeedback.nextRoundRecommendations,
+    routingEvidence: {
+      priorRouteDistribution: contentFeedback.routeCounts,
+      approvalFeedback: contentFeedback.approvalFeedback,
+      contentInheritance: contentFeedback.nextRoundRecommendations.contentInheritance,
+      tagAdaptation: contentFeedback.nextRoundRecommendations.tagAdaptation,
+      industryTrends: contentFeedback.nextRoundRecommendations.industryTrends,
+    },
   };
   const payload = { status: 'generated', summary };
   if (existing) {

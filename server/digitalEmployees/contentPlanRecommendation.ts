@@ -4,6 +4,7 @@ import { buildWeeklyOperatingContext } from './weeklyPackage.js';
 import type { WeeklyPackage } from '../../src/lib/weeklyPackage.js';
 import { buildBenchmarkAnalysis, type BenchmarkAnalysis } from '../../shared/benchmarkAnalysis.js';
 import { includedAdaptationCostRange, masterVideoCostRange, MASTER_VIDEO_COST_POINT_CNY } from '../../shared/contracts/contentCostModel.js';
+import { isDiscoveryVideoEligible } from '../../shared/contracts/discoveryVideoPolicy.js';
 
 type EvidenceRecord = { id: string; [key: string]: unknown };
 type BenchmarkAccount = {
@@ -135,13 +136,18 @@ export function rankContentReferences(input: {
   return input.videos.flatMap(video => {
     const platform = text(video.platform) as VideoCreationPlan['platform'];
     if (!['facebook', 'instagram', 'tiktok', 'youtube'].includes(platform)) return [];
+    const sourceUrl = previewUrl(video.sourceUrl, video.videoUrl, video.url);
+    if (!isDiscoveryVideoEligible({ platform, duration: Number(video.duration || 0), sourceUrl })) return [];
     const analysis = record(video.aiAnalysis);
     const gemini = record(analysis.gemini);
     const candidate = record(analysis.candidateEvidence);
     const relevance = text(record(candidate.relevance).level);
     const transferability = text(record(candidate.transferability).level);
     const momentum = text(record(candidate.momentum).level);
-    const exact = analysis.analysisMode === 'exact' && analysis.analysisQuality === 'video' && Object.keys(gemini).length > 0;
+    const exactReviewRequired = analysis.analysisMode === 'exact' && analysis.analysisQuality === 'video_review_required';
+    const exact = analysis.analysisMode === 'exact'
+      && ['video', 'video_review_required'].includes(String(analysis.analysisQuality || ''))
+      && Object.keys(gemini).length > 0;
     const benchmarkAnalysis = buildBenchmarkAnalysis({
       analysis,
       videoId: video.id,
@@ -161,6 +167,7 @@ export function rankContentReferences(input: {
     let score = 0;
     if (platform === input.platform) { score += 24; factors.push('同平台'); }
     if (exact) { score += 28; factors.push('全片精确分析'); }
+    if (exactReviewRequired) factors.push('精确分析已完成，发布前需轻量复核');
     if (benchmark) { score += 18; factors.push(`来自对标账号 ${text(benchmark.accountName || benchmark.handle || benchmark.accountUrl, 80)}`); }
     if (relevance === 'high') { score += 10; factors.push('业务相关性高'); }
     else if (relevance === 'medium') score += 5;
@@ -177,7 +184,7 @@ export function rankContentReferences(input: {
       title,
       views,
       thumbnailUrl: previewUrl(video.thumbnailUrl, video.coverUrl, video.thumbnail, analysis.thumbnailUrl, analysis.coverUrl),
-      sourceUrl: previewUrl(video.sourceUrl, video.videoUrl, video.url, analysis.sourceUrl, analysis.videoUrl),
+      sourceUrl: previewUrl(sourceUrl, analysis.sourceUrl, analysis.videoUrl),
       theme,
       hook: hooks[0] || theme,
       evidenceRequirement: sellingPoints[0] ? `用企业资料核验并呈现：${sellingPoints[0]}` : '必须使用企业资料或素材库中的可核验事实与画面',
