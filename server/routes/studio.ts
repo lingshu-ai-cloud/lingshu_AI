@@ -96,6 +96,7 @@ import { runVeoWorker } from '../lib/generativeVideoGateway.js';
 import { createLinkedAbort } from '../lib/abort.js';
 import { invalidatePublishingApprovalForProject } from '../digitalEmployees/publishingExecution.js';
 import { verifiedStudioGenerationFromSpec } from '../lib/studioGenerationVerification.js';
+import { currentStudioProjectQualityRecord, studioProjectQualityFingerprint, studioProjectQualityIssues, type StudioProjectQualityRecord } from '../lib/studioProjectQuality.js';
 import {
   assessScriptQualityV2,
   isBusinessRoleEntity,
@@ -1608,6 +1609,79 @@ studioRouter.use('/shooting-tasks', createShootingTasksRouter(store, async (id, 
 
 studioRouter.use('/production', createStudioAvatarProductionRouter(store));
 
+// The first free-creation page owns a small, explicit AIGC hook flow. It uses
+// the same Seedream material store as storyboard generation, but validates the
+// saved manual draft instead of pretending that a page-one hook is already a
+// page-two storyboard slot.
+studioRouter.post('/free-creation-hook/first-frame', async (req, res) => {
+  const { tenantId } = res.locals as AuthLocals;
+  const projectId = String(req.body?.projectId || '').trim();
+  const requestId = String(req.body?.requestId || '').trim().slice(0, 180);
+  const productIds = [...new Set<string>((Array.isArray(req.body?.productIds) ? req.body.productIds : []).map((value: unknown) => String(value || '').trim()).filter(Boolean))];
+  const goal = String(req.body?.goal || '').trim().slice(0, 500);
+  const audience = String(req.body?.audience || '').trim().slice(0, 500);
+  const visualIntent = String(req.body?.visualIntent || '').trim().slice(0, 2_000);
+  const ratio = ['9:16', '16:9', '1:1'].includes(String(req.body?.ratio)) ? req.body.ratio as '9:16' | '16:9' | '1:1' : '9:16';
+  if (!projectId || !/^[A-Za-z0-9_:.-]{8,180}$/.test(requestId) || !productIds.length || !goal || !audience) {
+    res.status(400).json({ ok: false, code: 'FREE_HOOK_INPUT_REQUIRED', error: 'AI 钩子需要已保存草稿、稳定请求 ID、产品、内容目标和目标受众' }); return;
+  }
+  const project = await store.getById<any>('studio_projects', projectId);
+  if (!project || project.tenant_id !== tenantId) { res.status(404).json({ ok: false, code: 'FREE_HOOK_PROJECT_NOT_FOUND', error: '当前企业的自由创作草稿不存在' }); return; }
+  const saved = normalizeFreeCreationProjectSpec(project.spec || {}).freeCreation;
+  if (!saved?.manualWorkflow || saved.hookSource !== 'ai' || JSON.stringify(saved.brief?.productIds || []) !== JSON.stringify(productIds)
+    || saved.brief?.goal !== goal || saved.brief?.audience !== audience) {
+    res.status(409).json({ ok: false, code: 'FREE_HOOK_DRAFT_CHANGED', error: '产品或创作简报已变化，请等待草稿保存后重试' }); return;
+  }
+  const profile = await readTenantEnterpriseProfile(tenantId);
+  const items = profile.products.items || [];
+  const references: ReferenceImage[] = [];
+  const names: string[] = [];
+  for (const id of productIds) {
+    let product = items.find((item, index) => productIdentity(item, index) === id);
+    if (!product) {
+      const legacy = id.match(/^product-(\d+)-(.+)$/); const candidate = legacy ? items[Number(legacy[1])] : undefined;
+      if (candidate && candidate.name === legacy?.[2] && items.filter(item => item.name === candidate.name).length === 1) product = candidate;
+    }
+    if (!product) { res.status(422).json({ ok: false, code: 'FREE_HOOK_PRODUCT_CHANGED', error: '所选产品已不在当前企业知识库中' }); return; }
+    const imageUrl = String(product.images?.[0]?.url || product.imageUrl || '');
+    const image = imageUrl ? await storyboardEnterpriseImage(imageUrl, tenantId) : null;
+    if (!image) { res.status(422).json({ ok: false, code: 'FREE_HOOK_PRODUCT_IMAGE_REQUIRED', error: `产品「${String(product.name || '')}」缺少可读取的主图` }); return; }
+    names.push(String(product.name || '')); references.push(image);
+  }
+  const reference = references.length === 1 ? references[0]! : await storyboardProductReferenceSheet(references);
+  const prompt = [
+    `Create the opening frame of a ${ratio} short-form commercial video for these exact products: ${names.join(', ')}.`,
+    `Content goal: ${goal}. Target audience: ${audience}.`,
+    visualIntent ? `Creative direction: ${visualIntent}.` : 'Create a strong product-first visual hook with a clear focal point and natural commercial lighting.',
+    'Preserve the exact visible product identity, packaging shape and colors from the supplied owned reference. Do not invent labels, claims, text, logos, people, before-after results or additional products.',
+  ].join('\n');
+  const generator = new SeedreamFirstFrameGenerator();
+  const frameRequest = { referenceMode: 'storyboard_scene' as const, tenantId, videoId: projectId, compositionId: 'free-creation-hook', presenterVersion: productIds.join(','), prompt, ratio,
+    references: [{ role: 'product_identity' as FirstFrameReferenceRole, bytes: Buffer.from(reference.base64, 'base64'), mimeType: reference.mimeType as 'image/jpeg' | 'image/png' | 'image/webp', sha256: createHash('sha256').update(Buffer.from(reference.base64, 'base64')).digest('hex') }], idempotencyKey: requestId };
+  const fingerprint = firstFrameInputFingerprint(frameRequest, generator.provider, generator.model);
+  const previous = loadMaterials().find(item => item.tenantId === tenantId && item.sourceType === 'ai-free-creation-hook-frame' && item.provenance?.requestId === requestId);
+  if (previous) {
+    if (previous.provenance?.fingerprint !== fingerprint) { res.status(409).json({ ok: false, code: 'FREE_HOOK_REQUEST_CONFLICT', error: '该请求 ID 已用于不同的 AI 钩子输入' }); return; }
+    res.json({ ok: true, reused: true, material: await materialResponse(previous, tenantId), fingerprint, estimatedCostCny: previous.provenance?.estimatedCostCny }); return;
+  }
+  const configuredBudget = Number(process.env.FREE_CREATION_HOOK_MAX_COST_CNY || 6);
+  if (!Number.isFinite(configuredBudget) || configuredBudget < generator.estimatedCostCny) {
+    res.status(429).json({ ok: false, code: 'FREE_HOOK_BUDGET_EXCEEDED', error: 'AI 钩子首帧预计费用超过本项目预算，未调用供应商' }); return;
+  }
+  if (!await consumeDemoQuota(req, res, 'generation')) return;
+  try {
+    const generated = await generator.generate(frameRequest);
+    const material = await createGeneratedImageMaterial({ title: `自由创作 AI 钩子首帧 · ${names.join('、')}`, bytes: generated.bytes, mimeType: generated.mimeType, source: generated.provider, tenantId });
+    material.sourceType = 'ai-free-creation-hook-frame';
+    material.provenance = { freeCreationHook: true, projectId, requestId, fingerprint, productIds, productNames: names, goal, audience, visualIntent, provider: generated.provider, model: generated.model, providerRequestId: generated.providerRequestId, estimatedCostCny: generated.estimatedCostCny, generatedAt: new Date().toISOString() };
+    const list = loadMaterials(); const index = list.findIndex(item => item.id === material.id); if (index >= 0) { list[index] = material; persistMaterials(list); }
+    res.json({ ok: true, material: await materialResponse(material, tenantId), fingerprint, estimatedCostCny: generated.estimatedCostCny });
+  } catch (error) {
+    const status = error instanceof FirstFrameProviderError && error.status === 'rejected' ? 422 : 502;
+    res.status(status).json({ ok: false, code: error instanceof FirstFrameProviderError && error.status === 'uncertain' ? 'FREE_HOOK_PROVIDER_UNCERTAIN' : 'FREE_HOOK_FRAME_FAILED', error: error instanceof Error ? error.message : 'AI 钩子首帧生成失败' });
+  }
+});
+
 function storyboardImageMime(file: string): string {
   const ext = path.extname(file).toLowerCase();
   return ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg' : ext === '.webp' ? 'image/webp' : 'image/png';
@@ -2598,6 +2672,28 @@ studioRouter.post('/seedance-video', async (req, res) => {
     parentVersionId = '',
     requestId = '',
   } = req.body ?? {};
+  const freeHookContext = generationContext && typeof generationContext === 'object' && !Array.isArray(generationContext)
+    && (generationContext as Record<string, unknown>).freeCreationHook === true
+    ? generationContext as Record<string, unknown> : null;
+  if (freeHookContext) {
+    const hookProjectId = String(freeHookContext.projectId || '').trim();
+    if (!hookProjectId || !/^[A-Za-z0-9_:.-]{8,180}$/.test(String(requestId))) {
+      res.status(400).json({ ok: false, code: 'FREE_HOOK_REQUEST_ID_REQUIRED', error: 'AI 钩子视频需要当前草稿和稳定请求 ID，未调用供应商' }); return;
+    }
+    const hookProject = await store.getById<any>('studio_projects', hookProjectId);
+    const hookState = hookProject && hookProject.tenant_id === tenantId ? normalizeFreeCreationProjectSpec(hookProject.spec || {}).freeCreation : null;
+    if (!hookState?.manualWorkflow || hookState.hookSource !== 'ai') {
+      res.status(409).json({ ok: false, code: 'FREE_HOOK_PROJECT_CHANGED', error: '自由创作草稿或钩子方式已变化，未调用供应商' }); return;
+    }
+    const previous = loadMaterials().find(item => item.tenantId === tenantId && item.sourceType === 'ai-free-creation-hook-video'
+      && item.provenance?.requestId === String(requestId));
+    if (previous) {
+      const expected = createHash('sha256').update(JSON.stringify({ script: String(script), productInfo: String(productInfo), language: String(language), ratio: String(ratio), duration: rawDuration, resolution: String(resolution), referenceImageUrl: String(referenceImageUrl), projectId: hookProjectId })).digest('hex');
+      if (previous.provenance?.inputFingerprint !== expected) { res.status(409).json({ ok: false, code: 'FREE_HOOK_REQUEST_CONFLICT', error: '该请求 ID 已用于不同的 AI 钩子视频输入' }); return; }
+      const visible = await materialResponse(previous, tenantId);
+      res.json({ ok: true, reused: true, source: 'seedance', id: visible.id, url: visible.url, poster: visible.poster, duration: visible.duration, material: visible }); return;
+    }
+  }
   const duration = normalizeSeedanceVideoDuration(rawDuration ?? (firstFrameMaterialId ? 4 : 8));
   const firstFrame = firstFrameMaterialId
     ? loadMaterials().find(item => item.id === String(firstFrameMaterialId) && item.tenantId === tenantId && item.sourceType === 'ai-storyboard-first-frame')
@@ -2785,6 +2881,16 @@ studioRouter.post('/seedance-video', async (req, res) => {
     try {
       url = await downloadGeneratedVideo(remoteUrl, filename, tenantId);
       material = await createGeneratedVideoMaterial({ title, filename, duration, tenantId, sourceType: 'ai-seedance' });
+      if (freeHookContext && material) {
+        const inputFingerprint = createHash('sha256').update(JSON.stringify({ script: String(script), productInfo: String(productInfo), language: String(language), ratio: String(ratio), duration: rawDuration, resolution: String(resolution), referenceImageUrl: String(referenceImageUrl), projectId: String(freeHookContext.projectId || '') })).digest('hex');
+        material.sourceType = 'ai-free-creation-hook-video';
+        material.provenance = { ...material.provenance, freeCreationHook: true, projectId: String(freeHookContext.projectId || ''), requestId: String(requestId), inputFingerprint,
+          firstFrameMaterialId: String(freeHookContext.firstFrameMaterialId || ''), productIds: Array.isArray(freeHookContext.productIds) ? freeHookContext.productIds.map(String) : [],
+          providerTaskId: taskId, providerModel: config.model, resolution: String(resolution), durationSeconds: duration,
+          estimatedCostCny: estimateSeedanceCostCny(duration, String(resolution)), generatedAt: new Date().toISOString() };
+        const materialList = loadMaterials(); const materialIndex = materialList.findIndex(item => item.id === material?.id);
+        if (materialIndex >= 0) { materialList[materialIndex] = material; persistMaterials(materialList); }
+      }
       if (firstFrame && material) {
         material.provenance = {
           ...material.provenance,
@@ -5279,6 +5385,142 @@ studioRouter.post('/render/local', async (req, res) => {
     if (remaining) activeStudioRenders.set(tenantId, remaining);
     else activeStudioRenders.delete(tenantId);
   }
+});
+
+type StudioRenderJobStatus = 'queued' | 'processing' | 'completed' | 'failed';
+interface StoredStudioRenderJob {
+  id: string; tenant_id: string; project_id: string; idempotency_key: string;
+  output_key: string; input_signature: string; status: StudioRenderJobStatus;
+  spec: RenderSpec; progress: number; attempts: number; output_path?: string;
+  preview_url?: string; error?: string; created_at: string; updated_at: string;
+}
+const activePersistentStudioRenders = new Set<string>();
+
+function publicStudioRenderJob(job: StoredStudioRenderJob) {
+  return { id: job.id, projectId: job.project_id, outputKey: job.output_key,
+    inputSignature: job.input_signature, status: job.status, progress: Number(job.progress || 0),
+    attempts: Number(job.attempts || 0), outputPath: job.output_path || '', previewUrl: job.preview_url || '',
+    error: job.error || '', createdAt: job.created_at, updatedAt: job.updated_at };
+}
+
+async function runPersistentStudioRender(jobId: string, tenantId: string, origin: string, localPort: number,
+  assetHeaders: Record<string, string>) {
+  const activeKey = `${tenantId}:${jobId}`;
+  if (activePersistentStudioRenders.has(activeKey)) return;
+  activePersistentStudioRenders.add(activeKey);
+  try {
+    const current = await store.getById<StoredStudioRenderJob>('studio_render_jobs', jobId);
+    if (!current || current.tenant_id !== tenantId || current.status === 'completed') return;
+    const now = new Date().toISOString();
+    await store.update('studio_render_jobs', jobId, { status: 'processing', progress: 15,
+      attempts: Number(current.attempts || 0) + 1, error: '', updated_at: now });
+    const manifest = buildManifest(jobId, current.spec, origin);
+    const safeManifest = secureStudioRenderManifest(manifest, tenantId, origin, `http://127.0.0.1:${localPort}`);
+    const outputDir = publishingRenderDir(tenantId);
+    fs.mkdirSync(outputDir, { recursive: true });
+    let lastProgress = 15;
+    const result = await composite({ ...safeManifest, requireVisualAssets: true,
+      assetOrigin: `http://127.0.0.1:${localPort}`, serverStrictAssets: true,
+      maxAssetBytes: MAX_STUDIO_RENDER_ASSET_BYTES, maxTotalAssetBytes: MAX_STUDIO_RENDER_TOTAL_BYTES,
+      assetHeaders }, (rawProgress: number) => {
+        const progress = Math.max(15, Math.min(95, Math.round(rawProgress)));
+        if (progress < lastProgress + 3) return;
+        lastProgress = progress;
+        void store.update('studio_render_jobs', jobId, { progress, updated_at: new Date().toISOString() });
+      }, outputDir);
+    if (!result.ok || !result.outputPath) throw new Error(result.error || '本地 MP4 导出失败');
+    const outputPath = String(result.outputPath);
+    const previewUrl = publishingRenderPreviewUrl(tenantId, outputPath);
+    const finishedAt = new Date().toISOString();
+    await store.update('studio_render_jobs', jobId, { status: 'completed', progress: 100,
+      output_path: outputPath, preview_url: previewUrl, error: '', updated_at: finishedAt });
+    const project = await store.getById<any>('studio_projects', current.project_id);
+    if (project && project.tenant_id === tenantId) {
+      const projectSpec = typeof project.spec === 'string' ? JSON.parse(project.spec) : project.spec || {};
+      const outputs = projectSpec.languageRenderOutputs && typeof projectSpec.languageRenderOutputs === 'object'
+        ? projectSpec.languageRenderOutputs : {};
+      const versions = projectSpec.languageRenderVersions && typeof projectSpec.languageRenderVersions === 'object'
+        ? projectSpec.languageRenderVersions : {};
+      const priorVersions = Array.isArray(versions[current.output_key]) ? versions[current.output_key] : [];
+      const generation = { id: jobId, versionNumber: Number(priorVersions[0]?.versionNumber || 0) + 1,
+        status: 'done', path: outputPath, previewUrl, inputSignature: current.input_signature, createdAt: finishedAt };
+      const nextSpec = { ...projectSpec, languageRenderOutputs: { ...outputs,
+        [current.output_key]: { status: 'done', path: outputPath, previewUrl, inputSignature: current.input_signature } },
+        languageRenderVersions: { ...versions, [current.output_key]: [generation, ...priorVersions.filter((item: any) => item?.id !== jobId)] },
+        manualRenderJob: { id: jobId, status: 'completed', outputKey: current.output_key,
+          inputSignature: current.input_signature, outputPath, previewUrl, updatedAt: finishedAt },
+        staleReason: '' };
+      await store.update('studio_projects', current.project_id, { spec: nextSpec, updated_at: finishedAt });
+    }
+  } catch (error) {
+    await store.update('studio_render_jobs', jobId, { status: 'failed', progress: 0,
+      error: error instanceof Error ? error.message : '本地 MP4 导出失败', updated_at: new Date().toISOString() });
+  } finally { activePersistentStudioRenders.delete(activeKey); }
+}
+
+// Persistent web render jobs survive page refreshes. Electron keeps using its existing local bridge.
+studioRouter.post('/render/jobs', async (req, res) => {
+  const { tenantId } = res.locals as AuthLocals;
+  const projectId = String(req.body?.projectId || '');
+  const project = await store.getById<any>('studio_projects', projectId);
+  if (!project || project.tenant_id !== tenantId) { res.status(404).json({ ok: false, error: 'Project not found' }); return; }
+  const projectSpec = typeof project.spec === 'string' ? JSON.parse(project.spec) : project.spec || {};
+  if (!isManualStudioProject(projectSpec)) { res.status(409).json({ ok: false, error: '只有人工自由创作项目可创建持久渲染任务' }); return; }
+  const spec = req.body?.spec as RenderSpec;
+  const outputKey = String(req.body?.outputKey || '').slice(0, 240);
+  const inputSignature = String(req.body?.inputSignature || '');
+  if (!spec || !outputKey || !inputSignature) { res.status(400).json({ ok: false, error: '渲染任务参数不完整' }); return; }
+  const idempotencyKey = createHash('sha256').update(`${projectId}\n${outputKey}\n${inputSignature}`).digest('hex');
+  const listed = await store.list<StoredStudioRenderJob>('studio_render_jobs', { where: {
+    tenant_id: tenantId, project_id: projectId, idempotency_key: idempotencyKey }, sort: '-created_at', perPage: 1 });
+  let job: StoredStudioRenderJob | null = listed.items[0] || null;
+  if (!job) {
+    if (!await consumeDemoQuota(req, res, 'render')) return;
+    const now = new Date().toISOString();
+    job = await store.create<StoredStudioRenderJob>('studio_render_jobs', { tenant_id: tenantId,
+      project_id: projectId, idempotency_key: idempotencyKey, output_key: outputKey,
+      input_signature: inputSignature, spec, status: 'queued', progress: 0, attempts: 0,
+      created_at: now, updated_at: now });
+    if (!job) { res.status(503).json({ ok: false, error: '渲染任务未能保存，请重试' }); return; }
+  }
+  const localPort = req.socket.localPort;
+  if (!localPort) { res.status(503).json({ ok: false, error: '无法确认本机渲染服务端口' }); return; }
+  if (job.status === 'queued' || job.status === 'failed') void runPersistentStudioRender(job.id, tenantId,
+    `${req.protocol}://${req.get('host')}`, localPort, { ...(req.get('authorization') ? { authorization: req.get('authorization')! } : {}),
+      ...(req.get('cookie') ? { cookie: req.get('cookie')! } : {}) });
+  res.status(job.status === 'completed' ? 200 : 202).json({ ok: true, replayed: Boolean(listed.items[0]), job: publicStudioRenderJob(job) });
+});
+
+studioRouter.get('/render/jobs/project/:projectId/latest', async (req, res) => {
+  const { tenantId } = res.locals as AuthLocals;
+  const project = await store.getById<any>('studio_projects', req.params.projectId);
+  if (!project || project.tenant_id !== tenantId) { res.status(404).json({ ok: false, error: 'Project not found' }); return; }
+  const result = await store.list<StoredStudioRenderJob>('studio_render_jobs', { where: {
+    tenant_id: tenantId, project_id: req.params.projectId }, sort: '-created_at', perPage: 1 });
+  const job = result.items[0];
+  if (!job) { res.json({ ok: true, job: null }); return; }
+  // A process restart leaves a processing record behind. The first authenticated status read resumes it.
+  if ((job.status === 'queued' || job.status === 'processing') && !activePersistentStudioRenders.has(`${tenantId}:${job.id}`)) {
+    const localPort = req.socket.localPort;
+    if (localPort) void runPersistentStudioRender(job.id, tenantId, `${req.protocol}://${req.get('host')}`, localPort,
+      { ...(req.get('authorization') ? { authorization: req.get('authorization')! } : {}),
+        ...(req.get('cookie') ? { cookie: req.get('cookie')! } : {}) });
+  }
+  res.setHeader('Cache-Control', 'private, no-store');
+  res.json({ ok: true, job: publicStudioRenderJob(job) });
+});
+
+studioRouter.post('/render/jobs/:id/retry', async (req, res) => {
+  const { tenantId } = res.locals as AuthLocals;
+  const job = await store.getById<StoredStudioRenderJob>('studio_render_jobs', req.params.id);
+  if (!job || job.tenant_id !== tenantId) { res.status(404).json({ ok: false, error: 'Render job not found' }); return; }
+  if (job.status === 'completed') { res.json({ ok: true, replayed: true, job: publicStudioRenderJob(job) }); return; }
+  await store.update('studio_render_jobs', job.id, { status: 'queued', error: '', progress: 0, updated_at: new Date().toISOString() });
+  const localPort = req.socket.localPort;
+  if (localPort) void runPersistentStudioRender(job.id, tenantId, `${req.protocol}://${req.get('host')}`, localPort,
+    { ...(req.get('authorization') ? { authorization: req.get('authorization')! } : {}),
+      ...(req.get('cookie') ? { cookie: req.get('cookie')! } : {}) });
+  res.status(202).json({ ok: true, job: publicStudioRenderJob({ ...job, status: 'queued', error: '', progress: 0 }) });
 });
 
 // POST /studio/render/open-output Body: { path }
@@ -8908,6 +9150,45 @@ studioRouter.get('/projects/:id', async (req, res) => {
   res.json(projectFromRecord(p, tenantId));
 });
 
+// Re-run the final project gate after any manual script, storyboard, material,
+// subtitle, voice or render change. The signed record is bound to the complete
+// current input fingerprint; later edits make it stale without trusting UI state.
+studioRouter.post('/projects/:id/requality', async (req, res) => {
+  const { tenantId, userId } = res.locals as AuthLocals;
+  const project = await store.getById<any>('studio_projects', req.params.id);
+  if (!project || project.tenant_id !== tenantId || !socialProjectBelongs(project, socialProjectTaskId(res.locals))) {
+    res.status(404).json({ ok: false, code: 'studio_project_not_found', error: 'Project not found' }); return;
+  }
+  const spec = typeof project.spec === 'string' ? JSON.parse(project.spec) : project.spec || {};
+  const issues = studioProjectQualityIssues(spec);
+  if (issues.length) {
+    res.status(422).json({ ok: false, code: 'studio_project_quality_failed', error: '当前版本未通过重新质检', issues }); return;
+  }
+  const inputFingerprint = studioProjectQualityFingerprint(spec);
+  const existing = currentStudioProjectQualityRecord(spec);
+  if (existing) { res.json({ ok: true, replayed: true, record: existing }); return; }
+  const now = new Date().toISOString();
+  const acceptance = spec.renderAcceptance as Record<string, unknown>;
+  const record: StudioProjectQualityRecord = {
+    id: `project-quality-${randomUUID()}`,
+    inputFingerprint,
+    generationProvenance: 'ai', qualityStatus: 'passed', publishable: true,
+    createdAt: now, createdBy: userId, projectRevision: String(project.updated_at || ''),
+    renderPath: String(acceptance.renderPath || ''),
+    report: { gateVersion: 'studio-project-quality-v1', checks: [
+      { id: 'storyboard_materials', passed: true, detail: '全部分镜已绑定当前项目素材' },
+      { id: 'voice_subtitles', passed: true, detail: spec.voiceoverMode === 'none' ? '无口播模式，无需配音' : '配音与字幕输入完整' },
+      { id: 'render_acceptance', passed: true, detail: '当前正式成片已完成人工验收' },
+      { id: 'input_fingerprint', passed: true, detail: `输入指纹 ${inputFingerprint.slice(0, 12)}` },
+    ] },
+  };
+  const records = Array.isArray(spec.projectQualityRecords) ? spec.projectQualityRecords : [];
+  const nextSpec = { ...spec, projectQualityRecords: [...records, record].slice(-50), activeProjectQualityRecordId: record.id };
+  const updated = await store.update('studio_projects', req.params.id, { spec: nextSpec, updated_at: now });
+  if (!updated) { res.status(503).json({ ok: false, code: 'studio_project_quality_storage_unavailable', error: '质检签发记录保存失败，请重试' }); return; }
+  res.status(201).json({ ok: true, replayed: false, record, project: projectFromRecord({ ...project, spec: nextSpec, updated_at: now }, tenantId) });
+});
+
 // These records are created only by an explicit user action after reviewing a
 // completed manual render. Saving or exporting a project never creates one.
 studioRouter.get('/projects/:id/manual-handoffs', async (req, res) => {
@@ -8942,6 +9223,9 @@ studioRouter.post('/projects/:id/manual-handoffs', async (req, res) => {
     ? spec.renderAcceptance as Record<string, unknown> : {};
   if (req.body?.reviewed !== true || savedAcceptance.accepted !== true || String(savedAcceptance.renderPath || '') !== renderPath) {
     res.status(422).json({ ok: false, code: 'manual_handoff_review_required', error: '请先完成人工成片验收' }); return;
+  }
+  if (!currentStudioProjectQualityRecord(spec)) {
+    res.status(422).json({ ok: false, code: 'manual_handoff_requality_required', error: '当前版本尚未重新质检，或质检记录已因修改失效' }); return;
   }
   const existing = await store.list<any>('studio_manual_handoffs', {
     where: { tenant_id: tenantId, project_id: req.params.id, action, render_path: renderPath }, perPage: 1,

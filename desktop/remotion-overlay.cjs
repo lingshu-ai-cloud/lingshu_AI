@@ -3,9 +3,10 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { filterAdvancedEventsForQa } = require('./emphasis-layout-qa.cjs');
 
 let bundlePromise = null;
-const RENDERER_VERSION = 'semantic-assets-v4-cropped-layout';
+const RENDERER_VERSION = 'semantic-assets-v10-motion-roles';
 const ASSET_DIRECTORY = path.join(__dirname, '../assets/reference/emphasis/v1');
 
 const finite = value => Number.isFinite(Number(value)) ? Number(value) : null;
@@ -19,14 +20,26 @@ const VISUAL_INTENT_KIND = Object.freeze({
   warning: 'warning', urgency: 'urgency', cta: 'cta', focus_product: 'reveal',
   attention: 'key_fact', fact: 'key_fact',
 });
+const MOTION_ROLES = new Set(['surround', 'point_to', 'adjacent', 'caption_companion', 'corner_badge']);
+const MOTION_ASSET_REGISTRY = Object.freeze({
+  surround_rays: { allowedRoles: ['surround'], family: 'rays', runtimeEligible: true },
+  pointer_shard: { allowedRoles: ['point_to'], family: 'directional', runtimeEligible: true },
+  adjacent_badge: { allowedRoles: ['adjacent'], family: 'badge', runtimeEligible: true },
+  caption_accent: { allowedRoles: ['caption_companion'], family: 'directional', runtimeEligible: true },
+  corner_badge: { allowedRoles: ['corner_badge'], family: 'badge', runtimeEligible: true },
+});
 
 function semanticAssetKind(event) {
-  return ASSET_INTENT_KIND[String(event && event.assetIntent)]
+  const requested = ASSET_INTENT_KIND[String(event && event.assetIntent)]
     || VISUAL_INTENT_KIND[String(event && event.visualIntent)]
     || (event && event.type === 'cta' ? 'cta' : null)
     || (['warning', 'urgency'].includes(String(event && (event.semanticRole || event.emphasisKind || event.tone)))
       ? String(event.semanticRole || event.emphasisKind || event.tone) : null)
     || (event && event.type === 'reveal' ? 'reveal' : 'key_fact');
+  const role = normalizeMotionRole(event);
+  if (role !== 'surround' && requested === 'reveal') return 'urgency';
+  if (role !== 'surround' && requested === 'key_fact') return 'warning';
+  return requested;
 }
 
 const intersects = (a, b, gap = 0) => a.x < b.x + b.width + gap && a.x + a.width + gap > b.x
@@ -40,6 +53,36 @@ const normalizedBox = value => {
     x: clamp(x, 0, 1), y: clamp(y, 0, 1), width: clamp(width, .03, .8), height: clamp(height, .03, .8),
   };
 };
+const targetBox = event => normalizedBox(event && event.subjectBox) || (() => {
+  const anchor = event && event.subjectAnchor;
+  if (!anchor || finite(anchor.x) === null || finite(anchor.y) === null) return null;
+  return { x: clamp(Number(anchor.x) - .10, .03, .77), y: clamp(Number(anchor.y) - .10, .04, .50), width: .20, height: .20 };
+})();
+
+function normalizeMotionRole(event) {
+  const explicit = String(event && (event.visualRole || event.motionRole || event.componentRole) || '');
+  const requested = MOTION_ROLES.has(explicit) ? explicit : String(event && event.targetRelation || '');
+  const target = targetBox(event);
+  if (requested === 'surround') return event && event.assetFamily === 'rays' && target ? 'surround' : target ? 'adjacent' : 'corner_badge';
+  if (requested === 'point_to') return target ? 'point_to' : 'caption_companion';
+  if (requested === 'adjacent') return target ? 'adjacent' : 'corner_badge';
+  if (requested === 'caption_companion' || requested === 'corner_badge') return requested;
+  return target ? 'adjacent' : 'corner_badge';
+}
+
+function roleLayout(event, base) {
+  const role = normalizeMotionRole(event), target = targetBox(event);
+  if (role === 'surround' && target) {
+    const pad = .025;
+    const asset = { x: clamp(target.x - pad, .035, .93), y: clamp(target.y - pad, .035, .665),
+      width: Math.min(.42, target.width + pad * 2), height: Math.min(.48, target.height + pad * 2) };
+    asset.x = Math.min(asset.x, .965 - asset.width); asset.y = Math.min(asset.y, .70 - asset.height);
+    return { ...base, asset, mode: 'role-surround' };
+  }
+  if (role === 'caption_companion') return { ...base,
+    asset: { x: .34, y: .625, width: .32, height: .055 }, mode: 'role-caption-companion' };
+  return { ...base, mode: `role-${role}-${base.mode}` };
+}
 
 /** Returns independent decoration and label rectangles. Every candidate is
  * checked as a full rectangle against the subject, caption reserve and frame. */
@@ -138,16 +181,74 @@ function resolveOverlayPlacement(event, index = 0) {
   return conservative('fallback');
 }
 
-const advancedEvents = plan => (plan && Array.isArray(plan.events) ? plan.events : [])
-  .filter(event => ['key_fact', 'reveal', 'cta'].includes(event.type) && event.text)
+function mergeMotionEvents(plan) {
+  const baseEvents = plan && Array.isArray(plan.events) ? plan.events : [];
+  const motionEvents = plan && Array.isArray(plan.motionEvents) ? plan.motionEvents : [];
+  if (!motionEvents.length) return baseEvents;
+  const matched = new Set();
+  const merged = motionEvents.flatMap((motion, index) => {
+    if (!motion || typeof motion !== 'object') return [];
+    const motionStart = finite(motion.startMs), motionEnd = finite(motion.endMs);
+    const candidates = baseEvents.map((event, eventIndex) => {
+      const direct = motion.id === event.id || motion.id === `motion-${event.id}`;
+      const target = motion.target && motion.target.targetId && motion.target.targetId === event.targetId;
+      const sameType = motion.emphasisType === event.type;
+      const overlap = motionStart !== null && motionEnd !== null
+        ? Math.max(0, Math.min(motionEnd, Number(event.endMs) || 0) - Math.max(motionStart, Number(event.startMs) || 0)) : 0;
+      return { event, eventIndex, score: direct ? 1e9 : target && sameType ? 1e7 + overlap : sameType ? overlap : -1 };
+    }).sort((left, right) => right.score - left.score);
+    const match = candidates[0] && candidates[0].score > 0 ? candidates[0] : null;
+    if (match) matched.add(match.eventIndex);
+    const base = match ? match.event : {};
+    const rawType = String(motion.emphasisType || base.type || 'key_fact');
+    const type = rawType === 'cta' ? 'cta' : rawType === 'reveal' || rawType === 'hook' ? 'reveal' : 'key_fact';
+    const visualRole = MOTION_ROLES.has(String(motion.visualRole)) ? String(motion.visualRole) : undefined;
+    const trustedRays = visualRole === 'surround' && Number(motion.target && motion.target.confidence) >= .68
+      && ['person', 'product', 'machine', 'action'].includes(String(motion.target && motion.target.kind));
+    return [{ ...base, id: String(motion.id || base.id || `motion-${index + 1}`), type,
+      startMs: motionStart ?? finite(base.startMs) ?? 0, endMs: motionEnd ?? finite(base.endMs) ?? 0,
+      text: String(base.text || motion.target && motion.target.label || motion.anchor && motion.anchor.phrase || ''),
+      visualRole, ...(trustedRays ? { assetFamily: 'rays' } : {}),
+      presentationMode: base.presentationMode || 'graphic_only', motionEventId: motion.id,
+      semanticAnchor: motion.anchor, target: motion.target }];
+  });
+  return [...merged, ...baseEvents.filter((_, index) => !matched.has(index))];
+}
+
+const mappedAdvancedEvents = plan => mergeMotionEvents(plan)
+  .filter(event => ['key_fact', 'reveal', 'cta'].includes(event.type) && (event.text || event.presentationMode === 'graphic_only'))
   .map((event, index) => ({
-    id: event.id, type: event.type, startMs: event.startMs, endMs: event.endMs, text: event.text,
+    id: event.id, type: event.type, startMs: event.startMs, endMs: event.endMs, text: String(event.text || ''),
     assetKind: semanticAssetKind(event),
+    motionRole: normalizeMotionRole(event),
+    assetId: Object.entries(MOTION_ASSET_REGISTRY).find(([, definition]) => definition.allowedRoles.includes(normalizeMotionRole(event)))?.[0],
+    assetFamily: normalizeMotionRole(event) === 'surround' ? 'rays' : normalizeMotionRole(event) === 'point_to' || normalizeMotionRole(event) === 'caption_companion' ? 'directional' : 'badge',
+    runtimeAssetFamily: normalizeMotionRole(event) === 'surround' ? 'rays' : normalizeMotionRole(event) === 'point_to' || normalizeMotionRole(event) === 'caption_companion' ? 'directional' : 'badge',
+    allowedRoles: [normalizeMotionRole(event)],
+    presentationMode: event.presentationMode === 'graphic_only' ? 'graphic_only' : 'label',
+    importance: Number(event.importance) || 1,
+    confidence: Number(event.confidence) || 0,
+    targetRelation: event.targetRelation || normalizeMotionRole(event),
+    semanticEvidence: event.semanticEvidence || event.semanticAnchor || event.placementEvidence,
+    semanticAnchor: event.semanticAnchor,
+    shotId: String(event.shotId || event.placementEvidence && event.placementEvidence.windowId || ''),
+    occupiedBoxes: Array.isArray(event.occupiedBoxes) ? event.occupiedBoxes : [],
+    captionBoxes: Array.isArray(event.captionBoxes) ? event.captionBoxes : [],
+    protectedBoxes: Array.isArray(event.protectedBoxes) ? event.protectedBoxes : [],
+    primaryDecorationCount: 1,
     placement: resolveOverlayPlacement(event, index),
-    layout: resolveOverlayLayout(event, index),
+    layout: roleLayout(event, resolveOverlayLayout(event, index)),
     ...(event.subjectAnchor && Number.isFinite(Number(event.subjectAnchor.x)) && Number.isFinite(Number(event.subjectAnchor.y))
       ? { subjectAnchor: { x: clamp(Number(event.subjectAnchor.x), .08, .92), y: clamp(Number(event.subjectAnchor.y), .08, .70) } } : {}),
+    ...(normalizedBox(event.subjectBox) ? { subjectBox: normalizedBox(event.subjectBox) } : {}),
   }));
+
+const advancedEvents = plan => {
+  const mapped = mappedAdvancedEvents(plan);
+  const modern = mapped.filter(event => event.semanticEvidence);
+  const acceptedModern = new Set(filterAdvancedEventsForQa(modern, { cooldownMs: 4_000 }).map(event => event.id));
+  return mapped.filter(event => !event.semanticEvidence || acceptedModern.has(event.id));
+};
 
 async function rendererModules() {
   const [{ bundle }, { renderMedia, selectComposition }] = await Promise.all([
@@ -196,4 +297,4 @@ async function renderTransparentOverlay({ plan, width, height, durationSeconds, 
   return { path: output, cacheHit: false, renderMs: Date.now() - started };
 }
 
-module.exports = { RENDERER_VERSION, advancedEvents, intersects, resolveOverlayLayout, resolveOverlayPlacement, semanticAssetKind, renderTransparentOverlay };
+module.exports = { MOTION_ASSET_REGISTRY, RENDERER_VERSION, advancedEvents, intersects, mergeMotionEvents, normalizeMotionRole, resolveOverlayLayout, resolveOverlayPlacement, semanticAssetKind, renderTransparentOverlay };

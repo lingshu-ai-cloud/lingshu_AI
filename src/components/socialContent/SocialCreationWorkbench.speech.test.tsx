@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
+import fs from 'node:fs';
 import SocialCreationWorkbench, { parseFreeCreationScript, serializeFreeCreationLines } from './SocialCreationWorkbench';
 
 const html = renderToStaticMarkup(<SocialCreationWorkbench
@@ -43,6 +44,14 @@ assert.ok(freeHtml.includes('暂不指定'));
 assert.ok(freeHtml.includes('上传素材'));
 assert.ok(freeHtml.includes('素材库'));
 assert.ok(freeHtml.includes('AI 生成'));
+const workbenchSource = fs.readFileSync(new URL('./SocialCreationWorkbench.tsx', import.meta.url), 'utf8');
+assert.match(workbenchSource, /在第一页生成 AI 钩子/);
+assert.match(workbenchSource, /确认费用并生成/);
+assert.match(workbenchSource, /Seedream 首帧/);
+assert.match(workbenchSource, /Seedance 4 秒 480p/);
+assert.doesNotMatch(workbenchSource, /AI 钩子将在第二页生成/);
+assert.match(workbenchSource, /draggable onDragStart=/, 'free creation shot cards must support direct drag sorting');
+assert.match(workbenchSource, /事实来源：/, 'each free creation shot card must expose its enterprise fact source');
 assert.ok(freeHtml.includes('Gemini 生成逐句口播与分镜'));
 assert.ok(!freeHtml.includes('还在为内容拍摄和剪辑反复返工吗'));
 assert.ok(!freeHtml.includes('可选的一句话要求'));

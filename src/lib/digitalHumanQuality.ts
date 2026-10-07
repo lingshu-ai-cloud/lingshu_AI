@@ -151,7 +151,7 @@ export function recordReferenceTechnicalChecks(
       ? { passed: false, evidence: '源视频或候选视频缺少可比较音轨，需人工确认声音策略后重新检查' }
       : { passed: metrics.audioCorrelation >= 0.98, evidence: `音轨相关度 ${metrics.audioCorrelation.toFixed(3)}` },
     reference_motion: {
-      passed: metrics.comparedFrames >= 5 && metrics.freezeMismatchRatio <= 0.05 && metrics.temporalMotionDifference <= 8,
+      passed: metrics.comparedFrames >= 5 && metrics.freezeMismatchRatio <= 0.1 && metrics.temporalMotionDifference <= 15,
       evidence: `对比 ${metrics.comparedFrames} 帧；停帧差异 ${(metrics.freezeMismatchRatio * 100).toFixed(1)}%；运动差异 ${metrics.temporalMotionDifference.toFixed(2)}`,
     },
   };

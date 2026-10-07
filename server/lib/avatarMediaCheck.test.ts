@@ -23,6 +23,8 @@ test('real files: measure dimensions, reject bad ratio/resolution/audio and veri
     const portrait = make('portrait.mp4', '720x1280');
     const result = await checkAvatarMedia(portrait, expected);
     assert.equal(result.width, 720); assert.equal(result.height, 1280); assert.equal(result.hasAudio, true); assert.equal(result.alphaVerified, false);
+    const providerPortrait = await checkAvatarMedia(make('provider-portrait.mp4', '496x864'), { ...expected, resolution: '480p' });
+    assert.equal(providerPortrait.width, 496); assert.equal(providerPortrait.height, 864);
     await assert.rejects(checkAvatarMedia(portrait, { ...expected, ratio: '16:9' }), /画幅/);
     await assert.rejects(checkAvatarMedia(portrait, { ...expected, duration: 8 }), /时长/);
     await assert.rejects(checkAvatarMedia(make('small.mp4', '360x640'), expected), /分辨率/);

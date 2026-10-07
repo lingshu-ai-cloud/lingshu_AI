@@ -35,6 +35,30 @@ test('reference generation never silently falls back to a talking provider', () 
   }
   assert.equal(planDigitalHumanShot({ ...base, requirements: { ...reference, method: 'talking' } }).executable, false, 'talking must not ignore motion and scene constraints');
 });
+test('sentence-first-frame reenactment is executable only after Seedream + Seedance preflight', () => {
+  const requirements: DigitalHumanRequirements = {
+    ...reference,
+    method: 'reenact',
+    replicationMode: 'sentence_first_frame',
+    preferredProvider: 'sd',
+    replacementScope: 'person_and_scene',
+    targetEffect: 'flexible_scene',
+    reference: {
+      ...reference.reference!,
+      cues: [{ id: 'sentence-1', start: 1, end: 5, originalText: '原句', targetText: '目标口播', shotIds: ['shot-1'], personShot: true, compositionClusterId: 'front-medium' }],
+    },
+  };
+  const unavailable = planDigitalHumanShot({ ...base, requirements, seedanceSentenceAvailable: false });
+  assert.equal(unavailable.state, 'preview_only');
+  assert.equal(unavailable.executable, false);
+  assert.equal(unavailable.provider, null);
+  assert.match(unavailable.reasons.join('；'), /尚未通过运行环境预检/);
+
+  const ready = planDigitalHumanShot({ ...base, requirements, seedanceSentenceAvailable: true });
+  assert.equal(ready.state, 'ready');
+  assert.equal(ready.executable, true);
+  assert.equal(ready.provider, 'runway_seedance');
+});
 test('candidate tools reflect the visual operation instead of the shared digital-human category', () => {
   assert.deepEqual(candidateToolsFor({ ...reference, method: 'replace' }), ['local_head_pipeline', 'runway_kling_motion']);
   assert.deepEqual(candidateToolsFor({ ...reference, method: 'reenact' }), ['runway_kling_motion', 'runway_seedance', 'runway_act_two', 'self_hosted_video']);

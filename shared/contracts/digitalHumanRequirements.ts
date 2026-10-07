@@ -2,6 +2,10 @@ export interface DigitalHumanReferenceCue {
   id: string;
   start: number;
   end: number;
+  /** Supplier request duration when the reference beat is shorter than the provider minimum. */
+  generationDurationSeconds?: number;
+  /** Duration retained on the editing timeline after the supplier result is returned. */
+  outputDurationSeconds?: number;
   originalText: string;
   targetText: string;
   shotIds: string[];

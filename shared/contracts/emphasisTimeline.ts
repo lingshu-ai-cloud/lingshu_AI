@@ -10,6 +10,9 @@ export const EMPHASIS_SOURCES = ['transcript', 'vision', 'metadata', 'editor'] a
 export const EMPHASIS_PROFILES = ['d2c_dialogue', 'talking_head', 'factory_process', 'product_showcase'] as const;
 export const EMPHASIS_VISUAL_INTENTS = ['focus_product', 'attention', 'urgency', 'warning', 'cta'] as const;
 export const EMPHASIS_ASSET_INTENTS = ['product_marker', 'attention_marker', 'urgency_badge', 'warning_marker', 'cta_marker', 'fact_label', 'section_marker'] as const;
+export const VISUAL_ROLES = ['surround', 'point_to', 'adjacent', 'caption_companion', 'corner_badge'] as const;
+export const VISUAL_TARGET_KINDS = ['person', 'product', 'machine', 'action', 'caption', 'frame'] as const;
+export const SEMANTIC_ANCHOR_BOUNDARIES = ['start', 'center', 'end'] as const;
 export const EMPHASIS_TIMELINE_SCHEMA_VERSION = 1 as const;
 
 export type EmphasisEventType = typeof EMPHASIS_EVENT_TYPES[number];
@@ -18,17 +21,59 @@ export type EmphasisProfile = typeof EMPHASIS_PROFILES[number];
 export type EmphasisImportance = 1 | 2 | 3;
 export type EmphasisVisualIntent = typeof EMPHASIS_VISUAL_INTENTS[number];
 export type EmphasisAssetIntent = typeof EMPHASIS_ASSET_INTENTS[number];
+export type VisualRole = typeof VISUAL_ROLES[number];
+export type VisualTargetKind = typeof VISUAL_TARGET_KINDS[number];
+export type SemanticAnchorBoundary = typeof SEMANTIC_ANCHOR_BOUNDARIES[number];
 export type NormalizedPoint = { x: number; y: number };
 export type NormalizedBox = { x: number; y: number; width: number; height: number };
+
+export interface CaptionWord {
+  id: string;
+  startMs: number;
+  endMs: number;
+  text: string;
+}
 
 export interface CaptionSegment {
   id: string;
   startMs: number;
   endMs: number;
   text: string;
+  words?: CaptionWord[];
   speakerId?: string;
   /** Inline emphasis only. Keywords do not create EmphasisEvents. */
   keywords?: string[];
+}
+
+export interface SemanticAnchor {
+  cueId: string;
+  wordIds?: string[];
+  phrase?: string;
+  boundary: SemanticAnchorBoundary;
+  offsetMs?: number;
+}
+
+/** Semantic target only. Geometry is resolved later from trusted visual evidence. */
+export interface VisualTarget {
+  kind: VisualTargetKind;
+  targetId?: string;
+  label?: string;
+  confidence: number;
+}
+
+export interface MotionEvent {
+  id: string;
+  emphasisType: EmphasisEventType;
+  anchor: SemanticAnchor;
+  target: VisualTarget;
+  visualRole: VisualRole;
+  /** Server-resolved compatibility window; semantic anchor remains authoritative. */
+  startMs?: number;
+  endMs?: number;
+  /** Accepted only by a trusted deterministic asset-selection boundary. */
+  componentId?: string;
+  /** Accepted only by a trusted deterministic sound-selection boundary. */
+  soundCueId?: string;
 }
 
 export interface EmphasisEvent {
@@ -100,6 +145,8 @@ export interface EmphasisPlanV1 {
   profile: EmphasisProfile;
   captions: CaptionSegment[];
   events: EmphasisEvent[];
+  /** Semantic motion layer. Legacy manifests may omit it. */
+  motionEvents?: MotionEvent[];
   maxEvents?: number;
 }
 
@@ -149,6 +196,69 @@ export function deriveEmphasisIntent(
     : { visualIntent: 'attention', assetIntent: 'attention_marker' };
 }
 
+export function normalizeSemanticAnchor(input: unknown, cueIds?: ReadonlySet<string>): SemanticAnchor | null {
+  const raw = asRecord(input);
+  const cueId = cleanId(raw.cueId, '');
+  if (!cueId || (cueIds && !cueIds.has(cueId))) return null;
+  const boundary = SEMANTIC_ANCHOR_BOUNDARIES.includes(String(raw.boundary) as SemanticAnchorBoundary)
+    ? raw.boundary as SemanticAnchorBoundary : 'center';
+  const wordIds = [...new Set((Array.isArray(raw.wordIds) ? raw.wordIds : [])
+    .map(item => cleanId(item, '')).filter(Boolean))].slice(0, 64);
+  const phrase = cleanText(raw.phrase, 160);
+  const offsetMs = Number.isFinite(Number(raw.offsetMs))
+    ? Math.round(clamp(raw.offsetMs, -5_000, 5_000, 0)) : undefined;
+  return { cueId, ...(wordIds.length ? { wordIds } : {}), ...(phrase ? { phrase } : {}), boundary,
+    ...(offsetMs ? { offsetMs } : {}) };
+}
+
+export function normalizeVisualTarget(input: unknown): VisualTarget | null {
+  const raw = asRecord(input);
+  const kind = VISUAL_TARGET_KINDS.includes(String(raw.kind) as VisualTargetKind)
+    ? raw.kind as VisualTargetKind : null;
+  const confidence = clamp(raw.confidence, 0, 1, 0);
+  if (!kind || confidence < .5) return null;
+  const targetId = cleanId(raw.targetId, '');
+  const label = cleanText(raw.label, 120);
+  return { kind, ...(targetId ? { targetId } : {}), ...(label ? { label } : {}),
+    confidence: Number(confidence.toFixed(4)) };
+}
+
+function roleSupportsTarget(role: VisualRole, kind: VisualTargetKind): boolean {
+  if (role === 'caption_companion') return kind === 'caption';
+  if (role === 'corner_badge') return kind === 'frame';
+  if (role === 'surround') return ['person', 'product', 'machine', 'action'].includes(kind);
+  if (role === 'point_to') return ['product', 'machine', 'action'].includes(kind);
+  return kind !== 'caption';
+}
+
+export function normalizeMotionEvents(
+  input: unknown,
+  options: {
+    cueIds?: ReadonlySet<string>;
+    allowedComponentIds?: ReadonlySet<string>;
+    allowedSoundCueIds?: ReadonlySet<string>;
+  } = {},
+): MotionEvent[] {
+  return (Array.isArray(input) ? input : []).slice(0, 500).flatMap((value, index): MotionEvent[] => {
+    const raw = asRecord(value);
+    const emphasisType = EMPHASIS_EVENT_TYPES.includes(String(raw.emphasisType) as EmphasisEventType)
+      ? raw.emphasisType as EmphasisEventType : null;
+    const visualRole = VISUAL_ROLES.includes(String(raw.visualRole) as VisualRole)
+      ? raw.visualRole as VisualRole : null;
+    const anchor = normalizeSemanticAnchor(raw.anchor, options.cueIds);
+    const target = normalizeVisualTarget(raw.target);
+    if (!emphasisType || !visualRole || !anchor || !target || !roleSupportsTarget(visualRole, target.kind)) return [];
+    const requestedComponentId = cleanId(raw.componentId, '');
+    const requestedSoundCueId = cleanId(raw.soundCueId, '');
+    const componentId = requestedComponentId && options.allowedComponentIds?.has(requestedComponentId)
+      ? requestedComponentId : '';
+    const soundCueId = requestedSoundCueId && options.allowedSoundCueIds?.has(requestedSoundCueId)
+      ? requestedSoundCueId : '';
+    return [{ id: cleanId(raw.id, `motion-${index + 1}`), emphasisType, anchor, target, visualRole,
+      ...(componentId ? { componentId } : {}), ...(soundCueId ? { soundCueId } : {}) }];
+  });
+}
+
 export function emphasisBudgetForDuration(durationMs: number): EmphasisBudget {
   const seconds = Math.max(0, finite(durationMs, 0)) / 1_000;
   if (seconds <= 15) return { min: 2, max: 4 };
@@ -169,10 +279,18 @@ export function normalizeCaptionSegments(input: unknown, durationMs: number): Ca
     const keywords = [...new Set((Array.isArray(raw.keywords) ? raw.keywords : [])
       .map(item => cleanText(item, 40)).filter(Boolean))].filter(item => text.includes(item)).slice(0, 12);
     const speakerId = cleanId(raw.speakerId, '');
+    const words = (Array.isArray(raw.words) ? raw.words : []).slice(0, 500).flatMap((item, wordIndex): CaptionWord[] => {
+      const word = asRecord(item);
+      const wordText = cleanText(word.text, 80);
+      const wordStartMs = Math.round(clamp(word.startMs, startMs, endMs, startMs));
+      const wordEndMs = Math.round(clamp(word.endMs, wordStartMs, endMs, wordStartMs));
+      if (!wordText || wordEndMs <= wordStartMs) return [];
+      return [{ id: cleanId(word.id, `word-${index + 1}-${wordIndex + 1}`), startMs: wordStartMs, endMs: wordEndMs, text: wordText }];
+    });
     return {
       id: cleanId(raw.id, `caption-${index + 1}`),
       startMs: Math.round(startMs), endMs: Math.round(endMs), text,
-      ...(speakerId ? { speakerId } : {}), ...(keywords.length ? { keywords } : {}),
+      ...(words.length ? { words } : {}), ...(speakerId ? { speakerId } : {}), ...(keywords.length ? { keywords } : {}),
     } satisfies CaptionSegment;
   }).filter((item): item is CaptionSegment => Boolean(item))
     .sort((left, right) => left.startMs - right.startMs || left.endMs - right.endMs);
@@ -354,16 +472,19 @@ export function normalizeEmphasisPlan(
     ? raw.profile as EmphasisProfile : 'talking_head';
   const defaultBudget = emphasisBudgetForDuration(durationMs);
   const maxEvents = Math.round(clamp(raw.maxEvents, 0, 500, defaultBudget.max));
+  const captions = normalizeCaptionSegments(raw.captions, durationMs);
+  const motionEvents = normalizeMotionEvents(raw.motionEvents, { cueIds: new Set(captions.map(caption => caption.id)) });
   return {
     schemaVersion: EMPHASIS_TIMELINE_SCHEMA_VERSION,
     profile,
-    captions: normalizeCaptionSegments(raw.captions, durationMs),
+    captions,
     events: selectEmphasisTimeline({
       durationMs,
       candidates: Array.isArray(raw.events) ? raw.events : Array.isArray(raw.emphasisEvents) ? raw.emphasisEvents : [],
       placementWindows,
       budget: { max: maxEvents },
     }),
+    ...(motionEvents.length ? { motionEvents } : {}),
     maxEvents,
   };
 }

@@ -2,7 +2,7 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { RENDERER_VERSION, advancedEvents, intersects, resolveOverlayLayout, resolveOverlayPlacement } = require('./remotion-overlay.cjs');
+const { MOTION_ASSET_REGISTRY, RENDERER_VERSION, advancedEvents, intersects, normalizeMotionRole, resolveOverlayLayout, resolveOverlayPlacement, semanticAssetKind } = require('./remotion-overlay.cjs');
 const { normalizeEmphasisPlan } = require('./emphasis-composition.cjs');
 
 const selected = advancedEvents({ events: [
@@ -50,8 +50,48 @@ const crossLayer = advancedEvents(normalizeEmphasisPlan({ profile: 'product_show
   { id: 'attention-intent', type: 'key_fact', assetIntent: 'attention', startMs: 2100, endMs: 2700, text: '重点', importance: 3, confidence: 1, source: 'editor' },
   { id: 'cta-intent', type: 'key_fact', assetIntent: 'cta_marker', startMs: 2800, endMs: 3400, text: '咨询', importance: 3, confidence: 1, source: 'editor' },
 ] }, 4));
-assert.deepEqual(crossLayer.map(event => event.assetKind), ['warning', 'urgency', 'reveal', 'key_fact', 'cta'], 'shared asset intents select concrete desktop assets');
-assert.match(RENDERER_VERSION, /^semantic-assets-v\d+-cropped-layout$/, 'cache namespace changes when cropped layout renderer is introduced');
+assert.deepEqual(crossLayer.map(event => event.assetKind), ['warning', 'urgency', 'urgency', 'warning', 'cta'], 'detached events select non-rays assets');
+assert.match(RENDERER_VERSION, /^semantic-assets-v\d+-motion-roles$/, 'cache namespace changes with the component registry');
+assert.deepEqual(Object.keys(MOTION_ASSET_REGISTRY), ['surround_rays', 'pointer_shard', 'adjacent_badge', 'caption_accent', 'corner_badge']);
+const target = { subjectBox: { x: .3, y: .2, width: .2, height: .25 } };
+assert.equal(normalizeMotionRole({ ...target, visualRole: 'surround', assetFamily: 'rays' }), 'surround');
+assert.equal(normalizeMotionRole({ visualRole: 'surround', assetFamily: 'rays' }), 'corner_badge', 'surround fails closed without a target');
+assert.equal(normalizeMotionRole({ ...target, visualRole: 'surround', assetFamily: 'corner_marker' }), 'adjacent', 'non-rays family cannot render surround');
+assert.equal(normalizeMotionRole({ ...target, visualRole: 'point_to' }), 'point_to');
+assert.equal(normalizeMotionRole({ ...target, visualRole: 'adjacent' }), 'adjacent');
+assert.equal(normalizeMotionRole({ visualRole: 'caption_companion' }), 'caption_companion');
+assert.equal(normalizeMotionRole({ visualRole: 'corner_badge' }), 'corner_badge');
+assert.equal(semanticAssetKind({ type: 'reveal', assetIntent: 'product_marker' }), 'urgency', 'detached graphic never selects yellow rays');
+assert.equal(semanticAssetKind({ ...target, type: 'reveal', assetIntent: 'product_marker', visualRole: 'surround', assetFamily: 'rays' }), 'reveal');
+const serverMotion = advancedEvents({ events: [{ id: 'fact-1', type: 'key_fact', startMs: 1000, endMs: 2400,
+  text: '独立包装', importance: 3, confidence: .9, source: 'transcript' }], motionEvents: [{
+  id: 'motion-fact-1', emphasisType: 'key_fact', startMs: 1100, endMs: 2100,
+  anchor: { cueId: 'cue-1', phrase: '独立包装', boundary: 'center' },
+  target: { kind: 'caption', label: '独立包装', confidence: .9 }, visualRole: 'caption_companion',
+}] });
+assert.equal(serverMotion.filter(event => event.id === 'motion-fact-1').length, 1, 'motion event merges with its base event instead of duplicating it');
+assert.deepEqual({ role: serverMotion[0].motionRole, startMs: serverMotion[0].startMs, endMs: serverMotion[0].endMs,
+  text: serverMotion[0].text }, { role: 'caption_companion', startMs: 1100, endMs: 2100, text: '独立包装' });
+assert.equal('visualRole' in serverMotion[0], false, 'the model role is normalized into renderer-owned motionRole');
+const detachedSurround = advancedEvents({ motionEvents: [{
+  id: 'detached-surround', emphasisType: 'reveal', startMs: 0, endMs: 900,
+  anchor: { cueId: 'cue-rays', phrase: '产品出现', boundary: 'center' },
+  target: { kind: 'product', label: '产品', confidence: .9 }, visualRole: 'surround',
+}] });
+assert.ok(detachedSurround.every(event => event.assetKind !== 'reveal' && event.assetKind !== 'key_fact'),
+  'a surround request without target geometry never reaches Remotion as detached rays');
+const qaDensity = advancedEvents({ events: [
+  { id: 'b', type: 'key_fact', startMs: 1000, endMs: 2000, text: '低优先级', importance: 1, confidence: .9,
+    semanticEvidence: { cueId: 'cue-low' }, presentationMode: 'graphic_only', visualRole: 'surround', assetFamily: 'rays', shotId: 'shot', subjectBox: target.subjectBox },
+  { id: 'd', type: 'key_fact', startMs: 1200, endMs: 2200, text: '高优先级', importance: 3, confidence: .9,
+    semanticEvidence: { cueId: 'cue-high' }, presentationMode: 'graphic_only', visualRole: 'surround', assetFamily: 'rays', shotId: 'shot', subjectBox: target.subjectBox },
+  { id: 'f', type: 'key_fact', startMs: 4500, endMs: 5200, text: '冷却中', importance: 2, confidence: .9,
+    semanticEvidence: { cueId: 'cue-repeat' }, presentationMode: 'graphic_only', visualRole: 'surround', assetFamily: 'rays', shotId: 'shot', subjectBox: target.subjectBox },
+  { id: 'h', type: 'key_fact', startMs: 5400, endMs: 6100, text: '冷却后', importance: 1, confidence: .9,
+    semanticEvidence: { cueId: 'cue-later' }, presentationMode: 'graphic_only', visualRole: 'surround', assetFamily: 'rays', shotId: 'shot', subjectBox: target.subjectBox },
+] });
+assert.deepEqual(qaDensity.map(event => event.id), ['d', 'h'],
+  'advancedEvents applies same-screen priority and four-second asset cooldown before rendering');
 const assetComponent = fs.readFileSync(path.join(__dirname, 'remotion-overlay/semantic-assets.tsx'), 'utf8');
 assert.match(assetComponent, /from '@remotion\/gif'/, 'animated originals use video-frame-synchronized GIF playback');
 for (const file of ['burst-rays-yellow-static.png', 'burst-rays-yellow.gif', 'emphasis-rays-yellow.gif', 'lightning-orange.gif', 'megaphone-blue-yellow.gif']) {
@@ -59,9 +99,15 @@ for (const file of ['burst-rays-yellow-static.png', 'burst-rays-yellow.gif', 'em
   assert.match(assetComponent, new RegExp(file.replace('.', '\\.')), `${file} is mapped by the semantic component`);
 }
 assert.match(assetComponent, /if \(failed\) return <SvgFallback/, 'SVG artwork is restricted to load failure fallback');
+for (const role of ['surround', 'point_to', 'adjacent', 'caption_companion', 'corner_badge']) assert.match(assetComponent, new RegExp(`${role}:`));
+assert.match(assetComponent, /useCurrentFrame\(\)/, 'parameterized components are driven by Remotion frames');
+assert.doesNotMatch(assetComponent, /animation\s*:/, 'production components do not use CSS animation');
+const rootComponent = fs.readFileSync(path.join(__dirname, 'remotion-overlay/root.tsx'), 'utf8');
+assert.doesNotMatch(rootComponent, /transform:\s*`/, 'root component uses frame-driven scale and translate properties');
 
 const subjectBox = { x: .38, y: .25, width: .24, height: .30 };
-const subjectLayout = resolveOverlayLayout({ id: 'subject-layout', type: 'key_fact', text: '核心事实', subjectBox });
+const subjectLayout = resolveOverlayLayout({ id: 'subject-layout', type: 'key_fact', text: '核心事实', subjectBox,
+  visualRole: 'surround', assetFamily: 'rays' });
 assert.equal(intersects(subjectLayout.asset, subjectBox, .008), false, 'decoration rectangle clears the full subject box');
 assert.equal(intersects(subjectLayout.label, subjectBox, .012), false, 'label rectangle clears the full subject box');
 assert.equal(intersects(subjectLayout.asset, subjectLayout.label, .006), false, 'asset and label use independent non-overlapping rectangles');

@@ -31,8 +31,13 @@ export function sentenceCueQualityFromEvidence(input: {
   const technicalEvidence = technical
     ? `独立 FFmpeg：对比 ${technical.comparedFrames} 帧，时长差 ${technical.durationDeltaFrames} 帧，运动差 ${technical.temporalMotionDifference.toFixed(2)}，停帧差异 ${(technical.freezeMismatchRatio * 100).toFixed(1)}%`
     : `独立 FFmpeg 未完成：${input.technicalError || '无可用证据'}`;
-  const motionAnomaly = Boolean(technical && (technical.comparedFrames < 5 || technical.temporalMotionDifference > 8 || technical.freezeMismatchRatio > 0.05));
-  const audioStructuralFailure = Boolean(technical && (!technical.candidate.hasAudio || technical.durationDeltaFrames > 1));
+  // Photo-talking intentionally creates fresh gestures from a still target frame. A moderate
+  // difference from the source motion is expected; reserve automatic failure for clear outliers.
+  const motionAnomaly = Boolean(technical && (technical.comparedFrames < 5 || technical.temporalMotionDifference > 25 || technical.freezeMismatchRatio > 0.1));
+  // Generated-avatar slots follow the provider material's measured duration. A
+  // duration difference from the reference is therefore not an audio-sync
+  // defect; only a missing candidate audio track is a structural failure here.
+  const audioStructuralFailure = Boolean(technical && !technical.candidate.hasAudio);
   const visualPoseAnomaly = Boolean(visual && (visual.posePairCount < 5 || visual.normalizedPoseError === null || visual.normalizedPoseError > 0.08
     || (visual.handPairCount > 0 && (visual.handPckAt008 === null || visual.handPckAt008 < 0.7))
     || (visual.wristPosePairCount > 0 && (visual.wristSeparationMae === null || visual.wristSeparationMae > 0.35))));
@@ -58,7 +63,7 @@ export function sentenceCueQualityFromEvidence(input: {
   let audioSync = pending('audio_sync', technical
     ? `${technicalEvidence}；候选音轨=${technical.candidate.hasAudio ? '有' : '无'}；${lipEvidence}。结构检查不能代替口型同步证据。`
     : `${technicalEvidence}；${lipEvidence}`);
-  if (audioStructuralFailure) audioSync = decided('audio_sync', false, `${technicalEvidence}；候选缺少音轨或时长偏差超过 1 帧。`);
+  if (audioStructuralFailure) audioSync = decided('audio_sync', false, `${technicalEvidence}；候选缺少音轨。`);
   else if (input.lipSync) audioSync = decided('audio_sync', input.lipSync.passed, `${lipEvidence}${input.lipSync.failures.length ? `；${input.lipSync.failures.join('；')}` : ''}`);
 
   let reuseRisk = pending('reuse_risk', technicalEvidence);

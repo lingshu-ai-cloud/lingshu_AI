@@ -91,7 +91,9 @@ export function normalizeFreeCreationState(value: unknown): FreeCreationState {
     manualWorkflow: true,
     currentStep: [1, 2, 3].includes(Number(source.currentStep)) ? Number(source.currentStep) as 1 | 2 | 3 : 1,
     hookSource,
-    hookMaterialId: hookSource === 'none' || hookSource === 'ai' ? '' : clean(source.hookMaterialId, 200),
+    // AI hooks are real materials after the user adopts the generated video.
+    // Keep that identity so a draft can restore its preview and provenance.
+    hookMaterialId: hookSource === 'none' ? '' : clean(source.hookMaterialId, 200),
     brief: {
       productIds: cleanList(brief.productIds, 30), goal: clean(brief.goal), audience: clean(brief.audience),
       platform: clean(brief.platform, 80), language: clean(brief.language, 40), sellingPoints: clean(brief.sellingPoints, 5_000),

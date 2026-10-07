@@ -32,6 +32,14 @@ test('obvious technical anomalies fail only the affected cue', () => {
   assert.equal(result.checks.find(check => check.key === 'identity')?.status, 'pending');
 });
 
+test('moderate generated gesture differences do not block photo talking', () => {
+  const result = sentenceCueQualityFromEvidence({ cueId: 'c2b', mediaEvidence: 'media ok', technical: {
+    ...technical, temporalMotionDifference: 12.86, freezeMismatchRatio: 0,
+  } });
+  assert.equal(result.checks.find(check => check.key === 'motion')?.status, 'pending');
+  assert.equal(result.state, 'manual_review');
+});
+
 test('high-confidence semantic evidence can decide identity and product while lip sync stays pending', () => {
   const result = sentenceCueQualityFromEvidence({ cueId: 'c3', mediaEvidence: 'media ok', technical, semantic: { version: 1, model: 'qwen-test',
     identity: { status: 'pass', confidence: .91, evidence: '人物可见特征一致', frameRefs: ['presenter', 'candidate_start'] },
@@ -65,4 +73,16 @@ test('provider or structural audio evidence alone never passes lip sync', () => 
     lipSyncError: '官方 SyncNet 模型未安装' });
   assert.equal(result.checks.find(check => check.key === 'audio_sync')?.status, 'pending');
   assert.equal(result.state, 'manual_review');
+});
+
+test('a generated clip duration that differs from the reference cue does not fail audio sync', () => {
+  const result = sentenceCueQualityFromEvidence({ cueId: 'c6', mediaEvidence: '4.200s · audio=true', technical: {
+    ...technical,
+    source: { ...technical.source, duration: 5.6 },
+    candidate: { ...technical.candidate, duration: 4.2, hasAudio: true },
+    durationDeltaFrames: 34,
+  } });
+  assert.equal(result.checks.find(check => check.key === 'audio_sync')?.status, 'pending',
+    'reference timing is composition evidence; generated speech keeps its measured duration and awaits lip-sync review');
+  assert.notEqual(result.state, 'failed');
 });

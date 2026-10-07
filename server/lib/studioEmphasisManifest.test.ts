@@ -146,3 +146,23 @@ test('passes semantic intents and only trusted subject geometry through the mani
     subjectBox: { x: .3, y: .25, width: .36, height: .55 },
   });
 });
+
+test('emits server-resolved semantic motion while stripping model-selected assets and coordinates', () => {
+  const plan = buildStudioEmphasisPlan({
+    durationSeconds: 5,
+    subtitles: { cues: [{ start: 0, end: 3, text: '面膜采用独立包装' }] },
+    emphasisPlan: {
+      events: [{ id: 'fact', type: 'key_fact', startMs: 0, endMs: 1_800, text: '独立包装', importance: 3, confidence: .95, source: 'editor' }],
+      motionEvents: [{ id: 'gemini-fact', emphasisType: 'key_fact',
+        anchor: { cueId: 'caption-1', phrase: '独立包装', boundary: 'start' },
+        target: { kind: 'caption', label: '独立包装', confidence: .9, box: { x: .1, y: .2, width: .3, height: .2 } },
+        visualRole: 'caption_companion', componentId: '/tmp/spark.gif', soundCueId: 'boom', x: .8, y: .1 }],
+    },
+  });
+  assert.deepEqual(plan.motionEvents, [{
+    id: 'gemini-fact', emphasisType: 'key_fact',
+    anchor: { cueId: 'caption-1', phrase: '独立包装', boundary: 'start' },
+    target: { kind: 'caption', label: '独立包装', confidence: .9 }, visualRole: 'caption_companion',
+    startMs: 1_500, endMs: 2_400,
+  }]);
+});

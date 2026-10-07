@@ -81,6 +81,10 @@ test('supplier can fetch only a signed tenant-local object over the media route'
     await objectStorageUpload({ key, body: Buffer.from('spoken audio'), contentType: 'audio/mpeg' });
     const signed = await objectStorageSignedGetUrl(key);
     assert.equal((await fetch(`${origin}${signed}`)).status, 200);
+    const firstFrameKey = 'first-frames/tenants/tenant-a/video-1/frame.jpg';
+    await objectStorageUpload({ key: firstFrameKey, body: Buffer.from('image'), contentType: 'image/jpeg' });
+    const signedFirstFrame = await objectStorageSignedGetUrl(firstFrameKey);
+    assert.equal((await fetch(`${origin}${signedFirstFrame}`)).status, 200);
     assert.equal((await fetch(`${origin}${signed.split('?')[0]}`)).status, 401);
     const forged = signAssetUrl(signed.split('?')[0]!, 'tenant-b');
     assert.equal((await fetch(`${origin}${forged}`)).status, 404);
@@ -101,6 +105,9 @@ test('local storage gives suppliers a signed HTTPS URL only with an explicit pub
     const signed = new URL(await objectStorageSignedGetUrl(materialAssetObjectKey('tenant-a', 'voice.mp3')));
     assert.equal(signed.origin, 'https://dev-assets.example');
     assert.equal(verifyAssetToken(signed.searchParams.get('assetToken'), signed.pathname)?.tenantId, 'tenant-a');
+    const nested = new URL(await objectStorageSignedGetUrl('first-frames/tenants/tenant-a/video-1/frame.jpg'));
+    assert.equal(nested.origin, 'https://dev-assets.example');
+    assert.equal(verifyAssetToken(nested.searchParams.get('assetToken'), nested.pathname)?.tenantId, 'tenant-a');
   }
   finally { if (previous === undefined) delete process.env.LOCAL_OBJECT_STORAGE_PUBLIC_BASE_URL; else process.env.LOCAL_OBJECT_STORAGE_PUBLIC_BASE_URL = previous; }
 });

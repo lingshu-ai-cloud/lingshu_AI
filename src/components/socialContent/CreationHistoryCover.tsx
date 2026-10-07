@@ -4,7 +4,7 @@ import { creationHistoryCoverSources } from '../../lib/creationHistoryCover';
 import { authHeader } from '../../lib/auth';
 import { resolveInspirationPlaybackUrl } from '../../lib/inspirationVideoPlayback';
 
-export default function CreationHistoryCover({ project, className = 'h-16 w-24', firstFrameRef }: { project: StudioProject; className?: string; firstFrameRef?: string }) {
+export default function CreationHistoryCover({ project, className = 'h-16 w-24', firstFrameRef, fit = 'cover' }: { project: StudioProject; className?: string; firstFrameRef?: string; fit?: 'cover' | 'contain' }) {
   const container = useRef<HTMLSpanElement>(null);
   const [visible, setVisible] = useState(false);
   const [index, setIndex] = useState(0);
@@ -50,8 +50,8 @@ export default function CreationHistoryCover({ project, className = 'h-16 w-24',
     } catch { /* A decoded cross-origin video frame remains visible when canvas access is blocked. */ }
   };
   return <span ref={container} className={`relative block shrink-0 overflow-hidden rounded-lg bg-slate-900 ${className}`}>
-    {captured || url && candidate?.kind === 'image' ? <img src={captured || url} alt={`${project.title}首帧封面`} onError={next} className="h-full w-full object-cover" />
-      : url && candidate?.kind === 'video' ? <video src={url} muted playsInline preload="auto" aria-label={`${project.title}首帧封面`} onError={next} onSeeked={event => capture(event.currentTarget)} onLoadedMetadata={event => { const video = event.currentTarget; video.pause(); video.currentTime = Math.min(.01, Number.isFinite(video.duration) ? Math.max(0, video.duration - .01) : .01); }} className="pointer-events-none h-full w-full object-cover" />
+    {captured || url && candidate?.kind === 'image' ? <img src={captured || url} alt={`${project.title}首帧封面`} onError={next} className={`h-full w-full ${fit === 'contain' ? 'object-contain' : 'object-cover'}`} />
+      : url && candidate?.kind === 'video' ? <video src={url} muted playsInline preload="auto" aria-label={`${project.title}首帧封面`} onError={next} onSeeked={event => capture(event.currentTarget)} onLoadedMetadata={event => { const video = event.currentTarget; video.pause(); video.currentTime = Math.min(.01, Number.isFinite(video.duration) ? Math.max(0, video.duration - .01) : .01); }} className={`pointer-events-none h-full w-full ${fit === 'contain' ? 'object-contain' : 'object-cover'}`} />
       : <span className="flex h-full items-center justify-center text-[10px] text-white/70">{candidate ? '正在提取首帧' : '首帧暂不可用'}</span>}
   </span>;
 }

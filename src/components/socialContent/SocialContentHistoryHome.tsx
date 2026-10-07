@@ -6,7 +6,6 @@ import {
   CirclePlay,
   Clapperboard,
   Clock3,
-  FileVideo2,
   Loader2,
   Plus,
   Sparkles,
@@ -14,6 +13,7 @@ import {
 } from 'lucide-react';
 import { studioApi, type StudioProject } from '../../lib/studioApi';
 import CreationMaterialHistory from './CreationMaterialHistory';
+import CreationHistoryCover from './CreationHistoryCover';
 import { useModalFocus } from '../../hooks/useModalFocus';
 
 type CreationFilter = 'all' | 'viral_replication' | 'free_creation';
@@ -125,7 +125,13 @@ export default function SocialContentHistoryHome({ onRequestCreate }: { onReques
   const filtered = useMemo(() => filter === 'all'
     ? projects
     : projects.filter(project => projectCategory(project) === filter), [filter, projects]);
-  const featuredProject = projects.find(project => projectHasAcceptedRender(project));
+  const featuredProject = [...projects].sort((left, right) => new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime())[0];
+  const featuredPreviewUrl = featuredProject ? projectPreviewUrl(featuredProject) : '';
+  const openFeatured = () => {
+    if (!featuredProject) return;
+    if (featuredPreviewUrl) setPreviewVideoOpen(true);
+    else openProject(featuredProject);
+  };
   const itemCount = filtered.length;
   const pageCount = Math.max(1, Math.ceil(itemCount / PAGE_SIZE));
   const firstProjectIndex = (page - 1) * PAGE_SIZE;
@@ -143,17 +149,17 @@ export default function SocialContentHistoryHome({ onRequestCreate }: { onReques
       {featuredProject && <section className="overflow-hidden rounded-3xl border border-emerald-200 bg-[#102d25] text-white shadow-[0_20px_50px_rgba(16,45,37,0.14)]">
           <div className="grid lg:grid-cols-[minmax(320px,0.9fr)_minmax(0,1.35fr)]">
             <div className="flex flex-col justify-center p-6 sm:p-8">
-              <span className="inline-flex w-fit items-center gap-1.5 rounded-full bg-emerald-400/15 px-3 py-1.5 text-[10px] font-black text-emerald-200"><Sparkles size={12} />最新成片</span>
+              <span className="inline-flex w-fit items-center gap-1.5 rounded-full bg-emerald-400/15 px-3 py-1.5 text-[10px] font-black text-emerald-200"><Sparkles size={12} />{featuredPreviewUrl ? '最新成片' : '最新草稿'}</span>
               <h2 className="mt-5 text-2xl font-black leading-tight sm:text-3xl">{featuredProject.title}</h2>
-              <p className="mt-3 max-w-lg text-sm leading-6 text-emerald-50/75">{projectCategory(featuredProject) === 'viral_replication' ? '爆款复刻模式' : '自由创作模式'} · 已验收成片。点击即可直接预览完整成片。</p>
+              <p className="mt-3 max-w-lg text-sm leading-6 text-emerald-50/75">{projectCategory(featuredProject) === 'viral_replication' ? '爆款复刻模式' : '自由创作模式'} · {featuredPreviewUrl ? `${statusLabel(featuredProject, featuredPreviewUrl)}。点击即可预览完整成片。` : '草稿首帧预览，点击继续制作。'}</p>
               <div className="mt-6 flex flex-wrap items-center gap-3">
-                <button type="button" onClick={() => setPreviewVideoOpen(true)} className="inline-flex items-center gap-2 rounded-xl bg-emerald-400 px-4 py-2.5 text-xs font-black text-emerald-950 hover:bg-emerald-300"><CirclePlay size={15} />预览成片</button>
+                <button type="button" onClick={openFeatured} className="inline-flex items-center gap-2 rounded-xl bg-emerald-400 px-4 py-2.5 text-xs font-black text-emerald-950 hover:bg-emerald-300"><CirclePlay size={15} />{featuredPreviewUrl ? '预览成片' : '继续制作'}</button>
                 <span className="text-[11px] font-semibold text-emerald-100/65">更新于 {dateLabel(featuredProject.updatedAt)}</span>
               </div>
             </div>
-            <div className="min-h-[360px] bg-black lg:min-h-[430px]">
-              <button type="button" onClick={() => setPreviewVideoOpen(true)} className="group relative block h-full min-h-[360px] w-full lg:min-h-[430px]" aria-label={`预览${featuredProject.title}成片`}>
-                <video src={`${projectPreviewUrl(featuredProject)}#t=0.1`} muted playsInline preload="metadata" className="pointer-events-none h-full max-h-[520px] w-full object-contain" aria-hidden="true" />
+            <div className="relative h-[360px] overflow-hidden bg-black lg:h-[430px]">
+              <button type="button" onClick={openFeatured} className="group relative block h-full w-full" aria-label={`${featuredPreviewUrl ? '预览' : '继续制作'}${featuredProject.title}`}>
+                <CreationHistoryCover project={featuredProject} fit="contain" className="absolute inset-0 h-full w-full" />
                 <span className="absolute inset-0 flex items-center justify-center bg-black/5 transition group-hover:bg-black/20"><span className="flex h-16 w-16 items-center justify-center rounded-full bg-white/90 text-emerald-900 shadow-xl transition group-hover:scale-105"><CirclePlay size={34} /></span></span>
               </button>
             </div>
@@ -192,7 +198,7 @@ export default function SocialContentHistoryHome({ onRequestCreate }: { onReques
               return (
                 <button key={project.id} type="button" onClick={() => openProject(project)} className="group overflow-hidden rounded-2xl border border-slate-200 bg-white text-left shadow-sm transition hover:-translate-y-0.5 hover:border-emerald-300 hover:shadow-lg">
                   <span className="relative flex aspect-[16/10] items-center justify-center overflow-hidden bg-gradient-to-br from-slate-800 via-slate-900 to-emerald-950">
-                    {previewUrl ? <video src={`${previewUrl}#t=0.1`} muted preload="metadata" className="h-full w-full object-cover opacity-90" /> : <FileVideo2 size={34} className="text-white/45" />}
+                    <CreationHistoryCover project={project} className="absolute inset-0 h-full w-full" />
                     <span className="absolute left-3 top-3 rounded-full bg-black/55 px-2.5 py-1 text-[9px] font-black text-white backdrop-blur">{category === 'viral_replication' ? '爆款复刻模式' : '自由创作模式'}</span>
                     {previewUrl && <span className="absolute inset-0 flex items-center justify-center bg-black/0 transition group-hover:bg-black/20"><CirclePlay size={36} className="text-white opacity-0 drop-shadow transition group-hover:opacity-100" /></span>}
                   </span>

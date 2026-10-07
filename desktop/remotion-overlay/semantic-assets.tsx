@@ -4,6 +4,15 @@ import { Img, interpolate, staticFile, useCurrentFrame, useVideoConfig } from 'r
 import cropData from './asset-crops.json';
 
 export type SemanticAssetKind = 'key_fact' | 'reveal' | 'warning' | 'urgency' | 'cta';
+export type MotionRole = 'surround' | 'point_to' | 'adjacent' | 'caption_companion' | 'corner_badge';
+
+export const ASSET_REGISTRY: Record<MotionRole, { id: string; family: 'rays' | 'directional' | 'badge'; allowedRoles: MotionRole[] }> = {
+  surround: { id: 'surround_rays', family: 'rays', allowedRoles: ['surround'] },
+  point_to: { id: 'pointer_shard', family: 'directional', allowedRoles: ['point_to'] },
+  adjacent: { id: 'adjacent_badge', family: 'badge', allowedRoles: ['adjacent'] },
+  caption_companion: { id: 'caption_accent', family: 'directional', allowedRoles: ['caption_companion'] },
+  corner_badge: { id: 'corner_badge', family: 'badge', allowedRoles: ['corner_badge'] },
+};
 
 const Rays: React.FC<{ progress: number; color?: string }> = ({ progress, color = '#FFE531' }) => {
   const rays = Array.from({ length: 10 }, (_, index) => index * 36);
@@ -38,6 +47,29 @@ const Megaphone: React.FC<{ progress: number }> = ({ progress }) => <svg viewBox
   </g>
 </svg>;
 
+const RoleGraphic: React.FC<{ role: Exclude<MotionRole, 'surround'>; progress: number; text: string; direction: string }> = ({ role, progress, text, direction }) => {
+  const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
+  const breathe = 1 + Math.sin(frame / fps * Math.PI * 2.4) * .025;
+  const rotate = direction === 'left' ? 180 : direction === 'top' ? -90 : direction === 'bottom' ? 90 : 0;
+  const number = text.match(/\d+(?:[.,]\d+)?%?/)?.[0] || (role === 'corner_badge' ? '!' : '•');
+  if (role === 'point_to') return <svg viewBox="0 0 240 180" width="100%" height="100%"><g opacity={progress}
+    transform={`translate(120 90) rotate(${rotate}) scale(${(.72 + progress * .28) * breathe})`}>
+    <path d="M-98-25H32V-58L104 0 32 58V25H-98Z" fill="#FFE36A" stroke="#3B3420" strokeWidth="8" strokeLinejoin="round" />
+    <path d="M-80 0H40" stroke="white" strokeWidth="8" strokeLinecap="round" opacity=".7" /></g></svg>;
+  if (role === 'caption_companion') return <svg viewBox="0 0 260 100" width="100%" height="100%"><g opacity={progress}
+    transform={`translate(10 12) scale(${.82 + progress * .18},1)`}>
+    <path d="M4 60C55 30 132 82 238 38" fill="none" stroke="#FFE36A" strokeWidth="13" strokeLinecap="round" />
+    <path d="m218 13 11 16 20 2-15 13 4 20-18-10-18 10 5-20-15-13 20-2Z" fill="#FFF4A5" /></g></svg>;
+  const corner = role === 'corner_badge';
+  return <svg viewBox="0 0 220 180" width="100%" height="100%"><g opacity={progress}
+    transform={`translate(110 90) scale(${(.68 + progress * .32) * breathe})`}>
+    {corner ? <path d="M-91-62H65L91-36V62H-91Z" fill="#FFF7D1" stroke="#403A2B" strokeWidth="7" strokeLinejoin="round" />
+      : <circle r="72" fill="#FFE36A" stroke="#403A2B" strokeWidth="8" />}
+    <text x="0" y="17" textAnchor="middle" fontFamily="Source Han Sans SC, sans-serif" fontWeight="800"
+      fontSize={number.length > 4 ? 42 : 58} fill="#302C24">{number}</text></g></svg>;
+};
+
 const FILES: Record<SemanticAssetKind, { file: string; animated: boolean }> = {
   key_fact: { file: 'burst-rays-yellow-static.png', animated: false },
   reveal: { file: 'burst-rays-yellow.gif', animated: true },
@@ -65,8 +97,9 @@ const SvgFallback: React.FC<{ kind: SemanticAssetKind; progress: number }> = ({ 
  * deliberately mounted only after an asset load error. @remotion/gif selects
  * the image from the current video frame, so rendering does not depend on the
  * browser's wall clock. */
-export const SemanticAsset: React.FC<{ kind: SemanticAssetKind; progress: number }> = ({ kind, progress }) => {
+export const SemanticAsset: React.FC<{ kind: SemanticAssetKind; role: MotionRole; progress: number; text?: string; direction?: string }> = ({ kind, role, progress, text = '', direction = 'right' }) => {
   const [failed, setFailed] = useState(false);
+  if (role !== 'surround') return <RoleGraphic role={role} progress={progress} text={text} direction={direction} />;
   const asset = FILES[kind];
   if (failed) return <SvgFallback kind={kind} progress={progress} />;
   const crop = CROPS[asset.file] || { x: 0, y: 0, width: 1, height: 1 };

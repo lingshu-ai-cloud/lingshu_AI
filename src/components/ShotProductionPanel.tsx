@@ -47,6 +47,7 @@ export default function ShotProductionPanel(props: {
   shot: ShotProduction; shotId?: string; scriptNarration?: string; keyframeCues?: ShotKeyframeCue[]; shotDuration?: number; context: string; title: string; defaults: ProductionDefaults; materials: Asset[]; products: { id: string; label: string }[];
   jobs: AvatarJob[]; refreshingJobIds?: string[]; preview?: Asset; reason: string; error: string; busy: boolean; configured: boolean; capabilityReason?: string; costPerSecond: number | null;
   maxAttemptsPerShot?: number;
+  seedanceSentenceAvailable?: boolean;
   viralReplication?: boolean; salesConfiguration?: boolean; applyToSales?: boolean; onApplyToSalesChange?: (value: boolean) => void;
   toolCapabilities?: Array<{ id: string; label: string; execution: boolean; cancellation?: boolean; costReconciliation?: boolean; reason: string; executionProfile?: { maxDurationSeconds?: number; preserves: string[]; qualityInspection: boolean; estimatedCostCnyPerSecond?: number } }>;
   savedPlan?: DigitalHumanPlanRecord;
@@ -77,6 +78,7 @@ export default function ShotProductionPanel(props: {
   });
   const plan = planDigitalHumanShot({ requirements: shot.digitalHuman, narration: shot.narration,
     hasAuthorizedPresenter: Boolean(selectedPresenter?.authorized), talkingAvailable: props.configured,
+    seedanceSentenceAvailable: props.seedanceSentenceAvailable,
     presenterCapabilities: selectedPresenter ? presenterCapabilities(selectedPresenter) : undefined });
   const [defaultsError, setDefaultsError] = useState('');
   const [chargeConfirmed, setChargeConfirmed] = useState(false);

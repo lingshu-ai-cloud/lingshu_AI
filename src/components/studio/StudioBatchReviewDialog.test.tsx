@@ -17,7 +17,7 @@ const html = renderToStaticMarkup(<StudioBatchReviewDialog
 />);
 assert.match(html, /role="dialog"/);
 assert.match(html, /已就绪 13\/17 镜/);
-assert.match(html, /需你确认 1 镜/);
+assert.match(html, /待完成 1 项/);
 assert.match(html, /待制作 3 镜/);
 assert.match(html, /这一镜对应哪款产品？/);
 assert.match(html, /分镜 3 目标首帧/);
@@ -25,3 +25,14 @@ assert.match(html, /本批预计费用 ¥12\.50/);
 assert.match(html, /确认首帧并生成视频<\/button>/);
 assert.match(html, /disabled="" class="ml-auto/);
 console.log('Studio batch review dialog presentation passed');
+
+const selectedOnly = renderToStaticMarkup(<StudioBatchReviewDialog totalShots={1} readyShots={0}
+  issues={[{ id: 's1', shotNumber: 1, title: '数字人', question: '待生成', selectedOptionId: 'person-1' }]}
+  frames={[]} canSubmit={true} onSelectIssueOption={() => {}} onSubmit={() => {}} onClose={() => {}}
+  submitLabel="全部完成，进入成片渲染和导出" />);
+assert.match(selectedOnly, /待完成 1 项/);
+assert.match(selectedOnly, /disabled=""[^>]*>全部完成，进入成片渲染和导出/);
+const completed = renderToStaticMarkup(<StudioBatchReviewDialog totalShots={1} readyShots={1}
+  issues={[]} frames={[]} canSubmit onSelectIssueOption={() => {}} onSubmit={() => {}} onClose={() => {}}
+  submitLabel="全部完成，进入成片渲染和导出" />);
+assert.doesNotMatch(completed, /disabled=""[^>]*>全部完成，进入成片渲染和导出/);

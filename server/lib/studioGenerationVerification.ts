@@ -1,3 +1,5 @@
+import { currentStudioProjectQualityRecord } from './studioProjectQuality.js';
+
 export type StudioGenerationKind = 'script' | 'poster';
 
 export type StudioGenerationMetadata = {
@@ -79,6 +81,9 @@ export function verifiedStudioGenerationFromSpec(
     return { ok: true, metadata: claim };
   }
 
+  const projectRecord = currentStudioProjectQualityRecord(spec);
+  if (projectRecord && projectRecord.id === claim.generationRecordId) return { ok: true, metadata: claim };
+
   const currentScript = cleanText(spec.script);
   const scripts = Array.isArray(spec.modeScripts) ? spec.modeScripts.map(objectValue) : [];
   const record = scripts.find(item => cleanText(item.id) === claim.generationRecordId);
@@ -104,6 +109,11 @@ export function publishableStudioGenerationFromSpec(
     };
     return verifiedStudioGenerationFromSpec(spec, metadata).ok ? metadata : null;
   }
+  const projectRecord = currentStudioProjectQualityRecord(spec);
+  if (projectRecord) return {
+    generationKind: 'script', generationProvenance: 'ai', qualityStatus: 'passed', publishable: true,
+    generationRecordId: projectRecord.id,
+  };
   const currentScript = cleanText(spec.script);
   const activeId = cleanText(spec.activeModeScriptId);
   const scripts = Array.isArray(spec.modeScripts) ? spec.modeScripts.map(objectValue) : [];

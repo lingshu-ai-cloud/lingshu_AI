@@ -6,8 +6,42 @@ import {
   normalizeCaptionSegments,
   normalizeEmphasisTimeline,
   normalizeEmphasisPlan,
+  normalizeMotionEvents,
+  normalizeSemanticAnchor,
+  normalizeVisualTarget,
   selectEmphasisTimeline,
 } from './emphasisTimeline.js';
+
+test('strictly normalizes semantic anchors, visual targets and five visual roles', () => {
+  const cueIds = new Set(['cue-1']);
+  assert.deepEqual(normalizeSemanticAnchor({ cueId: 'cue-1', wordIds: ['w-1', 'w-1'], phrase: ' 核心卖点 ', boundary: 'start', offsetMs: 99_999 }, cueIds), {
+    cueId: 'cue-1', wordIds: ['w-1'], phrase: '核心卖点', boundary: 'start', offsetMs: 5_000,
+  });
+  assert.equal(normalizeSemanticAnchor({ cueId: 'invented', boundary: 'start' }, cueIds), null);
+  assert.deepEqual(normalizeVisualTarget({ kind: 'product', targetId: 'sku 1', label: ' 主产品 ', confidence: 2 }), {
+    kind: 'product', targetId: 'sku1', label: '主产品', confidence: 1,
+  });
+  assert.equal(normalizeVisualTarget({ kind: 'file:///tmp/a.svg', confidence: 1 }), null);
+
+  const events = normalizeMotionEvents([
+    { id: 'valid', emphasisType: 'reveal', anchor: { cueId: 'cue-1', boundary: 'center' },
+      target: { kind: 'product', confidence: .9 }, visualRole: 'surround', componentId: '/tmp/yellow.gif',
+      soundCueId: 'boom', x: .2, y: .3 },
+    { id: 'bad-relation', emphasisType: 'cta', anchor: { cueId: 'cue-1', boundary: 'end' },
+      target: { kind: 'frame', confidence: .9 }, visualRole: 'surround' },
+  ], { cueIds });
+  assert.deepEqual(events, [{ id: 'valid', emphasisType: 'reveal', anchor: { cueId: 'cue-1', boundary: 'center' },
+    target: { kind: 'product', confidence: .9 }, visualRole: 'surround' }]);
+});
+
+test('accepts resolved assets only through explicit deterministic allowlists', () => {
+  const [event] = normalizeMotionEvents([{
+    id: 'resolved', emphasisType: 'cta', anchor: { cueId: 'cue-1', boundary: 'start' },
+    target: { kind: 'frame', confidence: 1 }, visualRole: 'corner_badge', componentId: 'cta-badge', soundCueId: 'cta-pop',
+  }], { cueIds: new Set(['cue-1']), allowedComponentIds: new Set(['cta-badge']), allowedSoundCueIds: new Set(['cta-pop']) });
+  assert.equal(event?.componentId, 'cta-badge');
+  assert.equal(event?.soundCueId, 'cta-pop');
+});
 
 test('normalizes the caption layer without promoting keywords to events', () => {
   assert.deepEqual(normalizeCaptionSegments([{

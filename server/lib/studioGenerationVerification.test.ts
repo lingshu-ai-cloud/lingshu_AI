@@ -3,6 +3,7 @@ import {
   publishableStudioGenerationFromSpec,
   verifiedStudioGenerationFromSpec,
 } from './studioGenerationVerification.js';
+import { studioProjectQualityFingerprint } from './studioProjectQuality.js';
 
 const verifiedScript = {
   id: 'script-v1',
@@ -51,5 +52,19 @@ assert.equal(publishableStudioGenerationFromSpec({
   ...posterSpec,
   posterDraft: { ...posterSpec.posterDraft, fieldsToConfirm: ['MOQ'] },
 }, 'poster'), null);
+
+const projectSpecBase = {
+  contentMode: 'video', creationPath: 'free_creation', script: 'manual revised script', voiceoverMode: 'none', subtitlesOn: false,
+  storyboardAssignments: { s1: 'm1' }, languageRenderOutputs: { one: { status: 'done', path: '/tmp/current.mp4' } },
+  renderAcceptance: { accepted: true, renderPath: '/tmp/current.mp4' },
+};
+const projectRecord = { id: 'project-quality-1', inputFingerprint: studioProjectQualityFingerprint(projectSpecBase),
+  generationProvenance: 'ai', qualityStatus: 'passed', publishable: true };
+const projectSpec = { ...projectSpecBase, activeProjectQualityRecordId: projectRecord.id, projectQualityRecords: [projectRecord] };
+const projectClaim = publishableStudioGenerationFromSpec(projectSpec);
+assert.equal(projectClaim?.generationRecordId, projectRecord.id, 'artifact bridge accepts a current project-level quality record');
+assert.equal(verifiedStudioGenerationFromSpec(projectSpec, projectClaim).ok, true);
+assert.equal(verifiedStudioGenerationFromSpec({ ...projectSpec, script: 'changed again' }, projectClaim).ok, false,
+  'artifact bridge rejects a project record after inputs change');
 
 console.log('studio generation verification tests passed');

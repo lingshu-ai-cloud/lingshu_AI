@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
+  followAdoptedDigitalHumanSlotDurations,
   resolveStudioWorkflowProjectEntry,
   studioAgentSourceLabel,
   studioSpecHasMeaningfulContent,
@@ -8,6 +9,7 @@ import {
   validateStudioScriptGenerationInput,
 } from './AiCreateStudio.js';
 import { parseDigitalEmployeeWorkflowContext } from './TrafficPage.js';
+import { reconcileShootingSlots } from '../lib/shootingWorkflow.js';
 
 const validBase = {
   mode: 'product' as const,
@@ -62,6 +64,25 @@ assert.equal(studioSpecHasMeaningfulContent({ workflowRunId: 'run-1', workflowTa
 assert.equal(studioSpecHasMeaningfulContent({ script: '真实创作脚本' }), true);
 assert.equal(studioSpecHasMeaningfulContent({ selected: ['asset-1'] }), true);
 
+const durationSlot = { id: 'slot-17', title: '结尾', detail: '口播', time: '0.0s-5.7s', start: 0, end: 5.67 };
+const adoptedShot = { adoptedId: 'candidate-3', candidates: [{ id: 'candidate-3', materialId: 'pipeline-3', source: 'avatar' }] };
+const followedSlots = followAdoptedDigitalHumanSlotDurations(
+  [durationSlot], { 'slot-17': 'pipeline-3' }, { 'video-1:persisted-17': adoptedShot } as never,
+  new Map([['pipeline-3', 6.083]]), 'video-1', { 'slot-17': 'persisted-17' },
+);
+assert.equal(followedSlots[0]?.end, 6.083, 'adopted duration must resolve through the persisted shooting-shot identity');
+const wrongAssemblySlots = followAdoptedDigitalHumanSlotDurations(
+  [durationSlot], { 'slot-17': 'pipeline-3' }, { 'other-video:persisted-17': adoptedShot } as never,
+  new Map([['pipeline-3', 6.083]]), 'video-1', { 'slot-17': 'persisted-17' },
+);
+assert.equal(wrongAssemblySlots[0]?.end, 5.67, 'another assembly must not retime this storyboard slot');
+const reconciledDuration = reconcileShootingSlots(
+  [{ id: 'persisted-17', slotId: 'slot-17', detail: '口播', duration: 5.67, requirements: '{"duration":5.67}' }],
+  followedSlots, '{}', () => 'new-id',
+)[0]!;
+assert.equal(reconciledDuration.duration, 6.08);
+assert.equal(JSON.parse(reconciledDuration.requirements).duration, 6.08, 'shooting slot and its persisted requirements must use the same adopted duration');
+
 const handoffNow = Date.parse('2026-09-04T08:00:00.000Z');
 const validHandoff = JSON.stringify({
   page: 'smartAssets', runId: 'legacy-run', taskId: 'legacy-task', workflowRunId: 'run-1', workflowTaskId: 'task-1', issuedAt: handoffNow,
@@ -88,6 +109,22 @@ assert.match(studioSource, /<StudioInputSummary[\s\S]{0,300}title="已确认内�
 assert.doesNotMatch(studioSource, />Agent 任务上下文<|label: 'Agent 来源'|`Agent 任务 · \$\{normalized\}`/, 'Studio must not expose internal workflow labels or raw source codes');
 assert.match(studioSource, /sourceWorkflowContext\.preview \? '制作方案预览' : '灵小图'/, 'Studio must distinguish draft-plan preview from an executing content task');
 assert.match(studioSource, /焦点产品/);
+assert.match(
+  studioSource,
+  /autoConfirmedPhotoShot[\s\S]{0,500}targetFramesConfirmed:true[\s\S]{0,700}studioApi\.saveProject/,
+  'a newly generated photo-talking target frame must be auto-confirmed and persisted before video generation',
+);
+assert.match(studioSource, /数字人素材已生成并自动回填当前分镜/);
+assert.match(studioSource, /已完成.*目标人物视频，并自动回填当前分镜/);
+assert.match(studioSource, /const refreshProductionJob[\s\S]{0,2400}digitalHumanFullLengthEdit\(clip, storyboardSlot\)/, 'a manually refreshed completed avatar job must immediately synchronize its full-length edit');
+assert.match(studioSource, /const runProductionSentenceReplication[\s\S]{0,3000}digitalHumanFullLengthEdit\(clip, slot\)/, 'sentence-video auto-fill must immediately synchronize its full-length edit');
+assert.match(studioSource, /useEffect\(\(\) => \{[\s\S]{0,1000}adoptedDigitalHumanCandidate\(slot, materialId\)[\s\S]{0,800}digitalHumanFullLengthEdit\(clip, slot\)/, 'restored and asynchronously loaded avatar assignments must normalize historical clip edits');
+assert.match(studioSource, /item\.source === 'avatar' && item\.materialId === clip\?\.id[\s\S]{0,120}const adoptedVideo = Boolean\(adopted && clip\?\.type === 'video'\)/, 'only the adopted digital-human material may control the slot duration');
+assert.match(studioSource, /const targetDuration = adoptedVideo \? clip!\.duration/, 'an adopted digital-human storyboard slot must follow the material duration');
+assert.match(studioSource, /trimStart: adoptedVideo \? 0 : edit\.trimStart,[\s\S]{0,120}trimEnd: adoptedVideo \? clip\.duration : edit\.trimEnd,[\s\S]{0,120}speed: adoptedVideo \? 1 : edit\.speed/, 'an adopted digital-human storyboard slot must use the complete material at normal speed');
+assert.match(studioSource, /fallbackDigitalHumanVideo\?\.duration[\s\S]{0,1300}trimStart: 0, trimEnd: fallbackDigitalHumanVideo\?\.duration \|\| targetDuration, speed: 1/, 'the legacy HeyGen render fallback must use measured material duration at normal speed');
+assert.match(studioSource, /if \(adoptedDigitalHumanCandidate\(slot, clip\.id\)\)[\s\S]{0,180}保持 1 倍速完整播放/, 'digital-human timing controls must not mutate the locked full-length edit');
+assert.match(studioSource, /followAdoptedDigitalHumanSlotDurations\(base, storyboardAssignments, shotProductions,[\s\S]{0,180}item\.duration/, 'storyboard timing must be rebuilt from the adopted digital-human material duration');
 assert.match(studioSource, /workflowRunId:\s*projectWorkflowContext\?\.runId/, 'saved studio projects must retain their own originating workflow run');
 assert.match(studioSource, /workflowTaskId:\s*projectWorkflowContext\?\.taskId/, 'saved studio projects must retain their own originating workflow task');
 assert.match(
@@ -158,5 +195,9 @@ const workerSource = readFileSync(new URL('../../scripts/local-crawl-worker.ts',
 assert.match(workerSource, /CRAWL_WORKER_HEARTBEAT_MS/);
 assert.match(workerSource, /heartbeatJob\(job\)/);
 assert.match(workerSource, /localCrawlWorkerFailureMessage\(error\)/);
+
+assert.match(studioSource, /重新质检并签发/);
+assert.match(studioSource, /requalityProject\(projectId\)/);
+assert.match(studioSource, /!currentProjectQualityRecord \|\| Boolean\(manualHandoffBusy\)/);
 
 console.log('content execution workspace contract tests passed');

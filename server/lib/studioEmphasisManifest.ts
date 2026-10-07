@@ -3,12 +3,16 @@ import {
   EMPHASIS_PROFILES,
   normalizeCaptionSegments,
   normalizeEmphasisPlan,
+  normalizeMotionEvents,
   type CaptionSegment,
   type EmphasisEvent,
   type EmphasisPlanV1,
   type EmphasisProfile,
   type EmphasisPlacementWindow,
+  type MotionEvent,
+  type VisualTarget,
 } from '../../shared/contracts/emphasisTimeline.js';
+import { normalizeGeminiMotionCandidates, resolveMotionEventWindows } from './studioMotionSemantics.js';
 
 export type StudioEmphasisPlan = EmphasisPlanV1;
 
@@ -28,6 +32,7 @@ export type StudioEmphasisPlanInput = {
   captions?: unknown;
   events?: unknown;
   placementWindows?: unknown;
+  motionEvents?: unknown;
   maxEvents?: unknown;
 };
 
@@ -209,6 +214,45 @@ function timelineCandidates(shots: TimelineShot[], captions: CaptionSegment[], e
   });
 }
 
+function semanticCueForEvent(event: EmphasisEvent, captions: CaptionSegment[]): CaptionSegment | undefined {
+  const overlapping = captions.filter(caption => caption.startMs < event.endMs && event.startMs < caption.endMs);
+  if (event.text) {
+    const eventText = normalizedSemanticText(event.text);
+    const exact = overlapping.find(caption => normalizedSemanticText(caption.text).includes(eventText));
+    if (exact) return exact;
+  }
+  return overlapping[0] || captions.find(caption => caption.startMs <= event.startMs && caption.endMs >= event.startMs);
+}
+
+function visualTargetForEvent(event: EmphasisEvent): VisualTarget {
+  if (event.type === 'cta' || event.type === 'section_label') {
+    return { kind: 'frame', targetId: event.targetId, label: event.text, confidence: event.confidence };
+  }
+  if (event.targetId) {
+    const kind = /机|设备|产线|工序|machine|process/i.test(`${event.targetId} ${event.text || ''}`) ? 'machine'
+      : /人|主播|人物|person|speaker/i.test(`${event.targetId} ${event.text || ''}`) ? 'person' : 'product';
+    return { kind, targetId: event.targetId, label: event.text, confidence: event.confidence };
+  }
+  return { kind: 'caption', label: event.text, confidence: event.confidence };
+}
+
+/** Builds semantic candidates only; asset IDs and placement coordinates are resolved downstream. */
+export function motionCandidatesFromEvents(events: EmphasisEvent[], captions: CaptionSegment[]): MotionEvent[] {
+  const cueIds = new Set(captions.map(caption => caption.id));
+  const candidates = events.flatMap((event): unknown[] => {
+    const cue = semanticCueForEvent(event, captions);
+    if (!cue) return [];
+    const target = visualTargetForEvent(event);
+    const visualRole = target.kind === 'caption' ? 'caption_companion'
+      : target.kind === 'frame' ? 'corner_badge'
+        : event.type === 'reveal' ? 'surround' : 'adjacent';
+    return [{ id: `motion-${event.id}`, emphasisType: event.type,
+      anchor: { cueId: cue.id, ...(event.text ? { phrase: event.text } : {}), boundary: event.type === 'reveal' ? 'center' : 'start' },
+      target, visualRole }];
+  });
+  return normalizeMotionEvents(candidates, { cueIds });
+}
+
 export function buildStudioEmphasisPlan(input: {
   durationSeconds: number;
   script?: unknown;
@@ -236,5 +280,10 @@ export function buildStudioEmphasisPlan(input: {
     ? Math.max(0, Math.min(40, Math.round(requestedMax))) : defaultBudget.max;
   const placementWindows = Array.isArray(supplied.placementWindows)
     ? supplied.placementWindows as EmphasisPlacementWindow[] : undefined;
-  return normalizeEmphasisPlan({ profile, captions: normalizedCaptions, events: candidates, maxEvents }, durationMs, placementWindows);
+  const normalized = normalizeEmphasisPlan({ profile, captions: normalizedCaptions, events: candidates, maxEvents }, durationMs, placementWindows);
+  const suppliedMotionEvents = normalizeGeminiMotionCandidates(supplied.motionEvents, normalized.captions);
+  const semanticMotionEvents = suppliedMotionEvents.length
+    ? suppliedMotionEvents : motionCandidatesFromEvents(normalized.events, normalized.captions);
+  const motionEvents = resolveMotionEventWindows(semanticMotionEvents, normalized.captions);
+  return { ...normalized, ...(motionEvents.length ? { motionEvents } : {}) };
 }

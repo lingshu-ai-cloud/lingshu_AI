@@ -216,6 +216,8 @@ export function planDigitalHumanShot(input: {
   narration: string;
   hasAuthorizedPresenter: boolean;
   talkingAvailable: boolean;
+  /** True only when the sentence-first-frame Seedream + Seedance runtime passed preflight. */
+  seedanceSentenceAvailable?: boolean;
   presenterCapabilities?: Array<'talking' | 'reference_image' | 'reference_video' | 'person_replacement'>;
 }): DigitalHumanPlan {
   const r = input.requirements;
@@ -249,6 +251,10 @@ export function planDigitalHumanShot(input: {
       : ['使用已确认人物与口播', '生成数字人口播', '核验音画与时长', '预览确认后填入分镜'];
   if (reasons.length) return { state: 'needs_input', executable: false, reasons, steps, provider: null };
   if (r && r.contentConfirmed !== true) return { state: 'needs_confirmation', executable: false, reasons: ['请确认本镜头人物、口播和画面要求'], steps, provider: null };
+  if (r?.method === 'reenact' && (r.replicationMode || 'sentence_first_frame') === 'sentence_first_frame') {
+    if (input.seedanceSentenceAvailable) return { state: 'ready', executable: true, reasons: [], steps, provider: 'runway_seedance' };
+    return { state: 'preview_only', executable: false, reasons: ['Seedream + Seedance 逐句复刻服务尚未通过运行环境预检'], steps, provider: null };
+  }
   if (r && r.method !== 'talking') return { state: 'preview_only', executable: false, reasons: ['仅支持方案预览：参考人物制作链尚未接通，不会改用口播接口生成'], steps, provider: null };
   // Talking APIs do not honor custom motion or scene constraints.
   if (r && [r.action, r.scene, r.preserve].some(value => value?.trim())) return { state: 'preview_only', executable: false, reasons: ['当前口播链无法执行自定义动作、场景或画面保留要求，仅支持方案预览'], steps, provider: null };

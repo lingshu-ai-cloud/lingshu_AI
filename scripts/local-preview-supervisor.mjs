@@ -43,6 +43,7 @@ const services = [
     args: [path.join(runtimeRoot, 'node_modules/tsx/dist/cli.mjs'), 'server/index.ts'],
     env: {
       PORT: '8790',
+      LINGSHU_LOCAL_PORT: '8790',
       NODE_USE_ENV_PROXY: '1',
       LINGSHU_LOCAL_PREVIEW: '1',
       // The preview exercises the real task lifecycle, including queue recovery
