@@ -4,7 +4,7 @@ import { SemanticAsset, type MotionRole, type SemanticAssetKind } from './semant
 
 type Point = { x: number; y: number };
 type Rect = Point & { width: number; height: number };
-type OverlayEvent = { id: string; type: 'key_fact' | 'reveal' | 'cta'; assetKind: SemanticAssetKind; motionRole: MotionRole; presentationMode: 'label' | 'graphic_only'; startMs: number; endMs: number; text: string; placement: Point & { source: string }; layout: { asset: Rect; label: Rect; mode: string }; subjectAnchor?: Point };
+type OverlayEvent = { id: string; type: 'key_fact' | 'reveal' | 'cta'; assetKind: SemanticAssetKind; motionRole: MotionRole; startMs: number; endMs: number; text: string; placement: Point & { source: string }; layout: { asset: Rect; label: Rect; mode: string }; presentationMode: 'label' | 'graphic_only'; targetRelation: 'surround' | 'point_to' | 'adjacent'; shotId?: string; playbackKey: string; subjectAnchor?: Point };
 type OverlayProps = { durationFrames: number; fps: number; width: number; height: number; profile: string; events: OverlayEvent[] };
 
 const EventCard: React.FC<{ event: OverlayEvent }> = ({ event }) => {
@@ -25,7 +25,7 @@ const EventCard: React.FC<{ event: OverlayEvent }> = ({ event }) => {
   return <>
     <div style={{ position: 'absolute', left: `${assetRect.x * 100}%`, top: `${assetRect.y * 100}%`, width: `${assetRect.width * 100}%`, height: `${assetRect.height * 100}%`,
       scale: enter * pulse, opacity: exit, transformOrigin: labelRect.x < assetRect.x ? 'right center' : 'left center' }}>
-      <SemanticAsset kind={event.assetKind} role={event.motionRole} progress={enter} text={event.text} direction={direction} />
+      <SemanticAsset kind={event.assetKind} role={event.motionRole} progress={enter} text={event.text} direction={direction} eventDurationFrames={duration} />
     </div>
     {event.presentationMode === 'label' && event.motionRole !== 'caption_companion' && <div style={{
       position: 'absolute', left: `${labelRect.x * 100}%`, top: `${labelRect.y * 100}%`, width: `${labelRect.width * 100}%`, minHeight: `${labelRect.height * 100}%`,
@@ -45,7 +45,7 @@ const Overlay: React.FC<OverlayProps> = ({ events }) => {
     {events.map(event => {
       const from = Math.max(0, Math.round(event.startMs / 1000 * fps));
       const durationInFrames = Math.max(1, Math.round((event.endMs - event.startMs) / 1000 * fps));
-      return <Sequence key={event.id} from={from} durationInFrames={durationInFrames} layout="none">
+      return <Sequence key={`${event.id}:${event.playbackKey}`} from={from} durationInFrames={durationInFrames} layout="none">
         <EventCard event={event} />
       </Sequence>;
     })}

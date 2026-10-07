@@ -3,12 +3,18 @@ import test from 'node:test';
 import {
   emphasisBudgetForDuration,
   deriveEmphasisIntent,
+  captionWordsToText,
+  mergeCaptionWordsForDisplay,
+  normalizeCaptionCues,
   normalizeCaptionSegments,
+  normalizeCaptionOccupancy,
   normalizeEmphasisTimeline,
   normalizeEmphasisPlan,
   normalizeMotionEvents,
   normalizeSemanticAnchor,
   normalizeVisualTarget,
+  normalizeShotWindows,
+  normalizeVisualEvidence,
   selectEmphasisTimeline,
 } from './emphasisTimeline.js';
 
@@ -51,6 +57,54 @@ test('normalizes the caption layer without promoting keywords to events', () => 
     id: 'line1', startMs: 0, endMs: 1_800, text: '支持 免费配送',
     speakerId: 'hostA', keywords: ['免费配送'],
   }]);
+});
+
+test('normalizes BCP 47 language and word alignment while retaining legacy cues', () => {
+  const [aligned, legacy] = normalizeCaptionCues([{
+    id: 'fr', startMs: 1_000, endMs: 3_000, text: "L'amour porte-monnaie.", language: 'fr_fr',
+    words: [
+      { text: "L'", startMs: 900, endMs: 1_200, alignmentTokenIds: ['a1'], confidence: 1.2 },
+      { text: 'amour', startMs: 1_200, endMs: 1_800, alignmentTokenIds: ['a2'], confidence: .92 },
+      { text: 'porte', startMs: 1_800, endMs: 2_150 },
+      { text: '-', startMs: 2_150, endMs: 2_220 },
+      { text: 'monnaie', startMs: 2_220, endMs: 2_700 },
+      { text: '.', startMs: 2_700, endMs: 3_100 },
+    ],
+  }, { id: 'old', startMs: 3_000, endMs: 4_000, text: 'Legacy cue' }], 5_000);
+  assert.equal(aligned?.language, 'fr-FR');
+  assert.equal(aligned?.words?.[0]?.startMs, 1_000);
+  assert.equal(aligned?.words?.at(-1)?.endMs, 3_000);
+  assert.equal(aligned?.words?.[0]?.confidence, 1);
+  assert.equal(captionWordsToText(aligned?.words || [], aligned?.language), "L'amour porte-monnaie.");
+  assert.equal(legacy?.language, undefined);
+  assert.equal(legacy?.words, undefined);
+});
+
+test('keeps German compounds whole and attaches punctuation without whitespace tokenization', () => {
+  const words = normalizeCaptionCues([{
+    id: 'de', startMs: 0, endMs: 2_000, text: 'Donaudampfschifffahrt, heute!', language: 'de-DE', words: [
+      { text: 'Donaudampfschifffahrt', startMs: 0, endMs: 700, alignmentTokenIds: ['1'] },
+      { text: ',', startMs: 700, endMs: 760, alignmentTokenIds: ['2'] },
+      { text: 'heute', startMs: 800, endMs: 1_400, alignmentTokenIds: ['3'] },
+      { text: '!', startMs: 1_400, endMs: 1_500, alignmentTokenIds: ['4'] },
+    ],
+  }], 2_000)[0]?.words || [];
+  const display = mergeCaptionWordsForDisplay(words, 'de-DE');
+  assert.deepEqual(display.map(word => word.text), ['Donaudampfschifffahrt,', 'heute!']);
+  assert.deepEqual(display.map(word => word.alignmentTokenIds), [['1', '2'], ['3', '4']]);
+  assert.equal(captionWordsToText(words, 'de-DE'), 'Donaudampfschifffahrt, heute!');
+});
+
+test('honors explicit separators and joins CJK display text without inventing spaces', () => {
+  const [cue] = normalizeCaptionCues([{
+    id: 'zh', startMs: 0, endMs: 1_000, text: '你好！', language: 'zh_hans', words: [
+      { text: '你', startMs: 0, endMs: 300 },
+      { text: '好', startMs: 300, endMs: 600 },
+      { text: '！', startMs: 600, endMs: 800 },
+    ],
+  }], 1_000);
+  assert.equal(cue?.language, 'zh-Hans');
+  assert.equal(captionWordsToText(cue?.words || [], cue?.language), '你好！');
 });
 
 test('uses whole-film soft budgets including doubled long-form density', () => {
@@ -159,4 +213,64 @@ test('emits the canonical renderer manifest shape with a closed profile set', ()
   assert.equal(plan.maxEvents, 1);
   assert.equal(plan.events.length, 1);
   assert.equal(plan.captions.length, 1);
+});
+
+test('normalizes shot, caption occupancy and trusted visual evidence contracts', () => {
+  assert.deepEqual(normalizeShotWindows([
+    { id: 'shot 1', startMs: -4, endMs: 1_200.4, confidence: 2, source: 'ffmpeg_scene' },
+    { id: 'bad', startMs: 1_200, endMs: 900, source: 'storyboard' },
+  ], 2_000), [{ id: 'shot1', startMs: 0, endMs: 1_200, confidence: 1, source: 'ffmpeg_scene' }]);
+  assert.deepEqual(normalizeCaptionOccupancy([{
+    id: 'burned in', startMs: 100, endMs: 900, text: '30 年', confidence: .8, source: 'ocr', editable: true,
+    boxes: [{ x: .1, y: .8, width: .8, height: .1 }, { x: -.1, y: 0, width: .2, height: .2 }],
+  }], 2_000), [{ id: 'burnedin', startMs: 100, endMs: 900, text: '30 年', boxes: [{ x: .1, y: .8, width: .8, height: .1 }],
+    confidence: .8, source: 'ocr', editable: false }]);
+  assert.deepEqual(normalizeVisualEvidence([{
+    shotId: 'shot-1', subjectType: 'machine', subjectBox: { x: .2, y: .1, width: .6, height: .7 },
+    subjectAnchor: { x: .5, y: .45 }, safeZones: [{ x: .05, y: .05, width: .2, height: .2, clarity: .9 }],
+    captionBoxes: [], confidence: .9,
+  }, { shotId: 'weak', subjectType: 'product', confidence: .4 }]), [{
+    shotId: 'shot-1', subjectType: 'machine', subjectBox: { x: .2, y: .1, width: .6, height: .7 },
+    subjectAnchor: { x: .5, y: .45 }, safeZones: [{ x: .05, y: .05, width: .2, height: .2, clarity: .9 }],
+    captionBoxes: [], confidence: .9,
+  }]);
+});
+
+test('preserves closed shot-aware presentation fields on normalized events', () => {
+  const plan = normalizeEmphasisPlan({ events: [{
+    id: 'aligned', type: 'key_fact', startMs: 1_000, endMs: 2_000, text: '30年工厂', importance: 3,
+    confidence: 1, source: 'editor', shotId: 'shot-2', evidenceStartMs: 900, evidenceEndMs: 2_100,
+    presentationMode: 'graphic_only', targetRelation: 'surround',
+    assetFamily: 'rays',
+    occupiedBoxes: [{ x: .1, y: .8, width: .8, height: .1 }, { x: .9, y: .9, width: .2, height: .2 }],
+  }] }, 3_000);
+  assert.deepEqual({
+    shotId: plan.events[0]?.shotId, evidenceStartMs: plan.events[0]?.evidenceStartMs,
+    evidenceEndMs: plan.events[0]?.evidenceEndMs, presentationMode: plan.events[0]?.presentationMode,
+    targetRelation: plan.events[0]?.targetRelation, assetFamily: plan.events[0]?.assetFamily,
+    occupiedBoxes: plan.events[0]?.occupiedBoxes,
+  }, { shotId: 'shot-2', evidenceStartMs: 900, evidenceEndMs: 2_100, presentationMode: 'graphic_only',
+    targetRelation: 'surround', assetFamily: 'corner_marker', occupiedBoxes: [{ x: .1, y: .8, width: .8, height: .1 }] });
+});
+
+test('normalizes event-scoped local focus and preferred composition hints', () => {
+  assert.deepEqual(normalizeVisualEvidence([{
+    shotId: 'shot-wide', eventId: 'fact-local', targetId: 'machine-head', subjectType: 'machine',
+    subjectBox: { x: .68, y: .24, width: .2, height: .28 }, subjectAnchor: { x: .78, y: .38 },
+    preferredSide: 'left', targetRelation: 'point_to', safeZones: [], captionBoxes: [], confidence: .92,
+  }]), [{
+    shotId: 'shot-wide', eventId: 'fact-local', targetId: 'machine-head', subjectType: 'machine',
+    subjectBox: { x: .68, y: .24, width: .2, height: .28 }, subjectAnchor: { x: .78, y: .38 },
+    safeZones: [], captionBoxes: [], confidence: .92, preferredSide: 'left', targetRelation: 'point_to',
+  }]);
+});
+
+test('drops scene-sized subject boxes while keeping a bindable anchor', () => {
+  assert.deepEqual(normalizeVisualEvidence([{
+    shotId: 'shot-wide', subjectType: 'product', subjectBox: { x: 0, y: 0, width: 1, height: 1 },
+    subjectAnchor: { x: .48, y: .42 }, safeZones: [], captionBoxes: [], confidence: .9,
+  }]), [{
+    shotId: 'shot-wide', subjectType: 'product', subjectAnchor: { x: .48, y: .42 },
+    safeZones: [], captionBoxes: [], confidence: .9,
+  }]);
 });

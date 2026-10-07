@@ -13,7 +13,7 @@ export function resolveSemanticAnchorMs(anchor: SemanticAnchor, captions: Captio
   const cue = captions.find(caption => caption.id === anchor.cueId);
   if (!cue) return null;
   const selectedWords = anchor.wordIds?.length
-    ? (cue.words || []).filter(word => anchor.wordIds!.includes(word.id)) : [];
+    ? (cue.words || []).filter(word => Boolean(word.id && anchor.wordIds!.includes(word.id))) : [];
   let startMs = selectedWords.length ? Math.min(...selectedWords.map(word => word.startMs)) : cue.startMs;
   let endMs = selectedWords.length ? Math.max(...selectedWords.map(word => word.endMs)) : cue.endMs;
   if (!selectedWords.length && anchor.phrase) {

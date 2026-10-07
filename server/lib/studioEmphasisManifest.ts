@@ -13,6 +13,7 @@ import {
   type VisualTarget,
 } from '../../shared/contracts/emphasisTimeline.js';
 import { normalizeGeminiMotionCandidates, resolveMotionEventWindows } from './studioMotionSemantics.js';
+import { alignStudioEmphasisEvents, type StudioEmphasisPreanalysis } from './studioEmphasisAlignment.js';
 
 export type StudioEmphasisPlan = EmphasisPlanV1;
 
@@ -34,6 +35,8 @@ export type StudioEmphasisPlanInput = {
   placementWindows?: unknown;
   motionEvents?: unknown;
   maxEvents?: unknown;
+  /** Optional analysis supplied by the background prepass. */
+  preanalysis?: StudioEmphasisPreanalysis;
 };
 
 const text = (value: unknown): string => String(value || '').replace(/\s+/g, ' ').trim();
@@ -259,6 +262,8 @@ export function buildStudioEmphasisPlan(input: {
   subtitles?: { cues?: Cue[] };
   timeline?: TimelineShot[];
   emphasisPlan?: StudioEmphasisPlanInput;
+  /** Optional shot/OCR/visual evidence; callers may add the prepass later. */
+  emphasisPreanalysis?: StudioEmphasisPreanalysis;
   /** Confirmed user/business data. Storyboard production notes are excluded. */
   businessFacts?: unknown;
 }): StudioEmphasisPlan {
@@ -285,5 +290,7 @@ export function buildStudioEmphasisPlan(input: {
   const semanticMotionEvents = suppliedMotionEvents.length
     ? suppliedMotionEvents : motionCandidatesFromEvents(normalized.events, normalized.captions);
   const motionEvents = resolveMotionEventWindows(semanticMotionEvents, normalized.captions);
-  return { ...normalized, ...(motionEvents.length ? { motionEvents } : {}) };
+  const preanalysis = input.emphasisPreanalysis || supplied.preanalysis;
+  const events = preanalysis ? alignStudioEmphasisEvents({ durationMs, events: normalized.events, captions: normalized.captions, preanalysis }) : normalized.events;
+  return { ...normalized, events, ...(motionEvents.length ? { motionEvents } : {}) };
 }

@@ -1,0 +1,859 @@
+{
+  "jobId": "hongyu-first10-word-highlight-v10",
+  "spec": {
+    "ratio": "9:16",
+    "duration": 10,
+    "bgmVol": 0,
+    "voiceVol": 100
+  },
+  "timeline": [
+    {
+      "name": "宏昱越南灯具前10秒",
+      "url": "/Users/julia1/Downloads/宏昱越南灯具-Seedance分镜复刻-v8-Lucy-A-SIMPLE-PLAN配乐.MP4",
+      "trimStart": 0,
+      "trimEnd": 10,
+      "targetStart": 0,
+      "targetEnd": 10,
+      "targetDuration": 10,
+      "cropMode": "cover",
+      "focusX": 0.5,
+      "focusY": 0.5,
+      "production": {
+        "sound": "source"
+      }
+    }
+  ],
+  "subtitles": {
+    "mode": "auto",
+    "style": {
+      "font": "sans",
+      "fontScale": 1.3,
+      "bottomRatio": 0.24,
+      "outlineWidth": 18,
+      "outlineColor": "#000000",
+      "boxed": true,
+      "color": "#FFFFFF",
+      "karaokeColor": "#FACC15"
+    },
+    "cues": [
+      {
+        "id": "en-1",
+        "start": 0.0,
+        "end": 1.55,
+        "text": "Hello boss.",
+        "timingPrecision": "acceptance_fixture_estimate",
+        "words": [
+          {
+            "text": "Hello",
+            "startMs": 250,
+            "endMs": 720
+          },
+          {
+            "text": "boss",
+            "startMs": 720,
+            "endMs": 1300
+          }
+        ]
+      },
+      {
+        "id": "en-2",
+        "start": 1.75,
+        "end": 2.8,
+        "text": "Are you from Vietnam?",
+        "timingPrecision": "source_caption_calibrated",
+        "words": [
+          {
+            "text": "Are",
+            "startMs": 1750,
+            "endMs": 1980
+          },
+          {
+            "text": "you",
+            "startMs": 1980,
+            "endMs": 2180
+          },
+          {
+            "text": "from",
+            "startMs": 2180,
+            "endMs": 2400
+          },
+          {
+            "text": "Vietnam",
+            "startMs": 2400,
+            "endMs": 2740
+          }
+        ]
+      },
+      {
+        "id": "en-3",
+        "start": 3.0,
+        "end": 6.35,
+        "text": "Do you want to buy more indoor lighting for your market?",
+        "timingPrecision": "source_caption_calibrated",
+        "words": [
+          {
+            "text": "Do",
+            "startMs": 3000,
+            "endMs": 3200
+          },
+          {
+            "text": "you",
+            "startMs": 3200,
+            "endMs": 3400
+          },
+          {
+            "text": "want",
+            "startMs": 3400,
+            "endMs": 3700
+          },
+          {
+            "text": "to",
+            "startMs": 3700,
+            "endMs": 3870
+          },
+          {
+            "text": "buy",
+            "startMs": 3870,
+            "endMs": 4130
+          },
+          {
+            "text": "more",
+            "startMs": 4130,
+            "endMs": 4400
+          },
+          {
+            "text": "indoor",
+            "startMs": 4400,
+            "endMs": 4780
+          },
+          {
+            "text": "lighting",
+            "startMs": 4780,
+            "endMs": 5160
+          },
+          {
+            "text": "for",
+            "startMs": 5160,
+            "endMs": 5370
+          },
+          {
+            "text": "your",
+            "startMs": 5370,
+            "endMs": 5600
+          },
+          {
+            "text": "market",
+            "startMs": 5600,
+            "endMs": 6200
+          }
+        ]
+      },
+      {
+        "id": "en-4",
+        "start": 6.65,
+        "end": 7.75,
+        "text": "Look here.",
+        "timingPrecision": "source_caption_calibrated",
+        "words": [
+          {
+            "text": "Look",
+            "startMs": 6650,
+            "endMs": 7080
+          },
+          {
+            "text": "here",
+            "startMs": 7080,
+            "endMs": 7580
+          }
+        ]
+      },
+      {
+        "id": "en-5",
+        "start": 7.8,
+        "end": 8.3,
+        "text": "I'm Lucy.",
+        "timingPrecision": "source_caption_calibrated",
+        "words": [
+          {
+            "text": "I'm",
+            "startMs": 7800,
+            "endMs": 8000
+          },
+          {
+            "text": "Lucy",
+            "startMs": 8000,
+            "endMs": 8280
+          }
+        ]
+      },
+      {
+        "id": "en-6",
+        "start": 8.3,
+        "end": 10.0,
+        "text": "A 30-year indoor lighting factory.",
+        "timingPrecision": "acceptance_fixture_estimate",
+        "words": [
+          {
+            "text": "A",
+            "startMs": 8300,
+            "endMs": 8500
+          },
+          {
+            "text": "30-year",
+            "startMs": 8500,
+            "endMs": 8900
+          },
+          {
+            "text": "indoor",
+            "startMs": 8900,
+            "endMs": 9250
+          },
+          {
+            "text": "lighting",
+            "startMs": 9250,
+            "endMs": 9600
+          },
+          {
+            "text": "factory",
+            "startMs": 9600,
+            "endMs": 9950
+          }
+        ]
+      }
+    ]
+  },
+  "voiceover": {
+    "url": null
+  },
+  "bgm": {
+    "url": null
+  },
+  "cover": {
+    "url": null
+  },
+  "emphasisPlan": {
+    "schemaVersion": 1,
+    "profile": "factory_process",
+    "captions": [],
+    "events": [
+      {
+        "id": "factory-history",
+        "type": "key_fact",
+        "startMs": 8400,
+        "endMs": 9367,
+        "text": "a 30-year indoor lighting",
+        "importance": 3,
+        "confidence": 0.96,
+        "source": "transcript",
+        "evidenceStartMs": 8200,
+        "evidenceEndMs": 9900,
+        "visualIntent": "attention",
+        "assetIntent": "fact_label",
+        "shotId": "shot-5",
+        "presentationMode": "graphic_only",
+        "targetRelation": "none",
+        "assetFamily": "corner_marker",
+        "occupiedBoxes": [
+          {
+            "x": 0.04,
+            "y": 0.5999,
+            "width": 0.92,
+            "height": 0.0285
+          }
+        ]
+      }
+    ],
+    "maxEvents": 2
+  },
+  "preanalysis": {
+    "shotWindows": [
+      {
+        "id": "shot-1",
+        "startMs": 0,
+        "endMs": 2800,
+        "confidence": 0.9,
+        "source": "ffmpeg_scene"
+      },
+      {
+        "id": "shot-2",
+        "startMs": 2800,
+        "endMs": 3967,
+        "confidence": 0.9,
+        "source": "ffmpeg_scene"
+      },
+      {
+        "id": "shot-3",
+        "startMs": 3967,
+        "endMs": 6484,
+        "confidence": 0.9,
+        "source": "ffmpeg_scene"
+      },
+      {
+        "id": "shot-4",
+        "startMs": 6484,
+        "endMs": 8300,
+        "confidence": 0.9,
+        "source": "ffmpeg_scene"
+      },
+      {
+        "id": "shot-5",
+        "startMs": 8300,
+        "endMs": 9467,
+        "confidence": 0.9,
+        "source": "ffmpeg_scene"
+      },
+      {
+        "id": "shot-6",
+        "startMs": 9467,
+        "endMs": 10000,
+        "confidence": 0.9,
+        "source": "ffmpeg_scene"
+      }
+    ],
+    "captionOccupancy": [
+      {
+        "id": "ocr-shot-1",
+        "startMs": 0,
+        "endMs": 2800,
+        "boxes": [
+          {
+            "x": 0.04,
+            "y": 0.646,
+            "width": 0.92,
+            "height": 0.0244
+          }
+        ],
+        "confidence": 0.55,
+        "source": "ocr",
+        "editable": false
+      },
+      {
+        "id": "ocr-shot-2",
+        "startMs": 2800,
+        "endMs": 3967,
+        "boxes": [
+          {
+            "x": 0.04,
+            "y": 0.418,
+            "width": 0.92,
+            "height": 0.0329
+          },
+          {
+            "x": 0.04,
+            "y": 0.4421,
+            "width": 0.92,
+            "height": 0.0241
+          },
+          {
+            "x": 0.04,
+            "y": 0.4574,
+            "width": 0.92,
+            "height": 0.0222
+          }
+        ],
+        "confidence": 0.55,
+        "source": "ocr",
+        "editable": false
+      },
+      {
+        "id": "ocr-shot-3",
+        "startMs": 3967,
+        "endMs": 6484,
+        "boxes": [
+          {
+            "x": 0.04,
+            "y": 0.6043,
+            "width": 0.92,
+            "height": 0.0263
+          },
+          {
+            "x": 0.04,
+            "y": 0.6438,
+            "width": 0.92,
+            "height": 0.0263
+          }
+        ],
+        "confidence": 0.55,
+        "source": "ocr",
+        "editable": false
+      },
+      {
+        "id": "ocr-shot-4",
+        "startMs": 6484,
+        "endMs": 8300,
+        "boxes": [
+          {
+            "x": 0.04,
+            "y": 0.6503,
+            "width": 0.92,
+            "height": 0.0222
+          }
+        ],
+        "confidence": 0.55,
+        "source": "ocr",
+        "editable": false
+      },
+      {
+        "id": "ocr-shot-5",
+        "startMs": 8300,
+        "endMs": 9467,
+        "boxes": [
+          {
+            "x": 0.04,
+            "y": 0.5999,
+            "width": 0.92,
+            "height": 0.0285
+          }
+        ],
+        "confidence": 0.55,
+        "source": "ocr",
+        "editable": false
+      },
+      {
+        "id": "ocr-shot-6",
+        "startMs": 9467,
+        "endMs": 10000,
+        "boxes": [
+          {
+            "x": 0.04,
+            "y": 0.5999,
+            "width": 0.92,
+            "height": 0.0263
+          }
+        ],
+        "confidence": 0.55,
+        "source": "ocr",
+        "editable": false
+      },
+      {
+        "id": "vision-caption-shot-1",
+        "startMs": 0,
+        "endMs": 2800,
+        "text": "Hello boss",
+        "boxes": [
+          {
+            "x": 0.04,
+            "y": 0.646,
+            "width": 0.92,
+            "height": 0.0244
+          }
+        ],
+        "confidence": 0.9,
+        "source": "ocr",
+        "editable": false
+      },
+      {
+        "id": "vision-caption-shot-2",
+        "startMs": 2800,
+        "endMs": 3967,
+        "text": "Do you want to buy more indoor lighting for your market?",
+        "boxes": [
+          {
+            "x": 0.04,
+            "y": 0.418,
+            "width": 0.92,
+            "height": 0.0329
+          },
+          {
+            "x": 0.04,
+            "y": 0.4421,
+            "width": 0.92,
+            "height": 0.0241
+          },
+          {
+            "x": 0.04,
+            "y": 0.4574,
+            "width": 0.92,
+            "height": 0.0222
+          }
+        ],
+        "confidence": 0.9,
+        "source": "ocr",
+        "editable": false
+      },
+      {
+        "id": "vision-caption-shot-3",
+        "startMs": 3967,
+        "endMs": 6484,
+        "text": "Look here. I'm Lucy.",
+        "boxes": [
+          {
+            "x": 0.04,
+            "y": 0.6043,
+            "width": 0.92,
+            "height": 0.0263
+          },
+          {
+            "x": 0.04,
+            "y": 0.6438,
+            "width": 0.92,
+            "height": 0.0263
+          }
+        ],
+        "confidence": 0.9,
+        "source": "ocr",
+        "editable": false
+      },
+      {
+        "id": "vision-caption-shot-4",
+        "startMs": 6484,
+        "endMs": 8300,
+        "text": "a 30-year indoor lighting",
+        "boxes": [
+          {
+            "x": 0.04,
+            "y": 0.6503,
+            "width": 0.92,
+            "height": 0.0222
+          }
+        ],
+        "confidence": 0.9,
+        "source": "ocr",
+        "editable": false
+      },
+      {
+        "id": "vision-caption-shot-5",
+        "startMs": 8300,
+        "endMs": 9467,
+        "text": "a 30-year indoor lighting",
+        "boxes": [
+          {
+            "x": 0.04,
+            "y": 0.5999,
+            "width": 0.92,
+            "height": 0.0285
+          }
+        ],
+        "confidence": 0.9,
+        "source": "ocr",
+        "editable": false
+      },
+      {
+        "id": "vision-caption-shot-5",
+        "startMs": 8300,
+        "endMs": 9467,
+        "text": "a 30-year indoor lighting",
+        "boxes": [
+          {
+            "x": 0.04,
+            "y": 0.5999,
+            "width": 0.92,
+            "height": 0.0285
+          }
+        ],
+        "confidence": 0.96,
+        "source": "ocr",
+        "editable": false
+      },
+      {
+        "id": "vision-caption-shot-6",
+        "startMs": 9467,
+        "endMs": 10000,
+        "text": "a 30-year indoor lighting",
+        "boxes": [
+          {
+            "x": 0.04,
+            "y": 0.5999,
+            "width": 0.92,
+            "height": 0.0263
+          }
+        ],
+        "confidence": 0.9,
+        "source": "ocr",
+        "editable": false
+      },
+      {
+        "id": "vision-caption-shot-6",
+        "startMs": 9467,
+        "endMs": 10000,
+        "text": "a 30-year indoor lighting",
+        "boxes": [
+          {
+            "x": 0.04,
+            "y": 0.5999,
+            "width": 0.92,
+            "height": 0.0263
+          }
+        ],
+        "confidence": 0.96,
+        "source": "ocr",
+        "editable": false
+      }
+    ],
+    "visualEvidence": [
+      {
+        "shotId": "shot-1",
+        "subjectType": "person",
+        "subjectBox": {
+          "x": 0.09,
+          "y": 0.01,
+          "width": 0.82,
+          "height": 0.63
+        },
+        "subjectAnchor": {
+          "x": 0.5,
+          "y": 0.32
+        },
+        "safeZones": [],
+        "captionBoxes": [
+          {
+            "x": 0.04,
+            "y": 0.646,
+            "width": 0.92,
+            "height": 0.0244
+          }
+        ],
+        "confidence": 0.9,
+        "captionText": "Hello boss",
+        "preferredSide": "auto",
+        "targetRelation": "none"
+      },
+      {
+        "shotId": "shot-2",
+        "subjectType": "machine",
+        "subjectBox": {
+          "x": 0.4,
+          "y": 0.216,
+          "width": 0.2,
+          "height": 0.168
+        },
+        "subjectAnchor": {
+          "x": 0.5,
+          "y": 0.3
+        },
+        "safeZones": [],
+        "captionBoxes": [
+          {
+            "x": 0.04,
+            "y": 0.418,
+            "width": 0.92,
+            "height": 0.0329
+          },
+          {
+            "x": 0.04,
+            "y": 0.4421,
+            "width": 0.92,
+            "height": 0.0241
+          },
+          {
+            "x": 0.04,
+            "y": 0.4574,
+            "width": 0.92,
+            "height": 0.0222
+          }
+        ],
+        "confidence": 0.9,
+        "captionText": "Do you want to buy more indoor lighting for your market?",
+        "preferredSide": "top",
+        "targetRelation": "none"
+      },
+      {
+        "shotId": "shot-3",
+        "subjectType": "person",
+        "subjectBox": {
+          "x": 0.09,
+          "y": 0.01,
+          "width": 0.82,
+          "height": 0.63
+        },
+        "subjectAnchor": {
+          "x": 0.5,
+          "y": 0.32
+        },
+        "safeZones": [],
+        "captionBoxes": [
+          {
+            "x": 0.04,
+            "y": 0.6043,
+            "width": 0.92,
+            "height": 0.0263
+          },
+          {
+            "x": 0.04,
+            "y": 0.6438,
+            "width": 0.92,
+            "height": 0.0263
+          }
+        ],
+        "confidence": 0.9,
+        "captionText": "Look here. I'm Lucy.",
+        "preferredSide": "auto",
+        "targetRelation": "none"
+      },
+      {
+        "shotId": "shot-4",
+        "subjectType": "machine",
+        "subjectBox": {
+          "x": 0.4,
+          "y": 0.216,
+          "width": 0.2,
+          "height": 0.168
+        },
+        "subjectAnchor": {
+          "x": 0.5,
+          "y": 0.3
+        },
+        "safeZones": [],
+        "captionBoxes": [
+          {
+            "x": 0.04,
+            "y": 0.6503,
+            "width": 0.92,
+            "height": 0.0222
+          }
+        ],
+        "confidence": 0.9,
+        "captionText": "a 30-year indoor lighting",
+        "preferredSide": "top",
+        "targetRelation": "none"
+      },
+      {
+        "shotId": "shot-5",
+        "subjectType": "product",
+        "safeZones": [],
+        "captionBoxes": [
+          {
+            "x": 0.04,
+            "y": 0.5999,
+            "width": 0.92,
+            "height": 0.0285
+          }
+        ],
+        "confidence": 0.9,
+        "captionText": "a 30-year indoor lighting",
+        "preferredSide": "auto",
+        "targetRelation": "none"
+      },
+      {
+        "shotId": "shot-5",
+        "eventId": "factory-history",
+        "targetId": "factory-history-target",
+        "subjectType": "product",
+        "safeZones": [],
+        "captionBoxes": [
+          {
+            "x": 0.04,
+            "y": 0.5999,
+            "width": 0.92,
+            "height": 0.0285
+          }
+        ],
+        "confidence": 0.96,
+        "captionText": "a 30-year indoor lighting",
+        "preferredSide": "auto",
+        "targetRelation": "surround"
+      },
+      {
+        "shotId": "shot-6",
+        "subjectType": "product",
+        "safeZones": [],
+        "captionBoxes": [
+          {
+            "x": 0.04,
+            "y": 0.5999,
+            "width": 0.92,
+            "height": 0.0263
+          }
+        ],
+        "confidence": 0.9,
+        "captionText": "a 30-year indoor lighting",
+        "preferredSide": "auto",
+        "targetRelation": "none"
+      },
+      {
+        "shotId": "shot-6",
+        "eventId": "factory-history",
+        "targetId": "factory-history-target",
+        "subjectType": "product",
+        "safeZones": [],
+        "captionBoxes": [
+          {
+            "x": 0.04,
+            "y": 0.5999,
+            "width": 0.92,
+            "height": 0.0263
+          }
+        ],
+        "confidence": 0.96,
+        "captionText": "a 30-year indoor lighting",
+        "preferredSide": "auto",
+        "targetRelation": "surround"
+      }
+    ]
+  },
+  "acceptance": {
+    "purpose": "word-level subtitle render contract only",
+    "wordTiming": "source-caption calibrated preview; replace with measured ASR before editorial approval",
+    "expectedTranscript": "Hello boss. Are you from Vietnam? Do you want to buy more indoor lighting for your market? Look here. I'm Lucy. A 30-year indoor lighting factory.",
+    "sourceHasBurnedCaptions": true,
+    "burnedCaptionsCovered": false
+  },
+  "burnedCaptionMasks": [
+    {
+      "id": "shot-1-caption",
+      "startMs": 1650,
+      "endMs": 2800,
+      "box": {
+        "x": 0.33,
+        "y": 0.745,
+        "width": 0.34,
+        "height": 0.05
+      }
+    },
+    {
+      "id": "shot-2-caption",
+      "startMs": 2800,
+      "endMs": 3967,
+      "box": {
+        "x": 0.13,
+        "y": 0.635,
+        "width": 0.74,
+        "height": 0.05
+      }
+    },
+    {
+      "id": "shot-3-caption",
+      "startMs": 3967,
+      "endMs": 6484,
+      "box": {
+        "x": 0.23,
+        "y": 0.605,
+        "width": 0.54,
+        "height": 0.08
+      }
+    },
+    {
+      "id": "shot-4-caption",
+      "startMs": 6484,
+      "endMs": 8300,
+      "box": {
+        "x": 0.3,
+        "y": 0.6,
+        "width": 0.4,
+        "height": 0.055
+      }
+    },
+    {
+      "id": "shot-5-caption",
+      "startMs": 8300,
+      "endMs": 9467,
+      "box": {
+        "x": 0.14,
+        "y": 0.595,
+        "width": 0.72,
+        "height": 0.055
+      }
+    },
+    {
+      "id": "shot-6-caption",
+      "startMs": 9467,
+      "endMs": 10000,
+      "box": {
+        "x": 0.14,
+        "y": 0.595,
+        "width": 0.72,
+        "height": 0.055
+      }
+    }
+  ]
+}
