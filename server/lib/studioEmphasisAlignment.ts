@@ -70,10 +70,27 @@ function bestShot(evidence: { startMs: number; endMs: number }, shots: ShotWindo
 }
 
 function targetRelation(event: EmphasisEvent, evidence: VisualEvidence): NonNullable<EmphasisEvent['targetRelation']> {
+  if (evidence.targetRelation) return evidence.targetRelation;
   if (event.type === 'cta') return 'point_to';
   if (evidence.subjectType === 'person') return 'adjacent';
   if (evidence.subjectType === 'unknown') return 'none';
   return 'surround';
+}
+
+function bestVisualEvidence(event: EmphasisEvent, shotId: string, evidence: VisualEvidence[]): VisualEvidence | undefined {
+  return evidence.filter(item => item.shotId === shotId && (!item.eventId || item.eventId === event.id)
+    && (!item.targetId || item.targetId === event.targetId))
+    .sort((left, right) => {
+      const scope = (item: VisualEvidence) => (item.eventId === event.id ? 4 : 0)
+        + (event.targetId && item.targetId === event.targetId ? 2 : 0) + (item.eventId || item.targetId ? 0 : 1);
+      return scope(right) - scope(left) || right.confidence - left.confidence;
+    })[0];
+}
+
+function preferredSide(evidence: VisualEvidence): NonNullable<EmphasisEvent['preferredSide']> {
+  if (evidence.preferredSide) return evidence.preferredSide;
+  const centerX = evidence.subjectAnchor?.x ?? (evidence.subjectBox ? evidence.subjectBox.x + evidence.subjectBox.width / 2 : .5);
+  return centerX < .5 ? 'right' : centerX > .5 ? 'left' : 'auto';
 }
 
 const mainDecoration = (event: EmphasisEvent): boolean => event.presentationMode === 'graphic_only' || event.presentationMode === 'label';
@@ -106,19 +123,21 @@ export function alignStudioEmphasisEvents(input: {
     const duplicates = concurrent.filter(item => emphasisTextRepeats(event.text, item.text));
     const editableCaption = duplicates.some(item => item.editable);
     const duplicate = duplicates.length > 0;
-    const shotVisual = visuals.find(item => item.shotId === shot.id && item.confidence >= .68);
+    const shotVisuals = visuals.filter(item => item.shotId === shot.id && item.confidence >= .68);
+    const shotVisual = bestVisualEvidence(event, shot.id, shotVisuals);
     const visual = shotVisual?.subjectBox || shotVisual?.subjectAnchor ? shotVisual : undefined;
-    const occupiedBoxes = uniqueBoxes([...concurrent.flatMap(item => item.boxes), ...(shotVisual?.captionBoxes || [])]);
+    const occupiedBoxes = uniqueBoxes([...concurrent.flatMap(item => item.boxes), ...shotVisuals.flatMap(item => item.captionBoxes)]);
     const tooShort = endMs - startMs < 500;
     let presentationMode: NonNullable<EmphasisEvent['presentationMode']>;
     if (tooShort) presentationMode = editableCaption ? 'caption_emphasis' : 'none';
-    else if (duplicate) presentationMode = editableCaption ? 'caption_emphasis' : visual ? 'graphic_only' : 'none';
+    else if (duplicate) presentationMode = editableCaption ? 'caption_emphasis' : 'graphic_only';
     else presentationMode = visual ? 'graphic_only' : event.text ? 'label' : 'none';
     const relation = presentationMode === 'graphic_only' && visual ? targetRelation(event, visual) : 'none';
     return {
       ...event, startMs: Math.round(Math.max(startMs, 0)), endMs: Math.round(Math.max(startMs, endMs)),
       shotId: shot.id, evidenceStartMs: evidence.startMs, evidenceEndMs: evidence.endMs,
       presentationMode, targetRelation: relation,
+      ...(presentationMode !== 'none' && visual ? { preferredSide: preferredSide(visual) } : {}),
       ...(occupiedBoxes.length ? { occupiedBoxes } : {}),
       ...(visual?.subjectBox ? { subjectBox: visual.subjectBox } : {}),
       ...(visual?.subjectAnchor ? { subjectAnchor: visual.subjectAnchor } : {}),
@@ -135,6 +154,6 @@ export function alignStudioEmphasisEvents(input: {
     const editable = occupancy.some(item => item.editable && overlapMs(event.startMs, event.endMs, item.startMs, item.endMs) > 0
       && emphasisTextRepeats(event.text, item.text));
     return { ...event, presentationMode: editable ? 'caption_emphasis' as const : 'none' as const, targetRelation: 'none' as const,
-      subjectBox: undefined, subjectAnchor: undefined };
+      preferredSide: undefined, subjectBox: undefined, subjectAnchor: undefined };
   });
 }

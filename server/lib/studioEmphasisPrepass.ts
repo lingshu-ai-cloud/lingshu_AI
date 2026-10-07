@@ -131,6 +131,14 @@ export async function runStudioEmphasisPrepass(input: {
     const occupancy = occupancyByShot.get(evidence.shotId);
     return occupancy?.captionBoxes.length ? { ...evidence, captionBoxes: occupancy.captionBoxes } : evidence;
   });
+  for (const evidence of visualEvidence) {
+    if (!evidence.captionText) continue;
+    const shot = shotWindows.find(item => item.id === evidence.shotId);
+    if (!shot) continue;
+    const boxes = evidence.captionBoxes.length ? evidence.captionBoxes : occupancyByShot.get(shot.id)?.captionBoxes || [];
+    captionOccupancy.push({ id: `vision-caption-${shot.id}-${evidence.eventId || 'general'}`, startMs: shot.startMs, endMs: shot.endMs,
+      text: evidence.captionText, boxes, confidence: Math.max(.75, evidence.confidence), source: 'ocr', editable: false });
+  }
   const result: StudioEmphasisPrepassResult = {
     shotWindows,
     captionOccupancy: normalizeCaptionOccupancy(captionOccupancy, durationMs),

@@ -80,7 +80,31 @@ assert.ok(cropMetadata.assets['burst-rays-yellow-static.png'].height < .5, 'larg
 const surround = planOverlayPresentation({ id: 'surround', type: 'key_fact', text: '新品', presentationMode: 'label', targetRelation: 'surround', subjectBox });
 assert.equal(surround.outcome, 'label');
 assert.equal(surround.layout.relation, 'surround');
+assert.ok(surround.layout.asset.width <= .16 && surround.layout.asset.height <= .145,
+  'surround accent stays compact instead of spanning the subject');
+assert.equal(intersects(surround.layout.asset, subjectBox), false, 'surround accent is tangent to, not over, the subject');
 assert.equal(intersects(surround.layout.label, subjectBox, .012), false, 'surround label clears the target rectangle');
+const surroundAvoidance = planOverlayPresentation({ id: 'surround-occupied', type: 'key_fact', text: '参数', presentationMode: 'label',
+  targetRelation: 'surround', subjectBox, occupiedBoxes: [
+    { x: .64, y: .24, width: .33, height: .25 },
+    { x: .28, y: .08, width: .42, height: .12 },
+  ] });
+assert.equal(surroundAvoidance.outcome, 'label');
+assert.equal(intersects(surroundAvoidance.layout.asset, subjectBox), false);
+for (const occupied of [{ x: .64, y: .24, width: .33, height: .25 }, { x: .28, y: .08, width: .42, height: .12 }]) {
+  assert.equal(intersects(surroundAvoidance.layout.asset, occupied), false, 'edge direction avoids occupied image regions');
+  assert.equal(intersects(surroundAvoidance.layout.label, occupied), false, 'label follows into unoccupied negative space');
+}
+assert.ok(surroundAvoidance.layout.asset.y + surroundAvoidance.layout.asset.height <= .70,
+  'surround accent never enters the subtitle reserve');
+const preferredSurround = planOverlayPresentation({ id: 'surround-preferred', type: 'key_fact', text: '局部',
+  presentationMode: 'graphic_only', targetRelation: 'surround', preferredSide: 'left', subjectBox });
+assert.match(preferredSurround.layout.mode, /surround-left/, 'uses the evidence preferred side when it is collision-free');
+const detachedFact = planOverlayPresentation({ id: 'detached-fact', type: 'key_fact', text: '画面已有事实字幕',
+  presentationMode: 'graphic_only', targetRelation: 'none', occupiedBoxes: [{ x: .04, y: .60, width: .92, height: .04 }] });
+assert.equal(detachedFact.outcome, 'graphic_only');
+assert.ok(detachedFact.layout.asset.width <= .13 && detachedFact.layout.asset.x >= .8,
+  'an immutable fact caption gets a compact upper-right accent instead of a central burst');
 const pointTo = planOverlayPresentation({ id: 'point', type: 'reveal', text: '看这里', targetRelation: 'point_to', subjectBox });
 assert.equal(pointTo.outcome, 'label');
 assert.match(pointTo.layout.mode, /relation-point/);

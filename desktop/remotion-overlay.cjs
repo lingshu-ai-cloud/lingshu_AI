@@ -5,7 +5,7 @@ const os = require('node:os');
 const path = require('node:path');
 
 let bundlePromise = null;
-const RENDERER_VERSION = 'semantic-assets-v6-visible-hold';
+const RENDERER_VERSION = 'semantic-assets-v7-visible-hold';
 const ASSET_DIRECTORY = path.join(__dirname, '../assets/reference/emphasis/v1');
 
 const finite = value => Number.isFinite(Number(value)) ? Number(value) : null;
@@ -53,7 +53,8 @@ function resolveOverlayLayout(event, index = 0) {
   })();
   const kind = semanticAssetKind(event);
   const aspect = kind === 'cta' ? 1.08 : kind === 'warning' ? .85 : kind === 'urgency' ? .70 : 1.5;
-  const assetWidth = kind === 'cta' ? .23 : kind === 'key_fact' || kind === 'reveal' ? .27 : .18;
+  const detachedGraphic = !subject && event && event.presentationMode === 'graphic_only';
+  const assetWidth = detachedGraphic ? .13 : kind === 'cta' ? .23 : kind === 'key_fact' || kind === 'reveal' ? .27 : .18;
   const assetHeight = assetWidth / aspect;
   const chars = Array.from(String(event && event.text || '')).length;
   const labelWidth = clamp(.14 + chars * .022, .20, .40), labelHeight = chars > 12 ? .105 : .075;
@@ -75,11 +76,16 @@ function resolveOverlayLayout(event, index = 0) {
       candidates.push({ asset, label, mode: `subject-${direction}` });
     }
   } else {
-    const left = side === 'left' ? .055 : .945 - assetWidth - gap - labelWidth;
+    const detachedSide = detachedGraphic && !(event && ['left', 'right'].includes(String(event.preferredSide)))
+      ? 'right' : side;
+    const left = detachedGraphic
+      ? (detachedSide === 'left' ? .055 : .945 - assetWidth)
+      : (side === 'left' ? .055 : .945 - assetWidth - gap - labelWidth);
     const y = kind === 'cta' ? .57 : .08 + (index % 3) * .17;
     candidates.push({
       asset: { x: left, y, width: assetWidth, height: assetHeight },
-      label: { x: left + assetWidth + gap, y: y + Math.max(0, (assetHeight - labelHeight) / 2), width: labelWidth, height: labelHeight },
+      label: { x: detachedGraphic && detachedSide === 'right' ? left - labelWidth - gap : left + assetWidth + gap,
+        y: y + Math.max(0, (assetHeight - labelHeight) / 2), width: labelWidth, height: labelHeight },
       mode: `corner-${side}`,
     });
   }
@@ -127,15 +133,33 @@ function relationLayouts(event, index = 0) {
   if (!subject) return [{ ...base, relation: 'adjacent' }];
   const a = base.asset, l = base.label, gap = .02;
   if (relation === 'surround') {
-    const expanded = {
-      x: clamp(subject.x - .055, .035, .965 - Math.min(.48, subject.width + .11)),
-      y: clamp(subject.y - .055, .035, .70 - Math.min(.58, subject.height + .11)),
-      width: Math.min(.48, subject.width + .11), height: Math.min(.58, subject.height + .11),
-    };
-    return [
-      { asset: expanded, label: { ...l, x: clamp(expanded.x + expanded.width + gap, .035, .965 - l.width), y: clamp(subject.y - l.height - gap, .035, .70 - l.height) }, mode: 'relation-surround-right', relation },
-      { asset: expanded, label: { ...l, x: clamp(expanded.x - l.width - gap, .035, .965 - l.width), y: clamp(subject.y - l.height - gap, .035, .70 - l.height) }, mode: 'relation-surround-left', relation },
+    // A "surround" asset is a compact edge accent, not a frame over the
+    // subject. Keep it tangent to one edge and let collision scoring choose
+    // the side with usable negative space.
+    const width = Math.min(a.width, .16);
+    const height = Math.min(a.height, .145);
+    const edgeGap = .016;
+    const centreX = subject.x + subject.width / 2;
+    const centreY = subject.y + subject.height / 2;
+    const candidates = [
+      { direction: 'right', asset: { x: subject.x + subject.width + edgeGap, y: centreY - height / 2, width, height } },
+      { direction: 'left', asset: { x: subject.x - width - edgeGap, y: centreY - height / 2, width, height } },
+      { direction: 'top', asset: { x: centreX - width / 2, y: subject.y - height - edgeGap, width, height } },
+      { direction: 'bottom', asset: { x: centreX - width / 2, y: subject.y + subject.height + edgeGap, width, height } },
     ];
+    const preferred = ['left', 'right', 'top', 'bottom'].includes(String(event && event.preferredSide))
+      ? String(event.preferredSide) : '';
+    if (preferred) candidates.sort((left, right) => Number(right.direction === preferred) - Number(left.direction === preferred));
+    return candidates.map(({ direction, asset }) => {
+      const label = direction === 'right'
+        ? { ...l, x: asset.x, y: asset.y - l.height - gap }
+        : direction === 'left'
+          ? { ...l, x: asset.x + width - l.width, y: asset.y - l.height - gap }
+          : direction === 'top'
+            ? { ...l, x: asset.x + width + gap, y: asset.y }
+            : { ...l, x: asset.x + width + gap, y: asset.y + height - l.height };
+      return { asset, label, mode: `relation-surround-${direction}`, relation, edge: direction };
+    });
   }
   if (relation === 'point_to') {
     return [
@@ -157,12 +181,8 @@ function planOverlayPresentation(event, index = 0) {
   const subject = eventSubject(event);
   const occupied = eventOccupied(event);
   const layouts = relationLayouts(event, index).map(layout => {
-    const asset = layout.relation === 'surround' ? occupied.reduce((rect, box) => {
-      if (!intersects(rect, box, .006)) return rect;
-      const above = box.y - rect.height - .012;
-      return above >= .035 ? { ...rect, y: above } : rect;
-    }, layout.asset) : layout.asset;
-    const assetOccupied = layout.relation === 'surround' ? occupied : subject ? [subject, ...occupied] : occupied;
+    const asset = layout.asset;
+    const assetOccupied = subject ? [subject, ...occupied] : occupied;
     const score = rectPenalty(asset, assetOccupied) + rectPenalty(layout.label, subject ? [subject, ...occupied] : occupied)
       + overlapArea(asset, layout.label) * 2000;
     return { ...layout, asset, score };
@@ -171,7 +191,7 @@ function planOverlayPresentation(event, index = 0) {
   if (requested === 'label' && full) return { outcome: 'label', attempted, layout: full };
   if (requested === 'label') attempted.push('graphic_only');
   const graphic = layouts.map(layout => ({ ...layout, score: rectPenalty(layout.asset,
-    layout.relation === 'surround' ? occupied : subject ? [subject, ...occupied] : occupied) }))
+    subject ? [subject, ...occupied] : occupied) }))
     .sort((left, right) => left.score - right.score).find(layout => layout.score === 0);
   if (graphic) return { outcome: 'graphic_only', attempted, layout: graphic };
   attempted.push('caption_emphasis');

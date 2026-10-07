@@ -36,6 +36,23 @@ test('accepts Gemini object envelopes and fenced JSON in addition to a bare arra
   assert.equal(result[0]?.subjectType, 'machine');
 });
 
+test('localizes a broad machine box around a model focal point', async () => {
+  const [result] = await analyzeStudioVisualEvidence(input, { analyzer: async () => ({ shots: [{
+    shotId: 'shot-1', subjectType: 'machine', subjectBox: { x: .05, y: .1, width: .9, height: .75 },
+    focalPoint: { x: .72, y: .38 }, confidence: .92,
+  }] }) });
+  assert.deepEqual(result?.subjectAnchor, { x: .72, y: .38 });
+  assert.deepEqual(result?.subjectBox, { x: .62, y: .28, width: .2, height: .2 });
+});
+
+test('uses a local machine edge when a broad detection has no focal point', async () => {
+  const [result] = await analyzeStudioVisualEvidence(input, { analyzer: async () => [{
+    shotId: 'shot-1', subjectType: 'process', subjectBox: { x: .1, y: .1, width: .7, height: .7 }, confidence: .88,
+  }] });
+  assert.ok(result?.subjectBox && result.subjectBox.width <= .2 && result.subjectBox.height <= .2);
+  assert.ok(result?.subjectAnchor && result.subjectAnchor.x > .6 && result.subjectAnchor.y < .5);
+});
+
 test('fails closed on analyzer errors and invalid or low-confidence coordinates', async () => {
   assert.deepEqual(await analyzeStudioVisualEvidence(input, { analyzer: async () => { throw new Error('offline'); } }), []);
   assert.deepEqual(await analyzeStudioVisualEvidence(input, { analyzer: async () => [

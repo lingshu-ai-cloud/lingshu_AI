@@ -46,6 +46,27 @@ test('uses graphic-only for immutable OCR duplicates when trusted subject eviden
   ]);
 });
 
+test('selects event-scoped local focus and preserves its preferred side over a wide-shot subject', () => {
+  const [aligned] = alignStudioEmphasisEvents({ durationMs: 3_000, events: [event({
+    id: 'local-fact', targetId: 'machine-head', startMs: 400, endMs: 2_400, evidenceStartMs: 400, evidenceEndMs: 2_400,
+  })], captions: [], preanalysis: {
+    shotWindows: [{ id: 'wide-shot', startMs: 0, endMs: 3_000, confidence: .95, source: 'ffmpeg_scene' }],
+    visualEvidence: [
+      { shotId: 'wide-shot', subjectType: 'machine', subjectBox: { x: .05, y: .1, width: .9, height: .75 },
+        safeZones: [], captionBoxes: [{ x: .05, y: .78, width: .9, height: .12 }], confidence: .9 },
+      { shotId: 'wide-shot', eventId: 'local-fact', targetId: 'machine-head', subjectType: 'machine',
+        subjectBox: { x: .7, y: .2, width: .18, height: .25 }, subjectAnchor: { x: .79, y: .32 },
+        preferredSide: 'left', targetRelation: 'point_to', safeZones: [], captionBoxes: [], confidence: .88 },
+    ],
+  } });
+  assert.equal(aligned?.presentationMode, 'graphic_only');
+  assert.deepEqual(aligned?.subjectBox, { x: .7, y: .2, width: .18, height: .25 });
+  assert.deepEqual(aligned?.subjectAnchor, { x: .79, y: .32 });
+  assert.equal(aligned?.targetRelation, 'point_to');
+  assert.equal(aligned?.preferredSide, 'left');
+  assert.deepEqual(aligned?.occupiedBoxes, [{ x: .05, y: .78, width: .9, height: .12 }]);
+});
+
 test('allows a new fact label without a subject and degrades sub-500ms windows', () => {
   const preanalysis = { shotWindows: [{ id: 'shot', startMs: 0, endMs: 2_000, confidence: .9, source: 'storyboard' }] };
   const [label] = alignStudioEmphasisEvents({ durationMs: 2_000, events: [event({ startMs: 500, endMs: 1_500, text: '独立包装' })],

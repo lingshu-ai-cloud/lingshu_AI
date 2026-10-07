@@ -12,6 +12,7 @@ export const EMPHASIS_VISUAL_INTENTS = ['focus_product', 'attention', 'urgency',
 export const EMPHASIS_ASSET_INTENTS = ['product_marker', 'attention_marker', 'urgency_badge', 'warning_marker', 'cta_marker', 'fact_label', 'section_marker'] as const;
 export const EMPHASIS_PRESENTATION_MODES = ['caption_emphasis', 'graphic_only', 'label', 'none'] as const;
 export const EMPHASIS_TARGET_RELATIONS = ['surround', 'point_to', 'adjacent', 'none'] as const;
+export const EMPHASIS_PREFERRED_SIDES = ['left', 'right', 'top', 'bottom', 'auto'] as const;
 export const EMPHASIS_TIMELINE_SCHEMA_VERSION = 1 as const;
 
 export type EmphasisEventType = typeof EMPHASIS_EVENT_TYPES[number];
@@ -22,6 +23,7 @@ export type EmphasisVisualIntent = typeof EMPHASIS_VISUAL_INTENTS[number];
 export type EmphasisAssetIntent = typeof EMPHASIS_ASSET_INTENTS[number];
 export type EmphasisPresentationMode = typeof EMPHASIS_PRESENTATION_MODES[number];
 export type EmphasisTargetRelation = typeof EMPHASIS_TARGET_RELATIONS[number];
+export type EmphasisPreferredSide = typeof EMPHASIS_PREFERRED_SIDES[number];
 export type NormalizedPoint = { x: number; y: number };
 export type NormalizedBox = { x: number; y: number; width: number; height: number };
 
@@ -57,12 +59,18 @@ export interface CaptionOccupancy {
 
 export interface VisualEvidence {
   shotId: string;
+  /** Optional scope for a local subject inside a wider shot. */
+  eventId?: string;
+  targetId?: string;
   subjectType: 'person' | 'product' | 'machine' | 'process' | 'unknown';
   subjectBox?: NormalizedBox;
   subjectAnchor?: NormalizedPoint;
   safeZones: Array<NormalizedBox & { clarity: number }>;
   captionBoxes: NormalizedBox[];
+  captionText?: string;
   confidence: number;
+  preferredSide?: EmphasisPreferredSide;
+  targetRelation?: EmphasisTargetRelation;
 }
 
 export interface EmphasisEvent {
@@ -79,6 +87,8 @@ export interface EmphasisEvent {
   evidenceEndMs?: number;
   presentationMode?: EmphasisPresentationMode;
   targetRelation?: EmphasisTargetRelation;
+  /** Preferred side for label/asset placement; renderer still applies collision checks. */
+  preferredSide?: EmphasisPreferredSide;
   /** Subtitle/OCR rectangles the renderer must treat as occupied. */
   occupiedBoxes?: NormalizedBox[];
   /** Semantic/visual subject used to find the best placement window. */
@@ -263,6 +273,8 @@ export function normalizeVisualEvidence(input: unknown): VisualEvidence[] {
   return (Array.isArray(input) ? input : []).slice(0, 500).map((value): VisualEvidence | null => {
     const raw = asRecord(value);
     const shotId = cleanId(raw.shotId, '');
+    const eventId = cleanId(raw.eventId, '');
+    const targetId = cleanId(raw.targetId, '');
     const subjectType = ['person', 'product', 'machine', 'process', 'unknown'].includes(String(raw.subjectType))
       ? raw.subjectType as VisualEvidence['subjectType'] : 'unknown';
     const confidence = clamp(raw.confidence, 0, 1, 0);
@@ -282,8 +294,16 @@ export function normalizeVisualEvidence(input: unknown): VisualEvidence[] {
       return [{ ...box, clarity: Number(clamp(asRecord(value).clarity, 0, 1, 0).toFixed(4)) }];
     });
     const captionBoxes = (Array.isArray(raw.captionBoxes) ? raw.captionBoxes : []).map(normalizedBox).filter((box): box is NormalizedBox => Boolean(box));
-    return { shotId, subjectType, ...(subjectBox ? { subjectBox } : {}), ...(subjectAnchor ? { subjectAnchor } : {}),
-      safeZones, captionBoxes, confidence: Number(confidence.toFixed(4)) };
+    const captionText = String(raw.captionText || '').trim().slice(0, 500);
+    const preferredSide = EMPHASIS_PREFERRED_SIDES.includes(String(raw.preferredSide) as EmphasisPreferredSide)
+      ? raw.preferredSide as EmphasisPreferredSide : undefined;
+    const targetRelation = EMPHASIS_TARGET_RELATIONS.includes(String(raw.targetRelation) as EmphasisTargetRelation)
+      ? raw.targetRelation as EmphasisTargetRelation : undefined;
+    return { shotId, ...(eventId ? { eventId } : {}), ...(targetId ? { targetId } : {}), subjectType,
+      ...(subjectBox ? { subjectBox } : {}), ...(subjectAnchor ? { subjectAnchor } : {}),
+      safeZones, captionBoxes, confidence: Number(confidence.toFixed(4)),
+      ...(captionText ? { captionText } : {}),
+      ...(preferredSide ? { preferredSide } : {}), ...(targetRelation ? { targetRelation } : {}) };
   }).filter((item): item is VisualEvidence => Boolean(item));
 }
 
@@ -308,6 +328,8 @@ export function normalizeEmphasisCandidates(input: unknown, durationMs: number):
       ? raw.presentationMode as EmphasisPresentationMode : undefined;
     const targetRelation = EMPHASIS_TARGET_RELATIONS.includes(String(raw.targetRelation) as EmphasisTargetRelation)
       ? raw.targetRelation as EmphasisTargetRelation : undefined;
+    const preferredSide = EMPHASIS_PREFERRED_SIDES.includes(String(raw.preferredSide) as EmphasisPreferredSide)
+      ? raw.preferredSide as EmphasisPreferredSide : undefined;
     const occupiedBoxes = (Array.isArray(raw.occupiedBoxes) ? raw.occupiedBoxes : [])
       .map(normalizedBox).filter((box): box is NormalizedBox => Boolean(box)).slice(0, 24);
     const strength = raw.strength === 'weak' || raw.strength === 'strong' ? raw.strength : undefined;
@@ -336,6 +358,7 @@ export function normalizeEmphasisCandidates(input: unknown, durationMs: number):
       ...(Number.isFinite(Number(raw.evidenceEndMs)) ? { evidenceEndMs } : {}),
       ...(presentationMode ? { presentationMode } : {}),
       ...(targetRelation ? { targetRelation } : {}),
+      ...(preferredSide ? { preferredSide } : {}),
       ...(occupiedBoxes.length ? { occupiedBoxes } : {}),
       visualIntent,
       assetIntent,
