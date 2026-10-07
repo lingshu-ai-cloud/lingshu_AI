@@ -31,13 +31,11 @@ assert.deepEqual(PRIMARY_SOCIAL_NAV_PAGES, [
   'socialInspiration',
   'smartAssets',
   'traffic',
-  'socialMonitoring',
 ]);
 assert.deepEqual(PRIMARY_SOCIAL_NAV_PAGES.map(page => PAGE_REGISTRY[page].navLabel), [
   '灵感中心',
   '内容制作',
   '发布与渠道',
-  '内容监控',
 ]);
 assert.deepEqual(SOCIAL_PROGRAM_NAV_PAGES, []);
 assert.equal(resolvePage('socialWorkspace'), 'smartAssets');

@@ -232,6 +232,7 @@ const agentRoleGroups: Array<{
 const destinationLabel: Record<BusinessDestination, string> = {
   enterprise: "企业资料",
   accountManagement: "社媒账号",
+  plugins: "集成中心",
   scheduled: "定时任务",
   socialInspiration: "爆款灵感",
   scriptLibrary: "话术库",
@@ -4160,8 +4161,8 @@ export default function DigitalEmployeePage({
             {views.map((view)=>{const active=workspaceView===view.id||(view.id==="overview"&&workspaceView==="live");return <button type="button" key={view.id} onClick={()=>{setWorkspaceView(view.id);if(view.id!=="overview")setSelectedContentItemId("");}} aria-current={active?"page":undefined} className={`shrink-0 border-b-2 pb-3 text-left ${active?"border-emerald-700":"border-transparent"}`}><span className={`block text-sm font-black ${active?"text-emerald-800":"text-slate-500"}`}>{view.label}</span><span className="mt-0.5 block text-[10px] text-slate-400">{view.caption}</span></button>;})}
           </nav>
           {error&&<div role="alert" className="mt-5 flex items-center justify-between gap-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-xs font-bold text-red-700"><span>{error}</span><button type="button" aria-label="关闭错误提示" onClick={()=>setError("")}><X size={15}/></button></div>}
-          <div className={`grid gap-5 py-6 ${workspaceView === "matrix" ? "lg:grid-cols-[220px_minmax(0,1fr)]" : "grid-cols-1"}`}>
-            {workspaceView === "matrix" && <SmartOperationsAccountRail targets={smartOperationsAccounts} selectedAccountId={selectedAccountId} taskCounts={accountTaskCounts} onSelect={setSelectedAccountId} onManage={() => onNavigate?.('accountManagement')}/>}
+          <div className="grid grid-cols-1 gap-4 py-6">
+            {workspaceView === "matrix" && <SmartOperationsAccountRail targets={smartOperationsAccounts} selectedAccountId={selectedAccountId} taskCounts={accountTaskCounts} onSelect={setSelectedAccountId} onManage={() => onNavigate?.('plugins')}/>}
             <main className="min-w-0">
             {workspaceView === "rules"
               ? <OnboardingPanel initial={data.config} readiness={data.businessSnapshot?.readiness || []} busy={Boolean(busy)} mode="rules" activeRun={activeRun} onOpenReadiness={openReadiness} onSave={(config) => void saveConfig(config)} />
@@ -4171,7 +4172,7 @@ export default function DigitalEmployeePage({
                     setWeeklyPlanOpen(true);
                     return;
                   }
-                  if (["enterprise", "accountManagement", "scheduled", "socialInspiration", "scriptLibrary", "smartAssets", "conversion", "digitalEmployees"].includes(page)) onNavigate?.(page as BusinessDestination);
+                  if (["enterprise", "accountManagement", "plugins", "scheduled", "socialInspiration", "scriptLibrary", "smartAssets", "conversion", "digitalEmployees"].includes(page)) onNavigate?.(page as BusinessDestination);
                 }} />}
             </main>
           </div>

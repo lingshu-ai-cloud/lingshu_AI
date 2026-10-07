@@ -746,6 +746,7 @@ export interface FollowupDispatchResponse {
 export type BusinessDestination =
   | "enterprise"
   | "accountManagement"
+  | "plugins"
   | "scheduled"
   | "socialInspiration"
   | "scriptLibrary"

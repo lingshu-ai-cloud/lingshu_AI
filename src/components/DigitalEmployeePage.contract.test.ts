@@ -68,12 +68,17 @@ for (const label of ['全部账号', 'YouTube', 'Instagram', 'Facebook', 'TikTok
 }
 assert.match(accountRailSource, /targets\.map\(account =>/, 'the account rail must render one flat list of real or planned accounts');
 assert.doesNotMatch(accountRailSource, /platforms\.map\(/, 'the account rail must not group accounts into duplicate platform sections');
+assert.match(accountRailSource, /overflow-x-auto/, 'the account selector must stay compact above the schedule instead of squeezing it from the left');
+assert.doesNotMatch(accountRailSource, /lg:sticky|lg:grid-cols-\[220px/, 'the account selector must not reserve a fixed desktop sidebar');
+assert.doesNotMatch(pageSource, /workspaceView === "matrix" \? "lg:grid-cols-\[220px/, 'the matrix workspace must keep the schedule at full width');
 for (const label of ['爆款视频预览', '素材组合预览', '效果置信度', '任务不能开始']) {
   assert.match(smartBusinessSource, new RegExp(label), `content task cards must expose ${label}`);
 }
 for (const label of ['每条视频就是一条日历任务', '爆款参考', '预计成本', '编导 45m', '内容制作 约5h']) {
   assert.match(matrixScheduleSource, new RegExp(label), `calendar content cards must expose ${label}`);
 }
+assert.match(matrixScheduleSource, /账号并行/, 'the calendar must make same-day multi-account operation visible');
+assert.match(matrixScheduleSource, /spreadAccountDate/, 'placeholder and generated tasks must use the same per-account distributed weekly axis');
 assert.doesNotMatch(matrixScheduleSource, /账号与内容任务|gridTemplateColumns: `260px/, 'the calendar must not reserve a separate left content-plan column');
 assert.match(matrixScheduleSource, /group-hover:max-h-64/, 'calendar preview cards must reveal details on hover');
 assert.match(smartBusinessSource, /当前节点[\s\S]{0,1000}来源[\s\S]{0,1000}结果[\s\S]{0,1000}下一步/, 'the existing four-Agent section must expose node, source, result, and next step');
@@ -133,7 +138,7 @@ assert.match(pageSource, /实际搜索范围以已批准的灵感范围为准/, 
 assert.match(pageSource, /输出内容语言/, 'content Agent settings must retain only its output-language requirement');
 assert.doesNotMatch(appSource, /SocialOperatingSummary/, 'Smart Business must not render the redundant social-operation background bar');
 assert.match(appSource, /page === 'traffic'[\s\S]{0,1200}initialView="publish"[\s\S]{0,300}visibleModes=\{\['publish'\]\}[\s\S]{0,200}showModeTabs=\{false\}/, 'publishing must not keep the redundant publish/account top-level tabs');
-assert.match(appSource, /page === 'socialMonitoring'[\s\S]{0,800}<TrafficPage[\s\S]{0,500}initialView="accounts"[\s\S]{0,300}visibleModes=\{\['accounts'\]\}/, 'Content Monitoring must host the account activity surface');
+assert.match(smartBusinessSource, /<AccountActivity embedded\/>/, 'Content Monitoring must be embedded at the bottom of the Smart Business content queue');
 for (const label of ['经营总览', '账号矩阵', '内容队列', '数据复盘']) assert.match(pageSource, new RegExp(label), `Smart Business must expose ${label}`);
 assert.doesNotMatch(pageSource, /id: "live", label: "周计划"/, 'the repetitive standalone weekly-plan tab must be removed');
 assert.match(layoutSource, /\{accountMenuOpen && \([\s\S]{0,1800}新手引导/, 'the beginner guide must live in the expanded user menu');
@@ -196,12 +201,14 @@ assert.match(smartBusinessSource, /\/api\/oauth\/whatsapp\/config/, 'account det
 assert.match(smartBusinessSource, /messengerSubscribed/, 'Facebook account details must read the real Messenger subscription state');
 assert.match(smartBusinessSource, /排期规则：编导结论先完成，经营 Agent 再派发内容任务/, 'the account matrix must feed the unified weekly content queue with the approved Agent handoff');
 assert.match(smartBusinessSource, /const pageSize = 6/, 'long content queues must use a bounded page size');
-assert.match(smartBusinessSource, /aria-label="内容队列分页"/, 'long content queues must expose pagination controls');
+assert.match(smartBusinessSource, /aria-label="生成进度分页"/, 'long per-video progress lists must expose pagination controls inside the account matrix');
 assert.match(smartBusinessSource, /内容队列[\s\S]{0,900}视频内容数据概览/, 'the queue must open with video-specific performance data');
-assert.match(smartBusinessSource, /查看制作进度 →[\s\S]{0,4500}进入制作台 →/, 'planned and running content must link directly to detailed production progress');
+assert.match(smartBusinessSource, /每条视频生成进度[\s\S]{0,4500}查看完整进度[\s\S]{0,1000}进入制作台/, 'planned and running content must move below the account matrix and link directly to production');
 assert.match(pageSource, /onOpenContent=\{openContentProduction\}/, 'Smart Business content links must preserve the current Agent task when opening Studio');
 assert.match(smartBusinessSource, /分平台数据[\s\S]{0,500}各平台的视频表现/, 'the content queue must expose platform performance filters');
 assert.match(smartBusinessSource, /视频热度榜单/, 'the content queue must expose a video heat ranking');
+assert.match(smartBusinessSource, /sm:grid-cols-2 xl:grid-cols-4/, 'the video ranking must use a horizontal card grid');
+assert.match(smartBusinessSource, /原“内容监控”页已合并到这里/, 'the content queue must explain that account monitoring now lives at its bottom');
 assert.doesNotMatch(smartBusinessSource, /成本建议/, 'the content queue must not show cost advice');
 for (const platform of ['YouTube', 'TikTok', 'Instagram', 'Facebook']) assert.match(smartBusinessSource, new RegExp(platform), `review ranking must expose ${platform}`);
 assert.match(smartBusinessSource, /loadConnectedSocialPerformance/, 'review must read the same connected-account performance source as Content Monitoring');

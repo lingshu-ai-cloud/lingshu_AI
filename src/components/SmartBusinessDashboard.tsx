@@ -37,6 +37,7 @@ import { authHeader } from "../lib/auth";
 import ProductionTaskScene from "./ProductionTaskScene";
 import MatrixWorkSchedule from "./smartBusiness/MatrixWorkSchedule";
 import NextRoundRecommendationsSection from "./NextRoundRecommendationsSection";
+import AccountActivity from "./AccountActivity";
 
 export type SmartBusinessView = "home" | "matrix" | "queue" | "production" | "review";
 
@@ -586,12 +587,15 @@ function LegacyMatrixWorkSchedule({ startsAt, endsAt, accounts, plans, selectedA
   </section>;
 }
 
-function MatrixView({ data, onRefresh, onNavigate, onGeneratePlan, selectedAccountId = "" }: {
+function MatrixView({ data, onRefresh, onNavigate, onGeneratePlan, selectedAccountId = "", onOpenContent, onOpenProductionProgress, onRetryTask }: {
   data: DigitalEmployeeOverview;
   onRefresh?: () => void;
   onNavigate?: (page: Page) => void;
   onGeneratePlan?: () => void;
   selectedAccountId?: string;
+  onOpenContent?: (taskId?: string, socialContentTaskId?: string) => void;
+  onOpenProductionProgress?: (taskId: string, contentItemId: string) => void;
+  onRetryTask?: (taskId: string) => Promise<boolean>;
 }) {
   const saved = data.plan?.businessPackage;
   const config = data.config;
@@ -741,7 +745,7 @@ function MatrixView({ data, onRefresh, onNavigate, onGeneratePlan, selectedAccou
     <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div><p className="text-xs font-bold tracking-[0.16em] text-emerald-700">账号配置</p><h2 className="mt-1 text-2xl font-black text-slate-950">账号职责与连接状态</h2><p className="mt-1 text-sm text-slate-500">内容任务已统一放入上方工作排期；这里仅保留账号定位、承接能力和对标配置。</p></div>
-        <div className="flex flex-wrap gap-2"><button type="button" onClick={() => onNavigate?.("accountManagement")} className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-xs font-black text-slate-700">管理连接账号</button>{editable&&<button type="button" disabled={saving} onClick={() => void synchronizePackage()} className="inline-flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-xs font-black text-emerald-800 disabled:opacity-50"><RefreshCcw size={14} className={saving ? "animate-spin" : ""}/>按矩阵同步周任务包</button>}{editable&&<button type="button" onClick={() => { setDraft(saved || null); setEditing(true); }} className="inline-flex items-center gap-2 rounded-xl bg-slate-950 px-4 py-2.5 text-xs font-black text-white"><Pencil size={14}/>修改矩阵</button>}</div>
+        <div className="flex flex-wrap gap-2"><button type="button" onClick={() => onNavigate?.("plugins")} className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-xs font-black text-slate-700">管理连接账号</button>{editable&&<button type="button" disabled={saving} onClick={() => void synchronizePackage()} className="inline-flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-xs font-black text-emerald-800 disabled:opacity-50"><RefreshCcw size={14} className={saving ? "animate-spin" : ""}/>按矩阵同步周任务包</button>}{editable&&<button type="button" onClick={() => { setDraft(saved || null); setEditing(true); }} className="inline-flex items-center gap-2 rounded-xl bg-slate-950 px-4 py-2.5 text-xs font-black text-white"><Pencil size={14}/>修改矩阵</button>}</div>
       </div>
       {message&&<p role="status" className="mt-4 rounded-xl bg-emerald-50 px-4 py-3 text-xs font-bold text-emerald-800">{message}</p>}
       {!rows.length&&<p className="mt-5 rounded-xl border border-dashed border-amber-200 bg-amber-50 px-4 py-3 text-xs font-bold text-amber-800">还没有已连接账号，当前展示可直接配置的默认账号矩阵。</p>}
@@ -765,6 +769,7 @@ function MatrixView({ data, onRefresh, onNavigate, onGeneratePlan, selectedAccou
       {!saved&&<div className="mt-5 flex justify-end"><button type="button" onClick={onGeneratePlan} className="inline-flex items-center gap-2 rounded-xl bg-emerald-700 px-4 py-2.5 text-xs font-black text-white"><CalendarRange size={14}/>生成周计划并应用矩阵</button></div>}
       {saved&&!saved.matrixPlan?.length&&defaultRows.length>0&&editable&&<div className="mt-5 flex justify-end"><button type="button" disabled={saving} onClick={() => void save({ ...saved, matrixPlan: defaultRows })} className="inline-flex items-center gap-2 rounded-xl bg-emerald-700 px-4 py-2.5 text-xs font-black text-white disabled:opacity-50"><LayoutGrid size={14}/>应用默认矩阵</button></div>}
     </section>
+    <ContentGenerationProgress data={data} selectedAccountId={selectedAccountId} onOpenContent={onOpenContent} onOpenProductionProgress={onOpenProductionProgress} onRetryTask={onRetryTask}/>
     {editing&&draft&&config&&goal&&<div className="fixed inset-0 z-[190] flex justify-end bg-slate-950/35" onMouseDown={() => !saving&&setEditing(false)}><section role="dialog" aria-modal="true" aria-label="修改账号矩阵" className="h-full w-full max-w-[1180px] overflow-y-auto bg-white p-5 shadow-2xl sm:p-7" onMouseDown={event => event.stopPropagation()}><header className="mb-5 flex items-start justify-between gap-4 border-b border-slate-100 pb-4"><div><p className="text-xs font-bold text-emerald-700">本周账号矩阵</p><h2 className="mt-1 text-xl font-black text-slate-950">修改账号、内容方向与排期</h2></div><button type="button" aria-label="关闭修改矩阵" onClick={() => !saving&&setEditing(false)} className="rounded-full border border-slate-200 p-2 text-slate-500"><X size={18}/></button></header><WeeklyMatrixEditor pack={draft} config={config} platforms={goal.contentPlatforms} startsAt={goal.startsAt} dueAt={goal.endsAt} projects={projects} onChange={setDraft} onNavigate={page => onNavigate?.(page)}/><div className="sticky bottom-0 mt-6 flex justify-end border-t border-slate-100 bg-white py-4"><button type="button" disabled={saving} onClick={() => void save(draft)} className="rounded-xl bg-emerald-700 px-5 py-2.5 text-sm font-black text-white disabled:opacity-50">{saving?"保存中…":"保存并更新内容清单"}</button></div></section></div>}
   </div>;
 }
@@ -838,17 +843,6 @@ function shiftIsoDate(value: string, days: number) {
   return Number.isFinite(time) ? new Date(time + days * DAY_MS).toISOString().slice(0, 10) : "";
 }
 
-function queueWeekLabel(value: string) {
-  const time = Date.parse(`${value}T00:00:00Z`);
-  if (!Number.isFinite(time)) return "未排期内容";
-  const date = new Date(time);
-  const day = date.getUTCDay() || 7;
-  const start = new Date(time - (day - 1) * DAY_MS);
-  const end = new Date(start.getTime() + 6 * DAY_MS);
-  const label = (item: Date) => `${item.getUTCMonth() + 1}月${item.getUTCDate()}日`;
-  return `${label(start)}–${label(end)}`;
-}
-
 function deliveryNumber(card: DeliveryResource, pattern: RegExp) {
   const value = card.metrics.find(metric => pattern.test(metric.label))?.value;
   return typeof value === "number" && Number.isFinite(value) ? value : null;
@@ -875,6 +869,42 @@ function performanceForQueueItem(item: ContentQueueItem, deliveries: DeliveryRes
   };
 }
 
+function ContentGenerationProgress({ data, selectedAccountId = "", onOpenContent, onOpenProductionProgress, onRetryTask }: {
+  data: DigitalEmployeeOverview;
+  selectedAccountId?: string;
+  onOpenContent?: (taskId?: string, socialContentTaskId?: string) => void;
+  onOpenProductionProgress?: (taskId: string, contentItemId: string) => void;
+  onRetryTask?: (taskId: string) => Promise<boolean>;
+}) {
+  const items = (data.contentQueue?.items || []).filter(item => !selectedAccountId || item.accountId === selectedAccountId);
+  const [statusFilter, setStatusFilter] = useState<"all" | "active" | "waiting_review" | "blocked" | "completed">("all");
+  const [page, setPage] = useState(1);
+  const [retryingTaskId, setRetryingTaskId] = useState("");
+  const filtered = items.filter(item => statusFilter === "all"
+    || statusFilter === "active" && ["planned", "queued", "producing"].includes(item.status)
+    || item.status === statusFilter);
+  const pageSize = 6;
+  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const pageItems = filtered.slice((page - 1) * pageSize, page * pageSize);
+  useEffect(() => setPage(1), [statusFilter, selectedAccountId]);
+  useEffect(() => setPage(current => Math.min(current, totalPages)), [totalPages]);
+  const statusLabel = { planned: "计划已生成", queued: "等待制作", producing: "制作中", waiting_review: "待验收", completed: "已完成", blocked: "制作受阻" } as const;
+  const statusTone = { planned: "bg-slate-100 text-slate-700", queued: "bg-sky-50 text-sky-700", producing: "bg-blue-50 text-blue-700", waiting_review: "bg-amber-50 text-amber-700", completed: "bg-emerald-50 text-emerald-700", blocked: "bg-red-50 text-red-700" } as const;
+  const retry = async (item: ContentQueueItem) => {
+    if (!onRetryTask || !item.taskId || retryingTaskId) return;
+    setRetryingTaskId(item.taskId);
+    try {
+      if (await onRetryTask(item.taskId)) showActionSuccess("任务已从失败节点重新生成", "已完成的素材和结果不会被覆盖。");
+    } finally { setRetryingTaskId(""); }
+  };
+  return <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6" aria-labelledby="content-generation-progress-title">
+    <div className="flex flex-wrap items-end justify-between gap-4"><div><p className="text-xs font-bold tracking-[0.16em] text-emerald-700">逐视频生产</p><h2 id="content-generation-progress-title" className="mt-1 text-xl font-black text-slate-950">每条视频生成进度</h2><p className="mt-1 text-xs text-slate-500">账号矩阵决定发布节奏；这里继续追踪每条视频当前节点、责任 Agent、预计时间和失败重试。</p></div><select aria-label="生成进度状态" value={statusFilter} onChange={event => setStatusFilter(event.target.value as typeof statusFilter)} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-[10px] font-black text-slate-700"><option value="all">全部状态</option><option value="active">制作中</option><option value="waiting_review">待验收</option><option value="blocked">异常任务</option><option value="completed">已完成</option></select></div>
+    <div className="mt-4 grid gap-3 lg:grid-cols-2">{pageItems.map(item => { const currentStep = item.steps.find(step => step.state === "active") || item.steps.find(step => step.state !== "done") || item.steps.at(-1); return <article key={item.id} className="rounded-2xl border border-slate-200 bg-slate-50/50 p-4"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><SocialPlatformIcon platform={item.platform} size={15}/><span className="text-[9px] font-black text-emerald-700">{platformLabels[item.platform]}</span><span className={`rounded-full px-2 py-1 text-[8px] font-black ${statusTone[item.status]}`}>{statusLabel[item.status]}</span><span className="text-[9px] text-slate-400">{item.plannedPublishDate || "待排期"}</span></div><h3 className="mt-2 truncate text-sm font-black text-slate-950">{item.title}</h3><p className="mt-1 truncate text-[10px] text-slate-500">{item.accountLabel || "仅制作"} · {item.productName || "待绑定产品"}</p></div><strong className="shrink-0 text-sm text-slate-800">{item.progress}%</strong></div><div className="mt-3 h-1.5 overflow-hidden rounded-full bg-slate-200"><div className={`h-full rounded-full ${item.status === "blocked" ? "bg-red-500" : item.status === "completed" ? "bg-emerald-500" : "bg-blue-500"}`} style={{ width: `${item.progress}%` }}/></div><div className="mt-3 flex flex-wrap items-center justify-between gap-3"><p className="text-[9px] font-bold text-slate-500">{currentStep ? `${currentStep.responsibleAgent} · ${currentStep.label} · ${productionDurationLabel(currentStep.estimatedMinutes)}` : "等待经营 Agent 派发"}</p><div className="flex gap-2">{item.status === "blocked" && onRetryTask && item.taskId&&<button type="button" disabled={retryingTaskId === item.taskId} onClick={()=>void retry(item)} className="rounded-lg bg-amber-400 px-2.5 py-1.5 text-[9px] font-black text-amber-950 disabled:opacity-40">{retryingTaskId === item.taskId ? "重试中…" : "重新生成"}</button>}{onOpenProductionProgress&&<button type="button" onClick={()=>onOpenProductionProgress(item.taskId,item.id)} className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[9px] font-black text-slate-700">查看完整进度</button>}<button type="button" onClick={()=>onOpenContent?.(item.taskId||undefined,item.socialContentTaskId||undefined)} className="rounded-lg bg-slate-950 px-2.5 py-1.5 text-[9px] font-black text-white">进入制作台</button></div></div>{item.reason&&<p className="mt-2 rounded-lg bg-red-50 px-2.5 py-2 text-[9px] font-bold text-red-700">{item.reason}</p>}</article>;})}</div>
+    {!filtered.length&&<div className="mt-4 rounded-2xl border border-dashed border-slate-200 px-5 py-12 text-center"><Clapperboard size={24} className="mx-auto text-slate-300"/><p className="mt-2 text-xs font-bold text-slate-500">当前筛选下没有视频任务</p></div>}
+    {totalPages>1&&<nav aria-label="生成进度分页" className="mt-4 flex items-center justify-between"><p className="text-[9px] font-bold text-slate-400">第 {page}/{totalPages} 页 · {filtered.length} 条</p><div className="flex gap-2"><button type="button" disabled={page===1} onClick={()=>setPage(current=>Math.max(1,current-1))} className="rounded-lg border border-slate-200 px-3 py-1.5 text-[9px] font-black disabled:opacity-40">上一页</button><button type="button" disabled={page===totalPages} onClick={()=>setPage(current=>Math.min(totalPages,current+1))} className="rounded-lg border border-slate-200 px-3 py-1.5 text-[9px] font-black disabled:opacity-40">下一页</button></div></nav>}
+  </section>;
+}
+
 function QueueView({ data, onRefresh, onNavigate, onGenerateDetails, selectedAccountId = "", onOpenContent, onOpenProductionProgress, onControlJob, onRetryTask }: { data: DigitalEmployeeOverview; onRefresh?: () => void; onNavigate?: (page: Page) => void; onGenerateDetails?: () => void; selectedAccountId?: string; onOpenContent?: (taskId?: string, socialContentTaskId?: string) => void; onOpenProductionProgress?: (taskId: string, contentItemId: string) => void; onControlJob?: (jobId: string, action: ExecutionControlAction) => Promise<boolean>; onRetryTask?: (taskId: string) => Promise<boolean> }) {
   const projection = data.contentQueue;
   const items = (projection?.items || []).filter(item => !selectedAccountId || item.accountId === selectedAccountId);
@@ -884,8 +914,6 @@ function QueueView({ data, onRefresh, onNavigate, onGenerateDetails, selectedAcc
   const cycleEnd = data.goal?.endsAt || snapshot?.range.endsAt || "";
   const [periodFilter, setPeriodFilter] = useState<"current" | "previous" | "30d" | "all">("current");
   const [platformFilter, setPlatformFilter] = useState<"all" | Platform>("all");
-  const [statusFilter, setStatusFilter] = useState<"all" | "active" | "waiting_review" | "blocked" | "completed">("all");
-  const [retryingTaskId, setRetryingTaskId] = useState("");
   const performanceByItem = useMemo(() => new Map(items.map(item => [item.id, performanceForQueueItem(item, deliveries)])), [items, deliveries]);
   const periodBounds = periodFilter === "current" ? { start: cycleStart, end: cycleEnd }
     : periodFilter === "previous" ? { start: shiftIsoDate(cycleStart, -7), end: shiftIsoDate(cycleStart, -1) }
@@ -896,35 +924,8 @@ function QueueView({ data, onRefresh, onNavigate, onGenerateDetails, selectedAcc
       ? periodFilter === "all" || !item.plannedPublishDate || periodFilter === "current"
       : item.plannedPublishDate >= periodBounds.start && item.plannedPublishDate <= periodBounds.end;
     const platformMatch = platformFilter === "all" || item.platform === platformFilter;
-    const statusMatch = statusFilter === "all"
-      || statusFilter === "active" && ["planned", "queued", "producing"].includes(item.status)
-      || item.status === statusFilter;
-    return periodMatch && platformMatch && statusMatch;
+    return periodMatch && platformMatch;
   }).sort((left, right) => (right.plannedPublishDate || right.updatedAt).localeCompare(left.plannedPublishDate || left.updatedAt));
-  const pageSize = 6;
-  const [page, setPage] = useState(1);
-  const retryBlockedTask = async (item: ContentQueueItem) => {
-    if (!onRetryTask || !item.taskId || retryingTaskId) return;
-    setRetryingTaskId(item.taskId);
-    try {
-      if (await onRetryTask(item.taskId)) showActionSuccess("任务已从失败节点重新生成", "已完成的素材和结果不会被覆盖。");
-    } finally {
-      setRetryingTaskId("");
-    }
-  };
-  const totalPages = Math.max(1, Math.ceil(filteredItems.length / pageSize));
-  const pageItems = filteredItems.slice((page - 1) * pageSize, page * pageSize);
-  const groupedPageItems = pageItems.reduce<Array<{ label: string; items: ContentQueueItem[] }>>((groups, item) => {
-    const label = item.plannedPublishDate ? queueWeekLabel(item.plannedPublishDate) : "未排期内容";
-    const current = groups.at(-1);
-    if (current?.label === label) current.items.push(item);
-    else groups.push({ label, items: [item] });
-    return groups;
-  }, []);
-  useEffect(() => setPage(current => Math.min(current, totalPages)), [totalPages]);
-  useEffect(() => setPage(1), [statusFilter, periodFilter, platformFilter, selectedAccountId]);
-  const statusLabel = { planned: "计划已生成", queued: "等待制作", producing: "制作中", waiting_review: "待验收", completed: "已完成", blocked: "制作受阻" } as const;
-  const statusTone = { planned: "bg-slate-100 text-slate-700", queued: "bg-sky-50 text-sky-700", producing: "bg-blue-50 text-blue-700", waiting_review: "bg-amber-50 text-amber-700", completed: "bg-emerald-50 text-emerald-700", blocked: "bg-red-50 text-red-700" } as const;
   const fallbackPerformance = [...performanceByItem.values()];
   const fallbackViews = fallbackPerformance.map(item => item.views).filter((value): value is number => value !== null).reduce((total, value) => total + value, 0);
   const fallbackInteractions = fallbackPerformance.map(item => item.interactions).filter((value): value is number => value !== null).reduce((total, value) => total + value, 0);
@@ -954,8 +955,11 @@ function QueueView({ data, onRefresh, onNavigate, onGenerateDetails, selectedAcc
   ] as const;
 
   void onRefresh;
+  void onNavigate;
   void onGenerateDetails;
+  void onOpenContent;
   void onControlJob;
+  void onRetryTask;
   return <div className="space-y-5">
     <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm" aria-labelledby="video-overview-title">
       <header className="flex flex-wrap items-end justify-between gap-4 border-b border-slate-100 px-5 py-5 sm:px-6">
@@ -978,17 +982,18 @@ function QueueView({ data, onRefresh, onNavigate, onGenerateDetails, selectedAcc
       <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{platformRows.map(row => <button key={row.platform} type="button" aria-pressed={platformFilter === row.platform} onClick={() => setPlatformFilter(current => current === row.platform ? "all" : row.platform)} className={`rounded-2xl border p-4 text-left transition ${platformFilter === row.platform ? "border-emerald-500 bg-emerald-50 shadow-sm" : "border-slate-200 bg-white hover:border-emerald-200"}`}><div className="flex items-center justify-between"><span className="flex items-center gap-2 text-xs font-black text-slate-900"><SocialPlatformIcon platform={row.platform} size={17}/>{platformLabels[row.platform]}</span><span className="text-[9px] font-bold text-slate-400">回传 {row.returned} 条</span></div><p className="mt-4 text-xl font-black text-slate-950">{row.views === null ? "—" : row.views.toLocaleString("zh-CN")}</p><div className="mt-1 flex items-center justify-between text-[10px] text-slate-400"><span>播放量</span><span>{row.engagementRate === null ? "互动率 —" : `互动率 ${row.engagementRate.toFixed(2)}%`}</span></div></button>)}</div>
     </section>
 
-    <section className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_330px]">
-      <div className="min-w-0">
-        <div className="flex flex-wrap items-end justify-between gap-4"><div><p className="text-xs font-bold tracking-[0.16em] text-emerald-700">内容明细</p><h2 className="mt-1 text-xl font-black text-slate-950">按周期查看每条视频</h2><p className="mt-1 text-xs text-slate-500">{selectedAccountId ? `当前账号：${data.config?.publishingTargets.find(target => target.accountId === selectedAccountId)?.accountLabel || selectedAccountId}` : "播放与互动来自已连接平台；制作状态来自内容任务。"}</p></div><div className="flex flex-wrap gap-2"><select aria-label="内容状态" value={statusFilter} onChange={event => setStatusFilter(event.target.value as typeof statusFilter)} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-[10px] font-black text-slate-700"><option value="all">全部状态</option><option value="active">制作中</option><option value="waiting_review">待验收</option><option value="blocked">异常任务</option><option value="completed">已完成</option></select>{platformFilter !== "all" && <button type="button" onClick={() => setPlatformFilter("all")} className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-[10px] font-black text-emerald-800">清除平台筛选</button>}</div></div>
-        <nav aria-label="内容时间周期" className="mt-4 flex flex-wrap gap-2">{periodOptions.map(option => <button key={option.id} type="button" aria-pressed={periodFilter === option.id} onClick={() => setPeriodFilter(option.id)} className={`rounded-full border px-3 py-1.5 text-[10px] font-black ${periodFilter === option.id ? "border-slate-950 bg-slate-950 text-white" : "border-slate-200 bg-white text-slate-600"}`}>{option.label}</button>)}</nav>
-        <div className={`mt-4 rounded-xl border px-4 py-3 text-xs ${projection?.sourceStatus === "available" ? "border-emerald-100 bg-emerald-50 text-emerald-800" : "border-amber-200 bg-amber-50 text-amber-800"}`}><strong>{projection?.sourceStatus === "available" ? "视频任务与平台数据已合并" : "内容数据等待连接"}</strong><span className="ml-2">{projection?.sourceNote || "当前没有可读取的内容记录"}</span></div>
-        <div className="mt-4 space-y-5">{groupedPageItems.map(group => <section key={group.label}><div className="mb-2 flex items-center gap-3"><p className="text-[10px] font-black text-slate-500">{group.label}</p><span className="h-px flex-1 bg-slate-200"/></div><div className="space-y-3">{group.items.map(item => { const metrics = performanceByItem.get(item.id)!; const currentStep = item.steps.find(step => step.state === "active"); return <article key={item.id} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"><div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_280px_auto] lg:items-center"><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><SocialPlatformIcon platform={item.platform} size={16}/><span className="text-[10px] font-black text-emerald-700">{platformLabels[item.platform]}</span><span className={`rounded-full px-2 py-1 text-[9px] font-black ${statusTone[item.status]}`}>{statusLabel[item.status]}</span><span className="text-[10px] text-slate-400">{item.plannedPublishDate || "待排期"}</span></div><h3 className="mt-2 truncate text-sm font-black text-slate-950">{item.title}</h3><p className="mt-1 truncate text-xs text-slate-500">{item.accountLabel || "仅制作"} · {item.productName || "待绑定产品"}</p>{item.reason && <p className="mt-2 text-[10px] font-bold text-red-600">{item.reason}</p>}</div><dl className="grid grid-cols-3 gap-2"><div className="rounded-xl bg-slate-50 px-3 py-2"><dt className="text-[9px] font-bold text-slate-400">播放量</dt><dd className="mt-1 text-sm font-black text-slate-900">{metrics.views === null ? "—" : metrics.views.toLocaleString("zh-CN")}</dd></div><div className="rounded-xl bg-slate-50 px-3 py-2"><dt className="text-[9px] font-bold text-slate-400">互动</dt><dd className="mt-1 text-sm font-black text-slate-900">{metrics.interactions === null ? "—" : metrics.interactions.toLocaleString("zh-CN")}</dd></div><div className="rounded-xl bg-slate-50 px-3 py-2"><dt className="text-[9px] font-bold text-slate-400">互动率</dt><dd className="mt-1 text-sm font-black text-slate-900">{metrics.engagementRate === null ? "—" : `${metrics.engagementRate.toFixed(2)}%`}</dd></div></dl><div className="flex flex-wrap justify-end gap-2">{item.status === "blocked" && onRetryTask && item.taskId && <button type="button" disabled={retryingTaskId === item.taskId} onClick={() => void retryBlockedTask(item)} className="inline-flex items-center gap-1 rounded-lg bg-amber-400 px-3 py-2 text-[10px] font-black text-amber-950 disabled:opacity-40">{retryingTaskId === item.taskId && <Loader2 size={11} className="animate-spin"/>}重新生成</button>}{onOpenProductionProgress && <button type="button" onClick={() => onOpenProductionProgress(item.taskId, item.id)} className="rounded-lg border border-slate-200 px-3 py-2 text-[10px] font-black text-slate-700">查看制作进度 →</button>}<button type="button" onClick={() => onOpenContent?.(item.taskId || undefined, item.socialContentTaskId || undefined)} className="rounded-lg bg-slate-950 px-3 py-2 text-[10px] font-black text-white">进入制作台 →</button></div></div><div className="mt-3 flex items-center gap-3 border-t border-slate-100 pt-3"><div className="h-1.5 flex-1 overflow-hidden rounded-full bg-slate-100"><div className={`h-full rounded-full ${item.status === "blocked" ? "bg-red-500" : item.status === "completed" ? "bg-emerald-500" : "bg-blue-500"}`} style={{ width: `${item.progress}%` }}/></div><p className="shrink-0 text-[9px] font-bold text-slate-400">{metrics.hasPlatformData ? `赞 ${metrics.likes ?? "—"} · 评 ${metrics.comments ?? "—"} · 分享 ${metrics.shares ?? "—"}` : currentStep ? `${currentStep.responsibleAgent} · ${currentStep.label} · ${productionDurationLabel(currentStep.estimatedMinutes)}` : "等待平台数据回传"}</p></div></article>; })}</div></section>)}
-          {!filteredItems.length && <div className="rounded-3xl border border-slate-200 bg-white px-5 py-16 text-center"><Clapperboard size={28} className="mx-auto text-slate-300"/><p className="mt-3 text-sm font-bold text-slate-600">当前分类下没有内容</p><p className="mt-1 text-xs text-slate-400">切换周期、平台或状态查看；没有平台回传时不会生成模拟数据。</p></div>}
-          {totalPages > 1 && <nav aria-label="内容队列分页" className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white px-5 py-4"><p className="text-[10px] font-bold text-slate-400">第 {page} / {totalPages} 页 · 当前分类 {filteredItems.length} 条</p><div className="flex items-center gap-1.5"><button type="button" disabled={page === 1} onClick={() => setPage(current => Math.max(1, current - 1))} className="rounded-lg border border-slate-200 px-3 py-2 text-[10px] font-black text-slate-600 disabled:opacity-40">上一页</button><button type="button" disabled={page === totalPages} onClick={() => setPage(current => Math.min(totalPages, current + 1))} className="rounded-lg border border-slate-200 px-3 py-2 text-[10px] font-black text-slate-600 disabled:opacity-40">下一页</button></div></nav>}
-        </div>
-      </div>
-      <aside className="h-fit overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm" aria-labelledby="video-heat-ranking-title"><div className="border-b border-slate-100 bg-slate-950 px-5 py-5 text-white"><div className="flex items-center gap-3"><span className="flex h-9 w-9 items-center justify-center rounded-xl bg-amber-400 text-amber-950"><Trophy size={18}/></span><div><p className="text-[9px] font-black uppercase tracking-[.16em] text-emerald-300">Video ranking</p><h2 id="video-heat-ranking-title" className="mt-1 text-base font-black">视频热度榜单</h2></div></div><p className="mt-3 text-[10px] leading-5 text-slate-300">按真实播放与互动信号排序，随上方周期和平台筛选更新。</p></div>{ranking.length ? <div>{ranking.map((entry, index) => <button key={entry.item.id} type="button" onClick={() => onOpenProductionProgress?.(entry.item.taskId, entry.item.id)} className={`grid w-full grid-cols-[32px_minmax(0,1fr)_auto] items-center gap-3 px-4 py-4 text-left hover:bg-slate-50 ${index ? "border-t border-slate-100" : ""}`}><span className={`flex h-7 w-7 items-center justify-center rounded-lg text-[10px] font-black ${index < 3 ? "bg-amber-100 text-amber-800" : "bg-slate-100 text-slate-500"}`}>{index + 1}</span><div className="min-w-0"><p className="truncate text-xs font-black text-slate-900">{entry.item.title}</p><p className="mt-1 flex items-center gap-1 text-[9px] text-slate-400"><SocialPlatformIcon platform={entry.item.platform} size={11}/>{entry.item.accountLabel || platformLabels[entry.item.platform]}</p></div><div className="text-right"><p className="flex items-center justify-end gap-1 text-xs font-black text-slate-900"><Eye size={12}/>{entry.metrics.views === null ? "—" : entry.metrics.views.toLocaleString("zh-CN")}</p><p className="mt-1 text-[9px] text-slate-400">互动 {entry.metrics.interactions ?? "—"}</p></div></button>)}</div> : <div className="px-5 py-14 text-center"><TrendingUp size={26} className="mx-auto text-slate-300"/><p className="mt-3 text-xs font-black text-slate-600">暂无可排名的视频数据</p><p className="mt-1 text-[10px] leading-5 text-slate-400">发布并完成平台数据回传后，这里会自动生成热度榜。</p></div>}</aside>
+    <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm" aria-labelledby="video-heat-ranking-title">
+      <header className="flex flex-wrap items-end justify-between gap-4 border-b border-slate-100 bg-slate-950 px-5 py-5 text-white sm:px-6">
+        <div className="flex items-center gap-3"><span className="flex h-9 w-9 items-center justify-center rounded-xl bg-amber-400 text-amber-950"><Trophy size={18}/></span><div><p className="text-[9px] font-black uppercase tracking-[.16em] text-emerald-300">Video ranking</p><h2 id="video-heat-ranking-title" className="mt-1 text-base font-black">视频热度榜单</h2><p className="mt-1 text-[10px] text-slate-300">按真实播放与互动信号横向排列；制作进度已移到账号矩阵。</p></div></div>
+        <div className="flex flex-wrap items-center gap-2"><nav aria-label="榜单时间周期" className="flex flex-wrap gap-1.5">{periodOptions.map(option => <button key={option.id} type="button" aria-pressed={periodFilter === option.id} onClick={() => setPeriodFilter(option.id)} className={`rounded-full border px-3 py-1.5 text-[10px] font-black ${periodFilter === option.id ? "border-white bg-white text-slate-950" : "border-white/20 bg-white/5 text-slate-200"}`}>{option.label}</button>)}</nav>{platformFilter !== "all"&&<button type="button" onClick={() => setPlatformFilter("all")} className="rounded-full border border-emerald-300/40 bg-emerald-400/10 px-3 py-1.5 text-[10px] font-black text-emerald-200">清除平台筛选</button>}</div>
+      </header>
+      <div className={`border-b px-5 py-3 text-[10px] sm:px-6 ${projection?.sourceStatus === "available" ? "border-emerald-100 bg-emerald-50 text-emerald-800" : "border-amber-200 bg-amber-50 text-amber-800"}`}><strong>{projection?.sourceStatus === "available" ? "视频任务与平台数据已合并" : "内容数据等待连接"}</strong><span className="ml-2">{projection?.sourceNote || "当前没有可读取的内容记录"}</span></div>
+      {ranking.length ? <div className="grid gap-3 p-4 sm:grid-cols-2 xl:grid-cols-4">{ranking.map((entry, index) => <button key={entry.item.id} type="button" onClick={() => onOpenProductionProgress?.(entry.item.taskId, entry.item.id)} className="grid min-w-0 grid-cols-[32px_minmax(0,1fr)] gap-3 rounded-2xl border border-slate-200 bg-white p-4 text-left transition hover:border-emerald-300 hover:shadow-sm"><span className={`flex h-8 w-8 items-center justify-center rounded-lg text-[10px] font-black ${index < 3 ? "bg-amber-100 text-amber-800" : "bg-slate-100 text-slate-500"}`}>{index + 1}</span><div className="min-w-0"><p className="line-clamp-2 min-h-8 text-xs font-black leading-4 text-slate-900">{entry.item.title}</p><p className="mt-2 flex items-center gap-1 truncate text-[9px] text-slate-400"><SocialPlatformIcon platform={entry.item.platform} size={11}/>{entry.item.accountLabel || platformLabels[entry.item.platform]}</p><div className="mt-3 flex items-center justify-between gap-2 border-t border-slate-100 pt-3"><span className="inline-flex items-center gap-1 text-xs font-black text-slate-900"><Eye size={12}/>{entry.metrics.views === null ? "—" : entry.metrics.views.toLocaleString("zh-CN")}</span><span className="text-[9px] text-slate-400">互动 {entry.metrics.interactions ?? "—"}</span></div></div></button>)}</div> : <div className="px-5 py-14 text-center"><TrendingUp size={26} className="mx-auto text-slate-300"/><p className="mt-3 text-xs font-black text-slate-600">暂无可排名的视频数据</p><p className="mt-1 text-[10px] leading-5 text-slate-400">发布并完成平台数据回传后，这里会自动生成热度榜。</p></div>}
+    </section>
+
+    <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm" aria-labelledby="content-monitoring-title">
+      <header className="border-b border-slate-100 px-5 py-5 sm:px-6"><p className="text-xs font-bold tracking-[0.16em] text-emerald-700">账号数据与评论</p><h2 id="content-monitoring-title" className="mt-1 text-xl font-black text-slate-950">内容监控</h2><p className="mt-1 text-xs text-slate-500">原“内容监控”页已合并到这里，可继续查看真实账号数据、评论商机与回复处理。</p></header>
+      <AccountActivity embedded/>
     </section>
   </div>;
 }
@@ -1175,7 +1180,7 @@ function ReviewView({ data, selectedAccountId = "", onNavigate }: { data: Digita
 }
 
 export default function SmartBusinessDashboard({ data, view, selectedAccountId, selectedContentItemId, onRefresh, onNavigate, onGeneratePlan, onGenerateDetails, onOpenContent, onOpenProductionProgress, onBackToQueue, onRetryTask, onControlJob }: { data: DigitalEmployeeOverview; view: SmartBusinessView; selectedAccountId?: string; selectedContentItemId?: string; onRefresh?: () => void; onNavigate?: (page: Page) => void; onGeneratePlan?: () => void; onGenerateDetails?: () => void; onOpenContent?: (taskId?: string, socialContentTaskId?: string) => void; onOpenProductionProgress?: (taskId: string, contentItemId: string) => void; onBackToQueue?: () => void; onRetryTask?: (taskId: string) => Promise<boolean>; onControlJob?: (jobId: string, action: ExecutionControlAction) => Promise<boolean> }) {
-  if (view === "matrix") return <MatrixView data={data} selectedAccountId={selectedAccountId} onRefresh={onRefresh} onNavigate={onNavigate} onGeneratePlan={onGeneratePlan}/>;
+  if (view === "matrix") return <MatrixView data={data} selectedAccountId={selectedAccountId} onRefresh={onRefresh} onNavigate={onNavigate} onGeneratePlan={onGeneratePlan} onOpenContent={onOpenContent} onOpenProductionProgress={onOpenProductionProgress} onRetryTask={onRetryTask}/>;
   if (view === "queue") return <QueueView data={data} selectedAccountId={selectedAccountId} onRefresh={onRefresh} onNavigate={onNavigate} onGenerateDetails={onGenerateDetails} onOpenContent={onOpenContent} onOpenProductionProgress={onOpenProductionProgress} onControlJob={onControlJob} onRetryTask={onRetryTask}/>;
   if (view === "production") return <ProductionDetailView data={data} contentItemId={selectedContentItemId} onBack={onBackToQueue} onNavigate={onNavigate} onOpenContent={onOpenContent} onRetryTask={onRetryTask}/>;
   if (view === "review") return <ReviewView data={data} selectedAccountId={selectedAccountId} onNavigate={onNavigate}/>;

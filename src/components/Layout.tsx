@@ -29,7 +29,6 @@ const SOCIAL_NAV_ICONS: Record<(typeof PRIMARY_SOCIAL_NAV_PAGES)[number], ReactN
   socialInspiration: <DuotoneGlyph kind="inspiration" />,
   smartAssets: <DuotoneGlyph kind="create" />,
   traffic: <DuotoneGlyph kind="publish" />,
-  socialMonitoring: <DuotoneGlyph kind="monitor" />,
 };
 
 const SOCIAL_NAV: NavSection = {

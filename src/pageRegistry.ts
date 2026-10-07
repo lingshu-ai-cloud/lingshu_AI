@@ -83,7 +83,6 @@ export const PRIMARY_SOCIAL_NAV_PAGES = [
   'socialInspiration',
   'smartAssets',
   'traffic',
-  'socialMonitoring',
 ] as const satisfies readonly Page[];
 
 const PAGE_ID_SET: ReadonlySet<string> = new Set(PAGE_IDS);

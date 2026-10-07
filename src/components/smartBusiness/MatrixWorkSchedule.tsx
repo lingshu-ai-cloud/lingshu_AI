@@ -38,6 +38,16 @@ function dayKey(value: Date) {
   return `${year}-${month}-${day}`;
 }
 
+function spreadAccountDate(start: Date, end: Date, slotIndex: number, accountTotal: number) {
+  const days = Math.max(1, Math.round((end.getTime() - start.getTime()) / 86_400_000) + 1);
+  const total = Math.max(1, accountTotal);
+  const index = Math.max(0, Math.min(total - 1, slotIndex));
+  const offset = total === 1
+    ? Math.floor((days - 1) / 2)
+    : Math.round(index * (days - 1) / (total - 1));
+  return addDays(start, offset);
+}
+
 function previewFrames(plan?: VideoCreationPlan) {
   const matched = (plan?.preproduction?.materials.storyboard || []).map(step => ({
     url: step.materialPreviewUrl || step.referenceFirstFrameUrl,
@@ -66,15 +76,15 @@ function planBlockers(plan?: VideoCreationPlan) {
 export default function MatrixWorkSchedule({ startsAt, endsAt, accounts, plans, selectedAccountId, onOpenPublishing }: Props) {
   const goalStart = safeDate(startsAt);
   const goalEnd = safeDate(endsAt, addDays(goalStart, 6));
-  const anchor = addDays(goalStart, -3);
-  const visibleEnd = addDays(goalEnd, 2);
-  const dayCount = Math.max(7, Math.min(14, Math.round((visibleEnd.getTime() - anchor.getTime()) / 86_400_000) + 1));
+  const anchor = goalStart;
+  const dayCount = Math.max(7, Math.min(14, Math.round((goalEnd.getTime() - goalStart.getTime()) / 86_400_000) + 1));
   const days = Array.from({ length: dayCount }, (_, index) => addDays(anchor, index));
   const today = dayKey(new Date());
   const visibleAccounts = selectedAccountId ? accounts.filter(account => account.accountId === selectedAccountId) : accounts;
   const rows = visibleAccounts.flatMap(account => {
     const accountPlans = plans.filter(plan => plan.matrix?.accountId === account.accountId);
-    return Array.from({ length: Math.max(accountPlans.length, account.weeklyCount) }, (_, index) => ({ account, plan: accountPlans[index], index }));
+    const accountTotal = Math.max(accountPlans.length, account.weeklyCount);
+    return Array.from({ length: accountTotal }, (_, index) => ({ account, plan: accountPlans[index], index, accountTotal }));
   });
   const plannedCount = rows.filter(row => Boolean(row.plan)).length;
   const originalCount = plans.filter(plan => plan.productionRole !== "platform_adaptation").length;
@@ -83,6 +93,15 @@ export default function MatrixWorkSchedule({ startsAt, endsAt, accounts, plans, 
     .map(row => row.plan?.contentFamilyId || row.plan?.contentId)
     .filter(Boolean));
   const blockedCount = blockedFamilies.size;
+  const dayLoads = new Map<string, { tasks: number; accounts: Set<string> }>();
+  rows.forEach(({ account, plan, index, accountTotal }) => {
+    const fallback = spreadAccountDate(goalStart, goalEnd, index, accountTotal);
+    const key = dayKey(safeDate(plan?.plannedPublishDate, fallback));
+    const current = dayLoads.get(key) || { tasks: 0, accounts: new Set<string>() };
+    current.tasks += 1;
+    current.accounts.add(account.accountId);
+    dayLoads.set(key, current);
+  });
 
   return <section className="overflow-hidden rounded-3xl border border-emerald-100 bg-white shadow-sm" aria-label="数字员工工作排期">
     <header className="flex flex-wrap items-start justify-between gap-4 border-b border-slate-100 px-5 py-5 sm:px-6">
@@ -99,12 +118,12 @@ export default function MatrixWorkSchedule({ startsAt, endsAt, accounts, plans, 
       <div className="bg-white px-5 py-3"><p className="text-[9px] font-bold text-slate-400">母版卡点</p><p className={`mt-1 text-sm font-black ${blockedCount ? "text-amber-700" : "text-emerald-700"}`}>{blockedCount ? `${blockedCount} 个母版待处理` : "无生产卡点"}</p></div>
     </div>
     <div className="overflow-x-auto">
-      <div style={{ minWidth: `${days.length * 132}px` }}>
-        <div className="grid border-b border-slate-200 bg-slate-50" style={{ gridTemplateColumns: `repeat(${days.length}, minmax(132px, 1fr))` }}>
-          {days.map(day => { const key = dayKey(day); const inGoal = key >= dayKey(goalStart) && key <= dayKey(goalEnd); return <div key={key} className={`border-r border-slate-100 px-2 py-2.5 text-center ${key === today ? "bg-emerald-50" : inGoal ? "bg-white" : "bg-slate-50"}`}><p className={`text-[9px] font-black ${key === today ? "text-emerald-700" : "text-slate-400"}`}>{day.toLocaleDateString("zh-CN", { weekday: "short" })}</p><p className="mt-1 text-[10px] font-black text-slate-700">{day.toLocaleDateString("zh-CN", { month: "numeric", day: "numeric" })}</p>{key === today&&<span className="mt-1 inline-block rounded-full bg-emerald-600 px-1.5 py-0.5 text-[7px] font-black text-white">今天</span>}</div>; })}
+      <div style={{ minWidth: `${days.length * 112}px` }}>
+        <div className="grid border-b border-slate-200 bg-slate-50" style={{ gridTemplateColumns: `repeat(${days.length}, minmax(112px, 1fr))` }}>
+          {days.map(day => { const key = dayKey(day); const inGoal = key >= dayKey(goalStart) && key <= dayKey(goalEnd); const load = dayLoads.get(key); return <div key={key} className={`border-r border-slate-100 px-2 py-2.5 text-center ${key === today ? "bg-emerald-50" : inGoal ? "bg-white" : "bg-slate-50"}`}><p className={`text-[9px] font-black ${key === today ? "text-emerald-700" : "text-slate-400"}`}>{day.toLocaleDateString("zh-CN", { weekday: "short" })}</p><p className="mt-1 text-[10px] font-black text-slate-700">{day.toLocaleDateString("zh-CN", { month: "numeric", day: "numeric" })}</p>{load?<p className="mt-1 rounded-full bg-sky-50 px-1.5 py-0.5 text-[7px] font-black text-sky-700">{load.accounts.size} 账号并行 · {load.tasks} 条</p>:<p className="mt-1 text-[7px] font-bold text-slate-300">无发布</p>}{key === today&&<span className="mt-1 inline-block rounded-full bg-emerald-600 px-1.5 py-0.5 text-[7px] font-black text-white">今天</span>}</div>; })}
         </div>
-        <div>{rows.map(({ account, plan, index }, rowIndex) => {
-          const fallbackPublish = addDays(goalStart, Math.min(6, index));
+        <div>{rows.map(({ account, plan, index, accountTotal }, rowIndex) => {
+          const fallbackPublish = spreadAccountDate(goalStart, goalEnd, index, accountTotal);
           const publishDate = safeDate(plan?.plannedPublishDate, fallbackPublish);
           const publishIndex = Math.max(0, Math.min(days.length - 1, Math.round((publishDate.getTime() - anchor.getTime()) / 86_400_000)));
           const startIndex = Math.max(0, publishIndex - 3);
@@ -114,7 +133,7 @@ export default function MatrixWorkSchedule({ startsAt, endsAt, accounts, plans, 
           const frames = previewFrames(plan);
           const fallbackThumbnail = plan?.planningEvidence?.referenceThumbnailUrl || plan?.preproduction?.benchmark.thumbnailUrl || "";
           const master = plan?.productionRole !== "platform_adaptation";
-          return <div key={`${account.accountId}-${plan?.contentId || index}`} className={`relative grid min-h-[116px] border-b border-slate-100 ${rowIndex % 2 ? "bg-slate-50/35" : "bg-white"}`} style={{ gridTemplateColumns: `repeat(${days.length}, minmax(132px, 1fr))` }}>
+          return <div key={`${account.accountId}-${plan?.contentId || index}`} className={`relative grid min-h-[116px] border-b border-slate-100 ${rowIndex % 2 ? "bg-slate-50/35" : "bg-white"}`} style={{ gridTemplateColumns: `repeat(${days.length}, minmax(112px, 1fr))` }}>
             {days.map((day, dayIndex) => <span key={dayKey(day)} className={`border-r border-slate-100 ${dayKey(day) === today ? "bg-emerald-50/45" : ""}`} style={{ gridColumn: dayIndex + 1, gridRow: 1 }}/>) }
             <article tabIndex={0} aria-label={`${account.accountLabel} 第 ${index + 1} 条视频排期`} className={`group relative z-10 m-2 overflow-visible rounded-2xl border bg-white shadow-sm outline-none transition hover:z-30 hover:border-emerald-300 hover:shadow-lg focus:z-30 focus:border-emerald-300 focus:shadow-lg ${blocked ? "border-amber-300" : plan ? "border-slate-200" : "border-dashed border-slate-300"}`} style={{ gridColumn: `${startIndex + 1} / span ${span}`, gridRow: 1 }}>
               {plan ? <>
@@ -136,6 +155,6 @@ export default function MatrixWorkSchedule({ startsAt, endsAt, accounts, plans, 
         })}{!rows.length&&<div className="px-6 py-16 text-center"><CalendarRange size={28} className="mx-auto text-slate-300"/><p className="mt-3 text-sm font-black text-slate-600">还没有账号内容排期</p><p className="mt-1 text-xs text-slate-400">先制定周目标，系统会为每个平台账号生成视频任务卡。</p></div>}</div>
       </div>
     </div>
-    <footer className="flex flex-wrap items-center gap-3 bg-slate-50 px-5 py-3 text-[9px] font-bold text-slate-400"><span>卡片位置表示生产到发布的时间窗口；卡内三段表示 Agent 交接。</span><span className="ml-auto">发布仍以账号授权和最终验收为准。</span></footer>
+    <footer className="flex flex-wrap items-center gap-3 bg-slate-50 px-5 py-3 text-[9px] font-bold text-slate-400"><span>排期规则：每个账号独立均匀铺满本周；同一天允许多个账号并行制作与发布。</span><span className="ml-auto">卡片位置表示生产到发布的时间窗口；发布仍以账号授权和最终验收为准。</span></footer>
   </section>;
 }

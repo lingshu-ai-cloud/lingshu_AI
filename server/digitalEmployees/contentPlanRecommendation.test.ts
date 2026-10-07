@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { normalizeDigitalEmployeeConfig, normalizeWeeklyGoal } from './domain.js';
 import { recommendPackage } from './weeklyPackage.js';
-import { bindDefaultProductsToPackage, enrichPackageWithContentSignals, rankContentReferences } from './contentPlanRecommendation.js';
+import { bindDefaultProductsToPackage, enrichPackageWithContentSignals, publishDateForAccountSlot, rankContentReferences } from './contentPlanRecommendation.js';
 import { buildContentBatchPlan } from './contentBatchPlan.js';
 
 const config = normalizeDigitalEmployeeConfig({
@@ -56,6 +56,11 @@ assert.equal(enriched.directorPlan?.productionBudget, plans.reduce((sum, plan) =
 assert.equal(enriched.operatingContext?.budget.productionCny, enriched.directorPlan?.productionBudget, 'weekly goal and account allocation must read the same production budget');
 assert.ok(plans[0]?.buyerProblem);
 assert.ok(plans[0]?.plannedPublishDate);
+assert.deepEqual(
+  Array.from({ length: 5 }, (_, index) => publishDateForAccountSlot('2026-09-28', '2026-10-04', index, 5)),
+  ['2026-09-28', '2026-09-30', '2026-10-01', '2026-10-03', '2026-10-04'],
+  'one account must distribute its weekly posts across the full week',
+);
 
 const shortage = enrichPackageWithContentSignals({ pack: recommendPackage(goal, config), goal, config, videos: videos.slice(0, 1), benchmarks });
 const shortagePlans = shortage.tasks.find(task => task.templateId === 'production')?.videoPlans || [];
@@ -95,7 +100,13 @@ assert.deepEqual(Object.fromEntries(['youtube', 'tiktok', 'instagram', 'facebook
 for (const platform of ['youtube', 'tiktok', 'instagram', 'facebook']) {
   const platformPlans = fourPlatformPlans.filter(plan => plan.platform === platform);
   assert.equal(new Set(platformPlans.map(plan => plan.contentFamilyId)).size, platformPlans.length, `${platform} must not publish the same master twice`);
+  assert.equal(new Set(platformPlans.map(plan => plan.plannedPublishDate)).size, platformPlans.length, `${platform} must not publish its whole weekly quota on one day`);
 }
+assert.equal(
+  new Set(fourPlatformPlans.filter(plan => plan.plannedPublishDate === fourPlatformGoal.startsAt).map(plan => plan.matrix?.accountId)).size,
+  4,
+  'all four accounts must begin operating in parallel on the same weekly axis',
+);
 assert.equal(new Set(fourPlatformMasters.map(plan => plan.referenceId)).size, 5, 'the five originals use five distinct viral references');
 for (const master of fourPlatformMasters) {
   const family = fourPlatformPlans.filter(plan => plan.contentFamilyId === master.contentFamilyId);
