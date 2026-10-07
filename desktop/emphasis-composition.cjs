@@ -7,6 +7,8 @@ const TYPES = new Set(['hook', 'key_fact', 'reveal', 'section_label', 'cta']);
 const SOURCES = new Set(['transcript', 'vision', 'metadata', 'editor']);
 const VISUAL_INTENTS = new Set(['attention', 'fact', 'warning', 'urgency', 'focus_product', 'cta']);
 const ASSET_INTENTS = new Set(['warning_marker', 'urgency_badge', 'cta_marker', 'product_marker', 'attention', 'fact']);
+const PRESENTATION_MODES = new Set(['caption_emphasis', 'graphic_only', 'label', 'none']);
+const TARGET_RELATIONS = new Set(['surround', 'point_to', 'adjacent', 'none']);
 
 const record = value => value && typeof value === 'object' && !Array.isArray(value) ? value : {};
 const finite = (value, fallback) => Number.isFinite(Number(value)) ? Number(value) : fallback;
@@ -77,6 +79,16 @@ function normalizeEmphasisPlan(input, durationSeconds = 0) {
         clarity: clamp(zone.clarity, 0, 1, .5), safe: zone.safe !== false,
       }];
     });
+    const presentationMode = PRESENTATION_MODES.has(String(event.presentationMode)) ? String(event.presentationMode) : '';
+    const targetRelation = TARGET_RELATIONS.has(String(event.targetRelation)) ? String(event.targetRelation) : '';
+    const occupiedBoxes = (Array.isArray(event.occupiedBoxes) ? event.occupiedBoxes : []).slice(0, 24).flatMap(boxValue => {
+      const box = record(boxValue);
+      if (![box.x, box.y, box.width, box.height].every(value => Number.isFinite(Number(value)))) return [];
+      const normalized = { x: Number(box.x), y: Number(box.y), width: Number(box.width), height: Number(box.height) };
+      if (normalized.x < 0 || normalized.y < 0 || normalized.width <= 0 || normalized.height <= 0
+        || normalized.x + normalized.width > 1 || normalized.y + normalized.height > 1) return [];
+      return [normalized];
+    });
     return [{
       id: safeId(event.id, `event-${index}`), type, text,
       startMs: Math.round(startMs), endMs: Math.round(endMs), importance,
@@ -102,6 +114,12 @@ function normalizeEmphasisPlan(input, durationSeconds = 0) {
       ...(semanticRole ? { semanticRole } : {}),
       ...(visualIntent ? { visualIntent } : {}),
       ...(assetIntent ? { assetIntent } : {}),
+      ...(presentationMode ? { presentationMode } : {}),
+      ...(targetRelation ? { targetRelation } : {}),
+      ...(safeId(event.shotId, '') ? { shotId: safeId(event.shotId, '') } : {}),
+      ...(Number.isFinite(Number(event.evidenceStartMs)) ? { evidenceStartMs: Math.round(clamp(event.evidenceStartMs, 0, durationMs, startMs)) } : {}),
+      ...(Number.isFinite(Number(event.evidenceEndMs)) ? { evidenceEndMs: Math.round(clamp(event.evidenceEndMs, startMs, durationMs, endMs)) } : {}),
+      ...(occupiedBoxes.length ? { occupiedBoxes } : {}),
       degraded: unsafe || confidence < .7,
     }];
   });
@@ -136,7 +154,8 @@ function assTime(ms) {
 
 function emphasisToAssEvents(plan, width, height) {
   const style = PROFILE_STYLE[plan.profile] || PROFILE_STYLE.talking_head;
-  return plan.events.filter(event => event.type !== 'section_label').map(event => {
+  return plan.events.filter(event => event.type !== 'section_label'
+    && !['graphic_only', 'caption_emphasis', 'none'].includes(event.presentationMode)).map(event => {
     const strong = event.strength === 'strong';
     const size = Math.round(width * (strong ? style.strongSize : style.weakSize));
     const defaultY = ({ key_fact: .68, reveal: .62, cta: .68 })[event.type] || .68;

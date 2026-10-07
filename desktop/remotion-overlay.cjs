@@ -5,7 +5,7 @@ const os = require('node:os');
 const path = require('node:path');
 
 let bundlePromise = null;
-const RENDERER_VERSION = 'semantic-assets-v4-cropped-layout';
+const RENDERER_VERSION = 'semantic-assets-v6-visible-hold';
 const ASSET_DIRECTORY = path.join(__dirname, '../assets/reference/emphasis/v1');
 
 const finite = value => Number.isFinite(Number(value)) ? Number(value) : null;
@@ -31,6 +31,8 @@ function semanticAssetKind(event) {
 
 const intersects = (a, b, gap = 0) => a.x < b.x + b.width + gap && a.x + a.width + gap > b.x
   && a.y < b.y + b.height + gap && a.y + a.height + gap > b.y;
+const overlapArea = (a, b) => Math.max(0, Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x))
+  * Math.max(0, Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y));
 const inside = rect => rect.x >= .035 && rect.y >= .035 && rect.x + rect.width <= .965 && rect.y + rect.height <= .70;
 const normalizedBox = value => {
   if (!value || typeof value !== 'object') return null;
@@ -95,6 +97,89 @@ function resolveOverlayLayout(event, index = 0) {
   };
 }
 
+const PRESENTATION_MODES = new Set(['label', 'graphic_only', 'caption_emphasis', 'none', 'full']);
+const TARGET_RELATIONS = new Set(['surround', 'point_to', 'adjacent']);
+const eventSubject = event => normalizedBox(event && event.subjectBox) || (() => {
+  const anchor = event && event.subjectAnchor;
+  if (!anchor || finite(anchor.x) === null || finite(anchor.y) === null) return null;
+  // An anchor-only visual result means the model could not isolate a useful
+  // full box (often because products fill the frame). Use a compact proxy so
+  // surround graphics stay local and clear of existing captions.
+  return { x: clamp(Number(anchor.x) - .10, .03, .77), y: clamp(Number(anchor.y) - .10, .04, .50), width: .20, height: .20 };
+})();
+const eventOccupied = event => [
+  ...(Array.isArray(event && event.occupiedBoxes) ? event.occupiedBoxes : []),
+  ...(Array.isArray(event && event.captionBoxes) ? event.captionBoxes : []),
+  ...(Array.isArray(event && event.occupiedRegions) ? event.occupiedRegions : []),
+  ...(Array.isArray(event && event.reservedBoxes) ? event.reservedBoxes : []),
+]
+  .map(normalizedBox).filter(Boolean).concat([{ x: 0, y: .71, width: 1, height: .29 }]);
+const rectPenalty = (rect, occupied) => {
+  const outside = Math.max(0, .035 - rect.x) + Math.max(0, .035 - rect.y)
+    + Math.max(0, rect.x + rect.width - .965) + Math.max(0, rect.y + rect.height - .70);
+  return outside * 100 + occupied.reduce((sum, box) => sum + overlapArea(rect, box) * 1000, 0);
+};
+
+function relationLayouts(event, index = 0) {
+  const base = resolveOverlayLayout(event, index);
+  const subject = eventSubject(event);
+  const relation = TARGET_RELATIONS.has(String(event && event.targetRelation)) ? String(event.targetRelation) : 'adjacent';
+  if (!subject) return [{ ...base, relation: 'adjacent' }];
+  const a = base.asset, l = base.label, gap = .02;
+  if (relation === 'surround') {
+    const expanded = {
+      x: clamp(subject.x - .055, .035, .965 - Math.min(.48, subject.width + .11)),
+      y: clamp(subject.y - .055, .035, .70 - Math.min(.58, subject.height + .11)),
+      width: Math.min(.48, subject.width + .11), height: Math.min(.58, subject.height + .11),
+    };
+    return [
+      { asset: expanded, label: { ...l, x: clamp(expanded.x + expanded.width + gap, .035, .965 - l.width), y: clamp(subject.y - l.height - gap, .035, .70 - l.height) }, mode: 'relation-surround-right', relation },
+      { asset: expanded, label: { ...l, x: clamp(expanded.x - l.width - gap, .035, .965 - l.width), y: clamp(subject.y - l.height - gap, .035, .70 - l.height) }, mode: 'relation-surround-left', relation },
+    ];
+  }
+  if (relation === 'point_to') {
+    return [
+      { asset: { ...a, x: clamp(subject.x + subject.width + gap, .035, .965 - a.width), y: clamp(subject.y + subject.height * .25, .035, .70 - a.height) }, label: { ...l, x: clamp(subject.x + subject.width + gap + a.width + gap, .035, .965 - l.width), y: clamp(subject.y, .035, .70 - l.height) }, mode: 'relation-point-right', relation },
+      { asset: { ...a, x: clamp(subject.x - a.width - gap, .035, .965 - a.width), y: clamp(subject.y + subject.height * .25, .035, .70 - a.height) }, label: { ...l, x: clamp(subject.x - a.width - gap - l.width - gap, .035, .965 - l.width), y: clamp(subject.y, .035, .70 - l.height) }, mode: 'relation-point-left', relation },
+    ];
+  }
+  return [{ ...base, relation }];
+}
+
+/** Chooses a renderable relationship layout and exposes the degradation path
+ * so callers/tests can distinguish a graphic-only fallback from no overlay. */
+function planOverlayPresentation(event, index = 0) {
+  const rawMode = PRESENTATION_MODES.has(String(event && event.presentationMode)) ? String(event.presentationMode) : 'label';
+  const requested = rawMode === 'full' ? 'label' : rawMode;
+  const attempted = [requested];
+  if (requested === 'none') return { outcome: 'none', attempted, layout: null };
+  if (requested === 'caption_emphasis') return { outcome: 'caption_emphasis', attempted, layout: null };
+  const subject = eventSubject(event);
+  const occupied = eventOccupied(event);
+  const layouts = relationLayouts(event, index).map(layout => {
+    const asset = layout.relation === 'surround' ? occupied.reduce((rect, box) => {
+      if (!intersects(rect, box, .006)) return rect;
+      const above = box.y - rect.height - .012;
+      return above >= .035 ? { ...rect, y: above } : rect;
+    }, layout.asset) : layout.asset;
+    const assetOccupied = layout.relation === 'surround' ? occupied : subject ? [subject, ...occupied] : occupied;
+    const score = rectPenalty(asset, assetOccupied) + rectPenalty(layout.label, subject ? [subject, ...occupied] : occupied)
+      + overlapArea(asset, layout.label) * 2000;
+    return { ...layout, asset, score };
+  }).sort((left, right) => left.score - right.score);
+  const full = layouts.find(layout => layout.score === 0);
+  if (requested === 'label' && full) return { outcome: 'label', attempted, layout: full };
+  if (requested === 'label') attempted.push('graphic_only');
+  const graphic = layouts.map(layout => ({ ...layout, score: rectPenalty(layout.asset,
+    layout.relation === 'surround' ? occupied : subject ? [subject, ...occupied] : occupied) }))
+    .sort((left, right) => left.score - right.score).find(layout => layout.score === 0);
+  if (graphic) return { outcome: 'graphic_only', attempted, layout: graphic };
+  attempted.push('caption_emphasis');
+  if (String(event && event.text || '').trim()) return { outcome: 'caption_emphasis', attempted, layout: null };
+  attempted.push('none');
+  return { outcome: 'none', attempted, layout: null };
+}
+
 /** Resolve a sticker position without assuming that the centre of the frame is
  * empty. Coordinates are normalized. The lower 28% stays reserved for speech
  * captions and platform controls. */
@@ -139,15 +224,29 @@ function resolveOverlayPlacement(event, index = 0) {
 }
 
 const advancedEvents = plan => (plan && Array.isArray(plan.events) ? plan.events : [])
-  .filter(event => ['key_fact', 'reveal', 'cta'].includes(event.type) && event.text)
-  .map((event, index) => ({
-    id: event.id, type: event.type, startMs: event.startMs, endMs: event.endMs, text: event.text,
+  .filter(event => ['key_fact', 'reveal', 'cta'].includes(event.type))
+  .flatMap((event, index) => {
+    const evidence = event && typeof (event.evidence || event.evidenceTime || event.evidenceWindow) === 'object'
+      ? (event.evidence || event.evidenceTime || event.evidenceWindow) : {};
+    const startMs = Math.max(Number(event.startMs) || 0, Number(event.evidenceStartMs ?? evidence.startMs) || 0);
+    const evidenceEnd = Number(event.evidenceEndMs ?? evidence.endMs);
+    const endMs = Number.isFinite(evidenceEnd) ? Math.min(Number(event.endMs) || evidenceEnd, evidenceEnd) : Number(event.endMs) || 0;
+    if (endMs <= startMs) return [];
+    const presentation = planOverlayPresentation(event, index);
+    if (!['label', 'graphic_only'].includes(presentation.outcome) || !presentation.layout) return [];
+    return [{
+    id: event.id, type: event.type, startMs, endMs, text: String(event.text || ''),
     assetKind: semanticAssetKind(event),
     placement: resolveOverlayPlacement(event, index),
-    layout: resolveOverlayLayout(event, index),
+    layout: presentation.layout,
+    presentationMode: presentation.outcome,
+    targetRelation: presentation.layout.relation,
+    shotId: String(event.shotId || ''),
+    playbackKey: `${event.shotId || 'timeline'}:${startMs}:${endMs}`,
     ...(event.subjectAnchor && Number.isFinite(Number(event.subjectAnchor.x)) && Number.isFinite(Number(event.subjectAnchor.y))
       ? { subjectAnchor: { x: clamp(Number(event.subjectAnchor.x), .08, .92), y: clamp(Number(event.subjectAnchor.y), .08, .70) } } : {}),
-  }));
+  }];
+  });
 
 async function rendererModules() {
   const [{ bundle }, { renderMedia, selectComposition }] = await Promise.all([
@@ -169,10 +268,14 @@ async function renderTransparentOverlay({ plan, width, height, durationSeconds, 
   const events = advancedEvents(plan);
   if (!events.length || process.env.LINGSHU_REMOTION_OVERLAY === 'off') return { path: null, cacheHit: false, renderMs: 0 };
   const sourceVersion = crypto.createHash('sha256').update([
+    fs.readFileSync(__filename),
     fs.readFileSync(path.join(__dirname, 'remotion-overlay/root.tsx')),
     fs.readFileSync(path.join(__dirname, 'remotion-overlay/semantic-assets.tsx')),
     fs.readFileSync(path.join(__dirname, 'remotion-overlay/asset-crops.json')),
+    fs.readFileSync(path.join(__dirname, 'remotion-overlay/asset-playback.json')),
     ...['burst-rays-yellow-static.png', 'burst-rays-yellow.gif', 'emphasis-rays-yellow.gif', 'lightning-orange.gif', 'megaphone-blue-yellow.gif']
+      .map(file => fs.readFileSync(path.join(ASSET_DIRECTORY, file))),
+    ...['hold-burst-rays-yellow.png', 'hold-emphasis-rays-yellow.png', 'hold-lightning-orange.png', 'hold-megaphone-blue-yellow.png']
       .map(file => fs.readFileSync(path.join(ASSET_DIRECTORY, file))),
   ].map(value => crypto.createHash('sha256').update(value).digest('hex')).join(':')).digest('hex').slice(0, 16);
   const props = { rendererVersion: RENDERER_VERSION, sourceVersion, durationFrames: Math.max(1, Math.ceil(durationSeconds * fps)), fps, width, height, profile: plan.profile, events };
@@ -196,4 +299,4 @@ async function renderTransparentOverlay({ plan, width, height, durationSeconds, 
   return { path: output, cacheHit: false, renderMs: Date.now() - started };
 }
 
-module.exports = { RENDERER_VERSION, advancedEvents, intersects, resolveOverlayLayout, resolveOverlayPlacement, semanticAssetKind, renderTransparentOverlay };
+module.exports = { RENDERER_VERSION, advancedEvents, intersects, planOverlayPresentation, relationLayouts, resolveOverlayLayout, resolveOverlayPlacement, semanticAssetKind, renderTransparentOverlay };

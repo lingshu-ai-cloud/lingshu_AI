@@ -4,7 +4,7 @@ import { SemanticAsset, type SemanticAssetKind } from './semantic-assets';
 
 type Point = { x: number; y: number };
 type Rect = Point & { width: number; height: number };
-type OverlayEvent = { id: string; type: 'key_fact' | 'reveal' | 'cta'; assetKind: SemanticAssetKind; startMs: number; endMs: number; text: string; placement: Point & { source: string }; layout: { asset: Rect; label: Rect; mode: string }; subjectAnchor?: Point };
+type OverlayEvent = { id: string; type: 'key_fact' | 'reveal' | 'cta'; assetKind: SemanticAssetKind; startMs: number; endMs: number; text: string; placement: Point & { source: string }; layout: { asset: Rect; label: Rect; mode: string }; presentationMode: 'label' | 'graphic_only'; targetRelation: 'surround' | 'point_to' | 'adjacent'; shotId?: string; playbackKey: string; subjectAnchor?: Point };
 type OverlayProps = { durationFrames: number; fps: number; width: number; height: number; profile: string; events: OverlayEvent[] };
 
 const EventCard: React.FC<{ event: OverlayEvent }> = ({ event }) => {
@@ -23,9 +23,9 @@ const EventCard: React.FC<{ event: OverlayEvent }> = ({ event }) => {
   return <>
     <div style={{ position: 'absolute', left: `${assetRect.x * 100}%`, top: `${assetRect.y * 100}%`, width: `${assetRect.width * 100}%`, height: `${assetRect.height * 100}%`,
       transform: `scale(${enter * pulse})`, opacity: exit, transformOrigin: labelRect.x < assetRect.x ? 'right center' : 'left center' }}>
-      <SemanticAsset kind={event.assetKind} progress={enter} />
+      <SemanticAsset kind={event.assetKind} progress={enter} eventDurationFrames={duration} />
     </div>
-    <div style={{
+    {event.presentationMode === 'label' && <div style={{
       position: 'absolute', left: `${labelRect.x * 100}%`, top: `${labelRect.y * 100}%`, width: `${labelRect.width * 100}%`, minHeight: `${labelRect.height * 100}%`,
       transform: `translateX(${slide}px) scale(${enter})`, opacity: exit, boxSizing: 'border-box',
       padding: `${width * .009}px ${width * .016}px`, borderRadius: width * .012,
@@ -33,7 +33,7 @@ const EventCard: React.FC<{ event: OverlayEvent }> = ({ event }) => {
       boxShadow: `0 ${width * .005}px ${width * .018}px rgba(0,0,0,.16)`,
       fontFamily: 'Source Han Sans SC, PingFang SC, sans-serif', fontSize: width * (isFact ? .042 : .04),
       fontWeight: 750, lineHeight: 1.14, display: 'flex', alignItems: 'center', textAlign: 'left', whiteSpace: 'normal', wordBreak: 'keep-all',
-    }}>{event.text}</div>
+    }}>{event.text}</div>}
   </>;
 };
 
@@ -43,7 +43,7 @@ const Overlay: React.FC<OverlayProps> = ({ events }) => {
     {events.map(event => {
       const from = Math.max(0, Math.round(event.startMs / 1000 * fps));
       const durationInFrames = Math.max(1, Math.round((event.endMs - event.startMs) / 1000 * fps));
-      return <Sequence key={event.id} from={from} durationInFrames={durationInFrames} layout="none">
+      return <Sequence key={`${event.id}:${event.playbackKey}`} from={from} durationInFrames={durationInFrames} layout="none">
         <EventCard event={event} />
       </Sequence>;
     })}

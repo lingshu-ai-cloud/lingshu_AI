@@ -9,6 +9,7 @@ import {
   type EmphasisProfile,
   type EmphasisPlacementWindow,
 } from '../../shared/contracts/emphasisTimeline.js';
+import { alignStudioEmphasisEvents, type StudioEmphasisPreanalysis } from './studioEmphasisAlignment.js';
 
 export type StudioEmphasisPlan = EmphasisPlanV1;
 
@@ -29,6 +30,8 @@ export type StudioEmphasisPlanInput = {
   events?: unknown;
   placementWindows?: unknown;
   maxEvents?: unknown;
+  /** Optional analysis supplied by the background prepass. */
+  preanalysis?: StudioEmphasisPreanalysis;
 };
 
 const text = (value: unknown): string => String(value || '').replace(/\s+/g, ' ').trim();
@@ -215,6 +218,8 @@ export function buildStudioEmphasisPlan(input: {
   subtitles?: { cues?: Cue[] };
   timeline?: TimelineShot[];
   emphasisPlan?: StudioEmphasisPlanInput;
+  /** Optional shot/OCR/visual evidence; callers may add the prepass later. */
+  emphasisPreanalysis?: StudioEmphasisPreanalysis;
   /** Confirmed user/business data. Storyboard production notes are excluded. */
   businessFacts?: unknown;
 }): StudioEmphasisPlan {
@@ -236,5 +241,9 @@ export function buildStudioEmphasisPlan(input: {
     ? Math.max(0, Math.min(40, Math.round(requestedMax))) : defaultBudget.max;
   const placementWindows = Array.isArray(supplied.placementWindows)
     ? supplied.placementWindows as EmphasisPlacementWindow[] : undefined;
-  return normalizeEmphasisPlan({ profile, captions: normalizedCaptions, events: candidates, maxEvents }, durationMs, placementWindows);
+  const plan = normalizeEmphasisPlan({ profile, captions: normalizedCaptions, events: candidates, maxEvents }, durationMs, placementWindows);
+  const preanalysis = input.emphasisPreanalysis || supplied.preanalysis;
+  return preanalysis ? { ...plan, events: alignStudioEmphasisEvents({
+    durationMs, events: plan.events, captions: plan.captions, preanalysis,
+  }) } : plan;
 }

@@ -146,3 +146,31 @@ test('passes semantic intents and only trusted subject geometry through the mani
     subjectBox: { x: .3, y: .25, width: .36, height: .55 },
   });
 });
+
+test('accepts optional preanalysis and signs shot-aware presentation into the manifest plan', () => {
+  const plan = buildStudioEmphasisPlan({
+    durationSeconds: 4,
+    subtitles: { cues: [{ start: .4, end: 2.8, text: '我们拥有30年灯具工厂经验' }] },
+    emphasisPlan: { profile: 'factory_process', events: [{
+      id: 'factory-years', type: 'key_fact', startMs: 400, endMs: 2_800, text: '30年灯具工厂',
+      importance: 3, confidence: .95, source: 'editor',
+    }] },
+    emphasisPreanalysis: {
+      shotWindows: [{ id: 'factory-shot', startMs: 0, endMs: 3_000, confidence: .95, source: 'ffmpeg_scene' }],
+      visualEvidence: [{ shotId: 'factory-shot', subjectType: 'machine', subjectBox: { x: .2, y: .2, width: .6, height: .6 },
+        safeZones: [], captionBoxes: [], confidence: .9 }],
+    },
+  });
+  assert.deepEqual({
+    shotId: plan.events[0]?.shotId, startMs: plan.events[0]?.startMs, endMs: plan.events[0]?.endMs,
+    presentationMode: plan.events[0]?.presentationMode, targetRelation: plan.events[0]?.targetRelation,
+  }, { shotId: 'factory-shot', startMs: 400, endMs: 2_800, presentationMode: 'caption_emphasis', targetRelation: 'none' });
+});
+
+test('keeps manifest output backward compatible when no preanalysis is supplied', () => {
+  const plan = buildStudioEmphasisPlan({ durationSeconds: 4, subtitles: { cues: [] }, emphasisPlan: { events: [{
+    id: 'legacy', type: 'reveal', startMs: 500, endMs: 1_500, text: '成品效果', importance: 2, confidence: .9, source: 'editor',
+  }] } });
+  assert.equal(plan.events[0]?.shotId, undefined);
+  assert.equal(plan.events[0]?.presentationMode, undefined);
+});
