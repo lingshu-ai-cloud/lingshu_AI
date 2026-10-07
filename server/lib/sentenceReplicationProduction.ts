@@ -146,7 +146,9 @@ export async function runProductionSentenceReplication(input: { tenantId: string
         if (existingTaskId) providerTaskIds.push(existingTaskId);
         const response=await fetch(generated.videoUrl,{signal:AbortSignal.timeout(90_000)}); if(!response.ok) throw new Error(`逐句视频下载失败：HTTP ${response.status}`);
         const bytes=Buffer.from(await response.arrayBuffer()); const id=stableId('sentence-video',input.requestId,cue.id); const filePath=path.join(work,`${id}.mp4`); fs.writeFileSync(filePath,bytes);
-        const providerDuration = 'duration' in generated ? Number(generated.duration) : cue.end - cue.start;
+        const providerDuration = 'duration' in generated ? Number(generated.duration) : photoTalking
+          ? cue.end - cue.start
+          : Number(cue.generationDurationSeconds ?? (cue.end - cue.start));
         if (photoTalking && photoTalkingBudget({cues:[{...cue,end:cue.start+providerDuration}],frameCount:0,fixedHeygenReserveCny:Number(process.env.STUDIO_HEYGEN_RESERVE_CNY)}).heygenByCue[cue.id]! > photoQuote!.heygenByCue[cue.id]!) throw new Error('HeyGen 实际视频时长超过已预占费用，请核对供应商账单');
         const media=await checkAvatarMedia(filePath,{ratio:'9:16',duration:providerDuration,transparent:false,resolution}); const sourcePath=qualitySourcePath || await sourceSegmentFor(cue,photoTalking?media.duration:undefined);
         let technical=null; let technicalError=''; let visual=null; let visualError=''; let semantic=null; let semanticError=''; let lipSync=null; let lipSyncError='';
