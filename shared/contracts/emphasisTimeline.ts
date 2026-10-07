@@ -10,6 +10,8 @@ export const EMPHASIS_SOURCES = ['transcript', 'vision', 'metadata', 'editor'] a
 export const EMPHASIS_PROFILES = ['d2c_dialogue', 'talking_head', 'factory_process', 'product_showcase'] as const;
 export const EMPHASIS_VISUAL_INTENTS = ['focus_product', 'attention', 'urgency', 'warning', 'cta'] as const;
 export const EMPHASIS_ASSET_INTENTS = ['product_marker', 'attention_marker', 'urgency_badge', 'warning_marker', 'cta_marker', 'fact_label', 'section_marker'] as const;
+export const EMPHASIS_PRESENTATION_MODES = ['caption_emphasis', 'graphic_only', 'label', 'none'] as const;
+export const EMPHASIS_TARGET_RELATIONS = ['surround', 'point_to', 'adjacent', 'none'] as const;
 export const EMPHASIS_TIMELINE_SCHEMA_VERSION = 1 as const;
 
 export type EmphasisEventType = typeof EMPHASIS_EVENT_TYPES[number];
@@ -18,6 +20,8 @@ export type EmphasisProfile = typeof EMPHASIS_PROFILES[number];
 export type EmphasisImportance = 1 | 2 | 3;
 export type EmphasisVisualIntent = typeof EMPHASIS_VISUAL_INTENTS[number];
 export type EmphasisAssetIntent = typeof EMPHASIS_ASSET_INTENTS[number];
+export type EmphasisPresentationMode = typeof EMPHASIS_PRESENTATION_MODES[number];
+export type EmphasisTargetRelation = typeof EMPHASIS_TARGET_RELATIONS[number];
 export type NormalizedPoint = { x: number; y: number };
 export type NormalizedBox = { x: number; y: number; width: number; height: number };
 
@@ -31,6 +35,36 @@ export interface CaptionSegment {
   keywords?: string[];
 }
 
+export interface ShotWindow {
+  id: string;
+  startMs: number;
+  endMs: number;
+  confidence: number;
+  source: 'ffmpeg_scene' | 'storyboard' | 'fallback';
+}
+
+export interface CaptionOccupancy {
+  id: string;
+  startMs: number;
+  endMs: number;
+  text?: string;
+  boxes: NormalizedBox[];
+  confidence: number;
+  source: 'subtitle' | 'ocr';
+  /** Project subtitles can be emphasized in place; OCR text is immutable. */
+  editable: boolean;
+}
+
+export interface VisualEvidence {
+  shotId: string;
+  subjectType: 'person' | 'product' | 'machine' | 'process' | 'unknown';
+  subjectBox?: NormalizedBox;
+  subjectAnchor?: NormalizedPoint;
+  safeZones: Array<NormalizedBox & { clarity: number }>;
+  captionBoxes: NormalizedBox[];
+  confidence: number;
+}
+
 export interface EmphasisEvent {
   id: string;
   type: EmphasisEventType;
@@ -40,6 +74,13 @@ export interface EmphasisEvent {
   importance: EmphasisImportance;
   confidence: number;
   source: EmphasisEventSource;
+  shotId?: string;
+  evidenceStartMs?: number;
+  evidenceEndMs?: number;
+  presentationMode?: EmphasisPresentationMode;
+  targetRelation?: EmphasisTargetRelation;
+  /** Subtitle/OCR rectangles the renderer must treat as occupied. */
+  occupiedBoxes?: NormalizedBox[];
   /** Semantic/visual subject used to find the best placement window. */
   targetId?: string;
   /** Semantic goal used to choose a suitable asset family; never a filename. */
@@ -178,6 +219,74 @@ export function normalizeCaptionSegments(input: unknown, durationMs: number): Ca
     .sort((left, right) => left.startMs - right.startMs || left.endMs - right.endMs);
 }
 
+const normalizedBox = (value: unknown): NormalizedBox | undefined => {
+  const raw = asRecord(value);
+  if (![raw.x, raw.y, raw.width, raw.height].every(item => Number.isFinite(Number(item)))) return undefined;
+  const box = { x: Number(raw.x), y: Number(raw.y), width: Number(raw.width), height: Number(raw.height) };
+  if (box.x < 0 || box.y < 0 || box.width <= 0 || box.height <= 0 || box.x + box.width > 1 || box.y + box.height > 1) return undefined;
+  return Object.fromEntries(Object.entries(box).map(([key, item]) => [key, Number(item.toFixed(4))])) as NormalizedBox;
+};
+
+export function normalizeShotWindows(input: unknown, durationMs: number): ShotWindow[] {
+  const duration = Math.max(0, finite(durationMs, 0));
+  return (Array.isArray(input) ? input : []).slice(0, 500).map((value, index): ShotWindow | null => {
+    const raw = asRecord(value);
+    const startMs = Math.round(clamp(raw.startMs, 0, duration, 0));
+    const endMs = Math.round(clamp(raw.endMs, startMs, duration, startMs));
+    const source = ['ffmpeg_scene', 'storyboard', 'fallback'].includes(String(raw.source))
+      ? raw.source as ShotWindow['source'] : null;
+    if (!source || endMs <= startMs) return null;
+    return { id: cleanId(raw.id, `shot-${index + 1}`), startMs, endMs,
+      confidence: Number(clamp(raw.confidence, 0, 1, source === 'fallback' ? .5 : 0).toFixed(4)), source };
+  }).filter((item): item is ShotWindow => Boolean(item))
+    .sort((left, right) => left.startMs - right.startMs || left.endMs - right.endMs);
+}
+
+export function normalizeCaptionOccupancy(input: unknown, durationMs: number): CaptionOccupancy[] {
+  const duration = Math.max(0, finite(durationMs, 0));
+  return (Array.isArray(input) ? input : []).slice(0, 2_000).map((value, index): CaptionOccupancy | null => {
+    const raw = asRecord(value);
+    const source = raw.source === 'subtitle' || raw.source === 'ocr' ? raw.source : null;
+    const startMs = Math.round(clamp(raw.startMs, 0, duration, 0));
+    const endMs = Math.round(clamp(raw.endMs, startMs, duration, startMs));
+    if (!source || endMs <= startMs) return null;
+    const boxes = (Array.isArray(raw.boxes) ? raw.boxes : []).map(normalizedBox).filter((box): box is NormalizedBox => Boolean(box));
+    const occupancyText = cleanText(raw.text, 500);
+    return { id: cleanId(raw.id, `occupancy-${index + 1}`), startMs, endMs,
+      ...(occupancyText ? { text: occupancyText } : {}), boxes,
+      confidence: Number(clamp(raw.confidence, 0, 1, source === 'subtitle' ? 1 : 0).toFixed(4)),
+      source, editable: source === 'subtitle' && raw.editable !== false };
+  }).filter((item): item is CaptionOccupancy => Boolean(item));
+}
+
+export function normalizeVisualEvidence(input: unknown): VisualEvidence[] {
+  return (Array.isArray(input) ? input : []).slice(0, 500).map((value): VisualEvidence | null => {
+    const raw = asRecord(value);
+    const shotId = cleanId(raw.shotId, '');
+    const subjectType = ['person', 'product', 'machine', 'process', 'unknown'].includes(String(raw.subjectType))
+      ? raw.subjectType as VisualEvidence['subjectType'] : 'unknown';
+    const confidence = clamp(raw.confidence, 0, 1, 0);
+    if (!shotId || confidence < .68) return null;
+    const normalizedSubjectBox = normalizedBox(raw.subjectBox);
+    // A nearly full-frame box describes the scene instead of a bindable
+    // subject. Preserve the anchor so layout can derive a local proxy.
+    const subjectBox = normalizedSubjectBox && normalizedSubjectBox.width * normalizedSubjectBox.height <= .72
+      ? normalizedSubjectBox : undefined;
+    const point = asRecord(raw.subjectAnchor);
+    const subjectAnchor = Number.isFinite(Number(point.x)) && Number.isFinite(Number(point.y))
+      && Number(point.x) >= 0 && Number(point.x) <= 1 && Number(point.y) >= 0 && Number(point.y) <= 1
+      ? { x: Number(Number(point.x).toFixed(4)), y: Number(Number(point.y).toFixed(4)) } : undefined;
+    const safeZones = (Array.isArray(raw.safeZones) ? raw.safeZones : []).flatMap(value => {
+      const box = normalizedBox(value);
+      if (!box) return [];
+      return [{ ...box, clarity: Number(clamp(asRecord(value).clarity, 0, 1, 0).toFixed(4)) }];
+    });
+    const captionBoxes = (Array.isArray(raw.captionBoxes) ? raw.captionBoxes : []).map(normalizedBox).filter((box): box is NormalizedBox => Boolean(box));
+    return { shotId, subjectType, ...(subjectBox ? { subjectBox } : {}), ...(subjectAnchor ? { subjectAnchor } : {}),
+      safeZones, captionBoxes, confidence: Number(confidence.toFixed(4)) };
+  }).filter((item): item is VisualEvidence => Boolean(item));
+}
+
 export function normalizeEmphasisCandidates(input: unknown, durationMs: number): EmphasisEvent[] {
   const duration = Math.max(0, finite(durationMs, 0));
   return (Array.isArray(input) ? input : []).slice(0, 500).map((value, index): EmphasisEvent | null => {
@@ -192,6 +301,15 @@ export function normalizeEmphasisCandidates(input: unknown, durationMs: number):
     if (endMs <= startMs) return null;
     const text = cleanText(raw.text);
     const targetId = cleanId(raw.targetId, '');
+    const shotId = cleanId(raw.shotId, '');
+    const evidenceStartMs = Math.round(clamp(raw.evidenceStartMs, 0, duration, startMs));
+    const evidenceEndMs = Math.round(clamp(raw.evidenceEndMs, evidenceStartMs, duration, endMs));
+    const presentationMode = EMPHASIS_PRESENTATION_MODES.includes(String(raw.presentationMode) as EmphasisPresentationMode)
+      ? raw.presentationMode as EmphasisPresentationMode : undefined;
+    const targetRelation = EMPHASIS_TARGET_RELATIONS.includes(String(raw.targetRelation) as EmphasisTargetRelation)
+      ? raw.targetRelation as EmphasisTargetRelation : undefined;
+    const occupiedBoxes = (Array.isArray(raw.occupiedBoxes) ? raw.occupiedBoxes : [])
+      .map(normalizedBox).filter((box): box is NormalizedBox => Boolean(box)).slice(0, 24);
     const strength = raw.strength === 'weak' || raw.strength === 'strong' ? raw.strength : undefined;
     const anchor = asRecord(raw.anchor);
     const hasAnchor = Number.isFinite(Number(anchor.x)) && Number.isFinite(Number(anchor.y));
@@ -213,6 +331,12 @@ export function normalizeEmphasisCandidates(input: unknown, durationMs: number):
       importance: Math.round(clamp(raw.importance, 1, 3, 1)) as EmphasisImportance,
       confidence: Number(confidence.toFixed(4)), source,
       ...(targetId ? { targetId } : {}),
+      ...(shotId ? { shotId } : {}),
+      ...(Number.isFinite(Number(raw.evidenceStartMs)) ? { evidenceStartMs } : {}),
+      ...(Number.isFinite(Number(raw.evidenceEndMs)) ? { evidenceEndMs } : {}),
+      ...(presentationMode ? { presentationMode } : {}),
+      ...(targetRelation ? { targetRelation } : {}),
+      ...(occupiedBoxes.length ? { occupiedBoxes } : {}),
       visualIntent,
       assetIntent,
       ...(strength ? { strength } : {}),

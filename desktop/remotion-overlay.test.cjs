@@ -2,7 +2,7 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { RENDERER_VERSION, advancedEvents, intersects, resolveOverlayLayout, resolveOverlayPlacement } = require('./remotion-overlay.cjs');
+const { RENDERER_VERSION, advancedEvents, intersects, planOverlayPresentation, resolveOverlayLayout, resolveOverlayPlacement } = require('./remotion-overlay.cjs');
 const { normalizeEmphasisPlan } = require('./emphasis-composition.cjs');
 
 const selected = advancedEvents({ events: [
@@ -51,7 +51,7 @@ const crossLayer = advancedEvents(normalizeEmphasisPlan({ profile: 'product_show
   { id: 'cta-intent', type: 'key_fact', assetIntent: 'cta_marker', startMs: 2800, endMs: 3400, text: '咨询', importance: 3, confidence: 1, source: 'editor' },
 ] }, 4));
 assert.deepEqual(crossLayer.map(event => event.assetKind), ['warning', 'urgency', 'reveal', 'key_fact', 'cta'], 'shared asset intents select concrete desktop assets');
-assert.match(RENDERER_VERSION, /^semantic-assets-v\d+-cropped-layout$/, 'cache namespace changes when cropped layout renderer is introduced');
+assert.match(RENDERER_VERSION, /^semantic-assets-v\d+-visible-hold$/, 'cache namespace changes when hold-frame playback changes');
 const assetComponent = fs.readFileSync(path.join(__dirname, 'remotion-overlay/semantic-assets.tsx'), 'utf8');
 assert.match(assetComponent, /from '@remotion\/gif'/, 'animated originals use video-frame-synchronized GIF playback');
 for (const file of ['burst-rays-yellow-static.png', 'burst-rays-yellow.gif', 'emphasis-rays-yellow.gif', 'lightning-orange.gif', 'megaphone-blue-yellow.gif']) {
@@ -76,4 +76,56 @@ assert.ok(cornerLayout.asset.y + cornerLayout.asset.height <= .71 && cornerLayou
 const cropMetadata = JSON.parse(fs.readFileSync(path.join(__dirname, 'remotion-overlay/asset-crops.json'), 'utf8'));
 assert.equal(cropMetadata.assets['megaphone-blue-yellow.gif'].frames, 26);
 assert.ok(cropMetadata.assets['burst-rays-yellow-static.png'].height < .5, 'large transparent padding is removed using union alpha bounds');
+
+const surround = planOverlayPresentation({ id: 'surround', type: 'key_fact', text: '新品', presentationMode: 'label', targetRelation: 'surround', subjectBox });
+assert.equal(surround.outcome, 'label');
+assert.equal(surround.layout.relation, 'surround');
+assert.equal(intersects(surround.layout.label, subjectBox, .012), false, 'surround label clears the target rectangle');
+const pointTo = planOverlayPresentation({ id: 'point', type: 'reveal', text: '看这里', targetRelation: 'point_to', subjectBox });
+assert.equal(pointTo.outcome, 'label');
+assert.match(pointTo.layout.mode, /relation-point/);
+const graphicOnly = planOverlayPresentation({ id: 'graphic', type: 'cta', text: '咨询', presentationMode: 'graphic_only' });
+assert.equal(graphicOnly.outcome, 'graphic_only');
+const captionFallback = planOverlayPresentation({ id: 'blocked', type: 'key_fact', text: '保留字幕强调', subjectBox,
+  occupiedBoxes: [{ x: 0, y: 0, width: 1, height: .71 }] });
+assert.equal(captionFallback.outcome, 'caption_emphasis');
+assert.deepEqual(captionFallback.attempted, ['label', 'graphic_only', 'caption_emphasis']);
+assert.equal(planOverlayPresentation({ id: 'off', presentationMode: 'none' }).outcome, 'none');
+
+const timed = advancedEvents({ events: [
+  { id: 'shot-event', type: 'key_fact', text: '证据窗口', startMs: 1000, endMs: 5000, evidence: { startMs: 1800, endMs: 3200 }, shotId: 'shot-7', presentationMode: 'graphic_only' },
+  { id: 'none-event', type: 'cta', text: '不渲染', startMs: 0, endMs: 1000, presentationMode: 'none' },
+] });
+assert.equal(timed.length, 1);
+assert.deepEqual({ startMs: timed[0].startMs, endMs: timed[0].endMs, shotId: timed[0].shotId, mode: timed[0].presentationMode },
+  { startMs: 1800, endMs: 3200, shotId: 'shot-7', mode: 'graphic_only' });
+assert.match(timed[0].playbackKey, /^shot-7:1800:3200$/);
+
+const interfaceModes = advancedEvents({ events: [
+  { id: 'label-mode', type: 'key_fact', text: '标签', startMs: 0, endMs: 800, presentationMode: 'label' },
+  { id: 'graphic-mode', type: 'reveal', text: '只画图', startMs: 900, endMs: 1700, presentationMode: 'graphic_only' },
+  { id: 'caption-mode', type: 'key_fact', text: '字幕内强调', startMs: 1800, endMs: 2600, presentationMode: 'caption_emphasis' },
+  { id: 'none-mode', type: 'cta', text: '关闭', startMs: 2700, endMs: 3500, presentationMode: 'none' },
+  { id: 'legacy-mode', type: 'cta', text: '旧事件', startMs: 3600, endMs: 4400 },
+] });
+assert.deepEqual(interfaceModes.map(event => [event.id, event.presentationMode]), [
+  ['label-mode', 'label'], ['graphic-mode', 'graphic_only'], ['legacy-mode', 'label'],
+]);
+const captionCollision = planOverlayPresentation({ id: 'caption-box', type: 'key_fact', text: '避让', presentationMode: 'label',
+  captionBoxes: [{ x: 0, y: 0, width: 1, height: .71 }] });
+assert.equal(captionCollision.outcome, 'caption_emphasis', 'alignment captionBoxes participate in occupancy scoring');
+
+const playback = JSON.parse(fs.readFileSync(path.join(__dirname, 'remotion-overlay/asset-playback.json'), 'utf8'));
+assert.equal(playback.assets['megaphone-blue-yellow.gif'].frameCount, 26);
+for (const [file, metadata] of Object.entries(playback.assets)) {
+  assert.ok(metadata.holdFrame >= Math.floor(metadata.effectiveEndFrame * .55), `${file} hold frame comes from the stable latter portion`);
+  assert.ok(metadata.holdFrame <= metadata.effectiveEndFrame, `${file} hold frame stays inside the effective interval`);
+  assert.ok(metadata.alphaCoverage[metadata.holdFrame] > .01, `${file} hold frame has visible alpha coverage`);
+  assert.ok(fs.statSync(path.join(__dirname, '../assets/reference/emphasis/v1', metadata.holdAsset)).size > 1024,
+    `${file} has a rendered, visible hold asset`);
+}
+assert.match(assetComponent, /loopBehavior="pause-after-finish"/, 'GIF plays once and holds instead of looping transparent phases');
+assert.match(assetComponent, /frame < playFrames/, 'runtime switches at the effective playback boundary');
+assert.match(assetComponent, /playback\.holdAsset/, 'runtime freezes on the selected visible hold frame');
+assert.doesNotMatch(assetComponent, /loopBehavior="loop"/);
 console.log('remotion overlay selection regression passed');

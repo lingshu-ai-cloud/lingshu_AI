@@ -4,8 +4,11 @@ import {
   emphasisBudgetForDuration,
   deriveEmphasisIntent,
   normalizeCaptionSegments,
+  normalizeCaptionOccupancy,
   normalizeEmphasisTimeline,
   normalizeEmphasisPlan,
+  normalizeShotWindows,
+  normalizeVisualEvidence,
   selectEmphasisTimeline,
 } from './emphasisTimeline.js';
 
@@ -125,4 +128,50 @@ test('emits the canonical renderer manifest shape with a closed profile set', ()
   assert.equal(plan.maxEvents, 1);
   assert.equal(plan.events.length, 1);
   assert.equal(plan.captions.length, 1);
+});
+
+test('normalizes shot, caption occupancy and trusted visual evidence contracts', () => {
+  assert.deepEqual(normalizeShotWindows([
+    { id: 'shot 1', startMs: -4, endMs: 1_200.4, confidence: 2, source: 'ffmpeg_scene' },
+    { id: 'bad', startMs: 1_200, endMs: 900, source: 'storyboard' },
+  ], 2_000), [{ id: 'shot1', startMs: 0, endMs: 1_200, confidence: 1, source: 'ffmpeg_scene' }]);
+  assert.deepEqual(normalizeCaptionOccupancy([{
+    id: 'burned in', startMs: 100, endMs: 900, text: '30 年', confidence: .8, source: 'ocr', editable: true,
+    boxes: [{ x: .1, y: .8, width: .8, height: .1 }, { x: -.1, y: 0, width: .2, height: .2 }],
+  }], 2_000), [{ id: 'burnedin', startMs: 100, endMs: 900, text: '30 年', boxes: [{ x: .1, y: .8, width: .8, height: .1 }],
+    confidence: .8, source: 'ocr', editable: false }]);
+  assert.deepEqual(normalizeVisualEvidence([{
+    shotId: 'shot-1', subjectType: 'machine', subjectBox: { x: .2, y: .1, width: .6, height: .7 },
+    subjectAnchor: { x: .5, y: .45 }, safeZones: [{ x: .05, y: .05, width: .2, height: .2, clarity: .9 }],
+    captionBoxes: [], confidence: .9,
+  }, { shotId: 'weak', subjectType: 'product', confidence: .4 }]), [{
+    shotId: 'shot-1', subjectType: 'machine', subjectBox: { x: .2, y: .1, width: .6, height: .7 },
+    subjectAnchor: { x: .5, y: .45 }, safeZones: [{ x: .05, y: .05, width: .2, height: .2, clarity: .9 }],
+    captionBoxes: [], confidence: .9,
+  }]);
+});
+
+test('preserves closed shot-aware presentation fields on normalized events', () => {
+  const plan = normalizeEmphasisPlan({ events: [{
+    id: 'aligned', type: 'key_fact', startMs: 1_000, endMs: 2_000, text: '30年工厂', importance: 3,
+    confidence: 1, source: 'editor', shotId: 'shot-2', evidenceStartMs: 900, evidenceEndMs: 2_100,
+    presentationMode: 'graphic_only', targetRelation: 'surround',
+    occupiedBoxes: [{ x: .1, y: .8, width: .8, height: .1 }, { x: .9, y: .9, width: .2, height: .2 }],
+  }] }, 3_000);
+  assert.deepEqual({
+    shotId: plan.events[0]?.shotId, evidenceStartMs: plan.events[0]?.evidenceStartMs,
+    evidenceEndMs: plan.events[0]?.evidenceEndMs, presentationMode: plan.events[0]?.presentationMode,
+    targetRelation: plan.events[0]?.targetRelation, occupiedBoxes: plan.events[0]?.occupiedBoxes,
+  }, { shotId: 'shot-2', evidenceStartMs: 900, evidenceEndMs: 2_100, presentationMode: 'graphic_only',
+    targetRelation: 'surround', occupiedBoxes: [{ x: .1, y: .8, width: .8, height: .1 }] });
+});
+
+test('drops scene-sized subject boxes while keeping a bindable anchor', () => {
+  assert.deepEqual(normalizeVisualEvidence([{
+    shotId: 'shot-wide', subjectType: 'product', subjectBox: { x: 0, y: 0, width: 1, height: 1 },
+    subjectAnchor: { x: .48, y: .42 }, safeZones: [], captionBoxes: [], confidence: .9,
+  }]), [{
+    shotId: 'shot-wide', subjectType: 'product', subjectAnchor: { x: .48, y: .42 },
+    safeZones: [], captionBoxes: [], confidence: .9,
+  }]);
 });
