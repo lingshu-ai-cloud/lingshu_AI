@@ -91,24 +91,36 @@ function assTime(ms) {
 
 function emphasisToAssEvents(plan, width, height) {
   const style = PROFILE_STYLE[plan.profile] || PROFILE_STYLE.talking_head;
-  return plan.events.map(event => {
+  return plan.events.filter(event => event.type !== 'section_label').map(event => {
     const strong = event.strength === 'strong';
     const size = Math.round(width * (strong ? style.strongSize : style.weakSize));
-    const defaultY = ({ hook: style.y, key_fact: style.y, reveal: .38, section_label: .13, cta: .66 })[event.type] || style.y;
+    const defaultY = ({ key_fact: .68, reveal: .62, cta: .68 })[event.type] || .68;
     const x = Math.round(width * event.anchor.x);
     const y = Math.round(height * (event.anchor.y === style.y ? defaultY : event.anchor.y));
     const entrance = strong ? ({
       hook: '\\fscx76\\fscy76\\t(0,150,\\fscx108\\fscy108)\\t(150,260,\\fscx100\\fscy100)',
-      key_fact: '\\fscx90\\fscy90\\t(0,180,\\fscx100\\fscy100)\\fad(70,140)',
-      reveal: '\\fscx68\\fscy68\\t(0,210,\\fscx104\\fscy104)\\t(210,320,\\fscx100\\fscy100)\\fad(60,160)',
+      key_fact: '\\frz-4\\fscx55\\fscy55\\t(0,140,\\frz2\\fscx118\\fscy118)\\t(140,260,\\frz0\\fscx100\\fscy100)\\fad(40,140)',
+      reveal: '\\fscx62\\fscy62\\t(0,170,\\fscx112\\fscy112)\\t(170,300,\\fscx100\\fscy100)\\fad(40,150)',
       section_label: '\\fsp8\\t(0,220,\\fsp1)\\fad(100,180)',
-      cta: '\\fscx86\\fscy86\\t(0,180,\\fscx100\\fscy100)\\fad(80,180)',
+      cta: '\\fscx70\\fscy70\\t(0,150,\\fscx112\\fscy112)\\t(150,280,\\fscx100\\fscy100)\\t(650,820,\\fscx106\\fscy106)\\t(820,980,\\fscx100\\fscy100)\\fad(50,180)',
     }[event.type] || '\\fad(100,140)') : '\\fad(100,120)';
     const box = strong ? `\\bord2\\shad2\\3c&H00101010&\\4c${style.panel}` : '\\bord3\\shad0\\3c&H00101010&';
-    const label = event.type === 'section_label' ? `「${event.text}」`
-      : event.type === 'cta' ? `▶ ${event.text}` : event.text;
-    return `Dialogue: ${strong ? 3 : 2},${assTime(event.startMs)},${assTime(event.endMs)},Emphasis,,0,0,0,,{\\an8\\pos(${x},${y})\\fs${size}\\c${style.accent}${box}${entrance}}${label}`;
+    const label = event.type === 'key_fact' ? `【${event.text}】`
+      : event.type === 'cta' ? `▶ ${event.text}` : `✦ ${event.text}`;
+    return `Dialogue: ${strong ? 3 : 2},${assTime(event.startMs)},${assTime(event.endMs)},Emphasis,,0,0,0,,{\\an5\\pos(${x},${y})\\fs${size}\\c${style.accent}${box}${entrance}}${label}`;
   });
 }
 
-module.exports = { PROFILES, TYPES, PROFILE_STYLE, suggestedBudget, normalizeEmphasisPlan, emphasisToAssEvents };
+function captionEmphasisTags(plan, startSeconds, endSeconds, width) {
+  const startMs = finite(startSeconds, 0) * 1000;
+  const endMs = finite(endSeconds, 0) * 1000;
+  const event = (plan && Array.isArray(plan.events) ? plan.events : []).find(item =>
+    ['hook', 'reveal'].includes(item.type) && item.source === 'transcript'
+    && startMs < item.endMs && item.startMs < endMs);
+  if (!event) return '';
+  const style = PROFILE_STYLE[plan.profile] || PROFILE_STYLE.talking_head;
+  const size = Math.round(width * (event.type === 'hook' ? .073 : .066));
+  return `{\\fs${size}\\c${style.accent}\\bord4\\3c&H00101010&\\fscx72\\fscy72\\t(0,150,\\fscx114\\fscy114)\\t(150,280,\\fscx100\\fscy100)}`;
+}
+
+module.exports = { PROFILES, TYPES, PROFILE_STYLE, suggestedBudget, normalizeEmphasisPlan, emphasisToAssEvents, captionEmphasisTags };

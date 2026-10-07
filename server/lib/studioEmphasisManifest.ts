@@ -47,6 +47,22 @@ function shortTimelineLabel(value: unknown): string {
   return raw.length <= 48 && !metadataField.test(raw) ? raw : '';
 }
 
+function semanticTimelineEvent(label: string): { type: EmphasisEvent['type']; text: string; importance: 1 | 2 | 3 } | null {
+  const quantity = label.match(/(?:起订量[^，。！？!?]{0,10})?(\d+)\s*(件|支|套|个|盒)\s*(?:起订)?/i);
+  if (quantity && /起订|MOQ|最低|只要/i.test(label)) {
+    return { type: 'key_fact', text: `${quantity[1]}${quantity[2]}起订`, importance: 3 };
+  }
+  if (/私信|咨询|联系|扫码|点击|留言|戳我|contact|shop now|learn more/i.test(label)) {
+    const messenger = label.match(/Messenger[^，。！？!?]{0,12}/i)?.[0];
+    return { type: 'cta', text: messenger || label.slice(0, 24), importance: 3 };
+  }
+  if (/马上配货|立即发货|成品效果|前后对比|完成|亮灯|开灯|揭晓|reveal|result/i.test(label)) {
+    const concise = label.match(/马上配货|立即发货|成品效果|前后对比|亮灯看效果|开灯看效果|揭晓效果/i)?.[0];
+    return { type: 'reveal', text: concise || label.slice(0, 24), importance: 2 };
+  }
+  return null;
+}
+
 export function recommendStudioSubtitleProfile(input: { script?: unknown; cues?: Cue[]; timeline?: TimelineShot[] }): EmphasisProfile {
   const corpus = [text(input.script), ...(input.cues || []).map(cue => text(cue.text)), ...(input.timeline || []).map(shot => text(shot.name))].join(' ');
   if (/工厂|厂区|车间|产线|流水线|设备|加工|质检|仓库|机械|machine|factory|production line/i.test(corpus)) return 'factory_process';
@@ -101,10 +117,17 @@ function timelineCandidates(shots: TimelineShot[]): EmphasisEvent[] {
     const label = shortTimelineLabel(shot.caption || shot.purpose);
     const visual = text(shot.targetVisual || shot.action || shot.name);
     const events: EmphasisEvent[] = [];
-    if (label && !/^(无|none)$/i.test(label)) events.push({
-      id: `auto-shot-label-${index + 1}`, type: 'section_label', startMs, endMs: Math.min(endMs, startMs + 2_200),
-      text: label, importance: 1, confidence: .78, source: 'metadata',
-    });
+    const semantic = label && !/^(无|none)$/i.test(label) ? semanticTimelineEvent(label) : null;
+    if (semantic) {
+      const semanticStart = semantic.type === 'key_fact' && startMs === 0
+        ? Math.min(Math.max(startMs, endMs - 1_800), startMs + 3_600)
+        : startMs;
+      events.push({
+        id: `auto-shot-${semantic.type}-${index + 1}`, type: semantic.type,
+        startMs: semanticStart, endMs: Math.min(endMs, semanticStart + 1_800),
+        text: semantic.text, importance: semantic.importance, confidence: .84, source: 'metadata',
+      });
+    }
     if (visual && /成品|效果|前后对比|完成|亮灯|开灯|揭晓|reveal|result/i.test(visual)) events.push({
       id: `auto-shot-reveal-${index + 1}`, type: 'reveal', startMs, endMs: Math.min(endMs, startMs + 2_000),
       text: label || visual, importance: 2, confidence: .76, source: 'vision',

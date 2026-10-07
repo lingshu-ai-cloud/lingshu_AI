@@ -20,7 +20,8 @@ const { pipeline } = require('node:stream/promises');
 const { layoutFilters, tempoFilters, muteIntervals } = require('./shot-composition.cjs');
 const { normalizeEffectPlan, sceneEffectFilters, joinSceneFilters, audioEventFilters } = require('./effect-composition.cjs');
 const { automaticSubtitleText, verifySubtitleFonts, fontsDirectory, template: subtitleTemplate } = require('./automatic-subtitles.cjs');
-const { normalizeEmphasisPlan, emphasisToAssEvents } = require('./emphasis-composition.cjs');
+const { normalizeEmphasisPlan, emphasisToAssEvents, captionEmphasisTags } = require('./emphasis-composition.cjs');
+const { advancedEvents, renderTransparentOverlay } = require('./remotion-overlay.cjs');
 
 let ffmpegPath = null;
 try { ffmpegPath = require('ffmpeg-static'); } catch { ffmpegPath = null; }
@@ -329,10 +330,20 @@ function cuesToAss(cues, width, height, disclaimer = '', duration = 0, style = {
       ? `{\\an8\\pos(${Math.round(width / 2)},${Math.round(height * 0.12)})}`
       : '';
     const text = cue.screen ? cue.text : automaticSubtitleText(cue.text, style);
-    return `Dialogue: ${cue.screen ? 1 : 0},${assTime(cue.start)},${assTime(cue.end)},Default,,0,0,0,,${prefix}${text}`;
+    const emphasis = cue.screen ? '' : captionEmphasisTags(emphasisPlan, cue.start, cue.end, width);
+    return `Dialogue: ${cue.screen ? 1 : 0},${assTime(cue.start)},${assTime(cue.end)},Default,,0,0,0,,${prefix}${emphasis}${text}`;
   });
   if (disclaimer && duration > 0) events.push(`Dialogue: 1,0:00:00.00,${assTime(duration)},Default,,0,0,0,,{\\an8\\pos(${Math.round(width / 2)},${Math.round(height * 0.08)})\\fs${Math.round(width * 0.035)}}${assText(disclaimer).replace(/[{}]/g, '')}`);
-  if (emphasisPlan) events.push(...emphasisToAssEvents(emphasisPlan, width, height));
+  if (emphasisPlan) {
+    const captionBoundIds = new Set(valid.flatMap(cue => {
+      if (cue.screen) return [];
+      const startMs = cue.start * 1000, endMs = cue.end * 1000;
+      return emphasisPlan.events.filter(event => ['hook', 'reveal'].includes(event.type) && event.source === 'transcript'
+        && startMs < event.endMs && event.startMs < endMs).map(event => event.id);
+    }));
+    events.push(...emphasisToAssEvents({ ...emphasisPlan,
+      events: emphasisPlan.events.filter(event => !captionBoundIds.has(event.id)) }, width, height));
+  }
   return [
     '[Script Info]',
     'ScriptType: v4.00+',
@@ -426,6 +437,21 @@ async function composite(manifest, onProgress = () => {}, outDir) {
       clipId: clip.clipId,
       targetDuration: clip.targetDuration,
     })));
+    const emphasisPlan = normalizeEmphasisPlan(manifest && (manifest.emphasisPlan || manifest.emphasis), duration);
+    let motionOverlay = { path: null, cacheHit: false, renderMs: 0 };
+    if (advancedEvents(emphasisPlan).length) {
+      try {
+        motionOverlay = await renderTransparentOverlay({
+          plan: emphasisPlan, width: Math.max(360, Math.round(w / 2)), height: Math.max(640, Math.round(h / 2)),
+          durationSeconds: duration, fps: 15,
+          onProgress: progress => onProgress(Math.min(18, Math.round(progress * 18))),
+        });
+        if (process.env.RENDER_DEBUG) console.error(`[render] remotion overlay cache=${motionOverlay.cacheHit ? 'hit' : 'miss'} ms=${motionOverlay.renderMs}`);
+      } catch (error) {
+        if (process.env.RENDER_DEBUG) console.error(`[render] remotion overlay fallback: ${error && error.message || error}`);
+        motionOverlay = { path: null, cacheHit: false, renderMs: 0 };
+      }
+    }
 
     // Product and background layers are separate FFmpeg inputs. A declared
     // layer must download successfully; silently dropping it would change the
@@ -542,8 +568,12 @@ async function composite(manifest, onProgress = () => {}, outDir) {
       vlabel = '[0:v]';
     }
 
+    const visualInputCount = n > 0 ? n + extraClips.length : 1;
+    const motionOverlayIdx = motionOverlay.path ? visualInputCount : -1;
+    if (motionOverlay.path) args.push('-c:v', 'libvpx-vp9', '-i', motionOverlay.path);
+
     // 音轨输入：BGM(或静音) 固定一路，配音可选第二路。视频输入占 0..(vInputs-1)
-    const vInputs = n > 0 ? n + extraClips.length : 1;
+    const vInputs = visualInputCount + (motionOverlay.path ? 1 : 0);
     const bgmIdx = vInputs;
     if (bgmFile) args.push('-stream_loop', '-1', '-i', bgmFile);
     else args.push('-f', 'lavfi', '-i', 'anullsrc=channel_layout=stereo:sample_rate=44100');
@@ -554,16 +584,22 @@ async function composite(manifest, onProgress = () => {}, outDir) {
     const subtitleCues = manifest && manifest.subtitles && manifest.subtitles.mode !== 'off'
       ? manifest.subtitles.cues
       : [];
-    const emphasisPlan = normalizeEmphasisPlan(manifest && (manifest.emphasisPlan || manifest.emphasis), duration);
-    const ass = cuesToAss(subtitleCues, w, h, manifest.disclaimer || '', duration, manifest.subtitles?.style || {}, emphasisPlan);
+    const assPlan = motionOverlay.path
+      ? { ...emphasisPlan, events: emphasisPlan.events.filter(event => !['key_fact', 'reveal', 'cta'].includes(event.type)) }
+      : emphasisPlan;
+    const ass = cuesToAss(subtitleCues, w, h, manifest.disclaimer || '', duration, manifest.subtitles?.style || {}, assPlan);
+    let captionLabel = vlabel;
     if (ass) {
       verifySubtitleFonts();
       const assFile = path.join(tmp, 'subtitles.ass');
       fs.writeFileSync(assFile, ass, 'utf8');
-      filters.push(`${vlabel}subtitles='${filterPath(assFile)}':fontsdir='${filterPath(fontsDirectory)}'[vout]`);
-    } else {
-      filters.push(`${vlabel}null[vout]`);
+      filters.push(`${vlabel}subtitles='${filterPath(assFile)}':fontsdir='${filterPath(fontsDirectory)}'[vcaption]`);
+      captionLabel = '[vcaption]';
     }
+    if (motionOverlayIdx >= 0) {
+      filters.push(`[${motionOverlayIdx}:v]fps=30,scale=${w}:${h},format=yuva420p,setpts=PTS-STARTPTS[vmotion]`);
+      filters.push(`${captionLabel}[vmotion]overlay=0:0:format=auto:shortest=1[vout]`);
+    } else filters.push(`${captionLabel}null[vout]`);
 
     // 4) 音轨混音：bgmVol 表示最终混音增益，必须与界面显示一致。
     // 默认值本身已经按“口播垫底”设置，不能在有配音时再静默减半，

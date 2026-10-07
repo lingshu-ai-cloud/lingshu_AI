@@ -42,7 +42,7 @@ test('honors an authored profile and normalizes authored events', () => {
   assert.deepEqual(plan.events.map(event => event.id), ['one']);
 });
 
-test('extracts short emphasis copy instead of rendering storyboard production metadata', () => {
+test('extracts a concise key fact instead of rendering storyboard production metadata', () => {
   const plan = buildStudioEmphasisPlan({
     durationSeconds: 12,
     subtitles: { cues: [{ start: 0, end: 2, text: '产品介绍' }] },
@@ -52,7 +52,7 @@ test('extracts short emphasis copy instead of rendering storyboard production me
       caption: '环境：按实物环境 景别：特写 运镜：固定 镜头功能：展示产品 画面：手持产品 配乐：无 字幕：起订量只要1件',
     }],
   });
-  const label = plan.events.find(event => event.type === 'section_label');
-  assert.equal(label?.text, '起订量只要1件');
-  assert.equal(label?.text.includes('环境：'), false);
+  const fact = plan.events.find(event => event.type === 'key_fact');
+  assert.equal(fact?.text, '1件起订');
+  assert.equal(fact?.text.includes('环境：'), false);
 });

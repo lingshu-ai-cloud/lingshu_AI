@@ -1,6 +1,6 @@
 /* eslint-disable */
 const assert = require('node:assert/strict');
-const { suggestedBudget, normalizeEmphasisPlan, emphasisToAssEvents } = require('./emphasis-composition.cjs');
+const { suggestedBudget, normalizeEmphasisPlan, emphasisToAssEvents, captionEmphasisTags } = require('./emphasis-composition.cjs');
 
 assert.equal(suggestedBudget(15_000), 4);
 assert.equal(suggestedBudget(30_000), 8);
@@ -25,8 +25,8 @@ assert.equal(plan.events.filter(event => event.strength === 'strong').length, 1,
 assert.equal(plan.events.find(event => event.id === 'unsafe').strength, 'weak', 'unsafe placement degrades to compact emphasis');
 assert.ok(plan.events.find(event => event.id === 'unsafe').anchor.y <= .68, 'degraded emphasis stays above captions and bottom controls');
 const ass = emphasisToAssEvents(plan, 1080, 1920).join('\n');
-assert.match(ass, /Dialogue: 3/);
-assert.match(ass, /69\.9 四支正装/);
+assert.match(ass, /Dialogue: 2/);
+assert.match(ass, /69\.9 四支正装/, 'a hook can fall back to a standalone badge when no caption exists');
 assert.doesNotMatch(ass, /未经证实价格/);
 assert.match(ass, /\\pos\(540,/);
 
@@ -36,7 +36,7 @@ for (const profile of ['d2c_dialogue', 'talking_head', 'factory_process', 'produ
   const [cta] = emphasisToAssEvents(normalized, 1080, 1920);
   assert.ok(cta);
   assert.match(cta, /▶ 私信询价/);
-  assert.match(cta, /\\pos\(540,1267\)/, 'CTA uses the lower safe information area');
+  assert.match(cta, /\\pos\(540,1306\)/, 'CTA uses the lower safe information area');
 }
 
 const eventVariants = emphasisToAssEvents(normalizeEmphasisPlan({ profile: 'talking_head', events: [
@@ -44,8 +44,10 @@ const eventVariants = emphasisToAssEvents(normalizeEmphasisPlan({ profile: 'talk
   { type: 'section_label', startMs: 1200, endMs: 2000, text: '仓储实力', importance: 3, confidence: 1, source: 'editor' },
   { type: 'reveal', startMs: 2400, endMs: 3400, text: '成品效果', importance: 3, confidence: 1, source: 'editor' },
 ] }, 4), 1080, 1920).join('\n');
-assert.match(eventVariants, /\\fscx76/, 'hook has a punchier entrance');
-assert.match(eventVariants, /「仓储实力」/, 'section labels are visually distinct');
-assert.match(eventVariants, /\\pos\(540,730\)/, 'reveal moves to the visual-result zone');
+assert.doesNotMatch(eventVariants, /仓储实力/, 'generic section labels do not create a duplicate top caption');
+assert.match(eventVariants, /\\pos\(540,1190\)/, 'reveal uses the lower information zone');
+assert.match(captionEmphasisTags(normalizeEmphasisPlan({ profile: 'talking_head', events: [
+  { type: 'hook', startMs: 0, endMs: 800, text: '开场', importance: 3, confidence: 1, source: 'transcript' },
+] }, 2), 0, .8, 1080), /\\fscx72/, 'hook animates the primary caption in place');
 
 console.log('caption emphasis composition regression passed');
