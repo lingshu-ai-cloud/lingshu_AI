@@ -5,7 +5,7 @@ const os = require('node:os');
 const path = require('node:path');
 
 let bundlePromise = null;
-const RENDERER_VERSION = 'semantic-assets-v3-original-media';
+const RENDERER_VERSION = 'semantic-assets-v4-cropped-layout';
 const ASSET_DIRECTORY = path.join(__dirname, '../assets/reference/emphasis/v1');
 
 const finite = value => Number.isFinite(Number(value)) ? Number(value) : null;
@@ -27,6 +27,72 @@ function semanticAssetKind(event) {
     || (['warning', 'urgency'].includes(String(event && (event.semanticRole || event.emphasisKind || event.tone)))
       ? String(event.semanticRole || event.emphasisKind || event.tone) : null)
     || (event && event.type === 'reveal' ? 'reveal' : 'key_fact');
+}
+
+const intersects = (a, b, gap = 0) => a.x < b.x + b.width + gap && a.x + a.width + gap > b.x
+  && a.y < b.y + b.height + gap && a.y + a.height + gap > b.y;
+const inside = rect => rect.x >= .035 && rect.y >= .035 && rect.x + rect.width <= .965 && rect.y + rect.height <= .70;
+const normalizedBox = value => {
+  if (!value || typeof value !== 'object') return null;
+  const x = finite(value.x ?? value.left), y = finite(value.y ?? value.top);
+  const width = finite(value.width), height = finite(value.height);
+  return x === null || y === null || width === null || height === null ? null : {
+    x: clamp(x, 0, 1), y: clamp(y, 0, 1), width: clamp(width, .03, .8), height: clamp(height, .03, .8),
+  };
+};
+
+/** Returns independent decoration and label rectangles. Every candidate is
+ * checked as a full rectangle against the subject, caption reserve and frame. */
+function resolveOverlayLayout(event, index = 0) {
+  const subject = normalizedBox(event && event.subjectBox) || (() => {
+    const anchor = event && event.subjectAnchor;
+    if (!anchor || finite(anchor.x) === null || finite(anchor.y) === null) return null;
+    return { x: clamp(Number(anchor.x) - .13, .03, .71), y: clamp(Number(anchor.y) - .17, .04, .48), width: .26, height: .34 };
+  })();
+  const kind = semanticAssetKind(event);
+  const aspect = kind === 'cta' ? 1.08 : kind === 'warning' ? .85 : kind === 'urgency' ? .70 : 1.5;
+  const assetWidth = kind === 'cta' ? .23 : kind === 'key_fact' || kind === 'reveal' ? .27 : .18;
+  const assetHeight = assetWidth / aspect;
+  const chars = Array.from(String(event && event.text || '')).length;
+  const labelWidth = clamp(.14 + chars * .022, .20, .40), labelHeight = chars > 12 ? .105 : .075;
+  const captionReserve = { x: 0, y: .71, width: 1, height: .29 };
+  const gap = .025;
+  const side = stableSide(event && event.id || `${event && event.type}-${index}`) > .5 ? 'right' : 'left';
+  const candidates = [];
+  if (subject) {
+    const rightX = subject.x + subject.width + gap;
+    const leftX = subject.x - assetWidth - gap;
+    const upperY = Math.max(.05, subject.y - assetHeight * .45);
+    for (const direction of side === 'right' ? ['right', 'left', 'top'] : ['left', 'right', 'top']) {
+      const asset = direction === 'right' ? { x: rightX, y: upperY, width: assetWidth, height: assetHeight }
+        : direction === 'left' ? { x: leftX, y: upperY, width: assetWidth, height: assetHeight }
+          : { x: subject.x + subject.width / 2 - assetWidth / 2, y: subject.y - assetHeight - gap, width: assetWidth, height: assetHeight };
+      const label = direction === 'left'
+        ? { x: asset.x - labelWidth - gap, y: Math.max(.05, asset.y), width: labelWidth, height: labelHeight }
+        : { x: asset.x + asset.width + gap, y: Math.max(.05, asset.y), width: labelWidth, height: labelHeight };
+      candidates.push({ asset, label, mode: `subject-${direction}` });
+    }
+  } else {
+    const left = side === 'left' ? .055 : .945 - assetWidth - gap - labelWidth;
+    const y = kind === 'cta' ? .57 : .08 + (index % 3) * .17;
+    candidates.push({
+      asset: { x: left, y, width: assetWidth, height: assetHeight },
+      label: { x: left + assetWidth + gap, y: y + Math.max(0, (assetHeight - labelHeight) / 2), width: labelWidth, height: labelHeight },
+      mode: `corner-${side}`,
+    });
+  }
+  const valid = candidates.find(({ asset, label }) => inside(asset) && inside(label)
+    && !intersects(asset, label, .006) && !intersects(asset, captionReserve) && !intersects(label, captionReserve)
+    && (!subject || (!intersects(asset, subject, .008) && !intersects(label, subject, .012))));
+  if (valid) return valid;
+  // Fixed upper corner is the final conservative result. It remains a
+  // horizontal lockup and never occupies the centre or caption reserve.
+  const left = side === 'left' ? .05 : .95 - assetWidth - gap - labelWidth;
+  return {
+    asset: { x: left, y: .06, width: assetWidth, height: assetHeight },
+    label: { x: left + assetWidth + gap, y: .06 + Math.max(0, (assetHeight - labelHeight) / 2), width: labelWidth, height: labelHeight },
+    mode: `fallback-${side}`,
+  };
 }
 
 /** Resolve a sticker position without assuming that the centre of the frame is
@@ -78,6 +144,7 @@ const advancedEvents = plan => (plan && Array.isArray(plan.events) ? plan.events
     id: event.id, type: event.type, startMs: event.startMs, endMs: event.endMs, text: event.text,
     assetKind: semanticAssetKind(event),
     placement: resolveOverlayPlacement(event, index),
+    layout: resolveOverlayLayout(event, index),
     ...(event.subjectAnchor && Number.isFinite(Number(event.subjectAnchor.x)) && Number.isFinite(Number(event.subjectAnchor.y))
       ? { subjectAnchor: { x: clamp(Number(event.subjectAnchor.x), .08, .92), y: clamp(Number(event.subjectAnchor.y), .08, .70) } } : {}),
   }));
@@ -104,6 +171,7 @@ async function renderTransparentOverlay({ plan, width, height, durationSeconds, 
   const sourceVersion = crypto.createHash('sha256').update([
     fs.readFileSync(path.join(__dirname, 'remotion-overlay/root.tsx')),
     fs.readFileSync(path.join(__dirname, 'remotion-overlay/semantic-assets.tsx')),
+    fs.readFileSync(path.join(__dirname, 'remotion-overlay/asset-crops.json')),
     ...['burst-rays-yellow-static.png', 'burst-rays-yellow.gif', 'emphasis-rays-yellow.gif', 'lightning-orange.gif', 'megaphone-blue-yellow.gif']
       .map(file => fs.readFileSync(path.join(ASSET_DIRECTORY, file))),
   ].map(value => crypto.createHash('sha256').update(value).digest('hex')).join(':')).digest('hex').slice(0, 16);
@@ -128,4 +196,4 @@ async function renderTransparentOverlay({ plan, width, height, durationSeconds, 
   return { path: output, cacheHit: false, renderMs: Date.now() - started };
 }
 
-module.exports = { RENDERER_VERSION, advancedEvents, resolveOverlayPlacement, semanticAssetKind, renderTransparentOverlay };
+module.exports = { RENDERER_VERSION, advancedEvents, intersects, resolveOverlayLayout, resolveOverlayPlacement, semanticAssetKind, renderTransparentOverlay };

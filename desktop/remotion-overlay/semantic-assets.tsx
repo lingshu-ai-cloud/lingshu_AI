@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Gif } from '@remotion/gif';
 import { Img, interpolate, staticFile, useCurrentFrame, useVideoConfig } from 'remotion';
+import cropData from './asset-crops.json';
 
 export type SemanticAssetKind = 'key_fact' | 'reveal' | 'warning' | 'urgency' | 'cta';
 
@@ -44,6 +45,8 @@ const FILES: Record<SemanticAssetKind, { file: string; animated: boolean }> = {
   urgency: { file: 'lightning-orange.gif', animated: true },
   cta: { file: 'megaphone-blue-yellow.gif', animated: true },
 };
+type Crop = { x: number; y: number; width: number; height: number };
+const CROPS = cropData.assets as Record<string, Crop>;
 
 const SvgFallback: React.FC<{ kind: SemanticAssetKind; progress: number }> = ({ kind, progress }) => {
   const frame = useCurrentFrame();
@@ -66,7 +69,14 @@ export const SemanticAsset: React.FC<{ kind: SemanticAssetKind; progress: number
   const [failed, setFailed] = useState(false);
   const asset = FILES[kind];
   if (failed) return <SvgFallback kind={kind} progress={progress} />;
-  const style: React.CSSProperties = { width: '100%', height: '100%', objectFit: 'contain', opacity: progress };
-  if (asset.animated) return <Gif src={staticFile(asset.file)} fit="contain" loopBehavior="loop" style={style} onError={() => setFailed(true)} />;
-  return <Img src={staticFile(asset.file)} style={style} onError={() => setFailed(true)} />;
+  const crop = CROPS[asset.file] || { x: 0, y: 0, width: 1, height: 1 };
+  const style: React.CSSProperties = {
+    position: 'absolute', left: `${-crop.x / crop.width * 100}%`, top: `${-crop.y / crop.height * 100}%`,
+    width: `${100 / crop.width}%`, height: `${100 / crop.height}%`, objectFit: 'fill', opacity: progress,
+  };
+  return <div style={{ position: 'absolute', inset: 0, overflow: 'hidden' }}>
+    {asset.animated
+      ? <Gif src={staticFile(asset.file)} fit="fill" loopBehavior="loop" style={style} onError={() => setFailed(true)} />
+      : <Img src={staticFile(asset.file)} style={style} onError={() => setFailed(true)} />}
+  </div>;
 };

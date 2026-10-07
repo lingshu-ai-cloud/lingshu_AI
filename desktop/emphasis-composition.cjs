@@ -55,6 +55,9 @@ function normalizeEmphasisPlan(input, durationSeconds = 0) {
     const unsafe = event.safeArea === false || Number(anchor.y) > .68;
     const subjectAnchor = record(event.subjectAnchor);
     const hasSubjectAnchor = Number.isFinite(Number(subjectAnchor.x)) && Number.isFinite(Number(subjectAnchor.y));
+    const subjectBox = record(event.subjectBox);
+    const hasSubjectBox = Number.isFinite(Number(subjectBox.x ?? subjectBox.left)) && Number.isFinite(Number(subjectBox.y ?? subjectBox.top))
+      && Number.isFinite(Number(subjectBox.width)) && Number.isFinite(Number(subjectBox.height));
     const placement = record(event.placement);
     const placementEvidence = record(event.placementEvidence);
     const semanticRole = ['warning', 'urgency'].includes(String(event.semanticRole || event.emphasisKind || event.tone))
@@ -83,6 +86,10 @@ function normalizeEmphasisPlan(input, durationSeconds = 0) {
       anchor: { x: Number(x.toFixed(4)), y: Number((unsafe ? PROFILE_STYLE[profile].y : y).toFixed(4)) },
       hasExplicitAnchor,
       ...(hasSubjectAnchor ? { subjectAnchor: { x: clamp(subjectAnchor.x, .08, .92, .5), y: clamp(subjectAnchor.y, .08, .70, .4) } } : {}),
+      ...(hasSubjectBox ? { subjectBox: {
+        x: clamp(subjectBox.x ?? subjectBox.left, 0, 1, .3), y: clamp(subjectBox.y ?? subjectBox.top, 0, 1, .2),
+        width: clamp(subjectBox.width, .03, .8, .3), height: clamp(subjectBox.height, .03, .8, .4),
+      } } : {}),
       ...(Object.keys(placement).length ? { placement: {
         ...(Number.isFinite(Number(placement.x)) ? { x: clamp(placement.x, .08, .92, .5) } : {}),
         ...(Number.isFinite(Number(placement.y)) ? { y: clamp(placement.y, .08, .70, .4) } : {}),

@@ -2,7 +2,7 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { RENDERER_VERSION, advancedEvents, resolveOverlayPlacement } = require('./remotion-overlay.cjs');
+const { RENDERER_VERSION, advancedEvents, intersects, resolveOverlayLayout, resolveOverlayPlacement } = require('./remotion-overlay.cjs');
 const { normalizeEmphasisPlan } = require('./emphasis-composition.cjs');
 
 const selected = advancedEvents({ events: [
@@ -51,7 +51,7 @@ const crossLayer = advancedEvents(normalizeEmphasisPlan({ profile: 'product_show
   { id: 'cta-intent', type: 'key_fact', assetIntent: 'cta_marker', startMs: 2800, endMs: 3400, text: '咨询', importance: 3, confidence: 1, source: 'editor' },
 ] }, 4));
 assert.deepEqual(crossLayer.map(event => event.assetKind), ['warning', 'urgency', 'reveal', 'key_fact', 'cta'], 'shared asset intents select concrete desktop assets');
-assert.match(RENDERER_VERSION, /^semantic-assets-v\d+-original-media$/, 'cache namespace changes when original media renderer is introduced');
+assert.match(RENDERER_VERSION, /^semantic-assets-v\d+-cropped-layout$/, 'cache namespace changes when cropped layout renderer is introduced');
 const assetComponent = fs.readFileSync(path.join(__dirname, 'remotion-overlay/semantic-assets.tsx'), 'utf8');
 assert.match(assetComponent, /from '@remotion\/gif'/, 'animated originals use video-frame-synchronized GIF playback');
 for (const file of ['burst-rays-yellow-static.png', 'burst-rays-yellow.gif', 'emphasis-rays-yellow.gif', 'lightning-orange.gif', 'megaphone-blue-yellow.gif']) {
@@ -59,4 +59,21 @@ for (const file of ['burst-rays-yellow-static.png', 'burst-rays-yellow.gif', 'em
   assert.match(assetComponent, new RegExp(file.replace('.', '\\.')), `${file} is mapped by the semantic component`);
 }
 assert.match(assetComponent, /if \(failed\) return <SvgFallback/, 'SVG artwork is restricted to load failure fallback');
+
+const subjectBox = { x: .38, y: .25, width: .24, height: .30 };
+const subjectLayout = resolveOverlayLayout({ id: 'subject-layout', type: 'key_fact', text: '核心事实', subjectBox });
+assert.equal(intersects(subjectLayout.asset, subjectBox, .008), false, 'decoration rectangle clears the full subject box');
+assert.equal(intersects(subjectLayout.label, subjectBox, .012), false, 'label rectangle clears the full subject box');
+assert.equal(intersects(subjectLayout.asset, subjectLayout.label, .006), false, 'asset and label use independent non-overlapping rectangles');
+assert.ok(subjectLayout.label.y + subjectLayout.label.height <= .71, 'subject label clears the subtitle reserve');
+
+const cornerLayout = resolveOverlayLayout({ id: 'no-subject', type: 'cta', text: '立即咨询' });
+assert.match(cornerLayout.mode, /corner|fallback/);
+assert.notEqual(cornerLayout.asset.x + cornerLayout.asset.width / 2, .5, 'missing subject uses a safe corner instead of centre');
+assert.equal(intersects(cornerLayout.asset, cornerLayout.label, .006), false, 'corner lockup keeps megaphone clear of text');
+assert.ok(cornerLayout.asset.y + cornerLayout.asset.height <= .71 && cornerLayout.label.y + cornerLayout.label.height <= .71);
+
+const cropMetadata = JSON.parse(fs.readFileSync(path.join(__dirname, 'remotion-overlay/asset-crops.json'), 'utf8'));
+assert.equal(cropMetadata.assets['megaphone-blue-yellow.gif'].frames, 26);
+assert.ok(cropMetadata.assets['burst-rays-yellow-static.png'].height < .5, 'large transparent padding is removed using union alpha bounds');
 console.log('remotion overlay selection regression passed');

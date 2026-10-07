@@ -3,20 +3,13 @@ import { AbsoluteFill, Composition, Easing, Sequence, interpolate, spring, useCu
 import { SemanticAsset, type SemanticAssetKind } from './semantic-assets';
 
 type Point = { x: number; y: number };
-type OverlayEvent = { id: string; type: 'key_fact' | 'reveal' | 'cta'; assetKind: SemanticAssetKind; startMs: number; endMs: number; text: string; placement: Point & { source: string }; subjectAnchor?: Point };
+type Rect = Point & { width: number; height: number };
+type OverlayEvent = { id: string; type: 'key_fact' | 'reveal' | 'cta'; assetKind: SemanticAssetKind; startMs: number; endMs: number; text: string; placement: Point & { source: string }; layout: { asset: Rect; label: Rect; mode: string }; subjectAnchor?: Point };
 type OverlayProps = { durationFrames: number; fps: number; width: number; height: number; profile: string; events: OverlayEvent[] };
 
-const colors: Record<string, { accent: string; ink: string; panel: string }> = {
-  d2c_dialogue: { accent: '#FFD83D', ink: '#23142E', panel: '#FFF3A8' },
-  talking_head: { accent: '#FFE04E', ink: '#171717', panel: '#FFF6B8' },
-  factory_process: { accent: '#4CB3F0', ink: '#081923', panel: '#D9F1FF' },
-  product_showcase: { accent: '#CFFF6C', ink: '#14231F', panel: '#E9FFC0' },
-};
-
-const EventCard: React.FC<{ event: OverlayEvent; profile: string }> = ({ event, profile }) => {
+const EventCard: React.FC<{ event: OverlayEvent }> = ({ event }) => {
   const frame = useCurrentFrame();
   const { fps, width } = useVideoConfig();
-  const palette = colors[profile] || colors.talking_head;
   const enter = spring({ frame, fps, config: event.type === 'key_fact'
     ? { damping: 11, stiffness: 250, mass: .65 }
     : event.type === 'reveal' ? { damping: 15, stiffness: 180, mass: .8 }
@@ -25,35 +18,33 @@ const EventCard: React.FC<{ event: OverlayEvent; profile: string }> = ({ event, 
   const exit = interpolate(frame, [Math.max(0, duration - .2 * fps), duration], [1, 0], { extrapolateLeft: 'clamp', extrapolateRight: 'clamp', easing: Easing.in(Easing.cubic) });
   const pulse = event.type === 'cta' && frame > .35 * fps ? 1 + Math.sin((frame / fps - .35) * Math.PI * 3.4) * .065 : 1;
   const isFact = event.type === 'key_fact';
-  const x = `${event.placement.x * 100}%`;
-  const y = `${event.placement.y * 100}%`;
-  const assetAnchor = event.subjectAnchor || event.placement;
-  const assetSize = width * (event.assetKind === 'cta' ? .28 : event.assetKind === 'key_fact' || event.assetKind === 'reveal' ? .36 : .22);
-  const slide = interpolate(enter, [0, 1], [event.placement.x < .5 ? -24 : 24, 0]);
+  const { asset: assetRect, label: labelRect } = event.layout;
+  const slide = interpolate(enter, [0, 1], [labelRect.x < .5 ? -18 : 18, 0]);
   return <>
-    <div style={{ position: 'absolute', left: `${assetAnchor.x * 100}%`, top: `${assetAnchor.y * 100}%`, width: assetSize, height: assetSize,
-      transform: `translate(-50%, -50%) scale(${enter * pulse})`, opacity: exit, transformOrigin: 'center' }}>
+    <div style={{ position: 'absolute', left: `${assetRect.x * 100}%`, top: `${assetRect.y * 100}%`, width: `${assetRect.width * 100}%`, height: `${assetRect.height * 100}%`,
+      transform: `scale(${enter * pulse})`, opacity: exit, transformOrigin: labelRect.x < assetRect.x ? 'right center' : 'left center' }}>
       <SemanticAsset kind={event.assetKind} progress={enter} />
     </div>
     <div style={{
-      position: 'absolute', left: x, top: y, transform: `translate(calc(-50% + ${slide}px), -50%) scale(${enter})`, opacity: exit,
-      padding: `${width * .009}px ${width * .018}px`, borderRadius: width * .012,
-      background: 'rgba(16,16,16,.76)', color: event.assetKind === 'urgency' ? '#FF6A3D' : palette.accent,
-      borderLeft: `${Math.max(3, width * .006)}px solid ${event.assetKind === 'urgency' ? '#E84217' : palette.accent}`,
-      fontFamily: 'Source Han Sans SC, PingFang SC, sans-serif', fontSize: width * (isFact ? .046 : .043),
-      fontWeight: 800, lineHeight: 1.12, maxWidth: width * .46, textAlign: 'left', whiteSpace: 'normal', wordBreak: 'keep-all',
+      position: 'absolute', left: `${labelRect.x * 100}%`, top: `${labelRect.y * 100}%`, width: `${labelRect.width * 100}%`, minHeight: `${labelRect.height * 100}%`,
+      transform: `translateX(${slide}px) scale(${enter})`, opacity: exit, boxSizing: 'border-box',
+      padding: `${width * .009}px ${width * .016}px`, borderRadius: width * .012,
+      background: 'rgba(255,255,255,.88)', color: '#2B2B2B', border: `1px solid rgba(43,43,43,.16)`,
+      boxShadow: `0 ${width * .005}px ${width * .018}px rgba(0,0,0,.16)`,
+      fontFamily: 'Source Han Sans SC, PingFang SC, sans-serif', fontSize: width * (isFact ? .042 : .04),
+      fontWeight: 750, lineHeight: 1.14, display: 'flex', alignItems: 'center', textAlign: 'left', whiteSpace: 'normal', wordBreak: 'keep-all',
     }}>{event.text}</div>
   </>;
 };
 
-const Overlay: React.FC<OverlayProps> = ({ events, profile }) => {
+const Overlay: React.FC<OverlayProps> = ({ events }) => {
   const { fps } = useVideoConfig();
   return <AbsoluteFill style={{ backgroundColor: 'transparent' }}>
     {events.map(event => {
       const from = Math.max(0, Math.round(event.startMs / 1000 * fps));
       const durationInFrames = Math.max(1, Math.round((event.endMs - event.startMs) / 1000 * fps));
       return <Sequence key={event.id} from={from} durationInFrames={durationInFrames} layout="none">
-        <EventCard event={event} profile={profile} />
+        <EventCard event={event} />
       </Sequence>;
     })}
   </AbsoluteFill>;

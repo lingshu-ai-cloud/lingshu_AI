@@ -207,7 +207,7 @@ function subtitleUnits(value) {
  * lines, and every line is constrained by visual width rather than JS string
  * length so Chinese and Latin copy behave consistently.
  */
-function subtitlePages(value, maxUnitsPerLine = 15, maxLines = 2) {
+function subtitlePages(value, maxUnitsPerLine = 12, maxLines = 2, maxUnitsPerPage = 16) {
   const source = assText(value);
   if (!source) return [];
   // Keep space-delimited words intact; CJK still permits breaks between glyphs.
@@ -229,7 +229,7 @@ function subtitlePages(value, maxUnitsPerLine = 15, maxLines = 2) {
   };
   const cost = Array(tokens.length + 1).fill(Infinity), next = [], layouts = [];
   cost[tokens.length] = 0;
-  const capacity = maxUnitsPerLine * maxLines;
+  const capacity = Math.max(8, Math.min(maxUnitsPerLine * maxLines, maxUnitsPerPage));
   for (let i = tokens.length - 1; i >= 0; i--) {
     for (let j = i + 1; j <= tokens.length; j++) {
       const words = tokens.slice(i, j), phrase = join(words), width = subtitleUnits(phrase);
@@ -237,7 +237,10 @@ function subtitlePages(value, maxUnitsPerLine = 15, maxLines = 2) {
       const lines = wrap(words);
       if (!lines || lines.length > maxLines) continue;
       const dangling = j < tokens.length && badEnd.test(phrase);
-      const penalty = capacity * capacity + (capacity - width) ** 2 + (dangling ? 250 : 0);
+      const punctuationBoundary = /[，。！？；：、,;:!?]["'”’]?$/u.test(phrase);
+      const tooShort = width < 8 && j < tokens.length ? (8 - width) ** 2 * 20 : 0;
+      const penalty = capacity * capacity + (capacity - width) ** 2 + (dangling ? 250 : 0) + tooShort
+        - (punctuationBoundary ? capacity * capacity : 0);
       if (penalty + cost[j] < cost[i]) { cost[i] = penalty + cost[j]; next[i] = j; layouts[i] = lines; }
     }
   }
@@ -250,9 +253,13 @@ function groupSpokenCues(cues, options = {}) {
   const gapLimit = finiteNumber(options.pauseThreshold, .28);
   const maxDuration = finiteNumber(options.maxPhraseDuration, 4.2);
   const groups = [];
+  const seen = new Set();
   for (const cue of Array.isArray(cues) ? cues : []) {
     const text = assText(cue.text), start = Number(cue.start), end = Number(cue.end);
     if (!text || !Number.isFinite(start) || !Number.isFinite(end) || end <= start || start < 0) continue;
+    const signature = `${start.toFixed(3)}:${end.toFixed(3)}:${text}`;
+    if (seen.has(signature)) continue;
+    seen.add(signature);
     const previous = groups.at(-1);
     const gap = previous ? start - previous.end : Infinity;
     const terminal = previous && /[.!?。！？]["'”’]?\s*$/.test(previous.text);
@@ -265,10 +272,11 @@ function groupSpokenCues(cues, options = {}) {
 }
 
 function normalizeSubtitleCues(cues, options = {}) {
-  const maxUnitsPerLine = Math.max(8, finiteNumber(options.maxUnitsPerLine, 15));
+  const maxUnitsPerLine = Math.max(8, Math.min(12, finiteNumber(options.maxUnitsPerLine, 12)));
   const maxLines = Math.max(1, Math.min(2, Math.round(finiteNumber(options.maxLines, 2))));
+  const maxUnitsPerPage = Math.max(8, Math.min(16, finiteNumber(options.maxUnitsPerPage, 16)));
   return groupSpokenCues(cues, options).flatMap(group => {
-    const pages = subtitlePages(group.text, maxUnitsPerLine, maxLines);
+    const pages = subtitlePages(group.text, maxUnitsPerLine, maxLines, maxUnitsPerPage);
     // Preserve measured cue boundaries. A break inside one provider cue is
     // an estimate within that cue, never a new word-level alignment claim.
     const units = value => subtitleUnits(value.replace(/\s/g, ''));
@@ -306,11 +314,16 @@ function cuesToAss(cues, width, height, disclaimer = '', duration = 0, style = {
   const font = fontByChoice[style.font] || subtitleTemplate.body.font;
   const primaryColor = assColor(style.color, '&H00FFFFFF&');
   const outlineColor = assColor(style.outlineColor, '&HAA000000&');
-  const fontSize = Math.round(Math.min(width / 15, height / 18) * Math.max(.7, Math.min(1.4, Number(style.fontScale) || 1)));
+  // Scale from the short edge so a 1080px-wide portrait and 1080px-high
+  // landscape render use the same perceived subtitle size.
+  const fontSize = Math.round(Math.min(width, height) / 18 * Math.max(.7, Math.min(1.4, Number(style.fontScale) || 1)));
   const marginX = Math.round(width * .085);
   const rawCues = Array.isArray(cues) ? cues : [];
   const normalizedCues = [
-    ...normalizeSubtitleCues(rawCues.filter(cue => cue?.kind !== 'screen'), { maxUnitsPerLine: Math.min((width - marginX * 2) / fontSize, Math.max(8, Math.min(28, Number(style.lineWidth) || 28))) }),
+    ...normalizeSubtitleCues(rawCues.filter(cue => cue?.kind !== 'screen'), {
+      maxUnitsPerLine: Math.min(12, (width - marginX * 2) / fontSize, Math.max(8, Number(style.lineWidth) || 12)),
+      maxUnitsPerPage: 16,
+    }),
     ...rawCues.filter(cue => cue?.kind === 'screen'),
   ].sort((a, b) => Number(a?.start || 0) - Number(b?.start || 0));
   const valid = normalizedCues
