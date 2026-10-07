@@ -80,7 +80,7 @@ export default function EnterpriseProductImportCard({ importing, importMessage, 
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <p className="text-xs font-semibold text-text-primary">产品数据导入</p>
-              <p className="mt-1 text-[11px] leading-relaxed text-text-muted">上传本地商品表，或给 ERP 服务商使用 API 批量 upsert、查询、删除。</p>
+              <p className="mt-1 text-[11px] leading-relaxed text-text-muted">上传 Excel / CSV 商品表或 PDF / DOCX 产品资料，确认识别结果后导入；也可由 ERP 服务商通过 API 接入。</p>
             </div>
             <div className="flex items-center gap-2">
               <label className="inline-flex cursor-pointer items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-border text-xs font-semibold text-text-secondary hover:text-text-primary">
@@ -88,7 +88,7 @@ export default function EnterpriseProductImportCard({ importing, importMessage, 
                 上传产品表
                 <input
                   type="file"
-                  accept=".xlsx,.xls,.csv"
+                  accept=".xlsx,.xls,.csv,.pdf,.docx"
                   className="hidden"
                   disabled={importing}
                   onChange={event => {

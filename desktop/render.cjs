@@ -20,6 +20,7 @@ const { pipeline } = require('node:stream/promises');
 const { layoutFilters, tempoFilters, muteIntervals } = require('./shot-composition.cjs');
 const { normalizeEffectPlan, sceneEffectFilters, joinSceneFilters, audioEventFilters } = require('./effect-composition.cjs');
 const { automaticSubtitleText, verifySubtitleFonts, fontsDirectory, template: subtitleTemplate } = require('./automatic-subtitles.cjs');
+const { normalizeEmphasisPlan, emphasisToAssEvents } = require('./emphasis-composition.cjs');
 
 let ffmpegPath = null;
 try { ffmpegPath = require('ffmpeg-static'); } catch { ffmpegPath = null; }
@@ -298,12 +299,17 @@ function filterPath(value) {
     .replace(/,/g, '\\,');
 }
 
-function cuesToAss(cues, width, height, disclaimer = '', duration = 0, style = {}) {
+function cuesToAss(cues, width, height, disclaimer = '', duration = 0, style = {}, emphasisPlan = null) {
+  const assColor = (hex, fallback) => /^#[0-9a-f]{6}$/i.test(String(hex || '')) ? `&H00${hex.slice(5, 7)}${hex.slice(3, 5)}${hex.slice(1, 3).toUpperCase()}&`.toUpperCase() : fallback;
+  const fontByChoice = { sans: subtitleTemplate.body.font, impact: subtitleTemplate.emphasis.font, rounded: subtitleTemplate.product.font };
+  const font = fontByChoice[style.font] || subtitleTemplate.body.font;
+  const primaryColor = assColor(style.color, '&H00FFFFFF&');
+  const outlineColor = assColor(style.outlineColor, '&HAA000000&');
   const fontSize = Math.round(Math.min(width / 15, height / 18) * Math.max(.7, Math.min(1.4, Number(style.fontScale) || 1)));
   const marginX = Math.round(width * .085);
   const rawCues = Array.isArray(cues) ? cues : [];
   const normalizedCues = [
-    ...normalizeSubtitleCues(rawCues.filter(cue => cue?.kind !== 'screen'), { maxUnitsPerLine: (width - marginX * 2) / fontSize }),
+    ...normalizeSubtitleCues(rawCues.filter(cue => cue?.kind !== 'screen'), { maxUnitsPerLine: Math.min((width - marginX * 2) / fontSize, Math.max(8, Math.min(28, Number(style.lineWidth) || 28))) }),
     ...rawCues.filter(cue => cue?.kind === 'screen'),
   ].sort((a, b) => Number(a?.start || 0) - Number(b?.start || 0));
   const valid = normalizedCues
@@ -314,10 +320,10 @@ function cuesToAss(cues, width, height, disclaimer = '', duration = 0, style = {
       screen: cue && cue.kind === 'screen',
     }))
     .filter(cue => cue.text && cue.end > cue.start);
-  if (!valid.length && !disclaimer) return '';
+  if (!valid.length && !disclaimer && !(emphasisPlan && emphasisPlan.events && emphasisPlan.events.length)) return '';
 
   const marginV = Math.round(height * Math.max(.08, Math.min(.35, Number(style.bottomRatio) || .20)));
-  const outline = Math.max(2, Math.round(width * .003));
+  const outline = Math.max(0, Math.min(8, Number(style.outlineWidth ?? Math.round(width * .003))));
   const events = valid.map(cue => {
     const prefix = cue.screen
       ? `{\\an8\\pos(${Math.round(width / 2)},${Math.round(height * 0.12)})}`
@@ -326,6 +332,7 @@ function cuesToAss(cues, width, height, disclaimer = '', duration = 0, style = {
     return `Dialogue: ${cue.screen ? 1 : 0},${assTime(cue.start)},${assTime(cue.end)},Default,,0,0,0,,${prefix}${text}`;
   });
   if (disclaimer && duration > 0) events.push(`Dialogue: 1,0:00:00.00,${assTime(duration)},Default,,0,0,0,,{\\an8\\pos(${Math.round(width / 2)},${Math.round(height * 0.08)})\\fs${Math.round(width * 0.035)}}${assText(disclaimer).replace(/[{}]/g, '')}`);
+  if (emphasisPlan) events.push(...emphasisToAssEvents(emphasisPlan, width, height));
   return [
     '[Script Info]',
     'ScriptType: v4.00+',
@@ -336,7 +343,8 @@ function cuesToAss(cues, width, height, disclaimer = '', duration = 0, style = {
     '',
     '[V4+ Styles]',
     'Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding',
-    `Style: Default,${subtitleTemplate.body.font},${fontSize},&H00FFFFFF,&H00FFFFFF,&HAA000000,&H66000000,-1,0,0,0,100,100,0,0,1,${outline},1,2,${marginX},${marginX},${marginV},1`,
+    `Style: Default,${font},${fontSize},${primaryColor},${primaryColor},${outlineColor},&H66000000,-1,0,0,0,100,100,0,0,1,${outline},1,2,${marginX},${marginX},${marginV},1`,
+    `Style: Emphasis,${subtitleTemplate.emphasis.font},${Math.round(width * .05)},&H00FFFFFF&,&H00FFFFFF&,&H00101010&,&HAA101010&,-1,0,0,0,100,100,0,0,3,2,1,8,${marginX},${marginX},${Math.round(height * .08)},1`,
     '',
     '[Events]',
     'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text',
@@ -546,7 +554,8 @@ async function composite(manifest, onProgress = () => {}, outDir) {
     const subtitleCues = manifest && manifest.subtitles && manifest.subtitles.mode !== 'off'
       ? manifest.subtitles.cues
       : [];
-    const ass = cuesToAss(subtitleCues, w, h, manifest.disclaimer || '', duration, manifest.subtitles?.style || {});
+    const emphasisPlan = normalizeEmphasisPlan(manifest && (manifest.emphasisPlan || manifest.emphasis), duration);
+    const ass = cuesToAss(subtitleCues, w, h, manifest.disclaimer || '', duration, manifest.subtitles?.style || {}, emphasisPlan);
     if (ass) {
       verifySubtitleFonts();
       const assFile = path.join(tmp, 'subtitles.ass');

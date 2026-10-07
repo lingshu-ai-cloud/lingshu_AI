@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as XLSX from 'xlsx';
-import { parseWorkbook } from './productImport.js';
+import { heuristicProductMapping, mapRowToProduct, parseWorkbook, prepareSheet } from './productImport.js';
 
 function sampleXlsx(): File {
   const workbook = XLSX.utils.book_new();
@@ -23,6 +23,17 @@ test('安全解析 CSV：支持引号、逗号和换行', async () => {
     ['SKU', '商品名称', '卖点'],
     ['A-01', '铝合金,支架', '第一行\n第二行'],
   ]);
+});
+
+test('只有一条产品数据时不会把产品行误判为第二行表头', async () => {
+  const csv = '产品名称,SKU,品牌,卖点\n验收面霜,QA-1,灵枢测试,保湿';
+  const [sheet] = await parseWorkbook(new File([csv], 'single-product.csv', { type: 'text/csv' }));
+  const prepared = prepareSheet(sheet);
+  const mapping = heuristicProductMapping(prepared.headers);
+  const products = prepared.dataRows.map(row => mapRowToProduct(row, mapping));
+  assert.equal(products.length, 1);
+  assert.equal(products[0]?.name, '验收面霜');
+  assert.equal(products[0]?.sku, 'QA-1');
 });
 
 test('使用受限安全解析器读取真实 xlsx 工作簿', async () => {

@@ -1,6 +1,21 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { arrangeShotsWithinNarration, durationForUnfixedNarration, narrationForUnfixedShots, shotsMissingSourceCues, sourceCaptionCacheMatchesContent, sourceCuesForShot, voiceoverMatchesNarrationSources, type NarrationTimelineShot } from './narrationTimeline';
+import { arrangeShotsWithinNarration, durationForUnfixedNarration, narrationForUnfixedShots, shotsMissingSourceCues, sourceCaptionCacheMatchesContent, sourceCuesForShot, sourceCuesWithoutVoiceover, voiceoverMatchesNarrationSources, type NarrationTimelineShot } from './narrationTimeline';
+
+test('source-only captions use clip-local timing instead of estimated script timing', () => {
+  const shots: NarrationTimelineShot[] = [
+    { targetDuration: 2, lockedSourceVoice: true, lockedDuration: 3,
+      sourceCues: [{ text: '原声一句', start: 0.2, end: 1.1 }, { text: '截断一句', start: 1.8, end: 2.5 }] },
+    { targetDuration: 1, lockedSourceVoice: false },
+    { targetDuration: 2, lockedSourceVoice: true, lockedDuration: 2,
+      sourceCues: [{ text: '末镜原声', start: 0.3, end: 1.5 }] },
+  ];
+  assert.deepEqual(sourceCuesWithoutVoiceover(shots), [
+    { text: '原声一句', start: 0.2, end: 1.1 },
+    { text: '截断一句', start: 1.8, end: 2 },
+    { text: '末镜原声', start: 3.3, end: 4.5 },
+  ]);
+});
 
 test('measured avatar captions are invalidated when the source material changes', () => {
   const first = 'a'.repeat(64);

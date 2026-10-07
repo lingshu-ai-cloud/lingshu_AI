@@ -56,6 +56,19 @@ export function shotsMissingSourceCues(shots: NarrationTimelineShot[]): number[]
     && !sourceCuesForShot(shot.sourceCues, Number(shot.lockedDuration || shot.targetDuration)).length ? [index + 1] : []);
 }
 
+/** With no separate voiceover, captions for source-audio shots must come from those clips. */
+export function sourceCuesWithoutVoiceover(shots: NarrationTimelineShot[]): SpeechCue[] {
+  let cursor = 0;
+  return shots.flatMap(shot => {
+    const start = shot.targetStart ?? cursor;
+    cursor = start + shot.targetDuration;
+    if (!shot.lockedSourceVoice) return [];
+    return sourceCuesForShot(shot.sourceCues, Number(shot.lockedDuration || shot.targetDuration))
+      .filter(cue => cue.start < shot.targetDuration)
+      .map(cue => ({ ...cue, start: start + cue.start, end: start + Math.min(cue.end, shot.targetDuration) }));
+  });
+}
+
 function paragraphOwners(shots: NarrationTimelineShot[], lines: string[], referenceLines?: string[]): ParagraphOwner[] {
   if (!shots.length || !lines.length) throw new Error('缺少分镜或口播段落，无法校准时间轴');
   if (referenceLines && referenceLines.length !== lines.length) throw new Error('译文口播段落数量与原分镜不一致，请逐段确认译文');

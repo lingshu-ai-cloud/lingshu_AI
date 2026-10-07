@@ -34,6 +34,9 @@ import {
 } from '../starter198/legacyEffectGuard.js';
 import { localFallbacksEnabled } from '../lib/localFallbackPolicy.js';
 import { currentDataAuthority } from '../storage/dataAuthority.js';
+import { upsertTenantUploadCloudMaterial } from '../lib/cloudMaterials.js';
+import { normalizeTenantMedia } from '../lib/tenantMediaNormalization.js';
+import os from 'node:os';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_FILE = path.join(__dirname, '../../data/enterprise.json');
@@ -2252,9 +2255,9 @@ enterpriseRouter.post('/assets', async (req, res) => {
     res.status(400).json({ error: 'invalid asset payload' });
     return;
   }
-  const storedName = safeStoredName(name);
-  const buffer = Buffer.from(match[2], 'base64');
-  const contentType = enterpriseAssetContentType(name, type || match[1]);
+  let storedName = safeStoredName(name);
+  let buffer = Buffer.from(match[2], 'base64');
+  let contentType = enterpriseAssetContentType(name, type || match[1]);
   if (!enterpriseAssetTypeAllowed(contentType)) {
     res.status(415).json({ error: 'only image, video and PDF enterprise assets are supported' });
     return;
@@ -2264,7 +2267,20 @@ enterpriseRouter.post('/assets', async (req, res) => {
     return;
   }
 
+  let material: Record<string, unknown> | undefined;
+  let normalized: Awaited<ReturnType<typeof normalizeTenantMedia>> | undefined;
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lingshu-enterprise-upload-'));
   try {
+    if (contentType.startsWith('image/') || contentType.startsWith('video/') || contentType.startsWith('audio/')) {
+      normalized = await normalizeTenantMedia({
+        buffer, originalName: name, declaredMimeType: contentType,
+        kind: contentType.startsWith('image/') ? 'image' : contentType.startsWith('audio/') ? 'audio' : 'video',
+        temporaryDirectory: tempDir,
+      });
+      buffer = normalized.buffer;
+      storedName = safeStoredName(normalized.filename);
+      contentType = normalized.mimeType;
+    }
     if (objectStorageEnabled()) {
       await objectStorageUpload({
         key: enterpriseAssetObjectKey(tenantId, storedName),
@@ -2277,10 +2293,47 @@ enterpriseRouter.post('/assets', async (req, res) => {
       fs.mkdirSync(tenantDir, { recursive: true });
       fs.writeFileSync(path.join(tenantDir, storedName), buffer);
     }
+    if (contentType.startsWith('image/') || contentType.startsWith('video/') || contentType.startsWith('audio/')) {
+      material = await upsertTenantUploadCloudMaterial({
+        tenantId,
+        title: name,
+        folder: 'enterprise-upload',
+        type: contentType.startsWith('image/') ? 'image' : contentType.startsWith('audio/') ? 'audio' : 'video',
+        sizeBytes: buffer.length,
+        duration: normalized?.duration,
+        width: normalized?.width,
+        height: normalized?.height,
+        sha256: normalized?.sha256 || createHash('sha256').update(buffer).digest('hex'),
+        scope: 'own',
+        usage: 'editable',
+        sourceType: 'enterprise_upload',
+        sourceName: name,
+        sourceProvider: 'tenant',
+        sourceUrl: `/api/overseas/enterprise/assets/${storedName}`,
+        sourceEntry: 'enterprise_knowledge',
+        provenance: {
+          uploadMethod: 'enterprise_knowledge',
+          sourceEntry: 'enterprise_knowledge',
+          originalName: name,
+          mimeType: contentType,
+          receivedAt: new Date().toISOString(),
+          knowledgeEligible: true,
+          normalization: normalized?.normalization,
+        },
+        media: { name: storedName, buf: buffer, contentType },
+        ...(normalized?.poster ? { poster: { name: normalized.poster.filename, buf: normalized.poster.buffer, contentType: normalized.poster.mimeType } } : {}),
+      });
+      const materialId = String(material.id || '');
+      if (materialId) void import('../lib/materialLibraryAnalysis.js')
+        .then(module => module.requestMaterialAnalysis(tenantId, materialId))
+        .catch(error => console.warn('[enterprise-assets] material analysis start failed', error instanceof Error ? error.message : error));
+    }
   } catch (error) {
     console.error('[enterprise-assets] upload failed', error instanceof Error ? error.message : error);
     res.status(503).json({ error: 'enterprise asset storage unavailable' });
     return;
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
   }
 
   res.json({
@@ -2289,6 +2342,7 @@ enterpriseRouter.post('/assets', async (req, res) => {
     size: buffer.length,
     updatedAt: new Date().toISOString(),
     url: `/api/overseas/enterprise/assets/${storedName}`,
+    material,
   });
 });
 

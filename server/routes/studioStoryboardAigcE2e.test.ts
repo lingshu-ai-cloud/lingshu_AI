@@ -19,13 +19,14 @@ let projectId = `storyboard-project-${suffix}`;
 const assetRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'storyboard-aigc-e2e-'));
 const originals = {
   fetch: globalThis.fetch,
-  env: Object.fromEntries(['DASHSCOPE_API_KEY', 'DASHSCOPE_BASE_URL', 'DASHSCOPE_IMAGE_BASE_URL', 'SEEDANCE_API_KEY',
-    'SEEDANCE_BASE_URL', 'SEEDANCE_VIDEO_ENABLED', 'OBJECT_STORAGE_DRIVER', 'LOCAL_OBJECT_STORAGE_ROOT',
+  env: Object.fromEntries(['DASHSCOPE_API_KEY', 'DASHSCOPE_BASE_URL', 'DASHSCOPE_IMAGE_BASE_URL', 'SEEDREAM_API_KEY',
+    'SEEDREAM_BASE_URL', 'SEEDANCE_API_KEY', 'SEEDANCE_BASE_URL', 'SEEDANCE_VIDEO_ENABLED', 'OBJECT_STORAGE_DRIVER', 'LOCAL_OBJECT_STORAGE_ROOT',
     'STORYBOARD_AIGC_BATCH_BUDGET_CNY', 'STORYBOARD_AIGC_MAX_RETRIES', 'STORYBOARD_AIGC_BUDGET_DIR', 'DEMO_MODE', 'SUBSCRIPTION_ENFORCED'].map(key => [key, process.env[key]])),
 };
 Object.assign(process.env, {
   DASHSCOPE_API_KEY: 'test-only', DASHSCOPE_BASE_URL: 'https://mock.storyboard/compatible-mode/v1',
-  DASHSCOPE_IMAGE_BASE_URL: 'https://mock.storyboard/compatible-mode/v1', SEEDANCE_API_KEY: 'test-only',
+  DASHSCOPE_IMAGE_BASE_URL: 'https://mock.storyboard/compatible-mode/v1',
+  SEEDREAM_API_KEY: 'test-only', SEEDREAM_BASE_URL: 'https://mock.storyboard', SEEDANCE_API_KEY: 'test-only',
   SEEDANCE_BASE_URL: 'https://mock.seedance', SEEDANCE_VIDEO_ENABLED: 'true',
   OBJECT_STORAGE_DRIVER: 'local', LOCAL_OBJECT_STORAGE_ROOT: path.join(assetRoot, 'objects'),
   STORYBOARD_AIGC_BATCH_BUDGET_CNY: '200', STORYBOARD_AIGC_MAX_RETRIES: '1',
@@ -65,7 +66,7 @@ let supplierImagePosts = 0;
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   const url = String(input instanceof Request ? input.url : input);
-  if (url === 'https://mock.storyboard/compatible-mode/v1/images/generations') {
+  if (url === 'https://mock.storyboard/images/generations') {
     supplierImagePosts++;
     const payload = JSON.parse(String(init?.body || '{}'));
     if (String(payload.prompt || '').includes('两款企业吊灯')) {

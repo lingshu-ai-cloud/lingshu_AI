@@ -1,0 +1,256 @@
+/**
+ * Renderer-agnostic caption and sparse emphasis timeline.
+ *
+ * This contract describes what deserves emphasis and when. It deliberately
+ * contains no animation names, CSS, FFmpeg expressions or profile styling.
+ */
+
+export const EMPHASIS_EVENT_TYPES = ['hook', 'key_fact', 'reveal', 'section_label', 'cta'] as const;
+export const EMPHASIS_SOURCES = ['transcript', 'vision', 'metadata', 'editor'] as const;
+export const EMPHASIS_PROFILES = ['d2c_dialogue', 'talking_head', 'factory_process', 'product_showcase'] as const;
+export const EMPHASIS_TIMELINE_SCHEMA_VERSION = 1 as const;
+
+export type EmphasisEventType = typeof EMPHASIS_EVENT_TYPES[number];
+export type EmphasisEventSource = typeof EMPHASIS_SOURCES[number];
+export type EmphasisProfile = typeof EMPHASIS_PROFILES[number];
+export type EmphasisImportance = 1 | 2 | 3;
+
+export interface CaptionSegment {
+  id: string;
+  startMs: number;
+  endMs: number;
+  text: string;
+  speakerId?: string;
+  /** Inline emphasis only. Keywords do not create EmphasisEvents. */
+  keywords?: string[];
+}
+
+export interface EmphasisEvent {
+  id: string;
+  type: EmphasisEventType;
+  startMs: number;
+  endMs: number;
+  text?: string;
+  importance: EmphasisImportance;
+  confidence: number;
+  source: EmphasisEventSource;
+  /** Semantic/visual subject used to find the best placement window. */
+  targetId?: string;
+}
+
+export interface EmphasisPlacementWindow {
+  id: string;
+  startMs: number;
+  endMs: number;
+  /** IDs of products, facts or process stages visibly supported here. */
+  targetIds?: string[];
+  /** A transition-only or obstructed window is not safe for a new overlay. */
+  safe?: boolean;
+  /** Visual legibility/evidence strength, from 0 to 1. */
+  clarity?: number;
+}
+
+export interface EmphasisBudget {
+  min: number;
+  max: number;
+}
+
+export interface EmphasisTimelineV1 {
+  schemaVersion: typeof EMPHASIS_TIMELINE_SCHEMA_VERSION;
+  captions: CaptionSegment[];
+  emphasisEvents: EmphasisEvent[];
+}
+
+/** Canonical manifest shape consumed by preview and export renderers. */
+export interface EmphasisPlanV1 {
+  schemaVersion: typeof EMPHASIS_TIMELINE_SCHEMA_VERSION;
+  profile: EmphasisProfile;
+  captions: CaptionSegment[];
+  events: EmphasisEvent[];
+  maxEvents?: number;
+}
+
+export interface SelectEmphasisTimelineInput {
+  durationMs: number;
+  candidates: unknown[];
+  placementWindows?: EmphasisPlacementWindow[];
+  /** Override only for an editor-authored timeline or an experiment. */
+  budget?: Partial<EmphasisBudget>;
+  /** Default 1200 ms. Hook -> reveal is allowed to use 500 ms. */
+  minimumGapMs?: number;
+}
+
+const asRecord = (value: unknown): Record<string, unknown> => value && typeof value === 'object' && !Array.isArray(value)
+  ? value as Record<string, unknown> : {};
+const finite = (value: unknown, fallback: number): number => Number.isFinite(Number(value)) ? Number(value) : fallback;
+const clamp = (value: unknown, min: number, max: number, fallback: number): number =>
+  Math.max(min, Math.min(max, finite(value, fallback)));
+const cleanId = (value: unknown, fallback: string): string => {
+  const result = String(value || '').trim().replace(/[^a-zA-Z0-9_.:-]/g, '').slice(0, 96);
+  return result || fallback;
+};
+const cleanText = (value: unknown, max = 160): string => String(value || '')
+  .replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max);
+const textKey = (value: string | undefined): string => String(value || '')
+  .toLocaleLowerCase().replace(/[\s，。！？；：、,.!?;:'"“”‘’()（）【】\[\]-]/g, '');
+
+export function emphasisBudgetForDuration(durationMs: number): EmphasisBudget {
+  const seconds = Math.max(0, finite(durationMs, 0)) / 1_000;
+  if (seconds <= 15) return { min: 2, max: 4 };
+  if (seconds <= 30) return { min: 4, max: 8 };
+  if (seconds <= 60) return { min: 6, max: 12 };
+  // For long-form work, calculate by chapters of roughly 20–30 seconds.
+  return { min: Math.ceil(seconds / 30) * 2, max: Math.ceil(seconds / 20) * 4 };
+}
+
+export function normalizeCaptionSegments(input: unknown, durationMs: number): CaptionSegment[] {
+  const duration = Math.max(0, finite(durationMs, 0));
+  return (Array.isArray(input) ? input : []).slice(0, 2_000).map((value, index) => {
+    const raw = asRecord(value);
+    const startMs = clamp(raw.startMs, 0, duration, 0);
+    const endMs = clamp(raw.endMs, startMs, duration, Math.min(duration, startMs + 2_000));
+    const text = cleanText(raw.text, 500);
+    if (!text || endMs <= startMs) return null;
+    const keywords = [...new Set((Array.isArray(raw.keywords) ? raw.keywords : [])
+      .map(item => cleanText(item, 40)).filter(Boolean))].filter(item => text.includes(item)).slice(0, 12);
+    const speakerId = cleanId(raw.speakerId, '');
+    return {
+      id: cleanId(raw.id, `caption-${index + 1}`),
+      startMs: Math.round(startMs), endMs: Math.round(endMs), text,
+      ...(speakerId ? { speakerId } : {}), ...(keywords.length ? { keywords } : {}),
+    } satisfies CaptionSegment;
+  }).filter((item): item is CaptionSegment => Boolean(item))
+    .sort((left, right) => left.startMs - right.startMs || left.endMs - right.endMs);
+}
+
+export function normalizeEmphasisCandidates(input: unknown, durationMs: number): EmphasisEvent[] {
+  const duration = Math.max(0, finite(durationMs, 0));
+  return (Array.isArray(input) ? input : []).slice(0, 500).map((value, index) => {
+    const raw = asRecord(value);
+    const type = EMPHASIS_EVENT_TYPES.includes(String(raw.type) as EmphasisEventType)
+      ? raw.type as EmphasisEventType : null;
+    const source = EMPHASIS_SOURCES.includes(String(raw.source) as EmphasisEventSource)
+      ? raw.source as EmphasisEventSource : null;
+    if (!type || !source) return null;
+    const startMs = clamp(raw.startMs, 0, duration, 0);
+    const endMs = clamp(raw.endMs, startMs, duration, Math.min(duration, startMs + 2_000));
+    if (endMs <= startMs) return null;
+    const text = cleanText(raw.text);
+    const targetId = cleanId(raw.targetId, '');
+    const confidence = clamp(raw.confidence, 0, 1, 0);
+    // Commercial facts must be supported. Editor-authored values already went
+    // through human review, while other low-confidence facts fall back to speech.
+    if (type === 'key_fact' && source !== 'editor' && confidence < .72) return null;
+    return {
+      id: cleanId(raw.id, `emphasis-${index + 1}`), type,
+      startMs: Math.round(startMs), endMs: Math.round(endMs),
+      ...(text ? { text } : {}),
+      importance: Math.round(clamp(raw.importance, 1, 3, 1)) as EmphasisImportance,
+      confidence: Number(confidence.toFixed(4)), source,
+      ...(targetId ? { targetId } : {}),
+    } satisfies EmphasisEvent;
+  }).filter((item): item is EmphasisEvent => Boolean(item));
+}
+
+const TYPE_RANK: Record<EmphasisEventType, number> = {
+  hook: 6, key_fact: 5, reveal: 4, section_label: 2, cta: 1,
+};
+
+function candidateScore(event: EmphasisEvent): number {
+  const sourceBoost = event.source === 'editor' ? 1 : event.source === 'metadata' ? .35 : 0;
+  return TYPE_RANK[event.type] * 10 + event.importance * 3 + event.confidence + sourceBoost;
+}
+
+function placeOnBestWindow(event: EmphasisEvent, windows: EmphasisPlacementWindow[]): EmphasisEvent {
+  if (!event.targetId) return event;
+  const matches = windows.filter(window => window.safe !== false
+    && window.endMs > window.startMs && window.targetIds?.includes(event.targetId!));
+  if (!matches.length) return event;
+  const best = matches.sort((left, right) => finite(right.clarity, .5) - finite(left.clarity, .5)
+    || (right.endMs - right.startMs) - (left.endMs - left.startMs))[0]!;
+  const originalDuration = Math.max(500, event.endMs - event.startMs);
+  const startMs = Math.max(0, Math.round(best.startMs));
+  return { ...event, startMs, endMs: Math.min(Math.round(best.endMs), startMs + originalDuration) };
+}
+
+/** Selects the sparse, whole-film emphasis layer from a larger candidate set. */
+export function selectEmphasisTimeline(input: SelectEmphasisTimelineInput): EmphasisEvent[] {
+  const durationMs = Math.max(0, finite(input.durationMs, 0));
+  const defaults = emphasisBudgetForDuration(durationMs);
+  const max = Math.max(0, Math.round(clamp(input.budget?.max, 0, 500, defaults.max)));
+  const minimumGapMs = Math.round(clamp(input.minimumGapMs, 0, 10_000, 1_200));
+  const windows = (input.placementWindows || []).filter(window => Number.isFinite(window.startMs) && Number.isFinite(window.endMs));
+  const normalized = normalizeEmphasisCandidates(input.candidates, durationMs).map(event => placeOnBestWindow(event, windows));
+
+  // The same semantic claim is emphasized once. Prefer human review, clearer
+  // evidence, higher importance, then the earliest complete occurrence.
+  const deduplicated = new Map<string, EmphasisEvent>();
+  for (const event of normalized) {
+    const semantic = event.targetId || textKey(event.text) || event.id;
+    const key = `${event.type}:${semantic}`;
+    const previous = deduplicated.get(key);
+    if (!previous || candidateScore(event) > candidateScore(previous)
+      || (candidateScore(event) === candidateScore(previous) && event.startMs < previous.startMs)) {
+      deduplicated.set(key, event);
+    }
+  }
+
+  const ranked = [...deduplicated.values()].sort((left, right) => candidateScore(right) - candidateScore(left)
+    || left.startMs - right.startMs);
+  const selected: EmphasisEvent[] = [];
+  for (const event of ranked) {
+    if (selected.length >= max) break;
+    const conflicts = selected.some(existing => {
+      const overlap = event.startMs < existing.endMs && existing.startMs < event.endMs;
+      const gap = Math.max(existing.startMs - event.endMs, event.startMs - existing.endMs);
+      const hookRevealPair = (event.type === 'hook' && existing.type === 'reveal')
+        || (event.type === 'reveal' && existing.type === 'hook');
+      return overlap || gap < (hookRevealPair ? Math.min(500, minimumGapMs) : minimumGapMs);
+    });
+    if (!conflicts) selected.push(event);
+  }
+  return selected.sort((left, right) => left.startMs - right.startMs || candidateScore(right) - candidateScore(left));
+}
+
+/** Normalizes untrusted persisted/agent output into the complete two-layer model. */
+export function normalizeEmphasisTimeline(
+  input: unknown,
+  durationMs: number,
+  placementWindows: EmphasisPlacementWindow[] = [],
+): EmphasisTimelineV1 {
+  const raw = asRecord(input);
+  return {
+    schemaVersion: EMPHASIS_TIMELINE_SCHEMA_VERSION,
+    captions: normalizeCaptionSegments(raw.captions, durationMs),
+    emphasisEvents: selectEmphasisTimeline({
+      durationMs,
+      candidates: Array.isArray(raw.emphasisEvents) ? raw.emphasisEvents : [],
+      placementWindows,
+    }),
+  };
+}
+
+/** Canonical `manifest.emphasisPlan` boundary. */
+export function normalizeEmphasisPlan(
+  input: unknown,
+  durationMs: number,
+  placementWindows: EmphasisPlacementWindow[] = [],
+): EmphasisPlanV1 {
+  const raw = asRecord(input);
+  const profile = EMPHASIS_PROFILES.includes(String(raw.profile) as EmphasisProfile)
+    ? raw.profile as EmphasisProfile : 'talking_head';
+  const defaultBudget = emphasisBudgetForDuration(durationMs);
+  const maxEvents = Math.round(clamp(raw.maxEvents, 0, 500, defaultBudget.max));
+  return {
+    schemaVersion: EMPHASIS_TIMELINE_SCHEMA_VERSION,
+    profile,
+    captions: normalizeCaptionSegments(raw.captions, durationMs),
+    events: selectEmphasisTimeline({
+      durationMs,
+      candidates: Array.isArray(raw.events) ? raw.events : Array.isArray(raw.emphasisEvents) ? raw.emphasisEvents : [],
+      placementWindows,
+      budget: { max: maxEvents },
+    }),
+    maxEvents,
+  };
+}

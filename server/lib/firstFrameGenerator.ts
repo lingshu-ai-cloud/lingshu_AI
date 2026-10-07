@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 
 export type FirstFrameProvider = 'seedream' | 'qwen';
-export type FirstFrameReferenceRole = 'source_composition' | 'authorized_presenter' | 'product_identity';
+export type FirstFrameReferenceRole = 'source_composition' | 'authorized_presenter' | 'product_identity' | 'enterprise_environment';
 
 export interface FirstFrameReference {
   role: FirstFrameReferenceRole;
@@ -13,7 +13,7 @@ export interface FirstFrameReference {
 export interface FirstFrameRequest {
   /** Presenter replacement keeps the historic two-image contract. Product
    * scenes accept one composition frame plus one or more product references. */
-  referenceMode?: 'presenter_replace' | 'product_scene' | 'environment_plate';
+  referenceMode?: 'presenter_replace' | 'product_scene' | 'environment_plate' | 'storyboard_scene';
   tenantId: string;
   videoId: string;
   compositionId: string;
@@ -51,7 +51,12 @@ export function validateFirstFrameRequest(input: FirstFrameRequest, options: { r
   if (!input.prompt.trim()) throw new Error('首帧请求缺少构图提示词');
   if (options.requireIdempotencyKey !== false && !input.idempotencyKey.trim()) throw new Error('首帧请求缺少稳定幂等键');
   const roles = input.references.map(item => item.role);
-  if (input.referenceMode === 'product_scene') {
+  if (input.referenceMode === 'storyboard_scene') {
+    if (input.references.length > 3 || input.references.some(reference =>
+      !['source_composition', 'authorized_presenter', 'product_identity', 'enterprise_environment'].includes(reference.role))) {
+      throw new Error('分镜首帧最多支持三张已分类参考图');
+    }
+  } else if (input.referenceMode === 'product_scene') {
     const products = roles.filter(role => role === 'product_identity').length;
     if (roles.filter(role => role === 'source_composition').length !== 1 || products < 1 || products > 9 || input.references.length !== products + 1) {
       throw new Error('产品场景首帧必须包含一张原构图和一至九张同产品参考图');

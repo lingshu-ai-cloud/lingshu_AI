@@ -31,3 +31,17 @@ test('Seedream network ambiguity is surfaced as uncertain and never silently ret
   await assert.rejects(() => generator.generate(request()), (error: unknown) => error instanceof FirstFrameProviderError && error.status === 'uncertain');
   assert.equal(calls, 1);
 });
+
+test('Seedream supports a prompt-only storyboard scene and does not invoke a fallback provider', async () => {
+  let calls = 0; let sent: any;
+  const generator = new SeedreamFirstFrameGenerator({ apiKey: 'key', model: 'seedream-test', transport: (async (_url, init) => {
+    calls += 1; sent = JSON.parse(String(init?.body));
+    return Response.json({ model: 'seedream-test', data: [{ b64_json: Buffer.from('storyboard-frame').toString('base64') }] });
+  }) as typeof fetch });
+  const input: FirstFrameRequest = { tenantId: 'tenant-a', videoId: 'project-a', compositionId: 'shot-a',
+    presenterVersion: 'shot-fingerprint', prompt: 'Create a clean factory scene.', ratio: '16:9',
+    referenceMode: 'storyboard_scene', references: [], idempotencyKey: 'storyboard-request-a' };
+  const result = await generator.generate(input);
+  assert.equal(result.provider, 'seedream'); assert.equal(calls, 1);
+  assert.equal(sent.model, 'seedream-test'); assert.equal('image' in sent, false);
+});

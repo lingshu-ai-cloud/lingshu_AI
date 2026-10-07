@@ -119,6 +119,10 @@ assert.match(studioSource, /HeyGen 数字人口播生成/, 'the material workben
 assert.match(studioSource, /studioApi\.digitalHumanAvatars\(\)/, 'the Studio must load provider avatar assets instead of rendering an empty selector');
 assert.match(studioSource, /onDigitalHuman=\{\(\) => \{[\s\S]{0,1200}openProduction\(salesSlot\)/, 'the material decision panel must open the selected storyboard shot in digital-human production');
 assert.match(studioSource, /avatar\.defaultVoiceId/, 'provider-owned avatars must carry their default voice into production defaults');
+assert.match(studioSource, /setStoryboardAssignments\(current => \(\{ \.\.\.current, \[slot\.id\]: clip\.id \}\)\)/,
+  'a generated non-presenter clip must immediately replace the active storyboard assignment');
+assert.match(studioSource, /新AI画面已回填当前分镜，并已保存到 AI 素材库/,
+  'the Studio must explain immediate storyboard backfill and durable AI-library storage');
 
 const trafficSource = readFileSync(new URL('./TrafficPage.tsx', import.meta.url), 'utf8');
 assert.match(trafficSource, /digitalEmployee\.businessDeepLink/, 'the content workspace must consume the persisted Digital Employee handoff');

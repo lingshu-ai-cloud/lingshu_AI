@@ -6,6 +6,7 @@ import {
   createCloudMaterial,
   deleteOwnedCloudMaterial,
   upsertSocialTaskCloudMaterial,
+  upsertTenantUploadCloudMaterial,
 } from './cloudMaterials.js';
 
 const directory = await fsp.mkdtemp(path.join(os.tmpdir(), 'cloud-material-write-test-'));
@@ -33,13 +34,38 @@ try {
     assert.equal(form.get('sha256'), sha256);
     assert.equal(form.get('scope'), 'own');
     assert.equal(form.get('usage'), 'editable');
-    assert.equal(form.get('provenance'), JSON.stringify({ uploadMethod: 'test' }));
+    assert.equal(form.get('provenance'), JSON.stringify({ uploadMethod: 'test', sourceEntry: 'legacy' }));
     assert.deepEqual(Buffer.from(await (form.get('videoFile') as Blob).arrayBuffer()), bytes);
     assert.ok((form.get('posterFile') as Blob).size > 0, 'required PB poster is attached without a server-side cache');
     return Response.json({ id: 'materialrecord1', tenantId: 'tenant-a', videoFile: 'clip.mp4', posterFile: 'poster.png' });
   });
   assert.equal(createCalls, 1);
   assert.equal(created.id, 'materialrecord1');
+
+  let entryPatch: Record<string, unknown> | undefined;
+  const unified = await upsertTenantUploadCloudMaterial({
+    tenantId: 'tenant-a', title: '知识库生产线', folder: 'enterprise-upload', type: 'video',
+    sizeBytes: bytes.length, sha256, sourceEntry: 'enterprise_knowledge',
+    media: { name: 'clip.mp4', path: mediaPath, contentType: 'video/mp4' },
+    provenance: { uploadMethod: 'enterprise_knowledge' },
+  }, async (requestPath, options = {}) => {
+    if (requestPath.includes('?')) return Response.json({ items: [{
+      id: 'materialrecord1', tenantId: 'tenant-a', scope: 'own', sha256,
+      title: '同一原片', type: 'video', videoFile: 'clip.mp4', posterFile: 'poster.png',
+      provenance: { sourceEntry: 'studio_workspace' },
+    }] });
+    assert.equal(options.method, 'PATCH');
+    entryPatch = JSON.parse(String(options.body));
+    return Response.json({
+      id: 'materialrecord1', tenantId: 'tenant-a', scope: 'own', sha256,
+      title: '同一原片', type: 'video', videoFile: 'clip.mp4', posterFile: 'poster.png',
+      ...entryPatch,
+    });
+  });
+  assert.equal(unified.id, 'pb-materialrecord1');
+  assert.deepEqual((entryPatch!.provenance as Record<string, unknown>).sourceEntries, ['studio_workspace', 'enterprise_knowledge']);
+  assert.equal(unified.sourceEntry, 'enterprise_knowledge');
+  assert.equal(unified.knowledgeEligible, true);
 
   const patched: Array<Record<string, unknown>> = [];
   const reused = await upsertSocialTaskCloudMaterial({

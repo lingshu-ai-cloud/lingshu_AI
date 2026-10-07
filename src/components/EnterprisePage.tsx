@@ -10,6 +10,7 @@ import {
   parseWorkbook,
   prepareSheet,
 } from '../lib/productImport';
+import { parseProductDocument } from '../lib/productDocumentImport';
 import SupportAccessControl from './SupportAccessControl';
 import EnterpriseProductImportCard, { type ProductApiStatus } from './EnterpriseProductImportCard';
 import type { AppliedProfile } from './enterprise/KnowledgeIntakePanel';
@@ -47,6 +48,16 @@ interface ProductItem {
   certificateImages?: ProductAsset[];
   sceneImages?: ProductAsset[];
   brandAssets?: ProductAsset[];
+}
+
+interface PendingProductImport {
+  fileName: string;
+  sheetName: string;
+  products: ProductItem[];
+  totalRows: number;
+  skippedRows: number;
+  sourceLabel: string;
+  unassignedImages: Array<{ name: string; url: string; file: File; status?: 'pending' | 'uploading' | 'uploaded' | 'failed'; error?: string }>;
 }
 
 type AutonomyLevel = 'remind' | 'draft' | 'auto';
@@ -726,6 +737,8 @@ export default function EnterprisePage() {
   const [autonomyHighlight, setAutonomyHighlight] = useState(false);
   const [productImporting, setProductImporting] = useState(false);
   const [productImportMessage, setProductImportMessage] = useState('');
+  const [pendingProductImport, setPendingProductImport] = useState<PendingProductImport | null>(null);
+  const [productImportConfirming, setProductImportConfirming] = useState(false);
   const [faqPreview, setFaqPreview] = useState<FaqItem[]>([]);
   const [faqStructuring, setFaqStructuring] = useState(false);
   const [faqPacks, setFaqPacks] = useState<FaqPack[]>([]);
@@ -1407,6 +1420,21 @@ export default function EnterprisePage() {
     setProductImporting(true);
     setProductImportMessage('');
     try {
+      if (/\.(pdf|docx)$/i.test(file.name)) {
+        const parsed = await parseProductDocument(file);
+        const incoming = parsed.products.map((item, index): ProductItem => ({
+          ...item,
+          name: item.name || item.sku || `导入产品${index + 1}`,
+          priceRange: item.retailPrice || item.tagPrice,
+          category: profile.products.categories,
+          images: item.imageUrl ? [{ name: item.imageUrl.split('/').pop() || '商品主图', type: 'image/url', size: 0, updatedAt: new Date().toISOString(), url: item.imageUrl }] : [],
+          videos: [],
+          documents: [],
+        }));
+        setPendingProductImport({ fileName: file.name, sheetName: '文档正文', products: incoming, totalRows: incoming.length, skippedRows: 0, sourceLabel: parsed.sourceLabel, unassignedImages: parsed.unassignedImages });
+        setProductImportMessage(`已从文档识别 ${incoming.length} 个产品，请确认字段与图片归属后导入`);
+        return;
+      }
       const sheets = await parseWorkbook(file);
       const selected = sheets.slice().sort((a, b) => b.rowCount - a.rowCount)[0];
       if (!selected) throw new Error('没有读取到可导入的表格');
@@ -1434,7 +1462,48 @@ export default function EnterprisePage() {
           documents: [],
         }));
       if (!incoming.length) throw new Error('没有识别到有效产品行，请检查表头是否包含商品名称或 SKU');
-      setProfile(prev => {
+      const skipped = prepared.dataRows.length - incoming.length;
+      setPendingProductImport({
+        fileName: file.name,
+        sheetName: prepared.sheetName,
+        products: incoming,
+        totalRows: prepared.dataRows.length,
+        skippedRows: skipped,
+        sourceLabel: '表格字段映射',
+        unassignedImages: [],
+      });
+      setProductImportMessage(`已解析 ${incoming.length} 个产品，请确认产品与图片对应关系后导入`);
+    } catch (e) {
+      setProductImportMessage(e instanceof Error ? e.message : '产品导入失败，请检查 CSV/XLSX 字段');
+    } finally {
+      setProductImporting(false);
+    }
+  };
+
+  const confirmProductImport = async () => {
+    if (!pendingProductImport || productImportConfirming) return;
+    setProductImportConfirming(true);
+    const images = pendingProductImport.unassignedImages;
+    const nextImages = images.map(image => image.status === 'uploaded' ? image : { ...image, status: 'uploading' as const, error: undefined });
+    setPendingProductImport(current => current ? { ...current, unassignedImages: nextImages } : null);
+    const settled = await Promise.all(nextImages.map(async image => {
+      if (image.status === 'uploaded') return image;
+      try {
+        await uploadProductEvidence(image.file);
+        return { ...image, status: 'uploaded' as const, error: undefined };
+      } catch (error) {
+        return { ...image, status: 'failed' as const, error: error instanceof Error ? error.message : '图片上传失败' };
+      }
+    }));
+    const failed = settled.filter(image => image.status === 'failed');
+    if (failed.length) {
+      setPendingProductImport(current => current ? { ...current, unassignedImages: settled } : null);
+      setProductImportMessage(`${failed.length} 张未归属图片上传失败，产品尚未导入。请重试或取消导入。`);
+      setProductImportConfirming(false);
+      return;
+    }
+    const incoming = pendingProductImport.products;
+    setProfile(prev => {
         const existing = normalizeProductItems(prev.products);
         const next = [...existing];
         for (const item of incoming) {
@@ -1446,13 +1515,16 @@ export default function EnterprisePage() {
         setProductPage(Math.max(1, Math.ceil(next.length / PAGE_SIZE)));
         return { ...prev, products: { ...prev.products, items: next } };
       });
-      const skipped = prepared.dataRows.length - incoming.length;
-      setProductImportMessage(`已导入 ${incoming.length} 个产品${skipped > 0 ? `，跳过 ${skipped} 行` : ''}，点击右上角保存后生效`);
-    } catch (e) {
-      setProductImportMessage(e instanceof Error ? e.message : '产品导入失败，请检查 CSV/XLSX 字段');
-    } finally {
-      setProductImporting(false);
-    }
+    setProductImportMessage(`已导入 ${incoming.length} 个产品${pendingProductImport.skippedRows > 0 ? `，跳过 ${pendingProductImport.skippedRows} 行` : ''}，点击右上角保存后生效`);
+    pendingProductImport.unassignedImages.forEach(image => URL.revokeObjectURL(image.url));
+    setPendingProductImport(null);
+    setProductImportConfirming(false);
+  };
+
+  const closeProductImport = () => {
+    if (productImportConfirming) return;
+    pendingProductImport?.unassignedImages.forEach(image => URL.revokeObjectURL(image.url));
+    setPendingProductImport(null);
   };
 
   const updateProduct = (index: number, patch: Partial<ProductItem>) => {
@@ -1981,7 +2053,7 @@ export default function EnterprisePage() {
               <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-border bg-white px-3 py-2 text-xs font-bold text-text-secondary hover:bg-surface-2">
                 {productImporting ? <Loader2 size={12} className="animate-spin" /> : <FileSpreadsheet size={12} />}
                 导入产品表
-                <input type="file" accept=".xlsx,.csv" className="hidden" disabled={productImporting} onChange={e => { void importProductSheet(e.currentTarget.files?.[0] ?? null); e.currentTarget.value = ''; }} />
+                <input type="file" accept=".xlsx,.xls,.csv,.pdf,.docx" className="hidden" disabled={productImporting} onChange={e => { void importProductSheet(e.currentTarget.files?.[0] ?? null); e.currentTarget.value = ''; }} />
               </label>
               <button type="button" onClick={addProduct} className="inline-flex items-center gap-1.5 rounded-lg bg-slate-950 px-3 py-2 text-xs font-bold text-white">
                 <Plus size={12} />添加产品
@@ -2378,6 +2450,43 @@ export default function EnterprisePage() {
                 </div>
               </div>
           </section>
+          )}
+
+          {pendingProductImport && (
+            <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/55 p-4" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) closeProductImport(); }}>
+              <section role="dialog" aria-modal="true" aria-labelledby="product-import-confirm-title" className="flex max-h-[88vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+                <header className="flex items-start justify-between gap-4 border-b border-border px-5 py-4">
+                  <div>
+                    <h2 id="product-import-confirm-title" className="text-base font-black text-text-primary">确认产品导入结果</h2>
+                    <p className="mt-1 text-xs text-text-muted">{pendingProductImport.fileName} · {pendingProductImport.sourceLabel} · 识别 {pendingProductImport.products.length}/{pendingProductImport.totalRows} 行</p>
+                  </div>
+                  <button type="button" aria-label="关闭导入确认" disabled={productImportConfirming} onClick={closeProductImport} className="rounded-lg p-2 text-text-muted hover:bg-surface-2 disabled:opacity-40"><X size={18}/></button>
+                </header>
+                <div className="overflow-auto px-5 py-4">
+                  <p className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">请核对产品名称、SKU、模型提取字段与图片归属。PDF / DOCX 的内容来自文档文本或表格提取，必须由用户复核后才会写入。</p>
+                  <div className="overflow-hidden rounded-xl border border-border">
+                    <table className="w-full min-w-[680px] text-left text-xs">
+                      <thead className="bg-surface-2 text-text-muted"><tr><th className="px-3 py-2">图片</th><th className="px-3 py-2">产品名称</th><th className="px-3 py-2">SKU</th><th className="px-3 py-2">品牌 / 规格</th><th className="px-3 py-2">识别卖点</th><th className="w-16 px-3 py-2">操作</th></tr></thead>
+                      <tbody className="divide-y divide-border">
+                        {pendingProductImport.products.map((product, index) => <tr key={`${product.sku || product.name}-${index}`}>
+                          <td className="px-3 py-2">{product.imageUrl ? <img src={product.imageUrl} alt="" className="h-12 w-12 rounded-lg border border-border object-cover" onError={event => { event.currentTarget.style.display = 'none'; }} /> : <span className="inline-flex h-12 w-12 items-center justify-center rounded-lg bg-surface-2 text-[10px] text-text-muted">无图片</span>}</td>
+                          <td className="px-3 py-2 font-bold text-text-primary">{product.name}</td>
+                          <td className="px-3 py-2 text-text-secondary">{product.sku || '—'}</td>
+                          <td className="px-3 py-2 text-text-secondary">{[product.brand, product.color, product.size].filter(Boolean).join(' · ') || '—'}</td>
+                          <td className="max-w-56 px-3 py-2 text-text-secondary"><span className="line-clamp-2">{product.highlights || '—'}</span></td>
+                          <td className="px-3 py-2"><button type="button" onClick={() => setPendingProductImport(current => current ? { ...current, products: current.products.filter((_, itemIndex) => itemIndex !== index) } : null)} className="text-[11px] font-bold text-red-600 hover:text-red-800">移除</button></td>
+                        </tr>)}
+                      </tbody>
+                    </table>
+                  </div>
+                  {pendingProductImport.unassignedImages.length > 0 && <div className="mt-4 rounded-xl border border-sky-200 bg-sky-50 p-3"><p className="text-xs font-black text-sky-900">未归属图片（{pendingProductImport.unassignedImages.length}）</p><p className="mt-1 text-[11px] leading-5 text-sky-800">文档没有提供可验证的图片与产品对应关系，因此不会静默绑定。确认导入时会把这些图片持久化到“企业上传素材”，随后可手动关联产品。</p><div className="mt-3 flex flex-wrap gap-2">{pendingProductImport.unassignedImages.map(image => <figure key={image.name} className="w-24"><div className="relative"><img src={image.url} alt={image.name} className="h-20 w-24 rounded-lg border border-sky-200 bg-white object-cover"/>{image.status && image.status !== 'pending' && <span className={`absolute bottom-1 right-1 rounded px-1.5 py-0.5 text-[9px] font-black ${image.status === 'uploaded' ? 'bg-emerald-600 text-white' : image.status === 'failed' ? 'bg-red-600 text-white' : 'bg-slate-900 text-white'}`}>{image.status === 'uploaded' ? '已保存' : image.status === 'failed' ? '失败' : '上传中'}</span>}</div><figcaption className="mt-1 truncate text-[9px] text-sky-800" title={image.error || image.name}>{image.error || image.name}</figcaption></figure>)}</div></div>}
+                </div>
+                <footer className="flex items-center justify-between gap-3 border-t border-border px-5 py-4">
+                  <span className="text-xs text-text-muted">{pendingProductImport.skippedRows ? `${pendingProductImport.skippedRows} 行因缺少产品名称或 SKU 将被跳过` : '未发现需要跳过的空行'}</span>
+                  <div className="flex gap-2"><button type="button" disabled={productImportConfirming} onClick={closeProductImport} className="rounded-lg border border-border px-4 py-2 text-xs font-bold text-text-secondary disabled:opacity-40">取消</button><button type="button" disabled={!pendingProductImport.products.length || productImportConfirming} onClick={() => void confirmProductImport()} className="inline-flex items-center gap-1.5 rounded-lg bg-slate-950 px-4 py-2 text-xs font-bold text-white disabled:opacity-40">{productImportConfirming && <Loader2 size={12} className="animate-spin"/>}{productImportConfirming ? '正在保存图片…' : `确认导入 ${pendingProductImport.products.length} 个产品`}</button></div>
+                </footer>
+              </section>
+            </div>
           )}
 
           <div className="h-4" />

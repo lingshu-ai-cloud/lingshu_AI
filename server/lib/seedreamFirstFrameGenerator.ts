@@ -54,7 +54,7 @@ export class SeedreamFirstFrameGenerator implements FirstFrameGenerator {
     try {
       response = await fetcher(`${base}/images/generations`, { method: 'POST', headers: {
         Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json', 'X-Client-Request-Id': input.idempotencyKey,
-      }, body: JSON.stringify({ model: this.model, prompt: input.prompt.trim(), image: input.references.map(dataUrl), size: seedreamSize(input.ratio, this.model),
+      }, body: JSON.stringify({ model: this.model, prompt: input.prompt.trim(), ...(input.references.length ? { image: input.references.map(dataUrl) } : {}), size: seedreamSize(input.ratio, this.model),
         response_format: 'url', output_format: 'jpeg', watermark: false }), signal: AbortSignal.timeout(timeoutMs) });
     } catch (error) {
       throw new FirstFrameProviderError(`Seedream 请求状态未知：${transportFailure(error)}`, 'uncertain', input.idempotencyKey);

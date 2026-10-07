@@ -6,6 +6,7 @@ import type { DigitalHumanCapabilities, DigitalHumanJob, TransformationAssessmen
 import { fetchMaterialLibrary, type MaterialLibraryPurpose } from './studioDigitalHuman';
 import type { MaterialScriptAnalysis } from '../../shared/materialScriptAnalysis';
 import { type EffectPlanV1 } from '../../shared/contracts/effectPlan';
+import type { EmphasisPlanV1 } from '../../shared/contracts/emphasisTimeline';
 
 export interface HeyGenAvatarOption {
   id: string;
@@ -220,7 +221,7 @@ export interface StudioAudioCapabilities {
 export interface SubtitleSpec {
   mode: 'off' | 'target' | 'bilingual';
   cues: SubCue[];
-  style: Partial<CoverStyle> & { productNames?: string[]; autoEmphasis?: boolean; fontScale?: number; bottomRatio?: number };
+  style: Partial<CoverStyle> & { productNames?: string[]; autoEmphasis?: boolean; fontScale?: number; bottomRatio?: number; outlineColor?: string; outlineWidth?: number; lineWidth?: number };
 }
 
 export interface RenderSpec {
@@ -238,6 +239,9 @@ export interface RenderSpec {
     targetStart?: number;
     targetEnd?: number;
     targetDuration?: number;
+    cropMode?: 'cover' | 'contain';
+    focusX?: number;
+    focusY?: number;
   }[];
   script: string;
   voice: string;
@@ -254,6 +258,7 @@ export interface RenderSpec {
   coverUrl?: string;
   subtitles?: SubtitleSpec;       // 字幕轨（桌面端 ffmpeg 烧录）
   effectPlan?: EffectPlanV1;      // 版本化白名单特效计划
+  emphasisPlan?: EmphasisPlanV1;  // 可选人工/Agent 校正；服务端缺省时自动生成
 }
 
 export interface RenderManifest {
@@ -279,6 +284,7 @@ export interface RenderManifest {
   bgm: { id: string | null; url: string | null };
   subtitles?: SubtitleSpec;
   effectPlan?: EffectPlanV1;
+  emphasisPlan?: EmphasisPlanV1;
 }
 
 export interface RenderAuthorization {

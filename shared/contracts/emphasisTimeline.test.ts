@@ -1,0 +1,86 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import {
+  emphasisBudgetForDuration,
+  normalizeCaptionSegments,
+  normalizeEmphasisTimeline,
+  normalizeEmphasisPlan,
+  selectEmphasisTimeline,
+} from './emphasisTimeline.js';
+
+test('normalizes the caption layer without promoting keywords to events', () => {
+  assert.deepEqual(normalizeCaptionSegments([{
+    id: 'line 1', startMs: -20, endMs: 1_800, text: '  支持 免费配送  ',
+    speakerId: 'host A', keywords: ['免费配送', '不存在', '免费配送'],
+  }], 5_000), [{
+    id: 'line1', startMs: 0, endMs: 1_800, text: '支持 免费配送',
+    speakerId: 'hostA', keywords: ['免费配送'],
+  }]);
+});
+
+test('uses whole-film soft budgets including doubled long-form density', () => {
+  assert.deepEqual(emphasisBudgetForDuration(10_000), { min: 2, max: 4 });
+  assert.deepEqual(emphasisBudgetForDuration(25_000), { min: 4, max: 8 });
+  assert.deepEqual(emphasisBudgetForDuration(45_000), { min: 6, max: 12 });
+  assert.deepEqual(emphasisBudgetForDuration(61_000), { min: 6, max: 16 });
+});
+
+test('deduplicates repeated semantics, rejects weak facts and enforces one strong emphasis at a time', () => {
+  const events = selectEmphasisTimeline({ durationMs: 30_000, candidates: [
+    { id: 'hook', type: 'hook', startMs: 0, endMs: 1_500, text: '工厂直供', importance: 3, confidence: .9, source: 'transcript' },
+    { id: 'weak-price', type: 'key_fact', startMs: 2_000, endMs: 3_000, text: '只要 99', importance: 3, confidence: .6, source: 'transcript' },
+    { id: 'fact-early', type: 'key_fact', startMs: 5_000, endMs: 6_000, text: '免费配送', targetId: 'delivery', importance: 2, confidence: .9, source: 'transcript' },
+    { id: 'fact-proof', type: 'key_fact', startMs: 12_000, endMs: 13_000, text: '免费配送', targetId: 'delivery', importance: 3, confidence: .96, source: 'metadata' },
+    { id: 'reveal', type: 'reveal', startMs: 12_200, endMs: 13_100, text: '成品', importance: 2, confidence: .9, source: 'vision' },
+  ] });
+  assert.deepEqual(events.map(event => event.id), ['hook', 'fact-proof']);
+});
+
+test('lands a semantic event on the clearest safe supporting shot regardless of material duration', () => {
+  const [event] = selectEmphasisTimeline({
+    durationMs: 20_000,
+    candidates: [{ id: 'factory', type: 'section_label', startMs: 2_000, endMs: 3_500, text: '精密加工', targetId: 'cnc', importance: 3, confidence: .9, source: 'vision' }],
+    placementWindows: [
+      { id: 'wide', startMs: 8_000, endMs: 11_000, targetIds: ['cnc'], safe: true, clarity: .6 },
+      { id: 'detail', startMs: 14_000, endMs: 17_000, targetIds: ['cnc'], safe: true, clarity: .95 },
+      { id: 'blocked', startMs: 4_000, endMs: 7_000, targetIds: ['cnc'], safe: false, clarity: 1 },
+    ],
+  });
+  assert.equal(event?.startMs, 14_000);
+  assert.equal(event?.endMs, 15_500);
+});
+
+test('keeps hook and reveal closer only when they do not overlap', () => {
+  const events = selectEmphasisTimeline({ durationMs: 10_000, candidates: [
+    { id: 'hook', type: 'hook', startMs: 0, endMs: 1_000, importance: 3, confidence: 1, source: 'editor' },
+    { id: 'reveal', type: 'reveal', startMs: 1_600, endMs: 2_500, importance: 3, confidence: 1, source: 'editor' },
+    { id: 'section', type: 'section_label', startMs: 3_000, endMs: 4_000, importance: 3, confidence: 1, source: 'editor' },
+  ] });
+  assert.deepEqual(events.map(event => event.id), ['hook', 'reveal']);
+});
+
+test('normalizes the complete two-layer timeline with a stable schema version', () => {
+  const timeline = normalizeEmphasisTimeline({
+    schemaVersion: 999,
+    captions: [{ startMs: 0, endMs: 1_000, text: '核心卖点' }],
+    emphasisEvents: [{ type: 'hook', startMs: 0, endMs: 900, text: '核心卖点', importance: 3, confidence: 1, source: 'editor' }],
+  }, 5_000);
+  assert.equal(timeline.schemaVersion, 1);
+  assert.equal(timeline.captions.length, 1);
+  assert.equal(timeline.emphasisEvents.length, 1);
+});
+
+test('emits the canonical renderer manifest shape with a closed profile set', () => {
+  const plan = normalizeEmphasisPlan({
+    profile: 'arbitrary-css', maxEvents: 1,
+    captions: [{ startMs: 0, endMs: 1_000, text: '字幕' }],
+    events: [
+      { id: 'hook', type: 'hook', startMs: 0, endMs: 900, text: '钩子', importance: 3, confidence: 1, source: 'editor' },
+      { id: 'cta', type: 'cta', startMs: 3_000, endMs: 4_000, text: '咨询', importance: 3, confidence: 1, source: 'editor' },
+    ],
+  }, 5_000);
+  assert.equal(plan.profile, 'talking_head');
+  assert.equal(plan.maxEvents, 1);
+  assert.equal(plan.events.length, 1);
+  assert.equal(plan.captions.length, 1);
+});

@@ -39,6 +39,11 @@ async function main() {
   assert.equal(subtitlePages('한국어 문장을 유지합니다', 12.45).flat().join(' '), '한국어 문장을 유지합니다', 'Korean word spacing survives layout');
   assert.match(ass, /Style: Default,Source Han Sans SC,72,/, 'mobile font scales with canvas width');
   assert.match(ass, /,92,92,384,1/, 'captions sit below the face, above bottom UI');
+  const emphasisOnlyAss = cuesToAss([], 1080, 1920, '', 3, {}, {
+    profile: 'talking_head',
+    events: [{ type: 'hook', text: '核心卖点', startMs: 0, endMs: 1200, strength: 'strong', anchor: { x: .5, y: .18 } }],
+  });
+  assert.match(emphasisOnlyAss, /核心卖点/, 'emphasis renders even when the segment has no spoken subtitle');
   const audio = fs.readFileSync(path.join(__dirname, '../server/assets/bgm/tech-pulse.mp3'));
   let servedImage;
   let ownedImageRequests = 0;

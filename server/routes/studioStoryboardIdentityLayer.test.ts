@@ -16,12 +16,14 @@ const projectId = `identity-project-${suffix}`;
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'identity-route-'));
 const oldFetch = globalThis.fetch;
 const oldEnv = Object.fromEntries(['DASHSCOPE_API_KEY', 'DASHSCOPE_BASE_URL', 'DASHSCOPE_IMAGE_BASE_URL',
+  'SEEDREAM_API_KEY', 'SEEDREAM_BASE_URL',
   'OBJECT_STORAGE_DRIVER', 'LOCAL_OBJECT_STORAGE_ROOT', 'STORYBOARD_AIGC_BATCH_BUDGET_CNY',
   'STORYBOARD_AIGC_BUDGET_DIR', 'STORYBOARD_CLONE_GEOMETRY_QWEN_ENABLED',
   'STORYBOARD_AIGC_CLONE_GEOMETRY_ESTIMATED_CNY', 'DEMO_MODE', 'SUBSCRIPTION_ENFORCED'].map(key => [key, process.env[key]]));
 Object.assign(process.env, {
   DASHSCOPE_API_KEY: 'test-only', DASHSCOPE_BASE_URL: 'https://mock.identity/compatible-mode/v1',
   DASHSCOPE_IMAGE_BASE_URL: 'https://mock.identity/compatible-mode/v1', OBJECT_STORAGE_DRIVER: 'local',
+  SEEDREAM_API_KEY: 'test-only', SEEDREAM_BASE_URL: 'https://mock.identity/compatible-mode/v1',
   LOCAL_OBJECT_STORAGE_ROOT: path.join(temp, 'objects'), STORYBOARD_AIGC_BATCH_BUDGET_CNY: '200',
   STORYBOARD_AIGC_BUDGET_DIR: path.join(temp, 'budget'), STORYBOARD_CLONE_GEOMETRY_QWEN_ENABLED: 'true',
   STORYBOARD_AIGC_CLONE_GEOMETRY_ESTIMATED_CNY: '0.1', DEMO_MODE: 'false', SUBSCRIPTION_ENFORCED: 'false',
@@ -147,15 +149,16 @@ try {
   const cloneSaved = readLocalMaterials().find(item => item.id === clone.body.material.id);
   assert.equal(cloneSaved?.provenance?.identityLayer?.strategy, 'exact_source_pixels');
   assert.equal(cloneSaved?.provenance?.geometryPlan?.source, 'observed_source_frame');
-  assert.equal(cloneSaved?.provenance?.estimatedCostCny, .4);
+  assert.equal(cloneSaved?.provenance?.estimatedCostCny, .1,
+    'direct Seedance routing charges only the geometry observation and skips Seedream cost');
   assert.equal(geometryPosts, 1, 'only current-shot source frame is observed once');
-  assert.equal(imagePosts, 5);
-  assert.equal(imageRequests[4]!.image?.length, 1, 'clone clean plate receives only current-shot composition reference');
+  assert.equal(imagePosts, 4, 'reliable clone composition bypasses Seedream');
+  assert.equal(cloneSaved?.provenance?.identityLayer?.directToSeedance, true);
   const replay = await request('clone', undefined, true);
   assert.equal(replay.status, 200, JSON.stringify(replay.body));
   assert.equal(replay.body.reused, true);
   assert.equal(geometryPosts, 1, 'idempotent replay must not re-observe the paid source frame');
-  assert.equal(imagePosts, 5, 'idempotent replay must not regenerate the first frame');
+  assert.equal(imagePosts, 4, 'idempotent replay must not regenerate the first frame');
   console.log('storyboard identity route mocked exact/fallback passed');
 } finally {
   server.close(); globalThis.fetch = oldFetch;

@@ -26,6 +26,7 @@ import { spokenLanguageMatches } from '../../shared/contracts/videoCreationPlan.
 import { buildMaterialScriptAnalysis, type MaterialScriptAnalysis } from '../../shared/materialScriptAnalysis.js';
 import { normalizeVideoLanguage, VIDEO_LANGUAGES } from '../../shared/contracts/videoLanguages.js';
 import { normalizeEffectPlan, type EffectPlanV1 } from '../../shared/contracts/effectPlan.js';
+import { buildStudioEmphasisPlan, type StudioEmphasisPlan, type StudioEmphasisPlanInput } from '../lib/studioEmphasisManifest.js';
 import { inspectRenderedVisuals } from '../lib/renderVisualQuality.js';
 import { dashscopeCredentialConfigured, inspectGeneratedVoice, type VoiceQualityReport } from '../lib/voiceQuality.js';
 import { downloadHeygenSubtitles, heygenConfigured, heygenRequest, listHeygenAvatars, submitHeygenVideo, downloadHeygenOutput } from '../integrations/heygen.js';
@@ -61,6 +62,9 @@ import { secureStudioRenderManifest, studioRenderAssetPath, studioRenderManifest
 import { studioBgmMediaPath, studioBgmObjectKey } from '../lib/studioBgmAccess.js';
 import { consumeDemoQuota, isDemoMode } from '../lib/demo.js';
 import { generatePosterImage, ImageProviderRejectedError, imageExt, type ReferenceImage } from '../lib/imageGen.js';
+import { SeedreamFirstFrameGenerator } from '../lib/seedreamFirstFrameGenerator.js';
+import { FirstFrameProviderError, firstFrameInputFingerprint, type FirstFrameReferenceRole } from '../lib/firstFrameGenerator.js';
+import { storyboardFirstFrameExecutionRoute } from '../lib/storyboardFirstFrameRouting.js';
 import { buildStoryboardFirstFramePrompt, buildStoryboardVideoActionPrompt, STORYBOARD_FIRST_FRAME_PROMPT_VERSION, type StoryboardSceneType, type StoryboardMode } from '../lib/storyboardAigcPrompt.js';
 import { compileStoryboardShotSpec, type StoryboardShotSpec } from '../../shared/storyboardShotSpec.js';
 import { prepareProductIdentityLayer, verifiedTransparentCutoutGeometry } from '../lib/productIdentityPreparation.js';
@@ -122,7 +126,7 @@ export {
   unsupportedNumericClaims,
 } from '../lib/studioGenerationTruthfulness.js';
 import { canAppearInSharedLibrary, isReferenceOnlyMaterial, materialUsage, type MaterialUsage } from '../lib/materialPolicy.js';
-import { cloudMaterialView, createCloudMaterial, deleteOwnedCloudMaterial, fetchCloudMaterial, getCloudMaterialRecord, getOwnedCloudMaterialRecord, listCloudMaterials, updateCloudMaterial } from '../lib/cloudMaterials.js';
+import { cloudMaterialView, createCloudMaterial, deleteOwnedCloudMaterial, fetchCloudMaterial, getCloudMaterialRecord, getOwnedCloudMaterialRecord, listCloudMaterials, updateCloudMaterial, upsertTenantUploadCloudMaterial } from '../lib/cloudMaterials.js';
 import { analyzeVideo } from '../agents/gemini.js';
 import {
   analyzeVideoFramesWithQwen,
@@ -1913,7 +1917,7 @@ studioRouter.post('/storyboard-first-frame', async (req, res) => {
     ? savedPlacement.contactScene as 'tabletop' | 'conveyor'
     : hasConveyor !== hasTabletop ? (hasConveyor ? 'conveyor' : 'tabletop') : null;
   let geometryPlan: StoryboardGeometryPlan | null = null;
-  if (mode === 'free_creation' && verifiedSourceCutout && sourceCutout && geometryScene) {
+  if (verifiedSourceCutout && sourceCutout && geometryScene) {
     geometryPlan = await planStoryboardExactProductGeometry({ shotId, mode, scene: geometryScene,
       confirmedVisual, product: { assetId: sourceCutout.id, version: sourceCutoutVersion, view: 'source',
         cutoutAspectRatio: sourceCutoutGeometry!.aspectRatio },
@@ -1952,9 +1956,7 @@ studioRouter.post('/storyboard-first-frame', async (req, res) => {
   // tabletop or conveyor product in its knowledge-base image's own view.
   // Handheld needs a verified aligned foreground hand mask and stays on the
   // generative route until that asset exists.
-  const identityPreflight = mode === 'replication'
-    ? { status: 'generative_fallback' as const, reason: 'clone_geometry_observer_not_budgeted' }
-    : !geometryPlan || geometryPlan.status !== 'ready'
+  const identityPreflight = !geometryPlan || geometryPlan.status !== 'ready'
       ? { status: 'generative_fallback' as const,
         reason: geometryPlan?.status === 'blocked' ? geometryPlan.code : 'contact_scene_or_cutout_unavailable' }
       : shotSpec.scene === 'usage'
@@ -2044,8 +2046,8 @@ studioRouter.post('/storyboard-first-frame', async (req, res) => {
   if (!planned || planned.status !== 'ready') {
     res.status(409).json({ ok: false, code: 'STORYBOARD_BUDGET_PLAN_UNAVAILABLE', error: '当前分镜未进入智能生成预算计划，未调用供应商', plan: planned }); return;
   }
-  if (!String(process.env.DASHSCOPE_API_KEY || '').trim()) {
-    res.status(423).json({ ok: false, code: 'STORYBOARD_IMAGE_PROVIDER_UNAVAILABLE', error: '首帧模型尚未配置，未调用供应商' }); return;
+  if (!String(process.env.SEEDREAM_API_KEY || process.env.SEEDANCE_API_KEY || '').trim()) {
+    res.status(423).json({ ok: false, code: 'STORYBOARD_IMAGE_PROVIDER_UNAVAILABLE', error: 'Seedream 首帧模型尚未配置，未调用供应商' }); return;
   }
   if (!await consumeDemoQuota(req, res, 'generation')) return;
   const frameOperationId = `firstframe:${createHash('sha256').update(`${tenantId}:${String(body.projectId)}:${shotId}:${requestId}`).digest('hex')}`;
@@ -2120,19 +2122,54 @@ studioRouter.post('/storyboard-first-frame', async (req, res) => {
       environmentImage ? 'Use the selected environment reference only for directly visible spatial appearance. Do not infer factory ownership, equipment capabilities, certifications or other business claims.' : '',
       'Do not draw any product, package, hand, extra prop, brand, readable label, subtitle or watermark in or over the empty product slot. A separate exact knowledge-base product cutout will be inserted after this plate is generated.',
     ].filter(Boolean).join('\n');
-    const providerGenerated = await generatePosterImage({ prompt: useExactProductLayer ? cleanPlatePrompt : prompt,
-      ratio, references: useExactProductLayer ? [sourceFrame, environmentImage].filter(Boolean) as ReferenceImage[] : references });
-    let generated = providerGenerated;
+    let directCompositionUsed = false;
     let identityLayer: Record<string, unknown> = { strategy: 'generative', fallbackReason: identityFallbackReason };
-    if (useExactProductLayer) {
+    let generated: { bytes: Buffer; mimeType: string; source: string; model: string };
+    const firstFrameRoute = storyboardFirstFrameExecutionRoute({ hasReliableComposition: !!sourceFrame,
+      hasExactProductLayer: useExactProductLayer,
+      seedanceModel: String(process.env.SEEDANCE_MODEL || 'doubao-seedance-2-0-fast-260128'),
+      multimodalEnabled: process.env.SEEDANCE_STORYBOARD_MULTIMODAL_ENABLED !== 'false' });
+    if (firstFrameRoute === 'direct_seedance_input') {
       const prepared = await prepareProductIdentityLayer({ spec: shotSpec, cleanPlate: true,
-        background: Buffer.from(providerGenerated.bytes),
+        background: Buffer.from(sourceFrame!.base64, 'base64'),
         assetBytes: new Map(productReferences.map(item => [item.imageUrl, Buffer.from(item.image.base64, 'base64')])) });
       if (prepared.status !== 'eligible') throw new Error(`product_identity_preparation_changed:${prepared.reason}`);
       const composite = await compositeProductIdentityLayer(prepared.composite);
-      generated = { ...providerGenerated, bytes: composite.bytes, mimeType: 'image/png' };
+      generated = { bytes: composite.bytes, mimeType: 'image/png', source: 'local_exact_composite',
+        model: `${String(process.env.SEEDANCE_MODEL || 'doubao-seedance-2-0-fast-260128')}:direct-input` };
+      identityLayer = { strategy: 'exact_source_pixels', directToSeedance: true, ...prepared.provenance,
+        productBox: composite.productBox, occludedProductFraction: composite.occludedProductFraction };
+      directCompositionUsed = true;
+    } else {
+      const selectedReferences = useExactProductLayer
+        ? [sourceFrame, environmentImage].filter(Boolean) as ReferenceImage[] : references;
+      const seedream = new SeedreamFirstFrameGenerator();
+      const seedreamReferences = selectedReferences.map(reference => {
+        const role: FirstFrameReferenceRole = sourceFrame && reference === sourceFrame ? 'source_composition'
+          : environmentImage && reference === environmentImage ? 'enterprise_environment'
+            : characterImage && reference === characterImage ? 'authorized_presenter' : 'product_identity';
+        const bytes = Buffer.from(reference.base64, 'base64');
+        return { role, bytes, mimeType: reference.mimeType as 'image/jpeg' | 'image/png' | 'image/webp',
+          sha256: createHash('sha256').update(bytes).digest('hex') };
+      });
+      const seedreamRequest = {
+        referenceMode: 'storyboard_scene' as const, tenantId, videoId: String(body.projectId), compositionId: shotId,
+        presenterVersion: fingerprint, prompt: useExactProductLayer ? cleanPlatePrompt : prompt,
+        ratio: ratio as '9:16' | '16:9' | '1:1', references: seedreamReferences, idempotencyKey: '',
+      };
+      seedreamRequest.idempotencyKey = firstFrameInputFingerprint(seedreamRequest, seedream.provider, seedream.model);
+      const seedreamResult = await seedream.generate(seedreamRequest);
+      generated = { ...seedreamResult, source: seedreamResult.provider };
+    }
+    if (useExactProductLayer && !directCompositionUsed) {
+      const prepared = await prepareProductIdentityLayer({ spec: shotSpec, cleanPlate: true,
+        background: Buffer.from(generated.bytes),
+        assetBytes: new Map(productReferences.map(item => [item.imageUrl, Buffer.from(item.image.base64, 'base64')])) });
+      if (prepared.status !== 'eligible') throw new Error(`product_identity_preparation_changed:${prepared.reason}`);
+      const composite = await compositeProductIdentityLayer(prepared.composite);
+      generated = { ...generated, bytes: composite.bytes, mimeType: 'image/png' };
       identityLayer = { strategy: 'exact_source_pixels', ...prepared.provenance, productBox: composite.productBox,
-        occludedProductFraction: composite.occludedProductFraction, cleanPlateModel: providerGenerated.model };
+        occludedProductFraction: composite.occludedProductFraction, cleanPlateModel: generated.model };
     }
     let firstFrameObservations: unknown = [];
     try {
@@ -2162,14 +2199,17 @@ studioRouter.post('/storyboard-first-frame', async (req, res) => {
     material.sourceType = 'ai-storyboard-first-frame';
     material.productId = productReferences[0]?.id;
     material.productName = productReferences.map(item => item.name).join('、') || undefined;
-    material.provenance = { projectId: String(body.projectId || ''), shotId, fingerprint, projectShotFingerprint: projectShotInput.fingerprint, requestId, promptVersion: STORYBOARD_FIRST_FRAME_PROMPT_VERSION, sceneType, mode, shotSpec, geometryPlan, actionKeyStates, actionBeatDurations, productIds, identityLayer, firstFrameQuality, confirmed: false, model: generated.model,
-      estimatedCostCny: studioAigcBudgetConfigFromEnv().firstFrameCostCny
+    material.provenance = { projectId: String(body.projectId || ''), shotId, fingerprint, projectShotFingerprint: projectShotInput.fingerprint, requestId, promptVersion: STORYBOARD_FIRST_FRAME_PROMPT_VERSION, sceneType, mode, shotSpec, geometryPlan, actionKeyStates, actionBeatDurations, productIds, identityLayer, firstFrameQuality, confirmed: false, provider: generated.source, model: generated.model,
+      estimatedCostCny: (directCompositionUsed ? 0 : studioAigcBudgetConfigFromEnv().firstFrameCostCny)
         + (geometryObserverAttempted ? Number(planned.estimatedGeometryObservationCostCny || 0) : 0),
       generationLatencyMs: Date.now() - generationStartedAt };
     const list = loadMaterials();
     const index = list.findIndex(item => item.id === material.id);
     if (index >= 0) { list[index] = material; persistMaterials(list); }
-    if (!geometryObserverAttempted && Number(planned.estimatedGeometryObservationCostCny || 0) > 0) {
+    if (directCompositionUsed) {
+      await storyboardAigcProjectBudget.settlePartial(tenantId, String(body.projectId), frameOperationId,
+        geometryObserverAttempted ? Number(planned.estimatedGeometryObservationCostCny || 0) : 0, { materialId: material.id });
+    } else if (!geometryObserverAttempted && Number(planned.estimatedGeometryObservationCostCny || 0) > 0) {
       await storyboardAigcProjectBudget.settlePartial(tenantId, String(body.projectId), frameOperationId,
         planned.estimatedFirstFrameCostCny - Number(planned.estimatedGeometryObservationCostCny), { materialId: material.id });
     } else {
@@ -2178,7 +2218,7 @@ studioRouter.post('/storyboard-first-frame', async (req, res) => {
     res.json({ ok: true, material: await materialResponse(material, tenantId), fingerprint, promptVersion: STORYBOARD_FIRST_FRAME_PROMPT_VERSION,
       model: generated.model, firstFrameQuality, identityNotice: storyboardIdentityNotice(identityLayer, productReferences.length > 0) });
   } catch (error) {
-    if (error instanceof ImageProviderRejectedError) {
+    if (error instanceof ImageProviderRejectedError || error instanceof FirstFrameProviderError && error.status === 'rejected') {
       if (geometryObserverAttempted) {
         await storyboardAigcProjectBudget.settlePartial(tenantId, String(body.projectId), frameOperationId,
           Number(planned.estimatedGeometryObservationCostCny || 0)).catch(markError =>
@@ -5007,6 +5047,10 @@ interface RenderSpec {
     targetStart?: number;
     targetEnd?: number;
     targetDuration?: number;
+    purpose?: string;
+    caption?: string;
+    targetVisual?: string;
+    action?: string;
   }[];
   script?: string;
   voice?: string;
@@ -5023,6 +5067,7 @@ interface RenderSpec {
   voiceoverUrl?: string; // 前端在脚本步生成配音后回传的 /tts/xxx.wav
   subtitles?: SubtitleSpec; // 字幕轨：桌面端 ffmpeg 按 cue 烧录
   effectPlan?: EffectPlanV1; // 白名单特效计划；服务端会再次标准化
+  emphasisPlan?: StudioEmphasisPlanInput; // 可选人工/Agent 校正；缺省时由字幕与分镜静默生成
 }
 
 interface RenderManifest {
@@ -5046,6 +5091,7 @@ interface RenderManifest {
   bgm: { id: string | null; url: string | null };
   subtitles?: SubtitleSpec;
   effectPlan?: EffectPlanV1;
+  emphasisPlan: StudioEmphasisPlan;
 }
 
 function absoluteAssetUrl(base: string, value?: string | null): string | null {
@@ -5069,6 +5115,13 @@ function buildManifest(jobId: string, spec: RenderSpec, base: string): RenderMan
     clipId: item.clipId,
     targetDuration: item.targetDuration,
   }))) : undefined;
+  const emphasisPlan = buildStudioEmphasisPlan({
+    durationSeconds: spec.duration ?? 20,
+    script: spec.script,
+    subtitles: spec.subtitles,
+    timeline: rawTimeline,
+    emphasisPlan: spec.emphasisPlan,
+  });
   return {
     jobId,
     requireVisualAssets: true,
@@ -5099,6 +5152,7 @@ function buildManifest(jobId: string, spec: RenderSpec, base: string): RenderMan
     })(),
     subtitles: spec.subtitles && spec.subtitles.mode !== 'off' ? spec.subtitles : undefined,
     effectPlan: normalizedEffectPlan,
+    emphasisPlan,
   };
 }
 
@@ -6082,7 +6136,7 @@ async function saveMaterialUploadToDatabase(input: {
     type: input.type,
     duration: input.duration,
   });
-  const record = await createCloudMaterial({
+  const material = await upsertTenantUploadCloudMaterial({
     tenantId: input.tenantId,
     title: input.name || input.mediaName,
     folder: input.folder,
@@ -6100,14 +6154,16 @@ async function saveMaterialUploadToDatabase(input: {
     sourceUrl: input.sourceUrl || undefined,
     provenance: {
       uploadMethod: 'studio_my_materials',
+      sourceEntry: 'studio_workspace',
       originalName: input.name || input.mediaName,
       mimeType: input.mimeType,
       receivedAt: new Date().toISOString(),
     },
+    sourceEntry: 'studio_workspace',
     media: { name: input.mediaName, path: input.mediaPath, contentType: input.mimeType },
     poster,
   });
-  return cloudMaterialView(record) as unknown as Material;
+  return material as unknown as Material;
 }
 
 // POST /studio/materials/file
