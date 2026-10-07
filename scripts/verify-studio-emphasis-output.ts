@@ -34,10 +34,18 @@ const fontSize = Math.round(Math.min(width, height) / 18 * Math.max(.7, Math.min
 const maxUnitsPerLine = Math.min(12, (width - Math.round(width * .085) * 2) / fontSize, Math.max(8, Number(style.lineWidth) || 10));
 const cues = Array.isArray(manifest.subtitles?.cues) ? manifest.subtitles.cues : [];
 const spoken = cues.filter((cue: any) => cue?.kind !== 'screen');
+const transcriptKey = (input: unknown) => String(input || '').normalize('NFKC').toLocaleLowerCase()
+  .replace(/[^\p{L}\p{N}]+/gu, ' ').trim().replace(/\s+/g, ' ');
+const expectedTranscript = transcriptKey(manifest.acceptance?.expectedTranscript);
+const renderedTranscript = transcriptKey(spoken.map((cue: any) => cue?.text || '').join(' '));
 const normalizedCues = normalizeSubtitleCues(spoken, { maxUnitsPerLine, maxUnitsPerPage: 16 });
 const plan = normalizeEmphasisPlan(manifest.emphasisPlan || manifest.emphasis, duration);
 const events = advancedEvents(plan);
 const failures: Failure[] = [];
+if (expectedTranscript && renderedTranscript !== expectedTranscript) failures.push({
+  check: 'subtitle_transcript_completeness',
+  detail: 'rendered subtitle cues do not exactly cover the accepted source transcript',
+});
 const unit = (char: string) => /\s/.test(char) ? .35 : /[ilI.,!:'`|]/.test(char) ? .28 : /[frt()]/.test(char) ? .36
   : /[MWmw@]/.test(char) ? .82 : /[A-Z]/.test(char) ? .66 : /[\x00-\xff]/.test(char) ? .54 : 1;
 const units = (text: string) => Array.from(text).reduce((sum, char) => sum + unit(char), 0);
@@ -196,7 +204,8 @@ const inputHash = crypto.createHash('sha256').update(JSON.stringify({ plan: mani
 const report = { schemaVersion: 'studio-emphasis-output-acceptance.v1', passed: failures.length === 0, manifest: path.resolve(manifestPath), video,
   subtitle: { fontSize, cueCount: normalizedCues.length, maxLines: 2, maxUnitsPerLine,
     timedWordCount: timedWords.length, wordHighlightCount: wordHighlightDialogues.length, dialogueCount: subtitleDialogues.length,
-    generatedDialogueUnique: new Set(dialogueKeys).size === dialogueKeys.length, sourceHasBurnedCaptions }, overlay: { eventCount: events.length, assetEvidence },
+    generatedDialogueUnique: new Set(dialogueKeys).size === dialogueKeys.length, sourceHasBurnedCaptions,
+    transcriptComplete: !expectedTranscript || renderedTranscript === expectedTranscript }, overlay: { eventCount: events.length, assetEvidence },
   cache: { rendererVersion: RENDERER_VERSION, sourceHash: cacheSourceHash, signature: cacheSignature, inputHash }, frameTimes, failures };
 const reportPath = value('--report');
 if (reportPath) fs.writeFileSync(path.resolve(reportPath), `${JSON.stringify(report, null, 2)}\n`);

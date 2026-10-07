@@ -1,5 +1,5 @@
 {
-  "jobId": "hongyu-first10-word-highlight-v8",
+  "jobId": "hongyu-first10-word-highlight-v9",
   "spec": {
     "ratio": "9:16",
     "duration": 10,
@@ -39,117 +39,155 @@
       {
         "id": "en-1",
         "start": 0.0,
-        "end": 2.8,
+        "end": 1.55,
         "text": "Hello boss.",
         "timingPrecision": "acceptance_fixture_estimate",
         "words": [
           {
             "text": "Hello",
-            "startMs": 100,
-            "endMs": 1250
+            "startMs": 250,
+            "endMs": 720
           },
           {
             "text": "boss",
-            "startMs": 1250,
-            "endMs": 2600
+            "startMs": 720,
+            "endMs": 1300
           }
         ]
       },
       {
         "id": "en-2",
-        "start": 2.8,
-        "end": 6.484,
-        "text": "Do you want to buy more indoor lighting for your market?",
-        "timingPrecision": "acceptance_fixture_estimate",
+        "start": 1.75,
+        "end": 2.8,
+        "text": "Are you from Vietnam?",
+        "timingPrecision": "source_caption_calibrated",
         "words": [
           {
-            "text": "Do",
-            "startMs": 2800,
-            "endMs": 3100
+            "text": "Are",
+            "startMs": 1750,
+            "endMs": 1980
           },
           {
             "text": "you",
-            "startMs": 3100,
-            "endMs": 3400
+            "startMs": 1980,
+            "endMs": 2180
           },
           {
-            "text": "want",
-            "startMs": 3400,
-            "endMs": 3750
+            "text": "from",
+            "startMs": 2180,
+            "endMs": 2400
           },
           {
-            "text": "to",
-            "startMs": 3750,
-            "endMs": 4000
-          },
-          {
-            "text": "buy",
-            "startMs": 4000,
-            "endMs": 4350
-          },
-          {
-            "text": "more",
-            "startMs": 4350,
-            "endMs": 4700
-          },
-          {
-            "text": "indoor",
-            "startMs": 4700,
-            "endMs": 5150
-          },
-          {
-            "text": "lighting",
-            "startMs": 5150,
-            "endMs": 5600
-          },
-          {
-            "text": "for",
-            "startMs": 5600,
-            "endMs": 5850
-          },
-          {
-            "text": "your",
-            "startMs": 5850,
-            "endMs": 6150
-          },
-          {
-            "text": "market",
-            "startMs": 6150,
-            "endMs": 6420
+            "text": "Vietnam",
+            "startMs": 2400,
+            "endMs": 2740
           }
         ]
       },
       {
         "id": "en-3",
-        "start": 6.484,
-        "end": 8.3,
-        "text": "Look here. I'm Lucy.",
-        "timingPrecision": "acceptance_fixture_estimate",
+        "start": 3.0,
+        "end": 6.35,
+        "text": "Do you want to buy more indoor lighting for your market?",
+        "timingPrecision": "source_caption_calibrated",
         "words": [
           {
-            "text": "Look",
-            "startMs": 6484,
-            "endMs": 6850
+            "text": "Do",
+            "startMs": 3000,
+            "endMs": 3200
           },
           {
-            "text": "here",
-            "startMs": 6850,
-            "endMs": 7250
+            "text": "you",
+            "startMs": 3200,
+            "endMs": 3400
           },
           {
-            "text": "I'm",
-            "startMs": 7350,
-            "endMs": 7700
+            "text": "want",
+            "startMs": 3400,
+            "endMs": 3700
           },
           {
-            "text": "Lucy",
-            "startMs": 7700,
-            "endMs": 8250
+            "text": "to",
+            "startMs": 3700,
+            "endMs": 3870
+          },
+          {
+            "text": "buy",
+            "startMs": 3870,
+            "endMs": 4130
+          },
+          {
+            "text": "more",
+            "startMs": 4130,
+            "endMs": 4400
+          },
+          {
+            "text": "indoor",
+            "startMs": 4400,
+            "endMs": 4780
+          },
+          {
+            "text": "lighting",
+            "startMs": 4780,
+            "endMs": 5160
+          },
+          {
+            "text": "for",
+            "startMs": 5160,
+            "endMs": 5370
+          },
+          {
+            "text": "your",
+            "startMs": 5370,
+            "endMs": 5600
+          },
+          {
+            "text": "market",
+            "startMs": 5600,
+            "endMs": 6200
           }
         ]
       },
       {
         "id": "en-4",
+        "start": 6.65,
+        "end": 7.75,
+        "text": "Look here.",
+        "timingPrecision": "source_caption_calibrated",
+        "words": [
+          {
+            "text": "Look",
+            "startMs": 6650,
+            "endMs": 7080
+          },
+          {
+            "text": "here",
+            "startMs": 7080,
+            "endMs": 7580
+          }
+        ]
+      },
+      {
+        "id": "en-5",
+        "start": 7.8,
+        "end": 8.3,
+        "text": "I'm Lucy.",
+        "timingPrecision": "source_caption_calibrated",
+        "words": [
+          {
+            "text": "I'm",
+            "startMs": 7800,
+            "endMs": 8000
+          },
+          {
+            "text": "Lucy",
+            "startMs": 8000,
+            "endMs": 8280
+          }
+        ]
+      },
+      {
+        "id": "en-6",
         "start": 8.3,
         "end": 10.0,
         "text": "A 30-year indoor lighting factory.",
@@ -745,7 +783,8 @@
   },
   "acceptance": {
     "purpose": "word-level subtitle render contract only",
-    "wordTiming": "estimated; replace with measured ASR before editorial approval",
+    "wordTiming": "source-caption calibrated preview; replace with measured ASR before editorial approval",
+    "expectedTranscript": "Hello boss. Are you from Vietnam? Do you want to buy more indoor lighting for your market? Look here. I'm Lucy. A 30-year indoor lighting factory.",
     "sourceHasBurnedCaptions": true,
     "burnedCaptionsCovered": false
   },
