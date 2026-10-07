@@ -207,3 +207,11 @@ assert.match(assetComponent, /frame < playFrames/, 'runtime switches at the effe
 assert.match(assetComponent, /playback\.holdAsset/, 'runtime freezes on the selected visible hold frame');
 assert.doesNotMatch(assetComponent, /loopBehavior="loop"/);
 console.log('remotion overlay selection regression passed');
+
+for (const presentationMode of ['caption_emphasis', 'none']) {
+  const suppressed = advancedEvents({ events: [{ id: 'aligned-fact', type: 'key_fact', text: '30 years',
+    startMs: 100, endMs: 1900, presentationMode }], motionEvents: [{ id: 'motion-aligned-fact',
+    emphasisType: 'key_fact', startMs: 200, endMs: 1200, visualRole: 'caption_companion',
+    anchor: { cueId: 'cue', phrase: '30 years', boundary: 'center' }, target: { kind: 'caption', confidence: .9 } }] });
+  assert.deepEqual(suppressed, [], 'semantic motion cannot promote a shot-aligned caption-only or disabled event');
+}

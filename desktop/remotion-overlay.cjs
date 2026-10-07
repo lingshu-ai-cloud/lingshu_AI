@@ -323,6 +323,8 @@ function mergeMotionEvents(plan) {
 const mappedAdvancedEvents = plan => mergeMotionEvents(plan)
   .filter(event => ['key_fact', 'reveal', 'cta'].includes(event.type))
   .flatMap((event, index) => {
+    // Shot alignment's degradation decision also governs semantic motion.
+    if (['caption_emphasis', 'none'].includes(event.presentationMode)) return [];
     const evidence = event && typeof (event.evidence || event.evidenceTime || event.evidenceWindow) === 'object'
       ? (event.evidence || event.evidenceTime || event.evidenceWindow) : {};
     const startMs = Math.max(Number(event.startMs) || 0, Number(event.evidenceStartMs ?? evidence.startMs) || 0);
