@@ -98,11 +98,13 @@ export interface WeeklyPublicationWorkerResult {
 export async function runWeeklyPublicationPackageScan(input: {
   dataStore?: DataStore;
   limit?: number;
+  tenantId?: string;
+  taskId?: string;
 } = {}): Promise<WeeklyPublicationWorkerResult> {
   const dataStore = input.dataStore ?? store;
   const limit = Math.min(Math.max(input.limit ?? 100, 1), 500);
   const rows = await dataStore.list<ArtifactRow>('starter_social_content_artifacts', {
-    where: { status: 'approved' }, sort: 'updated_at', page: 1, perPage: limit,
+    where: { status: 'approved', ...(input.tenantId ? { tenant_id: input.tenantId } : {}), ...(input.taskId ? { task_id: input.taskId } : {}) }, sort: 'updated_at', page: 1, perPage: limit,
   });
   const result: WeeklyPublicationWorkerResult = { scanned: rows.items.length, createdAssignments: 0, createdPackages: 0, skipped: 0, errors: [] };
   for (const artifact of rows.items) {
@@ -127,6 +129,21 @@ export async function runWeeklyPublicationPackageScan(input: {
       if (weekly.version !== lineage.packageRef.version || weekly.packageId !== lineage.packageRef.id) throw new Error('weekly_operating_package_lineage_mismatch');
       const publicationTask = weekly.socialContentPackage.publicationTasks.find(item => item.publicationTaskId === lineage.publicationTaskRef.id);
       if (!publicationTask) throw new Error('weekly_publication_task_not_found');
+      // Weekly execution acceptance is independent from automatic artifact QC approval.
+      const boundTasks = await dataStore.list<any>('starter_social_content_tasks', {
+        where: { tenant_id: tenantId, task_id: artifact.task_id }, page: 1, perPage: 2,
+      });
+      const boundTask = boundTasks.items[0];
+      if (String(boundTask?.create_idempotency_key ?? '').startsWith('weekly-production:')) {
+        const approvals = await dataStore.list<any>('social_weekly_execution_tasks', {
+          where: { tenant_id: tenantId, package_id: weekly.packageId, package_version: weekly.version }, page: 1, perPage: 1000,
+        });
+        if (approvals.totalItems > approvals.items.length) throw new Error('weekly_approval_scan_truncated');
+        const accepted = approvals.items.some(row => row.payload?.publicationTaskId === publicationTask.publicationTaskId
+          && row.payload?.schedule?.stepKind === 'user_approval' && row.payload?.status === 'succeeded'
+          && row.payload?.resultRefs?.some((ref: any) => ref.type === 'starter_social_content_artifact' && ref.id === artifactId && ref.version === Number(String(artifact.version).replace(/^v/, ''))));
+        if (!accepted) { result.skipped += 1; continue; }
+      }
       const publishable = productionFromArtifact(artifact, lineage, weekly);
       const assignment = buildPublicationAssignment({ tenantId, operatingPackage: weekly, publicationTask, productionResult: publishable });
       const persisted = await persistPublicationAssignment(assignment, dataStore);

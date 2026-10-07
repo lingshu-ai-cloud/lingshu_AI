@@ -8,6 +8,8 @@ async function request<T>(path: string, body?: unknown): Promise<T> {
   return value;
 }
 export const productionApi = {
+  avatarSourceCaptions: (body: { projectId: string; assemblyId: string; shotId: string; slotId: string; materialId: string; confirmedPaidAsr?: boolean }) =>
+    request<{ materialId: string; transcript: string; cues: Array<{ text: string; start: number; end: number }>; provenance: string; sourceHash?: string; cached: boolean }>('/avatar-source-captions', body),
   arkEnrollmentCapabilities: () => request<{ ready: boolean; reason: string }>('/presenters/ark-enrollments/capabilities'),
   uploadArkMaterial: async (file: File, type: 'image' | 'video') => {
     const fallbackMime = type === 'video' ? /\.mov$/i.test(file.name) ? 'video/quicktime' : /\.webm$/i.test(file.name) ? 'video/webm' : 'video/mp4' : 'application/octet-stream';

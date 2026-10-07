@@ -31,6 +31,44 @@ export interface NarrationTimelineResult<T extends NarrationTimelineShot> {
   paragraphs: Array<{ text: string; firstShot: number; lastShot: number; start: number; end: number; source: 'avatar' | 'mixed' | 'ai' }>;
 }
 
+/** Source-video cues are local to the generated clip, never to the AI voiceover. */
+export function sourceCuesForShot(cues: SpeechCue[] | undefined, duration: number): SpeechCue[] {
+  if (!Array.isArray(cues) || !Number.isFinite(duration) || duration <= 0) return [];
+  const valid = cues.map(cue => ({ ...cue, text: String(cue.text || '').trim(), start: Number(cue.start), end: Number(cue.end) }))
+    .filter(cue => cue.text && Number.isFinite(cue.start) && Number.isFinite(cue.end)
+      && cue.start >= 0 && cue.end > cue.start && cue.end <= duration + 0.05)
+    .sort((a, b) => a.start - b.start);
+  if (valid.length !== cues.length || valid.some((cue, index) => index > 0 && cue.start < valid[index - 1]!.end - 0.02)) return [];
+  return valid.map(cue => ({ ...cue, end: Math.min(duration, cue.end) }));
+}
+
+/** A measured transcript belongs only to the source file from which it was derived. */
+export function sourceCaptionCacheMatchesContent(provenance: string | undefined, sourceHash: string | undefined, contentHash: string | undefined): boolean {
+  if (!['heygen:source_video_srt', 'qwen_filetrans:source_material'].includes(provenance || '')) return false;
+  if (provenance !== 'qwen_filetrans:source_material') return true;
+  const current = String(contentHash || '').toLowerCase();
+  if (!/^[a-f0-9]{64}$/.test(current)) return false;
+  return String(sourceHash || '').toLowerCase() === current;
+}
+
+export function shotsMissingSourceCues(shots: NarrationTimelineShot[]): number[] {
+  return shots.flatMap((shot, index) => shot.lockedSourceVoice
+    && !sourceCuesForShot(shot.sourceCues, Number(shot.lockedDuration || shot.targetDuration)).length ? [index + 1] : []);
+}
+
+/** With no separate voiceover, captions for source-audio shots must come from those clips. */
+export function sourceCuesWithoutVoiceover(shots: NarrationTimelineShot[]): SpeechCue[] {
+  let cursor = 0;
+  return shots.flatMap(shot => {
+    const start = shot.targetStart ?? cursor;
+    cursor = start + shot.targetDuration;
+    if (!shot.lockedSourceVoice) return [];
+    return sourceCuesForShot(shot.sourceCues, Number(shot.lockedDuration || shot.targetDuration))
+      .filter(cue => cue.start < shot.targetDuration)
+      .map(cue => ({ ...cue, start: start + cue.start, end: start + Math.min(cue.end, shot.targetDuration) }));
+  });
+}
+
 function paragraphOwners(shots: NarrationTimelineShot[], lines: string[], referenceLines?: string[]): ParagraphOwner[] {
   if (!shots.length || !lines.length) throw new Error('缺少分镜或口播段落，无法校准时间轴');
   if (referenceLines && referenceLines.length !== lines.length) throw new Error('译文口播段落数量与原分镜不一致，请逐段确认译文');
@@ -61,6 +99,16 @@ export function narrationForUnfixedShots(
   const lines = narrationLines.map(spokenText).filter(Boolean);
   return paragraphOwners(shots, lines, referenceLines)
     .filter(owner => owner.source === 'ai').map(owner => owner.text);
+}
+
+/** Audio generated for an older source/voiceover split must never be reused. */
+export function voiceoverMatchesNarrationSources(
+  shots: NarrationTimelineShot[], narrationLines: string[], audioText: string, referenceLines?: string[],
+): boolean {
+  if (!speechText(audioText)) return false;
+  try {
+    return speechText(narrationForUnfixedShots(shots, narrationLines, referenceLines).join(' ')) === speechText(audioText);
+  } catch { return false; }
 }
 
 export function durationForUnfixedNarration(
@@ -104,7 +152,7 @@ export function arrangeShotsWithinNarration<T extends NarrationTimelineShot>(
     if (owner.source === 'mixed') {
       const group = shots.slice(owner.firstShotIndex, owner.endShotIndex);
       const start = cursor;
-      warnings.push(`第 ${index + 1} 段同时含原声与其他画面，沿用现有镜头粗排；如需逐句精确字幕，请补充该段原声时间码`);
+      const silentShots: number[] = [];
       for (const [offset, shot] of group.entries()) {
         const shotIndex = owner.firstShotIndex + offset;
         const fixed = Boolean(shot.lockedSourceVoice);
@@ -114,13 +162,19 @@ export function arrangeShotsWithinNarration<T extends NarrationTimelineShot>(
           throw new Error(`分镜 ${shotIndex + 1} 缺少有效的镜头时间`);
         timeline.push({ ...shot, targetStart: precision(shotStart), targetEnd: precision(shotEnd),
           targetDuration: precision(shotEnd - shotStart), speed: fixed ? 1 : shot.speed,
-          voiceStart: undefined, voiceEnd: undefined, voiceAligned: false } as T);
+          // A mixed paragraph is excluded from AI synthesis. Mark adjacent B-roll
+          // explicitly silent so the renderer cannot accidentally reuse another
+          // paragraph's audio at the same video timestamp.
+          voiceStart: fixed ? undefined : 0, voiceEnd: fixed ? undefined : 0,
+          voiceAligned: !fixed } as T);
         if (fixed) {
-          if (!shot.sourceCues?.length) warnings.push(`分镜 ${shotIndex + 1} 的数字人原声缺少独立字幕时间码`);
-          outputCues.push(...(shot.sourceCues || []).map(cue => ({ ...cue, start: precision(shotStart + cue.start), end: precision(shotStart + cue.end) })));
-        }
+          const sourceCues = sourceCuesForShot(shot.sourceCues, shotEnd - shotStart);
+          if (!sourceCues.length) warnings.push(`分镜 ${shotIndex + 1} 的数字人原声缺少有效的独立字幕时间码`);
+          outputCues.push(...sourceCues.map(cue => ({ ...cue, start: precision(shotStart + cue.start), end: precision(shotStart + cue.end) })));
+        } else silentShots.push(shotIndex + 1);
         cursor = shotEnd;
       }
+      if (silentShots.length) warnings.push(`第 ${index + 1} 段仅在数字人镜头播放原声；分镜 ${silentShots.join('、')} 没有口播音轨。若需连续口播，请为这些镜头安排独立台词并重新生成配音`);
       arrangedParagraphs.push({ text: owner.text, firstShot: owner.firstShotIndex + 1, lastShot: owner.endShotIndex,
         start: precision(start), end: precision(cursor), source: 'mixed' });
       index++;
@@ -139,8 +193,9 @@ export function arrangeShotsWithinNarration<T extends NarrationTimelineShot>(
         voiceStart: undefined, voiceEnd: undefined, voiceAligned: false } as T);
       arrangedParagraphs.push({ text: owner.text, firstShot: owner.firstShotIndex + 1, lastShot: owner.endShotIndex,
         start: precision(start), end: precision(end), source: 'avatar' });
-      if (!shot.sourceCues?.length) warnings.push(`分镜 ${owner.firstShotIndex + 1} 的数字人原声缺少独立字幕时间码`);
-      outputCues.push(...(shot.sourceCues || []).map(cue => ({ ...cue, start: precision(start + cue.start), end: precision(start + cue.end) })));
+      const sourceCues = sourceCuesForShot(shot.sourceCues, targetDuration);
+      if (!sourceCues.length) warnings.push(`分镜 ${owner.firstShotIndex + 1} 的数字人原声缺少有效的独立字幕时间码`);
+      outputCues.push(...sourceCues.map(cue => ({ ...cue, start: precision(start + cue.start), end: precision(start + cue.end) })));
       cursor = end;
       index++;
       continue;

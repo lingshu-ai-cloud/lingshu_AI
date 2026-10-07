@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import type { VideoAiAnalysis } from '../types/index.js';
 import { normalizeVideoAnalysis } from './gemini.js';
+import { BENCHMARK_ANALYSIS_CONTRACT } from '../prompts/geminiVideoScriptDirector.js';
 import { hasOnCameraSpeechEvidence } from '../lib/salesPresenterReview.js';
 import { untrustedPromptData } from '../lib/untrustedPromptData.js';
 import type { StoryboardQaPhase, StoryboardQaScene, StoryboardQaObservation } from '../lib/storyboardAigcQuality.js';
@@ -12,12 +13,19 @@ const QWEN_VL_MODEL = () => (process.env.QWEN_VL_MODEL ?? 'qwen-vl-max').trim();
 const QWEN_EXACT_VL_MODEL = () => (process.env.QWEN_EXACT_VL_MODEL ?? 'qwen3-vl-flash').trim();
 const BASE_URL = () => (process.env.DASHSCOPE_BASE_URL ?? 'https://dashscope.aliyuncs.com/compatible-mode/v1').trim();
 
-function client(): OpenAI {
+export function dashscopeApiKey(): string {
+  const envKey = process.env.DASHSCOPE_API_KEY?.trim();
+  if (envKey) return envKey;
   const keyFile = (process.env.DASHSCOPE_API_KEY_FILE || path.join(os.homedir(), '.config/lingshu/dashscope.key')).trim();
-  let fileKey = '';
-  try { fileKey = fs.readFileSync(keyFile, 'utf8').trim(); } catch { /* optional local secret file */ }
-  const apiKey = process.env.DASHSCOPE_API_KEY?.trim() || fileKey;
-  if (!apiKey) throw new Error('DASHSCOPE_API_KEY is not set');
+  try {
+    const fileKey = fs.readFileSync(keyFile, 'utf8').trim();
+    if (fileKey) return fileKey;
+  } catch { /* optional local secret file */ }
+  throw new Error('DASHSCOPE_API_KEY is not set');
+}
+
+function client(): OpenAI {
+  const apiKey = dashscopeApiKey();
   return new OpenAI({
     apiKey,
     baseURL: BASE_URL(),
@@ -296,11 +304,12 @@ export async function analyzeVideoFramesWithQwen(opts: {
     : '当前为全片策略分析：必须覆盖从 0 秒到结尾，但镜头密度跟随真实内容变化；重复或稳定画面合并为区间并用 beats 记录变化，禁止无意义逐秒拆分。';
   const systemPrompt = `你是一个面向出海电商营销的短视频内容分析专家。
 ${modeInstruction}
+${BENCHMARK_ANALYSIS_CONTRACT}
 你会收到按时间顺序排列的关键帧，以及标题、平台、热度、标签等资料。视频首 4 秒按每秒 3 帧密集抽取，其余为均匀帧和转场帧；必须逐张比较相邻帧，时间精度以帧间隔为上限。
 请基于画面、字幕、标题和元数据推断短视频结构。无法从关键帧确认的字幕、音频或口播必须留空，不要写“按画面/字幕推断”，不要编造品牌、@账号、字幕或台词。
 必须严格区分“可见事实”和“表达意图”：可见事实只写帧中实际出现的物体状态、接触关系、动作和变化；表达意图允许根据上下文推断营销含义，但不得把推断的前因补写成画面动作。例如首帧纸巾已经湿润、随后直接落下，只能写“湿纸巾已位于眼下并落下”，不得编造“流泪后反复擦眼睛”。
 动作分析必须记录：动作开始/结束时间、手是否入镜、手与物体/面部是否接触、物体初始和结束状态、眼神方向、表情、头部姿态、镜头是否真的移动。界面贴纸、平台 UI 和字幕层必须与真人实拍内容分开。
-除 recommendedScriptType 字段外，所有字符串内容必须使用简体中文输出。
+除合同枚举值、字段键和人物ID外，所有说明字符串内容必须使用简体中文输出。
 只输出合法 JSON，不要 markdown，不要代码块，不要前后解释。
 
 必需 JSON 字段：
@@ -362,7 +371,8 @@ ${modeInstruction}
     const repair = await client().chat.completions.create({
       model: opts.analysisMode === 'exact' ? QWEN_EXACT_VL_MODEL() : QWEN_VL_MODEL(),
       messages: [
-        { role: 'system', content: `你是视频导演分镜修复器。只输出合法JSON对象，且只能包含scriptDetails15s。首4秒是每秒3帧，必须逐相邻帧比较，不得跳过亚秒动作。每项包含time、environment、shot、camera、purpose、visual、dialogue、onScreenText、ambientSound、bgm、soundEffects、beats、persistentState、authenticity、observedFacts、inferredIntent、causalGap、omniPrompt、omniNegativePrompt、confidence、needsReview、viralPotential（object：score 为 0-100 且必须拉开差距，锚点 85以上=强钩子或强证据、70-84=有明确记忆点、50-69=功能性过渡、50以下=信息稀薄；mechanisms 最多4项只写本镜头真实成立的机制，没有就空数组；whyEffective 一句话说明理由并引用本镜头具体画面或台词，低于50分要说明弱在哪里。禁止套用通用话术）、subtitle、audio、note。observedFacts只能写实际可见内容，inferredIntent写推断含义，causalGap写未展示的因果动作；绝不能把causalGap补进visual、beats或omniPrompt。omniPrompt和omniNegativePrompt使用英文。time必须为start-end s区间；口播与屏幕字幕分离；品牌、款名、价格、左右眼不确定时needsReview=true。` },
+        { role: 'system', content: `你是视频导演分镜修复器。只输出合法JSON对象，且只能包含scriptDetails15s。${BENCHMARK_ANALYSIS_CONTRACT}
+首4秒是每秒3帧，必须逐相邻帧比较，不得跳过亚秒动作。每项包含time、environment、shot、camera、purpose、visual、dialogue、onScreenText、ambientSound、bgm、soundEffects、beats、persistentState、authenticity、observedFacts、inferredIntent、causalGap、omniPrompt、omniNegativePrompt、confidence、needsReview、viralPotential（object：score 为 0-100 且必须拉开差距，锚点 85以上=强钩子或强证据、70-84=有明确记忆点、50-69=功能性过渡、50以下=信息稀薄；mechanisms 最多4项只写本镜头真实成立的机制，没有就空数组；whyEffective 一句话说明理由并引用本镜头具体画面或台词，低于50分要说明弱在哪里。禁止套用通用话术）、subtitle、audio、note。observedFacts只能写实际可见内容，inferredIntent写推断含义，causalGap写未展示的因果动作；绝不能把causalGap补进visual、beats或omniPrompt。omniPrompt和omniNegativePrompt使用英文。time必须为start-end s区间；口播与屏幕字幕分离；品牌、款名、价格、左右眼不确定时needsReview=true。` },
         { role: 'user', content: content as any },
       ],
       response_format: { type: 'json_object' },
@@ -455,6 +465,7 @@ export async function analyzeVideoTimelineDetailsWithQwen(opts: {
     model: QWEN_EXACT_VL_MODEL(),
     messages: [{ role: 'user', content: [
       { type: 'text', text: `你是视频导演分镜分析器。只输出合法JSON对象 {"summary":{},"shots":[]}。严格逐项分析服务端时间窗口，不得新增、删除、合并或修改边界；每项用boundaryId关联。
+${BENCHMARK_ANALYSIS_CONTRACT}
 时间窗口：${JSON.stringify(boundaries)}
 ${opts.transcript?.segments.length ? `独立ASR：${JSON.stringify(opts.transcript.segments)}` : '无可靠ASR，dialogue留空。'}
 summary字段：theme、identityEntities（仅提取明确可见或可听的企业名、品牌名和产品名，每项含type/text/evidence/confidence，不确定时不输出）、hooks、sellingPoints、mood、structure、baseRequirements、firstTenSeconds（atmosphere/audioVisual/camera/visuals/voiceMusic）、coarseStructure（time/label/description）、scriptSummary15s（visualStyle/coreEmotion/competitors）、recommendedScriptType。

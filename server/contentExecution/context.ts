@@ -76,6 +76,21 @@ export async function runWithContentExecutionContext<T>(input: {
   return executionContext.run(value, input.action);
 }
 
+export class ContentExecutionStoppedError extends Error {
+  readonly code = 'content_execution_stopped';
+  constructor() { super('content_execution_stopped:任务已暂停或撤回，不再提交新的生产工作'); }
+}
+
+/** Stop at stage/submission boundaries while allowing already accepted receipts to be saved. */
+export async function assertCurrentContentExecutionActive(): Promise<void> {
+  const current = executionContext.getStore();
+  if (!current) return;
+  const job = await current.dataStore.getById<Record<string, unknown>>(CONTENT_EXECUTION_JOB_COLLECTION, current.jobId);
+  if (!job || job.id !== current.jobId || !compact(job.tenant_id) || !compact(job.run_id) || !['queued', 'running', 'retry_wait', 'reconciling'].includes(String(job.status))) throw new ContentExecutionStoppedError();
+  const run = await current.dataStore.getById<Record<string, unknown>>('workflow_runs', String(job.run_id || ''));
+  if (!run || run.id !== job.run_id || run.tenant_id !== job.tenant_id || ['paused', 'pausing', 'cancelling', 'cancelled', 'failed', 'completed', 'succeeded', 'dead_letter'].includes(String(run.status))) throw new ContentExecutionStoppedError();
+}
+
 export function currentContentProviderReceipt(input: {
   provider: string;
   requestId: string;
@@ -100,6 +115,7 @@ export async function recordCurrentContentProviderReceipt(input: {
 }): Promise<void> {
   const current = executionContext.getStore();
   if (!current) return;
+  if (input.state === 'submitting') await assertCurrentContentExecutionActive();
   const provider = compact(input.provider, 80);
   const requestId = compact(input.requestId, 240);
   if (!provider || !requestId) throw new Error('content_provider_receipt_identity_invalid');

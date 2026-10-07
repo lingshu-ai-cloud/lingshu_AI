@@ -165,6 +165,8 @@ export interface WeeklyExecutionTask {
   lease: WeeklyExecutionTaskLease | null;
   resultRefs: VersionedSocialRef[];
   lastError: { code: string; message: string; retryable: boolean; occurredAt: string } | null;
+  /** Observed upstream activity, independent from verified step completion. */
+  productionProgress?: { contentTaskId: string; runId: string; step: string; activity: string; updatedAt: string } | null;
   recoveredFromDeadLetterAt: string | null;
   cancelReason: string | null;
   createdAt: string;
@@ -241,6 +243,12 @@ export interface WeeklyBusinessContentDispatch {
   scheduleItemIds: string[];
   scheduleItems: WeeklyDetailedContentScheduleItem[];
   issuedAt: string;
+}
+
+/** Both identities are required for planning mutations; neither version substitutes for the other. */
+export interface WeeklyAgentPlanningMutation {
+  expectedPackageVersion: number;
+  expectedPlanningVersion: number;
 }
 
 export interface WeeklyAgentPlanningState {
@@ -527,4 +535,13 @@ export function weeklyPlanActivationIssues(program: SocialProgram, plan: SocialW
     if (!item.factRefs.length) issues.push({ code: `item_fact_missing:${item.itemId}`, message: `内容 ${item.title || item.itemId} 没有事实来源。` });
   }
   return issues;
+}
+
+/** Cancellation reports preserved external effects rather than claiming rollback. */
+export interface WeeklyCancellationSummary {
+  status: string;
+  boundary: string;
+  effects: Array<{ resourceType: string; resourceId: string; outcome: 'irreversible' | 'unknown_requires_reconciliation'; receiptCount: number }>;
+  lastError: string | null;
+  updatedAt: string;
 }

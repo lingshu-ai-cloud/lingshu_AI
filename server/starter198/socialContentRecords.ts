@@ -838,7 +838,9 @@ export async function readSocialTaskDetail(input: {
     summary.brief.targetAccountRef?.id,
     summary.brief.presenterAssetId,
   );
+  const weeklyAuthority = socialObject(socialJson(task.brief))?._weeklyAuthority as Parameters<typeof buildSocialAgentWorkflow>[0]['authoritativeContext'];
   const confirmedFactRefs = [
+    ...(weeklyAuthority?.publicationTask.factRefs.map(ref => `${ref.type}:${ref.id}@${ref.version}`) ?? []),
     ...activeSources.filter(source => source.kind === 'knowledge').map(source => source.sourceId),
     ...(summary.brief.brandNotes ? ['brief:confirmed-facts'] : []),
   ];
@@ -954,6 +956,7 @@ export async function readSocialTaskDetail(input: {
     mode: summary.mode ?? 'weekly',
     weeklyPlanId: summary.weeklyPlanId ?? null,
     brief: summary.brief,
+    authoritativeContext: weeklyAuthority,
     sources: activeSources,
     factSourceRefs: confirmedFactRefs,
     assetSupplyPlan,

@@ -1,3 +1,9 @@
+import { store } from '../storage/index.js';
+import { createSocialWeeklyPlanningAdapter, initSocialWeeklyExecutionRuntime, WEEKLY_PREPRODUCTION_STEPS } from './socialWeeklyExecutionRuntime.js';
+import { createSocialWeeklyProductionAdapter } from './socialWeeklyProductionAdapter.js';
+import { createSocialWeeklyPublicationAdapter } from './socialWeeklyPublicationAdapter.js';
+import type { WeeklyProductionStepKind } from '../../shared/contracts/socialProgram.js';
+import type { SocialWeeklyExecutionAdapter } from './socialWeeklyExecutionAdapter.js';
 import { initDigitalEmployeeRuntime } from '../digitalEmployees/runtimeOrchestrator.js';
 import { initFollowupDispatchWorker } from '../digitalEmployees/followupDispatchWorker.js';
 import { initScheduledPublisher } from '../publishing/scheduledPublisher.js';
@@ -50,6 +56,14 @@ export async function startBackgroundJobs(role: ProcessRole = 'all'): Promise<vo
     initEngagementIngestionWorker();
     initAgentNotificationOutboxWorker();
     initSocialWeeklyReviewWorker();
+    const planningAdapter = createSocialWeeklyPlanningAdapter(store);
+    const productionAdapter = createSocialWeeklyProductionAdapter(store);
+    const publicationAdapter = createSocialWeeklyPublicationAdapter(store);
+    const weeklyAdapters: Partial<Record<WeeklyProductionStepKind, SocialWeeklyExecutionAdapter>> = {};
+    for (const step of WEEKLY_PREPRODUCTION_STEPS) weeklyAdapters[step] = planningAdapter;
+    for (const step of ['material_readiness', 'script', 'storyboard', 'asset_generation', 'video_generation', 'quality_check', 'rework'] as const) weeklyAdapters[step] = productionAdapter;
+    for (const step of ['publishing', 'performance_monitoring', 'weekly_review'] as const) weeklyAdapters[step] = publicationAdapter;
+    initSocialWeeklyExecutionRuntime(weeklyAdapters);
     initDigitalEmployeeRuntime();
     markBackgroundJobsReady();
     await startWorkerHeartbeat(role);

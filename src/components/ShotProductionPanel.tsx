@@ -136,7 +136,7 @@ export default function ShotProductionPanel(props: {
       <div className="mb-4 flex items-center justify-between"><h2 className="font-bold">企业数字人</h2><button type="button" onClick={props.onClose}>完成</button></div>
       <div className="grid grid-cols-2 gap-2" role="group" aria-label="数字人模式">{([['video_twin', '视频分身'], ['photo_talking', '照片口播']] as const).map(([mode, label]) => <button type="button" key={mode} aria-pressed={presenterMode === mode} onClick={() => selectPresenterMode(mode)} className={`rounded-lg border py-3 text-sm font-bold ${presenterMode === mode ? 'border-emerald-600 bg-emerald-50 text-emerald-800' : ''}`}>{label}</button>)}</div>
       {presenterMode && <div className="mt-4 space-y-3 border-t pt-4">
-      <p className="text-xs text-text-muted">{presenterMode === 'video_twin' ? 'HeyGen · 人物视频 → 本人验证 → 视频分身' : viralPhoto ? 'Seedream · 爆款口播首帧 + 企业人物照片 → 目标首帧 → HeyGen 口播视频' : 'HeyGen · 企业人物照片 + 口播内容 → 口播视频'}</p>
+      <p className="text-xs text-text-muted">{presenterMode === 'video_twin' ? 'HeyGen · 人物视频 → 本人验证 → 视频分身' : viralPhoto ? '爆款复刻：优先沿用对标口播原素材的背景和构图，由 Seedream 生成企业人物目标首帧，再制作 HeyGen 口播视频。' : '自由创作：优先选择已清理、已授权的企业场景背景；确认人物首帧后再制作口播。'}</p>
       <section className="rounded-lg border bg-slate-50 p-3" aria-label="人物与声音">
         <h3 className="mb-2 text-xs font-bold">人物与声音</h3>
         <div className="grid gap-3 sm:grid-cols-2">

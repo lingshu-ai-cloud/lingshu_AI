@@ -1,5 +1,6 @@
 import { gzipSync, gunzipSync } from 'node:zlib';
 import type { VideoAiAnalysis } from '../types/index.js';
+import { benchmarkAnalysisForRecord } from './benchmarkAnalysis.js';
 
 function parseJsonRecord<T>(value: unknown, fallback: T): T {
   if (value && typeof value === 'object') return value as T;
@@ -15,7 +16,9 @@ export function parseAnalysisTimeRange(value: string): { start: number; end: num
 export function videoAnalysisOf(record: Record<string, unknown>): Record<string, unknown> {
   const parsed = parseJsonRecord<Record<string, unknown>>(record.aiAnalysis, {}); const compressed = typeof parsed.imageEvidenceGzip === 'string' ? parsed.imageEvidenceGzip : '';
   if (!parsed.imageEvidence && compressed) try { parsed.imageEvidence = JSON.parse(gunzipSync(Buffer.from(compressed, 'base64')).toString('utf8')); } catch { /* explicitly unavailable */ }
-  delete parsed.imageEvidenceGzip; delete parsed.imageEvidenceEncoding; return parsed;
+  delete parsed.imageEvidenceGzip; delete parsed.imageEvidenceEncoding;
+  if (parsed.contentFormat !== 'image' && Object.keys(parsed).length) parsed.benchmarkAnalysis = benchmarkAnalysisForRecord(record, parsed);
+  return parsed;
 }
 /** A review-required exact analysis is completed evidence, not an invitation
  * to fetch the reference again. Review completion is a separate gate. */

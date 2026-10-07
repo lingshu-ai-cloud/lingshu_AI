@@ -8,6 +8,7 @@ import {
   persistPublicationAssignment, realPublishingCapabilities, reconcileWeeklyPublication,
   revokePublicationAssignments, type WeeklyPublishingProviderAdapter,
 } from './weeklyLineage.js';
+import { runWeeklyPublicationExecutionScan } from './weeklyPublicationExecutionWorker.js';
 import { runWeeklyPublicationPackageScan } from './weeklyPublicationWorker.js';
 
 type Row = { id: string; [key: string]: any };
@@ -97,6 +98,46 @@ workerStore.rows.set('starter_social_content_artifacts', [{
     productionResult: { productionResultId: 'r4-production-1', version: '1', executionPlanId: 'plan-1', executionPlanVersion: '1', executionPlanReviewId: 'review-1', artifactId: 'artifact-1', creativeReviewId: 'creative-1', publishAssignmentId: null, status: 'asset_review', sceneResults: [], technicalReview: { approved: true, checkedScenes: 1, failures: [] }, creativeReview: { approved: true, failedCriteria: [], reviewedBy: 'director_agent' }, artifactResourceRef: '/api/overseas/files/r4-video.mp4', createdAt: '2026-09-25T00:30:00Z' },
   },
 }]);
+// Automatic technical/creative QC does not supply the independent user's acceptance.
+const weeklyBoundStore = memoryStore();
+for (const [collection, rows] of workerStore.rows) weeklyBoundStore.rows.set(collection, structuredClone(rows));
+weeklyBoundStore.rows.set('starter_social_content_tasks', [{ id: 'bound-content-task', tenant_id: 'tenant-a', task_id: task.publicationTaskId, create_idempotency_key: 'weekly-production:tenant-a:weekly-package-1:2:weekly-item-1' }]);
+const awaitingAcceptance = await runWeeklyPublicationPackageScan({ dataStore: weeklyBoundStore });
+assert.deepEqual({ assignments: awaitingAcceptance.createdAssignments, packages: awaitingAcceptance.createdPackages, skipped: awaitingAcceptance.skipped, errors: awaitingAcceptance.errors.length }, { assignments: 0, packages: 0, skipped: 1, errors: 0 }, 'automatic QC approval must not create a weekly publication package');
+const approval = { publicationTaskId: task.publicationTaskId, schedule: { stepKind: 'user_approval' }, status: 'succeeded', resultRefs: [{ type: 'starter_social_content_artifact', id: 'artifact-1', version: 1 }] };
+weeklyBoundStore.rows.set('social_weekly_execution_tasks', [
+  { id: 'other-tenant-approval', tenant_id: 'tenant-b', package_id: weekly.packageId, package_version: weekly.version, payload: approval },
+  { id: 'other-artifact-approval', tenant_id: 'tenant-a', package_id: weekly.packageId, package_version: weekly.version, payload: { ...approval, resultRefs: [{ type: 'starter_social_content_artifact', id: 'artifact-old', version: 1 }] } },
+  { id: 'other-artifact-version-approval', tenant_id: 'tenant-a', package_id: weekly.packageId, package_version: weekly.version, payload: { ...approval, resultRefs: [{ type: 'starter_social_content_artifact', id: 'artifact-1', version: 2 }] } },
+  { id: 'other-package-version-approval', tenant_id: 'tenant-a', package_id: weekly.packageId, package_version: weekly.version - 1, payload: approval },
+]);
+const mismatchedAcceptance = await runWeeklyPublicationPackageScan({ dataStore: weeklyBoundStore });
+assert.equal(mismatchedAcceptance.createdPackages, 0, 'cross-tenant, obsolete package, different artifact and wrong artifact version acceptance cannot release packaging');
+weeklyBoundStore.rows.get('social_weekly_execution_tasks')!.push({ id: 'actual-approval', tenant_id: 'tenant-a', package_id: weekly.packageId, package_version: weekly.version, payload: approval });
+const acceptedScan = await runWeeklyPublicationPackageScan({ dataStore: weeklyBoundStore });
+assert.deepEqual({ assignments: acceptedScan.createdAssignments, packages: acceptedScan.createdPackages, errors: acceptedScan.errors.length }, { assignments: 1, packages: 1, errors: 0 }, 'matching actual user acceptance releases packaging');
+const acceptedReplay = await runWeeklyPublicationPackageScan({ dataStore: weeklyBoundStore });
+assert.equal(acceptedReplay.createdPackages, 0, 'accepted package reconciliation remains idempotent');
+weeklyBoundStore.rows.get('social_weekly_execution_tasks')!.push({
+  id: 'formal-weekly-publishing-task', tenant_id: 'tenant-a', package_id: weekly.packageId, package_version: weekly.version,
+  payload: { publicationTaskId: task.publicationTaskId, schedule: { stepKind: 'publishing' }, status: 'blocked' },
+});
+let legacyAdapterCalls = 0, legacyProviderCalls = 0;
+const delegatedExecution = await runWeeklyPublicationExecutionScan({
+  dataStore: weeklyBoundStore, now: new Date('2026-09-25T02:00:00Z'),
+  adapterFactory: async () => {
+    legacyAdapterCalls++;
+    return { provider: 'isolated-legacy-test', platform: 'youtube', capability: 'available',
+      async publish() { legacyProviderCalls++; return { status: 'published', providerReceiptId: 'unexpected', platformPostId: 'unexpected' }; },
+      async reconcile() { legacyProviderCalls++; return { status: 'published', providerReceiptId: 'unexpected', platformPostId: 'unexpected' }; },
+    };
+  },
+});
+assert.deepEqual({ skipped: delegatedExecution.skipped, pending: delegatedExecution.pending, published: delegatedExecution.published, errors: delegatedExecution.errors.length }, { skipped: 1, pending: 0, published: 0, errors: 0 }, 'formal weekly publishing task reserves execution for the leased consumer');
+assert.equal(legacyAdapterCalls, 0, 'legacy scanner must not admit a provider adapter outside the formal weekly gate');
+assert.equal(legacyProviderCalls, 0, 'legacy scanner must not submit or reconcile the delegated assignment');
+assert.equal(weeklyBoundStore.rows.get('social_publication_attempts')?.length ?? 0, 0, 'skipping leaves no fabricated provider attempt');
+
 const firstScan = await runWeeklyPublicationPackageScan({ dataStore: workerStore });
 assert.deepEqual({ assignments: firstScan.createdAssignments, packages: firstScan.createdPackages, errors: firstScan.errors.length }, { assignments: 1, packages: 1, errors: 0 });
 const replayScan = await runWeeklyPublicationPackageScan({ dataStore: workerStore });

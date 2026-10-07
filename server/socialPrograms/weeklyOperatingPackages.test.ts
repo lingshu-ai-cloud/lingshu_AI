@@ -467,3 +467,28 @@ test('weekly operating package migration defines immutable versions and one acti
   assert.match(eventsMigration, /updateRule: null/);
   assert.match(eventsMigration, /deleteRule: null/);
 });
+
+test('retirement exposes partial success and resumes compensation after storage failure', async () => {
+  const { dataStore, packages, program, accountIds } = await fixture();
+  const authority = await authoritativeInput(dataStore, program.programId, accountIds);
+  const draft = await packages.create('tenant-a', 'owner', program.programId, { ...authority, weekStart: '2026-10-05', objective: '撤回恢复', successCriteria: ['补偿可恢复'] });
+  await packages.activate('tenant-a', 'owner', program.programId, draft.packageId, { expectedVersion: 1, expectedProgramVersion: 1 });
+  const originalUpdate = dataStore.update.bind(dataStore);
+  let fault = true;
+  dataStore.update = async (collection, id, patch) => {
+    if (fault && collection === 'social_weekly_execution_tasks' && patch.status === 'cancelled') { fault = false; return false; }
+    return originalUpdate(collection, id, patch);
+  };
+  await assert.rejects(packages.retire('tenant-a', 'owner', program.programId, draft.packageId, { expectedVersion: 1, expectedProgramVersion: 2 }), (error: unknown) => error instanceof SocialProgramError && error.code === 'weekly_cancellation_partial_failure');
+  const persisted = await packages.get('tenant-a', program.programId, draft.packageId);
+  assert.equal(persisted.status, 'retired');
+  assert.equal(persisted.socialContentPackage.authorization.allowRealPublishing, false);
+  const records = await dataStore.list<Record_>('social_weekly_cancellations', { where: { tenant_id: 'tenant-a', package_id: draft.packageId } });
+  assert.equal(records.items[0]!.status, 'partial_failure');
+  const retired = await packages.retire('tenant-a', 'owner', program.programId, draft.packageId, { expectedVersion: 1, expectedProgramVersion: 2 });
+  assert.equal(retired.status, 'retired');
+  assert.equal(retired.executionSummary!.byStatus.cancelled, retired.executionSummary!.total);
+  const repeated = await packages.retire('tenant-a', 'owner', program.programId, draft.packageId, { expectedVersion: 1, expectedProgramVersion: 2 });
+  assert.equal(repeated.executionSummary!.byStatus.cancelled, repeated.executionSummary!.total);
+  assert.equal((await dataStore.list<Record_>('social_weekly_cancellations', { where: { tenant_id: 'tenant-a', package_id: draft.packageId } })).totalItems, 1);
+});

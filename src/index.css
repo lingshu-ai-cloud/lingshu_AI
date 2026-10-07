@@ -1117,3 +1117,6 @@ body:has([data-lingshu-assistant-clearance="bottom-navigation"]) [data-global-as
 .replication-workbench .studio-workbench-panel-layout > main > div { padding: 16px; }
 .replication-workbench > footer { min-height: 76px; padding-top: 12px; padding-bottom: 12px; }
 .replication-workbench > footer button { min-height: 44px; }
+@font-face { font-family: 'Source Han Sans SC'; src: url('../desktop/fonts/SourceHanSansSC-Regular.otf') format('opentype'); font-display: swap; }
+@font-face { font-family: 'ZCOOL QingKe HuangYou'; src: url('../desktop/fonts/ZCOOLQingKeHuangYou-Regular.ttf') format('truetype'); font-display: swap; }
+@font-face { font-family: 'Smiley Sans Oblique'; src: url('../desktop/fonts/SmileySans-Oblique.ttf') format('truetype'); font-display: swap; }

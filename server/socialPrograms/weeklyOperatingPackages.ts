@@ -3,6 +3,7 @@ import type { DataStore } from '../storage/datastore.js';
 import {
   type VersionedSocialRef,
   type WeeklyOperatingPackage,
+  type WeeklyAgentPlanningMutation,
   type WeeklyWorkflowEvent,
 } from '../../shared/contracts/socialProgram.js';
 import type { VersionedQuotaReference } from '../../shared/contracts/socialReview.js';
@@ -401,36 +402,65 @@ export function createWeeklyOperatingPackageService(dataStore: DataStore) {
       return agentPlanning.get(tenantId, programId, packageId, version);
     },
 
-    async runDirectorPlanning(tenantId: string, programId: string, packageId: string, expectedVersion: number) {
-      const row = await latestPackageRow(dataStore, tenantId, programId, packageId);
-      if (!row) throw new SocialProgramError('weekly_operating_package_not_found', 404, '周任务包不存在。');
-      requireExpectedVersion(row.payload.version, expectedVersion);
-      return agentPlanning.runDirectorAnalysis({ tenantId, programId, packageId, packageVersion: row.payload.version, actor: 'director_agent' });
+    async runDirectorPlanning(tenantId: string, programId: string, packageId: string, versions: WeeklyAgentPlanningMutation) {
+      return serializeWorkflowMutation(`${tenantId}:${programId}:${packageId}`, async () => {
+        const row = await latestPackageRow(dataStore, tenantId, programId, packageId);
+        if (!row) throw new SocialProgramError('weekly_operating_package_not_found', 404, '周任务包不存在。');
+        if (!Number.isSafeInteger(versions.expectedPackageVersion) || versions.expectedPackageVersion < 1) {
+          throw new SocialProgramError('weekly_package_version_required', 400, '请提供有效的周任务包版本。');
+        }
+        if (row.payload.version !== versions.expectedPackageVersion) {
+          throw new SocialProgramError('weekly_package_version_conflict', 409, '周任务包已更新，请从后端刷新后重试；已有计划已保留。');
+        }
+        return agentPlanning.runDirectorAnalysis({ tenantId, programId, packageId, packageVersion: row.payload.version, expectedPlanningVersion: versions.expectedPlanningVersion, actor: 'director_agent' });
+      });
     },
 
-    async mergeAgentSchedule(tenantId: string, programId: string, packageId: string, expectedVersion: number) {
-      const row = await latestPackageRow(dataStore, tenantId, programId, packageId);
-      if (!row) throw new SocialProgramError('weekly_operating_package_not_found', 404, '周任务包不存在。');
-      requireExpectedVersion(row.payload.version, expectedVersion);
-      return agentPlanning.mergeDetailedSchedule({ tenantId, programId, package: row.payload, actor: 'business_agent' });
+    async mergeAgentSchedule(tenantId: string, programId: string, packageId: string, versions: WeeklyAgentPlanningMutation) {
+      return serializeWorkflowMutation(`${tenantId}:${programId}:${packageId}`, async () => {
+        const row = await latestPackageRow(dataStore, tenantId, programId, packageId);
+        if (!row) throw new SocialProgramError('weekly_operating_package_not_found', 404, '周任务包不存在。');
+        if (!Number.isSafeInteger(versions.expectedPackageVersion) || versions.expectedPackageVersion < 1) {
+          throw new SocialProgramError('weekly_package_version_required', 400, '请提供有效的周任务包版本。');
+        }
+        if (row.payload.version !== versions.expectedPackageVersion) {
+          throw new SocialProgramError('weekly_package_version_conflict', 409, '周任务包已更新，请从后端刷新后重试；已有计划已保留。');
+        }
+        return agentPlanning.mergeDetailedSchedule({ tenantId, programId, package: row.payload, expectedPlanningVersion: versions.expectedPlanningVersion, actor: 'business_agent' });
+      });
     },
 
-    async confirmAgentSchedule(tenantId: string, userId: string, programId: string, packageId: string, expectedVersion: number) {
-      const row = await latestPackageRow(dataStore, tenantId, programId, packageId);
-      if (!row) throw new SocialProgramError('weekly_operating_package_not_found', 404, '周任务包不存在。');
-      requireExpectedVersion(row.payload.version, expectedVersion);
-      return agentPlanning.confirm({ tenantId, programId, packageId, packageVersion: row.payload.version, userId });
+    async confirmAgentSchedule(tenantId: string, userId: string, programId: string, packageId: string, versions: WeeklyAgentPlanningMutation) {
+      return serializeWorkflowMutation(`${tenantId}:${programId}:${packageId}`, async () => {
+        const row = await latestPackageRow(dataStore, tenantId, programId, packageId);
+        if (!row) throw new SocialProgramError('weekly_operating_package_not_found', 404, '周任务包不存在。');
+        if (!Number.isSafeInteger(versions.expectedPackageVersion) || versions.expectedPackageVersion < 1) {
+          throw new SocialProgramError('weekly_package_version_required', 400, '请提供有效的周任务包版本。');
+        }
+        if (row.payload.version !== versions.expectedPackageVersion) {
+          throw new SocialProgramError('weekly_package_version_conflict', 409, '周任务包已更新，请从后端刷新后重试；已有计划已保留。');
+        }
+        return agentPlanning.confirm({ tenantId, programId, packageId, packageVersion: row.payload.version, expectedPlanningVersion: versions.expectedPlanningVersion, userId });
+      });
     },
 
-    async dispatchAgentSchedule(tenantId: string, programId: string, packageId: string, expectedVersion: number) {
-      const row = await latestPackageRow(dataStore, tenantId, programId, packageId);
-      if (!row) throw new SocialProgramError('weekly_operating_package_not_found', 404, '周任务包不存在。');
-      requireExpectedVersion(row.payload.version, expectedVersion);
-      const state = await agentPlanning.dispatch({ tenantId, programId, packageId, packageVersion: row.payload.version, actor: 'business_agent' });
-      if (!state.dispatch) throw new SocialProgramError('business_dispatch_missing', 503, '经营派单记录生成失败。');
-      await applyBusinessDispatchToExecutionTasks(dataStore, tenantId, programId, packageId, row.payload.version, state.dispatch, state.updatedAt);
-      return state;
+    async dispatchAgentSchedule(tenantId: string, programId: string, packageId: string, versions: WeeklyAgentPlanningMutation) {
+      return serializeWorkflowMutation(`${tenantId}:${programId}:${packageId}`, async () => {
+        const row = await latestPackageRow(dataStore, tenantId, programId, packageId);
+        if (!row) throw new SocialProgramError('weekly_operating_package_not_found', 404, '周任务包不存在。');
+        if (!Number.isSafeInteger(versions.expectedPackageVersion) || versions.expectedPackageVersion < 1) {
+          throw new SocialProgramError('weekly_package_version_required', 400, '请提供有效的周任务包版本。');
+        }
+        if (row.payload.version !== versions.expectedPackageVersion) {
+          throw new SocialProgramError('weekly_package_version_conflict', 409, '周任务包已更新，请从后端刷新后重试；已有计划已保留。');
+        }
+        const state = await agentPlanning.dispatch({ tenantId, programId, packageId, packageVersion: row.payload.version, expectedPlanningVersion: versions.expectedPlanningVersion, actor: 'business_agent' });
+        if (!state.dispatch) throw new SocialProgramError('business_dispatch_missing', 503, '经营派单记录生成失败。');
+        await applyBusinessDispatchToExecutionTasks(dataStore, tenantId, programId, packageId, row.payload.version, state.dispatch, state.updatedAt);
+        return state;
+      });
     },
+
 
     async activate(
       tenantId: string,
@@ -559,7 +589,16 @@ export function createWeeklyOperatingPackageService(dataStore: DataStore) {
       if (!current) throw new SocialProgramError('weekly_operating_package_not_found', 404, '周任务包不存在。');
       requireExpectedVersion(current.payload.version, input.expectedVersion);
       if (current.payload.status === 'retired') {
-        throw new SocialProgramError('weekly_operating_package_retired', 409, '该周任务包版本已撤回。');
+        // Resume the durable cancellation after an interrupted partial success.
+        const program = await programRow(dataStore, tenantId, programId);
+        const activeRef = program.payload.activeWeeklyOperatingPackageRef as VersionedSocialRef | null;
+        if (activeRef?.id === packageId && activeRef.version === current.payload.version) {
+          const timestamp = at();
+          const next = { ...program.payload, activeWeeklyOperatingPackageRef: null, version: Number(program.payload.version) + 1, updatedAt: timestamp };
+          if (!await dataStore.update(PROGRAMS, program.id, { payload: next, version: next.version, updated_by: userId, updated_at: timestamp })) throw new SocialProgramError('program_storage_unavailable', 503, '撤回已停止新执行，项目引用清理待重试。');
+        }
+        const tasks = await cancelWeeklyExecutionTasks(dataStore, tenantId, programId, packageId, current.payload.version, `package_retired:${userId}`, at());
+        return projectWeeklyExecution(current.payload, tasks, at());
       }
       const timestamp = at();
       let activeProgram: ProgramRow | null = null;

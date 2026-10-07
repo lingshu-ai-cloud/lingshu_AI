@@ -24,6 +24,7 @@ export interface TrendVideo {
 }
 
 export interface GeminiVideoAnalysis {
+  audioTranscript?: { text: string; segments: Array<{ start: number; end: number; text: string; timingPrecision: 'phrase' | 'coarse'; needsReview?: boolean }> };
   theme?: string;
   hooks?: string[];
   sellingPoints?: string[];
@@ -52,6 +53,9 @@ export interface GeminiVideoAnalysis {
     competitors?: string[];
   };
   scriptDetails15s?: Array<{
+    materialType?: import('../../shared/benchmarkAnalysis').BenchmarkMaterialType;
+    narrativeRole?: import('../../shared/benchmarkAnalysis').BenchmarkShotRole;
+    classificationEvidence?: string;
     time?: string;
     timestamp?: string;
     environment?: string;
@@ -75,6 +79,7 @@ export interface GeminiVideoAnalysis {
 }
 
 export interface VideoAnalysisPayload {
+  benchmarkAnalysis?: import('../../shared/benchmarkAnalysis').BenchmarkAnalysis;
   usage?: 'editable' | 'reference_only';
   contentSha256?: string;
   userVisible?: boolean;
@@ -150,7 +155,7 @@ export interface AccountSpecialRecommendation {
 
 export interface StructureStep { time: string; label: string; desc: string }
 export interface FirstTenSecondInsight { dimension: string; detail: string }
-export interface ScriptDetail15s { time: string; environment: string; shot: string; camera: string; angle?: string; composition?: string; visual: string; subtitle: string; audio: string; note?: string; purpose?: string; dialogue?: string; onScreenText?: string; ambientSound?: string; bgm?: string; soundEffects?: string[]; beats?: Array<{ time?: string; action?: string; dialogue?: string; onScreenText?: string }>; persistentState?: string; startState?: string; endState?: string; transitionToNext?: string; backgroundPriority?: 'low' | 'medium' | 'high'; depthOfField?: 'shallow' | 'moderate' | 'deep'; authenticity?: string; estimatedSpeechDuration?: number; dialogueFits?: boolean; confidence?: number; needsReview?: boolean; materialEvidence?: { sourceVideoRef?: string; clipRef?: string | null; firstFrameRef?: string | null; firstFrameSeconds?: number; extractionStatus?: 'ready' | 'unavailable' }; viralPotential?: { score?: number; mechanisms?: string[]; whyEffective?: string } }
+export interface ScriptDetail15s { materialType?: import('../../shared/benchmarkAnalysis').BenchmarkMaterialType; narrativeRole?: import('../../shared/benchmarkAnalysis').BenchmarkShotRole; classificationEvidence?: string; time: string; environment: string; shot: string; camera: string; angle?: string; composition?: string; visual: string; subtitle: string; audio: string; note?: string; purpose?: string; dialogue?: string; onScreenText?: string; ambientSound?: string; bgm?: string; soundEffects?: string[]; beats?: Array<{ time?: string; action?: string; dialogue?: string; onScreenText?: string }>; persistentState?: string; startState?: string; endState?: string; transitionToNext?: string; backgroundPriority?: 'low' | 'medium' | 'high'; depthOfField?: 'shallow' | 'moderate' | 'deep'; authenticity?: string; estimatedSpeechDuration?: number; dialogueFits?: boolean; confidence?: number; needsReview?: boolean; materialEvidence?: { sourceVideoRef?: string; clipRef?: string | null; firstFrameRef?: string | null; firstFrameSeconds?: number; extractionStatus?: 'ready' | 'unavailable' }; viralPotential?: { score?: number; mechanisms?: string[]; whyEffective?: string } }
 export interface ScriptSummary15s { visualStyle: string; coreEmotion: string; competitors: string[] }
 export interface ScriptAnalysis {
   videoType: string;

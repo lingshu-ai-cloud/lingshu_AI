@@ -5,7 +5,8 @@ import { authHeader } from './auth';
 import type { DigitalHumanCapabilities, DigitalHumanJob, TransformationAssessment, TransformationAssessmentInput } from './studioDigitalHuman';
 import { fetchMaterialLibrary, type MaterialLibraryPurpose } from './studioDigitalHuman';
 import type { MaterialScriptAnalysis } from '../../shared/materialScriptAnalysis';
-import { normalizeEffectPlan, type EffectPlanV1 } from '../../shared/contracts/effectPlan';
+import { type EffectPlanV1 } from '../../shared/contracts/effectPlan';
+import type { EmphasisPlanV1 } from '../../shared/contracts/emphasisTimeline';
 
 export interface HeyGenAvatarOption {
   id: string;
@@ -45,6 +46,9 @@ async function post<T>(path: string, body: unknown, fallback: T, signal?: AbortS
       }
       if (!r.ok) {
         const payload = await r.json().catch(() => ({})) as Record<string, unknown> & { error?: string; source?: string; code?: string; retryable?: boolean };
+        // Project conflicts carry diagnostics and a server snapshot. Keep them
+        // structured, but never advance the client's revision on a rejected save.
+        if (path === 'projects') return { ...fallback, ...payload, ok: false } as T & { source?: string };
         // Quality and fact gates are expected structured responses. Keep their
         // diagnostics, but never merge them with a local/previous draft.
         if (VERIFIED_AI_GENERATION_PATHS.has(path) && r.status === 422) {
@@ -220,7 +224,7 @@ export interface StudioAudioCapabilities {
 export interface SubtitleSpec {
   mode: 'off' | 'target' | 'bilingual';
   cues: SubCue[];
-  style: Partial<CoverStyle> & { productNames?: string[]; autoEmphasis?: boolean; fontScale?: number; bottomRatio?: number };
+  style: Partial<CoverStyle> & { productNames?: string[]; autoEmphasis?: boolean; fontScale?: number; bottomRatio?: number; outlineColor?: string; outlineWidth?: number; lineWidth?: number };
 }
 
 export interface RenderSpec {
@@ -238,6 +242,9 @@ export interface RenderSpec {
     targetStart?: number;
     targetEnd?: number;
     targetDuration?: number;
+    cropMode?: 'cover' | 'contain';
+    focusX?: number;
+    focusY?: number;
   }[];
   script: string;
   voice: string;
@@ -254,6 +261,7 @@ export interface RenderSpec {
   coverUrl?: string;
   subtitles?: SubtitleSpec;       // 字幕轨（桌面端 ffmpeg 烧录）
   effectPlan?: EffectPlanV1;      // 版本化白名单特效计划
+  emphasisPlan?: EmphasisPlanV1;  // 可选人工/Agent 校正；服务端缺省时自动生成
 }
 
 export interface RenderManifest {
@@ -279,6 +287,7 @@ export interface RenderManifest {
   bgm: { id: string | null; url: string | null };
   subtitles?: SubtitleSpec;
   effectPlan?: EffectPlanV1;
+  emphasisPlan?: EmphasisPlanV1;
 }
 
 export interface RenderAuthorization {
@@ -304,40 +313,6 @@ export function getDesktopRender(): DesktopRenderBridge | undefined {
   return typeof window !== 'undefined' ? window.desktopRender : undefined;
 }
 
-/** 离线 / 未授权时的本地兜底 manifest，桥接服务端 buildManifest 的结构 */
-function localManifest(spec: RenderSpec): RenderManifest {
-  const timeline: NonNullable<RenderSpec['timeline']> = spec.timeline?.length
-    ? spec.timeline
-    : (spec.materials ?? []).map(name => ({ name }));
-  return {
-    jobId: `local-${Date.now()}`,
-    requireVisualAssets: true,
-    spec: {
-      ratio: spec.ratio || '9:16',
-      duration: spec.duration ?? 20,
-      platform: spec.platform || 'tiktok',
-      language: spec.language || 'en',
-      bgmVol: spec.bgmVol ?? 35,
-      voiceVol: spec.voiceVol ?? 100,
-    },
-    script: spec.script ?? '',
-    timeline: timeline
-      .map((item, index) => {
-        const candidateUrl = Reflect.get(item, 'url');
-        return { index, ...item, url: typeof candidateUrl === 'string' ? candidateUrl : null };
-      }),
-    voiceover: { voice: spec.voice ?? null, url: spec.voiceoverUrl ?? null },
-    cover: { id: spec.coverId ?? null, title: spec.coverTitle ?? '', url: spec.coverUrl ?? null },
-    bgm: { id: spec.bgm ?? null, url: null },
-    subtitles: spec.subtitles,
-    effectPlan: spec.effectPlan ? normalizeEffectPlan(spec.effectPlan, timeline.map((item, index) => ({
-      sceneId: item.sceneId || item.clipId || String(index),
-      clipId: item.clipId,
-      targetDuration: item.targetDuration,
-    }))) : undefined,
-  };
-}
-
 export interface StudioProject {
   id: string;
   title: string;
@@ -348,6 +323,7 @@ export interface StudioProject {
   updatedAt: string;
 }
 const studioProjectRevisions = new Map<string, string>();
+const studioProjectSaveQueues = new Map<string, Promise<void>>();
 export interface VariationBatch {
   id: string;
   title: string;
@@ -596,6 +572,8 @@ export const studioApi = {
   },
   uploadVoiceover: (b: { name: string; dataBase64: string; mimeType?: string; duration?: number }) =>
     post<{ ok: boolean; url?: string; duration?: number; error?: string }>('voiceover', b, { ok: false }),
+  productDocumentOcr: (b: { dataBase64: string; mimeType: string }) =>
+    post<{ ok: boolean; text?: string; source?: 'local_tesseract'; needsReview?: true; code?: string; error?: string }>('product-document-ocr', b, { ok: false }),
 
   // 封面 SVG
   cover: (b: { title: string; ratio: string; accent: string; bgImageUrl?: string } & Partial<CoverStyle>) =>
@@ -700,17 +678,17 @@ export const studioApi = {
       if (!r.ok) throw new Error(String(r.status));
       return (await r.json()) as RenderAuthorization;
     } catch (err: any) {
-      if (String(err?.message || '').includes('Demo')) throw err;
-      return { source: 'local', token: null, expiresAt: null, manifest: localManifest(spec) };
+      throw err instanceof Error ? err : new Error('渲染授权服务不可用，请稍后重试');
     }
   },
 
-  renderLocal: async (manifest: RenderManifest): Promise<{ ok: boolean; outputPath?: string; previewUrl?: string; error?: string }> => {
+  renderLocal: async (manifest: RenderManifest, token: string | null): Promise<{ ok: boolean; outputPath?: string; previewUrl?: string; error?: string }> => {
+    if (!token) return { ok: false, error: '缺少服务端签发的渲染授权，请重试' };
     try {
       const r = await fetch('/api/overseas/studio/render/local', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...authHeader() },
-        body: JSON.stringify(manifest),
+        body: JSON.stringify({ manifest, token }),
       });
       const data = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(data?.error || String(r.status));
@@ -742,21 +720,38 @@ export const studioApi = {
       if (!r.ok) throw new Error(String(r.status));
       const data = await r.json();
       const projects = Array.isArray(data) ? (data as StudioProject[]) : [];
-      projects.forEach(project => studioProjectRevisions.set(project.id, project.updatedAt));
+      projects.forEach(project => {
+        if (!studioProjectRevisions.has(project.id)) studioProjectRevisions.set(project.id, project.updatedAt);
+      });
       return projects;
     } catch {
       return [];
     }
   },
+  adoptProjectRevision: (project: StudioProject) => {
+    studioProjectRevisions.set(project.id, project.updatedAt);
+  },
   saveProject: async (b: { id?: string; title: string; status: 'draft' | 'ready_for_approval' | 'published' | 'template'; spec: Record<string, unknown>; thumbSeed?: string; baseUpdatedAt?: string }) => {
-    const baseUpdatedAt = b.id ? b.baseUpdatedAt || studioProjectRevisions.get(b.id) : undefined;
-    const result = await post<{ ok: boolean; project: StudioProject; error?: string; code?: string }>(
-      'projects',
-      { ...b, ...(baseUpdatedAt ? { baseUpdatedAt } : {}) },
-      { ok: false, project: null as unknown as StudioProject },
-    );
-    if (result.ok && result.project?.id) studioProjectRevisions.set(result.project.id, result.project.updatedAt);
-    return result;
+    // Serialize each existing project across all save callers. Read its revision
+    // after the previous write settles; independent projects can save in parallel.
+    const previous = b.id ? studioProjectSaveQueues.get(b.id) : undefined;
+    let release: (() => void) | undefined;
+    const pending = b.id ? new Promise<void>(resolve => { release = resolve; }) : undefined;
+    if (b.id && pending) studioProjectSaveQueues.set(b.id, pending);
+    try {
+      if (previous) await previous;
+      const baseUpdatedAt = b.id ? b.baseUpdatedAt || studioProjectRevisions.get(b.id) : undefined;
+      const result = await post<{ ok: boolean; project: StudioProject; error?: string; code?: string }>(
+        'projects',
+        { ...b, ...(baseUpdatedAt ? { baseUpdatedAt } : {}) },
+        { ok: false, project: null as unknown as StudioProject },
+      );
+      if (result.ok && result.project?.id) studioProjectRevisions.set(result.project.id, result.project.updatedAt);
+      return result;
+    } finally {
+      if (b.id && studioProjectSaveQueues.get(b.id) === pending) studioProjectSaveQueues.delete(b.id);
+      release?.();
+    }
   },
   deleteProject: (id: string) => del(`projects/${id}`),
   createVariationBatch: (b: { title: string; templateProjectId?: string; duration: number; maxItems: number; dimensions: Record<string, string[]>; plan?: VariationBatch['plan'] }) =>
@@ -938,6 +933,8 @@ export interface CoverStyle {
 export interface Material {
   transcript?: string;
   transcriptCues?: SubCue[];
+  transcriptCuesProvenance?: string;
+  transcriptSourceHash?: string;
   id: string;
   name: string;
   folder: string;
@@ -954,6 +951,8 @@ export interface Material {
   usage?: 'editable' | 'reference_only';
   canManage?: boolean;
   sourceType?: string;
+  providerTaskId?: string;
+  contentSha256?: string;
   sourceName?: string;
   sourceProvider?: string;
   sourceCreator?: string;

@@ -1,3 +1,5 @@
+import { withStarter198RunMutationLease } from './runMutationLease.js';
+import { assertCurrentContentExecutionActive } from '../contentExecution/context.js';
 import { createHash } from 'node:crypto';
 import { existsSync, statSync } from 'node:fs';
 import fsp from 'node:fs/promises';
@@ -228,6 +230,7 @@ export async function writeExecutionStage(input: {
   message: string;
   extra?: Record<string, unknown>;
 }): Promise<void> {
+  await assertCurrentContentExecutionActive();
   const task = await executionTask(input);
   if (!task) return;
   const output = socialObject(socialJson(task.output)) ?? {};
@@ -285,6 +288,7 @@ export async function finishExecution(input: {
   taskId: string;
   userId: string;
 }): Promise<void> {
+  await assertCurrentContentExecutionActive();
   const detail = await readSocialTaskDetail(input);
   const artifact = detail?.artifacts.find(item => item.artifactId === input.artifactId);
   const managed = detail?.brief.managementMode === 'one_click_managed';
@@ -322,13 +326,15 @@ export async function finishExecution(input: {
       : managed ? '成品已保留，自动验收证据未满足，等待系统恢复检查。' : '成品视频已生成，等待用户验收。',
     extra: { artifactId: input.artifactId, ...(publication ? { managedPublishing: publication } : {}) },
   });
+  await withStarter198RunMutationLease({ tenantId: input.tenantId, runId: input.runId, dataStore: input.repository.dataStore, action: async () => {
   const run = await input.repository.get(STARTER_COLLECTIONS.runs, input.tenantId, input.runId);
-  if (run) await input.repository.update(STARTER_COLLECTIONS.runs, input.tenantId, run.id, {
+  if (run && !['paused', 'pausing', 'cancelling', 'cancelled', 'failed', 'completed', 'succeeded'].includes(socialText(run.status))) await input.repository.update(STARTER_COLLECTIONS.runs, input.tenantId, run.id, {
     status: managed && !accepted ? 'waiting_external' : 'completed',
     current_controller: managed ? 'agent' : 'system',
     pause_reason: managed && !accepted ? 'automatic_acceptance_evidence_incomplete' : '',
     completed_at: managed && !accepted ? '' : new Date().toISOString(),
   });
+  } });
 }
 
 export async function failExecution(input: {
@@ -339,6 +345,10 @@ export async function failExecution(input: {
   userId: string;
   error: unknown;
 }): Promise<void> {
+  const stoppedRun = await input.repository.get(STARTER_COLLECTIONS.runs, input.tenantId, input.runId).catch(() => null);
+  if (stoppedRun && ['paused', 'pausing', 'cancelling', 'cancelled', 'succeeded', 'completed', 'failed'].includes(socialText(stoppedRun.status))) return;
+  const stoppedJobs = await input.repository.dataStore?.list<Record<string, unknown>>('content_execution_jobs', { where: { tenant_id: input.tenantId, task_id: input.taskId, run_id: input.runId }, page: 1, perPage: 2 });
+  if (stoppedJobs?.items.some(job => ['paused', 'cancelled'].includes(socialText(job.status)))) return;
   const detail = await readSocialTaskDetail(input).catch(() => null);
   const pendingRevision = detail?.artifacts.some(artifact => artifact.kind === 'short_video'
     && artifact.status === 'changes_requested');
@@ -379,8 +389,10 @@ export async function failExecution(input: {
       updated_at: new Date().toISOString(),
     }).catch(() => undefined);
   }
+  await withStarter198RunMutationLease({ tenantId: input.tenantId, runId: input.runId, dataStore: input.repository.dataStore, action: async () => {
   const run = await input.repository.get(STARTER_COLLECTIONS.runs, input.tenantId, input.runId).catch(() => null);
-  if (run) await input.repository.update(STARTER_COLLECTIONS.runs, input.tenantId, run.id, {
+  if (run && !['paused', 'pausing', 'cancelling', 'cancelled', 'failed', 'completed', 'succeeded'].includes(socialText(run.status))) await input.repository.update(STARTER_COLLECTIONS.runs, input.tenantId, run.id, {
     status: 'waiting_external', current_controller: 'agent', pause_reason: message,
   }).catch(() => undefined);
+  } });
 }

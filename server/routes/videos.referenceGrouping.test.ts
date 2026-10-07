@@ -36,3 +36,14 @@ for (let index = 0; index < montageCuts.length - 1; index += 1) {
     `短产品镜头 ${from}–${to} 必须保留一帧供视觉标注`);
 }
 console.log('reference observation grouping tests passed');
+
+const mixedClassification = groupExactObservationWindows({ ...base, scriptDetails15s: [
+  { time: '0-2s', visual: '人物讲话', materialType: 'talking_head', narrativeRole: 'hook', classificationEvidence: '可见讲话', needsReview: false },
+  { time: '2-4s', visual: '人物使用产品', materialType: 'consumer_demo', narrativeRole: 'effect_proof', classificationEvidence: '可见涂抹', needsReview: false },
+  { time: '4-6s', visual: '产品', materialType: 'product', narrativeRole: 'product_intro', classificationEvidence: '产品特写', needsReview: false },
+] }, [4]);
+assert.equal(mixedClassification.scriptDetails15s?.[0]?.materialType, 'unknown', '一个物理镜头内不同类型不能静默沿用第一观察窗分类');
+assert.equal(mixedClassification.scriptDetails15s?.[0]?.narrativeRole, 'unknown');
+assert.equal(mixedClassification.scriptDetails15s?.[0]?.needsReview, true);
+assert.match(mixedClassification.scriptDetails15s?.[0]?.classificationEvidence || '', /可见讲话.*可见涂抹/);
+assert.equal(mixedClassification.scriptDetails15s?.[1]?.materialType, 'product');

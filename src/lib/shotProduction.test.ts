@@ -50,6 +50,11 @@ test('old candidates cannot be silently published against changed requirements',
   assert.ok(shotBlockers({ ...current, narration: 'new' }, 'context').length);
   assert.ok(shotBlockers({ ...current, layout: 'pip' }, 'context').length);
 });
+test('verified existing avatar source can render without a current project candidate', () => {
+  const shot = { ...newShotProduction('原声口播'), source: 'avatar' as const, sound: 'source' as const };
+  assert.ok(shotBlockers(shot, 'context').some(message => message.includes('生成并采用')));
+  assert.ok(!shotBlockers(shot, 'context', undefined, { sourceMaterialVerified: true }).some(message => message.includes('生成并采用')));
+});
 test('evidence and real-person preferences never turn into synthetic proof', () => {
   const input = { detail: '展示检测证书', preference: 'avatar' as const, locked: false, hasMaterial: false, hasPresenter: true };
   assert.equal(recommendShot(input).source, 'shoot');

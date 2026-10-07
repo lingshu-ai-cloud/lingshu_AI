@@ -78,6 +78,15 @@ test('real FFmpeg exports full, split, pip and mixed source/voiceover audio loca
     const firstRms = rms(out.outputPath, 0.2), secondRms = rms(out.outputPath, 1.2);
     assert.ok(firstRms > 0.02 && secondRms > 0.02, 'both source and voiceover intervals must be audible');
     assert.ok(firstRms / secondRms > 0.75 && firstRms / secondRms < 1.3, `source interval should not double the same voiceover: ${firstRms}/${secondRms}`);
+    const mixedGap = await composite({ jobId: 'mixed-source-with-silent-broll', spec: { ratio: '1:1', duration: 3 }, voiceover: { url: `${origin}/person.mp4` }, timeline: [
+      { url: `${origin}/product.mp4`, targetDuration: 1, trimEnd: 1, targetStart: 0, voiceStart: 0, voiceEnd: 0, voiceAligned: true, production: { sound: 'silent' } },
+      { url: `${origin}/person.mp4`, targetDuration: 1, trimEnd: 1, targetStart: 1, production: { sound: 'source' } },
+      { url: `${origin}/product.mp4`, targetDuration: 1, trimEnd: 1, targetStart: 2, voiceStart: 0, voiceEnd: 0, voiceAligned: true, production: { sound: 'silent' } },
+    ] }, undefined, dir);
+    assert.equal(mixedGap.ok, true, mixedGap.error);
+    assert.ok(rms(mixedGap.outputPath, 0.2) < 0.001, 'leading mixed B-roll must not borrow AI voiceover');
+    assert.ok(rms(mixedGap.outputPath, 1.2) > 0.02, 'avatar source voice must remain audible');
+    assert.ok(rms(mixedGap.outputPath, 2.2) < 0.001, 'trailing mixed B-roll must not repeat AI voiceover');
     for (const layout of ['full', 'split', 'pip']) {
       const alpha = await composite({ jobId: `alpha-${layout}`, spec: { ratio: '1:1', duration: 1 }, bgm: { url: `${origin}/person.mp4` }, voiceover: { url: `${origin}/person.mp4` }, timeline: [{
         url: `${origin}/alpha.webm`, targetDuration: 1, trimEnd: 1, targetStart: 0,

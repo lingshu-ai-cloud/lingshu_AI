@@ -89,18 +89,18 @@ test('social program API exposes the two-step Agent plan and detailed execution 
   };
   try {
     await socialProgramApi.getAgentPlanning('program/a', 'package/a', 3);
-    await socialProgramApi.runDirectorPlanning('program/a', 'package/a', 2);
-    await socialProgramApi.mergeAgentSchedule('program/a', 'package/a', 3);
-    await socialProgramApi.confirmAgentSchedule('program/a', 'package/a', 4);
-    await socialProgramApi.dispatchAgentSchedule('program/a', 'package/a', 5);
+    await socialProgramApi.runDirectorPlanning('program/a', 'package/a', { expectedPackageVersion: 3, expectedPlanningVersion: 2 });
+    await socialProgramApi.mergeAgentSchedule('program/a', 'package/a', { expectedPackageVersion: 3, expectedPlanningVersion: 3 });
+    await socialProgramApi.confirmAgentSchedule('program/a', 'package/a', { expectedPackageVersion: 3, expectedPlanningVersion: 4 });
+    await socialProgramApi.dispatchAgentSchedule('program/a', 'package/a', { expectedPackageVersion: 3, expectedPlanningVersion: 5 });
     assert.deepEqual(await socialProgramApi.listExecutionTasks('program/a', 'package/a', 3), []);
     assert.deepEqual(await socialProgramApi.approveExecutionTask('program/a', 'package/a', 'task/a'), []);
     assert.deepEqual(calls, [
       { url: '/api/overseas/social-programs/program%2Fa/operating-packages/package%2Fa/agent-planning?version=3', method: 'GET', body: null },
-      { url: '/api/overseas/social-programs/program%2Fa/operating-packages/package%2Fa/agent-planning/director-analysis', method: 'POST', body: { expectedVersion: 2 } },
-      { url: '/api/overseas/social-programs/program%2Fa/operating-packages/package%2Fa/agent-planning/merge', method: 'POST', body: { expectedVersion: 3 } },
-      { url: '/api/overseas/social-programs/program%2Fa/operating-packages/package%2Fa/agent-planning/confirm', method: 'POST', body: { expectedVersion: 4 } },
-      { url: '/api/overseas/social-programs/program%2Fa/operating-packages/package%2Fa/agent-planning/dispatch', method: 'POST', body: { expectedVersion: 5 } },
+      { url: '/api/overseas/social-programs/program%2Fa/operating-packages/package%2Fa/agent-planning/director-analysis', method: 'POST', body: { expectedPackageVersion: 3, expectedPlanningVersion: 2 } },
+      { url: '/api/overseas/social-programs/program%2Fa/operating-packages/package%2Fa/agent-planning/merge', method: 'POST', body: { expectedPackageVersion: 3, expectedPlanningVersion: 3 } },
+      { url: '/api/overseas/social-programs/program%2Fa/operating-packages/package%2Fa/agent-planning/confirm', method: 'POST', body: { expectedPackageVersion: 3, expectedPlanningVersion: 4 } },
+      { url: '/api/overseas/social-programs/program%2Fa/operating-packages/package%2Fa/agent-planning/dispatch', method: 'POST', body: { expectedPackageVersion: 3, expectedPlanningVersion: 5 } },
       { url: '/api/overseas/social-programs/program%2Fa/operating-packages/package%2Fa/execution-tasks?version=3', method: 'GET', body: null },
       { url: '/api/overseas/social-programs/program%2Fa/operating-packages/package%2Fa/execution-tasks/task%2Fa/approve', method: 'POST', body: {} },
     ]);

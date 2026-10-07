@@ -22,6 +22,7 @@ import { channelsRouter } from './routes/channels.js';
 import { schedulerRouter } from './routes/scheduler.js';
 import { pluginsRouter } from './routes/plugins.js';
 import { studioRouter } from './routes/studio.js';
+import { productDocumentOcrRouter } from './routes/productDocumentOcr.js';
 import { authRouter } from './routes/auth.js';
 import { youtubeRouter } from './routes/youtube.js';
 import { socialRouter } from './routes/social.js';
@@ -73,7 +74,7 @@ import {
 } from './runtime/httpSafety.js';
 import { createRuntimeReadinessProbe, runtimeCapabilities } from './runtime/readiness.js';
 import { dataAuthorityRequestScope } from './storage/dataAuthority.js';
-import { objectStorageConfigurationIssues } from './storage/objectStorage.js';
+import { objectStorageConfigurationIssues, objectStorageDriver, objectStorageLocalRoot } from './storage/objectStorage.js';
 import { runtimeBuildInfo } from './runtime/buildInfo.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -189,6 +190,7 @@ app.use('/api/overseas/enterprise/assets', requireAuth, jsonBody(`${limits.legac
 app.use('/api/overseas/studio/voice-samples', requireAuth, jsonBody(`${limits.voiceUpload}mb`));
 app.use('/api/overseas/studio/voiceover', requireAuth, jsonBody(`${limits.voiceUpload}mb`));
 app.use('/api/overseas/studio/bgm', requireAuth, jsonBody(`${limits.voiceUpload}mb`));
+app.use('/api/overseas/studio/product-document-ocr', requireAuth, jsonBody('9mb'));
 app.use(jsonBody(`${limits.default}mb`));
 app.use(syncAssetSession);
 
@@ -229,6 +231,7 @@ app.use('/api/overseas/agent-notifications', agentNotificationsRouter);
 app.use('/api/overseas/startup-hub', startupHubRouter);
 app.use('/api/overseas/support-access', supportAccessRouter);
 app.use('/api/overseas/crawl-worker', crawlWorkerRouter);
+app.use('/api/overseas/studio/product-document-ocr', productDocumentOcrRouter);
 app.use('/api/overseas/studio', studioRouter);
 app.use('/api/overseas/platform-integrations', platformIntegrationsRouter);
 app.use('/api/overseas/assistant-threads', assistantThreadsRouter);
@@ -261,9 +264,12 @@ const privateAssetHeaders = (res: express.Response) => {
 app.use('/cloud-files', cloudMaterialMediaRouter);
 // Neutral alias for browsers/extensions that block paths containing "cloud-files".
 app.use('/studio-media', cloudMaterialMediaRouter);
-app.use('/media', requireScopedAsset, express.static(mediaDir, {
-  setHeaders: privateAssetHeaders,
-}));
+const mediaRouter = express.Router();
+if (objectStorageDriver() === 'local') {
+  mediaRouter.use('/object-storage', express.static(objectStorageLocalRoot(), { setHeaders: privateAssetHeaders }));
+}
+mediaRouter.use(express.static(mediaDir, { setHeaders: privateAssetHeaders }));
+app.use('/media', requireScopedAsset, mediaRouter);
 
 // BGM 鏇插簱鏈湴鏂囦欢鎵樼锛圥OST /studio/bgm 涓婁紶锛?
 const bgmDir = path.join(__dirname, '..', 'data', 'bgm');

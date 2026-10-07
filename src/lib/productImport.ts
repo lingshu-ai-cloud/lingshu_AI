@@ -120,7 +120,12 @@ function uniqueHeaders(headers: string[]) {
 function headersFrom(rows: string[][], headerRowIndex: number) {
   const top = rows[headerRowIndex] ?? [];
   const next = rows[headerRowIndex + 1] ?? [];
-  const doubleHeader = textRatio(next) > 0.72 && regularity(rows, headerRowIndex + 2) >= regularity(rows, headerRowIndex + 1);
+  // A single product row often contains mostly text as well. It cannot be a
+  // second header unless at least one non-empty data row follows it.
+  const hasRowsAfterSecondHeader = rows.slice(headerRowIndex + 2).some(row => row.some(Boolean));
+  const doubleHeader = hasRowsAfterSecondHeader
+    && textRatio(next) > 0.72
+    && regularity(rows, headerRowIndex + 2) >= regularity(rows, headerRowIndex + 1);
   const width = Math.max(top.length, doubleHeader ? next.length : 0);
   return uniqueHeaders(Array.from({ length: width }, (_, index) => {
     const a = top[index] || '';

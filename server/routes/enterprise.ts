@@ -34,12 +34,56 @@ import {
 } from '../starter198/legacyEffectGuard.js';
 import { localFallbacksEnabled } from '../lib/localFallbackPolicy.js';
 import { currentDataAuthority } from '../storage/dataAuthority.js';
+import { upsertTenantUploadCloudMaterial } from '../lib/cloudMaterials.js';
+import { normalizeTenantMedia } from '../lib/tenantMediaNormalization.js';
+import os from 'node:os';
+import { downloadAndNormalizeExternalImage, ExternalImageImportError } from '../lib/externalProductImageImport.js';
+import { readLocalMaterials, saveLocalMaterials } from '../lib/materialLibrary.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_FILE = path.join(__dirname, '../../data/enterprise.json');
 const DATA_DIR = path.join(__dirname, '../../data');
 const ASSETS_DIR = path.join(DATA_DIR, 'enterprise-assets');
 const TENANT_ORDERS_DIR = path.join(DATA_DIR, 'tenant-orders');
+
+function upsertLocalEnterpriseMaterial(input: {
+  tenantId: string; title: string; type: 'image' | 'video' | 'audio'; sizeBytes: number;
+  duration?: number; width?: number; height?: number; sha256: string; sourceUrl: string;
+  sourceName: string; productId?: string; provenance: Record<string, unknown>;
+}): Record<string, unknown> {
+  const records = readLocalMaterials();
+  const index = records.findIndex(item => String(item.tenantId || item.tenant_id || '') === input.tenantId
+    && String(item.contentSha256 || item.sha256 || '').toLowerCase() === input.sha256.toLowerCase());
+  const now = new Date().toISOString();
+  const sourceEntries = ['enterprise_knowledge'];
+  if (index >= 0) {
+    const current = records[index]!;
+    const currentProvenance = current.provenance && typeof current.provenance === 'object' ? current.provenance : {};
+    records[index] = {
+      ...current,
+      ...(input.productId ? { productId: input.productId } : {}),
+      sourceUrl: input.sourceUrl,
+      provenance: { ...currentProvenance, ...input.provenance, sourceEntry: 'enterprise_knowledge', sourceEntries },
+      updatedAt: now,
+    };
+    saveLocalMaterials(records);
+    return records[index]!;
+  }
+  const created = {
+    id: `enterprise-${randomUUID()}`, tenantId: input.tenantId, name: input.title, title: input.title,
+    folder: 'enterprise-upload', type: input.type, duration: input.duration || 0,
+    width: input.width, height: input.height, sizeBytes: input.sizeBytes, size: `${input.sizeBytes} B`,
+    contentSha256: input.sha256, sha256: input.sha256, scope: 'own', usage: 'editable',
+    sourceType: 'enterprise_upload', sourceName: input.sourceName, sourceProvider: 'tenant',
+    sourceUrl: input.sourceUrl, url: input.sourceUrl, ...(input.productId ? { productId: input.productId } : {}),
+    sourceEntry: 'enterprise_knowledge', ownership: 'enterprise', visibility: 'tenant', knowledgeEligible: true,
+    provenance: { ...input.provenance, sourceEntry: 'enterprise_knowledge', sourceEntries },
+    createdAt: now, updatedAt: now,
+  };
+  records.push(created);
+  saveLocalMaterials(records);
+  return created;
+}
 
 
 
@@ -2252,9 +2296,9 @@ enterpriseRouter.post('/assets', async (req, res) => {
     res.status(400).json({ error: 'invalid asset payload' });
     return;
   }
-  const storedName = safeStoredName(name);
-  const buffer = Buffer.from(match[2], 'base64');
-  const contentType = enterpriseAssetContentType(name, type || match[1]);
+  let storedName = safeStoredName(name);
+  let buffer = Buffer.from(match[2], 'base64');
+  let contentType = enterpriseAssetContentType(name, type || match[1]);
   if (!enterpriseAssetTypeAllowed(contentType)) {
     res.status(415).json({ error: 'only image, video and PDF enterprise assets are supported' });
     return;
@@ -2264,7 +2308,20 @@ enterpriseRouter.post('/assets', async (req, res) => {
     return;
   }
 
+  let material: Record<string, unknown> | undefined;
+  let normalized: Awaited<ReturnType<typeof normalizeTenantMedia>> | undefined;
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lingshu-enterprise-upload-'));
   try {
+    if (contentType.startsWith('image/') || contentType.startsWith('video/') || contentType.startsWith('audio/')) {
+      normalized = await normalizeTenantMedia({
+        buffer, originalName: name, declaredMimeType: contentType,
+        kind: contentType.startsWith('image/') ? 'image' : contentType.startsWith('audio/') ? 'audio' : 'video',
+        temporaryDirectory: tempDir,
+      });
+      buffer = normalized.buffer;
+      storedName = safeStoredName(normalized.filename);
+      contentType = normalized.mimeType;
+    }
     if (objectStorageEnabled()) {
       await objectStorageUpload({
         key: enterpriseAssetObjectKey(tenantId, storedName),
@@ -2277,10 +2334,55 @@ enterpriseRouter.post('/assets', async (req, res) => {
       fs.mkdirSync(tenantDir, { recursive: true });
       fs.writeFileSync(path.join(tenantDir, storedName), buffer);
     }
+    if (contentType.startsWith('image/') || contentType.startsWith('video/') || contentType.startsWith('audio/')) {
+      const materialInput: Parameters<typeof upsertTenantUploadCloudMaterial>[0] = {
+        tenantId,
+        title: name,
+        folder: 'enterprise-upload',
+        type: contentType.startsWith('image/') ? 'image' : contentType.startsWith('audio/') ? 'audio' : 'video',
+        sizeBytes: buffer.length,
+        duration: normalized?.duration,
+        width: normalized?.width,
+        height: normalized?.height,
+        sha256: normalized?.sha256 || createHash('sha256').update(buffer).digest('hex'),
+        scope: 'own',
+        usage: 'editable',
+        sourceType: 'enterprise_upload',
+        sourceName: name,
+        sourceProvider: 'tenant',
+        sourceUrl: `/api/overseas/enterprise/assets/${storedName}`,
+        sourceEntry: 'enterprise_knowledge',
+        provenance: {
+          uploadMethod: 'enterprise_knowledge',
+          sourceEntry: 'enterprise_knowledge',
+          originalName: name,
+          mimeType: contentType,
+          receivedAt: new Date().toISOString(),
+          knowledgeEligible: true,
+          normalization: normalized?.normalization,
+        },
+        media: { name: storedName, buf: buffer, contentType },
+        ...(normalized?.poster ? { poster: { name: normalized.poster.filename, buf: normalized.poster.buffer, contentType: normalized.poster.mimeType } } : {}),
+      };
+      material = currentDataAuthority() === 'local'
+        ? upsertLocalEnterpriseMaterial({
+          tenantId, title: name, type: materialInput.type, sizeBytes: buffer.length,
+          duration: normalized?.duration, width: normalized?.width, height: normalized?.height,
+          sha256: materialInput.sha256, sourceUrl: String(materialInput.sourceUrl || ''), sourceName: name,
+          provenance: materialInput.provenance || {},
+        })
+        : await upsertTenantUploadCloudMaterial(materialInput);
+      const materialId = String(material.id || '');
+      if (materialId) void import('../lib/materialLibraryAnalysis.js')
+        .then(module => module.requestMaterialAnalysis(tenantId, materialId))
+        .catch(error => console.warn('[enterprise-assets] material analysis start failed', error instanceof Error ? error.message : error));
+    }
   } catch (error) {
     console.error('[enterprise-assets] upload failed', error instanceof Error ? error.message : error);
     res.status(503).json({ error: 'enterprise asset storage unavailable' });
     return;
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
   }
 
   res.json({
@@ -2289,7 +2391,57 @@ enterpriseRouter.post('/assets', async (req, res) => {
     size: buffer.length,
     updatedAt: new Date().toISOString(),
     url: `/api/overseas/enterprise/assets/${storedName}`,
+    material,
   });
+});
+
+enterpriseRouter.post('/assets/import-url', async (req, res) => {
+  const { tenantId } = res.locals as AuthLocals;
+  const sourceUrl = String(req.body?.url || '').trim();
+  const requestedName = String(req.body?.name || '').trim().slice(0, 160);
+  const productId = String(req.body?.productId || '').trim().slice(0, 160);
+  if (!sourceUrl) { res.status(400).json({ error: 'url is required' }); return; }
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lingshu-product-image-import-'));
+  try {
+    const normalized = await downloadAndNormalizeExternalImage({ url: sourceUrl, temporaryDirectory: tempDir });
+    const storedName = safeStoredName(normalized.filename);
+    if (objectStorageEnabled()) {
+      await objectStorageUpload({ key: enterpriseAssetObjectKey(tenantId, storedName), body: normalized.buffer, contentType: normalized.mimeType });
+    } else {
+      ensureAssetsDir();
+      const tenantDir = path.join(ASSETS_DIR, enterpriseAssetTenantKey(tenantId));
+      fs.mkdirSync(tenantDir, { recursive: true });
+      fs.writeFileSync(path.join(tenantDir, storedName), normalized.buffer, { mode: 0o600 });
+    }
+    const enterpriseUrl = `/api/overseas/enterprise/assets/${storedName}`;
+    const materialInput: Parameters<typeof upsertTenantUploadCloudMaterial>[0] = {
+      tenantId, title: requestedName || path.basename(normalized.filename), folder: 'enterprise-upload', type: 'image',
+      width: normalized.width, height: normalized.height, sizeBytes: normalized.buffer.length, sha256: normalized.sha256,
+      scope: 'own', usage: 'editable', sourceType: 'enterprise_product_image_import', sourceName: requestedName || normalized.filename,
+      sourceProvider: 'tenant', sourceUrl: normalized.sourceUrl, sourceEntry: 'enterprise_knowledge', productId: productId || undefined,
+      provenance: { uploadMethod: 'enterprise_external_url', sourceEntry: 'enterprise_knowledge', originalUrl: normalized.sourceUrl,
+        enterpriseAssetUrl: enterpriseUrl, normalization: normalized.normalization, knowledgeEligible: true, receivedAt: new Date().toISOString() },
+      media: { name: storedName, buf: normalized.buffer, contentType: normalized.mimeType },
+      ...(normalized.poster ? { poster: { name: normalized.poster.filename, buf: normalized.poster.buffer, contentType: normalized.poster.mimeType } } : {}),
+    };
+    const material = currentDataAuthority() === 'local'
+      ? upsertLocalEnterpriseMaterial({
+        tenantId, title: materialInput.title, type: 'image', sizeBytes: normalized.buffer.length,
+        width: normalized.width, height: normalized.height, sha256: normalized.sha256,
+        sourceUrl: enterpriseUrl, sourceName: String(materialInput.sourceName || materialInput.title), productId: productId || undefined,
+        provenance: materialInput.provenance || {},
+      })
+      : await upsertTenantUploadCloudMaterial(materialInput);
+    void import('../lib/materialLibraryAnalysis.js').then(module => module.requestMaterialAnalysis(tenantId, String(material.id || ''))).catch(() => {});
+    res.status(201).json({ name: requestedName || normalized.filename, type: normalized.mimeType, size: normalized.buffer.length,
+      width: normalized.width, height: normalized.height, sha256: normalized.sha256, sourceUrl: normalized.sourceUrl,
+      url: enterpriseUrl, material });
+  } catch (error) {
+    const known = error instanceof ExternalImageImportError;
+    res.status(known ? 422 : 503).json({ error: error instanceof Error ? error.message : 'external image import failed', ...(known ? { code: error.code } : {}) });
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
 });
 
 enterpriseRouter.get('/assets/:file', async (req, res) => {

@@ -15,9 +15,13 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { fileURLToPath } = require('node:url');
+const { Readable, Transform } = require('node:stream');
+const { pipeline } = require('node:stream/promises');
 const { layoutFilters, tempoFilters, muteIntervals } = require('./shot-composition.cjs');
 const { normalizeEffectPlan, sceneEffectFilters, joinSceneFilters, audioEventFilters } = require('./effect-composition.cjs');
 const { automaticSubtitleText, verifySubtitleFonts, fontsDirectory, template: subtitleTemplate } = require('./automatic-subtitles.cjs');
+const { normalizeEmphasisPlan, emphasisToAssEvents, captionEmphasisTags } = require('./emphasis-composition.cjs');
+const { advancedEvents, renderTransparentOverlay } = require('./remotion-overlay.cjs');
 
 let ffmpegPath = null;
 try { ffmpegPath = require('ffmpeg-static'); } catch { ffmpegPath = null; }
@@ -90,19 +94,30 @@ async function downloadTo(url, dest, options = {}) {
   const rawSource = String(url || '');
   const source = rawSource.startsWith('/') && options.assetOrigin
     ? new URL(rawSource, options.assetOrigin).href : rawSource;
+  if (options.serverStrictAssets) {
+    let parsed;
+    try { parsed = new URL(source); } catch { throw new Error('invalid server render asset URL'); }
+    if (!options.assetOrigin || parsed.origin !== new URL(options.assetOrigin).origin || parsed.username || parsed.password
+      || !/^\/(?:media|tts|covers|bgm|studio-media|api\/overseas\/studio\/)/.test(parsed.pathname)) {
+      throw new Error('server render asset source is not allowed');
+    }
+  }
   const data = dataUrlParts(source);
   if (data) {
+    if (options.serverStrictAssets) throw new Error('data URL is not allowed for server render');
     if (!data.bytes.length) throw new Error('empty data URL');
     fs.writeFileSync(dest, data.bytes);
     return dest;
   }
   if (source.startsWith('file://')) {
+    if (options.serverStrictAssets) throw new Error('file URL is not allowed for server render');
     const localPath = fileURLToPath(source);
     if (!fs.existsSync(localPath) || fs.statSync(localPath).size <= 0) throw new Error(`missing local file ${localPath}`);
     fs.copyFileSync(localPath, dest);
     return dest;
   }
   if (!/^[a-z][a-z0-9+.-]*:/i.test(source) && fs.existsSync(source)) {
+    if (options.serverStrictAssets) throw new Error('local path is not allowed for server render');
     if (fs.statSync(source).size <= 0) throw new Error(`empty local file ${source}`);
     fs.copyFileSync(source, dest);
     return dest;
@@ -114,17 +129,40 @@ async function downloadTo(url, dest, options = {}) {
     : {};
   let res;
   try {
-    res = await fetch(source, { headers, signal: controller.signal });
+    res = await fetch(source, { headers, signal: controller.signal, redirect: options.serverStrictAssets ? 'manual' : 'follow' });
   } finally {
     clearTimeout(timer);
   }
   if (!res.ok) throw new Error(`素材读取失败（HTTP ${res.status}）`);
   if ((res.headers.get('content-type') || '').includes('application/json')) {
+    if (options.serverStrictAssets) throw new Error('server render media route returned JSON instead of media');
     const payload = await res.json();
     if (typeof payload.url !== 'string' || options.resolvedMediaUrl) throw new Error('素材接口没有返回有效媒体地址');
     return downloadTo(payload.url, dest, { ...options, resolvedMediaUrl: true });
   }
-  fs.writeFileSync(dest, Buffer.from(await res.arrayBuffer()));
+  if (options.serverStrictAssets) {
+    const declared = Number(res.headers.get('content-length') || 0);
+    if (declared > options.maxAssetBytes) throw new Error('render asset exceeds size limit');
+    if (!res.body) throw new Error('render asset has no response body');
+    let bytes = 0;
+    const meter = new Transform({ transform(chunk, _encoding, done) {
+      bytes += chunk.length;
+      options.totalBytes.value += chunk.length;
+      if (bytes > options.maxAssetBytes || options.totalBytes.value > options.maxTotalAssetBytes) done(new Error('render asset exceeds size limit'));
+      else done(null, chunk);
+    } });
+    const streamTimer = setTimeout(() => controller.abort(), 45_000);
+    try {
+      await pipeline(Readable.fromWeb(res.body), meter, fs.createWriteStream(dest, { mode: 0o600 }));
+    } catch (error) {
+      try { fs.rmSync(dest, { force: true }); } catch { /* noop */ }
+      throw error;
+    } finally {
+      clearTimeout(streamTimer);
+    }
+  } else {
+    fs.writeFileSync(dest, Buffer.from(await res.arrayBuffer()));
+  }
   return dest;
 }
 
@@ -169,7 +207,7 @@ function subtitleUnits(value) {
  * lines, and every line is constrained by visual width rather than JS string
  * length so Chinese and Latin copy behave consistently.
  */
-function subtitlePages(value, maxUnitsPerLine = 15, maxLines = 2) {
+function subtitlePages(value, maxUnitsPerLine = 12, maxLines = 2, maxUnitsPerPage = 16) {
   const source = assText(value);
   if (!source) return [];
   // Keep space-delimited words intact; CJK still permits breaks between glyphs.
@@ -191,7 +229,7 @@ function subtitlePages(value, maxUnitsPerLine = 15, maxLines = 2) {
   };
   const cost = Array(tokens.length + 1).fill(Infinity), next = [], layouts = [];
   cost[tokens.length] = 0;
-  const capacity = maxUnitsPerLine * maxLines;
+  const capacity = Math.max(8, Math.min(maxUnitsPerLine * maxLines, maxUnitsPerPage));
   for (let i = tokens.length - 1; i >= 0; i--) {
     for (let j = i + 1; j <= tokens.length; j++) {
       const words = tokens.slice(i, j), phrase = join(words), width = subtitleUnits(phrase);
@@ -199,7 +237,10 @@ function subtitlePages(value, maxUnitsPerLine = 15, maxLines = 2) {
       const lines = wrap(words);
       if (!lines || lines.length > maxLines) continue;
       const dangling = j < tokens.length && badEnd.test(phrase);
-      const penalty = capacity * capacity + (capacity - width) ** 2 + (dangling ? 250 : 0);
+      const punctuationBoundary = /[，。！？；：、,;:!?]["'”’]?$/u.test(phrase);
+      const tooShort = width < 8 && j < tokens.length ? (8 - width) ** 2 * 20 : 0;
+      const penalty = capacity * capacity + (capacity - width) ** 2 + (dangling ? 250 : 0) + tooShort
+        - (punctuationBoundary ? capacity * capacity : 0);
       if (penalty + cost[j] < cost[i]) { cost[i] = penalty + cost[j]; next[i] = j; layouts[i] = lines; }
     }
   }
@@ -212,9 +253,13 @@ function groupSpokenCues(cues, options = {}) {
   const gapLimit = finiteNumber(options.pauseThreshold, .28);
   const maxDuration = finiteNumber(options.maxPhraseDuration, 4.2);
   const groups = [];
+  const seen = new Set();
   for (const cue of Array.isArray(cues) ? cues : []) {
     const text = assText(cue.text), start = Number(cue.start), end = Number(cue.end);
     if (!text || !Number.isFinite(start) || !Number.isFinite(end) || end <= start || start < 0) continue;
+    const signature = `${start.toFixed(3)}:${end.toFixed(3)}:${text}`;
+    if (seen.has(signature)) continue;
+    seen.add(signature);
     const previous = groups.at(-1);
     const gap = previous ? start - previous.end : Infinity;
     const terminal = previous && /[.!?。！？]["'”’]?\s*$/.test(previous.text);
@@ -227,10 +272,11 @@ function groupSpokenCues(cues, options = {}) {
 }
 
 function normalizeSubtitleCues(cues, options = {}) {
-  const maxUnitsPerLine = Math.max(8, finiteNumber(options.maxUnitsPerLine, 15));
+  const maxUnitsPerLine = Math.max(8, Math.min(12, finiteNumber(options.maxUnitsPerLine, 12)));
   const maxLines = Math.max(1, Math.min(2, Math.round(finiteNumber(options.maxLines, 2))));
+  const maxUnitsPerPage = Math.max(8, Math.min(16, finiteNumber(options.maxUnitsPerPage, 16)));
   return groupSpokenCues(cues, options).flatMap(group => {
-    const pages = subtitlePages(group.text, maxUnitsPerLine, maxLines);
+    const pages = subtitlePages(group.text, maxUnitsPerLine, maxLines, maxUnitsPerPage);
     // Preserve measured cue boundaries. A break inside one provider cue is
     // an estimate within that cue, never a new word-level alignment claim.
     const units = value => subtitleUnits(value.replace(/\s/g, ''));
@@ -262,12 +308,22 @@ function filterPath(value) {
     .replace(/,/g, '\\,');
 }
 
-function cuesToAss(cues, width, height, disclaimer = '', duration = 0, style = {}) {
-  const fontSize = Math.round(Math.min(width / 15, height / 18) * Math.max(.7, Math.min(1.4, Number(style.fontScale) || 1)));
+function cuesToAss(cues, width, height, disclaimer = '', duration = 0, style = {}, emphasisPlan = null) {
+  const assColor = (hex, fallback) => /^#[0-9a-f]{6}$/i.test(String(hex || '')) ? `&H00${hex.slice(5, 7)}${hex.slice(3, 5)}${hex.slice(1, 3).toUpperCase()}&`.toUpperCase() : fallback;
+  const fontByChoice = { sans: subtitleTemplate.body.font, impact: subtitleTemplate.emphasis.font, rounded: subtitleTemplate.product.font };
+  const font = fontByChoice[style.font] || subtitleTemplate.body.font;
+  const primaryColor = assColor(style.color, '&H00FFFFFF&');
+  const outlineColor = assColor(style.outlineColor, '&HAA000000&');
+  // Scale from the short edge so a 1080px-wide portrait and 1080px-high
+  // landscape render use the same perceived subtitle size.
+  const fontSize = Math.round(Math.min(width, height) / 18 * Math.max(.7, Math.min(1.4, Number(style.fontScale) || 1)));
   const marginX = Math.round(width * .085);
   const rawCues = Array.isArray(cues) ? cues : [];
   const normalizedCues = [
-    ...normalizeSubtitleCues(rawCues.filter(cue => cue?.kind !== 'screen'), { maxUnitsPerLine: (width - marginX * 2) / fontSize }),
+    ...normalizeSubtitleCues(rawCues.filter(cue => cue?.kind !== 'screen'), {
+      maxUnitsPerLine: Math.min(12, (width - marginX * 2) / fontSize, Math.max(8, Number(style.lineWidth) || 12)),
+      maxUnitsPerPage: 16,
+    }),
     ...rawCues.filter(cue => cue?.kind === 'screen'),
   ].sort((a, b) => Number(a?.start || 0) - Number(b?.start || 0));
   const valid = normalizedCues
@@ -278,18 +334,29 @@ function cuesToAss(cues, width, height, disclaimer = '', duration = 0, style = {
       screen: cue && cue.kind === 'screen',
     }))
     .filter(cue => cue.text && cue.end > cue.start);
-  if (!valid.length && !disclaimer) return '';
+  if (!valid.length && !disclaimer && !(emphasisPlan && emphasisPlan.events && emphasisPlan.events.length)) return '';
 
   const marginV = Math.round(height * Math.max(.08, Math.min(.35, Number(style.bottomRatio) || .20)));
-  const outline = Math.max(2, Math.round(width * .003));
+  const outline = Math.max(0, Math.min(8, Number(style.outlineWidth ?? Math.round(width * .003))));
   const events = valid.map(cue => {
     const prefix = cue.screen
       ? `{\\an8\\pos(${Math.round(width / 2)},${Math.round(height * 0.12)})}`
       : '';
     const text = cue.screen ? cue.text : automaticSubtitleText(cue.text, style);
-    return `Dialogue: ${cue.screen ? 1 : 0},${assTime(cue.start)},${assTime(cue.end)},Default,,0,0,0,,${prefix}${text}`;
+    const emphasis = cue.screen ? '' : captionEmphasisTags(emphasisPlan, cue.start, cue.end, width);
+    return `Dialogue: ${cue.screen ? 1 : 0},${assTime(cue.start)},${assTime(cue.end)},Default,,0,0,0,,${prefix}${emphasis}${text}`;
   });
   if (disclaimer && duration > 0) events.push(`Dialogue: 1,0:00:00.00,${assTime(duration)},Default,,0,0,0,,{\\an8\\pos(${Math.round(width / 2)},${Math.round(height * 0.08)})\\fs${Math.round(width * 0.035)}}${assText(disclaimer).replace(/[{}]/g, '')}`);
+  if (emphasisPlan) {
+    const captionBoundIds = new Set(valid.flatMap(cue => {
+      if (cue.screen) return [];
+      const startMs = cue.start * 1000, endMs = cue.end * 1000;
+      return emphasisPlan.events.filter(event => ['hook', 'reveal'].includes(event.type) && event.source === 'transcript'
+        && startMs < event.endMs && event.startMs < endMs).map(event => event.id);
+    }));
+    events.push(...emphasisToAssEvents({ ...emphasisPlan,
+      events: emphasisPlan.events.filter(event => !captionBoundIds.has(event.id)) }, width, height));
+  }
   return [
     '[Script Info]',
     'ScriptType: v4.00+',
@@ -300,7 +367,8 @@ function cuesToAss(cues, width, height, disclaimer = '', duration = 0, style = {
     '',
     '[V4+ Styles]',
     'Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding',
-    `Style: Default,${subtitleTemplate.body.font},${fontSize},&H00FFFFFF,&H00FFFFFF,&HAA000000,&H66000000,-1,0,0,0,100,100,0,0,1,${outline},1,2,${marginX},${marginX},${marginV},1`,
+    `Style: Default,${font},${fontSize},${primaryColor},${primaryColor},${outlineColor},&H66000000,-1,0,0,0,100,100,0,0,1,${outline},1,2,${marginX},${marginX},${marginV},1`,
+    `Style: Emphasis,${subtitleTemplate.emphasis.font},${Math.round(width * .05)},&H00FFFFFF&,&H00FFFFFF&,&H00101010&,&HAA101010&,-1,0,0,0,100,100,0,0,3,2,1,8,${marginX},${marginX},${Math.round(height * .08)},1`,
     '',
     '[Events]',
     'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text',
@@ -334,6 +402,10 @@ async function composite(manifest, onProgress = () => {}, outDir) {
   const downloadOptions = {
     assetOrigin: String(manifest && manifest.assetOrigin || ''),
     assetHeaders: manifest && manifest.assetHeaders && typeof manifest.assetHeaders === 'object' ? manifest.assetHeaders : {},
+    serverStrictAssets: Boolean(manifest && manifest.serverStrictAssets),
+    maxAssetBytes: Number(manifest && manifest.maxAssetBytes) || 100 * 1024 * 1024,
+    maxTotalAssetBytes: Number(manifest && manifest.maxTotalAssetBytes) || 1024 * 1024 * 1024,
+    totalBytes: { value: 0 },
   };
 
   try {
@@ -378,6 +450,21 @@ async function composite(manifest, onProgress = () => {}, outDir) {
       clipId: clip.clipId,
       targetDuration: clip.targetDuration,
     })));
+    const emphasisPlan = normalizeEmphasisPlan(manifest && (manifest.emphasisPlan || manifest.emphasis), duration);
+    let motionOverlay = { path: null, cacheHit: false, renderMs: 0 };
+    if (advancedEvents(emphasisPlan).length) {
+      try {
+        motionOverlay = await renderTransparentOverlay({
+          plan: emphasisPlan, width: Math.max(360, Math.round(w / 2)), height: Math.max(640, Math.round(h / 2)),
+          durationSeconds: duration, fps: 15,
+          onProgress: progress => onProgress(Math.min(18, Math.round(progress * 18))),
+        });
+        if (process.env.RENDER_DEBUG) console.error(`[render] remotion overlay cache=${motionOverlay.cacheHit ? 'hit' : 'miss'} ms=${motionOverlay.renderMs}`);
+      } catch (error) {
+        if (process.env.RENDER_DEBUG) console.error(`[render] remotion overlay fallback: ${error && error.message || error}`);
+        motionOverlay = { path: null, cacheHit: false, renderMs: 0 };
+      }
+    }
 
     // Product and background layers are separate FFmpeg inputs. A declared
     // layer must download successfully; silently dropping it would change the
@@ -494,8 +581,12 @@ async function composite(manifest, onProgress = () => {}, outDir) {
       vlabel = '[0:v]';
     }
 
+    const visualInputCount = n > 0 ? n + extraClips.length : 1;
+    const motionOverlayIdx = motionOverlay.path ? visualInputCount : -1;
+    if (motionOverlay.path) args.push('-c:v', 'libvpx-vp9', '-i', motionOverlay.path);
+
     // 音轨输入：BGM(或静音) 固定一路，配音可选第二路。视频输入占 0..(vInputs-1)
-    const vInputs = n > 0 ? n + extraClips.length : 1;
+    const vInputs = visualInputCount + (motionOverlay.path ? 1 : 0);
     const bgmIdx = vInputs;
     if (bgmFile) args.push('-stream_loop', '-1', '-i', bgmFile);
     else args.push('-f', 'lavfi', '-i', 'anullsrc=channel_layout=stereo:sample_rate=44100');
@@ -506,15 +597,22 @@ async function composite(manifest, onProgress = () => {}, outDir) {
     const subtitleCues = manifest && manifest.subtitles && manifest.subtitles.mode !== 'off'
       ? manifest.subtitles.cues
       : [];
-    const ass = cuesToAss(subtitleCues, w, h, manifest.disclaimer || '', duration, manifest.subtitles?.style || {});
+    const assPlan = motionOverlay.path
+      ? { ...emphasisPlan, events: emphasisPlan.events.filter(event => !['key_fact', 'reveal', 'cta'].includes(event.type)) }
+      : emphasisPlan;
+    const ass = cuesToAss(subtitleCues, w, h, manifest.disclaimer || '', duration, manifest.subtitles?.style || {}, assPlan);
+    let captionLabel = vlabel;
     if (ass) {
       verifySubtitleFonts();
       const assFile = path.join(tmp, 'subtitles.ass');
       fs.writeFileSync(assFile, ass, 'utf8');
-      filters.push(`${vlabel}subtitles='${filterPath(assFile)}':fontsdir='${filterPath(fontsDirectory)}'[vout]`);
-    } else {
-      filters.push(`${vlabel}null[vout]`);
+      filters.push(`${vlabel}subtitles='${filterPath(assFile)}':fontsdir='${filterPath(fontsDirectory)}'[vcaption]`);
+      captionLabel = '[vcaption]';
     }
+    if (motionOverlayIdx >= 0) {
+      filters.push(`[${motionOverlayIdx}:v]fps=30,scale=${w}:${h},format=yuva420p,setpts=PTS-STARTPTS[vmotion]`);
+      filters.push(`${captionLabel}[vmotion]overlay=0:0:format=auto:shortest=1[vout]`);
+    } else filters.push(`${captionLabel}null[vout]`);
 
     // 4) 音轨混音：bgmVol 表示最终混音增益，必须与界面显示一致。
     // 默认值本身已经按“口播垫底”设置，不能在有配音时再静默减半，
@@ -593,11 +691,20 @@ async function composite(manifest, onProgress = () => {}, outDir) {
       // stdin 忽略（双保险防挂起）、stdout 忽略、只读 stderr 解析进度
       const proc = spawn(ffmpegPath, args, { stdio: ['ignore', 'ignore', 'pipe'] });
       let stderr = '';
+      let exceededOutputLimit = false;
       const maxRenderMs = Math.max(120_000, duration * 15_000);
       const killTimer = setTimeout(() => proc.kill('SIGKILL'), maxRenderMs);
+      const sizeTimer = downloadOptions.serverStrictAssets ? setInterval(() => {
+        try {
+          if (fs.statSync(outputPath).size > 1024 * 1024 * 1024) {
+            exceededOutputLimit = true;
+            proc.kill('SIGKILL');
+          }
+        } catch { /* output not created yet */ }
+      }, 1000) : null;
       proc.stderr.on('data', chunk => {
         const s = chunk.toString();
-        stderr += s;
+        stderr = (stderr + s).slice(-4096);
         const m = s.match(/time=(\d+):(\d+):(\d+(?:\.\d+)?)/);
         if (m) {
           const secs = (+m[1]) * 3600 + (+m[2]) * 60 + parseFloat(m[3]);
@@ -607,12 +714,15 @@ async function composite(manifest, onProgress = () => {}, outDir) {
       proc.on('error', err => resolve({ ok: false, error: String(err) }));
       proc.on('close', (code, signal) => {
         clearTimeout(killTimer);
+        if (sizeTimer) clearInterval(sizeTimer);
         try { fs.rmSync(tmp, { recursive: true, force: true }); } catch { /* noop */ }
-        if (code === 0) {
+        const finalBytes = (() => { try { return fs.statSync(outputPath).size; } catch { return 0; } })();
+        if (code === 0 && (!downloadOptions.serverStrictAssets || finalBytes <= 1024 * 1024 * 1024)) {
           onProgress(100);
           resolve({ ok: true, outputPath });
         } else {
-          resolve({ ok: false, error: code === null ? `ffmpeg 被信号 ${signal || 'unknown'} 中止\n${stderr.slice(-1200)}` : `ffmpeg exited ${code}\n${stderr.slice(-1200)}` });
+          if (downloadOptions.serverStrictAssets) try { fs.rmSync(outputPath, { force: true }); } catch { /* noop */ }
+          resolve({ ok: false, error: exceededOutputLimit || finalBytes > 1024 * 1024 * 1024 ? '成片文件超出 1 GiB 限制' : code === null ? `ffmpeg 被信号 ${signal || 'unknown'} 中止\n${stderr.slice(-1200)}` : `ffmpeg exited ${code}\n${stderr.slice(-1200)}` });
         }
       });
     });
@@ -622,4 +732,4 @@ async function composite(manifest, onProgress = () => {}, outDir) {
   }
 }
 
-module.exports = { composite, resolution, ffmpegPath, dataUrlParts, extensionForAsset, isImageAsset, subtitlePages, groupSpokenCues, normalizeSubtitleCues, cuesToAss };
+module.exports = { composite, downloadTo, resolution, ffmpegPath, dataUrlParts, extensionForAsset, isImageAsset, subtitlePages, groupSpokenCues, normalizeSubtitleCues, cuesToAss };

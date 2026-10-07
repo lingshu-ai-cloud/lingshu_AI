@@ -27,6 +27,7 @@ import { spokenLanguageMatches } from '../../shared/contracts/videoCreationPlan.
 import { buildMaterialScriptAnalysis, type MaterialScriptAnalysis } from '../../shared/materialScriptAnalysis.js';
 import { normalizeVideoLanguage, VIDEO_LANGUAGES } from '../../shared/contracts/videoLanguages.js';
 import { normalizeEffectPlan, type EffectPlanV1 } from '../../shared/contracts/effectPlan.js';
+import { buildStudioEmphasisPlan, type StudioEmphasisPlan, type StudioEmphasisPlanInput } from '../lib/studioEmphasisManifest.js';
 import { inspectRenderedVisuals } from '../lib/renderVisualQuality.js';
 import { dashscopeCredentialConfigured, inspectGeneratedVoice, type VoiceQualityReport } from '../lib/voiceQuality.js';
 import { downloadHeygenSubtitles, heygenConfigured, heygenRequest, listHeygenAvatars, submitHeygenVideo, downloadHeygenOutput } from '../integrations/heygen.js';
@@ -57,9 +58,14 @@ import {
   isEntitled,
   isSubscriptionEnforced,
 } from '../middleware/subscription.js';
-import { signRenderToken } from '../lib/renderToken.js';
+import { signRenderToken, verifyRenderToken } from '../lib/renderToken.js';
+import { secureStudioRenderManifest, studioRenderAssetPath, studioRenderManifestHash, MAX_STUDIO_RENDER_ASSET_BYTES, MAX_STUDIO_RENDER_TOTAL_BYTES } from '../lib/studioRenderSecurity.js';
+import { studioBgmMediaPath, studioBgmObjectKey } from '../lib/studioBgmAccess.js';
 import { consumeDemoQuota, isDemoMode } from '../lib/demo.js';
 import { generatePosterImage, ImageProviderRejectedError, imageExt, type ReferenceImage } from '../lib/imageGen.js';
+import { SeedreamFirstFrameGenerator } from '../lib/seedreamFirstFrameGenerator.js';
+import { FirstFrameProviderError, firstFrameInputFingerprint, type FirstFrameReferenceRole } from '../lib/firstFrameGenerator.js';
+import { storyboardFirstFrameExecutionRoute } from '../lib/storyboardFirstFrameRouting.js';
 import { buildStoryboardFirstFramePrompt, buildStoryboardVideoActionPrompt, STORYBOARD_FIRST_FRAME_PROMPT_VERSION, type StoryboardSceneType, type StoryboardMode } from '../lib/storyboardAigcPrompt.js';
 import { compileStoryboardShotSpec, type StoryboardShotSpec } from '../../shared/storyboardShotSpec.js';
 import { prepareProductIdentityLayer, verifiedTransparentCutoutGeometry } from '../lib/productIdentityPreparation.js';
@@ -121,7 +127,7 @@ export {
   unsupportedNumericClaims,
 } from '../lib/studioGenerationTruthfulness.js';
 import { canAppearInSharedLibrary, isReferenceOnlyMaterial, materialUsage, type MaterialUsage } from '../lib/materialPolicy.js';
-import { cloudMaterialView, createCloudMaterial, deleteOwnedCloudMaterial, fetchCloudMaterial, findOwnedCloudMaterialByHash, getCloudMaterialRecord, getOwnedCloudMaterialRecord, listCloudMaterials, updateCloudMaterial } from '../lib/cloudMaterials.js';
+import { cloudMaterialView, createCloudMaterial, deleteOwnedCloudMaterial, fetchCloudMaterial, getCloudMaterialRecord, getOwnedCloudMaterialRecord, listCloudMaterials, updateCloudMaterial, upsertTenantUploadCloudMaterial } from '../lib/cloudMaterials.js';
 import { analyzeVideo } from '../agents/gemini.js';
 import {
   analyzeVideoFramesWithQwen,
@@ -1912,7 +1918,7 @@ studioRouter.post('/storyboard-first-frame', async (req, res) => {
     ? savedPlacement.contactScene as 'tabletop' | 'conveyor'
     : hasConveyor !== hasTabletop ? (hasConveyor ? 'conveyor' : 'tabletop') : null;
   let geometryPlan: StoryboardGeometryPlan | null = null;
-  if (mode === 'free_creation' && verifiedSourceCutout && sourceCutout && geometryScene) {
+  if (verifiedSourceCutout && sourceCutout && geometryScene) {
     geometryPlan = await planStoryboardExactProductGeometry({ shotId, mode, scene: geometryScene,
       confirmedVisual, product: { assetId: sourceCutout.id, version: sourceCutoutVersion, view: 'source',
         cutoutAspectRatio: sourceCutoutGeometry!.aspectRatio },
@@ -1951,9 +1957,7 @@ studioRouter.post('/storyboard-first-frame', async (req, res) => {
   // tabletop or conveyor product in its knowledge-base image's own view.
   // Handheld needs a verified aligned foreground hand mask and stays on the
   // generative route until that asset exists.
-  const identityPreflight = mode === 'replication'
-    ? { status: 'generative_fallback' as const, reason: 'clone_geometry_observer_not_budgeted' }
-    : !geometryPlan || geometryPlan.status !== 'ready'
+  const identityPreflight = !geometryPlan || geometryPlan.status !== 'ready'
       ? { status: 'generative_fallback' as const,
         reason: geometryPlan?.status === 'blocked' ? geometryPlan.code : 'contact_scene_or_cutout_unavailable' }
       : shotSpec.scene === 'usage'
@@ -2043,8 +2047,8 @@ studioRouter.post('/storyboard-first-frame', async (req, res) => {
   if (!planned || planned.status !== 'ready') {
     res.status(409).json({ ok: false, code: 'STORYBOARD_BUDGET_PLAN_UNAVAILABLE', error: '当前分镜未进入智能生成预算计划，未调用供应商', plan: planned }); return;
   }
-  if (!String(process.env.DASHSCOPE_API_KEY || '').trim()) {
-    res.status(423).json({ ok: false, code: 'STORYBOARD_IMAGE_PROVIDER_UNAVAILABLE', error: '首帧模型尚未配置，未调用供应商' }); return;
+  if (!String(process.env.SEEDREAM_API_KEY || process.env.SEEDANCE_API_KEY || '').trim()) {
+    res.status(423).json({ ok: false, code: 'STORYBOARD_IMAGE_PROVIDER_UNAVAILABLE', error: 'Seedream 首帧模型尚未配置，未调用供应商' }); return;
   }
   if (!await consumeDemoQuota(req, res, 'generation')) return;
   const frameOperationId = `firstframe:${createHash('sha256').update(`${tenantId}:${String(body.projectId)}:${shotId}:${requestId}`).digest('hex')}`;
@@ -2119,19 +2123,54 @@ studioRouter.post('/storyboard-first-frame', async (req, res) => {
       environmentImage ? 'Use the selected environment reference only for directly visible spatial appearance. Do not infer factory ownership, equipment capabilities, certifications or other business claims.' : '',
       'Do not draw any product, package, hand, extra prop, brand, readable label, subtitle or watermark in or over the empty product slot. A separate exact knowledge-base product cutout will be inserted after this plate is generated.',
     ].filter(Boolean).join('\n');
-    const providerGenerated = await generatePosterImage({ prompt: useExactProductLayer ? cleanPlatePrompt : prompt,
-      ratio, references: useExactProductLayer ? [sourceFrame, environmentImage].filter(Boolean) as ReferenceImage[] : references });
-    let generated = providerGenerated;
+    let directCompositionUsed = false;
     let identityLayer: Record<string, unknown> = { strategy: 'generative', fallbackReason: identityFallbackReason };
-    if (useExactProductLayer) {
+    let generated: { bytes: Buffer; mimeType: string; source: string; model: string };
+    const firstFrameRoute = storyboardFirstFrameExecutionRoute({ hasReliableComposition: !!sourceFrame,
+      hasExactProductLayer: useExactProductLayer,
+      seedanceModel: String(process.env.SEEDANCE_MODEL || 'doubao-seedance-2-0-fast-260128'),
+      multimodalEnabled: process.env.SEEDANCE_STORYBOARD_MULTIMODAL_ENABLED !== 'false' });
+    if (firstFrameRoute === 'direct_seedance_input') {
       const prepared = await prepareProductIdentityLayer({ spec: shotSpec, cleanPlate: true,
-        background: Buffer.from(providerGenerated.bytes),
+        background: Buffer.from(sourceFrame!.base64, 'base64'),
         assetBytes: new Map(productReferences.map(item => [item.imageUrl, Buffer.from(item.image.base64, 'base64')])) });
       if (prepared.status !== 'eligible') throw new Error(`product_identity_preparation_changed:${prepared.reason}`);
       const composite = await compositeProductIdentityLayer(prepared.composite);
-      generated = { ...providerGenerated, bytes: composite.bytes, mimeType: 'image/png' };
+      generated = { bytes: composite.bytes, mimeType: 'image/png', source: 'local_exact_composite',
+        model: `${String(process.env.SEEDANCE_MODEL || 'doubao-seedance-2-0-fast-260128')}:direct-input` };
+      identityLayer = { strategy: 'exact_source_pixels', directToSeedance: true, ...prepared.provenance,
+        productBox: composite.productBox, occludedProductFraction: composite.occludedProductFraction };
+      directCompositionUsed = true;
+    } else {
+      const selectedReferences = useExactProductLayer
+        ? [sourceFrame, environmentImage].filter(Boolean) as ReferenceImage[] : references;
+      const seedream = new SeedreamFirstFrameGenerator();
+      const seedreamReferences = selectedReferences.map(reference => {
+        const role: FirstFrameReferenceRole = sourceFrame && reference === sourceFrame ? 'source_composition'
+          : environmentImage && reference === environmentImage ? 'enterprise_environment'
+            : characterImage && reference === characterImage ? 'authorized_presenter' : 'product_identity';
+        const bytes = Buffer.from(reference.base64, 'base64');
+        return { role, bytes, mimeType: reference.mimeType as 'image/jpeg' | 'image/png' | 'image/webp',
+          sha256: createHash('sha256').update(bytes).digest('hex') };
+      });
+      const seedreamRequest = {
+        referenceMode: 'storyboard_scene' as const, tenantId, videoId: String(body.projectId), compositionId: shotId,
+        presenterVersion: fingerprint, prompt: useExactProductLayer ? cleanPlatePrompt : prompt,
+        ratio: ratio as '9:16' | '16:9' | '1:1', references: seedreamReferences, idempotencyKey: '',
+      };
+      seedreamRequest.idempotencyKey = firstFrameInputFingerprint(seedreamRequest, seedream.provider, seedream.model);
+      const seedreamResult = await seedream.generate(seedreamRequest);
+      generated = { ...seedreamResult, source: seedreamResult.provider };
+    }
+    if (useExactProductLayer && !directCompositionUsed) {
+      const prepared = await prepareProductIdentityLayer({ spec: shotSpec, cleanPlate: true,
+        background: Buffer.from(generated.bytes),
+        assetBytes: new Map(productReferences.map(item => [item.imageUrl, Buffer.from(item.image.base64, 'base64')])) });
+      if (prepared.status !== 'eligible') throw new Error(`product_identity_preparation_changed:${prepared.reason}`);
+      const composite = await compositeProductIdentityLayer(prepared.composite);
+      generated = { ...generated, bytes: composite.bytes, mimeType: 'image/png' };
       identityLayer = { strategy: 'exact_source_pixels', ...prepared.provenance, productBox: composite.productBox,
-        occludedProductFraction: composite.occludedProductFraction, cleanPlateModel: providerGenerated.model };
+        occludedProductFraction: composite.occludedProductFraction, cleanPlateModel: generated.model };
     }
     let firstFrameObservations: unknown = [];
     try {
@@ -2161,14 +2200,17 @@ studioRouter.post('/storyboard-first-frame', async (req, res) => {
     material.sourceType = 'ai-storyboard-first-frame';
     material.productId = productReferences[0]?.id;
     material.productName = productReferences.map(item => item.name).join('、') || undefined;
-    material.provenance = { projectId: String(body.projectId || ''), shotId, fingerprint, projectShotFingerprint: projectShotInput.fingerprint, requestId, promptVersion: STORYBOARD_FIRST_FRAME_PROMPT_VERSION, sceneType, mode, shotSpec, geometryPlan, actionKeyStates, actionBeatDurations, productIds, identityLayer, firstFrameQuality, confirmed: false, model: generated.model,
-      estimatedCostCny: studioAigcBudgetConfigFromEnv().firstFrameCostCny
+    material.provenance = { projectId: String(body.projectId || ''), shotId, fingerprint, projectShotFingerprint: projectShotInput.fingerprint, requestId, promptVersion: STORYBOARD_FIRST_FRAME_PROMPT_VERSION, sceneType, mode, shotSpec, geometryPlan, actionKeyStates, actionBeatDurations, productIds, identityLayer, firstFrameQuality, confirmed: false, provider: generated.source, model: generated.model,
+      estimatedCostCny: (directCompositionUsed ? 0 : studioAigcBudgetConfigFromEnv().firstFrameCostCny)
         + (geometryObserverAttempted ? Number(planned.estimatedGeometryObservationCostCny || 0) : 0),
       generationLatencyMs: Date.now() - generationStartedAt };
     const list = loadMaterials();
     const index = list.findIndex(item => item.id === material.id);
     if (index >= 0) { list[index] = material; persistMaterials(list); }
-    if (!geometryObserverAttempted && Number(planned.estimatedGeometryObservationCostCny || 0) > 0) {
+    if (directCompositionUsed) {
+      await storyboardAigcProjectBudget.settlePartial(tenantId, String(body.projectId), frameOperationId,
+        geometryObserverAttempted ? Number(planned.estimatedGeometryObservationCostCny || 0) : 0, { materialId: material.id });
+    } else if (!geometryObserverAttempted && Number(planned.estimatedGeometryObservationCostCny || 0) > 0) {
       await storyboardAigcProjectBudget.settlePartial(tenantId, String(body.projectId), frameOperationId,
         planned.estimatedFirstFrameCostCny - Number(planned.estimatedGeometryObservationCostCny), { materialId: material.id });
     } else {
@@ -2177,7 +2219,7 @@ studioRouter.post('/storyboard-first-frame', async (req, res) => {
     res.json({ ok: true, material: await materialResponse(material, tenantId), fingerprint, promptVersion: STORYBOARD_FIRST_FRAME_PROMPT_VERSION,
       model: generated.model, firstFrameQuality, identityNotice: storyboardIdentityNotice(identityLayer, productReferences.length > 0) });
   } catch (error) {
-    if (error instanceof ImageProviderRejectedError) {
+    if (error instanceof ImageProviderRejectedError || error instanceof FirstFrameProviderError && error.status === 'rejected') {
       if (geometryObserverAttempted) {
         await storyboardAigcProjectBudget.settlePartial(tenantId, String(body.projectId), frameOperationId,
           Number(planned.estimatedGeometryObservationCostCny || 0)).catch(markError =>
@@ -5006,6 +5048,10 @@ interface RenderSpec {
     targetStart?: number;
     targetEnd?: number;
     targetDuration?: number;
+    purpose?: string;
+    caption?: string;
+    targetVisual?: string;
+    action?: string;
   }[];
   script?: string;
   voice?: string;
@@ -5022,6 +5068,7 @@ interface RenderSpec {
   voiceoverUrl?: string; // 前端在脚本步生成配音后回传的 /tts/xxx.wav
   subtitles?: SubtitleSpec; // 字幕轨：桌面端 ffmpeg 按 cue 烧录
   effectPlan?: EffectPlanV1; // 白名单特效计划；服务端会再次标准化
+  emphasisPlan?: StudioEmphasisPlanInput; // 可选人工/Agent 校正；缺省时由字幕与分镜静默生成
 }
 
 interface RenderManifest {
@@ -5045,6 +5092,7 @@ interface RenderManifest {
   bgm: { id: string | null; url: string | null };
   subtitles?: SubtitleSpec;
   effectPlan?: EffectPlanV1;
+  emphasisPlan: StudioEmphasisPlan;
 }
 
 function absoluteAssetUrl(base: string, value?: string | null): string | null {
@@ -5068,6 +5116,13 @@ function buildManifest(jobId: string, spec: RenderSpec, base: string): RenderMan
     clipId: item.clipId,
     targetDuration: item.targetDuration,
   }))) : undefined;
+  const emphasisPlan = buildStudioEmphasisPlan({
+    durationSeconds: spec.duration ?? 20,
+    script: spec.script,
+    subtitles: spec.subtitles,
+    timeline: rawTimeline,
+    emphasisPlan: spec.emphasisPlan,
+  });
   return {
     jobId,
     requireVisualAssets: true,
@@ -5094,22 +5149,32 @@ function buildManifest(jobId: string, spec: RenderSpec, base: string): RenderMan
     cover: { id: spec.coverId ?? null, title: spec.coverTitle ?? '', url: absoluteAssetUrl(base, spec.coverUrl) },
     bgm: (() => {
       const track = spec.bgm && tenantId ? withRecommendedBgmNames(userBgms(tenantId)).find(t => t.id === spec.bgm) : null;
-      return { id: spec.bgm ?? null, url: track ? `${base}${track.url}` : null };
+      return { id: spec.bgm ?? null, url: track && tenantId ? absoluteAssetUrl(base, studioBgmMediaPath(track, tenantId)) : null };
     })(),
     subtitles: spec.subtitles && spec.subtitles.mode !== 'off' ? spec.subtitles : undefined,
     effectPlan: normalizedEffectPlan,
+    emphasisPlan,
   };
 }
 
 // POST /studio/render  Body: RenderSpec → { ok, token, expiresAt, manifest }
 studioRouter.post('/render', async (req, res) => {
-  if (!await consumeDemoQuota(req, res, 'render')) return;
   const spec = (req.body ?? {}) as RenderSpec;
   const jobId = randomUUID();
   const base = `${req.protocol}://${req.get('host')}`;
   const manifest = buildManifest(jobId, spec, base);
-
-  const { token, payload } = signRenderToken({ jti: jobId, ratio: manifest.spec.ratio, duration: manifest.spec.duration });
+  const { tenantId } = res.locals as AuthLocals;
+  if (spec.bgm && !manifest.bgm.url) {
+    res.status(400).json({ ok: false, error: '所选配乐已不可用，请重新选择' }); return;
+  }
+  try {
+    secureStudioRenderManifest(manifest, tenantId, base, 'http://127.0.0.1');
+  } catch (error) {
+    res.status(400).json({ ok: false, error: error instanceof Error ? error.message : '渲染清单无效' });
+    return;
+  }
+  if (!await consumeDemoQuota(req, res, 'render')) return;
+  const { token, payload } = signRenderToken({ jti: jobId, tenantId, origin: base, manifestSha256: studioRenderManifestHash(manifest) });
 
   res.status(201).json({
     ok: true,
@@ -5119,18 +5184,64 @@ studioRouter.post('/render', async (req, res) => {
   });
 });
 
-// POST /studio/render/local  Body: RenderManifest → { ok, outputPath }
+// POST /studio/render/local  Body: { manifest, token } → { ok, outputPath }
 // 网页端兜底：没有 Electron 桥时，直接让本机后端调用同一套 ffmpeg 合成器导出 MP4。
+const activeStudioRenders = new Map<string, number>();
+const consumedStudioRenderJobs = new Map<string, number>();
 studioRouter.post('/render/local', async (req, res) => {
+  const { tenantId } = res.locals as AuthLocals;
+  const manifest = req.body?.manifest;
+  const claim = verifyRenderToken(req.body?.token);
+  if (!manifest || !req.body?.token) {
+    res.status(400).json({ ok: false, error: '导出接口已更新，请刷新页面后重新发起渲染授权' }); return;
+  }
+  if (!claim || claim.scope !== 'render' || claim.tenantId !== tenantId || !/^[\w-]{1,80}$/.test(String(claim.jti || '')) || claim.jti !== manifest?.jobId
+    || claim.manifestSha256 !== studioRenderManifestHash(manifest)) {
+    res.status(403).json({ ok: false, error: '渲染授权无效，请重新发起导出' }); return;
+  }
+  const now = Date.now();
+  for (const [job, expiry] of consumedStudioRenderJobs) if (expiry <= now) consumedStudioRenderJobs.delete(job);
+  const replayKey = `${tenantId}:${claim.jti}`;
+  if (consumedStudioRenderJobs.has(replayKey)) { res.status(409).json({ ok: false, error: '渲染授权已使用' }); return; }
+  if ((activeStudioRenders.get(tenantId) || 0) >= 2 || [...activeStudioRenders.values()].reduce((sum, n) => sum + n, 0) >= 4) {
+    res.status(429).json({ ok: false, error: '渲染任务繁忙，请稍后重试' }); return;
+  }
+  let safeManifest: Record<string, unknown>;
+  const localPort = req.socket.localPort;
   try {
-    const { tenantId } = res.locals as AuthLocals;
-    const origin = `${req.protocol}://${req.get('host')}`;
-    const outputDir = publishingRenderDir(tenantId);
+    if (!localPort) throw new Error('无法确认本机渲染服务端口');
+    safeManifest = secureStudioRenderManifest(manifest, tenantId, String(claim.origin), `http://127.0.0.1:${localPort}`);
+  } catch (error) {
+    res.status(400).json({ ok: false, error: error instanceof Error ? error.message : '渲染清单无效' }); return;
+  }
+  const outputDir = publishingRenderDir(tenantId);
+  const claimDir = path.join(outputDir, '.render-claims', new Date().toISOString().slice(0, 10));
+  try {
+    fs.mkdirSync(claimDir, { recursive: true });
+    const storedBytes = fs.readdirSync(outputDir, { withFileTypes: true })
+      .filter(entry => entry.isFile() && /^studio-[\w-]+\.mp4$/.test(entry.name))
+      .reduce((total, entry) => total + fs.statSync(path.join(outputDir, entry.name)).size, 0);
+    if (storedBytes >= 5 * 1024 * 1024 * 1024) {
+      res.status(429).json({ ok: false, error: '当前工作区成片存储已达 5 GiB 上限，请先清理旧成片' }); return;
+    }
+    if (fs.readdirSync(claimDir).length >= 20) {
+      res.status(429).json({ ok: false, error: '今日导出次数已用完，请明天再试' }); return;
+    }
+    fs.writeFileSync(path.join(claimDir, `${claim.jti}.claim`), '', { flag: 'wx', mode: 0o600 });
+  } catch (error) {
+    res.status((error as NodeJS.ErrnoException)?.code === 'EEXIST' ? 409 : 500).json({ ok: false, error: '渲染授权已使用或无法记录导出任务' }); return;
+  }
+  consumedStudioRenderJobs.set(replayKey, Number(claim.exp) * 1000);
+  activeStudioRenders.set(tenantId, (activeStudioRenders.get(tenantId) || 0) + 1);
+  try {
     fs.mkdirSync(outputDir, { recursive: true });
     const result = await composite({
-      ...(req.body || {}),
+      ...safeManifest,
       requireVisualAssets: true,
-      assetOrigin: origin,
+      assetOrigin: `http://127.0.0.1:${localPort}`,
+      serverStrictAssets: true,
+      maxAssetBytes: MAX_STUDIO_RENDER_ASSET_BYTES,
+      maxTotalAssetBytes: MAX_STUDIO_RENDER_TOTAL_BYTES,
       assetHeaders: {
         ...(req.get('authorization') ? { authorization: req.get('authorization') } : {}),
         ...(req.get('cookie') ? { cookie: req.get('cookie') } : {}),
@@ -5148,6 +5259,10 @@ studioRouter.post('/render/local', async (req, res) => {
     });
   } catch (err) {
     res.status(500).json({ ok: false, error: err instanceof Error ? err.message : '本地 MP4 导出失败' });
+  } finally {
+    const remaining = (activeStudioRenders.get(tenantId) || 1) - 1;
+    if (remaining) activeStudioRenders.set(tenantId, remaining);
+    else activeStudioRenders.delete(tenantId);
   }
 });
 
@@ -6064,8 +6179,6 @@ async function saveMaterialUploadToDatabase(input: {
     type: input.type,
     duration: input.duration,
   });
-  const existing = await findOwnedCloudMaterialByHash(input.tenantId, input.sha256);
-  if (existing) return cloudMaterialView(existing) as unknown as Material;
 
   if (!objectStorageEnabled()) throw new Error('对象存储未配置，素材文件不会写入数据库文件字段');
   const objectKey = materialContentAddressedObjectKey(input.tenantId, input.sha256, input.mediaName);
@@ -6083,7 +6196,7 @@ async function saveMaterialUploadToDatabase(input: {
     contentType: poster.contentType,
     contentLength: posterStat.size,
   });
-  const record = await createCloudMaterial({
+  const material = await upsertTenantUploadCloudMaterial({
     tenantId: input.tenantId,
     title: input.name || input.mediaName,
     folder: input.folder,
@@ -6101,14 +6214,16 @@ async function saveMaterialUploadToDatabase(input: {
     sourceUrl: input.sourceUrl || undefined,
     provenance: {
       uploadMethod: 'studio_my_materials',
+      sourceEntry: 'studio_workspace',
       originalName: input.name || input.mediaName,
       mimeType: input.mimeType,
       receivedAt: new Date().toISOString(),
     },
+    sourceEntry: 'studio_workspace',
     media: { key: objectKey, etag: storedMedia.head.etag, contentType: input.mimeType },
     poster: { key: posterKey, etag: storedPoster.head.etag, contentType: poster.contentType },
   });
-  return cloudMaterialView(record) as unknown as Material;
+  return material as unknown as Material;
 }
 
 // POST /studio/materials/file
@@ -8319,6 +8434,36 @@ export async function automationBgmAudio(tenantId: string, id: string): Promise<
   return 'data:audio/mpeg;base64,' + fs.readFileSync(file).toString('base64');
 }
 
+// Same-origin, authenticated BGM stream for rendering. Never expose object keys or signed COS URLs to ffmpeg.
+studioRouter.get('/bgm/media/:id', async (req, res) => {
+  const { tenantId } = res.locals as AuthLocals;
+  const track = userBgms(tenantId).find(item => item.id === req.params.id);
+  if (!studioBgmMediaPath(track, tenantId)) { res.status(404).end(); return; }
+  if (track?.objectKey) {
+    const key = studioBgmObjectKey(track, tenantId);
+    if (!key) { res.status(404).end(); return; }
+    const object = await objectStorageGetObject(key, req.headers.range);
+    if (!object) { res.status(404).end(); return; }
+    res.setHeader('Content-Type', object.contentType);
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.setHeader('Accept-Ranges', object.acceptRanges || 'bytes');
+    if (object.contentLength !== undefined) res.setHeader('Content-Length', String(object.contentLength));
+    if (object.contentRange) { res.status(206); res.setHeader('Content-Range', object.contentRange); }
+    for await (const chunk of object.body) res.write(chunk);
+    res.end();
+    return;
+  }
+  let sourcePath: string;
+  try { sourcePath = studioRenderAssetPath(new URL(String(track?.url || ''), 'http://local').pathname, tenantId); }
+  catch { res.status(404).end(); return; }
+  if (!sourcePath.startsWith('/bgm/')) { res.status(404).end(); return; }
+  const file = path.resolve(BGM_ROOT, sourcePath.replace(/^\/bgm\//, ''));
+  const root = path.resolve(BGM_ROOT);
+  if (!file.startsWith(`${root}${path.sep}`) || !fs.existsSync(file) || !fs.statSync(file).isFile()) { res.status(404).end(); return; }
+  res.setHeader('Cache-Control', 'private, no-store');
+  res.sendFile(file);
+});
+
 // GET /studio/bgm → BgmTrack[]（仅用户上传音乐）
 studioRouter.get('/bgm', async (_req, res) => {
   const { tenantId } = res.locals as AuthLocals;
@@ -8689,7 +8834,8 @@ studioRouter.post('/projects', async (req, res) => {
       const changed = JSON.stringify(existing.spec || {}) !== JSON.stringify(spec || {})
         || String(existing.title || '') !== String(title ?? existing.title ?? '')
         || String(existing.status || '') !== String(status || '');
-      await store.update('studio_projects', String(id), { title: title ?? existing.title, status, spec, thumb_seed: thumbSeed || '', updated_at: now });
+      const updated = await store.update('studio_projects', String(id), { title: title ?? existing.title, status, spec, thumb_seed: thumbSeed || '', updated_at: now });
+      if (!updated) { res.status(503).json({ ok: false, code: 'studio_project_storage_unavailable', error: '草稿未能写入存储，请重试；当前编辑仍保留在页面中。' }); return; }
       if (changed) await invalidatePublishingApprovalForProject(tenantId, String(id));
       res.json({ ok: true, project: projectFromRecord({ ...existing, title: title ?? existing.title, status, spec, thumb_seed: thumbSeed, updated_at: now }, tenantId) });
       return;

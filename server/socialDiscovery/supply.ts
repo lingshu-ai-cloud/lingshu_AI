@@ -84,12 +84,12 @@ export interface SocialDiscoverySupplyFilters {
   perPage?: number;
 }
 
-export async function listSocialDiscoverySupply(input: {
+async function querySocialDiscoverySupply(input: {
   tenantId: string;
   filters?: SocialDiscoverySupplyFilters;
   dataStore?: DataStore;
   now?: Date;
-}): Promise<{ items: SocialDiscoverySupplyItem[]; totalItems: number; page: number; perPage: number; filtersApplied: SocialDiscoverySupplyFilters }> {
+}, paginate = true): Promise<{ items: SocialDiscoverySupplyItem[]; totalItems: number; page: number; perPage: number; filtersApplied: SocialDiscoverySupplyFilters }> {
   const dataStore = input.dataStore ?? store;
   const now = input.now ?? new Date();
   const filters = input.filters ?? {};
@@ -100,9 +100,7 @@ export async function listSocialDiscoverySupply(input: {
   const output: SocialDiscoverySupplyItem[] = [];
 
   if (filters.candidateType !== 'account') {
-    const evidenceRows = latestByCandidate((await dataStore.list<VersionedCandidateEvidence & { id: string }>(CANDIDATE_EVIDENCE_COLLECTION, {
-      where: { tenant_id: input.tenantId }, page: 1, perPage: 1000,
-    })).items);
+    const evidenceRows = latestByCandidate(await allTenantRows<VersionedCandidateEvidence & { id: string; tenant_id: string }>(dataStore, CANDIDATE_EVIDENCE_COLLECTION, input.tenantId));
     for (const row of evidenceRows) {
       const record = await dataStore.getById<Record<string, unknown>>('trend_videos', row.candidateId) ?? {};
       const { score, businessModel, platform } = scoreForEvidence(row, record, audienceRole, now);
@@ -127,9 +125,7 @@ export async function listSocialDiscoverySupply(input: {
   }
 
   if (filters.candidateType !== 'video') {
-    const accounts = (await dataStore.list<SocialAccountTrackingDecision & { id: string; updated_at?: string }>(ACCOUNT_COLLECTION, {
-      where: { tenant_id: input.tenantId }, page: 1, perPage: 500,
-    })).items;
+    const accounts = await allTenantRows<SocialAccountTrackingDecision & { id: string; updated_at?: string; tenant_id: string }>(dataStore, ACCOUNT_COLLECTION, input.tenantId);
     for (const account of accounts) {
       const confidence = Math.max(0, Math.min(1, Number(account.confidence || 0)));
       const evidence = evaluateSocialCandidateEvidence({
@@ -184,12 +180,25 @@ export async function listSocialDiscoverySupply(input: {
   const page = Math.max(1, Math.floor(Number(filters.page || 1)));
   const perPage = Math.min(100, Math.max(1, Math.floor(Number(filters.perPage || 30))));
   return {
-    items: filtered.slice((page - 1) * perPage, page * perPage),
+    items: paginate ? filtered.slice((page - 1) * perPage, page * perPage) : filtered,
     totalItems: filtered.length,
     page,
     perPage,
     filtersApplied: filters,
   };
+}
+
+export async function listSocialDiscoverySupply(input: Parameters<typeof querySocialDiscoverySupply>[0]) {
+  return querySocialDiscoverySupply(input);
+}
+
+async function allTenantRows<T extends { tenant_id?: string }>(dataStore: DataStore, collection: string, tenantId: string): Promise<T[]> {
+  const rows: T[] = [];
+  for (let page = 1; ; page += 1) {
+    const result = await dataStore.list<T>(collection, { where: { tenant_id: tenantId }, sort: 'id', page, perPage: 500 });
+    rows.push(...result.items.filter(row => row.tenant_id === tenantId));
+    if (page >= result.totalPages || !result.items.length) return rows;
+  }
 }
 
 export async function evaluateSocialDiscoveryReadiness(input: {
@@ -206,12 +215,12 @@ export async function evaluateSocialDiscoveryReadiness(input: {
   };
   const [scopeResult, supply, accounts] = await Promise.all([
     dataStore.list<DiscoveryScopeRecord>(DISCOVERY_SCOPE_COLLECTION, { where: { tenant_id: input.tenantId, status: 'active' }, sort: '-updated_at', page: 1, perPage: 1 }),
-    listSocialDiscoverySupply({ tenantId: input.tenantId, filters: { candidateType: 'video', decision: 'accepted', perPage: 100 }, dataStore, now: input.now }),
-    dataStore.list<SocialAccountTrackingDecision>(ACCOUNT_COLLECTION, { where: { tenant_id: input.tenantId }, page: 1, perPage: 500 }),
+    querySocialDiscoverySupply({ tenantId: input.tenantId, filters: { candidateType: 'video', decision: 'accepted' }, dataStore, now: input.now }, false),
+    allTenantRows<SocialAccountTrackingDecision & { tenant_id: string }>(dataStore, ACCOUNT_COLLECTION, input.tenantId),
   ]);
   const scope = scopeResult.items[0];
   const acceptedVideos = supply.totalItems;
-  const benchmarkAccounts = accounts.items.filter(account => account.status === 'tracked' && account.businessConfirmation?.status === 'confirmed').length;
+  const benchmarkAccounts = accounts.filter(account => account.status === 'tracked' && account.businessConfirmation?.status === 'confirmed').length;
   const sceneClusters = new Set([
     ...(scope?.payload.keywordSet?.graph?.sceneClusters ?? []).filter(scene => scene.status === 'approved' || scene.status === 'watching').map(scene => scene.sceneId),
     ...supply.items.flatMap(item => item.sceneIds),

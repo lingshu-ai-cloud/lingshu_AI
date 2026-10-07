@@ -23,6 +23,15 @@ export async function runWeeklyPublicationExecutionScan(input: {
     try {
       const weeklyRows = await dataStore.list<WeeklyPackageRow>('social_weekly_operating_packages', { where: { tenant_id: row.tenant_id, package_id: row.operating_package_id, version: row.operating_package_version }, page: 1, perPage: 2 });
       if (weeklyRows.totalItems !== 1 || !weeklyRows.items[0]) throw new Error('weekly_operating_package_not_found');
+      // Formal weekly tasks are executed by their leased consumer, with explicit content acceptance.
+      // Keep the legacy scanner from submitting the same assignment outside that boundary.
+      const weeklyExecutors = await dataStore.list<any>('social_weekly_execution_tasks', {
+        where: { tenant_id: row.tenant_id, package_id: row.operating_package_id, package_version: row.operating_package_version }, page: 1, perPage: 1000,
+      });
+      if (weeklyExecutors.totalItems > weeklyExecutors.items.length) throw new Error('weekly_task_scan_truncated');
+      if (weeklyExecutors.items.some(item => item.payload?.publicationTaskId === row.publication_task_id && item.payload?.schedule?.stepKind === 'publishing')) {
+        result.skipped += 1; continue;
+      }
       const publicationPackage = await readStarterPublicationPackage(row.tenant_id, row.package_id, dataStore);
       if (!publicationPackage) throw new Error('publication_package_not_found');
       const adapter = input.adapterFactory ? await input.adapterFactory(row) : await createWeeklyPublishingAdapter({ tenantId: row.tenant_id, accountId: row.account_id, platform: row.platform, dataStore, now: input.now });

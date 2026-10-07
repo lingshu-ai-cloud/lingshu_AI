@@ -2,6 +2,7 @@ import { openAsBlob } from 'node:fs';
 import { Readable } from 'node:stream';
 import { adminFetch } from '../storage/pb.js';
 import { createFilePlaybackUrl } from '../storage/files.js';
+import { materialAssetPolicy, type MaterialSourceEntry } from './materialAssetPolicy.js';
 import { objectStorageGetObject } from '../storage/objectStorage.js';
 import { postgresListWithPocketBaseFilter, postgresStore, selectedDataBackend } from '../storage/postgres.js';
 
@@ -58,6 +59,7 @@ export interface CreateCloudMaterialInput {
   derivativesApproved?: boolean;
   rawLibraryUseApproved?: boolean;
   provenance?: Record<string, unknown>;
+  sourceEntry?: MaterialSourceEntry;
   media: CloudMaterialFileInput | CloudMaterialObjectInput;
   poster?: CloudMaterialFileInput | CloudMaterialObjectInput;
 }
@@ -140,7 +142,14 @@ export async function createCloudMaterial(
     commercialUseApproved: input.commercialUseApproved,
     derivativesApproved: input.derivativesApproved,
     rawLibraryUseApproved: input.rawLibraryUseApproved,
-    provenance: input.provenance,
+    provenance: {
+      ...(input.provenance || {}),
+      sourceEntry: input.sourceEntry || input.provenance?.sourceEntry || materialAssetPolicy({
+        scope: input.scope,
+        tenantId: input.tenantId,
+        sourceType: input.sourceType,
+      }).sourceEntry,
+    },
     ...(isObjectInput(input.media) ? {
       objectKey: input.media.key,
       objectEtag: input.media.etag,
@@ -232,6 +241,7 @@ export function cloudMaterialView(item: CloudMaterialRecord): Record<string, unk
     : parseObject(item.provenance);
   const width = Number(item.width || 0);
   const height = Number(item.height || 0);
+  const policy = materialAssetPolicy({ ...item, provenance });
   return {
     id: `pb-${item.id}`, cloudRecordId: String(item.id), name: String(item.title || item.sourceName || item.name || '云端素材'),
     folder: String(item.folder || 'upload'), type: String(item.type || 'video'), duration: Number(item.duration || 0),
@@ -256,6 +266,14 @@ export function cloudMaterialView(item: CloudMaterialRecord): Record<string, unk
     manifestSha256: String(item.manifestSha256 || ''), importedAt: String(item.importedAt || ''), commercialUseApproved: Boolean(item.commercialUseApproved),
     derivativesApproved: Boolean(item.derivativesApproved), rawLibraryUseApproved: Boolean(item.rawLibraryUseApproved),
     provenance,
+    ownership: policy.ownership,
+    visibility: policy.visibility,
+    knowledgeEligible: policy.knowledgeEligible,
+    sourceEntry: policy.sourceEntry,
+    transcript: String(provenance?.avatarSourceTranscript || ''),
+    transcriptCues: parseSegments(provenance?.avatarSourceCues),
+    transcriptCuesProvenance: String(provenance?.avatarSourceCuesProvenance || ''),
+    transcriptSourceHash: String(provenance?.avatarSourceHash || ''),
     industry: String(item.industry || ''), shotFunction: String(item.shotFunction || ''),
     applicability: String(item.applicability || ''), tags: String(item.tags || ''),
     createdAt: String(item.created || ''), updatedAt: String(item.updated || ''),
@@ -364,6 +382,49 @@ async function ownedCloudMaterialByHash(
   const items = Array.isArray(payload.items) ? payload.items.filter(item => materialTenantId(item) === tenantId) : [];
   if (items.length > 1) throw new Error('duplicate tenant material hash records');
   return items[0] || null;
+}
+
+/**
+ * Register tenant-owned bytes in the single material inventory. Re-uploading
+ * the same bytes from Knowledge or Studio reuses the record and records every
+ * entry point, instead of creating competing copies with different ownership.
+ */
+export async function upsertTenantUploadCloudMaterial(
+  input: CreateCloudMaterialInput & { sourceEntry: Exclude<MaterialSourceEntry, 'platform_operations'> },
+  request: typeof adminFetch = adminFetch,
+): Promise<Record<string, unknown>> {
+  if (input.scope === 'shared') throw new Error('tenant upload cannot be platform shared');
+  const existing = await ownedCloudMaterialByHash(input.tenantId, input.sha256, request);
+  if (!existing) return cloudMaterialView(await createCloudMaterial({ ...input, scope: 'own' }, request));
+
+  const current = existing.provenance && typeof existing.provenance === 'object'
+    ? existing.provenance as Record<string, unknown>
+    : parseObject(existing.provenance) || {};
+  const sourceEntries = Array.from(new Set([
+    ...(Array.isArray(current.sourceEntries) ? current.sourceEntries : []),
+    current.sourceEntry,
+    input.sourceEntry,
+  ].map(String).filter(Boolean)));
+  const provenance = {
+    ...current,
+    ...(input.provenance || {}),
+    sourceEntry: input.sourceEntry === 'enterprise_knowledge' ? input.sourceEntry : current.sourceEntry || input.sourceEntry,
+    sourceEntries,
+  };
+  const response = await request(`/api/collections/materials/records/${encodeURIComponent(existing.id)}`, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      provenance,
+      ...(input.productId ? { productId: input.productId } : {}),
+      ...(input.productName ? { productName: input.productName } : {}),
+    }),
+  });
+  if (!response.ok) throw new Error(`material entry association update failed (${response.status})`);
+  const updated = await response.json() as CloudMaterialRecord;
+  if (materialTenantId(updated) !== input.tenantId || String(updated.scope || 'own') === 'shared') {
+    throw new Error('material database returned an invalid tenant record');
+  }
+  return cloudMaterialView(updated);
 }
 
 export interface UpsertSocialTaskCloudMaterialInput extends Omit<CreateCloudMaterialInput,
