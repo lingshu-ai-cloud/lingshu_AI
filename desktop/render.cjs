@@ -346,7 +346,7 @@ function cuesToAss(cues, width, height, disclaimer = '', duration = 0, style = {
   const outlineColor = assColor(style.outlineColor, '&HAA000000&');
   // Scale from the short edge so a 1080px-wide portrait and 1080px-high
   // landscape render use the same perceived subtitle size.
-  const fontSize = Math.round(Math.min(width, height) / 18 * Math.max(.7, Math.min(1.4, Number(style.fontScale) || 1)));
+  const fontSize = Math.round(Math.min(width, height) / 18 * Math.max(.7, Math.min(1.4, Number(style.fontScale) || 1.2)));
   const marginX = Math.round(width * .085);
   const rawCues = Array.isArray(cues) ? cues : [];
   const normalizedCues = [

@@ -30,7 +30,7 @@ const [baseW, baseH] = resolution(manifest.spec?.ratio || '9:16');
 const scale = manifest.spec?.resolution === '720p' ? 2 / 3 : 1;
 const width = Math.round(baseW * scale / 2) * 2, height = Math.round(baseH * scale / 2) * 2;
 const style = manifest.subtitles?.style || {};
-const fontSize = Math.round(Math.min(width, height) / 18 * Math.max(.7, Math.min(1.4, Number(style.fontScale) || 1)));
+const fontSize = Math.round(Math.min(width, height) / 18 * Math.max(.7, Math.min(1.4, Number(style.fontScale) || 1.2)));
 const maxUnitsPerLine = Math.min(12, (width - Math.round(width * .085) * 2) / fontSize, Math.max(8, Number(style.lineWidth) || 10));
 const cues = Array.isArray(manifest.subtitles?.cues) ? manifest.subtitles.cues : [];
 const spoken = cues.filter((cue: any) => cue?.kind !== 'screen');

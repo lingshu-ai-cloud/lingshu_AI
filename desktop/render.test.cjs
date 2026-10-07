@@ -37,7 +37,7 @@ async function main() {
   assert.equal(mobileCues.map(cue => cue.text.replace(/\\N/g, ' ')).join(' '), spokenCues.map(cue => cue.text).join(' '));
   assert.ok(subtitlePages('product specifications separately', 12.45).flat().join(' ').includes('specifications'), 'English words are never split');
   assert.equal(subtitlePages('한국어 문장을 유지합니다', 12.45).flat().join(' '), '한국어 문장을 유지합니다', 'Korean word spacing survives layout');
-  assert.match(ass, /Style: Default,Source Han Sans SC,60,/, 'subtitle font scales with the canvas short edge');
+  assert.match(ass, /Style: Default,Source Han Sans SC,72,/, 'default subtitle size stays readable on a 1080px short edge');
   assert.match(ass, /,92,92,461,1/, 'captions sit at the 76% reading line above bottom UI');
   const emphasisOnlyAss = cuesToAss([], 1080, 1920, '', 3, {}, {
     profile: 'talking_head',

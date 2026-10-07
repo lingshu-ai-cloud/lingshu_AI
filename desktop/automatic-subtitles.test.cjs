@@ -74,8 +74,8 @@ assert.equal((semanticAss.match(/^Dialogue: 0,/gm) || []).length, pages.length);
 assert.ok(semanticAss.split('\n').filter(line => line.startsWith('Dialogue: 0,')).every(line => (line.match(/\\N/g) || []).length <= 1));
 const verticalDefault = cuesToAss([{ start: 0, end: 1, text: '普通字幕' }], 1080, 1920);
 const horizontalDefault = cuesToAss([{ start: 0, end: 1, text: '普通字幕' }], 1920, 1080);
-assert.match(verticalDefault, /Style: Default,[^,]+,60,/);
-assert.match(horizontalDefault, /Style: Default,[^,]+,60,/);
+assert.match(verticalDefault, /Style: Default,[^,]+,72,/);
+assert.match(horizontalDefault, /Style: Default,[^,]+,72,/);
 for (const type of ['hook', 'reveal']) {
   const emphasizedAss = cuesToAss([{ start: 0, end: 2, text: '面膜采用独立包装' }], 1080, 1920, '', 2, {}, {
     profile: 'product_showcase', events: [{ id: type, type, startMs: 0, endMs: 2_000, text: '面膜采用独立包装',
