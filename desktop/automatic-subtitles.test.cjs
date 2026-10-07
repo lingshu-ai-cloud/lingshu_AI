@@ -58,7 +58,7 @@ assert.doesNotMatch(legacyDialogue, /WordHighlight|\\kf/, 'legacy cues do not in
 const boxedKaraoke = cuesToAss([{ start: 0, end: 1, text: 'Clean subtitle', words: [
   { text: 'Clean', start: 0, end: .5 }, { text: 'subtitle', start: .5, end: 1 },
 ] }], 1080, 1920, '', 0, { boxed: true, outlineWidth: 8 });
-assert.match(boxedKaraoke, /Style: WordHighlight,[^\n]*,3,8,1,2,/, 'boxed highlighting can cover immutable source captions without moving the type');
+assert.match(boxedKaraoke, /Style: WordHighlight,[^\n]*,1,2,0,2,/, 'the active word never inherits the base caption background plate');
 const longChinese = '这款面膜采用独立包装，可以用于日常护肤，打开后按照说明均匀涂抹即可。';
 const pages = subtitlePages(longChinese);
 assert.ok(pages.length >= 3);
