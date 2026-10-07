@@ -5,11 +5,21 @@ import { normalizeBenchmarkAnalysisSnapshot, type BenchmarkAnalysis, type Benchm
 /** Frozen user choices shared by planning, script, voice and rendering. */
 export interface VideoCreationPlan {
   contentId?: string;
+  /** Five weekly originals fan out into platform delivery versions. */
+  contentFamilyId?: string;
+  productionRole?: 'master' | 'platform_adaptation';
+  masterContentId?: string;
+  adaptationMode?: 'master' | 'platform_light';
   plannedPublishDate?: string;
   buyerProblem?: string;
   evidenceRequirement?: string;
   directorStatus?: 'candidate' | 'script_draft' | 'script_approved' | 'in_production' | 'review' | 'approved' | 'blocked';
   estimatedCost?: number;
+  estimatedCostRange?: {
+    minCny: number;
+    maxCny: number;
+    basis: 'blended_master' | 'included_platform_adaptation';
+  };
   /** Frozen publication copy produced together with the video brief. */
   publication?: {
     title: string;
@@ -135,6 +145,7 @@ export function presentationScenes(plan: VideoCreationPlan, count: number): Vide
   return scenes;
 }
 export const VIDEO_ROUTES = { clone: '爆款裂变', material: '从素材生成', product: '从产品生成' } as const;
+export const isMasterVideoPlan = (plan: Pick<VideoCreationPlan, 'productionRole'>) => plan.productionRole !== 'platform_adaptation';
 export function normalizeVideoPlan(value: Partial<VideoCreationPlan>): VideoCreationPlan {
   const preview = value.preproduction && typeof value.preproduction === 'object'
     ? value.preproduction
@@ -152,11 +163,20 @@ export function normalizeVideoPlan(value: Partial<VideoCreationPlan>): VideoCrea
   const benchmarkAnalysis = normalizeBenchmarkAnalysisSnapshot(value.benchmarkAnalysis);
   return {
     contentId: String(value.contentId || '').trim().slice(0, 120),
+    contentFamilyId: String(value.contentFamilyId || '').trim().slice(0, 120),
+    productionRole: value.productionRole === 'platform_adaptation' ? 'platform_adaptation' : 'master',
+    masterContentId: String(value.masterContentId || '').trim().slice(0, 120),
+    adaptationMode: value.adaptationMode === 'platform_light' ? 'platform_light' : 'master',
     plannedPublishDate: /^\d{4}-\d{2}-\d{2}$/.test(String(value.plannedPublishDate || '')) ? String(value.plannedPublishDate) : '',
     buyerProblem: String(value.buyerProblem || '').trim().slice(0, 500),
     evidenceRequirement: String(value.evidenceRequirement || '').trim().slice(0, 1000),
     directorStatus: ['candidate', 'script_draft', 'script_approved', 'in_production', 'review', 'approved', 'blocked'].includes(String(value.directorStatus)) ? value.directorStatus : 'candidate',
     estimatedCost: Math.max(0, Math.round((Number(value.estimatedCost) || 0) * 100) / 100),
+    ...(value.estimatedCostRange && typeof value.estimatedCostRange === 'object' ? { estimatedCostRange: {
+      minCny: Math.max(0, Math.round((Number(value.estimatedCostRange.minCny) || 0) * 100) / 100),
+      maxCny: Math.max(0, Math.round((Number(value.estimatedCostRange.maxCny) || 0) * 100) / 100),
+      basis: value.estimatedCostRange.basis === 'included_platform_adaptation' ? 'included_platform_adaptation' as const : 'blended_master' as const,
+    } } : {}),
     ...(value.publication && typeof value.publication === 'object' ? { publication: {
       title: String(value.publication.title || '').trim().slice(0, 300),
       caption: String(value.publication.caption || '').trim().slice(0, 2_000),

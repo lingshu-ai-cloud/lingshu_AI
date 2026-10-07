@@ -395,7 +395,9 @@ export async function buildContentQueueProjection(input: {
     store.list<Stored>('starter_social_content_tasks', { where: { tenant_id: input.tenantId }, sort: '-updated_at', perPage: 500 }).catch(() => ({ items: [] as Stored[] })),
   ]);
   const batch = batchResult.items.find(item => text(item.status) === 'planned');
-  const orders = batch ? array<ContentOrder>(batch.orders) : productionPlans.map(planOrder);
+  const orders = batch
+    ? array<ContentOrder>(batch.orders)
+    : productionPlans.filter(plan => plan.productionRole !== 'platform_adaptation').map(planOrder);
   const projects = projectResult.items.filter(project => {
     const spec = object(project.spec);
     const automation = object(spec.automation);

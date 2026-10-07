@@ -421,6 +421,7 @@ async function generateWeeklyTaskPreviews(input: {
   const goal = goalInput(input.goal);
   const production = input.pack.tasks.find(task => task.templateId === 'production');
   const plans = production?.videoPlans || [];
+  const masterPlans = plans.filter(plan => plan.productionRole !== 'platform_adaptation');
   if (!production || !plans.length) throw new Error('周视频计划中还没有内容任务');
   const generatedAt = new Date().toISOString();
   const versions = {
@@ -449,8 +450,8 @@ async function generateWeeklyTaskPreviews(input: {
       ...input.pack,
       detailGeneration: {
         status: 'blocked', startedAt: generatedAt, generatedAt,
-        estimatedMinutes: Math.max(2, Math.ceil(plans.length / 2) * 2), usageCostCny: null,
-        readyCount: 0, blockedCount: blockedPlans.length, blockers: [draft.blocker].filter(Boolean),
+        estimatedMinutes: Math.max(2, Math.ceil(masterPlans.length / 2) * 2), usageCostCny: null,
+        readyCount: 0, blockedCount: masterPlans.length, blockers: [draft.blocker].filter(Boolean),
       },
       tasks: input.pack.tasks.map(task => task.templateId === 'production' ? { ...task, videoPlans: blockedPlans } : task),
     };
@@ -462,10 +463,11 @@ async function generateWeeklyTaskPreviews(input: {
   const pendingShooting = shootingRows.items.map(row => ({ row, payload: jsonObject<Record<string, unknown>>(row.payload, {}) }))
     .filter(item => !jsonObject<string[]>(item.payload.uploadedMaterialIds, []).length);
   const budgetExceeded = Boolean(input.pack.directorPlan
-    && input.pack.directorPlan.productionSpent + plans.reduce((sum, plan) => sum + Number(plan.estimatedCost || 0), 0) > input.pack.directorPlan.productionBudget);
+    && input.pack.directorPlan.productionSpent + plans.reduce((sum, plan) => sum + Number(plan.estimatedCost || 0), 0) > (input.pack.directorPlan.productionBudgetMax || input.pack.directorPlan.productionBudget));
 
-  const preflight = draft.orders.map((order, index) => {
-    const plan = plans[index]!;
+  const preflight = draft.orders.map(order => {
+    const plan = order.videoPlan || masterPlans.find(item => item.contentId === order.videoPlan?.contentId);
+    if (!plan) throw new Error(`生产订单 ${order.id} 缺少原创母版`);
     const selectedAssets = order.evidenceRefs
       .filter(ref => ref.type === 'enterprise_material')
       .map(ref => assetById.get(ref.id))
@@ -481,7 +483,7 @@ async function generateWeeklyTaskPreviews(input: {
       selectedAssets.some(asset => asset.authorization.status === 'unknown') ? '素材授权范围未确认' : '',
       shootTasks.length ? `有 ${shootTasks.length} 个待拍任务尚未回填素材` : '',
       budgetExceeded ? '本周预计制作成本超过生产预算' : '',
-      publishingRequired && !input.config.publishingTargets.some(target => target.accountId === order.accountId && target.platform === order.platform) ? '发布账号尚未连接或不在本周授权范围' : '',
+      publishingRequired && (order.deliveryVariants || []).some(variant => !input.config.publishingTargets.some(target => target.accountId === variant.accountId && target.platform === variant.platform)) ? '一个或多个平台发布账号尚未连接或不在本周授权范围' : '',
       plan.route === 'clone' && !references.items.some(item => item.id === plan.referenceId) ? '爆款参考不存在或已失效' : '',
     ].filter(Boolean);
     return { order, plan, selectedAssets, shootTasks, blockers: [...new Set(blockers)] };
@@ -491,7 +493,7 @@ async function generateWeeklyTaskPreviews(input: {
     ? await generateDirectorScriptContracts({ tenantId: input.tenantId, config: input.config, goal, orders: readyOrders, now: generatedAt })
     : [];
   const directedById = new Map(directedOrders.map(order => [order.id, order]));
-  const nextPlans = preflight.map(item => {
+  const nextMasterPlans = preflight.map(item => {
     const reference = references.items.find(row => row.id === item.plan.referenceId);
     const analysis = jsonObject<Record<string, unknown>>(reference?.aiAnalysis, {});
     const directed = directedById.get(item.order.id);
@@ -585,14 +587,26 @@ async function generateWeeklyTaskPreviews(input: {
     };
     return normalizeVideoPlan({ ...item.plan, directorStatus: canStart ? 'script_approved' : 'blocked', preproduction: preview });
   });
-  const blocked = nextPlans.filter(plan => !plan.preproduction?.readiness.canStart);
+  const masterByFamily = new Map(nextMasterPlans.map(plan => [plan.contentFamilyId || plan.contentId || '', plan]));
+  const nextPlans = plans.map(plan => {
+    const preparedMaster = masterByFamily.get(plan.contentFamilyId || plan.contentId || '');
+    if (!preparedMaster) return normalizeVideoPlan(plan);
+    if (plan.contentId === preparedMaster.contentId) return preparedMaster;
+    return normalizeVideoPlan({
+      ...plan,
+      directorStatus: preparedMaster.directorStatus,
+      benchmarkAnalysis: preparedMaster.benchmarkAnalysis,
+      preproduction: preparedMaster.preproduction,
+    });
+  });
+  const blocked = nextMasterPlans.filter(plan => !plan.preproduction?.readiness.canStart);
   const allBlockers = [...new Set(blocked.flatMap(plan => plan.preproduction?.readiness.blockers || []))];
   return {
     ...input.pack,
     detailGeneration: {
       status: blocked.length ? 'blocked' : 'ready', startedAt: generatedAt, generatedAt,
-      estimatedMinutes: Math.max(2, Math.ceil(plans.length / 2) * 2), usageCostCny: null,
-      readyCount: nextPlans.length - blocked.length, blockedCount: blocked.length, blockers: allBlockers,
+      estimatedMinutes: Math.max(2, Math.ceil(masterPlans.length / 2) * 2), usageCostCny: null,
+      readyCount: nextMasterPlans.length - blocked.length, blockedCount: blocked.length, blockers: allBlockers,
     },
     tasks: input.pack.tasks.map(task => task.templateId === 'production' ? { ...task, videoPlans: nextPlans } : task),
   };
@@ -2653,6 +2667,7 @@ digitalEmployeesRouter.post('/goals/:goalId/package/details', async (req, res) =
       return;
     }
     const currentPlans = pack.tasks.find(task => task.templateId === 'production')?.videoPlans || [];
+    const currentMasterPlans = currentPlans.filter(item => item.productionRole !== 'platform_adaptation');
     if (pack.detailGeneration?.status === 'ready' && currentPlans.length && currentPlans.every(item => item.preproduction?.readiness.canStart)) {
       res.json(await buildOverview(tenantId, goal.id));
       return;
@@ -2671,7 +2686,7 @@ digitalEmployeesRouter.post('/goals/:goalId/package/details', async (req, res) =
         ...pack,
         detailGeneration: {
           status: 'generating', startedAt, generatedAt: '',
-          estimatedMinutes: Math.max(2, Math.ceil(currentPlans.length / 2) * 2), usageCostCny: null,
+          estimatedMinutes: Math.max(2, Math.ceil(currentMasterPlans.length / 2) * 2), usageCostCny: null,
           readyCount: 0, blockedCount: 0, blockers: [],
         },
       };
@@ -2703,7 +2718,7 @@ digitalEmployeesRouter.post('/goals/:goalId/package/details', async (req, res) =
           ...generatingPack,
           detailGeneration: {
             ...generatingPack.detailGeneration!, status: 'blocked', generatedAt: new Date().toISOString(),
-            readyCount: 0, blockedCount: currentPlans.length, blockers: [reason.slice(0, 500)],
+            readyCount: 0, blockedCount: currentMasterPlans.length, blockers: [reason.slice(0, 500)],
           },
         };
         await store.update(COLLECTION.plans, plan.id, { plan: { ...generatingPlan, businessPackage: blockedPack } }).catch(() => false);

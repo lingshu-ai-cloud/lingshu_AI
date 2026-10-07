@@ -147,7 +147,7 @@ assert.match(pageSource, /planningEvidence\?\.referenceThumbnailUrl/, 'weekly ca
 assert.match(pageSource, /updateWeeklyPlanProduct[\s\S]{0,2500}savePackage/, 'product selection must persist product-bound material ids and publishing copy in the weekly package');
 assert.match(pageSource, /refreshWeeklyViralPlan[\s\S]{0,900}recommendPackage[\s\S]{0,400}savePackage/, 'persisted legacy drafts must support rebuilding the one-to-one viral plan from the current weekly target');
 assert.match(pageSource, /按本周目标重新匹配爆款/, 'a weekly plan with missing references must expose an actionable repair instead of a dead-end warning');
-assert.match(pageSource, /1080p 最高档 AIGC 单价估算/, 'per-video estimates must explain their planning basis and distinguish it from settlement');
+assert.match(pageSource, /综合产品素材、云素材、剪辑和必要 AIGC 的母版估算/, 'per-master estimates must explain the blended planning basis and distinguish it from settlement');
 assert.match(pageSource, /Agent To Do List[\s\S]{0,1800}expectedMinutes/, 'confirmed weekly plans must show Agent ownership and expected duration');
 assert.match(pageSource, /aria-label="社媒视频矩阵"[\s\S]{0,2500}编辑完整矩阵/, 'the default weekly proposal must visibly restore the social video matrix');
 assert.match(pageSource, /workspaceView === "matrix" && <SmartOperationsAccountRail/, 'the account rail must only appear inside the account-matrix tab');

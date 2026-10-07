@@ -77,7 +77,12 @@ export default function MatrixWorkSchedule({ startsAt, endsAt, accounts, plans, 
     return Array.from({ length: Math.max(accountPlans.length, account.weeklyCount) }, (_, index) => ({ account, plan: accountPlans[index], index }));
   });
   const plannedCount = rows.filter(row => Boolean(row.plan)).length;
-  const blockedCount = rows.filter(row => Boolean(row.plan) && planBlockers(row.plan).length > 0).length;
+  const originalCount = plans.filter(plan => plan.productionRole !== "platform_adaptation").length;
+  const blockedFamilies = new Set(rows
+    .filter(row => Boolean(row.plan) && planBlockers(row.plan).length > 0)
+    .map(row => row.plan?.contentFamilyId || row.plan?.contentId)
+    .filter(Boolean));
+  const blockedCount = blockedFamilies.size;
 
   return <section className="overflow-hidden rounded-3xl border border-emerald-100 bg-white shadow-sm" aria-label="数字员工工作排期">
     <header className="flex flex-wrap items-start justify-between gap-4 border-b border-slate-100 px-5 py-5 sm:px-6">
@@ -87,10 +92,11 @@ export default function MatrixWorkSchedule({ startsAt, endsAt, accounts, plans, 
       </div>
       <div className="flex flex-wrap items-center gap-2"><span className="rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-2 text-[10px] font-black text-emerald-800">{goalStart.toLocaleDateString("zh-CN", { month: "numeric", day: "numeric" })} — {goalEnd.toLocaleDateString("zh-CN", { month: "numeric", day: "numeric" })}</span>{onOpenPublishing&&<button type="button" onClick={onOpenPublishing} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-[10px] font-black text-slate-700 hover:border-emerald-200 hover:text-emerald-700">打开发布日历 →</button>}</div>
     </header>
-    <div className="grid gap-px border-b border-slate-100 bg-slate-100 sm:grid-cols-3">
+    <div className="grid gap-px border-b border-slate-100 bg-slate-100 sm:grid-cols-4">
       <div className="bg-white px-5 py-3"><p className="text-[9px] font-bold text-slate-400">经营账号</p><p className="mt-1 text-sm font-black text-slate-900">{visibleAccounts.length} 个</p></div>
-      <div className="bg-white px-5 py-3"><p className="text-[9px] font-bold text-slate-400">视频任务</p><p className="mt-1 text-sm font-black text-slate-900">{plannedCount}/{rows.length} 条已编排</p></div>
-      <div className="bg-white px-5 py-3"><p className="text-[9px] font-bold text-slate-400">生产卡点</p><p className={`mt-1 text-sm font-black ${blockedCount ? "text-amber-700" : "text-emerald-700"}`}>{blockedCount ? `${blockedCount} 条待处理` : "无生产卡点"}</p></div>
+      <div className="bg-white px-5 py-3"><p className="text-[9px] font-bold text-slate-400">原创母版</p><p className="mt-1 text-sm font-black text-slate-900">{originalCount} 条</p></div>
+      <div className="bg-white px-5 py-3"><p className="text-[9px] font-bold text-slate-400">发布版本</p><p className="mt-1 text-sm font-black text-slate-900">{plannedCount}/{rows.length} 条已编排</p></div>
+      <div className="bg-white px-5 py-3"><p className="text-[9px] font-bold text-slate-400">母版卡点</p><p className={`mt-1 text-sm font-black ${blockedCount ? "text-amber-700" : "text-emerald-700"}`}>{blockedCount ? `${blockedCount} 个母版待处理` : "无生产卡点"}</p></div>
     </div>
     <div className="overflow-x-auto">
       <div style={{ minWidth: `${days.length * 132}px` }}>
@@ -107,7 +113,7 @@ export default function MatrixWorkSchedule({ startsAt, endsAt, accounts, plans, 
           const blocked = Boolean(plan && blockers.length > 0);
           const frames = previewFrames(plan);
           const fallbackThumbnail = plan?.planningEvidence?.referenceThumbnailUrl || plan?.preproduction?.benchmark.thumbnailUrl || "";
-          const cost = Number(plan?.estimatedCost || 0);
+          const master = plan?.productionRole !== "platform_adaptation";
           return <div key={`${account.accountId}-${plan?.contentId || index}`} className={`relative grid min-h-[116px] border-b border-slate-100 ${rowIndex % 2 ? "bg-slate-50/35" : "bg-white"}`} style={{ gridTemplateColumns: `repeat(${days.length}, minmax(132px, 1fr))` }}>
             {days.map((day, dayIndex) => <span key={dayKey(day)} className={`border-r border-slate-100 ${dayKey(day) === today ? "bg-emerald-50/45" : ""}`} style={{ gridColumn: dayIndex + 1, gridRow: 1 }}/>) }
             <article tabIndex={0} aria-label={`${account.accountLabel} 第 ${index + 1} 条视频排期`} className={`group relative z-10 m-2 overflow-visible rounded-2xl border bg-white shadow-sm outline-none transition hover:z-30 hover:border-emerald-300 hover:shadow-lg focus:z-30 focus:border-emerald-300 focus:shadow-lg ${blocked ? "border-amber-300" : plan ? "border-slate-200" : "border-dashed border-slate-300"}`} style={{ gridColumn: `${startIndex + 1} / span ${span}`, gridRow: 1 }}>
@@ -116,11 +122,11 @@ export default function MatrixWorkSchedule({ startsAt, endsAt, accounts, plans, 
                   <div className="relative w-24 shrink-0 overflow-hidden rounded-l-2xl bg-slate-900">{frames[0]?.url?<img src={frames[0].url} alt="内容结构首帧" className="h-full min-h-[76px] w-full object-cover"/>:fallbackThumbnail?<img src={fallbackThumbnail} alt="爆款视频预览" className="h-full min-h-[76px] w-full object-cover"/>:<div className="flex h-full min-h-[76px] items-center justify-center"><Clapperboard size={20} className="text-white/40"/></div>}<span className="absolute left-1.5 top-1.5 rounded-full bg-black/65 px-1.5 py-0.5 text-[7px] font-black text-white"><SocialPlatformIcon platform={account.platform} size={10}/> </span></div>
                   <div className="min-w-0 flex-1 p-2.5"><div className="flex items-start justify-between gap-2"><div className="min-w-0"><p className="truncate text-[8px] font-bold text-slate-400">{account.accountLabel}</p><h3 className="mt-0.5 truncate text-[10px] font-black text-slate-900">{plan.publication?.title || plan.theme}</h3></div><span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[7px] font-black ${blocked ? "bg-amber-100 text-amber-800" : "bg-emerald-50 text-emerald-700"}`}>{blocked ? "有卡点" : "可执行"}</span></div>
                     <div className="mt-2 flex items-center gap-1 overflow-hidden">{frames.slice(0,4).map((frame, frameIndex) => <div key={`${frame.label}-${frameIndex}`} className="flex shrink-0 items-center gap-1">{frameIndex>0&&<span className="text-[8px] text-emerald-400">→</span>}<span className={`relative h-8 w-12 overflow-hidden rounded-md border ${frame.status === "ready" ? "border-emerald-200 bg-emerald-50" : "border-amber-200 bg-amber-50"}`}>{frame.url?<img src={frame.url} alt={`${frame.label}首帧`} className="h-full w-full object-cover"/>:<span className="flex h-full items-center justify-center px-1 text-center text-[6px] font-black text-slate-500">{frame.label}</span>}<span className="absolute inset-x-0 bottom-0 truncate bg-black/60 px-1 py-0.5 text-[5px] font-black text-white">{frame.label}</span></span></div>)}</div>
-                    <div className="mt-2 grid grid-cols-[1fr_2fr_1fr] gap-1 text-[7px] font-black"><span className="rounded bg-violet-50 px-1.5 py-1 text-violet-700">编导 45m</span><span className="rounded bg-sky-50 px-1.5 py-1 text-sky-700">内容制作 约5h</span><span className={`rounded px-1.5 py-1 ${blocked ? "bg-amber-50 text-amber-700" : "bg-emerald-50 text-emerald-700"}`}>质检发布 35m</span></div>
+                    <div className="mt-2 grid grid-cols-[1fr_2fr_1fr] gap-1 text-[7px] font-black"><span className="rounded bg-violet-50 px-1.5 py-1 text-violet-700">{master ? "编导 45m" : "沿用母版"}</span><span className="rounded bg-sky-50 px-1.5 py-1 text-sky-700">{master ? "内容制作 约5h" : "平台轻适配 约40m"}</span><span className={`rounded px-1.5 py-1 ${blocked ? "bg-amber-50 text-amber-700" : "bg-emerald-50 text-emerald-700"}`}>质检发布 35m</span></div>
                   </div>
                 </div>
                 <div className="max-h-0 overflow-hidden border-t border-transparent px-3 text-[9px] opacity-0 transition-all duration-200 group-hover:max-h-64 group-hover:border-slate-100 group-hover:py-3 group-hover:opacity-100 group-focus:max-h-64 group-focus:border-slate-100 group-focus:py-3 group-focus:opacity-100">
-                  <dl className="grid gap-x-4 gap-y-1.5 sm:grid-cols-2"><div><dt className="font-bold text-slate-400">产品</dt><dd className="mt-0.5 font-black text-slate-800">{plan.productName || "系统尚未选中产品"}</dd></div><div><dt className="font-bold text-slate-400">发布日期</dt><dd className="mt-0.5 font-black text-slate-800">{plan.plannedPublishDate || dayKey(publishDate)}</dd></div><div><dt className="font-bold text-slate-400">爆款参考</dt><dd className="mt-0.5 line-clamp-2 font-semibold text-slate-700">{plan.planningEvidence?.referenceTitle || "等待精确分析"}</dd></div><div><dt className="font-bold text-slate-400">预计成本</dt><dd className="mt-0.5 font-black text-slate-800">{cost > 0 ? `¥${cost.toFixed(2)}` : "待核算"}</dd></div></dl>
+                  <dl className="grid gap-x-4 gap-y-1.5 sm:grid-cols-2"><div><dt className="font-bold text-slate-400">任务类型</dt><dd className="mt-0.5 font-black text-slate-800">{master ? "原创母版" : "跨平台轻适配"}</dd></div><div><dt className="font-bold text-slate-400">发布日期</dt><dd className="mt-0.5 font-black text-slate-800">{plan.plannedPublishDate || dayKey(publishDate)}</dd></div><div><dt className="font-bold text-slate-400">爆款参考</dt><dd className="mt-0.5 line-clamp-2 font-semibold text-slate-700">{plan.planningEvidence?.referenceTitle || "等待精确分析"}</dd></div><div><dt className="font-bold text-slate-400">预计成本</dt><dd className="mt-0.5 font-black text-slate-800">{master ? `¥${plan.estimatedCostRange?.minCny || 10}–${plan.estimatedCostRange?.maxCny || 15}` : "已包含在母版成本"}</dd></div><div><dt className="font-bold text-slate-400">产品</dt><dd className="mt-0.5 font-black text-slate-800">{plan.productName || "系统尚未选中产品"}</dd></div><div><dt className="font-bold text-slate-400">内容家族</dt><dd className="mt-0.5 font-black text-slate-800">{plan.contentFamilyId || plan.contentId}</dd></div></dl>
                   {blocked&&<p className="mt-2 flex items-start gap-1 rounded-lg bg-amber-50 px-2 py-1.5 font-bold leading-4 text-amber-800"><AlertTriangle size={11} className="mt-0.5 shrink-0"/>{blockers.slice(0, 2).join("；")}</p>}
                   <p className="mt-2 text-[8px] font-bold text-slate-400">经营 Agent 排期 → 编导 Agent 拆解结构 → 内容 Agent 按结构调用素材 → 质检 Agent 验收 → 经营 Agent 发布</p>
                 </div>

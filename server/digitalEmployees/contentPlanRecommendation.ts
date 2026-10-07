@@ -2,8 +2,8 @@ import { normalizeVideoPlan, type VideoCreationPlan } from '../../shared/contrac
 import type { DigitalEmployeeConfig, WeeklyGoalInput } from './domain.js';
 import { buildWeeklyOperatingContext } from './weeklyPackage.js';
 import type { WeeklyPackage } from '../../src/lib/weeklyPackage.js';
-import { estimateSeedanceCostCny } from '../lib/seedanceBudget.js';
 import { buildBenchmarkAnalysis, type BenchmarkAnalysis } from '../../shared/benchmarkAnalysis.js';
+import { includedAdaptationCostRange, masterVideoCostRange, MASTER_VIDEO_COST_POINT_CNY } from '../../shared/contracts/contentCostModel.js';
 
 type EvidenceRecord = { id: string; [key: string]: unknown };
 type BenchmarkAccount = {
@@ -40,13 +40,11 @@ const record = (value: unknown): Record<string, any> => {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, any> : {};
 };
 
-/**
- * Weekly planning uses the same configurable 1080p Seedance rate as the
- * production service. This is deliberately a conservative plan estimate:
- * settlement is still reconciled from the provider receipt after execution.
- */
+/** Compatibility helper for callers that need a point estimate. Weekly
+ * planning uses a blended per-master cost, while settlement remains receipt based. */
 export function estimateHighestTierVideoCostCny(duration: number): number {
-  return estimateSeedanceCostCny(Math.max(1, Number(duration) || 30), '1080p');
+  void duration;
+  return MASTER_VIDEO_COST_POINT_CNY;
 }
 
 function tokens(...values: unknown[]): string[] {
@@ -203,9 +201,9 @@ function publishDate(startsAt: string, endsAt: string, index: number, total: num
 
 /**
  * Enriches the deterministic matrix quota with tenant evidence. It never
- * invents a reference: every weekly video slot is paired one-to-one with a
- * persisted exact viral-video analysis. A shortage remains visible as a
- * blocker instead of silently falling back to an unrelated content route.
+ * invents a reference: each weekly original is paired one-to-one with a
+ * persisted exact viral-video analysis. Platform adaptations inherit that
+ * reference and structure. A shortage remains visible as a blocker.
  */
 export function enrichPackageWithContentSignals(input: {
   pack: WeeklyPackage;
@@ -216,68 +214,92 @@ export function enrichPackageWithContentSignals(input: {
 }): WeeklyPackage {
   const production = input.pack.tasks.find(task => task.templateId === 'production');
   if (!production?.videoPlans?.length) return input.pack;
+  const normalized = production.videoPlans.map(normalizeVideoPlan);
+  const groups = new Map<string, Array<{ plan: VideoCreationPlan; index: number }>>();
+  normalized.forEach((plan, index) => {
+    const familyId = plan.contentFamilyId || plan.contentId || `weekly-master-${index + 1}`;
+    const current = groups.get(familyId) || [];
+    current.push({ plan, index });
+    groups.set(familyId, current);
+  });
   const used = new Set<string>();
-  const plans = production.videoPlans.map((source, index, all) => {
-    const plan = normalizeVideoPlan(source);
-    const row = input.pack.matrixPlan?.find(item => item.accountId === plan.matrix?.accountId);
-    const rowPlans = all.filter(item => item.matrix?.accountId === plan.matrix?.accountId);
-    const slot = Math.max(1, rowPlans.indexOf(source) + 1);
-    const requiredCount = row?.weeklyCount || rowPlans.length || all.length;
+  const enriched = new Map<number, VideoCreationPlan>();
+  [...groups.entries()].forEach(([familyId, members], familyIndex) => {
+    const anchor = members.find(item => item.plan.platform === 'tiktok')
+      || members.find(item => item.plan.productionRole !== 'platform_adaptation')
+      || members[0]!;
+    const anchorRow = input.pack.matrixPlan?.find(item => item.accountId === anchor.plan.matrix?.accountId);
     const ranked = rankContentReferences({
       videos: input.videos,
       benchmarks: input.benchmarks,
-      platform: plan.platform,
-      productName: plan.productName,
-      audience: row?.audience || plan.matrix?.audience || input.config.customerProfile,
-      direction: row?.contentDirection || plan.theme,
+      platform: anchor.plan.platform,
+      productName: anchor.plan.productName,
+      audience: anchorRow?.audience || anchor.plan.matrix?.audience || input.config.customerProfile,
+      direction: anchorRow?.contentDirection || anchor.plan.theme,
     });
     const reference = ranked.find(item => item.exact && !used.has(item.id));
     if (reference) used.add(reference.id);
-    const placeholder = !plan.referenceId && !plan.buyerProblem
-      && (plan.theme === '介绍产品的用途与特点' || /待编导确认/.test(plan.theme));
     const mayClone = input.config.enabledWorkflows.includes('viral_clone');
-    const angle = contentAngles[(slot - 1) % contentAngles.length];
-    const matrixTheme = row ? `${row.contentDirection.replace(/[。；;\s]+$/u, '')}｜${angle}` : `${plan.theme}｜${angle}`;
+    const angle = contentAngles[familyIndex % contentAngles.length];
+    const matrixTheme = anchorRow
+      ? `${anchorRow.contentDirection.replace(/[。；;\s]+$/u, '')}｜${angle}`
+      : `${anchor.plan.theme}｜${angle}`;
     const generatedFrom = reference?.benchmarkAccount && reference.exact
       ? 'matrix_benchmark_viral' as const
       : reference?.exact ? 'matrix_viral' as const : 'matrix_product' as const;
-    const theme = placeholder ? reference?.theme || matrixTheme : plan.theme;
-    return normalizeVideoPlan({
-      ...plan,
-      contentId: plan.contentId || `weekly-${input.goal.startsAt}-${index + 1}`,
-      plannedPublishDate: plan.plannedPublishDate || publishDate(input.goal.startsAt, input.goal.endsAt, index, all.length),
-      buyerProblem: plan.buyerProblem || reference?.hook || matrixTheme,
-      evidenceRequirement: plan.evidenceRequirement || reference?.evidenceRequirement || '必须使用企业资料或素材库中的可核验事实与画面',
-      theme,
-      route: mayClone ? 'clone' : plan.route,
-      referenceId: mayClone ? reference?.id || '' : plan.referenceId,
-      estimatedCost: Number(plan.estimatedCost) > 0 ? Number(plan.estimatedCost) : estimateHighestTierVideoCostCny(plan.duration),
-      publication: plan.publication?.title ? plan.publication : publicationCopyForPlan({ plan, reference, productName: plan.productName, theme }),
-      planningEvidence: {
-        generatedFrom,
-        matrixAccountId: row?.accountId || plan.matrix?.accountId || '',
-        requiredCount,
-        slot,
-        referenceTitle: reference?.title || '',
-        referenceViews: reference?.views || '',
-        referenceThumbnailUrl: reference?.thumbnailUrl || '',
-        referenceSourceUrl: reference?.sourceUrl || '',
-        benchmarkAccount: reference?.benchmarkAccount || '',
-        matchScore: reference?.score || 0,
-        factors: [
-          `矩阵要求 ${requiredCount} 条`,
-          ...(reference?.factors || []),
-          reference?.exact ? '参考内容已具备可执行精确分析' : '爆款视频数量不足，补齐后才能确认周计划',
-        ],
-      },
-      ...(reference?.analysis ? { benchmarkAnalysis: reference.analysis } : {}),
+    members.forEach(({ plan, index }) => {
+      const row = input.pack.matrixPlan?.find(item => item.accountId === plan.matrix?.accountId);
+      const rowPlans = normalized.filter(item => item.matrix?.accountId === plan.matrix?.accountId);
+      const slot = Math.max(1, rowPlans.findIndex(item => item.contentId === plan.contentId) + 1);
+      const requiredCount = row?.weeklyCount || rowPlans.length || normalized.length;
+      const placeholder = !plan.referenceId && !plan.buyerProblem
+        && (plan.theme === '介绍产品的用途与特点' || /待编导确认/.test(plan.theme));
+      const theme = placeholder ? reference?.theme || matrixTheme : plan.theme;
+      const master = plan.productionRole !== 'platform_adaptation';
+      enriched.set(index, normalizeVideoPlan({
+        ...plan,
+        contentId: plan.contentId || `weekly-${input.goal.startsAt}-${index + 1}`,
+        contentFamilyId: familyId,
+        plannedPublishDate: plan.plannedPublishDate || publishDate(input.goal.startsAt, input.goal.endsAt, index, normalized.length),
+        buyerProblem: plan.buyerProblem || reference?.hook || matrixTheme,
+        evidenceRequirement: plan.evidenceRequirement || reference?.evidenceRequirement || '必须使用企业资料或素材库中的可核验事实与画面',
+        theme,
+        route: mayClone ? 'clone' : plan.route,
+        referenceId: mayClone ? reference?.id || '' : plan.referenceId,
+        estimatedCost: master ? MASTER_VIDEO_COST_POINT_CNY : 0,
+        estimatedCostRange: master ? masterVideoCostRange() : includedAdaptationCostRange(),
+        publication: publicationCopyForPlan({ plan, reference, productName: plan.productName, theme }),
+        ...(plan.referenceId && plan.referenceId !== reference?.id ? { preproduction: undefined } : {}),
+        planningEvidence: {
+          generatedFrom,
+          matrixAccountId: row?.accountId || plan.matrix?.accountId || '',
+          requiredCount,
+          slot,
+          referenceTitle: reference?.title || '',
+          referenceViews: reference?.views || '',
+          referenceThumbnailUrl: reference?.thumbnailUrl || '',
+          referenceSourceUrl: reference?.sourceUrl || '',
+          benchmarkAccount: reference?.benchmarkAccount || '',
+          matchScore: reference?.score || 0,
+          factors: [
+            `原创母版 ${familyIndex + 1}/${groups.size} · 本账号发布位 ${slot}/${requiredCount}`,
+            ...(reference?.factors || []),
+            reference?.exact ? '参考内容已具备可执行精确分析' : '爆款视频数量不足，补齐后才能确认周计划',
+            master ? '原创母版承担一次生产成本' : '跨平台轻适配包含在母版成本中',
+          ],
+        },
+        ...(reference?.analysis ? { benchmarkAnalysis: reference.analysis } : {}),
+      }));
     });
   });
+  const plans = normalized.map((plan, index) => enriched.get(index) || plan);
   const productionBudget = Math.round(plans.reduce((sum, plan) => sum + Number(plan.estimatedCost || 0), 0) * 100) / 100;
+  const productionBudgetMin = Math.round(plans.reduce((sum, plan) => sum + Number(plan.estimatedCostRange?.minCny || 0), 0) * 100) / 100;
+  const productionBudgetMax = Math.round(plans.reduce((sum, plan) => sum + Number(plan.estimatedCostRange?.maxCny || 0), 0) * 100) / 100;
   const result: WeeklyPackage = {
     ...input.pack,
     directorPlan: input.pack.directorPlan
-      ? { ...input.pack.directorPlan, productionBudget }
+      ? { ...input.pack.directorPlan, productionBudget, productionBudgetMin, productionBudgetMax }
       : input.pack.directorPlan,
     tasks: input.pack.tasks.map(task => task.templateId === 'production' ? { ...task, videoPlans: plans } : task),
   };

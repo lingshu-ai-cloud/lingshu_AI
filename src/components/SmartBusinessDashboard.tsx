@@ -349,11 +349,16 @@ export function WeeklyCommandCenter({
   const weeklyQueue = contentQueue.filter(item => item.origin === "weekly_plan");
   const manualQueue = contentQueue.filter(item => item.origin === "manual");
   const plannedOutputCount = operatingContext?.outputs.count ?? packagePlans.length;
+  const plannedOriginalCount = operatingContext?.outputs.originalCount
+    ?? packagePlans.filter(plan => plan.productionRole !== "platform_adaptation").length;
+  const plannedPublishCount = operatingContext?.outputs.publishCount ?? plannedOutputCount;
   const plannedDurationSeconds = operatingContext?.outputs.totalDurationSeconds
     ?? packagePlans.reduce((sum, plan) => sum + Number(plan.duration || 0), 0);
   const estimatedContentCost = weeklyQueue.reduce((sum, item) => sum + Number(item.estimatedCostCny || 0), 0)
     || packagePlans.reduce((sum, plan) => sum + Number(plan.estimatedCost || 0), 0);
   const settledContentCost = weeklyQueue.reduce((sum, item) => sum + Number(item.settledCostCny || 0), 0);
+  const budgetMin = operatingContext?.budget.totalMinCny ?? packagePlans.reduce((sum, plan) => sum + Number(plan.estimatedCostRange?.minCny || 0), 0);
+  const budgetMax = operatingContext?.budget.totalMaxCny ?? packagePlans.reduce((sum, plan) => sum + Number(plan.estimatedCostRange?.maxCny || 0), 0);
   const queuedBlockedCount = weeklyQueue.filter(item => item.status === "blocked").length;
   const preproductionBlockedCount = data.plan?.businessPackage?.detailGeneration?.blockedCount || 0;
   const weeklyStatusCounts = {
@@ -382,11 +387,11 @@ export function WeeklyCommandCenter({
     </div>
     <div className="grid gap-px bg-slate-100 sm:grid-cols-2 xl:grid-cols-6">
       {[
-        { label: "周计划内容", value: `${plannedOutputCount} 条`, note: manualQueue.length ? `另有 ${manualQueue.length} 条手动单项` : "不含手动单项" },
-        { label: "原创 / 版本 / 发布", value: directorPlan ? `${directorPlan.originalTarget} / ${directorPlan.platformVersionTarget} / ${directorPlan.publishTarget}` : `${plannedOutputCount} / ${plannedOutputCount} / ${plannedOutputCount}`, note: "分别计数，不重复混算" },
-        { label: "预计总时长", value: plannedDurationSeconds > 0 ? `${plannedDurationSeconds} 秒` : "待确认", note: operatingContext?.outputs.formats.join(" / ") || "短视频" },
-        { label: "计划总预算", value: operatingContext ? `¥${operatingContext.budget.totalCny.toFixed(2)}` : "待核算", note: operatingContext ? `生产 ¥${operatingContext.budget.productionCny.toFixed(2)} · 投放 ¥${operatingContext.budget.paidMediaCny.toFixed(2)}` : "等待预算分配" },
-        { label: "预计制作成本", value: estimatedContentCost > 0 ? `¥${estimatedContentCost.toFixed(2)}` : "待核算", note: "逐条计划估算合计" },
+        { label: "原创母版", value: `${plannedOriginalCount} 条`, note: "每条匹配一条不同爆款并只生产一次" },
+        { label: "平台版本", value: `${plannedOutputCount} 条`, note: `${plannedPublishCount} 个发布任务 · ${operatingContext?.accounts.length || 0} 个账号` },
+        { label: "母版总时长", value: plannedDurationSeconds > 0 ? `${plannedDurationSeconds} 秒` : "待确认", note: operatingContext?.outputs.formats.join(" / ") || "短视频" },
+        { label: "本周成本范围", value: budgetMax > 0 ? `¥${budgetMin.toFixed(0)}–${budgetMax.toFixed(0)}` : "待核算", note: operatingContext ? `中位估算 ¥${operatingContext.budget.totalCny.toFixed(2)} · 平台轻适配已包含` : "按每条母版 ¥10–15 估算" },
+        { label: "预计制作成本", value: estimatedContentCost > 0 ? `¥${estimatedContentCost.toFixed(2)}` : "待核算", note: manualQueue.length ? `另有 ${manualQueue.length} 条手动单项` : "只统计原创母版，不重复计算适配版" },
         { label: "已结算成本", value: settledContentCost > 0 ? `¥${settledContentCost.toFixed(2)}` : "暂无结算", note: "仅统计供应商对账回执" },
       ].map(item => <article key={item.label} className="bg-white px-4 py-4"><p className="text-[9px] font-bold text-slate-400">{item.label}</p><p className="mt-1 text-lg font-black text-slate-950">{item.value}</p><p className="mt-1 truncate text-[9px] text-slate-500" title={item.note}>{item.note}</p></article>)}
     </div>
@@ -766,9 +771,10 @@ function MatrixView({ data, onRefresh, onNavigate, onGeneratePlan, selectedAccou
       },
     }, config.videoDefaults || {}, goal.endsAt);
     const contentCount = filled.tasks.find(task => task.templateId === "production")?.videoPlans?.length || 0;
+    const originalTarget = Math.min(contentCount, socialOperatingProfile(config.socialOperatingProfile).weeklyTargets.baseVideoOriginals);
     return filled.directorPlan ? {
       ...filled,
-      directorPlan: { ...filled.directorPlan, originalTarget: contentCount, platformVersionTarget: contentCount, publishTarget: contentCount },
+      directorPlan: { ...filled.directorPlan, originalTarget, platformVersionTarget: contentCount, publishTarget: contentCount },
     } : filled;
   };
 

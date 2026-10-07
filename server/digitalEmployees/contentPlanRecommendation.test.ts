@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { normalizeDigitalEmployeeConfig, normalizeWeeklyGoal } from './domain.js';
 import { recommendPackage } from './weeklyPackage.js';
 import { bindDefaultProductsToPackage, enrichPackageWithContentSignals, rankContentReferences } from './contentPlanRecommendation.js';
+import { buildContentBatchPlan } from './contentBatchPlan.js';
 
 const config = normalizeDigitalEmployeeConfig({
   companyName: '海拓装备', industry: '智能制造', primaryBusiness: '工业检测设备', targetMarkets: '德国', customerProfile: '工厂采购负责人',
@@ -64,5 +65,54 @@ const blankProductPack = recommendPackage(goal, normalizeDigitalEmployeeConfig({
 const productBound = bindDefaultProductsToPackage(blankProductPack, [{ id: 'product-1', name: '默认检测设备', materialIds: ['asset-1'] }]);
 const productBoundPlans = productBound.tasks.find(task => task.templateId === 'production')?.videoPlans || [];
 assert.ok(productBoundPlans.length && productBoundPlans.every(plan => plan.productName === '默认检测设备' && plan.materialIds[0] === 'asset-1'), 'backend must select the first confirmed product instead of silently blocking a blank selector');
+
+const fourPlatformConfig = normalizeDigitalEmployeeConfig({
+  ...config,
+  socialCadence: '每周生成 5 条原创母版',
+  publishingTargets: [
+    { platform: 'youtube', accountId: 'yt-1', accountLabel: '海拓装备 YouTube' },
+    { platform: 'tiktok', accountId: 'tt-1', accountLabel: '海拓装备 TikTok' },
+    { platform: 'instagram', accountId: 'ig-1', accountLabel: '海拓装备 Instagram' },
+    { platform: 'facebook', accountId: 'fb-1', accountLabel: '海拓装备 Facebook' },
+  ],
+});
+const fourPlatformGoal = normalizeWeeklyGoal({
+  startsAt: '2026-09-28', endsAt: '2026-10-04',
+  contentPlatforms: ['youtube', 'tiktok', 'instagram', 'facebook'],
+  objective: '用四个平台验证五个内容方向',
+}, fourPlatformConfig);
+const fourPlatformPlans = enrichPackageWithContentSignals({
+  pack: recommendPackage(fourPlatformGoal, fourPlatformConfig),
+  goal: fourPlatformGoal,
+  config: fourPlatformConfig,
+  videos,
+  benchmarks,
+}).tasks.find(task => task.templateId === 'production')?.videoPlans || [];
+const fourPlatformMasters = fourPlatformPlans.filter(plan => plan.productionRole === 'master');
+assert.equal(fourPlatformPlans.length, 18, 'four accounts keep 18 distinct publish versions');
+assert.equal(fourPlatformMasters.length, 5, '18 publish versions must collapse into five paid original masters');
+assert.deepEqual(Object.fromEntries(['youtube', 'tiktok', 'instagram', 'facebook'].map(platform => [platform, fourPlatformPlans.filter(plan => plan.platform === platform).length])), { youtube: 3, tiktok: 5, instagram: 5, facebook: 5 });
+for (const platform of ['youtube', 'tiktok', 'instagram', 'facebook']) {
+  const platformPlans = fourPlatformPlans.filter(plan => plan.platform === platform);
+  assert.equal(new Set(platformPlans.map(plan => plan.contentFamilyId)).size, platformPlans.length, `${platform} must not publish the same master twice`);
+}
+assert.equal(new Set(fourPlatformMasters.map(plan => plan.referenceId)).size, 5, 'the five originals use five distinct viral references');
+for (const master of fourPlatformMasters) {
+  const family = fourPlatformPlans.filter(plan => plan.contentFamilyId === master.contentFamilyId);
+  assert.ok(family.every(plan => plan.referenceId === master.referenceId), 'cross-platform variants inherit the same benchmark and normalized structure');
+}
+assert.equal(fourPlatformPlans.reduce((sum, plan) => sum + Number(plan.estimatedCost || 0), 0), 62.5);
+assert.equal(fourPlatformPlans.reduce((sum, plan) => sum + Number(plan.estimatedCostRange?.minCny || 0), 0), 50);
+assert.equal(fourPlatformPlans.reduce((sum, plan) => sum + Number(plan.estimatedCostRange?.maxCny || 0), 0), 75);
+const fourPlatformBatch = buildContentBatchPlan({
+  goalId: 'four-platform-goal',
+  goal: { ...fourPlatformGoal, videoPlans: fourPlatformPlans },
+  config: fourPlatformConfig,
+  evidence: { products: [{ id: 'product-1', name: '工业检测设备', materialIds: ['asset-1'] }], exactAnalysisIds: videos.map(item => item.id), materialIds: ['asset-1'] },
+  versions: { configVersion: 1, policyVersion: '1', factsVersion: '1' },
+});
+assert.equal(fourPlatformBatch.status, 'planned', fourPlatformBatch.blocker);
+assert.equal(fourPlatformBatch.orders.length, 5, 'production receives five orders instead of resubmitting all 18 versions');
+assert.equal(fourPlatformBatch.orders.flatMap(order => order.deliveryVariants || []).length, 18, 'five production orders retain every platform delivery destination');
 
 console.log('content plan recommendation tests passed');

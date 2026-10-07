@@ -14,6 +14,16 @@ export interface ContentRoutingEvidence {
 
 export interface ContentOrder extends Partial<DirectorScriptContract> {
   videoPlan?: VideoCreationPlan;
+  /** Publish destinations derived from this master without another full render. */
+  deliveryVariants?: Array<{
+    contentId: string;
+    platform: PublishingPlatform;
+    accountId: string;
+    accountLabel: string;
+    plannedPublishDate: string;
+    adaptationMode: 'master' | 'platform_light';
+    publication?: VideoCreationPlan['publication'];
+  }>;
   /** Frozen autonomous deliverable languages for this approved order. */
   languages?: string[];
   id: string;
@@ -99,6 +109,20 @@ export function buildContentBatchPlan(input: {
       if (plan.route === 'clone' && !input.evidence.exactAnalysisIds.includes(plan.referenceId)) referenceErrors.push(prefix + '参考视频尚无有效精确分析');
       const account = input.config.publishingTargets.find(target => target.platform === plan.platform && (!plan.matrix || target.accountId === plan.matrix.accountId));
       if (!input.goal.contentPlatforms.includes(plan.platform)) errors.push(prefix + '制作平台不在本周目标范围中');
+      if (plan.productionRole === 'platform_adaptation') return;
+      const familyVariants = input.goal.videoPlans!.filter(candidate => (candidate.contentFamilyId || candidate.contentId) === (plan.contentFamilyId || plan.contentId));
+      const deliveryVariants: NonNullable<ContentOrder['deliveryVariants']> = familyVariants.map((variant, variantIndex) => {
+        const target = input.config.publishingTargets.find(item => item.platform === variant.platform && (!variant.matrix || item.accountId === variant.matrix.accountId));
+        return {
+          contentId: variant.contentId || `${plan.contentId || `content-${index + 1}`}-delivery-${variantIndex + 1}`,
+          platform: variant.platform,
+          accountId: target?.accountId || variant.matrix?.accountId || '',
+          accountLabel: target?.accountLabel || (enabled.has('content_publish') ? '发布前待绑定账号' : '仅内容生产，不分发'),
+          plannedPublishDate: variant.plannedPublishDate || '',
+          adaptationMode: variant.productionRole === 'platform_adaptation' ? 'platform_light' : 'master',
+          ...(variant.publication ? { publication: variant.publication } : {}),
+        };
+      });
       const frozenScript = plan.preproduction?.directorScript;
       const benchmarkStructureConstraints = plan.benchmarkAnalysis?.structure.map((step, structureIndex) => {
         const shots = step.shotIds.map(id => plan.benchmarkAnalysis?.shots.find(shot => shot.shotId === id)).filter(Boolean);
@@ -108,9 +132,10 @@ export function buildContentBatchPlan(input: {
       orders.push({ id: `content_order_${index + 1}`, goalId: input.goalId, productId: product.id, productName: product.name,
         languages: plan.matrix ? [plan.language] : input.config.videoLanguages,
         theme: { key: 'user_selected', label: plan.theme }, platform: plan.platform, accountId: account?.accountId || '', accountLabel: account?.accountLabel || (enabled.has('content_publish') ? '发布前待绑定账号' : '仅内容生产，不分发'),
-        route: plan.route, videoPlan: plan, configurationSnapshot: input.versions, cta: plan.matrix?.cta || ctaFor(input.config.primaryGoal),
+        route: plan.route, videoPlan: plan, deliveryVariants, configurationSnapshot: input.versions, cta: plan.matrix?.cta || ctaFor(input.config.primaryGoal),
         constraints: [...new Set([...input.config.constraints, ...input.goal.constraints,
-          ...platformExecutionConstraints(plan.platform).map(rule => `${plan.platform} 平台改编：${rule}`),
+          ...familyVariants.flatMap(variant => platformExecutionConstraints(variant.platform).map(rule => `${variant.platform} 平台改编：${rule}`)),
+          `本订单只生产 1 条原创母版；${deliveryVariants.length} 个平台发布版本共用母版，不得重复提交完整 AIGC 生成`,
           ...(plan.buyerProblem ? [`必须回答的买家问题：${plan.buyerProblem}`] : []),
           ...(plan.evidenceRequirement ? [`必须呈现并核验的证据：${plan.evidenceRequirement}`] : []),
           ...(plan.matrix?.objective ? [`账号本周目标：${plan.matrix.objective}`] : []),
