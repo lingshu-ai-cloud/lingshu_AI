@@ -78,8 +78,19 @@ test('business outline → director evidence → business schedule → user conf
     (error: unknown) => error instanceof SocialProgramError && error.code === 'confirmed_detailed_schedule_required',
   );
   const confirmed = await service.confirm({ tenantId: 'tenant-1', programId: 'program-1', packageId: 'package-1', packageVersion: 1, expectedPlanningVersion: merged.version, userId: 'owner' });
+  const assertFrozen = async (state: typeof confirmed) => {
+    await assert.rejects(service.mergeDetailedSchedule({ tenantId: 'tenant-1', programId: 'program-1', package: pkg(), expectedPlanningVersion: state.version, actor: 'business_agent' }),
+      (error: unknown) => error instanceof SocialProgramError && error.status === 409 && error.code === 'weekly_agent_plan_already_confirmed');
+    await assert.rejects(service.runDirectorAnalysis({ tenantId: 'tenant-1', programId: 'program-1', packageId: 'package-1', packageVersion: 1, expectedPlanningVersion: state.version, actor: 'director_agent' }),
+      (error: unknown) => error instanceof SocialProgramError && error.code === 'weekly_agent_plan_already_confirmed');
+    const repeated = await service.confirm({ tenantId: 'tenant-1', programId: 'program-1', packageId: 'package-1', packageVersion: 1, expectedPlanningVersion: state.version, userId: 'other-user' });
+    assert.deepEqual(repeated, state, 'reconfirmation preserves the original approval and history');
+    assert.deepEqual(await service.get('tenant-1', 'program-1', 'package-1', 1), state);
+  };
+  await assertFrozen(confirmed);
   const dispatched = await service.dispatch({ tenantId: 'tenant-1', programId: 'program-1', packageId: 'package-1', packageVersion: 1, expectedPlanningVersion: confirmed.version, actor: 'business_agent' });
   assert.equal(dispatched.dispatch?.issuedBy, 'business_agent');
   assert.equal(dispatched.dispatch?.assignedTo, 'content_agent');
   assert.ok(dispatched.dispatch?.detailedScheduleRef.id);
+  await assertFrozen(dispatched);
 });

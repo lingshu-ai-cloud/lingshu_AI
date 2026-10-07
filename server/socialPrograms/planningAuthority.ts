@@ -88,6 +88,12 @@ function requirePlanningVersion(current: WeeklyAgentPlanningState, expected: num
   }
 }
 
+function requireEditablePlanning(current: WeeklyAgentPlanningState): void {
+  if (current.status === 'confirmed' || current.status === 'dispatched') {
+    throw new SocialProgramError('weekly_agent_plan_already_confirmed', 409, '本周计划已确认或已派单，不能重写分析和排期；请创建新的周任务包修订并重新确认。');
+  }
+}
+
 export function createWeeklyPlanningAuthority(dataStore: DataStore) {
   return {
     async initialize(tenantId: string, pkg: WeeklyOperatingPackage): Promise<WeeklyAgentPlanningState> {
@@ -130,7 +136,7 @@ export function createWeeklyPlanningAuthority(dataStore: DataStore) {
       if (input.actor !== 'director_agent') throw new SocialProgramError('director_analysis_authority_required', 403, '只有编导 Agent 可以写入对标分析。');
       const current = await this.get(input.tenantId, input.programId, input.packageId, input.packageVersion);
       requirePlanningVersion(current, input.expectedPlanningVersion);
-      if (current.status === 'confirmed' || current.status === 'dispatched') throw new SocialProgramError('weekly_agent_plan_already_confirmed', 409, '已确认计划不能重写编导分析。');
+      requireEditablePlanning(current);
       const [videos, accounts] = await Promise.all([
         listSocialDiscoverySupply({ tenantId: input.tenantId, dataStore, filters: { candidateType: 'video', decision: 'accepted', businessModel: 'b2b', sort: 'score', perPage: 100 } }),
         listSocialDiscoverySupply({ tenantId: input.tenantId, dataStore, filters: { candidateType: 'account', decision: 'accepted', businessModel: 'b2b', sort: 'score', perPage: 100 } }),
@@ -184,6 +190,7 @@ export function createWeeklyPlanningAuthority(dataStore: DataStore) {
       if (input.actor !== 'business_agent') throw new SocialProgramError('business_schedule_authority_required', 403, '只有经营 Agent 可以生成详细内容排期。');
       const current = await this.get(input.tenantId, input.programId, input.package.packageId, input.package.version);
       requirePlanningVersion(current, input.expectedPlanningVersion);
+      requireEditablePlanning(current);
       const analysisBySlot = new Map(current.directorAnalyses.map(item => [item.slotId, item]));
       const missing = current.skeleton.slots.filter(slot => !analysisBySlot.has(slot.slotId));
       if (missing.length) throw new SocialProgramError('director_analysis_incomplete', 409, `仍有 ${missing.length} 个内容槽位缺少编导分析。`);
@@ -238,7 +245,7 @@ export function createWeeklyPlanningAuthority(dataStore: DataStore) {
       const current = await this.get(input.tenantId, input.programId, input.packageId, input.packageVersion);
       requirePlanningVersion(current, input.expectedPlanningVersion);
       if (!current.detailedSchedule) throw new SocialProgramError('detailed_schedule_required', 409, '详细内容排期尚未生成。');
-      if (current.status === 'dispatched') return current;
+      if (current.status === 'confirmed' || current.status === 'dispatched') return current;
       const now = (input.now ?? new Date()).toISOString();
       return append(dataStore, input.tenantId, {
         ...current,

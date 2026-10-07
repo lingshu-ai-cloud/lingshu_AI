@@ -147,6 +147,21 @@ export default function WeeklyOperatingWorkbench({ pkg, loading, error, selected
       setPlanningError(cause instanceof Error ? cause.message : 'Agent 计划处理失败。');
     } finally { setPlanningBusy(false); }
   };
+  const revisePlanning = async (): Promise<void> => {
+    if (!pkg || !planning || planningBusy || !['confirmed', 'dispatched'].includes(planning.status)) return;
+    setPlanningBusy(true);
+    setPlanningError('');
+    try {
+      await socialProgramApi.reviseOperatingPackage(pkg.programId, pkg.packageId, {
+        expectedVersion: pkg.version,
+        changeReason: '用户在周工作台修订已确认计划并重新规划',
+      });
+      // Reload the whole package: a revision changes package identity/version too.
+      onRefresh();
+    } catch (cause) {
+      setPlanningError(cause instanceof Error ? cause.message : '创建计划修订失败。');
+    } finally { setPlanningBusy(false); }
+  };
   const approveTask = async (task: WeeklyExecutionTask): Promise<void> => {
     if (!pkg || planningBusy) return;
     setPlanningBusy(true);
@@ -186,6 +201,10 @@ export default function WeeklyOperatingWorkbench({ pkg, loading, error, selected
         <article className="rounded-xl border border-emerald-100 bg-emerald-50/60 p-4"><div className="flex items-start justify-between gap-3"><div><p className="text-[10px] font-black text-emerald-700">第一步 · 经营 Agent</p><h4 className="mt-1 text-sm font-bold text-text-primary">免费任务总纲</h4></div><span className="rounded-full bg-white px-2 py-1 text-[10px] font-bold text-emerald-700">0 token</span></div><p className="mt-2 text-xs leading-5 text-text-secondary">共 {planning?.skeleton.slots.reduce((sum, slot) => sum + slot.quantity, 0) ?? pkg.socialContentPackage.publicationTaskTarget} 条，分配到 {new Set(publicationTasks.map(item => item.accountId)).size} 个账号；只确定目标、产量、平台、日期和预算，不调用生成模型。</p></article>
         <article className={`rounded-xl border p-4 ${planning?.detailedSchedule ? 'border-violet-100 bg-violet-50/60' : 'border-dashed border-border bg-surface-2/60'}`}><div className="flex items-start justify-between gap-3"><div><p className="text-[10px] font-black text-violet-700">第二步 · 编导分析 → 经营合并</p><h4 className="mt-1 text-sm font-bold text-text-primary">爆款视频预览 + 素材组合预览</h4></div><span className="rounded-full bg-white px-2 py-1 text-[10px] font-bold text-violet-700">{planning?.detailedSchedule ? '已生成' : '待生成'}</span></div><p className="mt-2 text-xs leading-5 text-text-secondary">{planning?.detailedSchedule ? `已生成 ${planning.detailedSchedule.items.length} 条可追溯详细排期；每条已绑定对标证据、素材方案、账号和发布窗口。` : '需要已通过服务端评分的 B2B 对标账号与视频；详细分析才会产生 Agent 消耗。'}</p></article>
       </div>
+      {(planning?.status === 'confirmed' || planning?.status === 'dispatched') && <div className="mt-3 rounded-lg border border-border bg-surface-2 p-3">
+        <p className="text-xs leading-5 text-text-secondary">本周计划已冻结。修改时创建新修订，重新生成排期并确认；旧计划和派单记录保留，已有执行不会因修订被撤销。</p>
+        <button type="button" disabled={planningBusy || loading} onClick={() => void revisePlanning()} className="mt-2 rounded-lg border border-border bg-white px-3 py-2 text-xs font-semibold disabled:opacity-50">创建修订并重新规划</button>
+      </div>}
       {planning?.status === 'dispatched'&&<p className="mt-3 rounded-lg bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-800">用户已确认，经营 Agent 已向内容 Agent 下发 {planning.dispatch?.scheduleItemIds.length ?? 0} 条正式任务。</p>}
       {planningError&&<p role="alert" className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-xs leading-5 text-red-700">{planningError}</p>}
     </section>

@@ -195,6 +195,22 @@ test('social program routes expose the weekly operating package lifecycle', asyn
     state = await advanceWeeklyPlanning(program.programId, created.packageId, 1, state, () => {});
     assert.equal(state.status, 'confirmed');
     assert.equal(state.userConfirmation?.confirmedBy, 'owner');
+    const assertFrozenOverHttp = async (frozen: WeeklyAgentPlanningState) => {
+      const before = await dataStore.list('social_weekly_agent_planning', { where: { tenant_id: 'tenant-a', package_id: created.packageId } });
+      for (const action of ['director-analysis', 'merge']) {
+        const response = await fetch(`${path}/${action}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ expectedPackageVersion: 1, expectedPlanningVersion: frozen.version }) });
+        assert.equal(response.status, 409);
+        const error = await response.json();
+        assert.equal(error.error, 'weekly_agent_plan_already_confirmed');
+        assert.match(error.message, /修订.*重新确认/);
+      }
+      const repeated = await socialProgramApi.confirmAgentSchedule(program.programId, created.packageId, { expectedPackageVersion: 1, expectedPlanningVersion: frozen.version });
+      assert.deepEqual(repeated, frozen);
+      assert.deepEqual(await socialProgramApi.getAgentPlanning(program.programId, created.packageId, 1), frozen);
+      const after = await dataStore.list('social_weekly_agent_planning', { where: { tenant_id: 'tenant-a', package_id: created.packageId } });
+      assert.equal(after.totalItems, before.totalItems, 'frozen reentry does not append history');
+    };
+    await assertFrozenOverHttp(state);
     state = await advanceWeeklyPlanning(program.programId, created.packageId, 1, state, () => {});
     assert.equal(state.status, 'dispatched');
     assert.equal(state.version, 5);
@@ -203,6 +219,31 @@ test('social program routes expose the weekly operating package lifecycle', asyn
     const tasks = await socialProgramApi.listExecutionTasks(program.programId, created.packageId, 1);
     assert.ok(tasks.some(item => (item.inputSnapshot.dispatchRef as { id?: string } | undefined)?.id === state.dispatch?.dispatchId));
     assert.ok(tasks.every(item => item.status !== 'succeeded'), 'dispatch is not completed production');
+    await assertFrozenOverHttp(state);
+    assert.deepEqual(await socialProgramApi.listExecutionTasks(program.programId, created.packageId, 1), tasks, 'frozen reentry preserves dispatch task snapshots');
+
+    // A real package revision gets its own planning identity and fresh confirmation.
+    const oldPlanning = state;
+    const revised = await socialProgramApi.reviseOperatingPackage(program.programId, created.packageId, {
+      expectedVersion: 1, objective: '修订后的周经营目标', changeReason: '用户修改已确认排期',
+    });
+    assert.equal(revised.version, 2);
+    assert.equal(revised.previousVersion, 1);
+    assert.equal(revised.agentPlanning?.status, 'outline_ready');
+    assert.equal(revised.agentPlanning?.version, 1);
+    assert.equal(revised.agentPlanning?.userConfirmation, null);
+    assert.equal(revised.agentPlanning?.dispatch, null);
+    assert.notEqual(revised.agentPlanning?.planningId, oldPlanning.planningId);
+    let revisionPlanning = await advanceWeeklyPlanning(program.programId, created.packageId, revised.version, revised.agentPlanning!, () => {});
+    await assert.rejects(socialProgramApi.dispatchAgentSchedule(program.programId, created.packageId, { expectedPackageVersion: 2, expectedPlanningVersion: revisionPlanning.version }),
+      (error: unknown) => error instanceof SocialProgramRequestError && error.code === 'confirmed_detailed_schedule_required');
+    revisionPlanning = await advanceWeeklyPlanning(program.programId, created.packageId, 2, revisionPlanning, () => {});
+    assert.equal(revisionPlanning.status, 'confirmed');
+    revisionPlanning = await advanceWeeklyPlanning(program.programId, created.packageId, 2, revisionPlanning, () => {});
+    assert.equal(revisionPlanning.status, 'dispatched');
+    assert.notEqual(revisionPlanning.dispatch?.dispatchId, oldPlanning.dispatch?.dispatchId);
+    assert.deepEqual(await socialProgramApi.getAgentPlanning(program.programId, created.packageId, 1), oldPlanning);
+    assert.deepEqual(await socialProgramApi.listExecutionTasks(program.programId, created.packageId, 1), tasks, 'new revision preserves old dispatched task history');
   } finally {
     globalThis.fetch = originalFetch;
     Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: previousStorage });
@@ -210,14 +251,14 @@ test('social program routes expose the weekly operating package lifecycle', asyn
 
   const activatedResponse = await fetch(`${base}/operating-packages/${created.packageId}/activate`, {
     method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ expectedVersion: 1, expectedProgramVersion: 1, authorizePublishing: true }),
+    body: JSON.stringify({ expectedVersion: 2, expectedProgramVersion: 1, authorizePublishing: true }),
   });
   assert.equal(activatedResponse.status, 409);
   assert.equal((await activatedResponse.json()).error, 'weekly_operating_package_activation_blocked');
 
   const retiredResponse = await fetch(`${base}/operating-packages/${created.packageId}/retire`, {
     method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ expectedVersion: 1, expectedProgramVersion: 1 }),
+    body: JSON.stringify({ expectedVersion: 2, expectedProgramVersion: 1 }),
   });
   assert.equal(retiredResponse.status, 200);
   const retired = (await retiredResponse.json()).item;
