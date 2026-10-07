@@ -38,7 +38,8 @@ test('uses graphic-only for immutable OCR duplicates when trusted subject eviden
       subjectAnchor: { x: .5, y: .5 }, safeZones: [], captionBoxes: [{ x: .08, y: .68, width: .84, height: .08 }], confidence: .9 }],
   } });
   assert.equal(aligned?.presentationMode, 'graphic_only');
-  assert.equal(aligned?.targetRelation, 'surround');
+  assert.equal(aligned?.targetRelation, 'adjacent');
+  assert.equal(aligned?.assetFamily, 'corner_marker');
   assert.deepEqual(aligned?.subjectBox, { x: .2, y: .2, width: .6, height: .6 });
   assert.deepEqual(aligned?.occupiedBoxes, [
     { x: .1, y: .8, width: .8, height: .1 },
@@ -64,7 +65,25 @@ test('selects event-scoped local focus and preserves its preferred side over a w
   assert.deepEqual(aligned?.subjectAnchor, { x: .79, y: .32 });
   assert.equal(aligned?.targetRelation, 'point_to');
   assert.equal(aligned?.preferredSide, 'left');
+  assert.equal(aligned?.assetFamily, 'corner_marker');
   assert.deepEqual(aligned?.occupiedBoxes, [{ x: .05, y: .78, width: .9, height: .12 }]);
+});
+
+test('authorizes surround rays only for trusted event-scoped local targets', () => {
+  const [local, detached] = alignStudioEmphasisEvents({ durationMs: 5_000, events: [
+    event({ id: 'local', targetId: 'detail', startMs: 400, endMs: 1_700, evidenceStartMs: 400, evidenceEndMs: 1_700 }),
+    event({ id: 'detached', startMs: 2_200, endMs: 3_500, text: '支持定制', evidenceStartMs: 2_200, evidenceEndMs: 3_500 }),
+  ], captions: [], preanalysis: {
+    shotWindows: [
+      { id: 'shot-local', startMs: 0, endMs: 2_000, confidence: .95, source: 'ffmpeg_scene' },
+      { id: 'shot-detached', startMs: 2_000, endMs: 4_000, confidence: .95, source: 'ffmpeg_scene' },
+    ],
+    visualEvidence: [{ shotId: 'shot-local', eventId: 'local', targetId: 'detail', subjectType: 'product',
+      subjectBox: { x: .62, y: .2, width: .2, height: .25 }, targetRelation: 'surround',
+      safeZones: [], captionBoxes: [], confidence: .9 }],
+  } });
+  assert.deepEqual({ relation: local?.targetRelation, family: local?.assetFamily }, { relation: 'surround', family: 'rays' });
+  assert.deepEqual({ relation: detached?.targetRelation, family: detached?.assetFamily }, { relation: 'none', family: 'corner_marker' });
 });
 
 test('allows a new fact label without a subject and degrades sub-500ms windows', () => {

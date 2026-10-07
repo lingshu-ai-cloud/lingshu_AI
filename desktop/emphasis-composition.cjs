@@ -10,6 +10,7 @@ const ASSET_INTENTS = new Set(['warning_marker', 'urgency_badge', 'cta_marker', 
 const PRESENTATION_MODES = new Set(['caption_emphasis', 'graphic_only', 'label', 'none']);
 const TARGET_RELATIONS = new Set(['surround', 'point_to', 'adjacent', 'none']);
 const PREFERRED_SIDES = new Set(['left', 'right', 'top', 'bottom', 'auto']);
+const ASSET_FAMILIES = new Set(['rays', 'corner_marker']);
 
 const record = value => value && typeof value === 'object' && !Array.isArray(value) ? value : {};
 const finite = (value, fallback) => Number.isFinite(Number(value)) ? Number(value) : fallback;
@@ -83,6 +84,7 @@ function normalizeEmphasisPlan(input, durationSeconds = 0) {
     const presentationMode = PRESENTATION_MODES.has(String(event.presentationMode)) ? String(event.presentationMode) : '';
     const targetRelation = TARGET_RELATIONS.has(String(event.targetRelation)) ? String(event.targetRelation) : '';
     const preferredSide = PREFERRED_SIDES.has(String(event.preferredSide)) ? String(event.preferredSide) : '';
+    const assetFamily = ASSET_FAMILIES.has(String(event.assetFamily)) ? String(event.assetFamily) : '';
     const occupiedBoxes = (Array.isArray(event.occupiedBoxes) ? event.occupiedBoxes : []).slice(0, 24).flatMap(boxValue => {
       const box = record(boxValue);
       if (![box.x, box.y, box.width, box.height].every(value => Number.isFinite(Number(value)))) return [];
@@ -119,6 +121,7 @@ function normalizeEmphasisPlan(input, durationSeconds = 0) {
       ...(presentationMode ? { presentationMode } : {}),
       ...(targetRelation ? { targetRelation } : {}),
       ...(preferredSide ? { preferredSide } : {}),
+      ...(assetFamily ? { assetFamily } : {}),
       ...(safeId(event.shotId, '') ? { shotId: safeId(event.shotId, '') } : {}),
       ...(Number.isFinite(Number(event.evidenceStartMs)) ? { evidenceStartMs: Math.round(clamp(event.evidenceStartMs, 0, durationMs, startMs)) } : {}),
       ...(Number.isFinite(Number(event.evidenceEndMs)) ? { evidenceEndMs: Math.round(clamp(event.evidenceEndMs, startMs, durationMs, endMs)) } : {}),

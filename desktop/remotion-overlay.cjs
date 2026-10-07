@@ -5,7 +5,7 @@ const os = require('node:os');
 const path = require('node:path');
 
 let bundlePromise = null;
-const RENDERER_VERSION = 'semantic-assets-v7-visible-hold';
+const RENDERER_VERSION = 'semantic-assets-v8-visible-hold';
 const ASSET_DIRECTORY = path.join(__dirname, '../assets/reference/emphasis/v1');
 
 const finite = value => Number.isFinite(Number(value)) ? Number(value) : null;
@@ -21,12 +21,23 @@ const VISUAL_INTENT_KIND = Object.freeze({
 });
 
 function semanticAssetKind(event) {
-  return ASSET_INTENT_KIND[String(event && event.assetIntent)]
+  const requested = ASSET_INTENT_KIND[String(event && event.assetIntent)]
     || VISUAL_INTENT_KIND[String(event && event.visualIntent)]
     || (event && event.type === 'cta' ? 'cta' : null)
     || (['warning', 'urgency'].includes(String(event && (event.semanticRole || event.emphasisKind || event.tone)))
       ? String(event.semanticRole || event.emphasisKind || event.tone) : null)
     || (event && event.type === 'reveal' ? 'reveal' : 'key_fact');
+  const box = normalizedBox(event && event.subjectBox);
+  const anchor = event && event.subjectAnchor;
+  const hasTarget = Boolean(box || (anchor && finite(anchor.x) !== null && finite(anchor.y) !== null));
+  const maySurroundTarget = event && event.assetFamily === 'rays' && hasTarget
+    && String(event.targetRelation) === 'surround';
+  // Rays only make visual sense when they are visibly attached to a detected
+  // subject. Detached facts use an exclamation marker; detached reveals use a
+  // directional lightning marker instead of a floating circular burst.
+  if (!maySurroundTarget && requested === 'reveal') return 'urgency';
+  if (!maySurroundTarget && requested === 'key_fact') return 'warning';
+  return requested;
 }
 
 const intersects = (a, b, gap = 0) => a.x < b.x + b.width + gap && a.x + a.width + gap > b.x
