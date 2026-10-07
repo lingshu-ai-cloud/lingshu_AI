@@ -74,13 +74,20 @@ assert.doesNotMatch(pageSource, /workspaceView === "matrix" \? "lg:grid-cols-\[2
 for (const label of ['爆款视频预览', '素材组合预览', '效果置信度', '任务不能开始']) {
   assert.match(smartBusinessSource, new RegExp(label), `content task cards must expose ${label}`);
 }
-for (const label of ['每条视频就是一条日历任务', '爆款参考', '预计成本', '编导 45m', '内容制作 约5h']) {
+for (const label of ['每条视频就是一条日历任务', '素材结构预览', '制作时长', '工期', '发布时间', '发布账号', '爆款参考', '预计成本', '编导 45m', '内容制作 约5h']) {
   assert.match(matrixScheduleSource, new RegExp(label), `calendar content cards must expose ${label}`);
 }
+const calendarCardSource = matrixScheduleSource.slice(
+  matrixScheduleSource.indexOf('<article tabIndex={0}'),
+  matrixScheduleSource.indexOf('</article>', matrixScheduleSource.indexOf('<article tabIndex={0}')),
+);
+assert.ok(calendarCardSource.indexOf('frames.slice(0,4)') < calendarCardSource.indexOf('制作时长'), 'the material structure preview must appear before the production details');
+assert.match(calendarCardSource, /min-w-0[\s\S]{0,400}overflow-hidden/, 'calendar card contents must be constrained to the card width');
+assert.match(matrixScheduleSource, /Math\.max\(4, span\)/, 'short schedule cards must keep a readable minimum width without overflowing the calendar');
 assert.match(matrixScheduleSource, /账号并行/, 'the calendar must make same-day multi-account operation visible');
 assert.match(matrixScheduleSource, /spreadAccountDate/, 'placeholder and generated tasks must use the same per-account distributed weekly axis');
 assert.doesNotMatch(matrixScheduleSource, /账号与内容任务|gridTemplateColumns: `260px/, 'the calendar must not reserve a separate left content-plan column');
-assert.match(matrixScheduleSource, /group-hover:max-h-64/, 'calendar preview cards must reveal details on hover');
+assert.match(matrixScheduleSource, /group-hover:max-h-72/, 'calendar preview cards must reveal details on hover');
 assert.match(smartBusinessSource, /当前节点[\s\S]{0,1000}来源[\s\S]{0,1000}结果[\s\S]{0,1000}下一步/, 'the existing four-Agent section must expose node, source, result, and next step');
 assert.doesNotMatch(smartBusinessSource, /数字员工协作状态|四位数字员工协作状态/, 'the dashboard must not create a separate Digital Employee section');
 assert.doesNotMatch(pageSource, /aria-label="开启或关闭智能经营"|智能经营已开启|已停止新计划/, 'the redundant Smart Operations switch must not remain beside the weekly task control');
