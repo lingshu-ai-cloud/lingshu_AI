@@ -10,6 +10,8 @@ import { createStudioAsrRouter } from '../lib/studioAsrRouter.js';
 import type { AvatarMediaCheck } from '../lib/avatarMediaCheck.js';
 import { createStudioAvatarProductionRouter } from '../lib/studioAvatarProduction.js';
 import { refreshStudioProjectAssetUrls, studioProjectSpecForStorage } from '../lib/studioProjectAssets.js';
+import { freeCreationCompletionIssues, normalizeFreeCreationProjectSpec } from '../../shared/contracts/freeCreationProject.js';
+import { STUDIO_MANUAL_HANDOFF_ACTIONS, isManualStudioProject, studioProjectRenderPaths } from '../../shared/contracts/studioManualHandoff.js';
 import { studioProjectRevisionConflict } from '../lib/studioProjectRevision.js';
 export { refreshStudioProjectAssetUrls, studioProjectSpecForStorage } from '../lib/studioProjectAssets.js';
 import { matchedReferenceIndustryLeaks } from '../lib/referenceIndustryLeak.js';
@@ -3124,6 +3126,7 @@ studioRouter.post('/script', async (req, res) => {
     materials = [],
     productInfo: submittedProductInfo = '',
     selectedProductId = '',
+    selectedProductIds = [],
     language = 'en',
     platform = 'tiktok',
     duration = 20,
@@ -3149,33 +3152,43 @@ studioRouter.post('/script', async (req, res) => {
   const openingHookOnly = generationMode === 'material' && normalizedMaterialInfos.length === 1
     && /用户指定开场钩子/.test(String(normalizedMaterialInfos[0]?.role || ''));
   let productInfo = String(submittedProductInfo || '');
-  if (openingHookOnly) {
+  const requestedProductIds = [...new Set([
+    ...(Array.isArray(selectedProductIds) ? selectedProductIds : []),
+    ...(selectedProductId ? [selectedProductId] : []),
+  ].map(value => String(value || '').trim()).filter(Boolean))].slice(0, 30);
+  const selectedFactReferences: string[] = [];
+  if (requestedProductIds.length) {
     const tenantId = (res.locals as AuthLocals).tenantId;
     const profile = await readTenantEnterpriseProfile(tenantId);
     const items = profile.products?.items || [];
-    const selectedId = String(selectedProductId || '').trim();
-    const selected = items.find((item, index) => {
-      const name = String(item.name || '').trim().slice(0, 200);
-      const id = [item.id, item.productId].map(value => String(value || '').trim().slice(0, 200)).find(Boolean)
-        || String(item.sku || '').trim().slice(0, 160)
-        || `product-${createHash('sha256').update(name || `legacy-empty-row:${index}`).digest('hex').slice(0, 16)}`;
-      return id === selectedId;
-    });
-    if (!selectedId || !selected?.name || (productInfo.trim() && productInfo.trim() !== selected.name.trim())) {
+    const selected = requestedProductIds.map(id => {
+      const index = items.findIndex((item, itemIndex) => productIdentity(item, itemIndex) === id);
+      return index >= 0 ? { id, item: items[index]! } : null;
+    }).filter((item): item is { id: string; item: typeof items[number] } => Boolean(item));
+    if (selected.length !== requestedProductIds.length || selected.some(entry => !entry.item.name)) {
       res.status(422).json({ ok: false, source: 'ai_rejected', provenance: 'ai_rejected', publishable: false,
         qualityStatus: 'rejected', code: 'ENTERPRISE_PRODUCT_REQUIRED', script: '',
-        error: '所选产品与当前企业中心记录不一致，请重新选择产品后生成。' });
+        error: '部分所选产品与当前企业中心记录不一致，请重新选择产品后生成。' });
       return;
     }
-    productInfo = [
-      `产品名称：${selected.name}`,
-      selected.sku ? `产品SKU：${selected.sku}` : '',
-      selected.category ? `所属类目：${selected.category}` : '',
-      selected.highlights ? `产品卖点：${selected.highlights}` : '',
-      selected.priceRange ? `价格区间：${selected.priceRange}` : '',
-      selected.moq ? `起订量：${selected.moq}` : '',
-      selected.certifications ? `认证资质：${selected.certifications}` : '',
-    ].filter(Boolean).join('\n');
+    productInfo = selected.map(({ id, item }) => {
+      selectedFactReferences.push(`enterprise-product:${id}`);
+      return [
+        `产品ID：${id}`,
+        `产品名称：${item.name}`,
+        item.sku ? `产品SKU：${item.sku}` : '',
+        item.category ? `所属类目：${item.category}` : '',
+        item.highlights ? `产品卖点：${item.highlights}` : '',
+        item.priceRange ? `价格区间：${item.priceRange}` : '',
+        item.moq ? `起订量：${item.moq}` : '',
+        item.certifications ? `认证资质：${item.certifications}` : '',
+      ].filter(Boolean).join('\n');
+    }).join('\n\n');
+  } else if (openingHookOnly) {
+    res.status(422).json({ ok: false, source: 'ai_rejected', provenance: 'ai_rejected', publishable: false,
+      qualityStatus: 'rejected', code: 'ENTERPRISE_PRODUCT_REQUIRED', script: '',
+      error: '请至少选择一个企业中心产品后生成。' });
+    return;
   }
   const structuredMaterials = materialInfoLines(normalizedMaterialInfos);
   const selectedClipEvidence = untrustedPromptData('selected_material_names', clips, 4_000);
@@ -4092,6 +4105,8 @@ ${script}`, { backend: providerOpt, systemPrompt: confirmedProductEnterprise || 
       validationIssues: [],
       validationWarnings,
       fieldsToConfirm: commercialAudit.fieldsToConfirm,
+      factReferences: selectedFactReferences,
+      selectedProductIds: requestedProductIds,
     });
   } catch (error) {
     const rawError = String(error instanceof Error ? error.message : error);
@@ -8718,7 +8733,7 @@ studioRouter.post('/projects', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   const { id, title, status = 'draft', spec: rawSpec = {}, thumbSeed, baseUpdatedAt } = req.body ?? {};
   const socialTaskId = socialProjectTaskId(res.locals);
-  const spec = studioProjectSpecForStorage(bindSocialProjectSpec(rawSpec, socialTaskId));
+  let spec = normalizeFreeCreationProjectSpec(studioProjectSpecForStorage(bindSocialProjectSpec(rawSpec, socialTaskId)));
   const automation = spec.automation && typeof spec.automation === 'object' && !Array.isArray(spec.automation)
     ? spec.automation as Record<string, unknown> : {};
   const now = new Date().toISOString();
@@ -8759,6 +8774,11 @@ studioRouter.post('/projects', async (req, res) => {
         return;
       }
       const storedSpec = typeof existing.spec === 'string' ? JSON.parse(existing.spec) : existing.spec;
+      spec = normalizeFreeCreationProjectSpec(spec, storedSpec);
+      const freeCreationIssues = spec.creationPath === 'free_creation' ? freeCreationCompletionIssues(spec.freeCreation) : [];
+      if (!['draft', 'template'].includes(String(status)) && freeCreationIssues.length) {
+        res.status(422).json({ ok: false, code: 'FREE_CREATION_INCOMPLETE', error: '自由创作尚未满足交付条件', reasons: freeCreationIssues }); return;
+      }
       // A remounted editor can briefly hold an empty draft while hydration is
       // still in flight. Never let that snapshot erase an established storyboard.
       const savedAssignments = Object.keys(storedSpec?.storyboardAssignments || {}).length;
@@ -8808,6 +8828,10 @@ studioRouter.post('/projects', async (req, res) => {
     createdAt: now,
     updatedAt: now,
   };
+  const freeCreationIssues = spec.creationPath === 'free_creation' ? freeCreationCompletionIssues(spec.freeCreation) : [];
+  if (!['draft', 'template'].includes(String(status)) && freeCreationIssues.length) {
+    res.status(422).json({ ok: false, code: 'FREE_CREATION_INCOMPLETE', error: '自由创作尚未满足交付条件', reasons: freeCreationIssues }); return;
+  }
   const assignmentIssues = storyboardAigcAssignmentIssues({ tenantId, projectId: '', spec, materials: loadMaterials() });
   if (assignmentIssues.length) {
     res.status(409).json({ ok: false, code: 'STORYBOARD_AIGC_ASSIGNMENT_UNVERIFIED', error: 'AI 分镜候选尚未通过当前项目验收', reasons: assignmentIssues }); return;
@@ -8839,6 +8863,61 @@ studioRouter.get('/projects/:id', async (req, res) => {
   const p = await store.getById<any>('studio_projects', req.params.id);
   if (!p || p.tenant_id !== tenantId || !socialProjectBelongs(p, socialProjectTaskId(res.locals))) { res.status(404).json({ ok: false, error: 'Project not found' }); return; }
   res.json(projectFromRecord(p, tenantId));
+});
+
+// These records are created only by an explicit user action after reviewing a
+// completed manual render. Saving or exporting a project never creates one.
+studioRouter.get('/projects/:id/manual-handoffs', async (req, res) => {
+  const { tenantId } = res.locals as AuthLocals;
+  const project = await store.getById<any>('studio_projects', req.params.id);
+  if (!project || project.tenant_id !== tenantId) { res.status(404).json({ ok: false, error: 'Project not found' }); return; }
+  const result = await store.list<any>('studio_manual_handoffs', {
+    where: { tenant_id: tenantId, project_id: req.params.id }, sort: '-created_at', perPage: 100,
+  });
+  res.setHeader('Cache-Control', 'private, no-store');
+  res.json({ ok: true, handoffs: result.items.map(item => ({ id: item.id, action: item.action,
+    status: item.status, renderPath: item.render_path, createdAt: item.created_at, createdBy: item.created_by })) });
+});
+
+studioRouter.post('/projects/:id/manual-handoffs', async (req, res) => {
+  const { tenantId, userId } = res.locals as AuthLocals;
+  const project = await store.getById<any>('studio_projects', req.params.id);
+  if (!project || project.tenant_id !== tenantId) { res.status(404).json({ ok: false, error: 'Project not found' }); return; }
+  const spec = typeof project.spec === 'string' ? JSON.parse(project.spec) : project.spec || {};
+  if (!isManualStudioProject(spec)) {
+    res.status(409).json({ ok: false, code: 'manual_studio_project_required', error: '只有人工自由创作项目可以主动提交此协作请求' }); return;
+  }
+  const action = String(req.body?.action || '');
+  if (!STUDIO_MANUAL_HANDOFF_ACTIONS.includes(action as any)) {
+    res.status(400).json({ ok: false, code: 'manual_handoff_action_invalid', error: '协作动作无效' }); return;
+  }
+  const renderPath = String(req.body?.renderPath || '').trim();
+  if (!renderPath || !studioProjectRenderPaths(spec).includes(renderPath)) {
+    res.status(422).json({ ok: false, code: 'manual_handoff_render_required', error: '请先完成并保存当前正式成片' }); return;
+  }
+  const savedAcceptance = spec.renderAcceptance && typeof spec.renderAcceptance === 'object'
+    ? spec.renderAcceptance as Record<string, unknown> : {};
+  if (req.body?.reviewed !== true || savedAcceptance.accepted !== true || String(savedAcceptance.renderPath || '') !== renderPath) {
+    res.status(422).json({ ok: false, code: 'manual_handoff_review_required', error: '请先完成人工成片验收' }); return;
+  }
+  const existing = await store.list<any>('studio_manual_handoffs', {
+    where: { tenant_id: tenantId, project_id: req.params.id, action, render_path: renderPath }, perPage: 1,
+  });
+  if (existing.items[0]) {
+    const item = existing.items[0];
+    res.json({ ok: true, replayed: true, handoff: { id: item.id, action: item.action, status: item.status,
+      renderPath: item.render_path, createdAt: item.created_at, createdBy: item.created_by } });
+    return;
+  }
+  const now = new Date().toISOString();
+  const created = await store.create<any>('studio_manual_handoffs', {
+    tenant_id: tenantId, project_id: req.params.id, action,
+    status: action === 'team_review' ? 'pending_review' : 'planned', render_path: renderPath,
+    project_revision: String(project.updated_at || ''), created_by: userId, created_at: now, updated_at: now,
+  });
+  if (!created) { res.status(503).json({ ok: false, code: 'manual_handoff_storage_unavailable', error: '协作请求未能保存，请重试' }); return; }
+  res.status(201).json({ ok: true, replayed: false, handoff: { id: created.id, action: created.action,
+    status: created.status, renderPath: created.render_path, createdAt: created.created_at, createdBy: created.created_by } });
 });
 
 // DELETE /studio/projects/:id

@@ -38,7 +38,7 @@ interface BatchShotSpec {
   shootingSlots?: Array<{ id?: string; slotId?: string; detail?: string; duration?: number; requirements?: string; observedPresenterRole?: import('../../shared/contracts/presenterShotRecognition.js').ObservedPresenterRole; personContinuityId?: string; salesPresenterConfirmed?: boolean }>;
   shotProductions?: Record<string, ShotProduction>;
   storyboardAssignments?: Record<string, string>;
-  storyboardSourcePlans?: Record<string, { userSource?: string; mode?: string; shotTopic?: 'presenter' | 'factory' | 'product' | 'general'; sceneType?: 'product' | 'factory' | 'usage' | 'general'; confirmed?: boolean; firstFrameMaterialId?: string; firstFrameConfirmed?: boolean; generatedClipId?: string; videoResolution?: '480p' | '720p'; videoResolutionPinned?: boolean }>;
+  storyboardSourcePlans?: Record<string, { userSource?: string; mode?: string; shotTopic?: 'presenter' | 'factory' | 'product' | 'consumer_demo' | 'general'; sceneType?: 'product' | 'factory' | 'usage' | 'general'; confirmed?: boolean; firstFrameMaterialId?: string; firstFrameConfirmed?: boolean; generatedClipId?: string; videoResolution?: '480p' | '720p'; videoResolutionPinned?: boolean }>;
   clipEdits?: Record<string, { segmentId?: string; trimStart?: number; trimEnd?: number }>;
   materialSnapshots?: Array<{ id?: string; usage?: string; name?: string; type?: string; url?: string; duration?: number; width?: number; height?: number; aspectRatio?: number; transcript?: string }>;
 }
@@ -73,7 +73,7 @@ export function planStudioBatchShotRoutes(spec: BatchShotSpec, options: {
     const action = !factoryScene && recognition === 'motion';
     const visualTopic: StudioBatchShotRoute['visualTopic'] = factoryScene ? 'factory' : action || spokenOnScreen ? 'presenter'
       : explicitScene === 'general' ? 'other'
-        : explicitScene === 'usage' || /使用|试用|安装|操作|涂抹|喷涂|上脸|妆效|粉底覆盖|usage/i.test(description) ? 'usage_scene'
+        : selectedTopic === 'consumer_demo' || explicitScene === 'usage' || /消费者|顾客|用户|使用|试用|安装|操作|涂抹|喷涂|上脸|妆效|粉底覆盖|使用前后|consumer|usage/i.test(description) ? 'usage_scene'
           : explicitScene === 'product' || /产品|包装|瓶身|质地|粉底液|product/i.test(description) ? 'product' : 'other';
     const assignedId = String(assignments[slotId] || '').trim();
     const assigned = assignedId && snapshots.has(assignedId) && snapshots.get(assignedId)?.usage !== 'reference_only' ? assignedId : null;

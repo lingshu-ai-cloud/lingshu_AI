@@ -128,7 +128,7 @@ socialEngagementRouter.get('/comments', async (_req, res) => {
         const stateKey = key('youtube', account.id, comment.id); const state = savedByKey.get(stateKey);
         const translation = stateTranslation(state);
         await writebackInteraction(tenantId, { kind: 'comment', platform: 'youtube', providerEventId: comment.id, accountId: account.id, contentId: comment.videoId, body: comment.textDisplay, occurredAt: comment.publishedAt, actorRef: comment.authorName, raw: comment });
-        items.push({ ...comment, platform: 'youtube', accountId: account.id, accountTitle: account.channelTitle, contentTitle: `YouTube video ${comment.videoId || ''}`, status: state?.status || 'pending', analysis: state?.analysis, translation: translation?.sourceText === comment.textDisplay ? translation : undefined, stateKey });
+        items.push({ ...comment, platform: 'youtube', accountId: account.id, accountTitle: account.channelTitle, contentTitle: `YouTube video ${comment.videoId || ''}`, originalUrl: comment.videoId ? `https://www.youtube.com/watch?v=${encodeURIComponent(comment.videoId)}&lc=${encodeURIComponent(comment.id)}` : '', status: state?.status || 'pending', analysis: state?.analysis, translation: translation?.sourceText === comment.textDisplay ? translation : undefined, stateKey });
       }
     } catch (error) { unavailable.push({ platform: 'youtube', reason: error instanceof Error ? error.message : '评论同步失败' }); }
   }
@@ -149,7 +149,7 @@ socialEngagementRouter.get('/comments', async (_req, res) => {
           const stateKey = key(account.platform, account.id, comment.id); const state = savedByKey.get(stateKey);
           const translation = stateTranslation(state);
           await writebackInteraction(tenantId, { kind: 'comment', platform: account.platform, providerEventId: comment.id, accountId: account.id, contentId: post.id, body: comment.textDisplay, occurredAt: comment.publishedAt, actorRef: comment.authorName, raw: comment });
-          items.push({ ...comment, platform: account.platform, accountId: account.id, accountTitle: account.title, contentTitle: post.title || post.description || `${account.platform} content`, status: state?.status || 'pending', analysis: state?.analysis, translation: translation?.sourceText === comment.textDisplay ? translation : undefined, stateKey });
+          items.push({ ...comment, platform: account.platform, accountId: account.id, accountTitle: account.title, contentTitle: post.title || post.description || `${account.platform} content`, originalUrl: post.permalinkUrl || '', status: state?.status || 'pending', analysis: state?.analysis, translation: translation?.sourceText === comment.textDisplay ? translation : undefined, stateKey });
         }
       }
     } catch (error) { unavailable.push({ platform: account.platform, reason: error instanceof Error ? error.message : '评论同步失败' }); }

@@ -733,15 +733,15 @@ function SkillCard({ skill, onView }: { skill: Skill; onView: () => void }) {
           ) : (
             <>
               {skill.category === 'product' ? (
-                <button className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border border-dashed border-gray-300 text-gray-400 cursor-not-allowed">
+                <button type="button" disabled title="请先在企业知识库上传产品资料" className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border border-dashed border-gray-300 text-gray-400 cursor-not-allowed">
                   <Plus size={12} />上传产品资料
                 </button>
               ) : (
-                <button className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border border-dashed border-gray-300 text-gray-400 cursor-not-allowed">
+                <button type="button" disabled title="该能力即将开放" className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border border-dashed border-gray-300 text-gray-400 cursor-not-allowed">
                   <Lock size={12} />即将开放
                 </button>
               )}
-              <button className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border border-dashed border-gray-300 text-gray-400 cursor-not-allowed">
+              <button type="button" disabled title="Demo 预览即将开放" className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border border-dashed border-gray-300 text-gray-400 cursor-not-allowed">
                 <FlaskConical size={12} />预览 Demo
               </button>
             </>

@@ -131,7 +131,6 @@ const EMPTY_CONFIG: DigitalEmployeeConfig = {
   enabledWorkflows: [
     "scheduled_social",
     "viral_clone",
-    "product_content",
     "content_publish",
     "customer_segmentation",
     "batch_followup",
@@ -173,8 +172,6 @@ const workflowOptions: Array<{
     label: "爆款裂变",
     detail: "从爆款证据和精确分析进入创作",
   },
-  { id: "product_content", label: "使用产品生成", detail: "引用重点产品事实" },
-  { id: "material_content", label: "使用素材生成", detail: "复用企业已有素材" },
   {
     id: "content_publish",
     label: "内容发布",
@@ -194,24 +191,23 @@ const workflowOptions: Array<{
   },
 ];
 
-const workflowLabel = Object.fromEntries(
-  workflowOptions.map((option) => [option.id, option.label]),
-) as Record<DigitalEmployeeWorkflow, string>;
+const workflowLabel: Record<DigitalEmployeeWorkflow, string> = {
+  ...Object.fromEntries(workflowOptions.map((option) => [option.id, option.label])),
+  // Kept only for rendering historic saved configurations.
+  product_content: "历史：使用产品生成",
+  material_content: "历史：使用素材生成",
+} as Record<DigitalEmployeeWorkflow, string>;
 const contentCreationWorkflows: DigitalEmployeeWorkflow[] = [
   "viral_clone",
-  "product_content",
-  "material_content",
 ];
+const legacyFreeCreationWorkflows: DigitalEmployeeWorkflow[] = ["product_content", "material_content"];
 
 function synchronizeThemeContentWorkflows(
   workflows: DigitalEmployeeWorkflow[],
 ): DigitalEmployeeWorkflow[] {
-  if (!workflows.some((item) => contentCreationWorkflows.includes(item)))
-    return workflows;
-  return [
-    ...workflows.filter((item) => !contentCreationWorkflows.includes(item)),
-    ...contentCreationWorkflows,
-  ];
+  const hadLegacyContent = workflows.some(item => legacyFreeCreationWorkflows.includes(item));
+  const cleaned = workflows.filter(item => !legacyFreeCreationWorkflows.includes(item));
+  return hadLegacyContent && !cleaned.includes("viral_clone") ? [...cleaned, "viral_clone"] : cleaned;
 }
 
 const agentRoleGroups: Array<{
@@ -223,7 +219,7 @@ const agentRoleGroups: Array<{
 }> = [
   { id: "orchestrator", label: "灵小枢 · 统筹 Agent", responsibility: "读取企业上下文、拆解本周目标，协调四个专业 Agent 并跟踪任务状态", outputs: "执行上下文、周目标、任务编排与异常提醒", workflows: [] },
   { id: "business", label: "经营 Agent", responsibility: "负责发布审批、发布日历、平台回执和周度经营复盘", outputs: "发布计划、真实回执、经营结果与复盘报告", workflows: ["content_publish"] },
-  { id: "director", label: "编导 Agent", responsibility: "逐镜分析爆款参考，重点拆解前三秒钩子，锁定可复刻的脚本、口播、字幕、分镜、音乐节奏和验收规则", outputs: "参考视频分析、逐镜复刻脚本、素材映射、替代方案与验收规则", workflows: ["scheduled_social", "viral_clone", "product_content", "material_content"] },
+  { id: "director", label: "编导 Agent", responsibility: "逐镜分析爆款参考，重点拆解前三秒钩子，锁定可复刻的脚本、口播、字幕、分镜、音乐节奏和验收规则", outputs: "参考视频分析、逐镜复刻脚本、素材映射、替代方案与验收规则", workflows: ["scheduled_social", "viral_clone"] },
   { id: "content", label: "内容 Agent", responsibility: "执行已锁定的导演方案，按镜头选择真实素材、数字人、授权素材和生成模型，完成配音、字幕、剪辑、混音、封面和技术质检", outputs: "可播放成片、字幕与音轨、封面、平台版本和质检报告", workflows: [] },
   { id: "customer", label: "客服 Agent", responsibility: "承接真实询盘、完成客户分层，并按客户上下文生成跟进草稿", outputs: "客户标签、回复草稿、跟进批次、转人工提醒", workflows: ["customer_segmentation", "batch_followup"] },
 ];
@@ -924,7 +920,7 @@ function OnboardingPanel({
         ...contentCreationWorkflows,
       ]),
     );
-    setDependencyNotice("已启用社媒视频制作；素材加工和爆款裂变会共用这套 Agent 工作流。");
+    setDependencyNotice("已启用爆款复刻；缺少全片精确分析时会退回编导 Agent 补齐，不会转入自由创作。");
   };
   const missingRecommendationFields = [
     ["企业名称", form.companyName], ["行业", form.industry], ["主要业务", form.primaryBusiness],

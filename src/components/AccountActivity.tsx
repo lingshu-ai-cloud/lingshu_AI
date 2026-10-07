@@ -43,6 +43,7 @@ type SocialComment = {
   commentId: string;
   stateKey: string;
   videoId?: string;
+  originalUrl?: string;
   authorId?: string;
   translation?: string;
   translationLanguage?: string;
@@ -150,6 +151,7 @@ export default function AccountActivity() {
         commentId: item.id,
         stateKey: item.stateKey,
         videoId: item.videoId,
+        originalUrl: /^https?:\/\//i.test(String(item.originalUrl || '')) ? String(item.originalUrl) : undefined,
         authorId: item.authorId || item.authorName,
         platform: item.platform === 'youtube' ? 'YouTube' : item.platform === 'instagram' ? 'Instagram' : item.platform === 'facebook' ? 'Facebook' : 'TikTok',
         author: item.authorName || '社媒用户',
@@ -378,7 +380,9 @@ export default function AccountActivity() {
                 <div className="rounded-lg border border-border bg-white p-4 sm:p-5">
                   <div className="flex items-start justify-between gap-4">
                     <div><div className="flex items-center gap-2"><h3 className="text-sm font-black text-text-primary">{selected.author}</h3><span className="text-xs text-text-muted">{selected.handle}</span></div><p className="mt-1 flex items-center gap-1 text-[11px] text-text-muted"><SocialPlatformIcon platform={selected.platform} size={13} /><span className="sr-only">{selected.platform} · </span>来自《{selected.contentTitle}》</p></div>
-                    <button type="button" className="inline-flex items-center gap-1 text-[11px] font-bold text-text-muted hover:text-accent">查看原评论 <ExternalLink size={11} /></button>
+                    {selected.originalUrl
+                      ? <a href={selected.originalUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[11px] font-bold text-text-muted hover:text-accent">查看原评论 <ExternalLink size={11} /></a>
+                      : <button type="button" disabled title="平台未返回原评论链接" className="inline-flex cursor-not-allowed items-center gap-1 text-[11px] font-bold text-text-muted opacity-50">暂无原评论链接 <ExternalLink size={11} /></button>}
                   </div>
                   <div className="mt-4 rounded-md bg-surface-2 px-4 py-3">
                     <p className="text-[10px] font-black text-text-muted">原文</p>

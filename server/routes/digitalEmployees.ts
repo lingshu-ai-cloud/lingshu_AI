@@ -2252,7 +2252,7 @@ digitalEmployeesRouter.post('/onboarding/complete', async (req, res) => {
     focusProducts: '',
     primaryGoal: 'awareness',
     approvalOwner: String(onboardingInput.approvalOwner || '').trim() || '企业管理员',
-    enabledWorkflows: ['viral_clone', 'product_content', 'material_content'],
+    enabledWorkflows: ['viral_clone'],
     publishingTargets: [],
     allowRealPublishing: false,
     allowRealCustomerMessages: false,

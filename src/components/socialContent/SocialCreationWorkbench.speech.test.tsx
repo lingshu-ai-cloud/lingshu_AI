@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import SocialCreationWorkbench from './SocialCreationWorkbench';
+import SocialCreationWorkbench, { parseFreeCreationScript, serializeFreeCreationLines } from './SocialCreationWorkbench';
 
 const html = renderToStaticMarkup(<SocialCreationWorkbench
   mode="viral_replication"
@@ -37,8 +37,23 @@ const freeHtml = renderToStaticMarkup(<SocialCreationWorkbench
   mode="material_processing"
   onOpenChooser={() => {}} onShowCreations={() => {}} onGenerate={() => {}}
 />);
-assert.ok(freeHtml.includes('上传指定开场钩子'));
+assert.ok(freeHtml.includes('创意与口播确认'));
+assert.ok(freeHtml.includes('主推产品 · 多选'));
+assert.ok(freeHtml.includes('暂不指定'));
+assert.ok(freeHtml.includes('上传素材'));
+assert.ok(freeHtml.includes('素材库'));
+assert.ok(freeHtml.includes('AI 生成'));
 assert.ok(freeHtml.includes('Gemini 生成逐句口播与分镜'));
 assert.ok(!freeHtml.includes('还在为内容拍摄和剪辑反复返工吗'));
 assert.ok(!freeHtml.includes('可选的一句话要求'));
 assert.ok(!freeHtml.includes('生成或沿用逐句口播'));
+
+const parsed = parseFreeCreationScript('[0–4s]\n画面：产品特写\n台词：看看这款面膜\n\n[4–8s]\n画面：工厂生产线\n台词：（无口播）');
+assert.equal(parsed.length, 2);
+assert.equal(parsed[0]?.hook, true);
+assert.equal(parsed[1]?.shotType, '工厂');
+assert.equal(parsed[1]?.silent, true);
+assert.match(serializeFreeCreationLines(parsed), /镜头类型：工厂/);
+
+const d2cParsed = parseFreeCreationScript('[0–4s]\n画面：消费者上脸涂抹面霜并展示使用效果\n台词：（无口播）');
+assert.equal(d2cParsed[0]?.shotType, 'D to C');

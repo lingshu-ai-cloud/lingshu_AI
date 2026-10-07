@@ -160,7 +160,7 @@ export function enrichPackageWithContentSignals(input: {
     if (reference) used.add(reference.id);
     const placeholder = !plan.referenceId && !plan.buyerProblem
       && (plan.theme === '介绍产品的用途与特点' || /待编导确认/.test(plan.theme));
-    const mayClone = placeholder && reference?.exact && input.config.enabledWorkflows.includes('viral_clone');
+    const mayClone = Boolean(reference?.exact && input.config.enabledWorkflows.includes('viral_clone'));
     const angle = contentAngles[(slot - 1) % contentAngles.length];
     const matrixTheme = row ? `${row.contentDirection.replace(/[。；;\s]+$/u, '')}｜${angle}` : `${plan.theme}｜${angle}`;
     const generatedFrom = reference?.benchmarkAccount && reference.exact
@@ -173,7 +173,11 @@ export function enrichPackageWithContentSignals(input: {
       buyerProblem: plan.buyerProblem || reference?.hook || matrixTheme,
       evidenceRequirement: plan.evidenceRequirement || reference?.evidenceRequirement || '必须使用企业资料或素材库中的可核验事实与画面',
       theme: placeholder ? reference?.theme || matrixTheme : plan.theme,
-      route: mayClone ? 'clone' : plan.route,
+      // New placeholder slots enter clone even before a reference is ready, so
+      // the Director sees the exact-analysis blocker. Preserve explicit or
+      // frozen historic choices here; the batch admission boundary rejects a
+      // new non-clone order without rewriting history.
+      route: placeholder && input.config.enabledWorkflows.includes('viral_clone') ? 'clone' : plan.route,
       referenceId: mayClone ? reference!.id : plan.referenceId,
       planningEvidence: {
         generatedFrom,

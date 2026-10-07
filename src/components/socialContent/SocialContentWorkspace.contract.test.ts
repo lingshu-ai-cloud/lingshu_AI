@@ -33,6 +33,8 @@ assert.match(api, /requestJson<unknown>\(`\/tasks\?\$\{params\}`\)/);
 assert.doesNotMatch(api, /listTasks:[\s\S]{0,500}perPage = 200/);
 assert.match(api, /JSON_REQUEST_TIMEOUT_MS = 30_000/);
 assert.match(api, /READ_RETRY_STATUSES = new Set\(\[429/);
+assert.match(api, /readonly code = ''/,
+  'structured workflow errors must retain their server code for actionable UI');
 assert.doesNotMatch(hook, /saveDraft|requestInput|SocialContentSaveTarget/,
   'modal-only task editing and upload paths must be removed');
 assert.match(hook, /createDeliveryPackage\(task\.taskId/);
@@ -53,6 +55,10 @@ assert.match(workspace, /contentCreationRequest:/,
 assert.match(workspace, /const taskId = explicitTaskId \|\| task\?\.taskId/,
   'a newly-created task must open Studio with its returned id instead of a stale render closure');
 assert.match(workspace, /hasMoreTasks=\{state\.workspace\.taskList\.page < state\.workspace\.taskList\.totalPages\}/);
+assert.match(workspace, /查看编导待修改项/);
+assert.match(workspace, /补充企业与产品事实/);
+assert.match(workspace, /onNavigate\('enterprise'\)/,
+  'facts-required must link to the authoritative enterprise knowledge editor');
 assert.match(workspace, /onLoadMoreTasks=\{\(\) => void state\.loadMoreTasks\(\)\}/);
 assert.match(planning, /<SocialContentHistoryHome/);
 assert.match(planning, /useState\(false\)/, 'the creation chooser must not cover the history home by default');
@@ -62,7 +68,10 @@ assert.match(historyHome, /PAGE_SIZE = 8/);
 assert.match(historyHome, /最新成片/);
 assert.match(historyHome, /languageRenderOutputs/);
 assert.match(historyHome, /status !== 'template'/);
-assert.match(historyHome, /feishu-20260929-final\.mp4/);
+assert.match(historyHome, /projectHasAcceptedRender/,
+  'the featured video must come from a persisted, accepted tenant project');
+assert.doesNotMatch(historyHome, /feishu-20260929-final\.mp4|FEATURED_COMPLETED_VIDEO/,
+  'the creation history must not inject a hard-coded demo video');
 assert.match(historyHome, /setPreviewVideoOpen\(true\)/,
   'the completed video must open a direct preview instead of navigating into the editor');
 assert.match(historyHome, /<video autoPlay controls playsInline preload="auto"/,

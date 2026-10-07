@@ -130,10 +130,10 @@ function assertValidPlanGraph(workflows: DigitalEmployeeConfig['enabledWorkflows
 }
 
 const productOnly = assertValidPlanGraph(['product_content'], [
-  'context_readiness', 'goal_decomposition', 'content_mode_routing', 'content_production', 'content_quality_gate', 'weekly_review',
+  'context_readiness', 'goal_decomposition', 'weekly_review',
 ]);
-assert.deepEqual(productOnly.get('content_mode_routing')?.dependsOn, ['goal_decomposition']);
-assert.deepEqual(productOnly.get('weekly_review')?.dependsOn, ['content_quality_gate']);
+assert.equal(productOnly.has('content_mode_routing'), false);
+assert.deepEqual(productOnly.get('weekly_review')?.dependsOn, ['goal_decomposition']);
 
 assertValidPlanGraph(['scheduled_social'], [
   'context_readiness', 'goal_decomposition', 'scheduled_source_collection', 'weekly_review',

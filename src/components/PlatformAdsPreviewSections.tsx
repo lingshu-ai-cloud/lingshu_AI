@@ -113,7 +113,7 @@ export function PlatformAdsManagedPreview({ mode, onModeChange }: { mode: string
     </section>
     <div className="ads-managed-grid">
       <section className="ads-card"><div className="ads-section-title"><h2>待审批</h2><span className="ads-count">0</span></div><div className="ads-mini-empty"><ShieldCheck size={24} /><strong>暂无待审批动作</strong><p>建议达到执行条件后，会显示原因、影响对象、修改前后值和有效期。</p></div></section>
-      <section className="ads-card"><div className="ads-section-title"><h2>执行记录</h2><button className="ads-text-button">查看全部</button></div><div className="ads-mini-empty"><Clock3 size={24} /><strong>尚无执行记录</strong><p>账户接入后记录发现、决策、审批、平台回执和后续观察结果。</p></div></section>
+      <section className="ads-card"><div className="ads-section-title"><h2>执行记录</h2><button type="button" disabled title="账户接入并产生执行记录后可查看" className="ads-text-button cursor-not-allowed opacity-50">暂无记录</button></div><div className="ads-mini-empty"><Clock3 size={24} /><strong>尚无执行记录</strong><p>账户接入后记录发现、决策、审批、平台回执和后续观察结果。</p></div></section>
     </div>
   </>;
 }

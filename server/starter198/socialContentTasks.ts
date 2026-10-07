@@ -261,21 +261,12 @@ export async function updateSocialContentTask(input: {
       if (Object.prototype.hasOwnProperty.call(briefChanges, 'productId')
         && (briefChanges.productId || briefChanges.productRef)) {
         const profile = await readTenantEnterpriseProfile(input.tenantId).catch(() => null);
-        const matches = (profile?.products.items ?? []).flatMap((item, index) => {
-          const selectedId = socialText(briefChanges.productId);
-          const selectedName = socialText(briefChanges.productRef);
-          const canonicalId = enterpriseProductIdentity(item, index);
-          return selectedId
-            ? canonicalId === selectedId ? [{ item, canonicalId }] : []
-            : selectedName && [socialText(item.name), socialText(item.sku)].includes(selectedName)
-              ? [{ item, canonicalId }] : [];
-        });
-        const product = matches.length === 1 ? matches[0]?.item : null;
-        if (!product || !socialText(product.name)) {
+        const match = resolveEnterpriseProductSelection(profile?.products.items ?? [], briefChanges);
+        if (!match || !socialText(match.item.name)) {
           throw new SocialContentWorkflowError('social_content_product_not_found', 400);
         }
-        briefChanges.productId = matches[0]!.canonicalId;
-        briefChanges.productRef = socialText(product.name);
+        briefChanges.productId = match.canonicalId;
+        briefChanges.productRef = socialText(match.item.name);
       }
       const nextMode = mode ?? currentSummary.mode ?? 'weekly';
       const hasThemeInput = ['themeId', 'customTopic', 'topic'].some(key => Object.prototype.hasOwnProperty.call(input.value.changes, key));
@@ -879,4 +870,22 @@ export async function readSocialContentWorkspace(input: {
     weeklyPlans,
     themes: [...SOCIAL_THEME_CATALOG],
   };
+}
+export function resolveEnterpriseProductSelection<T extends { id?: unknown; productId?: unknown; sku?: unknown; name?: unknown }>(
+  items: T[],
+  selection: { productId?: unknown; productRef?: unknown },
+): { item: T; canonicalId: string } | null {
+  const selectedId = socialText(selection.productId);
+  const selectedName = socialText(selection.productRef).toLocaleLowerCase();
+  const indexed = items.map((item, index) => ({ item, canonicalId: enterpriseProductIdentity(item, index) }));
+  const idMatch = selectedId ? indexed.find(candidate => candidate.canonicalId === selectedId) : undefined;
+  if (idMatch) return idMatch;
+
+  // Product imports can replace a legacy generated id while preserving the
+  // product name or SKU. Recover that stale selection only when the human-
+  // readable reference resolves to exactly one current catalog item.
+  if (!selectedName) return null;
+  const fallback = indexed.filter(({ item }) => [item.name, item.sku]
+    .some(value => socialText(value).toLocaleLowerCase() === selectedName));
+  return fallback.length === 1 ? fallback[0]! : null;
 }

@@ -172,3 +172,9 @@ const installation = planStudioBatchShotRoutes({ activeAssemblyId: 'a',
 }, { talkingExecutorReady: false, actionExecutorReady: false, authorizedPresenterIds: [] });
 assert.equal(installation[0]?.visualTopic, 'usage_scene');
 assert.equal(installation[0]?.route, 'aigc_first_frame');
+const consumerDemo = planStudioBatchShotRoutes({ activeAssemblyId: 'a',
+  shootingSlots: [{ id: 'demo', slotId: 'demo-slot', detail: '模特展示面霜效果', duration: 4 }],
+  shotProductions: { 'a:demo': { source: 'ai' } as never },
+  storyboardSourcePlans: { 'demo-slot': { mode: 'ai', shotTopic: 'consumer_demo' } },
+}, { talkingExecutorReady: false, actionExecutorReady: false, authorizedPresenterIds: [] });
+assert.equal(consumerDemo[0]?.visualTopic, 'usage_scene');

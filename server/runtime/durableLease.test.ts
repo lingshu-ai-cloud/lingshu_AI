@@ -104,6 +104,29 @@ const input = { tenantId: 'tenant-1', scope: 'scheduled-publish', subjectId: 'po
 }
 
 {
+  const { store, rows } = memoryStore();
+  rows.push(
+    {
+      id: 'lease-stale-a', tenant_id: input.tenantId, lease_scope: input.scope, subject_id: input.subjectId,
+      lease_token: 'stale-token-a', owner_id: 'dead-worker-a', acquired_at: start.toISOString(),
+      expires_at: new Date(start.getTime() + 30_000).toISOString(),
+    },
+    {
+      id: 'lease-stale-b', tenant_id: input.tenantId, lease_scope: input.scope, subject_id: input.subjectId,
+      lease_token: 'stale-token-b', owner_id: 'dead-worker-b', acquired_at: start.toISOString(),
+      expires_at: new Date(start.getTime() + 31_000).toISOString(),
+    },
+  );
+  const repaired = await acquireDurableOperationLease({
+    dataStore: store, ...input, ownerId: 'worker-recovery', now: new Date(start.getTime() + 70_000),
+    leaseDurationMs: 60_000, reclaimGraceMs: 10_000,
+  });
+  assert.ok(repaired, 'expired duplicate generations should be repaired in file-backed local stores');
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0]?.owner_id, 'worker-recovery');
+}
+
+{
   const { store } = memoryStore();
   const attempts = await Promise.all(Array.from({ length: 8 }, (_, index) => acquireDurableOperationLease({
     dataStore: store,

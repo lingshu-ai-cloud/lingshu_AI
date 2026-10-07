@@ -40,6 +40,7 @@ export function useSocialContentWorkspace() {
   const [loadingMoreTasks, setLoadingMoreTasks] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [errorCode, setErrorCode] = useState('');
   const [notice, setNotice] = useState('');
 
   const fileOperationKey = useCallback((file: File): string => {
@@ -81,6 +82,7 @@ export function useSocialContentWorkspace() {
   const load = useCallback(async () => {
     const generation = ++readGeneration.current;
     setError('');
+    setErrorCode('');
     try {
       let next = await socialContentApi.getWorkspace();
       const savedTaskId = readActiveSocialContentTaskId();
@@ -112,6 +114,7 @@ export function useSocialContentWorkspace() {
     loadingMoreTasksRef.current = true;
     setLoadingMoreTasks(true);
     setError('');
+    setErrorCode('');
     try {
       const [page, refreshedFirstPage] = await Promise.all([
         socialContentApi.listTasks(requestedPage, snapshot.taskList.perPage),
@@ -155,13 +158,17 @@ export function useSocialContentWorkspace() {
     busyOperations.current += 1;
     setBusy(true);
     setError('');
+    setErrorCode('');
     setNotice('');
     try {
       const result = await operation();
       if (mounted.current) setNotice(typeof success === 'function' ? success(result) : success);
       return result;
     } catch (operationError) {
-      if (mounted.current) setError(operationError instanceof Error ? operationError.message : '操作未完成，请重试');
+      if (mounted.current) {
+        setError(operationError instanceof Error ? operationError.message : '操作未完成，请重试');
+        setErrorCode(operationError instanceof SocialContentRequestError ? operationError.code : '');
+      }
       throw operationError;
     } finally {
       busyOperations.current = Math.max(0, busyOperations.current - 1);
@@ -345,6 +352,7 @@ export function useSocialContentWorkspace() {
     loadingMoreTasks,
     busy,
     error,
+    errorCode,
     notice,
     refresh: load,
     loadMoreTasks,

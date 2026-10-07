@@ -84,7 +84,7 @@ export default function VideoPlanEditor({ plans, config, platforms, matrixPlan, 
     <header className="border-b border-border pb-4">
       <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-accent">Production planning</p>
       <h3 className="mt-1 text-base font-bold text-text-primary">{themeWorkflow ? '逐条确认社媒视频计划' : '逐条确认视频制作计划'}</h3>
-      <p className="mt-1 text-xs leading-5 text-text-muted">{themeWorkflow ? '确认内容目标和成片要求即可；系统在素材加工与爆款裂变中选择路径，没有素材时自动准备替代画面。' : '脚本来源与成片方式分别选择；批准后按此计划生成，缺少资料时暂停提示。'}</p>
+      <p className="mt-1 text-xs leading-5 text-text-muted">确认内容目标和成片要求；数字员工只执行爆款复刻，缺少精确对标分析时暂停并退回编导补齐。</p>
     </header>
 
     {notice && <p role="alert" className="border-l-2 border-amber bg-amber-dim px-3 py-2 text-sm text-amber">{notice}</p>}
@@ -102,14 +102,7 @@ export default function VideoPlanEditor({ plans, config, platforms, matrixPlan, 
 
         <div className="grid gap-x-4 gap-y-3 md:grid-cols-2">
           {matrixPlan && <label className={`${fieldLabel} md:col-span-2`}>服务账号<select className={selectField} value={plan.matrix?.accountId || ''} onChange={event => onChange(plans.map((video, i) => i === index ? bindMatrixVideo(video, matrixPlan.find(row => row.accountId === event.target.value)) : video))}><option value="">仅制作，不发布</option>{matrixPlan.map(row => <option key={row.accountId} value={row.accountId}>{row.platform} · {config.publishingTargets.find(target => target.accountId === row.accountId)?.accountLabel || row.accountId}</option>)}</select>{plan.matrix?.accountId && <span className="mt-1 block font-normal text-text-muted">受众：{plan.matrix.audience} · 目标：{plan.matrix.objective} · 引导：{plan.matrix.cta}</span>}</label>}
-          {themeWorkflow ? <div className="rounded-md border border-blue-100 bg-blue-50/60 px-3 py-2 md:col-span-2"><p className="text-xs font-bold text-blue-950">社媒视频制作</p><p className="mt-1 text-xs leading-5 text-blue-700">系统在素材加工与爆款裂变中自动匹配制作路径；没有素材时使用数字人、合规素材、信息图或安全生成画面。</p></div> : <label className={fieldLabel}>
-              脚本来源
-              <select className={selectField} value={plan.route} onChange={event => change(index, { route: event.target.value as VideoCreationPlan['route'], materialIds: [], referenceId: '' })}>
-                {Object.entries(VIDEO_ROUTES)
-                  .filter(([route]) => config.enabledWorkflows.includes(({ clone: 'viral_clone', material: 'material_content', product: 'product_content' } as const)[route as keyof typeof VIDEO_ROUTES]))
-                  .map(([route, label]) => <option key={route} value={route}>{label}</option>)}
-              </select>
-            </label>}
+          <div className="rounded-md border border-blue-100 bg-blue-50/60 px-3 py-2 md:col-span-2"><p className="text-xs font-bold text-blue-950">数字员工制作路径</p><p className="mt-1 text-xs leading-5 text-blue-700">{plan.route === 'clone' ? '爆款复刻；编导 Agent 必须先提供全片精确分析。' : `历史任务：${VIDEO_ROUTES[plan.route]}（只读，可继续查看与执行冻结版本）`}</p></div>
           <label className={fieldLabel}>
             产品
             <select className={selectField} value={plan.productName} disabled={Boolean(matrixPlan && plan.matrix?.accountId)} onChange={event => change(index, { productName: event.target.value, materialIds: [], scenePlan: plan.scenePlan?.map(scene => ({ ...scene, materialId: '' })) })}>

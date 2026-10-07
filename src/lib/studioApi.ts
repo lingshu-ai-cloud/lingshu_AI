@@ -143,6 +143,18 @@ export interface StudioScriptResult {
   fallbackReason?: string;
   error?: string;
   code?: string;
+  /** Enterprise records that ground this generation. */
+  factReferences?: string[];
+  /** Canonical multi-select product IDs accepted by the server. */
+  selectedProductIds?: string[];
+}
+export interface StudioManualHandoff {
+  id: string;
+  action: 'team_review' | 'publishing_plan';
+  status: 'pending_review' | 'planned';
+  renderPath: string;
+  createdAt: string;
+  createdBy: string;
 }
 
 async function get<T>(path: string, fallback: T): Promise<T & { source?: string }> {
@@ -468,6 +480,7 @@ export const studioApi = {
     materials: string[];
     productInfo?: string;
     selectedProductId?: string;
+    selectedProductIds?: string[];
     language: string;
     platform: string;
     duration: number;
@@ -714,7 +727,7 @@ export const studioApi = {
   },
 
   // 草稿 / 作品
-  listProjects: async (): Promise<StudioProject[]> => {
+  listProjects: async (options?: { throwOnError?: boolean }): Promise<StudioProject[]> => {
     try {
       const r = await fetch('/api/overseas/studio/projects', { headers: authHeader() });
       if (!r.ok) throw new Error(String(r.status));
@@ -724,7 +737,8 @@ export const studioApi = {
         if (!studioProjectRevisions.has(project.id)) studioProjectRevisions.set(project.id, project.updatedAt);
       });
       return projects;
-    } catch {
+    } catch (error) {
+      if (options?.throwOnError) throw error;
       return [];
     }
   },
@@ -754,6 +768,11 @@ export const studioApi = {
     }
   },
   deleteProject: (id: string) => del(`projects/${id}`),
+  listManualHandoffs: (projectId: string) => get<{ ok: boolean; handoffs: StudioManualHandoff[] }>(
+    `projects/${encodeURIComponent(projectId)}/manual-handoffs`, { ok: false, handoffs: [] }),
+  createManualHandoff: (projectId: string, body: { action: StudioManualHandoff['action']; renderPath: string; reviewed: true }) =>
+    post<{ ok: boolean; replayed?: boolean; handoff?: StudioManualHandoff; error?: string }>(
+      `projects/${encodeURIComponent(projectId)}/manual-handoffs`, body, { ok: false }),
   createVariationBatch: (b: { title: string; templateProjectId?: string; duration: number; maxItems: number; dimensions: Record<string, string[]>; plan?: VariationBatch['plan'] }) =>
     post<{ ok: boolean; batch: VariationBatch }>('variation-batches', b, { ok: false, batch: null as unknown as VariationBatch }),
   listVariationBatches: async (): Promise<VariationBatch[]> => {

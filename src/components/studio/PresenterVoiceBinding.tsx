@@ -58,6 +58,7 @@ export default function PresenterVoiceBinding({ presenterId, currentVoiceId, onB
     return () => window.clearTimeout(timer);
   }, [jobId, jobStatus]);
   const selected = voices.find(item => item.id === voiceId);
+  const catalogUnavailableWithBoundVoice = Boolean(currentVoiceId && error && /未连接|未配置|不可用/.test(error));
   const start = async () => {
     setError('');
     try {
@@ -97,6 +98,7 @@ export default function PresenterVoiceBinding({ presenterId, currentVoiceId, onB
       <option value="">请选择音色</option>{voiceId && !selected && <option value={voiceId}>当前已绑定音色（待核验）</option>}
       {voices.map(voice => <option key={voice.id} value={voice.id}>{voice.name} · {voice.language}</option>)}
     </select></label>
+    {currentVoiceId && <p role="status" className="text-emerald-700">当前已绑定音色，可直接用于生成口播视频。</p>}
     {selected?.previewUrl && <audio aria-label="音色试听" controls src={selected.previewUrl} className="h-9 w-full" />}
     {token && <button type="button" disabled={busy} onClick={() => void presenterApi.voices(token, '', 'private').then(page => { setVoices(current => [...current, ...page.items]); setToken(page.nextToken); }).catch(e => setError(String(e)))} className="underline">加载更多音色</button>}
     <label className="flex items-start gap-1"><input type="checkbox" checked={authorized} onChange={event => setAuthorized(event.target.checked)} />我确认已取得本人声音克隆及商业口播使用授权</label>
@@ -117,6 +119,8 @@ export default function PresenterVoiceBinding({ presenterId, currentVoiceId, onB
       {jobId && <p role="status">音色任务：{jobStatus === 'completed' ? '已可用，请试听后绑定' : jobStatus === 'failed' ? '失败' : '正在处理'}</p>}
       {jobs.length > 0 && <div className="space-y-1"><p>已有音色任务</p>{jobs.map(job => <button key={job.id} type="button" onClick={() => { setJobId(job.id); setJobStatus('processing'); }} className="block underline">{job.name} · {job.status === 'completed' ? '已完成' : job.status === 'uncertain' ? '待核对' : '处理中'} · 查看原任务</button>)}</div>}
     </div></details>
-    {error && <p role="alert" className="text-red-700">{error}</p>}
+    {catalogUnavailableWithBoundVoice
+      ? <p role="status" className="text-text-muted">私人音色目录尚未连接；仅影响试听、更换和新增音色，不影响使用当前已绑定音色生成。</p>
+      : error && <p role="alert" className="text-red-700">{error}</p>}
   </div>;
 }

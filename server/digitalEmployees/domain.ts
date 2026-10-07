@@ -385,7 +385,7 @@ export function buildWeeklyPlan(goal: WeeklyGoalInput, config: DigitalEmployeeCo
   const lineAllowsCustomer = goal.businessLine !== 'content_growth';
   const hasScheduledCollection = lineAllowsContent && enabled.has('scheduled_social');
   const hasViralClone = lineAllowsContent && enabled.has('viral_clone');
-  const hasContentCreation = lineAllowsContent && (hasViralClone || enabled.has('product_content') || enabled.has('material_content'));
+  const hasContentCreation = lineAllowsContent && hasViralClone;
   const hasPublishing = lineAllowsContent && enabled.has('content_publish');
   const hasBatchFollowup = lineAllowsCustomer && enabled.has('batch_followup');
   const hasCustomerSegmentation = lineAllowsCustomer && (enabled.has('customer_segmentation') || hasBatchFollowup);
@@ -415,10 +415,9 @@ export function buildWeeklyPlan(goal: WeeklyGoalInput, config: DigitalEmployeeCo
     goal_decomposition: ['context_readiness'],
     scheduled_source_collection: ['goal_decomposition'],
     viral_analysis: [hasScheduledCollection ? 'scheduled_source_collection' : 'goal_decomposition'],
-    // Viral evidence is opportunistic. Product/material routes must continue
-    // when an exact benchmark analysis is not available yet; the route
-    // allocator simply excludes clone until that evidence exists.
-    content_mode_routing: ['goal_decomposition'],
+    // Exact benchmark analysis is mandatory for every new Agent production
+    // task. The Director must complete it before routing can proceed.
+    content_mode_routing: [hasViralClone ? 'viral_analysis' : 'goal_decomposition'],
     content_production: ['content_mode_routing'],
     content_quality_gate: ['content_production'],
     content_release_approval: [hasContentCreation ? 'content_quality_gate' : 'goal_decomposition'],

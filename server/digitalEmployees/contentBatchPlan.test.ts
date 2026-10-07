@@ -16,7 +16,7 @@ const planned = buildContentBatchPlan({
 });
 assert.equal(planned.status, 'planned');
 assert.equal(planned.orders.length, 5);
-assert.deepEqual(planned.orders.map(order => order.route), ['clone', 'product', 'material', 'clone', 'product']);
+assert.deepEqual(planned.orders.map(order => order.route), ['clone', 'clone', 'clone', 'clone', 'clone']);
 assert.ok(planned.orders.every(order => order.goalId === 'goal-1' && order.productId && order.theme.key && order.platform && order.cta));
 assert.ok(planned.orders.every(order => order.evidenceRefs.filter(ref => ref.type === 'enterprise_material').every(ref => ref.id === (order.productId === 'sku-1' ? 'asset-a' : 'asset-b'))), 'A/B 产品不得串用素材');
 assert.ok(planned.orders.every(order => order.accountId === '' && order.accountLabel.includes('不分发')));
@@ -28,9 +28,9 @@ const publishing = buildContentBatchPlan({
   evidence: { products: [{ id: 'sku-1', name: '产品 A', materialIds: ['asset-a'] }], exactAnalysisIds: [], materialIds: ['asset-a'] },
   versions: { configVersion: 1, policyVersion: 'p', factsVersion: 'f' },
 });
-assert.equal(publishing.status, 'planned', 'publishing credentials must not block content production');
-assert.ok(publishing.orders.every(order => order.accountId === '' && order.accountLabel.includes('待绑定')));
-assert.deepEqual([...new Set(publishing.orders.map(order => order.platform))].sort(), [...goal.contentPlatforms].sort(), 'unbound target platforms must not be silently omitted');
+assert.equal(publishing.status, 'blocked', 'product-only free creation must not be created by a digital employee');
+assert.equal(publishing.orders.length, 0);
+assert.match(publishing.blocker, /自由创作|没有可执行/);
 
 const noEvidence = buildContentBatchPlan({
   goalId: 'goal-1', goal, config,
@@ -48,7 +48,7 @@ const feedbackRouted = buildContentBatchPlan({
   versions: { configVersion: 8, policyVersion: 'p8', factsVersion: 'f8' },
   priorRoutingEvidence: { priorRouteDistribution: { clone: 8, product: 1, material: 1 }, approvalFeedback: [{ note: '开头更直接' }] },
 });
-assert.equal(feedbackRouted.orders[0]?.route, 'product', '下周分配必须考虑历史路径分布');
+assert.equal(feedbackRouted.orders[0]?.route, 'clone', 'new Agent plans remain clone-only regardless of historic route distribution');
 assert.ok(feedbackRouted.orders.every(order => order.constraints.includes('审批反馈：开头更直接')));
 
 console.log('content batch plan tests passed');

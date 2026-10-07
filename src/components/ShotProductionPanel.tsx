@@ -69,6 +69,7 @@ export default function ShotProductionPanel(props: {
   const isUgc = contentType === 'ugc';
   const isPeopleShot = isEnterprisePresenter || isUgc;
   const selectedPresenter = defaults.presenters.find(item => item.id === shot.presenterId);
+  const hasExistingHeyGenTwin = Boolean(selectedPresenter?.authorized && (selectedPresenter.toolMappings?.heygen?.avatarId || selectedPresenter.avatarId));
   const routingDecision = presentShotRouting(shot, {
     hasPresenter: defaults.presenters.some(item => item.authorized),
     hasMaterial: Boolean(props.preview || props.materials.some(item => item.type !== 'audio')),
@@ -114,7 +115,7 @@ export default function ShotProductionPanel(props: {
       reference: { ...reference, end, cues: [{ ...cue, end, sourceFirstFrame: undefined, draftFirstFrame: undefined, targetFirstFrame: undefined, generatedClip: undefined }] },
     } });
   };
-  const selectPresenterMode = (mode: 'video_twin' | 'photo_talking') => props.onChange({ digitalHuman: { ...(shot.digitalHuman || newDigitalHumanRequirements()), presenterMode: mode, workflow: mode === 'photo_talking' && props.viralReplication !== false ? 'viral_replication' : 'material_processing', method: mode === 'photo_talking' && props.viralReplication !== false ? 'reenact' : 'talking', preferredProvider: 'auto', replacementScope: mode === 'photo_talking' && props.viralReplication !== false ? 'person_keep_scene' : undefined, replicationMode: 'sentence_first_frame', targetEffect: 'natural_talking', scene: mode === 'photo_talking' && props.viralReplication !== false ? '沿用爆款口播首帧的场景与构图' : '', action: mode === 'photo_talking' && props.viralReplication !== false ? '人物自然口播，保持原首帧姿态意图' : '', preserve: mode === 'photo_talking' && props.viralReplication !== false ? '保持原首帧背景、光线、产品位置，只替换人物主体' : '', contentConfirmed: false, targetFramesConfirmed:false } });
+  const selectPresenterMode = (mode: 'video_twin' | 'photo_talking') => props.onChange({ digitalHuman: { ...(shot.digitalHuman || newDigitalHumanRequirements()), presenterMode: mode, presenterSelected: Boolean(selectedPresenter?.authorized), workflow: mode === 'photo_talking' && props.viralReplication !== false ? 'viral_replication' : 'material_processing', method: mode === 'photo_talking' && props.viralReplication !== false ? 'reenact' : 'talking', preferredProvider: 'auto', replacementScope: mode === 'photo_talking' && props.viralReplication !== false ? 'person_keep_scene' : undefined, replicationMode: 'sentence_first_frame', targetEffect: 'natural_talking', scene: mode === 'photo_talking' && props.viralReplication !== false ? '沿用爆款口播首帧的场景与构图' : '', action: mode === 'photo_talking' && props.viralReplication !== false ? '人物自然口播，保持原首帧姿态意图' : '', preserve: mode === 'photo_talking' && props.viralReplication !== false ? '保持原首帧背景、光线、产品位置，只替换人物主体' : '', contentConfirmed: false, targetFramesConfirmed:false } });
   const [showHeyGenManager, setShowHeyGenManager] = useState(false);
   const [showAssetSettings, setShowAssetSettings] = useState(false);
   const [showPresenterSetup,setShowPresenterSetup]=useState(false);const [presenterSetupBusy,setPresenterSetupBusy]=useState(false);const [presenterSetupError,setPresenterSetupError]=useState('');
@@ -136,7 +137,7 @@ export default function ShotProductionPanel(props: {
       <div className="mb-4 flex items-center justify-between"><h2 className="font-bold">企业数字人</h2><button type="button" onClick={props.onClose}>完成</button></div>
       <div className="grid grid-cols-2 gap-2" role="group" aria-label="数字人模式">{([['video_twin', '视频分身'], ['photo_talking', '照片口播']] as const).map(([mode, label]) => <button type="button" key={mode} aria-pressed={presenterMode === mode} onClick={() => selectPresenterMode(mode)} className={`rounded-lg border py-3 text-sm font-bold ${presenterMode === mode ? 'border-emerald-600 bg-emerald-50 text-emerald-800' : ''}`}>{label}</button>)}</div>
       {presenterMode && <div className="mt-4 space-y-3 border-t pt-4">
-      <p className="text-xs text-text-muted">{presenterMode === 'video_twin' ? 'HeyGen · 人物视频 → 本人验证 → 视频分身' : viralPhoto ? '爆款复刻：优先沿用对标口播原素材的背景和构图，由 Seedream 生成企业人物目标首帧，再制作 HeyGen 口播视频。' : '自由创作：优先选择已清理、已授权的企业场景背景；确认人物首帧后再制作口播。'}</p>
+      <p className="text-xs text-text-muted">{presenterMode === 'video_twin' ? hasExistingHeyGenTwin ? 'HeyGen · 已绑定视频分身，可直接复用生成当前镜头' : 'HeyGen · 人物视频 → 本人验证 → 视频分身' : viralPhoto ? '爆款复刻：优先沿用对标口播原素材的背景和构图，由 Seedream 生成企业人物目标首帧，再制作 HeyGen 口播视频。' : '自由创作：优先选择已清理、已授权的企业场景背景；确认人物首帧后再制作口播。'}</p>
       <section className="rounded-lg border bg-slate-50 p-3" aria-label="人物与声音">
         <h3 className="mb-2 text-xs font-bold">人物与声音</h3>
         <div className="grid gap-3 sm:grid-cols-2">
@@ -147,7 +148,7 @@ export default function ShotProductionPanel(props: {
         </div>
       </section>
       <div className="mt-2 flex flex-wrap gap-3 text-xs font-bold text-accent">
-        {presenterMode === 'video_twin' && <button type="button" onClick={() => setShowHeyGenManager(true)}>上传视频并绑定分身</button>}
+        {presenterMode === 'video_twin' && <button type="button" onClick={() => setShowHeyGenManager(true)}>{hasExistingHeyGenTwin ? '更换或重新绑定视频分身' : '上传视频并绑定分身'}</button>}
         {presenterMode === 'photo_talking' && <button type="button" onClick={() => setShowHeyGenManager(true)}>创建或导入 HeyGen 照片形象</button>}
         <button type="button" onClick={() => setShowAssetSettings(true)}>在这里管理企业人物资产</button>
       </div>
@@ -195,8 +196,10 @@ export default function ShotProductionPanel(props: {
       <label className="block text-xs">原片人物物理镜头起点（秒）<input aria-label="原片人物物理镜头起点" type="number" min="0" max={photoReferenceCues[0].end - 0.05} step="0.01" value={photoReferenceCues[0].start} onChange={event => trimPhotoReferenceStart(Number(event.target.value))} className="mt-1 w-full rounded border p-2" /><span className="mt-1 block text-text-muted">原片出现硬切时，从切点之后的同一物理镜头取首帧；调整后需重新生成并确认目标首帧。</span></label>
       <label className="block text-xs">原片人物物理镜头终点（秒）<input aria-label="原片人物物理镜头终点" type="number" min={photoReferenceCues[0].start + 0.05} step="0.01" value={photoReferenceCues[0].end} onChange={event => trimPhotoReferenceEnd(Number(event.target.value))} className="mt-1 w-full rounded border p-2" /><span className="mt-1 block text-text-muted">只保留当前口播所在的连续人物镜头；缩短时长后需重新生成并确认目标首帧。</span></label>
       </div></details>}
-      {!viralPhoto && <button type="button" disabled={props.busy || !props.configured || !selectedPresenter?.voiceId || !shot.digitalHuman?.contentConfirmed} onClick={props.onGenerate} className="rounded border px-3 py-2 text-xs disabled:opacity-40">{props.busy ? '正在提交…' : '生成口播视频'}</button>}
-      {!viralPhoto && <label className="flex gap-2 text-xs"><input type="checkbox" checked={shot.digitalHuman?.contentConfirmed || false} onChange={event => props.onChange({digitalHuman: {...(shot.digitalHuman || newDigitalHumanRequirements()), contentConfirmed: event.target.checked}})} />{viralPhoto ? '确认本镜头口播文案' : '应用到销售人员口播镜头'}</label>}
+      {!viralPhoto && <label className="flex gap-2 text-xs"><input type="checkbox" checked={shot.digitalHuman?.contentConfirmed || false} onChange={event => props.onChange({digitalHuman: {...(shot.digitalHuman || newDigitalHumanRequirements()), presenterSelected: Boolean(selectedPresenter?.authorized), contentConfirmed: event.target.checked}})} />{viralPhoto ? '确认本镜头口播文案' : '应用到销售人员口播镜头'}</label>}
+      {!viralPhoto && hasExistingHeyGenTwin && <p role="status" className="text-xs text-emerald-700">已有 HeyGen 视频分身和绑定音色，将直接复用，不会重新创建人物。</p>}
+      {!viralPhoto && !props.configured && <p role="alert" className="text-xs text-amber-700">{props.capabilityReason || '当前生成预算或 HeyGen 服务配置尚未就绪'}</p>}
+      {!viralPhoto && <button type="button" disabled={props.busy || !props.configured || !hasExistingHeyGenTwin || !selectedPresenter?.voiceId || !shot.digitalHuman?.contentConfirmed} onClick={props.onGenerate} className="rounded border px-3 py-2 text-xs disabled:opacity-40">{props.busy ? '正在提交…' : '使用已有视频分身生成口播视频'}</button>}
 
       </div>}
       {showHeyGenManager && <PresenterManager fixedMode initialMode={presenterMode === 'video_twin' ? 'expert' : 'quick'} reusePresenterId={selectedPresenter?.avatarId ? selectedPresenter.id : undefined} onClose={() => setShowHeyGenManager(false)} onSaved={async next => { await props.onDefaults(next); const presenter = next.presenters.at(-1); if (presenter) { props.onChange({ presenterId: presenter.id, digitalHuman: { ...(shot.digitalHuman || newDigitalHumanRequirements()), presenterSelected: true, contentConfirmed: false } }); if (presenterMode === 'photo_talking' && !presenter.referenceMaterialIds?.length) setShowPresenterSetup(true); } setShowHeyGenManager(false); }} />}

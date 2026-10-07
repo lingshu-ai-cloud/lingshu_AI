@@ -72,7 +72,7 @@ export default function AgentNotificationBell({ onNavigate }: { onNavigate: (pag
   };
 
   return (
-    <div ref={areaRef} className="absolute right-4 top-2 z-50">
+    <div ref={areaRef} className="relative z-50">
       <button type="button" aria-label={`消息中心，${feed.unreadCount} 条未读`} aria-haspopup="dialog" aria-expanded={open}
         onClick={() => setOpen(value => !value)} className="relative flex h-9 w-9 items-center justify-center rounded-xl border border-border bg-white text-text-secondary shadow-sm transition hover:bg-surface-2 hover:text-text-primary">
         <Bell size={18} />

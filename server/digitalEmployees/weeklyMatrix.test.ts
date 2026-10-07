@@ -40,7 +40,7 @@ assert.equal(bindMatrixVideo(edited, row('a', { audience: '新受众' })).theme,
 assert.deepEqual(bindMatrixVideo(edited, row('a', { productName: '产品 B' })).materialIds, [], 'changing product must not retain old product material bindings');
 assert.equal(bindMatrixVideo(edited).matrix?.accountId, '', 'unbinding explicitly makes content production-only');
 
-const config = normalizeDigitalEmployeeConfig({ companyName: '测试公司', focusProducts: '产品 A', enabledWorkflows: ['product_content', 'content_publish'], publishingTargets: targets, videoLanguages: ['en', 'zh'], socialCadence: '' });
+const config = normalizeDigitalEmployeeConfig({ companyName: '测试公司', focusProducts: '产品 A', enabledWorkflows: ['viral_clone', 'content_publish'], publishingTargets: targets, videoLanguages: ['en', 'zh'], socialCadence: '' });
 const planningOnly = defaultMatrixPlan({ ...config, publishingTargets: [] }, ['tiktok'], '验证短视频需求');
 assert.equal(planningOnly.length, 1, 'the video matrix must still produce a planning row before an account is connected');
 assert.equal(planningOnly[0]?.weeklyCount, 5, 'planning rows must use the real matrix weekly cadence');
@@ -48,13 +48,14 @@ assert.equal(planningOnly[0]?.connected, false);
 const planningOnlyPack = fillMatrixVideos({ ...base, matrixPlan: planningOnly, authorization: { ...base.authorization, accountIds: [] } }, {}, '2026-09-20');
 assert.equal(planningOnlyPack.tasks.find(task => task.templateId === 'production')?.videoPlans?.length, 5);
 assert.deepEqual(matrixScopeIssues(planningOnlyPack, [], ['tiktok']), [], 'planning-only rows are valid content scope without granting publishing access');
-const goal = normalizeWeeklyGoal({ contentPlatforms: ['facebook'], videoPlans: plans, startsAt: '2026-09-14', endsAt: '2026-09-20' }, config);
+const executionPlans = plans.map(plan => normalizeVideoPlan({ ...plan, route: 'clone', referenceId: 'analysis-1' }));
+const goal = normalizeWeeklyGoal({ contentPlatforms: ['facebook'], videoPlans: executionPlans, startsAt: '2026-09-14', endsAt: '2026-09-20' }, config);
 assert.deepEqual(validatePackage(pack, goal, config), []);
-const batch = buildContentBatchPlan({ goalId: 'goal', goal, config, evidence: { products: [{ id: 'prod', name: '产品 A', materialIds: ['material'] }], exactAnalysisIds: [], materialIds: ['material'] }, versions: { configVersion: 1, policyVersion: '1', factsVersion: '1' } });
+const batch = buildContentBatchPlan({ goalId: 'goal', goal, config, evidence: { products: [{ id: 'prod', name: '产品 A', materialIds: ['material'] }], exactAnalysisIds: ['analysis-1'], materialIds: ['material'] }, versions: { configVersion: 1, policyVersion: '1', factsVersion: '1' } });
 assert.equal(batch.status, 'planned', batch.blocker);
 assert.deepEqual(batch.orders.map(o => [o.accountId, o.cta, o.languages]), [['a', rows[0].cta, ['en']], ['b', rows[1].cta, ['es']]]);
-const directedPlans = plans.map((plan, index) => index ? plan : normalizeVideoPlan({ ...plan, buyerProblem: '如何核对安装尺寸', evidenceRequirement: '真实卡尺测量与产品型号同框' }));
-const directedBatch = buildContentBatchPlan({ goalId: 'goal', goal: { ...goal, videoPlans: directedPlans }, config, evidence: { products: [{ id: 'prod', name: '产品 A', materialIds: ['material'] }], exactAnalysisIds: [], materialIds: ['material'] }, versions: { configVersion: 1, policyVersion: '1', factsVersion: '1' } });
+const directedPlans = executionPlans.map((plan, index) => index ? plan : normalizeVideoPlan({ ...plan, buyerProblem: '如何核对安装尺寸', evidenceRequirement: '真实卡尺测量与产品型号同框' }));
+const directedBatch = buildContentBatchPlan({ goalId: 'goal', goal: { ...goal, videoPlans: directedPlans }, config, evidence: { products: [{ id: 'prod', name: '产品 A', materialIds: ['material'] }], exactAnalysisIds: ['analysis-1'], materialIds: ['material'] }, versions: { configVersion: 1, policyVersion: '1', factsVersion: '1' } });
 assert.ok(directedBatch.orders[0].constraints.includes('必须回答的买家问题：如何核对安装尺寸'));
 assert.ok(directedBatch.orders[0].constraints.includes('必须呈现并核验的证据：真实卡尺测量与产品型号同框'));
 const orders = expandContentOrdersByLanguage(batch.orders, config);

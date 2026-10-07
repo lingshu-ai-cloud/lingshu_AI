@@ -96,22 +96,22 @@ export default function SocialContentPlanningPage({
 
   const startGeneration = (request: SocialCreationWorkbenchSubmit) => {
     const primaryMaterial = request.uploadedMaterials[0];
-    if (primaryMaterial && request.creationPath === 'material_processing') {
+    if (request.creationPath === 'material_processing') {
       try {
         localStorage.setItem('ow_video_kickoff', JSON.stringify({
           source: 'material_library',
           productInfo: request.productName,
           script: request.initialScript,
           initialGeneration: request.initialGeneration,
-          generatedVideo: {
+          generatedVideo: primaryMaterial ? {
             id: primaryMaterial.id,
             title: primaryMaterial.name,
             url: primaryMaterial.url,
             poster: primaryMaterial.poster,
             duration: primaryMaterial.duration,
             material: primaryMaterial,
-          },
-          materialRole: 'hook',
+          } : undefined,
+          materialRole: primaryMaterial ? 'hook' : undefined,
         }));
       } catch { /* local handoff is optional */ }
     }
@@ -121,6 +121,7 @@ export default function SocialContentPlanningPage({
       requestId: request.requestId,
       replicationStep: request.replicationStep,
       confirmedSpeech: request.confirmedSpeech,
+      continueProjectId: request.draftProjectId,
       themeId: sourceRequest?.themeId || 'product_value',
       mode: 'instant',
       creationPath: request.creationPath,
@@ -136,8 +137,8 @@ export default function SocialContentPlanningPage({
       },
       sourceContext: sourceRequest?.sourceContext,
       identityMappings: {
-        selectedProductIds: request.creationPath === 'material_processing' ? [request.productId].filter(Boolean) : request.productMappings.map(mapping => mapping.productId).filter(Boolean),
-        selectedProductNames: request.creationPath === 'material_processing' ? [request.productName].filter(Boolean) : request.productMappings.map(mapping => mapping.productName).filter(Boolean),
+        selectedProductIds: request.productMappings.map(mapping => mapping.productId).filter(Boolean),
+        selectedProductNames: request.productMappings.map(mapping => mapping.productName).filter(Boolean),
         products: request.productMappings,
         brand: request.brandMapping,
       },

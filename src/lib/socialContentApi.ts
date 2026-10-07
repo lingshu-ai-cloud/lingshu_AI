@@ -73,7 +73,7 @@ function friendlyFailure(status: number, code = ''): string {
   if (code.includes('social_content_execution_rights_required')) return '参考视频或素材的使用权尚未确认，请先补充授权信息';
   if (code.includes('social_content_execution_budget_required')) return '当前制作方案超过预算，请调整预算或选择更轻量的制作路线';
   if (code.includes('social_content_execution_goal_degraded')) return '当前素材只能完成降级版本，请先确认是否接受目标调整';
-  if (code.includes('social_content_execution_director_review_required')) return '内容 Agent 的执行方案未通过编导审核，系统正在重新规划';
+  if (code.includes('social_content_execution_director_review_required')) return '内容 Agent 的执行方案尚未通过编导审核，请查看待修改项后补齐方案';
   if (code.includes('package') && (code.includes('inactive') || code.includes('unavailable'))) return '所选作业方案已更新，请重新选择';
   if (code.includes('social_content_task_inputs_incomplete')) return '请确认任务目标和必要事实；没有图片或视频也可以使用系统托管方案继续制作';
   if (code.includes('readiness') || code.includes('required') || code.includes('incomplete')) return '请确认内容目标、必要事实或授权信息；没有图片和视频也可以继续托管制作';
@@ -94,7 +94,7 @@ function friendlyFailure(status: number, code = ''): string {
 }
 
 export class SocialContentRequestError extends Error {
-  constructor(readonly status: number, code = '') {
+  constructor(readonly status: number, readonly code = '') {
     super(friendlyFailure(status, code));
     this.name = 'SocialContentRequestError';
   }

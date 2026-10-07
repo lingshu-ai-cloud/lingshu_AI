@@ -118,7 +118,7 @@ export function fillMatrixVideos(pack: WeeklyPackage, defaults: Partial<VideoCre
     for (let i = 0; i < missing && plans.length < 30; i++) {
       const slot = assigned + i;
       const theme = row.weeklyCount === 1 && row.contentDirection ? row.contentDirection : `待编导确认的买家问题 ${slot + 1}`;
-      plans.push(bindMatrixVideo(normalizeVideoPlan({ ...defaults, contentId: crypto.randomUUID(), route: 'product', theme, buyerProblem: '', directorStatus: 'candidate', plannedPublishDate: '' }), row));
+      plans.push(bindMatrixVideo(normalizeVideoPlan({ ...defaults, contentId: crypto.randomUUID(), route: 'clone', theme, buyerProblem: '', directorStatus: 'candidate', plannedPublishDate: '' }), row));
     }
   }
   const production = existing ? { ...existing, videoPlans: plans } : { templateId: 'production' as const, title: '制作产品视频', ownerId: '', ownerName: '', dueAt, notes: '', sourceProjectIds: [], videoPlans: plans };

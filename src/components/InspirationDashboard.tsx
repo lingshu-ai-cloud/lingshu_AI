@@ -33,6 +33,7 @@ import { showActionFeedback, showActionSuccess } from '../lib/actionFeedback';
 import { resolveInspirationPlaybackUrl } from '../lib/inspirationVideoPlayback';
 import type { AccountSpecialRecommendation, ContentFormat, FirstTenSecondInsight, FrameMaterialMatch, GeminiVideoAnalysis, Platform, ScriptAnalysis, ScriptDetail15s, ScriptResultProvenance, ScriptSummary15s, ShootingNeed, StructureStep, TrendVideo, VideoAnalysisPayload } from '../lib/inspirationTypes';
 import { socialDiscoveryApi } from '../lib/socialDiscoveryApi';
+import { openScriptLibrary } from '../lib/contentActionNavigation';
 import type { SocialBusinessModel, SocialDiscoveryScoreDecision, SocialDiscoverySupplyItem } from '../../shared/contracts/socialContentWorkflow';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -2246,7 +2247,7 @@ function ScriptPanel({ video, activePanelTab, onClose, onRetry, onExactAnalysis,
                       <button onClick={handleCopy} className="flex items-center gap-1 text-xs text-text-muted hover:text-text-primary transition-colors">
                         {copied ? <><Check size={11} className="text-green" /><span className="text-green">已复制</span></> : <><Copy size={11} /><span>复制</span></>}
                       </button>
-                      <button className="flex items-center gap-1 text-xs text-text-muted hover:text-text-primary transition-colors">
+                      <button type="button" onClick={() => openScriptLibrary({ tab: 'inspiration', contentId: video.id, query: video.title || '', openDetail: true })} className="flex items-center gap-1 text-xs text-text-muted hover:text-text-primary transition-colors">
                         <ArrowRight size={11} /><span>保存到脚本库</span>
                       </button>
                     </div>
