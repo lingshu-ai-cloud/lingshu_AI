@@ -1,3 +1,5 @@
+import BenchmarkAnalysisSections from './inspiration/BenchmarkAnalysisSections';
+import { buildBenchmarkAnalysis } from '../../shared/benchmarkAnalysis';
 import MaterialLibraryStatus from './studio/MaterialLibraryStatus';
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -446,6 +448,7 @@ function buildScriptDetails15s(gemini: GeminiVideoAnalysis, video: TrendVideo, s
       backgroundPriority: item.backgroundPriority, depthOfField: item.depthOfField, authenticity: cleanAnalysisText(item.authenticity),
       estimatedSpeechDuration: typeof item.estimatedSpeechDuration === 'number' ? item.estimatedSpeechDuration : undefined, dialogueFits: item.dialogueFits,
       confidence: typeof item.confidence === 'number' ? item.confidence : undefined, needsReview: Boolean(item.needsReview),
+      materialType: item.materialType, narrativeRole: item.narrativeRole, classificationEvidence: item.classificationEvidence,
       materialEvidence: item.materialEvidence,
       viralPotential: item.viralPotential && typeof item.viralPotential === 'object' ? {
         score: typeof item.viralPotential.score === 'number' ? item.viralPotential.score : undefined,
@@ -2923,7 +2926,7 @@ function DirectorReviewWorkspace({ recordId, onPreview, handoff }: { recordId: s
   </section>;
 }
 
-function DirectorVideoDetailPanel({
+export function DirectorVideoDetailPanel({
   video,
   onClose,
   onPreview,
@@ -2965,6 +2968,7 @@ function DirectorVideoDetailPanel({
       .catch(() => { if (active) setReviewHandoff(null); });
     return () => { active = false; };
   }, [video.recordId, payload?.geminiStatus, payload?.analyzedAt, payload?.requestedAnalysisMode]);
+  const benchmark = payload?.benchmarkAnalysis || buildBenchmarkAnalysis({ analysis: payload, videoId: video.recordId || video.id, duration: video.duration });
   const handoffReady = reviewHandoff?.status === 'production_ready' && reviewHandoff.productionExecutionAllowed === true;
   const draftReady = reviewHandoff?.directorHandoffReady === true;
   const imageEvidence = payload?.imageEvidence;
@@ -3024,6 +3028,7 @@ function DirectorVideoDetailPanel({
         </header>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
+          {!isImagePost && <BenchmarkAnalysisSections analysis={benchmark} pending={pending} renderClip={url => <AuthenticatedVideo apiUrl={url} controls className="max-h-64 w-full rounded-lg bg-black" />} />}
           {!isImagePost && <section aria-label="编导到内容 Agent 交接状态" className="mb-4 rounded-xl border border-border bg-white p-4">
             <div className="flex flex-wrap items-center gap-2 text-xs font-black"><span className="rounded bg-emerald-50 px-2 py-1 text-emerald-700">原片入库</span><ChevronRight size={13} className="text-text-muted" /><span className={`rounded px-2 py-1 ${pending ? 'bg-amber-50 text-amber-700' : draftReady ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>{pending ? '编导分析中' : draftReady ? '可交接内容起稿' : '编导证据不足'}</span><ChevronRight size={13} className="text-text-muted" /><span className={`rounded px-2 py-1 ${draftReady ? 'bg-emerald-50 text-emerald-700' : 'bg-surface-2 text-text-muted'}`}>{handoffReady ? '可制作成片' : draftReady ? '可生成口播草稿' : '内容起稿未开放'}</span></div>
             {!handoffReady && !pending && <p className="mt-2 text-[11px] leading-5 text-amber-800">系统将使用带估计时间码的原片口播，并继续检查镜头切片、钩子动作和企业“销售”人物资产。如需继续，编导 Agent 会按清单补证，无需人工逐句校时或逐镜勾选。</p>}
@@ -3074,20 +3079,6 @@ function DirectorVideoDetailPanel({
                 <div className="mt-3 flex flex-wrap gap-1.5">{analysis.referenceHighlights.slice(0, 7).map(item => <span key={item} className="rounded-md bg-accent-glow px-2 py-1 text-[10px] font-semibold text-accent">{item}</span>)}</div>
               </section>
 
-              <section className="rounded-xl border border-border bg-white p-4">
-                <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="text-sm font-black text-text-primary">全片分镜时间线</h3><span className="text-[10px] font-bold text-text-muted">编导 Agent · {analysis.scriptDetails15s.length} 段</span></div>
-                <div className="mt-3 space-y-3">
-                  {analysis.scriptDetails15s.map((detail, index) => <article key={`${detail.time}-${index}`} className="rounded-lg border border-border bg-[#fbfcfa] p-3">
-                    <div className="flex flex-wrap items-center gap-2"><span className="rounded bg-text-primary px-2 py-1 text-[10px] font-black text-white">{detail.time}</span><span className="text-[10px] font-bold text-text-muted">{detail.shot} · {detail.camera}</span>{typeof detail.viralPotential?.score === 'number' && <span className="ml-auto rounded bg-amber-50 px-2 py-1 text-[10px] font-black text-amber-700">爆点 {detail.viralPotential.score}</span>}</div>
-                    <p className="mt-2 text-xs font-semibold leading-5 text-text-primary">{detail.purpose || '镜头作用待编导确认'}</p>
-                    <p className="mt-1 text-xs leading-5 text-text-secondary">{detail.visual}</p>
-                    {(detail.dialogue || detail.onScreenText || detail.subtitle) && <p className="mt-2 rounded bg-white px-2.5 py-2 text-[11px] leading-5 text-text-secondary">音画信息：{detail.dialogue || detail.onScreenText || detail.subtitle}</p>}
-                    {detail.materialEvidence && <p className="mt-2 text-[10px] font-semibold text-text-muted">原片证据：{detail.materialEvidence.extractionStatus === 'ready' ? '分镜切片与首帧已提取' : '切片或首帧缺失，待复核'}{typeof detail.materialEvidence.firstFrameSeconds === 'number' ? ` · 首帧 ${detail.materialEvidence.firstFrameSeconds.toFixed(2)}s` : ''}</p>}
-                    {detail.viralPotential?.whyEffective && <p className="mt-2 text-[11px] leading-5 text-amber-800">为什么有效：{detail.viralPotential.whyEffective}</p>}
-                    {(detail.needsReview || detail.authenticity) && <p className="mt-2 text-[10px] font-semibold text-text-muted">{detail.needsReview ? '待编导 Agent 自动核验 · ' : ''}{detail.authenticity}</p>}
-                  </article>)}
-                </div>
-              </section>
 
               <section className="rounded-xl border border-border bg-white p-4">
                 <h3 className="text-sm font-black text-text-primary">编导改编建议</h3>

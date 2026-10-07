@@ -3,6 +3,7 @@ import type { VideoAiAnalysis, VoiceoverContent, StoryboardContent, ScriptType, 
 import type { ImagePostEvidenceAnalysis } from './qwen.js';
 import { GEMINI_ANALYSIS_DIRECTOR_CONTRACT, GEMINI_STORYBOARD_DIRECTOR_CONTRACT } from '../prompts/geminiVideoScriptDirector.js';
 import { untrustedPromptData } from '../lib/untrustedPromptData.js';
+import { benchmarkMaterialType, benchmarkShotRole } from '../../shared/benchmarkAnalysis.js';
 
 const MODEL = () => (process.env.GEMINI_MODEL ?? 'gemini-2.5-flash').trim();
 
@@ -254,6 +255,9 @@ function parseScriptDetails15s(value: unknown): VideoAiAnalysis['scriptDetails15
     if (!visual && !subtitle) return null;
     return {
       time: normalizeAnalysisTime(item.time ?? item.timestamp),
+      materialType: benchmarkMaterialType(item.materialType),
+      narrativeRole: benchmarkShotRole(item.narrativeRole),
+      classificationEvidence: String(item.classificationEvidence ?? '').trim(),
       environment: String(item.environment ?? '').trim(),
       shot: String(item.shot ?? '').trim(),
       camera: String(item.camera ?? '').trim(),
@@ -334,7 +338,7 @@ export async function analyzeVideo(opts: {
     : '当前为默认全片策略分析：必须从 0 秒覆盖到结尾，镜头密度跟随真实内容变化；重复或稳定画面应合并为区间并用 beats 记录变化，禁止无意义逐秒拆分。';
   const systemInstruction = `你是一个面向出海电商营销的短视频内容分析专家。
 ${modeInstruction}
-请分析提供的视频，并提取结构化信息。除 recommendedScriptType 字段外，所有字符串内容必须使用简体中文输出。
+请分析提供的视频，并提取结构化信息。除合同枚举值、字段键和人物ID外，所有说明字符串内容必须使用简体中文输出。
 只输出合法 JSON，不要 markdown，不要代码块，不要前后解释。
 ${GEMINI_ANALYSIS_DIRECTOR_CONTRACT}
 
@@ -403,7 +407,7 @@ export async function analyzeYouTubeUrl(opts: {
   url: string;
 }): Promise<VideoAiAnalysis> {
   const systemInstruction = `你是一个面向出海电商营销的短视频内容分析专家。
-请分析提供的 YouTube 视频，并提取结构化信息。除 recommendedScriptType 字段外，所有字符串内容必须使用简体中文输出。
+请分析提供的 YouTube 视频，并提取结构化信息。除合同枚举值、字段键和人物ID外，所有说明字符串内容必须使用简体中文输出。
 只输出合法 JSON，不要 markdown，不要代码块，不要前后解释。
 ${GEMINI_ANALYSIS_DIRECTOR_CONTRACT}
 

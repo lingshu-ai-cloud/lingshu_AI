@@ -1,4 +1,14 @@
-export const GEMINI_ANALYSIS_DIRECTOR_CONTRACT = `
+export const BENCHMARK_ANALYSIS_CONTRACT = `
+- 开场钩子就是第一个分镜，详细分析写入该分镜已有字段，不另建钩子对象或重复章节；第一个分镜 narrativeRole=hook。
+对标分析结构化合同（新增字段的键与枚举使用以下英文，其余说明用中文）：
+- 每个 scriptDetails15s 或 shots 项追加 materialType、narrativeRole、classificationEvidence。
+  materialType 仅取 talking_head（有画内讲话证据的真人口播）、factory（工厂生产过程）、product（产品展示）、consumer_demo（消费者使用产品或效果演示）、other、unknown。
+  consumer_demo 只描述镜头，不表示整片 B2C/DTC；工厂背景中的前景真人口播属于 talking_head，不因环境改成 factory；画外音不能证明画内人在讲话。
+  narrativeRole 仅取 hook、pain_point、capability_proof、product_intro、effect_proof、cta、transition、unknown，独立于素材类型。classificationEvidence 写本镜头分类的具体可见/可听依据；无法判断用 unknown，禁止填模板。
+- 镜头按真实视觉/动作边界记录，不按台词句数凑镜头。口播段可能覆盖多个镜头，不能重复整段原话制造逐镜台词。
+`;
+
+export const GEMINI_ANALYSIS_DIRECTOR_CONTRACT = `${BENCHMARK_ANALYSIS_CONTRACT}
 导演级分析规范：
 - 严格分离 observedFacts（实际可见/可听事实）、inferredIntent（推断意图）和 causalGap（视频未展示的因果动作）。causalGap 绝不能写入 visual、beats 或 omniPrompt。
 - 将平台 UI、贴纸、字幕层与真人/产品/场景分开。无法确认的台词、字幕、品牌、价格、型号、认证和左右方向留空，并设置 needsReview=true。

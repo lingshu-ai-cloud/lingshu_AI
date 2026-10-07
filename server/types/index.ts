@@ -68,6 +68,9 @@ export interface VideoAiAnalysis {
     competitors?: string[];
   };
   scriptDetails15s?: Array<{
+    materialType?: import('../../shared/benchmarkAnalysis.js').BenchmarkMaterialType;
+    narrativeRole?: import('../../shared/benchmarkAnalysis.js').BenchmarkShotRole;
+    classificationEvidence?: string;
     time?: string;
     timestamp?: string;
     environment?: string;
