@@ -16,6 +16,10 @@ import {
   type WeeklyOperatingWorkflowKind,
 } from '../../shared/contracts/socialProgram.js';
 import { SocialProgramError } from './service.js';
+import { createStarter198Repository } from '../starter198/repository.js';
+import { socialJson } from '../starter198/socialContentValidation.js';
+import { validateContentArtifact } from '../runtime/socialWeeklyResultValidation.js';
+import { decideSocialContentArtifact } from '../starter198/socialContentOutputs.js';
 import {
   acquireDurableOperationLease,
   releaseDurableOperationLease,
@@ -597,14 +601,14 @@ export async function cancelWeeklyExecutionTasks(
 }
 
 export function createWeeklyExecutionTaskService(dataStore: DataStore) {
-  async function mutate(tenantId: string, programId: string, packageId: string, taskId: string, action: (task: WeeklyExecutionTask, now: string) => WeeklyExecutionTask) {
+  async function mutate(tenantId: string, programId: string, packageId: string, taskId: string, action: (task: WeeklyExecutionTask, now: string) => WeeklyExecutionTask | Promise<WeeklyExecutionTask>) {
     return withWeeklyExecutionTaskMutation(dataStore, tenantId, taskId, async () => {
       const [row] = await taskRows(dataStore, tenantId, [taskId]);
       if (row.payload.programId !== programId || row.payload.packageId !== packageId) {
         throw new SocialProgramError('weekly_execution_task_not_found', 404, '周包执行任务不存在。');
       }
       const now = new Date().toISOString();
-      const next = action(row.payload, now);
+      const next = await action(row.payload, now);
       await writeWeeklyExecutionTask(dataStore, row, next);
       const priorLease = durableLease(row.payload);
       if (priorLease && !next.lease) await releaseDurableOperationLease({ dataStore, lease: priorLease });
@@ -649,16 +653,47 @@ export function createWeeklyExecutionTaskService(dataStore: DataStore) {
       });
     },
     async approve(tenantId: string, programId: string, packageId: string, taskId: string, userId: string) {
-      return mutate(tenantId, programId, packageId, taskId, (task, now) => {
+      return mutate(tenantId, programId, packageId, taskId, async (task, now) => {
         if (task.schedule.stepKind !== 'user_approval' || task.schedule.responsibleActor !== 'user') {
           throw new SocialProgramError('weekly_execution_task_not_user_approval', 409, '该节点不是用户审批节点。');
         }
         if (task.inheritedBlockingTaskIds.length) throw new SocialProgramError('weekly_execution_upstream_incomplete', 409, '上游生产步骤尚未完成。');
         if (['cancelled', 'dead_letter'].includes(task.status)) throw new SocialProgramError('weekly_execution_task_terminal', 409, '终态任务不能审批。');
+        if (task.status === 'succeeded') return task;
+        const bindings = await dataStore.list<any>('starter_social_content_tasks', {
+          where: { tenant_id: tenantId, create_idempotency_key: `weekly-production:${packageId}:${task.packageVersion}:${task.publicationTaskId}` }, page: 1, perPage: 2,
+        });
+        const binding = bindings.items[0];
+        if (bindings.totalItems !== 1 || !binding || binding.weekly_plan_id !== packageId) {
+          throw new SocialProgramError('weekly_production_binding_required', 409, '尚未取得本条内容的真实生产身份，不能验收。');
+        }
+        const artifacts = await dataStore.list<any>('starter_social_content_artifacts', {
+          where: { tenant_id: tenantId, task_id: binding.task_id }, sort: '-created_at', page: 1, perPage: 100,
+        });
+        const artifactsWithVideo = artifacts.items.map(item => ({ ...item, content: socialJson(item.content) })).filter(item => item.content?.productionResult?.productionResultId && item.content?.mediaStorage?.video?.fileId);
+        const artifact = artifactsWithVideo[0];
+        if (!artifact || !['review_required', 'approved'].includes(artifact.status)
+          || artifact.content.productionResult.technicalReview?.approved !== true
+          || artifact.content.productionResult.creativeReview?.approved !== true) {
+          throw new SocialProgramError('weekly_production_artifact_not_reviewable', 409, '真实成片尚未就绪或质量检查未通过。');
+        }
+        await validateContentArtifact(dataStore, { ...task, workflowKind: 'content', schedule: { ...task.schedule, stepKind: 'quality_check' } }, {
+          type: 'starter_social_content_artifact', id: artifact.artifact_id, version: Number(String(artifact.version).replace(/^v/, '')),
+        });
+        const accepted = await decideSocialContentArtifact({
+          repository: createStarter198Repository(dataStore), tenantId, userId,
+          taskId: binding.task_id, artifactId: artifact.artifact_id,
+          idempotencyKey: `weekly-content-approval:${task.taskId}:${artifact.artifact_id}`,
+          value: { decision: 'approved', expectedVersion: String(artifact.version), note: '用户在周工作台确认本条真实成片' },
+          now: new Date(now),
+        });
         return {
           ...task,
           status: 'succeeded',
-          resultRefs: [{ type: 'user_content_approval', id: `${task.taskId}:${userId}`, version: 1 }],
+          resultRefs: [
+            { type: 'user_content_approval', id: `${task.taskId}:${userId}`, version: 1 },
+            { type: 'starter_social_content_artifact', id: accepted.artifact.artifactId, version: Number(String(accepted.artifact.version).replace(/^v/, '')) },
+          ],
           schedule: { ...task.schedule, actualStartedAt: task.schedule.actualStartedAt ?? now, actualFinishedAt: now },
           updatedAt: now,
         };

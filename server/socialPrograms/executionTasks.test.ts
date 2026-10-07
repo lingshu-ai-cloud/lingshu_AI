@@ -4,7 +4,7 @@ import type { DataStore, ListQuery, ListResult, Record_ } from '../storage/datas
 import { DURABLE_OPERATION_LEASE_COLLECTION } from '../runtime/durableLease.js';
 import { createSocialWeeklyExecutionWorker } from '../runtime/socialWeeklyExecutionWorker.js';
 import { createSocialProgramService } from './service.js';
-import { applyBusinessDispatchToExecutionTasks, createWeeklyExecutionTaskService, WEEKLY_EXECUTION_TASKS } from './executionTasks.js';
+import { applyBusinessDispatchToExecutionTasks, createWeeklyExecutionTaskService, WEEKLY_EXECUTION_TASKS, getWeeklyExecutionTaskRow, writeWeeklyExecutionTask, recomputePackageExecution } from './executionTasks.js';
 import { createWeeklyOperatingPackageService } from './weeklyOperatingPackages.js';
 import { createSocialOperatingRepository } from '../socialOperating/repository.js';
 
@@ -57,6 +57,14 @@ function memoryStore(): DataStore {
       };
     },
   };
+}
+
+// Seed predecessor completion as a test fixture for dependency/lease behavior.
+// Production success goes through the resource validator, tested separately.
+async function seedCompleted(dataStore: DataStore, task: import('../../shared/contracts/socialProgram.js').WeeklyExecutionTask, now: Date) {
+  const row = await getWeeklyExecutionTaskRow(dataStore, task.tenantId, task.taskId);
+  await writeWeeklyExecutionTask(dataStore, row, { ...row.payload, status: 'succeeded', lease: null, updatedAt: now.toISOString() });
+  await recomputePackageExecution(dataStore, task.tenantId, task.programId, task.packageId, task.packageVersion, now.toISOString(), true);
 }
 
 async function fixture() {
@@ -141,14 +149,15 @@ test('weekly execution tasks freeze the full worker contract and aggregate real 
 });
 
 test('worker leases, retries, dead letters and explicit recovery are durable', async () => {
-  const { packages, execution, worker, program, draft } = await fixture();
+  const { dataStore, packages, execution, worker, program, draft } = await fixture();
   await packages.activate('tenant-a', 'owner', program.programId, draft.packageId, { expectedVersion: 1, expectedProgramVersion: 1 });
   const start = new Date('2026-10-05T00:00:00.000Z');
   const readiness = await worker.claimNext({ tenantId: 'tenant-a', workerId: 'worker-a', now: start, leaseDurationMs: 30_000 });
   assert.ok(readiness);
   assert.equal(readiness.task.workflowKind, 'readiness');
   assert.equal(await worker.claimNext({ tenantId: 'tenant-a', workerId: 'worker-b', now: new Date(start.getTime() + 1_000) }), null);
-  await worker.complete(readiness, [{ type: 'readiness_result', id: 'ready-1', version: 1 }], new Date(start.getTime() + 2_000));
+  await assert.rejects(worker.complete(readiness, [], new Date(start.getTime() + 2_000)));
+  await seedCompleted(dataStore, readiness.task, new Date(start.getTime() + 2_000));
 
   let claim = await worker.claimNext({ tenantId: 'tenant-a', workerId: 'worker-a', now: new Date(start.getTime() + 3_000) });
   assert.ok(claim);
@@ -167,7 +176,7 @@ test('worker leases, retries, dead letters and explicit recovery are durable', a
   claim = await worker.claimNext({ tenantId: 'tenant-a', workerId: 'worker-b', now: new Date(start.getTime() + 9_000) });
   assert.ok(claim);
   assert.equal(claim.task.attempt, 4);
-  await worker.complete(claim, [{ type: 'discovery_result', id: 'discovery-1', version: 2 }], new Date(start.getTime() + 10_000));
+  await seedCompleted(dataStore, claim.task, new Date(start.getTime() + 10_000));
   tasks = await execution.list('tenant-a', program.programId, draft.packageId, 1);
   assert.equal(tasks.find(task => task.workflowKind === 'directing')!.status, 'queued');
 });
@@ -184,7 +193,8 @@ test('expired leases are reclaimed with fencing and local blocks do not stop sib
   assert.ok(reclaimed);
   assert.equal(reclaimed.task.taskId, stale.task.taskId);
   await assert.rejects(worker.complete(stale, [], new Date(start.getTime() + 37_000)), /durable_lease_lost|weekly_execution_lease_lost/);
-  await worker.complete(reclaimed, [], new Date(start.getTime() + 37_000));
+  await assert.rejects(worker.complete(reclaimed, [], new Date(start.getTime() + 37_000)));
+  await seedCompleted(dataStore, reclaimed.task, new Date(start.getTime() + 37_000));
 
   await applyBusinessDispatchToExecutionTasks(dataStore, 'tenant-a', program.programId, draft.packageId, 1, {
     dispatchId: 'dispatch-test', packageId: draft.packageId, packageVersion: 1, issuedBy: 'business_agent', assignedTo: 'content_agent',
@@ -202,13 +212,13 @@ test('expired leases are reclaimed with fencing and local blocks do not stop sib
   for (let index = 0; index < 40; index += 1) {
     const claim = await worker.claimNext({ tenantId: 'tenant-a', workerId: 'worker-b', kinds: ['discovery', 'directing', 'content'], now: new Date(start.getTime() + 38_000 + index) });
     if (claim) {
-      await worker.complete(claim, [], new Date(start.getTime() + 38_000 + index));
+      await seedCompleted(dataStore, claim.task, new Date(start.getTime() + 38_000 + index));
       continue;
     }
     const current = await execution.list('tenant-a', program.programId, draft.packageId, 1);
     const approvals = current.filter(task => task.schedule.stepKind === 'user_approval' && task.status === 'queued');
     if (approvals.length) {
-      for (const approval of approvals) await execution.approve('tenant-a', program.programId, draft.packageId, approval.taskId, 'owner');
+      for (const approval of approvals) await seedCompleted(dataStore, approval, new Date(start.getTime() + 38_000 + index));
       continue;
     }
     if (current.filter(task => task.workflowKind === 'publishing').every(task => task.status === 'queued')) break;
@@ -223,4 +233,81 @@ test('expired leases are reclaimed with fencing and local blocks do not stop sib
   const packageView = await packages.get('tenant-a', program.programId, draft.packageId);
   assert.equal(packageView.executionSummary!.byWorkflow.publishing, 'blocked');
   assert.ok(packageView.workflows.find(item => item.kind === 'publishing')!.blockingReasons.includes('account_review_required'));
+});
+
+test('unverified completion preserves lease and durable polling does not consume retry budget', async () => {
+  const { dataStore, packages, worker, program, draft } = await fixture();
+  await packages.activate('tenant-a', 'owner', program.programId, draft.packageId, { expectedVersion: 1, expectedProgramVersion: 1 });
+  const now = new Date('2026-10-05T00:00:00Z');
+  const claim = await worker.claimNext({ tenantId: 'tenant-a', workerId: 'worker', now });
+  assert.ok(claim);
+  await assert.rejects(worker.complete(claim, [{ type: 'fake', id: 'fake', version: 1 }], now));
+  const unchanged = await getWeeklyExecutionTaskRow(dataStore, 'tenant-a', claim.task.taskId);
+  assert.equal(unchanged.payload.status, 'leased');
+  assert.equal(unchanged.payload.lease!.token, claim.lease.token);
+  const deferred = await worker.defer(claim, { code: 'receipt_pending', message: '等待对账', retryDelayMs: 1_000, now });
+  assert.equal(deferred.status, 'queued');
+  assert.equal(deferred.attempt, 0);
+  assert.equal(await worker.claimNext({ tenantId: 'tenant-a', workerId: 'worker', now }), null);
+  const recovered = await worker.claimNext({ tenantId: 'tenant-a', workerId: 'worker', now: new Date(now.getTime() + 1_000) });
+  assert.ok(recovered);
+  const blocked = await worker.defer(recovered, { code: 'credentials_expired', message: '凭据失效', blockingReason: 'credentials_expired', now: new Date(now.getTime() + 1_000) });
+  assert.equal(blocked.status, 'blocked');
+  assert.ok(blocked.ownBlockingReasons.includes('credentials_expired'));
+  assert.equal(blocked.lease, null);
+});
+
+test('weekly user approval rejects missing binding/media and accepts an actual reviewed artifact', async context => {
+  const fs = await import('node:fs/promises');
+  const path = await import('node:path');
+  const { createHash, randomUUID } = await import('node:crypto');
+  const { defaultBrief } = await import('../starter198/socialContentTaskSupport.js');
+  const { SOCIAL_WORK_PACKAGE_KINDS } = await import('../../shared/contracts/socialContentReplication.js');
+  const { dataStore, packages, execution, program, draft } = await fixture();
+  await packages.activate('tenant-a', 'owner', program.programId, draft.packageId, { expectedVersion: 1, expectedProgramVersion: 1 });
+  const tasks = await execution.list('tenant-a', program.programId, draft.packageId, 1);
+  const approval = tasks.find(task => task.schedule.stepKind === 'user_approval')!;
+  // Isolate approval from predecessor scheduling; this fixture does not execute production.
+  for (const task of tasks.filter(task => task.workflowKind !== 'publishing' && task.schedule.stepKind !== 'user_approval' && !['review', 'engagement'].includes(task.workflowKind))) await seedCompleted(dataStore, task, new Date());
+  const approve = () => execution.approve('tenant-a', program.programId, draft.packageId, approval.taskId, 'owner');
+  await assert.rejects(approve(), /真实生产身份/);
+  const timestamp = new Date().toISOString();
+  await dataStore.create('workflow_runs', { id: 'approval-production-run', tenant_id: 'tenant-a', status: 'succeeded' });
+  await dataStore.create('starter_social_content_tasks', {
+    tenant_id: 'tenant-a', task_id: 'approval-production-task', weekly_plan_id: draft.packageId,
+    create_idempotency_key: `weekly-production:${draft.packageId}:1:${approval.publicationTaskId}`,
+    run_id: 'approval-production-run', status: 'asset_review', version: '1', task_mode: 'weekly',
+    brief: defaultBrief({ title: 'Actual production fixture', objective: 'Verified product', platforms: ['youtube'], languages: ['zh'], formats: ['short_video'], programRef: { objectType: 'social_program', id: program.programId, version: '1' } }),
+    package_selection: SOCIAL_WORK_PACKAGE_KINDS.map(kind => ({ kind, packageKey: `fixture-${kind}`, version: '1', name: 'fixture' })),
+    source_count: 0, knowledge_source_count: 0, material_source_count: 0, artifact_count: 1, approved_artifact_count: 0, delivery_package_count: 0, publication_count: 0, metric_submission_count: 0,
+    created_at: timestamp, updated_at: timestamp,
+  });
+  const bytes = Buffer.from('isolated weekly approval artifact');
+  const hash = createHash('sha256').update(bytes).digest('hex');
+  const folder = path.resolve('data/social-content-sources', `weekly-approval-test-${randomUUID()}`);
+  const filePath = path.join(folder, `${hash}.mp4`);
+  await fs.mkdir(folder, { recursive: true });
+  context.after(() => fs.rm(folder, { recursive: true, force: true }));
+  await dataStore.create('starter_social_content_artifacts', {
+    tenant_id: 'tenant-a', task_id: 'approval-production-task', artifact_id: 'approval-artifact', artifact_kind: 'short_video', origin: 'agent', status: 'review_required', version: '1', resource_ref: 'socialfile:approval-media',
+    content: { render: { completed: true }, mediaStorage: { video: { fileId: 'approval-media', sha256: hash, url: '/fixture.mp4' } }, productionResult: { productionResultId: 'approval-production-result', technicalReview: { approved: true }, creativeReview: { approved: true } } },
+    created_at: timestamp, updated_at: timestamp,
+  });
+  await assert.rejects(approve());
+  await dataStore.create('starter_social_content_files', {
+    tenant_id: 'tenant-a', task_id: 'approval-production-task', file_id: 'approval-media', usage: 'artifact_media', name: 'video.mp4', mime_type: 'video/mp4', byte_size: bytes.length, content_sha256: hash,
+    storage_kind: 'local', storage_key: path.relative(path.resolve('data/social-content-sources'), filePath), created_at: timestamp,
+  });
+  await assert.rejects(approve());
+  await fs.writeFile(filePath, bytes);
+  const accepted = await approve();
+  const approved = accepted.find(task => task.taskId === approval.taskId)!;
+  assert.equal(approved.status, 'succeeded');
+  assert.ok(approved.resultRefs.some(ref => ref.type === 'user_content_approval'));
+  const artifactRef = approved.resultRefs.find(ref => ref.type === 'starter_social_content_artifact')!;
+  assert.equal(artifactRef.id, 'approval-artifact');
+  assert.equal(artifactRef.version, 2);
+  const artifact = (await dataStore.list<Record_>('starter_social_content_artifacts', { where: { tenant_id: 'tenant-a', artifact_id: 'approval-artifact' } })).items[0]!;
+  assert.equal(artifact.status, 'approved');
+  assert.deepEqual((await approve()).find(task => task.taskId === approval.taskId)!.resultRefs, approved.resultRefs);
 });

@@ -20,15 +20,12 @@ import {
   writeWeeklyExecutionTask,
   type WeeklyExecutionTaskRow,
 } from '../socialPrograms/executionTasks.js';
+import { validateWeeklyExecutionResults } from './socialWeeklyResultValidation.js';
 import { SocialProgramError } from '../socialPrograms/service.js';
 
 export interface WeeklyExecutionClaim {
   task: WeeklyExecutionTask;
   lease: DurableOperationLease;
-}
-
-function validRef(value: VersionedSocialRef): boolean {
-  return Boolean(value?.type?.trim() && value?.id?.trim() && Number.isSafeInteger(value.version) && value.version > 0);
 }
 
 function sameLease(task: WeeklyExecutionTask, lease: DurableOperationLease): boolean {
@@ -39,15 +36,18 @@ function sameLease(task: WeeklyExecutionTask, lease: DurableOperationLease): boo
 }
 
 async function candidates(dataStore: DataStore, tenantId: string): Promise<WeeklyExecutionTaskRow[]> {
-  const [queued, leased] = await Promise.all([
-    dataStore.list<WeeklyExecutionTaskRow>(WEEKLY_EXECUTION_TASKS, {
-      where: { tenant_id: tenantId, status: 'queued' }, sort: 'created_at', page: 1, perPage: 500,
-    }),
-    dataStore.list<WeeklyExecutionTaskRow>(WEEKLY_EXECUTION_TASKS, {
-      where: { tenant_id: tenantId, status: 'leased' }, sort: 'updated_at', page: 1, perPage: 500,
-    }),
-  ]);
-  return [...queued.items, ...leased.items];
+  const all = async (status: string) => {
+    const rows: WeeklyExecutionTaskRow[] = [];
+    for (let page = 1; ; page += 1) {
+      const result = await dataStore.list<WeeklyExecutionTaskRow>(WEEKLY_EXECUTION_TASKS, {
+        where: { tenant_id: tenantId, status }, sort: 'created_at', page, perPage: 500,
+      });
+      rows.push(...result.items.filter(row => row.tenant_id === tenantId && row.payload.tenantId === tenantId));
+      if (page >= result.totalPages || !result.items.length) return rows;
+    }
+  };
+  const [queued, leased] = await Promise.all([all('queued'), all('leased')]);
+  return [...queued, ...leased];
 }
 
 /**
@@ -152,15 +152,36 @@ export function createSocialWeeklyExecutionWorker(dataStore: DataStore) {
     },
 
     async complete(claim: WeeklyExecutionClaim, resultRefs: VersionedSocialRef[], now = new Date()): Promise<WeeklyExecutionTask> {
-      if (!Array.isArray(resultRefs) || resultRefs.some(ref => !validRef(ref))) {
-        throw new SocialProgramError('weekly_execution_result_refs_invalid', 400, '执行结果必须是有效的版本引用。');
-      }
       const task = await withWeeklyExecutionTaskMutation(dataStore, claim.task.tenantId, claim.task.taskId, async () => {
         const row = await currentClaim(claim, now);
+        const validationStartedAt = Date.now();
+        await validateWeeklyExecutionResults(dataStore, row.payload, resultRefs, now);
+        await currentClaim(claim, new Date(now.getTime() + Math.max(0, Date.now() - validationStartedAt)));
         const next: WeeklyExecutionTask = {
           ...row.payload, status: 'succeeded', resultRefs: structuredClone(resultRefs), lease: null,
           nextAttemptAt: null,
           schedule: { ...row.payload.schedule, actualStartedAt: row.payload.schedule.actualStartedAt ?? now.toISOString(), actualFinishedAt: now.toISOString() },
+          updatedAt: now.toISOString(),
+        };
+        await writeWeeklyExecutionTask(dataStore, row, next);
+        return next;
+      });
+      await releaseDurableOperationLease({ dataStore, lease: claim.lease });
+      await recompute(task, now);
+      return task;
+    },
+
+    async defer(claim: WeeklyExecutionClaim, input: { code: string; message: string; retryDelayMs?: number; blockingReason?: string; now?: Date }): Promise<WeeklyExecutionTask> {
+      const now = input.now ?? new Date();
+      const task = await withWeeklyExecutionTaskMutation(dataStore, claim.task.tenantId, claim.task.taskId, async () => {
+        const row = await currentClaim(claim, now);
+        const blocked = Boolean(input.blockingReason);
+        const next: WeeklyExecutionTask = {
+          ...row.payload, status: blocked ? 'blocked' : 'queued', lease: null,
+          attempt: Math.max(0, row.payload.attempt - 1),
+          nextAttemptAt: blocked ? null : new Date(now.getTime() + Math.max(1000, Math.min(input.retryDelayMs ?? 30_000, 86_400_000))).toISOString(),
+          ownBlockingReasons: blocked ? [...new Set([...row.payload.ownBlockingReasons, input.blockingReason!])] : row.payload.ownBlockingReasons,
+          lastError: { code: input.code, message: input.message, retryable: !blocked, occurredAt: now.toISOString() },
           updatedAt: now.toISOString(),
         };
         await writeWeeklyExecutionTask(dataStore, row, next);
