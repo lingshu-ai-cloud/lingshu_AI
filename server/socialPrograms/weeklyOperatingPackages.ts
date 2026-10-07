@@ -15,6 +15,7 @@ import type { CapacityPlan } from '../socialOperating/capacityPlanner.js';
 import type { AutomationPolicyResolution } from '../socialOperating/automationPolicyResolver.js';
 import {
   activateWeeklyExecutionTasks,
+  applyBusinessDispatchToExecutionTasks,
   cancelWeeklyExecutionTasks,
   listWeeklyExecutionTasks,
   materializeWeeklyExecutionTasks,
@@ -22,6 +23,7 @@ import {
   summarizeWeeklyExecutionTasks,
 } from './executionTasks.js';
 import { enqueueAgentNotificationDomainEvent } from '../notifications/agentNotificationOutbox.js';
+import { createWeeklyPlanningAuthority } from './planningAuthority.js';
 import {
   PACKAGES, PROGRAMS, PROMOTION_QUOTAS, WEEKLY_REVIEWS, WORKFLOW_EVENTS,
   type PackageRow, type ProgramRow, type WorkflowEventRow,
@@ -34,6 +36,7 @@ import {
 
 export function createWeeklyOperatingPackageService(dataStore: DataStore) {
   const operatingRepository = createSocialOperatingRepository(dataStore);
+  const agentPlanning = createWeeklyPlanningAuthority(dataStore);
 
   function rejectClientAuthorityObjects(input: Record<string, unknown>): void {
     for (const field of ['businessContentGoal', 'capacityPlan', 'automationPolicy']) {
@@ -126,7 +129,13 @@ export function createWeeklyOperatingPackageService(dataStore: DataStore) {
     const tasks = await listWeeklyExecutionTasks(
       dataStore, tenantId, item.programId, item.packageId, item.version,
     );
-    return projectWeeklyExecution(item, tasks);
+    const projected = projectWeeklyExecution(item, tasks);
+    try {
+      return { ...projected, agentPlanning: await agentPlanning.get(tenantId, item.programId, item.packageId, item.version) };
+    } catch (error) {
+      if (error instanceof SocialProgramError && error.code === 'weekly_agent_planning_not_found') return projected;
+      throw error;
+    }
   }
 
   async function withAuthoritativeDecisions(
@@ -297,9 +306,10 @@ export function createWeeklyOperatingPackageService(dataStore: DataStore) {
       }
       const saved = await savePackage(dataStore, tenantId, item);
       try {
+        const planning = await agentPlanning.initialize(tenantId, item);
         const tasks = await materializeWeeklyExecutionTasks(dataStore, tenantId, item);
         await enqueuePackageChange({ tenantId, item, operation: 'created' });
-        return projectWeeklyExecution(item, tasks, item.updatedAt);
+        return { ...projectWeeklyExecution(item, tasks, item.updatedAt), agentPlanning: planning };
       } catch (error) {
         await dataStore.delete(PACKAGES, saved.id);
         throw error;
@@ -355,7 +365,8 @@ export function createWeeklyOperatingPackageService(dataStore: DataStore) {
       const saved = await savePackage(dataStore, tenantId, item);
       let projected: WeeklyOperatingPackage;
       try {
-        projected = projectWeeklyExecution(item, await materializeWeeklyExecutionTasks(dataStore, tenantId, item), item.updatedAt);
+        const planning = await agentPlanning.initialize(tenantId, item);
+        projected = { ...projectWeeklyExecution(item, await materializeWeeklyExecutionTasks(dataStore, tenantId, item), item.updatedAt), agentPlanning: planning };
       } catch (error) {
         await dataStore.delete(PACKAGES, saved.id);
         throw error;
@@ -381,6 +392,44 @@ export function createWeeklyOperatingPackageService(dataStore: DataStore) {
         }
       }
       return projected;
+    },
+
+    async getAgentPlanning(tenantId: string, programId: string, packageId: string, packageVersion?: number) {
+      const row = await latestPackageRow(dataStore, tenantId, programId, packageId);
+      if (!row) throw new SocialProgramError('weekly_operating_package_not_found', 404, '周任务包不存在。');
+      const version = packageVersion ?? row.payload.version;
+      return agentPlanning.get(tenantId, programId, packageId, version);
+    },
+
+    async runDirectorPlanning(tenantId: string, programId: string, packageId: string, expectedVersion: number) {
+      const row = await latestPackageRow(dataStore, tenantId, programId, packageId);
+      if (!row) throw new SocialProgramError('weekly_operating_package_not_found', 404, '周任务包不存在。');
+      requireExpectedVersion(row.payload.version, expectedVersion);
+      return agentPlanning.runDirectorAnalysis({ tenantId, programId, packageId, packageVersion: row.payload.version, actor: 'director_agent' });
+    },
+
+    async mergeAgentSchedule(tenantId: string, programId: string, packageId: string, expectedVersion: number) {
+      const row = await latestPackageRow(dataStore, tenantId, programId, packageId);
+      if (!row) throw new SocialProgramError('weekly_operating_package_not_found', 404, '周任务包不存在。');
+      requireExpectedVersion(row.payload.version, expectedVersion);
+      return agentPlanning.mergeDetailedSchedule({ tenantId, programId, package: row.payload, actor: 'business_agent' });
+    },
+
+    async confirmAgentSchedule(tenantId: string, userId: string, programId: string, packageId: string, expectedVersion: number) {
+      const row = await latestPackageRow(dataStore, tenantId, programId, packageId);
+      if (!row) throw new SocialProgramError('weekly_operating_package_not_found', 404, '周任务包不存在。');
+      requireExpectedVersion(row.payload.version, expectedVersion);
+      return agentPlanning.confirm({ tenantId, programId, packageId, packageVersion: row.payload.version, userId });
+    },
+
+    async dispatchAgentSchedule(tenantId: string, programId: string, packageId: string, expectedVersion: number) {
+      const row = await latestPackageRow(dataStore, tenantId, programId, packageId);
+      if (!row) throw new SocialProgramError('weekly_operating_package_not_found', 404, '周任务包不存在。');
+      requireExpectedVersion(row.payload.version, expectedVersion);
+      const state = await agentPlanning.dispatch({ tenantId, programId, packageId, packageVersion: row.payload.version, actor: 'business_agent' });
+      if (!state.dispatch) throw new SocialProgramError('business_dispatch_missing', 503, '经营派单记录生成失败。');
+      await applyBusinessDispatchToExecutionTasks(dataStore, tenantId, programId, packageId, row.payload.version, state.dispatch, state.updatedAt);
+      return state;
     },
 
     async activate(

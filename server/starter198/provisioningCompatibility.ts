@@ -1,5 +1,5 @@
 import type { DataStore, ListQuery } from '../storage/datastore.js';
-import { store } from '../storage/index.js';
+import { dataBackend, store } from '../storage/index.js';
 import { pbListStrict } from '../storage/pb.js';
 
 type RecordRow = { id: string; [key: string]: unknown };
@@ -50,7 +50,7 @@ async function allTenantRows(
   let expectedTotal: number | null = null;
   for (let page = 1; ; page += 1) {
     const query: ListQuery = { where: { [tenantField]: tenantId }, page, perPage: 500 };
-    const result = process.env.NODE_ENV === 'production' && dataStore === store
+    const result = process.env.NODE_ENV === 'production' && dataStore === store && dataBackend === 'pocketbase'
       ? await pbListStrict<RecordRow>(collection, {
         filter: `${tenantField} = "${tenantId.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`,
         page,

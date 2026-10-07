@@ -6,6 +6,8 @@ const config = normalizeDigitalEmployeeConfig({
   companyName: '企业', industry: '制造', primaryBusiness: '产品', targetMarkets: '美国', customerProfile: '经销商', approvalOwner: '负责人',
   enabledWorkflows: ['viral_clone', 'product_content', 'material_content'], socialCadence: '每周 5 条', publishingTargets: [], constraints: ['禁止虚构'],
 });
+assert.equal(config.smartOperationsEnabled, true, 'existing tenants default to Smart Operations enabled');
+assert.equal(normalizeDigitalEmployeeConfig({ ...config, smartOperationsEnabled: false }).smartOperationsEnabled, false, 'the Smart Operations switch must persist an explicit off state');
 const goal = normalizeWeeklyGoal({ objective: '获得询盘', contentPlatforms: ['youtube', 'tiktok'], constraints: ['禁止虚构认证'] }, config);
 const planned = buildContentBatchPlan({
   goalId: 'goal-1', goal, config,

@@ -86,6 +86,26 @@ export type SocialDiscoveryPath = 'keyword' | 'account' | 'relation' | 'performa
 export type SocialInspirationReadiness = 'discovery_reference' | 'strategy_reference' | 'production_reference';
 export type SocialAccountTrackingStatus = 'candidate' | 'trial' | 'tracked' | 'watching' | 'stopped';
 export type SocialCrawlKeywordCategory = 'discovery_seed' | 'scene_cluster' | 'evidence_query' | 'competitor_account' | 'task_override';
+export type SocialCollectionScopeMode = 'industry_matrix' | 'market_focus';
+export type SocialBusinessModel = 'b2b' | 'd2c' | 'mixed' | 'unknown';
+export type SocialDiscoveryScoreDecision = 'accepted' | 'review' | 'rejected';
+
+export interface SocialDiscoveryCandidateScore {
+  ruleVersion: 'discovery-score-v1';
+  overall: number;
+  dimensions: {
+    relevance: number;
+    transferability: number;
+    momentum: number;
+    evidence: number;
+    platformPriority: number;
+    businessModelFit: number;
+  };
+  decision: SocialDiscoveryScoreDecision;
+  reasons: string[];
+  blockers: string[];
+  scoredAt: string;
+}
 
 export interface SocialKeywordScope {
   productRef: string;
@@ -209,6 +229,8 @@ export interface SocialInspirationCollectionRun {
   triggerType: 'scheduled' | 'manual' | 'production_gap';
   scopeSnapshot: SocialDiscoveryBrief;
   modeStats: Partial<Record<SocialDiscoveryMode, SocialDiscoveryModeRunStats>>;
+  platformStats?: Record<string, SocialDiscoveryModeRunStats>;
+  keywordTierStats?: Partial<Record<'broad' | 'medium' | 'evidence' | 'account' | 'unknown', SocialDiscoveryModeRunStats>>;
   /** Qualified worker outcomes. Imported crawler rows are never authority. */
   evidenceOutcomes?: Partial<Record<SocialDiscoveryMode, {
     acceptedCandidateIds: string[];
@@ -282,6 +304,39 @@ export interface SocialCandidateEvidence {
   novelty?: { level: 'high' | 'medium' | 'low'; reasons: string[]; confidence: number };
   transferability: { level: 'high' | 'medium' | 'low'; mechanisms: string[]; limitations: string[] };
   evidenceRefs: string[];
+  /** Server-owned, versioned decision. UI filters must use this value instead of recomputing a score. */
+  qualityScore?: SocialDiscoveryCandidateScore;
+  classification?: {
+    businessModel: SocialBusinessModel;
+    platform: string;
+    keywordTier: 'broad' | 'medium' | 'evidence' | 'account' | 'unknown';
+  };
+}
+
+export interface SocialDiscoveryReadiness {
+  readyForOutline: boolean;
+  readyForDetailedPlan: boolean;
+  thresholds: { acceptedVideos: number; benchmarkAccounts: number; sceneClusters: number };
+  actual: { acceptedVideos: number; benchmarkAccounts: number; sceneClusters: number };
+  gaps: Array<{ code: 'videos' | 'accounts' | 'scenes' | 'scope'; label: string; missing: number }>;
+  evaluatedAt: string;
+}
+
+export interface SocialDiscoverySupplyItem {
+  candidateId: string;
+  candidateType: 'video' | 'account';
+  platform: string;
+  title: string;
+  author: string;
+  sourceUrl: string;
+  thumbnailUrl: string | null;
+  publishedAt: string | null;
+  sceneIds: string[];
+  businessModel: SocialBusinessModel;
+  score: SocialDiscoveryCandidateScore;
+  evidenceRef: string;
+  evidenceVersion: number;
+  raw?: Record<string, unknown>;
 }
 
 export interface SocialInspirationHandoff {
@@ -337,6 +392,15 @@ export interface SocialCrawlStrategy {
   keywords: Array<{ category: SocialCrawlKeywordCategory; values: string[] }>;
   benchmarkAccounts: Array<{ accountRef: string; type: SocialBenchmarkAccountType; weight: number }>;
   platformQuotas: Array<{ platform: string; limit: number; weight: number }>;
+  collectionPolicy?: {
+    scopeMode: SocialCollectionScopeMode;
+    industryFocus: string | null;
+    marketFocus: string | null;
+    keywordTierWeights: { broad: number; medium: number; evidence: number };
+    platformWeights: Record<string, number>;
+    primaryPlatform: 'tiktok';
+    youtubePolicy: 'targeted_only';
+  };
   refreshIntervalMinutes: number;
   stopConditions: string[];
   market: string | null;

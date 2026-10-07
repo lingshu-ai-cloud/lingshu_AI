@@ -505,7 +505,7 @@ function enterpriseAssets(profile: EnterpriseProfile, tenantId: string): AssetCa
   });
 }
 
-async function collectAssets(tenantId: string, profile: EnterpriseProfile): Promise<AssetCandidate[]> {
+export async function collectProductionAssets(tenantId: string, profile: EnterpriseProfile): Promise<AssetCandidate[]> {
   const inventory = await readMaterialLibrary(tenantId);
   if (inventory.status === 'unavailable') throw Error('素材库暂时无法读取，请重试或联系管理员');
   const cloud = inventory.items.filter(item => item.id.startsWith('pb-'));
@@ -999,18 +999,25 @@ export async function generateDirectorScriptContracts(input: { tenantId: string;
     readTenantEnterpriseProfile(input.tenantId),
     store.list<StoredRecord>('trend_videos', { where: { tenantId: input.tenantId }, sort: '-updatedAt', perPage: 500 }),
   ]);
-  const allAssets = await collectAssets(input.tenantId, profile);
+  const allAssets = await collectProductionAssets(input.tenantId, profile);
   const analyses = analysesResult.items.filter(record => exactAnalysis(record) && Boolean(referenceStructure(record)));
   const learnedNarrationStyle = aggregateNarrationStyleProfiles(analyses.map(record => referenceStructure(record)?.narrationStyle || null));
   const generatedAt = input.now || new Date().toISOString();
   const results: ContentProductionOrderInput[] = [];
   for (const order of input.orders) {
     const languages = (order.languages?.length ? order.languages : [order.videoPlan?.language || input.config.videoDefaults?.language || 'en']).map(normalizeVideoLanguage).filter((language, index, values) => language in VIDEO_LANGUAGES && values.indexOf(language) === index);
-    const scripts: Record<string, FrozenDirectorScript> = {};
+    const persistedScripts = order.contractVersion === 1 && order.scripts ? order.scripts : {};
+    const scripts: Record<string, FrozenDirectorScript> = Object.fromEntries(Object.entries(persistedScripts).filter(([language, script]) => (
+      languages.includes(language)
+      && script?.status === 'confirmed'
+      && script.generatedBy === 'director_agent'
+      && script.hash === stableHash(script.body)
+    )));
     const assets = allAssets.filter(asset => order.evidenceRefs.some(ref => ref.type === 'enterprise_material' && ref.id === asset.id));
     const referenceId = order.evidenceRefs.find(ref => ref.type === 'exact_analysis')?.id || '';
     const reference = analyses.find(item => item.id === referenceId);
     for (const language of languages.length ? languages : ['en']) {
+      if (scripts[language]) continue;
       const directedOrder = { ...order, videoPlan: normalizeVideoPlan({ ...(order.videoPlan || input.config.videoDefaults || {}), language }) };
       let generated: GeneratedScript;
       if (process.env.DIRECTOR_SCRIPT_OFFLINE_FALLBACK === 'true') {
@@ -1712,7 +1719,7 @@ export async function advanceAutomatedContentProduction(input: {
     listTenantContentProjects(input.tenantId),
   ]);
   const analyses = analysesResult.items.filter(record => exactAnalysis(record) && Boolean(referenceStructure(record)));
-  const assets = await collectAssets(input.tenantId, profile);
+  const assets = await collectProductionAssets(input.tenantId, profile);
   const selectedProducts = selectedProductItems(profile, input.config);
   const productNames = selectedProducts.map(({ item }) => text(item.name, 160)).filter(Boolean);
   const evidence: ContentRouteEvidence = { exactAnalysisIds: analyses.map(item => item.id), productNames, assetIds: assets.map(item => item.id) };

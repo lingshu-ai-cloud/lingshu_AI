@@ -16,6 +16,7 @@ import { initEngagementIngestionWorker } from '../socialEngagement/ingestionWork
 import { initAgentNotificationOutboxWorker } from '../notifications/agentNotificationOutbox.js';
 import { initSocialWeeklyReviewWorker } from '../socialReview/weeklyReviewWorker.js';
 import type { ProcessRole } from './processRole.js';
+import { initLocalTempMaintenance } from '../storage/localTempMaintenance.js';
 import { initSocialContentProductionBullWorker } from '../starter198/socialContentProductionQueue.js';
 import {
   markBackgroundJobsFailed,
@@ -31,6 +32,7 @@ export async function startBackgroundJobs(role: ProcessRole = 'all'): Promise<vo
   console.log('[runtime] starting background jobs');
   try {
     await initScheduler();
+    initLocalTempMaintenance();
     initSocialContentProductionBullWorker();
     initScheduledPublisher();
     initCrawlerOpsWorker();

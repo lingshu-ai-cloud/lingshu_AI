@@ -3965,8 +3965,9 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     void productionApi.capabilities().then(capability => { if (live) setProductionCapability(capability); }).catch(error => { if (live) setProductionError(String(error)); });
     void studioApi.digitalHumanAvatars().then(avatars => {
       if (!live) return;
-      setHeygenAvatars(avatars.items);
-      setHeygenAvatarId(current => current || avatars.items.find(item => item.ownership === 'private')?.id || '');
+       const avatarItems = Array.isArray(avatars.items) ? avatars.items : [];
+       setHeygenAvatars(avatarItems);
+       setHeygenAvatarId(current => current || avatarItems.find(item => item.ownership === 'private')?.id || '');
     }).catch(error => { if (live) setProductionError(String(error)); });
     void studioApi.digitalHumanCapabilities().then(digitalCapability => { if (live) setDigitalHumanCapabilities(digitalCapability); }).catch(error => { if (live) setProductionError(String(error)); });
     return () => { live = false; };

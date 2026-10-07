@@ -10,6 +10,24 @@ export function materialAssetObjectKey(tenantId: string, filename: string): stri
   return `${MATERIAL_ASSET_PREFIX}/${materialAssetTenantKey(tenantId)}/${path.basename(filename)}`;
 }
 
+/** Stable per-tenant key used to reuse identical uploads without exposing the
+ * original filename. The digest is already computed by the streaming ingress. */
+export function materialContentAddressedObjectKey(tenantId: string, sha256: string, filename: string): string {
+  const digest = String(sha256).trim().toLowerCase();
+  if (!/^[a-f0-9]{64}$/.test(digest)) throw new Error('素材内容哈希无效');
+  const extension = path.extname(filename).toLowerCase();
+  const safeExtension = /^\.[a-z0-9]{1,8}$/.test(extension) ? extension : '.bin';
+  return materialAssetObjectKey(tenantId, `${digest}${safeExtension}`);
+}
+
+export function materialPosterObjectKey(tenantId: string, sha256: string, filename: string): string {
+  const digest = String(sha256).trim().toLowerCase();
+  if (!/^[a-f0-9]{64}$/.test(digest)) throw new Error('素材内容哈希无效');
+  const extension = path.extname(filename).toLowerCase();
+  const safeExtension = /^\.[a-z0-9]{1,8}$/.test(extension) ? extension : '.jpg';
+  return tenantPrivateObjectKey('material-posters', tenantId, `${digest}${safeExtension}`);
+}
+
 export function isTenantPrivateObjectKey(objectKey: string, tenantId: string): boolean {
   const parts = String(objectKey).split('/');
   return parts.length === 4

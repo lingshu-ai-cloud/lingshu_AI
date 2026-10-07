@@ -1,12 +1,24 @@
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import fs from 'node:fs';
+import { execFileSync } from 'node:child_process';
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const runtimeRoot = path.resolve(process.env.LINGSHU_PREVIEW_ROOT || repositoryRoot);
 const nodeExecutable = process.execPath;
 const shuttingDown = { value: false };
 let monitoring = false;
+let backendRestartTimer;
+let repositoryRevision = '';
+
+function currentRevision() {
+  try {
+    return execFileSync('git', ['rev-parse', 'HEAD'], { cwd: runtimeRoot, encoding: 'utf8', timeout: 2_000, stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+  } catch {
+    return 'unknown';
+  }
+}
 
 function localNetworkEnvironment(extra = {}) {
   const existing = String(process.env.NO_PROXY || process.env.no_proxy || '')
@@ -36,6 +48,7 @@ const services = [
       // after a backend restart. Use the combined role until the persistent
       // queue/scheduler migration makes a split local worker safe.
       PROCESS_ROLE: 'all',
+      ENABLE_LOCAL_DEV_FALLBACK: 'true',
     },
     // Health monitoring must stay cheap and independent of business data.
     // Business queries can be temporarily slow while background jobs are busy;
@@ -89,7 +102,7 @@ function start(service) {
   service.failures = 0;
   const child = spawn(nodeExecutable, service.args, {
     cwd: runtimeRoot,
-    env: localNetworkEnvironment(service.env),
+    env: localNetworkEnvironment({ ...service.env, APP_BUILD_SHA: currentRevision(), VITE_APP_BUILD_SHA: currentRevision() }),
     stdio: 'inherit',
     detached: true,
   });
@@ -103,6 +116,36 @@ function start(service) {
     service.restartTimer = setTimeout(() => start(service), 2_000);
   });
 }
+
+function scheduleBackendRestart(reason) {
+  if (shuttingDown.value) return;
+  if (backendRestartTimer) clearTimeout(backendRestartTimer);
+  backendRestartTimer = setTimeout(() => {
+    backendRestartTimer = undefined;
+    const backend = services.find(service => service.name === 'backend');
+    if (!backend?.child) return;
+    log(`backend source changed (${reason}); restarting with the latest code`);
+    terminate(backend);
+  }, 800);
+}
+
+try {
+  fs.watch(path.join(runtimeRoot, 'server'), { recursive: true }, (_event, filename) => {
+    if (!filename || /(?:^|\/)(?:data|dist|node_modules)(?:\/|$)/.test(filename)) return;
+    if (/\.(?:ts|tsx|js|mjs|json)$/.test(filename)) scheduleBackendRestart(filename);
+  });
+} catch (error) {
+  log(`backend source watch unavailable: ${error instanceof Error ? error.message : String(error)}`);
+}
+
+repositoryRevision = currentRevision();
+setInterval(() => {
+  const next = currentRevision();
+  if (next === repositoryRevision) return;
+  repositoryRevision = next;
+  log(`repository revision changed to ${next.slice(0, 8)}; restarting preview services`);
+  for (const service of services) terminate(service);
+}, 3_000).unref();
 
 function terminate(service) {
   const child = service.child;

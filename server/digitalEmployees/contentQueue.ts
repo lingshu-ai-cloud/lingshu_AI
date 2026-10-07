@@ -2,7 +2,7 @@ import { contentAccepted } from './contentAcceptance.js';
 import type { ContentOrder } from './contentBatchPlan.js';
 import { store } from '../storage/index.js';
 import type { ExecutionStoreRecord } from '../routes/productionContracts.js';
-import type { ContentQueueItem, ContentQueueProjection, PublishingPlatform, WorkflowTask } from '../../src/lib/digitalEmployees.js';
+import type { ContentQueueItem, ContentQueueProjection, ContentQueueStep, PublishingPlatform, WorkflowTask } from '../../src/lib/digitalEmployees.js';
 import type { WeeklyPackage } from '../../src/lib/weeklyPackage.js';
 import type { VideoCreationPlan } from '../../shared/contracts/videoCreationPlan.js';
 
@@ -24,6 +24,133 @@ const stageOrder = ['script', 'material_match', 'voice_subtitles', 'heygen', 're
 const stageLabels: Record<string, string> = {
   script: '脚本生成', material_match: '素材匹配', voice_subtitles: '配音与字幕', heygen: '数字人口播', render: '成片渲染', quality: '质量检查', completed: '成片完成', blocked: '制作受阻',
 };
+type ProductionStepTemplate = Pick<ContentQueueStep, 'key' | 'label' | 'responsibleAgent' | 'estimatedMinutes'> & { stageIndex: number; approval?: boolean };
+const productionStepTemplates: ProductionStepTemplate[] = [
+  { key: 'material_readiness', label: '核对素材与授权', responsibleAgent: '内容 Agent', estimatedMinutes: 20, stageIndex: -1 },
+  { key: 'script', label: '生成口播与脚本', responsibleAgent: '内容 Agent', estimatedMinutes: 30, stageIndex: 0 },
+  { key: 'storyboard', label: '生成逐镜分镜', responsibleAgent: '内容 Agent', estimatedMinutes: 35, stageIndex: 0 },
+  { key: 'asset_generation', label: '匹配或生成逐镜素材', responsibleAgent: '内容 Agent', estimatedMinutes: 45, stageIndex: 1 },
+  { key: 'voice_subtitles', label: '生成配音与字幕', responsibleAgent: '内容 Agent', estimatedMinutes: 30, stageIndex: 2 },
+  { key: 'presenter', label: '生成数字人口播或人物镜头', responsibleAgent: '内容 Agent', estimatedMinutes: 60, stageIndex: 3 },
+  { key: 'video_generation', label: '剪辑、合成与成片渲染', responsibleAgent: '内容 Agent', estimatedMinutes: 90, stageIndex: 4 },
+  { key: 'quality_check', label: '事实、画面、音频与版权质检', responsibleAgent: '质检 Agent', estimatedMinutes: 25, stageIndex: 5 },
+  { key: 'rework', label: '按质检结果局部返工', responsibleAgent: '内容 Agent', estimatedMinutes: 30, stageIndex: 5 },
+  { key: 'user_approval', label: '用户确认成片', responsibleAgent: '用户', estimatedMinutes: 10, stageIndex: 6, approval: true },
+];
+
+function productionSteps(input: {
+  hasProjects: boolean;
+  taskPresent: boolean;
+  currentIndex: number;
+  complete: boolean;
+  approved: boolean;
+}): ContentQueueStep[] {
+  return productionStepTemplates.map(template => {
+    let state: ContentQueueStep['state'] = 'pending';
+    if (template.approval) state = input.approved ? 'done' : input.complete ? 'active' : 'pending';
+    else if (input.complete || input.hasProjects && template.stageIndex < input.currentIndex || input.hasProjects && template.stageIndex < 0) state = 'done';
+    else if (input.hasProjects && template.stageIndex === input.currentIndex) state = 'active';
+    else if (!input.hasProjects && input.taskPresent && template.stageIndex < 0) state = 'active';
+    return { ...template, state };
+  });
+}
+
+function confidenceDimension(input: {
+  evidence: string[];
+  gaps: string[];
+  blocked?: boolean;
+  maximum?: 'high' | 'medium';
+}): NonNullable<ContentQueueItem['confidence']>['production'] {
+  const evidence = input.evidence.filter(Boolean);
+  const gaps = input.gaps.filter(Boolean);
+  const level = input.blocked ? 'low'
+    : evidence.length === 0 ? 'insufficient'
+      : gaps.length === 0 && input.maximum !== 'medium' ? 'high'
+        : evidence.length >= 2 ? 'medium' : 'low';
+  return {
+    level,
+    label: level === 'high' ? '高' : level === 'medium' ? '中' : level === 'low' ? '低' : '数据不足',
+    evidence,
+    gaps,
+  };
+}
+
+function taskConfidence(input: {
+  status: ContentQueueItem['status'];
+  productName: string;
+  languages: string[];
+  formats: string[];
+  projectCount: number;
+  accountId: string;
+  accountConnected: boolean;
+  publishDate: string;
+  authorizationMode: ContentQueueItem['lineage']['authorizationMode'];
+  objective: string;
+  referenceTitle: string;
+  referenceViews: string;
+  benchmarkAccount: string;
+  matchScore: number | null;
+}): NonNullable<ContentQueueItem['confidence']> {
+  const production = confidenceDimension({
+    blocked: input.status === 'blocked',
+    evidence: [
+      input.productName ? '已绑定产品或制作主题' : '',
+      input.languages.length ? `已确认语言：${input.languages.join(' / ')}` : '',
+      input.formats.length ? `已确认形式：${input.formats.join(' / ')}` : '',
+      input.projectCount ? `已有 ${input.projectCount} 个正式制作项目` : '',
+      ['waiting_review', 'completed'].includes(input.status) ? '已经产出可验收结果' : '',
+    ],
+    gaps: [
+      !input.productName ? '缺产品或制作主题' : '',
+      !input.languages.length ? '缺语言要求' : '',
+      input.status === 'blocked' ? '当前存在制作卡点' : '',
+    ],
+  });
+  const publishing = confidenceDimension({
+    evidence: [
+      input.accountConnected ? '目标账号已连接' : input.accountId ? '已指定目标账号' : '',
+      input.publishDate ? `已安排日期：${input.publishDate}` : '',
+      input.authorizationMode === 'bounded' ? '已获得范围授权' : input.authorizationMode === 'each' ? '采用逐次确认' : '',
+    ],
+    gaps: [
+      !input.accountId ? '缺发布账号' : '',
+      !input.accountConnected && input.accountId ? '账号连接状态待确认' : '',
+      !input.publishDate ? '缺发布时间' : '',
+      input.authorizationMode !== 'bounded' ? '发布前仍需确认' : '',
+    ],
+  });
+  const businessEvidenceReady = Boolean(input.objective && (input.referenceTitle || input.benchmarkAccount));
+  const businessBase = confidenceDimension({
+    maximum: 'medium',
+    evidence: [
+      input.objective ? `已绑定经营目标：${input.objective}` : '',
+      input.benchmarkAccount ? `已绑定对标账号：${input.benchmarkAccount}` : '',
+      input.referenceTitle ? `已有可核对参考：${input.referenceTitle}` : '',
+      input.referenceViews ? `已有参考播放证据：${input.referenceViews}` : '',
+      input.matchScore !== null ? `内容匹配度：${input.matchScore}` : '',
+    ],
+    gaps: [
+      !input.objective ? '缺经营目标' : '',
+      !input.referenceTitle && !input.benchmarkAccount ? '缺可核对的参考内容' : '',
+      '发布后的真实播放、互动、询盘或成交数据尚未回传',
+    ],
+  });
+  const business = businessEvidenceReady ? businessBase : {
+    ...businessBase,
+    level: 'insufficient' as const,
+    label: '数据不足',
+  };
+  const dimensions = [production, publishing, business];
+  const dataSufficiency = dimensions.some(item => item.level === 'insufficient') ? 'insufficient'
+    : dimensions.some(item => item.gaps.length > 0) ? 'partial' : 'complete';
+  return {
+    production,
+    publishing,
+    business,
+    dataSufficiency,
+    note: '这是基于现有证据的数据充分度与执行把握，不是承诺播放、询盘或成交的成功概率。',
+  };
+}
 
 function planOrder(plan: VideoCreationPlan, index: number): ContentOrder {
   return {
@@ -53,7 +180,9 @@ function sourceOrderId(project: Stored): string {
 }
 
 function projectStage(project: Stored): string {
-  return text(object(object(project.spec).automation).stage) || 'script';
+  const automation = object(object(project.spec).automation);
+  const stage = text(automation.stage) || 'script';
+  return ['blocked', 'failed'].includes(stage) ? text(automation.resumeStage) || 'script' : stage;
 }
 
 function projectBlocked(project: Stored): boolean {
@@ -70,7 +199,7 @@ function queueState(projects: Stored[], task?: WorkflowTask): Pick<ContentQueueI
       progress: 0,
       reason: blocked ? task.blocked_reason : '',
       updatedAt: task?.updated_at || '',
-      steps: stageOrder.slice(0, -1).map((stage, index) => ({ label: stageLabels[stage], state: index === 0 && task ? 'active' as const : 'pending' as const })),
+      steps: productionSteps({ hasProjects: false, taskPresent: Boolean(task), currentIndex: 0, complete: false, approved: false }),
     };
   }
   const blockedProject = projects.find(projectBlocked);
@@ -86,12 +215,7 @@ function queueState(projects: Stored[], task?: WorkflowTask): Pick<ContentQueueI
     progress,
     reason: blockedProject ? text(object(object(blockedProject.spec).automation).blocker) : '',
     updatedAt: projects.map(project => text(project.updated_at || project.updated)).filter(Boolean).sort().at(-1) || task?.updated_at || '',
-    steps: stageOrder.slice(0, -1).map((stage, index) => ({
-      label: stageLabels[stage],
-      state: complete || projects.every(project => stageOrder.indexOf(projectStage(project) as typeof stageOrder[number]) > index)
-        ? 'done' as const
-        : index === currentIndex ? 'active' as const : 'pending' as const,
-    })),
+    steps: productionSteps({ hasProjects: true, taskPresent: Boolean(task), currentIndex, complete, approved }),
   };
 }
 
@@ -112,6 +236,17 @@ const manualStageOrder = ['brief', 'plan', 'production', 'review', 'delivery'] a
 const manualStageLabels: Record<typeof manualStageOrder[number], string> = {
   brief: '需求确认', plan: '方案确认', production: '内容制作', review: '内容验收', delivery: '交付发布',
 };
+const manualStepTemplates: Array<Pick<ContentQueueStep, 'key' | 'label' | 'responsibleAgent' | 'estimatedMinutes'> & { stageIndex: number }> = [
+  { key: 'brief', label: '确认需求、账号和预算', responsibleAgent: '用户', estimatedMinutes: 10, stageIndex: 0 },
+  { key: 'plan', label: '确认内容方案与交付时间', responsibleAgent: '经营 Agent', estimatedMinutes: 15, stageIndex: 1 },
+  { key: 'script', label: '生成口播脚本', responsibleAgent: '内容 Agent', estimatedMinutes: 30, stageIndex: 2 },
+  { key: 'storyboard', label: '生成逐镜分镜', responsibleAgent: '内容 Agent', estimatedMinutes: 35, stageIndex: 2 },
+  { key: 'assets', label: '匹配或生成逐镜素材', responsibleAgent: '内容 Agent', estimatedMinutes: 45, stageIndex: 2 },
+  { key: 'video', label: '配音、剪辑与成片渲染', responsibleAgent: '内容 Agent', estimatedMinutes: 120, stageIndex: 2 },
+  { key: 'quality', label: '成片质检与局部返工', responsibleAgent: '质检 Agent', estimatedMinutes: 25, stageIndex: 3 },
+  { key: 'approval', label: '用户确认成片', responsibleAgent: '用户', estimatedMinutes: 10, stageIndex: 3 },
+  { key: 'delivery', label: '交付或发布', responsibleAgent: '发布 Agent', estimatedMinutes: 10, stageIndex: 4 },
+];
 
 function manualPlatform(values: unknown[]): PublishingPlatform {
   const joined = values.map(value => text(value).toLowerCase()).join(' ');
@@ -137,9 +272,12 @@ function manualState(record: Stored): Pick<ContentQueueItem, 'status' | 'stage' 
     progress: completed ? 100 : Math.round(stageIndex / (manualStageOrder.length - 1) * 100),
     reason: blocked ? text(object(record.brief).specialRequirements) || (status === 'needs_input' ? '请补齐任务输入后继续' : '请进入内容创作查看处理要求') : '',
     updatedAt: text(record.updated_at || record.updated || record.created_at),
-    steps: manualStageOrder.map((stage, index) => ({
-      label: manualStageLabels[stage],
-      state: completed || index < stageIndex ? 'done' as const : index === stageIndex ? 'active' as const : 'pending' as const,
+    steps: manualStepTemplates.map(step => ({
+      key: step.key,
+      label: step.label,
+      responsibleAgent: step.responsibleAgent,
+      estimatedMinutes: step.estimatedMinutes,
+      state: completed || step.stageIndex < stageIndex ? 'done' as const : step.stageIndex === stageIndex ? 'active' as const : 'pending' as const,
     })),
   };
 }
@@ -167,6 +305,7 @@ function manualTaskItem(input: {
   const platforms = array<unknown>(brief.platforms);
   const formats = array<unknown>(brief.formats).map(text).filter(Boolean);
   const languages = array<unknown>(brief.languages).map(text).filter(Boolean);
+  const state = manualState(input.record);
   return {
     id: `social:${taskId}`,
     contentId: taskId,
@@ -186,6 +325,7 @@ function manualTaskItem(input: {
     plannedPublishDate: text(brief.dueAt),
     referenceId: '',
     referenceTitle: '',
+    referenceViews: '',
     benchmarkAccount: '',
     matchScore: null,
     planningFactors: [
@@ -211,7 +351,23 @@ function manualTaskItem(input: {
       durationSeconds: null,
       formats: formats.length ? formats : ['短视频'],
     },
-    ...manualState(input.record),
+    confidence: taskConfidence({
+      status: state.status,
+      productName: text(brief.productRef) || title,
+      languages,
+      formats: formats.length ? formats : ['短视频'],
+      projectCount: relatedProjects.length,
+      accountId,
+      accountConnected: input.accountLabels.has(accountId),
+      publishDate: text(brief.dueAt),
+      authorizationMode: 'manual',
+      objective: text(brief.objective),
+      referenceTitle: '',
+      referenceViews: '',
+      benchmarkAccount: '',
+      matchScore: null,
+    }),
+    ...state,
     ...costState(relatedProjects, input.executions, estimated),
   };
 }
@@ -248,6 +404,9 @@ export async function buildContentQueueProjection(input: {
     const evidence = plan?.planningEvidence;
     const state = queueState(relatedProjects, productionTask);
     const estimated = money(plan?.estimatedCost);
+    const accountId = order.accountId || plan?.matrix?.accountId || '';
+    const languages = [...new Set(relatedProjects.map(project => text(object(project.spec).lang)).filter(Boolean).concat(order.languages || plan?.language || []))];
+    const authorizationMode = pack?.authorization.mode || 'each';
     return {
       id: order.id,
       contentId: plan?.contentId || order.id,
@@ -260,34 +419,52 @@ export async function buildContentQueueProjection(input: {
       title: plan?.buyerProblem || order.theme?.label || plan?.theme || `内容 ${index + 1}`,
       productName: order.productName || plan?.productName || '',
       platform: order.platform,
-      accountId: order.accountId || plan?.matrix?.accountId || '',
+      accountId,
       accountLabel: order.accountLabel || '',
       route: order.route,
-      languages: [...new Set(relatedProjects.map(project => text(object(project.spec).lang)).filter(Boolean).concat(order.languages || plan?.language || []))],
+      languages,
       plannedPublishDate: plan?.plannedPublishDate || '',
       referenceId: plan?.referenceId || '',
       referenceTitle: evidence?.referenceTitle || '',
+      referenceViews: evidence?.referenceViews || '',
       benchmarkAccount: evidence?.benchmarkAccount || '',
       matchScore: evidence ? evidence.matchScore : null,
       planningFactors: evidence?.factors || [],
       lineage: {
         goalId: order.goalId || input.goal?.id || '',
         objective: input.goal?.objective || '',
-        accountId: order.accountId || plan?.matrix?.accountId || '',
-        accountLabel: order.accountLabel || accountLabels.get(order.accountId || plan?.matrix?.accountId || '') || '',
+        accountId,
+        accountLabel: order.accountLabel || accountLabels.get(accountId) || '',
         budgetCny: estimated && estimated > 0 ? estimated : null,
         planId: input.planId || '',
         planVersion: String(pack?.revision || input.goal?.version || ''),
         factsVersion: text(order.configurationSnapshot?.factsVersion),
         cycleStart: input.goal?.startsAt || '',
         cycleEnd: input.goal?.endsAt || '',
-        authorizationMode: pack?.authorization.mode || 'each',
+        authorizationMode,
       },
       outputSummary: {
         count: 1,
         durationSeconds: Number.isFinite(Number(plan?.duration)) && Number(plan?.duration) > 0 ? Number(plan?.duration) : null,
         formats: ['短视频'],
       },
+      confidence: taskConfidence({
+        status: state.status,
+        productName: order.productName || plan?.productName || '',
+        languages,
+        formats: ['短视频'],
+        projectCount: relatedProjects.length,
+        accountId,
+        accountConnected: accountLabels.has(accountId),
+        publishDate: plan?.plannedPublishDate || '',
+        authorizationMode,
+        objective: input.goal?.objective || '',
+        referenceTitle: evidence?.referenceTitle || '',
+        referenceViews: evidence?.referenceViews || '',
+        benchmarkAccount: evidence?.benchmarkAccount || '',
+        matchScore: evidence ? evidence.matchScore : null,
+      }),
+      ...(plan?.preproduction ? { preproduction: plan.preproduction } : {}),
       ...state,
       ...costState(relatedProjects, executionResult.items, estimated && estimated > 0 ? estimated : null),
     };

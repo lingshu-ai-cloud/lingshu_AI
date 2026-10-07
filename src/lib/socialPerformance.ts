@@ -40,7 +40,15 @@ export interface ConnectedSocialPerformance {
 async function json<T>(url: string): Promise<T> {
   const response = await fetch(url, { headers: authHeader() });
   const body = await response.json().catch(() => ({})) as T & { error?: string };
-  if (!response.ok) throw new Error(body.error || `账号数据读取失败（${response.status}）`);
+  if (!response.ok) {
+    const raw = String(body.error || '');
+    if (response.status === 401 || response.status === 403 || /unauthorized|forbidden|token|auth/i.test(raw)) {
+      throw new Error('账号授权已失效，请重新连接对应平台后再同步数据');
+    }
+    if (response.status === 429) throw new Error('平台同步频率过高，请稍后再试');
+    if (response.status >= 500) throw new Error('平台数据服务暂时不可用，已保留上次同步结果');
+    throw new Error(raw || `账号数据读取失败（${response.status}）`);
+  }
   return body;
 }
 

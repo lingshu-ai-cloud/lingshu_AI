@@ -16,10 +16,11 @@ type Snapshot = { task: { id: string; task_key?: string; title: string; status: 
 type ProgressState = 'complete' | 'current' | 'pending' | 'failed';
 
 const agentSteps = [
-  { id: 'director', label: '编导 Agent', stage: 'script' as Stage },
-  { id: 'subtitle', label: '字幕 Agent', stage: 'voice_subtitles' as Stage },
-  { id: 'voice', label: '口播 Agent', stage: 'voice_subtitles' as Stage },
-  { id: 'editing', label: '成片 Agent', stage: 'render' as Stage },
+  { id: 'script', label: '脚本与分镜', agent: '内容 Agent', duration: '约 65 分钟', stage: 'script' as Stage, matcher: /脚本|分镜|文案/, fallback: '正在读取经营 Agent 派单和编导 Agent 分析结论' },
+  { id: 'materials', label: '逐镜素材', agent: '内容 Agent', duration: '约 45 分钟', stage: 'material_match' as Stage, matcher: /素材|首帧|授权/, fallback: '脚本锁定后匹配企业素材或最高档 AIGC' },
+  { id: 'voice', label: '配音、字幕与人物', agent: '内容 Agent', duration: '约 90 分钟', stage: 'voice_subtitles' as Stage, matcher: /字幕|口播|配音|声音|数字人/, fallback: '素材就绪后按镜头需求生成配音、字幕和人物镜头' },
+  { id: 'editing', label: '剪辑与渲染', agent: '内容 Agent', duration: '约 90 分钟', stage: 'render' as Stage, matcher: /剪辑|合成|渲染|成片/, fallback: '合成画面、音频和字幕，并生成可验收成片' },
+  { id: 'quality', label: '质检与局部返工', agent: '质检 Agent', duration: '约 25–55 分钟', stage: 'quality' as Stage, matcher: /质检|质量|返工|验收/, fallback: '检查事实、画面、音频、版权和平台要求；仅重做不合格镜头' },
 ];
 
 function stageIndex(stage?: string) { const index = stages.indexOf(stage as Stage); return index < 0 ? 0 : index; }
@@ -80,27 +81,27 @@ export default function ProductionTaskScene({ runId, taskId, embedded = false }:
   const previewUrl = videoUrl(task?.output);
   const selected = agentSteps.find(item => item.id === selectedAgent) || agentSteps[0];
   const selectedState = progressState(currentStage, selected.stage, task?.status);
-  const progress = useMemo(() => [
-    { id: 'script', label: '脚本', state: progressState(currentStage, 'script', task?.status), detail: eventDetail(events, /脚本|分镜|文案/, '等待编导 Agent 生成脚本') },
-    { id: 'subtitle', label: '字幕', state: progressState(currentStage, 'voice_subtitles', task?.status), detail: eventDetail(events, /字幕/, '脚本完成后自动生成字幕') },
-    { id: 'voice', label: '口播', state: progressState(currentStage, 'voice_subtitles', task?.status), detail: eventDetail(events, /口播|配音|声音/, '脚本完成后自动生成口播') },
-  ], [currentStage, events, task?.status]);
+  const progress = useMemo(() => agentSteps.map(item => ({
+    ...item,
+    state: progressState(currentStage, item.stage, task?.status),
+    detail: eventDetail(events, item.matcher, item.fallback),
+  })), [currentStage, events, task?.status]);
 
   return <section data-testid="production-task-scene" className="flex min-h-0 flex-col overflow-hidden rounded-2xl border border-border bg-white text-text-primary shadow-sm">
     <header className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-3">
       <div><h2 className="font-bold">内容生产现场</h2><p className="mt-1 text-xs text-text-muted">{task?.title || '正在读取任务'} · {error || statuses[task?.status || 'pending']}</p></div>
       {!embedded && <button type="button" onClick={requestProductionBack} className="rounded-lg border border-border px-3 py-2 text-xs font-bold text-text-secondary hover:bg-surface-2">返回内容制作</button>}
     </header>
-    <nav aria-label="Agent 制作顺序" className="grid shrink-0 grid-cols-2 gap-2 border-b border-border bg-surface-2/60 p-3 sm:grid-cols-4">
-      {agentSteps.map((agent, index) => { const state = progressState(currentStage, agent.stage, task?.status); return <button key={agent.id} type="button" aria-pressed={selectedAgent === agent.id} onClick={() => setSelectedAgent(agent.id)} className={`flex min-w-0 items-center gap-2 rounded-xl border px-3 py-2 text-left transition ${selectedAgent === agent.id ? 'border-emerald-300 bg-white shadow-sm' : 'border-transparent hover:border-border hover:bg-white'}`}><span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-white text-[10px] font-black text-text-secondary">{index + 1}</span><span className="min-w-0 flex-1 truncate text-xs font-bold">{agent.label}</span><ProgressIcon state={state} /></button>; })}
+    <nav aria-label="Agent 制作顺序" className="grid shrink-0 grid-cols-2 gap-2 border-b border-border bg-surface-2/60 p-3 sm:grid-cols-3 xl:grid-cols-5">
+      {agentSteps.map((agent, index) => { const state = progressState(currentStage, agent.stage, task?.status); return <button key={agent.id} type="button" aria-pressed={selectedAgent === agent.id} onClick={() => setSelectedAgent(agent.id)} className={`flex min-w-0 items-center gap-2 rounded-xl border px-3 py-2 text-left transition ${selectedAgent === agent.id ? 'border-emerald-300 bg-white shadow-sm' : 'border-transparent hover:border-border hover:bg-white'}`}><span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-white text-[10px] font-black text-text-secondary">{index + 1}</span><span className="min-w-0 flex-1"><span className="block truncate text-xs font-bold">{agent.label}</span><span className="block truncate text-[9px] text-text-muted">{agent.agent} · {agent.duration}</span></span><ProgressIcon state={state} /></button>; })}
     </nav>
     <div className="grid min-h-0 flex-1 lg:grid-cols-[minmax(0,1.35fr)_minmax(280px,0.65fr)]">
       <div className="flex min-h-[360px] items-center justify-center bg-slate-950 p-4 lg:min-h-[520px]">
-        {previewUrl ? <video src={previewUrl} controls preload="metadata" className="max-h-[70vh] max-w-full rounded-xl bg-black" /> : <div className="flex max-w-sm flex-col items-center text-center text-slate-300"><Film size={42} className="text-slate-500"/><p className="mt-4 text-sm font-bold">视频生成后会显示在这里</p><p className="mt-2 text-xs leading-5 text-slate-500">当前由 {selected.label} 处理，页面会自动刷新。</p></div>}
+        {previewUrl ? <video src={previewUrl} controls preload="metadata" className="max-h-[70vh] max-w-full rounded-xl bg-black" /> : <div className="flex max-w-sm flex-col items-center text-center text-slate-300"><Film size={42} className="text-slate-500"/><p className="mt-4 text-sm font-bold">视频生成后会显示在这里</p><p className="mt-2 text-xs leading-5 text-slate-500">{selected.agent} 负责“{selected.label}”，该步{selected.duration}，页面会自动刷新。</p></div>}
       </div>
       <aside className="min-h-0 overflow-y-auto border-t border-border p-5 lg:border-l lg:border-t-0">
-        <div className="flex items-center justify-between gap-3"><div><p className="text-sm font-black">{selected.label}</p><p className="mt-1 text-xs text-text-muted">只展示与成片直接相关的进度</p></div><span className="rounded-full bg-surface-2 px-2.5 py-1 text-[10px] font-bold text-text-secondary">{selectedState === 'complete' ? '已完成' : selectedState === 'current' ? '生成中' : selectedState === 'failed' ? '需重试' : '等待中'}</span></div>
-        <ol className="mt-5 space-y-3">{progress.map(item => <li key={item.id} className="rounded-xl border border-border p-3"><div className="flex items-center gap-2"><ProgressIcon state={item.state}/><p className="text-xs font-black">{item.label}</p><span className="ml-auto text-[10px] text-text-muted">{item.state === 'complete' ? '完成' : item.state === 'current' ? '生成中' : item.state === 'failed' ? '失败' : '等待'}</span></div><p className="mt-2 text-xs leading-5 text-text-secondary">{item.detail}</p></li>)}</ol>
+        <div className="flex items-center justify-between gap-3"><div><p className="text-sm font-black">{selected.label}</p><p className="mt-1 text-xs text-text-muted">负责：{selected.agent} · 预计：{selected.duration}</p></div><span className="rounded-full bg-surface-2 px-2.5 py-1 text-[10px] font-bold text-text-secondary">{selectedState === 'complete' ? '已完成' : selectedState === 'current' ? '生成中' : selectedState === 'failed' ? '需重试' : '等待中'}</span></div>
+        <ol className="mt-5 space-y-3">{progress.map((item, index) => <li key={item.id} className="rounded-xl border border-border p-3"><div className="flex items-center gap-2"><ProgressIcon state={item.state}/><p className="text-xs font-black">{index + 1}. {item.label}</p><span className="ml-auto text-[10px] text-text-muted">{item.state === 'complete' ? '完成' : item.state === 'current' ? '生成中' : item.state === 'failed' ? '失败' : '等待'}</span></div><div className="mt-2 flex flex-wrap gap-x-3 text-[10px] text-text-muted"><span>负责：{item.agent}</span><span>预计：{item.duration}</span></div><p className="mt-2 text-xs leading-5 text-text-secondary">{item.detail}</p></li>)}</ol>
         {task?.blocker_reason && <p className="mt-4 rounded-xl bg-red-50 px-3 py-2 text-xs leading-5 text-red-700">{task.blocker_reason}</p>}
         {error && <p role="alert" className="mt-4 rounded-xl bg-amber-50 px-3 py-2 text-xs text-amber-700">{error}</p>}
         <div className="mt-5 flex items-center gap-2 rounded-xl bg-surface-2 p-3 text-xs text-text-secondary"><Volume2 size={15}/><span>脚本、字幕和口播会随任务自动更新。</span></div>

@@ -20,11 +20,13 @@ import { fillMatrixVideos } from '../../src/lib/weeklyMatrix.js';
 import { applyDirectorDecision, DIRECTOR_DECISION_LABELS, DIRECTOR_REASON_LABELS, type DirectorDecision, type DirectorDecisionReason } from '../../src/lib/directorDecision.js';
 import { reviseContent } from '../digitalEmployees/contentRevision.js';
 import { automationBgmCatalog } from './studio.js';
-import { spokenLanguageMatches } from '../../shared/contracts/videoCreationPlan.js';
+import { normalizeVideoPlan, spokenLanguageMatches, videoPlanErrors, type VideoCreationPlan, type VideoPreproductionPreview } from '../../shared/contracts/videoCreationPlan.js';
 import { invalidatePublishingApprovalForProject, invalidatePublishingAuthorizationForRun } from '../digitalEmployees/publishingExecution.js';
 import { contentAcceptanceHash, contentAccepted } from '../digitalEmployees/contentAcceptance.js';
 import { buildDeliveryResources } from '../digitalEmployees/deliveryResources.js';
 import { buildContentQueueProjection } from '../digitalEmployees/contentQueue.js';
+import { buildContentExecutionRuntime, unavailableContentExecutionRuntime } from '../digitalEmployees/contentExecutionRuntime.js';
+import { controlContentExecutionJob, type ContentExecutionControlAction } from '../contentExecution/durableQueue.js';
 import { buildTaskDeepLink, type WorkflowTask } from '../../src/lib/digitalEmployees.js';
 import { Router, type Request, type Response } from 'express';
 import fs from 'node:fs';
@@ -44,7 +46,7 @@ import { ensureDigitalEmployeeSocialCollectionTask, runScheduledTaskNow } from '
 import { readTenantEnterpriseProfile, updateTenantEnterpriseProfile } from './enterprise.js';
 import { buildBusinessSnapshot as defaultBuildBusinessSnapshot, type BusinessSnapshot } from '../digitalEmployees/businessSnapshot.js';
 const buildBusinessSnapshot: typeof defaultBuildBusinessSnapshot = (tenantId, range) => currentExecutionAdapters()?.snapshot?.(tenantId, range) ?? defaultBuildBusinessSnapshot(tenantId, range);
-import { freezeStoryboardNarration, CONTENT_SCRIPT_QUALITY_RULE_VERSION, advanceAutomatedContentProduction, generateDirectorScriptContracts, productIdentity, resolveEnterpriseAssetLocation, resumeContentProjectForTaskControl } from '../digitalEmployees/contentProduction.js';
+import { freezeStoryboardNarration, CONTENT_SCRIPT_QUALITY_RULE_VERSION, advanceAutomatedContentProduction, collectProductionAssets, generateDirectorScriptContracts, productIdentity, resolveEnterpriseAssetLocation, resumeContentProjectForTaskControl } from '../digitalEmployees/contentProduction.js';
 import { contentProjectLineageFields } from '../digitalEmployees/contentProjectLineage.js';
 import { buildContentBatchPlan, contentPlanCoverage, enterpriseAssetStableId, type ContentBatchPlanDraft } from '../digitalEmployees/contentBatchPlan.js';
 import { enrichPackageWithContentSignals } from '../digitalEmployees/contentPlanRecommendation.js';
@@ -346,6 +348,203 @@ async function recommendPackageWithTenantEvidence(
     ? fillMatrixVideos({ ...pack, matrixPlan }, config.videoDefaults || {}, goal.endsAt)
     : pack;
   return enrichPackageWithContentSignals({ pack: matrixBound, goal, config, videos: videos.items, benchmarks: benchmarks.items });
+}
+
+function publicPreviewUrl(value: unknown): string {
+  const candidate = String(value || '').trim().slice(0, 2_000);
+  return /^(?:https?:\/\/|\/api\/|\/media\/|\/covers\/|\/generated\/)/i.test(candidate) ? candidate : '';
+}
+
+function directorShotSummary(script: string): string[] {
+  return script.split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(line => /^(?:镜头功能|画面|台词|字幕)[：:]/.test(line))
+    .slice(0, 8)
+    .map(line => line.slice(0, 500));
+}
+
+function previewForBlockedPlan(input: {
+  plan: VideoCreationPlan;
+  generatedAt: string;
+  blockers: string[];
+  reference?: StoredRecord;
+}): VideoPreproductionPreview {
+  const analysis = jsonObject<Record<string, unknown>>(input.reference?.aiAnalysis, {});
+  const thumbnailUrl = publicPreviewUrl(input.reference?.thumbnailUrl || input.reference?.thumbnail);
+  const sourceUrl = publicPreviewUrl(input.reference?.sourceUrl);
+  const blockers = [...new Set(input.blockers.filter(Boolean))];
+  return {
+    version: 1,
+    status: 'blocked',
+    generatedAt: input.generatedAt,
+    benchmark: {
+      status: input.plan.referenceId ? input.reference ? 'ready' : 'missing' : input.plan.route === 'clone' ? 'missing' : 'not_applicable',
+      referenceId: input.plan.referenceId,
+      title: String(input.reference?.title || input.plan.planningEvidence?.referenceTitle || '').trim(),
+      account: String(input.plan.planningEvidence?.benchmarkAccount || analysis.sourceAccountName || analysis.author || '').trim(),
+      views: String(input.plan.planningEvidence?.referenceViews || input.reference?.views || '').trim(),
+      thumbnailUrl,
+      sourceUrl,
+      hook: input.plan.buyerProblem || input.plan.theme,
+      shotSummary: [],
+    },
+    materials: { status: 'blocked', items: [], blockers, pendingShootTaskIds: [] },
+    readiness: { canStart: false, blockers },
+    confidence: { onTimeRate: null, effectLevel: 'insufficient', reasons: ['制作条件尚未补齐，不展示虚构成功率'] },
+  };
+}
+
+async function generateWeeklyTaskPreviews(input: {
+  tenantId: string;
+  goal: GoalRecord;
+  plan: PlanRecord;
+  pack: WeeklyPackage;
+  config: DigitalEmployeeConfig;
+  planBody: Record<string, unknown>;
+}): Promise<WeeklyPackage> {
+  const goal = goalInput(input.goal);
+  const production = input.pack.tasks.find(task => task.templateId === 'production');
+  const plans = production?.videoPlans || [];
+  if (!production || !plans.length) throw new Error('周任务总纲中还没有内容任务');
+  const generatedAt = new Date().toISOString();
+  const versions = {
+    configVersion: Number(input.planBody.configVersion || 1),
+    policyVersion: String(input.planBody.policyVersion || 'unknown'),
+    factsVersion: String(jsonObject<Record<string, unknown>>(input.planBody.knowledgeBinding, {}).factsVersion || 'unknown'),
+  };
+  const [evidence, profile, references, shootingRows] = await Promise.all([
+    contentRoutingEvidence(input.tenantId, input.config),
+    readTenantEnterpriseProfile(input.tenantId),
+    store.list<StoredRecord>('trend_videos', { where: { tenantId: input.tenantId }, sort: '-updatedAt', perPage: 500 }),
+    store.list<StoredRecord>('studio_shooting_tasks', { where: { tenant_id: input.tenantId }, sort: '-created_at', perPage: 500 }).catch(() => ({ items: [] })),
+  ]);
+  const draft = buildContentBatchPlan({ goalId: input.goal.id, goal: { ...goal, videoPlans: plans }, config: input.config, evidence, versions });
+  if (draft.status === 'blocked') {
+    const blockedPlans = plans.map(plan => normalizeVideoPlan({
+      ...plan,
+      preproduction: previewForBlockedPlan({
+        plan,
+        generatedAt,
+        blockers: [...videoPlanErrors(plan), draft.blocker || '内容 Agent 未找到可执行素材组合'],
+        reference: references.items.find(item => item.id === plan.referenceId),
+      }),
+    }));
+    return {
+      ...input.pack,
+      detailGeneration: {
+        status: 'blocked', startedAt: generatedAt, generatedAt,
+        estimatedMinutes: Math.max(2, Math.ceil(plans.length / 2) * 2), usageCostCny: null,
+        readyCount: 0, blockedCount: blockedPlans.length, blockers: [draft.blocker].filter(Boolean),
+      },
+      tasks: input.pack.tasks.map(task => task.templateId === 'production' ? { ...task, videoPlans: blockedPlans } : task),
+    };
+  }
+
+  const assets = await collectProductionAssets(input.tenantId, profile);
+  const assetById = new Map(assets.map(asset => [asset.id, asset]));
+  const publishingRequired = input.pack.tasks.some(task => task.templateId === 'publishing');
+  const pendingShooting = shootingRows.items.map(row => ({ row, payload: jsonObject<Record<string, unknown>>(row.payload, {}) }))
+    .filter(item => !jsonObject<string[]>(item.payload.uploadedMaterialIds, []).length);
+  const budgetExceeded = Boolean(input.pack.directorPlan
+    && input.pack.directorPlan.productionSpent + plans.reduce((sum, plan) => sum + Number(plan.estimatedCost || 0), 0) > input.pack.directorPlan.productionBudget);
+
+  const preflight = draft.orders.map((order, index) => {
+    const plan = plans[index]!;
+    const selectedAssets = order.evidenceRefs
+      .filter(ref => ref.type === 'enterprise_material')
+      .map(ref => assetById.get(ref.id))
+      .filter((asset): asset is NonNullable<typeof asset> => Boolean(asset));
+    const normalizedNeedle = `${plan.productName} ${plan.theme}`.toLowerCase();
+    const shootTasks = pendingShooting.filter(item => {
+      const label = `${item.payload.productLabel || ''} ${item.payload.themeTitle || ''}`.trim().toLowerCase();
+      return Boolean(label && (normalizedNeedle.includes(label) || label.includes(plan.productName.toLowerCase())));
+    });
+    const blockers = [
+      ...videoPlanErrors(plan),
+      !selectedAssets.length && plan.presenter !== 'avatar' ? '素材组合为空，请先补充产品图片或视频' : '',
+      selectedAssets.some(asset => asset.authorization.status === 'unknown') ? '素材授权范围未确认' : '',
+      shootTasks.length ? `有 ${shootTasks.length} 个待拍任务尚未回填素材` : '',
+      budgetExceeded ? '本周预计制作成本超过生产预算' : '',
+      publishingRequired && !input.config.publishingTargets.some(target => target.accountId === order.accountId && target.platform === order.platform) ? '发布账号尚未连接或不在本周授权范围' : '',
+      plan.route === 'clone' && !references.items.some(item => item.id === plan.referenceId) ? '爆款参考不存在或已失效' : '',
+    ].filter(Boolean);
+    return { order, plan, selectedAssets, shootTasks, blockers: [...new Set(blockers)] };
+  });
+  const readyOrders = preflight.filter(item => !item.blockers.length).map(item => item.order);
+  const directedOrders = readyOrders.length
+    ? await generateDirectorScriptContracts({ tenantId: input.tenantId, config: input.config, goal, orders: readyOrders, now: generatedAt })
+    : [];
+  const directedById = new Map(directedOrders.map(order => [order.id, order]));
+  const nextPlans = preflight.map(item => {
+    const reference = references.items.find(row => row.id === item.plan.referenceId);
+    const analysis = jsonObject<Record<string, unknown>>(reference?.aiAnalysis, {});
+    const directed = directedById.get(item.order.id);
+    const script = directed?.scripts?.[item.plan.language] || Object.values(directed?.scripts || {})[0];
+    const materialItems: VideoPreproductionPreview['materials']['items'] = item.selectedAssets.map(asset => ({
+      id: asset.id,
+      name: asset.name,
+      type: asset.type,
+      previewUrl: publicPreviewUrl(asset.url),
+      status: asset.authorization.status === 'unknown' ? 'needs_authorization' : 'ready',
+    }));
+    for (const shooting of item.shootTasks) materialItems.push({
+      id: shooting.row.id,
+      name: String(shooting.payload.title || '待拍素材'),
+      type: 'video', previewUrl: '', status: 'pending_shoot',
+    });
+    const benchmarkStatus: VideoPreproductionPreview['benchmark']['status'] = item.plan.referenceId
+      ? reference ? 'ready' : 'missing'
+      : item.plan.route === 'clone' ? 'missing' : 'not_applicable';
+    const blockers = [...item.blockers];
+    if (!script && !blockers.length) blockers.push('编导 Agent 未返回可执行分镜，请重试本步骤');
+    const exactReference = benchmarkStatus === 'ready' && jsonObject<Record<string, unknown>>(analysis, {}).analysisMode === 'exact';
+    const canStart = blockers.length === 0 && Boolean(script);
+    const preview: VideoPreproductionPreview = {
+      version: 1,
+      status: canStart ? 'ready' : 'blocked',
+      generatedAt,
+      benchmark: {
+        status: benchmarkStatus,
+        referenceId: item.plan.referenceId,
+        title: String(reference?.title || item.plan.planningEvidence?.referenceTitle || '').trim(),
+        account: String(item.plan.planningEvidence?.benchmarkAccount || analysis.sourceAccountName || analysis.author || '').trim(),
+        views: String(item.plan.planningEvidence?.referenceViews || reference?.views || '').trim(),
+        thumbnailUrl: publicPreviewUrl(reference?.thumbnailUrl || reference?.thumbnail),
+        sourceUrl: publicPreviewUrl(reference?.sourceUrl),
+        hook: item.plan.buyerProblem || item.plan.theme,
+        shotSummary: script ? directorShotSummary(script.body) : [],
+      },
+      materials: {
+        status: item.blockers.some(blocker => /素材|待拍|授权/.test(blocker)) ? 'blocked' : 'ready',
+        items: materialItems,
+        blockers: blockers.filter(blocker => /素材|待拍|授权/.test(blocker)),
+        pendingShootTaskIds: item.shootTasks.map(shooting => shooting.row.id),
+      },
+      readiness: { canStart, blockers },
+      confidence: {
+        onTimeRate: null,
+        effectLevel: exactReference && item.selectedAssets.length ? 'medium' : item.selectedAssets.length ? 'low' : 'insufficient',
+        reasons: [
+          exactReference ? '已绑定可核验的全片精确分析' : '缺少可核验的历史效果样本',
+          item.selectedAssets.length ? `已锁定 ${item.selectedAssets.length} 项真实素材` : '素材证据不足',
+          '尚未发布，不把匹配度包装成爆款成功率',
+        ],
+      },
+      ...(script ? { directorScript: script } : {}),
+    };
+    return normalizeVideoPlan({ ...item.plan, directorStatus: canStart ? 'script_approved' : 'blocked', preproduction: preview });
+  });
+  const blocked = nextPlans.filter(plan => !plan.preproduction?.readiness.canStart);
+  const allBlockers = [...new Set(blocked.flatMap(plan => plan.preproduction?.readiness.blockers || []))];
+  return {
+    ...input.pack,
+    detailGeneration: {
+      status: blocked.length ? 'blocked' : 'ready', startedAt: generatedAt, generatedAt,
+      estimatedMinutes: Math.max(2, Math.ceil(plans.length / 2) * 2), usageCostCny: null,
+      readyCount: nextPlans.length - blocked.length, blockedCount: blocked.length, blockers: allBlockers,
+    },
+    tasks: input.pack.tasks.map(task => task.templateId === 'production' ? { ...task, videoPlans: nextPlans } : task),
+  };
 }
 
 async function prepareContentBatchPlan(input: { tenantId: string; goal: GoalRecord; run: RunRecord; task: TaskRecord; plan: PlanRecord | null; config: DigitalEmployeeConfig }) {
@@ -650,14 +849,16 @@ async function buildOverview(tenantId: string, requestedGoalId = '', requestedRa
     : operatingGoals.find(item => ['active', 'paused'].includes(item.status)) ?? operatingGoals[0] ?? null;
   const resolvedConfiguration = await resolveCurrentConfiguration(tenantId, configRecord);
   if (!goal) {
-    const [businessSnapshot, contentQueue] = await Promise.all([
+    const [businessSnapshot, contentQueue, executionRuntime] = await Promise.all([
       buildBusinessSnapshot(tenantId, requestedRange),
       buildContentQueueProjection({
         tenantId, runId: '', planBody: {}, tasks: [],
         publishingTargets: resolvedConfiguration?.config.publishingTargets || [],
       }).catch(() => ({ generatedAt: new Date().toISOString(), sourceStatus: 'unavailable' as const, sourceNote: '内容队列暂时无法读取，请刷新重试', items: [] })),
+      buildContentExecutionRuntime({ dataStore: store, tenantId })
+        .catch(() => unavailableContentExecutionRuntime()),
     ]);
-    return { config: resolvedConfiguration?.config || null, configuration: publicConfigurationMetadata(resolvedConfiguration), goals: [], goal: null, plan: null, run: null, tasks: [], contentQueue, events: [], approvals: [], handoffs: [], review: null, liveReview: null, agents: publicAgentStatuses([]), businessSnapshot };
+    return { config: resolvedConfiguration?.config || null, configuration: publicConfigurationMetadata(resolvedConfiguration), goals: [], goal: null, plan: null, run: null, tasks: [], contentQueue, executionRuntime, events: [], approvals: [], handoffs: [], review: null, liveReview: null, agents: publicAgentStatuses([]), businessSnapshot };
   }
   const [plan, run, businessSnapshot] = await Promise.all([
     first<PlanRecord>(COLLECTION.plans, { tenant_id: tenantId, goal_id: goal.id }),
@@ -677,7 +878,7 @@ async function buildOverview(tenantId: string, requestedGoalId = '', requestedRa
   const agents = publicAgentStatuses(normalizedTasks);
   const publicTasks = normalizedTasks.map(task => ({ ...task, business_refs: jsonObject(task.business_refs, []), depends_on: jsonObject(task.depends_on, []), output: jsonObject(task.output, {}) })) as WorkflowTask[];
   const planBody = plan ? jsonObject<Record<string, unknown>>(plan.plan, {}) : {};
-  const [deliveryData, contentQueue] = await Promise.all([
+  const [deliveryData, contentQueue, executionRuntime] = await Promise.all([
     buildDeliveryResources(tenantId, publicTasks, goal.title)
       .then(deliveries => ({ deliveries, deliveryNotice: '' }))
       .catch(() => ({ deliveries: undefined, deliveryNotice: '业务产物暂时无法读取，当前展示任务记录。请刷新重试。' })),
@@ -691,6 +892,8 @@ async function buildOverview(tenantId: string, requestedGoalId = '', requestedRa
       publishingTargets: resolvedConfiguration?.config.publishingTargets || [],
     })
       .catch(() => ({ generatedAt: new Date().toISOString(), sourceStatus: 'unavailable' as const, sourceNote: '内容队列暂时无法读取，请刷新重试', items: [] })),
+    buildContentExecutionRuntime({ dataStore: store, tenantId })
+      .catch(() => unavailableContentExecutionRuntime()),
   ]);
   return {
     config: resolvedConfiguration?.config || null,
@@ -721,6 +924,7 @@ async function buildOverview(tenantId: string, requestedGoalId = '', requestedRa
     tasks: normalizedTasks.map(task => ({ ...task, depends_on: jsonObject(task.depends_on, []), output: jsonObject(task.output, {}) })),
     ...deliveryData,
     contentQueue,
+    executionRuntime,
     events: events?.items.slice().reverse().map(event => ({ ...event, payload: jsonObject(event.payload, {}) })) || [],
     approvals: approvals?.items.map(approval => {
       const approvalTask = taskItems.find(task => task.id === approval.task_id);
@@ -2343,6 +2547,92 @@ digitalEmployeesRouter.post('/goals/:goalId/package/recommend', async (req, res)
   res.json(proposal);
 });
 
+digitalEmployeesRouter.post('/goals/:goalId/package/details', async (req, res) => {
+  const { tenantId, userId } = res.locals as AuthLocals;
+  await withLocalQueue(goalApprovalQueues, `${tenantId}:package-details:${req.params.goalId}`, async () => {
+    const goal = await tenantRecord<GoalRecord>(COLLECTION.goals, req.params.goalId, tenantId);
+    if (!goal || goal.status !== 'draft') {
+      res.status(409).json({ error: 'draft_required', message: '只有待确认的周任务总纲可以生成详细预览。' });
+      return;
+    }
+    const run = await first<RunRecord>(COLLECTION.runs, { tenant_id: tenantId, goal_id: goal.id });
+    if (run) {
+      res.status(409).json({ error: 'package_locked', message: '计划已经开始执行，不能重新生成任务预览。' });
+      return;
+    }
+    const plan = await first<PlanRecord>(COLLECTION.plans, { tenant_id: tenantId, goal_id: goal.id });
+    if (!plan) { res.status(404).json({ error: 'plan_not_found' }); return; }
+    const planBody = jsonObject<Record<string, unknown>>(plan.plan, {});
+    const pack = planBody.businessPackage as WeeklyPackage | undefined;
+    if (!pack) { res.status(409).json({ error: 'weekly_package_missing', message: '请先生成免费的周任务总纲。' }); return; }
+    const config = configSnapshotForPlan(plan, publicConfig(await configForTenant(tenantId))!);
+    if (config.smartOperationsEnabled === false) {
+      res.status(409).json({ error: 'smart_operations_disabled', message: '智能经营已关闭；开启后才能生成新的 Agent 任务详情。' });
+      return;
+    }
+    const currentPlans = pack.tasks.find(task => task.templateId === 'production')?.videoPlans || [];
+    if (pack.detailGeneration?.status === 'ready' && currentPlans.length && currentPlans.every(item => item.preproduction?.readiness.canStart)) {
+      res.json(await buildOverview(tenantId, goal.id));
+      return;
+    }
+    const lease = await acquireDurableOperationLease({
+      dataStore: store, tenantId, scope: 'weekly_package_details', subjectId: goal.id,
+      ownerId: `weekly-details-${randomUUID()}`, leaseDurationMs: 30 * 60_000,
+    });
+    if (!lease) {
+      res.status(202).json(await buildOverview(tenantId, goal.id));
+      return;
+    }
+    try {
+      const startedAt = new Date().toISOString();
+      const generatingPack: WeeklyPackage = {
+        ...pack,
+        detailGeneration: {
+          status: 'generating', startedAt, generatedAt: '',
+          estimatedMinutes: Math.max(2, Math.ceil(currentPlans.length / 2) * 2), usageCostCny: null,
+          readyCount: 0, blockedCount: 0, blockers: [],
+        },
+      };
+      const generatingPlan = { ...planBody, businessPackage: generatingPack };
+      if (!await store.update(COLLECTION.plans, plan.id, { plan: generatingPlan })) {
+        res.status(503).json({ error: 'weekly_plan_storage_unavailable' });
+        return;
+      }
+      try {
+        const detailed = await generateWeeklyTaskPreviews({ tenantId, goal, plan, pack: generatingPack, config, planBody: generatingPlan });
+        await assertDurableOperationLease({ dataStore: store, lease, minimumRemainingMs: 1_000 });
+        const compiled = compilePackage(detailed, goalInput(goal), config);
+        if (!await store.update(COLLECTION.plans, plan.id, { plan: { ...generatingPlan, ...compiled } })) {
+          throw new Error('周任务详情保存失败，请重试');
+        }
+        await appendAudit({
+          tenantId, userId, action: 'weekly_package.details_generated', targetType: 'weekly_plan', targetId: plan.id,
+          metadata: {
+            revision: detailed.revision,
+            readyCount: detailed.detailGeneration?.readyCount || 0,
+            blockedCount: detailed.detailGeneration?.blockedCount || 0,
+            usageCostCny: detailed.detailGeneration?.usageCostCny ?? null,
+          },
+        });
+        res.json(await buildOverview(tenantId, goal.id));
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : '任务详情生成失败';
+        const blockedPack: WeeklyPackage = {
+          ...generatingPack,
+          detailGeneration: {
+            ...generatingPack.detailGeneration!, status: 'blocked', generatedAt: new Date().toISOString(),
+            readyCount: 0, blockedCount: currentPlans.length, blockers: [reason.slice(0, 500)],
+          },
+        };
+        await store.update(COLLECTION.plans, plan.id, { plan: { ...generatingPlan, businessPackage: blockedPack } }).catch(() => false);
+        res.status(503).json({ error: 'weekly_package_detail_generation_failed', message: `${reason}。已保留任务总纲，可修复后重试。` });
+      }
+    } finally {
+      await releaseDurableOperationLease({ dataStore: store, lease }).catch(() => undefined);
+    }
+  });
+});
+
 digitalEmployeesRouter.put('/goals/:goalId/package', async (req, res) => {
   const { tenantId, userId } = res.locals as AuthLocals;
   await withLocalQueue(goalApprovalQueues, `${tenantId}:activate`, async () => {
@@ -2372,6 +2662,14 @@ digitalEmployeesRouter.put('/goals/:goalId/package', async (req, res) => {
       const project = await tenantRecord<StoredRecord & { tenant_id: string }>('studio_projects', id, tenantId);
       if (!project || !studioProjectRendered(project)) { res.status(400).json({ error: 'invalid_source_project', message: '已有作品不可用，请重新选择。' }); return; }
     }
+    // A matrix, budget or content edit makes the previous Director/Content
+    // Agent evidence stale. Keep the free outline, but require step 2 to run
+    // again instead of showing or executing an obsolete preview.
+    delete pack.detailGeneration;
+    for (const task of pack.tasks) {
+      if (task.templateId !== 'production') continue;
+      for (const videoPlan of task.videoPlans || []) delete videoPlan.preproduction;
+    }
     pack.revision = (old?.revision || 0) + 1;
     const compiled = compilePackage(pack, goalInput(goal), config);
     if (!await store.update(COLLECTION.plans, plan.id, { plan: { ...body, ...compiled } })) { res.status(503).json({ error: 'weekly_plan_storage_unavailable' }); return; }
@@ -2386,6 +2684,10 @@ digitalEmployeesRouter.post('/goals', async (req, res) => {
   const resolvedConfiguration = await resolveCurrentConfiguration(tenantId, configRecord);
   const config = resolvedConfiguration?.config || null;
   if (!config || !resolvedConfiguration) { res.status(409).json({ error: 'onboarding_required' }); return; }
+  if (config.smartOperationsEnabled === false) {
+    res.status(409).json({ error: 'smart_operations_disabled', message: '智能经营已关闭；历史任务仍可查看，开启后才能生成新的周任务总纲。' });
+    return;
+  }
   const goal = normalizeWeeklyGoal(req.body || {}, config);
   const missing = validateWeeklyGoal(goal);
   if (missing.length) { res.status(400).json({ error: 'goal_invalid', missing }); return; }
@@ -2526,6 +2828,10 @@ export async function approveGoalForReview(tenantId: string, userId: string, goa
   if (pack) {
     if (packageRevision !== pack.revision) { return { status: 409, body: { error: 'package_changed', message: '请查看并确认最新版本的经营包。' } }; }
     if (pack.tasks.some(t => t.ownerId && !members.some(m => m.id === t.ownerId))) { return { status: 409, body: { error: 'owner_unavailable', message: '计划中的负责人已不可用，请重新分配任务。' } }; }
+    const detailedPlans = pack.tasks.find(task => task.templateId === 'production')?.videoPlans || [];
+    if (pack.detailGeneration && (pack.detailGeneration.status !== 'ready' || detailedPlans.some(item => !item.preproduction?.readiness.canStart))) {
+      return { status: 409, body: { error: 'package_details_blocked', message: '任务预分析仍有卡点，请先补齐素材、授权、预算或参考后重新生成预览。' } };
+    }
     const issues = validatePackage(pack, goalInput(goal), configSnapshotForPlan(existingPlan, currentConfig));
     if (issues.length) { return { status: 400, body: { error: 'package_invalid', message: issues.join('；') } }; }
   }
@@ -3467,6 +3773,26 @@ digitalEmployeesRouter.post('/tasks/:taskId/director-decision', async (req, res)
 digitalEmployeesRouter.post('/tasks/:taskId/retry', async (req, res) => handleTaskControl(req, res, 'retry'));
 digitalEmployeesRouter.post('/tasks/:taskId/skip', async (req, res) => handleTaskControl(req, res, 'skip'));
 digitalEmployeesRouter.post('/tasks/:taskId/complete', async (req, res) => handleTaskControl(req, res, 'manual_complete'));
+
+digitalEmployeesRouter.post('/execution-jobs/:jobId/:action', async (req, res) => {
+  const { tenantId } = res.locals as AuthLocals;
+  const action = String(req.params.action || '') as ContentExecutionControlAction;
+  if (!['pause', 'cancel', 'resume', 'retry'].includes(action)) {
+    res.status(400).json({ error: 'content_execution_control_invalid' });
+    return;
+  }
+  try {
+    await controlContentExecutionJob({
+      dataStore: store, tenantId, jobId: String(req.params.jobId || ''), action,
+    });
+    res.json(await buildOverview(tenantId));
+  } catch (error) {
+    const code = error instanceof Error ? error.message : 'content_execution_job_control_failed';
+    const status = code === 'content_execution_job_not_found' ? 404
+      : code.includes('not_') || code.endsWith('_invalid') ? 409 : 500;
+    res.status(status).json({ error: code });
+  }
+});
 
 async function canonicalEvidenceRef(tenantId: string, raw: Record<string, unknown>): Promise<Record<string, unknown> | null> {
   const type = String(raw.type || '').trim();

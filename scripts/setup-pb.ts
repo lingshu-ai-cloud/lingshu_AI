@@ -30,6 +30,59 @@ type CollectionSpec = { name: string; fields: Field[]; indexes?: string[] };
 /** Legacy repair definitions, derived from what the route handlers write/read. */
 const COLLECTIONS: CollectionSpec[] = [
   {
+    name: 'content_execution_jobs',
+    fields: [
+      { name: 'tenant_id', type: 'text', required: true }, { name: 'job_key', type: 'text', required: true },
+      { name: 'task_id', type: 'text', required: true }, { name: 'run_id', type: 'text', required: true },
+      { name: 'user_id', type: 'text', required: true }, { name: 'account_id', type: 'text', required: true },
+      { name: 'task_type', type: 'text', required: true }, { name: 'status', type: 'text', required: true },
+      { name: 'attempt', type: 'number', required: true, onlyInt: true, min: 0 },
+      { name: 'reconciliation_attempt', type: 'number', required: true, onlyInt: true, min: 0 },
+      { name: 'next_attempt_at', type: 'text' }, { name: 'worker_id', type: 'text' },
+      { name: 'lease_expires_at', type: 'text' }, { name: 'retry_class', type: 'text' },
+      { name: 'last_error', type: 'text' }, { name: 'provider_state', type: 'text', required: true },
+      { name: 'provider_receipts', type: 'json', required: true, maxSize: 2097152 },
+      { name: 'created_at', type: 'text', required: true }, { name: 'updated_at', type: 'text', required: true },
+      { name: 'last_started_at', type: 'text' }, { name: 'completed_at', type: 'text' },
+    ],
+    indexes: [
+      'CREATE UNIQUE INDEX idx_content_execution_job_key ON content_execution_jobs (tenant_id, job_key)',
+      'CREATE UNIQUE INDEX idx_content_execution_task_run ON content_execution_jobs (tenant_id, task_id, run_id)',
+      'CREATE INDEX idx_content_execution_claim ON content_execution_jobs (status, next_attempt_at, created_at)',
+    ],
+  },
+  {
+    name: 'content_execution_limits',
+    fields: [
+      { name: 'tenant_id', type: 'text', required: true }, { name: 'limit_scope', type: 'text', required: true },
+      { name: 'scope_key', type: 'text', required: true },
+      { name: 'max_running', type: 'number', required: true, onlyInt: true, min: 1, max: 100 },
+      { name: 'updated_by', type: 'text', required: true }, { name: 'created_at', type: 'text', required: true },
+      { name: 'updated_at', type: 'text', required: true },
+    ],
+    indexes: ['CREATE UNIQUE INDEX idx_content_execution_limit_scope ON content_execution_limits (tenant_id, limit_scope, scope_key)'],
+  },
+  {
+    name: 'studio_social_presenter_jobs',
+    fields: [
+      { name: 'tenant_id', type: 'text', required: true }, { name: 'task_id', type: 'text', required: true },
+      { name: 'shot_id', type: 'text', required: true }, { name: 'request_id', type: 'text', required: true },
+      { name: 'status', type: 'text', required: true }, { name: 'provider', type: 'text', required: true },
+      { name: 'provider_task_id', type: 'text' }, { name: 'presenter_asset_id', type: 'text', required: true },
+      { name: 'authorization_ref', type: 'text', required: true }, { name: 'consent_ref', type: 'text', required: true },
+      { name: 'social_account_id', type: 'text' }, { name: 'presenter_profile_id', type: 'text' },
+      { name: 'presenter_profile_version', type: 'text' }, { name: 'presenter_consistency_key', type: 'text' },
+      { name: 'visual_control', type: 'json', required: true, maxSize: 262144 },
+      { name: 'material_id', type: 'text' }, { name: 'object_key', type: 'text' },
+      { name: 'content_sha256', type: 'text' }, { name: 'error', type: 'text' },
+      { name: 'created_at', type: 'text', required: true }, { name: 'updated_at', type: 'text', required: true },
+    ],
+    indexes: [
+      'CREATE UNIQUE INDEX idx_social_presenter_job_request ON studio_social_presenter_jobs (tenant_id, request_id)',
+      'CREATE INDEX idx_social_presenter_job_status ON studio_social_presenter_jobs (tenant_id, status, updated_at)',
+    ],
+  },
+  {
     name: 'social_operating_constraints',
     fields: [
       { name: 'tenant_id', type: 'text', required: true }, { name: 'program_id', type: 'text', required: true },

@@ -10,6 +10,8 @@ const EMPTY: AgentNotificationList = { items: [], unreadCount: 0, latestAt: null
 const TYPE_LABEL: Record<AgentNotification['type'], string> = {
   scope_changed: '发现范围调整', weekly_package_adjusted: '周任务调整',
   critical_business_change: '关键经营信息变化', authorization_required: '需要授权',
+  content_task_blocked: '内容任务需要处理',
+  content_task_review_ready: '内容等待验收',
 };
 
 function relativeTime(value: string): string {

@@ -207,8 +207,9 @@ export default function SocialContentHistoryHome({ onRequestCreate }: { onReques
                     <span className="line-clamp-2 min-h-10 text-sm font-black leading-5 text-slate-950">{project.title}</span>
                     <span className="mt-3 flex items-center justify-between gap-3 text-[10px]">
                       <span className={`rounded-full px-2 py-1 font-black ${previewUrl ? 'bg-emerald-50 text-emerald-700' : 'bg-blue-50 text-blue-700'}`}>{statusLabel(project, previewUrl)}</span>
-                      <span className="flex items-center gap-1 text-slate-400"><Clock3 size={11} />{dateLabel(project.updatedAt)}</span>
+                      <span className="flex items-center gap-1 font-black text-emerald-700">进入制作 →</span>
                     </span>
+                    <span className="mt-2 flex items-center gap-1 text-[9px] text-slate-400"><Clock3 size={10} />{dateLabel(project.updatedAt)}</span>
                   </span>
                 </button>
               );

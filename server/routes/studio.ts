@@ -141,8 +141,8 @@ import { signAssetUrl, signPathAssetUrl, sharedAssetRelativePath, tenantAssetDir
 import { requireAdminUser } from '../lib/demoAccounts.js';
 import { listPublishRecords, recommendPublish, type PublishPlatform } from '../lib/publishHistory.js';
 import { assessTransformation, buildPersonExecutionStrategy, commercialDigitalHumanGate, type PersonExecutionStrategyInput, type TransformationAssessmentInput } from '../lib/creativeTransformation.js';
-import { objectStorageEnabled, objectStorageDelete, objectStorageDownload, objectStorageGetObject, objectStorageHead, objectStorageSignedGetUrl, objectStorageUpload } from '../storage/objectStorage.js';
-import { materialAssetContentType, materialAssetObjectKey, materialAssetTypeAllowed, sharedObjectKey, tenantPrivateObjectKey } from '../storage/materialAssets.js';
+import { objectStorageEnabled, objectStorageDelete, objectStorageDownload, objectStorageEnsureFile, objectStorageGetObject, objectStorageHead, objectStorageSignedGetUrl, objectStorageUpload } from '../storage/objectStorage.js';
+import { materialAssetContentType, materialAssetObjectKey, materialAssetTypeAllowed, materialContentAddressedObjectKey, materialPosterObjectKey, sharedObjectKey, tenantPrivateObjectKey } from '../storage/materialAssets.js';
 import { isSyntheticMaterial } from '../lib/materialTruthfulness.js';
 import { untrustedPromptData } from '../lib/untrustedPromptData.js';
 import { bindSocialProjectSpec, socialProjectBelongs, socialProjectTaskId } from '../starter198/socialProjectScope.js';
@@ -6075,8 +6075,9 @@ function isMockMaterial(m: Material): boolean {
     || isSyntheticMaterial(m as unknown as Record<string, unknown>);
 }
 
-// PocketBase materials.videoFile is 100 MiB. Reject at the HTTP boundary first
-// so users never finish a larger upload only to have persistence fail later.
+// Keep an application-level safety boundary while uploads pass through this
+// service. Durable media bytes are written to object storage, not database
+// file fields.
 const MAX_MATERIAL_UPLOAD_BYTES = 100 * 1024 * 1024;
 
 function materialUploadFileName(type: Material['type'], mimeType: string): string {
@@ -6100,7 +6101,6 @@ async function createTransientMaterialPoster(input: {
     }
     fs.rmSync(jpgPath, { force: true });
   }
-  // PocketBase's historical schema requires posterFile for every material.
   // Audio and unreadable/unsupported previews get a tiny neutral placeholder;
   // the original media still remains the sole playback authority.
   const pngPath = path.join(input.directory, 'poster.png');
@@ -6136,6 +6136,23 @@ async function saveMaterialUploadToDatabase(input: {
     type: input.type,
     duration: input.duration,
   });
+
+  if (!objectStorageEnabled()) throw new Error('对象存储未配置，素材文件不会写入数据库文件字段');
+  const objectKey = materialContentAddressedObjectKey(input.tenantId, input.sha256, input.mediaName);
+  const storedMedia = await objectStorageEnsureFile({
+    key: objectKey,
+    filePath: input.mediaPath,
+    contentType: input.mimeType,
+    contentLength: input.sizeBytes,
+  });
+  const posterStat = fs.statSync(poster.path);
+  const posterKey = materialPosterObjectKey(input.tenantId, input.sha256, poster.name);
+  const storedPoster = await objectStorageEnsureFile({
+    key: posterKey,
+    filePath: poster.path,
+    contentType: poster.contentType,
+    contentLength: posterStat.size,
+  });
   const material = await upsertTenantUploadCloudMaterial({
     tenantId: input.tenantId,
     title: input.name || input.mediaName,
@@ -6160,15 +6177,16 @@ async function saveMaterialUploadToDatabase(input: {
       receivedAt: new Date().toISOString(),
     },
     sourceEntry: 'studio_workspace',
-    media: { name: input.mediaName, path: input.mediaPath, contentType: input.mimeType },
-    poster,
+    media: { key: objectKey, etag: storedMedia.head.etag, contentType: input.mimeType },
+    poster: { key: posterKey, etag: storedPoster.head.etag, contentType: poster.contentType },
   });
   return material as unknown as Material;
 }
 
 // POST /studio/materials/file
-// Streams a browser-selected file to an OS temp directory, attaches it to the
-// PocketBase materials record, then removes the transient bytes.
+// Streams a browser-selected file to an OS temp directory, persists the bytes
+// in object storage, writes metadata to the selected data backend, then removes
+// the transient local copy.
 studioRouter.post('/materials/file', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   const name = String(req.query.name || '').trim();

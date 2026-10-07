@@ -1,3 +1,9 @@
+import { createHash } from 'node:crypto';
+import {
+  currentContentProviderReceipt,
+  recordCurrentContentProviderReceipt,
+} from '../contentExecution/context.js';
+
 export interface ReferenceImage {
   mimeType: string;
   base64: string;
@@ -61,24 +67,49 @@ async function generateQwenImage(input: {
   const apiKey = (process.env.DASHSCOPE_API_KEY || '').trim();
   if (!apiKey) throw new Error('DASHSCOPE_API_KEY is not configured');
   const model = (process.env.QWEN_IMAGE_MODEL || 'qwen-image-3.0').trim();
+  const requestId = createHash('sha256').update(`${model}\0${input.ratio}\0${input.prompt}`).digest('hex');
+  const prior = currentContentProviderReceipt({ provider: 'qwen_image', requestId });
+  if (prior && ['submitting', 'unknown'].includes(prior.state)) {
+    throw new Error('provider_submission_unknown:qwen_image:requires_manual_reconciliation');
+  }
   // Qwen Image accepts at most three ordered reference images.
   const refs = (input.references || []).slice(0, 3);
-  const response = await fetch(qwenImageEndpoint(), {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model, prompt: input.prompt, ...(refs.length ? { image: refs.map(ref => `data:${normalizeMime(ref.mimeType)};base64,${ref.base64}`) } : {}), n: 1, size: qwenSizeFor(input.ratio) }),
-    signal: AbortSignal.timeout(90_000),
-  });
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    const message = `Qwen Image ${response.status}: ${String(payload?.message || payload?.error?.message || response.statusText).slice(0, 500)}`;
-    if ([400, 401, 403, 404, 422].includes(response.status)) throw new ImageProviderRejectedError(response.status, message);
-    throw new Error(message);
+  let url = String(prior?.metadata.outputUrl || '');
+  if (!/^https:\/\//i.test(url)) {
+    await recordCurrentContentProviderReceipt({
+      provider: 'qwen_image', requestId, state: 'submitting', metadata: { model },
+    });
+    let response: Response;
+    try {
+      response = await fetch(qwenImageEndpoint(), {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model, prompt: input.prompt, ...(refs.length ? { image: refs.map(ref => `data:${normalizeMime(ref.mimeType)};base64,${ref.base64}`) } : {}), n: 1, size: qwenSizeFor(input.ratio) }),
+        signal: AbortSignal.timeout(90_000),
+      });
+    } catch (error) {
+      await recordCurrentContentProviderReceipt({ provider: 'qwen_image', requestId, state: 'unknown', metadata: { model } });
+      throw error;
+    }
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      await recordCurrentContentProviderReceipt({ provider: 'qwen_image', requestId, state: 'failed', metadata: { model, statusCode: response.status } });
+      const message = `Qwen Image ${response.status}: ${String(payload?.message || payload?.error?.message || response.statusText).slice(0, 500)}`;
+      if ([400, 401, 403, 404, 422].includes(response.status)) throw new ImageProviderRejectedError(response.status, message);
+      throw new Error(message);
+    }
+    url = qwenImageUrl(payload);
+    await recordCurrentContentProviderReceipt({
+      provider: 'qwen_image', requestId, state: 'accepted', metadata: { model, outputUrl: url },
+    });
   }
-  const url = qwenImageUrl(payload);
   const image = await fetch(url, { signal: AbortSignal.timeout(90_000) });
   if (!image.ok) throw new Error(`Qwen Image 产物下载失败：HTTP ${image.status}`);
-  return { bytes: Buffer.from(await image.arrayBuffer()), mimeType: normalizeMime(image.headers.get('content-type') || 'image/png'), source: 'qwen', model };
+  const result = { bytes: Buffer.from(await image.arrayBuffer()), mimeType: normalizeMime(image.headers.get('content-type') || 'image/png'), source: 'qwen' as const, model };
+  await recordCurrentContentProviderReceipt({
+    provider: 'qwen_image', requestId, state: 'completed', metadata: { model, outputUrl: url, mimeType: result.mimeType },
+  });
+  return result;
 }
 
 export async function generatePosterImage(input: {

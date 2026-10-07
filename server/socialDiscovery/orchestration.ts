@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { store } from '../storage/index.js';
-import { evaluateSocialCandidateEvidence } from '../../shared/socialInspirationStrategy.js';
-import type { SocialCandidateEvidence, SocialDiscoveryPath, SocialProductionGapTask } from '../../shared/contracts/socialContentWorkflow.js';
+import { evaluateSocialCandidateEvidence, scoreSocialDiscoveryCandidate } from '../../shared/socialInspirationStrategy.js';
+import type { SocialAudienceRole, SocialCandidateEvidence, SocialDiscoveryPath, SocialProductionGapTask } from '../../shared/contracts/socialContentWorkflow.js';
 import { assessAccountRelativeMomentum, buildCandidateG1, type CandidateG1, type PerformanceSnapshot, type VersionedCandidateEvidence } from './qualityOrchestration.js';
 
 export const CANDIDATE_EVIDENCE_COLLECTION = 'social_candidate_evidence';
@@ -26,6 +26,10 @@ export interface CandidateEvidenceInput {
   limitations?: string[];
   evidenceRefs?: string[];
   novelty?: number | null;
+  platform?: string;
+  keywordTier?: 'broad' | 'medium' | 'evidence' | 'account' | 'unknown';
+  audienceRole?: SocialAudienceRole;
+  sourceText?: string;
   g1: Parameters<typeof buildCandidateG1>[0];
   now?: Date;
 }
@@ -58,7 +62,25 @@ export async function persistCandidateEvidence(input: CandidateEvidenceInput): P
     evidenceRefs: input.evidenceRefs,
     novelty: input.novelty,
   });
-  const evidence: SocialCandidateEvidence = { ...base, momentum: { ...base.momentum, level: momentum.level, reasons: momentum.reasons } };
+  const scoredEvidence = { ...base, momentum: { ...base.momentum, level: momentum.level, reasons: momentum.reasons } };
+  const { businessModel, ...qualityScore } = scoreSocialDiscoveryCandidate({
+    evidence: scoredEvidence,
+    platform: input.platform,
+    keywordTier: input.keywordTier,
+    audienceRole: input.audienceRole,
+    sourceText: input.sourceText,
+    hasSource: Boolean(input.g1.sourceUrl && input.g1.sourceUrl !== 'unknown'),
+    now: input.now,
+  });
+  const evidence: SocialCandidateEvidence = {
+    ...scoredEvidence,
+    qualityScore,
+    classification: {
+      businessModel,
+      platform: input.platform || 'unknown',
+      keywordTier: input.keywordTier ?? 'unknown',
+    },
+  };
   const g1 = buildCandidateG1(input.g1);
   const version = (latest?.version ?? 0) + 1;
   const createdAt = (input.now ?? new Date()).toISOString();

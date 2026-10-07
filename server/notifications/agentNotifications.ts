@@ -182,7 +182,10 @@ export type AgentNotificationDomainEvent = {
   occurredAt: string;
 };
 
-const DOMAIN_NOTIFICATION_TYPE: Record<AgentNotificationDomainEvent['kind'], AgentNotificationType> = {
+const DOMAIN_NOTIFICATION_TYPE: Record<
+  AgentNotificationDomainEvent['kind'],
+  Extract<AgentNotificationType, 'scope_changed' | 'weekly_package_adjusted' | 'critical_business_change' | 'authorization_required'>
+> = {
   'scope.changed': 'scope_changed',
   'weekly_package.adjusted': 'weekly_package_adjusted',
   'business_information.changed': 'critical_business_change',

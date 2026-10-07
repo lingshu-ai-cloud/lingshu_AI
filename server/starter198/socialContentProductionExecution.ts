@@ -1108,4 +1108,3 @@ export async function runSocialContentAutoProduction(input: {
     }
   });
 }
-export const activeProductions = new Map<string, { runId: string; promise: Promise<void> }>();

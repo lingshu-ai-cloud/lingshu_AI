@@ -37,7 +37,15 @@ export async function runCandidateEvidenceWorker(
       }
     }
     try {
-      result.accepted.push(await persist(item));
+      const persisted = await persist(item);
+      const decision = persisted.evidence.qualityScore?.decision;
+      if (decision === undefined || decision === 'accepted') result.accepted.push(persisted);
+      else result.suggestions.push({
+        candidateId: item.candidateId,
+        reasons: persisted.evidence.qualityScore?.blockers.length
+          ? persisted.evidence.qualityScore.blockers
+          : persisted.evidence.qualityScore?.reasons ?? ['候选评分未达到自动入选阈值'],
+      });
     } catch (cause) {
       result.failed.push({ candidateId: item.candidateId, error: cause instanceof Error ? cause.message : 'candidate_evidence_failed' });
     }

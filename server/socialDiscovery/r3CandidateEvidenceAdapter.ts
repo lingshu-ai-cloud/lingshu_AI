@@ -1,7 +1,7 @@
 import type { DataStore } from '../storage/datastore.js';
 import { store } from '../storage/index.js';
 import type { CrawlVideosResult } from '../routes/videos.js';
-import type { SocialDiscoveryMode, SocialDiscoveryPath } from '../../shared/contracts/socialContentWorkflow.js';
+import type { SocialAudienceRole, SocialDiscoveryMode, SocialDiscoveryPath } from '../../shared/contracts/socialContentWorkflow.js';
 import type { CandidateEvidenceWorkItem } from './candidateEvidenceWorker.js';
 import type { InnovationEvidence } from './qualityOrchestration.js';
 
@@ -14,6 +14,9 @@ export interface R3CandidateEvidenceAdapterInput {
   queryRef: string;
   result: CrawlVideosResult;
   observedAt: string;
+  platform?: string;
+  keywordTier?: 'broad' | 'medium' | 'evidence' | 'account' | 'unknown';
+  audienceRole?: SocialAudienceRole;
 }
 
 /**
@@ -122,6 +125,11 @@ function workItem(input: R3CandidateEvidenceAdapterInput, record: Record<string,
     ],
     evidenceRefs,
     novelty: finite(analysis.novelty),
+    platform: input.platform || String(record.platform || input.result.platform || 'unknown'),
+    keywordTier: input.keywordTier ?? (input.mode === 'account' ? 'account' : 'unknown'),
+    audienceRole: input.audienceRole,
+    sourceText: [record.title, analysis.caption, analysis.author, gemini.summary, input.queryRef]
+      .map(value => String(value || '').trim()).filter(Boolean).join(' '),
     innovationEvidence: innovationEvidence(analysis.innovationEvidence),
     g1: {
       runId: input.runId,

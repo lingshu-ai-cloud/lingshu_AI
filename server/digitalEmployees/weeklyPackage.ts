@@ -132,10 +132,26 @@ export function normalizePackage(raw: WeeklyPackage): WeeklyPackage {
     else currentTasks.push(migrated);
   }
   const a = raw.authorization;
+  const detail = raw.detailGeneration;
   return {
     ...(raw.directorPlan !== undefined ? { directorPlan: normalizeDirectorPlan(raw.directorPlan) } : {}),
     ...(raw.matrixPlan !== undefined ? { matrixPlan: normalizeMatrixPlan(raw.matrixPlan) } : {}),
     ...(Array.isArray(raw.reviewTodos) ? { reviewTodos: raw.reviewTodos.slice(0, 50).map(t => normalizeTodo(t)) } : {}),
+    ...(detail && ['generating', 'ready', 'blocked'].includes(String(detail.status)) ? { detailGeneration: {
+      status: detail.status,
+      startedAt: clean(detail.startedAt, 80),
+      generatedAt: clean(detail.generatedAt, 80),
+      estimatedMinutes: Math.max(1, Math.min(120, Math.floor(Number(detail.estimatedMinutes) || 1))),
+      usageCostCny: detail.usageCostCny !== null
+        && detail.usageCostCny !== undefined
+        && Number.isFinite(Number(detail.usageCostCny))
+        && Number(detail.usageCostCny) >= 0
+        ? Math.round(Number(detail.usageCostCny) * 10_000) / 10_000
+        : null,
+      readyCount: Math.max(0, Math.min(30, Math.floor(Number(detail.readyCount) || 0))),
+      blockedCount: Math.max(0, Math.min(30, Math.floor(Number(detail.blockedCount) || 0))),
+      blockers: Array.isArray(detail.blockers) ? [...new Set(detail.blockers.map(item => clean(item, 500)).filter(Boolean))].slice(0, 30) : [],
+    } } : {}),
     revision: Number.isInteger(raw.revision) ? raw.revision : 0,
     maturity: ['starting', 'growing', 'established'].includes(raw.maturity) ? raw.maturity : 'growing',
     operatingAssessment: normalizeAssessment(raw.operatingAssessment),

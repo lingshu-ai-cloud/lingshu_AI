@@ -3,6 +3,8 @@ export const AGENT_NOTIFICATION_TYPES = [
   'weekly_package_adjusted',
   'critical_business_change',
   'authorization_required',
+  'content_task_blocked',
+  'content_task_review_ready',
 ] as const;
 
 export type AgentNotificationType = (typeof AGENT_NOTIFICATION_TYPES)[number];
@@ -35,4 +37,3 @@ export interface AgentNotificationList {
   unreadCount: number;
   latestAt: string | null;
 }
-

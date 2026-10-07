@@ -1,5 +1,5 @@
 import type { DataStore, ListQuery, Record_ } from '../storage/datastore.js';
-import { store } from '../storage/index.js';
+import { dataBackend, store } from '../storage/index.js';
 import { adminFetch, pbListStrict } from '../storage/pb.js';
 
 function pbValue(value: string | number | boolean): string {
@@ -87,7 +87,7 @@ const strictPocketBaseWorkerStore: DataStore = {
  * production because it can split leases and artifacts across two stores.
  */
 export function starterWorkerDataStore(dataStore: DataStore, env: NodeJS.ProcessEnv = process.env): DataStore {
-  return env.NODE_ENV === 'production' && dataStore === store
+  return env.NODE_ENV === 'production' && dataStore === store && dataBackend === 'pocketbase'
     ? strictPocketBaseWorkerStore
     : dataStore;
 }

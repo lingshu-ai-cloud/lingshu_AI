@@ -30,6 +30,8 @@ import { VideoCard, VideoListItem } from './InspirationVideoCards';
 import { showActionFeedback, showActionSuccess } from '../lib/actionFeedback';
 import { resolveInspirationPlaybackUrl } from '../lib/inspirationVideoPlayback';
 import type { AccountSpecialRecommendation, ContentFormat, FirstTenSecondInsight, FrameMaterialMatch, GeminiVideoAnalysis, Platform, ScriptAnalysis, ScriptDetail15s, ScriptResultProvenance, ScriptSummary15s, ShootingNeed, StructureStep, TrendVideo, VideoAnalysisPayload } from '../lib/inspirationTypes';
+import { socialDiscoveryApi } from '../lib/socialDiscoveryApi';
+import type { SocialBusinessModel, SocialDiscoveryScoreDecision, SocialDiscoverySupplyItem } from '../../shared/contracts/socialContentWorkflow';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 type ScriptType = 'voiceover' | 'storyboard';
@@ -43,6 +45,8 @@ type MaterialSourceFilter = 'all' | 'local_upload' | 'seedance' | 'gemini' | 'of
 type MaterialTypeFilter = 'all' | 'video' | 'image' | 'audio';
 type FavoriteFilter = 'all' | 'favorite';
 export type MaterialAssetTab = 'enterprise' | 'ai' | 'cloud';
+type DiscoveryDecisionFilter = 'all' | SocialDiscoveryScoreDecision;
+type BusinessModelFilter = 'all' | SocialBusinessModel;
 
 const INSPIRATION_PAGE_SIZE = 30;
 
@@ -2411,6 +2415,30 @@ function recordsToVideos(records: CrawlerRecord[]): TrendVideo[] {
     .sort((a, b) => heatValue(b.views) - heatValue(a.views));
 }
 
+function supplyItemsToVideos(items: SocialDiscoverySupplyItem[]): TrendVideo[] {
+  const records = items.flatMap(item => {
+    if (!ACTIVE_PLATFORMS.includes(item.platform as Exclude<Platform, 'all'>)) return [];
+    const raw = item.raw || {};
+    let analysis: Record<string, unknown> = {};
+    if (typeof raw.aiAnalysis === 'string') {
+      try { analysis = JSON.parse(raw.aiAnalysis) as Record<string, unknown>; } catch { analysis = {}; }
+    } else if (raw.aiAnalysis && typeof raw.aiAnalysis === 'object' && !Array.isArray(raw.aiAnalysis)) {
+      analysis = raw.aiAnalysis as Record<string, unknown>;
+    }
+    return [{
+      ...raw,
+      id: item.candidateId,
+      platform: item.platform as Exclude<Platform, 'all'>,
+      title: item.title,
+      sourceUrl: item.sourceUrl,
+      thumbnailUrl: item.thumbnailUrl || String(raw.thumbnailUrl || ''),
+      aiAnalysis: JSON.stringify({ ...analysis, author: item.author || analysis.author, discoveryScore: item.score, discoveryBusinessModel: item.businessModel }),
+      crawledAt: String(raw.crawledAt || item.publishedAt || item.score.scoredAt),
+    } satisfies CrawlerRecord];
+  });
+  return recordsToVideos(records);
+}
+
 function metadataFallbackAnalysis(
   title: string,
   platform: Exclude<Platform, 'all'>,
@@ -2475,6 +2503,12 @@ function reliablePublicViews(value: string): number {
 
 export function inspirationScoresForVideo(video: TrendVideo) {
   const analysis = video.aiAnalysis;
+  if (analysis?.discoveryScore) return {
+    sourcePriority: analysis.discoveryScore.dimensions.platformPriority,
+    contentOpportunityScore: analysis.discoveryScore.overall,
+    relativePerformance: null,
+    reasons: analysis.discoveryScore.reasons,
+  };
   const relative = analysis?.publicBaseline?.relativeMultiple ?? analysis?.relativeViewMultiple ?? null;
   const ageDays = Math.max(0, (Date.now() - timeValue(video.crawledAt)) / 86_400_000);
   const freshness = ageDays <= 3 ? 1 : ageDays <= 7 ? 0.8 : ageDays <= 30 ? 0.5 : 0.2;
@@ -3132,6 +3166,12 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
   const [contentFormat, setContentFormat] = useState<ContentFormat>('video');
   const [inspirationFavoriteFilter, setInspirationFavoriteFilter] = useState<FavoriteFilter>('all');
   const [crawlTimeRange, setCrawlTimeRange] = useState<CrawlTimeRange>('all');
+  const [discoveryDecision, setDiscoveryDecision] = useState<DiscoveryDecisionFilter>('all');
+  const [businessModelFilter, setBusinessModelFilter] = useState<BusinessModelFilter>('all');
+  const [minimumDiscoveryScore, setMinimumDiscoveryScore] = useState(0);
+  const [discoverySupplyItems, setDiscoverySupplyItems] = useState<SocialDiscoverySupplyItem[]>([]);
+  const [discoverySupplyLoading, setDiscoverySupplyLoading] = useState(false);
+  const [discoverySupplyError, setDiscoverySupplyError] = useState('');
   const [inspirationFiltersOpen, setInspirationFiltersOpen] = useState(false);
   const [crawledVideos, setCrawledVideos] = useState<TrendVideo[]>([]);
   const [videoPage, setVideoPage] = useState(1);
@@ -3445,6 +3485,33 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     return () => window.clearTimeout(timer);
   }, [search]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  useEffect(() => {
+    if (innerView !== 'inspiration') return;
+    let active = true;
+    const timer = window.setTimeout(() => {
+      setDiscoverySupplyLoading(true);
+      setDiscoverySupplyError('');
+      void socialDiscoveryApi.listSupply({
+        candidateType: 'video',
+        platform: platform === 'all' ? undefined : platform,
+        businessModel: businessModelFilter === 'all' ? undefined : businessModelFilter,
+        decision: discoveryDecision === 'all' ? undefined : discoveryDecision,
+        minScore: minimumDiscoveryScore || undefined,
+        search: search.trim() || undefined,
+        sort: sortMode === 'heat' ? 'score' : 'latest',
+        page: 1,
+        perPage: 100,
+      }).then(result => {
+        if (active) setDiscoverySupplyItems(result.items);
+      }).catch(error => {
+        if (active) setDiscoverySupplyError(error instanceof Error ? error.message : '服务端评分暂时无法读取');
+      }).finally(() => {
+        if (active) setDiscoverySupplyLoading(false);
+      });
+    }, 250);
+    return () => { active = false; window.clearTimeout(timer); };
+  }, [innerView, platform, businessModelFilter, discoveryDecision, minimumDiscoveryScore, search, sortMode]);
+
   const hasPendingVideos = crawledVideos.some(v =>
     v.status === 'pending' ||
     v.aiAnalysis?.downloadStatus === 'queued' ||
@@ -3534,7 +3601,18 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
   };
   // 爆款页只展示灵感采集结果；已入库素材统一留在“我的素材”，
   // 避免把本地片段伪装成爆款视频并混用两套交互。
-  const allVideos = crawledVideos;
+  const serverDiscoveryFilterActive = discoveryDecision !== 'all'
+    || businessModelFilter !== 'all'
+    || minimumDiscoveryScore > 0
+    || sortMode === 'heat';
+  const scoredSupplyVideos = useMemo(() => supplyItemsToVideos(discoverySupplyItems), [discoverySupplyItems]);
+  const scoredSupplyByRecordId = useMemo(() => new Map(scoredSupplyVideos.map(video => [video.recordId, video])), [scoredSupplyVideos]);
+  const allVideos = useMemo(() => serverDiscoveryFilterActive
+    ? scoredSupplyVideos
+    : crawledVideos.map(video => {
+      const scored = scoredSupplyByRecordId.get(video.recordId);
+      return scored ? { ...video, aiAnalysis: { ...video.aiAnalysis, discoveryScore: scored.aiAnalysis?.discoveryScore, discoveryBusinessModel: scored.aiAnalysis?.discoveryBusinessModel } } : video;
+    }), [serverDiscoveryFilterActive, scoredSupplyVideos, crawledVideos, scoredSupplyByRecordId]);
   const accountRecommendationByVideoId = useMemo(() => {
     const groups = new Map<string, TrendVideo[]>();
     for (const item of crawledVideos) {
@@ -3729,6 +3807,9 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     setPlatform('all');
     setInspirationFavoriteFilter('all');
     setCrawlTimeRange('all');
+    setDiscoveryDecision('all');
+    setBusinessModelFilter('all');
+    setMinimumDiscoveryScore(0);
   };
 
   const handleWatch = (video: TrendVideo) => {
@@ -4273,6 +4354,9 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     + Number(contentFormat !== 'video')
     + Number(inspirationFavoriteFilter !== 'all')
     + Number(crawlTimeRange !== 'all')
+    + Number(discoveryDecision !== 'all')
+    + Number(businessModelFilter !== 'all')
+    + Number(minimumDiscoveryScore > 0)
     + Number(sortMode !== 'crawlTime')
     + Number(viewMode !== 'grid');
   const materialFilterCount = Number(materialSearch.trim().length > 0)
@@ -4441,6 +4525,43 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                 <span className="sr-only">{sortLabel}</span>
                   </label>
                   <label className="relative block h-14 rounded-xl border border-border bg-surface-2 focus-within:border-accent">
+                    <Check size={15} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
+                    <span className="pointer-events-none absolute left-10 top-1.5 text-[10px] font-semibold text-text-muted">服务端筛选结论</span>
+                    <select value={discoveryDecision} onChange={event => setDiscoveryDecision(event.target.value as DiscoveryDecisionFilter)} aria-label="服务端筛选结论"
+                      className="h-full w-full cursor-pointer appearance-none rounded-xl bg-transparent pl-10 pr-9 pt-3 text-sm font-bold text-text-primary outline-none">
+                      <option value="all">全部评分结果</option>
+                      <option value="accepted">已入选</option>
+                      <option value="review">待复核</option>
+                      <option value="rejected">已淘汰</option>
+                    </select>
+                    <ChevronDown size={15} className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
+                  </label>
+                  <label className="relative block h-14 rounded-xl border border-border bg-surface-2 focus-within:border-accent">
+                    <Users size={15} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
+                    <span className="pointer-events-none absolute left-10 top-1.5 text-[10px] font-semibold text-text-muted">业务类型</span>
+                    <select value={businessModelFilter} onChange={event => setBusinessModelFilter(event.target.value as BusinessModelFilter)} aria-label="业务类型"
+                      className="h-full w-full cursor-pointer appearance-none rounded-xl bg-transparent pl-10 pr-9 pt-3 text-sm font-bold text-text-primary outline-none">
+                      <option value="all">全部业务类型</option>
+                      <option value="b2b">B2B 对标</option>
+                      <option value="mixed">混合业务</option>
+                      <option value="d2c">DTC 卖货</option>
+                      <option value="unknown">待识别</option>
+                    </select>
+                    <ChevronDown size={15} className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
+                  </label>
+                  <label className="relative block h-14 rounded-xl border border-border bg-surface-2 focus-within:border-accent">
+                    <BarChart2 size={15} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
+                    <span className="pointer-events-none absolute left-10 top-1.5 text-[10px] font-semibold text-text-muted">最低综合评分</span>
+                    <select value={minimumDiscoveryScore} onChange={event => setMinimumDiscoveryScore(Number(event.target.value))} aria-label="最低综合评分"
+                      className="h-full w-full cursor-pointer appearance-none rounded-xl bg-transparent pl-10 pr-9 pt-3 text-sm font-bold text-text-primary outline-none">
+                      <option value={0}>不限分数</option>
+                      <option value={50}>50 分以上</option>
+                      <option value={70}>70 分以上</option>
+                      <option value={85}>85 分以上</option>
+                    </select>
+                    <ChevronDown size={15} className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
+                  </label>
+                  <label className="relative block h-14 rounded-xl border border-border bg-surface-2 focus-within:border-accent">
                 {viewMode === 'grid'
                       ? <LayoutGrid size={15} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
                       : <List size={15} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-text-muted" />}
@@ -4473,6 +4594,9 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
           <span>当前显示 <strong className="text-text-primary">{filtered.length}</strong> 条</span>
           <span>本页近 3 日新入库 <strong className="text-text-primary">{recentThreeDayUploads}</strong> 条</span>
           <span>覆盖 <strong className="text-text-primary">{new Set(visibleVideos.map(v => v.platform)).size}</strong> 个平台</span>
+          {serverDiscoveryFilterActive && <span>服务端评分结果 <strong className="text-text-primary">{discoverySupplyItems.length}</strong> 条</span>}
+          {discoverySupplyError && <span className="font-semibold text-amber-700">{discoverySupplyError}</span>}
+          {discoverySupplyLoading && <span className="inline-flex items-center gap-1.5 font-semibold text-accent"><Loader2 size={12} className="animate-spin" />评分筛选中…</span>}
           {videosLoading && <span className="ml-auto inline-flex items-center gap-1.5 font-semibold text-accent"><Loader2 size={12} className="animate-spin" />更新中…</span>}
         </div>}
 
@@ -4528,7 +4652,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                   ))}
                 </div>
               )}
-              {videosLoaded && videoTotalPages > 1 && (
+              {videosLoaded && !serverDiscoveryFilterActive && videoTotalPages > 1 && (
                 <nav className="flex flex-wrap items-center justify-center gap-2 pb-4 pt-4" aria-label="灵感发现分页">
                   <button
                     type="button"

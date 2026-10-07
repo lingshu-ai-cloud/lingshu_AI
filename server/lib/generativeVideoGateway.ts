@@ -4,6 +4,10 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { estimateSeedanceCostCny, reconcileSeedanceBudget, releaseSeedanceBudget, reserveSeedanceBudget } from './seedanceBudget.js';
+import {
+  currentContentProviderReceipt,
+  recordCurrentContentProviderReceipt,
+} from '../contentExecution/context.js';
 
 export interface ConceptVideoResult {
   providerId: 'seedance' | 'veo';
@@ -113,6 +117,17 @@ export async function generateSeedanceConceptVideo(input: ConceptVideoInput & {
       .catch(() => null);
     if (!checkpoint?.taskId || !checkpoint.reservationId || !Number.isFinite(checkpoint.reservedCny)) checkpoint = null;
   }
+  const durableReceipt = currentContentProviderReceipt({ provider: 'seedance', requestId: input.idempotencyKey });
+  if (!checkpoint && durableReceipt?.providerTaskId) {
+    const reservationId = String(durableReceipt.metadata.reservationId || '').trim();
+    const reservedCny = Number(durableReceipt.metadata.reservedCny);
+    if (reservationId && Number.isFinite(reservedCny)) {
+      checkpoint = { taskId: durableReceipt.providerTaskId, reservationId, reservedCny };
+    }
+  }
+  if (!checkpoint && durableReceipt && ['submitting', 'accepted', 'unknown'].includes(durableReceipt.state)) {
+    throw new Error('provider_submission_unknown:seedance:missing_provider_task_id');
+  }
   const budget = checkpoint
     ? { ok: true, reservationId: checkpoint.reservationId, reservedCny: checkpoint.reservedCny }
     : reserve({ tenantId: input.tenantId, duration, resolution });
@@ -136,23 +151,48 @@ export async function generateSeedanceConceptVideo(input: ConceptVideoInput & {
     }
     let taskId = checkpoint?.taskId || '';
     if (!taskId) {
-      const created = await jsonRequest(fetcher, `${baseUrl}/contents/generations/tasks`, input.apiKey, {
-        method: 'POST',
-        headers: { 'X-Client-Request-Id': input.idempotencyKey },
-        body: JSON.stringify({
-          model: input.model,
-          content,
-          ratio: input.ratio,
-          duration,
-          resolution,
-          generate_audio: false,
-          watermark: false,
-        }),
-        signal: AbortSignal.timeout(Math.min(input.timeoutMs, 180_000)),
+      await recordCurrentContentProviderReceipt({
+        provider: 'seedance', requestId: input.idempotencyKey, state: 'submitting',
+        metadata: { reservationId: budget.reservationId, reservedCny: budget.reservedCny, model: input.model },
       });
+      let created: SeedanceTask;
+      try {
+        created = await jsonRequest(fetcher, `${baseUrl}/contents/generations/tasks`, input.apiKey, {
+          method: 'POST',
+          headers: { 'X-Client-Request-Id': input.idempotencyKey },
+          body: JSON.stringify({
+            model: input.model,
+            content,
+            ratio: input.ratio,
+            duration,
+            resolution,
+            generate_audio: false,
+            watermark: false,
+          }),
+          signal: AbortSignal.timeout(Math.min(input.timeoutMs, 180_000)),
+        });
+      } catch (error) {
+        const definitive = /Seedance (?:400|401|403|404|422):/i.test(String(error instanceof Error ? error.message : error));
+        await recordCurrentContentProviderReceipt({
+          provider: 'seedance', requestId: input.idempotencyKey,
+          state: definitive ? 'failed' : 'unknown',
+          metadata: { reservationId: budget.reservationId, reservedCny: budget.reservedCny, model: input.model },
+        });
+        throw error;
+      }
       taskId = String(created.id || created.data?.id || created.task?.id || '').trim();
-      if (!taskId) throw new Error('Seedance 提交结果未知：未返回任务 ID，不能自动重试');
+      if (!taskId) {
+        await recordCurrentContentProviderReceipt({
+          provider: 'seedance', requestId: input.idempotencyKey, state: 'unknown',
+          metadata: { reservationId: budget.reservationId, reservedCny: budget.reservedCny, model: input.model },
+        });
+        throw new Error('Seedance 提交结果未知：未返回任务 ID，不能自动重试');
+      }
       accepted = true;
+      await recordCurrentContentProviderReceipt({
+        provider: 'seedance', requestId: input.idempotencyKey, state: 'accepted', providerTaskId: taskId,
+        metadata: { reservationId: budget.reservationId, reservedCny: budget.reservedCny, model: input.model },
+      });
       if (input.checkpointPath) {
         await fsp.mkdir(path.dirname(input.checkpointPath), { recursive: true });
         const temporary = `${input.checkpointPath}.${process.pid}.tmp`;
@@ -176,6 +216,10 @@ export async function generateSeedanceConceptVideo(input: ConceptVideoInput & {
       const status = String(task.status || task.data?.status || task.task?.status || '').toLowerCase();
       if (['succeeded', 'success', 'completed', 'done'].includes(status)) { completed = task; break; }
       if (['failed', 'error', 'expired', 'cancelled', 'canceled'].includes(status)) {
+        await recordCurrentContentProviderReceipt({
+          provider: 'seedance', requestId: input.idempotencyKey, state: 'failed', providerTaskId: taskId,
+          metadata: { providerStatus: status },
+        });
         if (input.checkpointPath) await fsp.rm(input.checkpointPath, { force: true });
         release(input.tenantId, budget.reservationId);
         reservationReleased = true;
@@ -200,6 +244,10 @@ export async function generateSeedanceConceptVideo(input: ConceptVideoInput & {
     const actualCostCny = reportedSeedanceCostCny(input.model, completed, budget.reservedCny);
     const reconcile = input.reconcileBudget || (input.reserveBudget ? null : reconcileSeedanceBudget);
     reconcile?.(input.tenantId, budget.reservationId, actualCostCny);
+    await recordCurrentContentProviderReceipt({
+      provider: 'seedance', requestId: input.idempotencyKey, state: 'completed', providerTaskId: taskId,
+      metadata: { reservationId: budget.reservationId, reservedCny: budget.reservedCny, actualCostCny, outputUrl: url, model: input.model },
+    });
     return {
       providerId: 'seedance', model: input.model, providerTaskId: taskId,
       bytes: Buffer.from(await media.arrayBuffer()), duration,
@@ -258,19 +306,58 @@ export async function generateVeoConceptVideo(input: ConceptVideoInput & {
   estimatedCostCny: number;
 }): Promise<ConceptVideoResult> {
   const duration = Math.max(5, Math.min(8, Math.round(input.durationSeconds)));
-  const output = await (input.worker || runVeoWorker)({
-    prompt: input.prompt, model: input.model, ratio: input.ratio, duration,
-    resolution: input.resolution || '720p', outputDir: input.outputDirectory,
-    timeoutMs: input.timeoutMs, idempotencyKey: input.idempotencyKey,
-  }, input.timeoutMs);
-  if (output.ok !== true) throw new Error(String(output.error || 'Veo generation failed'));
+  const prior = currentContentProviderReceipt({ provider: 'veo', requestId: input.idempotencyKey });
+  if (prior?.state === 'completed') {
+    const storedFile = String(prior.metadata.file || '').trim();
+    const storedPath = storedFile && path.basename(storedFile) === storedFile
+      ? path.join(input.outputDirectory, storedFile) : '';
+    if (!storedPath || !fs.existsSync(storedPath)) {
+      throw new Error('provider_submission_unknown:veo:completed_output_missing');
+    }
+    return {
+      providerId: 'veo', model: String(prior.metadata.model || input.model),
+      providerTaskId: prior.providerTaskId || input.idempotencyKey,
+      bytes: await fsp.readFile(storedPath), duration: Number(prior.metadata.duration) || duration,
+      estimatedCostCny: input.estimatedCostCny,
+    };
+  }
+  if (prior && ['submitting', 'accepted', 'unknown'].includes(prior.state)) {
+    throw new Error('provider_submission_unknown:veo:requires_provider_reconciliation');
+  }
+  await recordCurrentContentProviderReceipt({
+    provider: 'veo', requestId: input.idempotencyKey, state: 'submitting', metadata: { model: input.model },
+  });
+  let output: Record<string, any>;
+  try {
+    output = await (input.worker || runVeoWorker)({
+      prompt: input.prompt, model: input.model, ratio: input.ratio, duration,
+      resolution: input.resolution || '720p', outputDir: input.outputDirectory,
+      timeoutMs: input.timeoutMs, idempotencyKey: input.idempotencyKey,
+    }, input.timeoutMs);
+  } catch (error) {
+    await recordCurrentContentProviderReceipt({
+      provider: 'veo', requestId: input.idempotencyKey, state: 'unknown', metadata: { model: input.model },
+    });
+    throw error;
+  }
+  if (output.ok !== true) {
+    await recordCurrentContentProviderReceipt({
+      provider: 'veo', requestId: input.idempotencyKey, state: 'failed', metadata: { model: input.model },
+    });
+    throw new Error(String(output.error || 'Veo generation failed'));
+  }
   const file = String(output.file || '').trim();
   if (!file || path.basename(file) !== file) throw new Error('Veo worker returned an unsafe output filename');
   const filePath = path.join(input.outputDirectory, file);
   if (!fs.existsSync(filePath)) throw new Error('Veo worker output file is missing');
+  const providerTaskId = String(output.id || input.idempotencyKey);
+  await recordCurrentContentProviderReceipt({
+    provider: 'veo', requestId: input.idempotencyKey, state: 'completed', providerTaskId,
+    metadata: { model: String(output.model || input.model), file, duration },
+  });
   return {
     providerId: 'veo', model: String(output.model || input.model),
-    providerTaskId: String(output.id || input.idempotencyKey),
+    providerTaskId,
     bytes: await fsp.readFile(filePath), duration,
     estimatedCostCny: input.estimatedCostCny,
   };

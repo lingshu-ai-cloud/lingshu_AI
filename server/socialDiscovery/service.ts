@@ -3,6 +3,7 @@ import { crawlVideosForTenant, inferPlatformFromUrl } from '../routes/videos.js'
 import { dueDiscoveryModes, nextDiscoveryRunAt, validateDiscoveryBrief } from './domain.js';
 import { planRollingSevenDayQuotas } from './qualityOrchestration.js';
 import { hasLegacyProductTitleQueries } from '../../shared/productDiscovery.js';
+import { normalizeSocialPlatformQuotas } from '../../shared/socialInspirationStrategy.js';
 import { runCandidateEvidenceWorker, type CandidateEvidenceWorkResult } from './candidateEvidenceWorker.js';
 import { createR3CandidateEvidenceAdapter, type R3CandidateEvidenceAdapter } from './r3CandidateEvidenceAdapter.js';
 import type { CrawlVideosInput, CrawlVideosResult } from '../routes/videos.js';
@@ -33,6 +34,29 @@ const defaultDependencies: ApprovedDiscoveryRunDependencies = {
   candidateEvidenceAdapter: createR3CandidateEvidenceAdapter(),
   runCandidateEvidence: runCandidateEvidenceWorker,
 };
+
+function emptyStats(): SocialDiscoveryModeRunStats {
+  return { requested: 0, fetched: 0, deduplicated: 0, accepted: 0, momentumCandidates: 0, failed: 0, costCny: null, effectiveRate: null };
+}
+
+function addStats(target: SocialDiscoveryModeRunStats, value: Partial<SocialDiscoveryModeRunStats>): void {
+  target.requested += value.requested ?? 0;
+  target.fetched += value.fetched ?? 0;
+  target.deduplicated += value.deduplicated ?? 0;
+  target.accepted += value.accepted ?? 0;
+  target.momentumCandidates += value.momentumCandidates ?? 0;
+  target.failed += value.failed ?? 0;
+  target.effectiveRate = target.fetched > 0 ? target.accepted / target.fetched : null;
+}
+
+function keywordTier(scope: DiscoveryScopeRecord, mode: SocialDiscoveryMode, ref: string): 'broad' | 'medium' | 'evidence' | 'account' | 'unknown' {
+  if (mode === 'account' || /^https?:\/\//i.test(ref)) return 'account';
+  const category = scope.payload.keywords.find(item => item.values.includes(ref))?.category;
+  if (category === 'discovery_seed') return 'broad';
+  if (category === 'scene_cluster') return 'medium';
+  if (category === 'evidence_query' || category === 'task_override') return 'evidence';
+  return 'unknown';
+}
 
 export type DiscoveryScopeRecord = {
   id: string;
@@ -133,24 +157,37 @@ export async function executeApprovedDiscoveryRun(input: {
   const initial: SocialInspirationCollectionRun & { tenant_id: string } = {
     tenant_id: input.tenantId, runId, planId: brief.discoveryBriefId, keywordSetId: brief.keywordSetId, keywordSetVersion: brief.keywordSetVersion,
     discoveryScopeId: scope.id, discoveryScopeVersion: scope.version, status: 'running', triggerType: input.triggerType,
-    scopeSnapshot: brief, modeStats: {}, evidenceOutcomes: {}, sourceRunRefs: [], queryBasis, market: scope.payload.market || brief.market, language: scope.payload.language || '',
+    scopeSnapshot: brief, modeStats: {}, platformStats: {}, keywordTierStats: {}, evidenceOutcomes: {}, sourceRunRefs: [], queryBasis, market: scope.payload.market || brief.market, language: scope.payload.language || '',
     stopReason: null, startedAt, finishedAt: null, error: null,
   };
   const created = await dependencies.dataStore.create<SocialInspirationCollectionRun & { id: string }>(DISCOVERY_RUN_COLLECTION, { ...initial });
   if (!created) throw new Error('discovery_run_storage_unavailable');
 
   const modeStats: SocialInspirationCollectionRun['modeStats'] = {};
+  const platformStats: NonNullable<SocialInspirationCollectionRun['platformStats']> = {};
+  const keywordTierStats: NonNullable<SocialInspirationCollectionRun['keywordTierStats']> = {};
   const evidenceOutcomes: NonNullable<SocialInspirationCollectionRun['evidenceOutcomes']> = {};
   const sourceRunRefs: string[] = [];
+  const quotaPlatforms = [...new Set([
+    ...brief.platforms,
+    ...brief.competitorAccounts.map(account => inferPlatformFromUrl(account)),
+  ])];
+  const remainingPlatformQuota = new Map(normalizeSocialPlatformQuotas(quotaPlatforms, brief.resultLimit)
+    .map(item => [item.platform, item.limit]));
   let error: string | null = null;
   for (const mode of requestedModes) {
     const policy = brief.modePolicies![mode]!;
-    const stats: SocialDiscoveryModeRunStats = { requested: 0, fetched: 0, deduplicated: 0, accepted: 0, momentumCandidates: 0, failed: 0, costCny: null, effectiveRate: null };
+    const stats: SocialDiscoveryModeRunStats = emptyStats();
     const refs = queryBasis[mode] ?? [];
     const configuredPlatforms = policy.platforms.length ? policy.platforms : brief.platforms;
-    const targets = refs.flatMap(ref => /^https?:\/\//i.test(ref)
-      ? [{ ref, platform: inferPlatformFromUrl(ref) }]
-      : configuredPlatforms.filter(platform => ['tiktok', 'instagram', 'youtube', 'facebook'].includes(platform)).map(platform => ({ ref, platform: platform as ReturnType<typeof inferPlatformFromUrl> })));
+    const targets = refs.flatMap(ref => {
+      const tier = keywordTier(scope, mode, ref);
+      if (/^https?:\/\//i.test(ref)) return [{ ref, platform: inferPlatformFromUrl(ref), tier }];
+      return configuredPlatforms
+        .filter(platform => ['tiktok', 'instagram', 'youtube', 'facebook'].includes(platform))
+        .filter(platform => platform !== 'youtube' || tier !== 'broad')
+        .map(platform => ({ ref, platform: platform as ReturnType<typeof inferPlatformFromUrl>, tier }));
+    });
     // Scheduled/manual discovery fills accepted-item gaps. A production gap owns its
     // independent budget and is therefore bounded by its explicit mode policy.
     let remaining = input.triggerType === 'production_gap'
@@ -164,8 +201,18 @@ export async function executeApprovedDiscoveryRun(input: {
     const momentumCandidateIds = new Set<string>();
     for (const [index, target] of targets.entries()) {
       if (remaining <= 0) break;
-      const perSourceLimit = Math.max(1, Math.ceil(remaining / Math.max(1, targets.length - index)));
+      const configuredPlatformRemaining = remainingPlatformQuota.get(target.platform) ?? 0;
+      const platformRemaining = configuredPlatformRemaining > 0
+        ? configuredPlatformRemaining
+        : /^https?:\/\//i.test(target.ref) && configuredPlatformRemaining === 0 ? 1 : 0;
+      if (platformRemaining <= 0) continue;
+      const perSourceLimit = Math.min(platformRemaining, Math.max(1, Math.ceil(remaining / Math.max(1, targets.length - index))));
+      remainingPlatformQuota.set(target.platform, configuredPlatformRemaining - perSourceLimit);
       stats.requested += perSourceLimit;
+      platformStats[target.platform] ??= emptyStats();
+      keywordTierStats[target.tier] ??= emptyStats();
+      addStats(platformStats[target.platform]!, { requested: perSourceLimit });
+      addStats(keywordTierStats[target.tier]!, { requested: perSourceLimit });
       try {
         const dateTo = new Date().toISOString().slice(0, 10);
         const dateFrom = new Date(Date.now() - brief.lookbackDays * 86_400_000).toISOString().slice(0, 10);
@@ -181,9 +228,13 @@ export async function executeApprovedDiscoveryRun(input: {
         });
         stats.fetched += Number(result.total || 0);
         stats.deduplicated += Number(result.skippedExisting || 0);
+        addStats(platformStats[target.platform]!, { fetched: Number(result.total || 0), deduplicated: Number(result.skippedExisting || 0) });
+        addStats(keywordTierStats[target.tier]!, { fetched: Number(result.total || 0), deduplicated: Number(result.skippedExisting || 0) });
+        const acceptedBefore = acceptedCandidateIds.size;
         const workItems = await dependencies.candidateEvidenceAdapter.toEvidenceWorkItems({
           tenantId: input.tenantId, runId, scopeId: scope.id, scopeVersion: scope.version,
-          mode, queryRef: target.ref, result, observedAt: new Date().toISOString(),
+          mode, queryRef: target.ref, result, observedAt: new Date().toISOString(), platform: target.platform,
+          keywordTier: target.tier, audienceRole: scope.payload.keywordSet?.scope?.audienceRole,
         });
         const evidenceResult = await dependencies.runCandidateEvidence(workItems);
         for (const item of evidenceResult.accepted) {
@@ -193,6 +244,9 @@ export async function executeApprovedDiscoveryRun(input: {
         evidenceResult.suggestions.forEach(item => suggestionCandidateIds.add(item.candidateId));
         evidenceResult.failed.forEach(item => failedCandidateIds.add(item.candidateId));
         stats.failed += evidenceResult.failed.length;
+        const callAccepted = acceptedCandidateIds.size - acceptedBefore;
+        addStats(platformStats[target.platform]!, { accepted: callAccepted, failed: evidenceResult.failed.length });
+        addStats(keywordTierStats[target.tier]!, { accepted: callAccepted, failed: evidenceResult.failed.length });
         if (mode === 'momentum') evidenceResult.accepted
           .filter(item => item.evidence.momentum.level !== 'unknown')
           .forEach(item => momentumCandidateIds.add(item.candidateId));
@@ -204,6 +258,8 @@ export async function executeApprovedDiscoveryRun(input: {
         sourceRunRefs.push(`${mode}:${target.platform}:${result.source}`);
       } catch (cause) {
         stats.failed += 1;
+        addStats(platformStats[target.platform]!, { failed: 1 });
+        addStats(keywordTierStats[target.tier]!, { failed: 1 });
         error = cause instanceof Error ? cause.message : '采集来源失败';
       }
     }
@@ -221,10 +277,10 @@ export async function executeApprovedDiscoveryRun(input: {
   const status = failed ? (accepted ? 'partial' as const : 'failed' as const) : accepted ? 'succeeded' as const : 'stopped' as const;
   const finishedAt = new Date().toISOString();
   const run: SocialInspirationCollectionRun = {
-    ...initial, status, modeStats, evidenceOutcomes, sourceRunRefs,
+    ...initial, status, modeStats, platformStats, keywordTierStats, evidenceOutcomes, sourceRunRefs,
     stopReason: status === 'failed' ? 'source_failed' : status === 'stopped' ? 'no_valid_results' : 'completed', finishedAt, error,
   };
-  const saved = await dependencies.dataStore.update(DISCOVERY_RUN_COLLECTION, created.id, { status, modeStats, evidenceOutcomes, sourceRunRefs, stopReason: run.stopReason, finishedAt, error });
+  const saved = await dependencies.dataStore.update(DISCOVERY_RUN_COLLECTION, created.id, { status, modeStats, platformStats, keywordTierStats, evidenceOutcomes, sourceRunRefs, stopReason: run.stopReason, finishedAt, error });
   if (!saved) throw new Error('discovery_run_storage_unavailable');
   return { run };
 }

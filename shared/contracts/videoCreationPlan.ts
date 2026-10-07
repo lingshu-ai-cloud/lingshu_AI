@@ -21,6 +21,12 @@ export interface VideoCreationPlan {
     matchScore: number;
     factors: string[];
   };
+  /**
+   * Persisted result of the paid pre-production step. The outline intentionally
+   * omits this object so a free weekly outline can never masquerade as an Agent
+   * analysis or a material check.
+   */
+  preproduction?: VideoPreproductionPreview;
   matrix?: { accountId: string; audience: string; objective: string; cta: string; accountRole?: SocialAccountRole; formats?: string[] };
   reviewRequirements?: Array<{ todoId: string; reference: string; scene: number; startsAt: number; endsAt: number; requirements: string; materials: string; acceptance: string }>;
   route: 'clone' | 'material' | 'product';
@@ -36,6 +42,55 @@ export interface VideoCreationPlan {
   heygenAvatarId: string;
   avatarConsent: boolean;
   voice: string;
+}
+export interface VideoPreproductionPreview {
+  version: 1;
+  status: 'ready' | 'blocked';
+  generatedAt: string;
+  benchmark: {
+    status: 'ready' | 'not_applicable' | 'missing';
+    referenceId: string;
+    title: string;
+    account: string;
+    views: string;
+    thumbnailUrl: string;
+    sourceUrl: string;
+    hook: string;
+    shotSummary: string[];
+  };
+  materials: {
+    status: 'ready' | 'blocked';
+    items: Array<{
+      id: string;
+      name: string;
+      type: 'image' | 'video';
+      previewUrl: string;
+      status: 'ready' | 'missing' | 'pending_shoot' | 'needs_authorization';
+    }>;
+    blockers: string[];
+    pendingShootTaskIds: string[];
+  };
+  readiness: {
+    canStart: boolean;
+    blockers: string[];
+  };
+  confidence: {
+    onTimeRate: number | null;
+    effectLevel: 'medium' | 'low' | 'insufficient';
+    reasons: string[];
+  };
+  /** Frozen Director Agent output reused by production instead of paying twice. */
+  directorScript?: {
+    version: number;
+    body: string;
+    hash: string;
+    language: string;
+    status: 'confirmed';
+    generatedBy: 'director_agent';
+    generatedAt: string;
+    source: 'llm' | 'deterministic_closed_world_fallback';
+    degradedReason: string;
+  };
 }
 export interface VideoSceneChoice { source: 'avatar' | 'material'; materialId: string }
 export const VIDEO_PRESENTATIONS = { material: '纯素材剪辑', avatar: '纯数字人口播', heygen: '数字人 + 素材混剪' } as const;
@@ -62,6 +117,19 @@ export function presentationScenes(plan: VideoCreationPlan, count: number): Vide
 }
 export const VIDEO_ROUTES = { clone: '爆款裂变', material: '从素材生成', product: '从产品生成' } as const;
 export function normalizeVideoPlan(value: Partial<VideoCreationPlan>): VideoCreationPlan {
+  const preview = value.preproduction && typeof value.preproduction === 'object'
+    ? value.preproduction
+    : undefined;
+  const previewStatus = preview && ['ready', 'blocked'].includes(String(preview.status))
+    ? preview.status
+    : undefined;
+  const cleanPreviewUrl = (raw: unknown) => {
+    const candidate = String(raw || '').trim().slice(0, 2_000);
+    return /^(?:https?:\/\/|\/api\/|\/media\/|\/covers\/|\/generated\/)/i.test(candidate) ? candidate : '';
+  };
+  const cleanList = (raw: unknown, limit: number, itemLimit = 500) => Array.isArray(raw)
+    ? [...new Set(raw.map(item => String(item || '').trim()).filter(Boolean))].slice(0, limit).map(item => item.slice(0, itemLimit))
+    : [];
   return {
     contentId: String(value.contentId || '').trim().slice(0, 120),
     plannedPublishDate: /^\d{4}-\d{2}-\d{2}$/.test(String(value.plannedPublishDate || '')) ? String(value.plannedPublishDate) : '',
@@ -83,6 +151,58 @@ export function normalizeVideoPlan(value: Partial<VideoCreationPlan>): VideoCrea
       factors: Array.isArray(value.planningEvidence.factors)
         ? [...new Set(value.planningEvidence.factors.map(item => String(item || '').trim()).filter(Boolean))].slice(0, 8).map(item => item.slice(0, 160))
         : [],
+    } } : {}),
+    ...(preview && previewStatus ? { preproduction: {
+      version: 1,
+      status: previewStatus,
+      generatedAt: String(preview.generatedAt || '').trim().slice(0, 80),
+      benchmark: {
+        status: ['ready', 'not_applicable', 'missing'].includes(String(preview.benchmark?.status)) ? preview.benchmark.status : 'missing',
+        referenceId: String(preview.benchmark?.referenceId || '').trim().slice(0, 160),
+        title: String(preview.benchmark?.title || '').trim().slice(0, 500),
+        account: String(preview.benchmark?.account || '').trim().slice(0, 300),
+        views: String(preview.benchmark?.views || '').trim().slice(0, 80),
+        thumbnailUrl: cleanPreviewUrl(preview.benchmark?.thumbnailUrl),
+        sourceUrl: cleanPreviewUrl(preview.benchmark?.sourceUrl),
+        hook: String(preview.benchmark?.hook || '').trim().slice(0, 1_000),
+        shotSummary: cleanList(preview.benchmark?.shotSummary, 8, 500),
+      },
+      materials: {
+        status: preview.materials?.status === 'ready' ? 'ready' : 'blocked',
+        items: Array.isArray(preview.materials?.items) ? preview.materials.items.slice(0, 30).map(item => ({
+          id: String(item?.id || '').trim().slice(0, 160),
+          name: String(item?.name || '').trim().slice(0, 240),
+          type: item?.type === 'video' ? 'video' as const : 'image' as const,
+          previewUrl: cleanPreviewUrl(item?.previewUrl),
+          status: ['ready', 'missing', 'pending_shoot', 'needs_authorization'].includes(String(item?.status)) ? item.status : 'missing',
+        })) : [],
+        blockers: cleanList(preview.materials?.blockers, 20, 500),
+        pendingShootTaskIds: cleanList(preview.materials?.pendingShootTaskIds, 20, 160),
+      },
+      readiness: {
+        canStart: preview.readiness?.canStart === true,
+        blockers: cleanList(preview.readiness?.blockers, 20, 500),
+      },
+      confidence: {
+        onTimeRate: preview.confidence?.onTimeRate !== null
+          && preview.confidence?.onTimeRate !== undefined
+          && Number.isFinite(Number(preview.confidence.onTimeRate))
+          ? Math.max(0, Math.min(100, Math.round(Number(preview.confidence?.onTimeRate))))
+          : null,
+        effectLevel: ['medium', 'low', 'insufficient'].includes(String(preview.confidence?.effectLevel)) ? preview.confidence.effectLevel : 'insufficient',
+        reasons: cleanList(preview.confidence?.reasons, 10, 500),
+      },
+      ...(preview.directorScript && typeof preview.directorScript === 'object' ? { directorScript: {
+        version: Math.max(1, Math.floor(Number(preview.directorScript.version) || 1)),
+        body: String(preview.directorScript.body || '').trim().slice(0, 30_000),
+        hash: String(preview.directorScript.hash || '').trim().slice(0, 128),
+        language: normalizeVideoLanguage(preview.directorScript.language || value.language || 'en'),
+        status: 'confirmed' as const,
+        generatedBy: 'director_agent' as const,
+        generatedAt: String(preview.directorScript.generatedAt || preview.generatedAt || '').trim().slice(0, 80),
+        source: preview.directorScript.source === 'deterministic_closed_world_fallback' ? 'deterministic_closed_world_fallback' as const : 'llm' as const,
+        degradedReason: String(preview.directorScript.degradedReason || '').trim().slice(0, 1_000),
+      } } : {}),
     } } : {}),
     ...(value.matrix && typeof value.matrix === 'object' ? { matrix: {
       accountId: String(value.matrix.accountId || '').trim().slice(0, 160), audience: String(value.matrix.audience || '').trim().slice(0, 500), objective: String(value.matrix.objective || '').trim().slice(0, 500), cta: String(value.matrix.cta || '').trim().slice(0, 500),

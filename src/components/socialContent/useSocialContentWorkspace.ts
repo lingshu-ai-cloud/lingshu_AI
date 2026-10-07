@@ -232,9 +232,14 @@ export function useSocialContentWorkspace() {
         }
         throw error;
       }
-    }, (result: SocialContentTaskDetail) => result.status === 'attention'
-      ? '任务已保留，系统会继续切换可用素材方案；如需确认事实或版权，会明确列出'
-      : '内容生产任务已进入执行队列');
+    }, (result: SocialContentTaskDetail) => {
+      if (result.status === 'attention') return `《${result.brief.title}》已提交并保留当前结果；系统正在切换可用素材方案，需要你确认时会明确提醒`;
+      const remainingSeconds = result.productionProgress?.estimatedRemainingSeconds;
+      const eta = remainingSeconds == null
+        ? '预计时间会在制作开始后实时更新'
+        : `当前预计还需 ${Math.max(1, Math.ceil(remainingSeconds / 60))} 分钟`;
+      return `《${result.brief.title}》已提交，只执行一次；${eta}，离开或刷新本页不会影响任务`;
+    });
   }, [workspace?.currentTask, run, applyTask]);
 
   const decideArtifact = useCallback(async (artifact: SocialContentArtifact, decision: 'approved' | 'changes_requested', note: string | null = null) => {

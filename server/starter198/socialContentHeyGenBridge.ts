@@ -12,6 +12,7 @@ import type {
   SocialDigitalPresenterBridgePorts,
 } from './socialContentDigitalPresenterAdapter.js';
 import { validateHeyGenPresenterRecord } from '../lib/presenterAssetTrust.js';
+import { recordCurrentContentProviderReceipt } from '../contentExecution/context.js';
 
 type PresenterRecord = Record<string, unknown> & {
   id?: string; name?: string; authorized?: boolean; assetVersion?: number;
@@ -151,22 +152,50 @@ export function createSocialHeyGenBridgePorts(deps: SocialHeyGenBridgeDependenci
           created_at: new Date().toISOString(), updated_at: new Date().toISOString() });
         if (!record) return { status: 'uncertain', error: 'provider_job_claim_failed' };
         try {
+          await recordCurrentContentProviderReceipt({
+            provider: 'heygen', requestId: input.idempotencyKey, state: 'submitting',
+            metadata: { reservationRef: input.reservationRef },
+          });
           providerTaskId = await deps.client.create({ avatarId: input.presenter.providerPresenterId,
             voiceId: input.presenter.providerVoiceId, script: input.script, ratio: input.aspectRatio,
             transparent: false, title: `灵枢社媒镜头 ${input.shotId}` }, input.idempotencyKey);
           await deps.store.update('studio_social_presenter_jobs', record.id, { provider_task_id: providerTaskId,
             status: 'pending', updated_at: new Date().toISOString() });
+          await recordCurrentContentProviderReceipt({
+            provider: 'heygen', requestId: input.idempotencyKey, state: 'accepted', providerTaskId,
+            metadata: { reservationRef: input.reservationRef },
+          });
         } catch (error) {
           await deps.store.update('studio_social_presenter_jobs', record.id, { status: 'uncertain',
             error: String(error instanceof Error ? error.message : error), updated_at: new Date().toISOString() });
+          await recordCurrentContentProviderReceipt({
+            provider: 'heygen', requestId: input.idempotencyKey, state: 'unknown',
+            metadata: { reservationRef: input.reservationRef },
+          });
           return { status: 'uncertain', error: 'provider_submission_uncertain' };
         }
       }
-      if (!providerTaskId) return { status: 'uncertain', error: 'provider_task_id_missing' };
+      if (!providerTaskId) {
+        await recordCurrentContentProviderReceipt({
+          provider: 'heygen', requestId: input.idempotencyKey, state: 'unknown',
+          metadata: { reservationRef: input.reservationRef },
+        });
+        return { status: 'uncertain', error: 'provider_task_id_missing' };
+      }
+      await recordCurrentContentProviderReceipt({
+        provider: 'heygen', requestId: input.idempotencyKey, state: 'accepted', providerTaskId,
+        metadata: { reservationRef: input.reservationRef },
+      });
       let completed: Awaited<ReturnType<HeyGenClient['status']>> | null = null;
       for (let index = 0; index < polls; index += 1) {
         const status = await deps.client.status(providerTaskId);
-        if (status.status === 'failed') return { status: 'failed', providerTaskId, error: status.error || 'provider_failed' };
+        if (status.status === 'failed') {
+          await recordCurrentContentProviderReceipt({
+            provider: 'heygen', requestId: input.idempotencyKey, state: 'failed', providerTaskId,
+            metadata: { providerError: status.error || 'provider_failed' },
+          });
+          return { status: 'failed', providerTaskId, error: status.error || 'provider_failed' };
+        }
         if (status.status === 'completed') { completed = status; break; }
         if (pollInterval) await new Promise(resolve => setTimeout(resolve, pollInterval));
       }
@@ -191,6 +220,10 @@ export function createSocialHeyGenBridgePorts(deps: SocialHeyGenBridgeDependenci
       }]);
       await deps.store.update('studio_social_presenter_jobs', record.id, { status: 'completed', provider_task_id: providerTaskId,
         material_id: materialId, object_key: objectKey, content_sha256: contentHash, updated_at: new Date().toISOString() });
+      await recordCurrentContentProviderReceipt({
+        provider: 'heygen', requestId: input.idempotencyKey, state: 'completed', providerTaskId,
+        metadata: { reservationRef: input.reservationRef, materialId, objectKey, contentHash, duration },
+      });
       return { status: 'completed', providerTaskId, localPath, contentHash, duration };
     },
   };

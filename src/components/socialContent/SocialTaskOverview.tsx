@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   BarChart3,
   CheckCircle2,
@@ -32,6 +32,7 @@ import SocialReplicationAnalysisPanel from './SocialReplicationAnalysisPanel';
 import SocialAgentWorkflowPanel from './SocialAgentWorkflowPanel';
 import SocialGenerationConfirmationCard from './SocialGenerationConfirmationCard';
 import SocialWeeklySummary from './SocialWeeklySummary';
+import ContentProductionExperiencePanel, { type ContentProductionView } from './ContentProductionExperiencePanel';
 import AgentDecisionCard from '../AgentDecisionCard';
 import { socialArtifactGenerationDisclosure } from '../../lib/socialArtifactGeneration';
 import {
@@ -39,6 +40,7 @@ import {
   contentCreationTestBypassEnabled,
 } from '../../lib/contentCreationTestBypass';
 import { PLATFORM_OPTIONS, artifactKindLabel, contentLanguageLabel, optionLabel, packageVersionLabel } from './socialContentUi';
+import { contentProductionExceptions } from '../../lib/contentProductionExperience';
 
 const ARTIFACT_STATUS: Record<SocialContentArtifact['status'], string> = {
   draft: '制作中',
@@ -187,6 +189,13 @@ function DeliveryPanel({ task, busy, onDownload, onOpenPublication, onOpenMetric
 
 export default function SocialTaskOverview(props: SocialTaskOverviewProps) {
   const { task, onCreate, createMode } = props;
+  const [productionView, setProductionView] = useState<ContentProductionView>('overview');
+  useEffect(() => {
+    if (!task) return;
+    setProductionView(contentProductionExceptions(task).length > 0
+      ? 'exceptions'
+      : ['producing', 'attention', 'paused'].includes(task.status) ? 'shots' : 'overview');
+  }, [task?.taskId]);
   if (!task) {
     const weekly = createMode === 'weekly';
     return (
@@ -207,6 +216,10 @@ export default function SocialTaskOverview(props: SocialTaskOverviewProps) {
     || task.metricSubmissions.length > 0
     || socialContentCanRegisterPublication(task),
   );
+  const openProductionView = (view: ContentProductionView) => {
+    setProductionView(view);
+    window.requestAnimationFrame(() => document.getElementById('social-production-experience')?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+  };
   return (
     <div className="space-y-4 pb-8">
       <SocialProductionProgressPanel
@@ -222,10 +235,20 @@ export default function SocialTaskOverview(props: SocialTaskOverviewProps) {
         onStart={props.onStart}
         onPlanReview={() => document.getElementById('social-generation-confirmation')?.scrollIntoView({ behavior: 'smooth', block: 'center' })}
         onEdit={props.onEdit}
+        onOpenShots={() => openProductionView('shots')}
+        onOpenExceptions={() => openProductionView('exceptions')}
         onReview={() => document.getElementById('social-task-artifacts')?.scrollIntoView({ behavior: 'smooth', block: 'center' })}
       />
       <div className="min-w-0 space-y-4">
         <SocialGenerationConfirmationCard task={task} busy={props.busy} onConfirm={props.onStart} />
+        <ContentProductionExperiencePanel
+          task={task}
+          busy={props.busy}
+          view={productionView}
+          onViewChange={setProductionView}
+          onOpenWorkbench={props.onEdit}
+          onRetry={props.onStart}
+        />
         {task.mode === 'weekly' && <SocialWeeklySummary task={task} onEdit={props.onEdit} />}
         <div className={`grid gap-4 ${showDelivery ? 'xl:grid-cols-2' : ''}`}>
           <ReadinessPanel task={task} />

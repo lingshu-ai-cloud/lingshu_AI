@@ -97,6 +97,8 @@ function localCreate<T = Record_>(collection: string, data: Record<string, unkno
   if (collection === 'tenants') return createLocalDataTenant(data) as T;
   const records = readLocalCollection<Record_>(collection);
   const now = new Date().toISOString();
+  const requestedId = String(data.id || '');
+  if (requestedId && records.some(record => record.id === requestedId)) return null;
   const record = {
     id: String(data.id || `${collection}_${randomUUID().replaceAll('-', '')}`),
     created: data.created || now,

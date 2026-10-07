@@ -3,7 +3,7 @@ import type {
   SocialContentSourceOptionPage,
 } from '../../shared/contracts/socialContentWorkflow.js';
 import { readMaterialLibrary, type MaterialRecord } from '../lib/materialLibrary.js';
-import { store } from '../storage/index.js';
+import { dataBackend, store } from '../storage/index.js';
 import { pbListStrict } from '../storage/pb.js';
 import {
   SocialContentWorkflowError,
@@ -138,7 +138,7 @@ function pocketBaseFilterValue(value: string): string {
 }
 
 async function readTenantKnowledgeProfile(tenantId: string): Promise<Record<string, unknown> | null> {
-  const result = process.env.NODE_ENV === 'production'
+  const result = process.env.NODE_ENV === 'production' && dataBackend === 'pocketbase'
     ? await pbListStrict<Record<string, unknown> & { id: string }>('tenant_profiles', {
       filter: `tenant_id = ${pocketBaseFilterValue(tenantId)}`,
       page: 1,

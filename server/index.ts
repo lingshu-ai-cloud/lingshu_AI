@@ -75,6 +75,7 @@ import {
 import { createRuntimeReadinessProbe, runtimeCapabilities } from './runtime/readiness.js';
 import { dataAuthorityRequestScope } from './storage/dataAuthority.js';
 import { objectStorageConfigurationIssues, objectStorageDriver, objectStorageLocalRoot } from './storage/objectStorage.js';
+import { runtimeBuildInfo } from './runtime/buildInfo.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const processRole = parseProcessRole(process.env.PROCESS_ROLE);
@@ -142,6 +143,7 @@ app.get('/api/overseas/health', (_req, res) => {
   res.json({
     status: startupReadinessIssues.length ? 'degraded' : 'ok',
     service: 'overseas-marketing-agent',
+    build: runtimeBuildInfo(),
     port: PORT,
     role: processRole,
     demoMode: isDemoMode(),

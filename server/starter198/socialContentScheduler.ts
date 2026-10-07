@@ -386,7 +386,7 @@ export async function scheduleSocialContentWork(input: {
     userId: string;
     taskId: string;
     runId: string;
-  }) => void;
+  }) => void | Promise<void>;
 }): Promise<Starter198OrchestratorQueueResult> {
   const subject = input.queue.subject;
   if (!subject || subject.type !== 'social_content_task' || !socialText(subject.id)
@@ -435,7 +435,7 @@ export async function scheduleSocialContentWork(input: {
           || !['producing', 'asset_review', 'packaging', 'delivered'].includes(socialText(record.status))) {
           fail('social_content_schedule_state_integrity_violation', 503);
         }
-        if (socialText(record.status) === 'producing') input.productionRunner?.({
+        if (socialText(record.status) === 'producing') await input.productionRunner?.({
           repository: input.repository,
           tenantId: input.queue.tenantId,
           userId: input.queue.userId,
@@ -496,7 +496,7 @@ export async function scheduleSocialContentWork(input: {
         || socialText(written.orchestrator_item_id) !== result.queueItemId) {
         fail('social_content_schedule_state_integrity_violation', 503);
       }
-      input.productionRunner?.({
+      await input.productionRunner?.({
         repository: input.repository,
         tenantId: input.queue.tenantId,
         userId: input.queue.userId,

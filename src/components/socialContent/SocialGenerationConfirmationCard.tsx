@@ -1,13 +1,21 @@
-import { AlertTriangle, Bot, CheckCircle2, Clock3, Film, ReceiptText, Sparkles } from 'lucide-react';
+import { AlertTriangle, Bot, CheckCircle2, Clock3, Film, Image, ReceiptText, Sparkles, UserRound, WalletCards } from 'lucide-react';
 import type { SocialContentTaskDetail } from '../../../shared/contracts/socialContentWorkflow';
 import { FORMAT_OPTIONS, optionLabel } from './socialContentUi';
 import {
   contentCreationReviewAdmissionAllowed,
   contentCreationTestBypassEnabled,
 } from '../../lib/contentCreationTestBypass';
+import { contentPreflightItems, type ContentPreflightState } from '../../lib/contentProductionExperience';
 
 function money(value: number): string {
   return `¥${Math.max(0, value).toFixed(2)}`;
+}
+
+function preflightTone(state: ContentPreflightState): string {
+  if (state === 'ready') return 'border-emerald-200 bg-emerald-50/70 text-emerald-800';
+  if (state === 'blocked') return 'border-rose-200 bg-rose-50/70 text-rose-800';
+  if (state === 'warning') return 'border-amber-200 bg-amber-50/70 text-amber-800';
+  return 'border-slate-200 bg-slate-50 text-slate-700';
 }
 
 export default function SocialGenerationConfirmationCard({
@@ -44,6 +52,19 @@ export default function SocialGenerationConfirmationCard({
     && task.replicationScript?.status !== 'confirmed';
   const formats = task.brief.formats.map(value => optionLabel(FORMAT_OPTIONS, value)).filter(Boolean).join('、') || '内容成品';
   const estimatedMinutes = Math.max(1, Math.round(plan.estimatedTotalSeconds / 60));
+  const preflightItems = contentPreflightItems(task);
+  const preflightIcons = { materials: Image, account: UserRound, budget: WalletCards, time: Clock3 } as const;
+  const blockedMaterialCount = plan.scenes.filter(scene => scene.feasibility === 'blocked_for_facts_or_rights').length;
+  const budgetBlocked = review.reasonCodes.includes('budget_exceeded');
+  const actionLabel = busy
+    ? '正在提交任务'
+    : formalReplicationBlocked || blockedMaterialCount > 0
+      ? `补齐 ${Math.max(1, blockedMaterialCount)} 项必要素材`
+      : budgetBlocked && !canConfirm
+        ? '调整方案后开始制作'
+        : canConfirm
+          ? `${needsReplicationReview ? '确认逐镜方案' : '开始制作'} · 预计 ${money(plan.estimatedTotalCostCny)} · 约 ${estimatedMinutes} 分钟`
+          : '先处理方案风险';
 
   return (
     <section id="social-generation-confirmation" data-social-generation-confirmation className="overflow-hidden rounded-2xl border border-emerald-200 bg-white shadow-sm" aria-labelledby="social-generation-confirmation-title">
@@ -65,6 +86,31 @@ export default function SocialGenerationConfirmationCard({
         </div>
       </div>
 
+      <div className="border-t border-border bg-white px-4 py-4 sm:px-5" data-content-preflight>
+        <div className="flex flex-wrap items-end justify-between gap-2">
+          <div>
+            <p className="text-[10px] font-black tracking-[0.08em] text-text-muted">开始前确认</p>
+            <h4 className="mt-1 text-sm font-black text-text-primary">素材、账号、预算和时间一眼看清</h4>
+          </div>
+          <p className="text-[10px] text-text-muted">缺账号不会阻止制作，成片会先保存到作品库</p>
+        </div>
+        <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+          {preflightItems.map(item => {
+            const Icon = preflightIcons[item.id];
+            return (
+              <div key={item.id} className={`rounded-xl border px-3 py-3 ${preflightTone(item.state)}`}>
+                <div className="flex items-center justify-between gap-2">
+                  <span className="flex items-center gap-1.5 text-[10px] font-black"><Icon size={13} />{item.label}</span>
+                  <span className="text-[9px] font-black">{item.state === 'ready' ? '已就绪' : item.state === 'blocked' ? '需处理' : item.state === 'warning' ? '可稍后补' : '计算中'}</span>
+                </div>
+                <p className="mt-2 text-xs font-black leading-5">{item.value}</p>
+                <p className="mt-1 text-[9px] leading-4 opacity-80">{item.detail}</p>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
       <div className={`border-t px-4 py-3 text-[10px] font-semibold leading-4 sm:px-5 ${formalReplicationBlocked ? 'border-rose-200 bg-rose-50 text-rose-800' : localBudgetOverride ? 'border-sky-200 bg-sky-50 text-sky-900' : 'border-blue-100 bg-blue-50/60 text-blue-900'}`}>
         {formalReplicationBlocked
           ? '当前方案只会生成说明卡片，达不到爆款复刻的画面预期。请先补充产品视频或图片；也可以改为“概念样片”，但不可直接发布。'
@@ -75,7 +121,7 @@ export default function SocialGenerationConfirmationCard({
 
       <div className="flex flex-col gap-3 border-t border-border bg-white p-4 sm:flex-row sm:items-center sm:justify-between sm:px-5">
         <div className="flex items-start gap-2 text-[10px] leading-4 text-text-muted">{canConfirm ? <CheckCircle2 size={14} className="mt-0.5 shrink-0 text-emerald-700" /> : <AlertTriangle size={14} className="mt-0.5 shrink-0 text-amber-700" />}<span>{formalReplicationBlocked ? '正式生成已阻止：补充真实产品素材后会重新计算费用和效果。' : localBudgetOverride ? '预算上限已在本地演示中放行，其他质量检查均已通过。' : approved ? '费用为当前执行方案预估，最终账单按实际调用结算；重试或改稿前会重新提示。' : review.requiredRevision.join('；') || '方案存在阻断项，请先补齐信息。'}</span></div>
-        <button type="button" disabled={busy || !canConfirm} onClick={onConfirm} className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-emerald-600 px-5 py-3 text-xs font-black text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50">{busy ? <Clock3 size={14} className="animate-spin" /> : <Bot size={14} />}{formalReplicationBlocked ? '请先补充产品素材' : canConfirm ? needsReplicationReview ? '确认逐镜方案' : `开始生成 · 预计 ${money(plan.estimatedTotalCostCny)}` : '先处理方案风险'}</button>
+        <button type="button" disabled={busy || !canConfirm} onClick={onConfirm} aria-busy={busy} className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-emerald-600 px-5 py-3 text-xs font-black text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50">{busy ? <Clock3 size={14} className="animate-spin" /> : <Bot size={14} />}{actionLabel}</button>
       </div>
     </section>
   );

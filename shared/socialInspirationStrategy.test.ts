@@ -6,6 +6,7 @@ import {
   buildSocialTimelineBeats,
   evaluateSocialCandidateEvidence,
   inferSocialReplicationReferenceMode,
+  scoreSocialDiscoveryCandidate,
   scoreSocialInspirationCandidate,
 } from './socialInspirationStrategy';
 import type { SocialReferenceVideoAnalysis } from './contracts/socialContentWorkflow';
@@ -25,7 +26,10 @@ assert.deepEqual(strategy.keywords.map(item => item.category), ['discovery_seed'
 assert.ok(strategy.keywords.find(item => item.category === 'discovery_seed')?.values.includes('五轴加工'));
 assert.equal(strategy.keywordSet.scope.companyRole, 'factory');
 assert.equal(strategy.keywordSet.graph.sceneClusters[0]?.evidence[0], 'inquiry');
-assert.equal(strategy.platformQuotas.every(item => item.limit === 30), true);
+assert.equal(strategy.platformQuotas.reduce((sum, item) => sum + item.limit, 0), 30);
+assert.equal(strategy.platformQuotas.find(item => item.platform === 'tiktok')?.limit, 27);
+assert.equal(strategy.platformQuotas.find(item => item.platform === 'youtube')?.limit, 3);
+assert.equal(strategy.collectionPolicy?.keywordTierWeights.medium, 0.75);
 
 const breakout = scoreSocialInspirationCandidate({ currentPerformance: 10_000, accountPlatformBaseline: 1_000, engagementQuality: 0.8, freshness: 1, weeklyGoalRelevance: 0.9, structuralTransferability: 0.9, evidenceQuality: 0.8, platformWeight: 0.8, accountWeight: 0.5, accountTypeWeight: 1, industryRelevance: 1, strategyMatch: 1 });
 const famousAverage = scoreSocialInspirationCandidate({ currentPerformance: 1_000_000, accountPlatformBaseline: 900_000, engagementQuality: 0.6, freshness: 1, weeklyGoalRelevance: 0.7, structuralTransferability: 0.6, evidenceQuality: 0.6, platformWeight: 1, accountWeight: 1, accountTypeWeight: 1, industryRelevance: 0.8, strategyMatch: 0.8 });
@@ -40,6 +44,24 @@ const candidate = evaluateSocialCandidateEvidence({
 });
 assert.equal(candidate.momentum.level, 'high_performance', 'a point-in-time metric must not be called rising');
 assert.equal(candidate.relevance.level, 'high');
+
+const b2bCandidate = scoreSocialDiscoveryCandidate({
+  evidence: candidate,
+  platform: 'tiktok', keywordTier: 'medium', audienceRole: 'brand_buyer',
+  sourceText: 'OEM skincare manufacturer wholesale private label supplier', hasSource: true,
+  now: new Date('2026-10-07T00:00:00.000Z'),
+});
+const dtcCandidate = scoreSocialDiscoveryCandidate({
+  evidence: candidate,
+  platform: 'tiktok', keywordTier: 'medium', audienceRole: 'brand_buyer',
+  sourceText: 'shop now add to cart discount code beauty routine', hasSource: true,
+  now: new Date('2026-10-07T00:00:00.000Z'),
+});
+assert.equal(b2bCandidate.businessModel, 'b2b');
+assert.equal(b2bCandidate.decision, 'accepted');
+assert.equal(dtcCandidate.businessModel, 'd2c');
+assert.equal(dtcCandidate.decision, 'rejected');
+assert.ok(dtcCandidate.blockers.some(item => item.includes('DTC')));
 
 const handoff = buildSocialInspirationHandoff({
   inspirationId: 'inspiration-1', analysisId: 'analysis-1', analysisVersion: '2',

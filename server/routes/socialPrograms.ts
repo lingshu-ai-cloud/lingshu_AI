@@ -170,6 +170,42 @@ export function createSocialProgramsRouter(dataStore: DataStore = store, authent
     res.json({ item });
   }));
 
+  router.get('/:programId/operating-packages/:packageId/agent-planning', asyncRoute(async (req, res) => {
+    const { tenantId } = res.locals as AuthLocals;
+    const version = typeof req.query.version === 'string' ? Number(req.query.version) : undefined;
+    res.json({ item: await weeklyPackages.getAgentPlanning(
+      tenantId, String(req.params.programId || ''), String(req.params.packageId || ''), version,
+    ) });
+  }));
+
+  router.post('/:programId/operating-packages/:packageId/agent-planning/director-analysis', asyncRoute(async (req, res) => {
+    const { tenantId } = res.locals as AuthLocals;
+    res.json({ item: await weeklyPackages.runDirectorPlanning(
+      tenantId, String(req.params.programId || ''), String(req.params.packageId || ''), Number(req.body?.expectedVersion),
+    ) });
+  }));
+
+  router.post('/:programId/operating-packages/:packageId/agent-planning/merge', asyncRoute(async (req, res) => {
+    const { tenantId } = res.locals as AuthLocals;
+    res.json({ item: await weeklyPackages.mergeAgentSchedule(
+      tenantId, String(req.params.programId || ''), String(req.params.packageId || ''), Number(req.body?.expectedVersion),
+    ) });
+  }));
+
+  router.post('/:programId/operating-packages/:packageId/agent-planning/confirm', asyncRoute(async (req, res) => {
+    const { tenantId, userId } = res.locals as AuthLocals;
+    res.json({ item: await weeklyPackages.confirmAgentSchedule(
+      tenantId, userId, String(req.params.programId || ''), String(req.params.packageId || ''), Number(req.body?.expectedVersion),
+    ) });
+  }));
+
+  router.post('/:programId/operating-packages/:packageId/agent-planning/dispatch', asyncRoute(async (req, res) => {
+    const { tenantId } = res.locals as AuthLocals;
+    res.json({ item: await weeklyPackages.dispatchAgentSchedule(
+      tenantId, String(req.params.programId || ''), String(req.params.packageId || ''), Number(req.body?.expectedVersion),
+    ) });
+  }));
+
   router.get('/:programId/operating-packages/:packageId/execution-tasks', asyncRoute(async (req, res) => {
     const { tenantId } = res.locals as AuthLocals;
     const programId = String(req.params.programId || '');
@@ -200,6 +236,13 @@ export function createSocialProgramsRouter(dataStore: DataStore = store, authent
   router.post('/:programId/operating-packages/:packageId/execution-tasks/:taskId/recover', asyncRoute(async (req, res) => {
     const { tenantId } = res.locals as AuthLocals;
     res.json({ items: await executionTasks.recoverDeadLetter(tenantId, String(req.params.programId || ''), String(req.params.packageId || ''), String(req.params.taskId || '')) });
+  }));
+
+  router.post('/:programId/operating-packages/:packageId/execution-tasks/:taskId/approve', asyncRoute(async (req, res) => {
+    const { tenantId, userId } = res.locals as AuthLocals;
+    res.json({ items: await executionTasks.approve(
+      tenantId, String(req.params.programId || ''), String(req.params.packageId || ''), String(req.params.taskId || ''), userId,
+    ) });
   }));
 
   router.post('/:programId/operating-packages/:packageId/workflow-events', asyncRoute(async (req, res) => {

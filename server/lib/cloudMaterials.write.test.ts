@@ -5,9 +5,11 @@ import path from 'node:path';
 import {
   createCloudMaterial,
   deleteOwnedCloudMaterial,
+  fetchCloudMaterial,
   upsertSocialTaskCloudMaterial,
   upsertTenantUploadCloudMaterial,
 } from './cloudMaterials.js';
+import { objectStorageUpload } from '../storage/objectStorage.js';
 
 const directory = await fsp.mkdtemp(path.join(os.tmpdir(), 'cloud-material-write-test-'));
 try {
@@ -66,6 +68,45 @@ try {
   assert.deepEqual((entryPatch!.provenance as Record<string, unknown>).sourceEntries, ['studio_workspace', 'enterprise_knowledge']);
   assert.equal(unified.sourceEntry, 'enterprise_knowledge');
   assert.equal(unified.knowledgeEligible, true);
+  const objectBacked = await createCloudMaterial({
+    tenantId: 'tenant-a',
+    title: '对象存储镜头',
+    folder: 'upload',
+    type: 'video',
+    sizeBytes: bytes.length,
+    sha256: 'b'.repeat(64),
+    media: { key: 'materials/tenants/dGVuYW50LWE/hash.mp4', etag: 'media-v1', contentType: 'video/mp4' },
+    poster: { key: 'material-posters/tenants/dGVuYW50LWE/hash.jpg', etag: 'poster-v1', contentType: 'image/jpeg' },
+  }, async (_requestPath, options = {}) => {
+    const form = options.body as FormData;
+    assert.equal(form.get('objectKey'), 'materials/tenants/dGVuYW50LWE/hash.mp4');
+    assert.equal(form.get('objectEtag'), 'media-v1');
+    assert.equal(form.get('posterObjectKey'), 'material-posters/tenants/dGVuYW50LWE/hash.jpg');
+    assert.equal(form.get('storageBackend'), 'object_storage');
+    assert.equal(form.get('videoFile'), null);
+    assert.equal(form.get('posterFile'), null);
+    return Response.json({ id: 'objectrecord1', tenantId: 'tenant-a', objectKey: String(form.get('objectKey')) });
+  });
+  assert.equal(objectBacked.id, 'objectrecord1');
+  const previousStorage = {
+    driver: process.env.OBJECT_STORAGE_DRIVER,
+    root: process.env.LOCAL_OBJECT_STORAGE_ROOT,
+  };
+  process.env.OBJECT_STORAGE_DRIVER = 'local';
+  process.env.LOCAL_OBJECT_STORAGE_ROOT = path.join(directory, 'objects');
+  try {
+    await objectStorageUpload({ key: 'materials/tenants/dGVuYW50LWE/hash.mp4', body: Buffer.from('material-bytes'), contentType: 'video/mp4' });
+    const playback = await fetchCloudMaterial('objectrecord1', 'videoFile', 'bytes=1-3', 'tenant-a', async () => Response.json({
+      id: 'objectrecord1', tenantId: 'tenant-a', scope: 'own', objectKey: 'materials/tenants/dGVuYW50LWE/hash.mp4',
+    }));
+    assert.equal(playback?.status, 206);
+    assert.equal(await playback?.text(), 'ate');
+  } finally {
+    if (previousStorage.driver === undefined) delete process.env.OBJECT_STORAGE_DRIVER;
+    else process.env.OBJECT_STORAGE_DRIVER = previousStorage.driver;
+    if (previousStorage.root === undefined) delete process.env.LOCAL_OBJECT_STORAGE_ROOT;
+    else process.env.LOCAL_OBJECT_STORAGE_ROOT = previousStorage.root;
+  }
 
   const patched: Array<Record<string, unknown>> = [];
   const reused = await upsertSocialTaskCloudMaterial({

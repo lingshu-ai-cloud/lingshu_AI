@@ -34,6 +34,11 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
         "该任务涉及真实对外动作，不能直接标记完成人工执行",
       skip_not_allowed: "该任务会影响后续真实业务动作，不能直接跳过",
       missing_required_resources: "启动前仍有必需业务资产未就绪",
+      content_execution_job_not_found: "没有找到这条后台任务，可能已被计划更新",
+      content_execution_job_not_pauseable: "当前任务已经结束，不能暂停",
+      content_execution_job_not_cancellable: "当前任务已经完成，不能取消",
+      content_execution_job_not_resumable: "当前任务不在可恢复状态",
+      content_execution_job_not_retryable: "当前任务尚未进入可人工重试状态",
     };
     throw new Error(
       `${body.message || friendlyErrors[body.error || ""] || body.error || "请求失败"}${detail}${effectDetail}`,
@@ -71,6 +76,7 @@ export const digitalEmployeeApi = {
       body: JSON.stringify(goal),
     }),
   recommendPackage: (goalId: string) => request<WeeklyPackage>(`/goals/${encodeURIComponent(goalId)}/package/recommend`, { method: "POST" }),
+  generatePackageDetails: (goalId: string) => request<DigitalEmployeeOverview>(`/goals/${encodeURIComponent(goalId)}/package/details`, { method: "POST" }),
   savePackage: (goalId: string, pack: WeeklyPackage) => request<DigitalEmployeeOverview>(`/goals/${encodeURIComponent(goalId)}/package`, { method: "PUT", body: JSON.stringify(pack) }),
   linkTaskProject: (runId: string, taskId: string, projectId: string) => request<DigitalEmployeeOverview>(`/runs/${encodeURIComponent(runId)}/tasks/${encodeURIComponent(taskId)}/link-project`, { method: "POST", body: JSON.stringify({ projectId }) }),
   packageOptions: () => request<{ members: Array<{ id: string; name: string }>; projects: Array<{ id: string; title: string }>; customers: Array<{ id: string; name: string }> }>("/package-options"),
@@ -135,6 +141,11 @@ export const digitalEmployeeApi = {
   retryTask: (taskId: string) =>
     request<DigitalEmployeeOverview>(
       `/tasks/${encodeURIComponent(taskId)}/retry`,
+      { method: "POST" },
+    ),
+  controlExecutionJob: (jobId: string, action: "pause" | "cancel" | "resume" | "retry") =>
+    request<DigitalEmployeeOverview>(
+      `/execution-jobs/${encodeURIComponent(jobId)}/${action}`,
       { method: "POST" },
     ),
   skipTask: (taskId: string, note: string) =>

@@ -16,6 +16,8 @@ import {
   objectStorageGetObject,
   objectStorageHead,
   objectStorageLocalRoot,
+  objectStorageEnsureFile,
+  objectStorageList,
   objectStorageSignedGetUrl,
   objectStorageSupplierDeliveryReady,
   objectStorageUpload,
@@ -41,6 +43,14 @@ test('development defaults to private local system storage', async () => {
     assert.equal(Buffer.concat(rangeChunks).toString(), 'ort');
     const signed = new URL(await objectStorageSignedGetUrl(key), 'http://local');
     assert.equal(verifyAssetToken(signed.searchParams.get('assetToken'), signed.pathname)?.tenantId, 'tenant-a');
+    const source = path.join(root, 'source-upload.mp4');
+    fs.writeFileSync(source, 'video');
+    const first = await objectStorageEnsureFile({ key: 'materials/tenants/a/hash.mp4', filePath: source, contentType: 'video/mp4', contentLength: 5 });
+    const second = await objectStorageEnsureFile({ key: 'materials/tenants/a/hash.mp4', filePath: source, contentType: 'video/mp4', contentLength: 5 });
+    assert.equal(first.reused, false);
+    assert.equal(second.reused, true);
+    const inventory = await objectStorageList({ prefix: 'materials/tenants/a' });
+    assert.deepEqual(inventory.items.map(item => item.key), ['materials/tenants/a/hash.mp4']);
     await objectStorageDelete(key); assert.equal(await objectStorageHead(key), null);
     await assert.rejects(() => objectStorageUpload({ key: '../escape', body: Buffer.from('x'), contentType: 'text/plain' }), /key/);
   } finally {

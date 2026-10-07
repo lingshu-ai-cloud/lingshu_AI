@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import { existsSync, statSync } from 'node:fs';
 import fsp from 'node:fs/promises';
 import { createRequire } from 'node:module';
@@ -22,7 +21,13 @@ import {
 import { analyzeProductionMaterial } from '../digitalEmployees/productionMaterialAnalysis.js';
 import { objectStorageEnabled, objectStorageSignedGetUrl } from '../storage/objectStorage.js';
 import { store } from '../storage/index.js';
+import { createAgentNotification } from '../notifications/agentNotifications.js';
 import { enqueueBullJob, selectedQueueBackend, startBullWorker } from '../queues/bullmq.js';
+import {
+  admitContentExecutionJob,
+  DurableContentExecutionWorker,
+  type ContentExecutionJob,
+} from '../contentExecution/durableQueue.js';
 import { createSocialContentArtifact } from './socialContentOutputs.js';
 import {
   inspectTransientSocialContentFile,
@@ -36,7 +41,7 @@ import {
   type SocialContentCloudMaterialPort,
 } from './socialContentMaterialAccess.js';
 import { withSocialContentRenderWorkspace } from './socialContentRenderWorkspace.js';
-import { readSocialTaskDetail, requireSocialTask } from './socialContentRecords.js';
+import { readSocialTaskDetail, requireSocialTask, socialTaskSummary } from './socialContentRecords.js';
 import { createStarter198Repository, STARTER_COLLECTIONS, type Starter198Repository, type StarterRecord } from './repository.js';
 import {
   SocialContentWorkflowError,
@@ -98,8 +103,9 @@ const { composite } = require('../../desktop/render.cjs') as {
   ) => Promise<{ ok: boolean; outputPath?: string; error?: string }>;
 };
 
-import { MEDIA_ROOT, type ProductionAsset, type SocialProductionBaseline, type SocialProductionAdaptation, type SocialReviewRevisionDirective, automaticSocialMaterialEligible, detectDistinctTaskVideoSegments, hasExactTaskProductAssociation, resolveTaskProductionMaterialLocation, taskProductionAssets, systemThemeGraphicAssets, applyZeroAssetTruthSafeNarration, socialReviewRevisionDirective, applySocialReviewRevision, createVideoCover, type SocialContentAutoProductionRuntime, runSocialContentAutoProduction } from './socialContentAutoProduction.js';
-import { activeProductions, failExecution, writeExecutionStage } from './socialContentAutoProduction.js';
+import { MEDIA_ROOT, type ProductionAsset, type SocialProductionBaseline, type SocialProductionAdaptation, type SocialReviewRevisionDirective, automaticSocialMaterialEligible, detectDistinctTaskVideoSegments, hasExactTaskProductAssociation, resolveTaskProductionMaterialLocation, taskProductionAssets, systemThemeGraphicAssets, applyZeroAssetTruthSafeNarration, socialReviewRevisionDirective, applySocialReviewRevision, createVideoCover, type SocialContentAutoProductionRuntime } from './socialContentAutoProduction.js';
+import { runSocialContentAutoProduction } from './socialContentProductionExecution.js';
+import { failExecution, writeExecutionStage } from './socialContentProductionRuntimeSupport.js';
 export async function runSocialContentAutoProductionWithRetry(input: {
   repository: Starter198Repository;
   tenantId: string;
@@ -107,92 +113,170 @@ export async function runSocialContentAutoProductionWithRetry(input: {
   taskId: string;
   runId: string;
 }): Promise<void> {
-  let lastError: unknown = new Error('自动成片失败');
-  for (let attempt = 1; attempt <= 3; attempt += 1) {
-    try {
-      await runSocialContentAutoProduction(input);
-      return;
-    } catch (error) {
-      lastError = error;
-      const raw = String(error instanceof Error ? error.message : error || '自动成片失败');
-      if (raw.startsWith('user_input_required:')) break;
-      // Paid model failures and quality-gate rejections are deterministic for
-      // the same inputs. Repeating them silently can charge the user three
-      // times without improving the result; preserve the reason for review.
-      if (raw.includes('asset_supply_provider_exhausted:') || raw.includes('product_scene_')) break;
-      if (attempt >= 3) break;
-      await writeExecutionStage({
-        ...input,
-        stage: 'automatic_recovery',
-        status: 'running',
-        message: raw.startsWith('production_input_required:')
-          ? '现有素材未通过自动检查，正在切换素材库与安全基础方案。'
-          : '本次生成暂未完成，正在自动切换备用方案。',
-        extra: { automaticRetryAttempt: attempt + 1, automaticRetryLimit: 3 },
-      }).catch(() => undefined);
-      await new Promise<void>(resolve => setTimeout(resolve, attempt * 300));
-    }
-  }
-  throw lastError;
+  // The durable queue owns retry classification and delay. Keeping retries in
+  // one layer prevents one paid failure from multiplying across nested loops.
+  await runSocialContentAutoProduction(input);
 }
 
-/** Fire-and-observe entry point: API admission returns immediately while the worker renders in-process. */
-export function enqueueSocialContentAutoProduction(input: {
+let productionWorker: DurableContentExecutionWorker | null = null;
+
+async function executePersistedProduction(job: ContentExecutionJob): Promise<void> {
+  const repository = createStarter198Repository(store);
+  const record = await requireSocialTask({ repository, tenantId: job.tenantId, taskId: job.taskId });
+  const task = socialTaskSummary(record);
+  if (['asset_review', 'packaging', 'delivered', 'awaiting_publish', 'awaiting_metrics', 'reviewed'].includes(task.status)) return;
+  if (task.status !== 'producing') throw new Error(`user_input_required:content_task_${task.status}`);
+  await runOutsideSocialContentMutationScope(() => runSocialContentAutoProductionWithRetry({
+    repository,
+    tenantId: job.tenantId,
+    userId: job.userId,
+    taskId: job.taskId,
+    runId: job.runId,
+  }));
+}
+
+function ensureProductionWorker(): DurableContentExecutionWorker {
+  if (productionWorker) return productionWorker;
+  productionWorker = new DurableContentExecutionWorker({
+    dataStore: store,
+    execute: executePersistedProduction,
+    async onSucceeded(job) {
+      await createAgentNotification({
+        tenantId: job.tenantId,
+        eventKey: `content-execution:${job.id}:review-ready`,
+        type: 'content_task_review_ready',
+        severity: 'info',
+        title: '一条内容已经完成制作',
+        summary: '成片和质检结果已保存，等待你验收；验收后再进入发布确认。',
+        sourceAgent: '内容 Agent',
+        entityType: 'social_content_task',
+        entityId: job.taskId,
+        action: {
+          label: '验收内容',
+          page: 'smartAssets',
+          href: `/?page=smartAssets&taskId=${encodeURIComponent(job.taskId)}`,
+        },
+      }, store).catch(notificationError => console.warn('[content-execution] review notification failed', {
+        jobId: job.id,
+        error: notificationError instanceof Error ? notificationError.message : String(notificationError),
+      }));
+    },
+    async onRetry(job, error, decision) {
+      const repository = createStarter198Repository(store);
+      await writeExecutionStage({
+        repository, tenantId: job.tenantId, runId: job.runId,
+        stage: decision.failureClass === 'provider_reconciliation' ? 'provider_reconciliation' : 'automatic_recovery',
+        status: 'running',
+        message: decision.publicReason,
+        extra: {
+          retryClass: decision.failureClass,
+          retryAttempt: job.attempt,
+          retryLimit: decision.maxAttempts,
+          failure: String(error instanceof Error ? error.message : error || '').slice(0, 400),
+        },
+      }).catch(() => undefined);
+    },
+    async onBlocked(job, error, decision) {
+      const repository = createStarter198Repository(store);
+      await failExecution({
+        repository, tenantId: job.tenantId, userId: job.userId, taskId: job.taskId, runId: job.runId,
+        error: new Error(`${decision.failureClass}:${decision.publicReason}:${String(error instanceof Error ? error.message : error || '').slice(0, 800)}`),
+      }).catch(() => undefined);
+      await createAgentNotification({
+        tenantId: job.tenantId,
+        eventKey: `content-execution:${job.id}:blocked:${decision.failureClass}:${job.attempt}`,
+        type: 'content_task_blocked',
+        severity: decision.failureClass === 'insufficient_balance' ? 'critical' : 'warning',
+        title: '一条内容任务需要处理',
+        summary: `${decision.publicReason}。已完成结果会保留，处理后可从当前任务继续。`,
+        sourceAgent: '内容 Agent',
+        entityType: 'social_content_task',
+        entityId: job.taskId,
+        action: {
+          label: '进入内容制作',
+          page: 'smartAssets',
+          href: `/?page=smartAssets&taskId=${encodeURIComponent(job.taskId)}`,
+        },
+      }, store).catch(notificationError => console.warn('[content-execution] blocked notification failed', {
+        jobId: job.id,
+        error: notificationError instanceof Error ? notificationError.message : String(notificationError),
+      }));
+    },
+  });
+  return productionWorker;
+}
+
+/** Admission returns only after the database row exists; execution remains asynchronous. */
+export async function enqueueSocialContentAutoProduction(input: {
   repository: Starter198Repository;
   tenantId: string;
   userId: string;
   taskId: string;
   runId: string;
-}): void {
-  if (selectedQueueBackend() === 'bullmq') {
-    const data = { tenantId: input.tenantId, userId: input.userId, taskId: input.taskId, runId: input.runId };
-    const jobId = createHash('sha256').update(`${data.tenantId}\0${data.taskId}\0${data.runId}`).digest('hex');
-    void enqueueBullJob({
-      queue: 'social-content-production',
-      name: 'render',
-      data,
-      jobId,
-    }).catch(error => failExecution({ ...input, error }));
-    return;
+}): Promise<void> {
+  const dataStore = input.repository.dataStore ?? store;
+  try {
+    const record = await requireSocialTask(input);
+    const task = socialTaskSummary(record);
+    const job = await admitContentExecutionJob({
+      dataStore,
+      tenantId: input.tenantId,
+      userId: input.userId,
+      taskId: input.taskId,
+      runId: input.runId,
+      accountId: task.brief.targetAccountRef?.id,
+      taskType: `social_content_${task.mode}`,
+    });
+    if (job.status === 'queued' && !job.lastStartedAt) {
+      await writeExecutionStage({
+        repository: input.repository,
+        tenantId: input.tenantId,
+        runId: input.runId,
+        stage: 'queued',
+        status: 'running',
+        message: '任务已进入后台制作队列，关闭或刷新网页不会中断。',
+        extra: { queueJobId: job.id, queueStatus: job.status, accountId: job.accountId, taskType: job.taskType },
+      }).catch(() => undefined);
+    }
+    if (dataStore === store && selectedQueueBackend() === 'bullmq') {
+      void enqueueBullJob({
+        queue: 'social-content-production',
+        name: 'wake-durable-job',
+        data: { jobId: job.id },
+        jobId: job.id,
+      }).catch(error => {
+        // Redis is a latency optimization only. The database scanner remains
+        // authoritative and will claim this queued row after a Redis outage.
+        console.warn('[content-execution] BullMQ wake-up failed; durable scan will recover', {
+          jobId: job.id, error: error instanceof Error ? error.message : String(error),
+        });
+      });
+    }
+    // Only a background process initializes this worker. On a web-only
+    // process the database row remains queued until a worker claims it.
+    if (dataStore === store) await productionWorker?.drain();
+  } catch (error) {
+    await failExecution({ ...input, error }).catch(failure => {
+      console.error('[content-execution] durable admission failed', {
+        taskId: input.taskId,
+        error: error instanceof Error ? error.message : String(error),
+        reportingError: failure instanceof Error ? failure.message : String(failure),
+      });
+    });
+    throw error;
   }
-  const key = `${input.tenantId}\u0000${input.taskId}`;
-  const current = activeProductions.get(key);
-  if (current?.runId === input.runId) return;
-  let pending!: Promise<void>;
-  pending = runOutsideSocialContentMutationScope(() => (
-    (current?.promise.catch(() => undefined) ?? Promise.resolve())
-      .then(() => new Promise<void>(resolve => setImmediate(resolve)))
-      .then(() => runSocialContentAutoProductionWithRetry(input))
-      .catch(error => failExecution({ ...input, error }))
-      .finally(() => {
-        if (activeProductions.get(key)?.promise === pending) activeProductions.delete(key);
-      })
-  ));
-  activeProductions.set(key, { runId: input.runId, promise: pending });
 }
 
 export function initSocialContentProductionBullWorker(): void {
-  startBullWorker<{
-    tenantId: string;
-    userId: string;
-    taskId: string;
-    runId: string;
-  }>({
+  const durableWorker = ensureProductionWorker();
+  durableWorker.start();
+  startBullWorker<{ jobId: string }>({
     queue: 'social-content-production',
-    concurrency: Number(process.env.SOCIAL_CONTENT_PRODUCTION_CONCURRENCY || 1),
-    processor: async job => {
-      const repository = createStarter198Repository(store);
-      const input = { repository, ...job.data };
-      try {
-        await runSocialContentAutoProductionWithRetry(input);
-      } catch (error) {
-        await failExecution({ ...input, error });
-        throw error;
-      }
-    },
+    concurrency: Number(process.env.SOCIAL_CONTENT_PRODUCTION_CONCURRENCY || 4),
+    processor: async () => durableWorker.drain(),
   });
 }
 
 export function socialContentAutoProductionActive(tenantId: string, taskId: string): boolean {
-  return activeProductions.has(`${tenantId}\u0000${taskId}`);
+  return productionWorker?.isLocallyActive(tenantId, taskId) ?? false;
 }
