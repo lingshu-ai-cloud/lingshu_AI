@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { evaluateStoryboardRenderReadiness, type RenderReadyShot } from './storyboardRenderReadiness';
+import { canEnterStoryboardRenderStep, evaluateStoryboardRenderReadiness, type RenderReadyShot } from './storyboardRenderReadiness';
 
 const local: RenderReadyShot = { id: 's1', index: 1, title: '产品瓶特写', duration: 2,
   route: 'local', material: { id: 'm1', url: '/m1.mp4', type: 'video', usableDuration: 2.4 },
@@ -38,4 +38,17 @@ test('a mismatched aspect ratio is not a render blocker', () => {
 test('missing storyboard and speech inputs are actionable global blockers', () => {
   const result = evaluateStoryboardRenderReadiness({ shots: [], scriptReady: false, voiceoverRequired: true, voiceoverReady: false });
   assert.deepEqual(result.issues.map(issue => issue.code), ['no_shots', 'script_missing', 'voiceover_missing']);
+});
+
+test('render settings require a storyboard, independently of final render readiness', () => {
+  assert.equal(canEnterStoryboardRenderStep([]), false);
+  assert.equal(canEnterStoryboardRenderStep([local]), true);
+});
+
+test('a persisted material assignment is not reported as missing while materials hydrate', () => {
+  const result = evaluateStoryboardRenderReadiness({ shots: [{ ...local, material: undefined, materialAssigned: true }], scriptReady: true });
+  assert.equal(result.ready, false);
+  assert.ok(result.issues.some(issue => issue.code === 'material_unusable'));
+  assert.ok(!result.issues.some(issue => issue.code === 'material_missing'));
+  assert.match(result.issues[0].message, /已匹配素材/);
 });

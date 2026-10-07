@@ -34,7 +34,7 @@ export interface NarrationTimelineResult<T extends NarrationTimelineShot> {
 /** Source-video cues are local to the generated clip, never to the AI voiceover. */
 export function sourceCuesForShot(cues: SpeechCue[] | undefined, duration: number): SpeechCue[] {
   if (!Array.isArray(cues) || !Number.isFinite(duration) || duration <= 0) return [];
-  const valid = cues.map(cue => ({ text: String(cue.text || '').trim(), start: Number(cue.start), end: Number(cue.end) }))
+  const valid = cues.map(cue => ({ ...cue, text: String(cue.text || '').trim(), start: Number(cue.start), end: Number(cue.end) }))
     .filter(cue => cue.text && Number.isFinite(cue.start) && Number.isFinite(cue.end)
       && cue.start >= 0 && cue.end > cue.start && cue.end <= duration + 0.05)
     .sort((a, b) => a.start - b.start);

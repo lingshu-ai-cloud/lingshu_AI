@@ -6,6 +6,8 @@ export interface RenderReadyShot {
   duration: number;
   route: 'local' | 'ai' | 'presenter' | 'shoot';
   material?: { id: string; url?: string; type: 'video' | 'image' | 'audio'; usableDuration?: number };
+  /** A persisted storyboard assignment may exist before the material catalogue finishes hydrating. */
+  materialAssigned?: boolean;
   /** Set only after the generated video, rather than its first frame, passes review. */
   generatedVideoAccepted?: boolean;
   digitalHumanAccepted?: boolean;
@@ -16,6 +18,11 @@ export interface RenderReadyShot {
   productIds?: string[];
   productMappingAmbiguous?: boolean;
   productionBlockers?: string[];
+}
+
+/** Step 3 belongs to an existing storyboard. Rendering readiness is checked separately. */
+export function canEnterStoryboardRenderStep(shots: ArrayLike<unknown>): boolean {
+  return shots.length > 0;
 }
 
 export type RenderReadinessIssueCode =
@@ -56,7 +63,10 @@ export function evaluateStoryboardRenderReadiness(input: {
     const add = (code: RenderReadinessIssueCode, message: string) => shotIssues.push({ slotId: shot.id, index: shot.index, code, message });
     const name = `分镜 ${shot.index}${shot.title ? `「${shot.title}」` : ''}`;
     const material = shot.material;
-    if (!material?.id || !material.url) add('material_missing', `${name}缺少可用于成片的画面`);
+    if (!material?.id || !material.url) {
+      if (shot.materialAssigned) add('material_unusable', `${name}已匹配素材，但素材暂时无法读取`);
+      else add('material_missing', `${name}缺少可用于成片的画面`);
+    }
     else if (material.type === 'audio' || ((shot.route === 'ai' || shot.route === 'presenter') && material.type !== 'video')) {
       add('material_unusable', `${name}需要已验收的视频画面`);
     }

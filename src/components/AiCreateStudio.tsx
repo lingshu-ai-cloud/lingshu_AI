@@ -1,3 +1,5 @@
+import { applyCaptionTextEdits, sourceCaptionEditKey, subtitleReviewCues } from '../lib/subtitleReview';
+import { studioPreviewRenderBlockers } from '../lib/studioPreviewReadiness';
 import { presenterApi } from '../lib/presenterApi';
 import { digitalHumanDecisionIssues, enterpriseMaterialIssue } from '../../shared/contracts/smartStoryboardAdmission';
 import ShotSourceDecisionPanel from './studio/ShotSourceDecisionPanel';
@@ -64,7 +66,7 @@ import {
 } from './studio/StudioWorkbenchFrame';
 import { groupSpeechShots } from './socialContent/speechShotGroups';
 import StudioBatchReviewDialog, { type StudioBatchReviewIssue } from './studio/StudioBatchReviewDialog';
-import { evaluateStoryboardRenderReadiness } from '../lib/storyboardRenderReadiness';
+import { canEnterStoryboardRenderStep, evaluateStoryboardRenderReadiness } from '../lib/storyboardRenderReadiness';
 import { currentRenderOutput } from '../lib/studioRenderVersion';
 import {
   authenticatedAudioBlobUrl,
@@ -3105,6 +3107,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
   const [voiceoverAudios, setVoiceoverAudios] = useState<Record<string, { url: string; duration: number; cues?: SubCue[]; text?: string; alignmentSource?: string; customVoiceStatus?: 'activated' }>>({});
   const [voiceoverStaleLangs, setVoiceoverStaleLangs] = useState<string[]>([]);
   const [alignedCuesByLang, setAlignedCuesByLang] = useState<Record<string, SubCue[]>>({});
+  const [sourceCaptionTextEdits, setSourceCaptionTextEdits] = useState<Record<string, string>>({});
   const [ttsLanguageSettings, setTtsLanguageSettings] = useState<Record<string, LanguageTtsSettings>>({});
   const activeTtsSettings = ttsLanguageSettings[activeVoiceLang] || DEFAULT_TTS_SETTINGS;
   const patchActiveTtsSettings = (patch: Partial<LanguageTtsSettings>) => {
@@ -3534,6 +3537,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
   const [savingProj, setSavingProj] = useState(false);
   const [savedTick, setSavedTick] = useState(false);
   const [autosaveStatus, setAutosaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  const [autosaveError, setAutosaveError] = useState('');
   const [lastAutosavedAt, setLastAutosavedAt] = useState<Date | null>(null);
   const autosaveInFlightRef = useRef(false);
   const autosavePendingRef = useRef(false);
@@ -3779,7 +3783,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     alignment: (mode === 'clone' && contentMode === 'video') ? [] : productionAlignment,
     alignmentSource: (mode === 'clone' && contentMode === 'video') ? undefined : voiceoverAudios[activeVoiceLang]?.alignmentSource,
   });
-  const productionSignature = JSON.stringify({ renderPolicyVersion: 'avatar-cover-v2-effects-v1', script, ratio, assignments: storyboardAssignments, clipEdits, subtitleStyle, bgm, bgmVol, voiceVol, effectPreset, effectIntensity, effectSoundsOn, disabledEffectSceneIds, subtitlesOn, subMode, audio: productionAudioUrl ? new URL(productionAudioUrl, 'http://local').pathname : '', alignment: alignedCuesByLang, alignmentSources: Object.fromEntries(Object.entries(voiceoverAudios).map(([code, audio]) => [code, audio.alignmentSource])), shots: Object.fromEntries(Object.entries(shotProductions).map(([key, value]) => { const { candidates, revision, locked, ...output } = value; return [key, output]; })) });
+  const productionSignature = JSON.stringify({ renderPolicyVersion: 'avatar-cover-v2-effects-v1', script, ratio, assignments: storyboardAssignments, clipEdits, subtitleStyle, bgm, bgmVol, voiceVol, effectPreset, effectIntensity, effectSoundsOn, disabledEffectSceneIds, subtitlesOn, subMode, audio: productionAudioUrl ? new URL(productionAudioUrl, 'http://local').pathname : '', alignment: alignedCuesByLang, sourceCaptionTextEdits, alignmentSources: Object.fromEntries(Object.entries(voiceoverAudios).map(([code, audio]) => [code, audio.alignmentSource])), shots: Object.fromEntries(Object.entries(shotProductions).map(([key, value]) => { const { candidates, revision, locked, ...output } = value; return [key, output]; })) });
   const productionKey = (slotId: string, assembly = activeAssemblyId) => `${assembly}:${shootingSlots.find(item => item.slotId === slotId)?.id || slotId}`;
   const newProductionFor = (slot: StoryboardSlot): ShotProduction => {
     const salesPresenterId = mode === 'clone'
@@ -5186,7 +5190,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     const trustedStoredCues = sourceCaptionCacheMatchesContent(
       clip.transcriptCuesProvenance, clip.transcriptSourceHash, clip.contentSha256);
     const source = jobCues ? digitalHumanJob!.subtitleCues : trustedStoredCues ? clip.transcriptCues : undefined;
-    return sourceCuesForShot(source, clip.duration);
+    return applyCaptionTextEdits(sourceCuesForShot(source, clip.duration), clip.id, clip.contentSha256, sourceCaptionTextEdits);
   };
   const missingAvatarSourceCues = storyboardSlots.flatMap((slot, index) => {
     if (!hasAvatarSourceVoice(slot)) return [];
@@ -5329,6 +5333,47 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
       return { result: null, error: error instanceof Error ? error.message : '口播与分镜尚未对齐' };
     }
   })();
+  const subtitleReviewAiCues = alignedCuesByLang[activeVoiceLang] || voiceoverAudios[activeVoiceLang]?.cues || [];
+  const subtitleReviewTimeline = narrationArrangementPreview?.result?.timeline || storyboardSlots.map(slot => {
+    const clip = materialById.get(storyboardAssignments[slot.id] || '');
+    const lockedSourceVoice = hasAvatarSourceVoice(slot);
+    return { targetDuration: lockedSourceVoice ? clip?.duration || slot.end - slot.start
+      : clip ? editForSlot(clip, slot).targetDuration || slot.end - slot.start : slot.end - slot.start,
+      lockedSourceVoice, sourceCues: lockedSourceVoice ? sourceCuesForMaterial(clip) : undefined };
+  });
+  const subtitleReviewBaseRows = presentationMode !== 'material' && digitalHumanJob?.subtitleCues?.length
+    ? applyCaptionTextEdits(digitalHumanJob.subtitleCues, digitalHumanJob.id, digitalHumanJob.outputMaterialId, sourceCaptionTextEdits).map((cue, cueIndex) => ({ ...cue, source: 'job' as const, cueIndex, shotIndex: undefined }))
+    : narrationArrangementPreview?.result || voiceoverMode === 'none'
+      ? narrationArrangementPreview?.result
+        ? narrationArrangementPreview.result.cues.map((cue, cueIndex) => {
+          const source = subtitleReviewCues(subtitleReviewTimeline, []).find(row => Math.abs(row.start - cue.start) < .002 && Math.abs(row.end - cue.end) < .002 && row.text === cue.text);
+          return source || { ...cue, source: 'ai' as const, cueIndex, shotIndex: undefined };
+        }) : subtitleReviewCues(subtitleReviewTimeline, [])
+      : [...subtitleReviewCues(subtitleReviewTimeline, []), ...subtitleReviewAiCues.map((cue, cueIndex) => ({ ...cue, source: 'ai' as const, cueIndex, shotIndex: undefined }))];
+  const subtitleReviewRows = subtitleReviewBaseRows.map(row => {
+    const editKey = row.source === 'ai'
+      ? sourceCaptionEditKey(`voice:${activeVoiceLang}:${activeVoiceoverUrl || ''}`, undefined, row) : '';
+    return { ...row, editKey, text: editKey ? sourceCaptionTextEdits[editKey] ?? row.text : row.text };
+  });
+  const editReviewedSubtitle = (row: (typeof subtitleReviewRows)[number], text: string) => {
+    if (row.source === 'job') {
+      const cue = digitalHumanJob?.subtitleCues?.[row.cueIndex];
+      if (!digitalHumanJob || !cue) return;
+      setSourceCaptionTextEdits(current => ({ ...current, [sourceCaptionEditKey(digitalHumanJob.id, digitalHumanJob.outputMaterialId, cue)]: text }));
+    } else if (row.source === 'source' && row.shotIndex !== undefined) {
+      const slot = storyboardSlots[row.shotIndex];
+      const clip = slot ? materialById.get(storyboardAssignments[slot.id] || '') : undefined;
+      if (!clip) return;
+      const raw = digitalHumanJob?.outputMaterialId === clip.id && digitalHumanJob.subtitleCues?.length
+        ? digitalHumanJob.subtitleCues : clip.transcriptCues;
+      const cue = sourceCuesForShot(raw, clip.duration)[row.cueIndex];
+      if (!cue) return;
+      setSourceCaptionTextEdits(current => ({ ...current, [sourceCaptionEditKey(clip.id, clip.contentSha256, cue)]: text }));
+    } else {
+      setSourceCaptionTextEdits(current => ({ ...current, [row.editKey]: text }));
+    }
+    invalidateMusicRender();
+  };
   const narrationAudioHasMeasuredCues = Boolean(narrationMeasuredCues.length);
   const timelineForAssembly = (assembly: StoryboardAssembly) => {
     let timelineCursor = 0;
@@ -5640,11 +5685,12 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
         lockedSourceVoice: Boolean(slot && hasAvatarSourceVoice(slot)),
         lockedDuration: clip?.duration, sourceCues: sourceCuesForMaterial(clip) };
     })) : [];
-    const rawOutputCues = arrangedNarration ? arrangedNarration.cues : sourceOnlyCaptions ? sourceOnlyCues : presentationMode !== 'material' && digitalHumanJob?.subtitleCues?.length ? digitalHumanJob.subtitleCues : renderOverride?.cues?.length
+    const rawOutputCues = arrangedNarration ? arrangedNarration.cues : sourceOnlyCaptions ? sourceOnlyCues : presentationMode !== 'material' && digitalHumanJob?.subtitleCues?.length ? applyCaptionTextEdits(digitalHumanJob.subtitleCues, digitalHumanJob.id, digitalHumanJob.outputMaterialId, sourceCaptionTextEdits) : renderOverride?.cues?.length
       ? renderOverride.cues
       : defaultVoiceover.cues.length
         ? defaultVoiceover.cues
         : buildCues(outputScript, outputVoiceoverDur || timelineDuration || totalDur);
+    const reviewedOutputCues = applyCaptionTextEdits(rawOutputCues, `voice:${outputLanguage}:${outputVoiceoverUrl || ''}`, undefined, sourceCaptionTextEdits);
     const maxOutputCueDuration = Math.min(
       timelineDuration || duration,
       arrangedNarration || sourceOnlyCaptions ? timelineDuration || duration : outputVoiceoverDur > 0 ? outputVoiceoverDur : timelineDuration || duration,
@@ -5652,9 +5698,9 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     // The arranged cues already have measured positions. Do not push a short
     // source-video cue forward to satisfy the generic 0.25 s caption minimum.
     const outputCues = arrangedNarration || sourceOnlyCaptions
-      ? rawOutputCues.filter(cue => cue.text?.trim() && Number.isFinite(cue.start) && Number.isFinite(cue.end)
+      ? reviewedOutputCues.filter(cue => cue.text?.trim() && Number.isFinite(cue.start) && Number.isFinite(cue.end)
         && cue.start >= 0 && cue.end > cue.start && cue.end <= maxOutputCueDuration + 0.05)
-      : renderSafeCues(rawOutputCues, maxOutputCueDuration);
+      : renderSafeCues(reviewedOutputCues, maxOutputCueDuration);
     const effectTimeline = outputTimeline.map((item, index) => ({
       sceneId: 'sceneId' in item && typeof item.sceneId === 'string'
         ? item.sceneId
@@ -8651,7 +8697,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     bgm, bgmCandidates, platformBgms, assemblyBgms, materialVersionBgms, soundCandidatesPerContent, bgmVol, voiceVol, effectPreset, effectIntensity, effectSoundsOn, disabledEffectSceneIds, cover, coverTitle, coverStyle, capturedCoverFrameUrl, materialVersionCovers, account, caption,
     subtitlesOn, subMode, subtitleStyle, clipEdits, voiceoverMode, uploadedVoiceName, customVoiceId, customVoiceName, customVoiceUrl,
     ttsPreset, ttsEmotion, ttsEmotionIntensity, ttsSpeed, ttsPauseStyle, ttsPronunciationText, ttsLanguageSettings, voiceLangs, activeVoiceLang, voiceDrafts, voiceDraftStaleLangs, voiceoverStaleLangs,
-    voiceoverUrl, voiceoverDur, voiceoverAudios, languageRenderOutputs, languageRenderVersions, referenceVoiceStrength, useReferenceVoiceStyle, alignedCuesByLang,
+    voiceoverUrl, voiceoverDur, voiceoverAudios, languageRenderOutputs, languageRenderVersions, referenceVoiceStrength, useReferenceVoiceStyle, alignedCuesByLang, sourceCaptionTextEdits,
     storyboardVideoVersions, productVideoVersions,
     variationStrategy, variationPeople, variationScenes, variationLanguages, variationHooks, variationMax,
     shootingSlots, shotProductions: savedShotProductions, shotProductionContext, socialDigitalHumanPlans,
@@ -8733,6 +8779,8 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     const restoredVoiceoverAudios = s.voiceoverAudios && typeof s.voiceoverAudios === 'object'
       ? s.voiceoverAudios as typeof voiceoverAudios
       : {};
+    setSourceCaptionTextEdits(s.sourceCaptionTextEdits && typeof s.sourceCaptionTextEdits === 'object'
+      ? Object.fromEntries(Object.entries(s.sourceCaptionTextEdits).filter((entry): entry is [string, string] => typeof entry[1] === 'string')) : {});
     const restoredAlignedCues = s.alignedCuesByLang && typeof s.alignedCuesByLang === 'object'
       ? s.alignedCuesByLang as Record<string, SubCue[]>
       : {};
@@ -9044,12 +9092,14 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
       }
     }
     if (silent && !projectId && !studioSpecHasMeaningfulContent(nextSpec)) return false;
-    if (silent && autosaveInFlightRef.current) {
+    if (autosaveInFlightRef.current) {
       autosavePendingRef.current = true;
+      if (!silent) setModeNotice('当前草稿正在保存，已安排再次自动保存，请稍候。');
       return false;
     }
+    autosaveInFlightRef.current = true;
+    setAutosaveError('');
     if (silent) {
-      autosaveInFlightRef.current = true;
       setAutosaveStatus('saving');
     }
     else setSavingProj(true);
@@ -9090,19 +9140,18 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
       }
       return true;
     } catch (error) {
+      setAutosaveError(error instanceof Error ? error.message : '草稿保存失败，请检查网络后重试。');
       setAutosaveStatus('error');
       if (!silent) throw error;
       console.warn('[AiCreateStudio] autosave failed', error);
       return false;
     } finally {
-      if (silent) {
-        autosaveInFlightRef.current = false;
-        if (autosavePendingRef.current) {
-          autosavePendingRef.current = false;
-          queueMicrotask(() => { void autosaveSnapshotRef.current(); });
-        }
+      autosaveInFlightRef.current = false;
+      if (autosavePendingRef.current) {
+        autosavePendingRef.current = false;
+        queueMicrotask(() => { void autosaveSnapshotRef.current(); });
       }
-      else setSavingProj(false);
+      if (!silent) setSavingProj(false);
     }
   };
 
@@ -9500,6 +9549,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     voiceDrafts,
     voiceoverAudios,
     alignedCuesByLang,
+    sourceCaptionTextEdits,
     storyboardAssignments,
     storyboardSourcePlans,
     storyboardAssemblies,
@@ -9590,6 +9640,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
   };
 
   const loadProject = (p: StudioProject) => {
+    if (p.status !== 'template') studioApi.adoptProjectRevision(p);
     projectHydrationPendingRef.current = true;
     applySpec(p.status === 'template' ? withoutStudioWorkflowContext(p.spec) : p.spec);
     setProjectId(p.status === 'template' ? null : p.id);
@@ -9761,6 +9812,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
         setProjects(list);
         const project = list.find(item => item.id === targetProjectId);
         if (project) {
+          studioApi.adoptProjectRevision(project);
           applySpec(project.spec);
           setProjectId(project.status === 'template' ? null : project.id);
           setProjectTitle(project.status === 'template' ? `${project.title} · 副本` : project.title);
@@ -14333,6 +14385,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
       return { id: slot.id, index: index + 1, title: slot.title,
         duration: verifiedSource && clip?.duration ? clip.duration : slot.end - slot.start, route,
         material: clip ? { id: clip.id, url: clip.url, type: clip.type, usableDuration: clip.type === 'video' ? clip.duration : undefined } : undefined,
+        materialAssigned: Boolean(storyboardAssignments[slot.id] || plan.generatedClipId),
         generatedVideoAccepted: route === 'ai' && Boolean(adopted?.source === 'ai' && plan.generatedClipId === clip?.id && plan.quality?.passed),
         digitalHumanAccepted: route === 'presenter' && Boolean(adopted?.source === 'avatar' || verifiedSource),
         quality: route === 'ai' && plan.quality ? { passed: Boolean(plan.quality.passed) } : undefined,
@@ -14826,6 +14879,14 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
       : step === 'preview'
         ? !workbenchHasFormalVideo || rendering || batchRenderingLangs
         : !canNext);
+  const previewRenderBlockers = studioPreviewRenderBlockers({
+    busy: Boolean(rendering || batchRenderingLangs || ttsLoading), ready: renderReadiness.ready,
+    canGenerateVoiceover: freeCanGenerateVoiceover,
+    readinessIssues: renderReadiness.issues.map(issue => issue.message),
+    subtitleReason: subtitleSourceBlockReason, alignmentReason: voiceoverAlignmentBlockReason,
+    renderableVersions: workbenchRenderableVersionCount, needsVoiceover: replicationNeedsVoiceover,
+    timingBlocked: replicationTimingBlocked, preparationError: replicationPreparationError,
+  });
   const activeLanguageLabel = LANGS.find(item => item.code === activeVoiceLang)?.label || activeVoiceLang;
   const workflowTaskLabel: Record<string, string> = {
     content_mode_routing: '选择内容生产路径',
@@ -15068,6 +15129,12 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
 
   const navigateReplicationStep = async (index: number) => {
     if (modeActionLoading || ttsLoading || savingProj || batchShotBusy) return;
+    if (index === 2 && !canEnterStoryboardRenderStep(storyboardSlots)) {
+      setModeNotice('请先完成分镜，再进入成片设置。');
+      const materialIndex = activeSteps.findIndex(item => item.id === 'material');
+      if (materialIndex >= 0) setStepIdx(materialIndex);
+      return;
+    }
     if (index === 2 && canFinalizeAndRender && !renderReadiness.ready) {
       await finalizeBatchAndEnterRender();
       return;
@@ -15180,7 +15247,10 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
         onReplicationStepChange={index => {
           if (freeThreeStep) {
             if (index === 0) setStepIdx(activeSteps.findIndex(item => item.id === 'mode'));
-            else setStepIdx(activeSteps.findIndex(item => item.id === (index === 2 ? 'preview' : 'material')));
+            else if (index === 2 && !canEnterStoryboardRenderStep(storyboardSlots)) {
+              setModeNotice('请先完成分镜，再进入成片设置。');
+              setStepIdx(activeSteps.findIndex(item => item.id === 'material'));
+            } else setStepIdx(activeSteps.findIndex(item => item.id === (index === 2 ? 'preview' : 'material')));
             return;
           }
           void navigateReplicationStep(index);
@@ -15198,6 +15268,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
         onProjectTitleChange={title => { setProjectTitle(title); setAutosaveStatus('idle'); }}
         saveStatus={{
           state: savingProj ? 'saving' : autosaveStatus,
+          label: autosaveStatus === 'error' && !savingProj ? `${autosaveError || '保存失败'} 点击重试` : undefined,
           savedAt: lastAutosavedAt?.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }),
           onRetry: () => void saveProject('draft').catch(error => setModeNotice(error.message)),
         }}
@@ -15262,7 +15333,41 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
           </div>
         ) : <button key={index} type="button" className="block w-full rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-left text-[10px] text-amber-900" onClick={() => { const slot = storyboardSlots.find(item => item.id === todo.slotId); if (todo.target === 'system') { void navigateReplicationStep(0); return; } if (!slot) return; focusWorkbenchStoryboardSlot(slot.id); if (todo.target === 'digital') openProduction(slot); else void createBoundShootingTask(storyboardSlotScript(slot.detail).visual || slot.title, slot.id); }}>{todo.label}</button>)}</div>)}
         propertyPanel={(
-          <div className="space-y-4">
+          threeStepWorkflow && step === 'preview' ? (
+            <section className="space-y-3" aria-label="成片操作">
+              <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-4">
+                <p className="text-sm font-black text-text-primary">生成成片</p>
+                <p className="mt-1 text-[11px] leading-5 text-text-secondary">{workbenchHasFormalVideo ? '效果调整后，可在这里重新生成。' : replicationNeedsVoiceover ? '点击后自动生成配音并渲染成片。' : '点击后开始渲染成片。'}</p>
+                <button type="button" onClick={startReplicationRender} disabled={rendering || batchRenderingLangs || ttsLoading || Boolean(subtitleSourceBlockReason) && !freeCanGenerateVoiceover || Boolean(voiceoverAlignmentBlockReason) || replicationTimingBlocked} className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-emerald-700 px-4 py-3 text-xs font-black text-white shadow-sm hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-50">
+                  {(rendering || batchRenderingLangs || ttsLoading) && <Loader2 size={15} className="animate-spin" />}
+                  {rendering || batchRenderingLangs ? `正在生成 ${renderPct}%` : ttsLoading ? '正在生成配音…' : workbenchHasFormalVideo ? '重新生成成片' : replicationNeedsVoiceover ? '生成配音并渲染成片' : '生成成片'}
+                </button>
+              </div>
+
+              <details className="rounded-xl border border-border bg-white p-3" aria-label="调整效果">
+                <summary className="cursor-pointer text-xs font-black text-text-primary">调整效果</summary>
+                <div className="mt-4 space-y-4 border-t border-border pt-4">
+                  <section aria-label="配音设置">
+                    <p className="text-[11px] font-black text-text-primary">配音</p>
+                    <label className="mt-2 block text-[10px] font-bold text-text-secondary">音色<select aria-label="配音音色" value={voice} onChange={event => { setVoice(event.target.value); setTtsLanguageSettings(current => ({ ...current, [activeVoiceLang]: { ...(current[activeVoiceLang] || DEFAULT_TTS_SETTINGS), voiceId: event.target.value } })); setVoiceoverStaleLangs(current => [...new Set([...current, activeVoiceLang])]); invalidateMusicRender(); }} className="mt-1 w-full rounded-lg border border-border bg-white p-2 text-xs">{[...VOICES, ...customVoices.map(item => ({ id: item.voiceId, name: item.name }))].map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+                    <label className="mt-2 block text-[10px] font-bold text-text-secondary">语速 · {replicationSpeechSpeed.toFixed(2)} 倍<input aria-label="配音语速" type="range" min="0.85" max="1.30" step="0.05" value={replicationSpeechSpeed} onChange={event => { const speed = Number(event.target.value); setReplicationSpeechSpeed(speed); setTtsLanguageSettings(current => ({ ...current, [activeVoiceLang]: { ...(current[activeVoiceLang] || DEFAULT_TTS_SETTINGS), speed } })); setVoiceoverStaleLangs(current => [...new Set([...current, activeVoiceLang])]); invalidateMusicRender(); }} className="mt-2 w-full accent-emerald-700" /></label>
+                    {activeVoiceoverUrl && <audio src={activeVoiceoverUrl} controls aria-label="成片配音试听" className="mt-2 w-full" />}
+                  </section>
+                  <section className="border-t border-border pt-3" aria-label="配乐设置"><p className="mb-2 text-[11px] font-black text-text-primary">配乐</p>{workbenchProductionPanel}</section>
+                  <section className="border-t border-border pt-3" aria-label="字幕设置">
+                    <p className="text-[11px] font-black text-text-primary">字幕</p>
+                    <label className="mt-2 flex items-center gap-2 text-xs"><input type="checkbox" checked={subtitlesOn} onChange={event => { setSubtitlesOn(event.target.checked); invalidateMusicRender(); }} />显示字幕</label>
+                  </section>
+                  <section className="border-t border-border pt-3" aria-label="动效设置">
+                    <p className="text-[11px] font-black text-text-primary">画面动效</p>
+                    <select aria-label="动效风格" value={effectPreset} onChange={event => { setEffectPreset(event.target.value as EffectPresetId); invalidateMusicRender(); }} className="mt-2 w-full rounded border border-border p-2 text-xs"><option value="natural">自然</option><option value="dynamic">动感</option><option value="tech">科技</option><option value="cinematic">电影</option></select>
+                    <select aria-label="动效强度" value={effectIntensity} onChange={event => { setEffectIntensity(Number(event.target.value) as EffectIntensity); invalidateMusicRender(); }} className="mt-2 w-full rounded border border-border p-2 text-xs"><option value={0}>关闭</option><option value={1}>弱</option><option value={2}>中</option><option value={3}>强</option></select>
+                    <label className="mt-3 flex items-center gap-2 text-xs"><input type="checkbox" checked={effectSoundsOn} onChange={event => { setEffectSoundsOn(event.target.checked); invalidateMusicRender(); }} />跟随动效添加音效</label>
+                  </section>
+                </div>
+              </details>
+            </section>
+          ) : <div className="space-y-4">
       {socialViralTask && step !== 'mode' && step !== 'material' && (modeActionLoading || replicationPreparationError) && <div role={replicationPreparationError ? 'alert' : 'status'} aria-live="polite" className="flex shrink-0 items-center gap-3 border-b border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-950">
         {modeActionLoading && <Loader2 size={16} className="shrink-0 animate-spin" />}
         <span className="min-w-0 flex-1">{replicationPreparationError || modeActionStatus || '正在准备口播与分镜…'}{!replicationPreparationError && ' 可先查看分镜和素材。'}</span>
@@ -15572,7 +15677,32 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
         onOpenShot={shotId => { setProductionEditorId(shotId); setProductionError(''); }}
       />}
             {threeStepWorkflow && step === 'preview' ? <section className="space-y-2" aria-label="成片渲染与导出">
-      <div className="rounded-lg border border-border bg-white p-3 text-xs" aria-label="口播段落与镜头编排">
+      <div className="rounded-lg border border-border bg-white p-3 text-xs" aria-label="成片制作检查清单">
+        <p className="font-black text-text-primary">成片制作检查清单</p>
+        <p className="mt-1 text-[10px] leading-4 text-text-muted">配置就绪后仍需实际渲染，并检查成片后才能导出。</p>
+        <ul className="mt-2 space-y-2 text-[11px] leading-5">
+          <li>草稿保存 · {savingProj || autosaveStatus === 'saving' ? '保存中' : autosaveStatus === 'error' ? `失败：${autosaveError || '保存失败，请重试'}` : autosaveStatus === 'saved' ? '已保存' : '待保存'}{autosaveStatus === 'error' && <button type="button" disabled={savingProj} onClick={() => void saveProject('draft').catch(error => setModeNotice(error.message))} className="ml-2 font-bold text-emerald-700 underline disabled:opacity-50">重试保存</button>}</li>
+          <li>分镜脚本 · {hasTimestampScript ? '已就绪' : '待处理：请先确认有效分镜脚本'}</li>
+          <li>分镜素材 · {renderReadiness.unreadyShots.length ? `待处理：${renderReadiness.unreadyShots.length} 个分镜未就绪` : storyboardSlots.length ? '已就绪' : '待处理：尚无分镜'}</li>
+          <li>口播与镜头编排 · {narrationArrangementPreview?.error ? `待处理：${narrationArrangementPreview.error}` : voiceoverAlignmentBlockReason ? `待处理：${voiceoverAlignmentBlockReason}` : '配置就绪，渲染后检查衔接'}</li>
+          <li>成片配音 · {ttsLoading ? '正在生成' : replicationNeedsVoiceover ? '待处理：需生成当前语言配音' : voiceoverMode === 'none' ? '配置就绪：无配音' : '配置就绪，渲染后试听'}</li>
+          <li>字幕 · {!subtitlesOn ? '配置就绪：已关闭' : subtitleSourceBlockReason ? `待处理：${subtitleSourceBlockReason}` : '配置就绪，渲染后检查字幕'}</li>
+          <li>配乐 · {bgm ? '配置就绪，渲染后检查混音' : '配置就绪：不使用配乐'}</li>
+          <li>画面动效与音效 · 配置就绪，渲染后检查效果</li>
+          <li>成片与导出 · {rendering || batchRenderingLangs ? `正在渲染 ${renderPct}%` : workbenchHasFormalVideo ? currentRenderReviewed ? '已检查当前成片，可导出' : '已生成成片，待检查确认后导出' : '待处理：尚未生成成片'}</li>
+        </ul>
+        {previewRenderBlockers.length > 0 && <div role="status" className="mt-3 rounded border border-amber-200 bg-amber-50 p-2 text-amber-900">
+          <p className="font-bold">当前暂不能渲染</p>
+          <ul className="mt-1 list-disc space-y-1 pl-4">{previewRenderBlockers.map(reason => <li key={reason}>{reason}</li>)}</ul>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {(!renderReadiness.ready && !freeCanGenerateVoiceover) && <button type="button" onClick={() => setStepIdx(activeSteps.findIndex(item => item.id === 'material'))} className="rounded border border-amber-300 px-2 py-1 font-bold">返回步骤二处理分镜</button>}
+            {subtitleSourceBlockReason && <button type="button" onClick={() => { document.getElementById('preview-narration-arrangement')?.scrollIntoView({ block: 'nearest' }); }} className="rounded border border-amber-300 px-2 py-1 font-bold">查看原字幕补取</button>}
+            {(replicationNeedsVoiceover || voiceoverAlignmentBlockReason) && <button type="button" onClick={() => document.getElementById('preview-voiceover-settings')?.scrollIntoView({ block: 'nearest' })} className="rounded border border-amber-300 px-2 py-1 font-bold">查看配音设置</button>}
+          </div>
+        </div>}
+      </div>
+
+      <div id="preview-narration-arrangement" className="rounded-lg border border-border bg-white p-3 text-xs" aria-label="口播段落与镜头编排">
         <p className="font-black text-text-primary">口播段落与镜头编排</p>
         {missingAvatarSourceCues.length > 0 && <div className="mt-2 rounded border border-amber-200 bg-amber-50 px-2 py-2 text-amber-900">
           <p>数字人分镜 {missingAvatarSourceCues.map(item => item.index + 1).join('、')} 缺少当前源片的实测字幕时间码。开启字幕导出前请补取；不会借用另一次 AI 配音的时间码。</p>
@@ -15619,7 +15749,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
           {narrationArrangementPreview.result!.warnings.map((warning, index) => <p key={index} className="mt-1 text-amber-700">{warning}</p>)}
         </>}
       </div>
-      {threeStepWorkflow && <div className="rounded-xl border border-border bg-white p-3">
+      {threeStepWorkflow && <div id="preview-voiceover-settings" className="rounded-xl border border-border bg-white p-3">
         <p className="text-xs font-black text-text-primary">成片配音口播</p>
         <p className="mt-1 text-[10px] leading-4 text-text-muted">已生成的数字人镜头保留原声；这里只为其他分镜生成口播。点击底部渲染按钮会自动补齐缺少的配音，也可先生成并试听。</p>
         <p role="status" className="mt-2 text-[10px] leading-4 text-text-secondary">{voiceoverStaleLangs.includes(activeVoiceLang)
@@ -15635,7 +15765,10 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
               <details className="rounded-lg border border-border p-3" open><summary className="cursor-pointer text-xs font-bold">配乐</summary><div className="mt-3">{workbenchProductionPanel}</div></details>
               <details className="rounded-lg border border-border p-3"><summary className="cursor-pointer text-xs font-bold">字幕确认</summary>
                 <label className="mt-3 flex items-center gap-2 text-xs"><input type="checkbox" checked={subtitlesOn} onChange={event => { setSubtitlesOn(event.target.checked); invalidateMusicRender(); }} />显示字幕</label>
-                <div className="mt-2 max-h-64 space-y-2 overflow-y-auto">{(alignedCuesByLang[activeVoiceLang] || []).map((cue, index) => <label key={index} className="block text-[10px]">{cue.start.toFixed(1)}–{cue.end.toFixed(1)}s<textarea aria-label={`字幕 ${index + 1}`} value={cue.text} rows={2} onChange={event => { const text = event.target.value; setAlignedCuesByLang(current => ({ ...current, [activeVoiceLang]: (current[activeVoiceLang] || []).map((item, i) => i === index ? { ...item, text } : item) })); invalidateMusicRender(); }} className="mt-1 w-full rounded border border-border p-2" /></label>)}</div>
+                <p className="mt-2 text-[10px] text-text-muted">{subtitleReviewRows.length} 条字幕 · 数字人字幕沿用源片实测时间码，文字修改会用于成片。</p>
+                {narrationArrangementPreview?.error && <p role="status" className="mt-2 text-[10px] text-orange-700">口播尚未校准：{narrationArrangementPreview.error}。当前 AI 字幕显示配音时间，校准后显示成片时间。</p>}
+                {missingAvatarSourceCues.length > 0 && <p role="status" className="mt-2 text-[10px] text-orange-700">分镜 {missingAvatarSourceCues.map(item => item.index + 1).join('、')} 缺少源片字幕，请先补取原字幕。</p>}
+                <div className="mt-2 max-h-64 space-y-2 overflow-y-auto">{subtitleReviewRows.map((cue, index) => <label key={`${cue.source}-${cue.shotIndex ?? ''}-${cue.cueIndex}`} className="block text-[10px]">{cue.start.toFixed(1)}–{cue.end.toFixed(1)}s · {cue.source === 'ai' ? 'AI 配音' : `数字人原声${cue.shotIndex === undefined ? '' : ` · 分镜 ${cue.shotIndex + 1}`}`}<textarea aria-label={`字幕 ${index + 1}`} value={cue.text} readOnly={cue.source === 'ai' && presentationMode === 'material' && !narrationArrangementPreview?.result} rows={2} onChange={event => editReviewedSubtitle(cue, event.target.value)} className="mt-1 w-full rounded border border-border p-2" /></label>)}{!subtitleReviewRows.length && <p className="text-text-muted">请先生成配音字幕或补取数字人源片字幕。</p>}</div>
               </details>
               <details className="rounded-lg border border-border p-3"><summary className="cursor-pointer text-xs font-bold">画面可控动效</summary>
                 <select aria-label="动效风格" value={effectPreset} onChange={event => { setEffectPreset(event.target.value as EffectPresetId); invalidateMusicRender(); }} className="mt-3 w-full rounded border border-border p-2 text-xs"><option value="natural">自然</option><option value="dynamic">动感</option><option value="tech">科技</option><option value="cinematic">电影</option></select>
@@ -15704,7 +15837,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
           disabled: threeStepWorkflow && step === 'material' ? smartBatchTodos.some(todo => todo.target === 'system') || batchShotBusy || savingProj || replicationTimingBlocked : threeStepWorkflow && step === 'preview' ? rendering || batchRenderingLangs || ttsLoading || !renderReadiness.ready && !freeCanGenerateVoiceover || Boolean(subtitleSourceBlockReason) && !freeCanGenerateVoiceover || Boolean(voiceoverAlignmentBlockReason) || workbenchRenderableVersionCount === 0 && !replicationNeedsVoiceover || replicationTimingBlocked : agentProduction.active ? !agentProduction.action || agentProduction.busy || Boolean(window.__agentProductionTarget?.projectId && projectId !== window.__agentProductionTarget.projectId) : primaryActionDisabled,
           loading: agentProduction.busy || primaryActionLoading,
           loadingLabel: socialArtifactSubmitting ? '正在提交成品' : modeActionStatus || (rendering ? `正在生成 ${renderPct}%` : undefined),
-          blockReason: agentProduction.active ? undefined : primaryActionBlockedReason,
+          blockReason: threeStepWorkflow && step === 'preview' ? previewRenderBlockers[0] : agentProduction.active ? undefined : primaryActionBlockedReason,
           icon: primarySubmitsSocialArtifact || step === 'preview' && workbenchHasFormalVideo && !primaryGeneratesVideo ? <Send size={15} /> : <ChevronRight size={15} />,
         }}
       >

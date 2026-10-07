@@ -8791,7 +8791,8 @@ studioRouter.post('/projects', async (req, res) => {
       const changed = JSON.stringify(existing.spec || {}) !== JSON.stringify(spec || {})
         || String(existing.title || '') !== String(title ?? existing.title ?? '')
         || String(existing.status || '') !== String(status || '');
-      await store.update('studio_projects', String(id), { title: title ?? existing.title, status, spec, thumb_seed: thumbSeed || '', updated_at: now });
+      const updated = await store.update('studio_projects', String(id), { title: title ?? existing.title, status, spec, thumb_seed: thumbSeed || '', updated_at: now });
+      if (!updated) { res.status(503).json({ ok: false, code: 'studio_project_storage_unavailable', error: '草稿未能写入存储，请重试；当前编辑仍保留在页面中。' }); return; }
       if (changed) await invalidatePublishingApprovalForProject(tenantId, String(id));
       res.json({ ok: true, project: projectFromRecord({ ...existing, title: title ?? existing.title, status, spec, thumb_seed: thumbSeed, updated_at: now }, tenantId) });
       return;
