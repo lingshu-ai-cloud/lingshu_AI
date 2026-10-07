@@ -403,11 +403,28 @@ function localMaterials(tenantId: string, records: Array<Record<string, unknown>
 export function resolveEnterpriseAssetLocation(
   assetUrl: string,
   tenantId: string,
-  options: { assetsDir?: string; objectStorage?: boolean } = {},
+  options: { assetsDir?: string; mediaDir?: string; objectStorage?: boolean } = {},
 ): Pick<AssetCandidate, 'url' | 'localPath' | 'objectKey'> {
   const url = text(assetUrl, 2_000);
   if (!url || syntheticMaterialMarker(url)) return {};
   if (/^(?:https?:|data:)/i.test(url)) return { url };
+  // Imported product catalog images also live in the tenant media tree.
+  if (url.startsWith('/media/tenants/')) {
+    let relative: string;
+    try { relative = decodeURIComponent(url.slice('/media/tenants/'.length).split(/[?#]/)[0]!); } catch { return {}; }
+    const parts = relative.split('/');
+    if (parts[0] !== tenantId || parts.some(part => !part || part === '.' || part === '..' || part.includes('\\') || /\0/.test(part))) return {};
+    const mediaDir = path.resolve(options.mediaDir || path.resolve(process.cwd(), 'data', 'media'));
+    const tenantRoot = path.join(mediaDir, 'tenants', tenantId);
+    const candidate = path.resolve(mediaDir, 'tenants', relative);
+    try {
+      const realRoot = fs.realpathSync(tenantRoot);
+      const realFile = fs.realpathSync(candidate);
+      if (!realFile.startsWith(realRoot + path.sep) || fs.statSync(realFile).size <= 0) return {};
+      return { localPath: realFile };
+    } catch { return {}; }
+  }
+
   const match = url.match(/^\/api\/overseas\/enterprise\/assets\/([^/?#]+)(?:[?#].*)?$/i);
   if (!match) return {};
   let filename = '';
