@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { docxTablesFromXml, parseProductDocument, productsFromLabeledText } from './productDocumentImport.js';
+import { docxTablesFromXml, normalizeLocalOcrProductText, parseProductDocument, productsFromLabeledText } from './productDocumentImport.js';
 
 const enc = new TextEncoder();
 const concat = (...parts: Uint8Array[]) => {
@@ -33,6 +33,22 @@ test('从 PDF 风格标签文本提取结构化产品字段', () => {
   assert.deepEqual(products, [{ name: '轻盈面霜', sku: 'CR-01', brand: 'Ling', color: undefined, size: undefined, retailPrice: '99', moq: undefined, material: undefined, imageUrl: undefined, highlights: '清爽保湿' }]);
   assert.deepEqual(productsFromLabeledText('第1页 产品名称：精华液 SKU：S-2 品牌：Ling 价格：128 卖点：提亮')[0], {
     name: '精华液', sku: 'S-2', brand: 'Ling', color: undefined, size: undefined, retailPrice: '128', moq: undefined, material: undefined, imageUrl: undefined, highlights: '提亮',
+  });
+});
+
+test('本地 OCR 英文字段可以进入同一产品确认结构', () => {
+  assert.deepEqual(productsFromLabeledText('Product Name: Light Cream\nSKU: CR-01\nBrand: Ling\nRetail Price: 99\nHighlights: Lightweight hydration')[0], {
+    name: 'Light Cream', sku: 'CR-01', brand: 'Ling', color: undefined, size: undefined, retailPrice: '99',
+    moq: undefined, material: undefined, imageUrl: undefined, highlights: 'Lightweight hydration',
+  });
+});
+
+test('本地 OCR 清理由相邻中文字符间空格，不破坏 SKU 和英文词边界', () => {
+  const normalized = normalizeLocalOcrProductText('产 品 名 称 : 验 收 精 华\n品 牌 : Ling Shu\nSKU: CR-01 PRO\n价 格 : 128');
+  assert.equal(normalized, '产品名称 : 验收精华\n品牌 : Ling Shu\nSKU: CR-01 PRO\n价格 : 128');
+  assert.deepEqual(productsFromLabeledText(normalized)[0], {
+    name: '验收精华', sku: 'CR-01 PRO', brand: 'Ling Shu', color: undefined, size: undefined,
+    retailPrice: '128', moq: undefined, material: undefined, imageUrl: undefined, highlights: undefined,
   });
 });
 

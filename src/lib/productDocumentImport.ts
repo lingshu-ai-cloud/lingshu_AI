@@ -1,5 +1,6 @@
 import { heuristicProductMapping, mapRowToProduct } from './productImport';
 import { readProductDiscoveryFile, validateProductDiscoveryFileSize } from './productDiscoveryFile';
+import { studioApi } from './studioApi';
 
 export interface DocumentProductDraft {
   name?: string;
@@ -13,6 +14,8 @@ export interface DocumentProductDraft {
   material?: string;
   imageUrl?: string;
   highlights?: string;
+  extractionSource?: 'document_text' | 'local_ocr';
+  needsFieldReview?: boolean;
 }
 
 export interface ProductDocumentParseResult {
@@ -52,21 +55,27 @@ function productsFromRows(rows: string[][]): DocumentProductDraft[] {
 
 export function productsFromLabeledText(text: string): DocumentProductDraft[] {
   const normalized = text.replace(/第\d+页/g, '\n').replace(/[；;]/g, '\n');
-  const blocks = normalized.split(/(?=(?:产品|商品)?(?:名称|品名)\s*[:：])/i).map(item => item.trim()).filter(Boolean);
-  const anyLabel = '产品名称|商品名称|品名|名称|SKU|货号|款号|商品编号|品牌|brand|颜色|color|规格|尺寸|尺码|size|零售价|售价|价格|price|起订量|MOQ|最小订单量|材质|面料|成分|material|图片URL|主图URL|图片链接|卖点|亮点|产品描述|描述';
-  const field = (block: string, labels: string) => new RegExp(`(?:${labels})\\s*[:：]\\s*([^\\n|]{1,160}?)(?=\\s+(?:${anyLabel})\\s*[:：]|$)`, 'i').exec(block)?.[1]?.trim();
+  const blocks = normalized.split(/(?=(?:(?:产品|商品)?(?:名称|品名)|product\s*name)\s*[:：])/i).map(item => item.trim()).filter(Boolean);
+  const anyLabel = '产品名称|商品名称|品名|名称|product\s*name|name|SKU|货号|款号|商品编号|品牌|brand|颜色|color|规格|尺寸|尺码|size|零售价|售价|价格|retail\s*price|price|起订量|MOQ|minimum\s*order(?:\s*quantity)?|最小订单量|材质|面料|成分|material|图片URL|主图URL|图片链接|image\s*url|卖点|亮点|产品描述|描述|highlights?|description';
+  const field = (block: string, labels: string) => new RegExp(`(?:${labels})\\s*[:：]\\s*([^\\n|]{1,160}?)(?=\\s+(?:${anyLabel})\\s*[:：]|$)`, 'im').exec(block)?.[1]?.trim();
   return blocks.map(block => ({
-    name: field(block, '产品名称|商品名称|品名|名称'),
+    name: field(block, '产品名称|商品名称|品名|名称|product\s*name|name'),
     sku: field(block, 'SKU|货号|款号|商品编号'),
     brand: field(block, '品牌|brand'),
     color: field(block, '颜色|color'),
     size: field(block, '规格|尺寸|尺码|size'),
-    retailPrice: field(block, '零售价|售价|价格|price'),
-    moq: field(block, '起订量|MOQ|最小订单量'),
+    retailPrice: field(block, '零售价|售价|价格|retail\s*price|price'),
+    moq: field(block, '起订量|MOQ|minimum\s*order(?:\s*quantity)?|最小订单量'),
     material: field(block, '材质|面料|成分|material'),
-    imageUrl: field(block, '图片URL|主图URL|图片链接'),
-    highlights: field(block, '卖点|亮点|产品描述|描述'),
+    imageUrl: field(block, '图片URL|主图URL|图片链接|image\s*url'),
+    highlights: field(block, '卖点|亮点|产品描述|描述|highlights?|description'),
   })).filter(item => item.name || item.sku);
+}
+
+export function normalizeLocalOcrProductText(text: string): string {
+  // Chinese OCR commonly inserts a space between every glyph. Remove only
+  // whitespace whose two neighbours are CJK so SKU and English word boundaries remain intact.
+  return text.replace(/(?<=[\u3400-\u9fff])[ \t\u3000]+(?=[\u3400-\u9fff])/g, '');
 }
 
 interface ZipEntry { name: string; method: number; compressedSize: number; uncompressedSize: number; localOffset: number }
@@ -136,7 +145,8 @@ async function renderPdfVisualPages(file: File): Promise<Array<{ name: string; u
   try {
     const pdf = await task.promise;
     const imageOps = new Set([pdfjs.OPS.paintImageXObject, pdfjs.OPS.paintInlineImageXObject, pdfjs.OPS.paintImageMaskXObject]);
-    for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
+    if (pdf.numPages > 100) throw new Error('请上传不超过100页的产品资料');
+    for (let pageNumber = 1; pageNumber <= Math.min(pdf.numPages, 20); pageNumber += 1) {
       const page = await pdf.getPage(pageNumber);
       const operators = await page.getOperatorList();
       if (!operators.fnArray.some(operator => imageOps.has(operator))) continue;
@@ -161,14 +171,40 @@ async function renderPdfVisualPages(file: File): Promise<Array<{ name: string; u
   return results;
 }
 
+async function fileBase64(file: File): Promise<string> {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  let binary = '';
+  for (let offset = 0; offset < bytes.length; offset += 0x8000) binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
+  return btoa(binary);
+}
+
+async function recognizePdfPagesLocally(pages: Array<{ file: File }>): Promise<string> {
+  if (!pages.length) throw new Error('扫描 PDF 没有可渲染的页面');
+  const recognized: string[] = [];
+  for (const [index, page] of pages.entries()) {
+    if (page.file.size > 6 * 1024 * 1024) throw new Error(`第 ${index + 1} 页图片超过本地 OCR 的 6MB 限制`);
+    const result = await studioApi.productDocumentOcr({ dataBase64: await fileBase64(page.file), mimeType: page.file.type });
+    if (!result.ok) throw new Error(result.error || '本地 OCR 未就绪');
+    if (result.text?.trim()) recognized.push(`第${index + 1}页\n${result.text.trim()}`);
+  }
+  return recognized.join('\n');
+}
+
 export async function parseProductDocument(file: File): Promise<ProductDocumentParseResult> {
   validateProductDiscoveryFileSize(file.name, file.size);
   if (/\.pdf$/i.test(file.name)) {
-    const text = await readProductDiscoveryFile(file);
-    const products = productsFromLabeledText(text);
-    if (!products.length) throw new Error('PDF 中未识别到带名称或 SKU 的产品，请确认文档使用“产品名称：…”等清晰字段');
+    let text = ''; let extractionSource: 'document_text' | 'local_ocr' = 'document_text';
+    try { text = await readProductDiscoveryFile(file); }
+    catch (error) {
+      if (!/没有可读取的文字/.test(error instanceof Error ? error.message : '')) throw error;
+      extractionSource = 'local_ocr';
+    }
     const unassignedImages = await renderPdfVisualPages(file);
-    return { sourceLabel: 'PDF 文本与含图页面提取', products, unassignedImages, needsReview: true };
+    if (extractionSource === 'local_ocr') text = normalizeLocalOcrProductText(await recognizePdfPagesLocally(unassignedImages));
+    const products = productsFromLabeledText(text).map(product => ({ ...product, extractionSource,
+      needsFieldReview: extractionSource === 'local_ocr' }));
+    if (!products.length) throw new Error('PDF 中未识别到带名称或 SKU 的产品，请确认文档使用“产品名称：…”等清晰字段');
+    return { sourceLabel: extractionSource === 'local_ocr' ? 'PDF 本地 OCR（中英文，需逐项复核）' : 'PDF 文本与含图页面提取', products, unassignedImages, needsReview: true };
   }
   if (!/\.docx$/i.test(file.name)) throw new Error('文档导入仅支持 PDF 和 DOCX');
   const bytes = new Uint8Array(await file.arrayBuffer());

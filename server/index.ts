@@ -22,6 +22,7 @@ import { channelsRouter } from './routes/channels.js';
 import { schedulerRouter } from './routes/scheduler.js';
 import { pluginsRouter } from './routes/plugins.js';
 import { studioRouter } from './routes/studio.js';
+import { productDocumentOcrRouter } from './routes/productDocumentOcr.js';
 import { authRouter } from './routes/auth.js';
 import { youtubeRouter } from './routes/youtube.js';
 import { socialRouter } from './routes/social.js';
@@ -187,6 +188,7 @@ app.use('/api/overseas/enterprise/assets', requireAuth, jsonBody(`${limits.legac
 app.use('/api/overseas/studio/voice-samples', requireAuth, jsonBody(`${limits.voiceUpload}mb`));
 app.use('/api/overseas/studio/voiceover', requireAuth, jsonBody(`${limits.voiceUpload}mb`));
 app.use('/api/overseas/studio/bgm', requireAuth, jsonBody(`${limits.voiceUpload}mb`));
+app.use('/api/overseas/studio/product-document-ocr', requireAuth, jsonBody('9mb'));
 app.use(jsonBody(`${limits.default}mb`));
 app.use(syncAssetSession);
 
@@ -227,6 +229,7 @@ app.use('/api/overseas/agent-notifications', agentNotificationsRouter);
 app.use('/api/overseas/startup-hub', startupHubRouter);
 app.use('/api/overseas/support-access', supportAccessRouter);
 app.use('/api/overseas/crawl-worker', crawlWorkerRouter);
+app.use('/api/overseas/studio/product-document-ocr', productDocumentOcrRouter);
 app.use('/api/overseas/studio', studioRouter);
 app.use('/api/overseas/platform-integrations', platformIntegrationsRouter);
 app.use('/api/overseas/assistant-threads', assistantThreadsRouter);

@@ -568,6 +568,8 @@ export const studioApi = {
   },
   uploadVoiceover: (b: { name: string; dataBase64: string; mimeType?: string; duration?: number }) =>
     post<{ ok: boolean; url?: string; duration?: number; error?: string }>('voiceover', b, { ok: false }),
+  productDocumentOcr: (b: { dataBase64: string; mimeType: string }) =>
+    post<{ ok: boolean; text?: string; source?: 'local_tesseract'; needsReview?: true; code?: string; error?: string }>('product-document-ocr', b, { ok: false }),
 
   // 封面 SVG
   cover: (b: { title: string; ratio: string; accent: string; bgImageUrl?: string } & Partial<CoverStyle>) =>

@@ -23,3 +23,11 @@ test('PDF 含图页面会渲染为可上传 File', () => {
   assert.match(parserSource, /new File\(\[blob\], name/);
   assert.match(parserSource, /PDF 文本与含图页面提取/);
 });
+
+test('产品外链主图必须转存为租户资产后才能导入', () => {
+  assert.match(source, /enterprise\/assets\/import-url/);
+  assert.match(source, /importProductEvidenceUrl\(transfer\.originalUrl/);
+  assert.match(source, /product\.imageUrl = asset\.url/);
+  assert.match(source, /产品外链图片转存失败，产品尚未导入/);
+  assert.match(source, /待转存/);
+});
