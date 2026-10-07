@@ -16,3 +16,16 @@ export function benchmarkVideoFixture(): Record<string, unknown> {
       ] },
     } };
 }
+
+/** Existing lighting reference evidence, trimmed to classification inputs only. */
+export function lightingBenchmarkFixture(): Record<string, unknown> {
+  const shots = [
+    { time: '0-3.4s', visual: '女主播手持黑色麦克风与绿色吊灯，微笑挥手', environment: '展厅', observedPresenterRole: 'sales_presenter', salesPresenterConfirmed: true },
+    { time: '3.4-8.48s', visual: '女主播手持绿灯，嘴唇微张似在提问', environment: '展厅', observedPresenterRole: 'sales_presenter', salesPresenterConfirmed: true },
+    { time: '8.48-9.33s', visual: '女主播双臂展开，左手持灯，右手指向右侧', environment: '展厅全景，天花板挂满灯具', purpose: '展示产品广度与场景应用能力', observedPresenterRole: 'none', salesPresenterConfirmed: false },
+    { time: '9.33-10.28s', visual: '黑衣女工戴白手套操作绿色立式钻床，前景堆叠银色铝制灯罩', environment: '工厂车间', observedPresenterRole: 'background', salesPresenterConfirmed: false },
+    { time: '10.28-11.65s', visual: '多名工人在长桌旁分拣银色金属零件', environment: '工厂流水线', observedPresenterRole: 'background', salesPresenterConfirmed: false },
+    { time: '11.65-14.26s', visual: '女主播手持绿色复古吊灯，左手竖大拇指', environment: '展厅', observedPresenterRole: 'sales_presenter', salesPresenterConfirmed: true },
+  ];
+  return { analysisMode: 'exact', geminiStatus: 'needs_review', analysisQuality: 'video_review_required', gemini: { scriptDetails15s: shots } };
+}

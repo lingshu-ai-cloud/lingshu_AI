@@ -48,13 +48,21 @@ try {
   await page.locator('[data-benchmark-analysis]').evaluate(element => element.parentElement.scrollTop = 0);
   await page.screenshot({ path: `${output}/mobile.png` });
   await open('pending');
-  assert.ok((await page.locator('[data-benchmark-analysis]').innerText()).includes('编导 Agent 分析中'));
+  assert.ok(!(await page.locator('[data-benchmark-analysis]').innerText()).includes('待补齐或复核'));
   assert.ok(!(await page.locator('[data-benchmark-analysis]').innerText()).includes('分析字段齐全'));
   await open('failed');
-  assert.ok((await page.locator('[data-benchmark-analysis]').innerText()).includes('分析需要重试'));
+  assert.ok(!(await page.locator('[data-benchmark-analysis]').innerText()).includes('分析待复核'));
   await open('legacy');
   assert.ok((await page.locator('[data-benchmark-analysis]').innerText()).includes('依据已有描述整理'));
   assert.ok((await page.locator('[data-benchmark-analysis]').innerText()).includes('真人口播 2'));
+  await open('lighting');
+  const lighting = await page.locator('[data-benchmark-analysis]').innerText();
+  for (const value of ['真人口播 3', '产品展示 1', '工厂生产 2']) assert.ok(lighting.includes(value), value);
+  assert.ok(!lighting.includes('待判断')); assert.ok(!lighting.includes('作用待确认'));
+  assert.ok(!lighting.includes('分析待复核')); assert.ok(!lighting.includes('待补齐或复核'));
+  assert.equal(await page.locator('[data-benchmark-analysis] article').count(), 6);
+  await page.setViewportSize({ width: 1280, height: 1100 });
+  await page.screenshot({ path: `${output}/lighting-desktop.png` });
   assert.deepEqual(errors, []); assert.deepEqual(mutations, [], 'expansion and display cannot start paid analysis');
   console.log('Benchmark UI acceptance passed: top section order, nine shots, six-shot speech expansion/collapse, missing-frame placeholders, 390px layout, pending/failed/legacy states; no runtime errors or mutation requests.');
 } finally {

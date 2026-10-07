@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { buildBenchmarkAnalysis, benchmarkMaterialType, benchmarkTimeRange, recordOf } from './benchmarkAnalysis.js';
-import { benchmarkVideoFixture } from '../tests/fixtures/benchmarkVideo.js';
+import { benchmarkVideoFixture, lightingBenchmarkFixture } from '../tests/fixtures/benchmarkVideo.js';
 
 const build = (analysis = benchmarkVideoFixture()) => buildBenchmarkAnalysis({ analysis, videoId: 'video-fixture', duration: 9, evidenceRevision: 'revision' });
 test('nine shots remain nine when a speech line covers six shots', () => {
@@ -68,4 +68,12 @@ test('legacy microphone presenter is classified, factory setting alone remains u
   assert.equal(result.shots[0].narrativeRole, 'hook');
   assert.equal(result.shots[0].needsReview, true);
   assert.equal(result.shots[1].materialType, 'unknown');
+});
+
+test('existing lighting reference uses presenter evidence and factory actions for all six shots', () => {
+  const result = buildBenchmarkAnalysis({ analysis: lightingBenchmarkFixture(), duration: 14.26 });
+  assert.deepEqual(result.shots.map(shot => shot.materialType), ['talking_head', 'talking_head', 'product', 'factory', 'factory', 'talking_head']);
+  assert.deepEqual(result.structure.map(segment => [segment.materialType, segment.shotIds.length]), [['talking_head', 2], ['product', 1], ['factory', 2], ['talking_head', 1]]);
+  assert.equal(result.status, 'needs_review');
+  assert.equal(result.materialCounts.unknown, 0);
 });

@@ -1,7 +1,8 @@
+import { recognizePresenterShot, type ObservedPresenterRole } from './contracts/presenterShotRecognition.js';
 /** Evidence contract shared by Inspiration and the future business schedule consumer. */
 export const MATERIAL_TYPE_LABELS = {
   talking_head: '真人口播', factory: '工厂生产', product: '产品展示',
-  consumer_demo: '消费者使用与效果演示', other: '其他', unknown: '待判断',
+  consumer_demo: '消费者使用与效果演示', unknown: '待判断',
 } as const;
 export const SHOT_ROLE_LABELS = {
   hook: '钩子', pain_point: '痛点', capability_proof: '能力证明', product_intro: '产品介绍',
@@ -52,10 +53,18 @@ export function benchmarkTimeRange(value: unknown): { start: number; end: number
 /** Conservative compatibility mapping: use visible actions, never factory background alone. */
 function legacyMaterial(row: Record<string, unknown>): BenchmarkMaterialType {
   const visual = text(row.visual);
-  if (/(消费者|顾客|用户|模特).{0,20}(使用|涂抹|试用|上脸)|使用前后|效果对比/.test(visual)) return 'consumer_demo';
-  if (/(主播|主持人|讲解员|销售人员|人物).{0,40}(麦克风|口播|面向镜头|对镜头|讲解)|真人口播/.test(visual)) return 'talking_head';
-  if (/(生产线|流水线|灌装|包装工序|机器运转|工人.{0,10}(操作|生产|组装))/.test(visual)) return 'factory';
-  if (/(产品|商品|瓶身|包装盒|灯具|吊灯).{0,20}(特写|展示|近景)|特写.{0,20}(产品|商品|瓶身)/.test(visual)) return 'product';
+  const facts = [visual, text(row.observedFacts), text(row.environment)].join('；');
+  const role = text(row.observedPresenterRole) as ObservedPresenterRole;
+  const presenter = row.salesPresenterConfirmed === true || role === 'sales_presenter'
+    || recognizePresenterShot({ observedPresenterRole: role || undefined,
+      detail: `画面：${visual} 镜头功能：${text(row.purpose)} 口播：${text(row.dialogue) || '无'}` }) === 'presenter';
+  if (presenter) return 'talking_head';
+  if (/(消费者|顾客|用户|模特).{0,30}(使用|涂抹|涂在|试用|上脸)|使用前后|效果对比|before.?and.?after|consumer demo/i.test(facts)) return 'consumer_demo';
+  if (!['none', 'background'].includes(role) && row.salesPresenterConfirmed !== false
+    && /(主播|主持人|讲解员|销售人员|人物).{0,40}(麦克风|口播|面向镜头|对镜头|讲解)|真人口播/.test(visual)) return 'talking_head';
+  if (/(生产线|流水线|灌装|包装工序|机器运转|钻床|车床|冲压|焊接|工[人厂]|女工|男工).{0,35}(操作|生产|组装|分拣|加工|装配|设备|零件)|生产线|流水线|灌装|钻床|工厂车间|factory|assembly line/i.test(facts)) return 'factory';
+  // Product/showroom demonstrations are product material unless visible presenter evidence says otherwise.
+  if (/产品|商品|瓶身|包装盒|灯具|吊灯|灯饰|灯罩|护肤品|展厅|陈列|product|showroom/i.test(facts)) return 'product';
   return 'unknown';
 }
 function legacyRole(row: Record<string, unknown>): BenchmarkShotRole {
@@ -127,7 +136,7 @@ export function buildBenchmarkAnalysis(input: {
   for (const shot of shots) {
     materialCounts[shot.materialType] += 1;
     const last = structure.at(-1);
-    if (last?.materialType === shot.materialType && last.narrativeRole === shot.narrativeRole) last.shotIds.push(shot.shotId);
+    if (last?.materialType === shot.materialType) last.shotIds.push(shot.shotId);
     else structure.push({ materialType: shot.materialType, narrativeRole: shot.narrativeRole, shotIds: [shot.shotId] });
   }
   const transcript = recordOf(gemini.audioTranscript);

@@ -16,9 +16,18 @@ test('top sections distinguish source evidence, classification and counts withou
 test('empty, pending, legacy and failed evidence remains readable', () => {
   const empty = buildBenchmarkAnalysis({ analysis: {} });
   const pending = renderToStaticMarkup(<BenchmarkAnalysisSections analysis={empty} pending />);
-  assert.ok(pending.includes('编导 Agent 分析中')); assert.ok(!pending.includes('分析字段齐全'));
+  assert.ok(pending.includes('正在拆解原片')); assert.ok(!pending.includes('分析字段齐全'));
   const legacy = renderToStaticMarkup(<BenchmarkAnalysisSections analysis={empty} />);
   assert.ok(legacy.includes('尚无逐镜数据')); assert.ok(!legacy.includes('结构化钩子'));
   const failed = buildBenchmarkAnalysis({ analysis: { analysisError: 'timeout' } });
-  assert.ok(renderToStaticMarkup(<BenchmarkAnalysisSections analysis={failed} />).includes('分析需要重试'));
+  assert.ok(!renderToStaticMarkup(<BenchmarkAnalysisSections analysis={failed} />).includes('待补齐或复核'));
+});
+
+test('the structure section omits review banner and narrative-role placeholders', () => {
+  const analysis = buildBenchmarkAnalysis({ analysis: benchmarkVideoFixture(), duration: 9 });
+  analysis.status = 'needs_review'; analysis.gaps = ['missing'];
+  const html = renderToStaticMarkup(<BenchmarkAnalysisSections analysis={analysis} />);
+  assert.ok(!html.includes('分析待复核'));
+  assert.ok(!html.includes('待补齐或复核'));
+  assert.ok(!html.includes('作用待确认'));
 });
