@@ -93,6 +93,12 @@ function preferredSide(evidence: VisualEvidence): NonNullable<EmphasisEvent['pre
   return centerX < .5 ? 'right' : centerX > .5 ? 'left' : 'auto';
 }
 
+function trustedLocalTarget(event: EmphasisEvent, evidence: VisualEvidence | undefined): boolean {
+  if (!evidence?.subjectBox || evidence.confidence < .68) return false;
+  const scoped = evidence.eventId === event.id || Boolean(event.targetId && evidence.targetId === event.targetId);
+  return scoped && evidence.subjectBox.width * evidence.subjectBox.height <= .35;
+}
+
 const mainDecoration = (event: EmphasisEvent): boolean => event.presentationMode === 'graphic_only' || event.presentationMode === 'label';
 const eventRank = (event: EmphasisEvent): number => event.importance * 10 + event.confidence
   + (event.source === 'editor' ? 3 : event.source === 'metadata' ? 2 : event.source === 'vision' ? 1 : 0);
@@ -132,11 +138,18 @@ export function alignStudioEmphasisEvents(input: {
     if (tooShort) presentationMode = editableCaption ? 'caption_emphasis' : 'none';
     else if (duplicate) presentationMode = editableCaption ? 'caption_emphasis' : 'graphic_only';
     else presentationMode = visual ? 'graphic_only' : event.text ? 'label' : 'none';
-    const relation = presentationMode === 'graphic_only' && visual ? targetRelation(event, visual) : 'none';
+    const requestedRelation = presentationMode === 'graphic_only' && visual ? targetRelation(event, visual) : 'none';
+    const localTarget = trustedLocalTarget(event, visual);
+    const relation = requestedRelation === 'surround' && !localTarget
+      ? visual ? 'adjacent' as const : 'none' as const : requestedRelation;
+    const assetFamily = presentationMode === 'graphic_only' || presentationMode === 'label'
+      ? relation === 'surround' && localTarget ? 'rays' as const : 'corner_marker' as const
+      : undefined;
     return {
       ...event, startMs: Math.round(Math.max(startMs, 0)), endMs: Math.round(Math.max(startMs, endMs)),
       shotId: shot.id, evidenceStartMs: evidence.startMs, evidenceEndMs: evidence.endMs,
       presentationMode, targetRelation: relation,
+      ...(assetFamily ? { assetFamily } : {}),
       ...(presentationMode !== 'none' && visual ? { preferredSide: preferredSide(visual) } : {}),
       ...(occupiedBoxes.length ? { occupiedBoxes } : {}),
       ...(visual?.subjectBox ? { subjectBox: visual.subjectBox } : {}),
@@ -154,6 +167,6 @@ export function alignStudioEmphasisEvents(input: {
     const editable = occupancy.some(item => item.editable && overlapMs(event.startMs, event.endMs, item.startMs, item.endMs) > 0
       && emphasisTextRepeats(event.text, item.text));
     return { ...event, presentationMode: editable ? 'caption_emphasis' as const : 'none' as const, targetRelation: 'none' as const,
-      preferredSide: undefined, subjectBox: undefined, subjectAnchor: undefined };
+      preferredSide: undefined, assetFamily: undefined, subjectBox: undefined, subjectAnchor: undefined };
   });
 }

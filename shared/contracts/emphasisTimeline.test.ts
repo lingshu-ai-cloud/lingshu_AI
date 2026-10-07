@@ -156,14 +156,16 @@ test('preserves closed shot-aware presentation fields on normalized events', () 
     id: 'aligned', type: 'key_fact', startMs: 1_000, endMs: 2_000, text: '30年工厂', importance: 3,
     confidence: 1, source: 'editor', shotId: 'shot-2', evidenceStartMs: 900, evidenceEndMs: 2_100,
     presentationMode: 'graphic_only', targetRelation: 'surround',
+    assetFamily: 'rays',
     occupiedBoxes: [{ x: .1, y: .8, width: .8, height: .1 }, { x: .9, y: .9, width: .2, height: .2 }],
   }] }, 3_000);
   assert.deepEqual({
     shotId: plan.events[0]?.shotId, evidenceStartMs: plan.events[0]?.evidenceStartMs,
     evidenceEndMs: plan.events[0]?.evidenceEndMs, presentationMode: plan.events[0]?.presentationMode,
-    targetRelation: plan.events[0]?.targetRelation, occupiedBoxes: plan.events[0]?.occupiedBoxes,
+    targetRelation: plan.events[0]?.targetRelation, assetFamily: plan.events[0]?.assetFamily,
+    occupiedBoxes: plan.events[0]?.occupiedBoxes,
   }, { shotId: 'shot-2', evidenceStartMs: 900, evidenceEndMs: 2_100, presentationMode: 'graphic_only',
-    targetRelation: 'surround', occupiedBoxes: [{ x: .1, y: .8, width: .8, height: .1 }] });
+    targetRelation: 'surround', assetFamily: 'corner_marker', occupiedBoxes: [{ x: .1, y: .8, width: .8, height: .1 }] });
 });
 
 test('normalizes event-scoped local focus and preferred composition hints', () => {

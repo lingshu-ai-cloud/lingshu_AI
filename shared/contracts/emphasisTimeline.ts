@@ -13,6 +13,7 @@ export const EMPHASIS_ASSET_INTENTS = ['product_marker', 'attention_marker', 'ur
 export const EMPHASIS_PRESENTATION_MODES = ['caption_emphasis', 'graphic_only', 'label', 'none'] as const;
 export const EMPHASIS_TARGET_RELATIONS = ['surround', 'point_to', 'adjacent', 'none'] as const;
 export const EMPHASIS_PREFERRED_SIDES = ['left', 'right', 'top', 'bottom', 'auto'] as const;
+export const EMPHASIS_ASSET_FAMILIES = ['rays', 'corner_marker'] as const;
 export const EMPHASIS_TIMELINE_SCHEMA_VERSION = 1 as const;
 
 export type EmphasisEventType = typeof EMPHASIS_EVENT_TYPES[number];
@@ -24,6 +25,7 @@ export type EmphasisAssetIntent = typeof EMPHASIS_ASSET_INTENTS[number];
 export type EmphasisPresentationMode = typeof EMPHASIS_PRESENTATION_MODES[number];
 export type EmphasisTargetRelation = typeof EMPHASIS_TARGET_RELATIONS[number];
 export type EmphasisPreferredSide = typeof EMPHASIS_PREFERRED_SIDES[number];
+export type EmphasisAssetFamily = typeof EMPHASIS_ASSET_FAMILIES[number];
 export type NormalizedPoint = { x: number; y: number };
 export type NormalizedBox = { x: number; y: number; width: number; height: number };
 
@@ -97,6 +99,8 @@ export interface EmphasisEvent {
   visualIntent?: EmphasisVisualIntent;
   /** Abstract asset category. Rendering resolves the concrete approved asset. */
   assetIntent?: EmphasisAssetIntent;
+  /** Relationship-safe asset family. `rays` is signed only by shot alignment. */
+  assetFamily?: EmphasisAssetFamily;
   /** Subject geometry copied only from a trusted matching visual window. */
   subjectAnchor?: NormalizedPoint;
   subjectBox?: NormalizedBox;
@@ -330,6 +334,11 @@ export function normalizeEmphasisCandidates(input: unknown, durationMs: number):
       ? raw.targetRelation as EmphasisTargetRelation : undefined;
     const preferredSide = EMPHASIS_PREFERRED_SIDES.includes(String(raw.preferredSide) as EmphasisPreferredSide)
       ? raw.preferredSide as EmphasisPreferredSide : undefined;
+    const requestedAssetFamily = EMPHASIS_ASSET_FAMILIES.includes(String(raw.assetFamily) as EmphasisAssetFamily)
+      ? raw.assetFamily as EmphasisAssetFamily : undefined;
+    // Persisted or authored input cannot self-authorize a surround-only asset.
+    // Alignment may upgrade this to rays after validating local visual evidence.
+    const assetFamily = requestedAssetFamily === 'rays' ? 'corner_marker' : requestedAssetFamily;
     const occupiedBoxes = (Array.isArray(raw.occupiedBoxes) ? raw.occupiedBoxes : [])
       .map(normalizedBox).filter((box): box is NormalizedBox => Boolean(box)).slice(0, 24);
     const strength = raw.strength === 'weak' || raw.strength === 'strong' ? raw.strength : undefined;
@@ -359,6 +368,7 @@ export function normalizeEmphasisCandidates(input: unknown, durationMs: number):
       ...(presentationMode ? { presentationMode } : {}),
       ...(targetRelation ? { targetRelation } : {}),
       ...(preferredSide ? { preferredSide } : {}),
+      ...(assetFamily ? { assetFamily } : {}),
       ...(occupiedBoxes.length ? { occupiedBoxes } : {}),
       visualIntent,
       assetIntent,

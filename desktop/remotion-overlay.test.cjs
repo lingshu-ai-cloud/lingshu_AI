@@ -2,7 +2,7 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { RENDERER_VERSION, advancedEvents, intersects, planOverlayPresentation, resolveOverlayLayout, resolveOverlayPlacement } = require('./remotion-overlay.cjs');
+const { RENDERER_VERSION, advancedEvents, intersects, planOverlayPresentation, resolveOverlayLayout, resolveOverlayPlacement, semanticAssetKind } = require('./remotion-overlay.cjs');
 const { normalizeEmphasisPlan } = require('./emphasis-composition.cjs');
 
 const selected = advancedEvents({ events: [
@@ -50,7 +50,16 @@ const crossLayer = advancedEvents(normalizeEmphasisPlan({ profile: 'product_show
   { id: 'attention-intent', type: 'key_fact', assetIntent: 'attention', startMs: 2100, endMs: 2700, text: '重点', importance: 3, confidence: 1, source: 'editor' },
   { id: 'cta-intent', type: 'key_fact', assetIntent: 'cta_marker', startMs: 2800, endMs: 3400, text: '咨询', importance: 3, confidence: 1, source: 'editor' },
 ] }, 4));
-assert.deepEqual(crossLayer.map(event => event.assetKind), ['warning', 'urgency', 'reveal', 'key_fact', 'cta'], 'shared asset intents select concrete desktop assets');
+assert.deepEqual(crossLayer.map(event => event.assetKind), ['warning', 'urgency', 'urgency', 'warning', 'cta'],
+  'detached facts and product markers use directional assets instead of circular rays');
+assert.equal(semanticAssetKind({ type: 'reveal', assetIntent: 'product_marker' }), 'urgency', 'detached reveal never selects burst rays');
+assert.equal(semanticAssetKind({ type: 'key_fact', assetIntent: 'fact', targetRelation: 'adjacent' }), 'warning', 'corner fact never selects rays');
+assert.equal(semanticAssetKind({ type: 'reveal', assetIntent: 'product_marker', targetRelation: 'surround',
+  assetFamily: 'rays', subjectBox: { x: .3, y: .2, width: .2, height: .3 } }), 'reveal', 'signed precise surround target may select animated burst rays');
+assert.equal(semanticAssetKind({ type: 'key_fact', assetIntent: 'fact', targetRelation: 'surround',
+  assetFamily: 'rays', subjectAnchor: { x: .4, y: .4 } }), 'key_fact', 'signed precise anchor may select the local static rays accent');
+assert.equal(semanticAssetKind({ type: 'key_fact', assetIntent: 'fact', targetRelation: 'surround',
+  subjectAnchor: { x: .4, y: .4 } }), 'warning', 'unsanctioned subject coordinates cannot enable rays');
 assert.match(RENDERER_VERSION, /^semantic-assets-v\d+-visible-hold$/, 'cache namespace changes when hold-frame playback changes');
 const assetComponent = fs.readFileSync(path.join(__dirname, 'remotion-overlay/semantic-assets.tsx'), 'utf8');
 assert.match(assetComponent, /from '@remotion\/gif'/, 'animated originals use video-frame-synchronized GIF playback');
@@ -61,7 +70,8 @@ for (const file of ['burst-rays-yellow-static.png', 'burst-rays-yellow.gif', 'em
 assert.match(assetComponent, /if \(failed\) return <SvgFallback/, 'SVG artwork is restricted to load failure fallback');
 
 const subjectBox = { x: .38, y: .25, width: .24, height: .30 };
-const subjectLayout = resolveOverlayLayout({ id: 'subject-layout', type: 'key_fact', text: '核心事实', subjectBox });
+const subjectLayout = resolveOverlayLayout({ id: 'subject-layout', type: 'key_fact', text: '核心事实', subjectBox,
+  targetRelation: 'surround', assetFamily: 'rays' });
 assert.equal(intersects(subjectLayout.asset, subjectBox, .008), false, 'decoration rectangle clears the full subject box');
 assert.equal(intersects(subjectLayout.label, subjectBox, .012), false, 'label rectangle clears the full subject box');
 assert.equal(intersects(subjectLayout.asset, subjectLayout.label, .006), false, 'asset and label use independent non-overlapping rectangles');
