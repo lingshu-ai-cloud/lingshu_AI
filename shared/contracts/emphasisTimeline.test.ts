@@ -166,6 +166,18 @@ test('preserves closed shot-aware presentation fields on normalized events', () 
     targetRelation: 'surround', occupiedBoxes: [{ x: .1, y: .8, width: .8, height: .1 }] });
 });
 
+test('normalizes event-scoped local focus and preferred composition hints', () => {
+  assert.deepEqual(normalizeVisualEvidence([{
+    shotId: 'shot-wide', eventId: 'fact-local', targetId: 'machine-head', subjectType: 'machine',
+    subjectBox: { x: .68, y: .24, width: .2, height: .28 }, subjectAnchor: { x: .78, y: .38 },
+    preferredSide: 'left', targetRelation: 'point_to', safeZones: [], captionBoxes: [], confidence: .92,
+  }]), [{
+    shotId: 'shot-wide', eventId: 'fact-local', targetId: 'machine-head', subjectType: 'machine',
+    subjectBox: { x: .68, y: .24, width: .2, height: .28 }, subjectAnchor: { x: .78, y: .38 },
+    safeZones: [], captionBoxes: [], confidence: .92, preferredSide: 'left', targetRelation: 'point_to',
+  }]);
+});
+
 test('drops scene-sized subject boxes while keeping a bindable anchor', () => {
   assert.deepEqual(normalizeVisualEvidence([{
     shotId: 'shot-wide', subjectType: 'product', subjectBox: { x: 0, y: 0, width: 1, height: 1 },
