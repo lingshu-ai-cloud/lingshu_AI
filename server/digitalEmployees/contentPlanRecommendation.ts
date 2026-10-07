@@ -102,6 +102,7 @@ export function bindDefaultProductsToPackage(
         const selected = products.find(product => product.name === current.productName || product.id === current.productName) || fallback;
         return normalizeVideoPlan({
           ...current,
+          productId: selected?.id || '',
           productName: selected?.name || '',
           materialIds: selected?.materialIds || [],
         });

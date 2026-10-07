@@ -74,7 +74,8 @@ assert.match(approveGoal, /correction_version:\s*0/, 'new workflow tasks must st
 assert.doesNotMatch(approveGoal, /missingGoalResources/, 'missing delivery resources must not block independent branches from starting');
 assert.doesNotMatch(approveGoal, /missing_required_resources|publishing_accounts_invalid/, 'delivery checks belong to runtime tasks, not whole-plan activation');
 assert.match(approveGoal, /active_goal_exists/, 'a tenant must not start overlapping active weekly goals');
-assert.match(approveGoal, /package_details_blocked/, 'a generated-but-blocked preview must never be approved into production');
+assert.match(approveGoal, /detailedMasters\.some\(item => item\.preproduction\?\.readiness\.canStart\)/, 'one ready master must allow independent content production to start');
+assert.match(approveGoal, /package_details_blocked/, 'activation must still fail when no master is production-ready');
 
 const streamRoute = routeBlock("digitalEmployeesRouter.get('/runs/:runId/stream'");
 assert.match(streamRoute, /tenantRecord<RunRecord>/, 'SSE subscriptions must verify run ownership before streaming');

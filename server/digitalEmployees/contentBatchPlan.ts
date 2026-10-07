@@ -1,4 +1,4 @@
-import { type VideoCreationPlan, videoPlanErrors } from '../../shared/contracts/videoCreationPlan.js';
+import { normalizeVideoPlan, type VideoCreationPlan, videoPlanErrors } from '../../shared/contracts/videoCreationPlan.js';
 import type { DigitalEmployeeConfig, PublishingPlatform, WeeklyGoalInput } from './domain.js';
 import type { DirectorScriptContract } from '../../src/lib/directorScript.js';
 import { platformExecutionConstraints } from '../../shared/contracts/socialOperatingProfile.js';
@@ -140,14 +140,18 @@ export function buildContentBatchPlan(input: {
     const referenceErrors: string[] = [];
     input.goal.videoPlans.forEach((plan, index) => {
       const prefix = `第 ${index + 1} 条：`;
-      errors.push(...videoPlanErrors(plan).map(error => prefix + error));
+      const deferredMaterialErrors = /(?:请选择本条素材|数字人混剪需选择产品画面素材)/;
+      errors.push(...videoPlanErrors(plan).filter(error => !deferredMaterialErrors.test(error)).map(error => prefix + error));
       const workflow = { clone: 'viral_clone', product: 'product_content', material: 'material_content' }[plan.route];
       if (!enabled.has(workflow as DigitalEmployeeConfig['enabledWorkflows'][number])) errors.push(prefix + '此创作方式未在 Agent 配置中开启');
-      const product = input.evidence.products.find(product => product.name === plan.productName || product.id === plan.productName);
+      const product = input.evidence.products.find(product => product.id === plan.productId)
+        || input.evidence.products.find(product => product.name === plan.productName || product.id === plan.productName);
       if (!product) { errors.push(prefix + '指定产品不在重点产品资料中'); return; }
       const ids = plan.materialIds.length ? plan.materialIds : product.materialIds;
       if (ids.some(id => !product.materialIds.includes(id))) errors.push(prefix + '所选素材不存在或不属于指定产品');
-      if (!ids.length && plan.presenter === 'material' && plan.route !== 'product') errors.push(prefix + `${product.name} 缺少画面素材，请补充或明确选择数字人口播`);
+      // A missing product visual is a per-master production readiness issue.
+      // Keep the order so other masters in the same week can still run; the
+      // storyboard preflight below reports the exact missing shot requirement.
       if (plan.route === 'clone' && !input.evidence.exactAnalysisIds.includes(plan.referenceId)) referenceErrors.push(prefix + '参考视频尚无有效精确分析');
       const account = input.config.publishingTargets.find(target => target.platform === plan.platform && (!plan.matrix || target.accountId === plan.matrix.accountId));
       if (!input.goal.contentPlatforms.includes(plan.platform)) errors.push(prefix + '制作平台不在本周目标范围中');
@@ -171,10 +175,11 @@ export function buildContentBatchPlan(input: {
         const first = shots[0];
         return `参考结构 ${structureIndex + 1}：${MATERIAL_TYPE_LABELS[step.materialType]} / ${SHOT_ROLE_LABELS[step.narrativeRole]} / ${step.shotIds.length} 镜${first?.purpose ? `；作用：${first.purpose}` : ''}`;
       }) || [];
+      const frozenVideoPlan = normalizeVideoPlan({ ...plan, productId: product.id, productName: product.name });
       orders.push({ id: `content_order_${index + 1}`, goalId: input.goalId, productId: product.id, productName: product.name,
         languages: plan.matrix ? [plan.language] : input.config.videoLanguages,
         theme: { key: 'user_selected', label: plan.theme }, platform: plan.platform, accountId: account?.accountId || '', accountLabel: account?.accountLabel || (enabled.has('content_publish') ? '发布前待绑定账号' : '仅内容生产，不分发'),
-        route: plan.route, videoPlan: plan, deliveryVariants, configurationSnapshot: input.versions, cta: plan.matrix?.cta || ctaFor(input.config.primaryGoal),
+        route: plan.route, videoPlan: frozenVideoPlan, deliveryVariants, configurationSnapshot: input.versions, cta: plan.matrix?.cta || ctaFor(input.config.primaryGoal),
         constraints: [...new Set([...input.config.constraints, ...input.goal.constraints, ...reviewConstraints,
           ...familyVariants.flatMap(variant => platformExecutionConstraints(variant.platform).map(rule => `${variant.platform} 平台改编：${rule}`)),
           `本订单只生产 1 条原创母版；${deliveryVariants.length} 个平台发布版本共用母版，不得重复提交完整 AIGC 生成`,

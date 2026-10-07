@@ -11,6 +11,7 @@ assert.equal(visibleDigitalEmployeeAgentRole('content', 'platform_publish'), 'bu
 assert.equal(visibleDigitalEmployeeAgentRole('channel', 'publishing_calendar'), 'business');
 assert.equal(visibleDigitalEmployeeAgentRole('industry', 'content_production'), 'content');
 assert.equal(visibleDigitalEmployeeAgentRole('planner', 'goal_decomposition'), 'business', '经营 Agent owns objective, account, cadence, CTA and authorization decisions');
+assert.equal(visibleDigitalEmployeeAgentRole('director', 'content_mode_routing'), 'business', '经营 Agent owns detailed topic scheduling after the director conclusion');
 assert.equal(visibleDigitalEmployeeAgentRole('review', 'weekly_review'), 'business');
 assert.equal(visibleDigitalEmployeeAgentRole('risk', 'followup_batch_approval'), 'customer');
 

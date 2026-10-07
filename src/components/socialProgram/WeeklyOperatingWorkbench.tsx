@@ -25,7 +25,7 @@ const ACTOR_LABEL: Record<WeeklyResponsibleActor, string> = {
   business_agent: '经营 Agent',
   director_agent: '编导 Agent',
   content_agent: '内容 Agent',
-  quality_agent: '质检 Agent',
+  quality_agent: '内容 Agent · 质检能力',
   publishing_agent: '发布 Agent',
   user: '用户',
 };
@@ -54,8 +54,8 @@ const STEP_DETAIL: Record<WeeklyProductionStepKind, string> = {
   director_analysis: '输出对标账号、具体视频、结构、风格和迁移边界。',
   business_schedule: '经营 Agent 把编导结论合并成数量、账号、日期和预算均明确的排期。',
   material_readiness: '核对现有素材、人物授权和待拍建议；默认保留最高档 AIGC 兜底。',
-  script: '基于经营派单和编导结论生成可核对脚本。',
-  storyboard: '将脚本拆成可单独制作和返工的镜头。',
+  script: '编导 Agent 对照爆款原脚本与企业已确认事实，生成可核对的适配脚本。',
+  storyboard: '编导 Agent 将适配脚本拆成可单独制作、验收和返工的逐镜分镜。',
   asset_generation: '逐镜选用企业素材、合法库存或最高档 AIGC。',
   video_generation: '执行画面、数字人、配音、字幕、剪辑和渲染。',
   quality_check: '对每个镜头和整体成片进行独立质检。',
@@ -209,7 +209,7 @@ export default function WeeklyOperatingWorkbench({ pkg, loading, error, selected
 
     <section className="rounded-xl border border-border bg-white p-5 sm:p-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
-        <div><p className="text-[11px] font-black uppercase tracking-[.14em] text-accent">Two-step planning</p><h3 className="mt-1 text-base font-bold text-text-primary">任务生成分两步，用户确认后才生产</h3><p className="mt-1 text-xs leading-5 text-text-muted">经营 Agent 负责数量、账号、日期和预算；编导 Agent 只提供对标分析；内容 Agent 只执行经营 Agent 的正式派单。</p></div>
+        <div><p className="text-[11px] font-black uppercase tracking-[.14em] text-accent">Two-step planning</p><h3 className="mt-1 text-base font-bold text-text-primary">任务生成分两步，用户确认后才生产</h3><p className="mt-1 text-xs leading-5 text-text-muted">编导 Agent 分析爆款并负责原脚本拆解、企业适配脚本和分镜；经营 Agent 据此制定详细选题、账号、日期和预算排期；内容 Agent 只执行正式派单。</p></div>
         {planningAction && <button type="button" disabled={planningBusy} onClick={() => void advancePlanning()} className="btn-primary inline-flex items-center gap-2 disabled:opacity-50">{planningBusy&&<Loader2 size={14} className="animate-spin"/>}{planningAction}<ArrowUpRight size={14}/></button>}
       </div>
       <div className="mt-4 grid gap-3 lg:grid-cols-2">

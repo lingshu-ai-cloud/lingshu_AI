@@ -64,6 +64,74 @@ export type MaterialLibraryEntryContext = {
   productRef: string;
 };
 
+type InspirationReferenceTarget = {
+  referenceId: string;
+  sourceUrl: string;
+  title: string;
+  platform: string;
+  thumbnailUrl: string;
+  duration: number;
+  benchmarkAnalysis?: VideoAnalysisPayload['benchmarkAnalysis'];
+};
+
+function normalizedReferenceText(value: string) {
+  return value
+    .normalize('NFKC')
+    .toLowerCase()
+    .replace(/https?:\/\/\S+/g, '')
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .trim();
+}
+
+function normalizedReferenceUrl(value: string) {
+  try {
+    const url = new URL(value);
+    return `${url.hostname.replace(/^www\./, '')}${url.pathname}`.replace(/\/$/, '').toLowerCase();
+  } catch {
+    return value.trim().replace(/^https?:\/\/(?:www\.)?/i, '').replace(/[?#].*$/, '').replace(/\/$/, '').toLowerCase();
+  }
+}
+
+function videoMatchesReference(video: TrendVideo, target: InspirationReferenceTarget) {
+  const normalizedId = target.referenceId.replace(/^crawl-/, '');
+  const targetUrl = normalizedReferenceUrl(target.sourceUrl);
+  const videoUrl = normalizedReferenceUrl(video.sourceUrl || '');
+  const targetTitle = normalizedReferenceText(target.title);
+  const videoTitle = normalizedReferenceText(video.title);
+  return video.id === target.referenceId
+    || video.recordId === normalizedId
+    || Boolean(targetUrl && videoUrl && targetUrl === videoUrl)
+    || Boolean(targetTitle && videoTitle && (targetTitle === videoTitle || targetTitle.includes(videoTitle) || videoTitle.includes(targetTitle)));
+}
+
+function parseInspirationReferenceTarget(input: unknown): InspirationReferenceTarget | null {
+  if (!input || typeof input !== 'object') return null;
+  const detail = input as Record<string, unknown>;
+  const reference = detail.inspirationReference && typeof detail.inspirationReference === 'object'
+    ? detail.inspirationReference as Record<string, unknown>
+    : {};
+  const businessRef = detail.businessRef && typeof detail.businessRef === 'object'
+    ? detail.businessRef as Record<string, unknown>
+    : {};
+  const referenceId = String(reference.referenceId || businessRef.referenceId || '').trim();
+  const sourceUrl = String(reference.sourceUrl || '').trim();
+  const title = String(reference.title || '').trim();
+  const platform = String(reference.platform || '').trim().toLowerCase();
+  const thumbnailUrl = String(reference.thumbnailUrl || '').trim();
+  const duration = Math.max(0, Number(reference.duration || 0));
+  const benchmarkAnalysis = reference.benchmarkAnalysis && typeof reference.benchmarkAnalysis === 'object'
+    ? reference.benchmarkAnalysis as VideoAnalysisPayload['benchmarkAnalysis']
+    : undefined;
+  return referenceId || sourceUrl || title
+    ? { referenceId, sourceUrl, title, platform, thumbnailUrl, duration, benchmarkAnalysis }
+    : null;
+}
+
+function initialInspirationReferenceTarget(): InspirationReferenceTarget | null {
+  if (typeof window === 'undefined') return null;
+  return parseInspirationReferenceTarget(window.history.state?.productionDetail);
+}
+
 export function parseMaterialLibraryEntry(search: string): MaterialLibraryEntryContext {
   const params = new URLSearchParams(search);
   return {
@@ -1158,7 +1226,7 @@ function AuthenticatedImage({ src, alt, className }: { src: string; alt: string;
     : <div className={`${className} animate-pulse bg-slate-200`} aria-label={alt} />;
 }
 
-export function AuthenticatedVideo({ apiUrl, poster, className, controls = false, autoPlay = false, loadOnMount = autoPlay, hoverPlay = false, onReady, onError, onLoadingChange }: { apiUrl: string; poster?: string; className: string; controls?: boolean; autoPlay?: boolean; loadOnMount?: boolean; hoverPlay?: boolean; onReady?: () => void; onError?: (message?: string) => void; onLoadingChange?: (loading: boolean) => void }) {
+export function AuthenticatedVideo({ apiUrl, poster, className, controls = false, autoPlay = false, loadOnMount = autoPlay, hoverPlay = false, previewFrame = false, preload = previewFrame ? 'auto' : 'metadata', onReady, onError, onLoadingChange }: { apiUrl: string; poster?: string; className: string; controls?: boolean; autoPlay?: boolean; loadOnMount?: boolean; hoverPlay?: boolean; previewFrame?: boolean; preload?: 'none' | 'metadata' | 'auto'; onReady?: () => void; onError?: (message?: string) => void; onLoadingChange?: (loading: boolean) => void }) {
   const [playbackUrl, setPlaybackUrl] = useState('');
   const videoRef = useRef<HTMLVideoElement>(null);
   const requestRef = useRef<Promise<string> | null>(null);
@@ -1233,8 +1301,15 @@ export function AuthenticatedVideo({ apiUrl, poster, className, controls = false
     };
   }, [apiUrl, loadOnMount]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (autoPlay && playbackUrl) void videoRef.current?.play().catch(() => {}); }, [autoPlay, playbackUrl]);
-  return <video ref={videoRef} src={playbackUrl || undefined} poster={poster} controls={controls} autoPlay={autoPlay} muted={!controls} playsInline loop={hoverPlay} preload="metadata" className={className}
-    onLoadedData={() => { clearMediaReadyTimer(); mediaRetryRef.current = 0; onReady?.(); }}
+  return <video ref={videoRef} src={playbackUrl || undefined} poster={poster} controls={controls} autoPlay={autoPlay} muted={!controls} playsInline loop={hoverPlay} preload={preload} className={className}
+    onLoadedMetadata={() => {
+      const video = videoRef.current;
+      if (!previewFrame || !video || !Number.isFinite(video.duration) || video.duration <= 0) return;
+      // A tiny seek paints a reliable first frame for uploaded MP4s whose frame
+      // at 0s is transparent/black and which do not yet have a poster asset.
+      video.currentTime = Math.min(0.12, Math.max(0.01, video.duration / 20));
+    }}
+    onLoadedData={() => { clearMediaReadyTimer(); mediaRetryRef.current = 0; if (previewFrame) videoRef.current?.pause(); onReady?.(); }}
     onCanPlay={() => { clearMediaReadyTimer(); onReady?.(); }}
     onError={() => {
       if (!playbackUrl) return;
@@ -3156,6 +3231,8 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
   const searchRef = useRef('');
   searchRef.current = search;
   const [selectedVideo, setSelectedVideo] = useState<TrendVideo | null>(null);
+  const [requestedReference, setRequestedReference] = useState<InspirationReferenceTarget | null>(initialInspirationReferenceTarget);
+  const openedReferenceTargetRef = useRef('');
   const [watchVideo, setWatchVideo] = useState<TrendVideo | null>(null);
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [sortMode, setSortMode] = useState<SortMode>('crawlTime');
@@ -3239,6 +3316,88 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
   const platformLabel = PLATFORM_FILTERS.find(f => f.id === platform)?.label ?? '全部平台';
   const sortLabel = sortMode === 'crawlTime' ? '按爬取时间' : '按内容机会';
   const contentFormatLabel = contentFormat === 'video' ? '视频' : '图文';
+  useEffect(() => {
+    const receiveReference = (event: Event) => {
+      const detail = (event as CustomEvent<Record<string, unknown>>).detail;
+      if (detail?.page !== 'socialInspiration') return;
+      const next = parseInspirationReferenceTarget(detail);
+      if (!next) return;
+      openedReferenceTargetRef.current = '';
+      setRequestedReference(next);
+    };
+    window.addEventListener('lingshu:navigate', receiveReference);
+    return () => window.removeEventListener('lingshu:navigate', receiveReference);
+  }, []);
+  useEffect(() => {
+    if (!requestedReference || !videosLoaded) return;
+    const requestKey = [requestedReference.referenceId, requestedReference.sourceUrl, requestedReference.title].join('|');
+    if (!requestKey || openedReferenceTargetRef.current === requestKey) return;
+    openedReferenceTargetRef.current = requestKey;
+    let cancelled = false;
+    const openRequestedReference = async () => {
+      setInnerView('inspiration');
+      const normalizedId = requestedReference.referenceId.replace(/^crawl-/, '');
+      let match = crawledVideos.find(video => videoMatchesReference(video, requestedReference));
+      if (!match && normalizedId) {
+        try {
+          const response = await fetch(`/api/overseas/videos/${encodeURIComponent(normalizedId)}`, { headers: authHeader() });
+          if (response.ok) {
+            const record = await response.json() as CrawlerRecord;
+            match = recordsToVideos([record])[0];
+          }
+        } catch {
+          // The loaded inventory is still searched by source URL and title below.
+        }
+      }
+      if (!match && requestedReference.title) {
+        try {
+          const searchTitle = normalizedReferenceText(requestedReference.title).split(' ').slice(0, 10).join(' ');
+          const response = await fetch(`/api/overseas/videos?page=1&perPage=100&contentFormat=video&crawlRange=all&search=${encodeURIComponent(searchTitle)}`, { headers: authHeader() });
+          if (response.ok) {
+            const payload = await response.json() as { items?: CrawlerRecord[] };
+            const candidates = recordsToVideos(payload.items || []);
+            match = candidates.find(video => videoMatchesReference(video, requestedReference));
+          }
+        } catch {
+          // The reference may have been removed after the weekly plan was created.
+        }
+      }
+      if (cancelled) return;
+      if (!match) {
+        const platform = ACTIVE_PLATFORMS.includes(requestedReference.platform as Exclude<Platform, 'all'>)
+          ? requestedReference.platform as Exclude<Platform, 'all'>
+          : 'tiktok';
+        const snapshot: TrendVideo = {
+          id: `weekly-reference-${requestedReference.referenceId || normalizedReferenceText(requestedReference.title)}`,
+          platform,
+          title: requestedReference.title || '周计划爆款参考',
+          thumbnail: requestedReference.thumbnailUrl,
+          duration: requestedReference.duration,
+          tags: [],
+          views: '—',
+          trend: 'stable',
+          sourceUrl: requestedReference.sourceUrl || undefined,
+          status: 'analyzed',
+          contentFormat: 'video',
+          aiAnalysis: {
+            benchmarkAnalysis: requestedReference.benchmarkAnalysis,
+            analysisSource: 'weekly-plan-snapshot',
+            analysisQuality: 'snapshot',
+            geminiStatus: 'analyzed',
+            gemini: { theme: requestedReference.title || '周计划爆款参考' },
+          },
+        };
+        setMaterialMessage('原爆款已从灵感库删除，当前打开的是周计划保存的分析快照。');
+        setSelectedVideo(snapshot);
+        return;
+      }
+      setCrawledVideos(items => [match!, ...items.filter(item => item.id !== match!.id)]);
+      setMaterialMessage('');
+      setSelectedVideo(match);
+    };
+    void openRequestedReference();
+    return () => { cancelled = true; };
+  }, [requestedReference, videosLoaded]); // crawledVideos is intentionally read from the request-triggered render
   useEffect(() => {
     if (selectedVideo) { onScriptPanelOpen?.(); }
     else { onScriptPanelClose?.(); }
@@ -4864,7 +5023,9 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                         <>
                           {material.poster
                             ? <AuthenticatedImage src={material.poster} alt={material.name} className="h-full w-full object-cover" />
-                            : <div className="flex h-full flex-col items-center justify-center gap-2 bg-slate-950 text-white/65"><Film size={26} /><span className="text-[11px] font-semibold">点击播放预览</span></div>}
+                            : material.url
+                              ? <AuthenticatedVideo apiUrl={material.url} loadOnMount previewFrame preload="auto" className="pointer-events-none h-full w-full bg-slate-950 object-cover" />
+                              : <div className="flex h-full flex-col items-center justify-center gap-2 bg-slate-950 text-white/65"><Film size={26} /><span className="text-[11px] font-semibold">预览待生成</span></div>}
                           <button
                             type="button"
                             aria-label={`播放 ${material.name}`}

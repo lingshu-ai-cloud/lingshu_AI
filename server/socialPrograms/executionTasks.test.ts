@@ -141,8 +141,20 @@ test('weekly execution tasks freeze the full worker contract and aggregate real 
   assert.ok(tasks.every(task => task.idempotencyKey && task.inputSnapshot && task.budget && task.upstreamVersionRefs.length === 3));
   assert.ok(tasks.every(task => task.schedule.responsibleActor && task.schedule.estimatedDurationMinutes > 0 && task.schedule.estimatedFinishAt >= task.schedule.estimatedStartAt));
   assert.deepEqual([...new Set(tasks.filter(task => task.workflowKind === 'content').map(task => task.schedule.stepKind))], [
-    'material_readiness', 'script', 'storyboard', 'asset_generation', 'video_generation', 'quality_check', 'rework', 'user_approval',
+    'material_readiness', 'asset_generation', 'video_generation', 'quality_check', 'rework', 'user_approval',
   ]);
+  assert.ok(tasks.filter(task => ['script', 'storyboard'].includes(task.schedule.stepKind)).every(task => task.schedule.responsibleActor === 'director_agent'));
+  assert.ok(tasks.filter(task => task.schedule.stepKind === 'quality_check').every(task => task.schedule.responsibleActor === 'quality_agent'));
+  const scheduleTask = tasks.find(task => task.schedule.stepKind === 'business_schedule');
+  const scriptTask = tasks.find(task => task.schedule.stepKind === 'script' && task.scope === 'content');
+  const storyboardTask = tasks.find(task => task.schedule.stepKind === 'storyboard' && task.publicationTaskId === scriptTask?.publicationTaskId);
+  const materialTask = tasks.find(task => task.schedule.stepKind === 'material_readiness' && task.publicationTaskId === scriptTask?.publicationTaskId);
+  const assetTask = tasks.find(task => task.schedule.stepKind === 'asset_generation' && task.publicationTaskId === scriptTask?.publicationTaskId);
+  assert.equal(scheduleTask?.schedule.responsibleActor, 'business_agent');
+  assert.ok(scriptTask && storyboardTask?.dependsOnTaskIds.includes(scriptTask.taskId));
+  assert.ok(storyboardTask && scheduleTask?.dependsOnTaskIds.includes(storyboardTask.taskId));
+  assert.ok(scheduleTask && materialTask?.dependsOnTaskIds.includes(scheduleTask.taskId));
+  assert.ok(materialTask && assetTask?.dependsOnTaskIds.includes(materialTask.taskId));
   assert.ok(tasks.some(task => task.scope === 'adaptation'));
   const firstTask = (await packages.get('tenant-a', program.programId, draft.packageId)).executionSummary!;
   assert.equal(firstTask.total, 25);

@@ -20,7 +20,7 @@ assert.equal(view.content?.buyerProblem, '如何选择安装规格？');
 assert.equal(view.content?.evidenceRequirement, '展示孔距测量');
 assert.equal(view.productionBudget - view.productionSpent - view.productionReserved, 500);
 assert.deepEqual([view.originalTarget, view.platformVersionTarget, view.publishTarget], [2, 4, 6]);
-assert.equal(view.stage, '矩阵与脚本编排');
+assert.equal(view.stage, '详细选题与经营排期');
 assert.equal(view.status, '进行中');
 assert.equal(view.progress[0]?.nextStep, '完成脚本');
 assert.deepEqual(view.scriptVersions, [{ language: 'es', version: 2, hash: 'abcdef123456' }]);

@@ -14,7 +14,9 @@ import { nodeDeepLink } from './WeeklyExecutionNodes.js';
 const pageSource = fs.readFileSync('src/components/DigitalEmployeePage.tsx', 'utf8');
 const smartBusinessSource = fs.readFileSync('src/components/SmartBusinessDashboard.tsx', 'utf8');
 const matrixScheduleSource = fs.readFileSync('src/components/smartBusiness/MatrixWorkSchedule.tsx', 'utf8');
+const weeklyPlanCalendarSource = fs.readFileSync('src/components/smartBusiness/WeeklyPlanCalendar.tsx', 'utf8');
 const accountRailSource = fs.readFileSync('src/components/SmartOperationsAccountRail.tsx', 'utf8');
+const nextRoundRecommendationsSource = fs.readFileSync('src/components/NextRoundRecommendationsSection.tsx', 'utf8');
 const planHistorySource = fs.readFileSync('src/components/PlanHistoryDialog.tsx', 'utf8');
 const socialPerformanceSource = fs.readFileSync('src/lib/socialPerformance.ts', 'utf8');
 const inspirationSource = fs.readFileSync('src/components/InspirationDashboard.tsx', 'utf8');
@@ -57,9 +59,10 @@ const weeklyPlanControlsSource = pageSource.slice(
   pageSource.indexOf('return (', pageSource.indexOf('const weeklyPlanControls')),
 );
 
-for (const label of ['智能经营', '制定本周目标', '爆款视频裂变计划', '确认周计划并开始工作', '数字员工工作排期']) {
+for (const label of ['智能经营', '制定本周目标', '确认周计划并开始工作', '数字员工工作排期']) {
   assert.match(pageSource, new RegExp(label), `Smart Operations must expose the confirmed weekly workflow: ${label}`);
 }
+assert.match(weeklyPlanCalendarSource, /本周发布日历/, 'weekly planning must use the compact publishing calendar');
 for (const deprecated of ['生成免费任务总纲', '免费的周任务总纲', '步骤 1 · 免费', '步骤 2 · Agent 预分析']) {
   assert.doesNotMatch(pageSource, new RegExp(deprecated), `Smart Operations must remove the deprecated free/paid two-step copy: ${deprecated}`);
 }
@@ -147,6 +150,11 @@ assert.doesNotMatch(appSource, /SocialOperatingSummary/, 'Smart Business must no
 assert.match(appSource, /page === 'traffic'[\s\S]{0,1200}initialView="publish"[\s\S]{0,300}visibleModes=\{\['publish'\]\}[\s\S]{0,200}showModeTabs=\{false\}/, 'publishing must not keep the redundant publish/account top-level tabs');
 assert.match(smartBusinessSource, /<AccountActivity embedded\/>/, 'Content Monitoring must be embedded at the bottom of the Smart Business content queue');
 for (const label of ['经营总览', '账号矩阵', '内容队列', '数据复盘']) assert.match(pageSource, new RegExp(label), `Smart Business must expose ${label}`);
+assert.doesNotMatch(smartBusinessSource, /本周统一数据口径|One weekly plan/i, 'the four views must not repeat the weekly-plan summary already shown in the command center');
+for (const label of ['演示数据', '真实回传']) assert.match(smartBusinessSource, new RegExp(label), `missing performance data must keep its source label: ${label}`);
+assert.ok((smartBusinessSource.match(/buildSmartBusinessDisplayModel\(data\)/g) || []).length >= 5, 'the weekly command center and four Smart Business views must derive account, video and cost counts from one weekly-plan display model');
+assert.match(smartBusinessSource, /缺失的结果指标使用演示数据/, 'the overview must disclose mocked fallback metrics instead of presenting them as real data');
+assert.match(smartBusinessSource, /演示指标不会写入真实复盘/, 'demo performance must be visibly excluded from real review decisions');
 assert.doesNotMatch(pageSource, /id: "live", label: "周计划"/, 'the repetitive standalone weekly-plan tab must be removed');
 assert.match(layoutSource, /\{accountMenuOpen && \([\s\S]{0,1800}新手引导/, 'the beginner guide must live in the expanded user menu');
 assert.doesNotMatch(layoutSource, /aria-label="主导航"[\s\S]{0,900}新手引导/, 'the beginner guide must not remain in the primary navigation');
@@ -163,21 +171,24 @@ assert.match(weeklyPlanControlsSource, /controlWeeklyWork[\s\S]{0,900}weeklyCont
 assert.match(pageSource, /const startWeeklyWork[\s\S]{0,900}setWeeklyPlanOpen\(true\)/, 'the prominent start-work action must open the persisted plan confirmation workflow');
 assert.doesNotMatch(currentPlanSource, /查看内容队列|查看完整周计划|新手引导/, 'the current-plan card must not keep duplicate queue, full-plan, or guide buttons');
 assert.match(pageSource, /aria-label=\{goal && !newGoal \? "本周计划详情" : "周计划生成"\}/, 'the weekly-plan dialog must distinguish inspecting the current plan from generating a new one');
-assert.match(pageSource, /每条计划由一条真实爆款视频裂变；选择产品后一次确认并启动。/, 'the weekly-plan detail must explain the one-to-one viral mutation workflow');
+assert.match(pageSource, /按发布时间查看全部内容；点击卡片打开对应爆款详情。/, 'the weekly-plan detail must explain the compact calendar interaction');
 const outlineFlowSource = pageSource.slice(pageSource.indexOf('const createWeeklyOutline'), pageSource.indexOf('const generateCurrentPlanDetails'));
 assert.match(outlineFlowSource, /digitalEmployeeApi\.createGoal/, 'weekly goal creation must persist before product confirmation');
 assert.match(pageSource, /const confirmWeeklyPlan[\s\S]{0,2400}generatePackageDetails[\s\S]{0,1600}approveGoal/, 'one confirmation must prepare persisted details and then approve the same plan revision');
-assert.match(pageSource, /publication\?\.title[\s\S]{0,800}publication\?\.caption[\s\S]{0,400}publication!\.tags/, 'weekly cards must preview future title, caption and tags');
-assert.match(pageSource, /planningEvidence\?\.referenceThumbnailUrl/, 'weekly cards must render persisted viral thumbnails');
+assert.match(weeklyPlanCalendarSource, /publication\?\.title/, 'weekly calendar cards must show the future publishing title');
+assert.match(weeklyPlanCalendarSource, /planningEvidence\?\.referenceThumbnailUrl/, 'weekly calendar cards must render persisted viral thumbnails');
 assert.match(pageSource, /updateWeeklyPlanProduct[\s\S]{0,2500}savePackage/, 'product selection must persist product-bound material ids and publishing copy in the weekly package');
 assert.match(pageSource, /refreshWeeklyViralPlan[\s\S]{0,900}recommendPackage[\s\S]{0,400}savePackage/, 'persisted legacy drafts must support rebuilding the one-to-one viral plan from the current weekly target');
-assert.match(pageSource, /按本周目标重新匹配爆款/, 'a weekly plan with missing references must expose an actionable repair instead of a dead-end warning');
-assert.match(pageSource, /综合产品素材、云素材、剪辑和必要 AIGC 的母版估算/, 'per-master estimates must explain the blended planning basis and distinguish it from settlement');
+assert.match(weeklyPlanCalendarSource, /补齐 \{missingReferences\} 条爆款/, 'a weekly plan with missing references must expose an actionable repair instead of a dead-end warning');
+assert.match(pageSource, /预计成本/, 'the compact weekly-plan summary must retain its cost estimate');
 assert.match(pageSource, /Agent To Do List[\s\S]{0,1800}expectedMinutes/, 'confirmed weekly plans must show Agent ownership and expected duration');
 assert.match(pageSource, /aria-label="社媒视频矩阵"[\s\S]{0,2500}编辑完整矩阵/, 'the default weekly proposal must visibly restore the social video matrix');
 assert.match(pageSource, /workspaceView === "matrix" && <SmartOperationsAccountRail/, 'the account rail must only appear inside the account-matrix tab');
-assert.match(pageSource, /账号视频产量分配[\s\S]{0,1500}weeklyCount/, 'the weekly goal must expose conserved video totals per account');
-assert.match(pageSource, /视频 \+ 发布标题 \/ 文案 \/ Tag/, 'the weekly output promise must remain video-only while clearly including publication metadata');
+assert.match(weeklyPlanCalendarSource, /plans\.length[\s\S]{0,300}条内容/, 'the weekly calendar must expose the conserved total publishing count');
+assert.match(weeklyPlanCalendarSource, /plansByDay[\s\S]{0,2200}dayPlans\.map/, 'the weekly calendar must place every publishing version on its date');
+assert.match(pageSource, /inspirationReference:[\s\S]{0,160}referenceId[\s\S]{0,160}sourceUrl[\s\S]{0,160}title/, 'weekly content cards must pass a traceable reference into Inspiration Center');
+assert.match(inspirationSource, /receiveReference[\s\S]{0,5000}setSelectedVideo\(match\)/, 'Inspiration Center must open the exact requested viral-video detail');
+assert.match(inspirationSource, /weekly-plan-snapshot[\s\S]{0,600}setSelectedVideo\(snapshot\)/, 'deleted references must still open the frozen weekly-plan analysis snapshot');
 assert.match(pageSource, /具体缺少/, 'weekly-plan validation must name the missing business fields instead of showing a generic warning');
 assert.match(pageSource, /page === "socialPlanning"[\s\S]{0,240}setWeeklyPlanOpen\(true\)/, 'the account matrix next step must open weekly-plan generation inside Smart Business');
 assert.match(weeklyPlanControlsSource, /历史计划/, 'Smart Business must expose plan history from the weekly-plan header controls');
@@ -195,7 +206,7 @@ assert.match(smartBusinessSource, /过去已核算消耗/, 'Agent detail must ex
 assert.match(smartBusinessSource, /账号真实结算账本/, 'Agent detail must identify the persisted account ledger as its source');
 assert.match(smartBusinessSource, /<MatrixView data=\{data\}/, 'the account matrix tab must use the deterministic editable weekly matrix');
 assert.match(smartBusinessSource, /aria-label="数字员工工作排期"[\s\S]{0,1500}账号内容日历 · 甘特排期/, 'the account matrix must expose an account-level calendar and Gantt schedule');
-assert.match(smartBusinessSource, /编导分析[\s\S]{0,500}编导 Agent[\s\S]{0,1000}内容制作[\s\S]{0,500}内容 Agent[\s\S]{0,1000}质检与发布/, 'the work schedule must make every production owner and stage explicit');
+assert.match(smartBusinessSource, /编导结论与经营排期[\s\S]{0,500}编导 Agent → 经营 Agent[\s\S]{0,1000}内容制作[\s\S]{0,500}内容 Agent[\s\S]{0,1000}质检与发布[\s\S]{0,500}内容 Agent · 质检能力/, 'the work schedule must make the director-to-business-to-content ownership explicit');
 assert.doesNotMatch(smartBusinessSource, /matrixSystemLayers|谁来建立信任|aria-label="按平台查看账号"/, 'the deleted dark explainer and duplicate platform cards must not remain');
 for (const item of ['企业默认 CTA', 'WhatsApp', 'Messenger', '对标账号']) {
   assert.match(smartBusinessSource, new RegExp(item), `account details must expose ${item}`);
@@ -220,7 +231,9 @@ assert.doesNotMatch(smartBusinessSource, /成本建议/, 'the content queue must
 for (const platform of ['YouTube', 'TikTok', 'Instagram', 'Facebook']) assert.match(smartBusinessSource, new RegExp(platform), `review ranking must expose ${platform}`);
 assert.match(smartBusinessSource, /loadConnectedSocialPerformance/, 'review must read the same connected-account performance source as Content Monitoring');
 assert.match(socialPerformanceSource, /\/api\/overseas\/youtube\/accounts[\s\S]{0,500}\/api\/overseas\/social\/accounts/, 'performance loading must use the real account endpoints shared with Content Monitoring');
-assert.match(smartBusinessSource, /(?:纳入下周待办|加入 1 条验证任务)[\s\S]{0,1000}下周待办/, 'Agent advice must feed the simplified next-week todo list');
+for (const removedReviewCopy of ['全部账号', '暂无内容播放量', '热度候选', '加入 1 条验证任务', '暂无待办，可从上方建议直接加入', '先给出用户可阅读、可验证的结论', '给你看：结论、依据、原始来源', '系统使用：下一周编导与内容约束']) {
+  assert.doesNotMatch(smartBusinessSource + nextRoundRecommendationsSource, new RegExp(removedReviewCopy), `data review must remove ${removedReviewCopy}`);
+}
 assert.match(inspirationSource, /对标账号/, 'Inspiration Center must expose benchmark accounts as its own page');
 assert.match(competitorAccountsSource, /embedded/, 'benchmark accounts must support an embedded standalone page instead of only a modal');
 for (const role of ['orchestrator', 'business', 'director', 'content', 'customer']) {
@@ -285,7 +298,7 @@ assert.match(pageSource, /\u5feb\u7167\u7f3a\u5931\uff0c\u4e0d\u80fd\u5224\u5b9a
 
 assert.match(liveSceneSource, /\u5185\u5bb9\u751f\u4ea7\u73b0\u573a/, 'the shared component must expose the content production scene');
 assert.match(pageSource, /displayedReadiness[\s\S]{0,3000}profileConfirmed[\s\S]{0,1200}knowledgeProducts\.length/, 'onboarding readiness must immediately reflect enterprise and product facts saved on the current page');
-for (const label of ['经营 Agent', '编导 Agent', '内容 Agent', '质检 Agent', '脚本与分镜', '逐镜素材', '配音、字幕与人物', '剪辑与渲染', '质检与局部返工']) {
+for (const label of ['经营 Agent', '编导 Agent', '内容 Agent', '内容 Agent · 质检能力', '脚本与分镜', '逐镜素材', '配音、字幕与人物', '剪辑与渲染', '质检与局部返工']) {
   assert.match(liveSceneSource, new RegExp(label), `the shared production scene must expose ${label}`);
 }
 assert.match(liveSceneSource, /负责：\{item\.agent\}[\s\S]{0,120}预计：\{item\.duration\}/, 'every visible production step must identify its responsible Agent and estimated duration');

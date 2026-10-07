@@ -252,8 +252,10 @@ export function planWeeklyExecutionTasks(
 
   const byMother = new Map<string, SocialWeeklyPublicationTask[]>();
   for (const item of publications) byMother.set(item.motherContentId, [...(byMother.get(item.motherContentId) ?? []), item]);
+  const productionBudget = moneyShare(pkg.socialContentPackage.weeklyBudgetCny, publications.length);
   const directingByMother = new Map<string, WeeklyExecutionTask>();
   const scheduleByMother = new Map<string, WeeklyExecutionTask>();
+  const storyboardByPublication = new Map<string, WeeklyExecutionTask>();
   for (const [motherContentId, items] of byMother) {
     const scoring = add({
       workflowKind: 'directing', scope: 'content', subjectId: `${motherContentId}:benchmark-scoring`,
@@ -269,15 +271,33 @@ export function planWeeklyExecutionTasks(
       stepKind: 'director_analysis', responsibleActor: 'director_agent', estimatedDurationMinutes: 45,
     });
     directingByMother.set(motherContentId, directing);
+    const storyboards = items.map(item => {
+      const mode = item.adaptationOfPublicationTaskId === null ? 'original' : 'adaptation';
+      const scope = mode === 'original' ? 'content' as const : 'adaptation' as const;
+      const base = `${item.publicationTaskId}:${mode}`;
+      const script = add({
+        workflowKind: 'directing', scope, subjectId: `${base}:script`, accountId: item.accountId, publicationTaskId: item.publicationTaskId,
+        dependsOnTaskIds: [directing.taskId],
+        inputSnapshot: { publicationTask: item, motherContentId, mode, source: 'director_analysis_and_enterprise_facts' },
+        budget: { category: 'production', limitCny: productionBudget }, ownBlockingReasons: [],
+        stepKind: 'script', responsibleActor: 'director_agent', estimatedDurationMinutes: 30,
+      });
+      const storyboard = add({
+        workflowKind: 'directing', scope, subjectId: `${base}:storyboard`, accountId: item.accountId, publicationTaskId: item.publicationTaskId,
+        dependsOnTaskIds: [script.taskId], inputSnapshot: { publicationTask: item, motherContentId, mode }, budget: noBudget, ownBlockingReasons: [],
+        stepKind: 'storyboard', responsibleActor: 'director_agent', estimatedDurationMinutes: 35,
+      });
+      storyboardByPublication.set(item.publicationTaskId, storyboard);
+      return storyboard;
+    });
     scheduleByMother.set(motherContentId, add({
       workflowKind: 'directing', scope: 'content', subjectId: `${motherContentId}:business-schedule`,
-      accountId: null, publicationTaskId: null, dependsOnTaskIds: [directing.taskId],
+      accountId: null, publicationTaskId: null, dependsOnTaskIds: storyboards.map(item => item.taskId),
       inputSnapshot: { motherContentId, directorTaskId: directing.taskId, variants: items }, budget: noBudget,
       ownBlockingReasons: [], stepKind: 'business_schedule', responsibleActor: 'business_agent', estimatedDurationMinutes: 15,
     }));
   }
 
-  const productionBudget = moneyShare(pkg.socialContentPackage.weeklyBudgetCny, publications.length);
   const approvalByPublication = new Map<string, WeeklyExecutionTask>();
   for (const [motherContentId, items] of byMother) {
     const original = items.find(item => item.adaptationOfPublicationTaskId === null) ?? items[0]!;
@@ -286,27 +306,17 @@ export function planWeeklyExecutionTasks(
       const mode = item.publicationTaskId === original.publicationTaskId ? 'original' : 'adaptation';
       const scope = mode === 'original' ? 'content' as const : 'adaptation' as const;
       const base = `${item.publicationTaskId}:${mode}`;
+      const storyboard = storyboardByPublication.get(item.publicationTaskId)!;
       const material = add({
         workflowKind: 'content', scope, subjectId: `${base}:material-readiness`, accountId: item.accountId, publicationTaskId: item.publicationTaskId,
-        dependsOnTaskIds: [scheduleByMother.get(motherContentId)!.taskId, ...(mode === 'adaptation' && originalQualityTask ? [originalQualityTask.taskId] : [])],
+        dependsOnTaskIds: [scheduleByMother.get(motherContentId)!.taskId, storyboard.taskId, ...(mode === 'adaptation' && originalQualityTask ? [originalQualityTask.taskId] : [])],
         inputSnapshot: { publicationTask: item, motherContentId, mode, qualityTier: 'premium' },
         budget: noBudget, ownBlockingReasons: ['business_dispatch_required'],
         stepKind: 'material_readiness', responsibleActor: 'content_agent', estimatedDurationMinutes: 20,
       });
-      const script = add({
-        workflowKind: 'content', scope, subjectId: `${base}:script`, accountId: item.accountId, publicationTaskId: item.publicationTaskId,
-        dependsOnTaskIds: [material.taskId], inputSnapshot: { publicationTask: item, motherContentId, mode },
-        budget: { category: 'production', limitCny: productionBudget }, ownBlockingReasons: [],
-        stepKind: 'script', responsibleActor: 'content_agent', estimatedDurationMinutes: 30,
-      });
-      const storyboard = add({
-        workflowKind: 'content', scope, subjectId: `${base}:storyboard`, accountId: item.accountId, publicationTaskId: item.publicationTaskId,
-        dependsOnTaskIds: [script.taskId], inputSnapshot: { publicationTask: item, motherContentId, mode }, budget: noBudget, ownBlockingReasons: [],
-        stepKind: 'storyboard', responsibleActor: 'content_agent', estimatedDurationMinutes: 35,
-      });
       const assets = add({
         workflowKind: 'content', scope, subjectId: `${base}:asset-generation`, accountId: item.accountId, publicationTaskId: item.publicationTaskId,
-        dependsOnTaskIds: [storyboard.taskId], inputSnapshot: { publicationTask: item, motherContentId, mode, generationPolicy: 'premium_max_available' },
+        dependsOnTaskIds: [material.taskId], inputSnapshot: { publicationTask: item, motherContentId, mode, generationPolicy: 'premium_max_available' },
         budget: { category: 'production', limitCny: productionBudget }, ownBlockingReasons: [],
         stepKind: 'asset_generation', responsibleActor: 'content_agent', estimatedDurationMinutes: 45,
       });
