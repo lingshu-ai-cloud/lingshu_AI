@@ -77,6 +77,39 @@ test('social program API exposes the weekly operating package lifecycle', async 
   }
 });
 
+test('social program API exposes the two-step Agent plan and detailed execution timeline', async () => {
+  const previousFetch = globalThis.fetch;
+  const previousStorage = globalThis.localStorage;
+  Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: storage });
+  const calls: Array<{ url: string; method: string; body: unknown }> = [];
+  globalThis.fetch = async (input, init) => {
+    const url = String(input);
+    calls.push({ url, method: init?.method || 'GET', body: init?.body ? JSON.parse(String(init.body)) : null });
+    return Response.json(url.includes('/execution-tasks') ? { items: [] } : { item: { planningId: 'planning-a', version: 2 } });
+  };
+  try {
+    await socialProgramApi.getAgentPlanning('program/a', 'package/a', 3);
+    await socialProgramApi.runDirectorPlanning('program/a', 'package/a', 2);
+    await socialProgramApi.mergeAgentSchedule('program/a', 'package/a', 3);
+    await socialProgramApi.confirmAgentSchedule('program/a', 'package/a', 4);
+    await socialProgramApi.dispatchAgentSchedule('program/a', 'package/a', 5);
+    assert.deepEqual(await socialProgramApi.listExecutionTasks('program/a', 'package/a', 3), []);
+    assert.deepEqual(await socialProgramApi.approveExecutionTask('program/a', 'package/a', 'task/a'), []);
+    assert.deepEqual(calls, [
+      { url: '/api/overseas/social-programs/program%2Fa/operating-packages/package%2Fa/agent-planning?version=3', method: 'GET', body: null },
+      { url: '/api/overseas/social-programs/program%2Fa/operating-packages/package%2Fa/agent-planning/director-analysis', method: 'POST', body: { expectedVersion: 2 } },
+      { url: '/api/overseas/social-programs/program%2Fa/operating-packages/package%2Fa/agent-planning/merge', method: 'POST', body: { expectedVersion: 3 } },
+      { url: '/api/overseas/social-programs/program%2Fa/operating-packages/package%2Fa/agent-planning/confirm', method: 'POST', body: { expectedVersion: 4 } },
+      { url: '/api/overseas/social-programs/program%2Fa/operating-packages/package%2Fa/agent-planning/dispatch', method: 'POST', body: { expectedVersion: 5 } },
+      { url: '/api/overseas/social-programs/program%2Fa/operating-packages/package%2Fa/execution-tasks?version=3', method: 'GET', body: null },
+      { url: '/api/overseas/social-programs/program%2Fa/operating-packages/package%2Fa/execution-tasks/task%2Fa/approve', method: 'POST', body: {} },
+    ]);
+  } finally {
+    globalThis.fetch = previousFetch;
+    Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: previousStorage });
+  }
+});
+
 test('social program API exposes raw operating constraints and server resolution without accepting computed results', async () => {
   const previousFetch = globalThis.fetch;
   const previousStorage = globalThis.localStorage;

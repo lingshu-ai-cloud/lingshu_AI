@@ -2,11 +2,14 @@ import type {
   SocialAudienceRole,
   SocialBenchmarkAccountType,
   SocialCandidateEvidence,
+  SocialBusinessModel,
+  SocialCollectionScopeMode,
   SocialCompanyRole,
   SocialContentSearchUnit,
   SocialCrawlKeywordCategory,
   SocialCrawlStrategy,
   SocialDiscoveryMode,
+  SocialDiscoveryCandidateScore,
   SocialInspirationHandoff,
   SocialInspirationReadiness,
   SocialInspirationScores,
@@ -38,6 +41,98 @@ function stableHash(value: string): string {
 
 function stableId(prefix: string, value: unknown): string {
   return `${prefix}_${stableHash(JSON.stringify(value))}`;
+}
+
+function normalizedPlatform(value: string): string {
+  const platform = value.trim().toLowerCase();
+  if (platform === 'tik tok') return 'tiktok';
+  if (platform === 'you tube') return 'youtube';
+  return platform;
+}
+
+/**
+ * The collection budget is deliberately asymmetric: TikTok is the main
+ * discovery field, while YouTube is retained only for targeted evidence.
+ */
+export function normalizeSocialPlatformQuotas(platforms: string[], resultLimit: number): Array<{ platform: string; limit: number; weight: number }> {
+  const selected = unique(platforms.map(normalizedPlatform));
+  if (!selected.includes('tiktok')) selected.unshift('tiktok');
+  const supported = selected.filter(platform => ['tiktok', 'instagram', 'facebook', 'youtube'].includes(platform));
+  const total = Math.max(1, Math.floor(resultLimit));
+  const socialCount = supported.filter(item => item === 'instagram' || item === 'facebook').length;
+  const auxiliaryWeights = Object.fromEntries(supported.filter(platform => platform !== 'tiktok').map(platform => [platform,
+    platform === 'youtube' ? 0.1 : 0.15 / Math.max(1, socialCount),
+  ]));
+  const auxiliaryTotal = Object.values(auxiliaryWeights).reduce((value, weight) => value + weight, 0);
+  const normalized = supported.map(platform => ({ platform, weight: platform === 'tiktok' ? Math.max(0.75, 1 - auxiliaryTotal) : auxiliaryWeights[platform] }));
+  const quotas = normalized.map(item => ({ ...item, limit: Math.floor(total * item.weight) }));
+  let assigned = quotas.reduce((value, item) => value + item.limit, 0);
+  for (const item of [...quotas].sort((a, b) => b.weight - a.weight || a.platform.localeCompare(b.platform))) {
+    if (assigned >= total) break;
+    item.limit += 1;
+    assigned += 1;
+  }
+  return quotas;
+}
+
+export function inferSocialBusinessModel(text: string): SocialBusinessModel {
+  const value = text.toLowerCase();
+  const b2b = /\b(oem|odm|wholesale|wholesaler|distributor|manufacturer|factory|supplier|procurement|bulk|private label|trade show|dealer)\b|批发|经销|代理|工厂|制造商|供应商|采购|贴牌|代工|外贸/.test(value);
+  const d2c = /\b(shop now|buy now|add to cart|checkout|discount code|free shipping|unboxing|haul|routine|influencer)\b|立即购买|加入购物车|折扣码|包邮|开箱|种草|日常护肤/.test(value);
+  if (b2b && d2c) return 'mixed';
+  if (b2b) return 'b2b';
+  if (d2c) return 'd2c';
+  return 'unknown';
+}
+
+function evidenceLevelScore(level: 'high' | 'medium' | 'low'): number {
+  return level === 'high' ? 90 : level === 'medium' ? 60 : 25;
+}
+
+/** Authoritative, deterministic candidate score used by persistence and filtering. */
+export function scoreSocialDiscoveryCandidate(input: {
+  evidence: Omit<SocialCandidateEvidence, 'qualityScore' | 'classification'>;
+  platform?: string;
+  keywordTier?: 'broad' | 'medium' | 'evidence' | 'account' | 'unknown';
+  audienceRole?: SocialAudienceRole;
+  sourceText?: string;
+  hasSource?: boolean;
+  now?: Date;
+}): SocialDiscoveryCandidateScore & { businessModel: SocialBusinessModel } {
+  const platform = normalizedPlatform(input.platform || 'unknown');
+  const businessModel = inferSocialBusinessModel(input.sourceText || '');
+  const expectsBusiness = (input.audienceRole ?? 'consumer') !== 'consumer';
+  const businessModelFit = expectsBusiness
+    ? businessModel === 'b2b' ? 100 : businessModel === 'mixed' ? 75 : businessModel === 'unknown' ? 50 : 15
+    : businessModel === 'd2c' ? 100 : businessModel === 'mixed' ? 75 : businessModel === 'unknown' ? 55 : 35;
+  const relevance = evidenceLevelScore(input.evidence.relevance.level);
+  const transferability = evidenceLevelScore(input.evidence.transferability.level);
+  const momentum = input.evidence.momentum.level === 'rising' ? 95 : input.evidence.momentum.level === 'high_performance' ? 75 : 35;
+  const hasSource = input.hasSource !== false && input.evidence.evidenceRefs.length > 0;
+  const evidence = hasSource ? Math.min(100, 55 + input.evidence.evidenceRefs.length * 12) : 0;
+  const platformPriority = platform === 'tiktok' ? 100 : platform === 'instagram' ? 70 : platform === 'facebook' ? 65 : platform === 'youtube' ? 45 : 30;
+  const tierBoost = input.keywordTier === 'medium' ? 10 : input.keywordTier === 'account' ? 8 : input.keywordTier === 'evidence' ? 5 : input.keywordTier === 'broad' ? -10 : 0;
+  const overall = Math.max(0, Math.min(100, Math.round(
+    relevance * 0.25 + transferability * 0.2 + momentum * 0.1 + evidence * 0.15
+    + Math.max(0, Math.min(100, platformPriority + tierBoost)) * 0.1 + businessModelFit * 0.2,
+  )));
+  const blockers = [
+    ...(!hasSource ? ['缺少可追溯来源或证据'] : []),
+    ...(input.evidence.relevance.level === 'low' ? ['与当前产品、市场或沟通对象相关性过低'] : []),
+    ...(expectsBusiness && businessModel === 'd2c' ? ['账号以 DTC 消费者卖货为主，不符合当前 B2B 客群'] : []),
+  ];
+  const decision = blockers.length ? 'rejected' : overall >= 70 ? 'accepted' : overall >= 50 ? 'review' : 'rejected';
+  const reasons = [
+    `相关性 ${relevance} / 可迁移性 ${transferability} / 证据 ${evidence}`,
+    platform === 'tiktok' ? 'TikTok 主采集阵地加权' : platform === 'youtube' ? 'YouTube 仅作为定向证据来源' : `${platform || '未知平台'} 辅助来源`,
+    expectsBusiness ? `B2B 匹配：${businessModel}` : `消费者业务匹配：${businessModel}`,
+    input.keywordTier === 'medium' ? '命中用户痛点或产品卖点中词' : `查询层级：${input.keywordTier ?? 'unknown'}`,
+  ];
+  return {
+    ruleVersion: 'discovery-score-v1', overall,
+    dimensions: { relevance, transferability, momentum, evidence, platformPriority, businessModelFit },
+    decision, reasons, blockers, scoredAt: (input.now ?? new Date()).toISOString(), businessModel,
+  };
 }
 
 function factorCategory(value: string, fallback: SocialReplicationFactorCategory): SocialReplicationFactorCategory {
@@ -361,6 +456,9 @@ export function buildSocialCrawlStrategy(input: {
   resultLimit?: number;
   budgetLimitCny?: number | null;
   productionGap?: string | null;
+  scopeMode?: SocialCollectionScopeMode;
+  industryFocus?: string | null;
+  marketFocus?: string | null;
   now?: Date;
 }): SocialCrawlStrategy {
   const productTerms = unique(input.productTerms ?? []);
@@ -369,7 +467,8 @@ export function buildSocialCrawlStrategy(input: {
   const companyRole = input.companyRole ?? 'brand';
   const audienceRole = input.audienceRole ?? 'consumer';
   const competitors = unique(input.competitorTerms ?? []);
-  const platforms = unique(input.platforms);
+  const platforms = unique(input.platforms.map(normalizedPlatform));
+  if (!platforms.includes('tiktok')) platforms.unshift('tiktok');
   const createdAt = (input.now ?? new Date()).toISOString();
   const scopeIdentity = { productTerms, market, language, companyRole, audienceRole, competitors };
   const keywordSetId = stableId('market_keyword_set', scopeIdentity);
@@ -431,6 +530,7 @@ export function buildSocialCrawlStrategy(input: {
     productionGap: input.productionGap?.trim() || null,
     createdBy: 'director_agent' as const,
   };
+  const platformQuotas = normalizeSocialPlatformQuotas(platforms, discoveryBrief.resultLimit);
   return {
     crawlStrategyId,
     version: createdAt,
@@ -445,7 +545,16 @@ export function buildSocialCrawlStrategy(input: {
       keyword('task_override', input.taskOverrides ?? []),
     ],
     benchmarkAccounts: (input.benchmarkAccounts ?? []).map(account => ({ ...account, weight: clamp01(account.weight ?? 0.7) })),
-    platformQuotas: platforms.map(platform => ({ platform, limit: discoveryBrief.resultLimit, weight: 1 })),
+    platformQuotas,
+    collectionPolicy: {
+      scopeMode: input.scopeMode ?? (market ? 'market_focus' : 'industry_matrix'),
+      industryFocus: input.industryFocus?.trim() || productTerms[0] || null,
+      marketFocus: input.marketFocus?.trim() || market || null,
+      keywordTierWeights: { broad: 0.15, medium: 0.75, evidence: 0.1 },
+      platformWeights: Object.fromEntries(platformQuotas.map(item => [item.platform, item.weight])),
+      primaryPlatform: 'tiktok',
+      youtubePolicy: 'targeted_only',
+    },
     refreshIntervalMinutes: 24 * 60,
     stopConditions: ['连续三轮没有新增有效内容时暂停当前查询分支', '来源连续失败三次时熔断并等待复核', '达到单次结果、预算或超时上限时停止'],
     market: market || null,

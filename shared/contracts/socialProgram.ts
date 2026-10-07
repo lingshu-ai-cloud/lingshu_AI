@@ -85,6 +85,42 @@ export const WEEKLY_EXECUTION_TASK_STATUSES = [
 export type WeeklyExecutionTaskStatus = typeof WEEKLY_EXECUTION_TASK_STATUSES[number];
 export type WeeklyExecutionTaskScope = 'package' | 'content' | 'adaptation' | 'account' | 'publication';
 
+export type WeeklyResponsibleActor =
+  | 'business_agent'
+  | 'director_agent'
+  | 'content_agent'
+  | 'quality_agent'
+  | 'publishing_agent'
+  | 'user';
+
+export type WeeklyProductionStepKind =
+  | 'business_outline'
+  | 'benchmark_collection'
+  | 'benchmark_scoring'
+  | 'director_analysis'
+  | 'business_schedule'
+  | 'material_readiness'
+  | 'script'
+  | 'storyboard'
+  | 'asset_generation'
+  | 'video_generation'
+  | 'quality_check'
+  | 'rework'
+  | 'user_approval'
+  | 'publishing'
+  | 'performance_monitoring'
+  | 'weekly_review';
+
+export interface WeeklyExecutionTaskSchedule {
+  stepKind: WeeklyProductionStepKind;
+  responsibleActor: WeeklyResponsibleActor;
+  estimatedDurationMinutes: number;
+  estimatedStartAt: string;
+  estimatedFinishAt: string;
+  actualStartedAt: string | null;
+  actualFinishedAt: string | null;
+}
+
 export interface WeeklyExecutionTaskLease {
   leaseId: string;
   token: string;
@@ -119,6 +155,7 @@ export interface WeeklyExecutionTask {
   inputSnapshot: Record<string, unknown>;
   idempotencyKey: string;
   budget: WeeklyExecutionTaskBudget;
+  schedule: WeeklyExecutionTaskSchedule;
   status: WeeklyExecutionTaskStatus;
   ownBlockingReasons: string[];
   inheritedBlockingTaskIds: string[];
@@ -130,6 +167,94 @@ export interface WeeklyExecutionTask {
   lastError: { code: string; message: string; retryable: boolean; occurredAt: string } | null;
   recoveredFromDeadLetterAt: string | null;
   cancelReason: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface WeeklyOperatingScheduleSlot {
+  slotId: string;
+  motherContentId: string;
+  publicationTaskIds: string[];
+  accountIds: string[];
+  platforms: SocialWeeklyPublicationTask['platform'][];
+  plannedPublishWindows: string[];
+  objective: string;
+  quantity: number;
+}
+
+export interface WeeklyOperatingScheduleSkeleton {
+  skeletonId: string;
+  packageId: string;
+  packageVersion: number;
+  generatedBy: 'business_agent';
+  tokenCost: 0;
+  slots: WeeklyOperatingScheduleSlot[];
+  createdAt: string;
+}
+
+export interface WeeklyDirectorPlanningAnalysis {
+  analysisId: string;
+  slotId: string;
+  packageId: string;
+  packageVersion: number;
+  analyzedBy: 'director_agent';
+  benchmarkAccountRefs: VersionedSocialRef[];
+  benchmarkVideoRefs: VersionedSocialRef[];
+  benchmarkEvidenceRefs: string[];
+  contentDirection: string;
+  styleRules: string[];
+  updateRhythm: string;
+  materialRequirements: string[];
+  estimatedProductionMinutes: number;
+  createdAt: string;
+}
+
+export interface WeeklyDetailedContentScheduleItem {
+  scheduleItemId: string;
+  slotId: string;
+  publicationTaskId: string;
+  accountId: string;
+  platform: SocialWeeklyPublicationTask['platform'];
+  topic: string;
+  directorAnalysisRef: VersionedSocialRef;
+  benchmarkAccountRefs: VersionedSocialRef[];
+  benchmarkVideoRefs: VersionedSocialRef[];
+  materialRequirements: string[];
+  materialPlan: {
+    canStartWithExistingAssets: boolean;
+    fallback: 'premium_aigc';
+    optionalShootTaskIds: string[];
+    note: string;
+  };
+  publishWindow: string;
+  qualityTier: 'premium';
+  estimatedProductionMinutes: number;
+}
+
+export interface WeeklyBusinessContentDispatch {
+  dispatchId: string;
+  packageId: string;
+  packageVersion: number;
+  issuedBy: 'business_agent';
+  assignedTo: 'content_agent';
+  detailedScheduleRef: VersionedSocialRef;
+  scheduleItemIds: string[];
+  scheduleItems: WeeklyDetailedContentScheduleItem[];
+  issuedAt: string;
+}
+
+export interface WeeklyAgentPlanningState {
+  planningId: string;
+  version: number;
+  programId: string;
+  packageId: string;
+  packageVersion: number;
+  status: 'outline_ready' | 'director_analyzing' | 'awaiting_confirmation' | 'confirmed' | 'dispatched';
+  skeleton: WeeklyOperatingScheduleSkeleton;
+  directorAnalyses: WeeklyDirectorPlanningAnalysis[];
+  detailedSchedule: { ref: VersionedSocialRef; mergedBy: 'business_agent'; items: WeeklyDetailedContentScheduleItem[]; createdAt: string } | null;
+  userConfirmation: { confirmedBy: string; confirmedAt: string } | null;
+  dispatch: WeeklyBusinessContentDispatch | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -231,6 +356,8 @@ export interface WeeklyOperatingPackage {
   /** Present on R3-aware reads; optional while older R1 consumers migrate. */
   executionTaskRefs?: VersionedSocialRef[];
   executionSummary?: WeeklyExecutionStatusSummary;
+  /** Read projection from the independent append-only Agent planning stream. */
+  agentPlanning?: WeeklyAgentPlanningState;
   appliedWorkflowEvents: WeeklyWorkflowEvent[];
   /** Independent append-only workflow stream version; absent only on legacy rows. */
   workflowStateVersion?: number;

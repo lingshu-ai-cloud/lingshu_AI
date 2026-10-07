@@ -84,6 +84,7 @@ export function createSocialWeeklyExecutionWorker(dataStore: DataStore) {
       for (const row of await candidates(dataStore, input.tenantId)) {
         const task = row.payload;
         if (input.kinds?.length && !input.kinds.includes(task.workflowKind)) continue;
+        if (task.schedule?.responsibleActor === 'user') continue;
         if (task.status === 'queued' && task.nextAttemptAt && Date.parse(task.nextAttemptAt) > now.getTime()) continue;
         if (task.status === 'leased' && task.lease && Date.parse(task.lease.expiresAt) > now.getTime()) continue;
         const lease = await acquireDurableOperationLease({
@@ -116,6 +117,7 @@ export function createSocialWeeklyExecutionWorker(dataStore: DataStore) {
               lastError: latest.payload.status === 'leased' ? {
                 code: 'lease_expired', message: '上一个 Worker 租约过期，任务已被重新领取。', retryable: true, occurredAt: now.toISOString(),
               } : latest.payload.lastError,
+              schedule: { ...latest.payload.schedule, actualStartedAt: latest.payload.schedule.actualStartedAt ?? now.toISOString() },
               updatedAt: now.toISOString(),
             };
             await writeWeeklyExecutionTask(dataStore, latest, next);
@@ -157,7 +159,9 @@ export function createSocialWeeklyExecutionWorker(dataStore: DataStore) {
         const row = await currentClaim(claim, now);
         const next: WeeklyExecutionTask = {
           ...row.payload, status: 'succeeded', resultRefs: structuredClone(resultRefs), lease: null,
-          nextAttemptAt: null, updatedAt: now.toISOString(),
+          nextAttemptAt: null,
+          schedule: { ...row.payload.schedule, actualStartedAt: row.payload.schedule.actualStartedAt ?? now.toISOString(), actualFinishedAt: now.toISOString() },
+          updatedAt: now.toISOString(),
         };
         await writeWeeklyExecutionTask(dataStore, row, next);
         return next;
@@ -175,21 +179,31 @@ export function createSocialWeeklyExecutionWorker(dataStore: DataStore) {
       now?: Date;
     }): Promise<WeeklyExecutionTask> {
       const now = input.now ?? new Date();
-      const delay = Math.min(Math.max(Math.floor(input.retryDelayMs ?? 30_000), 0), 24 * 60 * 60_000);
+      const code = input.code.trim().slice(0, 120) || 'worker_failed';
+      const balanceFailure = /balance|insufficient[_-]?fund|余额不足/i.test(code);
+      const contentRejection = /content[_-]?(rejected|refused)|policy[_-]?rejection|内容拒绝/i.test(code);
+      const networkFailure = /network|timeout|timed[_-]?out|econn|429|rate[_-]?limit/i.test(code);
+      const systemFailure = /system|internal|5\d\d|provider[_-]?unavailable/i.test(code);
+      const delay = Math.min(Math.max(Math.floor(input.retryDelayMs ?? (networkFailure ? 30_000 * Math.max(1, claim.task.attempt) : systemFailure ? 60_000 : 30_000)), 0), 24 * 60 * 60_000);
       const task = await withWeeklyExecutionTaskMutation(dataStore, claim.task.tenantId, claim.task.taskId, async () => {
         const row = await currentClaim(claim, now);
-        const retry = input.retryable && row.payload.attempt < row.payload.maxAttempts;
+        const requiresUserAction = balanceFailure || contentRejection;
+        const retry = !requiresUserAction && (networkFailure || systemFailure || input.retryable) && row.payload.attempt < row.payload.maxAttempts;
         const next: WeeklyExecutionTask = {
           ...row.payload,
-          status: retry ? 'queued' : 'dead_letter',
+          status: requiresUserAction ? 'blocked' : retry ? 'queued' : 'dead_letter',
           lease: null,
           nextAttemptAt: retry ? new Date(now.getTime() + delay).toISOString() : null,
+          ownBlockingReasons: requiresUserAction
+            ? [...new Set([...row.payload.ownBlockingReasons, balanceFailure ? 'balance_insufficient' : 'content_rejected_review_required'])]
+            : row.payload.ownBlockingReasons,
           lastError: {
-            code: input.code.trim().slice(0, 120) || 'worker_failed',
+            code,
             message: input.message.trim().slice(0, 2_000) || '执行失败。',
-            retryable: input.retryable,
+            retryable: retry,
             occurredAt: now.toISOString(),
           },
+          schedule: { ...row.payload.schedule, actualFinishedAt: !retry && !requiresUserAction ? now.toISOString() : null },
           updatedAt: now.toISOString(),
         };
         await writeWeeklyExecutionTask(dataStore, row, next);

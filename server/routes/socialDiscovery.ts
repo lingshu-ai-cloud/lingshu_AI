@@ -11,6 +11,7 @@ import { buildSocialCrawlStrategy, type SocialSceneClusterInput } from '../../sh
 import { buildDiscoverySummary, nextDiscoveryRunAt, normalizeModePolicies } from '../socialDiscovery/domain.js';
 import { ensureSocialDiscoveryCollectionTask } from './scheduler.js';
 import { DISCOVERY_RUN_COLLECTION, DISCOVERY_SCOPE_COLLECTION, executeApprovedDiscoveryRun, loadActiveDiscoveryScope, type DiscoveryScopeRecord } from '../socialDiscovery/service.js';
+import { evaluateSocialDiscoveryReadiness, listSocialDiscoverySupply } from '../socialDiscovery/supply.js';
 import type {
   SocialAccountTrackingDecision,
   SocialAudienceRole,
@@ -20,6 +21,9 @@ import type {
   SocialKeywordEvidenceSource,
   SocialInspirationCollectionRun,
   SocialBenchmarkAccountType,
+  SocialCollectionScopeMode,
+  SocialBusinessModel,
+  SocialDiscoveryScoreDecision,
 } from '../../shared/contracts/socialContentWorkflow.js';
 
 export const socialDiscoveryRouter = Router();
@@ -192,8 +196,12 @@ socialDiscoveryRouter.put('/scope', async (req, res) => {
   }).filter(item => item.label);
 
   let approvedQueries: string[] | undefined;
+  let keywordRecommendation: import('../../shared/productDiscovery.js').ProductKeywordRecommendation | undefined;
   if (body.keywordRecommendation) {
-    try { approvedQueries = fiveProductKeywords(body.keywordRecommendation as import('../../shared/productDiscovery.js').ProductKeywordRecommendation); }
+    try {
+      keywordRecommendation = body.keywordRecommendation as import('../../shared/productDiscovery.js').ProductKeywordRecommendation;
+      approvedQueries = fiveProductKeywords(keywordRecommendation);
+    }
     catch { res.status(400).json({ message: '请确认2个大词和3个中词，搜索词不能为空或重复。' }); return; }
   }
   const searchQueries = approvedQueries ?? unique(body.productQueries, 5);
@@ -222,7 +230,19 @@ socialDiscoveryRouter.put('/scope', async (req, res) => {
   const strategy = buildSocialCrawlStrategy({
     businessGoal: String(body.businessGoal || '发现与当前产品、市场和沟通对象相符，并可迁移到生产的内容机会').trim(),
     productTerms: products,
-    sceneClusters: approvedQueries ? [] : sceneClusters,
+    sceneClusters: keywordRecommendation
+      ? [
+        ...keywordRecommendation.mediumTerms.map((term, index): SocialSceneClusterInput => ({
+          label: term.term,
+          productTask: products[0],
+          demandDimension: index % 2 === 0 ? 'problem' : 'decision_concern',
+          queryVariants: [term.term],
+          evidence: ['product'],
+          status: 'approved',
+        })),
+        ...sceneClusters,
+      ]
+      : sceneClusters,
     competitorTerms: unique(body.competitorTerms, 20),
     benchmarkAccounts: benchmarkAccounts(body.benchmarkAccounts),
     platforms: unique(body.platforms, 4).length ? unique(body.platforms, 4) : ['tiktok', 'instagram', 'youtube', 'facebook'],
@@ -234,13 +254,17 @@ socialDiscoveryRouter.put('/scope', async (req, res) => {
     resultLimit: Number(body.resultLimit || 30),
     budgetLimitCny: body.budgetLimitCny === null || body.budgetLimitCny === '' ? null : Number(body.budgetLimitCny),
     productionGap: String(body.productionGap || '').trim() || null,
+    scopeMode: (body.scopeMode === 'industry_matrix' || body.scopeMode === 'market_focus' ? body.scopeMode : market ? 'market_focus' : 'industry_matrix') as SocialCollectionScopeMode,
+    industryFocus: String(body.industryFocus || products[0] || '').trim() || null,
+    marketFocus: String(body.marketFocus || market || '').trim() || null,
   });
-  if (approvedQueries) strategy.keywordRecommendation = body.keywordRecommendation as import('../../shared/productDiscovery.js').ProductKeywordRecommendation;
-  const productQueries = searchQueries;
+  if (keywordRecommendation) strategy.keywordRecommendation = keywordRecommendation;
+  const productQueries = keywordRecommendation ? keywordRecommendation.broadTerms.map(item => item.term) : searchQueries;
   if (productQueries.length) {
     strategy.keywordSet.graph.discoverySeeds = strategy.keywordSet.graph.discoverySeeds.slice(0, 1);
     strategy.keywordSet.graph.discoverySeeds[0].queryVariants = productQueries;
     strategy.keywords.find(item => item.category === 'discovery_seed')!.values = productQueries;
+    strategy.keywords.find(item => item.category === 'scene_cluster')!.values = strategy.keywordSet.graph.sceneClusters.flatMap(item => item.queryVariants);
   }
   strategy.keywordSet.createdBy = 'user';
   strategy.keywordSet.version = Math.max(1, Number(previous?.version || 0) + 1);
@@ -360,13 +384,45 @@ socialDiscoveryRouter.get('/runs', async (req, res) => {
   res.json(result);
 });
 
+socialDiscoveryRouter.get('/supply', async (req, res) => {
+  const { tenantId } = res.locals as AuthLocals;
+  const candidateType = ['video', 'account', 'all'].includes(String(req.query.candidateType))
+    ? String(req.query.candidateType) as 'video' | 'account' | 'all' : 'all';
+  const businessModel = ['b2b', 'd2c', 'mixed', 'unknown'].includes(String(req.query.businessModel))
+    ? String(req.query.businessModel) as SocialBusinessModel : undefined;
+  const decision = ['accepted', 'review', 'rejected'].includes(String(req.query.decision))
+    ? String(req.query.decision) as SocialDiscoveryScoreDecision : undefined;
+  const result = await listSocialDiscoverySupply({
+    tenantId,
+    filters: {
+      candidateType,
+      platform: String(req.query.platform || '').trim().toLowerCase() || undefined,
+      businessModel,
+      decision,
+      minScore: Math.max(0, Math.min(100, Number(req.query.minScore || 0))),
+      sceneId: String(req.query.sceneId || '').trim() || undefined,
+      search: String(req.query.search || '').trim() || undefined,
+      sort: req.query.sort === 'latest' ? 'latest' : 'score',
+      page: Math.max(1, Number(req.query.page || 1)),
+      perPage: Math.min(100, Math.max(1, Number(req.query.perPage || 30))),
+    },
+  });
+  res.json(result);
+});
+
+socialDiscoveryRouter.get('/readiness', async (_req, res) => {
+  const { tenantId } = res.locals as AuthLocals;
+  res.json({ readiness: await evaluateSocialDiscoveryReadiness({ tenantId }) });
+});
+
 socialDiscoveryRouter.get('/summary', async (_req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   const scope = await latestScope(tenantId);
   if (!scope) return void res.status(404).json({ error: 'discovery_scope_not_found' });
-  const [runs, accounts] = await Promise.all([
+  const [runs, accounts, readiness] = await Promise.all([
     store.list<SocialInspirationCollectionRun>(DISCOVERY_RUN_COLLECTION, { where: { tenant_id: tenantId, keywordSetId: scope.keyword_set_id }, sort: '-startedAt', page: 1, perPage: 200 }),
     store.list<SocialAccountTrackingDecision>(ACCOUNT_COLLECTION, { where: { tenant_id: tenantId }, page: 1, perPage: 200 }),
+    evaluateSocialDiscoveryReadiness({ tenantId }),
   ]);
   const summary = buildDiscoverySummary({
     keywordSetId: scope.keyword_set_id,
@@ -376,7 +432,7 @@ socialDiscoveryRouter.get('/summary', async (_req, res) => {
     enabledModes: scope.payload.discoveryBrief.discoveryModes.filter(mode => scope.payload.discoveryBrief.modePolicies?.[mode]?.enabled),
     pendingBusinessConfirmations: accounts.items.filter(item => item.businessConfirmation?.status === 'pending').length,
   });
-  res.json({ summary });
+  res.json({ summary, readiness });
 });
 
 socialDiscoveryRouter.post('/runs', async (req, res) => {

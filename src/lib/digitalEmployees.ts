@@ -476,6 +476,17 @@ export interface ContentTaskConfidence {
   dataSufficiency: "complete" | "partial" | "insufficient";
   note: string;
 }
+export interface ContentQueueStep {
+  key: string;
+  label: string;
+  state: "pending" | "active" | "done";
+  responsibleAgent: string;
+  estimatedMinutes: number;
+  estimatedStartAt?: string;
+  estimatedFinishAt?: string;
+  actualStartedAt?: string | null;
+  actualFinishedAt?: string | null;
+}
 export interface ContentQueueItem {
   id: string;
   contentId: string;
@@ -511,7 +522,7 @@ export interface ContentQueueItem {
   estimatedCostCny: number | null;
   settledCostCny: number | null;
   costStatus: "estimated" | "awaiting_settlement" | "settled" | "unavailable";
-  steps: Array<{ label: string; state: "pending" | "active" | "done" }>;
+  steps: ContentQueueStep[];
 }
 
 export interface ContentQueueProjection {

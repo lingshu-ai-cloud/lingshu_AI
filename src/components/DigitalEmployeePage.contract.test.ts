@@ -229,9 +229,11 @@ assert.match(pageSource, /\u5feb\u7167\u7f3a\u5931\uff0c\u4e0d\u80fd\u5224\u5b9a
 
 assert.match(liveSceneSource, /\u5185\u5bb9\u751f\u4ea7\u73b0\u573a/, 'the shared component must expose the content production scene');
 assert.match(pageSource, /displayedReadiness[\s\S]{0,3000}profileConfirmed[\s\S]{0,1200}knowledgeProducts\.length/, 'onboarding readiness must immediately reflect enterprise and product facts saved on the current page');
-for (const label of ['编导 Agent', '字幕 Agent', '口播 Agent', '成片 Agent', '脚本', '字幕', '口播']) {
+for (const label of ['经营 Agent', '编导 Agent', '内容 Agent', '质检 Agent', '脚本与分镜', '逐镜素材', '配音、字幕与人物', '剪辑与渲染', '质检与局部返工']) {
   assert.match(liveSceneSource, new RegExp(label), `the shared production scene must expose ${label}`);
 }
+assert.match(liveSceneSource, /负责：\{item\.agent\}[\s\S]{0,120}预计：\{item\.duration\}/, 'every visible production step must identify its responsible Agent and estimated duration');
+assert.doesNotMatch(liveSceneSource, /agent:\s*['"](?:字幕|口播|成片) Agent['"]/, 'sub-capabilities must not be presented as independent Agents');
 assert.doesNotMatch(liveSceneSource, /absolute inset-0|AgentBrowserViewport|DirectorTaskContext/, 'the production scene must not trap scrolling or embed the old technical monitoring UI');
 assert.doesNotMatch(liveSceneSource, /\u601d\u8003\u4f9d\u636e|chain[_ -]?of[_ -]?thought/i, 'the UI must not claim to expose private model reasoning');
 assert.match(boardSource, /function DeliveryBoard/, 'execution center must render a real task kanban');

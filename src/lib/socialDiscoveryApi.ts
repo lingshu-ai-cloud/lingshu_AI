@@ -10,6 +10,10 @@ import type {
   SocialInspirationCollectionRun,
   SocialAccountTrackingDecision,
   SocialBenchmarkAccountType,
+  SocialBusinessModel,
+  SocialDiscoveryReadiness,
+  SocialDiscoveryScoreDecision,
+  SocialDiscoverySupplyItem,
 } from '../../shared/contracts/socialContentWorkflow';
 import { authHeader } from './auth';
 
@@ -55,7 +59,16 @@ export const socialDiscoveryApi = {
   saveScope: (input: SocialDiscoveryScopeInput) => request<ScopeResponse>('/scope', { method: 'PUT', body: JSON.stringify(input) }),
   listRuns: (page = 1, perPage = 30) => request<{ items: SocialInspirationCollectionRun[]; page: number; perPage: number; totalItems: number }>(`/runs?page=${page}&perPage=${perPage}`),
   run: (input: { discoveryModes?: SocialDiscoveryMode[]; triggerType?: 'manual' | 'production_gap' } = {}) => request<{ run?: SocialInspirationCollectionRun; skipped?: boolean; reason?: string; nextRunAt?: string | null }>('/runs', { method: 'POST', body: JSON.stringify(input) }),
-  getSummary: () => request<{ summary: SocialDiscoverySummary }>('/summary'),
+  getSummary: () => request<{ summary: SocialDiscoverySummary; readiness?: SocialDiscoveryReadiness }>('/summary'),
+  getReadiness: () => request<{ readiness: SocialDiscoveryReadiness }>('/readiness'),
+  listSupply: (filters: {
+    candidateType?: 'video' | 'account' | 'all'; platform?: string; businessModel?: SocialBusinessModel;
+    decision?: SocialDiscoveryScoreDecision; minScore?: number; sceneId?: string; search?: string;
+    sort?: 'score' | 'latest'; page?: number; perPage?: number;
+  } = {}) => {
+    const query = new URLSearchParams(Object.entries(filters).flatMap(([key, value]) => value === undefined || value === '' ? [] : [[key, String(value)]]));
+    return request<{ items: SocialDiscoverySupplyItem[]; totalItems: number; page: number; perPage: number }>(`/supply?${query.toString()}`);
+  },
   listAccounts: () => request<{ items: SocialAccountTrackingDecision[] }>('/accounts'),
   recommendAccountDecision: (accountId: string, input: Omit<SocialAccountTrackingDecision, 'accountId' | 'status' | 'recommendedBy' | 'businessConfirmation'>) => request<{ item: SocialAccountTrackingDecision }>(`/accounts/${encodeURIComponent(accountId)}/decision`, { method: 'PUT', body: JSON.stringify(input) }),
   confirmAccountPromotion: (accountId: string, approved: boolean, businessDecisionRef: string, reason?: string) => request<{ item: SocialAccountTrackingDecision }>(`/accounts/${encodeURIComponent(accountId)}/business-confirmation`, { method: 'POST', body: JSON.stringify({ approved, businessDecisionRef, reason }) }),

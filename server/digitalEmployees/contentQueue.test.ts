@@ -58,6 +58,11 @@ try {
   assert.equal(queue.items[0]?.confidence?.production.level, 'high');
   assert.equal(queue.items[0]?.confidence?.business.level, 'medium', 'reference match is evidence, not a promised business success rate');
   assert.match(queue.items[0]?.confidence?.note || '', /不是.*成功概率/);
+  assert.equal(queue.items[0]?.steps.length, 10, 'production must expose each user-visible step instead of a coarse stage only');
+  assert.equal(queue.items[0]?.steps.find(step => step.key === 'video_generation')?.responsibleAgent, '内容 Agent');
+  assert.equal(queue.items[0]?.steps.find(step => step.key === 'video_generation')?.estimatedMinutes, 90);
+  assert.equal(queue.items[0]?.steps.find(step => step.key === 'quality_check')?.responsibleAgent, '质检 Agent');
+  assert.equal(queue.items[0]?.steps.find(step => step.key === 'user_approval')?.responsibleAgent, '用户');
   assert.equal(queue.items[1]?.origin, 'manual');
   assert.equal(queue.items[1]?.socialContentTaskId, 'social-manual-1');
   assert.equal(queue.items[1]?.status, 'waiting_review');
@@ -66,6 +71,7 @@ try {
   assert.deepEqual(queue.items[1]?.projectIds, ['project-manual']);
   assert.deepEqual(queue.items[1]?.outputSummary, { count: 2, durationSeconds: null, formats: ['Shorts'] });
   assert.equal(queue.items[1]?.confidence?.business.level, 'insufficient');
+  assert.equal(queue.items[1]?.steps.find(step => step.key === 'quality')?.estimatedMinutes, 25);
 } finally {
   store.list = originalList;
 }

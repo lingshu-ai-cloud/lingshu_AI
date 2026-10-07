@@ -1,4 +1,5 @@
 import type { Material, MaterialSegment } from './studioApi';
+import type { SocialBusinessModel, SocialDiscoveryCandidateScore } from '../../shared/contracts/socialContentWorkflow';
 export type Platform = 'all' | 'tiktok' | 'instagram' | 'youtube' | 'facebook';
 export type ScriptResultProvenance = 'ai' | 'ai_rejected' | 'template';
 export type ContentFormat = 'video' | 'image';
@@ -127,6 +128,9 @@ export interface VideoAnalysisPayload {
     momentum?: { level?: 'rising' | 'high_performance' | 'unknown'; reasons?: string[]; confidence?: number };
     transferability?: { level?: 'high' | 'medium' | 'low'; mechanisms?: string[]; limitations?: string[] };
   };
+  /** Authoritative server score; the client must not recompute filter decisions. */
+  discoveryScore?: SocialDiscoveryCandidateScore;
+  discoveryBusinessModel?: SocialBusinessModel;
   discoveryOrigins?: Array<{ runId: string; scopeId: string; scopeVersion: number; mode: 'momentum' | 'account' | 'innovation'; queryRef: string; observedAt: string }>;
   publicAdSignals?: { isAd?: boolean; isPaidPartnership?: boolean };
   author?: string;

@@ -117,11 +117,16 @@ test('social program routes expose the weekly operating package lifecycle', asyn
   assert.equal(createdResponse.status, 201);
   const created = (await createdResponse.json()).item;
   assert.equal(created.socialContentPackage.publicationTaskTarget, 26);
-  assert.equal(created.executionSummary.total, 76);
+  assert.equal(created.executionSummary.total, 278);
+  assert.equal(created.agentPlanning.status, 'outline_ready');
+  assert.equal(created.agentPlanning.skeleton.generatedBy, 'business_agent');
+  assert.equal(created.agentPlanning.skeleton.tokenCost, 0);
 
   const executionResponse = await fetch(`${base}/operating-packages/${created.packageId}/execution-tasks?version=1`);
   assert.equal(executionResponse.status, 200);
-  assert.equal((await executionResponse.json()).items.length, 76);
+  const executionItems = (await executionResponse.json()).items;
+  assert.equal(executionItems.length, 278);
+  assert.ok(executionItems.every((item: { schedule?: { responsibleActor?: string; estimatedDurationMinutes?: number } }) => item.schedule?.responsibleActor && Number(item.schedule.estimatedDurationMinutes) > 0));
 
   const listResponse = await fetch(`${base}/operating-packages?weekStart=2026-10-05`);
   assert.equal(listResponse.status, 200);

@@ -2,7 +2,7 @@ import { contentAccepted } from './contentAcceptance.js';
 import type { ContentOrder } from './contentBatchPlan.js';
 import { store } from '../storage/index.js';
 import type { ExecutionStoreRecord } from '../routes/productionContracts.js';
-import type { ContentQueueItem, ContentQueueProjection, PublishingPlatform, WorkflowTask } from '../../src/lib/digitalEmployees.js';
+import type { ContentQueueItem, ContentQueueProjection, ContentQueueStep, PublishingPlatform, WorkflowTask } from '../../src/lib/digitalEmployees.js';
 import type { WeeklyPackage } from '../../src/lib/weeklyPackage.js';
 import type { VideoCreationPlan } from '../../shared/contracts/videoCreationPlan.js';
 
@@ -24,6 +24,36 @@ const stageOrder = ['script', 'material_match', 'voice_subtitles', 'heygen', 're
 const stageLabels: Record<string, string> = {
   script: '脚本生成', material_match: '素材匹配', voice_subtitles: '配音与字幕', heygen: '数字人口播', render: '成片渲染', quality: '质量检查', completed: '成片完成', blocked: '制作受阻',
 };
+type ProductionStepTemplate = Pick<ContentQueueStep, 'key' | 'label' | 'responsibleAgent' | 'estimatedMinutes'> & { stageIndex: number; approval?: boolean };
+const productionStepTemplates: ProductionStepTemplate[] = [
+  { key: 'material_readiness', label: '核对素材与授权', responsibleAgent: '内容 Agent', estimatedMinutes: 20, stageIndex: -1 },
+  { key: 'script', label: '生成口播与脚本', responsibleAgent: '内容 Agent', estimatedMinutes: 30, stageIndex: 0 },
+  { key: 'storyboard', label: '生成逐镜分镜', responsibleAgent: '内容 Agent', estimatedMinutes: 35, stageIndex: 0 },
+  { key: 'asset_generation', label: '匹配或生成逐镜素材', responsibleAgent: '内容 Agent', estimatedMinutes: 45, stageIndex: 1 },
+  { key: 'voice_subtitles', label: '生成配音与字幕', responsibleAgent: '内容 Agent', estimatedMinutes: 30, stageIndex: 2 },
+  { key: 'presenter', label: '生成数字人口播或人物镜头', responsibleAgent: '内容 Agent', estimatedMinutes: 60, stageIndex: 3 },
+  { key: 'video_generation', label: '剪辑、合成与成片渲染', responsibleAgent: '内容 Agent', estimatedMinutes: 90, stageIndex: 4 },
+  { key: 'quality_check', label: '事实、画面、音频与版权质检', responsibleAgent: '质检 Agent', estimatedMinutes: 25, stageIndex: 5 },
+  { key: 'rework', label: '按质检结果局部返工', responsibleAgent: '内容 Agent', estimatedMinutes: 30, stageIndex: 5 },
+  { key: 'user_approval', label: '用户确认成片', responsibleAgent: '用户', estimatedMinutes: 10, stageIndex: 6, approval: true },
+];
+
+function productionSteps(input: {
+  hasProjects: boolean;
+  taskPresent: boolean;
+  currentIndex: number;
+  complete: boolean;
+  approved: boolean;
+}): ContentQueueStep[] {
+  return productionStepTemplates.map(template => {
+    let state: ContentQueueStep['state'] = 'pending';
+    if (template.approval) state = input.approved ? 'done' : input.complete ? 'active' : 'pending';
+    else if (input.complete || input.hasProjects && template.stageIndex < input.currentIndex || input.hasProjects && template.stageIndex < 0) state = 'done';
+    else if (input.hasProjects && template.stageIndex === input.currentIndex) state = 'active';
+    else if (!input.hasProjects && input.taskPresent && template.stageIndex < 0) state = 'active';
+    return { ...template, state };
+  });
+}
 
 function confidenceDimension(input: {
   evidence: string[];
@@ -150,7 +180,9 @@ function sourceOrderId(project: Stored): string {
 }
 
 function projectStage(project: Stored): string {
-  return text(object(object(project.spec).automation).stage) || 'script';
+  const automation = object(object(project.spec).automation);
+  const stage = text(automation.stage) || 'script';
+  return ['blocked', 'failed'].includes(stage) ? text(automation.resumeStage) || 'script' : stage;
 }
 
 function projectBlocked(project: Stored): boolean {
@@ -167,7 +199,7 @@ function queueState(projects: Stored[], task?: WorkflowTask): Pick<ContentQueueI
       progress: 0,
       reason: blocked ? task.blocked_reason : '',
       updatedAt: task?.updated_at || '',
-      steps: stageOrder.slice(0, -1).map((stage, index) => ({ label: stageLabels[stage], state: index === 0 && task ? 'active' as const : 'pending' as const })),
+      steps: productionSteps({ hasProjects: false, taskPresent: Boolean(task), currentIndex: 0, complete: false, approved: false }),
     };
   }
   const blockedProject = projects.find(projectBlocked);
@@ -183,12 +215,7 @@ function queueState(projects: Stored[], task?: WorkflowTask): Pick<ContentQueueI
     progress,
     reason: blockedProject ? text(object(object(blockedProject.spec).automation).blocker) : '',
     updatedAt: projects.map(project => text(project.updated_at || project.updated)).filter(Boolean).sort().at(-1) || task?.updated_at || '',
-    steps: stageOrder.slice(0, -1).map((stage, index) => ({
-      label: stageLabels[stage],
-      state: complete || projects.every(project => stageOrder.indexOf(projectStage(project) as typeof stageOrder[number]) > index)
-        ? 'done' as const
-        : index === currentIndex ? 'active' as const : 'pending' as const,
-    })),
+    steps: productionSteps({ hasProjects: true, taskPresent: Boolean(task), currentIndex, complete, approved }),
   };
 }
 
@@ -209,6 +236,17 @@ const manualStageOrder = ['brief', 'plan', 'production', 'review', 'delivery'] a
 const manualStageLabels: Record<typeof manualStageOrder[number], string> = {
   brief: '需求确认', plan: '方案确认', production: '内容制作', review: '内容验收', delivery: '交付发布',
 };
+const manualStepTemplates: Array<Pick<ContentQueueStep, 'key' | 'label' | 'responsibleAgent' | 'estimatedMinutes'> & { stageIndex: number }> = [
+  { key: 'brief', label: '确认需求、账号和预算', responsibleAgent: '用户', estimatedMinutes: 10, stageIndex: 0 },
+  { key: 'plan', label: '确认内容方案与交付时间', responsibleAgent: '经营 Agent', estimatedMinutes: 15, stageIndex: 1 },
+  { key: 'script', label: '生成口播脚本', responsibleAgent: '内容 Agent', estimatedMinutes: 30, stageIndex: 2 },
+  { key: 'storyboard', label: '生成逐镜分镜', responsibleAgent: '内容 Agent', estimatedMinutes: 35, stageIndex: 2 },
+  { key: 'assets', label: '匹配或生成逐镜素材', responsibleAgent: '内容 Agent', estimatedMinutes: 45, stageIndex: 2 },
+  { key: 'video', label: '配音、剪辑与成片渲染', responsibleAgent: '内容 Agent', estimatedMinutes: 120, stageIndex: 2 },
+  { key: 'quality', label: '成片质检与局部返工', responsibleAgent: '质检 Agent', estimatedMinutes: 25, stageIndex: 3 },
+  { key: 'approval', label: '用户确认成片', responsibleAgent: '用户', estimatedMinutes: 10, stageIndex: 3 },
+  { key: 'delivery', label: '交付或发布', responsibleAgent: '发布 Agent', estimatedMinutes: 10, stageIndex: 4 },
+];
 
 function manualPlatform(values: unknown[]): PublishingPlatform {
   const joined = values.map(value => text(value).toLowerCase()).join(' ');
@@ -234,9 +272,12 @@ function manualState(record: Stored): Pick<ContentQueueItem, 'status' | 'stage' 
     progress: completed ? 100 : Math.round(stageIndex / (manualStageOrder.length - 1) * 100),
     reason: blocked ? text(object(record.brief).specialRequirements) || (status === 'needs_input' ? '请补齐任务输入后继续' : '请进入内容创作查看处理要求') : '',
     updatedAt: text(record.updated_at || record.updated || record.created_at),
-    steps: manualStageOrder.map((stage, index) => ({
-      label: manualStageLabels[stage],
-      state: completed || index < stageIndex ? 'done' as const : index === stageIndex ? 'active' as const : 'pending' as const,
+    steps: manualStepTemplates.map(step => ({
+      key: step.key,
+      label: step.label,
+      responsibleAgent: step.responsibleAgent,
+      estimatedMinutes: step.estimatedMinutes,
+      state: completed || step.stageIndex < stageIndex ? 'done' as const : step.stageIndex === stageIndex ? 'active' as const : 'pending' as const,
     })),
   };
 }

@@ -23,6 +23,7 @@ export function VideoCard({ video, index, isSelected, onSelect, onCreate, onWatc
   const meta = getPlatformMeta(video.platform);
   const crawlRule = video.aiAnalysis?.crawlRule || '关键词检索';
   const inspirationScores = inspirationScoresForVideo(video);
+  const serverScore = video.aiAnalysis?.discoveryScore;
   const candidateDimensions = candidateDimensionLabels(video);
   const isImagePost = video.contentFormat === 'image';
   const [mediaReady, setMediaReady] = useState(false);
@@ -111,7 +112,10 @@ export function VideoCard({ video, index, isSelected, onSelect, onCreate, onWatc
         <div className="flex flex-wrap gap-1">
           {video.tags.slice(0, 2).map(tag => <span key={tag} className="tag text-[10px]">#{tag}</span>)}
         </div>
-        {!video.id.startsWith('material-') && <div className="mt-2 flex flex-wrap gap-1 text-[9px] font-bold" title={`来源优先 ${inspirationScores.sourcePriority}；内容机会 ${inspirationScores.contentOpportunityScore}`}><span className="rounded-md bg-violet-50 px-2 py-1 text-violet-900" title={discoveryOriginTitle(video)}>{discoverySupplyLabel(video)}</span><span className="rounded-md bg-cyan-50 px-2 py-1 text-cyan-900">{candidateDimensions.relevance}</span><span className="rounded-md bg-amber-50 px-2 py-1 text-amber-900">{candidateDimensions.momentum}</span><span className="rounded-md bg-emerald-50 px-2 py-1 text-emerald-800">{candidateDimensions.transferability}</span></div>}
+        {!video.id.startsWith('material-') && <div className="mt-2 flex flex-wrap gap-1 text-[9px] font-bold" title={serverScore ? serverScore.reasons.join('；') : `来源优先 ${inspirationScores.sourcePriority}；内容机会 ${inspirationScores.contentOpportunityScore}`}>
+          {serverScore && <span className={`rounded-md px-2 py-1 ${serverScore.decision === 'accepted' ? 'bg-emerald-100 text-emerald-900' : serverScore.decision === 'review' ? 'bg-amber-100 text-amber-900' : 'bg-red-100 text-red-800'}`}>服务端 {serverScore.overall} 分 · {serverScore.decision === 'accepted' ? '入选' : serverScore.decision === 'review' ? '复核' : '淘汰'}</span>}
+          {video.aiAnalysis?.discoveryBusinessModel && <span className="rounded-md bg-slate-100 px-2 py-1 text-slate-700">{video.aiAnalysis.discoveryBusinessModel.toUpperCase()}</span>}
+          <span className="rounded-md bg-violet-50 px-2 py-1 text-violet-900" title={discoveryOriginTitle(video)}>{discoverySupplyLabel(video)}</span><span className="rounded-md bg-cyan-50 px-2 py-1 text-cyan-900">{candidateDimensions.relevance}</span><span className="rounded-md bg-amber-50 px-2 py-1 text-amber-900">{candidateDimensions.momentum}</span><span className="rounded-md bg-emerald-50 px-2 py-1 text-emerald-800">{candidateDimensions.transferability}</span></div>}
         <div className="mt-auto border-t border-border pt-3">
           <div className="grid grid-cols-2 gap-2">
             <button type="button" onClick={onSelect}
@@ -148,6 +152,7 @@ export function VideoListItem({ video, isSelected, onSelect, onCreate, onWatch, 
   const crawlRule = video.aiAnalysis?.crawlRule || '关键词检索';
   const isImagePost = video.contentFormat === 'image';
   const inspirationScores = inspirationScoresForVideo(video);
+  const serverScore = video.aiAnalysis?.discoveryScore;
   const candidateDimensions = candidateDimensionLabels(video);
   return (
     <div className={`flex flex-wrap items-center gap-3 px-4 py-3 transition-all group sm:flex-nowrap ${isSelected ? 'bg-accent-glow' : 'hover:bg-surface-2'}`}>
@@ -174,7 +179,9 @@ export function VideoListItem({ video, isSelected, onSelect, onCreate, onWatch, 
       <span className="hidden xl:inline-flex flex-shrink-0 px-2 py-1 rounded-md text-[10px] font-semibold bg-surface-2 border border-border text-text-muted">
         {crawlRule}
       </span>
-      {!video.id.startsWith('material-') && <span className="hidden 2xl:inline-flex shrink-0 gap-1 text-[9px] font-bold" title={`来源优先 ${inspirationScores.sourcePriority}；内容机会 ${inspirationScores.contentOpportunityScore}`}><span className="rounded bg-cyan-50 px-1.5 py-1 text-cyan-900">{candidateDimensions.relevance}</span><span className="rounded bg-amber-50 px-1.5 py-1 text-amber-900">{candidateDimensions.momentum}</span><span className="rounded bg-emerald-50 px-1.5 py-1 text-emerald-800">{candidateDimensions.transferability}</span></span>}
+      {!video.id.startsWith('material-') && <span className="hidden 2xl:inline-flex shrink-0 gap-1 text-[9px] font-bold" title={serverScore ? serverScore.reasons.join('；') : `来源优先 ${inspirationScores.sourcePriority}；内容机会 ${inspirationScores.contentOpportunityScore}`}>
+        {serverScore && <span className={`rounded px-1.5 py-1 ${serverScore.decision === 'accepted' ? 'bg-emerald-100 text-emerald-900' : serverScore.decision === 'review' ? 'bg-amber-100 text-amber-900' : 'bg-red-100 text-red-800'}`}>{serverScore.overall} 分</span>}
+        <span className="rounded bg-cyan-50 px-1.5 py-1 text-cyan-900">{candidateDimensions.relevance}</span><span className="rounded bg-amber-50 px-1.5 py-1 text-amber-900">{candidateDimensions.momentum}</span><span className="rounded bg-emerald-50 px-1.5 py-1 text-emerald-800">{candidateDimensions.transferability}</span></span>}
       <div className="flex-shrink-0 text-right min-w-[52px]">
         <p className="text-xs font-mono text-text-secondary">{isImagePost ? '图文' : `${Math.floor(video.duration / 60)}:${String(video.duration % 60).padStart(2, '0')}`}</p>
         <p className="text-[10px] text-text-muted">{video.views}</p>

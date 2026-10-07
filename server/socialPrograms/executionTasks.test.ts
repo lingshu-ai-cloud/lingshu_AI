@@ -4,7 +4,7 @@ import type { DataStore, ListQuery, ListResult, Record_ } from '../storage/datas
 import { DURABLE_OPERATION_LEASE_COLLECTION } from '../runtime/durableLease.js';
 import { createSocialWeeklyExecutionWorker } from '../runtime/socialWeeklyExecutionWorker.js';
 import { createSocialProgramService } from './service.js';
-import { createWeeklyExecutionTaskService, WEEKLY_EXECUTION_TASKS } from './executionTasks.js';
+import { applyBusinessDispatchToExecutionTasks, createWeeklyExecutionTaskService, WEEKLY_EXECUTION_TASKS } from './executionTasks.js';
 import { createWeeklyOperatingPackageService } from './weeklyOperatingPackages.js';
 import { createSocialOperatingRepository } from '../socialOperating/repository.js';
 
@@ -120,20 +120,24 @@ async function fixture() {
 
 test('weekly execution tasks freeze the full worker contract and aggregate real state', async () => {
   const { packages, execution, program, draft } = await fixture();
-  assert.equal(draft.executionSummary!.total, 9);
-  assert.equal(draft.executionSummary!.byStatus.pending_activation, 9);
+  assert.equal(draft.executionSummary!.total, 25);
+  assert.equal(draft.executionSummary!.byStatus.pending_activation, 25);
   assert.ok(draft.executionTaskRefs!.every(ref => ref.type === 'weekly_execution_task'));
   const active = await packages.activate('tenant-a', 'owner', program.programId, draft.packageId, {
     expectedVersion: 1, expectedProgramVersion: 1,
   });
   assert.equal(active.executionSummary!.byStatus.queued, 1);
-  assert.equal(active.executionSummary!.byStatus.blocked, 8);
+  assert.equal(active.executionSummary!.byStatus.blocked, 24);
   const tasks = await execution.list('tenant-a', program.programId, draft.packageId, 1);
   assert.ok(tasks.every(task => task.tenantId === 'tenant-a' && task.packageVersion === 1));
   assert.ok(tasks.every(task => task.idempotencyKey && task.inputSnapshot && task.budget && task.upstreamVersionRefs.length === 3));
+  assert.ok(tasks.every(task => task.schedule.responsibleActor && task.schedule.estimatedDurationMinutes > 0 && task.schedule.estimatedFinishAt >= task.schedule.estimatedStartAt));
+  assert.deepEqual([...new Set(tasks.filter(task => task.workflowKind === 'content').map(task => task.schedule.stepKind))], [
+    'material_readiness', 'script', 'storyboard', 'asset_generation', 'video_generation', 'quality_check', 'rework', 'user_approval',
+  ]);
   assert.ok(tasks.some(task => task.scope === 'adaptation'));
   const firstTask = (await packages.get('tenant-a', program.programId, draft.packageId)).executionSummary!;
-  assert.equal(firstTask.total, 9);
+  assert.equal(firstTask.total, 25);
 });
 
 test('worker leases, retries, dead letters and explicit recovery are durable', async () => {
@@ -169,7 +173,7 @@ test('worker leases, retries, dead letters and explicit recovery are durable', a
 });
 
 test('expired leases are reclaimed with fencing and local blocks do not stop sibling publications', async () => {
-  const { packages, execution, worker, program, draft } = await fixture();
+  const { dataStore, packages, execution, worker, program, draft } = await fixture();
   await packages.activate('tenant-a', 'owner', program.programId, draft.packageId, { expectedVersion: 1, expectedProgramVersion: 1 });
   const start = new Date('2026-10-05T00:00:00.000Z');
   const stale = await worker.claimNext({ tenantId: 'tenant-a', workerId: 'worker-a', now: start, leaseDurationMs: 30_000 });
@@ -182,11 +186,32 @@ test('expired leases are reclaimed with fencing and local blocks do not stop sib
   await assert.rejects(worker.complete(stale, [], new Date(start.getTime() + 37_000)), /durable_lease_lost|weekly_execution_lease_lost/);
   await worker.complete(reclaimed, [], new Date(start.getTime() + 37_000));
 
+  await applyBusinessDispatchToExecutionTasks(dataStore, 'tenant-a', program.programId, draft.packageId, 1, {
+    dispatchId: 'dispatch-test', packageId: draft.packageId, packageVersion: 1, issuedBy: 'business_agent', assignedTo: 'content_agent',
+    detailedScheduleRef: { type: 'weekly_detailed_content_schedule', id: 'schedule-test', version: 1 }, scheduleItemIds: ['item-1', 'item-2'],
+    scheduleItems: draft.socialContentPackage.publicationTasks.map((item, index) => ({
+      scheduleItemId: `item-${index + 1}`, slotId: 'slot-test', publicationTaskId: item.publicationTaskId, accountId: item.accountId, platform: item.platform,
+      topic: item.businessProposition!, directorAnalysisRef: { type: 'weekly_director_analysis', id: 'analysis-test', version: 1 }, benchmarkAccountRefs: [], benchmarkVideoRefs: [],
+      materialRequirements: [], materialPlan: { canStartWithExistingAssets: true, fallback: 'premium_aigc', optionalShootTaskIds: [], note: 'test' },
+      publishWindow: item.publishWindow!, qualityTier: 'premium', estimatedProductionMinutes: 180,
+    })),
+    issuedAt: start.toISOString(),
+  });
+
   // Drain prerequisite work until both independent publication tasks are ready.
-  for (let index = 0; index < 4; index += 1) {
-    const claim = await worker.claimNext({ tenantId: 'tenant-a', workerId: 'worker-b', now: new Date(start.getTime() + 38_000 + index) });
-    assert.ok(claim);
-    await worker.complete(claim, [], new Date(start.getTime() + 38_000 + index));
+  for (let index = 0; index < 40; index += 1) {
+    const claim = await worker.claimNext({ tenantId: 'tenant-a', workerId: 'worker-b', kinds: ['discovery', 'directing', 'content'], now: new Date(start.getTime() + 38_000 + index) });
+    if (claim) {
+      await worker.complete(claim, [], new Date(start.getTime() + 38_000 + index));
+      continue;
+    }
+    const current = await execution.list('tenant-a', program.programId, draft.packageId, 1);
+    const approvals = current.filter(task => task.schedule.stepKind === 'user_approval' && task.status === 'queued');
+    if (approvals.length) {
+      for (const approval of approvals) await execution.approve('tenant-a', program.programId, draft.packageId, approval.taskId, 'owner');
+      continue;
+    }
+    if (current.filter(task => task.workflowKind === 'publishing').every(task => task.status === 'queued')) break;
   }
   let tasks = await execution.list('tenant-a', program.programId, draft.packageId, 1);
   const publications = tasks.filter(task => task.workflowKind === 'publishing');
