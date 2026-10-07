@@ -33,6 +33,29 @@ assert.equal(plain(automaticSubtitleText('介绍冰川\\N杯', { productNames: [
 assert.doesNotMatch(automaticSubtitleText('Coil', { productNames: ['oil'] }), /fnSmiley Sans/);
 assert.match(automaticSubtitleText('Try Oil today', { productNames: ['oil'] }), /fnSmiley Sans/);
 assert.match(ass, /fnZCOOL QingKe HuangYou/);
+const frenchKaraoke = cuesToAss([{ start: 1, end: 3.4, text: 'Bonjour, tout le monde !', words: [
+  { text: 'Bonjour', startMs: 1000, endMs: 1550 },
+  { text: 'tout', startMs: 1600, endMs: 1950 },
+  { text: 'le', startMs: 1980, endMs: 2150 },
+  { text: 'monde', startMs: 2200, endMs: 3100 },
+] }], 1080, 1920, '', 0, { autoEmphasis: false });
+const frenchDialogue = frenchKaraoke.split('\n').find(line => line.startsWith('Dialogue: 0,'));
+assert.match(frenchDialogue, /,Karaoke,,/);
+assert.equal((frenchDialogue.match(/\\kf\d+/g) || []).length, 4, 'every spoken French word receives one timing tag');
+assert.match(frenchDialogue, /\{\\kf\d+\}Bonjour,/, 'punctuation stays attached and never flashes independently');
+assert.equal((frenchKaraoke.match(/^Dialogue: 0,/gm) || []).length, 1, 'word highlighting does not duplicate the sentence');
+const germanKaraoke = cuesToAss([{ start: 0, end: 1.8, text: 'Sehr gute Qualität.', words: [
+  { text: 'Sehr', start: 0, end: .35 }, { text: 'gute', start: .4, end: .85 }, { text: 'Qualität', start: .9, end: 1.6 },
+] }], 1080, 1920, '', 0, { autoEmphasis: false });
+assert.equal((germanKaraoke.match(/\\kf\d+/g) || []).length, 3, 'second-based alignment remains compatible');
+const legacyDialogue = cuesToAss([{ start: 0, end: 1, text: 'Keine Zeitmarken.' }], 1080, 1920, '', 0,
+  { autoEmphasis: false }).split('\n').find(line => line.startsWith('Dialogue: 0,'));
+assert.match(legacyDialogue, /,Default,,/);
+assert.doesNotMatch(legacyDialogue, /\\kf/, 'legacy cues do not invent strong word timing');
+const boxedKaraoke = cuesToAss([{ start: 0, end: 1, text: 'Clean subtitle', words: [
+  { text: 'Clean', start: 0, end: .5 }, { text: 'subtitle', start: .5, end: 1 },
+] }], 1080, 1920, '', 0, { boxed: true, outlineWidth: 8 });
+assert.match(boxedKaraoke, /Style: Karaoke,[^\n]*,3,8,1,2,/, 'boxed karaoke can cover immutable source captions without moving the type');
 const longChinese = '这款面膜采用独立包装，可以用于日常护肤，打开后按照说明均匀涂抹即可。';
 const pages = subtitlePages(longChinese);
 assert.ok(pages.length >= 3);

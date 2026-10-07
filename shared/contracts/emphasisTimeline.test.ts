@@ -3,6 +3,9 @@ import test from 'node:test';
 import {
   emphasisBudgetForDuration,
   deriveEmphasisIntent,
+  captionWordsToText,
+  mergeCaptionWordsForDisplay,
+  normalizeCaptionCues,
   normalizeCaptionSegments,
   normalizeCaptionOccupancy,
   normalizeEmphasisTimeline,
@@ -20,6 +23,54 @@ test('normalizes the caption layer without promoting keywords to events', () => 
     id: 'line1', startMs: 0, endMs: 1_800, text: '支持 免费配送',
     speakerId: 'hostA', keywords: ['免费配送'],
   }]);
+});
+
+test('normalizes BCP 47 language and word alignment while retaining legacy cues', () => {
+  const [aligned, legacy] = normalizeCaptionCues([{
+    id: 'fr', startMs: 1_000, endMs: 3_000, text: "L'amour porte-monnaie.", language: 'fr_fr',
+    words: [
+      { text: "L'", startMs: 900, endMs: 1_200, alignmentTokenIds: ['a1'], confidence: 1.2 },
+      { text: 'amour', startMs: 1_200, endMs: 1_800, alignmentTokenIds: ['a2'], confidence: .92 },
+      { text: 'porte', startMs: 1_800, endMs: 2_150 },
+      { text: '-', startMs: 2_150, endMs: 2_220 },
+      { text: 'monnaie', startMs: 2_220, endMs: 2_700 },
+      { text: '.', startMs: 2_700, endMs: 3_100 },
+    ],
+  }, { id: 'old', startMs: 3_000, endMs: 4_000, text: 'Legacy cue' }], 5_000);
+  assert.equal(aligned?.language, 'fr-FR');
+  assert.equal(aligned?.words?.[0]?.startMs, 1_000);
+  assert.equal(aligned?.words?.at(-1)?.endMs, 3_000);
+  assert.equal(aligned?.words?.[0]?.confidence, 1);
+  assert.equal(captionWordsToText(aligned?.words || [], aligned?.language), "L'amour porte-monnaie.");
+  assert.equal(legacy?.language, undefined);
+  assert.equal(legacy?.words, undefined);
+});
+
+test('keeps German compounds whole and attaches punctuation without whitespace tokenization', () => {
+  const words = normalizeCaptionCues([{
+    id: 'de', startMs: 0, endMs: 2_000, text: 'Donaudampfschifffahrt, heute!', language: 'de-DE', words: [
+      { text: 'Donaudampfschifffahrt', startMs: 0, endMs: 700, alignmentTokenIds: ['1'] },
+      { text: ',', startMs: 700, endMs: 760, alignmentTokenIds: ['2'] },
+      { text: 'heute', startMs: 800, endMs: 1_400, alignmentTokenIds: ['3'] },
+      { text: '!', startMs: 1_400, endMs: 1_500, alignmentTokenIds: ['4'] },
+    ],
+  }], 2_000)[0]?.words || [];
+  const display = mergeCaptionWordsForDisplay(words, 'de-DE');
+  assert.deepEqual(display.map(word => word.text), ['Donaudampfschifffahrt,', 'heute!']);
+  assert.deepEqual(display.map(word => word.alignmentTokenIds), [['1', '2'], ['3', '4']]);
+  assert.equal(captionWordsToText(words, 'de-DE'), 'Donaudampfschifffahrt, heute!');
+});
+
+test('honors explicit separators and joins CJK display text without inventing spaces', () => {
+  const [cue] = normalizeCaptionCues([{
+    id: 'zh', startMs: 0, endMs: 1_000, text: '你好！', language: 'zh_hans', words: [
+      { text: '你', startMs: 0, endMs: 300 },
+      { text: '好', startMs: 300, endMs: 600 },
+      { text: '！', startMs: 600, endMs: 800 },
+    ],
+  }], 1_000);
+  assert.equal(cue?.language, 'zh-Hans');
+  assert.equal(captionWordsToText(cue?.words || [], cue?.language), '你好！');
 });
 
 test('uses whole-film soft budgets including doubled long-form density', () => {
