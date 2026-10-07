@@ -42,6 +42,7 @@ import { digitalEmployeeProductionGraph } from '../videoProduction/runtimeGraph.
 import { closedWorldNarrationLines, ensureStoredVoiceQuality, socialVideoEffectPlan } from './contentProductionCreative.js';
 import { aggregateNarrationStyleProfiles, deriveNarrationStyleProfile, narrationStyleInstruction, type NarrationStyleProfile } from './narrationStyle.js';
 import { containsInternalContentMarker, paginateAlignedCues, subtitleCuesAreSafe } from '../lib/subtitleCues.js';
+import { buildBenchmarkAnalysis, MATERIAL_TYPE_LABELS, SHOT_ROLE_LABELS } from '../../shared/benchmarkAnalysis.js';
 export { containsInternalContentMarker, paginateAlignedCues, subtitleCuesAreSafe } from '../lib/subtitleCues.js';
 import type { AssetCandidate, ContentProductionAdvanceResult, ContentProductionOrderInput, ContentProductionRoute, ContentRouteEvidence, ContentRoutePlan, ProductionStage, RouteSourcePlan, SceneSourcePlanItem, StoredRecord } from './contentProductionContracts.js';
 export type { AssetCandidate, ContentProductionAdvanceResult, ContentProductionOrderInput, ContentProductionRoute, ContentRouteEvidence, ContentRoutePlan, RouteSourcePlan, SceneSourcePlanItem } from './contentProductionContracts.js';
@@ -492,18 +493,20 @@ function referenceStructure(record?: StoredRecord): { id: string; structure: unk
   const analysis = json<Record<string, unknown>>(record.aiAnalysis, {});
   const gemini = json<Record<string, unknown>>(analysis.gemini, {});
   const shots = Array.isArray(gemini.scriptDetails15s) ? gemini.scriptDetails15s : Array.isArray(gemini.shots) ? gemini.shots : [];
-  const structure = shots.map((shot, index) => {
-    const row = json<Record<string, unknown>>(shot, {});
-    return {
-      index,
-      time: text(row.time, 80),
-      shot: text(row.shot, 120),
-      camera: text(row.camera, 120),
-      purpose: text(row.purpose, 180),
-      beats: Array.isArray(row.beats) ? row.beats : [],
-      transitionToNext: text(row.transitionToNext, 180),
-    };
+  const normalized = buildBenchmarkAnalysis({
+    analysis,
+    videoId: record.id,
+    duration: Number(record.duration || 0),
+    evidenceRevision: text(record.updatedAt || record.updated_at || analysis.analysisRunId || `analysis:${record.id}`, 160),
   });
+  const structure = normalized.structure.map((step, index) => ({
+    index,
+    materialType: step.materialType,
+    materialLabel: MATERIAL_TYPE_LABELS[step.materialType],
+    narrativeRole: step.narrativeRole,
+    narrativeRoleLabel: SHOT_ROLE_LABELS[step.narrativeRole],
+    shots: step.shotIds.map(id => normalized.shots.find(shot => shot.shotId === id)).filter(Boolean),
+  }));
   const observedFacts = shots.flatMap(shot => {
     const row = json<Record<string, unknown>>(shot, {});
     return Array.isArray(row.observedFacts) ? row.observedFacts.map(item => text(item, 200)).filter(Boolean) : [];

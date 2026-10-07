@@ -3,6 +3,7 @@ import type { DigitalEmployeeConfig, WeeklyGoalInput } from './domain.js';
 import { buildWeeklyOperatingContext } from './weeklyPackage.js';
 import type { WeeklyPackage } from '../../src/lib/weeklyPackage.js';
 import { estimateSeedanceCostCny } from '../lib/seedanceBudget.js';
+import { buildBenchmarkAnalysis, type BenchmarkAnalysis } from '../../shared/benchmarkAnalysis.js';
 
 type EvidenceRecord = { id: string; [key: string]: unknown };
 type BenchmarkAccount = {
@@ -27,6 +28,7 @@ export interface RankedContentReference {
   exact: boolean;
   score: number;
   factors: string[];
+  analysis: BenchmarkAnalysis;
 }
 
 const text = (value: unknown, limit = 500) => String(value ?? '').trim().slice(0, limit);
@@ -84,6 +86,31 @@ export function publicationCopyForPlan(input: {
   };
 }
 
+/** Backend authority for product defaults: a blank selector can never silently
+ * produce a plan with no product. Focus-product ordering is already reflected
+ * by the evidence loader, so the first item is the deterministic default. */
+export function bindDefaultProductsToPackage(
+  pack: WeeklyPackage,
+  products: Array<{ id: string; name: string; materialIds: string[] }>,
+): WeeklyPackage {
+  const fallback = products[0];
+  return {
+    ...pack,
+    tasks: pack.tasks.map(task => task.templateId !== 'production' ? task : {
+      ...task,
+      videoPlans: (task.videoPlans || []).map(source => {
+        const current = normalizeVideoPlan(source);
+        const selected = products.find(product => product.name === current.productName || product.id === current.productName) || fallback;
+        return normalizeVideoPlan({
+          ...current,
+          productName: selected?.name || '',
+          materialIds: selected?.materialIds || [],
+        });
+      }),
+    }),
+  };
+}
+
 function benchmarkFor(video: EvidenceRecord, accounts: BenchmarkAccount[]): BenchmarkAccount | undefined {
   const analysis = record(video.aiAnalysis);
   const source = [analysis.sourceAccount, analysis.sourceAccountName, analysis.author, video.author]
@@ -117,6 +144,12 @@ export function rankContentReferences(input: {
     const transferability = text(record(candidate.transferability).level);
     const momentum = text(record(candidate.momentum).level);
     const exact = analysis.analysisMode === 'exact' && analysis.analysisQuality === 'video' && Object.keys(gemini).length > 0;
+    const benchmarkAnalysis = buildBenchmarkAnalysis({
+      analysis,
+      videoId: video.id,
+      duration: Number(video.duration || 0),
+      evidenceRevision: text(video.updatedAt || video.updated_at || analysis.evidenceRevision || analysis.analysisRunId || `analysis:${video.id}`, 160),
+    });
     const benchmark = benchmarkFor(video, input.benchmarks);
     const publicBaseline = record(analysis.publicBaseline);
     const relativeMultiple = Number(analysis.relativeViewMultiple || publicBaseline.relativeMultiple || 0);
@@ -154,6 +187,7 @@ export function rankContentReferences(input: {
       exact,
       score: Math.max(0, Math.min(100, Math.round(score))),
       factors: [...new Set(factors)].slice(0, 8),
+      analysis: benchmarkAnalysis,
     }];
   }).sort((left, right) => right.score - left.score || numericViews(right.views) - numericViews(left.views) || left.id.localeCompare(right.id));
 }
@@ -236,6 +270,7 @@ export function enrichPackageWithContentSignals(input: {
           reference?.exact ? '参考内容已具备可执行精确分析' : '爆款视频数量不足，补齐后才能确认周计划',
         ],
       },
+      ...(reference?.analysis ? { benchmarkAnalysis: reference.analysis } : {}),
     });
   });
   const productionBudget = Math.round(plans.reduce((sum, plan) => sum + Number(plan.estimatedCost || 0), 0) * 100) / 100;

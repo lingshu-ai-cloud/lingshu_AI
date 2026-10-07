@@ -13,6 +13,7 @@ import { nodeDeepLink } from './WeeklyExecutionNodes.js';
 
 const pageSource = fs.readFileSync('src/components/DigitalEmployeePage.tsx', 'utf8');
 const smartBusinessSource = fs.readFileSync('src/components/SmartBusinessDashboard.tsx', 'utf8');
+const matrixScheduleSource = fs.readFileSync('src/components/smartBusiness/MatrixWorkSchedule.tsx', 'utf8');
 const accountRailSource = fs.readFileSync('src/components/SmartOperationsAccountRail.tsx', 'utf8');
 const planHistorySource = fs.readFileSync('src/components/PlanHistoryDialog.tsx', 'utf8');
 const socialPerformanceSource = fs.readFileSync('src/lib/socialPerformance.ts', 'utf8');
@@ -62,6 +63,11 @@ assert.doesNotMatch(accountRailSource, /platforms\.map\(/, 'the account rail mus
 for (const label of ['爆款视频预览', '素材组合预览', '效果置信度', '任务不能开始']) {
   assert.match(smartBusinessSource, new RegExp(label), `content task cards must expose ${label}`);
 }
+for (const label of ['每条视频就是一条日历任务', '爆款参考', '预计成本', '编导 45m', '内容制作 约5h']) {
+  assert.match(matrixScheduleSource, new RegExp(label), `calendar content cards must expose ${label}`);
+}
+assert.doesNotMatch(matrixScheduleSource, /账号与内容任务|gridTemplateColumns: `260px/, 'the calendar must not reserve a separate left content-plan column');
+assert.match(matrixScheduleSource, /group-hover:max-h-64/, 'calendar preview cards must reveal details on hover');
 assert.match(smartBusinessSource, /当前节点[\s\S]{0,1000}来源[\s\S]{0,1000}结果[\s\S]{0,1000}下一步/, 'the existing four-Agent section must expose node, source, result, and next step');
 assert.doesNotMatch(smartBusinessSource, /数字员工协作状态|四位数字员工协作状态/, 'the dashboard must not create a separate Digital Employee section');
 assert.match(pageSource, /role="switch"[\s\S]{0,300}aria-checked=\{smartOperationsEnabled\}/, 'Smart Operations must have an explicit global switch');
@@ -138,7 +144,7 @@ assert.match(outlineFlowSource, /digitalEmployeeApi\.createGoal/, 'weekly goal c
 assert.match(pageSource, /const confirmWeeklyPlan[\s\S]{0,2400}generatePackageDetails[\s\S]{0,1600}approveGoal/, 'one confirmation must prepare persisted details and then approve the same plan revision');
 assert.match(pageSource, /publication\?\.title[\s\S]{0,800}publication\?\.caption[\s\S]{0,400}publication!\.tags/, 'weekly cards must preview future title, caption and tags');
 assert.match(pageSource, /planningEvidence\?\.referenceThumbnailUrl/, 'weekly cards must render persisted viral thumbnails');
-assert.match(pageSource, /updateWeeklyPlanProduct[\s\S]{0,1000}savePackage/, 'product selection must persist product-bound material ids in the weekly package');
+assert.match(pageSource, /updateWeeklyPlanProduct[\s\S]{0,2500}savePackage/, 'product selection must persist product-bound material ids and publishing copy in the weekly package');
 assert.match(pageSource, /refreshWeeklyViralPlan[\s\S]{0,900}recommendPackage[\s\S]{0,400}savePackage/, 'persisted legacy drafts must support rebuilding the one-to-one viral plan from the current weekly target');
 assert.match(pageSource, /按本周目标重新匹配爆款/, 'a weekly plan with missing references must expose an actionable repair instead of a dead-end warning');
 assert.match(pageSource, /1080p 最高档 AIGC 单价估算/, 'per-video estimates must explain their planning basis and distinguish it from settlement');

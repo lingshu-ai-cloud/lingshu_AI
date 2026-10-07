@@ -2,6 +2,7 @@ import { type VideoCreationPlan, videoPlanErrors } from '../../shared/contracts/
 import type { DigitalEmployeeConfig, PublishingPlatform, WeeklyGoalInput } from './domain.js';
 import type { DirectorScriptContract } from '../../src/lib/directorScript.js';
 import { platformExecutionConstraints } from '../../shared/contracts/socialOperatingProfile.js';
+import { MATERIAL_TYPE_LABELS, SHOT_ROLE_LABELS } from '../../shared/benchmarkAnalysis.js';
 
 export type ContentRoute = 'clone' | 'product' | 'material';
 
@@ -99,6 +100,11 @@ export function buildContentBatchPlan(input: {
       const account = input.config.publishingTargets.find(target => target.platform === plan.platform && (!plan.matrix || target.accountId === plan.matrix.accountId));
       if (!input.goal.contentPlatforms.includes(plan.platform)) errors.push(prefix + '制作平台不在本周目标范围中');
       const frozenScript = plan.preproduction?.directorScript;
+      const benchmarkStructureConstraints = plan.benchmarkAnalysis?.structure.map((step, structureIndex) => {
+        const shots = step.shotIds.map(id => plan.benchmarkAnalysis?.shots.find(shot => shot.shotId === id)).filter(Boolean);
+        const first = shots[0];
+        return `参考结构 ${structureIndex + 1}：${MATERIAL_TYPE_LABELS[step.materialType]} / ${SHOT_ROLE_LABELS[step.narrativeRole]} / ${step.shotIds.length} 镜${first?.purpose ? `；作用：${first.purpose}` : ''}`;
+      }) || [];
       orders.push({ id: `content_order_${index + 1}`, goalId: input.goalId, productId: product.id, productName: product.name,
         languages: plan.matrix ? [plan.language] : input.config.videoLanguages,
         theme: { key: 'user_selected', label: plan.theme }, platform: plan.platform, accountId: account?.accountId || '', accountLabel: account?.accountLabel || (enabled.has('content_publish') ? '发布前待绑定账号' : '仅内容生产，不分发'),
@@ -110,6 +116,7 @@ export function buildContentBatchPlan(input: {
           ...(plan.matrix?.objective ? [`账号本周目标：${plan.matrix.objective}`] : []),
           ...(plan.matrix?.accountRole ? [`账号定位：${plan.matrix.accountRole === 'brand_capability' ? '品牌与供应能力' : plan.matrix.accountRole === 'buyer_advisor' ? '买家顾问与采购教育' : '品牌综合账号'}`] : []),
           ...(plan.matrix?.formats?.length ? [`平台内容形式：${plan.matrix.formats.join('、')}`] : []),
+          ...(benchmarkStructureConstraints.length ? ['素材调用必须严格按以下规范化结构顺序逐段匹配，不得合并或改写素材类别', ...benchmarkStructureConstraints] : []),
           ...(plan.reviewRequirements || []).map(r => `复盘分镜约束【${r.todoId}】：第1镜0–3秒；参考：${r.reference}；保留：${r.requirements}；素材：${r.materials}；验收：${r.acceptance}`)])],
         evidenceRefs: [...ids.map(id => ({ type: 'enterprise_material' as const, id })), ...(plan.route === 'clone' ? [{ type: 'exact_analysis' as const, id: plan.referenceId }] : [])], status: 'planned',
         ...(frozenScript && plan.preproduction?.readiness.canStart ? {

@@ -166,3 +166,71 @@ export function buildBenchmarkAnalysis(input: {
     totalShots: payload.analysisMode === 'exact' && shots.length > 0 && shots.every(shot => shot.granularity === 'shot') ? shots.length : null,
     timelineComplete, materialCounts, structure, speechGroups };
 }
+
+/**
+ * Keeps an already-normalized benchmark snapshot safe when it crosses the
+ * weekly-plan API boundary. Business, Director and Content agents all read
+ * this same frozen snapshot instead of rebuilding different interpretations.
+ */
+export function normalizeBenchmarkAnalysisSnapshot(value: unknown): BenchmarkAnalysis | undefined {
+  const payload = recordOf(value);
+  if (Number(payload.schemaVersion) !== 1) return undefined;
+  const source = recordOf(payload.source);
+  const shots = (Array.isArray(payload.shots) ? payload.shots : []).slice(0, 60).flatMap((raw, offset) => {
+    const row = recordOf(raw);
+    const shotId = text(row.shotId).slice(0, 120) || `shot_${offset + 1}`;
+    const index = Math.max(1, Math.min(60, Math.floor(Number(row.index) || offset + 1)));
+    const start = typeof row.start === 'number' && Number.isFinite(row.start) ? Math.max(0, row.start) : null;
+    const end = typeof row.end === 'number' && Number.isFinite(row.end) && (start === null || row.end > start) ? row.end : null;
+    const detailed = recordOf(row.detailedAnalysis);
+    return [{
+      shotId, index, time: text(row.time).slice(0, 80), start, end,
+      materialType: benchmarkMaterialType(row.materialType), narrativeRole: benchmarkShotRole(row.narrativeRole),
+      classificationSource: ['model', 'legacy_evidence', 'missing'].includes(text(row.classificationSource))
+        ? text(row.classificationSource) as BenchmarkShot['classificationSource'] : 'missing',
+      classificationEvidence: text(row.classificationEvidence).slice(0, 1_000),
+      visual: text(row.visual).slice(0, 2_000), dialogue: text(row.dialogue).slice(0, 2_000),
+      onScreenText: text(row.onScreenText).slice(0, 1_000), purpose: text(row.purpose).slice(0, 1_000),
+      firstFrameRef: text(row.firstFrameRef).startsWith('/api/') ? text(row.firstFrameRef).slice(0, 2_000) : null,
+      clipRef: text(row.clipRef).startsWith('/api/') ? text(row.clipRef).slice(0, 2_000) : null,
+      needsReview: row.needsReview === true,
+      granularity: row.granularity === 'observation_window' ? 'observation_window' as const : 'shot' as const,
+      environment: text(row.environment).slice(0, 1_000), framing: text(row.framing).slice(0, 500),
+      camera: text(row.camera).slice(0, 500), audio: text(row.audio).slice(0, 1_000),
+      authenticity: text(row.authenticity).slice(0, 1_000), effectivenessHypothesis: text(row.effectivenessHypothesis).slice(0, 1_000),
+      detailedAnalysis: Object.fromEntries(Object.entries(detailed).slice(0, 30).flatMap(([key, item]) => {
+        const content = text(item).slice(0, 2_000);
+        return content ? [[key.slice(0, 80), content]] : [];
+      })),
+    } satisfies BenchmarkShot];
+  });
+  const shotIds = new Set(shots.map(shot => shot.shotId));
+  const structure = (Array.isArray(payload.structure) ? payload.structure : []).slice(0, 60).flatMap(raw => {
+    const row = recordOf(raw);
+    const ids = (Array.isArray(row.shotIds) ? row.shotIds : []).map(item => text(item).slice(0, 120)).filter(id => shotIds.has(id));
+    return ids.length ? [{ materialType: benchmarkMaterialType(row.materialType), narrativeRole: benchmarkShotRole(row.narrativeRole), shotIds: ids }] : [];
+  });
+  const counts = recordOf(payload.materialCounts);
+  const materialCounts = Object.fromEntries(Object.keys(MATERIAL_TYPE_LABELS).map(key => [key, Math.max(0, Math.floor(Number(counts[key]) || 0))])) as Record<BenchmarkMaterialType, number>;
+  const statuses: BenchmarkAnalysis['status'][] = ['pending', 'failed', 'needs_review', 'partial', 'ready'];
+  return {
+    schemaVersion: 1,
+    source: {
+      videoId: text(source.videoId).slice(0, 160),
+      analysisRunId: text(source.analysisRunId).slice(0, 160) || null,
+      evidenceRevision: text(source.evidenceRevision).slice(0, 160) || null,
+      correctionVersion: Math.max(0, Math.floor(Number(source.correctionVersion) || 0)),
+      analyzedAt: text(source.analyzedAt).slice(0, 80) || null,
+      analysisMode: text(source.analysisMode).slice(0, 80),
+    },
+    status: statuses.includes(payload.status as BenchmarkAnalysis['status']) ? payload.status as BenchmarkAnalysis['status'] : 'partial',
+    gaps: (Array.isArray(payload.gaps) ? payload.gaps : []).map(item => text(item).slice(0, 500)).filter(Boolean).slice(0, 20),
+    hookShotId: shotIds.has(text(payload.hookShotId)) ? text(payload.hookShotId) : null,
+    shots,
+    totalShots: typeof payload.totalShots === 'number' && Number.isFinite(payload.totalShots) ? Math.max(0, Math.floor(payload.totalShots)) : null,
+    timelineComplete: payload.timelineComplete === true,
+    materialCounts,
+    structure,
+    speechGroups: [],
+  };
+}

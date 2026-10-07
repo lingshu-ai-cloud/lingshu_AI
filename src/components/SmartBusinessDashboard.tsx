@@ -35,6 +35,7 @@ import { loadConnectedSocialPerformance, type ConnectedSocialPerformance } from 
 import { starterWorkspaceApi, type StarterAgentRole } from "../lib/starterWorkspace";
 import { authHeader } from "../lib/auth";
 import ProductionTaskScene from "./ProductionTaskScene";
+import MatrixWorkSchedule from "./smartBusiness/MatrixWorkSchedule";
 
 export type SmartBusinessView = "home" | "matrix" | "queue" | "production" | "review";
 
@@ -571,7 +572,7 @@ function dateKey(date: Date) {
   return `${year}-${month}-${day}`;
 }
 
-type MatrixScheduleAccount = {
+export type MatrixScheduleAccount = {
   accountId: string;
   accountLabel: string;
   platform: Platform;
@@ -586,7 +587,7 @@ const matrixScheduleStages = [
   { label: "质检与发布", owner: "质检 / 经营 Agent", duration: "约 35 分钟", color: "bg-emerald-100 text-emerald-800 ring-emerald-200" },
 ] as const;
 
-function MatrixWorkSchedule({ startsAt, endsAt, accounts, plans, selectedAccountId, onOpenPublishing }: {
+function LegacyMatrixWorkSchedule({ startsAt, endsAt, accounts, plans, selectedAccountId, onOpenPublishing }: {
   startsAt?: string;
   endsAt?: string;
   accounts: MatrixScheduleAccount[];
@@ -871,7 +872,8 @@ function TaskPreviewCards({ item, onNavigate, onGenerateDetails }: {
     </article>
     <article className={`overflow-hidden rounded-2xl border ${materials.status==='ready'?'border-emerald-100 bg-emerald-50/45':'border-amber-200 bg-amber-50/55'}`}>
       <div className="p-4"><div className="flex items-center justify-between gap-2"><p className="text-xs font-black text-slate-900">素材组合预览</p><span className={`rounded-full px-2 py-1 text-[8px] font-black ${materials.status==='ready'?'bg-emerald-100 text-emerald-700':'bg-amber-100 text-amber-800'}`}>{materials.status==='ready'?`${materials.items.length} 项已锁定`:"任务不能开始"}</span></div>
-        <div className="mt-3 grid grid-cols-3 gap-2">{materials.items.slice(0,3).map(material=><div key={material.id} className="min-w-0"><div className={`flex aspect-video items-center justify-center overflow-hidden rounded-lg border ${material.status==='ready'?'border-emerald-100 bg-white':'border-amber-200 bg-amber-100'}`}>{material.previewUrl?(material.type==='video'?<video src={`${material.previewUrl}#t=0.1`} muted preload="metadata" className="h-full w-full object-cover"/>:<img src={material.previewUrl} alt="" className="h-full w-full object-cover"/>):material.status==='pending_shoot'?<span className="text-[9px] font-black text-amber-700">待拍</span>:<LayoutGrid size={16} className="text-slate-300"/>}</div><p className="mt-1 truncate text-[8px] font-bold text-slate-600">{material.name}</p></div>)}{!materials.items.length&&<div className="col-span-3 flex min-h-16 items-center justify-center rounded-xl border border-dashed border-amber-200 bg-white/70 text-[10px] font-bold text-amber-700">还没有可用素材</div>}</div>
+        {Boolean(materials.storyboard?.length)&&<div className="mt-3"><p className="mb-2 text-[9px] font-black text-slate-500">按爆款结构连接的成片首帧</p><div className="flex items-stretch gap-1 overflow-x-auto pb-1">{materials.storyboard!.map((step,index)=>{const matched=materials.items.find(material=>material.id===step.materialId);const previewUrl=step.materialPreviewUrl||step.referenceFirstFrameUrl;return <div key={`${step.materialType}-${step.shotIds.join('-')}`} className="flex shrink-0 items-center gap-1"><div className={`w-24 overflow-hidden rounded-xl border bg-white ${step.status==='ready'?'border-emerald-200':'border-amber-200'}`}><div className="flex aspect-video items-center justify-center overflow-hidden bg-slate-100">{previewUrl?(matched?.type==='video'&&step.materialPreviewUrl?<video src={`${previewUrl}#t=0.1`} muted preload="metadata" className="h-full w-full object-cover"/>:<img src={previewUrl} alt={`${step.materialLabel}首帧`} className="h-full w-full object-cover"/>):<span className="text-[8px] font-black text-amber-700">待补素材</span>}</div><div className="px-2 py-1.5"><p className="truncate text-[8px] font-black text-slate-700">{step.materialLabel}</p><p className="mt-0.5 truncate text-[7px] text-slate-400">{step.shotIds.length} 镜 · {step.status==='ready'?'已匹配':'待匹配'}</p></div></div>{index<materials.storyboard!.length-1&&<span className="text-xs font-black text-emerald-500">→</span>}</div>})}</div></div>}
+        {!materials.storyboard?.length&&<div className="mt-3 grid grid-cols-3 gap-2">{materials.items.slice(0,3).map(material=><div key={material.id} className="min-w-0"><div className={`flex aspect-video items-center justify-center overflow-hidden rounded-lg border ${material.status==='ready'?'border-emerald-100 bg-white':'border-amber-200 bg-amber-100'}`}>{material.previewUrl?(material.type==='video'?<video src={`${material.previewUrl}#t=0.1`} muted preload="metadata" className="h-full w-full object-cover"/>:<img src={material.previewUrl} alt="" className="h-full w-full object-cover"/>):material.status==='pending_shoot'?<span className="text-[9px] font-black text-amber-700">待拍</span>:<LayoutGrid size={16} className="text-slate-300"/>}</div><p className="mt-1 truncate text-[8px] font-bold text-slate-600">{material.name}</p></div>)}{!materials.items.length&&<div className="col-span-3 flex min-h-16 items-center justify-center rounded-xl border border-dashed border-amber-200 bg-white/70 text-[10px] font-bold text-amber-700">还没有可用素材</div>}</div>}
         {blocked?<div role="alert" className="mt-3 rounded-xl bg-white/80 px-3 py-2 text-[9px] font-bold leading-4 text-amber-800">{preview.readiness.blockers.slice(0,3).join("；")}</div>:<p className="mt-3 text-[9px] leading-4 text-emerald-700">素材、授权和预算检查已通过，可以进入制作。</p>}
       </div>
       <button type="button" onClick={()=>openTaskPreviewPage(item,"materials",onNavigate)} className={`flex w-full items-center justify-between border-t bg-white/70 px-4 py-2.5 text-[10px] font-black ${materials.status==='ready'?'border-emerald-100 text-emerald-700':'border-amber-200 text-amber-800'}`}><span>{materials.pendingShootTaskIds.length?"打开对应待拍任务":materials.status==='ready'?"打开对应素材":"去补齐素材与授权"}</span><span>→</span></button>

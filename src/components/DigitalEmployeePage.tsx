@@ -3860,11 +3860,26 @@ export default function DigitalEmployeePage({
       ...pack,
       tasks: pack.tasks.map(task => task.templateId !== "production" ? task : {
         ...task,
-        videoPlans: (task.videoPlans || []).map((plan, planIndex) => planIndex === index ? {
-          ...plan,
-          productName: product.name,
-          materialIds: [...product.materialIds],
-        } : plan),
+        videoPlans: (task.videoPlans || []).map((plan, planIndex) => {
+          if (planIndex !== index) return plan;
+          const subject = plan.buyerProblem || plan.theme || "产品价值说明";
+          return {
+            ...plan,
+            productName: product.name,
+            materialIds: [...product.materialIds],
+            publication: {
+              title: `${product.name}｜${subject}`.slice(0, 80),
+              caption: `${subject}。本条视频将结合 ${product.name} 的真实产品素材与爆款结构完成制作。`,
+              tags: Array.from(new Set([
+                product.name.replace(/\s+/g, ""),
+                contentPlatformLabel[plan.platform],
+                "产品视频",
+              ])),
+              status: "planned" as const,
+              generatedBy: "business_agent" as const,
+            },
+          };
+        }),
       }),
     };
     const next = await act(`select-product:${index}`, () => digitalEmployeeApi.savePackage(goal.id, nextPack));
@@ -3880,7 +3895,7 @@ export default function DigitalEmployeePage({
       const next = await digitalEmployeeApi.savePackage(goal.id, proposal);
       overviewRequestVersionRef.current += 1;
       setData(next);
-      showActionSuccess("爆款计划已重新匹配", "系统已按本周账号产量重新选择等量爆款，并同步更新账号、预计成本和发布标题。请逐条选择产品后确认。");
+      showActionSuccess("爆款计划已重新匹配", "系统已按本周账号产量重新选择爆款、自动绑定默认产品，并同步更新账号、预计成本和发布标题。爆款供给不足的任务会明确标记，补齐后即可确认。");
     } catch (actionError) {
       setError(actionError instanceof Error ? actionError.message : "爆款计划重新匹配失败");
     } finally {
@@ -4117,7 +4132,7 @@ export default function DigitalEmployeePage({
               statusLabel={currentPlanStatusLabel}
               primaryAction={<button type="button" disabled={Boolean(busy) || (!smartOperationsEnabled && !activeRun) || Boolean(viewGoalId && busy)} onClick={startWeeklyWork} title={!smartOperationsEnabled && !activeRun ? "请先开启智能经营" : !activeRun ? "核对爆款参考并选择产品后启动" : undefined} className="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl bg-emerald-300 px-4 py-2.5 text-xs font-black text-emerald-950 shadow-sm transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-45">{busy ? <Loader2 size={14} className="animate-spin"/> : <Play size={14} fill="currentColor"/>}{viewGoalId ? "返回当前周任务" : activeRun ? "查看进行中的周任务" : canCreateNextGoal ? "开始下一周任务" : "开始周任务工作"}</button>}
               actions={<>
-                {!activeRun && !viewGoalId && (!planDetailsReady || approvalBlocked) && <p className="mr-auto text-[10px] font-bold text-amber-700">{approvalBlocked ? `开始前需补齐：${firstMissingReadiness?.label || "经营基础信息"}` : detailGeneration?.status === "blocked" ? `开始前需处理 ${detailGeneration.blockedCount} 条任务卡点` : "请先选择产品并确认周计划"}</p>}
+                {!activeRun && !viewGoalId && (!planDetailsReady || approvalBlocked) && <p className="mr-auto text-[10px] font-bold text-amber-700">{approvalBlocked ? `开始前需补齐：${firstMissingReadiness?.label || "经营基础信息"}` : currentVideoPlans.some(plan => !plan.referenceId) ? `爆款库还缺 ${currentVideoPlans.filter(plan => !plan.referenceId).length} 条已完成分析的视频` : currentVideoPlans.some(plan => !plan.productName) ? `还有 ${currentVideoPlans.filter(plan => !plan.productName).length} 条未绑定产品` : detailGeneration?.status === "blocked" ? `开始前需处理 ${detailGeneration.blockedCount} 条任务卡点` : "请确认周计划并开始工作"}</p>}
                 <button type="button" onClick={()=>{ setNewGoal(false); setWeeklyPlanOpen(true); }} className="inline-flex items-center gap-2 rounded-xl bg-emerald-700 px-4 py-2.5 text-xs font-black text-white hover:bg-emerald-800"><CalendarRange size={14}/>查看本周计划</button>
                 <button type="button" onClick={()=>setWorkspaceView("rules")} className={`inline-flex items-center gap-2 rounded-xl border px-4 py-2.5 text-xs font-black ${workspaceView==="rules"?"border-slate-950 bg-slate-950 text-white":"border-slate-200 bg-white text-slate-700 hover:border-emerald-300"}`}><Settings2 size={14}/>Agent 设置</button>
                 <button type="button" onClick={()=>setPlanHistoryOpen(true)} className="inline-flex items-center gap-2 rounded-xl border border-emerald-200 bg-white px-4 py-2.5 text-xs font-black text-emerald-800 hover:bg-emerald-50"><History size={14}/>历史计划</button>

@@ -1,5 +1,6 @@
 import { VIDEO_LANGUAGES, normalizeVideoLanguage } from './videoLanguages.js';
 import type { SocialAccountRole } from './socialOperatingProfile.js';
+import { normalizeBenchmarkAnalysisSnapshot, type BenchmarkAnalysis, type BenchmarkMaterialType, type BenchmarkShotRole } from '../benchmarkAnalysis.js';
 
 /** Frozen user choices shared by planning, script, voice and rendering. */
 export interface VideoCreationPlan {
@@ -31,6 +32,8 @@ export interface VideoCreationPlan {
     matchScore: number;
     factors: string[];
   };
+  /** Frozen Director evidence. Content Agent must use this exact structure. */
+  benchmarkAnalysis?: BenchmarkAnalysis;
   /** Persisted pre-production result reused across refreshes and production. */
   preproduction?: VideoPreproductionPreview;
   matrix?: { accountId: string; audience: string; objective: string; cta: string; accountRole?: SocialAccountRole; formats?: string[] };
@@ -71,6 +74,16 @@ export interface VideoPreproductionPreview {
       name: string;
       type: 'image' | 'video';
       previewUrl: string;
+      status: 'ready' | 'missing' | 'pending_shoot' | 'needs_authorization';
+    }>;
+    storyboard?: Array<{
+      materialType: BenchmarkMaterialType;
+      materialLabel: string;
+      narrativeRole: BenchmarkShotRole;
+      shotIds: string[];
+      referenceFirstFrameUrl: string;
+      materialId: string;
+      materialPreviewUrl: string;
       status: 'ready' | 'missing' | 'pending_shoot' | 'needs_authorization';
     }>;
     blockers: string[];
@@ -136,6 +149,7 @@ export function normalizeVideoPlan(value: Partial<VideoCreationPlan>): VideoCrea
   const cleanList = (raw: unknown, limit: number, itemLimit = 500) => Array.isArray(raw)
     ? [...new Set(raw.map(item => String(item || '').trim()).filter(Boolean))].slice(0, limit).map(item => item.slice(0, itemLimit))
     : [];
+  const benchmarkAnalysis = normalizeBenchmarkAnalysisSnapshot(value.benchmarkAnalysis);
   return {
     contentId: String(value.contentId || '').trim().slice(0, 120),
     plannedPublishDate: /^\d{4}-\d{2}-\d{2}$/.test(String(value.plannedPublishDate || '')) ? String(value.plannedPublishDate) : '',
@@ -167,6 +181,7 @@ export function normalizeVideoPlan(value: Partial<VideoCreationPlan>): VideoCrea
         ? [...new Set(value.planningEvidence.factors.map(item => String(item || '').trim()).filter(Boolean))].slice(0, 8).map(item => item.slice(0, 160))
         : [],
     } } : {}),
+    ...(benchmarkAnalysis ? { benchmarkAnalysis } : {}),
     ...(preview && previewStatus ? { preproduction: {
       version: 1,
       status: previewStatus,
@@ -189,6 +204,16 @@ export function normalizeVideoPlan(value: Partial<VideoCreationPlan>): VideoCrea
           name: String(item?.name || '').trim().slice(0, 240),
           type: item?.type === 'video' ? 'video' as const : 'image' as const,
           previewUrl: cleanPreviewUrl(item?.previewUrl),
+          status: ['ready', 'missing', 'pending_shoot', 'needs_authorization'].includes(String(item?.status)) ? item.status : 'missing',
+        })) : [],
+        storyboard: Array.isArray(preview.materials?.storyboard) ? preview.materials.storyboard.slice(0, 30).map(item => ({
+          materialType: ['talking_head', 'factory', 'product', 'consumer_demo', 'unknown'].includes(String(item?.materialType)) ? item.materialType : 'unknown',
+          materialLabel: String(item?.materialLabel || '').trim().slice(0, 80),
+          narrativeRole: ['hook', 'pain_point', 'capability_proof', 'product_intro', 'effect_proof', 'cta', 'transition', 'unknown'].includes(String(item?.narrativeRole)) ? item.narrativeRole : 'unknown',
+          shotIds: cleanList(item?.shotIds, 20, 120),
+          referenceFirstFrameUrl: cleanPreviewUrl(item?.referenceFirstFrameUrl),
+          materialId: String(item?.materialId || '').trim().slice(0, 160),
+          materialPreviewUrl: cleanPreviewUrl(item?.materialPreviewUrl),
           status: ['ready', 'missing', 'pending_shoot', 'needs_authorization'].includes(String(item?.status)) ? item.status : 'missing',
         })) : [],
         blockers: cleanList(preview.materials?.blockers, 20, 500),

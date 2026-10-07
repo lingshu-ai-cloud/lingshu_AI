@@ -49,7 +49,8 @@ const buildBusinessSnapshot: typeof defaultBuildBusinessSnapshot = (tenantId, ra
 import { freezeStoryboardNarration, CONTENT_SCRIPT_QUALITY_RULE_VERSION, advanceAutomatedContentProduction, collectProductionAssets, generateDirectorScriptContracts, productIdentity, resolveEnterpriseAssetLocation, resumeContentProjectForTaskControl } from '../digitalEmployees/contentProduction.js';
 import { contentProjectLineageFields } from '../digitalEmployees/contentProjectLineage.js';
 import { buildContentBatchPlan, contentPlanCoverage, enterpriseAssetStableId, type ContentBatchPlanDraft } from '../digitalEmployees/contentBatchPlan.js';
-import { enrichPackageWithContentSignals, publicationCopyForPlan } from '../digitalEmployees/contentPlanRecommendation.js';
+import { bindDefaultProductsToPackage, enrichPackageWithContentSignals, publicationCopyForPlan } from '../digitalEmployees/contentPlanRecommendation.js';
+import { MATERIAL_TYPE_LABELS, SHOT_ROLE_LABELS, buildBenchmarkAnalysis } from '../../shared/benchmarkAnalysis.js';
 import { summarizeContentFeedback } from '../digitalEmployees/contentReview.js';
 import { summarizeWeeklyMatrix } from '../digitalEmployees/weeklyMatrixReview.js';
 import {
@@ -345,10 +346,11 @@ async function recommendPackageWithTenantEvidence(
   ownerName = '',
 ): Promise<WeeklyPackage> {
   const pack = recommendPackage(goal, config, ownerId, ownerName);
-  const [videos, benchmarks, enterpriseProfile] = await Promise.all([
+  const [videos, benchmarks, enterpriseProfile, routingEvidence] = await Promise.all([
     store.list<StoredRecord>('trend_videos', { where: { tenantId }, sort: '-updatedAt', perPage: 500 }).catch(() => ({ items: [] })),
     store.list<StoredRecord>('competitor_accounts', { where: { tenantId }, sort: '-createdAt', perPage: 200 }).catch(() => ({ items: [] })),
     readTenantEnterpriseProfile(tenantId),
+    contentRoutingEvidence(tenantId, config),
   ]);
   const enabledRoutes = enterpriseProfile.socialStrategy?.enabledRoutes || [];
   const enterprisePrimaryCta = enabledRoutes
@@ -360,7 +362,8 @@ async function recommendPackageWithTenantEvidence(
   const matrixBound = matrixPlan?.length
     ? fillMatrixVideos({ ...pack, matrixPlan }, config.videoDefaults || {}, goal.endsAt)
     : pack;
-  return enrichPackageWithContentSignals({ pack: matrixBound, goal, config, videos: videos.items, benchmarks: benchmarks.items });
+  const productBound = bindDefaultProductsToPackage(matrixBound, routingEvidence.products);
+  return enrichPackageWithContentSignals({ pack: productBound, goal, config, videos: videos.items, benchmarks: benchmarks.items });
 }
 
 function publicPreviewUrl(value: unknown): string {
@@ -401,7 +404,7 @@ function previewForBlockedPlan(input: {
       hook: input.plan.buyerProblem || input.plan.theme,
       shotSummary: [],
     },
-    materials: { status: 'blocked', items: [], blockers, pendingShootTaskIds: [] },
+    materials: { status: 'blocked', items: [], storyboard: [], blockers, pendingShootTaskIds: [] },
     readiness: { canStart: false, blockers },
     confidence: { onTimeRate: null, effectLevel: 'insufficient', reasons: ['制作条件尚未补齐，不展示虚构成功率'] },
   };
@@ -505,6 +508,40 @@ async function generateWeeklyTaskPreviews(input: {
       name: String(shooting.payload.title || '待拍素材'),
       type: 'video', previewUrl: '', status: 'pending_shoot',
     });
+    const benchmarkAnalysis = item.plan.benchmarkAnalysis || (reference ? buildBenchmarkAnalysis({
+      analysis,
+      videoId: reference.id,
+      duration: Number(reference.duration || 0),
+      evidenceRevision: String(reference.updatedAt || reference.updated_at || analysis.analysisRunId || `analysis:${reference.id}`),
+    }) : undefined);
+    const unusedAssets = [...item.selectedAssets];
+    const assetForStructure = (materialType: keyof typeof MATERIAL_TYPE_LABELS) => {
+      const keywords: Record<keyof typeof MATERIAL_TYPE_LABELS, RegExp> = {
+        talking_head: /真人|口播|主播|人物|presenter|talking/i,
+        factory: /工厂|生产|车间|设备|流水线|factory|production/i,
+        product: /产品|商品|包装|展示|product|packaging/i,
+        consumer_demo: /消费者|用户|使用|效果|试用|consumer|demo|before|after/i,
+        unknown: /./,
+      };
+      const matchIndex = unusedAssets.findIndex(asset => keywords[materialType].test([asset.name, ...asset.tags, ...asset.visualObservations].join(' ')));
+      const selectedIndex = matchIndex >= 0 ? matchIndex : unusedAssets.length ? 0 : -1;
+      return selectedIndex >= 0 ? unusedAssets.splice(selectedIndex, 1)[0] : undefined;
+    };
+    const storyboard: VideoPreproductionPreview['materials']['storyboard'] = (benchmarkAnalysis?.structure || []).map(step => {
+      const shot = step.shotIds.map(id => benchmarkAnalysis?.shots.find(item => item.shotId === id)).find(Boolean);
+      const asset = assetForStructure(step.materialType);
+      const status = asset ? asset.authorization.status === 'unknown' ? 'needs_authorization' as const : 'ready' as const : 'missing' as const;
+      return {
+        materialType: step.materialType,
+        materialLabel: MATERIAL_TYPE_LABELS[step.materialType],
+        narrativeRole: step.narrativeRole,
+        shotIds: step.shotIds,
+        referenceFirstFrameUrl: publicPreviewUrl(shot?.firstFrameRef),
+        materialId: asset?.id || '',
+        materialPreviewUrl: publicPreviewUrl(asset?.url),
+        status,
+      };
+    });
     const benchmarkStatus: VideoPreproductionPreview['benchmark']['status'] = item.plan.referenceId
       ? reference ? 'ready' : 'missing'
       : item.plan.route === 'clone' ? 'missing' : 'not_applicable';
@@ -530,6 +567,7 @@ async function generateWeeklyTaskPreviews(input: {
       materials: {
         status: item.blockers.some(blocker => /素材|待拍|授权/.test(blocker)) ? 'blocked' : 'ready',
         items: materialItems,
+        storyboard,
         blockers: blockers.filter(blocker => /素材|待拍|授权/.test(blocker)),
         pendingShootTaskIds: item.shootTasks.map(shooting => shooting.row.id),
       },
