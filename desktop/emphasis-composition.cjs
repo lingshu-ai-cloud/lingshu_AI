@@ -5,6 +5,8 @@
 const PROFILES = new Set(['d2c_dialogue', 'talking_head', 'factory_process', 'product_showcase']);
 const TYPES = new Set(['hook', 'key_fact', 'reveal', 'section_label', 'cta']);
 const SOURCES = new Set(['transcript', 'vision', 'metadata', 'editor']);
+const VISUAL_INTENTS = new Set(['attention', 'fact', 'warning', 'urgency', 'focus_product', 'cta']);
+const ASSET_INTENTS = new Set(['warning_marker', 'urgency_badge', 'cta_marker', 'product_marker', 'attention', 'fact']);
 
 const record = value => value && typeof value === 'object' && !Array.isArray(value) ? value : {};
 const finite = (value, fallback) => Number.isFinite(Number(value)) ? Number(value) : fallback;
@@ -45,11 +47,33 @@ function normalizeEmphasisPlan(input, durationSeconds = 0) {
     const requestedStrength = event.strength === 'weak' || event.strength === 'strong'
       ? event.strength : importance >= 3 ? 'strong' : 'weak';
     const anchor = record(event.anchor);
+    const hasExplicitAnchor = Number.isFinite(Number(anchor.x)) && Number.isFinite(Number(anchor.y));
     const x = clamp(anchor.x, .12, .88, .5);
     const y = clamp(anchor.y, .08, .68, PROFILE_STYLE[profile].y);
     // No spatial evidence means the conservative top safe area. Explicitly
     // unsafe placements are downgraded instead of covering a face/product.
     const unsafe = event.safeArea === false || Number(anchor.y) > .68;
+    const subjectAnchor = record(event.subjectAnchor);
+    const hasSubjectAnchor = Number.isFinite(Number(subjectAnchor.x)) && Number.isFinite(Number(subjectAnchor.y));
+    const placement = record(event.placement);
+    const placementEvidence = record(event.placementEvidence);
+    const semanticRole = ['warning', 'urgency'].includes(String(event.semanticRole || event.emphasisKind || event.tone))
+      ? String(event.semanticRole || event.emphasisKind || event.tone) : '';
+    const visualIntent = VISUAL_INTENTS.has(String(event.visualIntent)) ? String(event.visualIntent) : '';
+    const assetIntent = ASSET_INTENTS.has(String(event.assetIntent)) ? String(event.assetIntent) : '';
+    const safeZones = (Array.isArray(event.safeZones) ? event.safeZones : []).slice(0, 6).flatMap(zoneValue => {
+      const zone = record(zoneValue);
+      if (![zone.x, zone.y, zone.left, zone.top, zone.width, zone.height].some(value => Number.isFinite(Number(value)))) return [];
+      return [{
+        ...(Number.isFinite(Number(zone.x)) ? { x: clamp(zone.x, 0, 1, .5) } : {}),
+        ...(Number.isFinite(Number(zone.y)) ? { y: clamp(zone.y, 0, 1, .5) } : {}),
+        ...(Number.isFinite(Number(zone.left)) ? { left: clamp(zone.left, 0, 1, 0) } : {}),
+        ...(Number.isFinite(Number(zone.top)) ? { top: clamp(zone.top, 0, 1, 0) } : {}),
+        ...(Number.isFinite(Number(zone.width)) ? { width: clamp(zone.width, 0, 1, .2) } : {}),
+        ...(Number.isFinite(Number(zone.height)) ? { height: clamp(zone.height, 0, 1, .2) } : {}),
+        clarity: clamp(zone.clarity, 0, 1, .5), safe: zone.safe !== false,
+      }];
+    });
     return [{
       id: safeId(event.id, `event-${index}`), type, text,
       startMs: Math.round(startMs), endMs: Math.round(endMs), importance,
@@ -57,6 +81,20 @@ function normalizeEmphasisPlan(input, durationSeconds = 0) {
       source: SOURCES.has(String(event.source)) ? String(event.source) : 'editor',
       strength: unsafe || confidence < .7 ? 'weak' : requestedStrength,
       anchor: { x: Number(x.toFixed(4)), y: Number((unsafe ? PROFILE_STYLE[profile].y : y).toFixed(4)) },
+      hasExplicitAnchor,
+      ...(hasSubjectAnchor ? { subjectAnchor: { x: clamp(subjectAnchor.x, .08, .92, .5), y: clamp(subjectAnchor.y, .08, .70, .4) } } : {}),
+      ...(Object.keys(placement).length ? { placement: {
+        ...(Number.isFinite(Number(placement.x)) ? { x: clamp(placement.x, .08, .92, .5) } : {}),
+        ...(Number.isFinite(Number(placement.y)) ? { y: clamp(placement.y, .08, .70, .4) } : {}),
+        ...(placement.zone ? { zone: safeText(placement.zone).toLowerCase() } : {}),
+        safe: placement.safe !== false,
+      } } : {}),
+      ...(Object.keys(placementEvidence).length ? { placementEvidence: { safe: placementEvidence.safe !== false } } : {}),
+      ...(event.safeArea === false ? { safeArea: false } : {}),
+      ...(safeZones.length ? { safeZones } : {}),
+      ...(semanticRole ? { semanticRole } : {}),
+      ...(visualIntent ? { visualIntent } : {}),
+      ...(assetIntent ? { assetIntent } : {}),
       degraded: unsafe || confidence < .7,
     }];
   });
@@ -119,10 +157,9 @@ function captionEmphasisTags(plan, startSeconds, endSeconds, width) {
     && startMs < item.endMs && item.startMs < endMs);
   if (!event) return '';
   const style = PROFILE_STYLE[plan.profile] || PROFILE_STYLE.talking_head;
-  // The opening line is the primary title within the existing speech layer;
-  // it must read above ordinary captions without creating a duplicate card.
-  const size = Math.round(width * (event.type === 'hook' ? .082 : .072));
-  return `{\\fs${size}\\c${style.accent}\\bord4\\3c&H00101010&\\fscx72\\fscy72\\t(0,150,\\fscx114\\fscy114)\\t(150,280,\\fscx100\\fscy100)}`;
+  // Hook/reveal stay in the primary caption: color and weight establish the
+  // hierarchy without changing the sentence size or duplicating its text.
+  return `{\\c${style.accent}\\b1\\bord4\\3c&H00101010&}`;
 }
 
 module.exports = { PROFILES, TYPES, PROFILE_STYLE, suggestedBudget, normalizeEmphasisPlan, emphasisToAssEvents, captionEmphasisTags };

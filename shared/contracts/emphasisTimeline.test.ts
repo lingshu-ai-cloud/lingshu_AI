@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   emphasisBudgetForDuration,
+  deriveEmphasisIntent,
   normalizeCaptionSegments,
   normalizeEmphasisTimeline,
   normalizeEmphasisPlan,
@@ -42,26 +43,50 @@ test('lands a semantic event on the clearest safe supporting shot regardless of 
     candidates: [{ id: 'factory', type: 'section_label', startMs: 2_000, endMs: 3_500, text: '精密加工', targetId: 'cnc', importance: 3, confidence: .9, source: 'vision' }],
     placementWindows: [
       { id: 'wide', startMs: 8_000, endMs: 11_000, targetIds: ['cnc'], safe: true, clarity: .6 },
-      { id: 'detail', startMs: 14_000, endMs: 17_000, targetIds: ['cnc'], safe: true, clarity: .95, anchor: { x: .78, y: .22 } },
+      { id: 'detail', startMs: 14_000, endMs: 17_000, targetIds: ['cnc'], safe: true, clarity: .95,
+        evidenceSource: 'vision', anchor: { x: .78, y: .22 }, subjectAnchor: { x: .42, y: .55 }, subjectBox: { x: .2, y: .3, width: .44, height: .5 } },
       { id: 'blocked', startMs: 4_000, endMs: 7_000, targetIds: ['cnc'], safe: false, clarity: 1 },
     ],
   });
   assert.equal(event?.startMs, 14_000);
   assert.equal(event?.endMs, 15_500);
   assert.deepEqual(event?.anchor, { x: .78, y: .22 });
+  assert.deepEqual(event?.subjectAnchor, { x: .42, y: .55 });
+  assert.deepEqual(event?.subjectBox, { x: .2, y: .3, width: .44, height: .5 });
   assert.deepEqual(event?.placementEvidence, { windowId: 'detail', targetId: 'cnc', clarity: .95, safe: true });
+});
+
+test('derives conservative semantic intents without naming concrete assets', () => {
+  assert.deepEqual(deriveEmphasisIntent('key_fact', '面膜采用独立包装'), { visualIntent: 'focus_product', assetIntent: 'product_marker' });
+  assert.deepEqual(deriveEmphasisIntent('key_fact', '限时优惠'), { visualIntent: 'urgency', assetIntent: 'urgency_badge' });
+  assert.deepEqual(deriveEmphasisIntent('key_fact', '请勿接触眼睛'), { visualIntent: 'warning', assetIntent: 'warning_marker' });
+  assert.deepEqual(deriveEmphasisIntent('cta', '查看详细介绍'), { visualIntent: 'cta', assetIntent: 'cta_marker' });
+});
+
+test('drops untrusted subject coordinates while preserving closed intent values', () => {
+  const [event] = selectEmphasisTimeline({ durationMs: 5_000, candidates: [{
+    id: 'unsafe', type: 'key_fact', startMs: 0, endMs: 1_000, text: '独立包装', importance: 2,
+    confidence: .9, source: 'editor', visualIntent: 'execute_code', assetIntent: '/tmp/badge.svg',
+    subjectAnchor: { x: .5, y: .5 }, subjectBox: { x: 0, y: 0, width: 1, height: 1 },
+  }] });
+  assert.equal(event?.visualIntent, 'focus_product');
+  assert.equal(event?.assetIntent, 'product_marker');
+  assert.equal(event?.subjectAnchor, undefined);
+  assert.equal(event?.subjectBox, undefined);
 });
 
 test('preserves safe renderer placement hints and semantic evidence at the manifest boundary', () => {
   const plan = normalizeEmphasisPlan({ profile: 'product_showcase', maxEvents: 2, events: [{
     id: 'product-material', type: 'key_fact', startMs: 1_000, endMs: 2_200, text: '岩板台面',
     importance: 3, confidence: .96, source: 'editor', targetId: 'countertop', strength: 'strong',
+    visualIntent: 'cta', assetIntent: 'cta_marker',
     anchor: { x: 1.4, y: -.2 }, safeArea: false,
     placementEvidence: { windowId: 'manual-product-shot', targetId: 'countertop', clarity: 2, safe: false },
   }] }, 5_000);
   assert.deepEqual(plan.events[0], {
     id: 'product-material', type: 'key_fact', startMs: 1_000, endMs: 2_200, text: '岩板台面',
     importance: 3, confidence: .96, source: 'editor', targetId: 'countertop', strength: 'strong',
+    visualIntent: 'focus_product', assetIntent: 'product_marker',
     anchor: { x: .95, y: .05 }, safeArea: false,
     placementEvidence: { windowId: 'manual-product-shot', targetId: 'countertop', clarity: 1, safe: false },
   });

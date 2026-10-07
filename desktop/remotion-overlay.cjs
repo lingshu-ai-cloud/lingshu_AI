@@ -5,17 +5,35 @@ const os = require('node:os');
 const path = require('node:path');
 
 let bundlePromise = null;
+const RENDERER_VERSION = 'semantic-assets-v2';
 
 const finite = value => Number.isFinite(Number(value)) ? Number(value) : null;
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 const stableSide = value => [...String(value || '')].reduce((sum, char) => sum + char.charCodeAt(0), 0) % 2 ? .72 : .28;
+const ASSET_INTENT_KIND = Object.freeze({
+  warning_marker: 'warning', urgency_badge: 'urgency', cta_marker: 'cta',
+  product_marker: 'reveal', attention: 'key_fact', fact: 'key_fact',
+});
+const VISUAL_INTENT_KIND = Object.freeze({
+  warning: 'warning', urgency: 'urgency', cta: 'cta', focus_product: 'reveal',
+  attention: 'key_fact', fact: 'key_fact',
+});
+
+function semanticAssetKind(event) {
+  return ASSET_INTENT_KIND[String(event && event.assetIntent)]
+    || VISUAL_INTENT_KIND[String(event && event.visualIntent)]
+    || (event && event.type === 'cta' ? 'cta' : null)
+    || (['warning', 'urgency'].includes(String(event && (event.semanticRole || event.emphasisKind || event.tone)))
+      ? String(event.semanticRole || event.emphasisKind || event.tone) : null)
+    || (event && event.type === 'reveal' ? 'reveal' : 'key_fact');
+}
 
 /** Resolve a sticker position without assuming that the centre of the frame is
  * empty. Coordinates are normalized. The lower 28% stays reserved for speech
  * captions and platform controls. */
 function resolveOverlayPlacement(event, index = 0) {
   const placement = event && typeof event.placement === 'object' ? event.placement : {};
-  const anchor = event && typeof event.anchor === 'object' ? event.anchor : {};
+  const anchor = event && event.hasExplicitAnchor !== false && typeof event.anchor === 'object' ? event.anchor : {};
   const placementEvidence = event && typeof event.placementEvidence === 'object' ? event.placementEvidence : {};
   const side = stableSide(event && event.id || `${event && event.type}-${index}`);
   const yByType = { key_fact: .22, reveal: .43, cta: .62 };
@@ -30,6 +48,11 @@ function resolveOverlayPlacement(event, index = 0) {
   const explicitY = finite(placement.y) ?? finite(anchor.y);
   if (explicitX !== null && explicitY !== null) {
     return { x: clamp(explicitX, .16, .84), y: clamp(explicitY, .10, .68), source: 'anchor' };
+  }
+  const subjectAnchor = event && typeof event.subjectAnchor === 'object' ? event.subjectAnchor : {};
+  const subjectX = finite(subjectAnchor.x), subjectY = finite(subjectAnchor.y);
+  if (subjectX !== null && subjectY !== null) {
+    return { x: clamp(subjectX < .5 ? subjectX + .23 : subjectX - .23, .16, .84), y: clamp(subjectY - .13, .10, .68), source: 'subject-anchor' };
   }
   const safeZones = [
     ...(Array.isArray(event && event.safeZones) ? event.safeZones : []),
@@ -52,7 +75,10 @@ const advancedEvents = plan => (plan && Array.isArray(plan.events) ? plan.events
   .filter(event => ['key_fact', 'reveal', 'cta'].includes(event.type) && event.text)
   .map((event, index) => ({
     id: event.id, type: event.type, startMs: event.startMs, endMs: event.endMs, text: event.text,
+    assetKind: semanticAssetKind(event),
     placement: resolveOverlayPlacement(event, index),
+    ...(event.subjectAnchor && Number.isFinite(Number(event.subjectAnchor.x)) && Number.isFinite(Number(event.subjectAnchor.y))
+      ? { subjectAnchor: { x: clamp(Number(event.subjectAnchor.x), .08, .92), y: clamp(Number(event.subjectAnchor.y), .08, .70) } } : {}),
   }));
 
 async function rendererModules() {
@@ -73,7 +99,11 @@ async function bundleOverlay(bundle) {
 async function renderTransparentOverlay({ plan, width, height, durationSeconds, fps = 15, onProgress = () => {} }) {
   const events = advancedEvents(plan);
   if (!events.length || process.env.LINGSHU_REMOTION_OVERLAY === 'off') return { path: null, cacheHit: false, renderMs: 0 };
-  const props = { durationFrames: Math.max(1, Math.ceil(durationSeconds * fps)), fps, width, height, profile: plan.profile, events };
+  const sourceVersion = crypto.createHash('sha256').update([
+    fs.readFileSync(path.join(__dirname, 'remotion-overlay/root.tsx')),
+    fs.readFileSync(path.join(__dirname, 'remotion-overlay/semantic-assets.tsx')),
+  ].map(value => crypto.createHash('sha256').update(value).digest('hex')).join(':')).digest('hex').slice(0, 16);
+  const props = { rendererVersion: RENDERER_VERSION, sourceVersion, durationFrames: Math.max(1, Math.ceil(durationSeconds * fps)), fps, width, height, profile: plan.profile, events };
   const key = crypto.createHash('sha256').update(JSON.stringify(props)).digest('hex');
   const cacheDir = path.join(os.homedir(), '.cache', 'lingshu-ai', 'remotion-overlays');
   const output = path.join(cacheDir, `${key}.webm`);
@@ -94,4 +124,4 @@ async function renderTransparentOverlay({ plan, width, height, durationSeconds, 
   return { path: output, cacheHit: false, renderMs: Date.now() - started };
 }
 
-module.exports = { advancedEvents, resolveOverlayPlacement, renderTransparentOverlay };
+module.exports = { RENDERER_VERSION, advancedEvents, resolveOverlayPlacement, semanticAssetKind, renderTransparentOverlay };

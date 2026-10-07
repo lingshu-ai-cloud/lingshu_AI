@@ -8,12 +8,18 @@
 export const EMPHASIS_EVENT_TYPES = ['hook', 'key_fact', 'reveal', 'section_label', 'cta'] as const;
 export const EMPHASIS_SOURCES = ['transcript', 'vision', 'metadata', 'editor'] as const;
 export const EMPHASIS_PROFILES = ['d2c_dialogue', 'talking_head', 'factory_process', 'product_showcase'] as const;
+export const EMPHASIS_VISUAL_INTENTS = ['focus_product', 'attention', 'urgency', 'warning', 'cta'] as const;
+export const EMPHASIS_ASSET_INTENTS = ['product_marker', 'attention_marker', 'urgency_badge', 'warning_marker', 'cta_marker', 'fact_label', 'section_marker'] as const;
 export const EMPHASIS_TIMELINE_SCHEMA_VERSION = 1 as const;
 
 export type EmphasisEventType = typeof EMPHASIS_EVENT_TYPES[number];
 export type EmphasisEventSource = typeof EMPHASIS_SOURCES[number];
 export type EmphasisProfile = typeof EMPHASIS_PROFILES[number];
 export type EmphasisImportance = 1 | 2 | 3;
+export type EmphasisVisualIntent = typeof EMPHASIS_VISUAL_INTENTS[number];
+export type EmphasisAssetIntent = typeof EMPHASIS_ASSET_INTENTS[number];
+export type NormalizedPoint = { x: number; y: number };
+export type NormalizedBox = { x: number; y: number; width: number; height: number };
 
 export interface CaptionSegment {
   id: string;
@@ -36,6 +42,13 @@ export interface EmphasisEvent {
   source: EmphasisEventSource;
   /** Semantic/visual subject used to find the best placement window. */
   targetId?: string;
+  /** Semantic goal used to choose a suitable asset family; never a filename. */
+  visualIntent?: EmphasisVisualIntent;
+  /** Abstract asset category. Rendering resolves the concrete approved asset. */
+  assetIntent?: EmphasisAssetIntent;
+  /** Subject geometry copied only from a trusted matching visual window. */
+  subjectAnchor?: NormalizedPoint;
+  subjectBox?: NormalizedBox;
   /** Optional renderer hint. Strong events may still be degraded for safety. */
   strength?: 'weak' | 'strong';
   /** Normalized placement selected from trusted visual evidence. */
@@ -63,6 +76,11 @@ export interface EmphasisPlacementWindow {
   clarity?: number;
   /** Safe normalized overlay anchor observed for this visual window. */
   anchor?: { x: number; y: number };
+  /** Optional detected subject geometry; accepted only with safe, clear evidence. */
+  subjectAnchor?: NormalizedPoint;
+  subjectBox?: NormalizedBox;
+  /** Provenance required before subject geometry may enter the manifest. */
+  evidenceSource?: 'vision' | 'manual_reviewed';
 }
 
 export interface EmphasisBudget {
@@ -109,6 +127,28 @@ const cleanText = (value: unknown, max = 160): string => String(value || '')
 const textKey = (value: string | undefined): string => String(value || '')
   .toLocaleLowerCase().replace(/[\s，。！？；：、,.!?;:'"“”‘’()（）【】\[\]-]/g, '');
 
+export function deriveEmphasisIntent(
+  type: EmphasisEventType,
+  value: string | undefined,
+): { visualIntent: EmphasisVisualIntent; assetIntent: EmphasisAssetIntent } {
+  const content = String(value || '');
+  if (/警告|注意|避免|禁止|切勿|请勿|风险|warning|caution|avoid/i.test(content)) {
+    return { visualIntent: 'warning', assetIntent: 'warning_marker' };
+  }
+  if (/限时|立即|马上|仅剩|最后\s*\d+|倒计时|urgent|limited time|now/i.test(content)) {
+    return { visualIntent: 'urgency', assetIntent: 'urgency_badge' };
+  }
+  if (type === 'cta') return { visualIntent: 'cta', assetIntent: 'cta_marker' };
+  if (type === 'reveal') return { visualIntent: 'focus_product', assetIntent: 'product_marker' };
+  if (type === 'section_label') return { visualIntent: 'attention', assetIntent: 'section_marker' };
+  if (type === 'key_fact' && /产品|材质|包装|结构|尺寸|规格|面膜|台面|product|material|package/i.test(content)) {
+    return { visualIntent: 'focus_product', assetIntent: 'product_marker' };
+  }
+  return type === 'key_fact'
+    ? { visualIntent: 'attention', assetIntent: 'fact_label' }
+    : { visualIntent: 'attention', assetIntent: 'attention_marker' };
+}
+
 export function emphasisBudgetForDuration(durationMs: number): EmphasisBudget {
   const seconds = Math.max(0, finite(durationMs, 0)) / 1_000;
   if (seconds <= 15) return { min: 2, max: 4 };
@@ -140,7 +180,7 @@ export function normalizeCaptionSegments(input: unknown, durationMs: number): Ca
 
 export function normalizeEmphasisCandidates(input: unknown, durationMs: number): EmphasisEvent[] {
   const duration = Math.max(0, finite(durationMs, 0));
-  return (Array.isArray(input) ? input : []).slice(0, 500).map((value, index) => {
+  return (Array.isArray(input) ? input : []).slice(0, 500).map((value, index): EmphasisEvent | null => {
     const raw = asRecord(value);
     const type = EMPHASIS_EVENT_TYPES.includes(String(raw.type) as EmphasisEventType)
       ? raw.type as EmphasisEventType : null;
@@ -157,6 +197,11 @@ export function normalizeEmphasisCandidates(input: unknown, durationMs: number):
     const hasAnchor = Number.isFinite(Number(anchor.x)) && Number.isFinite(Number(anchor.y));
     const placement = asRecord(raw.placementEvidence);
     const placementWindowId = cleanId(placement.windowId, '');
+    const derivedIntent = deriveEmphasisIntent(type, text);
+    // Intent is derived from event semantics. Callers cannot select arbitrary
+    // asset categories by attaching a valid-looking enum to unrelated text.
+    const visualIntent = derivedIntent.visualIntent;
+    const assetIntent = derivedIntent.assetIntent;
     const confidence = clamp(raw.confidence, 0, 1, 0);
     // Commercial facts must be supported. Editor-authored values already went
     // through human review, while other low-confidence facts fall back to speech.
@@ -168,6 +213,8 @@ export function normalizeEmphasisCandidates(input: unknown, durationMs: number):
       importance: Math.round(clamp(raw.importance, 1, 3, 1)) as EmphasisImportance,
       confidence: Number(confidence.toFixed(4)), source,
       ...(targetId ? { targetId } : {}),
+      visualIntent,
+      assetIntent,
       ...(strength ? { strength } : {}),
       ...(hasAnchor ? { anchor: {
         x: Number(clamp(anchor.x, .05, .95, .5).toFixed(4)),
@@ -204,6 +251,16 @@ function placeOnBestWindow(event: EmphasisEvent, windows: EmphasisPlacementWindo
   const startMs = Math.max(0, Math.round(best.startMs));
   const anchor = asRecord(best.anchor);
   const hasAnchor = Number.isFinite(Number(anchor.x)) && Number.isFinite(Number(anchor.y));
+  const subjectAnchor = asRecord(best.subjectAnchor);
+  const hasSubjectAnchor = Number.isFinite(Number(subjectAnchor.x)) && Number.isFinite(Number(subjectAnchor.y))
+    && Number(subjectAnchor.x) >= 0 && Number(subjectAnchor.x) <= 1 && Number(subjectAnchor.y) >= 0 && Number(subjectAnchor.y) <= 1;
+  const subjectBox = asRecord(best.subjectBox);
+  const hasSubjectBox = Number.isFinite(Number(subjectBox.x)) && Number.isFinite(Number(subjectBox.y))
+    && Number.isFinite(Number(subjectBox.width)) && Number.isFinite(Number(subjectBox.height))
+    && Number(subjectBox.x) >= 0 && Number(subjectBox.y) >= 0 && Number(subjectBox.width) > 0 && Number(subjectBox.height) > 0
+    && Number(subjectBox.x) + Number(subjectBox.width) <= 1 && Number(subjectBox.y) + Number(subjectBox.height) <= 1;
+  const trustedSubjectGeometry = best.safe !== false && finite(best.clarity, 0) >= .7
+    && (best.evidenceSource === 'vision' || best.evidenceSource === 'manual_reviewed');
   return {
     ...event,
     startMs,
@@ -211,6 +268,13 @@ function placeOnBestWindow(event: EmphasisEvent, windows: EmphasisPlacementWindo
     ...(hasAnchor ? { anchor: {
       x: Number(clamp(anchor.x, .05, .95, .5).toFixed(4)),
       y: Number(clamp(anchor.y, .05, .95, .2).toFixed(4)),
+    } } : {}),
+    ...(trustedSubjectGeometry && hasSubjectAnchor ? { subjectAnchor: {
+      x: Number(Number(subjectAnchor.x).toFixed(4)), y: Number(Number(subjectAnchor.y).toFixed(4)),
+    } } : {}),
+    ...(trustedSubjectGeometry && hasSubjectBox ? { subjectBox: {
+      x: Number(Number(subjectBox.x).toFixed(4)), y: Number(Number(subjectBox.y).toFixed(4)),
+      width: Number(Number(subjectBox.width).toFixed(4)), height: Number(Number(subjectBox.height).toFixed(4)),
     } } : {}),
     safeArea: best.safe !== false,
     placementEvidence: {

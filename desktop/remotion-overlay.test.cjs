@@ -1,6 +1,7 @@
 /* eslint-disable */
 const assert = require('node:assert/strict');
-const { advancedEvents, resolveOverlayPlacement } = require('./remotion-overlay.cjs');
+const { RENDERER_VERSION, advancedEvents, resolveOverlayPlacement } = require('./remotion-overlay.cjs');
+const { normalizeEmphasisPlan } = require('./emphasis-composition.cjs');
 
 const selected = advancedEvents({ events: [
   { id: 'hook', type: 'hook', startMs: 0, endMs: 800, text: '开场' },
@@ -31,4 +32,22 @@ const safePlacement = resolveOverlayPlacement({ id: 'safe', safeZones: [
 assert.ok(Math.abs(safePlacement.x - .7) < 1e-9 && Math.abs(safePlacement.y - .32) < 1e-9);
 assert.equal(safePlacement.source, 'safe-zone');
 assert.equal(resolveOverlayPlacement({ id: 'middle', placement: { zone: 'middle' } }).y, .4);
+const subjectPlacement = resolveOverlayPlacement({ id: 'subject', type: 'key_fact', subjectAnchor: { x: .45, y: .5 } });
+assert.equal(subjectPlacement.source, 'subject-anchor');
+assert.ok(subjectPlacement.x > .45 && subjectPlacement.y < .5, 'label sits beside and above the subject anchor');
+const semantic = advancedEvents({ events: [
+  { id: 'warning', type: 'key_fact', semanticRole: 'warning', startMs: 0, endMs: 900, text: '注意参数' },
+  { id: 'urgent', type: 'key_fact', tone: 'urgency', startMs: 1000, endMs: 1900, text: '限时' },
+  { id: 'cta2', type: 'cta', startMs: 2000, endMs: 2900, text: '立即咨询' },
+] });
+assert.deepEqual(semantic.map(event => event.assetKind), ['warning', 'urgency', 'cta']);
+const crossLayer = advancedEvents(normalizeEmphasisPlan({ profile: 'product_showcase', maxEvents: 5, events: [
+  { id: 'warning-intent', type: 'key_fact', assetIntent: 'warning_marker', visualIntent: 'warning', startMs: 0, endMs: 600, text: '注意', importance: 3, confidence: 1, source: 'editor' },
+  { id: 'urgent-intent', type: 'key_fact', assetIntent: 'urgency_badge', startMs: 700, endMs: 1300, text: '限时', importance: 3, confidence: 1, source: 'editor' },
+  { id: 'product-intent', type: 'key_fact', assetIntent: 'product_marker', visualIntent: 'focus_product', startMs: 1400, endMs: 2000, text: '产品', importance: 3, confidence: 1, source: 'editor' },
+  { id: 'attention-intent', type: 'key_fact', assetIntent: 'attention', startMs: 2100, endMs: 2700, text: '重点', importance: 3, confidence: 1, source: 'editor' },
+  { id: 'cta-intent', type: 'key_fact', assetIntent: 'cta_marker', startMs: 2800, endMs: 3400, text: '咨询', importance: 3, confidence: 1, source: 'editor' },
+] }, 4));
+assert.deepEqual(crossLayer.map(event => event.assetKind), ['warning', 'urgency', 'reveal', 'key_fact', 'cta'], 'shared asset intents select concrete desktop assets');
+assert.match(RENDERER_VERSION, /^semantic-assets-v\d+$/);
 console.log('remotion overlay selection regression passed');

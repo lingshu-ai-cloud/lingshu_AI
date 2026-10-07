@@ -122,3 +122,27 @@ test('keeps a 21-second skincare draft useful with sparse transcript-grounded fa
   assert.ok(plan.events.length >= 3 && plan.events.length <= 5);
   assert.doesNotMatch(plan.events.map(event => event.text).join(' '), /起订|配货|Messenger/i);
 });
+
+test('passes semantic intents and only trusted subject geometry through the manifest', () => {
+  const plan = buildStudioEmphasisPlan({
+    durationSeconds: 8,
+    subtitles: { cues: [] },
+    emphasisPlan: {
+      profile: 'product_showcase',
+      events: [{ id: 'product', type: 'key_fact', startMs: 1_000, endMs: 2_500, text: '面膜独立包装',
+        importance: 3, confidence: .95, source: 'editor', targetId: 'mask-pack' }],
+      placementWindows: [{ id: 'product-shot', startMs: 1_000, endMs: 3_000, targetIds: ['mask-pack'],
+        safe: true, clarity: .92, evidenceSource: 'vision', subjectAnchor: { x: .48, y: .52 },
+        subjectBox: { x: .3, y: .25, width: .36, height: .55 } }],
+    },
+  });
+  assert.deepEqual({
+    visualIntent: plan.events[0]?.visualIntent,
+    assetIntent: plan.events[0]?.assetIntent,
+    subjectAnchor: plan.events[0]?.subjectAnchor,
+    subjectBox: plan.events[0]?.subjectBox,
+  }, {
+    visualIntent: 'focus_product', assetIntent: 'product_marker', subjectAnchor: { x: .48, y: .52 },
+    subjectBox: { x: .3, y: .25, width: .36, height: .55 },
+  });
+});

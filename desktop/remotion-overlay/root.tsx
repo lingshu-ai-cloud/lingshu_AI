@@ -1,7 +1,9 @@
 import React from 'react';
 import { AbsoluteFill, Composition, Easing, Sequence, interpolate, spring, useCurrentFrame, useVideoConfig } from 'remotion';
+import { SemanticAsset, type SemanticAssetKind } from './semantic-assets';
 
-type OverlayEvent = { id: string; type: 'key_fact' | 'reveal' | 'cta'; startMs: number; endMs: number; text: string; placement: { x: number; y: number; source: string } };
+type Point = { x: number; y: number };
+type OverlayEvent = { id: string; type: 'key_fact' | 'reveal' | 'cta'; assetKind: SemanticAssetKind; startMs: number; endMs: number; text: string; placement: Point & { source: string }; subjectAnchor?: Point };
 type OverlayProps = { durationFrames: number; fps: number; width: number; height: number; profile: string; events: OverlayEvent[] };
 
 const colors: Record<string, { accent: string; ink: string; panel: string }> = {
@@ -23,27 +25,25 @@ const EventCard: React.FC<{ event: OverlayEvent; profile: string }> = ({ event, 
   const exit = interpolate(frame, [Math.max(0, duration - .2 * fps), duration], [1, 0], { extrapolateLeft: 'clamp', extrapolateRight: 'clamp', easing: Easing.in(Easing.cubic) });
   const pulse = event.type === 'cta' && frame > .35 * fps ? 1 + Math.sin((frame / fps - .35) * Math.PI * 3.4) * .065 : 1;
   const isFact = event.type === 'key_fact';
-  const isReveal = event.type === 'reveal';
   const x = `${event.placement.x * 100}%`;
   const y = `${event.placement.y * 100}%`;
-  const slide = isFact ? interpolate(enter, [0, 1], [event.placement.x < .5 ? -42 : 42, 0])
-    : event.type === 'cta' ? interpolate(enter, [0, 1], [32, 0]) : 0;
-  const revealClip = isReveal ? `inset(0 ${interpolate(enter, [0, 1], [100, 0])}% 0 0 round ${width * .03}px)` : undefined;
-  const heldDrift = isFact ? Math.sin(frame / fps * Math.PI * 1.5) * 1.5 : 0;
-  return <div style={{
-    position: 'absolute', left: x, top: y,
-    transform: `translate(-50%, calc(-50% + ${slide}px)) scale(${enter * pulse}) rotate(${isFact ? interpolate(enter, [0, 1], [event.placement.x < .5 ? -8 : 8, event.placement.x < .5 ? -2 : 2]) + heldDrift : 0}deg)`,
-    opacity: exit, padding: isFact ? `${width * .025}px ${width * .042}px` : `${width * .022}px ${width * .039}px`,
-    borderRadius: isFact ? width * .03 : 999, background: palette.panel, color: palette.ink,
-    border: `${Math.max(2, width * .007)}px solid ${palette.ink}`,
-    boxShadow: isReveal ? `0 0 ${width * .04}px ${palette.accent}88, ${width * .01}px ${width * .013}px 0 ${palette.ink}` : `${width * .014}px ${width * .017}px 0 ${palette.ink}`,
-    clipPath: revealClip,
-    fontFamily: 'Source Han Sans SC, PingFang SC, sans-serif',
-    fontSize: width * (isFact ? .073 : event.type === 'cta' ? .064 : .068), fontWeight: 900, lineHeight: 1.08,
-    maxWidth: width * .68, textAlign: 'center', whiteSpace: 'normal', wordBreak: 'keep-all',
-  }}>
-    <span style={{ color: palette.ink }}>{isFact ? '✦ ' : event.type === 'cta' ? '▶ ' : '✓ '}</span>{event.text}
-  </div>;
+  const assetAnchor = event.subjectAnchor || event.placement;
+  const assetSize = width * (event.assetKind === 'cta' ? .28 : event.assetKind === 'key_fact' || event.assetKind === 'reveal' ? .36 : .22);
+  const slide = interpolate(enter, [0, 1], [event.placement.x < .5 ? -24 : 24, 0]);
+  return <>
+    <div style={{ position: 'absolute', left: `${assetAnchor.x * 100}%`, top: `${assetAnchor.y * 100}%`, width: assetSize, height: assetSize,
+      transform: `translate(-50%, -50%) scale(${enter * pulse})`, opacity: exit, transformOrigin: 'center' }}>
+      <SemanticAsset kind={event.assetKind} progress={enter} />
+    </div>
+    <div style={{
+      position: 'absolute', left: x, top: y, transform: `translate(calc(-50% + ${slide}px), -50%) scale(${enter})`, opacity: exit,
+      padding: `${width * .009}px ${width * .018}px`, borderRadius: width * .012,
+      background: 'rgba(16,16,16,.76)', color: event.assetKind === 'urgency' ? '#FF6A3D' : palette.accent,
+      borderLeft: `${Math.max(3, width * .006)}px solid ${event.assetKind === 'urgency' ? '#E84217' : palette.accent}`,
+      fontFamily: 'Source Han Sans SC, PingFang SC, sans-serif', fontSize: width * (isFact ? .046 : .043),
+      fontWeight: 800, lineHeight: 1.12, maxWidth: width * .46, textAlign: 'left', whiteSpace: 'normal', wordBreak: 'keep-all',
+    }}>{event.text}</div>
+  </>;
 };
 
 const Overlay: React.FC<OverlayProps> = ({ events, profile }) => {

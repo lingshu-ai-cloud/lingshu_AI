@@ -24,6 +24,7 @@ assert.equal(plan.events.length, 3, 'deduplicates semantics and rejects low-conf
 assert.equal(plan.events.filter(event => event.strength === 'strong').length, 1, 'overlapping strong events cannot compete');
 assert.equal(plan.events.find(event => event.id === 'unsafe').strength, 'weak', 'unsafe placement degrades to compact emphasis');
 assert.ok(plan.events.find(event => event.id === 'unsafe').anchor.y <= .68, 'degraded emphasis stays above captions and bottom controls');
+assert.equal(plan.events.find(event => event.id === 'hook').hasExplicitAnchor, false, 'generated default anchor is not mistaken for placement evidence');
 const ass = emphasisToAssEvents(plan, 1080, 1920).join('\n');
 assert.match(ass, /Dialogue: 2/);
 assert.match(ass, /69\.9 四支正装/, 'a hook can fall back to a standalone badge when no caption exists');
@@ -48,9 +49,27 @@ assert.doesNotMatch(eventVariants, /仓储实力/, 'generic section labels do no
 assert.match(eventVariants, /\\pos\(540,1190\)/, 'reveal uses the lower information zone');
 assert.match(captionEmphasisTags(normalizeEmphasisPlan({ profile: 'talking_head', events: [
   { type: 'hook', startMs: 0, endMs: 800, text: '开场', importance: 3, confidence: 1, source: 'transcript' },
-] }, 2), 0, .8, 1080), /\\fscx72/, 'hook animates the primary caption in place');
-assert.match(captionEmphasisTags(normalizeEmphasisPlan({ profile: 'talking_head', events: [
+] }, 2), 0, .8, 1080), /\\b1/, 'hook emphasizes the primary caption in place');
+const sameSizeHook = captionEmphasisTags(normalizeEmphasisPlan({ profile: 'talking_head', events: [
   { type: 'hook', startMs: 0, endMs: 800, text: '开场', importance: 3, confidence: 1, source: 'transcript' },
-] }, 2), 0, .8, 1080), /\\fs89/, 'opening caption is clearly larger than the 72px ordinary subtitle');
+] }, 2), 0, .8, 1080);
+assert.doesNotMatch(sameSizeHook, /\\fs|\\fsc[xy]/, 'Hook keeps the ordinary subtitle size and scale');
+const semanticPlan = normalizeEmphasisPlan({ profile: 'factory_process', events: [{
+  id: 'warning', type: 'key_fact', text: '注意高温', startMs: 0, endMs: 900, importance: 3, confidence: 1, source: 'editor',
+  semanticRole: 'warning', subjectAnchor: { x: .4, y: .5 }, placementEvidence: { safe: true },
+}] }, 2);
+assert.equal(semanticPlan.events[0].semanticRole, 'warning');
+assert.deepEqual(semanticPlan.events[0].subjectAnchor, { x: .4, y: .5 });
+const intentPlan = normalizeEmphasisPlan({ profile: 'talking_head', events: [{
+  id: 'intent', type: 'key_fact', text: '警告', startMs: 0, endMs: 900, importance: 3, confidence: 1, source: 'editor',
+  visualIntent: 'warning', assetIntent: 'warning_marker',
+}, {
+  id: 'bad-intent', type: 'key_fact', text: '普通事实', startMs: 1000, endMs: 1900, importance: 2, confidence: 1, source: 'editor',
+  visualIntent: 'arbitrary_css', assetIntent: '../../../asset',
+}] }, 2);
+assert.equal(intentPlan.events[0].visualIntent, 'warning');
+assert.equal(intentPlan.events[0].assetIntent, 'warning_marker');
+assert.equal(intentPlan.events[1].visualIntent, undefined, 'unknown renderer intents are dropped');
+assert.equal(intentPlan.events[1].assetIntent, undefined, 'asset paths cannot cross the renderer boundary');
 
 console.log('caption emphasis composition regression passed');
