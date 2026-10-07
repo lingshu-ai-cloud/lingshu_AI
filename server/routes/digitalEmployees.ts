@@ -49,7 +49,8 @@ const buildBusinessSnapshot: typeof defaultBuildBusinessSnapshot = (tenantId, ra
 import { freezeStoryboardNarration, CONTENT_SCRIPT_QUALITY_RULE_VERSION, advanceAutomatedContentProduction, collectProductionAssets, generateDirectorScriptContracts, productIdentity, resolveEnterpriseAssetLocation, resumeContentProjectForTaskControl } from '../digitalEmployees/contentProduction.js';
 import { contentProjectLineageFields } from '../digitalEmployees/contentProjectLineage.js';
 import { buildContentBatchPlan, contentPlanCoverage, enterpriseAssetStableId, type ContentBatchPlanDraft } from '../digitalEmployees/contentBatchPlan.js';
-import { enrichPackageWithContentSignals } from '../digitalEmployees/contentPlanRecommendation.js';
+import { bindDefaultProductsToPackage, enrichPackageWithContentSignals, publicationCopyForPlan } from '../digitalEmployees/contentPlanRecommendation.js';
+import { MATERIAL_TYPE_LABELS, SHOT_ROLE_LABELS, buildBenchmarkAnalysis } from '../../shared/benchmarkAnalysis.js';
 import { summarizeContentFeedback } from '../digitalEmployees/contentReview.js';
 import { summarizeWeeklyMatrix } from '../digitalEmployees/weeklyMatrixReview.js';
 import {
@@ -58,7 +59,7 @@ import {
   type ResolvedDigitalEmployeeConfiguration,
 } from '../digitalEmployees/configuration.js';
 import { dispatchFollowupBatch, recoverStaleFollowupSending, followupDispatchPreflightBlockedReason, getTenantFollowupDispatchStatus, onFollowupWorkerEvent, preflightFollowupBatchDispatch } from '../digitalEmployees/followupDispatchWorker.js';
-import { bindPublishingTargets, listConnectedPublishingAccounts, publishingTargetPlatforms } from '../digitalEmployees/publishingTargets.js';
+import { bindPublishingTargets, listConnectedPublishingAccounts, localPublishingAccountMocksEnabled, publishingTargetPlatforms } from '../digitalEmployees/publishingTargets.js';
 import { digitalEmployeeOperatingGoals, isDigitalEmployeeOperatingGoal } from '../digitalEmployees/overviewGoalScope.js';
 import {
   VISIBLE_DIGITAL_EMPLOYEE_AGENT_ROLES as VISIBLE_AGENT_ROLES,
@@ -110,7 +111,8 @@ digitalEmployeesRouter.use(enforceSupportSessionReadOnly);
 
 digitalEmployeesRouter.get('/publishing-accounts', async (_req, res) => {
   const { tenantId } = res.locals as AuthLocals;
-  res.json({ items: await listConnectedPublishingAccounts(tenantId) });
+  const enterprise = await readTenantEnterpriseProfile(tenantId);
+  res.json({ items: await listConnectedPublishingAccounts(tenantId, enterprise.company.name) });
 });
 
 digitalEmployeesRouter.get('/agent-usage-costs', async (_req, res) => {
@@ -161,6 +163,14 @@ async function resolveCurrentConfiguration(
   const config = publicConfig(configRecord);
   if (!config || !configRecord) return null;
   const enterpriseProfile = await readTenantEnterpriseProfile(tenantId);
+  if (localPublishingAccountMocksEnabled()) {
+    const accounts = await listConnectedPublishingAccounts(tenantId, enterpriseProfile.company.name);
+    config.publishingTargets = accounts.map(account => ({
+      platform: account.platform,
+      accountId: account.accountId,
+      accountLabel: account.accountLabel,
+    }));
+  }
   return resolveDigitalEmployeeConfiguration({
     config,
     enterpriseProfile,
@@ -301,7 +311,11 @@ async function contentRoutingEvidence(tenantId: string, config: DigitalEmployeeC
   if (materials.status === 'unavailable') throw Error('素材库暂时不可用，请稍后重试');
   const rawProducts = Array.isArray(profile.products?.items) ? profile.products.items as Array<Record<string, unknown>> : [];
   const focused = config.focusProducts.split(/[\n,，;；、]/).map(item => item.trim().toLowerCase()).filter(Boolean);
-  const selectedProducts = focused.length ? rawProducts.filter(product => focused.some(value => [product.name, product.sku].some(field => String(field || '').trim().toLowerCase() === value))) : [];
+  const focusedProducts = focused.length ? rawProducts.filter(product => focused.some(value => [product.name, product.sku].some(field => String(field || '').trim().toLowerCase() === value))) : [];
+  // The weekly product-selection step may bind any product already confirmed in
+  // the enterprise table. `focusProducts` only controls ordering; it must not
+  // hide the user's other products or make an explicit selection fail later.
+  const selectedProducts = [...focusedProducts, ...rawProducts.filter(product => !focusedProducts.includes(product))];
   const materialRows = materials.items.filter(item => {
     const url = String(item.url || item.path || item.objectKey || '').trim();
     return Boolean(url && item.synthetic !== true && !/mock|placeholder|e2e-quality-test/i.test(url));
@@ -332,10 +346,11 @@ async function recommendPackageWithTenantEvidence(
   ownerName = '',
 ): Promise<WeeklyPackage> {
   const pack = recommendPackage(goal, config, ownerId, ownerName);
-  const [videos, benchmarks, enterpriseProfile] = await Promise.all([
+  const [videos, benchmarks, enterpriseProfile, routingEvidence] = await Promise.all([
     store.list<StoredRecord>('trend_videos', { where: { tenantId }, sort: '-updatedAt', perPage: 500 }).catch(() => ({ items: [] })),
     store.list<StoredRecord>('competitor_accounts', { where: { tenantId }, sort: '-createdAt', perPage: 200 }).catch(() => ({ items: [] })),
     readTenantEnterpriseProfile(tenantId),
+    contentRoutingEvidence(tenantId, config),
   ]);
   const enabledRoutes = enterpriseProfile.socialStrategy?.enabledRoutes || [];
   const enterprisePrimaryCta = enabledRoutes
@@ -347,7 +362,8 @@ async function recommendPackageWithTenantEvidence(
   const matrixBound = matrixPlan?.length
     ? fillMatrixVideos({ ...pack, matrixPlan }, config.videoDefaults || {}, goal.endsAt)
     : pack;
-  return enrichPackageWithContentSignals({ pack: matrixBound, goal, config, videos: videos.items, benchmarks: benchmarks.items });
+  const productBound = bindDefaultProductsToPackage(matrixBound, routingEvidence.products);
+  return enrichPackageWithContentSignals({ pack: productBound, goal, config, videos: videos.items, benchmarks: benchmarks.items });
 }
 
 function publicPreviewUrl(value: unknown): string {
@@ -388,7 +404,7 @@ function previewForBlockedPlan(input: {
       hook: input.plan.buyerProblem || input.plan.theme,
       shotSummary: [],
     },
-    materials: { status: 'blocked', items: [], blockers, pendingShootTaskIds: [] },
+    materials: { status: 'blocked', items: [], storyboard: [], blockers, pendingShootTaskIds: [] },
     readiness: { canStart: false, blockers },
     confidence: { onTimeRate: null, effectLevel: 'insufficient', reasons: ['制作条件尚未补齐，不展示虚构成功率'] },
   };
@@ -405,7 +421,8 @@ async function generateWeeklyTaskPreviews(input: {
   const goal = goalInput(input.goal);
   const production = input.pack.tasks.find(task => task.templateId === 'production');
   const plans = production?.videoPlans || [];
-  if (!production || !plans.length) throw new Error('周任务总纲中还没有内容任务');
+  const masterPlans = plans.filter(plan => plan.productionRole !== 'platform_adaptation');
+  if (!production || !plans.length) throw new Error('周视频计划中还没有内容任务');
   const generatedAt = new Date().toISOString();
   const versions = {
     configVersion: Number(input.planBody.configVersion || 1),
@@ -433,8 +450,8 @@ async function generateWeeklyTaskPreviews(input: {
       ...input.pack,
       detailGeneration: {
         status: 'blocked', startedAt: generatedAt, generatedAt,
-        estimatedMinutes: Math.max(2, Math.ceil(plans.length / 2) * 2), usageCostCny: null,
-        readyCount: 0, blockedCount: blockedPlans.length, blockers: [draft.blocker].filter(Boolean),
+        estimatedMinutes: Math.max(2, Math.ceil(masterPlans.length / 2) * 2), usageCostCny: null,
+        readyCount: 0, blockedCount: masterPlans.length, blockers: [draft.blocker].filter(Boolean),
       },
       tasks: input.pack.tasks.map(task => task.templateId === 'production' ? { ...task, videoPlans: blockedPlans } : task),
     };
@@ -446,10 +463,11 @@ async function generateWeeklyTaskPreviews(input: {
   const pendingShooting = shootingRows.items.map(row => ({ row, payload: jsonObject<Record<string, unknown>>(row.payload, {}) }))
     .filter(item => !jsonObject<string[]>(item.payload.uploadedMaterialIds, []).length);
   const budgetExceeded = Boolean(input.pack.directorPlan
-    && input.pack.directorPlan.productionSpent + plans.reduce((sum, plan) => sum + Number(plan.estimatedCost || 0), 0) > input.pack.directorPlan.productionBudget);
+    && input.pack.directorPlan.productionSpent + plans.reduce((sum, plan) => sum + Number(plan.estimatedCost || 0), 0) > (input.pack.directorPlan.productionBudgetMax || input.pack.directorPlan.productionBudget));
 
-  const preflight = draft.orders.map((order, index) => {
-    const plan = plans[index]!;
+  const preflight = draft.orders.map(order => {
+    const plan = order.videoPlan || masterPlans.find(item => item.contentId === order.videoPlan?.contentId);
+    if (!plan) throw new Error(`生产订单 ${order.id} 缺少原创母版`);
     const selectedAssets = order.evidenceRefs
       .filter(ref => ref.type === 'enterprise_material')
       .map(ref => assetById.get(ref.id))
@@ -465,7 +483,7 @@ async function generateWeeklyTaskPreviews(input: {
       selectedAssets.some(asset => asset.authorization.status === 'unknown') ? '素材授权范围未确认' : '',
       shootTasks.length ? `有 ${shootTasks.length} 个待拍任务尚未回填素材` : '',
       budgetExceeded ? '本周预计制作成本超过生产预算' : '',
-      publishingRequired && !input.config.publishingTargets.some(target => target.accountId === order.accountId && target.platform === order.platform) ? '发布账号尚未连接或不在本周授权范围' : '',
+      publishingRequired && (order.deliveryVariants || []).some(variant => !input.config.publishingTargets.some(target => target.accountId === variant.accountId && target.platform === variant.platform)) ? '一个或多个平台发布账号尚未连接或不在本周授权范围' : '',
       plan.route === 'clone' && !references.items.some(item => item.id === plan.referenceId) ? '爆款参考不存在或已失效' : '',
     ].filter(Boolean);
     return { order, plan, selectedAssets, shootTasks, blockers: [...new Set(blockers)] };
@@ -475,7 +493,7 @@ async function generateWeeklyTaskPreviews(input: {
     ? await generateDirectorScriptContracts({ tenantId: input.tenantId, config: input.config, goal, orders: readyOrders, now: generatedAt })
     : [];
   const directedById = new Map(directedOrders.map(order => [order.id, order]));
-  const nextPlans = preflight.map(item => {
+  const nextMasterPlans = preflight.map(item => {
     const reference = references.items.find(row => row.id === item.plan.referenceId);
     const analysis = jsonObject<Record<string, unknown>>(reference?.aiAnalysis, {});
     const directed = directedById.get(item.order.id);
@@ -491,6 +509,40 @@ async function generateWeeklyTaskPreviews(input: {
       id: shooting.row.id,
       name: String(shooting.payload.title || '待拍素材'),
       type: 'video', previewUrl: '', status: 'pending_shoot',
+    });
+    const benchmarkAnalysis = item.plan.benchmarkAnalysis || (reference ? buildBenchmarkAnalysis({
+      analysis,
+      videoId: reference.id,
+      duration: Number(reference.duration || 0),
+      evidenceRevision: String(reference.updatedAt || reference.updated_at || analysis.analysisRunId || `analysis:${reference.id}`),
+    }) : undefined);
+    const unusedAssets = [...item.selectedAssets];
+    const assetForStructure = (materialType: keyof typeof MATERIAL_TYPE_LABELS) => {
+      const keywords: Record<keyof typeof MATERIAL_TYPE_LABELS, RegExp> = {
+        talking_head: /真人|口播|主播|人物|presenter|talking/i,
+        factory: /工厂|生产|车间|设备|流水线|factory|production/i,
+        product: /产品|商品|包装|展示|product|packaging/i,
+        consumer_demo: /消费者|用户|使用|效果|试用|consumer|demo|before|after/i,
+        unknown: /./,
+      };
+      const matchIndex = unusedAssets.findIndex(asset => keywords[materialType].test([asset.name, ...asset.tags, ...asset.visualObservations].join(' ')));
+      const selectedIndex = matchIndex >= 0 ? matchIndex : unusedAssets.length ? 0 : -1;
+      return selectedIndex >= 0 ? unusedAssets.splice(selectedIndex, 1)[0] : undefined;
+    };
+    const storyboard: VideoPreproductionPreview['materials']['storyboard'] = (benchmarkAnalysis?.structure || []).map(step => {
+      const shot = step.shotIds.map(id => benchmarkAnalysis?.shots.find(item => item.shotId === id)).find(Boolean);
+      const asset = assetForStructure(step.materialType);
+      const status = asset ? asset.authorization.status === 'unknown' ? 'needs_authorization' as const : 'ready' as const : 'missing' as const;
+      return {
+        materialType: step.materialType,
+        materialLabel: MATERIAL_TYPE_LABELS[step.materialType],
+        narrativeRole: step.narrativeRole,
+        shotIds: step.shotIds,
+        referenceFirstFrameUrl: publicPreviewUrl(shot?.firstFrameRef),
+        materialId: asset?.id || '',
+        materialPreviewUrl: publicPreviewUrl(asset?.url),
+        status,
+      };
     });
     const benchmarkStatus: VideoPreproductionPreview['benchmark']['status'] = item.plan.referenceId
       ? reference ? 'ready' : 'missing'
@@ -517,6 +569,7 @@ async function generateWeeklyTaskPreviews(input: {
       materials: {
         status: item.blockers.some(blocker => /素材|待拍|授权/.test(blocker)) ? 'blocked' : 'ready',
         items: materialItems,
+        storyboard,
         blockers: blockers.filter(blocker => /素材|待拍|授权/.test(blocker)),
         pendingShootTaskIds: item.shootTasks.map(shooting => shooting.row.id),
       },
@@ -534,14 +587,26 @@ async function generateWeeklyTaskPreviews(input: {
     };
     return normalizeVideoPlan({ ...item.plan, directorStatus: canStart ? 'script_approved' : 'blocked', preproduction: preview });
   });
-  const blocked = nextPlans.filter(plan => !plan.preproduction?.readiness.canStart);
+  const masterByFamily = new Map(nextMasterPlans.map(plan => [plan.contentFamilyId || plan.contentId || '', plan]));
+  const nextPlans = plans.map(plan => {
+    const preparedMaster = masterByFamily.get(plan.contentFamilyId || plan.contentId || '');
+    if (!preparedMaster) return normalizeVideoPlan(plan);
+    if (plan.contentId === preparedMaster.contentId) return preparedMaster;
+    return normalizeVideoPlan({
+      ...plan,
+      directorStatus: preparedMaster.directorStatus,
+      benchmarkAnalysis: preparedMaster.benchmarkAnalysis,
+      preproduction: preparedMaster.preproduction,
+    });
+  });
+  const blocked = nextMasterPlans.filter(plan => !plan.preproduction?.readiness.canStart);
   const allBlockers = [...new Set(blocked.flatMap(plan => plan.preproduction?.readiness.blockers || []))];
   return {
     ...input.pack,
     detailGeneration: {
       status: blocked.length ? 'blocked' : 'ready', startedAt: generatedAt, generatedAt,
-      estimatedMinutes: Math.max(2, Math.ceil(plans.length / 2) * 2), usageCostCny: null,
-      readyCount: nextPlans.length - blocked.length, blockedCount: blocked.length, blockers: allBlockers,
+      estimatedMinutes: Math.max(2, Math.ceil(masterPlans.length / 2) * 2), usageCostCny: null,
+      readyCount: nextMasterPlans.length - blocked.length, blockedCount: blocked.length, blockers: allBlockers,
     },
     tasks: input.pack.tasks.map(task => task.templateId === 'production' ? { ...task, videoPlans: nextPlans } : task),
   };
@@ -578,6 +643,9 @@ async function prepareContentBatchPlan(input: { tenantId: string; goal: GoalReco
     priorRoutingEvidence: {
       priorRouteDistribution: jsonObject(priorRoutingEvidence.priorRouteDistribution, {}),
       approvalFeedback: jsonObject(priorRoutingEvidence.approvalFeedback, []),
+      contentInheritance: jsonObject(priorRoutingEvidence.contentInheritance, {}),
+      tagAdaptation: jsonObject(priorRoutingEvidence.tagAdaptation, {}),
+      industryTrends: jsonObject(priorRoutingEvidence.industryTrends, {}),
     },
   });
   return { existing, draft, planBody };
@@ -1095,14 +1163,16 @@ async function completeReview(tenantId: string, goal: GoalRecord, run: RunRecord
   const weeklyPlan = await tenantRecord<PlanRecord>(COLLECTION.plans, run.plan_id, tenantId);
   const reviewPackage = jsonObject<{ businessPackage?: WeeklyPackage }>(weeklyPlan?.plan, {}).businessPackage;
   const matrixPlan = reviewPackage?.matrixPlan;
-  const existing = await first<StoredRecord & { tenant_id: string }>(COLLECTION.reviews, { tenant_id: tenantId, run_id: run.id });
-  const [approvals, handoffs, businessSnapshot, batchPlans, projects, posts] = await Promise.all([
+  const existing = await first<StoredRecord & { tenant_id: string; run_id: string; summary: unknown }>(COLLECTION.reviews, { tenant_id: tenantId, run_id: run.id });
+  const [approvals, handoffs, businessSnapshot, batchPlans, projects, posts, trendVideos, reviewHistory] = await Promise.all([
     store.list<ApprovalRecord>(COLLECTION.approvals, { where: { tenant_id: tenantId, run_id: run.id }, perPage: 100 }),
     store.list<HandoffRecord>(COLLECTION.handoffs, { where: { tenant_id: tenantId, run_id: run.id }, perPage: 100 }),
     buildBusinessSnapshot(tenantId, { startsAt: goal.starts_at, endsAt: goal.ends_at }),
     store.list<ContentBatchPlanRecord>(COLLECTION.contentBatchPlans, { where: { tenant_id: tenantId, run_id: run.id }, perPage: 20 }),
     store.list<StoredRecord>('studio_projects', { where: { tenant_id: tenantId }, perPage: 500 }),
     store.list<StoredRecord>('posts', { where: { tenant_id: tenantId }, perPage: 500 }),
+    store.list<StoredRecord>('trend_videos', { where: { tenantId }, sort: '-updatedAt', perPage: 100 }).catch(() => ({ items: [] })),
+    store.list<StoredRecord & { run_id?: string; summary?: unknown }>(COLLECTION.reviews, { where: { tenant_id: tenantId }, sort: '-created_at', perPage: 20 }),
   ]);
   const taskReview = buildWeeklyReview({
     goal: goalInput(goal),
@@ -1121,11 +1191,16 @@ async function completeReview(tenantId: string, goal: GoalRecord, run: RunRecord
       .filter(Boolean))),
   };
   const contentApprovalTaskIds = new Set(tasks.filter(task => task.task_key === 'content_release_approval').map(task => task.id));
+  const previousReview = reviewHistory.items.find(item => String(item.run_id || '') !== run.id);
+  const previousRound = jsonObject<Record<string, unknown>>(jsonObject<Record<string, unknown>>(previousReview?.summary, {}).nextRoundRecommendations, {});
+  const previousTagAdaptation = jsonObject<Record<string, unknown>>(previousRound.tagAdaptation, {});
   const contentFeedback = summarizeContentFeedback({
     orders: batchPlans.items.flatMap(item => jsonObject(item.orders, [])),
     projects: projects.items.filter(item => recordBelongsToTask(item, run, reviewScope)),
     approvals: approvals.items.filter(approval => contentApprovalTaskIds.has(String(approval.task_id || ''))),
     posts: posts.items.filter(item => recordBelongsToTask(item, run, reviewScope)),
+    trendVideos: trendVideos.items,
+    previousHotTags: jsonObject<string[]>(previousTagAdaptation.hotTags, []),
   });
   const matrixPerformance = matrixPlan ? summarizeWeeklyMatrix(matrixPlan, projects.items.filter(item => recordBelongsToTask(item, run, reviewScope)), posts.items.filter(item => recordBelongsToTask(item, run, reviewScope)), reviewPackage?.tasks.some(task => task.templateId === 'publishing')) : undefined;
   const summary = {
@@ -1135,7 +1210,14 @@ async function completeReview(tenantId: string, goal: GoalRecord, run: RunRecord
     contentPerformance: contentFeedback.items,
     approvalFeedback: contentFeedback.approvalFeedback,
     nextPlanRecommendations: [...contentFeedback.nextPlanRecommendations, ...(matrixPerformance || []).map(row => `${row.platform} · ${row.accountId}：${row.recommendation}`)],
-    routingEvidence: { priorRouteDistribution: contentFeedback.routeCounts, approvalFeedback: contentFeedback.approvalFeedback },
+    nextRoundRecommendations: contentFeedback.nextRoundRecommendations,
+    routingEvidence: {
+      priorRouteDistribution: contentFeedback.routeCounts,
+      approvalFeedback: contentFeedback.approvalFeedback,
+      contentInheritance: contentFeedback.nextRoundRecommendations.contentInheritance,
+      tagAdaptation: contentFeedback.nextRoundRecommendations.tagAdaptation,
+      industryTrends: contentFeedback.nextRoundRecommendations.industryTrends,
+    },
   };
   const payload = { status: 'generated', summary };
   if (existing) {
@@ -2524,7 +2606,22 @@ digitalEmployeesRouter.get('/planning-options', async (_req, res) => {
     return groups.flat().map((asset: any, assetIndex: number) => ({ id: enterpriseAssetStableId(index, assetIndex, String(asset.url || '')), name: asset.name || '产品素材' }));
   });
   const videos = await store.list<StoredRecord>('trend_videos', { where: { tenantId }, perPage: 500 });
-  res.json({ ...evidence, assets, references: videos.items.filter(exactVideoAnalysis).map(item => ({ id: item.id, name: String(item.title || item.id) })) });
+  res.json({ ...evidence, assets, references: videos.items.filter(exactVideoAnalysis).map(item => {
+    const analysis = jsonObject<Record<string, any>>(item.aiAnalysis, {});
+    const thumbnailUrl = [item.thumbnailUrl, item.coverUrl, item.thumbnail, analysis.thumbnailUrl, analysis.coverUrl]
+      .map(value => String(value || '').trim()).find(Boolean) || '';
+    const sourceUrl = [item.sourceUrl, item.videoUrl, item.url, analysis.sourceUrl, analysis.videoUrl]
+      .map(value => String(value || '').trim()).find(Boolean) || '';
+    return {
+      id: item.id,
+      name: String(item.title || item.id),
+      platform: String(item.platform || ''),
+      thumbnailUrl,
+      sourceUrl,
+      views: String(item.views || analysis.views || ''),
+      account: String(analysis.sourceAccountName || analysis.author || item.author || ''),
+    };
+  }) });
 });
 
 digitalEmployeesRouter.get('/package-options', async (req, res) => {
@@ -2538,12 +2635,22 @@ digitalEmployeesRouter.post('/goals/:goalId/package/recommend', async (req, res)
   const goal = await tenantRecord<GoalRecord>(COLLECTION.goals, req.params.goalId, tenantId);
   if (!goal || goal.status !== 'draft') { res.status(409).json({ error: 'draft_required' }); return; }
   const plan = await first<PlanRecord>(COLLECTION.plans, { tenant_id: tenantId, goal_id: goal.id });
-  const config = configSnapshotForPlan(plan, publicConfig(await configForTenant(tenantId))!);
-  const current = plan ? jsonObject<{ businessPackage?: WeeklyPackage }>(plan.plan, {}).businessPackage : undefined;
+  const configRecord = await configForTenant(tenantId);
+  const current = publicConfig(configRecord);
+  if (!current) { res.status(409).json({ error: 'onboarding_required' }); return; }
+  const resolved = await resolveCurrentConfiguration(tenantId, configRecord);
+  const snapshot = configSnapshotForPlan(plan, current);
+  // Local development intentionally provides one enterprise-named account per
+  // supported platform. Recommending a draft must rebind legacy `planned:*`
+  // targets to those usable accounts instead of preserving dead placeholders.
+  const config = localPublishingAccountMocksEnabled() && resolved
+    ? { ...snapshot, companyName: resolved.config.companyName, publishingTargets: resolved.config.publishingTargets }
+    : snapshot;
+  const currentPackage = plan ? jsonObject<{ businessPackage?: WeeklyPackage }>(plan.plan, {}).businessPackage : undefined;
   const members = await listTenantEmployees(res.locals as AuthLocals, req.headers.authorization);
   const member = members.find(m => m.id === userId);
-  const proposal = await recommendPackageWithTenantEvidence(tenantId, goalInput(goal), { ...config, operatingMaturity: current?.maturity || config.operatingMaturity, operatingAssessment: current?.operatingAssessment || config.operatingAssessment, defaultParticipation: current?.participation || config.defaultParticipation }, userId, member?.name);
-  proposal.revision = current?.revision || 0;
+  const proposal = await recommendPackageWithTenantEvidence(tenantId, goalInput(goal), { ...config, operatingMaturity: currentPackage?.maturity || config.operatingMaturity, operatingAssessment: currentPackage?.operatingAssessment || config.operatingAssessment, defaultParticipation: currentPackage?.participation || config.defaultParticipation }, userId, member?.name);
+  proposal.revision = currentPackage?.revision || 0;
   res.json(proposal);
 });
 
@@ -2552,7 +2659,7 @@ digitalEmployeesRouter.post('/goals/:goalId/package/details', async (req, res) =
   await withLocalQueue(goalApprovalQueues, `${tenantId}:package-details:${req.params.goalId}`, async () => {
     const goal = await tenantRecord<GoalRecord>(COLLECTION.goals, req.params.goalId, tenantId);
     if (!goal || goal.status !== 'draft') {
-      res.status(409).json({ error: 'draft_required', message: '只有待确认的周任务总纲可以生成详细预览。' });
+      res.status(409).json({ error: 'draft_required', message: '只有待确认的周视频计划可以生成制作准备。' });
       return;
     }
     const run = await first<RunRecord>(COLLECTION.runs, { tenant_id: tenantId, goal_id: goal.id });
@@ -2564,13 +2671,20 @@ digitalEmployeesRouter.post('/goals/:goalId/package/details', async (req, res) =
     if (!plan) { res.status(404).json({ error: 'plan_not_found' }); return; }
     const planBody = jsonObject<Record<string, unknown>>(plan.plan, {});
     const pack = planBody.businessPackage as WeeklyPackage | undefined;
-    if (!pack) { res.status(409).json({ error: 'weekly_package_missing', message: '请先生成免费的周任务总纲。' }); return; }
-    const config = configSnapshotForPlan(plan, publicConfig(await configForTenant(tenantId))!);
+    if (!pack) { res.status(409).json({ error: 'weekly_package_missing', message: '请先制定本周目标和视频计划。' }); return; }
+    const configRecord = await configForTenant(tenantId);
+    const currentConfig = publicConfig(configRecord);
+    if (!currentConfig) { res.status(409).json({ error: 'onboarding_required' }); return; }
+    const resolvedConfiguration = await resolveCurrentConfiguration(tenantId, configRecord);
+    const config = localPublishingAccountMocksEnabled() && resolvedConfiguration
+      ? resolvedConfiguration.config
+      : configSnapshotForPlan(plan, currentConfig);
     if (config.smartOperationsEnabled === false) {
       res.status(409).json({ error: 'smart_operations_disabled', message: '智能经营已关闭；开启后才能生成新的 Agent 任务详情。' });
       return;
     }
     const currentPlans = pack.tasks.find(task => task.templateId === 'production')?.videoPlans || [];
+    const currentMasterPlans = currentPlans.filter(item => item.productionRole !== 'platform_adaptation');
     if (pack.detailGeneration?.status === 'ready' && currentPlans.length && currentPlans.every(item => item.preproduction?.readiness.canStart)) {
       res.json(await buildOverview(tenantId, goal.id));
       return;
@@ -2589,7 +2703,7 @@ digitalEmployeesRouter.post('/goals/:goalId/package/details', async (req, res) =
         ...pack,
         detailGeneration: {
           status: 'generating', startedAt, generatedAt: '',
-          estimatedMinutes: Math.max(2, Math.ceil(currentPlans.length / 2) * 2), usageCostCny: null,
+          estimatedMinutes: Math.max(2, Math.ceil(currentMasterPlans.length / 2) * 2), usageCostCny: null,
           readyCount: 0, blockedCount: 0, blockers: [],
         },
       };
@@ -2621,11 +2735,11 @@ digitalEmployeesRouter.post('/goals/:goalId/package/details', async (req, res) =
           ...generatingPack,
           detailGeneration: {
             ...generatingPack.detailGeneration!, status: 'blocked', generatedAt: new Date().toISOString(),
-            readyCount: 0, blockedCount: currentPlans.length, blockers: [reason.slice(0, 500)],
+            readyCount: 0, blockedCount: currentMasterPlans.length, blockers: [reason.slice(0, 500)],
           },
         };
         await store.update(COLLECTION.plans, plan.id, { plan: { ...generatingPlan, businessPackage: blockedPack } }).catch(() => false);
-        res.status(503).json({ error: 'weekly_package_detail_generation_failed', message: `${reason}。已保留任务总纲，可修复后重试。` });
+        res.status(503).json({ error: 'weekly_package_detail_generation_failed', message: `${reason}。已保留周视频计划，可修复后重试。` });
       }
     } finally {
       await releaseDurableOperationLease({ dataStore: store, lease }).catch(() => undefined);
@@ -2653,7 +2767,13 @@ digitalEmployeesRouter.put('/goals/:goalId/package', async (req, res) => {
     const members = await listTenantEmployees(res.locals as AuthLocals, req.headers.authorization);
     if (pack.tasks.some(t => t.ownerId && !members.some(m => m.id === t.ownerId))) { res.status(400).json({ error: 'invalid_owner', message: '负责人必须是当前企业成员。' }); return; }
     for (const task of pack.tasks) task.ownerName = members.find(m => m.id === task.ownerId)?.name || '';
-    const config = configSnapshotForPlan(plan, publicConfig(await configForTenant(tenantId))!);
+    const configRecord = await configForTenant(tenantId);
+    const currentConfig = publicConfig(configRecord);
+    if (!currentConfig) { res.status(409).json({ error: 'onboarding_required' }); return; }
+    const resolvedConfiguration = await resolveCurrentConfiguration(tenantId, configRecord);
+    const config = localPublishingAccountMocksEnabled() && resolvedConfiguration
+      ? resolvedConfiguration.config
+      : configSnapshotForPlan(plan, currentConfig);
     if (pack.authorization.accountIds.some(id => !config.publishingTargets.some(t => t.accountId === id))) { res.status(400).json({ error: 'invalid_account_scope', message: '请选择本计划绑定的发布账号。' }); return; }
     if (pack.matrixPlan?.some(row => !goalInput(goal).contentPlatforms.includes(row.platform) || (row.connected !== false && !config.publishingTargets.some(target => target.accountId === row.accountId && target.platform === row.platform)))) { res.status(400).json({ error: 'invalid_matrix_account', message: '矩阵账号必须属于本计划及本周平台范围。' }); return; }
     const customerIds = new Set(getWhatsAppCustomers(tenantId).map(c => c.id));
@@ -2662,17 +2782,29 @@ digitalEmployeesRouter.put('/goals/:goalId/package', async (req, res) => {
       const project = await tenantRecord<StoredRecord & { tenant_id: string }>('studio_projects', id, tenantId);
       if (!project || !studioProjectRendered(project)) { res.status(400).json({ error: 'invalid_source_project', message: '已有作品不可用，请重新选择。' }); return; }
     }
-    // A matrix, budget or content edit makes the previous Director/Content
-    // Agent evidence stale. Keep the free outline, but require step 2 to run
-    // again instead of showing or executing an obsolete preview.
+    // A matrix, product, budget or content edit invalidates previous
+    // pre-production evidence. Publication copy is regenerated from the same
+    // frozen weekly plan so title/caption/tags stay aligned with the product.
     delete pack.detailGeneration;
     for (const task of pack.tasks) {
       if (task.templateId !== 'production') continue;
-      for (const videoPlan of task.videoPlans || []) delete videoPlan.preproduction;
+      task.videoPlans = (task.videoPlans || []).map(source => {
+        const videoPlan = normalizeVideoPlan(source);
+        delete videoPlan.preproduction;
+        videoPlan.publication = publicationCopyForPlan({
+          plan: videoPlan,
+          productName: videoPlan.productName,
+          theme: videoPlan.planningEvidence?.referenceTitle || videoPlan.theme,
+        });
+        return videoPlan;
+      });
     }
     pack.revision = (old?.revision || 0) + 1;
     const compiled = compilePackage(pack, goalInput(goal), config);
-    if (!await store.update(COLLECTION.plans, plan.id, { plan: { ...body, ...compiled } })) { res.status(503).json({ error: 'weekly_plan_storage_unavailable' }); return; }
+    const localConfigurationSnapshot = localPublishingAccountMocksEnabled() && resolvedConfiguration
+      ? configurationSnapshot(resolvedConfiguration)
+      : {};
+    if (!await store.update(COLLECTION.plans, plan.id, { plan: { ...body, ...localConfigurationSnapshot, ...compiled } })) { res.status(503).json({ error: 'weekly_plan_storage_unavailable' }); return; }
     await appendAudit({ tenantId, userId, action: 'weekly_package.updated', targetType: 'weekly_plan', targetId: plan.id, metadata: { revision: pack.revision, tasks: pack.tasks } });
     res.json(await buildOverview(tenantId, goal.id));
   });
@@ -2685,7 +2817,7 @@ digitalEmployeesRouter.post('/goals', async (req, res) => {
   const config = resolvedConfiguration?.config || null;
   if (!config || !resolvedConfiguration) { res.status(409).json({ error: 'onboarding_required' }); return; }
   if (config.smartOperationsEnabled === false) {
-    res.status(409).json({ error: 'smart_operations_disabled', message: '智能经营已关闭；历史任务仍可查看，开启后才能生成新的周任务总纲。' });
+    res.status(409).json({ error: 'smart_operations_disabled', message: '智能经营已关闭；历史任务仍可查看，开启后才能制定新的周目标。' });
     return;
   }
   const goal = normalizeWeeklyGoal(req.body || {}, config);
@@ -2830,7 +2962,7 @@ export async function approveGoalForReview(tenantId: string, userId: string, goa
     if (pack.tasks.some(t => t.ownerId && !members.some(m => m.id === t.ownerId))) { return { status: 409, body: { error: 'owner_unavailable', message: '计划中的负责人已不可用，请重新分配任务。' } }; }
     const detailedPlans = pack.tasks.find(task => task.templateId === 'production')?.videoPlans || [];
     if (pack.detailGeneration && (pack.detailGeneration.status !== 'ready' || detailedPlans.some(item => !item.preproduction?.readiness.canStart))) {
-      return { status: 409, body: { error: 'package_details_blocked', message: '任务预分析仍有卡点，请先补齐素材、授权、预算或参考后重新生成预览。' } };
+      return { status: 409, body: { error: 'package_details_blocked', message: '制作准备仍有卡点，请先补齐素材、授权、预算或爆款参考后再启动。' } };
     }
     const issues = validatePackage(pack, goalInput(goal), configSnapshotForPlan(existingPlan, currentConfig));
     if (issues.length) { return { status: 400, body: { error: 'package_invalid', message: issues.join('；') } }; }

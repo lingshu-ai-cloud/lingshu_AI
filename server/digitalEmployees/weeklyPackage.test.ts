@@ -55,13 +55,13 @@ const scoped = normalizePackage({ ...pack, authorization: { mode: 'bounded', acc
 assert.deepEqual(scoped.directorPlan, pack.directorPlan, 'director budgets and targets persist through normalization');
 const unknownDetailCost = normalizePackage({ ...pack, detailGeneration: { status: 'ready', startedAt: '2026-10-05T00:00:00Z', generatedAt: '2026-10-05T00:01:00Z', estimatedMinutes: 2, usageCostCny: null, readyCount: 1, blockedCount: 0, blockers: [] } });
 assert.equal(unknownDetailCost.detailGeneration?.usageCostCny, null, 'unknown Agent usage must not normalize into a fabricated zero cost');
-const overBudget = normalizePackage({ ...pack, directorPlan: { ...pack.directorPlan!, productionBudget: 100, productionSpent: 70, productionReserved: 40 } });
+const overBudget = normalizePackage({ ...pack, directorPlan: { ...pack.directorPlan!, productionBudget: 100, productionBudgetMax: 100, productionSpent: 70, productionReserved: 40 } });
 assert.ok(validatePackage(overBudget, goal).some(issue => issue.includes('超过生产预算')));
-const costly = structuredClone(pack); costly.directorPlan!.productionBudget = 10; costly.tasks.find(t => t.templateId === 'production')!.videoPlans![0].estimatedCost = 20;
+const costly = structuredClone(pack); costly.directorPlan!.productionBudget = 10; costly.directorPlan!.productionBudgetMax = 10; costly.tasks.find(t => t.templateId === 'production')!.videoPlans![0].estimatedCost = 20;
 assert.ok(validatePackage(costly, goal).some(issue => issue.includes('预计费用')));
 const optimizedContext = compilePackage(costly, goal, config).businessPackage.operatingContext!;
 assert.equal(optimizedContext.accounts.reduce((sum, account) => sum + (account.budgetCny || 0), 0), 10, 'account budgets exhaust the confirmed production budget');
-assert.equal(optimizedContext.accounts[0]?.allocationBasis, 'estimated_cost', 'known per-item costs drive account budget optimization');
+assert.equal(optimizedContext.accounts[0]?.allocationBasis, 'content_load', 'shared master cost is allocated by each account publication load, not by whichever platform owns the master record');
 const wrongTarget = structuredClone(pack); wrongTarget.directorPlan!.originalTarget = 2; wrongTarget.directorPlan!.platformVersionTarget = 2; wrongTarget.directorPlan!.publishTarget = 2;
 assert.ok(validatePackage(wrongTarget, goal).some(issue => issue.includes('与编导目标')));
 const multilingual = structuredClone(pack); multilingual.directorPlan!.platformVersionTarget = 1; multilingual.directorPlan!.publishTarget = 2;

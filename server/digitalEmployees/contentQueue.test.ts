@@ -72,6 +72,26 @@ try {
   assert.deepEqual(queue.items[1]?.outputSummary, { count: 2, durationSeconds: null, formats: ['Shorts'] });
   assert.equal(queue.items[1]?.confidence?.business.level, 'insufficient');
   assert.equal(queue.items[1]?.steps.find(step => step.key === 'quality')?.estimatedMinutes, 25);
+
+  const acceptedProject = {
+    id: 'project-complete', tenant_id: 'tenant-1', updated_at: '2026-09-29T12:00:00Z',
+    spec: {
+      workflowRunId: 'run-1', contentOrderId: 'content_order_1::en', lang: 'en', contentOrder: { ...order, id: 'content_order_1::en', sourceContentOrderId: 'content_order_1' },
+      automation: { managedBy: 'digital_employee', stage: 'completed', status: 'completed', quality: { passed: true } },
+    },
+  };
+  store.list = (async (collection: string) => {
+    const items = collection === 'content_batch_plans' ? [{ id: 'batch-1', tenant_id: 'tenant-1', run_id: 'run-1', status: 'planned', orders: [order] }]
+      : collection === 'studio_projects' ? [acceptedProject]
+        : [];
+    return { items, page: 1, perPage: 500, totalItems: items.length, totalPages: 1 } as any;
+  }) as typeof store.list;
+  const awaitingAcceptance = await buildContentQueueProjection({
+    tenantId: 'tenant-1', runId: 'run-1', planBody: {}, tasks: [productionTask], planId: 'weekly-plan-1',
+    goal: { id: 'goal-1', objective: '本周获得 10 条询盘', startsAt: '2026-09-28', endsAt: '2026-10-04', version: 2 },
+  });
+  assert.equal(awaitingAcceptance.items[0]?.status, 'waiting_review');
+  assert.equal(awaitingAcceptance.items[0]?.progress, 90, '100% is reserved for a user-accepted deliverable');
 } finally {
   store.list = originalList;
 }

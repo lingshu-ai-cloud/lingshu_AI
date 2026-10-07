@@ -6,6 +6,7 @@ import { execFile } from 'child_process';
 import { promisify } from 'util';
 import fs from 'fs';
 import path from 'path';
+import os from 'os';
 import { fileURLToPath } from 'url';
 import { createHash, randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
@@ -39,6 +40,7 @@ import { localFallbacksEnabled } from '../lib/localFallbackPolicy.js';
 import { currentDataAuthority, runWithDataAuthority } from '../storage/dataAuthority.js';
 import { analysisTimelineQualityError, canPromoteExistingAnalysisToExact, exactVideoReviewReasons, hasCompleteVideoGeminiAnalysis, hasCompletedExactVideoEvidence, isAutoSeededVideo, isVideoLevelAnalysis, parseAnalysisTimeRange, serializeImagePostAnalysis, videoAnalysisOf } from '../lib/videoAnalysisCodec.js';
 import { applyOpeningHookMotionEvidence, firstSubstantiveOpeningShot } from './hookMotionEvidence.js';
+import { isDiscoveryVideoEligible, youtubeShortUrl } from '../../shared/contracts/discoveryVideoPolicy.js';
 
 export const videosRouter = Router();
 videosRouter.use(requireAuth);
@@ -61,6 +63,14 @@ let activeDownloadJobs = 0;
 const MAX_DOWNLOAD_JOBS = Number(process.env.VIDEO_DOWNLOAD_CONCURRENCY || 3);
 const pendingVisibleBackfillJobs = new Set<string>();
 const pocketBaseBackfillFailures = new Map<string, number>();
+
+function ytDlpPythonPath(): string {
+  const configured = String(process.env.YT_DLP_PYTHON || '').trim();
+  if (configured) return configured;
+  const bundled = path.join(os.homedir(), '.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3');
+  if (fs.existsSync(bundled)) return bundled;
+  return process.env.PYTHON || 'python3';
+}
 
 function crawlerCosKey(record: Record<string, unknown>, role: string, extension: string): string {
   const tenantId = String(record.tenantId || 'unknown').replace(/[^a-zA-Z0-9_-]/g, '_');
@@ -198,6 +208,8 @@ interface CrawledVideo {
   isAd?: boolean;
   isPaidPartnership?: boolean;
   source?: string;
+  /** True only when YouTube supplied the candidate from its Shorts surface. */
+  youtubeShort?: boolean;
 }
 
 type ContentFormat = 'video' | 'image';
@@ -745,6 +757,7 @@ async function discoverFreshBackfillCandidates(input: {
   const seen = new Set<string>();
   return sortByHeat(candidates.map(normalizeCrawledVideo))
     .filter(item => item.platform === input.platform && isPlatformUrl(item.sourceUrl, input.platform))
+    .filter(item => isDiscoveryVideoEligible(item))
     .filter(item => !input.excludedSourceUrls.has(item.sourceUrl))
     .filter(item => !seen.has(item.sourceUrl) && seen.add(item.sourceUrl))
     .filter(item => isKeywordRelevant(item, keyword))
@@ -857,6 +870,8 @@ export interface CrawlVideosInput {
   disableBackfill?: boolean;
   /** Scheduled collection finishes after persistence; analysis owns its own queue. */
   deferAnalysis?: boolean;
+  /** Maintenance callers may take immediate ownership of exact analysis after persistence. */
+  suppressAnalysisQueue?: boolean;
   /** Immutable discovery provenance attached to every imported or deduplicated candidate. */
   discoveryContext?: {
     runId: string;
@@ -1196,6 +1211,13 @@ export async function crawlVideosForTenant(input: CrawlVideosInput): Promise<Cra
     } else {
       throw new Error(`${platform} adapter pending`);
     }
+    const beforeShortFormFilter = items.length;
+    items = items.filter(item => isDiscoveryVideoEligible(item));
+    if (items.length === 0 && beforeShortFormFilter > 0) {
+      throw new NoCrawlResultsError(platform === 'youtube'
+        ? `候选 ${beforeShortFormFilter} 条均不符合硬规则：只采集 YouTube Shorts，且时长必须在 1–60 秒`
+        : `候选 ${beforeShortFormFilter} 条均不符合硬规则：视频时长必须在 1–60 秒`);
+    }
     if (!directUrlInput) {
       const beforeDateFilter = items.length;
       items = filterDateRangeItems(items, dateFrom, dateTo);
@@ -1243,6 +1265,7 @@ export async function crawlVideosForTenant(input: CrawlVideosInput): Promise<Cra
   const seenKeys = new Set<string>();
   const orderedItems = sortByHeat(items.map(normalizeCrawledVideo))
     .filter(item => item.platform === platform && isPlatformUrl(item.sourceUrl, platform))
+    .filter(item => isDiscoveryVideoEligible(item))
     .filter(item => {
     const key = videoDedupeKey(item);
     if (seenKeys.has(key)) {
@@ -1354,7 +1377,12 @@ export async function crawlVideosForTenant(input: CrawlVideosInput): Promise<Cra
   let returnedExisting = Math.max(0, resultRecords.length - returnedNew);
   let visibleNewCount = 0;
   const candidateIds = resultRecords.map(record => String((record as Record<string, unknown>).id));
-  if (testTenant && input.deferAnalysis) {
+  if (input.suppressAnalysisQueue) {
+    // Keep the durable records and candidate ids, but do not race a maintenance
+    // job that will immediately run a fresh exact analysis for every candidate.
+    resultRecords = [];
+    returnedExisting = 0;
+  } else if (testTenant && input.deferAnalysis) {
     for (const record of resultRecords) {
       await queueTestTenantVideoLevelAnalysis(record as Record<string, unknown>);
     }
@@ -3912,7 +3940,7 @@ async function releaseStalledExactAnalysis(forceInterrupted = false, tenantId?: 
     // Durable local/material jobs are owned by the analysis worker and must be
     // resumed after a restart, not released back to a terminal retry state.
     if (['queued', 'running'].includes(String(analysis.analysisQueueState || ''))
-      && ['material', 'stored_video'].includes(String(analysis.analysisQueueKind || ''))) continue;
+      && ['material', 'stored_video', 'maintenance_exact'].includes(String(analysis.analysisQueueKind || ''))) continue;
     const startedAt = Date.parse(String(analysis.reanalyzeQueuedAt || record.updated || ''));
     // The durable ownership check above also protects work in sibling local
     // processes. Only ownerless work can be released immediately on startup.
@@ -5242,8 +5270,7 @@ function apifyTikTokItemToCrawledVideo(item: Record<string, unknown>, keyword: s
   const duration = Number(item.videoMeta && typeof item.videoMeta === 'object' && 'duration' in item.videoMeta
     ? (item.videoMeta as Record<string, unknown>).duration
     : item.duration || 0);
-  const maxVideoDuration = Math.max(15, Number(process.env.CRAWLER_MAX_VIDEO_DURATION_SECONDS || 180));
-  if (duration > maxVideoDuration) return null;
+  if (!isDiscoveryVideoEligible({ platform: 'tiktok', duration, sourceUrl })) return null;
   const playCount = Number(item.playCount || item.views || item.viewCount || 0);
   const diggCount = Number(item.diggCount || item.likes || item.likeCount || 0);
   const commentCount = Number(item.commentCount || item.comments || 0);
@@ -5888,7 +5915,7 @@ async function crawlYtDlpMetadata(platform: Platform, url: string, keyword: stri
 async function crawlYtDlpMetadataNow(platform: Platform, url: string, keyword: string): Promise<CrawledVideo> {
   let stdout = '';
   try {
-    ({ stdout } = await execFileAsync('python3', buildYtDlpArgs(['--dump-json', '--skip-download'], url, false), { maxBuffer: 8 * 1024 * 1024, timeout: 45_000, env: crawlerExecEnv() }));
+    ({ stdout } = await execFileAsync(ytDlpPythonPath(), buildYtDlpArgs(['--dump-json', '--skip-download'], url, false), { maxBuffer: 8 * 1024 * 1024, timeout: 45_000, env: crawlerExecEnv() }));
   } catch {
     if (!usesServerCookiesForCrawl(platform)) throw new Error(`${platform} anonymous metadata crawl failed`);
     stdout = await execYtDlpWithCookieFallback(['--dump-json', '--skip-download'], url, 60_000, 8 * 1024 * 1024);
@@ -5937,7 +5964,7 @@ async function downloadVideoToMaterial(input: {
 
   let ytDlpError: unknown = null;
   try {
-    await execFileAsync('python3', buildYtDlpArgs(downloadArgs, input.sourceUrl, false), { maxBuffer: 4 * 1024 * 1024, timeout: 180_000, env: crawlerExecEnv() });
+    await execFileAsync(ytDlpPythonPath(), buildYtDlpArgs(downloadArgs, input.sourceUrl, false), { maxBuffer: 4 * 1024 * 1024, timeout: 180_000, env: crawlerExecEnv() });
   } catch (e) {
     ytDlpError = e;
     if (usesServerCookiesForCrawl(input.platform)) {
@@ -6056,7 +6083,7 @@ export async function downloadVideoForAnalysis(input: {
       ...(candidate.format ? ['-f', candidate.format] : []),
     ];
     try {
-      await executeDownload('python3', buildYtDlpArgs(downloadArgs, input.sourceUrl, false), { maxBuffer: 4 * 1024 * 1024, timeout: budget.remaining(), env: crawlerExecEnv() });
+      await executeDownload(ytDlpPythonPath(), buildYtDlpArgs(downloadArgs, input.sourceUrl, false), { maxBuffer: 4 * 1024 * 1024, timeout: budget.remaining(), env: crawlerExecEnv() });
       lastError = null;
       break;
     } catch (e) {
@@ -7200,14 +7227,15 @@ async function normalizeVideoForGemini(filePath: string): Promise<string> {
 }
 
 async function crawlYouTubeSearch(keyword: string, limit: number, dateFrom = '', dateTo = ''): Promise<CrawledVideo[]> {
-  if (hasDateRange(dateFrom, dateTo)) {
-    const filtered = await crawlYouTubeUploadDateFilteredSearch(keyword, limit, dateFrom, dateTo);
-    if (filtered.length > 0) return filtered;
-  }
+  const shortsUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(keyword)}&sp=EgIYAQ%253D%253D`;
   try {
-    return await crawlYtDlpSearch('youtube', `ytsearch${limit}:${keyword}`, keyword, limit, dateFrom, dateTo);
+    const items = await crawlYtDlpSearch('youtube', shortsUrl, keyword, Math.max(limit * 3, limit), '', '', true);
+    return items
+      .filter(item => isWithinDateRange(item.uploadedAt, dateFrom, dateTo))
+      .filter(item => isDiscoveryVideoEligible(item))
+      .slice(0, limit);
   } catch (e) {
-    throw new Error(`YouTube search failed: ${e instanceof Error ? e.message : String(e)}`);
+    throw new Error(`YouTube Shorts search failed: ${e instanceof Error ? e.message : String(e)}`);
   }
   const url = `https://www.youtube.com/results?search_query=${encodeURIComponent(keyword)}&sp=EgIQAQ%253D%253D`;
   const r = await fetch(url, {
@@ -7240,12 +7268,13 @@ async function crawlYouTubeSearch(keyword: string, limit: number, dateFrom = '',
     out.push({
       platform: 'youtube',
       title,
-      sourceUrl,
+      sourceUrl: youtubeShortUrl(sourceUrl),
       thumbnailUrl,
       duration: parseDuration(durationLabel),
       views,
       tags: keyword.split(/\s+/).map(s => s.replace(/^#/, '').trim()).filter(Boolean).slice(0, 5),
       uploadedAt: undefined,
+      youtubeShort: true,
     });
     if (out.length >= limit) break;
   }
@@ -7259,7 +7288,7 @@ async function crawlYouTubeUploadDateFilteredSearch(keyword: string, limit: numb
   if (!sp) return [];
   const searchUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(keyword)}&sp=${sp}`;
   try {
-    const items = await crawlYtDlpSearch('youtube', searchUrl, keyword, limit, '', '');
+    const items = await crawlYtDlpSearch('youtube', searchUrl, keyword, limit, '', '', true);
     return items
       .map(item => ({
         ...item,
@@ -7291,9 +7320,9 @@ function dateFromCompact(input: string): Date {
   return new Date(`${input.slice(0, 4)}-${input.slice(4, 6)}-${input.slice(6, 8)}T00:00:00.000Z`);
 }
 
-async function crawlYtDlpSearch(platform: Platform, searchUrl: string, keyword: string, limit: number, dateFrom = '', dateTo = ''): Promise<CrawledVideo[]> {
+async function crawlYtDlpSearch(platform: Platform, searchUrl: string, keyword: string, limit: number, dateFrom = '', dateTo = '', youtubeShortsSource = false): Promise<CrawledVideo[]> {
   const dateArgs = ytdlpDateArgs(dateFrom, dateTo);
-  const { stdout } = await withPlatformCrawlPacing(platform, () => execFileAsync('python3', buildYtDlpArgs(['--dump-json', '--flat-playlist', '--playlist-end', String(limit), ...dateArgs], searchUrl, false), {
+  const { stdout } = await withPlatformCrawlPacing(platform, () => execFileAsync(ytDlpPythonPath(), buildYtDlpArgs(['--dump-json', '--flat-playlist', '--playlist-end', String(limit), ...dateArgs], searchUrl, false), {
     maxBuffer: 16 * 1024 * 1024,
     timeout: 45_000,
     env: crawlerExecEnv(),
@@ -7302,7 +7331,7 @@ async function crawlYtDlpSearch(platform: Platform, searchUrl: string, keyword: 
     .map(line => line.trim())
     .filter(Boolean)
     .map(line => JSON.parse(line) as Record<string, unknown>)
-    .map(metaToCrawledVideo(platform, keyword))
+    .map(metaToCrawledVideo(platform, keyword, youtubeShortsSource))
     .filter((item): item is CrawledVideo => Boolean(item));
   if (items.length === 0) throw new Error(`${platform} search returned no videos`);
   return items.slice(0, limit);
@@ -7422,6 +7451,7 @@ async function topUpCrawledItems(input: {
   const seen = new Set(out.map(item => videoDedupeKey(item)));
   const add = (candidates: CrawledVideo[], dateEvidence: string) => {
     for (const candidate of candidates.map(normalizeCrawledVideo)) {
+      if (!isDiscoveryVideoEligible(candidate)) continue;
       const key = videoDedupeKey(candidate);
       if (seen.has(key)) continue;
       seen.add(key);
@@ -7781,8 +7811,8 @@ export function accountLabelFromUrl(url: string): string {
 function normalizeAccountListUrl(platform: Platform, url: string): string {
   const clean = stripTrackingParams(String(url || '').trim()).replace(/\/+$/, '');
   if (platform === 'youtube') {
-    if (/\/(?:videos|shorts|streams|featured)$/i.test(clean)) return clean;
-    return `${clean}/videos`;
+    const base = clean.replace(/\/(?:videos|shorts|streams|featured)$/i, '');
+    return `${base}/shorts`;
   }
   if (platform === 'instagram') {
     if (/\/(?:reels|reels\/|tagged)$/i.test(clean)) return clean;
@@ -7801,12 +7831,7 @@ function accountListUrlCandidates(platform: Platform, url: string): string[] {
 
   const clean = stripTrackingParams(String(url || '').trim()).replace(/\/+$/, '');
   const base = clean.replace(/\/(?:videos|shorts|streams|featured)$/i, '');
-  return Array.from(new Set([
-    primary,
-    `${base}/shorts`,
-    `${base}/streams`,
-    clean,
-  ]));
+  return Array.from(new Set([primary, `${base}/shorts`]));
 }
 
 // 采集某个对标账号主页的最新视频列表（flat-playlist 枚举，最多 limit 条）。
@@ -7834,7 +7859,8 @@ async function crawlAccountHomepage(platform: Platform, accountUrl: string, limi
   if (platform === 'tiktok' && cloudFallback && canUseApifyTikTokCrawlFallback()) {
     try {
       const apifyItems = await crawlTikTokApify(accountUrl, safeLimit, dateFrom, dateTo);
-      if (apifyItems.length > 0) return apifyItems.slice(0, limit);
+      const eligible = apifyItems.filter(item => isDiscoveryVideoEligible(item));
+      if (eligible.length > 0) return eligible.slice(0, limit);
     } catch (apifyError) {
       console.warn('[videos] TikTok account cloud Apify crawl failed:', apifyError instanceof Error ? apifyError.message : apifyError);
     }
@@ -7871,7 +7897,7 @@ async function crawlAccountHomepage(platform: Platform, accountUrl: string, limi
   const errors: unknown[] = [];
   for (const candidate of candidates) {
     try {
-      items = await crawlYtDlpSearch(platform, candidate, '', safeLimit, '', '');
+      items = await crawlYtDlpSearch(platform, candidate, '', safeLimit, '', '', platform === 'youtube');
       break;
     } catch (e) {
       errors.push(e);
@@ -7896,7 +7922,10 @@ async function crawlAccountHomepage(platform: Platform, accountUrl: string, limi
   const withinRange = hasDateRange(dateFrom, dateTo)
     ? items.filter(item => isWithinDateRange(item.uploadedAt, dateFrom, dateTo))
     : items;
-  return (withinRange.length ? withinRange : items).slice(0, limit);
+  return (withinRange.length ? withinRange : items)
+    .map(normalizeCrawledVideo)
+    .filter(item => isDiscoveryVideoEligible(item))
+    .slice(0, limit);
 }
 
 function mergeCrawledVideos(existing: CrawledVideo[], incoming: CrawledVideo[]): CrawledVideo[] {
@@ -7950,7 +7979,7 @@ async function enumerateAccountWithCookies(platform: Platform, listUrl: string, 
     .filter(Boolean)
     .map(line => { try { return JSON.parse(line) as Record<string, unknown>; } catch { return null; } })
     .filter((meta): meta is Record<string, unknown> => Boolean(meta))
-    .map(metaToCrawledVideo(platform, ''))
+    .map(metaToCrawledVideo(platform, '', platform === 'youtube' && /\/shorts(?:[/?#]|$)/i.test(listUrl)))
     .filter((item): item is CrawledVideo => Boolean(item));
   if (items.length === 0) throw new Error(`${platform} 账号主页没有枚举到可用视频`);
   return items.slice(0, limit);
@@ -7978,9 +8007,12 @@ async function fetchText(url: string, timeoutMs: number): Promise<string> {
   }
 }
 
-function metaToCrawledVideo(platform: Platform, keyword: string): (meta: Record<string, unknown>) => CrawledVideo | null {
+function metaToCrawledVideo(platform: Platform, keyword: string, youtubeShortsSource = false): (meta: Record<string, unknown>) => CrawledVideo | null {
   return (meta) => {
-    const webpageUrl = canonicalSourceUrl(platform, String(meta.webpage_url || meta.original_url || meta.url || ''), metadataUploader(meta));
+    const rawWebpageUrl = String(meta.webpage_url || meta.original_url || meta.url || '');
+    const canonicalUrl = canonicalSourceUrl(platform, rawWebpageUrl, metadataUploader(meta));
+    const isYouTubeShort = platform === 'youtube' && (youtubeShortsSource || /youtube\.com\/shorts\//i.test(rawWebpageUrl));
+    const webpageUrl = isYouTubeShort ? youtubeShortUrl(canonicalUrl) : canonicalUrl;
     if (!webpageUrl) return null;
     const title = metadataTitle(platform, meta);
     const duration = Number(meta.duration || 0);
@@ -7997,12 +8029,16 @@ function metaToCrawledVideo(platform: Platform, keyword: string): (meta: Record<
       views,
       tags,
       uploadedAt: uploadedAtFromMeta(meta),
+      youtubeShort: isYouTubeShort || undefined,
     });
   };
 }
 
 function normalizeCrawledVideo(item: CrawledVideo): CrawledVideo {
-  const sourceUrl = canonicalSourceUrl(item.platform, item.sourceUrl, item.author);
+  const canonicalUrl = canonicalSourceUrl(item.platform, item.sourceUrl, item.author);
+  const sourceUrl = item.platform === 'youtube' && (item.youtubeShort || /youtube\.com\/shorts\//i.test(item.sourceUrl))
+    ? youtubeShortUrl(canonicalUrl)
+    : canonicalUrl;
   return {
     ...item,
     sourceUrl,
@@ -8798,7 +8834,7 @@ async function execYtDlpWithCookieFallback(extra: string[], url: string, timeout
       const proxy = proxyUrl();
       const insertAt = proxy ? args.indexOf('--proxy') : args.length - 1;
       args.splice(insertAt, 0, '--cookies', cookieFile);
-      const { stdout } = await execFileAsync('python3', args, { maxBuffer, timeout: budget.remaining(), env: crawlerExecEnv() });
+      const { stdout } = await execFileAsync(ytDlpPythonPath(), args, { maxBuffer, timeout: budget.remaining(), env: crawlerExecEnv() });
       return stdout;
     } catch (e) {
       lastError = e;
@@ -8817,7 +8853,7 @@ async function execYtDlpWithCookieFallback(extra: string[], url: string, timeout
       const proxy = proxyUrl();
       const insertAt = proxy ? args.indexOf('--proxy') : args.length - 1;
       args.splice(insertAt, 0, '--cookies-from-browser', browser);
-      const { stdout } = await execFileAsync('python3', args, { maxBuffer, timeout: budget.remaining(), env: crawlerExecEnv() });
+      const { stdout } = await execFileAsync(ytDlpPythonPath(), args, { maxBuffer, timeout: budget.remaining(), env: crawlerExecEnv() });
       return stdout;
     } catch (e) {
       lastError = e;

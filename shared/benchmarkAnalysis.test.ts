@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { buildBenchmarkAnalysis, benchmarkMaterialType, benchmarkTimeRange, recordOf } from './benchmarkAnalysis.js';
+import { buildBenchmarkAnalysis, benchmarkMaterialType, benchmarkTimeRange, normalizeBenchmarkAnalysisSnapshot, recordOf } from './benchmarkAnalysis.js';
 import { benchmarkVideoFixture, lightingBenchmarkFixture } from '../tests/fixtures/benchmarkVideo.js';
 
 const build = (analysis = benchmarkVideoFixture()) => buildBenchmarkAnalysis({ analysis, videoId: 'video-fixture', duration: 9, evidenceRevision: 'revision' });
@@ -76,4 +76,12 @@ test('existing lighting reference uses presenter evidence and factory actions fo
   assert.deepEqual(result.structure.map(segment => [segment.materialType, segment.shotIds.length]), [['talking_head', 2], ['product', 1], ['factory', 2], ['talking_head', 1]]);
   assert.equal(result.status, 'needs_review');
   assert.equal(result.materialCounts.unknown, 0);
+});
+
+test('normalized snapshots survive the weekly-plan boundary without leaking arbitrary media paths', () => {
+  const original = build();
+  const normalized = normalizeBenchmarkAnalysisSnapshot({ ...original, shots: original.shots.map((shot, index) => ({ ...shot, firstFrameRef: index ? shot.firstFrameRef : '/tmp/private.png' })) });
+  assert.equal(normalized?.structure.length, original.structure.length);
+  assert.equal(normalized?.shots[0]?.firstFrameRef, null);
+  assert.equal(normalized?.shots[1]?.firstFrameRef, original.shots[1]?.firstFrameRef);
 });

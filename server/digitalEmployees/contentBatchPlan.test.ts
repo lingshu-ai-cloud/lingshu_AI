@@ -46,9 +46,19 @@ const feedbackRouted = buildContentBatchPlan({
   goalId: 'goal-2', goal, config,
   evidence: { products: [{ id: 'sku-1', name: '产品 A', materialIds: ['asset-a'] }], exactAnalysisIds: ['analysis-1'], materialIds: ['asset-a'] },
   versions: { configVersion: 8, policyVersion: 'p8', factsVersion: 'f8' },
-  priorRoutingEvidence: { priorRouteDistribution: { clone: 8, product: 1, material: 1 }, approvalFeedback: [{ note: '开头更直接' }] },
+  priorRoutingEvidence: {
+    priorRouteDistribution: { clone: 8, product: 1, material: 1 },
+    approvalFeedback: [{ note: '开头更直接' }],
+    contentInheritance: { status: 'ready', title: '工厂透明度', hook: '采购商为什么不敢下单', framework: ['真人口播 · 钩子', '工厂生产 · 能力证明'] },
+    tagAdaptation: { status: 'changed', newTags: ['smallbatch'], droppedTags: ['oldtag'], requiresConfirmation: true },
+    industryTrends: { status: 'available', signals: [{ title: '小批量交付成为行业热点', sourceUrl: 'https://example.com/trend' }] },
+  },
 });
 assert.equal(feedbackRouted.orders[0]?.route, 'clone', 'new Agent plans remain clone-only regardless of historic route distribution');
 assert.ok(feedbackRouted.orders.every(order => order.constraints.includes('审批反馈：开头更直接')));
+assert.ok(feedbackRouted.orders.every(order => order.constraints.some(item => item.includes('上轮优秀内容继承'))), '优秀内容的框架与钩子必须进入下一周制作约束');
+assert.ok(feedbackRouted.orders.every(order => order.constraints.some(item => item.includes('#smallbatch'))), '热门 Tag 变化必须进入下一周验证约束');
+assert.ok(feedbackRouted.orders.every(order => order.constraints.some(item => item.includes('采集范围变化需要人工确认'))), '采集范围不得被复盘静默扩大');
+assert.ok(feedbackRouted.orders.every(order => order.constraints.some(item => item.includes('小批量交付成为行业热点'))), '可追溯行业信号必须进入下一周编导判断');
 
 console.log('content batch plan tests passed');

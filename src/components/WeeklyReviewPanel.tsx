@@ -1,4 +1,5 @@
 import ReviewTodoFloat, { type ReviewTodoApi } from './ReviewTodoFloat';
+import NextRoundRecommendationsSection from './NextRoundRecommendationsSection';
 import type { ReviewTodoBoard } from '../lib/reviewTodos';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -92,6 +93,7 @@ export default function WeeklyReviewPanel({ data, onGoLive, onOpen, onHistory, p
     </header>
 
     <p className="text-xs leading-6 text-text-secondary">{data.run && !['succeeded', 'completed', 'failed', 'cancelled'].includes(data.run.status) ? '本轮仍在运行，以下为阶段性发现。' : ''}平台数据按所选周期统计；执行卡点与知识候选属于当前目标。</p>
+    <NextRoundRecommendationsSection summary={data.review?.summary} onOpen={onOpen}/>
     <section aria-label="互动与销售资格复盘" className="rounded-md border border-border bg-white p-5 sm:p-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div><h2 className="text-base font-bold text-text-primary">互动与销售资格</h2><p className="mt-1 text-xs leading-5 text-text-secondary">{interactionReview?.note || '等待忠实互动回写与销售确认。'}</p></div>

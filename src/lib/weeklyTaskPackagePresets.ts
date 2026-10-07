@@ -1,4 +1,5 @@
 import { normalizeVideoPlan, type VideoCreationPlan } from './videoCreationPlan';
+import { bindMatrixVideo, type MatrixAccountPlan } from './weeklyMatrix';
 
 export type WeeklyTaskPackagePresetId = 'b2b_starting' | 'b2b_growing' | 'brand_authority' | 'dtc_sales';
 export type WeeklyTaskPackagePlatform = VideoCreationPlan['platform'];
@@ -102,4 +103,32 @@ export function buildPresetVideoPlans(input: {
     theme: focus ? `${theme}；本周重点：${focus}` : theme,
     duration: input.preset.primaryPlatform === 'youtube' && /长视频/.test(theme) ? 90 : 30,
   }));
+}
+
+/**
+ * Expand the preset's editorial directions into the account matrix's actual
+ * weekly video slots. The preset themes describe what to make; the matrix
+ * quotas determine how many platform/account deliverables will be made.
+ */
+export function buildPresetMatrixVideoPlans(input: {
+  preset: WeeklyTaskPackagePreset;
+  productName: string;
+  focus?: string;
+  defaults?: Partial<VideoCreationPlan>;
+  platforms?: WeeklyTaskPackagePlatform[];
+  matrixRows: MatrixAccountPlan[];
+  idFactory?: () => string;
+}): VideoCreationPlan[] {
+  const seeds = buildPresetVideoPlans(input);
+  if (!input.matrixRows.length || !seeds.length) return seeds;
+  const idFactory = input.idFactory || (() => crypto.randomUUID());
+  let slot = 0;
+  return input.matrixRows.flatMap(row => Array.from(
+    { length: Math.max(0, Math.floor(row.weeklyCount)) },
+    () => {
+      const seed = seeds[slot % seeds.length]!;
+      slot += 1;
+      return bindMatrixVideo({ ...seed, contentId: idFactory() }, row);
+    },
+  )).slice(0, 30);
 }

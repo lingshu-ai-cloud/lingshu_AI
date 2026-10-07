@@ -61,6 +61,7 @@
     "import:materials": "tsx scripts/import-materials-to-pb.ts",
     "test:material-import": "tsx --test scripts/materialImportManifest.test.ts src/lib/studioMaterialUpload.test.ts",
     "worker:crawl": "NODE_USE_ENV_PROXY=1 tsx scripts/local-crawl-worker.ts",
+    "refresh:beauty-short-benchmarks": "NODE_USE_ENV_PROXY=1 tsx scripts/refresh-beauty-short-benchmarks.ts",
     "demo:seed": "tsx scripts/demo-seed.ts",
     "demo:reset": "tsx scripts/demo-reset.ts",
     "guide:reset": "tsx scripts/reset-account-guide.ts",

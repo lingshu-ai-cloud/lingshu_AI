@@ -44,6 +44,7 @@ const services = [
     env: {
       PORT: '8790',
       NODE_USE_ENV_PROXY: '1',
+      LINGSHU_LOCAL_PREVIEW: '1',
       // The preview exercises the real task lifecycle, including queue recovery
       // after a backend restart. Use the combined role until the persistent
       // queue/scheduler migration makes a split local worker safe.

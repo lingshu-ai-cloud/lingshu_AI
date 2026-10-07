@@ -1,14 +1,33 @@
 import { VIDEO_LANGUAGES, normalizeVideoLanguage } from './videoLanguages.js';
 import type { SocialAccountRole } from './socialOperatingProfile.js';
+import { normalizeBenchmarkAnalysisSnapshot, type BenchmarkAnalysis, type BenchmarkMaterialType, type BenchmarkShotRole } from '../benchmarkAnalysis.js';
 
 /** Frozen user choices shared by planning, script, voice and rendering. */
 export interface VideoCreationPlan {
   contentId?: string;
+  /** Five weekly originals fan out into platform delivery versions. */
+  contentFamilyId?: string;
+  productionRole?: 'master' | 'platform_adaptation';
+  masterContentId?: string;
+  adaptationMode?: 'master' | 'platform_light';
   plannedPublishDate?: string;
   buyerProblem?: string;
   evidenceRequirement?: string;
   directorStatus?: 'candidate' | 'script_draft' | 'script_approved' | 'in_production' | 'review' | 'approved' | 'blocked';
   estimatedCost?: number;
+  estimatedCostRange?: {
+    minCny: number;
+    maxCny: number;
+    basis: 'blended_master' | 'included_platform_adaptation';
+  };
+  /** Frozen publication copy produced together with the video brief. */
+  publication?: {
+    title: string;
+    caption: string;
+    tags: string[];
+    status: 'planned' | 'generated' | 'confirmed';
+    generatedBy: 'business_agent' | 'content_agent';
+  };
   /** Auditable evidence used by the Business Agent when it proposed this slot. */
   planningEvidence?: {
     generatedFrom: 'matrix_benchmark_viral' | 'matrix_viral' | 'matrix_product';
@@ -17,15 +36,15 @@ export interface VideoCreationPlan {
     slot: number;
     referenceTitle: string;
     referenceViews: string;
+    referenceThumbnailUrl: string;
+    referenceSourceUrl: string;
     benchmarkAccount: string;
     matchScore: number;
     factors: string[];
   };
-  /**
-   * Persisted result of the paid pre-production step. The outline intentionally
-   * omits this object so a free weekly outline can never masquerade as an Agent
-   * analysis or a material check.
-   */
+  /** Frozen Director evidence. Content Agent must use this exact structure. */
+  benchmarkAnalysis?: BenchmarkAnalysis;
+  /** Persisted pre-production result reused across refreshes and production. */
   preproduction?: VideoPreproductionPreview;
   matrix?: { accountId: string; audience: string; objective: string; cta: string; accountRole?: SocialAccountRole; formats?: string[] };
   reviewRequirements?: Array<{ todoId: string; reference: string; scene: number; startsAt: number; endsAt: number; requirements: string; materials: string; acceptance: string }>;
@@ -65,6 +84,16 @@ export interface VideoPreproductionPreview {
       name: string;
       type: 'image' | 'video';
       previewUrl: string;
+      status: 'ready' | 'missing' | 'pending_shoot' | 'needs_authorization';
+    }>;
+    storyboard?: Array<{
+      materialType: BenchmarkMaterialType;
+      materialLabel: string;
+      narrativeRole: BenchmarkShotRole;
+      shotIds: string[];
+      referenceFirstFrameUrl: string;
+      materialId: string;
+      materialPreviewUrl: string;
       status: 'ready' | 'missing' | 'pending_shoot' | 'needs_authorization';
     }>;
     blockers: string[];
@@ -116,6 +145,7 @@ export function presentationScenes(plan: VideoCreationPlan, count: number): Vide
   return scenes;
 }
 export const VIDEO_ROUTES = { clone: '爆款裂变', material: '从素材生成', product: '从产品生成' } as const;
+export const isMasterVideoPlan = (plan: Pick<VideoCreationPlan, 'productionRole'>) => plan.productionRole !== 'platform_adaptation';
 export function normalizeVideoPlan(value: Partial<VideoCreationPlan>): VideoCreationPlan {
   const preview = value.preproduction && typeof value.preproduction === 'object'
     ? value.preproduction
@@ -130,13 +160,30 @@ export function normalizeVideoPlan(value: Partial<VideoCreationPlan>): VideoCrea
   const cleanList = (raw: unknown, limit: number, itemLimit = 500) => Array.isArray(raw)
     ? [...new Set(raw.map(item => String(item || '').trim()).filter(Boolean))].slice(0, limit).map(item => item.slice(0, itemLimit))
     : [];
+  const benchmarkAnalysis = normalizeBenchmarkAnalysisSnapshot(value.benchmarkAnalysis);
   return {
     contentId: String(value.contentId || '').trim().slice(0, 120),
+    contentFamilyId: String(value.contentFamilyId || '').trim().slice(0, 120),
+    productionRole: value.productionRole === 'platform_adaptation' ? 'platform_adaptation' : 'master',
+    masterContentId: String(value.masterContentId || '').trim().slice(0, 120),
+    adaptationMode: value.adaptationMode === 'platform_light' ? 'platform_light' : 'master',
     plannedPublishDate: /^\d{4}-\d{2}-\d{2}$/.test(String(value.plannedPublishDate || '')) ? String(value.plannedPublishDate) : '',
     buyerProblem: String(value.buyerProblem || '').trim().slice(0, 500),
     evidenceRequirement: String(value.evidenceRequirement || '').trim().slice(0, 1000),
     directorStatus: ['candidate', 'script_draft', 'script_approved', 'in_production', 'review', 'approved', 'blocked'].includes(String(value.directorStatus)) ? value.directorStatus : 'candidate',
     estimatedCost: Math.max(0, Math.round((Number(value.estimatedCost) || 0) * 100) / 100),
+    ...(value.estimatedCostRange && typeof value.estimatedCostRange === 'object' ? { estimatedCostRange: {
+      minCny: Math.max(0, Math.round((Number(value.estimatedCostRange.minCny) || 0) * 100) / 100),
+      maxCny: Math.max(0, Math.round((Number(value.estimatedCostRange.maxCny) || 0) * 100) / 100),
+      basis: value.estimatedCostRange.basis === 'included_platform_adaptation' ? 'included_platform_adaptation' as const : 'blended_master' as const,
+    } } : {}),
+    ...(value.publication && typeof value.publication === 'object' ? { publication: {
+      title: String(value.publication.title || '').trim().slice(0, 300),
+      caption: String(value.publication.caption || '').trim().slice(0, 2_000),
+      tags: cleanList(value.publication.tags, 20, 80).map(item => item.replace(/^#+/, '')),
+      status: ['planned', 'generated', 'confirmed'].includes(String(value.publication.status)) ? value.publication.status : 'planned',
+      generatedBy: value.publication.generatedBy === 'content_agent' ? 'content_agent' as const : 'business_agent' as const,
+    } } : {}),
     ...(value.planningEvidence && typeof value.planningEvidence === 'object' ? { planningEvidence: {
       generatedFrom: ['matrix_benchmark_viral', 'matrix_viral', 'matrix_product'].includes(String(value.planningEvidence.generatedFrom))
         ? value.planningEvidence.generatedFrom
@@ -146,12 +193,15 @@ export function normalizeVideoPlan(value: Partial<VideoCreationPlan>): VideoCrea
       slot: Math.max(1, Math.min(30, Math.floor(Number(value.planningEvidence.slot) || 1))),
       referenceTitle: String(value.planningEvidence.referenceTitle || '').trim().slice(0, 500),
       referenceViews: String(value.planningEvidence.referenceViews || '').trim().slice(0, 80),
+      referenceThumbnailUrl: cleanPreviewUrl(value.planningEvidence.referenceThumbnailUrl),
+      referenceSourceUrl: cleanPreviewUrl(value.planningEvidence.referenceSourceUrl),
       benchmarkAccount: String(value.planningEvidence.benchmarkAccount || '').trim().slice(0, 300),
       matchScore: Math.max(0, Math.min(100, Math.round(Number(value.planningEvidence.matchScore) || 0))),
       factors: Array.isArray(value.planningEvidence.factors)
         ? [...new Set(value.planningEvidence.factors.map(item => String(item || '').trim()).filter(Boolean))].slice(0, 8).map(item => item.slice(0, 160))
         : [],
     } } : {}),
+    ...(benchmarkAnalysis ? { benchmarkAnalysis } : {}),
     ...(preview && previewStatus ? { preproduction: {
       version: 1,
       status: previewStatus,
@@ -174,6 +224,16 @@ export function normalizeVideoPlan(value: Partial<VideoCreationPlan>): VideoCrea
           name: String(item?.name || '').trim().slice(0, 240),
           type: item?.type === 'video' ? 'video' as const : 'image' as const,
           previewUrl: cleanPreviewUrl(item?.previewUrl),
+          status: ['ready', 'missing', 'pending_shoot', 'needs_authorization'].includes(String(item?.status)) ? item.status : 'missing',
+        })) : [],
+        storyboard: Array.isArray(preview.materials?.storyboard) ? preview.materials.storyboard.slice(0, 30).map(item => ({
+          materialType: ['talking_head', 'factory', 'product', 'consumer_demo', 'unknown'].includes(String(item?.materialType)) ? item.materialType : 'unknown',
+          materialLabel: String(item?.materialLabel || '').trim().slice(0, 80),
+          narrativeRole: ['hook', 'pain_point', 'capability_proof', 'product_intro', 'effect_proof', 'cta', 'transition', 'unknown'].includes(String(item?.narrativeRole)) ? item.narrativeRole : 'unknown',
+          shotIds: cleanList(item?.shotIds, 20, 120),
+          referenceFirstFrameUrl: cleanPreviewUrl(item?.referenceFirstFrameUrl),
+          materialId: String(item?.materialId || '').trim().slice(0, 160),
+          materialPreviewUrl: cleanPreviewUrl(item?.materialPreviewUrl),
           status: ['ready', 'missing', 'pending_shoot', 'needs_authorization'].includes(String(item?.status)) ? item.status : 'missing',
         })) : [],
         blockers: cleanList(preview.materials?.blockers, 20, 500),

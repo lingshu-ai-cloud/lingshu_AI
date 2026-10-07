@@ -15,6 +15,8 @@ export interface DirectorProgressItem {
 export interface ContentDirectorPlan {
   currency: 'CNY' | 'USD';
   productionBudget: number;
+  productionBudgetMin: number;
+  productionBudgetMax: number;
   paidMediaBudget: number;
   productionReserved: number;
   productionSpent: number;
@@ -34,7 +36,10 @@ export function normalizeDirectorPlan(value: unknown): ContentDirectorPlan {
   const raw = value && typeof value === 'object' ? value as Partial<ContentDirectorPlan> : {};
   return {
     currency: raw.currency === 'USD' ? 'USD' : 'CNY',
-    productionBudget: money(raw.productionBudget), paidMediaBudget: money(raw.paidMediaBudget),
+    productionBudget: money(raw.productionBudget),
+    productionBudgetMin: money(raw.productionBudgetMin),
+    productionBudgetMax: money(raw.productionBudgetMax || raw.productionBudget),
+    paidMediaBudget: money(raw.paidMediaBudget),
     productionReserved: money(raw.productionReserved), productionSpent: money(raw.productionSpent),
     originalTarget: count(raw.originalTarget), platformVersionTarget: count(raw.platformVersionTarget), publishTarget: count(raw.publishTarget),
     collectionBrief: text(raw.collectionBrief), qualityStandard: text(raw.qualityStandard),
@@ -51,15 +56,15 @@ export function normalizeDirectorPlan(value: unknown): ContentDirectorPlan {
 export function directorIssues(value: ContentDirectorPlan | undefined): string[] {
   if (!value) return [];
   const issues: string[] = [];
-  if (value.productionSpent + value.productionReserved > value.productionBudget) issues.push('内容生产的已用与预占金额超过生产预算');
+  if (value.productionSpent + value.productionReserved > (value.productionBudgetMax || value.productionBudget)) issues.push('内容生产的已用与预占金额超过生产预算');
   if (value.platformVersionTarget < value.originalTarget) issues.push('平台交付版本目标不能少于原创内容目标');
   if (value.publishTarget < value.platformVersionTarget) issues.push('发布次数目标不能少于平台交付版本目标');
   if (value.progress.some(item => !item.title)) issues.push('编导过程记录需要填写名称');
   return issues;
 }
 
-export function defaultDirectorPlan(contentCount = 1): ContentDirectorPlan {
-  return normalizeDirectorPlan({ originalTarget: contentCount, platformVersionTarget: contentCount, publishTarget: contentCount,
+export function defaultDirectorPlan(originalTarget = 1, platformVersionTarget = originalTarget, publishTarget = platformVersionTarget): ContentDirectorPlan {
+  return normalizeDirectorPlan({ originalTarget, platformVersionTarget, publishTarget,
     collectionBrief: '围绕本周买家问题采集平台热点、对标结构和可验证证据。',
     qualityStandard: '脚本回答明确的买家问题；关键主张有真实事实或素材支持；平台版本、行动引导和承接入口完整。' });
 }

@@ -98,6 +98,40 @@ export function bindMatrixVideo(plan: VideoCreationPlan, row?: MatrixAccountPlan
     ...(plan.productName !== row.productName ? { materialIds: [], scenePlan: plan.scenePlan?.map(scene => ({ ...scene, materialId: '' })) } : {}) } : {}),
     matrix: row ? { accountId: row.accountId, audience: row.audience, objective: row.objective, cta: row.cta, accountRole: row.accountRole || 'brand_combined', formats: row.formats || [] } : { accountId: '', audience: '', objective: '', cta: '', accountRole: 'brand_combined', formats: [] } });
 }
+
+/**
+ * Connect every publish slot to one of the weekly originals. A single account
+ * never receives the same family twice, so reuse only happens across platforms.
+ */
+export function linkMatrixVersionsToMasters(plans: VideoCreationPlan[], originalTarget: number): VideoCreationPlan[] {
+  const target = Math.max(1, Math.min(plans.length || 1, Math.floor(originalTarget) || plans.length || 1));
+  const platformSlots = new Map<VideoCreationPlan['platform'], number>();
+  const staged = plans.map((source, index) => {
+    const plan = normalizeVideoPlan(source);
+    const slot = platformSlots.get(plan.platform) || 0;
+    platformSlots.set(plan.platform, slot + 1);
+    const contentId = plan.contentId || crypto.randomUUID();
+    return normalizeVideoPlan({
+      ...plan,
+      contentId,
+      contentFamilyId: `weekly-master-${(slot % target) + 1}`,
+    });
+  });
+  const masterByFamily = new Map<string, string>();
+  for (const plan of staged) {
+    if (!masterByFamily.has(plan.contentFamilyId || '')) masterByFamily.set(plan.contentFamilyId || '', plan.contentId || '');
+  }
+  return staged.map(plan => {
+    const masterContentId = masterByFamily.get(plan.contentFamilyId || '') || plan.contentId || '';
+    const master = plan.contentId === masterContentId;
+    return normalizeVideoPlan({
+      ...plan,
+      productionRole: master ? 'master' : 'platform_adaptation',
+      masterContentId,
+      adaptationMode: master ? 'master' : 'platform_light',
+    });
+  });
+}
 /** Preserve in-scope authored content while making deliverables exactly match the matrix. */
 export function fillMatrixVideos(pack: WeeklyPackage, defaults: Partial<VideoCreationPlan>, dueAt: string): WeeklyPackage {
   const rows = pack.matrixPlan || [];
@@ -121,7 +155,8 @@ export function fillMatrixVideos(pack: WeeklyPackage, defaults: Partial<VideoCre
       plans.push(bindMatrixVideo(normalizeVideoPlan({ ...defaults, contentId: crypto.randomUUID(), route: 'clone', theme, buyerProblem: '', directorStatus: 'candidate', plannedPublishDate: '' }), row));
     }
   }
-  const production = existing ? { ...existing, videoPlans: plans } : { templateId: 'production' as const, title: '制作产品视频', ownerId: '', ownerName: '', dueAt, notes: '', sourceProjectIds: [], videoPlans: plans };
+  const linkedPlans = linkMatrixVersionsToMasters(plans, pack.directorPlan?.originalTarget || plans.length);
+  const production = existing ? { ...existing, videoPlans: linkedPlans } : { templateId: 'production' as const, title: '制作产品视频', ownerId: '', ownerName: '', dueAt, notes: '', sourceProjectIds: [], videoPlans: linkedPlans };
   const projects = [...new Set(rows.flatMap(row => row.sourceProjectIds))];
   let tasks = pack.tasks.map(task => task.templateId === 'production' ? production : task.templateId === 'publishing' ? { ...task, sourceProjectIds: projects } : task);
   if (!existing && plans.length) tasks = [...tasks, production];
@@ -146,6 +181,12 @@ export function matrixIssues(pack: WeeklyPackage): string[] {
     if (publishing && row.connected !== false && !pack.authorization.accountIds.includes(row.accountId)) issues.push('已连接矩阵账号不在本周允许发布的账号范围内');
     if (assigned.some(plan => plan.platform !== row.platform || plan.productName !== row.productName || plan.language !== row.language || plan.matrix?.audience !== row.audience || plan.matrix?.objective !== row.objective || plan.matrix?.cta !== row.cta)) issues.push('账号策略已修改，请同步视频计划后再执行');
   }
+  for (const platform of [...new Set(rows.map(row => row.platform))]) {
+    const families = plans.filter(plan => plan.platform === platform).map(plan => plan.contentFamilyId).filter(Boolean);
+    if (new Set(families).size !== families.length) issues.push(`${platform} 平台存在重复母版，请调整内容分配，确保同平台不发布相似内容`);
+  }
+  const originals = plans.filter(plan => plan.productionRole !== 'platform_adaptation');
+  if (pack.directorPlan && originals.length !== pack.directorPlan.originalTarget) issues.push('原创母版数量与本周目标不一致，请重新同步账号矩阵');
   if (plans.some(plan => plan.matrix?.accountId && !rows.some(row => row.accountId === plan.matrix?.accountId))) issues.push('视频绑定的账号已从矩阵移除，请重新选择账号');
   const sources = pack.tasks.find(t => t.templateId === 'publishing')?.sourceProjectIds || [];
   if (publishing && (sources.some(id => !rows.some(row => row.sourceProjectIds.includes(id))) || rows.some(row => row.sourceProjectIds.some(id => !sources.includes(id))))) issues.push('已有作品的账号安排与发布任务不一致，请同步视频计划');

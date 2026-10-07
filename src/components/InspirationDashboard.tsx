@@ -9,7 +9,7 @@ import {
   Check, Copy, ArrowRight, Zap, LayoutGrid, List,
   Lightbulb, Flame, BarChart2, ChevronRight, Film, Download,
   Bookmark, Maximize2, Minimize2, Lock, Upload, Users, Images, Pencil, Trash2, Music2,
-  SlidersHorizontal, Package, ScanFace, Star, Eye,
+  SlidersHorizontal, Package, Cloud, ScanFace, Star, Eye,
 } from 'lucide-react';
 import { studioApi, type Material, type MaterialSegment, type VideoGenerationVersion } from '../lib/studioApi';
 import { authHeader } from '../lib/auth';
@@ -45,6 +45,7 @@ type MaterialIndustryFilter = 'all' | 'beauty_skincare' | 'universal_manufacturi
 type MaterialApplicabilityFilter = 'all' | 'universal' | 'cross_industry' | 'industry_specific';
 type MaterialOrientationFilter = 'all' | 'vertical' | 'horizontal';
 type MaterialSourceFilter = 'all' | 'local_upload' | 'seedance' | 'gemini' | 'official_import' | 'licensed_stock';
+type MaterialKindFilter = 'all' | 'product' | 'cloud';
 type MaterialTypeFilter = 'all' | 'video' | 'image' | 'audio';
 type FavoriteFilter = 'all' | 'favorite';
 export type MaterialAssetTab = 'enterprise' | 'ai' | 'cloud';
@@ -166,6 +167,10 @@ function materialSourceOf(material: Material): Exclude<MaterialSourceFilter, 'al
   if (source.includes('gemini')) return 'gemini';
   if (source.includes('official') || source.includes('viral') || material.folder === 'hot' || material.scope === 'shared') return 'official_import';
   return 'local_upload';
+}
+
+function materialKindOf(material: Material): Exclude<MaterialKindFilter, 'all'> {
+  return material.productId || material.sourceType === 'enterprise_product_table' ? 'product' : 'cloud';
 }
 
 /** Product-facing ownership groups. Upload entry only affects traceability, never ownership. */
@@ -3208,12 +3213,12 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     closeOnEscape: () => !manageBusy,
   });
   const [materialSearch, setMaterialSearch] = useState('');
-  const [materialAssetTab, setMaterialAssetTab] = useState<MaterialAssetTab>('enterprise');
   const [materialIndustry, setMaterialIndustry] = useState<MaterialIndustryFilter>('all');
   const [materialFunction, setMaterialFunction] = useState('all');
   const [materialApplicability, setMaterialApplicability] = useState<MaterialApplicabilityFilter>('all');
   const [materialOrientation, setMaterialOrientation] = useState<MaterialOrientationFilter>('all');
   const [materialSource, setMaterialSource] = useState<MaterialSourceFilter>('all');
+  const [materialKind, setMaterialKind] = useState<MaterialKindFilter>('all');
   const [materialType, setMaterialType] = useState<MaterialTypeFilter>('all');
   const [materialFavoriteFilter, setMaterialFavoriteFilter] = useState<FavoriteFilter>('all');
   const [materialFiltersOpen, setMaterialFiltersOpen] = useState(false);
@@ -3688,8 +3693,8 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
         productId: materialProductId,
         productRef: materialProductRef,
       });
-      return materialAssetTabOf(material) === materialAssetTab
-        && (!q || searchable.includes(q))
+      return (!q || searchable.includes(q))
+        && (materialKind === 'all' || materialKindOf(material) === materialKind)
         && (materialType === 'all' || material.type === materialType)
         && (materialIndustry === 'all' || material.industry === materialIndustry)
         && (materialFunction === 'all' || functions.includes(materialFunction))
@@ -3704,10 +3709,15 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
       const sourcePriority = Number(materialSourceOf(b) === 'local_upload') - Number(materialSourceOf(a) === 'local_upload');
       return sourcePriority || (Date.parse(String(b.createdAt || '')) || 0) - (Date.parse(String(a.createdAt || '')) || 0);
     });
-  }, [localMaterials, materialAssetTab, materialSearch, materialType, materialIndustry, materialFunction, materialApplicability, materialOrientation, materialSource, materialFavoriteFilter, materialProductFilterEnabled, materialProductId, materialProductRef]);
+  }, [localMaterials, materialSearch, materialType, materialIndustry, materialFunction, materialApplicability, materialOrientation, materialSource, materialKind, materialFavoriteFilter, materialProductFilterEnabled, materialProductId, materialProductRef]);
 
   const handleUploadMaterials = async (files: FileList | null) => {
     if (!files?.length) return;
+    if (!uploadProductId) {
+      setMaterialMessage('请先选择素材对应的产品；产品素材必须与产品表中的产品一一绑定。');
+      if (uploadInputRef.current) uploadInputRef.current.value = '';
+      return;
+    }
     setUploadingMaterial(true);
     setMaterialMessage('');
     try {
@@ -4332,6 +4342,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
   const clearMaterialFilters = () => {
     setMaterialSearch('');
     setMaterialSource('all');
+    setMaterialKind('all');
     setMaterialType('all');
     setMaterialFavoriteFilter('all');
     setMaterialIndustry('all');
@@ -4352,6 +4363,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     + Number(sortMode !== 'crawlTime')
     + Number(viewMode !== 'grid');
   const materialFilterCount = Number(materialSearch.trim().length > 0)
+    + Number(materialKind !== 'all')
     + Number(materialSource !== 'all')
     + Number(materialType !== 'all')
     + Number(materialFavoriteFilter !== 'all')
@@ -4681,48 +4693,30 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                 className="hidden"
                 onChange={e => void handleUploadMaterials(e.currentTarget.files)}
               />
-              <div className="grid grid-cols-3 gap-2 rounded-xl border border-border bg-surface p-2" aria-label="我的素材分类">
-                {([
-                  { id: 'enterprise' as const, label: '企业上传素材', detail: '知识库与工作台上传' },
-                  { id: 'ai' as const, label: 'AI 素材库', detail: '生成后自动入库' },
-                  { id: 'cloud' as const, label: '云爆款素材', detail: '灵枢公共素材' },
-                ]).map(tab => {
-                  const active = materialAssetTab === tab.id;
-                  const count = localMaterials.filter(material => materialAssetTabOf(material) === tab.id).length;
-                  const activeClass = tab.id === 'enterprise' ? 'border-emerald-300 bg-emerald-50' : tab.id === 'ai' ? 'border-violet-300 bg-violet-50' : 'border-orange-300 bg-orange-50';
-                  return <button key={tab.id} type="button" onClick={() => setMaterialAssetTab(tab.id)} aria-pressed={active}
-                    className={`rounded-lg border px-3 py-3 text-left transition ${active ? activeClass : 'border-transparent hover:bg-surface-2'}`}>
-                    <span className="flex items-center justify-between gap-2 text-sm font-black text-text-primary"><span>{tab.label}</span><span className="rounded-full bg-white px-2 py-0.5 text-[10px] text-text-muted">{count}</span></span>
-                    <span className="mt-1 block text-[10px] text-text-muted">{tab.detail}</span>
-                  </button>;
-                })}
-              </div>
-              {materialAssetTab === 'cloud' && <p className="rounded-lg border border-orange-200 bg-orange-50 px-4 py-3 text-xs leading-5 text-orange-800">云爆款是灵枢提供的公共参考素材，不属于企业资产，也不会进入企业知识库。</p>}
-              {materialAssetTab === 'ai' && <p className="rounded-lg border border-violet-200 bg-violet-50 px-4 py-3 text-xs leading-5 text-violet-800">工厂、产品和 D2C 分镜生成后会自动回填当前分镜，并同步保存在这里。</p>}
-              {materialAssetTab === 'enterprise' && <div className="flex flex-wrap items-center justify-end gap-2 rounded-lg border border-border bg-surface px-2.5 py-2">
-                <label htmlFor="material-upload-product" className="sr-only">本次上传关联产品（可选）</label>
+              <div className="flex flex-wrap items-center justify-end gap-2 rounded-lg border border-border bg-surface px-2.5 py-2">
+                <label htmlFor="material-upload-product" className="sr-only">本次上传必须关联产品</label>
                 <select
                   id="material-upload-product"
                   aria-label="本次上传素材归属"
-                  value={uploadProductId || MATERIAL_PRODUCT_COMMON}
-                  onChange={event => setUploadProductId(event.target.value === MATERIAL_PRODUCT_COMMON ? '' : event.target.value)}
+                  value={uploadProductId}
+                  onChange={event => setUploadProductId(event.target.value)}
                   className="h-9 min-w-[190px] rounded-md border border-border bg-white px-3 text-xs font-bold text-text-primary outline-none focus:border-accent"
                 >
-                  <option value={MATERIAL_PRODUCT_COMMON}>不指定（系统自动匹配）</option>
+                  <option value="">选择关联产品（必选）</option>
                   {materialProductId && materialProductRef && !materialProducts.some(item => item.id === materialProductId) && <option value={materialProductId}>{materialProductRef}</option>}
                   {materialProducts.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
                 </select>
                 <button
                   type="button"
                   onClick={() => uploadInputRef.current?.click()}
-                  disabled={uploadingMaterial}
-                  title="上传到我的素材"
+                  disabled={uploadingMaterial || !uploadProductId}
+                  title={uploadProductId ? "上传到产品素材" : "请先选择产品"}
                   className="inline-flex h-9 items-center gap-1.5 rounded-md bg-accent px-3 text-xs font-bold text-white transition hover:bg-accent-dim disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {uploadingMaterial ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
                   上传素材
                 </button>
-              </div>}
+              </div>
 
               {materialProductFilterEnabled && (
                 <div className="flex flex-col gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
@@ -4735,6 +4729,14 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
               )}
 
               <div className="space-y-3 rounded-lg border border-border bg-surface p-3 sm:p-4">
+                <div className="flex flex-wrap items-center gap-2" aria-label="素材分类">
+                  {([
+                    { id: 'all', label: '全部素材', icon: Images, count: localMaterials.length },
+                    { id: 'product', label: '产品素材', icon: Package, count: localMaterials.filter(item => materialKindOf(item) === 'product').length },
+                    { id: 'cloud', label: '云素材', icon: Cloud, count: localMaterials.filter(item => materialKindOf(item) === 'cloud').length },
+                  ] as const).map(item => { const Icon = item.icon; return <button key={item.id} type="button" onClick={() => setMaterialKind(item.id)} aria-pressed={materialKind === item.id} className={`inline-flex h-9 items-center gap-2 rounded-lg border px-3 text-xs font-black transition ${materialKind === item.id ? 'border-accent bg-accent text-white' : 'border-border bg-white text-text-secondary hover:border-accent hover:text-accent'}`}><Icon size={14}/>{item.label}<span className={`rounded-full px-1.5 py-0.5 text-[9px] ${materialKind === item.id ? 'bg-white/20' : 'bg-surface-2'}`}>{item.count}</span></button>; })}
+                  <p className="ml-auto text-[10px] text-text-muted">企业产品表图片自动进入产品素材；系统预置内容归入云素材。</p>
+                </div>
                 <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 xl:grid-cols-4">
                   <div className="relative w-full">
                     <Search size={14} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-text-muted" />

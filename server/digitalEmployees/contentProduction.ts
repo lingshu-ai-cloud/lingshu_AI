@@ -42,6 +42,7 @@ import { digitalEmployeeProductionGraph } from '../videoProduction/runtimeGraph.
 import { closedWorldNarrationLines, ensureStoredVoiceQuality, socialVideoEffectPlan } from './contentProductionCreative.js';
 import { aggregateNarrationStyleProfiles, deriveNarrationStyleProfile, narrationStyleInstruction, type NarrationStyleProfile } from './narrationStyle.js';
 import { containsInternalContentMarker, paginateAlignedCues, subtitleCuesAreSafe } from '../lib/subtitleCues.js';
+import { buildBenchmarkAnalysis, MATERIAL_TYPE_LABELS, SHOT_ROLE_LABELS } from '../../shared/benchmarkAnalysis.js';
 export { containsInternalContentMarker, paginateAlignedCues, subtitleCuesAreSafe } from '../lib/subtitleCues.js';
 import type { AssetCandidate, ContentProductionAdvanceResult, ContentProductionOrderInput, ContentProductionRoute, ContentRouteEvidence, ContentRoutePlan, ProductionStage, RouteSourcePlan, SceneSourcePlanItem, StoredRecord } from './contentProductionContracts.js';
 export type { AssetCandidate, ContentProductionAdvanceResult, ContentProductionOrderInput, ContentProductionRoute, ContentRouteEvidence, ContentRoutePlan, RouteSourcePlan, SceneSourcePlanItem } from './contentProductionContracts.js';
@@ -490,18 +491,20 @@ function referenceStructure(record?: StoredRecord): { id: string; structure: unk
   const analysis = json<Record<string, unknown>>(record.aiAnalysis, {});
   const gemini = json<Record<string, unknown>>(analysis.gemini, {});
   const shots = Array.isArray(gemini.scriptDetails15s) ? gemini.scriptDetails15s : Array.isArray(gemini.shots) ? gemini.shots : [];
-  const structure = shots.map((shot, index) => {
-    const row = json<Record<string, unknown>>(shot, {});
-    return {
-      index,
-      time: text(row.time, 80),
-      shot: text(row.shot, 120),
-      camera: text(row.camera, 120),
-      purpose: text(row.purpose, 180),
-      beats: Array.isArray(row.beats) ? row.beats : [],
-      transitionToNext: text(row.transitionToNext, 180),
-    };
+  const normalized = buildBenchmarkAnalysis({
+    analysis,
+    videoId: record.id,
+    duration: Number(record.duration || 0),
+    evidenceRevision: text(record.updatedAt || record.updated_at || analysis.analysisRunId || `analysis:${record.id}`, 160),
   });
+  const structure = normalized.structure.map((step, index) => ({
+    index,
+    materialType: step.materialType,
+    materialLabel: MATERIAL_TYPE_LABELS[step.materialType],
+    narrativeRole: step.narrativeRole,
+    narrativeRoleLabel: SHOT_ROLE_LABELS[step.narrativeRole],
+    shots: step.shotIds.map(id => normalized.shots.find(shot => shot.shotId === id)).filter(Boolean),
+  }));
   const observedFacts = shots.flatMap(shot => {
     const row = json<Record<string, unknown>>(shot, {});
     return Array.isArray(row.observedFacts) ? row.observedFacts.map(item => text(item, 200)).filter(Boolean) : [];
@@ -1743,12 +1746,15 @@ export async function advanceAutomatedContentProduction(input: {
         reference: referenceEvidence,
         hash: stableHash({ productId: routePlan.productId || '', assets: routeAssets.map(evidenceAssetSnapshot), reference: referenceEvidence }),
       };
+      const normalizedPlan = normalizeVideoPlan(frozenOrder?.videoPlan || input.config.videoDefaults || {});
+      const publication = normalizedPlan.publication;
       const spec = {
         mode: route, contentMode: 'video', platform: routePlan.platform, platformBrief: routePlan.platformBrief, ratio: '9:16', exportSpec: { ratio: '9:16', resolution: '1080p', fps: 30 }, duration: normalizeVideoPlan(frozenOrder?.videoPlan || input.config.videoDefaults || {}).duration, lang: normalizeVideoPlan(frozenOrder?.videoPlan || input.config.videoDefaults || {}).language,
         workflowRunId: input.runId, workflowTaskId: input.taskId, workflowTaskKey: 'content_production', productInfo: productFacts(profile, input.config, routePlan.productId),
         ...(input.batchPlanId ? { batchPlanId: input.batchPlanId } : {}), ...(frozenOrder?.id ? { contentOrderId: frozenOrder.id, contentOrder: frozenOrder } : {}),
         presenterMode: Boolean(frozenOrder?.videoPlan && usesDigitalPresenter(frozenOrder.videoPlan)) ? 'digital' : 'real',
         audience: input.config.customerProfile, selectedMaterialIds: [], script: '', subtitlesOn: true,
+        caption: publication?.caption || '', hashtags: publication?.tags || [], publicationTitle: publication?.title || '',
         evidenceSnapshot: snapshot,
         automation: {
           schemaVersion: CONTENT_PRODUCTION_SCHEMA_VERSION, managedBy: 'digital_employee', route, slot: slot + 1,
@@ -1761,7 +1767,7 @@ export async function advanceAutomatedContentProduction(input: {
       };
       const record = await store.create<StoredRecord>('studio_projects', {
         tenant_id: input.tenantId,
-        title: `${routeTitle(route)} · ${input.goal.title} · ${normalizeVideoPlan(frozenOrder?.videoPlan || input.config.videoDefaults || {}).language.toUpperCase()} · ${slot + 1}`,
+        title: publication?.title || `${routeTitle(route)} · ${input.goal.title} · ${normalizedPlan.language.toUpperCase()} · ${slot + 1}`,
         status: 'draft',
         spec,
         ...contentProjectLineageFields({ tenantId: input.tenantId, spec }),

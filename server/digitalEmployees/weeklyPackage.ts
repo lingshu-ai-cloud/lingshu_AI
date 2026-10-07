@@ -4,7 +4,8 @@ import { normalizeVideoPlan, videoPlanErrors } from '../../shared/contracts/vide
 import { defaultMatrixPlan, fillMatrixVideos, normalizeMatrixPlan, matrixScopeIssues } from '../../src/lib/weeklyMatrix.js';
 import { LEGACY_TASK_TEMPLATE_IDS, TASK_TEMPLATES, packageIssues, type WeeklyPackage, type PackageTask, type TemplateId, type WeeklyOperatingContext } from '../../src/lib/weeklyPackage.js';
 import { defaultDirectorPlan, normalizeDirectorPlan } from '../../src/lib/contentDirector.js';
-import { connectedAccountIssues } from '../../shared/contracts/socialOperatingProfile.js';
+import { connectedAccountIssues, socialOperatingProfile } from '../../shared/contracts/socialOperatingProfile.js';
+import { MASTER_VIDEO_COST_MAX_CNY, MASTER_VIDEO_COST_MIN_CNY, MASTER_VIDEO_COST_POINT_CNY } from '../../shared/contracts/contentCostModel.js';
 import { buildWeeklyPlan, type DigitalEmployeeConfig, type WeeklyGoalInput, type WeeklyPlanDraft } from './domain.js';
 
 const splitMarkets = (value: string): string[] => [...new Set(value.split(/[、，,；;\n]/).map(item => item.trim()).filter(Boolean))];
@@ -15,15 +16,16 @@ export function buildWeeklyOperatingContext(
   config: DigitalEmployeeConfig,
 ): WeeklyOperatingContext {
   const videos = pack.tasks.find(task => task.templateId === 'production')?.videoPlans || [];
+  const masters = videos.filter(video => video.productionRole !== 'platform_adaptation');
   const rows = pack.matrixPlan || [];
-  const productionCny = Number(pack.directorPlan?.productionBudget || 0);
+  const plannedPoint = masters.reduce((sum, video) => sum + Math.max(0, Number(video.estimatedCost) || 0), 0);
+  const plannedMin = masters.reduce((sum, video) => sum + Math.max(0, Number(video.estimatedCostRange?.minCny) || 0), 0);
+  const plannedMax = masters.reduce((sum, video) => sum + Math.max(0, Number(video.estimatedCostRange?.maxCny) || 0), 0);
+  const productionCny = Number(pack.directorPlan?.productionBudget || 0) || plannedPoint;
+  const productionMinCny = plannedMin || Number(pack.directorPlan?.productionBudgetMin || 0);
+  const productionMaxCny = plannedMax || Number(pack.directorPlan?.productionBudgetMax || pack.directorPlan?.productionBudget || 0);
   const paidMediaCny = Number(pack.directorPlan?.paidMediaBudget || 0);
-  const accountWeights = rows.map(row => {
-    const plannedCost = videos
-      .filter(video => video.matrix?.accountId === row.accountId)
-      .reduce((sum, video) => sum + Math.max(0, Number(video.estimatedCost) || 0), 0);
-    return { accountId: row.accountId, platform: row.platform, weight: plannedCost > 0 ? plannedCost : Math.max(1, row.weeklyCount), basedOnCost: plannedCost > 0 };
-  });
+  const accountWeights = rows.map(row => ({ accountId: row.accountId, platform: row.platform, weight: Math.max(1, row.weeklyCount) }));
   const totalWeight = Math.max(1, accountWeights.reduce((sum, item) => sum + item.weight, 0));
   const accounts = rows.map(row => {
     const connected = config.publishingTargets.find(target => target.accountId === row.accountId && target.platform === row.platform);
@@ -35,13 +37,14 @@ export function buildWeeklyOperatingContext(
       positioning: row.contentDirection || row.objective || row.accountRole || '本周内容账号',
       contentCount: row.weeklyCount,
       budgetCny: productionCny > 0 ? Math.round((productionCny * allocation.weight / totalWeight) * 100) / 100 : null,
-      allocationBasis: allocation.basedOnCost ? 'estimated_cost' as const : 'content_load' as const,
+      allocationBasis: 'content_load' as const,
     };
   });
-  const formats = [...new Set([
-    ...rows.flatMap(row => row.formats || []),
-    ...videos.map(video => video.route === 'clone' ? '爆款复刻短视频' : video.route === 'material' ? '素材加工短视频' : '产品短视频'),
-  ].filter(Boolean))];
+  // Smart Operations currently delivers video only. Matrix strategy formats
+  // may still contain legacy carousel/article labels, but those must not leak
+  // into the weekly output promise. Title, caption and tags are publication
+  // metadata attached to each video rather than independent content outputs.
+  const formats = [...new Set(videos.map(video => video.route === 'clone' ? '爆款复刻短视频' : video.route === 'material' ? '素材加工短视频' : '产品短视频'))];
   return {
     objective: goal.objective,
     metric: `${goal.metric}：${goal.baseline} → ${goal.target} ${goal.unit}`,
@@ -51,8 +54,12 @@ export function buildWeeklyOperatingContext(
     budget: {
       currency: pack.directorPlan?.currency || 'CNY',
       productionCny,
+      productionMinCny,
+      productionMaxCny,
       paidMediaCny,
       totalCny: Math.round((productionCny + paidMediaCny) * 100) / 100,
+      totalMinCny: Math.round((productionMinCny + paidMediaCny) * 100) / 100,
+      totalMaxCny: Math.round((productionMaxCny + paidMediaCny) * 100) / 100,
     },
     cadence: {
       contentCount: videos.length || rows.reduce((sum, row) => sum + row.weeklyCount, 0),
@@ -69,8 +76,11 @@ export function buildWeeklyOperatingContext(
     },
     outputs: {
       count: videos.length || rows.reduce((sum, row) => sum + row.weeklyCount, 0),
+      originalCount: masters.length,
+      platformVersionCount: videos.length,
+      publishCount: rows.reduce((sum, row) => sum + row.weeklyCount, 0) || videos.length,
       formats: formats.length ? formats : ['短视频'],
-      totalDurationSeconds: videos.reduce((sum, video) => sum + Math.max(0, Number(video.duration) || 0), 0),
+      totalDurationSeconds: masters.reduce((sum, video) => sum + Math.max(0, Number(video.duration) || 0), 0),
     },
   };
 }
@@ -88,9 +98,16 @@ export function recommendPackage(goal: WeeklyGoalInput, config: DigitalEmployeeC
   }));
   const matrixPlan = goal.businessLine === 'customer_conversion' ? [] : defaultMatrixPlan(config, goal.contentPlatforms, goal.objective);
   const baseContentCount = tasks.find(t => t.templateId === 'production')?.videoPlans?.length || 0;
+  const profile = socialOperatingProfile(config.socialOperatingProfile);
+  const platformVersionTarget = matrixPlan.reduce((sum, row) => sum + row.weeklyCount, 0) || baseContentCount;
+  const originalTarget = Math.min(platformVersionTarget, matrixPlan.length ? profile.weeklyTargets.baseVideoOriginals : baseContentCount);
+  const initialDirectorPlan = defaultDirectorPlan(originalTarget, platformVersionTarget, platformVersionTarget);
+  initialDirectorPlan.productionBudgetMin = originalTarget * MASTER_VIDEO_COST_MIN_CNY;
+  initialDirectorPlan.productionBudget = originalTarget * MASTER_VIDEO_COST_POINT_CNY;
+  initialDirectorPlan.productionBudgetMax = originalTarget * MASTER_VIDEO_COST_MAX_CNY;
   let recommended: WeeklyPackage = { revision: 1, maturity, operatingAssessment: normalizeAssessment(config.operatingAssessment), participation, tasks,
     ...(matrixPlan.length ? { matrixPlan } : {}),
-    directorPlan: defaultDirectorPlan(baseContentCount),
+    directorPlan: initialDirectorPlan,
     // Approving the weekly package is the single human authorization event.
     // Every actual publish still has to pass the frozen account/week/count/hash
     // boundary and the existing quality, connection and receipt safeguards.
@@ -102,7 +119,7 @@ export function recommendPackage(goal: WeeklyGoalInput, config: DigitalEmployeeC
     : contentCount * Math.max(1, config.publishingTargets.filter(target => goal.contentPlatforms.includes(target.platform)).length);
   const result: WeeklyPackage = {
     ...recommended,
-    directorPlan: defaultDirectorPlan(contentCount),
+    directorPlan: { ...initialDirectorPlan, platformVersionTarget: contentCount, publishTarget: defaultPublishActions },
     authorization: { ...recommended.authorization, maxPublishItems: Math.max(1, defaultPublishActions) },
   };
   return { ...result, operatingContext: buildWeeklyOperatingContext(result, goal, config) };

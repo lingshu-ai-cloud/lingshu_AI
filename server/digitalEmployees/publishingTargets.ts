@@ -1,5 +1,6 @@
 import { validTimeZone } from './continuationPolicy.js';
 import { store } from '../storage/index.js';
+import { currentDataAuthority } from '../storage/dataAuthority.js';
 import type { PublishingPlatform, PublishingTarget } from './domain.js';
 
 interface SocialAccountRecord {
@@ -25,12 +26,16 @@ export interface ConnectedPublishingAccount extends PublishingTarget {
 
 const text = (value: unknown): string => String(value ?? '').trim();
 
-export async function listConnectedPublishingAccounts(tenantId: string): Promise<ConnectedPublishingAccount[]> {
+export function localPublishingAccountMocksEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return currentDataAuthority() === 'local' || env.LINGSHU_LOCAL_PREVIEW === '1';
+}
+
+export async function listConnectedPublishingAccounts(tenantId: string, companyName = ''): Promise<ConnectedPublishingAccount[]> {
   const [social, youtube] = await Promise.all([
     store.list<SocialAccountRecord>('social_accounts', { where: { tenantId }, perPage: 200 }),
     store.list<YouTubeAccountRecord>('youtube_accounts', { where: { tenantId }, perPage: 200 }),
   ]);
-  return [
+  const connected: ConnectedPublishingAccount[] = [
     ...social.items
       .filter(account => account.status === 'connected' && ['facebook', 'instagram', 'tiktok'].includes(account.platform))
       .map(account => ({
@@ -48,6 +53,18 @@ export async function listConnectedPublishingAccounts(tenantId: string): Promise
         status: 'connected' as const,
       })),
   ];
+  if (!localPublishingAccountMocksEnabled()) return connected;
+  const localLabel = text(companyName) || '本地演示企业';
+  for (const platform of ['youtube', 'tiktok', 'instagram', 'facebook'] as const) {
+    if (connected.some(account => account.platform === platform)) continue;
+    connected.push({
+      platform,
+      accountId: `local-${platform}-${tenantId}`,
+      accountLabel: localLabel,
+      status: 'connected',
+    });
+  }
+  return connected;
 }
 
 /**

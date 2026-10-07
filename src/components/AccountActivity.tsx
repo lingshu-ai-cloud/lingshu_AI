@@ -89,7 +89,7 @@ function needsChineseTranslation(text: string) {
   return han.length / letters.length < 0.45;
 }
 
-export default function AccountActivity() {
+export default function AccountActivity({ embedded = false }: { embedded?: boolean } = {}) {
   const [tab, setTab] = useState<ActivityTab>('overview');
   const [filter, setFilter] = useState<CommentFilter>('all');
   const [comments, setComments] = useState<SocialComment[]>([]);
@@ -257,7 +257,7 @@ export default function AccountActivity() {
 
   return (
     <div className="min-h-full">
-      <div className="sticky top-0 z-10 border-b border-border bg-white/95 px-4 backdrop-blur sm:px-6">
+      <div className={`${embedded ? '' : 'sticky top-0 z-10'} border-b border-border bg-white/95 px-4 backdrop-blur sm:px-6`}>
         <div className="flex min-h-14 flex-wrap items-center justify-between gap-3 py-2">
           <div className="flex items-center gap-6 border-b border-border" role="tablist" aria-label="账号动态视图">
             {TAB_ITEMS.map(item => (

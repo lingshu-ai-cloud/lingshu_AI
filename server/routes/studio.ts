@@ -18,6 +18,7 @@ import { matchedReferenceIndustryLeaks } from '../lib/referenceIndustryLeak.js';
 export { matchedReferenceIndustryLeaks } from '../lib/referenceIndustryLeak.js';
 import { materialRoleFromFolder, safeMaterialScenes, safeMaterialVoicePlan } from '../lib/studioMaterialPresentation.js';
 import { productIdentity } from '../digitalEmployees/contentProduction.js';
+import { enterpriseAssetStableId } from '../digitalEmployees/contentBatchPlan.js';
 import { requestMaterialAnalysis, waitForMaterialAnalysis, isMaterialAnalysisActive, saveMaterialSegmentsWithScriptAnalysis, startPendingLocalMaterialAnalyses } from '../lib/materialLibraryAnalysis.js';
 import { readMaterialLibrary, readLocalMaterials, saveLocalMaterials, updateLocalMaterial } from '../lib/materialLibrary.js';
 import { currentDataAuthority } from '../storage/dataAuthority.js';
@@ -5932,7 +5933,43 @@ async function materialResponse(material: Material, tenantId: string): Promise<M
       analyzedAt: material.createdAt,
     })
     : undefined);
-  return { ...material, url: url || material.url, poster, segments, scriptAnalysis, canManage: material.scope !== 'shared' && material.tenantId === tenantId, objectKey: undefined, posterObjectKey: undefined };
+  return { ...material, url: url || material.url, poster, segments, scriptAnalysis, canManage: material.sourceType !== 'enterprise_product_table' && material.scope !== 'shared' && material.tenantId === tenantId, objectKey: undefined, posterObjectKey: undefined };
+}
+
+function enterpriseProductMaterials(tenantId: string, profile: Awaited<ReturnType<typeof readTenantEnterpriseProfile>>): Material[] {
+  return (profile.products.items || []).flatMap((product, productIndex) => {
+    const productId = productIdentity(product, productIndex);
+    const productName = String(product.name || product.sku || `产品 ${productIndex + 1}`).trim();
+    const groups = ['images', 'videos', 'factoryImages', 'packagingImages', 'sceneImages', 'brandAssets']
+      .map(group => Array.isArray((product as Record<string, unknown>)[group]) ? (product as Record<string, unknown>)[group] as Array<Record<string, unknown>> : [])
+      .filter(group => group.length);
+    if (String(product.imageUrl || '').trim()) groups.unshift([{ type: 'image', url: product.imageUrl, name: '产品主图' }]);
+    return groups.flat().flatMap((asset, assetIndex) => {
+      const url = String(asset.url || '').trim();
+      if (!url) return [];
+      const type = String(asset.type || '').startsWith('video') ? 'video' as const : 'image' as const;
+      return [{
+        id: enterpriseAssetStableId(productIndex, assetIndex, url),
+        tenantId,
+        name: String(asset.name || `${productName}${type === 'video' ? '视频' : '图片'} ${assetIndex + 1}`).trim(),
+        folder: 'product',
+        type,
+        duration: 0,
+        size: Number(asset.size || 0) > 0 ? humanSize(Number(asset.size)) : '企业产品表',
+        file: '',
+        url,
+        poster: type === 'image' ? url : undefined,
+        scope: 'own' as const,
+        usage: 'editable' as const,
+        sourceType: 'enterprise_product_table',
+        sourceName: '企业中心产品表',
+        productId,
+        productName,
+        tags: `产品素材,${productName}`,
+        createdAt: String(asset.updatedAt || new Date(0).toISOString()),
+      } satisfies Material];
+    });
+  });
 }
 
 // Video generation history. A groupKey identifies one logical output slot
@@ -6027,11 +6064,17 @@ studioRouter.get('/materials', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   const scope = req.query.scope as string | undefined;
   const purpose = String(req.query.purpose || 'library');
-  const inventory = await readMaterialLibrary(tenantId);
+  const [inventory, enterpriseProfile] = await Promise.all([
+    readMaterialLibrary(tenantId),
+    readTenantEnterpriseProfile(tenantId),
+  ]);
   // Legacy local imports wrote materials.json directly. Start their visual
   // indexing when the owner opens the library; the response stays immediate.
   if (currentDataAuthority() === 'local') startPendingLocalMaterialAnalyses(tenantId, inventory.items);
-  let list = inventory.items as Material[];
+  let list = [...new Map([
+    ...enterpriseProductMaterials(tenantId, enterpriseProfile),
+    ...inventory.items as Material[],
+  ].map(material => [material.id, material])).values()];
   if (scope === 'shared') list = list.filter(canAppearInSharedLibrary);
   else if (scope === 'own') list = list.filter(m => (m.scope ?? 'own') === 'own');
   if (purpose === 'reference') list = list.filter(isReferenceOnlyMaterial);
