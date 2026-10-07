@@ -169,6 +169,7 @@
     "@dnd-kit/utilities": "^3.2.2",
     "@google/genai": "^2.22.0",
     "@remotion/bundler": "4.0.530",
+    "@remotion/gif": "4.0.530",
     "@remotion/renderer": "4.0.530",
     "@tailwindcss/vite": "^4.3.3",
     "@tesseract.js-data/chi_sim": "1.0.0",

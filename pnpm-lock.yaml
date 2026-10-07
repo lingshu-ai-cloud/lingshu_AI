@@ -32,6 +32,9 @@ importers:
       '@remotion/bundler':
         specifier: 4.0.530
         version: 4.0.530(lightningcss@1.33.0)(postcss@8.5.26)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
+      '@remotion/gif':
+        specifier: 4.0.530
+        version: 4.0.530(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       '@remotion/renderer':
         specifier: 4.0.530
         version: 4.0.530(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
@@ -1050,6 +1053,12 @@ packages:
 
   '@remotion/elevenlabs@4.0.530':
     resolution: {integrity: sha512-NbYbB9El/FfCaXRK0WueeLep/mYGL+rw+26JyW5oVyRBFt/M5nxOpIUL/kz+0oCUyKiFMBoRA4skBpvgiE2HWw==}
+
+  '@remotion/gif@4.0.530':
+    resolution: {integrity: sha512-kvR5zB8n+37CsY/4H/CrXqotqj/Eq/DVlGyo+P4+eb353FTc+w/F0O8JRQy44NqFWfIuACmQEZ+hhUT/NMXiCg==}
+    peerDependencies:
+      react: '>=16.8.0'
+      react-dom: '>=16.8.0'
 
   '@remotion/licensing@4.0.530':
     resolution: {integrity: sha512-xMnT4tT/cEcjF7CdcOP3V1pE4uMp7y6T2+vv74DQnFE0XcyU8QlwwjD/28uubprk/rLEw8F5cUHwzWDYuec90g==}
@@ -4049,6 +4058,12 @@ snapshots:
     dependencies:
       '@remotion/captions': 4.0.530
       zod: 4.5.4
+
+  '@remotion/gif@4.0.530(react-dom@19.2.8(react@19.2.8))(react@19.2.8)':
+    dependencies:
+      react: 19.2.8
+      react-dom: 19.2.8(react@19.2.8)
+      remotion: 4.0.530(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
 
   '@remotion/licensing@4.0.530': {}
 

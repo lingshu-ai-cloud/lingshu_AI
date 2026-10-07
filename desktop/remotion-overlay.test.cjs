@@ -1,5 +1,7 @@
 /* eslint-disable */
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 const { RENDERER_VERSION, advancedEvents, resolveOverlayPlacement } = require('./remotion-overlay.cjs');
 const { normalizeEmphasisPlan } = require('./emphasis-composition.cjs');
 
@@ -49,5 +51,12 @@ const crossLayer = advancedEvents(normalizeEmphasisPlan({ profile: 'product_show
   { id: 'cta-intent', type: 'key_fact', assetIntent: 'cta_marker', startMs: 2800, endMs: 3400, text: '咨询', importance: 3, confidence: 1, source: 'editor' },
 ] }, 4));
 assert.deepEqual(crossLayer.map(event => event.assetKind), ['warning', 'urgency', 'reveal', 'key_fact', 'cta'], 'shared asset intents select concrete desktop assets');
-assert.match(RENDERER_VERSION, /^semantic-assets-v\d+$/);
+assert.match(RENDERER_VERSION, /^semantic-assets-v\d+-original-media$/, 'cache namespace changes when original media renderer is introduced');
+const assetComponent = fs.readFileSync(path.join(__dirname, 'remotion-overlay/semantic-assets.tsx'), 'utf8');
+assert.match(assetComponent, /from '@remotion\/gif'/, 'animated originals use video-frame-synchronized GIF playback');
+for (const file of ['burst-rays-yellow-static.png', 'burst-rays-yellow.gif', 'emphasis-rays-yellow.gif', 'lightning-orange.gif', 'megaphone-blue-yellow.gif']) {
+  assert.ok(fs.statSync(path.join(__dirname, '../assets/reference/emphasis/v1', file)).size > 1024, `${file} is a real runtime asset`);
+  assert.match(assetComponent, new RegExp(file.replace('.', '\\.')), `${file} is mapped by the semantic component`);
+}
+assert.match(assetComponent, /if \(failed\) return <SvgFallback/, 'SVG artwork is restricted to load failure fallback');
 console.log('remotion overlay selection regression passed');

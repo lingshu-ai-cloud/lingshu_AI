@@ -5,7 +5,8 @@ const os = require('node:os');
 const path = require('node:path');
 
 let bundlePromise = null;
-const RENDERER_VERSION = 'semantic-assets-v2';
+const RENDERER_VERSION = 'semantic-assets-v3-original-media';
+const ASSET_DIRECTORY = path.join(__dirname, '../assets/reference/emphasis/v1');
 
 const finite = value => Number.isFinite(Number(value)) ? Number(value) : null;
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
@@ -91,6 +92,7 @@ async function rendererModules() {
 async function bundleOverlay(bundle) {
   if (!bundlePromise) bundlePromise = bundle({
     entryPoint: path.join(__dirname, 'remotion-overlay/index.ts'),
+    publicDir: ASSET_DIRECTORY,
     onProgress: () => undefined,
   });
   return bundlePromise;
@@ -102,6 +104,8 @@ async function renderTransparentOverlay({ plan, width, height, durationSeconds, 
   const sourceVersion = crypto.createHash('sha256').update([
     fs.readFileSync(path.join(__dirname, 'remotion-overlay/root.tsx')),
     fs.readFileSync(path.join(__dirname, 'remotion-overlay/semantic-assets.tsx')),
+    ...['burst-rays-yellow-static.png', 'burst-rays-yellow.gif', 'emphasis-rays-yellow.gif', 'lightning-orange.gif', 'megaphone-blue-yellow.gif']
+      .map(file => fs.readFileSync(path.join(ASSET_DIRECTORY, file))),
   ].map(value => crypto.createHash('sha256').update(value).digest('hex')).join(':')).digest('hex').slice(0, 16);
   const props = { rendererVersion: RENDERER_VERSION, sourceVersion, durationFrames: Math.max(1, Math.ceil(durationSeconds * fps)), fps, width, height, profile: plan.profile, events };
   const key = crypto.createHash('sha256').update(JSON.stringify(props)).digest('hex');
