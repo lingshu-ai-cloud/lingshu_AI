@@ -11,7 +11,8 @@ class MemoryStore implements DataStore {
   async delete(): Promise<boolean> { return false; }
   async list<T>(collection: string, query: ListQuery = {}): Promise<ListResult<T>> {
     const items = (this.rows.get(collection) ?? []).filter(row => Object.entries(query.where ?? {}).every(([key, value]) => row[key] === value));
-    return { items: items as T[], totalItems: items.length, totalPages: items.length ? 1 : 0, page: 1, perPage: query.perPage ?? 500 };
+    const page = query.page ?? 1, perPage = query.perPage ?? 500;
+    return { items: items.slice((page - 1) * perPage, page * perPage) as T[], totalItems: items.length, totalPages: Math.ceil(items.length / perPage), page, perPage };
   }
 }
 
@@ -68,4 +69,34 @@ test('readiness is computed from accepted videos, confirmed accounts, and approv
   assert.equal(readiness.readyForOutline, true);
   assert.equal(readiness.readyForDetailedPlan, true);
   assert.deepEqual(readiness.gaps, []);
+});
+
+test('full supply filtering and readiness include records beyond legacy scan caps and latest versions', async () => {
+  const dataStore = new MemoryStore();
+  dataStore.rows.set('social_discovery_scopes', [{ id: 'scope', tenant_id: 'tenant-1', status: 'active', payload: { approval: { status: 'approved' }, keywordSet: { scope: { audienceRole: 'brand_buyer' }, graph: { sceneClusters: [] } } } }]);
+  const videos = Array.from({ length: 1105 }, (_, index) => evidence(`video-${String(index).padStart(4, '0')}`, `evidence-${index}`));
+  videos.forEach((row, index) => { row.evidence.sceneIds = [index === 1104 ? 'late-scene' : 'scene-1']; });
+  dataStore.rows.set('social_candidate_evidence', videos);
+  dataStore.rows.set('trend_videos', videos.map(row => ({ id: row.candidateId, platform: 'tiktok', title: `OEM factory wholesale supplier ${row.candidateId}`, sourceUrl: row.g1.sourceUrl })));
+  const tail = await listSocialDiscoverySupply({ tenantId: 'tenant-1', dataStore, filters: { search: 'video-1104', candidateType: 'video', sceneId: 'late-scene', decision: 'accepted' } });
+  assert.equal(tail.totalItems, 1);
+  assert.equal(tail.items[0]!.candidateId, 'video-1104');
+  const first = await listSocialDiscoverySupply({ tenantId: 'tenant-1', dataStore, filters: { candidateType: 'video', decision: 'accepted', perPage: 100 } });
+  const last = await listSocialDiscoverySupply({ tenantId: 'tenant-1', dataStore, filters: { candidateType: 'video', decision: 'accepted', page: 12, perPage: 100 } });
+  assert.equal(first.totalItems, 1105);
+  assert.equal(last.items.length, 5);
+  assert.equal(new Set([...first.items, ...last.items].map(item => item.candidateId)).size, 105);
+  const newer = { ...videos[0]!, evidenceId: 'latest-at-end', version: 2, evidence: { ...videos[0]!.evidence, sceneIds: ['new-scene'] } };
+  dataStore.rows.get('social_candidate_evidence')!.push(newer);
+  const newest = await listSocialDiscoverySupply({ tenantId: 'tenant-1', dataStore, filters: { candidateType: 'video', search: 'video-0000', sceneId: 'new-scene' } });
+  assert.equal(newest.items[0]!.evidenceVersion, 2);
+  const accounts = Array.from({ length: 505 }, (_, index) => ({ id: `account-${index}`, tenant_id: 'tenant-1', accountId: `https://www.tiktok.com/@factory-${index}`, decision: 'track', status: index === 504 ? 'tracked' : 'watching', reasons: ['OEM factory'], evidenceVideoIds: ['video-1'], relatedSceneIds: ['scene-1'], missingEvidence: [], confidence: 0.9, businessConfirmation: { status: index === 504 ? 'confirmed' : 'pending' } }));
+  dataStore.rows.set('social_tracked_accounts', accounts);
+  const accountTail = await listSocialDiscoverySupply({ tenantId: 'tenant-1', dataStore, filters: { candidateType: 'account', search: 'factory-504' } });
+  assert.equal(accountTail.totalItems, 1);
+  const readiness = await evaluateSocialDiscoveryReadiness({ tenantId: 'tenant-1', dataStore, thresholds: { acceptedVideos: 1105, benchmarkAccounts: 1, sceneClusters: 3 } });
+  assert.equal(readiness.actual.acceptedVideos, 1105);
+  assert.equal(readiness.actual.benchmarkAccounts, 1);
+  assert.equal(readiness.actual.sceneClusters, 3);
+  assert.equal(readiness.readyForDetailedPlan, true);
 });

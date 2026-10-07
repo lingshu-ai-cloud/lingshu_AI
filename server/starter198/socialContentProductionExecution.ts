@@ -1,3 +1,4 @@
+import { assertCurrentContentExecutionActive } from '../contentExecution/context.js';
 import { createHash } from 'node:crypto';
 import { existsSync, statSync } from 'node:fs';
 import fsp from 'node:fs/promises';
@@ -677,6 +678,7 @@ export async function runSocialContentAutoProduction(input: {
       let voice: Awaited<ReturnType<typeof synthesizeStudioVoiceForAutomation>> | null = null;
       let duration = 0;
       for (let revisionAttempt = 0; revisionAttempt <= 2; revisionAttempt += 1) {
+        await assertCurrentContentExecutionActive();
         voice = await (input.runtime?.synthesizeVoice ?? synthesizeStudioVoiceForAutomation)({
           tenantId: input.tenantId,
           text: contentHandoff.narration,

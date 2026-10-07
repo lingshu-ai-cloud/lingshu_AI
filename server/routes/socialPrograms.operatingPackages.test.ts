@@ -81,8 +81,8 @@ test('social program routes expose the weekly operating package lifecycle', asyn
 
   const app = express();
   app.use(express.json());
-  app.use((_req, res, next) => {
-    res.locals.tenantId = 'tenant-a';
+  app.use((req, res, next) => {
+    res.locals.tenantId = req.header('x-isolated-test-tenant') || 'tenant-a';
     res.locals.userId = 'owner';
     next();
   });
@@ -124,6 +124,20 @@ test('social program routes expose the weekly operating package lifecycle', asyn
   assert.equal(created.agentPlanning.status, 'outline_ready');
   assert.equal(created.agentPlanning.skeleton.generatedBy, 'business_agent');
   assert.equal(created.agentPlanning.skeleton.tokenCost, 0);
+
+  const cancellationPath = `${base}/operating-packages/${created.packageId}/cancellation`;
+  const noCancellation = await fetch(`${cancellationPath}?version=1`);
+  assert.equal(noCancellation.status, 200);
+  assert.deepEqual(await noCancellation.json(), { item: null }, 'no cancellation receipt remains unknown rather than invented success');
+  for (const version of ['0', '-1', '1.5', 'invalid']) {
+    const invalid = await fetch(`${cancellationPath}?version=${version}`);
+    assert.equal(invalid.status, 400);
+    assert.equal((await invalid.json()).error, 'package_version_invalid');
+  }
+  const otherTenant = await fetch(cancellationPath, { headers: { 'x-isolated-test-tenant': 'tenant-other' } });
+  assert.equal(otherTenant.status, 404, 'cancellation route requires tenant ownership of the package');
+  const otherProgram = await fetch(cancellationPath.replace(program.programId, 'program-not-owned'));
+  assert.equal(otherProgram.status, 404, 'cancellation route requires matching program ownership');
 
   const executionResponse = await fetch(`${base}/operating-packages/${created.packageId}/execution-tasks?version=1`);
   assert.equal(executionResponse.status, 200);
@@ -264,4 +278,25 @@ test('social program routes expose the weekly operating package lifecycle', asyn
   const retired = (await retiredResponse.json()).item;
   assert.equal(retired.status, 'retired');
   assert.equal(retired.socialContentPackage.authorization.allowRealPublishing, false);
+  const actualCancellation = await fetch(`${cancellationPath}?version=2`);
+  assert.equal(actualCancellation.status, 200);
+  const summary = (await actualCancellation.json()).item;
+  assert.ok(summary, 'actual retirement records a durable cancellation summary');
+  assert.equal(summary.boundary, 'stop_future_work_preserve_external_effects');
+  assert.equal(summary.status, 'completed');
+  const otherVersion = await fetch(`${cancellationPath}?version=3`);
+  assert.deepEqual(await otherVersion.json(), { item: null }, 'a receipt for another package version must not leak');
+  const receipt = (await dataStore.list<any>('social_weekly_cancellations', { where: { tenant_id: 'tenant-a', package_id: created.packageId, package_version: 2 } })).items[0];
+  assert.ok(receipt);
+  await dataStore.update('social_weekly_cancellations', receipt.id, {
+    status: 'completed_with_external_effects', reason: 'secret-provider-reason', last_error: 'secret-provider-token',
+    effects: [{ resourceType: 'production_job', resourceId: 'job-trace', outcome: 'unknown_requires_reconciliation', receiptRefs: ['secret-provider-receipt-token'] }],
+  });
+  const sanitizedResponse = await fetch(`${cancellationPath}?version=2`);
+  const sanitized = await sanitizedResponse.json();
+  assert.deepEqual(sanitized.item.effects, [{ resourceType: 'production_job', resourceId: 'job-trace', outcome: 'unknown_requires_reconciliation', receiptCount: 1 }]);
+  assert.equal(sanitized.item.lastError, '部分清理未完成，请重试撤回以继续补偿。');
+  assert.ok(!JSON.stringify(sanitized).includes('secret-provider'), 'summary excludes raw receipts, reasons and provider error secrets');
+  assert.deepEqual(Object.keys(sanitized.item).sort(), ['boundary', 'effects', 'lastError', 'status', 'updatedAt']);
+
 });

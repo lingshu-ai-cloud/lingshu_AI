@@ -1,4 +1,5 @@
 import type { WeeklyExecutionTask, WeeklyOperatingPackage } from '../../shared/contracts/socialProgram.js';
+import { withWeeklyProductionAdmissionGuard } from '../socialPrograms/weeklyCancellation.js';
 import type { DataStore } from '../storage/datastore.js';
 import { createWeeklyPublishingAdapter } from '../publishing/weeklyPublishingAdapter.js';
 import { runWeeklyPublicationPackageScan } from '../publishing/weeklyPublicationWorker.js';
@@ -27,7 +28,13 @@ export function createSocialWeeklyPublicationAdapter(dataStore: DataStore, optio
     const pkg = row.payload as WeeklyOperatingPackage;
     if (pkg.packageId !== task.packageId || pkg.version !== task.packageVersion || pkg.programId !== task.programId) return blocked('weekly_package_identity_invalid', '周任务包身份不一致。');
     if (pkg.status !== 'active') return blocked('weekly_package_inactive', '周任务包已停用或被修订替代。');
-    if (task.schedule.stepKind === 'publishing') return publish(task, pkg);
+    if (task.schedule.stepKind === 'publishing') {
+      try { return await withWeeklyProductionAdmissionGuard({ dataStore, tenantId: task.tenantId, packageId: task.packageId, packageVersion: task.packageVersion, action: assertAdmission => publish(task, pkg, assertAdmission) }); }
+      catch (error) {
+        const code = error && typeof error === 'object' && 'code' in error ? String(error.code) : 'weekly_publication_admission_failed';
+        return code === 'weekly_cancellation_busy' ? pending(code, '撤回或其他执行正在处理，等待安全核对。') : blocked(code, '本周发布已停止或撤回，已有回执保留。');
+      }
+    }
     if (task.schedule.stepKind === 'performance_monitoring') {
       const rows = await dataStore.list<Row>('social_metric_snapshots', { where: { tenant_id: task.tenantId, account_id: task.accountId! }, sort: '-captured_at', page: 1, perPage: 100 });
       const starts = Date.parse(`${pkg.weekStart}T00:00:00Z`);
@@ -50,7 +57,7 @@ export function createSocialWeeklyPublicationAdapter(dataStore: DataStore, optio
     return blocked('weekly_execution_adapter_missing', '该执行节点没有匹配的发布或复盘适配器。');
   } };
 
-  async function publish(task: WeeklyExecutionTask, pkg: WeeklyOperatingPackage): Promise<WeeklyExecutionAdapterResult> {
+  async function publish(task: WeeklyExecutionTask, pkg: WeeklyOperatingPackage, assertAdmission: () => Promise<void>): Promise<WeeklyExecutionAdapterResult> {
     const publication = pkg.socialContentPackage.publicationTasks.find(item => item.publicationTaskId === task.publicationTaskId && item.accountId === task.accountId);
     if (!publication) return blocked('weekly_publication_identity_invalid', '发布任务不属于当前周包或账号。');
     const all = await dataStore.list<Row>('social_weekly_execution_tasks', { where: { tenant_id: task.tenantId, package_id: task.packageId, package_version: task.packageVersion }, page: 1, perPage: 1000 });
@@ -94,6 +101,7 @@ export function createSocialWeeklyPublicationAdapter(dataStore: DataStore, optio
       }
       const authorizationIssue = validateWeeklyAssignmentBoundary({ assignment: assignment.payload, contentPackage: pkg.socialContentPackage, existingPublishedCount: publishedCount, now: now().toISOString() });
       if (authorizationIssue) return blocked(authorizationIssue, '发布授权未就绪、已失效或额度已用尽。');
+      await assertAdmission();
       attempt = await executeWeeklyPublication({ assignment: assignment.payload, publicationPackage, contentPackage: pkg.socialContentPackage, adapter: provider, existingPublishedCount: publishedCount, dataStore, now: now() });
     }
     return publicationResult(attempt);

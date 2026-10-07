@@ -358,7 +358,7 @@ function defaultDependencies(): DispatchDependencies {
     customers: tenantId => getWhatsAppCustomers(tenantId) as Array<Record<string, unknown>>,
     guard: guardOutbound,
     recordOutbound: markWhatsAppHumanReply,
-    authorization: readCustomerMessagingAuthorization,
+    authorization: tenantId => readCustomerMessagingAuthorization(tenantId, 'whatsapp'),
     recipientDelayMs: Number.isFinite(delay) ? Math.max(0, delay) : 1000,
     assertLegacyAccess: assertLegacyExternalEffectAllowed,
     executeLegacyEffect: withLegacyExternalEffectAllowed,
@@ -742,7 +742,7 @@ export async function getTenantFollowupDispatchStatus(tenantId: string): Promise
 }> {
   return {
     ...getFollowupDispatchWorkerStatus(),
-    authorization: await readCustomerMessagingAuthorization(tenantId),
+    authorization: await readCustomerMessagingAuthorization(tenantId, 'whatsapp'),
   };
 }
 

@@ -41,6 +41,15 @@ async function requiredCreate(
   }
 }
 
+async function allRunRows(dataStore: DataStore, collection: string, where: Record<string, string>): Promise<Row[]> {
+  const rows: Row[] = [];
+  for (let page = 1; ; page++) {
+    const result = await dataStore.list<Row>(collection, { where, sort: 'id', page, perPage: 500 });
+    rows.push(...result.items.filter(row => Object.entries(where).every(([key, value]) => row[key] === value)));
+    if (page >= result.totalPages || !result.items.length) return rows;
+  }
+}
+
 export async function cancelDigitalEmployeeRun(input: {
   tenantId: string;
   userId: string;
@@ -71,23 +80,14 @@ export async function cancelDigitalEmployeeRun(input: {
         pause_reason: text(input.reason).slice(0, 500) || '用户通过灵小枢取消',
       });
     }
-    const tasks = await dataStore.list<Row>('workflow_tasks', {
-      where: { tenant_id: input.tenantId, run_id: run.id }, perPage: 500,
-    });
-    const approvals = await dataStore.list<Row>('approval_requests', {
-      where: { tenant_id: input.tenantId, run_id: run.id, status: 'pending' }, perPage: 500,
-    });
-    if (tasks.totalItems > tasks.items.length || approvals.totalItems > approvals.items.length) {
-      throw new DigitalEmployeeRunCancellationError('workflow_cancellation_projection_incomplete', 503);
-    }
-    for (const task of tasks.items) {
+    const tasks = await allRunRows(dataStore, 'workflow_tasks', { tenant_id: input.tenantId, run_id: run.id });
+    const approvals = await allRunRows(dataStore, 'approval_requests', { tenant_id: input.tenantId, run_id: run.id, status: 'pending' });
+    for (const task of tasks) {
       if (['succeeded', 'failed', 'cancelled'].includes(text(task.status))) continue;
       await requiredUpdate(dataStore, 'workflow_tasks', task.id, { status: 'cancelled', updated_at: now });
     }
-    for (const approval of approvals.items) {
-      await requiredUpdate(dataStore, 'approval_requests', approval.id, {
-        status: 'superseded', decision_note: '运行已取消，审批失效', decided_at: now,
-      });
+    for (const approval of approvals) {
+      await requiredUpdate(dataStore, 'approval_requests', approval.id, { status: 'superseded', decision_note: '运行已取消，审批失效', decided_at: now });
     }
     if (text(run.goal_id)) {
       await requiredUpdate(dataStore, 'weekly_goals', text(run.goal_id), { status: 'cancelled', updated_at: now });
@@ -96,6 +96,8 @@ export async function cancelDigitalEmployeeRun(input: {
       where: { tenant_id: input.tenantId, run_id: run.id }, sort: '-sequence', perPage: 1,
     });
     const sequence = Number(events.items[0]?.sequence || 0) + 1;
+    const existingCancellation = await dataStore.list<Row>('run_events', { where: { tenant_id: input.tenantId, run_id: run.id, type: 'workflow.cancelled' }, page: 1, perPage: 1 });
+    if (!existingCancellation.totalItems) {
     await requiredCreate(dataStore, 'run_events', {
       tenant_id: input.tenantId,
       run_id: run.id,
@@ -107,6 +109,9 @@ export async function cancelDigitalEmployeeRun(input: {
       payload: {},
       occurred_at: now,
     });
+    }
+    const existingAudit = await dataStore.list<Row>('audit_logs', { where: { tenantId: input.tenantId, targetId: run.id, action: 'workflow.cancelled' }, page: 1, perPage: 1 });
+    if (!existingAudit.totalItems) {
     await requiredCreate(dataStore, 'audit_logs', {
       tenantId: input.tenantId,
       actorUserId: input.userId,
@@ -117,6 +122,7 @@ export async function cancelDigitalEmployeeRun(input: {
       metadata: { source: 'starter_198_orchestrator' },
       createdAt: now,
     });
+    }
     await requiredUpdate(dataStore, 'workflow_runs', run.id, {
       status: 'cancelled',
       current_controller: 'human',

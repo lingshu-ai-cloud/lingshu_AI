@@ -589,7 +589,16 @@ export function createWeeklyOperatingPackageService(dataStore: DataStore) {
       if (!current) throw new SocialProgramError('weekly_operating_package_not_found', 404, '周任务包不存在。');
       requireExpectedVersion(current.payload.version, input.expectedVersion);
       if (current.payload.status === 'retired') {
-        throw new SocialProgramError('weekly_operating_package_retired', 409, '该周任务包版本已撤回。');
+        // Resume the durable cancellation after an interrupted partial success.
+        const program = await programRow(dataStore, tenantId, programId);
+        const activeRef = program.payload.activeWeeklyOperatingPackageRef as VersionedSocialRef | null;
+        if (activeRef?.id === packageId && activeRef.version === current.payload.version) {
+          const timestamp = at();
+          const next = { ...program.payload, activeWeeklyOperatingPackageRef: null, version: Number(program.payload.version) + 1, updatedAt: timestamp };
+          if (!await dataStore.update(PROGRAMS, program.id, { payload: next, version: next.version, updated_by: userId, updated_at: timestamp })) throw new SocialProgramError('program_storage_unavailable', 503, '撤回已停止新执行，项目引用清理待重试。');
+        }
+        const tasks = await cancelWeeklyExecutionTasks(dataStore, tenantId, programId, packageId, current.payload.version, `package_retired:${userId}`, at());
+        return projectWeeklyExecution(current.payload, tasks, at());
       }
       const timestamp = at();
       let activeProgram: ProgramRow | null = null;

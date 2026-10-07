@@ -12,7 +12,7 @@ import type {
   SocialDigitalPresenterBridgePorts,
 } from './socialContentDigitalPresenterAdapter.js';
 import { validateHeyGenPresenterRecord } from '../lib/presenterAssetTrust.js';
-import { recordCurrentContentProviderReceipt } from '../contentExecution/context.js';
+import { recordCurrentContentProviderReceipt, ContentExecutionStoppedError } from '../contentExecution/context.js';
 
 type PresenterRecord = Record<string, unknown> & {
   id?: string; name?: string; authorized?: boolean; assetVersion?: number;
@@ -166,6 +166,7 @@ export function createSocialHeyGenBridgePorts(deps: SocialHeyGenBridgeDependenci
             metadata: { reservationRef: input.reservationRef },
           });
         } catch (error) {
+          if (error instanceof ContentExecutionStoppedError) throw error;
           await deps.store.update('studio_social_presenter_jobs', record.id, { status: 'uncertain',
             error: String(error instanceof Error ? error.message : error), updated_at: new Date().toISOString() });
           await recordCurrentContentProviderReceipt({

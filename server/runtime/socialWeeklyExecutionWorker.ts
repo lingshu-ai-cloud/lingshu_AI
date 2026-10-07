@@ -158,7 +158,7 @@ export function createSocialWeeklyExecutionWorker(dataStore: DataStore) {
         await validateWeeklyExecutionResults(dataStore, row.payload, resultRefs, now);
         await currentClaim(claim, new Date(now.getTime() + Math.max(0, Date.now() - validationStartedAt)));
         const next: WeeklyExecutionTask = {
-          ...row.payload, status: 'succeeded', resultRefs: structuredClone(resultRefs), lease: null,
+          ...row.payload, status: 'succeeded', resultRefs: structuredClone(resultRefs), lease: null, productionProgress: null, lastError: null,
           nextAttemptAt: null,
           schedule: { ...row.payload.schedule, actualStartedAt: row.payload.schedule.actualStartedAt ?? now.toISOString(), actualFinishedAt: now.toISOString() },
           updatedAt: now.toISOString(),
@@ -171,13 +171,13 @@ export function createSocialWeeklyExecutionWorker(dataStore: DataStore) {
       return task;
     },
 
-    async defer(claim: WeeklyExecutionClaim, input: { code: string; message: string; retryDelayMs?: number; blockingReason?: string; now?: Date }): Promise<WeeklyExecutionTask> {
+    async defer(claim: WeeklyExecutionClaim, input: { code: string; message: string; retryDelayMs?: number; progress?: WeeklyExecutionTask['productionProgress']; blockingReason?: string; now?: Date }): Promise<WeeklyExecutionTask> {
       const now = input.now ?? new Date();
       const task = await withWeeklyExecutionTaskMutation(dataStore, claim.task.tenantId, claim.task.taskId, async () => {
         const row = await currentClaim(claim, now);
         const blocked = Boolean(input.blockingReason);
         const next: WeeklyExecutionTask = {
-          ...row.payload, status: blocked ? 'blocked' : 'queued', lease: null,
+          ...row.payload, productionProgress: input.progress ?? row.payload.productionProgress, status: blocked ? 'blocked' : 'queued', lease: null,
           attempt: Math.max(0, row.payload.attempt - 1),
           nextAttemptAt: blocked ? null : new Date(now.getTime() + Math.max(1000, Math.min(input.retryDelayMs ?? 30_000, 86_400_000))).toISOString(),
           ownBlockingReasons: blocked ? [...new Set([...row.payload.ownBlockingReasons, input.blockingReason!])] : row.payload.ownBlockingReasons,

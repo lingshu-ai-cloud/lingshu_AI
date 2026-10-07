@@ -112,11 +112,11 @@ test('expired worker lease is reconciled on restart and never treated as complet
   value.lease = { leaseId: 'expired', token: 'old', workerId: 'old', acquiredAt: '2020-01-01T00:00:00Z', expiresAt: '2020-01-01T00:01:00Z' };
   await saveTask(dataStore, value);
   let attempts = 0;
-  const adapters = { business_outline: { async execute() { attempts++; return { status: 'pending' as const, code: 'provider_result_unknown', message: '先核对已有供应商回执', retryDelayMs: 30_000 }; } } };
+  const adapters = { business_outline: { async execute() { attempts++; return { status: 'pending' as const, code: 'provider_result_unknown', message: '先核对已有供应商回执', progress: { contentTaskId: 'real-content', runId: 'real-run', step: '剪辑合成', activity: '等待合成回执', updatedAt: '2026-10-07T00:00:00Z' }, retryDelayMs: 30_000 }; } } };
   const result = await runSocialWeeklyExecutionScan({ dataStore, adapters });
   assert.equal(result.pending, 1); assert.equal(attempts, 1);
   const current = (await dataStore.list<any>(WEEKLY_EXECUTION_TASKS)).items[0].payload;
-  assert.equal(current.attempt, 1); assert.equal(current.status, 'queued'); assert.equal(current.resultRefs.length, 0);
+  assert.equal(current.productionProgress.contentTaskId, 'real-content'); assert.equal(current.productionProgress.step, '剪辑合成'); assert.equal(current.attempt, 1); assert.equal(current.status, 'queued'); assert.equal(current.resultRefs.length, 0);
 });
 test('concurrent scans execute a claimed task once while the lease is renewed', async () => {
   const dataStore = memoryStore(); await saveTask(dataStore, task()); let calls = 0;

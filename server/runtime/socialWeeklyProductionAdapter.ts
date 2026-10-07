@@ -1,3 +1,4 @@
+import { withWeeklyProductionAdmissionGuard } from '../socialPrograms/weeklyCancellation.js';
 import type { DataStore } from '../storage/datastore.js';
 import type { WeeklyExecutionTask, VersionedSocialRef, WeeklyOperatingPackage } from '../../shared/contracts/socialProgram.js';
 import type { SocialContentTaskDetail, CreateSocialContentTaskInput } from '../../shared/contracts/socialContentWorkflow.js';
@@ -39,7 +40,7 @@ export interface WeeklyProductionPorts {
   orchestratorQueue?: Parameters<typeof startSocialContentTask>[0]['orchestratorQueue'];
 }
 const blocked = (code: string, message: string): WeeklyExecutionAdapterResult => ({ status: 'blocked', code, message });
-const pending = (code: string, message: string): WeeklyExecutionAdapterResult => ({ status: 'pending', code, message, retryDelayMs: 15_000 });
+const pending = (code: string, message: string): Extract<WeeklyExecutionAdapterResult, { status: 'pending' }> => ({ status: 'pending', code, message, retryDelayMs: 15_000 });
 function version(value: string): number | null {
   const parsed = Number(value.replace(/^v/, ''));
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
@@ -54,6 +55,8 @@ export function createSocialWeeklyProductionAdapter(dataStore: DataStore, ports:
   const read = ports.read ?? readSocialTaskDetail;
   const orchestratorQueue = ports.orchestratorQueue ?? createStarter198OrchestratorQueue({ repository, dataStore });
   return { async execute(task: WeeklyExecutionTask): Promise<WeeklyExecutionAdapterResult> {
+    try {
+      return await withWeeklyProductionAdmissionGuard({ dataStore, tenantId: task.tenantId, packageId: task.packageId, packageVersion: task.packageVersion, action: async (assertAdmission) => {
     if (!task.publicationTaskId || !WEEKLY_PRODUCTION_STEPS.includes(task.schedule.stepKind as typeof WEEKLY_PRODUCTION_STEPS[number])) {
       return blocked('weekly_production_step_unsupported', '该排期节点没有内容生产执行器。');
     }
@@ -101,6 +104,7 @@ export function createSocialWeeklyProductionAdapter(dataStore: DataStore, ports:
           targetAccountRef: { objectType: 'owned_social_account', id: publication.accountId, version: String(accountRows.items[0].payload.version) },
           specialRequirements: [item.topic, ...item.materialRequirements, `事实凭据：${publication.factRefs.map(ref => `${ref.type}:${ref.id}@${ref.version}`).join('，')}`].join('\n'),
         };
+        await assertAdmission();
         detail = await create({ repository, tenantId: task.tenantId, userId: planning.userConfirmation.confirmedBy, idempotencyKey: binding, value });
       }
       const boundRows = await repository.list(STARTER_COLLECTIONS.socialContentTasks, task.tenantId, { where: { task_id: detail.taskId }, perPage: 2 });
@@ -117,6 +121,7 @@ export function createSocialWeeklyProductionAdapter(dataStore: DataStore, ports:
       // Never restart an existing run after a provider timeout. Its durable job owns receipt reconciliation.
       if (!detail.runId && ['draft', 'needs_input', 'plan_review'].includes(detail.status)) {
         if (!detail.readiness.complete) return blocked('weekly_production_inputs_required', `内容输入待补全：${detail.readiness.missing.join('、')}`);
+        await assertAdmission();
         detail = await start({ repository, orchestratorQueue, tenantId: task.tenantId,
           userId: planning.userConfirmation.confirmedBy, taskId: detail.taskId,
           expectedVersion: detail.version, idempotencyKey: `${binding}:start` });
@@ -129,7 +134,8 @@ export function createSocialWeeklyProductionAdapter(dataStore: DataStore, ports:
     const job = await readContentExecutionJob(dataStore, task.tenantId, detail.taskId, detail.runId);
     if (['draft', 'needs_input', 'plan_review'].includes(detail.status) && !job) return blocked('weekly_production_confirmation_required', '运行身份已保留，但尚未完成生产准入确认。');
     if (job && ['blocked', 'paused', 'cancelled', 'dead_letter'].includes(job.status)) return blocked(job.retryClass || `content_execution_${job.status}`, job.lastError || '后台生产需要处理后才能继续。');
-    if (job?.status === 'reconciling') return pending('provider_reconciliation', '供应商结果未知，沿用原生产身份对账，不能重新付费提交。');
+    const progress = detail.productionProgress ? { contentTaskId: detail.taskId, runId: detail.runId, step: detail.productionProgress.step, activity: detail.productionProgress.activity, updatedAt: detail.productionProgress.updatedAt } : undefined;
+    if (job?.status === 'reconciling') return { ...pending('provider_reconciliation', '供应商结果未知，沿用原生产身份对账，不能重新付费提交。'), progress };
     if (task.schedule.stepKind === 'material_readiness' && detail.readiness.complete) {
       const v = version(detail.version);
       return v ? success({ type: 'starter_social_content_task', id: detail.taskId, version: v }) : blocked('weekly_production_version_invalid', '内容任务版本无效。');
@@ -150,6 +156,12 @@ export function createSocialWeeklyProductionAdapter(dataStore: DataStore, ports:
       return v ? success({ type: 'starter_social_content_artifact', id: artifact.artifactId, version: v }) : blocked('weekly_production_version_invalid', '内容产物版本无效。');
     }
     if (['attention', 'needs_input', 'paused'].includes(detail.status)) return blocked('weekly_production_user_action_required', detail.productionProgress?.activity || '生产已暂停，需处理输入、凭据、余额或质检问题。');
-    return pending('weekly_production_in_progress', detail.productionProgress?.activity || '后台生产进行中，正在等待真实产物或供应商回执对账。');
+    return { ...pending('weekly_production_in_progress', detail.productionProgress?.activity || '后台生产进行中，正在等待真实产物或供应商回执对账。'), progress };
+      } });
+    } catch (error) {
+      const code = error && typeof error === 'object' && 'code' in error ? String(error.code) : 'weekly_production_admission_failed';
+      if (code === 'weekly_cancellation_busy') return pending(code, '撤回或生产准入正在处理，等待安全恢复。');
+      return blocked(code, error instanceof Error ? error.message : '该周版本不能继续生产。');
+    }
   } };
 }

@@ -1,4 +1,7 @@
 import { socialAccessToken } from '../lib/accountCredentials.js';
+import { resolveTenantWhatsAppConfig } from '../whatsapp/send.js';
+import { decryptSecret, type TenantPlatformAppRecord } from '../lib/tenantPlatformApps.js';
+import type { DataStore } from '../storage/datastore.js';
 import { store } from '../storage/index.js';
 
 type ConfigRecord = {
@@ -11,6 +14,7 @@ type ConfigRecord = {
 
 export interface CustomerMessagingAuthorization {
   tenantId: string;
+  channel?: 'whatsapp' | 'messenger';
   configVersion: number;
   configActive: boolean;
   customerAgentEnabled: boolean;
@@ -25,6 +29,7 @@ export interface CustomerMessagingAuthorization {
 
 export interface CustomerMessagingAuthorizationInput {
   tenantId: string;
+  channel?: 'whatsapp' | 'messenger';
   configVersion?: number;
   configActive: boolean;
   customerAgentEnabled: boolean;
@@ -58,10 +63,11 @@ export function resolveCustomerMessagingAuthorization(
   if (!input.configActive) reasons.push('digital_employee_configuration_inactive');
   if (!input.customerAgentEnabled) reasons.push('customer_agent_not_enabled');
   if (!input.allowRealCustomerMessages) reasons.push('tenant_real_customer_messages_not_authorized');
-  if (!input.providerReady) reasons.push('messenger_provider_not_ready');
+  if (!input.providerReady) reasons.push(`${input.channel ?? 'whatsapp'}_provider_not_ready`);
   if (!input.backgroundWorkerEnabled) reasons.push('followup_background_worker_disabled');
   return {
     tenantId: input.tenantId,
+    channel: input.channel ?? 'whatsapp',
     configVersion: Math.max(0, Math.trunc(Number(input.configVersion) || 0)),
     configActive: input.configActive,
     customerAgentEnabled: input.customerAgentEnabled,
@@ -79,36 +85,47 @@ export function followupBackgroundWorkerEnabled(): boolean {
   return process.env.FOLLOWUP_WORKER_ENABLED === 'true';
 }
 
+/** Authorize the transport that will actually send; one channel never grants another. */
 export async function readCustomerMessagingAuthorization(
   tenantId: string,
+  channel: 'whatsapp' | 'messenger' = 'whatsapp',
+  dependencies: { dataStore?: DataStore; openWhatsAppSecret?: typeof decryptSecret; openMessengerToken?: typeof socialAccessToken; now?: Date } = {},
 ): Promise<CustomerMessagingAuthorization> {
+  const dataStore = dependencies.dataStore ?? store;
   try {
-    const [configs, messengerAccounts] = await Promise.all([
-      store.list<ConfigRecord>('digital_employee_configs', {
+    const [configs, channelAccounts] = await Promise.all([
+      dataStore.list<ConfigRecord>('digital_employee_configs', {
         where: { tenant_id: tenantId },
         sort: '-config_version',
         page: 1,
         perPage: 1,
       }),
-      store.list<Record<string, unknown>>('social_accounts', {
+      channel === 'messenger' ? dataStore.list<Record<string, unknown>>('social_accounts', {
         where: { tenantId, platform: 'facebook', status: 'connected' },
         page: 1,
         perPage: 100,
-      }),
+      }) : dataStore.list<TenantPlatformAppRecord>('tenant_platform_apps', { where: { tenant_id: tenantId, platform: 'meta' }, page: 1, perPage: 2 }),
     ]);
     const configRecord = configs.items[0];
     const config = jsonObject(configRecord?.config);
     const enabledWorkflows = Array.isArray(config.enabledWorkflows)
       ? config.enabledWorkflows.map(item => String(item || ''))
       : [];
-    const providerReady = messengerAccounts.items.some(account => {
-      if (account.messengerSubscribed !== true) return false;
-      try { return Boolean(socialAccessToken(account)); } catch { return false; }
-    });
+    const providerReady = channel === 'whatsapp'
+      ? channelAccounts.totalItems === 1 && channelAccounts.items.length === 1 && (() => {
+          try { resolveTenantWhatsAppConfig(tenantId, channelAccounts.items[0] as TenantPlatformAppRecord, dependencies.openWhatsAppSecret ?? decryptSecret, dependencies.now); return true; } catch { return false; }
+        })()
+      : channelAccounts.items.some(rawAccount => {
+          const account = rawAccount as unknown as Record<string, unknown>;
+          if (account.tenantId !== tenantId || account.platform !== 'facebook' || account.status !== 'connected' || account.messengerSubscribed !== true || !String(account.providerAccountId || '').trim()) return false;
+          const expiresAt = String(account.tokenExpiresAt || account.expiresAt || '').trim();
+          if (expiresAt && (!Number.isFinite(Date.parse(expiresAt)) || Date.parse(expiresAt) <= (dependencies.now ?? new Date()).getTime())) return false;
+          try { return Boolean((dependencies.openMessengerToken ?? socialAccessToken)(account)); } catch { return false; }
+        });
     return resolveCustomerMessagingAuthorization({
-      tenantId,
+      tenantId, channel,
       configVersion: configRecord?.config_version,
-      configActive: Boolean(configRecord && configRecord.status === 'active'),
+      configActive: Boolean(configRecord && configRecord.tenant_id === tenantId && configRecord.status === 'active' && Number.isSafeInteger(configRecord.config_version) && Number(configRecord.config_version) > 0),
       customerAgentEnabled: enabledWorkflows.includes('customer_segmentation') || enabledWorkflows.includes('batch_followup'),
       allowRealCustomerMessages: config.allowRealCustomerMessages === true,
       providerReady,
@@ -116,7 +133,7 @@ export async function readCustomerMessagingAuthorization(
     });
   } catch {
     return resolveCustomerMessagingAuthorization({
-      tenantId,
+      tenantId, channel,
       configVersion: 0,
       configActive: false,
       customerAgentEnabled: false,

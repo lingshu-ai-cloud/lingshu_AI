@@ -1,4 +1,4 @@
-import { decryptSecret, getTenantPlatformApp } from '../lib/tenantPlatformApps.js';
+import { decryptSecret, getTenantPlatformApp, type TenantPlatformAppRecord } from '../lib/tenantPlatformApps.js';
 import { sendWhatsAppImage, sendWhatsAppTemplate, sendWhatsAppText, type WhatsAppConfig, type WhatsAppSendReceipt } from '../integrations/whatsapp.js';
 import { planMobileChatMessages } from '../agents/mobileChatStyle.js';
 
@@ -6,10 +6,12 @@ function text(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
 }
 
-export async function getTenantWhatsAppConfig(tenantId: string): Promise<WhatsAppConfig> {
-  const app = await getTenantPlatformApp(tenantId, 'meta');
+export function resolveTenantWhatsAppConfig(tenantId: string, app: TenantPlatformAppRecord | null, openSecret = decryptSecret, now = new Date()): WhatsAppConfig {
+  const expiresAt = text(app?.token_expires_at);
+  if (!app || app.tenant_id !== tenantId || app.platform !== 'meta' || app.status !== 'active'
+    || (expiresAt && (!Number.isFinite(Date.parse(expiresAt)) || Date.parse(expiresAt) <= now.getTime()))) throw new Error('tenant_whatsapp_not_configured');
   const phoneNumberId = text(app?.phone_number_id);
-  const accessToken = decryptSecret(app?.access_token);
+  const accessToken = openSecret(app?.access_token);
   const verifyToken = text(app?.webhook_verify_token);
 
   if (!app || !phoneNumberId || !accessToken) {
@@ -17,6 +19,10 @@ export async function getTenantWhatsAppConfig(tenantId: string): Promise<WhatsAp
   }
 
   return { phoneNumberId, accessToken, verifyToken };
+}
+
+export async function getTenantWhatsAppConfig(tenantId: string): Promise<WhatsAppConfig> {
+  return resolveTenantWhatsAppConfig(tenantId, await getTenantPlatformApp(tenantId, 'meta'));
 }
 
 function pacingDelayMs(): number {

@@ -1,3 +1,4 @@
+import { reconcileWeeklyCancellation } from './weeklyCancellation.js';
 import { createHash, randomUUID } from 'node:crypto';
 import type { DataStore } from '../storage/datastore.js';
 import {
@@ -586,6 +587,9 @@ export async function cancelWeeklyExecutionTasks(
   now = new Date().toISOString(),
 ): Promise<WeeklyExecutionTask[]> {
   const current = await listWeeklyExecutionTasks(dataStore, tenantId, programId, packageId, packageVersion);
+  await reconcileWeeklyCancellation({
+    dataStore, tenantId, programId, packageId, packageVersion, reason, now,
+    cancelPending: async () => {
   for (const candidate of current.filter(task => !['succeeded', 'cancelled'].includes(task.status))) {
     await withWeeklyExecutionTaskMutation(dataStore, tenantId, candidate.taskId, async () => {
       const row = await getWeeklyExecutionTaskRow(dataStore, tenantId, candidate.taskId);
@@ -597,6 +601,8 @@ export async function cancelWeeklyExecutionTasks(
       if (priorLease) await releaseDurableOperationLease({ dataStore, lease: priorLease });
     });
   }
+    },
+  });
   return listWeeklyExecutionTasks(dataStore, tenantId, programId, packageId, packageVersion);
 }
 

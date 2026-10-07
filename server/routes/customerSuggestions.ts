@@ -136,7 +136,7 @@ customerSuggestionsRouter.post('/:id/outbox', requireAuth, async (req, res) => {
   }
   if (req.body?.auto === true) {
     const status = customerServiceStatus(await readTenantEnterpriseProfile(tenantId));
-    const messagingAuthorization = await readCustomerMessagingAuthorization(tenantId);
+    const messagingAuthorization = await readCustomerMessagingAuthorization(tenantId, 'messenger');
     if (!status.autoReplyReady || !messagingAuthorization.inboundAutoSendAllowed) {
       res.status(409).json({ error: 'auto_reply_not_authorized', message: '当前只提供建议回复，不能自动发送。' });
       return;

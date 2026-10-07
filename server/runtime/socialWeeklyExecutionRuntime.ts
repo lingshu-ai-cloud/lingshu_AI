@@ -94,7 +94,7 @@ export async function runSocialWeeklyExecutionScan(input: {
         await renewal;
         if (lostLease) throw lostLease;
         if (result.status === 'succeeded') { await worker.complete(claim, result.resultRefs); report.succeeded++; }
-        else { await worker.defer(claim, { code: result.code, message: result.message, retryDelayMs: result.status === 'pending' ? result.retryDelayMs : undefined, blockingReason: result.status === 'blocked' ? result.code : undefined }); report[result.status]++; }
+        else { await worker.defer(claim, { code: result.code, message: result.message, progress: result.progress, retryDelayMs: result.status === 'pending' ? result.retryDelayMs : undefined, blockingReason: result.status === 'blocked' ? result.code : undefined }); report[result.status]++; }
       } catch (error) {
         clearInterval(timer);
         await renewal;

@@ -95,3 +95,14 @@ test('authoritative production binding freezes real analyzed evidence and reject
   const candidate=(await f.store.list<any>('social_candidate_evidence')).items[0];await f.store.update('social_candidate_evidence',candidate.id,{version:4});
   await assert.rejects(()=>bindWeeklyProductionAuthority({dataStore:f.store,repository,tenantId:'tenant',pkg,publication,detail}),/weekly_production_analyzed_handoff_required/);
 });
+
+
+test('observed production progress is returned while artifacts remain pending, never as completion', async () => {
+  const f = await fixture();
+  f.set({ productionProgress: { step: 'content_production', activity: '正在合成真实素材', estimatedRemainingSeconds: 90, updatedAt: '2026-10-07T00:00:00Z' } });
+  const result = await f.adapter.execute(f.task);
+  assert.equal(result.status, 'pending');
+  assert.deepEqual(result.status === 'pending' ? result.progress : null, { contentTaskId: 'content', runId: 'run-existing', step: 'content_production', activity: '正在合成真实素材', updatedAt: '2026-10-07T00:00:00Z' });
+  assert.equal('resultRefs' in result, false);
+  assert.equal(f.starts(), 0);
+});

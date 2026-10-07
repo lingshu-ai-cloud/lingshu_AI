@@ -9,6 +9,7 @@ import type {
   WeeklyOperatingScheduleSkeleton,
 } from '../../shared/contracts/socialProgram.js';
 import { listSocialDiscoverySupply } from '../socialDiscovery/supply.js';
+import { acquireDurableOperationLease, assertDurableOperationLease, releaseDurableOperationLease, DurableOperationLeaseError } from '../runtime/durableLease.js';
 import { SocialProgramError } from './service.js';
 
 export const WEEKLY_AGENT_PLANNING = 'social_weekly_agent_planning';
@@ -66,16 +67,29 @@ async function latest(dataStore: DataStore, tenantId: string, programId: string,
 }
 
 async function append(dataStore: DataStore, tenantId: string, state: WeeklyAgentPlanningState): Promise<WeeklyAgentPlanningState> {
-  const saved = await dataStore.create<PlanningRow>(WEEKLY_AGENT_PLANNING, {
-    tenant_id: tenantId,
-    program_id: state.programId,
-    package_id: state.packageId,
-    package_version: state.packageVersion,
-    planning_version: state.version,
-    payload: state,
-    created_at: state.updatedAt,
-  });
-  if (!saved) throw new SocialProgramError('weekly_agent_planning_storage_unavailable', 503, 'Agent 计划状态暂时无法保存。');
+  const id = createHash('sha256').update(JSON.stringify([tenantId, state.programId, state.packageId, state.packageVersion, state.version])).digest('hex').slice(0, 15);
+  let saved: PlanningRow | null;
+  try {
+    saved = await dataStore.create<PlanningRow>(WEEKLY_AGENT_PLANNING, {
+      id,
+      tenant_id: tenantId,
+      program_id: state.programId,
+      package_id: state.packageId,
+      package_version: state.packageVersion,
+      planning_version: state.version,
+      payload: state,
+      created_at: state.updatedAt,
+    });
+  } catch (error) {
+    const winner = await dataStore.getById<PlanningRow>(WEEKLY_AGENT_PLANNING, id);
+    if (winner) throw new SocialProgramError('weekly_agent_planning_version_conflict', 409, '本周计划已更新，请刷新后重试；已有计划已保留。');
+    throw error;
+  }
+  if (!saved) {
+    const winner = await dataStore.getById<PlanningRow>(WEEKLY_AGENT_PLANNING, id);
+    if (winner) throw new SocialProgramError('weekly_agent_planning_version_conflict', 409, '本周计划已更新，请刷新后重试；已有计划已保留。');
+    throw new SocialProgramError('weekly_agent_planning_storage_unavailable', 503, 'Agent 计划状态暂时无法保存。');
+  }
   return state;
 }
 
@@ -94,7 +108,11 @@ function requireEditablePlanning(current: WeeklyAgentPlanningState): void {
   }
 }
 
-export function createWeeklyPlanningAuthority(dataStore: DataStore) {
+function unguardedPlanningAuthority(dataStore: DataStore, beforeAppend: () => Promise<void> = async () => undefined) {
+  const guardedAppend = async (tenantId: string, state: WeeklyAgentPlanningState) => {
+    await beforeAppend();
+    return append(dataStore, tenantId, state);
+  };
   return {
     async initialize(tenantId: string, pkg: WeeklyOperatingPackage): Promise<WeeklyAgentPlanningState> {
       const existing = await latest(dataStore, tenantId, pkg.programId, pkg.packageId, pkg.version);
@@ -115,7 +133,7 @@ export function createWeeklyPlanningAuthority(dataStore: DataStore) {
         createdAt: pkg.createdAt,
         updatedAt: pkg.createdAt,
       };
-      return append(dataStore, tenantId, state);
+      return guardedAppend(tenantId, state);
     },
 
     async get(tenantId: string, programId: string, packageId: string, packageVersion: number): Promise<WeeklyAgentPlanningState> {
@@ -167,7 +185,7 @@ export function createWeeklyPlanningAuthority(dataStore: DataStore) {
           createdAt: now,
         };
       });
-      return append(dataStore, input.tenantId, {
+      return guardedAppend(input.tenantId, {
         ...current,
         version: current.version + 1,
         status: 'director_analyzing',
@@ -225,7 +243,7 @@ export function createWeeklyPlanningAuthority(dataStore: DataStore) {
         });
       });
       const nextVersion = current.version + 1;
-      return append(dataStore, input.tenantId, {
+      return guardedAppend(input.tenantId, {
         ...current,
         version: nextVersion,
         status: 'awaiting_confirmation',
@@ -247,7 +265,7 @@ export function createWeeklyPlanningAuthority(dataStore: DataStore) {
       if (!current.detailedSchedule) throw new SocialProgramError('detailed_schedule_required', 409, '详细内容排期尚未生成。');
       if (current.status === 'confirmed' || current.status === 'dispatched') return current;
       const now = (input.now ?? new Date()).toISOString();
-      return append(dataStore, input.tenantId, {
+      return guardedAppend(input.tenantId, {
         ...current,
         version: current.version + 1,
         status: 'confirmed',
@@ -276,7 +294,7 @@ export function createWeeklyPlanningAuthority(dataStore: DataStore) {
         scheduleItems: structuredClone(current.detailedSchedule.items),
         issuedAt: now,
       };
-      return append(dataStore, input.tenantId, {
+      return guardedAppend(input.tenantId, {
         ...current,
         version: current.version + 1,
         status: 'dispatched',
@@ -284,5 +302,35 @@ export function createWeeklyPlanningAuthority(dataStore: DataStore) {
         updatedAt: now,
       });
     },
+  };
+}
+
+export const WEEKLY_PLANNING_MUTATION_SCOPE = 'social_weekly_planning_mutation';
+
+/** Database unique lease plus immutable, deterministic version IDs protect independent API processes. */
+export function createWeeklyPlanningAuthority(dataStore: DataStore) {
+  const reader = unguardedPlanningAuthority(dataStore);
+  async function mutate<T>(tenantId: string, programId: string, packageId: string, packageVersion: number, operation: (authority: ReturnType<typeof unguardedPlanningAuthority>) => Promise<T>): Promise<T> {
+    const subjectId = createHash('sha256').update(JSON.stringify([programId, packageId, packageVersion])).digest('hex');
+    const lease = await acquireDurableOperationLease({ dataStore, tenantId, scope: WEEKLY_PLANNING_MUTATION_SCOPE, subjectId, ownerId: `planning-${randomUUID()}`, leaseDurationMs: 120_000 });
+    if (!lease) throw new SocialProgramError('weekly_agent_planning_version_conflict', 409, '本周计划正在被其他请求更新，请刷新后重试；已有计划已保留。');
+    try {
+      const authority = unguardedPlanningAuthority(dataStore, async () => {
+        try { await assertDurableOperationLease({ dataStore, lease, minimumRemainingMs: 5_000 }); }
+        catch (error) {
+          if (error instanceof DurableOperationLeaseError) throw new SocialProgramError('weekly_agent_planning_lease_lost', 409, '本次规划写入租约已失效，请刷新后重试；已有计划已保留。');
+          throw error;
+        }
+      });
+      return await operation(authority);
+    } finally { await releaseDurableOperationLease({ dataStore, lease }); }
+  }
+  return {
+    get: reader.get,
+    initialize: (tenantId: string, pkg: WeeklyOperatingPackage) => mutate(tenantId, pkg.programId, pkg.packageId, pkg.version, authority => authority.initialize(tenantId, pkg)),
+    runDirectorAnalysis: (input: Parameters<typeof reader.runDirectorAnalysis>[0]) => mutate(input.tenantId, input.programId, input.packageId, input.packageVersion, authority => authority.runDirectorAnalysis(input)),
+    mergeDetailedSchedule: (input: Parameters<typeof reader.mergeDetailedSchedule>[0]) => mutate(input.tenantId, input.programId, input.package.packageId, input.package.version, authority => authority.mergeDetailedSchedule(input)),
+    confirm: (input: Parameters<typeof reader.confirm>[0]) => mutate(input.tenantId, input.programId, input.packageId, input.packageVersion, authority => authority.confirm(input)),
+    dispatch: (input: Parameters<typeof reader.dispatch>[0]) => mutate(input.tenantId, input.programId, input.packageId, input.packageVersion, authority => authority.dispatch(input)),
   };
 }

@@ -3,6 +3,7 @@ import { requireAuth, enforceSupportSessionReadOnly, type AuthLocals } from '../
 import { store } from '../storage/index.js';
 import type { DataStore } from '../storage/datastore.js';
 import { createSocialProgramService, SocialProgramError } from '../socialPrograms/service.js';
+import { readWeeklyCancellation } from '../socialPrograms/weeklyCancellation.js';
 import { createWeeklyOperatingPackageService } from '../socialPrograms/weeklyOperatingPackages.js';
 import { createSocialOperatingOrchestrationService, weeklyAuthorityFromResolution } from '../socialOperating/orchestration.js';
 import { SocialOperatingDecisionError } from '../socialOperating/service.js';
@@ -204,6 +205,16 @@ export function createSocialProgramsRouter(dataStore: DataStore = store, authent
     res.json({ item: await weeklyPackages.dispatchAgentSchedule(
       tenantId, String(req.params.programId || ''), String(req.params.packageId || ''), { expectedPackageVersion: req.body?.expectedPackageVersion, expectedPlanningVersion: req.body?.expectedPlanningVersion },
     ) });
+  }));
+
+  router.get('/:programId/operating-packages/:packageId/cancellation', asyncRoute(async (req, res) => {
+    const { tenantId } = res.locals as AuthLocals;
+    const programId = String(req.params.programId || '');
+    const packageId = String(req.params.packageId || '');
+    const pkg = await weeklyPackages.get(tenantId, programId, packageId);
+    const version = Number(req.query.version ?? pkg.version);
+    if (!Number.isSafeInteger(version) || version < 1) throw new SocialProgramError('package_version_invalid', 400, '周包版本无效。');
+    res.json({ item: await readWeeklyCancellation(dataStore, tenantId, programId, packageId, version) });
   }));
 
   router.get('/:programId/operating-packages/:packageId/execution-tasks', asyncRoute(async (req, res) => {
