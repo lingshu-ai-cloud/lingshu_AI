@@ -42,7 +42,7 @@ test('honors an authored profile and normalizes authored events', () => {
   assert.deepEqual(plan.events.map(event => event.id), ['one']);
 });
 
-test('extracts a concise key fact instead of rendering storyboard production metadata', () => {
+test('does not turn unsupported storyboard production metadata into a business sticker', () => {
   const plan = buildStudioEmphasisPlan({
     durationSeconds: 12,
     subtitles: { cues: [{ start: 0, end: 2, text: '产品介绍' }] },
@@ -53,6 +53,72 @@ test('extracts a concise key fact instead of rendering storyboard production met
     }],
   });
   const fact = plan.events.find(event => event.type === 'key_fact');
-  assert.equal(fact?.text, '1件起订');
-  assert.equal(fact?.text.includes('环境：'), false);
+  assert.equal(fact, undefined);
+});
+
+test('uses storyboard metadata only when nearby speech independently supports the event', () => {
+  const plan = buildStudioEmphasisPlan({
+    durationSeconds: 12,
+    subtitles: { cues: [
+      { start: 0, end: 1, text: '下面看产品' },
+      { start: 5, end: 6.5, text: '1件也可以起订' },
+    ] },
+    timeline: [{ targetStart: 5, targetEnd: 8.5, caption: '字幕：起订量只要1件' }],
+  });
+  assert.equal(plan.events.find(event => event.type === 'key_fact')?.text, '1件起订');
+});
+
+test('allows an explicit user business fact to ground a timeline event', () => {
+  const plan = buildStudioEmphasisPlan({
+    durationSeconds: 12,
+    businessFacts: { moq: '1件起订' },
+    subtitles: { cues: [{ start: 0, end: 2, text: '下面看一下产品' }] },
+    timeline: [{ targetStart: 4, targetEnd: 7, caption: '字幕：起订量只要1件' }],
+  });
+  assert.equal(plan.events.find(event => event.type === 'key_fact')?.text, '1件起订');
+});
+
+test('does not add unrelated ordering, fulfillment or contact stickers to skincare speech', () => {
+  const plan = buildStudioEmphasisPlan({
+    durationSeconds: 16,
+    script: '先清洁皮肤，再轻轻涂抹面霜，最后按摩吸收。',
+    subtitles: { cues: [
+      { start: 0, end: 3, text: '先清洁皮肤' },
+      { start: 5, end: 8, text: '再轻轻涂抹面霜' },
+      { start: 10, end: 13, text: '最后按摩吸收' },
+    ] },
+    timeline: [
+      { targetStart: 3, targetEnd: 5, purpose: '起订量只要1件' },
+      { targetStart: 8, targetEnd: 10, purpose: '马上配货' },
+      { targetStart: 13, targetEnd: 15, purpose: '联系 Messenger 咨询' },
+    ],
+  });
+  assert.deepEqual(plan.events.map(event => event.type), ['hook']);
+});
+
+test('keeps a 21-second skincare draft useful with sparse transcript-grounded facts and CTA', () => {
+  const plan = buildStudioEmphasisPlan({
+    durationSeconds: 21,
+    script: '温和清洁之后使用面膜，可以用于日常护肤。面膜采用独立包装。想了解产品，请查看详细介绍。',
+    subtitles: { cues: [
+      { start: 0, end: 5.5, text: '温和清洁之后使用面膜，可以用于日常护肤' },
+      { start: 6.5, end: 12, text: '日常护理时按照说明使用' },
+      { start: 13, end: 16.7, text: '面膜采用独立包装' },
+      { start: 17.1, end: 20.7, text: '想了解产品，请查看详细介绍' },
+    ] },
+    timeline: [
+      { targetStart: 3, targetEnd: 5, purpose: '起订量只要1件' },
+      { targetStart: 8, targetEnd: 10, purpose: '马上配货' },
+      { targetStart: 13, targetEnd: 15, purpose: '联系 Messenger 咨询' },
+    ],
+  });
+  assert.deepEqual(plan.events.map(event => [event.type, event.text]), [
+    ['hook', '温和清洁之后使用面膜，可以用于日常护肤'],
+    ['key_fact', '独立包装'],
+    ['cta', '查看详细介绍'],
+  ]);
+  assert.equal(plan.events.find(event => event.text === '独立包装')?.endMs, 14_800);
+  assert.equal(plan.events.find(event => event.type === 'cta')?.endMs, 19_100);
+  assert.ok(plan.events.length >= 3 && plan.events.length <= 5);
+  assert.doesNotMatch(plan.events.map(event => event.text).join(' '), /起订|配货|Messenger/i);
 });

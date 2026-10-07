@@ -42,12 +42,29 @@ test('lands a semantic event on the clearest safe supporting shot regardless of 
     candidates: [{ id: 'factory', type: 'section_label', startMs: 2_000, endMs: 3_500, text: '精密加工', targetId: 'cnc', importance: 3, confidence: .9, source: 'vision' }],
     placementWindows: [
       { id: 'wide', startMs: 8_000, endMs: 11_000, targetIds: ['cnc'], safe: true, clarity: .6 },
-      { id: 'detail', startMs: 14_000, endMs: 17_000, targetIds: ['cnc'], safe: true, clarity: .95 },
+      { id: 'detail', startMs: 14_000, endMs: 17_000, targetIds: ['cnc'], safe: true, clarity: .95, anchor: { x: .78, y: .22 } },
       { id: 'blocked', startMs: 4_000, endMs: 7_000, targetIds: ['cnc'], safe: false, clarity: 1 },
     ],
   });
   assert.equal(event?.startMs, 14_000);
   assert.equal(event?.endMs, 15_500);
+  assert.deepEqual(event?.anchor, { x: .78, y: .22 });
+  assert.deepEqual(event?.placementEvidence, { windowId: 'detail', targetId: 'cnc', clarity: .95, safe: true });
+});
+
+test('preserves safe renderer placement hints and semantic evidence at the manifest boundary', () => {
+  const plan = normalizeEmphasisPlan({ profile: 'product_showcase', maxEvents: 2, events: [{
+    id: 'product-material', type: 'key_fact', startMs: 1_000, endMs: 2_200, text: '岩板台面',
+    importance: 3, confidence: .96, source: 'editor', targetId: 'countertop', strength: 'strong',
+    anchor: { x: 1.4, y: -.2 }, safeArea: false,
+    placementEvidence: { windowId: 'manual-product-shot', targetId: 'countertop', clarity: 2, safe: false },
+  }] }, 5_000);
+  assert.deepEqual(plan.events[0], {
+    id: 'product-material', type: 'key_fact', startMs: 1_000, endMs: 2_200, text: '岩板台面',
+    importance: 3, confidence: .96, source: 'editor', targetId: 'countertop', strength: 'strong',
+    anchor: { x: .95, y: .05 }, safeArea: false,
+    placementEvidence: { windowId: 'manual-product-shot', targetId: 'countertop', clarity: 1, safe: false },
+  });
 });
 
 test('keeps hook and reveal closer only when they do not overlap', () => {

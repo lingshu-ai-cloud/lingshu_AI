@@ -119,7 +119,9 @@ function captionEmphasisTags(plan, startSeconds, endSeconds, width) {
     && startMs < item.endMs && item.startMs < endMs);
   if (!event) return '';
   const style = PROFILE_STYLE[plan.profile] || PROFILE_STYLE.talking_head;
-  const size = Math.round(width * (event.type === 'hook' ? .073 : .066));
+  // The opening line is the primary title within the existing speech layer;
+  // it must read above ordinary captions without creating a duplicate card.
+  const size = Math.round(width * (event.type === 'hook' ? .082 : .072));
   return `{\\fs${size}\\c${style.accent}\\bord4\\3c&H00101010&\\fscx72\\fscy72\\t(0,150,\\fscx114\\fscy114)\\t(150,280,\\fscx100\\fscy100)}`;
 }
 

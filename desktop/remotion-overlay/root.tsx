@@ -1,7 +1,7 @@
 import React from 'react';
 import { AbsoluteFill, Composition, Easing, Sequence, interpolate, spring, useCurrentFrame, useVideoConfig } from 'remotion';
 
-type OverlayEvent = { id: string; type: 'key_fact' | 'reveal' | 'cta'; startMs: number; endMs: number; text: string };
+type OverlayEvent = { id: string; type: 'key_fact' | 'reveal' | 'cta'; startMs: number; endMs: number; text: string; placement: { x: number; y: number; source: string } };
 type OverlayProps = { durationFrames: number; fps: number; width: number; height: number; profile: string; events: OverlayEvent[] };
 
 const colors: Record<string, { accent: string; ink: string; panel: string }> = {
@@ -15,21 +15,32 @@ const EventCard: React.FC<{ event: OverlayEvent; profile: string }> = ({ event, 
   const frame = useCurrentFrame();
   const { fps, width } = useVideoConfig();
   const palette = colors[profile] || colors.talking_head;
-  const enter = spring({ frame, fps, config: { damping: 13, stiffness: 240, mass: .7 }, durationInFrames: Math.round(.45 * fps) });
+  const enter = spring({ frame, fps, config: event.type === 'key_fact'
+    ? { damping: 11, stiffness: 250, mass: .65 }
+    : event.type === 'reveal' ? { damping: 15, stiffness: 180, mass: .8 }
+      : { damping: 12, stiffness: 220, mass: .7 }, durationInFrames: Math.round(.45 * fps) });
   const duration = Math.max(1, Math.round((event.endMs - event.startMs) / 1000 * fps));
   const exit = interpolate(frame, [Math.max(0, duration - .2 * fps), duration], [1, 0], { extrapolateLeft: 'clamp', extrapolateRight: 'clamp', easing: Easing.in(Easing.cubic) });
-  const pulse = event.type === 'cta' ? 1 + Math.sin(frame / fps * Math.PI * 3) * .035 : 1;
+  const pulse = event.type === 'cta' && frame > .35 * fps ? 1 + Math.sin((frame / fps - .35) * Math.PI * 3.4) * .065 : 1;
   const isFact = event.type === 'key_fact';
   const isReveal = event.type === 'reveal';
+  const x = `${event.placement.x * 100}%`;
+  const y = `${event.placement.y * 100}%`;
+  const slide = isFact ? interpolate(enter, [0, 1], [event.placement.x < .5 ? -42 : 42, 0])
+    : event.type === 'cta' ? interpolate(enter, [0, 1], [32, 0]) : 0;
+  const revealClip = isReveal ? `inset(0 ${interpolate(enter, [0, 1], [100, 0])}% 0 0 round ${width * .03}px)` : undefined;
+  const heldDrift = isFact ? Math.sin(frame / fps * Math.PI * 1.5) * 1.5 : 0;
   return <div style={{
-    position: 'absolute', left: '50%', top: isReveal ? '61%' : '67%',
-    translate: '-50% -50%', scale: enter * pulse, rotate: isFact ? `${interpolate(enter, [0, 1], [-7, -2])}deg` : '0deg',
+    position: 'absolute', left: x, top: y,
+    transform: `translate(-50%, calc(-50% + ${slide}px)) scale(${enter * pulse}) rotate(${isFact ? interpolate(enter, [0, 1], [event.placement.x < .5 ? -8 : 8, event.placement.x < .5 ? -2 : 2]) + heldDrift : 0}deg)`,
     opacity: exit, padding: isFact ? `${width * .025}px ${width * .042}px` : `${width * .022}px ${width * .039}px`,
     borderRadius: isFact ? width * .03 : 999, background: palette.panel, color: palette.ink,
     border: `${Math.max(2, width * .007)}px solid ${palette.ink}`,
-    boxShadow: `${width * .014}px ${width * .017}px 0 ${palette.ink}`,
+    boxShadow: isReveal ? `0 0 ${width * .04}px ${palette.accent}88, ${width * .01}px ${width * .013}px 0 ${palette.ink}` : `${width * .014}px ${width * .017}px 0 ${palette.ink}`,
+    clipPath: revealClip,
     fontFamily: 'Source Han Sans SC, PingFang SC, sans-serif',
-    fontSize: width * (isFact ? .081 : .067), fontWeight: 900, lineHeight: 1.05, whiteSpace: 'nowrap',
+    fontSize: width * (isFact ? .073 : event.type === 'cta' ? .064 : .068), fontWeight: 900, lineHeight: 1.08,
+    maxWidth: width * .68, textAlign: 'center', whiteSpace: 'normal', wordBreak: 'keep-all',
   }}>
     <span style={{ color: palette.ink }}>{isFact ? '✦ ' : event.type === 'cta' ? '▶ ' : '✓ '}</span>{event.text}
   </div>;

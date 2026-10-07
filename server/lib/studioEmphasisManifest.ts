@@ -56,11 +56,53 @@ function semanticTimelineEvent(label: string): { type: EmphasisEvent['type']; te
     const messenger = label.match(/Messenger[^，。！？!?]{0,12}/i)?.[0];
     return { type: 'cta', text: messenger || label.slice(0, 24), importance: 3 };
   }
-  if (/马上配货|立即发货|成品效果|前后对比|完成|亮灯|开灯|揭晓|reveal|result/i.test(label)) {
-    const concise = label.match(/马上配货|立即发货|成品效果|前后对比|亮灯看效果|开灯看效果|揭晓效果/i)?.[0];
+  if (/成品效果|前后对比|完成|亮灯|开灯|揭晓|reveal|result/i.test(label)) {
+    const concise = label.match(/成品效果|前后对比|亮灯看效果|开灯看效果|揭晓效果/i)?.[0];
     return { type: 'reveal', text: concise || label.slice(0, 24), importance: 2 };
   }
   return null;
+}
+
+function businessFactTexts(value: unknown, depth = 0): string[] {
+  if (depth > 3 || value === null || value === undefined) return [];
+  if (typeof value === 'string' || typeof value === 'number') return text(value) ? [text(value)] : [];
+  if (Array.isArray(value)) return value.flatMap(item => businessFactTexts(item, depth + 1)).slice(0, 100);
+  if (typeof value !== 'object') return [];
+  return Object.entries(value as Record<string, unknown>).flatMap(([key, item]) => {
+    const values = businessFactTexts(item, depth + 1);
+    return values.flatMap(valueText => [valueText, `${text(key)}：${valueText}`]);
+  }).slice(0, 100);
+}
+
+const normalizedSemanticText = (value: string): string => value.toLocaleLowerCase()
+  .replace(/[\s，。！？；：、,.!?;:'"“”‘’()（）【】\[\]-]/g, '');
+
+function eventHasSemanticEvidence(
+  event: { type: EmphasisEvent['type']; text: string },
+  evidence: string[],
+): boolean {
+  const relevant = evidence.map(text).filter(Boolean);
+  if (!relevant.length) return false;
+  if (event.type === 'cta') {
+    const actionGroup = (value: string): string => /messenger/i.test(value) ? 'messenger'
+      : /私信|咨询|联系|留言|contact/i.test(value) ? 'contact'
+        : /查看|了解|详情|learn more/i.test(value) ? 'view'
+          : /扫码|点击/i.test(value) ? 'interact'
+            : /下单|购买|shop now/i.test(value) ? 'purchase' : '';
+    const expected = actionGroup(event.text);
+    return Boolean(expected) && relevant.some(item => actionGroup(item) === expected
+      || (expected === 'contact' && actionGroup(item) === 'messenger'));
+  }
+  if (event.type === 'reveal') return relevant.some(item => /成品|效果|前后对比|完成|亮灯|开灯|揭晓|reveal|result/i.test(item));
+  const eventText = normalizedSemanticText(event.text);
+  return relevant.some(item => {
+    const evidenceText = normalizedSemanticText(item);
+    if (!eventText || !evidenceText) return false;
+    if (evidenceText.includes(eventText) || eventText.includes(evidenceText)) return true;
+    const eventQuantity = event.text.match(/(\d+(?:\.\d+)?)\s*(件|支|套|个|盒)/i);
+    return Boolean(eventQuantity && new RegExp(`${eventQuantity[1]}\\s*${eventQuantity[2]}`).test(item)
+      && /起订|MOQ|最低|只要/i.test(item));
+  });
 }
 
 export function recommendStudioSubtitleProfile(input: { script?: unknown; cues?: Cue[]; timeline?: TimelineShot[] }): EmphasisProfile {
@@ -82,6 +124,23 @@ function captionsFromCues(cues: Cue[], durationMs: number): CaptionSegment[] {
   })), durationMs);
 }
 
+function conciseTranscriptFact(value: string): string {
+  const raw = text(value);
+  const useCase = raw.match(/(?:可以|可)?用于\s*([^，。！？!?]{2,14})/i)?.[1]
+    || raw.match(/适合\s*([^，。！？!?]{2,14})/i)?.[1];
+  if (useCase) return text(useCase).replace(/(?:使用|场景)$/i, '').slice(0, 16);
+  const attribute = raw.match(/(?:采用|配备|支持)\s*([^，。！？!?]{2,14})/i)?.[1]
+    || raw.match(/(?:是|为)\s*(独立包装|单独包装|一次性包装)/i)?.[1];
+  return attribute ? text(attribute).slice(0, 16) : '';
+}
+
+function conciseTranscriptCta(value: string): string {
+  const raw = text(value);
+  return raw.match(/查看详细介绍|查看详情|了解更多|私信咨询|联系我们|联系咨询|扫码查看|点击查看|到店看样|立即购买|立即下单/i)?.[0]
+    || raw.match(/(?:请|欢迎)?\s*(私信|咨询|联系|扫码|点击|留言|购买|下单|到店)[^，。！？!?]{0,10}/i)?.[0]?.replace(/^(?:请|欢迎)\s*/i, '')
+    || '';
+}
+
 function inferredCandidates(captions: CaptionSegment[], cues: Cue[]): EmphasisEvent[] {
   if (!captions.length) return [];
   const candidates: EmphasisEvent[] = [{
@@ -91,13 +150,17 @@ function inferredCandidates(captions: CaptionSegment[], cues: Cue[]): EmphasisEv
   }];
   captions.forEach((caption, index) => {
     const cue = cues[index];
-    if (/\d|价格|优惠|折扣|免费|规格|尺寸|产能|交付|质保|认证|price|free|%/i.test(caption.text)) {
+    const conciseFact = conciseTranscriptFact(caption.text);
+    if (/\d|价格|优惠|折扣|免费|规格|尺寸|产能|交付|质保|认证|price|free|%/i.test(caption.text) || conciseFact) {
       candidates.push({ id: `auto-fact-${index + 1}`, type: 'key_fact', startMs: caption.startMs,
-        endMs: caption.endMs, text: caption.text, importance: 2, confidence: .8, source: 'transcript' });
+        endMs: conciseFact ? Math.min(caption.endMs, caption.startMs + 1_800) : caption.endMs,
+        text: conciseFact || caption.text, importance: 2, confidence: .8, source: 'transcript' });
     }
-    if (/私信|咨询|到店|下单|购买|联系我们|立即|扫码|点击|留言|contact|shop now|learn more/i.test(caption.text)) {
+    const conciseCta = conciseTranscriptCta(caption.text);
+    if (conciseCta || /contact|shop now|learn more/i.test(caption.text)) {
       candidates.push({ id: `auto-cta-${index + 1}`, type: 'cta', startMs: caption.startMs,
-        endMs: caption.endMs, text: caption.text, importance: 2, confidence: .82, source: 'transcript' });
+        endMs: Math.min(caption.endMs, caption.startMs + 2_000),
+        text: conciseCta || caption.text, importance: 2, confidence: .82, source: 'transcript' });
     }
     if (String(cue?.kind || '') === 'screen') {
       candidates.push({ id: `auto-section-${index + 1}`, type: 'section_label', startMs: caption.startMs,
@@ -107,7 +170,7 @@ function inferredCandidates(captions: CaptionSegment[], cues: Cue[]): EmphasisEv
   return candidates;
 }
 
-function timelineCandidates(shots: TimelineShot[]): EmphasisEvent[] {
+function timelineCandidates(shots: TimelineShot[], captions: CaptionSegment[], explicitBusinessFacts: string[]): EmphasisEvent[] {
   let cursorMs = 0;
   return shots.flatMap((shot, index) => {
     const startMs = Number.isFinite(Number(shot.targetStart)) ? Number(shot.targetStart) * 1_000 : cursorMs;
@@ -118,7 +181,14 @@ function timelineCandidates(shots: TimelineShot[]): EmphasisEvent[] {
     const visual = text(shot.targetVisual || shot.action || shot.name);
     const events: EmphasisEvent[] = [];
     const semantic = label && !/^(无|none)$/i.test(label) ? semanticTimelineEvent(label) : null;
-    if (semantic) {
+    // Storyboard fields are production instructions, not content truth. They
+    // may position an overlay only when nearby spoken captions or explicit
+    // user-owned business facts independently support the same semantics.
+    const nearbyCaptionEvidence = captions
+      .filter(caption => caption.endMs >= startMs - 2_500 && caption.startMs <= endMs + 2_500)
+      .map(caption => caption.text);
+    const evidence = [...nearbyCaptionEvidence, ...explicitBusinessFacts];
+    if (semantic && eventHasSemanticEvidence(semantic, evidence)) {
       const semanticStart = semantic.type === 'key_fact' && startMs === 0
         ? Math.min(Math.max(startMs, endMs - 1_800), startMs + 3_600)
         : startMs;
@@ -128,10 +198,13 @@ function timelineCandidates(shots: TimelineShot[]): EmphasisEvent[] {
         text: semantic.text, importance: semantic.importance, confidence: .84, source: 'metadata',
       });
     }
-    if (visual && /成品|效果|前后对比|完成|亮灯|开灯|揭晓|reveal|result/i.test(visual)) events.push({
-      id: `auto-shot-reveal-${index + 1}`, type: 'reveal', startMs, endMs: Math.min(endMs, startMs + 2_000),
-      text: label || visual, importance: 2, confidence: .76, source: 'vision',
-    });
+    if (visual && /成品|效果|前后对比|完成|亮灯|开灯|揭晓|reveal|result/i.test(visual)) {
+      const reveal = { type: 'reveal' as const, text: label || visual, importance: 2 as const };
+      if (eventHasSemanticEvidence(reveal, evidence)) events.push({
+        id: `auto-shot-reveal-${index + 1}`, type: 'reveal', startMs, endMs: Math.min(endMs, startMs + 2_000),
+        text: reveal.text, importance: 2, confidence: .76, source: 'vision',
+      });
+    }
     return events;
   });
 }
@@ -142,6 +215,8 @@ export function buildStudioEmphasisPlan(input: {
   subtitles?: { cues?: Cue[] };
   timeline?: TimelineShot[];
   emphasisPlan?: StudioEmphasisPlanInput;
+  /** Confirmed user/business data. Storyboard production notes are excluded. */
+  businessFacts?: unknown;
 }): StudioEmphasisPlan {
   const durationMs = Math.max(0, Math.round(Number(input.durationSeconds || 0) * 1_000));
   const cues = Array.isArray(input.subtitles?.cues) ? input.subtitles!.cues! : [];
@@ -152,7 +227,9 @@ export function buildStudioEmphasisPlan(input: {
     ? supplied.profile as EmphasisProfile
     : recommendStudioSubtitleProfile({ script: input.script, cues, timeline: input.timeline });
   const candidates = Array.isArray(supplied.events) && supplied.events.length
-    ? supplied.events : [...inferredCandidates(normalizedCaptions, cues), ...timelineCandidates(input.timeline || [])];
+    ? supplied.events : [...inferredCandidates(normalizedCaptions, cues), ...timelineCandidates(
+      input.timeline || [], normalizedCaptions, businessFactTexts(input.businessFacts),
+    )];
   const defaultBudget = emphasisBudgetForDuration(durationMs);
   const requestedMax = Number(supplied.maxEvents);
   const maxEvents = Number.isFinite(requestedMax)

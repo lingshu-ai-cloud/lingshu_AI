@@ -49,5 +49,8 @@ assert.match(eventVariants, /\\pos\(540,1190\)/, 'reveal uses the lower informat
 assert.match(captionEmphasisTags(normalizeEmphasisPlan({ profile: 'talking_head', events: [
   { type: 'hook', startMs: 0, endMs: 800, text: '开场', importance: 3, confidence: 1, source: 'transcript' },
 ] }, 2), 0, .8, 1080), /\\fscx72/, 'hook animates the primary caption in place');
+assert.match(captionEmphasisTags(normalizeEmphasisPlan({ profile: 'talking_head', events: [
+  { type: 'hook', startMs: 0, endMs: 800, text: '开场', importance: 3, confidence: 1, source: 'transcript' },
+] }, 2), 0, .8, 1080), /\\fs89/, 'opening caption is clearly larger than the 72px ordinary subtitle');
 
 console.log('caption emphasis composition regression passed');

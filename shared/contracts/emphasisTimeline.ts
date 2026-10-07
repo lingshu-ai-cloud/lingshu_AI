@@ -36,6 +36,19 @@ export interface EmphasisEvent {
   source: EmphasisEventSource;
   /** Semantic/visual subject used to find the best placement window. */
   targetId?: string;
+  /** Optional renderer hint. Strong events may still be degraded for safety. */
+  strength?: 'weak' | 'strong';
+  /** Normalized placement selected from trusted visual evidence. */
+  anchor?: { x: number; y: number };
+  /** False forces the renderer to use its conservative safe position. */
+  safeArea?: boolean;
+  /** Traceability for an event moved onto a supporting visual window. */
+  placementEvidence?: {
+    windowId: string;
+    targetId?: string;
+    clarity: number;
+    safe: boolean;
+  };
 }
 
 export interface EmphasisPlacementWindow {
@@ -48,6 +61,8 @@ export interface EmphasisPlacementWindow {
   safe?: boolean;
   /** Visual legibility/evidence strength, from 0 to 1. */
   clarity?: number;
+  /** Safe normalized overlay anchor observed for this visual window. */
+  anchor?: { x: number; y: number };
 }
 
 export interface EmphasisBudget {
@@ -137,6 +152,11 @@ export function normalizeEmphasisCandidates(input: unknown, durationMs: number):
     if (endMs <= startMs) return null;
     const text = cleanText(raw.text);
     const targetId = cleanId(raw.targetId, '');
+    const strength = raw.strength === 'weak' || raw.strength === 'strong' ? raw.strength : undefined;
+    const anchor = asRecord(raw.anchor);
+    const hasAnchor = Number.isFinite(Number(anchor.x)) && Number.isFinite(Number(anchor.y));
+    const placement = asRecord(raw.placementEvidence);
+    const placementWindowId = cleanId(placement.windowId, '');
     const confidence = clamp(raw.confidence, 0, 1, 0);
     // Commercial facts must be supported. Editor-authored values already went
     // through human review, while other low-confidence facts fall back to speech.
@@ -148,6 +168,18 @@ export function normalizeEmphasisCandidates(input: unknown, durationMs: number):
       importance: Math.round(clamp(raw.importance, 1, 3, 1)) as EmphasisImportance,
       confidence: Number(confidence.toFixed(4)), source,
       ...(targetId ? { targetId } : {}),
+      ...(strength ? { strength } : {}),
+      ...(hasAnchor ? { anchor: {
+        x: Number(clamp(anchor.x, .05, .95, .5).toFixed(4)),
+        y: Number(clamp(anchor.y, .05, .95, .2).toFixed(4)),
+      } } : {}),
+      ...(typeof raw.safeArea === 'boolean' ? { safeArea: raw.safeArea } : {}),
+      ...(placementWindowId ? { placementEvidence: {
+        windowId: placementWindowId,
+        ...(cleanId(placement.targetId, '') ? { targetId: cleanId(placement.targetId, '') } : {}),
+        clarity: Number(clamp(placement.clarity, 0, 1, .5).toFixed(4)),
+        safe: placement.safe !== false,
+      } } : {}),
     } satisfies EmphasisEvent;
   }).filter((item): item is EmphasisEvent => Boolean(item));
 }
@@ -170,7 +202,24 @@ function placeOnBestWindow(event: EmphasisEvent, windows: EmphasisPlacementWindo
     || (right.endMs - right.startMs) - (left.endMs - left.startMs))[0]!;
   const originalDuration = Math.max(500, event.endMs - event.startMs);
   const startMs = Math.max(0, Math.round(best.startMs));
-  return { ...event, startMs, endMs: Math.min(Math.round(best.endMs), startMs + originalDuration) };
+  const anchor = asRecord(best.anchor);
+  const hasAnchor = Number.isFinite(Number(anchor.x)) && Number.isFinite(Number(anchor.y));
+  return {
+    ...event,
+    startMs,
+    endMs: Math.min(Math.round(best.endMs), startMs + originalDuration),
+    ...(hasAnchor ? { anchor: {
+      x: Number(clamp(anchor.x, .05, .95, .5).toFixed(4)),
+      y: Number(clamp(anchor.y, .05, .95, .2).toFixed(4)),
+    } } : {}),
+    safeArea: best.safe !== false,
+    placementEvidence: {
+      windowId: cleanId(best.id, 'placement-window'),
+      targetId: event.targetId,
+      clarity: Number(clamp(best.clarity, 0, 1, .5).toFixed(4)),
+      safe: best.safe !== false,
+    },
+  };
 }
 
 /** Selects the sparse, whole-film emphasis layer from a larger candidate set. */
