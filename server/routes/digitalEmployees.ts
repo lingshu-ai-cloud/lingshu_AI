@@ -1455,7 +1455,11 @@ async function observeTaskProof(tenantId: string, run: RunRecord, task: TaskReco
   }
   if (task.task_key === 'viral_analysis') {
     const videos = await store.list<StoredRecord>('trend_videos', { where: { tenantId }, perPage: 500 });
-    const matching = videos.items.filter(item => recordBelongsToTask(item, run, scope) && exactVideoAnalysis(item));
+    const boundPlan = await tenantRecord<PlanRecord>(COLLECTION.plans, run.plan_id, tenantId);
+    const packageBody = jsonObject<Record<string, any>>(boundPlan?.plan, {});
+    const explicitReferences = new Set<string>((packageBody.businessPackage?.tasks?.find((item: any) => item.templateId === 'production')?.videoPlans || [])
+      .filter((video: VideoCreationPlan) => video.route === 'clone' && video.referenceId).map((video: VideoCreationPlan) => video.referenceId));
+    const matching = videos.items.filter(item => (recordBelongsToTask(item, run, scope) || explicitReferences.has(item.id)) && exactVideoAnalysis(item));
     return scopedProof('exactAnalyses', 'trend_videos.aiAnalysis + workflow scope', matching, matching.map(item => ({ type: 'trend_video', id: item.id })), snapshot.content.exactAnalyses.value);
   }
   if (task.task_key === 'content_production' || task.task_key === 'content_quality_gate') {
@@ -1867,6 +1871,20 @@ async function advanceRunUnlocked(tenantId: string, runId: string): Promise<void
     const previousFailure = jsonObject<Record<string, unknown>>(task.output, {}).executionFailure as TaskFailure | undefined;
     if (!taskRetryDue(previousFailure)) continue;
     try {
+    // An explicitly selected, fully analyzed reference is already collected.
+    // Do not require creating a new recurring crawler for a one-off remake.
+    if (task.task_key === 'scheduled_source_collection' && videoTask?.videoPlans?.length
+      && videoTask.videoPlans.every(video => video.route === 'clone' && video.referenceId && video.preproduction?.benchmark.status === 'ready')) {
+      const referenceIds = [...new Set(videoTask.videoPlans.map(video => video.referenceId))];
+      const references = await Promise.all(referenceIds.map(id => store.getById<StoredRecord>('trend_videos', id)));
+      if (references.every(reference => reference && reference.tenantId === tenantId && exactVideoAnalysis(reference))) {
+        const output = { dataStatus: 'not_required', summary: '本轮已选择采集并完成精确分析的灵感视频，无需新增定时采集。', referenceIds };
+        await store.update(COLLECTION.tasks, task.id, { status: 'skipped', output, blocked_reason: '', updated_at: new Date().toISOString() });
+        task.status = 'skipped'; task.output = output; task.blocked_reason = '';
+        await appendEvent({ tenantId, runId: run.id, taskId: task.id, type: 'task.not_required', summary: output.summary, payload: { referenceIds } });
+        continue;
+      }
+    }
     if (task.task_key === 'viral_analysis' && videoTask?.videoPlans?.length && videoTask.videoPlans.every(video => video.route !== 'clone')) {
       const output = { dataStatus: 'not_required', summary: '本轮视频均未指定爆款裂变，无需等待参考分析。' };
       await store.update(COLLECTION.tasks, task.id, { status: 'skipped', output, blocked_reason: '', updated_at: new Date().toISOString() });

@@ -53,12 +53,12 @@ export function normalizeDirectorPlan(value: unknown): ContentDirectorPlan {
   };
 }
 
-export function directorIssues(value: ContentDirectorPlan | undefined): string[] {
+export function directorIssues(value: ContentDirectorPlan | undefined, options: { requirePublishing?: boolean } = {}): string[] {
   if (!value) return [];
   const issues: string[] = [];
   if (value.productionSpent + value.productionReserved > (value.productionBudgetMax || value.productionBudget)) issues.push('内容生产的已用与预占金额超过生产预算');
   if (value.platformVersionTarget < value.originalTarget) issues.push('平台交付版本目标不能少于原创内容目标');
-  if (value.publishTarget < value.platformVersionTarget) issues.push('发布次数目标不能少于平台交付版本目标');
+  if (options.requirePublishing !== false && value.publishTarget < value.platformVersionTarget) issues.push('发布次数目标不能少于平台交付版本目标');
   if (value.progress.some(item => !item.title)) issues.push('编导过程记录需要填写名称');
   return issues;
 }
