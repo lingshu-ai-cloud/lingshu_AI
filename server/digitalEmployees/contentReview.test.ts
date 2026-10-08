@@ -28,4 +28,10 @@ assert.equal(result.nextRoundRecommendations.tagAdaptation.requiresConfirmation,
 assert.equal(result.nextRoundRecommendations.industryTrends.signals.length, 2);
 assert.equal(result.nextRoundRecommendations.industryTrends.signals[0]?.sourceUrl, 'https://www.tiktok.com/@factory/video/1');
 
+const legacy = summarizeContentFeedback({
+  orders: [{ id: 'legacy-order', route: 'clone', platform: 'youtube', productId: 'sku-1' } as any],
+  projects: [], approvals: [], posts: [],
+});
+assert.equal(legacy.items[0].title, 'legacy-order', 'legacy incomplete orders must not crash the weekly review');
+assert.equal(legacy.items[0].performance.status, 'pending');
 console.log('content review tests passed');

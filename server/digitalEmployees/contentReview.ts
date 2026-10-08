@@ -139,7 +139,7 @@ export function summarizeContentFeedback(input: {
     ])].slice(0, 20);
     return {
       orderId: order.id, projectId: project?.id || '', route: order.route, platform: order.platform, productId: order.productId,
-      title: order.videoPlan?.publication?.title || order.theme.label,
+      title: order.videoPlan?.publication?.title || order.theme?.label || order.productName || order.id,
       productName: order.productName,
       hook: order.videoPlan?.preproduction?.benchmark.hook || hookShot?.purpose || hookShot?.onScreenText || order.videoPlan?.buyerProblem || '',
       framework,
