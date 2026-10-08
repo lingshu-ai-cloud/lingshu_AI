@@ -361,8 +361,17 @@ async function main(): Promise<void> {
     'scheduled_tasks',
   ];
   for (const collection of orderedCollections) {
-    const count = await replaceFixtureCollection(token, collection, fixture.collections[collection] || [], tenantId, userId);
-    console.log(`IMPORTED ${collection}=${count}`);
+    try {
+      const count = await replaceFixtureCollection(token, collection, fixture.collections[collection] || [], tenantId, userId);
+      console.log(`IMPORTED ${collection}=${count}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message.includes(`/api/collections/${collection}: 404`)) {
+        console.log(`SKIPPED ${collection}=collection_not_available`);
+        continue;
+      }
+      throw error;
+    }
   }
   console.log(`IMPORTED materials=${await importMaterials(token, tenantId)}`);
   await verifyLoginAndData(token, tenantId);
