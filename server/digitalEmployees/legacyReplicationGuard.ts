@@ -1,5 +1,5 @@
 /** The generic legacy editor cannot execute reference shots or generate their replacements. */
-export const LEGACY_REPLICATION_BRIDGE_BLOCKER = 'needs_per_shot_replication_bridge：经营任务尚未接通真正的逐镜复刻执行器；必须逐镜匹配或生成数字人与非数字人素材，不能以普通素材拼接替代爆款复刻';
+export const LEGACY_REPLICATION_BRIDGE_BLOCKER = 'needs_per_shot_replication_bridge：旧通用剪辑执行器不支持逐镜复刻，请使用经营逐镜工作台执行器；必须逐镜匹配或生成数字人与非数字人素材，不能以普通素材拼接替代爆款复刻';
 
 export function legacyReplicationBlocker(input: {
   route: string;

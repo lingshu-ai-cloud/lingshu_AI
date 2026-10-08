@@ -8933,6 +8933,11 @@ studioRouter.get('/projects', async (_req, res) => {
     .map(project => projectFromRecord(project, tenantId)));
 });
 
+/** Trusted worker adoption uses the same current-input and KB checks as Studio. */
+export async function automationStoryboardAssignmentIssues(tenantId: string, projectId: string, spec: Record<string, unknown>, materials = loadMaterials()): Promise<string[]> {
+  return [...storyboardAigcAssignmentIssues({ tenantId, projectId, spec, materials }), ...await storyboardKbAssignmentIssuesForSpec(tenantId, spec, materials)];
+}
+
 async function storyboardKbAssignmentIssuesForSpec(tenantId: string, spec: Record<string, unknown>, materials: Material[]) {
   let profilePromise: ReturnType<typeof readTenantEnterpriseProfile> | null = null;
   const productIssues = await storyboardAigcCurrentKbIssues({ spec, materials, readCurrentProductImage: async productId => {

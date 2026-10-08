@@ -1,4 +1,5 @@
 import { legacyReplicationBlocker } from './legacyReplicationGuard.js';
+import { advanceManagedReplication, MANAGED_REPLICATION_BRIDGE_VERSION } from './replicationContentProduction.js';
 import { waitForMaterialAnalysis } from '../lib/materialLibraryAnalysis.js';
 import { readMaterialLibrary } from '../lib/materialLibrary.js';
 import { applySceneRepair, planSceneRepair } from './sceneRepair.js';
@@ -354,7 +355,7 @@ function requestedDraftCount(config: DigitalEmployeeConfig, goal: WeeklyGoalInpu
 
 function exactAnalysis(record: StoredRecord): boolean {
   const analysis = json<Record<string, unknown>>(record.aiAnalysis, {});
-  return analysis.analysisMode === 'exact' && analysis.analysisQuality === 'video' && Boolean(analysis.gemini);
+  return analysis.analysisMode === 'exact' && ['video', 'video_review_required'].includes(String(analysis.analysisQuality)) && Boolean(analysis.gemini);
 }
 
 function realMaterial(record: Record<string, unknown>, tenantId: string): boolean {
@@ -1023,6 +1024,17 @@ export async function advanceOneProject(input: {
   const spec = json<Record<string, unknown>>(input.record.spec, {});
   const automation = projectAutomation(input.record);
   const route = text(automation.route) as ContentProductionRoute;
+  // Clone has its own real per-shot pipeline. Never send it into the generic
+  // catalog/script/matching renderer, even when the bridge reports a blocker.
+  if (String(route) === 'clone') {
+    const contract = json<Record<string, any>>(spec.contentOrder, {});
+    const language = text(spec.lang) || input.config.videoDefaults?.language || 'en';
+    const script = text(spec.script || contract.scripts?.[language]?.body, 30_000);
+    const productId = text(json<Record<string, unknown>>(automation.routePlan, {}).productId);
+    const issues = narrationEvidenceIssues(productFacts(input.profile, input.config, productId), voiceoverText(script));
+    return advanceManagedReplication({ tenantId: input.tenantId, projectId: input.record.id,
+      store, references: input.analyses, preflightBlocker: issues.length ? issues.join('；') : undefined });
+  }
   const legacyAssetIds = Array.isArray(spec.selectedMaterialIds) ? spec.selectedMaterialIds.map(String) : [];
   const legacyAssets = legacyAssetIds.map(id => input.assets.find(asset => asset.id === id)).filter((asset): asset is AssetCandidate => Boolean(asset));
   const legacyProductId = legacyAssets.map(asset => asset.productId).find(Boolean);
@@ -1870,7 +1882,9 @@ export async function advanceAutomatedContentProduction(input: {
   }
   const pending = selectContentProjectsForTick(projects.map(project => ({
     project, stage: text(projectAutomation(project).stage),
-    retryable: contentProjectRetryable(projectAutomation(project)) || presenterApprovalResumesQuality(projectAutomation(project),
+    retryable: contentProjectRetryable(projectAutomation(project))
+      || (projectAutomation(project).route === 'clone' && projectAutomation(project).replicationBridgeVersion !== MANAGED_REPLICATION_BRIDGE_VERSION)
+      || presenterApprovalResumesQuality(projectAutomation(project),
       presenterApprovalForProject(input.tenantId, project.id, json<Record<string, unknown>>(project.spec, {}), projectAutomation(project))),
   }))).map(item => item.project);
   const advancedResults = await Promise.all(pending.map(project => advanceOneProject({
