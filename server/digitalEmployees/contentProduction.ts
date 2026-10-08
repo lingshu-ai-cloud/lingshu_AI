@@ -273,10 +273,14 @@ export function selectContentProjectsForTick<T extends { stage: string; retryabl
   return selected;
 }
 
-function enabledRoutes(config: DigitalEmployeeConfig): ContentProductionRoute[] {
-  // New autonomous production is clone-only. Frozen historical orders keep
-  // their recorded route through requiredContentRoutes/buildRouteSourcePlans.
-  return config.enabledWorkflows.includes('viral_clone') ? ['clone'] : [];
+export function enabledRoutes(config: Pick<DigitalEmployeeConfig, 'enabledWorkflows'>): ContentProductionRoute[] {
+  // Explicit content preparation remains independent of publishing accounts.
+  const enabled = new Set(config.enabledWorkflows);
+  return [
+    ...(enabled.has('viral_clone') ? ['clone' as const] : []),
+    ...(enabled.has('product_content') ? ['product' as const] : []),
+    ...(enabled.has('material_content') ? ['material' as const] : []),
+  ];
 }
 
 /** Configuration enables capabilities; only this batch's selected routes require evidence. */

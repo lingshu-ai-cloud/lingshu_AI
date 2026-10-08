@@ -17,7 +17,7 @@ const planned = buildContentBatchPlan({
 });
 assert.equal(planned.status, 'planned');
 assert.equal(planned.orders.length, 5);
-assert.deepEqual(planned.orders.map(order => order.route), ['clone', 'clone', 'clone', 'clone', 'clone']);
+assert.deepEqual(planned.orders.map(order => order.route), ['clone', 'product', 'material', 'clone', 'product']);
 assert.ok(planned.orders.every(order => order.goalId === 'goal-1' && order.productId && order.theme.key && order.platform && order.cta));
 assert.ok(planned.orders.every(order => order.evidenceRefs.filter(ref => ref.type === 'enterprise_material').every(ref => ref.id === (order.productId === 'sku-1' ? 'asset-a' : 'asset-b'))), 'A/B 产品不得串用素材');
 assert.ok(planned.orders.every(order => order.accountId === '' && order.accountLabel.includes('不分发')));
@@ -29,9 +29,9 @@ const publishing = buildContentBatchPlan({
   evidence: { products: [{ id: 'sku-1', name: '产品 A', materialIds: ['asset-a'] }], exactAnalysisIds: [], materialIds: ['asset-a'] },
   versions: { configVersion: 1, policyVersion: 'p', factsVersion: 'f' },
 });
-assert.equal(publishing.status, 'blocked', 'product-only free creation must not be created by a digital employee');
-assert.equal(publishing.orders.length, 0);
-assert.match(publishing.blocker, /自由创作|没有可执行/);
+assert.equal(publishing.status, 'planned', 'explicit product preparation must remain available without a publishing account');
+assert.equal(publishing.orders.length, 5);
+assert.ok(publishing.orders.every(order => order.route === 'product' && order.accountId === ''));
 
 const noEvidence = buildContentBatchPlan({
   goalId: 'goal-1', goal, config,
@@ -72,11 +72,18 @@ const feedbackRouted = buildContentBatchPlan({
     industryTrends: { status: 'available', signals: [{ title: '小批量交付成为行业热点', sourceUrl: 'https://example.com/trend' }] },
   },
 });
-assert.equal(feedbackRouted.orders[0]?.route, 'clone', 'new Agent plans remain clone-only regardless of historic route distribution');
+assert.equal(feedbackRouted.orders[0]?.route, 'clone', 'valid clone evidence remains an eligible route');
 assert.ok(feedbackRouted.orders.every(order => order.constraints.includes('审批反馈：开头更直接')));
 assert.ok(feedbackRouted.orders.every(order => order.constraints.some(item => item.includes('上轮优秀内容继承'))), '优秀内容的框架与钩子必须进入下一周制作约束');
 assert.ok(feedbackRouted.orders.every(order => order.constraints.some(item => item.includes('#smallbatch'))), '热门 Tag 变化必须进入下一周验证约束');
 assert.ok(feedbackRouted.orders.every(order => order.constraints.some(item => item.includes('采集范围变化需要人工确认'))), '采集范围不得被复盘静默扩大');
 assert.ok(feedbackRouted.orders.every(order => order.constraints.some(item => item.includes('小批量交付成为行业热点'))), '可追溯行业信号必须进入下一周编导判断');
 
+const explicitUnanalyzedClone = buildContentBatchPlan({
+  goalId: 'no-clone-fallback', goal: explicitMissingMaterialGoal, config,
+  evidence: { products: [{ id: 'sku-1', name: '产品 A', materialIds: ['asset-a'] }], exactAnalysisIds: [], materialIds: ['asset-a'] },
+  versions: { configVersion: 1, policyVersion: 'p', factsVersion: 'f' },
+});
+assert.equal(explicitUnanalyzedClone.status, 'blocked', 'enabling product/material must never replace an explicit clone with missing analysis');
+assert.equal(explicitUnanalyzedClone.orders.length, 0);
 console.log('content batch plan tests passed');

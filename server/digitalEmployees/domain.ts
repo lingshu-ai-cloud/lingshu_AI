@@ -385,7 +385,7 @@ export function buildWeeklyPlan(goal: WeeklyGoalInput, config: DigitalEmployeeCo
   const lineAllowsCustomer = goal.businessLine !== 'content_growth';
   const hasScheduledCollection = lineAllowsContent && enabled.has('scheduled_social');
   const hasViralClone = lineAllowsContent && enabled.has('viral_clone');
-  const hasContentCreation = lineAllowsContent && hasViralClone;
+  const hasContentCreation = lineAllowsContent && (hasViralClone || enabled.has('product_content') || enabled.has('material_content'));
   const hasPublishing = lineAllowsContent && enabled.has('content_publish');
   const hasBatchFollowup = lineAllowsCustomer && enabled.has('batch_followup');
   const hasCustomerSegmentation = lineAllowsCustomer && (enabled.has('customer_segmentation') || hasBatchFollowup);

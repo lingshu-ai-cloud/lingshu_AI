@@ -272,7 +272,13 @@ try {
     }
     const first = await post('/storyboard-first-frame', frameRequest);
     assert.equal(first.status, 200, `${shot.id} first frame: ${JSON.stringify(first.body)}`);
-    assert.equal(first.body.firstFrameQuality.status, 'needs_review');
+    const automaticReplication = shot.mode === 'clone' && !('characterMaterialId' in frameRequest);
+    assert.equal(first.body.firstFrameQuality.status, automaticReplication ? 'passed' : 'needs_review');
+    if (automaticReplication) {
+      assert.equal(first.body.material.provenance.confirmationSource, 'automatic_policy');
+      assert.equal(first.body.firstFrameQuality.requiresHumanReview, false);
+      assert.equal(first.body.firstFrameQuality.reviewedBy, undefined);
+    }
     if (shot.id === 'free-factory') assert.equal(first.body.firstFrameQuality.checks.environment_fidelity.verdict, 'pass');
     if (productIds.length) assert.ok(first.body.identityNotice, `${shot.id} must explain how the first frame handled product identity`);
     if (shot.id === 'free-product') {
@@ -317,9 +323,11 @@ try {
       assert.equal(changed.body.code, 'STORYBOARD_PERSON_IMAGE_CHANGED');
       await objectStorageUpload({ key: characterObjectKey, body: image, contentType: 'image/png' });
     }
-    const confirmed = await post(`/storyboard-first-frame/${first.body.material.id}/confirm`,
-      { shotId: shot.id, fingerprint: first.body.fingerprint });
-    assert.equal(confirmed.status, 200, `${shot.id} confirm: ${JSON.stringify(confirmed.body)}`);
+    if (!automaticReplication) {
+      const confirmed = await post(`/storyboard-first-frame/${first.body.material.id}/confirm`,
+        { shotId: shot.id, fingerprint: first.body.fingerprint });
+      assert.equal(confirmed.status, 200, `${shot.id} confirm: ${JSON.stringify(confirmed.body)}`);
+    }
     const videoRequest = { firstFrameMaterialId: first.body.material.id, firstFrameFingerprint: first.body.fingerprint,
       shotId: shot.id, requestId: `video-${shot.id}-${suffix}`, ratio: '9:16', duration: 4, resolution: '480p',
       generationContext: { projectId }, script: shot.detail, language: 'zh' };
@@ -390,13 +398,19 @@ try {
     assert.equal(premature.body.code, 'STORYBOARD_AIGC_ASSIGNMENT_UNVERIFIED', 'unreviewed candidate must not be adopted');
     const checked = await post('/storyboard-quality-check', { materialId: result.body.material.id, storyboard: shot.detail });
     assert.equal(checked.status, 200, `${shot.id} QA: ${JSON.stringify(checked.body)}`);
-    assert.equal(checked.body.quality.status, 'needs_review');
+    assert.equal(checked.body.quality.status, automaticReplication ? 'passed' : 'needs_review');
     if (shot.id === 'free-factory') assert.equal(checked.body.quality.checks.environment_fidelity.verdict, 'pass');
-    const reviewed = await post(`/storyboard-quality-check/${result.body.material.id}/review`, {
-      shotId: shot.id, reportId: checked.body.quality.reportId, decision: 'accept',
-    });
-    assert.equal(reviewed.status, 200, `${shot.id} review: ${JSON.stringify(reviewed.body)}`);
-    assert.equal(reviewed.body.quality.passed, true);
+    if (automaticReplication) {
+      assert.equal(checked.body.quality.acceptanceSource, 'automatic_policy');
+      assert.equal(checked.body.quality.requiresHumanReview, false);
+      assert.equal(checked.body.quality.reviewedBy, undefined);
+    } else {
+      const reviewed = await post(`/storyboard-quality-check/${result.body.material.id}/review`, {
+        shotId: shot.id, reportId: checked.body.quality.reportId, decision: 'accept',
+      });
+      assert.equal(reviewed.status, 200, `${shot.id} review: ${JSON.stringify(reviewed.body)}`);
+      assert.equal(reviewed.body.quality.passed, true);
+    }
     if (shot.id === 'free-product') {
       const sideFile = path.join(assetDir, 'product-side.png');
       fs.writeFileSync(sideFile, await sharp({ create: { width: 720, height: 1280, channels: 3, background: '#345678' } }).png().toBuffer());

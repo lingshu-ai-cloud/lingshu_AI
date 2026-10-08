@@ -106,9 +106,11 @@ export function planStudioBatchShotRoutes(spec: BatchShotSpec, options: {
       if (sourcePlan?.generatedClipId && sourcePlan.confirmed && assignedId === sourcePlan.generatedClipId) {
         return { ...base, route: 'local_material', status: 'matched', reason: '采用已确认的 AIGC 分镜候选' };
       }
-      return { ...base, route: 'aigc_first_frame', status: 'needs_plan', reason: sourcePlan?.firstFrameConfirmed && sourcePlan.firstFrameMaterialId
-        ? '目标首帧已确认，等待生成视频候选并逐镜验收'
-        : '需要先生成并确认目标首帧；批量入口不得跳过确认直接提交视频' };
+      return { ...base, route: 'aigc_first_frame', status: 'needs_plan', reason: spec.mode === 'clone'
+        ? sourcePlan?.firstFrameMaterialId ? '目标首帧已生成，按自动质检结果继续生成视频候选' : '需要先生成目标首帧，自动质检后继续制作视频'
+        : sourcePlan?.firstFrameConfirmed && sourcePlan.firstFrameMaterialId
+          ? '目标首帧已确认，等待生成视频候选并逐镜验收'
+          : '需要先生成并确认目标首帧；批量入口不得跳过确认直接提交视频' };
     }
     // An unusable association is not a reason to make the user choose between
     // shooting and AIGC. Only an explicitly selected material/shooting route

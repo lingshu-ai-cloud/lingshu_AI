@@ -41,3 +41,19 @@ assert.equal((await storyboardAigcCurrentKbIssues({ ...kbInput, readCurrentProdu
 assert.equal((await storyboardAigcCurrentKbIssues({ ...kbInput, spec: { ...currentSpec, selectedProductIds: [] } })).length, 1);
 assert.deepEqual(await storyboardAigcCurrentKbIssues({ ...kbInput, spec: { ...currentSpec, storyboardAssignments: {}, storyboardAssemblies: [] },
   readCurrentProductImage: async () => { throw new Error('should not read KB for an unassigned candidate'); } }), []);
+
+// Automatic replication adoption uses real QA evidence, without human fields.
+const { buildStoryboardQaReport } = await import('./storyboardAigcQuality.js');
+const autoShotSpec = { ...shotSpec, mode: 'replication', constraints: ['product_identity'] };
+const qaBase = { sceneType: 'product' as const, hasProduct: true, hasNamedPerson: false, hasContact: false, hasAction: false, evidenceFrameLabels: ['候选0s', '候选4s'] };
+const autoFrameQa = buildStoryboardQaReport({ ...qaBase, phase: 'first_frame', observations: [] });
+const autoVideoQa = buildStoryboardQaReport({ ...qaBase, phase: 'video', observations: [] });
+const autoFrame = { ...firstFrame, provenance: { ...firstFrame.provenance, confirmed: false, firstFrameQuality: autoFrameQa, shotSpec: autoShotSpec } };
+const autoVideo = { ...video, provenance: { ...video.provenance, storyboardQualityReport: autoVideoQa, shotSpec: autoShotSpec } };
+const autoInput = { ...input, materials: [autoFrame, autoVideo] };
+assert.deepEqual(storyboardAigcAssignmentIssues(autoInput), [], 'automatic replication adopts without user confirm or reviewDecision');
+const hardProduct = buildStoryboardQaReport({ ...qaBase, phase: 'video', observations: [{ key: 'product_identity', verdict: 'fail', evidenceFrames: ['候选0s'], note: '包装错误', action: 'retry_video' }] });
+assert.equal(storyboardAigcAssignmentIssues({ ...autoInput, materials: [autoFrame, { ...autoVideo, provenance: { ...autoVideo.provenance, storyboardQualityReport: hardProduct } }] }).length, 1, 'automatic policy never bypasses product hard failure');
+assert.equal(storyboardAigcAssignmentIssues({ ...autoInput, tenantId: 'foreign-tenant' }).length, 1);
+assert.equal(storyboardAigcAssignmentIssues({ ...autoInput, materials: [{ ...autoFrame, provenance: { ...autoFrame.provenance, projectShotFingerprint: 'stale' } }, autoVideo] }).length, 1);
+assert.equal(storyboardAigcAssignmentIssues({ ...autoInput, materials: [{ ...autoFrame, provenance: { ...autoFrame.provenance, fingerprint: 'wrong-hash' } }, autoVideo] }).length, 1);
