@@ -29,9 +29,9 @@ const publishing = buildContentBatchPlan({
   evidence: { products: [{ id: 'sku-1', name: '产品 A', materialIds: ['asset-a'] }], exactAnalysisIds: [], materialIds: ['asset-a'] },
   versions: { configVersion: 1, policyVersion: 'p', factsVersion: 'f' },
 });
-assert.equal(publishing.status, 'planned', 'publishing credentials must not block content production');
-assert.ok(publishing.orders.every(order => order.accountId === '' && order.accountLabel.includes('待绑定')));
-assert.deepEqual([...new Set(publishing.orders.map(order => order.platform))].sort(), [...goal.contentPlatforms].sort(), 'unbound target platforms must not be silently omitted');
+assert.equal(publishing.status, 'planned', 'explicit product preparation must remain available without a publishing account');
+assert.equal(publishing.orders.length, 5);
+assert.ok(publishing.orders.every(order => order.route === 'product' && order.accountId === ''));
 
 const noEvidence = buildContentBatchPlan({
   goalId: 'goal-1', goal, config,
@@ -72,11 +72,18 @@ const feedbackRouted = buildContentBatchPlan({
     industryTrends: { status: 'available', signals: [{ title: '小批量交付成为行业热点', sourceUrl: 'https://example.com/trend' }] },
   },
 });
-assert.equal(feedbackRouted.orders[0]?.route, 'product', '下周分配必须考虑历史路径分布');
+assert.equal(feedbackRouted.orders[0]?.route, 'clone', 'valid clone evidence remains an eligible route');
 assert.ok(feedbackRouted.orders.every(order => order.constraints.includes('审批反馈：开头更直接')));
 assert.ok(feedbackRouted.orders.every(order => order.constraints.some(item => item.includes('上轮优秀内容继承'))), '优秀内容的框架与钩子必须进入下一周制作约束');
 assert.ok(feedbackRouted.orders.every(order => order.constraints.some(item => item.includes('#smallbatch'))), '热门 Tag 变化必须进入下一周验证约束');
 assert.ok(feedbackRouted.orders.every(order => order.constraints.some(item => item.includes('采集范围变化需要人工确认'))), '采集范围不得被复盘静默扩大');
 assert.ok(feedbackRouted.orders.every(order => order.constraints.some(item => item.includes('小批量交付成为行业热点'))), '可追溯行业信号必须进入下一周编导判断');
 
+const explicitUnanalyzedClone = buildContentBatchPlan({
+  goalId: 'no-clone-fallback', goal: explicitMissingMaterialGoal, config,
+  evidence: { products: [{ id: 'sku-1', name: '产品 A', materialIds: ['asset-a'] }], exactAnalysisIds: [], materialIds: ['asset-a'] },
+  versions: { configVersion: 1, policyVersion: 'p', factsVersion: 'f' },
+});
+assert.equal(explicitUnanalyzedClone.status, 'blocked', 'enabling product/material must never replace an explicit clone with missing analysis');
+assert.equal(explicitUnanalyzedClone.orders.length, 0);
 console.log('content batch plan tests passed');

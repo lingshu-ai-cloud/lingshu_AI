@@ -17,16 +17,36 @@ import { sentenceCueQualityFromEvidence } from './sentenceCueQuality.js';
 import { inspectSentenceSemanticQuality } from './sentenceSemanticQuality.js';
 import { inspectSentenceLipSyncQuality } from './sentenceLipSyncQuality.js';
 import { validatePresenterRightsEvidence } from './presenterAssetTrust.js';
-import { estimateSeedanceCostCny } from './seedanceBudget.js';
 import { photoTalkingBudget } from './photoTalkingBudget.js';
 import { assertPersonCueShotBoundaries, assertSeedanceCueDurations, assertSplitCueAssignments, hardSceneCutTimes } from './sentenceCueSceneCuts.js';
+import { planSeedanceReplication, seedanceTalkingHeadPrompt } from './seedanceReplicationPlan.js';
+import { seedanceImageFirstFrameInput, seedanceTrustedAssetForMaterial, type SeedanceTrustedAsset } from './seedanceTrustedAsset.js';
+import { VolcengineArkAssets } from './volcengineArkAssets.js';
 
 const MEDIA_ROOT = path.resolve(process.cwd(), 'data/media');
 const run = promisify(execFile);
 export async function readTenantMaterialBytes(material: MaterialRecord, tenantId: string): Promise<{ bytes: Buffer; mimeType: string }> { if (material.scope !== 'shared' && String(material.tenantId || material.tenant_id || '') !== tenantId) throw new Error('逐句素材不属于当前企业'); if (material.file) { const file = path.resolve(MEDIA_ROOT, String(material.file)); if (file.startsWith(path.resolve(MEDIA_ROOT)) && fs.existsSync(file)) return { bytes: fs.readFileSync(file), mimeType: materialAssetContentType(file) }; } if (material.objectKey) { const object = await objectStorageDownload(String(material.objectKey)); if (object) return { bytes: object.buf, mimeType: object.contentType }; } throw new Error(`素材 ${material.id} 没有可读取文件`); }
 function stableId(prefix: string, requestId: string, cueId = '') { return `${prefix}-${createHash('sha256').update(`${requestId}:${cueId}`).digest('hex').slice(0,24)}`; }
 function persistMaterial(material: MaterialRecord) { const current = readLocalMaterials(); saveLocalMaterials([...current.filter(item => item.id !== material.id), material]); }
-export async function runProductionSentenceReplication(input: { tenantId: string; projectId: string; assemblyId: string; shotId: string; fingerprint: string; shot: ShotProduction; presenter: PresenterAsset; cues: DigitalHumanReferenceCue[]; requestId: string; maxCostCny?: number; sourceMaterial?: MaterialRecord; existingProviderTasks?: Record<string,string>; reuseCueMaterialIds?: Record<string,string>; reuseCueQuality?: SentenceCueQuality[]; onProviderTaskSubmitted?: (cueId:string,taskId:string)=>Promise<void> }): Promise<SentenceReplicationResult> {
+export async function certifySeedanceTargetFrame(input: { presenter: PresenterAsset; material: MaterialRecord; objectKey: string }) {
+  const certification = input.presenter.arkCertification;
+  if (!certification || certification.status !== 'active' || !certification.projectName || !certification.groupId) throw new Error('当前人物缺少 Active 方舟真人认证，无法认证目标首帧');
+  const assets = new VolcengineArkAssets(); const name = `pipeline3-${String(input.material.id).replace(/^target-frame-/, '').slice(0,24)}`;
+  let asset = await assets.findImageByName(certification.projectName, certification.groupId, name);
+  if (!asset) {
+    const url = await objectStorageSignedGetUrl(input.objectKey, 3600);
+    try { const id = await assets.createImage(certification.projectName, certification.groupId, url, name); asset = await assets.getAsset(certification.projectName, id); }
+    catch (error) { asset = await assets.findImageByName(certification.projectName, certification.groupId, name); if (!asset) throw error; }
+  }
+  for (let attempt = 0; asset.Status === 'Processing' && attempt < 24; attempt += 1) {
+    await new Promise(resolve => setTimeout(resolve, 5_000)); asset = await assets.getAsset(certification.projectName, asset.Id);
+  }
+  if (asset.Status !== 'Active') throw new Error(`方舟目标首帧认证失败：${asset.Error?.Message || asset.Status}`);
+  const trusted = { uri:`asset://${asset.Id}`, kind:'image' as const, status:'active' as const, provider:'volcengine_ark' as const };
+  const certified: MaterialRecord = { ...input.material, seedanceTrustedAsset:trusted, seedanceTrustedAssetUri:trusted.uri, seedanceTrustedAssetKind:trusted.kind, seedanceTrustedAssetStatus:trusted.status, seedanceTrustedAssetProvider:trusted.provider, updatedAt:new Date().toISOString() };
+  persistMaterial(certified); return certified;
+}
+export async function runProductionSentenceReplication(input: { tenantId: string; projectId: string; assemblyId: string; shotId: string; fingerprint: string; shot: ShotProduction; presenter: PresenterAsset; cues: DigitalHumanReferenceCue[]; requestId: string; maxCostCny?: number; targetLanguage?: string; sourceMaterial?: MaterialRecord; existingProviderTasks?: Record<string,string>; reuseCueMaterialIds?: Record<string,string>; reuseCueQuality?: SentenceCueQuality[]; prepareMotionGuide?: (value: { tenantId: string; projectId: string; shotId: string; cue: DigitalHumanReferenceCue; sourceVideoPath: string }) => Promise<{ url: string; identityRemoved: true; motionOnly: true }>; onProviderTaskSubmitted?: (cueId:string,taskId:string)=>Promise<void> }): Promise<SentenceReplicationResult> {
   const photoTalking = input.shot.digitalHuman?.presenterMode === 'photo_talking';
   const readiness = sentenceReplicationReadiness(process.env, photoTalking ? 'heygen' : 'seedance');
   if (photoTalking) { const rights = validatePresenterRightsEvidence(input.presenter.rightsEvidence, {provider: 'heygen', uses: ['digital_presenter', 'voice_synthesis']}); if (!rights.ok) throw new Error(`HeyGen人物授权未完成：${rights.reasons.join('、')}`); if (!input.presenter.voiceId) throw new Error('请选择 HeyGen 口播声音'); }
@@ -36,14 +56,15 @@ export async function runProductionSentenceReplication(input: { tenantId: string
   if (!photoTalking && !objectStorageSupplierDeliveryReady()) throw new Error('本地系统存储已启用，但 Seedance 无法访问 localhost；真实出片需生产 COS 签名地址或显式配置 HTTPS 开发地址');
   const materials = readLocalMaterials(); const byId = new Map(materials.map(item => [String(item.id), item])); if (input.sourceMaterial) byId.set(String(input.sourceMaterial.id), input.sourceMaterial); const presenterIds = [...new Set([...(input.presenter.toolMappings?.seedance?.referenceMaterialIds || []), ...(input.presenter.toolMappings?.sd?.referenceMaterialIds || []), ...(input.presenter.toolMappings?.runway?.referenceMaterialIds || []), ...(input.presenter.referenceMaterialIds || [])])];
   if (!presenterIds.length) throw new Error('企业人物缺少可用于首帧重建的参考图片');
-  let presenterReference: FirstFrameReference | null = null; for (const id of presenterIds) { const material = byId.get(id); if (!material || material.type !== 'image') continue;
+  let presenterReference: FirstFrameReference | null = null; let presenterTrustedAsset: SeedanceTrustedAsset | undefined; for (const id of presenterIds) { const material = byId.get(id); if (!material || material.type !== 'image') continue;
     // Fail closed before any portrait bytes are read or sent to an external model.
     if (photoTalking) acceptPresenterPortraitReference({ tenantId: input.tenantId, presenter: input.presenter, material, provider: 'heygen', uses: ['digital_presenter', 'voice_synthesis'] });
     else acceptPresenterPortraitReference({ tenantId: input.tenantId, presenter: input.presenter, material, provider: 'volcengine_ark', uses: ['digital_presenter', 'person_replacement'] });
     const loaded = await readTenantMaterialBytes(material,input.tenantId); presenterReference = { role: 'authorized_presenter', bytes: loaded.bytes,
       mimeType: /png/i.test(loaded.mimeType) ? 'image/png' : /webp/i.test(loaded.mimeType) ? 'image/webp' : 'image/jpeg',
-      sha256: createHash('sha256').update(loaded.bytes).digest('hex') }; break; }
+      sha256: createHash('sha256').update(loaded.bytes).digest('hex') }; presenterTrustedAsset = seedanceTrustedAssetForMaterial(material); if (photoTalking || presenterTrustedAsset) break; }
   if (!presenterReference) throw new Error('企业人物没有可读取的参考图片；视频参考不能代替首帧身份图');
+  if (!photoTalking && !presenterTrustedAsset) throw new Error('Seedance 真人生成需要当前企业人物绑定状态为 Active 的方舟图片资产');
   const maxFrames = Math.max(1, Number(process.env.DIGITAL_HUMAN_MAX_FIRST_FRAMES_PER_VIDEO) || 3);
   const clusterPlan = planPersonShotClusters(input.cues,maxFrames); if(clusterPlan.state!=='ready') throw new Error(clusterPlan.blockers.join('；'));
   const photoQuote = photoTalking ? photoTalkingBudget({cues:input.cues,frameCount:clusterPlan.clusters.length,fixedHeygenReserveCny:Number(process.env.STUDIO_HEYGEN_RESERVE_CNY)}) : null;
@@ -60,13 +81,16 @@ export async function runProductionSentenceReplication(input: { tenantId: string
     }
   }
   const resolution = process.env.SEEDANCE_SENTENCE_RESOLUTION === '480p' ? '480p' as const : '720p' as const;
+  const seedancePlan = !photoTalking ? planSeedanceReplication({
+    cues: input.cues,
+    reuseCueMaterialIds: input.reuseCueMaterialIds,
+    compositionClusterIds: clusterPlan.clusters.filter(cluster => cluster.cueIds.some(id => !input.reuseCueMaterialIds?.[id])).map(cluster => cluster.fingerprint),
+    resolution,
+    firstFrameCostCny: Number(process.env.SEEDREAM_FIRST_FRAME_ESTIMATED_CNY) || .22,
+  }) : null;
   if (!photoTalking && input.maxCostCny !== undefined) {
     if (!Number.isFinite(input.maxCostCny) || input.maxCostCny <= 0) throw new Error('逐句生成费用上限无效');
-    const pending = input.cues.filter(cue => cue.personShot !== false && !input.reuseCueMaterialIds?.[cue.id]);
-    const videoEstimate = pending.reduce((sum, cue) => sum + estimateSeedanceCostCny(Math.max(4, Math.ceil(cue.end - cue.start)), resolution), 0);
-    const frameEstimate = clusterPlan.clusters.filter(cluster => cluster.cueIds.some(id => pending.some(cue => cue.id === id))).length
-      * (Number(process.env.SEEDREAM_FIRST_FRAME_ESTIMATED_CNY) > 0 ? Number(process.env.SEEDREAM_FIRST_FRAME_ESTIMATED_CNY) : 0.22);
-    const estimate = Math.ceil((videoEstimate + frameEstimate) * 100) / 100;
+    const estimate = seedancePlan!.estimatedCostCny;
     if (estimate > input.maxCostCny) throw new Error(`逐句生成预估 ${estimate.toFixed(2)} 元，超过本次 ${input.maxCostCny.toFixed(2)} 元上限；未提交供应商`);
   }
   const clusterByCue = new Map(clusterPlan.clusters.flatMap(cluster=>cluster.cueIds.map(cueId=>[cueId,cluster] as const)));
@@ -75,35 +99,58 @@ export async function runProductionSentenceReplication(input: { tenantId: string
   const sourceSegmentFor=async(cue:DigitalHumanReferenceCue,duration=cue.end-cue.start)=>{const filePath=path.join(work,`reference-${createHash('sha256').update(cue.id).digest('hex').slice(0,12)}.mp4`); await run(String(ffmpegStatic||''),['-hide_banner','-loglevel','error','-nostdin','-ss',String(cue.start),'-i',referencePath,'-t',String(Math.min(duration,cue.end-cue.start)),'-c:v','libx264','-pix_fmt','yuv420p','-c:a','aac','-movflags','+faststart','-y',filePath],{timeout:120_000}); return filePath;};
   const firstFrameGenerator = new SeedreamFirstFrameGenerator(); const frameByComposition = new Map<string, Promise<{ materialId: string; filePath: string; url: string }>>();
   try { assertPersonCueShotBoundaries(input.cues, await hardSceneCutTimes(String(ffmpegStatic || ''), referencePath));
-    const result = await runSentenceReplicationPipeline({ cues: input.cues, outputPath:path.join(work,'joined.mp4'), ffmpegPath:String(ffmpegStatic || ''), useGeneratedDuration: photoTalking,
+    const result = await runSentenceReplicationPipeline({ cues: input.cues, outputPath:path.join(work,'joined.mp4'), ffmpegPath:String(ffmpegStatic || ''), useGeneratedDuration: true,
       reuseCompletedClip: async cue=>{ const materialId=String(input.reuseCueMaterialIds?.[cue.id]||''); if(!materialId) return null; const material=byId.get(materialId); if(!material || material.type!=='video') throw new Error(`已通过镜头 ${cue.id} 的复用素材不存在`); const loaded=await readTenantMaterialBytes(material,input.tenantId); const filePath=path.join(work,`reuse-${createHash('sha256').update(`${cue.id}:${materialId}`).digest('hex').slice(0,16)}.mp4`); fs.writeFileSync(filePath,loaded.bytes,{mode:0o600}); return {materialId,filePath,url:String(material.url||''),...(Number(material.duration)>0?{duration:Number(material.duration)}:{})}; },
       createTargetFrame: async cue => { if (photoTalking) {
         const material = byId.get(String(cue.targetFirstFrame?.materialId || ''));
-        if (!input.shot.digitalHuman?.targetFramesConfirmed || cue.targetFirstFrame?.state !== 'ready' || material?.sourceType !== 'digital-human-target-first-frame' || material.presenterAssetId !== input.presenter.id || material.sourceFrameMaterialId !== clusterSourceFirstFrameMaterialId(clusterByCue.get(cue.id)!,input.cues) || Number(material.presenterAssetVersion) !== (input.presenter.assetVersion || 1)) throw new Error('请先重建并确认当前人物版本的目标首帧');
+        if (cue.targetFirstFrame?.state !== 'ready' || material?.sourceType !== 'digital-human-target-first-frame' || material.presenterAssetId !== input.presenter.id || material.sourceFrameMaterialId !== clusterSourceFirstFrameMaterialId(clusterByCue.get(cue.id)!,input.cues) || Number(material.presenterAssetVersion) !== (input.presenter.assetVersion || 1)) throw new Error('请先重建并确认当前人物版本的目标首帧');
         const loaded = await readTenantMaterialBytes(material,input.tenantId); const filePath = path.join(work, `${material.id}.${/png/i.test(loaded.mimeType)?'png':/webp/i.test(loaded.mimeType)?'webp':'jpg'}`); fs.writeFileSync(filePath,loaded.bytes,{mode:0o600}); return {materialId:String(material.id),filePath,url:''};
       }
  const cluster=clusterByCue.get(cue.id); if(!cluster) throw new Error(`人物镜头 ${cue.id} 缺少构图簇`); const compositionId=cluster.fingerprint; const existing = frameByComposition.get(compositionId); if (existing) return existing;
+        const existingTarget = byId.get(String(cue.targetFirstFrame?.materialId || ''));
+        if (cue.targetFirstFrame?.state === 'ready' && existingTarget?.sourceType === 'digital-human-target-first-frame'
+          && existingTarget.presenterAssetId === input.presenter.id
+          && Number(existingTarget.presenterAssetVersion) === (input.presenter.assetVersion || 1)
+          && existingTarget.sourceFrameMaterialId === clusterSourceFirstFrameMaterialId(cluster,input.cues)
+          && seedanceTrustedAssetForMaterial(existingTarget)) {
+          const loaded=await readTenantMaterialBytes(existingTarget,input.tenantId); const filePath=path.join(work,`${existingTarget.id}.${/png/i.test(loaded.mimeType)?'png':/webp/i.test(loaded.mimeType)?'webp':'jpg'}`); fs.writeFileSync(filePath,loaded.bytes,{mode:0o600});
+          const reused=Promise.resolve({materialId:String(existingTarget.id),filePath,url:await objectStorageSignedGetUrl(String(existingTarget.objectKey),900)}); frameByComposition.set(compositionId,reused); return reused;
+        }
         const task = (async () => { const sourceMaterialId=clusterSourceFirstFrameMaterialId(cluster,input.cues); const source = byId.get(sourceMaterialId); if (!source) throw new Error(`构图簇 ${cluster.id} 缺少源首帧素材`); const loaded = await readTenantMaterialBytes(source,input.tenantId);
           const sourceReference: FirstFrameReference = { role: 'source_composition', bytes: loaded.bytes,
             mimeType: /png/i.test(loaded.mimeType) ? 'image/png' : /webp/i.test(loaded.mimeType) ? 'image/webp' : 'image/jpeg', sha256:createHash('sha256').update(loaded.bytes).digest('hex') };
           const request = { tenantId:input.tenantId, videoId:`${input.projectId}:${input.assemblyId}`, compositionId, presenterVersion:`${input.presenter.id}:${input.presenter.assetVersion || 1}`,
-            prompt:'保持图一的机位、景别、姿态意图、产品位置、背景几何与光线，仅用图二的已授权企业人物替换图一人物。保持自然、写实、身份稳定；不要添加字幕、界面、徽标或水印。',
+            prompt:'保持图一的机位、景别、姿态意图、产品位置、背景几何与光线。仅替换人物身份，图二人物的脸型、五官比例、眼睛、鼻子、嘴唇、发际线与肤色必须逐项严格一致，不得美化、混脸或改变年龄；服装可改为图一白色实验服。正脸必须清晰可辨、无遮挡、自然写实。不要添加字幕、界面、徽标或水印。',
             ratio:'9:16' as const, references:[sourceReference,presenterReference!], idempotencyKey:'' };
           request.idempotencyKey=firstFrameInputFingerprint(request,firstFrameGenerator.provider,firstFrameGenerator.model);
           const generated=await produceFirstFrame(request,firstFrameGenerator); const stored=await objectStorageDownload(generated.objectKey); if(!stored?.buf.length) throw new Error('目标人物首帧入库后无法读取');
           const id=`target-frame-${generated.operationId.slice(0,24)}`; const extension=stored.contentType.includes('png')?'png':stored.contentType.includes('webp')?'webp':'jpg'; const filename=`${id}.${extension}`; const filePath=path.join(work,filename); fs.writeFileSync(filePath,stored.buf,{mode:0o600}); const head=await objectStorageHead(generated.objectKey); if(!head?.etag) throw new Error('目标人物首帧上传后缺少对象版本');
-          persistMaterial({id,name:`目标人物首帧 · ${compositionId}`.slice(0,100),folder:'presenter',type:'image',duration:0,size:`${Math.ceil(stored.buf.length/1024)} KB`,file:'',url:'',objectKey:generated.objectKey,objectEtag:head.etag,contentSha256:generated.contentSha256,scope:'own',tenantId:input.tenantId,sourceType:'digital-human-target-first-frame',providerRequestId:generated.providerRequestId,providerModel:generated.model,estimatedCostCny:generated.estimatedCostCny,createdAt:new Date().toISOString()});
+          const targetMaterial: MaterialRecord={id,name:`目标人物首帧 · ${compositionId}`.slice(0,100),folder:'presenter',type:'image',duration:0,size:`${Math.ceil(stored.buf.length/1024)} KB`,file:'',url:'',objectKey:generated.objectKey,objectEtag:head.etag,contentSha256:generated.contentSha256,scope:'own',tenantId:input.tenantId,sourceType:'digital-human-target-first-frame',presenterAssetId:input.presenter.id,presenterAssetVersion:input.presenter.assetVersion||1,sourceFrameMaterialId:sourceMaterialId,providerRequestId:generated.providerRequestId,providerModel:generated.model,estimatedCostCny:generated.estimatedCostCny,createdAt:new Date().toISOString()};
+          persistMaterial(targetMaterial); if(!photoTalking) await certifySeedanceTargetFrame({presenter:input.presenter,material:targetMaterial,objectKey:generated.objectKey});
           return {materialId:id,filePath,url:photoTalking ? '' : await objectStorageSignedGetUrl(generated.objectKey,900)}; })(); frameByComposition.set(compositionId,task); return task; },
       createNonPersonClip: async cue => { const material=byId.get(String(cue.nonPersonMaterialId||'')); if(!material || material.type!=='video') throw new Error(`非人物镜头 ${cue.id} 的替换视频不存在或不可用`); const loaded=await readTenantMaterialBytes(material,input.tenantId); const id=stableId('non-person-clip',input.requestId,cue.id); const filePath=path.join(work,`${id}.mp4`); fs.writeFileSync(filePath,loaded.bytes,{mode:0o600}); return {materialId:String(material.id),filePath,url:String(material.url||'')}; },
       createSentenceVideo: async (cue,frame) => {
-        const existingTaskId = photoTalking ? input.existingProviderTasks?.[cue.id] : undefined;
-        const generated = photoTalking ? await generateHeyGenPhotoVideo({ bytes: fs.readFileSync(frame.filePath), mimeType: /\.png$/i.test(frame.filePath) ? 'image/png' : /\.webp$/i.test(frame.filePath) ? 'image/webp' : 'image/jpeg', voiceId: input.presenter.voiceId, script: cue.targetText || input.shot.narration, ratio: '9:16', requestId: `${input.tenantId}:${input.requestId}:${cue.id}`, existingTaskId, reserveCny: photoQuote!.heygenByCue[cue.id], onSubmitted: async taskId => { providerTaskIds.push(taskId); await input.onProviderTaskSubmitted?.(cue.id, taskId); } }) : await generateSeedanceSentenceVideo({apiKey:process.env.SEEDANCE_API_KEY||'',model:process.env.SEEDANCE_MODEL||'doubao-seedance-2-0-fast-260128',baseUrl:process.env.SEEDANCE_BASE_URL,imageUrl:frame.url||'',duration:cue.end-cue.start,ratio:'9:16',resolution,prompt:`Animate the supplied enterprise-presenter first frame as one continuous B2B talking-head shot. The presenter naturally speaks in Chinese: ${cue.targetText || input.shot.narration}. Preserve identity, composition, product and background. Natural lip sync and restrained gestures. No captions, logos, UI or watermark.`,onSubmitted:async taskId=>{providerTaskIds.push(taskId);await input.onProviderTaskSubmitted?.(cue.id,taskId);}});
+        const existingTaskId = input.existingProviderTasks?.[cue.id];
+        const targetFrameMaterial = byId.get(frame.materialId) || readLocalMaterials().find(item => String(item.id) === frame.materialId);
+        const targetFrameTrustedAsset = targetFrameMaterial ? seedanceTrustedAssetForMaterial(targetFrameMaterial) : undefined;
+        if (!photoTalking && !targetFrameTrustedAsset) throw new Error('Seedance 目标首帧尚未注册为 Active 方舟图片资产；不会退回使用原始人物证件照');
+        const trustedFrame = targetFrameTrustedAsset ? seedanceImageFirstFrameInput(targetFrameTrustedAsset) : undefined;
+        let qualitySourcePath: string | undefined; let motionGuide: { url: string; identityRemoved: true; motionOnly: true } | undefined;
+        if (!photoTalking && !existingTaskId) {
+          qualitySourcePath = await sourceSegmentFor(cue);
+          if (!input.prepareMotionGuide) throw new Error('Seedance 动作复刻缺少去身份 motion-guide 预处理器；原片不会直接提交供应商');
+          motionGuide = await input.prepareMotionGuide({ tenantId:input.tenantId, projectId:input.projectId, shotId:input.shotId, cue, sourceVideoPath:qualitySourcePath });
+          if (!motionGuide?.identityRemoved || !motionGuide.motionOnly) throw new Error('Seedance motion-guide 预处理未证明已移除原人物身份；原片不会直接提交供应商');
+        }
+        const generated = photoTalking ? await generateHeyGenPhotoVideo({ bytes: fs.readFileSync(frame.filePath), mimeType: /\.png$/i.test(frame.filePath) ? 'image/png' : /\.webp$/i.test(frame.filePath) ? 'image/webp' : 'image/jpeg', voiceId: input.presenter.voiceId, script: cue.targetText || input.shot.narration, ratio: '9:16', requestId: `${input.tenantId}:${input.requestId}:${cue.id}`, existingTaskId, reserveCny: photoQuote!.heygenByCue[cue.id], onSubmitted: async taskId => { providerTaskIds.push(taskId); await input.onProviderTaskSubmitted?.(cue.id, taskId); } }) : await generateSeedanceSentenceVideo({apiKey:process.env.SEEDANCE_API_KEY||'',model:process.env.SEEDANCE_MODEL||'doubao-seedance-2-0-fast-260128',baseUrl:process.env.SEEDANCE_BASE_URL,imageUrl:trustedFrame!.url,trustedAssetKind:trustedFrame!.kind,referenceVideoUrl:motionGuide?.url,motionGuideAttested:Boolean(motionGuide?.identityRemoved&&motionGuide?.motionOnly),duration:Number(cue.generationDurationSeconds ?? (cue.end-cue.start)),ratio:'9:16',resolution,existingTaskId,prompt:seedanceTalkingHeadPrompt(cue.targetText || input.shot.narration, input.targetLanguage, { action: input.shot.digitalHuman?.action, scene: input.shot.digitalHuman?.scene, preserve: input.shot.digitalHuman?.preserve }),onSubmitted:async taskId=>{providerTaskIds.push(taskId);await input.onProviderTaskSubmitted?.(cue.id,taskId);}});
         if (existingTaskId) providerTaskIds.push(existingTaskId);
         const response=await fetch(generated.videoUrl,{signal:AbortSignal.timeout(90_000)}); if(!response.ok) throw new Error(`逐句视频下载失败：HTTP ${response.status}`);
         const bytes=Buffer.from(await response.arrayBuffer()); const id=stableId('sentence-video',input.requestId,cue.id); const filePath=path.join(work,`${id}.mp4`); fs.writeFileSync(filePath,bytes);
-        const providerDuration = 'duration' in generated ? Number(generated.duration) : cue.end - cue.start;
+        const providerDuration = 'duration' in generated ? Number(generated.duration) : photoTalking
+          ? cue.end - cue.start
+          : Number(cue.generationDurationSeconds ?? (cue.end - cue.start));
         if (photoTalking && photoTalkingBudget({cues:[{...cue,end:cue.start+providerDuration}],frameCount:0,fixedHeygenReserveCny:Number(process.env.STUDIO_HEYGEN_RESERVE_CNY)}).heygenByCue[cue.id]! > photoQuote!.heygenByCue[cue.id]!) throw new Error('HeyGen 实际视频时长超过已预占费用，请核对供应商账单');
-        const media=await checkAvatarMedia(filePath,{ratio:'9:16',duration:providerDuration,transparent:false}); const sourcePath=await sourceSegmentFor(cue,photoTalking?media.duration:undefined);
+        const media=await checkAvatarMedia(filePath,{ratio:'9:16',duration:providerDuration,transparent:false,resolution}); const sourcePath=qualitySourcePath || await sourceSegmentFor(cue,photoTalking?media.duration:undefined);
         let technical=null; let technicalError=''; let visual=null; let visualError=''; let semantic=null; let semanticError=''; let lipSync=null; let lipSyncError='';
         try{technical=await inspectPersonReplacementPair(sourcePath,filePath);}catch(error){technicalError=error instanceof Error?error.message:String(error);}
         if(process.env.DIGITAL_HUMAN_VISUAL_QA_PYTHON){try{visual=await inspectPersonReplacementVisualPair(sourcePath,filePath);}catch(error){visualError=error instanceof Error?error.message:String(error);}}
@@ -118,10 +165,10 @@ export async function runProductionSentenceReplication(input: { tenantId: string
         cueQuality.set(cue.id,sentenceCueQualityFromEvidence({cueId:cue.id,mediaEvidence:`${media.width}x${media.height} · ${media.duration.toFixed(3)}s · audio=${media.hasAudio}`,technical,technicalError,visual,visualError,semantic,semanticError,lipSync,lipSyncError}));
         const relative=tenantAssetRelativePath(input.tenantId,`${id}.mp4`); const stored=path.join(MEDIA_ROOT,relative); fs.mkdirSync(path.dirname(stored),{recursive:true}); fs.copyFileSync(filePath,stored);
         persistMaterial({id,name:`逐句数字人视频 · ${cue.targetText || cue.originalText}`.slice(0,100),folder:'presenter',type:'video',duration:media.duration,size:`${Math.ceil(bytes.length/1024)} KB`,file:relative,url:`/media/${relative}`,scope:'own',tenantId:input.tenantId,sourceType:'digital-human-sentence-video',providerTaskId:generated.taskId,contentSha256:createHash('sha256').update(bytes).digest('hex'),createdAt:new Date().toISOString()});
-        return {materialId:id,filePath,url:`/media/${relative}`,duration:media.duration};
+        return {materialId:id,filePath,url:`/media/${relative}`,duration:Number(cue.outputDurationSeconds ?? media.duration)};
       } });
     for(const cue of result.cues.filter(item=>item.personShot===false)) cueQuality.set(cue.id,{cueId:cue.id,kind:'non_person_material',state:'accepted',checks:[{key:'media',status:'passed',evidence:`tenant material:${cue.nonPersonMaterialId}`},{key:'reuse_risk',status:'passed',evidence:'使用已选本企业素材，不复用未授权爆款原片'},...(['identity','motion','product_brand_text','background','audio_sync'] as const).map(key=>({key,status:'passed' as const,evidence:'非人物素材沿用企业素材验收'}))]});
-    const expectedFinalDuration=result.cues.reduce((sum,cue)=>sum+(cue.generatedClip?.duration || cue.end-cue.start),0); const finalMedia=await checkAvatarMedia(result.outputPath,{ratio:'9:16',duration:expectedFinalDuration,transparent:false});
+    const expectedFinalDuration=result.cues.reduce((sum,cue)=>sum+(cue.generatedClip?.duration || cue.end-cue.start),0); const finalMedia=await checkAvatarMedia(result.outputPath,{ratio:'9:16',duration:expectedFinalDuration,transparent:false,resolution});
     const finalBytes=fs.readFileSync(result.outputPath); const id=stableId('viral-replication',input.requestId); const filename=`${id}.mp4`; const relative=tenantAssetRelativePath(input.tenantId,filename); const finalPath=path.join(MEDIA_ROOT,relative); fs.mkdirSync(path.dirname(finalPath),{recursive:true}); fs.copyFileSync(result.outputPath,finalPath); const key=materialAssetObjectKey(input.tenantId,filename); await objectStorageUpload({key,body:finalBytes,contentType:'video/mp4'}); const head=await objectStorageHead(key); if(!head?.etag) throw new Error('拼接候选上传后缺少对象版本'); const contentSha256=createHash('sha256').update(finalBytes).digest('hex'); const final:MaterialRecord={id,name:'爆款逐句复刻 · 数字人候选',folder:'presenter',type:'video',duration:finalMedia.duration,size:`${Math.ceil(finalBytes.length/1024)} KB`,file:relative,url:`/media/${relative}`,objectKey:key,objectEtag:head.etag,scope:'own',tenantId:input.tenantId,sourceType:'viral-sentence-replication',contentSha256,providerTaskIds,createdAt:new Date().toISOString()}; persistMaterial(final); const quality=[...cueQuality.values()]; return {cues:result.cues,materialId:id,candidateUrl:final.url,providerTaskIds,candidateOutput:{materialId:id,objectKey:key,contentSha256,objectEtag:head.etag},cueQuality:quality,failedCueIds:quality.filter(item=>item.state==='failed').map(item=>item.cueId),state:'completed'};
   } finally { fs.rmSync(work,{recursive:true,force:true}); }
 }

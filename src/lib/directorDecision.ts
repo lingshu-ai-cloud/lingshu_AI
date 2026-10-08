@@ -34,7 +34,7 @@ export function applyDirectorDecision(input: { pack: WeeklyPackage; contentId: s
     const replacements = affected.map((plan, index) => {
       const id = `auto-${Date.parse(now) || Date.now()}-${index + 1}`;
       if (!replacementContentId) replacementContentId = id;
-      return { ...plan, contentId: id, route: 'product' as const, referenceId: '', materialIds: [], theme: '等待编导 Agent 自动补位', buyerProblem: '', evidenceRequirement: '', directorStatus: 'candidate' as const, estimatedCost: 0 };
+      return { ...plan, contentId: id, route: 'clone' as const, referenceId: '', materialIds: [], theme: '等待编导 Agent 自动补位', buyerProblem: '', evidenceRequirement: '', directorStatus: 'candidate' as const, estimatedCost: 0 };
     });
     nextPlans.push(...replacements);
   }

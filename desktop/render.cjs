@@ -263,10 +263,15 @@ function groupSpokenCues(cues, options = {}) {
     const previous = groups.at(-1);
     const gap = previous ? start - previous.end : Infinity;
     const terminal = previous && /[.!?。！？]["'”’]?\s*$/.test(previous.text);
+    const words = (Array.isArray(cue.words) ? cue.words : []).map(word => ({
+      text: String(word && word.text || '').trim(),
+      start: Number.isFinite(Number(word && word.startMs)) ? Number(word.startMs) / 1000 : Number(word && word.start),
+      end: Number.isFinite(Number(word && word.endMs)) ? Number(word.endMs) / 1000 : Number(word && word.end),
+    })).filter(word => word.text && Number.isFinite(word.start) && Number.isFinite(word.end) && word.end > word.start);
     if (previous && !terminal && gap >= 0 && gap <= gapLimit && end - previous.start <= maxDuration) {
       previous.text += (/^[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/u.test(text) ? '' : ' ') + text;
-      previous.end = end; previous.parts.push({ start, end, text });
-    } else groups.push({ start, end, text, parts: [{ start, end, text }] });
+      previous.end = end; previous.parts.push({ start, end, text, words }); previous.words.push(...words);
+    } else groups.push({ start, end, text, words, parts: [{ start, end, text, words }] });
   }
   return groups;
 }
@@ -295,8 +300,33 @@ function normalizeSubtitleCues(cues, options = {}) {
     return pages.map((page, index) => {
       const start = index === 0 ? group.start : at(offset, false);
       offset += units(page.join(''));
-      return { start, end: index === pages.length - 1 ? group.end : at(Math.min(totalWeight, offset), true), text: page.join('\\N') };
+      const end = index === pages.length - 1 ? group.end : at(Math.min(totalWeight, offset), true);
+      return { start, end, text: page.join('\\N'), words: group.words.filter(word => word.start < end && start < word.end) };
     });
+  });
+}
+
+function wordHighlightOverlays(value, words, cueStart, cueEnd) {
+  const text = String(value || '').replace(/[{}]/g, '');
+  const timed = (Array.isArray(words) ? words : []).filter(word => word && word.text
+    && Number.isFinite(word.start) && Number.isFinite(word.end) && word.end > word.start)
+    .sort((left, right) => left.start - right.start);
+  if (!timed.length) return [];
+  let cursor = 0;
+  return timed.flatMap(word => {
+    const found = text.toLocaleLowerCase().indexOf(String(word.text).toLocaleLowerCase(), cursor);
+    if (found < 0) return [];
+    let end = found + String(word.text).length;
+    // Closing punctuation belongs to the spoken word and never gets its own
+    // color event. Preserve spaces and line breaks outside the highlighted span.
+    while (end < text.length && /[.,!?;:…。，！？；：”’»)]/u.test(text[end])) end++;
+    cursor = end;
+    const start = Math.max(cueStart, word.start), finish = Math.min(cueEnd, word.end);
+    if (!(finish > start)) return [];
+    return [{
+      start, end: finish,
+      text: `{\\alpha&HFF&}${text.slice(0, found)}{\\alpha&H00&}${text.slice(found, end)}{\\alpha&HFF&}${text.slice(end)}`,
+    }];
   });
 }
 
@@ -316,7 +346,7 @@ function cuesToAss(cues, width, height, disclaimer = '', duration = 0, style = {
   const outlineColor = assColor(style.outlineColor, '&HAA000000&');
   // Scale from the short edge so a 1080px-wide portrait and 1080px-high
   // landscape render use the same perceived subtitle size.
-  const fontSize = Math.round(Math.min(width, height) / 18 * Math.max(.7, Math.min(1.4, Number(style.fontScale) || 1)));
+  const fontSize = Math.round(Math.min(width, height) / 18 * Math.max(.7, Math.min(1.4, Number(style.fontScale) || 1.2)));
   const marginX = Math.round(width * .085);
   const rawCues = Array.isArray(cues) ? cues : [];
   const normalizedCues = [
@@ -332,19 +362,32 @@ function cuesToAss(cues, width, height, disclaimer = '', duration = 0, style = {
       end: Math.max(0, Number(cue && cue.end) || 0),
       text: String(cue && cue.text || '').replace(/[{}]/g, '').trim(),
       screen: cue && cue.kind === 'screen',
+      words: Array.isArray(cue && cue.words) ? cue.words : [],
     }))
     .filter(cue => cue.text && cue.end > cue.start);
   if (!valid.length && !disclaimer && !(emphasisPlan && emphasisPlan.events && emphasisPlan.events.length)) return '';
 
-  const marginV = Math.round(height * Math.max(.08, Math.min(.35, Number(style.bottomRatio) || .20)));
-  const outline = Math.max(0, Math.min(8, Number(style.outlineWidth ?? Math.round(width * .003))));
-  const events = valid.map(cue => {
+  const marginV = Math.round(height * Math.max(.08, Math.min(.35, Number(style.bottomRatio) || .24)));
+  const outline = Math.max(0, Math.min(style.boxed === true ? 24 : 8,
+    Number(style.outlineWidth ?? Math.round(width * .003))));
+  const borderStyle = style.boxed === true ? 3 : 1;
+  // The base caption owns the optional background plate. Drawing a second
+  // boxed border around the active word would cover adjacent words and lines.
+  const highlightOutline = Math.max(0, Math.min(4,
+    Number(style.highlightOutlineWidth ?? Math.round(width * .002))));
+  const events = valid.flatMap(cue => {
     const prefix = cue.screen
       ? `{\\an8\\pos(${Math.round(width / 2)},${Math.round(height * 0.12)})}`
       : '';
-    const text = cue.screen ? cue.text : automaticSubtitleText(cue.text, style);
+    const overlays = cue.screen ? [] : wordHighlightOverlays(cue.text, cue.words, cue.start, cue.end);
+    // Timed-word captions keep the base sentence in the manifest color; the
+    // WordHighlight layer is the only span allowed to use the accent color.
+    const text = cue.screen ? cue.text : overlays.length ? cue.text : automaticSubtitleText(cue.text, style);
     const emphasis = cue.screen ? '' : captionEmphasisTags(emphasisPlan, cue.start, cue.end, width);
-    return `Dialogue: ${cue.screen ? 1 : 0},${assTime(cue.start)},${assTime(cue.end)},Default,,0,0,0,,${prefix}${emphasis}${text}`;
+    return [
+      `Dialogue: ${cue.screen ? 1 : 0},${assTime(cue.start)},${assTime(cue.end)},Default,,0,0,0,,${prefix}${emphasis}${text}`,
+      ...overlays.map(overlay => `Dialogue: 1,${assTime(overlay.start)},${assTime(overlay.end)},WordHighlight,,0,0,0,,${overlay.text}`),
+    ];
   });
   if (disclaimer && duration > 0) events.push(`Dialogue: 1,0:00:00.00,${assTime(duration)},Default,,0,0,0,,{\\an8\\pos(${Math.round(width / 2)},${Math.round(height * 0.08)})\\fs${Math.round(width * 0.035)}}${assText(disclaimer).replace(/[{}]/g, '')}`);
   if (emphasisPlan) {
@@ -367,7 +410,8 @@ function cuesToAss(cues, width, height, disclaimer = '', duration = 0, style = {
     '',
     '[V4+ Styles]',
     'Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding',
-    `Style: Default,${font},${fontSize},${primaryColor},${primaryColor},${outlineColor},&H66000000,-1,0,0,0,100,100,0,0,1,${outline},1,2,${marginX},${marginX},${marginV},1`,
+    `Style: Default,${font},${fontSize},${primaryColor},${primaryColor},${outlineColor},&H66000000,-1,0,0,0,100,100,0,0,${borderStyle},${outline},1,2,${marginX},${marginX},${marginV},1`,
+    `Style: WordHighlight,${font},${fontSize},${assColor(style.karaokeColor || subtitleTemplate.body.color, '&H0066DFFF&')},${primaryColor},${outlineColor},&H00000000,-1,0,0,0,100,100,0,0,1,${highlightOutline},0,2,${marginX},${marginX},${marginV},1`,
     `Style: Emphasis,${subtitleTemplate.emphasis.font},${Math.round(width * .05)},&H00FFFFFF&,&H00FFFFFF&,&H00101010&,&HAA101010&,-1,0,0,0,100,100,0,0,3,2,1,8,${marginX},${marginX},${Math.round(height * .08)},1`,
     '',
     '[Events]',
@@ -450,7 +494,16 @@ async function composite(manifest, onProgress = () => {}, outDir) {
       clipId: clip.clipId,
       targetDuration: clip.targetDuration,
     })));
-    const emphasisPlan = normalizeEmphasisPlan(manifest && (manifest.emphasisPlan || manifest.emphasis), duration);
+    const rawEmphasisPlan = manifest && (manifest.emphasisPlan || manifest.emphasis);
+    const emphasisPlan = normalizeEmphasisPlan(rawEmphasisPlan, duration);
+    // Motion events use the normalized caption events as their timing/layout
+    // fallback, but belong to the same render contract. Preserve them here so
+    // the Remotion layer can merge a single semantic motion with its event.
+    // The overlay renderer validates role, timing, target confidence and
+    // geometry before anything reaches Remotion.
+    if (rawEmphasisPlan && Array.isArray(rawEmphasisPlan.motionEvents)) {
+      emphasisPlan.motionEvents = rawEmphasisPlan.motionEvents.slice(0, 160);
+    }
     let motionOverlay = { path: null, cacheHit: false, renderMs: 0 };
     if (advancedEvents(emphasisPlan).length) {
       try {
@@ -507,7 +560,9 @@ async function composite(manifest, onProgress = () => {}, outDir) {
 
     // 2) 组装 ffmpeg 参数
     const n = localClips.length;
-    const args = ['-hide_banner', '-nostdin', '-fflags', '+genpts']; // -nostdin：别等键盘输入，否则 spawn 的 stdin 管道会让 ffmpeg 永久挂起
+    // Bound filter workers: multiple 1080p xfade inputs otherwise retain large
+    // frame queues per worker and can exhaust memory on a local preview host.
+    const args = ['-hide_banner', '-nostdin', '-fflags', '+genpts', '-filter_complex_threads', '2']; // -nostdin：别等键盘输入，否则 spawn 的 stdin 管道会让 ffmpeg 永久挂起
     const filters = [];
     let vlabel;
 
@@ -588,8 +643,10 @@ async function composite(manifest, onProgress = () => {}, outDir) {
     // 音轨输入：BGM(或静音) 固定一路，配音可选第二路。视频输入占 0..(vInputs-1)
     const vInputs = visualInputCount + (motionOverlay.path ? 1 : 0);
     const bgmIdx = vInputs;
-    if (bgmFile) args.push('-stream_loop', '-1', '-i', bgmFile);
-    else args.push('-f', 'lavfi', '-i', 'anullsrc=channel_layout=stereo:sample_rate=44100');
+    // Stop the looping music source at the approved timeline. An unbounded
+    // input can keep loudnorm/amix feeding while video waits for its output.
+    if (bgmFile) args.push('-stream_loop', '-1', '-t', String(duration), '-i', bgmFile);
+    else args.push('-f', 'lavfi', '-t', String(duration), '-i', 'anullsrc=channel_layout=stereo:sample_rate=44100');
     let voIdx = -1;
     if (voFile) { args.push('-i', voFile); voIdx = bgmIdx + 1; }
 
@@ -676,7 +733,7 @@ async function composite(manifest, onProgress = () => {}, outDir) {
       '-filter_complex', filters.join(';'),
       '-map', '[vout]', '-map', '[aout]',
       '-t', String(duration),
-      '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-pix_fmt', 'yuv420p',
+      '-c:v', 'libx264', '-threads', '2', '-preset', 'veryfast', '-crf', '20', '-pix_fmt', 'yuv420p',
       '-r', '30', '-g', '60', '-keyint_min', '30', '-sc_threshold', '0',
       '-c:a', 'aac', '-b:a', '128k',
       '-avoid_negative_ts', 'make_zero',

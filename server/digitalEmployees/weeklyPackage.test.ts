@@ -146,3 +146,11 @@ console.log('Maturity assessment, persistence, differentiated strategies and sco
 
 assert.equal(assessMaturity({ ...evidence, gaps: ['missing_handoff'] }).maturity, 'growing', 'declared gaps must not contradict advanced recommendation');
 assert.equal(assessMaturity({ ...evidence, gaps: ['unstable_publishing'] }).maturity, 'starting');
+
+const productionOnlyPack = structuredClone(pack);
+productionOnlyPack.tasks = productionOnlyPack.tasks.filter(task => task.templateId !== 'publishing');
+if (productionOnlyPack.directorPlan) productionOnlyPack.directorPlan.publishTarget = 0;
+assert.ok(!validatePackage(productionOnlyPack, goal, config).includes('发布次数目标不能少于平台交付版本目标'), 'production-only goals do not require external publishing targets');
+const publishingPack = structuredClone(pack);
+if (publishingPack.directorPlan) publishingPack.directorPlan.publishTarget = 0;
+assert.ok(validatePackage(publishingPack, goal, config).includes('发布次数目标不能少于平台交付版本目标'), 'publishing goals retain the delivery-count guard');

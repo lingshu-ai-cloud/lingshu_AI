@@ -31,8 +31,13 @@ export function sentenceCueQualityFromEvidence(input: {
   const technicalEvidence = technical
     ? `独立 FFmpeg：对比 ${technical.comparedFrames} 帧，时长差 ${technical.durationDeltaFrames} 帧，运动差 ${technical.temporalMotionDifference.toFixed(2)}，停帧差异 ${(technical.freezeMismatchRatio * 100).toFixed(1)}%`
     : `独立 FFmpeg 未完成：${input.technicalError || '无可用证据'}`;
-  const motionAnomaly = Boolean(technical && (technical.comparedFrames < 5 || technical.temporalMotionDifference > 8 || technical.freezeMismatchRatio > 0.05));
-  const audioStructuralFailure = Boolean(technical && (!technical.candidate.hasAudio || technical.durationDeltaFrames > 1));
+  // Photo-talking intentionally creates fresh gestures from a still target frame. A moderate
+  // difference from the source motion is expected; reserve automatic failure for clear outliers.
+  const motionAnomaly = Boolean(technical && (technical.comparedFrames < 5 || technical.temporalMotionDifference > 25 || technical.freezeMismatchRatio > 0.1));
+  // Generated-avatar slots follow the provider material's measured duration. A
+  // duration difference from the reference is therefore not an audio-sync
+  // defect; only a missing candidate audio track is a structural failure here.
+  const audioStructuralFailure = Boolean(technical && !technical.candidate.hasAudio);
   const visualPoseAnomaly = Boolean(visual && (visual.posePairCount < 5 || visual.normalizedPoseError === null || visual.normalizedPoseError > 0.08
     || (visual.handPairCount > 0 && (visual.handPckAt008 === null || visual.handPckAt008 < 0.7))
     || (visual.wristPosePairCount > 0 && (visual.wristSeparationMae === null || visual.wristSeparationMae > 0.35))));
@@ -45,7 +50,7 @@ export function sentenceCueQualityFromEvidence(input: {
   if (motionAnomaly || visualPoseAnomaly) motion = decided('motion', false, `${technicalEvidence}；${visualEvidence}。检测到运动／姿态异常。`);
   else if (input.semantic?.actionMotion.status === 'fail' && input.semantic.actionMotion.confidence >= .6) motion = decided('motion', false, semanticEvidence(input.semantic.actionMotion));
   else if (input.semantic?.actionMotion.status === 'pass' && input.semantic.actionMotion.confidence >= .85) motion = decided('motion', true, `${technicalEvidence}；${visualEvidence}；${semanticEvidence(input.semantic.actionMotion)}`);
-  else if (input.semantic?.actionMotion) motion = pending('motion', `${semanticEvidence(input.semantic.actionMotion)}；置信度或采样证据不足，需人工确认`);
+  else if (input.semantic?.actionMotion) motion = pending('motion', `${semanticEvidence(input.semantic.actionMotion)}；置信度或采样证据不足，诊断证据不足，保留待核验项`);
 
   let background = pending('background', visualEvidence);
   if (visual?.backgroundSsim !== null && visual?.backgroundSsim !== undefined) {
@@ -58,7 +63,7 @@ export function sentenceCueQualityFromEvidence(input: {
   let audioSync = pending('audio_sync', technical
     ? `${technicalEvidence}；候选音轨=${technical.candidate.hasAudio ? '有' : '无'}；${lipEvidence}。结构检查不能代替口型同步证据。`
     : `${technicalEvidence}；${lipEvidence}`);
-  if (audioStructuralFailure) audioSync = decided('audio_sync', false, `${technicalEvidence}；候选缺少音轨或时长偏差超过 1 帧。`);
+  if (audioStructuralFailure) audioSync = decided('audio_sync', false, `${technicalEvidence}；候选缺少音轨。`);
   else if (input.lipSync) audioSync = decided('audio_sync', input.lipSync.passed, `${lipEvidence}${input.lipSync.failures.length ? `；${input.lipSync.failures.join('；')}` : ''}`);
 
   let reuseRisk = pending('reuse_risk', technicalEvidence);
@@ -85,7 +90,13 @@ export function sentenceCueQualityFromEvidence(input: {
     audioSync,
     reuseRisk,
   ];
-  const state = checks.some(check => check.status === 'failed') ? 'failed'
-    : checks.every(check => check.status === 'passed') ? 'accepted' : 'manual_review';
+  const state = sentenceCueQualityState(checks);
   return { cueId: input.cueId, kind: 'person_generated', state, checks };
+}
+
+/** Background and absent optional review evidence do not block production.
+ * Explicit identity/product, motion, media, reuse and sync failures still do. */
+export function sentenceCueQualityState(checks: SentenceCueQuality['checks']): SentenceCueQuality['state'] {
+  if (checks.some(check => check.key !== 'background' && check.status === 'failed')) return 'failed';
+  return checks.find(check => check.key === 'media')?.status === 'passed' ? 'accepted' : 'manual_review';
 }

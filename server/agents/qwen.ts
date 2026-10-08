@@ -277,7 +277,7 @@ export async function inspectStoryboardAigcFramesWithQwen(opts: {
   const request = {
     model: QWEN_VL_MODEL(),
     messages: [{ role: 'user', content: [
-      { type: 'text', text: `你是逐镜视觉质检员。产品和指定人物参考图只用于身份；环境参考图只用于直接可见的设备外观、工位布局与产线方向，不证明工厂归属、产能或资质。候选图才是质检对象。若有环境参考图，environment_fidelity 必须对照可见空间与设备；没有环境参考图则标 uncertain。${opts.previousTerminalFrame ? '上一段合格末帧仅用于与当前候选第一帧比较交界处；seam_continuity 必须同时引用「上一段合格末帧」和当前候选起始帧，检查产品、接触关系、人物、背景和机位是否连续，突变则 fail，无法判断则 uncertain。' : ''}不得根据参考图推定候选中已完成动作。对于静态首帧，只判断起始状态，不声称动作完成；对于视频帧，按时间顺序判断动作顺序与终点。看不到或证据不足时写 uncertain，不得猜测通过。无法通过稀疏抽帧确认的闪烁、短暂变形、隐藏标签和精确接触写 uncertain。\n镜头类型：${opts.sceneType}；质检阶段：${opts.phase}\n分镜要求：${opts.storyboard.slice(0, 1800)}\n企业产品资料：${opts.productInfo.slice(0, 1200)}\n动作起点：${String(opts.startState || '').slice(0, 500)}\n动作步骤：${(opts.beats || []).slice(0, 8).join(' → ').slice(0, 800)}\n动作终点：${String(opts.endState || '').slice(0, 500)}\n图像时间与角色：${images.map(item => item.timeLabel).join('、')}\n逐项输出 ${expected}。没有相关人物身份或接触时仍可标 uncertain，由调用方决定是否必检。每项 verdict 只能为 pass/fail/uncertain，evidenceFrames 只能引用上列标签，action 只能为 retry_first_frame/retry_video/needs_assets/manual_review。产品身份失败若因参考角度或图片不足，选 needs_assets；候选画面失真选对应重做。只输出 JSON：{"observations":[{"key":"product_identity","verdict":"uncertain","evidenceFrames":["候选0s"],"note":"可见证据","action":"manual_review"}]}。` },
+      { type: 'text', text: `你是逐镜视觉质检员。产品身份必须以标注为企业产品参考的图片中实际可见的品牌、包装正面图案（包括包装印刷的人像）、颜色、轮廓和文字布局为依据。企业参考图已经存在的品牌应保留，不能把企业品牌误当原片竞品品牌；不能只凭产品名称臆造无品牌版本。只有明确提供原片品牌证据时才判定原片品牌残留。即使品牌正确，包装印刷图案缺失、人物图案被删除或排版变化仍需独立判定产品身份失败，不能以“无人物脸”的场景要求删除包装上的印刷人像。产品和指定人物参考图只用于身份；环境参考图只用于直接可见的设备外观、工位布局与产线方向，不证明工厂归属、产能或资质。候选图才是质检对象。若有环境参考图，environment_fidelity 必须对照可见空间与设备；没有环境参考图则标 uncertain。${opts.previousTerminalFrame ? '上一段合格末帧仅用于与当前候选第一帧比较交界处；seam_continuity 必须同时引用「上一段合格末帧」和当前候选起始帧，检查产品、接触关系、人物、背景和机位是否连续，突变则 fail，无法判断则 uncertain。' : ''}不得根据参考图推定候选中已完成动作。对于静态首帧，只判断起始状态，不声称动作完成；对于视频帧，按时间顺序判断动作顺序与终点。看不到或证据不足时写 uncertain，不得猜测通过。无法通过稀疏抽帧确认的闪烁、短暂变形、隐藏标签和精确接触写 uncertain。\n镜头类型：${opts.sceneType}；质检阶段：${opts.phase}\n分镜要求：${opts.storyboard.slice(0, 1800)}\n企业产品资料：${opts.productInfo.slice(0, 1200)}\n动作起点：${String(opts.startState || '').slice(0, 500)}\n动作步骤：${(opts.beats || []).slice(0, 8).join(' → ').slice(0, 800)}\n动作终点：${String(opts.endState || '').slice(0, 500)}\n图像时间与角色：${images.map(item => item.timeLabel).join('、')}\n逐项输出 ${expected}。没有相关人物身份或接触时仍可标 uncertain，由调用方决定是否必检。每项 verdict 只能为 pass/fail/uncertain，evidenceFrames 只能引用上列标签，action 只能为 retry_first_frame/retry_video/needs_assets/manual_review。产品身份失败若因参考角度或图片不足，选 needs_assets；候选画面失真选对应重做。只输出 JSON：{"observations":[{"key":"product_identity","verdict":"uncertain","evidenceFrames":["候选0s"],"note":"可见证据","action":"manual_review"}]}。` },
       ...images.map(frame => ({ type: 'image_url', image_url: { url: `data:${frame.mimeType};base64,${frame.base64}` } })),
     ] as any }], response_format: { type: 'json_object' }, max_tokens: 1800,
   } as any;
@@ -300,7 +300,7 @@ export async function analyzeVideoFramesWithQwen(opts: {
   if (opts.frames.length === 0) throw new Error('Qwen frame analysis requires at least one frame');
 
   const modeInstruction = opts.analysisMode === 'exact'
-    ? '当前为全片精确分析：逐张比较全片高密度关键帧，主体动作、对象、构图、运镜、台词或营销功能变化时必须新建镜头，不得合并有效动作。'
+    ? '当前为全片精确分析：逐张比较全片高密度关键帧，主体动作、对象、构图、运镜、台词或营销功能变化时必须新建镜头，不得合并有效动作。必须覆盖0秒到视频结尾，单项时间区间不得超过5秒；稳定长镜头分段记录并保持同一人物和镜头状态。每项说明简洁，优先保证全片完整覆盖。'
     : '当前为全片策略分析：必须覆盖从 0 秒到结尾，但镜头密度跟随真实内容变化；重复或稳定画面合并为区间并用 beats 记录变化，禁止无意义逐秒拆分。';
   const systemPrompt = `你是一个面向出海电商营销的短视频内容分析专家。
 ${modeInstruction}
@@ -350,8 +350,8 @@ ${BENCHMARK_ANALYSIS_CONTRACT}
       image_url: { url: `data:${frame.mimeType};base64,${frame.base64}` },
     })),
   ];
-  const outputTokens = opts.analysisMode === 'exact' && Number(opts.duration || 0) <= 15
-    ? 3000
+  const outputTokens = opts.analysisMode === 'exact'
+    ? Math.min(24_000, Math.max(8_000, Math.ceil(Number(opts.duration || 15) / 5) * 1_200 + 2_000))
     : Number(opts.duration || 0) > 60 ? 8000 : 4500;
 
   const completion = await client().chat.completions.create({

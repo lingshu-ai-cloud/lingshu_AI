@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import type { StoryboardQaReport } from './storyboardAigcQuality.js';
+import { applyStoryboardReplicationAutomation, automaticStoryboardFrameAdmission, type StoryboardQaReport } from './storyboardAigcQuality.js';
 import { storyboardProjectShotInput } from './storyboardProjectShotInput.js';
 import type { StoryboardShotSpec } from '../../shared/storyboardShotSpec.js';
 
@@ -91,11 +91,15 @@ export function storyboardAigcAssignmentIssues(input: {
       const material = materials.get(materialId);
       if (!material || material.provenance?.storyboardAigc !== true) continue;
       const provenance = material.provenance;
-      const quality = provenance.storyboardQualityReport as StoryboardQaReport | undefined;
+      const storedQuality = provenance.storyboardQualityReport as StoryboardQaReport | undefined;
       const firstFrame = materials.get(String(provenance.firstFrameMaterialId || ''));
       const currentShot = storyboardProjectShotInput(spec as Record<string, any>, shotId);
       const frameSpec = firstFrame?.provenance?.shotSpec as StoryboardShotSpec | undefined;
       const videoSpec = provenance.shotSpec as StoryboardShotSpec | undefined;
+      const automaticReplication = frameSpec?.mode === 'replication' && !frameSpec.constraints.includes('person_identity');
+      const quality = automaticReplication && storedQuality ? applyStoryboardReplicationAutomation(storedQuality) : storedQuality;
+      const storedFrameQuality = firstFrame?.provenance?.firstFrameQuality as StoryboardQaReport | undefined;
+      const frameQuality = automaticReplication && storedFrameQuality ? applyStoryboardReplicationAutomation(storedFrameQuality) : storedFrameQuality;
       const valid = material.tenantId === input.tenantId
         && material.type === 'video'
         && material.sourceType === 'ai-seedance'
@@ -107,18 +111,18 @@ export function storyboardAigcAssignmentIssues(input: {
         && quality?.phase === 'video'
         && quality.passed === true
         && quality.status === 'passed'
-        && quality.reviewDecision === 'accept'
+        && (quality.reviewDecision === 'accept' || automaticReplication && quality.acceptanceSource === 'automatic_policy')
         && !!quality.reportId
         && firstFrame?.tenantId === input.tenantId
         && firstFrame.sourceType === 'ai-storyboard-first-frame'
         && firstFrame.provenance?.projectId === input.projectId
         && firstFrame.provenance?.shotId === shotId
         && firstFrame.provenance?.fingerprint === provenance.firstFrameFingerprint
-        && firstFrame.provenance?.confirmed === true
-        && (firstFrame.provenance?.firstFrameQuality as StoryboardQaReport | undefined)?.phase === 'first_frame'
-        && (firstFrame.provenance?.firstFrameQuality as StoryboardQaReport | undefined)?.passed === true
-        && (firstFrame.provenance?.firstFrameQuality as StoryboardQaReport | undefined)?.status === 'passed'
-        && (firstFrame.provenance?.firstFrameQuality as StoryboardQaReport | undefined)?.reviewDecision === 'accept'
+        && (firstFrame.provenance?.confirmed === true || automaticStoryboardFrameAdmission(firstFrame.provenance))
+        && frameQuality?.phase === 'first_frame'
+        && frameQuality?.passed === true
+        && frameQuality?.status === 'passed'
+        && (frameQuality?.reviewDecision === 'accept' || automaticReplication && frameQuality?.acceptanceSource === 'automatic_policy')
         && !!frameSpec && !!videoSpec
         && JSON.stringify(frameSpec) === JSON.stringify(videoSpec)
         && JSON.stringify(productAssets(frameSpec)) === JSON.stringify(productAssets(videoSpec))

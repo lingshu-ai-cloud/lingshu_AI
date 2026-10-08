@@ -1,3 +1,5 @@
+import { legacyReplicationBlocker } from './legacyReplicationGuard.js';
+import { advanceManagedReplication, MANAGED_REPLICATION_BRIDGE_VERSION } from './replicationContentProduction.js';
 import { waitForMaterialAnalysis } from '../lib/materialLibraryAnalysis.js';
 import { readMaterialLibrary } from '../lib/materialLibrary.js';
 import { applySceneRepair, planSceneRepair } from './sceneRepair.js';
@@ -22,7 +24,7 @@ import { listHeygenAvatars } from '../integrations/heygen.js';
 import { callVideoModel } from './videoModel.js';
 import { SCRIPT_CREATIVE_QUALITY_RULES, scriptCreativeModeRule } from '../prompts/scriptCreativeQuality.js';
 import { readTenantEnterpriseProfile, type EnterpriseProfile } from '../routes/enterprise.js';
-import { synthesizeStudioVoiceForAutomation, ensureHeygenAutomationJob, heygenOutputPath } from '../routes/studio.js';
+import { synthesizeStudioVoiceForAutomation, alignStudioVoiceForAutomation, ensureHeygenAutomationJob, heygenOutputPath } from '../routes/studio.js';
 import { assessScriptQualityV2, storyboardSceneRanges, type StudioScriptMaterialInfo } from '../lib/studioScriptQualityV2.js';
 import { fetchCloudMaterial, listCloudMaterials } from '../lib/cloudMaterials.js';
 import { store } from '../storage/index.js';
@@ -272,12 +274,14 @@ export function selectContentProjectsForTick<T extends { stage: string; retryabl
   return selected;
 }
 
-function enabledRoutes(config: DigitalEmployeeConfig): ContentProductionRoute[] {
-  const routes: ContentProductionRoute[] = [];
-  if (config.enabledWorkflows.includes('viral_clone')) routes.push('clone');
-  if (config.enabledWorkflows.includes('product_content')) routes.push('product');
-  if (config.enabledWorkflows.includes('material_content')) routes.push('material');
-  return routes;
+export function enabledRoutes(config: Pick<DigitalEmployeeConfig, 'enabledWorkflows'>): ContentProductionRoute[] {
+  // Explicit content preparation remains independent of publishing accounts.
+  const enabled = new Set(config.enabledWorkflows);
+  return [
+    ...(enabled.has('viral_clone') ? ['clone' as const] : []),
+    ...(enabled.has('product_content') ? ['product' as const] : []),
+    ...(enabled.has('material_content') ? ['material' as const] : []),
+  ];
 }
 
 /** Configuration enables capabilities; only this batch's selected routes require evidence. */
@@ -351,7 +355,7 @@ function requestedDraftCount(config: DigitalEmployeeConfig, goal: WeeklyGoalInpu
 
 function exactAnalysis(record: StoredRecord): boolean {
   const analysis = json<Record<string, unknown>>(record.aiAnalysis, {});
-  return analysis.analysisMode === 'exact' && analysis.analysisQuality === 'video' && Boolean(analysis.gemini);
+  return analysis.analysisMode === 'exact' && ['video', 'video_review_required'].includes(String(analysis.analysisQuality)) && Boolean(analysis.gemini);
 }
 
 function realMaterial(record: Record<string, unknown>, tenantId: string): boolean {
@@ -414,11 +418,28 @@ function localMaterials(tenantId: string, records: Array<Record<string, unknown>
 export function resolveEnterpriseAssetLocation(
   assetUrl: string,
   tenantId: string,
-  options: { assetsDir?: string; objectStorage?: boolean } = {},
+  options: { assetsDir?: string; mediaDir?: string; objectStorage?: boolean } = {},
 ): Pick<AssetCandidate, 'url' | 'localPath' | 'objectKey'> {
   const url = text(assetUrl, 2_000);
   if (!url || syntheticMaterialMarker(url)) return {};
   if (/^(?:https?:|data:)/i.test(url)) return { url };
+  // Imported product catalog images also live in the tenant media tree.
+  if (url.startsWith('/media/tenants/')) {
+    let relative: string;
+    try { relative = decodeURIComponent(url.slice('/media/tenants/'.length).split(/[?#]/)[0]!); } catch { return {}; }
+    const parts = relative.split('/');
+    if (parts[0] !== tenantId || parts.some(part => !part || part === '.' || part === '..' || part.includes('\\') || /\0/.test(part))) return {};
+    const mediaDir = path.resolve(options.mediaDir || path.resolve(process.cwd(), 'data', 'media'));
+    const tenantRoot = path.join(mediaDir, 'tenants', tenantId);
+    const candidate = path.resolve(mediaDir, 'tenants', relative);
+    try {
+      const realRoot = fs.realpathSync(tenantRoot);
+      const realFile = fs.realpathSync(candidate);
+      if (!realFile.startsWith(realRoot + path.sep) || fs.statSync(realFile).size <= 0) return {};
+      return { localPath: realFile };
+    } catch { return {}; }
+  }
+
   const match = url.match(/^\/api\/overseas\/enterprise\/assets\/([^/?#]+)(?:[?#].*)?$/i);
   if (!match) return {};
   let filename = '';
@@ -1003,6 +1024,17 @@ export async function advanceOneProject(input: {
   const spec = json<Record<string, unknown>>(input.record.spec, {});
   const automation = projectAutomation(input.record);
   const route = text(automation.route) as ContentProductionRoute;
+  // Clone has its own real per-shot pipeline. Never send it into the generic
+  // catalog/script/matching renderer, even when the bridge reports a blocker.
+  if (String(route) === 'clone') {
+    const contract = json<Record<string, any>>(spec.contentOrder, {});
+    const language = text(spec.lang) || input.config.videoDefaults?.language || 'en';
+    const script = text(spec.script || contract.scripts?.[language]?.body, 30_000);
+    const productId = text(json<Record<string, unknown>>(automation.routePlan, {}).productId);
+    const issues = narrationEvidenceIssues(productFacts(input.profile, input.config, productId), voiceoverText(script));
+    return advanceManagedReplication({ tenantId: input.tenantId, projectId: input.record.id,
+      store, references: input.analyses, preflightBlocker: issues.length ? issues.join('；') : undefined });
+  }
   const legacyAssetIds = Array.isArray(spec.selectedMaterialIds) ? spec.selectedMaterialIds.map(String) : [];
   const legacyAssets = legacyAssetIds.map(id => input.assets.find(asset => asset.id === id)).filter((asset): asset is AssetCandidate => Boolean(asset));
   const legacyProductId = legacyAssets.map(asset => asset.productId).find(Boolean);
@@ -1018,7 +1050,7 @@ export async function advanceOneProject(input: {
   const routeAssets = routePlan.assetIds.map(id => input.assets.find(asset => asset.id === id)).filter((asset): asset is AssetCandidate => Boolean(asset));
   let stage = text(automation.stage) as ProductionStage;
   if (stage === 'blocked') {
-    const approvalChanged = presenterApprovalResumesQuality(automation, presenterApprovalForProject(input.tenantId, input.record.id, spec, automation));
+    const approvalChanged = presenterApprovalResumesQuality(automation, presenterApprovalForProject(input.tenantId, input.record.id, spec, automation, undefined, route === 'clone'));
     if (!approvalChanged && !contentProjectRetryable(automation)) return { changed: false, blocker: text(automation.blocker) };
     stage = text(automation.resumeStage) as ProductionStage || 'script';
   }
@@ -1033,6 +1065,8 @@ export async function advanceOneProject(input: {
   };
 
   try {
+    const replicationBlocker = legacyReplicationBlocker({ route, creationPath: spec.creationPath, stage, heygenJobId: automation.heygenJobId });
+    if (replicationBlocker) return block('material_match', replicationBlocker, { retryPolicy: 'input_required' });
     const evidenceIssues = narrationEvidenceIssues(productFacts(input.profile, input.config, routePlan.productId), stage === 'script' ? '' : voiceoverText(text(spec.script, 30_000)));
     if (evidenceIssues.length) return block('script', evidenceIssues.join('；'), { retryPolicy: 'input_required' });
     if (brief.presenter !== 'avatar' && ['script', 'material_match', 'voice_subtitles', 'render'].includes(stage)) {
@@ -1291,7 +1325,17 @@ export async function advanceOneProject(input: {
       const spoken = voiceoverText(text(spec.script, 30_000));
       if (!spoken) return block('script', '脚本中没有可合成的口播台词');
       if (!spokenLanguageMatches(spoken, brief.language)) return block('script', '口播语言与本条制作计划不符');
-      const issues = await reviewFinalNarration({ spoken, facts: productFacts(input.profile, input.config, routePlan.productId), language: brief.language, constraints: contentOrder?.constraints || input.goal.constraints });
+      const narrationSceneEvidence = storyboardVoiceLines(text(spec.script, 30_000)).map((spoken, index) => {
+        const item = (spec.sceneSourcePlan as SceneSourcePlanItem[] | undefined)?.find(item => item.sceneIndex === index);
+        const asset = routeAssets.find(asset => asset.id === item?.assetId);
+        return { spoken, asset: asset?.name || '', observations: asset?.visualObservations || [] };
+      });
+      const issues = await reviewFinalNarration({
+        spoken, facts: productFacts(input.profile, input.config, routePlan.productId),
+        visualFacts: routeAssets.flatMap(asset => [asset.name, ...asset.visualObservations]),
+        sceneEvidence: narrationSceneEvidence,
+        language: brief.language, constraints: contentOrder?.constraints || input.goal.constraints,
+      });
       if (issues.length) {
         const attempts = Number(automation.autoNarrationReviewAttempts || 0);
         const narrationFeedback = `上一版需修正：${issues.join('；')}`;
@@ -1302,7 +1346,21 @@ export async function advanceOneProject(input: {
         }
         return block('script', `口播自动事实修复 ${attempts} 次后仍未通过：${issues.join('；')}`, { narrationFeedback, retryPolicy: 'input_required' });
       }
-      const voice = await synthesizeStudioVoiceForAutomation({ tenantId: input.tenantId, text: spoken, language: brief.language, voice: brief.voice, targetDuration: brief.duration, style: spec.voiceStyle as any });
+      let voice = await synthesizeStudioVoiceForAutomation({ tenantId: input.tenantId, text: spoken, language: brief.language, voice: brief.voice, targetDuration: brief.duration, style: spec.voiceStyle as any });
+      if (voice.ok && voice.url && voice.duration && voice.alignmentSource === 'pending_alignment') {
+        try {
+          const aligned = await alignStudioVoiceForAutomation({ tenantId: input.tenantId, text: spoken, url: voice.url, duration: voice.duration });
+          voice = { ...voice, cues: aligned.cues, alignmentSource: aligned.source };
+        } catch {
+          // Keep the gate strict when private ASR storage is unavailable: synthesize
+          // scene lines separately and measure their actual audio boundaries.
+          voice = await synthesizeStudioVoiceForAutomation({
+            tenantId: input.tenantId, text: spoken, language: brief.language, voice: brief.voice,
+            targetDuration: brief.duration, style: spec.voiceStyle as any,
+            sentenceLines: storyboardVoiceLines(text(spec.script, 30_000)), measuredSentenceTiming: true,
+          });
+        }
+      }
       if (!voice.ok || !voice.localPath || !fs.existsSync(voice.localPath)) return block('voice_subtitles', `配音服务不可用：${voice.error || '未返回可用音频文件'}`);
       const duration = Math.max(1, Number(voice.duration || brief.duration));
       if (String(voice.text || spoken) !== spoken) return block('voice_subtitles', '配音文本发生变化，需要重新确认口播');
@@ -1335,6 +1393,10 @@ export async function advanceOneProject(input: {
         await updateProject(input.record, { ...spec, presenterMode: 'digital', automation: stagePatch(automation, 'heygen', { heygenJobId: job.id, blocker: job.status === 'review' ? 'HeyGen 成片已生成，请进入内容工作台预览并确认人物、口型与声音' : job.errorMessage || 'HeyGen 正在生成数字人视频' }) });
         return { changed: automation.heygenJobId !== job.id, blocker: job.status === 'review' || job.status === 'failed' ? job.errorMessage || 'HeyGen 成片等待人工确认' : '' };
       }
+      // Poll existing supplier work, but do not turn a completed talking-head job
+      // into a generic edit accepted as per-shot reference replication.
+      const replicationRenderBlocker = legacyReplicationBlocker({ route, stage: 'render' });
+      if (replicationRenderBlocker) return block('material_match', replicationRenderBlocker, { retryPolicy: 'input_required', heygenJobId: job.id });
       if (!job.subtitleCues?.length) return block('heygen', '缺少基于配音的字幕时间轴，请重新获取并复核数字人字幕');
       const videoPath = heygenOutputPath(input.tenantId, job.id);
       const voicePath = text(automation.voiceLocalPath, 2000);
@@ -1459,7 +1521,7 @@ export async function advanceOneProject(input: {
 
       // Approval is persisted on the job after the mixed review copy is rendered.
       // Always re-read and validate that exact tenant/project/audio/output binding.
-      if (usesDigitalPresenter(brief)) automation.heygenApproved = presenterApprovalForProject(input.tenantId, input.record.id, spec, automation);
+      if (usesDigitalPresenter(brief)) automation.heygenApproved = presenterApprovalForProject(input.tenantId, input.record.id, spec, automation, undefined, route === 'clone');
       const originalCues = json<Record<string, unknown>>(spec.alignedCuesByLang, {})[brief.language];
       if (!subtitleCuesAreSafe(originalCues, Number(spec.duration || 20))) {
         const repaired = paginateAlignedCues(originalCues, Number(spec.duration || 20));
@@ -1563,12 +1625,12 @@ export async function advanceOneProject(input: {
         voiceQuality.passed !== true ? `口播声音质检未通过：${voiceQuality.failures?.join('；') || '缺少响度、削波、静音和回听证据'}` : '',
         ...sceneAlignmentIssues,
         !spokenLanguageMatches(text(automation.spokenText, 30000), brief.language) || text(spec.lang) !== brief.language ? '最终语言与制作计划不符' : '',
-        usesDigitalPresenter(brief) && !automation.heygenApproved ? '当前数字人成片尚未获得与本项目、配音及素材版本一致的人工确认' : '',
+        usesDigitalPresenter(brief) && !automation.heygenApproved ? '当前数字人成片缺少与本项目、配音及素材版本一致的质量证据' : '',
         !semanticAlignment ? '逐镜头素材语义匹配证据不完整' : '',
         !routeDifferentiation ? '内容路径差异检查未通过' : '',
         !sceneDiversity ? '存在多个相关素材但分镜仍只循环单一素材' : '',
         !internalMarkerFree ? '成片内容含 E2E、local.test、mock 或 placeholder 内部标记' : '',
-        !['synthesized_sentence_audio', 'heygen_audio', 'human_reviewed', 'audio_ai'].includes(String(spec.subtitleAlignmentSource)) ? '字幕缺少实际音频对齐来源' : '',
+        !['synthesized_sentence_audio', 'minimax_native', 'heygen_audio', 'human_reviewed', 'audio_ai'].includes(String(spec.subtitleAlignmentSource)) ? '字幕缺少实际音频对齐来源' : '',
         !subtitleSafe ? '字幕时间轴、长度或内部标记安全检查未通过' : '',
         !platformBriefApplied ? '未应用目标平台差异化创作要求' : '',
       ].filter(Boolean);
@@ -1820,7 +1882,9 @@ export async function advanceAutomatedContentProduction(input: {
   }
   const pending = selectContentProjectsForTick(projects.map(project => ({
     project, stage: text(projectAutomation(project).stage),
-    retryable: contentProjectRetryable(projectAutomation(project)) || presenterApprovalResumesQuality(projectAutomation(project),
+    retryable: contentProjectRetryable(projectAutomation(project))
+      || (projectAutomation(project).route === 'clone' && projectAutomation(project).replicationBridgeVersion !== MANAGED_REPLICATION_BRIDGE_VERSION)
+      || presenterApprovalResumesQuality(projectAutomation(project),
       presenterApprovalForProject(input.tenantId, project.id, json<Record<string, unknown>>(project.spec, {}), projectAutomation(project))),
   }))).map(item => item.project);
   const advancedResults = await Promise.all(pending.map(project => advanceOneProject({

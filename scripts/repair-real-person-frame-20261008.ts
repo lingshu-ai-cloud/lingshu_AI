@@ -1,0 +1,32 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import dotenv from 'dotenv';
+import {createHash} from 'node:crypto';
+const source=path.resolve('../local-preview-1002');
+dotenv.config({path:path.join(source,'.env'),quiet:true});dotenv.config({path:path.join(source,'.env.local'),override:true,quiet:true});
+const root=path.resolve('data/acceptance/real-shot-replication-20261008');
+const tunnelLog=fs.readFileSync(path.join(root,'tunnel.log'),'utf8');process.env.LOCAL_OBJECT_STORAGE_PUBLIC_BASE_URL=tunnelLog.match(/https:\/\/[a-z0-9-]+\.trycloudflare\.com/g)?.at(-1);
+const parse=(x:any)=>typeof x==='string'?JSON.parse(x):x;
+const tenantId='local_tenant_customer_1b2913131e2c46deab66172228c4df0a';
+const d=JSON.parse(fs.readFileSync(path.join(source,'data/local-store/studio_production_defaults.json'),'utf8')).find((x:any)=>x.tenant_id===tenantId);
+const presenter=parse(d.payload).presenters.find((x:any)=>x.id==='presenter-f281e943169413c9b5525072');
+const {readLocalMaterials,saveLocalMaterials}=await import('../server/lib/materialLibrary.js');
+const {acceptPresenterPortraitReference}=await import('../server/lib/presenterAssetAcceptance.js');
+const {readTenantMaterialBytes,certifySeedanceTargetFrame}=await import('../server/lib/sentenceReplicationProduction.js');
+const {SeedreamFirstFrameGenerator}=await import('../server/lib/seedreamFirstFrameGenerator.js');
+const {produceFirstFrame}=await import('../server/lib/firstFrameProduction.js');
+const {firstFrameInputFingerprint}=await import('../server/lib/firstFrameGenerator.js');
+const mats=readLocalMaterials();const portrait=mats.find((m:any)=>m.id==='presenter-photo-12cf020ecb9ed8b35225bc88')!;
+acceptPresenterPortraitReference({tenantId,presenter,material:portrait,provider:'volcengine_ark',uses:['digital_presenter','person_replacement']});
+const sourceFrame=mats.find((m:any)=>m.id==='sentence-frame-fcda7122ecfb31e96c18ba4f')!;
+const references:any[]=[];for(const [m,role] of [[sourceFrame,'source_composition'],[portrait,'authorized_presenter']] as const){const b=await readTenantMaterialBytes(m,tenantId);references.push({role,bytes:b.bytes,mimeType:b.mimeType,sha256:createHash('sha256').update(b.bytes).digest('hex')});}
+const generator=new SeedreamFirstFrameGenerator();
+const input:any={tenantId,videoId:'real-shot-test-20261008:video-1',compositionId:'opening-glass-lab-identity-repair-v2',presenterVersion:`${presenter.id}:${presenter.assetVersion}`,ratio:'9:16',references,idempotencyKey:'',prompt:'这是有明确人物身份和机位约束的逐镜复刻首帧修正。图一是原片构图，图二是唯一获授权的企业人物身份。请严格复制图一的全幅摄影机位置、人物占比、玻璃隔断、门框、玻璃上的磨砂圆点、白色实验室、顶灯位置及透视关系。禁止改成产品陈列展厅、展示柜、货架或另一个房间，禁止拉近景别。只将图一的女性替换为图二的同一女性，保留白色实验服。图二的脸型、下颌、眼睛间距及大小、鼻形、嘴唇、发际线和刘海必须逐项精确复制，不得美化或混入图一人物面貌。保持图一正在走动并准备张开手臂的姿态，不遮脸。服装和身体真实自然，不增加人物或额外手指。清除原片字幕和图形，无文字、标志、水印。'};
+input.idempotencyKey=firstFrameInputFingerprint(input,generator.provider,generator.model);
+const state:any={sourceFrameMaterialId:sourceFrame.id,presenterAssetId:presenter.id,previousCandidateIssue:'Reused certified frame changed the glass laboratory to product shelves; fresh first frame failed provider face consistency.',state:'generating'};
+const save=()=>fs.writeFileSync(path.join(root,'person-frame-repair-state.json'),JSON.stringify(state,null,2));save();
+try{const output=await produceFirstFrame(input,generator);state.output=output;state.state='generated';save();
+ const material:any={id:`target-frame-${output.operationId.slice(0,24)}`,name:'开场逐镜首帧修正 · 玻璃实验室',type:'image',folder:'presenter',duration:0,scope:'own',tenantId,objectKey:output.objectKey,contentSha256:output.contentSha256,sourceType:'digital-human-target-first-frame',presenterAssetId:presenter.id,presenterAssetVersion:presenter.assetVersion,sourceFrameMaterialId:sourceFrame.id,providerRequestId:output.providerRequestId,createdAt:new Date().toISOString()};
+ saveLocalMaterials([...readLocalMaterials().filter(m=>m.id!==material.id),material]);
+ const certified=await certifySeedanceTargetFrame({presenter,material,objectKey:output.objectKey});state.targetMaterialId=certified.id;state.state='certified';save();console.log(JSON.stringify({state:state.state,targetMaterialId:certified.id}));
+}catch(e){state.error=(e as Error).message.replace(/assetToken=[^\s"\\]+/g,'assetToken=[redacted]');state.state='failed';save();console.log(JSON.stringify({state:state.state,error:state.error}));process.exitCode=1;}

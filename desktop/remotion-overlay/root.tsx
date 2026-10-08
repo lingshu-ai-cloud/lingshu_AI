@@ -1,15 +1,15 @@
 import React from 'react';
 import { AbsoluteFill, Composition, Easing, Sequence, interpolate, spring, useCurrentFrame, useVideoConfig } from 'remotion';
-import { SemanticAsset, type SemanticAssetKind } from './semantic-assets';
+import { SemanticAsset, type MotionRole, type SemanticAssetKind } from './semantic-assets';
 
 type Point = { x: number; y: number };
 type Rect = Point & { width: number; height: number };
-type OverlayEvent = { id: string; type: 'key_fact' | 'reveal' | 'cta'; assetKind: SemanticAssetKind; startMs: number; endMs: number; text: string; placement: Point & { source: string }; layout: { asset: Rect; label: Rect; mode: string }; subjectAnchor?: Point };
+type OverlayEvent = { id: string; type: 'key_fact' | 'reveal' | 'cta'; assetKind: SemanticAssetKind; motionRole: MotionRole; startMs: number; endMs: number; text: string; placement: Point & { source: string }; layout: { asset: Rect; label: Rect; mode: string }; presentationMode: 'label' | 'graphic_only'; targetRelation: 'surround' | 'point_to' | 'adjacent'; shotId?: string; playbackKey: string; subjectAnchor?: Point };
 type OverlayProps = { durationFrames: number; fps: number; width: number; height: number; profile: string; events: OverlayEvent[] };
 
 const EventCard: React.FC<{ event: OverlayEvent }> = ({ event }) => {
   const frame = useCurrentFrame();
-  const { fps, width } = useVideoConfig();
+  const { fps, width, height } = useVideoConfig();
   const enter = spring({ frame, fps, config: event.type === 'key_fact'
     ? { damping: 11, stiffness: 250, mass: .65 }
     : event.type === 'reveal' ? { damping: 15, stiffness: 180, mass: .8 }
@@ -19,21 +19,40 @@ const EventCard: React.FC<{ event: OverlayEvent }> = ({ event }) => {
   const pulse = event.type === 'cta' && frame > .35 * fps ? 1 + Math.sin((frame / fps - .35) * Math.PI * 3.4) * .065 : 1;
   const isFact = event.type === 'key_fact';
   const { asset: assetRect, label: labelRect } = event.layout;
+  // Surround assets are authored as square artwork. CSS percentage width and
+  // height refer to different video axes, so reusing the semantic target's
+  // normalized rectangle would stretch the artwork in portrait video. Fit a
+  // pixel-square around the target instead and keep its center unchanged.
+  const renderAssetRect = event.motionRole === 'surround' ? (() => {
+    const centerX = assetRect.x + assetRect.width / 2;
+    const centerY = assetRect.y + assetRect.height / 2;
+    const diameterPx = Math.min(width * .92, Math.max(assetRect.width * width, assetRect.height * height));
+    const rectWidth = diameterPx / width;
+    const rectHeight = diameterPx / height;
+    return {
+      x: Math.max(.04, Math.min(.96 - rectWidth, centerX - rectWidth / 2)),
+      y: Math.max(.035, Math.min(.70 - rectHeight, centerY - rectHeight / 2)),
+      width: rectWidth,
+      height: rectHeight,
+    };
+  })() : assetRect;
+  const direction = event.layout.mode.includes('right') ? 'left' : event.layout.mode.includes('left') ? 'right'
+    : event.layout.mode.includes('top') ? 'bottom' : 'top';
   const slide = interpolate(enter, [0, 1], [labelRect.x < .5 ? -18 : 18, 0]);
   return <>
-    <div style={{ position: 'absolute', left: `${assetRect.x * 100}%`, top: `${assetRect.y * 100}%`, width: `${assetRect.width * 100}%`, height: `${assetRect.height * 100}%`,
-      transform: `scale(${enter * pulse})`, opacity: exit, transformOrigin: labelRect.x < assetRect.x ? 'right center' : 'left center' }}>
-      <SemanticAsset kind={event.assetKind} progress={enter} />
+    <div style={{ position: 'absolute', left: `${renderAssetRect.x * 100}%`, top: `${renderAssetRect.y * 100}%`, width: `${renderAssetRect.width * 100}%`, height: `${renderAssetRect.height * 100}%`,
+      scale: enter * pulse, opacity: exit, transformOrigin: 'center center' }}>
+      <SemanticAsset kind={event.assetKind} role={event.motionRole} progress={enter} text={event.text} direction={direction} eventDurationFrames={duration} />
     </div>
-    <div style={{
+    {event.presentationMode === 'label' && event.motionRole !== 'caption_companion' && <div style={{
       position: 'absolute', left: `${labelRect.x * 100}%`, top: `${labelRect.y * 100}%`, width: `${labelRect.width * 100}%`, minHeight: `${labelRect.height * 100}%`,
-      transform: `translateX(${slide}px) scale(${enter})`, opacity: exit, boxSizing: 'border-box',
+      translate: `${slide}px 0`, scale: enter, opacity: exit, boxSizing: 'border-box',
       padding: `${width * .009}px ${width * .016}px`, borderRadius: width * .012,
       background: 'rgba(255,255,255,.88)', color: '#2B2B2B', border: `1px solid rgba(43,43,43,.16)`,
       boxShadow: `0 ${width * .005}px ${width * .018}px rgba(0,0,0,.16)`,
       fontFamily: 'Source Han Sans SC, PingFang SC, sans-serif', fontSize: width * (isFact ? .042 : .04),
       fontWeight: 750, lineHeight: 1.14, display: 'flex', alignItems: 'center', textAlign: 'left', whiteSpace: 'normal', wordBreak: 'keep-all',
-    }}>{event.text}</div>
+    }}>{event.text}</div>}
   </>;
 };
 
@@ -43,7 +62,7 @@ const Overlay: React.FC<OverlayProps> = ({ events }) => {
     {events.map(event => {
       const from = Math.max(0, Math.round(event.startMs / 1000 * fps));
       const durationInFrames = Math.max(1, Math.round((event.endMs - event.startMs) / 1000 * fps));
-      return <Sequence key={event.id} from={from} durationInFrames={durationInFrames} layout="none">
+      return <Sequence key={`${event.id}:${event.playbackKey}`} from={from} durationInFrames={durationInFrames} layout="none">
         <EventCard event={event} />
       </Sequence>;
     })}

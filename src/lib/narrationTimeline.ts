@@ -42,6 +42,15 @@ export function sourceCuesForShot(cues: SpeechCue[] | undefined, duration: numbe
   return valid.map(cue => ({ ...cue, end: Math.min(duration, cue.end) }));
 }
 
+/** Generated narration already supplies caption text; this fallback is shot-level, not measured word timing. */
+export function generatedShotCaptionCues(cues: SpeechCue[] | undefined, duration: number, script: string, generated: boolean): SpeechCue[] {
+  const measured = sourceCuesForShot(cues, duration);
+  if (measured.length) return measured;
+  const text = script.trim();
+  return generated && text && Number.isFinite(duration) && duration > 0
+    ? [{ text, start: 0, end: duration }] : [];
+}
+
 /** A measured transcript belongs only to the source file from which it was derived. */
 export function sourceCaptionCacheMatchesContent(provenance: string | undefined, sourceHash: string | undefined, contentHash: string | undefined): boolean {
   if (!['heygen:source_video_srt', 'qwen_filetrans:source_material'].includes(provenance || '')) return false;

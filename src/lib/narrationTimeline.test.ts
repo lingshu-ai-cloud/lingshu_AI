@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { arrangeShotsWithinNarration, durationForUnfixedNarration, narrationForUnfixedShots, shotsMissingSourceCues, sourceCaptionCacheMatchesContent, sourceCuesForShot, sourceCuesWithoutVoiceover, voiceoverMatchesNarrationSources, type NarrationTimelineShot } from './narrationTimeline';
+import { arrangeShotsWithinNarration, durationForUnfixedNarration, narrationForUnfixedShots, shotsMissingSourceCues, sourceCaptionCacheMatchesContent, generatedShotCaptionCues, sourceCuesForShot, sourceCuesWithoutVoiceover, voiceoverMatchesNarrationSources, type NarrationTimelineShot } from './narrationTimeline';
 
 test('source-only captions use clip-local timing instead of estimated script timing', () => {
   const shots: NarrationTimelineShot[] = [
@@ -218,4 +218,11 @@ test('an adopted source shot invalidates old TTS that still speaks its line', ()
   assert.equal(voiceoverMatchesNarrationSources(before, lines, lines.join(' ')), true);
   assert.equal(voiceoverMatchesNarrationSources(after, lines, lines.join(' ')), false);
   assert.equal(voiceoverMatchesNarrationSources(after, lines, lines[0]!), true);
+});
+
+test('generated shots reuse script captions without ASR, while measured timing and imported media stay protected', () => {
+assert.deepEqual(generatedShotCaptionCues(undefined, 2.5, 'Hello, boss!', true), [{ text: 'Hello, boss!', start: 0, end: 2.5 }]);
+assert.deepEqual(generatedShotCaptionCues(undefined, 2.5, 'Unrelated script', false), []);
+assert.deepEqual(generatedShotCaptionCues([{ text: 'Actual speech', start: .2, end: 1.5 }], 2.5, 'Script', true), [{ text: 'Actual speech', start: .2, end: 1.5 }]);
+assert.deepEqual(generatedShotCaptionCues(undefined, NaN, 'Script', true), []);
 });

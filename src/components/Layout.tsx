@@ -602,11 +602,15 @@ export default function Layout({ page, onNavigate, conversation, children, sessi
         </div>
       </motion.aside>}
 
-      <AccountSettingsModal open={accountSettingsOpen} onClose={() => setAccountSettingsOpen(false)} onLogout={onLogout} />
+      <AccountSettingsModal
+        open={accountSettingsOpen}
+        onClose={() => setAccountSettingsOpen(false)}
+        onLogout={onLogout}
+        canManageEmployees={organizationRole === 'super_admin' || organizationRole === 'admin'}
+      />
 
       {/* ── Main content ─────────────────────────────── */}
       <main className="app-main relative flex min-w-0 flex-1 flex-col overflow-hidden">
-        {activeSession && <AgentNotificationBell key={`${activeSession.user.tenantId}:${activeSession.user.id}`} onNavigate={navigateFromSidebar} />}
         {supportAccess && (
           <div className="flex h-10 shrink-0 items-center justify-between gap-4 border-b border-emerald-200 bg-emerald-50 px-4 text-xs">
             <div className="flex min-w-0 items-center gap-2 text-emerald-950">
@@ -621,6 +625,12 @@ export default function Layout({ page, onNavigate, conversation, children, sessi
         )}
         <div data-app-content-stack className="flex min-h-0 flex-1 flex-col overflow-hidden">{children}</div>
       </main>
+
+      {activeSession && (
+        <aside aria-label="全局消息" className="relative z-50 flex w-12 shrink-0 items-start justify-center border-l border-border bg-white pt-2">
+          <AgentNotificationBell key={`${activeSession.user.tenantId}:${activeSession.user.id}`} onNavigate={navigateFromSidebar} />
+        </aside>
+      )}
 
       {/* ── Right panel (only in conversation mode) ── */}
       {isInConversation && !mobileRightPanelOpen && (

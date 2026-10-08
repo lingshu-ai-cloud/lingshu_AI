@@ -228,9 +228,12 @@ export async function objectStorageSignedGetUrl(key: string, expiresIn = 900): P
     const parts = String(key).split('/');
     const relative = `/media/object-storage/${parts.map(encodeURIComponent).join('/')}`;
     const base = String(process.env.LOCAL_OBJECT_STORAGE_PUBLIC_BASE_URL || '').replace(/\/$/, '');
-    if (parts.length === 4 && parts[1] === 'tenants') {
-      const tenantId = safeAssetTenantId(Buffer.from(parts[2] || '', 'base64url').toString('utf8'));
-      if (materialAssetTenantKey(tenantId) !== parts[2]) throw new Error('对象存储租户路径无效');
+    if (parts.length >= 4 && parts[1] === 'tenants') {
+      const tenantKey = String(parts[2] || '');
+      const decoded = Buffer.from(tenantKey, 'base64url').toString('utf8');
+      const tenantId = materialAssetTenantKey(decoded) === tenantKey
+        ? safeAssetTenantId(decoded)
+        : safeAssetTenantId(tenantKey);
       const signed = signAssetUrl(relative, tenantId, Math.max(60, Math.min(3600, Math.round(expiresIn))) * 1000);
       return base ? `${base}${signed}` : signed;
     }

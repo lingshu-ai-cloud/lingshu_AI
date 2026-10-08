@@ -30,6 +30,22 @@ type CollectionSpec = { name: string; fields: Field[]; indexes?: string[] };
 /** Legacy repair definitions, derived from what the route handlers write/read. */
 const COLLECTIONS: CollectionSpec[] = [
   {
+    name: 'studio_render_jobs',
+    fields: [
+      { name: 'tenant_id', type: 'text', required: true }, { name: 'project_id', type: 'text', required: true },
+      { name: 'idempotency_key', type: 'text', required: true }, { name: 'output_key', type: 'text', required: true },
+      { name: 'input_signature', type: 'text', required: true }, { name: 'status', type: 'text', required: true },
+      { name: 'spec', type: 'json', required: true, maxSize: 4194304 }, { name: 'progress', type: 'number', onlyInt: true, min: 0, max: 100 },
+      { name: 'attempts', type: 'number', onlyInt: true, min: 0 }, { name: 'output_path', type: 'text' },
+      { name: 'preview_url', type: 'text' }, { name: 'error', type: 'text' }, { name: 'created_at', type: 'text', required: true },
+      { name: 'updated_at', type: 'text', required: true },
+    ],
+    indexes: [
+      'CREATE UNIQUE INDEX idx_studio_render_job_idempotency ON studio_render_jobs (tenant_id, project_id, idempotency_key)',
+      'CREATE INDEX idx_studio_render_job_recovery ON studio_render_jobs (tenant_id, project_id, status, updated_at)',
+    ],
+  },
+  {
     name: 'content_execution_jobs',
     fields: [
       { name: 'tenant_id', type: 'text', required: true }, { name: 'job_key', type: 'text', required: true },

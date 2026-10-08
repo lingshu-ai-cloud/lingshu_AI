@@ -7,8 +7,12 @@ import {
   ChevronRight,
   CircleAlert,
   Film,
+  GripVertical,
   Loader2,
   Megaphone,
+  Plus,
+  RefreshCw,
+  Trash2,
   Upload,
 } from 'lucide-react';
 import type { SocialContentCreationPath } from '../../lib/socialContentModel';
@@ -20,10 +24,53 @@ import { authHeader } from '../../lib/auth';
 import { referenceBrandTerm, referenceProductMentions, referenceProductTerms, replaceReferenceIdentities, spokenIdentityLabel } from '../../lib/referenceIdentityMapping';
 import { referenceSpeechLines, type ReferenceSpeechLine } from './referenceSpeechLines';
 import { groupSpeechShots, type SpeechGroup, timeRange } from './speechShotGroups';
+import { normalizeFreeCreationState, type FreeCreationState, type FreeCreationShotType } from '../../../shared/contracts/freeCreationProject';
 
 interface EnterpriseProductOption {
   id: string;
   name: string;
+}
+
+export interface FreeCreationLine {
+  id: string;
+  time: string;
+  speech: string;
+  visual: string;
+  shotType: '真人口播' | '工厂' | '产品' | 'D to C';
+  silent: boolean;
+  hook: boolean;
+}
+
+export function parseFreeCreationScript(script: string): FreeCreationLine[] {
+  const normalized = String(script || '').replace(/\r/g, '').trim();
+  if (!normalized) return [];
+  const timestampLine = /^\s*\[?(?:\d+:)?\d+(?:\.\d+)?\s*[–—-]\s*(?:\d+:)?\d+(?:\.\d+)?s?\]?/;
+  const grouped: string[] = [];
+  for (const line of normalized.split('\n')) {
+    if (timestampLine.test(line) && grouped.length && grouped[grouped.length - 1]!.trim()) grouped.push(line);
+    else if (!grouped.length) grouped.push(line);
+    else grouped[grouped.length - 1] += `\n${line}`;
+  }
+  const blocks = grouped.length > 1 ? grouped.map(item => item.trim()).filter(Boolean) : normalized.split(/\n\s*\n/).map(item => item.trim()).filter(Boolean);
+  return blocks.map((block, index) => {
+    const time = block.match(/\[?((?:\d+:)?\d+(?:\.\d+)?\s*[–—-]\s*(?:\d+:)?\d+(?:\.\d+)?s?)\]?/)?.[1] || `${index * 4}–${(index + 1) * 4}s`;
+    const speechMatch = block.match(/(?:台词|口播|旁白|Dialogue|Voiceover)\s*[：:]\s*([^\n]+)/i);
+    const visualMatch = block.match(/(?:画面|镜头|Visual)\s*[：:]\s*([^\n]+)/i);
+    const speech = (speechMatch?.[1] || (!visualMatch ? block.replace(/^\[?[^\]\n]+\]?\s*/, '').trim() : '')).trim();
+    const visual = (visualMatch?.[1] || '根据口播生成对应画面').trim();
+    // Classify visible content only. Field names such as “口播” and the value
+    // “无口播” must not turn every generated line into a talking-head shot.
+    const explicitShotType = block.match(/镜头类型\s*[：:]\s*([^\n]+)/)?.[1] || '';
+    const hinted = `${explicitShotType} ${visual}`;
+    const shotType: FreeCreationLine['shotType'] = /工厂|车间|生产线|实验室/.test(hinted) ? '工厂'
+      : /真人|口播|主播|人物对镜/.test(hinted) ? '真人口播'
+        : /消费者|顾客|用户|模特|达人|使用场景|使用效果|效果展示|效果演示|使用前后|涂抹|上脸|试用|开箱|种草|D\s*(?:to|2)\s*C/i.test(hinted) ? 'D to C' : '产品';
+    return { id: `free-line-${Date.now()}-${index}`, time, speech, visual, shotType, silent: !speech || /无口播|纯画面/.test(block), hook: index === 0 };
+  });
+}
+
+export function serializeFreeCreationLines(lines: FreeCreationLine[]): string {
+  return lines.map(line => `[${line.time}]\n画面：${line.visual.trim() || '待补充画面'}\n镜头类型：${line.shotType}\n台词：${line.silent ? '（无口播）' : line.speech.trim()}`).join('\n\n');
 }
 
 export interface SocialCreationWorkbenchSeed {
@@ -47,6 +94,7 @@ export interface SocialCreationWorkbenchSubmit {
   confirmedSpeech?: Array<{ source: string; draft: string; time: string }>;
   initialScript?: string;
   initialGeneration?: StudioScriptResult;
+  draftProjectId?: string;
   requestId: number;
   creationPath: SocialContentCreationPath;
   title: string;
@@ -189,6 +237,30 @@ export default function SocialCreationWorkbench({
   const [freeScriptText, setFreeScriptText] = useState('');
   const [freeGeneration, setFreeGeneration] = useState<StudioScriptResult | null>(null);
   const [freeHookMaterial, setFreeHookMaterial] = useState<Material | null>(null);
+  const [aiHookCandidate, setAiHookCandidate] = useState<Material | null>(null);
+  const [aiHookFrame, setAiHookFrame] = useState<Material | null>(null);
+  const [aiHookPhase, setAiHookPhase] = useState<'idle' | 'saving' | 'frame' | 'video' | 'ready' | 'failed'>('idle');
+  const [aiHookError, setAiHookError] = useState('');
+  const [aiHookEstimatedCost, setAiHookEstimatedCost] = useState(0);
+  const aiHookRequestRef = useRef<{ frame: string; video: string } | null>(null);
+  const [freeLines, setFreeLines] = useState<FreeCreationLine[]>([]);
+  const [hookMode, setHookMode] = useState<'none' | 'upload' | 'library' | 'ai'>('none');
+  const [libraryHooks, setLibraryHooks] = useState<Material[]>([]);
+  const [libraryLoading, setLibraryLoading] = useState(false);
+  const [draftProjectId, setDraftProjectId] = useState('');
+  const draftSaveTimer = useRef<number>(0);
+  const draftCreationRef = useRef<Promise<string> | null>(null);
+  const draggedFreeLineIndex = useRef<number | null>(null);
+  const [contentGoal, setContentGoal] = useState('种草');
+  const [targetAudience, setTargetAudience] = useState('海外目标客户');
+  const [platform, setPlatform] = useState('TikTok');
+  const [contentLanguage, setContentLanguage] = useState('zh');
+  const [sellingPoints, setSellingPoints] = useState('');
+  const [desiredDuration, setDesiredDuration] = useState(20);
+  const [tone, setTone] = useState('专业、自然');
+  const [callToAction, setCallToAction] = useState('');
+  const [prohibitedClaims, setProhibitedClaims] = useState('');
+  const [briefNotes, setBriefNotes] = useState('');
   const [activeLine, setActiveLine] = useState(0);
   const [expandedSpeechLines, setExpandedSpeechLines] = useState<Set<number>>(() => new Set());
   const [requestedSeek, setRequestedSeek] = useState(0);
@@ -222,6 +294,98 @@ export default function SocialCreationWorkbench({
   }, [seed?.confirmedSpeech]);
   const uploadRef = useRef<HTMLInputElement>(null);
   const isReplication = mode === 'viral_replication';
+  const selectedFreeProducts = useMemo(() => products.filter(item => selectedProductIds.includes(item.id)), [products, selectedProductIds]);
+  const freeDraftCreatedAt = useRef(new Date().toISOString());
+  const freeCreationState = useMemo<FreeCreationState>(() => ({
+    schemaVersion: 1,
+    manualWorkflow: true,
+    currentStep: 1,
+    hookSource: hookMode,
+    hookMaterialId: freeHookMaterial?.id || '',
+    brief: {
+      productIds: selectedProductIds,
+      goal: contentGoal,
+      audience: targetAudience,
+      platform,
+      language: contentLanguage,
+      sellingPoints,
+      durationSeconds: desiredDuration,
+      tone,
+      cta: callToAction,
+      prohibitedClaims,
+      notes: briefNotes,
+    },
+    script: {
+      version: 1,
+      status: freeLines.length ? 'draft' : 'draft',
+      createdAt: freeDraftCreatedAt.current,
+      invalidatedReasons: [],
+      lines: freeLines.map((line, index) => {
+        const range = timeRange(line.time);
+        const shotType: FreeCreationShotType = line.shotType === '真人口播' ? 'presenter' : line.shotType === '工厂' ? 'factory' : line.shotType === 'D to C' ? 'consumer_demo' : 'product';
+        return { id: line.id, start: range?.start ?? index * 4, end: range?.end ?? (index + 1) * 4, narration: line.speech, silent: line.silent, visualIntent: line.visual, shotType, factReferences: selectedFreeProducts.map(item => `enterprise-product:${item.id}`), primaryHook: line.hook };
+      }),
+    },
+  }), [briefNotes, callToAction, contentGoal, contentLanguage, desiredDuration, freeHookMaterial?.id, freeLines, hookMode, platform, prohibitedClaims, selectedFreeProducts, selectedProductIds, sellingPoints, targetAudience, tone]);
+
+  useEffect(() => {
+    if (isReplication || draftCreationRef.current) return;
+    draftCreationRef.current = (async () => {
+      const storedId = (() => { try { return localStorage.getItem('lingshu:free-creation-draft-id') || ''; } catch { return ''; } })();
+      if (storedId) {
+        const existing = (await studioApi.listProjects()).find(item => item.id === storedId && item.status === 'draft' && item.spec?.freeCreation);
+        if (existing) {
+          const restored = normalizeFreeCreationState(existing.spec.freeCreation);
+          setSelectedProductIds(restored.brief.productIds); setContentGoal(restored.brief.goal || '种草'); setTargetAudience(restored.brief.audience || '海外目标客户');
+          setPlatform(restored.brief.platform || 'TikTok'); setContentLanguage(restored.brief.language || 'zh'); setSellingPoints(restored.brief.sellingPoints);
+          setDesiredDuration(restored.brief.durationSeconds); setTone(restored.brief.tone || '专业、自然'); setCallToAction(restored.brief.cta);
+          setProhibitedClaims(restored.brief.prohibitedClaims); setBriefNotes(restored.brief.notes); setHookMode(restored.hookSource);
+          const restoredLines: FreeCreationLine[] = restored.script.lines.map(line => ({ id: line.id, time: `${line.start}–${line.end}s`, speech: line.narration, visual: line.visualIntent, shotType: line.shotType === 'presenter' ? '真人口播' : line.shotType === 'factory' ? '工厂' : line.shotType === 'consumer_demo' ? 'D to C' : '产品', silent: line.silent, hook: line.primaryHook }));
+          setFreeLines(restoredLines); setFreeScriptText(String(existing.spec.script || serializeFreeCreationLines(restoredLines)));
+          const kickoff = existing.spec.videoKickoff as { initialGeneration?: StudioScriptResult; generatedVideo?: { material?: Material } } | undefined;
+          setFreeGeneration(kickoff?.initialGeneration || null);
+          setFreeHookMaterial(kickoff?.generatedVideo?.material || null);
+          setDraftProjectId(existing.id);
+          return existing.id;
+        }
+      }
+      const result = await studioApi.saveProject({
+        title: '自由创作 · 未命名草稿', status: 'draft',
+        spec: { creationPath: 'free_creation', mode: 'material', contentMode: 'video', manualWorkflow: true, freeCreation: freeCreationState },
+      });
+      const id = result.ok ? result.project?.id || '' : '';
+      if (id) { setDraftProjectId(id); try { localStorage.setItem('lingshu:free-creation-draft-id', id); } catch { /* navigation hint only */ } }
+      return id;
+    })().catch(() => '');
+  }, [isReplication]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (isReplication) return;
+    window.clearTimeout(draftSaveTimer.current);
+    draftSaveTimer.current = window.setTimeout(() => {
+      void (async () => {
+        const id = draftProjectId || await draftCreationRef.current || '';
+        if (!id) return;
+        const title = selectedFreeProducts.length ? `${selectedFreeProducts.map(item => item.name).join('、')} · 自由创作` : '自由创作 · 未命名草稿';
+        const productName = selectedFreeProducts.map(item => item.name).join('、');
+        await studioApi.saveProject({ id, title, status: 'draft', spec: {
+          creationPath: 'free_creation', mode: 'material', contentMode: 'video', manualWorkflow: true,
+          freeCreation: freeCreationState, script: freeScriptText, duration: desiredDuration,
+          selectedProductIds, productId: selectedFreeProducts[0]?.id || '', productInfo: productName,
+          videoKickoff: {
+            source: hookMode === 'ai' ? 'ai_generated_hook' : 'material_library', productInfo: productName, script: freeScriptText,
+            initialGeneration: freeGeneration || undefined,
+            generatedVideo: freeHookMaterial ? {
+              id: freeHookMaterial.id, title: freeHookMaterial.name, url: freeHookMaterial.url,
+              poster: freeHookMaterial.poster, duration: freeHookMaterial.duration, material: freeHookMaterial,
+            } : undefined,
+            materialRole: freeHookMaterial ? 'hook' : undefined,
+          },
+        } });
+      })();
+    }, 600);
+    return () => window.clearTimeout(draftSaveTimer.current);
+  }, [desiredDuration, draftProjectId, freeCreationState, freeGeneration, freeHookMaterial, freeScriptText, isReplication, selectedFreeProducts, selectedProductIds]);
   const referenceShots = isReplication ? taskReferenceShots || seed?.referenceShots || [] : [];
   const referenceLines: ReferenceSpeechLine[] = taskSpeechLines.length
     ? groupSpeechShots(taskSpeechLines, referenceShots).map(group => {
@@ -451,7 +615,7 @@ export default function SocialCreationWorkbench({
   }, []);
 
   const startGeneration = async (replicationStep: 1 | 2 | 3 = 1, navigationOnly = false) => {
-    if (submitting || productsLoading || (!isReplication && (!productId || files.length !== 1 || !files[0]?.type.startsWith('video/'))) || (!navigationOnly && isReplication && (!productsReady || !speechGenerated || confirmedSpeech.some(line => !line.draft.trim())))) return;
+    if (submitting || productsLoading || (!isReplication && !selectedProductIds.length) || (!navigationOnly && isReplication && (!productsReady || !speechGenerated || confirmedSpeech.some(line => !line.draft.trim())))) return;
     setSubmitting(true); setGenerationNotice('');
     try {
       const presenterAssetId = '';
@@ -462,36 +626,62 @@ export default function SocialCreationWorkbench({
         if (!result.ok || !result.material?.id) throw new Error(result.error || `「${file.name}」上传失败`);
         uploadedMaterials.push(result.material);
       }
-      const selected = products.find(item => item.id === productId);
+      const selected = selectedFreeProducts[0] || products.find(item => item.id === productId);
       if (!isReplication && !freeScriptText.trim()) {
         const hook = uploadedMaterials[0];
-        if (!hook || !selected) throw new Error('请先选择企业产品并上传开场钩子。');
-        setFreeHookMaterial(hook);
-        setGenerationNotice('正在分析开场画面并由 Gemini 生成逐句口播…');
-        const analysis = await studioApi.analyzeMaterialSegments(hook.id);
-        if (!analysis.ok || !analysis.material) throw new Error(analysis.error || '开场钩子画面分析失败，请重试。');
-        const analyzed = analysis.material;
-        const observations = [
-          ...(analyzed.visualObservations || []),
-          ...(analyzed.segments || []).filter(segment => !segment.needsReview).map(segment => [segment.action, segment.shot, segment.environment].filter(Boolean).join('；')),
-        ].filter(Boolean);
-        if (!observations.length) throw new Error('尚未识别出开场钩子的画面内容，请更换清晰视频后重试。');
-        const duration = Math.min(3, Math.max(0.5, analyzed.duration || 3));
+        if (!selected) throw new Error('请至少选择一个企业产品。');
+        setGenerationNotice(hook ? '正在分析开场画面并由 Gemini 生成逐句口播…' : '正在由 Gemini 生成逐句口播与画面建议…');
+        let analyzed = hook;
+        let observations: string[] = [];
+        let hookDuration = 0;
+        if (hook) {
+          const analysis = await studioApi.analyzeMaterialSegments(hook.id);
+          if (!analysis.ok || !analysis.material) throw new Error(analysis.error || '开场钩子画面分析失败，请重试。');
+          analyzed = analysis.material;
+          observations = [
+            ...(analyzed.visualObservations || []),
+            ...(analyzed.segments || []).filter(segment => !segment.needsReview).map(segment => [segment.action, segment.shot, segment.environment].filter(Boolean).join('；')),
+          ].filter(Boolean);
+          if (!observations.length) throw new Error('尚未识别出开场钩子的画面内容，请更换清晰素材或选择“暂不指定”。');
+          hookDuration = Math.min(3, Math.max(0.5, analyzed.duration || 3));
+          setFreeHookMaterial(analyzed);
+        }
+        const productInfo = selectedFreeProducts.map(item => item.name).join('、');
         const result = await studioApi.script({
-          materials: [analyzed.name],
-          materialInfos: [{ name: analyzed.name, type: 'video', folder: analyzed.folder, duration: analyzed.duration, effectiveDuration: duration, role: '用户指定开场钩子', targetStart: 0, targetEnd: duration, observations }],
-          selectedProductId: selected.id, productInfo: selected.name, language: 'zh', platform: 'tiktok', duration: 20,
+          materials: analyzed ? [analyzed.name] : [],
+          materialInfos: analyzed ? [{ name: analyzed.name, type: analyzed.type, folder: analyzed.folder, duration: analyzed.duration, effectiveDuration: hookDuration, role: '用户指定开场钩子', targetStart: 0, targetEnd: hookDuration, observations }] : [],
+          selectedProductId: selected.id, selectedProductIds, productInfo: [productInfo, `目标：${contentGoal}`, `受众：${targetAudience}`, sellingPoints && `卖点：${sellingPoints}`, tone && `语气：${tone}`, callToAction && `CTA：${callToAction}`, prohibitedClaims && `禁止表达：${prohibitedClaims}`, briefNotes].filter(Boolean).join('；'), language: contentLanguage, platform: platform.toLowerCase(), duration: desiredDuration,
           scriptType: 'storyboard', generationMode: 'material', voiceoverMode: 'ai', provider: 'gemini',
         }, '');
         if (!result.ok || !result.script?.trim() || result.publishable !== true || result.qualityStatus !== 'passed') throw new Error(result.error || 'Gemini 未生成通过质量核验的逐句口播，请重试。');
         setFreeHookMaterial(analyzed);
         setFreeScriptText(result.script);
+        setFreeLines(parseFreeCreationScript(result.script));
         setFreeGeneration(result);
         setGenerationNotice('逐句口播与分镜已生成，请在左侧检查，确认后进入分镜制作。');
         setSubmitting(false);
         return;
       }
-      const productName = isReplication ? productMappings[0]?.productName || (navigationOnly ? seed?.productName || '' : '') : selected?.name || '';
+      const productName = isReplication ? productMappings[0]?.productName || (navigationOnly ? seed?.productName || '' : '') : selectedFreeProducts.map(item => item.name).join('、');
+      let resolvedDraftProjectId = draftProjectId;
+      if (!isReplication) {
+        resolvedDraftProjectId = resolvedDraftProjectId || await draftCreationRef.current || '';
+        const confirmedFreeState: FreeCreationState = { ...freeCreationState, currentStep: 2, script: { ...freeCreationState.script, status: 'confirmed', invalidatedReasons: [] } };
+        if (resolvedDraftProjectId) {
+          const saved = await studioApi.saveProject({
+            id: resolvedDraftProjectId,
+            title: `${productName || '自由创作'} · 新内容`, status: 'draft',
+            spec: {
+              creationPath: 'free_creation', mode: 'material', contentMode: 'video', manualWorkflow: true,
+              freeCreation: confirmedFreeState, script: freeScriptText, duration: desiredDuration,
+              selectedProductIds, productId: selectedFreeProducts[0]?.id || '', productInfo: productName,
+              videoKickoff: { source: hookMode === 'ai' ? 'ai_generated_hook' : 'material_library', productInfo: productName, script: freeScriptText, initialGeneration: freeGeneration || undefined, generatedVideo: freeHookMaterial ? { id: freeHookMaterial.id, title: freeHookMaterial.name, url: freeHookMaterial.url, poster: freeHookMaterial.poster, duration: freeHookMaterial.duration, material: freeHookMaterial } : undefined, materialRole: freeHookMaterial ? 'hook' : undefined },
+            },
+          });
+          if (!saved.ok) throw new Error(saved.error || '自由创作草稿保存失败，请重试');
+          setDraftProjectId(resolvedDraftProjectId);
+        }
+      }
       // GENERATION_INTEGRATION_GAP: the current task contract accepts shared files plus
       // selected sentence indexes, but not a durable sentence-to-asset mapping yet.
       onGenerate({
@@ -499,6 +689,7 @@ export default function SocialCreationWorkbench({
         confirmedSpeech: isReplication && !navigationOnly ? confirmedSpeech : undefined,
         initialScript: !isReplication ? freeScriptText : undefined,
         initialGeneration: !isReplication ? freeGeneration || undefined : undefined,
+        draftProjectId: !isReplication ? resolvedDraftProjectId : undefined,
         requestId: Date.now(),
         creationPath: mode,
         title: isReplication
@@ -506,14 +697,14 @@ export default function SocialCreationWorkbench({
           : `${productName || '自由创作'} · 新内容`,
         productId: isReplication ? productMappings[0]?.productId || '' : selected?.id || '',
         productName,
-        productMappings: isReplication ? productMappings : [],
+        productMappings: isReplication ? productMappings : selectedFreeProducts.map(item => ({ sourceTerm: item.name, productId: item.id, productName: item.name })),
         brandMapping: enterpriseBrandName ? { sourceTerm: brandSourceTerm.trim(), brandName: enterpriseBrandName } : undefined,
         presenterAssetId,
         files,
         uploadedMaterials,
         referenceLinks: [...new Set([...(seed?.referenceLinks || []), ...uploadedMaterials.map(item => item.url).filter(Boolean)])],
         callToAction: '',
-        specialRequirements: isReplication ? '已确认口播文本；分镜匹配时制作数字人口播镜头，成片渲染时生成统一配音。' : '用户上传指定开场钩子；由 Gemini 依据企业产品资料和开场画面重新生成逐句口播及后续分镜。',
+        specialRequirements: isReplication ? '已确认口播文本；分镜匹配时制作数字人口播镜头，成片渲染时生成统一配音。' : `人工自由创作；钩子来源：${hookMode}；允许无口播分镜；由 Gemini 依据企业产品资料生成逐句口播及后续分镜。`,
         stageProfileId: stageProfile?.id || 'b2b_launch',
         stageLabel: stageProfile?.name || 'B2B 起步验证',
         strategyPresetId: stageProfile?.presetId || 'b2b_starting',
@@ -524,20 +715,105 @@ export default function SocialCreationWorkbench({
     }
   };
 
+  const commitFreeLines = (next: FreeCreationLine[]) => {
+    const normalized = next.map((line, index) => ({ ...line, hook: line.hook || (!next.some(item => item.hook) && index === 0) }));
+    let hookSeen = false;
+    normalized.forEach(line => { if (line.hook && hookSeen) line.hook = false; else if (line.hook) hookSeen = true; });
+    const scriptText = serializeFreeCreationLines(normalized);
+    setFreeLines(normalized);
+    setFreeScriptText(scriptText);
+    setFreeGeneration(current => current ? { ...current, script: scriptText } : current);
+  };
+  const regenerateFreeLine = async (index: number) => {
+    const line = freeLines[index];
+    if (!line || generatingSpeech) return;
+    setGeneratingSpeech(true); setGenerationNotice('正在重新生成当前分镜…');
+    try {
+      const result = await studioApi.script({
+        materials: freeHookMaterial ? [freeHookMaterial.name] : [], materialInfos: [],
+        selectedProductId: selectedFreeProducts[0]?.id || '', selectedProductIds,
+        productInfo: `${selectedFreeProducts.map(item => item.name).join('、')}；仅重写第 ${index + 1} 个分镜。前文：${freeLines.slice(0, index).map(item => item.speech).join(' ')}；当前画面意图：${line.visual}`,
+        language: contentLanguage, platform: platform.toLowerCase(), duration: Math.max(4, (timeRange(line.time)?.end || 4) - (timeRange(line.time)?.start || 0)),
+        scriptType: 'storyboard', generationMode: 'material', voiceoverMode: line.silent ? 'none' : 'ai', provider: 'gemini',
+      }, '');
+      if (!result.ok || !result.script?.trim()) throw new Error(result.error || '当前分镜重新生成失败');
+      const generated = parseFreeCreationScript(result.script)[0];
+      if (!generated) throw new Error('未得到可编辑分镜');
+      commitFreeLines(freeLines.map((item, itemIndex) => itemIndex === index ? { ...generated, id: item.id, time: item.time, hook: item.hook, silent: item.silent } : item));
+      setGenerationNotice('当前分镜已重新生成，修改已自动保存。');
+    } catch (error) { setGenerationNotice(error instanceof Error ? error.message : '当前分镜重新生成失败'); }
+    finally { setGeneratingSpeech(false); }
+  };
+  const generateAiHook = async () => {
+    if (isReplication || aiHookPhase === 'saving' || aiHookPhase === 'frame' || aiHookPhase === 'video') return;
+    if (!selectedProductIds.length || !contentGoal.trim() || !targetAudience.trim()) {
+      setAiHookError('请先选择产品并填写内容目标和目标受众。'); return;
+    }
+    setAiHookError(''); setAiHookCandidate(null); setAiHookFrame(null); setAiHookEstimatedCost(0); setAiHookPhase('saving');
+    try {
+      const id = draftProjectId || await draftCreationRef.current || '';
+      if (!id) throw new Error('自由创作草稿尚未建立，请重试。');
+      const productName = selectedFreeProducts.map(item => item.name).join('、');
+      const saved = await studioApi.saveProject({ id, title: `${productName || '自由创作'} · AI 钩子草稿`, status: 'draft', spec: {
+        creationPath: 'free_creation', mode: 'material', contentMode: 'video', manualWorkflow: true,
+        freeCreation: { ...freeCreationState, hookSource: 'ai', hookMaterialId: '' }, script: freeScriptText, duration: desiredDuration,
+        selectedProductIds, productId: selectedFreeProducts[0]?.id || '', productInfo: productName,
+      } });
+      if (!saved.ok) throw new Error(saved.error || 'AI 钩子草稿保存失败');
+      if (!aiHookRequestRef.current) {
+        const suffix = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        aiHookRequestRef.current = { frame: `free-hook-frame:${suffix}`, video: `free-hook-video:${suffix}` };
+      }
+      const visualIntent = freeLines.find(line => line.hook)?.visual || briefNotes || sellingPoints || '产品优先、前三秒抓住目标用户注意力';
+      setAiHookPhase('frame');
+      const frame = await studioApi.freeCreationHookFirstFrame({ projectId: id, requestId: aiHookRequestRef.current.frame,
+        productIds: selectedProductIds, goal: contentGoal, audience: targetAudience, visualIntent, ratio: '9:16' });
+      if (!frame.ok || !frame.material?.id || !frame.material.url) throw new Error(frame.error || 'AI 钩子首帧生成失败');
+      setAiHookFrame(frame.material); setAiHookEstimatedCost(Number(frame.estimatedCostCny || 0));
+      setAiHookPhase('video');
+      const video = await studioApi.seedanceVideo({ requestId: aiHookRequestRef.current.video,
+        script: [visualIntent, `内容目标：${contentGoal}`, `目标受众：${targetAudience}`].join('；'), productInfo: productName,
+        language: contentLanguage, ratio: '9:16', duration: 4, resolution: '480p', title: `自由创作 AI 钩子 · ${productName}`,
+        referenceImageUrl: frame.material.url, generationGroupKey: `free-hook:${id}`,
+        generationContext: { freeCreationHook: true, projectId: id, firstFrameMaterialId: frame.material.id, productIds: selectedProductIds },
+      });
+      if (!video.ok || !video.material?.id || !video.material.url) throw new Error(video.error || 'Seedance 未返回可预览的 AI 钩子视频');
+      setAiHookCandidate(video.material); setAiHookEstimatedCost(current => current + 0.96); setAiHookPhase('ready');
+    } catch (error) {
+      setAiHookError(error instanceof Error ? error.message : 'AI 钩子生成失败'); setAiHookPhase('failed');
+    }
+  };
+  const adoptAiHook = () => {
+    if (!aiHookCandidate) return;
+    setFreeHookMaterial(aiHookCandidate); setHookMode('ai'); setFiles([]);
+    setGenerationNotice('AI 钩子已采纳并写入素材库，草稿正在自动保存。');
+  };
+  const freeReady = selectedProductIds.length > 0 && Boolean(contentGoal.trim()) && Boolean(targetAudience.trim()) && freeLines.length > 0
+    && freeLines.every(line => line.visual.trim() && (line.silent || line.speech.trim())) && freeLines.filter(line => line.hook).length === 1;
+
   return (
     <section className="flex h-full min-h-0 flex-col bg-[#f2f7f4]">
-      <ReplicationWorkbenchHeader activeStep={0} stepLabels={isReplication ? undefined : ['确认自由创作口播', '分镜匹配与制作', '成片渲染和导出']} onStepChange={index => { if (index > 0 && (isReplication ? speechGenerated : Boolean(freeScriptText))) void startGeneration(); }} navigationDisabled={submitting || productsLoading || (isReplication ? !speechGenerated : !freeScriptText)} title={isReplication ? seed?.referenceTitle : products.find(item => item.id === productId)?.name || '自由创作'} actions={<><button type="button" onClick={onShowCreations} className="rounded-lg border border-border px-3 py-2 text-xs font-bold">我的创作</button><button type="button" onClick={onOpenChooser} className="rounded-lg bg-[#173d31] px-3 py-2 text-xs font-bold text-white">切换制作方式</button></>} />
+      <ReplicationWorkbenchHeader activeStep={0} stepLabels={isReplication ? undefined : ['创意与口播确认', '分镜匹配与制作', '成片渲染和导出']} onStepChange={index => { if (index > 0 && (isReplication ? speechGenerated : Boolean(freeScriptText))) void startGeneration(); }} navigationDisabled={submitting || productsLoading || (isReplication ? !speechGenerated : !freeScriptText)} title={isReplication ? seed?.referenceTitle : products.find(item => item.id === productId)?.name || '自由创作'} actions={<><button type="button" onClick={onShowCreations} className="rounded-lg border border-border px-3 py-2 text-xs font-bold">我的创作</button><button type="button" onClick={onOpenChooser} className="rounded-lg bg-[#173d31] px-3 py-2 text-xs font-bold text-white">切换制作方式</button></>} />
 
 
       <div className="social-creation-workbench-layout grid min-h-0 flex-1 grid-cols-1 overflow-y-auto lg:overflow-hidden">
         <aside className="min-h-0 border-b border-border bg-white lg:overflow-y-auto lg:border-b-0 lg:border-r">
           <div className="sticky top-0 z-10 border-b border-border bg-white px-4 py-4">
-            <p className="text-sm font-black text-text-primary">{isReplication ? '口播替换与确认' : '创作准备'}</p>
-            <p className="mt-1 text-[11px] leading-5 text-text-muted">{isReplication ? '先在右侧完成产品映射并生成口播，再检查高亮产品词、修改并确认。' : '选择企业产品并上传指定开场钩子，Gemini 会生成新片逐句口播。'}</p>
+            <p className="text-sm font-black text-text-primary">{isReplication ? '口播替换与确认' : '创意与口播确认'}</p>
+            <p className="mt-1 text-[11px] leading-5 text-text-muted">{isReplication ? '先在右侧完成产品映射并生成口播，再检查高亮产品词、修改并确认。' : '选择一个或多个产品填写创作简报；钩子与口播均可按本次内容需要选择。'}</p>
           </div>
           <ol ref={cardListRef} className="space-y-2 p-3">
-            {!isReplication && !freeScriptText && <li className="rounded-xl border border-dashed border-emerald-200 bg-emerald-50/50 p-4 text-xs leading-5 text-emerald-900">上传一段指定开场视频作为首镜。Gemini 将分析画面并生成新片逐句口播；这里不使用示例口播。</li>}
-            {!isReplication && freeScriptText && <li className="rounded-xl border border-emerald-200 bg-emerald-50 p-3"><p className="text-xs font-bold text-emerald-900">Gemini 生成的逐句口播与分镜</p><pre className="mt-2 whitespace-pre-wrap rounded-lg border border-emerald-200 bg-white p-3 text-xs leading-6 text-text-primary">{freeScriptText}</pre><button type="button" onClick={() => { setFreeScriptText(''); setFreeGeneration(null); setGenerationNotice(''); }} className="mt-2 text-xs font-bold text-emerald-800 underline">重新生成一版</button></li>}
+            {!isReplication && !freeLines.length && <li className="rounded-xl border border-dashed border-emerald-200 bg-emerald-50/50 p-4 text-xs leading-5 text-emerald-900">填写右侧创作简报即可生成分镜。钩子素材为可选项，也可以在第二页再完成首镜。</li>}
+            {!isReplication && freeLines.map((freeLine, index) => <li key={freeLine.id} draggable onDragStart={event => { draggedFreeLineIndex.current = index; event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData('text/plain', freeLine.id); }} onDragOver={event => { event.preventDefault(); event.dataTransfer.dropEffect = 'move'; }} onDrop={event => { event.preventDefault(); const from = draggedFreeLineIndex.current; draggedFreeLineIndex.current = null; if (from == null || from === index) return; const next = [...freeLines]; const [moved] = next.splice(from, 1); next.splice(index, 0, moved); commitFreeLines(next); }} onDragEnd={() => { draggedFreeLineIndex.current = null; }} className={`rounded-xl border p-3 ${freeLine.hook ? 'border-emerald-500 bg-emerald-50' : 'border-border bg-white'}`}>
+              <div className="flex items-center gap-2"><span title="拖动调整分镜顺序" aria-label={`拖动第 ${index + 1} 个分镜排序`} className="cursor-grab text-text-muted active:cursor-grabbing"><GripVertical size={14} /></span><span className="text-xs font-black">{index + 1}</span><input aria-label={`第 ${index + 1} 个分镜时间`} value={freeLine.time} onChange={event => commitFreeLines(freeLines.map((item, i) => i === index ? { ...item, time: event.target.value } : item))} className="min-w-0 flex-1 rounded border border-border px-2 py-1 text-[10px]" /><button type="button" onClick={() => commitFreeLines(freeLines.map((item, i) => ({ ...item, hook: i === index })))} className={`rounded px-2 py-1 text-[10px] font-bold ${freeLine.hook ? 'bg-emerald-700 text-white' : 'bg-surface-2 text-text-secondary'}`}>{freeLine.hook ? '首要钩子' : '设为钩子'}</button></div>
+              <textarea aria-label={`第 ${index + 1} 个分镜口播`} disabled={freeLine.silent} value={freeLine.speech} onChange={event => commitFreeLines(freeLines.map((item, i) => i === index ? { ...item, speech: event.target.value } : item))} rows={3} placeholder="填写口播" className="mt-2 w-full resize-y rounded-lg border border-border p-2 text-xs leading-5 disabled:bg-slate-100" />
+              <label className="mt-2 flex items-center gap-2 text-[10px] font-bold"><input type="checkbox" checked={freeLine.silent} onChange={event => commitFreeLines(freeLines.map((item, i) => i === index ? { ...item, silent: event.target.checked } : item))} />无口播画面</label>
+              <textarea aria-label={`第 ${index + 1} 个分镜画面意图`} value={freeLine.visual} onChange={event => commitFreeLines(freeLines.map((item, i) => i === index ? { ...item, visual: event.target.value } : item))} rows={2} placeholder="画面意图" className="mt-2 w-full resize-y rounded-lg border border-border p-2 text-xs leading-5" />
+              <select aria-label={`第 ${index + 1} 个分镜类型`} value={freeLine.shotType} onChange={event => commitFreeLines(freeLines.map((item, i) => i === index ? { ...item, shotType: event.target.value as FreeCreationLine['shotType'] } : item))} className="mt-2 w-full rounded-lg border border-border bg-white p-2 text-xs"><option>真人口播</option><option>工厂</option><option>产品</option><option>D to C</option></select>
+              <p className="mt-2 rounded-md bg-slate-50 px-2 py-1.5 text-[10px] leading-4 text-text-muted">事实来源：{selectedFreeProducts.length ? selectedFreeProducts.map(item => item.name).join('、') : '尚未选择企业产品'}</p>
+              <div className="mt-2 flex flex-wrap gap-1.5 text-[10px] font-bold"><button type="button" onClick={() => void regenerateFreeLine(index)} className="rounded border border-border px-2 py-1"><RefreshCw size={11} className="mr-1 inline" />重生成</button><button type="button" onClick={() => { const midpoint = Math.max(1, Math.floor(freeLine.speech.length / 2)); commitFreeLines([...freeLines.slice(0, index), { ...freeLine, id: `${freeLine.id}-a`, speech: freeLine.speech.slice(0, midpoint), hook: freeLine.hook }, { ...freeLine, id: `${freeLine.id}-b`, speech: freeLine.speech.slice(midpoint), hook: false }, ...freeLines.slice(index + 1)]); }} className="rounded border border-border px-2 py-1">拆分</button><button type="button" disabled={index === 0} onClick={() => { const previous = freeLines[index - 1]; commitFreeLines([...freeLines.slice(0, index - 1), { ...previous, speech: [previous.speech, freeLine.speech].filter(Boolean).join(' '), visual: [previous.visual, freeLine.visual].filter(Boolean).join('；'), hook: previous.hook || freeLine.hook }, ...freeLines.slice(index + 1)]); }} className="rounded border border-border px-2 py-1 disabled:opacity-40">与上条合并</button><button type="button" disabled={index === 0} onClick={() => { const next = [...freeLines]; [next[index - 1], next[index]] = [next[index], next[index - 1]]; commitFreeLines(next); }} className="rounded border border-border px-2 py-1 disabled:opacity-40">上移</button><button type="button" disabled={index === freeLines.length - 1} onClick={() => { const next = [...freeLines]; [next[index], next[index + 1]] = [next[index + 1], next[index]]; commitFreeLines(next); }} className="rounded border border-border px-2 py-1 disabled:opacity-40">下移</button><button type="button" disabled={freeLines.length === 1} onClick={() => commitFreeLines(freeLines.filter((_, i) => i !== index))} className="rounded border border-red-200 px-2 py-1 text-red-700 disabled:opacity-40"><Trash2 size={11} className="inline" />删除</button></div>
+            </li>)}
+            {!isReplication && freeLines.length > 0 && <li><button type="button" onClick={() => commitFreeLines([...freeLines, { id: `free-line-${Date.now()}`, time: `${freeLines.length * 4}–${(freeLines.length + 1) * 4}s`, speech: '', visual: '', shotType: '产品', silent: true, hook: false }])} className="flex w-full items-center justify-center gap-1 rounded-xl border border-dashed border-emerald-300 py-2 text-xs font-bold text-emerald-800"><Plus size={13} />新增分镜</button><button type="button" onClick={() => { setFreeScriptText(''); setFreeLines([]); setFreeGeneration(null); setGenerationNotice(''); }} className="mt-2 text-xs font-bold text-emerald-800 underline">重新生成整版</button></li>}
             {isReplication && !referenceShots.length && <li className="rounded-xl border border-dashed border-border p-4 text-xs leading-5 text-text-muted">原片分镜和口播尚未完成分析。完成后会在这里逐句显示真实口播与素材首帧。</li>}
             {script.map((line, index) => {
               const active = activeLine === index;
@@ -578,23 +854,31 @@ export default function SocialCreationWorkbench({
         <main className="flex min-h-[560px] min-w-0 flex-col bg-[#f5f8f5] lg:min-h-0">
           <div className="flex items-center justify-between border-b border-black/5 px-5 py-3">
             <div><p className="text-xs font-black text-text-primary">画面预览</p><p className="mt-0.5 text-[10px] text-text-muted">{isReplication ? `当前对应第 ${activeLine + 1} 句口播` : `当前对应第 ${activeLine + 1} 个分镜`}</p></div>
-            {!isReplication && <button type="button" onClick={() => uploadRef.current?.click()} className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-white px-3 py-2 text-xs font-black text-text-secondary shadow-sm"><Upload size={14} />上传指定开场钩子</button>}
+            {!isReplication && <span className="text-[10px] font-bold text-emerald-800">钩子素材可选</span>}
           </div>
-          <input ref={uploadRef} type="file" accept="video/*" className="hidden" onChange={event => { setFiles(Array.from(event.currentTarget.files || [])); setFreeScriptText(''); setFreeGeneration(null); setFreeHookMaterial(null); }} />
+          {!isReplication && <div className="flex flex-wrap gap-2 border-b border-black/5 px-4 py-3">{([['none', '暂不指定'], ['upload', '上传素材'], ['library', '素材库'], ['ai', 'AI 生成']] as const).map(([value, label]) => <button key={value} type="button" onClick={() => { setHookMode(value); if (value === 'upload') uploadRef.current?.click(); if (value === 'library' && !libraryHooks.length) { setLibraryLoading(true); void studioApi.listMaterials('library').then(items => setLibraryHooks(items.filter(item => item.type === 'video' || item.type === 'image'))).finally(() => setLibraryLoading(false)); } if (value === 'none' || value === 'ai') { setFiles([]); setFreeHookMaterial(null); } }} className={`rounded-lg border px-3 py-1.5 text-[10px] font-bold ${hookMode === value ? 'border-emerald-600 bg-emerald-50 text-emerald-800' : 'border-border bg-white text-text-secondary'}`}>{label}</button>)}</div>}
+          <input ref={uploadRef} type="file" accept="video/*,image/*" className="hidden" onChange={event => { setFiles(Array.from(event.currentTarget.files || []).slice(0, 1)); setHookMode('upload'); setFreeScriptText(''); setFreeLines([]); setFreeGeneration(null); setFreeHookMaterial(null); }} />
+          {!isReplication && hookMode === 'library' && <div className="max-h-36 overflow-y-auto border-b border-border p-3">{libraryLoading ? <p className="text-xs text-text-muted">正在读取素材库…</p> : libraryHooks.length ? <div className="grid grid-cols-2 gap-2">{libraryHooks.map(item => <button type="button" key={item.id} onClick={() => { setFreeHookMaterial(item); setFiles([]); }} className={`rounded-lg border p-2 text-left text-[10px] ${freeHookMaterial?.id === item.id ? 'border-emerald-600 bg-emerald-50' : 'border-border'}`}><span className="line-clamp-2 font-bold">{item.name}</span></button>)}</div> : <p className="text-xs text-text-muted">素材库暂无可用图片或视频，可改用上传或暂不指定。</p>}</div>}
           <div className="flex min-h-0 flex-1 items-center justify-center overflow-hidden p-4 sm:p-5">
             <div className="relative flex h-full min-h-0 max-h-full w-full items-center justify-center overflow-hidden rounded-xl border border-[#dfe5e1] bg-[#eef0f3] shadow-[0_2px_12px_rgba(23,61,49,0.06)]">
               {previewUrl && files[0]?.type.startsWith('video/') ? <video src={previewUrl} controls playsInline preload="metadata" className="h-full w-full object-contain" />
                 : previewUrl ? <img src={previewUrl} alt="用户上传素材预览" className="h-full w-full object-contain" />
+                : !isReplication && (aiHookCandidate?.url || freeHookMaterial?.url) && (aiHookCandidate || freeHookMaterial)?.type === 'video' ? <video src={(aiHookCandidate || freeHookMaterial)?.url} poster={(aiHookCandidate || freeHookMaterial)?.poster} controls playsInline className="h-full w-full object-contain" />
+                : !isReplication && freeHookMaterial?.url ? <img src={freeHookMaterial.url} alt="素材库钩子预览" className="h-full w-full object-contain" />
                 : seed?.referenceContentType === 'video' && seed.referenceMediaUrl ? <WorkbenchVideoPreview source={seed.referenceMediaUrl} poster={seed.referenceThumbnail} title={seed.referenceTitle || '爆款视频预览'} seekSeconds={requestedSeek} seekRequestId={seekRequestId} onPlaybackTime={syncPlaybackCard} onResolved={setResolvedReferenceUrl} />
                 : seed?.referenceThumbnail ? <img src={seed.referenceThumbnail} alt={isReplication ? '爆款视频预览' : '已选素材预览'} className="h-full w-full object-contain" />
                 : <div className="flex h-full w-full flex-col items-center justify-center gap-4 px-8 text-center text-[#294c40]">
                     <span className="flex h-16 w-16 items-center justify-center rounded-full bg-white text-[#607b71] shadow-sm"><Film size={27} /></span>
-                    <div><p className="text-base font-black">{isReplication ? '等待爆款视频' : '等待开场钩子'}</p><p className="mt-2 text-xs leading-5 text-[#789087]">{isReplication ? '从灵感中心选择爆款后，会在这里显示原视频。' : '上传指定开场视频，作为自由创作的第一镜。'}</p></div>
-                    {!isReplication && <button type="button" onClick={() => uploadRef.current?.click()} className="rounded-lg bg-[#173d31] px-4 py-2.5 text-xs font-black text-white shadow-sm">上传指定开场钩子</button>}
+                    <div><p className="text-base font-black">{isReplication ? '等待爆款视频' : hookMode === 'ai' ? aiHookPhase === 'frame' ? '正在生成钩子首帧…' : aiHookPhase === 'video' ? '正在生成 4 秒钩子视频…' : '在第一页生成 AI 钩子' : '尚未指定钩子素材'}</p><p className="mt-2 text-xs leading-5 text-[#789087]">{isReplication ? '从灵感中心选择爆款后，会在这里显示原视频。' : hookMode === 'ai' ? '将按已选产品、内容目标和目标受众生成，预览满意后再采纳。' : '不影响脚本生成；进入分镜制作后仍可完成首镜。'}</p></div>
                   </div>}
             </div>
           </div>
-          <div className="flex items-center justify-between border-t border-black/5 px-5 py-3 text-[11px] text-text-muted"><span>{files.length ? `已选择开场钩子：${files[0]?.name}` : isReplication ? '原片仅供分析' : '尚未上传开场钩子'}</span>{!isReplication && <button type="button" onClick={()=>uploadRef.current?.click()} className="font-black text-emerald-700">更换钩子</button>}</div>
+          {!isReplication && hookMode === 'ai' && <div className="border-t border-black/5 px-5 py-3 text-[11px]">
+            <div className="flex flex-wrap items-center justify-between gap-2"><span className="text-text-muted">预计费用：Seedream 首帧约 ¥0.30 + Seedance 4 秒 480p 约 ¥0.96；以服务端预算核算为准。</span>
+              <div className="flex gap-2">{aiHookCandidate && freeHookMaterial?.id !== aiHookCandidate.id && <button type="button" onClick={adoptAiHook} className="rounded-lg bg-emerald-700 px-3 py-1.5 font-black text-white">采纳此钩子</button>}<button type="button" disabled={['saving','frame','video'].includes(aiHookPhase)} onClick={() => void generateAiHook()} className="rounded-lg border border-emerald-700 px-3 py-1.5 font-black text-emerald-800 disabled:opacity-50">{aiHookPhase === 'failed' ? '重试生成' : aiHookCandidate ? '重新生成' : '确认费用并生成'}</button></div></div>
+            {aiHookFrame && !aiHookCandidate && <p className="mt-1 text-text-muted">首帧已生成并入库，正在继续生成视频。</p>}{aiHookEstimatedCost > 0 && <p className="mt-1 text-text-muted">本次已核算预计费用约 ¥{aiHookEstimatedCost.toFixed(2)}</p>}{aiHookError && <p role="alert" className="mt-1 text-red-600">{aiHookError}</p>}{freeHookMaterial && freeHookMaterial.id === aiHookCandidate?.id && <p className="mt-1 font-bold text-emerald-700">已采纳并保存到素材库；刷新后可从当前草稿恢复。</p>}
+          </div>}
+          <div className="flex items-center justify-between border-t border-black/5 px-5 py-3 text-[11px] text-text-muted"><span>{files.length ? `已选择开场钩子：${files[0]?.name}` : freeHookMaterial ? `已选择开场钩子：${freeHookMaterial.name}` : isReplication ? '原片仅供分析' : hookMode === 'ai' ? '请生成、预览并采纳 AI 钩子' : '本次未指定钩子素材'}</span>{!isReplication && hookMode === 'upload' && <button type="button" onClick={()=>uploadRef.current?.click()} className="font-black text-emerald-700">更换钩子</button>}</div>
         </main>
 
         <aside className="flex min-h-0 flex-col border-t border-border bg-white lg:border-l lg:border-t-0">
@@ -638,13 +922,17 @@ export default function SocialCreationWorkbench({
               <div className="mt-3 rounded-lg border border-border bg-surface-2 p-2.5"><p className="text-[10px] font-bold text-text-secondary">企业品牌 · 自动读取</p><p className="mt-1 text-xs text-text-primary">{enterpriseBrandName || '企业知识库尚未填写品牌名称'}</p><p className="mt-1 text-[10px] text-text-muted">新口播使用企业知识库中的品牌信息，无需填写原片品牌名。</p></div>
             </div>}
 
-            {!isReplication && <label className="mt-4 block text-xs font-black text-text-primary">本次宣传产品
-              <select aria-label="自由创作产品" value={productId} disabled={productsLoading || submitting} onChange={event => { setProductId(event.target.value); setFreeScriptText(''); setFreeGeneration(null); }} className="mt-2 h-11 w-full rounded-xl border border-border bg-white px-3 text-xs font-bold text-text-primary">
-                <option value="">{productsLoading ? '正在读取企业产品…' : '请选择企业产品'}</option>
-                {products.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
-              </select>
-              {!productsLoading && !products.length && <span className="mt-2 block text-[10px] font-normal text-amber-700">请先在企业中心录入产品。</span>}
-            </label>}
+            {!isReplication && <div className="mt-4 space-y-3">
+              <div><p className="text-xs font-black text-text-primary">主推产品 · 多选</p><button type="button" aria-expanded={productSelectorOpen} onClick={() => setProductSelectorOpen(value => !value)} disabled={productsLoading || submitting} className="mt-2 flex h-11 w-full items-center justify-between rounded-xl border border-border bg-white px-3 text-left text-xs font-bold"><span>{productsLoading ? '正在读取企业产品…' : selectedFreeProducts.length ? `已选 ${selectedFreeProducts.length} 款：${selectedFreeProducts.map(item => item.name).join('、')}` : '请选择一个或多个产品'}</span><ChevronDown size={14} /></button>{productSelectorOpen && <div className="mt-1 max-h-44 overflow-y-auto rounded-xl border border-border p-2">{products.map(item => <label key={item.id} className="flex items-center gap-2 rounded-lg p-2 text-xs hover:bg-emerald-50"><input type="checkbox" checked={selectedProductIds.includes(item.id)} onChange={event => { setSelectedProductIds(current => event.target.checked ? [...current, item.id] : current.filter(id => id !== item.id)); setProductId(current => event.target.checked && !current ? item.id : current === item.id && !event.target.checked ? '' : current); setFreeScriptText(''); setFreeLines([]); setFreeGeneration(null); }} /><span>{item.name}</span></label>)}</div>}{!productsLoading && !products.length && <span className="mt-2 block text-[10px] font-normal text-amber-700">请先在企业中心录入产品。</span>}</div>
+              <label className="block text-[10px] font-bold">内容目标<select value={contentGoal} onChange={event => setContentGoal(event.target.value)} className="mt-1 w-full rounded-lg border border-border bg-white p-2 text-xs"><option>种草</option><option>询盘</option><option>品牌认知</option><option>活动推广</option></select></label>
+              <label className="block text-[10px] font-bold">目标受众<input value={targetAudience} onChange={event => setTargetAudience(event.target.value)} className="mt-1 w-full rounded-lg border border-border p-2 text-xs" /></label>
+              <div className="grid grid-cols-2 gap-2"><label className="text-[10px] font-bold">发布平台<select value={platform} onChange={event => setPlatform(event.target.value)} className="mt-1 w-full rounded-lg border border-border bg-white p-2 text-xs"><option>TikTok</option><option>Instagram</option><option>YouTube</option><option>Facebook</option></select></label><label className="text-[10px] font-bold">内容语言<select value={contentLanguage} onChange={event => setContentLanguage(event.target.value)} className="mt-1 w-full rounded-lg border border-border bg-white p-2 text-xs"><option value="zh">中文</option><option value="en">English</option></select></label></div>
+              <label className="block text-[10px] font-bold">强调卖点<textarea value={sellingPoints} onChange={event => setSellingPoints(event.target.value)} rows={2} className="mt-1 w-full rounded-lg border border-border p-2 text-xs" /></label>
+              <div className="grid grid-cols-2 gap-2"><label className="text-[10px] font-bold">期望时长<input type="number" min={5} max={300} value={desiredDuration} onChange={event => setDesiredDuration(Number(event.target.value) || 20)} className="mt-1 w-full rounded-lg border border-border p-2 text-xs" /></label><label className="text-[10px] font-bold">表达语气<input value={tone} onChange={event => setTone(event.target.value)} className="mt-1 w-full rounded-lg border border-border p-2 text-xs" /></label></div>
+              <label className="block text-[10px] font-bold">CTA<input value={callToAction} onChange={event => setCallToAction(event.target.value)} placeholder={enterpriseCtas[0] || '例如：私信获取产品目录'} className="mt-1 w-full rounded-lg border border-border p-2 text-xs" /></label>
+              <label className="block text-[10px] font-bold">禁止表达<input value={prohibitedClaims} onChange={event => setProhibitedClaims(event.target.value)} className="mt-1 w-full rounded-lg border border-border p-2 text-xs" /></label>
+              <label className="block text-[10px] font-bold">补充说明<textarea value={briefNotes} onChange={event => setBriefNotes(event.target.value)} rows={2} className="mt-1 w-full rounded-lg border border-border p-2 text-xs" /></label>
+            </div>}
             {enterpriseProfileState === 'ready' && enterpriseCtas.length > 0 && <div className="mt-4 rounded-xl border border-border bg-surface-2 p-3">
               <div className="flex items-center gap-2"><Megaphone size={14} /><p className="text-xs font-black text-text-primary">CTA · 已从企业知识库读取</p></div>
               {enterpriseCtas.map(cta => <p key={cta} className="mt-1 text-[10px] leading-5 text-text-secondary">{cta}</p>)}
@@ -665,7 +953,7 @@ export default function SocialCreationWorkbench({
             {/* GENERATION_INTEGRATION_GAP: the server calculates estimatedCostCny only
                 after a task plan exists; there is no preflight quote endpoint yet. */}
             {isReplication && <div className="flex items-center gap-3 text-[11px]"><span className="text-text-muted">预计消耗</span><span className="font-black text-text-primary" title="生成任务建立后由服务端返回真实预估">待生成服务核算</span></div>}
-            <button type="button" disabled={submitting || generatingSpeech || productsLoading || (!isReplication && (!productId || files.length !== 1 || !files[0]?.type.startsWith('video/'))) || (isReplication && (!productsReady || !confirmedSpeech.length || (speechGenerated && confirmedSpeech.some(line => !line.draft.trim()))))} onClick={() => { if (isReplication && !speechGenerated) void generateSpeech(); else void startGeneration(); }} className="flex min-w-[220px] items-center justify-center gap-2 rounded-xl bg-[#173d31] px-4 py-3 text-sm font-black text-white shadow-sm hover:bg-[#245644] disabled:cursor-not-allowed disabled:bg-slate-300">
+            <button type="button" disabled={submitting || generatingSpeech || productsLoading || (!isReplication && (!selectedProductIds.length || (freeLines.length > 0 && !freeReady))) || (isReplication && (!productsReady || !confirmedSpeech.length || (speechGenerated && confirmedSpeech.some(line => !line.draft.trim()))))} onClick={() => { if (isReplication && !speechGenerated) void generateSpeech(); else void startGeneration(); }} className="flex min-w-[220px] items-center justify-center gap-2 rounded-xl bg-[#173d31] px-4 py-3 text-sm font-black text-white shadow-sm hover:bg-[#245644] disabled:cursor-not-allowed disabled:bg-slate-300">
               {submitting || generatingSpeech ? <Loader2 size={16} className="animate-spin" /> : <Film size={16} />}{submitting ? '正在处理…' : generatingSpeech ? '正在生成英文口播' : isReplication ? speechGenerated ? '确认口播，进入分镜匹配' : '生成口播' : freeScriptText ? '确认口播，进入分镜制作' : 'Gemini 生成逐句口播与分镜'}
             </button>
           </div></footer>

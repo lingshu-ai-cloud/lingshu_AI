@@ -303,6 +303,19 @@ try {
   assert.equal(localLocation.localPath, filePath, 'enterprise product assets must resolve within the current tenant directory');
   assert.match(await assetRenderUrl(asset({ id: 'product-image', name: '真实产品图', observations: [], visualObservations: [], ...localLocation }), tenantId), /^data:image\/png;base64,/, 'a local enterprise product upload must become a render-readable data URL');
 
+  const mediaTenant = 'tenant-product-media';
+  const mediaRoot = path.join(enterpriseAssetRoot, 'media');
+  const catalogDir = path.join(mediaRoot, 'tenants', mediaTenant, 'catalog');
+  fs.mkdirSync(catalogDir, { recursive: true });
+  const catalogImage = path.join(catalogDir, 'product.png');
+  fs.writeFileSync(catalogImage, 'catalog-image');
+  const mediaOptions = { mediaDir: mediaRoot, objectStorage: false };
+  assert.equal(resolveEnterpriseAssetLocation(`/media/tenants/${mediaTenant}/catalog/product.png`, mediaTenant, mediaOptions).localPath, fs.realpathSync(catalogImage));
+  assert.deepEqual(resolveEnterpriseAssetLocation(`/media/tenants/${mediaTenant}/catalog/product.png`, 'other-tenant', mediaOptions), {});
+  assert.deepEqual(resolveEnterpriseAssetLocation(`/media/tenants/${mediaTenant}/catalog/%2e%2e/product.png`, mediaTenant, mediaOptions), {});
+  fs.symlinkSync(filePath, path.join(catalogDir, 'escape.png'));
+  assert.deepEqual(resolveEnterpriseAssetLocation(`/media/tenants/${mediaTenant}/catalog/escape.png`, mediaTenant, mediaOptions), {});
+
   const objectLocation = resolveEnterpriseAssetLocation('/api/overseas/enterprise/assets/remote-product.mp4', tenantId, { assetsDir: enterpriseAssetRoot, objectStorage: true });
   assert.equal(objectLocation.objectKey, enterpriseAssetObjectKey(tenantId, 'remote-product.mp4'), 'object-storage fallback must remain tenant scoped');
   assert.deepEqual(resolveEnterpriseAssetLocation('/api/overseas/enterprise/assets/mock-product.png', tenantId, { assetsDir: enterpriseAssetRoot, objectStorage: false }), {}, 'mock product assets must remain ineligible');

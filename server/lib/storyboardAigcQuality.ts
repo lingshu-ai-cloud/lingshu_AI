@@ -39,6 +39,8 @@ export interface StoryboardQaReport {
   reviewedAt?: string;
   reviewedBy?: string;
   reviewDecision?: 'accept' | 'reject';
+  acceptanceSource?: 'automatic_policy';
+  backgroundCheckPolicy?: 'disabled';
 }
 
 const checksByPhase = {
@@ -143,6 +145,26 @@ export function buildStoryboardQaReport(input: {
     reasonCodes: findings.map(item => item.code), findings, checks,
     evidenceFrameLabels: [...input.evidenceFrameLabels], checkedAt,
   };
+}
+
+/** Replication runs automatically. Keep uncertainties visible without claiming
+ * they passed vision QA; retain every non-background hard failure. */
+export function applyStoryboardReplicationAutomation(report: StoryboardQaReport): StoryboardQaReport {
+  const findings = report.findings.filter(item => item.key !== 'environment_fidelity');
+  const hard = findings.filter(item => item.severity === 'hard_failure');
+  const checks = Object.fromEntries(Object.entries(report.checks).filter(([key]) => key !== 'environment_fidelity'));
+  const { reviewedAt: _at, reviewedBy: _by, reviewDecision: _decision, ...original } = report;
+  return { ...original, checks, findings, reasonCodes: findings.map(item => item.code),
+    automatedPassed: findings.length === 0, passed: hard.length === 0, requiresHumanReview: false,
+    status: hard.some(item => item.action === 'needs_assets') ? 'needs_assets'
+      : hard.length ? report.phase === 'first_frame' ? 'retry_first_frame' : 'retry_video' : 'passed',
+    acceptanceSource: 'automatic_policy', backgroundCheckPolicy: 'disabled' };
+}
+
+export function automaticStoryboardFrameAdmission(provenance: Record<string, any> | undefined): boolean {
+  const spec = provenance?.shotSpec;
+  if (spec?.mode !== 'replication' || spec?.constraints?.includes('person_identity') || !provenance?.firstFrameQuality) return false;
+  return applyStoryboardReplicationAutomation(provenance.firstFrameQuality).passed;
 }
 
 export function reviewStoryboardQaReport(report: StoryboardQaReport, input: { decision: 'accept' | 'reject'; reviewedBy: string; reviewedAt?: string }): StoryboardQaReport {

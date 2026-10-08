@@ -61,6 +61,14 @@ export default function SocialContentWorkspace({
   const [changeArtifact, setChangeArtifact] = useState<SocialContentArtifact | null>(null);
   const [batchChangesOpen, setBatchChangesOpen] = useState(false);
   const task = state.workspace?.currentTask || null;
+  const reviewBlocked = state.errorCode === 'social_content_execution_director_review_required';
+  const factsBlocked = state.errorCode === 'social_content_execution_facts_required';
+
+  const openDirectorReview = useCallback(() => {
+    const panel = document.querySelector<HTMLElement>('[data-social-agent-workflow]');
+    panel?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    panel?.querySelector<HTMLDetailsElement>('details')?.setAttribute('open', '');
+  }, []);
 
   const openNewTask = useCallback(() => {
     if (onRequestCreate) {
@@ -110,7 +118,7 @@ export default function SocialContentWorkspace({
 
   return (
     <section aria-labelledby="social-content-workspace-title">
-      {(state.error || state.notice) && <div role={state.error ? 'alert' : 'status'} className={`mb-4 flex items-center justify-between gap-3 rounded-xl border px-4 py-3 text-xs font-semibold ${state.error ? 'border-rose-200 bg-rose-50 text-rose-800' : 'border-emerald-200 bg-emerald-50 text-emerald-800'}`}><span className="flex items-center gap-2">{state.error ? <AlertCircle size={14} /> : <CheckCircle2 size={14} />}{state.error || state.notice}</span>{state.notice && <button type="button" onClick={state.dismissNotice} className="text-[10px] font-bold">关闭</button>}</div>}
+      {(state.error || state.notice) && <div role={state.error ? 'alert' : 'status'} className={`mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border px-4 py-3 text-xs font-semibold ${state.error ? 'border-rose-200 bg-rose-50 text-rose-800' : 'border-emerald-200 bg-emerald-50 text-emerald-800'}`}><span className="flex items-center gap-2">{state.error ? <AlertCircle size={14} /> : <CheckCircle2 size={14} />}{state.error || state.notice}</span><span className="flex items-center gap-2">{reviewBlocked && <button type="button" onClick={openDirectorReview} className="rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-[10px] font-black text-amber-900">查看编导待修改项</button>}{factsBlocked && <button type="button" onClick={() => onNavigate('enterprise')} className="rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-[10px] font-black text-amber-900">补充企业与产品事实</button>}{state.notice && <button type="button" onClick={state.dismissNotice} className="text-[10px] font-bold">关闭</button>}</span></div>}
 
       <h1 id="social-content-workspace-title" className="mb-4 text-lg font-bold text-text-primary">{task?.brief.title || '社媒内容任务'}</h1>
 

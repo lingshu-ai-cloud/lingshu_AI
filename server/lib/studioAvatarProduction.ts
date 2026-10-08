@@ -22,6 +22,7 @@ import { RunwayFastHeadAdapter } from './runwayFastHeadAdapter.js';
 import { SeedanceReferenceAdapter } from './seedanceReferenceAdapter.js';
 import { extractSentenceFirstFrames } from './sentenceFirstFramePipeline.js';
 import { runProductionSentenceReplication } from './sentenceReplicationProduction.js';
+import { prepareLocalSeedanceMotionGuide } from './seedanceMotionGuide.js';
 import { runProductionQwenFirstFrameDrafts } from './sentenceFirstFrameDraftProduction.js';
 import { VolcengineArkAssets } from './volcengineArkAssets.js';
 
@@ -240,7 +241,10 @@ export function createStudioAvatarProductionRouter(store: DataStore) {
     },
     prepareSentenceFirstFrames: input => extractSentenceFirstFrames(input),
     generateSentenceFirstFrameDrafts: input=>runProductionQwenFirstFrameDrafts(input),
-    runSentenceReplication: input => runProductionSentenceReplication(input),
+    runSentenceReplication: input => runProductionSentenceReplication({ ...input, prepareMotionGuide: async value => {
+      const prepared = await prepareLocalSeedanceMotionGuide({ tenantId:value.tenantId, cueId:value.cue.id, sourceVideoPath:value.sourceVideoPath });
+      return { url:prepared.url, identityRemoved:prepared.identityRemoved, motionOnly:prepared.motionOnly };
+    } }),
     toolUnavailableReasons: { ...(runway ? {} : { runway_act_two: runwayReadiness.reason }), ...(!fastHead ? { local_head_pipeline: !runway ? runwayReadiness.reason : '严格人物替换尚未启用，需配置 DIGITAL_HUMAN_FAST_HEAD_ENABLED=true 和 DIGITAL_HUMAN_FAST_HEAD_PYTHON' } : {}),
       ...(!seedance ? { runway_seedance: seedanceReadiness.reason } : {}), runway_kling_motion: 'Kling 尚未注册真实执行适配器', self_hosted_video: '自有模型尚未注册真实执行适配器' },
     prepareAudio: async (ref, tenantId) => {

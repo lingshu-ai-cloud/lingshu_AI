@@ -281,12 +281,13 @@ export function enrichPackageWithContentSignals(input: {
         buyerProblem: plan.buyerProblem || reference?.hook || matrixTheme,
         evidenceRequirement: plan.evidenceRequirement || reference?.evidenceRequirement || '必须使用企业资料或素材库中的可核验事实与画面',
         theme,
-        route: mayClone ? 'clone' : plan.route,
-        referenceId: mayClone ? reference?.id || '' : plan.referenceId,
+        // Preserve explicit historic routes; only new placeholders enter clone.
+        route: placeholder && mayClone ? 'clone' : plan.route,
+        referenceId: mayClone && reference ? reference.id : plan.referenceId,
         estimatedCost: master ? MASTER_VIDEO_COST_POINT_CNY : 0,
         estimatedCostRange: master ? masterVideoCostRange() : includedAdaptationCostRange(),
         publication: publicationCopyForPlan({ plan, reference, productName: plan.productName, theme }),
-        ...(plan.referenceId && plan.referenceId !== reference?.id ? { preproduction: undefined } : {}),
+        ...(mayClone && reference && plan.referenceId && plan.referenceId !== reference.id ? { preproduction: undefined } : {}),
         planningEvidence: {
           generatedFrom,
           matrixAccountId: row?.accountId || plan.matrix?.accountId || '',

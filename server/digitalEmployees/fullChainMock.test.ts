@@ -42,7 +42,7 @@ const saveStep=(name:string)=>steps.push({name,status:run.status,nodes:tasks.map
 const customer={id:'mock-customer',tenantId:tenant,sourcePostId:'',name:'MOCK buyer',waNumber:'12025550123'};
 const prepare=async({task:t}:any)=>{
  const c=t.task_key;
- if(c==='scheduled_source_collection')records.scheduled_tasks=[{id:'mock-schedule',tenant_id:tenant,enabled:true,task_id:'mock-schedule',config:{workflowTaskId:t.id,synthetic:true}}];
+ if(c==='scheduled_source_collection')records.scheduled_tasks=[{id:'mock-schedule',tenant_id:tenant,enabled:true,task_id:'mock-schedule',task_type:'social_discovery_collection',config:{workflowRefs:JSON.stringify([{workflowRunId:run.id,workflowTaskId:t.id}]),synthetic:true}}];
  if(c==='viral_analysis'&&permitAnalysis)records.trend_videos=[{id:'mock-reference',tenantId:tenant,...scope(c),aiAnalysis:{analysisMode:'exact',analysisQuality:'video',gemini:{synthetic:true,shots:[{text:'MOCK shot'}]}}}];
  if(c==='content_production')records.studio_projects=[{id:'mock-project',tenant_id:tenant,...scope(c),status:'ready_for_approval',spec:{caption:'MOCK content - simulation only',automation:{managedBy:'digital_employee',stage:'completed',renderOutputPath:fixtureVideo,quality:{passed:permitQuality,ruleVersion:9,synthetic:true}}}}];
  if(c==='content_quality_gate'&&permitQuality)records.studio_projects[0].spec.automation.quality.passed=true;

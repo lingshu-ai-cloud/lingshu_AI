@@ -5,6 +5,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "test:managed-replication": "tsx --test server/digitalEmployees/replicationContentProduction.test.ts server/digitalEmployees/replicationWorkbenchPlan.test.ts server/digitalEmployees/replicationWorkbenchFinish.test.ts server/lib/automatedReplicationBridge.test.ts server/lib/automatedReplicationBridge.production.test.ts server/lib/replicationMaterialMatching.test.ts server/routes/studioStoryboardAigcE2e.test.ts",
     "dev": "vite",
     "dev:preview:keepalive": "node scripts/local-preview-supervisor.mjs",
     "dev:account-hub": "vite --config apps/account-hub/vite.config.ts",

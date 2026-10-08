@@ -4,10 +4,10 @@ import { KeyRound, Loader2, Plus, Trash2, UserRound, UsersRound, X } from 'lucid
 import { authApi, type EmployeeAccount, type OrganizationRole } from '../lib/auth';
 import { useModalFocus } from '../hooks/useModalFocus';
 
-interface Props { open: boolean; onClose: () => void; onLogout?: () => void }
+interface Props { open: boolean; onClose: () => void; onLogout?: () => void; canManageEmployees?: boolean }
 const field = 'ui-field !rounded-md';
 
-export default function AccountSettingsModal({ open, onClose, onLogout }: Props) {
+export default function AccountSettingsModal({ open, onClose, onLogout, canManageEmployees = false }: Props) {
   const [tab, setTab] = useState<'password' | 'employees'>('password');
   const [current, setCurrent] = useState('');
   const [next, setNext] = useState('');
@@ -33,6 +33,10 @@ export default function AccountSettingsModal({ open, onClose, onLogout }: Props)
     setLoading(true); setError('');
     authApi.employees().then(setEmployees).catch(e => setError(e instanceof Error ? e.message : '员工列表加载失败')).finally(() => setLoading(false));
   }, [open, tab]);
+
+  useEffect(() => {
+    if (!canManageEmployees && tab === 'employees') setTab('password');
+  }, [canManageEmployees, tab]);
 
   const submitPassword = async (event: FormEvent) => {
     event.preventDefault(); setError('');
@@ -64,9 +68,9 @@ export default function AccountSettingsModal({ open, onClose, onLogout }: Props)
     <motion.div ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="account-settings-title" initial={{ opacity: 0, y: 12, scale: .99 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 12, scale: .99 }} className="flex max-h-[92dvh] w-full max-w-[760px] flex-col overflow-hidden rounded-t-lg border border-border bg-white shadow-xl sm:h-[580px] sm:flex-row sm:rounded-lg">
       <aside className="w-full shrink-0 border-b border-border bg-surface-2 px-4 pt-4 sm:w-48 sm:border-b-0 sm:border-r sm:p-4">
         <p id="account-settings-title" className="px-1 pb-3 text-base font-bold text-text-primary sm:px-2 sm:pb-4">账号设置</p>
-        <div className="grid grid-cols-2 gap-4 sm:block" role="tablist" aria-label="账号设置分类">
+        <div className={`grid gap-4 sm:block ${canManageEmployees ? 'grid-cols-2' : 'grid-cols-1'}`} role="tablist" aria-label="账号设置分类">
         <button type="button" role="tab" aria-selected={tab === 'password'} onClick={() => { setTab('password'); setError(''); }} className={`flex w-full items-center justify-center gap-2 border-b-2 px-2 py-2.5 text-sm font-semibold transition-colors sm:mb-1 sm:justify-start sm:rounded-md sm:border-b-0 sm:border-l-2 sm:px-3 ${tab === 'password' ? 'border-accent bg-white text-text-primary' : 'border-transparent text-text-muted hover:bg-white/70 hover:text-text-secondary'}`}><KeyRound size={16} />修改密码</button>
-        <button type="button" role="tab" aria-selected={tab === 'employees'} onClick={() => { setTab('employees'); setError(''); }} className={`flex w-full items-center justify-center gap-2 border-b-2 px-2 py-2.5 text-sm font-semibold transition-colors sm:justify-start sm:rounded-md sm:border-b-0 sm:border-l-2 sm:px-3 ${tab === 'employees' ? 'border-accent bg-white text-text-primary' : 'border-transparent text-text-muted hover:bg-white/70 hover:text-text-secondary'}`}><UsersRound size={16} />员工管理</button>
+        {canManageEmployees && <button type="button" role="tab" aria-selected={tab === 'employees'} onClick={() => { setTab('employees'); setError(''); }} className={`flex w-full items-center justify-center gap-2 border-b-2 px-2 py-2.5 text-sm font-semibold transition-colors sm:justify-start sm:rounded-md sm:border-b-0 sm:border-l-2 sm:px-3 ${tab === 'employees' ? 'border-accent bg-white text-text-primary' : 'border-transparent text-text-muted hover:bg-white/70 hover:text-text-secondary'}`}><UsersRound size={16} />员工管理</button>}
         </div>
       </aside>
       <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto p-4 sm:p-6">

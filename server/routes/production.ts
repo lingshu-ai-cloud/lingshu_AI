@@ -1,3 +1,4 @@
+import { sentenceCueQualityState } from '../lib/sentenceCueQuality.js';
 import { preparePhotoTalkingFirstFrames } from '../lib/photoTalkingFirstFrames.js';
 import { photoTalkingBudget } from '../lib/photoTalkingBudget.js';
 import { selectPresenterPortraitFrame } from '../lib/presenterPortraitFromVideo.js';
@@ -22,7 +23,7 @@ import { HeyGenClient, type HeyGenInput } from '../lib/heygen.js';
 import { EMPTY_DEFAULTS, presenterAssetFingerprint, presenterCapabilities, shotFingerprint, type AvatarJob, type PresenterAsset, type PresenterCapability, type ProductionDefaults, type ShotProduction } from '../../src/lib/shotProduction.js';
 import { mapNarrationCues, narrationFromDetail } from '../../src/lib/narrationAlignment.js';
 import { candidateToolsFor, digitalHumanRouteSteps, planDigitalHumanShot, referenceCues, referenceModelInputAuthorization, routeStepsForExecution, usesDirectReferenceVideo, type DigitalHumanExecutionRecord, type DigitalHumanPlanRecord, type DigitalHumanReferenceCue, type SentenceFirstFrameDraftResult, type SentenceReplicationResult } from '../../src/lib/digitalHumanPlan.js';
-import { deferUnavailableVisualChecksToManual, initialDigitalHumanQuality, recordDigitalHumanMediaCheck, recordModelQualityChecks, recordReferenceTechnicalChecks, recordReferenceVisualChecks, reviewDigitalHumanQuality, type ModelQualityDecision, type ModelQualityKey, type ReferenceTechnicalMetrics, type ReferenceVisualMetrics } from '../../src/lib/digitalHumanQuality.js';
+import { sentenceExecutionQuality, digitalHumanQualityState, deferUnavailableVisualChecksToManual, initialDigitalHumanQuality, recordDigitalHumanMediaCheck, recordModelQualityChecks, recordReferenceTechnicalChecks, recordReferenceVisualChecks, reviewDigitalHumanQuality, type ModelQualityDecision, type ModelQualityKey, type ReferenceTechnicalMetrics, type ReferenceVisualMetrics } from '../../src/lib/digitalHumanQuality.js';
 import { digitalHumanToolCapabilities, isDefinitiveSupplierSubmissionError, requiredReferencePreservation, selectReferenceAdapter, verifiedSupplierCost, type DigitalHumanExecutionAdapter, type DigitalHumanToolId } from '../lib/digitalHumanProviderRegistry.js';
 import { normalizePresenterAccountIdentity } from '../lib/presenterAccountIdentity.js';
 import { validateHeyGenPresenterRecord } from '../lib/presenterAssetTrust.js';
@@ -62,8 +63,11 @@ export function createProductionRouter(store: DataStore, importVideo: (url: stri
         const cloud = !material && cloudId ? await getOwnedCloudMaterialRecord(cloudId, tenantId) : null;
         const snapshot = !material && !cloud ? (project.spec?.materialSnapshots || []).find((item: any) => item.id === materialId) : null;
         const jobs = await store.list<JobRecord>('studio_avatar_jobs', { where: { tenant_id: tenantId, project_id: projectId }, perPage: 500 });
+        // Caption recovery verifies the source video, whose completed job retains its
+        // original shot ID when a storyboard is rebuilt. Current assignment/source
+        // checks above still bind this request to the authenticated draft and shot.
         const verifiedHeygenJob = jobs.items.find(job => job.tenant_id === tenantId && job.payload.status === 'completed'
-          && job.payload.materialId === materialId && job.payload.assemblyId === assemblyId && job.payload.shotId === shotId);
+          && job.payload.materialId === materialId && job.payload.assemblyId === assemblyId);
         const executions = await store.list<ExecutionStoreRecord>('studio_digital_human_executions', { where: { tenant_id: tenantId, project_id: projectId }, perPage: 500 });
         const verifiedAdoption = executions.items.some(record => record.tenant_id === tenantId
             && record.payload.assemblyId === assemblyId && record.payload.shotId === shotId
@@ -200,7 +204,7 @@ export function createProductionRouter(store: DataStore, importVideo: (url: stri
     const presenter = defaults?.presenters.find(item => item.id === shot.presenterId && item.authorized);
     const slot = (Array.isArray(project.spec?.shootingSlots) ? project.spec.shootingSlots : []).find((item: any) => String(item.id) === shotId);
     const now = new Date().toISOString();
-    let plan = planDigitalHumanShot({ requirements: shot.digitalHuman, narration: shot.narration, hasAuthorizedPresenter: Boolean(presenter), talkingAvailable: enabled(), presenterCapabilities: presenter ? presenterCapabilities(presenter) : undefined });
+    let plan = planDigitalHumanShot({ requirements: shot.digitalHuman, narration: shot.narration, hasAuthorizedPresenter: Boolean(presenter), talkingAvailable: enabled(), seedanceSentenceAvailable: sentenceReadiness().ready, presenterCapabilities: presenter ? presenterCapabilities(presenter) : undefined });
     let referenceEstimatedCostCny: number | null = null;
     let routeDecision: DigitalHumanPlanRecord['routeDecision'] = null;
     const modelInputAuthorization = referenceModelInputAuthorization(shot.digitalHuman, now);
@@ -220,7 +224,7 @@ export function createProductionRouter(store: DataStore, importVideo: (url: stri
     } else if (shot.digitalHuman?.method === 'reenact' && usesDirectReferenceVideo(shot.digitalHuman) && plan.state === 'preview_only' && !modelInputAuthorization) {
       plan = { ...plan, reasons: ['当前仅做结构分析与方案预览；如需把源视频提交给生成模型，请确认模型输入授权并填写依据'] };
     } else if (shot.digitalHuman?.method === 'reenact' && !usesDirectReferenceVideo(shot.digitalHuman) && plan.state === 'preview_only') {
-      plan = { ...plan, reasons: ['逐句首帧重建方案已就绪；等待接通“首帧提取 → 目标人物首帧生成 → 逐句视频生成 → 拼接”编排器'] };
+      plan = { ...plan, reasons: [sentenceReadiness().reason || 'Seedream + Seedance 逐句复刻运行环境预检未通过'] };
     }
     if (plan.provider === 'heygen' && plan.executable && presenter) {
       const trust = validateHeyGenPresenterRecord(presenter);
@@ -249,7 +253,8 @@ export function createProductionRouter(store: DataStore, importVideo: (url: stri
       presenterAssetVersion: presenterVersion, candidateTools: candidateToolsFor(shot.digitalHuman), inputSnapshot,
       routeSteps: digitalHumanRouteSteps(shot.digitalHuman?.method || 'talking', plan.provider, plan.executable, plan.state),
       routeDecision,
-      estimatedCostCny: plan.provider === 'heygen' && rate > 0 ? Number((Math.max(1, shot.narration.length / 4) * rate).toFixed(2)) : referenceEstimatedCostCny,
+      estimatedCostCny: plan.provider === 'heygen' && rate > 0 ? Number((Math.max(1,
+        Number.isFinite(Number(slot?.duration)) && Number(slot?.duration) > 0 ? Number(slot.duration) : shot.narration.length / 4) * rate).toFixed(2)) : referenceEstimatedCostCny,
       ...plan, origin: input.origin || existing?.payload.origin || 'manual',
       ...((input.sourceTaskId || existing?.payload.sourceTaskId) ? { sourceTaskId: input.sourceTaskId || existing?.payload.sourceTaskId } : {}),
       ...((input.sourceTaskVersion || existing?.payload.sourceTaskVersion) ? { sourceTaskVersion: input.sourceTaskVersion || existing?.payload.sourceTaskVersion } : {}),
@@ -357,7 +362,7 @@ export function createProductionRouter(store: DataStore, importVideo: (url: stri
       const record = await store.getById<ExecutionStoreRecord>('studio_digital_human_executions', req.params.id);
       if (!record || record.tenant_id !== res.locals.tenantId) throw new Error('数字人执行记录不存在');
       if (record.payload.adoption) throw new Error('候选已填入分镜；如需更换，请先创建新的候选或装配版本，不能改写已采用版本的验收结论');
-      if (record.payload.quality.state !== 'manual_review') throw new Error('当前候选的人工验收已经结束；不通过后请按修改意见生成新候选，不能改写原结论');
+      if (record.payload.quality.state === 'failed' || record.payload.quality.reviewedAt) throw new Error('当前候选的人工验收已经结束；不通过后请按修改意见生成新候选，不能改写原结论');
       if (record.payload.quality.checks.find(check => check.key === 'media_import')?.status !== 'passed') throw new Error('媒体尚未通过入库检查，不能完成人工验收');
       await assertCandidateOutputCurrent(record, res.locals.tenantId as string);
       const raw = req.body?.decisions;
@@ -513,10 +518,10 @@ export function createProductionRouter(store: DataStore, importVideo: (url: stri
         const cues = referenceCues(shot.digitalHuman);
         assertSplitCueAssignments(cues);
         const reprocessRecord = reprocessJobId ? await store.getById<SentenceJobRecord>('studio_sentence_replication_jobs', reprocessJobId) : null;
-        if (reprocessJobId && (!reprocessRecord || reprocessRecord.tenant_id !== tenantId || reprocessRecord.project_id !== project.id || reprocessRecord.payload.state !== 'completed' || reprocessRecord.payload.assemblyId !== b.assemblyId || reprocessRecord.payload.shotId !== b.shotId || reprocessRecord.payload.fingerprint !== fingerprint || shot.digitalHuman.presenterMode !== 'photo_talking' || cues.some(cue => cue.personShot !== false && !reprocessRecord.payload.providerTasks?.[cue.id]))) throw new Error('原 HeyGen 作业不完整或与当前分镜不一致，不能复用');
+        if (reprocessJobId && (!reprocessRecord || reprocessRecord.tenant_id !== tenantId || reprocessRecord.project_id !== project.id || !['completed','failed'].includes(reprocessRecord.payload.state) || reprocessRecord.payload.assemblyId !== b.assemblyId || reprocessRecord.payload.shotId !== b.shotId || reprocessRecord.payload.fingerprint !== fingerprint || cues.some(cue => cue.personShot !== false && !reprocessRecord.payload.providerTasks?.[cue.id]))) throw new Error('原逐句作业不完整或与当前分镜不一致，不能恢复供应商结果');
         if (shot.digitalHuman.presenterMode !== 'photo_talking') assertSeedanceCueDurations(cues);
-        if (resumeJobId && (shot.digitalHuman.presenterMode !== 'photo_talking' || cues.some(cue => cue.personShot !== false && !existing?.payload.providerTasks?.[cue.id]))) throw new Error('原作业缺少完整 HeyGen 任务 ID，需人工核对，不能重新提交计费');
-        if (shot.digitalHuman.presenterMode === 'photo_talking' && (!shot.digitalHuman.targetFramesConfirmed || cues.some(cue => cue.personShot !== false && cue.targetFirstFrame?.state !== 'ready'))) throw new Error('请先重建并确认目标人物首帧');
+        if (resumeJobId && cues.some(cue => cue.personShot !== false && !existing?.payload.providerTasks?.[cue.id])) throw new Error('原作业缺少完整供应商任务 ID，需人工核对，不能重新提交计费');
+        if (shot.digitalHuman.presenterMode === 'photo_talking' && cues.some(cue => cue.personShot !== false && cue.targetFirstFrame?.state !== 'ready')) throw new Error('请先重建并确认目标人物首帧');
         const clusterPlan = planPersonShotClusters(cues, Math.max(1, Number(process.env.DIGITAL_HUMAN_MAX_FIRST_FRAMES_PER_VIDEO) || 3));
         if (clusterPlan.state !== 'ready') throw new Error(clusterPlan.blockers.join('；'));
         if (!clusterPlan.personCueIds.length) throw new Error('当前视频没有人物镜头，不应调用人物首帧或数字人口播生成；请按普通素材混剪路线制作');
@@ -533,12 +538,10 @@ export function createProductionRouter(store: DataStore, importVideo: (url: stri
         if (!record) throw new Error('逐句生成请求记录保存失败，尚未调用供应商');
         if (resumeJobId) { record.payload = { ...record.payload, state: 'running', error: '', updatedAt: now }; if (!await store.update('studio_sentence_replication_jobs', record.id, { payload: record.payload })) throw new Error('原作业恢复状态保存失败'); }
         try {
-          const generated = await options.runSentenceReplication({ tenantId, projectId: project.id, assemblyId: String(b.assemblyId), shotId: String(b.shotId), fingerprint, shot, presenter, cues, requestId, maxCostCny: b.maxCostCny, sourceMaterial, existingProviderTasks: resumeJobId || reprocessJobId ? record.payload.providerTasks : undefined,
+          const generated = await options.runSentenceReplication({ tenantId, projectId: project.id, assemblyId: String(b.assemblyId), shotId: String(b.shotId), fingerprint, shot, presenter, cues, requestId, maxCostCny: b.maxCostCny, targetLanguage: String(project.spec?.activeVoiceLang || project.spec?.lang || ''), sourceMaterial, existingProviderTasks: resumeJobId || reprocessJobId ? record.payload.providerTasks : undefined,
             onProviderTaskSubmitted: async (cueId,taskId)=>{ const providerTasks={...(record.payload.providerTasks||{}),[cueId]:taskId}; record.payload={...record.payload,providerTasks,updatedAt:new Date().toISOString()}; if(!await store.update('studio_sentence_replication_jobs',record.id,{payload:record.payload})) throw new Error('供应商已受理任务但任务 ID 持久化失败；请核对原任务，勿重复提交'); } });
           if (!generated.candidateOutput) throw new Error('逐句拼接候选缺少可复核的对象版本与内容哈希');
-          let quality = initialDigitalHumanQuality(shot.digitalHuman);
-          quality = recordDigitalHumanMediaCheck(quality, { passed: true, evidence: `material:${generated.materialId}` });
-          quality = deferUnavailableVisualChecksToManual(quality);
+          const quality = sentenceExecutionQuality(generated.cueQuality, generated.materialId);
           const execution: DigitalHumanExecutionRecord = { id: '', planId: savedPlan.id, jobId: record.id, projectId: project.id, assemblyId: String(b.assemblyId), shotId: String(b.shotId), fingerprint,
             tool: shot.digitalHuman.presenterMode === 'photo_talking' ? 'heygen' : 'runway_seedance', provider: shot.digitalHuman.presenterMode === 'photo_talking' ? 'sentence_first_frame_heygen' : 'sentence_first_frame_pipeline', model: shot.digitalHuman.presenterMode === 'photo_talking' ? 'heygen-v3-photo' : process.env.SEEDANCE_MODEL || 'doubao-seedance-2-0-fast-260128', presenterAssetVersion: presenter.assetVersion || 1,
             submissionOutcome: 'created', candidateOutput: generated.candidateOutput, routeSteps: routeStepsForExecution(savedPlan.routeSteps || [], 'completed', quality), state: 'completed',
@@ -586,8 +589,9 @@ export function createProductionRouter(store: DataStore, importVideo: (url: stri
       if(!record || record.tenant_id!==tenantId || record.payload.state!=='completed' || !record.payload.result?.cueQuality) throw new Error('逐镜质检记录不存在或生产尚未完成');
       const submitted=req.body?.decisions && typeof req.body.decisions==='object'?req.body.decisions as Record<string,Record<string,{passed?:unknown;evidence?:unknown}>>:{};
       const allowed=new Set(['identity','motion','product_brand_text','background','audio_sync','reuse_risk']);
-      const cueQuality=record.payload.result.cueQuality.map(cue=>{ const decisions=submitted[cue.cueId]||{}; const checks=cue.checks.map(check=>{ if(check.status!=='pending'||!allowed.has(check.key)||!decisions[check.key]) return check; const decision=decisions[check.key]!; const evidence=String(decision.evidence||'').trim(); if(typeof decision.passed!=='boolean'||!evidence) throw new Error(`镜头 ${cue.cueId} 的 ${check.key} 缺少明确结论或证据`); return {...check,status:decision.passed?'passed' as const:'failed' as const,evidence}; }); const state=checks.some(check=>check.status==='failed')?'failed':checks.every(check=>check.status==='passed')?'accepted':'manual_review'; return {...cue,checks,state}; });
-      const failedCueIds=cueQuality.filter(cue=>cue.state==='failed').map(cue=>cue.cueId); const result={...record.payload.result,cueQuality,failedCueIds}; const payload={...record.payload,result,updatedAt:new Date().toISOString()}; if(!await store.update('studio_sentence_replication_jobs',record.id,{payload})) throw new Error('逐镜质检结果保存失败'); res.json(result);
+      const cueQuality=record.payload.result.cueQuality.map(cue=>{ const decisions=submitted[cue.cueId]||{}; const checks=cue.checks.map(check=>{ if(check.status!=='pending'||!allowed.has(check.key)||!decisions[check.key]) return check; const decision=decisions[check.key]!; const evidence=String(decision.evidence||'').trim(); if(typeof decision.passed!=='boolean'||!evidence) throw new Error(`镜头 ${cue.cueId} 的 ${check.key} 缺少明确结论或证据`); return {...check,status:decision.passed?'passed' as const:'failed' as const,evidence}; }); const state=sentenceCueQualityState(checks); return {...cue,checks,state}; });
+      const failedCueIds=cueQuality.filter(cue=>cue.state==='failed').map(cue=>cue.cueId); const result={...record.payload.result,cueQuality,failedCueIds}; const payload={...record.payload,result,updatedAt:new Date().toISOString()}; if(!await store.update('studio_sentence_replication_jobs',record.id,{payload})) throw new Error('逐镜质检结果保存失败');
+      if(result.executionId){ const execution=await store.getById<ExecutionStoreRecord>('studio_digital_human_executions',result.executionId); if(execution && execution.tenant_id===tenantId){const quality=sentenceExecutionQuality(cueQuality,result.materialId); if(!await store.update('studio_digital_human_executions',execution.id,{payload:{...execution.payload,quality,routeSteps:routeStepsForExecution(execution.payload.routeSteps||[],'completed',quality),updatedAt:new Date().toISOString()}}))throw new Error('逐镜质检已保存但执行质量同步失败，请刷新原任务');}} res.json(result);
     } catch(error){res.status(400).json({error:error instanceof Error?error.message:'逐镜质检保存失败'});}
   });
   router.post('/sentence-replication-jobs/:id/retry-failed',async(req,res)=>{
@@ -603,7 +607,7 @@ export function createProductionRouter(store: DataStore, importVideo: (url: stri
         const reuseCueQuality=(previous.payload.result.cueQuality||[]).filter(item=>!failed.has(item.cueId)&&item.state==='accepted'); if(Object.keys(reuseCueMaterialIds).length!==reuseCueQuality.length)throw new Error('已通过镜头缺少完整质量验收证据，不能在局部返工中直接复用');
         const now=new Date().toISOString(); const createdRetry=await store.create<SentenceJobRecord>('studio_sentence_replication_jobs',{tenant_id:tenantId,project_id:project.id,request_id:requestId,payload:{state:'running',fingerprint,assemblyId,shotId,createdAt:now,updatedAt:now}}); if(!createdRetry)throw new Error('局部返工作业保存失败，尚未调用供应商'); retryRecord=createdRetry;
         try { const generated=await options.runSentenceReplication!({tenantId,projectId:project.id,assemblyId,shotId,fingerprint,shot,presenter,cues,requestId,reuseCueMaterialIds,reuseCueQuality,onProviderTaskSubmitted:async(cueId,taskId)=>{const providerTasks={...(retryRecord!.payload.providerTasks||{}),[cueId]:taskId};retryRecord!.payload={...retryRecord!.payload,providerTasks,updatedAt:new Date().toISOString()};if(!await store.update('studio_sentence_replication_jobs',retryRecord!.id,{payload:retryRecord!.payload}))throw new Error('Seedance 已受理返工任务但任务 ID 持久化失败；请核对原任务，勿重复提交');}});
-          if(!generated.candidateOutput)throw new Error('局部返工拼接结果缺少可复核对象证据'); const savedPlan=await persistPlan({tenantId,project,assemblyId,shotId,fingerprint}); let quality=recordDigitalHumanMediaCheck(initialDigitalHumanQuality(shot.digitalHuman),{passed:true,evidence:`material:${generated.materialId}`});quality=deferUnavailableVisualChecksToManual(quality); const execution:DigitalHumanExecutionRecord={id:'',planId:savedPlan.id,jobId:retryRecord.id,projectId:project.id,assemblyId,shotId,fingerprint,tool:shot.digitalHuman?.presenterMode==='photo_talking'?'heygen':'runway_seedance',provider:shot.digitalHuman?.presenterMode==='photo_talking'?'sentence_first_frame_heygen_repair':'sentence_first_frame_repair',model:shot.digitalHuman?.presenterMode==='photo_talking'?'heygen-v3-photo':process.env.SEEDANCE_MODEL||'doubao-seedance-2-0-fast-260128',presenterAssetVersion:presenter.assetVersion||1,submissionOutcome:'created',candidateOutput:generated.candidateOutput,routeSteps:routeStepsForExecution(savedPlan.routeSteps||[],'completed',quality),state:'completed',externalTaskId:generated.providerTaskIds?.join(',')||null,materialId:generated.materialId,estimatedCostCny:null,actualCostCny:null,costStatus:'awaiting_invoice',costSourceRef:null,error:'',quality,createdAt:now,updatedAt:new Date().toISOString()}; const executionRecord=await store.create<ExecutionStoreRecord>('studio_digital_human_executions',{tenant_id:tenantId,project_id:project.id,job_id:retryRecord.id,plan_id:savedPlan.id,request_id:requestId,payload:execution});if(!executionRecord)throw new Error('局部返工已完成但执行记录保存失败；请核对素材库，勿重复提交'); const completed={...generated,executionId:executionRecord.id,sentenceJobId:retryRecord.id}; const payload={...retryRecord.payload,state:'completed' as const,result:completed,updatedAt:new Date().toISOString()};if(!await store.update('studio_sentence_replication_jobs',retryRecord.id,{payload}))throw new Error('局部返工已完成但结果记录保存失败；请核对素材库，勿重复提交');return completed;
+          if(!generated.candidateOutput)throw new Error('局部返工拼接结果缺少可复核对象证据'); const savedPlan=await persistPlan({tenantId,project,assemblyId,shotId,fingerprint}); const quality=sentenceExecutionQuality(generated.cueQuality, generated.materialId); const execution:DigitalHumanExecutionRecord={id:'',planId:savedPlan.id,jobId:retryRecord.id,projectId:project.id,assemblyId,shotId,fingerprint,tool:shot.digitalHuman?.presenterMode==='photo_talking'?'heygen':'runway_seedance',provider:shot.digitalHuman?.presenterMode==='photo_talking'?'sentence_first_frame_heygen_repair':'sentence_first_frame_repair',model:shot.digitalHuman?.presenterMode==='photo_talking'?'heygen-v3-photo':process.env.SEEDANCE_MODEL||'doubao-seedance-2-0-fast-260128',presenterAssetVersion:presenter.assetVersion||1,submissionOutcome:'created',candidateOutput:generated.candidateOutput,routeSteps:routeStepsForExecution(savedPlan.routeSteps||[],'completed',quality),state:'completed',externalTaskId:generated.providerTaskIds?.join(',')||null,materialId:generated.materialId,estimatedCostCny:null,actualCostCny:null,costStatus:'awaiting_invoice',costSourceRef:null,error:'',quality,createdAt:now,updatedAt:new Date().toISOString()}; const executionRecord=await store.create<ExecutionStoreRecord>('studio_digital_human_executions',{tenant_id:tenantId,project_id:project.id,job_id:retryRecord.id,plan_id:savedPlan.id,request_id:requestId,payload:execution});if(!executionRecord)throw new Error('局部返工已完成但执行记录保存失败；请核对素材库，勿重复提交'); const completed={...generated,executionId:executionRecord.id,sentenceJobId:retryRecord.id}; const payload={...retryRecord.payload,state:'completed' as const,result:completed,updatedAt:new Date().toISOString()};if(!await store.update('studio_sentence_replication_jobs',retryRecord.id,{payload}))throw new Error('局部返工已完成但结果记录保存失败；请核对素材库，勿重复提交');return completed;
         }catch(error){const message=error instanceof Error?error.message:'局部返工失败';const uncertain=/未知|超时|核对原任务|已完成但|已受理/.test(message);await store.update('studio_sentence_replication_jobs',retryRecord.id,{payload:{...retryRecord.payload,state:uncertain?'uncertain':'failed',error:message,updatedAt:new Date().toISOString()}});throw error;}
       });res.json(result);
     }catch(error){res.status(400).json({error:error instanceof Error?error.message:'逐镜局部返工失败'});}
@@ -616,7 +620,8 @@ export function createProductionRouter(store: DataStore, importVideo: (url: stri
         if (!record || record.tenant_id !== tenantId) throw new Error('数字人执行记录不存在');
         const candidateId = String(req.body?.candidateId || ''); const materialId = String(req.body?.materialId || '');
         if (!candidateId || !materialId) throw new Error('候选或素材标识无效');
-        if (record.payload.quality.state !== 'accepted' || !record.payload.quality.reviewedAt || record.payload.state !== 'completed' || record.payload.materialId !== materialId) throw new Error('候选尚未完成生成与逐项人工验收，不能填入分镜');
+        if (digitalHumanQualityState(record.payload.quality.checks) !== 'accepted' || record.payload.state !== 'completed' || record.payload.materialId !== materialId) throw new Error('候选尚未完成生成或存在质量失败，不能填入分镜');
+        record.payload.quality = { ...record.payload.quality, state: digitalHumanQualityState(record.payload.quality.checks) };
         await assertCandidateOutputCurrent(record, tenantId);
         if (record.payload.adoption) {
           if (record.payload.adoption.candidateId !== candidateId || record.payload.adoption.materialId !== materialId) throw new Error('该执行结果已填入其他候选，不能静默改写装配记录');
@@ -644,7 +649,7 @@ export function createProductionRouter(store: DataStore, importVideo: (url: stri
         nextSpec.shotProductions = { ...(nextSpec.shotProductions || {}), [shotKey]: { ...shot, adoptedId: candidateId } };
         nextSpec.storyboardAssignments = { ...(nextSpec.storyboardAssignments || {}), [slot.slotId]: materialId };
         const adoption = { candidateId, materialId, assemblyVersion, adoptedAt, planId: record.payload.planId, fingerprint: record.payload.fingerprint,
-          presenterAssetVersion: record.payload.presenterAssetVersion, qualityReviewedAt: record.payload.quality.reviewedAt,
+          presenterAssetVersion: record.payload.presenterAssetVersion, ...(record.payload.quality.reviewedAt ? { qualityReviewedAt: record.payload.quality.reviewedAt } : {}),
           ...(record.payload.candidateOutput ? { ...(record.payload.candidateOutput.objectKey ? { candidateObjectKey: record.payload.candidateOutput.objectKey } : {}),
             ...(record.payload.candidateOutput.localFile ? { candidateLocalFile: record.payload.candidateOutput.localFile } : {}),
             candidateContentSha256: record.payload.candidateOutput.contentSha256,
@@ -980,7 +985,7 @@ export function createProductionRouter(store: DataStore, importVideo: (url: stri
           continue;
         }
         const configuredShot = project.spec?.shotProductions?.[`${assemblyId}:${route.shotId}`] as ShotProduction | undefined;
-        if (configuredShot?.digitalHuman?.contentConfirmed && configuredShot.digitalHuman.method === 'reenact' && route.visualTopic === 'presenter') {
+        if (configuredShot?.digitalHuman && configuredShot.digitalHuman.method === 'reenact' && route.visualTopic === 'presenter') {
           try {
             if (configuredShot.locked) throw new Error('镜头已锁定，请先解锁');
             const fingerprint = shotFingerprint(configuredShot, String(project.spec?.shotProductionContext || ''), route.shotId);

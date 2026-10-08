@@ -136,6 +136,9 @@ const productOnly = assertValidPlanGraph(['product_content'], [
 ]);
 assert.deepEqual(productOnly.get('content_mode_routing')?.dependsOn, ['goal_decomposition']);
 assert.deepEqual(productOnly.get('weekly_review')?.dependsOn, ['content_quality_gate']);
+assertValidPlanGraph(['material_content'], [
+  'context_readiness', 'goal_decomposition', 'content_mode_routing', 'content_production', 'content_quality_gate', 'weekly_review',
+]);
 
 assertValidPlanGraph(['scheduled_social'], [
   'context_readiness', 'goal_decomposition', 'scheduled_source_collection', 'weekly_review',

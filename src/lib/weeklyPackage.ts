@@ -126,5 +126,5 @@ export function packageIssues(pack: WeeklyPackage, startsAt: string, endsAt: str
     const estimated = videoPlans.reduce((sum, plan) => sum + Number(plan.estimatedCost || 0), 0);
     if (estimated + pack.directorPlan.productionSpent > (pack.directorPlan.productionBudgetMax || pack.directorPlan.productionBudget)) issues.push('内容计划预计费用与已用金额超过生产预算');
   }
-  return [...new Set([...issues, ...matrixIssues(pack), ...directorIssues(pack.directorPlan)])];
+  return [...new Set([...issues, ...matrixIssues(pack), ...directorIssues(pack.directorPlan, { requirePublishing: ids.has('publishing') })])];
 }

@@ -1,3 +1,4 @@
+import { requiresContentHumanAcceptance } from '../digitalEmployees/contentProductionAcceptancePolicy.js';
 import { nextManagedCycleWindow, prepareManagedCyclePackage } from '../digitalEmployees/managedOperatingCycle.js';
 import { acquireDurableOperationLease, assertDurableOperationLease, releaseDurableOperationLease } from '../runtime/durableLease.js';
 import { randomUUID } from 'node:crypto';
@@ -1491,7 +1492,11 @@ async function observeTaskProof(tenantId: string, run: RunRecord, task: TaskReco
   }
   if (task.task_key === 'viral_analysis') {
     const videos = await store.list<StoredRecord>('trend_videos', { where: { tenantId }, perPage: 500 });
-    const matching = videos.items.filter(item => recordBelongsToTask(item, run, scope) && exactVideoAnalysis(item));
+    const boundPlan = await tenantRecord<PlanRecord>(COLLECTION.plans, run.plan_id, tenantId);
+    const packageBody = jsonObject<Record<string, any>>(boundPlan?.plan, {});
+    const explicitReferences = new Set<string>((packageBody.businessPackage?.tasks?.find((item: any) => item.templateId === 'production')?.videoPlans || [])
+      .filter((video: VideoCreationPlan) => video.route === 'clone' && video.referenceId).map((video: VideoCreationPlan) => video.referenceId));
+    const matching = videos.items.filter(item => (recordBelongsToTask(item, run, scope) || explicitReferences.has(item.id)) && exactVideoAnalysis(item));
     return scopedProof('exactAnalyses', 'trend_videos.aiAnalysis + workflow scope', matching, matching.map(item => ({ type: 'trend_video', id: item.id })), snapshot.content.exactAnalyses.value);
   }
   if (task.task_key === 'content_production' || task.task_key === 'content_quality_gate') {
@@ -1507,7 +1512,7 @@ async function observeTaskProof(tenantId: string, run: RunRecord, task: TaskReco
       };
     }
     const requiresAcceptance = task.task_key === 'content_quality_gate' && (await tenantRecord<GoalRecord>(COLLECTION.goals, run.goal_id, tenantId))?.metric === 'approved_content_packages';
-    const matching = task.task_key === 'content_quality_gate' ? scoped.filter(item => studioProjectCompleted(item) && (!(requiresAcceptance || jsonObject<Record<string, any>>(item.spec, {}).contentOrder?.videoPlan?.reviewRequirements?.length) || contentAccepted(jsonObject(item.spec, {})))) : scoped.filter(studioProjectRendered);
+    const matching = task.task_key === 'content_quality_gate' ? scoped.filter(item => studioProjectCompleted(item) && (!requiresContentHumanAcceptance({ requiresAcceptance, spec: jsonObject(item.spec, {}) }) || contentAccepted(jsonObject(item.spec, {})))) : scoped.filter(studioProjectRendered);
     const result = scopedProof(
       task.task_key === 'content_quality_gate' ? 'completedWorks' : 'contentProjects',
       task.task_key === 'content_quality_gate' ? 'studio_projects.spec.automation.quality + workflow scope' : 'studio_projects.spec.automation.renderOutputPath + workflow scope',
@@ -1524,7 +1529,7 @@ async function observeTaskProof(tenantId: string, run: RunRecord, task: TaskReco
     result.ready = scoped.length >= expectedCount && matching.length === scoped.length;
     result.proof = { ...result.proof, value: matching.length, status: result.ready ? 'available' : 'pending' };
     const blocker = scoped.map(item => String(jsonObject<Record<string, unknown>>(jsonObject<Record<string, unknown>>(item.spec, {}).automation, {}).blocker || '').trim()).find(Boolean) || '';
-    return { ...result, blockedReason: blocker || (requiresAcceptance && !result.ready ? '请在交付看板预览成片并确认当前版本；机器通过不计为人工批准' : '') };
+    return { ...result, blockedReason: blocker || (requiresAcceptance && !result.ready ? '内容成片尚未完成所需质量检查' : '') };
   }
   if (task.task_key === 'publishing_calendar') {
     const posts = await store.list<StoredRecord>('posts', { where: { tenant_id: tenantId }, perPage: 500 });
@@ -1903,6 +1908,20 @@ async function advanceRunUnlocked(tenantId: string, runId: string): Promise<void
     const previousFailure = jsonObject<Record<string, unknown>>(task.output, {}).executionFailure as TaskFailure | undefined;
     if (!taskRetryDue(previousFailure)) continue;
     try {
+    // An explicitly selected, fully analyzed reference is already collected.
+    // Do not require creating a new recurring crawler for a one-off remake.
+    if (task.task_key === 'scheduled_source_collection' && videoTask?.videoPlans?.length
+      && videoTask.videoPlans.every(video => video.route === 'clone' && video.referenceId && video.preproduction?.benchmark.status === 'ready')) {
+      const referenceIds = [...new Set(videoTask.videoPlans.map(video => video.referenceId))];
+      const references = await Promise.all(referenceIds.map(id => store.getById<StoredRecord>('trend_videos', id)));
+      if (references.every(reference => reference && reference.tenantId === tenantId && exactVideoAnalysis(reference))) {
+        const output = { dataStatus: 'not_required', summary: '本轮已选择采集并完成精确分析的灵感视频，无需新增定时采集。', referenceIds };
+        await store.update(COLLECTION.tasks, task.id, { status: 'skipped', output, blocked_reason: '', updated_at: new Date().toISOString() });
+        task.status = 'skipped'; task.output = output; task.blocked_reason = '';
+        await appendEvent({ tenantId, runId: run.id, taskId: task.id, type: 'task.not_required', summary: output.summary, payload: { referenceIds } });
+        continue;
+      }
+    }
     if (task.task_key === 'viral_analysis' && videoTask?.videoPlans?.length && videoTask.videoPlans.every(video => video.route !== 'clone')) {
       const output = { dataStatus: 'not_required', summary: '本轮视频均未指定爆款裂变，无需等待参考分析。' };
       await store.update(COLLECTION.tasks, task.id, { status: 'skipped', output, blocked_reason: '', updated_at: new Date().toISOString() });
@@ -2370,7 +2389,7 @@ digitalEmployeesRouter.post('/onboarding/complete', async (req, res) => {
     focusProducts: '',
     primaryGoal: 'awareness',
     approvalOwner: String(onboardingInput.approvalOwner || '').trim() || '企业管理员',
-    enabledWorkflows: ['viral_clone', 'product_content', 'material_content'],
+    enabledWorkflows: ['viral_clone'],
     publishingTargets: [],
     allowRealPublishing: false,
     allowRealCustomerMessages: false,

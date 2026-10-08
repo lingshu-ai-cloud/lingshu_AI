@@ -197,14 +197,20 @@ export function validatePackage(pack: WeeklyPackage, goal: WeeklyGoalInput, conf
           : []),
       ]
     : [];
-  return [...packageIssues(pack, goal.startsAt, goal.endsAt), ...versionIssues, ...growthIssues, ...(config ? matrixScopeIssues(pack, config.publishingTargets, goal.contentPlatforms) : []), ...pack.tasks.flatMap(t => (t.videoPlans || []).flatMap((p, i) => videoPlanErrors(p).map(e => `第 ${i + 1} 条视频：${e}`)))];
+  return [...packageIssues(pack, goal.startsAt, goal.endsAt), ...versionIssues, ...growthIssues, ...(config ? matrixScopeIssues(pack, config.publishingTargets, goal.contentPlatforms) : []), ...pack.tasks.flatMap(t => (t.videoPlans || []).flatMap((p, i) => videoPlanErrors(p)
+    // A candidate clone slot is a scheduling intention. The Director attaches
+    // an exact reference during detail generation; execution remains blocked
+    // by buildContentBatchPlan until that evidence exists.
+    .filter(error => !(p.route === 'clone' && p.directorStatus === 'candidate' && error === '请选择爆款参考'))
+    .map(e => `第 ${i + 1} 条视频：${e}`)))];
 }
 
 export function packageConfig(pack: WeeklyPackage, config: DigitalEmployeeConfig): DigitalEmployeeConfig {
   const selected = new Set(pack.tasks.map(t => t.templateId));
   const workflows: DigitalEmployeeConfig['enabledWorkflows'] = [];
   if (selected.has('director')) workflows.push('scheduled_social', 'viral_clone');
-  if (selected.has('production')) workflows.push('product_content');
+  // Content Agent production is admitted only through the Director's viral
+  // replication workflow. Free creation is an independent human workflow.
   if (selected.has('publishing')) workflows.push('content_publish');
   if (selected.has('customers')) workflows.push('customer_segmentation');
   if (selected.has('followup')) workflows.push('batch_followup');

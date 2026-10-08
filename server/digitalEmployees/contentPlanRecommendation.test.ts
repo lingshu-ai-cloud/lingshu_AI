@@ -127,3 +127,13 @@ assert.equal(fourPlatformBatch.orders.length, 5, 'production receives five order
 assert.equal(fourPlatformBatch.orders.flatMap(order => order.deliveryVariants || []).length, 18, 'five production orders retain every platform delivery destination');
 
 console.log('content plan recommendation tests passed');
+
+// Merging the new schedule must not rewrite explicit historic production routes.
+const historicPack = recommendPackage(goal, config);
+historicPack.tasks = historicPack.tasks.map(task => task.templateId === 'production'
+  ? { ...task, videoPlans: (task.videoPlans || []).map(plan => ({ ...plan, route: 'product' as const, buyerProblem: '已确认的历史任务', referenceId: 'historic-reference' })) }
+  : task);
+const historicResult = enrichPackageWithContentSignals({ pack: historicPack, goal, config, videos: [], benchmarks });
+const historicPlans = historicResult.tasks.find(task => task.templateId === 'production')?.videoPlans || [];
+assert.ok(historicPlans.length > 0);
+assert.ok(historicPlans.every(plan => plan.route === 'product' && plan.referenceId === 'historic-reference'), 'explicit historic routes and references must survive enrichment when no replacement evidence exists');

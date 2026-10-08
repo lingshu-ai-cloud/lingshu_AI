@@ -143,6 +143,24 @@ export interface StudioScriptResult {
   fallbackReason?: string;
   error?: string;
   code?: string;
+  /** Enterprise records that ground this generation. */
+  factReferences?: string[];
+  /** Canonical multi-select product IDs accepted by the server. */
+  selectedProductIds?: string[];
+}
+export interface StudioRenderJob {
+  id: string; projectId: string; outputKey: string; inputSignature: string;
+  status: 'queued' | 'processing' | 'completed' | 'failed'; progress: number; attempts: number;
+  outputPath?: string; previewUrl?: string; error?: string; createdAt: string; updatedAt: string;
+}
+
+export interface StudioManualHandoff {
+  id: string;
+  action: 'team_review' | 'publishing_plan';
+  status: 'pending_review' | 'planned';
+  renderPath: string;
+  createdAt: string;
+  createdBy: string;
 }
 
 async function get<T>(path: string, fallback: T): Promise<T & { source?: string }> {
@@ -370,6 +388,16 @@ export interface StoryboardFirstFrameResult {
   error?: string;
 }
 
+export interface FreeCreationHookFrameResult {
+  ok: boolean;
+  material?: Material;
+  fingerprint?: string;
+  estimatedCostCny?: number;
+  reused?: boolean;
+  error?: string;
+  code?: string;
+}
+
 export interface StoryboardQualityResult {
   score?: number;
   passed: boolean;
@@ -468,6 +496,7 @@ export const studioApi = {
     materials: string[];
     productInfo?: string;
     selectedProductId?: string;
+    selectedProductIds?: string[];
     language: string;
     platform: string;
     duration: number;
@@ -586,6 +615,15 @@ export const studioApi = {
     post<{ ok: boolean; translations: Record<string, string>; error?: string }>('translate/batch', b, { ok: false, translations: {} }, options?.signal),
 
   // Seedance 视频生成
+  freeCreationHookFirstFrame: (b: {
+    projectId: string;
+    requestId: string;
+    productIds: string[];
+    goal: string;
+    audience: string;
+    visualIntent: string;
+    ratio?: '9:16' | '16:9' | '1:1';
+  }) => post<FreeCreationHookFrameResult>('free-creation-hook/first-frame', b, { ok: false }),
   storyboardFirstFrame: (b: {
     projectId?: string;
     requestId: string;
@@ -698,6 +736,31 @@ export const studioApi = {
     }
   },
 
+  createRenderJob: async (body: { projectId: string; outputKey: string; inputSignature: string; spec: RenderSpec }): Promise<{ ok: boolean; replayed?: boolean; job?: StudioRenderJob; error?: string }> => {
+    try {
+      const r = await fetch('/api/overseas/studio/render/jobs', { method: 'POST', headers: { 'Content-Type': 'application/json', ...authHeader() }, body: JSON.stringify(body) });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data?.error || String(r.status));
+      return data;
+    } catch (err: any) { return { ok: false, error: err?.message || '渲染任务创建失败' }; }
+  },
+  latestRenderJob: async (projectId: string): Promise<{ ok: boolean; job: StudioRenderJob | null; error?: string }> => {
+    try {
+      const r = await fetch(`/api/overseas/studio/render/jobs/project/${encodeURIComponent(projectId)}/latest`, { headers: authHeader(), cache: 'no-store' });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data?.error || String(r.status));
+      return data;
+    } catch (err: any) { return { ok: false, job: null, error: err?.message || '渲染任务查询失败' }; }
+  },
+  retryRenderJob: async (id: string): Promise<{ ok: boolean; job?: StudioRenderJob; error?: string }> => {
+    try {
+      const r = await fetch(`/api/overseas/studio/render/jobs/${encodeURIComponent(id)}/retry`, { method: 'POST', headers: authHeader() });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data?.error || String(r.status));
+      return data;
+    } catch (err: any) { return { ok: false, error: err?.message || '渲染任务重试失败' }; }
+  },
+
   openRenderOutput: async (path: string): Promise<{ ok: boolean; error?: string }> => {
     try {
       const r = await fetch('/api/overseas/studio/render/open-output', {
@@ -714,7 +777,7 @@ export const studioApi = {
   },
 
   // 草稿 / 作品
-  listProjects: async (): Promise<StudioProject[]> => {
+  listProjects: async (options?: { throwOnError?: boolean }): Promise<StudioProject[]> => {
     try {
       const r = await fetch('/api/overseas/studio/projects', { headers: authHeader() });
       if (!r.ok) throw new Error(String(r.status));
@@ -724,7 +787,8 @@ export const studioApi = {
         if (!studioProjectRevisions.has(project.id)) studioProjectRevisions.set(project.id, project.updatedAt);
       });
       return projects;
-    } catch {
+    } catch (error) {
+      if (options?.throwOnError) throw error;
       return [];
     }
   },
@@ -753,7 +817,17 @@ export const studioApi = {
       release?.();
     }
   },
+  requalityProject: (projectId: string) => post<{
+    ok: boolean; replayed?: boolean; error?: string; issues?: string[];
+    record?: { id: string; inputFingerprint: string; generationProvenance: 'ai'; qualityStatus: 'passed'; publishable: true; createdAt: string; renderPath: string; report: { gateVersion: string; checks: Array<{ id: string; passed: true; detail: string }> } };
+    project?: StudioProject;
+  }>(`projects/${encodeURIComponent(projectId)}/requality`, {}, { ok: false }),
   deleteProject: (id: string) => del(`projects/${id}`),
+  listManualHandoffs: (projectId: string) => get<{ ok: boolean; handoffs: StudioManualHandoff[] }>(
+    `projects/${encodeURIComponent(projectId)}/manual-handoffs`, { ok: false, handoffs: [] }),
+  createManualHandoff: (projectId: string, body: { action: StudioManualHandoff['action']; renderPath: string; reviewed: true }) =>
+    post<{ ok: boolean; replayed?: boolean; handoff?: StudioManualHandoff; error?: string }>(
+      `projects/${encodeURIComponent(projectId)}/manual-handoffs`, body, { ok: false }),
   createVariationBatch: (b: { title: string; templateProjectId?: string; duration: number; maxItems: number; dimensions: Record<string, string[]>; plan?: VariationBatch['plan'] }) =>
     post<{ ok: boolean; batch: VariationBatch }>('variation-batches', b, { ok: false, batch: null as unknown as VariationBatch }),
   listVariationBatches: async (): Promise<VariationBatch[]> => {

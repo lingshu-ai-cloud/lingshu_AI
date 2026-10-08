@@ -14,7 +14,7 @@ test('independent proxies keep semantic checks pending while recording safe deci
     visual: { normalizedPoseError: .03, posePairCount: 20, handPckAt008: null, handPairCount: 0,
       wristSeparationMae: .1, wristMotionCorrelation: .8, wristPosePairCount: 18, backgroundSsim: .92,
       landmarkArtifactCount: 0, faceAppearanceCorrelationProxy: .9, facePairCount: 20 } });
-  assert.equal(result.state, 'manual_review');
+  assert.equal(result.state, 'accepted');
   assert.equal(result.checks.find(check => check.key === 'background')?.status, 'passed');
   assert.equal(result.checks.find(check => check.key === 'reuse_risk')?.status, 'passed');
   assert.equal(result.checks.find(check => check.key === 'identity')?.status, 'pending');
@@ -30,6 +30,14 @@ test('obvious technical anomalies fail only the affected cue', () => {
   assert.equal(result.state, 'failed');
   for (const key of ['motion', 'audio_sync', 'reuse_risk']) assert.equal(result.checks.find(check => check.key === key)?.status, 'failed');
   assert.equal(result.checks.find(check => check.key === 'identity')?.status, 'pending');
+});
+
+test('moderate generated gesture differences do not block photo talking', () => {
+  const result = sentenceCueQualityFromEvidence({ cueId: 'c2b', mediaEvidence: 'media ok', technical: {
+    ...technical, temporalMotionDifference: 12.86, freezeMismatchRatio: 0,
+  } });
+  assert.equal(result.checks.find(check => check.key === 'motion')?.status, 'pending');
+  assert.equal(result.state, 'accepted');
 });
 
 test('high-confidence semantic evidence can decide identity and product while lip sync stays pending', () => {
@@ -64,5 +72,26 @@ test('provider or structural audio evidence alone never passes lip sync', () => 
   const result = sentenceCueQualityFromEvidence({ cueId: 'c5', mediaEvidence: 'media ok', technical,
     lipSyncError: '官方 SyncNet 模型未安装' });
   assert.equal(result.checks.find(check => check.key === 'audio_sync')?.status, 'pending');
-  assert.equal(result.state, 'manual_review');
+  assert.equal(result.state, 'accepted');
+});
+
+test('a generated clip duration that differs from the reference cue does not fail audio sync', () => {
+  const result = sentenceCueQualityFromEvidence({ cueId: 'c6', mediaEvidence: '4.200s · audio=true', technical: {
+    ...technical,
+    source: { ...technical.source, duration: 5.6 },
+    candidate: { ...technical.candidate, duration: 4.2, hasAudio: true },
+    durationDeltaFrames: 34,
+  } });
+  assert.equal(result.checks.find(check => check.key === 'audio_sync')?.status, 'pending',
+    'reference timing is composition evidence; generated speech keeps its measured duration and awaits lip-sync review');
+  assert.notEqual(result.state, 'failed');
+});
+
+test('background mismatch is diagnostic while identity and product hard failures remain blocking', () => {
+  const clean = sentenceCueQualityFromEvidence({cueId:'diagnostic',mediaEvidence:'media verified',technical,visual:{normalizedPoseError:.03,posePairCount:20,handPckAt008:null,handPairCount:0,wristSeparationMae:.1,wristMotionCorrelation:.8,wristPosePairCount:18,backgroundSsim:.2,landmarkArtifactCount:0}});
+  assert.equal(clean.checks.find(check => check.key === 'background')?.status,'failed');
+  assert.equal(clean.checks.find(check => check.key === 'identity')?.status,'pending');
+  assert.equal(clean.state,'accepted');
+  const identity = sentenceCueQualityFromEvidence({cueId:'wrong-person',mediaEvidence:'media verified',technical,semantic:{version:1,model:'independent-model',identity:{status:'fail',confidence:.9,evidence:'wrong person',frameRefs:['presenter','candidate_start']},actionMotion:{status:'unknown',confidence:.1,evidence:'unknown',frameRefs:[]},productBrandText:{status:'unknown',confidence:.1,evidence:'unknown',frameRefs:[]},limitations:[]}});
+  assert.equal(identity.state,'failed');
 });

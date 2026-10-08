@@ -72,4 +72,17 @@ assert.equal(intentPlan.events[0].assetIntent, 'warning_marker');
 assert.equal(intentPlan.events[1].visualIntent, undefined, 'unknown renderer intents are dropped');
 assert.equal(intentPlan.events[1].assetIntent, undefined, 'asset paths cannot cross the renderer boundary');
 
+const shotAwarePlan = normalizeEmphasisPlan({ profile: 'factory_process', events: [{
+  id: 'graphic', type: 'key_fact', text: '30年工厂', startMs: 800, endMs: 1700,
+  evidenceStartMs: 750, evidenceEndMs: 1800, importance: 3, confidence: 1, source: 'transcript',
+  shotId: 'shot-2', presentationMode: 'graphic_only', targetRelation: 'surround',
+  subjectAnchor: { x: .5, y: .5 }, occupiedBoxes: [{ x: .1, y: .6, width: .8, height: .08 }],
+}] }, 2);
+assert.equal(shotAwarePlan.events[0].presentationMode, 'graphic_only');
+assert.equal(shotAwarePlan.events[0].targetRelation, 'surround');
+assert.equal(shotAwarePlan.events[0].shotId, 'shot-2');
+assert.deepEqual(shotAwarePlan.events[0].occupiedBoxes, [{ x: .1, y: .6, width: .8, height: .08 }]);
+assert.equal(emphasisToAssEvents(shotAwarePlan, 1080, 1920).length, 0,
+  'graphic-only events do not reappear as duplicate ASS labels');
+
 console.log('caption emphasis composition regression passed');

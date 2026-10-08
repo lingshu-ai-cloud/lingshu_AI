@@ -146,9 +146,9 @@ export async function requireScopedAsset(req: Request, res: Response, next: Next
   if (segments[0] === 'object-storage') {
     const namespace = segments[1];
     if (/^[a-z0-9_-]+$/i.test(namespace || '')
-      && ((segments.length === 4 && segments[2] === 'shared')
-        || (segments.length === 5 && segments[2] === 'tenants'
-          && segments[3] === materialAssetTenantKey(viewerTenantId)))) {
+      && ((segments.length >= 4 && segments[2] === 'shared')
+        || (segments.length >= 5 && segments[2] === 'tenants'
+          && [viewerTenantId, materialAssetTenantKey(viewerTenantId)].includes(segments[3] || '')))) {
       next();
       return;
     }

@@ -12,7 +12,7 @@ const reference: DigitalHumanRequirements = {
 };
 test('talking requires confirmation for new requirements, preserves legacy admission and checks capability', () => {
   assert.equal(planDigitalHumanShot(base).executable, true);
-assert.equal(planDigitalHumanShot({ ...base, requirements: newDigitalHumanRequirements() }).state, 'needs_confirmation');
+assert.equal(planDigitalHumanShot({ ...base, requirements: newDigitalHumanRequirements() }).state, 'ready');
 assert.deepEqual(referenceModelInputAuthorization(reference, '2026-09-24T00:00:00.000Z'), { evidence: '企业自有拍摄 AUTH-1', confirmedAt: '2026-09-24T00:00:00.000Z' });
 assert.equal(referenceModelInputAuthorization({ ...reference, method: 'reenact', reference: { ...reference.reference!, modelInputAuthorized: false } }, '2026-09-24T00:00:00.000Z'), null);
 assert.deepEqual(referenceModelInputAuthorization({ ...reference, method: 'reenact', replicationMode: 'direct_reference', reference: { ...reference.reference!, modelInputAuthorized: true, modelInputAuthorizationEvidence: '允许供应商处理 AUTH-MODEL-1' } }, '2026-09-24T00:00:00.000Z'), { evidence: '允许供应商处理 AUTH-MODEL-1', confirmedAt: '2026-09-24T00:00:00.000Z' });
@@ -34,6 +34,30 @@ test('reference generation never silently falls back to a talking provider', () 
     assert.equal(plan.executable, false);
   }
   assert.equal(planDigitalHumanShot({ ...base, requirements: { ...reference, method: 'talking' } }).executable, false, 'talking must not ignore motion and scene constraints');
+});
+test('sentence-first-frame reenactment is executable only after Seedream + Seedance preflight', () => {
+  const requirements: DigitalHumanRequirements = {
+    ...reference,
+    method: 'reenact',
+    replicationMode: 'sentence_first_frame',
+    preferredProvider: 'sd',
+    replacementScope: 'person_and_scene',
+    targetEffect: 'flexible_scene',
+    reference: {
+      ...reference.reference!,
+      cues: [{ id: 'sentence-1', start: 1, end: 5, originalText: '原句', targetText: '目标口播', shotIds: ['shot-1'], personShot: true, compositionClusterId: 'front-medium' }],
+    },
+  };
+  const unavailable = planDigitalHumanShot({ ...base, requirements, seedanceSentenceAvailable: false });
+  assert.equal(unavailable.state, 'preview_only');
+  assert.equal(unavailable.executable, false);
+  assert.equal(unavailable.provider, null);
+  assert.match(unavailable.reasons.join('；'), /尚未通过运行环境预检/);
+
+  const ready = planDigitalHumanShot({ ...base, requirements, seedanceSentenceAvailable: true });
+  assert.equal(ready.state, 'ready');
+  assert.equal(ready.executable, true);
+  assert.equal(ready.provider, 'runway_seedance');
 });
 test('candidate tools reflect the visual operation instead of the shared digital-human category', () => {
   assert.deepEqual(candidateToolsFor({ ...reference, method: 'replace' }), ['local_head_pipeline', 'runway_kling_motion']);
@@ -83,7 +107,7 @@ test('changed reference, identity or narration revokes content approval and inva
 });
 test('route dependencies expose generation, automatic checks, manual review and assembly truthfully', () => {
   const planned = digitalHumanRouteSteps('replace', 'runway_act_two', true);
-  assert.deepEqual(planned.map(step => step.dependsOn), [[], ['source_alignment'], ['generation'], ['automatic_quality'], ['manual_review']]);
+  assert.deepEqual(planned.map(step => step.dependsOn), [[], ['source_alignment'], ['generation'], ['automatic_quality'], ['automatic_quality']]);
   assert.equal(planned.find(step => step.id === 'generation')?.tool, 'runway_act_two');
   const initial = initialDigitalHumanQuality(undefined, '2026-01-01T00:00:00Z');
   assert.equal(routeStepsForExecution(planned, 'pending', initial).find(step => step.id === 'generation')?.status, 'running');

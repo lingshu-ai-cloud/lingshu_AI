@@ -95,9 +95,9 @@ async function matchingRows(dataStore: DataStore, input: {
       lease_scope: input.scope,
       subject_id: input.subjectId,
     },
-    perPage: 2,
+    perPage: 100,
   });
-  if (!Array.isArray(result.items) || result.totalItems > 1 || result.items.length > 1) {
+  if (!Array.isArray(result.items) || result.totalItems > result.items.length) {
     throw new DurableOperationLeaseError('durable_lease_integrity_violation');
   }
   return result.items;
@@ -132,7 +132,26 @@ export async function acquireDurableOperationLease(input: {
     MAX_RECLAIM_GRACE_MS,
   );
   const key = { tenantId, scope, subjectId };
-  const current = (await matchingRows(input.dataStore, key))[0];
+  let rows = await matchingRows(input.dataStore, key);
+  // File-backed local previews cannot enforce the production unique index. A
+  // hard-killed worker may therefore leave an expired generation beside its
+  // successor. Remove only generations that are safely beyond the reclaim
+  // grace period; multiple live owners still fail closed.
+  if (rows.length > 1) {
+    for (const row of rows) {
+      if (!rowMatches(row, key)) throw new DurableOperationLeaseError('durable_lease_integrity_violation');
+      const expiresAt = timestamp(row.expires_at)!;
+      if (expiresAt + reclaimGraceMs > now.getTime()) continue;
+      const latest = await input.dataStore.getById<LeaseRow>(DURABLE_OPERATION_LEASE_COLLECTION, row.id);
+      if (latest && rowMatches(latest, key) && latest.lease_token === row.lease_token
+        && timestamp(latest.expires_at)! + reclaimGraceMs <= now.getTime()) {
+        await input.dataStore.delete(DURABLE_OPERATION_LEASE_COLLECTION, row.id);
+      }
+    }
+    rows = await matchingRows(input.dataStore, key);
+    if (rows.length > 1) throw new DurableOperationLeaseError('durable_lease_integrity_violation');
+  }
+  const current = rows[0];
   if (current) {
     if (!rowMatches(current, key)) throw new DurableOperationLeaseError('durable_lease_integrity_violation');
     const expiresAt = timestamp(current.expires_at)!;

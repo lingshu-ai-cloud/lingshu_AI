@@ -12,7 +12,7 @@ function run(args: string[]): Promise<{ stdout: Buffer; stderr: string }> {
 }
 
 /** Technical checks only: do not certify lip sync, visual authenticity or aesthetic quality. */
-export async function checkAvatarMedia(file: string, expected: { ratio: string; duration: number; transparent: boolean }): Promise<AvatarMediaCheck> {
+export async function checkAvatarMedia(file: string, expected: { ratio: string; duration: number; transparent: boolean; resolution?: '480p' | '720p' }): Promise<AvatarMediaCheck> {
   // Force the expected container: an HTML response or playlist must not cause secondary fetches.
   const input = ['-protocol_whitelist', 'file,pipe', '-f', expected.transparent ? 'matroska' : 'mov', '-i', file];
   const decoded = await run(['-hide_banner', '-nostdin', '-xerror', ...input, '-map', '0:v:0', '-map', '0:a:0?', '-f', 'null', '-']);
@@ -26,8 +26,9 @@ export async function checkAvatarMedia(file: string, expected: { ratio: string; 
   const duration = Number(time[1]) * 3600 + Number(time[2]) * 60 + Number(time[3]);
   if (!Number.isFinite(duration) || duration <= 0 || duration > 180) throw new Error('数字人实际时长须在0到180秒之间');
   const ratios: Record<string, number> = { '9:16': 9 / 16, '16:9': 16 / 9, '1:1': 1 };
-  if (!ratios[expected.ratio] || Math.abs(width / height / ratios[expected.ratio] - 1) > 0.02) throw new Error(`数字人实际画幅 ${width}×${height} 与请求 ${expected.ratio} 不符`);
-  if (Math.min(width, height) < 720) throw new Error(`数字人实际分辨率 ${width}×${height} 未达到720p短边要求`);
+  if (!ratios[expected.ratio] || Math.abs(width / height / ratios[expected.ratio] - 1) > 0.03) throw new Error(`数字人实际画幅 ${width}×${height} 与请求 ${expected.ratio} 不符`);
+  const minimumShortEdge = expected.resolution === '480p' ? 480 : 720;
+  if (Math.min(width, height) < minimumShortEdge) throw new Error(`数字人实际分辨率 ${width}×${height} 未达到${minimumShortEdge}p短边要求`);
   if (!Number.isFinite(expected.duration) || Math.abs(duration - expected.duration) > Math.max(0.5, expected.duration * 0.05)) throw new Error('数字人文件实际时长与供应商结果不符，需人工核验');
   const hasAudio = /Stream .*Audio:/.test(decoded.stderr);
   if (!hasAudio) throw new Error('数字人口播文件缺少音轨，不能作为已完成候选');

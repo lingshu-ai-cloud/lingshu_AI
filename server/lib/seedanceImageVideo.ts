@@ -11,16 +11,24 @@ function resolveFirstFrame(input: FirstFrameInput): string {
   }
   throw new Error('Seedance 逐句视频需要 HTTPS 目标人物首帧，或状态为 Active 的图片型 asset:// 可信素材');
 }
-export async function generateSeedanceSentenceVideo(input: { apiKey: string; model: string; baseUrl?: string; imageUrl: string; trustedAssetKind?: SeedanceTrustedAssetKind; prompt: string; duration: number; ratio: string; resolution?: '480p' | '720p'; pollMs?: number; timeoutMs?: number; transport?: typeof fetch; onSubmitted?: (taskId: string) => Promise<void> | void }): Promise<{ taskId: string; videoUrl: string }> {
+function resolveMotionGuide(url: string, attested: boolean): string {
+  const normalized = String(url || '').trim();
+  if (!attested) throw new Error('Seedance 动作参考缺少已去除原人物身份的预处理证明，未调用供应商');
+  if (!/^https:\/\//i.test(normalized)) throw new Error('Seedance 动作参考必须是供应商可访问的 HTTPS 脱敏视频，未调用供应商');
+  return normalized;
+}
+
+export async function generateSeedanceSentenceVideo(input: { apiKey: string; model: string; baseUrl?: string; imageUrl: string; trustedAssetKind?: SeedanceTrustedAssetKind; referenceVideoUrl?: string; motionGuideAttested?: boolean; prompt: string; duration: number; ratio: string; resolution?: '480p' | '720p'; existingTaskId?: string; pollMs?: number; timeoutMs?: number; transport?: typeof fetch; onSubmitted?: (taskId: string) => Promise<void> | void }): Promise<{ taskId: string; videoUrl: string }> {
   if (!input.apiKey.trim()) throw new Error('Seedance 未配置方舟 API Key');
   const imageUrl = resolveFirstFrame({ url: input.imageUrl, trustedAssetKind: input.trustedAssetKind });
+  const referenceVideoUrl = input.existingTaskId ? '' : resolveMotionGuide(String(input.referenceVideoUrl || ''), input.motionGuideAttested === true);
   const fetcher = input.transport || fetch; const base = (input.baseUrl || 'https://ark.cn-beijing.volces.com/api/v3').replace(/\/+$/, '');
   const request = async (url: string, init?: RequestInit) => { const response = await fetcher(url, { ...init, headers: { Authorization: `Bearer ${input.apiKey}`, 'Content-Type': 'application/json', ...(init?.headers || {}) }, signal: AbortSignal.timeout(45_000) }); const value = await response.json().catch(() => ({})) as Task & { message?: string }; if (!response.ok) throw new Error(`Seedance ${response.status}: ${typeof value.error === 'string' ? value.error : value.error?.message || value.message || response.statusText}`); return value; };
-  const created = await request(`${base}/contents/generations/tasks`, { method: 'POST', body: JSON.stringify({ model: input.model,
-    content: [{ type: 'text', text: input.prompt }, { type: 'image_url', image_url: { url: imageUrl }, role: 'first_frame' }],
+  const created = input.existingTaskId ? { id: input.existingTaskId } : await request(`${base}/contents/generations/tasks`, { method: 'POST', body: JSON.stringify({ model: input.model,
+    content: [{ type: 'text', text: input.prompt }, { type: 'image_url', image_url: { url: imageUrl }, role: 'reference_image' }, { type: 'video_url', video_url: { url: referenceVideoUrl }, role: 'reference_video' }],
     ratio: input.ratio, duration: Math.max(4, Math.min(15, Math.ceil(input.duration))), resolution: input.resolution || '720p', generate_audio: true, watermark: false }) });
   if (!created.id) throw new Error('Seedance 提交结果未知：未返回任务 ID，不能自动重试');
-  await input.onSubmitted?.(created.id);
+  if (!input.existingTaskId) await input.onSubmitted?.(created.id);
   const deadline = Date.now() + (input.timeoutMs || 600_000);
   while (Date.now() < deadline) { const task = await request(`${base}/contents/generations/tasks/${encodeURIComponent(created.id)}`); const status = String(task.status || '').toLowerCase();
     if (['succeeded','success','completed','done'].includes(status)) { if (!task.content?.video_url) throw new Error('Seedance 任务完成但没有视频地址'); return { taskId: created.id, videoUrl: task.content.video_url }; }

@@ -415,8 +415,7 @@ export function buildWeeklyPlan(goal: WeeklyGoalInput, config: DigitalEmployeeCo
     goal_decomposition: ['context_readiness'],
     scheduled_source_collection: ['goal_decomposition'],
     viral_analysis: [hasScheduledCollection ? 'scheduled_source_collection' : 'goal_decomposition'],
-    // Viral-clone plans must consume the Director Agent's confirmed analysis.
-    // Product-only plans can still be scheduled directly from the confirmed goal.
+    // Viral-clone plans consume the Director Agent's confirmed benchmark analysis.
     content_mode_routing: [hasViralClone ? 'viral_analysis' : 'goal_decomposition'],
     content_production: ['content_mode_routing'],
     content_quality_gate: ['content_production'],

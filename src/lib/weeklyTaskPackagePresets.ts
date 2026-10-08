@@ -96,7 +96,7 @@ export function buildPresetVideoPlans(input: {
     : platforms[0]!;
   return input.preset.themes.slice(0, input.preset.weeklyOutput).map((theme, index) => normalizeVideoPlan({
     ...input.defaults,
-    route: 'product',
+    route: 'clone',
     presenter: 'material',
     productName: input.productName,
     platform: index === 0 ? primaryPlatform : platforms[index % platforms.length]!,

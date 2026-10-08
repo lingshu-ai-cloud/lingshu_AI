@@ -12,6 +12,8 @@ import { enterpriseAssetTenantKey } from '../storage/enterpriseAssets.js';
 import { readLocalMaterials, saveLocalMaterials } from '../lib/materialLibrary.js';
 import { objectStorageUpload } from '../storage/objectStorage.js';
 import { tenantPrivateObjectKey } from '../storage/materialAssets.js';
+import { advanceAutomatedReplication, invokeReplicationRoute } from '../lib/automatedReplicationBridge.js';
+import { newShotProduction } from '../../src/lib/shotProduction.js';
 
 const suffix = randomUUID();
 const tenantId = `local_tenant_storyboard_e2e_${suffix}`;
@@ -272,7 +274,13 @@ try {
     }
     const first = await post('/storyboard-first-frame', frameRequest);
     assert.equal(first.status, 200, `${shot.id} first frame: ${JSON.stringify(first.body)}`);
-    assert.equal(first.body.firstFrameQuality.status, 'needs_review');
+    const automaticReplication = shot.mode === 'clone' && !('characterMaterialId' in frameRequest);
+    assert.equal(first.body.firstFrameQuality.status, automaticReplication ? 'passed' : 'needs_review');
+    if (automaticReplication) {
+      assert.equal(first.body.material.provenance.confirmationSource, 'automatic_policy');
+      assert.equal(first.body.firstFrameQuality.requiresHumanReview, false);
+      assert.equal(first.body.firstFrameQuality.reviewedBy, undefined);
+    }
     if (shot.id === 'free-factory') assert.equal(first.body.firstFrameQuality.checks.environment_fidelity.verdict, 'pass');
     if (productIds.length) assert.ok(first.body.identityNotice, `${shot.id} must explain how the first frame handled product identity`);
     if (shot.id === 'free-product') {
@@ -317,9 +325,11 @@ try {
       assert.equal(changed.body.code, 'STORYBOARD_PERSON_IMAGE_CHANGED');
       await objectStorageUpload({ key: characterObjectKey, body: image, contentType: 'image/png' });
     }
-    const confirmed = await post(`/storyboard-first-frame/${first.body.material.id}/confirm`,
-      { shotId: shot.id, fingerprint: first.body.fingerprint });
-    assert.equal(confirmed.status, 200, `${shot.id} confirm: ${JSON.stringify(confirmed.body)}`);
+    if (!automaticReplication) {
+      const confirmed = await post(`/storyboard-first-frame/${first.body.material.id}/confirm`,
+        { shotId: shot.id, fingerprint: first.body.fingerprint });
+      assert.equal(confirmed.status, 200, `${shot.id} confirm: ${JSON.stringify(confirmed.body)}`);
+    }
     const videoRequest = { firstFrameMaterialId: first.body.material.id, firstFrameFingerprint: first.body.fingerprint,
       shotId: shot.id, requestId: `video-${shot.id}-${suffix}`, ratio: '9:16', duration: 4, resolution: '480p',
       generationContext: { projectId }, script: shot.detail, language: 'zh' };
@@ -390,13 +400,19 @@ try {
     assert.equal(premature.body.code, 'STORYBOARD_AIGC_ASSIGNMENT_UNVERIFIED', 'unreviewed candidate must not be adopted');
     const checked = await post('/storyboard-quality-check', { materialId: result.body.material.id, storyboard: shot.detail });
     assert.equal(checked.status, 200, `${shot.id} QA: ${JSON.stringify(checked.body)}`);
-    assert.equal(checked.body.quality.status, 'needs_review');
+    assert.equal(checked.body.quality.status, automaticReplication ? 'passed' : 'needs_review');
     if (shot.id === 'free-factory') assert.equal(checked.body.quality.checks.environment_fidelity.verdict, 'pass');
-    const reviewed = await post(`/storyboard-quality-check/${result.body.material.id}/review`, {
-      shotId: shot.id, reportId: checked.body.quality.reportId, decision: 'accept',
-    });
-    assert.equal(reviewed.status, 200, `${shot.id} review: ${JSON.stringify(reviewed.body)}`);
-    assert.equal(reviewed.body.quality.passed, true);
+    if (automaticReplication) {
+      assert.equal(checked.body.quality.acceptanceSource, 'automatic_policy');
+      assert.equal(checked.body.quality.requiresHumanReview, false);
+      assert.equal(checked.body.quality.reviewedBy, undefined);
+    } else {
+      const reviewed = await post(`/storyboard-quality-check/${result.body.material.id}/review`, {
+        shotId: shot.id, reportId: checked.body.quality.reportId, decision: 'accept',
+      });
+      assert.equal(reviewed.status, 200, `${shot.id} review: ${JSON.stringify(reviewed.body)}`);
+      assert.equal(reviewed.body.quality.passed, true);
+    }
     if (shot.id === 'free-product') {
       const sideFile = path.join(assetDir, 'product-side.png');
       fs.writeFileSync(sideFile, await sharp({ create: { width: 720, height: 1280, channels: 3, background: '#345678' } }).png().toBuffer());
@@ -430,7 +446,41 @@ try {
   }
   assert.equal(supplierImagePosts, shots.length + 1, 'factory without a reference also reaches image generation');
   assert.equal(supplierVideoPosts, shots.length);
-  console.log('storyboard AIGC mocked e2e passed: six shot cases, QA, review, adoption, idempotent video retry');
+  // Exercise the business bridge against the actual native studio handlers,
+  // using the same provider-only fixture as the six manual workbench cases.
+  projectId = `storyboard-project-bridge-${suffix}`;
+  const bridgeShotId = 'bridge-product'; const bridgeSlotId = 'bridge-slot';
+  const sourceFirstFrameUrl = `/api/overseas/videos/trend-${suffix}/shot/1/first-frame`;
+  projectSpec = { mode: 'clone', ratio: '9:16', selectedProductIds: ['product-1'], selected: [], activeAssemblyId: 'bridge-assembly',
+    shootingSlots: [{ id: bridgeShotId, slotId: bridgeSlotId, detail: '星河吊灯产品特写', duration: 4 }],
+    shotProductions: { [`bridge-assembly:${bridgeShotId}`]: newShotProduction('', '') },
+    storyboardSourcePlans: { [bridgeSlotId]: { mode: 'ai', sceneType: 'product', productIds: ['product-1'], videoResolution: '480p', videoResolutionPinned: true } },
+    videoKickoff: { referenceAnalysis: { details: [{ shotId: bridgeSlotId, firstFrameRef: sourceFirstFrameUrl }] } }, storyboardAssignments: {},
+    automatedReplicationShots: [{ shotId: bridgeShotId, slotId: bridgeSlotId, kind: 'nonperson', start: 0, end: 4,
+      firstFrameRequest: { mode: 'replication', sceneType: 'product', shotDescription: '星河吊灯产品特写', startSeconds: 0, endSeconds: 4, ratio: '9:16', productIds: ['product-1'], sourceFirstFrameUrl } }] } as any;
+  project = { id: projectId, tenant_id: tenantId, title: 'Bridge E2E', status: 'draft', spec: projectSpec, updated_at: '2026-10-01T00:00:00.000Z' };
+  const beforeBridgeImages = supplierImagePosts, beforeBridgeVideos = supplierVideoPosts;
+  const bridgeDeps = { call: async (_surface: 'production' | 'studio', method: 'get' | 'post', route: string, body?: Record<string, unknown>) => invokeReplicationRoute(studioRouter, tenantId, method, route, body) };
+  for (let tick = 0; tick < 4; tick++) {
+    const advanced = await advanceAutomatedReplication({ tenantId, projectId, store }, bridgeDeps);
+    assert.equal(advanced.state, 'pending', `bridge tick ${tick}: ${JSON.stringify(advanced)}`);
+  }
+  assert.equal((await advanceAutomatedReplication({ tenantId, projectId, store }, bridgeDeps)).state, 'ready');
+  assert.equal(supplierImagePosts, beforeBridgeImages + 1);
+  assert.equal(supplierVideoPosts, beforeBridgeVideos + 1);
+  assert.ok((project.spec as any).shotProductions[`bridge-assembly:${bridgeShotId}`].adoptedId);
+  assert.equal((project.spec as any).automatedReplicationProgress[bridgeShotId].qualityChecked, true);
+  const originalDetail = (project.spec as any).shootingSlots[0].detail;
+  (project.spec as any).shootingSlots[0].detail = '改变后的新画面要求';
+  const stalePlan = await advanceAutomatedReplication({ tenantId, projectId, store }, bridgeDeps);
+  assert.equal(stalePlan.state, 'blocked', 'changed source plan cannot reuse old automatic QA');
+  (project.spec as any).shootingSlots[0].detail = originalDetail;
+  const originalProduct = fs.readFileSync(path.join(assetDir, 'product.png'));
+  fs.writeFileSync(path.join(assetDir, 'product.png'), sideImage);
+  const staleProduct = await advanceAutomatedReplication({ tenantId, projectId, store }, bridgeDeps);
+  assert.equal(staleProduct.state, 'blocked', 'changed enterprise product image cannot reuse old automatic QA');
+  fs.writeFileSync(path.join(assetDir, 'product.png'), originalProduct);
+  console.log('storyboard AIGC mocked e2e passed: six cases plus automatic business bridge native generation/QA/adoption');
 } finally {
   server.close();
   globalThis.fetch = originals.fetch;

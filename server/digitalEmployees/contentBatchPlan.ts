@@ -142,8 +142,8 @@ export function buildContentBatchPlan(input: {
       const prefix = `第 ${index + 1} 条：`;
       const deferredMaterialErrors = /(?:请选择本条素材|数字人混剪需选择产品画面素材)/;
       errors.push(...videoPlanErrors(plan).filter(error => !deferredMaterialErrors.test(error)).map(error => prefix + error));
-      const workflow = { clone: 'viral_clone', product: 'product_content', material: 'material_content' }[plan.route];
-      if (!enabled.has(workflow as DigitalEmployeeConfig['enabledWorkflows'][number])) errors.push(prefix + '此创作方式未在 Agent 配置中开启');
+      const workflowByRoute = { clone: 'viral_clone', product: 'product_content', material: 'material_content' } as const;
+      if (!enabled.has(workflowByRoute[plan.route])) errors.push(prefix + '指定内容路径未在 Agent 配置中开启');
       const product = input.evidence.products.find(product => product.id === plan.productId)
         || input.evidence.products.find(product => product.name === plan.productName || product.id === plan.productName);
       if (!product) { errors.push(prefix + '指定产品不在重点产品资料中'); return; }
@@ -197,36 +197,25 @@ export function buildContentBatchPlan(input: {
         } : {}),
       });
     });
-    // A mixed batch keeps each requested route. Missing clone evidence blocks
-    // that project in production; it must never substitute a product route.
-    if (!orders.some(order => order.route !== 'clone')) errors.push(...referenceErrors);
+    // A user-selected clone must retain its reference requirement; never
+    // silently replace it with another enabled content route.
+    errors.push(...referenceErrors);
     return { coverage: contentPlanCoverage(input.config, input.goal, errors.length ? 0 : orders.length), status: errors.length ? 'blocked' : 'planned', orders: errors.length ? [] : orders, blocker: errors.join('；'), eligibleRoutes: [...new Set(orders.map(order => order.route))], disabledRoutes: [...disabledRoutes, ...referenceErrors.map(reason => ({ route: 'clone' as const, reason }))] };
   }
   const missingProducts = input.evidence.products.filter(product => !product.materialIds.length);
   if (missingProducts.length) return { status: 'blocked', orders: [], blocker: `重点产品缺少素材：${missingProducts.map(product => product.name).join('、')}。请补充素材或逐条确认制作计划，不能自动替换产品。`, eligibleRoutes, disabledRoutes };
 
   if (enabled.has('viral_clone') && input.evidence.exactAnalysisIds.length && productsWithMaterial.length) eligibleRoutes.push('clone');
-  else if (enabled.has('viral_clone')) disabledRoutes.push({ route: 'clone', reason: '缺少全片精确分析或真实产品' });
+  else if (enabled.has('viral_clone')) disabledRoutes.push({ route: 'clone', reason: '缺少全片精确分析或真实产品，请由编导 Agent 补齐对标分析后重试' });
   if (enabled.has('product_content') && productsWithMaterial.length) eligibleRoutes.push('product');
-  else if (enabled.has('product_content')) disabledRoutes.push({ route: 'product', reason: '缺少真实产品资料' });
   if (enabled.has('material_content') && productsWithMaterial.length) eligibleRoutes.push('material');
-  else if (enabled.has('material_content')) disabledRoutes.push({ route: 'material', reason: '缺少真实企业素材或关联产品' });
 
   const connectedTargets = input.config.publishingTargets.filter(target => input.goal.contentPlatforms.includes(target.platform));
   const targets = input.goal.contentPlatforms.map(platform => connectedTargets.find(target => target.platform === platform) || { platform, accountId: '', accountLabel: enabled.has('content_publish') ? '发布前待绑定账号' : '仅内容生产，不分发' });
   if (!eligibleRoutes.length) return { status: 'blocked', orders: [], blocker: disabledRoutes.map(item => `${item.route}：${item.reason}`).join('；') || '没有可执行的内容路径', eligibleRoutes, disabledRoutes };
 
   const count = requestedCount(input.config.socialCadence);
-  const allocationCounts: Record<ContentRoute, number> = {
-    clone: Number(input.priorRoutingEvidence?.priorRouteDistribution?.clone || 0),
-    product: Number(input.priorRoutingEvidence?.priorRouteDistribution?.product || 0),
-    material: Number(input.priorRoutingEvidence?.priorRouteDistribution?.material || 0),
-  };
-  const allocations = Array.from({ length: count }, () => {
-    const route = eligibleRoutes.slice().sort((left, right) => allocationCounts[left] - allocationCounts[right] || eligibleRoutes.indexOf(left) - eligibleRoutes.indexOf(right))[0]!;
-    allocationCounts[route] += 1;
-    return route;
-  });
+  const allocations = Array.from({ length: count }, (_, index) => eligibleRoutes[index % eligibleRoutes.length]!);
   const feedbackConstraints = (input.priorRoutingEvidence?.approvalFeedback || []).map(item => String(item.note || '').trim()).filter(Boolean).slice(0, 10).map(note => `审批反馈：${note}`);
   const orders: ContentOrder[] = Array.from({ length: count }, (_, index) => {
     const route = allocations[index]!;
