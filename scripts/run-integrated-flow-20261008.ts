@@ -115,7 +115,7 @@ await runWithDataAuthority('local',async()=>{
   for(const project of projects.items){const spec=obj(project.spec);if(spec.automation?.productionGraphId?.includes(state.runId)){
    const script=String(spec.script);if(createHash('sha256').update(JSON.stringify(script)).digest('hex')!==contract.hash)throw Error('Current script differs from reviewed revision');
    const lines=storyboardVoiceLines(script);spec.languageSceneBindings=lines.map((line,index)=>({sceneId:`scene-${index+1}`,sourceText:line,translatedText:line,cue:spec.sceneVoiceCuesByLang?.en?.[index]||null}));
-   spec.automation={...spec.automation,directorScriptVersion:contract.version,directorScriptHash:contract.hash,contentHash:contract.hash,contentFingerprint:contentFingerprint({route:'clone',productId:spec.contentOrder.productId,referenceAnalysisId:referenceId,assetIds:ids,script}),reviewRevisionOrigin:'operator_reviewed_llm'};
+   spec.automation={...spec.automation,directorScriptVersion:contract.version,directorScriptHash:contract.hash,contentHash:contract.hash,contentFingerprint:contentFingerprint({route:'material',productId:spec.contentOrder.productId,referenceAnalysisId:referenceId,assetIds:ids,script}),reviewRevisionOrigin:'operator_reviewed_llm'};
    await store.update('studio_projects',project.id,{spec});
   }}
   const plans=await store.list<any>('weekly_plans',{where:{tenant_id:tenantId,goal_id:state.goalId},perPage:100});for(const plan of plans.items){const body=obj(plan.plan);for(const task of body.businessPackage.tasks)if(task.templateId==='production')for(const v of task.videoPlans){v.materialIds=ids;v.preproduction.directorScript=contract;}await store.update('weekly_plans',plan.id,{plan:body});}
@@ -201,10 +201,10 @@ await runWithDataAuthority('local',async()=>{
    const configs=await store.list<any>('digital_employee_configs',{where:{tenant_id:tenantId},perPage:100});
    const configRecord=configs.items.find((x:any)=>x.status==='active')||configs.items[0];
    const config=obj(configRecord.config);
-   await store.update('digital_employee_configs',configRecord.id,{config:{...config,socialCadence:'每周制作1条短视频',videoLanguages:['en'],enabledWorkflows:['viral_clone'],allowRealPublishing:false,allowRealCustomerMessages:false,managedPublishingGrant:undefined}});
+   await store.update('digital_employee_configs',configRecord.id,{config:{...config,socialCadence:'每周制作1条短视频',videoLanguages:['en'],enabledWorkflows:['material_content'],allowRealPublishing:false,allowRealCustomerMessages:false,managedPublishingGrant:undefined}});
    const selected=assets.filter(x=>x.productName==='云朵泡沫卸妆蜜').map(x=>x.id);
-   const videoPlan={route:'clone',referenceId,productName:'云朵泡沫卸妆蜜',theme:'以已采集的护肤工厂视频为结构参考，展示企业已有护肤产品与包装、使用画面；不得虚构工厂、研发能力、认证、年限或产品功效。',duration:33.58,language:'en',platform:'tiktok',presenter:'material',materialIds:selected,voice:'',estimatedCost:0};
-   await route('post','/goals',{title:'合并分支完整流程：护肤产品爆款复刻',businessLine:'content_growth',objective:'由经营 Agent 拆解目标，编导 Agent 使用指定灵感视频结构，内容 Agent 用已授权企业素材制作1条可审核的英文竖屏成片。',metric:'approved_content_packages',baseline:0,target:1,unit:'条',startsAt:'2026-10-08',endsAt:'2026-10-14',scope:'仅制作与审核1条成片',constraints:['只使用企业真实产品和已授权素材','不复用对标原片作为成片素材','不对外发布','不得虚构研发、工厂、认证或功效'],contentPlatforms:['tiktok'],videoPlans:[videoPlan]});
+   const videoPlan={route:'material',referenceId,productName:'云朵泡沫卸妆蜜',theme:'纯素材技术回归：展示企业已有护肤产品目录与包装图片，不代表逐镜爆款复刻；不得虚构工厂、研发能力、认证、年限或产品功效。',duration:33.58,language:'en',platform:'tiktok',presenter:'material',materialIds:selected,voice:'',estimatedCost:0};
+   await route('post','/goals',{title:'目录素材剪辑技术回归（非爆款复刻）',businessLine:'content_growth',objective:'仅验证经营任务到普通企业目录素材剪辑的技术通路，不计作爆款复刻或逐镜生成验收。',metric:'approved_content_packages',baseline:0,target:1,unit:'条',startsAt:'2026-10-08',endsAt:'2026-10-14',scope:'仅制作与审核1条成片',constraints:['只使用企业真实产品和已授权素材','不复用对标原片作为成片素材','不对外发布','不得虚构研发、工厂、认证或功效'],contentPlatforms:['tiktok'],videoPlans:[videoPlan]});
    const goals=await store.list<any>('weekly_goals',{where:{tenant_id:tenantId},perPage:100});state.goalId=goals.items[0].id;
    fs.writeFileSync(stateFile,JSON.stringify(state,null,2));
    console.log(JSON.stringify({phase:'goal_created',goalId:state.goalId}));

@@ -1,3 +1,4 @@
+import { legacyReplicationBlocker } from './legacyReplicationGuard.js';
 import { waitForMaterialAnalysis } from '../lib/materialLibraryAnalysis.js';
 import { readMaterialLibrary } from '../lib/materialLibrary.js';
 import { applySceneRepair, planSceneRepair } from './sceneRepair.js';
@@ -1036,6 +1037,8 @@ export async function advanceOneProject(input: {
   };
 
   try {
+    const replicationBlocker = legacyReplicationBlocker({ route, creationPath: spec.creationPath, stage, heygenJobId: automation.heygenJobId });
+    if (replicationBlocker) return block('material_match', replicationBlocker, { retryPolicy: 'input_required' });
     const evidenceIssues = narrationEvidenceIssues(productFacts(input.profile, input.config, routePlan.productId), stage === 'script' ? '' : voiceoverText(text(spec.script, 30_000)));
     if (evidenceIssues.length) return block('script', evidenceIssues.join('；'), { retryPolicy: 'input_required' });
     if (brief.presenter !== 'avatar' && ['script', 'material_match', 'voice_subtitles', 'render'].includes(stage)) {
@@ -1362,6 +1365,10 @@ export async function advanceOneProject(input: {
         await updateProject(input.record, { ...spec, presenterMode: 'digital', automation: stagePatch(automation, 'heygen', { heygenJobId: job.id, blocker: job.status === 'review' ? 'HeyGen 成片已生成，请进入内容工作台预览并确认人物、口型与声音' : job.errorMessage || 'HeyGen 正在生成数字人视频' }) });
         return { changed: automation.heygenJobId !== job.id, blocker: job.status === 'review' || job.status === 'failed' ? job.errorMessage || 'HeyGen 成片等待人工确认' : '' };
       }
+      // Poll existing supplier work, but do not turn a completed talking-head job
+      // into a generic edit accepted as per-shot reference replication.
+      const replicationRenderBlocker = legacyReplicationBlocker({ route, stage: 'render' });
+      if (replicationRenderBlocker) return block('material_match', replicationRenderBlocker, { retryPolicy: 'input_required', heygenJobId: job.id });
       if (!job.subtitleCues?.length) return block('heygen', '缺少基于配音的字幕时间轴，请重新获取并复核数字人字幕');
       const videoPath = heygenOutputPath(input.tenantId, job.id);
       const voicePath = text(automation.voiceLocalPath, 2000);

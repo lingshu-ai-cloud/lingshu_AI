@@ -81,6 +81,7 @@ import { storyboardPersonEnvironmentSheet } from '../lib/storyboardPersonEnviron
 import { storyboardReferenceCapacity } from '../lib/storyboardReferenceCapacity.js';
 import { planStoryboardExactProductGeometry, type StoryboardGeometryPlan } from '../lib/storyboardGeometryPlanner.js';
 import { createStoryboardGeometryQwenObserver } from '../lib/storyboardGeometryQwen.js';
+import { tenantCatalogImageFile } from '../lib/enterpriseMediaImage.js';
 import { planStoryboardActionSegments } from '../../shared/storyboardActionSegments.js';
 import type { StoryboardKeyState } from '../../shared/storyboardActionSegments.js';
 import { assembleStoryboardActionSegments } from '../lib/storyboardActionAssembly.js';
@@ -1723,6 +1724,8 @@ function storyboardImageUrlPath(raw: string): string {
 }
 
 async function storyboardEnterpriseImage(url: string, tenantId: string): Promise<ReferenceImage | null> {
+  const catalogFile=tenantCatalogImageFile(url,tenantId,MEDIA_DIR);
+  if(catalogFile)return {mimeType:storyboardImageMime(catalogFile),base64:fs.readFileSync(catalogFile).toString('base64')};
   const route = storyboardImageUrlPath(url);
   const match = route.match(/^\/api\/overseas\/enterprise\/assets\/([\w.-]+)$/);
   if (!match) {
