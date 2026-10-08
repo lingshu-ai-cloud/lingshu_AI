@@ -1022,7 +1022,7 @@ export async function advanceOneProject(input: {
   const routeAssets = routePlan.assetIds.map(id => input.assets.find(asset => asset.id === id)).filter((asset): asset is AssetCandidate => Boolean(asset));
   let stage = text(automation.stage) as ProductionStage;
   if (stage === 'blocked') {
-    const approvalChanged = presenterApprovalResumesQuality(automation, presenterApprovalForProject(input.tenantId, input.record.id, spec, automation));
+    const approvalChanged = presenterApprovalResumesQuality(automation, presenterApprovalForProject(input.tenantId, input.record.id, spec, automation, undefined, route === 'clone'));
     if (!approvalChanged && !contentProjectRetryable(automation)) return { changed: false, blocker: text(automation.blocker) };
     stage = text(automation.resumeStage) as ProductionStage || 'script';
   }
@@ -1493,7 +1493,7 @@ export async function advanceOneProject(input: {
 
       // Approval is persisted on the job after the mixed review copy is rendered.
       // Always re-read and validate that exact tenant/project/audio/output binding.
-      if (usesDigitalPresenter(brief)) automation.heygenApproved = presenterApprovalForProject(input.tenantId, input.record.id, spec, automation);
+      if (usesDigitalPresenter(brief)) automation.heygenApproved = presenterApprovalForProject(input.tenantId, input.record.id, spec, automation, undefined, route === 'clone');
       const originalCues = json<Record<string, unknown>>(spec.alignedCuesByLang, {})[brief.language];
       if (!subtitleCuesAreSafe(originalCues, Number(spec.duration || 20))) {
         const repaired = paginateAlignedCues(originalCues, Number(spec.duration || 20));
@@ -1597,7 +1597,7 @@ export async function advanceOneProject(input: {
         voiceQuality.passed !== true ? `口播声音质检未通过：${voiceQuality.failures?.join('；') || '缺少响度、削波、静音和回听证据'}` : '',
         ...sceneAlignmentIssues,
         !spokenLanguageMatches(text(automation.spokenText, 30000), brief.language) || text(spec.lang) !== brief.language ? '最终语言与制作计划不符' : '',
-        usesDigitalPresenter(brief) && !automation.heygenApproved ? '当前数字人成片尚未获得与本项目、配音及素材版本一致的人工确认' : '',
+        usesDigitalPresenter(brief) && !automation.heygenApproved ? '当前数字人成片缺少与本项目、配音及素材版本一致的质量证据' : '',
         !semanticAlignment ? '逐镜头素材语义匹配证据不完整' : '',
         !routeDifferentiation ? '内容路径差异检查未通过' : '',
         !sceneDiversity ? '存在多个相关素材但分镜仍只循环单一素材' : '',

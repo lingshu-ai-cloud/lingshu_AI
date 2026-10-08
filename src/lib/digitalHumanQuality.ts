@@ -16,6 +16,28 @@ export interface DigitalHumanQualityReport {
   updatedAt: string;
 }
 
+/** Production admission is separate from optional human review. Pending manual
+ * observations stay pending; background similarity is diagnostic only. */
+export function backgroundQualityCheck(key: string): boolean {
+  return key === 'reference_background_proxy' || key === 'background' || key.endsWith(':background');
+}
+export function digitalHumanQualityState(checks: DigitalHumanQualityCheck[]): DigitalHumanQualityReport['state'] {
+  const required = checks.filter(check => !backgroundQualityCheck(check.key));
+  if (required.some(check => check.status === 'failed')) return 'failed';
+  if (!required.some(check => check.key === 'media_import' && check.status === 'passed')
+    || required.some(check => check.mode === 'automatic' && check.status === 'pending')) return 'pending';
+  return 'accepted';
+}
+
+/** Preserve every cue decision without fabricating a human review timestamp. */
+export function sentenceExecutionQuality(cues: import('./digitalHumanPlan').SentenceCueQuality[] | undefined, materialId: string, now = new Date().toISOString()): DigitalHumanQualityReport {
+  const checks: DigitalHumanQualityCheck[] = [
+    {key:'media_import', label:'候选媒体有效',mode:'automatic',status: cues?.length ? 'passed' : 'pending',evidence: `material:${materialId}`},
+    ...(cues || []).flatMap(cue => cue.checks.map(check => ({key:`${cue.cueId}:${check.key}`, label:`${cue.cueId} · ${check.key}`,mode:check.status === 'pending' ? 'manual' as const : 'automatic' as const,status:check.status,evidence:check.evidence}))),
+  ];
+  return {state:digitalHumanQualityState(checks), checks, updatedAt:now};
+}
+
 export interface ReferenceTechnicalMetrics {
   durationDeltaFrames: number;
   audioCorrelation: number | null;
@@ -92,19 +114,16 @@ export function recordModelQualityChecks(
     return { ...check, mode: 'automatic' as const, status: decision.passed ? 'passed' as const : 'failed' as const,
       evidence: `${model} · 置信度 ${confidence.toFixed(3)} · ${evidence}` };
   });
-  const state = checks.some(check => check.status === 'failed') ? 'failed'
-    : checks.every(check => check.status === 'passed') ? 'accepted'
-      : checks.some(check => check.status === 'passed') ? 'manual_review' : 'pending';
+  const state = digitalHumanQualityState(checks);
   return { ...report, state, checks, updatedAt: now };
 }
 
 export function deferUnavailableVisualChecksToManual(report: DigitalHumanQualityReport, now = new Date().toISOString()): DigitalHumanQualityReport {
   const keys = new Set(['reference_pose_proxy', 'reference_background_proxy', 'reference_artifacts_proxy']);
   const checks = report.checks.map(check => keys.has(check.key) && check.status === 'pending'
-    ? { ...check, mode: 'manual' as const, evidence: '当前执行未配置可核验的视觉模型，由人工对照原片验收' }
+    ? { ...check, mode: 'manual' as const, evidence: '当前执行未配置可核验的视觉模型，仅保留未核验诊断，不阻断生产' }
     : check);
-  const state = checks.some(check => check.status === 'failed') ? 'failed'
-    : checks.some(check => check.status === 'passed') ? 'manual_review' : 'pending';
+  const state = digitalHumanQualityState(checks);
   return { ...report, state, checks, updatedAt: now };
 }
 
@@ -130,9 +149,7 @@ export function recordReferenceVisualChecks(
     if (!decision || check.mode !== 'automatic') return check;
     return { ...check, status: decision.passed ? 'passed' as const : 'failed' as const, evidence: decision.evidence };
   });
-  const state = checks.some(check => check.status === 'failed') ? 'failed'
-    : checks.every(check => check.status === 'passed') ? 'accepted'
-      : checks.some(check => check.status === 'passed') ? 'manual_review' : 'pending';
+  const state = digitalHumanQualityState(checks);
   return { state, checks, updatedAt: now };
 }
 
@@ -160,9 +177,7 @@ export function recordReferenceTechnicalChecks(
     if (!decision || check.mode !== 'automatic') return check;
     return { ...check, status: decision.passed ? 'passed' as const : 'failed' as const, evidence: decision.evidence };
   });
-  const state = checks.some(check => check.status === 'failed') ? 'failed'
-    : checks.every(check => check.status === 'passed') ? 'accepted'
-      : checks.some(check => check.status === 'passed') ? 'manual_review' : 'pending';
+  const state = digitalHumanQualityState(checks);
   return { state, checks, updatedAt: now };
 }
 
@@ -170,7 +185,7 @@ export function recordDigitalHumanMediaCheck(report: DigitalHumanQualityReport, 
   const checks = report.checks.map(check => check.key === 'media_import'
     ? { ...check, status: input.passed ? 'passed' as const : 'failed' as const, evidence: input.evidence }
     : check);
-  return { state: input.passed ? 'manual_review' : 'failed', checks, updatedAt: input.now ?? new Date().toISOString() };
+  return { state: digitalHumanQualityState(checks), checks, updatedAt: input.now ?? new Date().toISOString() };
 }
 
 export function reviewDigitalHumanQuality(report: DigitalHumanQualityReport, decisions: Record<string, { passed: boolean; evidence: string }>, now = new Date().toISOString(), reviewNote?: string): DigitalHumanQualityReport {
@@ -179,8 +194,6 @@ export function reviewDigitalHumanQuality(report: DigitalHumanQualityReport, dec
     const decision = decisions[check.key]!;
     return { ...check, status: decision.passed ? 'passed' as const : 'failed' as const, evidence: decision.evidence.trim() || null };
   });
-  const state = checks.some(check => check.status === 'failed') ? 'failed'
-    : checks.every(check => check.status === 'passed') ? 'accepted'
-      : checks.some(check => check.status === 'passed') ? 'manual_review' : 'pending';
+  const state = digitalHumanQualityState(checks);
   return { ...report, state, checks, reviewNote: reviewNote?.trim().slice(0, 1000) || report.reviewNote || null, reviewedAt: now, updatedAt: now };
 }

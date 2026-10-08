@@ -130,7 +130,7 @@ export function planStudioBatchShotRoutes(spec: BatchShotSpec, options: {
         : '人物动作复刻执行器尚未接通，不能当作普通数字人口播生成' };
     }
     if (visualTopic === 'presenter') {
-      if (shot?.digitalHuman?.contentConfirmed && shot.digitalHuman.method !== 'talking')
+      if (shot?.digitalHuman && shot.digitalHuman.method !== 'talking')
         return { ...base, route: 'seedance_action', status: 'needs_plan', reason: '已选择场景重建方案，请在数字人工作面板完成首帧和模型预检；批量制作保留该选择，不改用 HeyGen' };
       if (!options.talkingExecutorReady) return { ...base, route: 'digital_human', status: 'blocked', reason: '数字人口播执行器不可用' };
       const presenterId = shot?.presenterId;

@@ -1,3 +1,4 @@
+import { requiresContentHumanAcceptance } from '../digitalEmployees/contentProductionAcceptancePolicy.js';
 import { nextManagedCycleWindow, prepareManagedCyclePackage } from '../digitalEmployees/managedOperatingCycle.js';
 import { acquireDurableOperationLease, assertDurableOperationLease, releaseDurableOperationLease } from '../runtime/durableLease.js';
 import { randomUUID } from 'node:crypto';
@@ -1475,7 +1476,7 @@ async function observeTaskProof(tenantId: string, run: RunRecord, task: TaskReco
       };
     }
     const requiresAcceptance = task.task_key === 'content_quality_gate' && (await tenantRecord<GoalRecord>(COLLECTION.goals, run.goal_id, tenantId))?.metric === 'approved_content_packages';
-    const matching = task.task_key === 'content_quality_gate' ? scoped.filter(item => studioProjectCompleted(item) && (!(requiresAcceptance || jsonObject<Record<string, any>>(item.spec, {}).contentOrder?.videoPlan?.reviewRequirements?.length) || contentAccepted(jsonObject(item.spec, {})))) : scoped.filter(studioProjectRendered);
+    const matching = task.task_key === 'content_quality_gate' ? scoped.filter(item => studioProjectCompleted(item) && (!requiresContentHumanAcceptance({ requiresAcceptance, spec: jsonObject(item.spec, {}) }) || contentAccepted(jsonObject(item.spec, {})))) : scoped.filter(studioProjectRendered);
     const result = scopedProof(
       task.task_key === 'content_quality_gate' ? 'completedWorks' : 'contentProjects',
       task.task_key === 'content_quality_gate' ? 'studio_projects.spec.automation.quality + workflow scope' : 'studio_projects.spec.automation.renderOutputPath + workflow scope',
@@ -1492,7 +1493,7 @@ async function observeTaskProof(tenantId: string, run: RunRecord, task: TaskReco
     result.ready = scoped.length >= expectedCount && matching.length === scoped.length;
     result.proof = { ...result.proof, value: matching.length, status: result.ready ? 'available' : 'pending' };
     const blocker = scoped.map(item => String(jsonObject<Record<string, unknown>>(jsonObject<Record<string, unknown>>(item.spec, {}).automation, {}).blocker || '').trim()).find(Boolean) || '';
-    return { ...result, blockedReason: blocker || (requiresAcceptance && !result.ready ? '请在交付看板预览成片并确认当前版本；机器通过不计为人工批准' : '') };
+    return { ...result, blockedReason: blocker || (requiresAcceptance && !result.ready ? '内容成片尚未完成所需质量检查' : '') };
   }
   if (task.task_key === 'publishing_calendar') {
     const posts = await store.list<StoredRecord>('posts', { where: { tenant_id: tenantId }, perPage: 500 });

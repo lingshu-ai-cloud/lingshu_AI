@@ -12,7 +12,7 @@ const reference: DigitalHumanRequirements = {
 };
 test('talking requires confirmation for new requirements, preserves legacy admission and checks capability', () => {
   assert.equal(planDigitalHumanShot(base).executable, true);
-assert.equal(planDigitalHumanShot({ ...base, requirements: newDigitalHumanRequirements() }).state, 'needs_confirmation');
+assert.equal(planDigitalHumanShot({ ...base, requirements: newDigitalHumanRequirements() }).state, 'ready');
 assert.deepEqual(referenceModelInputAuthorization(reference, '2026-09-24T00:00:00.000Z'), { evidence: '企业自有拍摄 AUTH-1', confirmedAt: '2026-09-24T00:00:00.000Z' });
 assert.equal(referenceModelInputAuthorization({ ...reference, method: 'reenact', reference: { ...reference.reference!, modelInputAuthorized: false } }, '2026-09-24T00:00:00.000Z'), null);
 assert.deepEqual(referenceModelInputAuthorization({ ...reference, method: 'reenact', replicationMode: 'direct_reference', reference: { ...reference.reference!, modelInputAuthorized: true, modelInputAuthorizationEvidence: '允许供应商处理 AUTH-MODEL-1' } }, '2026-09-24T00:00:00.000Z'), { evidence: '允许供应商处理 AUTH-MODEL-1', confirmedAt: '2026-09-24T00:00:00.000Z' });
@@ -107,7 +107,7 @@ test('changed reference, identity or narration revokes content approval and inva
 });
 test('route dependencies expose generation, automatic checks, manual review and assembly truthfully', () => {
   const planned = digitalHumanRouteSteps('replace', 'runway_act_two', true);
-  assert.deepEqual(planned.map(step => step.dependsOn), [[], ['source_alignment'], ['generation'], ['automatic_quality'], ['manual_review']]);
+  assert.deepEqual(planned.map(step => step.dependsOn), [[], ['source_alignment'], ['generation'], ['automatic_quality'], ['automatic_quality']]);
   assert.equal(planned.find(step => step.id === 'generation')?.tool, 'runway_act_two');
   const initial = initialDigitalHumanQuality(undefined, '2026-01-01T00:00:00Z');
   assert.equal(routeStepsForExecution(planned, 'pending', initial).find(step => step.id === 'generation')?.status, 'running');

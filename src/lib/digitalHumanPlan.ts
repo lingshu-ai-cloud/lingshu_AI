@@ -1,3 +1,4 @@
+import { backgroundQualityCheck } from './digitalHumanQuality.js';
 import { digitalHumanDecisionIssues } from '../../shared/contracts/smartStoryboardAdmission.js';
 import type { DigitalHumanReferenceCue, DigitalHumanRequirements } from '../../shared/contracts/digitalHumanRequirements.js';
 import { planPersonShotClusters } from './personShotClustering.js';
@@ -154,8 +155,8 @@ export function digitalHumanRouteSteps(method: DigitalHumanRequirements['method'
     { id: 'source_alignment', label: method === 'talking' ? '确认人物与口播输入' : '确认原片、逐句映射与保留要求', actor: 'system', tool: null, dependsOn: [], status: inputStatus },
     { id: 'generation', label: generationLabel, actor: 'provider', tool: provider, dependsOn: ['source_alignment'], status: executable ? 'ready' : 'blocked' },
     { id: 'automatic_quality', label: '自动媒体与画面检查', actor: 'system', tool: null, dependsOn: ['generation'], status: 'blocked' },
-    { id: 'manual_review', label: '人工验收人物、口型与保留内容', actor: 'user', tool: null, dependsOn: ['automatic_quality'], status: 'blocked' },
-    { id: 'assembly', label: '确认候选并填入分镜', actor: 'user', tool: null, dependsOn: ['manual_review'], status: 'blocked' },
+    { id: 'manual_review', label: '可选人物与口型复核', actor: 'user', tool: null, dependsOn: ['automatic_quality'], status: 'blocked' },
+    { id: 'assembly', label: '确认候选并填入分镜', actor: 'user', tool: null, dependsOn: ['automatic_quality'], status: 'blocked' },
   ];
 }
 
@@ -176,14 +177,14 @@ export function routeStepsForExecution(
   quality: import('./digitalHumanQuality').DigitalHumanQualityReport,
   assembled = false,
 ): DigitalHumanRouteStep[] {
-  const automatic = quality.checks.filter(check => check.mode === 'automatic');
+  const automatic = quality.checks.filter(check => check.mode === 'automatic' && !backgroundQualityCheck(check.key));
   const automaticFailed = automatic.some(check => check.status === 'failed');
   const automaticPassed = automatic.length > 0 && automatic.every(check => check.status === 'passed');
   return steps.map(step => {
     if (step.id === 'source_alignment') return { ...step, status: 'completed' };
     if (step.id === 'generation') return { ...step, status: state === 'completed' ? 'completed' : state === 'failed' || state === 'cancelled' ? 'failed' : state === 'uncertain' ? 'attention' : 'running' };
     if (step.id === 'automatic_quality') return { ...step, status: automaticFailed ? 'failed' : automaticPassed ? 'completed' : state === 'completed' ? 'running' : 'blocked' };
-    if (step.id === 'manual_review') return { ...step, status: quality.state === 'accepted' ? 'completed' : quality.state === 'failed' ? 'failed' : quality.state === 'manual_review' ? 'ready' : 'blocked' };
+    if (step.id === 'manual_review') return { ...step, status: quality.reviewedAt ? 'completed' : state === 'completed' ? 'ready' : 'blocked' };
     return { ...step, status: assembled ? 'completed' : quality.state === 'accepted' ? 'ready' : 'blocked' };
   });
 }
@@ -250,7 +251,6 @@ export function planDigitalHumanShot(input: {
         ? ['对齐原片语句与镜头', '将授权原片提交为动作参考', '生成动作视频与口播', '预览确认后填入分镜']
       : ['使用已确认人物与口播', '生成数字人口播', '核验音画与时长', '预览确认后填入分镜'];
   if (reasons.length) return { state: 'needs_input', executable: false, reasons, steps, provider: null };
-  if (r && r.contentConfirmed !== true) return { state: 'needs_confirmation', executable: false, reasons: ['请确认本镜头人物、口播和画面要求'], steps, provider: null };
   if (r?.method === 'reenact' && (r.replicationMode || 'sentence_first_frame') === 'sentence_first_frame') {
     if (input.seedanceSentenceAvailable) return { state: 'ready', executable: true, reasons: [], steps, provider: 'runway_seedance' };
     return { state: 'preview_only', executable: false, reasons: ['Seedream + Seedance 逐句复刻服务尚未通过运行环境预检'], steps, provider: null };

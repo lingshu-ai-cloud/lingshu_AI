@@ -86,7 +86,7 @@ import { planStoryboardActionSegments } from '../../shared/storyboardActionSegme
 import type { StoryboardKeyState } from '../../shared/storyboardActionSegments.js';
 import { assembleStoryboardActionSegments } from '../lib/storyboardActionAssembly.js';
 import { storyboardAigcProjectBudget } from '../lib/storyboardAigcProjectBudget.js';
-import { buildStoryboardQaReport, inspectStoryboardTechnicalFrames, reviewStoryboardQaReport, type StoryboardQaReport } from '../lib/storyboardAigcQuality.js';
+import { applyStoryboardReplicationAutomation, automaticStoryboardFrameAdmission, buildStoryboardQaReport, inspectStoryboardTechnicalFrames, reviewStoryboardQaReport, type StoryboardQaReport } from '../lib/storyboardAigcQuality.js';
 import { studioAigcBudgetConfigFromEnv, studioAigcBudgetPreviewForSpec } from './studioAigcBatchBudget.js';
 import { enterpriseAssetObjectKey, enterpriseAssetTenantKey } from '../storage/enterpriseAssets.js';
 import { videoAnalysisOf } from '../lib/videoAnalysisCodec.js';
@@ -2262,7 +2262,7 @@ studioRouter.post('/storyboard-first-frame', async (req, res) => {
         productReferences: productReferences.flatMap((item, index) => item.views.map(view => ({ ...view.image,
           timeLabel: `企业产品参考${index + 1}视角${view.index + 1}：${item.name}` }))),
         personReferences: characterImage ? [{ ...characterImage, timeLabel: '企业人物参考' }] : [],
-        environmentReferences: environmentImage ? [{ ...environmentImage, timeLabel: '企业工厂环境参考' }] : [],
+        environmentReferences: environmentImage && !(mode === 'replication' && !characterImage) ? [{ ...environmentImage, timeLabel: '企业工厂环境参考' }] : [],
         storyboard: shotDescription, productInfo: productReferences.map(item => item.name).join('、'),
         startState: shotSpec.action.startState, beats: shotSpec.action.beats, endState: shotSpec.action.endState,
       });
@@ -2270,7 +2270,7 @@ studioRouter.post('/storyboard-first-frame', async (req, res) => {
       console.warn('[studio] first-frame automated QA unavailable:', qualityError);
     }
     const technicalFrameObservations = await inspectStoryboardTechnicalFrames('first_frame', [{ bytes: Buffer.from(generated.bytes), timeLabel: '候选首帧' }]);
-    const firstFrameQuality = buildStoryboardQaReport({
+    let firstFrameQuality = buildStoryboardQaReport({
       phase: 'first_frame', sceneType, hasProduct: productReferences.length > 0, hasNamedPerson: !!characterImage,
       hasEnvironmentReference: !!environmentImage,
       hasContact: shotSpec.constraints.includes('physical_contact'),
@@ -2278,11 +2278,13 @@ studioRouter.post('/storyboard-first-frame', async (req, res) => {
       observations: [...(Array.isArray(firstFrameObservations) ? firstFrameObservations : []).filter(item => !technicalFrameObservations.some(technical => technical.key === item?.key)), ...technicalFrameObservations],
       evidenceFrameLabels: ['候选首帧'],
     });
+    if (mode === 'replication' && !characterImage) firstFrameQuality = applyStoryboardReplicationAutomation(firstFrameQuality);
     const material = await createGeneratedImageMaterial({ title: `分镜首帧 · ${shotId}`.slice(0, 120), bytes: generated.bytes, mimeType: generated.mimeType, source: generated.source, tenantId });
     material.sourceType = 'ai-storyboard-first-frame';
     material.productId = productReferences[0]?.id;
     material.productName = productReferences.map(item => item.name).join('、') || undefined;
-    material.provenance = { projectId: String(body.projectId || ''), shotId, fingerprint, projectShotFingerprint: projectShotInput.fingerprint, requestId, promptVersion: STORYBOARD_FIRST_FRAME_PROMPT_VERSION, sceneType, mode, shotSpec, geometryPlan, actionKeyStates, actionBeatDurations, productIds, identityLayer, firstFrameQuality, confirmed: false, provider: generated.source, model: generated.model,
+    material.provenance = { projectId: String(body.projectId || ''), shotId, fingerprint, projectShotFingerprint: projectShotInput.fingerprint, requestId, promptVersion: STORYBOARD_FIRST_FRAME_PROMPT_VERSION, sceneType, mode, shotSpec, geometryPlan, actionKeyStates, actionBeatDurations, productIds, identityLayer, firstFrameQuality, confirmed: firstFrameQuality.acceptanceSource === 'automatic_policy' && firstFrameQuality.passed,
+      ...(firstFrameQuality.acceptanceSource === 'automatic_policy' ? { confirmationSource: 'automatic_policy', qualityStatus: !firstFrameQuality.passed ? 'automated_checks_failed' : firstFrameQuality.automatedPassed ? 'automated_checks_passed' : 'automatic_policy_with_uncertainties' } : {}), provider: generated.source, model: generated.model,
       estimatedCostCny: (directCompositionUsed ? 0 : studioAigcBudgetConfigFromEnv().firstFrameCostCny)
         + (geometryObserverAttempted ? Number(planned.estimatedGeometryObservationCostCny || 0) : 0),
       generationLatencyMs: Date.now() - generationStartedAt };
@@ -2346,11 +2348,15 @@ studioRouter.post('/storyboard-first-frame/:id/confirm', async (req, res) => {
   if (!firstFrameQuality) { res.status(409).json({ ok: false, error: '首帧缺少质检报告，请重新生成' }); return; }
   let reviewed: StoryboardQaReport;
   try {
-    reviewed = reviewStoryboardQaReport(firstFrameQuality, { decision: 'accept', reviewedBy: userId });
+    const confirmShotSpec = material.provenance?.shotSpec as StoryboardShotSpec | undefined;
+    reviewed = confirmShotSpec?.mode === 'replication' && !confirmShotSpec.constraints.includes('person_identity')
+      ? applyStoryboardReplicationAutomation(firstFrameQuality)
+      : reviewStoryboardQaReport(firstFrameQuality, { decision: 'accept', reviewedBy: userId });
+    if (!reviewed.passed) throw new Error('首帧存在非背景质量硬失败，请重新生成');
   } catch (error) {
     res.status(409).json({ ok: false, code: 'FIRST_FRAME_QA_FAILED', error: error instanceof Error ? error.message : '首帧质检未通过', firstFrameQuality }); return;
   }
-  material.provenance = { ...material.provenance, firstFrameQuality: reviewed, confirmed: true, confirmationSource: 'user', qualityStatus: 'manual_confirmed_after_automated_review', confirmedAt: new Date().toISOString() };
+  material.provenance = { ...material.provenance, firstFrameQuality: reviewed, confirmed: true, confirmationSource: reviewed.acceptanceSource === 'automatic_policy' ? 'automatic_policy' : 'user', qualityStatus: reviewed.acceptanceSource === 'automatic_policy' ? (reviewed.automatedPassed ? 'automated_checks_passed' : 'automatic_policy_with_uncertainties') : 'manual_confirmed_after_automated_review', confirmedAt: new Date().toISOString() };
   persistMaterials(list);
   res.json({ ok: true, materialId: material.id, fingerprint });
 });
@@ -2368,7 +2374,7 @@ studioRouter.post('/storyboard-action-video', async (req, res) => {
   const materials = loadMaterials();
   const firstFrame = materials.find(item => item.id === firstFrameMaterialId && item.tenantId === tenantId && item.sourceType === 'ai-storyboard-first-frame');
   const shotSpec = firstFrame?.provenance?.shotSpec as StoryboardShotSpec | undefined;
-  if (!firstFrame || !shotSpec || !firstFrameFingerprint || !shotId || firstFrame.provenance?.confirmed !== true
+  if (!firstFrame || !shotSpec || !firstFrameFingerprint || !shotId || (firstFrame.provenance?.confirmed !== true && !automaticStoryboardFrameAdmission(firstFrame.provenance))
       || firstFrame.provenance?.fingerprint !== firstFrameFingerprint || firstFrame.provenance?.shotId !== shotId) {
     res.status(409).json({ ok: false, code: 'FIRST_FRAME_NOT_CONFIRMED', error: '当前分镜首帧未确认或输入已变化' }); return;
   }
@@ -2490,7 +2496,9 @@ studioRouter.post('/storyboard-action-video', async (req, res) => {
         const visible = await materialResponse(completedMaterial, tenantId);
         res.json({ ok: true, reused: true, source: 'seedance', id: visible.id, url: visible.url, poster: visible.poster,
           duration: visible.duration, material: visible,
-          quality: { status: 'needs_review', requiresHumanReview: true },
+          quality: shotSpec.mode === 'replication' && !shotSpec.constraints.includes('person_identity')
+            ? { status: 'passed', requiresHumanReview: false, acceptanceSource: 'automatic_policy' }
+            : { status: 'needs_review', requiresHumanReview: true },
           segments: completedMaterial.provenance?.segmentTasks || [] }); return;
       }
       res.status(reserved.entry.status === 'reserved' ? 202 : 409).json({ ok: false,
@@ -2575,14 +2583,14 @@ studioRouter.post('/storyboard-action-video', async (req, res) => {
         phase: 'video', sceneType: 'usage', frames, productReferences: productImages,
         previousTerminalFrame: previousTerminalFrame ? { ...previousTerminalFrame, timeLabel: '上一段合格末帧' } : undefined,
         personReferences: personReference ? [{ ...personReference, timeLabel: '企业人物参考' }] : [],
-        environmentReferences: environmentReference ? [{ ...environmentReference, timeLabel: '企业工厂环境参考' }] : [],
+        environmentReferences: environmentReference && !(shotSpec.mode === 'replication' && !shotSpec.constraints.includes('person_identity')) ? [{ ...environmentReference, timeLabel: '企业工厂环境参考' }] : [],
         storyboard: shotSpec.description, productInfo: firstFrame.productName || '',
         startState: segment.startState, beats: segment.beats, endState: segment.endState,
       });
       const technical = await inspectStoryboardTechnicalFrames('video', frames.map(frame => ({
         bytes: Buffer.from(frame.base64, 'base64'), timeLabel: frame.timeLabel,
       })));
-      const quality = buildStoryboardQaReport({
+      let quality = buildStoryboardQaReport({
         phase: 'video', sceneType: 'usage', hasProduct: shotSpec.constraints.includes('product_identity'),
         hasNamedPerson: shotSpec.constraints.includes('person_identity'), hasContact: true, hasAction: true,
         hasSeam: !!previousTerminalFrame,
@@ -2590,8 +2598,9 @@ studioRouter.post('/storyboard-action-video', async (req, res) => {
         observations: [...(Array.isArray(observations) ? observations : []).filter(item => !technical.some(check => check.key === item?.key)), ...technical],
         evidenceFrameLabels: previousTerminalFrame ? ['上一段合格末帧', ...labels] : labels,
       });
+      if (shotSpec.mode === 'replication' && !shotSpec.constraints.includes('person_identity')) quality = applyStoryboardReplicationAutomation(quality);
       accepted[accepted.length - 1] = { taskId, path: localVideo, quality, duration: segment.providerDurationSeconds };
-      if (!quality.automatedPassed || quality.checks.end_state?.verdict !== 'pass') {
+      if (quality.acceptanceSource === 'automatic_policy' ? !quality.passed : !quality.automatedPassed || quality.checks.end_state?.verdict !== 'pass') {
         const error = new Error('分段动作或产品一致性质检未通过') as Error & { quality?: StoryboardQaReport; segmentIndex?: number };
         error.quality = quality; error.segmentIndex = segment.index;
         throw error;
@@ -2628,7 +2637,9 @@ studioRouter.post('/storyboard-action-video', async (req, res) => {
       segmentTaskIds: accepted.map(item => item.taskId), estimatedCostCny: plannedCost });
     const visible = await materialResponse(material, tenantId);
     res.json({ ok: true, source: 'seedance', id: material.id, url: visible.url, poster: visible.poster,
-      duration: assembled.durationSeconds, material: visible, quality: { status: 'needs_review', requiresHumanReview: true },
+      duration: assembled.durationSeconds, material: visible, quality: shotSpec.mode === 'replication' && !shotSpec.constraints.includes('person_identity')
+            ? { status: 'passed', requiresHumanReview: false, acceptanceSource: 'automatic_policy' }
+            : { status: 'needs_review', requiresHumanReview: true },
       segments: accepted.map((item, index) => ({ index, taskId: item.taskId, quality: item.quality })) });
   } catch (error) {
     const acceptedCost = accepted.reduce((sum, item) => sum + estimateSeedanceCostCny(item.duration, resolution), 0);
@@ -2708,7 +2719,7 @@ studioRouter.post('/seedance-video', async (req, res) => {
   if (firstFrameMaterialId && (Number(rawDuration ?? 4) < 4 || Number(rawDuration ?? 4) > 15 || !Number.isInteger(Number(rawDuration ?? 4)))) {
     res.status(400).json({ ok: false, code: 'UNSUPPORTED_STORYBOARD_DURATION', error: '分镜视频候选时长须为 4–15 秒整数；长镜头请先拆镜' }); return;
   }
-  if (firstFrameMaterialId && (!firstFrame || !shotId || !firstFrameFingerprint || firstFrame.provenance?.confirmed !== true ||
+  if (firstFrameMaterialId && (!firstFrame || !shotId || !firstFrameFingerprint || (firstFrame.provenance?.confirmed !== true && !automaticStoryboardFrameAdmission(firstFrame.provenance)) ||
     firstFrame.provenance?.shotId !== String(shotId) ||
     firstFrame.provenance?.fingerprint !== String(firstFrameFingerprint) ||
     (generationContext && typeof generationContext === 'object' && !Array.isArray(generationContext) &&
@@ -3079,7 +3090,7 @@ studioRouter.post('/storyboard-quality-check', async (req, res) => {
           phase: 'video', sceneType: shotSpec.scene, frames,
           productReferences: productImages,
           personReferences: personReference ? [{ ...personReference, timeLabel: '企业人物参考' }] : [],
-          environmentReferences: environmentReference ? [{ ...environmentReference, timeLabel: '企业工厂环境参考' }] : [],
+          environmentReferences: environmentReference && !(shotSpec.mode === 'replication' && !shotSpec.constraints.includes('person_identity')) ? [{ ...environmentReference, timeLabel: '企业工厂环境参考' }] : [],
           storyboard: shotSpec.description, productInfo: firstFrame.productName || '',
           startState: shotSpec.action.startState, beats: shotSpec.action.beats, endState: shotSpec.action.endState,
         });
@@ -3087,7 +3098,7 @@ studioRouter.post('/storyboard-quality-check', async (req, res) => {
         console.warn('[studio] storyboard video automated QA unavailable:', qualityError);
       }
       const technical = await inspectStoryboardTechnicalFrames('video', frameNames.map((name, index) => ({ bytes: fs.readFileSync(path.join(tempDir, name)), timeLabel: evidenceFrameLabels[index] })));
-      const quality = buildStoryboardQaReport({
+      let quality = buildStoryboardQaReport({
         phase: 'video', sceneType: shotSpec.scene,
         hasProduct: shotSpec.constraints.includes('product_identity'),
         hasNamedPerson: shotSpec.constraints.includes('person_identity'),
@@ -3097,6 +3108,7 @@ studioRouter.post('/storyboard-quality-check', async (req, res) => {
         observations: [...(Array.isArray(observations) ? observations : []).filter(item => !technical.some(check => check.key === item?.key)), ...technical],
         evidenceFrameLabels,
       });
+      if (shotSpec.mode === 'replication' && !shotSpec.constraints.includes('person_identity')) quality = applyStoryboardReplicationAutomation(quality);
       const materials = loadMaterials();
       const own = materials.find(item => item.id === material.id && item.tenantId === tenantId);
       if (own) { own.provenance = { ...own.provenance, storyboardQualityReport: quality }; persistMaterials(materials); }

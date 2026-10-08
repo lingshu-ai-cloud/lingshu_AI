@@ -1,3 +1,4 @@
+import { digitalHumanQualityState } from '../lib/digitalHumanQuality';
 import StudioReviewIssueActions from './studio/StudioReviewIssueActions';
 import { applyCaptionTextEdits, sourceCaptionEditKey, subtitleReviewCues } from '../lib/subtitleReview';
 import { studioPreviewRenderBlockers } from '../lib/studioPreviewReadiness';
@@ -4482,7 +4483,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
       };
       if (batchSpecOverride) batchSpecOverride.storyboardSourcePlans[slot.id] = generatedPlan;
       setStoryboardSourcePlans(prev => ({ ...prev, [slot.id]: generatedPlan }));
-      setModeNotice('目标首帧已生成，请先核对画面，再点击“确认首帧并生成视频”。');
+      setModeNotice('目标首帧已生成，可继续生成视频。');
     } catch (error) {
       setStoryboardSourcePlans(prev => ({ ...prev, [slot.id]: { ...plan, firstFrameRequestId, confirmed: false, error: error instanceof Error ? error.message : '首帧生成失败' } }));
     } finally {
@@ -4493,7 +4494,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     const plan = sourcePlanFor(slot);
     if (productionFor(slot).locked) { setModeNotice('镜头已锁定，请先解锁'); return false; }
     if (!plan.firstFrameMaterialId || !plan.firstFrameUrl) {
-      setModeNotice('请先确认目标首帧，再生成视频。'); return false;
+      setModeNotice('请先生成目标首帧，再生成视频。'); return false;
     }
     const actionBeats = (plan.actionBeats || '').split(/[；;\n]+/).map(item => item.trim()).filter(Boolean);
     const enteredKeyStates = (plan.actionKeyStates || '').split(/[；;\n]+/).map(item => item.trim()).filter(Boolean);
@@ -4541,12 +4542,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
           candidateResolution = budgetPlan.resolutionTier;
         }
       }
-      if (!plan.firstFrameConfirmed) {
-        if (!plan.firstFrameFingerprint) throw new Error('首帧缺少版本校验信息，请重新生成首帧');
-        const confirmed = await studioApi.confirmStoryboardFirstFrame(plan.firstFrameMaterialId, { fingerprint: plan.firstFrameFingerprint, shotId: slot.id });
-        if (!confirmed.ok) throw new Error(confirmed.error || '首帧确认失败');
-        setStoryboardSourcePlans(prev => ({ ...prev, [slot.id]: { ...sourcePlanFor(slot), firstFrameConfirmed: true } }));
-      }
+      if (!plan.firstFrameFingerprint) throw new Error('首帧缺少版本校验信息，请重新生成首帧');
       const generated = useSegmentedAction ? await studioApi.storyboardActionVideo({
         requestId: actionVideoRequestId,
         firstFrameMaterialId: plan.firstFrameMaterialId,
@@ -5290,7 +5286,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
       && candidate.source === 'avatar' && candidate.materialId === materialId);
     const adoptedExecution = productionExecutions.some(execution => execution.assemblyId === activeAssemblyId
       && execution.shotId === persistedShotId && execution.adoption?.materialId === materialId
-      && execution.quality.state === 'accepted');
+      && digitalHumanQualityState(execution.quality.checks) === 'accepted');
     const assignedMaterial = materialById.get(materialId);
     const reusableSentenceVideo = assignedMaterial?.scope === 'own'
       && assignedMaterial.type === 'video'
@@ -9705,10 +9701,10 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     if (candidate.source === 'avatar' && !taskReady) {
       setProductionError('数字人任务未完成或仍待核验，请刷新原任务；不能采用未验证的候选'); return;
     }
-    const acceptedExecution = execution?.quality.state === 'accepted' ? execution : productionExecutions.find(item => item.jobId === candidate.jobId && item.presenterAssetVersion === currentPresenterVersion && item.quality.state === 'accepted');
+    const acceptedExecution = execution && digitalHumanQualityState(execution.quality.checks) === 'accepted' ? execution : productionExecutions.find(item => item.jobId === candidate.jobId && item.presenterAssetVersion === currentPresenterVersion && digitalHumanQualityState(item.quality.checks) === 'accepted');
     const qualityAccepted = Boolean(acceptedExecution);
     if (candidate.source === 'avatar' && !qualityAccepted) {
-      setProductionError('请先完成当前数字人候选的人物、口播和口型人工验收'); return;
+      setProductionError('当前数字人候选存在质量失败或缺少媒体检查，请刷新质检结果'); return;
     }
     const clip = materialById.get(candidate.materialId); if (!clip) { setProductionError('候选素材未就绪，请刷新任务或素材库'); return; }
     if (candidate.source === 'avatar') {
@@ -11869,7 +11865,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                               {mode === 'clone' && sourceFirstFrameFor(slot) && <img src={sourceFirstFrameFor(slot)} alt="原片首帧构图参考" className="h-24 w-1/2 rounded object-contain bg-slate-950" />}
                               <img src={sourcePlanFor(slot).firstFrameUrl} alt="待确认的目标首帧" className="h-24 flex-1 min-w-0 rounded object-contain bg-slate-950" />
                             </div>
-                            {sourcePlanFor(slot).firstFrameQuality && <p className="mt-2 text-[10px] text-text-secondary">首帧检查：{sourcePlanFor(slot).firstFrameQuality?.status === 'retry_first_frame' || sourcePlanFor(slot).firstFrameQuality?.status === 'needs_assets' ? '需修正后重做' : sourcePlanFor(slot).firstFrameQuality?.status === 'needs_review' ? '请人工核对产品、接触和构图' : '已完成自动检查'}{sourcePlanFor(slot).firstFrameQuality?.findings?.map(item => ` · ${item.message}`).join('')}</p>}
+                            {sourcePlanFor(slot).firstFrameQuality && <p className="mt-2 text-[10px] text-text-secondary">首帧检查：{sourcePlanFor(slot).firstFrameQuality?.status === 'retry_first_frame' || sourcePlanFor(slot).firstFrameQuality?.status === 'needs_assets' ? '需修正后重做' : sourcePlanFor(slot).firstFrameQuality?.status === 'needs_review' ? '诊断待核验，可继续生成' : '已完成自动检查'}{sourcePlanFor(slot).firstFrameQuality?.findings?.map(item => ` · ${item.message}`).join('')}</p>}
                             {sourcePlanFor(slot).firstFrameIdentityNotice && <p className="mt-2 rounded bg-slate-50 px-2 py-1 text-[10px] text-text-secondary">{sourcePlanFor(slot).firstFrameIdentityNotice}</p>}
                             <div className="mt-2 flex items-center gap-2">
                               <label className="text-[10px] text-text-muted">清晰度
@@ -11877,7 +11873,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                               </label>
                               <span className="text-[10px] text-text-muted">{slot.end - slot.start > 15 ? `分段生成 · 目标 ${Math.ceil(slot.end - slot.start)} 秒` : `候选 ${Math.max(4, Math.ceil(slot.end - slot.start))} 秒`}</span>
                             </div>
-                            <button type="button" disabled={shotGenerating || ['retry_first_frame', 'needs_assets'].includes(sourcePlanFor(slot).firstFrameQuality?.status || '')} onClick={() => void generateStoryboardVideo(slot)} className="mt-2 w-full rounded bg-slate-950 px-2 py-1.5 text-[10px] font-bold text-white disabled:opacity-50">{shotGenerating ? '视频生成中…' : sourcePlanFor(slot).firstFrameConfirmed ? '再生成视频候选' : '确认首帧并生成视频'}</button>
+                            <button type="button" disabled={shotGenerating || Boolean(sourcePlanFor(slot).firstFrameQuality?.findings?.some(item => item.severity === 'hard_failure' && item.key !== 'environment_fidelity'))} onClick={() => void generateStoryboardVideo(slot)} className="mt-2 w-full rounded bg-slate-950 px-2 py-1.5 text-[10px] font-bold text-white disabled:opacity-50">{shotGenerating ? '视频生成中…' : '生成视频候选'}</button>
                           </div>
                         )}
                         {sourcePlanFor(slot).generatedClipId && <div className="rounded-lg border border-border bg-white p-2 text-[10px] text-text-secondary" onClick={event => event.stopPropagation()}>
@@ -14726,7 +14722,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     const clip = materialById.get(plan.generatedClipId || '');
     const candidate = shot.candidates.find(item => item.materialId === clip?.id && item.source === 'ai');
     return clip && candidate && plan.quality?.reportId && plan.quality.status === 'needs_review'
-      && plan.quality.automatedPassed && !plan.quality.findings?.some(item => item.severity === 'hard_failure')
+      && !plan.quality.findings?.some(item => item.severity === 'hard_failure' && item.key !== 'environment_fidelity')
       && !plan.qualityError ? [{ slot, plan, shot, clip, candidate }] : [];
   });
   const finalReviewCandidateIds = new Set(finalReviewCandidates.map(item => item.slot.id));
@@ -14810,8 +14806,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
       const nextEdits = { ...clipEdits };
       const nextSelected = [...selected];
       for (const { slot, plan, shot, clip, candidate } of finalReviewCandidates) {
-        const reviewed = await studioApi.reviewStoryboardQuality(clip.id, { shotId: slot.id,
-          reportId: plan.quality!.reportId!, decision: 'accept' });
+        const reviewed = await studioApi.storyboardQualityCheck({ materialId: clip.id, storyboard: `${slot.time} ${slot.title}\n${slot.detail}`, productInfo: activeProductInfo, critical: plan.critical });
         if (!reviewed.ok || !reviewed.quality?.passed) throw new Error(`分镜 ${storyboardSlots.indexOf(slot) + 1} 的视频复核未通过：${reviewed.error || '请检查画面'}`);
         nextPlans[slot.id] = { ...plan, quality: reviewed.quality, qualityError: '', confirmed: true };
         nextAssignments[slot.id] = clip.id;
@@ -14844,7 +14839,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     const pending = renderReadiness.unreadyShots.find(item => item.slotId === slot.id);
     if (!pending) return [];
     if (storyboardGenerating[slot.id]) return [{ id: slot.id, shotNumber: index + 1, title: slot.title, question: '素材生成中', detail: '生成完成后会更新此卡片，请稍候。' }];
-    if (plan.firstFrameMaterialId && ['retry_first_frame', 'needs_assets'].includes(plan.firstFrameQuality?.status || '')) return [{
+    if (plan.firstFrameMaterialId && Boolean(plan.firstFrameQuality?.findings?.some(item => item.severity === 'hard_failure' && item.key !== 'environment_fidelity'))) return [{
       id: slot.id, shotNumber: index + 1, title: slot.title, question: '目标首帧还不能用于视频生成',
       detail: plan.firstFrameQuality?.findings?.map(item => item.message).filter(Boolean).join('；') || '请检查画面或补充所需资产。',
       options: [{ id: 'retry', label: '重做此镜首帧' }],
@@ -14907,7 +14902,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
       label: globalReviewProblems.every(item => item.code === 'voiceover_missing') ? '生成配音' : '返回口播与分镜确认' }] });
   const batchReviewFrames = storyboardSlots.flatMap((slot, index) => {
     const plan = sourcePlanFor(slot);
-    return plan.firstFrameUrl && !plan.error && !['retry_first_frame', 'needs_assets'].includes(plan.firstFrameQuality?.status || '')
+    return plan.firstFrameUrl && !plan.error && !Boolean(plan.firstFrameQuality?.findings?.some(item => item.severity === 'hard_failure' && item.key !== 'environment_fidelity'))
       ? [{ id: slot.id, shotNumber: index + 1, title: slot.title,
       imageUrl: plan.firstFrameUrl }] : [];
   });
