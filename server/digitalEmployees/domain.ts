@@ -310,16 +310,16 @@ export function buildWeeklyPlan(goal: WeeklyGoalInput, config: DigitalEmployeeCo
     },
     {
       key: 'viral_analysis',
-      title: '编导分析并筛选候选选题',
-      description: '编导 Agent 读取灵感与对标分析，记录采用或淘汰依据，只把能够匹配买家问题与真实证据的候选送入脚本。',
+      title: '编导分析爆款并输出创作结论',
+      description: '编导 Agent 读取灵感与对标分析，记录采用或淘汰依据，拆解爆款原脚本与分镜，并结合企业已确认事实形成可供排期使用的新脚本和分镜结论。',
       agentRole: 'director', backgroundCapability: 'knowledge', kind: 'analysis', sequence: 4, priority: 'high', requiresApproval: false, dependsOn: ['scheduled_source_collection'], expectedMinutes: 8,
       businessDomain: 'content', capabilityKey: 'inspiration.exact_analysis', destination: 'socialInspiration', statusSource: 'trend_videos.aiAnalysis', executionMode: 'observe', externalEffect: 'none',
     },
     {
       key: 'content_mode_routing',
-      title: '编排矩阵、周计划与脚本',
-      description: '编导 Agent 在内容数量、生产预算和交期内，根据参考证据、重点产品与素材完备度确认创作路径、脚本、分镜意图和验收要求。',
-      agentRole: 'director', backgroundCapability: 'planner', kind: 'planning', sequence: 5, priority: 'high', requiresApproval: false, dependsOn: ['viral_analysis'], expectedMinutes: 3,
+      title: '经营 Agent 制定详细选题与排期',
+      description: '经营 Agent 读取编导 Agent 的爆款分析、脚本与分镜结论，在内容数量、生产预算和交期内确定每条内容的选题、产品、参考视频、账号、平台与发布时间，并形成内容 Agent 可执行的派单。',
+      agentRole: 'business', backgroundCapability: 'planner', kind: 'planning', sequence: 5, priority: 'high', requiresApproval: false, dependsOn: ['viral_analysis'], expectedMinutes: 3,
       businessDomain: 'content', capabilityKey: 'studio.mode_routing', destination: 'scriptLibrary', statusSource: 'content_batch_plans.orders', executionMode: 'internal', externalEffect: 'draft',
     },
     {
@@ -415,8 +415,7 @@ export function buildWeeklyPlan(goal: WeeklyGoalInput, config: DigitalEmployeeCo
     goal_decomposition: ['context_readiness'],
     scheduled_source_collection: ['goal_decomposition'],
     viral_analysis: [hasScheduledCollection ? 'scheduled_source_collection' : 'goal_decomposition'],
-    // Exact benchmark analysis is mandatory for every new Agent production
-    // task. The Director must complete it before routing can proceed.
+    // Viral-clone plans consume the Director Agent's confirmed benchmark analysis.
     content_mode_routing: [hasViralClone ? 'viral_analysis' : 'goal_decomposition'],
     content_production: ['content_mode_routing'],
     content_quality_gate: ['content_production'],

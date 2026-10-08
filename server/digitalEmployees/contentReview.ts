@@ -68,6 +68,37 @@ export interface NextRoundRecommendations {
   };
 }
 
+/**
+ * Build the live industry-signal slice independently from the end-of-week
+ * review. Only public HTTP(S) sources are returned so the UI can always link
+ * back to real collected evidence.
+ */
+export function traceableIndustryTrends(trendVideos: Row[]): NextRoundRecommendations['industryTrends'] {
+  const signals = trendVideos.flatMap(video => {
+    const sourceUrl = publicUrl(video.sourceUrl || video.url);
+    if (!sourceUrl) return [];
+    const tags = list(video.tags).slice(0, 8);
+    const observedAt = String(video.updatedAt || video.updated_at || video.crawledAt || video.createdAt || video.created_at || '');
+    const views = String(video.views || obj(video.aiAnalysis).views || '').trim();
+    return [{
+      id: video.id,
+      title: String(video.title || '社媒行业信号').trim().slice(0, 240),
+      platform: String(video.platform || '').trim(),
+      summary: [views ? `播放 ${views}` : '', tags.length ? `标签：${tags.slice(0, 4).map(tag => `#${tag}`).join(' ')}` : ''].filter(Boolean).join(' · ') || '点击查看原始社媒内容',
+      sourceUrl,
+      observedAt,
+      tags,
+    }];
+  }).slice(0, 5);
+  return {
+    status: signals.length ? 'available' : 'waiting',
+    signals: signals.slice(0, 3),
+    systemActions: signals.length
+      ? ['把真实社媒信号写入下一周编导参考池', '仅把有来源链接的热点用于内容方向判断', '热点变化不自动覆盖用户已确认的产品与品牌事实']
+      : ['等待可追溯的社媒热点来源，不生成无来源行业结论'],
+  };
+}
+
 function receipt(value: unknown): boolean {
   if (!value || typeof value !== 'object') return false;
   return Object.values(value as Record<string, unknown>).some(item => {
@@ -124,22 +155,8 @@ export function summarizeContentFeedback(input: {
     + item.performance.likes * 4 + item.performance.comments * 8 + item.performance.shares * 12 + item.performance.leads * 25;
   const top = items.filter(item => item.performance.status === 'available').sort((a, b) => performanceScore(b) - performanceScore(a))[0];
 
-  const trendSignals = (input.trendVideos || []).flatMap(video => {
-    const sourceUrl = publicUrl(video.sourceUrl || video.url);
-    if (!sourceUrl) return [];
-    const tags = list(video.tags).slice(0, 8);
-    const observedAt = String(video.updatedAt || video.updated_at || video.crawledAt || video.createdAt || video.created_at || '');
-    const views = String(video.views || obj(video.aiAnalysis).views || '').trim();
-    return [{
-      id: video.id,
-      title: String(video.title || '社媒行业信号').trim().slice(0, 240),
-      platform: String(video.platform || '').trim(),
-      summary: [views ? `播放 ${views}` : '', tags.length ? `标签：${tags.slice(0, 4).map(tag => `#${tag}`).join(' ')}` : ''].filter(Boolean).join(' · ') || '点击查看原始社媒内容',
-      sourceUrl,
-      observedAt,
-      tags,
-    }];
-  }).slice(0, 5);
+  const industryTrends = traceableIndustryTrends(input.trendVideos || []);
+  const trendSignals = industryTrends.signals;
   const tagCounts = trendSignals.flatMap(signal => signal.tags).reduce<Record<string, number>>((acc, tag) => {
     const key = tag.toLowerCase();
     acc[key] = (acc[key] || 0) + 1;
@@ -184,13 +201,7 @@ export function summarizeContentFeedback(input: {
         '编导 Agent 在下一周内容计划中验证新旧关键词，不直接改写已确认产品事实',
       ] : ['等待真实热门 Tag 回流，不根据空数据调整卖点关键词或采集范围'],
     },
-    industryTrends: {
-      status: trendSignals.length ? 'available' : 'waiting',
-      signals: trendSignals.slice(0, 3),
-      systemActions: trendSignals.length
-        ? ['把真实社媒信号写入下一周编导参考池', '仅把有来源链接的热点用于内容方向判断', '热点变化不自动覆盖用户已确认的产品与品牌事实']
-        : ['等待可追溯的社媒热点来源，不生成无来源行业结论'],
-    },
+    industryTrends,
   };
   const nextPlanRecommendations = [
     top ? `优秀内容继承：下周优先复用「${top.title}」的内容框架与钩子，并生成新的表达和镜头组合` : '内容表现数据尚未回流，下周保持可用路径均衡并继续收集真实表现',

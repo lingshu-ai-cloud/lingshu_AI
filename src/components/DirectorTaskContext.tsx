@@ -6,7 +6,7 @@ import { useDeliveryHandoff } from '../hooks/useDeliveryHandoff';
 import { DIRECTOR_REASON_LABELS, type DirectorDecision, type DirectorDecisionReason } from '../lib/directorDecision';
 
 const taskLabels: Record<string, string> = {
-  scheduled_source_collection: '热点与素材采集', viral_analysis: '候选内容分析', content_mode_routing: '矩阵与脚本编排',
+  scheduled_source_collection: '热点与素材采集', viral_analysis: '爆款分析、脚本与分镜', content_mode_routing: '详细选题与经营排期',
   content_production: '内容生产', content_quality_gate: '成片质检', content_release_approval: '发布审批',
 };
 const statusLabels: Record<string, string> = {
@@ -87,6 +87,7 @@ export default function DirectorTaskContext({ page, runtimeContext, className = 
   if (error) return <section role="alert" className={`flex items-center gap-2 border-b border-amber-200 bg-amber-50 px-5 py-3 text-xs text-amber-900 ${className}`}><AlertCircle size={14} />{error}</section>;
   const view = overview ? buildDirectorContextView(overview, link) : null;
   if (!view) return null;
+  const isBusinessScheduling = (link.businessRef?.taskKey || '') === 'content_mode_routing' || view.stage === '详细选题与经营排期';
   const currency = overview?.plan?.businessPackage?.directorPlan?.currency === 'USD' ? '$' : '¥';
   const remaining = Math.max(0, view.productionBudget - view.productionSpent - view.productionReserved);
   const go = (destination: BusinessDestination, taskKey: string, viewMode?: 'create' | 'publish') => dispatchDigitalEmployeeDeepLink({ ...link, page: destination, view: viewMode, businessRef: { ...link.businessRef, taskKey } });
@@ -104,7 +105,7 @@ export default function DirectorTaskContext({ page, runtimeContext, className = 
   return <section data-testid="director-task-context" className={`border-b border-emerald-100 bg-gradient-to-r from-emerald-50 via-white to-white px-4 py-3 sm:px-6 ${className}`}>
     <div className="mx-auto max-w-6xl">
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><span className="rounded bg-emerald-700 px-2 py-1 text-[11px] font-semibold text-white">编导任务</span><strong className="truncate text-sm text-slate-900">{view.goalTitle}</strong>{view.week && <span className="text-xs text-slate-500">{view.week}</span>}<span className="rounded-full border border-emerald-200 bg-white px-2 py-0.5 text-[11px] text-emerald-800">{view.stage} · {view.status}</span></div>
+        <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><span className="rounded bg-emerald-700 px-2 py-1 text-[11px] font-semibold text-white">{isBusinessScheduling ? '经营排期' : '编导任务'}</span><strong className="truncate text-sm text-slate-900">{view.goalTitle}</strong>{view.week && <span className="text-xs text-slate-500">{view.week}</span>}<span className="rounded-full border border-emerald-200 bg-white px-2 py-0.5 text-[11px] text-emerald-800">{view.stage} · {view.status}</span></div>
           <p className="mt-2 text-xs leading-5 text-slate-600">{view.scope === 'content' ? `${view.content?.productName || '当前内容'} · ${view.content?.theme || view.content?.buyerProblem || '待补充主题'}` : '当前展示本周任务包汇总；选择具体内容后将自动定位到单条任务。'}</p></div>
         <div className="flex flex-wrap gap-2 text-[11px]"><button type="button" onClick={() => go('socialInspiration', 'viral_analysis')} className="rounded border border-emerald-200 bg-white px-2.5 py-1.5 font-semibold text-emerald-800">灵感</button><button type="button" onClick={() => go('scriptLibrary', 'content_mode_routing')} className="rounded border border-emerald-200 bg-white px-2.5 py-1.5 font-semibold text-emerald-800">脚本</button><button type="button" onClick={() => go('smartAssets', 'content_production', 'create')} className="rounded bg-emerald-700 px-2.5 py-1.5 font-semibold text-white">进入制作 <ExternalLink className="ml-1 inline" size={11}/></button></div>
       </div>

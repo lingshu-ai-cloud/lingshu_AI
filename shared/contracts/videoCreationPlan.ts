@@ -49,6 +49,8 @@ export interface VideoCreationPlan {
   matrix?: { accountId: string; audience: string; objective: string; cta: string; accountRole?: SocialAccountRole; formats?: string[] };
   reviewRequirements?: Array<{ todoId: string; reference: string; scene: number; startsAt: number; endsAt: number; requirements: string; materials: string; acceptance: string }>;
   route: 'clone' | 'material' | 'product';
+  /** Stable enterprise product identity. Names remain display-only. */
+  productId?: string;
   productName: string;
   theme: string;
   language: string;
@@ -271,6 +273,7 @@ export function normalizeVideoPlan(value: Partial<VideoCreationPlan>): VideoCrea
     } } : {}),
     ...(Array.isArray(value.reviewRequirements) ? { reviewRequirements: value.reviewRequirements.slice(0, 5).map(r => ({ todoId: String(r.todoId || '').slice(0, 80), reference: String(r.reference || '').slice(0, 4000), scene: 1, startsAt: 0, endsAt: 3, requirements: String(r.requirements || '').slice(0, 4000), materials: String(r.materials || '').slice(0, 4000), acceptance: String(r.acceptance || '').slice(0, 4000) })) } : {}),
     route: ['clone', 'material', 'product'].includes(String(value.route)) ? value.route! : 'product',
+    productId: String(value.productId || '').trim().slice(0, 160),
     productName: String(value.productName || '').trim().slice(0, 180), theme: String(value.theme || '').trim().slice(0, 500),
     language: normalizeVideoLanguage(value.language || 'en'), duration: Math.max(10, Math.min(180, Number(value.duration) || 30)),
     platform: ['facebook', 'instagram', 'tiktok', 'youtube'].includes(String(value.platform)) ? value.platform! : 'youtube',

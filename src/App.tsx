@@ -24,6 +24,7 @@ import { SocialProgramProvider } from './contexts/SocialProgramContext';
 import { PageErrorBoundary, PageLoading } from './components/AppPageBoundary';
 import type { SocialContentCreateRequest } from './components/socialContent/SocialContentWorkspace';
 import RuntimeVersionBanner from './components/RuntimeVersionBanner';
+import { availableProductPage, PLATFORM_ADS_PAGE_IDS, PLATFORM_ADS_SURFACE_ENABLED } from './config/productSurfaceFlags';
 import { AGENT_PAGES, ROLE_PAGE_ACCESS, customerUnifiedAgent, firstUserText, isAdminSession, isExternalCustomerServiceDemoSession, isLocalCustomerReplyLab, loadConvs, loadPage, pagePreferenceScope, type AgentAction, type AgentType, type Conversation, type ConversationContext, type KickoffSignal, type Message, type RestoreSignal, type StarterAccessState } from './appSession';
 
 // 页面仍然拆包，但本地预览会在浏览器空闲时逐个预热这些模块。显式 loader
@@ -73,7 +74,7 @@ const SmartBusinessPreview = import.meta.env.DEV ? lazy(() => import('./dev/Smar
 const StartupHubPage = lazy(() => import('./components/StartupHubPage'));
 
 type PageModuleLoader = () => Promise<unknown>;
-const ADS_PAGES: Page[] = ['adsOverview', 'adsPlans', 'adsCreatives', 'adsManaged'];
+const ADS_PAGES: Page[] = [...PLATFORM_ADS_PAGE_IDS];
 const INTEGRATION_PAGES: Page[] = ['plugins', 'channels', 'youtube'];
 
 const LOCAL_PREVIEW_PAGE_LOADERS: PageModuleLoader[] = [
@@ -83,7 +84,7 @@ const LOCAL_PREVIEW_PAGE_LOADERS: PageModuleLoader[] = [
   () => import('./components/InspirationDashboard'),
   () => import('./components/publishing/CalendarPlanner'),
   loadStrategyPage,
-  loadPlatformAdsPage,
+  ...(PLATFORM_ADS_SURFACE_ENABLED ? [loadPlatformAdsPage] : []),
   loadConversionPage,
   loadOrderManagementPage,
   loadEnterprisePage,
@@ -198,7 +199,7 @@ export default function App() {
   if (publicPath === '/data-deletion') return <LegalPages kind="data-deletion" />;
   const isRegistrationEntry = window.location.pathname === '/register' &&
     Boolean(new URLSearchParams(window.location.search).get('invite')?.trim());
-  const [page, setPage] = useState<Page>(loadPage);
+  const [page, setPage] = useState<Page>(() => availableProductPage(loadPage()));
   const pageRef = useRef(page);
   pageRef.current = page;
   const [mountedPages, setMountedPages] = useState<Set<Page>>(() => new Set<Page>(['digitalEmployees', loadPage()]));
@@ -226,6 +227,9 @@ export default function App() {
   }, [page]);
   useEffect(() => {
     if (ADS_PAGES.includes(page)) setLastAdsPage(page);
+  }, [page]);
+  useEffect(() => {
+    if (!PLATFORM_ADS_SURFACE_ENABLED && ADS_PAGES.includes(page)) setPage('digitalEmployees');
   }, [page]);
   useEffect(() => scheduleLocalPreviewPreload(pageRef.current), []);
   const [socialContentNavigation, setSocialContentNavigation] = useState<{
@@ -488,7 +492,7 @@ export default function App() {
   };
 
   const handleNavigate = useCallback((p: Page) => {
-    const next = resolvePage(p) || 'digitalEmployees';
+    const next = availableProductPage(resolvePage(p) || 'digitalEmployees');
     if (next !== pageRef.current) pushProductionLocation(next);
     else window.history.replaceState({
       ...window.history.state,
@@ -966,7 +970,7 @@ export default function App() {
             </Activity>
           )}
           {(page === 'scriptLibrary' || mountedPages.has('scriptLibrary')) && <Activity mode={page === 'scriptLibrary' ? 'visible' : 'hidden'}><ScriptLibraryPage socialContentTaskId={activeSocialContentTaskId} /></Activity>}
-          {(ADS_PAGES.includes(page) || ADS_PAGES.some(item => mountedPages.has(item))) && <Activity mode={ADS_PAGES.includes(page) ? 'visible' : 'hidden'}><PlatformAdsPage page={ADS_PAGES.includes(page) ? page : lastAdsPage} onNavigate={handleNavigate} /></Activity>}
+          {PLATFORM_ADS_SURFACE_ENABLED && (ADS_PAGES.includes(page) || ADS_PAGES.some(item => mountedPages.has(item))) && <Activity mode={ADS_PAGES.includes(page) ? 'visible' : 'hidden'}><PlatformAdsPage page={ADS_PAGES.includes(page) ? page : lastAdsPage} onNavigate={handleNavigate} /></Activity>}
           {(page === 'conversion' || mountedPages.has('conversion')) && (
             <Activity mode={page === 'conversion' ? 'visible' : 'hidden'}>
             <ConversionPage

@@ -16,11 +16,11 @@ type Snapshot = { task: { id: string; task_key?: string; title: string; status: 
 type ProgressState = 'complete' | 'current' | 'pending' | 'failed';
 
 const agentSteps = [
-  { id: 'script', label: '脚本与分镜', agent: '内容 Agent', duration: '约 65 分钟', stage: 'script' as Stage, matcher: /脚本|分镜|文案/, fallback: '正在读取经营 Agent 派单和编导 Agent 分析结论' },
+  { id: 'script', label: '脚本与分镜', agent: '编导 Agent', duration: '约 65 分钟', stage: 'script' as Stage, matcher: /脚本|分镜|文案/, fallback: '经营 Agent 派单后，编导 Agent 根据爆款分析和企业事实生成适配脚本与逐镜分镜' },
   { id: 'materials', label: '逐镜素材', agent: '内容 Agent', duration: '约 45 分钟', stage: 'material_match' as Stage, matcher: /素材|首帧|授权/, fallback: '脚本锁定后匹配企业素材或最高档 AIGC' },
   { id: 'voice', label: '配音、字幕与人物', agent: '内容 Agent', duration: '约 90 分钟', stage: 'voice_subtitles' as Stage, matcher: /字幕|口播|配音|声音|数字人/, fallback: '素材就绪后按镜头需求生成配音、字幕和人物镜头' },
   { id: 'editing', label: '剪辑与渲染', agent: '内容 Agent', duration: '约 90 分钟', stage: 'render' as Stage, matcher: /剪辑|合成|渲染|成片/, fallback: '合成画面、音频和字幕，并生成可验收成片' },
-  { id: 'quality', label: '质检与局部返工', agent: '质检 Agent', duration: '约 25–55 分钟', stage: 'quality' as Stage, matcher: /质检|质量|返工|验收/, fallback: '检查事实、画面、音频、版权和平台要求；仅重做不合格镜头' },
+  { id: 'quality', label: '质检与局部返工', agent: '内容 Agent · 质检能力', duration: '约 25–55 分钟', stage: 'quality' as Stage, matcher: /质检|质量|返工|验收/, fallback: '检查事实、画面、音频、版权和平台要求；仅重做不合格镜头' },
 ];
 
 function stageIndex(stage?: string) { const index = stages.indexOf(stage as Stage); return index < 0 ? 0 : index; }

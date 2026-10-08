@@ -15,6 +15,7 @@ import { useDismissibleLayer } from '../hooks/useDismissibleLayer';
 import { useModalFocus } from '../hooks/useModalFocus';
 import ActionFeedbackHost from './ui/ActionFeedbackHost';
 import DuotoneGlyph from './ui/DuotoneGlyph';
+import { PLATFORM_ADS_SURFACE_ENABLED } from '../config/productSurfaceFlags';
 
 interface NavSection {
   label: string;
@@ -78,7 +79,9 @@ const SYSTEM_NAV: NavSection = {
   ],
 };
 
-const NAV_SECTIONS = [SOCIAL_NAV, ADS_NAV, CUSTOMER_NAV, AGENT_NAV, SYSTEM_NAV];
+// Platform Ads is temporarily hidden behind a reversible product-surface flag;
+// ADS_NAV remains intact as the restoration backup.
+const NAV_SECTIONS = [SOCIAL_NAV, ...(PLATFORM_ADS_SURFACE_ENABLED ? [ADS_NAV] : []), CUSTOMER_NAV, AGENT_NAV, SYSTEM_NAV];
 
 const STARTER_HOME_NAV_ITEM = navItem('digitalEmployees', <DuotoneGlyph kind="home" />);
 

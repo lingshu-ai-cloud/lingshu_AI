@@ -499,6 +499,14 @@ export interface ContentQueueItem {
   lineage: ContentTaskLineage;
   outputSummary: ContentTaskOutputSummary;
   confidence?: ContentTaskConfidence;
+  /** The user-facing production promise. Manual tasks may use explicit system defaults until confirmed. */
+  contentPlan?: {
+    summary: string;
+    source: "confirmed" | "system_default";
+    deliverBy: string;
+    publishAt: string;
+    estimatedMinutes: number;
+  };
   preproduction?: import('../../shared/contracts/videoCreationPlan').VideoPreproductionPreview;
   title: string;
   productName: string;
@@ -716,6 +724,8 @@ export interface DigitalEmployeeOverview {
   approvals: ApprovalRequest[];
   handoffs: HandoffSession[];
   review: WeeklyReview | null;
+  /** Traceable social signals can be shown before a weekly review is finalized. */
+  industryTrends?: NextRoundRecommendations['industryTrends'];
   liveReview?: LiveWeeklyReview | null;
   agents: AgentStatus[];
   businessSnapshot: BusinessSnapshot | null;

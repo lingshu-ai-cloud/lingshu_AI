@@ -141,7 +141,7 @@ export function normalizePackage(raw: WeeklyPackage): WeeklyPackage {
     const mergedSources = ids([...(currentDirector?.sourceProjectIds || []), ...legacyTasks.flatMap(task => task.sourceProjectIds || [])]);
     const base = currentDirector || legacyTasks[0];
     const migrated: PackageTask = {
-      templateId: 'director', title: currentDirector?.title || '编排本周内容', ownerId: clean(base.ownerId, 160), ownerName: clean(base.ownerName, 160),
+      templateId: 'director', title: currentDirector?.title || '分析爆款并完成脚本分镜', ownerId: clean(base.ownerId, 160), ownerName: clean(base.ownerName, 160),
       dueAt: clean(base.dueAt, 10), notes: mergedNotes, sourceProjectIds: mergedSources,
     };
     const index = currentTasks.findIndex(task => task.templateId === 'director');
