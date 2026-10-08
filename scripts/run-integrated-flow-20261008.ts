@@ -1,6 +1,11 @@
 import '../server/loadEnvironment.js';
 import fs from 'node:fs';
 import path from 'node:path';
+// This historical run is a catalog-editing regression, not viral replication acceptance.
+// Keep it for technical reproduction without allowing the same scope mistake again.
+if (process.argv.includes('--flow') && !process.argv.includes('--catalog-regression-only')) {
+  throw Error('旧验收脚本只跑纯素材目录剪辑，不能作为爆款复刻验收。仅技术回归可显式传 --catalog-regression-only；真正复刻须进入逐镜数字人与非数字人素材匹配生成流程。');
+}
 const runRoot=path.resolve('data/acceptance/integrated-flow-20261008');
 process.env.LOCAL_STORE_DIR=path.join(runRoot,'local-store');
 process.env.ENABLE_LOCAL_DEV_FALLBACK='true';
