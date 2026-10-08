@@ -71,6 +71,11 @@ test('legacy avatar snapshot restores measured provider SRT for its own tenant a
     assert.equal((await post('tenant-a', body)).status, 200);
     assert.equal(supplierCalls, 1, 'persisted cues should avoid another supplier request');
     rows.get('studio_projects/project-1').spec.materialSnapshots[0].transcriptCues = undefined;
+    rows.get('studio_avatar_jobs/job-1').payload.shotId = 'original-shot-before-rebuild';
+    assert.equal((await post('tenant-a', body)).status, 200, 'rebuilt shot retains trusted source provenance for caption recovery');
+    rows.get('studio_projects/project-1').spec.materialSnapshots[0].transcriptCues = undefined;
+    rows.get('studio_avatar_jobs/job-1').payload.assemblyId = 'other-assembly';
+    assert.equal((await post('tenant-a', body)).status, 422, 'other assembly source cannot supply provenance');
     rows.delete('studio_avatar_jobs/job-1');
     assert.equal((await post('tenant-a', body)).status, 422, 'a forged snapshot alone is not source evidence');
     rows.set('studio_avatar_jobs/job-1', { id: 'job-1', tenant_id: 'tenant-a', project_id: 'project-1',

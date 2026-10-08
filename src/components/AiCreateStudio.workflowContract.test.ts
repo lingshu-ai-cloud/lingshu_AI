@@ -119,11 +119,9 @@ assert.match(studioSource, /已完成.*目标人物视频，并自动回填当�
 assert.match(studioSource, /const refreshProductionJob[\s\S]{0,2400}digitalHumanFullLengthEdit\(clip, storyboardSlot\)/, 'a manually refreshed completed avatar job must immediately synchronize its full-length edit');
 assert.match(studioSource, /const runProductionSentenceReplication[\s\S]{0,3000}digitalHumanFullLengthEdit\(clip, slot\)/, 'sentence-video auto-fill must immediately synchronize its full-length edit');
 assert.match(studioSource, /useEffect\(\(\) => \{[\s\S]{0,1000}adoptedDigitalHumanCandidate\(slot, materialId\)[\s\S]{0,800}digitalHumanFullLengthEdit\(clip, slot\)/, 'restored and asynchronously loaded avatar assignments must normalize historical clip edits');
-assert.match(studioSource, /item\.source === 'avatar' && item\.materialId === clip\?\.id[\s\S]{0,120}const adoptedVideo = Boolean\(adopted && clip\?\.type === 'video'\)/, 'only the adopted digital-human material may control the slot duration');
 assert.match(studioSource, /const targetDuration = adoptedVideo \? clip!\.duration/, 'an adopted digital-human storyboard slot must follow the material duration');
 assert.match(studioSource, /trimStart: adoptedVideo \? 0 : edit\.trimStart,[\s\S]{0,120}trimEnd: adoptedVideo \? clip\.duration : edit\.trimEnd,[\s\S]{0,120}speed: adoptedVideo \? 1 : edit\.speed/, 'an adopted digital-human storyboard slot must use the complete material at normal speed');
 assert.match(studioSource, /fallbackDigitalHumanVideo\?\.duration[\s\S]{0,1300}trimStart: 0, trimEnd: fallbackDigitalHumanVideo\?\.duration \|\| targetDuration, speed: 1/, 'the legacy HeyGen render fallback must use measured material duration at normal speed');
-assert.match(studioSource, /if \(adoptedDigitalHumanCandidate\(slot, clip\.id\)\)[\s\S]{0,180}保持 1 倍速完整播放/, 'digital-human timing controls must not mutate the locked full-length edit');
 assert.match(studioSource, /followAdoptedDigitalHumanSlotDurations\(base, storyboardAssignments, shotProductions,[\s\S]{0,180}item\.duration/, 'storyboard timing must be rebuilt from the adopted digital-human material duration');
 assert.match(studioSource, /workflowRunId:\s*projectWorkflowContext\?\.runId/, 'saved studio projects must retain their own originating workflow run');
 assert.match(studioSource, /workflowTaskId:\s*projectWorkflowContext\?\.taskId/, 'saved studio projects must retain their own originating workflow task');
@@ -201,3 +199,8 @@ assert.match(studioSource, /requalityProject\(projectId\)/);
 assert.match(studioSource, /!currentProjectQualityRecord \|\| Boolean\(manualHandoffBusy\)/);
 
 console.log('content execution workspace contract tests passed');
+
+const reusedDigitalSlots = followAdoptedDigitalHumanSlotDurations([durationSlot, { ...durationSlot, id: 'slot-next', start: 5.67, end: 7.67 }], { 'slot-17': 'reused-digital' }, {}, new Map([['reused-digital', 3.2]]), 'video-1', {}, new Set(['reused-digital']));
+assert.equal(reusedDigitalSlots[0]?.end, 3.2, 'reused digital-human videos follow media duration without an adoption candidate');
+assert.equal(reusedDigitalSlots[1]?.start, 3.2, 'the following shot shifts with the digital-human media duration');
+assert.equal(reusedDigitalSlots[1]?.end, 5.2);

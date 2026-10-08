@@ -494,7 +494,16 @@ async function composite(manifest, onProgress = () => {}, outDir) {
       clipId: clip.clipId,
       targetDuration: clip.targetDuration,
     })));
-    const emphasisPlan = normalizeEmphasisPlan(manifest && (manifest.emphasisPlan || manifest.emphasis), duration);
+    const rawEmphasisPlan = manifest && (manifest.emphasisPlan || manifest.emphasis);
+    const emphasisPlan = normalizeEmphasisPlan(rawEmphasisPlan, duration);
+    // Motion events use the normalized caption events as their timing/layout
+    // fallback, but belong to the same render contract. Preserve them here so
+    // the Remotion layer can merge a single semantic motion with its event.
+    // The overlay renderer validates role, timing, target confidence and
+    // geometry before anything reaches Remotion.
+    if (rawEmphasisPlan && Array.isArray(rawEmphasisPlan.motionEvents)) {
+      emphasisPlan.motionEvents = rawEmphasisPlan.motionEvents.slice(0, 160);
+    }
     let motionOverlay = { path: null, cacheHit: false, renderMs: 0 };
     if (advancedEvents(emphasisPlan).length) {
       try {

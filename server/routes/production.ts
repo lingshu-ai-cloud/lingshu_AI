@@ -62,8 +62,11 @@ export function createProductionRouter(store: DataStore, importVideo: (url: stri
         const cloud = !material && cloudId ? await getOwnedCloudMaterialRecord(cloudId, tenantId) : null;
         const snapshot = !material && !cloud ? (project.spec?.materialSnapshots || []).find((item: any) => item.id === materialId) : null;
         const jobs = await store.list<JobRecord>('studio_avatar_jobs', { where: { tenant_id: tenantId, project_id: projectId }, perPage: 500 });
+        // Caption recovery verifies the source video, whose completed job retains its
+        // original shot ID when a storyboard is rebuilt. Current assignment/source
+        // checks above still bind this request to the authenticated draft and shot.
         const verifiedHeygenJob = jobs.items.find(job => job.tenant_id === tenantId && job.payload.status === 'completed'
-          && job.payload.materialId === materialId && job.payload.assemblyId === assemblyId && job.payload.shotId === shotId);
+          && job.payload.materialId === materialId && job.payload.assemblyId === assemblyId);
         const executions = await store.list<ExecutionStoreRecord>('studio_digital_human_executions', { where: { tenant_id: tenantId, project_id: projectId }, perPage: 500 });
         const verifiedAdoption = executions.items.some(record => record.tenant_id === tenantId
             && record.payload.assemblyId === assemblyId && record.payload.shotId === shotId
