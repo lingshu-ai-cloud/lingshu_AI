@@ -226,7 +226,12 @@ async function importMaterials(token: string, tenantId: string): Promise<number>
     const mediaPath = materialPath(material.file || material.url);
     if (!fs.existsSync(mediaPath) || !fs.statSync(mediaPath).isFile()) {
       const allowed = await collectionFieldNames(token, 'materials');
-      const body = writableRecord(material, allowed, tenantId, '');
+      const body = {
+        ...writableRecord(material, allowed, tenantId, ''),
+        tenantId,
+        title: String(material.title || material.name || '未命名素材'),
+        sha256: String(material.sha256 || material.contentSha256 || ''),
+      };
       await pbRequest(token, '/api/collections/materials/records', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
       });
