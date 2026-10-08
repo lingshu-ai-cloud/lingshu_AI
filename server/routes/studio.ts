@@ -8081,6 +8081,11 @@ async function alignTtsAudio(transcript: string, url: string | undefined, durati
   return { cues: await alignQwenFile(signed, transcript, duration, file + '.asr.json'), source: 'audio_ai' };
 }
 
+/** Trusted automation entry point; reuses the same tenant-scoped real audio alignment as the studio UI. */
+export async function alignStudioVoiceForAutomation(input: { tenantId: string; text: string; url: string; duration: number }) {
+  return studioTenantContext.run(input.tenantId, () => alignTtsAudio(input.text, input.url, input.duration));
+}
+
 async function rewriteVoiceoverToDuration(text: string, language: string, currentDuration: number, targetDuration: number): Promise<string> {
   const targetChars = Math.max(8, Math.round(text.replace(/\s/g, '').length * targetDuration / Math.max(1, currentDuration)));
   const prompt = `Rewrite this spoken short-video voiceover to fit about ${targetDuration} seconds and approximately ${targetChars} non-space characters at normal speech speed. Language: ${langName(language)}. Preserve every verified product fact, brand name, number and CTA. Do not invent claims. Keep the same emotional arc. Output only the revised spoken copy, without labels, timestamps, quotation marks or explanation.\n\n${text}`;

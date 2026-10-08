@@ -73,7 +73,7 @@ ${input.styleProfile ? '历史优质口播只提供抽象风格指纹，绝不�
   }
   throw Error('口播生成失败');
 }
-export async function reviewFinalNarration(input: { spoken: string; facts: string; language: string; constraints: string[] }): Promise<string[]> {
+export async function reviewFinalNarration(input: { spoken: string; facts: string; visualFacts?: string[]; sceneEvidence?: Array<{ spoken: string; asset: string; observations: string[] }>; language: string; constraints: string[] }): Promise<string[]> {
   const evidenceIssues = narrationEvidenceIssues(input.facts, input.spoken);
   if (evidenceIssues.length) return evidenceIssues;
   if (!spokenLanguageMatches(input.spoken, input.language)) return ['最终口播语言与制作计划不符'];
@@ -81,10 +81,20 @@ export async function reviewFinalNarration(input: { spoken: string; facts: strin
   if (naturalnessIssues.length) return naturalnessIssues;
   const { text: raw } = await callVideoModel(`审核最终口播，首先检查正文是否为目标语言 ${input.language}（品牌、型号可保留原文），包括区分英语、西语、法语等拉丁字母语言。再检查会改变事实或理解的问题：未提供依据的数字/效果/承诺，条件或否定丢失，要求“这几个问题”却未列出，制作审稿腔。不要按个人文风改写。私信领取清单/指南/方案等也属于服务承诺，事实中未明确提供则指出。只检查口播，不检查画面标识是否出现或出现位置；画面标识由渲染单独验证。
 已确认事实：${input.facts}
+已核验素材观察（只能证明画面，不能证明功效或合规）：${(input.visualFacts || []).join('；')}
+逐镜口播与实际素材对应（判断指代时以本镜为准，其他镜头不表示同一商品）：${JSON.stringify(input.sceneEvidence || [])}
 约束：${input.constraints.join('；')}
 最终口播：${input.spoken}
-不把待确认的中性提问当成事实断言。“视频不能证明某功能”不等于“设备没有某功能”，前者是证据边界，不应误报为否定功能。不要因未展开全部技术条件而拒绝简短科普。仅输出 JSON：{"issues":["具体问题及原句；没有问题则空数组"]}。`, { timeoutMs: 60000 });
+不把待确认的中性提问当成事实断言。“视频不能证明某功能”不等于“设备没有某功能”，前者是证据边界，不应误报为否定功能。不要因未展开全部技术条件而拒绝简短科普。只返回已确认的事实错误，策略建议放advisories。严格输出JSON：{"issues":[{"kind":"unsupported_claim|contradiction|missing_condition|language|service_promise|missing_enumeration|audit_tone","quote":"逐字引用最终口播中的原句","reason":"具体违反的事实及证据"}],"advisories":[]}。没有事实错误issues必须为空，不得在issues中写“此项无误/尚可接受/不计入”。`, { timeoutMs: 60000, systemPrompt: '你只做事实与语言审核，不做营销策略评分。只报告口播中实际出现的具体错误，并逐字引用原句。产品名本身不是功效承诺；不声称包装能证明性能，不等于否认产品性能。请阅读成分/说明、比较资料、评论提问、联系讨论需求，都不是企业承诺提供服务。只有明确承诺赠送、发送、提供未确认资料或服务才报告服务承诺。普通开放提问不需要枚举问题，只有明确说“这几个/这些/三项问题”等固定问题集合而未列出才报告数量丢失。不得从消费品类别推断只能面向C端，B2B受众与市场定位由用户目标决定。约束中的平台节奏、CTA偏好、画面要求和营销风格应交给策略审核，不得当作语言错误或虚构事实。不得因口播未复述全部卖点而拒绝。缺少免责声明不是事实错误，除非原句实际作出了需附条件的功效或认证断言。普通建议阅读标签不暗示该标签具有认证或功效证明。逐镜已对应的包装展示无需口播重复商品名，其他镜头已注明其他目录商品时不得推断它们都是本商品。' });
+  return parseFinalNarrationReview(raw, input.spoken);
+}
+
+export function parseFinalNarrationReview(raw: string, spoken: string): string[] {
   const payload = JSON.parse(raw.replace(/^```(?:json)?\s*|\s*```$/g, '').trim());
   if (!Array.isArray(payload.issues)) throw Error('最终口播审核未返回有效结论');
-  return payload.issues.filter((issue: unknown) => typeof issue === 'string' && issue.trim());
+  const kinds = new Set(['unsupported_claim', 'contradiction', 'missing_condition', 'language', 'service_promise', 'missing_enumeration', 'audit_tone']);
+  return payload.issues.map((issue: any) => {
+    if (!issue || !kinds.has(issue.kind) || typeof issue.quote !== 'string' || !issue.quote.trim() || !spoken.includes(issue.quote) || typeof issue.reason !== 'string' || !issue.reason.trim()) throw Error('口播审核错误缺少可核验原句或有效事实类别');
+    return `${issue.reason}；原句：${issue.quote}`;
+  });
 }

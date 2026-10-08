@@ -37,7 +37,7 @@ test('filter builders provide motion, particles, transitions and synthetic sound
   assert.match(audio.filters.join(';'), /adelay=200\|200/);
 });
 
-test('real FFmpeg render applies EffectPlan without changing approved duration', { timeout: 60_000 }, async () => {
+test('real FFmpeg joins mixed moving and static scenes without changing approved duration', { timeout: 60_000 }, async () => {
   assert.ok(ffmpegPath, 'ffmpeg-static is required');
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lingshu-effect-test-'));
   try {
@@ -59,7 +59,7 @@ test('real FFmpeg render applies EffectPlan without changing approved duration',
         schemaVersion: 1, presetId: 'dynamic', intensity: 3, beatSync: false, seed: 198,
         scenes: [
           { sceneId: 'hook', enabled: true, motion: 'push_in', color: 'warm', transitionOut: { type: 'dissolve', duration: .25 }, overlays: [{ presetId: 'sparkle', layer: 'around_subject', start: .05, end: .9, anchor: { x: .5, y: .5 }, scale: 1, opacity: .8 }] },
-          { sceneId: 'proof', enabled: true, motion: 'pull_out', color: 'cool', transitionOut: { type: 'cut', duration: 0 }, overlays: [] },
+          { sceneId: 'proof', enabled: true, motion: 'none', color: 'cool', transitionOut: { type: 'cut', duration: 0 }, overlays: [] },
         ],
         audioEvents: [{ presetId: 'impact', at: .15, volume: .7 }],
       },
@@ -71,6 +71,11 @@ test('real FFmpeg render applies EffectPlan without changing approved duration',
     const match = durationProbe.stderr.match(/Duration:\s*00:00:([\d.]+)/);
     assert.ok(match, durationProbe.stderr);
     assert.ok(Math.abs(Number(match[1]) - 2) < .15, `output duration must remain 2s, got ${match[1]}`);
+    // File existence and total duration do not detect a frozen first scene.
+    const secondFrame = spawnSync(ffmpegPath, ['-hide_banner', '-loglevel', 'error', '-ss', '1.6', '-i', result.outputPath, '-vf', 'scale=1:1', '-frames:v', '1', '-pix_fmt', 'rgb24', '-f', 'rawvideo', 'pipe:1']);
+    assert.equal(secondFrame.status, 0, String(secondFrame.stderr));
+    assert.equal(secondFrame.stdout.length, 3);
+    assert.ok(secondFrame.stdout[2] > secondFrame.stdout[0] + 60, 'the second scene must be blue, not a repeated first red frame');
     const audioProbe = spawnSync(ffmpegPath, ['-hide_banner', '-i', result.outputPath, '-map', '0:a:0', '-af', 'volumedetect', '-f', 'null', '-'], { encoding: 'utf8' });
     const mean = Number((audioProbe.stderr.match(/mean_volume:\s*(-?[\d.]+) dB/) || [])[1]);
     assert.ok(Number.isFinite(mean) && mean > -70, `synthetic effect event must be audible, mean=${mean}`);
