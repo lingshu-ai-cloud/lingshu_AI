@@ -24,6 +24,99 @@ await runWithDataAuthority('local',async()=>{
 
 
 
+
+
+
+ if(process.argv.includes('--review-regression')) {
+  const {reviewFinalNarration}=await import('../server/digitalEmployees/narration.js');
+  const facts='产品：卸妆产品；类别：卸妆；规格：100ml。未提供认证、功效保证或资料赠送服务。';
+  const safe=await reviewFinalNarration({spoken:'Read the ingredient list before choosing. Packaging alone is not proof of performance. Which details matter to you? Share your questions in the comments.',facts,language:'en',constraints:['禁止未经确认的功效和服务承诺','优先主页或私信承接']});
+  const unsafe=await reviewFinalNarration({spoken:'This clinically certified makeup remover guarantees perfect results in three days. Message us and we will send you a free certified testing report.',facts,language:'en',constraints:['禁止未经确认的功效和服务承诺']});
+  fs.writeFileSync(path.join(runRoot,'narration-review-regression.json'),JSON.stringify({safeIssues:safe,unsafeIssues:unsafe},null,2));
+  if(safe.length||!unsafe.length)throw Error('Narration reviewer regression failed');console.log(JSON.stringify({phase:'narration_review_regression_passed',safeIssues:0,unsafeIssues:unsafe.length}));
+ }
+ if(process.argv.includes('--cut-transitions')) {
+  const {reviseContent}=await import('../server/digitalEmployees/contentRevision.js');
+  const state=JSON.parse(fs.readFileSync(path.join(runRoot,'flow-state.json'),'utf8'));
+  const projects=await store.list<any>('studio_projects',{where:{tenant_id:tenantId},perPage:500});
+  for(const project of projects.items){const spec=obj(project.spec);if(spec.automation?.productionGraphId?.includes(state.runId)){
+   if(!spec.automation.narrationReviewPassed||!fs.existsSync(spec.automation.voiceLocalPath))throw Error('Effect revision requires verified voice');
+   fs.writeFileSync(path.join(runRoot,'effect-before-cut-transitions.json'),JSON.stringify(project,null,2));
+   const revised=reviseContent(spec,'export',{ratio:'9:16',resolution:'720p',reason:'多镜嵌套xfade在本机持续被系统终止，保留轻微镜内运动、使用直接切镜，完整重做成片质检'});
+   revised.effectPlan={schemaVersion:1,presetId:'natural',intensity:1,beatSync:false,seed:198,scenes:spec.sceneSourcePlan.map((item:any,index:number)=>({sceneId:`scene-${index+1}`,enabled:true,motion:index%2?'pull_out':'push_in',color:'original',transitionOut:{type:'cut',duration:0},overlays:[]})),audioEvents:[]};
+   await store.update('studio_projects',project.id,{spec:revised,status:'draft'});
+  }}
+  const tasks=await store.list<any>('workflow_tasks',{where:{tenant_id:tenantId,run_id:state.runId},perPage:100});const task=tasks.items.find(x=>x.task_key==='content_production');
+  await store.update('workflow_tasks',task.id,{status:'pending',blocked_reason:'',output:{correctionInput:{action:'retry',instruction:'直接切镜与轻微镜内运动，重新渲染并检查成片'}},updated_at:new Date().toISOString()});await store.update('workflow_runs',state.runId,{status:'running',pause_reason:''});
+  console.log(JSON.stringify({phase:'effect_revision_queued',transitions:'cut',cameraMotion:true}));
+ }
+ if(process.argv.includes('--export-720p')) {
+  const {reviseContent}=await import('../server/digitalEmployees/contentRevision.js');
+  const state=JSON.parse(fs.readFileSync(path.join(runRoot,'flow-state.json'),'utf8'));
+  const projects=await store.list<any>('studio_projects',{where:{tenant_id:tenantId},perPage:500});
+  for(const project of projects.items){const spec=obj(project.spec);if(spec.automation?.productionGraphId?.includes(state.runId)){
+   if(!spec.automation.narrationReviewPassed||!fs.existsSync(spec.automation.voiceLocalPath))throw Error('Export revision requires verified voice');
+   fs.writeFileSync(path.join(runRoot,'export-before-720p.json'),JSON.stringify(project,null,2));
+   const revised=reviseContent(spec,'export',{ratio:'9:16',resolution:'720p',reason:'本机1080p多镜转场进程被系统中止；改用正式支持的720p导出，保留配音和完整质量检查'});
+   await store.update('studio_projects',project.id,{spec:revised,status:'draft'});
+  }}
+  const tasks=await store.list<any>('workflow_tasks',{where:{tenant_id:tenantId,run_id:state.runId},perPage:100});const task=tasks.items.find(x=>x.task_key==='content_production');
+  await store.update('workflow_tasks',task.id,{status:'pending',blocked_reason:'',output:{correctionInput:{action:'retry',instruction:'使用720p导出，保留全部内容检查'}},updated_at:new Date().toISOString()});await store.update('workflow_runs',state.runId,{status:'running',pause_reason:''});
+  console.log(JSON.stringify({phase:'export_revision_queued',resolution:'720p'}));
+ }
+ if(process.argv.includes('--resume-render')) {
+  const state=JSON.parse(fs.readFileSync(path.join(runRoot,'flow-state.json'),'utf8'));
+  const projects=await store.list<any>('studio_projects',{where:{tenant_id:tenantId},perPage:500});
+  for(const project of projects.items){const spec=obj(project.spec);if(spec.automation?.productionGraphId?.includes(state.runId)){
+   if(spec.automation.stage!=='blocked'||spec.automation.resumeStage!=='render'||!spec.automation.narrationReviewPassed||!fs.existsSync(spec.automation.voiceLocalPath))throw Error('Expected failed render with verified voice');
+   fs.writeFileSync(path.join(runRoot,'render-before-retry.json'),JSON.stringify(project,null,2));
+   spec.automation={...spec.automation,stage:'render',status:'queued',blocker:'',renderRetryReason:'修复动效后时间基准，保留已审核配音重试真实渲染'};await store.update('studio_projects',project.id,{spec,status:'draft'});
+  }}
+  const tasks=await store.list<any>('workflow_tasks',{where:{tenant_id:tenantId,run_id:state.runId},perPage:100});const task=tasks.items.find(x=>x.task_key==='content_production');
+  await store.update('workflow_tasks',task.id,{status:'pending',blocked_reason:'',output:{correctionInput:{action:'retry',instruction:'修复转场时间基准，重新渲染并执行全部质量检查'}},updated_at:new Date().toISOString()});await store.update('workflow_runs',state.runId,{status:'running',pause_reason:''});
+  console.log(JSON.stringify({phase:'render_retry_queued'}));
+ }
+ if(process.argv.includes('--resume-review')) {
+  const state=JSON.parse(fs.readFileSync(path.join(runRoot,'flow-state.json'),'utf8'));
+  const projects=await store.list<any>('studio_projects',{where:{tenant_id:tenantId},perPage:500});
+  for(const project of projects.items){const spec=obj(project.spec);if(spec.automation?.productionGraphId?.includes(state.runId)){
+   if(spec.automation.stage!=='blocked'||!['script','quality'].includes(spec.automation.resumeStage))throw Error('Expected failed review or quality project');
+   fs.writeFileSync(path.join(runRoot,'narration-review-before-retry.json'),JSON.stringify(project,null,2));
+   spec.automation={...spec.automation,stage:'voice_subtitles',status:'queued',blocker:'',reviewRetryReason:'已修复审核范围误报，重新调用真实审核服务；不覆盖审核结论'};await store.update('studio_projects',project.id,{spec,status:'draft'});
+  }}
+  const tasks=await store.list<any>('workflow_tasks',{where:{tenant_id:tenantId,run_id:state.runId},perPage:100});const task=tasks.items.find(x=>x.task_key==='content_production');
+  await store.update('workflow_tasks',task.id,{status:'pending',blocked_reason:'',output:{correctionInput:{action:'retry',instruction:'澄清口播事实审核范围后重试；保留原失败证据，所有质量检查继续执行'}},updated_at:new Date().toISOString()});await store.update('workflow_runs',state.runId,{status:'running',pause_reason:''});
+  console.log(JSON.stringify({phase:'narration_review_retry_queued'}));
+ }
+ if(process.argv.includes('--revise-narration')) {
+  const {createHash}=await import('node:crypto');const {freezeStoryboardNarration}=await import('../server/digitalEmployees/contentProduction.js');
+  const state=JSON.parse(fs.readFileSync(path.join(runRoot,'flow-state.json'),'utf8'));const prior=JSON.parse(fs.readFileSync(path.join(runRoot,'director-script-revision-3.json'),'utf8'));
+  const lines=["Choosing a makeup remover? Take a closer look before you decide.","Here is the packaging for this makeup remover.","The other packages are separate catalog examples. They are not the same product.","For this choice, read the product's own ingredient list and usage instructions.","The ingredients, packaging, and intended use can guide a careful comparison.","What would you check first: ingredients, packaging, or intended use?"];
+  const script=freezeStoryboardNarration(prior.contract.body,lines);const contract={...prior.contract,version:7,body:script,hash:createHash('sha256').update(JSON.stringify(script)).digest('hex'),generatedAt:new Date().toISOString()};
+  const revision={...prior,contract,source:'对真实模型脚本的人工审核修订',reason:'移除主观产品译名与样品服务邀请，明确包装不证明功效；保留评论提问CTA'};fs.writeFileSync(path.join(runRoot,'reviewed-director-contract.json'),JSON.stringify(revision,null,2));
+  const projects=await store.list<any>('studio_projects',{where:{tenant_id:tenantId},perPage:500});for(const project of projects.items){const spec=obj(project.spec);if(spec.automation?.productionGraphId?.includes(state.runId)){spec.contentOrder.scripts={en:contract};spec.contentOrder.contractVersion=1;spec.script=script;spec.automation={...spec.automation,stage:'script',status:'queued',blocker:'',contentVersion:7};await store.update('studio_projects',project.id,{spec,status:'draft'});}}
+  const batches=await store.list<any>('content_batch_plans',{where:{tenant_id:tenantId,run_id:state.runId},perPage:100});for(const batch of batches.items){const orders=obj(batch.orders);for(const order of orders){order.scripts={en:contract};order.evidenceRefs=[{type:'exact_analysis',id:referenceId},...prior.assetIds.map((id:string)=>({type:'enterprise_material',id}))];if(order.videoPlan){order.videoPlan.materialIds=prior.assetIds;if(order.videoPlan.preproduction)order.videoPlan.preproduction.directorScript=contract;}}await store.update('content_batch_plans',batch.id,{orders});}
+  const tasks=await store.list<any>('workflow_tasks',{where:{tenant_id:tenantId,run_id:state.runId},perPage:100});const task=tasks.items.find(x=>x.task_key==='content_production');await store.update('workflow_tasks',task.id,{status:'pending',blocked_reason:'',output:{correctionInput:{instruction:'新口播版本明确区分本商品与其他目录图片，列出三项选品问题；重新执行全部审核'}},updated_at:new Date().toISOString()});await store.update('workflow_runs',state.runId,{status:'running',pause_reason:''});
+  console.log(JSON.stringify({phase:'narration_revision_ready',version:7}));
+ }
+ if(process.argv.includes('--sync-reviewed-version')) {
+  const {createHash}=await import('node:crypto');
+  const {contentFingerprint}=await import('../server/digitalEmployees/contentProduction.js');
+  const {storyboardVoiceLines}=await import('../server/digitalEmployees/contentProduction.js');
+  const state=JSON.parse(fs.readFileSync(path.join(runRoot,'flow-state.json'),'utf8'));
+  const revision=JSON.parse(fs.readFileSync(path.join(runRoot,fs.existsSync(path.join(runRoot,'reviewed-director-contract.json'))?'reviewed-director-contract.json':'director-script-revision-3.json'),'utf8'));
+  const contract=revision.contract;const ids=revision.assetIds;
+  const projects=await store.list<any>('studio_projects',{where:{tenant_id:tenantId},perPage:500});
+  for(const project of projects.items){const spec=obj(project.spec);if(spec.automation?.productionGraphId?.includes(state.runId)){
+   const script=String(spec.script);if(createHash('sha256').update(JSON.stringify(script)).digest('hex')!==contract.hash)throw Error('Current script differs from reviewed revision');
+   const lines=storyboardVoiceLines(script);spec.languageSceneBindings=lines.map((line,index)=>({sceneId:`scene-${index+1}`,sourceText:line,translatedText:line,cue:spec.sceneVoiceCuesByLang?.en?.[index]||null}));
+   spec.automation={...spec.automation,directorScriptVersion:contract.version,directorScriptHash:contract.hash,contentHash:contract.hash,contentFingerprint:contentFingerprint({route:'clone',productId:spec.contentOrder.productId,referenceAnalysisId:referenceId,assetIds:ids,script}),reviewRevisionOrigin:'operator_reviewed_llm'};
+   await store.update('studio_projects',project.id,{spec});
+  }}
+  const plans=await store.list<any>('weekly_plans',{where:{tenant_id:tenantId,goal_id:state.goalId},perPage:100});for(const plan of plans.items){const body=obj(plan.plan);for(const task of body.businessPackage.tasks)if(task.templateId==='production')for(const v of task.videoPlans){v.materialIds=ids;v.preproduction.directorScript=contract;}await store.update('weekly_plans',plan.id,{plan:body});}
+  const batches=await store.list<any>('content_batch_plans',{where:{tenant_id:tenantId,run_id:state.runId},perPage:100});for(const batch of batches.items){const orders=obj(batch.orders);for(const order of orders){order.scripts={en:contract};order.evidenceRefs=[{type:'exact_analysis',id:referenceId},...ids.map((id:string)=>({type:'enterprise_material',id}))];if(order.videoPlan){order.videoPlan.materialIds=ids;if(order.videoPlan.preproduction)order.videoPlan.preproduction.directorScript=contract;}}await store.update('content_batch_plans',batch.id,{orders});}
+  console.log(JSON.stringify({phase:'reviewed_revision_lineage_synchronized',version:contract.version}));
+ }
  if(process.argv.includes('--catalog-scenes')) {
   const {updateTenantEnterpriseProfile}=await import('../server/routes/enterprise.js');
   const {createHash}=await import('node:crypto');

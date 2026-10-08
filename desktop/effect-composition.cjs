@@ -161,14 +161,19 @@ function textOverlayFilters(overlay, width, height) {
 
 /** Apply color, camera motion and decorative/text layers to one normalized scene. */
 function sceneEffectFilters({ source, output, scene, width, height, target, intensity }) {
-  if (!scene || !scene.enabled || intensity <= 0) return [`${source}null[${output}]`];
-  const chain = [colorFilter(scene.color), motionFilter(scene.motion, width, height, target, intensity)];
+  // zoompan changes timebase but preserves input frame duration. Feeding
+  // AVTB frames (duration 33333 ticks) makes each output frame last 1111s.
+  // Convert both PTS and duration to frame ticks before applying motion.
+  const inputTiming = 'fps=30,settb=1/30,setpts=N';
+  const timing = 'settb=AVTB,setpts=N/(30*TB)';
+  if (!scene || !scene.enabled || intensity <= 0) return [`${source}${inputTiming},${timing}[${output}]`];
+  const chain = [inputTiming, colorFilter(scene.color), motionFilter(scene.motion, width, height, target, intensity)];
   const ordered = [...scene.overlays].sort((a, b) => {
     const order = { background: 0, around_subject: 1, foreground: 2 };
     return order[a.layer] - order[b.layer];
   });
   for (const overlay of ordered) chain.push(...textOverlayFilters(overlay, width, height));
-  return [`${source}${chain.join(',')}[${output}]`];
+  return [`${source}${chain.join(',')},${timing}[${output}]`];
 }
 
 /** Join scenes, preserving legacy concat when every boundary is a hard cut. */

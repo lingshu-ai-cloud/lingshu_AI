@@ -22,7 +22,7 @@ import { listHeygenAvatars } from '../integrations/heygen.js';
 import { callVideoModel } from './videoModel.js';
 import { SCRIPT_CREATIVE_QUALITY_RULES, scriptCreativeModeRule } from '../prompts/scriptCreativeQuality.js';
 import { readTenantEnterpriseProfile, type EnterpriseProfile } from '../routes/enterprise.js';
-import { synthesizeStudioVoiceForAutomation, ensureHeygenAutomationJob, heygenOutputPath } from '../routes/studio.js';
+import { synthesizeStudioVoiceForAutomation, alignStudioVoiceForAutomation, ensureHeygenAutomationJob, heygenOutputPath } from '../routes/studio.js';
 import { assessScriptQualityV2, storyboardSceneRanges, type StudioScriptMaterialInfo } from '../lib/studioScriptQualityV2.js';
 import { fetchCloudMaterial, listCloudMaterials } from '../lib/cloudMaterials.js';
 import { store } from '../storage/index.js';
@@ -1294,7 +1294,17 @@ export async function advanceOneProject(input: {
       const spoken = voiceoverText(text(spec.script, 30_000));
       if (!spoken) return block('script', '脚本中没有可合成的口播台词');
       if (!spokenLanguageMatches(spoken, brief.language)) return block('script', '口播语言与本条制作计划不符');
-      const issues = await reviewFinalNarration({ spoken, facts: productFacts(input.profile, input.config, routePlan.productId), language: brief.language, constraints: contentOrder?.constraints || input.goal.constraints });
+      const narrationSceneEvidence = storyboardVoiceLines(text(spec.script, 30_000)).map((spoken, index) => {
+        const item = (spec.sceneSourcePlan as SceneSourcePlanItem[] | undefined)?.find(item => item.sceneIndex === index);
+        const asset = routeAssets.find(asset => asset.id === item?.assetId);
+        return { spoken, asset: asset?.name || '', observations: asset?.visualObservations || [] };
+      });
+      const issues = await reviewFinalNarration({
+        spoken, facts: productFacts(input.profile, input.config, routePlan.productId),
+        visualFacts: routeAssets.flatMap(asset => [asset.name, ...asset.visualObservations]),
+        sceneEvidence: narrationSceneEvidence,
+        language: brief.language, constraints: contentOrder?.constraints || input.goal.constraints,
+      });
       if (issues.length) {
         const attempts = Number(automation.autoNarrationReviewAttempts || 0);
         const narrationFeedback = `上一版需修正：${issues.join('；')}`;
@@ -1305,7 +1315,21 @@ export async function advanceOneProject(input: {
         }
         return block('script', `口播自动事实修复 ${attempts} 次后仍未通过：${issues.join('；')}`, { narrationFeedback, retryPolicy: 'input_required' });
       }
-      const voice = await synthesizeStudioVoiceForAutomation({ tenantId: input.tenantId, text: spoken, language: brief.language, voice: brief.voice, targetDuration: brief.duration, style: spec.voiceStyle as any });
+      let voice = await synthesizeStudioVoiceForAutomation({ tenantId: input.tenantId, text: spoken, language: brief.language, voice: brief.voice, targetDuration: brief.duration, style: spec.voiceStyle as any });
+      if (voice.ok && voice.url && voice.duration && voice.alignmentSource === 'pending_alignment') {
+        try {
+          const aligned = await alignStudioVoiceForAutomation({ tenantId: input.tenantId, text: spoken, url: voice.url, duration: voice.duration });
+          voice = { ...voice, cues: aligned.cues, alignmentSource: aligned.source };
+        } catch {
+          // Keep the gate strict when private ASR storage is unavailable: synthesize
+          // scene lines separately and measure their actual audio boundaries.
+          voice = await synthesizeStudioVoiceForAutomation({
+            tenantId: input.tenantId, text: spoken, language: brief.language, voice: brief.voice,
+            targetDuration: brief.duration, style: spec.voiceStyle as any,
+            sentenceLines: storyboardVoiceLines(text(spec.script, 30_000)), measuredSentenceTiming: true,
+          });
+        }
+      }
       if (!voice.ok || !voice.localPath || !fs.existsSync(voice.localPath)) return block('voice_subtitles', `配音服务不可用：${voice.error || '未返回可用音频文件'}`);
       const duration = Math.max(1, Number(voice.duration || brief.duration));
       if (String(voice.text || spoken) !== spoken) return block('voice_subtitles', '配音文本发生变化，需要重新确认口播');
@@ -1571,7 +1595,7 @@ export async function advanceOneProject(input: {
         !routeDifferentiation ? '内容路径差异检查未通过' : '',
         !sceneDiversity ? '存在多个相关素材但分镜仍只循环单一素材' : '',
         !internalMarkerFree ? '成片内容含 E2E、local.test、mock 或 placeholder 内部标记' : '',
-        !['synthesized_sentence_audio', 'heygen_audio', 'human_reviewed', 'audio_ai'].includes(String(spec.subtitleAlignmentSource)) ? '字幕缺少实际音频对齐来源' : '',
+        !['synthesized_sentence_audio', 'minimax_native', 'heygen_audio', 'human_reviewed', 'audio_ai'].includes(String(spec.subtitleAlignmentSource)) ? '字幕缺少实际音频对齐来源' : '',
         !subtitleSafe ? '字幕时间轴、长度或内部标记安全检查未通过' : '',
         !platformBriefApplied ? '未应用目标平台差异化创作要求' : '',
       ].filter(Boolean);

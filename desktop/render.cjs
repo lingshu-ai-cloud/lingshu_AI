@@ -551,7 +551,9 @@ async function composite(manifest, onProgress = () => {}, outDir) {
 
     // 2) 组装 ffmpeg 参数
     const n = localClips.length;
-    const args = ['-hide_banner', '-nostdin', '-fflags', '+genpts']; // -nostdin：别等键盘输入，否则 spawn 的 stdin 管道会让 ffmpeg 永久挂起
+    // Bound filter workers: multiple 1080p xfade inputs otherwise retain large
+    // frame queues per worker and can exhaust memory on a local preview host.
+    const args = ['-hide_banner', '-nostdin', '-fflags', '+genpts', '-filter_complex_threads', '2']; // -nostdin：别等键盘输入，否则 spawn 的 stdin 管道会让 ffmpeg 永久挂起
     const filters = [];
     let vlabel;
 
@@ -632,8 +634,10 @@ async function composite(manifest, onProgress = () => {}, outDir) {
     // 音轨输入：BGM(或静音) 固定一路，配音可选第二路。视频输入占 0..(vInputs-1)
     const vInputs = visualInputCount + (motionOverlay.path ? 1 : 0);
     const bgmIdx = vInputs;
-    if (bgmFile) args.push('-stream_loop', '-1', '-i', bgmFile);
-    else args.push('-f', 'lavfi', '-i', 'anullsrc=channel_layout=stereo:sample_rate=44100');
+    // Stop the looping music source at the approved timeline. An unbounded
+    // input can keep loudnorm/amix feeding while video waits for its output.
+    if (bgmFile) args.push('-stream_loop', '-1', '-t', String(duration), '-i', bgmFile);
+    else args.push('-f', 'lavfi', '-t', String(duration), '-i', 'anullsrc=channel_layout=stereo:sample_rate=44100');
     let voIdx = -1;
     if (voFile) { args.push('-i', voFile); voIdx = bgmIdx + 1; }
 
@@ -720,7 +724,7 @@ async function composite(manifest, onProgress = () => {}, outDir) {
       '-filter_complex', filters.join(';'),
       '-map', '[vout]', '-map', '[aout]',
       '-t', String(duration),
-      '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-pix_fmt', 'yuv420p',
+      '-c:v', 'libx264', '-threads', '2', '-preset', 'veryfast', '-crf', '20', '-pix_fmt', 'yuv420p',
       '-r', '30', '-g', '60', '-keyint_min', '30', '-sc_threshold', '0',
       '-c:a', 'aac', '-b:a', '128k',
       '-avoid_negative_ts', 'make_zero',
