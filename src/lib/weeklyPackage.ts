@@ -9,8 +9,8 @@ export type { Maturity } from './operatingMaturity';
 export type Participation = 'agent' | 'team';
 export const TASK_TEMPLATES = [
   { id: 'readiness', title: '准备企业与产品资料', description: '核对产品资料、账号和执行授权。', outcome: '资料与账号具备执行条件', keys: ['context_readiness'], page: 'enterprise' },
-  { id: 'director', title: '编排本周内容', description: '在预算和数量目标内完成采集、选题、矩阵编排与脚本把控。', outcome: '形成可执行的周内容计划与脚本', keys: ['scheduled_source_collection', 'viral_analysis', 'content_mode_routing'], page: 'socialInspiration' },
-  { id: 'production', title: '制作产品视频', description: '根据已确认脚本和分镜意图完成素材匹配、生成、渲染与技术检查。', outcome: '完成计划中的视频并通过质量检查', keys: ['content_production', 'content_quality_gate'], page: 'smartAssets' },
+  { id: 'director', title: '分析爆款并完成脚本分镜', description: '完成对标采集与爆款分析，拆解原脚本，并依据企业事实生成适配脚本和逐镜分镜。', outcome: '形成有证据来源的编导结论、脚本与分镜', keys: ['scheduled_source_collection', 'viral_analysis'], page: 'socialInspiration' },
+  { id: 'production', title: '排期并制作产品视频', description: '经营 Agent 根据编导结论冻结详细选题与排期，内容 Agent 再完成素材、生成、渲染与质检。', outcome: '完成排期中的视频并通过内容 Agent 质检', keys: ['content_mode_routing', 'content_production', 'content_quality_gate'], page: 'smartAssets' },
   { id: 'publishing', title: '发布内容', description: '将作品发布到指定账号，并核验平台回执。', outcome: '取得真实平台发布回执', keys: ['content_release_approval', 'publishing_calendar', 'platform_publish'], page: 'smartAssets' },
   { id: 'customers', title: '整理客户分层', description: '整理客户来源与当前阶段，形成跟进客群。', outcome: '保存客户分层快照', keys: ['customer_attribution', 'customer_segmentation'], page: 'conversion' },
   { id: 'followup', title: '跟进潜在客户', description: '为指定客户生成草稿并跟进，记录实际回执。', outcome: '取得跟进记录和渠道回执', keys: ['followup_batch_draft', 'followup_batch_approval', 'followup_dispatch'], page: 'conversion' },

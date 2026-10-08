@@ -59,9 +59,11 @@ try {
   assert.equal(queue.items[0]?.confidence?.business.level, 'medium', 'reference match is evidence, not a promised business success rate');
   assert.match(queue.items[0]?.confidence?.note || '', /不是.*成功概率/);
   assert.equal(queue.items[0]?.steps.length, 10, 'production must expose each user-visible step instead of a coarse stage only');
+  assert.equal(queue.items[0]?.steps.find(step => step.key === 'script')?.responsibleAgent, '编导 Agent');
+  assert.equal(queue.items[0]?.steps.find(step => step.key === 'storyboard')?.responsibleAgent, '编导 Agent');
   assert.equal(queue.items[0]?.steps.find(step => step.key === 'video_generation')?.responsibleAgent, '内容 Agent');
   assert.equal(queue.items[0]?.steps.find(step => step.key === 'video_generation')?.estimatedMinutes, 90);
-  assert.equal(queue.items[0]?.steps.find(step => step.key === 'quality_check')?.responsibleAgent, '质检 Agent');
+  assert.equal(queue.items[0]?.steps.find(step => step.key === 'quality_check')?.responsibleAgent, '内容 Agent · 质检能力');
   assert.equal(queue.items[0]?.steps.find(step => step.key === 'user_approval')?.responsibleAgent, '用户');
   assert.equal(queue.items[1]?.origin, 'manual');
   assert.equal(queue.items[1]?.socialContentTaskId, 'social-manual-1');

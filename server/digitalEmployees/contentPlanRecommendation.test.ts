@@ -69,7 +69,7 @@ assert.equal(shortagePlans.filter(plan => !plan.referenceId).length, shortagePla
 const blankProductPack = recommendPackage(goal, normalizeDigitalEmployeeConfig({ ...config, focusProducts: '' }));
 const productBound = bindDefaultProductsToPackage(blankProductPack, [{ id: 'product-1', name: '默认检测设备', materialIds: ['asset-1'] }]);
 const productBoundPlans = productBound.tasks.find(task => task.templateId === 'production')?.videoPlans || [];
-assert.ok(productBoundPlans.length && productBoundPlans.every(plan => plan.productName === '默认检测设备' && plan.materialIds[0] === 'asset-1'), 'backend must select the first confirmed product instead of silently blocking a blank selector');
+assert.ok(productBoundPlans.length && productBoundPlans.every(plan => plan.productId === 'product-1' && plan.productName === '默认检测设备' && plan.materialIds[0] === 'asset-1'), 'backend must freeze the first confirmed product ID instead of silently blocking a blank selector');
 
 const fourPlatformConfig = normalizeDigitalEmployeeConfig({
   ...config,

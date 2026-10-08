@@ -19,6 +19,7 @@ export { matchedReferenceIndustryLeaks } from '../lib/referenceIndustryLeak.js';
 import { materialRoleFromFolder, safeMaterialScenes, safeMaterialVoicePlan } from '../lib/studioMaterialPresentation.js';
 import { productIdentity } from '../digitalEmployees/contentProduction.js';
 import { enterpriseAssetStableId } from '../digitalEmployees/contentBatchPlan.js';
+import { resolveMaterialProductAssociation } from '../digitalEmployees/materialProductionReadiness.js';
 import { requestMaterialAnalysis, waitForMaterialAnalysis, isMaterialAnalysisActive, saveMaterialSegmentsWithScriptAnalysis, startPendingLocalMaterialAnalyses } from '../lib/materialLibraryAnalysis.js';
 import { readMaterialLibrary, readLocalMaterials, saveLocalMaterials, updateLocalMaterial } from '../lib/materialLibrary.js';
 import { currentDataAuthority } from '../storage/dataAuthority.js';
@@ -6355,6 +6356,15 @@ studioRouter.get('/materials', async (req, res) => {
     ...enterpriseProductMaterials(tenantId, enterpriseProfile),
     ...inventory.items as Material[],
   ].map(material => [material.id, material])).values()];
+  const productReferences = (enterpriseProfile.products.items || []).map((product, index) => ({
+    id: productIdentity(product, index),
+    name: String(product.name || '').trim(),
+    sku: String(product.sku || '').trim(),
+  })).filter(product => product.name);
+  list = list.map(material => {
+    const association = resolveMaterialProductAssociation(material as unknown as Record<string, unknown>, productReferences);
+    return association ? { ...material, productId: association.productId, productName: association.productName } : material;
+  });
   if (scope === 'shared') list = list.filter(canAppearInSharedLibrary);
   else if (scope === 'own') list = list.filter(m => (m.scope ?? 'own') === 'own');
   if (purpose === 'reference') list = list.filter(isReferenceOnlyMaterial);

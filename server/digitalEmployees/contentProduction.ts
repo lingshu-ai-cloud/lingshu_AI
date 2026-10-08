@@ -44,6 +44,7 @@ import { closedWorldNarrationLines, ensureStoredVoiceQuality, socialVideoEffectP
 import { aggregateNarrationStyleProfiles, deriveNarrationStyleProfile, narrationStyleInstruction, type NarrationStyleProfile } from './narrationStyle.js';
 import { containsInternalContentMarker, paginateAlignedCues, subtitleCuesAreSafe } from '../lib/subtitleCues.js';
 import { buildBenchmarkAnalysis, MATERIAL_TYPE_LABELS, SHOT_ROLE_LABELS } from '../../shared/benchmarkAnalysis.js';
+import { resolveMaterialProductAssociation, type ProductMaterialReference } from './materialProductionReadiness.js';
 export { containsInternalContentMarker, paginateAlignedCues, subtitleCuesAreSafe } from '../lib/subtitleCues.js';
 import type { AssetCandidate, ContentProductionAdvanceResult, ContentProductionOrderInput, ContentProductionRoute, ContentRouteEvidence, ContentRoutePlan, ProductionStage, RouteSourcePlan, SceneSourcePlanItem, StoredRecord } from './contentProductionContracts.js';
 export type { AssetCandidate, ContentProductionAdvanceResult, ContentProductionOrderInput, ContentProductionRoute, ContentRouteEvidence, ContentRoutePlan, RouteSourcePlan, SceneSourcePlanItem } from './contentProductionContracts.js';
@@ -380,7 +381,15 @@ function mimeFromFile(filePath: string): string {
   return 'video/mp4';
 }
 
-function localMaterials(tenantId: string, records: Array<Record<string, unknown>>): AssetCandidate[] {
+function productMaterialReferences(profile: EnterpriseProfile): ProductMaterialReference[] {
+  return (profile.products.items || []).map((product, index) => ({
+    id: productIdentity(product, index),
+    name: text(product.name, 200),
+    sku: text(product.sku, 120),
+  })).filter(product => product.name);
+}
+
+function localMaterials(tenantId: string, records: Array<Record<string, unknown>>, products: ProductMaterialReference[]): AssetCandidate[] {
   return records.filter(record => realMaterial(record, tenantId) && ['video', 'image'].includes(String(record.type || ''))).flatMap(record => {
     const relative = text(record.file, 500);
     const localPath = relative ? path.resolve(process.cwd(), 'data', 'media', relative) : '';
@@ -388,13 +397,13 @@ function localMaterials(tenantId: string, records: Array<Record<string, unknown>
     if ((!localPath || !fs.existsSync(localPath) || fs.statSync(localPath).size <= 0) && !objectKey) return [];
     const source = String(record.scope || 'own') === 'shared' ? 'licensed_shared_material' as const : 'tenant_material' as const;
     const visualObservations = observationsForMaterial(record);
+    const association = resolveMaterialProductAssociation(record, products);
     return [{
       id: text(record.id, 160), name: text(record.name, 200) || '企业素材', type: String(record.type) as 'video' | 'image',
       ...(localPath && fs.existsSync(localPath) ? { localPath } : {}), ...(objectKey ? { objectKey } : {}), duration: Math.max(0, Number(record.duration || 0)),
       observations: visualObservations, visualObservations, segments: Array.isArray(record.segments) ? record.segments as Array<Record<string, unknown>> : [],
       ...(record.scriptAnalysis ? { scriptAnalysis: record.scriptAnalysis as MaterialScriptAnalysis } : {}),
-      ...(text(record.productId, 160) ? { productId: text(record.productId, 160) } : {}),
-      ...(text(record.productName, 200) ? { productName: text(record.productName, 200) } : {}),
+      ...(association ? { productId: association.productId, productName: association.productName } : {}),
       authorization: assetAuthorization(record, source), synthetic: isSyntheticMaterial(record), ...dimensions(record),
       tags: stringList(record.tags), source,
     }];
@@ -467,19 +476,22 @@ function enterpriseAssets(profile: EnterpriseProfile, tenantId: string): AssetCa
 export async function collectProductionAssets(tenantId: string, profile: EnterpriseProfile): Promise<AssetCandidate[]> {
   const inventory = await readMaterialLibrary(tenantId);
   if (inventory.status === 'unavailable') throw Error('素材库暂时无法读取，请重试或联系管理员');
+  const products = productMaterialReferences(profile);
   const cloud = inventory.items.filter(item => item.id.startsWith('pb-'));
-  const cloudAssets = cloud.filter(record => realMaterial(record, tenantId) && ['video', 'image'].includes(String(record.type || ''))).map(record => ({
-    id: text(record.id, 160), name: text(record.name, 200) || '云端素材', type: String(record.type) as 'video' | 'image',
-    url: text(record.url, 2_000), cloudRecordId: text(record.id).replace(/^pb-/, ''), duration: Math.max(0, Number(record.duration || 0)),
-    observations: observationsForMaterial(record), visualObservations: observationsForMaterial(record), segments: Array.isArray(record.segments) ? record.segments as Array<Record<string, unknown>> : [],
-    ...(record.scriptAnalysis ? { scriptAnalysis: record.scriptAnalysis as MaterialScriptAnalysis } : {}),
-    ...(text(record.productId, 160) ? { productId: text(record.productId, 160) } : {}),
-    ...(text(record.productName, 200) ? { productName: text(record.productName, 200) } : {}),
-    authorization: assetAuthorization(record, String(record.scope || 'own') === 'shared' ? 'licensed_shared_material' : 'tenant_material'),
-    synthetic: isSyntheticMaterial(record), ...dimensions(record), tags: stringList(record.tags),
-    source: String(record.scope || 'own') === 'shared' ? 'licensed_shared_material' as const : 'tenant_material' as const,
-  }));
-  const byId = new Map([...localMaterials(tenantId, inventory.items.filter(item => !item.id.startsWith('pb-'))), ...cloudAssets, ...enterpriseAssets(profile, tenantId)].map(asset => [asset.id, asset]));
+  const cloudAssets = cloud.filter(record => realMaterial(record, tenantId) && ['video', 'image'].includes(String(record.type || ''))).map(record => {
+    const association = resolveMaterialProductAssociation(record, products);
+    return {
+      id: text(record.id, 160), name: text(record.name, 200) || '云端素材', type: String(record.type) as 'video' | 'image',
+      url: text(record.url, 2_000), cloudRecordId: text(record.id).replace(/^pb-/, ''), duration: Math.max(0, Number(record.duration || 0)),
+      observations: observationsForMaterial(record), visualObservations: observationsForMaterial(record), segments: Array.isArray(record.segments) ? record.segments as Array<Record<string, unknown>> : [],
+      ...(record.scriptAnalysis ? { scriptAnalysis: record.scriptAnalysis as MaterialScriptAnalysis } : {}),
+      ...(association ? { productId: association.productId, productName: association.productName } : {}),
+      authorization: assetAuthorization(record, String(record.scope || 'own') === 'shared' ? 'licensed_shared_material' : 'tenant_material'),
+      synthetic: isSyntheticMaterial(record), ...dimensions(record), tags: stringList(record.tags),
+      source: String(record.scope || 'own') === 'shared' ? 'licensed_shared_material' as const : 'tenant_material' as const,
+    };
+  });
+  const byId = new Map([...localMaterials(tenantId, inventory.items.filter(item => !item.id.startsWith('pb-')), products), ...cloudAssets, ...enterpriseAssets(profile, tenantId)].map(asset => [asset.id, asset]));
   return [...byId.values()].filter(assetEligible);
 }
 
@@ -1761,10 +1773,13 @@ export async function advanceAutomatedContentProduction(input: {
       // Additional material may still be chosen by a future batch plan, but it
       // must be explicit evidence rather than an implicit same-product sweep.
       const assetIds = order.evidenceRefs.filter(ref => ref.type === 'enterprise_material').map(ref => ref.id).filter(id => owned.some(asset => asset.id === id));
-      const gap = !productId ? '批次订单引用的产品不在当前冻结重点产品中'
+      const preproductionGap = order.videoPlan?.preproduction && !order.videoPlan.preproduction.readiness.canStart
+        ? order.videoPlan.preproduction.readiness.blockers.join('；') || '本条母版制作准备尚未完成'
+        : '';
+      const gap = preproductionGap || (!productId ? '批次订单引用的产品不在当前冻结重点产品中'
         : order.route === 'clone' && !analyses.some(record => record.id === referenceId) ? '批次订单引用的精确参考结构不存在或不可解析'
           : order.route === 'material' && !material ? '批次订单引用的锁定素材不存在、未授权或不属于当前产品'
-            : !assetIds.length && (!order.videoPlan || !usesDigitalPresenter(order.videoPlan)) && order.route !== 'product' ? '批次订单没有属于当前产品的已授权视觉素材' : '';
+            : !assetIds.length && (!order.videoPlan || !usesDigitalPresenter(order.videoPlan)) && order.route !== 'product' ? '批次订单没有属于当前产品的已授权视觉素材' : '');
       return {
         route: order.route, productId, productName, assetIds, ...(order.route === 'material' && material ? { seedAssetId: material.id } : {}),
         ...(referenceId ? { referenceAnalysisId: referenceId } : {}),
@@ -1885,7 +1900,7 @@ export async function advanceAutomatedContentProduction(input: {
     ready,
     projectRefs,
     knowledgeGaps: contentProductionKnowledgeGaps({ enabled: requiredRoutes, evidence }),
-    blocker: coverageBlocker || blocker || blocked[0] || (ready ? '' : '内容 Agent 正在后台推进脚本、素材、配音、渲染与质检'),
+    blocker: coverageBlocker || blocker || blocked[0] || (ready ? '' : '内容 Agent 正在后台推进素材、配音、渲染与质检'),
     summary: ready ? `已完成 ${projectRefs.length} 个可审批成片` : `内容生产进度 ${projectRefs.filter(ref => ref.stage === 'completed').length}/${projectRefs.length}`,
   };
 }

@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import os from 'node:os';
+import { currentDataAuthority, runWithDataAuthority, type DataAuthority } from '../storage/dataAuthority.js';
 import type { DataStore, ListQuery } from '../storage/datastore.js';
 import {
   acquireDurableOperationLease,
@@ -439,6 +440,7 @@ async function finishFailed(input: {
 }
 
 export interface DurableContentExecutionWorkerOptions {
+  dataAuthority?: DataAuthority;
   dataStore: DataStore;
   execute(job: ContentExecutionJob): Promise<void>;
   onSucceeded?(job: ContentExecutionJob): Promise<void>;
@@ -478,6 +480,11 @@ export class DurableContentExecutionWorker {
   }
 
   async drain(): Promise<void> {
+    // Pin the complete claim/execution lifecycle, including retries and callbacks,
+    // so a local list cannot be followed by a remote lookup or mutation.
+    if (this.options.dataAuthority && currentDataAuthority() !== this.options.dataAuthority) {
+      return runWithDataAuthority(this.options.dataAuthority, () => this.drain());
+    }
     if (this.draining) return;
     this.draining = true;
     try {

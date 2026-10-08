@@ -27,13 +27,13 @@ const stageLabels: Record<string, string> = {
 type ProductionStepTemplate = Pick<ContentQueueStep, 'key' | 'label' | 'responsibleAgent' | 'estimatedMinutes'> & { stageIndex: number; approval?: boolean };
 const productionStepTemplates: ProductionStepTemplate[] = [
   { key: 'material_readiness', label: '核对素材与授权', responsibleAgent: '内容 Agent', estimatedMinutes: 20, stageIndex: -1 },
-  { key: 'script', label: '生成口播与脚本', responsibleAgent: '内容 Agent', estimatedMinutes: 30, stageIndex: 0 },
-  { key: 'storyboard', label: '生成逐镜分镜', responsibleAgent: '内容 Agent', estimatedMinutes: 35, stageIndex: 0 },
+  { key: 'script', label: '拆解爆款原脚本并生成企业适配脚本', responsibleAgent: '编导 Agent', estimatedMinutes: 30, stageIndex: 0 },
+  { key: 'storyboard', label: '生成企业适配逐镜分镜', responsibleAgent: '编导 Agent', estimatedMinutes: 35, stageIndex: 0 },
   { key: 'asset_generation', label: '匹配或生成逐镜素材', responsibleAgent: '内容 Agent', estimatedMinutes: 45, stageIndex: 1 },
   { key: 'voice_subtitles', label: '生成配音与字幕', responsibleAgent: '内容 Agent', estimatedMinutes: 30, stageIndex: 2 },
   { key: 'presenter', label: '生成数字人口播或人物镜头', responsibleAgent: '内容 Agent', estimatedMinutes: 60, stageIndex: 3 },
   { key: 'video_generation', label: '剪辑、合成与成片渲染', responsibleAgent: '内容 Agent', estimatedMinutes: 90, stageIndex: 4 },
-  { key: 'quality_check', label: '事实、画面、音频与版权质检', responsibleAgent: '质检 Agent', estimatedMinutes: 25, stageIndex: 5 },
+  { key: 'quality_check', label: '事实、画面、音频与版权质检', responsibleAgent: '内容 Agent · 质检能力', estimatedMinutes: 25, stageIndex: 5 },
   { key: 'rework', label: '按质检结果局部返工', responsibleAgent: '内容 Agent', estimatedMinutes: 30, stageIndex: 5 },
   { key: 'user_approval', label: '用户确认成片', responsibleAgent: '用户', estimatedMinutes: 10, stageIndex: 6, approval: true },
 ];
@@ -243,11 +243,11 @@ const manualStageLabels: Record<typeof manualStageOrder[number], string> = {
 const manualStepTemplates: Array<Pick<ContentQueueStep, 'key' | 'label' | 'responsibleAgent' | 'estimatedMinutes'> & { stageIndex: number }> = [
   { key: 'brief', label: '确认需求、账号和预算', responsibleAgent: '用户', estimatedMinutes: 10, stageIndex: 0 },
   { key: 'plan', label: '确认内容方案与交付时间', responsibleAgent: '经营 Agent', estimatedMinutes: 15, stageIndex: 1 },
-  { key: 'script', label: '生成口播脚本', responsibleAgent: '内容 Agent', estimatedMinutes: 30, stageIndex: 2 },
-  { key: 'storyboard', label: '生成逐镜分镜', responsibleAgent: '内容 Agent', estimatedMinutes: 35, stageIndex: 2 },
+  { key: 'script', label: '拆解参考脚本并生成企业适配脚本', responsibleAgent: '编导 Agent', estimatedMinutes: 30, stageIndex: 2 },
+  { key: 'storyboard', label: '生成企业适配逐镜分镜', responsibleAgent: '编导 Agent', estimatedMinutes: 35, stageIndex: 2 },
   { key: 'assets', label: '匹配或生成逐镜素材', responsibleAgent: '内容 Agent', estimatedMinutes: 45, stageIndex: 2 },
   { key: 'video', label: '配音、剪辑与成片渲染', responsibleAgent: '内容 Agent', estimatedMinutes: 120, stageIndex: 2 },
-  { key: 'quality', label: '成片质检与局部返工', responsibleAgent: '质检 Agent', estimatedMinutes: 25, stageIndex: 3 },
+  { key: 'quality', label: '成片质检与局部返工', responsibleAgent: '内容 Agent · 质检能力', estimatedMinutes: 25, stageIndex: 3 },
   { key: 'approval', label: '用户确认成片', responsibleAgent: '用户', estimatedMinutes: 10, stageIndex: 3 },
   { key: 'delivery', label: '交付或发布', responsibleAgent: '发布 Agent', estimatedMinutes: 10, stageIndex: 4 },
 ];
@@ -260,7 +260,7 @@ function manualPlatform(values: unknown[]): PublishingPlatform {
   return 'tiktok';
 }
 
-function manualState(record: Stored): Pick<ContentQueueItem, 'status' | 'stage' | 'progress' | 'reason' | 'steps' | 'updatedAt'> {
+function manualState(record: Stored, missingInputs: string[]): Pick<ContentQueueItem, 'status' | 'stage' | 'progress' | 'reason' | 'steps' | 'updatedAt'> {
   const status = text(record.status);
   const stageIndex = status === 'draft' || status === 'needs_input' ? 0
     : status === 'plan_review' ? 1
@@ -269,12 +269,21 @@ function manualState(record: Stored): Pick<ContentQueueItem, 'status' | 'stage' 
           : ['packaging', 'delivered', 'awaiting_publish', 'awaiting_metrics', 'reviewed'].includes(status) ? 4 : 0;
   const blocked = ['paused', 'attention', 'needs_input'].includes(status);
   const completed = ['delivered', 'awaiting_publish', 'awaiting_metrics', 'reviewed'].includes(status);
+  const brief = object(record.brief);
+  const managedStartReason = text(
+    object(brief._managedStart).reason || object(record._managedStart).reason,
+  );
+  const reason = !blocked ? ''
+    : text(brief.specialRequirements)
+      || (missingInputs.length ? `仍缺：${missingInputs.join('、')}。请进入制作台补齐后继续。` : '')
+      || (managedStartReason === 'reference_analysis_pending' ? '参考视频逐镜分析仍在进行；分析完成后会自动进入内容方案确认。' : '')
+      || (status === 'paused' ? '任务已暂停，可从当前节点继续。' : '当前任务需要人工确认后继续。');
   return {
     status: blocked ? 'blocked' : completed ? 'completed' : status === 'asset_review' ? 'waiting_review' : status === 'producing' || status === 'packaging' ? 'producing' : 'planned',
     stage: blocked ? status === 'needs_input' ? '等待补齐任务输入' : status === 'paused' ? '任务已暂停' : '任务需要处理'
       : completed ? '内容已交付' : manualStageLabels[manualStageOrder[stageIndex]],
     progress: completed ? 100 : Math.round(stageIndex / (manualStageOrder.length - 1) * 100),
-    reason: blocked ? text(object(record.brief).specialRequirements) || (status === 'needs_input' ? '请补齐任务输入后继续' : '请进入内容创作查看处理要求') : '',
+    reason,
     updatedAt: text(record.updated_at || record.updated || record.created_at),
     steps: manualStepTemplates.map(step => ({
       key: step.key,
@@ -291,25 +300,46 @@ function manualTaskItem(input: {
   projects: Stored[];
   executions: ExecutionStoreRecord[];
   accountLabels: Map<string, string>;
+  publishingTargets: Array<{ platform?: PublishingPlatform; accountId: string; accountLabel: string }>;
+  defaultProductName: string;
+  defaultPublishDate: string;
+  defaultLanguages: string[];
 }): ContentQueueItem | null {
   const brief = object(input.record.brief);
   const taskId = text(input.record.task_id);
   const title = text(brief.title);
   if (!taskId || !title) return null;
   const targetAccount = object(brief.targetAccountRef);
-  const accountId = text(targetAccount.id);
   const count = Math.max(1, Math.floor(Number(brief.requestedOutputCount) || 1));
   const weeklyBudget = money(brief.weeklyBudgetCny);
   const perItemBudget = money(brief.perItemBudgetCny);
-  const estimated = perItemBudget ?? (weeklyBudget === null ? null : Math.round((weeklyBudget / count) * 100) / 100);
+  const estimated = perItemBudget !== null && perItemBudget > 0
+    ? perItemBudget
+    : weeklyBudget !== null && weeklyBudget > 0
+      ? Math.round((weeklyBudget / count) * 100) / 100
+      : 12.5;
   const mode = text(input.record.task_mode);
   const weeklyPlanId = text(input.record.weekly_plan_id);
   const creationMode = text(brief.creationMode || input.record.legacy_creation_route);
   const relatedProjects = input.projects.filter(project => text(object(project.spec).socialContentTaskId) === taskId);
   const platforms = array<unknown>(brief.platforms);
+  const platform = manualPlatform(platforms);
+  const fallbackAccount = input.publishingTargets.find(target => target.platform === platform) || input.publishingTargets[0];
+  const accountId = text(targetAccount.id) || fallbackAccount?.accountId || '';
+  const productName = text(brief.productRef) || input.defaultProductName;
   const formats = array<unknown>(brief.formats).map(text).filter(Boolean);
   const languages = array<unknown>(brief.languages).map(text).filter(Boolean);
-  const state = manualState(input.record);
+  const resolvedLanguages = languages.length ? languages : input.defaultLanguages.length ? input.defaultLanguages : ['en'];
+  const plannedPublishDate = text(brief.dueAt) || input.defaultPublishDate;
+  const missingInputs = [
+    !productName ? '产品' : '',
+    !accountId ? '发布账号' : '',
+    !resolvedLanguages.length ? '输出语言' : '',
+    !plannedPublishDate ? '交付时间' : '',
+  ].filter(Boolean);
+  const state = manualState(input.record, missingInputs);
+  const planSource = text(brief.productRef) && text(targetAccount.id) && languages.length && text(brief.dueAt) ? 'confirmed' as const : 'system_default' as const;
+  const estimatedMinutes = manualStepTemplates.reduce((sum, step) => sum + step.estimatedMinutes, 0);
   return {
     id: `social:${taskId}`,
     contentId: taskId,
@@ -320,13 +350,13 @@ function manualTaskItem(input: {
     socialContentTaskId: taskId,
     origin: mode === 'instant' || !weeklyPlanId ? 'manual' : 'weekly_plan',
     title,
-    productName: text(brief.productRef),
-    platform: manualPlatform(platforms),
+    productName,
+    platform,
     accountId,
-    accountLabel: input.accountLabels.get(accountId) || accountId,
+    accountLabel: input.accountLabels.get(accountId) || fallbackAccount?.accountLabel || accountId,
     route: creationMode === 'viral_replication' || creationMode === 'clone' ? 'clone' : creationMode === 'material_processing' ? 'material' : 'product',
-    languages,
-    plannedPublishDate: text(brief.dueAt),
+    languages: resolvedLanguages,
+    plannedPublishDate,
     referenceId: '',
     referenceTitle: '',
     referenceViews: '',
@@ -335,19 +365,20 @@ function manualTaskItem(input: {
     planningFactors: [
       mode === 'instant' ? '用户在内容创作中创建的单项任务' : weeklyPlanId ? '来自内容周计划' : '用户手动创建的内容任务',
       text(brief.objective) ? `目标：${text(brief.objective)}` : '',
-      accountId ? `账号：${input.accountLabels.get(accountId) || accountId}` : '尚未指定发布账号',
+      accountId ? `账号：${input.accountLabels.get(accountId) || fallbackAccount?.accountLabel || accountId}` : '尚未指定发布账号',
+      planSource === 'system_default' ? '缺省字段已按企业重点产品、同平台账号和本周截止时间自动补齐，仍可在制作台调整' : '内容方案与交付时间已由用户确认',
     ].filter(Boolean),
     lineage: {
       goalId: text(object(brief.programRef).id),
       objective: text(brief.objective),
       accountId,
-      accountLabel: input.accountLabels.get(accountId) || accountId,
+      accountLabel: input.accountLabels.get(accountId) || fallbackAccount?.accountLabel || accountId,
       budgetCny: estimated,
       planId: weeklyPlanId,
       planVersion: weeklyPlanId ? text(input.record.version) : '',
       factsVersion: '',
       cycleStart: text(input.record.created_at).slice(0, 10),
-      cycleEnd: text(brief.dueAt),
+      cycleEnd: plannedPublishDate,
       authorizationMode: 'manual',
     },
     outputSummary: {
@@ -357,13 +388,13 @@ function manualTaskItem(input: {
     },
     confidence: taskConfidence({
       status: state.status,
-      productName: text(brief.productRef) || title,
-      languages,
+      productName,
+      languages: resolvedLanguages,
       formats: formats.length ? formats : ['短视频'],
       projectCount: relatedProjects.length,
       accountId,
       accountConnected: input.accountLabels.has(accountId),
-      publishDate: text(brief.dueAt),
+      publishDate: plannedPublishDate,
       authorizationMode: 'manual',
       objective: text(brief.objective),
       referenceTitle: '',
@@ -371,6 +402,15 @@ function manualTaskItem(input: {
       benchmarkAccount: '',
       matchScore: null,
     }),
+    contentPlan: {
+      summary: creationMode === 'viral_replication' || creationMode === 'clone'
+        ? `爆款结构复刻 · ${resolvedLanguages.join(' / ').toUpperCase()} · ${formats[0] || '短视频'}`
+        : `产品内容制作 · ${resolvedLanguages.join(' / ').toUpperCase()} · ${formats[0] || '短视频'}`,
+      source: planSource,
+      deliverBy: plannedPublishDate,
+      publishAt: plannedPublishDate,
+      estimatedMinutes,
+    },
     ...state,
     ...costState(relatedProjects, input.executions, estimated),
   };
@@ -383,7 +423,9 @@ export async function buildContentQueueProjection(input: {
   tasks: WorkflowTask[];
   planId?: string;
   goal?: { id: string; objective: string; startsAt: string; endsAt: string; version: number } | null;
-  publishingTargets?: Array<{ accountId: string; accountLabel: string }>;
+  publishingTargets?: Array<{ platform?: PublishingPlatform; accountId: string; accountLabel: string }>;
+  defaultProductName?: string;
+  defaultLanguages?: string[];
 }): Promise<ContentQueueProjection> {
   const pack = input.planBody.businessPackage as WeeklyPackage | undefined;
   const productionPlans = pack?.tasks.find(task => task.templateId === 'production')?.videoPlans || [];
@@ -476,7 +518,16 @@ export async function buildContentQueueProjection(input: {
     };
   });
   const manualItems = manualTaskResult.items
-    .map(record => manualTaskItem({ record, projects: projectResult.items, executions: executionResult.items, accountLabels }))
+    .map(record => manualTaskItem({
+      record,
+      projects: projectResult.items,
+      executions: executionResult.items,
+      accountLabels,
+      publishingTargets: input.publishingTargets || [],
+      defaultProductName: input.defaultProductName || productionPlans.find(plan => plan.productionRole !== 'platform_adaptation')?.productName || '',
+      defaultPublishDate: input.goal?.endsAt || '',
+      defaultLanguages: input.defaultLanguages || [],
+    }))
     .filter((item): item is ContentQueueItem => Boolean(item));
   const items = [...manualItems, ...weeklyItems]
     .sort((left, right) => Date.parse(right.updatedAt || '1970-01-01') - Date.parse(left.updatedAt || '1970-01-01'));

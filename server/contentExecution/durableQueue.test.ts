@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { currentDataAuthority, runWithDataAuthority } from '../storage/dataAuthority.js';
 import type { DataStore, ListQuery, ListResult } from '../storage/datastore.js';
 import {
   CONTENT_EXECUTION_JOB_COLLECTION,
@@ -304,4 +305,37 @@ test('accepted Seedance receipt resumes polling and never submits a second paid 
   assert.equal(result.providerTaskId, 'provider-task-7');
   assert.equal(result.bytes.toString(), 'resumed-video');
   assert.equal(requests.some(url => url.endsWith('/contents/generations/tasks')), false);
+});
+
+
+test('worker pins local storage across claims, execution, callbacks and remote wakeups', async () => {
+  const store = new MemoryStore();
+  await admitContentExecutionJob({ dataStore: store, tenantId: 'tenant-local', userId: 'user-local', taskId: 'task-local', runId: 'run-local', taskType: 'social_content_instant' });
+  const calls: string[] = [];
+  const scopedStore = new Proxy(store, {
+    get(target, property) {
+      const value = Reflect.get(target, property);
+      if (typeof value !== 'function') return value;
+      return (...args: unknown[]) => {
+        assert.equal(currentDataAuthority(), 'local', String(property));
+        calls.push(String(property));
+        return value.apply(target, args);
+      };
+    },
+  });
+  let executed = false;
+  let succeeded = false;
+  const worker = new DurableContentExecutionWorker({
+    dataStore: scopedStore, dataAuthority: 'local', env,
+    async execute() { await Promise.resolve(); assert.equal(currentDataAuthority(), 'local'); executed = true; },
+    async onSucceeded() { assert.equal(currentDataAuthority(), 'local'); succeeded = true; },
+  });
+  await runWithDataAuthority('pocketbase', async () => {
+    await worker.drain();
+    assert.equal(currentDataAuthority(), 'pocketbase', 'worker context must not leak into caller');
+  });
+  for (let attempt = 0; attempt < 20 && !succeeded; attempt++) await new Promise<void>(resolve => setImmediate(resolve));
+  worker.stop();
+  assert.ok(executed && succeeded, 'the persisted job reaches successful completion');
+  assert.ok(calls.includes('list') && calls.includes('getById') && calls.includes('update') && calls.includes('delete'));
 });

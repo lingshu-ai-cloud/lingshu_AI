@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from
 import {
   AlertTriangle,
   ArrowLeft,
-  CalendarPlus,
   CalendarRange,
   CheckCircle2,
   CircleDollarSign,
@@ -13,14 +12,12 @@ import {
   MessageSquareText,
   Pencil,
   RefreshCcw,
-  Sparkles,
   TrendingUp,
   Trophy,
   Users,
   X,
 } from "lucide-react";
-import { digitalEmployeeApi, type ContentExecutionRuntimeJob, type ContentQueueItem, type DigitalEmployeeOverview, type DigitalEmployeeAgentRole } from "../lib/digitalEmployees";
-import { nextReviewWeek, type ReviewTodo, type ReviewTodoBoard } from "../lib/reviewTodos";
+import { digitalEmployeeApi, type ContentExecutionRuntimeJob, type ContentQueueItem, type DigitalEmployeeOverview, type DigitalEmployeeAgentRole, type NextRoundRecommendations, type WeeklyReviewSummary } from "../lib/digitalEmployees";
 import type { DeliveryResource } from "../lib/delivery";
 import type { Page } from "../pageRegistry";
 import { SocialPlatformIcon } from "./SocialPlatformIcon";
@@ -283,18 +280,17 @@ export function WeeklyCommandCenter({
   notice?: ReactNode;
   className?: string;
 }) {
+  const display = buildSmartBusinessDisplayModel(data);
   const contentQueue = data.contentQueue?.items || [];
   const operatingContext = data.plan?.businessPackage?.operatingContext;
   const packagePlans = data.plan?.businessPackage?.tasks.find(task => task.templateId === "production")?.videoPlans || [];
   const directorPlan = data.plan?.businessPackage?.directorPlan;
   const weeklyQueue = contentQueue.filter(item => item.origin === "weekly_plan");
   const manualQueue = contentQueue.filter(item => item.origin === "manual");
-  const plannedOutputCount = operatingContext?.outputs.count ?? packagePlans.length;
-  const plannedOriginalCount = operatingContext?.outputs.originalCount
-    ?? packagePlans.filter(plan => plan.productionRole !== "platform_adaptation").length;
-  const plannedPublishCount = operatingContext?.outputs.publishCount ?? plannedOutputCount;
-  const plannedDurationSeconds = operatingContext?.outputs.totalDurationSeconds
-    ?? packagePlans.reduce((sum, plan) => sum + Number(plan.duration || 0), 0);
+  const plannedOutputCount = display.totals.versionCount;
+  const plannedOriginalCount = display.totals.originalCount;
+  const plannedPublishCount = display.totals.versionCount;
+  const plannedDurationSeconds = display.totals.durationSeconds;
   const estimatedContentCost = weeklyQueue.reduce((sum, item) => sum + Number(item.estimatedCostCny || 0), 0)
     || packagePlans.reduce((sum, plan) => sum + Number(plan.estimatedCost || 0), 0);
   const settledContentCost = weeklyQueue.reduce((sum, item) => sum + Number(item.settledCostCny || 0), 0);
@@ -303,11 +299,11 @@ export function WeeklyCommandCenter({
   const queuedBlockedCount = weeklyQueue.filter(item => item.status === "blocked").length;
   const preproductionBlockedCount = data.plan?.businessPackage?.detailGeneration?.blockedCount || 0;
   const weeklyStatusCounts = {
-    queued: weeklyQueue.filter(item => ["planned", "queued"].includes(item.status)).length,
-    producing: weeklyQueue.filter(item => item.status === "producing").length,
-    review: weeklyQueue.filter(item => item.status === "waiting_review").length,
-    blocked: Math.max(queuedBlockedCount, preproductionBlockedCount),
-    completed: weeklyQueue.filter(item => item.status === "completed").length,
+    queued: display.contents.filter(item => ["planned", "queued"].includes(item.status)).length,
+    producing: display.contents.filter(item => item.status === "producing").length,
+    review: display.totals.waitingReviewCount,
+    blocked: Math.max(display.totals.blockedCount, queuedBlockedCount, preproductionBlockedCount),
+    completed: display.totals.completedCount,
   };
 
   return <section className={`overflow-hidden rounded-3xl border border-emerald-200 bg-white shadow-sm ${className}`.trim()} aria-label="本周任务驾驶舱">
@@ -338,50 +334,301 @@ export function WeeklyCommandCenter({
         ["需要处理", weeklyStatusCounts.blocked, "bg-red-50 text-red-700"],
         ["已完成", weeklyStatusCounts.completed, "bg-emerald-50 text-emerald-700"],
       ].map(([label, value, tone]) => <span key={String(label)} className={`rounded-full px-3 py-1.5 text-[10px] font-black ${tone}`}>{label} {value}</span>)}
-      <span className="text-[10px] font-bold text-slate-400 xl:ml-auto">统一队列共 {contentQueue.length} 条，其中周计划 {weeklyQueue.length} 条</span>
+      <span className="text-[10px] font-bold text-slate-400 xl:ml-auto">本周发布版本 {display.totals.versionCount} 条 · 另有手动单项 {manualQueue.length} 条</span>
     </div>
     {notice && <div className="flex flex-wrap items-center gap-2 border-t border-slate-100 bg-slate-50/70 px-5 py-3">{notice}</div>}
   </section>;
 }
 
+type DisplayMetricSource = "real" | "demo";
+
+type UnifiedPlanContent = {
+  id: string;
+  contentId: string;
+  familyId: string;
+  title: string;
+  productName: string;
+  platform: Platform;
+  accountId: string;
+  accountLabel: string;
+  plannedPublishDate: string;
+  duration: number;
+  productionRole: "master" | "platform_adaptation";
+  status: ContentQueueItem["status"];
+  queueItem: ContentQueueItem | null;
+  metrics: {
+    views: number;
+    likes: number;
+    comments: number;
+    shares: number;
+    interactions: number;
+    engagementRate: number;
+    source: DisplayMetricSource;
+  };
+};
+
+type UnifiedAccountRow = {
+  accountId: string;
+  accountLabel: string;
+  platform: Platform;
+  positioning: string;
+  plannedCount: number;
+  budgetCny: number | null;
+  source: "connected" | "plan";
+};
+
+type SmartBusinessDisplayModel = {
+  revision: number;
+  startsAt: string;
+  endsAt: string;
+  contents: UnifiedPlanContent[];
+  masters: UnifiedPlanContent[];
+  accounts: UnifiedAccountRow[];
+  totals: {
+    accountCount: number;
+    originalCount: number;
+    versionCount: number;
+    durationSeconds: number;
+    budgetMinCny: number;
+    budgetMaxCny: number;
+    budgetMidCny: number;
+    completedCount: number;
+    waitingReviewCount: number;
+    blockedCount: number;
+    views: number;
+    interactions: number;
+    publishedCount: number;
+    engagementRate: number;
+    performanceSource: DisplayMetricSource;
+  };
+  platforms: Array<{
+    platform: Platform;
+    plannedCount: number;
+    views: number;
+    interactions: number;
+    engagementRate: number;
+    source: DisplayMetricSource;
+  }>;
+};
+
+const demoPerformanceBase: Record<Platform, { views: number; engagementRate: number }> = {
+  youtube: { views: 2_600, engagementRate: 4.1 },
+  tiktok: { views: 5_200, engagementRate: 6.8 },
+  instagram: { views: 3_600, engagementRate: 5.5 },
+  facebook: { views: 1_800, engagementRate: 3.4 },
+};
+
+function deterministicSeed(value: string) {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+}
+
+function demoMetrics(platform: Platform, identity: string) {
+  const seed = deterministicSeed(identity);
+  const base = demoPerformanceBase[platform];
+  const views = Math.round(base.views * (0.78 + (seed % 47) / 100));
+  const engagementRate = Math.round((base.engagementRate + ((seed >> 3) % 15) / 10) * 10) / 10;
+  const interactions = Math.round(views * engagementRate / 100);
+  const likes = Math.round(interactions * 0.72);
+  const comments = Math.round(interactions * 0.13);
+  const shares = Math.max(0, interactions - likes - comments);
+  return { views, likes, comments, shares, interactions, engagementRate, source: "demo" as const };
+}
+
+function buildSmartBusinessDisplayModel(data: DigitalEmployeeOverview, selectedAccountId = ""): SmartBusinessDisplayModel {
+  const operatingContext = data.plan?.businessPackage?.operatingContext;
+  const packagePlans = data.plan?.businessPackage?.tasks.find(task => task.templateId === "production")?.videoPlans || [];
+  const goalPlans = data.goal?.videoPlans || [];
+  const sourcePlans = packagePlans.length ? packagePlans : goalPlans;
+  const queue = data.contentQueue?.items || [];
+  const deliveries = data.deliveries || [];
+  const connectedIds = new Set((data.config?.publishingTargets || []).map(target => target.accountId));
+  const operatingAccounts = operatingContext?.accounts || [];
+  const accountById = new Map(operatingAccounts.map(account => [account.accountId, account]));
+  const targetById = new Map((data.config?.publishingTargets || []).map(target => [target.accountId, target]));
+  const queueByContentId = new Map(queue.filter(item => item.contentId).map(item => [item.contentId, item]));
+  const claimedQueueIds = new Set<string>();
+
+  const findQueueItem = (plan: VideoCreationPlan) => {
+    const direct = plan.contentId ? queueByContentId.get(plan.contentId) : undefined;
+    if (direct) {
+      claimedQueueIds.add(direct.id);
+      return direct;
+    }
+    const candidate = queue.find(item => !claimedQueueIds.has(item.id)
+      && item.origin === "weekly_plan"
+      && item.platform === plan.platform
+      && (!plan.matrix?.accountId || item.accountId === plan.matrix.accountId)
+      && (!plan.plannedPublishDate || item.plannedPublishDate === plan.plannedPublishDate));
+    if (candidate) claimedQueueIds.add(candidate.id);
+    return candidate;
+  };
+
+  const mappedContents = sourcePlans.map((plan, index): UnifiedPlanContent => {
+    const queueItem = findQueueItem(plan) || null;
+    const accountId = plan.matrix?.accountId || queueItem?.accountId || `plan-${plan.platform}`;
+    const account = accountById.get(accountId);
+    const target = targetById.get(accountId);
+    const identity = plan.contentId || `${plan.platform}-${plan.plannedPublishDate}-${plan.theme}-${index}`;
+    const actual = queueItem ? performanceForQueueItem(queueItem, deliveries) : null;
+    const fallback = demoMetrics(plan.platform, identity);
+    const hasActual = Boolean(actual?.hasPlatformData);
+    const views = hasActual ? actual?.views || 0 : fallback.views;
+    const likes = hasActual ? actual?.likes || 0 : fallback.likes;
+    const comments = hasActual ? actual?.comments || 0 : fallback.comments;
+    const shares = hasActual ? actual?.shares || 0 : fallback.shares;
+    const interactions = hasActual ? actual?.interactions || 0 : fallback.interactions;
+    const engagementRate = hasActual ? actual?.engagementRate || 0 : fallback.engagementRate;
+    return {
+      id: identity,
+      contentId: plan.contentId || identity,
+      familyId: plan.contentFamilyId || plan.masterContentId || plan.contentId || identity,
+      title: plan.publication?.title || plan.theme || plan.planningEvidence?.referenceTitle || `本周视频 ${index + 1}`,
+      productName: plan.productName || data.config?.focusProducts || "待绑定产品",
+      platform: plan.platform,
+      accountId,
+      accountLabel: account?.accountLabel || target?.accountLabel || `${data.config?.companyName || "企业"} · ${platformLabels[plan.platform]}`,
+      plannedPublishDate: plan.plannedPublishDate || data.goal?.endsAt || "",
+      duration: Number(plan.duration || 0),
+      productionRole: plan.productionRole === "platform_adaptation" ? "platform_adaptation" : "master",
+      status: queueItem?.status || "planned",
+      queueItem,
+      metrics: { views, likes, comments, shares, interactions, engagementRate, source: hasActual ? "real" : "demo" },
+    };
+  });
+  const contents = mappedContents.filter(item => !selectedAccountId || item.accountId === selectedAccountId);
+  const masters = contents.filter(item => item.productionRole === "master");
+  const groupedAccounts = new Map<string, UnifiedAccountRow>();
+  for (const item of contents) {
+    const operatingAccount = accountById.get(item.accountId);
+    const current = groupedAccounts.get(item.accountId);
+    if (current) current.plannedCount += 1;
+    else groupedAccounts.set(item.accountId, {
+      accountId: item.accountId,
+      accountLabel: item.accountLabel,
+      platform: item.platform,
+      positioning: operatingAccount?.positioning || "本周计划经营账号",
+      plannedCount: 1,
+      budgetCny: operatingAccount?.budgetCny ?? null,
+      source: connectedIds.has(item.accountId) ? "connected" : "plan",
+    });
+  }
+  if (!contents.length) {
+    for (const account of operatingAccounts.filter(item => !selectedAccountId || item.accountId === selectedAccountId)) {
+      groupedAccounts.set(account.accountId, {
+        accountId: account.accountId,
+        accountLabel: account.accountLabel,
+        platform: account.platform as Platform,
+        positioning: account.positioning,
+        plannedCount: account.contentCount,
+        budgetCny: account.budgetCny,
+        source: connectedIds.has(account.accountId) ? "connected" : "plan",
+      });
+    }
+  }
+  const accounts = [...groupedAccounts.values()];
+  const planByContentId = new Map(sourcePlans.map(plan => [plan.contentId, plan]));
+  const budgetMinCny = operatingContext?.budget.totalMinCny
+    ?? masters.reduce((sum, item) => sum + Number(planByContentId.get(item.contentId)?.estimatedCostRange?.minCny || 0), 0);
+  const budgetMaxCny = operatingContext?.budget.totalMaxCny
+    ?? masters.reduce((sum, item) => sum + Number(planByContentId.get(item.contentId)?.estimatedCostRange?.maxCny || 0), 0);
+  const fallbackBudget = operatingContext?.budget.totalCny
+    ?? masters.reduce((sum, item) => sum + Number(planByContentId.get(item.contentId)?.estimatedCost || 0), 0);
+  const normalizedMin = budgetMinCny || fallbackBudget;
+  const normalizedMax = budgetMaxCny || fallbackBudget;
+  const realAggregateViews = data.businessSnapshot?.social.views.value;
+  const realAggregateInteractions = data.businessSnapshot
+    ? [data.businessSnapshot.social.likes.value, data.businessSnapshot.social.comments.value, data.businessSnapshot.social.shares.value, data.businessSnapshot.social.saves.value]
+      .filter((value): value is number => value !== null).reduce((sum, value) => sum + value, 0)
+    : null;
+  const actualPublishedCount = data.businessSnapshot?.content.publishedPosts.value;
+  const useRealAggregate = realAggregateViews !== null && realAggregateViews !== undefined;
+  const views = useRealAggregate ? realAggregateViews : contents.reduce((sum, item) => sum + item.metrics.views, 0);
+  const interactions = useRealAggregate && realAggregateInteractions !== null
+    ? realAggregateInteractions
+    : contents.reduce((sum, item) => sum + item.metrics.interactions, 0);
+  const publishedCount = actualPublishedCount !== null && actualPublishedCount !== undefined
+    ? actualPublishedCount
+    : contents.filter(item => item.status === "completed").length;
+  const platforms = platformOptions.map(platform => {
+    const rows = contents.filter(item => item.platform === platform);
+    const platformSnapshot = data.businessSnapshot?.social.platformBreakdown.find(item => item.platform.toLowerCase() === platform);
+    const hasReal = platformSnapshot?.views !== null && platformSnapshot?.views !== undefined;
+    const platformViews = hasReal ? platformSnapshot?.views || 0 : rows.reduce((sum, item) => sum + item.metrics.views, 0);
+    const platformInteractions = hasReal
+      ? [platformSnapshot?.likes, platformSnapshot?.comments, platformSnapshot?.shares].filter((value): value is number => value !== null && value !== undefined).reduce((sum, value) => sum + value, 0)
+      : rows.reduce((sum, item) => sum + item.metrics.interactions, 0);
+    return {
+      platform,
+      plannedCount: rows.length,
+      views: platformViews,
+      interactions: platformInteractions,
+      engagementRate: platformViews ? platformInteractions / platformViews * 100 : 0,
+      source: hasReal ? "real" as const : "demo" as const,
+    };
+  });
+  return {
+    revision: data.plan?.businessPackage?.revision || data.goal?.version || 1,
+    startsAt: operatingContext?.cycle.startsAt || data.goal?.startsAt || "",
+    endsAt: operatingContext?.cycle.endsAt || data.goal?.endsAt || "",
+    contents,
+    masters,
+    accounts,
+    totals: {
+      accountCount: accounts.length,
+      originalCount: operatingContext?.outputs.originalCount ?? masters.length,
+      versionCount: contents.length || operatingContext?.outputs.platformVersionCount || operatingContext?.outputs.count || 0,
+      durationSeconds: operatingContext?.outputs.totalDurationSeconds ?? masters.reduce((sum, item) => sum + item.duration, 0),
+      budgetMinCny: normalizedMin,
+      budgetMaxCny: normalizedMax,
+      budgetMidCny: fallbackBudget || (normalizedMin + normalizedMax) / 2,
+      completedCount: contents.filter(item => item.status === "completed").length,
+      waitingReviewCount: contents.filter(item => item.status === "waiting_review").length,
+      blockedCount: contents.filter(item => item.status === "blocked").length,
+      views,
+      interactions,
+      publishedCount,
+      engagementRate: views ? interactions / views * 100 : 0,
+      performanceSource: useRealAggregate ? "real" : "demo",
+    },
+    platforms,
+  };
+}
+
+function PlanDataSourceBadge({ source }: { source: DisplayMetricSource }) {
+  return <span className={`rounded-full px-2.5 py-1 text-[9px] font-black ${source === "real" ? "bg-emerald-100 text-emerald-800" : "bg-violet-100 text-violet-800"}`}>{source === "real" ? "真实回传" : "演示数据"}</span>;
+}
+
 function HomeView({ data, onRefresh, selectedAccountId = "" }: { data: DigitalEmployeeOverview; onRefresh?: () => void; selectedAccountId?: string }) {
   const [monitor, setMonitor] = useState<AgentCard | null>(null);
+  const display = useMemo(() => buildSmartBusinessDisplayModel(data), [data]);
   const snapshot = data.businessSnapshot;
-  const contentQueue = (data.contentQueue?.items || []).filter(item => !selectedAccountId || item.accountId === selectedAccountId);
   const operatingContext = data.plan?.businessPackage?.operatingContext;
-  const weeklyQueue = contentQueue.filter(item => item.origin === "weekly_plan");
   const weeklyStatusCounts = {
-    queued: weeklyQueue.filter(item => ["planned", "queued"].includes(item.status)).length,
-    producing: weeklyQueue.filter(item => item.status === "producing").length,
-    review: weeklyQueue.filter(item => item.status === "waiting_review").length,
-    blocked: Math.max(
-      weeklyQueue.filter(item => item.status === "blocked").length,
-      data.plan?.businessPackage?.detailGeneration?.blockedCount || 0,
-    ),
-    completed: weeklyQueue.filter(item => item.status === "completed").length,
+    queued: display.contents.filter(item => ["planned", "queued"].includes(item.status)).length,
+    producing: display.contents.filter(item => item.status === "producing").length,
+    review: display.totals.waitingReviewCount,
+    blocked: Math.max(display.totals.blockedCount, data.plan?.businessPackage?.detailGeneration?.blockedCount || 0),
+    completed: display.totals.completedCount,
   };
   const cycleTasks = data.tasks || [];
   const cycleCompleted = cycleTasks.filter(item => ["succeeded", "skipped"].includes(item.status)).length;
   const cycleAttention = cycleTasks.filter(item => ["failed", "waiting_approval", "waiting_human", "handed_off"].includes(item.status)).length;
   const connectedTargets = data.config?.publishingTargets || [];
-  const monitoredAccounts = (operatingContext?.accounts || connectedTargets.map(target => ({
-    accountId: target.accountId,
-    accountLabel: target.accountLabel,
-    platform: target.platform,
-    positioning: "已授权经营账号",
-    contentCount: contentQueue.filter(item => item.accountId === target.accountId).length,
-    budgetCny: 0,
-    allocationBasis: "content_load" as const,
-  }))).filter(account => !selectedAccountId || account.accountId === selectedAccountId);
+  const monitoredAccounts = display.accounts;
   const agentLiveState = Object.fromEntries(agentCards.map(item => {
     const status = data.agents.find(agent => roleAliases[item.role].includes(agent.role));
     const live = Boolean(status && runningStatuses.has(status.status)) || relatedTasks(data, item.role).some(task => runningStatuses.has(task.status));
     return [item.role, live];
   })) as Record<AgentCard["role"], boolean>;
   const activeAgentCount = agentCards.filter(item => agentLiveState[item.role]).length;
-  const waitingCount = contentQueue.filter(item => item.status === "waiting_review").length;
-  const completedCount = contentQueue.filter(item => item.status === "completed").length;
-  const cycleProgress = contentQueue.length ? Math.round((completedCount / contentQueue.length) * 100) : 0;
+  const waitingCount = display.totals.waitingReviewCount;
+  const completedCount = display.totals.completedCount;
+  const cycleProgress = display.totals.versionCount ? Math.round((completedCount / display.totals.versionCount) * 100) : 0;
   const nextMilestone = weeklyStatusCounts.blocked > 0
     ? `先处理 ${weeklyStatusCounts.blocked} 条卡点任务`
     : weeklyStatusCounts.review > 0
@@ -393,22 +640,26 @@ function HomeView({ data, onRefresh, selectedAccountId = "" }: { data: DigitalEm
           : "确认周计划后开始第一条内容";
   const platformCoverage = platformOptions.map(platform => ({
     platform,
-    count: contentQueue.filter(item => item.platform === platform).length,
+    count: display.platforms.find(item => item.platform === platform)?.plannedCount || 0,
   }));
   const pulse = [
-    { label: "已进入内容队列", value: contentQueue.length, color: "#2fd1c5" },
+    { label: "本周发布版本", value: display.totals.versionCount, color: "#2fd1c5" },
     { label: "已完成交付", value: completedCount, color: "#8b7cf6" },
     { label: "等待验收", value: waitingCount, color: "#ff8e72" },
     { label: "正在工作的 Agent", value: activeAgentCount, color: "#10244a" },
   ];
   const pulseMax = Math.max(1, ...pulse.map(item => item.value));
   const adSpend = snapshot?.ads?.spendByCurrency || [];
-  const adSpendValue = adSpend.length === 1 ? `${adSpend[0].currency} ${adSpend[0].amount.toLocaleString("zh-CN", { maximumFractionDigits: 2 })}` : adSpend.length > 1 ? `${adSpend.length} 种币种` : "—";
+  const adSpendValue = adSpend.length === 1 ? `${adSpend[0].currency} ${adSpend[0].amount.toLocaleString("zh-CN", { maximumFractionDigits: 2 })}` : adSpend.length > 1 ? `${adSpend.length} 种币种` : `¥${(operatingContext?.budget.paidMediaCny || 0).toFixed(0)}`;
+  const inquiriesAvailable = snapshot?.content.inquiries.status === "available" && snapshot.content.inquiries.value !== null;
+  const wonAvailable = snapshot?.customer.won.status === "available" && snapshot.customer.won.value !== null;
+  const demoInquiryCount = Math.max(8, Math.round(display.totals.versionCount * 0.65));
+  const demoWonCount = Math.max(1, Math.round(demoInquiryCount * 0.22));
   const metrics = [
-    { label: "运营平台账号", value: metricValue(snapshot?.social.accountCount.value), note: snapshot?.social.accountCount.note || "已接入账号", icon: Users },
-    { label: "获得询盘", value: metricValue(snapshot?.content.inquiries.value), note: snapshot?.content.inquiries.note || "当前统计周期", icon: MessageSquareText },
-    { label: "实际增长", value: metricValue(snapshot?.customer.won.value), note: "按成交客户记录", icon: TrendingUp },
-    { label: "投流消耗", value: adSpendValue, note: snapshot?.ads?.note || "本周期尚无已同步投放指标", icon: CircleDollarSign },
+    { label: "运营平台账号", value: `${display.totals.accountCount}`, note: `${display.accounts.filter(item => item.source === "connected").length} 个已连接 · ${display.totals.accountCount} 个纳入计划`, icon: Users, source: "plan" },
+    { label: "获得询盘", value: metricValue(inquiriesAvailable ? snapshot?.content.inquiries.value : demoInquiryCount), note: inquiriesAvailable ? snapshot?.content.inquiries.note || "当前统计周期" : "缺少回传，当前为演示数据", icon: MessageSquareText, source: inquiriesAvailable ? "real" : "demo" },
+    { label: "实际增长", value: metricValue(wonAvailable ? snapshot?.customer.won.value : demoWonCount), note: wonAvailable ? "按成交客户记录" : "缺少成交回传，当前为演示数据", icon: TrendingUp, source: wonAvailable ? "real" : "demo" },
+    { label: "投流消耗", value: adSpendValue, note: adSpend.length ? snapshot?.ads?.note || "平台真实回传" : "当前周计划未配置付费投流", icon: CircleDollarSign, source: adSpend.length ? "real" : "plan" },
   ];
 
   return <>
@@ -419,8 +670,8 @@ function HomeView({ data, onRefresh, selectedAccountId = "" }: { data: DigitalEm
     </section>
 
     <section className="visual-card overflow-hidden p-5 sm:p-7">
-      <div className="flex flex-wrap items-start justify-between gap-4"><div><p className="text-xs font-bold tracking-[0.16em] text-emerald-700">过去业绩</p><h2 className="mt-2 text-2xl font-black text-slate-950">经营结果一眼看清</h2><p className="mt-1 text-sm text-slate-500">仅展示业务系统已经回传的真实数据；缺失数据明确标记，不再用本地模拟值覆盖。</p></div>{onRefresh&&<button type="button" onClick={onRefresh} className="inline-flex items-center gap-2 rounded-xl border border-emerald-200 bg-white px-3 py-2 text-xs font-bold text-emerald-800"><RefreshCcw size={14}/>刷新</button>}</div>
-      <div className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{metrics.map(({ label, value, note, icon: Icon }, index)=><article key={label} className="relative overflow-hidden rounded-2xl border border-[#10244a]/10 bg-white/90 p-4 shadow-[0_4px_0_rgba(16,36,74,.04)]"><span aria-hidden="true" className={`absolute -right-5 -top-5 h-20 w-20 rounded-full ${index%2?'bg-[#8b7cf6]/10':'bg-[#2fd1c5]/12'}`}/><div className="relative flex items-center justify-between"><span className="text-xs font-bold text-slate-500">{label}</span><span className={`flex h-8 w-8 items-center justify-center rounded-xl border-2 border-[#10244a] ${index%2?'bg-[#dcd7ff]':'bg-[#baf2e8]'}`}><Icon size={15} className="text-[#10244a]" strokeWidth={2.5}/></span></div><p className={`relative mt-3 font-black tracking-tight text-[#10244a] ${index===3?'text-2xl':'text-3xl'}`}>{value}</p><p className="relative mt-1 truncate text-[11px] text-slate-400">{note}</p><div aria-hidden="true" className="relative mt-4 flex h-5 items-end gap-1">{[0.35,0.58,0.46,0.78,0.68].map((height, barIndex)=><span key={barIndex} className={`w-2 rounded-t-sm ${index%2?'bg-[#8b7cf6]/35':'bg-[#2fd1c5]/40'}`} style={{height:`${height*100}%`}}/>)}</div></article>)}</div>
+      <div className="flex flex-wrap items-start justify-between gap-4"><div><p className="text-xs font-bold tracking-[0.16em] text-emerald-700">经营数据</p><h2 className="mt-2 text-2xl font-black text-slate-950">经营结果一眼看清</h2><p className="mt-1 text-sm text-slate-500">账号与内容数量统一取自当前周计划；缺失的结果指标使用演示数据，并在卡片中明确标记。</p></div>{onRefresh&&<button type="button" onClick={onRefresh} className="inline-flex items-center gap-2 rounded-xl border border-emerald-200 bg-white px-3 py-2 text-xs font-bold text-emerald-800"><RefreshCcw size={14}/>刷新</button>}</div>
+      <div className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{metrics.map(({ label, value, note, icon: Icon, source }, index)=><article key={label} className="relative overflow-hidden rounded-2xl border border-[#10244a]/10 bg-white/90 p-4 shadow-[0_4px_0_rgba(16,36,74,.04)]"><span aria-hidden="true" className={`absolute -right-5 -top-5 h-20 w-20 rounded-full ${index%2?'bg-[#8b7cf6]/10':'bg-[#2fd1c5]/12'}`}/><div className="relative flex items-center justify-between"><span className="text-xs font-bold text-slate-500">{label}</span><span className={`flex h-8 w-8 items-center justify-center rounded-xl border-2 border-[#10244a] ${index%2?'bg-[#dcd7ff]':'bg-[#baf2e8]'}`}><Icon size={15} className="text-[#10244a]" strokeWidth={2.5}/></span></div><p className={`relative mt-3 font-black tracking-tight text-[#10244a] ${index===3?'text-2xl':'text-3xl'}`}>{value}</p><div className="relative mt-1 flex min-w-0 items-center gap-2"><p className="min-w-0 flex-1 truncate text-[11px] text-slate-400">{note}</p>{source === "demo"&&<PlanDataSourceBadge source="demo"/>}</div><div aria-hidden="true" className="relative mt-4 flex h-5 items-end gap-1">{[0.35,0.58,0.46,0.78,0.68].map((height, barIndex)=><span key={barIndex} className={`w-2 rounded-t-sm ${index%2?'bg-[#8b7cf6]/35':'bg-[#2fd1c5]/40'}`} style={{height:`${height*100}%`}}/>)}</div></article>)}</div>
       <div className="mt-4">
         <article className="rounded-2xl border border-[#10244a]/10 bg-white/82 p-5">
           <div className="flex items-center justify-between gap-4"><div><p className="visual-kicker">经营脉冲</p><h3 className="mt-1 text-base font-black text-[#10244a]">内容与执行状态</h3></div><span className="text-[10px] font-bold text-slate-400">实时业务记录</span></div>
@@ -433,10 +684,10 @@ function HomeView({ data, onRefresh, selectedAccountId = "" }: { data: DigitalEm
     <section className="mt-6 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
       <div className="flex flex-wrap items-start justify-between gap-4"><div><p className="text-xs font-bold tracking-[0.16em] text-emerald-700">本周期监控</p><h2 className="mt-1 text-xl font-black text-slate-950">真实账号、周任务与经营周期联动</h2><p className="mt-1 text-xs text-slate-500">账号授权、计划分工、预算与任务进度使用同一轮经营数据。</p></div><span className="rounded-full bg-slate-100 px-3 py-1.5 text-[10px] font-black text-slate-600">{data.goal ? `${data.goal.startsAt} 至 ${data.goal.endsAt}` : "等待经营周期"}</span></div>
       <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        {[{label:"已授权账号",value:connectedTargets.length,note:connectedTargets.length?"真实发布目标":"等待账号授权"},{label:"周期任务",value:cycleTasks.length,note:`${cycleCompleted} 项已完成`},{label:"需要处理",value:cycleAttention,note:cycleAttention?"审批、异常或人工接管":"当前无阻塞"},{label:"本周预算",value:operatingContext?`¥${operatingContext.budget.totalCny.toLocaleString("zh-CN")}`:"—",note:operatingContext?`${operatingContext.outputs.count} 条计划产出`:"等待周计划"}].map(item=><article key={item.label} className="rounded-2xl border border-slate-100 bg-slate-50/70 px-4 py-3"><p className="text-[10px] font-bold text-slate-400">{item.label}</p><p className="mt-1 text-xl font-black text-slate-950">{item.value}</p><p className="mt-1 text-[10px] text-slate-500">{item.note}</p></article>)}
+        {[{label:"计划经营账号",value:display.totals.accountCount,note:`其中 ${connectedTargets.length} 个已连接`},{label:"发布版本",value:display.totals.versionCount,note:`${display.totals.originalCount} 条原创母版`},{label:"需要处理",value:Math.max(cycleAttention,display.totals.blockedCount),note:Math.max(cycleAttention,display.totals.blockedCount)?"审批、异常或人工接管":"当前无阻塞"},{label:"本周预算",value:display.totals.budgetMaxCny?`¥${display.totals.budgetMinCny.toFixed(0)}–${display.totals.budgetMaxCny.toFixed(0)}`:"待核算",note:`${display.totals.versionCount} 个发布版本`}].map(item=><article key={item.label} className="rounded-2xl border border-slate-100 bg-slate-50/70 px-4 py-3"><p className="text-[10px] font-bold text-slate-400">{item.label}</p><p className="mt-1 text-xl font-black text-slate-950">{item.value}</p><p className="mt-1 text-[10px] text-slate-500">{item.note}</p></article>)}
       </div>
       <div className="mt-4 overflow-hidden rounded-2xl border border-slate-100">
-        {monitoredAccounts.slice(0, 8).map((account,index)=><div key={`${account.platform}-${account.accountId}`} className={`grid gap-2 px-4 py-3 sm:grid-cols-[minmax(0,1fr)_120px_160px] sm:items-center ${index?"border-t border-slate-100":""}`}><div className="min-w-0"><p className="truncate text-xs font-black text-slate-800">{account.accountLabel}</p><p className="mt-0.5 truncate text-[10px] text-slate-500">{platformLabels[account.platform as Platform] || account.platform} · {account.positioning}</p></div><p className="text-[10px] font-bold text-slate-600">分配 {account.contentCount} 条内容</p><p className="text-[10px] font-bold text-slate-600">{typeof account.budgetCny === "number" && account.budgetCny>0?`预算 ¥${account.budgetCny.toFixed(2)} · ${account.allocationBasis === "estimated_cost" ? "按预计成本" : "按内容负载"}`:"预算随任务核算"}</p></div>)}
+        {monitoredAccounts.slice(0, 8).map((account,index)=><div key={`${account.platform}-${account.accountId}`} className={`grid gap-2 px-4 py-3 sm:grid-cols-[minmax(0,1fr)_120px_160px] sm:items-center ${index?"border-t border-slate-100":""}`}><div className="min-w-0"><p className="truncate text-xs font-black text-slate-800">{account.accountLabel}</p><p className="mt-0.5 truncate text-[10px] text-slate-500">{platformLabels[account.platform]} · {account.positioning} · {account.source === "connected" ? "已连接" : "计划账号"}</p></div><p className="text-[10px] font-bold text-slate-600">分配 {account.plannedCount} 个发布版本</p><p className="text-[10px] font-bold text-slate-600">{typeof account.budgetCny === "number" && account.budgetCny>0?`预算 ¥${account.budgetCny.toFixed(2)}`:"成本计入母版"}</p></div>)}
         {!monitoredAccounts.length&&<p className="px-4 py-8 text-center text-xs text-slate-400">还没有已授权并纳入本周期的经营账号。</p>}
       </div>
     </section>
@@ -520,9 +771,9 @@ export type MatrixScheduleAccount = {
 };
 
 const matrixScheduleStages = [
-  { label: "编导分析", owner: "编导 Agent", duration: "约 45 分钟", color: "bg-violet-100 text-violet-800 ring-violet-200" },
+  { label: "编导结论与经营排期", owner: "编导 Agent → 经营 Agent", duration: "约 60 分钟", color: "bg-violet-100 text-violet-800 ring-violet-200" },
   { label: "内容制作", owner: "内容 Agent", duration: "约 5 小时", color: "bg-sky-100 text-sky-800 ring-sky-200" },
-  { label: "质检与发布", owner: "质检 / 经营 Agent", duration: "约 35 分钟", color: "bg-emerald-100 text-emerald-800 ring-emerald-200" },
+  { label: "质检与发布", owner: "内容 Agent · 质检能力 / 经营 Agent", duration: "约 35 分钟", color: "bg-emerald-100 text-emerald-800 ring-emerald-200" },
 ] as const;
 
 function LegacyMatrixWorkSchedule({ startsAt, endsAt, accounts, plans, selectedAccountId, onOpenPublishing }: {
@@ -575,9 +826,9 @@ function LegacyMatrixWorkSchedule({ startsAt, endsAt, accounts, plans, selectedA
             <div className={`sticky left-0 z-20 border-r border-slate-200 px-4 py-3 ${rowIndex % 2 ? "bg-[#fbfcfb]" : "bg-white"}`}><div className="flex items-start gap-2.5"><span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-slate-100 bg-white"><SocialPlatformIcon platform={account.platform} size={16}/></span><div className="min-w-0"><p className="truncate text-[9px] font-bold text-slate-400">{account.accountLabel}</p><p className="mt-0.5 line-clamp-2 text-[10px] font-black leading-4 text-slate-800">{plan?.theme || `内容位 ${index + 1} · ${account.contentDirection}`}</p><div className="mt-1 flex items-center gap-1.5"><span className={`rounded-full px-1.5 py-0.5 text-[8px] font-black ${planBlocked ? "bg-amber-100 text-amber-700" : plan ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-500"}`}>{statusLabel}</span><span className="text-[8px] font-bold text-slate-400">{plan?.plannedPublishDate || dateKey(publishDate)} 发布</span></div></div></div></div>
             <div className="grid min-h-[72px]" style={{ gridTemplateColumns: `repeat(${days.length}, minmax(108px, 1fr))` }}>
               {days.map((day, dayIndex) => <span key={dateKey(day)} className={`border-r border-slate-100 ${dateKey(day) === today ? "bg-emerald-50/45" : ""}`} style={{ gridColumn: dayIndex + 1, gridRow: 1 }}/>) }
-              <span title="编导 Agent：分析对标账号、爆款结构和选题，预计约 45 分钟" className={`z-10 m-1.5 flex min-w-0 items-center rounded-lg px-2 text-[8px] font-black ring-1 ${matrixScheduleStages[0].color}`} style={{ gridColumn: `${directorStart + 1} / span 1`, gridRow: 1 }}>编导 · 45m</span>
-              <span title="内容 Agent：完成脚本、分镜、素材、配音、剪辑与渲染，预计约 5 小时" className={`z-10 m-1.5 flex min-w-0 items-center rounded-lg px-2 text-[8px] font-black ring-1 ${matrixScheduleStages[1].color}`} style={{ gridColumn: `${productionStart + 1} / span ${productionSpan}`, gridRow: 1 }}>内容制作 · 约 5h</span>
-              <span title="质检 Agent 完成质量检查，经营 Agent 确认发布，合计预计约 35 分钟" className={`z-10 m-1.5 flex min-w-0 items-center rounded-lg px-2 text-[8px] font-black ring-1 ${planBlocked ? "bg-amber-100 text-amber-800 ring-amber-200" : matrixScheduleStages[2].color}`} style={{ gridColumn: `${publishIndex + 1} / span 1`, gridRow: 1 }}>{planBlocked ? "补齐后质检" : "质检 / 发布"}</span>
+              <span title="编导 Agent 分析爆款并完成脚本、分镜；经营 Agent 根据结论制定详细选题和排期，预计约 60 分钟" className={`z-10 m-1.5 flex min-w-0 items-center rounded-lg px-2 text-[8px] font-black ring-1 ${matrixScheduleStages[0].color}`} style={{ gridColumn: `${directorStart + 1} / span 1`, gridRow: 1 }}>编导 → 经营 · 60m</span>
+              <span title="内容 Agent：根据已确认脚本和分镜完成素材、配音、剪辑与渲染，预计约 5 小时" className={`z-10 m-1.5 flex min-w-0 items-center rounded-lg px-2 text-[8px] font-black ring-1 ${matrixScheduleStages[1].color}`} style={{ gridColumn: `${productionStart + 1} / span ${productionSpan}`, gridRow: 1 }}>内容制作 · 约 5h</span>
+              <span title="内容 Agent · 质检能力完成质量检查，经营 Agent 确认发布，合计预计约 35 分钟" className={`z-10 m-1.5 flex min-w-0 items-center rounded-lg px-2 text-[8px] font-black ring-1 ${planBlocked ? "bg-amber-100 text-amber-800 ring-amber-200" : matrixScheduleStages[2].color}`} style={{ gridColumn: `${publishIndex + 1} / span 1`, gridRow: 1 }}>{planBlocked ? "补齐后质检" : "质检 / 发布"}</span>
             </div>
           </div>;
         })}{!scheduleRows.length&&<div className="px-6 py-16 text-center"><CalendarRange size={28} className="mx-auto text-slate-300"/><p className="mt-3 text-sm font-black text-slate-600">还没有账号内容排期</p><p className="mt-1 text-xs text-slate-400">先在本周计划中确认账号和内容数量，再生成具体制作任务。</p></div>}</div>
@@ -612,6 +863,7 @@ function MatrixView({ data, onRefresh, onNavigate, onGeneratePlan, selectedAccou
     whatsapp: boolean;
     messengerPages: MatrixMessengerPage[];
   }>({ loaded: false, whatsapp: false, messengerPages: [] });
+  const display = useMemo(() => buildSmartBusinessDisplayModel(data), [data]);
   useEffect(() => { if (!editing) setDraft(saved || null); }, [saved, editing]);
   useEffect(() => {
     if (!editing) return;
@@ -629,11 +881,14 @@ function MatrixView({ data, onRefresh, onNavigate, onGeneratePlan, selectedAccou
   const productionPlans = saved?.tasks.find(task => task.templateId === "production")?.videoPlans || [];
   const accountRows = useMemo(() => rows.length ? rows.map(row => {
     const target = config?.publishingTargets.find(item => item.accountId === row.accountId && item.platform === row.platform);
+    const plannedAccount = saved?.operatingContext?.accounts.find(item => item.accountId === row.accountId);
+    const planCount = productionPlans.filter(plan => plan.matrix?.accountId === row.accountId).length;
     return {
     ...row,
     cta: enterprisePrimaryCta || row.cta,
     connected: row.connected !== false && Boolean(target),
-    accountLabel: target?.accountLabel || `${platformLabels[row.platform]} · ${matrixRoleLabel[row.accountRole || "brand_combined"]}`,
+    weeklyCount: planCount || plannedAccount?.contentCount || row.weeklyCount,
+    accountLabel: plannedAccount?.accountLabel || target?.accountLabel || `${platformLabels[row.platform]} · ${matrixRoleLabel[row.accountRole || "brand_combined"]}`,
   };}) : profile.accounts.map((row, index) => ({
     accountId: `default-${row.platform}-${row.accountRole}-${index}`,
     accountRole: row.accountRole,
@@ -649,7 +904,7 @@ function MatrixView({ data, onRefresh, onNavigate, onGeneratePlan, selectedAccou
     sourceProjectIds: [] as string[],
     connected: false,
     accountLabel: `${platformLabels[row.platform]} · ${matrixRoleLabel[row.accountRole]}`,
-  })), [config, enterprisePrimaryCta, profile.accounts, rows]);
+  })), [config, enterprisePrimaryCta, productionPlans, profile.accounts, rows, saved?.operatingContext?.accounts]);
   const selectedAccounts = accountRows.filter(row => !selectedAccountId || row.accountId === selectedAccountId);
   useEffect(() => {
     let active = true;
@@ -907,49 +1162,38 @@ function ContentGenerationProgress({ data, selectedAccountId = "", onOpenContent
 
 function QueueView({ data, onRefresh, onNavigate, onGenerateDetails, selectedAccountId = "", onOpenContent, onOpenProductionProgress, onControlJob, onRetryTask }: { data: DigitalEmployeeOverview; onRefresh?: () => void; onNavigate?: (page: Page) => void; onGenerateDetails?: () => void; selectedAccountId?: string; onOpenContent?: (taskId?: string, socialContentTaskId?: string) => void; onOpenProductionProgress?: (taskId: string, contentItemId: string) => void; onControlJob?: (jobId: string, action: ExecutionControlAction) => Promise<boolean>; onRetryTask?: (taskId: string) => Promise<boolean> }) {
   const projection = data.contentQueue;
-  const items = (projection?.items || []).filter(item => !selectedAccountId || item.accountId === selectedAccountId);
-  const deliveries = data.deliveries || [];
+  const display = useMemo(() => buildSmartBusinessDisplayModel(data), [data]);
   const snapshot = data.businessSnapshot;
-  const cycleStart = data.goal?.startsAt || snapshot?.range.startsAt || "";
-  const cycleEnd = data.goal?.endsAt || snapshot?.range.endsAt || "";
+  const cycleStart = display.startsAt || snapshot?.range.startsAt || "";
+  const cycleEnd = display.endsAt || snapshot?.range.endsAt || "";
   const [periodFilter, setPeriodFilter] = useState<"current" | "previous" | "30d" | "all">("current");
   const [platformFilter, setPlatformFilter] = useState<"all" | Platform>("all");
-  const performanceByItem = useMemo(() => new Map(items.map(item => [item.id, performanceForQueueItem(item, deliveries)])), [items, deliveries]);
   const periodBounds = periodFilter === "current" ? { start: cycleStart, end: cycleEnd }
     : periodFilter === "previous" ? { start: shiftIsoDate(cycleStart, -7), end: shiftIsoDate(cycleStart, -1) }
       : periodFilter === "30d" ? { start: shiftIsoDate(cycleEnd || new Date().toISOString().slice(0, 10), -29), end: cycleEnd || new Date().toISOString().slice(0, 10) }
         : { start: "", end: "" };
-  const filteredItems = items.filter(item => {
+  const filteredItems = display.contents.filter(item => {
     const periodMatch = !periodBounds.start || !periodBounds.end || !item.plannedPublishDate
       ? periodFilter === "all" || !item.plannedPublishDate || periodFilter === "current"
       : item.plannedPublishDate >= periodBounds.start && item.plannedPublishDate <= periodBounds.end;
     const platformMatch = platformFilter === "all" || item.platform === platformFilter;
     return periodMatch && platformMatch;
-  }).sort((left, right) => (right.plannedPublishDate || right.updatedAt).localeCompare(left.plannedPublishDate || left.updatedAt));
-  const fallbackPerformance = [...performanceByItem.values()];
-  const fallbackViews = fallbackPerformance.map(item => item.views).filter((value): value is number => value !== null).reduce((total, value) => total + value, 0);
-  const fallbackInteractions = fallbackPerformance.map(item => item.interactions).filter((value): value is number => value !== null).reduce((total, value) => total + value, 0);
-  const totalViews = snapshot?.social.views.value ?? (fallbackViews || null);
-  const totalInteractions = snapshot ? [snapshot.social.likes.value, snapshot.social.comments.value, snapshot.social.shares.value, snapshot.social.saves.value].filter((value): value is number => value !== null).reduce((total, value) => total + value, 0) : fallbackInteractions || null;
-  const publishedVideos = snapshot?.content.publishedPosts.value ?? items.filter(item => item.status === "completed").length;
-  const averageViews = totalViews !== null && publishedVideos ? Math.round(totalViews / publishedVideos) : null;
-  const engagementRate = totalViews && totalInteractions !== null ? totalInteractions / totalViews * 100 : null;
-  const platformRows = platformOptions.map(platform => {
-    const snapshotRow = snapshot?.social.platformBreakdown.find(row => row.platform.toLowerCase() === platform);
-    const platformItems = items.filter(item => item.platform === platform);
-    const itemMetrics = platformItems.map(item => performanceByItem.get(item.id)!);
-    const derivedViews = itemMetrics.map(item => item.views).filter((value): value is number => value !== null).reduce((total, value) => total + value, 0);
-    const derivedInteractions = itemMetrics.map(item => item.interactions).filter((value): value is number => value !== null).reduce((total, value) => total + value, 0);
-    const views = snapshotRow?.views ?? (derivedViews || null);
-    const interactions = snapshotRow && [snapshotRow.likes, snapshotRow.comments, snapshotRow.shares].some(value => value !== null)
-      ? [snapshotRow.likes, snapshotRow.comments, snapshotRow.shares].filter((value): value is number => value !== null).reduce((total, value) => total + value, 0)
-      : derivedInteractions || null;
-    return { platform, views, interactions, returned: itemMetrics.filter(item => item.hasPlatformData).length, engagementRate: views && interactions !== null ? interactions / views * 100 : null };
-  });
-  const ranking = filteredItems.map(item => ({ item, metrics: performanceByItem.get(item.id)! }))
-    .filter(entry => entry.metrics.hasPlatformData)
-    .sort((left, right) => (right.metrics.views || 0) + (right.metrics.interactions || 0) * 10 - ((left.metrics.views || 0) + (left.metrics.interactions || 0) * 10))
+  }).sort((left, right) => right.plannedPublishDate.localeCompare(left.plannedPublishDate));
+  const totalViews = display.totals.views;
+  const totalInteractions = display.totals.interactions;
+  const publishedVideos = display.totals.publishedCount;
+  const averageViews = display.totals.versionCount ? Math.round(totalViews / display.totals.versionCount) : 0;
+  const engagementRate = display.totals.engagementRate;
+  const platformRows = display.platforms;
+  const ranking = filteredItems
+    .sort((left, right) => right.metrics.views + right.metrics.interactions * 10 - (left.metrics.views + left.metrics.interactions * 10))
     .slice(0, 8);
+  const demoTrend = Array.from({ length: 7 }, (_, index) => ({
+    date: cycleStart ? shiftIsoDate(cycleStart, index) : `D${index + 1}`,
+    views: Math.round(totalViews * [0.08, 0.11, 0.13, 0.12, 0.16, 0.18, 0.22][index]),
+  }));
+  const trend = snapshot?.social.dailyTrend.length ? snapshot.social.dailyTrend.slice(-14) : demoTrend;
+  const trendSource: DisplayMetricSource = snapshot?.social.dailyTrend.length ? "real" : "demo";
   const periodOptions = [
     { id: "current", label: "本周期" }, { id: "previous", label: "上周期" }, { id: "30d", label: "近 30 天" }, { id: "all", label: "全部" },
   ] as const;
@@ -963,32 +1207,32 @@ function QueueView({ data, onRefresh, onNavigate, onGenerateDetails, selectedAcc
   return <div className="space-y-5">
     <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm" aria-labelledby="video-overview-title">
       <header className="flex flex-wrap items-end justify-between gap-4 border-b border-slate-100 px-5 py-5 sm:px-6">
-        <div><p className="text-xs font-bold tracking-[0.16em] text-emerald-700">内容队列</p><h2 id="video-overview-title" className="mt-1 text-2xl font-black text-slate-950">视频内容数据概览</h2><p className="mt-1 text-sm text-slate-500">只看视频发布与互动表现；经营目标、预算和询盘增长仍在“经营总览”。</p></div>
-        <span className="rounded-full bg-slate-100 px-3 py-1.5 text-[10px] font-black text-slate-600">{snapshot?.range ? `${snapshot.range.startsAt} 至 ${snapshot.range.endsAt}` : "等待统计周期"}</span>
+        <div><p className="text-xs font-bold tracking-[0.16em] text-emerald-700">内容队列</p><h2 id="video-overview-title" className="mt-1 text-2xl font-black text-slate-950">视频内容数据概览</h2><p className="mt-1 text-sm text-slate-500">内容数量与当前周计划一致；平台尚未回传的数据使用演示指标，并明确标记。</p></div>
+        <div className="flex items-center gap-2"><PlanDataSourceBadge source={display.totals.performanceSource}/><span className="rounded-full bg-slate-100 px-3 py-1.5 text-[10px] font-black text-slate-600">{cycleStart && cycleEnd ? `${cycleStart} 至 ${cycleEnd}` : "等待统计周期"}</span></div>
       </header>
       <div className="grid gap-px bg-slate-100 sm:grid-cols-2 xl:grid-cols-4">
         {[
-          { label: "视频播放量", value: totalViews === null ? "—" : totalViews.toLocaleString("zh-CN"), note: "已连接账号回传" },
-          { label: "互动总数", value: totalInteractions === null ? "—" : totalInteractions.toLocaleString("zh-CN"), note: engagementRate === null ? "互动率待回传" : `互动率 ${engagementRate.toFixed(2)}%` },
-          { label: "已发布视频", value: publishedVideos === null ? "—" : `${publishedVideos} 条`, note: "不包含排期与草稿" },
-          { label: "平均播放/条", value: averageViews === null ? "—" : averageViews.toLocaleString("zh-CN"), note: "按已发布视频计算" },
+          { label: "视频播放量", value: totalViews.toLocaleString("zh-CN"), note: display.totals.performanceSource === "real" ? "已连接账号回传" : "本周 18 个版本演示预估" },
+          { label: "互动总数", value: totalInteractions.toLocaleString("zh-CN"), note: `互动率 ${engagementRate.toFixed(2)}%` },
+          { label: "已发布视频", value: `${publishedVideos} 条`, note: `本周计划 ${display.totals.versionCount} 条` },
+          { label: "平均播放/版本", value: averageViews.toLocaleString("zh-CN"), note: display.totals.performanceSource === "real" ? "按回传内容计算" : "演示数据，不作为复盘结论" },
         ].map((metric, index) => <article key={metric.label} className="bg-white px-5 py-5"><div className="flex items-center justify-between gap-3"><p className="text-[10px] font-black text-slate-400">{metric.label}</p><span className={`h-2.5 w-2.5 rounded-full ${index === 0 ? "bg-blue-500" : index === 1 ? "bg-cyan-400" : index === 2 ? "bg-emerald-500" : "bg-violet-500"}`}/></div><p className="mt-3 text-2xl font-black text-slate-950">{metric.value}</p><p className="mt-1 text-[10px] text-slate-400">{metric.note}</p></article>)}
       </div>
-      {snapshot?.social.dailyTrend.length ? <div className="border-t border-slate-100 px-5 py-4 sm:px-6"><div className="flex h-16 items-end gap-1" aria-label="视频播放趋势">{snapshot.social.dailyTrend.slice(-14).map(point => { const max = Math.max(...snapshot.social.dailyTrend.map(item => item.views || 0), 1); return <span key={point.date} title={`${point.date} · 播放 ${point.views ?? "—"}`} className="min-w-2 flex-1 rounded-t bg-emerald-200 transition hover:bg-emerald-500" style={{ height: `${Math.max(8, (point.views || 0) / max * 100)}%` }}/>; })}</div><p className="mt-2 text-[10px] text-slate-400">最近 {Math.min(14, snapshot.social.dailyTrend.length)} 个数据日 · 悬停查看播放量</p></div> : <p className="border-t border-slate-100 px-5 py-3 text-[10px] text-slate-400 sm:px-6">平台日趋势尚未回传；这里不会用计划数量代替实际播放数据。</p>}
+      <div className="border-t border-slate-100 px-5 py-4 sm:px-6"><div className="flex h-16 items-end gap-1" aria-label="视频播放趋势">{trend.map(point => { const max = Math.max(...trend.map(item => item.views || 0), 1); return <span key={point.date} title={`${point.date} · 播放 ${point.views ?? "—"}`} className="min-w-2 flex-1 rounded-t bg-emerald-200 transition hover:bg-emerald-500" style={{ height: `${Math.max(8, (point.views || 0) / max * 100)}%` }}/>; })}</div><div className="mt-2 flex items-center justify-between gap-2"><p className="text-[10px] text-slate-400">最近 {trend.length} 个数据日 · 悬停查看播放量</p><PlanDataSourceBadge source={trendSource}/></div></div>
     </section>
 
     <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6" aria-labelledby="platform-performance-title">
       <div><p className="text-xs font-bold tracking-[0.16em] text-emerald-700">分平台数据</p><h2 id="platform-performance-title" className="mt-1 text-xl font-black text-slate-950">各平台的视频表现</h2><p className="mt-1 text-xs text-slate-500">点击平台卡片，下面的内容明细与热度榜会同步筛选。</p></div>
-      <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{platformRows.map(row => <button key={row.platform} type="button" aria-pressed={platformFilter === row.platform} onClick={() => setPlatformFilter(current => current === row.platform ? "all" : row.platform)} className={`rounded-2xl border p-4 text-left transition ${platformFilter === row.platform ? "border-emerald-500 bg-emerald-50 shadow-sm" : "border-slate-200 bg-white hover:border-emerald-200"}`}><div className="flex items-center justify-between"><span className="flex items-center gap-2 text-xs font-black text-slate-900"><SocialPlatformIcon platform={row.platform} size={17}/>{platformLabels[row.platform]}</span><span className="text-[9px] font-bold text-slate-400">回传 {row.returned} 条</span></div><p className="mt-4 text-xl font-black text-slate-950">{row.views === null ? "—" : row.views.toLocaleString("zh-CN")}</p><div className="mt-1 flex items-center justify-between text-[10px] text-slate-400"><span>播放量</span><span>{row.engagementRate === null ? "互动率 —" : `互动率 ${row.engagementRate.toFixed(2)}%`}</span></div></button>)}</div>
+      <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{platformRows.map(row => <button key={row.platform} type="button" aria-pressed={platformFilter === row.platform} onClick={() => setPlatformFilter(current => current === row.platform ? "all" : row.platform)} className={`rounded-2xl border p-4 text-left transition ${platformFilter === row.platform ? "border-emerald-500 bg-emerald-50 shadow-sm" : "border-slate-200 bg-white hover:border-emerald-200"}`}><div className="flex items-center justify-between"><span className="flex items-center gap-2 text-xs font-black text-slate-900"><SocialPlatformIcon platform={row.platform} size={17}/>{platformLabels[row.platform]}</span><span className="flex items-center gap-2"><span className="text-[9px] font-bold text-slate-400">计划 {row.plannedCount} 条</span><PlanDataSourceBadge source={row.source}/></span></div><p className="mt-4 text-xl font-black text-slate-950">{row.views.toLocaleString("zh-CN")}</p><div className="mt-1 flex items-center justify-between text-[10px] text-slate-400"><span>播放量</span><span>互动率 {row.engagementRate.toFixed(2)}%</span></div></button>)}</div>
     </section>
 
     <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm" aria-labelledby="video-heat-ranking-title">
       <header className="flex flex-wrap items-end justify-between gap-4 border-b border-slate-100 bg-slate-950 px-5 py-5 text-white sm:px-6">
-        <div className="flex items-center gap-3"><span className="flex h-9 w-9 items-center justify-center rounded-xl bg-amber-400 text-amber-950"><Trophy size={18}/></span><div><p className="text-[9px] font-black uppercase tracking-[.16em] text-emerald-300">Video ranking</p><h2 id="video-heat-ranking-title" className="mt-1 text-base font-black">视频热度榜单</h2><p className="mt-1 text-[10px] text-slate-300">按真实播放与互动信号横向排列；制作进度已移到账号矩阵。</p></div></div>
+        <div className="flex items-center gap-3"><span className="flex h-9 w-9 items-center justify-center rounded-xl bg-amber-400 text-amber-950"><Trophy size={18}/></span><div><p className="text-[9px] font-black uppercase tracking-[.16em] text-emerald-300">Video ranking</p><h2 id="video-heat-ranking-title" className="mt-1 text-base font-black">视频热度榜单</h2><p className="mt-1 text-[10px] text-slate-300">榜单严格对应本周 {display.totals.versionCount} 个发布版本；没有回传的条目展示演示指标。</p></div></div>
         <div className="flex flex-wrap items-center gap-2"><nav aria-label="榜单时间周期" className="flex flex-wrap gap-1.5">{periodOptions.map(option => <button key={option.id} type="button" aria-pressed={periodFilter === option.id} onClick={() => setPeriodFilter(option.id)} className={`rounded-full border px-3 py-1.5 text-[10px] font-black ${periodFilter === option.id ? "border-white bg-white text-slate-950" : "border-white/20 bg-white/5 text-slate-200"}`}>{option.label}</button>)}</nav>{platformFilter !== "all"&&<button type="button" onClick={() => setPlatformFilter("all")} className="rounded-full border border-emerald-300/40 bg-emerald-400/10 px-3 py-1.5 text-[10px] font-black text-emerald-200">清除平台筛选</button>}</div>
       </header>
-      <div className={`border-b px-5 py-3 text-[10px] sm:px-6 ${projection?.sourceStatus === "available" ? "border-emerald-100 bg-emerald-50 text-emerald-800" : "border-amber-200 bg-amber-50 text-amber-800"}`}><strong>{projection?.sourceStatus === "available" ? "视频任务与平台数据已合并" : "内容数据等待连接"}</strong><span className="ml-2">{projection?.sourceNote || "当前没有可读取的内容记录"}</span></div>
-      {ranking.length ? <div className="grid gap-3 p-4 sm:grid-cols-2 xl:grid-cols-4">{ranking.map((entry, index) => <button key={entry.item.id} type="button" onClick={() => onOpenProductionProgress?.(entry.item.taskId, entry.item.id)} className="grid min-w-0 grid-cols-[32px_minmax(0,1fr)] gap-3 rounded-2xl border border-slate-200 bg-white p-4 text-left transition hover:border-emerald-300 hover:shadow-sm"><span className={`flex h-8 w-8 items-center justify-center rounded-lg text-[10px] font-black ${index < 3 ? "bg-amber-100 text-amber-800" : "bg-slate-100 text-slate-500"}`}>{index + 1}</span><div className="min-w-0"><p className="line-clamp-2 min-h-8 text-xs font-black leading-4 text-slate-900">{entry.item.title}</p><p className="mt-2 flex items-center gap-1 truncate text-[9px] text-slate-400"><SocialPlatformIcon platform={entry.item.platform} size={11}/>{entry.item.accountLabel || platformLabels[entry.item.platform]}</p><div className="mt-3 flex items-center justify-between gap-2 border-t border-slate-100 pt-3"><span className="inline-flex items-center gap-1 text-xs font-black text-slate-900"><Eye size={12}/>{entry.metrics.views === null ? "—" : entry.metrics.views.toLocaleString("zh-CN")}</span><span className="text-[9px] text-slate-400">互动 {entry.metrics.interactions ?? "—"}</span></div></div></button>)}</div> : <div className="px-5 py-14 text-center"><TrendingUp size={26} className="mx-auto text-slate-300"/><p className="mt-3 text-xs font-black text-slate-600">暂无可排名的视频数据</p><p className="mt-1 text-[10px] leading-5 text-slate-400">发布并完成平台数据回传后，这里会自动生成热度榜。</p></div>}
+      <div className={`border-b px-5 py-3 text-[10px] sm:px-6 ${projection?.sourceStatus === "available" ? "border-emerald-100 bg-emerald-50 text-emerald-800" : "border-violet-200 bg-violet-50 text-violet-800"}`}><strong>当前周计划已统一</strong><span className="ml-2">{display.totals.originalCount} 条母版裂变为 {display.totals.versionCount} 个平台版本；演示指标不会写入真实复盘。</span></div>
+      {ranking.length ? <div className="grid gap-3 p-4 sm:grid-cols-2 xl:grid-cols-4">{ranking.map((entry, index) => <button key={entry.id} type="button" onClick={() => entry.queueItem ? onOpenProductionProgress?.(entry.queueItem.taskId, entry.queueItem.id) : onNavigate?.("socialInspiration")} className="grid min-w-0 grid-cols-[32px_minmax(0,1fr)] gap-3 rounded-2xl border border-slate-200 bg-white p-4 text-left transition hover:border-emerald-300 hover:shadow-sm"><span className={`flex h-8 w-8 items-center justify-center rounded-lg text-[10px] font-black ${index < 3 ? "bg-amber-100 text-amber-800" : "bg-slate-100 text-slate-500"}`}>{index + 1}</span><div className="min-w-0"><div className="flex items-start justify-between gap-2"><p className="line-clamp-2 min-h-8 text-xs font-black leading-4 text-slate-900">{entry.title}</p><PlanDataSourceBadge source={entry.metrics.source}/></div><p className="mt-2 flex items-center gap-1 truncate text-[9px] text-slate-400"><SocialPlatformIcon platform={entry.platform} size={11}/>{entry.accountLabel}</p><div className="mt-3 flex items-center justify-between gap-2 border-t border-slate-100 pt-3"><span className="inline-flex items-center gap-1 text-xs font-black text-slate-900"><Eye size={12}/>{entry.metrics.views.toLocaleString("zh-CN")}</span><span className="text-[9px] text-slate-400">互动 {entry.metrics.interactions}</span></div></div></button>)}</div> : <div className="px-5 py-14 text-center"><TrendingUp size={26} className="mx-auto text-slate-300"/><p className="mt-3 text-xs font-black text-slate-600">当前周计划还没有视频内容</p></div>}
     </section>
 
     <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm" aria-labelledby="content-monitoring-title">
@@ -1025,6 +1269,13 @@ function ProductionDetailView({ data, contentItemId, onBack, onNavigate, onOpenC
     || null;
   const currentProductionStep = item.steps.find(step => step.state === "active") || item.steps.at(-1);
   const remainingProductionMinutes = item.steps.filter(step => step.state !== "done").reduce((sum, step) => sum + step.estimatedMinutes, 0);
+  const contentPlan = item.contentPlan || {
+    summary: `${item.route === "clone" ? "爆款结构复刻" : item.route === "material" ? "现有素材再创作" : "产品内容制作"} · ${item.languages.join(" / ").toUpperCase() || "语言待确认"} · ${item.outputSummary.formats[0] || "短视频"}`,
+    source: "confirmed" as const,
+    deliverBy: item.plannedPublishDate,
+    publishAt: item.plannedPublishDate,
+    estimatedMinutes: item.steps.reduce((sum, step) => sum + step.estimatedMinutes, 0),
+  };
   const retryCurrentTask = async () => {
     if (!item.taskId || !onRetryTask || retrying) return;
     setRetrying(true);
@@ -1049,11 +1300,26 @@ function ProductionDetailView({ data, contentItemId, onBack, onNavigate, onOpenC
       </div>
     </section>
 
+    <section aria-label="内容方案与交付时间" className="overflow-hidden rounded-3xl border border-emerald-200 bg-white shadow-sm">
+      <header className="flex flex-wrap items-start justify-between gap-3 border-b border-emerald-100 bg-emerald-50/70 px-5 py-4 sm:px-6">
+        <div><p className="text-[10px] font-black uppercase tracking-[.14em] text-emerald-700">Delivery promise</p><h3 className="mt-1 text-base font-black text-slate-950">内容方案与交付时间</h3></div>
+        <span className={`rounded-full px-2.5 py-1 text-[9px] font-black ${contentPlan.source === "system_default" ? "bg-amber-100 text-amber-800" : "bg-emerald-100 text-emerald-800"}`}>{contentPlan.source === "system_default" ? "系统默认 · 可调整" : "已确认"}</span>
+      </header>
+      <div className="grid gap-px bg-slate-100 sm:grid-cols-2 xl:grid-cols-4">
+        {[
+          ["内容方案", contentPlan.summary],
+          ["预计制作工期", productionDurationLabel(contentPlan.estimatedMinutes)],
+          ["交付与发布时间", contentPlan.deliverBy || contentPlan.publishAt || "待确认"],
+          ["发布账号", item.accountLabel ? `${platformLabels[item.platform]} · ${item.accountLabel}` : "仅制作，不自动发布"],
+        ].map(([label, value]) => <article key={label} className="min-w-0 bg-white px-5 py-4"><p className="text-[9px] font-bold text-slate-400">{label}</p><p className="mt-1 break-words text-xs font-black leading-5 text-slate-800">{value}</p></article>)}
+      </div>
+    </section>
+
     {item.preproduction&&<section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6"><div><p className="text-[10px] font-black uppercase tracking-[.14em] text-violet-700">Pre-production</p><h3 className="mt-1 text-base font-black text-slate-950">开始制作前锁定的双预览</h3></div><TaskPreviewCards item={item} onNavigate={onNavigate}/></section>}
 
     {executionJob&&<section className={`rounded-2xl border px-4 py-4 ${executionJob.status === "blocked" || executionJob.status === "dead_letter" ? "border-red-200 bg-red-50" : executionJob.status === "reconciling" || executionJob.status === "retry_wait" ? "border-amber-200 bg-amber-50" : "border-blue-100 bg-blue-50"}`}><div className="flex flex-wrap items-start justify-between gap-3"><div><div className="flex items-center gap-2"><span className={`rounded-full px-2.5 py-1 text-[9px] font-black ${executionStatusTone[executionJob.status]}`}>{executionStatusLabel[executionJob.status]}</span><p className="text-xs font-black text-slate-900">后台执行状态</p></div><p className="mt-2 text-xs leading-5 text-slate-700">{executionJob.publicReason}</p><p className="mt-1 text-[10px] text-slate-500">{executionWaitingLabel(executionJob)}</p></div><div className="text-left sm:text-right"><p className="text-[9px] font-bold text-slate-400">自动尝试</p><p className="mt-1 text-sm font-black text-slate-800">{executionJob.attempt}/{executionJob.maxAttempts}</p></div></div></section>}
 
-    {item.reason&&<section role="alert" className="flex items-start gap-3 rounded-2xl border border-red-200 bg-red-50 px-4 py-4"><AlertTriangle size={18} className="mt-0.5 shrink-0 text-red-600"/><div><p className="text-xs font-black text-red-800">当前任务需要处理</p><p className="mt-1 text-xs leading-5 text-red-700">{item.reason}</p><p className="mt-1 text-[10px] text-red-600">已完成的制作结果会保留；请进入制作台查看对应素材或质量要求。</p></div></section>}
+    {item.reason&&<section role="alert" className="flex items-start gap-3 rounded-2xl border border-red-200 bg-red-50 px-4 py-4"><AlertTriangle size={18} className="mt-0.5 shrink-0 text-red-600"/><div><p className="text-xs font-black text-red-800">当前任务需要处理</p><p className="mt-1 text-xs leading-5 text-red-700">{item.reason}</p><p className="mt-1 text-[10px] text-red-600">已完成的制作结果会保留；上面的系统默认产品、账号和时间可以进入制作台调整。</p></div></section>}
 
     <section className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
       <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
@@ -1072,22 +1338,17 @@ function ProductionDetailView({ data, contentItemId, onBack, onNavigate, onOpenC
 }
 
 function ReviewView({ data, selectedAccountId = "", onNavigate }: { data: DigitalEmployeeOverview; selectedAccountId?: string; onNavigate?: (page: Page) => void }) {
+  const display = useMemo(() => buildSmartBusinessDisplayModel(data), [data]);
   const selectedTarget = data.config?.publishingTargets.find(target => target.accountId === selectedAccountId);
-  const [platform, setPlatform] = useState<Platform>(selectedTarget?.platform || "youtube");
-  const [accountId, setAccountId] = useState(selectedAccountId || "all");
+  const [platform, setPlatform] = useState<Platform>(selectedTarget?.platform || display.accounts[0]?.platform || "youtube");
   const [performance, setPerformance] = useState<ConnectedSocialPerformance | null>(null);
   const [performanceBusy, setPerformanceBusy] = useState(true);
   const [performanceError, setPerformanceError] = useState("");
-  const [board, setBoard] = useState<ReviewTodoBoard | null>(null);
-  const [todoBusy, setTodoBusy] = useState(false);
-  const [todoMessage, setTodoMessage] = useState("");
-  const week = nextReviewWeek();
   const deliveries = data.deliveries || [];
   const review = data.review;
   const reviewSummary = review?.summary;
   const liveReview = data.liveReview;
   const reviewQueue = data.contentQueue?.items.filter(item => item.origin === "weekly_plan" && (!selectedAccountId || item.accountId === selectedAccountId)) || [];
-  const completedReviewItems = reviewQueue.filter(item => item.status === "completed");
   const settledReviewItems = reviewQueue.filter(item => item.settledCostCny !== null);
   const settledReviewCost = settledReviewItems.reduce((sum,item)=>sum+Number(item.settledCostCny||0),0);
   const performanceByAccount = Object.values((performance?.contents || []).reduce<Record<string,{ accountId:string; accountTitle:string; views:number; videos:number }>>((result,item)=>{
@@ -1112,70 +1373,78 @@ function ReviewView({ data, selectedAccountId = "", onNavigate }: { data: Digita
   useEffect(() => { void refreshPerformance(); }, []);
   useEffect(() => {
     const target = data.config?.publishingTargets.find(item => item.accountId === selectedAccountId);
-    if (target) { setPlatform(target.platform); setAccountId(target.accountId); }
-    else if (!selectedAccountId) setAccountId("all");
+    if (target) setPlatform(target.platform);
   }, [data.config?.publishingTargets, selectedAccountId]);
-  useEffect(() => {
-    const target = data.config?.publishingTargets.find(item => item.accountId === selectedAccountId);
-    if (!target || target.platform !== platform) setAccountId("all");
-  }, [data.config?.publishingTargets, platform, selectedAccountId]);
-  useEffect(() => {
-    let active = true;
-    setTodoBusy(true);
-    digitalEmployeeApi.reviewTodos(week).then((next) => active&&setBoard(next)).catch((error: Error) => active&&setTodoMessage(error.message)).finally(()=>active&&setTodoBusy(false));
-    return () => { active=false; };
-  }, [week]);
 
-  const connectedAccounts = (performance?.accounts || []).filter(item => item.platform === platform);
   const liveRanking = (performance?.contents || [])
-    .filter(item => item.platform === platform && (accountId === "all" || item.accountId === accountId) && item.metrics.views !== null)
+    .filter(item => item.platform === platform && item.metrics.views !== null)
     .map(item => ({ id:item.id,title:item.title,subject:`${item.accountTitle} · 内容监控`,accountId:item.accountId,views:item.metrics.views || 0,likes:item.metrics.likes,comments:item.metrics.comments }))
+    .sort((left,right)=>right.views-left.views);
+  const planRanking = display.contents
+    .filter(item => item.platform === platform)
+    .map(item => ({ id:item.id,title:item.title,subject:`${item.accountLabel} · 本周计划`,accountId:item.accountId,views:item.metrics.views,likes:item.metrics.likes,comments:item.metrics.comments,source:item.metrics.source }))
     .sort((left,right)=>right.views-left.views);
   const fallbackRanking = deliveries
     .filter(card => deliveryPlatform(card) === platform && deliveryMetric(card, /播放|浏览|view/i) !== null)
-    .map(card => ({id:card.id,title:card.title,subject:`${card.subject} · 经营交付记录`,accountId:"",views:deliveryMetric(card,/播放|浏览|view/i)||0,likes:null,comments:null}))
+    .map(card => ({id:card.id,title:card.title,subject:`${card.subject} · 经营交付记录`,accountId:"",views:deliveryMetric(card,/播放|浏览|view/i)||0,likes:null,comments:null,source:"real" as const}))
     .sort((left,right)=>right.views-left.views);
-  const ranking = liveRanking.length ? liveRanking : fallbackRanking;
-  const top = ranking[0];
-
-  const addTopToTodo = async () => {
-    if (!board || !top) return;
-    const sourceId = `heat:${platform}:${top.id}`;
-    if (board.items.some((item)=>item.sourceIds.includes(sourceId))) { setTodoMessage("这条建议已经在下周待办里了"); return; }
-    const item: ReviewTodo = {
-      id: crypto.randomUUID(), sourceIds:[sourceId], sourceTitle:`${platformLabels[platform]} 热度排行`, title:`验证《${top.title}》的高表现结构`, kind:"video",
-      requirements:`把《${top.title}》作为结构候选，结合下周主推产品先制作 1 条差异化测试；不得直接复制原片。`, acceptance:"成片结构与原高热内容可对照，首镜表达和镜头组合已更新，产品卖点和事实信息已核验。", materials:"优先使用已授权产品素材与可核验的首镜参考。", reference:`${platformLabels[platform]} 播放量：${top.views.toLocaleString("zh-CN")}`,
-      quantity:1, videoIndexes:[], status:"pending", reason:"",
-    };
-    setTodoBusy(true); setTodoMessage("");
-    try { const saved=await digitalEmployeeApi.saveReviewTodos({...board,sourceGoalId:board.sourceGoalId||data.goal?.id||"",items:[...board.items,item]});setBoard(saved);setTodoMessage("已加入下周待办");showActionSuccess("已加入下周待办 👏", "Agent 会在下周计划中继续推进这条内容建议。"); }
-    catch (error) { setTodoMessage(error instanceof Error?error.message:"保存失败"); }
-    finally { setTodoBusy(false); }
+  const ranking = liveRanking.length
+    ? liveRanking.map(item => ({ ...item, source: "real" as const }))
+    : fallbackRanking.length ? fallbackRanking : planRanking;
+  const reviewMetricSource: DisplayMetricSource = liveRanking.length || fallbackRanking.length ? "real" : "demo";
+  const useDemoReview = review?.status !== "generated";
+  const demoTotal = Math.max(1, display.totals.versionCount || 18);
+  const demoCompleted = Math.min(demoTotal, Math.max(1, Math.round(demoTotal * 0.72)));
+  const realIndustryTrends: NextRoundRecommendations["industryTrends"] = data.industryTrends || reviewSummary?.nextRoundRecommendations?.industryTrends || {
+    status: "waiting", signals: [], systemActions: ["等待可追溯的社媒热点来源，不生成无来源行业结论"],
+  };
+  const demoTags = [...new Set(realIndustryTrends.signals.flatMap(signal => signal.tags))].slice(0, 6);
+  const demoContent = display.contents[0];
+  const demoRecommendations: NextRoundRecommendations = {
+    contentInheritance: {
+      status: "ready", sourceContentId: demoContent?.contentId || "demo", title: demoContent?.title || "本周首条产品视频", platform: demoContent?.platform || platform,
+      hook: "演示：前三秒直接呈现买家问题与产品证据", framework: ["买家问题", "产品证据", "行动引导"], tags: demoTags, sourceUrl: "",
+      reason: "演示复盘：该内容在示例数据中的播放与互动综合得分最高；真实回传后将自动替换。",
+      paidBoost: { status: "not_enough_data", reason: "演示数据不能触发追加投放，需等待真实播放、互动或询盘回流。" },
+      systemActions: ["把示例高表现结构带入下一轮候选", "真实数据回流后重新排序", "不自动消耗投放预算"],
+    },
+    tagAdaptation: {
+      status: demoTags.length ? "baseline" : "waiting", publishedTags: demoTags.slice(0, 3), hotTags: demoTags, newTags: [], droppedTags: [], requiresConfirmation: false,
+      systemActions: demoTags.length ? ["以真实采集视频的 Tag 建立观察基线", "下周期只比较新增与退出标签", "调整前仍需用户确认"] : ["等待真实热门 Tag 回流"],
+    },
+    industryTrends: realIndustryTrends,
+  };
+  const recommendationSummary: WeeklyReviewSummary = reviewSummary ? {
+    ...reviewSummary,
+    nextRoundRecommendations: reviewSummary.nextRoundRecommendations
+      ? { ...reviewSummary.nextRoundRecommendations, industryTrends: realIndustryTrends.status === "available" ? realIndustryTrends : reviewSummary.nextRoundRecommendations.industryTrends }
+      : demoRecommendations,
+  } : {
+    completionRate: demoCompleted / demoTotal * 100, automationRate: 78, approvalRate: 86, handoffRate: 75,
+    completedTasks: demoCompleted, totalTasks: demoTotal, failedTasks: 1,
+    highlights: ["演示数据，仅用于页面预览"], nextGoalSuggestion: "等待真实复盘后生成", knowledgeCandidates: [],
+    nextRoundRecommendations: demoRecommendations,
   };
 
   return <div>
-    <div className="flex flex-wrap items-start justify-between gap-4"><div><p className="text-xs font-bold tracking-[0.16em] text-emerald-700">数据复盘</p><h2 className="mt-1 text-2xl font-black text-slate-950">账号内容热度排行</h2><p className="mt-1 text-sm text-slate-500">直接读取“内容监控”同一批已授权账号与视频数据，不再依赖经营交付卡片推断。</p></div><button type="button" disabled={performanceBusy} onClick={() => void refreshPerformance()} className="inline-flex items-center gap-2 rounded-xl border border-emerald-200 bg-white px-3 py-2 text-xs font-black text-emerald-800 disabled:opacity-50"><RefreshCcw size={14} className={performanceBusy?"animate-spin":""}/>同步账号数据</button></div>
-    <div className="mt-5"><NextRoundRecommendationsSection summary={reviewSummary} onOpen={(page) => onNavigate?.(page as Page)}/></div>
+    <div className="flex flex-wrap items-start justify-between gap-4"><div><p className="text-xs font-bold tracking-[0.16em] text-emerald-700">数据复盘</p><h2 className="mt-1 text-2xl font-black text-slate-950">账号内容热度排行</h2><p className="mt-1 text-sm text-slate-500">复盘范围固定为当前周计划的 {display.totals.accountCount} 个账号和 {display.totals.versionCount} 个发布版本；缺失回传使用演示指标。</p></div><div className="flex items-center gap-2"><PlanDataSourceBadge source={reviewMetricSource}/><button type="button" disabled={performanceBusy} onClick={() => void refreshPerformance()} className="inline-flex items-center gap-2 rounded-xl border border-emerald-200 bg-white px-3 py-2 text-xs font-black text-emerald-800 disabled:opacity-50"><RefreshCcw size={14} className={performanceBusy?"animate-spin":""}/>同步账号数据</button></div></div>
+    <div className="mt-5"><NextRoundRecommendationsSection summary={recommendationSummary} demo={useDemoReview} onOpen={(page) => onNavigate?.(page as Page)}/></div>
     <section className="mt-5 rounded-3xl border border-slate-200 bg-white p-5">
-      <div className="flex items-center justify-between gap-3"><div><p className="text-[10px] font-black tracking-[.14em] text-slate-400">本周复盘</p><h3 className="mt-1 text-base font-black text-slate-950">计划完成与业务回流</h3></div><span className={`rounded-full px-2.5 py-1 text-[10px] font-black ${review?.status==='generated'?'bg-emerald-50 text-emerald-700':'bg-slate-100 text-slate-600'}`}>{review?.status==='generated'?'复盘已生成':'等待完整数据'}</span></div>
+      <div className="flex items-center justify-between gap-3"><div><p className="text-[10px] font-black tracking-[.14em] text-slate-400">本周复盘</p><h3 className="mt-1 text-base font-black text-slate-950">计划完成与业务回流</h3></div><span className={`rounded-full px-2.5 py-1 text-[10px] font-black ${review?.status==='generated'?'bg-emerald-50 text-emerald-700':'bg-violet-50 text-violet-700'}`}>{review?.status==='generated'?'真实复盘已生成':'演示复盘'}</span></div>
       <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4 xl:grid-cols-7">{[
-        {label:"完成率",value:reviewSummary?`${Math.round(reviewSummary.completionRate)}%`:liveReview?.completionRate!==undefined?`${Math.round(liveReview.completionRate)}%`:"—"},
-        {label:"已完成",value:reviewSummary?`${reviewSummary.completedTasks}/${reviewSummary.totalTasks}`:liveReview?.totalTasks!==undefined?`${liveReview.completedTasks||0}/${liveReview.totalTasks}`:"—"},
-        {label:"阻塞项",value:liveReview?.blockedTasks.length??reviewSummary?.failedTasks??"—"},
-        {label:"数据缺口",value:liveReview?.dataGaps.length??"—"},
-        {label:"周计划内容",value:`${completedReviewItems.length}/${reviewQueue.length}`},
-        {label:"真实账号样本",value:`${performanceByAccount.reduce((sum,item)=>sum+item.videos,0)} 条`},
-        {label:"已结算制作费",value:settledReviewItems.length?`¥${settledReviewCost.toFixed(2)}`:"待回传"},
+        {label:"完成率",value:useDemoReview?`${Math.round(recommendationSummary.completionRate)}%`:`${Math.round(reviewSummary?.completionRate || 0)}%`},
+        {label:"已完成",value:useDemoReview?`${demoCompleted}/${demoTotal}`:`${reviewSummary?.completedTasks || 0}/${reviewSummary?.totalTasks || 0}`},
+        {label:"阻塞项",value:useDemoReview?"1":liveReview?.blockedTasks.length??reviewSummary?.failedTasks??0},
+        {label:"数据缺口",value:useDemoReview?"2":liveReview?.dataGaps.length??0},
+        {label:"周计划内容",value:useDemoReview?`${demoCompleted}/${demoTotal}`:`${display.totals.completedCount}/${display.totals.versionCount}`},
+        {label:"账号样本",value:performanceByAccount.length?`${performanceByAccount.reduce((sum,item)=>sum+item.videos,0)} 条`:`${display.totals.accountCount} 个`},
+        {label:"已结算制作费",value:settledReviewItems.length?`¥${settledReviewCost.toFixed(2)}`:useDemoReview?`¥${Math.max(0, display.totals.budgetMidCny * .65).toFixed(2)} · 演示`:"待回传"},
       ].map(item=><div key={item.label} className="rounded-xl bg-slate-50 px-3 py-3"><p className="text-[9px] font-bold text-slate-400">{item.label}</p><p className="mt-1 text-lg font-black text-slate-900">{item.value}</p></div>)}</div>
-      {liveReview?.dataGaps.length?<p className="mt-3 text-[10px] leading-5 text-amber-700">仍需补齐：{liveReview.dataGaps.slice(0,3).join("；")}</p>:<p className="mt-3 text-[10px] text-slate-400">复盘只采用工作流结果与已连接账号回传，不用模拟指标补齐。</p>}
+      {liveReview?.dataGaps.length?<p className="mt-3 text-[10px] leading-5 text-amber-700">仍需补齐：{liveReview.dataGaps.slice(0,3).join("；")}。缺失位置暂用演示数据展示，正式复盘不会写入这些演示值。</p>:<p className="mt-3 text-[10px] text-slate-400">真实数据优先；紫色“演示数据”仅用于补齐页面预览，不会进入正式结算或下一轮决策。</p>}
     </section>
-    {(performanceError||performance?.unavailable.length)&&<div role="status" className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs leading-5 text-amber-800"><span>{performanceError||`${performance?.unavailable.length} 个账号暂时无法同步；已保留其他账号的真实数据。`}</span><button type="button" onClick={()=>onNavigate?.("accountManagement")} className="rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-[10px] font-black text-amber-900">检查账号授权 →</button></div>}
-    <div className="mt-5 flex flex-wrap items-end justify-between gap-3 border-b border-slate-200"><div className="flex gap-3 overflow-x-auto">{platformOptions.map((item)=><button type="button" key={item} title={platformLabels[item]} aria-label={platformLabels[item]} onClick={()=>setPlatform(item)} aria-pressed={platform===item} className={`flex h-11 w-12 shrink-0 items-center justify-center border-b-2 pb-2 ${platform===item?'border-emerald-700':'border-transparent opacity-45 hover:opacity-75'}`}><SocialPlatformIcon platform={item} size={21}/></button>)}</div><select aria-label="复盘账号" value={accountId} onChange={event=>setAccountId(event.target.value)} className="mb-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700"><option value="all">全部账号</option>{connectedAccounts.map(account=><option key={account.id} value={account.id}>{account.title}</option>)}</select></div>
-    <div className="mt-5 grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
-      <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white">{ranking.map((card,index)=><article key={card.id} className={`grid grid-cols-[44px_minmax(0,1fr)_auto] items-center gap-4 p-5 ${index?'border-t border-slate-100':''}`}><span className={`flex h-9 w-9 items-center justify-center rounded-xl text-sm font-black ${index===0?'bg-amber-100 text-amber-800':'bg-slate-100 text-slate-500'}`}>{index+1}</span><div className="min-w-0"><h3 className="truncate text-sm font-black text-slate-950">{card.title}</h3><p className="mt-1 truncate text-xs text-slate-400">{card.subject}</p>{(card.likes!==null||card.comments!==null)&&<p className="mt-1 text-[10px] text-slate-400">点赞 {card.likes??"—"} · 评论 {card.comments??"—"}</p>}</div><div className="text-right"><p className="flex items-center gap-1 text-sm font-black text-slate-900"><Eye size={13}/>{card.views.toLocaleString("zh-CN")}</p><p className="mt-1 text-[10px] text-slate-400">播放量</p></div></article>)}{performanceBusy&&!ranking.length?<div className="flex items-center justify-center gap-2 px-5 py-20 text-sm text-slate-400"><Loader2 size={17} className="animate-spin"/>正在同步账号内容数据</div>:!ranking.length&&<div className="px-5 py-20 text-center"><Eye size={28} className="mx-auto text-slate-300"/><p className="mt-3 text-sm font-bold text-slate-600">{platformLabels[platform]} 暂无内容播放量</p><p className="mt-1 text-xs text-slate-400">请确认账号授权包含内容读取权限，然后点击“同步账号数据”。</p></div>}</section>
-      <aside className="space-y-4"><section className="rounded-3xl border border-emerald-100 bg-emerald-50/55 p-5"><Sparkles size={20} className="text-emerald-700"/><h3 className="mt-4 text-base font-black text-slate-950">热度候选</h3><p className="mt-3 text-sm font-bold leading-6 text-slate-800">{top?`《${top.title}》当前播放排名第一，可作为结构复用候选。`:"等待平台播放量回传后生成候选。"}</p><p className="mt-2 text-xs leading-6 text-slate-500">{top?"这里只依据当前可见播放量；顶部“下一轮建议”还会结合互动与询盘，不会据此自动追加投放。":"当前没有足够数据，不生成未经证实的复刻建议。"}</p><button type="button" disabled={!top||!board||todoBusy} onClick={()=>void addTopToTodo()} className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-800 px-4 py-2.5 text-xs font-black text-white disabled:opacity-40">{todoBusy?<Loader2 size={14} className="animate-spin"/>:<CalendarPlus size={14}/>}加入 1 条验证任务</button>{todoMessage&&<p role="status" className="mt-2 text-center text-[10px] text-emerald-800">{todoMessage}</p>}</section>
-        <section className="rounded-3xl border border-slate-200 bg-white p-5"><div className="flex items-center justify-between"><h3 className="text-sm font-black text-slate-950">下周待办</h3><span className="text-[10px] text-slate-400">{week} 起</span></div><div className="mt-4 space-y-3">{board?.items.slice(0,5).map((item)=><div key={item.id} className="flex items-start gap-3"><CheckCircle2 size={15} className="mt-0.5 shrink-0 text-emerald-700"/><div className="min-w-0"><p className="truncate text-xs font-bold text-slate-800">{item.title}</p><p className="mt-0.5 text-[10px] text-slate-400">{item.quantity>1?`${item.quantity} 条 · `:""}{item.status==='assigned'?'已分配':'待分配'}</p></div></div>)}{board&&!board.items.length&&<p className="py-3 text-xs text-slate-400">暂无待办，可从上方建议直接加入。</p>}{!board&&<p className="py-3 text-xs text-slate-400">正在读取待办…</p>}</div></section></aside>
-    </div>
+    {(Boolean(performanceError)||Boolean(performance?.unavailable.length))&&<div role="status" className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs leading-5 text-amber-800"><span>{performanceError||`${performance?.unavailable.length} 个账号暂时无法同步；已保留其他账号的真实数据。`}</span><button type="button" onClick={()=>onNavigate?.("accountManagement")} className="rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-[10px] font-black text-amber-900">检查账号授权 →</button></div>}
+    <div className="mt-5 border-b border-slate-200"><div className="flex gap-3 overflow-x-auto">{platformOptions.map((item)=><button type="button" key={item} title={platformLabels[item]} aria-label={platformLabels[item]} onClick={()=>setPlatform(item)} aria-pressed={platform===item} className={`flex h-11 w-12 shrink-0 items-center justify-center border-b-2 pb-2 ${platform===item?'border-emerald-700':'border-transparent opacity-45 hover:opacity-75'}`}><SocialPlatformIcon platform={item} size={21}/></button>)}</div></div>
+    {ranking.length || performanceBusy ? <section className="mt-5 overflow-hidden rounded-3xl border border-slate-200 bg-white">{ranking.map((card,index)=><article key={card.id} className={`grid grid-cols-[44px_minmax(0,1fr)_auto] items-center gap-4 p-5 ${index?'border-t border-slate-100':''}`}><span className={`flex h-9 w-9 items-center justify-center rounded-xl text-sm font-black ${index===0?'bg-amber-100 text-amber-800':'bg-slate-100 text-slate-500'}`}>{index+1}</span><div className="min-w-0"><div className="flex items-center gap-2"><h3 className="truncate text-sm font-black text-slate-950">{card.title}</h3><PlanDataSourceBadge source={card.source}/></div><p className="mt-1 truncate text-xs text-slate-400">{card.subject}</p>{(card.likes!==null||card.comments!==null)&&<p className="mt-1 text-[10px] text-slate-400">点赞 {card.likes??"—"} · 评论 {card.comments??"—"}</p>}</div><div className="text-right"><p className="flex items-center gap-1 text-sm font-black text-slate-900"><Eye size={13}/>{card.views.toLocaleString("zh-CN")}</p><p className="mt-1 text-[10px] text-slate-400">播放量</p></div></article>)}{performanceBusy&&!ranking.length&&<div className="flex items-center justify-center gap-2 px-5 py-20 text-sm text-slate-400"><Loader2 size={17} className="animate-spin"/>正在同步账号内容数据</div>}</section> : null}
   </div>;
 }
 

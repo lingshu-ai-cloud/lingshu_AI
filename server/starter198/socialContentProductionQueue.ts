@@ -20,7 +20,8 @@ import {
 } from '../lib/socialContentLegacyPorts.js';
 import { analyzeProductionMaterial } from '../digitalEmployees/productionMaterialAnalysis.js';
 import { objectStorageEnabled, objectStorageSignedGetUrl } from '../storage/objectStorage.js';
-import { store } from '../storage/index.js';
+import { store, dataBackend } from '../storage/index.js';
+import { localFallbacksEnabled } from '../lib/localFallbackPolicy.js';
 import { createAgentNotification } from '../notifications/agentNotifications.js';
 import { enqueueBullJob, selectedQueueBackend, startBullWorker } from '../queues/bullmq.js';
 import {
@@ -138,6 +139,8 @@ async function executePersistedProduction(job: ContentExecutionJob): Promise<voi
 function ensureProductionWorker(): DurableContentExecutionWorker {
   if (productionWorker) return productionWorker;
   productionWorker = new DurableContentExecutionWorker({
+    ...(process.env.LINGSHU_LOCAL_PREVIEW === '1' && localFallbacksEnabled() && dataBackend === 'pocketbase'
+      ? { dataAuthority: 'local' as const } : {}),
     dataStore: store,
     execute: executePersistedProduction,
     async onSucceeded(job) {

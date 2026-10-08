@@ -5,7 +5,7 @@ const dashboard = fs.readFileSync('src/components/SmartBusinessDashboard.tsx', '
 const recommendations = fs.readFileSync('src/components/NextRoundRecommendationsSection.tsx', 'utf8');
 const recommendationModel = fs.readFileSync('src/lib/nextRoundRecommendations.ts', 'utf8');
 
-assert.match(dashboard, /<NextRoundRecommendationsSection[^>]+summary=\{reviewSummary\}/, 'data review must prioritize the structured next-round section');
+assert.match(dashboard, /<NextRoundRecommendationsSection[^>]+summary=\{recommendationSummary\}/, 'data review must prioritize the structured next-round section with real industry signals');
 assert.doesNotMatch(dashboard, /目标、账号与预算怎样调整/, 'the old generic next-round copy must be removed');
 for (const label of ['优秀内容继承', 'Tag 与卖点调整', '行业热点与变化', '系统如何使用']) {
   assert.match(`${recommendations}\n${recommendationModel}`, new RegExp(label), `next-round recommendations must expose ${label}`);

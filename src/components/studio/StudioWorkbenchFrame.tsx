@@ -1,6 +1,6 @@
 import { StoryboardFirstFrame } from './StoryboardFirstFrame';
 import ReplicationWorkbenchHeader from '../socialContent/ReplicationWorkbenchHeader';
-import { useId, useState, type ReactNode } from 'react';
+import { useEffect, useId, useState, type ReactNode } from 'react';
 import {
   AlertCircle,
   Check,
@@ -311,7 +311,8 @@ export function StudioWorkbenchFrame({
   primaryAction,
   className,
 }: StudioWorkbenchFrameProps) {
-  const [timelineExpanded, setTimelineExpanded] = useState(false);
+  const [timelineExpanded, setTimelineExpanded] = useState(activeStepId === 'preview' || replicationWorkflow && replicationActiveStep === 2);
+  useEffect(() => { if (activeStepId === 'preview' || replicationWorkflow && replicationActiveStep === 2) setTimelineExpanded(true); }, [activeStepId, replicationWorkflow, replicationActiveStep]);
   const [mobilePanel, setMobilePanel] = useState<MobilePanel>('properties');
   const blockReasonId = useId();
   const projectTitleIsEditable = Boolean(onProjectTitleChange);

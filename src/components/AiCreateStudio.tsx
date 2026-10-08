@@ -33,7 +33,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { LayoutGrid, Film, FileText, Music, Image as ImageIcon, Play, Send, Check, ChevronLeft, ChevronRight, Folder, Search, Volume2, Mic, Download, Loader2, Sparkles, Wand2, Copy, RefreshCw, Clock, Upload, X, Plus, Save, FolderOpen, Trash2, Pause, ChevronDown, Heart, ExternalLink, Languages } from 'lucide-react';
 import { studioApi, getDesktopRender, type StudioProject, type VariationBatch, type Material, type MaterialSegment, type BgmTrack, type CoverStyle, type SubCue, type TtsStyleOptions, type StudioAudioCapabilities, type FbPosterResult, type LeadContentPackageResult, type StoryboardQualityResult, type VideoGenerationVersion, type StudioScriptResult, type StudioScriptQualityStatus, type StudioScriptQualityChecks, type StudioGenerationProvenance, type DigitalHumanCapabilities, type DigitalHumanJob, type HeyGenAvatarOption, type StudioManualHandoff } from '../lib/studioApi';
 import { isMeasuredVoiceAlignment, matchVoiceCuesToShots, productionVoiceCues, retimeVisualShotsToVoiceover } from '../lib/voiceoverAlignment';
-import { arrangeShotsWithinNarration, durationForUnfixedNarration, narrationForUnfixedShots, shotsMissingSourceCues, sourceCaptionCacheMatchesContent, sourceCuesForShot, sourceCuesWithoutVoiceover, voiceoverMatchesNarrationSources } from '../lib/narrationTimeline';
+import { arrangeShotsWithinNarration, durationForUnfixedNarration, narrationForUnfixedShots, shotsMissingSourceCues, sourceCaptionCacheMatchesContent, generatedShotCaptionCues, sourceCuesForShot, sourceCuesWithoutVoiceover, voiceoverMatchesNarrationSources } from '../lib/narrationTimeline';
 import { createPresetEffectPlan, type EffectIntensity, type EffectPresetId } from '../../shared/contracts/effectPlan';
 import type { Page } from '../App';
 import type { SocialContentCreateRequest } from './socialContent/SocialContentWorkspace';
@@ -1274,7 +1274,7 @@ export function fitStoryboardSlotsToDuration(slots: StoryboardSlot[], duration: 
 
 export function followAdoptedDigitalHumanSlotDurations(
   slots: StoryboardSlot[], assignments: Record<string, string>, productions: Record<string, ShotProduction>, materialDurations: Map<string, number>,
-  assemblyId: string, persistedShotIds: Record<string, string>,
+  assemblyId: string, persistedShotIds: Record<string, string>, digitalHumanMaterialIds: ReadonlySet<string> = new Set(),
 ): StoryboardSlot[] {
   let cursor = slots[0]?.start || 0;
   return slots.map(slot => {
@@ -1283,7 +1283,7 @@ export function followAdoptedDigitalHumanSlotDurations(
     const shot = productions[`${assemblyId}:${persistedShotId}`];
     const adoptedAvatar = Boolean(shot?.candidates.some(candidate => candidate.id === shot.adoptedId
       && candidate.source === 'avatar' && candidate.materialId === materialId));
-    const measured = adoptedAvatar ? materialDurations.get(materialId) : undefined;
+    const measured = adoptedAvatar || digitalHumanMaterialIds.has(materialId) ? materialDurations.get(materialId) : undefined;
     const length = measured && measured > 0 ? measured : Math.max(0.5, slot.end - slot.start);
     const start = cursor, end = cursor + length; cursor = end;
     return { ...slot, start: +start.toFixed(3), end: +end.toFixed(3), time: `${start.toFixed(1)}s-${end.toFixed(1)}s` };
@@ -3797,7 +3797,8 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
       : fitStoryboardSlotsToDuration(parsed, activeAudioDuration);
     return followAdoptedDigitalHumanSlotDurations(base, storyboardAssignments, shotProductions,
       new Map(materials.filter(item=>item.type==='video').map(item=>[item.id,item.duration])), activeAssemblyId,
-      Object.fromEntries(shootingSlotsRef.current.map(item => [item.slotId, item.id])));
+      Object.fromEntries(shootingSlotsRef.current.map(item => [item.slotId, item.id])),
+      new Set(materials.filter(item => item.type === 'video' && ['heygen', 'digital-human-sentence-video', 'digital_human'].includes(item.sourceType || '')).map(item => item.id)));
   }, [activeVoiceLang, duration, script, videoKickoff, voiceoverAudios, voiceoverDur, voiceoverMode, storyboardAssignments, shotProductions, materials, activeAssemblyId]);
   useEffect(() => {
     if (!socialShotMaterialBindings.length || !storyboardSlots.length) return;
@@ -4637,18 +4638,6 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     [storyboardAssignments, storyboardSlots, materialById],
   );
   const assignedCount = assignedOrderedIds.length;
-  const personContinuityConflicts = useMemo(() => {
-    const groups = new Map<string, Array<{ slot: StoryboardSlot; clipId: string }>>();
-    storyboardSlots.forEach(slot => {
-      const groupId = personContinuityBySlot[slot.id];
-      const clipId = storyboardAssignments[slot.id];
-      if (groupId && clipId && storyboardSourcePlans[slot.id]?.mode !== 'ai') {
-        groups.set(groupId, [...(groups.get(groupId) || []), { slot, clipId }]);
-      }
-    });
-    return [...groups.entries()].filter(([, rows]) => new Set(rows.map(row => row.clipId)).size > 1)
-      .map(([groupId, rows]) => `同一人物 ${groupId} 的分镜 ${rows.map(row => storyboardSlots.indexOf(row.slot) + 1).join('、')} 使用了不同人物素材`);
-  }, [storyboardSlots, personContinuityBySlot, storyboardAssignments, storyboardSourcePlans]);
   const selectedProductOptions = useMemo(
     () => selectedProductIds.map(id => productOptions.find(option => option.id === id)).filter((option): option is ProductOption => Boolean(option)),
     [productOptions, selectedProductIds],
@@ -5216,7 +5205,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
       for (const slot of storyboardSlots) {
         const materialId = storyboardAssignments[slot.id] || '';
         const clip = materialById.get(materialId);
-        if (!clip || clip.type !== 'video' || !adoptedDigitalHumanCandidate(slot, materialId)) continue;
+        if (!clip || clip.type !== 'video' || !(adoptedDigitalHumanCandidate(slot, materialId) || ['heygen', 'digital-human-sentence-video', 'digital_human'].includes(clip.sourceType || ''))) continue;
         const key = slotClipEditKey(slot.id, materialId);
         const existing = current[key];
         if (existing?.trimStart === 0 && existing.trimEnd === clip.duration && existing.speed === 1
@@ -5241,7 +5230,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
   }, [hookMaterialId, materialById, storyboardSlots]); // eslint-disable-line react-hooks/exhaustive-deps
   const patchStoryboardClipEdit = (slot: StoryboardSlot, clip: Clip, field: 'targetDuration' | 'trimStart' | 'trimEnd' | 'speed', rawValue: number) => {
     if (productionFor(slot).locked) { setModeNotice('镜头已锁定，请先解锁'); return; }
-    if (adoptedDigitalHumanCandidate(slot, clip.id)) {
+    if (adoptedDigitalHumanCandidate(slot, clip.id) || clip.type === 'video' && ['heygen', 'digital-human-sentence-video', 'digital_human'].includes(clip.sourceType || '')) {
       setModeNotice('数字人分镜跟随回填素材的实测时长，并保持 1 倍速完整播放。');
       return;
     }
@@ -5300,7 +5289,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     return production.source === 'avatar' && production.sound === 'source'
       && Boolean(materialId) && (adoptedAvatar || adoptedExecution || reusableSentenceVideo || legacyHeygenVideo);
   };
-  const sourceCuesForMaterial = (clip: Clip | undefined) => {
+  const sourceCuesForMaterial = (clip: Clip | undefined, slot?: StoryboardSlot) => {
     if (!clip) return [];
     // A HeyGen job's cues belong only to its own output material. Never use
     // the separately synthesized B-roll voiceover as avatar subtitles.
@@ -5308,12 +5297,17 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     const trustedStoredCues = sourceCaptionCacheMatchesContent(
       clip.transcriptCuesProvenance, clip.transcriptSourceHash, clip.contentSha256);
     const source = jobCues ? digitalHumanJob!.subtitleCues : trustedStoredCues ? clip.transcriptCues : undefined;
-    return applyCaptionTextEdits(sourceCuesForShot(source, clip.duration), clip.id, clip.contentSha256, sourceCaptionTextEdits);
+    const boundSlot = slot || storyboardSlots.find(item => storyboardAssignments[item.id] === clip.id);
+    const generatedSource = clip.sourceType === 'heygen' || clip.sourceType === 'digital-human-sentence-video';
+    const scriptText = boundSlot ? productionFor(boundSlot).narration?.trim() || storyboardSlotScript(boundSlot.detail).voice?.trim() : '';
+    // Script captions use the existing shot duration; they are not ASR word alignment.
+    const cues = generatedShotCaptionCues(source, clip.duration, scriptText, generatedSource);
+    return applyCaptionTextEdits(cues, clip.id, clip.contentSha256, sourceCaptionTextEdits);
   };
   const missingAvatarSourceCues = storyboardSlots.flatMap((slot, index) => {
     if (!hasAvatarSourceVoice(slot)) return [];
     const materialId = storyboardAssignments[slot.id];
-    return sourceCuesForMaterial(materialById.get(materialId || '')).length ? []
+    return sourceCuesForMaterial(materialById.get(materialId || ''), slot).length ? []
       : [{ slot, index, materialId: materialId || '' }];
   });
   const refreshAvatarSourceCaptions = async () => {
@@ -5356,7 +5350,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
       const edit: ClipEdit = clip ? editForSlot(clip, slot) : { trimStart: 0, trimEnd: slot.end - slot.start, speed: 1, targetDuration: slot.end - slot.start, transition: '硬切', note: '' };
       const production = productionFor(slot);
       const adopted = production.candidates.find(item => item.id === production.adoptedId && item.source === 'avatar' && item.materialId === clip?.id);
-      const adoptedVideo = Boolean(adopted && clip?.type === 'video');
+      const adoptedVideo = Boolean(clip?.type === 'video' && (adopted || ['heygen', 'digital-human-sentence-video', 'digital_human'].includes(clip.sourceType || '')));
       const fallbackDigitalHumanClip = avatarSlot && !adoptedVideo && digitalHumanJob?.outputMaterialId
         ? materialById.get(digitalHumanJob.outputMaterialId) : undefined;
       const fallbackDigitalHumanVideo = fallbackDigitalHumanClip?.type === 'video' ? fallbackDigitalHumanClip : undefined;
@@ -5452,7 +5446,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
           narration: storyboardSlotScript(slot.detail).voice,
           lockedSourceVoice,
           lockedDuration: lockedSourceVoice ? clip?.duration || slot.end - slot.start : undefined,
-          sourceCues: lockedSourceVoice ? sourceCuesForMaterial(clip) : undefined };
+          sourceCues: lockedSourceVoice ? sourceCuesForMaterial(clip, slot) : undefined };
       }), stripVoiceoverTimestamps(activeSpokenScript).split(/\n+/).map(line => line.trim()).filter(Boolean),
       measured, audio!.duration, audio!.alignmentSource || '',
       activeVoiceLang === masterSourceLanguage ? undefined : stripVoiceoverTimestamps(masterSourceVoiceover).split(/\n+/).map(line => line.trim()).filter(Boolean)), error: '' };
@@ -5466,7 +5460,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     const lockedSourceVoice = hasAvatarSourceVoice(slot);
     return { targetDuration: lockedSourceVoice ? clip?.duration || slot.end - slot.start
       : clip ? editForSlot(clip, slot).targetDuration || slot.end - slot.start : slot.end - slot.start,
-      lockedSourceVoice, sourceCues: lockedSourceVoice ? sourceCuesForMaterial(clip) : undefined };
+      lockedSourceVoice, sourceCues: lockedSourceVoice ? sourceCuesForMaterial(clip, slot) : undefined };
   });
   const subtitleReviewBaseRows = presentationMode !== 'material' && digitalHumanJob?.subtitleCues?.length
     ? applyCaptionTextEdits(digitalHumanJob.subtitleCues, digitalHumanJob.id, digitalHumanJob.outputMaterialId, sourceCaptionTextEdits).map((cue, cueIndex) => ({ ...cue, source: 'job' as const, cueIndex, shotIndex: undefined }))
@@ -5751,7 +5745,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
           narration: storyboardSlotScript(storyboardSlots[index]!.detail).voice,
           lockedSourceVoice,
           lockedDuration,
-          sourceCues: lockedSourceVoice ? sourceCuesForMaterial(sourceClip) : undefined,
+          sourceCues: lockedSourceVoice ? sourceCuesForMaterial(sourceClip, storyboardSlots[index]) : undefined,
           trimStart: lockedSourceVoice ? 0 : item.trimStart,
           trimEnd: lockedSourceVoice ? lockedDuration || item.trimEnd : item.trimEnd,
         };
@@ -5810,7 +5804,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
       const clip = slot ? materialById.get(storyboardAssignments[slot.id] || '') : undefined;
       return { targetStart: item.targetStart, targetDuration: item.targetDuration,
         lockedSourceVoice: Boolean(slot && hasAvatarSourceVoice(slot)),
-        lockedDuration: clip?.duration, sourceCues: sourceCuesForMaterial(clip) };
+        lockedDuration: clip?.duration, sourceCues: sourceCuesForMaterial(clip, slot) };
     })) : [];
     const rawOutputCues = arrangedNarration ? arrangedNarration.cues : sourceOnlyCaptions ? sourceOnlyCues : presentationMode !== 'material' && digitalHumanJob?.subtitleCues?.length ? applyCaptionTextEdits(digitalHumanJob.subtitleCues, digitalHumanJob.id, digitalHumanJob.outputMaterialId, sourceCaptionTextEdits) : renderOverride?.cues?.length
       ? renderOverride.cues
@@ -6004,7 +5998,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
         if (plan?.quality && !plan.quality.passed) return [`分镜“${slot.title}”未通过质检：${plan.quality.findings?.map(item => item.message).join('、') || plan.quality.issues?.join('、') || plan.quality.recommendation || '待人工复核'}`];
         return [];
       });
-      const blockers = [...qualityBlockers, ...personContinuityConflicts, ...validateStudioTimeline(renderTimeline)];
+      const blockers = [...qualityBlockers, ...validateStudioTimeline(renderTimeline)];
       if (blockers.length) {
         alert(`无法进入配乐：\n${blockers.join('\n')}`);
         return;
@@ -6023,10 +6017,6 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     if (socialViralTask && !renderReadiness.ready) {
       setModeNotice(`还有 ${renderReadiness.unreadyShots.length} 个分镜未就绪：${renderReadiness.issues[0]?.message || '请返回分镜制作检查'}`);
       setBatchReviewOpen(true);
-      return;
-    }
-    if (personContinuityConflicts.length) {
-      alert(`人物连续性未通过：\n${personContinuityConflicts.join('\n')}`);
       return;
     }
     const combinations = buildRenderableVideoVersions();
@@ -14731,7 +14721,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
       finalReviewCandidateIds.has(item.slotId) && ['material_missing', 'video_not_accepted', 'quality_failed'].includes(issue.code)))
     && renderReadiness.issues.every(issue => issue.slotId || !['script_missing', 'voiceover_missing', 'no_shots'].includes(issue.code)));
   const replicationNeedsVoiceover = voiceoverMode === 'ai'
-    && (!voiceoverAudios[activeVoiceLang]?.url || voiceoverStaleLangs.includes(activeVoiceLang));
+    && (!voiceoverAudios[activeVoiceLang]?.url || voiceoverStaleLangs.includes(activeVoiceLang) || activeVoiceoverSourceMismatch);
   const freeCanGenerateVoiceover = freeThreeStep && replicationNeedsVoiceover
     && renderReadiness.issues.every(issue => issue.code === 'voiceover_missing');
   const freeVisualReady = freeThreeStep && renderReadiness.unreadyShots.length === 0
@@ -14773,7 +14763,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
       setModeNotice(subtitleSourceBlockReason);
       return;
     }
-    if (voiceoverAlignmentBlockReason) {
+    if (voiceoverAlignmentBlockReason && !replicationNeedsVoiceover) {
       setModeNotice(voiceoverAlignmentBlockReason);
       return;
     }
@@ -15713,10 +15703,17 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
         propertyPanel={(
           threeStepWorkflow && step === 'preview' ? (
             <section className="space-y-3" aria-label="成片操作">
+              {subtitleSourceBlockReason && <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs leading-5">
+                <p>{subtitleSourceBlockReason}</p>
+                <button type="button" disabled={avatarCaptionBusy || !projectId} onClick={() => void refreshAvatarSourceCaptions()} className="mt-2 w-full rounded-lg border border-amber-400 bg-white px-3 py-2 font-bold disabled:opacity-50">{avatarCaptionBusy ? '正在补取原声字幕…' : '补取原声字幕'}</button>
+                <p className="mt-1 text-[10px] text-text-muted">优先读取已有字幕；需要付费转写时会单独确认。</p>
+              </div>}
+              {subtitleNotice && <p role="status" className="text-xs leading-5 text-text-secondary">{subtitleNotice}</p>}
               <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-4">
                 <p className="text-sm font-black text-text-primary">生成成片</p>
+                <p className="mt-1 text-[11px] text-text-muted">生成镜头使用口播脚本字幕，按镜头时长显示；已有实测字幕时沿用实测时间码。</p>
                 <p className="mt-1 text-[11px] leading-5 text-text-secondary">{workbenchHasFormalVideo ? '效果调整后，可在这里重新生成。' : replicationNeedsVoiceover ? '点击后自动生成配音并渲染成片。' : '点击后开始渲染成片。'}</p>
-                <button type="button" onClick={startReplicationRender} disabled={rendering || batchRenderingLangs || ttsLoading || Boolean(subtitleSourceBlockReason) && !freeCanGenerateVoiceover || Boolean(voiceoverAlignmentBlockReason) || replicationTimingBlocked} className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-emerald-700 px-4 py-3 text-xs font-black text-white shadow-sm hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-50">
+                <button type="button" onClick={startReplicationRender} disabled={rendering || batchRenderingLangs || ttsLoading || Boolean(subtitleSourceBlockReason) && !freeCanGenerateVoiceover || Boolean(voiceoverAlignmentBlockReason) && !replicationNeedsVoiceover || replicationTimingBlocked} className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-emerald-700 px-4 py-3 text-xs font-black text-white shadow-sm hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-50">
                   {(rendering || batchRenderingLangs || ttsLoading) && <Loader2 size={15} className="animate-spin" />}
                   {rendering || batchRenderingLangs ? `正在生成 ${renderPct}%` : ttsLoading ? '正在生成配音…' : workbenchHasFormalVideo ? '重新生成成片' : replicationNeedsVoiceover ? '生成配音并渲染成片' : '生成成片'}
                 </button>
@@ -16212,7 +16209,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
         primaryAction={{
           label: threeStepWorkflow && step === 'material' ? renderReadiness.ready || freeVisualReady ? '查看成片设置' : freeThreeStep ? `查看缺项（${renderReadiness.issues.filter(issue => issue.code !== 'voiceover_missing').length}）` : batchShotSummary ? '查看首帧审核' : '一次性生成所有智能分镜' : threeStepWorkflow && step === 'preview' ? workbenchHasFormalVideo ? '重新渲染成片' : replicationNeedsVoiceover ? '生成配音并渲染成片' : '渲染成片' : agentProduction.action?.label || primaryActionLabel,
           onClick: threeStepWorkflow && step === 'material' ? freeThreeStep && !freeCanEnterPreview ? explainFreePreviewBlockers : renderReadiness.ready || freeVisualReady ? () => void navigateReplicationStep(2) : batchShotSummary ? () => setBatchReviewOpen(true) : () => void runBatchShotJobs() : threeStepWorkflow && step === 'preview' ? startReplicationRender : agentProduction.active ? () => void agentProduction.execute().catch(error => setModeNotice(error.message)) : runPrimaryAction,
-          disabled: threeStepWorkflow && step === 'material' ? (freeThreeStep ? batchShotBusy || savingProj : smartBatchTodos.some(todo => todo.target === 'system') || batchShotBusy || savingProj || replicationTimingBlocked) : threeStepWorkflow && step === 'preview' ? rendering || batchRenderingLangs || ttsLoading || !renderReadiness.ready && !freeCanGenerateVoiceover || Boolean(subtitleSourceBlockReason) && !freeCanGenerateVoiceover || Boolean(voiceoverAlignmentBlockReason) || workbenchRenderableVersionCount === 0 && !replicationNeedsVoiceover || replicationTimingBlocked : agentProduction.active ? !agentProduction.action || agentProduction.busy || Boolean(window.__agentProductionTarget?.projectId && projectId !== window.__agentProductionTarget.projectId) : primaryActionDisabled,
+          disabled: threeStepWorkflow && step === 'material' ? (freeThreeStep ? batchShotBusy || savingProj : smartBatchTodos.some(todo => todo.target === 'system') || batchShotBusy || savingProj || replicationTimingBlocked) : threeStepWorkflow && step === 'preview' ? rendering || batchRenderingLangs || ttsLoading || !renderReadiness.ready && !freeCanGenerateVoiceover || Boolean(subtitleSourceBlockReason) && !freeCanGenerateVoiceover || Boolean(voiceoverAlignmentBlockReason) && !replicationNeedsVoiceover || workbenchRenderableVersionCount === 0 && !replicationNeedsVoiceover || replicationTimingBlocked : agentProduction.active ? !agentProduction.action || agentProduction.busy || Boolean(window.__agentProductionTarget?.projectId && projectId !== window.__agentProductionTarget.projectId) : primaryActionDisabled,
           loading: agentProduction.busy || primaryActionLoading,
           loadingLabel: socialArtifactSubmitting ? '正在提交成品' : modeActionStatus || (rendering ? `正在生成 ${renderPct}%` : undefined),
           blockReason: threeStepWorkflow && step === 'preview' ? previewRenderBlockers[0] : agentProduction.active ? undefined : primaryActionBlockedReason,
@@ -16255,11 +16252,6 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                 className="h-full w-full object-contain"
               />
             </div>
-          ) : threeStepWorkflow && step === 'preview' ? (
-            <div role="status" className="text-center text-text-secondary">
-              <p className="text-sm font-bold">尚未渲染成片</p>
-              <p className="mt-2 text-xs text-text-muted">完成分镜后，点击渲染成片</p>
-            </div>
           ) : activeWorkbenchClip?.type === 'video' && activeWorkbenchClip.url ? (
             <div className="flex h-full w-full items-center justify-center rounded-lg bg-slate-950 shadow-xl">
               <video
@@ -16270,7 +16262,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                 controls
                 playsInline
                 muted
-                preload="metadata"
+                preload="auto"
                 onPlay={() => { if (!workbenchPlaying) setWorkbenchPlaying(true); }}
                 onPause={event => { if (event.currentTarget.isConnected && !event.currentTarget.ended && !workbenchAdvanceLockRef.current && workbenchPlaying) setWorkbenchPlaying(false); }}
                 onLoadedMetadata={event => {
@@ -16296,7 +16288,14 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                   event.currentTarget.currentTime = edit.trimStart;
                   void event.currentTarget.play().catch(error => { setWorkbenchPlaying(false); setWorkbenchPlaybackError(`素材播放失败：${error instanceof Error ? error.message : String(error)}`); });
                 }}
-                onError={() => { setWorkbenchPlaying(false); setWorkbenchPlaybackError('当前素材无法播放，请检查素材文件或重新选择。'); }}
+                onError={() => {
+                  setWorkbenchPlaying(false);
+                  setWorkbenchPlaybackError('当前素材加载失败，正在刷新素材链接…');
+                  void refreshMaterialSource(activeWorkbenchClip.id).then(refreshed => {
+                    if (refreshed?.url && refreshed.url !== activeWorkbenchClip.url) setWorkbenchPlaybackError('');
+                    else setWorkbenchPlaybackError('当前素材无法播放，请检查素材文件或重新选择。');
+                  });
+                }}
                 className="max-h-full max-w-full object-contain"
               />
             </div>

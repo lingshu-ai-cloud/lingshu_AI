@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { buildContentBatchPlan, enterpriseAssetStableId } from './contentBatchPlan.js';
 import { normalizeDigitalEmployeeConfig, normalizeWeeklyGoal } from './domain.js';
+import { normalizeVideoPlan } from '../../shared/contracts/videoCreationPlan.js';
 
 const config = normalizeDigitalEmployeeConfig({
   companyName: '企业', industry: '制造', primaryBusiness: '产品', targetMarkets: '美国', customerProfile: '经销商', approvalOwner: '负责人',
@@ -41,6 +42,23 @@ assert.equal(noEvidence.status, 'blocked');
 assert.equal(noEvidence.orders.length, 0);
 assert.equal(enterpriseAssetStableId(1, 1, '/api/overseas/enterprise/assets/b.png'), `enterprise-product-1-1-${Buffer.from('/api/overseas/enterprise/assets/b.png').toString('base64url').slice(0, 12)}`);
 assert.notEqual(enterpriseAssetStableId(0, 0, '/api/overseas/enterprise/assets/a.png'), enterpriseAssetStableId(1, 1, '/api/overseas/enterprise/assets/b.png'), '第二产品/素材必须保留独立稳定 ID');
+
+const explicitMissingMaterialGoal = normalizeWeeklyGoal({
+  ...goal,
+  contentPlatforms: ['tiktok'],
+  videoPlans: [normalizeVideoPlan({
+    route: 'clone', productId: 'sku-1', productName: '产品 A', theme: '静态产品展示', language: 'en', duration: 30,
+    platform: 'tiktok', presenter: 'material', referenceId: 'analysis-1', materialIds: [],
+  })],
+}, config);
+const explicitMissingMaterial = buildContentBatchPlan({
+  goalId: 'goal-missing-one', goal: explicitMissingMaterialGoal, config,
+  evidence: { products: [{ id: 'sku-1', name: '产品 A', materialIds: [] }], exactAnalysisIds: ['analysis-1'], materialIds: [] },
+  versions: { configVersion: 1, policyVersion: 'p', factsVersion: 'f' },
+});
+assert.equal(explicitMissingMaterial.status, 'planned', 'missing visuals must remain a per-master readiness issue instead of dropping the whole weekly batch');
+assert.equal(explicitMissingMaterial.orders.length, 1);
+assert.equal(explicitMissingMaterial.orders[0]?.videoPlan?.productId, 'sku-1', 'the stable enterprise product ID must remain frozen on the production plan');
 
 const feedbackRouted = buildContentBatchPlan({
   goalId: 'goal-2', goal, config,

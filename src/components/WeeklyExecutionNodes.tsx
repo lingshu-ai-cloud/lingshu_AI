@@ -6,7 +6,8 @@ import { taskWaitLabels, type TaskWaitState } from '../lib/taskExecutionState';
 
 const nodeGroups = [
   { id: 'preparation', title: '经营准备', keys: ['context_readiness', 'goal_decomposition'] },
-  { id: 'director', title: '内容编导', keys: ['scheduled_source_collection', 'viral_analysis', 'content_mode_routing'] },
+  { id: 'director', title: '内容编导', keys: ['scheduled_source_collection', 'viral_analysis'] },
+  { id: 'scheduling', title: '经营排期', keys: ['content_mode_routing'] },
   { id: 'production', title: '内容生产', keys: ['content_production', 'content_quality_gate'] },
   { id: 'publishing', title: '内容发布', keys: ['content_release_approval', 'publishing_calendar', 'platform_publish'] },
   { id: 'customers', title: '客户经营', keys: ['customer_attribution', 'customer_segmentation', 'followup_batch_draft', 'followup_batch_approval', 'followup_dispatch'] },

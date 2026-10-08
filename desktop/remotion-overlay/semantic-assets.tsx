@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import { Gif } from '@remotion/gif';
 import { Img, interpolate, staticFile, useCurrentFrame, useVideoConfig } from 'remotion';
-import cropData from './asset-crops.json';
 import playbackData from './asset-playback.json';
 
 export type SemanticAssetKind = 'key_fact' | 'reveal' | 'warning' | 'urgency' | 'cta';
@@ -78,8 +77,6 @@ const FILES: Record<SemanticAssetKind, { file: string; animated: boolean }> = {
   urgency: { file: 'lightning-orange.gif', animated: true },
   cta: { file: 'megaphone-blue-yellow.gif', animated: true },
 };
-type Crop = { x: number; y: number; width: number; height: number };
-const CROPS = cropData.assets as Record<string, Crop>;
 type Playback = { frameCount: number; frameDelayMs: number; effectiveStartFrame: number; effectiveEndFrame: number; holdFrame: number; holdAsset: string; durationMs: number; alphaCoverage: number[] };
 const PLAYBACK = playbackData.assets as Record<string, Playback>;
 
@@ -107,14 +104,12 @@ export const SemanticAsset: React.FC<{ kind: SemanticAssetKind; progress: number
   if (role !== 'surround') return <RoleGraphic role={role} progress={progress} text={text} direction={direction} />;
   const asset = FILES[kind];
   if (failed) return <SvgFallback kind={kind} progress={progress} />;
-  const crop = CROPS[asset.file] || { x: 0, y: 0, width: 1, height: 1 };
   const playback = PLAYBACK[asset.file];
   const playbackRate = Math.max(1, (playback?.durationMs || 1000) / Math.max(1, eventDurationFrames / fps * 1000 * .72));
   const effectiveStartOffset = Math.round((playback?.effectiveStartFrame || 0) * (playback?.frameDelayMs || 0) / 1000 * fps / playbackRate);
   const playFrames = Math.max(1, Math.ceil((playback?.durationMs || 1000) / 1000 * fps / playbackRate));
   const style: React.CSSProperties = {
-    position: 'absolute', left: `${-crop.x / crop.width * 100}%`, top: `${-crop.y / crop.height * 100}%`,
-    width: `${100 / crop.width}%`, height: `${100 / crop.height}%`, objectFit: 'fill', opacity: progress,
+    position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'contain', opacity: progress,
   };
   return <div style={{ position: 'absolute', inset: 0, overflow: 'hidden' }}>
     {asset.animated && frame < playFrames
