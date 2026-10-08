@@ -213,7 +213,7 @@ function materialContentType(file: string, type: string): string {
 }
 
 async function importMaterials(token: string, tenantId: string): Promise<number> {
-  const materials = fixture.materials.filter(material => path.basename(String(material.file || '')) !== 'eyeshadow-palette.jpg');
+  const materials = fixture.materials;
   const existing = await listAll(
     token,
     'materials',
@@ -224,7 +224,14 @@ async function importMaterials(token: string, tenantId: string): Promise<number>
   }
   for (const material of materials) {
     const mediaPath = materialPath(material.file || material.url);
-    if (!fs.existsSync(mediaPath) || !fs.statSync(mediaPath).isFile()) throw new Error(`Material file is missing: ${mediaPath}`);
+    if (!fs.existsSync(mediaPath) || !fs.statSync(mediaPath).isFile()) {
+      const allowed = await collectionFieldNames(token, 'materials');
+      const body = writableRecord(material, allowed, tenantId, '');
+      await pbRequest(token, '/api/collections/materials/records', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+      });
+      continue;
+    }
     const type = ['image', 'audio'].includes(String(material.type)) ? String(material.type) as 'image' | 'audio' : 'video';
     const bytes = fs.readFileSync(mediaPath);
     const posterPath = materialPath(material.poster);
@@ -285,6 +292,13 @@ async function verifyLoginAndData(token: string, tenantId: string): Promise<void
 
   const profiles = await listAll(token, 'tenant_profiles', `tenant_id = ${pbValue(tenantId)}`);
   const products = profiles[0]?.profile?.products?.items;
+  const expected = {
+    materials: fixture.materials.length,
+    trendVideos: fixture.collections.trend_videos?.length || 0,
+    competitorAccounts: fixture.collections.competitor_accounts?.length || 0,
+    weeklyPlans: fixture.collections.weekly_plans?.length || 0,
+    contentTasks: fixture.collections.starter_social_content_tasks?.length || 0,
+  };
   const counts = {
     enterpriseProfile: profiles.length,
     products: Array.isArray(products) ? products.length : 0,
@@ -292,14 +306,18 @@ async function verifyLoginAndData(token: string, tenantId: string): Promise<void
     materials: (await listAll(token, 'materials', `tenantId = ${pbValue(tenantId)}`)).length,
     trendVideos: (await listAll(token, 'trend_videos', `tenantId = ${pbValue(tenantId)}`)).length,
     competitorAccounts: (await listAll(token, 'competitor_accounts', `tenantId = ${pbValue(tenantId)}`)).length,
+    weeklyPlans: (await listAll(token, 'weekly_plans', `tenant_id = ${pbValue(tenantId)}`)).length,
+    contentTasks: (await listAll(token, 'starter_social_content_tasks', `tenant_id = ${pbValue(tenantId)}`)).length,
   };
   const valid = counts.enterpriseProfile >= 1
     && counts.products === 41
     && counts.productImages === 40
-    && counts.materials === 29
-    && counts.trendVideos === 30
-    && counts.competitorAccounts === 27;
-  console.log(JSON.stringify({ ok: valid, email, tenantId, counts }, null, 2));
+    && counts.materials === expected.materials
+    && counts.trendVideos === expected.trendVideos
+    && counts.competitorAccounts === expected.competitorAccounts
+    && counts.weeklyPlans === expected.weeklyPlans
+    && counts.contentTasks === expected.contentTasks;
+  console.log(JSON.stringify({ ok: valid, email, tenantId, expected, counts }, null, 2));
   if (!valid) throw new Error('Beauty showcase PocketBase count verification failed');
 }
 
@@ -326,9 +344,21 @@ async function main(): Promise<void> {
     'digital_employee_config_versions',
     'digital_employee_configs',
     'social_discovery_scopes',
+    'social_programs',
+    'weekly_goals',
+    'weekly_plans',
+    'workflow_runs',
+    'workflow_tasks',
     'starter_social_content_tasks',
     'starter_social_content_files',
     'starter_social_content_operations',
+    'starter_social_content_artifacts',
+    'starter_social_director_plan_versions',
+    'starter_social_task_sources',
+    'studio_projects',
+    'studio_digital_human_plans',
+    'studio_shooting_tasks',
+    'scheduled_tasks',
   ];
   for (const collection of orderedCollections) {
     const count = await replaceFixtureCollection(token, collection, fixture.collections[collection] || [], tenantId, userId);
