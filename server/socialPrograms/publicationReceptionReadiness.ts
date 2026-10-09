@@ -5,7 +5,7 @@ export interface ReceptionBinding {
   tenantId: string;
   programId: string;
   packageId: string;
-  packageVersion: string;
+  packageVersion: number;
   publicationId: string;
   cta: string;
   enterpriseFactHash: string;
@@ -29,7 +29,7 @@ export interface ReceptionCheckPorts {
 
 /** No CTA inference, no success from configuration alone, and no external sending. */
 export async function checkPublicationReception(binding: ReceptionBinding, ports: ReceptionCheckPorts, now = new Date()) {
-  if (!binding.tenantId || !binding.programId || !binding.packageId || !binding.packageVersion || !binding.publicationId || !binding.cta.trim()
+  if (!binding.tenantId || !binding.programId || !binding.packageId || !Number.isSafeInteger(binding.packageVersion) || binding.packageVersion <= 0 || !binding.publicationId || !binding.cta.trim()
     || !binding.enterpriseFactHash || !Number.isFinite(now.getTime())) throw new Error('reception_binding_invalid');
   const bindingHash = createHash('sha256').update(JSON.stringify(binding)).digest('hex');
   const facts = await ports.facts(binding.tenantId);
@@ -63,6 +63,7 @@ export async function checkPublicationReception(binding: ReceptionBinding, ports
       evidence.messaging = { configVersion: auth.configVersion, channel: auth.channel, providerReady: auth.providerReady, inboundAutoSendAllowed: auth.inboundAutoSendAllowed };
       if (auth.tenantId !== binding.tenantId || auth.channel !== target.destination.channel) reasons.push('messaging_scope_mismatch');
       if (!auth.providerReady || (target.destination.receptionMode === 'automatic' && !auth.inboundAutoSendAllowed)) reasons.push('messaging_reception_not_ready');
+      if (target.destination.receptionMode === 'draft' && (!auth.configActive || !auth.customerAgentEnabled)) reasons.push('messaging_draft_agent_not_ready');
       if (!['human', 'draft', 'automatic'].includes(target.destination.receptionMode)) reasons.push('messaging_reception_mode_invalid');
     }
     results.push({ targetId: target.id, required: target.required, passed: !reasons.length, reasons: [...new Set(reasons)], evidence });

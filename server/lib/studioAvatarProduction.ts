@@ -209,6 +209,15 @@ export function createStudioAvatarProductionRouter(store: DataStore) {
       width: checked.width, height: checked.height, aspectRatio: checked.width / checked.height, avatarMediaCheck: checked,
       size: humanSize(size), file: relativeFile, url: objectKey ? '' : `/media/${relativeFile}`, objectKey, contentSha256, objectEtag,
       scope: 'own', tenantId, usage: 'editable', sourceType: 'heygen', createdAt: new Date().toISOString(),
+      generation: { pipelineId: 'digital_human_1', assetGenerationKind: 'digital_human', pipelineVersion: 'studio-avatar.v1',
+        executionId: String(job.id), provider: 'heygen', model: 'avatar_video', providerTaskId: String((job as any).providerTaskId || job.id),
+        idempotencyKey: String(job.id), inputFingerprint: createHash('sha256').update(JSON.stringify(input)).digest('hex'),
+        promptOrSpecHash: createHash('sha256').update(JSON.stringify({ title: input.title, ratio: input.ratio, transparent: input.transparent })).digest('hex'),
+        inputMaterialIds: [] },
+      lineage: { sourceShotId: String((job as any).shotId || '') || undefined },
+      quality: { state: 'accepted', policyVersion: 'avatar-media-check.v1', checkedAt: new Date().toISOString(),
+        checks: [{ key: 'avatar_media', status: 'passed', evidence: `${checked.width}x${checked.height} · ${checked.duration.toFixed(3)}s` }], rawReport: checked },
+      reuse: { eligible: true, reason: 'quality_accepted', usageCount: 0 }, rightsScope: 'tenant_generated_reusable', generationState: 'archived',
     };
     saveLocalMaterials([...materials.filter(item => !(item.id === id && item.tenantId === tenantId)), material]);
     return objectKey && objectEtag ? { materialId: id, objectKey, contentSha256, objectEtag } : { materialId: id, localFile: relativeFile, contentSha256 };

@@ -148,7 +148,7 @@ export function QuoteSkillCard({ customer, onInsertReply, onToast, channelReady,
     onToast('报价卡已发送到 WhatsApp');
   });
 
-  if (!draft) return <section className="rounded-lg border border-emerald-200 bg-white p-3" data-quote-skill-card><div className="flex items-center gap-2 text-xs font-black text-emerald-800"><Sparkles size={14} />智能报价</div><p className="mt-1 text-[11px] leading-5 text-text-muted">从当前会话提取需求，形成待人工核对的英文报价草稿。</p><button type="button" disabled={loading} onClick={() => createDraft(false)} className="mt-3 inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-blue-600 px-3 py-2 text-xs font-black text-white disabled:opacity-50">{loading ? <Loader2 size={13} className="animate-spin" /> : <Calculator size={13} />}整理报价</button></section>;
+  if (!draft) return <section className="rounded-lg border border-border bg-white p-3" data-quote-skill-card><div className="flex items-center gap-2 text-xs font-black text-text-primary"><Sparkles size={14} className="text-accent" />智能报价</div><p className="mt-1 text-[11px] leading-5 text-text-muted">从当前会话提取需求，形成待人工核对的英文报价草稿。</p><button type="button" disabled={loading} onClick={() => createDraft(false)} className="btn-primary mt-3 inline-flex w-full items-center justify-center gap-1.5 text-xs font-black disabled:opacity-50">{loading ? <Loader2 size={13} className="animate-spin" /> : <Calculator size={13} />}整理报价</button></section>;
 
   const ready = draft.status === 'ready_for_review';
   const confirmed = draft.status === 'confirmed';

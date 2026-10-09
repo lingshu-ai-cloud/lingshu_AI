@@ -6,6 +6,8 @@ export function publicationInstant(window: string | null | undefined): number | 
   const [year, month, day] = window.slice(0,10).split('-').map(Number);
   const date = new Date(Date.UTC(year!, month!-1, day!));
   if (date.getUTCFullYear() !== year || date.getUTCMonth()+1 !== month || date.getUTCDate() !== day) return null;
+  const clock = window.slice(11).match(/^(\d{2}):(\d{2})(?::(\d{2}))?/)!;
+  if (Number(clock[1]) > 23 || Number(clock[2]) > 59 || Number(clock[3] ?? 0) > 59) return null;
   const instant = Date.parse(window);
   return Number.isFinite(instant) ? instant : null;
 }

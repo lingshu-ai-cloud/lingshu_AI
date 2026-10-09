@@ -1,3 +1,4 @@
+import { isTrustedSocialOutputWorkspace, socialOutputWorkspaceClientWriteBlocked } from '../starter198/socialContentProductionWorkspace.js';
 import { MINIMAX_ENGLISH_PRESETS, ttsPostProcessingSpeed } from '../lib/studioVoiceSelection.js';
 import { parseMiniMaxSubtitleTiming } from '../lib/minimaxSubtitleTiming.js';
 import { wavDurationFromBytes } from '../lib/wavDuration';
@@ -22,6 +23,8 @@ import { enterpriseAssetStableId } from '../digitalEmployees/contentBatchPlan.js
 import { resolveMaterialProductAssociation } from '../digitalEmployees/materialProductionReadiness.js';
 import { requestMaterialAnalysis, waitForMaterialAnalysis, isMaterialAnalysisActive, saveMaterialSegmentsWithScriptAnalysis, startPendingLocalMaterialAnalyses } from '../lib/materialLibraryAnalysis.js';
 import { readMaterialLibrary, readLocalMaterials, saveLocalMaterials, updateLocalMaterial } from '../lib/materialLibrary.js';
+import { filterMyGeneratedMaterials, projectGeneratedMaterial } from '../../src/lib/generatedMaterial.js';
+import { ASSET_GENERATION_KINDS } from '../../shared/contracts/generatedMaterial.js';
 import { currentDataAuthority } from '../storage/dataAuthority.js';
 import { mixedStoryboardRules, mixedStoryboardIssues } from './mixedStoryboardContract.js';
 import { alignQwenFile } from '../integrations/qwenAlignment.js';
@@ -5541,7 +5544,7 @@ async function runPersistentStudioRender(jobId: string, tenantId: string, origin
     await store.update('studio_render_jobs', jobId, { status: 'completed', progress: 100,
       output_path: outputPath, preview_url: previewUrl, error: '', updated_at: finishedAt });
     const project = await store.getById<any>('studio_projects', current.project_id);
-    if (project && project.tenant_id === tenantId) {
+    if (project && project.tenant_id === tenantId && !isTrustedSocialOutputWorkspace(project)) {
       const projectSpec = typeof project.spec === 'string' ? JSON.parse(project.spec) : project.spec || {};
       const outputs = projectSpec.languageRenderOutputs && typeof projectSpec.languageRenderOutputs === 'object'
         ? projectSpec.languageRenderOutputs : {};
@@ -5570,6 +5573,7 @@ studioRouter.post('/render/jobs', async (req, res) => {
   const projectId = String(req.body?.projectId || '');
   const project = await store.getById<any>('studio_projects', projectId);
   if (!project || project.tenant_id !== tenantId) { res.status(404).json({ ok: false, error: 'Project not found' }); return; }
+  if(isTrustedSocialOutputWorkspace(project)){res.status(409).json({ok:false,code:'social_output_workspace_readonly',error:'原生产快照不可重新渲染覆盖'});return;}
   const projectSpec = typeof project.spec === 'string' ? JSON.parse(project.spec) : project.spec || {};
   if (!isManualStudioProject(projectSpec)) { res.status(409).json({ ok: false, error: '只有人工自由创作项目可创建持久渲染任务' }); return; }
   const spec = req.body?.spec as RenderSpec;
@@ -6406,7 +6410,7 @@ export function productionAnalysisSegments(id: string, duration: number, analysi
   });
 }
 
-// GET /studio/materials?scope=shared|own&purpose=library|reference|all
+// GET /studio/materials?scope=shared|own&purpose=library|reference|all&origin=generated
 // 素材库是统一使用边界：所有已入库视觉素材都可进入创作。
 studioRouter.get('/materials', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
@@ -6436,6 +6440,25 @@ studioRouter.get('/materials', async (req, res) => {
   else if (scope === 'own') list = list.filter(m => (m.scope ?? 'own') === 'own');
   if (purpose === 'reference') list = list.filter(isReferenceOnlyMaterial);
   else if (purpose !== 'all') list = list.filter(m => !isReferenceOnlyMaterial(m));
+  const origin = String(req.query.origin || '');
+  const assetGenerationKind = String(req.query.assetGenerationKind || '');
+  const qualityState = String(req.query.qualityState || '');
+  if (assetGenerationKind && !ASSET_GENERATION_KINDS.includes(assetGenerationKind as any)) {
+    res.status(400).json({ error: '生成素材类型无效' }); return;
+  }
+  if (qualityState && !['accepted', 'repair_required', 'failed'].includes(qualityState)) {
+    res.status(400).json({ error: '生成素材质量状态无效' }); return;
+  }
+  if (origin === 'generated' || assetGenerationKind || qualityState || req.query.reusableOnly === '1') {
+    list = filterMyGeneratedMaterials(list, {
+      tenantId,
+      ...(assetGenerationKind ? { assetGenerationKind: assetGenerationKind as any } : {}),
+      ...(qualityState ? { qualityState: qualityState as any } : {}),
+      reusableOnly: req.query.reusableOnly === '1',
+    }) as Material[];
+  } else if (origin === 'uploaded') {
+    list = list.filter(item => !projectGeneratedMaterial(item));
+  }
   const facets = {
     sources: Object.fromEntries(MATERIAL_SOURCE_CATEGORIES.map(value => [value, list.filter(item => materialSourceCategoryOf(item) === value).length])),
     themes: Object.fromEntries(MATERIAL_THEMES.map(value => [value, list.filter(item => materialThemeTagsOf(item).includes(value)).length])),
@@ -6964,6 +6987,25 @@ studioRouter.patch('/materials/:id', async (req, res) => {
 // DELETE /studio/materials/:id
 studioRouter.delete('/materials/:id', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
+  const projects = await store.list<any>('studio_projects', { where: { tenant_id: tenantId }, perPage: 500 });
+  const materialId = String(req.params.id);
+  const referencedBy = projects.items.filter(project => {
+    const visit = (value: unknown, key = ''): boolean => {
+      if (Array.isArray(value)) return value.some(item => visit(item, key));
+      if (value && typeof value === 'object') return Object.entries(value as Record<string, unknown>)
+        .some(([childKey, child]) => visit(child, childKey));
+      if (key === 'spec' && typeof value === 'string') {
+        try { return visit(JSON.parse(value), ''); } catch { return false; }
+      }
+      return /materialid$/i.test(key) && String(value || '') === materialId;
+    };
+    return visit(project.spec, 'spec');
+  });
+  if (referencedBy.length) {
+    res.status(409).json({ ok: false, error: '素材仍被制作项目引用，请先从相关分镜移除',
+      references: referencedBy.map(project => ({ projectId: project.id, title: project.title })) });
+    return;
+  }
   if (req.params.id.startsWith('pb-')) {
     try {
       const result = await deleteOwnedCloudMaterial(req.params.id.slice(3), tenantId);
@@ -9170,6 +9212,7 @@ studioRouter.post('/projects', async (req, res) => {
   const automation = spec.automation && typeof spec.automation === 'object' && !Array.isArray(spec.automation)
     ? spec.automation as Record<string, unknown> : {};
   const now = new Date().toISOString();
+  if (socialOutputWorkspaceClientWriteBlocked(spec)) { res.status(403).json({ok:false,code:'social_output_workspace_readonly',error:'真实生产快照只能由受信任生产流程保存'}); return; }
   if (automation.managedBy === 'digital_employee') { res.status(403).json({ ok: false, error: '数字员工内容项目只能由受信任的生产流程创建', code: 'managed_production_project_forbidden' }); return; }
   const generationBlocks = unpublishableGenerationReasons(spec);
   if (!['draft', 'template'].includes(String(status)) && generationBlocks.length) {
@@ -9185,6 +9228,7 @@ studioRouter.post('/projects', async (req, res) => {
   if (id) {
     const existing = await store.getById<any>('studio_projects', String(id));
     if (existing?.tenant_id === tenantId) {
+      if (isTrustedSocialOutputWorkspace(existing)) {res.status(409).json({ok:false,code:'social_output_workspace_readonly',error:'真实成片快照只读；请使用逐镜返工创建新运行'});return;}
       if (!socialProjectBelongs(existing, socialTaskId)) { res.status(404).json({ ok: false, error: 'Project not found' }); return; }
       const assignmentIssues = storyboardAigcAssignmentIssues({ tenantId, projectId: String(id), spec, materials: loadMaterials() });
       if (assignmentIssues.length) {
@@ -9307,6 +9351,7 @@ studioRouter.post('/projects/:id/requality', async (req, res) => {
   if (!project || project.tenant_id !== tenantId || !socialProjectBelongs(project, socialProjectTaskId(res.locals))) {
     res.status(404).json({ ok: false, code: 'studio_project_not_found', error: 'Project not found' }); return;
   }
+  if(isTrustedSocialOutputWorkspace(project)){res.status(409).json({ok:false,code:'social_output_workspace_readonly',error:'真实成片审核须使用原成片核验流程'});return;}
   const spec = typeof project.spec === 'string' ? JSON.parse(project.spec) : project.spec || {};
   const issues = studioProjectQualityIssues(spec);
   if (issues.length) {
@@ -9355,6 +9400,7 @@ studioRouter.post('/projects/:id/manual-handoffs', async (req, res) => {
   const { tenantId, userId } = res.locals as AuthLocals;
   const project = await store.getById<any>('studio_projects', req.params.id);
   if (!project || project.tenant_id !== tenantId) { res.status(404).json({ ok: false, error: 'Project not found' }); return; }
+  if(isTrustedSocialOutputWorkspace(project)){res.status(409).json({ok:false,code:'social_output_workspace_readonly',error:'真实生产快照不能转为人工交付声明'});return;}
   const spec = typeof project.spec === 'string' ? JSON.parse(project.spec) : project.spec || {};
   if (!isManualStudioProject(spec)) {
     res.status(409).json({ ok: false, code: 'manual_studio_project_required', error: '只有人工自由创作项目可以主动提交此协作请求' }); return;
@@ -9400,6 +9446,7 @@ studioRouter.delete('/projects/:id', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   const existing = await store.getById<any>('studio_projects', req.params.id);
   if (!existing || existing.tenant_id !== tenantId || !socialProjectBelongs(existing, socialProjectTaskId(res.locals))) { res.status(404).json({ ok: false, error: 'Project not found' }); return; }
+  if(isTrustedSocialOutputWorkspace(existing)){res.status(409).json({ok:false,code:'social_output_workspace_readonly',error:'真实生产快照不可删除'});return;}
   await store.delete('studio_projects', req.params.id);
   res.json({ ok: true });
 });

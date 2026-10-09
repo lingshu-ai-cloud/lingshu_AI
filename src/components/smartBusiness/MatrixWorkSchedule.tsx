@@ -7,6 +7,7 @@ import { MATERIAL_TYPE_LABELS } from '../../../shared/benchmarkAnalysis';
 import type { VideoCreationPlan } from '../../lib/videoCreationPlan';
 import type { MatrixScheduleAccount } from '../SmartBusinessDashboard';
 import { LsCalendar, calendarDayKey, type LsCalendarEvent } from '../ui/LsCalendar';
+import { LsGradientProgress } from '../ui/LsExperiencePrimitives';
 
 type Props = { calendarTasks?: AgentCalendarTask[]; calendarDemo?: boolean; taskItems?: ContentQueueItem[]; onOpenTask?: (taskId: string, contentItemId: string) => void; startsAt?: string; endsAt?: string; accounts: MatrixScheduleAccount[]; plans: VideoCreationPlan[]; selectedAccountId?: string; onOpenPublishing?: () => void };
 function safeDate(value: string | undefined, fallback = new Date()) {
@@ -101,6 +102,6 @@ export default function MatrixWorkSchedule({ calendarTasks, calendarDemo = false
       </div>;
     }}/>
     </div>}
-    {view === 'board' && visibleTasks.length > 0 && <section className="border-t border-border p-4" aria-label="内容任务执行进度"><h3 className="mb-3 text-sm font-semibold">内容任务执行进度</h3><div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">{visibleTasks.map(item => <button key={item.id} type="button" disabled={!onOpenTask} onClick={() => onOpenTask?.(item.taskId, item.id)} className="rounded-lg border border-border p-3 text-left hover:border-accent disabled:cursor-default"><h4 className="text-sm font-semibold">{item.title}</h4><p className="mt-1 text-xs text-text-secondary">{item.accountLabel || '仅制作'} · {item.platform} · {item.plannedPublishDate || '待排期'}</p><p className="mt-2 text-xs">{item.stage || item.status}</p><progress aria-label={`${item.title}执行进度`} max={100} value={Math.max(0, Math.min(100, item.progress || 0))} className="mt-2 h-1.5 w-full accent-emerald-600"/>{item.reason && <p className="mt-2 text-xs text-amber-800">{item.reason}</p>}</button>)}</div></section>}
+    {view === 'board' && visibleTasks.length > 0 && <section className="border-t border-border p-4" aria-label="内容任务执行进度"><h3 className="mb-3 text-sm font-semibold">内容任务执行进度</h3><div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">{visibleTasks.map(item => <button key={item.id} type="button" disabled={!onOpenTask} onClick={() => onOpenTask?.(item.taskId, item.id)} className="rounded-lg border border-border p-3 text-left transition-colors hover:border-accent disabled:cursor-default"><h4 className="text-sm font-semibold">{item.title}</h4><p className="mt-1 text-xs text-text-secondary">{item.accountLabel || '仅制作'} · {item.platform} · {item.plannedPublishDate || '待排期'}</p><p className="mt-2 text-xs">{item.stage || item.status}</p><LsGradientProgress aria-label={`${item.title}执行进度`} percent={Math.max(0, Math.min(100, item.progress || 0))} showInfo={false} size="small" className="mt-2" />{item.reason && <p className="mt-2 text-xs text-amber-800">{item.reason}</p>}</button>)}</div></section>}
   </section>;
 }

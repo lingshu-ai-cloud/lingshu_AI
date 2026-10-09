@@ -65,6 +65,14 @@ assert.equal(request.referenceImages.length, 2);
 assert.equal(request.spec.sceneTemplateKey, 'reference-shot:reference-hook');
 assert.match(completed.disclosure || '', /非客户实拍场景/);
 assert.equal(completed.asset.segments[0]?.sceneTemplateKey, 'reference-shot:reference-hook');
+const originalKey = request.idempotencyKey;
+const operationId = `scene_rework_${'a'.repeat(24)}`;
+await adapter.execute({ ...context, operationId });
+const repairKey = request.idempotencyKey;
+assert.notEqual(repairKey, originalKey);
+assert.equal(request.taskId, context.taskId);
+await adapter.execute({ ...context, operationId });
+assert.equal(request.idempotencyKey, repairKey);
 
 const identityFailed = createSocialProductSceneAdapter({ maximumCostCny: 3, async execute() {
   return { status: 'completed', providerId: 'mock-video', providerTaskId: 'provider-task-2', model: 'mock-v1',

@@ -1,0 +1,4 @@
+import type {WeeklyCustomerRelationshipCheck}from'../../shared/contracts/customerRelationshipEvidence';
+import{customerRelationshipEvidenceApi,type RelationshipSegmentRevisionReceipt}from'./customerRelationshipEvidenceApi';
+/** A late server receipt never refreshes a different selected program/run/package. No automatic retry on unknown network outcome. */
+export async function refreshRelationshipSegmentForScope(input:{check:WeeklyCustomerRelationshipCheck;isCurrent:()=>boolean;onSaved:()=>Promise<void>;revise?:(check:WeeklyCustomerRelationshipCheck)=>Promise<RelationshipSegmentRevisionReceipt>}){if(!input.isCurrent())throw Error('客户关系页面范围已改变');const receipt=await(input.revise??customerRelationshipEvidenceApi.reviseSegment)(input.check);if(!input.isCurrent())return null;await input.onSaved();if(!input.isCurrent())return null;return receipt;}

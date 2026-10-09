@@ -30,6 +30,7 @@ import {
 import { LsAvatarGroup, LsBrandAction, LsCompactFieldGroup, LsGradientProgress } from './ui/LsExperiencePrimitives';
 import type { EmojiClickData, PickerProps } from 'emoji-picker-react';
 import { authHeader } from '../lib/auth';
+import {assertSendScope,readCustomerSendScope,readCustomerSendRequest,readSendIntent,recoverSendIntent,sendIntentStorageKey,type CustomerSendIntent} from '../lib/customerSendIntent';
 import type { AgentAction, ConversationContext, KickoffSignal, RestoreSignal } from '../App';
 import { BasicInfoWidget } from './customers/widgets/BasicInfoWidget';
 import { TagsWidget } from './customers/widgets/TagsWidget';
@@ -962,7 +963,7 @@ function ChatThread({
                   {!isBuyer && event.sendStatus && (
                     <div className="mt-2 flex justify-end">
                       <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${event.sendStatus === 'failed' ? 'bg-red-100 text-red-700' : 'bg-white/15 text-white/85'}`}>
-                        {event.sendStatus === 'queued' ? '发送中' : event.sendStatus === 'sent' ? '已发送' : event.sendStatus === 'delivered' ? '已送达' : event.sendStatus === 'failed' ? '发送失败' : '草稿'}
+                        {event.sendStatus === 'queued' ? '发送中' : event.sendStatus === 'sent' ? '已发送' : event.sendStatus === 'delivered' ? '已送达' : event.sendStatus === 'failed' ? '发送失败' : event.sendStatus === 'unknown' ? '发送结果待确认' : '草稿'}
                       </span>
                     </div>
                   )}
@@ -1532,7 +1533,7 @@ function CustomerInfoRail({
             children: <div className="grid gap-2.5">
               <CustomerInsightDisclosure customer={customer} />
               <CustomerIntentActionPanel customer={customer} onModeChange={onHandlingModeChange} onToast={onToast} onGenerateDraft={onGenerateDraft} onFocusReply={onFocusReply} onViewDraft={onViewDraft} onCompleteTodo={onCompleteTodo} customerServiceEnabled={customerServiceEnabled} autoReplyReady={autoReplyReady} hasReplyReady={hasReplyReady} />
-              <QuoteSkillCard key={`quote-skill-${customer.id}`} customer={customer} onInsertReply={onInsertQuoteReply} onToast={onToast} channelReady={Boolean((customer.source === 'messenger' ? customerServiceStatus?.messengerAuthorization : customer.source === 'instagram' ? customerServiceStatus?.instagramAuthorization : customerServiceStatus?.messagingAuthorization)?.providerReady)} onCardSent={onQuoteCardSent} />
+              <QuoteSkillCard key={customer.id} customer={customer} onInsertReply={onInsertQuoteReply} onToast={onToast} channelReady={Boolean((customer.source === 'messenger' ? customerServiceStatus?.messengerAuthorization : customer.source === 'instagram' ? customerServiceStatus?.instagramAuthorization : customerServiceStatus?.messagingAuthorization)?.providerReady)} onCardSent={onQuoteCardSent} />
               <BasicInfoWidget customer={customer} onCustomerPatch={onCustomerPatch} />
               <TagsWidget key={`tags-${customer.id}`} customer={customer} onCustomerPatch={onCustomerPatch} onToast={onToast} />
             </div>,
@@ -1568,14 +1569,14 @@ function createMessageEvent(
   };
 }
 
-async function sendCustomerOutbox(customer: CustomerProfile, body: string, outsideWindow: boolean, templatePlan?: TemplatePlan | null, styleMemory?: StyleMemoryPayload | null) {
+async function sendCustomerOutbox(customer: CustomerProfile, requestId: string, body: string, outsideWindow: boolean, templatePlan?: TemplatePlan | null, styleMemory?: StyleMemoryPayload | null) {
   if (customer.isMock) return { status: 'delivered' as const, outboxId: `mock-${Date.now()}` };
   const resp = await fetch(`/api/overseas/customers/${encodeURIComponent(customer.id)}/outbox`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...authHeader() },
     body: JSON.stringify(templatePlan
-      ? { body: templatePlan.rendered, mode: 'template', outsideWindow, to: customer.source === 'instagram' ? customer.instagramUserId : customer.messengerUserId, styleMemory }
-      : { body, mode: 'free_text', outsideWindow, to: customer.source === 'instagram' ? customer.instagramUserId : customer.messengerUserId, styleMemory }),
+      ? { requestId, body: templatePlan.rendered, mode: 'template', outsideWindow, to: customer.source === 'instagram' ? customer.instagramUserId : customer.messengerUserId, styleMemory }
+      : { requestId, body, mode: 'free_text', outsideWindow, to: customer.source === 'instagram' ? customer.instagramUserId : customer.messengerUserId, styleMemory }),
   });
   const data = await resp.json().catch(() => ({}));
   if (!resp.ok) throw new Error(data.message || data.error || '发送失败');
@@ -1646,6 +1647,10 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
   const [input, setInput] = useState('');
   const [translatedInput, setTranslatedInput] = useState('');
   const [sendingReply, setSendingReply] = useState(false);
+  const [pendingSendIntent,setPendingSendIntent]=useState<CustomerSendIntent|null>(null);
+  const preparingSendRef=useRef(false);
+
+  const saveSendIntent=(intent:CustomerSendIntent)=>{localStorage.setItem(sendIntentStorageKey(intent.scope),JSON.stringify(intent));setPendingSendIntent(intent);};
   const translationRequestRef = useRef(0);
   const [toast, setToast] = useState<string | null>(null);
   const [undoSend, setUndoSend] = useState<null | { customerId: string; eventId: string; restoreText: string; timer: number }>(null);
@@ -1658,6 +1663,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
   const selected = useMemo(() => (
     selectedId ? customers.find(customer => customer.id === selectedId) ?? null : null
   ), [customers, selectedId]);
+  useEffect(()=>{let live=true;setPendingSendIntent(null);if(selected&&!selected.isMock){void readCustomerSendScope(selected.id).then(scope=>{if(live)setPendingSendIntent(readSendIntent(localStorage,scope));}).catch(()=>{});}return()=>{live=false;};},[selected?.id]);
   const selectedLatestBuyerId = useMemo(() => (
     selected ? [...selected.timeline].reverse().find(event => (event.type === 'messenger' || event.type === 'instagram' || event.type === 'whatsapp') && event.actor === 'buyer')?.id ?? '' : ''
   ), [selected?.id, selected?.timeline]);
@@ -2155,29 +2161,44 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
     };
   };
 
-  const queueSend = (customer: CustomerProfile, body: string, restoreText: string, templatePlan?: TemplatePlan | null, meta?: DraftResult | null) => {
+  const queueSend = async (customer: CustomerProfile, body: string, restoreText: string, templatePlan?: TemplatePlan | null, meta?: DraftResult | null) => {
+    if(preparingSendRef.current)return;
+    preparingSendRef.current=true;
+    let scope:CustomerSendIntent['scope']|null=null;
+    if(!customer.isMock){try {scope=await readCustomerSendScope(customer.id);const existing=readSendIntent(localStorage,scope);if(existing&&existing.state!=='accepted'){preparingSendRef.current=false;setPendingSendIntent(existing);setSendingReply(false);showToast('原发送结果尚未确认，请先读取发送状态');return;}}catch(error){preparingSendRef.current=false;setSendingReply(false);showToast(error instanceof Error?error.message:'发送身份读取失败');return;}}
+    const sendingAuthorization=authHeader().Authorization;
+    const requestId=crypto.randomUUID();
     const styleMemory = buildStyleMemoryPayload(customer, restoreText, meta);
     const eventBody = templatePlan ? templatePlan.rendered : body;
     const event = createMessageEvent(customer.id, eventBody, 'seller', {
       type: customer.source === 'instagram' ? 'instagram' : 'messenger',
       sendStatus: 'queued',
+      sendRequestId: requestId,
       sendMode: templatePlan ? 'template' : 'free_text',
       confirmedByHuman: true,
       translatedBody: restoreText.trim() && restoreText.trim() !== eventBody.trim() ? restoreText.trim() : undefined,
       audit: meta?.knowledgeMiss ? { knowledgeMiss: true, buyerMessage: meta.buyerMessage, evidence: meta.evidence } : undefined,
     });
+    const intent:CustomerSendIntent|null=scope?{scope,requestId,eventId:event.id,state:'prepared'}:null;
+    if(intent){try{saveSendIntent(intent);}catch{preparingSendRef.current=false;setSendingReply(false);showToast('无法保存发送请求身份，尚未发送');return;}}
+    preparingSendRef.current=false;
     appendTimelineEvent(customer.id, event);
     setDraftSuggestion(null);
     setDraftMeta(null);
     setInput('');
     setTranslatedInput('');
 
+    let sendAccepted=false;
     const timer = window.setTimeout(() => {
       setUndoSend(current => current?.eventId === event.id ? null : current);
-      void sendCustomerOutbox(customer, body, isOutsideWhatsAppWindow(customer), templatePlan, styleMemory)
+      const send=async()=>{if(intent){assertSendScope(intent.scope,await readCustomerSendScope(customer.id));saveSendIntent({...intent,state:'unknown'});}return sendCustomerOutbox(customer,requestId,body, isOutsideWhatsAppWindow(customer), templatePlan, styleMemory);};
+      void send()
         .then(async result => {
+          if(intent){assertSendScope(intent.scope,await readCustomerSendScope(customer.id));const receipt=await readCustomerSendRequest(intent);const recovered=recoverSendIntent(intent,receipt);saveSendIntent(recovered);if(recovered.state!=='accepted')throw new Error('发送结果尚未确认，请读取发送状态');}
+          if(!['sent','delivered'].includes(result.status||''))throw new Error('发送结果尚未确认');
+          sendAccepted=true;
           updateTimelineEvent(customer.id, event.id, {
-            sendStatus: result.status || 'sent',
+            sendStatus: result.status,
             audit: {
               ...(event.audit || {}),
               providerMessageId: result.providerMessageIds?.[0] || result.outboxId,
@@ -2192,12 +2213,10 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
           setUndoSend(null);
         })
         .catch(error => {
-          removeTimelineEvent(customer.id, event.id);
-          persistCustomerPatch(customer.id, { hasUnread: true, todoCompletedAt: undefined, pendingDraft: restoreText });
-          if (selected?.id === customer.id) {
-            setInput(restoreText);
-            setTranslatedInput('');
-          }
+          if(authHeader().Authorization!==sendingAuthorization){setPendingSendIntent(null);setSendingReply(false);setUndoSend(null);return;}
+          if(sendAccepted){setSendingReply(false);setUndoSend(null);showToast('已发送，后续记录保存需要核验');return;}
+          updateTimelineEvent(customer.id,event.id,{sendStatus:'unknown'});
+          if(intent&&intent.state!=='accepted'){try{saveSendIntent({...intent,state:'unknown'});}catch{/* Retain visible event; never issue another request. */}}
           setSendingReply(false);
           setUndoSend(null);
           showToast(error instanceof Error ? error.message : '发送失败');
@@ -2210,6 +2229,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
   const undoQueuedSend = () => {
     if (!undoSend) return;
     window.clearTimeout(undoSend.timer);
+    if(pendingSendIntent?.eventId===undoSend.eventId&&pendingSendIntent.state==='prepared'){localStorage.removeItem(sendIntentStorageKey(pendingSendIntent.scope));setPendingSendIntent(null);}
     removeTimelineEvent(undoSend.customerId, undoSend.eventId);
     if (selected?.id === undoSend.customerId) {
       setInput(undoSend.restoreText);
@@ -2431,6 +2451,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
         />
         </div>
         <div className={mobilePanel === 'chat' ? 'ls-conversation-workspace__pane flex min-h-0 min-w-0 flex-1 lg:contents' : 'hidden lg:contents'}>
+        {pendingSendIntent&&pendingSendIntent.scope.customerId===selected?.id&&pendingSendIntent.state!=='accepted'&&<div className="border border-amber-200 bg-amber-50 p-3 text-xs">原发送结果未确认；不会自动重发。{pendingSendIntent.state==='prepared'&&<button type="button" className="ml-2 underline" onClick={()=>{if(undoSend?.eventId===pendingSendIntent.eventId){undoQueuedSend();return;}localStorage.removeItem(sendIntentStorageKey(pendingSendIntent.scope));removeTimelineEvent(pendingSendIntent.scope.customerId,pendingSendIntent.eventId);setPendingSendIntent(null);}}>取消尚未发起的请求</button>}<button type="button" className="ml-2 underline" onClick={()=>{void readCustomerSendRequest(pendingSendIntent).then(item=>{const next=recoverSendIntent(pendingSendIntent,item);saveSendIntent(next);updateTimelineEvent(next.scope.customerId,next.eventId,{sendStatus:next.state==='accepted'?'sent':'unknown',audit:{providerMessageId:item.providerMessageId||undefined}});showToast(next.state==='accepted'?'已读取真实平台发送回执':'平台结果仍未知，请勿重复发送');}).catch(error=>showToast(error instanceof Error?error.message:'无法读取发送状态'));}}>读取原发送状态</button></div>}
         <ChatThread
           customer={selected}
           draftSuggestion={draftSuggestion}

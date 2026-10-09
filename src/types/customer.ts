@@ -76,7 +76,8 @@ export interface TimelineEvent {
   time: string;
   timestamp?: number;
   autoSent?: boolean;
-  sendStatus?: 'draft' | 'queued' | 'sent' | 'delivered' | 'failed';
+  sendStatus?: 'draft' | 'queued' | 'sent' | 'delivered' | 'failed' | 'unknown';
+  sendRequestId?: string;
   sendMode?: 'free_text' | 'template';
   confirmedByHuman?: boolean;
   audit?: {

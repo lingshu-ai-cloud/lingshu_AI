@@ -420,6 +420,11 @@ try {
     sendTemplate:async()=>{unsafeSends++;throw Error('must never send');}}}), /persistence_failed/);
   assert.equal(unsafeSends,0,'provider cannot be called until attempt is durable');
   store.update=updating;
+  batch.status='approved';item.status='approved';item.provider_receipt={};item.provider_message_id='';item.sent_at='';item.exclusion_reason='';item.send_mode='session_message';item.draft_body=body;item.content_hash=followupItemContentHash(item);item.scheduled_at=new Date(now.getTime()-1000).toISOString();
+  const relationList=store.list,relationGet=store.getById;(run as any).goal_id=batch.goal_id;
+  store.list=(async(c:string,q:any={})=>{const binding={id:'binding',tenant_id:tenantId,run_id:run.id,goal_id:batch.goal_id,program_id:'program',package_id:'week',package_version:1};const values=c==='social_weekly_customer_bindings'?[binding]:c==='social_weekly_operating_packages'?[{id:'pkg',tenant_id:tenantId,program_id:'program',package_id:'week',version:1,payload:{programId:'program',packageId:'week',version:1}}]:c==='social_programs'?[{id:'program',tenant_id:tenantId,program_id:'program',payload:{route:'cold_start'}}]:null;return values?{items:values,totalItems:values.length,totalPages:1,page:1,perPage:250}:relationList(c,q);})as typeof store.list;
+  store.getById=(async(c:string,id:string)=>c==='weekly_goals'?{id:batch.goal_id,tenant_id:tenantId,starts_at:'2026-08-31T00:00:00Z',ends_at:'2026-09-06T23:59:59Z'}:c==='customer_segment_members'?{id:item.segment_member_id,tenant_id:tenantId,segment_id:batch.segment_id,customer_id:item.customer_id,membership:'included',customer_snapshot:{id:item.customer_id}}:relationGet(c,id))as typeof store.getById;
+  let relationUnsafeSends=0;const relationBlocked=await dispatchFollowupBatch(tenantId,batch.id,{dependencies:{now:()=>now,customers:()=>[customer],guard:async()=>({allowed:true}),authorization,recipientDelayMs:0,sendText:async()=>{relationUnsafeSends++;throw Error('must not send');}}});assert.equal(relationBlocked.blocked,1);assert.equal(relationUnsafeSends,0);assert.equal(item.exclusion_reason,'weekly_customer_relationship_snapshot_missing');store.list=relationList;store.getById=relationGet;
 
 } finally {
   store.getById = originalGetById;

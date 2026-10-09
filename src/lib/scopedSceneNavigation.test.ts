@@ -1,0 +1,15 @@
+import {workspaceNavigationFixture} from './productionWorkspaceNavigation.fixture';
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {parseScopedSceneTarget,validateScopedSceneTarget,sceneStudioNavigationDetail,type ScopedSceneTarget} from './scopedSceneNavigation';
+const target:ScopedSceneTarget={tenantId:'tenant',programId:'program',packageId:'week',packageVersion:2,executionTaskId:'execution',contentTaskId:'content',contentTaskVersion:'v3',sourceRunId:'run',parentArtifactId:'artifact',sceneId:'s3',projectId:'video'};
+const execution={tenantId:'tenant',programId:'program',packageId:'week',packageVersion:2,taskId:'execution',workflowKind:'content',productionProgress:{contentTaskId:'content',runId:'run'}};
+const task={taskId:'content',version:'v3',runId:'run',brief:{programRef:{id:'program'}},agentWorkflow:{weeklyPackage:{packageId:'week',version:'2'}},artifacts:[{taskId:'content',artifactId:'artifact',origin:'agent',content:{productionWorkspaceSource:{type:'actual_social_render'}}}]};
+const fixture=workspaceNavigationFixture({tenantId:'tenant',taskId:'content',runId:'run',artifactId:'artifact',projectId:'video',sceneIds:['s3']});
+const project=fixture.project;
+const availability={productionWorkspaceBinding:fixture.binding,tenantId:'tenant',taskId:'content',sourceRunId:'run',parentArtifactId:'artifact',scenes:[{sceneId:'s3',status:'failed'}]};
+const verify=(t=target,e:any=[execution],d:any=task,p=project,a:any=availability)=>validateScopedSceneTarget(t,e,d,p,a);
+test('complete scope reread resolves only the exact failed scene',()=>{assert.equal(verify().sceneId,'s3');assert.equal(sceneStudioNavigationDetail(target).directStudio,true);assert.deepEqual(parseScopedSceneTarget(target),target);});
+test('each target identity mismatch is rejected',()=>{for(const key of Object.keys(target)){assert.throws(()=>verify({...target,[key]:key==='packageVersion'?3:'wrong'}));}});
+test('duplicate task/project binding, stale version, passed scene and wrong tenant are rejected',()=>{assert.throws(()=>verify(target,[execution,execution]));assert.throws(()=>verify(target,[execution],{...task,agentWorkflow:{weeklyPackage:{packageId:'week',version:'1'}}}));assert.throws(()=>verify(target,[execution],task,{...project,spec:{socialContentTaskId:'another'}}));assert.throws(()=>verify(target,[execution],task,project,{...availability,tenantId:'another'}));assert.throws(()=>verify(target,[execution],task,project,{...availability,scenes:[{sceneId:'s3',status:'passed'}]}));});
+test('partial or malformed navigation never becomes a valid target',()=>{assert.equal(parseScopedSceneTarget({...target,sceneId:''}),null);assert.equal(parseScopedSceneTarget({...target,packageVersion:'2'}),null);assert.equal(parseScopedSceneTarget(null),null);});

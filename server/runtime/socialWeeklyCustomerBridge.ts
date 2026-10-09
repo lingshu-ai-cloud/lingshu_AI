@@ -1,7 +1,10 @@
+import {verifyWeeklyNativeMember} from '../socialPrograms/weeklyCustomerChannelSelections.js';
+import {readWeeklyCustomerRelationshipScope,verifyFrozenWeeklyCustomerRelationship} from '../socialPrograms/weeklyCustomerRelationshipScope.js';
 import { createHash } from 'node:crypto';
 import type { DataStore, Record_ } from '../storage/datastore.js';
 import type { VersionedSocialRef } from '../../shared/contracts/socialProgram.js';
 import { SocialProgramError } from '../socialPrograms/service.js';
+import { orderedFollowupItems } from '../digitalEmployees/followupDraftFreeze.js';
 import { followupItemContentHash, type FollowupBatchItemRecord } from '../digitalEmployees/customerWorkflow.js';
 import { withLocalQueue } from '../routes/digitalEmployeeRecords.js';
 import { withDigitalEmployeeRunLock } from '../digitalEmployees/runControl.js';
@@ -110,6 +113,10 @@ export async function readWeeklyCustomerStep(store: DataStore, authority: Weekly
   const members = await rows(store, 'customer_segment_members', { tenant_id: authority.tenantId, segment_id: segment.id });
   const included = members.filter(row => row.membership === 'included');
   requireProof(included.length === segment.member_count && members.every(row => text(row.customer_id) && Object.keys(obj(row.customer_snapshot)).length));
+  const relationshipScope=await readWeeklyCustomerRelationshipScope(store,authority.tenantId,runId);
+  requireProof(relationshipScope?.programId===authority.programId&&relationshipScope.packageId===authority.packageId&&relationshipScope.packageVersion===authority.packageVersion,'weekly_customer_relationship_scope_mismatch');
+  try{for(const member of included){if(obj(member.customer_snapshot).weeklyChannelSelection)await verifyWeeklyNativeMember(store,relationshipScope!,String(member.customer_id),member.customer_snapshot);else await verifyFrozenWeeklyCustomerRelationship(store,relationshipScope!,String(member.customer_id),member.customer_snapshot);}}catch(error){return result('blocked',error instanceof Error?error.message:'weekly_customer_relationship_evidence_unverified');}
+  if(members.some(member=>Array.isArray(member.exclusion_reasons)&&member.exclusion_reasons.includes('weekly_customer_relationship_unknown')))return result('blocked','weekly_customer_relationship_unknown_requires_new_snapshot');
   if (included.length === 0) return segmentation?.status === 'succeeded' && segment.status === 'generated' ? result('no_data', 'weekly_customer_no_eligible_customers') : result('blocked', 'weekly_customer_segmentation_pending');
   if (step === 'customer_segmentation') {
     if (task.status !== 'succeeded' || segment.status !== 'generated') return result('blocked', 'weekly_customer_segmentation_pending');
@@ -119,7 +126,7 @@ export async function readWeeklyCustomerStep(store: DataStore, authority: Weekly
   const batch = batches[0];
   requireProof(!batches.some(row => row.mock || row.simulated || row.synthetic), 'weekly_customer_synthetic_evidence');
   if (!batch || batches.filter(row => row.version === batch.version).length !== 1) return result('blocked', 'weekly_customer_batch_missing');
-  const items = await rows(store, 'followup_batch_items', { tenant_id: authority.tenantId, batch_id: batch.id }, 'created_at');
+  const items = orderedFollowupItems(await rows(store, 'followup_batch_items', { tenant_id: authority.tenantId, batch_id: batch.id }, 'created_at'), batch.delivery_policy);
   requireProof(!members.some(row => row.mock || row.simulated || row.synthetic) && !items.some(row => row.mock || row.simulated || row.synthetic), 'weekly_customer_synthetic_evidence');
   requireProof(items.length > 0 && items.every(row => included.some(member => member.id === row.segment_member_id && member.customer_id === row.customer_id)));
   requireProof(included.every(member => items.some(row => row.segment_member_id === member.id)));
@@ -129,7 +136,8 @@ export async function readWeeklyCustomerStep(store: DataStore, authority: Weekly
   const hash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
   const legacyBatchHash = hash(stableValue(items.map(row => ({ customerId: row.customer_id, body: row.draft_body, scheduledAt: row.scheduled_at }))));
   const configuredBatchHash = hash(items.map(row => row.content_hash));
-  requireProof(batch.content_hash === legacyBatchHash || batch.content_hash === configuredBatchHash, 'weekly_customer_batch_hash_mismatch');
+  const algorithm = obj(batch.delivery_policy).hashAlgorithm;
+  requireProof(algorithm === 'stable_customer_body_schedule_v1' ? batch.content_hash === legacyBatchHash : algorithm === 'ordered_item_content_hashes_v1' ? batch.content_hash === configuredBatchHash : !algorithm && (batch.content_hash === legacyBatchHash || batch.content_hash === configuredBatchHash), 'weekly_customer_batch_hash_mismatch');
   const refs: VersionedSocialRef[] = [{ type: 'weekly_customer_followup_batch', id: batch.id, version: Number(batch.version) }];
   if (step === 'customer_followup_draft') return task.status === 'succeeded' ? result('succeeded', null, refs) : result('blocked', 'weekly_customer_draft_pending');
   if (active.length === 0) return result('blocked', 'weekly_customer_no_sendable_drafts');
@@ -137,7 +145,97 @@ export async function readWeeklyCustomerStep(store: DataStore, authority: Weekly
   const approved = approvals.some(row => row.goal_id === run.goal_id && row.id === batch.approval_id && row.status === 'approved' && row.subject_version === batch.version && row.content_hash === batch.content_hash && text(row.decided_by) && Number.isFinite(Date.parse(String(row.decided_at))));
   if (!approved || batch.approved_version !== batch.version || !text(batch.approved_by)) return result('blocked', 'weekly_customer_approval_required');
   if (step === 'customer_followup_approval') return task.status === 'succeeded' ? result('succeeded', null, refs) : result('blocked', 'weekly_customer_approval_pending');
+  if(items.some(row=>['messenger','instagram'].includes(String(row.channel))))return result('blocked','weekly_native_channel_dispatch_not_connected');
   if (items.some(row => row.exclusion_reason === 'send_outcome_unknown' || row.status === 'partial_sent')) return result('blocked', 'weekly_customer_send_outcome_unknown');
   if (!active.every(row => ['sent', 'delivered', 'read'].includes(String(row.status)) && text(row.provider_message_id) && !/^(mock|simulat)/i.test(String(row.provider_message_id)) && Object.keys(obj(row.provider_receipt)).length > 0 && !obj(row.provider_receipt).synthetic && !obj(row.provider_receipt).mock && Number.isFinite(Date.parse(String(row.sent_at))))) return result('blocked', 'weekly_customer_delivery_receipt_pending');
   return task.status === 'succeeded' ? result('succeeded', null, refs) : result('blocked', 'weekly_customer_dispatch_pending');
+}
+
+export interface WeeklyCustomerCalendarTask {
+  step: WeeklyCustomerStep; taskId: string; taskKey: string; title: string; status: string;
+  evidenceStatus: WeeklyCustomerStepEvidence['status']; reason: string | null; resultRefs: VersionedSocialRef[];
+  scheduledAt: string | null; scheduledAtSource: 'workflow_task' | 'followup_batch_item' | null;
+  latestFinishAt: string | null; estimateDurationMinutes: number | null;
+}
+export interface WeeklyCustomerCalendar {
+  binding: { bindingId: string; runId: string; goalId: string; planId: string; boundBy: string; boundAt: string } | null;
+  tasks: WeeklyCustomerCalendarTask[];
+  scheduleGaps: Array<{ step: WeeklyCustomerStep; taskId: string; reason: string }>;
+}
+/** Actual customer production projection. Missing scheduling data stays absent; goal windows and
+ * record creation timestamps are never substituted for per-task execution appointments. */
+export async function readWeeklyCustomerCalendar(store: DataStore, authority: WeeklyCustomerAuthority): Promise<WeeklyCustomerCalendar> {
+  const packages = await rows(store, 'social_weekly_operating_packages', { tenant_id: authority.tenantId, program_id: authority.programId, package_id: authority.packageId, version: authority.packageVersion });
+  requireProof(packages.length === 1, 'weekly_customer_package_missing');
+  const bindings = await rows(store, WEEKLY_CUSTOMER_BINDINGS, identity(authority));
+  requireProof(bindings.length <= 1, 'weekly_customer_binding_ambiguous');
+  if (!bindings.length) return { binding: null, tasks: [], scheduleGaps: [] };
+  const binding = bindings[0]!;
+  const runId = text(binding.run_id);
+  const { run, tasks } = await context(store, authority, runId);
+  const plan = await store.getById<Record_>('weekly_plans', String(run.plan_id));
+  const planTasks = obj(plan?.plan).tasks;
+  const phases: WeeklyCustomerCalendarTask[] = [];
+  const timestamp = (value: unknown) => text(value) && Number.isFinite(Date.parse(String(value))) && /(?:Z|[+-]\d{2}:\d{2})$/.test(String(value)) ? text(value) : null;
+  for (const step of Object.keys(KEYS) as WeeklyCustomerStep[]) {
+    const matching = tasks.filter(task => task.task_key === KEYS[step] && task.agent_role === 'customer');
+    if (!matching.length) continue;
+    requireProof(matching.length === 1, 'weekly_customer_task_ambiguous');
+    const task = matching[0]!;
+    const evidence = await readWeeklyCustomerStep(store, authority, runId, step);
+    const matches = Array.isArray(planTasks) ? planTasks.filter((item: any) => item.key === task.task_key) : [];
+    const planned = matches.length === 1 ? obj(matches[0]) : {};
+    let scheduledAt = timestamp(task.scheduled_at);
+    let scheduledAtSource: WeeklyCustomerCalendarTask['scheduledAtSource'] = scheduledAt ? 'workflow_task' : null;
+    if (!scheduledAt && step === 'customer_followup_dispatch') {
+      const latestBatch = (await rows(store, 'followup_batches', { tenant_id: authority.tenantId, run_id: runId })).filter(row => row.goal_id === run.goal_id && !['cancelled', 'superseded'].includes(String(row.status))).sort((left,right) => Number(right.version) - Number(left.version))[0];
+      if (latestBatch) {
+        const items = await rows(store, 'followup_batch_items', { tenant_id: authority.tenantId, batch_id: latestBatch.id });
+        const pending = items.filter(row => !['sent', 'delivered', 'read', 'excluded', 'cancelled'].includes(String(row.status)));
+        const windows = (pending.length ? pending : items).map(row => timestamp(row.scheduled_at)).filter((value): value is string => Boolean(value)).sort((left,right) => Date.parse(left) - Date.parse(right));
+        scheduledAt = windows[0] ?? null; scheduledAtSource = scheduledAt ? 'followup_batch_item' : null;
+      }
+    }
+    const minutes = planned.expectedMinutes;
+    phases.push({ step, taskId: task.id, taskKey: KEYS[step], title: text(task.title) || KEYS[step], status: String(task.status), evidenceStatus: evidence.status, reason: evidence.reason, resultRefs: evidence.resultRefs,
+      scheduledAt, scheduledAtSource, latestFinishAt: timestamp(task.due_at), estimateDurationMinutes: typeof minutes === 'number' && Number.isFinite(minutes) && minutes >= 0 ? minutes : null });
+  }
+  return { binding: { bindingId: text(binding.binding_id), runId, goalId: text(binding.goal_id), planId: text(binding.plan_id), boundBy: text(binding.bound_by), boundAt: text(binding.bound_at) }, tasks: phases,
+    scheduleGaps: phases.filter(task => !task.scheduledAt).map(task => ({ step: task.step, taskId: task.taskId, reason: 'weekly_customer_exact_schedule_missing' })) };
+}
+
+export interface WeeklyCustomerRunCandidate {
+  runId: string; goalId: string; planId: string; title: string; status: string;
+  startsAt: string; endsAt: string; customerTaskKeys: string[];
+  alreadyBound: boolean; bindingConflict: boolean;
+  customerSourceCoverage: 'unverified';
+}
+/** Enumerate real runs, then verify each one's ownership and week. Selection is always explicit. */
+export async function listWeeklyCustomerRunCandidates(store: DataStore, authority: WeeklyCustomerAuthority): Promise<{ items: WeeklyCustomerRunCandidate[]; boundRunId: string | null }> {
+  requireProof(Object.values(identity(authority)).every(value => typeof value === 'number' ? Number.isSafeInteger(value) && value > 0 : Boolean(text(value))), 'weekly_customer_authority_invalid');
+  const packages = await rows(store, 'social_weekly_operating_packages', { tenant_id: authority.tenantId, program_id: authority.programId, package_id: authority.packageId, version: authority.packageVersion });
+  requireProof(packages.length === 1, 'weekly_customer_package_missing');
+  const bindings = await rows(store, WEEKLY_CUSTOMER_BINDINGS, { tenant_id: authority.tenantId });
+  const current = bindings.filter(row => Object.entries(identity(authority)).every(([key,value]) => row[key] === value));
+  requireProof(current.length <= 1, 'weekly_customer_binding_ambiguous');
+  const runs = await rows(store, 'workflow_runs', { tenant_id: authority.tenantId });
+  const items: WeeklyCustomerRunCandidate[] = [];
+  for (const candidate of runs) {
+    if (['cancelled', 'failed', 'dead_letter'].includes(String(candidate.status))) continue;
+    let verified: Awaited<ReturnType<typeof context>>;
+    try { verified = await context(store, authority, candidate.id); }
+    catch (error) {
+      if (error instanceof SocialProgramError && ['weekly_customer_run_unavailable', 'weekly_customer_goal_incompatible', 'weekly_customer_week_mismatch', 'weekly_customer_evidence_unverified'].includes(error.code)) continue;
+      throw error;
+    }
+    const keys = verified.tasks.filter(task => task.agent_role === 'customer' && Object.values(KEYS).includes(String(task.task_key))).map(task => String(task.task_key));
+    if (!keys.length) continue;
+    const goal = await store.getById<Record_>('weekly_goals', String(candidate.goal_id));
+    const associations = bindings.filter(row => row.run_id === candidate.id);
+    requireProof(associations.length <= 1, 'weekly_customer_binding_ambiguous');
+    const same = current.some(row => row.run_id === candidate.id);
+    items.push({ runId: candidate.id, goalId: String(candidate.goal_id), planId: String(candidate.plan_id), title: text(goal?.title) || candidate.id, status: String(candidate.status), startsAt: text(goal?.starts_at), endsAt: text(goal?.ends_at), customerTaskKeys: keys,
+      alreadyBound: same, bindingConflict: associations.length > 0 && !same, customerSourceCoverage: 'unverified' });
+  }
+  return { items, boundRunId: current.length ? text(current[0]!.run_id) : null };
 }

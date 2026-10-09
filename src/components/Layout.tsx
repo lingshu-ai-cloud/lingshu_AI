@@ -98,6 +98,7 @@ const ROLE_PAGE_ACCESS: Record<OrganizationRole, Set<Page>> = {
 interface LayoutProps {
   page: Page;
   onNavigate: (p: Page) => void;
+  onPrefetchPage?: (p: Page) => void;
   conversation: ConversationContext | null;
   children: ReactNode;
   session?: import('../lib/auth').AuthSession | null;
@@ -131,16 +132,31 @@ function NavItem({
   item,
   active,
   onClick,
+  onPrefetch,
   collapsed = false,
 }: {
   item: { id: Page; label: string; icon: ReactNode };
   active: boolean;
   onClick: () => void;
+  onPrefetch?: () => void;
   collapsed?: boolean;
 }) {
   return (
-    <Menu className="ls-nav-menu" mode="inline" inlineCollapsed={collapsed} selectedKeys={active ? [item.id] : []} onClick={onClick}
-      items={[{ key: item.id, icon: <span className="inline-flex items-center justify-center">{item.icon}</span>, title: collapsed ? item.label : '', label: <span data-demo-target={item.id} aria-current={active ? 'page' : undefined}>{item.label}</span> }]} />
+    <div onPointerEnter={onPrefetch} onFocus={onPrefetch}>
+      <Menu
+        className="ls-nav-menu"
+        mode="inline"
+        inlineCollapsed={collapsed}
+        selectedKeys={active ? [item.id] : []}
+        onClick={onClick}
+        items={[{
+          key: item.id,
+          icon: <span className="inline-flex items-center justify-center">{item.icon}</span>,
+          title: collapsed ? item.label : '',
+          label: <span data-demo-target={item.id} aria-current={active ? 'page' : undefined}>{item.label}</span>,
+        }]}
+      />
+    </div>
   );
 }
 
@@ -203,7 +219,7 @@ function AdminPageGuide({ page }: { page: Page }) {
   );
 }
 
-export default function Layout({ page, onNavigate, conversation, children, session, onLogout, suppressRightPanel, onAction, onSessionUpdate, demoGuideActive, onDemoGuideShown, starterMode = false }: LayoutProps) {
+export default function Layout({ page, onNavigate, onPrefetchPage, conversation, children, session, onLogout, suppressRightPanel, onAction, onSessionUpdate, demoGuideActive, onDemoGuideShown, starterMode = false }: LayoutProps) {
   const reducedMotion = usePrefersReducedMotion();
   const spatialTransition = reducedMotion ? { duration: 0 } : {
     ...lsMotion.spring.standard,
@@ -399,6 +415,7 @@ export default function Layout({ page, onNavigate, conversation, children, sessi
             item={homeNavItem}
             active={page === homeNavItem.id}
             onClick={() => navigateFromSidebar(homeNavItem.id)}
+            onPrefetch={() => onPrefetchPage?.(homeNavItem.id)}
             collapsed={sidebarCollapsed}
           />
         </nav>
@@ -415,6 +432,7 @@ export default function Layout({ page, onNavigate, conversation, children, sessi
                     item={item}
                     active={page === item.id || PAGE_REGISTRY[page].navParent === item.id}
                     onClick={() => navigateFromSidebar(item.id)}
+                    onPrefetch={() => onPrefetchPage?.(item.id)}
                     collapsed={sidebarCollapsed}
                   />
                 ))}

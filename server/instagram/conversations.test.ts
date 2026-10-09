@@ -41,6 +41,19 @@ test('Instagram webhook creates a tenant-scoped conversation and is idempotent',
   assert.deepEqual(reordered.timeline.map(event => event.id), ['mid.older', 'mid.1']);
 });
 
+test('Instagram Login messaging identity is accepted while customer keeps the canonical account ID', async () => {
+  const payload = { object: 'instagram', entry: [{ id: 'ig-login-id', messagingAccountId: 'ig-user-id', messaging: [{
+    sender: { id: 'buyer-alias-test' }, recipient: { id: 'ig-user-id' }, timestamp: 1_800_000_000_001,
+    message: { mid: 'mid.alias', text: 'Please quote 1500 pieces' },
+  }] }] };
+  const result = await conversations.handleInstagramWebhook('tenant-alias', payload, { analyzeTags: false });
+  assert.equal(result.accepted, 1);
+  const customer = conversations.getInstagramCustomers('tenant-alias')[0];
+  assert.equal(customer.instagramAccountId, 'ig-login-id');
+  assert.equal(customer.instagramUserId, 'buyer-alias-test');
+  assert.equal(customer.timeline[0].body, 'Please quote 1500 pieces');
+});
+
 test('delivery and read callbacks update only matching outbound messages without reopening inbox', async () => {
   const payload = (messaging: unknown[]) => ({ object: 'instagram', entry: [{ id: 'ig-1', messaging }] });
   await conversations.handleInstagramWebhook('tenant-a', payload([{

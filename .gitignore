@@ -74,6 +74,9 @@ data/plugins.json
 data/tasks.json
 data/trend-videos.json
 data/daily-briefing-queue.json
+# Local acceptance evidence may contain customer records, provider responses,
+# absolute media paths, and generated files. It must never be committed.
+/data/acceptance/
 logs/
 output/
 dist-account-hub/

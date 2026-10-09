@@ -222,13 +222,14 @@ export async function handleInstagramWebhook(tenantId: string, payload: unknown,
   for (const rawEntry of root.entry) {
     const entry = rawEntry && typeof rawEntry === 'object' ? rawEntry as Record<string, unknown> : {};
     const instagramAccountId = String(entry.id || '');
+    const ownIds = new Set([instagramAccountId, String(entry.messagingAccountId || '')].filter(Boolean));
     const events = Array.isArray(entry.messaging) ? entry.messaging : [];
     for (const rawEvent of events) {
       const event = rawEvent && typeof rawEvent === 'object' ? rawEvent as Record<string, any> : {};
       const senderId = String(event.sender?.id || '');
       const recipientId = String(event.recipient?.id || '');
       if (event.delivery || event.read) {
-        if (!instagramAccountId || !senderId || recipientId !== instagramAccountId) continue;
+        if (!instagramAccountId || !senderId || !ownIds.has(recipientId)) continue;
         const items = readCustomers();
         const customer = items.find(item => item.id === customerId(tenantId, instagramAccountId, senderId));
         if (!customer) continue;
@@ -252,7 +253,7 @@ export async function handleInstagramWebhook(tenantId: string, payload: unknown,
       const isEcho = event.message?.is_echo === true;
       // The entry Instagram account is tenant-bound by the route. Each nested
       // event must also belong to that account.
-      if (isEcho ? senderId !== instagramAccountId : recipientId !== instagramAccountId) continue;
+      if (isEcho ? !ownIds.has(senderId) : !ownIds.has(recipientId)) continue;
       const userId = isEcho ? recipientId : senderId;
       const attachmentLabels: Record<string, string> = { image: '图片', audio: '音频', video: '视频', file: '文件', location: '位置' };
       const attachments = Array.isArray(event.message?.attachments) ? event.message.attachments : [];
@@ -261,7 +262,7 @@ export async function handleInstagramWebhook(tenantId: string, payload: unknown,
         return `[${attachmentLabels[type] || '未知类型'}附件]`;
       }).join(' ');
       const body = String(event.message?.text || event.postback?.title || event.postback?.payload || attachmentBody).trim();
-      if (!instagramAccountId || !userId || userId === instagramAccountId || !body) continue;
+      if (!instagramAccountId || !userId || ownIds.has(userId) || !body) continue;
       const providerTimestamp = Number(event.timestamp);
       const timestamp = Number.isFinite(providerTimestamp) && providerTimestamp > 0 && providerTimestamp <= 8.64e15 ? providerTimestamp : Date.now();
       const messageId = String(event.message?.mid || `instagram_${timestamp}_${userId}`);

@@ -1,3 +1,4 @@
+import type {ContentTemplateStructureConstraint} from '../socialContentTemplateStructure.js';
 export type SocialProgramRoute = 'cold_start' | 'account_repair';
 
 export type SocialProgramStage =
@@ -109,7 +110,9 @@ export type WeeklyProductionStepKind =
   | 'user_approval'
   | 'publishing'
   | 'performance_monitoring'
-  | 'weekly_review';
+  | 'weekly_review'
+  | 'template_extraction'
+  | 'template_performance_validation';
 
 export interface WeeklyExecutionTaskSchedule {
   stepKind: WeeklyProductionStepKind;
@@ -170,6 +173,10 @@ export interface WeeklyExecutionTask {
   lastError: { code: string; message: string; retryable: boolean; occurredAt: string } | null;
   /** Observed upstream activity, independent from verified step completion. */
   productionProgress?: { contentTaskId: string; runId: string | null; step: string; activity: string; updatedAt: string } | null;
+  /** Read-only API projection after verifying the original task's continuation receipt. */
+  continuationObservation?: { status: 'ready' | 'pending' | 'blocked'; sourceVersion?: number; sourceTaskId?: string; contentTaskId?: string; sourceActualFinishedAt?: string | null; sourceLatestFinishAt?: string | null; code?: string };
+  /** Stored deadline evaluation reference; never completion or authorization. */
+  deadlineRecovery?: { assessmentId: string; assessedAt: string; status: 'evaluated' | 'blocked'; blockingReasons: string[]; affectedPublicationIds: string[] };
   recoveredFromDeadLetterAt: string | null;
   cancelReason: string | null;
   createdAt: string;
@@ -198,7 +205,44 @@ export interface WeeklyOperatingScheduleSkeleton {
   createdAt: string;
 }
 
+export interface WeeklyMaterialEvidenceConfiguration {
+  schemaVersion: 'weekly-material-evidence-configuration.v1';
+  configurationId: string; version: number;
+  tenantId: string; programId: string;
+  scope: { packageId: string; packageVersion: number; slotId: string };
+  handoffRef: { inspirationId: string; version: string; recordHash: string };
+  decisions: Array<{ requirementId: string; classification: 'human_irreplaceable'; reason: string; shotUsage: string }>;
+  configuredBy: string; configuredAt: string; recordHash: string;
+}
+
+export interface WeeklyMaterialEvidenceRequirements {
+  schemaVersion: 'weekly-material-evidence.v1';
+  configurationRef?: { id: string; version: number; recordHash: string };
+  scope: { packageId: string; packageVersion: number; slotId: string };
+  handoffRef: { inspirationId: string; version: string; recordHash: string } | null;
+  source: { requiredEvidence: string[]; likelyAssetNeeds: string[]; adaptationBoundary: { reusable: string[]; mustReplace: string[]; prohibited: string[] } } | null;
+  items: Array<{ requirementId: string; sourceField: 'requiredEvidence' | 'likelyAssetNeeds' | 'missing_handoff'; sourceIndex: number; description: string; classification: 'human_irreplaceable' | 'generatable_non_evidentiary' | 'unknown'; reason: string }>;
+  recordHash: string;
+}
+
 export interface WeeklyDirectorPlanningAnalysis {
+  contentTemplateEvidence?: Array<{publicationTaskId:string;bindingRef:VersionedSocialRef;structure:ContentTemplateStructureConstraint}>;
+  customerFeedbackTopicRefs?: VersionedSocialRef[];
+  customerFeedbackTopicEvidence?: Array<{ publicationTaskId: string; confirmationRef: VersionedSocialRef; candidateRef: { id: string; version: number; recordHash: string }; question: string; topicAngle: string }>;
+  ownedReferenceDiagnosis?: {
+    policy: WeeklyReferenceSourcePolicy;
+    performanceStatus: 'complete' | 'partial' | 'unavailable';
+    observedMetrics: { views: number | null; likes: number | null; shares: number | null; comments: number | null };
+    performanceSnapshot: { ref: VersionedSocialRef; capturedAt: string; source: string } | null;
+    missingMetrics: Array<'views' | 'likes' | 'shares' | 'comments'>;
+    interactionRate: number | null;
+    acquisitionConclusion: 'not_measured';
+    toneStatus: 'verified' | 'pending';
+    tone: { hookTypes: string[]; revealOrder: string[]; proofPlacement: string[]; pacing: string; emotionalProgression: string; ctaPosition: string } | null;
+    handoffRef: { inspirationId: string; version: string; recordHash: string } | null;
+    checkedAt: string;
+    evidenceHash: string;
+  };
   frozenHandoffRefs?: Array<{ inspirationId: string; version: string; recordHash: string }>;
   historicalPerformance?: {
     snapshotRef: VersionedSocialRef;
@@ -218,11 +262,13 @@ export interface WeeklyDirectorPlanningAnalysis {
   styleRules: string[];
   updateRhythm: string;
   materialRequirements: string[];
+  materialEvidenceRequirements?: WeeklyMaterialEvidenceRequirements;
   estimatedProductionMinutes: number;
   createdAt: string;
 }
 
 export interface WeeklyDetailedContentScheduleItem {
+  contentTemplateStructure?: ContentTemplateStructureConstraint;
   scheduleItemId: string;
   slotId: string;
   publicationTaskId: string;
@@ -233,6 +279,7 @@ export interface WeeklyDetailedContentScheduleItem {
   benchmarkAccountRefs: VersionedSocialRef[];
   benchmarkVideoRefs: VersionedSocialRef[];
   materialRequirements: string[];
+  materialEvidenceRequirements?: WeeklyMaterialEvidenceRequirements;
   materialPlan: {
     canStartWithExistingAssets: boolean;
     fallback: 'premium_aigc';
@@ -244,7 +291,14 @@ export interface WeeklyDetailedContentScheduleItem {
   estimatedProductionMinutes: number;
 }
 
+export interface WeeklyPlanningCoverage {
+  selectedSlotIds: string[];
+  pendingSlotIds: string[];
+  referenceSourcePolicy: WeeklyReferenceSourcePolicy | null;
+}
+
 export interface WeeklyBusinessContentDispatch {
+  coverage?: WeeklyPlanningCoverage;
   dispatchId: string;
   packageId: string;
   packageVersion: number;
@@ -260,6 +314,7 @@ export interface WeeklyBusinessContentDispatch {
 export interface WeeklyAgentPlanningMutation {
   expectedPackageVersion: number;
   expectedPlanningVersion: number;
+  selectedSlotIds?: string[];
 }
 
 export interface WeeklyAgentPlanningState {
@@ -272,8 +327,9 @@ export interface WeeklyAgentPlanningState {
   status: 'outline_ready' | 'director_analyzing' | 'awaiting_confirmation' | 'confirmed' | 'dispatched';
   skeleton: WeeklyOperatingScheduleSkeleton;
   directorAnalyses: WeeklyDirectorPlanningAnalysis[];
-  detailedSchedule: { ref: VersionedSocialRef; mergedBy: 'business_agent'; items: WeeklyDetailedContentScheduleItem[]; createdAt: string } | null;
-  userConfirmation: { confirmedBy: string; confirmedAt: string } | null;
+  directorGaps?: Array<{ slotId: string; referenceSource: 'owned' | 'external' | 'unknown'; code: string; message: string; observedAt: string }>;
+  detailedSchedule: { ref: VersionedSocialRef; mergedBy: 'business_agent'; items: WeeklyDetailedContentScheduleItem[]; createdAt: string; coverage?: WeeklyPlanningCoverage } | null;
+  userConfirmation: { confirmedBy: string; confirmedAt: string; selectedSlotIds?: string[] } | null;
   dispatch: WeeklyBusinessContentDispatch | null;
   createdAt: string;
   updatedAt: string;
@@ -328,6 +384,13 @@ export interface SocialWeeklyPublicationTask {
   accountPositioning: string | null;
   businessProposition: string | null;
   cta: string | null;
+  /** Explicit frozen reception contract; historical packages may lack this field. */
+  receptionRequirement?: { required: true; bindingId: string | null };
+  /** Required human inputs are frozen by request identity and reverified at production admission. */
+  customerFeedbackTopicRef?: VersionedSocialRef;
+  /** Explicit confirmed structure binding for this exact immutable publication version. */
+  contentTemplateBindingRef?: VersionedSocialRef;
+  materialRequirement?: { required: true; requestIds: string[]; bindings?: Array<{ requirementId: string; requestId: string }> };
   factRefs: VersionedSocialRef[];
   metricTargets: string[];
   publishWindow: string | null;

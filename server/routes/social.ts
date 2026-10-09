@@ -411,7 +411,8 @@ async function connectInstagramLogin(pending: PendingOAuthState, code: string, r
     throw new Error('Instagram 未授予私信权限，请重新授权并允许消息访问。');
   }
   const account = await getInstagramLoginAccount(tokens.accessToken, graphVersion());
-  if (account.id !== tokens.userId) throw new Error('Instagram 授权账号与资料账号不一致');
+  // /me resolves the account represented by the exchanged access token. Its
+  // Graph ID can differ from the user_id returned by Instagram's OAuth endpoint.
   const saved = await upsertSocialAccount({
     tenantId: pending.tenantId,
     userId: pending.userId,

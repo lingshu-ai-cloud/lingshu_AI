@@ -1,6 +1,8 @@
 import { getToken } from './auth';
+import type { WeeklyScheduleCapacityInput, WeeklyScheduleProposal, WeeklyScheduleConfirmation } from '../../shared/contracts/socialWeeklyScheduleRevision';
 import type { WeeklyRecoveryInput, WeeklyRecoveryAssessment } from '../../server/socialPrograms/weeklyRecoveryAssessment';
-import type { WeeklyCustomerStep, WeeklyCustomerStepEvidence } from '../../server/runtime/socialWeeklyCustomerBridge';
+import type { WeeklyBackwardSchedule, WeeklyBackwardScheduleInput } from '../../server/socialPrograms/weeklyBackwardSchedule';
+import type { WeeklyCustomerStep, WeeklyCustomerStepEvidence, readWeeklyCustomerCalendar } from '../../server/runtime/socialWeeklyCustomerBridge';
 import type {
   AccountPlaybook,
   OwnedSocialAccount,
@@ -152,10 +154,22 @@ export const socialProgramApi = {
     return (await request<{ items: WeeklyExecutionTask[] }>(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/execution-tasks?version=${version}`)).items;
   },
   async assessRecovery(programId: string, packageId: string, packageVersion: number, input: Pick<WeeklyRecoveryInput, 'changedTaskIds' | 'constraints' | 'resources' | 'remainingBudgetCny'>): Promise<WeeklyRecoveryAssessment> {
-    return (await request<{ item: WeeklyRecoveryAssessment }>(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/recovery-assessment`, { method: 'POST', ...json({ ...input, packageVersion }) })).item;
+    return (await request<{ item: WeeklyRecoveryAssessment }>(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/recovery-assessment`, { method: 'POST', ...json({ changedTaskIds: input.changedTaskIds, constraints: input.constraints, resources: input.resources, remainingBudgetCny: input.remainingBudgetCny, packageVersion }) })).item;
+  },
+  async planBackwardSchedule(programId: string, packageId: string, packageVersion: number, input: Pick<WeeklyBackwardScheduleInput, 'constraints' | 'resources' | 'remainingBudgetCny' | 'operationalDeadlines'>): Promise<WeeklyBackwardSchedule> {
+    return (await request<{ item: WeeklyBackwardSchedule }>(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/backward-schedule`, { method: 'POST', ...json({ packageVersion, constraints: input.constraints, resources: input.resources, remainingBudgetCny: input.remainingBudgetCny, ...(input.operationalDeadlines ? { operationalDeadlines: input.operationalDeadlines } : {}) }) })).item;
+  },
+  async createScheduleRevisionProposal(programId: string, packageId: string, packageVersion: number, input: WeeklyScheduleCapacityInput): Promise<WeeklyScheduleProposal> {
+    return (await request<{ item: WeeklyScheduleProposal }>(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/schedule-revisions`, { method: 'POST', ...json({ packageVersion, constraints: input.constraints, resources: input.resources, remainingBudgetCny: input.remainingBudgetCny, ...(input.operationalDeadlines ? { operationalDeadlines: input.operationalDeadlines } : {}) }) })).item;
+  },
+  async confirmScheduleRevision(programId: string, packageId: string, proposalId: string, expectedVersion: number, inputEvidenceHash: string): Promise<WeeklyScheduleConfirmation> {
+    return request<WeeklyScheduleConfirmation>(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/schedule-revisions/${encodeURIComponent(proposalId)}/confirm`, { method: 'POST', ...json({ expectedVersion, inputEvidenceHash }) });
   },
   async bindCustomerRun(programId: string, packageId: string, packageVersion: number, runId: string): Promise<void> {
     await request(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/customer-run-binding`, { method: 'POST', ...json({ packageVersion, runId }) });
+  },
+  async readCustomerCalendar(programId: string, packageId: string, packageVersion: number): Promise<Awaited<ReturnType<typeof readWeeklyCustomerCalendar>>> {
+    return (await request<{ item: Awaited<ReturnType<typeof readWeeklyCustomerCalendar>> }>(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/customer-run-binding?version=${packageVersion}`)).item;
   },
   async readCustomerStep(programId: string, packageId: string, packageVersion: number, runId: string, step: WeeklyCustomerStep): Promise<WeeklyCustomerStepEvidence> {
     return (await request<{ item: WeeklyCustomerStepEvidence }>(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/customer-run-binding/${encodeURIComponent(runId)}/steps/${encodeURIComponent(step)}?version=${packageVersion}`)).item;

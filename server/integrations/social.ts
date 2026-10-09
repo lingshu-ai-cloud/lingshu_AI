@@ -73,6 +73,7 @@ export interface MetaPage {
 
 export interface MetaInstagramAccount {
   id: string;
+  userId?: string;
   username: string;
   profilePictureUrl?: string;
   followersCount?: number;
@@ -130,7 +131,7 @@ export async function exchangeInstagramLoginCode(input: {
 export async function getInstagramLoginAccount(accessToken: string, graphVersion: string): Promise<MetaInstagramAccount> {
   const response = await axios.get(`${INSTAGRAM_GRAPH}/${graphVersion}/me`, {
     params: {
-      fields: 'id,username,profile_picture_url,followers_count,media_count',
+      fields: 'id,user_id,username,profile_picture_url,followers_count,media_count',
       access_token: accessToken,
     },
   });
@@ -138,6 +139,7 @@ export async function getInstagramLoginAccount(accessToken: string, graphVersion
   if (!account?.id) throw new Error('Instagram token 无法读取专业账号信息');
   return {
     id: String(account.id),
+    userId: account.user_id ? String(account.user_id) : undefined,
     username: String(account.username || 'Instagram'),
     profilePictureUrl: account.profile_picture_url,
     followersCount: Number(account.followers_count || 0),

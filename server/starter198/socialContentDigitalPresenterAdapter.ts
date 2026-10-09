@@ -122,6 +122,7 @@ export interface SocialDigitalPresenterBridgePorts {
 function stableKey(input: {
   tenantId: string;
   taskId: string;
+  operationId?: string;
   shotId: string;
   presenter: AuthorizedDigitalPresenter;
   script: string;
@@ -130,6 +131,7 @@ function stableKey(input: {
   return `social-presenter:${createHash('sha256').update(JSON.stringify({
     tenantId: input.tenantId,
     taskId: input.taskId,
+    operationId: input.operationId,
     shotId: input.shotId,
     presenterAssetId: input.presenter.presenterAssetId,
     assetVersion: input.presenter.assetVersion,
@@ -316,7 +318,7 @@ export function createSocialDigitalPresenterAdapter(
         || context.baselineScene.script || context.baselineScene.caption || '').trim();
       if (!script) return null;
       const idempotencyKey = stableKey({ tenantId: context.tenantId, taskId: context.taskId,
-        shotId: context.shot.shotId, presenter, script, visualControl: control });
+        operationId: context.operationId, shotId: context.shot.shotId, presenter, script, visualControl: control });
       const budget = await ports.authorizeBudget({ tenantId: context.tenantId, taskId: context.taskId,
         shotId: context.shot.shotId, idempotencyKey, providerId: presenter.providerId, maximumCostCny });
       if (!budget.allowed) throw new Error(`digital_presenter_budget_denied:${budget.reason}`);

@@ -25,6 +25,8 @@ import {
 import { STARTER_COLLECTIONS, type Starter198Repository, type StarterRecord } from './repository.js';
 import { executeSocialContentMutation } from './socialContentMutation.js';
 import { socialTaskFileCapacity } from './socialContentLimits.js';
+import { generatedAssetArchive } from '../lib/generatedAssetArchive.js';
+import type { GeneratedAssetArchiveInput } from '../../shared/contracts/generatedMaterial.js';
 import { requireSocialTask } from './socialContentRecords.js';
 import {
   SocialContentWorkflowError,
@@ -817,6 +819,31 @@ export async function registerSocialContentFile(input: {
     },
   });
   return mutation.value.file;
+}
+
+/** Join a durable social task file to the reusable generated-material index.
+ * The task file remains the artifact's delivery record; the returned material
+ * is the cross-task reference used by “我的生成”. */
+export async function archiveGeneratedSocialContentFile(input: {
+  file: SocialContentFile;
+  stored: StoredSocialContentFile;
+  archive: Omit<GeneratedAssetArchiveInput, 'media'> & {
+    media: Omit<GeneratedAssetArchiveInput['media'], 'contentSha256' | 'mimeType' | 'type'> & {
+      type: GeneratedAssetArchiveInput['media']['type'];
+    };
+  };
+}): Promise<MaterialRecord> {
+  if (input.file.sha256 !== input.stored.sha256) {
+    throw new SocialContentWorkflowError('social_content_file_integrity_violation', 503);
+  }
+  return generatedAssetArchive.archiveNewMedia({
+    ...input.archive,
+    media: {
+      ...input.archive.media,
+      mimeType: input.file.mimeType,
+      contentSha256: input.file.sha256,
+    },
+  });
 }
 
 export async function requireOwnedSocialFileRef(input: {

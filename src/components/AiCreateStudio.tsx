@@ -1,3 +1,9 @@
+import { parseScopedSceneTarget, validateScopedSceneTarget } from '../lib/scopedSceneNavigation';
+import { socialProgramApi } from '../lib/socialProgramApi';
+import { socialSceneReworkApi } from '../lib/socialSceneReworkApi';
+import { frozenSceneSlotId, verifiedProductionSlots, verifyProductionSnapshotHash, type BoundProductionSlot } from '../lib/socialSceneReworkNavigation';
+import { SocialSceneReworkPanel } from './socialContent/SocialSceneReworkPanel';
+import type { SocialContentTaskDetail } from '../../shared/contracts/socialContentWorkflow';
 import { localFlowRenderRecovery, localFlowRenderInputIdentity } from '../lib/localFlowRenderRecovery';
 import { Button, Modal } from 'antd';
 import { canOpenWorkbenchRenderSettings, workbenchExportBlockReason } from '../lib/replicationWorkbenchNavigation';
@@ -87,6 +93,7 @@ import { newDigitalHumanRequirements, planDigitalHumanShot, type DigitalHumanExe
 import { shotKeyframeCues } from '../lib/shotKeyframes';
 import { CoverFace, ProjectFirstFrameThumb, RealThumb, Thumb, coverArtCss } from './StudioMediaPreviews';
 import { Field, Pill, SectionTitle } from './StudioFormPrimitives';
+import { GENERATED_MATERIAL_KIND_FILTERS, generatedMaterialKindLabel, matchesGeneratedMaterialKind, type GeneratedMaterialKindFilter } from '../lib/generatedMaterial';
 export { StudioRequestTimeoutError, waitForStudioMediaReady, withStudioTimeout } from './studio/studioAuthenticatedMedia';
 // AI 生成内容工作台：创作设置 → 脚本与声音 → 成片制作。
 const STUDIO_ACCENT = 'var(--color-accent)';
@@ -152,6 +159,7 @@ const probeClipAspect = (clip: Clip) => new Promise<{ width: number; height: num
 const materialToClip = (m: Material): Clip => ({
   id: m.id, name: m.name, folder: m.folder, type: m.type, duration: m.duration, width: m.width, height: m.height, aspectRatio: m.aspectRatio, size: m.size, url: m.url, poster: m.poster, scope: m.scope ?? 'own',
   usage: m.usage, sourceType: m.sourceType, providerTaskId: m.providerTaskId, contentSha256: m.contentSha256, industry: m.industry, shotFunction: m.shotFunction, applicability: m.applicability, tags: m.tags,
+  generation: m.generation, lineage: m.lineage, quality: m.quality, reuse: m.reuse, rightsScope: m.rightsScope, provenance: m.provenance,
   productId: m.productId, productName: m.productName,
   transcript: m.transcript, transcriptCues: m.transcriptCues, transcriptCuesProvenance: m.transcriptCuesProvenance,
   transcriptSourceHash: m.transcriptSourceHash,
@@ -254,6 +262,7 @@ interface MaterialFolder { id: string; name: string; count: number }
 const FOLDERS: MaterialFolder[] = [
   { id: 'recommend', name: '当前选择', count: 0 },
   { id: 'all',     name: '全部素材',   count: 0 },
+  { id: 'generated', name: '我的生成', count: 0 },
   { id: 'hot',     name: '爆款素材',   count: 0 },
   { id: 'upload',  name: '本地素材',   count: 0 },
   { id: 'presenter', name: '真人口播', count: 0 },
@@ -266,6 +275,7 @@ const FOLDERS: MaterialFolder[] = [
 const POSTER_FOLDERS: MaterialFolder[] = [
   { id: 'recommend', name: '素材推荐', count: 0 },
   { id: 'all', name: '全部图文素材', count: 0 },
+  { id: 'generated', name: '我的生成', count: 0 },
   { id: 'hot', name: '爆款图文参考', count: 0 },
   { id: 'upload', name: '我的上传', count: 0 },
   { id: 'product', name: '产品主图', count: 0 },
@@ -302,6 +312,12 @@ export interface Clip {
   scope?: 'shared' | 'own'; // 公共库 / 我的（缺省按 own）
   usage?: 'editable' | 'reference_only';
   sourceType?: string;
+  generation?: Material['generation'];
+  lineage?: Material['lineage'];
+  quality?: Material['quality'];
+  reuse?: Material['reuse'];
+  rightsScope?: string;
+  provenance?: Record<string, unknown>;
   providerTaskId?: string;
   contentSha256?: string;
   industry?: string;
@@ -2862,6 +2878,12 @@ async function runVoiceTranslationWithTimeout<T>(
 
 /* ── 缩略图与不可预览状态 ──────────────────────────────────────────────── */
 export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunchContentStudio, onReturnToContentPlanning, onGoPublish, openProjectsSignal = 0, workflowContext, publishStorageScope, socialContentTaskId: incomingSocialTaskId, studioCreateRequest: incomingCreateRequest }: { onNavigate?: (p: Page) => void; onOpenCreationHome?: (openChooser?: boolean) => void; onLaunchContentStudio?: (request: SocialContentCreateRequest) => void; onReturnToContentPlanning?: (request: SocialContentCreateRequest) => void; onGoPublish?: (payload: StudioPublishPayload) => void; openProjectsSignal?: number; workflowContext?: StudioWorkflowContext; publishStorageScope?: string; socialContentTaskId?: string | null; studioCreateRequest?: SocialContentCreateRequest | null } = {}) {
+  const rawSceneTarget = window.history.state?.productionDetail?.sceneTarget;
+  const sceneTarget = parseScopedSceneTarget(rawSceneTarget);
+  const sceneTargetKey = JSON.stringify(rawSceneTarget || null);
+  const [sceneNavigationError, setSceneNavigationError] = useState('');
+  const [sceneNavigationReceipt, setSceneNavigationReceipt] = useState('');
+  const [boundProductionSnapshot,setBoundProductionSnapshot]=useState<{projectId:string;slots:BoundProductionSlot[]}|null>(null);
   const localGateBypass = contentCreationTestBypassEnabled();
   const [stepIdx, setStepIdx] = useState(0);
   const [speechNames, setSpeechNames] = useState<{key: string; names: Record<string,string>}>({key:'',names:{}});
@@ -2869,6 +2891,16 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
   const [restoredSocialTaskId, setRestoredSocialTaskId] = useState<string | null>(null);
   const [restoredCreateRequest, setRestoredCreateRequest] = useState<SocialContentCreateRequest | null>(null);
   const socialContentTaskId = incomingSocialTaskId || restoredSocialTaskId;
+  const [sceneReworkTask, setSceneReworkTask] = useState<SocialContentTaskDetail | null>(null);
+  const [sceneReworkReadVersion, setSceneReworkReadVersion] = useState(0);
+  useEffect(() => {
+    let live = true;
+    setSceneReworkTask(current => current?.taskId === socialContentTaskId ? current : null);
+    if (socialContentTaskId) void socialContentApi.getTask(socialContentTaskId).then(value => {
+      if (live && value.taskId === socialContentTaskId) setSceneReworkTask(value);
+    }).catch(() => { if (live) { setSceneReworkTask(null); if (rawSceneTarget) setSceneNavigationError('指定内容任务不存在或无法读取，请返回原周任务核对真实上游。'); } });
+    return () => { live = false; };
+  }, [socialContentTaskId, sceneReworkReadVersion, sceneTargetKey]);
   const studioCreateRequest = incomingCreateRequest || restoredCreateRequest;
   const [replicationSpeechDraft, setReplicationSpeechDraft] = useState<{ signature: string; edits: Record<string, string>; deletedIds?: string[]; deletedShotIds?: string[] }>({ signature: '', edits: {} });
   const [replicationSpeechSpeed, setReplicationSpeechSpeed] = useState(1.3);
@@ -3015,6 +3047,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
   };
 
   const [activeFolder, setActiveFolder] = useState('recommend');
+  const [generatedAssetFilter, setGeneratedAssetFilter] = useState<GeneratedMaterialKindFilter>('all');
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState<string[]>([]);
   const [hookMaterialId, setHookMaterialId] = useState('');
@@ -3515,7 +3548,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     setSocialShotMaterialBindings(current => JSON.stringify(current) === JSON.stringify(bindings) ? current : bindings);
   };
   useStudioSocialTaskHydration({
-    taskId: socialTaskProjectLookupDone ? socialContentTaskId : null,
+    taskId: socialTaskProjectLookupDone && !rawSceneTarget ? socialContentTaskId : null,
     // A saved workbench shell can predate the task's reference analysis. Rehydrate
     // that empty shell from the authoritative task instead of trapping the user
     // in a manual draft with no reference or enabled script action.
@@ -3774,6 +3807,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
   const materialCoverageReady = effectiveSelectedDuration >= Math.max(1, duration * 0.85);
   const matNames = selectedClips.map(c => c.name);
   const storyboardSlots = useMemo(() => {
+    if(boundProductionSnapshot?.projectId===projectId)return boundProductionSnapshot.slots;
     const parsedFromScript = parseStoryboardSlots(script, duration);
     const persistedReplicationShots = mode === 'clone' && shootingSlotsRef.current.length > parsedFromScript.length
       ? storyboardTimelineFromShootingSlots(shootingSlotsRef.current)
@@ -3808,7 +3842,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
       new Map(materials.filter(item=>item.type==='video').map(item=>[item.id,item.duration])), activeAssemblyId,
       Object.fromEntries(shootingSlotsRef.current.map(item => [item.slotId, item.id])),
       new Set(materials.filter(item => item.type === 'video' && ['heygen', 'digital-human-sentence-video', 'digital_human'].includes(item.sourceType || '')).map(item => item.id)));
-  }, [activeVoiceLang, duration, script, videoKickoff, voiceoverAudios, voiceoverDur, voiceoverMode, storyboardAssignments, shotProductions, materials, activeAssemblyId]);
+  }, [boundProductionSnapshot, projectId, activeVoiceLang, duration, script, videoKickoff, voiceoverAudios, voiceoverDur, voiceoverMode, storyboardAssignments, shotProductions, materials, activeAssemblyId]);
   useEffect(() => {
     if (!socialShotMaterialBindings.length || !storyboardSlots.length) return;
     const materialIds = socialShotMaterialBindings.map(item => item.materialId);
@@ -3839,12 +3873,13 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
   const presenterConfirmationBySlot = useMemo(() => Object.fromEntries(storyboardSlots.flatMap(slot => { const source = referencePresenterForSlot(slot); return source ? [[slot.id, source.salesPresenterConfirmed]] : []; })), [storyboardSlots, videoKickoff]);
   const presenterEvidenceFor = (slot: StoryboardSlot) => ({ ...slot, observedPresenterRole: presenterRoleBySlot[slot.id], personContinuityId: personContinuityBySlot[slot.id], salesPresenterConfirmed: presenterConfirmationBySlot[slot.id] });
   const shootingSlots = useMemo(() => {
+    if(rawSceneTarget||boundProductionSnapshot?.projectId===projectId)return shootingSlotsRef.current;
     const slots = reconcileShootingSlots(shootingSlotsRef.current, storyboardSlots,
       slotId => JSON.stringify({ lang: activeVoiceLang || lang, ratio, productInfo, selectedProductIds,
         sound: shotProductions[`${activeAssemblyId}:${shootingSlotsRef.current.find(item => item.slotId === slotId)?.id}`]?.sound || 'voiceover' }), () => crypto.randomUUID());
     shootingSlotsRef.current = slots;
     return slots.map(slot => ({ ...slot, observedPresenterRole: presenterRoleBySlot[slot.slotId], personContinuityId: personContinuityBySlot[slot.slotId], salesPresenterConfirmed: presenterConfirmationBySlot[slot.slotId] }));
-  }, [presenterConfirmationBySlot, presenterRoleBySlot, personContinuityBySlot, storyboardSlots, activeVoiceLang, lang, ratio, productInfo, selectedProductIds, shootingIdentityEpoch, shotProductions, activeAssemblyId]);
+  }, [sceneTargetKey, boundProductionSnapshot, projectId, presenterConfirmationBySlot, presenterRoleBySlot, personContinuityBySlot, storyboardSlots, activeVoiceLang, lang, ratio, productInfo, selectedProductIds, shootingIdentityEpoch, shotProductions, activeAssemblyId]);
   const productionAudioUrl = (voiceoverMode === 'ai' ? voiceoverAudios[activeVoiceLang]?.url : voiceoverUrl) || '';
   const asrContextRef = useRef('');
   asrContextRef.current = JSON.stringify([projectId, productionAudioUrl, activeVoiceLang, voiceDrafts[activeVoiceLang], script]);
@@ -8929,6 +8964,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     const s: Record<string, unknown> = {
       ...(storyboardResults.script !== undefined ? { script: storyboardResults.script } : {}),
       ...(storyboardResults.assignments !== undefined ? { storyboardAssignments: storyboardResults.assignments } : {}),
+      ...(storyboardResults.clipEdits !== undefined ? { clipEdits: storyboardResults.clipEdits } : {}),
       ...(storyboardResults.sourcePlans !== undefined ? { storyboardSourcePlans: storyboardResults.sourcePlans } : {}),
       ...(storyboardResults.assemblies !== undefined ? { storyboardAssemblies: storyboardResults.assemblies } : {}),
       ...(voiceoverResults.text !== undefined ? { voiceoverLines: voiceoverResults.text } : {}),
@@ -9204,7 +9240,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     if (typeof s.subtitlesOn === 'boolean') setSubtitlesOn(s.subtitlesOn);
     if (s.subMode === 'target' || s.subMode === 'bilingual') setSubMode(s.subMode);
     if (s.subtitleStyle && typeof s.subtitleStyle === 'object') setSubtitleStyle(current => ({ ...current, ...(s.subtitleStyle as Partial<typeof current>) }));
-    if (s.clipEdits && typeof s.clipEdits === 'object') setClipEdits(s.clipEdits as Record<string, ClipEdit>);
+    setClipEdits(s.clipEdits && typeof s.clipEdits === 'object' && !Array.isArray(s.clipEdits) ? s.clipEdits as Record<string, ClipEdit> : {});
     if (typeof s.variationPeople === 'string') setVariationPeople(s.variationPeople);
     if (typeof s.variationScenes === 'string') setVariationScenes(s.variationScenes);
     if (typeof s.variationLanguages === 'string') setVariationLanguages(s.variationLanguages);
@@ -9923,6 +9959,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
   };
 
   const loadProject = (p: StudioProject) => {
+    setBoundProductionSnapshot(null);
     localFlowTestRef.current = (p.spec as any)?.localFlowTest?.enabled === true ? (p.spec as any).localFlowTest : null;
     localFlowRecoveryRef.current = localFlowTestRef.current ? { spec: p.spec, projectId: p.id } : null;
     if (p.status !== 'template') studioApi.adoptProjectRevision(p);
@@ -9955,6 +9992,12 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
       setProjects(list);
       const requestedProjectId = new URLSearchParams(location.search).get('project');
       const taskProjects = list.filter(item => item.status !== 'template' && item.spec?.socialContentTaskId === taskId);
+      const deepTarget = parseScopedSceneTarget(window.history.state?.productionDetail?.sceneTarget);
+      if (window.history.state?.productionDetail?.sceneTarget) {
+        const exact = taskProjects.filter(item => item.id === deepTarget?.projectId);
+        if (!deepTarget || deepTarget.contentTaskId !== taskId || exact.length !== 1) { setSceneNavigationError('指定视频项目缺失或与任务不一致，请返回原周任务定位真实上游。'); return; }
+        loadProject(exact[0]!); setCanvasView('creation'); return;
+      }
       const project = taskProjects.find(item => item.id === requestedProjectId)
         || taskProjects.find(item => Object.keys(item.spec?.storyboardAssignments || {}).length > 0)
         || taskProjects[0];
@@ -9971,7 +10014,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
       }
     });
     return () => { disposed = true; };
-  }, [socialContentTaskId]);
+  }, [socialContentTaskId, sceneTargetKey]);
 
   useEffect(() => {
     if (!agentProduction.active) return;
@@ -10753,7 +10796,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
         const folderName = (id: string) => FOLDERS.find(f => f.id === id)?.name ?? '';
         // 按内容相关性搜索：匹配素材名 + 所属文件夹（分类）名
         const q = search.trim().toLowerCase();
-        const matchSearch = (c: Clip) => q === '' || [c.name, folderName(c.folder), c.industry, c.shotFunction, c.applicability, c.tags]
+        const matchSearch = (c: Clip) => q === '' || [c.name, folderName(c.folder), generatedMaterialKindLabel(c), c.industry, c.shotFunction, c.applicability, c.tags]
           .filter(Boolean).some(value => String(value).toLowerCase().includes(q));
         // 「当前选择」跟随当前视频版本的分镜分配，不能读取跨版本的全局勾选状态。
         // 同一素材若用于多个分镜，只在素材网格中展示一次，并保持首次出现顺序。
@@ -10764,7 +10807,10 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
           .filter((item): item is Clip => Boolean(item && item.type !== 'audio'));
         const visible = (activeFolder === 'recommend'
           ? recommended
-          : materials.filter(c => activeFolder === 'all' || c.folder === activeFolder)
+          : materials.filter(c => activeFolder === 'all'
+            || (activeFolder === 'generated'
+              ? matchesGeneratedMaterialKind(c, generatedAssetFilter)
+              : c.folder === activeFolder))
         ).filter(matchSearch);
         const materialQualityIssueCount = storyboardSlots.filter(slot => {
           const plan = storyboardSourcePlans[slot.id];
@@ -10784,11 +10830,16 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
             : posterMaterials.filter(c => ['product', 'factory', 'packaging', 'certificate', 'scene', 'brand', 'hot'].includes(c.folder));
           const visiblePoster = (posterActiveFolder === 'recommend'
             ? posterRecommended
-            : posterMaterials.filter(c => posterActiveFolder === 'all' || c.folder === posterActiveFolder)
-          ).filter(c => q === '' || c.name.toLowerCase().includes(q) || posterFolderName(c.folder).toLowerCase().includes(q));
+            : posterMaterials.filter(c => posterActiveFolder === 'all'
+              || (posterActiveFolder === 'generated'
+                ? matchesGeneratedMaterialKind(c, generatedAssetFilter)
+                : c.folder === posterActiveFolder))
+          ).filter(c => q === '' || [c.name, posterFolderName(c.folder), generatedMaterialKindLabel(c)]
+            .filter(Boolean).some(value => String(value).toLowerCase().includes(q)));
           const folderCount = (folderId: string) => {
             if (folderId === 'recommend') return posterRecommended.length;
             if (folderId === 'all') return posterMaterials.length;
+            if (folderId === 'generated') return posterMaterials.filter(c => matchesGeneratedMaterialKind(c, 'all')).length;
             return posterMaterials.filter(c => c.folder === folderId).length;
           };
           const clipsForFolders = (folders: readonly string[]) =>
@@ -10865,6 +10916,18 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                   <span className="text-xs text-text-muted">已选 {selectedPosterClips.length}</span>
                 </div>
 
+                {posterActiveFolder === 'generated' && (
+                  <div className="flex flex-wrap gap-2 border-b border-border bg-surface px-5 py-2.5">
+                    {GENERATED_MATERIAL_KIND_FILTERS.map(filter => (
+                      <button key={filter.id} type="button" onClick={() => setGeneratedAssetFilter(filter.id)}
+                        className={`rounded-full px-3 py-1 text-[11px] font-bold transition ${generatedAssetFilter === filter.id ? 'bg-accent text-white' : 'border border-border bg-white text-text-secondary hover:bg-surface-2'}`}>
+                        {filter.label}
+                        <span className="ml-1 opacity-70">{posterMaterials.filter(item => matchesGeneratedMaterialKind(item, filter.id)).length}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+
                 <div className="flex-1 overflow-y-auto p-5">
                   <div className={`mb-4 rounded-lg border px-4 py-3 text-xs leading-relaxed ${activeProductLabel ? 'border-accent/20 bg-accent-glow text-text-secondary' : 'border-amber-200 bg-amber-50 text-amber-800'}`}>
                     <span className="font-bold text-text-primary">当前产品：</span>
@@ -10903,6 +10966,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                             <p className="text-[11px] font-medium text-text-primary truncate">{c.name}</p>
                             <MaterialAnalysisStatus material={c} onRefresh={refreshMaterials} />
                             <p className="text-[10px] text-text-muted mt-0.5">{posterFolderName(c.folder)} · {c.size}</p>
+                            {generatedMaterialKindLabel(c) && <p className="mt-1 text-[9px] font-bold text-accent">AI 生成 · {generatedMaterialKindLabel(c)}</p>}
                           </div>
                         </button>
                       );
@@ -11295,6 +11359,8 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                   ? recommended.length
                   : f.id === 'all'
                     ? materials.length
+                    : f.id === 'generated'
+                      ? materials.filter(c => matchesGeneratedMaterialKind(c, 'all')).length
                     : materials.filter(c => c.folder === f.id).length;
                 return (
                   <button key={f.id} onClick={() => setActiveFolder(f.id)}
@@ -11335,6 +11401,18 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
 		                </button>
 	                <span className="text-xs text-text-muted">已选 {activeFolder === 'recommend' ? recommendationSource.length : selected.length}</span>
 	              </div>
+
+                {activeFolder === 'generated' && (
+                  <div className="flex flex-wrap gap-2 border-b border-border bg-surface px-5 py-2.5">
+                    {GENERATED_MATERIAL_KIND_FILTERS.map(filter => (
+                      <button key={filter.id} type="button" onClick={() => setGeneratedAssetFilter(filter.id)}
+                        className={`rounded-full px-3 py-1 text-[11px] font-bold transition ${generatedAssetFilter === filter.id ? 'bg-accent text-white' : 'border border-border bg-white text-text-secondary hover:bg-surface-2'}`}>
+                        {filter.label}
+                        <span className="ml-1 opacity-70">{materials.filter(item => matchesGeneratedMaterialKind(item, filter.id)).length}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
 
 	              <div className="flex-1 overflow-y-auto p-5">
 	                {activeFolder === 'presenter' && digitalHumanNotice && (
@@ -11469,6 +11547,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
 	                          <p className="text-[11px] font-medium text-text-primary truncate">{c.name}</p>
                             <MaterialAnalysisStatus material={c} onRefresh={refreshMaterials} />
 	                          <p className="text-[10px] text-text-muted mt-0.5">{c.folder === 'presenter' ? '真人口播素材 · ' : ''}{c.size}</p>
+	                          {generatedMaterialKindLabel(c) && <p className="mt-1 text-[9px] font-bold text-accent">AI 生成 · {generatedMaterialKindLabel(c)}</p>}
 	                          {(c.industry || c.shotFunction) && (
 	                            <p className="mt-1 truncate text-[9px] text-text-muted">{[c.industry, c.shotFunction].filter(Boolean).join(' · ')}</p>
 	                          )}
@@ -14283,6 +14362,42 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     setWorkbenchTimelineTime(nextSlot.start);
     setCanvasView('creation');
   };
+  useEffect(() => {
+    let live = true;
+    setSceneNavigationError(''); setSceneNavigationReceipt('');
+    if (!rawSceneTarget) return;
+    if (!sceneTarget) { setSceneNavigationError('受阻任务定位身份不完整，请返回原周任务。'); return; }
+    if (!socialTaskProjectLookupDone || !sceneReworkTask || !projectId) return;
+    const target = sceneTarget;
+    void Promise.all([
+      socialProgramApi.listExecutionTasks(target.programId, target.packageId, target.packageVersion),
+      socialSceneReworkApi.availability({tenantId:target.tenantId,taskId:target.contentTaskId,sourceRunId:target.sourceRunId,parentArtifactId:target.parentArtifactId}),
+      studioApi.listProjects(),
+    ]).then(async ([tasks, availability, projects]) => {
+      if (!live) return;
+      const actualProjects = projects.filter(p => p.id === target.projectId);
+      if (actualProjects.length !== 1 || projectId !== target.projectId) throw Error('指定视频项目缺少唯一关联，请返回原周任务。');
+      await verifyProductionSnapshotHash(availability,actualProjects[0]!);
+      if(!live)return;
+      const scene = validateScopedSceneTarget(target, tasks, sceneReworkTask, actualProjects[0]!, availability);
+      const boundSlots=verifiedProductionSlots(availability,actualProjects[0]!);
+      const exact=boundSlots.filter(s=>s.sourceSceneId===scene.sceneId);
+      if(exact.length!==1)throw Error('失败分镜与真实生产快照缺少唯一映射。');
+      const slotId=exact[0]!.id;
+      const persistedShots=actualProjects[0]!.spec.shootingSlots;
+      shootingSlotsRef.current=Array.isArray(persistedShots)?persistedShots as ShootingSlot[]:[];
+      setShootingIdentityEpoch(value=>value+1);
+      setBoundProductionSnapshot({projectId:target.projectId,slots:boundSlots});
+      setStepIdx(activeSteps.findIndex(item => item.id === 'material'));
+      setShowProjects(false);
+      setActiveStoryboardSlotId(slotId);
+      setWorkbenchTimelineTime(exact[0]!.start);
+      setWorkbenchPlaying(false);
+      setCanvasView('creation');
+      setSceneNavigationReceipt(`${scene.sceneId} · ${scene.status} · 核验 ${scene.technicalReceiptId}${availability.blockingReasons.length ? ' · ' + availability.blockingReasons.join('；') : ''}`);
+    }).catch(error => { if (live) setSceneNavigationError(error instanceof Error ? error.message : String(error)); });
+    return () => { live = false; };
+  }, [sceneTargetKey, sceneReworkTask, projectId, socialTaskProjectLookupDone, script, duration]);
   const workbenchTimelineDuration = Math.max(0.1, ...storyboardSlots.map(slot => slot.end));
   const seekWorkbenchTimeline = (nextTime: number) => {
     setWorkbenchPlaying(false);
@@ -15665,9 +15780,23 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
 
   return (
     <div className="flex flex-col h-full relative" onPointerDownCapture={() => { studioSettingsEditedRef.current = true; }}>
-      {socialContentTaskId && <div role="status" className="shrink-0 border-b border-emerald-200 bg-emerald-50 px-4 py-2 text-xs text-emerald-950">
+      {sceneNavigationError && <div role="alert" className="p-3 text-amber-900">{sceneNavigationError}<button type="button" onClick={() => onNavigate?.('socialWorkspace')}>返回原周任务核对上游</button></div>}
+      {sceneNavigationReceipt && <div role="status" className="p-3">{sceneNavigationReceipt}</div>}
+      {socialContentTaskId && !rawSceneTarget && <div role="status" className="shrink-0 border-b border-blue-200 bg-blue-50 px-4 py-2 text-xs text-blue-950">
         任务资料已带入统一制作工作台，继续当前任务即可，不再选择旧制作路线。
       </div>}
+      {sceneReworkTask?.taskId === socialContentTaskId && sceneReworkTask && (!rawSceneTarget || !!sceneNavigationReceipt) && <details open={rawSceneTarget ? true : undefined} className="mx-4 mt-3 max-h-80 shrink-0 overflow-y-auto rounded border bg-white p-3">
+        <summary className="cursor-pointer font-bold">原成片失败镜头 · 局部返工</summary>
+        <SocialSceneReworkPanel key={`${sceneReworkTask.taskId}:${sceneReworkTask.runId}`} task={sceneReworkTask} focusedSceneId={sceneNavigationReceipt ? sceneTarget?.sceneId : undefined} initialParentArtifactId={sceneNavigationReceipt ? sceneTarget?.parentArtifactId : undefined} expectedTenantId={sceneNavigationReceipt ? sceneTarget?.tenantId : undefined}
+          onChanged={() => setSceneReworkReadVersion(value => value + 1)}
+          onFocusScene={scene => {
+            const bound=boundProductionSnapshot?.projectId===projectId ? boundProductionSnapshot.slots.filter(s=>s.sourceSceneId===scene.sceneId) : [];
+            const actualSlotId = bound.length===1 ? bound[0]!.id : rawSceneTarget ? null : frozenSceneSlotId(sceneReworkTask, scene, parseStoryboardSlots(script, duration));
+            const exact = storyboardSlots.filter(slot => slot.id === actualSlotId);
+            if (exact.length !== 1) { setModeNotice('原成片镜头与当前制作台缺少唯一身份映射，无法自动定位。请保留原任务，补齐真实分镜关联。'); return; }
+            focusWorkbenchStoryboardSlot(exact[0]!.id);
+          }} />
+      </details>}
       {linkedProductionContext && <details className="shrink-0 border-b border-emerald-200 bg-emerald-50 px-4 py-2 text-xs text-emerald-950">
         <summary className="cursor-pointer font-bold">关联任务进度 · 点击查看制作状态</summary>
         <div className="mt-2 max-h-80 overflow-y-auto"><ProductionTaskScene key={`${linkedProductionContext.runId}:${linkedProductionContext.taskId}`} runId={linkedProductionContext.runId!} taskId={linkedProductionContext.taskId!} directorContext={linkedProductionContext} embedded /></div>
@@ -15688,7 +15817,8 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
       {/* BGM 试听用的隐藏音频元素 */}
       <audio ref={audioRef} onEnded={() => setPlayingBgm(null)} className="hidden" />
 
-      <div className={showProjects ? 'hidden' : 'flex min-h-0 flex-1 flex-col'}>
+      {rawSceneTarget && !sceneNavigationReceipt && !sceneNavigationError && <p role="status" className="p-3">正在核对原周任务、视频与失败分镜凭据…</p>}
+      <div className={showProjects || (rawSceneTarget && !sceneNavigationReceipt) ? 'hidden' : 'flex min-h-0 flex-1 flex-col'}>
       <StudioWorkbenchFrame
         className="h-full min-h-0 rounded-none border-0 shadow-none lg:h-full lg:min-h-0"
         replicationWorkflow={threeStepWorkflow}

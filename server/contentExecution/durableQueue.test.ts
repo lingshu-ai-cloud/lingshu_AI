@@ -274,6 +274,36 @@ test('pause, cancel, resume and manual retry preserve the same durable job ident
   );
 });
 
+test('failed success projection cannot retry a durably completed production job', async () => {
+  const store = new MemoryStore();
+  const job = await admitContentExecutionJob({ dataStore: store, tenantId: 'tenant-a', userId: 'user-a',
+    taskId: 'completed-task', runId: 'completed-run', accountId: 'account-a', taskType: 'social_content_weekly' });
+  let executed = 0;
+  let projected = 0;
+  let retried = 0;
+  let blocked = 0;
+  const worker = new DurableContentExecutionWorker({ dataStore: store, env,
+    async execute() { executed++; },
+    async onSucceeded() { projected++; throw new Error('completion_projection_write_failed'); },
+    async onRetry() { retried++; },
+    async onBlocked() { blocked++; },
+  });
+  await worker.drain();
+  for (let attempt = 0; attempt < 20 && worker.isLocallyActive('tenant-a', 'completed-task'); attempt++) {
+    await new Promise<void>(resolve => setImmediate(resolve));
+  }
+  await worker.drain();
+  worker.stop();
+  const actual = await readContentExecutionJob(store, 'tenant-a', 'completed-task', 'completed-run');
+  assert.equal(actual?.id, job.id);
+  assert.equal(actual?.status, 'succeeded');
+  assert.ok(actual?.completedAt);
+  assert.equal(executed, 1);
+  assert.equal(projected, 1);
+  assert.equal(retried, 0);
+  assert.equal(blocked, 0);
+});
+
 test('worker enforces tenant and account caps while allowing another customer to run', async () => {
   const store = new MemoryStore();
   await setContentExecutionLimit({

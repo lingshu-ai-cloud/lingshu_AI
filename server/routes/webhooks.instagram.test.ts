@@ -16,6 +16,16 @@ test('Instagram webhook entries must belong to a connected account', () => {
   assert.deepEqual(result, [{ id: 'ig-a', messaging: [{ message: { mid: 'right' } }] }]);
 });
 
+test('Instagram Login messaging user ID routes to its canonical connected account', () => {
+  const result = selectInstagramWebhookEntries({ object: 'instagram', entry: [
+    { id: 'ig-messaging-id', messaging: [{ sender: { id: 'buyer' }, recipient: { id: 'ig-messaging-id' }, message: { mid: 'real' } }] },
+    { id: 'foreign-id', messaging: [{ message: { mid: 'foreign' } }] },
+  ] }, [{ providerAccountId: 'ig-login-id', instagramMessagingUserId: 'ig-messaging-id' }]);
+  assert.deepEqual(result, [{ id: 'ig-login-id', messagingAccountId: 'ig-messaging-id', messaging: [
+    { sender: { id: 'buyer' }, recipient: { id: 'ig-messaging-id' }, message: { mid: 'real' } },
+  ] }]);
+});
+
 test('Page-linked Instagram webhook rejects foreign nested events', () => {
   const result = selectInstagramWebhookEntries({ object: 'page', entry: [{ id: 'page-a', messaging: [
     { sender: { id: 'buyer' }, recipient: { id: 'ig-a' }, message: { mid: 'ig-message' } },
@@ -27,11 +37,12 @@ test('Page-linked Instagram webhook rejects foreign nested events', () => {
   ] }]);
 });
 
-test('Instagram payload rejects a valid signature from the tenant Facebook app', async () => {
+test('Instagram payload accepts either tenant app signature and rejects foreign signatures', async () => {
   const originalList = store.list;
   (store as any).list = async (collection: string, query: any) => {
     if (collection === 'tenant_platform_apps') return { items: [{
       tenant_id: 'tenant-a', platform: query.where.platform,
+      app_id: query.where.platform === 'instagram' ? 'ig-app' : 'meta-app',
       app_secret: encryptSecret(query.where.platform === 'instagram' ? 'ig-secret' : 'fb-secret'),
       webhook_verify_token: query.where.platform === 'instagram' ? 'ig-verify' : 'fb-verify',
     }] };
@@ -48,8 +59,9 @@ test('Instagram payload rejects a valid signature from the tenant Facebook app',
     const request = (secret: string) => fetch(`http://127.0.0.1:${address.port}/webhooks/meta/tenant-a`, {
       method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Hub-Signature-256': `sha256=${crypto.createHmac('sha256', secret).update(raw).digest('hex')}` }, body: raw,
     });
-    assert.equal((await request('fb-secret')).status, 403);
+    assert.equal((await request('fb-secret')).status, 200);
     assert.equal((await request('ig-secret')).status, 200);
+    assert.equal((await request('foreign-secret')).status, 403);
     const instagramCallback = `http://127.0.0.1:${address.port}/webhooks/instagram/tenant-a`;
     const challenge = '&hub.mode=subscribe&hub.challenge=challenge-1';
     assert.equal((await fetch(`${instagramCallback}?hub.verify_token=fb-verify${challenge}`)).status, 403);

@@ -13,6 +13,8 @@ export type SocialAssetSupplyRepresentation = 'customer_evidence' | 'non_evident
 export interface SocialAssetSupplyAdapterContext {
   tenantId: string;
   taskId: string;
+  /** Stable server-owned repair operation; task identity remains unchanged. */
+  operationId?: string;
   outputDirectory: string;
   shot: SocialAssetSupplyShotPlan;
   baselineScene: StoredSocialScriptBaseline['scenes'][number];
@@ -65,6 +67,12 @@ export interface SocialAssetSupplyShotExecution {
     disclosure: string | null;
   };
   attempts: SocialAssetSupplyExecutionAttempt[];
+  archivedMaterial?: {
+    materialId: string;
+    materialRevision: string;
+    generationExecutionId: string;
+    adoptedAt: string;
+  };
 }
 
 export interface SocialAssetSupplyExecution {
@@ -306,6 +314,7 @@ function strategyOrder(shot: SocialAssetSupplyShotPlan): SocialShotSourceStrateg
 export async function executeSocialAssetSupplyPlan(input: {
   tenantId: string;
   taskId: string;
+  operationId?: string;
   outputDirectory: string;
   plan: SocialAssetSupplyPlan;
   baseline: StoredSocialScriptBaseline;
@@ -314,6 +323,9 @@ export async function executeSocialAssetSupplyPlan(input: {
   now?: Date;
 }): Promise<SocialAssetSupplyExecutionResult> {
   const plan = alignSocialAssetSupplyPlanToBaseline({ plan: input.plan, baseline: input.baseline });
+  if (input.operationId !== undefined && !/^scene_rework_[a-f0-9]{24}$/.test(input.operationId)) {
+    throw new Error('asset_supply_operation_identity_invalid');
+  }
   const assets: SocialProductionAsset[] = [];
   const shots: SocialAssetSupplyShotExecution[] = [];
   for (const [index, shot] of plan.shots.entries()) {
@@ -332,6 +344,7 @@ export async function executeSocialAssetSupplyPlan(input: {
           const candidate = await adapter.execute({
             tenantId: input.tenantId,
             taskId: input.taskId,
+            operationId: input.operationId,
             outputDirectory: input.outputDirectory,
             shot: { ...shot, sourceStrategy: strategy },
             baselineScene: scene,
@@ -359,11 +372,17 @@ export async function executeSocialAssetSupplyPlan(input: {
           selected = candidate;
           break;
         } catch (error) {
+          const reason = String(error instanceof Error ? error.message : error || 'provider_failed');
+          // A submitted request with an unresolved outcome is not a failed
+          // candidate. Trying another adapter would hide the in-flight charge.
+          if (/provider_submission_(?:unknown|uncertain)|do not resubmit|not_completed:(?:pending|uncertain)/i.test(reason)) {
+            throw error;
+          }
           attempts.push({
             sourceStrategy: strategy,
             adapterId: adapter.adapterId,
             status: 'failed',
-            reason: String(error instanceof Error ? error.message : error || 'provider_failed').slice(0, 240),
+            reason: reason.slice(0, 240),
           });
         }
       }

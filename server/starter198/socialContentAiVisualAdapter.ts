@@ -55,6 +55,7 @@ function idempotencyKey(context: SocialAssetSupplyAdapterContext): string {
   return createHash('sha256').update(JSON.stringify({
     tenantId: context.tenantId,
     taskId: context.taskId,
+    operationId: context.operationId,
     shotId: context.shot.shotId,
     strategy: context.shot.sourceStrategy,
     instruction: context.shot.productionInstruction,
@@ -179,7 +180,7 @@ export function createSocialAiVisualAdapter(options: SocialAiVisualAdapterOption
             // running at the supplier. Never submit the same shot to another
             // provider in that state; the outer router may safely render its
             // local motion-graphics fallback.
-            if (/timeout|timed out|提交结果未知|unknown submission/i.test(reason)) break;
+            if (/timeout|timed out|提交结果未知|unknown submission|provider_submission_(?:unknown|uncertain)|do not resubmit/i.test(reason)) throw new Error(`provider_submission_unknown:ai_visual:${reason}`);
             // Try the next explicitly registered provider. If all fail, the
             // governed router records this adapter as unavailable and uses its
             // planned motion-graphics fallback.
@@ -199,16 +200,18 @@ export function createSocialAiVisualAdapter(options: SocialAiVisualAdapterOption
   };
 }
 
-export function createConfiguredSocialAiVisualAdapter(): SocialAssetSupplyProviderAdapter {
+export function createConfiguredSocialAiVisualAdapter(options:{recoveryOnly?:boolean;qwenOnly?:boolean;maximumCostCnyPerImage?:number;frozenModel?:string}={}): SocialAssetSupplyProviderAdapter {
   const enabled = (process.env.SOCIAL_AI_VISUAL_ENABLED || '').trim().toLowerCase() === 'true';
-  const maxCostCnyPerShot = Number(process.env.SOCIAL_AI_VISUAL_MAX_COST_CNY_PER_SHOT || 2);
+  if(options.qwenOnly&&(!Number.isFinite(options.maximumCostCnyPerImage)||options.maximumCostCnyPerImage!<0||options.frozenModel!==(process.env.QWEN_IMAGE_MODEL||'qwen-image-3.0').trim()))throw new Error('scene_rework_qwen_tariff_changed');
+  const maxCostCnyPerShot = options.qwenOnly?options.maximumCostCnyPerImage!:Number(process.env.SOCIAL_AI_VISUAL_MAX_COST_CNY_PER_SHOT || 2);
   const timeoutMs = Number(process.env.SOCIAL_AI_VISUAL_TIMEOUT_MS || 120_000);
   const qwenImage: SocialAiVisualGenerator = {
     generatorId: 'qwen_image',
     mediaType: 'image',
-    estimatedCostCny: Number(process.env.SOCIAL_QWEN_IMAGE_ESTIMATED_COST_CNY || 0.3),
+    estimatedCostCny:options.qwenOnly?options.maximumCostCnyPerImage!:Number(process.env.SOCIAL_QWEN_IMAGE_ESTIMATED_COST_CNY || 0.3),
     async generate(input) {
-      const output = await generatePosterImage({ prompt: input.prompt, ratio: input.ratio });
+      if(options.qwenOnly&&options.frozenModel!==(process.env.QWEN_IMAGE_MODEL||'qwen-image-3.0').trim())throw new Error('scene_rework_qwen_tariff_changed');
+      const output = await generatePosterImage({ prompt: input.prompt, ratio: input.ratio, idempotencyKey:input.idempotencyKey,recoveryOnly:options.recoveryOnly });
       return {
         type: 'image', providerId: output.source, model: output.model,
         bytes: output.bytes, mimeType: output.mimeType,
@@ -218,7 +221,7 @@ export function createConfiguredSocialAiVisualAdapter(): SocialAssetSupplyProvid
   };
   const videoProvider = (process.env.SOCIAL_AI_VISUAL_VIDEO_PROVIDER || '').trim().toLowerCase();
   const videoGenerators: SocialAiVisualGenerator[] = [];
-  if (videoProvider === 'seedance' && process.env.SEEDANCE_VIDEO_ENABLED === 'true'
+  if (!options.recoveryOnly && !options.qwenOnly && videoProvider === 'seedance' && process.env.SEEDANCE_VIDEO_ENABLED === 'true'
     && (process.env.SEEDANCE_API_KEY || '').trim()) {
     const duration = 5;
     videoGenerators.push({
@@ -241,7 +244,7 @@ export function createConfiguredSocialAiVisualAdapter(): SocialAssetSupplyProvid
       },
     });
   }
-  if (videoProvider === 'veo' && process.env.GEMINI_VIDEO_ENABLED === 'true'
+  if (!options.recoveryOnly && !options.qwenOnly && videoProvider === 'veo' && process.env.GEMINI_VIDEO_ENABLED === 'true'
     && (process.env.GEMINI_API_KEY || '').trim()) {
     videoGenerators.push({
       generatorId: 'veo_concept_video', mediaType: 'video',

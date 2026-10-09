@@ -266,6 +266,45 @@ function publicationTasks(
       const positionalOverride = taskInputs[index] && typeof taskInputs[index] === 'object' && !Array.isArray(taskInputs[index])
         ? taskInputs[index] as Record<string, unknown> : undefined;
       const override = matchingOverride ?? positionalOverride ?? {};
+      let receptionRequirement: SocialWeeklyPublicationTask['receptionRequirement'];
+      let materialRequirement: SocialWeeklyPublicationTask['materialRequirement'];
+      let customerFeedbackTopicRef: SocialWeeklyPublicationTask['customerFeedbackTopicRef'];
+      let contentTemplateBindingRef: SocialWeeklyPublicationTask['contentTemplateBindingRef'];
+      if (override.contentTemplateBindingRef !== undefined) {
+        const ref = override.contentTemplateBindingRef as Record<string, unknown> | null;
+        if (!ref || typeof ref !== 'object' || Array.isArray(ref) || Object.keys(ref).some(key => !['type', 'id', 'version'].includes(key))
+          || ref.type !== 'weekly_content_template_binding' || typeof ref.id !== 'string' || !/^[a-f0-9]{15}$/.test(ref.id) || ref.version !== 1) throw new SocialProgramError('publication_content_template_ref_invalid', 400, '内容结构模板须引用此发布版本的真实确认绑定。');
+        contentTemplateBindingRef = { type: 'weekly_content_template_binding', id: ref.id, version: 1 };
+      }
+      if (override.customerFeedbackTopicRef !== undefined) {
+        const ref = override.customerFeedbackTopicRef as Record<string, unknown> | null;
+        if (!ref || typeof ref !== 'object' || Array.isArray(ref) || Object.keys(ref).some(key => !['type', 'id', 'version'].includes(key))
+          || ref.type !== 'customer_feedback_topic_confirmation' || typeof ref.id !== 'string' || !/^[a-f0-9]{15}$/.test(ref.id) || ref.version !== 1) throw new SocialProgramError('publication_feedback_topic_ref_invalid', 400, '客户反馈选题须引用真实确认版本，不能传入自由文本或其它任务身份。');
+        customerFeedbackTopicRef = { type: 'customer_feedback_topic_confirmation', id: ref.id, version: 1 };
+      }
+      if (override.materialRequirement !== undefined) {
+        const requirement = override.materialRequirement as Record<string, unknown> | null;
+        if (!requirement || requirement.required !== true || !Array.isArray(requirement.requestIds)
+          || requirement.requestIds.length > 100 || requirement.requestIds.some(id => typeof id !== 'string' || !/^[a-f0-9]{15}$/.test(id))
+          || new Set(requirement.requestIds).size !== requirement.requestIds.length) {
+          throw new SocialProgramError('publication_material_requirement_invalid', 400, '必需素材任务需要明确、去重的真实任务身份。');
+        }
+        materialRequirement = { required: true, requestIds: [...requirement.requestIds] };
+        if (requirement.bindings !== undefined) {
+          const bindings = requirement.bindings;
+          if (!Array.isArray(bindings) || bindings.length > 100 || bindings.some(binding => !binding || typeof binding !== 'object' || Array.isArray(binding)
+            || !/^[a-f0-9]{15}$/.test(binding.requirementId) || !materialRequirement!.requestIds.includes(binding.requestId)
+            || Object.keys(binding).some(key => !['requirementId', 'requestId'].includes(key))) || new Set(bindings.map(binding => binding.requirementId)).size !== bindings.length) throw new SocialProgramError('publication_material_bindings_invalid', 400, '每项真实素材需求须唯一映射到本发布已冻结的素材请求。');
+          materialRequirement.bindings = bindings.map(binding => ({ requirementId: binding.requirementId, requestId: binding.requestId }));
+        }
+      }
+      if (override.receptionRequirement !== undefined) {
+        const requirement = override.receptionRequirement as Record<string, unknown> | null;
+        if (!requirement || requirement.required !== true || !(requirement.bindingId === null || typeof requirement.bindingId === 'string' && /^[a-f0-9]{15}$/.test(requirement.bindingId))) {
+          throw new SocialProgramError('publication_reception_requirement_invalid', 400, '发布承接要求需要明确的必需状态和绑定身份。');
+        }
+        receptionRequirement = { required: true, bindingId: requirement.bindingId as string | null };
+      }
       const motherIndex = index % originalContentTarget;
       const firstTask = generated.find(item => item.motherContentId === `mother-${motherIndex + 1}`);
       generated.push({
@@ -277,6 +316,10 @@ function publicationTasks(
         accountPositioning: text(override.accountPositioning, 300) || plan.accountPositioning,
         businessProposition: text(override.businessProposition, 500) || null,
         cta: text(override.cta, 500) || null,
+        ...(receptionRequirement ? { receptionRequirement } : {}),
+        ...(materialRequirement ? { materialRequirement } : {}),
+        ...(customerFeedbackTopicRef ? { customerFeedbackTopicRef } : {}),
+        ...(contentTemplateBindingRef ? { contentTemplateBindingRef } : {}),
         factRefs: Array.isArray(override.factRefs)
           ? override.factRefs.map(versionedRef).filter((ref): ref is VersionedSocialRef => Boolean(ref)).slice(0, 30)
           : [],

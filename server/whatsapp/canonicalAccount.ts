@@ -1,0 +1,13 @@
+import {createHash} from 'node:crypto';
+import type {DataStore,Record_} from '../storage/datastore.js';
+import {decryptSecret,type TenantPlatformAppRecord} from '../lib/tenantPlatformApps.js';
+import {resolveTenantWhatsAppConfig} from './send.js';
+export interface CanonicalWhatsAppAccountProof{accountId:string;tenantId:string;nativeAccountId:string;wabaId:string;accountHash:string}
+/** Existing tenant app is the real WhatsApp account; do not manufacture a social_accounts row. */
+export async function readCanonicalWhatsAppAccount(store:DataStore,tenantId:string,accountId:string,openSecret=decryptSecret):Promise<CanonicalWhatsAppAccountProof>{
+ const row=await store.getById<Record_>('tenant_platform_apps',accountId);
+ if(!row||row.tenant_id!==tenantId||row.platform!=='meta'||row.status!=='active'||typeof row.waba_id!=='string'||!row.waba_id.trim()||typeof row.app_id!=='string'||!row.app_id.trim()||!openSecret(row.app_secret as string|undefined))throw Error('weekly_whatsapp_account_not_ready');
+ const config=resolveTenantWhatsAppConfig(tenantId,row as unknown as TenantPlatformAppRecord,openSecret);
+ const authority={tenantId,accountId,appId:row.app_id,phoneNumberId:config.phoneNumberId,wabaId:row.waba_id,status:row.status,tokenType:row.token_type??null,tokenExpiresAt:row.token_expires_at??null,credentialHash:createHash('sha256').update(String(row.access_token)).digest('hex'),signingCredentialHash:createHash('sha256').update(String(row.app_secret)).digest('hex')};
+ return{tenantId,accountId,nativeAccountId:config.phoneNumberId,wabaId:String(row.waba_id),accountHash:createHash('sha256').update(JSON.stringify(authority)).digest('hex')};
+}

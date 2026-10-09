@@ -8,6 +8,9 @@ function task(id: string, step: string, parents: string[], publicationTaskId: st
 const pub = (id:string, window:string) => ({publicationTaskId:id,publishWindow:window}) as SocialWeeklyPublicationTask;
 test('invalid dates and non-executable dependency graphs fail explicitly', () => {
  assert.equal(publicationInstant('2026-02-30T10:00:00+08:00'),null);
+ assert.equal(publicationInstant('2026-10-05T24:00:00Z'),null);
+ assert.equal(publicationInstant('2026-10-05T10:60:00Z'),null);
+ assert.equal(publicationInstant('2026-10-05T10:00:60Z'),null);
  assert.equal(publicationInstant('2028-02-29T10:00:00+08:00'),Date.parse('2028-02-29T10:00:00+08:00'));
  assert.throws(()=>applyPublicationDeadlines([task('a','script',['b']),task('b','storyboard',['a'])],[]), /循环依赖/);
  assert.throws(()=>applyPublicationDeadlines([task('a','script',['missing'])],[]), /不存在/);

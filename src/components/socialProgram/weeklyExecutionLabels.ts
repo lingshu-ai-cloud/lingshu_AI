@@ -17,4 +17,6 @@ export const STEP_LABEL: Record<WeeklyProductionStepKind, string> = {
   publishing: '14. 发布到目标账号',
   performance_monitoring: '15. 回传表现与线索',
   weekly_review: '16. 周复盘与下轮建议',
+  template_extraction: '提炼企业成片结构模板',
+  template_performance_validation: '核验模板表现与适用条件',
 };

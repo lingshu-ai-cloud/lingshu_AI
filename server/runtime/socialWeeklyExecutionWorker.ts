@@ -1,3 +1,4 @@
+import {mayReconcileExistingWeeklyPlanning} from './socialWeeklyPlanningReconciliation.js';
 import type { DataStore } from '../storage/datastore.js';
 import type {
   VersionedSocialRef,
@@ -95,6 +96,7 @@ export function createSocialWeeklyExecutionWorker(dataStore: DataStore) {
         const task = row.payload;
         if (input.kinds?.length && !input.kinds.includes(task.workflowKind)) continue;
         if (task.schedule?.responsibleActor === 'user') continue;
+        if (task.status === 'queued' && Date.parse(task.schedule?.estimatedStartAt || '') > now.getTime() && !await mayReconcileExistingWeeklyPlanning(dataStore,task,now)) continue;
         if (task.status === 'queued' && task.nextAttemptAt && Date.parse(task.nextAttemptAt) > now.getTime()) continue;
         if (task.status === 'leased' && task.lease && Date.parse(task.lease.expiresAt) > now.getTime()) continue;
         const lease = await acquireDurableOperationLease({
@@ -112,6 +114,15 @@ export function createSocialWeeklyExecutionWorker(dataStore: DataStore) {
           const claimed = await withWeeklyExecutionTaskMutation(dataStore, input.tenantId, task.taskId, async () => {
             const latest = await getWeeklyExecutionTaskRow(dataStore, input.tenantId, task.taskId);
             if (!['queued', 'leased'].includes(latest.payload.status)) return null;
+            if (latest.payload.schedule.responsibleActor === 'user' || latest.payload.ownBlockingReasons.length || latest.payload.inheritedBlockingTaskIds.length) return null;
+            if (latest.payload.status === 'queued' && Date.parse(latest.payload.nextAttemptAt || '') > now.getTime()) return null;
+            if (latest.payload.status === 'queued' && Date.parse(latest.payload.schedule.estimatedStartAt || '') > now.getTime() && !await mayReconcileExistingWeeklyPlanning(dataStore,latest.payload,now)) return null;
+            for (const dependencyId of latest.payload.dependsOnTaskIds) {
+              let dependency: WeeklyExecutionTask;
+              try { dependency = (await getWeeklyExecutionTaskRow(dataStore, input.tenantId, dependencyId)).payload; }
+              catch (error) { if (error instanceof SocialProgramError && error.code === 'weekly_execution_task_not_found') return null; throw error; }
+              if (dependency.tenantId !== input.tenantId || dependency.taskId !== dependencyId || dependency.programId !== latest.payload.programId || dependency.packageId !== latest.payload.packageId || dependency.packageVersion !== latest.payload.packageVersion || dependency.status !== 'succeeded') return null;
+            }
             const next: WeeklyExecutionTask = {
               ...latest.payload,
               status: 'leased',
@@ -132,7 +143,7 @@ export function createSocialWeeklyExecutionWorker(dataStore: DataStore) {
             };
             await writeWeeklyExecutionTask(dataStore, latest, next);
             return next;
-          });
+          },'claim');
           if (!claimed) {
             await releaseDurableOperationLease({ dataStore, lease });
             continue;
@@ -140,6 +151,7 @@ export function createSocialWeeklyExecutionWorker(dataStore: DataStore) {
           return { task: claimed, lease };
         } catch (error) {
           await releaseDurableOperationLease({ dataStore, lease });
+          if(error instanceof SocialProgramError&&['weekly_execution_package_frozen','weekly_execution_package_gate_busy'].includes(error.code))continue;
           throw error;
         }
       }
@@ -158,7 +170,7 @@ export function createSocialWeeklyExecutionWorker(dataStore: DataStore) {
         };
         await writeWeeklyExecutionTask(dataStore, row, task);
         return { task, lease };
-      });
+      },'settlement');
     },
 
     async complete(claim: WeeklyExecutionClaim, resultRefs: VersionedSocialRef[], now = new Date()): Promise<WeeklyExecutionTask> {
@@ -175,7 +187,7 @@ export function createSocialWeeklyExecutionWorker(dataStore: DataStore) {
         };
         await writeWeeklyExecutionTask(dataStore, row, next);
         return next;
-      });
+      },'settlement');
       await releaseDurableOperationLease({ dataStore, lease: claim.lease });
       await recompute(task, now);
       return task;
@@ -196,7 +208,7 @@ export function createSocialWeeklyExecutionWorker(dataStore: DataStore) {
         };
         await writeWeeklyExecutionTask(dataStore, row, next);
         return next;
-      });
+      },'settlement');
       await releaseDurableOperationLease({ dataStore, lease: claim.lease });
       await recompute(task, now);
       return task;
@@ -234,12 +246,12 @@ export function createSocialWeeklyExecutionWorker(dataStore: DataStore) {
             retryable: retry,
             occurredAt: now.toISOString(),
           },
-          schedule: { ...row.payload.schedule, actualFinishedAt: !retry && !requiresUserAction ? now.toISOString() : null },
+          schedule: { ...row.payload.schedule, actualFinishedAt: null },
           updatedAt: now.toISOString(),
         };
         await writeWeeklyExecutionTask(dataStore, row, next);
         return next;
-      });
+      },'settlement');
       await releaseDurableOperationLease({ dataStore, lease: claim.lease });
       await recompute(task, now);
       return task;

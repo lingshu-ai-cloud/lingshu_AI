@@ -1,0 +1,184 @@
+import { publicationInstant } from './publicationDeadlines.js';
+import type { WeeklyRecoveryInput } from './weeklyRecoveryAssessment.js';
+import { weeklyReviewWindowBounds } from '../socialReview/weeklyReviewTiming.js';
+import {createHash} from 'node:crypto';
+import type {WeeklyExecutionTask,VersionedSocialRef} from '../../shared/contracts/socialProgram.js';
+
+type VerifiedWorkBase={taskFingerprint:string;verifiedAt:string;actualStartedAt:string};
+export interface BackwardCompletedEvidence extends VerifiedWorkBase {actualFinishedAt:string;resultRefs:VersionedSocialRef[];}
+export interface BackwardObservedReservation extends VerifiedWorkBase {leaseId:string;leaseTokenHash:string;leaseExpiresAt:string;expectedFinishAt:string;resourceKey:string;remainingCostCny:number;}
+const stable=(value:unknown):string=>Array.isArray(value)?`[${value.map(stable).join(',')}]`:value&&typeof value==='object'?`{${Object.entries(value).sort(([a],[b])=>a.localeCompare(b)).map(([key,item])=>`${JSON.stringify(key)}:${stable(item)}`).join(',')}}`:JSON.stringify(value);
+/** Binds internal, freshly validated receipts to the complete stored task; not client authorization. */
+export const backwardTaskEvidenceFingerprint=(task:WeeklyExecutionTask):string=>createHash('sha256').update(stable(task)).digest('hex');
+
+export type WeeklyBackwardScheduleInput = Pick<WeeklyRecoveryInput, 'tasks' | 'now' | 'constraints' | 'resources' | 'remainingBudgetCny'> & {
+  /** Explicit operating deadlines, never inferred from old forward estimates. */
+  operationalDeadlines?:Record<string,string>;
+  /** Read from the stored package by the caller, never accepted as client authority. */
+  frozenOperationalWeek?:{weekStart:string;weekEnd:string};
+  /** Internal only: caller must verify live outputs / durable leases under its shared source gate. */
+  completedEvidence?:Record<string,BackwardCompletedEvidence>;
+  observedReservations?:Record<string,BackwardObservedReservation>;
+};
+export interface WeeklyBackwardSchedule {
+  assignments: Array<{ taskId: string; startAt: string | null; finishAt: string | null; resourceKey: string | null; reasons: string[];mode:'planned'|'completed_verified'|'running_reserved'|'unavailable' }>;
+  publications: Array<{ publicationId: string; conditionallyReachable: boolean; reasons: string[] }>;
+  targetPublicationCount: number;
+  conditionallyReachableCount: number;
+  publicationGap: number;
+  reservedCostCny: number;
+  confirmationRequired: boolean;
+  fullGraphConditionallyReachable:boolean;
+  unscheduledTaskIds:string[];
+  crossWeekOperationalTaskIds:string[];
+  revisionApplied: false;
+}
+const instant = (value: string): number => {
+  const parsed = publicationInstant(value);
+  if (parsed === null) throw new Error('Invalid precise backward scheduling timestamp');
+  return parsed;
+};
+
+/** Conservative, non-preemptive reverse allocation; suggestions never mutate or approve work. */
+export function planWeeklyBackwardSchedule(input: WeeklyBackwardScheduleInput): WeeklyBackwardSchedule {
+  const now = instant(input.now);
+  if (!Number.isFinite(input.remainingBudgetCny) || input.remainingBudgetCny < 0) throw new Error('Invalid backward scheduling budget');
+  const tasks = new Map(input.tasks.map(task => [task.taskId, task]));
+  if(!tasks.size)throw Error('Backward scheduling tasks required');
+  if (tasks.size !== input.tasks.length) throw new Error('Duplicate backward scheduling task');
+  const scopes = new Set(input.tasks.map(task => JSON.stringify([task.tenantId, task.programId, task.packageId, task.packageVersion])));
+  if (scopes.size > 1 || input.tasks.some(task => !task.tenantId || !task.programId || !task.packageId || !Number.isInteger(task.packageVersion) || task.packageVersion < 1)) throw new Error('Mixed or missing backward scheduling authority');
+  const operationalDeadlines=new Map<string,number>(),crossWeekOperationalTaskIds:string[]=[];
+  for(const [id,deadline] of Object.entries(input.operationalDeadlines??{})) {
+    const task=tasks.get(id),week=input.frozenOperationalWeek;
+    if(!task||!['performance_monitoring','weekly_review','template_extraction','template_performance_validation'].includes(task.schedule.stepKind))throw Error('Operational deadline requires an actual monitoring or review task');
+    if(!week||!/^\d{4}-\d{2}-\d{2}$/.test(week.weekStart)||!/^\d{4}-\d{2}-\d{2}$/.test(week.weekEnd)||publicationInstant(`${week.weekStart}T00:00:00Z`)===null||publicationInstant(`${week.weekEnd}T00:00:00Z`)===null||week.weekStart>week.weekEnd)throw Error('Frozen operational week evidence required');
+    const parsed=instant(deadline),localDate=deadline.slice(0,10);
+    if(localDate<week.weekStart)throw Error('Operational deadline precedes frozen week in its explicit timezone');
+    if(localDate>week.weekEnd)crossWeekOperationalTaskIds.push(id);
+    operationalDeadlines.set(id,parsed);
+  }
+  const ownDeadline=(id:string)=>{const task=tasks.get(id)!;return Math.min(task.schedule.latestFinishAt?instant(task.schedule.latestFinishAt):Infinity,operationalDeadlines.get(id)??Infinity);};
+  const children = new Map(input.tasks.map(task => [task.taskId, [] as string[]]));
+  for (const task of input.tasks) for (const parent of task.dependsOnTaskIds) {
+    if (!tasks.has(parent)) throw new Error('Missing backward scheduling dependency');
+    children.get(parent)!.push(task.taskId);
+  }
+  const visiting = new Set<string>(), visited = new Set<string>();
+  const visit = (id: string) => {
+    if (visiting.has(id)) throw new Error('Backward scheduling dependency cycle');
+    if (visited.has(id)) return;
+    visiting.add(id); tasks.get(id)!.dependsOnTaskIds.forEach(visit); visiting.delete(id); visited.add(id);
+  };
+  input.tasks.forEach(task => visit(task.taskId));
+  const publishing = input.tasks.filter(task => task.schedule.stepKind === 'publishing' && task.publicationTaskId);
+  if (new Set(publishing.map(task => task.publicationTaskId)).size !== publishing.length) throw new Error('Duplicate backward scheduling publication');
+  const windows = new Map<string, Array<[number, number]>>();
+  const slots = new Map<string, Array<Array<[number, number]>>>();
+  for (const [key, resource] of Object.entries(input.resources)) {
+    if (!Number.isInteger(resource.concurrency) || resource.concurrency < 1) throw new Error('Invalid backward resource concurrency');
+    const ranges = resource.workingWindows.map(window => [instant(window.startAt), instant(window.finishAt)] as [number, number]).sort((a,b) => a[0]-b[0]);
+    if (ranges.some((range,index) => range[1] <= range[0] || index > 0 && range[0] < ranges[index-1]![1])) throw new Error('Invalid or overlapping backward work windows');
+    windows.set(key,ranges); slots.set(key,Array.from({length:resource.concurrency},()=>[]));
+  }
+  const assignments = new Map<string, WeeklyBackwardSchedule['assignments'][number]>();
+  const pending = [...input.tasks];
+  let reservedCostCny = 0;
+  const liveReservations=new Map<string,{evidence:BackwardObservedReservation;reasons:string[]}>();
+  let unresolvedRunningCommitment=false;
+  for(const id of [...Object.keys(input.completedEvidence??{}),...Object.keys(input.observedReservations??{})])if(!tasks.has(id))throw Error('Foreign internal backward work evidence');
+  if(Object.keys(input.completedEvidence??{}).some(id=>tasks.get(id)!.status!=='succeeded')||Object.keys(input.observedReservations??{}).some(id=>tasks.get(id)!.status!=='leased'))throw Error('Internal backward work evidence status mismatch');
+  // Already-running work owns its observed slot before any unstarted work can reserve capacity.
+  for(const task of input.tasks.filter(task=>task.status==='leased')) {
+    const evidence=input.observedReservations?.[task.taskId],constraint=input.constraints[task.taskId];
+    if(!evidence){unresolvedRunningCommitment=true;continue;}
+    const reasons:string[]=[];
+    if(evidence.taskFingerprint!==backwardTaskEvidenceFingerprint(task)||instant(evidence.verifiedAt)!==now||!task.lease||evidence.leaseId!==task.lease.leaseId||evidence.leaseTokenHash!==createHash('sha256').update(task.lease.token).digest('hex')||evidence.leaseExpiresAt!==task.lease.expiresAt||instant(evidence.leaseExpiresAt)<=now||evidence.actualStartedAt!==task.schedule.actualStartedAt||instant(evidence.actualStartedAt)>now||instant(evidence.expectedFinishAt)<now) {unresolvedRunningCommitment=true;liveReservations.set(task.taskId,{evidence,reasons:['running_observation_invalid_or_stale']});continue;}
+    if(!constraint||!evidence.resourceKey?.trim()||constraint.resourceKey!==evidence.resourceKey||!Number.isFinite(evidence.remainingCostCny)||evidence.remainingCostCny<0){unresolvedRunningCommitment=true;liveReservations.set(task.taskId,{evidence,reasons:['remaining_work_evidence_required']});continue;}
+    if([constraint.remainingMinutes,constraint.bufferMinutes,constraint.remainingCostCny].some(value=>!Number.isFinite(value)||value<0))throw Error('Invalid running remaining work');
+    if(instant(constraint.availableAt)>now||instant(evidence.expectedFinishAt)<now+(constraint.remainingMinutes+constraint.bufferMinutes)*60000)reasons.push('running_constraint_conflicts_with_observation');
+    if(constraint.remainingCostCny<evidence.remainingCostCny)reasons.push('running_remaining_cost_understated');
+    if(constraint.unresolvedReasons?.length)reasons.push(...constraint.unresolvedReasons);
+    if(task.ownBlockingReasons?.length)reasons.push(...task.ownBlockingReasons);
+    const calendars=slots.get(evidence.resourceKey),ranges=windows.get(evidence.resourceKey),finish=instant(evidence.expectedFinishAt);
+    const slot=calendars?.find(slot=>slot.every(([start,end])=>finish<=start||now>=end));
+    if(!slot||!ranges?.some(([start,end])=>start<=now&&end>=finish)){unresolvedRunningCommitment=true;reasons.push('observed_running_capacity_conflict');}
+    else slot.push([now,finish]);
+    reservedCostCny+=Math.max(constraint.remainingCostCny,evidence.remainingCostCny);
+    if(reservedCostCny>input.remainingBudgetCny)reasons.push('remaining_budget_insufficient');
+    if(finish>instant(evidence.leaseExpiresAt))reasons.push('running_lease_renewal_required');
+    liveReservations.set(task.taskId,{evidence,reasons});
+  }
+  while (pending.length) {
+    const eligible = pending.filter(task => children.get(task.taskId)!.every(id => assignments.has(id))).sort((a,b) =>
+      ownDeadline(a.taskId)-ownDeadline(b.taskId) || a.taskId.localeCompare(b.taskId));
+    const task = eligible[0]!; pending.splice(pending.indexOf(task),1);
+    const constraint = input.constraints[task.taskId];
+    const row:WeeklyBackwardSchedule['assignments'][number] = {taskId:task.taskId,startAt:null,finishAt:null,resourceKey:constraint?.resourceKey ?? null,reasons:[],mode:'unavailable'};
+    assignments.set(task.taskId,row);
+    if (task.status === 'succeeded') {
+      const evidence=input.completedEvidence?.[task.taskId];
+      if(!evidence||!task.schedule.actualStartedAt||!task.schedule.actualFinishedAt||!task.resultRefs?.length){row.reasons.push('completed_output_and_time_evidence_required');continue;}
+      if(evidence.taskFingerprint!==backwardTaskEvidenceFingerprint(task)||instant(evidence.verifiedAt)!==now||evidence.actualStartedAt!==task.schedule.actualStartedAt||evidence.actualFinishedAt!==task.schedule.actualFinishedAt||instant(evidence.actualStartedAt)>instant(evidence.actualFinishedAt)||instant(evidence.actualFinishedAt)>now||stable(evidence.resultRefs)!==stable(task.resultRefs)||evidence.resultRefs.some(ref=>!ref.type||!ref.id||!Number.isSafeInteger(ref.version)||ref.version<1)){row.reasons.push('completed_work_evidence_invalid_or_stale');continue;}
+      row.startAt=evidence.actualStartedAt;row.finishAt=evidence.actualFinishedAt;row.mode='completed_verified';continue;
+    }
+    if (task.schedule.responsibleActor === 'user') row.reasons.push('human_completion_not_verified');
+    if (task.status === 'leased') {
+      const observed=liveReservations.get(task.taskId);if(!observed){row.reasons.push('running_work_requires_observed_reservation');continue;}
+      row.reasons.push(...observed.reasons);
+      if(!row.reasons.some(reason=>!['human_completion_not_verified','running_lease_renewal_required'].includes(reason))){row.startAt=observed.evidence.actualStartedAt;row.finishAt=observed.evidence.expectedFinishAt;row.resourceKey=observed.evidence.resourceKey;row.mode='running_reserved';}
+      continue;
+    }
+    if(task.schedule.actualStartedAt||task.resultRefs?.length||task.productionProgress?.runId){row.reasons.push('started_work_requires_verified_continuation');continue;}
+    if(unresolvedRunningCommitment){row.reasons.push('running_commitment_evidence_required');continue;}
+    if (task.status === 'cancelled' || task.status === 'dead_letter') { row.reasons.push('task_requires_explicit_recovery'); continue; }
+    if (task.ownBlockingReasons?.length) { row.reasons.push(...task.ownBlockingReasons); continue; }
+    if (task.status === 'blocked' && !task.inheritedBlockingTaskIds?.length) { row.reasons.push('blocking_state_requires_verification'); continue; }
+    if(['performance_monitoring','weekly_review','template_extraction','template_performance_validation'].includes(task.schedule.stepKind)&&!task.schedule.latestFinishAt&&!operationalDeadlines.has(task.taskId)){row.reasons.push('operational_deadline_required');continue;}
+    if (!constraint) { row.reasons.push('remaining_work_evidence_required'); continue; }
+    if ([constraint.remainingMinutes,constraint.bufferMinutes,constraint.remainingCostCny].some(value => !Number.isFinite(value) || value < 0)) throw new Error('Invalid backward remaining work');
+    if (constraint.unresolvedReasons?.length) { row.reasons.push(...constraint.unresolvedReasons); continue; }
+    const successors = children.get(task.taskId)!.map(id => assignments.get(id)!);
+    if (successors.some(child => child.startAt === null)) { row.reasons.push('consumer_schedule_unavailable'); continue; }
+    if (!Number.isFinite(ownDeadline(task.taskId)) && !successors.length) { row.reasons.push('precise_deadline_required'); continue; }
+    const deadline = Math.min(ownDeadline(task.taskId),...successors.map(child => instant(child.startAt!)));
+    if(task.schedule.stepKind==='weekly_review'&&!input.frozenOperationalWeek){row.reasons.push('weekly_review_window_evidence_required');continue;}
+    const reviewAvailableAt=task.schedule.stepKind==='weekly_review'?instant(weeklyReviewWindowBounds(input.frozenOperationalWeek!).endsAt):-Infinity;
+    const earliest = Math.max(now,instant(constraint.availableAt),reviewAvailableAt);
+    const duration = (constraint.remainingMinutes+constraint.bufferMinutes)*60_000;
+    if(task.schedule.stepKind==='weekly_review'&&deadline<reviewAvailableAt+duration){row.reasons.push('weekly_review_window_still_open');continue;}
+    const calendars = slots.get(constraint.resourceKey), ranges = windows.get(constraint.resourceKey);
+    if (!calendars || !ranges) { row.reasons.push('resource_capacity_evidence_required'); continue; }
+    if (reservedCostCny+constraint.remainingCostCny > input.remainingBudgetCny) { row.reasons.push('remaining_budget_insufficient'); continue; }
+    let best: {start:number;finish:number;slot:Array<[number,number]>}|null=null;
+    for (const slot of calendars) for (const [open,close] of ranges) {
+      let finish = Math.min(deadline,close);
+      for (const [busyStart,busyFinish] of [...slot].sort((a,b)=>b[0]-a[0])) {
+        if (finish-duration >= busyFinish) break;
+        if (finish > busyStart && finish-duration < busyFinish) finish=busyStart;
+      }
+      const start=finish-duration;
+      if (start>=Math.max(open,earliest) && (!best || finish>best.finish)) best={start,finish,slot};
+    }
+    if (task.schedule.stepKind === 'publishing') {
+      best=null;
+      if (!task.schedule.latestStartAt) { row.reasons.push('precise_publish_time_required'); continue; }
+      const start=instant(task.schedule.latestStartAt),finish=start+duration;
+      for(const slot of calendars) if(start>=earliest && finish<=deadline && ranges.some(([open,close])=>start>=open&&finish<=close) && slot.every(([busyStart,busyFinish])=>finish<=busyStart||start>=busyFinish)) {best={start,finish,slot};break;}
+    }
+    if (!best) { row.reasons.push('work_window_or_capacity_insufficient'); continue; }
+    best.slot.push([best.start,best.finish]); reservedCostCny+=constraint.remainingCostCny;
+    row.startAt=new Date(best.start).toISOString(); row.finishAt=new Date(best.finish).toISOString();row.mode='planned';
+  }
+  for(const task of input.tasks){const row=assignments.get(task.taskId)!;if(row.startAt&&task.dependsOnTaskIds.some(id=>{const parent=assignments.get(id)!;return parent.finishAt&&instant(parent.finishAt)>instant(row.startAt!);})){row.reasons.push('dependency_finish_after_consumer_start');}}
+  // A successor's reservation is only conditionally reachable when every prerequisite fits.
+  const publications = publishing.map(task => {
+    const ancestors=new Set<string>();
+    const collect=(id:string)=>{if(ancestors.has(id))return;ancestors.add(id);tasks.get(id)!.dependsOnTaskIds.forEach(collect);}; collect(task.taskId);
+    const reasons=[...new Set([...ancestors].flatMap(id=>assignments.get(id)!.reasons))];
+    return {publicationId:task.publicationTaskId!,conditionallyReachable:reasons.every(reason=>['human_completion_not_verified','running_lease_renewal_required'].includes(reason)),reasons};
+  });
+  const reachable=publications.filter(publication=>publication.conditionallyReachable).length;
+  const unscheduledTaskIds=[...assignments.values()].filter(row=>!row.startAt||!row.finishAt||row.reasons.some(reason=>!['human_completion_not_verified','running_lease_renewal_required'].includes(reason))).map(row=>row.taskId);
+  return {assignments:[...assignments.values()],publications,targetPublicationCount:publications.length,conditionallyReachableCount:reachable,publicationGap:publications.length-reachable,reservedCostCny,confirmationRequired:input.tasks.some(task=>task.status!=='succeeded'),fullGraphConditionallyReachable:unscheduledTaskIds.length===0,unscheduledTaskIds,crossWeekOperationalTaskIds:crossWeekOperationalTaskIds.sort(),revisionApplied:false};
+}

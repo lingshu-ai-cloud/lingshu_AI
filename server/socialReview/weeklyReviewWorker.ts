@@ -8,6 +8,7 @@ import type { FrozenWeeklyReview, ReviewAvailability, ReviewContentInput, Versio
 import { acquireDurableOperationLease, releaseDurableOperationLease } from '../runtime/durableLease.js';
 import { enqueueAgentNotificationDomainEvent } from '../notifications/agentNotificationOutbox.js';
 import { PromotionAllocator } from './promotionAllocator.js';
+import {weeklyReviewWindowBounds} from './weeklyReviewTiming.js';
 import {
   freezeWeeklyReview,
   generateWeeklyCreativeLearnings,
@@ -42,13 +43,7 @@ const inWindow = (value: unknown, startsAt: string, endsAt: string) => {
   const timestamp = Date.parse(text(value));
   return Number.isFinite(timestamp) && timestamp > Date.parse(startsAt) && timestamp <= Date.parse(endsAt);
 };
-const weekBounds = (weekly: WeeklyOperatingPackage) => {
-  const startsAt = new Date(`${weekly.weekStart}T00:00:00.000Z`);
-  const endsAt = new Date(`${weekly.weekEnd}T00:00:00.000Z`);
-  endsAt.setUTCDate(endsAt.getUTCDate() + 1);
-  if (!Number.isFinite(startsAt.getTime()) || !Number.isFinite(endsAt.getTime())) throw new Error('weekly_review_window_invalid');
-  return { startsAt: startsAt.toISOString(), endsAt: endsAt.toISOString() };
-};
+const weekBounds = weeklyReviewWindowBounds;
 
 export type WeeklyReviewScheduleDecision =
   | { status: 'due'; startsAt: string; endsAt: string }
@@ -66,8 +61,18 @@ export function weeklyReviewScheduleDecision(weekly: WeeklyOperatingPackage, now
 
 async function safeList(dataStore: DataStore, collection: string, tenantId: string): Promise<{ items: RecordRow[]; available: boolean }> {
   try {
-    const result = await dataStore.list<RecordRow>(collection, { where: { tenant_id: tenantId }, page: 1, perPage: 1_000 });
-    return { items: result.items, available: true };
+    const items: RecordRow[] = [];
+    const seen = new Set<string>();
+    for (let page = 1; ; page++) {
+      const result = await dataStore.list<RecordRow>(collection, { where: { tenant_id: tenantId }, sort: 'id', page, perPage: 1_000 });
+      if (!result.items.length && page < result.totalPages) throw new Error('weekly_review_source_page_missing');
+      for (const item of result.items) {
+        if (item.tenant_id !== tenantId || !item.id || seen.has(item.id)) throw new Error('weekly_review_source_identity_invalid');
+        seen.add(item.id); items.push(item);
+      }
+      if (page >= result.totalPages) break;
+    }
+    return { items, available: true };
   } catch {
     return { items: [], available: false };
   }
@@ -81,7 +86,9 @@ function normalizeMetricSnapshot(row: RecordRow): MetricSnapshot | null {
   const metrics = object(row.metrics);
   const normalized: MetricValues = {};
   for (const key of SOCIAL_METRIC_KEYS) {
-    const value = Number(metrics[key]);
+    const raw = metrics[key];
+    if (typeof raw !== 'number' && (typeof raw !== 'string' || !raw.trim())) continue;
+    const value = Number(raw);
     if (Number.isFinite(value) && value >= 0) normalized[key] = value;
   }
   const capturedAt = text(row.captured_at || row.capturedAt);
@@ -168,7 +175,7 @@ export async function collectWeeklyReviewInput(input: {
       const contentQualificationRefs = matchingQualifications.map(item => item.id);
       interactionRefs.push(...contentInteractionRefs);
       salesQualificationRefs.push(...contentQualificationRefs);
-      const contentMetrics = metricSnapshots.filter(item => item.accountId === task.accountId && item.contentId === contentId);
+      const contentMetrics = metricSnapshots.filter(item => item.platform === task.platform && item.accountId === task.accountId && item.contentId === contentId);
       return {
         businessDirection: task.businessProposition || task.accountPositioning || weekly.objective,
         platform: task.platform,

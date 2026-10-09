@@ -1,0 +1,16 @@
+import type { VersionedSocialRef, WeeklyOperatingPackage } from './socialProgram.js';
+import type { WeeklyBackwardSchedule } from '../../server/socialPrograms/weeklyBackwardSchedule.js';
+import type { RecoveryResource,RecoveryTaskConstraint } from '../../server/socialPrograms/weeklyRecoveryAssessment.js';
+export interface WeeklyScheduleCapacityInput {constraints:Record<string,RecoveryTaskConstraint>;resources:Record<string,RecoveryResource>;remainingBudgetCny:number;operationalDeadlines?:Record<string,string>;}
+export interface WeeklyScheduleProposal {
+ proposalId:string;tenantId:string;programId:string;packageId:string;packageVersion:number;createdBy:string;createdAt:string;inputEvidenceHash:string;
+ capacity:WeeklyScheduleCapacityInput;plan:WeeklyBackwardSchedule;inputAuthority:'stored_tasks_with_user_confirmed_capacity_assumptions';
+}
+export interface WeeklyScheduleSnapshot {
+ snapshotId:string;proposalId:string;tenantId:string;programId:string;packageId:string;sourceVersion:number;targetVersion:number;confirmedBy:string;confirmedAt:string;inputEvidenceHash:string;
+ assignments:Array<{sourceTaskId:string;signature:string;startAt:string;finishAt:string;resourceKey:string|null;mode?:'planned'|'completed_verified'|'running_reserved';sourceInputHash?:string}>;
+ publicationTimes:Array<{publicationTaskId:string;publishWindow:string|null}>;
+ capacity:WeeklyScheduleCapacityInput;previousPublishingAuthorizationAllowed:boolean;
+}
+export type WeeklyScheduledPackage=WeeklyOperatingPackage&{scheduleRevisionRef?:VersionedSocialRef};
+export interface WeeklyScheduleConfirmation {item:WeeklyScheduledPackage;snapshot:WeeklyScheduleSnapshot;materialConsumerRepairs:Array<{requestId:string;reason:string}>;activated:false;previousPublishingAuthorizationRevoked:boolean;}

@@ -2,9 +2,20 @@ import type { VersionedSocialRef, WeeklyExecutionTask } from '../../shared/contr
 import type { DataStore, Record_ } from '../storage/datastore.js';
 import { SocialProgramError } from '../socialPrograms/service.js';
 import { assertSocialContentFilePersisted } from '../starter198/socialContentFiles.js';
-import { SOCIAL_METRIC_KEYS } from '../socialMetrics/aggregation.js';
 import { socialTaskSummary } from '../starter198/socialContentRecords.js';
 import { weeklyScriptEvidence } from './socialWeeklyScriptEvidence.js';
+import { weeklyStoryboardEvidence } from './socialWeeklyStoryboardEvidence.js';
+import { createWeeklyRequiredMaterialAdmission } from '../socialPrograms/weeklyRequiredMaterialAdmission.js';
+import { socialContentSourceOptions } from '../starter198/socialContentSourceOptions.js';
+import { verifiedNoSharedMaterialDemand } from './socialWeeklyMaterialDemand.js';
+import { ownedDiagnosisReady } from '../socialPrograms/ownedReferenceDiagnosis.js';
+import { verifyMaterialEvidenceRequirements } from '../socialPrograms/materialEvidenceClassification.js';
+import { readMaterialEvidenceConfiguration } from '../socialPrograms/materialEvidenceConfiguration.js';
+import { createCustomerFeedbackTopicService } from '../socialPrograms/customerFeedbackTopics.js';
+import { createWeeklyExecutionContinuationService } from '../socialPrograms/weeklyExecutionContinuations.js';
+import { assertWeeklyPlanningCoverage } from '../socialPrograms/weeklyPlanningCoverage.js';
+import { socialJson, socialRequestHash } from '../starter198/socialContentValidation.js';
+import { checkWeeklyMaterialClassification, checkWeeklyHumanRequirementBindings } from './socialWeeklyMaterialClassificationAdmission.js';
 
 const object = (value: unknown): Record<string, any> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, any> : {};
 const text = (value: unknown): string => typeof value === 'string' ? value.trim() : '';
@@ -20,25 +31,120 @@ async function unique(store: DataStore, collection: string, where: Record<string
   return row;
 }
 
+async function materialClassification(store: DataStore, task: WeeklyExecutionTask) {
+  const rows = await store.list<Record_>('social_weekly_agent_planning', { where: { tenant_id: task.tenantId, program_id: task.programId, package_id: task.packageId, package_version: task.packageVersion }, sort: '-planning_version', page: 1, perPage: 2 });
+  requireResult(rows.items.length > 0 && (!rows.items[1] || rows.items[0]!.planning_version !== rows.items[1].planning_version));
+  const row = rows.items[0]!;
+  const plan = object(socialJson(row.payload));
+  requireResult(row.tenant_id === task.tenantId && row.program_id === task.programId && row.package_id === task.packageId && row.package_version === task.packageVersion && plan.status === 'dispatched');
+  const items = (plan.dispatch?.scheduleItems ?? []).filter((item: any) => item.publicationTaskId === task.publicationTaskId);
+  requireResult(items.length === 1);
+  const analyses = (plan.directorAnalyses ?? []).filter((analysis: any) => analysis.analysisId === items[0].directorAnalysisRef?.id);
+  requireResult(analyses.length === 1);
+  const result = await checkWeeklyMaterialClassification({ store, tenantId: task.tenantId, programId: task.programId, packageId: task.packageId, packageVersion: task.packageVersion, item: items[0], analysis: analyses[0] });
+  requireResult(result.ready, result.ready ? undefined : result.code);
+  return result.contract;
+}
+
 /** Verify persisted authority, never accept a client-supplied success label. */
 export async function validateWeeklyExecutionResults(store: DataStore, task: WeeklyExecutionTask, refs: VersionedSocialRef[], now = new Date()): Promise<void> {
   requireResult(Array.isArray(refs) && refs.length > 0 && refs.every(ref => text(ref?.type) && text(ref?.id) && Number.isSafeInteger(ref?.version) && ref.version > 0), 'weekly_execution_result_refs_invalid');
+  if (refs.some(ref => ref.type === 'weekly_execution_continuation')) {
+    requireResult(refs.length === 1 && socialRequestHash(task.inputSnapshot?.weeklyContinuationRef) === socialRequestHash(refs[0]), 'weekly_execution_continuation_ref_unbound');
+    const read = await createWeeklyExecutionContinuationService(store).readValidated({ tenantId: task.tenantId, programId: task.programId, packageId: task.packageId, targetVersion: task.packageVersion, targetTaskId: task.taskId, ref: refs[0]! }, now.toISOString());
+    requireResult(read.status === 'ready' && read.detail.sourceVersion < task.packageVersion && read.resultRefs.length > 0, 'weekly_execution_continuation_not_ready');
+    return;
+  }
+  requireResult(!task.inputSnapshot?.weeklyContinuationPending && !task.inputSnapshot?.weeklyContinuationRef, 'weekly_execution_continuation_result_required');
+  if (['template_extraction','template_performance_validation'].includes(String(task.schedule?.stepKind))) {const {createWeeklyContentTemplateService}=await import('../socialPrograms/weeklyContentTemplates.js');await createWeeklyContentTemplateService(store,{now:()=>now.toISOString()}).validateTemplateExecutionEvidence(task,refs);return;}
+  if (refs.some(ref => ref.type === 'social_metric_snapshot')) {
+    const { validateWeeklyPublicationMetricRefs } = await import('./weeklyPublicationMetricEvidence.js');
+    await validateWeeklyPublicationMetricRefs(store, task, refs, now);
+    return;
+  }
   for (const ref of refs) {
     if (ref.type === 'weekly_agent_planning' && ['readiness', 'discovery', 'directing'].includes(task.workflowKind)) {
+      const planningWorkflow = { business_outline: 'readiness', benchmark_collection: 'discovery', benchmark_scoring: 'directing', director_analysis: 'directing', business_schedule: 'directing' } as const;
+      requireResult(planningWorkflow[task.schedule.stepKind as keyof typeof planningWorkflow] === task.workflowKind, 'weekly_planning_step_evidence_invalid');
       const row = await unique(store, 'social_weekly_agent_planning', { tenant_id: task.tenantId, program_id: task.programId, package_id: task.packageId, package_version: task.packageVersion, planning_version: ref.version });
       const plan = object(row.payload);
       requireResult(plan.planningId === ref.id && plan.version === ref.version && plan.status === 'dispatched' && text(plan.userConfirmation?.confirmedBy) && text(plan.userConfirmation?.confirmedAt) && plan.dispatch?.scheduleItems?.length && plan.detailedSchedule?.items?.length);
+      if ('referenceSourcePolicy' in task.inputSnapshot) {
+        const weekly = await unique(store, 'social_weekly_operating_packages', { tenant_id: task.tenantId, package_id: task.packageId, version: task.packageVersion });
+        const pkg = object(weekly.payload);
+        const policy = object(pkg.referenceSourcePolicy);
+        const planned = object(plan.referenceSourcePolicy);
+        const frozen = object(task.inputSnapshot.referenceSourcePolicy);
+        requireResult(pkg.programId === task.programId && ['b2b_cold_start', 'b2b_established'].includes(policy.profile)
+          && ['profile', 'ownedPercent', 'externalPercent', 'allocationUnit'].every(key => policy[key] === planned[key] && policy[key] === frozen[key]), 'weekly_reference_source_policy_unverified');
+        if (policy.profile === 'b2b_cold_start') requireResult((plan.skeleton?.slots ?? []).every((slot: any) => slot.referenceSource === 'external'), 'weekly_reference_source_policy_unverified');
+      }
       const step = task.schedule.stepKind;
       const motherId = String(task.inputSnapshot.motherContentId ?? '');
-      const slots = (plan.skeleton?.slots ?? []).filter((slot: any) => !motherId || slot.motherContentId === motherId);
+      const coverage = plan.dispatch.coverage;
+      if (coverage) {
+        assertWeeklyPlanningCoverage(plan as any, coverage, plan.userConfirmation.selectedSlotIds);
+        requireResult(socialRequestHash(plan.detailedSchedule.coverage) === socialRequestHash(coverage), 'weekly_partial_coverage_changed');
+        if (task.publicationTaskId) requireResult(plan.skeleton.slots.some((slot: any) => coverage.selectedSlotIds.includes(slot.slotId) && slot.publicationTaskIds.includes(task.publicationTaskId)) && plan.dispatch.scheduleItems.some((item: any) => item.publicationTaskId === task.publicationTaskId), 'weekly_slot_not_dispatched');
+      }
+      const slots = (plan.skeleton?.slots ?? []).filter((slot: any) => (!coverage || coverage.selectedSlotIds.includes(slot.slotId)) && (!motherId || slot.motherContentId === motherId) && (!task.accountId || slot.accountIds.includes(task.accountId)));
       requireResult(slots.length && (!task.accountId || slots.some((slot: any) => slot.accountIds.includes(task.accountId))));
       if (step === 'business_outline') requireResult(plan.skeleton?.slots?.length);
       else if (step === 'business_schedule') requireResult(slots.every((slot: any) => slot.publicationTaskIds.every((id: string) => plan.detailedSchedule.items.some((item: any) => item.publicationTaskId === id) && plan.dispatch.scheduleItems.some((item: any) => item.publicationTaskId === id))));
       else if (['benchmark_collection', 'benchmark_scoring', 'director_analysis'].includes(step)) {
         const analyses = (plan.directorAnalyses ?? []).filter((analysis: any) => slots.some((slot: any) => slot.slotId === analysis.slotId));
         requireResult(analyses.length && analyses.every((analysis: any) => analysis.packageVersion === task.packageVersion && analysis.benchmarkAccountRefs?.length && analysis.benchmarkVideoRefs?.length && analysis.benchmarkEvidenceRefs?.length && text(analysis.contentDirection)));
+        for (const analysis of analyses) {
+          const frozen = await unique(store, 'social_weekly_operating_packages', { tenant_id: task.tenantId, package_id: task.packageId, version: task.packageVersion });
+          const frozenPackage = object(frozen.payload);
+          requireResult(frozenPackage.programId === task.programId);
+          const slot = slots.find((item: any) => item.slotId === analysis.slotId);
+          const feedbackPublications = (frozenPackage.socialContentPackage?.publicationTasks ?? []).filter((publication: any) => slot?.publicationTaskIds.includes(publication.publicationTaskId) && publication.customerFeedbackTopicRef);
+          const topicRefs = analysis.customerFeedbackTopicRefs ?? [];
+          const topicEvidence = analysis.customerFeedbackTopicEvidence ?? [];
+          requireResult(topicRefs.length === feedbackPublications.length && topicEvidence.length === feedbackPublications.length, 'weekly_customer_feedback_topic_evidence_missing');
+          for (const publication of feedbackPublications) {
+            const matchingRefs = topicRefs.filter((ref: any) => socialRequestHash(ref) === socialRequestHash(publication.customerFeedbackTopicRef));
+            const matchingEvidence = topicEvidence.filter((evidence: any) => evidence.publicationTaskId === publication.publicationTaskId);
+            requireResult(matchingRefs.length === 1 && matchingEvidence.length === 1, 'weekly_customer_feedback_topic_evidence_ambiguous');
+            const verified = await createCustomerFeedbackTopicService(store).verifiedPlanningReference({ tenantId: task.tenantId, programId: task.programId, pkg: frozen.payload as any, publicationTaskId: publication.publicationTaskId, ref: publication.customerFeedbackTopicRef });
+            const evidence = matchingEvidence[0];
+            requireResult(evidence.question === verified.candidate.source.question && evidence.topicAngle === verified.candidate.topicAngle
+              && socialRequestHash(evidence.confirmationRef) === socialRequestHash(publication.customerFeedbackTopicRef)
+              && socialRequestHash(evidence.candidateRef) === socialRequestHash(verified.confirmation.candidateRef), 'weekly_customer_feedback_topic_evidence_changed');
+          }
+          const requirement = analysis.materialEvidenceRequirements;
+          if (!requirement) continue;
+          let handoff: any = null;
+          if (requirement.handoffRef) {
+            const rows = await store.list<Record_>('starter_social_inspiration_handoff_versions', { where: { tenant_id: task.tenantId, record_hash: requirement.handoffRef.recordHash }, page: 1, perPage: 2 });
+            requireResult(rows.totalItems === 1 && rows.items.length === 1);
+            const row = rows.items[0]!;
+            handoff = socialJson(row.payload);
+            requireResult(row.tenant_id === task.tenantId && row.record_hash === socialRequestHash(handoff));
+          }
+          const configuration = requirement.configurationRef && requirement.handoffRef ? await readMaterialEvidenceConfiguration(store, { tenantId: task.tenantId, programId: task.programId, scope: requirement.scope, handoffRef: requirement.handoffRef, ref: requirement.configurationRef }) : null;
+          requireResult(!requirement.configurationRef || configuration, 'weekly_material_classification_configuration_invalid');
+          requireResult(verifyMaterialEvidenceRequirements(requirement, { packageId: task.packageId, packageVersion: task.packageVersion, slotId: analysis.slotId }, analysis.frozenHandoffRefs ?? [], handoff, configuration), 'weekly_material_classification_unverified');
+        }
+        const ownedSlots = slots.filter((slot: any) => slot.referenceSource === 'owned');
+        if (ownedSlots.length) {
+          const weekly = await unique(store, 'social_weekly_operating_packages', { tenant_id: task.tenantId, package_id: task.packageId, version: task.packageVersion });
+          const pkg = object(weekly.payload);
+          const policy = object(pkg.referenceSourcePolicy);
+          requireResult(pkg.programId === task.programId && policy.profile === 'b2b_established');
+          const plannedPolicy = object(plan.referenceSourcePolicy);
+          requireResult(['profile', 'ownedPercent', 'externalPercent', 'allocationUnit'].every(key => plannedPolicy[key] === policy[key]), 'weekly_reference_source_policy_unverified');
+          requireResult(ownedSlots.every((slot: any) => {
+            const matches = analyses.filter((analysis: any) => analysis.slotId === slot.slotId);
+            if (matches.length !== 1 || !ownedDiagnosisReady(matches[0])) return false;
+            const diagnosisPolicy = matches[0].ownedReferenceDiagnosis.policy;
+            return diagnosisPolicy.profile === policy.profile && diagnosisPolicy.ownedPercent === policy.ownedPercent && diagnosisPolicy.externalPercent === policy.externalPercent && diagnosisPolicy.allocationUnit === policy.allocationUnit;
+          }), 'weekly_owned_reference_diagnosis_unverified');
+        }
       } else requireResult(false);
-    } else if (ref.type === 'starter_social_content_script_baseline' && task.workflowKind === 'content' && task.schedule.stepKind === 'script') {
+    } else if (['content', 'directing'].includes(task.workflowKind) && (ref.type === 'starter_social_content_script_baseline' && task.schedule.stepKind === 'script'
+      || ref.type === 'starter_social_content_director_plan' && task.schedule.stepKind === 'storyboard')) {
       const row = await unique(store, 'starter_social_content_tasks', { tenant_id: task.tenantId, task_id: ref.id });
       const brief = object(row.brief);
       requireResult(brief.programRef?.id === task.programId && row.create_idempotency_key === `weekly-production:${task.packageId}:${task.packageVersion}:${task.publicationTaskId}`);
@@ -46,8 +152,24 @@ export async function validateWeeklyExecutionResults(store: DataStore, task: Wee
       const run = await store.getById<Record_>('workflow_runs', String(row.run_id));
       requireResult(run?.tenant_id === task.tenantId && !['cancelled','failed','dead_letter'].includes(String(run.status)));
       const ids = (brief._weeklyAuthority?.referenceSelection?.selected ?? []).map((item: any) => String(item.candidateId));
-      const verified = weeklyScriptEvidence(row, ids);
+      const verified = ref.type === 'starter_social_content_director_plan' ? weeklyStoryboardEvidence(row, ids) : weeklyScriptEvidence(row, ids);
       requireResult(verified?.id === ref.id && verified.version === ref.version);
+      const { validateWeeklyTemplateProductionOutput } = await import('../socialPrograms/weeklyTemplateStructure.js');
+      await validateWeeklyTemplateProductionOutput({ store, task, contentRow: row });
+    } else if (ref.type === 'starter_social_content_material_demand' && task.workflowKind === 'content' && task.schedule.stepKind === 'material_readiness') {
+      const row = await unique(store, 'starter_social_content_tasks', { tenant_id: task.tenantId, task_id: ref.id });
+      requireResult(row.create_idempotency_key === `weekly-production:${task.packageId}:${task.packageVersion}:${task.publicationTaskId}` && text(row.run_id) && !['cancelled', 'paused', 'attention', 'needs_input'].includes(String(row.status)));
+      const run = await store.getById<Record_>('workflow_runs', String(row.run_id));
+      requireResult(run?.tenant_id === task.tenantId && !['cancelled', 'failed', 'dead_letter'].includes(String(run.status)));
+      const weekly = await unique(store, 'social_weekly_operating_packages', { tenant_id: task.tenantId, package_id: task.packageId, version: task.packageVersion });
+      const pkg = object(weekly.payload);
+      const publications = object(pkg.socialContentPackage).publicationTasks;
+      const matches = Array.isArray(publications) ? publications.filter((item: any) => item.publicationTaskId === task.publicationTaskId) : [];
+      requireResult(pkg.programId === task.programId && matches.length === 1 && !matches[0].materialRequirement && Array.isArray(matches[0].factRefs));
+      const demand = verifiedNoSharedMaterialDemand(row, { taskId: ref.id, programId: task.programId, packageId: task.packageId, packageVersion: task.packageVersion, publicationTaskId: task.publicationTaskId!, accountId: matches[0].accountId, factRefs: matches[0].factRefs });
+      requireResult(demand?.version === ref.version, 'weekly_material_demand_unverified');
+      const classification = await materialClassification(store, task);
+      requireResult(classification.items.every(item => item.classification === 'generatable_non_evidentiary'), 'weekly_required_materials_unverified');
     } else if (ref.type === 'starter_social_content_task' && task.workflowKind === 'content' && task.schedule.stepKind === 'material_readiness') {
       const row = await unique(store, 'starter_social_content_tasks', { tenant_id: task.tenantId, task_id: ref.id });
       requireResult(version(row.version) === ref.version);
@@ -57,6 +179,27 @@ export async function validateWeeklyExecutionResults(store: DataStore, task: Wee
       requireResult(run?.tenant_id === task.tenantId && !['cancelled', 'failed', 'dead_letter'].includes(String(run.status)));
       const brief = object(row.brief);
       requireResult(brief.programRef?.id === task.programId && row.create_idempotency_key === `weekly-production:${task.packageId}:${task.packageVersion}:${task.publicationTaskId}`);
+      const weekly = await unique(store, 'social_weekly_operating_packages', { tenant_id: task.tenantId, package_id: task.packageId, version: task.packageVersion });
+      const pkg = object(weekly.payload);
+      requireResult(pkg.programId === task.programId);
+      const publications = object(pkg.socialContentPackage).publicationTasks;
+      const matches = Array.isArray(publications) ? publications.filter((item: any) => item.publicationTaskId === task.publicationTaskId) : [];
+      requireResult(matches.length === 1);
+      requireResult(matches[0].materialRequirement?.required === true, 'weekly_material_contract_required');
+      if (matches[0].materialRequirement) {
+        const admitted = await createWeeklyRequiredMaterialAdmission(store)({ tenantId: task.tenantId, programId: task.programId, consumerTaskId: task.taskId, requirement: matches[0].materialRequirement });
+        requireResult(admitted.status === 'ready' && admitted.materials.length > 0, 'weekly_required_materials_unverified');
+        const classification = await materialClassification(store, task);
+        const gap = await checkWeeklyHumanRequirementBindings({ store, tenantId: task.tenantId, programId: task.programId, packageId: task.packageId, packageVersion: task.packageVersion, consumerTaskId: task.taskId, publication: matches[0], contract: classification });
+        requireResult(!gap, gap ?? undefined);
+        for (const material of admitted.materials) {
+          const sourceRef = `socialmaterial:${Buffer.from(`pb-${material.recordId}`, 'utf8').toString('base64url')}`;
+          const option = await socialContentSourceOptions.resolve({ tenantId: task.tenantId, kind: 'material', sourceRef });
+          requireResult(option?.sourceVersion, 'weekly_required_material_source_unverified');
+          const source = await unique(store, 'starter_social_task_sources', { tenant_id: task.tenantId, task_id: ref.id, source_kind: 'material', source_ref: sourceRef, status: 'active' });
+          requireResult(source.source_version === option.sourceVersion, 'weekly_required_material_source_unverified');
+        }
+      }
     } else if (ref.type === 'starter_social_content_artifact' && task.workflowKind === 'content') {
       await validateContentArtifact(store, task, ref);
     } else if (ref.type === 'weekly_publication_attempt' && task.workflowKind === 'publishing' && task.schedule.stepKind === 'publishing') {
@@ -69,15 +212,6 @@ export async function validateWeeklyExecutionResults(store: DataStore, task: Wee
       const pack = object(object(weekly.payload).socialContentPackage);
       requireResult(pack.authorization?.allowRealPublishing === true && !pack.authorization.revokedAt && pack.authorization.accountIds?.includes(task.accountId));
       await validateWeeklyPublicationAcceptance(store, task, String(assignment.production_result_id));
-    } else if (ref.type === 'social_metric_snapshot' && task.workflowKind === 'engagement') {
-      const row = await store.getById<Record_>('social_metric_snapshots', ref.id);
-      requireResult(ref.version === 1 && row?.tenant_id === task.tenantId && row.account_id === task.accountId && Number.isFinite(Date.parse(String(row.captured_at))));
-      const weekly = await unique(store, 'social_weekly_operating_packages', { tenant_id: task.tenantId, package_id: task.packageId, version: task.packageVersion });
-      const pkg = object(weekly.payload);
-      const captured = Date.parse(String(row.captured_at));
-      requireResult(pkg.programId === task.programId && captured >= Date.parse(`${pkg.weekStart}T00:00:00Z`) && captured <= Date.parse(`${pkg.weekEnd}T23:59:59.999Z`) && captured <= now.getTime() && !row.mock && !row.simulated && !/mock|simulat/i.test(String(row.source ?? '')));
-      const metrics = object(row.metrics);
-      requireResult(SOCIAL_METRIC_KEYS.some(key => typeof metrics[key] === 'number' && Number.isFinite(metrics[key]) && metrics[key] >= 0) && Object.values(metrics).every(value => typeof value === 'number' && Number.isFinite(value) && value >= 0));
     } else if (ref.type === 'weekly_review_snapshot' && task.workflowKind === 'review') {
       requireResult(ref.version === 1);
       const row = await unique(store, 'social_weekly_review_snapshots', { tenant_id: task.tenantId, package_id: task.packageId, package_version: task.packageVersion, snapshot_id: ref.id });
@@ -102,6 +236,8 @@ export async function validateContentArtifact(store: DataStore, task: WeeklyExec
   const file = await unique(store, 'starter_social_content_files', { tenant_id: task.tenantId, file_id: media.fileId });
   requireResult(row.resource_ref === `socialfile:${media.fileId}` && file.task_id === row.task_id && file.content_sha256 === media.sha256 && Number(file.byte_size) > 0 && ['object', 'backend_file', 'local'].includes(String(file.storage_kind)));
   await assertSocialContentFilePersisted({ record: file, tenantId: task.tenantId });
+  const { validateWeeklyTemplateProductionOutput } = await import('../socialPrograms/weeklyTemplateStructure.js');
+  await validateWeeklyTemplateProductionOutput({ store, task, contentRow: source, artifactRow: row });
   const step = task.schedule.stepKind;
   if (step === 'script') requireResult(content.scriptBaseline?.scenes?.length && content.scriptBaseline.scenes.every((scene: any) => text(scene.script) || text(scene.voiceover)));
   else if (step === 'storyboard') requireResult(content.directorPlan?.sceneCount > 0);

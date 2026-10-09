@@ -1,3 +1,4 @@
+import {validContentTemplateStructure,contentTemplateRoleAt,contentTemplateRoleLabel,type ContentTemplateStructureConstraint} from '../../shared/socialContentTemplateStructure.js';
 import type {
   SocialContentTaskBrief,
   SocialContentThemeId,
@@ -67,6 +68,7 @@ export interface SocialInspirationScriptMatch {
 }
 
 export interface StoredSocialScriptBaseline {
+  contentTemplateStructure?: ContentTemplateStructureConstraint;
   schemaVersion: typeof SOCIAL_SCRIPT_BASELINE_SCHEMA;
   version: string;
   source: 'formula' | 'inspiration_script' | 'knowledge_fallback' | 'system_theme_baseline';
@@ -436,6 +438,7 @@ function groundedNarration(input: {
  * fit shots to this script, but may not silently author a second script.
  */
 export function freezeSocialScriptBaseline(input: {
+  contentTemplateStructure?: ContentTemplateStructureConstraint;
   brief: SocialContentTaskBrief;
   theme: SocialContentThemeSelection | null;
   formula?: InternalSocialContentFormula | null;
@@ -610,7 +613,9 @@ export function freezeSocialScriptBaseline(input: {
   if (!scenes.length || (!replicationShots.length && scenes.some(scene => !scene.narration))) {
     throw new SocialContentWorkflowError('social_content_script_baseline_invalid', 503);
   }
+  if(input.contentTemplateStructure){if(!validContentTemplateStructure(input.contentTemplateStructure))throw new SocialContentWorkflowError('content_template_structure_invalid',409);for(let i=0;i<scenes.length;i++)scenes[i]!.shotFunction=contentTemplateRoleLabel(contentTemplateRoleAt(input.contentTemplateStructure,i,scenes.length));}
   return {
+    ...(input.contentTemplateStructure?{contentTemplateStructure:structuredClone(input.contentTemplateStructure)}:{}),
     schemaVersion: SOCIAL_SCRIPT_BASELINE_SCHEMA,
     version: nextBaselineVersion(input.previous),
     source,
@@ -853,7 +858,10 @@ export function parseStoredSocialScriptBaseline(value: unknown): StoredSocialScr
     }
     return parsed;
   });
+  const contentTemplateStructure=row.contentTemplateStructure as ContentTemplateStructureConstraint|undefined;
+  if(contentTemplateStructure&&(!validContentTemplateStructure(contentTemplateStructure)||scenes.some((scene,i)=>scene.shotFunction!==contentTemplateRoleLabel(contentTemplateRoleAt(contentTemplateStructure,i,scenes.length)))))throw new SocialContentWorkflowError('content_template_structure_invalid',503);
   return {
+    ...(contentTemplateStructure?{contentTemplateStructure:structuredClone(contentTemplateStructure)}:{}),
     schemaVersion: SOCIAL_SCRIPT_BASELINE_SCHEMA,
     version: socialText(row.version),
     source: source as StoredSocialScriptBaseline['source'],

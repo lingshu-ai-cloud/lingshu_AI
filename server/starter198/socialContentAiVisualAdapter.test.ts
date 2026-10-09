@@ -70,6 +70,30 @@ test('AI visual adapter enforces budget and returns null so the router can use m
   assert.equal(called, false);
 });
 
+test('visual repair uses a new provider key while repeating the same repair reuses its output', async () => {
+  const outputDirectory = await fsp.mkdtemp(path.join(os.tmpdir(), 'social-ai-repair-'));
+  const keys: string[] = [];
+  const adapter = createSocialAiVisualAdapter({ enabled: true, generators: [{
+    generatorId: 'test-image', mediaType: 'image', estimatedCostCny: 0,
+    async generate(input) {
+      keys.push(input.idempotencyKey);
+      return { type: 'image', providerId: 'test', model: 'test', bytes: Buffer.from('image'), mimeType: 'image/png', estimatedCostCny: 0 };
+    },
+  }], maxCostCnyPerShot: 1, timeoutMs: 1000 });
+  try {
+    const original = context(outputDirectory);
+    const repair = { ...original, operationId: `scene_rework_${'a'.repeat(24)}` };
+    const first = await adapter.execute(original);
+    const changed = await adapter.execute(repair);
+    const retry = await adapter.execute(repair);
+    assert.equal(keys.length, 2);
+    assert.notEqual(keys[0], keys[1]);
+    assert.notEqual(first?.asset.id, changed?.asset.id);
+    assert.equal(changed?.asset.id, retry?.asset.id);
+    assert.equal(repair.taskId, original.taskId);
+  } finally { await fsp.rm(outputDirectory, { recursive: true, force: true }); }
+});
+
 test('AI visual adapter rejects evidence-required shots before calling a provider', async () => {
   let called = false;
   const generator: SocialAiVisualGenerator = {

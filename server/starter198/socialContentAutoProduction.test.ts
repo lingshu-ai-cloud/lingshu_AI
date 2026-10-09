@@ -571,53 +571,11 @@ try {
       tenantId: 'social-auto-render-test', text: narration, language: 'zh', voice: 'v1',
       style: { preset: 'professional_b2b', speed: 1.12, pauseStyle: 'natural' },
     });
-    assert.equal(voice.ok, true, voice.error);
-    assert.equal(voice.source, 'local_say');
-    assert.ok(voice.localPath && fs.existsSync(voice.localPath));
-    assert.ok(voice.cues?.length);
+    assert.equal(voice.ok, false, 'Automation must reject system voices when natural providers are unavailable');
+    assert.match(voice.error || '', /自然人声|配音|语音服务/);
+    assert.equal(voice.localPath, undefined);
+    console.log('Natural voice unavailable: paid-provider render smoke deliberately not executed');
 
-    const duration = Math.max(1, Number(voice.duration || voice.cues!.at(-1)?.end || 1));
-    assert.ok(duration <= plan.maxDuration + 0.25, `voice ${duration}s must fit visual budget ${plan.maxDuration}s`);
-    const timeline = socialDirectorRenderTimeline(contentHandoff, duration);
-    assert.equal(timeline.length, plan.scenes.length);
-    assert.ok(timeline.every(scene => scene.type === 'video' && Number(scene.trimEnd) > Number(scene.trimStart)));
-
-    const outputDir = path.join(temporaryRoot, 'renders');
-    const rendered = await composite({
-      jobId: 'single-material-auto-production',
-      requireVisualAssets: true,
-      spec: {
-        ratio: contentHandoff.outputSpec.aspectRatio,
-        resolution: contentHandoff.outputSpec.resolution,
-        duration,
-        platform: contentHandoff.outputSpec.platform,
-        language: contentHandoff.outputSpec.language,
-        bgmVol: 0,
-        voiceVol: contentHandoff.outputSpec.voiceVolume,
-      },
-      timeline,
-      voiceover: { url: voice.localPath },
-      bgm: { id: null, url: null },
-      subtitles: {
-        mode: 'target', cues: socialDirectorSceneTimingCues(contentHandoff, duration),
-        style: {
-          fontScale: contentHandoff.direction.subtitles.fontScale,
-          bottomRatio: contentHandoff.direction.subtitles.bottomRatio,
-        },
-      },
-    }, undefined, outputDir);
-    assert.equal(rendered.ok, true, rendered.error);
-    assert.ok(rendered.outputPath && fs.existsSync(rendered.outputPath));
-    assert.ok(fs.statSync(rendered.outputPath!).size > 10_000, 'rendered MP4 must contain real media bytes');
-    const quality = await inspectRenderedVisuals({ outputPath: rendered.outputPath!, expectedDuration: duration, expectedUniqueScenes: plan.scenes.length });
-    assert.equal(quality.passed, true, quality.failures.join('; '));
-    const sceneQuality = await inspectRenderedScenes({
-      outputPath: rendered.outputPath!, scenes: socialDirectorSceneTimingCues(contentHandoff, duration), requireDistinct: true,
-    });
-    assert.equal(sceneQuality.passed, true, sceneQuality.issues.map(issue => issue.reason).join('; '));
-    const audio = await runVisualFfmpeg(['-i', rendered.outputPath!, '-map', '0:a:0', '-t', '1', '-f', 'null', '-']);
-    assert.equal(audio.ok, true, audio.stderr || 'rendered MP4 audio could not be decoded');
-    console.log(`Social auto-production single-material MP4 render passed (${path.basename(rendered.outputPath!)})`);
   }
 } finally {
   process.chdir(previous.cwd);

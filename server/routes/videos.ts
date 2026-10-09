@@ -1,4 +1,9 @@
 import { prepareReferenceNarration } from '../lib/referenceNarration.js';
+import { lockReferenceSpeechTimeline, type ReferenceSpeechTranscript } from '../lib/referenceSpeechAnalysis.js';
+import { joinReferenceWords } from '../lib/referenceWordAlignment.js';
+import { probeReferenceMediaClock } from '../lib/referenceMediaClock.js';
+import { produceReferenceCriticalShots } from '../lib/referenceCriticalShotProduction.js';
+import { produceReferenceProductionRouting } from '../lib/referenceProductionRouting.js';
 import { AnalysisAlreadyRunningError, AnalysisLeaseRegistry } from '../lib/analysisLease.js';
 import { DownloadBudget, RecordWorkRegistry, terminalDownloadFailure } from '../lib/downloadExecution.js';
 import { Router, type Request, type Response } from 'express';
@@ -29,7 +34,6 @@ import { buildReferenceSpeechTimeline, type ReferenceStructureInput } from './re
 import { approximateSpeechLines } from '../lib/referenceApproxSpeech.js';
 import { attachReviewShotMaterials, loadReferenceShotReview, reviewShotMaterialFingerprint, updateReferenceShotReview } from '../lib/referenceShotReview.js';
 import { currentVerifiedSpeech, validateVerifiedSpeechLines, verifiedSpeechStatus, type VerifiedReferenceSpeech } from '../lib/verifiedReferenceSpeech.js';
-import { QwenAsrService, qwenAsrCues } from '../lib/qwenAsr.js';
 import { recordVideoAdminAlert, updateVideoAdminAlertByRecordId } from '../lib/videoAdminAlerts.js';
 import { requireAdminUser } from '../lib/demoAccounts.js';
 import { ASSET_SESSION_COOKIE, cookieValue, signAssetUrl, tenantAssetDir, tenantAssetRelativePath } from '../lib/assetAccess.js';
@@ -64,7 +68,6 @@ const ffmpegBin = ffmpegStatic as unknown as string | null;
 const MANUAL_UPLOAD_MAX_BYTES = 10 * 1024 * 1024;
 const REFERENCE_UPLOAD_MAX_BYTES = 32 * 1024 * 1024;
 const referenceImportRegistry = new RecordWorkRegistry();
-const referenceAsrService = new QwenAsrService(path.join(process.cwd(), 'data', 'qwen-asr'));
 let legacyFakePurgePromise: Promise<void> | null = null;
 let activeDownloadJobs = 0;
 const MAX_DOWNLOAD_JOBS = Number(process.env.VIDEO_DOWNLOAD_CONCURRENCY || 3);
@@ -2609,47 +2612,133 @@ videosRouter.post('/:id/sales-presenter-review', async (req, res) => {
   catch (error) { res.status(422).json({ error: error instanceof Error ? error.message : '销售识别失败' }); }
 });
 
+/** Automatic measured speech repair uses the same ASR/mapping as new analysis.
+ * It updates source evidence only; no manual confirmation/review is introduced. */
+videosRouter.post('/:id/align-speech', async (req, res) => {
+  const { tenantId } = res.locals as AuthLocals;
+  const recordId = String(req.params.id);
+  const record = await store.getById<Record<string, unknown>>(COL, recordId);
+  if (!record || String(record.tenantId || '') !== tenantId) { res.status(404).json({ error: 'Not found' }); return; }
+  const before = parseJsonRecord<Record<string, any>>(record.aiAnalysis, {});
+  const videoPath = localReferenceVideoPath(String(record.videoFileId || ''), tenantId);
+  if (!videoPath || !fs.existsSync(videoPath)) { res.status(422).json({ error: '本地原片不可用，不能建立真实词级对齐' }); return; }
+  const fingerprint = (value: Record<string, any>) => createHash('sha256').update(JSON.stringify({
+    contentSha256: value.contentSha256, analysisRunId: value.analysisRunId, gemini: value.gemini,
+  })).digest('hex');
+  try {
+    const measuredHash = createHash('sha256').update(fs.readFileSync(videoPath)).digest('hex');
+    if (before.contentSha256 && before.contentSha256 !== measuredHash) {
+      res.status(409).json({ error: '原片已变化，不能将新音频写入旧分镜分析' }); return;
+    }
+    const clock = await probeReferenceMediaClock(videoPath);
+    const transcript = await prepareReferenceNarration(videoPath, clock.duration, { tenantId });
+    const mapped = lockReferenceSpeechTimeline(before.gemini, transcript, { duration: clock.duration, fps: clock.fps ?? undefined });
+    const latest = await store.getById<Record<string, unknown>>(COL, recordId);
+    const current = parseJsonRecord<Record<string, any>>(latest?.aiAnalysis, {});
+    if (!latest || String(latest.tenantId || '') !== tenantId || fingerprint(current) !== fingerprint(before)) {
+      res.status(409).json({ error: '分析已变化，对齐结果未覆盖新分析' }); return;
+    }
+    const alignment = { version: 2, status: 'aligned', provider: 'qwen', model: transcript.model,
+      taskId: transcript.taskId, sourceSha256: measuredHash, audioSha256: transcript.sourceSha256,
+      wordCount: transcript.words.length, shotCount: mapped.scriptDetails15s?.length || 0,
+      mappedWordCount: mapped.speechAlignmentSummary?.acceptedWordCount || 0,
+      clippedShotIds: mapped.speechAlignmentSummary?.clippedShotIds || [],
+      timestampResolutionMs: transcript.timestampResolutionMs, accuracyMs: transcript.accuracyMs,
+      durationSeconds: clock.duration, fps: clock.fps, completedAt: new Date().toISOString() };
+    if (!await store.update(COL, recordId, { duration: clock.duration,
+      aiAnalysis: JSON.stringify({ ...current, gemini: mapped, speechAlignment: alignment,
+        // A previous semantic classification cannot survive a changed audio clock.
+        criticalShotAnalysis: undefined }) })) throw new Error('对齐结果保存失败');
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.json({ ok: true, status: 'aligned', alignment, analysisRunId: current.analysisRunId, sourceSha256: measuredHash });
+  } catch (error) { res.status(422).json({ ok: false, status: 'unavailable',
+    error: error instanceof Error ? error.message : '口播对齐失败，未伪造时间戳' }); }
+});
+
+videosRouter.post('/:id/classify-critical-shots', async (req, res) => {
+  const { tenantId } = res.locals as AuthLocals;
+  const id = String(req.params.id);
+  const record = await store.getById<Record<string, unknown>>(COL, id);
+  if (!record || record.tenantId !== tenantId) { res.status(404).json({ error: 'Not found' }); return; }
+  const before = parseJsonRecord<Record<string, any>>(record.aiAnalysis, {});
+  const filePath = localReferenceVideoPath(String(record.videoFileId || ''), tenantId);
+  if (!filePath || !fs.existsSync(filePath)) { res.status(422).json({ error: '原片不可用，不能观察实际动作' }); return; }
+  if (!before.gemini?.audioTranscript?.words?.length || !before.gemini?.speechAlignmentSummary?.acceptedWordCount) {
+    res.status(422).json({ error: '缺少真实词级对齐，不能判定动作台词卡点' }); return;
+  }
+  const fingerprint = (value: Record<string, any>) => createHash('sha256')
+    .update(JSON.stringify({ contentSha256: value.contentSha256, analysisRunId: value.analysisRunId, gemini: value.gemini })).digest('hex');
+  try {
+    const sourceSha256 = createHash('sha256').update(fs.readFileSync(filePath)).digest('hex');
+    if (before.contentSha256 && before.contentSha256 !== sourceSha256) { res.status(409).json({ error: '源视频已变化' }); return; }
+    const clock = await probeReferenceMediaClock(filePath);
+    const classified = await produceReferenceCriticalShots({ filePath, analysis: before.gemini,
+      videoId: id, sourceSha256, duration: clock.duration, tenantId });
+    const latest = await store.getById<Record<string, unknown>>(COL, id);
+    const current = parseJsonRecord<Record<string, any>>(latest?.aiAnalysis, {});
+    if (!latest || latest.tenantId !== tenantId || fingerprint(current) !== fingerprint(before)) {
+      res.status(409).json({ error: '分析已变化，卡点判定未覆盖新版本' }); return;
+    }
+    if (!await store.update(COL, id, { aiAnalysis: JSON.stringify({ ...current,
+      gemini: classified, criticalShotAnalysis: classified.criticalShotSummary }) })) throw new Error('卡点判定保存失败');
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.json({ ok: true, status: 'classified', classification: classified.criticalShotSummary });
+  } catch (error) { res.status(422).json({ ok: false, status: 'unavailable',
+    error: error instanceof Error ? error.message : '卡点识别失败，未伪造判定' }); }
+});
+
+/** Automatic independent person-continuity evidence and identity-first route.
+ * Existing critical labels and measured speech remain intact. */
+videosRouter.post('/:id/route-production', async (req, res) => {
+  const { tenantId } = res.locals as AuthLocals;
+  const id = String(req.params.id), record = await store.getById<Record<string, unknown>>(COL, id);
+  if (!record || record.tenantId !== tenantId) { res.status(404).json({ error: 'Not found' }); return; }
+  const before = parseJsonRecord<Record<string, any>>(record.aiAnalysis, {});
+  const filePath = localReferenceVideoPath(String(record.videoFileId || ''), tenantId);
+  if (!filePath || !fs.existsSync(filePath)) { res.status(422).json({ error: '原片不可用，不能识别人物连续性' }); return; }
+  if (!before.gemini?.scriptDetails15s?.length || !before.gemini.scriptDetails15s.every((s:any)=>s.criticalShot)) {
+    res.status(422).json({ error: '缺少独立关键性证据，先完成原片分析' }); return;
+  }
+  const fingerprint = (value: Record<string, any>) => createHash('sha256').update(JSON.stringify({
+    source:value.contentSha256,run:value.analysisRunId,gemini:value.gemini })).digest('hex');
+  try {
+    const sourceSha256 = createHash('sha256').update(fs.readFileSync(filePath)).digest('hex');
+    if (before.contentSha256 !== sourceSha256) { res.status(409).json({ error: '原片指纹已变化' }); return; }
+    const clock = await probeReferenceMediaClock(filePath);
+    const routed = await produceReferenceProductionRouting({filePath,analysis:before.gemini,sourceSha256,
+      videoId:id,tenantId,duration:clock.duration});
+    const latest = await store.getById<Record<string,unknown>>(COL,id), current = parseJsonRecord<Record<string,any>>(latest?.aiAnalysis,{});
+    if (!latest || latest.tenantId !== tenantId || fingerprint(current) !== fingerprint(before)) {
+      res.status(409).json({error:'分析已变化，人物路由未覆盖新版本'});return;
+    }
+    if(!await store.update(COL,id,{aiAnalysis:JSON.stringify({...current,gemini:routed,
+      presenterContinuitySummary:routed.presenterContinuitySummary,referenceProductionRoutingSummary:routed.referenceProductionRoutingSummary})})) throw new Error('生产路由保存失败');
+    res.setHeader('Cache-Control','private, no-store');
+    res.json({ok:true,status:'routed',presenterContinuitySummary:routed.presenterContinuitySummary,
+      routing:routed.referenceProductionRoutingSummary});
+  } catch(error) {res.status(422).json({ok:false,status:'unavailable',error:error instanceof Error?error.message:'人物识别失败，未猜测路由'});}
+});
+
+/** Compatibility response for the existing detail editor. It shares the
+ * automatic reference ASR cache; no separate timestamp implementation. */
 videosRouter.post('/:id/phrase-asr', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   const record = await store.getById<Record<string, unknown>>(COL, req.params.id);
   if (!record || String(record.tenantId || '') !== tenantId) { res.status(404).json({ error: 'Not found' }); return; }
   const analysis = parseJsonRecord<Record<string, unknown>>(record.aiAnalysis, {});
-  if (analysis.usage !== 'reference_only' || !analysis.contentSha256 || !analysis.analysisRunId) {
-    res.status(422).json({ ok: false, error: '仅支持已导入的本企业参考视频' }); return;
-  }
-  const duration = Number(record.duration || 0);
-  if (!Number.isFinite(duration) || duration <= 0 || duration > 180) {
-    res.status(422).json({ ok: false, error: '逐句转写仅支持 180 秒以内视频' }); return;
-  }
-  const filename = String(record.videoFileId || '');
-  const videoPath = localReferenceVideoPath(filename, tenantId);
-  if (!videoPath || !fs.existsSync(videoPath) || !ffmpegBin) {
-    res.status(422).json({ ok: false, error: '本地参考视频或音频提取工具不可用' }); return;
-  }
-  const confirmed = req.body?.confirmed === true;
-  const audioPath = path.join(ANALYSIS_DIR, `reference-asr-${randomUUID()}.mp3`);
+  const videoPath = localReferenceVideoPath(String(record.videoFileId || ''), tenantId);
+  if (!videoPath || !fs.existsSync(videoPath)) { res.status(422).json({ error: '本地原片不可用' }); return; }
   try {
-    fs.mkdirSync(ANALYSIS_DIR, { recursive: true });
-    await execFileAsync(ffmpegBin, ['-hide_banner', '-loglevel', 'error', '-i', videoPath,
-      '-vn', '-ac', '1', '-ar', '16000', '-codec:a', 'libmp3lame', '-b:a', '64k', '-y', audioPath], { timeout: 60_000 });
-    const audio = fs.readFileSync(audioPath);
-    const task = await referenceAsrService.run(tenantId, audio, 'audio/mpeg', confirmed);
-    const common = { ok: true, status: task.status, taskId: task.taskId || null,
-      enabled: process.env.QWEN_ASR_GENERATION_ENABLED === 'true', error: task.error || null,
-      analysisRunId: analysis.analysisRunId, sourceSha256: analysis.contentSha256 };
-    if (task.status !== 'SUCCEEDED') { res.setHeader('Cache-Control', 'private, no-store'); res.json({ ...common, candidateLines: [] }); return; }
-    const result = qwenAsrCues(task.raw, duration);
+    const clock = await probeReferenceMediaClock(videoPath);
+    const result = await prepareReferenceNarration(videoPath, clock.duration, { tenantId });
     res.setHeader('Cache-Control', 'private, no-store');
-    res.json({ ...common, transcript: result.text, candidateLines: result.cues.map(cue => ({
-      text: cue.text, start: cue.start, end: cue.end, precision: 'phrase',
-      provenance: `qwen_asr:${task.taskId}`, visibility: 'unknown',
-    })) });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : '逐句转写失败';
-    res.status(message.includes('付费转写尚未启用') ? 409 : 400).json({
-      ok: false, enabled: process.env.QWEN_ASR_GENERATION_ENABLED === 'true', error: message,
-    });
-  } finally { try { fs.unlinkSync(audioPath); } catch {} }
+    res.json({ ok: true, status: 'SUCCEEDED', taskId: result.taskId, enabled: true,
+      analysisRunId: analysis.analysisRunId, sourceSha256: analysis.contentSha256,
+      transcript: result.text, candidateLines: result.segments.map((segment: any) => ({
+        text: segment.text, start: segment.start, end: segment.end, words: segment.words,
+        precision: 'phrase', provenance: result.provenance, visibility: 'unknown',
+      })) });
+  } catch (error) { res.status(422).json({ ok: false, status: 'unavailable', error: error instanceof Error ? error.message : '词级对齐不可用' }); }
 });
 
 /** Align observed ASR to an editor-confirmed narrative structure. This is a
@@ -3473,6 +3562,8 @@ async function triggerVideoAnalysis(
       duration: Number(record?.duration || 0),
       tags: parseJsonRecord<string[]>(record?.tags, []),
       sourceLabel: 'gemini-upload-video',
+      videoId: recordId,
+      tenantId: String(record?.tenantId || ''),
       analysisMode: previous.requestedAnalysisMode === 'strategy' ? 'strategy' : 'exact',
     });
     if (previous.requestedAnalysisMode !== 'strategy') {
@@ -4712,6 +4803,8 @@ async function analyzeSourceVideoJobInner(input: {
       views: String(input.record?.views || ''),
       tags: parseJsonRecord<string[]>(input.record?.tags, []),
       sourceLabel: 'gemini-temp-video',
+      videoId: recordId,
+      tenantId: String(input.record?.tenantId || ''),
       analysisMode,
     });
 
@@ -5131,6 +5224,8 @@ async function analyzeDownloadedMaterial(recordId: string, filePath: string, mat
       title: material.name,
       duration: material.duration,
       sourceLabel: 'gemini-video',
+      videoId: recordId,
+      tenantId: material.tenantId,
       analysisMode,
     });
     if (analysisMode === 'exact') {
@@ -6839,31 +6934,8 @@ export function coarseAsrSentences(text: string, start: number, end: number): Vi
   }));
 }
 
-export function lockAsrTimeline(analysis: VideoAiAnalysis, transcript?: { text: string; segments: VideoAsrSegment[] }): VideoAiAnalysis {
-  if (!transcript?.segments.length || !analysis.scriptDetails15s?.length) return analysis;
-  return {
-    ...analysis,
-    audioTranscript: { ...transcript, text: transcript.text, segments: transcript.segments.map(segment => ({
-      start: segment.start, end: segment.end, text: segment.text, words: segment.words,
-      timingPrecision: segment.timingPrecision === 'phrase' ? 'phrase' as const : 'coarse' as const,
-      provenance: segment.provenance, needsReview: segment.needsReview ?? segment.timingPrecision !== 'phrase',
-    })) },
-    scriptDetails15s: analysis.scriptDetails15s.map(detail => {
-      const range = parseAnalysisTimeRange(String(detail.time || detail.timestamp || ''));
-      if (!range) return detail;
-      const aligned = transcript.segments.filter(segment => segment.timingPrecision === 'phrase'
-        && segment.end > segment.start && segment.end - segment.start <= Math.max(5, range.end - range.start + 1)
-        && segment.start < range.end && segment.end > range.start);
-      const dialogue = aligned.map(segment => segment.text.trim()).filter(Boolean).join(' ');
-      const coarseSpeechOverlaps = transcript.segments.some(segment => segment.timingPrecision !== 'phrase'
-        && segment.start < range.end && segment.end > range.start);
-      const uncertain = /品牌|款名|名称|价格|左右|眼|色号|ASR|不一致|核实|确认/i.test(String(detail.note || ''));
-      return { ...detail, dialogue, subtitle: detail.onScreenText || detail.subtitle || '',
-        audio: coarseSpeechOverlaps ? '检测到未对齐的口播，逐镜台词待复核' : detail.audio,
-        confidence: uncertain || coarseSpeechOverlaps ? Math.min(Number(detail.confidence) || 0.55, 0.55) : detail.confidence,
-        needsReview: Boolean(detail.needsReview || uncertain || coarseSpeechOverlaps) };
-    }),
-  };
+export function lockAsrTimeline(analysis: VideoAiAnalysis, transcript?: ReferenceSpeechTranscript): VideoAiAnalysis {
+  return lockReferenceSpeechTimeline(analysis, transcript);
 }
 
 export function selectFramesForPhysicalCuts<T extends { timeLabel: string }>(
@@ -7118,7 +7190,7 @@ async function analyzeExactLongVideoChunks(input: {
   duration: number;
   views?: string;
   tags?: string[];
-  transcript?: { text: string; segments: Array<{ start: number; end: number; text: string; timingPrecision?: 'phrase' | 'coarse' }> };
+  transcript?: ReferenceSpeechTranscript;
   analysisMode?: 'strategy' | 'exact';
   sceneCuts?: number[];
 }): Promise<VideoAiAnalysis> {
@@ -7164,7 +7236,12 @@ async function analyzeExactLongVideoChunks(input: {
     const localFrames = selected.map(frame => ({ ...frame, timeLabel: `${Math.max(0, qwenFrameSeconds(frame.timeLabel) - chunk.start).toFixed(2)}s` }));
     const localSegments = (input.transcript?.segments || [])
       .filter(segment => segment.timingPrecision === 'phrase' && segment.end > chunk.start && segment.start < chunk.end)
-      .map(segment => ({ ...segment, start: Math.max(0, segment.start - chunk.start), end: Math.min(localDuration, segment.end - chunk.start) }));
+      .map(segment => {
+        const words = segment.words?.filter(word => word.end > chunk.start && word.start < chunk.end)
+          .map(word => ({ ...word, start: Math.max(0, word.start - chunk.start), end: Math.min(localDuration, word.end - chunk.start) }));
+        return { ...segment, ...(words?.length ? { words, text: joinReferenceWords(words) } : {}),
+          start: Math.max(0, segment.start - chunk.start), end: Math.min(localDuration, segment.end - chunk.start) };
+      });
     // Stage 1 is deterministic: lock continuous observation windows to the
     // real video clock. This is not a claim that every boundary is a cut; the
     // model only describes visible content inside each server-owned window.
@@ -7209,7 +7286,13 @@ async function analyzeExactLongVideoChunks(input: {
     });
     const localQualityError = analysisTimelineQualityError(result, localDuration, input.analysisMode || 'exact');
     if (localQualityError) throw new Error(`${input.analysisMode || 'exact'}_chunk_quality_failed_${chunk.start.toFixed(0)}_${localQualityError}`);
-    const details = (result.scriptDetails15s || []).map(detail => ({ ...detail, time: shiftedTimelineLabel(String(detail.time || detail.timestamp || ''), chunk.start, localDuration) }));
+    const details = (result.scriptDetails15s || []).map(detail => ({ ...detail,
+      time: shiftedTimelineLabel(String(detail.time || detail.timestamp || ''), chunk.start, localDuration),
+      beats: detail.beats?.map(beat => ({ ...beat,
+        time: shiftedTimelineLabel(String(beat.time || ''), chunk.start, localDuration) })),
+      tempoPhases: detail.tempoPhases?.map(phase => ({ ...phase,
+        time: shiftedTimelineLabel(String(phase.time || ''), chunk.start, localDuration) })),
+    }));
     return {
       ...result,
       coarseStructure: (result.coarseStructure || []).map(item => ({ ...item, time: shiftedTimelineLabel(String(item.time || ''), chunk.start, localDuration) })),
@@ -7281,8 +7364,35 @@ export async function analyzeDownloadedVideoWithFallback(opts: {
   views?: string;
   tags?: string[];
   sourceLabel: string;
+  videoId?: string;
+  tenantId?: string;
   analysisMode?: 'strategy' | 'exact';
 }): Promise<{ analysis: VideoAiAnalysis; source: string }> {
+  const sourceClock = await probeReferenceMediaClock(opts.filePath);
+  opts = { ...opts, duration: sourceClock.duration };
+  let speechPromise: Promise<ReferenceSpeechTranscript | undefined> | undefined;
+  const sourceSpeech = () => speechPromise ??= prepareReferenceNarration(opts.filePath, Number(opts.duration), { tenantId: opts.tenantId || undefined })
+    .catch(error => {
+      console.warn('[videos] Measured source speech unavailable:', error instanceof Error ? error.message : error);
+      return { text: '', segments: [], words: [], alignmentStatus: 'unavailable',
+        alignmentError: error instanceof Error ? error.message : 'source_speech_unavailable' };
+    });
+  const finishSourceAnalysis = async (analysis: VideoAiAnalysis) => {
+    const locked = lockReferenceSpeechTimeline(analysis, await sourceSpeech(),
+      { duration: sourceClock.duration, fps: sourceClock.fps ?? undefined });
+    if (opts.analysisMode !== 'exact' || !locked.audioTranscript?.words?.length) return locked;
+    try {
+      const sourceInput = { filePath: opts.filePath, analysis: locked,
+        videoId: opts.videoId || path.basename(opts.filePath, path.extname(opts.filePath)),
+        sourceSha256: createHash('sha256').update(fs.readFileSync(opts.filePath)).digest('hex'),
+        duration: sourceClock.duration, tenantId: opts.tenantId };
+      const classified = await produceReferenceCriticalShots(sourceInput);
+      try { return await produceReferenceProductionRouting({ ...sourceInput, analysis: classified }); }
+      catch (error) { return { ...classified, referenceProductionRoutingError: error instanceof Error ? error.message : 'person_continuity_unavailable' }; }
+    } catch (error) {
+      return { ...locked, criticalShotError: error instanceof Error ? error.message : 'critical_shot_unavailable' };
+    }
+  };
   const runQwen = async () => {
     // Dense opening frames + evenly distributed full-video evidence. Sixty base64
     // frames made long-video requests time out without materially improving the
@@ -7298,57 +7408,7 @@ export async function analyzeDownloadedVideoWithFallback(opts: {
       opts.analysisMode === 'exact' ? 'exact' : 'strategy',
       detectedSceneCuts,
     );
-    let transcript: { text: string; segments: VideoAsrSegment[] } | undefined;
-    const asrDir = path.join(ANALYSIS_DIR, `qwen-asr-${Date.now()}-${randomUUID()}`);
-    try {
-      if (ffmpegBin) {
-        fs.mkdirSync(asrDir, { recursive: true });
-        if (Number(opts.duration) > 0 && Number(opts.duration) <= 180) {
-          transcript = await prepareReferenceNarration(opts.filePath, Number(opts.duration));
-        } else {
-        const pattern = path.join(asrDir, 'chunk-%03d.mp3');
-        // Exact analysis needs a narrow, honest interval for each spoken line.
-        // Inline Qwen ASR has no word timestamps, so these remain coarse even
-        // when a window contains just one sentence. Paid filetrans is separate
-        // and requires explicit authorization through its own guarded API.
-        const configuredAsrSeconds = Number(process.env.VIDEO_ASR_SEGMENT_SECONDS);
-        const asrSegmentSeconds = opts.analysisMode === 'exact'
-          ? Math.max(2, Math.min(6, Number.isFinite(configuredAsrSeconds) && configuredAsrSeconds > 0 ? configuredAsrSeconds : 3))
-          : Math.max(15, Number.isFinite(configuredAsrSeconds) && configuredAsrSeconds > 0 ? configuredAsrSeconds : 30);
-        await execFileAsync(ffmpegBin, ['-hide_banner', '-loglevel', 'error', '-i', opts.filePath, '-vn', '-ac', '1', '-ar', '16000', '-b:a', '64k', '-f', 'segment', '-segment_time', String(asrSegmentSeconds), '-reset_timestamps', '1', '-y', pattern], { timeout: 90_000 });
-        const chunks = fs.readdirSync(asrDir).filter(file => /^chunk-\d+\.mp3$/.test(file)).sort();
-        const segments: VideoAsrSegment[] = [];
-        const concurrency = Math.max(1, Math.min(6, Number(process.env.VIDEO_ASR_CONCURRENCY || 6)));
-        const asrTimeoutMs = Math.max(10_000, Number(process.env.VIDEO_ASR_CHUNK_TIMEOUT_MS || 20_000));
-        for (let offset = 0; offset < chunks.length; offset += concurrency) {
-          const batch = chunks.slice(offset, offset + concurrency);
-          const results = await Promise.all(batch.map(async (file, batchIndex) => {
-            const index = offset + batchIndex;
-            const controller = new AbortController();
-            const timer = setTimeout(() => controller.abort(), asrTimeoutMs);
-            let result: { text: string; segments: Array<{ start: number; end: number; text: string }> } = { text: '', segments: [] };
-            try {
-              result = await transcribeAudioWithQwen({
-                audio: fs.readFileSync(path.join(asrDir, file)),
-                fileName: file,
-                signal: controller.signal,
-              });
-            } catch (error) {
-              console.warn(`[videos] Qwen ASR chunk ${index} skipped after ${asrTimeoutMs}ms:`, error instanceof Error ? error.message : error);
-            } finally {
-              clearTimeout(timer);
-            }
-            return result.text ? coarseAsrSentences(result.text,
-              index * asrSegmentSeconds,
-              Math.min(Number(opts.duration) || (index + 1) * asrSegmentSeconds, (index + 1) * asrSegmentSeconds)) : [];
-          }));
-          segments.push(...results.flat());
-        }
-        transcript = { text: segments.map(item => item.text).join(''), segments };
-        }
-      }
-    } catch (error) { console.warn('[videos] Qwen ASR unavailable, continuing with frames:', error instanceof Error ? error.message : error); }
-    finally { try { for (const file of fs.readdirSync(asrDir)) fs.unlinkSync(path.join(asrDir, file)); fs.rmdirSync(asrDir); } catch { /* best effort */ } }
+    const transcript = await sourceSpeech();
     // Exact mode always uses the chunk path, including short clips. Strategy
     // mode also chunks longer clips so each request stays bounded. Missing or
     // low-quality timelines now fail as retryable instead of being padded with
@@ -7372,6 +7432,7 @@ export async function analyzeDownloadedVideoWithFallback(opts: {
     let analysis = opts.analysisMode === 'exact'
       ? groupExactObservationWindows(observationAnalysis, detectedSceneCuts)
       : observationAnalysis;
+    analysis = lockReferenceSpeechTimeline(analysis, transcript, { duration: Number(opts.duration), fps: sourceClock.fps ?? undefined });
     let hookReviewReasons: string[] = [];
     if (opts.analysisMode === 'exact') {
       const hookIndex = firstSubstantiveOpeningShot(analysis);
@@ -7395,7 +7456,7 @@ export async function analyzeDownloadedVideoWithFallback(opts: {
         hookReviewReasons = ['opening_hook_no_substantive_shot'];
       }
     }
-    return { analysis: { ...analysis, detectedSceneCuts, hookReviewReasons } as VideoAiAnalysis, source: 'qwen-frame-video' };
+    return { analysis: await finishSourceAnalysis({ ...analysis, detectedSceneCuts, hookReviewReasons } as VideoAiAnalysis), source: 'qwen-frame-video' };
   };
 
   if (shouldUseQwenFirst()) {
@@ -7416,7 +7477,7 @@ export async function analyzeDownloadedVideoWithFallback(opts: {
     assertFullVideoTimeline(analysis, Number(opts.duration || 0), 'gemini');
     const qualityError = analysisTimelineQualityError(analysis, Number(opts.duration || 0), opts.analysisMode || 'strategy');
     if (qualityError) throw new Error(`analysis_quality_retryable_${qualityError}`);
-    return { analysis, source: opts.sourceLabel };
+    return { analysis: await finishSourceAnalysis(analysis), source: opts.sourceLabel };
   } catch (e) {
     if (shouldRetryGeminiWithNormalizedVideo(e)) {
       const normalizedPath = await normalizeVideoForGemini(opts.filePath);
@@ -7431,7 +7492,7 @@ export async function analyzeDownloadedVideoWithFallback(opts: {
           assertFullVideoTimeline(analysis, Number(opts.duration || 0), 'gemini_normalized');
           const qualityError = analysisTimelineQualityError(analysis, Number(opts.duration || 0), opts.analysisMode || 'strategy');
           if (qualityError) throw new Error(`analysis_quality_retryable_${qualityError}`);
-          return { analysis, source: `${opts.sourceLabel}-normalized` };
+          return { analysis: await finishSourceAnalysis(analysis), source: `${opts.sourceLabel}-normalized` };
         } catch (normalizedError) {
           console.warn('[videos] Gemini normalized video analysis failed:', normalizedError instanceof Error ? normalizedError.message : normalizedError);
         } finally {
@@ -10124,6 +10185,8 @@ async function analyzeOpsVideo(task: CrawlerOpsTask, videoBase64: string, mimeTy
       platform: task.platform,
       duration: Number(record?.duration || 0),
       sourceLabel: 'crawler-ops-video',
+      videoId: task.recordId,
+      tenantId: String(record?.tenantId || ''),
       analysisMode,
     });
     if (analysisMode === 'exact') {

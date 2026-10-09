@@ -3,7 +3,7 @@ import test from 'node:test';
 import { checkPublicationReception, type ReceptionBinding, type ReceptionCheckPorts } from './publicationReceptionReadiness.js';
 import { resolveCustomerMessagingAuthorization } from '../digitalEmployees/customerMessagingPolicy.js';
 
-const binding = (): ReceptionBinding => ({ tenantId: 'tenant', programId: 'program', packageId: 'package', packageVersion: '1', publicationId: 'video', cta: 'Contact us for specifications', enterpriseFactHash: 'facts-v1', targets: [{ id: 'contact', required: true, ownerId: 'salesperson', destination: { kind: 'messaging', channel: 'whatsapp', receptionMode: 'automatic' }, requiredDocumentUrls: ['https://example.test/spec.pdf'] }] });
+const binding = (): ReceptionBinding => ({ tenantId: 'tenant', programId: 'program', packageId: 'package', packageVersion: 1, publicationId: 'video', cta: 'Contact us for specifications', enterpriseFactHash: 'facts-v1', targets: [{ id: 'contact', required: true, ownerId: 'salesperson', destination: { kind: 'messaging', channel: 'whatsapp', receptionMode: 'automatic' }, requiredDocumentUrls: ['https://example.test/spec.pdf'] }] });
 const ports = (): ReceptionCheckPorts => ({ facts: async () => ({ contentHash: 'facts-v1', revision: 1, documentUrls: ['https://example.test/spec.pdf'] }), ownerExists: async () => true, messaging: async (tenantId, channel) => resolveCustomerMessagingAuthorization({ tenantId, channel, configVersion: 3, configActive: true, customerAgentEnabled: true, allowRealCustomerMessages: true, providerReady: true, backgroundWorkerEnabled: false }), probePublicUrl: async url => ({ accessible: true, checkedUrl: url, evidenceId: 'http-check-1' }) });
 
 test('complete check carries exact publication, facts, channel configuration and probe evidence', async () => {
@@ -44,7 +44,12 @@ test('manual reception needs connected channel and real owner, not automatic-sen
 });
 test('an applicable CTA requires at least one required target and binds package version', async () => {
   const b = binding(); const first = await checkPublicationReception(b, ports());
-  b.packageVersion = '2'; const second = await checkPublicationReception(b, ports());
-  assert.notEqual(first.bindingHash, second.bindingHash); assert.equal(second.packageVersion, '2');
+  b.packageVersion = 2; const second = await checkPublicationReception(b, ports());
+  assert.notEqual(first.bindingHash, second.bindingHash); assert.equal(second.packageVersion, 2);
   b.targets[0].required = false; assert.equal((await checkPublicationReception(b, ports())).status, 'blocked');
+});
+test('draft reception cannot claim an inactive customer agent is available', async () => {
+  const b = binding(); b.targets[0].destination = { kind: 'messaging', channel: 'whatsapp', receptionMode: 'draft' };
+  const p = ports(); const original = p.messaging; p.messaging = async (tenant, channel) => ({ ...await original(tenant, channel), customerAgentEnabled: false });
+  const result = await checkPublicationReception(b, p); assert.equal(result.status, 'blocked'); assert.ok(result.results[0].reasons.includes('messaging_draft_agent_not_ready'));
 });

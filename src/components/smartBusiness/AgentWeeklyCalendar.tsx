@@ -1,5 +1,17 @@
-import { useState } from 'react';
-import { ArrowLeft, ArrowRight, CheckCircle2, Clock3, X } from 'lucide-react';
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
+import { Alert, Button, Tag } from 'antd';
+import type { CustomerSendRecoveryTarget } from '../socialProgram/weeklyCustomerSendRecoveryNavigation';
+import { calendarClock, calendarDateTime, calendarTimestampLabel, type CalendarClock } from '../socialProgram/calendarTime';
+import { hasTemplateCalendarTarget, type TemplateCalendarTarget } from '../socialProgram/templateCalendarNavigation';
+import { hasReviewCalendarTarget, type ReviewCalendarTarget } from '../socialProgram/reviewCalendarNavigation';
+import { hasPlanningCalendarTarget, type PlanningCalendarTarget } from '../socialProgram/planningCalendarNavigation';
+import type { LsCalendarEvent } from '../../lib/calendarModel';
+
+const LsCalendar = typeof document === 'undefined'
+  ? function ServerCalendar({ events, label }: { events: LsCalendarEvent[]; label: string }) {
+      return <div aria-label={label}>{events.map(event => <span key={event.id}>{event.title} · {event.statusLabel}</span>)}</div>;
+    }
+  : lazy(() => import('../ui/LsCalendar').then(module => ({ default: module.LsCalendar })));
 
 export type AgentCalendarTask = {
   id: string;
@@ -9,69 +21,251 @@ export type AgentCalendarTask = {
   title: string;
   output: string;
   context: string;
-  minutes: number;
-  status: 'planned' | 'active' | 'completed' | 'blocked' | 'cancelled' | 'failed';
+  minutes: number | null;
+  status: 'planned' | 'active' | 'completed' | 'blocked' | 'cancelled' | 'failed' | 'no_data';
   reason?: string;
   chain?: string;
   dependsOn?: string[];
   assignee?: string;
   dueAt?: string;
-  submission?: "missing" | "pending" | "accepted" | "rejected";
+  deadlineRecovery?: { assessmentId: string; assessedAt: string; status: 'evaluated' | 'blocked'; blockingReasons: string[]; affectedPublicationIds: string[] };
+  calendarClock?: CalendarClock;
+  deadlineTracked?: boolean;
+  sourceDeadlineAt?: string;
+  sourceVersion?: number;
+  actualFinishedAt?: string;
+  deliveryTiming?: 'on_time' | 'late' | 'unknown';
+  affectedPublicationIds?: string[];
+  submission?: 'missing' | 'pending' | 'accepted' | 'rejected';
   humanAction?: 'upload' | 'approval';
   availableForHuman?: boolean;
+  salesHandoffId?: string;
+  salesPackageId?: string;
+  salesPackageVersion?: number;
+  salesAction?: 'claim' | 'feedback';
+  supplementTarget?: { tenantId: string; programId: string; packageId: string; packageVersion: number; requestId: string; action: 'submission' | 'verification' };
+  templateTarget?: TemplateCalendarTarget;
+  reviewTarget?: ReviewCalendarTarget;
+  planningTarget?: PlanningCalendarTarget;
+  sendRecoveryTarget?: CustomerSendRecoveryTarget;
   productionTaskId?: string;
+  materialRequestId?: string;
+  materialAction?: 'upload' | 'verification';
+  materialConsumerTaskIds?: string[];
+  customerRunId?: string;
+  customerWorkflowTaskId?: string;
+  customerTaskKey?: string;
+  timeSemantics?: 'start' | 'finish';
 };
-const agents = {
-  human: { label: "人工任务", tone: "bg-rose-50 text-rose-800", stripe: "border-t-rose-500" },
-  business: { label: '经营 Agent', tone: 'bg-emerald-50 text-emerald-800', stripe: 'border-t-emerald-500' },
-  director: { label: '编导 Agent', tone: 'bg-violet-50 text-violet-800', stripe: 'border-t-violet-500' },
-  content: { label: '内容 Agent', tone: 'bg-sky-50 text-sky-800', stripe: 'border-t-sky-500' },
-  customer: { label: '客服 Agent', tone: 'bg-orange-50 text-orange-800', stripe: 'border-t-orange-400' },
-};
-const statuses = { planned: '待执行', active: '进行中', completed: '已完成', blocked: '需处理', cancelled: '已取消', failed: '执行失败' };
-export function isHumanTaskOverdue(task: AgentCalendarTask, now = Date.now()): boolean {
-  return task.agent === 'human' && task.availableForHuman !== false && !['completed','cancelled'].includes(task.status)
-    && Boolean(task.dueAt && now > Date.parse(task.dueAt) && ['missing','rejected'].includes(task.submission || ''));
-}
-function key(date: Date) { return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`; }
-function shift(date: Date, count: number) { const result = new Date(date); result.setDate(result.getDate() + count); return result; }
 
-export default function AgentWeeklyCalendar({ startsAt, tasks, demo = false, onOpenProduction }: { startsAt?: string; tasks: AgentCalendarTask[]; demo?: boolean; onOpenProduction?: (task: AgentCalendarTask) => void }) {
-  const [offset, setOffset] = useState(0);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const selected = tasks.find(task => task.id === selectedId) ?? null;
-  const parsed = startsAt ? new Date(`${startsAt.slice(0, 10)}T00:00:00`) : new Date();
-  const anchor = Number.isNaN(parsed.getTime()) ? new Date() : parsed;
-  const monday = shift(anchor, -((anchor.getDay() + 6) % 7) + offset * 7);
-  const days = Array.from({ length: 7 }, (_, i) => shift(monday, i));
-  const weekTasks = tasks.filter(task => task.date >= key(days[0]) && task.date <= key(days[6]));
-  return <div id="agent-weekly-calendar" className="scroll-mt-4 p-5 sm:p-6">
-    <div className="mb-5 flex flex-wrap items-center justify-between gap-4">
-      <div><h3 className="text-lg font-black text-slate-950">{demo ? "B2B 零基础 · 首周任务日历" : "Agent 周任务日历"}</h3><p className="mt-1 text-xs text-slate-500">{demo ? "外部参考 100% · 3 条母版 / 6 个平台版本 · 主链路与按需触发的副链路" : "按每日交付展示已生成的任务、主负责 Agent 和上游依赖"}</p></div>
-      <div className="flex items-center gap-2"><button type="button" aria-label="上一周" onClick={() => setOffset(offset - 1)} className="rounded-lg border border-slate-200 p-2"><ArrowLeft size={14}/></button><span className="text-xs font-bold text-slate-700">{days[0].toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' })} — {days[6].toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' })}</span><button type="button" aria-label="下一周" onClick={() => setOffset(offset + 1)} className="rounded-lg border border-slate-200 p-2"><ArrowRight size={14}/></button><button type="button" onClick={() => setOffset(0)} className="rounded-lg bg-slate-100 px-3 py-2 text-xs font-bold">本周</button></div>
+const agentLabels: Record<AgentCalendarTask['agent'], string> = {
+  human: '人工处理',
+  business: '经营 Agent',
+  director: '编导 Agent',
+  content: '内容 Agent',
+  customer: '客服 Agent',
+};
+
+const statusLabels: Record<AgentCalendarTask['status'], string> = {
+  planned: '待执行',
+  active: '进行中',
+  completed: '已完成',
+  blocked: '需处理',
+  cancelled: '已取消',
+  failed: '执行失败',
+  no_data: '无符合条件的客户',
+};
+
+export function calendarDurationLabel(tasks: AgentCalendarTask[]): string {
+  const known = tasks.filter(task => task.minutes !== null);
+  const unknown = tasks.length - known.length;
+  const hours = Math.round(known.reduce((sum, task) => sum + (task.minutes ?? 0), 0) / 60 * 10) / 10;
+  return known.length ? `${unknown ? '已估' : '预计'} ${hours} 小时${unknown ? ` · ${unknown} 项待估` : ''}` : unknown ? `${unknown} 项工时待估` : '暂无工时';
+}
+
+export function hasCalendarProductionBinding(task: AgentCalendarTask): boolean {
+  const sendRecovery = task.agent === 'human'
+    && task.sendRecoveryTarget
+    && task.id === `send-recovery:${task.sendRecoveryTarget.id}`
+    && task.sendRecoveryTarget.channel === 'whatsapp'
+    && Boolean(task.sendRecoveryTarget.tenantId && task.sendRecoveryTarget.programId && task.sendRecoveryTarget.packageId)
+    && Number.isSafeInteger(task.sendRecoveryTarget.packageVersion)
+    && task.sendRecoveryTarget.packageVersion > 0
+    && Boolean(task.sendRecoveryTarget.runId && task.sendRecoveryTarget.taskId && task.sendRecoveryTarget.itemId);
+  const sales = task.agent === 'human'
+    && Boolean(task.salesHandoffId && task.salesPackageId)
+    && Number.isSafeInteger(task.salesPackageVersion)
+    && (task.salesPackageVersion ?? 0) > 0
+    && ['claim', 'feedback'].includes(task.salesAction || '');
+  const material = task.agent === 'human'
+    && Boolean(task.materialRequestId)
+    && ['upload', 'verification'].includes(task.materialAction || '');
+  const customer = task.agent === 'customer'
+    && Boolean(task.customerRunId && task.customerWorkflowTaskId && task.customerTaskKey);
+  return Boolean(sendRecovery || sales || task.productionTaskId || material || customer);
+}
+
+export function isHumanTaskOverdue(task: AgentCalendarTask, now = Date.now()): boolean {
+  return task.agent === 'human'
+    && task.availableForHuman !== false
+    && !['completed', 'cancelled'].includes(task.status)
+    && Boolean(task.dueAt && Number.isFinite(Date.parse(task.dueAt)) && now > Date.parse(task.dueAt)
+      && (task.supplementTarget || task.salesHandoffId || task.sendRecoveryTarget || ['missing', 'rejected'].includes(task.submission || '')));
+}
+
+export function isCalendarTaskOverdue(task: AgentCalendarTask, now = Date.now()): boolean {
+  if (['completed', 'cancelled', 'no_data'].includes(task.status)) return false;
+  if (task.agent === 'human' && !task.deadlineTracked) return isHumanTaskOverdue(task, now);
+  return Boolean(task.dueAt && Number.isFinite(Date.parse(task.dueAt)) && now > Date.parse(task.dueAt));
+}
+
+export function calendarOverdueDuration(task: AgentCalendarTask, now = Date.now()): string {
+  const due = Date.parse(task.dueAt || '');
+  if (!Number.isFinite(due)) return '截止时间待核验';
+  const minutes = Math.max(1, Math.floor((now - due) / 60_000));
+  return minutes >= 1440 ? `${Math.floor(minutes / 1440)} 天 ${Math.floor(minutes % 1440 / 60)} 小时` : minutes >= 60 ? `${Math.floor(minutes / 60)} 小时 ${minutes % 60} 分钟` : `${minutes} 分钟`;
+}
+
+export function calendarPendingReferences(tasks: AgentCalendarTask[], now = Date.now()): AgentCalendarTask[] {
+  return [...new Map(tasks.filter(task => task.date < calendarDateTime(now, task.calendarClock ?? calendarClock(task.dueAt)).date && isCalendarTaskOverdue(task, now)).map(task => [task.id, task])).values()];
+}
+
+function offsetSuffix(minutes: number): string {
+  const sign = minutes < 0 ? '-' : '+';
+  const absolute = Math.abs(minutes);
+  return `${sign}${String(Math.floor(absolute / 60)).padStart(2, '0')}:${String(absolute % 60).padStart(2, '0')}`;
+}
+
+function taskInstant(task: AgentCalendarTask): string {
+  if (task.dueAt && Number.isFinite(Date.parse(task.dueAt))) return task.dueAt;
+  const suffix = task.calendarClock?.timeZone ? 'Z' : offsetSuffix(task.calendarClock?.offsetMinutes ?? 8 * 60);
+  return `${task.date}T${task.time || '09:00'}:00${suffix}`;
+}
+
+function eventStatus(task: AgentCalendarTask, overdue: boolean): LsCalendarEvent['status'] {
+  if (overdue || task.status === 'blocked') return 'needs_action';
+  if (task.status === 'active') return 'working';
+  if (task.status === 'completed' || task.status === 'cancelled' || task.status === 'no_data') return 'done';
+  if (task.status === 'failed') return 'failed';
+  return 'planned';
+}
+
+type Props = {
+  startsAt?: string;
+  tasks: AgentCalendarTask[];
+  demo?: boolean;
+  onOpenProduction?: (task: AgentCalendarTask) => void;
+  onOpenPlanning?: (task: AgentCalendarTask) => void;
+  onOpenReview?: (task: AgentCalendarTask) => void;
+  onOpenSupplement?: (task: AgentCalendarTask) => void;
+  onOpenTemplate?: (task: AgentCalendarTask) => void;
+  scopeKey?: string;
+  canOpenContentTask?: (task: AgentCalendarTask) => boolean;
+};
+
+export default function AgentWeeklyCalendar({
+  startsAt,
+  tasks,
+  demo = false,
+  onOpenProduction,
+  onOpenPlanning,
+  onOpenReview,
+  onOpenSupplement,
+  onOpenTemplate,
+  scopeKey,
+  canOpenContentTask,
+}: Props) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 10_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  const pendingReferences = demo ? [] : calendarPendingReferences(tasks, now);
+  const timeZone = tasks.find(task => task.calendarClock?.timeZone)?.calendarClock?.timeZone || 'Asia/Shanghai';
+  const events = useMemo<LsCalendarEvent[]>(() => tasks.map(task => {
+    const overdue = !demo && isCalendarTaskOverdue(task, now);
+    const start = taskInstant(task);
+    const duration = Math.max(30, task.minutes ?? 60) * 60_000;
+    return {
+      id: task.id,
+      title: task.title,
+      start,
+      end: new Date(Date.parse(start) + duration).toISOString(),
+      timeZone: task.calendarClock?.timeZone || timeZone,
+      status: eventStatus(task, overdue),
+      statusLabel: overdue ? `交付已逾期 · ${calendarOverdueDuration(task, now)}` : task.deliveryTiming === 'late' ? '已完成 · 晚交付' : task.deliveryTiming === 'on_time' ? '已完成 · 按时' : statusLabels[task.status],
+      eventType: task.agent === 'customer' ? 'follow_up' : 'agent_task',
+      ownerAgent: task.assignee || agentLabels[task.agent],
+      sourceId: task.productionTaskId || task.id,
+      description: task.context,
+      data: task,
+    };
+  }), [demo, now, tasks, timeZone]);
+
+  const renderDetails = (event: LsCalendarEvent, closeDetails: () => void) => {
+    const task = event.data as AgentCalendarTask;
+    const overdue = !demo && isCalendarTaskOverdue(task, now);
+    const open = (action: ((task: AgentCalendarTask) => void) | undefined) => {
+      if (!action) return;
+      closeDetails();
+      action(task);
+    };
+    const action = !demo && task.supplementTarget && onOpenSupplement
+      ? { label: '处理当前真实补齐任务', run: () => open(onOpenSupplement) }
+      : !demo && hasTemplateCalendarTarget(task) && onOpenTemplate
+        ? { label: '查看真实模板来源与经营核验', run: () => open(onOpenTemplate) }
+        : !demo && hasReviewCalendarTarget(task) && onOpenReview
+          ? { label: '查看真实社媒指标与冻结复盘', run: () => open(onOpenReview) }
+          : !demo && hasPlanningCalendarTarget(task) && onOpenPlanning
+            ? { label: '查看本周真实参考分析与排期', run: () => open(onOpenPlanning) }
+            : !demo && (hasCalendarProductionBinding(task) || canOpenContentTask?.(task)) && onOpenProduction
+              ? { label: task.sendRecoveryTarget ? '核验原发送异常与真实回执' : task.productionTaskId ? '进入这条任务的生产实况' : '核验此任务生产对象与上游', run: () => open(onOpenProduction) }
+              : null;
+
+    return <div className="space-y-4">
+      <dl className="ls-calendar-details">
+        <div><dt>{task.timeSemantics === 'start' ? '计划开始' : '计划完成'}</dt><dd>{task.date} {task.time} · {task.calendarClock?.label || '冻结时区未知'}</dd></div>
+        {task.dueAt && <div><dt>规定完成截止</dt><dd>{calendarTimestampLabel(task.dueAt, task.calendarClock)}</dd></div>}
+        {task.sourceVersion !== undefined && <div><dt>原 v{task.sourceVersion} 任务规定截止</dt><dd>{task.sourceDeadlineAt ? calendarTimestampLabel(task.sourceDeadlineAt) : '原截止待核验'}</dd></div>}
+        {task.status === 'completed' && <div><dt>实际完成</dt><dd>{task.actualFinishedAt ? calendarTimestampLabel(task.actualFinishedAt, task.sourceVersion !== undefined ? calendarClock(task.sourceDeadlineAt) : task.calendarClock) : '完成时间待核验'} · {task.deliveryTiming === 'late' ? '晚交付' : task.deliveryTiming === 'on_time' ? '按时交付' : '是否按时待核验'}</dd></div>}
+        <div><dt>当天交付</dt><dd>{task.output}</dd></div>
+        <div><dt>执行状态</dt><dd>{statusLabels[task.status]} · {task.minutes === null ? '工时待估' : `预计 ${task.minutes} 分钟`}</dd></div>
+      </dl>
+      {task.chain && <p className="text-xs text-text-secondary">{task.chain} · {task.chain.includes('-S') ? '副链路' : '主链路'}</p>}
+      {task.dependsOn?.length ? <div><p className="text-xs font-semibold text-text-secondary">上游交付</p><p className="mt-1 text-xs text-text-primary">{task.dependsOn.join('、')}</p></div> : null}
+      {overdue && <Alert type="error" showIcon title={`交付已逾期 · ${calendarOverdueDuration(task, now)}`} description={`负责人：${task.assignee || agentLabels[task.agent]}；原因：${task.reason || '截止前尚未取得本任务核验交付'}；受影响发布：${task.affectedPublicationIds?.join('、') || '待核对真实下游依赖'}`}/>}
+      {task.deadlineRecovery && <Alert type="warning" showIcon title={`经营 Agent 补救评估 · ${task.deadlineRecovery.status === 'blocked' ? '评估受阻' : '已评估，方案未生效'}`} description={`${task.deadlineRecovery.assessmentId} · ${calendarTimestampLabel(task.deadlineRecovery.assessedAt, task.calendarClock)}；受影响发布：${task.deadlineRecovery.affectedPublicationIds.join('、') || '无已绑定发布'}`}/>}
+      {task.reason && !overdue && <Alert type="warning" showIcon title="当前卡点" description={task.reason}/>}
+      {action ? <Button type="primary" onClick={action.run}>{action.label}</Button> : <p className="rounded-lg bg-surface-2 p-3 text-xs text-text-secondary">{demo ? '示例任务仅用于验收日历与详情。' : '此任务尚无可打开的真实业务对象；执行状态以后台记录为准。'}</p>}
+    </div>;
+  };
+
+  return <section id="agent-weekly-calendar" key={scopeKey} className="scroll-mt-4 bg-white" aria-label={demo ? 'B2B 零基础首周任务日历' : 'Agent 周任务日历'}>
+    <div className="border-b border-border px-5 py-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h3 className="ls-type-title-large text-text-primary">{demo ? 'B2B 零基础 · 首周任务日历' : 'Agent 周任务日历'}</h3>
+        <div className="flex flex-wrap gap-2">{Object.entries(agentLabels).map(([agent, label]) => <Tag key={agent}>{label}</Tag>)}</div>
+      </div>
+      <p className="mt-1 text-xs text-text-secondary">{demo ? '演示数据会持续标记；真实任务以执行回执为准。' : `${tasks.length} 项真实交付 · ${calendarDurationLabel(tasks)}`}</p>
     </div>
-    <div className="mb-4 flex flex-wrap items-center gap-3 text-[10px] font-bold">{Object.values(agents).map(agent => <span key={agent.label} className={`rounded-full px-2.5 py-1 ${agent.tone}`}>{agent.label}</span>)}<span className="ml-auto text-slate-400">{weekTasks.length} 项交付{demo ? ' · 示例排期' : ''}</span></div>
-    {!demo && tasks.length === 0 && <p className="mb-4 rounded-xl bg-slate-100 px-3 py-2 text-xs text-slate-600">尚无可展示的 Agent 执行排期。发布计划不会自动视为制作任务；生成执行排期后将在此显示。</p>}
-    {demo && <p className="mb-4 rounded-xl bg-amber-50 px-3 py-2 text-[11px] text-amber-800">效果验收示例：任务、工时与执行状态为演示数据；异常副链路展示触发示例，不代表所有任务都必然发生。点击卡片查看任务详情。</p>}
-    <div className="overflow-x-auto rounded-2xl border border-slate-200"><div className="grid min-w-[1260px] grid-cols-7">
-      {days.map((day, index) => {
-        const items = weekTasks.filter(task => task.date === key(day)).sort((a, b) => a.time.localeCompare(b.time));
-        const today = key(day) === key(new Date());
-        return <section key={key(day)} aria-label={`${['周一','周二','周三','周四','周五','周六','周日'][index]}任务`} className="min-w-0 border-r border-slate-200 last:border-r-0">
-          <header className={`border-b border-slate-200 p-4 ${today ? 'bg-emerald-50' : 'bg-slate-50'}`}><div className="flex justify-between text-xs font-black text-slate-700"><span>{['周一','周二','周三','周四','周五','周六','周日'][index]}</span>{today && <span className="text-emerald-700">今天</span>}</div><p className="mt-1 text-xl font-black text-slate-950">{day.getMonth() + 1}/{day.getDate()}</p><p className="mt-2 text-[10px] text-slate-500">{items.length} 项交付 · 预计 {Math.round(items.reduce((sum, item) => sum + item.minutes, 0) / 60 * 10) / 10} 小时</p></header>
-          <div className="min-h-[420px] space-y-3 bg-slate-50/40 p-2.5">{items.map(task => {
-            const agent = agents[task.agent];
-            const overdue = isHumanTaskOverdue(task);
-            return <button type="button" key={task.id} onClick={() => setSelectedId(task.id)} className={`w-full rounded-xl border border-slate-200 border-t-[3px] bg-white p-3 text-left shadow-sm transition hover:border-emerald-300 hover:shadow-md focus-visible:outline-emerald-600 ${overdue ? "border-red-400 border-t-red-500 bg-red-50" : agent.stripe}`}>
-              <div className="flex items-center justify-between gap-1 text-[9px]"><span className="font-bold text-slate-500">{task.time} 前完成</span><span className={task.status === 'blocked' ? 'text-amber-700' : task.status === 'active' ? 'text-sky-700' : 'text-slate-500'}>{overdue ? (task.humanAction === "approval" ? "验收已逾期" : "上传已逾期") : task.submission === "pending" ? "已提交待核验" : statuses[task.status]}</span></div>
-              <p className="mt-2 text-[9px] font-bold text-slate-400">{task.chain} · {task.chain?.includes("-S") ? "副链路" : "主链路"}</p><h4 className="mt-2 text-xs font-black leading-5 text-slate-950">{task.title}</h4><span className={`mt-2 inline-block rounded-full px-2 py-1 text-[9px] font-bold ${agent.tone}`}>主负责 · {task.assignee || agent.label}</span>
-              <p className="mt-2 text-[10px] leading-4 text-slate-500">{task.context}</p><p className="mt-3 border-t border-slate-100 pt-2 text-[10px] leading-4 text-slate-700"><span className="font-bold">交付：</span>{task.output}</p>
-              <p className="mt-2 flex items-center gap-1 text-[9px] text-slate-400">{task.status === 'completed' ? <CheckCircle2 size={11}/> : <Clock3 size={11}/>}预计 {task.minutes} 分钟</p>{task.dependsOn?.length ? <p className="mt-2 text-[9px] text-slate-500">等待 {task.dependsOn.length} 项上游交付</p> : null}{task.reason && <p className={`mt-2 rounded-lg p-2 text-[9px] leading-4 ${overdue ? "bg-red-100 text-red-800" : "bg-amber-50 text-amber-800"}`}>{task.reason}</p>}
-            </button>;
-          })}{!items.length && <p className="py-12 text-center text-xs text-slate-400">暂无已排期任务</p>}</div>
-        </section>;
-      })}
-    </div></div>
-    {selected && <div className="fixed inset-0 z-[200] flex items-center justify-center bg-slate-950/35 p-4" onClick={() => setSelectedId(null)}><section role="dialog" aria-modal="true" aria-label="任务详情" className="w-full max-w-lg rounded-3xl bg-white p-6 shadow-xl" onClick={event => event.stopPropagation()}><div className="flex items-center justify-between"><span className={`rounded-full px-3 py-1 text-xs font-bold ${agents[selected.agent].tone}`}>主负责 · {agents[selected.agent].label}</span><button type="button" autoFocus onClick={() => setSelectedId(null)} aria-label="关闭任务详情" className="rounded-full bg-slate-100 p-2"><X size={16}/></button></div><h3 className="mt-4 text-xl font-black text-slate-950">{selected.title}</h3><p className="mt-2 text-sm text-slate-500">{selected.context}</p><p className="mt-3 text-xs text-slate-500">{selected.chain} · {selected.assignee ? `人工负责人：${selected.assignee}` : "Agent 执行任务"}</p><dl className="mt-5 space-y-3 text-sm"><div><dt className="text-slate-400">计划完成</dt><dd>{selected.date} {selected.time}</dd></div><div><dt className="text-slate-400">当天交付</dt><dd>{selected.output}</dd></div><div><dt className="text-slate-400">执行状态</dt><dd>{statuses[selected.status]} · 预计 {selected.minutes} 分钟</dd></div></dl>{selected.dependsOn?.length ? <div className="mt-4"><p className="text-xs font-bold text-slate-500">上游交付</p>{selected.dependsOn.map(id => <p key={id} className="mt-1 text-xs text-slate-700">{tasks.find(task => task.id === id)?.title || id}</p>)}</div> : null}{selected.reason && <p className="mt-4 rounded-xl bg-amber-50 p-3 text-sm text-amber-800">{selected.reason}</p>}{!demo && selected.productionTaskId && onOpenProduction ? <button type="button" className="mt-5 rounded-xl bg-blue-600 px-4 py-3 text-sm font-bold text-white" onClick={() => onOpenProduction(selected)}>进入这条任务的生产实况</button> : <p className="mt-5 rounded-xl bg-slate-50 p-3 text-xs text-slate-500">{demo ? "示例任务仅用于验收日历与详情。" : "此任务尚无可打开的内容生产对象；执行状态以后台记录为准。"}</p>}</section></div>}
-  </div>;
+    {!demo && tasks.length === 0 && <Alert className="m-4" type="info" showIcon title="尚无 Agent 执行排期" description="发布计划不会自动视为制作任务；生成执行排期后将在此显示。"/>}
+    {pendingReferences.length > 0 && <Alert className="m-4" type="error" showIcon title={`当前待处理 · ${pendingReferences.length} 项原任务（按各任务冻结时区）`} description={<div><p>引用原任务，原计划卡保留；不计为新增交付。</p><p className="mt-1">{pendingReferences.map(task => `${task.title} · 原计划 ${task.date} · 逾期 ${calendarOverdueDuration(task, now)}`).join('；')}</p></div>}/>}
+    {demo && <Alert className="m-4" type="warning" showIcon title="演示排期" description="任务、工时与执行状态为演示数据，异常副链路仅用于验收。"/>}
+    <ul className="sr-only">{events.map(event => {
+      const task = event.data as AgentCalendarTask;
+      return <li key={event.id}>{event.title} · {event.statusLabel}{task.affectedPublicationIds?.length ? ` · 受影响发布 ${task.affectedPublicationIds.join('、')}` : ''}</li>;
+    })}</ul>
+    {tasks.length > 0 && <Suspense fallback={<p className="p-5 text-xs text-text-secondary">正在加载日历…</p>}><LsCalendar
+        label={demo ? 'B2B 零基础首周任务日历' : 'Agent 周任务日历'}
+        events={events}
+        initialDate={startsAt || tasks[0]?.date}
+        date={startsAt || tasks[0]?.date}
+        initialView="timeGridWeek"
+        firstDay={1}
+        timeZone={timeZone}
+        timeGridHeight={760}
+        renderDetails={renderDetails}
+      /></Suspense>}
+  </section>;
 }

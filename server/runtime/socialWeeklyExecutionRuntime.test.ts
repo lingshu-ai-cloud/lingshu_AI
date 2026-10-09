@@ -87,6 +87,19 @@ test('planning reconciliation requires formal dispatch and matching immutable sc
   const discovery = task(); discovery.schedule.stepKind = 'benchmark_collection';
   assert.equal((await adapter.execute(discovery)).status, 'blocked');
 });
+test('missing real media blocks completion without consuming supplier retries', async () => {
+  const dataStore = memoryStore();
+  const value = task(); value.workflowKind = 'content'; value.schedule.stepKind = 'video_generation'; value.publicationTaskId = 'publication-a';
+  await saveTask(dataStore, value);
+  await dataStore.create('workflow_runs', { id: 'real-run', tenant_id: value.tenantId, status: 'succeeded' });
+  await dataStore.create('starter_social_content_tasks', { tenant_id: value.tenantId, task_id: 'content', run_id: 'real-run', status: 'asset_review', create_idempotency_key: 'weekly-production:package-a:1:publication-a', brief: { programRef: { id: value.programId } } });
+  await dataStore.create('starter_social_content_files', { tenant_id: value.tenantId, task_id: 'content', file_id: 'missing-file', usage: 'artifact_media', name: 'video.mp4', mime_type: 'video/mp4', byte_size: 12, content_sha256: 'a'.repeat(64), storage_kind: 'local', storage_key: 'missing-weekly-runtime-fixture/video.mp4' });
+  await dataStore.create('starter_social_content_artifacts', { tenant_id: value.tenantId, task_id: 'content', artifact_id: 'artifact', version: '1', artifact_kind: 'short_video', origin: 'agent', status: 'review_required', resource_ref: 'socialfile:missing-file', content: { render: { completed: true }, mediaStorage: { video: { fileId: 'missing-file', sha256: 'a'.repeat(64), url: '/video' } } } });
+  await runSocialWeeklyExecutionScan({ dataStore, adapters: { video_generation: { async execute() { return { status: 'succeeded', resultRefs: [{ type: 'starter_social_content_artifact', id: 'artifact', version: 1 }] }; } } } });
+  const row = (await dataStore.list<any>(WEEKLY_EXECUTION_TASKS)).items[0].payload;
+  assert.equal(row.status, 'blocked', JSON.stringify(row.lastError)); assert.equal(row.attempt, 0); assert.deepEqual(row.resultRefs, []);
+  assert.equal(row.lastError.code, 'social_content_file_integrity_violation');
+});
 test('scan blocks unsupported work while preserving user approval and tenant isolation', async () => {
   const dataStore = memoryStore();
   await saveTask(dataStore, task());
@@ -96,6 +109,44 @@ test('scan blocks unsupported work while preserving user approval and tenant iso
   const rows = await dataStore.list<any>(WEEKLY_EXECUTION_TASKS);
   assert.equal(rows.items.find(row => row.tenant_id === 'tenant-a').payload.status, 'blocked');
   assert.equal(rows.items.find(row => row.tenant_id === 'tenant-b').payload.status, 'queued');
+});
+test('a continuation awaiting trusted evidence never falls back to a new paid production adapter', async () => {
+  const dataStore = memoryStore();
+  const value = task();
+  value.workflowKind = 'content';
+  value.schedule.stepKind = 'asset_generation';
+  value.schedule.responsibleActor = 'content_agent';
+  value.inputSnapshot.weeklyContinuationPending = { mode: 'completed_verified', sourceTaskId: 'old-task', sourceInputHash: 'unverified', snapshotId: 'snapshot' };
+  await saveTask(dataStore, value);
+  let starts = 0;
+  const result = await runSocialWeeklyExecutionScan({ dataStore, adapters: { asset_generation: { async execute() { starts++; throw Error('must not start another production run'); } } } });
+  assert.equal(starts, 0);
+  assert.equal(result.blocked, 1);
+  const rows = await dataStore.list<any>(WEEKLY_EXECUTION_TASKS);
+  assert.equal(rows.items[0].payload.status, 'blocked');
+  assert.deepEqual(rows.items[0].payload.resultRefs, []);
+});
+test('missing owned-reference proof blocks completion instead of spending the retry budget', async () => {
+  const dataStore = memoryStore();
+  const value = task(); value.workflowKind = 'directing'; value.schedule.stepKind = 'director_analysis';
+  await saveTask(dataStore, value);
+  const policy = { profile: 'b2b_established', ownedPercent: 40, externalPercent: 60, allocationUnit: 'mother_content' };
+  const plans = await dataStore.list<any>('social_weekly_agent_planning');
+  const plan: any = plans.items[0].payload;
+  plan.referenceSourcePolicy = policy; plan.skeleton.slots[0].referenceSource = 'owned';
+  plan.userConfirmation.confirmedAt = new Date().toISOString();
+  plan.detailedSchedule.items = [{ publicationTaskId: 'pub' }];
+  plan.dispatch.scheduleItems = [{ publicationTaskId: 'pub' }];
+  plan.directorAnalyses = [{ slotId: 'slot', packageVersion: 1, benchmarkAccountRefs: ['account'], benchmarkVideoRefs: ['video'], benchmarkEvidenceRefs: ['evidence'], contentDirection: '采购问题' }];
+  await dataStore.update('social_weekly_agent_planning', plans.items[0].id, { payload: plan });
+  const weeks = await dataStore.list<any>('social_weekly_operating_packages');
+  await dataStore.update('social_weekly_operating_packages', weeks.items[0].id, { payload: { ...weeks.items[0].payload, programId: value.programId, referenceSourcePolicy: policy, socialContentPackage: { publicationTasks: [{ publicationTaskId: 'pub' }] } } });
+  await runSocialWeeklyExecutionScan({ dataStore, adapters: { director_analysis: { async execute() { return { status: 'succeeded', resultRefs: [{ type: 'weekly_agent_planning', id: plan.planningId, version: plan.version }] }; } } } });
+  const rows = await dataStore.list<any>(WEEKLY_EXECUTION_TASKS);
+  assert.equal(rows.items[0].payload.status, 'blocked');
+  assert.ok(rows.items[0].payload.ownBlockingReasons.includes('weekly_owned_reference_diagnosis_unverified'), JSON.stringify(rows.items[0].payload.ownBlockingReasons));
+  assert.deepEqual(rows.items[0].payload.resultRefs, []);
+  assert.equal(rows.items[0].payload.attempt, 0);
 });
 test('pending reconciliation does not exhaust retries or immediately reexecute', async () => {
   const dataStore = memoryStore(); await saveTask(dataStore, task());
@@ -158,4 +209,28 @@ test('background consumer requires explicit enablement', () => {
     if (old === undefined) delete process.env.SOCIAL_WEEKLY_EXECUTION_WORKER_ENABLED;
     else process.env.SOCIAL_WEEKLY_EXECUTION_WORKER_ENABLED = old;
   }
+});
+
+test('partial dispatch admits only explicitly confirmed slots and cannot borrow an injected pending publication', async () => {
+  const dataStore = memoryStore(), plan = planning();
+  const coverage = { selectedSlotIds: ['slot'], pendingSlotIds: ['pending-slot'], referenceSourcePolicy: null };
+  plan.skeleton.slots.push({ ...plan.skeleton.slots[0]!, slotId: 'pending-slot', motherContentId: 'pending-mother', publicationTaskIds: ['pending-pub'] });
+  plan.detailedSchedule!.coverage = structuredClone(coverage);
+  plan.dispatch!.coverage = structuredClone(coverage);
+  plan.userConfirmation!.selectedSlotIds = ['slot'];
+  await dataStore.create('social_weekly_operating_packages', { tenant_id: 'tenant-a', program_id: 'program-a', package_id: 'package-a', version: 1, payload: { packageId: 'package-a', version: 1, status: 'draft' } });
+  const row = await dataStore.create<Record_>('social_weekly_agent_planning', { tenant_id: 'tenant-a', program_id: 'program-a', package_id: 'package-a', package_version: 1, planning_version: 4, payload: plan });
+  assert(row);
+  const adapter = createSocialWeeklyPlanningAdapter(dataStore);
+  assert.equal((await adapter.execute(task())).status, 'succeeded');
+  // A stored item alone does not expand the user's frozen selection.
+  plan.dispatch!.scheduleItems = [{ publicationTaskId: 'pending-pub' }] as unknown as NonNullable<WeeklyAgentPlanningState['dispatch']>['scheduleItems'];
+  await dataStore.update('social_weekly_agent_planning', row.id, { payload: plan });
+  const pending = { ...task(), publicationTaskId: 'pending-pub' };
+  const result = await adapter.execute(pending);
+  assert.equal(result.status, 'blocked');
+  if (result.status === 'blocked') assert.equal(result.code, 'weekly_slot_not_dispatched');
+  plan.userConfirmation!.selectedSlotIds = ['pending-slot'];
+  await dataStore.update('social_weekly_agent_planning', row.id, { payload: plan });
+  assert.equal((await adapter.execute(task())).status, 'blocked');
 });

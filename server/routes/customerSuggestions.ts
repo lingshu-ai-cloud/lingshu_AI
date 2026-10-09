@@ -6,17 +6,20 @@ import { buildKnowledgePromptBlock } from '../knowledge/promptBlocks.js';
 import { buildStrategyPromptBlock, retrieveResponseStrategies, strategyEvidence } from '../knowledge/strategyRetrieve.js';
 import { aggregateKnowledgeMisses } from '../knowledge/misses.js';
 import { recordStyleMemory } from '../knowledge/styleMemory.js';
-import { getNightModeMorningBriefing } from '../whatsapp/historyImport.js';
-import { analyzeMessengerCustomerTags, getMessengerCustomers, patchMessengerCustomer, sendTenantMessengerText } from '../messenger/conversations.js';
-import { analyzeInstagramCustomerTags, getInstagramCustomers, patchInstagramCustomer } from '../instagram/conversations.js';
+import { getNightModeMorningBriefing,getWhatsAppCustomers } from '../whatsapp/historyImport.js';
+import { analyzeMessengerCustomerTags, getMessengerCustomers, patchMessengerCustomer, sendTenantMessengerText,upsertMessengerMessage } from '../messenger/conversations.js';
+import { analyzeInstagramCustomerTags, getInstagramCustomers, patchInstagramCustomer,upsertInstagramMessage } from '../instagram/conversations.js';
 import { sendTenantInstagramText } from '../instagram/send.js';
+import {createCustomerChannelSendRequestService,resolveCustomerChannelOutboxContext} from '../digitalEmployees/customerChannelSendRequests.js';
+import {store} from '../storage/index.js';
+import {createCustomerManualTakeoverService} from '../customerService/customerManualTakeover.js';
 import { customerServicePolicy, customerServiceStatus, readTenantEnterpriseProfile } from './enterprise.js';
 import { readCustomerMessagingAuthorization } from '../digitalEmployees/customerMessagingPolicy.js';
 
 export const customerSuggestionsRouter = Router();
 customerSuggestionsRouter.use(requireAuth);
 
-const manualActiveUntil = new Map<string, number>();
+const manualTakeoverService=createCustomerManualTakeoverService(store);
 
 async function maybeRecordStyleMemory(req: any, tenantId: string, customerId: string, finalBody: string) {
   const memory = req.body?.styleMemory;
@@ -93,18 +96,10 @@ customerSuggestionsRouter.post('/knowledge-misses/recompute', async (_req, res) 
   res.json({ ok: true, items });
 });
 
-customerSuggestionsRouter.post('/:id/manual-active', (req, res) => {
-  const { tenantId } = res.locals as AuthLocals;
-  const customerId = String(req.params.id || '');
-  if (!customerId) {
-    res.status(400).json({ error: 'customer_id_required' });
-    return;
-  }
-  const minutes = Math.max(1, Math.min(30, Number(req.body?.minutes || 10) || 10));
-  const until = Date.now() + minutes * 60_000;
-  manualActiveUntil.set(`${tenantId}:${customerId}`, until);
-  res.json({ ok: true, suspendedUntil: new Date(until).toISOString() });
-});
+function manualCustomerChannel(tenantId:string,id:string){return getWhatsAppCustomers(tenantId).some(c=>c.id===id)?'whatsapp' as const:customerChannel(tenantId,id);}
+customerSuggestionsRouter.get('/:id/manual-active',async(req,res)=>{const{tenantId,userId}=res.locals as AuthLocals;const id=String(req.params.id),channel=manualCustomerChannel(tenantId,id);if(!channel){res.status(404).json({error:'customer_not_found'});return;}try{res.json(await manualTakeoverService.read({tenantId,actorUserId:userId,customerId:id,channel}));}catch(error){res.status(error instanceof Error&&'status' in error?Number(error.status):409).json({error:error instanceof Error?error.message:'manual_takeover_read_failed'});}});
+customerSuggestionsRouter.post('/:id/manual-active',async(req,res)=>{const{tenantId,userId}=res.locals as AuthLocals;const id=String(req.params.id),channel=manualCustomerChannel(tenantId,id);if(!channel){res.status(404).json({error:'customer_not_found'});return;}try{const item=await manualTakeoverService.hold({tenantId,actorUserId:userId,customerId:id,channel,minutes:Number(req.body?.minutes??10),expectedVersion:req.body?.expectedVersion,ownerUserId:req.body?.ownerUserId});res.json({ok:true,item,suspendedUntil:item.expiresAt});}catch(error){res.status(error instanceof Error&&'status' in error?Number(error.status):409).json({error:error instanceof Error?error.message:'manual_takeover_failed'});}});
+customerSuggestionsRouter.post('/:id/manual-active/release',async(req,res)=>{const{tenantId,userId}=res.locals as AuthLocals;const id=String(req.params.id),channel=manualCustomerChannel(tenantId,id);if(!channel){res.status(404).json({error:'customer_not_found'});return;}try{const item=await manualTakeoverService.release({tenantId,actorUserId:userId,customerId:id,channel,expectedVersion:req.body?.expectedVersion});res.json({ok:true,item});}catch(error){res.status(error instanceof Error&&'status' in error?Number(error.status):409).json({error:error instanceof Error?error.message:'manual_takeover_release_failed'});}});
 
 customerSuggestionsRouter.patch('/:id', (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
@@ -156,10 +151,32 @@ customerSuggestionsRouter.post('/:id/source-attribution', async (req, res) => {
   });
 });
 
+customerSuggestionsRouter.get('/:id/outbox/context',requireAuth,async(req,res)=>{
+ const{tenantId,userId}=res.locals as AuthLocals;const customerId=String(req.params.id||'');const channel=customerChannel(tenantId,customerId);if(!channel){res.status(404).json({error:'customer_not_found'});return;}
+ const customer=channel==='instagram'?getInstagramCustomers(tenantId).find(c=>c.id===customerId):getMessengerCustomers(tenantId).find(c=>c.id===customerId);
+ try{const item=await resolveCustomerChannelOutboxContext(store,{tenantId,actorUserId:userId,customerId,channel,nativeAccountId:String(channel==='instagram'?customer?.instagramAccountId:customer?.pageId)});res.json({item});}catch(error){const code=error instanceof Error?error.message:'channel_send_context_unavailable';res.status(/forbidden$/.test(code)?403:409).json({error:code});}
+});
+
+customerSuggestionsRouter.get('/:id/outbox/:requestId',requireAuth,async(req,res)=>{
+ const {tenantId,userId}=res.locals as AuthLocals;const customerId=String(req.params.id||''),requestId=String(req.params.requestId||'');
+ if(!/^[a-zA-Z0-9_-]{8,120}$/.test(requestId)){res.status(400).json({error:'channel_send_request_id_required'});return;}
+ const channel=customerChannel(tenantId,customerId);if(!channel){res.status(404).json({error:'customer_not_found'});return;}
+ try{const item=await createCustomerChannelSendRequestService(store).get(tenantId,userId,channel,requestId);if(!item||item.customerId!==customerId){res.status(404).json({error:'channel_send_request_not_found'});return;}res.json({item});}catch(error){const code=error instanceof Error?error.message:'channel_send_request_read_failed';res.status(/forbidden$/.test(code)?403:409).json({error:code});}
+});
+
+customerSuggestionsRouter.post('/:id/outbox/:requestId/reconcile',requireAuth,async(req,res)=>{
+ const{tenantId,userId}=res.locals as AuthLocals;const customerId=String(req.params.id||''),requestId=String(req.params.requestId||'');if(req.body!==undefined&&(!req.body||Array.isArray(req.body)||typeof req.body!=='object'||Object.keys(req.body).length)){res.status(400).json({error:'channel_send_reconcile_body_invalid'});return;}
+ const channel=customerChannel(tenantId,customerId);if(!channel){res.status(404).json({error:'customer_not_found'});return;}
+ const customer=channel==='instagram'?getInstagramCustomers(tenantId).find(c=>c.id===customerId):getMessengerCustomers(tenantId).find(c=>c.id===customerId);
+ try{const item=await createCustomerChannelSendRequestService(store).repairHistory({tenantId,actorUserId:userId,channel,requestId,customerId,recordHistory:(receipt,body,account)=>{if(channel==='instagram'){if(customer?.instagramAccountId!==account.providerAccountId||customer?.instagramUserId!==receipt.recipientId)throw Error('channel_send_history_customer_drift');upsertInstagramMessage({tenantId,instagramAccountId:String(account.providerAccountId),userId:receipt.recipientId,messageId:receipt.messageId,body,timestamp:Date.parse(receipt.acceptedAt),actor:'seller',sendStatus:'sent'});}else{if(customer?.pageId!==account.providerAccountId||customer?.messengerUserId!==receipt.recipientId)throw Error('channel_send_history_customer_drift');upsertMessengerMessage({tenantId,pageId:String(account.providerAccountId),userId:receipt.recipientId,messageId:receipt.messageId,body,timestamp:Date.parse(receipt.acceptedAt),actor:'seller',sendStatus:'sent'});}}});res.json({item,messagesSent:0});}catch(error){const code=error instanceof Error?error.message:'channel_send_history_writeback_failed';res.status(/forbidden$/.test(code)?403:409).json({error:code,requestId});}
+});
+
 customerSuggestionsRouter.post('/:id/outbox', requireAuth, async (req, res) => {
-  const { tenantId } = res.locals as AuthLocals;
+  const { tenantId,userId } = res.locals as AuthLocals;
   const customerId = String(req.params.id || '');
   const body = String(req.body?.body || '').trim();
+  const requestId=typeof req.body?.requestId==='string'?req.body.requestId.trim():'';
+  if(!/^[a-zA-Z0-9_-]{8,120}$/.test(requestId)){res.status(400).json({error:'channel_send_request_id_required'});return;}
   if (!customerId || !body) {
     res.status(400).json({ error: 'customer_id_and_body_required' });
     return;
@@ -178,28 +195,22 @@ customerSuggestionsRouter.post('/:id/outbox', requireAuth, async (req, res) => {
     res.status(409).json({ error: `${channel}_window_closed`, message: `距客户上次互动已超过 24 小时，当前不能直接发送普通 ${channel === 'instagram' ? 'Instagram 私信' : 'Messenger 消息'}。` });
     return;
   }
-  const suspendedUntil = manualActiveUntil.get(`${tenantId}:${customerId}`) || 0;
-  if (req.body?.auto === true) {
-    if (suspendedUntil > Date.now()) {
-      res.status(409).json({ error: 'manual_active', message: '人工正在回复，AI 自动发送已挂起，只生成草稿。' });
-      return;
-    }
-  }
   try {
-    const receipt = channel === 'instagram'
-      ? await sendTenantInstagramText({ tenantId, customerId, body })
-      : await sendTenantMessengerText({ tenantId, customerId, body });
+    const send=()=>channel==='instagram'?sendTenantInstagramText({tenantId,customerId,body,requestId,actorUserId:userId}):sendTenantMessengerText({tenantId,customerId,body,requestId,actorUserId:userId});
+    const receipt=req.body?.auto===true?await manualTakeoverService.withAutoSendPermission({tenantId,customerId,channel},send):await send();
     await maybeRecordStyleMemory(req, tenantId, customerId, body);
+    const item=await createCustomerChannelSendRequestService(store).get(tenantId,userId,channel,requestId);
     res.json({
+      item,
       ok: true,
-      outboxId: receipt.messageId,
+      outboxId: receipt.messageId,requestId:receipt.requestId,
       providerMessageIds: [receipt.messageId],
       status: 'sent',
       sentAt: new Date().toISOString(),
     });
   } catch (error) {
     res.status(502).json({
-      error: `${channel}_send_failed`,
+      error: error instanceof Error&&/^(provider_identity_gap|provider_response_save_gap|channel_send_request_)/.test(error.message)?error.message:`${channel}_send_failed`,requestId,
       message: error instanceof Error ? error.message : `${channel} send failed`,
     });
   }

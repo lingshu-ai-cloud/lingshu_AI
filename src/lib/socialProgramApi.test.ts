@@ -2,6 +2,23 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { socialProgramApi, SocialProgramRequestError } from './socialProgramApi.js';
 
+test('backward scheduling sends capacity assumptions and exact version without client task authority', async () => {
+  const previousFetch = globalThis.fetch;
+  const previousStorage = globalThis.localStorage;
+  Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: storage });
+  let body: any;
+  globalThis.fetch = async (input, init) => {
+    assert.equal(String(input), '/api/overseas/social-programs/program%2Fa/operating-packages/week%2Fa/backward-schedule');
+    body = JSON.parse(String(init?.body));
+    return Response.json({ item: { revisionApplied: false, publicationGap: 1 } });
+  };
+  try {
+    const result = await socialProgramApi.planBackwardSchedule('program/a', 'week/a', 3, { constraints: {}, resources: {}, remainingBudgetCny: 10, tasks: [{ status: 'succeeded' }], now: '2099-01-01' } as any);
+    assert.deepEqual(body, { packageVersion: 3, constraints: {}, resources: {}, remainingBudgetCny: 10 });
+    assert.equal(result.revisionApplied, false);
+  } finally { globalThis.fetch = previousFetch; Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: previousStorage }); }
+});
+
 const storage = {
   getItem: () => 'test-token',
   setItem: () => undefined,
@@ -147,5 +164,29 @@ test('social program API exposes raw operating constraints and server resolution
   } finally {
     globalThis.fetch = previousFetch;
     Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: previousStorage });
+  }
+});
+
+
+test('schedule revision confirms frozen server proposal without sending task graph or computed assignments', async () => {
+  const previousFetch = globalThis.fetch;
+  const previousStorage = globalThis.localStorage;
+  Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: storage });
+  const calls: Array<{url:string;body:unknown}> = [];
+  globalThis.fetch = async (input, init) => {
+    calls.push({url:String(input),body:JSON.parse(String(init?.body))});
+    return Response.json(String(input).endsWith('/confirm') ? {activated:false} : {item:{proposalId:'proposal/a'}});
+  };
+  try {
+    const capacity = {constraints:{},resources:{},remainingBudgetCny:100,operationalDeadlines:{monitor:'2026-10-11T20:00:00+08:00'},tasks:[{status:'succeeded'}],now:'forged',assignments:[]} as any;
+    await socialProgramApi.createScheduleRevisionProposal('program/a','package/a',3,capacity);
+    await socialProgramApi.confirmScheduleRevision('program/a','package/a','proposal/a',3,'frozen-hash');
+    assert.deepEqual(calls,[
+      {url:'/api/overseas/social-programs/program%2Fa/operating-packages/package%2Fa/schedule-revisions',body:{packageVersion:3,constraints:{},resources:{},remainingBudgetCny:100,operationalDeadlines:capacity.operationalDeadlines}},
+      {url:'/api/overseas/social-programs/program%2Fa/operating-packages/package%2Fa/schedule-revisions/proposal%2Fa/confirm',body:{expectedVersion:3,inputEvidenceHash:'frozen-hash'}},
+    ]);
+  } finally {
+    globalThis.fetch = previousFetch;
+    Object.defineProperty(globalThis, 'localStorage', { configurable:true,value:previousStorage });
   }
 });

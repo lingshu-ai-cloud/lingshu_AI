@@ -39,7 +39,7 @@ test('Instagram Login exchanges a code for an IG User token and reads the matchi
     assert.equal(token.expiresIn, 5184000);
     assert.ok(token.permissions.includes('instagram_business_manage_messages'));
     assert.deepEqual(await getInstagramLoginAccount(token.accessToken, 'v25.0'), {
-      id: 'ig-123', username: 'brand', profilePictureUrl: undefined, followersCount: 7, mediaCount: 2,
+      id: 'ig-123', userId: undefined, username: 'brand', profilePictureUrl: undefined, followersCount: 7, mediaCount: 2,
     });
     assert.deepEqual(calls, [
       'https://api.instagram.com/oauth/access_token',

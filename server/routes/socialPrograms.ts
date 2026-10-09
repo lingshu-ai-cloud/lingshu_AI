@@ -11,7 +11,23 @@ import type { OperatingPlanningRequest } from '../../shared/contracts/socialOper
 import { createWeeklyExecutionTaskService } from '../socialPrograms/executionTasks.js';
 import { revokePublicationAssignments } from '../publishing/weeklyLineage.js';
 import { assessWeeklyRecovery } from '../socialPrograms/weeklyRecoveryAssessment.js';
-import { bindWeeklyCustomerRun, readWeeklyCustomerStep, type WeeklyCustomerStep } from '../runtime/socialWeeklyCustomerBridge.js';
+import { planWeeklyBackwardSchedule } from '../socialPrograms/weeklyBackwardSchedule.js';
+import { bindWeeklyCustomerRun, readWeeklyCustomerStep, readWeeklyCustomerCalendar, listWeeklyCustomerRunCandidates, type WeeklyCustomerStep } from '../runtime/socialWeeklyCustomerBridge.js';
+import { savePublicationReceptionBinding } from '../socialPrograms/publicationReceptionService.js';
+import { createSocialWeeklyMaterialRequestsRouter } from './socialWeeklyMaterialRequests.js';
+import { createSocialWeeklySalesHandoffsRouter } from './socialWeeklySalesHandoffs.js';
+import { createSocialWeeklyCustomerSendRecoveryRouter } from './socialWeeklyCustomerSendRecovery.js';
+import { createSocialWeeklyCustomerChannelScopeRouter } from './socialWeeklyCustomerChannelScope.js';
+import { createWeeklyCustomerSendRecoveryService } from '../socialPrograms/weeklyCustomerSendRecovery.js';
+import { createSocialWeeklySalesConversationEvidenceRouter } from './socialWeeklySalesConversationEvidence.js';
+import { createSocialWeeklyScheduleRevisionsRouter } from './socialWeeklyScheduleRevisions.js';
+import { createSocialWeeklyMaterialEvidenceConfigurationRouter } from './socialWeeklyMaterialEvidenceConfiguration.js';
+import { createSocialCustomerFeedbackTopicsRouter } from './socialCustomerFeedbackTopics.js';
+import { projectWeeklyContinuationCalendar } from '../socialPrograms/weeklyContinuationCalendar.js';
+import { createSocialWeeklyContentTemplatesRouter } from './socialWeeklyContentTemplates.js';
+import { createSocialWeeklyReviewEvidenceRouter } from './socialWeeklyReviewEvidence.js';
+import { createSocialWeeklyRunningResourceEvidenceRouter } from './socialWeeklyRunningResourceEvidence.js';
+import { createSocialWeeklySupplementRequestsRouter } from './socialWeeklySupplementRequests.js';
 
 function asyncRoute(handler: RequestHandler): RequestHandler {
   return (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
@@ -24,6 +40,55 @@ export function createSocialProgramsRouter(dataStore: DataStore = store, authent
   const weeklyPackages = createWeeklyOperatingPackageService(dataStore);
   const operating = createSocialOperatingOrchestrationService(dataStore);
   const executionTasks = createWeeklyExecutionTaskService(dataStore);
+  router.use('/:programId/operating-packages/:packageId/supplement-requests', asyncRoute(async (req, res, next) => {
+    await service.getProgram((res.locals as AuthLocals).tenantId, req.params.programId);
+    next();
+  }), createSocialWeeklySupplementRequestsRouter(dataStore));
+  router.use('/:programId/operating-packages/:packageId/running-resource-evidence', asyncRoute(async (req, res, next) => {
+    await service.getProgram((res.locals as AuthLocals).tenantId, req.params.programId);
+    next();
+  }), createSocialWeeklyRunningResourceEvidenceRouter(dataStore));
+  router.use('/:programId/operating-packages/:packageId/review-evidence', asyncRoute(async (req, res, next) => {
+    await service.getProgram((res.locals as AuthLocals).tenantId, req.params.programId);
+    next();
+  }), createSocialWeeklyReviewEvidenceRouter(dataStore));
+  router.use('/:programId/content-templates', asyncRoute(async (req, res, next) => {
+    await service.getProgram((res.locals as AuthLocals).tenantId, req.params.programId);
+    next();
+  }), createSocialWeeklyContentTemplatesRouter(dataStore));
+  router.use('/:programId/customer-feedback-topics', asyncRoute(async (req, res, next) => {
+    await service.getProgram((res.locals as AuthLocals).tenantId, req.params.programId);
+    next();
+  }), createSocialCustomerFeedbackTopicsRouter(dataStore));
+  router.use('/:programId/material-requests', asyncRoute(async (req, res, next) => {
+    const { tenantId } = res.locals as AuthLocals;
+    await service.getProgram(tenantId, String(req.params.programId || ''));
+    next();
+  }), createSocialWeeklyMaterialRequestsRouter(dataStore));
+  router.use('/:programId/operating-packages/:packageId/schedule-revisions', asyncRoute(async (req, res, next) => {
+    await service.getProgram((res.locals as AuthLocals).tenantId, req.params.programId);
+    next();
+  }), createSocialWeeklyScheduleRevisionsRouter(dataStore));
+  router.use('/:programId/operating-packages/:packageId/material-evidence-configuration', asyncRoute(async (req, res, next) => {
+    await service.getProgram((res.locals as AuthLocals).tenantId, req.params.programId);
+    next();
+  }), createSocialWeeklyMaterialEvidenceConfigurationRouter(dataStore));
+  router.use('/:programId/operating-packages/:packageId/customer-channel-scope', asyncRoute(async (req, res, next) => {
+    await service.getProgram((res.locals as AuthLocals).tenantId, req.params.programId);
+    next();
+  }), createSocialWeeklyCustomerChannelScopeRouter(dataStore));
+  router.use('/:programId/operating-packages/:packageId/send-recoveries', asyncRoute(async (req, res, next) => {
+    await service.getProgram((res.locals as AuthLocals).tenantId, req.params.programId);
+    next();
+  }), createSocialWeeklyCustomerSendRecoveryRouter(createWeeklyCustomerSendRecoveryService(dataStore)));
+  router.use('/:programId/operating-packages/:packageId/sales-handoffs', asyncRoute(async (req, res, next) => {
+    await service.getProgram((res.locals as AuthLocals).tenantId, req.params.programId);
+    next();
+  }), createSocialWeeklySalesHandoffsRouter(dataStore));
+  router.use('/:programId/operating-packages/:packageId/sales-conversation-evidence', asyncRoute(async (req, res, next) => {
+    await service.getProgram((res.locals as AuthLocals).tenantId, req.params.programId);
+    next();
+  }), createSocialWeeklySalesConversationEvidenceRouter(dataStore));
 
   router.get('/', asyncRoute(async (_req, res) => {
     const { tenantId } = res.locals as AuthLocals;
@@ -184,28 +249,28 @@ export function createSocialProgramsRouter(dataStore: DataStore = store, authent
   router.post('/:programId/operating-packages/:packageId/agent-planning/director-analysis', asyncRoute(async (req, res) => {
     const { tenantId } = res.locals as AuthLocals;
     res.json({ item: await weeklyPackages.runDirectorPlanning(
-      tenantId, String(req.params.programId || ''), String(req.params.packageId || ''), { expectedPackageVersion: req.body?.expectedPackageVersion, expectedPlanningVersion: req.body?.expectedPlanningVersion },
+      tenantId, String(req.params.programId || ''), String(req.params.packageId || ''), { expectedPackageVersion: req.body?.expectedPackageVersion, expectedPlanningVersion: req.body?.expectedPlanningVersion, selectedSlotIds: req.body?.selectedSlotIds },
     ) });
   }));
 
   router.post('/:programId/operating-packages/:packageId/agent-planning/merge', asyncRoute(async (req, res) => {
     const { tenantId } = res.locals as AuthLocals;
     res.json({ item: await weeklyPackages.mergeAgentSchedule(
-      tenantId, String(req.params.programId || ''), String(req.params.packageId || ''), { expectedPackageVersion: req.body?.expectedPackageVersion, expectedPlanningVersion: req.body?.expectedPlanningVersion },
+      tenantId, String(req.params.programId || ''), String(req.params.packageId || ''), { expectedPackageVersion: req.body?.expectedPackageVersion, expectedPlanningVersion: req.body?.expectedPlanningVersion, selectedSlotIds: req.body?.selectedSlotIds },
     ) });
   }));
 
   router.post('/:programId/operating-packages/:packageId/agent-planning/confirm', asyncRoute(async (req, res) => {
     const { tenantId, userId } = res.locals as AuthLocals;
     res.json({ item: await weeklyPackages.confirmAgentSchedule(
-      tenantId, userId, String(req.params.programId || ''), String(req.params.packageId || ''), { expectedPackageVersion: req.body?.expectedPackageVersion, expectedPlanningVersion: req.body?.expectedPlanningVersion },
+      tenantId, userId, String(req.params.programId || ''), String(req.params.packageId || ''), { expectedPackageVersion: req.body?.expectedPackageVersion, expectedPlanningVersion: req.body?.expectedPlanningVersion, selectedSlotIds: req.body?.selectedSlotIds },
     ) });
   }));
 
   router.post('/:programId/operating-packages/:packageId/agent-planning/dispatch', asyncRoute(async (req, res) => {
     const { tenantId } = res.locals as AuthLocals;
     res.json({ item: await weeklyPackages.dispatchAgentSchedule(
-      tenantId, String(req.params.programId || ''), String(req.params.packageId || ''), { expectedPackageVersion: req.body?.expectedPackageVersion, expectedPlanningVersion: req.body?.expectedPlanningVersion },
+      tenantId, String(req.params.programId || ''), String(req.params.packageId || ''), { expectedPackageVersion: req.body?.expectedPackageVersion, expectedPlanningVersion: req.body?.expectedPlanningVersion, selectedSlotIds: req.body?.selectedSlotIds },
     ) });
   }));
 
@@ -228,7 +293,40 @@ export function createSocialProgramsRouter(dataStore: DataStore = store, authent
     if (!Number.isSafeInteger(requestedVersion) || requestedVersion < 1) {
       throw new SocialProgramError('package_version_invalid', 400, '周包版本无效。');
     }
-    res.json({ items: await executionTasks.list(tenantId, programId, packageId, requestedVersion) });
+    res.json({ items: await projectWeeklyContinuationCalendar(dataStore, await executionTasks.list(tenantId, programId, packageId, requestedVersion)) });
+  }));
+
+  router.post('/:programId/operating-packages/:packageId/publications/:publicationId/reception-binding', asyncRoute(async (req, res) => {
+    const { tenantId, userId } = res.locals as AuthLocals;
+    const programId = String(req.params.programId || ''), packageId = String(req.params.packageId || ''), publicationId = String(req.params.publicationId || '');
+    const pkg = await weeklyPackages.get(tenantId, programId, packageId);
+    const packageVersion = Number(req.body?.packageVersion);
+    if (![pkg.version, pkg.version + 1].includes(packageVersion)) throw new SocialProgramError('package_version_conflict', 409, '绑定只能用于当前版本或下一次明确修订。');
+    const publication = pkg.socialContentPackage.publicationTasks.find(item => item.publicationTaskId === publicationId);
+    if (!publication) throw new SocialProgramError('weekly_publication_identity_invalid', 404, '当前周包不包含该发布任务。');
+    try {
+      const item = await savePublicationReceptionBinding(dataStore, {
+        tenantId, programId, packageId, packageVersion, publicationId,
+        cta: packageVersion === pkg.version ? publication.cta ?? '' : req.body?.cta,
+        enterpriseFactHash: req.body?.enterpriseFactHash,
+        targets: req.body?.targets,
+      }, userId);
+      res.json({ item, planningRevisionRequired: true });
+    } catch (error) { throw new SocialProgramError('publication_reception_binding_invalid', 400, error instanceof Error ? error.message : '承接绑定无效。'); }
+  }));
+
+  router.get('/:programId/operating-packages/:packageId/customer-run-candidates', asyncRoute(async (req, res) => {
+    const { tenantId } = res.locals as AuthLocals;
+    const packageVersion = Number(req.query.version);
+    if (!Number.isSafeInteger(packageVersion) || packageVersion < 1) throw new SocialProgramError('package_version_invalid', 400, '请明确指定周包版本。');
+    res.json(await listWeeklyCustomerRunCandidates(dataStore, { tenantId, programId: String(req.params.programId || ''), packageId: String(req.params.packageId || ''), packageVersion }));
+  }));
+
+  router.get('/:programId/operating-packages/:packageId/customer-run-binding', asyncRoute(async (req, res) => {
+    const { tenantId } = res.locals as AuthLocals;
+    const packageVersion = Number(req.query.version);
+    if (!Number.isSafeInteger(packageVersion) || packageVersion < 1) throw new SocialProgramError('package_version_invalid', 400, '请明确指定周包版本。');
+    res.json({ item: await readWeeklyCustomerCalendar(dataStore, { tenantId, programId: String(req.params.programId || ''), packageId: String(req.params.packageId || ''), packageVersion }) });
   }));
 
   router.post('/:programId/operating-packages/:packageId/customer-run-binding', asyncRoute(async (req, res) => {
@@ -249,6 +347,23 @@ export function createSocialProgramsRouter(dataStore: DataStore = store, authent
       throw new SocialProgramError('weekly_customer_step_unsupported', 400, '客服阶段无效。');
     }
     res.json({ item: await readWeeklyCustomerStep(dataStore, authority, String(req.params.runId || ''), step as WeeklyCustomerStep) });
+  }));
+
+  router.post('/:programId/operating-packages/:packageId/backward-schedule', asyncRoute(async (req, res) => {
+    const { tenantId } = res.locals as AuthLocals;
+    const programId = String(req.params.programId || '');
+    const packageId = String(req.params.packageId || '');
+    const body = req.body;
+    if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).some(key => !['packageVersion', 'constraints', 'resources', 'remainingBudgetCny', 'operationalDeadlines'].includes(key))) throw new SocialProgramError('weekly_backward_input_invalid', 400, '倒排只能提交明确容量条件，执行任务由服务端读取。');
+    if (!Number.isSafeInteger(body.packageVersion) || body.packageVersion < 1) throw new SocialProgramError('package_version_invalid', 400, '请明确指定倒排周包版本。');
+    const pkg = await weeklyPackages.get(tenantId, programId, packageId);
+    if (pkg.version !== body.packageVersion) throw new SocialProgramError('package_version_conflict', 409, '周包版本已变化，请刷新后重新倒排。');
+    const tasks = await executionTasks.list(tenantId, programId, packageId, body.packageVersion);
+    if (!tasks.length) throw new SocialProgramError('weekly_backward_tasks_missing', 409, '该版本没有可倒排的真实执行任务。');
+    try {
+      const item = planWeeklyBackwardSchedule({ tasks, now: new Date().toISOString(), constraints: body.constraints, resources: body.resources, remainingBudgetCny: body.remainingBudgetCny, operationalDeadlines: body.operationalDeadlines, frozenOperationalWeek: { weekStart: pkg.weekStart, weekEnd: pkg.weekEnd } });
+      res.json({ item, inputAuthority: 'stored_tasks_with_user_supplied_capacity_assumptions' });
+    } catch (cause) { throw new SocialProgramError('weekly_backward_input_invalid', 400, cause instanceof Error ? cause.message : '倒排容量输入无效。'); }
   }));
 
   router.post('/:programId/operating-packages/:packageId/recovery-assessment', asyncRoute(async (req, res) => {

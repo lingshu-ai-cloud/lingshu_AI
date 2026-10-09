@@ -568,7 +568,18 @@ export class DurableContentExecutionWorker {
       });
       if (!leaseOwned) throw new Error('content_execution_worker_lease_lost');
       const settled = await finishSucceeded(this.options.dataStore, job, this.options.now?.() ?? new Date());
-      if (settled) await this.options.onSucceeded?.(job);
+      // Execution is already durably successful. A completion projection or
+      // notification failure must not put paid production back in the queue.
+      // Domain recovery reconciles its saved output without executing again.
+      if (settled) {
+        try {
+          await this.options.onSucceeded?.(job);
+        } catch (error) {
+          console.error('[content-execution] success callback requires reconciliation', {
+            jobId: job.id, error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
     } catch (error) {
       const failed = await finishFailed({
         dataStore: this.options.dataStore, job, error,

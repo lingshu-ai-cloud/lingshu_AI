@@ -4,11 +4,52 @@ import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import ffmpeg from 'ffmpeg-static';
-import { transcribeAudioWithQwen, proofreadReferenceNarrationWithQwen } from '../agents/qwen.js';
-import { proofreadReferenceNarrationWithGemini } from '../agents/gemini.js';
-import { objectStorageEnabled, objectStorageUpload, objectStorageSignedGetUrl } from '../storage/objectStorage.js';
-import { alignQwenFile, type TimedCue } from '../integrations/qwenAlignment.js';
+import { transcribeWordAudioWithQwen } from './qwenAsr.js';
+import { type TimedCue } from '../integrations/qwenAlignment.js';
+import { withPaidOperationLock } from './paidOperationLock.js';
 const execute = promisify(execFile);
+export const REFERENCE_AUDIO_CLOCK_POLICY = 'media-origin-first-pts-zero-no-stretch-v1';
+
+/** Normalize the same media origin used by video seeking. Pad/trim only the
+ * initial audio PTS; async=0 forbids ongoing stretching or gap compensation.
+ * A discontinuous source clock is rejected before any paid ASR operation.
+ */
+export async function extractReferenceSourceAudio(filePath: string, audioPath: string,
+  options: { signal?: AbortSignal } = {}) {
+  const { stderr } = await execute(ffmpeg || 'ffmpeg', ['-hide_banner','-loglevel','info','-nostdin','-y',
+    '-copyts','-start_at_zero','-i',filePath,'-map','0:a:0','-vn',
+    '-af','ashowinfo,aresample=16000:async=0:first_pts=0',
+    '-ac','1','-ar','16000','-c:a','pcm_s16le',audioPath],
+  { timeout: 90_000, maxBuffer: 8 * 1024 * 1024, ...(options.signal ? { signal: options.signal } : {}) });
+  const sourceMediaStartSeconds = Number(stderr.match(/Duration:.*?start:\s*([-\d.]+)/)?.[1]);
+  const frames = [...stderr.matchAll(/\bn:\d+\s+pts:[-\d]+\s+pts_time:([-\d.e+]+).*?\brate:(\d+)\s+nb_samples:(\d+)/g)]
+    .map(match => ({ pts: Number(match[1]), rate: Number(match[2]), samples: Number(match[3]) }));
+  if (!Number.isFinite(sourceMediaStartSeconds) || !frames.length) throw new Error('源音轨时钟无法验证，未发起词级转写');
+  const firstAudioPtsSeconds = frames[0].pts;
+  const sampleRate = frames[0].rate;
+  let inputSamples = 0;
+  let maxAudioClockDeviationSeconds = 0;
+  for (const frame of frames) {
+    if (!Number.isFinite(frame.pts) || frame.rate !== sampleRate || frame.samples <= 0) throw new Error('源音轨时钟/采样率变化，无法保证源时间对齐');
+    maxAudioClockDeviationSeconds = Math.max(maxAudioClockDeviationSeconds,
+      Math.abs(frame.pts - (firstAudioPtsSeconds + inputSamples / sampleRate)));
+    inputSamples += frame.samples;
+  }
+  // Allow millisecond container timestamp quantization, not missing packets or
+  // changing playback clocks. Never rewrite word timestamps to hide drift.
+  if (maxAudioClockDeviationSeconds > 0.01) throw new Error('源音轨时间戳不连续，未建立音画同步证据');
+  return { format: 'pcm_s16le' as const, sampleRate: 16000, channels: 1,
+    clockPolicy: REFERENCE_AUDIO_CLOCK_POLICY,
+    timelineOrigin: 'source_media_start_time' as const,
+    sourceMediaStartSeconds, firstAudioPtsSeconds,
+    initialPaddingSamples: Math.max(0, Math.round(firstAudioPtsSeconds * 16000)),
+    initialTrimSamples: Math.max(0, Math.round(-firstAudioPtsSeconds * 16000)),
+    timelineOffsetSeconds: 0, preservesSourceClock: true,
+    audioClockContinuityVerified: true, maxAudioClockDeviationSeconds,
+    dynamicResampling: false, videoFrameTimingVerified: false,
+    limitations: ['asr_word_accuracy_not_measured', 'vfr_frame_clock_not_verified'],
+  };
+}
 
 /** Use measured words to anchor complete sentences; never divide duration by word count. */
 export function alignNarrationSentences(sentences: Array<{text: string; needsReview?: boolean}>, words: TimedCue[]) {
@@ -31,38 +72,32 @@ export function parseProofreadNarration(raw: string) {
   const brands = strings(value.brands).filter(p => sentences.some((s: any) => s.text.includes(p)));
   return { sentences, products, brands, uncertainties: strings(value.uncertainties), removedFragments: strings(value.removedFragments) };
 }
-/** One full audio request + one text correction, cached by source bytes and prompt version. */
-export async function prepareReferenceNarration(filePath: string, duration: number) {
-  if (!(duration > 0 && duration <= 180)) throw new Error('整段轻量转写支持 180 秒以内视频');
-  const hash = createHash('sha256').update(fs.readFileSync(filePath)).update('reference-proofread-v1').digest('hex');
+/** The single reference-analysis ASR entry point. Text correction can never
+ * create timestamps. Legacy proofread/equal-duration caches are not promoted. */
+export async function prepareReferenceNarration(filePath: string, duration: number, options: {
+  tenantId?: string; signal?: AbortSignal;
+} = {}) {
+  if (!(duration > 0 && duration <= 180)) throw new Error('真实词级转写支持 180 秒以内视频');
+  const sourceVideoSha256 = createHash('sha256').update(fs.readFileSync(filePath)).digest('hex');
+  const tenant = options.tenantId || filePath.match(/[/\\]tenants[/\\]([^/\\]+)/)?.[1] || 'reference_analysis';
+  const hash = createHash('sha256').update(`${tenant}:${sourceVideoSha256}:measured-word-v2:${REFERENCE_AUDIO_CLOCK_POLICY}`).digest('hex');
   const dir = path.resolve('data/analysis-output/narration-cache'); fs.mkdirSync(dir, { recursive: true });
-  const cache = path.join(dir, hash + '.json');
-  const saved = fs.existsSync(cache) ? JSON.parse(fs.readFileSync(cache, 'utf8')) : null;
-  const tenant = filePath.match(/[/\\]tenants[/\\]([^/\\]+)/)?.[1];
-  const canAlign = Boolean(tenant && objectStorageEnabled() && process.env.DASHSCOPE_API_KEY);
-  if (saved && (saved.alignmentStatus === 'aligned' || !canAlign)) return saved;
-  const audioPath = path.join(dir, hash + '.mp3');
-  try {
-    await execute(ffmpeg || 'ffmpeg', ['-hide_banner','-loglevel','error','-y','-i',filePath,'-vn','-ac','1','-ar','16000','-b:a','64k',audioPath], { timeout: 90000 });
-    const rawCache = path.join(dir, hash + '.asr.json');
-    const asr = fs.existsSync(rawCache) ? JSON.parse(fs.readFileSync(rawCache, 'utf8')) : await transcribeAudioWithQwen({ audio: fs.readFileSync(audioPath), fileName: 'complete-reference.mp3' });
-    if (!fs.existsSync(rawCache) && asr.text?.trim()) fs.writeFileSync(rawCache, JSON.stringify(asr));
-    if (!asr.text.trim()) throw new Error('完整音轨转写为空');
-    const provider = process.env.GEMINI_API_KEY?.trim() ? 'gemini' : 'qwen';
-    const proofread = saved || parseProofreadNarration(await (provider === 'gemini' ? proofreadReferenceNarrationWithGemini(asr.text) : proofreadReferenceNarrationWithQwen(asr.text)));
-    let alignedSegments: ReturnType<typeof alignNarrationSentences> | undefined;
-    let alignmentError = '';
-    if (canAlign) try {
-      const key = `tenants/${tenant}/reference-alignment/${hash}.mp3`;
-      await objectStorageUpload({key, body: fs.readFileSync(audioPath), contentType: 'audio/mpeg'});
-      const words = await alignQwenFile(await objectStorageSignedGetUrl(key, 900), proofread.sentences.map((s: any) => s.text).join(' '), duration, path.join(dir, hash + '.alignment.json'));
-      alignedSegments = alignNarrationSentences(proofread.sentences, words);
-    } catch (error) { alignmentError = error instanceof Error ? error.message : '原音频对齐失败'; }
-    const result = { version: 1, sourceHash: hash, rawText: asr.text, ...proofread, provider,
-      text: proofread.sentences.map((s: any) => s.text).join(' '),
-      // Coarse ranges are only placeholders until source audio alignment/review.
-      alignmentStatus: alignedSegments ? 'aligned' : 'pending', alignmentError: alignmentError || (!canAlign ? '未配置原音频词级对齐服务' : ''),
-      segments: alignedSegments || proofread.sentences.map((s: any, i: number) => ({ ...s, start: duration * i / proofread.sentences.length, end: duration * (i+1) / proofread.sentences.length, timingPrecision: 'coarse', provenance: 'full_audio_asr:proofread:v1' })), createdAt: new Date().toISOString() };
-    fs.writeFileSync(cache, JSON.stringify(result, null, 2)); return result;
-  } finally { try { fs.unlinkSync(audioPath); } catch {} }
+  const cache = path.join(dir, `${hash}.json`);
+  return withPaidOperationLock(path.join(dir, '.locks'), hash, async () => {
+    const saved = fs.existsSync(cache) ? JSON.parse(fs.readFileSync(cache, 'utf8')) : null;
+    if (saved?.version === 2 && saved.sourceVideoSha256 === sourceVideoSha256
+      && saved.alignmentStatus === 'aligned' && saved.words?.length) return saved;
+    // PCM avoids MP3 encoder delay. No scaling/tempo transformation is applied.
+    const audioPath = path.join(dir, `${hash}.wav`);
+    try {
+      const audioExtraction = await extractReferenceSourceAudio(filePath, audioPath, options);
+      const measured = await transcribeWordAudioWithQwen({ tenant, audio: fs.readFileSync(audioPath),
+        mimeType: 'audio/wav', duration, signal: options.signal });
+      const result = { ...measured, version: 2, sourceVideoSha256, sourceHash: hash,
+        rawText: measured.text, alignmentError: '', durationSeconds: duration,
+        audioExtraction, createdAt: new Date().toISOString() };
+      fs.writeFileSync(cache, JSON.stringify(result, null, 2), { mode: 0o600 });
+      return result;
+    } finally { try { fs.unlinkSync(audioPath); } catch {} }
+  });
 }
