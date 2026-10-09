@@ -15,6 +15,7 @@ const decided = (key: Check['key'], passed: boolean, evidence: string): Check =>
  * product/text fidelity, action semantics, or lip sync on its own.
  */
 export function sentenceCueQualityFromEvidence(input: {
+  automaticOnly?: boolean;
   cueId: string;
   mediaEvidence: string;
   technical?: PersonReplacementTechnicalMetrics | null;
@@ -94,8 +95,9 @@ export function sentenceCueQualityFromEvidence(input: {
     audioSync,
     reuseRisk,
   ];
-  const state = sentenceCueQualityState(checks);
-  return { cueId: input.cueId, kind: 'person_generated', state, checks };
+  const finalChecks=input.automaticOnly ? checks.map(check=>check.status==='pending' ? {...check,status:'failed' as const,evidence:`自动检测证据不足：${check.evidence.replace(/或人工逐镜验收/g,'').replace(/等待/g,'缺少')}`} : check) : checks;
+  const state=input.automaticOnly ? (finalChecks.some(check=>check.status==='failed') ? 'failed' as const : 'accepted' as const) : sentenceCueQualityState(finalChecks);
+  return {cueId:input.cueId,kind:'person_generated',state,checks:finalChecks};
 }
 
 /** Background and absent optional review evidence do not block production.

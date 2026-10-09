@@ -23,7 +23,7 @@ import type { DataStore } from '../storage/datastore.js';
 import { HeyGenClient, type HeyGenInput } from '../lib/heygen.js';
 import { EMPTY_DEFAULTS, presenterAssetFingerprint, presenterCapabilities, shotFingerprint, type AvatarJob, type PresenterAsset, type PresenterCapability, type ProductionDefaults, type ShotProduction } from '../../src/lib/shotProduction.js';
 import { mapNarrationCues, narrationFromDetail } from '../../src/lib/narrationAlignment.js';
-import { candidateToolsFor, digitalHumanRouteSteps, planDigitalHumanShot, referenceCues, referenceModelInputAuthorization, routeStepsForExecution, usesDirectReferenceVideo, type DigitalHumanExecutionRecord, type DigitalHumanPlanRecord, type DigitalHumanReferenceCue, type SentenceFirstFrameDraftResult, type SentenceReplicationResult } from '../../src/lib/digitalHumanPlan.js';
+import { candidateToolsFor, digitalHumanPipelineFor, digitalHumanRouteSteps, planDigitalHumanShot, referenceCues, referenceModelInputAuthorization, routeStepsForExecution, usesDirectReferenceVideo, type DigitalHumanExecutionRecord, type DigitalHumanPlanRecord, type DigitalHumanReferenceCue, type SentenceFirstFrameDraftResult, type SentenceReplicationResult } from '../../src/lib/digitalHumanPlan.js';
 import { sentenceExecutionQuality, digitalHumanQualityState, deferUnavailableVisualChecksToManual, initialDigitalHumanQuality, recordDigitalHumanMediaCheck, recordModelQualityChecks, recordReferenceTechnicalChecks, recordReferenceVisualChecks, reviewDigitalHumanQuality, type ModelQualityDecision, type ModelQualityKey, type ReferenceTechnicalMetrics, type ReferenceVisualMetrics } from '../../src/lib/digitalHumanQuality.js';
 import { digitalHumanToolCapabilities, isDefinitiveSupplierSubmissionError, requiredReferencePreservation, selectReferenceAdapter, verifiedSupplierCost, type DigitalHumanExecutionAdapter, type DigitalHumanToolId } from '../lib/digitalHumanProviderRegistry.js';
 import { normalizePresenterAccountIdentity } from '../lib/presenterAccountIdentity.js';
@@ -250,6 +250,7 @@ export function createProductionRouter(store: DataStore, importVideo: (url: stri
       ...(modelInputAuthorization ? { modelInputAuthorization } : {}),
     };
     const payload: DigitalHumanPlanRecord = { id: existing?.id || '', projectId: project.id, assemblyId, shotId, fingerprint,
+      pipeline: digitalHumanPipelineFor(shot.digitalHuman),
       workflow: shot.digitalHuman?.workflow || 'material_processing', method: shot.digitalHuman?.method || 'talking', presenterId: shot.presenterId,
       presenterAssetVersion: presenterVersion, candidateTools: candidateToolsFor(shot.digitalHuman), inputSnapshot,
       routeSteps: digitalHumanRouteSteps(shot.digitalHuman?.method || 'talking', plan.provider, plan.executable, plan.state),

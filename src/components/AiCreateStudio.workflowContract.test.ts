@@ -111,8 +111,8 @@ assert.match(studioSource, /sourceWorkflowContext\.preview \? '制作方案预�
 assert.match(studioSource, /焦点产品/);
 assert.match(
   studioSource,
-  /autoConfirmedPhotoShot[\s\S]{0,500}targetFramesConfirmed:true[\s\S]{0,700}studioApi\.saveProject/,
-  'a newly generated photo-talking target frame must be auto-confirmed and persisted before video generation',
+  /preparedTargetShot[\s\S]{0,500}targetFramesConfirmed:true[\s\S]{0,700}studioApi\.saveProject/,
+  'a generated target frame is automatically persisted without a human review gate',
 );
 assert.match(studioSource, /数字人素材已生成并自动回填当前分镜/);
 assert.match(studioSource, /已完成.*目标人物视频，并自动回填当前分镜/);
@@ -204,3 +204,5 @@ const reusedDigitalSlots = followAdoptedDigitalHumanSlotDurations([durationSlot,
 assert.equal(reusedDigitalSlots[0]?.end, 3.2, 'reused digital-human videos follow media duration without an adoption candidate');
 assert.equal(reusedDigitalSlots[1]?.start, 3.2, 'the following shot shifts with the digital-human media duration');
 assert.equal(reusedDigitalSlots[1]?.end, 5.2);
+
+assert.match(studioSource, /generatedSource \? sourceCuesForShot\(source, clip.duration\)/, 'generated speech captions must use measured source timings rather than spreading script text across the shot');

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { candidateToolsFor, cueFirstFrameTime, digitalHumanRouteSteps, newDigitalHumanRequirements, planDigitalHumanShot, referenceCues, referenceModelInputAuthorization, routeStepsForExecution, usesDirectReferenceVideo, type DigitalHumanRequirements } from './digitalHumanPlan';
+import { candidateToolsFor, cueFirstFrameTime, digitalHumanPipelineFor, digitalHumanRouteSteps, newDigitalHumanRequirements, planDigitalHumanShot, referenceCues, referenceModelInputAuthorization, routeStepsForExecution, usesDirectReferenceVideo, type DigitalHumanRequirements } from './digitalHumanPlan';
 import { initialDigitalHumanQuality, recordDigitalHumanMediaCheck, reviewDigitalHumanQuality } from './digitalHumanQuality';
 import { newShotProduction, patchShot, shotFingerprint } from './shotProduction';
 
@@ -10,6 +10,13 @@ const reference: DigitalHumanRequirements = {
   action: '举起产品', scene: '展厅', preserve: '产品、背景、动作',
   reference: { videoUrl: '/reference.mp4', start: 1, end: 4, originalText: '介绍产品', derivativeAuthorized: true, derivativeAuthorizationEvidence: '企业自有拍摄 AUTH-1' },
 };
+test('product routes keep Pipeline 3 quality scope separate from Pipeline 1 and 2', () => {
+  assert.equal(digitalHumanPipelineFor(), 'pipeline_1');
+  assert.equal(digitalHumanPipelineFor({ ...newDigitalHumanRequirements(), method: 'talking' }), 'pipeline_1');
+  assert.equal(digitalHumanPipelineFor({ ...reference, method: 'replace' }), 'pipeline_2');
+  assert.equal(digitalHumanPipelineFor({ ...reference, method: 'reenact', replicationMode: 'direct_reference' }), 'pipeline_2');
+  assert.equal(digitalHumanPipelineFor({ ...reference, method: 'reenact', replicationMode: 'sentence_first_frame' }), 'pipeline_3');
+});
 test('talking requires confirmation for new requirements, preserves legacy admission and checks capability', () => {
   assert.equal(planDigitalHumanShot(base).executable, true);
 assert.equal(planDigitalHumanShot({ ...base, requirements: newDigitalHumanRequirements() }).state, 'ready');

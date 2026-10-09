@@ -5327,8 +5327,8 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     const boundSlot = slot || storyboardSlots.find(item => storyboardAssignments[item.id] === clip.id);
     const generatedSource = clip.sourceType === 'heygen' || clip.sourceType === 'digital-human-sentence-video';
     const scriptText = boundSlot ? productionFor(boundSlot).narration?.trim() || storyboardSlotScript(boundSlot.detail).voice?.trim() : '';
-    // Script captions use the existing shot duration; they are not ASR word alignment.
-    const cues = generatedShotCaptionCues(source, clip.duration, scriptText, generatedSource);
+    // Generated speech needs measured timing; missing captions enter the existing recovery flow.
+    const cues = generatedSource ? sourceCuesForShot(source, clip.duration) : generatedShotCaptionCues(source, clip.duration, scriptText, false);
     return applyCaptionTextEdits(cues, clip.id, clip.contentSha256, sourceCaptionTextEdits);
   };
   const missingAvatarSourceCues = storyboardSlots.flatMap((slot, index) => {
@@ -9603,7 +9603,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
       if (!saved.ok || !saved.project?.id) throw new Error('草稿保存失败，未提取逐句首帧');
       projectRevisionRef.current = saved.project.updatedAt; setProjectId(saved.project.id);
       const result = await productionApi.prepareSentenceFirstFrames({ projectId: saved.project.id, assemblyId: activeAssemblyId, shotId: persistedShot.id, fingerprint: productionFingerprint(slot, shot) });
-      let autoConfirmedPhotoShot: ShotProduction | null = null;
+      let preparedTargetShot: ShotProduction | null = null;
       if (targetPhoto && shot.digitalHuman?.reference) {
         const preparedShot = {...shot, digitalHuman: {...shot.digitalHuman, targetFramesConfirmed:false, reference:{...shot.digitalHuman.reference,cues:result.cues}}, revision:shot.revision+1};
         const spec = collectSpec();
@@ -9611,21 +9611,21 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
         if (!persisted.ok) throw new Error('首帧配置保存失败');
         const target = await productionApi.preparePhotoTalkingFirstFrames({projectId:saved.project.id,assemblyId:activeAssemblyId,shotId:persistedShot.id,fingerprint:productionFingerprint(slot,preparedShot),confirmed:true,maxCostCny:Number(maxCostCny)});
         result.cues = target.cues;
-        autoConfirmedPhotoShot = {...preparedShot, digitalHuman:{...preparedShot.digitalHuman!, targetFramesConfirmed:true,
+        preparedTargetShot = {...preparedShot, digitalHuman:{...preparedShot.digitalHuman!, targetFramesConfirmed:true,
           reference:{...preparedShot.digitalHuman!.reference!,cues:target.cues}}, revision:preparedShot.revision+1};
-        const confirmed = await studioApi.saveProject({id:saved.project.id,title:projectTitle,status:'draft',spec:{...spec,shotProductions:{...spec.shotProductions,[productionKey(slot.id)]:autoConfirmedPhotoShot}}});
-        if (!confirmed.ok) throw new Error('目标首帧已生成，但自动确认保存失败');
+        const confirmed = await studioApi.saveProject({id:saved.project.id,title:projectTitle,status:'draft',spec:{...spec,shotProductions:{...spec.shotProductions,[productionKey(slot.id)]:preparedTargetShot}}});
+        if (!confirmed.ok) throw new Error('目标首帧已生成，但预览配置保存失败');
         projectRevisionRef.current = confirmed.project?.updatedAt || projectRevisionRef.current;
       }
       setShotProductions(current => {
         const key = productionKey(slot.id); const currentShot = current[key] || shot; if (!currentShot.digitalHuman?.reference) return current;
-        if (autoConfirmedPhotoShot) return {...current,[key]:autoConfirmedPhotoShot};
+        if (preparedTargetShot) return {...current,[key]:preparedTargetShot};
         return { ...current, [key]: { ...currentShot, digitalHuman: { ...currentShot.digitalHuman, contentConfirmed: false, targetFramesConfirmed:false,
           reference: { ...currentShot.digitalHuman.reference, cues: result.cues } }, revision: currentShot.revision + 1 } };
       });
       await refreshMaterials(); setDigitalHumanNotice(targetPhoto
-        ? `已生成并自动确认 ${result.cues.length} 个目标人物首帧，可继续生成照片口播。`
-        : `已提取 ${result.cues.length} 个逐句首帧。请检查后生成目标人物首帧。`);
+        ? `已生成 ${result.cues.length} 个目标人物首帧，系统自动校验后继续生成视频。`
+        : `已提取 ${result.cues.length} 个逐句首帧，可自动继续重建与视频生成。`);
     } catch (error) { setProductionError(error instanceof Error ? error.message : '逐句首帧提取失败'); }
     finally { autosaveInFlightRef.current = false; setProductionBusy(false); }
   };
@@ -9646,10 +9646,12 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
       setPendingPhotoSentenceJob(null);
       if (result.sentenceJobId) setProductionSentenceResults(current => ({ ...current, [result.sentenceJobId!]: result }));
       const refreshedMaterials = await refreshMaterials(); setProductionExecutions(await productionApi.executions(saved.project.id));
+      const automaticallyAccepted=Boolean(result.cueQuality?.length && result.cueQuality.every(cue=>cue.state==='accepted' && cue.checks.every(check=>check.status==='passed')));
       setShotProductions(current => { const key = productionKey(slot.id); const currentShot = current[key] || shot; if (!currentShot.digitalHuman?.reference) return current;
-        const nextShot = currentShot.digitalHuman.presenterMode === "photo_talking" ? currentShot : { ...currentShot, digitalHuman: { ...currentShot.digitalHuman, contentConfirmed: false, reference: { ...currentShot.digitalHuman.reference, cues: result.cues } }, revision: currentShot.revision + 1 };
+        const nextShot = { ...currentShot, digitalHuman: { ...currentShot.digitalHuman, contentConfirmed: true, reference: { ...currentShot.digitalHuman.reference, cues: result.cues } }, revision: currentShot.revision + 1 };
         const candidateId=`sentence-${result.sentenceJobId || result.executionId || crypto.randomUUID()}`;
-        return { ...current, [key]: { ...nextShot, adoptedId:candidateId, candidates: [...currentShot.candidates, { id: candidateId, materialId: result.materialId, source: 'avatar', fingerprint, jobId: result.executionId, createdAt: new Date().toISOString() }] } }; });
+        return { ...current, [key]: { ...nextShot, adoptedId:automaticallyAccepted?candidateId:currentShot.adoptedId, candidates: [...currentShot.candidates, { id: candidateId, materialId: result.materialId, source: 'avatar', fingerprint, jobId: result.executionId, createdAt: new Date().toISOString() }] } }; });
+      if (!automaticallyAccepted) { setDigitalHumanNotice('视频已生成，但自动检测未通过；候选与检测原因已保留，未回填分镜。'); return; }
       setStoryboardAssignments(current=>({...current,[slot.id]:result.materialId}));
       const clip = refreshedMaterials.find(item => item.id === result.materialId) || materialById.get(result.materialId);
       if (clip?.type === 'video') setClipEdits(current => ({ ...current,
@@ -16551,6 +16553,9 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
       />}
       {productionEditorSlot && (
         <ShotProductionPanel
+          projectId={projectId || undefined}
+          assemblyId={activeAssemblyId}
+          language={activeVoiceLang || lang}
           shot={productionFor(productionEditorSlot)}
           shotId={shootingSlots.find(item => item.slotId === productionEditorSlot.id)?.id || productionEditorSlot.id}
           scriptNarration={storyboardSlotScript(productionEditorSlot.detail).voice}

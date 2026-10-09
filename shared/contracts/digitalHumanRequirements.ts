@@ -24,7 +24,7 @@ export interface DigitalHumanReferenceCue {
   targetFirstFrame?: { materialId?: string; imageUrl?: string; state: 'pending' | 'ready' | 'failed' };
   /** Optional paid Qwen composition draft. It is never used as Seedance input without a separate final-frame step. */
   draftFirstFrame?: { provider: 'qwen'; materialId: string; imageUrl?: string; state: 'ready'; estimatedCostCny: number };
-  generatedClip?: { materialId?: string; videoUrl?: string; state: 'pending' | 'ready' | 'failed'; duration?: number };
+  generatedClip?: { materialId?: string; videoUrl?: string; state: 'pending' | 'ready' | 'failed'; duration?: number; inputFingerprint?: string };
 }
 
 /** Provider-independent requirements shared by the editor and server admission checks. */

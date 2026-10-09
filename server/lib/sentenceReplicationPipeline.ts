@@ -5,7 +5,7 @@ import { promisify } from 'node:util';
 import type { DigitalHumanReferenceCue } from '../../src/lib/digitalHumanPlan.js';
 
 const run = promisify(execFile);
-export interface SentencePipelineArtifact { materialId: string; filePath: string; url?: string; duration?: number }
+export interface SentencePipelineArtifact { materialId: string; filePath: string; url?: string; duration?: number; inputFingerprint?: string }
 
 /** Provider-neutral durable orchestration: source frames never become video-provider inputs. */
 export async function runSentenceReplicationPipeline(input: {
@@ -44,7 +44,7 @@ export async function runSentenceReplicationPipeline(input: {
       await run(input.ffmpegPath, ['-hide_banner', '-loglevel', 'error', '-nostdin', '-i', clip.filePath,
         '-t', String(duration), '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-movflags', '+faststart', '-y', normalized], { timeout: 120_000 });
       if (!fs.existsSync(normalized) || fs.statSync(normalized).size < 100) throw new Error(`句 ${cue.id} 时长归一结果为空`);
-      cue.generatedClip = { materialId: clip.materialId, videoUrl: clip.url, state: 'ready', duration }; clips.push(normalized); await input.onProgress?.(cues);
+      cue.generatedClip = { materialId: clip.materialId, videoUrl: clip.url, state: 'ready', duration, inputFingerprint: clip.inputFingerprint }; clips.push(normalized); await input.onProgress?.(cues);
     } catch (error) {
       if (cue.targetFirstFrame?.state !== 'ready') cue.targetFirstFrame = { ...cue.targetFirstFrame, state: 'failed' };
       else cue.generatedClip = { ...cue.generatedClip, state: 'failed' }; await input.onProgress?.(cues); throw error;

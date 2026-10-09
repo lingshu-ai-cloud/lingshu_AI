@@ -4,6 +4,18 @@ import type { DigitalHumanReferenceCue, DigitalHumanRequirements } from '../../s
 import { planPersonShotClusters } from './personShotClustering.js';
 export type { DigitalHumanReferenceCue, DigitalHumanRequirements } from '../../shared/contracts/digitalHumanRequirements.js';
 
+export type DigitalHumanPipelineId = 'pipeline_1' | 'pipeline_2' | 'pipeline_3';
+
+/**
+ * Product route boundary. Keep this mapping centralized so Pipeline 3 quality
+ * rules cannot accidentally become global rules for every talking-head job.
+ */
+export function digitalHumanPipelineFor(requirements?: DigitalHumanRequirements): DigitalHumanPipelineId {
+  if (!requirements || requirements.method === 'talking') return 'pipeline_1';
+  if (requirements.method === 'reenact' && (requirements.replicationMode || 'sentence_first_frame') === 'sentence_first_frame') return 'pipeline_3';
+  return 'pipeline_2';
+}
+
 export const newDigitalHumanRequirements = (): DigitalHumanRequirements => ({
   workflow: 'material_processing', method: 'talking', preferredProvider: 'auto', replicationMode: 'sentence_first_frame', contentConfirmed: false,
   action: '', scene: '', preserve: '',
@@ -43,6 +55,7 @@ export interface DigitalHumanPlanRecord extends DigitalHumanPlan {
   assemblyId: string;
   shotId: string;
   fingerprint: string;
+  pipeline: DigitalHumanPipelineId;
   workflow: DigitalHumanRequirements['workflow'];
   method: DigitalHumanRequirements['method'];
   presenterId: string;
@@ -246,7 +259,7 @@ export function planDigitalHumanShot(input: {
   const steps = r?.method === 'replace'
     ? ['对齐原片语句与镜头', '制作目标人物层', '核验动作、产品与背景保真', '预览确认后填入分镜']
     : r?.method === 'reenact' && (r.replicationMode || 'sentence_first_frame') === 'sentence_first_frame'
-      ? ['按口播逐句切分原片并提取首帧', '将每句首帧重建为目标企业人物', '按目标口播逐句生成短视频', '按原节奏拼接并预览确认']
+      ? ['按口播逐句切分原片并提取首帧', '将每句首帧重建为目标企业人物', '按目标口播逐句生成短视频', '按实际片长拼接并自动检测']
       : r?.method === 'reenact'
         ? ['对齐原片语句与镜头', '将授权原片提交为动作参考', '生成动作视频与口播', '预览确认后填入分镜']
       : ['使用已确认人物与口播', '生成数字人口播', '核验音画与时长', '预览确认后填入分镜'];
