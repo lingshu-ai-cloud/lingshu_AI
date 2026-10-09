@@ -1,7 +1,7 @@
+import { Button, Drawer } from 'antd';
 import { useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, CheckCircle2, Download, ExternalLink, FileText, Loader2, X } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Download, ExternalLink, FileText, Loader2 } from 'lucide-react';
 import type { SocialContentArtifact } from '../../../shared/contracts/socialContentWorkflow';
-import { useModalFocus } from '../../hooks/useModalFocus';
 import { socialContentApi } from '../../lib/socialContentApi';
 import { socialArtifactGenerationDisclosure } from '../../lib/socialArtifactGeneration';
 export { socialArtifactGenerationDisclosure } from '../../lib/socialArtifactGeneration';
@@ -165,7 +165,6 @@ export default function SocialArtifactPreviewDialog({ artifact, onClose }: {
   const [media, setMedia] = useState<{ url: string; filename: string; type: string } | null>(null);
   const [loading, setLoading] = useState(socialArtifactHasArchivedMedia(artifact));
   const [error, setError] = useState('');
-  const dialogRef = useModalFocus<HTMLDivElement>({ open: true, onClose });
   const copy = useMemo(() => socialArtifactReadableCopy(artifact), [artifact]);
   const generation = useMemo(() => socialArtifactGenerationDisclosure(artifact), [artifact]);
   const qualityChecks = useMemo(() => automatedQualityChecks(artifact), [artifact]);
@@ -203,32 +202,33 @@ export default function SocialArtifactPreviewDialog({ artifact, onClose }: {
   const isVideo = media?.type.startsWith('video/');
 
   return (
-    <div className="fixed inset-0 z-[195] flex items-center justify-center bg-slate-950/55 p-4 backdrop-blur-sm" onMouseDown={event => { if (event.target === event.currentTarget) onClose(); }}>
-      <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="social-artifact-preview-title" className="ui-modal-frame outline-none">
-        <header className="flex items-start justify-between gap-4 border-b border-border px-5 py-4">
-          <div className="min-w-0"><p className="flex items-center gap-2 text-[11px] font-bold text-emerald-700">{artifact.platform && <SocialPlatformIcon platform={artifact.platform} size={15}/>}<span>{artifactKindLabel(artifact.kind)}</span>{artifact.platform && <span className="sr-only">{optionLabel(PLATFORM_OPTIONS, artifact.platform)}</span>}</p><h2 id="social-artifact-preview-title" className="mt-1 truncate text-lg font-black text-text-primary">{copy.title}</h2>{details && <p className="mt-1 text-[11px] text-text-muted">{details}</p>}</div>
-          <button type="button" aria-label="关闭预览" onClick={onClose} className="shrink-0 rounded-lg p-2 text-text-muted hover:bg-surface-2"><X size={18} /></button>
-        </header>
-        <div className="min-h-0 flex-1 overflow-y-auto bg-[#f8faf9] p-5">
-          <section className={`mb-4 rounded-xl border p-4 ${release.tone === 'ready' ? 'border-emerald-200 bg-emerald-50' : release.tone === 'blocked' ? 'border-rose-200 bg-rose-50' : 'border-amber-200 bg-amber-50'}`} aria-label="成片发布结论">
-            <div className="flex items-start gap-2.5">{release.tone === 'ready' ? <CheckCircle2 size={18} className="mt-0.5 shrink-0 text-emerald-700" /> : <AlertTriangle size={18} className={`mt-0.5 shrink-0 ${release.tone === 'blocked' ? 'text-rose-700' : 'text-amber-700'}`} />}<div><p className="text-sm font-black text-text-primary">{release.title}</p><p className="mt-1 text-[11px] leading-5 text-text-secondary">{release.description}</p>{release.issues.length > 0 && <p className="mt-1.5 text-[10px] font-bold text-text-secondary">先处理：{release.issues.join('；')}</p>}{costSummary && <p className="mt-1.5 text-[10px] font-black text-text-primary">费用：{costSummary}</p>}</div></div>
-          </section>
-          {loading && <div role="status" className="flex min-h-64 items-center justify-center gap-2 rounded-xl border border-border bg-white text-sm font-semibold text-text-muted"><Loader2 size={18} className="animate-spin text-emerald-600" />正在打开成品</div>}
-          {!loading && media && (isVideo
-            ? <video controls preload="metadata" src={media.url} className="mx-auto max-h-[68vh] w-full rounded-xl bg-black shadow-sm">您的浏览器暂不支持视频预览。</video>
-            : <img src={media.url} alt={copy.title} className="mx-auto max-h-[68vh] max-w-full rounded-xl bg-white object-contain shadow-sm" />)}
-          {!loading && materialReviews.length > 0 && <section className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4" aria-label="需要重点复核的素材镜头"><div className="flex items-center gap-2 text-xs font-black text-amber-950"><AlertTriangle size={15} />请重点核对 {materialReviews.length} 个素材镜头</div><ul className="mt-3 grid gap-2">{materialReviews.map(item => <li key={item.sceneId} className="rounded-lg border border-amber-100 bg-white/80 px-3 py-2 text-[11px] leading-5 text-amber-950"><span className="font-black">{item.sceneId}{item.sourceRange ? ` · 原片 ${item.sourceRange}` : ''}</span><span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 font-bold">{item.priority === 'high' ? '高优先级' : '建议复核'}</span><p>{item.reasons.join('；')}</p></li>)}</ul></section>}
-          {!loading && productionWarnings.length > 0 && <section className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4" aria-label="生成方式提醒"><div className="flex items-center gap-2 text-xs font-black text-amber-950"><AlertTriangle size={15} />生成方式提醒</div><ul className="mt-2 space-y-1 text-[11px] leading-5 text-amber-900">{productionWarnings.map(item => <li key={item}>• {item}</li>)}</ul></section>}
-          {!loading && qualityChecks.length > 0 && <details className="mt-4 rounded-xl border border-emerald-100 bg-emerald-50/75 p-4" aria-label="成片技术质检结果"><summary className="cursor-pointer text-xs font-black text-emerald-900"><span className="inline-flex items-center gap-2"><CheckCircle2 size={15} />技术质检已通过</span></summary><ul className="mt-3 grid gap-2 sm:grid-cols-2">{qualityChecks.map(item => <li key={item} className="flex items-start gap-2 text-[11px] font-semibold leading-5 text-emerald-900"><CheckCircle2 size={13} className="mt-1 shrink-0 text-emerald-700" />{item}</li>)}</ul></details>}
-          {!loading && !media && copy.body && <article className="rounded-xl border border-border bg-white p-5"><div className="flex items-center gap-2 text-xs font-bold text-text-muted"><FileText size={14} />内容预览</div><p className="mt-4 whitespace-pre-wrap text-sm leading-7 text-text-primary">{copy.body}</p></article>}
-          {!loading && !media && !copy.body && !error && <div className="flex min-h-48 items-center justify-center rounded-xl border border-border bg-white px-6 text-center text-sm font-semibold text-text-muted">此成品暂无可预览内容</div>}
-          {error && <p role="alert" className="rounded-xl border border-rose-100 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">{error}</p>}
-        </div>
-        <footer className="flex flex-wrap justify-end gap-2 border-t border-border px-5 py-4">
-          <button type="button" onClick={onClose} className="rounded-xl border border-border px-4 py-2.5 text-xs font-bold text-text-secondary">关闭</button>
-          {media && <><a href={media.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 rounded-xl border border-border px-4 py-2.5 text-xs font-bold text-text-secondary"><ExternalLink size={14} />单独打开</a><a href={media.url} download={media.filename} className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-4 py-2.5 text-xs font-black text-white"><Download size={14} />下载成品</a></>}
-        </footer>
+    <Drawer open onClose={onClose} title={copy.title} size={800}
+      styles={{ body: { padding: 20 } }}
+      footer={<div className="flex flex-wrap justify-end gap-2">
+        <Button onClick={onClose}>关闭</Button>
+        {media && <><Button href={media.url} target="_blank" rel="noreferrer" icon={<ExternalLink size={14} />}>单独打开</Button><Button type="primary" href={media.url} download={media.filename} icon={<Download size={14} />}>下载成品</Button></>}
+      </div>}>
+      <div className="mb-4 flex flex-wrap items-center gap-2 text-xs text-text-secondary">
+        {artifact.platform && <SocialPlatformIcon platform={artifact.platform} size={15}/>}
+        <span>{artifactKindLabel(artifact.kind)}</span>
+        {artifact.platform && <span>{optionLabel(PLATFORM_OPTIONS, artifact.platform)}</span>}
+        <span>{details}</span>
       </div>
-    </div>
+        <div className="min-h-0 flex-1 overflow-y-auto bg-[#f8faf9] p-5">
+          <section className={`mb-4 rounded-lg border p-4 ${release.tone === 'ready' ? 'border-emerald-200 bg-emerald-50' : release.tone === 'blocked' ? 'border-rose-200 bg-rose-50' : 'border-amber-200 bg-amber-50'}`} aria-label="成片发布结论">
+            <div className="flex items-start gap-2.5">{release.tone === 'ready' ? <CheckCircle2 size={18} className="mt-0.5 shrink-0 text-emerald-700" /> : <AlertTriangle size={18} className={`mt-0.5 shrink-0 ${release.tone === 'blocked' ? 'text-rose-700' : 'text-amber-700'}`} />}<div><p className="text-sm font-semibold text-text-primary">{release.title}</p><p className="mt-1 text-[11px] leading-5 text-text-secondary">{release.description}</p>{release.issues.length > 0 && <p className="mt-1.5 text-[10px] font-bold text-text-secondary">先处理：{release.issues.join('；')}</p>}{costSummary && <p className="mt-1.5 text-[10px] font-semibold text-text-primary">费用：{costSummary}</p>}</div></div>
+          </section>
+          {loading && <div role="status" className="flex min-h-64 items-center justify-center gap-2 rounded-lg border border-border bg-white text-sm font-semibold text-text-muted"><Loader2 size={18} className="animate-spin text-emerald-600" />正在打开成品</div>}
+          {!loading && media && (isVideo
+            ? <video controls preload="metadata" src={media.url} className="mx-auto max-h-[68vh] w-full rounded-lg bg-black shadow-none">您的浏览器暂不支持视频预览。</video>
+            : <img src={media.url} alt={copy.title} className="mx-auto max-h-[68vh] max-w-full rounded-lg bg-white object-contain shadow-none" />)}
+          {!loading && materialReviews.length > 0 && <section className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-4" aria-label="需要重点复核的素材镜头"><div className="flex items-center gap-2 text-xs font-semibold text-amber-950"><AlertTriangle size={15} />请重点核对 {materialReviews.length} 个素材镜头</div><ul className="mt-3 grid gap-2">{materialReviews.map(item => <li key={item.sceneId} className="rounded-lg border border-amber-100 bg-white/80 px-3 py-2 text-[11px] leading-5 text-amber-950"><span className="font-semibold">{item.sceneId}{item.sourceRange ? ` · 原片 ${item.sourceRange}` : ''}</span><span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 font-bold">{item.priority === 'high' ? '高优先级' : '建议复核'}</span><p>{item.reasons.join('；')}</p></li>)}</ul></section>}
+          {!loading && productionWarnings.length > 0 && <section className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-4" aria-label="生成方式提醒"><div className="flex items-center gap-2 text-xs font-semibold text-amber-950"><AlertTriangle size={15} />生成方式提醒</div><ul className="mt-2 space-y-1 text-[11px] leading-5 text-amber-900">{productionWarnings.map(item => <li key={item}>• {item}</li>)}</ul></section>}
+          {!loading && qualityChecks.length > 0 && <details className="mt-4 rounded-lg border border-emerald-100 bg-emerald-50/75 p-4" aria-label="成片技术质检结果"><summary className="cursor-pointer text-xs font-semibold text-emerald-900"><span className="inline-flex items-center gap-2"><CheckCircle2 size={15} />技术质检已通过</span></summary><ul className="mt-3 grid gap-2 sm:grid-cols-2">{qualityChecks.map(item => <li key={item} className="flex items-start gap-2 text-[11px] font-semibold leading-5 text-emerald-900"><CheckCircle2 size={13} className="mt-1 shrink-0 text-emerald-700" />{item}</li>)}</ul></details>}
+          {!loading && !media && copy.body && <article className="rounded-lg border border-border bg-white p-5"><div className="flex items-center gap-2 text-xs font-bold text-text-muted"><FileText size={14} />内容预览</div><p className="mt-4 whitespace-pre-wrap text-sm leading-7 text-text-primary">{copy.body}</p></article>}
+          {!loading && !media && !copy.body && !error && <div className="flex min-h-48 items-center justify-center rounded-lg border border-border bg-white px-6 text-center text-sm font-semibold text-text-muted">此成品暂无可预览内容</div>}
+          {error && <p role="alert" className="rounded-lg border border-rose-100 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">{error}</p>}
+        </div>
+    </Drawer>
   );
 }

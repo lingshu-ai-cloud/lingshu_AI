@@ -229,7 +229,7 @@ export function normalizeVideoPlan(value: Partial<VideoCreationPlan>): VideoCrea
           status: ['ready', 'missing', 'pending_shoot', 'needs_authorization'].includes(String(item?.status)) ? item.status : 'missing',
         })) : [],
         storyboard: Array.isArray(preview.materials?.storyboard) ? preview.materials.storyboard.slice(0, 30).map(item => ({
-          materialType: ['talking_head', 'factory', 'product', 'consumer_demo', 'unknown'].includes(String(item?.materialType)) ? item.materialType : 'unknown',
+          materialType: ['talking_head', 'factory', 'product', 'consumer_demo', 'general', 'unknown'].includes(String(item?.materialType)) ? item.materialType : 'unknown',
           materialLabel: String(item?.materialLabel || '').trim().slice(0, 80),
           narrativeRole: ['hook', 'pain_point', 'capability_proof', 'product_intro', 'effect_proof', 'cta', 'transition', 'unknown'].includes(String(item?.narrativeRole)) ? item.narrativeRole : 'unknown',
           shotIds: cleanList(item?.shotIds, 20, 120),

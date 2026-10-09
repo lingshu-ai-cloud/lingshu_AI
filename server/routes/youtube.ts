@@ -24,7 +24,7 @@ import {
   getTenantAwareGoogleOAuthClient,
 } from '../lib/oauthConfig.js';
 import { parseOAuthState, signOAuthState } from '../lib/tenantPlatformApps.js';
-import { publishVideoToAccount } from '../publishing/platformPublisher.js';
+import { publishVideoToAccount, type PublishToAccountInput } from '../publishing/platformPublisher.js';
 import { readableYouTubeError } from '../publishing/youtubeError.js';
 import { saveSocialMetricSnapshot } from '../socialMetrics/store.js';
 import {
@@ -676,6 +676,7 @@ youtubeRouter.post('/accounts/:id/upload', async (req, res) => {
     contentId,
     trackWaLink = true,
     generationKind, generationProvenance, qualityStatus, publishable, generationRecordId, sourceKind, sourceVideoPath,
+    enterpriseFactVersion, copyAudit,
   } = req.body as {
     videoPath?: string;
     title?: string;
@@ -689,7 +690,7 @@ youtubeRouter.post('/accounts/:id/upload', async (req, res) => {
     language?: string;
     contentId?: string;
     trackWaLink?: boolean;
-    generationKind?: 'script' | 'poster'; generationProvenance?: string; qualityStatus?: string; publishable?: boolean; generationRecordId?: string; sourceKind?: 'project' | 'manual_upload'; sourceVideoPath?: string;
+    generationKind?: 'script' | 'poster'; generationProvenance?: string; qualityStatus?: string; publishable?: boolean; generationRecordId?: string; sourceKind?: 'project' | 'manual_upload'; sourceVideoPath?: string; enterpriseFactVersion?: string; copyAudit?: PublishToAccountInput['copyAudit'];
   };
 
   if (!videoPath || !title) {
@@ -742,6 +743,7 @@ youtubeRouter.post('/accounts/:id/upload', async (req, res) => {
       trackWaLink,
       generationKind, generationProvenance, qualityStatus, publishable, generationRecordId,
       sourceKind, sourceVideoPath,
+      enterpriseFactVersion, copyAudit,
     });
     res.status(201).json({
       ok: true,

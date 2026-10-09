@@ -29,6 +29,7 @@ import { PUBLICATION_ASSIGNMENTS, PUBLICATION_ATTEMPTS, type DurablePublicationA
 import { listTenantCapabilityEvidence } from '../publishing/platformCapabilities.js';
 import { fallbackQueueSuggestion, normalizeScheduleSlots } from './publishingSuggestions.js';
 import { externalVideoApprovalsRouter } from './externalVideoApprovals.js';
+import { assertPublishingCopyFactVersion, PublishingCopyFactVersionError, type PublishingCopyAudit } from '../publishing/copyFactVersion.js';
 
 export const publishingRouter = Router();
 
@@ -148,6 +149,8 @@ function publicPost(post: PostRecord) {
     workflowRunId: text(stats.workflowRunId),
     workflowTaskId: text(stats.workflowTaskId),
     workflowTaskKey: text(stats.workflowTaskKey),
+    enterpriseFactVersion: text(stats.enterpriseFactVersion),
+    copyAudit: stats.copyAudit && typeof stats.copyAudit === 'object' ? stats.copyAudit : undefined,
     isRecycle: Boolean(stats.isRecycle),
     inquiries: numberValue(post.inquiries),
     deals: numberValue(post.deals),
@@ -421,6 +424,17 @@ publishingRouter.post('/calendar', async (req, res) => {
     res.status(400).json({ error: 'scheduled_at_required' });
     return;
   }
+  let copyAudit: PublishingCopyAudit | null;
+  try {
+    copyAudit = await assertPublishingCopyFactVersion(tenantId, { ...(req.body || {}), platform });
+  } catch (error) {
+    if (error instanceof PublishingCopyFactVersionError) {
+      res.status(error.statusCode).json({ error: error.code, message: error.message });
+      return;
+    }
+    res.status(503).json({ error: 'enterprise_facts_unavailable', message: '企业事实版本暂时无法校验，未加入发布队列。' });
+    return;
+  }
   const workflowAttribution = await verifiedWorkflowAttribution(
     tenantId,
     (req.body || {}) as Record<string, unknown>,
@@ -487,6 +501,7 @@ publishingRouter.post('/calendar', async (req, res) => {
       workflowRunId: workflowAttribution.runId,
       workflowTaskId: workflowAttribution.taskId,
       workflowTaskKey: workflowAttribution.taskKey,
+      ...(copyAudit ? { enterpriseFactVersion: copyAudit.enterpriseFactVersion, copyAudit } : {}),
     },
   });
   const saved = await store.getById<PostRecord>('posts', tracked.id);
@@ -561,6 +576,25 @@ publishingRouter.patch('/calendar/:id', async (req, res) => {
   }
   const update: Record<string, unknown> = {};
   const stats = { ...currentStats };
+  const copyAuditProvided = Object.prototype.hasOwnProperty.call(req.body || {}, 'enterpriseFactVersion')
+    || Object.prototype.hasOwnProperty.call(req.body || {}, 'copyAudit');
+  let replacementCopyAudit: PublishingCopyAudit | null | undefined;
+  if (copyAuditProvided) {
+    try {
+      replacementCopyAudit = await assertPublishingCopyFactVersion(tenantId, {
+        ...(req.body || {}),
+        platform: text(req.body?.platform) || text(post.platform),
+        projectId: text(req.body?.projectId || req.body?.contentId) || text(currentStats.sourceProjectId || post.content_id),
+      });
+    } catch (error) {
+      if (error instanceof PublishingCopyFactVersionError) {
+        res.status(error.statusCode).json({ error: error.code, message: error.message });
+        return;
+      }
+      res.status(503).json({ error: 'enterprise_facts_unavailable', message: '企业事实版本暂时无法校验，日历内容未更新。' });
+      return;
+    }
+  }
   let changed = false;
   if (Object.prototype.hasOwnProperty.call(req.body || {}, 'scheduledAt')) {
     if (currentStats.scheduleLocked === true && req.body?.overrideScheduleLock !== true) {
@@ -582,11 +616,27 @@ publishingRouter.patch('/calendar/:id', async (req, res) => {
       return;
     }
     update.title = title;
+    if (replacementCopyAudit) {
+      stats.enterpriseFactVersion = replacementCopyAudit.enterpriseFactVersion;
+      stats.copyAudit = replacementCopyAudit;
+    } else {
+      delete stats.enterpriseFactVersion;
+      delete stats.copyAudit;
+    }
     changed = true;
   }
   for (const field of ['description', 'firstComment', 'coverUrl', 'videoPath'] as const) {
     if (!Object.prototype.hasOwnProperty.call(req.body || {}, field)) continue;
     stats[field] = text(req.body?.[field]);
+    if (field === 'description' || field === 'firstComment') {
+      if (replacementCopyAudit) {
+        stats.enterpriseFactVersion = replacementCopyAudit.enterpriseFactVersion;
+        stats.copyAudit = replacementCopyAudit;
+      } else {
+        delete stats.enterpriseFactVersion;
+        delete stats.copyAudit;
+      }
+    }
     changed = true;
   }
   for (const field of ['targetAccountIds', 'targetAccountLabels'] as const) {

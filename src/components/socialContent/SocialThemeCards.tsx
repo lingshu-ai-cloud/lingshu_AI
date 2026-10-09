@@ -92,14 +92,14 @@ export default function SocialThemeCards({
             type="button"
             aria-pressed={active}
             onClick={() => onSelect(theme.id)}
-            className={`group relative overflow-hidden border bg-white text-left transition duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 ${compact ? 'min-h-24 rounded-lg p-3' : 'rounded-xl'} ${active ? 'border-accent shadow-[0_0_0_1px_var(--color-accent),0_10px_24px_rgba(17,127,81,0.10)]' : 'border-border hover:-translate-y-0.5 hover:border-border-bright hover:shadow-[0_10px_24px_rgba(23,61,49,0.08)]'}`}
+            className={`group relative overflow-hidden border bg-white text-left transition duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 ${compact ? 'min-h-24 rounded-lg p-3' : 'rounded-lg'} ${active ? 'border-accent ' : 'border-border  hover:border-border-bright '}`}
           >
             {compact ? (
               <div className="flex h-full items-start gap-3">
                 <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ${visual.iconStyle}`}><Icon size={19} strokeWidth={1.8} /></span>
                 <span className="min-w-0 flex-1">
                   <span className="flex items-start justify-between gap-2">
-                    <strong className="text-xs font-black text-text-primary">{theme.title}</strong>
+                    <strong className="text-xs font-semibold text-text-primary">{theme.title}</strong>
                     {active && <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-accent text-white"><Check size={11} strokeWidth={3} /></span>}
                   </span>
                   <span className="mt-1 block text-[10px] leading-4 text-text-muted">{visual.example}</span>
@@ -107,19 +107,19 @@ export default function SocialThemeCards({
               </div>
             ) : (
               <>
-                <span className={`relative block h-28 overflow-hidden bg-gradient-to-br ${visual.tint}`}>
+                <span className={`relative block h-28 overflow-hidden bg-surface-2`}>
                   <span className="absolute -right-7 -top-7 h-24 w-24 rounded-full border border-white/70 bg-white/30" />
                   <span className="absolute bottom-3 left-3 flex gap-1.5">
-                    {visual.chips.map(chip => <span key={chip} className="rounded-md border border-white/70 bg-white/75 px-2 py-1 text-[9px] font-black text-text-secondary backdrop-blur">{chip}</span>)}
+                    {visual.chips.map(chip => <span key={chip} className="rounded-md border border-white/70 bg-white/75 px-2 py-1 text-[9px] font-semibold text-text-secondary ">{chip}</span>)}
                   </span>
-                  <span className={`absolute right-3 top-3 flex h-11 w-11 items-center justify-center rounded-xl shadow-sm ${visual.iconStyle}`}><Icon size={21} strokeWidth={1.8} /></span>
+                  <span className={`absolute right-3 top-3 flex h-11 w-11 items-center justify-center rounded-lg shadow-none ${visual.iconStyle}`}><Icon size={21} strokeWidth={1.8} /></span>
                 </span>
                 <span className="block p-4">
                   <span className="flex items-center justify-between gap-3">
-                    <span className="text-[10px] font-black uppercase tracking-[0.12em] text-text-muted">{visual.eyebrow}</span>
+                    <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-text-muted">{visual.eyebrow}</span>
                     {active ? <span className="flex h-5 w-5 items-center justify-center rounded-full bg-accent text-white"><Check size={11} strokeWidth={3} /></span> : <ArrowUpRight size={14} className="text-text-muted transition group-hover:text-accent" />}
                   </span>
-                  <strong className="mt-2 block text-sm font-black text-text-primary">{theme.title}</strong>
+                  <strong className="mt-2 block text-sm font-semibold text-text-primary">{theme.title}</strong>
                   <span className="mt-1 block text-[11px] leading-5 text-text-muted">{visual.example}</span>
                 </span>
               </>
@@ -133,12 +133,12 @@ export default function SocialThemeCards({
           type="button"
           aria-pressed={selected === ''}
           onClick={() => onSelect('')}
-          className={`relative min-h-24 rounded-lg border p-3 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 ${selected === '' ? 'border-accent bg-accent-glow shadow-[0_0_0_1px_var(--color-accent)]' : 'border-dashed border-border-bright bg-surface-2/60 hover:border-accent/50'}`}
+          className={`relative min-h-24 rounded-lg border p-3 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 ${selected === '' ? 'border-accent bg-accent-glow ' : 'border-dashed border-border-bright bg-surface-2/60 hover:border-accent/50'}`}
         >
           <span className="flex items-start gap-3">
             <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-border bg-white text-text-secondary"><PenLine size={18} /></span>
             <span className="min-w-0 flex-1">
-              <span className="flex items-start justify-between gap-2"><strong className="text-xs font-black text-text-primary">自定义主题</strong>{selected === '' && <Check size={14} className="text-accent" strokeWidth={3} />}</span>
+              <span className="flex items-start justify-between gap-2"><strong className="text-xs font-semibold text-text-primary">自定义主题</strong>{selected === '' && <Check size={14} className="text-accent" strokeWidth={3} />}</span>
               <span className="mt-1 block text-[10px] leading-4 text-text-muted">没有合适选项时，写下你想讲的内容</span>
             </span>
           </span>

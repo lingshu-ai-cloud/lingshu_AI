@@ -10,7 +10,7 @@ import {
   resolveSocialDirectorArtifactLineage,
 } from './socialContentDirectorPlanVersions.js';
 import type { SocialProductionAsset, SocialProductionPlan } from './socialContentProductionPlan.js';
-import { freezeSocialScriptBaseline } from './socialContentScriptBaseline.js';
+import { freezeSocialScriptBaseline, parseStoredSocialScriptBaseline } from './socialContentScriptBaseline.js';
 import {
   STARTER_COLLECTIONS,
   type Starter198Repository,
@@ -29,6 +29,7 @@ const verifiedContext = {
   ],
   source: 'enterprise_product' as const,
   confidence: 1,
+  factVersion: { id: 'enterprise-facts-v7', revision: 7, contentHash: 'fact-hash-v7' },
 };
 const baseline = freezeSocialScriptBaseline({
   brief: {
@@ -40,6 +41,8 @@ const baseline = freezeSocialScriptBaseline({
   verifiedContext,
   lockedAt: firstCreatedAt,
 });
+assert.deepEqual(parseStoredSocialScriptBaseline(JSON.stringify(baseline))?.verifiedContextSnapshot,
+  baseline.verifiedContextSnapshot, 'the frozen enterprise-fact values survive durable task serialization');
 
 const assets: SocialProductionAsset[] = [
   {
@@ -162,6 +165,8 @@ assert.equal(savedV1.created, true);
 assert.equal(savedV1.versionRecord.version, '1');
 assert.equal(savedV1.versionRecord.factSnapshot.captureMode, 'verified_context');
 assert.deepEqual(savedV1.versionRecord.factSnapshot.facts, verifiedContext.facts);
+assert.deepEqual(savedV1.versionRecord.factSnapshot.enterpriseFactVersion, verifiedContext.factVersion,
+  'director lineage freezes the exact enterprise fact generation admitted by the script baseline');
 assert.equal(savedV1.versionRecord.materialSnapshot.length, 2);
 assert.equal(savedV1.reference.directorPlanId, planV1.directorPlanId);
 assert.equal(savedV1.reference.version, planV1.version);
@@ -177,6 +182,22 @@ const replayedV1 = await persistSocialDirectorPlanVersion({
 });
 assert.equal(replayedV1.created, false, 'the exact same immutable write is idempotent');
 assert.equal(memory.rows.get(STARTER_COLLECTIONS.socialDirectorPlanVersions)?.length, 1);
+await assert.rejects(
+  persistSocialDirectorPlanVersion({
+    repository: memory.repository,
+    tenantId,
+    taskId,
+    plan: planV1,
+    baseline,
+    verifiedContext: {
+      ...verifiedContext,
+      facts: [{ key: 'category', label: '类别', value: '已更新分类' }],
+      factVersion: { id: 'enterprise-facts-v8', revision: 8, contentHash: 'fact-hash-v8' },
+    },
+  }),
+  /social_content_director_fact_snapshot_version_mismatch/,
+  'a retry may not relabel a frozen run with a newer enterprise fact version',
+);
 const compatibilityProbeV1 = await persistSocialDirectorPlanVersion({
   repository: memory.repository,
   tenantId,

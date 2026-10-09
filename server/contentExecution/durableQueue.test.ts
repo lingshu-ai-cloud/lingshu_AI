@@ -4,6 +4,8 @@ import { currentDataAuthority, runWithDataAuthority } from '../storage/dataAutho
 import type { DataStore, ListQuery, ListResult } from '../storage/datastore.js';
 import {
   CONTENT_EXECUTION_JOB_COLLECTION,
+  readCurrentContentExecutionCheckpoint,
+  recordCurrentContentExecutionCheckpoint,
   recordCurrentContentProviderReceipt,
   runWithContentExecutionContext,
 } from './context.js';
@@ -132,6 +134,81 @@ test('durable admission is idempotent and provider receipts survive execution co
   assert.equal(persisted?.providerReceipts[0]?.providerTaskId, 'provider-task-a');
 });
 
+test('versioned checkpoints survive a new execution context and stale workers are fenced', async () => {
+  const store = new MemoryStore();
+  const job = await admitContentExecutionJob({
+    dataStore: store, tenantId: 'tenant-checkpoint', userId: 'user-a', taskId: 'task-checkpoint',
+    runId: 'run-checkpoint', taskType: 'social_content_weekly',
+  });
+  await store.update(CONTENT_EXECUTION_JOB_COLLECTION, job.id, {
+    status: 'running', worker_id: 'worker-a', attempt: 1,
+  });
+  await runWithContentExecutionContext({
+    dataStore: store, jobId: job.id, expectedWorkerId: 'worker-a', expectedAttempt: 1,
+    action: () => recordCurrentContentExecutionCheckpoint({
+      stage: 'social.director_storyboard', version: '1', inputHash: 'input-v1',
+      payload: { scenes: [{ sceneId: 'scene-1', materialId: 'asset-1' }] },
+    }),
+  });
+  const persisted = await readContentExecutionJob(
+    store, 'tenant-checkpoint', 'task-checkpoint', 'run-checkpoint',
+  );
+  await runWithContentExecutionContext({
+    dataStore: store, jobId: job.id, checkpoints: persisted?.checkpoints,
+    action: async () => {
+      assert.deepEqual(readCurrentContentExecutionCheckpoint({
+        stage: 'social.director_storyboard', version: '1', inputHash: 'input-v1',
+      }), { scenes: [{ sceneId: 'scene-1', materialId: 'asset-1' }] });
+      assert.equal(readCurrentContentExecutionCheckpoint({
+        stage: 'social.director_storyboard', version: '1', inputHash: 'changed-input',
+      }), null, 'changed inputs must never reuse an old intermediate result');
+    },
+  });
+
+  await assert.rejects(runWithContentExecutionContext({
+    dataStore: store, jobId: job.id, checkpoints: persisted?.checkpoints,
+    expectedWorkerId: 'worker-a', expectedAttempt: 1,
+    action: async () => {
+      await store.update(CONTENT_EXECUTION_JOB_COLLECTION, job.id, {
+        worker_id: 'worker-b', attempt: 2,
+      });
+      await recordCurrentContentExecutionCheckpoint({
+        stage: 'social.director_storyboard', version: '1', inputHash: 'stale-write', payload: {},
+      });
+    },
+  }), /content_execution_stopped/);
+  const afterFence = await readContentExecutionJob(
+    store, 'tenant-checkpoint', 'task-checkpoint', 'run-checkpoint',
+  );
+  assert.equal(afterFence?.checkpoints['social.director_storyboard']?.inputHash, 'input-v1');
+});
+
+test('provider receipt writers merge under a durable lock and stale callbacks cannot downgrade completion', async () => {
+  const store = new MemoryStore();
+  const job = await admitContentExecutionJob({
+    dataStore: store, tenantId: 'tenant-receipt', userId: 'user-a', taskId: 'task-receipt',
+    runId: 'run-receipt', taskType: 'social_content_weekly',
+  });
+  await runWithContentExecutionContext({ dataStore: store, jobId: job.id, action: async () => {
+    await recordCurrentContentProviderReceipt({
+      provider: 'seedance', requestId: 'request-new', state: 'completed', providerTaskId: 'task-new',
+    });
+  } });
+  // This context intentionally starts with an empty/stale in-memory array.
+  await runWithContentExecutionContext({ dataStore: store, jobId: job.id, providerReceipts: [], action: async () => {
+    await recordCurrentContentProviderReceipt({
+      provider: 'heygen', requestId: 'request-old-worker', state: 'accepted', providerTaskId: 'task-old',
+    });
+    await recordCurrentContentProviderReceipt({
+      provider: 'seedance', requestId: 'request-new', state: 'accepted', providerTaskId: 'task-new',
+    });
+  } });
+  const persisted = await readContentExecutionJob(store, 'tenant-receipt', 'task-receipt', 'run-receipt');
+  assert.equal(persisted?.providerReceipts.length, 2);
+  assert.equal(persisted?.providerReceipts.find(item => item.requestId === 'request-new')?.state, 'completed');
+  assert.equal(persisted?.providerReceipts.find(item => item.requestId === 'request-old-worker')?.providerTaskId, 'task-old');
+});
+
 test('customer runtime projection explains capacity, queue position and retry without exposing raw failures', async () => {
   const store = new MemoryStore();
   await setContentExecutionLimit({
@@ -175,6 +252,9 @@ test('pause, cancel, resume and manual retry preserve the same durable job ident
   assert.equal(paused.status, 'paused');
   const resumed = await controlContentExecutionJob({ dataStore: store, tenantId: 'tenant-a', jobId: job.id, action: 'resume' });
   assert.equal(resumed.status, 'queued');
+  const duplicateResume = await controlContentExecutionJob({ dataStore: store, tenantId: 'tenant-a', jobId: job.id, action: 'resume' });
+  assert.equal(duplicateResume.id, job.id);
+  assert.equal(duplicateResume.status, 'queued');
   const cancelled = await controlContentExecutionJob({ dataStore: store, tenantId: 'tenant-a', jobId: job.id, action: 'cancel' });
   assert.equal(cancelled.status, 'cancelled');
   const recovered = await controlContentExecutionJob({ dataStore: store, tenantId: 'tenant-a', jobId: job.id, action: 'resume' });
@@ -185,6 +265,9 @@ test('pause, cancel, resume and manual retry preserve the same durable job ident
   assert.equal(retried.attempt, 0);
   assert.equal(retried.lastError, null);
   assert.equal(retried.id, job.id);
+  const duplicateRetry = await controlContentExecutionJob({ dataStore: store, tenantId: 'tenant-a', jobId: job.id, action: 'retry' });
+  assert.equal(duplicateRetry.id, job.id);
+  assert.equal(duplicateRetry.status, 'queued');
   await assert.rejects(
     controlContentExecutionJob({ dataStore: store, tenantId: 'tenant-b', jobId: job.id, action: 'pause' }),
     /content_execution_job_not_found/,

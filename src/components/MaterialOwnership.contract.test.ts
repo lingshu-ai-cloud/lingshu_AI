@@ -78,11 +78,11 @@ assert.doesNotMatch(inspirationSource, /enterMaterialSmartGeneration[\s\S]*?mate
 assert.doesNotMatch(inspirationSource, /pinnedMaterialVideos/, '素材库内容不得反向混入爆款视频列表');
 assert.doesNotMatch(inspirationSource, /<MaterialAnalysisStatus material=\{material\}/, '我的素材卡片不得展示内部分析进度和区间标注');
 assert.doesNotMatch(inspirationSource, /采集参考 · 仅供分析|参考素材 ≠ 可商用素材|产品归属待确认|点击智能分类/, '我的素材卡片不得展示内部用途、归属和分类标注');
-assert.match(inspirationSource, /grid-cols-3 gap-3 items-start lg:grid-cols-4 xl:grid-cols-5/, '我的素材卡片密度必须与灵感卡片保持一致');
+assert.match(inspirationSource, /grid-cols-1 gap-3 items-start sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5/, '我的素材卡片必须从移动端单列过渡到桌面端高密度视图');
 assert.match(inspirationSource, /title=\{materialSemanticLabel\(material\)\}>\{materialSemanticLabel\(material\)\}<\/p>/, '每张我的素材卡片必须显示产品名或主要内容关键词');
 assert.match(inspirationSource, /<Eye size=\{14\} \/>查看详情/, '每张素材卡必须提供查看详情入口');
 assert.match(inspirationSource, /<Sparkles size=\{14\} \/>自由创作/, '每张素材卡必须提供自由创作入口');
-assert.match(inspirationSource, /\{ id: 'library' as const[\s\S]{0,220}\{ id: 'accounts' as const/, '对标账号必须排列在我的素材之后');
+assert.match(inspirationSource, /\{ key: 'library'[\s\S]{0,220}\{ key: 'accounts'/, '对标账号必须排列在我的素材之后');
 assert.match(inspirationSource, /aria-label=\{`\$\{isFavoriteMaterial\(material\) \? '取消收藏' : '收藏'\} \$\{material\.name\}`\}/, '素材卡必须提供可持久化的收藏按钮');
 assert.match(studioRouteSource, /function enterpriseProductMaterials[\s\S]{0,5000}sourceType: 'enterprise_product_table'/, '产品表图片必须自动投影到正式素材接口并保留来源');
 assert.match(studioRouteSource, /enterpriseAssetStableId/, '产品表素材必须使用稳定 ID，保证周计划和制作工程引用同一条素材');

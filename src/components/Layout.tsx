@@ -1,4 +1,5 @@
 import { type ReactNode, useEffect, useRef, useState } from 'react';
+import { Menu } from 'antd';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   ChevronRight, LogOut, Loader2, RefreshCcw, X, ShieldCheck, ListTree, PanelLeftClose, PanelLeftOpen, Coins, Settings,
@@ -136,25 +137,8 @@ function NavItem({
   collapsed?: boolean;
 }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      title={collapsed ? item.label : undefined}
-      aria-label={collapsed ? item.label : undefined}
-      aria-current={active ? 'page' : undefined}
-      data-demo-target={item.id}
-      className={`relative flex w-full items-center border-l-2 py-1 text-sm font-medium transition-colors ${collapsed ? 'justify-center px-2' : 'gap-2.5 px-3'} ${active ? 'border-accent bg-[#edf4ef]' : 'border-transparent text-text-secondary hover:bg-[#f1f5f2] hover:text-text-primary'}`}
-      style={
-        active
-          ? { color: 'var(--color-text-primary)' }
-          : undefined
-      }
-    >
-      <span aria-hidden="true" className="relative flex-shrink-0" style={{ color: active ? 'var(--color-accent)' : undefined }}>
-        {item.icon}
-      </span>
-      {!collapsed && <span className="relative flex-1 text-left">{item.label}</span>}
-    </button>
+    <Menu className="ls-nav-menu" mode="inline" inlineCollapsed={collapsed} selectedKeys={active ? [item.id] : []} onClick={onClick}
+      items={[{ key: item.id, icon: <span className="inline-flex items-center justify-center">{item.icon}</span>, title: collapsed ? item.label : '', label: <span data-demo-target={item.id} aria-current={active ? 'page' : undefined}>{item.label}</span> }]} />
   );
 }
 
@@ -240,6 +224,7 @@ export default function Layout({ page, onNavigate, conversation, children, sessi
   ));
   const [mobileSidebarExpanded, setMobileSidebarExpanded] = useState(false);
   const sidebarCollapsed = mobileViewport ? !mobileSidebarExpanded : desktopSidebarCollapsed;
+  const sidebarWidth = sidebarCollapsed ? (mobileViewport ? 60 : 64) : 208;
   const sessionScope = session?.demo?.guideScope || session?.demo?.expiresAt || null;
   const liveSessionScope = liveSession?.demo?.guideScope || liveSession?.demo?.expiresAt || null;
   const sessionIdentityScope = `${session?.user?.id || ''}:${session?.tenant?.id || ''}:${session?.supportAccess?.requestId || ''}:${sessionScope || ''}`;
@@ -370,7 +355,7 @@ export default function Layout({ page, onNavigate, conversation, children, sessi
       {/* ── Left sidebar ─────────────────────────────── */}
       {page !== 'agentMonitor' && <motion.aside
         initial={false}
-        animate={{ width: sidebarCollapsed ? 64 : 220 }}
+        animate={{ width: sidebarWidth }}
         transition={{ type: 'spring', damping: 30, stiffness: 320 }}
         className="app-sidebar relative z-40 flex flex-shrink-0 flex-col overflow-visible border-r border-border"
       >
@@ -391,7 +376,7 @@ export default function Layout({ page, onNavigate, conversation, children, sessi
           </button>
         </div>
 
-        {showDemoGuide && !sidebarCollapsed && (
+        {showDemoGuide && (
           <DemoGuide
             key={guideScope}
             page={page}
@@ -402,7 +387,7 @@ export default function Layout({ page, onNavigate, conversation, children, sessi
         )}
 
         {/* Home nav */}
-        <nav aria-label="主导航" className="px-3 pb-1">
+        <nav aria-label="主导航" className={`${sidebarCollapsed ? 'px-2' : 'px-3'} pb-1`}>
           <NavItem
             item={homeNavItem}
             active={page === homeNavItem.id}
@@ -415,7 +400,7 @@ export default function Layout({ page, onNavigate, conversation, children, sessi
           {navSections.map((section, index) => (
             <div key={section.label}>
               {index > 0 && <div className={`mx-4 border-t border-border ${sidebarCollapsed ? 'my-1' : 'my-1.5'}`} />}
-              <nav aria-label={section.label} className="px-3">
+              <nav aria-label={section.label} className={sidebarCollapsed ? 'px-2' : 'px-3'}>
                 {!sidebarCollapsed && <p className="px-3 pb-1 pt-0.5 text-[10px] font-semibold text-text-muted uppercase tracking-wider">{section.label}</p>}
                 {section.items.map(item => (
                   <NavItem
@@ -569,7 +554,7 @@ export default function Layout({ page, onNavigate, conversation, children, sessi
                 <div className="pt-2">
                   {!starterMode && <button onClick={openQuota} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold text-text-secondary hover:bg-surface-2"><Coins size={17} /><span className="flex-1 text-left">积分管理</span><ChevronRight size={14} className="text-text-muted" /></button>}
                   <button onClick={openDigitalEmployeeGuide} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold text-text-secondary hover:bg-surface-2"><Sparkles size={17} /><span className="flex-1 text-left">新手引导</span><ChevronRight size={14} className="text-text-muted" /></button>
-                  <button onClick={() => { setAccountMenuOpen(false); setAccountSettingsOpen(true); }} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold text-text-secondary hover:bg-surface-2"><Settings size={17} /><span className="flex-1 text-left">账号设置</span><ChevronRight size={14} className="text-text-muted" /></button>
+                  <button onClick={() => { setAccountMenuOpen(false); setMobileRightPanelOpen(false); setAccountSettingsOpen(true); }} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold text-text-secondary hover:bg-surface-2"><Settings size={17} /><span className="flex-1 text-left">账号设置</span><ChevronRight size={14} className="text-text-muted" /></button>
                   {onLogout && <button onClick={onLogout} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold text-text-secondary hover:bg-red-50 hover:text-red-600"><LogOut size={17} /><span className="flex-1 text-left">退出登录</span></button>}
                   <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 border-t border-border px-3 pt-2 text-[10px] font-semibold text-text-muted">
                     <a href="/privacy" target="_blank" rel="noreferrer" className="hover:text-accent">隐私政策</a>
@@ -658,7 +643,7 @@ export default function Layout({ page, onNavigate, conversation, children, sessi
             exit={{ x: '100%', opacity: 0 }}
             transition={{ type: 'spring', damping: 30, stiffness: 300 }}
             className="fixed inset-y-0 right-0 z-50 flex flex-col overflow-hidden bg-white md:hidden"
-            style={{ left: page === 'agentMonitor' ? 0 : sidebarCollapsed ? 64 : 220 }}
+            style={{ left: page === 'agentMonitor' ? 0 : sidebarWidth }}
             role="dialog"
             aria-modal="true"
             aria-labelledby="conversation-context-panel-mobile-title"

@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { Button } from 'antd';
 import { motion } from 'motion/react';
 import { Sparkles } from 'lucide-react';
 import type { Page } from '../App';
 import { DEMO_PROGRESS_EVENT, readDemoProgress, writeDemoProgress, type DemoStepId } from '../lib/demoProgress';
+import { LsBrandAction, LsFlowDialog } from './ui/LsExperiencePrimitives';
 
 interface GuideStep {
   id: DemoStepId;
@@ -94,6 +96,7 @@ function useTargetRect(target: string, tick: number) {
 export default function DemoGuide({ page, onNavigate, onShown, forceStart }: { page: Page; onNavigate: (p: Page) => void; onShown?: () => void; forceStart?: boolean }) {
   const [done, setDone] = useState<Record<string, boolean>>(() => forceStart ? {} : readDemoProgress());
   const [showCelebration, setShowCelebration] = useState(false);
+  const [guideDialogOpen, setGuideDialogOpen] = useState(true);
   const wasCompleteRef = useRef(STEPS.every(step => readDemoProgress()[step.id]));
   const didNotifyShownRef = useRef(false);
   const [tick, setTick] = useState(0);
@@ -126,6 +129,7 @@ export default function DemoGuide({ page, onNavigate, onShown, forceStart }: { p
       }
       wasCompleteRef.current = nextComplete;
       setDone(next);
+      if (!nextComplete) setGuideDialogOpen(true);
       setTick(value => value + 1);
     };
     const sync = () => {
@@ -142,16 +146,8 @@ export default function DemoGuide({ page, onNavigate, onShown, forceStart }: { p
     };
   }, [onShown]);
 
-  useEffect(() => {
-    if (isComplete || current.page === page) return;
-    const timer = window.setTimeout(() => {
-      onNavigate(current.page);
-      setTick(value => value + 1);
-    }, 260);
-    return () => window.clearTimeout(timer);
-  }, [current.id, current.page, isComplete, onNavigate, page]);
-
   const go = () => {
+    setGuideDialogOpen(false);
     onNavigate(current.page);
     window.setTimeout(() => setTick(value => value + 1), 120);
   };
@@ -160,6 +156,7 @@ export default function DemoGuide({ page, onNavigate, onShown, forceStart }: { p
     const skipped = Object.fromEntries(STEPS.map(step => [step.id, true]));
     wasCompleteRef.current = true;
     setShowCelebration(false);
+    setGuideDialogOpen(false);
     writeDemoProgress(skipped);
   };
 
@@ -210,7 +207,7 @@ export default function DemoGuide({ page, onNavigate, onShown, forceStart }: { p
 
   return (
     <>
-      {rect && (
+      {rect && !guideDialogOpen && (
         <div
           className="pointer-events-none fixed z-[70] rounded-lg transition-all duration-200"
           style={{
@@ -223,59 +220,43 @@ export default function DemoGuide({ page, onNavigate, onShown, forceStart }: { p
         />
       )}
 
-      <motion.div
-        initial={{ opacity: 0, scale: 0.96, y: -6 }}
-        animate={{ opacity: 1, scale: [0.96, 1.025, 1], y: [-6, 0, 0] }}
-        transition={{ duration: 0.55, times: [0, 0.62, 1], ease: 'easeOut' }}
-        role="region"
-        aria-live="polite"
-        aria-labelledby="demo-guide-step-title"
-        className="fixed bottom-3 left-3 right-3 z-[71] overflow-visible rounded-lg border border-border bg-white shadow-lg sm:bottom-6 sm:left-4 sm:right-auto sm:w-[318px]"
+      <LsFlowDialog
+        open={guideDialogOpen}
+        onCancel={() => setGuideDialogOpen(false)}
+        title="新手引导"
+        width={680}
+        current={currentStepIndex}
+        steps={STEPS.map((step, index) => ({
+          title: ['企业', '策略', '脚本', '询盘', '唤醒', '定时', '自动化'][index],
+          status: done[step.id] ? 'finish' : index === currentStepIndex ? 'process' : 'wait',
+        }))}
+        mask={{ closable: false }}
+        footer={[
+          <Button key="skip" type="text" onClick={skipGuide}>跳过引导</Button>,
+          <LsBrandAction key="go" onClick={go}>{current.page === page ? '开始这一步' : '带我去'}</LsBrandAction>,
+        ]}
       >
-        <div className="px-4 py-4">
-          <div className="mb-2 flex justify-end">
-            <button
-              type="button"
-              onClick={skipGuide}
-              className="rounded-md px-2 py-1 text-[11px] font-semibold text-text-muted hover:bg-surface-2 hover:text-text-secondary"
-            >
-              跳过引导
-            </button>
+        <div className="flex items-start gap-4 rounded-lg bg-surface-2 p-4">
+          <span className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-md bg-accent-glow text-accent">
+            <Sparkles size={18} />
+          </span>
+          <div className="min-w-0">
+            <p className="text-sm font-semibold leading-[22px] text-text-primary">你好，我是灵枢 AI，你的出海外贸助手。</p>
+            <p className="mt-1 text-xs leading-[18px] text-text-muted">进度会自动保存，退出后也可从当前步骤继续。</p>
           </div>
-          <div className="flex items-start gap-3">
-            <span className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-md bg-accent-glow text-accent">
-              <Sparkles size={14} />
-            </span>
-            <div className="min-w-0">
-              <p className="text-[13px] font-semibold text-text-primary leading-relaxed">
-                你好，我是灵枢AI，你的出海外贸助手，请多多指教！
-              </p>
-            </div>
-          </div>
-
-          <div className="mt-4">
-            <p id="demo-guide-step-title" className="text-[15px] font-bold leading-snug text-text-primary">{current.title}</p>
-          </div>
-
-          <p className="text-xs text-text-secondary mt-3 leading-relaxed">
-            {current.page !== page ? '我正在带你进入对应页面，稍等一下。' : current.body}
-          </p>
-
-          <div className="flex items-center justify-between gap-3 mt-4">
-            <span className="inline-flex items-center border-l-2 border-insight bg-insight-soft px-2.5 py-1 text-[12px] font-bold text-insight-action">
-              当前步骤 {currentStepIndex + 1}/{STEPS.length}
-            </span>
-            <button
-              type="button"
-              onClick={go}
-              className="h-8 flex-shrink-0 rounded-md bg-accent px-4 text-xs font-semibold text-white hover:bg-accent-dim"
-            >
-              带我去
-            </button>
-          </div>
-
         </div>
-      </motion.div>
+
+        <div className="mt-5">
+          <p id="demo-guide-step-title" className="text-base font-semibold leading-6 text-text-primary">{current.title}</p>
+          <p className="mt-2 text-sm leading-[22px] text-text-secondary">{current.body}</p>
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-border pt-4">
+            <span className="text-xs font-medium text-text-muted">当前步骤 {currentStepIndex + 1}/{STEPS.length}</span>
+            <span className="text-xs font-medium text-accent">{current.page === page ? '目标页面已就绪' : '将前往对应页面'}</span>
+          </div>
+        </div>
+      </LsFlowDialog>
+
+      {!guideDialogOpen && <button type="button" onClick={() => setGuideDialogOpen(true)} className="fixed bottom-4 left-4 z-[71] rounded-md border border-border bg-white px-3 py-2 text-xs font-semibold text-text-primary shadow-lg hover:bg-surface-2">继续新手引导 · {currentStepIndex + 1}/{STEPS.length}</button>}
     </>
   );
 }

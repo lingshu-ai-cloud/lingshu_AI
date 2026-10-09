@@ -3,6 +3,8 @@ import { discoveryKeywords } from '../../shared/socialDiscoveryKeywords';
 import type { SocialCrawlStrategy } from '../../shared/contracts/socialContentWorkflow';
 import { useAgentProductionAction } from '../lib/agentProductionSession';
 import { useState, useEffect, useRef } from 'react';
+import { Button, Drawer, Modal, Segmented } from 'antd';
+import LsPageHeader from './ui/LsPageHeader';
 import { motion, AnimatePresence } from 'motion/react';
 import { Activity, AlertTriangle, BarChart3, Building2, ChevronDown, CircleDollarSign, Clock, Download, DownloadCloud, ExternalLink, Globe2, Loader, Play, Plus, RefreshCw, Search, Trash2, TrendingUp, X, CheckCircle } from 'lucide-react';
 import type { AgentAction, AgentType } from '../App';
@@ -15,7 +17,6 @@ import {
   type ScheduleActionPrefill,
 } from '../lib/contentActionNavigation';
 import { normalizeKeywordInput, type KeywordPlatform } from '../lib/keywordInput';
-import { useModalFocus } from '../hooks/useModalFocus';
 export type ScheduledTaskExecutionState = 'idle' | 'queued' | 'running' | 'succeeded' | 'failed' | 'worker_offline' | 'no_data' | 'collected' | 'partial';
 
 export type ScheduledWorkflowHandoff = {
@@ -516,14 +517,6 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
     setWorkspaceMessage('');
   };
 
-  const addTaskDialogRef = useModalFocus<HTMLDivElement>({
-    open: showAdd,
-    onClose: closeAddModal,
-  });
-  const resultTaskDialogRef = useModalFocus<HTMLDivElement>({
-    open: Boolean(resultTaskId),
-    onClose: closeResultPanel,
-  });
 
   useEffect(() => {
     void fetchTasks();
@@ -1499,18 +1492,7 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
       {/* Main content */}
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
         <div className="border-b border-gray-100 px-4 py-4 sm:px-6 md:px-8 md:py-5">
-          <div className="flex items-center justify-between">
-            <h2 className="text-base font-semibold text-gray-900">{activeGroupMeta.label}</h2>
-            <button
-              type="button"
-              data-demo-target={!showAdd && activeGroup === 'social' ? 'scheduled_run' : undefined}
-              onClick={openAddModal}
-              className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-white"
-              style={{ background: '#16a34a' }}
-            >
-              <Plus size={16} /> 新建任务
-            </button>
-          </div>
+          <LsPageHeader title="定时任务" description={activeGroupMeta.label} className="!mb-0 !border-0 !pb-0" extra={<Button type="primary" icon={<Plus size={16} />} data-demo-target={!showAdd && activeGroup === 'social' ? 'scheduled_run' : undefined} onClick={openAddModal}>新建任务</Button>} />
         </div>
 
         <div className="min-w-0 flex-1 overflow-y-auto px-4 py-4 sm:px-6 sm:py-5 md:px-8 md:py-6">
@@ -1518,36 +1500,20 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
           <div className="mb-6 space-y-4">
             <div className="flex flex-col items-stretch gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
               <div className="min-w-0">
-                <div className="inline-flex rounded-xl border border-gray-200 bg-gray-50 p-1">
-                  {[
-                    { id: 'crawler' as const, label: '社媒爬虫定时任务' },
-                    { id: 'analysis' as const, label: '视频分析' },
-                  ].map(tab => (
-                    <button
-                      key={tab.id}
-                      type="button"
-                      onClick={() => setSocialTaskTab(tab.id)}
-                      className={`h-8 rounded-lg px-3 text-xs font-medium transition-colors ${socialTaskTab === tab.id ? 'bg-white text-green-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
-                    >
-                      {tab.label}
-                    </button>
-                  ))}
-                </div>
+                <Segmented value={socialTaskTab} onChange={setSocialTaskTab} options={[{ value: 'crawler', label: '社媒爬虫定时任务' }, { value: 'analysis', label: '视频分析' }]} />
                 <p className="text-xs text-gray-500 mt-2">
                   {socialTaskTab === 'crawler'
                     ? `${crawlTasks.length > 0 ? crawlTasks.map(task => `${task.name} · ${task.cronLabel}`).join(' / ') : '自动采集任务未创建'} · 更新时间 ${formatTime(stats?.updatedAt)}`
                     : `视频下载入库后的 Gemini 分析进度 · 更新时间 ${formatTime(stats?.updatedAt)}`}
                 </p>
               </div>
-              <button
-                type="button"
+              <Button
                 onClick={() => { void fetchTasks(); void fetchVideoStats(true); }}
-                disabled={videoStatsLoading}
-                className="flex self-start items-center gap-1.5 rounded-lg border border-gray-200 px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-50 sm:self-auto"
+                loading={videoStatsLoading}
+                icon={<RefreshCw size={14} />}
               >
-                <RefreshCw size={12} className={videoStatsLoading ? 'animate-spin' : ''} />
-                {videoStatsLoading ? '加载中…' : '刷新'}
-              </button>
+                刷新
+              </Button>
             </div>
 
             {videoStatsError && videoStats && (
@@ -1977,28 +1943,8 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
       {/* Add Task Modal */}
       <AnimatePresence>
         {showAdd && (
-          <motion.div
-            ref={addTaskDialogRef}
-            tabIndex={-1}
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="scheduled-add-task-dialog-title"
-            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center"
-            onClick={closeAddModal}
-          >
-            <motion.div
-              initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }}
-              className="max-h-[85vh] w-[calc(100vw-2rem)] overflow-y-auto rounded-2xl bg-white p-4 sm:w-[560px] sm:p-6"
-              onClick={e => e.stopPropagation()}
-            >
-              <div className="flex items-center justify-between mb-5">
-                <div>
-                  <h3 id="scheduled-add-task-dialog-title" className="font-semibold text-gray-900">新建定时任务</h3>
-                  <p className="text-xs text-gray-400 mt-0.5">{activeGroupMeta.label}</p>
-                </div>
-                <button type="button" data-modal-initial-focus aria-label="关闭新建定时任务" onClick={closeAddModal} className="text-gray-400 hover:text-gray-600"><X size={20} /></button>
-              </div>
+          <Modal open title="新建定时任务" width={640} onCancel={closeAddModal} footer={null} mask={{ closable: false }} closable={!creatingTasks} keyboard={!creatingTasks} styles={{ body: { maxHeight: '70dvh', overflowY: 'auto' } }}>
+              <p className="mb-4 text-sm text-text-muted">{activeGroupMeta.label}</p>
 
               <p className="text-xs text-gray-500 mb-3 font-medium">选择任务模板</p>
               <div className="space-y-5 mb-5">
@@ -2215,14 +2161,13 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
 
               {createError && <p className="mb-3 flex items-start gap-1.5 text-xs text-red-600"><AlertTriangle size={14} className="mt-0.5 flex-shrink-0" />{createError}</p>}
               <div className="flex gap-3">
-                <button type="button" onClick={closeAddModal} className="flex-1 py-2.5 border border-gray-200 rounded-xl text-sm text-gray-600">取消</button>
-                <button
-                  type="button"
+                <Button onClick={closeAddModal} disabled={creatingTasks} className="flex-1">取消</Button>
+                <Button
+                  type="primary"
                   data-demo-target={showAdd && selectedTemplates.length > 0 ? 'scheduled_run' : undefined}
                   onClick={createTask}
                   disabled={selectedTemplates.length === 0 || creatingTasks || !keywordReviewConfirmed}
-                  className="flex-1 py-2.5 rounded-xl text-sm text-white font-medium disabled:opacity-40"
-                  style={{ background: '#16a34a' }}
+                  className="flex-1" loading={creatingTasks}
                 >
                   {creatingTasks
                     ? (runAfterCreate ? '正在创建并执行…' : '正在创建…')
@@ -2231,29 +2176,12 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
                       : runAfterCreate && ['video_keyword_crawl', 'image_post_crawl', 'competitor_account_crawl'].includes(selectedTemplate?.taskType || '')
                         ? '创建并执行任务'
                         : '创建任务'}
-                </button>
+                </Button>
               </div>
-            </motion.div>
-          </motion.div>
+          </Modal>
         )}
         {resultTask && (
-          <>
-            <motion.div
-              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-              className="fixed inset-0 bg-black/20 z-40"
-              onClick={closeResultPanel}
-            />
-            <motion.div
-              ref={resultTaskDialogRef}
-              tabIndex={-1}
-              role="dialog"
-              aria-modal="true"
-              aria-labelledby="scheduled-result-dialog-title"
-              initial={{ x: '100%' }} animate={{ x: 0 }} exit={{ x: '100%' }}
-              transition={{ type: 'spring', damping: 30, stiffness: 300 }}
-              className="fixed top-0 right-0 z-50 flex h-full w-full flex-col border-l border-gray-200 bg-white shadow-2xl sm:w-[520px]"
-              onClick={e => e.stopPropagation()}
-            >
+          <Drawer open title={resultWorkspace?.title ?? resultTask.name} onClose={closeResultPanel} size={640} styles={{ body: { padding: 0, display: 'flex', flexDirection: 'column' } }}>
               <div className="px-5 py-4 border-b border-gray-100 flex items-start gap-3">
                 <div className="text-3xl w-11 h-11 rounded-xl bg-gray-50 flex items-center justify-center flex-shrink-0">
                   {resultTemplate?.icon ?? '⚙️'}
@@ -2375,8 +2303,7 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
                   关闭
                 </button>
               </div>
-            </motion.div>
-          </>
+          </Drawer>
         )}
       </AnimatePresence>
     </div>

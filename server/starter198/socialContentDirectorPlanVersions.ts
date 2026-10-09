@@ -1,6 +1,7 @@
 import type { StoredSocialDirectorPlan } from './socialContentDirectorPlan.js';
 import { parseStoredSocialDirectorPlan } from './socialContentDirectorPlan.js';
 import type {
+  SocialEnterpriseFactVersion,
   StoredSocialScriptBaseline,
   VerifiedSocialScriptContext,
 } from './socialContentScriptBaseline.js';
@@ -29,6 +30,7 @@ export interface SocialDirectorFactSnapshot {
   baselineVersion: string;
   baselineHash: string | null;
   groundingVersion: string | null;
+  enterpriseFactVersion?: SocialEnterpriseFactVersion | null;
   source: SocialDirectorFactSource;
   productName: string | null;
   confidence: number;
@@ -102,6 +104,8 @@ function parseFactSnapshot(value: unknown): SocialDirectorFactSnapshot {
   const keysValue = socialJson(row?.verifiedFactKeys);
   const captureMode = socialText(row?.captureMode) as SocialDirectorFactSnapshot['captureMode'];
   const source = socialText(row?.source) as SocialDirectorFactSource;
+  const hasEnterpriseFactVersion = Object.prototype.hasOwnProperty.call(row ?? {}, 'enterpriseFactVersion');
+  const factVersionRow = socialObject(row?.enterpriseFactVersion);
   if (!row
     || socialText(row.schemaVersion) !== SOCIAL_DIRECTOR_FACT_SNAPSHOT_SCHEMA
     || !['verified_context', 'legacy_plan_only'].includes(captureMode)
@@ -119,9 +123,20 @@ function parseFactSnapshot(value: unknown): SocialDirectorFactSnapshot {
     ? null : socialText(row.groundingVersion);
   const productName = row.productName === null || row.productName === undefined || row.productName === ''
     ? null : socialText(row.productName);
+  const enterpriseFactVersion = factVersionRow ? {
+    id: socialText(factVersionRow.id),
+    revision: Number(factVersionRow.revision),
+    contentHash: socialText(factVersionRow.contentHash),
+  } : null;
   if ((baselineHash && !/^[a-f0-9]{64}$/.test(baselineHash))
     || (captureMode === 'verified_context' && !baselineHash)
-    || (captureMode === 'legacy_plan_only' && (baselineHash || factsValue.length || keysValue.length))) {
+    || (captureMode === 'legacy_plan_only' && (baselineHash || factsValue.length || keysValue.length))
+    || (hasEnterpriseFactVersion && row.enterpriseFactVersion !== null
+      && (!enterpriseFactVersion
+        || !enterpriseFactVersion.id
+        || !Number.isSafeInteger(enterpriseFactVersion.revision)
+        || enterpriseFactVersion.revision < 1
+        || !enterpriseFactVersion.contentHash))) {
     throw storageIntegrityError();
   }
   const verifiedFactKeys = keysValue.map(socialText).filter(Boolean);
@@ -143,6 +158,7 @@ function parseFactSnapshot(value: unknown): SocialDirectorFactSnapshot {
     baselineVersion: socialText(row.baselineVersion),
     baselineHash,
     groundingVersion,
+    ...(hasEnterpriseFactVersion ? { enterpriseFactVersion } : {}),
     source,
     productName,
     confidence: normalizedConfidence(row.confidence),
@@ -175,6 +191,7 @@ export function buildSocialDirectorFactSnapshot(input: {
       baselineVersion: parsedPlan.scriptSource.baselineVersion,
       baselineHash: null,
       groundingVersion: null,
+      enterpriseFactVersion: null,
       source: parsedPlan.scriptSource.verifiedKnowledgeSource,
       productName: null,
       confidence: Number(Math.max(0, Math.min(1, parsedPlan.scriptSource.matchConfidence)).toFixed(4)),
@@ -186,6 +203,7 @@ export function buildSocialDirectorFactSnapshot(input: {
   }
 
   const exactBaseline = baseline!;
+  const enterpriseFactVersion = exactBaseline.enterpriseFactVersion ?? null;
   const association = exactBaseline.match?.userProductAssociation;
   const knowledgeSource = exactBaseline.match?.verifiedKnowledgeSource ?? 'none';
   const source: SocialDirectorFactSource = knowledgeSource === 'none' && association
@@ -193,6 +211,15 @@ export function buildSocialDirectorFactSnapshot(input: {
     : knowledgeSource;
   const verifiedFactKeys = [...new Set(exactBaseline.match?.verifiedFactKeys ?? [])].filter(Boolean);
   const context = input.verifiedContext ?? null;
+  if (enterpriseFactVersion) {
+    const contextVersion = context?.factVersion;
+    if (!contextVersion
+      || contextVersion.id !== enterpriseFactVersion.id
+      || contextVersion.revision !== enterpriseFactVersion.revision
+      || contextVersion.contentHash !== enterpriseFactVersion.contentHash) {
+      throw new SocialContentWorkflowError('social_content_director_fact_snapshot_version_mismatch', 409);
+    }
+  }
   if (!['none', 'user_product_association'].includes(source) && (!context || context.source !== source)) {
     throw new SocialContentWorkflowError('social_content_director_fact_snapshot_unavailable', 503);
   }
@@ -211,6 +238,7 @@ export function buildSocialDirectorFactSnapshot(input: {
     baselineVersion: exactBaseline.version,
     baselineHash: socialRequestHash(exactBaseline),
     groundingVersion: socialText(exactBaseline.groundingVersion) || null,
+    enterpriseFactVersion: enterpriseFactVersion ? { ...enterpriseFactVersion } : null,
     source,
     productName: source === 'enterprise_product' ? context?.productName ?? null : null,
     confidence: Number(Math.max(0, Math.min(1,

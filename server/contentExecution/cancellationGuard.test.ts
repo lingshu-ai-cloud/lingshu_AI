@@ -3,13 +3,29 @@ import test from 'node:test';
 import type { DataStore } from '../storage/datastore.js';
 import { assertCurrentContentExecutionActive, runWithContentExecutionContext, recordCurrentContentProviderReceipt, CONTENT_EXECUTION_JOB_COLLECTION } from './context.js';
 function fixture() {
+  let nextId = 0;
   const rows = new Map<string, Record<string, unknown>>([
     [`${CONTENT_EXECUTION_JOB_COLLECTION}:job`, { id: 'job', tenant_id: 'tenant', run_id: 'run', status: 'running' }],
     ['workflow_runs:run', { id: 'run', tenant_id: 'tenant', status: 'running' }],
   ]);
   const store = {
     async getById(collection: string, id: string) { return structuredClone(rows.get(`${collection}:${id}`) ?? null); },
+    async list(collection: string, options: { where?: Record<string, unknown> } = {}) {
+      const items = [...rows.entries()]
+        .filter(([key]) => key.startsWith(`${collection}:`))
+        .map(([, row]) => row)
+        .filter(row => Object.entries(options.where ?? {}).every(([key, value]) => row[key] === value))
+        .map(row => structuredClone(row));
+      return { items, totalItems: items.length };
+    },
+    async create(collection: string, input: Record<string, unknown>) {
+      const id = `${collection}-${++nextId}`;
+      const row = { id, ...structuredClone(input) };
+      rows.set(`${collection}:${id}`, row);
+      return structuredClone(row);
+    },
     async update(collection: string, id: string, patch: Record<string, unknown>) { const row=rows.get(`${collection}:${id}`); if (!row) return false; Object.assign(row,structuredClone(patch));return true; },
+    async delete(collection: string, id: string) { return rows.delete(`${collection}:${id}`); },
   } as unknown as DataStore;
   return { rows, store };
 }

@@ -23,8 +23,8 @@ export default function DigitalHumanProductionOverview({ shots, onOpenShot }: { 
   const estimated = latest.reduce((sum, item) => sum + (item.execution?.estimatedCostCny ?? item.shot.plan?.estimatedCostCny ?? 0), 0);
   const actualValues = latest.map(item => item.execution?.actualCostCny).filter((value): value is number => value != null);
   const actual = actualValues.reduce((sum, value) => sum + value, 0);
-  return <details className="mx-4 mb-4 rounded-xl border border-border bg-white shadow-sm" aria-label="数字人制作进度">
-    <summary className="cursor-pointer px-4 py-3 text-xs font-black">数字人制作进度 · {adopted}/{shots.length} 已填入{attention ? ` · ${attention} 项需处理` : ''}</summary>
+  return <details className="mx-4 mb-4 rounded-lg border border-border bg-white shadow-none" aria-label="数字人制作进度">
+    <summary className="cursor-pointer px-4 py-3 text-xs font-semibold">数字人制作进度 · {adopted}/{shots.length} 已填入{attention ? ` · ${attention} 项需处理` : ''}</summary>
     <div className="border-t px-4 py-3">
       <p className="mb-3 text-[10px] text-text-muted">当前视频预计费用 ¥{estimated.toFixed(2)} · 已对账 ¥{actual.toFixed(2)}{actualValues.length < latest.filter(item => item.execution).length ? ' · 部分任务待账单' : ''}</p>
       <ul className="space-y-2">{latest.map(({ shot, execution }) => {

@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 600" role="img" aria-labelledby="title desc">
+  <title id="title">媒体暂不可用</title>
+  <desc id="desc">灵枢 AI 媒体占位图</desc>
+  <rect width="800" height="600" fill="#f1f6f2"/>
+  <rect x="250" y="170" width="300" height="220" rx="18" fill="#ffffff" stroke="#c8d9ce" stroke-width="8"/>
+  <circle cx="345" cy="250" r="34" fill="#86c968" opacity=".75"/>
+  <path d="M278 353l88-78 72 60 52-44 32 62H278z" fill="#2f9da5" opacity=".72"/>
+  <path d="M304 430h192" stroke="#117f51" stroke-width="12" stroke-linecap="round" opacity=".45"/>
+</svg>

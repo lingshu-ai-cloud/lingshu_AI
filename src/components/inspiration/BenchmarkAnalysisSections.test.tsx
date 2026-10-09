@@ -10,7 +10,7 @@ test('top sections distinguish source evidence, classification and counts withou
   assert.ok(!html.includes('钩子分析'));
   assert.ok(html.includes('钩子'));
   assert.ok(html.includes('<details open=""'));
-  for (const label of ['已拆解 9 个镜头', '3 个口播段', '消费者使用与效果演示', '首帧未取得', '按口播段查看']) assert.ok(html.includes(label), label);
+  for (const label of ['已拆解 9 个镜头', '3 个口播段', 'D2C', '首帧未取得', '按口播段查看']) assert.ok(html.includes(label), label);
   assert.ok(!html.includes('<img')); assert.ok(!html.includes('可制作成片'));
 });
 test('empty, pending, legacy and failed evidence remains readable', () => {

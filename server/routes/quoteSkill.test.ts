@@ -40,6 +40,7 @@ function memoryStore(): { dataStore: DataStore; records: Map<string, Record<stri
 test('报价 API：租户隔离、并发控制、人工确认、安全回复与审计', async () => {
   const { dataStore, records } = memoryStore();
   const sentImages: Array<{ to: string; caption: string; bytes: Buffer }> = [];
+  let activeFactVersion = { id: 'enterprise-facts-v3-quote', revision: 3, contentHash: 'quote-facts-hash' };
   const app = express();
   app.use(express.json({ limit: '100kb' }));
   const auth = (req: express.Request, res: express.Response, next: express.NextFunction) => {
@@ -54,6 +55,7 @@ test('报价 API：租户隔离、并发控制、人工确认、安全回复与�
     authMiddleware: auth,
     canConfirm: async req => req.headers['x-test-confirm'] !== 'deny',
     readEnterpriseProfile: async () => ({
+      factVersion: activeFactVersion,
       products: { items: [
         { sku: 'IMH-ABS-01', name: 'Injection molded electronics housing', material: 'ABS', moq: '1000', attributes: { unit: 'pcs', unitPrice: 3.8, currency: 'USD', leadTime: '30 days' } },
         { sku: 'COVER-NP-01', name: 'Unpriced custom cover', material: 'ABS', moq: '25', attributes: { unit: 'pcs', currency: 'USD', leadTime: '20 days' } },
@@ -95,6 +97,7 @@ test('报价 API：租户隔离、并发控制、人工确认、安全回复与�
     const created = (await createdResponse.json()).draft;
     assert.equal(created.revision, 1);
     assert.equal(created.version, 1);
+    assert.equal(created.enterpriseFactVersion.id, 'enterprise-facts-v3-quote');
     assert.equal(created.productName, 'aluminum brackets');
     assert.equal(created.customerName, 'Emily WA');
     assert.equal(created.customerNameSource, 'whatsapp_profile');
@@ -133,6 +136,11 @@ test('报价 API：租户隔离、并发控制、人工确认、安全回复与�
     });
     assert.equal(deniedConfirmation.status, 403);
 
+    activeFactVersion = { id: 'enterprise-facts-v4-quote', revision: 4, contentHash: 'quote-facts-hash-v4' };
+    const staleFactsConfirmation = await call(`/drafts/${created.id}/confirm`, 'POST', { expectedRevision: 2 });
+    assert.equal(staleFactsConfirmation.status, 409);
+    assert.equal((await staleFactsConfirmation.json()).error, 'enterprise_fact_version_conflict');
+    activeFactVersion = { id: 'enterprise-facts-v3-quote', revision: 3, contentHash: 'quote-facts-hash' };
     const confirmedResponse = await call(`/drafts/${created.id}/confirm`, 'POST', { expectedRevision: 2 });
     assert.equal(confirmedResponse.status, 200);
     const confirmed = (await confirmedResponse.json()).draft;
@@ -182,6 +190,14 @@ test('报价 API：租户隔离、并发控制、人工确认、安全回复与�
     assert.equal(catalogSelected.matchedProduct.priceSource, '企业产品目录 unitPrice');
     assert.match(catalogSelected.pricingExplanation.join('\n'), /价格来源：企业产品目录 unitPrice/);
 
+    const storedCatalogDraft = records.get(`quote_skill_drafts/${catalogDraft.id}`)!;
+    const catalogPayloadWithoutVersion = structuredClone(storedCatalogDraft.payload as Record<string, unknown>);
+    delete catalogPayloadWithoutVersion.enterpriseFactVersion;
+    storedCatalogDraft.payload = catalogPayloadWithoutVersion;
+    const unversionedCatalogConfirmation = await call(`/drafts/${catalogDraft.id}/confirm`, 'POST', { expectedRevision: 2 });
+    assert.equal(unversionedCatalogConfirmation.status, 409);
+    assert.equal((await unversionedCatalogConfirmation.json()).error, 'enterprise_fact_version_required');
+    storedCatalogDraft.payload = { ...catalogPayloadWithoutVersion, enterpriseFactVersion: activeFactVersion };
     const confirmedCatalogResponse = await call(`/drafts/${catalogDraft.id}/confirm`, 'POST', { expectedRevision: 2 });
     assert.equal(confirmedCatalogResponse.status, 200);
     const confirmedCatalog = (await confirmedCatalogResponse.json()).draft;
@@ -327,6 +343,7 @@ test('报价卡发送先持久化 claim，并在结果未知或回写失败后�
     authMiddleware: (_req, res, next) => { res.locals.tenantId = 'A'; res.locals.userId = 'user-A'; next(); },
     canConfirm: async () => true,
     readEnterpriseProfile: async () => ({
+      factVersion: { id: 'enterprise-facts-v1-send', revision: 1, contentHash: 'send-facts-hash' },
       products: { items: [{ sku: 'WIDGET-01', name: 'Widget', material: 'ABS', moq: '10', attributes: { unit: 'pcs', unitPrice: 10, currency: 'USD', leadTime: '20 days' } }] },
       bizRules: { paymentTerms: '100% before shipment' },
     } as any),

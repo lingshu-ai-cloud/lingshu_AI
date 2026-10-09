@@ -52,7 +52,7 @@ export default function DigitalHumanRequirementsEditor({ value, plan, compact = 
       <label className="flex gap-2 text-xs"><input type="checkbox" checked={current.contentConfirmed} onChange={event => onChange({ ...current, contentConfirmed: event.target.checked })} />确认应用此人物和效果</label>
     </div>}
   </section>;
-  return <section className="space-y-3 rounded-xl border border-violet-200 bg-white p-3" aria-label="数字人镜头要求">
+  return <section className="space-y-3 rounded-lg border border-violet-200 bg-white p-3" aria-label="数字人镜头要求">
     <p className="text-xs text-text-muted">根据人物、口播及参考画面安排制作，生成结果将作为当前分镜的候选素材。</p>
     <label className="block text-xs">内容来源<select className="mt-1 w-full rounded-lg border p-2" value={current.workflow} onChange={e => patch({ workflow: e.target.value as DigitalHumanRequirements['workflow'] })}>
       <option value="material_processing">素材加工 · 人物与口播驱动</option><option value="viral_replication">爆款裂变 · 原片逐句与人物驱动</option>

@@ -125,8 +125,11 @@ async function updateTaskUnlocked(tenantId: string, id: string, input: Record<st
   if (input.configuration === undefined) valid.configuration = configuration(existing.configuration, valid.budget);
   const updatedAt = new Date().toISOString();
   const version = Number(existing.version || 1) + 1;
-  if (!await store.update(PLATFORM_AD_TASKS_COLLECTION, id, { ...valid, version, updatedAt })) throw new Error('投放草稿更新失败');
-  return publicTask({ ...existing, ...valid, version, updatedAt });
+  // Any draft edit changes the premises of an AI proposal. Drop it rather than
+  // leaving old enterprise-fact claims attached to a newly edited plan.
+  const proposal = null;
+  if (!await store.update(PLATFORM_AD_TASKS_COLLECTION, id, { ...valid, proposal, version, updatedAt })) throw new Error('投放草稿更新失败');
+  return publicTask({ ...existing, ...valid, proposal, version, updatedAt });
 }
 
 export function validateAdAuthorization(input: unknown, taskBudget: number): AdAuthorization {

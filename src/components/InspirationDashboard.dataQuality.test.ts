@@ -50,7 +50,7 @@ assert.match(componentSource, /aria-label={`编辑 \${material\.name}`}[^]*?aria
 assert.match(componentSource, /INSPIRATION_PAGE_SIZE = 30/, '灵感列表每页必须固定读取最新 30 条');
 assert.match(componentSource, /inventory-summary[^]*?setTenantVideoTotalItems/, '首屏必须独立优先读取真实库存量');
 assert.match(componentSource, /正在读取真实视频库存/, '首次列表请求完成前必须显示加载动画，不能先显示空状态');
-assert.match(componentSource, /上一页[^]*?第 \{videoPage\} \/ \{videoTotalPages\} 页[^]*?下一页/, '灵感列表必须使用稳定分页');
+assert.match(componentSource, /<Pagination current=\{videoPage\}[^]*?pageSize=\{INSPIRATION_PAGE_SIZE\}[^]*?showSizeChanger=\{false\}[^]*?onChange=\{page => void refreshVideos\(page\)\}/, '灵感列表必须使用固定页大小的服务端分页');
 assert.doesNotMatch(componentSource, />\s*加载更多\s*</, '灵感列表不再使用追加式“加载更多”');
 
 console.log('InspirationDashboard data-quality tests passed');

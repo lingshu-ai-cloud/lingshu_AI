@@ -1,7 +1,8 @@
 import { callLLM } from '../agents/llm.js';
-import { createPlatformAdTask, validatePlatformAdTask, PlatformAdTaskValidationError } from './tasks.js';
+import { createPlatformAdTask, validatePlatformAdTask, PlatformAdTaskConflictError, PlatformAdTaskValidationError } from './tasks.js';
 import type { AdProposal } from '../../src/lib/platformAdsDomain.js';
 import { readTenantEnterpriseFacts } from '../routes/enterprise.js';
+import { samePlatformAdEnterpriseFactVersion } from './factVersion.js';
 
 type PlanningContext = { currency: 'CNY' | 'USD'; channels: string[]; enterpriseFactVersion?: string; enterpriseFacts?: string };
 export function adPlanningSystemPrompt(context: PlanningContext) {
@@ -55,8 +56,13 @@ export async function createAiPlatformAdPlan(tenantId: string, userId: string, i
     timeoutMs: 60_000,
     systemPrompt: adPlanningSystemPrompt(planningContext),
   });
+  const proposal = parseAdProposal(raw, planningContext);
+  const currentFacts = await readTenantEnterpriseFacts(tenantId);
+  if (!samePlatformAdEnterpriseFactVersion(facts.version, currentFacts.version)) {
+    throw new PlatformAdTaskConflictError('企业资料在方案生成期间已更新，请重新生成投放方案');
+  }
   return createPlatformAdTask(tenantId, userId, input, {
     creationSource: input.entry as 'ai_assisted' | 'ai_managed',
-    proposal: { ...parseAdProposal(raw, valid), enterpriseFactVersion: facts.version.id },
+    proposal: { ...proposal, enterpriseFactVersion: facts.version.id },
   });
 }

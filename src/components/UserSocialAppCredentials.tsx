@@ -49,7 +49,7 @@ function Callback({ label, value }: { label: string; value: string }) {
   const [copied, setCopied] = useState(false);
   return <div className="rounded-md border border-border bg-surface-2 px-3 py-2">
     <div className="mb-1 flex items-center justify-between gap-2"><span className="text-[10px] font-bold text-text-muted">{label}</span>
-      <button type="button" onClick={async () => { await navigator.clipboard?.writeText(value); setCopied(true); setTimeout(() => setCopied(false), 1200); }} className="inline-flex items-center gap-1 rounded-md border border-border bg-white px-2 py-1 text-[10px] font-bold text-text-secondary hover:border-border-bright">
+      <button type="button" onClick={async () => { await navigator.clipboard?.writeText(value); setCopied(true); setTimeout(() => setCopied(false), 1200); }} className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-md border border-border bg-white px-2 py-1 text-[10px] font-bold text-text-secondary hover:border-border-bright">
         {copied ? <CheckCircle2 size={11} className="text-accent" /> : <Clipboard size={11} />}{copied ? '已复制' : '复制'}
       </button>
     </div><code className="block break-all text-[11px] text-text-secondary">{value}</code>
@@ -57,9 +57,9 @@ function Callback({ label, value }: { label: string; value: string }) {
 }
 
 function Field({ label, value, saved, secret, onChange }: { label: string; value: string; saved?: boolean; secret?: boolean; onChange: (value: string) => void }) {
-  return <label className="grid gap-1 text-[11px] font-bold text-text-secondary">
+  return <label className="grid min-w-0 gap-1 text-[11px] font-bold text-text-secondary">
     <span className="flex items-center justify-between"><span>{label}<span className="ml-0.5 text-red">*</span></span>{(value.trim() || saved) && <span className="inline-flex items-center gap-1 text-[10px] text-accent"><CheckCircle2 size={11} />已填写</span>}</span>
-    <input type={secret ? 'password' : 'text'} autoComplete={secret ? 'new-password' : 'off'} data-1p-ignore data-lpignore="true" value={value} onChange={e => onChange(e.target.value)} placeholder={saved ? '已安全保存；留空表示不修改' : label} className="ui-field !rounded-md !bg-surface-2 font-normal" />
+    <input type={secret ? 'password' : 'text'} autoComplete={secret ? 'new-password' : 'off'} data-1p-ignore data-lpignore="true" value={value} onChange={e => onChange(e.target.value)} placeholder={saved ? '已安全保存；留空表示不修改' : label} className="ui-field min-w-0 !rounded-md !bg-surface-2 font-normal" />
   </label>;
 }
 
@@ -153,9 +153,9 @@ export default function UserSocialAppCredentials() {
       <p className="border-l-2 border-insight bg-insight-soft px-3 py-2 text-[11px] leading-5 text-insight-action">先在 Google、Meta 或 TikTok 开发者后台创建应用，再填写凭证。Secret 会加密保存，页面不会再次明文显示。</p>
       {message && <p role="status" className="border-l-2 border-accent bg-accent-glow px-3 py-2 text-xs font-bold text-accent">{message}</p>}{error && <p role="alert" className="border-l-2 border-red bg-red/5 px-3 py-2 text-xs font-bold text-red">{error}</p>}
       {loading ? <div className="flex h-24 items-center justify-center gap-2 text-sm text-text-muted"><Loader2 size={16} className="animate-spin" />正在读取配置...</div> : <>
-        <div className="grid gap-3 xl:grid-cols-3">{cards?.map(card => <div key={card.key} className="space-y-3 rounded-lg border border-border p-4">
-          <div className="flex items-start justify-between gap-3">
-            <div><p className="flex items-center gap-2 text-sm font-black text-text-primary">{card.icon}{card.title}</p><p className="mt-1 text-[11px] text-text-muted">{card.sub}</p></div>
+        <div className="grid min-w-0 grid-cols-1 gap-3 xl:grid-cols-3">{cards?.map(card => <div key={card.key} className="min-w-0 space-y-3 rounded-lg border border-border p-4">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="min-w-0 flex-1 basis-40"><p className="flex flex-wrap items-center gap-2 text-sm font-semibold text-text-primary">{card.icon}<span className="min-w-0 break-words">{card.title}</span></p><p className="mt-1 text-[11px] text-text-muted">{card.sub}</p></div>
             <button
               type="button"
               onClick={() => setClearTarget(card.key as ConfigPlatform)}

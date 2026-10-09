@@ -119,6 +119,31 @@ function boundedText(value: unknown, max: number): string {
   return String(value ?? '').trim().slice(0, max);
 }
 
+function quoteEnterpriseFactVersion(profile: Awaited<ReturnType<typeof readTenantEnterpriseProfile>>): QuoteSkillDraft['enterpriseFactVersion'] {
+  const version = profile.factVersion;
+  const id = boundedText(version?.id, 160);
+  const contentHash = boundedText(version?.contentHash, 128);
+  const revision = Math.max(0, Math.trunc(Number(version?.revision) || 0));
+  return id && contentHash && revision > 0 ? { id, revision, contentHash } : undefined;
+}
+
+export function quoteDraftUsesEnterpriseFacts(draft: Pick<QuoteSkillDraft, 'sellerName' | 'matchedProduct' | 'unitPriceSource' | 'evidence'>): boolean {
+  return Boolean(draft.sellerName.trim())
+    || Boolean(draft.matchedProduct)
+    || draft.unitPriceSource === 'product_catalog'
+    || draft.evidence.some(item => item.source === 'product_catalog' || item.source === 'enterprise_rule');
+}
+
+function sameQuoteEnterpriseFactVersion(
+  left: QuoteSkillDraft['enterpriseFactVersion'],
+  right: QuoteSkillDraft['enterpriseFactVersion'],
+): boolean {
+  return Boolean(left && right
+    && left.id === right.id
+    && left.revision === right.revision
+    && left.contentHash === right.contentHash);
+}
+
 function expectedRevision(body: unknown): number | null {
   const value = body && typeof body === 'object' ? Number((body as Record<string, unknown>).expectedRevision) : NaN;
   return Number.isInteger(value) && value > 0 ? value : null;
@@ -240,7 +265,10 @@ export function createQuoteSkillRouter(deps: QuoteSkillDeps = {}): Router {
     const { tenantId } = res.locals as AuthLocals;
     const profile = await profileReader(tenantId);
     res.setHeader('Cache-Control', 'private, no-store');
-    res.json({ items: catalogProductsFromEnterprise((profile.products?.items || []) as Array<Record<string, unknown>>) });
+    res.json({
+      items: catalogProductsFromEnterprise((profile.products?.items || []) as Array<Record<string, unknown>>),
+      enterpriseFactVersion: quoteEnterpriseFactVersion(profile),
+    });
   }));
 
   router.get('/customers/:customerId/latest', asyncRoute(async (req, res) => {
@@ -283,6 +311,7 @@ export function createQuoteSkillRouter(deps: QuoteSkillDeps = {}): Router {
       products: catalogProductsFromEnterprise((profile.products?.items || []) as Array<Record<string, unknown>>),
       rules: profile.bizRules || {},
     });
+    draft.enterpriseFactVersion = quoteEnterpriseFactVersion(profile);
     if (previous?.status === 'confirmed' && req.body?.clonePrevious === true) {
       draft = applyQuoteDraftPatch(draft, {
         productName: previous.productName,
@@ -340,9 +369,11 @@ export function createQuoteSkillRouter(deps: QuoteSkillDeps = {}): Router {
       res.status(400).json({ error: 'invalid_catalog_price_mode', message: '目录价格模式无效。' }); return;
     }
     let patch = validated.patch;
+    let selectedCatalogFactVersion: QuoteSkillDraft['enterpriseFactVersion'];
     let patchSource: 'human' | 'product_catalog' = 'human';
     if (catalogProductRef) {
       const profile = await profileReader(tenantId);
+      selectedCatalogFactVersion = quoteEnterpriseFactVersion(profile);
       const products = catalogProductsFromEnterprise((profile.products?.items || []) as Array<Record<string, unknown>>);
       const product = products.find(item => (item.sku || item.name) === catalogProductRef);
       if (!product) { res.status(409).json({ error: 'catalog_product_changed', message: '该产品已从企业知识库中移除或变更，请重新选择。' }); return; }
@@ -363,6 +394,7 @@ export function createQuoteSkillRouter(deps: QuoteSkillDeps = {}): Router {
     const changedFields = [...Object.keys(validated.patch), ...(catalogProductRef ? ['catalogProduct'] : [])];
     if (!changedFields.length) { res.status(400).json({ error: 'empty_quote_patch' }); return; }
     const draft = applyQuoteDraftPatch(owned.draft, patch, patchSource);
+    if (selectedCatalogFactVersion) draft.enterpriseFactVersion = selectedCatalogFactVersion;
     draft.revision = owned.draft.revision + 1;
     const ok = await dataStore.update(DRAFT_COLLECTION, owned.record.id, { status: draft.status, payload: draft, updated_at: draft.updatedAt });
     if (!ok) { res.status(503).json({ error: 'quote_storage_unavailable' }); return; }
@@ -386,6 +418,26 @@ export function createQuoteSkillRouter(deps: QuoteSkillDeps = {}): Router {
     const revision = expectedRevision(req.body);
     if (revision == null) { res.status(400).json({ error: 'expected_revision_required', message: '缺少报价版本，请刷新后重试。' }); return; }
     if (revision !== owned.draft.revision) { res.status(409).json({ error: 'quote_version_conflict', message: '报价已被其他成员更新，请刷新后重试。', draft: owned.draft }); return; }
+    const currentEnterpriseFactVersion = quoteEnterpriseFactVersion(await profileReader(tenantId));
+    if (quoteDraftUsesEnterpriseFacts(owned.draft) && !owned.draft.enterpriseFactVersion) {
+      res.status(409).json({
+        error: 'enterprise_fact_version_required',
+        message: '该历史报价使用了企业或产品目录事实，但没有保存事实版本。请重新创建报价或按最新目录重新选择产品。',
+        draft: owned.draft,
+        enterpriseFactVersion: currentEnterpriseFactVersion,
+      });
+      return;
+    }
+    if (owned.draft.enterpriseFactVersion
+      && !sameQuoteEnterpriseFactVersion(owned.draft.enterpriseFactVersion, currentEnterpriseFactVersion)) {
+      res.status(409).json({
+        error: 'enterprise_fact_version_conflict',
+        message: '企业资料已更新，请按最新产品与报价口径重新生成报价。',
+        draft: owned.draft,
+        enterpriseFactVersion: currentEnterpriseFactVersion,
+      });
+      return;
+    }
     if (owned.draft.missingFields.length || owned.draft.blockers.length || owned.draft.unitPrice == null || owned.draft.unitPrice <= 0 || owned.draft.quantity == null || owned.draft.quantity <= 0) {
       res.status(409).json({ error: 'quote_not_ready', message: '请先补齐报价信息并处理风险项。', draft: owned.draft }); return;
     }
