@@ -161,6 +161,38 @@ function mergeDimension(current: BantDimension, previous: BantDimension | undefi
   return { ...previous, evidence };
 }
 
+// Explicit buyer corrections veto individual historical signals without creating
+// positive evidence. A zero-point marker carries that veto across incremental runs.
+function correctRevokedSignals(current: BantDimension, previous: BantDimension | undefined, messages: string[], rules: { key: string; positive: RegExp; negative: RegExp; evidence: RegExp }[]): BantDimension {
+  let result = current;
+  for (const rule of rules) {
+    let denial = -1;
+    let confirmation = -1;
+    messages.forEach((message, index) => {
+      if (rule.negative.test(message)) denial = index;
+      else if (rule.positive.test(message)) confirmation = index;
+    });
+    const marker = `${rule.key}_revoked`;
+    const previouslyRevoked = previous?.signalPoints?.[marker] === 0;
+    if (denial < 0 && !previouslyRevoked) continue;
+    const revoked = denial >= confirmation && denial >= 0 || previouslyRevoked && confirmation < 0;
+    const signalPoints = { ...result.signalPoints };
+    delete signalPoints[marker];
+    if (revoked) {
+      delete signalPoints[rule.key];
+      signalPoints[marker] = 0;
+    }
+    const evidence = revoked ? result.evidence.filter(item => !rule.evidence.test(item)) : result.evidence;
+    const score = Math.min(25, Object.values(signalPoints).reduce((sum, points) => sum + points, 0));
+    result = { score, status: statusForScore(score), signalPoints, evidence };
+  }
+  return result;
+}
+
+const CUSTOMIZATION_REVOCATION = /\b(?:no\s+(?:customi[sz]ation|customi[sz]ed\s+(?:products?|items?)|OEM|ODM|private[- ]label)|(?:do\s+not|don't|no\s+longer)\s+(?:need|want|require)\s+(?:customi[sz]ation|OEM|ODM|private[- ]label|customi[sz]ed\s+(?:products?|items?)))\b|(?:不需要|不要|无需|取消)(?:任何)?(?:定制|OEM|ODM|私标|贴牌)/i;
+const SAMPLE_REVOCATION = /\b(?:no\s+samples?|(?:do\s+not|don't|no\s+longer)\s+(?:need|want|require)\s+(?:any\s+)?samples?)\b|(?:不需要|不要|无需|取消)(?:任何)?(?:样品|试样|打样)/i;
+const DEADLINE_REVOCATION = /\b(?:no\s+(?:fixed\s+)?(?:delivery\s+)?deadline|(?:cancel|withdraw)(?:led)?\s+(?:the\s+)?(?:deadline|delivery deadline)|(?:deadline|delivery deadline)\s+(?:is\s+)?(?:cancelled|canceled|withdrawn)|no\s+longer\s+(?:have|need)\s+(?:a\s+)?deadline)\b|(?:取消|撤销)(?:之前的|原来(?:的)?)?(?:交期|截止日期|到货期限)|(?:没有|无需|不再有)(?:明确|固定)?(?:交期|截止日期|到货期限)/i;
+
 function explicitLocationClaims(messages: string[]): string[] {
   return unique(messages.flatMap(message => {
     const matches = message.matchAll(/\b(?:i am|i'm|we are|our company is) (?:based |located )?in ([a-z][a-z .'-]{2,24}?)(?=[,.!?]|$|\s+(?:and|but)\s+)/gi);
@@ -232,7 +264,7 @@ export function assessBant(input: { turns: QualificationTurn[]; previous?: BantA
   // scores. Later unrelated messages cannot restore revoked decision rights.
   const authorityText = lastAuthorityDenial >= 0 ? buyerMessages.slice(lastAuthorityDenial + 1).join(' ') : text;
   const authorityPrevious = lastAuthorityDenial >= 0 || previousDenied ? undefined : input.previous?.authority;
-  const authority = authorityDenied ? {
+  let authority: BantDimension = authorityDenied ? {
     score: 0, status: 'unknown' as const,
     evidence: ['客户明确无采购决策权，需重新确认决策链 +0'],
     signalPoints: { authority_denied: 0 },
@@ -248,7 +280,7 @@ export function assessBant(input: { turns: QualificationTurn[]; previous?: BantA
     { key: 'identity_refusal', points: -5, evidence: '拒绝说明身份或采购用途 -5', matched: identityRefusal },
   ]), authorityPrevious, identityRefusal);
 
-  const need = mergeDimension(dimension([
+  let need = mergeDimension(dimension([
     { key: 'exact_product', points: 15, evidence: '指明具体产品、货号或视频中的款式 +15', matched: EXACT_PRODUCT_PATTERN.test(text) },
     { key: 'specification', points: 20, evidence: '给出成分、容量、材质或包装等规格 +20', matched: SPEC_PATTERN.test(text) },
     { key: 'target_market', points: 10, evidence: '说明目标市场或销售国家 +10', matched: TARGET_MARKET_PATTERN.test(text) },
@@ -258,7 +290,7 @@ export function assessBant(input: { turns: QualificationTurn[]; previous?: BantA
     { key: 'sample', points: 10, evidence: '主动索要样品或试样 +10', matched: SAMPLE_REQUEST_PATTERN.test(text) },
   ]), input.previous?.need, false);
 
-  const timing = mergeDimension(dimension([
+  let timing = mergeDimension(dimension([
     { key: 'deadline', points: 22, evidence: '给出到货、上市或项目截止时间 +22', matched: DEADLINE_PATTERN.test(text) },
     { key: 'urgent', points: 16, evidence: '明确表示紧急或需要尽快处理 +16', matched: URGENT_PATTERN.test(text) },
     { key: 'season', points: 12, evidence: '采购与节庆、旺季或销售季相关 +12', matched: SEASON_PATTERN.test(text) },
@@ -269,6 +301,18 @@ export function assessBant(input: { turns: QualificationTurn[]; previous?: BantA
     { key: 'sample', points: 10, evidence: '推进到索要样品或试样 +10', matched: SAMPLE_REQUEST_PATTERN.test(text) },
     { key: 'purchase_intent', points: 20, evidence: '明确表达购买或继续下单意向 +20', matched: PURCHASE_INTENT_PATTERN.test(text) },
   ]), input.previous?.timing, false);
+
+  authority = correctRevokedSignals(authority, input.previous?.authority, buyerMessages, [
+    { key: 'customization_authority', positive: CUSTOMIZATION_PATTERN, negative: CUSTOMIZATION_REVOCATION, evidence: /提出私标或 OEM/ },
+  ]);
+  need = correctRevokedSignals(need, input.previous?.need, buyerMessages, [
+    { key: 'customization', positive: CUSTOMIZATION_PATTERN, negative: CUSTOMIZATION_REVOCATION, evidence: /提出私标、OEM/ },
+    { key: 'sample', positive: SAMPLE_REQUEST_PATTERN, negative: SAMPLE_REVOCATION, evidence: /主动索要样品/ },
+  ]);
+  timing = correctRevokedSignals(timing, input.previous?.timing, buyerMessages, [
+    { key: 'sample', positive: SAMPLE_REQUEST_PATTERN, negative: SAMPLE_REVOCATION, evidence: /推进到索要样品/ },
+    { key: 'deadline', positive: DEADLINE_PATTERN, negative: DEADLINE_REVOCATION, evidence: /给出到货、上市或项目截止时间/ },
+  ]);
 
   const rawTotal = Math.max(0, budget.score + authority.score + need.score + timing.score);
   const authenticity = assessAuthenticity(buyerMessages, input.previous?.authenticity);

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { assessBant, selectProgressionGoal } from './qualification.js';
+import { assessBant, selectProgressionGoal, type QualificationTurn } from './qualification.js';
 
 const highValue = assessBant({
   turns: [
@@ -107,3 +107,56 @@ assert.equal(assessBant({ previous: incrementalRevoked, turns: [{ role: 'buyer',
 assert.equal(assessBant({ turns: [...authorityCorrection, { role: 'buyer', text: 'I approve purchases now.' }] }).authority.score, 16, 'restoration does not resurrect obsolete owner and OEM scores');
 assert.equal(assessBant({ previous: highValue, turns: [{ role: 'buyer', text: '我不能批准采购，先替经理了解产品。' }] }).authority.score, 0);
 assert.equal(assessBant({ previous: highValue, turns: [{ role: 'seller', text: 'I cannot approve purchases.' }] }).authority.score, highValue.authority.score, 'seller statements cannot revoke buyer authority');
+
+const demandOriginal: QualificationTurn[] = [{ role: 'buyer', text: 'We need OEM and a sample. The deadline is within 30 days.' }];
+const demandCancellation: QualificationTurn[] = [{ role: 'buyer', text: 'No customization or OEM, and no samples. There is no deadline anymore.' }];
+const originalDemand = assessBant({ turns: demandOriginal });
+assert.equal(originalDemand.need.score, 25);
+assert.equal(originalDemand.timing.score, 25);
+for (const cancelled of [
+  assessBant({ turns: [...demandOriginal, ...demandCancellation] }),
+  assessBant({ previous: originalDemand, turns: demandCancellation }),
+  assessBant({ previous: originalDemand, turns: [{ role: 'buyer', text: '取消定制，不需要样品，取消之前的交期。' }] }),
+]) {
+  assert.equal(cancelled.need.score, 0, 'cancelled customization and samples cannot inflate need');
+  assert.equal(cancelled.timing.score, 0, 'cancelled samples and deadline cannot inflate timing');
+  assert.equal(cancelled.authority.score, 0, 'cancelled OEM cannot inflate decision participation');
+  assert.ok(!cancelled.evidence.some(item => /OEM|样品|截止时间/.test(item)), 'obsolete scoring evidence is removed');
+  const unrelated = assessBant({ previous: cancelled, turns: [{ role: 'buyer', text: 'Thank you.' }] });
+  assert.equal(unrelated.need.score, 0, 'incremental unrelated turns do not restore revoked needs');
+  assert.equal(unrelated.timing.score, 0);
+  const restored = assessBant({ previous: unrelated, turns: demandOriginal });
+  assert.equal(restored.need.score, originalDemand.need.score, 'explicit later buyer requirements restore only matching positive signals');
+  assert.equal(restored.timing.score, originalDemand.timing.score);
+  assert.equal(restored.authority.score, originalDemand.authority.score);
+}
+const sellerCancellation = assessBant({ previous: originalDemand, turns: demandCancellation.map(turn => ({ ...turn, role: 'seller' })) });
+assert.equal(sellerCancellation.need.score, originalDemand.need.score, 'seller cannot revoke buyer requirements');
+assert.equal(sellerCancellation.timing.score, originalDemand.timing.score);
+const restoredFull = assessBant({ turns: [...demandOriginal, ...demandCancellation, ...demandOriginal] });
+assert.equal(restoredFull.need.score, originalDemand.need.score);
+assert.equal(restoredFull.timing.score, originalDemand.timing.score);
+const negativeOnly = assessBant({ turns: demandCancellation });
+assert.equal(negativeOnly.need.score, 0, 'negative mentions must not create positive scores');
+assert.equal(negativeOnly.authority.score, 0);
+assert.equal(negativeOnly.timing.score, 0);
+
+const specificDemand = assessBant({ turns: [{ role: 'buyer', text: 'SKU ABS-01, material ABS, OEM and a sample; deadline within 30 days. Please prepare a proforma invoice.' }] });
+const specificCancelled = assessBant({ previous: specificDemand, turns: demandCancellation });
+assert.equal(specificCancelled.need.score, 25, 'unrelated product and material scores remain after cancellation');
+assert.equal(specificCancelled.timing.score, 16, 'formal quotation signal remains when deadline and samples are revoked');
+assert.equal(specificCancelled.authority.score, 10, 'formal quotation authority signal survives OEM cancellation');
+const onlySampleRestored = assessBant({ previous: specificCancelled, turns: [{ role: 'buyer', text: 'I want a sample now.' }] });
+assert.equal(onlySampleRestored.timing.score, 25);
+assert.equal(onlySampleRestored.need.signalPoints?.customization, undefined, 'restoring samples does not restore OEM');
+assert.equal(onlySampleRestored.timing.signalPoints?.deadline, undefined, 'restoring samples does not restore old deadline');
+
+const realDeliveryCancellation = [{ role: 'buyer' as const, text: 'No customization or OEM, no samples, and no delivery deadline anymore.' }];
+const cancelledRealDelivery = assessBant({ previous: originalDemand, turns: realDeliveryCancellation });
+assert.equal(cancelledRealDelivery.timing.score, 0, 'real Messenger no delivery deadline correction removes old delivery points');
+const restoredFromMarkerAndFullHistory = assessBant({ previous: cancelledRealDelivery, turns: [...demandOriginal, ...realDeliveryCancellation, ...demandOriginal] });
+assert.equal(restoredFromMarkerAndFullHistory.need.score, originalDemand.need.score, 'new confirmation beats both old full-history denial and previous revoked marker');
+assert.equal(restoredFromMarkerAndFullHistory.timing.score, originalDemand.timing.score);
+assert.equal(restoredFromMarkerAndFullHistory.authority.score, originalDemand.authority.score);
+const stillRevokedFullHistory = assessBant({ previous: cancelledRealDelivery, turns: [...demandOriginal, ...realDeliveryCancellation, { role: 'buyer', text: 'Thank you.' }] });
+assert.equal(stillRevokedFullHistory.timing.score, 0, 'unrelated final turn cannot make old confirmation newer than denial');

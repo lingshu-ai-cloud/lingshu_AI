@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { socialAccessToken } from '../lib/accountCredentials.js';
 import { store } from '../storage/index.js';
 import { sendMessengerText } from '../integrations/messenger.js';
-import { classifyContextTags, type ContextTagEvidence } from './contextTags.js';
+import { classifyContextTags, vetoRevokedContextTags, type ContextTagEvidence } from './contextTags.js';
 import { assessBant, selectProgressionGoal } from '../sales/qualification.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -123,9 +123,21 @@ export function patchMessengerCustomer(tenantId: string, id: string, patch: Reco
 }
 
 const tagAnalyses = new Map<string, Promise<MessengerCustomer | null>>();
-const CONTEXT_ANALYSIS_VERSION = 2;
+const CONTEXT_ANALYSIS_VERSION = 3;
 function buyerFingerprint(customer: MessengerCustomer): string {
   return createHash('sha256').update(JSON.stringify(customer.timeline.filter(event => event.actor === 'buyer').slice(-40).map(event => [event.id, event.body]))).digest('hex');
+}
+
+function refreshBuyerQualification(customer: MessengerCustomer): void {
+  const oldEvidence = Array.isArray(customer.contextTagEvidence) ? customer.contextTagEvidence as ContextTagEvidence[] : [];
+  const evidence = vetoRevokedContextTags(oldEvidence, customer.timeline);
+  const removed = new Set(oldEvidence.filter(item => !evidence.includes(item)).map(item => item.tag));
+  const bant = assessBant({ turns: customer.timeline.map(event => ({ role: event.actor === 'buyer' ? 'buyer' as const : 'seller' as const, text: event.body })) });
+  patchMessengerCustomer(customer.tenantId, customer.id, {
+    contextTagEvidence: evidence,
+    tags: Array.isArray(customer.tags) ? customer.tags.map(String).filter(tag => !removed.has(tag)) : ['Messenger'],
+    bant, intentScore: bant.total, progressionGoal: selectProgressionGoal(bant, String(customer.language || 'English')),
+  });
 }
 
 export function analyzeMessengerCustomerTags(tenantId: string, id: string, classify = classifyContextTags): Promise<MessengerCustomer | null> {
@@ -136,6 +148,7 @@ export function analyzeMessengerCustomerTags(tenantId: string, id: string, class
     for (let attempt = 0; attempt < 3; attempt += 1) {
     const customer = getMessengerCustomers(tenantId).find(item => item.id === id);
     if (!customer) return null;
+    refreshBuyerQualification(customer);
     const snapshot = JSON.stringify(customer.timeline);
     const contextTagEvidence = await classify(customer.timeline);
     const current = getMessengerCustomers(tenantId).find(item => item.id === id);
@@ -157,6 +170,7 @@ export function analyzeMessengerCustomerTags(tenantId: string, id: string, class
   })().catch(error => {
     const current = getMessengerCustomers(tenantId).find(item => item.id === id);
     if (current) {
+      refreshBuyerQualification(current);
       const attempts = Number(current.contextTagsAttempts || 0) + 1;
       patchMessengerCustomer(tenantId, id, {
         contextTagsAttempts: attempts,

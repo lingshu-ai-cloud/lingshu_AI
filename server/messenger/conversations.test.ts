@@ -86,8 +86,9 @@ test('unfinished context tags survive reload, back off on failure and recover fr
     const recovered = JSON.parse(fs.readFileSync(file, 'utf8'))[0];
     assert.deepEqual(recovered.tags, ['人工标签', 'Messenger', '预算已提供']);
     assert.equal(recovered.contextTagsAttempts, 0);
+    assert.equal(recovered.contextTagsAnalysisVersion, 3);
     assert.equal(await conversations.recoverMessengerContextTags(Date.now(), retry), 0, 'completed buyer context is not billed again');
-    conversations.patchMessengerCustomer('retry-tenant', customer.id, { contextTagsAnalysisVersion: 1 });
+    conversations.patchMessengerCustomer('retry-tenant', customer.id, { contextTagsAnalysisVersion: 2 });
     assert.equal(await conversations.recoverMessengerContextTags(Date.now(), retry), 1, 'a changed analysis version refreshes persisted stale qualification');
     assert.equal(await conversations.recoverMessengerContextTags(Date.now(), retry), 0);
     payload.entry[0].messaging[0].message = { mid: 'retry-correction', text: 'Budget cancelled' };
@@ -110,3 +111,35 @@ test('invalid persisted conversations fail without replacing customer data', asy
 });
 
 test.after(() => fs.rmSync(root, { recursive: true, force: true }));
+
+test('classification failure still persists buyer BANT corrections and vetoes obsolete managed tags', async () => {
+  const file = process.env.MESSENGER_CUSTOMERS_DATA_FILE!;
+  const previous = fs.readFileSync(file, 'utf8');
+  fs.writeFileSync(file, '[]');
+  try {
+    const message = (mid: string, text: string, timestamp: number) => ({ object: 'page', entry: [{ id: 'correction-page', messaging: [{ sender: { id: 'correction-buyer' }, recipient: { id: 'correction-page' }, timestamp, message: { mid, text } }] }] });
+    await conversations.handleMessengerWebhook('correction-tenant', message('original', 'We need OEM and a sample. The deadline is within 30 days.', 1800000000000), { analyzeTags: false });
+    const customer = conversations.getMessengerCustomers('correction-tenant')[0];
+    const originalId = customer.timeline[0].id;
+    await conversations.analyzeMessengerCustomerTags('correction-tenant', customer.id, async () => [
+      { tag: '定制需求', messageId: originalId, excerpt: 'We need OEM' },
+      { tag: '索取样品', messageId: originalId, excerpt: 'a sample' },
+      { tag: '明确交期', messageId: originalId, excerpt: 'within 30 days' },
+      { tag: '批发采购', messageId: originalId, excerpt: 'We need OEM' },
+    ]);
+    conversations.patchMessengerCustomer('correction-tenant', customer.id, { tags: ['人工标签', 'Messenger', '定制需求', '索取样品', '明确交期', '批发采购'] });
+    await conversations.handleMessengerWebhook('correction-tenant', message('correction', 'No customization or OEM, no samples, and no delivery deadline anymore.', 1800000001000), { analyzeTags: false });
+    await assert.rejects(conversations.analyzeMessengerCustomerTags('correction-tenant', customer.id, async () => {
+      const pending = conversations.getMessengerCustomers('correction-tenant')[0];
+      assert.equal(pending.intentScore, 0, 'qualification correction is persisted before awaiting the model');
+      assert.deepEqual(pending.tags, ['人工标签', 'Messenger']);
+      throw new Error('model_timeout');
+    }), /model_timeout/);
+    const corrected = conversations.getMessengerCustomers('correction-tenant')[0];
+    assert.equal(corrected.intentScore, 0);
+    assert.deepEqual(corrected.contextTagEvidence, []);
+    assert.deepEqual(corrected.tags, ['人工标签', 'Messenger']);
+    assert.equal(corrected.contextTagsAttempts, 1);
+    assert.ok(Number(corrected.contextTagsRetryAt) > Date.now());
+  } finally { fs.writeFileSync(file, previous); }
+});

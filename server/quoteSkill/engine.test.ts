@@ -200,6 +200,14 @@ test('客户明确 FOB 港口待确认时不能直接确认报价，改价格不
   const followup = buildQuoteDraft({ customerId: 'fob-followup', customerName: '', productHint: product.sku, products: [product], rules: { paymentTerms: '30% deposit' },
     messages: ['Quote 1500 pcs in 6061-T6. Destination Germany. The named FOB port still needs confirmation.', 'Please acknowledge receipt only.'] });
   assert.ok(followup.blockers.includes('FOB 指定装运港尚未确认'), '无关的后续消息不能解除港口待确认状态');
+  for (const wording of ['remains unconfirmed', 'is not confirmed', 'is pending confirmation']) {
+    const corrected = buildQuoteDraft({ customerId: 'fob-correction', customerName: '', products: [product], rules: { paymentTerms: 'deposit' },
+      messages: ['Quote 1500 pcs of SKU CNC-6061-01 in 6061-T6. Destination Germany. The named FOB port still needs confirmation.',
+        `Keep quantity 1500 pcs; the FOB port ${wording}.`, 'Please acknowledge receipt only.'] });
+    assert.equal(corrected.status, 'needs_clarification', wording);
+    assert.ok(corrected.blockers.includes('FOB 指定装运港尚未确认'), wording);
+    assert.ok(applyQuoteDraftPatch(corrected, { unitPrice: 39 }).blockers.includes('FOB 指定装运港尚未确认'), wording);
+  }
   assert.ok(!applyQuoteDraftPatch(draft, { destination: 'Shanghai port' }).blockers.includes('FOB 指定装运港尚未确认'));
 });
 

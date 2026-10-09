@@ -226,7 +226,7 @@ export function buildQuoteDraft(input: BuildQuoteDraftInput): QuoteSkillDraft {
   if (materialMismatch) blockers.push('客户材料与目录规格不一致，需确认对应价格');
   if (!leadTime && deliveryDate) blockers.push('客户目标交期尚未获得企业履约信息确认');
   const latestFobContext = input.messages.filter(value => /\bFOB\b/i.test(value)).at(-1) || '';
-  const unresolvedFobPort = incoterm === 'FOB' && /(?:named\s+)?FOB\s+port\s+(?:still\s+)?(?:needs?\s+confirmation|is\s+(?:unknown|unconfirmed))|FOB.{0,8}(?:港口待确认|港口未确认)/i.test(latestFobContext);
+  const unresolvedFobPort = incoterm === 'FOB' && /(?:named\s+)?FOB\s+port\s+(?:still\s+)?(?:needs?\s+confirmation|(?:is|remains?)\s+(?:unknown|unconfirmed|not\s+confirmed|pending\s+confirmation))|FOB.{0,8}(?:港口待确认|港口未确认)/i.test(latestFobContext);
   if (unresolvedFobPort) blockers.push('FOB 指定装运港尚未确认');
   if (matchedProduct?.moq != null && quantity != null && quantity < matchedProduct.moq) blockers.push(`数量低于 MOQ ${matchedProduct.moq}`);
 

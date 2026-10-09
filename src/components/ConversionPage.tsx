@@ -2575,7 +2575,11 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
           onInsertQuoteReply={(text) => {
             if (!selected) return;
             reportManualActive();
+            translationRequestRef.current += 1;
             setInput(text);
+            setTranslatedInput('');
+            setDraftSuggestion(null);
+            setDraftMeta(null);
             updateCustomer(selected.id, { pendingDraft: text });
             setMobilePanel('chat');
           }}
