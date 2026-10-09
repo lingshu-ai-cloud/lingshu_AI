@@ -44,6 +44,10 @@ platformIntegrationsRouter.get('/oauth-config', requireAuth, async (req, res) =>
 platformIntegrationsRouter.put('/oauth-config', requireAuth, async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   const text = (value: unknown) => typeof value === 'string' ? value.trim() : '';
+  if (text(req.body?.metaWebhookVerifyToken).length > 64) {
+    res.status(400).json({ error: 'Messenger Webhook 验证口令最多允许 64 个字符。', platform: 'meta' });
+    return;
+  }
   const existing = await Promise.all([
     getTenantPlatformApp(tenantId, 'google'),
     getTenantPlatformApp(tenantId, 'meta'),

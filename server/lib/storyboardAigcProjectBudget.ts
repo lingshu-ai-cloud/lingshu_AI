@@ -87,7 +87,12 @@ export class StoryboardAigcProjectBudget {
       }
       const maxRetries = this.maxRetries();
       if (!Number.isInteger(maxRetries) || maxRetries < 0 || maxRetries > 20) throw new Error('分镜 AIGC 重试上限配置无效');
-      const acceptedAttempts = Object.values(ledger.entries).filter(entry => entry.shotId === input.shotId && entry.stage === input.stage).length;
+      // Retries protect one exact supplier input.  A newly uploaded product
+      // cutout or other reference asset changes the input fingerprint and is
+      // a new production revision, not a third retry of the old bad asset.
+      // It remains subject to the project-wide cost ceiling below.
+      const acceptedAttempts = Object.values(ledger.entries).filter(entry => entry.shotId === input.shotId
+        && entry.stage === input.stage && entry.inputFingerprint === input.inputFingerprint).length;
       if (acceptedAttempts >= maxRetries + 1) throw new Error(`当前镜头${input.stage === 'first_frame' ? '首帧' : '视频'}已达到 ${maxRetries + 1} 次生成上限，未调用供应商`);
       const limitMicros = micros(this.limitCny());
       const usedMicros = Object.values(ledger.entries).reduce((sum, entry) => sum + entry.amountMicros, 0);

@@ -119,6 +119,7 @@ test('报价 API：租户隔离、并发控制、人工确认、安全回复与�
       currency: 'USD',
       destination: 'Los Angeles',
       incoterm: 'FOB',
+      leadTime: '20 days',
       paymentTerms: '30% deposit, balance before shipment',
     });
     assert.equal(updatedResponse.status, 200);

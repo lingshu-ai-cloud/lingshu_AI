@@ -180,7 +180,9 @@ function publicPostStatus(record: GenericRecord): string {
 
 function exactAnalysis(record: GenericRecord): boolean {
   const analysis = jsonObject(record.aiAnalysis);
-  return analysis.analysisMode === 'exact' && analysis.analysisQuality === 'video' && Boolean(analysis.gemini);
+  return analysis.analysisMode === 'exact'
+    && ['video', 'video_review_required'].includes(String(analysis.analysisQuality || ''))
+    && Boolean(analysis.gemini);
 }
 
 function connectedAccount(record: GenericRecord): boolean {

@@ -1,10 +1,17 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { encryptSecret, validateTenantOAuthCredentialPair, type TenantPlatformAppRecord } from './tenantPlatformApps.js';
+import { encryptSecret, validateTenantOAuthCredentialPair, signOAuthState, parseOAuthState, type TenantPlatformAppRecord } from './tenantPlatformApps.js';
 
 const existing: TenantPlatformAppRecord = {
   id: 'app-1', tenant_id: 'tenant-1', platform: 'google', app_id: 'old-id', app_secret: encryptSecret('old-secret'),
 };
+
+test('Messenger purpose survives signed state recovery and rejects tampering', () => {
+  const state = signOAuthState({ tenantId: 'tenant-1', userId: 'user-1', platform: 'facebook', returnTo: '/?page=channels', purpose: 'messenger' });
+  assert.equal(parseOAuthState(state)?.purpose, 'messenger');
+  assert.equal(parseOAuthState(state.split('.')[0] + '.invalid'), null);
+  assert.equal(parseOAuthState(state.replace(/^./, state[0] === 'a' ? 'b' : 'a')), null);
+});
 
 test('a matching existing OAuth pair permits an empty secret as no change', () => {
   assert.equal(validateTenantOAuthCredentialPair({ appId: 'old-id', appSecret: '', existing }), null);

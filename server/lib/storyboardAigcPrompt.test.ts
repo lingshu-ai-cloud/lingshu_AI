@@ -17,6 +17,7 @@ const prompt = buildStoryboardFirstFramePrompt(base);
 assert.match(prompt, /source shot's actual first frame/);
 assert.match(prompt, /ONLY for camera angle/);
 assert.match(prompt, /enterprise knowledge-base product/);
+assert.match(prompt, /show only repeated instances of that same enterprise product/);
 assert.match(prompt, /stable START state/);
 assert.doesNotMatch(prompt, /specified enterprise person's identity/);
 

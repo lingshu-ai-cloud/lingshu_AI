@@ -48,6 +48,7 @@ interface PendingOAuthState {
   platform: SocialPlatform;
   returnTo: string;
   expiresAt: number;
+  purpose?: 'messenger';
 }
 
 interface SocialAccountRecord {
@@ -286,6 +287,7 @@ async function saveFacebookPageFromMeta(input: {
   tenantId: string;
   userId: string;
   page: Awaited<ReturnType<typeof getMetaPages>>[number];
+  purpose?: 'messenger';
 }) {
   const account = await upsertSocialAccount({
     tenantId: input.tenantId,
@@ -298,7 +300,7 @@ async function saveFacebookPageFromMeta(input: {
     accessToken: input.page.accessToken,
     refreshToken: '',
     tokenExpiresAt: '',
-    scope: metaOAuthScopes('facebook').join(','),
+    scope: metaOAuthScopes(input.purpose || 'facebook').join(','),
     parentPageId: input.page.id,
     parentPageName: input.page.name,
     followerCount: input.page.fanCount || 0,
@@ -384,7 +386,7 @@ async function connectMeta(pending: PendingOAuthState, code: string, req: Reques
   let saved = 0;
   for (const page of pages) {
     if (pending.platform === 'facebook') {
-      await saveFacebookPageFromMeta({ tenantId: pending.tenantId, userId: pending.userId, page });
+      await saveFacebookPageFromMeta({ tenantId: pending.tenantId, userId: pending.userId, page, purpose: pending.purpose });
       saved += 1;
     }
     if (pending.platform === 'instagram' && page.instagram) {
@@ -439,6 +441,7 @@ socialRouter.get('/oauth/:platform/callback', async (req, res) => {
     platform,
     returnTo: signedState.returnTo,
     expiresAt: signedState.expiresAt,
+    purpose: signedState.purpose,
   } : undefined);
   const returnTo = pending?.returnTo || '/';
   if (!pending || pending.platform !== platform) {
@@ -490,11 +493,13 @@ socialRouter.post('/oauth/:platform/start', async (req, res) => {
     return;
   }
   cleanupOAuthStates();
+  const purpose = platform === 'facebook' && req.body?.purpose === 'messenger' ? 'messenger' as const : undefined;
   const state = signOAuthState({
     userId,
     tenantId,
     platform,
     returnTo: normalizeReturnTo(req.body?.returnTo),
+    purpose,
   });
   pendingOAuthStates.set(state, {
     userId,
@@ -502,6 +507,7 @@ socialRouter.post('/oauth/:platform/start', async (req, res) => {
     platform,
     returnTo: normalizeReturnTo(req.body?.returnTo),
     expiresAt: Date.now() + OAUTH_STATE_TTL_MS,
+    purpose,
   });
 
   if (platform === 'tiktok') {
@@ -516,7 +522,7 @@ socialRouter.post('/oauth/:platform/start', async (req, res) => {
     return;
   }
 
-  const scopes = metaOAuthScopes(platform);
+  const scopes = metaOAuthScopes(purpose || platform);
   const url = new URL(`${META_AUTH_URL}/${graphVersion()}/dialog/oauth`);
   url.searchParams.set('client_id', metaClient!.appId);
   url.searchParams.set('redirect_uri', redirectUri(req, platform));

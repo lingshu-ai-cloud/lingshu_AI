@@ -49,7 +49,7 @@ function requiredQuoteFields(draft: Pick<QuoteSkillDraft, 'productName' | 'quant
   ].filter(Boolean);
 }
 
-function quoteQuestions(draft: Pick<QuoteSkillDraft, 'customerLanguage' | 'productName' | 'quantity' | 'material' | 'destination' | 'incoterm' | 'leadTime' | 'deliveryDate' | 'paymentTerms'>): string[] {
+export function quoteQuestions(draft: Pick<QuoteSkillDraft, 'customerLanguage' | 'productName' | 'quantity' | 'material' | 'destination' | 'incoterm' | 'leadTime' | 'deliveryDate' | 'paymentTerms'> & { blockers?: string[] }): string[] {
   const chinese = /^(?:zh|中文|chinese)/i.test(draft.customerLanguage || '');
   const questions = chinese ? [
     !draft.productName ? '请确认具体产品名称或 SKU。' : '',
@@ -57,6 +57,7 @@ function quoteQuestions(draft: Pick<QuoteSkillDraft, 'customerLanguage' | 'produ
     !draft.material ? '请确认所需材料和关键规格。' : '',
     !draft.destination ? '请确认本次报价的交货地点或港口。' : '',
     !draft.incoterm ? '请确认本次报价使用的贸易术语，例如 EXW、FOB 或 DDP。' : '',
+    draft.blockers?.includes('FOB 指定装运港尚未确认') ? '请确认 FOB 指定装运港。' : '',
     !draft.leadTime && !draft.deliveryDate ? '请确认目标交期。' : '',
     !draft.paymentTerms ? '请确认期望的付款条款。' : '',
   ] : [
@@ -65,6 +66,7 @@ function quoteQuestions(draft: Pick<QuoteSkillDraft, 'customerLanguage' | 'produ
     !draft.material ? 'Could you confirm the required material and key specifications?' : '',
     !draft.destination ? 'What named delivery place or port should we use for this quotation?' : '',
     !draft.incoterm ? 'Which Incoterm should we use for this quotation (for example, EXW, FOB or DDP)?' : '',
+    draft.blockers?.includes('FOB 指定装运港尚未确认') ? 'Which named port of shipment should we use for FOB?' : '',
     !draft.leadTime && !draft.deliveryDate ? 'What is your target lead time or delivery date?' : '',
     !draft.paymentTerms ? 'What payment terms should we use for this quotation?' : '',
   ];
@@ -83,29 +85,35 @@ export function quoteIntentScore(text: string): number {
 }
 
 function extractQuantity(text: string): number | null {
-  const match = text.match(/(\d[\d,]*)\s*(?:pcs?|pieces?|units?|sets?|件|套|个|箱)/i);
+  const match = [...text.matchAll(/(\d[\d,]*)\s*(?:pcs?|pieces?|units?|sets?|件|套|个|箱)/gi)].at(-1);
   return match ? Number(match[1].replaceAll(',', '')) : null;
 }
 
 function extractMaterial(text: string): string {
-  return MATERIALS.find(item => normalized(text).includes(normalized(item))) || '';
+  const matches = MATERIALS.flatMap(material => {
+    const escaped = material.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return [...text.matchAll(new RegExp(`${/^[A-Za-z0-9]/.test(material) ? '\\b' : ''}${escaped}${/[A-Za-z0-9]$/.test(material) ? '\\b' : ''}`, 'gi'))]
+      .map(match => ({ material, index: match.index }));
+  });
+  matches.sort((left, right) => right.index - left.index || right.material.length - left.material.length);
+  return matches[0]?.material || '';
 }
 
 function extractDelivery(text: string): string {
-  const iso = text.match(/(20\d{2})[-/.年](\d{1,2})[-/.月](\d{1,2})/);
+  const iso = [...text.matchAll(/(20\d{2})[-/.年](\d{1,2})[-/.月](\d{1,2})/g)].at(-1);
   if (iso) return `${iso[1]}-${String(iso[2]).padStart(2, '0')}-${String(iso[3]).padStart(2, '0')}`;
-  const relative = text.match(/(?:within|in|交期|需要)\s*(\d+)\s*(days?|weeks?|天|周)/i);
+  const relative = [...text.matchAll(/(?:within|in|交期|需要)\s*(\d+)\s*(days?|weeks?|天|周)/gi)].at(-1);
   if (relative) return `${relative[1]} ${/week|周/i.test(relative[2]) ? 'weeks' : 'days'}`;
   return '';
 }
 
 function extractDestination(text: string): string {
-  const match = text.match(/(?:ship(?:ping)?\s+to|deliver(?:y)?\s+to|destination|发往|发到|目的地|目的港)\s*[:：]?\s*([A-Za-z\u4e00-\u9fff][A-Za-z\u4e00-\u9fff .-]{1,40})/i);
-  return match?.[1]?.trim() || '';
+  const match = [...text.matchAll(/(?:ship(?:ping)?\s+to|deliver(?:y)?\s+to|destination(?:\s+(?:is|remains))?|发往|发到|目的地|目的港)\s*[:：]?\s*([A-Za-z\u4e00-\u9fff][A-Za-z\u4e00-\u9fff .-]{1,40})/gi)].at(-1);
+  return match?.[1]?.split(/[;,。\n]|\.(?:\s|$)/)[0]?.trim() || '';
 }
 
 function extractIncoterm(text: string): string {
-  return text.match(/\b(EXW|FCA|FOB|CFR|CIF|CPT|CIP|DAP|DPU|DDP)\b/i)?.[1]?.toUpperCase() || '';
+  return [...text.matchAll(/\b(EXW|FCA|FOB|CFR|CIF|CPT|CIP|DAP|DPU|DDP)\b/gi)].at(-1)?.[1]?.toUpperCase() || '';
 }
 
 function extractPackaging(text: string): string {
@@ -179,18 +187,29 @@ export function buildQuoteDraft(input: BuildQuoteDraftInput): QuoteSkillDraft {
   const packaging = extractPackaging(message);
   const drawingVersion = extractDrawingVersion(message);
   const extractedProduct = extractProductName(message);
-  const productQuery = clean(input.productHint) || extractedProduct || message;
-  const matchedProduct = bestProduct(productQuery, input.products);
+  // A later explicit SKU takes precedence over a generic profile hint or an
+  // earlier request. Keep unknown SKUs unmatched rather than reusing an old price.
+  const explicitSku = [...message.matchAll(/\bSKU\s*[:：]?\s*([A-Za-z0-9][A-Za-z0-9_-]*)/gi)].at(-1)?.[1];
+  const productHint = /^(?:待确认|待补充|未知|unknown|tbd)$/i.test(clean(input.productHint)) ? '' : clean(input.productHint);
+  const productQuery = explicitSku || productHint || extractedProduct || message;
+  const matchedProduct = explicitSku
+    ? input.products.find(product => normalized(product.sku) === normalized(explicitSku)) || null
+    : bestProduct(productQuery, input.products);
   const productName = matchedProduct?.name || clean(input.productHint) || extractedProduct;
   const resolvedMaterial = material || matchedProduct?.material || '';
-  const unitPrice = matchedProduct?.unitPrice ?? null;
+  const materialMismatch = Boolean(material && matchedProduct?.material && normalized(material) !== normalized(matchedProduct.material));
+  const unitPrice = materialMismatch ? null : matchedProduct?.unitPrice ?? null;
   const currency = matchedProduct?.currency || (/\busd\b|\$/i.test(message) ? 'USD' : 'CNY');
   const unit = matchedProduct?.unit || '件';
   const subtotal = quantity != null && unitPrice != null ? Number((quantity * unitPrice).toFixed(2)) : null;
-  const leadTime = matchedProduct?.leadTime || clean(input.rules.leadTime) || deliveryDate;
+  const budgetMatch = [...message.matchAll(/(?:\bbudget\s*(?:is|of|:)?|预算\s*[:：]?)\s*(USD|CNY|RMB|EUR|GBP|US\$|\$|¥|￥)\s*([\d,]+(?:\.\d+)?)/gi)].at(-1);
+  const budgetAmount = budgetMatch ? numberFrom(budgetMatch[2]) : null;
+  const budgetCurrency = budgetMatch?.[1].toUpperCase().replace(/^(?:US\$|\$)$/, 'USD').replace(/^(?:RMB|¥|￥)$/, 'CNY');
+  const customerBudget = budgetAmount && budgetCurrency ? { amount: budgetAmount, currency: budgetCurrency } : undefined;
+  const leadTime = matchedProduct?.leadTime || clean(input.rules.leadTime);
   const fieldEvidence: QuoteFieldEvidence[] = [];
   if (productName) fieldEvidence.push(evidence('productName', productName, matchedProduct ? 'product_catalog' : 'customer_profile', matchedProduct ? `${matchedProduct.sku} ${matchedProduct.name}` : productName));
-  if (quantity != null) fieldEvidence.push(evidence('quantity', quantity, 'buyer_message', message.match(/\d[\d,]*\s*(?:pcs?|pieces?|units?|sets?|件|套|个|箱)/i)?.[0] || String(quantity)));
+  if (quantity != null) fieldEvidence.push(evidence('quantity', quantity, 'buyer_message', [...message.matchAll(/\d[\d,]*\s*(?:pcs?|pieces?|units?|sets?|件|套|个|箱)/gi)].at(-1)?.[0] || String(quantity)));
   if (resolvedMaterial) fieldEvidence.push(evidence('material', resolvedMaterial, material ? 'buyer_message' : 'product_catalog', resolvedMaterial));
   if (deliveryDate) fieldEvidence.push(evidence('deliveryDate', deliveryDate, 'buyer_message', deliveryDate));
   if (destination) fieldEvidence.push(evidence('destination', destination, 'buyer_message', destination));
@@ -204,6 +223,11 @@ export function buildQuoteDraft(input: BuildQuoteDraftInput): QuoteSkillDraft {
   if (input.rules.quoteMode === 'human_only' && unitPrice == null) blockers.push('企业设置为仅人工报价，需人工填写单价');
   if (!matchedProduct) blockers.push('未匹配到企业产品目录');
   if (unitPrice == null) blockers.push('产品目录没有可核验单价');
+  if (materialMismatch) blockers.push('客户材料与目录规格不一致，需确认对应价格');
+  if (!leadTime && deliveryDate) blockers.push('客户目标交期尚未获得企业履约信息确认');
+  const latestFobContext = input.messages.filter(value => /\bFOB\b/i.test(value)).at(-1) || '';
+  const unresolvedFobPort = incoterm === 'FOB' && /(?:named\s+)?FOB\s+port\s+(?:still\s+)?(?:needs?\s+confirmation|is\s+(?:unknown|unconfirmed))|FOB.{0,8}(?:港口待确认|港口未确认)/i.test(latestFobContext);
+  if (unresolvedFobPort) blockers.push('FOB 指定装运港尚未确认');
   if (matchedProduct?.moq != null && quantity != null && quantity < matchedProduct.moq) blockers.push(`数量低于 MOQ ${matchedProduct.moq}`);
 
   const pricingExplanation = [
@@ -211,7 +235,7 @@ export function buildQuoteDraft(input: BuildQuoteDraftInput): QuoteSkillDraft {
     unitPrice != null ? `价格来源：${matchedProduct?.priceSource || '企业配置'} ${currency} ${unitPrice}/${unit}` : '价格待人工填写，Agent 不猜测单价',
     leadTime ? `参考交期：${leadTime}` : '交期待人工确认',
   ];
-  const clarificationQuestions = quoteQuestions({ ...requiredFields, customerLanguage: clean(input.customerLanguage) || 'English' });
+  const clarificationQuestions = quoteQuestions({ ...requiredFields, blockers, customerLanguage: clean(input.customerLanguage) || 'English' });
   const now = new Date().toISOString();
   return {
     schemaVersion: 1,
@@ -238,6 +262,7 @@ export function buildQuoteDraft(input: BuildQuoteDraftInput): QuoteSkillDraft {
     ...(unitPrice != null ? { unitPriceSource: 'product_catalog' as const } : {}),
     currency,
     subtotal,
+    ...(customerBudget ? { customerBudget } : {}),
     leadTime,
     paymentTerms: clean(input.rules.paymentTerms),
     validityDays: 15,
@@ -280,7 +305,7 @@ export function applyQuoteDraftPatch(draft: QuoteSkillDraft, patch: Record<strin
       : patch.unitPriceSource === 'product_catalog' || patch.unitPriceSource === 'human'
         ? patch.unitPriceSource
         : source === 'product_catalog' ? 'product_catalog' : 'human';
-  } else if (productIdentityChanged) {
+  } else if (productIdentityChanged || ('material' in patch && clean(patch.material) !== draft.material)) {
     next.unitPrice = null;
     next.unitPriceSource = undefined;
   }
@@ -294,8 +319,10 @@ export function applyQuoteDraftPatch(draft: QuoteSkillDraft, patch: Record<strin
   if ('validityDays' in patch) next.validityDays = Math.max(1, Math.min(365, Math.round(numberFrom(patch.validityDays) || 15)));
   next.subtotal = next.quantity != null && next.unitPrice != null ? Number((next.quantity * next.unitPrice).toFixed(2)) : null;
   next.missingFields = requiredQuoteFields(next);
-  next.blockers = draft.blockers.filter(item => !/没有可核验单价|未匹配到企业产品目录|仅人工报价|数量低于 MOQ/.test(item));
+  next.blockers = draft.blockers.filter(item => !/没有可核验单价|未匹配到企业产品目录|仅人工报价|数量低于 MOQ|客户材料与目录规格不一致|客户目标交期尚未获得企业履约信息确认/.test(item));
+  if (source === 'human' && 'destination' in patch && next.destination && next.destination !== draft.destination) next.blockers = next.blockers.filter(item => item !== 'FOB 指定装运港尚未确认');
   if (next.unitPrice == null) next.blockers.push('产品目录没有可核验单价');
+  if (!next.leadTime && next.deliveryDate && draft.blockers.includes('客户目标交期尚未获得企业履约信息确认') && !(source === 'human' && 'deliveryDate' in patch)) next.blockers.push('客户目标交期尚未获得企业履约信息确认');
   if (next.matchedProduct?.moq != null && next.quantity != null && next.quantity < next.matchedProduct.moq) next.blockers.push(`数量低于 MOQ ${next.matchedProduct.moq}`);
   next.pricingExplanation = [
     next.matchedProduct
@@ -304,7 +331,7 @@ export function applyQuoteDraftPatch(draft: QuoteSkillDraft, patch: Record<strin
     next.unitPrice != null
       ? `价格来源：${next.unitPriceSource === 'product_catalog' ? next.matchedProduct?.priceSource || '企业配置' : '人工填写'} ${next.currency} ${next.unitPrice}/${next.unit}`
       : '价格待人工填写，Agent 不猜测单价',
-    next.leadTime || next.deliveryDate ? `参考交期：${next.leadTime || next.deliveryDate}` : '交期待人工确认',
+    next.leadTime ? `参考交期：${next.leadTime}` : next.deliveryDate ? `目标交期：${next.deliveryDate}（需确认履约）` : '交期待人工确认',
   ];
   next.clarificationQuestions = quoteQuestions(next);
   next.status = next.missingFields.length || next.blockers.length ? 'needs_clarification' : 'ready_for_review';
@@ -325,7 +352,8 @@ export function composeQuoteReply(draft: QuoteSkillDraft): string {
       `${customerName ? `${customerName}，您好：` : '您好：'}`,
       `感谢您的询价。${draft.productName}${draft.material ? `（${draft.material}）` : ''}的报价为 ${draft.currency} ${draft.unitPrice}/${draft.unit}，数量 ${draft.quantity} ${draft.unit}。`,
       amount ? `产品小计：${amount}。` : '',
-      draft.leadTime || draft.deliveryDate ? `参考交期：${draft.leadTime || draft.deliveryDate}。` : '',
+      draft.leadTime ? `参考交期：${draft.leadTime}。` : '',
+      draft.deliveryDate ? `客户目标交期：${draft.deliveryDate}，最终履约时间待确认。` : '',
       draft.paymentTerms ? `付款条款：${draft.paymentTerms}。` : '',
       draft.incoterm ? `贸易术语：${draft.incoterm}${draft.destination ? `，指定地点/港口 ${draft.destination}` : ''}。` : '',
       draft.drawingVersion ? `图纸版本：${draft.drawingVersion}。` : '',
@@ -339,7 +367,8 @@ export function composeQuoteReply(draft: QuoteSkillDraft): string {
     `Hi ${customerName || 'there'},`,
     `Thank you for your inquiry. We can offer ${draft.quantity} ${englishUnit} of ${draft.productName}${draft.material ? ` in ${draft.material}` : ''} at ${draft.currency} ${draft.unitPrice} per ${englishUnit === 'pcs' ? 'piece' : englishUnit.replace(/s$/, '')}.`,
     amount ? `The product subtotal is ${amount}.` : '',
-    draft.leadTime || draft.deliveryDate ? `Reference lead time: ${draft.leadTime || draft.deliveryDate}.` : '',
+    draft.leadTime ? `Reference lead time: ${draft.leadTime}.` : '',
+    draft.deliveryDate ? `Requested delivery: ${draft.deliveryDate}; final fulfillment timing is subject to confirmation.` : '',
     draft.paymentTerms ? `Payment terms: ${draft.paymentTerms}.` : '',
     draft.incoterm ? `Incoterm: ${draft.incoterm}${draft.destination ? `, named place/port ${draft.destination}` : ''}.` : '',
     draft.drawingVersion ? `Drawing revision: ${draft.drawingVersion}.` : '',

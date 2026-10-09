@@ -28,6 +28,10 @@ export async function prepareLocalSeedanceMotionGuide(input: {
   cueId: string;
   sourceVideoPath: string;
   workDir?: string;
+  /** Provider reference-video admission follows the generated duration. Very
+   * short physical beats are held on their last anonymized frame, while the
+   * editing timeline still keeps the original beat length. */
+  padToSeconds?: number;
 }, dependencies: {
   ffmpegPath?: string;
   uploadFile?: typeof objectStorageUploadFile;
@@ -41,8 +45,10 @@ export async function prepareLocalSeedanceMotionGuide(input: {
   const workDir = path.resolve(input.workDir || path.dirname(input.sourceVideoPath));
   fs.mkdirSync(workDir, { recursive:true });
   const outputPath = path.join(workDir, `motion-guide-${sourceSha256.slice(0,24)}.mp4`);
+  const padToSeconds = Number(input.padToSeconds || 0);
+  const filter = padToSeconds > 0 ? `${MOTION_GUIDE_FILTER},tpad=stop_mode=clone:stop_duration=${padToSeconds}` : MOTION_GUIDE_FILTER;
   await run(String(dependencies.ffmpegPath || ffmpegStatic || ''), ['-hide_banner','-loglevel','error','-nostdin','-i',input.sourceVideoPath,
-    '-map','0:v:0','-vf',MOTION_GUIDE_FILTER,'-an','-map_metadata','-1','-c:v','libx264','-preset','medium','-crf','30','-pix_fmt','yuv420p','-movflags','+faststart','-y',outputPath], { timeout:120_000 });
+    '-map','0:v:0','-vf',filter,'-t',...(padToSeconds > 0 ? [String(padToSeconds)] : ['2147483647']),'-an','-map_metadata','-1','-c:v','libx264','-preset','medium','-crf','30','-pix_fmt','yuv420p','-movflags','+faststart','-y',outputPath], { timeout:120_000 });
   const output = fs.readFileSync(outputPath);
   if (output.length < 100) throw new Error('Seedance motion-guide 脱敏输出为空');
   const outputSha256 = createHash('sha256').update(output).digest('hex');

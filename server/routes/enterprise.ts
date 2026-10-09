@@ -1707,10 +1707,12 @@ enterpriseRouter.use(requireAuth);
 async function customerServiceRuntimeStatus(tenantId: string, profile: EnterpriseProfile) {
   const status = customerServiceStatus(profile);
   const messagingAuthorization = await readCustomerMessagingAuthorization(tenantId);
+  const messengerAuthorization = await readCustomerMessagingAuthorization(tenantId, 'messenger');
   return {
     ...status,
     autoReplyReady: status.autoReplyReady && messagingAuthorization.inboundAutoSendAllowed,
     messagingAuthorization,
+    messengerAuthorization,
   };
 }
 

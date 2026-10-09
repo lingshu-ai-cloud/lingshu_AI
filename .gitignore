@@ -91,3 +91,9 @@ __pycache__/
 /数字人0901_*.mp4
 # Downloaded licensed footage and local verification artifacts; provenance lives in docs.
 /data/acceptance-materials/
+/artifacts/customer-smoke/credentials.json
+/artifacts/customer-smoke/session.json
+/artifacts/customer-smoke/persistent-runtime/
+/artifacts/customer-smoke/*.log
+/data/messenger-customers.json
+/data/messenger-customers.json.*.tmp

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { reconcileShootingSlots, shootingRefillTarget, type ScriptGapTask } from './shootingWorkflow.js';
+import { reconcileShootingSlots, shootingRefillTarget, storyboardTimelineFromShootingSlots, type ScriptGapTask } from './shootingWorkflow.js';
 
 let counter = 0;
 const newId = () => `shot-${++counter}`;
@@ -43,4 +43,15 @@ test('ambiguous repeated shots fail closed when the script structure changes', (
   assert.equal(unchanged[0].id, repeated[0].id);
   const changed = reconcileShootingSlots(repeated, [input[1], input[0], { ...input[0], id: 'slot-3' }], 'same', newId);
   assert.ok(changed.every(item => !repeated.some(old => old.id === item.id)));
+});
+test('durable production cuts rebuild the complete render timeline', () => {
+  const timeline = storyboardTimelineFromShootingSlots([
+    { id: 'shot-a', slotId: 'slot-1', detail: '画面：产品近景', requirements: '', duration: 0.87 },
+    { id: 'shot-b', slotId: 'slot-2', detail: '景别：中景；画面：工厂', requirements: '', duration: 1.2 },
+  ]);
+  assert.deepEqual(timeline.map(item => [item.id, item.start, item.end]), [
+    ['slot-1', 0, 0.87], ['slot-2', 0.87, 2.07],
+  ]);
+  assert.equal(timeline[0].title, '产品近景');
+  assert.equal(timeline[1].title, '中景');
 });

@@ -97,6 +97,10 @@ export default function UserSocialAppCredentials() {
   useEffect(() => { void load(); }, []);
   const field = <K extends keyof Form>(key: K, value: Form[K]) => setForm(current => ({ ...current, [key]: value }));
   async function save() {
+    if (form.metaWebhookVerifyToken.trim().length > 64) {
+      setError('Messenger Webhook 验证口令最多允许 64 个字符。');
+      return;
+    }
     const validationError = validateOAuthCredentialPairs([
       { label: 'YouTube / Google', clientId: form.youtubeOAuthClientId, clientSecret: form.youtubeOAuthClientSecret, savedClientId: config?.apps.google?.appId || '', savedSecret: Boolean(config?.apps.google?.appSecretSet) },
       { label: 'Instagram / Facebook', clientId: form.metaSocialAppId, clientSecret: form.metaSocialAppSecret, savedClientId: config?.apps.meta?.appId || '', savedSecret: Boolean(config?.apps.meta?.appSecretSet) },

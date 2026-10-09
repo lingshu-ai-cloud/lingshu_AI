@@ -40,6 +40,45 @@ export function assertPersonCueShotBoundaries(cues: DigitalHumanReferenceCue[], 
   }
 }
 
+const cueTokens = (value: string): string[] => /\s/.test(value.trim()) ? value.trim().split(/\s+/) : Array.from(value.trim());
+
+/** Split managed person cues on locally measured physical cuts before any paid work. */
+export function splitPersonCuesAtHardCuts(cues: DigitalHumanReferenceCue[], cuts: number[]): DigitalHumanReferenceCue[] {
+  return cues.flatMap(cue => {
+    if (cue.personShot === false) return [cue];
+    const boundaries = [cue.start, ...cuts.filter(time => time > cue.start + 0.05 && time < cue.end - 0.05), cue.end]
+      .sort((a, b) => a - b);
+    if (boundaries.length === 2) return [cue];
+    const target = cueTokens(cue.targetText);
+    if (target.length < boundaries.length - 1) throw new Error(`人物逐句镜头 ${cue.id} 跨越 ${boundaries.length - 1} 个物理镜头，但本片台词不足以无重复拆分，未调用供应商`);
+    let tokenCursor = 0;
+    return boundaries.slice(0, -1).map((start, index) => {
+      const end = boundaries[index + 1]!;
+      const remainingParts = boundaries.length - 2 - index;
+      const remainingTokens = target.length - tokenCursor;
+      const proportional = index === boundaries.length - 2 ? remainingTokens
+        : Math.round(((end - start) / (cue.end - cue.start)) * target.length);
+      const take = Math.max(1, Math.min(remainingTokens - remainingParts, proportional));
+      const partText = target.slice(tokenCursor, tokenCursor + take).join(/\s/.test(cue.targetText.trim()) ? ' ' : '');
+      tokenCursor += take;
+      return {
+        ...cue,
+        id: `${cue.id}:part-${index + 1}`,
+        splitFromCueId: cue.splitFromCueId || cue.id,
+        start, end,
+        originalText: cue.originalText.trim() || '原片无可用口播（物理镜头）',
+        targetText: partText,
+        classificationSource: 'analysis' as const,
+        sourceFirstFrame: { time: start },
+        targetFirstFrame: undefined,
+        generatedClip: undefined,
+        generationDurationSeconds: Math.max(4, end - start),
+        outputDurationSeconds: end - start,
+      };
+    });
+  });
+}
+
 /** Seedance's current image-video adapter requests 4–15 seconds per person cue. */
 export function assertSeedanceCueDurations(cues: DigitalHumanReferenceCue[]): void {
   for (const cue of cues) {

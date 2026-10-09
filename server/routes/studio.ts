@@ -1841,6 +1841,7 @@ function storyboardIdentityNotice(layer: unknown, hasProduct: boolean): string |
   if (!layer || typeof layer !== 'object') return undefined;
   const value = layer as { strategy?: string; fallbackReason?: string };
   if (value.strategy === 'exact_source_pixels') return '已使用企业产品原图保留包装外观；请核对摆放、接触和光影。';
+  if (value.strategy === 'seedream_reference_composite') return '已先用 Seedream 清除对标产品，再以企业产品图重建目标首帧；请核对产品身份、手部接触、比例和光影。';
   if (value.strategy !== 'generative' || !value.fallbackReason) return undefined;
   if (value.fallbackReason === 'hand_foreground_missing') return '手持产品缺少可对齐的手部前景，已生成普通首帧草稿；请重点核对握持接触，失败时补充真实手持参考。';
   if (/cutout|transparent|view/i.test(value.fallbackReason)) return '当前产品图缺少适合此角度的透明产品层，已生成普通首帧草稿；请核对包装文字和外观，必要时补产品图后重做。';
@@ -2134,11 +2135,19 @@ studioRouter.post('/storyboard-first-frame', async (req, res) => {
     res.status(423).json({ ok: false, code: 'STORYBOARD_IMAGE_PROVIDER_UNAVAILABLE', error: 'Seedream 首帧模型尚未配置，未调用供应商' }); return;
   }
   if (!await consumeDemoQuota(req, res, 'generation')) return;
+  // Product remakes are image-to-image twice: first remove the reference
+  // product from its actual shot, then rebuild that same shot using only the
+  // enterprise product references.  This preserves the reference framing
+  // without asking one model call to both erase and invent packaging.
+  const seedreamProductComposite = mode === 'replication' && sceneType === 'product'
+    && Boolean(sourceFrame) && productReferences.length > 0;
+  const reservedFirstFrameCostCny = Number(planned.estimatedFirstFrameCostCny || 0)
+    * (seedreamProductComposite ? 2 : 1);
   const frameOperationId = `firstframe:${createHash('sha256').update(`${tenantId}:${String(body.projectId)}:${shotId}:${requestId}`).digest('hex')}`;
   try {
     const admission = await storyboardAigcProjectBudget.reserve({ tenantId, projectId: String(body.projectId), shotId,
       stage: 'first_frame', operationId: frameOperationId,
-      estimatedCostCny: planned.estimatedFirstFrameCostCny, inputFingerprint: fingerprint });
+      estimatedCostCny: reservedFirstFrameCostCny, inputFingerprint: fingerprint });
     if (admission.existing) {
       const recovered = admission.entry.status === 'completed' && admission.entry.output?.materialId
         ? loadMaterials().find(item => item.id === String(admission.entry.output?.materialId) && item.tenantId === tenantId
@@ -2213,7 +2222,7 @@ studioRouter.post('/storyboard-first-frame', async (req, res) => {
       hasExactProductLayer: useExactProductLayer,
       seedanceModel: String(process.env.SEEDANCE_MODEL || 'doubao-seedance-2-0-fast-260128'),
       multimodalEnabled: process.env.SEEDANCE_STORYBOARD_MULTIMODAL_ENABLED !== 'false' });
-    if (firstFrameRoute === 'direct_seedance_input') {
+    if (firstFrameRoute === 'direct_seedance_input' && !seedreamProductComposite) {
       const prepared = await prepareProductIdentityLayer({ spec: shotSpec, cleanPlate: true,
         background: Buffer.from(sourceFrame!.base64, 'base64'),
         assetBytes: new Map(productReferences.map(item => [item.imageUrl, Buffer.from(item.image.base64, 'base64')])) });
@@ -2224,6 +2233,45 @@ studioRouter.post('/storyboard-first-frame', async (req, res) => {
       identityLayer = { strategy: 'exact_source_pixels', directToSeedance: true, ...prepared.provenance,
         productBox: composite.productBox, occludedProductFraction: composite.occludedProductFraction };
       directCompositionUsed = true;
+    } else if (seedreamProductComposite) {
+      const seedream = new SeedreamFirstFrameGenerator();
+      const asReference = (role: FirstFrameReferenceRole, reference: ReferenceImage) => {
+        const bytes = Buffer.from(reference.base64, 'base64');
+        return { role, bytes, mimeType: reference.mimeType as 'image/jpeg' | 'image/png' | 'image/webp',
+          sha256: createHash('sha256').update(bytes).digest('hex') };
+      };
+      const cleanupPrompt = [
+        `Create exactly one photorealistic ${ratio} clean background plate for this source shot.`,
+        'Reference image 1 is the real source shot. Preserve its camera, framing, people, hands, lighting and background.',
+        'Remove every source product, package, brand mark, readable label, subtitle, watermark and unrelated foreground prop. Reconstruct only the exposed background and any hand area naturally hidden by the removed product.',
+        'Do not introduce a new product, package, logo, caption or readable text.',
+      ].join('\n');
+      const cleanupRequest = {
+        referenceMode: 'environment_plate' as const, tenantId, videoId: String(body.projectId),
+        compositionId: `${shotId}:cleanup`, presenterVersion: fingerprint, prompt: cleanupPrompt,
+        ratio: ratio as '9:16' | '16:9' | '1:1', references: [asReference('source_composition', sourceFrame!)], idempotencyKey: '',
+      };
+      cleanupRequest.idempotencyKey = firstFrameInputFingerprint(cleanupRequest, seedream.provider, seedream.model);
+      const cleanPlate = await seedream.generate(cleanupRequest);
+      const plate: ReferenceImage = { mimeType: cleanPlate.mimeType, base64: cleanPlate.bytes.toString('base64') };
+      const compositePrompt = [
+        `Create exactly one photorealistic ${ratio} first frame for a continuous commercial video shot.`,
+        'Reference image 1 is the cleaned version of the target shot. Preserve its camera, framing, people, hands, lighting and background.',
+        `Use the enterprise product reference images only for this product: ${productReferences.map(item => item.name).join('、')}.`,
+        'Place the enterprise product naturally in the product positions established by the cleaned reference shot. Preserve plausible hand contact and scale.',
+        'Do not restore, copy or invent any source-video product, brand, package form, label, subtitle, watermark or extra SKU.',
+      ].join('\n');
+      const compositeReferences = [asReference('source_composition', plate), ...productReferences.map(item => asReference('product_identity', item.image))];
+      const compositeRequest = {
+        referenceMode: 'product_scene' as const, tenantId, videoId: String(body.projectId),
+        compositionId: `${shotId}:product-composite`, presenterVersion: fingerprint, prompt: compositePrompt,
+        ratio: ratio as '9:16' | '16:9' | '1:1', references: compositeReferences, idempotencyKey: '',
+      };
+      compositeRequest.idempotencyKey = firstFrameInputFingerprint(compositeRequest, seedream.provider, seedream.model);
+      const result = await seedream.generate(compositeRequest);
+      generated = { ...result, source: result.provider };
+      identityLayer = { strategy: 'seedream_reference_composite', cleanupModel: cleanPlate.model,
+        cleanupProviderRequestId: cleanPlate.providerRequestId, compositeProviderRequestId: result.providerRequestId };
     } else {
       const selectedReferences = useExactProductLayer
         ? [sourceFrame, environmentImage].filter(Boolean) as ReferenceImage[] : references;
@@ -2245,7 +2293,7 @@ studioRouter.post('/storyboard-first-frame', async (req, res) => {
       const seedreamResult = await seedream.generate(seedreamRequest);
       generated = { ...seedreamResult, source: seedreamResult.provider };
     }
-    if (useExactProductLayer && !directCompositionUsed) {
+    if (useExactProductLayer && !directCompositionUsed && !seedreamProductComposite) {
       const prepared = await prepareProductIdentityLayer({ spec: shotSpec, cleanPlate: true,
         background: Buffer.from(generated.bytes),
         assetBytes: new Map(productReferences.map(item => [item.imageUrl, Buffer.from(item.image.base64, 'base64')])) });
@@ -2286,7 +2334,7 @@ studioRouter.post('/storyboard-first-frame', async (req, res) => {
     material.productName = productReferences.map(item => item.name).join('、') || undefined;
     material.provenance = { projectId: String(body.projectId || ''), shotId, fingerprint, projectShotFingerprint: projectShotInput.fingerprint, requestId, promptVersion: STORYBOARD_FIRST_FRAME_PROMPT_VERSION, sceneType, mode, shotSpec, geometryPlan, actionKeyStates, actionBeatDurations, productIds, identityLayer, firstFrameQuality, confirmed: firstFrameQuality.acceptanceSource === 'automatic_policy' && firstFrameQuality.passed,
       ...(firstFrameQuality.acceptanceSource === 'automatic_policy' ? { confirmationSource: 'automatic_policy', qualityStatus: !firstFrameQuality.passed ? 'automated_checks_failed' : firstFrameQuality.automatedPassed ? 'automated_checks_passed' : 'automatic_policy_with_uncertainties' } : {}), provider: generated.source, model: generated.model,
-      estimatedCostCny: (directCompositionUsed ? 0 : studioAigcBudgetConfigFromEnv().firstFrameCostCny)
+      estimatedCostCny: (directCompositionUsed ? 0 : studioAigcBudgetConfigFromEnv().firstFrameCostCny * (seedreamProductComposite ? 2 : 1))
         + (geometryObserverAttempted ? Number(planned.estimatedGeometryObservationCostCny || 0) : 0),
       generationLatencyMs: Date.now() - generationStartedAt };
     const list = loadMaterials();
@@ -2297,7 +2345,7 @@ studioRouter.post('/storyboard-first-frame', async (req, res) => {
         geometryObserverAttempted ? Number(planned.estimatedGeometryObservationCostCny || 0) : 0, { materialId: material.id });
     } else if (!geometryObserverAttempted && Number(planned.estimatedGeometryObservationCostCny || 0) > 0) {
       await storyboardAigcProjectBudget.settlePartial(tenantId, String(body.projectId), frameOperationId,
-        planned.estimatedFirstFrameCostCny - Number(planned.estimatedGeometryObservationCostCny), { materialId: material.id });
+        reservedFirstFrameCostCny - Number(planned.estimatedGeometryObservationCostCny || 0), { materialId: material.id });
     } else {
       await storyboardAigcProjectBudget.mark(tenantId, String(body.projectId), frameOperationId, 'completed', { materialId: material.id });
     }
@@ -2713,7 +2761,7 @@ studioRouter.post('/seedance-video', async (req, res) => {
     }
   }
   const duration = normalizeSeedanceVideoDuration(rawDuration ?? (firstFrameMaterialId ? 4 : 8));
-  const firstFrame = firstFrameMaterialId
+  let firstFrame = firstFrameMaterialId
     ? loadMaterials().find(item => item.id === String(firstFrameMaterialId) && item.tenantId === tenantId && item.sourceType === 'ai-storyboard-first-frame')
     : undefined;
   const storyboardShotSpec = firstFrame?.provenance?.shotSpec as StoryboardShotSpec | undefined;
@@ -2862,11 +2910,29 @@ studioRouter.post('/seedance-video', async (req, res) => {
   const generationStartedAt = Date.now();
   try {
     const content: any[] = [{ type: 'text', text: prompt }];
-    const rawReferenceImageUrl = firstFrame
-      ? (await materialResponse(firstFrame, tenantId)).url
-      : String(referenceImageUrl).trim();
+    // Storyboard frames are product/B-roll images, not portrait assets.  Do
+    // not put them in the presenter's LivenessFace asset group: Ark correctly
+    // rejects a product image there as lacking face consistency.  Seedance
+    // accepts an image data URL, which also avoids making a local dev tunnel a
+    // dependency of the provider's image fetch.
+    let rawReferenceImageUrl = String(referenceImageUrl).trim();
+    if (firstFrame) {
+      const object = firstFrame.objectKey ? await objectStorageDownload(firstFrame.objectKey) : null;
+      if (object?.buf?.length) {
+        if (object.buf.length > 30 * 1024 * 1024) throw new Error('分镜首帧超过 Seedance 允许的 30MB 上限');
+        const contentType = /^image\/(?:jpeg|png|webp|bmp|tiff|gif|heic|heif)$/i.test(object.contentType)
+          ? object.contentType.toLowerCase()
+          : 'image/jpeg';
+        rawReferenceImageUrl = `data:${contentType};base64,${object.buf.toString('base64')}`;
+      } else {
+        rawReferenceImageUrl = (await materialResponse(firstFrame, tenantId)).url;
+      }
+    }
+    // Internal Agent calls arrive from localhost, but Seedance must receive a
+    // supplier-reachable origin for the protected first-frame route.
+    const supplierAssetOrigin = String(process.env.LOCAL_OBJECT_STORAGE_PUBLIC_BASE_URL || '').replace(/\/$/, '') || getPublicOrigin(req);
     const resolvedReferenceImageUrl = rawReferenceImageUrl.startsWith('/')
-      ? `${getPublicOrigin(req)}${signAssetUrl(rawReferenceImageUrl, tenantId)}`
+      ? `${supplierAssetOrigin}${signAssetUrl(rawReferenceImageUrl, tenantId)}`
       : rawReferenceImageUrl;
     if (resolvedReferenceImageUrl) {
       content.push({

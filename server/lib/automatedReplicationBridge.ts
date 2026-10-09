@@ -123,7 +123,11 @@ export async function advanceAutomatedReplication(input: { tenantId: string; pro
         }
         readyIds.push(assigned); continue;
       }
-      const requestId = `bridge:${createHash('sha256').update(`${key}:${assemblyId}:${entry.shotId}:${fingerprint}`).digest('hex').slice(0,40)}`;
+      // A supplier request is tied to both the editable shot and the immutable
+      // generation recipe.  Product-image pipeline upgrades must be able to
+      // create a new request without perturbing other already-adopted shots.
+      const generationRevision = String(entry.firstFrameRequest?.generationRevision || 'v1');
+      const requestId = `bridge:${createHash('sha256').update(`${key}:${assemblyId}:${entry.shotId}:${fingerprint}:${generationRevision}`).digest('hex').slice(0,40)}`;
       const b = { projectId: project.id, assemblyId, shotId: entry.shotId, fingerprint, requestId, confirmed: true, maxCostCny: input.maxCostCny };
       if (entry.kind === 'person') {
         if (!referenceCues(shot.digitalHuman).every(cue => cue.personShot === false || cue.sourceFirstFrame?.materialId)) {
@@ -192,6 +196,12 @@ export async function advanceAutomatedReplication(input: { tenantId: string; pro
         await save(entry.shotId, { fingerprint, firstFrameMaterialId: reply.body.material.id, firstFrameFingerprint: reply.body.fingerprint }); return { state: 'pending', changed: true, shotId: entry.shotId };
       }
       if (!state.videoMaterialId) {
+        const firstFrame = await materialFor(String(state.firstFrameMaterialId));
+        const firstFrameQuality = firstFrame?.provenance?.firstFrameQuality as { passed?: unknown; reasonCodes?: unknown } | undefined;
+        if (firstFrameQuality && firstFrameQuality.passed !== true) {
+          const reasons = Array.isArray(firstFrameQuality.reasonCodes) ? firstFrameQuality.reasonCodes.map(String).join('、') : '';
+          throw new Error(`非人物首帧未通过产品与画面质检${reasons ? `：${reasons}` : ''}；未提交视频生成`);
+        }
         const reply = await deps.call('studio', 'post', '/seedance-video', { ...entry.firstFrameRequest, script: entry.firstFrameRequest?.shotDescription || shot.narration, firstFrameMaterialId: state.firstFrameMaterialId, firstFrameFingerprint: state.firstFrameFingerprint, shotId: entry.slotId, requestId: `${requestId}:video`, duration: Math.max(4, Math.min(15, Math.ceil(entry.end - entry.start))), resolution: '480p', ratio: spec.ratio || '9:16', language: spec.activeVoiceLang || spec.lang || 'en', generationContext: { projectId: project.id } });
         if (reply.status >= 400 || !reply.body?.ok || !reply.body?.material?.id) throw new Error(reply.body?.error || '非人物镜头生成未完成，原生预算账本保留原作业');
         await save(entry.shotId, { videoMaterialId: reply.body.material.id }); return { state: 'pending', changed: true, shotId: entry.shotId };

@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import ffmpegStatic from 'ffmpeg-static';
-import { assertPersonCueShotBoundaries, assertSeedanceCueDurations, hardSceneCutTimes } from './sentenceCueSceneCuts.js';
+import { assertPersonCueShotBoundaries, assertSeedanceCueDurations, hardSceneCutTimes, splitPersonCuesAtHardCuts } from './sentenceCueSceneCuts.js';
 
 test('a physical cut inside a person cue blocks generation while shot-aligned cues remain valid', async () => {
   assert.ok(ffmpegStatic);
@@ -38,4 +38,15 @@ test('Seedance rejects sub-four-second and over-fifteen-second person cues befor
   assert.throws(() => assertSeedanceCueDurations([cue]), /仅支持 4–15s.*未调用供应商/);
   assert.throws(() => assertSeedanceCueDurations([{ ...cue, end: 16 }]), /仅支持 4–15s.*未调用供应商/);
   assert.doesNotThrow(() => assertSeedanceCueDurations([{ ...cue, end: 4.1 }, { ...cue, personShot: false }]));
+});
+
+test('managed bridge splits an analyzed person cue at a measured opening hard cut without repeating words', () => {
+  const cue = { id: 'shot-1:cue', start: 0, end: 5.1, originalText: '', targetText: 'How do you actually verify a skincare factory', shotIds: ['shot-1'], personShot: true as const,
+    composition: { presenterKey: 'p', shotSize: 'medium', cameraAngle: 'eye', background: 'lab', actionIntent: 'walk' } };
+  const parts = splitPersonCuesAtHardCuts([cue], [0.1]);
+  assert.equal(parts.length, 2);
+  assert.deepEqual(parts.map(part => [part.start, part.end]), [[0, 0.1], [0.1, 5.1]]);
+  assert.equal(parts.map(part => part.targetText).join(' '), cue.targetText);
+  assert.ok(parts.every(part => part.splitFromCueId === cue.id && part.originalText && part.generationDurationSeconds! >= 4));
+  assert.doesNotThrow(() => assertPersonCueShotBoundaries(parts, [0.1]));
 });

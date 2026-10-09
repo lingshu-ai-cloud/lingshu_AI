@@ -25,6 +25,7 @@ export interface QuoteSkillDraft {
   unitPriceSource?: 'product_catalog' | 'human';
   currency: string;
   subtotal: number | null;
+  customerBudget?: { amount: number; currency: string };
   leadTime: string;
   paymentTerms: string;
   validityDays: number;

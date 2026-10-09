@@ -341,6 +341,7 @@ export function signOAuthState(input: {
   userId: string;
   platform: string;
   returnTo: string;
+  purpose?: 'messenger';
   nonce?: string;
   expiresAt?: number;
 }): string {
@@ -349,6 +350,7 @@ export function signOAuthState(input: {
     userId: input.userId,
     platform: input.platform,
     returnTo: input.returnTo,
+    ...(input.purpose ? { purpose: input.purpose } : {}),
     nonce: input.nonce || crypto.randomBytes(12).toString('base64url'),
     expiresAt: input.expiresAt || Date.now() + STATE_TTL_MS,
   };
@@ -362,11 +364,13 @@ export function parseOAuthState(state: string): null | {
   userId: string;
   platform: string;
   returnTo: string;
+  purpose?: 'messenger';
   expiresAt: number;
 } {
   const [body, sig] = text(state).split('.');
   if (!body || !sig) return null;
   const expected = crypto.createHmac('sha256', secretKey()).update(body).digest('base64url');
+  if (Buffer.byteLength(sig) !== Buffer.byteLength(expected)) return null;
   if (!crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected))) return null;
   try {
     const payload = JSON.parse(Buffer.from(body, 'base64url').toString('utf8')) as {
@@ -374,6 +378,7 @@ export function parseOAuthState(state: string): null | {
       userId?: string;
       platform?: string;
       returnTo?: string;
+      purpose?: string;
       expiresAt?: number;
     };
     if (!payload.tenantId || !payload.userId || !payload.platform || !payload.expiresAt) return null;
@@ -383,6 +388,7 @@ export function parseOAuthState(state: string): null | {
       userId: payload.userId,
       platform: payload.platform,
       returnTo: payload.returnTo || '/',
+      ...(payload.purpose === 'messenger' ? { purpose: 'messenger' as const } : {}),
       expiresAt: payload.expiresAt,
     };
   } catch {

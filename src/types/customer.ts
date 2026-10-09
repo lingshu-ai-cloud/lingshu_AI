@@ -117,6 +117,8 @@ export interface OrderRecord {
 }
 
 export interface CustomerProfile {
+  contextTagEvidence?: Array<{ tag: string; messageId: string; excerpt: string }>;
+  contextTagsUpdatedAt?: string;
   id: string;
   name: string;
   /** Public profile name supplied by WhatsApp. Never use the internal display name as customer-facing copy. */

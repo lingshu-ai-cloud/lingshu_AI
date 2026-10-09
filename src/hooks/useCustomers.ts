@@ -106,6 +106,9 @@ export function useCustomers(refreshKey = 0, includeMockCustomers = false, mockC
     let timer: number | undefined;
     let inFlight = false;
     let activeController: AbortController | null = null;
+    const refreshVisible = () => {
+      if (document.visibilityState === 'visible') void loadLiveCustomers().catch(() => {});
+    };
     const loadLiveCustomers = async () => {
       // 后端无响应时轮询不能继续叠加，否则会积累挂起请求并拖慢整个页面。
       if (inFlight || !alive) return;
@@ -125,7 +128,14 @@ export function useCustomers(refreshKey = 0, includeMockCustomers = false, mockC
         setCustomers(current => {
           if (!includeMockCustomers) return liveCustomers;
           const existingMocks = current.filter(customer => customer.isMock).map(cloneCustomer);
-          return [...liveCustomers, ...(existingMocks.length ? existingMocks : storedMocks)];
+          // Legacy sandbox storage may contain repeated IDs. React list keys
+          // must remain unique when live conversations and saved mocks merge.
+          const seen = new Set<string>();
+          return [...liveCustomers, ...(existingMocks.length ? existingMocks : storedMocks)].filter(customer => {
+            if (seen.has(customer.id)) return false;
+            seen.add(customer.id);
+            return true;
+          });
         });
       } finally {
         window.clearTimeout(timeout);
@@ -144,7 +154,12 @@ export function useCustomers(refreshKey = 0, includeMockCustomers = false, mockC
         if (alive) setCustomers(current => {
           if (!includeMockCustomers) return [];
           const existingMocks = current.filter(customer => customer.isMock).map(cloneCustomer);
-          return existingMocks.length ? existingMocks : storedMocks;
+          const seen = new Set<string>();
+          return (existingMocks.length ? existingMocks : storedMocks).filter(customer => {
+            if (seen.has(customer.id)) return false;
+            seen.add(customer.id);
+            return true;
+          });
         });
       } finally {
         if (alive) setLoading(false);
@@ -152,13 +167,17 @@ export function useCustomers(refreshKey = 0, includeMockCustomers = false, mockC
       // 首次加载失败也保留恢复轮询，服务恢复后无需用户刷新整页。
       if (alive) timer = window.setInterval(() => {
         if (document.visibilityState === 'visible') void loadLiveCustomers().catch(() => {});
-      }, 30_000);
+      }, 5_000);
     };
+    document.addEventListener('visibilitychange', refreshVisible);
+    window.addEventListener('focus', refreshVisible);
     void load();
     return () => {
       alive = false;
       activeController?.abort();
       if (timer) window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', refreshVisible);
+      window.removeEventListener('focus', refreshVisible);
     };
   }, [refreshKey, includeMockCustomers, scopedMockStorageKey]);
 

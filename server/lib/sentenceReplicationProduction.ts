@@ -131,7 +131,10 @@ export async function runProductionSentenceReplication(input: { tenantId: string
       createNonPersonClip: async cue => { const material=byId.get(String(cue.nonPersonMaterialId||'')); if(!material || material.type!=='video') throw new Error(`非人物镜头 ${cue.id} 的替换视频不存在或不可用`); const loaded=await readTenantMaterialBytes(material,input.tenantId); const id=stableId('non-person-clip',input.requestId,cue.id); const filePath=path.join(work,`${id}.mp4`); fs.writeFileSync(filePath,loaded.bytes,{mode:0o600}); return {materialId:String(material.id),filePath,url:String(material.url||'')}; },
       createSentenceVideo: async (cue,frame) => {
         const existingTaskId = input.existingProviderTasks?.[cue.id];
-        const targetFrameMaterial = byId.get(frame.materialId) || readLocalMaterials().find(item => String(item.id) === frame.materialId);
+        // Certification persists an updated copy after the initial material index
+        // was loaded. Prefer that live record so the same run can continue into
+        // Seedance instead of falsely treating the freshly certified frame as stale.
+        const targetFrameMaterial = readLocalMaterials().find(item => String(item.id) === frame.materialId) || byId.get(frame.materialId);
         const targetFrameTrustedAsset = targetFrameMaterial ? seedanceTrustedAssetForMaterial(targetFrameMaterial) : undefined;
         if (!photoTalking && !targetFrameTrustedAsset) throw new Error('Seedance 目标首帧尚未注册为 Active 方舟图片资产；不会退回使用原始人物证件照');
         const trustedFrame = targetFrameTrustedAsset ? seedanceImageFirstFrameInput(targetFrameTrustedAsset) : undefined;
@@ -162,7 +165,8 @@ export async function runProductionSentenceReplication(input: { tenantId: string
         if(process.env.DIGITAL_HUMAN_SYNCNET_QA_ENABLED==='true'){
           try{lipSync=await inspectSentenceLipSyncQuality(filePath,{workDir:path.join(work,`syncnet-${createHash('sha256').update(cue.id).digest('hex').slice(0,12)}`)});}catch(error){lipSyncError=error instanceof Error?error.message:String(error);}
         }
-        cueQuality.set(cue.id,sentenceCueQualityFromEvidence({cueId:cue.id,mediaEvidence:`${media.width}x${media.height} · ${media.duration.toFixed(3)}s · audio=${media.hasAudio}`,technical,technicalError,visual,visualError,semantic,semanticError,lipSync,lipSyncError}));
+        cueQuality.set(cue.id,sentenceCueQualityFromEvidence({cueId:cue.id,mediaEvidence:`${media.width}x${media.height} · ${media.duration.toFixed(3)}s · audio=${media.hasAudio}`,technical,technicalError,visual,visualError,semantic,semanticError,lipSync,lipSyncError,
+          motionComparable:Number(cue.outputDurationSeconds ?? (cue.end-cue.start)) >= 0.4}));
         const relative=tenantAssetRelativePath(input.tenantId,`${id}.mp4`); const stored=path.join(MEDIA_ROOT,relative); fs.mkdirSync(path.dirname(stored),{recursive:true}); fs.copyFileSync(filePath,stored);
         persistMaterial({id,name:`逐句数字人视频 · ${cue.targetText || cue.originalText}`.slice(0,100),folder:'presenter',type:'video',duration:media.duration,size:`${Math.ceil(bytes.length/1024)} KB`,file:relative,url:`/media/${relative}`,scope:'own',tenantId:input.tenantId,sourceType:'digital-human-sentence-video',providerTaskId:generated.taskId,contentSha256:createHash('sha256').update(bytes).digest('hex'),createdAt:new Date().toISOString()});
         return {materialId:id,filePath,url:`/media/${relative}`,duration:Number(cue.outputDurationSeconds ?? media.duration)};

@@ -40,6 +40,14 @@ test('moderate generated gesture differences do not block photo talking', () => 
   assert.equal(result.state, 'accepted');
 });
 
+test('a sub-frame physical flash keeps motion pending instead of inventing a failure', () => {
+  const result = sentenceCueQualityFromEvidence({ cueId: 'opening-flash', mediaEvidence: 'media ok', motionComparable: false, technical: {
+    ...technical, comparedFrames: 1, durationDeltaFrames: 120, temporalMotionDifference: 0, freezeMismatchRatio: 0,
+  } });
+  assert.equal(result.checks.find(check => check.key === 'motion')?.status, 'pending');
+  assert.equal(result.state, 'accepted');
+});
+
 test('high-confidence semantic evidence can decide identity and product while lip sync stays pending', () => {
   const result = sentenceCueQualityFromEvidence({ cueId: 'c3', mediaEvidence: 'media ok', technical, semantic: { version: 1, model: 'qwen-test',
     identity: { status: 'pass', confidence: .91, evidence: '人物可见特征一致', frameRefs: ['presenter', 'candidate_start'] },

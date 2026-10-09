@@ -5,6 +5,8 @@ import { fileURLToPath } from 'node:url';
 import { socialAccessToken } from '../lib/accountCredentials.js';
 import { store } from '../storage/index.js';
 import { sendMessengerText } from '../integrations/messenger.js';
+import { classifyContextTags, type ContextTagEvidence } from './contextTags.js';
+import { assessBant, selectProgressionGoal } from '../sales/qualification.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_FILE = process.env.MESSENGER_CUSTOMERS_DATA_FILE
@@ -20,7 +22,7 @@ type TimelineEvent = {
   time: string;
   timestamp: number;
   sendStatus?: 'sent' | 'delivered' | 'failed';
-  audit?: { providerMessageId?: string; providerRecipientId?: string };
+  audit?: { providerMessageId?: string; providerRecipientId?: string; providerReadAt?: number };
 };
 
 export type MessengerCustomer = Record<string, unknown> & {
@@ -36,16 +38,18 @@ export type MessengerCustomer = Record<string, unknown> & {
 function readCustomers(): MessengerCustomer[] {
   try {
     const parsed = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
+    if (!Array.isArray(parsed)) throw new Error('messenger_customer_store_invalid');
+    return parsed;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+    throw error;
   }
 }
 
 function writeCustomers(items: MessengerCustomer[]) {
   fs.mkdirSync(path.dirname(DATA_FILE), { recursive: true });
   const temporary = `${DATA_FILE}.${process.pid}.tmp`;
-  fs.writeFileSync(temporary, JSON.stringify(items, null, 2), 'utf8');
+  fs.writeFileSync(temporary, JSON.stringify(items, null, 2), { encoding: 'utf8', mode: 0o600 });
   fs.renameSync(temporary, DATA_FILE);
 }
 
@@ -78,6 +82,7 @@ function upsertMessage(input: {
   const id = customerId(input.tenantId, input.pageId, input.userId);
   const index = items.findIndex(item => item.id === id);
   const customer = index >= 0 ? items[index] : initialCustomer(input.tenantId, input.pageId, input.userId, input.timestamp);
+  if (customer.timeline.some(event => event.id === input.messageId)) return customer;
   if (!customer.timeline.some(event => event.id === input.messageId)) {
     customer.timeline.push({
       id: input.messageId, type: 'messenger', actor: input.actor,
@@ -88,8 +93,13 @@ function upsertMessage(input: {
     });
   }
   customer.lastActive = '刚刚';
-  customer.lastActiveAt = input.timestamp;
-  if (input.actor === 'buyer') customer.hasUnread = true;
+  customer.timeline.sort((left, right) => left.timestamp - right.timestamp);
+  customer.lastActiveAt = Math.max(customer.lastActiveAt, input.timestamp);
+  if (input.actor === 'buyer') {
+    customer.hasUnread = true;
+    customer.inboxReason = '客户发来新消息，等待回复';
+    customer.contextTagsRetryAt = 0;
+  }
   items[index >= 0 ? index : items.length] = customer;
   writeCustomers(items);
   return customer;
@@ -112,7 +122,82 @@ export function patchMessengerCustomer(tenantId: string, id: string, patch: Reco
   return items[index];
 }
 
-export async function handleMessengerWebhook(tenantId: string, payload: unknown) {
+const tagAnalyses = new Map<string, Promise<MessengerCustomer | null>>();
+const CONTEXT_ANALYSIS_VERSION = 2;
+function buyerFingerprint(customer: MessengerCustomer): string {
+  return createHash('sha256').update(JSON.stringify(customer.timeline.filter(event => event.actor === 'buyer').slice(-40).map(event => [event.id, event.body]))).digest('hex');
+}
+
+export function analyzeMessengerCustomerTags(tenantId: string, id: string, classify = classifyContextTags): Promise<MessengerCustomer | null> {
+  const key = `${tenantId}:${id}`;
+  const pending = tagAnalyses.get(key);
+  if (pending) return pending;
+  const analysis = (async () => {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+    const customer = getMessengerCustomers(tenantId).find(item => item.id === id);
+    if (!customer) return null;
+    const snapshot = JSON.stringify(customer.timeline);
+    const contextTagEvidence = await classify(customer.timeline);
+    const current = getMessengerCustomers(tenantId).find(item => item.id === id);
+    if (!current) return null;
+    if (JSON.stringify(current.timeline) !== snapshot) continue;
+    const oldTags = Array.isArray(current.contextTagEvidence) ? current.contextTagEvidence as ContextTagEvidence[] : [];
+    const managed = new Set(oldTags.map(item => item.tag));
+    const manualTags = Array.isArray(current.tags) ? current.tags.map(String).filter(tag => !managed.has(tag)) : [];
+    const bant = assessBant({ turns: current.timeline.map(event => ({ role: event.actor === 'buyer' ? 'buyer' as const : 'seller' as const, text: event.body })) });
+    return patchMessengerCustomer(tenantId, id, {
+      tags: [...new Set([...manualTags, 'Messenger', ...contextTagEvidence.map(item => item.tag)])],
+      contextTagEvidence, contextTagsUpdatedAt: new Date().toISOString(),
+      contextTagsBuyerFingerprint: buyerFingerprint(current), contextTagsRetryAt: 0, contextTagsAttempts: 0,
+      contextTagsAnalysisVersion: CONTEXT_ANALYSIS_VERSION,
+      bant, intentScore: bant.total, progressionGoal: selectProgressionGoal(bant, String(current.language || 'English')),
+    });
+    }
+    throw new Error('会话持续更新，请稍后重新分析标签');
+  })().catch(error => {
+    const current = getMessengerCustomers(tenantId).find(item => item.id === id);
+    if (current) {
+      const attempts = Number(current.contextTagsAttempts || 0) + 1;
+      patchMessengerCustomer(tenantId, id, {
+        contextTagsAttempts: attempts,
+        contextTagsRetryAt: Date.now() + Math.min(15 * 60_000, 60_000 * 2 ** Math.min(attempts - 1, 4)),
+      });
+    }
+    throw error;
+  }).finally(() => tagAnalyses.delete(key));
+  tagAnalyses.set(key, analysis);
+  return analysis;
+}
+
+// Runs only in the HTTP writer process. The conversation file is the durable
+// work list, so a process exit cannot lose an unfinished classification.
+export async function recoverMessengerContextTags(now = Date.now(), analyze = analyzeMessengerCustomerTags): Promise<number> {
+  const pending = readCustomers().filter(customer => customer.timeline.some(event => event.actor === 'buyer')
+    && (customer.contextTagsBuyerFingerprint !== buyerFingerprint(customer) || customer.contextTagsAnalysisVersion !== CONTEXT_ANALYSIS_VERSION)
+    && Number(customer.contextTagsRetryAt || 0) <= now).slice(0, 5);
+  await Promise.all(pending.map(customer => analyze(customer.tenantId, customer.id).catch(error => {
+    console.warn('[messenger:context-tags-recovery]', error instanceof Error ? error.message : 'analysis_failed');
+  })));
+  return pending.length;
+}
+
+export function startMessengerContextTagRecovery(): () => void {
+  let running = false;
+  let stopped = false;
+  const recover = async () => {
+    if (running || stopped) return;
+    running = true;
+    try { await recoverMessengerContextTags(); }
+    catch (error) { console.warn('[messenger:context-tags-recovery]', error instanceof Error ? error.message : 'recovery_failed'); }
+    finally { running = false; }
+  };
+  const timer = setInterval(() => void recover(), 30_000);
+  timer.unref();
+  void recover();
+  return () => { stopped = true; clearInterval(timer); };
+}
+
+export async function handleMessengerWebhook(tenantId: string, payload: unknown, options: { analyzeTags?: boolean } = {}) {
   const root = payload && typeof payload === 'object' ? payload as Record<string, unknown> : {};
   if (root.object !== 'page' || !Array.isArray(root.entry)) return { accepted: 0 };
   let accepted = 0;
@@ -124,13 +209,36 @@ export async function handleMessengerWebhook(tenantId: string, payload: unknown)
       const event = rawEvent && typeof rawEvent === 'object' ? rawEvent as Record<string, any> : {};
       const senderId = String(event.sender?.id || '');
       const recipientId = String(event.recipient?.id || '');
+      if (event.delivery || event.read) {
+        if (!pageId || !senderId || recipientId !== pageId) continue;
+        const items = readCustomers();
+        const customer = items.find(item => item.id === customerId(tenantId, pageId, senderId));
+        if (!customer) continue;
+        const receipt = event.read || event.delivery;
+        const watermark = Number(receipt.watermark);
+        const mids = new Set(Array.isArray(receipt.mids) ? receipt.mids.map(String) : []);
+        let changed = false;
+        for (const message of customer.timeline) {
+          if (message.actor === 'buyer') continue;
+          if (!mids.has(message.id) && !(Number.isFinite(watermark) && watermark > 0 && message.timestamp <= watermark)) continue;
+          if (message.sendStatus !== 'delivered') { message.sendStatus = 'delivered'; changed = true; }
+          if (event.read && Number.isFinite(watermark) && watermark > (message.audit?.providerReadAt || 0)) {
+            message.audit = { ...message.audit, providerReadAt: watermark };
+            changed = true;
+          }
+        }
+        if (changed) writeCustomers(items);
+        accepted += 1;
+        continue;
+      }
       const isEcho = event.message?.is_echo === true;
       const userId = isEcho ? recipientId : senderId;
       const body = String(event.message?.text || event.postback?.title || event.postback?.payload || '').trim();
       if (!pageId || !userId || userId === pageId || !body) continue;
       const timestamp = Number(event.timestamp) || Date.now();
       const messageId = String(event.message?.mid || `messenger_${timestamp}_${userId}`);
-      upsertMessage({ tenantId, pageId, userId, messageId, body, timestamp, actor: isEcho ? 'seller' : 'buyer', sendStatus: isEcho ? 'sent' : undefined });
+      const customer = upsertMessage({ tenantId, pageId, userId, messageId, body, timestamp, actor: isEcho ? 'seller' : 'buyer', sendStatus: isEcho ? 'sent' : undefined });
+      if (!isEcho && options.analyzeTags !== false) void analyzeMessengerCustomerTags(tenantId, customer.id).catch(error => console.warn('[messenger:context-tags]', error instanceof Error ? error.message : 'analysis_failed'));
       accepted += 1;
     }
   }
@@ -140,6 +248,8 @@ export async function handleMessengerWebhook(tenantId: string, payload: unknown)
 export async function sendTenantMessengerText(input: { tenantId: string; customerId: string; body: string }) {
   const customer = getMessengerCustomers(input.tenantId).find(item => item.id === input.customerId);
   if (!customer) throw new Error('messenger_customer_not_found');
+  const lastBuyerAt = Math.max(0, ...customer.timeline.filter(event => event.actor === 'buyer').map(event => event.timestamp));
+  if (!lastBuyerAt || Date.now() - lastBuyerAt > 24 * 60 * 60 * 1000) throw new Error('距客户上次互动已超过 24 小时，当前不能直接发送普通 Messenger 消息。');
   const accounts = await store.list<Record<string, unknown>>('social_accounts', {
     where: { tenantId: input.tenantId, platform: 'facebook', status: 'connected' }, page: 1, perPage: 100,
   });

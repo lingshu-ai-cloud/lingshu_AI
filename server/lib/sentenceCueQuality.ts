@@ -25,6 +25,9 @@ export function sentenceCueQualityFromEvidence(input: {
   semanticError?: string;
   lipSync?: SentenceLipSyncQualityReport | null;
   lipSyncError?: string;
+  /** False when a physical beat is too short to contain enough independent
+   * frames for a motion verdict. Media and reuse checks still run. */
+  motionComparable?: boolean;
 }): SentenceCueQuality {
   const technical = input.technical;
   const visual = input.visual;
@@ -33,7 +36,8 @@ export function sentenceCueQualityFromEvidence(input: {
     : `独立 FFmpeg 未完成：${input.technicalError || '无可用证据'}`;
   // Photo-talking intentionally creates fresh gestures from a still target frame. A moderate
   // difference from the source motion is expected; reserve automatic failure for clear outliers.
-  const motionAnomaly = Boolean(technical && (technical.comparedFrames < 5 || technical.temporalMotionDifference > 25 || technical.freezeMismatchRatio > 0.1));
+  const motionComparable = input.motionComparable !== false;
+  const motionAnomaly = Boolean(motionComparable && technical && (technical.comparedFrames < 5 || technical.temporalMotionDifference > 25 || technical.freezeMismatchRatio > 0.1));
   // Generated-avatar slots follow the provider material's measured duration. A
   // duration difference from the reference is therefore not an audio-sync
   // defect; only a missing candidate audio track is a structural failure here.
@@ -46,7 +50,7 @@ export function sentenceCueQualityFromEvidence(input: {
     : `独立视觉代理未完成：${input.visualError || '未配置'}`;
 
   const semanticEvidence = (value: SentenceSemanticDecision) => `${input.semantic?.model} · 置信度 ${value.confidence.toFixed(3)} · ${value.evidence} · 帧 ${value.frameRefs.join('、')}`;
-  let motion = pending('motion', `${technicalEvidence}；${visualEvidence}。代理正常仍不能证明动作语义${input.semanticError ? `；独立语义检测未完成：${input.semanticError}` : ''}。`);
+  let motion = pending('motion', `${technicalEvidence}；${visualEvidence}。${motionComparable ? '代理正常仍不能证明动作语义' : '物理镜头过短，独立帧不足，不能形成运动失败结论'}${input.semanticError ? `；独立语义检测未完成：${input.semanticError}` : ''}。`);
   if (motionAnomaly || visualPoseAnomaly) motion = decided('motion', false, `${technicalEvidence}；${visualEvidence}。检测到运动／姿态异常。`);
   else if (input.semantic?.actionMotion.status === 'fail' && input.semantic.actionMotion.confidence >= .6) motion = decided('motion', false, semanticEvidence(input.semantic.actionMotion));
   else if (input.semantic?.actionMotion.status === 'pass' && input.semantic.actionMotion.confidence >= .85) motion = decided('motion', true, `${technicalEvidence}；${visualEvidence}；${semanticEvidence(input.semantic.actionMotion)}`);

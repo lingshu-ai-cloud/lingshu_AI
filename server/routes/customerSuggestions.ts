@@ -7,7 +7,7 @@ import { buildStrategyPromptBlock, retrieveResponseStrategies, strategyEvidence 
 import { aggregateKnowledgeMisses } from '../knowledge/misses.js';
 import { recordStyleMemory } from '../knowledge/styleMemory.js';
 import { getNightModeMorningBriefing } from '../whatsapp/historyImport.js';
-import { getMessengerCustomers, patchMessengerCustomer, sendTenantMessengerText } from '../messenger/conversations.js';
+import { analyzeMessengerCustomerTags, getMessengerCustomers, patchMessengerCustomer, sendTenantMessengerText } from '../messenger/conversations.js';
 import { customerServicePolicy, customerServiceStatus, readTenantEnterpriseProfile } from './enterprise.js';
 import { readCustomerMessagingAuthorization } from '../digitalEmployees/customerMessagingPolicy.js';
 
@@ -50,6 +50,17 @@ customerSuggestionsRouter.get('/', requireAuth, (req, res) => {
 
 customerSuggestionsRouter.get('/templates', (_req, res) => {
   res.json({ items: [] });
+});
+
+customerSuggestionsRouter.post('/:id/context-tags', async (req, res) => {
+  const { tenantId } = res.locals as AuthLocals;
+  try {
+    const customer = await analyzeMessengerCustomerTags(tenantId, String(req.params.id));
+    if (!customer) { res.status(404).json({ error: 'customer_not_found' }); return; }
+    res.json({ customer });
+  } catch (error) {
+    res.status(503).json({ error: 'context_tag_analysis_failed', message: error instanceof Error ? error.message : '标签分析失败，请重试' });
+  }
 });
 
 customerSuggestionsRouter.get('/knowledge-misses/briefing', async (_req, res) => {

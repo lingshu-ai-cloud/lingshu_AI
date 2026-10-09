@@ -14,8 +14,9 @@ const decode = (value: string) => { try { return decodeURIComponent(value); } ca
 const folder = (tenant: string) => path.resolve('data/publishing-uploads', tenant.replace(/[^\w.-]+/g, '-'));
 export function safeContentFile(tenant: string, file: unknown) {
   if (typeof file !== 'string' || !fs.existsSync(file)) return '';
-  const resolved = fs.realpathSync(file), root = folder(tenant);
-  return resolved.startsWith(root + path.sep) && fs.statSync(resolved).isFile() ? resolved : '';
+  const resolved = fs.realpathSync(file), configuredRoot = folder(tenant);
+  const root = fs.existsSync(configuredRoot) ? fs.realpathSync(configuredRoot) : configuredRoot;
+  return resolved.startsWith(root + path.sep) && fs.statSync(resolved).isFile() ? path.resolve(file) : '';
 }
 async function projects(tenant: string) {
   const rows: Row[] = [];

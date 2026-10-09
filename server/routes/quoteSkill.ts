@@ -5,9 +5,10 @@ import { store } from '../storage/index.js';
 import type { DataStore } from '../storage/datastore.js';
 import { readTenantEnterpriseProfile } from './enterprise.js';
 import { requestOrganizationRoleStrict } from '../lib/organizationRole.js';
-import { applyQuoteDraftPatch, buildQuoteDraft, catalogProductsFromEnterprise, composeQuoteReply } from '../quoteSkill/engine.js';
+import { applyQuoteDraftPatch, buildQuoteDraft, catalogProductsFromEnterprise, composeQuoteReply, quoteQuestions } from '../quoteSkill/engine.js';
 import type { QuoteCatalogProduct, QuoteSkillDraft } from '../quoteSkill/types.js';
 import { quoteCardDigest, quoteNumber, renderQuoteCard } from '../quoteSkill/card.js';
+import { getMessengerCustomers } from '../messenger/conversations.js';
 import { getWhatsAppCustomers, markWhatsAppHumanReply } from '../whatsapp/historyImport.js';
 import { sendTenantWhatsAppImageWithReceipt } from '../whatsapp/send.js';
 import { readCustomerMessagingAuthorization } from '../digitalEmployees/customerMessagingPolicy.js';
@@ -109,24 +110,7 @@ function draftPayload(record: StoredDraft | null): QuoteSkillDraft | null {
       : '价格待人工填写，Agent 不猜测单价',
     draft.leadTime || draft.deliveryDate ? `参考交期：${draft.leadTime || draft.deliveryDate}` : '交期待人工确认',
   ];
-  const chinese = /^(?:zh|中文|chinese)/i.test(draft.customerLanguage || '');
-  draft.clarificationQuestions = (chinese ? [
-    !draft.productName ? '请确认具体产品名称或 SKU。' : '',
-    draft.quantity == null ? '请问本次需要报价的数量是多少？' : '',
-    !draft.material ? '请确认所需材料和关键规格。' : '',
-    !draft.destination ? '请确认本次报价的交货地点或港口。' : '',
-    !draft.incoterm ? '请确认本次报价使用的贸易术语，例如 EXW、FOB 或 DDP。' : '',
-    !draft.leadTime && !draft.deliveryDate ? '请确认目标交期。' : '',
-    !draft.paymentTerms ? '请确认期望的付款条款。' : '',
-  ] : [
-    !draft.productName ? 'Could you confirm the exact product name or SKU?' : '',
-    draft.quantity == null ? 'What quantity would you like us to quote?' : '',
-    !draft.material ? 'Could you confirm the required material and key specifications?' : '',
-    !draft.destination ? 'What named delivery place or port should we use for this quotation?' : '',
-    !draft.incoterm ? 'Which Incoterm should we use for this quotation (for example, EXW, FOB or DDP)?' : '',
-    !draft.leadTime && !draft.deliveryDate ? 'What is your target lead time or delivery date?' : '',
-    !draft.paymentTerms ? 'What payment terms should we use for this quotation?' : '',
-  ]).filter(Boolean);
+  draft.clarificationQuestions = quoteQuestions(draft);
   if (draft.status !== 'confirmed') draft.status = draft.missingFields.length || draft.blockers.length ? 'needs_clarification' : 'ready_for_review';
   return draft;
 }
@@ -227,7 +211,7 @@ export function createQuoteSkillRouter(deps: QuoteSkillDeps = {}): Router {
   const withDraftLock = createKeyedLock();
   const renderCard = deps.renderCard || renderQuoteCard;
   const sendImage = deps.sendImage || sendTenantWhatsAppImageWithReceipt;
-  const findCustomer = deps.findCustomer || ((tenantId: string, customerId: string) => getWhatsAppCustomers(tenantId).find(item => item.id === customerId));
+  const findCustomer = deps.findCustomer || ((tenantId: string, customerId: string) => getWhatsAppCustomers(tenantId).find(item => item.id === customerId) || getMessengerCustomers(tenantId).find(item => item.id === customerId));
   const messagingReady = deps.messagingReady || (async (tenantId: string) => (await readCustomerMessagingAuthorization(tenantId)).providerReady);
   const recordOutbound = deps.recordOutbound || markWhatsAppHumanReply;
   const customerVisibleDraft = (tenantId: string, draft: QuoteSkillDraft): QuoteSkillDraft => {

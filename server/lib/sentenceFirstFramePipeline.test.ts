@@ -64,3 +64,23 @@ test('cross-cut person cue is rejected before first-frame persistence', async ()
     assert.equal(fs.readdirSync(tenantRoot).filter(name => name.startsWith('sentence-frame-')).length, 0);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
+
+test('managed extraction auto-splits a cross-cut person cue and persists both first frames', async () => {
+  assert.ok(ffmpegStatic);
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'managed-cross-cut-sentence-'));
+  try {
+    const tenantRoot = path.join(root, 'tenants', 'tenant-a'); fs.mkdirSync(tenantRoot, { recursive: true });
+    const source = path.join(tenantRoot, 'source.mp4');
+    execFileSync(String(ffmpegStatic), ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'color=red:s=160x240:r=25:d=0.5', '-f', 'lavfi', '-i', 'color=blue:s=160x240:r=25:d=0.5', '-filter_complex', '[0:v][1:v]concat=n=2:v=1:a=0', '-pix_fmt', 'yuv420p', '-y', source]);
+    let saved: any[] = [];
+    const cues = await extractSentenceFirstFrames({ tenantId: 'tenant-a', referenceMaterialId: 'source', mediaRoot: root, ffmpegPath: String(ffmpegStatic), autoSplitPhysicalCuts: true,
+      sourceMaterial: { id: 'source', scope: 'own', tenantId: 'tenant-a', type: 'video', file: 'tenants/tenant-a/source.mp4' } as any,
+      materials: () => [], saveMaterials: items => { saved = items; },
+      cues: [{ id: 'whole-sentence', start: 0, end: 1, originalText: '', targetText: 'Verify this factory', shotIds: ['s1'], personShot: true,
+        composition: { presenterKey: 'p', shotSize: 'medium', cameraAngle: 'eye', background: 'lab', actionIntent: 'walk' } }],
+    });
+    assert.equal(cues.length, 2);
+    assert.equal(cues.map(cue => cue.targetText).join(' '), 'Verify this factory');
+    assert.ok(cues.every(cue => cue.sourceFirstFrame?.materialId && saved.some(item => item.id === cue.sourceFirstFrame!.materialId)));
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});

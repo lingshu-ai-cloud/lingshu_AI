@@ -3,6 +3,7 @@ import { authHeader } from './auth';
 export type PartialAutoReplyDecision = 'pending' | 'enabled' | 'declined';
 
 export interface CustomerServiceStatus {
+  messengerAuthorization?: CustomerServiceStatus['messagingAuthorization'];
   enabled: boolean;
   enabledAt: string;
   observationDay: number;

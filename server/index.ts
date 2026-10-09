@@ -1,4 +1,5 @@
 import './loadEnvironment.js';
+import { startMessengerContextTagRecovery } from './messenger/conversations.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { spawn } from 'child_process';
@@ -304,6 +305,7 @@ app.get('*', (_req, res) => {
 });
 
 if (processRoleStartsHttp(processRole)) {
+  const stopMessengerContextTagRecovery = startMessengerContextTagRecovery();
   const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`[overseas-agent] http://0.0.0.0:${PORT}`);
   });
@@ -312,6 +314,7 @@ if (processRoleStartsHttp(processRole)) {
   const shutdown = (signal: string) => {
     if (shuttingDown) return;
     shuttingDown = true;
+    stopMessengerContextTagRecovery();
     console.log(`[runtime] ${signal} received; draining HTTP connections`);
     server.close(error => {
       if (error) console.error('[runtime] graceful shutdown failed:', error);

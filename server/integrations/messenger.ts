@@ -17,7 +17,7 @@ async function metaRequest(path: string, init: RequestInit): Promise<Record<stri
 }
 
 export async function subscribeMessengerPage(input: { pageId: string; pageAccessToken: string }) {
-  const fields = ['messages', 'messaging_postbacks', 'message_deliveries', 'message_reads'];
+  const fields = ['messages', 'messaging_postbacks', 'message_deliveries', 'message_reads', 'message_echoes'];
   const params = new URLSearchParams({
     subscribed_fields: fields.join(','),
     access_token: input.pageAccessToken,

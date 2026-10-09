@@ -18,10 +18,11 @@ export function tikTokOAuthScopes(env: ScopeEnvironment = process.env): string[]
 }
 
 export function metaOAuthScopes(
-  platform: 'facebook' | 'instagram' | 'combined',
+  platform: 'facebook' | 'instagram' | 'combined' | 'messenger',
   env: ScopeEnvironment = process.env,
 ): string[] {
   const scopes = new Set(['pages_show_list', 'pages_read_engagement']);
+  if (platform === 'messenger') return [...scopes, 'pages_messaging', 'pages_manage_metadata'];
   if (platform === 'facebook' || platform === 'combined') {
     scopes.add('pages_manage_posts');
     scopes.add('pages_messaging');
