@@ -10,7 +10,7 @@ import type {
   SocialContentThemeId,
   SubmitSocialMetricsInput,
 } from '../../../shared/contracts/socialContentWorkflow';
-import { attachSocialContentNavigationState, readWeeklyContentNavigationTarget, SOCIAL_CONTENT_NAVIGATION_EVENT } from '../../lib/socialContentContext';
+import { attachSocialContentNavigationState, hasWeeklyContentNavigationTarget, readWeeklyContentNavigationTarget, SOCIAL_CONTENT_NAVIGATION_EVENT } from '../../lib/socialContentContext';
 import { socialContentCanRegisterPublication, type SocialContentCreationPath, type SocialContentDraft, type SocialContentMaterialInput } from '../../lib/socialContentModel';
 import { ArtifactBatchChangesDialog, ArtifactChangesDialog, MetricsDialog, PublicationDialog } from './SocialTaskActionDialogs';
 import SocialTaskOverview from './SocialTaskOverview';
@@ -60,7 +60,8 @@ export default function SocialContentWorkspace({
 }) {
   const state = useSocialContentWorkspace();
   const [weeklyTarget,setWeeklyTarget]=useState(()=>typeof window==='undefined'?null:readWeeklyContentNavigationTarget(window.history.state));
-  useEffect(()=>{const read=()=>setWeeklyTarget(readWeeklyContentNavigationTarget(window.history.state));window.addEventListener(SOCIAL_CONTENT_NAVIGATION_EVENT,read);window.addEventListener('popstate',read);return()=>{window.removeEventListener(SOCIAL_CONTENT_NAVIGATION_EVENT,read);window.removeEventListener('popstate',read);};},[]);
+  const [weeklyTargetPresent,setWeeklyTargetPresent]=useState(()=>typeof window!=='undefined'&&hasWeeklyContentNavigationTarget(window.history.state));
+  useEffect(()=>{const read=()=>{setWeeklyTarget(readWeeklyContentNavigationTarget(window.history.state));setWeeklyTargetPresent(hasWeeklyContentNavigationTarget(window.history.state));};window.addEventListener(SOCIAL_CONTENT_NAVIGATION_EVENT,read);window.addEventListener('popstate',read);return()=>{window.removeEventListener(SOCIAL_CONTENT_NAVIGATION_EVENT,read);window.removeEventListener('popstate',read);};},[]);
   const [publicationOpen, setPublicationOpen] = useState(false);
   const [metricsOpen, setMetricsOpen] = useState(false);
   const [changeArtifact, setChangeArtifact] = useState<SocialContentArtifact | null>(null);
@@ -96,6 +97,7 @@ export default function SocialContentWorkspace({
     if (taskId) attachSocialContentNavigationState(taskId, page);
   }, [onNavigate, onNavigateWithTask, task]);
 
+  if (weeklyTargetPresent&&!weeklyTarget) return <p role="alert">原周任务生产绑定无效，请返回任务日历重新打开。</p>;
   if (weeklyTarget) return <div className="space-y-3"><WeeklyContentProductionView key={JSON.stringify(weeklyTarget)} target={weeklyTarget}/><button type="button" className="rounded-lg border px-3 py-2 text-sm" onClick={()=>attachSocialContentNavigationState(weeklyTarget.contentTaskId,'smartAssets')}>打开该内容任务的当前制作工作区</button></div>;
 
   if (state.loading && !state.workspace) {

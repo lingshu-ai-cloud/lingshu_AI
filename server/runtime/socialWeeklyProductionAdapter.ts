@@ -1,3 +1,4 @@
+import {readVerifiedNoSharedMaterialDemand,freezeOriginalRunMaterialDemand} from './socialWeeklyOriginalRunMaterialDemand.js';
 import {publicationPreparationDeadline} from '../socialPrograms/publicationDeadlines.js';
 import {assertWeeklyProductionCoverage} from './weeklyProductionCoverageAdmission.js';
 import {readWeeklyTemplateStructure} from '../socialPrograms/weeklyTemplateStructure.js';
@@ -134,7 +135,7 @@ export function createSocialWeeklyProductionAdapter(dataStore: DataStore, ports:
           weeklyBudgetCny: pkg.socialContentPackage.weeklyBudgetCny,
           perItemBudgetCny: pkg.socialContentPackage.perItemBudgetCny,
           programRef: { objectType: 'social_program', id: task.programId, version: String(programRows.items[0].payload.version) },
-          targetAccountRef: { objectType: 'owned_social_account', id: publication.accountId, version: String(accountRows.items[0].payload.version) },
+          targetAccountRef: { objectType: 'social_owned_account', id: publication.accountId, version: String(accountRows.items[0].payload.version) },
           specialRequirements: [item.topic, ...item.materialRequirements, `事实凭据：${publication.factRefs.map(ref => `${ref.type}:${ref.id}@${ref.version}`).join('，')}`].join('\n'),
         };
         await assertAdmission();
@@ -163,7 +164,8 @@ export function createSocialWeeklyProductionAdapter(dataStore: DataStore, ports:
       }
       if(!publication.materialRequirement) {
         const demandScope={taskId:detail.taskId,programId:task.programId,packageId:task.packageId,packageVersion:task.packageVersion,publicationTaskId:task.publicationTaskId,accountId:publication.accountId,factRefs:publication.factRefs};
-        let demand=verifiedNoSharedMaterialDemand(boundRow,demandScope);
+        let demand=await readVerifiedNoSharedMaterialDemand(dataStore,boundRow,{...demandScope,tenantId:task.tenantId});
+        if(!demand&&detail.runId){await assertAdmission();demand=await freezeOriginalRunMaterialDemand(dataStore,{...demandScope,tenantId:task.tenantId});}
         if(!demand&&!detail.runId) {
           demand=buildNoSharedMaterialDemand(boundRow,detail,demandScope);
           if(demand) {

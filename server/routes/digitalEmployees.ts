@@ -3664,6 +3664,8 @@ async function decideDigitalEmployeeApproval(req: Request, res: Response): Promi
       approvalId: req.params.approvalId,
       decision: String(req.body?.decision || '') as 'approved' | 'rejected',
       note: String(req.body?.note || ''),
+      ...(req.body?.expectedContentHash!==undefined?{expectedContentHash:String(req.body.expectedContentHash)}:{}),
+      ...(req.body?.expectedRequestHash!==undefined?{expectedRequestHash:String(req.body.expectedRequestHash)}:{}),
       ...(req.body?.expectedSubjectVersion !== undefined
         ? { expectedSubjectVersion: String(req.body.expectedSubjectVersion).trim() }
         : {}),

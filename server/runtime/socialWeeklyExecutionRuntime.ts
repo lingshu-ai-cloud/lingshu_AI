@@ -1,3 +1,4 @@
+import {weeklyExecutionObservation} from './weeklyExecutionObservation.js';
 import { runWeeklyDeadlineRecoveryScan, type DeadlineRecoveryEvidenceReader } from './socialWeeklyDeadlineRecovery.js';
 import { randomUUID } from 'node:crypto';
 import { SocialProgramError } from '../socialPrograms/service.js';
@@ -13,6 +14,8 @@ import { WEEKLY_EXECUTION_TASKS, type WeeklyExecutionTaskRow } from '../socialPr
 import { createSocialWeeklyExecutionWorker } from './socialWeeklyExecutionWorker.js';
 import { createWeeklyExecutionContinuationService } from '../socialPrograms/weeklyExecutionContinuations.js';
 import type { SocialWeeklyExecutionAdapter, WeeklyExecutionAdapterResult } from './socialWeeklyExecutionAdapter.js';
+
+import {TEMPLATE_EXECUTION_INPUT_BLOCKERS} from '../socialPrograms/templateExecutionBlockingCodes.js';
 
 export const WEEKLY_PREPRODUCTION_STEPS: WeeklyProductionStepKind[] = ['business_outline', 'benchmark_collection', 'benchmark_scoring', 'director_analysis', 'business_schedule'];
 
@@ -142,8 +145,10 @@ export async function runSocialWeeklyExecutionScan(input: {
         clearInterval(timer);
         await renewal;
         report.failed++;
-        if (!lostLease && validatingCompletion && ((error instanceof SocialProgramError && [400, 401, 403, 404, 409, 422].includes(error.status)) || (error instanceof SocialContentWorkflowError && ([400, 401, 403, 404, 409, 422].includes(error.status) || ['social_content_file_integrity_violation', 'social_content_file_record_invalid'].includes(error.code))))) {
+        const templateInputBlocked = error instanceof SocialProgramError && [400,403,409].includes(error.status) && TEMPLATE_EXECUTION_INPUT_BLOCKERS.has(error.code);
+        if (!lostLease && ((error instanceof SocialProgramError && [400,403,409].includes(error.status) && TEMPLATE_EXECUTION_INPUT_BLOCKERS.has(error.code)) || validatingCompletion && ((error instanceof SocialProgramError && [400, 401, 403, 404, 409, 422].includes(error.status)) || (error instanceof SocialContentWorkflowError && ([400, 401, 403, 404, 409, 422].includes(error.status) || ['social_content_file_integrity_violation', 'social_content_file_record_invalid'].includes(error.code)))))) {
           await worker.defer(claim, { now: input.now, code: error.code, message: error.message, blockingReason: error.code }).catch(() => undefined);
+          if(templateInputBlocked){report.failed--;report.blocked++;}
         } else if (!lostLease) await worker.fail(claim, { now: input.now, code: 'weekly_execution_adapter_failed', message: error instanceof Error ? error.message : String(error), retryable: true }).catch(() => undefined);
       } finally { clearInterval(timer); }
     }
@@ -154,14 +159,16 @@ export async function runSocialWeeklyExecutionScan(input: {
 let timer: ReturnType<typeof setInterval> | null = null;
 let running = false;
 export function initSocialWeeklyExecutionRuntime(adapters: Partial<Record<WeeklyProductionStepKind, SocialWeeklyExecutionAdapter>>, options: { readRecoveryEvidence?: DeadlineRecoveryEvidenceReader } = {}): void {
-  if (timer || process.env.SOCIAL_WEEKLY_EXECUTION_WORKER_ENABLED !== 'true') return;
+  if(timer)return;
+  if(process.env.SOCIAL_WEEKLY_EXECUTION_WORKER_ENABLED!=='true'){weeklyExecutionObservation.initialize(false);return;}
   const workerId = `weekly-execution-${process.pid}-${randomUUID()}`;
   const tick = () => {
     if (running) return;
     running = true;
-    void runSocialWeeklyExecutionScan({ adapters, workerId, readRecoveryEvidence: options.readRecoveryEvidence }).catch(error => console.error('[social-weekly-execution] scan unavailable:', error instanceof Error ? error.message : String(error))).finally(() => { running = false; });
+    void weeklyExecutionObservation.scan(()=>runSocialWeeklyExecutionScan({ adapters, workerId, readRecoveryEvidence: options.readRecoveryEvidence })).catch(error => console.error('[social-weekly-execution] scan unavailable:', error instanceof Error ? error.message : String(error))).finally(() => { running = false; });
   };
   timer = setInterval(tick, Math.max(1_000, Number(process.env.SOCIAL_WEEKLY_EXECUTION_INTERVAL_MS) || 15_000));
   timer.unref?.();
+  weeklyExecutionObservation.initialize(true,workerId);
   tick();
 }

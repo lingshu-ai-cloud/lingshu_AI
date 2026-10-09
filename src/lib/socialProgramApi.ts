@@ -177,8 +177,8 @@ export const socialProgramApi = {
   async approveExecutionTask(programId: string, packageId: string, taskId: string): Promise<WeeklyExecutionTask[]> {
     return (await request<{ items: WeeklyExecutionTask[] }>(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/execution-tasks/${encodeURIComponent(taskId)}/approve`, { method: 'POST', ...json({}) })).items;
   },
-  async recheckRequiredMaterials(programId: string, packageId: string, taskId: string): Promise<WeeklyExecutionTask[]> {
-    return (await request<{ items: WeeklyExecutionTask[] }>(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/execution-tasks/${encodeURIComponent(taskId)}/unblock`, { method: 'POST', ...json({ reason: 'weekly_required_materials_missing' }) })).items;
+  async recheckRequiredMaterials(programId: string, packageId: string, taskId: string, packageVersion: number): Promise<WeeklyExecutionTask[]> {
+    return (await request<{ items: WeeklyExecutionTask[] }>(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/execution-tasks/${encodeURIComponent(taskId)}/recheck-required-materials`, { method: 'POST', ...json({ expectedPackageVersion: packageVersion }) })).items;
   },
 };
 

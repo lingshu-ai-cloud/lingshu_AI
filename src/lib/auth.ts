@@ -6,8 +6,9 @@ const TOKEN_KEY = 'overseas_token';
 const SUPPORT_ORIGINAL_TOKEN_KEY = 'overseas_support_original_token';
 
 export function getToken(): string | null { return localStorage.getItem(TOKEN_KEY); }
-export function setToken(t: string): void { localStorage.setItem(TOKEN_KEY, t); }
-export function clearToken(): void { localStorage.removeItem(TOKEN_KEY); }
+export const AUTH_TOKEN_CHANGED_EVENT = 'overseas-auth-token-changed';
+export function setToken(t: string): void { localStorage.setItem(TOKEN_KEY, t); if(typeof window !== 'undefined') window.dispatchEvent(new Event(AUTH_TOKEN_CHANGED_EVENT)); }
+export function clearToken(): void { localStorage.removeItem(TOKEN_KEY); if(typeof window !== 'undefined') window.dispatchEvent(new Event(AUTH_TOKEN_CHANGED_EVENT)); }
 /** 给 fetch 用的鉴权头（无 token 时为空对象） */
 export function authHeader(): Record<string, string> {
   const t = getToken();

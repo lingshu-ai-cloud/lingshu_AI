@@ -1,3 +1,4 @@
+import {assertWeeklyProductionMaterialAdmission} from './socialWeeklyProductionMaterialGate.js';
 import { existsSync, statSync } from 'node:fs';
 import fsp from 'node:fs/promises';
 import { createRequire } from 'node:module';
@@ -251,6 +252,7 @@ export async function enqueueSocialContentAutoProduction(input: {
 }): Promise<void> {
   const dataStore = input.repository.dataStore ?? store;
   try {
+  await assertWeeklyProductionMaterialAdmission(input);
     const record = await requireSocialTask(input);
     const task = socialTaskSummary(record);
     const job = await admitContentExecutionJob({

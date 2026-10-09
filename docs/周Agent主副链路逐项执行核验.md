@@ -27,8 +27,8 @@
 | H-M5 迭代/探索制作与验收 | 同 M5，但真实 dispatch 主题、路线与历史调性边界冻住。 | H-M5 实际平台/账号/视频主题卡，状态不由标题推断。 | 同真实产物验收。两路线存在输入差异，尚无独立“自有调性偏差/探索失败”返工任务合同。 |
 | Z-M6 首批发布与建立基线 | `publishing`；`social_publication_assignments/attempts`（`weeklyLineage.ts:26-27`）；发布前真实承接检查。 | M6 发布卡保留 production identity；账号/承接实际配置入口可操作。 | 仅 actual attempt 的 provider receipt、platform post、resolvedAt 可完成（`socialWeeklyPublicationAdapter.ts:122`）。计划数量、批准不算发布成功。首次基线观察见 S5。 |
 | H-M6 发布与历史关联 | 同真实发布，保留原版本/来源；已验收库存和 continuation 不当新增制作。 | H-M6 卡与已核验原版本说明；不伪造新成片。 | 实际回执/原产物引用；来源不能作为客户归因事实。未知回执先 reconcile，见 S4。 |
-| Z-M7 新询盘承接与知识补充 | 明确绑定 `social_weekly_customer_bindings`，实际分群/草稿/审批/发送任务：`customer_segmentation/customer_followup_draft/customer_followup_approval/customer_followup_dispatch`（`socialWeeklyCustomerBridge.ts:12-19`）。 | 实际客服卡投影 `weeklyCustomerCalendarProjection.ts:6-9`；真实 RunBinding/客服运行，不跳假 alias。 | 真实 segment/member、逐客草稿、approval 内容版本/hash、send receipt；new 需真实窗口内 buyer msg + 关系证据。真实无客群才 no_data；unknown 不能当无数据完成（bridge `:115-119`）。企业知识缺口回流不等于已形成独立补知识任务。 |
-| H-M7 老客推进＋新询盘承接 | 冻结真实 relationship evidence，prior conversation 仅证明往来，不能证明采购；旧客不依赖本周发布。另实际 sales handoff。 | 真实关系确认/显式重新分群、客服卡、sales 领取/反馈卡。 | 发前复核关系/当前分群；销售有实际 owner、deadline 和会话反馈。新老来源不能用建档日期推断。通用转人工/发送异常尚未全闭环，见 H-S7。 |
+| Z-M7 新询盘承接与知识补充 | 明确绑定 `social_weekly_customer_bindings`；bridge 读取真实分群、逐客草稿、审批与发送凭据。M/IG 冻结真实账号、入站消息及新询盘选择；WA 使用独立手机号/关系来源。 | 客服日历 → 原 run/task；逐客入口由 `customerTaskNavigation.ts` 服务端核验后定位真实客户/原批次；`CustomerWorkflowPanel` 已接原审批读取与显式真人批准/拒绝。 | `customerTaskApprovalContinuation.test.ts`、`customerTaskApprovalNavigation.test.ts` 覆盖三渠道实际持久审批及只读 HTTP；决策锁内重验成员/渠道、batch version/contentHash/requestHash。M/IG 明确逐条 native-dispatch，WA 独立 followup worker；批准不等于已发送，无真实回执不能核销发送卡。知识/报价补齐已存在，见 Z-S7。 |
+| H-M7 老客推进＋新询盘承接 | 冻结真实 relationship/channel evidence；M/IG 周前往来只证明既有联系，不冒充采购；WA 采购证明独立核验。另有真实销售交接。 | 同原运行/原逐客批次与真实审批工作区；关系确认、销售领取/反馈均独立明确操作。 | `customerTaskApprovalContinuation.test.ts` 证明三渠道批准/拒绝、受控继续及 native bridge 审批核销；源账号漂移拒绝。历史往来和建档日期不能替代采购/新询盘证据。三渠道发送端口已有默认注册，但 native 需显式发送，且权限/窗口/原审批 hash 必须有效；本核验未外发。 |
 | Z-M8 冷启动复盘与下周建议 | `weekly_review`；`social_weekly_review_snapshots`，真实观察窗口/metric refs。 | M8 → 只读 WeeklyReviewEvidencePanel，实际矩阵 `ConnectedAgentCalendar.tsx:151`。 | frozen_by、source_digest、真实周版本/window；缺指标保留 unknown，未到窗口等待（`weeklyReviewEvidence.ts:19-23`）。真实客户问题候选另有下一周明确引用，不自动派生产。 |
 | H-M8 双来源复盘与配额调整 | 同真实报告，按 owned/external 与平台/窗口区分；历史基线只用真实证据。 | H-M8 同实际报告，来源配额修订和问题转选题是独立明确操作。 | 真实冻结报告及候选/确认引用，不凭播放高宣称获客强。完整销售质量归因只限可验证关联，未知保留未知。 |
 
@@ -48,8 +48,8 @@
 | H-S5 历史与双来源数据比较 | 同 monitoring +冻结周报告历史/来源分组。 | H-S5 已有任务，不额外复制同一观察工作。 | 按 actual 平台/窗口/来源，质量与获客证据不足保留未知。不能把“有对比报告”当因果效果验证。 |
 | Z-S6 从外部复刻到自有模板候选 | 每 publication 的 `template_extraction` directing / `template_performance_validation` review（`executionTasks.ts:388-403`）；实际成片、同周复盘、明确 selected candidate。 | 真 S6 卡 → WeeklyContentTemplatesPanel；scope/source/review/extraction dependency 严格导航（`templateCalendarNavigation.ts:8-10`）。 | 候选、确认、`social_weekly_content_template_execution_selections` 明确持久引用（`weeklyContentTemplates.ts:44-47`）；显式“用于当前模板任务”“核验凭据并继续”命令。不是外部爆款参考入库即自有模板；未确认不核验通过。 |
 | H-S6 模板保留/修订/新增 | 同真实任务；保留/修订需原模板确认与真实结构/表现依据。 | 实际 taskId 缩窄候选来源，严禁 latest 猜（`WeeklyContentTemplatesPanel.tsx:16-58`）。 | 原 version/hash、确认人/时间、future binding+明确新周修订；不会改变母版参考来源配额。当前真实 S6 已接，不能将“模板数量”算视频交付数。 |
-| Z-S7 首批客户转人工/发送异常 | `social_weekly_sales_handoffs/events`（`socialWeeklySalesHandoff.ts:10-11`），真实批准批次+msg_in、明确销售 owner/领取/反馈期限。 | 真 sales 领取/反馈/补资料卡（`weeklySalesCalendarProjection.ts:7-8`）→ 精确 SalesPanel（Connected `:141,149`）。 | owner claim 与真实 post-claim msg_in/msg_out_human 反馈（service `:61-68`）。**仅销售交接闭环**：知识缺口、报价承诺、供应商未知发送/部分发送未统一生成真人接待/异常处置任务，不能声称全 S7 完成。 |
-| H-S7 既有客户/新询盘转人工 | 同 sales，真实 relationship/new-old 冻结，保留历史上下文。 | 同日历人工卡，旧周身份去重延续；销售反馈已接真实领取后会话选择器。 | 真实批准资料、处理证据/下一步。只读会话接口经原经营计划、交接版本、实际领取人和关系证据核验；反馈写入口同样核验真实 provider 消息和时间，不能由直接 POST 绕过。通用客服异常→指定人→知识沉淀→恢复对应逐客任务仍缺闭环。 |
+| Z-S7 首批客户转人工/发送异常 | 销售交接/events、`weeklyCustomerKnowledgeQuote.ts`、`weeklyNativeSendRecovery.ts`、`weeklyCustomerSendRecovery.ts` 与持久人工接管已接；绑定原 run/member/batch/request，指定 owner、提交/核验双截止。 | 真实销售领取/反馈、知识报价与发送恢复面板/日历卡；知识新批次可显式发起原审批、受权恢复完成运行用于审核，并进入正式审批工作区。 | 真实已审核 FAQ/已确认报价版本参与新草稿；逐条真人处理保留其他 guard 和全局 human_needed，新版本不继承旧审批。未知发送仅真实回执/对账恢复。`weeklyCustomerKnowledgeQuoteApproval.test.ts`、三渠道审批贯通测试为代码证据；已超出“仅销售交接”，但不能据此宣称所有异常自动建任务、知识自动核准或外部发送完成。 |
+| H-S7 既有客户/新询盘转人工 | 同真实知识/报价、发送恢复、持久人工接管及销售服务，保留原关系和历史上下文；native 销售使用实际 channel/member/provider conversation，不伪装 WA 字段。 | 对应原周任务与指定消费者的真实面板；旧周交接去重延续，真实 owner 领取后选择会话反馈。 | `socialWeeklyNativeSalesHandoff.test.ts` 覆盖 M/IG 真实来源、领取/反馈 HTTP；三渠道原审批以当前冻结内容及成员证据核验。报价/FAQ 漂移或未知发送保持阻塞；自由销售反馈不成为权威知识，处理结论不清其他 blocker、不自动批准/发送。 |
 | Z-S8 冷启动计划修订 | 显式 recovery/capacity proposal，`social_weekly_schedule_proposals/snapshots`（`weeklyScheduleSnapshots.ts:7`）；受信修订下一版本。 | Controls 真实 RecoveryPanel +显式确认；新任务 frozen schedule ref 才 S8。 | 真实 capacity inputs/leases、immutable新版本、用户确认、原Z全部外部。不是改卡片时间；旧 running/succeeded资源要真实封口/continuation证据，不能自动 activate。 |
 | H-S8 双来源计划修订 | 同受信方案，冻结 source policy/inputs/hash，旧/外来源不互换。 | H-S8 实际重排/来源修订界面。 | 同明确新版本与确认；预算、产能假设必须真实填写/证据。副链标识只说明该卡读冻结重排，不等于整周修订所有流程已完成。 |
 | Z-S9 跨周延续与画像升级建议 | `social_weekly_execution_continuations`（`weeklyExecutionContinuations.ts:10`），明确原task/version/inputhash，真实生产 observer。 | 已核验 continuation 才输出原 vN，不复制付费；材料/销售在当周轴保留原身份。 | 原产物/真实live resource/封口与唯一性。**部分接通**：同package跨版本衔接已有，标签刻意写“已核验原版本任务衔接”；不能因此宣称跨周自动库存编排或自动画像升级。 |
@@ -228,3 +228,40 @@ YouTube 格式检查已独立实现，并通过真实小尺寸、低帧率 MP4 �
 取消 GET 增加只读 currentSettlements，以实际原周包、派单、发布包和回执投影当前结果，不改历史取消凭据。真实回执已核对时界面显示已发布/发布失败；生产作业缺当前真实对账证据时仍提示核对。实际取消扫描、worker 完成、结果校验、HTTP→严格客户端解析及界面组合 14 项通过，Vite 构建通过。全部供应商响应仍受控，本轮未上传、部署、迁移、外发或调用付费生产。
 
 稳定源码的全量 TypeScript 检查通过；新增读取器的泛型持久行类型及 optional manifest lineage 已显式核验，不靠缺字段的摘要数据或伪数据库 ID 放行。上述实现与验证仍为本地阶段，完整目标继续保持未完成。
+
+### 原生产页导航与历史运行核验（本地续修）
+
+- 完成、审批、发布卡片通过真实只读 HTTP 接口核验冻结周任务、发布任务、原内容绑定及产物版本；正常审批升版须匹配实际成功审批操作，不直接取最新产物。
+- 目标页重新核验绑定，读取实际内容详情与原逐镜缓存，并预览原成片。已有成片仅展示对应产物及逐镜记录；当前制作工作区须用户明确点击进入，避免混入同一运行的后续结果。非法历史绑定不回退当前任务；登录切换清除已展示内容与预览并拒绝旧响应。
+- 原任务运行指针变化时，仅唯一持久缓存的上下文哈希、缓存密封哈希、冻结输入、原交接记录、产物及所属运行全部一致才定位原运行。后续缓存读取仍核验实际媒体字节和技术收据；缺失、损坏或多运行缓存拒绝。首次缓存写入尚无持久缓存时沿用实际当前生产运行。
+- 17 项联合回归通过：实际 HTTP→原生产页加载、历史运行漂移、缓存歧义与损坏，以及分镜缓存、返工输出与实际技术收据恢复。未新建生产、未调用付费供应商、未执行外部发布。
+- 此续修位于上传快照 8321924 之后，尚未上传；生产供应商端到端、真实租户页面视觉验收和生产部署仍未证实，不构成整体目标完成。
+
+### 未启动/未成片任务进入真实工作区（本地续修）
+
+已创建的真实内容任务等待补输入时，原生产适配器保存 contentTaskId 而 runId 为 null；原导航却强制运行 ID，导致实际任务无法打开。现只对真实绑定、无产物且 draft/needs_input/plan_review 的任务返回显式 null；已有成片仍必须核验原运行，运行中的身份、进度及生产页加载继续精确对应。卡片进入不创建、不启动供应商；页面明确未启动，并提供原任务的当前制作工作区入口。已有运行但无成片的受阻任务进入原任务记录，不猜失败分镜。生产中展开真实逐镜方案，显示实际活动和更新时刻。
+
+实际 createSocialContentTask（真实周绑定键）→只读 HTTP→严格客户端→页面加载已验证；未启动 0 jobs/0 attempts，不读取不存在的分镜。错误生命周期、产物无运行、原 null 目标遇后来运行均拒绝。正式执行器、未成片导航、历史运行、客户端及原分镜入口联合 27 项回归通过。
+
+模板候选/来源证据存在实际、明确输入错误时，原执行器会将其归为通用供应商失败并消耗重试。现仅对列举的模板身份/证据错误与实际领域错误状态保留具体阻塞原因；实际模板读取服务反例验证 attempt 不增加。供应商未知结果与存储错误仍保持原重试/对账行为，不以通用 409 当作已知失败。
+
+后台正式适配器清单已静态核对接入 startBackgroundJobs；周执行扫描另受 SOCIAL_WEEKLY_EXECUTION_WORKER_ENABLED=true 门禁。生产运行时开关、真实供应商及租户验收尚未验证，未擅自启用或部署。
+
+### 原客服审批工作区补齐（本地续修）
+
+客服跟进审批卡原先进入原客户工作区却缺少正式审批操作。现在通过鉴权只读原 run/task→实际当前批次→原审批请求→成员/渠道核验，再提交明确批准或拒绝。正式决策在原运行锁内复读并比较原版本、内容 hash 与请求 hash；明确周客服绑定的任务不能省略冻结身份。同版本内容/请求变更拒绝，0 下游调用。
+
+提交结果未知时仅查询；确认同一原请求仍 pending 后才允许用户重新逐条核对，不自动重复提交，也不借新请求继续旧审批。登录切换清空原客户与审批。Messenger/Instagram 实际 HTTP、严格客户端和原决策反例通过；本轮未调用真实消息 transport，未证明 WhatsApp 专门审批 HTTP 或真实租户外发。详见客服周任务真实客户定位核验文档。
+
+正式执行器、未开工导航、原客服审批 HTTP 与正式决策联合 18 项通过；另内容导航/历史分镜/客户端联合 27 项通过。前端构建通过。全部为上传快照之后的本地续修，未自动推送或部署，完整生产接入目标仍未完成。
+
+稳定源码的全量 TypeScript 检查通过。审批 GET 使用正式 RequestHandler 参数类型，修复编译期 runId 推导缺口；未移除原身份核验。
+
+### 补齐后恢复原任务（本地续修）
+
+- 模板证据修复后原任务仍保留新增阻塞原因，实际 worker 无法领取。执行器和模板恢复命令现在共用同一窄原因集合；恢复前重新核验原选择、候选、源与确认。实际候选损坏→原任务阻塞→恢复拒绝→修复原真实哈希→仅清对应原因→同 taskId 完成已验证，候选与任务没有复制，其它原因仍保留。联合 16 项回归通过。
+- 原“重新核验素材”直接调用通用 unblock，未读取证据。现独立命令要求准确周版本，核验原周包、发布任务、唯一素材消费者、真实审核和当前素材字节，仅清 weekly_required_materials_missing。工作台和智能经营日历均调用该命令，日历会重新读取实际任务和同版周包；未通过不清除，其它原因保留。恢复不是生产准入或成片完成，后续适配器仍核验完整冻结输入、绑定和预算。实际服务、原 worker 领取、客户端与注册 HTTP 版本/输入拒绝已验证；未启动供应商生产。
+- 正式客服审批在原运行锁内进一步复读原成员与渠道证据。实际三渠道批准/拒绝更新原批次、条目、任务；重复决定不重复推进。Messenger/Instagram 原账号漂移拒绝，WhatsApp 补原审批 GET；后续调度末端受控，未真实发送。
+- 上述恢复接口、正式 worker、三渠道审批和客户端联合 33 项测试通过；本轮未推送、迁移、部署、付费生成或外部发送。真实供应商执行和生产环境验收仍未完成。
+
+稳定源码全量 TypeScript 检查与前端构建通过。类型收窄使用显式 never 函数；日历恢复入口使用真实步骤与发布任务身份，无虚构任务标题。

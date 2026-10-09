@@ -1,3 +1,4 @@
+import {assertWeeklyProductionMaterialAdmission} from './socialWeeklyProductionMaterialGate.js';
 import { persistSocialProductionWorkspace } from './socialContentProductionWorkspace.js';
 import {persistInitialSocialSceneCache,initialSceneCacheInputFingerprint,initialSceneSourceHashes,type InitialSceneQualityReport} from './socialContentInitialSceneCache.js';
 import {buildSocialProductionHandoff} from './socialContentProductionHandoff.js';
@@ -329,6 +330,7 @@ export async function runSocialContentAutoProduction(input: {
   /** Deterministic ports for worker-level tests and alternate local runtimes. */
   runtime?: SocialContentAutoProductionRuntime;
 }): Promise<void> {
+  await assertWeeklyProductionMaterialAdmission(input);
   const admissionRow=await requireSocialTask(input),admissionAuthority=socialObject(socialObject(socialJson(admissionRow.brief))?._weeklyAuthority);
   if(admissionAuthority||String(admissionRow.create_idempotency_key??'').startsWith('weekly-production:')){if(!admissionAuthority)throw new SocialContentWorkflowError('weekly_production_start_authority_invalid',409);if(!input.repository.dataStore)throw new SocialContentWorkflowError('weekly_production_planning_missing',409);const pkg=socialObject(admissionAuthority.weeklyPackage) as unknown as import('../../shared/contracts/socialProgram.js').WeeklyOperatingPackage,publication=socialObject(admissionAuthority.publicationTask);if(!pkg||!publication?.publicationTaskId)throw new SocialContentWorkflowError('weekly_production_start_authority_invalid',409);await assertStoredWeeklyProductionCoverage({store:input.repository.dataStore,tenantId:input.tenantId,package:pkg,publicationTaskId:String(publication.publicationTaskId),frozenPlanning:pkg.agentPlanning});}
   const detail = await readSocialTaskDetail(input);

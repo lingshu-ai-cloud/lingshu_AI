@@ -17,6 +17,7 @@ import type { DataStore } from '../storage/datastore.js';
 import { createSocialProgramService, SocialProgramError } from '../socialPrograms/service.js';
 import { readWeeklyCancellation } from '../socialPrograms/weeklyCancellation.js';
 import {readWeeklyCancellationSettlements} from '../socialPrograms/weeklyCancellationSettlement.js';
+import {recheckWeeklyRequiredMaterials} from '../socialPrograms/weeklyRequiredMaterialRecovery.js';
 import {readWeeklyContentNavigation} from '../socialPrograms/weeklyContentNavigation.js';
 import { createWeeklyOperatingPackageService } from '../socialPrograms/weeklyOperatingPackages.js';
 import { createSocialOperatingOrchestrationService, weeklyAuthorityFromResolution } from '../socialOperating/orchestration.js';
@@ -440,6 +441,14 @@ export function createSocialProgramsRouter(dataStore: DataStore = store, authent
   router.post('/:programId/operating-packages/:packageId/execution-tasks/:taskId/block', asyncRoute(async (req, res) => {
     const { tenantId } = res.locals as AuthLocals;
     res.json({ items: await executionTasks.block(tenantId, String(req.params.programId || ''), String(req.params.packageId || ''), String(req.params.taskId || ''), String(req.body?.reason || '')) });
+  }));
+
+  router.post('/:programId/operating-packages/:packageId/execution-tasks/:taskId/recheck-required-materials', asyncRoute(async (req, res) => {
+    const {tenantId,userId}=res.locals as AuthLocals;
+    if(!tenantId||!userId)throw new SocialProgramError('auth_required',401,'请登录后重新核验素材。');
+    const version=req.body?.expectedPackageVersion;
+    if(!Number.isSafeInteger(version)||version<1||Object.keys(req.body??{}).some(key=>key!=='expectedPackageVersion'))throw new SocialProgramError('weekly_material_recovery_input_invalid',400,'请指定准确周包版本。');
+    res.json({items:await recheckWeeklyRequiredMaterials(dataStore,{tenantId,programId:String(req.params.programId||''),packageId:String(req.params.packageId||''),packageVersion:version,taskId:String(req.params.taskId||'')})});
   }));
 
   router.post('/:programId/operating-packages/:packageId/execution-tasks/:taskId/unblock', asyncRoute(async (req, res) => {

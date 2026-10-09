@@ -1,3 +1,4 @@
+import {weeklyExecutionObservation} from './weeklyExecutionObservation.js';
 import { randomUUID } from 'node:crypto';
 import type { DataStore } from '../storage/datastore.js';
 import { store } from '../storage/index.js';
@@ -60,6 +61,7 @@ export async function writeWorkerHeartbeat(
       error: runtimeState.error,
       pid: process.pid,
       build: runtimeBuildInfo(),
+      weeklyExecution:weeklyExecutionObservation.read(),
     },
   };
   if (heartbeatRecordId) {

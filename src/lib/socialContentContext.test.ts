@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import {
   readSocialContentNavigationTaskId,
   socialContentTaskRequestHeaders,
+  readWeeklyContentNavigationTarget,hasWeeklyContentNavigationTarget,
 } from './socialContentContext.js';
 
 assert.equal(readSocialContentNavigationTaskId('smartAssets', {
@@ -56,3 +57,10 @@ const authSource = fs.readFileSync(new URL('./auth.ts', import.meta.url), 'utf8'
 assert.match(authSource, /socialContentTaskRequestHeaders\(\)/, 'authenticated professional-page requests must carry the exact task handoff');
 
 console.log('social content client context contract tests passed');
+
+const weekly={scope:{tenantId:'tenant',programId:'p',packageId:'w',packageVersion:2,executionTaskId:'e'},publicationTaskId:'pub',contentTaskId:'social-task-1',runId:'original-run',artifactRef:{type:'starter_social_content_artifact',id:'original',version:1},bindingKey:'binding',source:'completed_artifact',gaps:[]};
+const handoff={socialContentTaskId:'social-task-1',socialContentPage:'smartAssets',weeklyContentTarget:weekly};
+assert.equal(readWeeklyContentNavigationTarget(handoff)?.runId,'original-run');
+assert.equal(hasWeeklyContentNavigationTarget(handoff),true);
+assert.equal(hasWeeklyContentNavigationTarget({}),false);
+for(const invalid of [null,{}, {...weekly,contentTaskId:'other'}, {...weekly,artifactRef:null}, {...weekly,scope:{...weekly.scope,packageVersion:0}}]){const state={...handoff,productionDetail:{socialContentTaskId:'social-task-1',socialContentPage:'smartAssets',weeklyContentTarget:invalid}};assert.equal(hasWeeklyContentNavigationTarget(state),true,'malformed history remains an explicit target and must block current fallback');assert.equal(readWeeklyContentNavigationTarget(state),null,'malformed nested target cannot fall back to valid outer target');}

@@ -42,9 +42,11 @@ export function readSocialContentNavigationTaskId(page: string, historyState: un
   return taskIdFrom(state.productionDetail, page) || taskIdFrom(state, page);
 }
 
+export function hasWeeklyContentNavigationTarget(historyState:unknown):boolean {const state=record(historyState),detail=record(state.productionDetail);return Object.prototype.hasOwnProperty.call(detail,'weeklyContentTarget')||Object.prototype.hasOwnProperty.call(state,'weeklyContentTarget');}
+
 export function readWeeklyContentNavigationTarget(historyState: unknown): WeeklyContentNavigation | null {
   const state = record(historyState), detail = record(state.productionDetail);
-  const value = detail.weeklyContentTarget ?? state.weeklyContentTarget;
+  const value = Object.prototype.hasOwnProperty.call(detail,'weeklyContentTarget') ? detail.weeklyContentTarget : state.weeklyContentTarget;
   if (!value) return null;
   const scope = record(record(value).scope);
   if (!['tenantId','programId','packageId','executionTaskId'].every(key => typeof scope[key] === 'string' && String(scope[key]).trim()) || typeof scope.packageVersion !== 'number') return null;
@@ -86,6 +88,7 @@ export function setActiveSocialContentTaskId(taskId: string | null): void {
 }
 
 export function attachSocialContentNavigationState(taskId: string, page: string, weeklyContentTarget?: WeeklyContentNavigation): void {
+  if(weeklyContentTarget){const validated=parseWeeklyContentNavigation(weeklyContentTarget,weeklyContentTarget.scope);if(page!=='smartAssets'||validated.contentTaskId!==taskId)throw Error('周任务生产目标与页面或内容身份不一致。');}
   setActiveSocialContentTaskId(taskId);
   const current = window.history.state && typeof window.history.state === 'object' ? window.history.state : {};
   const currentDetail = current.productionDetail && typeof current.productionDetail === 'object'

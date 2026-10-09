@@ -15,6 +15,7 @@ export async function loadWeeklyContentProductionView(target:WeeklyContentNaviga
   if(ref&&matches.length!==1)throw Error('原成片版本不存在或不唯一，不替换为最新成片。');
   if(!ref&&task.runId!==binding.runId)throw Error('原生产运行已变化，尚无对应成片凭据。');
   let scenes:SocialSceneReworkAvailability|null=null;
-  if(ref)scenes=await ports.scenes({tenantId:binding.scope.tenantId,taskId:binding.contentTaskId,sourceRunId:binding.runId,parentArtifactId:ref.id});
+  if(ref&&!binding.runId)throw Error('原成片缺少真实生产运行。');
+  if(ref&&binding.runId)scenes=await ports.scenes({tenantId:binding.scope.tenantId,taskId:binding.contentTaskId,sourceRunId:binding.runId,parentArtifactId:ref.id});
   return {binding,task,artifact:matches[0]??null,scenes,historical:task.runId!==binding.runId};
 }

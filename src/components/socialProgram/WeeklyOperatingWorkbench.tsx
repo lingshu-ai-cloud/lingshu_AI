@@ -175,7 +175,7 @@ export default function WeeklyOperatingWorkbench({ pkg, loading, error, selected
   const recheckMaterials = async (task: WeeklyExecutionTask) => {
     if (!pkg || planningBusy || task.status !== 'blocked' || !task.ownBlockingReasons.includes('weekly_required_materials_missing')) return;
     setPlanningBusy(true); setPlanningError('');
-    try { setExecutionTasks(await socialProgramApi.recheckRequiredMaterials(pkg.programId, pkg.packageId, task.taskId)); }
+    try { setExecutionTasks(await socialProgramApi.recheckRequiredMaterials(pkg.programId, pkg.packageId, task.taskId, pkg.version)); }
     catch (cause) { setPlanningError(cause instanceof Error ? cause.message : '素材重新核验请求失败。'); }
     finally { setPlanningBusy(false); }
   };

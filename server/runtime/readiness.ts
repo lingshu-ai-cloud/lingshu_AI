@@ -1,3 +1,4 @@
+import {weeklyExecutionObservation} from './weeklyExecutionObservation.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
@@ -367,6 +368,7 @@ export async function runtimeReadiness(input: {
     role: input.role,
     capabilities,
     digitalHumanQuality: quality,
+    weeklyExecution:{source:'local_process' as const,...weeklyExecutionObservation.read()},
     socialOperating,
     issues,
   };

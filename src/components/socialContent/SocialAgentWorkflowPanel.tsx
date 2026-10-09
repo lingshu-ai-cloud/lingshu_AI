@@ -118,7 +118,7 @@ function SceneRow({
   );
 }
 
-export default function SocialAgentWorkflowPanel({ task }: { task: SocialContentTaskDetail }) {
+export default function SocialAgentWorkflowPanel({ task, expanded = false }: { task: SocialContentTaskDetail; expanded?: boolean }) {
   const workflow = task.agentWorkflow;
   if (!workflow) return null;
   const context = workflow.weeklyPackage ?? workflow.adHocBusinessContext;
@@ -138,10 +138,10 @@ export default function SocialAgentWorkflowPanel({ task }: { task: SocialContent
         <span className={`rounded-full px-3 py-1.5 text-[10px] font-black ${blocked ? 'bg-amber-50 text-amber-900' : 'bg-emerald-50 text-emerald-800'}`}>{STAGE_LABEL[workflow.stage]}</span>
       </div>
 
-      <details className="mt-4 overflow-hidden rounded-xl border border-border bg-surface-2/30">
+      <details open={expanded} className="mt-4 overflow-hidden rounded-xl border border-border bg-surface-2/30">
         <summary className="flex cursor-pointer list-none items-center justify-between gap-3 bg-white px-4 py-3 text-xs font-black text-text-primary">
           <span>查看编导、逐镜方案与检测依据</span>
-          <span className="flex items-center gap-1 text-[10px] font-bold text-text-muted">{workflow.directorBrief.scenes.length} 个镜头 · 默认收起<ChevronRight size={13} /></span>
+          <span className="flex items-center gap-1 text-[10px] font-bold text-text-muted">{workflow.directorBrief.scenes.length} 个镜头{expanded ? '' : ' · 默认收起'}<ChevronRight size={13} /></span>
         </summary>
         <div className="border-t border-border p-4">
       <div className="grid gap-2 md:grid-cols-3">
