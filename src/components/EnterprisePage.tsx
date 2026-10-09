@@ -1,7 +1,8 @@
 import { useState, useEffect, useId, useRef } from 'react';
 import EnterprisePresenters from './enterprise/EnterprisePresenters';
+import EnterprisePresenterRouting from './enterprise/EnterprisePresenterRouting';
 import { motion } from 'motion/react';
-import { Building2, Package, Megaphone, BookOpen, Save, CheckCircle2, Loader2, Compass, Zap, MessageSquare, RotateCcw, Plus, Upload, X, Image, FileText, FileSpreadsheet, Bell, ChevronDown, ChevronLeft, ChevronRight, Globe2, ShieldCheck, ArrowRight, type LucideIcon } from 'lucide-react';
+import { Building2, Package, Megaphone, BookOpen, Save, CheckCircle2, Loader2, Compass, Zap, MessageSquare, RotateCcw, Plus, Upload, X, Image, FileText, FileSpreadsheet, Bell, ChevronDown, ChevronLeft, ChevronRight, Globe2, ShieldCheck, ArrowRight, Users, Clapperboard, type LucideIcon } from 'lucide-react';
 import { authHeader } from '../lib/auth';
 import { completeDemoStep } from '../lib/demoProgress';
 import {
@@ -221,14 +222,14 @@ const COMMUNICATION_STYLE_OPTIONS = ['专业', '轻松', '亲切', '正式'];
 const PAGE_SIZE = 5;
 const SERVICE_INTAKE_AUTO_OPEN_KEY = 'lingshu:enterprise:service-intake-auto-opened';
 
-type KnowledgeView = 'products' | 'bizRules' | 'faq' | 'company' | 'socialStrategy' | 'materials' | 'salesStyle' | 'advanced';
-type EnterpriseArea = 'facts' | 'social' | 'service';
+type KnowledgeView = 'products' | 'bizRules' | 'faq' | 'company' | 'socialStrategy' | 'materials' | 'salesStyle' | 'advanced' | 'presenters' | 'presenterRouting';
+type EnterpriseArea = 'facts' | 'social' | 'appearance' | 'service';
 
 function advisorInitialEnterpriseView(): KnowledgeView {
   try {
     const value = localStorage.getItem('lingshu:enterprise:initial-view') as KnowledgeView | null;
     if (value === 'materials') return 'products';
-    if (value && ['products', 'bizRules', 'faq', 'company', 'socialStrategy', 'materials', 'salesStyle', 'advanced'].includes(value)) return value;
+    if (value && ['products', 'bizRules', 'faq', 'company', 'socialStrategy', 'materials', 'salesStyle', 'advanced', 'presenters', 'presenterRouting'].includes(value)) return value;
   } catch { /* ignore */ }
   return 'company';
 }
@@ -244,9 +245,14 @@ const SERVICE_VIEWS: Array<{ id: KnowledgeView; label: string; hint: string }> =
   { id: 'salesStyle', label: '销售风格', hint: '持续学习' },
   { id: 'advanced', label: '接待与转人工', hint: '权限和提醒' },
 ];
+const APPEARANCE_VIEWS: Array<{ id: KnowledgeView; label: string; hint: string }> = [
+  { id: 'presenters', label: '人物与音色资产', hint: '长期维护' },
+  { id: 'presenterRouting', label: '渠道与出镜策略', hint: '渠道默认值' },
+];
 
 function enterpriseAreaForView(view: KnowledgeView): EnterpriseArea {
   if (view === 'socialStrategy') return 'social';
+  if (['presenters', 'presenterRouting'].includes(view)) return 'appearance';
   if (['bizRules', 'faq', 'salesStyle', 'advanced'].includes(view)) return 'service';
   return 'facts';
 }
@@ -260,6 +266,8 @@ const KNOWLEDGE_VIEW_ICONS: Record<KnowledgeView, LucideIcon> = {
   faq: BookOpen,
   salesStyle: Megaphone,
   advanced: Bell,
+  presenters: Users,
+  presenterRouting: Clapperboard,
 };
 const CHANNEL_OPTIONS: Array<{ value: NotificationChannel; label: string }> = [
   { value: 'wecom', label: '企业微信' },
@@ -1968,6 +1976,7 @@ export default function EnterprisePage() {
           {([
             { id: 'facts' as EnterpriseArea, label: '企业真实资料', icon: Building2, initialView: 'company' as KnowledgeView },
             { id: 'social' as EnterpriseArea, label: '社媒策略', icon: Megaphone, initialView: 'socialStrategy' as KnowledgeView },
+            { id: 'appearance' as EnterpriseArea, label: '人物与出镜', icon: Users, initialView: 'presenters' as KnowledgeView },
             { id: 'service' as EnterpriseArea, label: '智能客服规范', icon: MessageSquare, initialView: 'bizRules' as KnowledgeView },
           ]).map(item => {
             const active = enterpriseArea === item.id;
@@ -2026,8 +2035,8 @@ export default function EnterprisePage() {
           </section>
           {enterpriseArea !== 'social' && (
             <div className="overflow-x-auto pb-0.5">
-              <div className={`flex gap-6 border-b border-border ${enterpriseArea === 'facts' ? 'min-w-[360px]' : 'min-w-[680px]'}`}>
-                {(enterpriseArea === 'facts' ? FACT_VIEWS : SERVICE_VIEWS).map(item => {
+              <div className={`flex gap-6 border-b border-border ${enterpriseArea === 'facts' || enterpriseArea === 'appearance' ? 'min-w-[360px]' : 'min-w-[680px]'}`}>
+                {(enterpriseArea === 'facts' ? FACT_VIEWS : enterpriseArea === 'appearance' ? APPEARANCE_VIEWS : SERVICE_VIEWS).map(item => {
                   const active = knowledgeView === item.id;
                   const Icon = KNOWLEDGE_VIEW_ICONS[item.id];
                   return (
@@ -2047,11 +2056,11 @@ export default function EnterprisePage() {
             </div>
           )}
 
-          <div className={`rounded-lg border p-4 ${enterpriseArea === 'facts' ? 'border-emerald-100 bg-emerald-50/60' : enterpriseArea === 'social' ? 'border-violet-100 bg-violet-50/60' : 'border-sky-100 bg-sky-50/60'}`}>
+          <div className={`rounded-lg border p-4 ${enterpriseArea === 'facts' ? 'border-emerald-100 bg-emerald-50/60' : enterpriseArea === 'social' ? 'border-violet-100 bg-violet-50/60' : enterpriseArea === 'appearance' ? 'border-teal-100 bg-teal-50/60' : 'border-sky-100 bg-sky-50/60'}`}>
             <div className="flex items-start gap-3">
-              {enterpriseArea === 'facts' ? <Building2 size={15} className="mt-0.5 shrink-0 text-emerald-700" /> : enterpriseArea === 'social' ? <Megaphone size={15} className="mt-0.5 shrink-0 text-violet-700" /> : <ShieldCheck size={15} className="mt-0.5 shrink-0 text-sky-700" />}
+              {enterpriseArea === 'facts' ? <Building2 size={15} className="mt-0.5 shrink-0 text-emerald-700" /> : enterpriseArea === 'social' ? <Megaphone size={15} className="mt-0.5 shrink-0 text-violet-700" /> : enterpriseArea === 'appearance' ? <Users size={15} className="mt-0.5 shrink-0 text-teal-700" /> : <ShieldCheck size={15} className="mt-0.5 shrink-0 text-sky-700" />}
               <div className="min-w-0 flex-1">
-                <p className="text-xs font-black text-text-primary">{enterpriseArea === 'facts' ? '已保存资料可供 AI 使用' : enterpriseArea === 'social' ? '设置社媒创作默认策略' : '设置客服边界'}</p>
+                <p className="text-xs font-black text-text-primary">{enterpriseArea === 'facts' ? '已保存资料可供 AI 使用' : enterpriseArea === 'social' ? '设置社媒创作默认策略' : enterpriseArea === 'appearance' ? '维护企业人物资产和各渠道出镜规则' : '设置客服边界'}</p>
               </div>
               {enterpriseArea === 'service' && (
                 <button type="button" onClick={openKnowledgeIntake} className="shrink-0 rounded-lg border border-sky-200 bg-white px-3 py-2 text-[11px] font-black text-sky-700 hover:bg-sky-50">
@@ -2062,7 +2071,9 @@ export default function EnterprisePage() {
           </div>
 
           {knowledgeView === 'company' && <>{marketSection}{companySection}</>}
-          {knowledgeView === 'socialStrategy' && <>{socialStrategySection}<EnterprisePresenters /></>}
+          {knowledgeView === 'socialStrategy' && socialStrategySection}
+          {knowledgeView === 'presenters' && <EnterprisePresenters />}
+          {knowledgeView === 'presenterRouting' && <EnterprisePresenterRouting />}
 
           {knowledgeView === 'products' && (
           <KnowledgeCard

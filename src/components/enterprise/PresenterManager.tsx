@@ -8,9 +8,25 @@ const statusText = (job: PresenterCreation) => job.status === 'pending_consent'
   : ({ submitting: '正在提交', processing: '处理中', completed: '可用', failed: '处理失败', uncertain: '提交结果待核实' } as const)[job.status];
 const field = 'w-full rounded-lg border border-border bg-white p-2 text-sm';
 const button = 'rounded-lg border border-border px-3 py-2 text-sm disabled:opacity-40';
-export default function PresenterManager({ onClose, onSaved, initialMode = 'quick', fixedMode = false, reusePresenterId }: { onClose: () => void; onSaved: (value: ProductionDefaults) => void | Promise<void>; initialMode?: 'quick' | 'expert'; fixedMode?: boolean; reusePresenterId?: string }) {
+type PresenterLookGroup = { id: string; name: string; representative: PresenterLook; looks: PresenterLook[] };
+export const groupPresenterLooks = (looks: PresenterLook[]): PresenterLookGroup[] => {
+  const groups = new Map<string, PresenterLook[]>();
+  for (const look of looks) {
+    const id = look.groupId || `look:${look.id}`;
+    groups.set(id, [...(groups.get(id) || []), look]);
+  }
+  return [...groups].map(([id, groupLooks]) => {
+    const representative = groupLooks.find(look => look.imageUrl) || groupLooks[0];
+    const commonName = groupLooks.length > 1
+      ? groupLooks.map(look => look.name.trim().split(/\s+/)[0]).find(Boolean) || representative.name
+      : representative.name;
+    return { id, name: commonName, representative, looks: groupLooks };
+  });
+};
+export default function PresenterManager({ onClose, onSaved, onSynced, initialMode = 'quick', fixedMode = false, reusePresenterId, initialConfiguration = false }: { onClose: () => void; onSaved: (value: ProductionDefaults) => void | Promise<void>; onSynced?: (value: ProductionDefaults) => void | Promise<void>; initialMode?: 'quick' | 'expert'; fixedMode?: boolean; reusePresenterId?: string; initialConfiguration?: boolean }) {
   const dialog = useRef<HTMLDialogElement>(null);
-  const [tab, setTab] = useState<'create' | 'import'>('create');
+  const [tab, setTab] = useState<'create' | 'import'>(initialConfiguration ? 'import' : 'create');
+  const [wizardStep, setWizardStep] = useState<1 | 2 | 3 | 4>(1);
   const [cap, setCap] = useState<PresenterCapabilities>();
   const [jobs, setJobs] = useState<PresenterCreation[]>([]);
   const [looks, setLooks] = useState<PresenterLook[]>([]); const [lookToken, setLookToken] = useState('');
@@ -21,13 +37,16 @@ export default function PresenterManager({ onClose, onSaved, initialMode = 'quic
   const selectedCreationEnabled = creationMode === 'expert' ? (cap?.digitalTwinCreationEnabled ?? cap?.creationEnabled) : (cap?.photoCreationEnabled ?? cap?.creationEnabled);
   const selectedCreationReason = creationMode === 'expert' ? cap?.digitalTwinCreationReason : cap?.photoCreationReason;
   const [file, setFile] = useState<File>(); const [voiceId, setVoiceId] = useState('');
-  const [authorized, setAuthorized] = useState(false); const [confirmed, setConfirmed] = useState(false); const [reviewed, setReviewed] = useState(false);
+  const [authorized, setAuthorized] = useState(false); const [adultConfirmed, setAdultConfirmed] = useState(false); const [confirmed, setConfirmed] = useState(false); const [reviewed, setReviewed] = useState(false);
   const [reuseGroup, setReuseGroup] = useState(true);
   const [samePersonConfirmed, setSamePersonConfirmed] = useState(false);
   const [selected, setSelected] = useState<{ look: PresenterLook; creationId?: string }>();
   const [busy, setBusy] = useState(false); const [error, setError] = useState(''); const [notice, setNotice] = useState('');
   const [search, setSearch] = useState('');
+  const [expandedGroupId, setExpandedGroupId] = useState('');
   const [catalogScope, setCatalogScope] = useState<'public' | 'private'>('public');
+  const [favoritesSynced, setFavoritesSynced] = useState(false);
+  const favoriteSyncStarted = useRef(false);
   const attempt = useRef<{ requestId: string; uploadRequestId: string; uploadId?: string; signature?: string } | undefined>(undefined);
   const inFlight = useRef(false);
   const updateJob = (job: PresenterCreation) => setJobs(current => [job, ...current.filter(item => item.id !== job.id)]);
@@ -51,6 +70,7 @@ export default function PresenterManager({ onClose, onSaved, initialMode = 'quic
     });
     return () => { live = false; };
   }, []);
+  useEffect(() => { if (initialConfiguration && !looks.length && !inFlight.current) void loadCatalog(); }, [initialConfiguration]);
   useEffect(() => {
     const pending = jobs.filter(j => ['processing', 'pending_consent'].includes(j.status));
     if (!pending.length) return;
@@ -69,8 +89,19 @@ export default function PresenterManager({ onClose, onSaved, initialMode = 'quic
     const result = await presenterApi.catalog(lookToken, catalogScope);
     setLooks(current => [...new Map([...current, ...result.items].map(look => [look.id, look])).values()]); setLookToken(result.nextToken);
   });
+  const syncFavorites = () => run(async () => {
+    const result = await presenterApi.syncFavorites();
+    await onSynced?.(result.defaults);
+    setFavoritesSynced(true);
+    setNotice(`HeyGen 收藏 ${result.favoriteCount} 个，本次自动导入 ${result.importedCount} 个${result.skippedWithoutVoice ? `；${result.skippedWithoutVoice} 个缺少原配音色，需手动补选` : ''}${result.capacityReached ? '；企业人物已达上限' : ''}。`);
+  });
+  useEffect(() => {
+    if (favoriteSyncStarted.current) return;
+    favoriteSyncStarted.current = true;
+    void syncFavorites();
+  }, []);
   const choose = (look: PresenterLook, job?: PresenterCreation) => {
-    setSelected({ look, creationId: job?.id }); setVoiceId(job?.voiceId || look.voiceId || ''); setReviewed(false); setAuthorized(false);
+    setSelected({ look, creationId: job?.id }); setVoiceId(job?.voiceId || look.voiceId || ''); setReviewed(false); setAuthorized(false); if (initialConfiguration) setWizardStep(2);
   };
   const create = () => run(async () => {
     if (!file) throw new Error('请先选择人物素材');
@@ -82,26 +113,32 @@ export default function PresenterManager({ onClose, onSaved, initialMode = 'quic
       try { attempt.current.uploadId = (await presenterApi.upload(file, attempt.current.uploadRequestId, undefined, type === 'photo_from_video' ? 1 : undefined, type === 'digital_twin')).id; }
       catch (e) { attempt.current = undefined; throw e; }
     }
-    const job = await presenterApi.create({ name: name.trim(), type: type === 'photo_from_video' ? 'photo' : type, uploadId: attempt.current.uploadId, requestId: attempt.current.requestId, authorized, confirmed, ...(reuseId ? { reusePresenterId: reuseId, samePersonConfirmed } : {}) });
-    updateJob(job); attempt.current = undefined; setFile(undefined); setConfirmed(false); setAuthorized(false);
+    const job = await presenterApi.create({ name: name.trim(), type: type === 'photo_from_video' ? 'photo' : type, voiceId, uploadId: attempt.current.uploadId, requestId: attempt.current.requestId, authorized, adultConfirmed, confirmed, ...(reuseId ? { reusePresenterId: reuseId, samePersonConfirmed } : {}) });
+    updateJob(job); attempt.current = undefined; setFile(undefined); setConfirmed(false); setAuthorized(false); setAdultConfirmed(false);
     setSamePersonConfirmed(false);
     setNotice('人物任务已保存。训练和授权完成后，预览并添加到企业即可使用。');
   });
   const voice = voices.find(item => item.id === voiceId);
+  const normalizedSearch = search.trim().toLowerCase();
+  const catalogGroups = groupPresenterLooks(looks).filter(group => !normalizedSearch
+    || group.name.toLowerCase().includes(normalizedSearch)
+    || group.looks.some(look => look.name.toLowerCase().includes(normalizedSearch)));
   const voicePicker = <div className="space-y-2">{cap?.privateCatalog && <label className="block text-sm">声音来源<select aria-label="声音来源" className={field} value={voiceScope} onChange={e => { const scope = e.target.value as 'public' | 'private'; setVoiceScope(scope); void presenterApi.voices('', '', scope).then(page => { setVoices(page.items); setVoiceToken(page.nextToken); }).catch(error => setError(String(error))); }}><option value="public">公共音色</option><option value="private">本企业已录入音色</option></select></label>}<label className="block text-sm">人物声音<select aria-label="人物声音" className={field} value={voiceId} onChange={e => setVoiceId(e.target.value)}>
     <option value="">请选择声音</option>{voiceId && !voices.some(v => v.id === voiceId) && <option value={voiceId}>人物原配声音</option>}
     {voices.map(v => <option key={v.id} value={v.id}>{v.name} · {v.language}</option>)}
   </select></label>{voice && !voice.previewUrl && <p className="text-xs text-text-muted">此声音暂未提供试听样本</p>}{voice?.previewUrl && <audio aria-label="声音试听" controls src={voice.previewUrl} className="h-10 w-full" />}
     {voiceToken && <button className={button} type="button" disabled={busy} onClick={() => void run(async () => { const result = await presenterApi.voices(voiceToken, '', voiceScope); setVoices(current => [...new Map([...current, ...result.items].map(v => [v.id, v])).values()]); setVoiceToken(result.nextToken); })}>加载更多声音</button>}</div>;
   return <dialog ref={dialog} onCancel={event => { if (busy) event.preventDefault(); else onClose(); }} aria-labelledby="presenter-manager-title" className="m-auto max-h-[90vh] w-[min(900px,94vw)] overflow-y-auto rounded-2xl border border-border bg-white p-0 text-text-primary shadow-xl backdrop:bg-black/35">
-    <header className="sticky top-0 z-10 flex items-center justify-between border-b border-border bg-white p-5"><div><h2 id="presenter-manager-title" className="font-bold">企业人物资产</h2><p className="mt-1 text-xs text-text-muted">在这里创建、预览和选择企业出镜人物</p></div><button type="button" disabled={busy} onClick={onClose} className={button} aria-label="关闭人物管理">关闭</button></header>
+    <header className="sticky top-0 z-10 flex items-center justify-between border-b border-border bg-white p-5"><div><h2 id="presenter-manager-title" className="font-bold">{initialConfiguration ? '初始配置 · 人物与音色' : '企业人物资产'}</h2><p className="mt-1 text-xs text-text-muted">{initialConfiguration ? '选择已有角色无需肖像授权；创建新角色时完成授权和成年人检测' : '在这里创建、预览和选择企业出镜人物'}</p></div><button type="button" disabled={busy} onClick={onClose} className={button} aria-label="关闭人物管理">关闭</button></header>
     <div className="space-y-5 p-5">
       {cap?.reason && <p className="rounded-lg bg-amber-50 p-3 text-sm">{cap.reason}</p>}
       {cap && !selectedCreationEnabled && selectedCreationReason && selectedCreationReason !== cap.reason && tab === 'create' && <p role="status" className="rounded-lg bg-amber-50 p-3 text-sm">当前创建方式暂不可用：{selectedCreationReason}</p>}
       {error && <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>}
       {notice && <p role="status" className="rounded-lg bg-green-50 p-3 text-sm">{notice}</p>}
-      <div className="flex gap-2"><button className={`${button} ${tab === 'create' ? 'bg-emerald-50 font-bold' : ''}`} disabled={busy} onClick={() => { setTab('create'); setSelected(undefined); setAuthorized(false); }}>创建企业人物</button><button className={`${button} ${tab === 'import' ? 'bg-emerald-50 font-bold' : ''}`} disabled={busy} onClick={() => { setTab('import'); if (!looks.length) void loadCatalog(); }}>导入已有人物</button></div>
-      {tab === 'create' && <fieldset disabled={busy || !selectedCreationEnabled} className="space-y-4 disabled:opacity-60">
+      {initialConfiguration && <ol className="grid grid-cols-4 gap-2" aria-label="初始配置步骤">{['选择人物','选择音色','授权检测','确认配置'].map((label, index) => <li key={label} className={`rounded-lg border px-2 py-2 text-center text-xs ${wizardStep === index + 1 ? 'border-emerald-600 bg-emerald-50 font-bold text-emerald-800' : wizardStep > index + 1 ? 'border-emerald-200 text-emerald-700' : 'border-border text-text-muted'}`}>{index + 1}. {label}</li>)}</ol>}
+      {(!initialConfiguration || wizardStep === 1) && <div className="flex gap-2"><button className={`${button} ${tab === 'import' ? 'bg-emerald-50 font-bold' : ''}`} disabled={busy} onClick={() => { setTab('import'); if (!looks.length) void loadCatalog(); if (!favoritesSynced) void syncFavorites(); }}>选择已有人物</button><button className={`${button} ${tab === 'create' ? 'bg-emerald-50 font-bold' : ''}`} disabled={busy} onClick={() => { setTab('create'); setSelected(undefined); setAuthorized(false); if (initialConfiguration) setWizardStep(2); }}>创建新人物</button></div>}
+      {initialConfiguration && tab === 'create' && wizardStep === 2 && <section className="space-y-3 rounded-xl border border-emerald-200 p-4"><h3 className="font-bold">第 2 步 · 选择人物音色</h3>{voicePicker}<div className="flex gap-2"><button className={button} onClick={() => setWizardStep(1)}>上一步</button><button className={`${button} bg-emerald-700 text-white`} disabled={!voiceId} onClick={() => setWizardStep(3)}>继续授权与检测</button></div></section>}
+      {tab === 'create' && (!initialConfiguration || wizardStep === 3) && <fieldset disabled={busy || !selectedCreationEnabled} className="space-y-4 disabled:opacity-60">
         {!fixedMode && <div className="grid grid-cols-2 gap-2 rounded-xl bg-surface-2 p-1" aria-label="数字人创建模式">
           <button type="button" onClick={() => { if (creationMode !== 'quick') { setType('photo_from_video'); setFile(undefined); } }} className={`rounded-lg px-3 py-3 text-left text-sm ${creationMode === 'quick' ? 'bg-white font-bold shadow-sm' : ''}`}><span className="block">照片形象</span><span className="mt-1 block text-xs font-normal text-text-muted">上传照片或从视频抽帧，创建本人外观</span></button>
           <button type="button" onClick={() => { if (creationMode !== 'expert') { setType('digital_twin'); setFile(undefined); } }} className={`rounded-lg px-3 py-3 text-left text-sm ${creationMode === 'expert' ? 'bg-white font-bold shadow-sm' : ''}`}><span className="block">视频分身（专家）</span><span className="mt-1 block text-xs font-normal text-text-muted">完整真人视频训练，保留表情与动作习惯</span></button>
@@ -120,24 +157,39 @@ export default function PresenterManager({ onClose, onSaved, initialMode = 'quic
         {creationMode === 'expert' && <div className="grid gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-950 sm:grid-cols-2"><span>✓ 30 秒至 5 分钟连续录制</span><span>✓ 至少 720p、24fps</span><span>✓ 本人清晰说话音轨</span><span>✓ 无剪辑、无遮挡、均匀光线</span><span className="sm:col-span-2">提交前系统自动检查时长、画幅、帧率和音轨；推荐使用约 2 分钟的 1080p、30fps 素材。</span></div>}
         <label className="block text-sm">{type === 'photo' ? '清晰的单人正面照片' : type === 'photo_from_video' ? '包含本人清晰正脸的视频' : '单人正面连续口播视频'}<input key={type + (file ? 'selected' : 'empty')} aria-label="人物素材" type="file" accept={type === 'photo' ? '.jpg,.jpeg,.png,image/jpeg,image/png' : '.mp4,.mov,.webm,video/mp4,video/quicktime,video/webm'} onChange={e => setFile(e.target.files?.[0])} className={field} /><span className="mt-1 block text-xs text-text-muted">{file ? `已选择：${file.name} · ` : ''}单个文件不超过 200MB。{type === 'photo' ? '支持 JPG、PNG。' : type === 'photo_from_video' ? '支持 MP4、MOV、WebM；系统只提取第 1 秒画面作为本人照片。' : '支持 MP4、MOV、WebM；训练视频必须包含本人清晰说话音频并保持完整。人物创建成功后，单条口播测试再限制为 7 秒以内。'}</span></label>
         <label className="flex gap-2 text-sm"><input type="checkbox" checked={authorized} onChange={e => setAuthorized(e.target.checked)} />我已取得此人物的肖像及素材使用授权，同意将素材提交给 HeyGen 处理</label>
+        <label className="flex gap-2 text-sm"><input type="checkbox" checked={adultConfirmed} onChange={e => setAdultConfirmed(e.target.checked)} />我已核验画面主体为成年人</label>
         {cap?.privateCatalog && reusePresenterId && <div className="space-y-2 rounded-lg border border-emerald-200 p-3 text-sm"><label className="flex gap-2"><input type="checkbox" checked={reuseGroup} onChange={e => { setReuseGroup(e.target.checked); setSamePersonConfirmed(false); }} />沿用当前人物的 HeyGen 人物组授权</label>{reuseGroup && <label className="flex gap-2"><input type="checkbox" checked={samePersonConfirmed} onChange={e => setSamePersonConfirmed(e.target.checked)} />确认新增素材与当前已授权人物为同一人</label>}<p className="text-xs text-text-muted">若是另一位人物，取消沿用后创建独立人物组，由本人完成所需验证。</p></div>}
         <p className="text-xs text-text-muted">{type === 'digital_twin' ? '创建后在当前页面获取 HeyGen 本人授权入口。本人在官方页面逐字朗读当次显示的文案和授权码，返回灵枢刷新状态。' : '照片人物创建后在当前页面查看供应商状态；仅当 HeyGen 要求本人验证时，才显示官方授权入口。'}</p>
         <label className="flex gap-2 text-sm"><input type="checkbox" checked={confirmed} onChange={e => setConfirmed(e.target.checked)} />确认创建人物并接受供应商计费{(type !== 'digital_twin' ? cap?.photoReservationCny ?? cap?.reservationCny : cap?.digitalTwinReservationCny ?? cap?.reservationCny) != null ? `（本次预算预留 ¥${type !== 'digital_twin' ? cap?.photoReservationCny ?? cap?.reservationCny : cap?.digitalTwinReservationCny ?? cap?.reservationCny}，实际费用以供应商账单为准）` : ''}</label>
-        <button type="button" disabled={!name.trim() || !file || !authorized || !confirmed || Boolean(cap?.privateCatalog && reusePresenterId && reuseGroup && !samePersonConfirmed)} onClick={() => void create()} className={`${button} bg-emerald-700 text-white`}>{busy ? '正在提交，请稍候…' : '创建人物'}</button>
+        <button type="button" disabled={!name.trim() || !file || !voiceId || !authorized || !adultConfirmed || !confirmed || Boolean(cap?.privateCatalog && reusePresenterId && reuseGroup && !samePersonConfirmed)} onClick={() => void create()} className={`${button} bg-emerald-700 text-white`}>{busy ? '正在提交，请稍候…' : '创建人物并提交检测'}</button>
         {attempt.current && <p className="text-xs">如提交未返回结果，保持名称和文件不变后重试，将继续核对同一请求。</p>}
       </fieldset>}
-      {tab === 'import' && <div className="space-y-3"><p className="text-xs text-text-muted">选择公共人物，或从下方“本企业创建任务”添加已完成的人物。已绑定的人物继续显示在企业出镜设置中。</p>
+      {tab === 'import' && (!initialConfiguration || wizardStep === 1) && <div className="space-y-3"><p className="text-xs text-text-muted">选择公共人物，或从下方“本企业创建任务”添加已完成的人物。已有平台人物无需再次提交肖像授权；HeyGen 收藏人物自动导入，亚洲人物优先置顶。</p>
+        <button type="button" disabled={busy} onClick={() => void syncFavorites()} className={`${button} border-emerald-600 bg-emerald-50 font-bold text-emerald-800`}>{favoritesSynced ? '重新同步 HeyGen 收藏' : '同步并自动导入 HeyGen 收藏'}</button>
         {cap?.privateCatalog && <label className="block text-sm">人物来源<select className={field} value={catalogScope} disabled={busy} onChange={e => { const scope = e.target.value as 'public' | 'private'; setCatalogScope(scope); setSelected(undefined); void run(async () => { const result = await presenterApi.catalog('', scope); setLooks(result.items); setLookToken(result.nextToken); }); }}><option value="public">公共人物库</option><option value="private">企业账号已有的人物</option></select></label>}
-        <input aria-label="筛选人物" placeholder="按名称筛选已加载人物" value={search} onChange={e => setSearch(e.target.value)} className={field} />
-        <div className="grid max-h-80 grid-cols-2 gap-3 overflow-y-auto sm:grid-cols-4">{looks.filter(look => look.name.toLowerCase().includes(search.toLowerCase())).map(look => <button type="button" disabled={busy || look.status !== 'completed'} key={look.id} onClick={() => choose(look)} className={`overflow-hidden rounded-lg border p-2 text-left text-xs ${selected?.look.id === look.id ? 'border-emerald-600 bg-emerald-50' : 'border-border'}`}>
-          {look.imageUrl && <img src={look.imageUrl} alt={look.name} loading="lazy" className="mb-2 h-28 w-full rounded object-contain" />}<span>{look.name}</span></button>)}</div>
+        <input aria-label="筛选人物" placeholder="按人物或场景名称筛选" value={search} onChange={e => setSearch(e.target.value)} className={field} />
+        <div className="max-h-96 space-y-3 overflow-y-auto" aria-label="已加载人物组">{catalogGroups.map(group => {
+          const expanded = expandedGroupId === group.id;
+          return <section key={group.id} className={`rounded-xl border ${expanded ? 'border-emerald-300 bg-emerald-50/40' : 'border-border'}`}>
+            <button type="button" disabled={busy} aria-expanded={expanded} onClick={() => setExpandedGroupId(current => current === group.id ? '' : group.id)} className="grid w-full grid-cols-[96px_1fr_auto] items-center gap-3 p-3 text-left">
+              {group.representative.imageUrl ? <img src={group.representative.imageUrl} alt={group.name} loading="lazy" className="h-20 w-24 rounded-lg object-cover" /> : <span className="h-20 w-24 rounded-lg bg-surface-2" />}
+              <span><strong className="block text-sm">{group.name}</strong><span className="mt-1 block text-xs text-text-muted">{group.looks.length} 个场景造型</span></span>
+              <span className="text-xs font-medium text-emerald-700">{expanded ? '收起场景' : '查看场景'}</span>
+            </button>
+            {expanded && <div className="grid grid-cols-2 gap-2 border-t border-emerald-100 p-3 sm:grid-cols-4" aria-label={`${group.name} 的场景造型`}>
+              {group.looks.map(look => <button type="button" disabled={busy || look.status !== 'completed'} key={look.id} onClick={() => choose(look)} className={`overflow-hidden rounded-lg border bg-white p-2 text-left text-xs ${selected?.look.id === look.id ? 'border-emerald-600 ring-1 ring-emerald-500' : 'border-border'}`}>
+                {look.imageUrl && <img src={look.imageUrl} alt={look.name} loading="lazy" className="mb-2 h-24 w-full rounded object-contain" />}<span>{look.name}</span>
+              </button>)}
+            </div>}
+          </section>;
+        })}</div>
         <button className={button} type="button" disabled={busy} onClick={() => void loadCatalog()}>{lookToken ? '加载更多人物' : '刷新人物列表'}</button>
       </div>}
-      <section className="space-y-3 border-t border-border pt-4"><div className="flex items-center justify-between"><h3 className="font-bold">本企业创建任务</h3><button disabled={busy} className={button} onClick={() => void run(async () => setJobs(await presenterApi.creations()))}>刷新列表</button></div>
+      {(!initialConfiguration || (tab === 'create' && wizardStep >= 3)) && <section className="space-y-3 border-t border-border pt-4"><div className="flex items-center justify-between"><h3 className="font-bold">本企业创建任务</h3><button disabled={busy} className={button} onClick={() => void run(async () => setJobs(await presenterApi.creations()))}>刷新列表</button></div>
         {!jobs.length && <p className="text-sm text-text-muted">暂无创建任务。提交后进度会保存在这里，关闭页面也不会丢失。</p>}
         {jobs.map(job => <div key={job.id} className="space-y-2 rounded-lg border border-border p-3"><div className="flex flex-wrap items-center gap-3">{job.look?.imageUrl && <img alt={job.name} src={job.look.imageUrl} className="h-14 w-14 rounded object-contain" />}<strong className="text-sm">{job.name}</strong><span className="text-xs">{statusText(job)}</span>
           <button disabled={busy} className={button} onClick={() => void run(async () => updateJob(await presenterApi.refresh(job.id)))}>刷新状态</button>
-          {job.status === 'completed' && job.look && <button disabled={busy} className={button} onClick={() => { setTab('import'); choose(job.look!, job); }}>预览并添加</button>}
+          {job.status === 'completed' && job.look && <button disabled={busy} className={button} onClick={() => { setTab('import'); choose(job.look!, job); if (initialConfiguration) setWizardStep(4); }}>预览并添加</button>}
           {job.status === 'pending_consent' && !job.consentUrl && <button disabled={busy} className={button} onClick={() => void run(async () => updateJob(await presenterApi.consent(job.id, crypto.randomUUID())))}>获取本人授权入口</button>}
         </div>{job.error && <p className="text-xs text-amber-700">{job.error}</p>}
           {job.type === 'digital_twin' && job.groupId && <p className="break-all text-xs text-text-muted">绑定的 HeyGen 人物组：{job.groupId}</p>}
@@ -145,12 +197,12 @@ export default function PresenterManager({ onClose, onSaved, initialMode = 'quic
           {job.status === 'processing' && <div role="status" className="rounded-lg border border-sky-200 bg-sky-50 p-3 text-xs text-sky-950"><strong>HeyGen 正在处理人物素材或同步本人验证结果</strong><p className="mt-1">灵枢会自动刷新状态；如果处理完成，任务会出现“预览并添加”。如长时间未更新，可手动刷新状态。</p></div>}
           {job.consentUrl && <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm"><p className="font-medium text-amber-950">HeyGen 要求本人验证，请由人物本人打开官方授权页。</p><p className="mt-1 text-xs text-amber-900">按页面显示的当次文案和授权码录制；完成后回到这里点击“刷新状态”。灵枢不会把本地授权勾选当成 HeyGen 审核通过。</p><p className="mt-2"><a className="text-emerald-700 underline" href={job.consentUrl} target="_blank" rel="noopener noreferrer">一键打开 HeyGen 本人授权</a><span className="ml-2 text-xs text-text-muted">完成后等待 HeyGen 审核并刷新状态。</span></p></div>}
         </div>)}
-      </section>
-      {selected && tab === 'import' && <fieldset disabled={busy} className="space-y-3 rounded-xl border border-emerald-200 bg-emerald-50/30 p-4"><h3 className="font-bold">确认人物 · {selected.look.name}</h3>
+      </section>}
+      {selected && tab === 'import' && (!initialConfiguration || wizardStep >= 2) && <fieldset disabled={busy} className="space-y-3 rounded-xl border border-emerald-200 bg-emerald-50/30 p-4"><h3 className="font-bold">{initialConfiguration ? `第 ${wizardStep} 步 · ${wizardStep === 2 ? '选择人物音色' : '确认初始配置'}` : '确认人物'} · {selected.look.name}</h3>
         {selected.look.videoUrl ? <video aria-label="人物预览" controls src={selected.look.videoUrl} poster={selected.look.imageUrl} className="max-h-64 w-full rounded" /> : selected.look.imageUrl ? <img src={selected.look.imageUrl} alt={selected.look.name} className="max-h-64 w-full object-contain" /> : <p className="text-sm">供应商暂未提供预览，请稍后刷新。</p>}
-        {voicePicker}<label className="flex gap-2 text-sm"><input type="checkbox" checked={reviewed} onChange={e => setReviewed(e.target.checked)} />已预览并确认使用此人物</label>
-        <label className="flex gap-2 text-sm"><input type="checkbox" checked={authorized} onChange={e => setAuthorized(e.target.checked)} />已确认人物和声音使用授权</label>
-        <button type="button" disabled={!reviewed || !authorized || !voiceId || !(selected.look.imageUrl || selected.look.videoUrl)} className={`${button} bg-emerald-700 text-white`} onClick={() => void run(async () => { const value = await presenterApi.import({ lookId: selected.look.id, creationId: selected.creationId, voiceId, authorized, reviewed }); await onSaved(value); setNotice('人物已添加到企业，镜头编辑也可以直接选择。'); setSelected(undefined); })}>添加到企业</button>
+        {voicePicker}{initialConfiguration && wizardStep === 2 ? <div className="flex gap-2"><button className={button} onClick={() => { setSelected(undefined); setWizardStep(1); }}>上一步</button><button className={`${button} bg-emerald-700 text-white`} disabled={!voiceId} onClick={() => setWizardStep(4)}>继续确认</button></div> : <><label className="flex gap-2 text-sm"><input type="checkbox" checked={reviewed} onChange={e => setReviewed(e.target.checked)} />已预览并确认使用此平台人物和所选音色</label>
+        {!selected.creationId && <p className="rounded-lg bg-sky-50 p-3 text-xs text-sky-900">这是平台已有角色，使用依据为平台人物库许可，无需提交你的肖像授权或成年人声明。</p>}
+        <button type="button" disabled={!reviewed || !voiceId || !(selected.look.imageUrl || selected.look.videoUrl)} className={`${button} bg-emerald-700 text-white`} onClick={() => void run(async () => { const value = await presenterApi.import({ lookId: selected.look.id, creationId: selected.creationId, voiceId, reviewed }); await onSaved(value); setNotice('人物和音色已保存为企业资产，并设为当前默认配置。'); setSelected(undefined); })}>{initialConfiguration ? '完成初始配置' : '添加到企业'}</button></>}
       </fieldset>}
     </div>
   </dialog>;

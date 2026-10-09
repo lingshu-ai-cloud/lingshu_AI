@@ -1,6 +1,10 @@
 export interface PresenterLook {
   id: string; name: string; groupId?: string; voiceId?: string;
   imageUrl?: string; videoUrl?: string;
+  gender?: string;
+  ethnicity?: string;
+  tags?: string[];
+  favorite?: boolean;
   orientation: 'unknown' | 'portrait' | 'landscape' | 'square';
   status: string;
 }

@@ -12,6 +12,7 @@ async function request<T>(path: string, body?: unknown): Promise<T> {
 export const presenterApi = {
   capabilities: () => request<PresenterCapabilities>('/capabilities'),
   catalog: (token = '', scope: 'public' | 'private' = 'public') => request<PresenterPage<PresenterLook>>(`/catalog?token=${encodeURIComponent(token)}&scope=${scope}`),
+  syncFavorites: () => request<{ defaults: ProductionDefaults; favoriteCount: number; importedCount: number; skippedWithoutVoice: number; capacityReached: boolean }>('/favorites/sync', {}),
   voices: (token = '', language = '', scope: 'public' | 'private' = 'public') => request<PresenterPage<PresenterVoice>>(`/voices?token=${encodeURIComponent(token)}&language=${encodeURIComponent(language)}&scope=${scope}`),
   async cloneVoice(file: File | Blob, name: string, language: string, requestId: string): Promise<{ id: string; status: string; voiceId: string }> {
     const response = await fetch(`${root}/voices/clones?name=${encodeURIComponent(name)}&language=${encodeURIComponent(language)}&requestId=${encodeURIComponent(requestId)}&consent=true`, {
@@ -37,8 +38,8 @@ export const presenterApi = {
     if (!response.ok) throw new Error(data.error || `人物素材上传失败 (${response.status})`);
     return data;
   },
-  create: (body: { name: string; type: 'photo' | 'digital_twin'; voiceId?: string; uploadId: string; requestId: string; authorized: boolean; confirmed: boolean; reusePresenterId?: string; samePersonConfirmed?: boolean }) => request<PresenterCreation>('/creations', body),
+  create: (body: { name: string; type: 'photo' | 'digital_twin'; voiceId?: string; uploadId: string; requestId: string; authorized: boolean; adultConfirmed: boolean; confirmed: boolean; reusePresenterId?: string; samePersonConfirmed?: boolean }) => request<PresenterCreation>('/creations', body),
   refresh: (id: string) => request<PresenterCreation>(`/creations/${encodeURIComponent(id)}/refresh`, {}),
   consent: (id: string, requestId: string, uploadId?: string) => request<PresenterCreation>(`/creations/${encodeURIComponent(id)}/consent`, { requestId, uploadId }),
-  import: (body: { lookId?: string; creationId?: string; name?: string; voiceId?: string; authorized: boolean; reviewed: boolean }) => request<ProductionDefaults>('/import', body),
+  import: (body: { lookId?: string; creationId?: string; name?: string; voiceId?: string; reviewed: boolean }) => request<ProductionDefaults>('/import', body),
 };
