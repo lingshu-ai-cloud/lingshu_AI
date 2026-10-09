@@ -58,3 +58,17 @@ test('wholesale model label requires explicit buyer resale purpose, never quanti
 });
 
 assert.deepEqual(vetoRevokedContextTags([{ tag: '批发采购', messageId: 'existing', excerpt: 'I need 2000 customized products' }], [{ id: 'existing', actor: 'buyer', body: 'I need 2000 customized products' }]), [], 'persisted invalid model wholesale evidence is vetoed without another model call');
+
+
+test('channel test messages cannot become sample requests, including persisted model evidence', async () => {
+  for (const body of ['普通客户测试 NR-20261009-01', 'This is a test message.', 'Please test the callback.']) {
+    const turns = [{ id: 'buyer', actor: 'buyer', body }];
+    const evidence = [{ tag: '索取样品', messageId: 'buyer', excerpt: body }];
+    assert.deepEqual(await classifyContextTags(turns, async () => JSON.stringify({ items: evidence })), []);
+    assert.deepEqual(vetoRevokedContextTags(evidence, turns), []);
+  }
+  for (const body of ['Please send samples.', '请提供样品。']) {
+    const turns = [{ id: 'buyer', actor: 'buyer', body }];
+    assert.equal((await classifyContextTags(turns, async () => JSON.stringify({ items: [{ tag: '索取样品', messageId: 'buyer', excerpt: body }] }))).length, 1);
+  }
+});
