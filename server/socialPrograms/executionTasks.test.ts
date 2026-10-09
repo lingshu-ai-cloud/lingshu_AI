@@ -4,7 +4,7 @@ import type { DataStore, ListQuery, ListResult, Record_ } from '../storage/datas
 import { DURABLE_OPERATION_LEASE_COLLECTION } from '../runtime/durableLease.js';
 import { createSocialWeeklyExecutionWorker } from '../runtime/socialWeeklyExecutionWorker.js';
 import { createSocialProgramService } from './service.js';
-import { applyBusinessDispatchToExecutionTasks, createWeeklyExecutionTaskService, WEEKLY_EXECUTION_TASKS, getWeeklyExecutionTaskRow, writeWeeklyExecutionTask, recomputePackageExecution } from './executionTasks.js';
+import { planWeeklyExecutionTasks, applyBusinessDispatchToExecutionTasks, createWeeklyExecutionTaskService, WEEKLY_EXECUTION_TASKS, getWeeklyExecutionTaskRow, writeWeeklyExecutionTask, recomputePackageExecution } from './executionTasks.js';
 import { createWeeklyOperatingPackageService } from './weeklyOperatingPackages.js';
 import { createSocialOperatingRepository } from '../socialOperating/repository.js';
 
@@ -125,6 +125,21 @@ async function fixture() {
   });
   return { dataStore, programs, packages, execution, worker, program, account, draft };
 }
+
+test('preparation can precede the operating week and publication follows its zoned release time', async () => {
+  const { draft } = await fixture();
+  draft.socialContentPackage.publicationTasks[0]!.publishWindow = '2026-10-05T10:00:00+08:00';
+  const tasks = planWeeklyExecutionTasks('tenant-a', draft, '2026-10-01T00:00:00Z');
+  const preparation = tasks.find(task => task.schedule.stepKind === 'business_outline')!;
+  assert.equal(preparation.schedule.estimatedStartAt, '2026-10-01T00:00:00.000Z');
+  const publicationId = draft.socialContentPackage.publicationTasks[0]!.publicationTaskId;
+  const publishing = tasks.find(task => task.publicationTaskId === publicationId && task.schedule.stepKind === 'publishing')!;
+  assert.equal(publishing.schedule.estimatedStartAt, '2026-10-05T02:00:00.000Z');
+  const approval = tasks.find(task => task.taskId === publishing.dependsOnTaskIds[0])!;
+  assert(Date.parse(approval.schedule.estimatedFinishAt) <= Date.parse(approval.schedule.latestFinishAt!));
+  const late = planWeeklyExecutionTasks('tenant-a', draft, '2026-10-05T03:00:00Z');
+  assert(late.find(task => task.taskId === publishing.taskId)!.schedule.planningRisks!.includes('publication_deadline_at_risk'));
+});
 
 test('weekly execution tasks freeze the full worker contract and aggregate real state', async () => {
   const { packages, execution, program, draft } = await fixture();

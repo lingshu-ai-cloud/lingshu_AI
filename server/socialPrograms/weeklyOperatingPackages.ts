@@ -335,6 +335,7 @@ export function createWeeklyOperatingPackageService(dataStore: DataStore) {
         automationPolicyRef: current.payload.automationPolicyRef,
         operatingDecisionSnapshotRef: current.payload.operatingDecisionSnapshotRef,
         referenceModeRef: current.payload.referenceModeRef,
+        referenceSourcePolicy: current.payload.referenceSourcePolicy,
         promotionQuotaRef: current.payload.promotionQuotaRef,
         originalContentTarget: current.payload.socialContentPackage.originalContentTarget,
         weeklyBudgetCny: current.payload.socialContentPackage.weeklyBudgetCny,

@@ -9,6 +9,9 @@ import type {
   WeeklyOperatingScheduleSkeleton,
 } from '../../shared/contracts/socialProgram.js';
 import { listSocialDiscoverySupply } from '../socialDiscovery/supply.js';
+import { ownedReferenceSupply } from './ownedReferenceSupply.js';
+import { socialJson, socialRequestHash } from '../starter198/socialContentValidation.js';
+import type { SocialInspirationHandoff } from '../../shared/contracts/socialContentWorkflow.js';
 import { acquireDurableOperationLease, assertDurableOperationLease, releaseDurableOperationLease, DurableOperationLeaseError } from '../runtime/durableLease.js';
 import { SocialProgramError } from './service.js';
 
@@ -39,13 +42,15 @@ export function buildWeeklyOperatingScheduleSkeleton(pkg: WeeklyOperatingPackage
     byMother.set(item.motherContentId, [...(byMother.get(item.motherContentId) ?? []), item]);
   }
   const createdAt = pkg.createdAt;
+  const ownedCount = pkg.referenceSourcePolicy ? Math.round(byMother.size * pkg.referenceSourcePolicy.ownedPercent / 100) : 0;
   return {
     skeletonId: stableId('weekly_skeleton', { packageId: pkg.packageId, version: pkg.version }),
     packageId: pkg.packageId,
     packageVersion: pkg.version,
     generatedBy: 'business_agent',
     tokenCost: 0,
-    slots: [...byMother.entries()].map(([motherContentId, tasks]) => ({
+    slots: [...byMother.entries()].map(([motherContentId, tasks], index) => ({
+      ...(pkg.referenceSourcePolicy ? { referenceSource: index < ownedCount ? 'owned' as const : 'external' as const } : {}),
       slotId: stableId('weekly_slot', { packageId: pkg.packageId, version: pkg.version, motherContentId }),
       motherContentId,
       publicationTaskIds: tasks.map(item => item.publicationTaskId),
@@ -126,6 +131,7 @@ function unguardedPlanningAuthority(dataStore: DataStore, beforeAppend: () => Pr
         packageVersion: pkg.version,
         status: 'outline_ready',
         skeleton,
+        referenceSourcePolicy: pkg.referenceSourcePolicy ?? null,
         directorAnalyses: [],
         detailedSchedule: null,
         userConfirmation: null,
@@ -159,25 +165,48 @@ function unguardedPlanningAuthority(dataStore: DataStore, beforeAppend: () => Pr
         listSocialDiscoverySupply({ tenantId: input.tenantId, dataStore, filters: { candidateType: 'video', decision: 'accepted', businessModel: 'b2b', sort: 'score', perPage: 100 } }),
         listSocialDiscoverySupply({ tenantId: input.tenantId, dataStore, filters: { candidateType: 'account', decision: 'accepted', businessModel: 'b2b', sort: 'score', perPage: 100 } }),
       ]);
-      if (!videos.items.length || !accounts.items.length) {
+      if (!videos.items.length) {
         throw new SocialProgramError('qualified_benchmark_supply_required', 409, '详细计划需要已通过服务端评分的 B2B 对标账号和爆款视频。');
       }
+      const ownedPairs = await ownedReferenceSupply(dataStore, input.tenantId, input.programId, videos.items, input.now);
+      const ownedIds = new Set(ownedPairs.map(pair => pair.video.candidateId));
+      const pairs = videos.items.filter(video => !ownedIds.has(video.candidateId)).flatMap(video => {
+        const account = accounts.items.find(candidate => Array.isArray(candidate.raw?.evidenceVideoIds) && candidate.raw.evidenceVideoIds.includes(video.candidateId));
+        return account ? [{ video, account }] : [];
+      });
+      if (current.skeleton.slots.some(slot => slot.referenceSource === 'owned') && !ownedPairs.length) {
+        throw new SocialProgramError('owned_reference_evidence_required', 409, '自有历史视频缺少账号归属或合格分析证据，请补齐；不会以外部参考替换。');
+      }
+      if (current.skeleton.slots.some(slot => slot.referenceSource !== 'owned') && !pairs.length) {
+        throw new SocialProgramError('benchmark_account_video_link_required', 409, '对标账号与视频缺少可核验关联，请补齐账号的视频证据后再生成详细计划。');
+      }
       const now = (input.now ?? new Date()).toISOString();
+      const handoffs = await dataStore.list<any>('starter_social_inspiration_handoff_versions', { where: { tenant_id: input.tenantId }, perPage: 500 });
+      if (handoffs.totalItems > handoffs.items.length) throw new SocialProgramError('planning_handoff_scan_truncated', 409, '参考分析版本读取不完整，请补齐读取后再冻结计划。');
       const analyses: WeeklyDirectorPlanningAnalysis[] = current.skeleton.slots.map((slot, index) => {
-        const video = videos.items[index % videos.items.length]!;
-        const account = accounts.items[index % accounts.items.length]!;
+        const own = slot.referenceSource === 'owned' ? ownedPairs.filter(pair => slot.accountIds.includes(pair.account.accountId)) : [];
+        if (slot.referenceSource === 'owned' && !own.length) throw new SocialProgramError('owned_reference_account_required', 409, '该母版目标账号缺少已核验的自有参考，需补齐或明确修订配额。');
+        const selected = slot.referenceSource === 'owned' ? own[index % own.length]! : pairs[index % pairs.length]!;
+        const { video } = selected;
+        const frozenHandoff = handoffs.items.filter(row => row.tenant_id === input.tenantId && row.record_hash === socialRequestHash(socialJson(row.payload)))
+          .map(row => ({ row, handoff: socialJson(row.payload) as SocialInspirationHandoff }))
+          .filter(({ handoff }) => handoff?.inspirationId === video.candidateId && handoff.source?.sourceUrl === video.sourceUrl)
+          .sort((a,b) => Number(b.handoff.version ?? b.handoff.analysisVersion) - Number(a.handoff.version ?? a.handoff.analysisVersion))[0];
+        const accountTitle = 'evidenceRef' in selected ? selected.account.displayName : selected.account.title;
         const benchmarkVideoRef: VersionedSocialRef = { type: 'social_discovery_video', id: video.candidateId, version: video.evidenceVersion };
-        const benchmarkAccountRef: VersionedSocialRef = { type: 'social_benchmark_account', id: account.candidateId, version: account.evidenceVersion };
+        const benchmarkAccountRef: VersionedSocialRef = 'evidenceRef' in selected ? { type: 'owned_social_account', id: selected.account.accountId, version: selected.account.version } : { type: 'social_benchmark_account', id: selected.account.candidateId, version: selected.account.evidenceVersion };
         return {
           analysisId: stableId('director_analysis', { planningId: current.planningId, planningVersion: current.version + 1, slotId: slot.slotId, benchmarkVideoRef, benchmarkAccountRef }),
           slotId: slot.slotId,
           packageId: current.packageId,
           packageVersion: current.packageVersion,
           analyzedBy: 'director_agent',
+          frozenHandoffRefs: frozenHandoff ? [{ inspirationId: video.candidateId, version: String(frozenHandoff.handoff.version ?? frozenHandoff.handoff.analysisVersion), recordHash: frozenHandoff.row.record_hash }] : [],
           benchmarkAccountRefs: [benchmarkAccountRef],
           benchmarkVideoRefs: [benchmarkVideoRef],
-          benchmarkEvidenceRefs: [video.evidenceRef, account.evidenceRef],
-          contentDirection: `按 ${account.title} 的更新节奏和内容方向，迁移 ${video.title} 的结构；必须替换产品事实、原素材和原台词。`,
+          historicalPerformance: 'evidenceRef' in selected ? selected.historicalPerformance : null,
+          benchmarkEvidenceRefs: [video.evidenceRef, 'evidenceRef' in selected ? selected.evidenceRef : selected.account.evidenceRef],
+          contentDirection: slot.referenceSource === 'owned' ? `以本账号 ${accountTitle} 的历史视频 ${video.title} 为参考，保留已确认调性，更新本次产品事实与表达。` : `按 ${accountTitle} 的更新节奏和内容方向，迁移 ${video.title} 的结构；必须替换产品事实、原素材和原台词。`,
           styleRules: ['保留前三秒信息结构', '使用企业已确认事实', '不得复用原视频画面、音乐或台词'],
           updateRhythm: slot.plannedPublishWindows.length ? slot.plannedPublishWindows.join('、') : '按本周账号配额均匀发布',
           materialRequirements: ['企业产品实拍或已确认产品素材', '能够支撑卖点的细节镜头', '不可替代的工厂/产品真实性证据'],
@@ -231,10 +260,10 @@ function unguardedPlanningAuthority(dataStore: DataStore, beforeAppend: () => Pr
             benchmarkVideoRefs: analysis.benchmarkVideoRefs,
             materialRequirements: analysis.materialRequirements,
             materialPlan: {
-              canStartWithExistingAssets: true,
+              canStartWithExistingAssets: false,
               fallback: 'premium_aigc' as const,
-              optionalShootTaskIds: analysis.materialRequirements.map((requirement, index) => stableId('optional_shoot_task', { planningId: current.planningId, publicationTaskId, requirement, index })),
-              note: '不上传自有素材也可用现有素材与最高档 AIGC 开始制作；用户补拍内容进入下一轮排期，不阻塞本周任务。',
+              optionalShootTaskIds: [],
+              note: '素材就绪由实际核验任务确认。必需企业实拍、产品事实和人物授权不能以 AIGC 默认替代；拍摄任务仅在真实创建后关联。',
             },
             publishWindow: publication.publishWindow || input.package.weekEnd,
             qualityTier: 'premium' as const,

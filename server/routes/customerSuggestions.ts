@@ -8,6 +8,8 @@ import { aggregateKnowledgeMisses } from '../knowledge/misses.js';
 import { recordStyleMemory } from '../knowledge/styleMemory.js';
 import { getNightModeMorningBriefing } from '../whatsapp/historyImport.js';
 import { analyzeMessengerCustomerTags, getMessengerCustomers, patchMessengerCustomer, sendTenantMessengerText } from '../messenger/conversations.js';
+import { analyzeInstagramCustomerTags, getInstagramCustomers, patchInstagramCustomer } from '../instagram/conversations.js';
+import { sendTenantInstagramText } from '../instagram/send.js';
 import { customerServicePolicy, customerServiceStatus, readTenantEnterpriseProfile } from './enterprise.js';
 import { readCustomerMessagingAuthorization } from '../digitalEmployees/customerMessagingPolicy.js';
 
@@ -41,12 +43,20 @@ async function maybeRecordStyleMemory(req: any, tenantId: string, customerId: st
 customerSuggestionsRouter.get('/', requireAuth, (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   const source = String(req.query.source || '');
-  if (source && source !== 'messenger') {
+  if (source && source !== 'messenger' && source !== 'instagram') {
     res.json({ items: [], source });
     return;
   }
-  res.json({ items: getMessengerCustomers(tenantId), source: 'messenger' });
+  const items = source === 'messenger' ? getMessengerCustomers(tenantId)
+    : source === 'instagram' ? getInstagramCustomers(tenantId)
+      : [...getMessengerCustomers(tenantId), ...getInstagramCustomers(tenantId)].sort((a, b) => b.lastActiveAt - a.lastActiveAt);
+  res.json({ items, source: source || 'all' });
 });
+
+function customerChannel(tenantId: string, id: string): 'instagram' | 'messenger' | null {
+  if (id.startsWith('instagram_')) return getInstagramCustomers(tenantId).some(item => item.id === id) ? 'instagram' : null;
+  return getMessengerCustomers(tenantId).some(item => item.id === id) ? 'messenger' : null;
+}
 
 customerSuggestionsRouter.get('/templates', (_req, res) => {
   res.json({ items: [] });
@@ -55,7 +65,10 @@ customerSuggestionsRouter.get('/templates', (_req, res) => {
 customerSuggestionsRouter.post('/:id/context-tags', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   try {
-    const customer = await analyzeMessengerCustomerTags(tenantId, String(req.params.id));
+    const id = String(req.params.id);
+    const channel = customerChannel(tenantId, id);
+    const customer = channel === 'instagram' ? await analyzeInstagramCustomerTags(tenantId, id)
+      : channel === 'messenger' ? await analyzeMessengerCustomerTags(tenantId, id) : null;
     if (!customer) { res.status(404).json({ error: 'customer_not_found' }); return; }
     res.json({ customer });
   } catch (error) {
@@ -103,7 +116,10 @@ customerSuggestionsRouter.patch('/:id', (req, res) => {
   if (req.body && Object.prototype.hasOwnProperty.call(req.body, 'orders')) {
     res.status(422).json({ error: '请通过订单台账登记和更新订单，客户备注不再接受订单状态修改', code: 'use_order_ledger' }); return;
   }
-  const customer = patchMessengerCustomer(tenantId, customerId, req.body && typeof req.body === 'object' ? req.body as Record<string, unknown> : {});
+  const patch = req.body && typeof req.body === 'object' ? req.body as Record<string, unknown> : {};
+  const customer = customerChannel(tenantId, customerId) === 'instagram'
+    ? patchInstagramCustomer(tenantId, customerId, patch)
+    : patchMessengerCustomer(tenantId, customerId, patch);
   if (!customer) {
     res.status(404).json({ error: 'customer_not_found' });
     return;
@@ -119,10 +135,13 @@ customerSuggestionsRouter.post('/:id/source-attribution', async (req, res) => {
     res.status(400).json({ error: 'customer_id_and_post_id_required' });
     return;
   }
-  const customer = patchMessengerCustomer(tenantId, customerId, {
+  const channel = customerChannel(tenantId, customerId);
+  const patch = {
     sourcePostId: postId,
-    sourcePostPlatform: 'facebook',
-  });
+    sourcePostPlatform: channel === 'instagram' ? 'instagram' : 'facebook',
+  };
+  const customer = channel === 'instagram' ? patchInstagramCustomer(tenantId, customerId, patch)
+    : patchMessengerCustomer(tenantId, customerId, patch);
   if (!customer) {
     res.status(404).json({ error: 'attribution_candidate_not_found' });
     return;
@@ -145,16 +164,18 @@ customerSuggestionsRouter.post('/:id/outbox', requireAuth, async (req, res) => {
     res.status(400).json({ error: 'customer_id_and_body_required' });
     return;
   }
+  const channel = customerChannel(tenantId, customerId);
+  if (!channel) { res.status(404).json({ error: 'customer_not_found' }); return; }
   if (req.body?.auto === true) {
     const status = customerServiceStatus(await readTenantEnterpriseProfile(tenantId));
-    const messagingAuthorization = await readCustomerMessagingAuthorization(tenantId, 'messenger');
+    const messagingAuthorization = await readCustomerMessagingAuthorization(tenantId, channel);
     if (!status.autoReplyReady || !messagingAuthorization.inboundAutoSendAllowed) {
       res.status(409).json({ error: 'auto_reply_not_authorized', message: '当前只提供建议回复，不能自动发送。' });
       return;
     }
   }
   if (req.body?.outsideWindow) {
-    res.status(409).json({ error: 'messenger_window_closed', message: '距客户上次互动已超过 24 小时，当前不能直接发送普通 Messenger 消息。' });
+    res.status(409).json({ error: `${channel}_window_closed`, message: `距客户上次互动已超过 24 小时，当前不能直接发送普通 ${channel === 'instagram' ? 'Instagram 私信' : 'Messenger 消息'}。` });
     return;
   }
   const suspendedUntil = manualActiveUntil.get(`${tenantId}:${customerId}`) || 0;
@@ -165,7 +186,9 @@ customerSuggestionsRouter.post('/:id/outbox', requireAuth, async (req, res) => {
     }
   }
   try {
-    const receipt = await sendTenantMessengerText({ tenantId, customerId, body });
+    const receipt = channel === 'instagram'
+      ? await sendTenantInstagramText({ tenantId, customerId, body })
+      : await sendTenantMessengerText({ tenantId, customerId, body });
     await maybeRecordStyleMemory(req, tenantId, customerId, body);
     res.json({
       ok: true,
@@ -176,8 +199,8 @@ customerSuggestionsRouter.post('/:id/outbox', requireAuth, async (req, res) => {
     });
   } catch (error) {
     res.status(502).json({
-      error: 'messenger_send_failed',
-      message: error instanceof Error ? error.message : 'Messenger send failed',
+      error: `${channel}_send_failed`,
+      message: error instanceof Error ? error.message : `${channel} send failed`,
     });
   }
 });
@@ -202,14 +225,16 @@ customerSuggestionsRouter.get('/:id/suggestions', async (req, res) => {
     return;
   }
   const id = String(req.params.id ?? '');
-  const customer = getMessengerCustomers(tenantId).find(item => item.id === id);
+  const customer = id.startsWith('instagram_')
+    ? getInstagramCustomers(tenantId).find(item => item.id === id)
+    : getMessengerCustomers(tenantId).find(item => item.id === id);
   if (!customer) {
     res.status(404).json({ items: [], error: 'customer_not_found' });
     return;
   }
   const customerTimeline = Array.isArray(customer.timeline) ? customer.timeline.slice(-8) : [];
   const hint: CustomerHint = {
-    name: String(customer.name || customer.messengerUserId || '客户'),
+    name: String(customer.name || ('instagramUserId' in customer ? customer.instagramUserId : customer.messengerUserId) || '客户'),
     stage: String(customer.stage || 'inquiry'),
     intentScore: Number(customer.intentScore || 0),
     product: String(customer.outboundProduct || customer.product || ''),

@@ -13,6 +13,7 @@ import { createSocialOperatingRepository } from '../socialOperating/repository.j
 import { createWeeklyPlanningAuthority } from '../socialPrograms/planningAuthority.js';
 import { PACKAGES, type PackageRow } from '../socialPrograms/weeklyOperatingPackageSupport.js';
 import type { SocialWeeklyExecutionAdapter, WeeklyExecutionAdapterResult } from './socialWeeklyExecutionAdapter.js';
+import { weeklyScriptEvidence } from './socialWeeklyScriptEvidence.js';
 
 export const WEEKLY_PRODUCTION_STEPS = ['material_readiness', 'script', 'storyboard', 'asset_generation', 'video_generation', 'quality_check', 'rework'] as const;
 export function weeklyProductionBindingKey(task: Pick<WeeklyExecutionTask, 'packageId' | 'packageVersion' | 'publicationTaskId'>): string {
@@ -86,6 +87,7 @@ export function createSocialWeeklyProductionAdapter(dataStore: DataStore, ports:
     if (existing.totalItems > 1) return blocked('weekly_production_binding_ambiguous', '内容生产任务绑定不唯一。');
     let detail: SocialContentTaskDetail | null = existing.items[0]
       ? await read({ repository, tenantId: task.tenantId, taskId: String(existing.items[0].task_id) }) : null;
+    let scriptEvidence: VersionedSocialRef | null = null;
     try {
       if (!detail) {
         const goalRef = pkg.businessContentGoalRef;
@@ -110,6 +112,7 @@ export function createSocialWeeklyProductionAdapter(dataStore: DataStore, ports:
       const boundRows = await repository.list(STARTER_COLLECTIONS.socialContentTasks, task.tenantId, { where: { task_id: detail.taskId }, perPage: 2 });
       const boundRow = boundRows.items[0];
       if (!boundRow || boundRows.totalItems !== 1) return blocked('weekly_production_binding_missing', '内容任务身份无法核对。');
+      if (task.schedule.stepKind === 'script') scriptEvidence = weeklyScriptEvidence(boundRow, (item.benchmarkVideoRefs ?? []).map(ref => ref.id));
       const brief = socialObject(socialJson(boundRow.brief))!;
       let authority = brief._weeklyAuthority as Awaited<ReturnType<typeof bindWeeklyProductionAuthority>> | undefined;
       if (!authority) {
@@ -118,9 +121,18 @@ export function createSocialWeeklyProductionAdapter(dataStore: DataStore, ports:
         detail = (await read({ repository, tenantId: task.tenantId, taskId: detail.taskId }))!;
       }
       await (ports.persistResultAuthority ?? persistWeeklyProductionResultAuthority)({ repository, tenantId: task.tenantId, authority, detail });
+      const unmetMaterials = new Set([
+        ...(detail.materialReadiness?.blockingRequirementIds ?? []),
+        ...(detail.materialRequirements ?? []).filter(requirement => requirement.required && requirement.status !== 'satisfied').map(requirement => requirement.requirementId),
+      ]);
+      if (unmetMaterials.size || detail.materialReadiness?.complete === false) {
+        return { status: 'blocked', code: 'weekly_required_materials_missing', message: `必需素材尚未核验通过：${[...unmetMaterials].join('、') || '素材核验未完成'}。请在原内容任务补交并核验后继续；不能默认以生成素材替代。`,
+          progress: { contentTaskId: detail.taskId, runId: detail.runId, step: 'material_readiness', activity: '等待必需素材补交与核验', updatedAt: new Date().toISOString() } };
+      }
       // Never restart an existing run after a provider timeout. Its durable job owns receipt reconciliation.
       if (!detail.runId && ['draft', 'needs_input', 'plan_review'].includes(detail.status)) {
-        if (!detail.readiness.complete) return blocked('weekly_production_inputs_required', `内容输入待补全：${detail.readiness.missing.join('、')}`);
+        if (!detail.readiness.complete) return { status: 'blocked', code: 'weekly_production_inputs_required', message: `内容输入待补全：${detail.readiness.missing.join('、')}`,
+          progress: { contentTaskId: detail.taskId, runId: null, step: 'material_readiness', activity: '等待内容输入补齐', updatedAt: new Date().toISOString() } };
         await assertAdmission();
         detail = await start({ repository, orchestratorQueue, tenantId: task.tenantId,
           userId: planning.userConfirmation.confirmedBy, taskId: detail.taskId,
@@ -135,6 +147,7 @@ export function createSocialWeeklyProductionAdapter(dataStore: DataStore, ports:
     if (['draft', 'needs_input', 'plan_review'].includes(detail.status) && !job) return blocked('weekly_production_confirmation_required', '运行身份已保留，但尚未完成生产准入确认。');
     if (job && ['blocked', 'paused', 'cancelled', 'dead_letter'].includes(job.status)) return blocked(job.retryClass || `content_execution_${job.status}`, job.lastError || '后台生产需要处理后才能继续。');
     const progress = detail.productionProgress ? { contentTaskId: detail.taskId, runId: detail.runId, step: detail.productionProgress.step, activity: detail.productionProgress.activity, updatedAt: detail.productionProgress.updatedAt } : undefined;
+    if (task.schedule.stepKind === 'script' && scriptEvidence) return success(scriptEvidence);
     if (job?.status === 'reconciling') return { ...pending('provider_reconciliation', '供应商结果未知，沿用原生产身份对账，不能重新付费提交。'), progress };
     if (task.schedule.stepKind === 'material_readiness' && detail.readiness.complete) {
       const v = version(detail.version);

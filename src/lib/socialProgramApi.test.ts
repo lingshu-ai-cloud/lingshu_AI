@@ -11,6 +11,20 @@ const storage = {
   length: 0,
 } satisfies Storage;
 
+test('material recheck clears only its named blocker and preserves exact task identity', async () => {
+  const previousFetch = globalThis.fetch;
+  const previousStorage = globalThis.localStorage;
+  Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: storage });
+  globalThis.fetch = async (input, init) => {
+    assert.equal(String(input), '/api/overseas/social-programs/program%2Fa/operating-packages/package%2Fb/execution-tasks/task%2Fc/unblock');
+    assert.equal(init?.method, 'POST');
+    assert.deepEqual(JSON.parse(String(init?.body)), { reason: 'weekly_required_materials_missing' });
+    return Response.json({ items: [] });
+  };
+  try { assert.deepEqual(await socialProgramApi.recheckRequiredMaterials('program/a', 'package/b', 'task/c'), []); }
+  finally { globalThis.fetch = previousFetch; Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: previousStorage }); }
+});
+
 test('social program API rejects an HTML fallback instead of crashing the page', async () => {
   const previousFetch = globalThis.fetch;
   const previousStorage = globalThis.localStorage;

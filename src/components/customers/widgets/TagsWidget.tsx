@@ -20,7 +20,7 @@ export function TagsWidget({ customer, onCustomerPatch, onToast }: { customer: C
     <Card>
       <CardHeader>
         <p className="text-xs font-bold text-text-primary">客户标签</p>
-        {customer.source === 'messenger' && <button type="button" disabled={analyzing} onClick={() => void analyze()} className="mt-2 text-[11px] font-bold text-accent disabled:opacity-50">{analyzing ? '分析中…' : '根据会话更新标签'}</button>}
+        {(customer.source === 'messenger' || customer.source === 'instagram') && <button type="button" disabled={analyzing} onClick={() => void analyze()} className="mt-2 text-[11px] font-bold text-accent disabled:opacity-50">{analyzing ? '分析中…' : '根据会话更新标签'}</button>}
       </CardHeader>
       <CardContent>
         <div className="flex flex-wrap gap-1.5">

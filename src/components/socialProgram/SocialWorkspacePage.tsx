@@ -84,7 +84,14 @@ export default function SocialWorkspacePage({ onNavigate }: { onNavigate: (page:
         <button type="button" onClick={() => onNavigate(nextAction.page)} className="btn-primary inline-flex shrink-0 items-center justify-center gap-2">{nextAction.label}<ArrowRight size={15} /></button>
       </section>
 
-      <WeeklyOperatingWorkbench pkg={weeklyPackage} loading={packageLoading} error={packageError} selectedTaskId={linkedTaskId} onRefresh={() => void refreshPackage()} />
+      <WeeklyOperatingWorkbench pkg={weeklyPackage} programRoute={activeProgram.route} onRevision={next => {
+        const url = new URL(window.location.href);
+        url.searchParams.set('packageId', next.packageId);
+        url.searchParams.set('version', String(next.version));
+        url.searchParams.delete('taskId');
+        window.history.replaceState(window.history.state, '', url);
+        setWeeklyPackage(next);
+      }} loading={packageLoading} error={packageError} selectedTaskId={linkedTaskId} onRefresh={() => void refreshPackage()} />
 
       <section className="rounded-xl border border-border bg-white p-5 sm:p-6">
         <div className="flex flex-wrap items-end justify-between gap-3">

@@ -16,9 +16,10 @@ const SUPPORTED = ['shopify', 'tiktok', 'instagram', 'facebook', 'youtube', 'mes
 
 platformIntegrationsRouter.get('/oauth-config', requireAuth, async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
-  const [google, meta, tiktok] = await Promise.all([
+  const [google, meta, instagram, tiktok] = await Promise.all([
     getTenantPlatformApp(tenantId, 'google'),
     getTenantPlatformApp(tenantId, 'meta'),
+    getTenantPlatformApp(tenantId, 'instagram'),
     getTenantPlatformApp(tenantId, 'tiktok'),
   ]);
   const origin = getPublicOrigin(req);
@@ -28,6 +29,7 @@ platformIntegrationsRouter.get('/oauth-config', requireAuth, async (req, res) =>
     callbacks: {
       youtube: `${origin}/api/overseas/youtube/oauth/callback`,
       instagram: `${origin}/api/overseas/social/oauth/instagram/callback`,
+      instagramWebhook: `${origin}/api/webhooks/instagram/${tenantId}`,
       facebook: `${origin}/api/overseas/social/oauth/facebook/callback`,
       messenger: `${origin}/api/webhooks/meta/${tenantId}`,
       tiktok: `${origin}/api/overseas/social/oauth/tiktok/callback`,
@@ -36,6 +38,7 @@ platformIntegrationsRouter.get('/oauth-config', requireAuth, async (req, res) =>
     apps: {
       google: google ? publicTenantPlatformApp(req, google) : null,
       meta: publicMeta,
+      instagram: instagram ? publicTenantPlatformApp(req, instagram) : null,
       tiktok: tiktok ? publicTenantPlatformApp(req, tiktok) : null,
     },
   });
@@ -44,13 +47,14 @@ platformIntegrationsRouter.get('/oauth-config', requireAuth, async (req, res) =>
 platformIntegrationsRouter.put('/oauth-config', requireAuth, async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   const text = (value: unknown) => typeof value === 'string' ? value.trim() : '';
-  if (text(req.body?.metaWebhookVerifyToken).length > 64) {
-    res.status(400).json({ error: 'Messenger Webhook 验证口令最多允许 64 个字符。', platform: 'meta' });
+  if (text(req.body?.metaWebhookVerifyToken).length > 64 || text(req.body?.instagramWebhookVerifyToken).length > 64) {
+    res.status(400).json({ error: 'Webhook 验证口令最多允许 64 个字符。' });
     return;
   }
   const existing = await Promise.all([
     getTenantPlatformApp(tenantId, 'google'),
     getTenantPlatformApp(tenantId, 'meta'),
+    getTenantPlatformApp(tenantId, 'instagram'),
     getTenantPlatformApp(tenantId, 'tiktok'),
   ]);
   const appId = (value: unknown, current: string | undefined) => value === undefined ? text(current) : text(value);
@@ -62,7 +66,8 @@ platformIntegrationsRouter.put('/oauth-config', requireAuth, async (req, res) =>
       appSecret: text(req.body?.metaSocialAppSecret),
       webhookVerifyToken: text(req.body?.metaWebhookVerifyToken),
     },
-    { platform: 'tiktok' as const, appId: appId(req.body?.tiktokClientKey, existing[2]?.app_id), appSecret: text(req.body?.tiktokClientSecret) },
+    { platform: 'instagram' as const, appId: appId(req.body?.instagramAppId, existing[2]?.app_id), appSecret: text(req.body?.instagramAppSecret), webhookVerifyToken: text(req.body?.instagramWebhookVerifyToken) },
+    { platform: 'tiktok' as const, appId: appId(req.body?.tiktokClientKey, existing[3]?.app_id), appSecret: text(req.body?.tiktokClientSecret) },
   ];
   // Validate every pair before starting any write so one invalid application
   // cannot leave the other two partially updated.
@@ -84,13 +89,13 @@ platformIntegrationsRouter.put('/oauth-config', requireAuth, async (req, res) =>
 platformIntegrationsRouter.delete('/oauth-config/:platform', requireAuth, async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   const platform = req.params.platform;
-  if (!['google', 'meta', 'tiktok'].includes(platform)) {
+  if (!['google', 'meta', 'instagram', 'tiktok'].includes(platform)) {
     res.status(400).json({ error: 'invalid_oauth_platform' });
     return;
   }
 
   try {
-    const typedPlatform = platform as 'google' | 'meta' | 'tiktok';
+    const typedPlatform = platform as 'google' | 'meta' | 'instagram' | 'tiktok';
     const disconnectedAccounts = await disconnectTenantPlatformAccounts(tenantId, typedPlatform);
     const existing = await getTenantPlatformApp(tenantId, typedPlatform);
     const configDeleted = await deleteTenantPlatformApp(tenantId, typedPlatform);

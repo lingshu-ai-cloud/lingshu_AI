@@ -10,6 +10,8 @@ import { SocialOperatingDecisionError } from '../socialOperating/service.js';
 import type { OperatingPlanningRequest } from '../../shared/contracts/socialOperatingDecision.js';
 import { createWeeklyExecutionTaskService } from '../socialPrograms/executionTasks.js';
 import { revokePublicationAssignments } from '../publishing/weeklyLineage.js';
+import { assessWeeklyRecovery } from '../socialPrograms/weeklyRecoveryAssessment.js';
+import { bindWeeklyCustomerRun, readWeeklyCustomerStep, type WeeklyCustomerStep } from '../runtime/socialWeeklyCustomerBridge.js';
 
 function asyncRoute(handler: RequestHandler): RequestHandler {
   return (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
@@ -227,6 +229,51 @@ export function createSocialProgramsRouter(dataStore: DataStore = store, authent
       throw new SocialProgramError('package_version_invalid', 400, '周包版本无效。');
     }
     res.json({ items: await executionTasks.list(tenantId, programId, packageId, requestedVersion) });
+  }));
+
+  router.post('/:programId/operating-packages/:packageId/customer-run-binding', asyncRoute(async (req, res) => {
+    const { tenantId, userId } = res.locals as AuthLocals;
+    const authority = { tenantId, programId: String(req.params.programId || ''), packageId: String(req.params.packageId || ''), packageVersion: Number(req.body?.packageVersion) };
+    if (!Number.isSafeInteger(authority.packageVersion) || authority.packageVersion < 1 || typeof req.body?.runId !== 'string' || !req.body.runId.trim()) {
+      throw new SocialProgramError('weekly_customer_binding_input_invalid', 400, '请选择具体客服运行及周包版本。');
+    }
+    res.json({ item: await bindWeeklyCustomerRun(dataStore, authority, req.body.runId.trim(), userId) });
+  }));
+
+  router.get('/:programId/operating-packages/:packageId/customer-run-binding/:runId/steps/:step', asyncRoute(async (req, res) => {
+    const { tenantId } = res.locals as AuthLocals;
+    const authority = { tenantId, programId: String(req.params.programId || ''), packageId: String(req.params.packageId || ''), packageVersion: Number(req.query.version) };
+    if (!Number.isSafeInteger(authority.packageVersion) || authority.packageVersion < 1) throw new SocialProgramError('package_version_invalid', 400, '请明确指定周包版本。');
+    const step = String(req.params.step || '');
+    if (!['customer_segmentation', 'customer_followup_draft', 'customer_followup_approval', 'customer_followup_dispatch'].includes(step)) {
+      throw new SocialProgramError('weekly_customer_step_unsupported', 400, '客服阶段无效。');
+    }
+    res.json({ item: await readWeeklyCustomerStep(dataStore, authority, String(req.params.runId || ''), step as WeeklyCustomerStep) });
+  }));
+
+  router.post('/:programId/operating-packages/:packageId/recovery-assessment', asyncRoute(async (req, res) => {
+    const { tenantId } = res.locals as AuthLocals;
+    const programId = String(req.params.programId || '');
+    const packageId = String(req.params.packageId || '');
+    const pkg = await weeklyPackages.get(tenantId, programId, packageId);
+    const requestedVersion = Number(req.body?.packageVersion);
+    if (!Number.isSafeInteger(requestedVersion) || requestedVersion < 1) throw new SocialProgramError('package_version_invalid', 400, '请明确指定需要评估的周包版本。');
+    const tasks = await executionTasks.list(tenantId, programId, packageId, requestedVersion);
+    if (!tasks.length || pkg.programId !== programId) throw new SocialProgramError('weekly_recovery_tasks_missing', 409, '该版本没有可评估的执行任务。');
+    // Capacity inputs are explicit scenario assumptions, never persisted completion evidence.
+    // Task identity, dependencies, blockers and deadlines always come from the authenticated store.
+    try {
+      const item = assessWeeklyRecovery({
+        tasks, now: new Date().toISOString(),
+        changedTaskIds: req.body?.changedTaskIds,
+        constraints: req.body?.constraints,
+        resources: req.body?.resources,
+        remainingBudgetCny: req.body?.remainingBudgetCny,
+      });
+      res.json({ item, inputAuthority: 'stored_tasks_with_user_supplied_capacity_assumptions' });
+    } catch (error) {
+      throw new SocialProgramError('weekly_recovery_input_invalid', 400, error instanceof Error ? error.message : '补救评估输入无效。');
+    }
   }));
 
   router.post('/:programId/operating-packages/:packageId/execution-tasks/:taskId/block', asyncRoute(async (req, res) => {

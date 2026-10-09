@@ -117,6 +117,9 @@ export interface WeeklyExecutionTaskSchedule {
   estimatedDurationMinutes: number;
   estimatedStartAt: string;
   estimatedFinishAt: string;
+  latestStartAt?: string | null;
+  latestFinishAt?: string | null;
+  planningRisks?: string[];
   actualStartedAt: string | null;
   actualFinishedAt: string | null;
 }
@@ -166,7 +169,7 @@ export interface WeeklyExecutionTask {
   resultRefs: VersionedSocialRef[];
   lastError: { code: string; message: string; retryable: boolean; occurredAt: string } | null;
   /** Observed upstream activity, independent from verified step completion. */
-  productionProgress?: { contentTaskId: string; runId: string; step: string; activity: string; updatedAt: string } | null;
+  productionProgress?: { contentTaskId: string; runId: string | null; step: string; activity: string; updatedAt: string } | null;
   recoveredFromDeadLetterAt: string | null;
   cancelReason: string | null;
   createdAt: string;
@@ -174,6 +177,7 @@ export interface WeeklyExecutionTask {
 }
 
 export interface WeeklyOperatingScheduleSlot {
+  referenceSource?: 'owned' | 'external';
   slotId: string;
   motherContentId: string;
   publicationTaskIds: string[];
@@ -195,6 +199,13 @@ export interface WeeklyOperatingScheduleSkeleton {
 }
 
 export interface WeeklyDirectorPlanningAnalysis {
+  frozenHandoffRefs?: Array<{ inspirationId: string; version: string; recordHash: string }>;
+  historicalPerformance?: {
+    snapshotRef: VersionedSocialRef;
+    capturedAt: string;
+    source: string;
+    metrics: { views: number | null; likes: number | null; shares: number | null; comments: number | null };
+  } | null;
   analysisId: string;
   slotId: string;
   packageId: string;
@@ -252,6 +263,7 @@ export interface WeeklyAgentPlanningMutation {
 }
 
 export interface WeeklyAgentPlanningState {
+  referenceSourcePolicy?: WeeklyReferenceSourcePolicy | null;
   planningId: string;
   version: number;
   programId: string;
@@ -348,7 +360,15 @@ export interface SocialWeeklyContentPackage {
   };
 }
 
+export interface WeeklyReferenceSourcePolicy {
+  profile: 'b2b_cold_start' | 'b2b_established';
+  ownedPercent: number;
+  externalPercent: number;
+  allocationUnit: 'mother_content';
+}
+
 export interface WeeklyOperatingPackage {
+  referenceSourcePolicy?: WeeklyReferenceSourcePolicy | null;
   packageId: string;
   programId: string;
   version: number;

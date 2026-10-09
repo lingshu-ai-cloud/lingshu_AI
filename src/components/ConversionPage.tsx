@@ -183,7 +183,7 @@ function replyLanguage(customer: CustomerProfile): string {
 }
 
 function latestBuyerMessage(customer: CustomerProfile): string {
-  return [...customer.timeline].reverse().find(event => (event.type === 'messenger' || event.type === 'whatsapp') && event.actor === 'buyer')?.body || '';
+  return [...customer.timeline].reverse().find(event => (event.type === 'messenger' || event.type === 'instagram' || event.type === 'whatsapp') && event.actor === 'buyer')?.body || '';
 }
 
 function inferMessageLanguage(text: string): 'Arabic' | 'Spanish' | 'English' | null {
@@ -209,7 +209,7 @@ function fallbackConversationPhase(customer: CustomerProfile): 'first_contact' |
   if (latestBuyerIndex < 0) return 'first_contact';
   const previousSeller = [...customer.timeline.slice(0, latestBuyerIndex)]
     .reverse()
-    .find(event => (event.type === 'messenger' || event.type === 'whatsapp') && (event.actor === 'seller' || event.actor === 'ai'));
+    .find(event => (event.type === 'messenger' || event.type === 'instagram' || event.type === 'whatsapp') && (event.actor === 'seller' || event.actor === 'ai'));
   if (!previousSeller) return 'first_contact';
   const latestBuyerAt = Number(customer.timeline[latestBuyerIndex]?.timestamp);
   const previousSellerAt = Number(previousSeller.timestamp);
@@ -321,7 +321,7 @@ async function translateReplyToCustomerLanguage(customer: CustomerProfile, text:
 }
 
 function latestBuyerText(customer: CustomerProfile): string {
-  return [...customer.timeline].reverse().find(event => (event.type === 'messenger' || event.type === 'whatsapp') && event.actor === 'buyer')?.body || '';
+  return [...customer.timeline].reverse().find(event => (event.type === 'messenger' || event.type === 'instagram' || event.type === 'whatsapp') && event.actor === 'buyer')?.body || '';
 }
 
 function isWaitingForHumanQuote(customer: CustomerProfile): boolean {
@@ -969,7 +969,7 @@ function ChatThread({
             </form>
           )}
           {customer.timeline.map(event => {
-            if (event.type !== 'messenger' && event.type !== 'whatsapp') {
+            if (event.type !== 'messenger' && event.type !== 'instagram' && event.type !== 'whatsapp') {
               return (
                 <div key={event.id} className="flex justify-center">
                   <div className="max-w-[90%] rounded-md border border-border bg-surface px-3 py-2 text-center sm:max-w-[82%]">
@@ -1032,7 +1032,7 @@ function ChatThread({
       </div>
       <div className="shrink-0 space-y-2 border-t border-border bg-surface p-3">
         <div className="mx-auto max-w-3xl space-y-2">
-          {isOutsideWindow && <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-800">距客户上次互动已超过 24 小时，当前不能直接发送普通 Messenger 消息。</div>}
+          {isOutsideWindow && <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-800">距客户上次互动已超过 24 小时，当前不能直接发送普通 {customer.source === 'instagram' ? 'Instagram' : 'Messenger'} 消息。</div>}
           {composerState === 'idle' && chips.length > 0 && (
             <div className="flex flex-wrap gap-2">
               {chips.map(chip => <button key={chip.intent} type="button" onClick={() => onSceneDraft(chip.intent)} className="inline-flex items-center gap-1.5 rounded-md border border-border bg-surface px-3 py-1.5 text-xs font-bold text-text-secondary hover:border-accent/30 hover:bg-accent-glow hover:text-accent"><Sparkles size={13} /> {chip.label}</button>)}
@@ -1588,7 +1588,7 @@ function CustomerInfoRail({
           customer={customer}
           onInsertReply={onInsertQuoteReply}
           onToast={onToast}
-          channelReady={Boolean((customer.source === 'messenger' ? customerServiceStatus?.messengerAuthorization : customerServiceStatus?.messagingAuthorization)?.providerReady)}
+          channelReady={Boolean((customer.source === 'messenger' ? customerServiceStatus?.messengerAuthorization : customer.source === 'instagram' ? customerServiceStatus?.instagramAuthorization : customerServiceStatus?.messagingAuthorization)?.providerReady)}
           onCardSent={onQuoteCardSent}
         />
         <BasicInfoWidget customer={customer} onCustomerPatch={onCustomerPatch} />
@@ -1633,8 +1633,8 @@ async function sendCustomerOutbox(customer: CustomerProfile, body: string, outsi
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...authHeader() },
     body: JSON.stringify(templatePlan
-      ? { body: templatePlan.rendered, mode: 'template', outsideWindow, to: customer.messengerUserId, styleMemory }
-      : { body, mode: 'free_text', outsideWindow, to: customer.messengerUserId, styleMemory }),
+      ? { body: templatePlan.rendered, mode: 'template', outsideWindow, to: customer.source === 'instagram' ? customer.instagramUserId : customer.messengerUserId, styleMemory }
+      : { body, mode: 'free_text', outsideWindow, to: customer.source === 'instagram' ? customer.instagramUserId : customer.messengerUserId, styleMemory }),
   });
   const data = await resp.json().catch(() => ({}));
   if (!resp.ok) throw new Error(data.message || data.error || '发送失败');
@@ -1729,7 +1729,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
     selectedId ? customers.find(customer => customer.id === selectedId) ?? null : null
   ), [customers, selectedId]);
   const selectedLatestBuyerId = useMemo(() => (
-    selected ? [...selected.timeline].reverse().find(event => (event.type === 'messenger' || event.type === 'whatsapp') && event.actor === 'buyer')?.id ?? '' : ''
+    selected ? [...selected.timeline].reverse().find(event => (event.type === 'messenger' || event.type === 'instagram' || event.type === 'whatsapp') && event.actor === 'buyer')?.id ?? '' : ''
   ), [selected?.id, selected?.timeline]);
   const customersInActiveView = useMemo(() => filterCustomers(view, customers), [view, customers]);
   const activeView = VIEW_META[view];
@@ -1907,7 +1907,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
 
   useEffect(() => {
     if (!selected) return;
-    const untranslated = selected.timeline.filter(event => (event.type === 'messenger' || event.type === 'whatsapp') && !/[\u4e00-\u9fff]/.test(event.body) && !event.translatedBody);
+    const untranslated = selected.timeline.filter(event => (event.type === 'messenger' || event.type === 'instagram' || event.type === 'whatsapp') && !/[\u4e00-\u9fff]/.test(event.body) && !event.translatedBody);
     if (!untranslated.length) return;
     let cancelled = false;
     void Promise.all(untranslated.map(async event => {
@@ -1929,7 +1929,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
   useEffect(() => {
     if (!selected) return;
     if (!customerServiceStatus?.enabled) return;
-    const lastBuyer = [...selected.timeline].reverse().find(event => (event.type === 'messenger' || event.type === 'whatsapp') && event.actor === 'buyer');
+    const lastBuyer = [...selected.timeline].reverse().find(event => (event.type === 'messenger' || event.type === 'instagram' || event.type === 'whatsapp') && event.actor === 'buyer');
     if (!lastBuyer) return;
     if (isWaitingForHumanQuote(selected)) {
       setDraftSuggestion(null);
@@ -2229,6 +2229,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
     const styleMemory = buildStyleMemoryPayload(customer, restoreText, meta);
     const eventBody = templatePlan ? templatePlan.rendered : body;
     const event = createMessageEvent(customer.id, eventBody, 'seller', {
+      type: customer.source === 'instagram' ? 'instagram' : 'messenger',
       sendStatus: 'queued',
       sendMode: templatePlan ? 'template' : 'free_text',
       confirmedByHuman: true,
@@ -2294,7 +2295,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
     setSendingReply(true);
     try {
       if (isOutsideWhatsAppWindow(selected)) {
-        showToast('距客户上次互动已超过 24 小时，当前不能直接发送普通 Messenger 消息。');
+        showToast(`距客户上次互动已超过 24 小时，当前不能直接发送普通 ${selected.source === 'instagram' ? 'Instagram' : 'Messenger'} 消息。`);
         setSendingReply(false);
         return;
       }
@@ -2314,7 +2315,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
     if (!selected || !draftSuggestion || sendingReply) return;
     setSendingReply(true);
     if (isOutsideWhatsAppWindow(selected)) {
-      showToast('距客户上次互动已超过 24 小时，当前不能直接发送普通 Messenger 消息。');
+      showToast(`距客户上次互动已超过 24 小时，当前不能直接发送普通 ${selected.source === 'instagram' ? 'Instagram' : 'Messenger'} 消息。`);
       setSendingReply(false);
       return;
     }
@@ -2546,7 +2547,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
           draftMeta={draftMeta}
           onMockBuyerMessage={pushMockBuyerMessage}
           sending={sendingReply}
-          channelReady={Boolean((selected?.source === 'messenger' ? customerServiceStatus?.messengerAuthorization : customerServiceStatus?.messagingAuthorization)?.providerReady)}
+          channelReady={Boolean((selected?.source === 'messenger' ? customerServiceStatus?.messengerAuthorization : selected?.source === 'instagram' ? customerServiceStatus?.instagramAuthorization : customerServiceStatus?.messagingAuthorization)?.providerReady)}
           onToast={showToast}
         />
         </div>

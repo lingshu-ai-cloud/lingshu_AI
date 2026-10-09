@@ -4,6 +4,7 @@ import { SocialProgramError } from '../socialPrograms/service.js';
 import { assertSocialContentFilePersisted } from '../starter198/socialContentFiles.js';
 import { SOCIAL_METRIC_KEYS } from '../socialMetrics/aggregation.js';
 import { socialTaskSummary } from '../starter198/socialContentRecords.js';
+import { weeklyScriptEvidence } from './socialWeeklyScriptEvidence.js';
 
 const object = (value: unknown): Record<string, any> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, any> : {};
 const text = (value: unknown): string => typeof value === 'string' ? value.trim() : '';
@@ -37,6 +38,16 @@ export async function validateWeeklyExecutionResults(store: DataStore, task: Wee
         const analyses = (plan.directorAnalyses ?? []).filter((analysis: any) => slots.some((slot: any) => slot.slotId === analysis.slotId));
         requireResult(analyses.length && analyses.every((analysis: any) => analysis.packageVersion === task.packageVersion && analysis.benchmarkAccountRefs?.length && analysis.benchmarkVideoRefs?.length && analysis.benchmarkEvidenceRefs?.length && text(analysis.contentDirection)));
       } else requireResult(false);
+    } else if (ref.type === 'starter_social_content_script_baseline' && task.workflowKind === 'content' && task.schedule.stepKind === 'script') {
+      const row = await unique(store, 'starter_social_content_tasks', { tenant_id: task.tenantId, task_id: ref.id });
+      const brief = object(row.brief);
+      requireResult(brief.programRef?.id === task.programId && row.create_idempotency_key === `weekly-production:${task.packageId}:${task.packageVersion}:${task.publicationTaskId}`);
+      requireResult(text(row.run_id) && !['cancelled','paused','attention','needs_input'].includes(String(row.status)));
+      const run = await store.getById<Record_>('workflow_runs', String(row.run_id));
+      requireResult(run?.tenant_id === task.tenantId && !['cancelled','failed','dead_letter'].includes(String(run.status)));
+      const ids = (brief._weeklyAuthority?.referenceSelection?.selected ?? []).map((item: any) => String(item.candidateId));
+      const verified = weeklyScriptEvidence(row, ids);
+      requireResult(verified?.id === ref.id && verified.version === ref.version);
     } else if (ref.type === 'starter_social_content_task' && task.workflowKind === 'content' && task.schedule.stepKind === 'material_readiness') {
       const row = await unique(store, 'starter_social_content_tasks', { tenant_id: task.tenantId, task_id: ref.id });
       requireResult(version(row.version) === ref.version);

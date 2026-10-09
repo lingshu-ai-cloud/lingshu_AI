@@ -226,3 +226,7 @@ export function useSocialProgram(): SocialProgramContextValue {
   if (!context) throw new Error('useSocialProgram 必须在 SocialProgramProvider 内使用。');
   return context;
 }
+
+export function useOptionalSocialProgram(): SocialProgramContextValue | null {
+  return useContext(SocialProgramContext);
+}

@@ -60,13 +60,13 @@ function memoryStore(): DataStore {
   };
 }
 
-async function fixture() {
+async function fixture(route: 'cold_start' | 'account_repair' = 'cold_start') {
   const dataStore = memoryStore();
   const programs = createSocialProgramService(dataStore);
   const packages = createWeeklyOperatingPackageService(dataStore);
   const program = await programs.createProgram('tenant-a', 'owner', {
     brandName: 'Factory A', market: '北美', targetAudience: '品牌采购',
-    candidatePlatforms: ['tiktok', 'facebook', 'instagram', 'youtube'], route: 'cold_start',
+    candidatePlatforms: ['tiktok', 'facebook', 'instagram', 'youtube'], route,
   });
   const accountIds: Record<string, string[]> = { tiktok: [], facebook: [], instagram: [], youtube: [] };
   for (const [platform, count] of [['tiktok', 2], ['facebook', 2], ['instagram', 1], ['youtube', 1]] as const) {
@@ -133,6 +133,22 @@ async function authoritativeInput(
     })),
   };
 }
+
+test('source quota is persisted across immutable revisions and allocated per mother', async () => {
+  const { packages, program } = await fixture('account_repair');
+  const policy = { profile: 'b2b_established', ownedPercent: 40, externalPercent: 60, allocationUnit: 'mother_content' };
+  const initial = await packages.create('tenant-a', 'owner', program.programId, {
+    weekStart: '2026-10-05', objective: '采购询盘', successCriteria: ['有效发布'], referenceSourcePolicy: policy,
+  });
+  assert.deepEqual(initial.referenceSourcePolicy, policy);
+  assert.equal(initial.agentPlanning?.skeleton.slots.filter(slot => slot.referenceSource === 'owned').length, 4);
+  const revised = await packages.revise('tenant-a', 'owner', program.programId, initial.packageId, { expectedVersion: 1, changeReason: '修改目标', objective: '验证采购需求' });
+  assert.deepEqual(revised.referenceSourcePolicy, policy);
+  const changed = await packages.revise('tenant-a', 'owner', program.programId, initial.packageId, { expectedVersion: 2, changeReason: '确认20/80', referenceSourcePolicy: { ...policy, ownedPercent: 20, externalPercent: 80 } });
+  assert.equal(changed.agentPlanning?.skeleton.slots.filter(slot => slot.referenceSource === 'owned').length, 2);
+  const history = await packages.list('tenant-a', program.programId);
+  assert.equal(history.find(item => item.version === 1)?.referenceSourcePolicy?.ownedPercent, 40);
+});
 
 test('weekly operating package: default six-account cadence creates seven workflows and 26 publication tasks', async () => {
   const { packages, program } = await fixture();

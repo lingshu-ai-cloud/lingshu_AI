@@ -13,6 +13,7 @@ import type { BusinessContentGoal } from '../../shared/contracts/socialOperating
 import type { CapacityPlan } from '../socialOperating/capacityPlanner.js';
 import type { AutomationPolicyResolution } from '../socialOperating/automationPolicyResolver.js';
 import { SocialProgramError } from './service.js';
+import { referenceSourcePolicy } from './referenceSourcePolicy.js';
 import { buildWeeklyWorkflow, type WeeklyAutomationPolicySnapshot, type WeeklyCapacitySnapshot } from './weeklyPlanner.js';
 import { applyWorkflowEvent } from './workflowState.js';
 import { listWeeklyExecutionTasks, projectWeeklyExecution, summarizeWeeklyExecutionTasks } from './executionTasks.js';
@@ -455,6 +456,7 @@ export function packageFromInput(args: {
     automationPolicyRef: policy?.ref ?? null,
     operatingDecisionSnapshotRef: versionedRef(args.input.operatingDecisionSnapshotRef),
     referenceModeRef: versionedRef(args.input.referenceModeRef),
+    referenceSourcePolicy: referenceSourcePolicy(args.input.referenceSourcePolicy, args.program.route),
     promotionQuotaRef: versionedRef(args.input.promotionQuotaRef),
     discoveryBudgetCny: finiteBudget(args.input.discoveryBudgetCny),
     socialContentPackage: contentPackage,

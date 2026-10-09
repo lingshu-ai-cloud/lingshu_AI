@@ -35,7 +35,9 @@ export async function bindWeeklyProductionAuthority(input: {
   if (handoffRows.totalItems > handoffRows.items.length) throw new Error('weekly_production_handoff_scan_truncated');
   const storedHandoffs = [...new Map(handoffRows.items.filter(row => {
     const payload = socialJson(row.payload) as SocialInspirationHandoff;
-    return payload && row.record_hash === socialRequestHash(payload);
+    return payload && row.record_hash === socialRequestHash(payload)
+      && (analysis.frozenHandoffRefs === undefined || analysis.frozenHandoffRefs.some(ref => ref.inspirationId === payload.inspirationId
+        && ref.version === String(payload.version ?? payload.analysisVersion) && ref.recordHash === row.record_hash));
   }).map(row => socialJson(row.payload) as SocialInspirationHandoff)
     .filter(item => item && frozenVideos.has(item.inspirationId))
     .sort((a, b) => Number(a.version ?? a.analysisVersion) - Number(b.version ?? b.analysisVersion))

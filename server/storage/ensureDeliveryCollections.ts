@@ -34,7 +34,7 @@ const TENANTS_FIELDS: FieldDef[] = [
 
 const TENANT_PLATFORM_APP_FIELDS: FieldDef[] = [
   { name: 'tenant_id', type: 'text', required: true },
-  { name: 'platform', type: 'select', required: true, values: ['meta', 'google', 'wecom'] },
+  { name: 'platform', type: 'select', required: true, values: ['meta', 'instagram', 'google', 'tiktok', 'wecom'] },
   { name: 'app_id', type: 'text' },
   { name: 'app_secret', type: 'text' },
   { name: 'wa_config_id', type: 'text' },

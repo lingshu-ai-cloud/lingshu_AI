@@ -15,7 +15,7 @@ test('智能报价位于客户侧栏，经人工确认和预览后才能发送 W
   assert.doesNotMatch(conversion, /报价中心|quote-center|page=quote/i, '不得增加独立报价入口');
   assert.match(card, /quoteSkillApi\.confirm\(draft\.id, draft\.revision\)/, '确认必须携带当前版本');
   assert.match(card, /quoteSkillApi\.card\(draft\.id\)/, '发送前必须生成客户卡片预览');
-  assert.match(card, /confirmed && customer\.source !== 'messenger' && !draft\.delivery[\s\S]*发送到 WhatsApp/, '只有已确认且从未尝试发送的版本才能发送');
+  assert.match(card, /confirmed && customer\.source !== 'messenger' && customer\.source !== 'instagram' && !draft\.delivery[\s\S]*发送到 WhatsApp/, '只有 WhatsApp 已确认且从未尝试发送的版本才能发送卡片');
   assert.match(card, /deliveryPending[\s\S]*为避免重复报价已禁止重发/, '发送中或结果未知的版本必须阻止重发');
   assert.match(card, /quoteSkillApi\.sendCard\(draft\.id\)[\s\S]*quoteSkillApi\.latest\(customer\.id\)/, '发送失败后必须刷新服务端 claim，立即阻止同版本重发');
   assert.match(card, /\['状态'[\s\S]*\['总额'[\s\S]*\['数量'[\s\S]*\['有效期'/, '默认摘要只展示四项关键口径');

@@ -18,7 +18,7 @@ import { SocialPlatformIcon } from './SocialPlatformIcon';
 import { SocialConnectionPanel, YouTubeConnectionPanel } from './YouTubeIntegration';
 import { useModalFocus } from '../hooks/useModalFocus';
 
-type ClearableOAuthPlatform = 'youtube' | 'meta' | 'tiktok';
+type ClearableOAuthPlatform = 'youtube' | 'meta' | 'instagram' | 'tiktok';
 
 interface AdminOAuthConfig {
   admin: string;
@@ -35,6 +35,8 @@ interface AdminOAuthConfig {
     youtubeOAuthClientSecret: string;
     metaSocialAppId: string;
     metaSocialAppSecret: string;
+    instagramAppId: string;
+    instagramAppSecret: string;
     tiktokClientKey: string;
     tiktokClientSecret: string;
     advancedManualConnectEnabled: boolean;
@@ -42,11 +44,13 @@ interface AdminOAuthConfig {
   secretSet: {
     youtubeOAuthClientSecret: boolean;
     metaSocialAppSecret: boolean;
+    instagramAppSecret: boolean;
     tiktokClientSecret: boolean;
   };
   secretLength?: {
     youtubeOAuthClientSecret: number;
     metaSocialAppSecret: number;
+    instagramAppSecret: number;
     tiktokClientSecret: number;
   };
 }
@@ -56,6 +60,8 @@ interface OAuthForm {
   youtubeOAuthClientSecret: string;
   metaSocialAppId: string;
   metaSocialAppSecret: string;
+  instagramAppId: string;
+  instagramAppSecret: string;
   tiktokClientKey: string;
   tiktokClientSecret: string;
   advancedManualConnectEnabled: boolean;
@@ -66,6 +72,8 @@ const EMPTY_FORM: OAuthForm = {
   youtubeOAuthClientSecret: '',
   metaSocialAppId: '',
   metaSocialAppSecret: '',
+  instagramAppId: '',
+  instagramAppSecret: '',
   tiktokClientKey: '',
   tiktokClientSecret: '',
   advancedManualConnectEnabled: false,
@@ -77,6 +85,8 @@ function formFromConfig(config: AdminOAuthConfig): OAuthForm {
     youtubeOAuthClientSecret: '',
     metaSocialAppId: config.values.metaSocialAppId,
     metaSocialAppSecret: '',
+    instagramAppId: config.values.instagramAppId,
+    instagramAppSecret: '',
     tiktokClientKey: config.values.tiktokClientKey,
     tiktokClientSecret: '',
     advancedManualConnectEnabled: config.values.advancedManualConnectEnabled,
@@ -231,7 +241,8 @@ export default function AdminSocialAccountSetup() {
   async function save() {
     const validationError = validateOAuthCredentialPairs([
       { label: 'YouTube / Google', clientId: form.youtubeOAuthClientId, clientSecret: form.youtubeOAuthClientSecret, savedClientId: config?.values.youtubeOAuthClientId || '', savedSecret: Boolean(config?.secretSet.youtubeOAuthClientSecret) },
-      { label: 'Instagram / Facebook', clientId: form.metaSocialAppId, clientSecret: form.metaSocialAppSecret, savedClientId: config?.values.metaSocialAppId || '', savedSecret: Boolean(config?.secretSet.metaSocialAppSecret) },
+      { label: 'Facebook / Messenger', clientId: form.metaSocialAppId, clientSecret: form.metaSocialAppSecret, savedClientId: config?.values.metaSocialAppId || '', savedSecret: Boolean(config?.secretSet.metaSocialAppSecret) },
+      { label: 'Instagram 私信', clientId: form.instagramAppId, clientSecret: form.instagramAppSecret, savedClientId: config?.values.instagramAppId || '', savedSecret: Boolean(config?.secretSet.instagramAppSecret) },
       { label: 'TikTok', clientId: form.tiktokClientKey, clientSecret: form.tiktokClientSecret, savedClientId: config?.values.tiktokClientKey || '', savedSecret: Boolean(config?.secretSet.tiktokClientSecret) },
     ]);
     if (validationError) { setError(validationError); return; }
@@ -282,7 +293,9 @@ export default function AdminSocialAccountSetup() {
       const label = target === 'youtube'
         ? 'YouTube / Google'
         : target === 'meta'
-          ? 'Instagram / Facebook'
+          ? 'Facebook / Messenger'
+          : target === 'instagram'
+            ? 'Instagram 私信'
           : 'TikTok';
       const accountCount = data.disconnectedAccounts ?? 0;
       setNotice(`${label} 配置已清除${accountCount > 0 ? `，并已断开 ${accountCount} 个已连接账号` : ''}。`);
@@ -298,6 +311,7 @@ export default function AdminSocialAccountSetup() {
   const oauthPanelsKey = config?.updatedAt || 'oauth-not-configured';
   const youtubeConfigured = Boolean(form.youtubeOAuthClientId.trim() || form.youtubeOAuthClientSecret.trim() || config?.secretSet.youtubeOAuthClientSecret);
   const metaConfigured = Boolean(form.metaSocialAppId.trim() || form.metaSocialAppSecret.trim() || config?.secretSet.metaSocialAppSecret);
+  const instagramConfigured = Boolean(form.instagramAppId.trim() || form.instagramAppSecret.trim() || config?.secretSet.instagramAppSecret);
   const tiktokConfigured = Boolean(form.tiktokClientKey.trim() || form.tiktokClientSecret.trim() || config?.secretSet.tiktokClientSecret);
 
   return (
@@ -374,19 +388,27 @@ export default function AdminSocialAccountSetup() {
                       <div>
                         <p className="flex items-center gap-2 text-sm font-black text-text-primary">
                           <span className="flex items-center gap-1">
-                            <SocialPlatformIcon platform="instagram" size={19} />
                             <SocialPlatformIcon platform="facebook" size={19} />
                           </span>
-                          Instagram / Facebook
+                          Facebook / Messenger
                         </p>
-                        <p className="mt-1 text-[11px] text-text-muted">两个平台共用一套 Meta App</p>
+                        <p className="mt-1 text-[11px] text-text-muted">Facebook 主页与 Messenger 授权</p>
                       </div>
-                      <ClearConfigButton platformLabel="Instagram / Facebook" disabled={!metaConfigured || clearing} onClick={() => setClearTarget('meta')} />
+                      <ClearConfigButton platformLabel="Facebook / Messenger" disabled={!metaConfigured || clearing} onClick={() => setClearTarget('meta')} />
                     </div>
                     <CredentialField required fieldName="meta-social-app-id" label="App ID" value={form.metaSocialAppId} onChange={value => setField('metaSocialAppId', value)} />
                     <CredentialField required secret saved={config.secretSet.metaSocialAppSecret} fieldName="meta-social-app-secret" label="App Secret" value={form.metaSocialAppSecret} onChange={value => setField('metaSocialAppSecret', value)} />
-                    <CallbackLine label="Instagram redirect URI" value={config.callbacks.instagram} />
                     <CallbackLine label="Facebook redirect URI" value={config.callbacks.facebook} />
+                  </div>
+
+                  <div className="space-y-3 rounded-lg border border-border p-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div><p className="flex items-center gap-2 text-sm font-black text-text-primary"><SocialPlatformIcon platform="instagram" size={20} />Instagram 私信</p><p className="mt-1 text-[11px] text-text-muted">Instagram Login · 专业账号消息权限</p></div>
+                      <ClearConfigButton platformLabel="Instagram 私信" disabled={!instagramConfigured || clearing} onClick={() => setClearTarget('instagram')} />
+                    </div>
+                    <CredentialField required fieldName="instagram-app-id" label="Instagram App ID" value={form.instagramAppId} onChange={value => setField('instagramAppId', value)} />
+                    <CredentialField required secret saved={config.secretSet.instagramAppSecret} fieldName="instagram-app-secret" label="Instagram App Secret" value={form.instagramAppSecret} onChange={value => setField('instagramAppSecret', value)} />
+                    <CallbackLine label="Instagram redirect URI" value={config.callbacks.instagram} />
                   </div>
 
                   <div className="space-y-3 rounded-lg border border-border p-4">
@@ -459,7 +481,7 @@ export default function AdminSocialAccountSetup() {
             </span>
             <div>
               <h3 id="clear-platform-title" className="text-base font-bold text-text-primary">
-                清除 {clearTarget === 'youtube' ? 'YouTube / Google' : clearTarget === 'meta' ? 'Instagram / Facebook' : 'TikTok'} 配置？
+                清除 {clearTarget === 'youtube' ? 'YouTube / Google' : clearTarget === 'meta' ? 'Facebook / Messenger' : clearTarget === 'instagram' ? 'Instagram 私信' : 'TikTok'} 配置？
               </h3>
               <p id="clear-platform-description" className="mt-2 text-sm leading-6 text-text-secondary">
                 Client ID 和 Secret 会被清空，当前管理员在这个平台下已连接的账号也会同时断开。

@@ -49,6 +49,25 @@ test('dispatch and same-account authorization gates cannot be bypassed',async()=
   await f.store.update('social_weekly_agent_planning',row.id,{payload:{...f.planning,userConfirmation:null}});
   assert.equal((await f.adapter.execute(f.task)).status,'blocked');
 });
+test('mandatory materials block weekly production even when generic readiness passes, and resume the original identity after verification',async()=>{
+  const f=await fixture();
+  f.task.schedule.stepKind='material_readiness';
+  f.set({materialReadiness:{complete:false,requiredCount:1,satisfiedRequiredCount:0,blockingRequirementIds:['product-real-shot']}});
+  let result=await f.adapter.execute(f.task);
+  assert.equal(result.status,'blocked');
+  assert.equal('code' in result ? result.code : null,'weekly_required_materials_missing');
+  assert.equal(f.starts(),0);
+  assert.equal(result.status === 'blocked' ? result.progress?.contentTaskId : undefined, 'content');
+  f.set({runId:null,status:'draft'});
+  result=await f.adapter.execute(f.task);
+  assert.equal(result.status === 'blocked' ? result.progress?.runId : undefined,null);
+  assert.equal(f.starts(),0);
+  f.set({runId:'run-existing',status:'producing'});
+  f.set({materialReadiness:{complete:true,requiredCount:1,satisfiedRequiredCount:1,blockingRequirementIds:[]}});
+  result=await f.adapter.execute(f.task);
+  assert.deepEqual(result,{status:'succeeded',resultRefs:[{type:'starter_social_content_task',id:'content',version:4}]});
+  assert.equal(f.starts(),0);
+});
 test('real generated artifact completes evidence-backed steps; creative quality failure stays blocked',async()=>{
   const f=await fixture();
   const artifact:any={artifactId:'artifact',taskId:'content',version:'1',kind:'short_video',origin:'agent',resourceRef:'socialfile:file',status:'review_required',content:{render:{completed:true,selectedAssetIds:['asset']},scriptBaseline:{scenes:[{script:'真实脚本'}]},directorPlan:{sceneCount:1},productionResult:{technicalReview:{approved:true},creativeReview:{approved:false}}}};
@@ -92,6 +111,14 @@ test('authoritative production binding freezes real analyzed evidence and reject
   assert.equal(replay.referenceSelection.selectionId,result.referenceSelection.selectionId);
   assert.equal((await f.store.list('starter_social_content_lineage')).totalItems,1);
   assert.equal((await f.store.list('starter_social_director_brief_versions')).totalItems,1);
+  pkg.agentPlanning.directorAnalyses[0].frozenHandoffRefs=[{inspirationId:'candidate',version:'3',recordHash:socialRequestHash(handoff)}];
+  const newer={...handoff,version:'4',analysisVersion:'4',source:{...handoff.source,sourceUrl:'https://example.com/changed-reference'}};
+  await f.store.create('starter_social_inspiration_handoff_versions',{tenant_id:'tenant',handoff_id:'candidate',handoff_version:'4',payload:newer,record_hash:socialRequestHash(newer)});
+  const frozen=await bindWeeklyProductionAuthority({dataStore:f.store,repository,tenantId:'tenant',pkg,publication,detail});
+  assert.equal(frozen.referenceSelection.selectionId,result.referenceSelection.selectionId,'a newer handoff cannot replace the user-confirmed frozen source');
+  pkg.agentPlanning.directorAnalyses[0].frozenHandoffRefs=[{inspirationId:'candidate',version:'3',recordHash:'changed-hash'}];
+  await assert.rejects(()=>bindWeeklyProductionAuthority({dataStore:f.store,repository,tenantId:'tenant',pkg,publication,detail}),/weekly_production_analyzed_handoff_required/);
+  pkg.agentPlanning.directorAnalyses[0].frozenHandoffRefs=[{inspirationId:'candidate',version:'3',recordHash:socialRequestHash(handoff)}];
   const candidate=(await f.store.list<any>('social_candidate_evidence')).items[0];await f.store.update('social_candidate_evidence',candidate.id,{version:4});
   await assert.rejects(()=>bindWeeklyProductionAuthority({dataStore:f.store,repository,tenantId:'tenant',pkg,publication,detail}),/weekly_production_analyzed_handoff_required/);
 });

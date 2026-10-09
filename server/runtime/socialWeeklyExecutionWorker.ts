@@ -35,6 +35,16 @@ function sameLease(task: WeeklyExecutionTask, lease: DurableOperationLease): boo
     && task.lease.expiresAt === lease.expiresAt;
 }
 
+export function compareWeeklyExecutionUrgency(left: WeeklyExecutionTask, right: WeeklyExecutionTask): number {
+  const deadline = (task: WeeklyExecutionTask) => {
+    const value = Date.parse(task.schedule?.latestStartAt || '');
+    return Number.isFinite(value) ? value : Infinity;
+  };
+  const a = deadline(left), b = deadline(right);
+  if (a !== b) return a < b ? -1 : 1;
+  return left.createdAt.localeCompare(right.createdAt) || left.taskId.localeCompare(right.taskId);
+}
+
 async function candidates(dataStore: DataStore, tenantId: string): Promise<WeeklyExecutionTaskRow[]> {
   const all = async (status: string) => {
     const rows: WeeklyExecutionTaskRow[] = [];
@@ -47,7 +57,7 @@ async function candidates(dataStore: DataStore, tenantId: string): Promise<Weekl
     }
   };
   const [queued, leased] = await Promise.all([all('queued'), all('leased')]);
-  return [...queued, ...leased];
+  return [...queued, ...leased].sort((left, right) => compareWeeklyExecutionUrgency(left.payload, right.payload));
 }
 
 /**

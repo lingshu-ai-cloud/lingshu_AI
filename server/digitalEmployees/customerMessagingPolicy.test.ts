@@ -47,6 +47,7 @@ const now = new Date('2026-10-07T00:00:00Z');
 const config = { id: 'config', tenant_id: base.tenantId, status: 'active', config_version: 3, config: { enabledWorkflows: ['batch_followup'], allowRealCustomerMessages: true } };
 const wa = { id: 'meta', tenant_id: base.tenantId, platform: 'meta' as const, status: 'active' as const, phone_number_id: 'phone-id', access_token: 'sealed-valid', token_expires_at: '2026-11-01T00:00:00Z' };
 const messenger = { id: 'page', tenantId: base.tenantId, platform: 'facebook', status: 'connected', messengerSubscribed: true, providerAccountId: 'page-id', accessToken: 'sealed-valid' };
+const instagram = { id: 'ig', tenantId: base.tenantId, platform: 'instagram', status: 'connected', oauthProvider: 'instagram_login', providerAccountId: 'ig-id', accessToken: 'sealed-valid', scope: 'instagram_business_manage_messages', instagramWebhookSubscribed: true };
 function fixtures(meta: Record<string, unknown>[], pages: Record<string, unknown>[], consent = true) {
   return {
     dataStore: { async list(collection: string) {
@@ -64,6 +65,12 @@ assert.equal((await readCustomerMessagingAuthorization(base.tenantId, 'messenger
 const pageOnly = fixtures([], [messenger]);
 assert.equal((await readCustomerMessagingAuthorization(base.tenantId, 'messenger', pageOnly)).inboundAutoSendAllowed, true);
 assert.equal((await readCustomerMessagingAuthorization(base.tenantId, 'whatsapp', pageOnly)).manualFollowupSendAllowed, false, 'Messenger never authorizes the WhatsApp followup worker');
+assert.equal((await readCustomerMessagingAuthorization(base.tenantId, 'instagram', pageOnly)).providerReady, false, 'Facebook Page authorization cannot authorize Instagram');
+assert.equal((await readCustomerMessagingAuthorization(base.tenantId, 'instagram', fixtures([], [instagram]))).inboundAutoSendAllowed, true);
+assert.equal((await readCustomerMessagingAuthorization(base.tenantId, 'messenger', fixtures([], [instagram]))).providerReady, false, 'Instagram authorization cannot authorize Messenger');
+assert.equal((await readCustomerMessagingAuthorization(base.tenantId, 'instagram', fixtures([], [{ ...instagram, scope: 'instagram_business_basic' }]))).providerReady, false);
+assert.equal((await readCustomerMessagingAuthorization(base.tenantId, 'instagram', fixtures([], [{ ...instagram, instagramWebhookSubscribed: false }]))).providerReady, false);
+assert.equal((await readCustomerMessagingAuthorization(base.tenantId, 'instagram', fixtures([], [{ ...instagram, tenantId: 'other' }]))).providerReady, false);
 for (const patch of [{ access_token: '' }, { access_token: 'corrupt' }, { phone_number_id: '' }, { tenant_id: 'other' }, { status: 'token_expired' }, { token_expires_at: '2026-10-06T00:00:00Z' }, { token_expires_at: 'invalid-date' }]) {
   const denied = await readCustomerMessagingAuthorization(base.tenantId, 'whatsapp', fixtures([{ ...wa, ...patch }], [messenger]));
   assert.equal(denied.manualFollowupSendAllowed, false);

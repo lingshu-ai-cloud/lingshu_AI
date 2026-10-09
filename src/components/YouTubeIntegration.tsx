@@ -452,8 +452,8 @@ const SOCIAL_META: Record<SocialPlatform, {
   },
   instagram: {
     label: 'Instagram',
-    description: '连接 Instagram 专业账号后可读取媒体和评论，并发布 Reels。',
-    envHint: 'META_SOCIAL_APP_ID / META_SOCIAL_APP_SECRET',
+    description: '连接 Instagram 专业账号后，可同步私信并在客户会话中回复。',
+    envHint: 'INSTAGRAM_APP_ID / INSTAGRAM_APP_SECRET',
     color: '#c13584',
     bg: '#fdf2f8',
   },

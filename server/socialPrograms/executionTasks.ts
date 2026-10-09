@@ -1,3 +1,4 @@
+import { applyPublicationDeadlines, publicationInstant } from "./publicationDeadlines.js";
 import { reconcileWeeklyCancellation } from './weeklyCancellation.js';
 import { createHash, randomUUID } from 'node:crypto';
 import type { DataStore } from '../storage/datastore.js';
@@ -59,7 +60,7 @@ function normalizeExecutionTask(task: WeeklyExecutionTask): WeeklyExecutionTask 
   const legacy = task as WeeklyExecutionTask & { schedule?: WeeklyExecutionTask['schedule'] };
   const mapping: Record<WeeklyOperatingWorkflowKind, { stepKind: WeeklyProductionStepKind; responsibleActor: WeeklyResponsibleActor; duration: number }> = {
     readiness: { stepKind: 'business_outline', responsibleActor: 'business_agent', duration: 15 },
-    discovery: { stepKind: 'benchmark_collection', responsibleActor: 'business_agent', duration: 60 },
+    discovery: { stepKind: 'benchmark_collection', responsibleActor: 'director_agent', duration: 60 },
     directing: { stepKind: 'director_analysis', responsibleActor: 'director_agent', duration: 45 },
     content: { stepKind: 'video_generation', responsibleActor: 'content_agent', duration: 180 },
     publishing: { stepKind: 'publishing', responsibleActor: 'publishing_agent', duration: 10 },
@@ -154,6 +155,7 @@ type TaskSeed = Pick<WeeklyExecutionTask,
     stepKind: WeeklyProductionStepKind;
     responsibleActor: WeeklyResponsibleActor;
     estimatedDurationMinutes: number;
+    notBeforeAt?: number | null;
   };
 
 function makeTask(tenantId: string, pkg: WeeklyOperatingPackage, seed: TaskSeed, createdAt: string, estimatedStartAt: string): WeeklyExecutionTask {
@@ -225,8 +227,8 @@ export function planWeeklyExecutionTasks(
   const globalBlockers = pkg.planningBlockers.filter(blocker => ![...publicationIds].some(id => blocker.includes(id)));
   const add = (seed: TaskSeed) => {
     const dependencyFinishes = seed.dependsOnTaskIds.map(id => tasks.find(item => item.taskId === id)?.schedule.estimatedFinishAt).filter((value): value is string => Boolean(value));
-    const baseStart = new Date(`${pkg.weekStart}T00:00:00.000Z`).toISOString();
-    const estimatedStartAt = [...dependencyFinishes, createdAt, baseStart].sort().at(-1)!;
+    // Preparation can belong to the preceding week; publication has its own release time.
+    const estimatedStartAt = new Date(Math.max(Date.parse(createdAt), ...dependencyFinishes.map(value => Date.parse(value)), seed.notBeforeAt ?? 0)).toISOString();
     const item = makeTask(tenantId, pkg, seed, createdAt, estimatedStartAt);
     tasks.push(item);
     return item;
@@ -247,7 +249,7 @@ export function planWeeklyExecutionTasks(
     inputSnapshot: { accountId, weekStart: pkg.weekStart, objective: pkg.objective },
     budget: { category: 'discovery', limitCny: moneyShare(pkg.discoveryBudgetCny, accountIds.length) },
     ownBlockingReasons: [],
-    stepKind: 'benchmark_collection', responsibleActor: 'business_agent', estimatedDurationMinutes: 60,
+    stepKind: 'benchmark_collection', responsibleActor: 'director_agent', estimatedDurationMinutes: 60,
   }));
 
   const byMother = new Map<string, SocialWeeklyPublicationTask[]>();
@@ -347,6 +349,7 @@ export function planWeeklyExecutionTasks(
   }
 
   const publishing = publications.map(item => add({
+    notBeforeAt: publicationInstant(item.publishWindow),
     workflowKind: 'publishing', scope: 'publication', subjectId: item.publicationTaskId,
     accountId: item.accountId, publicationTaskId: item.publicationTaskId,
     dependsOnTaskIds: [approvalByPublication.get(item.publicationTaskId)!.taskId],
@@ -373,7 +376,7 @@ export function planWeeklyExecutionTasks(
     budget: noBudget, ownBlockingReasons: [],
     stepKind: 'weekly_review', responsibleActor: 'business_agent', estimatedDurationMinutes: 45,
   });
-  return tasks;
+  return applyPublicationDeadlines(tasks, publications);
 }
 
 function rowData(task: WeeklyExecutionTask): Record<string, unknown> {

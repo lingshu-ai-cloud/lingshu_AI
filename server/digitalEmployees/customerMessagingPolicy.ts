@@ -14,7 +14,7 @@ type ConfigRecord = {
 
 export interface CustomerMessagingAuthorization {
   tenantId: string;
-  channel?: 'whatsapp' | 'messenger';
+  channel?: 'whatsapp' | 'messenger' | 'instagram';
   configVersion: number;
   configActive: boolean;
   customerAgentEnabled: boolean;
@@ -29,7 +29,7 @@ export interface CustomerMessagingAuthorization {
 
 export interface CustomerMessagingAuthorizationInput {
   tenantId: string;
-  channel?: 'whatsapp' | 'messenger';
+  channel?: 'whatsapp' | 'messenger' | 'instagram';
   configVersion?: number;
   configActive: boolean;
   customerAgentEnabled: boolean;
@@ -88,7 +88,7 @@ export function followupBackgroundWorkerEnabled(): boolean {
 /** Authorize the transport that will actually send; one channel never grants another. */
 export async function readCustomerMessagingAuthorization(
   tenantId: string,
-  channel: 'whatsapp' | 'messenger' = 'whatsapp',
+  channel: 'whatsapp' | 'messenger' | 'instagram' = 'whatsapp',
   dependencies: { dataStore?: DataStore; openWhatsAppSecret?: typeof decryptSecret; openMessengerToken?: typeof socialAccessToken; now?: Date } = {},
 ): Promise<CustomerMessagingAuthorization> {
   const dataStore = dependencies.dataStore ?? store;
@@ -100,8 +100,8 @@ export async function readCustomerMessagingAuthorization(
         page: 1,
         perPage: 1,
       }),
-      channel === 'messenger' ? dataStore.list<Record<string, unknown>>('social_accounts', {
-        where: { tenantId, platform: 'facebook', status: 'connected' },
+      channel !== 'whatsapp' ? dataStore.list<Record<string, unknown>>('social_accounts', {
+        where: { tenantId, platform: channel === 'instagram' ? 'instagram' : 'facebook', status: 'connected' },
         page: 1,
         perPage: 100,
       }) : dataStore.list<TenantPlatformAppRecord>('tenant_platform_apps', { where: { tenant_id: tenantId, platform: 'meta' }, page: 1, perPage: 2 }),
@@ -117,7 +117,15 @@ export async function readCustomerMessagingAuthorization(
         })()
       : channelAccounts.items.some(rawAccount => {
           const account = rawAccount as unknown as Record<string, unknown>;
-          if (account.tenantId !== tenantId || account.platform !== 'facebook' || account.status !== 'connected' || account.messengerSubscribed !== true || !String(account.providerAccountId || '').trim()) return false;
+          if (account.tenantId !== tenantId || account.platform !== (channel === 'instagram' ? 'instagram' : 'facebook') || account.status !== 'connected' || !String(account.providerAccountId || '').trim()) return false;
+          if (channel === 'messenger' && account.messengerSubscribed !== true) return false;
+          if (channel === 'instagram') {
+            const isInstagramLogin = account.oauthProvider === 'instagram_login';
+            const scope = isInstagramLogin ? 'instagram_business_manage_messages' : 'instagram_manage_messages';
+            if (!new Set(String(account.scope || '').split(/[\s,]+/)).has(scope)) return false;
+            if (isInstagramLogin && account.instagramWebhookSubscribed !== true) return false;
+            if (!isInstagramLogin && !String(account.parentPageId || '').trim()) return false;
+          }
           const expiresAt = String(account.tokenExpiresAt || account.expiresAt || '').trim();
           if (expiresAt && (!Number.isFinite(Date.parse(expiresAt)) || Date.parse(expiresAt) <= (dependencies.now ?? new Date()).getTime())) return false;
           try { return Boolean((dependencies.openMessengerToken ?? socialAccessToken)(account)); } catch { return false; }

@@ -110,6 +110,9 @@
     "1791072006_create_social_operating_runtime.js": "83538773230c88eed508da645c4d01ae6aabb9e3a8c698355c5eacf8d8721a12",
     "1791072006_ensure_publishing_schedules.js": "7af3e6889270a7e4f9988cb480a2c60971e83ea033b8cef9ed21d11a566bf81a",
     "1791072007_fix_publishing_schedule_and_messenger_status.js": "159426312d27bb9c162696fe033dc279df17f90a2aecc1c674e969b0fe61d710",
-    "1791072008_create_content_execution_queue.js": "17082ecdb5a6228182507d1d2a01f55c6aac48922cd376c489fecce8c8fb2f07"
+    "1791072008_create_content_execution_queue.js": "17082ecdb5a6228182507d1d2a01f55c6aac48922cd376c489fecce8c8fb2f07",
+    "1791072018_create_social_weekly_customer_bindings.js": "1bcb66fd865587719249ddd139694a531be3f61d0484b7965df8a91fb58f9003",
+    "1791535000_add_instagram_tenant_app.js": "f05cef6e9f9d4b95262184f557c84d9c0159697421137e7924dd21f4745d210b",
+    "1791535001_extend_social_accounts_instagram_login.js": "900e65b5e2cc78c6842f05501f064d457e7941bbd7c83194f7f184cfff1e4e28"
   }
 }

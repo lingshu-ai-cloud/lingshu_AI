@@ -604,6 +604,8 @@ export function publicOAuthConfig(req: Parameters<typeof oauthCallbackUrls>[0], 
       youtubeOAuthClientSecret: '',
       metaSocialAppId: effective.metaSocialAppId,
       metaSocialAppSecret: '',
+      instagramAppId: effective.instagramAppId,
+      instagramAppSecret: '',
       tiktokClientKey: effective.tiktokClientKey,
       tiktokClientSecret: '',
       advancedManualConnectEnabled: effective.advancedManualConnectEnabled,
@@ -611,11 +613,13 @@ export function publicOAuthConfig(req: Parameters<typeof oauthCallbackUrls>[0], 
     secretSet: {
       youtubeOAuthClientSecret: Boolean(effective.youtubeOAuthClientSecret),
       metaSocialAppSecret: Boolean(effective.metaSocialAppSecret),
+      instagramAppSecret: Boolean(effective.instagramAppSecret),
       tiktokClientSecret: Boolean(effective.tiktokClientSecret),
     },
     secretLength: {
       youtubeOAuthClientSecret: effective.youtubeOAuthClientSecret.length,
       metaSocialAppSecret: effective.metaSocialAppSecret.length,
+      instagramAppSecret: effective.instagramAppSecret.length,
       tiktokClientSecret: effective.tiktokClientSecret.length,
     },
   };
@@ -1097,19 +1101,23 @@ adminRouter.put('/oauth-config', async (req, res) => {
     const patch: Partial<StoredOAuthConfig> = {
       youtubeOAuthClientId: bodyText(body.youtubeOAuthClientId),
       metaSocialAppId: bodyText(body.metaSocialAppId),
+      instagramAppId: bodyText(body.instagramAppId),
       tiktokClientKey: bodyText(body.tiktokClientKey),
       advancedManualConnectEnabled: body.advancedManualConnectEnabled === true,
     };
 
     const youtubeSecret = bodyText(body.youtubeOAuthClientSecret);
     const metaSecret = bodyText(body.metaSocialAppSecret);
+    const instagramSecret = bodyText(body.instagramAppSecret);
     const tiktokSecret = bodyText(body.tiktokClientSecret);
     if (youtubeSecret) patch.youtubeOAuthClientSecret = youtubeSecret;
     if (metaSecret) patch.metaSocialAppSecret = metaSecret;
+    if (instagramSecret) patch.instagramAppSecret = instagramSecret;
     if (tiktokSecret) patch.tiktokClientSecret = tiktokSecret;
 
     if (patch.youtubeOAuthClientId && youtubeSecret) disabledPlatforms.delete('youtube');
     if (patch.metaSocialAppId && metaSecret) disabledPlatforms.delete('meta');
+    if (patch.instagramAppId && instagramSecret) disabledPlatforms.delete('instagram');
     if (patch.tiktokClientKey && tiktokSecret) disabledPlatforms.delete('tiktok');
     patch.disabledPlatforms = Array.from(disabledPlatforms);
 
@@ -1127,7 +1135,7 @@ adminRouter.delete('/oauth-config/:platform', async (req, res) => {
   res.setHeader('Cache-Control', 'no-store');
 
   const platform = bodyText(req.params.platform) as OAuthPlatform;
-  if (!['youtube', 'meta', 'tiktok'].includes(platform)) {
+  if (!['youtube', 'meta', 'instagram', 'tiktok'].includes(platform)) {
     res.status(400).json({ error: 'invalid_oauth_platform' });
     return;
   }
@@ -1144,6 +1152,9 @@ adminRouter.delete('/oauth-config/:platform', async (req, res) => {
     } else if (platform === 'meta') {
       patch.metaSocialAppId = '';
       patch.metaSocialAppSecret = '';
+    } else if (platform === 'instagram') {
+      patch.instagramAppId = '';
+      patch.instagramAppSecret = '';
     } else {
       patch.tiktokClientKey = '';
       patch.tiktokClientSecret = '';

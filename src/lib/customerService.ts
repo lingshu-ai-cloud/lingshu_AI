@@ -4,6 +4,7 @@ export type PartialAutoReplyDecision = 'pending' | 'enabled' | 'declined';
 
 export interface CustomerServiceStatus {
   messengerAuthorization?: CustomerServiceStatus['messagingAuthorization'];
+  instagramAuthorization?: CustomerServiceStatus['messagingAuthorization'];
   enabled: boolean;
   enabledAt: string;
   observationDay: number;
