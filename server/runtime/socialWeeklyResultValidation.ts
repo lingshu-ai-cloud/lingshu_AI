@@ -1,4 +1,8 @@
-import type { VersionedSocialRef, WeeklyExecutionTask } from '../../shared/contracts/socialProgram.js';
+import type { VersionedSocialRef, WeeklyExecutionTask, WeeklyOperatingPackage } from '../../shared/contracts/socialProgram.js';
+import {assertWeeklyPublicationStoredScope} from '../publishing/weeklyFormalPublicationBoundary.js';
+import type {StoredPublicationAssignment} from '../publishing/weeklyLineage.js';
+import {readStarterPublicationPackage} from '../publishing/starterPublicationPackage.js';
+import {publicationInstant} from '../socialPrograms/publicationDeadlines.js';
 import type { DataStore, Record_ } from '../storage/datastore.js';
 import { SocialProgramError } from '../socialPrograms/service.js';
 import { assertSocialContentFilePersisted } from '../starter198/socialContentFiles.js';
@@ -213,9 +217,21 @@ export async function validateWeeklyExecutionResults(store: DataStore, task: Wee
       requireResult(ref.version === 1);
       const attempt = await unique(store, 'social_publication_attempts', { tenant_id: task.tenantId, attempt_id: ref.id });
       requireResult(attempt.status === 'published' && text(attempt.provider_receipt_id) && text(attempt.platform_post_id) && Number.isFinite(Date.parse(String(attempt.resolved_at))) && text(attempt.provider) && !attempt.mock && !attempt.simulated && !/mock|simulat|test[_-]?provider/i.test(String(attempt.provider)) && !/^(simr_|mock|simulat)/i.test(String(attempt.provider_receipt_id)) && !/^(simp_|mock|simulat)/i.test(String(attempt.platform_post_id)));
+      const startedAt = publicationInstant(String(attempt.started_at)), resolvedAt = publicationInstant(String(attempt.resolved_at));
+      requireResult(startedAt !== null && resolvedAt !== null && resolvedAt >= startedAt && resolvedAt <= now.getTime(), 'weekly_publication_result_time_invalid');
       const assignment = await unique(store, 'social_publication_assignments', { tenant_id: task.tenantId, assignment_id: String(attempt.assignment_id) });
       requireResult(assignment.status !== 'revoked' && !assignment.authorization_revoked_at && assignment.package_id === attempt.package_id && assignment.operating_package_id === task.packageId && assignment.operating_package_version === task.packageVersion && assignment.publication_task_id === task.publicationTaskId && assignment.account_id === task.accountId);
       const weekly = await unique(store, 'social_weekly_operating_packages', { tenant_id: task.tenantId, package_id: task.packageId, version: task.packageVersion });
+      const pkg = object(weekly.payload) as WeeklyOperatingPackage;
+      requireResult(weekly.program_id === task.programId && pkg.programId === task.programId && pkg.status === 'active', 'weekly_publication_result_scope_invalid');
+      try { assertWeeklyPublicationStoredScope(assignment as unknown as StoredPublicationAssignment, pkg); }
+      catch { requireResult(false, 'weekly_publication_result_scope_invalid'); }
+      const expectedProvider = assignment.platform === 'tiktok' ? 'tiktok-content-posting-api' : assignment.platform === 'youtube' ? 'youtube-data-api' : ['instagram', 'facebook'].includes(String(assignment.platform)) ? 'meta-graph-api' : null;
+      requireResult(expectedProvider && attempt.provider === expectedProvider, 'weekly_publication_result_provider_invalid');
+      const manifest = await readStarterPublicationPackage(task.tenantId, String(attempt.package_id), store);
+      requireResult(manifest && manifest.operatingLineage, 'weekly_publication_result_manifest_invalid');
+      const lineage = manifest.operatingLineage;
+      requireResult(lineage && manifest.tenantId === task.tenantId && manifest.packageId === assignment.package_id && manifest.platform === assignment.platform && lineage.assignmentId === assignment.assignment_id && lineage.assignmentHash === assignment.assignment_hash && lineage.productionResultRef.id === assignment.production_result_id, 'weekly_publication_result_manifest_invalid');
       const pack = object(object(weekly.payload).socialContentPackage);
       requireResult(pack.authorization?.allowRealPublishing === true && !pack.authorization.revokedAt && pack.authorization.accountIds?.includes(task.accountId));
       await validateWeeklyPublicationAcceptance(store, task, String(assignment.production_result_id));

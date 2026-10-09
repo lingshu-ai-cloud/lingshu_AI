@@ -635,6 +635,7 @@ export function weeklyPlanActivationIssues(program: SocialProgram, plan: SocialW
 
 /** Cancellation reports preserved external effects rather than claiming rollback. */
 export interface WeeklyCancellationSummary {
+  currentSettlements?: import('./weeklyCancellationSettlement.js').WeeklyCancellationSettlement[];
   status: string;
   boundary: string;
   effects: Array<{ resourceType: string; resourceId: string; outcome: 'irreversible' | 'unknown_requires_reconciliation'; receiptCount: number }>;

@@ -112,6 +112,7 @@ for (const platform of ['youtube', 'instagram', 'facebook'] as const) {
       authorization: { ...weekly.socialContentPackage.authorization, accountIds: [`account-${platform}`], maxPublishItems: 1 },
     },
   } satisfies WeeklyOperatingPackage;
+  if(platform==='instagram'){await assert.rejects(seed(platformStore,platformWeekly),/instagram_delivery_required_for_assignment/,'new Instagram assignment must not invent an archived delivery');continue;}
   await seed(platformStore, platformWeekly);
   let platformPublishCalls = 0;
   const platformAdapter: WeeklyPublishingProviderAdapter = {
@@ -129,3 +130,54 @@ for (const platform of ['youtube', 'instagram', 'facebook'] as const) {
 }
 
 console.log('weekly publication execution worker tests passed');
+
+// All unresolved pages are read even when no assignment remains package_ready.
+const pagedRecovery = memoryStore();
+await seed(pagedRecovery);
+let pagedPosts = 0, pagedGets = 0;
+// Only the unit fixture names the real provider; controlled callbacks are not provider evidence.
+const pagedAdapter: WeeklyPublishingProviderAdapter = { ...adapter, provider: 'tiktok-content-posting-api', async publish() { pagedPosts++; return { status: 'accepted', providerReceiptId: `paged-${pagedPosts}` }; }, async reconcile({ attempt }) { pagedGets++; return { status: 'published', providerReceiptId: attempt.provider_receipt_id, platformPostId: `resolved-${pagedGets}` }; } };
+await runWeeklyPublicationExecutionScan({ dataStore: pagedRecovery, limit: 1, now: new Date('2026-09-25T00:00:00Z'), adapterFactory: async () => pagedAdapter });
+assert.equal(pagedPosts, 2);
+for (const row of pagedRecovery.rows.get(PUBLICATION_ASSIGNMENTS)!) Object.assign(row, { status: 'revoked', receipt_recovery_required: true });
+const pagedScan = await runWeeklyPublicationExecutionScan({ dataStore: pagedRecovery, limit: 1, now: new Date('2026-09-25T00:01:00Z'), adapterFactory: async () => pagedAdapter });
+assert.equal(pagedScan.scanned, 2); assert.equal(pagedScan.published, 2); assert.deepEqual(pagedScan.errors, []);
+assert.equal(pagedPosts, 2); assert.equal(pagedGets, 2);
+for (const row of pagedRecovery.rows.get(PUBLICATION_ASSIGNMENTS)!) { assert.equal(row.status, 'revoked'); assert.equal(row.receipt_recovery_required, false); }
+// Callback can settle before scan: persisted recovery flags still get cleared without any GET.
+for (const row of pagedRecovery.rows.get(PUBLICATION_ASSIGNMENTS)!) row.receipt_recovery_required = true;
+const terminalScan = await runWeeklyPublicationExecutionScan({ dataStore: pagedRecovery, limit: 1, adapterFactory: async () => { throw Error('terminal flag cleanup must not call provider'); } });
+assert.equal(terminalScan.scanned, 2); assert.equal(terminalScan.skipped, 2); assert.deepEqual(terminalScan.errors, []);
+for (const row of pagedRecovery.rows.get(PUBLICATION_ASSIGNMENTS)!) { assert.equal(row.status, 'revoked'); assert.equal(row.receipt_recovery_required, false); }
+// A persisted terminal label without receipt chronology cannot clear a recovery flag.
+const invalidTerminal = pagedRecovery.rows.get(PUBLICATION_ATTEMPTS)![0]!;
+const invalidAssignment = pagedRecovery.rows.get(PUBLICATION_ASSIGNMENTS)!.find(row => row.assignment_id === invalidTerminal.assignment_id)!;
+invalidAssignment.receipt_recovery_required = true;
+const savedResolved = invalidTerminal.resolved_at; invalidTerminal.resolved_at = '2020-01-01T00:00:00Z';
+const invalidScan = await runWeeklyPublicationExecutionScan({ dataStore: pagedRecovery, limit: 1, adapterFactory: async () => { throw Error('invalid terminal must never query'); } });
+assert.equal(invalidAssignment.receipt_recovery_required, true);
+assert.ok(invalidScan.errors.some(error => error.code === 'publication_recovery_terminal_evidence_invalid'));
+invalidTerminal.resolved_at = savedResolved;
+// A changing pagination snapshot fails the scan rather than claiming complete coverage.
+const originalList = pagedRecovery.list.bind(pagedRecovery);
+pagedRecovery.list = async <T>(collection: string, query: ListQuery = {}) => {
+  const response = await originalList<T>(collection, query);
+  if (collection === PUBLICATION_ASSIGNMENTS && query.where?.receipt_recovery_required === true && query.page === 1) return { ...response, totalItems: 2, totalPages: 2 };
+  return response;
+};
+await assert.rejects(runWeeklyPublicationExecutionScan({ dataStore: pagedRecovery, limit: 1 }), /publication_scan_snapshot_changed/);
+pagedRecovery.list = originalList;
+
+for (const invalidEvidence of [
+  { resolved_at: '2099-01-01T00:00:00Z' },
+  { resolved_at: '2026-02-30T00:00:00Z' },
+  { provider: 'foreign-provider' },
+]) {
+  invalidAssignment.receipt_recovery_required = true;
+  const previous = { resolved_at: invalidTerminal.resolved_at, provider: invalidTerminal.provider };
+  Object.assign(invalidTerminal, invalidEvidence);
+  const refused = await runWeeklyPublicationExecutionScan({ dataStore: pagedRecovery, limit: 1, now: new Date('2026-09-26T00:00:00Z'), adapterFactory: async () => { throw Error('invalid persisted terminal must not query'); } });
+  assert.equal(invalidAssignment.receipt_recovery_required, true);
+  assert.ok(refused.errors.some(error => error.code === 'publication_recovery_terminal_evidence_invalid'));
+  Object.assign(invalidTerminal, previous);
+}

@@ -1,4 +1,5 @@
 import {createWeeklyInventoryReuseService} from '../socialPrograms/weeklyInventoryReuse.js';
+import {assertWeeklyPublicationStoredScope} from '../publishing/weeklyFormalPublicationBoundary.js';
 import {readWeeklyPublicationMetricEvidence} from './weeklyPublicationMetricEvidence.js';
 import type { WeeklyExecutionTask, WeeklyOperatingPackage } from '../../shared/contracts/socialProgram.js';
 import { withWeeklyProductionAdmissionGuard } from '../socialPrograms/weeklyCancellation.js';
@@ -32,7 +33,11 @@ export function createSocialWeeklyPublicationAdapter(dataStore: DataStore, optio
     if (packages.totalItems !== 1 || !packages.items[0]) return blocked('weekly_package_missing', '周任务包版本不存在或不唯一。');
     const row = packages.items[0];
     const pkg = row.payload as WeeklyOperatingPackage;
-    if (pkg.packageId !== task.packageId || pkg.version !== task.packageVersion || pkg.programId !== task.programId) return blocked('weekly_package_identity_invalid', '周任务包身份不一致。');
+    if (!pkg || row.tenant_id !== task.tenantId || row.package_id !== task.packageId || row.version !== task.packageVersion || pkg.packageId !== task.packageId || pkg.version !== task.packageVersion || pkg.programId !== task.programId) return blocked('weekly_package_identity_invalid', '周任务包身份不一致。');
+    if (task.schedule.stepKind === 'publishing') {
+      try { const observed = await observeOriginalAttempt(task, pkg); if (observed) return observed; }
+      catch (error) { return blocked(error instanceof Error ? error.message : 'publication_receipt_scope_invalid', '原发布回执身份或查询能力无法核验，未重新提交发布。'); }
+    }
     if (pkg.status !== 'active') return blocked('weekly_package_inactive', '周任务包已停用或被修订替代。');
     if (task.schedule.stepKind === 'publishing') {
       try { return await withWeeklyProductionAdmissionGuard({ dataStore, tenantId: task.tenantId, packageId: task.packageId, packageVersion: task.packageVersion, action: assertAdmission => publish(task, pkg, assertAdmission) }); }
@@ -51,6 +56,30 @@ export function createSocialWeeklyPublicationAdapter(dataStore: DataStore, optio
     }
     return blocked('weekly_execution_adapter_missing', '该执行节点没有匹配的发布或复盘适配器。');
   } };
+
+  // Observation of an existing request is independent of permission to submit a new one.
+  // Do not scan/create packages, restart production, or re-run current approval here.
+  async function observeOriginalAttempt(task: WeeklyExecutionTask, pkg: WeeklyOperatingPackage): Promise<WeeklyExecutionAdapterResult | null> {
+    if (!task.publicationTaskId || !task.accountId) throw Error('weekly_publication_identity_invalid');
+    const rows = await dataStore.list<StoredPublicationAssignment>(PUBLICATION_ASSIGNMENTS, {where: {tenant_id: task.tenantId, operating_package_id: task.packageId, operating_package_version: task.packageVersion, publication_task_id: task.publicationTaskId}, page: 1, perPage: 2});
+    if (!rows.totalItems && !rows.items.length) return null;
+    if (rows.totalItems !== 1 || rows.items.length !== 1) throw Error('weekly_publication_assignment_ambiguous');
+    const assignment = rows.items[0]!;
+    assertWeeklyPublicationStoredScope(assignment, pkg);
+    if (assignment.tenant_id !== task.tenantId || assignment.account_id !== task.accountId) throw Error('weekly_publication_assignment_scope_invalid');
+    const attempts = await dataStore.list<DurablePublicationAttempt>(PUBLICATION_ATTEMPTS, {where: {tenant_id: task.tenantId, assignment_id: assignment.assignment_id}, page: 1, perPage: 2});
+    if (!attempts.totalItems && !attempts.items.length) return null;
+    if (attempts.totalItems !== 1 || attempts.items.length !== 1) throw Error('publication_attempt_ambiguous');
+    const attempt = attempts.items[0]!;
+    if (!attempt.attempt_id || attempt.tenant_id !== task.tenantId || attempt.assignment_id !== assignment.assignment_id || attempt.package_id !== assignment.package_id || !attempt.provider) throw Error('publication_receipt_scope_invalid');
+    const publicationPackage = await readStarterPublicationPackage(task.tenantId, assignment.package_id, dataStore);
+    if (!publicationPackage || publicationPackage.tenantId !== task.tenantId || publicationPackage.platform !== assignment.platform || publicationPackage.packageId !== assignment.package_id || publicationPackage.operatingLineage?.assignmentId !== assignment.assignment_id || publicationPackage.operatingLineage.assignmentHash !== assignment.assignment_hash) throw Error('publication_package_scope_invalid');
+    if (attempt.status === 'published' || attempt.status === 'failed') return publicationResult(attempt);
+    if (attempt.status !== 'unknown' && attempt.status !== 'in_flight') throw Error('publication_receipt_status_invalid');
+    const provider = options.adapterFactory ? await options.adapterFactory(assignment) : await createWeeklyPublishingAdapter({tenantId: task.tenantId, accountId: assignment.account_id, platform: assignment.platform, dataStore, now: now(), purpose: 'receipt_lookup', providerReceiptId: attempt.provider_receipt_id});
+    if (provider.provider !== attempt.provider || provider.platform !== assignment.platform) throw Error('publication_receipt_provider_mismatch');
+    return publicationResult(await reconcileWeeklyPublication({assignment: assignment.payload, publicationPackage, adapter: provider, dataStore, now: now()}));
+  }
 
   async function publish(task: WeeklyExecutionTask, pkg: WeeklyOperatingPackage, assertAdmission: () => Promise<void>): Promise<WeeklyExecutionAdapterResult> {
     const publication = pkg.socialContentPackage.publicationTasks.find(item => item.publicationTaskId === task.publicationTaskId && item.accountId === task.accountId);

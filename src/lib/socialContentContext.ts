@@ -1,9 +1,12 @@
+import type {WeeklyContentNavigation} from '../../shared/contracts/weeklyContentNavigation';
+import {parseWeeklyContentNavigation} from './weeklyContentNavigationApi';
 const ACTIVE_SOCIAL_CONTENT_TASK_KEY = 'lingshu_active_social_content_task';
 export const SOCIAL_CONTENT_NAVIGATION_EVENT = 'lingshu:social-content-navigation';
 
 export interface SocialContentNavigationState {
   socialContentTaskId: string;
   socialContentPage: string;
+  weeklyContentTarget?: WeeklyContentNavigation;
 }
 
 export interface SocialContentNavigationEventDetail {
@@ -39,6 +42,19 @@ export function readSocialContentNavigationTaskId(page: string, historyState: un
   return taskIdFrom(state.productionDetail, page) || taskIdFrom(state, page);
 }
 
+export function readWeeklyContentNavigationTarget(historyState: unknown): WeeklyContentNavigation | null {
+  const state = record(historyState), detail = record(state.productionDetail);
+  const value = detail.weeklyContentTarget ?? state.weeklyContentTarget;
+  if (!value) return null;
+  const scope = record(record(value).scope);
+  if (!['tenantId','programId','packageId','executionTaskId'].every(key => typeof scope[key] === 'string' && String(scope[key]).trim()) || typeof scope.packageVersion !== 'number') return null;
+  try {
+    const target = parseWeeklyContentNavigation(value, {tenantId: String(scope.tenantId), programId: String(scope.programId), packageId: String(scope.packageId), packageVersion: scope.packageVersion, executionTaskId: String(scope.executionTaskId)});
+    if (readSocialContentNavigationTaskId('smartAssets', historyState) !== target.contentTaskId) return null;
+    return target;
+  } catch { return null; }
+}
+
 /** Adds a server-verifiable task handoff only for the exact professional page currently open. */
 export function socialContentTaskRequestHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};
@@ -69,20 +85,24 @@ export function setActiveSocialContentTaskId(taskId: string | null): void {
   }
 }
 
-export function attachSocialContentNavigationState(taskId: string, page: string): void {
+export function attachSocialContentNavigationState(taskId: string, page: string, weeklyContentTarget?: WeeklyContentNavigation): void {
   setActiveSocialContentTaskId(taskId);
   const current = window.history.state && typeof window.history.state === 'object' ? window.history.state : {};
   const currentDetail = current.productionDetail && typeof current.productionDetail === 'object'
     ? current.productionDetail
     : {};
+  const {weeklyContentTarget: previousTarget, ...cleanCurrent} = current;
+  const {weeklyContentTarget: previousDetailTarget, ...cleanDetail} = currentDetail;
+  void previousTarget; void previousDetailTarget;
   window.history.replaceState({
-    ...current,
+    ...cleanCurrent,
     socialContentTaskId: taskId,
     socialContentPage: page,
     productionDetail: {
-      ...currentDetail,
+      ...cleanDetail,
       socialContentTaskId: taskId,
       socialContentPage: page,
+      ...(weeklyContentTarget ? {weeklyContentTarget} : {}),
     },
   }, '');
   window.dispatchEvent(new CustomEvent<SocialContentNavigationEventDetail>(

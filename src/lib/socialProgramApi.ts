@@ -148,7 +148,7 @@ export const socialProgramApi = {
   },
   async readCancellation(programId: string, packageId: string, version: number): Promise<WeeklyCancellationSummary | null> {
     const result = await request<{ item: WeeklyCancellationSummary | null }>(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/cancellation?version=${version}`);
-    return result.item;
+    return parseWeeklyCancellationSummary(result.item);
   },
   async listExecutionTasks(programId: string, packageId: string, version: number): Promise<WeeklyExecutionTask[]> {
     return (await request<{ items: WeeklyExecutionTask[] }>(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/execution-tasks?version=${version}`)).items;
@@ -181,3 +181,9 @@ export const socialProgramApi = {
     return (await request<{ items: WeeklyExecutionTask[] }>(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/execution-tasks/${encodeURIComponent(taskId)}/unblock`, { method: 'POST', ...json({ reason: 'weekly_required_materials_missing' }) })).items;
   },
 };
+
+export function parseWeeklyCancellationSummary(value:unknown):WeeklyCancellationSummary|null {
+ if(value===null)return null;if(!value||typeof value!=='object')throw Error('撤回回执不可核验。');const v=value as WeeklyCancellationSummary;
+ if(!Array.isArray(v.effects)||v.effects.some(e=>!e||typeof e.resourceId!=='string'||typeof e.resourceType!=='string'||!['irreversible','unknown_requires_reconciliation'].includes(e.outcome)))throw Error('撤回历史不可核验。');
+ if(v.currentSettlements!==undefined){if(!Array.isArray(v.currentSettlements)||v.currentSettlements.length!==v.effects.length||v.currentSettlements.some(s=>!s||typeof s!=='object'||Array.isArray(s))||new Set(v.currentSettlements.map(s=>s.resourceType+'\0'+s.resourceId)).size!==v.currentSettlements.length||v.currentSettlements.some(s=>!s||!v.effects.some(e=>e.resourceId===s.resourceId&&e.resourceType===s.resourceType)||!['published','failed','unknown','unverified'].includes(s.status)||(['published','failed'].includes(s.status)&&(s.resourceType!=='publication_attempt'||typeof s.resolvedAt!=='string'||!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(s.resolvedAt)||!Number.isFinite(Date.parse(s.resolvedAt))||new Date(s.resolvedAt).toISOString().replace('.000Z','Z')!==s.resolvedAt.replace('.000Z','Z')||Date.parse(s.resolvedAt)>Date.now()||s.gap!==null))||(['unknown','unverified'].includes(s.status)&&(s.resolvedAt!==null||typeof s.gap!=='string'||!s.gap))))throw Error('当前回执与原撤回记录不一致。');}return v;
+}

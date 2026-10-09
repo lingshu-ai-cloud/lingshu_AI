@@ -1,6 +1,6 @@
 import {projectCustomerSendRecoveries,validCustomerSendRecoveryTarget} from './weeklyCustomerSendRecoveryNavigation';
 import type {WeeklyCustomerSendRecovery} from '../../../shared/contracts/weeklyCustomerSendRecovery';
-import {isSceneContentExecution} from './sceneCalendarNavigation';
+import {isWeeklyContentNavigationExecution} from './sceneCalendarNavigation';
 import {validatedTemplateCalendarTask} from './templateCalendarNavigation';
 import {validatedReviewCalendarTask} from './reviewCalendarNavigation';
 import {validatedPlanningCalendarTask} from './planningCalendarNavigation';
@@ -67,7 +67,7 @@ export default function WeeklyCustomerCalendar({ programId, packageId, packageVe
   const missing = item?.tasks.filter(task => !task.scheduledAt || !Number.isFinite(Date.parse(task.scheduledAt))) ?? [];
   const recoveryScope=tenantId?{tenantId,programId,packageId,packageVersion}:null;
   const recoveryTasks=recoveryScope?projectCustomerSendRecoveries(sendRecoveries,recoveryScope):[];
-  const canOpenContentTask=(card:AgentCalendarTask)=>ownedExecutions.filter(t=>t.taskId===card.id&&t.tenantId===tenantId&&isSceneContentExecution(t)).length===1;
+  const canOpenContentTask=(card:AgentCalendarTask)=>ownedExecutions.filter(t=>t.taskId===card.id&&t.tenantId===tenantId&&isWeeklyContentNavigationExecution(t)).length===1;
   return <div>
     <AgentWeeklyCalendar canOpenContentTask={canOpenContentTask} onOpenSupplement={onOpenSupplement?task=>{const t=task.supplementTarget;if(!t||!['submission','verification'].includes(t.action)||!t.tenantId||t.programId!==programId||t.packageId!==packageId||t.packageVersion!==packageVersion||task.id!==`supplement:${t.requestId}:${t.action}`){setError({identity,message:"补齐任务与当前周版本不一致，请刷新。"});return;}onOpenSupplement(task);}:undefined} onOpenTemplate={onOpenTemplate?task=>{if(!validatedTemplateCalendarTask({programId,packageId,packageVersion},ownedExecutions,task)){setError({identity,message:"模板任务与来源身份不一致，请刷新。"});return;}onOpenTemplate(task);}:undefined} onOpenReview={onOpenReview?task=>{if(!validatedReviewCalendarTask({programId,packageId,packageVersion},ownedExecutions,task)){setError({identity,message:"复盘卡片与所选周包执行身份不一致，请刷新。"});return;}onOpenReview(task);}:undefined} scopeKey={materialIdentity} startsAt={weekStart} onOpenPlanning={onOpenPlanning?task=>{if(!validatedPlanningCalendarTask({programId,packageId,packageVersion},ownedExecutions,task)){setError({identity,message:"规划卡片与所选周包执行身份不一致，请刷新。"});return;}onOpenPlanning(task);}:undefined} tasks={[...mainTasks,...recoveryTasks, ...(item ? customerCalendarTasks(item) : []), ...(materialProjection?.tasks??[]),...(salesProjection?.tasks??[])]} onOpenProduction={task => {
       if(task.sendRecoveryTarget){if(!recoveryScope||!validCustomerSendRecoveryTarget(task,recoveryScope)){setError({identity,message:'发送异常任务与当前租户或周包版本不一致，请刷新。'});return;}onOpenSendRecovery?.(task);}

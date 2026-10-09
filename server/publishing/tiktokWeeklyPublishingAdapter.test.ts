@@ -1,3 +1,6 @@
+import type {WeeklyOperatingPackage} from '../../shared/contracts/socialProgram.js';
+import {buildPublicationAssignment} from '../digitalEmployees/publishingExecution.js';
+import {persistPublicationAssignment} from './weeklyLineage.js';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
@@ -20,7 +23,7 @@ function memoryStore(): DataStore & { rows: Map<string, Row[]> } {
       return { items: items.slice((page - 1) * perPage, page * perPage) as T[], totalItems: items.length, totalPages: Math.ceil(items.length / perPage), page, perPage };
     },
     async getById<T>(collection: string, id: string) { return (rows.get(collection) || []).find(row => row.id === id) as T || null; },
-    async create<T>(collection: string, data: Record<string, unknown>) { const item = { id: `${collection}-${(rows.get(collection)?.length || 0) + 1}`, ...data }; rows.set(collection, [...(rows.get(collection) || []), item]); return item as T; }, async update() { return false; }, async delete() { return false; },
+    async create<T>(collection: string, data: Record<string, unknown>) { const item = { id: `${collection}-${(rows.get(collection)?.length || 0) + 1}`, ...data }; rows.set(collection, [...(rows.get(collection) || []), item]); return item as T; }, async update(collection:string,id:string,data:Record<string,unknown>) {const r=(rows.get(collection)||[]).find(r=>r.id===id);if(!r)return false;Object.assign(r,data);return true;}, async delete() { return false; },
   };
 }
 
@@ -46,7 +49,10 @@ const adapter = await createTikTokWeeklyPublishingAdapter({ tenantId: 'tenant-a'
   async reconcile() { reconciles += 1; return { status: 'published', providerReceiptId: 'receipt-1', platformPostId: 'post-1', platformUrl: 'https://tiktok.example/post-1', providerStatus: 'PUBLISH_COMPLETE', error: '' }; },
 } });
 assert.equal(adapter.capability, 'available');
-const assignment = { tenantId: 'tenant-a', accountId: 'account-1', publicationTaskId: 'task-1', lineage: { productionResultRef: { id: 'production-1' } } } as any;
+const pub={publicationTaskId:'task-1',motherContentId:'legacy-mother',adaptationOfPublicationTaskId:null,platform:'tiktok' as const,accountId:'account-1',accountPositioning:'企业证明',businessProposition:'产品说明',cta:'询问',factRefs:[],metricTargets:[],publishWindow:'2026-09-26T12:00:00Z',status:'ready' as const};
+const weekly:WeeklyOperatingPackage={packageId:'legacy-week',programId:'program',version:1,status:'active',weekStart:'2026-09-22',weekEnd:'2026-09-28',objective:'Legacy adapter unit test',enterpriseProfileRef:null,businessContentGoalRef:null,monthlyPlanRef:null,workflows:[],appliedWorkflowEvents:[],taskVersionMappings:[],planningBlockers:[],capacityPlanRef:null,automationPolicyRef:null,discoveryBudgetCny:null,workflowTasks:[{taskId:'workflow',kind:'publishing',taskRef:{type:'weekly_workflow_task',id:'workflow',version:1},dependsOnTaskIds:[],subjectRefs:[],status:'planned',ownBlockingReasons:[],inheritedBlockingTaskIds:[],carriedFromTaskId:null}],socialContentPackage:{contentPackageId:'content-package',operatingPackageId:'legacy-week',version:1,status:'active',originalContentTarget:1,adaptationVersionTarget:0,publicationTaskTarget:1,publicationTasks:[pub],weeklyBudgetCny:0,perItemBudgetCny:0,capacityNotes:[],authorization:{mode:'bounded',accountIds:['account-1'],maxPublishItems:1,weekStart:'2026-09-22',weekEnd:'2026-09-28',allowRealPublishing:true,authorizedBy:'owner',authorizedAt:'2026-09-21T00:00:00Z',revokedBy:null,revokedAt:null}},successCriteria:[],changeReason:null,previousVersion:null,createdBy:'owner',createdAt:'2026-09-21T00:00:00Z',updatedAt:'2026-09-21T00:00:00Z'};
+dataStore.rows.set('social_weekly_operating_packages',[{id:'legacy-week-row',tenant_id:'tenant-a',program_id:'program',package_id:weekly.packageId,version:1,payload:weekly}]);
+const assignment=buildPublicationAssignment({tenantId:'tenant-a',operatingPackage:weekly,publicationTask:pub,productionResult:{productionResultId:'production-1',contentId:'artifact-1',contentVersion:'v1',contentHash:videoHash,title:'Title',body:'Body',assets:[{kind:'video',fileName:'video.mp4',downloadUrl:videoPath,contentHash:videoHash}],sourceRefs:[],acceptedAt:'2026-09-25T00:00:00Z'}});await persistPublicationAssignment(assignment,dataStore);
 const publicationPackage = { contentId: 'artifact-1:task-1', contentVersion: 'v1', contentHash: videoHash, operatingLineage: { productionResultRef: { id: 'production-1' } }, copy: { title: 'Title', body: 'Body', hashtags: [] }, assets: [{ kind: 'video', downloadUrl: `file://${videoPath}`, contentHash: videoHash }] } as any;
 assert.deepEqual(await adapter.publish({ assignment, publicationPackage, attemptId: 'attempt-1' }), { status: 'accepted', providerReceiptId: 'receipt-1' });
 const reconciled = await adapter.reconcile({ assignment, publicationPackage, attempt: { provider_receipt_id: 'receipt-1' } as any });
@@ -58,7 +64,7 @@ const artifact = dataStore.rows.get('starter_social_content_artifacts')![0]!;
 artifact.content.productionResult.technicalReview.approved = false;
 await assert.rejects(
   adapter.publish({ assignment, publicationPackage, attemptId: 'attempt-after-revocation' }),
-  /social_production_artifact_stale/,
+  /weekly_publish_source_evidence_invalid/, // Actual frozen weekly legacy evidence rejects before generic media validation.
   'the approved production row must be rechecked before each provider effect',
 );
 assert.equal(publishes, 1);

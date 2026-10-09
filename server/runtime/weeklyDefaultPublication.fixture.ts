@@ -1,0 +1,54 @@
+import {readFile} from 'node:fs/promises';
+import {createHash} from 'node:crypto';
+import {createTikTokWeeklyPublishingAdapter} from '../publishing/tiktokWeeklyPublishingAdapter.js';
+import {verifySocialWeeklyG6Receipt} from '../starter198/socialWeeklyG6ReviewService.js';
+import {parseSocialProductionReceiptRecord} from '../starter198/socialContentProductionHandoff.js';
+import type {StarterRecord} from '../starter198/repository.js';
+import {checkPublicationReceptionAdmission} from '../socialPrograms/publicationReceptionService.js';
+import test,{type TestContext} from 'node:test';
+import {refreshPlatformCapabilityEvidence} from '../publishing/platformCapabilities.js';
+import assert from 'node:assert/strict';
+import {prepareWeeklyG6Fixture} from '../starter198/socialWeeklyG6ReviewService.fixture.js';
+import {createSocialWeeklyProductionAdapter} from './socialWeeklyProductionAdapter.js';
+import {createWeeklyExecutionTaskService} from '../socialPrograms/executionTasks.js';
+import {validateContentArtifact} from './socialWeeklyResultValidation.js';
+import {runWeeklyPublicationPackageScan} from '../publishing/weeklyPublicationWorker.js';
+import {readStarterPublicationPackage} from '../publishing/starterPublicationPackage.js';
+import {assertWeeklyPublicationG6Admission} from './weeklyPublicationG6Admission.js';
+import {createSocialWeeklyPublicationAdapter} from './socialWeeklyPublicationAdapter.js';
+import type {WeeklyExecutionTask} from '../../shared/contracts/socialProgram.js';
+import type {StoredPublicationAssignment} from '../publishing/weeklyLineage.js';
+
+export async function prepareDefaultPublication(t:TestContext){
+ const originalNodeEnv=process.env.NODE_ENV;process.env.NODE_ENV='test';t.after(()=>{if(originalNodeEnv===undefined)delete process.env.NODE_ENV;else process.env.NODE_ENV=originalNodeEnv;});
+ t.mock.timers.enable({apis:['Date'],now:new Date('2026-10-02T12:00:00Z')});
+ const f=await prepareWeeklyG6Fixture({registeredOwnedMedia:true});t.after(f.cleanup);
+ f.pkg.workflowTasks.push({taskId:'actual-publishing-workflow',kind:'publishing',taskRef:{type:'weekly_workflow_task',id:'actual-publishing-workflow',version:1},dependsOnTaskIds:['content-workflow'],subjectRefs:[{type:'weekly_publication_task',id:'pub',version:1}],status:'planned',ownBlockingReasons:[],inheritedBlockingTaskIds:[],carriedFromTaskId:null});
+ const preflight=await f.service.context(f.scope,'owner');assert.deepEqual(preflight.gaps,[]);
+ const checked=await f.service.check(f.scope,'owner',{programId:f.scope.programId,packageId:f.scope.packageId,packageVersion:f.scope.packageVersion,publicationTaskId:f.scope.publicationTaskId,requestId:'g6-complete-consumer-0001',expectedContextHash:preflight.contextHash});
+ assert.ok(checked.item);const checkedItem=checked.item;assert.equal(checkedItem.status,'passed');
+ const result=await createSocialWeeklyProductionAdapter(f.store,{start:async()=>{throw Error('no production start');},create:async()=>{throw Error('no duplicate content');}}).execute(f.task);
+ assert.equal(result.status,'succeeded',JSON.stringify(result));
+ await validateContentArtifact(f.store,f.task,f.ref);
+ assert.equal(f.tables.starter_social_content_lineage!.length,1);
+ const dependency:WeeklyExecutionTask={...f.task,taskId:'actual-quality-completed',status:'succeeded',dependsOnTaskIds:[],inheritedBlockingTaskIds:[],ownBlockingReasons:[],resultRefs:[f.ref],inputSnapshot:{}};
+ const approval:WeeklyExecutionTask={...dependency,taskId:'actual-final-human-approval',status:'blocked',dependsOnTaskIds:[dependency.taskId],resultRefs:[],schedule:{...dependency.schedule,stepKind:'user_approval',responsibleActor:'user'}};
+ const row=(task:WeeklyExecutionTask)=>({id:task.taskId,tenant_id:task.tenantId,program_id:task.programId,package_id:task.packageId,package_version:task.packageVersion,task_id:task.taskId,payload:task});
+ f.tables.social_weekly_execution_tasks=[row(dependency),row(approval)];f.tables.starter_social_content_tasks![0]!.weekly_plan_id=f.pkg.packageId;
+ await createWeeklyExecutionTaskService(f.store).approve('t','p','week1',approval.taskId,'owner');
+ assert.equal(f.artifact.status,'approved');assert.equal(f.artifact.version,'2');
+ const scan=await runWeeklyPublicationPackageScan({dataStore:f.store,tenantId:'t',taskId:'content'});assert.deepEqual(scan.errors,[]);assert.equal(scan.createdAssignments,1);
+ const assignments=await f.store.list<StoredPublicationAssignment>('social_publication_assignments',{where:{tenant_id:'t',operating_package_id:f.pkg.packageId,operating_package_version:f.pkg.version,publication_task_id:f.scope.publicationTaskId},perPage:2});assert.equal(assignments.totalItems,1);const assignment=assignments.items[0]!;
+ const publicationPackage=await readStarterPublicationPackage('t',assignment.package_id,f.store);assert.ok(publicationPackage);
+ const publishing:WeeklyExecutionTask={...dependency,taskId:'actual-weekly-publishing',workflowKind:'publishing',status:'queued',dependsOnTaskIds:[approval.taskId],resultRefs:[],schedule:{...dependency.schedule,stepKind:'publishing',responsibleActor:'publishing_agent'}};
+ f.tables.social_weekly_execution_tasks.push(row(publishing));
+ const raw=f.tables.starter_social_production_receipts!.find(row=>row.receipt_id===checkedItem.receiptId)!;
+  await verifySocialWeeklyG6Receipt(f.repository,'t',parseSocialProductionReceiptRecord(raw as StarterRecord));
+ const proof=await assertWeeklyPublicationG6Admission(f.store,publishing,assignment,publicationPackage);assert.equal(proof.length,1);assert.equal(proof[0]!.sourceHash,preflight.sourceHash);
+ await checkPublicationReceptionAdmission({dataStore:f.store,scope:{tenantId:'t',programId:'p',packageId:'week1',packageVersion:1,publicationId:'pub'},cta:f.pkg.socialContentPackage.publicationTasks[0]!.cta??'',required:true,bindingId:f.pkg.socialContentPackage.publicationTasks[0]!.receptionRequirement!.bindingId});
+ const ownedVideo=(f.artifact.content as Record<string,any>).mediaStorage.video;
+ const ownedRow=f.tables.starter_social_content_files!.find(r=>r.file_id===ownedVideo.fileId)!;
+ assert.ok(ownedRow.last_operation_id,'owned-file id must come from actual registerSocialContentFile mutation');assert.equal(ownedRow.content_sha256,ownedVideo.sha256);assert.equal(ownedVideo.fileRef,f.artifact.resource_ref);assert.match(ownedRow.file_id as string,/^socialfile_[a-f0-9]{24}$/);
+ return {f,preflight,assignment,publicationPackage,publishing};
+}
+

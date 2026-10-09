@@ -1,3 +1,4 @@
+import {readWeeklyContentNavigation,weeklyContentNavigationDetail} from '../../lib/weeklyContentNavigationApi';
 import {parseWeeklyProfileCreation,type WeeklyProfileUpgrade,type WeeklyProfileCreationIntent} from '../../lib/weeklyProfileUpgradeApi';
 import WeeklyInventoryReusePanel from '../socialProgram/WeeklyInventoryReusePanel';
 import WeeklyProfileUpgradePanel from '../socialProgram/WeeklyProfileUpgradePanel';
@@ -194,20 +195,19 @@ export default function ConnectedAgentCalendar() {
   const openMaterial=(requestId:string)=>{if(!pkg)return;if(!openMaterialPanelRequest(materialPanel.current,pkg.programId,pkg.packageId,pkg.version,requestId)){setBindingContext(currentSelection.current);setBindingError('对应素材任务仍在加载或尚未关联此版本，请在下方真实素材工作区核验。');}};
   async function openContent(card:AgentCalendarTask,chosen?:ScopedSceneTarget){
     if(!pkg)return;
-    const selection=currentSelection.current,generation=++sceneReadGeneration.current;
+    const selection=currentSelection.current,generation=++sceneReadGeneration.current,token=getToken();const stillCurrent=()=>currentSelection.current===selection&&sceneReadGeneration.current===generation&&getToken()===token;
     setBindingContext(selection);setBindingError('');setSceneChoices(null);setSceneUpstream(null);setSceneReading(selection);
     try{
       const actualTasks=await socialProgramApi.listExecutionTasks(pkg.programId,pkg.packageId,pkg.version);
       const currentTask=actualTasks.filter(t=>t.taskId===card.id&&t.programId===pkg.programId&&t.packageId===pkg.packageId&&t.packageVersion===pkg.version);
-      if(currentTask.length===1&&currentSelection.current===selection&&sceneReadGeneration.current===generation)setSceneUpstream({selection,tasks:actualTasks.filter(t=>currentTask[0]!.dependsOnTaskIds.includes(t.taskId)&&t.tenantId===currentTask[0]!.tenantId&&t.programId===pkg.programId&&t.packageId===pkg.packageId&&t.packageVersion===pkg.version)});
+      if(currentTask.length===1&&stillCurrent())setSceneUpstream({selection,tasks:actualTasks.filter(t=>currentTask[0]!.dependsOnTaskIds.includes(t.taskId)&&t.tenantId===currentTask[0]!.tenantId&&t.programId===pkg.programId&&t.packageId===pkg.packageId&&t.packageVersion===pkg.version)});
+      if(!stillCurrent())return;
+      if(currentTask.length!==1)throw Error('当前周任务身份不唯一，请刷新。');
+      const selectedExecution=currentTask[0]!;
+      if(!isSceneContentExecution(selectedExecution)||!['blocked','dead_letter'].includes(selectedExecution.status)){if(chosen)throw Error('原受阻任务已变化，请重新读取。');const binding=await readWeeklyContentNavigation({tenantId:selectedExecution.tenantId,programId:pkg.programId,packageId:pkg.packageId,packageVersion:pkg.version,executionTaskId:selectedExecution.taskId});if(binding.publicationTaskId!==selectedExecution.publicationTaskId)throw Error('内容绑定与当前发布条目不一致。');if(stillCurrent())window.dispatchEvent(new CustomEvent('lingshu:navigate',{detail:weeklyContentNavigationDetail(binding)}));return;}
       const actual=sceneCalendarExecution(pkg,actualTasks,card);
       const [content,projects]=await Promise.all([socialContentApi.getTask(actual.productionProgress!.contentTaskId),studioApi.listProjects({throwOnError:true})]);
       if(content.taskId!==actual.productionProgress!.contentTaskId||content.runId!==actual.productionProgress!.runId||content.brief.programRef?.id!==actual.programId||content.agentWorkflow?.weeklyPackage?.packageId!==actual.packageId||content.agentWorkflow?.weeklyPackage?.version!==String(actual.packageVersion))throw Error('内容任务与当前执行身份、项目或周包版本不一致，请核对原周上游。');
-      if(!isSceneContentExecution(actual)||!['blocked','dead_letter'].includes(actual.status)){
-        if(chosen)throw Error('原受阻任务已变化，请重新读取当前任务状态。');
-        if(currentSelection.current===selection&&sceneReadGeneration.current===generation)window.dispatchEvent(new CustomEvent('lingshu:navigate',{detail:{page:'smartAssets',directStudio:false,socialContentTaskId:content.taskId,socialContentPage:'smartAssets',socialContentView:'managed'}}));
-        return;
-      }
       const parents=content.artifacts.filter(a=>a.taskId===content.taskId&&a.origin==='agent'&&a.kind==='short_video');
       if(!parents.length)throw Error(`内容任务 ${content.taskId} 尚无真实原成片，请核对执行任务 ${actual.taskId} 的渲染、素材或质检上游。`);
       const reads=await Promise.allSettled(parents.map(a=>socialSceneReworkApi.availability({tenantId:actual.tenantId,taskId:content.taskId,sourceRunId:actual.productionProgress!.runId!,parentArtifactId:a.artifactId})));
@@ -215,11 +215,11 @@ export default function ConnectedAgentCalendar() {
       if(reads.some(r=>r.status==='rejected'))throw Error('部分原成片逐镜核验凭据无法读取，不能完整定位失败对象。'+reads.flatMap(r=>r.status==='rejected'?[String(r.reason)]:[]).join('；'));
       await Promise.all(receipts.map(receipt=>{const bound=projects.filter(p=>p.id===receipt.productionWorkspaceBinding?.projectId);if(bound.length!==1)throw Error(receipt.productionWorkspaceGap||`原成片 ${receipt.parentArtifactId} 缺少唯一已核验的视频项目血缘。`);return verifyProductionSnapshotHash(receipt,bound[0]!);}));
       const items=sceneCalendarChoices(actual,content,projects,receipts);
-      if(currentSelection.current!==selection||sceneReadGeneration.current!==generation)return;
+      if(!stillCurrent())return;
       if(chosen){const exact=items.filter(item=>JSON.stringify(item.target)===JSON.stringify(chosen));if(exact.length!==1)throw Error('所选成片或失败分镜已变化，请重新读取原任务。');window.dispatchEvent(new CustomEvent('lingshu:navigate',{detail:sceneStudioNavigationDetail(exact[0]!.target)}));}
       else if(items.length===1)window.dispatchEvent(new CustomEvent('lingshu:navigate',{detail:sceneStudioNavigationDetail(items[0]!.target)}));
       else setSceneChoices({selection,generation,card,items});
-    }catch(cause){if(currentSelection.current===selection&&sceneReadGeneration.current===generation){setBindingContext(selection);setBindingError(cause instanceof Error?cause.message:'真实生产对象读取失败，请核对原周任务上游。');}}
+    }catch(cause){if(stillCurrent()){setBindingContext(selection);setBindingError(cause instanceof Error?cause.message:'真实生产对象读取失败，请核对原周任务上游。');}}
     finally{if(sceneReadGeneration.current===generation)setSceneReading(null);}
   }
   if (!program) return <p className="p-6 text-sm text-slate-500">请先选择社媒经营项目，再查看真实 Agent 周任务排期。</p>;

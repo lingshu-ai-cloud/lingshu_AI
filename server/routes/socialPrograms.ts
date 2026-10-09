@@ -16,6 +16,8 @@ import { store } from '../storage/index.js';
 import type { DataStore } from '../storage/datastore.js';
 import { createSocialProgramService, SocialProgramError } from '../socialPrograms/service.js';
 import { readWeeklyCancellation } from '../socialPrograms/weeklyCancellation.js';
+import {readWeeklyCancellationSettlements} from '../socialPrograms/weeklyCancellationSettlement.js';
+import {readWeeklyContentNavigation} from '../socialPrograms/weeklyContentNavigation.js';
 import { createWeeklyOperatingPackageService } from '../socialPrograms/weeklyOperatingPackages.js';
 import { createSocialOperatingOrchestrationService, weeklyAuthorityFromResolution } from '../socialOperating/orchestration.js';
 import { SocialOperatingDecisionError } from '../socialOperating/service.js';
@@ -317,7 +319,15 @@ export function createSocialProgramsRouter(dataStore: DataStore = store, authent
     const pkg = await weeklyPackages.get(tenantId, programId, packageId);
     const version = Number(req.query.version ?? pkg.version);
     if (!Number.isSafeInteger(version) || version < 1) throw new SocialProgramError('package_version_invalid', 400, '周包版本无效。');
-    res.json({ item: await readWeeklyCancellation(dataStore, tenantId, programId, packageId, version) });
+    const summary = await readWeeklyCancellation(dataStore, tenantId, programId, packageId, version);
+    res.json({ item: summary ? {...summary, currentSettlements: await readWeeklyCancellationSettlements({dataStore, tenantId, programId, packageId, packageVersion: version})} : null });
+  }));
+
+  router.get('/:programId/operating-packages/:packageId/execution-tasks/:taskId/production-navigation', asyncRoute(async (req, res) => {
+    const {tenantId} = res.locals as AuthLocals;
+    const packageVersion = Number(req.query.version);
+    if (!Number.isSafeInteger(packageVersion) || packageVersion < 1) throw new SocialProgramError('package_version_invalid', 400, '周包版本无效。');
+    res.json({item: await readWeeklyContentNavigation(dataStore, {tenantId, programId: String(req.params.programId), packageId: String(req.params.packageId), packageVersion, executionTaskId: String(req.params.taskId)})});
   }));
 
   router.get('/:programId/operating-packages/:packageId/execution-tasks', asyncRoute(async (req, res) => {
