@@ -70,6 +70,8 @@ const record = (value: unknown): Record<string, unknown> => value && typeof valu
  * frozen, accepted artifact; it neither reconstructs nor copies production.
  */
 export interface PublishableProductionResult {
+  /** Canonical producer version when supplied; legacy handoffs retain their original v1 convention. */
+  productionResultRef?: VersionedSocialRef;
   productionResultId: string;
   contentId: string;
   contentVersion: string;
@@ -127,6 +129,7 @@ export function buildPublicationAssignment(input: {
   if (task.status === 'cancelled') throw new Error('publication_task_cancelled');
   if (!task.publishWindow) throw new Error('publication_publish_window_required');
   if (!result.productionResultId || !result.contentId || !/^[a-f0-9]{32,128}$/i.test(result.contentHash)) throw new Error('production_result_invalid');
+  if (result.productionResultRef && (result.productionResultRef.type !== 'production_result' || result.productionResultRef.id !== result.productionResultId || !Number.isSafeInteger(result.productionResultRef.version) || result.productionResultRef.version < 1)) throw new Error('production_result_ref_invalid');
   const lineage: PublicationAssignmentLineage = {
     programRef: { type: 'social_program', id: weekly.programId, version: 1 },
     operatingPackageRef: { type: 'weekly_operating_package', id: weekly.packageId, version: weekly.version },
@@ -136,7 +139,7 @@ export function buildPublicationAssignment(input: {
     businessGoalRef: weekly.businessContentGoalRef ? stableRef(weekly.businessContentGoalRef) : null,
     enterpriseProfileRef: weekly.enterpriseProfileRef ? stableRef(weekly.enterpriseProfileRef) : null,
     factRefs: stableRefs(task.factRefs),
-    productionResultRef: { type: 'production_result', id: result.productionResultId, version: 1 },
+    productionResultRef: result.productionResultRef ? stableRef(result.productionResultRef) : { type: 'production_result', id: result.productionResultId, version: 1 },
     upstreamRefs: stableRefs(result.sourceRefs),
   };
   const identity = { tenantId: text(input.tenantId), packageId: weekly.packageId, packageVersion: weekly.version, publicationTaskId: task.publicationTaskId, productionResultId: result.productionResultId, contentHash: result.contentHash.toLowerCase(), accountId: task.accountId, platform: task.platform };

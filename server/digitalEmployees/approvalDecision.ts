@@ -430,6 +430,10 @@ export function createDigitalEmployeeApprovalDecisionApplication(
         publicationPackageTaskId = queued.taskId;
       }
 
+      if (input.decision === 'approved' && followupBatch) {
+        const { assertAppliedKnowledgeQuoteBatchEvidence } = await import('../socialPrograms/weeklyCustomerKnowledgeQuote.js');
+        await assertAppliedKnowledgeQuoteBatchEvidence(dependencies.store, followupBatch, approval.evidence);
+      }
       await requiredUpdate(dependencies.store, COLLECTIONS.approvals, approval.id, {
         status: input.decision,
         decided_by: input.userId,

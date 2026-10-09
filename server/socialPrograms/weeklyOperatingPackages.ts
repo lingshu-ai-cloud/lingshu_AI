@@ -1,3 +1,5 @@
+import {createWeeklyInventoryReuseService,inventoryPublicationHash} from './weeklyInventoryReuse.js';
+import {createWeeklyProfileUpgradeService} from './weeklyProfileUpgrade.js';
 import {assertExecutionPackageGate,withExecutionPackageGate} from './weeklyExecutionGate.js';
 import {scheduleHash,readScheduleSnapshot} from './weeklyScheduleSnapshots.js';
 import type {WeeklyScheduledPackage} from '../../shared/contracts/socialWeeklyScheduleRevision.js';
@@ -296,13 +298,32 @@ export function createWeeklyOperatingPackageService(dataStore: DataStore) {
 
     async create(tenantId: string, userId: string, programId: string, input: Record<string, unknown>): Promise<WeeklyOperatingPackage> {
       rejectClientAuthorityObjects(input);
+      if(Array.isArray(input.publicationTasks)&&input.publicationTasks.some(p=>p&&typeof p==='object'&&(p as Record<string,unknown>).inventoryReuseRef!==undefined))throw new SocialProgramError('inventory_create_not_revision',400,'库存确认只能绑定原发布目标的下一次修订。');
+      if(input.profileUpgradeRef && typeof input.profileUpgradeRef==='object'&&!Array.isArray(input.profileUpgradeRef)){
+        const ref=input.profileUpgradeRef as Record<string,unknown>;
+        if(typeof ref.sourcePackageId==='string'&&Number.isSafeInteger(ref.sourcePackageVersion)&&Number(ref.sourcePackageVersion)>0){
+          const scope={tenantId,programId,packageId:ref.sourcePackageId,packageVersion:Number(ref.sourcePackageVersion)};
+          if(!await assertExecutionPackageGate(dataStore,scope))return withExecutionPackageGate(dataStore,scope,()=>createWeeklyOperatingPackageService(dataStore).create(tenantId,userId,programId,input));
+        }
+      }
       const program = await programRow(dataStore, tenantId, programId);
       const accounts = await accountsForProgram(dataStore, tenantId, programId);
       input = await withAuthoritativeDecisions(tenantId, programId, input);
       input = (await withAuthoritativePlanning(tenantId, programId, input)).input;
       input = await withPromotionQuota(tenantId, programId, input);
+      let packageProgram = program.payload;
+      if(input.profileUpgradeRef!==undefined){
+        const ref=input.profileUpgradeRef;
+        if(!ref||typeof ref!=='object'||Array.isArray(ref)||Object.keys(ref).some(key=>!['id','sourcePackageId','sourcePackageVersion'].includes(key)))throw new SocialProgramError('profile_upgrade_ref_invalid',400,'画像升级必须引用已确认的建议。');
+        const r=ref as Record<string,unknown>;
+        if(typeof r.id!=='string'||typeof r.sourcePackageId!=='string'||!Number.isSafeInteger(r.sourcePackageVersion)||Number(r.sourcePackageVersion)<1)throw new SocialProgramError('profile_upgrade_ref_invalid',400,'画像升级引用不完整。');
+        const upgrade=await createWeeklyProfileUpgradeService(dataStore).readForNextWeek({tenantId,programId,packageId:r.sourcePackageId,packageVersion:Number(r.sourcePackageVersion)},userId,r.id,String(input.weekStart));
+        if(input.referenceSourcePolicy!==undefined&&stable(input.referenceSourcePolicy)!==stable(upgrade.referenceSourcePolicy))throw new SocialProgramError('profile_upgrade_policy_conflict',409,'配额必须与明确确认的画像建议一致。');
+        input={...input,referenceSourcePolicy:upgrade.referenceSourcePolicy};
+        packageProgram={...program.payload,route:upgrade.route};
+      }
       const item = packageFromInput({
-        input, programId, userId, accounts, program: program.payload,
+        input, programId, userId, accounts, program: packageProgram,
         packageId: randomUUID(), contentPackageId: randomUUID(), version: 1, previousVersion: null,
       });
       if (!item.objective || !item.successCriteria.length) {
@@ -322,6 +343,7 @@ export function createWeeklyOperatingPackageService(dataStore: DataStore) {
 
     async revise(tenantId: string, userId: string, programId: string, packageId: string, input: Record<string, unknown>, internal?: {scheduleRevisionRef?:VersionedSocialRef;templateApplicationRef?:VersionedSocialRef}): Promise<WeeklyOperatingPackage> {
       rejectClientAuthorityObjects(input);
+      if(input.profileUpgradeRef!==undefined)throw new SocialProgramError('profile_upgrade_next_week_only',400,'画像升级只允许下一周创建时消费。');
       const current = await latestPackageRow(dataStore, tenantId, programId, packageId);
       if (!current) throw new SocialProgramError('weekly_operating_package_not_found', 404, '周任务包不存在。');
       const gateScope={tenantId,programId,packageId,packageVersion:current.payload.version};
@@ -361,7 +383,7 @@ export function createWeeklyOperatingPackageService(dataStore: DataStore) {
       const resolved = await withAuthoritativePlanning(tenantId, programId, orchestrated);
       const resolvedWithQuota = await withPromotionQuota(tenantId, programId, resolved.input);
       const item = packageFromInput({
-        input: resolvedWithQuota, programId, userId, accounts, program: program.payload,
+        input: resolvedWithQuota, programId, userId, accounts, program: {...program.payload,route:current.payload.referenceSourcePolicy?.profile==='b2b_established'?'account_repair':program.payload.route},
         packageId, contentPackageId: current.payload.socialContentPackage.contentPackageId,
         version: current.payload.version + 1, previousVersion: current.payload.version,
         previousPackage: projectedCurrent,
@@ -378,9 +400,15 @@ export function createWeeklyOperatingPackageService(dataStore: DataStore) {
       if (!item.objective || !item.successCriteria.length) {
         throw new SocialProgramError('weekly_operating_package_incomplete', 400, '周任务包必须包含经营目标和成功标准。');
       }
+      const inventoryService=createWeeklyInventoryReuseService(dataStore);
+      for(const publication of item.socialContentPackage.publicationTasks.filter(p=>p.inventoryReuseRef)){
+        const receipt=await inventoryService.get({tenantId,programId,packageId,packageVersion:current.payload.version,actorUserId:userId},publication.inventoryReuseRef!.id);
+        if(receipt.item.target.packageVersion!==item.version||receipt.item.target.publicationTaskId!==publication.publicationTaskId||receipt.item.confirmedBy!==userId||receipt.item.target.publicationHash!==inventoryPublicationHash(publication)||item.referenceSourcePolicy?.profile!=='b2b_established')throw new SocialProgramError('inventory_revision_binding_changed',409,'库存确认与实际新版本发布目标不一致。');
+      }
       const saved = await savePackage(dataStore, tenantId, item);
       let projected: WeeklyOperatingPackage;
       try {
+        for(const publication of item.socialContentPackage.publicationTasks.filter(p=>p.inventoryReuseRef))await inventoryService.readVerifiedBinding({tenantId,programId,packageId,packageVersion:item.version,publicationTaskId:publication.publicationTaskId,accountId:publication.accountId,inputSnapshot:{publicationTask:publication}});
         const planning = await agentPlanning.initialize(tenantId, item);
         projected = { ...projectWeeklyExecution(item, await materializeWeeklyExecutionTasks(dataStore, tenantId, item), item.updatedAt), agentPlanning: planning };
       } catch (error) {

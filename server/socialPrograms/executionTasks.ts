@@ -248,7 +248,7 @@ export function planWeeklyExecutionTasks(
   });
 
   const accountIds = [...new Set(publications.map(item => item.accountId))];
-  const discovery = accountIds.map(accountId => add({
+  const discovery = accountIds.filter(accountId=>publications.some(p=>p.accountId===accountId&&!p.inventoryReuseRef)).map(accountId => add({
     workflowKind: 'discovery', scope: 'account', subjectId: accountId,
     accountId, publicationTaskId: null, dependsOnTaskIds: [readiness.taskId],
     inputSnapshot: { accountId, weekStart: pkg.weekStart, objective: pkg.objective },
@@ -258,9 +258,9 @@ export function planWeeklyExecutionTasks(
   }));
 
   const byMother = new Map<string, SocialWeeklyPublicationTask[]>();
-  for (const item of publications) byMother.set(item.motherContentId, [...(byMother.get(item.motherContentId) ?? []), item]);
-  const sourceAllocation = allocateWeeklyReferenceSources(publications, pkg.referenceSourcePolicy);
-  const productionBudget = moneyShare(pkg.socialContentPackage.weeklyBudgetCny, publications.length);
+  for (const item of publications.filter(p=>!p.inventoryReuseRef)) byMother.set(item.motherContentId, [...(byMother.get(item.motherContentId) ?? []), item]);
+  const sourceAllocation = allocateWeeklyReferenceSources(publications.filter(p=>!p.inventoryReuseRef), pkg.referenceSourcePolicy);
+  const productionBudget = moneyShare(pkg.socialContentPackage.weeklyBudgetCny, publications.filter(p=>!p.inventoryReuseRef).length);
   const directingByMother = new Map<string, WeeklyExecutionTask>();
   const scheduleByMother = new Map<string, WeeklyExecutionTask>();
   const storyboardByPublication = new Map<string, WeeklyExecutionTask>();
@@ -355,6 +355,13 @@ export function planWeeklyExecutionTasks(
     }
   }
 
+  for(const item of publications.filter(p=>p.inventoryReuseRef)){
+    const ref=item.inventoryReuseRef!;
+    if(pkg.referenceSourcePolicy?.profile!=='b2b_established'||ref.type!=='weekly_inventory_binding'||ref.version!==1||!ref.id)throw new SocialProgramError('inventory_execution_ref_invalid',409,'库存任务必须绑定已确认的有基础周版本。');
+    const approval=add({workflowKind:'content',scope:'content',subjectId:`${item.publicationTaskId}:inventory-user-approval`,accountId:item.accountId,publicationTaskId:item.publicationTaskId,dependsOnTaskIds:[readiness.taskId],inputSnapshot:{publicationTask:item,decisionCard:'content_approval',inventoryReuseRef:ref,countsAsNewMotherContent:false,startsProduction:false},budget:noBudget,ownBlockingReasons:[],stepKind:'user_approval',responsibleActor:'user',estimatedDurationMinutes:10});
+    approvalByPublication.set(item.publicationTaskId,approval);
+  }
+
   const publishing = publications.map(item => add({
     notBeforeAt: publicationInstant(item.publishWindow),
     workflowKind: 'publishing', scope: 'publication', subjectId: item.publicationTaskId,
@@ -383,7 +390,7 @@ export function planWeeklyExecutionTasks(
     budget: noBudget, ownBlockingReasons: [],
     stepKind: 'weekly_review', responsibleActor: 'business_agent', estimatedDurationMinutes: 45,
   });
-  for (const publication of publications) {
+  for (const publication of publications.filter(p=>!p.inventoryReuseRef)) {
     const source = tasks.find(task => task.publicationTaskId === publication.publicationTaskId && task.schedule.stepKind === 'video_generation');
     if (!source) throw new SocialProgramError('content_template_source_task_missing', 409, '模板提炼缺少对应真实成片任务。');
     const extraction = add({
@@ -724,6 +731,16 @@ export function createWeeklyExecutionTaskService(dataStore: DataStore) {
         if (task.inheritedBlockingTaskIds.length) throw new SocialProgramError('weekly_execution_upstream_incomplete', 409, '上游生产步骤尚未完成。');
         if (['cancelled', 'dead_letter'].includes(task.status)) throw new SocialProgramError('weekly_execution_task_terminal', 409, '终态任务不能审批。');
         if (task.status === 'succeeded') return task;
+        if (task.inputSnapshot.inventoryReuseRef) {
+          const actualDependencies = await taskRows(dataStore, tenantId, task.dependsOnTaskIds);
+          if (actualDependencies.length !== task.dependsOnTaskIds.length || actualDependencies.some(row => row.payload.programId !== task.programId || row.payload.packageId !== task.packageId || row.payload.packageVersion !== task.packageVersion || row.payload.status !== 'succeeded')) {
+            throw new SocialProgramError('weekly_execution_upstream_incomplete', 409, '本周真实前置任务尚未完成，不能验收库存。');
+          }
+          if (task.status === 'pending_activation') throw new SocialProgramError('weekly_execution_package_not_active', 409, '草案尚未启用，不能绕过前置任务验收库存。');
+          const { createInventoryUserApproval } = await import('../runtime/weeklyInventoryApprovalEvidence.js');
+          const receipt = await createInventoryUserApproval(dataStore, task, userId, now);
+          return { ...task, ...receipt, status: 'succeeded', schedule: { ...task.schedule, actualStartedAt: task.schedule.actualStartedAt ?? now, actualFinishedAt: now }, updatedAt: now };
+        }
         const bindings = await dataStore.list<any>('starter_social_content_tasks', {
           where: { tenant_id: tenantId, create_idempotency_key: `weekly-production:${packageId}:${task.packageVersion}:${task.publicationTaskId}` }, page: 1, perPage: 2,
         });

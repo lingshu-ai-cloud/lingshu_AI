@@ -1,3 +1,4 @@
+import {createWeeklyInventoryReuseService} from '../socialPrograms/weeklyInventoryReuse.js';
 import {readWeeklyPublicationMetricEvidence} from './weeklyPublicationMetricEvidence.js';
 import type { WeeklyExecutionTask, WeeklyOperatingPackage } from '../../shared/contracts/socialProgram.js';
 import { withWeeklyProductionAdmissionGuard } from '../socialPrograms/weeklyCancellation.js';
@@ -58,16 +59,22 @@ export function createSocialWeeklyPublicationAdapter(dataStore: DataStore, optio
     if (all.totalItems > all.items.length) return blocked('weekly_task_scan_truncated', '无法完整校验发布审批与依赖。');
     const approval = all.items.find(item => item.payload.publicationTaskId === task.publicationTaskId && item.payload.schedule.stepKind === 'user_approval');
     if (!approval || approval.payload.status !== 'succeeded' || !approval.payload.resultRefs.some((ref: any) => ref.type === 'user_content_approval')) return blocked('weekly_content_approval_required', '成片尚未由用户验收。');
+    const inventoryRef = (publication as typeof publication & { inventoryReuseRef?: { type: string } }).inventoryReuseRef;
+    if (inventoryRef) {
+      try { await createWeeklyInventoryReuseService(dataStore).prepareAssignment(task); }
+      catch (error) { return blocked('weekly_inventory_reuse_unverified', error instanceof Error ? error.message : '库存复用凭据不完整。'); }
+    } else {
     const bindings = await dataStore.list<Row>('starter_social_content_tasks', { where: { tenant_id: task.tenantId, create_idempotency_key: `weekly-production:${task.packageId}:${task.packageVersion}:${task.publicationTaskId}` }, page: 1, perPage: 2 });
     if (bindings.totalItems !== 1 || !bindings.items[0]) return pending('weekly_production_binding_pending', '尚未取得本周成片的生产身份。');
     const packageScan = await runWeeklyPublicationPackageScan({ dataStore, tenantId: task.tenantId, taskId: bindings.items[0].task_id });
     if (packageScan.errors.length) return blocked(packageScan.errors[0]!.code, '成片发布交接校验失败，请检查产物和授权。');
+    }
     const assignments = await dataStore.list<StoredPublicationAssignment>(PUBLICATION_ASSIGNMENTS, { where: { tenant_id: task.tenantId, operating_package_id: task.packageId, operating_package_version: task.packageVersion, publication_task_id: publication.publicationTaskId }, page: 1, perPage: 2 });
     if (!assignments.items.length) return pending('weekly_publication_package_pending', '等待已验收成片的发布包。');
     if (assignments.totalItems !== 1) return blocked('weekly_publication_assignment_ambiguous', '发布派单身份不唯一。');
     const assignment = assignments.items[0]!;
     if (assignment.status === 'revoked' || assignment.account_id !== task.accountId) return blocked('authorization_revoked', '发布派单已撤销或账号身份不一致。');
-    try { await validateWeeklyPublicationAcceptance(dataStore, task, assignment.production_result_id); }
+    try { if (inventoryRef) { const verified = await createWeeklyInventoryReuseService(dataStore).readVerifiedBinding(task); if (verified.item.source.productionResultId !== assignment.production_result_id) throw new Error('inventory_assignment_source_changed'); } else await validateWeeklyPublicationAcceptance(dataStore, task, assignment.production_result_id); }
     catch (error) { return blocked('weekly_content_acceptance_unverified', error instanceof Error ? error.message : '用户验收产物尚未验证。'); }
     const attempts = await dataStore.list<DurablePublicationAttempt>(PUBLICATION_ATTEMPTS, { where: { tenant_id: task.tenantId, assignment_id: assignment.assignment_id }, page: 1, perPage: 2 });
     if (attempts.totalItems > 1) return blocked('publication_attempt_ambiguous', '平台执行回执不唯一。');

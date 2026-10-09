@@ -270,6 +270,9 @@ function publicationTasks(
       let materialRequirement: SocialWeeklyPublicationTask['materialRequirement'];
       let customerFeedbackTopicRef: SocialWeeklyPublicationTask['customerFeedbackTopicRef'];
       let contentTemplateBindingRef: SocialWeeklyPublicationTask['contentTemplateBindingRef'];
+      let inventoryReuseRef: SocialWeeklyPublicationTask['inventoryReuseRef'];
+      if(override.inventoryReuseRef!==undefined){const ref=override.inventoryReuseRef as Record<string,unknown>|null;if(!ref||typeof ref!=='object'||Array.isArray(ref)||Object.keys(ref).some(k=>!['type','id','version'].includes(k))||ref.type!=='weekly_inventory_binding'||typeof ref.id!=='string'||!/^[a-f0-9]{15}$/.test(ref.id)||ref.version!==1)throw new SocialProgramError('inventory_revision_ref_invalid',400,'库存引用须来自真实确认记录。');inventoryReuseRef={type:'weekly_inventory_binding',id:ref.id,version:1};}
+
       if (override.contentTemplateBindingRef !== undefined) {
         const ref = override.contentTemplateBindingRef as Record<string, unknown> | null;
         if (!ref || typeof ref !== 'object' || Array.isArray(ref) || Object.keys(ref).some(key => !['type', 'id', 'version'].includes(key))
@@ -320,6 +323,7 @@ function publicationTasks(
         ...(materialRequirement ? { materialRequirement } : {}),
         ...(customerFeedbackTopicRef ? { customerFeedbackTopicRef } : {}),
         ...(contentTemplateBindingRef ? { contentTemplateBindingRef } : {}),
+        ...(inventoryReuseRef ? {inventoryReuseRef} : {}),
         factRefs: Array.isArray(override.factRefs)
           ? override.factRefs.map(versionedRef).filter((ref): ref is VersionedSocialRef => Boolean(ref)).slice(0, 30)
           : [],

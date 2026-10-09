@@ -75,7 +75,7 @@ export default function WeeklyCustomerCalendar({ programId, packageId, packageVe
       else if(isMaterialCalendarTask(task)){onOpenMaterial?.(task.materialRequestId,task.materialAction);}
       else if (task.agent === 'customer' && task.customerRunId && task.customerWorkflowTaskId && task.customerTaskKey) {
         openCustomerCalendarTask(task.customerRunId, { taskId: task.customerWorkflowTaskId, taskKey: task.customerTaskKey });
-      } else if (task.customerExceptionTarget||task.publicationRecoveryTarget||task.nativeRecoveryTarget||task.productionTaskId||canOpenContentTask(task)) onOpenContent?.(task);
+      } else if (task.inventoryTarget||task.crossWeekMaterialTarget||task.customerExceptionTarget||task.publicationRecoveryTarget||task.nativeRecoveryTarget||task.productionTaskId||canOpenContentTask(task)) onOpenContent?.(task);
     }} />
     {salesState?.identity===identity&&salesState.error&&<p role="alert" className="mx-5 my-3 text-xs text-red-700">销售交接读取失败：{salesState.error}</p>}
     {Boolean(salesProjection?.references.length)&&<section className="mx-5 mb-4 space-y-2"><h4 className="text-xs font-bold text-slate-700">跨周销售交接引用 · 不重复计入本周交付</h4>{salesProjection?.references.map(item=><button key={item.id} className="block rounded border p-2 text-xs" onClick={()=>onOpenSales?.(item.id,item.packageId,item.packageVersion)}>{item.customerId} · 原周包 v{item.packageVersion} · 查看原交接任务</button>)}</section>}

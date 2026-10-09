@@ -1,3 +1,7 @@
+import {createSocialWeeklyInventoryReuseRouter} from './socialWeeklyInventoryReuse.js';
+import {createWeeklyInventoryReuseService} from '../socialPrograms/weeklyInventoryReuse.js';
+import {createSocialWeeklyProfileUpgradeRouter} from './socialWeeklyProfileUpgrade.js';
+import {createWeeklyProfileUpgradeService} from '../socialPrograms/weeklyProfileUpgrade.js';
 import { createSocialCrossWeekMaterialContinuationsRouter } from './socialCrossWeekMaterialContinuations.js';
 import { createSocialWeeklyCustomerKnowledgeQuoteRouter } from './socialWeeklyCustomerKnowledgeQuote.js';
 import { createSocialWeeklyPublicationRecoveryRouter } from './socialWeeklyPublicationRecovery.js';
@@ -85,6 +89,10 @@ export function createSocialProgramsRouter(dataStore: DataStore = store, authent
     await service.getProgram((res.locals as AuthLocals).tenantId, req.params.programId);
     next();
   }), createSocialWeeklyCustomerChannelScopeRouter(dataStore));
+  router.use('/:programId/operating-packages/:packageId/inventory-reuse',asyncRoute(async(req,res,next)=>{await service.getProgram((res.locals as AuthLocals).tenantId,req.params.programId);next();}),createSocialWeeklyInventoryReuseRouter(createWeeklyInventoryReuseService(dataStore)));
+  router.use('/:programId/operating-packages/:packageId/profile-upgrades', asyncRoute(async (req,res,next)=>{
+    await service.getProgram((res.locals as AuthLocals).tenantId,req.params.programId);next();
+  }),createSocialWeeklyProfileUpgradeRouter(createWeeklyProfileUpgradeService(dataStore)));
   router.use('/:programId/operating-packages/:packageId/cross-week-material-continuations', asyncRoute(async (req, res, next) => {
     await service.getProgram((res.locals as AuthLocals).tenantId, req.params.programId);
     next();

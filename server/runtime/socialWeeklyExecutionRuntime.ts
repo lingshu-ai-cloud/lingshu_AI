@@ -22,6 +22,10 @@ export function createSocialWeeklyPlanningAdapter(dataStore: DataStore): SocialW
     const packages = await dataStore.list<PackageRow>(PACKAGES, { where: { tenant_id: task.tenantId, program_id: task.programId, package_id: task.packageId, version: task.packageVersion }, page: 1, perPage: 1 });
     const pkg = packages.items[0]?.payload;
     if (!pkg || !['draft', 'active'].includes(pkg.status) || pkg.packageId !== task.packageId || pkg.version !== task.packageVersion) return { status: 'blocked', code: 'weekly_package_not_executable', message: '本周任务包已被替代、停用或不存在。' };
+    if(task.schedule.stepKind==='business_outline'&&pkg.socialContentPackage?.publicationTasks?.length&&pkg.socialContentPackage.publicationTasks.every(p=>p.inventoryReuseRef)){
+      try{const {readWeeklyInventoryOutlineEvidence}=await import('./weeklyInventoryOutlineEvidence.js');const result=await readWeeklyInventoryOutlineEvidence(dataStore,task);return {status:'succeeded',resultRefs:result.resultRefs};}
+      catch(error){if(error instanceof SocialProgramError)return {status:'blocked',code:error.code,message:error.message};throw error;}
+    }
     const rows = await dataStore.list<{ id: string; payload: WeeklyAgentPlanningState }>(WEEKLY_AGENT_PLANNING, {
       where: { tenant_id: task.tenantId, program_id: task.programId, package_id: task.packageId, package_version: task.packageVersion },
       sort: '-planning_version', page: 1, perPage: 1,
@@ -108,7 +112,9 @@ export async function runSocialWeeklyExecutionScan(input: {
       let validatingCompletion = false;
       try {
         const adapter = input.adapters[claim.task.schedule.stepKind];
-        const dispatchGate = await planningAuthority.execute({ ...claim.task, accountId: null, inputSnapshot: {}, schedule: { ...claim.task.schedule, stepKind: 'business_outline' } });
+        let dispatchGate:WeeklyExecutionAdapterResult;
+        try{const {readWeeklyInventoryExecutionGate}=await import('./weeklyInventoryOutlineEvidence.js');const inventoryGate=await readWeeklyInventoryExecutionGate(dataStore,claim.task);dispatchGate=inventoryGate?{status:'succeeded',resultRefs:inventoryGate.resultRefs}:await planningAuthority.execute({ ...claim.task, accountId: null, inputSnapshot: {}, schedule: { ...claim.task.schedule, stepKind: 'business_outline' } });}
+        catch(error){if(error instanceof SocialProgramError)dispatchGate={status:'blocked',code:error.code,message:error.message};else throw error;}
         const continuationPending = claim.task.inputSnapshot.weeklyContinuationPending;
         const continuationRef = claim.task.inputSnapshot.weeklyContinuationRef;
         let continuationResult: WeeklyExecutionAdapterResult | undefined;

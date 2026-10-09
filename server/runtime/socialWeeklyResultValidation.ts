@@ -49,6 +49,12 @@ async function materialClassification(store: DataStore, task: WeeklyExecutionTas
 /** Verify persisted authority, never accept a client-supplied success label. */
 export async function validateWeeklyExecutionResults(store: DataStore, task: WeeklyExecutionTask, refs: VersionedSocialRef[], now = new Date()): Promise<void> {
   requireResult(Array.isArray(refs) && refs.length > 0 && refs.every(ref => text(ref?.type) && text(ref?.id) && Number.isSafeInteger(ref?.version) && ref.version > 0), 'weekly_execution_result_refs_invalid');
+  if (task.inputSnapshot.inventoryReuseRef && task.schedule.stepKind === 'user_approval') {
+    requireResult(task.schedule.stepKind === 'user_approval' && task.schedule.responsibleActor === 'user', 'inventory_result_step_unsupported');
+    const { validateInventoryUserApproval } = await import('./weeklyInventoryApprovalEvidence.js');
+    await validateInventoryUserApproval(store, task, refs);
+    return;
+  }
   if (refs.some(ref => ref.type === 'weekly_execution_continuation')) {
     requireResult(refs.length === 1 && socialRequestHash(task.inputSnapshot?.weeklyContinuationRef) === socialRequestHash(refs[0]), 'weekly_execution_continuation_ref_unbound');
     const read = await createWeeklyExecutionContinuationService(store).readValidated({ tenantId: task.tenantId, programId: task.programId, packageId: task.packageId, targetVersion: task.packageVersion, targetTaskId: task.taskId, ref: refs[0]! }, now.toISOString());
@@ -57,6 +63,7 @@ export async function validateWeeklyExecutionResults(store: DataStore, task: Wee
   }
   requireResult(!task.inputSnapshot?.weeklyContinuationPending && !task.inputSnapshot?.weeklyContinuationRef, 'weekly_execution_continuation_result_required');
   if (['template_extraction','template_performance_validation'].includes(String(task.schedule?.stepKind))) {const {createWeeklyContentTemplateService}=await import('../socialPrograms/weeklyContentTemplates.js');await createWeeklyContentTemplateService(store,{now:()=>now.toISOString()}).validateTemplateExecutionEvidence(task,refs);return;}
+  if(refs.some(ref=>ref.type==='weekly_inventory_outline')){const {validateWeeklyInventoryOutlineRefs}=await import('./weeklyInventoryOutlineEvidence.js');await validateWeeklyInventoryOutlineRefs(store,task,refs);return;}
   if (refs.some(ref => ref.type === 'social_metric_snapshot')) {
     const { validateWeeklyPublicationMetricRefs } = await import('./weeklyPublicationMetricEvidence.js');
     await validateWeeklyPublicationMetricRefs(store, task, refs, now);
@@ -256,6 +263,15 @@ export async function validateWeeklyPublicationAcceptance(store: DataStore, task
     return row.tenant_id === task.tenantId && item.tenantId === task.tenantId && item.publicationTaskId === task.publicationTaskId && item.schedule?.stepKind === 'user_approval' && item.status === 'succeeded' && item.resultRefs?.some((ref: any) => ref.type === 'user_content_approval');
   });
   requireResult(approval);
+  const acceptedTask = object(approval.payload) as WeeklyExecutionTask;
+  if (acceptedTask.inputSnapshot?.inventoryReuseRef) {
+    const { validateInventoryUserApproval } = await import('./weeklyInventoryApprovalEvidence.js');
+    await validateInventoryUserApproval(store, acceptedTask, acceptedTask.resultRefs);
+    const { createWeeklyInventoryReuseService } = await import('../socialPrograms/weeklyInventoryReuse.js');
+    const current = await createWeeklyInventoryReuseService(store).readVerifiedBinding(task);
+    requireResult(!assignmentProductionId || current.item.source.productionResultId === assignmentProductionId, 'inventory_assignment_production_changed');
+    return;
+  }
   const artifactRef = object(approval.payload).resultRefs.find((ref: any) => ref.type === 'starter_social_content_artifact') as VersionedSocialRef | undefined;
   requireResult(artifactRef && Number.isSafeInteger(artifactRef.version) && artifactRef.version > 0);
   const artifact = await unique(store, 'starter_social_content_artifacts', { tenant_id: task.tenantId, artifact_id: artifactRef.id });

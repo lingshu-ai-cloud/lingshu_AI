@@ -28,12 +28,14 @@ export default function WeeklyMaterialRequestsPanel({ programId, packageId, pack
       if (disposed) return; if (!session?.user.id) throw Error('登录身份无法核验，请重新登录。');
       setRequests(items); setEmployees(people); setUserId(session.user.id); setMaterials(library.items ?? []); setLoaded(identity);
     }).catch(cause => { if (!disposed) setError(cause instanceof Error ? cause.message : '素材任务加载失败。'); });
+    const refresh=()=>{void weeklyMaterialRequestsApi.list(programId).then(items=>{if(!disposed)setRequests(items);}).catch(cause=>{if(!disposed)setError(cause instanceof Error?cause.message:'素材刷新失败。');});};
+    window.addEventListener('lingshu:agent-business-refresh',refresh);
     const timer = window.setInterval(() => { if (!document.hidden) void weeklyMaterialRequestsApi.list(programId).then(items => { if (!disposed) setRequests(items); }).catch(() => {}); }, 10_000);
-    return () => { disposed = true; window.clearInterval(timer); };
+    return () => { disposed = true; window.clearInterval(timer);window.removeEventListener('lingshu:agent-business-refresh',refresh); };
   }, [identity, reload]);
   const visible = requests.filter(request => requiredRequestIds.includes(request.requestId) || request.consumers.some(consumer => consumer.packageId === packageId && consumer.packageVersion === packageVersion));
   const usableMaterials = materials.filter(material => ['image', 'video'].includes(material.type) && material.scope !== 'shared' && material.usage !== 'reference_only' && materialCanonicalId(material));
-  async function act(action: () => Promise<void>) { const started = identity; setBusy(true); setError(''); try { await action(); if (current.current === started) { const items = await weeklyMaterialRequestsApi.list(programId); if (current.current === started) setRequests(items); } } catch (cause) { if (current.current === started) setError(cause instanceof Error ? cause.message : '素材操作失败。'); } finally { if (current.current === started) setBusy(false); } }
+  async function act(action: () => Promise<void>) { const started = identity; setBusy(true); setError(''); try { await action(); if (current.current === started) { const items = await weeklyMaterialRequestsApi.list(programId); if (current.current === started) {setRequests(items);window.dispatchEvent(new Event('lingshu:agent-business-refresh'));} } } catch (cause) { if (current.current === started) setError(cause instanceof Error ? cause.message : '素材操作失败。'); } finally { if (current.current === started) setBusy(false); } }
   async function create() { await act(async () => {
     if (!pkg || !key.trim() || !assignee || !reviewer || !Object.keys(consumers).length) throw Error('请从本版本真实需求分析选择真人素材要求，并填写稳定素材名称及指定人员。');
     const exactConsumers=selectedWeeklyMaterialConsumers(pkg,tasks,Object.keys(consumers));

@@ -24,13 +24,14 @@ export interface AgentOperatingControlsProps {
 export default function AgentOperatingControls({ pkg, tasks, programRoute, onRevision, onScheduleConfirmed, onPlanningChanged, onFeedbackRevision }: AgentOperatingControlsProps) {
   const identity = JSON.stringify([pkg.programId, pkg.packageId, pkg.version]);
   const current = useRef(identity); current.current = identity;
+  const effectiveRoute:SocialProgramRoute|null=pkg.referenceSourcePolicy?.profile==='b2b_established'?'account_repair':pkg.referenceSourcePolicy?.profile==='b2b_cold_start'?'cold_start':programRoute;
   const scoped = tasks.filter(task => task.programId === pkg.programId && task.packageId === pkg.packageId && task.packageVersion === pkg.version);
   const actions = createAgentOperatingControlActions(pkg, scoped);
   return <section aria-label="本周真实经营配置" className="space-y-3">
     <div className="rounded-xl border border-stone-200 bg-white p-4"><h3 className="text-sm font-semibold">本周经营配置 · v{pkg.version}</h3><p className="mt-1 text-xs text-stone-500">承接条件修订保存为新周版本。客服选择仅绑定已有真实运行；补救评估不直接改排期。</p></div>
     {onPlanningChanged && <details className="rounded-xl border border-stone-200 bg-white p-4"><summary className="cursor-pointer text-sm font-semibold">分析参考、核对排期与正式派单</summary><WeeklyAgentPlanningPanel key={`planning:${identity}:${pkg.agentPlanning?.version}`} pkg={pkg} tasks={scoped} onChanged={onPlanningChanged} /></details>}
     {onFeedbackRevision && <details className="rounded-xl border border-stone-200 bg-white p-4"><summary className="cursor-pointer text-sm font-semibold">把真实买家问题转为下周选题</summary><CustomerFeedbackTopicPanel key={`feedback:${identity}`} pkg={pkg} onRevision={onFeedbackRevision} /></details>}
-    <details className="rounded-xl border border-stone-200 bg-white p-4"><summary className="cursor-pointer text-sm font-semibold">确认爆款复刻来源配额</summary><ReferenceSourcePolicySetup key={`sources:${identity}`} pkg={pkg} route={programRoute} onRevision={onRevision} /></details>
+    <details className="rounded-xl border border-stone-200 bg-white p-4"><summary className="cursor-pointer text-sm font-semibold">确认爆款复刻来源配额</summary><ReferenceSourcePolicySetup key={`sources:${identity}`} pkg={pkg} route={effectiveRoute} onRevision={onRevision} /></details>
     <details className="rounded-xl border border-stone-200 bg-white p-4"><summary className="cursor-pointer text-sm font-semibold">补充待确认的真实素材需求</summary><MaterialEvidenceConfigurationPanel pkg={pkg} onPlanningChanged={async plan => {
       const actual = await socialProgramApi.getOperatingPackage(pkg.programId, pkg.packageId);
       if (current.current !== identity) throw Error('已切换周包，请回到原版本查看重新分析结果。');
@@ -45,7 +46,7 @@ export default function AgentOperatingControls({ pkg, tasks, programRoute, onRev
       }} />
     </details>
     <details className="rounded-xl border border-stone-200 bg-white p-4"><summary className="cursor-pointer text-sm font-semibold">绑定本周真实客服运行</summary>
-      {programRoute ? <WeeklyCustomerRunBinding key={`customer:${identity}`} programId={pkg.programId} packageId={pkg.packageId} packageVersion={pkg.version} profile={programRoute === 'cold_start' ? 'b2b_cold_start' : 'b2b_established'} /> : <p className="mt-3 text-sm text-amber-700">经营项目尚未确认用户画像，请先完成初始配置再绑定客服运行。</p>}
+      {effectiveRoute ? <WeeklyCustomerRunBinding key={`customer:${identity}`} programId={pkg.programId} packageId={pkg.packageId} packageVersion={pkg.version} profile={effectiveRoute === 'cold_start' ? 'b2b_cold_start' : 'b2b_established'} /> : <p className="mt-3 text-sm text-amber-700">经营项目尚未确认用户画像，请先完成初始配置再绑定客服运行。</p>}
     </details>
     <details className="rounded-xl border border-stone-200 bg-white p-4"><summary className="cursor-pointer text-sm font-semibold">评估素材延迟与发布补救排期</summary>
       <WeeklyRecoveryPanel key={`recovery:${identity}`} packageVersion={pkg.version} weekStart={pkg.weekStart} tasks={scoped} onPropose={async input => {

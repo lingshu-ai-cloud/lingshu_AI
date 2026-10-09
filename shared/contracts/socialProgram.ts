@@ -146,6 +146,7 @@ export interface WeeklyExecutionTaskBudget {
  * read a newer package, policy or planning decision while executing it.
  */
 export interface WeeklyExecutionTask {
+  inventoryUserApproval?: {actorUserId:string;confirmedAt:string;bindingRef:VersionedSocialRef;bindingHash:string;sourceHash:string;artifactRef:VersionedSocialRef};
   taskId: string;
   tenantId: string;
   programId: string;
@@ -390,6 +391,7 @@ export interface SocialWeeklyPublicationTask {
   customerFeedbackTopicRef?: VersionedSocialRef;
   /** Explicit confirmed structure binding for this exact immutable publication version. */
   contentTemplateBindingRef?: VersionedSocialRef;
+  inventoryReuseRef?: VersionedSocialRef;
   materialRequirement?: { required: true; requestIds: string[]; bindings?: Array<{ requirementId: string; requestId: string }> };
   factRefs: VersionedSocialRef[];
   metricTargets: string[];

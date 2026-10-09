@@ -6,7 +6,7 @@ export interface CrossWeekMaterialContinuation {
  source:CrossWeekMaterialSource;sourceTaskInputHash:string;target:{packageId:string;packageVersion:number;consumerTaskId:string;publicationTaskId:string;requirementId:string;requirement:string;inputHash:string;verificationDueAt:string};
  originalUploadDueAt:string;originalOwnerUserId:string;confirmedBy:string;confirmedAt:string;reason:string;recordHash:string;
 }
-export interface CrossWeekMaterialContinuationView {item:CrossWeekMaterialContinuation;attachment:'attached'|'pending';materialStatus:'pending_verification'|'ready'|'cancelled';consumerVerification:CrossWeekMaterialConsumerVerification|null;sourceTaskStatus:string;countsAsNewMotherContent:false;startsProduction:false}
+export interface CrossWeekMaterialContinuationView {item:CrossWeekMaterialContinuation;attachment:'attached'|'pending';materialStatus:'pending_verification'|'ready'|'cancelled';consumerVerification:CrossWeekMaterialConsumerVerification|null;reviewerUserId:string;sourceTaskStatus:string;countsAsNewMotherContent:false;startsProduction:false}
 export interface CrossWeekMaterialContinuationCandidate {
  source:CrossWeekMaterialSource;sourceTaskStatus:string;originalOwnerUserId:string;originalUploadDueAt:string;sourceMaterialStatus:string;
  targetConsumerTaskId:string;targetPublicationTaskId:string;requirementId:string;requirement:string;latestVerificationAt:string|null;

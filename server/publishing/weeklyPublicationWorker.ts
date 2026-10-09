@@ -47,10 +47,11 @@ function mediaAsset(value: unknown, kind: 'video' | 'cover') {
   return { kind, fileName, downloadUrl, contentHash } as const;
 }
 
-function productionFromArtifact(
+export function productionFromArtifact(
   artifact: ArtifactRow,
   lineage: SocialContentAuthorityLineage,
   weekly: WeeklyOperatingPackage,
+  options: { preserveProductionVersion?: boolean } = {},
 ): PublishableProductionResult {
   const content = object(artifact.content);
   const raw = object(content.productionResult) as unknown as SocialProductionResult;
@@ -71,6 +72,7 @@ function productionFromArtifact(
   ];
   return {
     productionResultId: raw.productionResultId,
+    ...(options.preserveProductionVersion && lineage.productionResultRef ? { productionResultRef: lineage.productionResultRef } : {}),
     contentId: artifact.artifact_id,
     contentVersion: text(raw.version),
     contentHash,

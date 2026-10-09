@@ -1,3 +1,4 @@
+import {weeklyProductionPopulation} from './weeklyProductionPopulation.js';
 import {selectWeeklyPlanningCoverage,assertWeeklyPlanningCoverage,assertWeeklyDetailedCoverage,type WeeklyDirectorSlotGap} from './weeklyPlanningCoverage.js';
 import {SocialContentWorkflowError} from '../starter198/socialContentValidation.js';
 import {readWeeklyTemplateStructure} from './weeklyTemplateStructure.js';
@@ -46,7 +47,7 @@ function minutes(value: number): number {
 
 export function buildWeeklyOperatingScheduleSkeleton(pkg: WeeklyOperatingPackage): WeeklyOperatingScheduleSkeleton {
   const byMother = new Map<string, typeof pkg.socialContentPackage.publicationTasks>();
-  for (const item of pkg.socialContentPackage.publicationTasks) {
+  for (const item of weeklyProductionPopulation(pkg.socialContentPackage.publicationTasks).productionPublications) {
     byMother.set(item.motherContentId, [...(byMother.get(item.motherContentId) ?? []), item]);
   }
   const createdAt = pkg.createdAt;
