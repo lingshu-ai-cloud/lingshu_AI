@@ -27,19 +27,24 @@ function latestBudgetEvidence(item: ContextTagEvidence, turns: Turn[]): ContextT
   if (item.tag !== '预算已提供') return item;
   const start = turns.findIndex(turn => turn.id === item.messageId && turn.actor === 'buyer');
   if (start < 0) return item;
+  return findExplicitBudgetEvidence(turns, start) || item;
+}
+
+function findExplicitBudgetEvidence(turns: Turn[], start = -1): ContextTagEvidence | undefined {
   for (let index = turns.length - 1; index > start; index -= 1) {
     const turn = turns[index];
     if (turn.actor !== 'buyer') continue;
+    if (/^\s*(?:do|does|can|could|would|is|what|how)\b.*\bbudget\b|预算.*[?？]/i.test(turn.body)) continue;
     const clauses = turn.body.split(/(?<!\d)\.(?!\d)|,(?!\d{3}\b)|[!?。！？;，\n]/);
     for (const clause of clauses.reverse()) {
       const amount = /(?:\bbudget\b|\bspending\s+limit\b|预算)\s*(?:(?:is|of|now|remains|will\s+be|has\s+changed\s+to)\s+|(?:改为|调整为|为|是))?(?:USD|EUR|GBP|RMB|CNY|[$€£¥])?\s*\d[\d,]*(?:\.\d+)?/i.exec(clause);
       if (!amount || REVOCATIONS['预算已提供']!.test(clause)) continue;
-      if (/\b(?:not|cannot|can't|unconfirmed|previous|original|old|was|unchanged|do\s+not|don't|no\s+(?:change|increase)|keep\s+(?:the\s+)?(?:same|existing|current))\b|不(?:是|能|改|变|增加)|未确认|之前|原来|原有|保持不变/i.test(clause)) continue;
+      if (/\b(?:not|no|cannot|can't|unconfirmed|previous|original|old|was|unchanged|do\s+not|don't|no\s+(?:change|increase)|keep\s+(?:the\s+)?(?:same|existing|current))\b|不(?:是|能|改|变|增加)|未确认|之前|原来|原有|保持不变/i.test(clause)) continue;
       const excerpt = clause.slice(Math.max(0, amount.index - 40), Math.max(0, amount.index - 40) + 500).trim();
-      return { ...item, messageId: turn.id, excerpt };
+      return { tag: '预算已提供', messageId: turn.id, excerpt };
     }
   }
-  return item;
+  return undefined;
 }
 
 // Only existing labels can survive: refresh their factual budget evidence, then
@@ -70,5 +75,11 @@ export async function classifyContextTags(turns: Turn[], classify = callLLM): Pr
     if (!buyer || !buyer.body.includes(item.excerpt) || result.some(row => row.tag === item.tag)) continue;
     result.push({ tag: item.tag, messageId: buyer.id, excerpt: item.excerpt.slice(0, 500) });
   }
-  return vetoRevokedContextTags(result, context);
+  // A valid explicit customer amount is factual evidence even when the model
+  // returns an empty list. Never accept an unverified budget label from it.
+  const explicitBudget = findExplicitBudgetEvidence(context);
+  return vetoRevokedContextTags([
+    ...result.filter(item => item.tag !== '预算已提供'),
+    ...(explicitBudget ? [explicitBudget] : []),
+  ], context);
 }

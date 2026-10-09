@@ -129,3 +129,23 @@ test('seller amounts, denied or historical amounts and unchanged budget instruct
   assert.deepEqual(vetoRevokedContextTags(evidence, [original, { id: 'new', actor: 'buyer', body: 'Budget cancelled. The old budget USD 6000 is withdrawn.' }]), []);
   assert.deepEqual(vetoRevokedContextTags([], [original, { id: 'new', actor: 'buyer', body: 'budget USD 6000' }]), [], 'refresh does not invent a tag');
 });
+
+test('model omission cannot erase an explicit current buyer budget', async () => {
+  const turns = [
+    { id: 'old', actor: 'buyer', body: 'Our budget is USD 5000.' },
+    { id: 'new', actor: 'buyer', body: 'Correction: budget USD 6000, destination Germany, FOB port unconfirmed.' },
+  ];
+  const result = await classifyContextTags(turns, async () => '{"items":[]}');
+  assert.equal(result.length, 1);
+  assert.equal(result[0].tag, '预算已提供');
+  assert.equal(result[0].messageId, 'new');
+  assert.ok(result[0].excerpt.includes('6000'));
+  assert.deepEqual(await classifyContextTags([...turns, { id: 'cancel', actor: 'buyer', body: 'Budget cancelled.' }], async () => '{"items":[]}'), []);
+});
+
+test('budget fallback cannot invent a label from tests, seller proposals, denials or unknown budgets', async () => {
+  for (const body of ['普通客户测试 NR-20261009-01', 'No budget USD 6000.', 'Budget USD 6000 is unconfirmed.', 'Our budget is not USD 6000.', 'I cannot confirm budget USD 6000.', 'Do not change budget USD 6000.', 'Is your budget USD 6000?', '预算6000美元是否可以？', '预算未知。']) {
+    assert.deepEqual(await classifyContextTags([{ id: 'b', actor: 'buyer', body }], async () => '{"items":[]}'), [], body);
+  }
+  assert.deepEqual(await classifyContextTags([{ id: 's', actor: 'seller', body: 'budget USD 6000' }], async () => '{"items":[]}'), []);
+});

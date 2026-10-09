@@ -123,7 +123,7 @@ export function patchMessengerCustomer(tenantId: string, id: string, patch: Reco
 }
 
 const tagAnalyses = new Map<string, Promise<MessengerCustomer | null>>();
-const CONTEXT_ANALYSIS_VERSION = 4;
+const CONTEXT_ANALYSIS_VERSION = 5;
 function buyerFingerprint(customer: MessengerCustomer): string {
   return createHash('sha256').update(JSON.stringify(customer.timeline.filter(event => event.actor === 'buyer').slice(-40).map(event => [event.id, event.body]))).digest('hex');
 }
