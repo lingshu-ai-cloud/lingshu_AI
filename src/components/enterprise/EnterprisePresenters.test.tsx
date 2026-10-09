@@ -18,6 +18,13 @@ test('presenter settings request a separate DashScope quality-inspection consent
 
 test('content production manages people without asking users to copy a HeyGen look ID', () => {
   const html = renderToStaticMarkup(<EnterprisePresenters contentProduction />);
-  assert.match(html, /创建或导入 HeyGen 人物/);
+  assert.match(html, /选择或创建人物/);
   assert.doesNotMatch(html, /HeyGen人物\/Look ID|添加授权人物/);
+});
+
+test('initial configuration only exposes the person and voice entry point', () => {
+  const html = renderToStaticMarkup(<EnterprisePresenters initialConfiguration />);
+  assert.match(html, /企业默认人物/);
+  assert.match(html, /选择或创建人物/);
+  assert.doesNotMatch(html, /默认出镜偏好|新分镜默认布局|添加授权人物/);
 });

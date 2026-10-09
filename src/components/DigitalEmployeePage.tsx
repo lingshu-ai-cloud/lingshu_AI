@@ -1103,12 +1103,8 @@ function OnboardingPanel({
   if (mode === "first" && profileConfirmed && productConfirmed) return (
     <div className="space-y-5">
       <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm" aria-label="初始配置人物授权与声音">
-        <p className="text-xs font-bold text-emerald-700">第三步 · 人物、授权与声音</p>
-        <h2 className="mt-1 text-xl font-bold text-slate-950">配置企业的出镜人物和声音</h2>
-        <p className="mt-2 text-sm text-slate-500">已有的人物和素材可直接复用。按需要补齐人物授权、本人验证和声音绑定；暂不使用数字人时可以继续下一步。</p>
-        <ol className="my-4 grid gap-2 text-xs sm:grid-cols-2 lg:grid-cols-4">
-          {["选择或建立人物档案", "补齐肖像授权与本人验证", "选择音色或授权克隆声音", "检查制作能力并绑定资产"].map((label, index) => <li key={label} className="rounded-xl bg-slate-50 p-3"><span className="font-bold text-emerald-700">{index + 1}. </span>{label}</li>)}
-        </ol>
+        <p className="text-xs font-bold text-emerald-700">第三步 · 人物与声音</p>
+        <h2 className="mt-1 text-xl font-bold text-slate-950">选择出镜人物和声音</h2>
         <EnterprisePresenters initialConfiguration />
       </section>
     <SocialContentStageOnboarding

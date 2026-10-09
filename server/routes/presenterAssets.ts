@@ -50,6 +50,7 @@ export function createPresenterAssetsRouter(store: DataStore, exclusive: Exclusi
   const client = () => options.client || new HeyGenPresenterClient(process.env.HEYGEN_API_KEY || '');
   const configured = () => options.configured?.() ?? Boolean(process.env.HEYGEN_API_KEY);
   const enabled = () => options.enabled?.() ?? (configured() && process.env.HEYGEN_GENERATION_ENABLED === 'true');
+  const localMock = () => currentDataAuthority() === 'local' && process.env.LOCAL_PRESENTER_MOCK_DISABLED !== 'true';
   const directConsent = () => options.directConsent?.() ?? process.env.HEYGEN_DIRECT_CONSENT_ENABLED === 'true';
   const privateCatalog = (tenant: string) => Boolean(tenant && process.env.HEYGEN_PRIVATE_ASSET_TENANT_ID === tenant);
   const canCreateFor = (tenant: string) => !process.env.HEYGEN_PRIVATE_ASSET_TENANT_ID || privateCatalog(tenant);
@@ -109,6 +110,7 @@ export function createPresenterAssetsRouter(store: DataStore, exclusive: Exclusi
       createdAt: p.createdAt, updatedAt: p.updatedAt };
   };
   const refresh = async (row: Row) => {
+    if (row.payload.mock === true) return publicJob(row);
     if (!row.payload.groupId) throw new Error('提交结果尚未核实，请管理员核对原任务；刷新不会重新创建或计费');
     const group = await client().group(row.payload.groupId);
     const looks = row.payload.look?.id ? [await client().look(row.payload.look.id)] : await client().groupLooks(row.payload.groupId);
@@ -119,6 +121,10 @@ export function createPresenterAssetsRouter(store: DataStore, exclusive: Exclusi
     return write(row, { status, look, error: failed ? '人物处理失败，请检查素材或授权录制要求' : '', ...(status === 'completed' ? { consentUrl: undefined } : {}) });
   };
   router.get('/capabilities', (_req, res) => {
+    if (localMock()) {
+      res.json({ localPhotoUpload: true, configured: true, creationEnabled: true, photoCreationEnabled: true, digitalTwinCreationEnabled: true, photoCreationReason: '', digitalTwinCreationReason: '', directConsent: false, privateCatalog: false, reservationCny: 0, photoReservationCny: 0, digitalTwinReservationCny: 0, reason: '' });
+      return;
+    }
     const photoBudget = creationBudget('photo').status('heygen');
     const digitalTwinBudget = creationBudget('digital_twin').status('heygen');
     const commonReason = !configured() ? '管理员尚未配置 HeyGen 服务密钥' : !canCreateFor(res.locals.tenantId) ? '当前企业尚未连接人物创建账号，可使用公共人物库' : !enabled() ? '人物创建尚未启用，可导入已有可用人物' : '';
@@ -321,7 +327,7 @@ export function createPresenterAssetsRouter(store: DataStore, exclusive: Exclusi
   // Auth is inherited from studioRouter, before buffering a bounded binary body.
   router.post('/uploads', raw({ type: 'application/octet-stream', limit: '200mb' }), async (req, res) => {
     try {
-      if (!configured()) throw new Error('管理员尚未配置 HeyGen 服务密钥');
+      if (!configured() && !localMock()) throw new Error('管理员尚未配置 HeyGen 服务密钥');
       let mime = String(req.query.mime || ''); const requestId = String(req.query.requestId || '');
       let bytes = req.body as Buffer;
       if (!validId(requestId) || !Buffer.isBuffer(bytes) || bytes.length < 12) throw new Error('上传文件或请求标识无效');
@@ -355,8 +361,19 @@ export function createPresenterAssetsRouter(store: DataStore, exclusive: Exclusi
         }
         const row = await store.create<Row>(COLLECTION, { tenant_id: tenant, kind: 'upload', request_id: requestId, payload: { mime, digest, ...(trainingInfo ? { trainingInfo } : {}), createdAt: new Date().toISOString() } });
         if (!row) throw new Error('素材登记失败，未上传到供应商');
-        const assetId = await client().upload(bytes, mime, `presenter-upload:${row.id}`);
-        if (!await store.update(COLLECTION, row.id, { payload: { ...row.payload, assetId } })) throw new Error('素材登记失败，请重新选择文件');
+        let assetId: string;
+        let previewUrl: string | undefined;
+        if (localMock()) {
+          assetId = `mock-asset-${digest.slice(0, 24)}`;
+          const extension = mime === 'image/png' ? 'png' : mime === 'image/jpeg' ? 'jpg' : 'mp4';
+          const filename = `presenter-mock-${digest.slice(0, 24)}.${extension}`;
+          const relative = tenantAssetRelativePath(tenant, filename);
+          const target = path.resolve('data/media', relative);
+          fs.mkdirSync(path.dirname(target), { recursive: true });
+          fs.writeFileSync(target, bytes, { mode: 0o600 });
+          previewUrl = `/media/${relative}`;
+        } else assetId = await client().upload(bytes, mime, `presenter-upload:${row.id}`);
+        if (!await store.update(COLLECTION, row.id, { payload: { ...row.payload, assetId, ...(previewUrl ? { previewUrl } : {}) } })) throw new Error('素材登记失败，请重新选择文件');
         return { id: row.id, ...(trimSeconds ? { processedDurationSeconds: trimSeconds } : {}), ...(frameAtSeconds >= 0 && req.query.frameAtSeconds !== undefined ? { extractedFrame: true } : {}), ...(trainingInfo ? { trainingInfo } : {}) };
       });
       res.json(result);
@@ -371,7 +388,7 @@ export function createPresenterAssetsRouter(store: DataStore, exclusive: Exclusi
         const fingerprint = hash(JSON.stringify([b.type, b.name.trim(), b.uploadId, b.voiceId, reusePresenterId]));
         const previous = await find(tenant, 'creation', b.requestId);
         if (previous) { if (previous.payload.fingerprint !== fingerprint) throw new Error('请求标识已用于其他人物'); return publicJob(previous); }
-        if (!enabled()) throw new Error('管理员尚未启用人物创建');
+        if (!enabled() && !localMock()) throw new Error('管理员尚未启用人物创建');
         if (!canCreateFor(tenant)) throw new Error('当前企业尚未连接人物创建账号');
         let reuseGroupId = '';
         if (reusePresenterId) {
@@ -396,6 +413,11 @@ export function createPresenterAssetsRouter(store: DataStore, exclusive: Exclusi
         const row = await store.create<Row>(COLLECTION, { tenant_id: tenant, kind: 'creation', request_id: b.requestId,
           payload: { name: b.name.trim(), type: b.type, voiceId: b.voiceId, uploadId: b.uploadId, sourceDigest: upload.payload.digest, fingerprint, authorized: true, subjectAdultConfirmed: true, ...(reusePresenterId ? { reusePresenterId } : {}), status: 'submitting', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() } });
         if (!row) throw new Error('人物任务登记失败，未创建人物');
+        if (localMock()) {
+          const groupId = `mock-group-${row.id}`;
+          const look: PresenterLook = { id: `mock-look-${row.id}`, name: b.name.trim(), groupId, voiceId: b.voiceId, imageUrl: upload.payload.previewUrl, videoUrl: b.type === 'digital_twin' ? upload.payload.previewUrl : undefined, orientation: 'portrait', status: 'completed', tags: ['local-mock'] };
+          return write(row, { mock: true, groupId, look, status: 'completed' });
+        }
         try { await (options.reserve ? options.reserve(`presenter:${row.id}`) : creationBudget(b.type).reserve('heygen', `presenter:${row.id}`)); }
         catch (e) { await write(row, { status: 'failed', error: message(e) }); throw e; }
         try {
