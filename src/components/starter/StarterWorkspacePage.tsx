@@ -15,8 +15,8 @@ import type { Page } from '../../App';
 import type {
   StarterAgentRole,
   StarterTodayItem,
+  StarterWorkspaceAction,
 } from '../../lib/starterWorkspace';
-import SocialContentWorkspace from '../socialContent/SocialContentWorkspace';
 import WorkspaceActionButtons from './WorkspaceActionButtons';
 import { useStarterWorkspace } from './useStarterWorkspace';
 import { PAGE_REGISTRY } from '../../pageRegistry';
@@ -28,6 +28,13 @@ const BUSINESS_AREA_LABEL: Record<StarterAgentRole, string> = {
   content: '内容制作',
   traffic: '发布与渠道',
   sales: '客户跟进',
+};
+
+const RESULT_WORKSPACE: Record<StarterAgentRole, { page: Page; label: string }> = {
+  orchestrator: { page: 'strategy', label: '经营首页' },
+  content: { page: 'smartAssets', label: '内容制作工作区' },
+  traffic: { page: 'traffic', label: '发布与渠道工作区' },
+  sales: { page: 'conversion', label: '客户会话工作区' },
 };
 
 const STATUS_LABEL: Record<string, string> = {
@@ -98,13 +105,23 @@ function TodayCard({
   item,
   pendingCommand,
   onExecute,
+  setupPlanLimits,
+  setupStartAction,
 }: {
   item: StarterTodayItem;
   pendingCommand: string | null;
   onExecute: ReturnType<typeof useStarterWorkspace>['execute'];
+  setupPlanLimits: {
+    contentArtifactCountPerCycle: number;
+    primaryPlatformCount: number;
+    budgetCnyPerCycle: number;
+    contentBudgetCnyPerCycle: number;
+  };
+  setupStartAction: StarterWorkspaceAction | null;
 }) {
+  const isGuidedSetup = item.actions.some(action => action.command === 'confirm_initial_setup');
   return (
-    <article className="rounded-xl border border-border bg-white p-4">
+    <article className={`rounded-xl border border-border bg-white p-4 ${isGuidedSetup ? 'xl:col-span-2' : ''}`}>
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0">
           <p className="text-[10px] font-bold uppercase tracking-wider text-accent">{BUSINESS_AREA_LABEL[item.ownerAgent]}</p>
@@ -121,13 +138,20 @@ function TodayCard({
         {item.evidence && <span>依据：{item.evidence}</span>}
         {formatTime(item.updatedAt) && <time dateTime={item.updatedAt || undefined}>更新：{formatTime(item.updatedAt)}</time>}
       </div>
-      <WorkspaceActionButtons actions={item.actions} targetId={item.id} pendingCommand={pendingCommand} onExecute={onExecute} />
+      <WorkspaceActionButtons actions={item.actions} targetId={item.id} pendingCommand={pendingCommand} onExecute={onExecute} setupPlanLimits={setupPlanLimits} setupStartAction={setupStartAction} />
     </article>
   );
 }
 
 function TodayView({ state }: { state: ReturnType<typeof useStarterWorkspace> }) {
   const workspace = state.workspace!;
+  const setupStartAction = workspace.controls.find(action => action.command === 'submit_orchestrator_input') || null;
+  const setupPlanLimits = {
+    contentArtifactCountPerCycle: workspace.capabilityManifest.resourceLimits.contentArtifactCountPerCycle,
+    primaryPlatformCount: workspace.capabilityManifest.resourceLimits.primaryPlatformCount,
+    budgetCnyPerCycle: workspace.capabilityManifest.resourceLimits.budgetCnyPerCycle,
+    contentBudgetCnyPerCycle: workspace.capabilityManifest.resourceLimits.agentBudgetCny.content,
+  };
   const groups = [
     { id: 'completed', title: '今天已完成', icon: <CheckCircle2 size={16} />, items: workspace.today.completed },
     { id: 'progress', title: '正在进行／需要处理', icon: <Clock3 size={16} />, items: workspace.today.inProgress },
@@ -157,7 +181,7 @@ function TodayView({ state }: { state: ReturnType<typeof useStarterWorkspace> })
           <h2 id={`today-${group.id}`} className="mb-3 flex items-center gap-2 text-sm font-bold text-text-primary"><span className="text-accent">{group.icon}</span>{group.title}</h2>
           {group.items.length === 0 ? <EmptyState text="这一组目前没有需要展示的任务。" /> : (
             <div className="grid gap-3 xl:grid-cols-2">
-              {group.items.map(item => <TodayCard key={item.id} item={item} pendingCommand={state.pendingCommand} onExecute={state.execute} />)}
+              {group.items.map(item => <TodayCard key={item.id} item={item} pendingCommand={state.pendingCommand} onExecute={state.execute} setupPlanLimits={setupPlanLimits} setupStartAction={setupStartAction} />)}
             </div>
           )}
         </section>
@@ -197,7 +221,13 @@ function DecisionsView({ state }: { state: ReturnType<typeof useStarterWorkspace
   );
 }
 
-function ResultsView({ state }: { state: ReturnType<typeof useStarterWorkspace> }) {
+function ResultsView({
+  state,
+  onNavigate,
+}: {
+  state: ReturnType<typeof useStarterWorkspace>;
+  onNavigate: (page: Page) => void;
+}) {
   const { results } = state.workspace!;
   return (
     <div className="space-y-6">
@@ -223,17 +253,22 @@ function ResultsView({ state }: { state: ReturnType<typeof useStarterWorkspace> 
         <h2 id="artifact-heading" className="mb-3 flex items-center gap-2 text-sm font-bold text-text-primary"><FileCheck2 size={16} className="text-accent" />成果与证据</h2>
         {results.artifacts.length === 0 ? <EmptyState text="暂无可验证成果。" /> : (
           <div className="grid gap-3 xl:grid-cols-2">
-            {results.artifacts.map(artifact => (
-              <article key={artifact.id} className="rounded-xl border border-border bg-white p-4">
-                <div className="flex items-start justify-between gap-3">
-                  <div><p className="text-[10px] font-bold text-accent">{BUSINESS_AREA_LABEL[artifact.agentRole]} · {artifactKindLabel(artifact.kind)}</p><h3 className="mt-1 text-sm font-bold text-text-primary">{artifact.title}</h3></div>
-                  <span className="rounded-full bg-surface-2 px-2 py-1 text-[10px] font-semibold text-text-secondary">{statusLabel(artifact.status)}</span>
-                </div>
-                {artifact.evidence && <p className="mt-2 text-xs leading-relaxed text-text-muted">证据：{artifact.evidence}</p>}
-                {formatTime(artifact.createdAt) && <p className="mt-1 text-[10px] text-text-muted">{formatTime(artifact.createdAt)}</p>}
-                <WorkspaceActionButtons actions={artifact.actions} targetId={artifact.id} pendingCommand={state.pendingCommand} onExecute={state.execute} />
-              </article>
-            ))}
+            {results.artifacts.map(artifact => {
+              const destination = RESULT_WORKSPACE[artifact.agentRole];
+              return (
+                <article key={artifact.id} className="rounded-xl border border-border bg-white p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div><p className="text-[10px] font-bold text-accent">{BUSINESS_AREA_LABEL[artifact.agentRole]} · {artifactKindLabel(artifact.kind)}</p><h3 className="mt-1 text-sm font-bold text-text-primary">{artifact.title}</h3></div>
+                    <span className="rounded-full bg-surface-2 px-2 py-1 text-[10px] font-semibold text-text-secondary">{statusLabel(artifact.status)}</span>
+                  </div>
+                  {artifact.evidence && <p className="mt-2 text-xs leading-relaxed text-text-muted">证据：{artifact.evidence}</p>}
+                  {formatTime(artifact.createdAt) && <p className="mt-1 text-[10px] text-text-muted">{formatTime(artifact.createdAt)}</p>}
+                  <p className="mt-3 rounded-lg bg-surface-2 px-3 py-2 text-[11px] leading-relaxed text-text-muted">当前成果记录没有可验证的媒体预览，界面不会生成占位画面。请进入对应工作区查看内容与后续状态。</p>
+                  <button type="button" onClick={() => onNavigate(destination.page)} className="mt-3 inline-flex items-center gap-1.5 text-xs font-bold text-accent hover:text-accent-dim">进入{destination.label}<ArrowRight size={13} aria-hidden="true" /></button>
+                  <WorkspaceActionButtons actions={artifact.actions} targetId={artifact.id} pendingCommand={state.pendingCommand} onExecute={state.execute} />
+                </article>
+              );
+            })}
           </div>
         )}
       </section>
@@ -243,7 +278,6 @@ function ResultsView({ state }: { state: ReturnType<typeof useStarterWorkspace> 
 
 export default function StarterWorkspacePage({
   onNavigate,
-  onNavigateWithTask,
 }: {
   onNavigate: (page: Page) => void;
   onNavigateWithTask?: (page: Page, taskId: string) => void;
@@ -298,11 +332,7 @@ export default function StarterWorkspacePage({
           </div>
         )}
 
-        <div>
-          <SocialContentWorkspace onNavigate={onNavigate} onNavigateWithTask={onNavigateWithTask} />
-        </div>
-
-        <div id="starter-workspace-tabs" className="mt-7 scroll-mt-4 flex items-center gap-1 rounded-xl border border-border bg-white p-1" role="tablist" aria-label="智能经营主视图">
+        <div id="starter-workspace-tabs" className="scroll-mt-4 flex items-center gap-1 rounded-xl border border-border bg-white p-1" role="tablist" aria-label="智能经营主视图">
           {tabs.map(item => (
             <button key={item.id} type="button" role="tab" aria-selected={tab === item.id} onClick={() => openWorkspaceTab(item.id)} className={`flex-1 rounded-lg px-3 py-2.5 text-sm font-bold transition ${tab === item.id ? 'bg-[#edf4ef] text-accent' : 'text-text-muted hover:bg-surface-2 hover:text-text-primary'}`}>
               {item.label}{item.count !== null && item.count > 0 ? <span className="ml-1.5 rounded-full bg-white px-1.5 py-0.5 text-[10px]">{item.count}</span> : null}
@@ -313,7 +343,7 @@ export default function StarterWorkspacePage({
         <main className="mt-5">
           {tab === 'today' && <TodayView state={state} />}
           {tab === 'decisions' && <DecisionsView state={state} />}
-          {tab === 'results' && <ResultsView state={state} />}
+          {tab === 'results' && <ResultsView state={state} onNavigate={onNavigate} />}
         </main>
 
         {tab === 'decisions' && (

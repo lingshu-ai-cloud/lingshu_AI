@@ -71,6 +71,30 @@ export interface Starter198QuoteInquiryInput {
   destinationCountry: string;
 }
 
+export type Starter198PresenterMode = 'brand_spokesperson' | 'product_expert' | 'none';
+
+export interface Starter198PlannedAccount {
+  platform: 'facebook' | 'instagram' | 'tiktok' | 'youtube';
+  accountName: string;
+  weeklyOutput: number;
+}
+
+/**
+ * The user-confirmed operating limits for the first work cycle. These are
+ * planning targets, not proof that a social account is connected and not
+ * authorization to publish. Real publishing continues to use the separate
+ * publishingTargets and approval/grant boundaries.
+ */
+export interface Starter198ConfirmedOperatingPlan {
+  brandName: string;
+  presenter: Starter198PresenterMode;
+  plannedAccounts: Starter198PlannedAccount[];
+  weeklyMasterCount: number;
+  weeklyVariantCount: number;
+  estimatedCostCny: { min: number; max: number };
+  deliveryDays: number;
+}
+
 export interface Starter198InitialSetupInput {
   companyName: string;
   industry: string;
@@ -81,6 +105,8 @@ export interface Starter198InitialSetupInput {
   primaryPlatform: 'facebook' | 'instagram' | 'tiktok' | 'youtube';
   primaryLanguage: string;
   constraints: string[];
+  /** Structured confirmation used by the planner. Legacy callers may omit it. */
+  operatingPlan?: Starter198ConfirmedOperatingPlan;
 }
 
 export type Starter198OrgRole = 'owner' | 'admin' | 'operator' | 'customer_service';

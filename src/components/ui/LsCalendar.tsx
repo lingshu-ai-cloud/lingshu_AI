@@ -137,11 +137,17 @@ export function LsCalendar({ events, label, initialDate, initialView = 'dayGridM
         eventClass={info => `ls-calendar-event ls-calendar-event-${(info.event.extendedProps.item as LsCalendarEvent).status}`}
         eventContent={info => {
           const item = info.event.extendedProps.item as LsCalendarEvent;
+          if (info.view.type.startsWith('timeGrid') && info.event.allDay) {
+            return <div className="ls-calendar-event-content ls-calendar-event-content-all-day">
+              <CalendarThumbnail src={item.thumbnailUrl} title={item.title}/>
+              <div className="ls-calendar-event-copy"><div className="ls-calendar-event-meta">{item.platform && <SocialPlatformIcon platform={item.platform} size={13}/>}<span>{item.accountName || item.ownerAgent || '待绑定账号'}</span></div><strong>{item.title}</strong></div>
+            </div>;
+          }
           if (info.view.type.startsWith('timeGrid') && !info.event.allDay) {
             // v7 measures each rendered segment before setting isShort, including
             // clipped multi-day events. Only sufficiently tall slots get media.
             return <div className={`ls-calendar-event-content ls-calendar-event-content-timed${info.isShort ? ' is-short' : ''}`}>
-              {!info.isShort && <CalendarThumbnail src={item.thumbnailUrl} title={item.title}/>}
+              <CalendarThumbnail src={item.thumbnailUrl} title={item.title}/>
               <div className="ls-calendar-event-copy">
                 {!info.isShort && <div className="ls-calendar-event-meta">{item.platform && <SocialPlatformIcon platform={item.platform} size={13}/>}<span>{item.accountName || item.ownerAgent || '待绑定账号'}</span></div>}
                 <strong>{item.title}</strong><span className="ls-calendar-event-time">{info.timeText}</span>

@@ -1,5 +1,9 @@
 import { createHash } from 'node:crypto';
-import type { Starter198InitialSetupInput } from '../../shared/contracts/starter198.js';
+import type {
+  Starter198ConfirmedOperatingPlan,
+  Starter198InitialSetupInput,
+  Starter198ResourceLimits,
+} from '../../shared/contracts/starter198.js';
 import {
   resolveDigitalEmployeeConfiguration,
   type EnterpriseFactsProfile,
@@ -18,8 +22,12 @@ const ACTIVE_RUN_STATUSES = [
   'waiting_approval', 'waiting_human', 'paused', 'cancelling',
 ] as const;
 const PLATFORMS = new Set(['facebook', 'instagram', 'tiktok', 'youtube']);
+const PRESENTER_MODES = new Set(['brand_spokesperson', 'product_expert', 'none']);
 const LANGUAGE_PATTERN = /^[a-z]{2}(?:-[A-Z]{2})?$/;
 const text = (value: unknown, max = 500): string => typeof value === 'string' ? value.trim().slice(0, max) : '';
+const integer = (value: unknown): number => Number.isSafeInteger(value) ? Number(value) : 0;
+const finiteNumber = (value: unknown): number => Number.isFinite(Number(value)) ? Math.max(0, Number(value)) : 0;
+type NormalizedInitialSetup = Starter198InitialSetupInput;
 
 /**
  * Serializes initial-setup replacement per tenant across every port instance in
@@ -67,7 +75,63 @@ function hash(value: unknown): string {
   return createHash('sha256').update(stableStringify(value)).digest('hex');
 }
 
-function normalizeSetup(value: Starter198InitialSetupInput): Starter198InitialSetupInput {
+function normalizeOperatingPlan(
+  value: Starter198InitialSetupInput['operatingPlan'],
+  primaryPlatform: Starter198InitialSetupInput['primaryPlatform'],
+): Starter198ConfirmedOperatingPlan | undefined {
+  if (!value) return undefined;
+  const plannedAccounts = Array.isArray(value.plannedAccounts)
+    ? value.plannedAccounts.map(item => ({
+      platform: text(item?.platform, 40).toLowerCase() as Starter198InitialSetupInput['primaryPlatform'],
+      accountName: text(item?.accountName, 200),
+      weeklyOutput: integer(item?.weeklyOutput),
+    }))
+    : [];
+  const weeklyMasterCount = integer(value.weeklyMasterCount);
+  const weeklyVariantCount = integer(value.weeklyVariantCount);
+  const estimatedCostCny = {
+    min: integer(value.estimatedCostCny?.min),
+    max: integer(value.estimatedCostCny?.max),
+  };
+  const deliveryDays = integer(value.deliveryDays);
+  const platformSet = new Set(plannedAccounts.map(item => item.platform));
+  const accountOutput = plannedAccounts.reduce((sum, item) => sum + item.weeklyOutput, 0);
+  if (!text(value.brandName, 120)
+    || !PRESENTER_MODES.has(String(value.presenter))
+    || plannedAccounts.length < 1 || plannedAccounts.length > PLATFORMS.size
+    || platformSet.size !== plannedAccounts.length
+    || plannedAccounts.some(item => !PLATFORMS.has(item.platform) || !item.accountName || item.weeklyOutput < 1 || item.weeklyOutput > weeklyMasterCount)
+    || plannedAccounts[0]?.platform !== primaryPlatform
+    || weeklyMasterCount < 1 || weeklyMasterCount > 100
+    || weeklyVariantCount !== accountOutput || weeklyVariantCount > weeklyMasterCount * plannedAccounts.length
+    || estimatedCostCny.min !== weeklyMasterCount * 10
+    || estimatedCostCny.max !== weeklyMasterCount * 15
+    || deliveryDays !== 7) {
+    throw new Starter198RuntimePortError('starter_198_initial_setup_plan_invalid', 400);
+  }
+  return {
+    brandName: text(value.brandName, 120),
+    presenter: value.presenter,
+    plannedAccounts,
+    weeklyMasterCount,
+    weeklyVariantCount,
+    estimatedCostCny,
+    deliveryDays,
+  };
+}
+
+function assertOperatingPlanWithinLimits(plan: Starter198ConfirmedOperatingPlan, limits: Starter198ResourceLimits): void {
+  const contentBudget = finiteNumber(limits.agentBudgetCny?.content);
+  const overallBudget = finiteNumber(limits.budgetCnyPerCycle);
+  const effectiveBudget = Math.min(contentBudget, overallBudget);
+  if (plan.plannedAccounts.length > Math.max(0, integer(limits.primaryPlatformCount))
+    || plan.weeklyMasterCount > Math.max(0, integer(limits.contentArtifactCountPerCycle))
+    || plan.estimatedCostCny.max > effectiveBudget) {
+    throw new Starter198RuntimePortError('starter_198_initial_setup_plan_exceeds_entitlement', 409);
+  }
+}
+
+function normalizeSetup(value: Starter198InitialSetupInput): NormalizedInitialSetup {
   const setup = {
     companyName: text(value.companyName, 120),
     industry: text(value.industry, 120),
@@ -87,7 +151,15 @@ function normalizeSetup(value: Starter198InitialSetupInput): Starter198InitialSe
     || !LANGUAGE_PATTERN.test(setup.primaryLanguage)) {
     throw new Starter198RuntimePortError('starter_198_initial_setup_invalid', 400);
   }
-  return setup as Starter198InitialSetupInput;
+  const operatingPlan = normalizeOperatingPlan(
+    value.operatingPlan,
+    setup.primaryPlatform as Starter198InitialSetupInput['primaryPlatform'],
+  );
+  return {
+    ...setup,
+    primaryPlatform: setup.primaryPlatform as Starter198InitialSetupInput['primaryPlatform'],
+    ...(operatingPlan ? { operatingPlan } : {}),
+  };
 }
 
 /** Canonical fingerprint shared by durable command recovery and configuration writes. */
@@ -116,8 +188,9 @@ async function assertNoActiveRun(repository: Starter198Repository, tenantId: str
   }
 }
 
-function enterprisePatch(current: JsonObject, setup: Starter198InitialSetupInput): EnterpriseFactsProfile & JsonObject {
+function enterprisePatch(current: JsonObject, setup: NormalizedInitialSetup): EnterpriseFactsProfile & JsonObject {
   const company = object(current.company);
+  const brand = object(current.brand);
   const strategy = object(current.strategy);
   const customers = object(current.customers);
   const products = object(current.products);
@@ -142,6 +215,12 @@ function enterprisePatch(current: JsonObject, setup: Starter198InitialSetupInput
       mainMarkets: setup.targetMarkets,
       description: setup.primaryBusiness,
     },
+    ...(setup.operatingPlan ? {
+      brand: {
+        ...brand,
+        name: setup.operatingPlan.brandName,
+      },
+    } : {}),
     strategy: {
       ...strategy,
       focusProducts: setup.focusProducts,
@@ -191,6 +270,7 @@ export function createStarter198InitialSetupPort(dependencies: {
         const setup = normalizeSetup(input.setup);
         await assertNoActiveRun(repository, input.tenantId);
         const access = await repository.access(input.tenantId);
+        if (setup.operatingPlan) assertOperatingPlanWithinLimits(setup.operatingPlan, access.resourceLimits);
         const [profileRow, configRow] = await Promise.all([
           exactTenantRow(dataStore, 'tenant_profiles', input.tenantId),
           exactTenantRow(dataStore, 'digital_employee_configs', input.tenantId),
@@ -221,6 +301,7 @@ export function createStarter198InitialSetupPort(dependencies: {
             primaryGoal: 'leads',
             enabledWorkflows: ['product_content', 'content_publish', 'customer_segmentation'],
             publishingTargets: [],
+            ...(setup.operatingPlan ? { confirmedOperatingPlan: setup.operatingPlan } : {}),
             allowRealPublishing: false,
             allowRealCustomerMessages: false,
             allowGeneratedVisuals: false,
@@ -245,6 +326,7 @@ export function createStarter198InitialSetupPort(dependencies: {
             confirmedBy: input.userId,
             confirmedAt: now.toISOString(),
             entitlementSnapshotId: access.entitlementSnapshotId,
+            ...(setup.operatingPlan ? { operatingPlan: setup.operatingPlan } : {}),
           },
         };
         const versions = await dataStore.list<Row>('digital_employee_config_versions', {

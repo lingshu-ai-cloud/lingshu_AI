@@ -147,7 +147,7 @@ function primaryPlatform(config: DigitalEmployeeConfig): 'facebook' | 'instagram
   return (configured || (allowed.has(preferred) ? preferred : 'tiktok')) as 'facebook' | 'instagram' | 'tiktok' | 'youtube';
 }
 
-function starterTasks(): StarterPlanTask[] {
+function starterTasks(operatingPlan?: DigitalEmployeeConfig['confirmedOperatingPlan']): StarterPlanTask[] {
   const task = (
     value: Omit<StarterPlanTask, 'sequence' | 'priority' | 'policySource'>,
     index: number,
@@ -169,7 +169,9 @@ function starterTasks(): StarterPlanTask[] {
     }, 1),
     task({
       key: 'starter_content_production', title: '生成首发内容与一次优化版',
-      description: '灵小图完成脚本、素材、基础成片与版本记录；不直接发布。',
+      description: operatingPlan
+        ? `灵小图先推进首条内容的脚本、素材、标题、Tag、成片与版本记录；本周期确认上限为 ${operatingPlan.weeklyMasterCount} 条母版、${operatingPlan.weeklyVariantCount} 条平台版本，后续批次须按真实任务继续创建，不把上限伪装为已执行。`
+        : '灵小图完成脚本、素材、标题、Tag、基础成片与版本记录；不直接发布。',
       agentRole: 'content', kind: 'production', requiresApproval: false, dependsOn: ['starter_content_research'],
       businessDomain: 'content', capabilityKey: 'workflow.standard.run', destination: 'smartAssets', destinationView: 'create',
       statusSource: 'studio_projects + render jobs', executionMode: 'draft_executor', externalEffect: 'draft', automaticExecutionAllowed: true,
@@ -190,7 +192,9 @@ function starterTasks(): StarterPlanTask[] {
     }, 4),
     task({
       key: 'starter_publication_package', title: '生成主平台自助发布包',
-      description: '灵小量只为已批准内容生成发布包；不调用官方发布 API、不建立发布日历、不标记已发布。',
+      description: operatingPlan
+        ? `已确认 ${operatingPlan.plannedAccounts.length} 个计划账号；当前标准链只为已批准的首条内容生成主平台自助发布包，不建立发布日历、不调用官方发布 API，也不标记已发布。`
+        : '灵小量只为已批准内容生成发布包；不调用官方发布 API、不建立发布日历、不标记已发布。',
       agentRole: 'traffic', kind: 'production', requiresApproval: false, dependsOn: [STARTER_CONTENT_RELEASE_APPROVAL_TASK_KEY],
       businessDomain: 'publishing', capabilityKey: 'publishing.package.generate', destination: 'smartAssets', destinationView: 'publish',
       statusSource: 'starter_publication_packages', executionMode: 'internal', externalEffect: 'draft', automaticExecutionAllowed: true,
@@ -225,6 +229,20 @@ function starterTasks(): StarterPlanTask[] {
       statusSource: 'workflow_tasks + evidence', executionMode: 'internal', externalEffect: 'none', automaticExecutionAllowed: true,
     }, 9),
   ];
+}
+
+function assertConfirmedPlanAllowed(config: DigitalEmployeeConfig, access: Starter198AccessSnapshot): void {
+  const plan = config.confirmedOperatingPlan;
+  if (!plan) return;
+  const limits = access.resourceLimits;
+  const overallBudget = Math.max(0, Number(limits.budgetCnyPerCycle) || 0);
+  const contentBudget = Math.max(0, Number(limits.agentBudgetCny?.content) || 0);
+  const effectiveBudget = Math.min(overallBudget, contentBudget);
+  if (plan.plannedAccounts.length > limits.primaryPlatformCount
+    || plan.weeklyMasterCount > limits.contentArtifactCountPerCycle
+    || plan.estimatedCostCny.max > effectiveBudget) {
+    throw new Starter198RuntimePortError('starter_198_confirmed_plan_entitlement_changed', 409);
+  }
 }
 
 function inboxResult(record: StarterRecord): Starter198OrchestratorQueueResult | null {
@@ -283,6 +301,9 @@ async function readConfiguration(dataStore: DataStore, tenantId: string): Promis
   const knowledgeBinding = jsonObject(effective?.knowledgeBinding);
   const config = normalizeDigitalEmployeeConfig(source ?? {});
   const missing = validateDigitalEmployeeConfig(config).map(label => `configuration:${label}`);
+  if (source && Object.prototype.hasOwnProperty.call(source, 'confirmedOperatingPlan') && !config.confirmedOperatingPlan) {
+    missing.push('configuration:confirmed_operating_plan_invalid');
+  }
   if (text(record.status) !== 'active') missing.push('configuration:not_active');
   if (!text(record.activated_at)) missing.push('configuration:not_confirmed');
   const configVersion = Number(record.config_version);
@@ -374,6 +395,7 @@ function buildInitialization(input: {
   ready: ReadyConfiguration;
   now: Date;
 }): StarterInitializationContext {
+  assertConfirmedPlanAllowed(input.ready.config, input.access);
   const inputVersion = hash({ schemaVersion: 1, input: input.text });
   const initializationId = hash({
     tenantId: input.tenantId,
@@ -408,7 +430,8 @@ async function finalizeStarterRun(dataStore: DataStore, tenantId: string, run: R
   if (!context || text(run.product_profile) !== 'starter_198') {
     throw new Starter198RuntimePortError('starter_198_run_initialization_context_invalid', 503);
   }
-  const tasks = starterTasks();
+  const operatingPlan = context.config.confirmedOperatingPlan;
+  const tasks = starterTasks(operatingPlan);
   const plan = {
     schemaVersion: 'starter-198.standard-plan.v1',
     planVersion: 1,
@@ -419,6 +442,7 @@ async function finalizeStarterRun(dataStore: DataStore, tenantId: string, run: R
     endsAt: context.endsAt,
     primaryPlatform: context.primaryPlatform,
     primaryLanguage: context.primaryLanguage,
+    ...(operatingPlan ? { operatingPlan } : {}),
     configSnapshot: context.config,
     configVersion: context.configVersion,
     policyVersion: context.policyVersion,
@@ -446,6 +470,13 @@ async function finalizeStarterRun(dataStore: DataStore, tenantId: string, run: R
       market: context.config.targetMarkets,
       buyerPersona: context.config.customerProfile,
       platform: context.primaryPlatform,
+      ...(operatingPlan ? {
+        plannedAccounts: operatingPlan.plannedAccounts,
+        weeklyMasterCount: operatingPlan.weeklyMasterCount,
+        weeklyVariantCount: operatingPlan.weeklyVariantCount,
+        estimatedCostCny: operatingPlan.estimatedCostCny,
+        deliveryDays: operatingPlan.deliveryDays,
+      } : {}),
       language: context.primaryLanguage,
     },
     constraints: context.config.constraints,

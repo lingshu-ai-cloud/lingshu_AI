@@ -30,7 +30,6 @@ import SmartBusinessDashboard, { WeeklyCommandCenter } from "./SmartBusinessDash
 import SmartOperationsAccountRail, { type SmartOperationsAccount } from "./SmartOperationsAccountRail";
 import WeeklyPlanCalendar from "./smartBusiness/WeeklyPlanCalendar";
 import PlanHistoryDialog from "./PlanHistoryDialog";
-import { PAGE_REGISTRY } from '../pageRegistry';
 import SocialContentStageOnboarding from "./socialContent/SocialContentStageOnboarding";
 import {
   saveSocialContentStage,
@@ -4124,15 +4123,14 @@ export default function DigitalEmployeePage({
       <>
       {!weeklyPlanOpen && <div className="h-full overflow-y-auto bg-surface-2">
         <div className="mx-auto w-full max-w-[1440px] px-4 py-5 sm:px-6 lg:px-8">
-          <header className="mb-5"><h1 className="text-[28px] font-semibold text-text-primary">{PAGE_REGISTRY.digitalEmployees.canonicalTitle}</h1><p className="mt-1 text-sm text-text-secondary">从本周计划到生产交付，持续跟进账号、内容与经营结果。</p></header>
           <div aria-label="当前周计划">
             {goal ? <WeeklyCommandCenter
               data={data}
               statusLabel={currentPlanStatusLabel}
               actions={weeklyPlanControls}
-              notice={<>
-                {!activeRun && !viewGoalId && (!planDetailsReady || approvalBlocked) && <p className="mr-auto text-[10px] font-bold text-amber-700">{approvalBlocked ? `开始前需补齐：${firstMissingReadiness?.label || "经营基础信息"}` : missingReferenceMasters.length ? `爆款库还缺 ${missingReferenceMasters.length} 条母版所需的已分析视频` : missingProductMasters.length ? `还有 ${missingProductMasters.length} 条原创母版未绑定产品` : detailGeneration?.status === "blocked" ? `开始前需处理 ${detailGeneration.blockedCount} 条母版任务卡点` : "请确认周计划并开始工作"}</p>}
-              </>}
+              notice={!activeRun && !viewGoalId && (approvalBlocked || missingReferenceMasters.length > 0 || missingProductMasters.length > 0 || detailGeneration?.status === "blocked")
+                ? <p className="mr-auto text-[10px] font-bold text-amber-700">{approvalBlocked ? `开始前需补齐：${firstMissingReadiness?.label || "经营基础信息"}` : missingReferenceMasters.length ? `爆款库还缺 ${missingReferenceMasters.length} 条母版所需的已分析视频` : missingProductMasters.length ? `还有 ${missingProductMasters.length} 条原创母版未绑定产品` : `开始前需处理 ${detailGeneration?.blockedCount || 0} 条母版任务卡点`}</p>
+                : undefined}
             /> : <section className="overflow-hidden rounded-lg border border-emerald-200 bg-surface-2"><div className="flex flex-wrap items-start justify-between gap-4 px-5 py-4"><div><p className="text-xs font-semibold text-emerald-800">周经营计划</p><p className="mt-1 text-sm font-bold text-slate-800">本周还没有可执行计划</p><p className="mt-1 text-xs text-slate-500">点击“开始周任务”确定平台、账号、视频产量和预算，再选择产品并确认工作排期。</p></div><div aria-label="智能经营控制" className="flex max-w-full flex-wrap items-center justify-end gap-2">{weeklyPlanControls}</div></div></section>}
           </div>
           <Tabs className="mt-6" aria-label="智能经营视图" activeKey={workspaceView === "live" ? "overview" : workspaceView} onChange={key => {setWorkspaceView(key as WorkspaceView); if(key !== "overview") setSelectedContentItemId("");}} items={views.map(view => ({key: view.id, label: view.label}))}/>

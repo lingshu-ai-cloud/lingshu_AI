@@ -9,6 +9,10 @@ const EXEMPT_PATHS = [
   /^\/api\/overseas\/starter-198\/publication-packages\/[^/]+\/download\/?$/,
   /^\/api\/overseas\/starter-198\/quote-artifacts\/[^/]+\/download\/?$/,
   /^\/api\/overseas\/starter-198\/social-content(?:\/|$)/,
+  // Lingxiaoshu is the starter product's conversational entry.  The route
+  // itself remains authenticated and maps mutations back onto the versioned
+  // starter command API; exempting it here does not reopen legacy writes.
+  /^\/api\/overseas\/assistant-threads(?:\/|$)/,
   /^(?:\/api\/overseas)?\/auth\/(?:me|change-password|employees(?:\/[^/]+(?:\/role)?)?|guide-seen|logout)\/?$/,
   /^\/api\/overseas\/admin(?:\/|$)/,
   /^\/api\/overseas\/support-access(?:\/|$)/,

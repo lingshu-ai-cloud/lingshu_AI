@@ -237,6 +237,18 @@ function executionWaitingLabel(job: ContentExecutionRuntimeJob) {
 
 type ExecutionControlAction = "pause" | "cancel" | "resume" | "retry";
 
+function visualPlanDate(value?: string) {
+  if (!value) return null;
+  const parsed = new Date(`${value.slice(0, 10)}T00:00:00+08:00`);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return {
+    iso: value.slice(0, 10),
+    year: parsed.toLocaleDateString("zh-CN", { timeZone: "Asia/Shanghai", year: "numeric" }),
+    day: parsed.toLocaleDateString("zh-CN", { timeZone: "Asia/Shanghai", month: "long", day: "numeric" }),
+    weekday: parsed.toLocaleDateString("zh-CN", { timeZone: "Asia/Shanghai", weekday: "short" }),
+  };
+}
+
 export function WeeklyCommandCenter({
   data,
   statusLabel,
@@ -251,6 +263,8 @@ export function WeeklyCommandCenter({
   className?: string;
 }) {
   const display = buildSmartBusinessDisplayModel(data);
+  const planStart = visualPlanDate(data.goal?.startsAt);
+  const planEnd = visualPlanDate(data.goal?.endsAt);
   const contentQueue = data.contentQueue?.items || [];
   const operatingContext = data.plan?.businessPackage?.operatingContext;
   const packagePlans = data.plan?.businessPackage?.tasks.find(task => task.templateId === "production")?.videoPlans || [];
@@ -280,9 +294,16 @@ export function WeeklyCommandCenter({
     <div className="flex flex-wrap items-start justify-between gap-5 border-b border-border px-5 py-5 text-text-primary sm:px-6">
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2">
-          <h2 className="text-xl font-semibold">周经营计划{data.goal ? ` · ${data.goal.startsAt} 至 ${data.goal.endsAt}` : ""}</h2>
+          <h2 className="text-xl font-semibold">周经营计划</h2>
           <Tag color={statusLabel === "执行中" ? "processing" : statusLabel === "待确认" ? "warning" : "default"}>{statusLabel}</Tag>
         </div>
+        {planStart && planEnd && <div className="mt-3 flex max-w-full flex-wrap items-center gap-2" aria-label={`计划周期：${planStart.iso} 至 ${planEnd.iso}`}>
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-emerald-50 text-emerald-700"><CalendarRange size={17}/></span>
+          <time dateTime={planStart.iso} className="rounded-lg border border-border bg-surface-2 px-3 py-1.5"><span className="mr-2 text-[10px] font-semibold text-text-muted">开始</span><strong className="text-sm text-text-primary">{planStart.day}</strong><span className="ml-2 text-xs text-text-secondary">{planStart.weekday}</span></time>
+          <span className="text-sm text-text-muted" aria-hidden="true">→</span>
+          <time dateTime={planEnd.iso} className="rounded-lg border border-border bg-surface-2 px-3 py-1.5"><span className="mr-2 text-[10px] font-semibold text-text-muted">结束</span><strong className="text-sm text-text-primary">{planEnd.day}</strong><span className="ml-2 text-xs text-text-secondary">{planEnd.weekday}</span></time>
+          <span className="rounded-full bg-surface-2 px-2.5 py-1 text-[10px] font-semibold text-text-secondary">{planStart.year}</span>
+        </div>}
       </div>
       {actions && <div aria-label="智能经营控制" className="flex max-w-full flex-wrap items-center justify-end gap-2">{actions}</div>}
     </div>
@@ -847,19 +868,15 @@ function MatrixView({ calendarTasks, calendarDemo, data, onRefresh, onNavigate, 
 
   return <div className="space-y-5">
     <MatrixWorkSchedule calendarTasks={calendarTasks} calendarDemo={calendarDemo} taskItems={data.contentQueue?.items} onOpenTask={onOpenProductionProgress} startsAt={goal?.startsAt} endsAt={goal?.endsAt} accounts={accountRows} plans={productionPlans} selectedAccountId={selectedAccountId} onOpenPublishing={() => onNavigate?.("traffic")}/>
-    <p className="text-xs text-text-secondary">排期规则：编导结论先完成，经营 Agent 再派发内容任务；内容 Agent 负责制作、质检与发布交付。</p>
-    <div className="grid gap-5 xl:grid-cols-2">
-      <LsDataChart title="各账号周更计划与完成" description="单位：条；当前周计划。最多展示 10 个账号，完整账号见明细表。" kind="bar" horizontal labels={selectedAccounts.slice(0, 10).map(row => row.accountLabel)} series={[
-        { label: "周更目标", values: selectedAccounts.slice(0, 10).map(row => row.weeklyCount) },
-        { label: "已完成", values: selectedAccounts.slice(0, 10).map(row => display.contents.filter(item => item.accountId === row.accountId && item.status === "completed").length) },
-      ]} unit="条"/>
-      <LsDataChart title="各账号周更稳定度" description="单位：%；需要连续多周账号发布记录。当前接口仅提供本周计划，连接历史数据后展示稳定度。" kind="bar" horizontal percent labels={[]} series={[{ label: "稳定度", values: [] }]}/>
-    </div>
+    <LsDataChart title="各账号周更计划与完成" description="单位：条；当前周计划。最多展示 10 个账号，完整账号见明细表。" kind="bar" horizontal labels={selectedAccounts.slice(0, 10).map(row => row.accountLabel)} series={[
+      { label: "周更目标", values: selectedAccounts.slice(0, 10).map(row => row.weeklyCount) },
+      { label: "已完成", values: selectedAccounts.slice(0, 10).map(row => display.contents.filter(item => item.accountId === row.accountId && item.status === "completed").length) },
+    ]} unit="条"/>
     <LsDataChart title="账号表现趋势" description="单位：次；需要按账号、日期记录的平台指标快照。当前回执为累计值，不推算为每日增长；请在数据复盘同步账号。" kind="line" labels={[]} series={[{ label: "每日播放量", values: [] }]}/>
     <section className="rounded-lg border border-slate-200 bg-white p-5 sm:p-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
-        <div><p className="text-xs font-bold tracking-[0.16em] text-emerald-700">账号配置</p><h2 className="mt-1 text-2xl font-semibold text-slate-950">账号职责与连接状态</h2><p className="mt-1 text-sm text-slate-500">内容任务已统一放入上方工作排期；这里仅保留账号定位、承接能力和对标配置。</p></div>
-        <div className="flex flex-wrap gap-2"><Button htmlType="button" onClick={() => onNavigate?.("plugins")} className="!h-auto min-h-9 !whitespace-normal rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-xs font-semibold text-slate-700">管理连接账号</Button>{editable&&<Button htmlType="button" disabled={saving} onClick={() => void synchronizePackage()} className="!h-auto min-h-9 !whitespace-normal inline-flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-xs font-semibold text-emerald-800 disabled:opacity-50"><RefreshCcw size={14} className={saving ? "animate-spin" : ""}/>按矩阵同步周任务包</Button>}{editable&&<Button htmlType="button" onClick={() => { setDraft(saved || null); setEditing(true); }} className="!h-auto min-h-9 !whitespace-normal inline-flex items-center gap-2 rounded-lg bg-slate-950 px-4 py-2.5 text-xs font-semibold text-white"><Pencil size={14}/>修改矩阵</Button>}</div>
+        <div><p className="text-xs font-bold tracking-[0.16em] text-emerald-700">账号配置</p><h2 className="mt-1 text-2xl font-semibold text-slate-950">账号职责与连接状态</h2></div>
+        <div className="flex flex-wrap gap-2"><Button htmlType="button" onClick={() => onNavigate?.("plugins")} className="!h-auto min-h-9 !whitespace-normal rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-xs font-semibold text-slate-700">管理连接账号</Button>{editable&&<Button htmlType="button" disabled={saving} onClick={() => void synchronizePackage()} className="!h-auto min-h-9 !whitespace-normal inline-flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-xs font-semibold text-emerald-800 disabled:opacity-50"><RefreshCcw size={14} className={saving ? "animate-spin" : ""}/>按矩阵同步周任务包</Button>}{editable&&<Button htmlType="button" title="编辑账号职责、周更目标、内容方向和发布排期" onClick={() => { setDraft(saved || null); setEditing(true); }} className="!h-auto min-h-9 !whitespace-normal inline-flex items-center gap-2 rounded-lg bg-slate-950 px-4 py-2.5 text-xs font-semibold text-white"><Pencil size={14}/>编辑账号与排期</Button>}</div>
       </div>
       {message&&<p role="status" className="mt-4 rounded-lg bg-emerald-50 px-4 py-3 text-xs font-bold text-emerald-800">{message}</p>}
       {!rows.length&&<p className="mt-5 rounded-lg border border-dashed border-amber-200 bg-amber-50 px-4 py-3 text-xs font-bold text-amber-800">还没有已连接账号，当前展示可直接配置的默认账号矩阵。</p>}

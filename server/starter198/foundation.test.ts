@@ -89,6 +89,8 @@ assert.equal(starterVersionString(7), '7', 'numeric PocketBase versions must rem
 assert.equal(starterVersionString(Number.NaN), '', 'invalid numeric versions must fail closed');
 assert.equal(isStarter198BoundaryExemptPath('/api/overseas/auth/me'), true);
 assert.equal(isStarter198BoundaryExemptPath('/api/overseas/auth/employees/member-a/role'), true);
+assert.equal(isStarter198BoundaryExemptPath('/api/overseas/assistant-threads/business/actions'), true,
+  'the authenticated Lingxiaoshu entry must reach its deterministic starter command adapter');
 assert.equal(isStarter198BoundaryExemptPath('/api/overseas/auth/future-dangerous-endpoint'), false,
   'new auth endpoints must not become starter_198 exceptions implicitly');
 

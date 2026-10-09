@@ -49,6 +49,12 @@ const config = (tenant: string): Row => ({
     enabledWorkflows: ['product_content', 'content_publish'],
     publishingTargets: [], videoLanguages: ['en'], videoDefaults: { platform: 'tiktok' },
     constraints: ['不得编造产品参数'],
+    confirmedOperatingPlan: {
+      brandName: '测试杯', presenter: 'none',
+      plannedAccounts: [{ platform: 'tiktok', accountName: '测试制造商', weeklyOutput: 1 }],
+      weeklyMasterCount: 1, weeklyVariantCount: 1,
+      estimatedCostCny: { min: 10, max: 15 }, deliveryDays: 7,
+    },
   },
   effective_config: {
     knowledgeBinding: {
@@ -150,6 +156,16 @@ const plan = rows.get('weekly_plans')?.[0].plan as Record<string, unknown>;
 assert.equal(plan.publicationMode, 'self_service_package');
 assert.equal(plan.officialApiPublishingAllowed, false);
 assert.equal(plan.quotationMode, 'deterministic_draft_with_human_approval');
+assert.deepEqual(plan.operatingPlan, {
+  brandName: '测试杯', presenter: 'none',
+  plannedAccounts: [{ platform: 'tiktok', accountName: '测试制造商', weeklyOutput: 1 }],
+  weeklyMasterCount: 1, weeklyVariantCount: 1,
+  estimatedCostCny: { min: 10, max: 15 }, deliveryDays: 7,
+});
+assert.equal(rows.get('weekly_goals')?.[0].target, 1);
+assert.equal(rows.get('weekly_goals')?.[0].unit, '轮');
+assert.match(String(rows.get('workflow_tasks')?.find(task => task.task_key === 'starter_content_production')?.description), /标题、Tag/);
+assert.match(String(rows.get('workflow_tasks')?.find(task => task.task_key === 'starter_content_production')?.description), /不把上限伪装为已执行/);
 assert.equal((rows.get('run_events')?.[0].payload as Record<string, unknown>).executed, false);
 
 rows.get('workflow_runs')![0].status = 'cancelling';
@@ -184,6 +200,23 @@ assert.equal(rows.get('workflow_runs')?.length, 1, 'missing facts must not creat
 const waiting = rows.get(STARTER_COLLECTIONS.orchestratorInbox)?.find(row => row.command_id === 'command-c');
 assert.equal(waiting?.status, 'waiting_user');
 assert.deepEqual(waiting?.missing_facts, ['digital_employee_configuration']);
+
+const invalidPlanTenant = 'starter-orchestrator-invalid-plan';
+rows.get(STARTER_COLLECTIONS.access)?.push(access(invalidPlanTenant));
+const invalidPlanConfig = config(invalidPlanTenant);
+(invalidPlanConfig.config as Record<string, unknown>).confirmedOperatingPlan = {
+  brandName: '测试杯', presenter: 'none', plannedAccounts: [],
+  weeklyMasterCount: 2, weeklyVariantCount: 8,
+  estimatedCostCny: { min: 1, max: 2 }, deliveryDays: 30,
+};
+rows.get('digital_employee_configs')?.push(invalidPlanConfig);
+const invalidPlan = await queue.enqueue({
+  tenantId: invalidPlanTenant, userId: 'owner-invalid-plan', commandId: 'command-invalid-plan',
+  input: '开始执行已确认计划。', idempotencyKey: 'orchestrator-input-invalid-plan',
+});
+assert.equal(invalidPlan.disposition, 'awaiting_initial_confirmation');
+assert.ok(invalidPlan.missingFacts?.includes('configuration:confirmed_operating_plan_invalid'),
+  'a malformed persisted plan must fail closed and require reconfirmation');
 
 const expiredTenant = 'starter-orchestrator-expired';
 rows.get(STARTER_COLLECTIONS.access)?.push({

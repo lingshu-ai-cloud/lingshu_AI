@@ -117,6 +117,10 @@
     "1791072012_add_content_execution_checkpoints.js": "27f9ac16b1d8b070d1396d0bacbd2456dea0c359bc7ab6bff2c667db72e2b284",
     "1791072018_create_social_weekly_customer_bindings.js": "1bcb66fd865587719249ddd139694a531be3f61d0484b7965df8a91fb58f9003",
     "1791535000_add_instagram_tenant_app.js": "f05cef6e9f9d4b95262184f557c84d9c0159697421137e7924dd21f4745d210b",
-    "1791535001_extend_social_accounts_instagram_login.js": "900e65b5e2cc78c6842f05501f064d457e7941bbd7c83194f7f184cfff1e4e28"
+    "1791535001_extend_social_accounts_instagram_login.js": "900e65b5e2cc78c6842f05501f064d457e7941bbd7c83194f7f184cfff1e4e28",
+    "1791536000_extend_assistant_thread_state.js": "a2ab723874522e85bed9bba19241cda64b0687beca3e0685f1ca7d69af04a777",
+    "1791536100_create_assistant_schedule_changes.js": "5bd29eeba2d252bcdee2581d7a7f8c5c1178046e1a942afea156c7d0b466f0f6",
+    "1791536200_isolate_and_version_assistant_threads.js": "9d9506c1abf6d3564339422058a809e465e85da90b85e3be175f171c87f6fb35",
+    "1791536300_create_datastore_cas_claims.js": "aa2a60175ede923ac2294b669e13be4d96f20c6a44957e890e6b66a6edb40166"
   }
 }

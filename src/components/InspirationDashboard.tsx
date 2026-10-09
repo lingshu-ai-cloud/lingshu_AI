@@ -3200,7 +3200,9 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
   const [innerView, setInnerView] = useState<InspirationInnerView>(() => typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('view') === 'shooting' ? 'shooting' : materialEntry.openLibrary ? 'library' : 'inspiration');
   const [shootingFilter, setShootingFilter] = useState<'all' | 'storyboard' | 'common'>('all');
   const [platform, setPlatform] = useState<Platform>('all');
-  const [search, setSearch] = useState('');
+  const [search, setSearch] = useState(() => typeof window === 'undefined'
+    ? ''
+    : String(new URLSearchParams(window.location.search).get('search') || '').trim());
   // 搜索改为服务端执行：此前只在已加载的那一页做前端过滤，翻页之外的记录搜不到。
   const searchRef = useRef('');
   searchRef.current = search;

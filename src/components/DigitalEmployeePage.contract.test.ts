@@ -59,7 +59,7 @@ const weeklyPlanControlsSource = pageSource.slice(
   pageSource.indexOf('return (', pageSource.indexOf('const weeklyPlanControls')),
 );
 
-for (const label of ['智能经营', '制定本周目标', '确认周计划并开始工作', '数字员工工作排期']) {
+for (const label of ['制定本周目标', '数字员工工作排期']) {
   assert.match(pageSource, new RegExp(label), `Smart Operations must expose the confirmed weekly workflow: ${label}`);
 }
 assert.match(weeklyPlanCalendarSource, /本周发布日历/, 'weekly planning must use the compact publishing calendar');
@@ -77,12 +77,13 @@ assert.doesNotMatch(pageSource, /workspaceView === "matrix" \? "lg:grid-cols-\[2
 for (const label of ['爆款视频预览', '素材组合预览', '效果置信度', '任务不能开始']) {
   assert.match(smartBusinessSource, new RegExp(label), `content task cards must expose ${label}`);
 }
-for (const label of ['每条视频就是一条日历任务', '素材结构预览', '制作时长', '工期', '发布时间', '发布账号', '爆款参考', '预计成本']) {
+for (const label of ['素材结构预览', '制作时长', '工期', '发布时间', '发布账号', '爆款参考', '预计成本']) {
   assert.match(matrixScheduleSource, new RegExp(label), `calendar content cards must expose ${label}`);
 }
 assert.match(matrixScheduleSource, /<LsCalendar/, 'matrix scheduling must use the shared FullCalendar implementation');
 assert.match(matrixScheduleSource, /renderDetails=/, 'calendar details must be reachable by click and keyboard, not hover only');
-assert.match(matrixScheduleSource, /账号并行/, 'the calendar must make same-day multi-account operation visible');
+assert.match(matrixScheduleSource, /scheduleTime\(publishDay, accountIndex, index\)/, 'each account must receive a stable visible time lane');
+assert.match(matrixScheduleSource, /allDay: false/, 'work items must live inside the time grid rather than stretching the all-day row');
 assert.match(matrixScheduleSource, /spreadAccountDate/, 'placeholder and generated tasks must use the same per-account distributed weekly axis');
 assert.doesNotMatch(matrixScheduleSource, /gridTemplateColumns|group-hover:max-h-72/, 'calendar must not retain a handwritten or hover-only schedule');
 assert.match(smartBusinessSource, /当前节点[\s\S]{0,1000}来源[\s\S]{0,1000}结果[\s\S]{0,1000}下一步/, 'the existing four-Agent section must expose node, source, result, and next step');
@@ -157,7 +158,9 @@ assert.match(pageSource, /addEventListener\('lingshu:open-digital-employee-guide
 assert.doesNotMatch(pageSource, /SMART OPERATIONS/, 'the redundant Smart Operations masthead must be removed');
 assert.match(weeklyPlanControlsSource, /查看本周计划[\s\S]{0,900}Agent 设置[\s\S]{0,900}历史计划/, 'the current-plan controls must retain all weekly-plan management actions');
 assert.match(currentPlanSource, /actions=\{weeklyPlanControls\}/, 'the current-plan header must receive the weekly-plan controls');
-assert.match(weeklyCommandCenterSource, /周经营计划[\s\S]{0,500}aria-label="智能经营控制"/, 'the weekly-plan title must own the management controls on its right');
+assert.match(weeklyCommandCenterSource, /<h2[^>]*>周经营计划<\/h2>/, 'the weekly-plan header must retain its concise title');
+assert.match(weeklyCommandCenterSource, /aria-label="智能经营控制"/, 'the weekly-plan header must retain management controls');
+assert.match(weeklyCommandCenterSource, /计划周期：[\s\S]{0,100}planStart\.iso[\s\S]{0,100}planEnd\.iso/, 'the plan range must use a visual, accessible date treatment');
 assert.match(currentPlanSource, /WeeklyCommandCenter/, 'the full weekly command center must replace the simplified current-plan summary');
 for (const label of ['开始周任务', '暂停周任务', '继续周任务']) assert.match(pageSource, new RegExp(label), `the merged weekly control must support ${label}`);
 assert.match(pageSource, /controlWeeklyWork[\s\S]{0,900}pauseRun[\s\S]{0,400}resumeRun|controlWeeklyWork[\s\S]{0,900}resumeRun[\s\S]{0,400}pauseRun/, 'the merged weekly control must pause and resume the persisted run');
@@ -203,18 +206,18 @@ assert.match(smartBusinessSource, /过去已核算消耗/, 'Agent detail must ex
 assert.match(smartBusinessSource, /账号真实结算账本/, 'Agent detail must identify the persisted account ledger as its source');
 assert.match(smartBusinessSource, /<MatrixView[^>]*\bdata=\{data\}/, 'the account matrix tab must use the deterministic editable weekly matrix');
 assert.match(smartBusinessSource, /<MatrixWorkSchedule[^>]+accounts=\{accountRows\}[^>]+plans=\{productionPlans\}/, 'the account matrix must feed real accounts and plans to the shared calendar');
-assert.match(smartBusinessSource, /编导结论先完成，经营 Agent 再派发内容任务；内容 Agent 负责制作、质检与发布交付/, 'the work schedule must make the director-to-business-to-content ownership explicit');
+assert.doesNotMatch(smartBusinessSource, /排期规则：/, 'the matrix must not add a redundant prose rule below the visual schedule');
 assert.doesNotMatch(smartBusinessSource, /matrixSystemLayers|谁来建立信任|aria-label="按平台查看账号"/, 'the deleted dark explainer and duplicate platform cards must not remain');
 for (const item of ['企业默认 CTA', 'WhatsApp', 'Messenger', '对标账号']) {
   assert.match(smartBusinessSource, new RegExp(item), `account details must expose ${item}`);
 }
-assert.match(smartBusinessSource, /内容任务已统一放入上方工作排期/, 'account content must live in the calendar instead of a duplicate detail column');
+assert.doesNotMatch(smartBusinessSource, /内容任务已统一放入上方工作排期/, 'account content ownership should be evident from layout rather than a subtitle');
 assert.doesNotMatch(smartBusinessSource, /账号宪法完成项|唯一 CTA 待锁定|当前只有平台承接规则/, 'account completion must hide unrelated constitution fields and the duplicate CTA warning');
 assert.match(smartBusinessSource, /按矩阵同步周任务包/, 'draft weekly packages must expose an explicit matrix synchronization action');
 assert.match(smartBusinessSource, /\/api\/overseas\/competitor-accounts/, 'account details must use the persisted benchmark-account library');
 assert.match(smartBusinessSource, /\/api\/oauth\/whatsapp\/config/, 'account details must read the real WhatsApp connection state');
 assert.match(smartBusinessSource, /messengerSubscribed/, 'Facebook account details must read the real Messenger subscription state');
-assert.match(smartBusinessSource, /排期规则：编导结论先完成，经营 Agent 再派发内容任务/, 'the account matrix must feed the unified weekly content queue with the approved Agent handoff');
+assert.doesNotMatch(smartBusinessSource, /各账号周更稳定度/, 'an empty historical stability chart must not occupy the account matrix');
 assert.match(smartBusinessSource, /const pageSize = 6/, 'long content queues must use a bounded page size');
 assert.match(smartBusinessSource, /aria-label="生成进度分页"/, 'long per-video progress lists must expose pagination controls inside the account matrix');
 assert.match(smartBusinessSource, /内容队列[\s\S]{0,1200}视频播放量/, 'the queue must open with video-specific performance data');

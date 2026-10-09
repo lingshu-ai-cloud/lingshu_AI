@@ -10,21 +10,51 @@ import {
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import {
   ArrowLeft,
-  ArrowUp,
+  ArrowDown,
   Bot,
   CheckCircle2,
-  Compass,
   Loader2,
+  Pause,
+  Play,
   X,
 } from 'lucide-react';
-import { AGENT_ROLE_ICONS } from './ui/AgentRoleIcon';
 import type { AgentAction, AgentType, Message, Page } from '../App';
 import { authHeader } from '../lib/auth';
-import { ASSISTANT_GUIDES, type AssistantGuide } from '../lib/assistantGuides';
-import { ORBIT_AGENT_IDS, type OrbitAgentId, useAssistantStore } from '../stores/assistantStore';
+import {
+  ASSISTANT_GUIDES,
+  ASSISTANT_NOTIFICATION_POLICY,
+  ASSISTANT_RESPONSE_CONTRACT,
+  type AssistantGuide,
+} from '../lib/assistantGuides';
+import {
+  assistantActionTarget,
+  assistantRunControl,
+  shouldNotifyAssistant,
+  type AssistantNotificationReason,
+  type AssistantTaskCard,
+  type AssistantTaskCardInput,
+  type AgentThreadState,
+  type OrbitAgentId,
+  useAssistantStore,
+} from '../stores/assistantStore';
 import AgentReply from './AgentReply';
+import AssistantComposer, { assistantAttachmentKind } from './assistant/AssistantComposer';
 import KnowledgeIntakePanel, { type AppliedProfile } from './enterprise/KnowledgeIntakePanel';
 import AssistantLauncherMascot, { PAGE_EXPRESSION, type AssistantExpression } from './AssistantLauncherMascot';
+import { studioApi } from '../lib/studioApi';
+import {
+  clearAssistantThreadJournal,
+  readAssistantThreadJournal,
+  sameAssistantThreadJournalContent,
+  writeAssistantThreadJournal,
+  type AssistantJournalScope,
+} from '../lib/assistantThreadJournal';
+import type {
+  AssistantActionId,
+  AssistantActionRequest,
+  AssistantActionResponse,
+  AssistantCompactCard,
+} from '../../shared/contracts/assistantActions';
 
 interface AssistantContext {
   agent: AgentType;
@@ -48,6 +78,14 @@ interface AssistantTodoItem {
 
 type AssistantTool = 'knowledge-intake';
 
+type UploadedAssistantAttachment = {
+  name: string;
+  size: number;
+  kind: 'image' | 'video' | 'audio';
+  materialId: string;
+  materialUrl?: string;
+};
+
 const GUIDE_MEMORY_KEY = 'lingshu-feature-guides-human-v1';
 const GUIDE_HOVER_DELAY_MS = 900;
 const GUIDE_COOLDOWN_MS = 45_000;
@@ -55,13 +93,15 @@ const GUIDE_VISIBLE_MS = 6_000;
 const ASSISTANT_AUTO_RETRACT_MS = 5_000;
 const ENTERPRISE_GUIDE_MEMORY_ID = '__enterprise-guide-shown__';
 const ASSISTANT_POSITION_KEY = 'lingshu-global-assistant-position-v1';
+const ASSISTANT_PRIMARY_ENTRY_SEEN_KEY = 'lingshu-assistant-primary-entry-seen-v1';
 const ASSISTANT_LAUNCHER_WIDTH = 60;
 const ASSISTANT_LAUNCHER_HEIGHT = 72;
 const ASSISTANT_VIEWPORT_GAP = 8;
 const ASSISTANT_DRAG_THRESHOLD = 6;
 
-type AssistantPerformance = { phase: string; message?: string };
+type AssistantPerformance = { phase: string; message?: string; reason: AssistantNotificationReason };
 type AssistantSpeech = { id: number; message: string };
+type AssistantPanelView = 'todo' | 'chat' | 'decision';
 
 const PERFORMANCE_LINES: Record<string, string[]> = {
   script: ['我正在把卖点排成能拍的镜头，马上就好。', '好内容值得多想几秒，我先帮你把逻辑捋顺。', '别急，我正在检查每个镜头能不能真正执行。'],
@@ -106,6 +146,8 @@ function readAssistantPosition(): AssistantPosition | null {
 
 interface Props {
   page: Page;
+  persistenceScope: AssistantJournalScope;
+  primaryEntry?: boolean;
   restore?: { agent: AgentType; messages: Message[]; key: string } | null;
   kickoff?: { agent: AgentType; text: string; key: string } | null;
   suppressForRightSidebar?: boolean;
@@ -190,28 +232,143 @@ const DEFAULT_CONTEXT: Record<string, AssistantContext> = {
   },
 };
 
-const SKILL_AGENTS: Array<{
-  id: OrbitAgentId;
-  label: string;
-  agentType: AgentType;
-  Icon: typeof Compass;
-  position: { x: number; y: number };
-}> = [
-  { id: 'business', label: '经营 Agent', agentType: 'strategy', Icon: AGENT_ROLE_ICONS.business, position: { x: 0, y: -1 } },
-  { id: 'director', label: '编导 Agent', agentType: 'traffic', Icon: AGENT_ROLE_ICONS.director, position: { x: -0.5, y: -0.866 } },
-  { id: 'content', label: '内容 Agent', agentType: 'traffic', Icon: AGENT_ROLE_ICONS.content, position: { x: -0.866, y: -0.5 } },
-  { id: 'customer', label: '客服 Agent', agentType: 'conversion', Icon: AGENT_ROLE_ICONS.customer, position: { x: -1, y: 0 } },
-];
+const PRIMARY_ASSISTANT_THREAD: OrbitAgentId = 'business';
+const CURRENT_STATUS_TASK_ID = 'assistant-current-status';
+const MAX_PERSISTED_MESSAGES = 120;
+const MAX_PERSISTED_TASK_CARDS = 50;
+const WORKFLOW_MUTATION_ACTIONS = new Set<AssistantActionId>([
+  'start_task',
+  'pause_task',
+  'resume_task',
+  'confirm_choice',
+  'accept_result',
+  'request_revision',
+]);
 
-const ORBIT_AGENT_IDLE_STYLE = { color: '#53695F', borderColor: '#9AAEA4', backgroundColor: '#F1F6F2' };
-const ORBIT_AGENT_ACTIVE_STYLE = { color: '#117F51', borderColor: '#117F51', backgroundColor: '#E7F6EE' };
-
-const AGENT_DISPLAY_NAME: Record<OrbitAgentId, string> = {
-  business: '经营 Agent',
-  director: '编导 Agent',
-  content: '内容 Agent',
-  customer: '客服 Agent',
+const INTERNAL_AGENT_TYPE: Record<OrbitAgentId, AgentType> = {
+  business: 'strategy',
+  director: 'traffic',
+  content: 'traffic',
+  customer: 'conversion',
 };
+
+type AssistantThreadSaveQueue = {
+  pending: AgentThreadState | null;
+  running: boolean;
+  retryAttempt: number;
+  retryTimer: number | null;
+  abortController: AbortController | null;
+};
+
+type AssistantPersistenceReason = 'change' | 'retry' | 'lifecycle';
+const ASSISTANT_PERSIST_RETRY_BASE_MS = 500;
+const ASSISTANT_PERSIST_RETRY_MAX_MS = 8_000;
+const ASSISTANT_PERSIST_KEEPALIVE_MAX_BYTES = 60 * 1024;
+
+function emptyAssistantThread(): AgentThreadState {
+  return {
+    version: 0,
+    updatedAt: '',
+    messages: [],
+    draftInput: '',
+    scrollPosition: 0,
+    unreadCount: 0,
+    isFollowingLatest: true,
+    paused: false,
+    taskCards: {},
+    focusedTaskId: null,
+  };
+}
+
+function assistantPersistenceRetryDelay(attempt: number): number {
+  return Math.min(
+    ASSISTANT_PERSIST_RETRY_MAX_MS,
+    ASSISTANT_PERSIST_RETRY_BASE_MS * (2 ** Math.min(Math.max(0, attempt), 4)),
+  );
+}
+
+function assistantPersistenceCanRun(): boolean {
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) return false;
+  return typeof document === 'undefined' || document.visibilityState !== 'hidden';
+}
+
+function cloneAssistantThread(thread: AgentThreadState): AgentThreadState {
+  return {
+    ...thread,
+    messages: thread.messages.map(message => ({
+      ...message,
+      ...(message.sources ? { sources: message.sources.map(source => ({ ...source })) } : {}),
+    })),
+    taskCards: Object.fromEntries(Object.entries(thread.taskCards).map(([id, card]) => [id, {
+      ...card,
+      details: [...card.details],
+      items: card.items.map(item => ({ ...item })),
+      secondaryActions: card.secondaryActions.map(action => ({ ...action })),
+      ...(card.primaryAction ? { primaryAction: { ...card.primaryAction } } : {}),
+      ...(card.workspace ? { workspace: { ...card.workspace } } : {}),
+    }])),
+  };
+}
+
+function mergeAssistantMessages(remote: Message[], local: Message[]): Message[] {
+  let commonPrefix = 0;
+  while (
+    commonPrefix < remote.length
+    && commonPrefix < local.length
+    && JSON.stringify(remote[commonPrefix]) === JSON.stringify(local[commonPrefix])
+  ) commonPrefix += 1;
+  if (commonPrefix === remote.length) return local.slice(-MAX_PERSISTED_MESSAGES);
+  if (commonPrefix === local.length) return remote.slice(-MAX_PERSISTED_MESSAGES);
+  return [...remote, ...local.slice(commonPrefix)].slice(-MAX_PERSISTED_MESSAGES);
+}
+
+function mergeAssistantThread(remote: AgentThreadState, local: AgentThreadState): AgentThreadState {
+  const cards = { ...remote.taskCards };
+  for (const [taskId, card] of Object.entries(local.taskCards)) {
+    const remoteCard = cards[taskId];
+    if (!remoteCard || card.updatedAt >= remoteCard.updatedAt) cards[taskId] = card;
+  }
+  const taskCards = Object.fromEntries(
+    Object.entries(cards)
+      .sort(([, left], [, right]) => right.updatedAt - left.updatedAt)
+      .slice(0, MAX_PERSISTED_TASK_CARDS),
+  );
+  const focusedTaskId = local.focusedTaskId && taskCards[local.focusedTaskId]
+    ? local.focusedTaskId
+    : remote.focusedTaskId && taskCards[remote.focusedTaskId]
+      ? remote.focusedTaskId
+      : null;
+  return {
+    ...remote,
+    ...local,
+    version: remote.version,
+    updatedAt: remote.updatedAt,
+    messages: mergeAssistantMessages(remote.messages, local.messages),
+    taskCards,
+    focusedTaskId,
+  };
+}
+
+function persistedAssistantThread(value: unknown, fallback: AgentThreadState): AgentThreadState | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const source = value as Partial<AgentThreadState>;
+  const version = Number(source.version);
+  if (!Number.isSafeInteger(version) || version < 0) return null;
+  return {
+    version,
+    updatedAt: typeof source.updatedAt === 'string' ? source.updatedAt : '',
+    messages: Array.isArray(source.messages) ? source.messages : [],
+    draftInput: typeof source.draftInput === 'string' ? source.draftInput : '',
+    scrollPosition: Number.isFinite(source.scrollPosition) ? Number(source.scrollPosition) : 0,
+    unreadCount: Number.isSafeInteger(source.unreadCount) ? Number(source.unreadCount) : 0,
+    isFollowingLatest: typeof source.isFollowingLatest === 'boolean' ? source.isFollowingLatest : true,
+    paused: typeof source.paused === 'boolean' ? source.paused : false,
+    taskCards: source.taskCards && typeof source.taskCards === 'object' ? source.taskCards : {},
+    focusedTaskId: typeof source.focusedTaskId === 'string' || source.focusedTaskId === null
+      ? source.focusedTaskId
+      : fallback.focusedTaskId,
+  };
+}
 
 function pageKey(page: Page) {
   if (page === 'youtube' || page === 'channels') return 'plugins';
@@ -233,20 +390,11 @@ function orbitIdForAgent(agent: AgentType, pageAgent: OrbitAgentId = 'business')
 }
 
 function agentForOrbit(id: OrbitAgentId): AgentType {
-  return SKILL_AGENTS.find(agent => agent.id === id)?.agentType ?? 'strategy';
+  return INTERNAL_AGENT_TYPE[id];
 }
 
 function contextForOrbit(id: OrbitAgentId, fallback: AssistantContext): AssistantContext {
-  if (id === 'director') {
-    return {
-      ...DEFAULT_CONTEXT.socialInspiration,
-      label: '编导工作区',
-      summary: '当前由编导 Agent 负责爆款参考、内容结构、脚本、口播、字幕和导演方案。',
-    };
-  }
-  if (id === 'content') return { ...DEFAULT_CONTEXT.smartAssets, label: '内容工作区' };
-  if (id === 'customer') return DEFAULT_CONTEXT.conversion;
-  return { ...fallback, agent: 'strategy' };
+  return { ...fallback, agent: agentForOrbit(id) };
 }
 
 function compactText(text: string, maxLength = 900) {
@@ -283,20 +431,22 @@ async function loadLiveIntegrationFacts(): Promise<string> {
     readItems('/api/overseas/customers'),
     readVideoInventory(),
   ]);
-  const socialPlatforms = Array.from(new Set(socialAccounts
+  const connectedSocialAccounts = socialAccounts.filter(item => String(item.status || '').trim().toLowerCase() === 'connected');
+  const connectedYoutubeAccounts = youtubeAccounts.filter(item => String(item.status || '').trim().toLowerCase() === 'connected');
+  const socialPlatforms = Array.from(new Set(connectedSocialAccounts
     .map(item => String(item.platform || item.provider || '').trim())
     .filter(Boolean)));
   // `/customers` returns customer profiles imported from WhatsApp. A profile is
   // not itself an inquiry event, so keep that distinction explicit in the
   // grounding context supplied to the model.
   const whatsappCustomers = customers.filter(item => String(item.source || '').toLowerCase() === 'whatsapp');
-  const accountViews = [...socialAccounts, ...youtubeAccounts].reduce(
+  const accountViews = [...connectedSocialAccounts, ...connectedYoutubeAccounts].reduce(
     (sum, item) => sum + Math.max(0, Number(item.viewCount ?? item.views ?? 0)),
     0,
   );
   const confirmed: string[] = [];
-  if (socialAccounts.length) confirmed.push(`社媒账号 ${socialAccounts.length} 个${socialPlatforms.length ? `（${socialPlatforms.join('、')}）` : ''}`);
-  if (youtubeAccounts.length) confirmed.push(`YouTube 账号 ${youtubeAccounts.length} 个`);
+  if (connectedSocialAccounts.length) confirmed.push(`已接入社媒账号 ${connectedSocialAccounts.length} 个${socialPlatforms.length ? `（${socialPlatforms.join('、')}）` : ''}`);
+  if (connectedYoutubeAccounts.length) confirmed.push(`已接入 YouTube 账号 ${connectedYoutubeAccounts.length} 个`);
   if (collectedVideos > 0) confirmed.push(`已采集视频 ${collectedVideos} 条`);
   if (accountViews > 0) confirmed.push(`账号内容曝光 ${accountViews.toLocaleString('zh-CN')}`);
   if (whatsappCustomers.length) confirmed.push(`WhatsApp 客户档案 ${whatsappCustomers.length} 条`);
@@ -384,8 +534,174 @@ function todoDotClass(tone: AssistantTodoItem['tone'], completed: boolean) {
   return 'bg-border-bright';
 }
 
+function taskStatusLabel(card: AssistantTaskCard) {
+  if (card.status === 'needs_input') return '待补信息';
+  if (card.status === 'approval') return '待确认';
+  if (card.status === 'ready') return '可开始';
+  if (card.status === 'running') return '执行中';
+  if (card.status === 'paused') return '已暂停';
+  if (card.status === 'failed') return '需要处理';
+  return '已完成';
+}
+
+function requestId() {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+  return `assistant-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+const FOCUSED_MUTATION_PATTERNS: Array<[AssistantActionId, RegExp]> = [
+  ['start_task', /^(?:请|请帮我|帮我)?(?:现在|立即|马上)?(?:开始执行|开始|启动)(?:这个|该|当前)?(?:任务|工作|计划|执行)(?:一下)?[。！!]?$/],
+  ['pause_task', /^(?:请|请帮我|帮我)?(?:我想|我希望)?(?:现在|立即|马上)?(?:暂停|先暂停|停止)(?:这个|该|当前)?(?:任务|工作|计划|执行|运行)(?:一下)?[。！!]?$/],
+  ['resume_task', /^(?:请|请帮我|帮我)?(?:我想|我希望)?(?:现在|立即|马上)?(?:继续执行|继续|恢复)(?:这个|该|当前)?(?:任务|工作|计划|执行|运行)?[。！!]?$/],
+  ['confirm_choice', /^(?:请)?(?:(?:确认|采用|选择)(?:这个|该|当前)?(?:选择|方案|选项)|(?:批准|确认)(?:这个|该|当前|这份)?报价)[。！!]?$/],
+  ['accept_result', /^(?:请)?(?:验收通过|接受结果|确认结果)[。！!]?$/],
+  ['request_revision', /^(?:请)?(?:退回修改|要求修改|修改(?:这个|该|当前)?(?:结果|方案)|重新做|再改)(?:一下)?[。！!]?$/],
+];
+
+function focusedNaturalLanguageActionId(text: string): AssistantActionId | undefined {
+  const normalized = text.trim().replace(/\s+/g, ' ');
+  const matches = FOCUSED_MUTATION_PATTERNS.filter(([, pattern]) => pattern.test(normalized));
+  return matches.length === 1 ? matches[0][0] : undefined;
+}
+
+function focusedNaturalLanguageActionInput(
+  card: AssistantTaskCard | null | undefined,
+  actionId: AssistantActionId,
+): Pick<AssistantActionRequest, 'target' | 'parameters'> | undefined {
+  const target = assistantActionTarget(card, actionId);
+  if (!card || !target?.objectId || !target.expectedVersion) return undefined;
+  const matchingActions = [card.primaryAction, ...card.secondaryActions].filter(action => (
+    action?.actionId === actionId
+    && action.target?.objectType === target.objectType
+    && action.target.objectId?.trim() === target.objectId
+    && action.target.expectedVersion?.trim() === target.expectedVersion
+  ));
+  if (matchingActions.length !== 1) return undefined;
+  const parameters = matchingActions[0]?.parameters;
+  return { target, ...(parameters ? { parameters } : {}) };
+}
+
+function actionResponseCardId(
+  request: AssistantActionRequest,
+  response: AssistantActionResponse,
+  existingCards: Record<string, AssistantTaskCard>,
+): string {
+  const responseActions = [response.card.primaryAction, ...(response.card.secondaryActions ?? [])];
+  const requestObjectId = request.target?.objectId?.trim();
+  const requestObjectType = request.target?.objectType;
+  const responseTargets = responseActions
+    .map(action => action?.target)
+    .filter((target): target is NonNullable<typeof target> => Boolean(target?.objectId?.trim()));
+  const responseObjectIds = [...new Set(responseTargets.map(target => target.objectId!.trim()))];
+  const responseDisagreesWithRequest = Boolean(requestObjectId)
+    && responseTargets.some(target => (
+      target.objectId?.trim() !== requestObjectId
+      || (requestObjectType && target.objectType !== requestObjectType)
+    ));
+  // Never attach a cross-object response to either the request card or an
+  // existing card for the unexpected response target. Treat it as a new
+  // response until the server and caller agree on one business object.
+  if (responseDisagreesWithRequest) return response.requestId || request.requestId;
+  const objectId = requestObjectId || (responseObjectIds.length === 1 ? responseObjectIds[0] : undefined);
+  if (!objectId) return response.requestId || request.requestId;
+  if (existingCards[objectId]) return objectId;
+  const matchingCardIds = Object.entries(existingCards)
+    .filter(([, card]) => [card.primaryAction, ...card.secondaryActions]
+      .some(action => (
+        action?.target?.objectId?.trim() === objectId
+        && (!requestObjectType || action.target.objectType === requestObjectType)
+      )))
+    .map(([cardId]) => cardId);
+  return matchingCardIds.length === 1
+    ? matchingCardIds[0]
+    : response.requestId || request.requestId;
+}
+
+function responseHasCrossObjectAction(
+  request: AssistantActionRequest,
+  response: AssistantActionResponse,
+): boolean {
+  const requestObjectId = request.target?.objectId?.trim();
+  const requestObjectType = request.target?.objectType;
+  if (!requestObjectId || !requestObjectType) return false;
+  return [response.card.primaryAction, ...(response.card.secondaryActions ?? [])]
+    .some(action => Boolean(
+      action?.target?.objectId?.trim()
+      && (
+        action.target.objectId.trim() !== requestObjectId
+        || action.target.objectType !== requestObjectType
+      )
+    ));
+}
+
+function responseWithoutCrossObjectActions(
+  request: AssistantActionRequest,
+  response: AssistantActionResponse,
+): AssistantActionResponse {
+  if (!responseHasCrossObjectAction(request, response)) return response;
+  const requestObjectId = request.target?.objectId?.trim();
+  const requestObjectType = request.target?.objectType;
+  const safeAction = (action: AssistantCompactCard['primaryAction']) => (
+    !action?.target?.objectId?.trim()
+    || (
+      action.target.objectId.trim() === requestObjectId
+      && action.target.objectType === requestObjectType
+    )
+  );
+  return {
+    ...response,
+    card: {
+      ...response.card,
+      primaryAction: safeAction(response.card.primaryAction) ? response.card.primaryAction : undefined,
+      secondaryActions: (response.card.secondaryActions ?? []).filter(safeAction),
+    },
+  };
+}
+
+function notificationReasonFromResponse(response: AssistantActionResponse): AssistantNotificationReason {
+  if (response.status === 'missing_required_input') return 'missing_input';
+  if (response.status === 'approval_required') return 'approval_required';
+  if (response.status === 'failed' || response.status === 'stale_action') return 'failed';
+  return 'routine';
+}
+
+function taskStatusFromResponse(response: AssistantActionResponse): AssistantTaskCard['status'] {
+  if (response.status === 'missing_required_input') return 'needs_input';
+  if (response.status === 'approval_required') return 'approval';
+  if (response.status === 'failed' || response.status === 'stale_action') return 'failed';
+  const signedRunControl = [response.card.primaryAction, ...(response.card.secondaryActions ?? [])]
+    .find(action => action?.actionId === 'pause_task' || action?.actionId === 'resume_task');
+  if (signedRunControl?.actionId === 'resume_task') return 'paused';
+  if (signedRunControl?.actionId === 'pause_task') return 'running';
+  if (response.actionId === 'pause_task' && (response.status === 'accepted' || response.status === 'completed')) return 'paused';
+  if (response.actionId === 'resume_task' && (response.status === 'accepted' || response.status === 'completed')) return 'running';
+  if (response.status === 'accepted' || response.status === 'delegated') return 'running';
+  return 'completed';
+}
+
+function actionCardToTaskCard(
+  card: AssistantCompactCard,
+  response: AssistantActionResponse,
+  stableTaskId: string,
+): AssistantTaskCardInput {
+  return {
+    taskId: stableTaskId,
+    title: card.title,
+    conclusion: card.summary,
+    details: card.details,
+    items: card.items,
+    status: taskStatusFromResponse(response),
+    notificationReason: notificationReasonFromResponse(response),
+    primaryAction: card.primaryAction,
+    secondaryActions: card.secondaryActions,
+    workspace: response.workspace,
+  };
+}
+
 export default function GlobalAssistant({
   page,
+  persistenceScope,
+  primaryEntry = false,
   restore,
   kickoff,
   suppressForRightSidebar = false,
@@ -394,10 +710,10 @@ export default function GlobalAssistant({
   onSessionRefresh,
 }: Props) {
   const reduceMotion = useReducedMotion();
-  const [mode, setMode] = useState<'breathing' | 'expanded' | 'chat'>('breathing');
+  const [mode, setMode] = useState<'breathing' | 'chat'>('breathing');
   const [launcherRetracted, setLauncherRetracted] = useState(false);
-  const [panelView, setPanelView] = useState<'todo' | 'chat'>('chat');
-  const [activeAgent, setActiveAgent] = useState<OrbitAgentId>('business');
+  const [panelView, setPanelView] = useState<AssistantPanelView>('chat');
+  const activeAgent = PRIMARY_ASSISTANT_THREAD;
   const [assistantTool, setAssistantTool] = useState<AssistantTool | null>(null);
   const [liveContext, setLiveContext] = useState<AssistantContext | null>(null);
   const [featureGuide, setFeatureGuide] = useState<(AssistantGuide & { id: string }) | null>(null);
@@ -408,14 +724,15 @@ export default function GlobalAssistant({
   const [performanceLineIndex, setPerformanceLineIndex] = useState(0);
   const [speechBubble, setSpeechBubble] = useState<AssistantSpeech | null>(null);
   const [loading, setLoading] = useState(false);
+  const [pendingAttachments, setPendingAttachments] = useState<File[]>([]);
+  const [attachmentError, setAttachmentError] = useState('');
+  const [attachmentUploading, setAttachmentUploading] = useState(false);
   const [assistantPosition, setAssistantPosition] = useState<AssistantPosition | null>(readAssistantPosition);
   const [viewport, setViewport] = useState(() => ({
     width: typeof window === 'undefined' ? 1440 : window.innerWidth,
     height: typeof window === 'undefined' ? 900 : window.innerHeight,
   }));
   const [launcherDragging, setLauncherDragging] = useState(false);
-  const longPressRef = useRef<number | null>(null);
-  const longPressedRef = useRef(false);
   const launcherDragRef = useRef<{
     pointerId: number;
     startX: number;
@@ -437,35 +754,78 @@ export default function GlobalAssistant({
   const seenGuideIdsRef = useRef(new Set<string>());
   const lastGuideShownAtRef = useRef(0);
   const lastGuideTargetRef = useRef<HTMLElement | null>(null);
-  const bottomRef = useRef<HTMLDivElement>(null);
+  const messageScrollRef = useRef<HTMLDivElement>(null);
+  const assistantInputRef = useRef<HTMLTextAreaElement>(null);
   const assistantRootRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const handledKickoffs = useRef(new Set<string>());
   const handledRestores = useRef(new Set<string>());
+  const assistantThreadHydrationStartedRef = useRef(false);
+  const initialAssistantPageRef = useRef(page);
+  const assistantThreadSaveQueuesRef = useRef(new Map<OrbitAgentId, AssistantThreadSaveQueue>());
+  const uploadedAttachmentCacheRef = useRef(new WeakMap<File, UploadedAssistantAttachment>());
+  const stablePersistenceScope = useMemo<AssistantJournalScope>(() => ({
+    tenantId: persistenceScope.tenantId.trim(),
+    userId: persistenceScope.userId.trim(),
+  }), [persistenceScope.tenantId, persistenceScope.userId]);
+  const persistenceScopeKey = `${stablePersistenceScope.tenantId}\u0000${stablePersistenceScope.userId}`;
+  const persistenceFenceRef = useRef({ scopeKey: persistenceScopeKey, active: true });
+  if (persistenceFenceRef.current.scopeKey !== persistenceScopeKey) {
+    persistenceFenceRef.current.active = false;
+    persistenceFenceRef.current = { scopeKey: persistenceScopeKey, active: true };
+  }
+
+  useEffect(() => {
+    const fence = persistenceFenceRef.current;
+    return () => {
+      fence.active = false;
+      for (const queue of assistantThreadSaveQueuesRef.current.values()) {
+        queue.abortController?.abort();
+        queue.abortController = null;
+      }
+    };
+  }, [persistenceScopeKey]);
 
   const threads = useAssistantStore(state => state.threads);
   const setMessages = useAssistantStore(state => state.setMessages);
   const setDraftInput = useAssistantStore(state => state.setDraftInput);
   const setScrollPosition = useAssistantStore(state => state.setScrollPosition);
   const setUnreadCount = useAssistantStore(state => state.setUnreadCount);
+  const setFollowingLatest = useAssistantStore(state => state.setFollowingLatest);
+  const upsertTaskCard = useAssistantStore(state => state.upsertTaskCard);
+  const focusTaskCard = useAssistantStore(state => state.focusTaskCard);
   const hydrateThread = useAssistantStore(state => state.hydrateThread);
+  const setPersistenceMetadata = useAssistantStore(state => state.setPersistenceMetadata);
 
   const pageContext = useMemo(() => liveContext ?? DEFAULT_CONTEXT[pageKey(page)] ?? DEFAULT_CONTEXT.strategy, [liveContext, page]);
   const currentPageAgent = useMemo(() => orbitIdForPage(page), [page]);
   const assistantExpression = PAGE_EXPRESSION[page];
-  const activeContext = useMemo(() => contextForOrbit(activeAgent, pageContext), [activeAgent, pageContext]);
+  const activeContext = useMemo(() => contextForOrbit(currentPageAgent, pageContext), [currentPageAgent, pageContext]);
   const activeThread = threads[activeAgent];
+  const focusedTaskCard = activeThread.focusedTaskId
+    ? activeThread.taskCards[activeThread.focusedTaskId] ?? null
+    : null;
+  const focusedRunControl = assistantRunControl(focusedTaskCard);
   const todoItems = pageContext.todoItems ?? [];
   const activeTodoItems = todoItems.filter(item => !item.completed);
   const completedTodoItems = todoItems.filter(item => item.completed);
   const orderedTodoItems = [...activeTodoItems, ...completedTodoItems];
   const pendingCount = todoItems.length ? activeTodoItems.length : Math.max(0, Number(pageContext.pendingCount ?? 0));
   const pendingBadge = pendingCount > 9 ? '9+' : String(pendingCount);
-  const activeAgentLabel = SKILL_AGENTS.find(agent => agent.id === activeAgent)?.label ?? '灵枢助手';
-  const isCustomerTodoView = panelView === 'todo' && activeAgent === 'customer' && pageContext.agent === 'conversion';
-  const panelTitle = assistantTool === 'knowledge-intake' ? '灵小枢 · 快速采集' : isCustomerTodoView ? '今日待办' : activeAgentLabel;
-  const panelSubtitle = assistantTool === 'knowledge-intake' ? '当前：智能客服规范' : isCustomerTodoView ? '当前：我的客户' : `当前：${activeContext.label}`;
-  const radius = 110;
+  const activeAgentLabel = '灵小枢';
+  const isCustomerTodoView = panelView === 'todo' && pageContext.agent === 'conversion';
+  const panelTitle = assistantTool === 'knowledge-intake'
+    ? '灵小枢 · 快速采集'
+    : panelView === 'decision' && focusedTaskCard
+      ? focusedTaskCard.status === 'approval' || focusedTaskCard.status === 'needs_input'
+        ? '需要你确认'
+        : '任务结果'
+      : isCustomerTodoView ? '今日待办' : activeAgentLabel;
+  const panelSubtitle = assistantTool === 'knowledge-intake'
+    ? '当前：智能客服规范'
+    : panelView === 'decision' && focusedTaskCard
+      ? focusedTaskCard.title
+      : isCustomerTodoView ? '当前：我的客户' : `当前：${activeContext.label}`;
   const dockOnLeft = assistantPosition ? assistantPosition.x < viewport.width / 2 : false;
   const dockOnTop = assistantPosition ? assistantPosition.y + ASSISTANT_LAUNCHER_HEIGHT / 2 < viewport.height / 2 : false;
   const launcherAtEdge = mode === 'breathing' && launcherRetracted && !assistantPosition;
@@ -493,27 +853,183 @@ export default function GlobalAssistant({
   const performanceLines = PERFORMANCE_LINES[performance?.phase || 'default'] || PERFORMANCE_LINES.default;
   const performanceMessage = performance?.message || performanceLines[performanceLineIndex % performanceLines.length];
 
-  const persistThread = useCallback((agentId: OrbitAgentId) => {
-    const thread = useAssistantStore.getState().threads[agentId];
-    fetch(`/api/overseas/assistant-threads/${agentId}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json', ...authHeader() },
-      body: JSON.stringify(thread),
-    }).catch(() => {});
-  }, []);
+  const persistThread = useCallback((
+    agentId: OrbitAgentId,
+    reason: AssistantPersistenceReason = 'change',
+  ) => {
+    const fence = persistenceFenceRef.current;
+    const fenceIsCurrent = () => fence.active && persistenceFenceRef.current === fence;
+    if (!fenceIsCurrent()) return;
+    // Capture the authenticated scope once. A request from an old component
+    // instance must never pick up a newly logged-in user's credentials.
+    const scopedAuthHeaders = authHeader();
+    const queues = assistantThreadSaveQueuesRef.current;
+    const queue = queues.get(agentId) ?? {
+      pending: null,
+      running: false,
+      retryAttempt: 0,
+      retryTimer: null,
+      abortController: null,
+    };
+    queue.pending = cloneAssistantThread(useAssistantStore.getState().threads[agentId]);
+    // The synchronous journal survives a pagehide that outlives keepalive.
+    // It is bounded and credential-scrubbed and never contains auth tokens or
+    // pending attachment bytes.
+    writeAssistantThreadJournal(window.localStorage, stablePersistenceScope, agentId, queue.pending);
+    queues.set(agentId, queue);
+    if (queue.running) return;
+    if (reason === 'change' && queue.retryTimer !== null) return;
+    if (reason !== 'change' && queue.retryTimer !== null) {
+      window.clearTimeout(queue.retryTimer);
+      queue.retryTimer = null;
+    }
+    if (reason !== 'lifecycle' && !assistantPersistenceCanRun()) return;
+    queue.running = true;
+    void (async () => {
+      let conflicts = 0;
+      let retryRequired = false;
+      try {
+        while (queue.pending && fenceIsCurrent()) {
+          const snapshot = queue.pending;
+          queue.pending = null;
+          const expectedVersion = useAssistantStore.getState().threads[agentId].version;
+          const requestBody = JSON.stringify({ ...snapshot, expectedVersion });
+          const controller = new AbortController();
+          queue.abortController = controller;
+          const response = await fetch(`/api/overseas/assistant-threads/${agentId}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json', ...scopedAuthHeaders },
+            body: requestBody,
+            signal: controller.signal,
+            // A pagehide can race an already-running save. Keep every request
+            // below the browser limit alive, not just the lifecycle-triggered
+            // retry, so the in-flight winner is not cancelled on navigation.
+            keepalive: new TextEncoder().encode(requestBody).byteLength <= ASSISTANT_PERSIST_KEEPALIVE_MAX_BYTES,
+          });
+          const payload = await response.json().catch(() => null) as ({
+            version?: unknown;
+            updatedAt?: unknown;
+            current?: unknown;
+          } & Record<string, unknown>) | null;
+          if (queue.abortController === controller) queue.abortController = null;
+          if (!fenceIsCurrent()) return;
+          if (response.status === 409) {
+            const latestLocal = useAssistantStore.getState().threads[agentId];
+            const remote = persistedAssistantThread(payload?.current, latestLocal);
+            if (!remote || conflicts >= 4) {
+              queue.pending = cloneAssistantThread(latestLocal);
+              retryRequired = true;
+              break;
+            }
+            const merged = mergeAssistantThread(remote, latestLocal);
+            hydrateThread(agentId, merged);
+            queue.pending = cloneAssistantThread(merged);
+            writeAssistantThreadJournal(window.localStorage, stablePersistenceScope, agentId, merged);
+            conflicts += 1;
+            continue;
+          }
+          if (!response.ok) {
+            queue.pending = cloneAssistantThread(useAssistantStore.getState().threads[agentId]);
+            retryRequired = true;
+            break;
+          }
+          const savedVersion = Number(payload?.version);
+          if (!Number.isSafeInteger(savedVersion) || savedVersion <= expectedVersion) {
+            queue.pending = cloneAssistantThread(useAssistantStore.getState().threads[agentId]);
+            retryRequired = true;
+            break;
+          }
+          setPersistenceMetadata(
+            agentId,
+            savedVersion,
+            typeof payload?.updatedAt === 'string' ? payload.updatedAt : '',
+          );
+          const latestAfterSave = useAssistantStore.getState().threads[agentId];
+          if (!queue.pending && sameAssistantThreadJournalContent(snapshot, latestAfterSave)) {
+            clearAssistantThreadJournal(window.localStorage, stablePersistenceScope, agentId);
+          } else {
+            queue.pending = cloneAssistantThread(latestAfterSave);
+            writeAssistantThreadJournal(window.localStorage, stablePersistenceScope, agentId, latestAfterSave);
+          }
+          conflicts = 0;
+          queue.retryAttempt = 0;
+        }
+      } catch {
+        if (!fenceIsCurrent()) return;
+        queue.pending = cloneAssistantThread(useAssistantStore.getState().threads[agentId]);
+        writeAssistantThreadJournal(window.localStorage, stablePersistenceScope, agentId, queue.pending);
+        retryRequired = true;
+      } finally {
+        queue.abortController = null;
+        queue.running = false;
+        if (fenceIsCurrent() && queue.pending && retryRequired && queue.retryTimer === null && assistantPersistenceCanRun()) {
+          const delay = assistantPersistenceRetryDelay(queue.retryAttempt);
+          queue.retryAttempt = Math.min(queue.retryAttempt + 1, 4);
+          queue.retryTimer = window.setTimeout(() => {
+            queue.retryTimer = null;
+            if (fenceIsCurrent()) persistThread(agentId, 'retry');
+          }, delay);
+        }
+      }
+    })();
+  }, [hydrateThread, setPersistenceMetadata, stablePersistenceScope]);
 
-  const openAgent = useCallback((agentId: OrbitAgentId) => {
+  useEffect(() => {
+    const retryPendingThreads = () => {
+      if (!assistantPersistenceCanRun()) return;
+      for (const [agentId, queue] of assistantThreadSaveQueuesRef.current) {
+        if (!queue.pending || queue.running) continue;
+        persistThread(agentId, 'retry');
+      }
+    };
+    const flushPendingThreads = () => {
+      const agentIds = new Set<OrbitAgentId>([
+        PRIMARY_ASSISTANT_THREAD,
+        ...assistantThreadSaveQueuesRef.current.keys(),
+      ]);
+      for (const agentId of agentIds) {
+        persistThread(agentId, 'lifecycle');
+      }
+    };
+    const handleVisibility = () => {
+      if (document.visibilityState === 'hidden') flushPendingThreads();
+      else retryPendingThreads();
+    };
+    window.addEventListener('online', retryPendingThreads);
+    window.addEventListener('pagehide', flushPendingThreads);
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => {
+      window.removeEventListener('online', retryPendingThreads);
+      window.removeEventListener('pagehide', flushPendingThreads);
+      document.removeEventListener('visibilitychange', handleVisibility);
+      for (const queue of assistantThreadSaveQueuesRef.current.values()) {
+        if (queue.retryTimer !== null) window.clearTimeout(queue.retryTimer);
+        queue.retryTimer = null;
+        queue.abortController?.abort();
+        queue.abortController = null;
+      }
+    };
+  }, [persistThread]);
+
+  const openAgent = useCallback((routeAgent: OrbitAgentId, preferredView?: AssistantPanelView) => {
+    const agentId = PRIMARY_ASSISTANT_THREAD;
+    const thread = useAssistantStore.getState().threads[agentId];
+    const focusedCard = thread.focusedTaskId ? thread.taskCards[thread.focusedTaskId] : null;
+    const nextView = preferredView
+      ?? (focusedCard && shouldNotifyAssistant(focusedCard.notificationReason)
+        ? 'decision'
+        : routeAgent === 'customer' && pageContext.agent === 'conversion' && (pendingCount > 0 || todoItems.length > 0)
+          ? 'todo'
+          : 'chat');
     setAssistantTool(null);
-    setActiveAgent(agentId);
-    setPanelView(agentId === 'customer' && pageContext.agent === 'conversion' && (pendingCount > 0 || todoItems.length > 0) ? 'todo' : 'chat');
+    setPanelView(nextView);
     setUnreadCount(agentId, 0);
     setMode('chat');
-    window.setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth' }), 60);
     persistThread(agentId);
-  }, [pageContext.agent, pendingCount, persistThread, reduceMotion, setUnreadCount, todoItems.length]);
+  }, [pageContext.agent, pendingCount, persistThread, setUnreadCount, todoItems.length]);
 
   const openCurrentPageAgent = useCallback(() => {
-    openAgent(currentPageAgent);
+    openAgent(currentPageAgent, 'chat');
   }, [currentPageAgent, openAgent]);
 
   const rememberGuide = useCallback((id: string, shownAt: number) => {
@@ -629,15 +1145,184 @@ export default function GlobalAssistant({
     if (featureGuideHoverTimerRef.current) window.clearTimeout(featureGuideHoverTimerRef.current);
   }, []);
 
-  const send = useCallback(async (text: string, targetAgent = activeAgent, forcedContext?: AssistantContext) => {
-    const visibleText = text.trim();
-    if (!visibleText || loading) return;
+  const executeAssistantAction = useCallback(async (
+    agentId: OrbitAgentId,
+    request: AssistantActionRequest,
+    options?: { deterministicActionId?: AssistantActionId },
+  ): Promise<AssistantActionResponse | null> => {
+    const actionFailure = (
+      message: string,
+      errorCode = 'assistant_action_unavailable',
+      httpStatus?: number,
+    ): AssistantActionResponse => {
+      const missingInput = httpStatus === 422 || /(?:^|_)(?:goal|required|missing)(?:_|$)/.test(errorCode);
+      const staleAction = httpStatus === 409 || /(?:stale|conflict)/.test(errorCode);
+      const status: AssistantActionResponse['status'] = missingInput
+        ? 'missing_required_input'
+        : staleAction ? 'stale_action' : 'failed';
+      return {
+        status,
+        actionId: request.actionId ?? options?.deterministicActionId ?? 'delegate_to_agent',
+        requestId: request.requestId,
+        card: {
+          kind: missingInput ? 'decision' : 'operation_result',
+          title: missingInput ? '还需要补充信息' : staleAction ? '页面信息已更新' : '操作没有完成',
+          summary: message,
+          details: ['原任务和已填写内容均已保留，可以稍后重试。'],
+        },
+        notification: { reason: missingInput ? 'missing_required_input' : 'failure', message },
+        errorCode,
+      };
+    };
+    try {
+      const response = await fetch(`/api/overseas/assistant-threads/${agentId}/actions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeader() },
+        body: JSON.stringify(request),
+      });
+      const payload = await response.json().catch(() => null) as (AssistantActionResponse & { error?: string; message?: string }) | null;
+      if (payload?.requestId && payload.card && payload.status) return payload;
+      if (!response.ok) {
+        return actionFailure(
+          payload?.message || '助手操作暂时不可用。',
+          payload?.error,
+          response.status,
+        );
+      }
+      return actionFailure('操作接口未返回可确认的结果。', 'assistant_action_invalid_response');
+    } catch (error) {
+      // Never make a failed deterministic route look like a successful
+      // generic conversation. Only an explicit delegated/not_handled
+      // response is allowed to fall through to the normal chat endpoint.
+      return actionFailure(error instanceof Error ? error.message : '助手操作暂时不可用。');
+    }
+  }, []);
 
-    const thread = useAssistantStore.getState().threads[targetAgent];
-    const context = forcedContext ?? contextForOrbit(targetAgent, pageContext);
+  const presentActionResponse = useCallback((
+    agentId: OrbitAgentId,
+    request: AssistantActionRequest,
+    response: AssistantActionResponse,
+  ) => {
+    const existingCards = useAssistantStore.getState().threads[agentId].taskCards;
+    const stableTaskId = actionResponseCardId(request, response, existingCards);
+    const displayResponse = responseWithoutCrossObjectActions(request, response);
+    upsertTaskCard(agentId, actionCardToTaskCard(displayResponse.card, displayResponse, stableTaskId));
+    const refreshCurrentStatus = () => {
+      const mutationSucceeded = response.status === 'accepted' || response.status === 'completed';
+      const workflowMutated = response.actionId !== 'delegate_to_agent'
+        && WORKFLOW_MUTATION_ACTIONS.has(response.actionId);
+      // The mutation endpoint deliberately returns only actions for the
+      // mutated object. Always re-read status after a successful workflow
+      // mutation so a newly-created next decision is fetched independently.
+      if (!workflowMutated || !mutationSucceeded) return;
+      const threadAfterMutation = useAssistantStore.getState().threads[agentId];
+      const statusRequest: AssistantActionRequest = {
+        source: 'button',
+        requestId: requestId(),
+        actionId: 'view_status',
+        page,
+      };
+      void executeAssistantAction(agentId, statusRequest).then(statusResponse => {
+        if (
+          useAssistantStore.getState().threads[agentId] !== threadAfterMutation
+          || !statusResponse
+          || statusResponse.status === 'not_handled'
+          || statusResponse.status === 'delegated'
+          || statusResponse.status === 'failed'
+          || statusResponse.status === 'stale_action'
+        ) return;
+        upsertTaskCard(
+          agentId,
+          actionCardToTaskCard(statusResponse.card, statusResponse, CURRENT_STATUS_TASK_ID),
+        );
+        focusTaskCard(agentId, CURRENT_STATUS_TASK_ID);
+        setPanelView('decision');
+        setMode('chat');
+        persistThread(agentId);
+      });
+    };
+    const notificationReason = notificationReasonFromResponse(response);
+    if (!shouldNotifyAssistant(notificationReason)) {
+      // This callback handles direct user actions. Keep routine success silent
+      // (no unread badge or speech bubble), but show the compact result card so
+      // its choices and workspace link are not lost in a plain-text summary.
+      focusTaskCard(agentId, stableTaskId);
+      setPanelView('decision');
+      setMode('chat');
+      refreshCurrentStatus();
+      return;
+    }
+    focusTaskCard(agentId, stableTaskId);
+    setPanelView('decision');
+    setMode('chat');
+    if (response.notification) {
+      const current = useAssistantStore.getState().threads[agentId];
+      setUnreadCount(agentId, current.unreadCount + 1);
+      setSpeechBubble({ id: Date.now(), message: response.notification.message });
+      setLauncherRetracted(false);
+    }
+    refreshCurrentStatus();
+  }, [executeAssistantAction, focusTaskCard, page, persistThread, setUnreadCount, upsertTaskCard]);
+
+  const send = useCallback(async (
+    text: string,
+    routeAgent = currentPageAgent,
+    forcedContext?: AssistantContext,
+    uploadedAttachments: UploadedAssistantAttachment[] = [],
+  ) => {
+    const userText = text.trim();
+    if ((!userText && !uploadedAttachments.length) || loading) return;
+    const visibleText = userText || '请基于这次附件继续处理。';
+    const visibleAttachmentSummary = uploadedAttachments.length
+      ? `\n\n附件（已保存到我的素材）：${uploadedAttachments.map(item => item.name).join('、')}`
+      : '';
+    const visibleMessage = `${visibleText}${visibleAttachmentSummary}`;
+
+    const threadAgent = PRIMARY_ASSISTANT_THREAD;
+    const thread = useAssistantStore.getState().threads[threadAgent];
+    const context = forcedContext ?? contextForOrbit(routeAgent, pageContext);
     const enterpriseBrief = compactText(enterpriseContext);
     const historyForApi = apiHistory(thread.messages);
-    const nextVisible = [...mergeConsecutiveAssistant(thread.messages), { role: 'user' as const, content: visibleText }];
+    const nextVisible = [...mergeConsecutiveAssistant(thread.messages), { role: 'user' as const, content: visibleMessage }];
+    setMessages(threadAgent, nextVisible);
+    setDraftInput(threadAgent, '');
+    setFollowingLatest(threadAgent, true);
+    setLoading(true);
+    openAgent(routeAgent, 'chat');
+
+    const focusedCard = thread.focusedTaskId ? thread.taskCards[thread.focusedTaskId] ?? null : null;
+    // Attachments deliberately bypass the deterministic action router. The
+    // router accepts only server-signed business object/version inputs; a
+    // newly uploaded material must never be guessed into those parameters.
+    const focusedMutationActionId = uploadedAttachments.length ? undefined : focusedNaturalLanguageActionId(visibleText);
+    const focusedActionInput = focusedMutationActionId
+      ? focusedNaturalLanguageActionInput(focusedCard, focusedMutationActionId)
+      : undefined;
+    const signedFocusedMutationActionId = focusedActionInput ? focusedMutationActionId : undefined;
+
+    const deterministicRequest: AssistantActionRequest = {
+      source: 'natural_language',
+      requestId: requestId(),
+      text: visibleText,
+      page,
+      ...(signedFocusedMutationActionId ? { actionId: signedFocusedMutationActionId } : {}),
+      ...(focusedActionInput ?? {}),
+    };
+    const actionResponse = uploadedAttachments.length
+      ? null
+      : await executeAssistantAction(
+        threadAgent,
+        deterministicRequest,
+        signedFocusedMutationActionId ? { deterministicActionId: signedFocusedMutationActionId } : undefined,
+      );
+    if (actionResponse && actionResponse.status !== 'delegated' && actionResponse.status !== 'not_handled') {
+      presentActionResponse(threadAgent, deterministicRequest, actionResponse);
+      setLoading(false);
+      persistThread(threadAgent);
+      onSessionRefresh?.();
+      return;
+    }
+
     const liveIntegrationFacts = await loadLiveIntegrationFacts();
     const apiMessages: Message[] = [
       ...historyForApi,
@@ -649,39 +1334,42 @@ export default function GlobalAssistant({
           `【当前时间】${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false })}（北京时间）。未注明年份时，“当前/最新/近期/今年”均指当前年份；不得把 2024 年或更早的公开数据表述为当前数据。`,
           enterpriseBrief ? `【企业中心摘要】${enterpriseBrief}` : '【企业中心摘要】当前未读取到企业中心资料。',
           `【实时接入事实】\n${liveIntegrationFacts}`,
+          uploadedAttachments.length
+            ? [
+              '【本次附件】以下文件已通过真实“我的素材”上传接口完成租户内持久化：',
+              ...uploadedAttachments.map(item => `- ${item.name}｜${item.kind}｜${item.size} bytes｜material:${item.materialId}${item.materialUrl ? `｜${item.materialUrl}` : ''}`),
+              '【附件事实边界】本轮只确认文件名、类型、大小、素材编号和链接；除非下游能力真实读取并返回证据，否则不得声称已经看见、听见或分析附件内容。',
+            ].join('\n')
+            : '',
           '【经营事实要求】描述、脚本、卖点、市场、客户、MOQ、价格、交期、认证、联系方式和语种，只能使用企业中心摘要、用户明确输入或当前页面真实素材证据。语种必须沿用企业中心主要业务语言/首选输出语言，禁止根据地区自行推断。没有来源的经营细节直接省略，不要用示例补齐。',
           '【联网要求】涉及外贸行业趋势、目标市场、平台规则、竞品或品类机会时，请联网检索公开来源，并在回答中保留可核验来源；不要把假设当成事实。',
           '【连续对话要求】请承接本窗口已有上下文回答，直接基于页面现有数据给出可执行结果；不要用“当前缺少数据”“无法判断”“无法筛选”开头。必要的数据范围说明放在结尾并保持中性简短。',
+          `【回答与操作规范】\n${ASSISTANT_RESPONSE_CONTRACT}\n${ASSISTANT_NOTIFICATION_POLICY}`,
           `用户问题：${visibleText}`,
         ].join('\n'),
       },
     ];
 
-    setMessages(targetAgent, nextVisible);
-    setDraftInput(targetAgent, '');
-    setLoading(true);
-    openAgent(targetAgent);
-
     let assistantStarted = false;
     const ensureAssistant = () => {
       if (assistantStarted) return;
       assistantStarted = true;
-      const current = useAssistantStore.getState().threads[targetAgent].messages;
-      setMessages(targetAgent, [...current, { role: 'assistant', content: '' }]);
+      const current = useAssistantStore.getState().threads[threadAgent].messages;
+      setMessages(threadAgent, [...current, { role: 'assistant', content: '' }]);
       setLoading(false);
     };
     const patchAssistant = (patch: (msg: Message) => Message) => {
       ensureAssistant();
-      const current = [...useAssistantStore.getState().threads[targetAgent].messages];
+      const current = [...useAssistantStore.getState().threads[threadAgent].messages];
       current[current.length - 1] = patch(current[current.length - 1]);
-      setMessages(targetAgent, current);
+      setMessages(threadAgent, current);
     };
 
     try {
       abortRef.current?.abort();
       const controller = new AbortController();
       abortRef.current = controller;
-      const resp = await fetch(API_PATH[agentForOrbit(targetAgent)], {
+      const resp = await fetch(API_PATH[agentForOrbit(routeAgent)], {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...authHeader() },
         body: JSON.stringify({ messages: apiMessages, deepThinking: false }),
@@ -718,38 +1406,193 @@ export default function GlobalAssistant({
     } catch (err: any) {
       const message = err?.name === 'AbortError' ? '这次响应已停止。' : (err?.message || '请求失败，请稍后重试。');
       if (assistantStarted) patchAssistant(msg => ({ ...msg, content: msg.content ? `${msg.content}\n\n${message}` : message }));
-      else setMessages(targetAgent, [...useAssistantStore.getState().threads[targetAgent].messages, { role: 'assistant', content: message }]);
+      else setMessages(threadAgent, [...useAssistantStore.getState().threads[threadAgent].messages, { role: 'assistant', content: message }]);
     } finally {
       setLoading(false);
       abortRef.current = null;
-      persistThread(targetAgent);
+      persistThread(threadAgent);
       onSessionRefresh?.();
     }
-  }, [activeAgent, enterpriseContext, loading, onSessionRefresh, openAgent, pageContext, persistThread, setDraftInput, setMessages]);
+  }, [currentPageAgent, enterpriseContext, executeAssistantAction, loading, onSessionRefresh, openAgent, page, pageContext, persistThread, presentActionResponse, setDraftInput, setFollowingLatest, setMessages]);
+
+  const sendComposerMessage = useCallback(async () => {
+    if (loading || attachmentUploading) return;
+    const draft = activeThread.draftInput;
+    const files = [...pendingAttachments];
+    if (!draft.trim() && !files.length) return;
+    if (!files.length) {
+      void send(draft);
+      return;
+    }
+
+    setAttachmentError('');
+    setAttachmentUploading(true);
+    try {
+      const uploaded: UploadedAssistantAttachment[] = [];
+      for (const file of files) {
+        const cached = uploadedAttachmentCacheRef.current.get(file);
+        if (cached) {
+          uploaded.push(cached);
+          continue;
+        }
+        const kind = assistantAttachmentKind(file);
+        if (!kind) throw new Error(`${file.name} 不是可上传的图片、视频或音频。`);
+        const result = await studioApi.uploadMaterialFile(file, {
+          folder: 'assistant',
+          type: kind,
+          sourceType: 'assistant-chat',
+        });
+        if (!result.ok || !result.material?.id) {
+          throw new Error(result.error || `${file.name} 上传失败，请重试。`);
+        }
+        const attachment: UploadedAssistantAttachment = {
+          name: file.name,
+          size: file.size,
+          kind,
+          materialId: result.material.id,
+          ...(result.material.url ? { materialUrl: result.material.url } : {}),
+        };
+        uploadedAttachmentCacheRef.current.set(file, attachment);
+        uploaded.push(attachment);
+      }
+      setPendingAttachments([]);
+      setAttachmentUploading(false);
+      void send(draft, currentPageAgent, undefined, uploaded);
+    } catch (error) {
+      setAttachmentError(error instanceof Error ? error.message : '附件上传失败，请重试。');
+      setAttachmentUploading(false);
+    }
+  }, [activeThread.draftInput, attachmentUploading, currentPageAgent, loading, pendingAttachments, send]);
+
+  const handleTaskCardAction = useCallback(async (
+    card: AssistantTaskCard,
+    action: NonNullable<AssistantTaskCard['primaryAction']>,
+  ) => {
+    if (action.disabled) return;
+    window.dispatchEvent(new CustomEvent('lingshu-assistant-action', {
+      detail: { agentId: activeAgent, taskId: card.taskId, actionId: action.id },
+    }));
+    if (action.actionId) {
+      const parameters = action.parameters;
+      const request: AssistantActionRequest = {
+        source: 'button',
+        requestId: requestId(),
+        actionId: action.actionId,
+        page,
+        target: action.target,
+        ...(parameters ? { parameters } : {}),
+      };
+      setLoading(true);
+      const response = await executeAssistantAction(activeAgent, request);
+      setLoading(false);
+      if (response) {
+        presentActionResponse(activeAgent, request, response);
+        persistThread(activeAgent);
+        onSessionRefresh?.();
+      }
+      return;
+    }
+    if (action.prompt) {
+      setPanelView('chat');
+      void send(action.prompt, currentPageAgent);
+      return;
+    }
+    if (action.href) window.location.assign(action.href);
+  }, [activeAgent, currentPageAgent, executeAssistantAction, onSessionRefresh, page, persistThread, presentActionResponse, send]);
+
+  const persistRecoveredThread = useCallback(() => {
+    persistThread(PRIMARY_ASSISTANT_THREAD, 'retry');
+  }, [persistThread]);
 
   useEffect(() => {
+    if (assistantThreadHydrationStartedRef.current) return undefined;
+    assistantThreadHydrationStartedRef.current = true;
+    let cancelled = false;
+    const journal = readAssistantThreadJournal(
+      window.localStorage,
+      stablePersistenceScope,
+      PRIMARY_ASSISTANT_THREAD,
+    );
+    // A keyed component instance starts from an empty scoped thread, then
+    // recovers only the matching tenant + user + agent journal. This prevents
+    // Zustand state from a prior login/support scope flashing into this one.
+    hydrateThread(PRIMARY_ASSISTANT_THREAD, journal ?? emptyAssistantThread());
+    const threadBeforeRequest = useAssistantStore.getState().threads[PRIMARY_ASSISTANT_THREAD];
     fetch('/api/overseas/assistant-threads', { headers: authHeader() })
       .then(resp => resp.ok ? resp.json() : null)
-      .then(data => {
-        if (!Array.isArray(data?.items)) return;
-        for (const item of data.items) {
-          if (!ORBIT_AGENT_IDS.includes(item.agentId)) continue;
-          hydrateThread(item.agentId, {
-            messages: Array.isArray(item.messages) ? item.messages : [],
-            draftInput: typeof item.draftInput === 'string' ? item.draftInput : '',
-            scrollPosition: Number(item.scrollPosition ?? 0),
-            unreadCount: Number(item.unreadCount ?? 0),
-          });
+      .then(async data => {
+        if (cancelled) return;
+        const localChangedWhileLoading = useAssistantStore.getState().threads[PRIMARY_ASSISTANT_THREAD] !== threadBeforeRequest;
+        const latestLocal = useAssistantStore.getState().threads[PRIMARY_ASSISTANT_THREAD];
+        if (!Array.isArray(data?.items)) {
+          if (journal) persistRecoveredThread();
+          return;
         }
+        const item = data.items.find((candidate: { agentId?: unknown } | null) => candidate?.agentId === PRIMARY_ASSISTANT_THREAD);
+        const remote = item ? persistedAssistantThread({
+          version: Number.isSafeInteger(Number(item.version)) ? Number(item.version) : 0,
+          updatedAt: typeof item.updatedAt === 'string' ? item.updatedAt : '',
+          messages: Array.isArray(item.messages) ? item.messages : [],
+          draftInput: typeof item.draftInput === 'string' ? item.draftInput : '',
+          scrollPosition: Number(item.scrollPosition ?? 0),
+          unreadCount: Number(item.unreadCount ?? 0),
+          isFollowingLatest: typeof item.isFollowingLatest === 'boolean' ? item.isFollowingLatest : true,
+          paused: typeof item.paused === 'boolean' ? item.paused : false,
+          taskCards: item.taskCards && typeof item.taskCards === 'object' ? item.taskCards : {},
+          focusedTaskId: typeof item.focusedTaskId === 'string' ? item.focusedTaskId : null,
+        }, emptyAssistantThread()) : null;
+        const merged = remote
+          ? (journal || localChangedWhileLoading ? mergeAssistantThread(remote, latestLocal) : remote)
+          : latestLocal;
+        hydrateThread(PRIMARY_ASSISTANT_THREAD, merged);
+        const hydratedThread = useAssistantStore.getState().threads[PRIMARY_ASSISTANT_THREAD];
+        const persistedFocusedTaskId = hydratedThread.focusedTaskId;
+
+        if (journal) persistRecoveredThread();
+
+        // Thread storage intentionally keeps presentation state only. Re-read
+        // the authoritative workspace after hydration and place its freshly
+        // signed actions on a dedicated current-status card. Never bind an
+        // arbitrary current decision to the ID of a possibly stale old card.
+        if (!persistedFocusedTaskId) return;
+        const request: AssistantActionRequest = {
+          source: 'button',
+          requestId: requestId(),
+          actionId: 'view_status',
+          page: initialAssistantPageRef.current,
+        };
+        const response = await executeAssistantAction(PRIMARY_ASSISTANT_THREAD, request);
+        if (
+          cancelled
+          || useAssistantStore.getState().threads[PRIMARY_ASSISTANT_THREAD] !== hydratedThread
+          || !response
+          || response.status === 'not_handled'
+          || response.status === 'delegated'
+          || response.status === 'failed'
+          || response.status === 'stale_action'
+        ) return;
+        upsertTaskCard(
+          PRIMARY_ASSISTANT_THREAD,
+          actionCardToTaskCard(response.card, response, CURRENT_STATUS_TASK_ID),
+        );
+        focusTaskCard(PRIMARY_ASSISTANT_THREAD, CURRENT_STATUS_TASK_ID);
       })
-      .catch(() => {});
+      .catch(() => {
+        if (!cancelled && journal) persistRecoveredThread();
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [executeAssistantAction, focusTaskCard, hydrateThread, persistRecoveredThread, stablePersistenceScope, upsertTaskCard]);
+
+  useEffect(() => {
     fetch('/api/overseas/enterprise/context', { headers: authHeader() })
       .then(resp => resp.ok ? resp.json() : null)
       .then(data => {
         if (typeof data?.context === 'string') setEnterpriseContext(data.context);
       })
       .catch(() => setEnterpriseContext(''));
-  }, [hydrateThread]);
+  }, []);
 
   useEffect(() => {
     const handler = (event: Event) => {
@@ -770,14 +1613,49 @@ export default function GlobalAssistant({
 
   useEffect(() => {
     const handler = (event: Event) => {
-      const detail = (event as CustomEvent<{ active?: boolean; phase?: string; message?: string }>).detail;
+      const detail = (event as CustomEvent<{
+        agentId?: OrbitAgentId;
+        agent?: AgentType;
+        card?: AssistantTaskCardInput;
+      }>).detail;
+      if (!detail?.card?.taskId) return;
+      const targetAgent = PRIMARY_ASSISTANT_THREAD;
+      upsertTaskCard(targetAgent, detail.card);
+      if (!shouldNotifyAssistant(detail.card.notificationReason)) return;
+      focusTaskCard(targetAgent, detail.card.taskId);
+      if (mode === 'chat') setPanelView('decision');
+      const thread = useAssistantStore.getState().threads[targetAgent];
+      setUnreadCount(targetAgent, thread.unreadCount + 1);
+      setSpeechBubble({ id: Date.now(), message: detail.card.conclusion });
+      setLauncherRetracted(false);
+      if (mode !== 'chat') setMode('breathing');
+    };
+    window.addEventListener('lingshu-assistant-card', handler);
+    return () => window.removeEventListener('lingshu-assistant-card', handler);
+  }, [focusTaskCard, mode, setUnreadCount, upsertTaskCard]);
+
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent<{
+        active?: boolean;
+        phase?: string;
+        message?: string;
+        reason?: AssistantNotificationReason;
+      }>).detail;
       if (!detail?.active) {
         setPerformance(null);
         setPerformanceHidden(false);
         setPerformanceLineIndex(0);
         return;
       }
-      setPerformance({ phase: detail.phase || 'default', message: detail.message?.trim() || undefined });
+      const reason = detail.reason ?? 'routine';
+      if (!shouldNotifyAssistant(reason)) {
+        setPerformance(null);
+        setPerformanceHidden(false);
+        setPerformanceLineIndex(0);
+        return;
+      }
+      setPerformance({ phase: detail.phase || 'default', message: detail.message?.trim() || undefined, reason });
       setPerformanceHidden(false);
       setPerformanceLineIndex(0);
       setLauncherRetracted(false);
@@ -794,9 +1672,14 @@ export default function GlobalAssistant({
 
   useEffect(() => {
     const handler = (event: Event) => {
-      const detail = (event as CustomEvent<{ message?: string; durationMs?: number }>).detail;
+      const detail = (event as CustomEvent<{
+        message?: string;
+        durationMs?: number;
+        reason?: AssistantNotificationReason;
+      }>).detail;
       const message = detail?.message?.trim();
       if (!message) return;
+      if (!shouldNotifyAssistant(detail.reason ?? 'routine')) return;
       if (speechTimerRef.current) window.clearTimeout(speechTimerRef.current);
       setSpeechBubble({ id: Date.now(), message });
       setLauncherRetracted(false);
@@ -810,6 +1693,20 @@ export default function GlobalAssistant({
       if (speechTimerRef.current) window.clearTimeout(speechTimerRef.current);
     };
   }, []);
+
+  useEffect(() => {
+    if (!primaryEntry) return;
+    try {
+      if (window.localStorage.getItem(ASSISTANT_PRIMARY_ENTRY_SEEN_KEY) === 'true') return;
+      window.localStorage.setItem(ASSISTANT_PRIMARY_ENTRY_SEEN_KEY, 'true');
+    } catch {
+      // Storage is optional; the primary entry remains usable without it.
+    }
+    setLauncherRetracted(false);
+    setSpeechBubble({ id: Date.now(), message: '告诉灵小枢你想完成什么，我会把目标变成计划并陪你推进。' });
+    if (speechTimerRef.current) window.clearTimeout(speechTimerRef.current);
+    speechTimerRef.current = window.setTimeout(() => setSpeechBubble(null), 12_000);
+  }, [primaryEntry]);
 
   useEffect(() => {
     const handler = (event: Event) => {
@@ -826,16 +1723,16 @@ export default function GlobalAssistant({
         };
         setLiveContext(targetContext);
       }
-      const targetAgent = orbitIdForAgent(targetContext.agent, currentPageAgent);
-      openAgent(targetAgent);
+      const routeAgent = orbitIdForAgent(targetContext.agent, currentPageAgent);
+      openAgent(routeAgent);
       if (detail?.tool === 'knowledge-intake') setAssistantTool('knowledge-intake');
       const assistantText = detail?.assistantText?.trim();
       if (assistantText) {
-        const current = useAssistantStore.getState().threads[targetAgent].messages;
-        setMessages(targetAgent, [...current, { role: 'assistant', content: assistantText }]);
+        const current = useAssistantStore.getState().threads[PRIMARY_ASSISTANT_THREAD].messages;
+        setMessages(PRIMARY_ASSISTANT_THREAD, [...current, { role: 'assistant', content: assistantText }]);
       }
       const text = detail?.text?.trim();
-      if (text) window.setTimeout(() => void send(text, targetAgent, targetContext), 0);
+      if (text) window.setTimeout(() => void send(text, routeAgent, targetContext), 0);
     };
     window.addEventListener('lingshu-assistant-open', handler);
     return () => window.removeEventListener('lingshu-assistant-open', handler);
@@ -851,14 +1748,34 @@ export default function GlobalAssistant({
   useEffect(() => {
     if (!restore || handledRestores.current.has(restore.key)) return;
     handledRestores.current.add(restore.key);
-    const targetAgent = orbitIdForAgent(restore.agent, currentPageAgent);
-    setMessages(targetAgent, mergeConsecutiveAssistant(restore.messages));
-    openAgent(targetAgent);
+    const routeAgent = orbitIdForAgent(restore.agent, currentPageAgent);
+    setMessages(PRIMARY_ASSISTANT_THREAD, mergeConsecutiveAssistant(restore.messages));
+    openAgent(routeAgent);
   }, [currentPageAgent, openAgent, restore, setMessages]);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth' });
-  }, [activeThread.messages, mode, reduceMotion]);
+    if (mode !== 'chat' || panelView !== 'chat') return;
+    const frame = window.requestAnimationFrame(() => {
+      const scroller = messageScrollRef.current;
+      if (!scroller) return;
+      if (!activeThread.isFollowingLatest) scroller.scrollTop = activeThread.scrollPosition;
+      else scroller.scrollTop = scroller.scrollHeight;
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [activeAgent, mode, panelView]);
+
+  useEffect(() => {
+    if (mode !== 'chat' || panelView !== 'chat' || !activeThread.isFollowingLatest) return;
+    const scroller = messageScrollRef.current;
+    if (scroller) scroller.scrollTop = scroller.scrollHeight;
+  }, [activeThread.isFollowingLatest, activeThread.messages, mode, panelView]);
+
+  useEffect(() => {
+    const input = assistantInputRef.current;
+    if (!input) return;
+    input.style.height = 'auto';
+    input.style.height = `${Math.min(input.scrollHeight, 88)}px`;
+  }, [activeAgent, activeThread.draftInput, mode, panelView]);
 
   useEffect(() => {
     setLiveContext(null);
@@ -874,7 +1791,53 @@ export default function GlobalAssistant({
     if (mode !== 'chat') return;
     const timer = window.setTimeout(() => persistThread(activeAgent), 500);
     return () => window.clearTimeout(timer);
-  }, [activeAgent, activeThread.draftInput, activeThread.messages, activeThread.scrollPosition, activeThread.unreadCount, mode, persistThread]);
+  }, [activeAgent, activeThread.draftInput, activeThread.focusedTaskId, activeThread.isFollowingLatest, activeThread.messages, activeThread.paused, activeThread.scrollPosition, activeThread.taskCards, activeThread.unreadCount, mode, persistThread]);
+
+  const closeAssistant = useCallback(() => {
+    persistThread(activeAgent);
+    setAssistantTool(null);
+    setPanelView('chat');
+    setMode('breathing');
+  }, [activeAgent, persistThread]);
+
+  const returnToConversation = useCallback(() => {
+    const thread = useAssistantStore.getState().threads[activeAgent];
+    setPanelView('chat');
+    window.requestAnimationFrame(() => {
+      const scroller = messageScrollRef.current;
+      if (!scroller) return;
+      if (!thread.isFollowingLatest) scroller.scrollTop = thread.scrollPosition;
+      else scroller.scrollTop = scroller.scrollHeight;
+    });
+  }, [activeAgent]);
+
+  const toggleTaskPaused = useCallback(async () => {
+    if (!focusedRunControl || loading) return;
+    const paused = focusedRunControl.actionId === 'pause_task';
+    const request: AssistantActionRequest = {
+      source: 'button',
+      requestId: requestId(),
+      actionId: focusedRunControl.actionId,
+      page,
+      target: focusedRunControl.target,
+    };
+    setLoading(true);
+    const response = await executeAssistantAction(activeAgent, request);
+    setLoading(false);
+    if (!response) return;
+    presentActionResponse(activeAgent, request, response);
+    const accepted = response.status === 'accepted' || response.status === 'completed';
+    if (!accepted) {
+      persistThread(activeAgent);
+      return;
+    }
+    if (paused) abortRef.current?.abort();
+    window.dispatchEvent(new CustomEvent('lingshu-assistant-task-control', {
+      detail: { agentId: activeAgent, taskId: focusedRunControl.target.objectId, paused },
+    }));
+    persistThread(activeAgent);
+    onSessionRefresh?.();
+  }, [activeAgent, executeAssistantAction, focusedRunControl, loading, onSessionRefresh, page, persistThread, presentActionResponse]);
 
   const handlePointerDown = (event: ReactPointerEvent<HTMLButtonElement>) => {
     const rootRect = assistantRootRef.current?.getBoundingClientRect();
@@ -890,12 +1853,6 @@ export default function GlobalAssistant({
         moved: false,
       };
     }
-    if (longPressRef.current) window.clearTimeout(longPressRef.current);
-    longPressedRef.current = false;
-    longPressRef.current = window.setTimeout(() => {
-      longPressedRef.current = true;
-      setMode('expanded');
-    }, 300);
   };
 
   const handlePointerMove = (event: ReactPointerEvent<HTMLButtonElement>) => {
@@ -906,9 +1863,6 @@ export default function GlobalAssistant({
     if (!drag.moved && Math.hypot(deltaX, deltaY) < ASSISTANT_DRAG_THRESHOLD) return;
     if (!drag.moved) {
       drag.moved = true;
-      longPressedRef.current = false;
-      if (longPressRef.current) window.clearTimeout(longPressRef.current);
-      longPressRef.current = null;
       setLauncherDragging(true);
       setLauncherRetracted(false);
       setMode('breathing');
@@ -936,8 +1890,6 @@ export default function GlobalAssistant({
       }
       launcherDragRef.current = null;
     }
-    if (longPressRef.current) window.clearTimeout(longPressRef.current);
-    longPressRef.current = null;
     setLauncherDragging(false);
   };
 
@@ -947,9 +1899,6 @@ export default function GlobalAssistant({
       event.preventDefault();
       return;
     }
-    if (longPressRef.current) window.clearTimeout(longPressRef.current);
-    longPressRef.current = null;
-    longPressedRef.current = false;
     nativeLauncherDragRef.current = {
       startX: event.clientX,
       startY: event.clientY,
@@ -994,44 +1943,25 @@ export default function GlobalAssistant({
       suppressLauncherClickRef.current = false;
       return;
     }
-    if (longPressedRef.current) {
-      longPressedRef.current = false;
-      return;
-    }
     if (assistantTool === 'knowledge-intake') {
       setMode('chat');
       return;
     }
-    if (mode === 'expanded') {
-      openCurrentPageAgent();
-      return;
-    }
-    else setMode('expanded');
+    openCurrentPageAgent();
   };
-
-  useEffect(() => {
-    if (mode !== 'expanded') return;
-    const handleOutsidePointerDown = (event: PointerEvent) => {
-      const target = event.target;
-      if (!(target instanceof Node)) return;
-      if (assistantRootRef.current?.contains(target)) return;
-      setMode('breathing');
-    };
-    document.addEventListener('pointerdown', handleOutsidePointerDown, true);
-    return () => document.removeEventListener('pointerdown', handleOutsidePointerDown, true);
-  }, [mode]);
 
   useEffect(() => {
     if (mode !== 'chat' && assistantTool !== 'knowledge-intake') return;
     const closePanel = (event: KeyboardEvent) => {
       if (event.key !== 'Escape' || event.defaultPrevented) return;
+      persistThread(activeAgent);
       setAssistantTool(null);
       setPanelView('chat');
       setMode('breathing');
     };
     window.addEventListener('keydown', closePanel);
     return () => window.removeEventListener('keydown', closePanel);
-  }, [assistantTool, mode]);
+  }, [activeAgent, assistantTool, mode, persistThread]);
 
   useEffect(() => {
     setLauncherRetracted(false);
@@ -1053,7 +1983,7 @@ export default function GlobalAssistant({
   }, []);
 
   useEffect(() => {
-    if (assistantPosition || mode !== 'breathing' || (performance && !performanceHidden)) {
+    if (assistantPosition || mode !== 'breathing' || (performance && shouldNotifyAssistant(performance.reason) && !performanceHidden)) {
       setLauncherRetracted(false);
       return;
     }
@@ -1072,18 +2002,11 @@ export default function GlobalAssistant({
       className={`fixed ${page === 'digitalEmployees' && mode === 'breathing' ? 'z-[35]' : 'z-[75]'} ${launcherDragging ? '' : 'transition-[left,right,top,bottom] duration-300'} ${assistantPosition ? '' : dockOnLeft ? 'bottom-5 left-4 lg:left-[292px]' : launcherAtEdge ? 'bottom-5 right-0' : 'bottom-5 right-5'}`}
       style={assistantPosition ? { left: assistantPosition.x, top: assistantPosition.y } : undefined}
     >
-      {mode === 'expanded' && (
-        <button
-          type="button"
-          aria-label="收起灵枢助手"
-          onClick={() => setMode('breathing')}
-          className="fixed inset-0 z-0 cursor-default bg-transparent"
-        />
-      )}
       <AnimatePresence>
-        {mode === 'breathing' && !launcherAtEdge && performance && !performanceHidden && (
+        {mode === 'breathing' && !launcherAtEdge && performance && shouldNotifyAssistant(performance.reason) && !performanceHidden && (
           <motion.div
             key={`performance-${performance.phase}`}
+            data-assistant-surface="floating-reminder"
             data-lingshu-assistant-performance={performance.phase}
             initial={{ opacity: 0, y: 10, scale: 0.94 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
@@ -1109,9 +2032,10 @@ export default function GlobalAssistant({
       </AnimatePresence>
 
       <AnimatePresence>
-        {mode === 'breathing' && !launcherAtEdge && (!performance || performanceHidden) && speechBubble && (
+        {mode === 'breathing' && !launcherAtEdge && (!performance || performanceHidden || !shouldNotifyAssistant(performance.reason)) && speechBubble && (
           <motion.div
             key={`speech-${speechBubble.id}`}
+            data-assistant-surface="floating-reminder"
             data-lingshu-assistant-speech="true"
             initial={{ opacity: 0, y: 8, scale: 0.96 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
@@ -1127,9 +2051,10 @@ export default function GlobalAssistant({
       </AnimatePresence>
 
       <AnimatePresence>
-        {mode === 'breathing' && !launcherAtEdge && (!performance || performanceHidden) && !speechBubble && featureGuide && (
+        {mode === 'breathing' && !launcherAtEdge && (!performance || performanceHidden || !shouldNotifyAssistant(performance.reason)) && !speechBubble && featureGuide && (
           <motion.div
             key={featureGuide.id}
+            data-assistant-surface="floating-reminder"
             data-lingshu-guide-bubble={featureGuide.id}
             initial={{ opacity: 0, y: 8, scale: 0.96 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
@@ -1176,49 +2101,6 @@ export default function GlobalAssistant({
       </AnimatePresence>
 
       <AnimatePresence>
-        {mode === 'expanded' && (
-          <motion.div
-            className={`pointer-events-none absolute z-10 h-52 w-52 ${dockOnLeft ? 'left-0' : 'right-0'} ${dockOnTop ? 'top-0' : 'bottom-0'}`}
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-          >
-            <div className={`absolute h-36 w-36 rounded-full border border-dashed border-accent/25 ${dockOnLeft ? 'left-6' : 'right-6'} ${dockOnTop ? 'top-6' : 'bottom-6'}`} />
-            <div className={`absolute h-24 w-24 rounded-full border border-dashed border-accent/15 ${dockOnLeft ? 'left-6' : 'right-6'} ${dockOnTop ? 'top-6' : 'bottom-6'}`} />
-            {SKILL_AGENTS.map((agent, index) => {
-              const Icon = agent.Icon;
-              const unread = threads[agent.id].unreadCount;
-              const current = agent.id === currentPageAgent;
-              const x = (dockOnLeft ? -agent.position.x : agent.position.x) * radius;
-              const y = (dockOnTop ? -agent.position.y : agent.position.y) * radius;
-              return (
-                <motion.button
-                  key={agent.id}
-                  type="button"
-                  title={`${AGENT_DISPLAY_NAME[agent.id]}${current ? ' · 当前页面' : ''}`}
-                  aria-label={`打开${AGENT_DISPLAY_NAME[agent.id]}`}
-                  aria-current={current ? 'page' : undefined}
-                  onClick={() => openAgent(agent.id)}
-                  className={`group pointer-events-auto absolute flex h-12 w-12 items-center justify-center rounded-full border bg-surface shadow-lg outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 ${dockOnLeft ? 'left-2' : 'right-2'} ${dockOnTop ? 'top-2' : 'bottom-2'}`}
-                  style={current ? ORBIT_AGENT_ACTIVE_STYLE : ORBIT_AGENT_IDLE_STYLE}
-                  initial={{ x: 0, y: 0, opacity: 0, scale: 0.72 }}
-                  animate={{ x, y, opacity: 1, scale: 1 }}
-                  exit={{ x: 0, y: 0, opacity: 0, scale: 0.72 }}
-                  transition={{ type: 'spring', stiffness: 260, damping: 18, delay: index * 0.06 }}
-                >
-                  <Icon size={20} />
-                  <span className="pointer-events-none absolute bottom-full left-1/2 mb-2 -translate-x-1/2 whitespace-nowrap rounded-md bg-text-primary px-2.5 py-1 text-[11px] font-bold text-white opacity-0 shadow-md transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">
-                    {AGENT_DISPLAY_NAME[agent.id]}{current ? ' · 当前页面' : ''}
-                  </span>
-                  {unread > 0 && <span className="absolute -right-1 -top-1 min-w-5 rounded-full bg-red px-1 text-[11px] font-bold text-white">{unread}</span>}
-                </motion.button>
-              );
-            })}
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      <AnimatePresence>
         {(mode === 'chat' || assistantTool === 'knowledge-intake') && (
           <motion.section
             data-global-assistant="panel"
@@ -1240,13 +2122,13 @@ export default function GlobalAssistant({
                   onClick={() => {
                     if (assistantTool === 'knowledge-intake') {
                       setAssistantTool(null);
-                      setPanelView('chat');
-                    } else if (isCustomerTodoView) setPanelView('chat');
-                    else setMode('expanded');
+                      returnToConversation();
+                    } else if (isCustomerTodoView || panelView === 'decision') returnToConversation();
+                    else setMode('breathing');
                   }}
                   className="rounded-md p-1.5 text-text-muted hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
-                  aria-label={assistantTool === 'knowledge-intake' ? '返回灵小枢对话' : isCustomerTodoView ? '返回客户助手' : '返回展开态'}
-                  title={assistantTool === 'knowledge-intake' ? '返回灵小枢对话' : isCustomerTodoView ? '返回客户助手' : '返回展开态'}
+                  aria-label={assistantTool === 'knowledge-intake' || panelView === 'decision' || isCustomerTodoView ? '返回灵小枢对话' : '收起灵小枢对话'}
+                  title={assistantTool === 'knowledge-intake' || panelView === 'decision' || isCustomerTodoView ? '返回灵小枢对话' : '收起灵小枢对话'}
                 >
                   <ArrowLeft size={16} />
                 </button>
@@ -1255,9 +2137,23 @@ export default function GlobalAssistant({
                   <p className="truncate text-[11px] text-text-muted">{panelSubtitle}</p>
                 </div>
               </div>
-              <button type="button" onClick={() => { setAssistantTool(null); setPanelView('chat'); setMode('breathing'); }} className="rounded-md p-1.5 text-text-muted hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent" title="关闭" aria-label="关闭灵枢助手">
-                <X size={15} />
-              </button>
+              <div className="flex items-center gap-1">
+                {!assistantTool && focusedRunControl && (
+                  <button
+                    type="button"
+                    onClick={() => void toggleTaskPaused()}
+                    disabled={loading}
+                    className="rounded-md p-1.5 text-text-muted hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+                    title={focusedRunControl.actionId === 'resume_task' ? '继续当前任务' : '暂停当前任务'}
+                    aria-label={focusedRunControl.actionId === 'resume_task' ? '继续当前任务' : '暂停当前任务'}
+                  >
+                    {focusedRunControl.actionId === 'resume_task' ? <Play size={15} /> : <Pause size={15} />}
+                  </button>
+                )}
+                <button type="button" onClick={closeAssistant} className="rounded-md p-1.5 text-text-muted hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent" title="关闭窗口（任务继续）" aria-label="关闭灵枢助手窗口，任务继续运行">
+                  <X size={15} />
+                </button>
+              </div>
             </header>
 
             {assistantTool === 'knowledge-intake' ? (
@@ -1271,6 +2167,102 @@ export default function GlobalAssistant({
                   }}
                 />
               </div>
+            ) : panelView === 'decision' && focusedTaskCard ? (
+              <div
+                data-assistant-surface="decision"
+                className="min-h-0 flex-1 overflow-y-auto bg-surface-2 px-4 py-4"
+              >
+                <article className="rounded-lg border border-border bg-surface p-4 shadow-sm">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="text-[11px] font-black uppercase tracking-[0.14em] text-accent">灵小枢已整理</p>
+                      <h3 className="mt-1 text-base font-black leading-snug text-text-primary">{focusedTaskCard.title}</h3>
+                    </div>
+                    <span className="shrink-0 rounded-full border border-border bg-surface-2 px-2 py-1 text-[10px] font-black text-text-secondary">
+                      {taskStatusLabel(focusedTaskCard)}
+                    </span>
+                  </div>
+
+                  <p className="mt-4 text-sm font-bold leading-6 text-text-primary">{focusedTaskCard.conclusion}</p>
+                  {focusedTaskCard.details.length > 0 && (
+                    <ul className="mt-3 space-y-2 border-l-2 border-accent/30 pl-3">
+                      {focusedTaskCard.details.map(detail => (
+                        <li key={detail} className="text-xs leading-5 text-text-secondary">{detail}</li>
+                      ))}
+                    </ul>
+                  )}
+
+                  {focusedTaskCard.items.length > 0 && (
+                    <div className="mt-4 space-y-2" aria-label="待调整视频">
+                      {focusedTaskCard.items.map(item => (
+                        <div key={item.id} className="flex min-w-0 gap-3 rounded-md border border-border bg-surface-2 p-2.5">
+                          <div className="h-16 w-12 shrink-0 overflow-hidden rounded bg-surface-3">
+                            {item.thumbnailUrl ? (
+                              <img src={item.thumbnailUrl} alt="" className="h-full w-full object-cover" loading="lazy" />
+                            ) : (
+                              <div className="flex h-full items-center justify-center px-1 text-center text-[9px] font-bold text-text-muted">暂无缩略图</div>
+                            )}
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <p className="line-clamp-2 text-xs font-black leading-5 text-text-primary">{item.title}</p>
+                            {item.accountLabel && <p className="mt-1 truncate text-[10px] text-text-muted">{item.accountLabel}</p>}
+                            <div className="mt-1.5 flex flex-wrap gap-1.5">
+                              {item.transition && <span className="rounded bg-accent-glow px-1.5 py-0.5 text-[10px] font-black text-accent">{item.transition}</span>}
+                              {item.note && <span className="rounded bg-surface px-1.5 py-0.5 text-[10px] font-bold text-text-secondary">{item.note}</span>}
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {(focusedTaskCard.primaryAction || focusedTaskCard.secondaryActions.length > 0) && (
+                    <div className="mt-5 grid gap-2">
+                      {focusedTaskCard.primaryAction && (
+                        <button
+                          type="button"
+                          disabled={focusedTaskCard.primaryAction.disabled || loading}
+                          onClick={() => void handleTaskCardAction(focusedTaskCard, focusedTaskCard.primaryAction!)}
+                          className="w-full rounded-md bg-accent px-3 py-2.5 text-sm font-black text-white hover:bg-accent-dim focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-40"
+                        >
+                          {focusedTaskCard.primaryAction.label}
+                        </button>
+                      )}
+                      {focusedTaskCard.secondaryActions.length > 0 && (
+                        <div className="grid grid-cols-2 gap-2">
+                          {focusedTaskCard.secondaryActions.map(action => (
+                            <button
+                              key={action.id}
+                              type="button"
+                              disabled={action.disabled || loading}
+                              onClick={() => void handleTaskCardAction(focusedTaskCard, action)}
+                              className="rounded-md border border-border bg-surface px-3 py-2 text-xs font-black text-text-secondary hover:border-accent/40 hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-40"
+                            >
+                              {action.label}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {focusedTaskCard.workspace && (
+                    <a
+                      href={focusedTaskCard.workspace.href}
+                      className="mt-4 block rounded-md border border-border bg-surface-2 px-3 py-2 text-center text-xs font-black text-accent hover:border-accent/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+                    >
+                      {focusedTaskCard.workspace.label}
+                    </a>
+                  )}
+                </article>
+                <button
+                  type="button"
+                  onClick={returnToConversation}
+                  className="mt-3 w-full rounded-md px-3 py-2 text-xs font-bold text-text-muted hover:bg-surface hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+                >
+                  返回对话
+                </button>
+              </div>
             ) : isCustomerTodoView ? (
               <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
                 <div className="space-y-3">
@@ -1281,7 +2273,7 @@ export default function GlobalAssistant({
                     </p>
                     <button
                       type="button"
-                      onClick={() => setPanelView('chat')}
+                      onClick={returnToConversation}
                       className="mt-4 rounded-md bg-accent px-3 py-2 text-xs font-black text-white hover:bg-accent-dim focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2"
                     >
                       客户助手
@@ -1296,7 +2288,7 @@ export default function GlobalAssistant({
                           type="button"
                           onClick={() => {
                             window.dispatchEvent(new CustomEvent('lingshu:select-customer', { detail: { id: item.id } }));
-                            setPanelView('chat');
+                            returnToConversation();
                           }}
                           className={`flex w-full items-start gap-3 rounded-lg border px-3 py-3 text-left transition-colors hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ${todoToneClass(item.tone, item.completed)}`}
                         >
@@ -1326,8 +2318,17 @@ export default function GlobalAssistant({
             ) : (
               <>
                 <div
+                  ref={messageScrollRef}
+                  data-assistant-surface="conversation"
                   className="min-h-0 flex-1 overflow-y-auto px-4 py-4"
-                  onScroll={event => setScrollPosition(activeAgent, event.currentTarget.scrollTop)}
+                  onScroll={event => {
+                    const scroller = event.currentTarget;
+                    setScrollPosition(activeAgent, scroller.scrollTop);
+                    setFollowingLatest(
+                      activeAgent,
+                      scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= 24,
+                    );
+                  }}
                 >
                   {!activeThread.messages.length ? (
                     <div className="flex h-full flex-col justify-center gap-4">
@@ -1366,33 +2367,43 @@ export default function GlobalAssistant({
                           <div className="rounded-lg rounded-tl-sm border border-border bg-surface-2 px-3 py-2 text-sm text-text-muted">思考中...</div>
                         </div>
                       )}
-                      <div ref={bottomRef} />
                     </div>
                   )}
                 </div>
 
-                <div className="shrink-0 border-t border-border p-3">
-                  <div className="rounded-lg border border-border bg-surface-2 focus-within:border-accent/40 focus-within:ring-2 focus-within:ring-accent/10">
-                    <textarea
-                      value={activeThread.draftInput}
-                      onChange={event => setDraftInput(activeAgent, event.target.value)}
-                      onKeyDown={event => {
-                        if (event.key === 'Enter' && !event.shiftKey) {
-                          event.preventDefault();
-                          void send(activeThread.draftInput);
-                        }
+                {!activeThread.isFollowingLatest && (
+                  <div className="flex shrink-0 justify-center border-t border-border/60 bg-surface px-3 py-1.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const scroller = messageScrollRef.current;
+                        if (scroller) scroller.scrollTop = scroller.scrollHeight;
+                        setFollowingLatest(activeAgent, true);
+                        setScrollPosition(activeAgent, scroller?.scrollHeight ?? activeThread.scrollPosition);
                       }}
-                      rows={2}
-                      placeholder="问灵枢助手..."
-                      className="w-full resize-none bg-transparent px-3 pt-3 text-sm text-text-primary outline-none placeholder:text-text-muted"
-                    />
-                    <div className="flex items-center justify-end px-2 pb-2">
-                      <button type="button" onClick={() => void send(activeThread.draftInput)} disabled={!activeThread.draftInput.trim() || loading} className="flex h-8 w-8 items-center justify-center rounded-md bg-accent text-white hover:bg-accent-dim focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 disabled:opacity-40" aria-label="发送消息">
-                        {loading ? <Loader2 size={13} className="animate-spin" /> : <ArrowUp size={13} />}
-                      </button>
-                    </div>
+                      className="inline-flex items-center gap-1.5 rounded-full border border-border bg-surface-2 px-3 py-1 text-[11px] font-black text-accent shadow-sm hover:border-accent/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+                      aria-label="回到最新消息"
+                    >
+                      <ArrowDown size={12} /> 回到最新消息
+                    </button>
                   </div>
-                </div>
+                )}
+
+                <AssistantComposer
+                  ref={assistantInputRef}
+                  draft={activeThread.draftInput}
+                  files={pendingAttachments}
+                  disabled={loading}
+                  uploading={attachmentUploading}
+                  error={attachmentError}
+                  onDraftChange={value => setDraftInput(activeAgent, value)}
+                  onFilesChange={files => {
+                    setPendingAttachments(files);
+                    if (!files.length) setAttachmentError('');
+                  }}
+                  onValidationError={setAttachmentError}
+                  onSubmit={() => void sendComposerMessage()}
+                />
               </>
             )}
           </motion.section>
@@ -1423,7 +2434,7 @@ export default function GlobalAssistant({
             type="button"
             draggable
             data-global-assistant="launcher"
-            aria-label={mode === 'expanded' ? `打开${AGENT_DISPLAY_NAME[currentPageAgent]}` : '拖动可移动，点击可展开灵枢助手'}
+            aria-label="拖动可移动，点击打开灵小枢"
             onPointerDown={handlePointerDown}
             onPointerMove={handlePointerMove}
             onPointerUp={handlePointerUp}
@@ -1433,11 +2444,11 @@ export default function GlobalAssistant({
             onDragEndCapture={handleNativeDragEnd}
             onClick={handleLauncherClick}
             className={`absolute inset-0 flex touch-none items-center justify-center rounded-lg bg-transparent outline-none transition-transform focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 ${launcherDragging ? 'cursor-grabbing' : 'cursor-grab hover:-translate-y-0.5'}`}
-            animate={performance && !reduceMotion
+            animate={performance && shouldNotifyAssistant(performance.reason) && !reduceMotion
               ? { scale: [1, 1.08, 1], y: [0, -9, 0], rotate: [0, -5, 5, 0] }
               : mode === 'breathing' && pendingCount > 0 && !reduceMotion ? { scale: [1, 1.05, 1], y: [0, -2, 0] } : { scale: 1, y: 0 }}
-            transition={{ duration: performance ? 1.55 : 2.4, ease: 'easeInOut', repeat: (performance || (mode === 'breathing' && pendingCount > 0)) && !reduceMotion ? Infinity : 0 }}
-            title={mode === 'expanded' ? `打开${AGENT_DISPLAY_NAME[currentPageAgent]}` : '拖动可移动，点击可展开灵枢助手'}
+            transition={{ duration: performance && shouldNotifyAssistant(performance.reason) ? 1.55 : 2.4, ease: 'easeInOut', repeat: ((performance && shouldNotifyAssistant(performance.reason)) || (mode === 'breathing' && pendingCount > 0)) && !reduceMotion ? Infinity : 0 }}
+            title="拖动可移动，点击打开灵小枢"
           >
             <AssistantLauncherMascot expression={assistantExpression} />
             {pendingCount > 0 && <span className="absolute -right-1 -top-1 min-w-5 rounded-full bg-red px-1 text-[11px] font-black text-white">{pendingBadge}</span>}

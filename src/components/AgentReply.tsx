@@ -6,20 +6,11 @@ import {
 import type { AgentType } from '../App';
 import { CHART_CURSOR_STYLE, CHART_TOOLTIP_STYLE } from '../lib/uiStyles';
 
-/* 渲染 Agent 回复的轻量 Markdown：
+/* 渲染灵小枢回复的轻量 Markdown：
    ## / ### 分级加粗标题，**加粗**强调结论，- / 1. 列表，[文字](链接) 可点跳转。
    支持 Markdown 表格、引用/话术块、代码块复制。
-   并把"建议触发 [X专家] 执行：任务"识别成「一键执行」按钮。 */
+   兼容旧回复中的内部能力触发格式，但只展示统一的灵小枢推进入口。 */
 
-const AGENT_BY_NAME: Record<string, AgentType> = {
-  流量专家: 'traffic',
-  我的社媒: 'traffic',
-  转化专家: 'conversion',
-  留存专家: 'retention',
-  我的客户: 'conversion',
-  策略专家: 'strategy',
-  首页: 'strategy',
-};
 // 锚定行首：只把独立成行的触发指令识别成按钮，避免把"如果需要，我建议触发…"整句吞成按钮、丢掉前半句
 const ACTION_RE = /^建议触发\s*[【[]?\s*(流量专家|我的社媒|转化专家|留存专家|我的客户|策略专家|首页)\s*[】\]]?\s*执行[:：]\s*(.+)/;
 // 引用块里的"提示/说明/备注"类内容：是说给用户听的话，不是可复制话术
@@ -207,13 +198,13 @@ export default function AgentReply({ content, sources, onAction, onSuggest }: {
     const cleaned = line.replace(/^\s*(?:[-*•·]|\d+[.、)])\s*/, '').replace(/\*\*/g, '').trim();
     const act = onAction ? cleaned.match(ACTION_RE) : null;
     if (!act) return null;
-    const agent = AGENT_BY_NAME[act[1]]; const task = act[2].trim();
+    const task = act[2].trim();
     return (
-      <button key={key} onClick={() => onAction!(agent, task)}
+      <button key={key} onClick={() => onAction!('strategy', task)}
         className="inline-flex items-start gap-1.5 my-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-white text-left transition-all active:scale-[0.98]"
         style={{ background: 'var(--color-accent)' }}>
         <Zap size={13} className="flex-shrink-0 mt-0.5" />
-        <span>一键执行 · 让{act[1]}{task.length > 22 ? `${task.slice(0, 22)}…` : task}</span>
+        <span>交给灵小枢推进 · {task.length > 22 ? `${task.slice(0, 22)}…` : task}</span>
       </button>
     );
   };
@@ -318,7 +309,7 @@ export default function AgentReply({ content, sources, onAction, onSuggest }: {
       continue;
     }
 
-    // 一键执行：把"建议触发 [X专家] 执行：任务"渲染成按钮
+    // 兼容旧回复格式；内部能力身份不暴露为用户可直接指挥的并列 Agent。
     const action = actionButton(line, `act_${i}`);
     if (action) {
       flush();

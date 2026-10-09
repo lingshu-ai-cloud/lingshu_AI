@@ -52,7 +52,8 @@ const event = { allDay: false, extendedProps: { item: { title: '新品短视频�
 {
   const result = render({ event, view: { type: 'timeGridWeek' }, isShort: true, timeText: '08:00 - 08:30' }) as RenderNode;
   assert.match(String(result.props?.className), /is-short/);
-  assert.deepEqual(nodes(result).map(node => node.type), ['div', 'div', 'strong', 'span'], 'short events retain title/time without a tall media card');
+  assert.ok(nodes(result).some(node => node.type === 'CalendarThumbnail'), 'short events retain a compact visual preview');
+  assert.ok(nodes(result).some(node => node.type === 'strong'), 'short events retain the title');
 }
 {
   const result = render({ event, view: { type: 'timeGridDay' }, isShort: false, timeText: '08:00 - 09:00' }) as RenderNode;
@@ -69,5 +70,6 @@ assert.match(css, /\.ls-calendar-surface\s*\{[^}]*min-width: 0;[^}]*max-width: 1
 assert.match(css, /\.ls-calendar-event-content-timed[^}]*overflow: hidden/);
 assert.match(css, /white-space: nowrap; text-overflow: ellipsis; line-height: 16px/);
 assert.match(css, /@container ls-calendar-slot \(max-height: 32px\)/, 'the smallest rendered segments suppress secondary time text instead of cropping the title');
+assert.match(css, /\.ls-calendar-event-content-all-day[^}]*max-height: 44px/, 'all-day rows must remain compact even when a legacy event has a long title');
 assert.match(source, /<Drawer title="排期详情"/);
 console.log('Calendar bounded time-grid height, 08:00 scrolling and compact event layout tests passed');

@@ -95,6 +95,20 @@ function attemptsOf(stats: Record<string, unknown>): number {
   return Number.isFinite(attempts) && attempts > 0 ? Math.floor(attempts) : 0;
 }
 
+function publishClaimGuard(post: PostRecord): Record<string, unknown> {
+  // Claim the exact schedule snapshot that was authorized. The schedule
+  // adjustment service guards the same fields, so only one transition can
+  // win: either the post moves to another time, or the publisher owns it.
+  // In particular, never turn a post into `publishing` after a stale read.
+  return {
+    tenant_id: post.tenant_id,
+    platform: post.platform,
+    published_at: post.published_at,
+    platform_post_id: post.platform_post_id,
+    stats: post.stats,
+  };
+}
+
 export function scheduledRetryDelay(attempt: number): number {
   return RETRY_DELAYS_MS[Math.min(Math.max(attempt - 1, 0), RETRY_DELAYS_MS.length - 1)];
 }
@@ -263,7 +277,21 @@ async function publishScheduledPost(
     publishError: '',
     warnings: [],
   };
-  if (!await store.update('posts', post.id, { stats: lockedStats })) throw new Error('无法保存发布执行状态，尚未调用平台');
+  // A durable CAS is the authority to start publishing. A lease prevents
+  // duplicate workers, but it cannot serialize a user schedule edit running
+  // through a different service/process. Fail closed when CAS is unavailable
+  // or another writer changed any guarded field; no provider effect follows.
+  if (!store.compareAndSwap) return;
+  const claimed = await store.compareAndSwap(
+    'posts',
+    post.id,
+    publishClaimGuard(post),
+    { stats: lockedStats },
+  ).catch(error => {
+    console.error(`[publishing-worker] failed to claim post ${post.id}:`, error instanceof Error ? error.message : error);
+    return false;
+  });
+  if (!claimed) return;
 
   const platform = text(post.platform) as PublishPlatform;
   const accountIds = Array.isArray(initialStats.targetAccountIds)

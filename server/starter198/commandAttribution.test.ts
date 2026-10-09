@@ -292,7 +292,13 @@ test('content approval final re-read, decision and attribution evidence share th
     request: {
       command: 'resolve_decision', idempotencyKey: 'content-leased-001',
       targetId: 'approval-content-leased', expectedVersion: '3',
-      payload: { decision: 'approved', note: '同意发布' },
+      payload: {
+        decision: 'approved',
+        note: '同意发布',
+        selection: {
+          option: 'accept_result', value: 'accepted', parameters: { note: '同意发布' },
+        },
+      },
     },
     dependencies: {
       repository,
@@ -312,7 +318,11 @@ test('content approval final re-read, decision and attribution evidence share th
   assert.equal(leaseObservedByDecision, true);
   const approval = repository.row(STARTER_COLLECTIONS.approvals, 'approval-content-leased');
   assert.equal(approval.status, 'approved');
-  assert.ok((approval.evidence as Record<string, unknown>[]).some(item => item.command === 'resolve_decision'));
+  const decisionEvidence = (approval.evidence as Record<string, unknown>[])
+    .find(item => item.command === 'resolve_decision');
+  assert.deepEqual(decisionEvidence?.selection, {
+    option: 'accept_result', value: 'accepted', parameters: { note: '同意发布' },
+  }, 'the exact assistant choice remains bound to durable mutation evidence');
   assert.equal(dataStore.activeRunLeaseCount(run.id), 0);
 });
 

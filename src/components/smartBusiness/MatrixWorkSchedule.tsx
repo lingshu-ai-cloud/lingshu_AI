@@ -14,6 +14,18 @@ function safeDate(value: string | undefined, fallback = new Date()) {
   return Number.isNaN(parsed.getTime()) ? fallback : parsed;
 }
 function addDays(value: Date, count: number) { return new Date(value.getTime() + count * 86_400_000); }
+function scheduleTime(day: Date, accountIndex: number, itemIndex: number) {
+  // Keep every account on a stable publishing rhythm while giving concurrent
+  // accounts their own visible lane in the weekly time grid.
+  const startMinutes = 9 * 60 + (accountIndex % 4) * 120 + (itemIndex % 2) * 15;
+  const endMinutes = startMinutes + 75;
+  const date = calendarDayKey(day);
+  const clock = (minutes: number) => `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}:00`;
+  return {
+    start: `${date}T${clock(startMinutes)}+08:00`,
+    end: `${date}T${clock(endMinutes)}+08:00`,
+  };
+}
 function spreadAccountDate(start: Date, end: Date, slotIndex: number, accountTotal: number) {
   const days = Math.max(1, Math.round((end.getTime() - start.getTime()) / 86_400_000) + 1);
   const total = Math.max(1, accountTotal);
@@ -39,18 +51,19 @@ export default function MatrixWorkSchedule({ calendarTasks, calendarDemo = false
   const visibleTasks = taskItems.filter(item => !selectedAccountId || item.accountId === selectedAccountId);
   const goalStart = safeDate(startsAt), goalEnd = safeDate(endsAt, addDays(goalStart, 6));
   const visibleAccounts = selectedAccountId ? accounts.filter(account => account.accountId === selectedAccountId) : accounts;
-  const rows = visibleAccounts.flatMap(account => {
+  const rows = visibleAccounts.flatMap((account, accountIndex) => {
     const accountPlans = plans.filter(plan => plan.matrix?.accountId === account.accountId);
     const accountTotal = Math.max(accountPlans.length, account.weeklyCount);
-    return Array.from({ length: accountTotal }, (_, index) => ({ account, plan: accountPlans[index], index, accountTotal }));
+    return Array.from({ length: accountTotal }, (_, index) => ({ account, accountIndex, plan: accountPlans[index], index, accountTotal }));
   });
-  const blockedFamilies = new Set(rows.filter(row => row.plan && planBlockers(row.plan).length).map(row => row.plan?.contentFamilyId || row.plan?.contentId));
   const events: LsCalendarEvent[] = rows.map(row => {
-    const { account, plan, index, accountTotal } = row;
+    const { account, accountIndex, plan, index, accountTotal } = row;
     const blockers = planBlockers(plan), frames = previewFrames(plan);
+    const publishDay = safeDate(plan?.plannedPublishDate, spreadAccountDate(goalStart, goalEnd, index, accountTotal));
+    const time = scheduleTime(publishDay, accountIndex, index);
     return {
       id: `${account.accountId}-${plan?.contentId || index}`, title: plan?.publication?.title || plan?.theme || `待编排内容 ${index + 1}`,
-      start: calendarDayKey(safeDate(plan?.plannedPublishDate, spreadAccountDate(goalStart, goalEnd, index, accountTotal))), allDay: true,
+      start: time.start, end: time.end, allDay: false,
       timeZone: 'Asia/Shanghai', status: blockers.length ? 'needs_action' : plan?.directorStatus === 'in_production' ? 'working' : 'planned',
       statusLabel: blockers.length ? '待处理' : plan?.directorStatus === 'in_production' ? '制作中' : '可执行', eventType: 'content',
       platform: account.platform, accountId: account.accountId, accountName: account.accountLabel,
@@ -62,12 +75,9 @@ export default function MatrixWorkSchedule({ calendarTasks, calendarDemo = false
   });
   return <section className="overflow-hidden rounded-lg border border-border bg-white" aria-label="数字员工工作排期">
     <header className="flex flex-wrap items-start justify-between gap-4 border-b border-border p-5">
-      <div><h2 className="text-xl font-semibold text-text-primary">数字员工工作排期</h2><p className="mt-1 text-sm text-text-secondary">每条视频就是一条日历任务；同日多账号并行，点击查看内容、素材、成本与卡点。</p></div>
+      <h2 className="text-xl font-semibold text-text-primary">数字员工工作排期</h2>
       {onOpenPublishing && <Button onClick={onOpenPublishing}>打开发布日历</Button>}
     </header>
-    <dl className="grid grid-cols-2 divide-x divide-border border-b border-border sm:grid-cols-4">
-      {[['经营账号', `${visibleAccounts.length} 个`], ['原创母版', `${plans.filter(plan => plan.productionRole !== 'platform_adaptation').length} 条`], ['发布版本', `${rows.filter(row => row.plan).length}/${rows.length} 条已编排`], ['母版卡点', `${blockedFamilies.size} 个待处理`]].map(([label, value]) => <div className="p-4" key={label}><dt className="text-xs text-text-secondary">{label}</dt><dd className="mt-1 text-base font-semibold text-text-primary">{value}</dd></div>)}
-    </dl>
     <div className="flex gap-2 border-b border-border p-3" role="tablist" aria-label="发布排期视图">{([['calendar', '发布日历'], ['board', 'Agent 任务看板']] as const).map(([id, label]) => <Button key={id} role="tab" id={`schedule-tab-${id}`} aria-selected={view === id} aria-controls={`schedule-panel-${id}`} type={view === id ? 'primary' : 'default'} onClick={() => setView(id)}>{label}</Button>)}</div>
     {view === 'board' ? <div id="schedule-panel-board" role="tabpanel" aria-labelledby="schedule-tab-board">{calendarTasks !== undefined || calendarDemo ? <AgentWeeklyCalendar startsAt={startsAt} demo={calendarDemo} tasks={calendarTasks ?? []}/> : <ConnectedAgentCalendar/>}</div> : <div id="schedule-panel-calendar" role="tabpanel" aria-labelledby="schedule-tab-calendar">
     <LsCalendar events={events} initialDate={calendarDayKey(goalStart)} date={calendarDayKey(goalStart)} initialView="timeGridWeek" label="数字员工工作排期" renderDetails={(event, closeDetails) => {
@@ -82,6 +92,5 @@ export default function MatrixWorkSchedule({ calendarTasks, calendarDemo = false
     }}/>
     </div>}
     {view === 'board' && visibleTasks.length > 0 && <section className="border-t border-border p-4" aria-label="内容任务执行进度"><h3 className="mb-3 text-sm font-semibold">内容任务执行进度</h3><div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">{visibleTasks.map(item => <button key={item.id} type="button" disabled={!onOpenTask} onClick={() => onOpenTask?.(item.taskId, item.id)} className="rounded-lg border border-border p-3 text-left hover:border-accent disabled:cursor-default"><h4 className="text-sm font-semibold">{item.title}</h4><p className="mt-1 text-xs text-text-secondary">{item.accountLabel || '仅制作'} · {item.platform} · {item.plannedPublishDate || '待排期'}</p><p className="mt-2 text-xs">{item.stage || item.status}</p><progress aria-label={`${item.title}执行进度`} max={100} value={Math.max(0, Math.min(100, item.progress || 0))} className="mt-2 h-1.5 w-full accent-emerald-600"/>{item.reason && <p className="mt-2 text-xs text-amber-800">{item.reason}</p>}</button>)}</div></section>}
-    <footer className="border-t border-border bg-surface-2 px-5 py-3 text-xs text-text-secondary">每个账号独立均匀铺满经营周期；具体发布时分以发布日历中的已确认排期为准。</footer>
   </section>;
 }

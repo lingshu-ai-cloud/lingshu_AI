@@ -482,13 +482,12 @@ export default function App() {
     if (AGENT_PAGES.includes(page)) setRestore({ agent: page as AgentType, messages: [], key: `new:${Date.now()}` });
   };
 
-  // 一键执行：策略专家把任务交给某个专家，跳转过去并自动发起任务
-  const startAgentTask = (agent: AgentType, text: string) => {
-    const pageAgent = customerUnifiedAgent(agent);
+  // 历史回复中的执行建议统一回到灵小枢。专业 Agent 只在内部路由，
+  // 不再作为平级入口跳走当前页面或创建另一段可见会话。
+  const startAgentTask = (_agent: AgentType, text: string) => {
     activeIdRef.current = null; setActiveConvId(null);
     setRestore(null); setConversation(null);
-    setKickoff({ agent: pageAgent, text, key: `k${Date.now()}` });
-    if (!AGENT_PAGES.includes(page)) setPage(pageAgent);
+    setKickoff({ agent: 'strategy', text, key: `k${Date.now()}` });
   };
 
   const handleNavigate = useCallback((p: Page) => {
@@ -822,8 +821,14 @@ export default function App() {
       conversations={conversations} activeConvId={activeConvId} onOpenConversation={openConversation} onNewConversation={newConversation}
       suppressRightPanel={starterMode || scriptPanelOpen} onAction={startAgentTask}>
       <Suspense fallback={null}>
-        {!starterMode && !isAgentProductionSession() && <GlobalAssistant
+        {!isAgentProductionSession() && <GlobalAssistant
+          primaryEntry
+          key={`assistant:${session.tenant?.id || session.user.tenantId}:${session.user.id}`}
           page={page}
+          persistenceScope={{
+            tenantId: session.tenant?.id || session.user.tenantId,
+            userId: session.user.id,
+          }}
           restore={restore}
           kickoff={kickoff}
           suppressForRightSidebar={scriptPanelOpen || conversation !== null || page === 'agentMonitor'}

@@ -6,14 +6,9 @@ import {
   type StarterWorkspaceAction,
   type StarterWorkspaceCommandInput,
 } from '../../lib/starterWorkspace';
+import StarterGuidedSetup, { type GuidedPlanLimits } from './StarterGuidedSetup';
 
 const COMPOSER_COMMANDS = new Set(['confirm_initial_setup', 'confirm_quote_rule', 'submit_quote_inquiry', 'submit_orchestrator_input', 'resolve_decision', 'cancel_run', 'submit_publication_evidence', 'submit_quote_send_evidence']);
-
-const EMPTY_SETUP = {
-  companyName: '', industry: '', primaryBusiness: '', focusProducts: '',
-  targetMarkets: '', customerProfile: '', primaryPlatform: 'tiktok',
-  primaryLanguage: 'en', constraints: '',
-};
 
 const EMPTY_QUOTE_RULE = {
   sku: '', currency: 'USD', unitPrice: '', unitCost: '', moq: '100', incoterm: 'FOB',
@@ -30,6 +25,17 @@ interface Props {
   targetId: string;
   pendingCommand: string | null;
   onExecute: (input: StarterWorkspaceCommandInput) => Promise<unknown>;
+  setupPlanLimits?: GuidedPlanLimits;
+  setupStartAction?: StarterWorkspaceAction | null;
+}
+
+function stableSetupActionKey(value: string): string {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(16).padStart(8, '0');
 }
 
 function actionStyle(kind: StarterWorkspaceAction['kind']): string {
@@ -38,7 +44,21 @@ function actionStyle(kind: StarterWorkspaceAction['kind']): string {
   return 'border-border bg-white text-text-secondary hover:bg-surface-2 hover:text-text-primary';
 }
 
-export default function WorkspaceActionButtons({ actions, targetId, pendingCommand, onExecute }: Props) {
+const DEFAULT_SETUP_PLAN_LIMITS: GuidedPlanLimits = {
+  contentArtifactCountPerCycle: 5,
+  primaryPlatformCount: 4,
+  budgetCnyPerCycle: 100,
+  contentBudgetCnyPerCycle: 100,
+};
+
+export default function WorkspaceActionButtons({
+  actions,
+  targetId,
+  pendingCommand,
+  onExecute,
+  setupPlanLimits = DEFAULT_SETUP_PLAN_LIMITS,
+  setupStartAction = null,
+}: Props) {
   const [composerAction, setComposerAction] = useState<StarterWorkspaceAction | null>(null);
   const [input, setInput] = useState('');
   const [decision, setDecision] = useState<'approved' | 'rejected'>('approved');
@@ -46,7 +66,6 @@ export default function WorkspaceActionButtons({ actions, targetId, pendingComma
   const [platformPostId, setPlatformPostId] = useState('');
   const [quoteChannel, setQuoteChannel] = useState('');
   const [quoteReference, setQuoteReference] = useState('');
-  const [setup, setSetup] = useState(EMPTY_SETUP);
   const [quoteRule, setQuoteRule] = useState(EMPTY_QUOTE_RULE);
   const [quoteInquiry, setQuoteInquiry] = useState(EMPTY_QUOTE_INQUIRY);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
@@ -54,41 +73,34 @@ export default function WorkspaceActionButtons({ actions, targetId, pendingComma
 
   if (actions.length === 0) return null;
 
-  const execute = async (selected: StarterWorkspaceAction, payload?: Record<string, unknown>) => {
+  const execute = async (
+    selected: StarterWorkspaceAction,
+    payload?: Record<string, unknown>,
+    options: { closeComposer?: boolean; idempotencyKey?: string } = {},
+  ) => {
     if (!selected.command) return;
     if (selected.kind === 'danger' && !window.confirm(`确认“${selected.label}”？系统会先安全处理在途任务。`)) return;
     const commandTargetId = starterWorkspaceCommandTargetId(selected.command, targetId);
     await onExecute({
       command: selected.command,
+      ...(options.idempotencyKey ? { idempotencyKey: options.idempotencyKey } : {}),
       ...(commandTargetId ? { targetId: commandTargetId } : {}),
       expectedVersion: selected.expectedVersion || undefined,
       ...(payload && Object.keys(payload).length > 0 ? { payload } : {}),
     });
-    setComposerAction(null);
+    if (options.closeComposer !== false) setComposerAction(null);
     setInput('');
     setDecision('approved');
     setPublicUrl('');
     setPlatformPostId('');
     setQuoteChannel('');
     setQuoteReference('');
-    setSetup(EMPTY_SETUP);
     setQuoteRule(EMPTY_QUOTE_RULE);
     setQuoteInquiry(EMPTY_QUOTE_INQUIRY);
   };
 
   const composerPayload = (): Record<string, unknown> => {
     if (!composerAction) return {};
-    if (composerAction.command === 'confirm_initial_setup') return {
-      companyName: setup.companyName.trim(),
-      industry: setup.industry.trim(),
-      primaryBusiness: setup.primaryBusiness.trim(),
-      focusProducts: setup.focusProducts.trim(),
-      targetMarkets: setup.targetMarkets.trim(),
-      customerProfile: setup.customerProfile.trim(),
-      primaryPlatform: setup.primaryPlatform,
-      primaryLanguage: setup.primaryLanguage,
-      constraints: setup.constraints.split('\n').map(item => item.trim()).filter(Boolean).slice(0, 10),
-    };
     if (composerAction.command === 'submit_orchestrator_input') return { input: input.trim() };
     if (composerAction.command === 'confirm_quote_rule') return {
       sku: quoteRule.sku.trim(),
@@ -129,8 +141,6 @@ export default function WorkspaceActionButtons({ actions, targetId, pendingComma
   };
 
   const composerReady = !composerAction ? false
-    : composerAction.command === 'confirm_initial_setup'
-      ? [setup.companyName, setup.industry, setup.primaryBusiness, setup.focusProducts, setup.targetMarkets, setup.customerProfile].every(value => Boolean(value.trim()))
     : composerAction.command === 'confirm_quote_rule'
       ? [quoteRule.sku, quoteRule.unitPrice, quoteRule.unitCost, quoteRule.moq, quoteRule.paymentTerm, quoteRule.sourceReference].every(value => Boolean(value.trim()))
         && [quoteRule.moq, quoteRule.taxRateBps, quoteRule.leadTimeDays, quoteRule.validDays, quoteRule.minMarginBps].every(value => Number.isSafeInteger(Number(value)))
@@ -195,7 +205,7 @@ export default function WorkspaceActionButtons({ actions, targetId, pendingComma
         <div className="mt-3 rounded-lg border border-border bg-surface-2 p-3">
           <div className="flex items-center justify-between gap-3">
             <p className="text-xs font-bold text-text-primary">{composerAction.label}</p>
-            <button type="button" onClick={() => { setComposerAction(null); setInput(''); setDecision('approved'); setPublicUrl(''); setPlatformPostId(''); setQuoteChannel(''); setQuoteReference(''); setSetup(EMPTY_SETUP); setQuoteRule(EMPTY_QUOTE_RULE); setQuoteInquiry(EMPTY_QUOTE_INQUIRY); }} aria-label="关闭补充输入" className="text-text-muted hover:text-text-primary">
+            <button type="button" onClick={() => { setComposerAction(null); setInput(''); setDecision('approved'); setPublicUrl(''); setPlatformPostId(''); setQuoteChannel(''); setQuoteReference(''); setQuoteRule(EMPTY_QUOTE_RULE); setQuoteInquiry(EMPTY_QUOTE_INQUIRY); }} aria-label="关闭补充输入" className="text-text-muted hover:text-text-primary">
               <X size={14} aria-hidden="true" />
             </button>
           </div>
@@ -206,18 +216,28 @@ export default function WorkspaceActionButtons({ actions, targetId, pendingComma
             </div>
           )}
           {composerAction.command === 'confirm_initial_setup' ? (
-            <div className="mt-3 grid gap-3 sm:grid-cols-2">
-              <p className="sm:col-span-2 text-[11px] leading-relaxed text-text-muted">只需确认一次。灵小枢会据此固化一个品牌、一个主推产品和一套安全执行边界；不会连接发布账号或开启自动外发。</p>
-              <label className="grid gap-1 text-[11px] font-semibold text-text-secondary">企业名称<input value={setup.companyName} onChange={event => setSetup(current => ({ ...current, companyName: event.target.value }))} maxLength={120} className="border border-border bg-white px-3 py-2 text-sm font-normal text-text-primary" /></label>
-              <label className="grid gap-1 text-[11px] font-semibold text-text-secondary">所属行业<input value={setup.industry} onChange={event => setSetup(current => ({ ...current, industry: event.target.value }))} maxLength={120} className="border border-border bg-white px-3 py-2 text-sm font-normal text-text-primary" /></label>
-              <label className="grid gap-1 text-[11px] font-semibold text-text-secondary sm:col-span-2">主要业务<input value={setup.primaryBusiness} onChange={event => setSetup(current => ({ ...current, primaryBusiness: event.target.value }))} maxLength={500} placeholder="例如：保温杯 OEM / ODM" className="border border-border bg-white px-3 py-2 text-sm font-normal text-text-primary" /></label>
-              <label className="grid gap-1 text-[11px] font-semibold text-text-secondary">本轮唯一主推产品<input value={setup.focusProducts} onChange={event => setSetup(current => ({ ...current, focusProducts: event.target.value }))} maxLength={500} className="border border-border bg-white px-3 py-2 text-sm font-normal text-text-primary" /></label>
-              <label className="grid gap-1 text-[11px] font-semibold text-text-secondary">目标市场<input value={setup.targetMarkets} onChange={event => setSetup(current => ({ ...current, targetMarkets: event.target.value }))} maxLength={300} placeholder="例如：德国" className="border border-border bg-white px-3 py-2 text-sm font-normal text-text-primary" /></label>
-              <label className="grid gap-1 text-[11px] font-semibold text-text-secondary sm:col-span-2">核心客户<input value={setup.customerProfile} onChange={event => setSetup(current => ({ ...current, customerProfile: event.target.value }))} maxLength={500} placeholder="例如：礼品经销商" className="border border-border bg-white px-3 py-2 text-sm font-normal text-text-primary" /></label>
-              <label className="grid gap-1 text-[11px] font-semibold text-text-secondary">首发平台<select value={setup.primaryPlatform} onChange={event => setSetup(current => ({ ...current, primaryPlatform: event.target.value }))} className="border border-border bg-white px-3 py-2 text-sm font-normal text-text-primary"><option value="tiktok">TikTok</option><option value="instagram">Instagram</option><option value="facebook">Facebook</option><option value="youtube">YouTube</option></select></label>
-              <label className="grid gap-1 text-[11px] font-semibold text-text-secondary">内容语言<select value={setup.primaryLanguage} onChange={event => setSetup(current => ({ ...current, primaryLanguage: event.target.value }))} className="border border-border bg-white px-3 py-2 text-sm font-normal text-text-primary"><option value="en">English</option><option value="de">Deutsch</option><option value="fr">Français</option><option value="es">Español</option><option value="pt">Português</option></select></label>
-              <label className="grid gap-1 text-[11px] font-semibold text-text-secondary sm:col-span-2">不能违反的规则（可选，每行一条）<textarea value={setup.constraints} onChange={event => setSetup(current => ({ ...current, constraints: event.target.value }))} rows={2} maxLength={2400} placeholder="例如：不得编造材质、认证和交期" className="resize-y border border-border bg-white px-3 py-2 text-sm font-normal leading-relaxed text-text-primary" /></label>
-            </div>
+            <StarterGuidedSetup
+              limits={setupPlanLimits}
+              busy={Boolean(pendingCommand)}
+              startAvailable={Boolean(setupStartAction?.command && !setupStartAction.disabledReason)}
+              startUnavailableReason={setupStartAction?.disabledReason || (!setupStartAction ? '当前工作区未下发任务启动操作' : undefined)}
+              onConfirm={async (payload, startInput) => {
+                if (!setupStartAction?.command || setupStartAction.disabledReason) {
+                  throw new Error(setupStartAction?.disabledReason || 'starter_198_orchestrator_start_unavailable');
+                }
+                const key = stableSetupActionKey(`${JSON.stringify(payload)}\n${startInput}`);
+                // Submit the real orchestrator goal first. If setup is still incomplete,
+                // the backend persists it as waiting_user; confirm_initial_setup then
+                // resumes that same goal through the durable initial-setup command.
+                await execute(setupStartAction, { input: startInput }, {
+                  closeComposer: false,
+                  idempotencyKey: `guided-plan-start-${key}`,
+                });
+                return execute(composerAction, payload, {
+                  idempotencyKey: `guided-plan-setup-${key}`,
+                });
+              }}
+            />
           ) : composerAction.command === 'confirm_quote_rule' ? (
             <div className="mt-3 grid gap-3 sm:grid-cols-2">
               <p className="sm:col-span-2 text-[11px] leading-relaxed text-text-muted">首次确认后形成不可变规则版本。灵小售只做确定性计算，AI 不能改价格、折扣、账期或交期；更新规则会生成新版本。</p>
@@ -268,7 +288,7 @@ export default function WorkspaceActionButtons({ actions, targetId, pendingComma
               />
             </>
           )}
-          <div className="mt-2 flex justify-end">
+          {composerAction.command !== 'confirm_initial_setup' && <div className="mt-2 flex justify-end">
             <button
               type="button"
               disabled={!composerReady || Boolean(pendingCommand)}
@@ -278,7 +298,7 @@ export default function WorkspaceActionButtons({ actions, targetId, pendingComma
               {pendingCommand ? <Loader2 size={13} className="animate-spin" aria-hidden="true" /> : <Send size={13} aria-hidden="true" />}
               提交给灵小枢
             </button>
-          </div>
+          </div>}
         </div>
       )}
     </div>
