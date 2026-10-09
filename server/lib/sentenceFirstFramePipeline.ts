@@ -8,7 +8,7 @@ import { cueFirstFrameTime, type DigitalHumanReferenceCue } from '../../src/lib/
 import { readLocalMaterials, saveLocalMaterials, type MaterialRecord } from './materialLibrary.js';
 import { tenantAssetDir, tenantAssetRelativePath } from './assetAccess.js';
 import { objectStorageDownload } from '../storage/objectStorage.js';
-import { assertPersonCueShotBoundaries, hardSceneCutTimes } from './sentenceCueSceneCuts.js';
+import { assertPersonCueShotBoundaries, hardSceneCutTimes, splitPersonCuesAtHardCuts } from './sentenceCueSceneCuts.js';
 
 const run = promisify(execFile);
 
@@ -22,6 +22,7 @@ export async function extractSentenceFirstFrames(input: {
   saveMaterials?: (items: MaterialRecord[]) => void;
   downloadObject?: typeof objectStorageDownload;
   sourceMaterial?: MaterialRecord;
+  autoSplitPhysicalCuts?: boolean;
 }): Promise<DigitalHumanReferenceCue[]> {
   if (!input.cues.length) throw new Error('逐句首帧提取缺少口播时间轴');
   const materials = (input.materials || readLocalMaterials)();
@@ -51,10 +52,12 @@ export async function extractSentenceFirstFrames(input: {
   }
   const ffmpeg = input.ffmpegPath || String(ffmpegStatic || '');
   if (!ffmpeg) throw new Error('逐句首帧提取缺少 FFmpeg');
-  assertPersonCueShotBoundaries(input.cues, await hardSceneCutTimes(ffmpeg, sourcePath));
+  const cuts = await hardSceneCutTimes(ffmpeg, sourcePath);
+  const preparedCues = input.autoSplitPhysicalCuts ? splitPersonCuesAtHardCuts(input.cues, cuts) : input.cues;
+  assertPersonCueShotBoundaries(preparedCues, cuts);
   const created: MaterialRecord[] = [];
     const next: DigitalHumanReferenceCue[] = [];
-    for (const cue of input.cues) {
+    for (const cue of preparedCues) {
       if (cue.personShot === false) { next.push({ ...cue, sourceFirstFrame: undefined, targetFirstFrame: undefined }); continue; }
       const time = cueFirstFrameTime(cue);
       const digest = createHash('sha256').update(`${source.id}:${source.contentSha256 || source.objectEtag || source.file || source.objectKey}:${cue.id}:${time}`).digest('hex');

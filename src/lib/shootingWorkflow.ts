@@ -7,6 +7,29 @@ export interface ShootingSlot {
   duration: number;
 }
 
+/** Rebuild the editable storyboard timeline from durable production shots.
+ * Viral replication can have many visual cuts under one spoken sentence, so
+ * reparsing narration blocks must not collapse those cuts during rendering. */
+export function storyboardTimelineFromShootingSlots(previous: ShootingSlot[]): Array<{
+  id: string; time: string; start: number; end: number; title: string; detail: string;
+}> {
+  let cursor = 0;
+  return previous.map((shot, index) => {
+    const duration = Number.isFinite(shot.duration) && shot.duration > 0 ? shot.duration : 0.5;
+    const start = cursor;
+    const end = start + duration;
+    cursor = end;
+    const detail = String(shot.detail || '').trim();
+    const compact = detail.replace(/\s+/g, ' ');
+    const title = compact.match(/(?:景别|Shot)\s*[：:]\s*([^；;。]+)/i)?.[1]
+      || compact.match(/(?:画面|Visual)\s*[：:]\s*([^；;。]+)/i)?.[1]
+      || compact.split(/[；;。]/)[0]
+      || `分镜 ${index + 1}`;
+    return { id: shot.slotId, time: `${start.toFixed(2)}s-${end.toFixed(2)}s`, start, end,
+      title: title.trim().slice(0, 24), detail: detail || `分镜 ${index + 1}` };
+  });
+}
+
 export interface ScriptGapTask {
   id: string;
   origin: 'script_gap';

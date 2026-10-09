@@ -242,7 +242,8 @@ export function createStudioAvatarProductionRouter(store: DataStore) {
     prepareSentenceFirstFrames: input => extractSentenceFirstFrames(input),
     generateSentenceFirstFrameDrafts: input=>runProductionQwenFirstFrameDrafts(input),
     runSentenceReplication: input => runProductionSentenceReplication({ ...input, prepareMotionGuide: async value => {
-      const prepared = await prepareLocalSeedanceMotionGuide({ tenantId:value.tenantId, cueId:value.cue.id, sourceVideoPath:value.sourceVideoPath });
+      const prepared = await prepareLocalSeedanceMotionGuide({ tenantId:value.tenantId, cueId:value.cue.id, sourceVideoPath:value.sourceVideoPath,
+        padToSeconds: Number(value.cue.generationDurationSeconds || 0) });
       return { url:prepared.url, identityRemoved:prepared.identityRemoved, motionOnly:prepared.motionOnly };
     } }),
     toolUnavailableReasons: { ...(runway ? {} : { runway_act_two: runwayReadiness.reason }), ...(!fastHead ? { local_head_pipeline: !runway ? runwayReadiness.reason : '严格人物替换尚未启用，需配置 DIGITAL_HUMAN_FAST_HEAD_ENABLED=true 和 DIGITAL_HUMAN_FAST_HEAD_PYTHON' } : {}),

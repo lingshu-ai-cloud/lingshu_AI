@@ -1,3 +1,5 @@
+import { localFlowRenderRecovery, localFlowRenderInputIdentity } from '../lib/localFlowRenderRecovery';
+import { canOpenWorkbenchRenderSettings, workbenchExportBlockReason } from '../lib/replicationWorkbenchNavigation';
 import { digitalHumanQualityState } from '../lib/digitalHumanQuality';
 import StudioReviewIssueActions from './studio/StudioReviewIssueActions';
 import { applyCaptionTextEdits, sourceCaptionEditKey, subtitleReviewCues } from '../lib/subtitleReview';
@@ -46,7 +48,7 @@ import { isSocialArtifactMediaSourceEligible } from '../lib/socialContentArtifac
 import { contentCreationDemoMaterialIds, contentCreationTestBypassEnabled } from '../lib/contentCreationTestBypass';
 import { useStudioSocialArtifactSubmission } from './socialContent/useStudioSocialArtifactSubmission';
 import { useStudioSocialTaskHydration, socialTaskReferenceKickoff, socialTaskShotMaterialBindings, type StudioSocialShotMaterialBinding, type StudioSocialTaskSeed } from './socialContent/useStudioSocialTaskHydration';
-import { reconcileShootingSlots, shootingRefillTarget, transcriptMatches, type ShootingSlot } from '../lib/shootingWorkflow';
+import { reconcileShootingSlots, shootingRefillTarget, storyboardTimelineFromShootingSlots, transcriptMatches, type ShootingSlot } from '../lib/shootingWorkflow';
 import { matchStoryboardEnvironmentImage, retainStoryboardReferenceImages } from '../lib/storyboardEnvironmentReference';
 import { storyboardFactoryReferenceRequired } from '../../shared/storyboardFactoryReference';
 import { inferStoryboardTopic, STORYBOARD_TOPIC_LABELS, type StoryboardTopic } from '../lib/storyboardTopic';
@@ -3253,6 +3255,9 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
   const [manualHandoffBusy, setManualHandoffBusy] = useState<StudioManualHandoff['action'] | ''>('');
   const [manualHandoffNotice, setManualHandoffNotice] = useState('');
   const [languageRenderOutputs, setLanguageRenderOutputs] = useState<Record<string, LanguageRenderOutput>>({});
+  const [localFlowRecoveryEpoch, setLocalFlowRecoveryEpoch] = useState(0);
+  const localFlowTestRef = useRef<Record<string, any> | null>(null);
+  const localFlowRecoveryRef = useRef<{ spec: Record<string, any>; projectId: string } | null>(null);
   const [languageRenderVersions, setLanguageRenderVersions] = useState<Record<string, LanguageRenderGeneration[]>>({});
   const [activeRenderCombinationKey, setActiveRenderCombinationKey] = useState('');
   const [batchRenderingLangs, setBatchRenderingLangs] = useState(false);
@@ -3773,7 +3778,11 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
   const materialCoverageReady = effectiveSelectedDuration >= Math.max(1, duration * 0.85);
   const matNames = selectedClips.map(c => c.name);
   const storyboardSlots = useMemo(() => {
-    const parsed = parseStoryboardSlots(script, duration);
+    const parsedFromScript = parseStoryboardSlots(script, duration);
+    const persistedReplicationShots = mode === 'clone' && shootingSlotsRef.current.length > parsedFromScript.length
+      ? storyboardTimelineFromShootingSlots(shootingSlotsRef.current)
+      : [];
+    const parsed = persistedReplicationShots.length ? persistedReplicationShots : parsedFromScript;
     const activeAudioDuration = voiceoverMode === 'ai'
       ? voiceoverAudios[activeVoiceLang]?.duration || 0
       : voiceoverMode === 'upload' ? voiceoverDur : 0;
@@ -3795,6 +3804,10 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     const base = retimed ? parsed.map((slot, index) => ({ ...slot, ...retimed[index],
       time: `${retimed[index].start.toFixed(1)}s-${retimed[index].end.toFixed(1)}s` }))
       : fitStoryboardSlotsToDuration(parsed, activeAudioDuration);
+    // These durations already describe the accepted production cuts. Replacing
+    // them with a candidate file's full duration changes the render identity
+    // and can make the page silently diverge from the exported 17-shot film.
+    if (persistedReplicationShots.length) return base;
     return followAdoptedDigitalHumanSlotDurations(base, storyboardAssignments, shotProductions,
       new Map(materials.filter(item=>item.type==='video').map(item=>[item.id,item.duration])), activeAssemblyId,
       Object.fromEntries(shootingSlotsRef.current.map(item => [item.slotId, item.id])),
@@ -4637,6 +4650,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     () => storyboardSlots.map(slot => storyboardAssignments[slot.id]).filter((id): id is string => Boolean(id && materialById.has(id))),
     [storyboardAssignments, storyboardSlots, materialById],
   );
+  const assignedOrderedIdsKey = assignedOrderedIds.join('\u0000');
   const assignedCount = assignedOrderedIds.length;
   const selectedProductOptions = useMemo(
     () => selectedProductIds.map(id => productOptions.find(option => option.id === id)).filter((option): option is ProductOption => Boolean(option)),
@@ -4941,7 +4955,11 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
       const deduped = [...new Set(assignedOrderedIds)];
       return current.length === deduped.length && current.every((id, index) => id === deduped[index]) ? current : deduped;
     });
-  }, [assignedOrderedIds]);
+  // Several upstream collections are normalized during project hydration and may
+  // receive a new array identity even when the assigned material ids did not
+  // change. Depend on their value signature so this synchronizer cannot enqueue
+  // a state update on every render.
+  }, [assignedOrderedIdsKey]);
   const isLast = stepIdx === activeSteps.length - 1;
   const toggleProductSelection = (id: string) => {
     setSelectedProductIds(current => {
@@ -5199,6 +5217,12 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     targetDurationEdited: true,
     trimRangeEdited: true,
   });
+  const digitalHumanEditSyncKey = storyboardSlots.map(slot => {
+    const materialId = storyboardAssignments[slot.id] || '';
+    const clip = materialById.get(materialId);
+    const production = productionFor(slot);
+    return [slot.id, materialId, clip?.duration || 0, clip?.sourceType || '', production.adoptedId || ''].join(':');
+  }).join('|');
   useEffect(() => {
     setClipEdits(current => {
       let next = current;
@@ -5208,14 +5232,17 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
         if (!clip || clip.type !== 'video' || !(adoptedDigitalHumanCandidate(slot, materialId) || ['heygen', 'digital-human-sentence-video', 'digital_human'].includes(clip.sourceType || ''))) continue;
         const key = slotClipEditKey(slot.id, materialId);
         const existing = current[key];
-        if (existing?.trimStart === 0 && existing.trimEnd === clip.duration && existing.speed === 1
-          && existing.targetDuration === clip.duration && existing.targetDurationEdited && existing.trimRangeEdited) continue;
+        // Generation/adoption writes the full-length edit explicitly. This is
+        // only a migration fallback for older projects with no edit at all;
+        // replacing an existing cut here fights project hydration/autosave and
+        // can also destroy a deliberately persisted timeline duration.
+        if (existing) continue;
         if (next === current) next = { ...current };
         next[key] = digitalHumanFullLengthEdit(clip, slot);
       }
       return next;
     });
-  }, [materialById, shotProductions, storyboardAssignments, storyboardSlots]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [digitalHumanEditSyncKey]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     const firstSlot = storyboardSlots[0];
     const hookClip = hookMaterialId ? materialById.get(hookMaterialId) : undefined;
@@ -5368,6 +5395,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
       }
       if (!clip) return null;
       return {
+        production,
         clipId: clip.id,
         name: clip.name,
         type: clip.type,
@@ -5538,7 +5566,9 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     const current: StoryboardAssembly = { id: activeAssemblyId, name: assemblyName, assignments: storyboardAssignments, sourcePlans: storyboardSourcePlans, selected };
     return storyboardAssemblies.map(item => item.id === activeAssemblyId ? current : item);
   }, [activeAssemblyId, assemblyName, selected, storyboardAssemblies, storyboardAssignments, storyboardSourcePlans]);
-  const scriptForRenderLanguage = (code: string) => String(voiceDrafts[code] || (code === activeVoiceLang ? activeSpokenScript : '')).trim();
+  const scriptForRenderLanguage = (code: string) => String(voiceDrafts[code]
+    || (code === activeVoiceLang ? activeSpokenScript : '')
+    || (voiceoverMode === 'none' && code === activeVoiceLang ? script : '')).trim();
   const renderScriptLanguages = () => Array.from(new Set([...voiceLangs, activeVoiceLang].filter(Boolean)))
     .filter(code => Boolean(scriptForRenderLanguage(code)))
     .filter(code => {
@@ -5784,10 +5814,10 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
       let cursor = 0;
       outputTimeline = storyboardSlots.map((slot, index) => {
         const targetStart = cursor, targetDuration = outputVoiceoverDur * weights[index] / total; cursor += targetDuration;
-        if (choices[index] === 'avatar') return { clipId: digitalHumanJob.outputMaterialId || digitalHumanJob.id, name: 'HeyGen 数字人', type: 'video' as const, url: digitalHumanJob.outputUrl!, poster: undefined, trimStart: targetStart, trimEnd: cursor, speed: 1, cropMode: 'contain' as 'cover' | 'contain', focusX: .5, focusY: .5, targetStart, targetEnd: cursor, targetDuration };
+        if (choices[index] === 'avatar') return { production: productionFor(slot), clipId: digitalHumanJob.outputMaterialId || digitalHumanJob.id, name: 'HeyGen 数字人', type: 'video' as const, url: digitalHumanJob.outputUrl!, poster: undefined, trimStart: targetStart, trimEnd: cursor, speed: 1, cropMode: 'contain' as 'cover' | 'contain', focusX: .5, focusY: .5, targetStart, targetEnd: cursor, targetDuration };
         const original = outputTimeline[index];
         if (!original?.url || original.clipId === digitalHumanJob.outputMaterialId) throw new Error(`第 ${index + 1} 镜缺少指定素材，不能使用数字人顶替`);
-        return { ...original, targetStart, targetEnd: cursor, targetDuration };
+        return { ...original, production: productionFor(slot), targetStart, targetEnd: cursor, targetDuration };
       });
     }
     const validOutputStoryboard = storyboardSlots.length > 0
@@ -7659,8 +7689,10 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
         : filePath || renderOutputPath;
       const outputPath = selectedOutputPath || (threeStepWorkflow ? null : await goPreview());
       if (!outputPath) throw Error('成片尚未生成');
-      if (threeStepWorkflow && reviewedRenderPath !== outputPath) throw Error('请先完整检查并确认当前成片');
-      if (threeStepWorkflow && (!projectQualityRecord || projectQualityRecord.renderPath !== outputPath)) throw Error('当前版本尚未重新质检，请先点击“重新质检并签发”');
+      if (threeStepWorkflow) {
+        const blocker = workbenchExportBlockReason({ replication: mode === 'clone', currentOutputPath: outputPath, reviewedPath: reviewedRenderPath, qualityRecordPath: projectQualityRecord?.renderPath });
+        if (blocker) throw Error(blocker);
+      }
       const response = await fetch('/api/overseas/studio/library/download-file', { method: 'POST', headers: { ...authHeader(), 'Content-Type': 'application/json' }, body: JSON.stringify({ path: outputPath }) });
       if (!response.ok) throw Error('文件不可下载，请检查文件是否存在或已同步到服务器');
       const url = URL.createObjectURL(await response.blob()), link = document.createElement('a');
@@ -8845,6 +8877,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
       },
     };
     return ({
+    ...(localFlowTestRef.current ? { localFlowTest: localFlowTestRef.current } : {}),
     mode, contentMode, posterStyle, platform, ratio, duration, lang, provider,
     workflowRunId: projectWorkflowContext?.runId || '', workflowTaskId: projectWorkflowContext?.taskId || '', workflowTaskKey: projectWorkflowContext?.taskKey || '',
     replicationSpeechDraft, replicationSpeechSpeed, activeStepId: step, activeStoryboardSlotId, canvasView, scriptStageTab,
@@ -8880,6 +8913,8 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
   };
 
   const applySpec = (savedSpec: Record<string, unknown>) => {
+    localFlowTestRef.current = (savedSpec as any).localFlowTest?.enabled === true ? (savedSpec as any).localFlowTest : null;
+    if (!localFlowTestRef.current) localFlowRecoveryRef.current = null;
     const analysisResults = savedSpec.analysisResults && typeof savedSpec.analysisResults === 'object'
       ? savedSpec.analysisResults as Record<string, unknown>
       : {};
@@ -9414,6 +9449,16 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     } catch (error) { if (currentProjectRef.current === requestedProject) setProductionError(error instanceof Error ? error.message : '供应商账单核对失败'); }
     finally { productionRefreshInFlight.current.delete(id); setProductionRefreshingIds(current => current.filter(item => item !== id)); }
   };
+  const productionJobAdoptionSyncKey = JSON.stringify({
+    projectId,
+    jobs: productionJobs.map(job => [job.id, job.projectId, job.status, job.materialId, job.updatedAt, job.assemblyId, job.shotId]),
+    slots: shootingSlots.map(slot => [slot.id, slot.slotId]),
+    storyboard: storyboardSlots.map(slot => slot.id),
+    materials: productionJobs.map(job => {
+      const clip = job.materialId ? materialById.get(job.materialId) : undefined;
+      return [job.materialId, clip?.duration || 0];
+    }),
+  });
   useEffect(() => {
     setShotProductions(current => {
       let next = current;
@@ -9441,7 +9486,17 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     if (!pending.length) return;
     const timer = window.setTimeout(() => { void Promise.all(pending.map(job => refreshProductionJob(job.id))); }, 10000);
     return () => window.clearTimeout(timer);
-  }, [productionJobs, projectId, shootingSlots, storyboardSlots, materialById]);
+  }, [productionJobAdoptionSyncKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  const productionExecutionAdoptionSyncKey = JSON.stringify({
+    projectId,
+    executions: productionExecutions.map(execution => [execution.id, execution.projectId, execution.provider, execution.state, execution.materialId, execution.updatedAt, execution.assemblyId, execution.shotId]),
+    slots: shootingSlots.map(slot => [slot.id, slot.slotId]),
+    storyboard: storyboardSlots.map(slot => slot.id),
+    materials: productionExecutions.map(execution => {
+      const clip = execution.materialId ? materialById.get(execution.materialId) : undefined;
+      return [execution.materialId, clip?.duration || 0];
+    }),
+  });
   useEffect(() => {
     setShotProductions(current => {
       let next = current;
@@ -9464,7 +9519,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
       }
       return next;
     });
-  }, [productionExecutions, projectId, shootingSlots, storyboardSlots, materialById]);
+  }, [productionExecutionAdoptionSyncKey]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     const jobIds = [...new Set(productionExecutions.filter(item => item.projectId === projectId && item.provider.startsWith('sentence_first_frame')).map(item => item.jobId).filter(Boolean))];
     const missing = jobIds.filter(id => !productionSentenceResults[id]);
@@ -9870,6 +9925,8 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
   };
 
   const loadProject = (p: StudioProject) => {
+    localFlowTestRef.current = (p.spec as any)?.localFlowTest?.enabled === true ? (p.spec as any).localFlowTest : null;
+    localFlowRecoveryRef.current = localFlowTestRef.current ? { spec: p.spec, projectId: p.id } : null;
     if (p.status !== 'template') studioApi.adoptProjectRevision(p);
     projectHydrationPendingRef.current = true;
     applySpec(p.status === 'template' ? withoutStudioWorkflowContext(p.spec) : p.spec);
@@ -9970,6 +10027,11 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
         }
         loadProject(project);
         setModeNotice(`已打开历史创作“${project.title}”。`);
+        window.setTimeout(() => {
+          if (disposed) return;
+          projectHydrationPendingRef.current = false;
+          setLocalFlowRecoveryEpoch(value => value + 1);
+        }, localFlowTestRef.current ? 5_000 : 0);
       }).catch(() => {
         projectHydrationPendingRef.current = false;
         setModeNotice('历史创作读取失败，请稍后重试。');
@@ -14111,6 +14173,20 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
   const selectedRenderableVersion = renderableVideoVersions.find(item => item.key === activeRenderCombinationKey)
     || renderableVideoVersions.find(item => item.key === fallbackRenderCombinationKey)
     || renderableVideoVersions[0];
+  useEffect(() => {
+    const pending = localFlowRecoveryRef.current;
+    if (!pending || pending.projectId !== projectId) return;
+    if (projectHydrationPendingRef.current) return;
+    if (!renderableVideoVersions.length) return;
+    const recovered = localFlowRenderRecovery(pending.spec, pending.projectId, renderableVideoVersions, location.hostname);
+    localFlowRecoveryRef.current = null;
+    if (!recovered) return;
+    const outputs = { ...languageRenderOutputs, [recovered.key]: recovered.output };
+    setLanguageRenderOutputs(outputs);
+    const nextLocalFlowTest = { ...localFlowTestRef.current, renderRecovery: { ...localFlowTestRef.current?.renderRecovery, inputIdentity: localFlowRenderInputIdentity(collectSpec()) } };
+    localFlowTestRef.current = nextLocalFlowTest;
+    void saveProject('draft', { silent: true, specOverrides: { languageRenderOutputs: outputs, localFlowTest: nextLocalFlowTest } });
+  }, [projectId, renderableVideoVersions, languageRenderOutputs, localFlowRecoveryEpoch]);
   const selectedStoredOutput = selectedRenderableVersion ? languageRenderOutputs[selectedRenderableVersion.key] : undefined;
   const selectedRenderableOutput = currentRenderOutput(selectedRenderableVersion, selectedStoredOutput);
   const selectedOutputStale = Boolean(selectedStoredOutput?.status === 'done' && selectedStoredOutput.path && !selectedRenderableOutput);
@@ -15447,8 +15523,8 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
         <div className="flex justify-between gap-3"><span className="text-text-muted">配乐</span><span className="truncate font-bold text-text-primary">{selectedBgmTrack?.name || '不配乐'}</span></div>
         <div className="flex justify-between gap-3"><span className="text-text-muted">封面</span><span className="truncate font-bold text-text-primary">{coverClip?.name || '沿用首帧'}</span></div>
       </div>
-      {threeStepWorkflow && workbenchHasFormalVideo && <label className="flex items-start gap-2 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-[11px] leading-5 text-emerald-950"><input type="checkbox" className="mt-1" checked={currentRenderReviewed} onChange={event => void updateRenderAcceptance(event.target.checked)} /><span>我已检查中间播放器中的画面、口播、字幕、配乐和结尾，同意导出当前版本。验收结果会保存到“我的创作”的历史素材。</span></label>}
-      {threeStepWorkflow && currentRenderReviewed && <div className={`rounded-xl border p-3 text-[11px] ${currentProjectQualityRecord ? 'border-emerald-200 bg-emerald-50' : 'border-amber-300 bg-amber-50'}`} aria-label="成片重新质检">
+      {threeStepWorkflow && mode !== 'clone' && workbenchHasFormalVideo && <label className="flex items-start gap-2 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-[11px] leading-5 text-emerald-950"><input type="checkbox" className="mt-1" checked={currentRenderReviewed} onChange={event => void updateRenderAcceptance(event.target.checked)} /><span>我已检查中间播放器中的画面、口播、字幕、配乐和结尾，同意导出当前版本。验收结果会保存到“我的创作”的历史素材。</span></label>}
+      {threeStepWorkflow && mode !== 'clone' && currentRenderReviewed && <div className={`rounded-xl border p-3 text-[11px] ${currentProjectQualityRecord ? 'border-emerald-200 bg-emerald-50' : 'border-amber-300 bg-amber-50'}`} aria-label="成片重新质检">
         <p className="font-black text-text-primary">{currentProjectQualityRecord ? '当前版本质检已签发' : '当前版本等待重新质检'}</p>
         <p className="mt-1 leading-5 text-text-muted">脚本、分镜、素材、字幕、配音或成片变化后，旧记录会自动失效。导出、团队审核和发布前必须为当前输入重新签发。</p>
         {currentProjectQualityRecord && <p className="mt-1 font-mono text-[9px] text-emerald-800">记录 {currentProjectQualityRecord.id} · 指纹 {currentProjectQualityRecord.inputFingerprint.slice(0, 12)}</p>}
@@ -15496,12 +15572,9 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
       if (materialIndex >= 0) setStepIdx(materialIndex);
       return;
     }
-    if (index === 2 && freeThreeStep && !freeCanEnterPreview) {
+    if (index === 2 && !canOpenWorkbenchRenderSettings({ shotCount: storyboardSlots.length, replication: mode === 'clone', freeCreation: freeThreeStep, freeCreationReady: freeCanEnterPreview })) {
       explainFreePreviewBlockers();
       return;
-    }
-    if (index === 2 && !renderReadiness.ready && !(freeThreeStep && freeCanEnterPreview)) {
-      setBatchReviewOpen(true); setModeNotice('请先完成确认卡片，再进入成片渲染和导出。'); return;
     }
     if (index === 2 && canFinalizeAndRender && !renderReadiness.ready) {
       await finalizeBatchAndEnterRender();
@@ -15510,7 +15583,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     if (index !== 0) {
       try {
         if (projectId && !await saveProject('draft')) throw new Error('草稿未保存成功，请处理保存问题后重试。');
-        if (index === 2 && latestRenderReadinessRef.current.unreadyShots.length) {
+        if (index === 2 && mode !== 'clone' && latestRenderReadinessRef.current.unreadyShots.length) {
           setBatchReviewOpen(true); setModeNotice('保存期间素材状态发生变化，请完成待处理卡片后再进入成片。'); return;
         }
         setStepIdx(activeSteps.findIndex(item => item.id === (index === 2 ? 'preview' : 'material')));
@@ -16054,7 +16127,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
             {threeStepWorkflow && step === 'preview' ? <section className="space-y-2" aria-label="成片渲染与导出">
       <div className="rounded-lg border border-border bg-white p-3 text-xs" aria-label="成片制作检查清单">
         <p className="font-black text-text-primary">成片制作检查清单</p>
-        <p className="mt-1 text-[10px] leading-4 text-text-muted">配置就绪后仍需实际渲染，并检查成片后才能导出。</p>
+        <p className="mt-1 text-[10px] leading-4 text-text-muted">配置就绪后仍需实际渲染；爆款复刻可直接导出当前成片。</p>
         <ul className="mt-2 space-y-2 text-[11px] leading-5">
           <li>草稿保存 · {savingProj || autosaveStatus === 'saving' ? '保存中' : autosaveStatus === 'error' ? `失败：${autosaveError || '保存失败，请重试'}` : autosaveStatus === 'saved' ? '已保存' : '待保存'}{autosaveStatus === 'error' && <button type="button" disabled={savingProj} onClick={() => void saveProject('draft').catch(error => setModeNotice(error.message))} className="ml-2 font-bold text-emerald-700 underline disabled:opacity-50">重试保存</button>}</li>
           <li>分镜脚本 · {hasTimestampScript ? '已就绪' : '待处理：请先确认有效分镜脚本'}</li>
@@ -16064,7 +16137,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
           <li>字幕 · {!subtitlesOn ? '配置就绪：已关闭' : subtitleSourceBlockReason ? `待处理：${subtitleSourceBlockReason}` : '配置就绪，渲染后检查字幕'}</li>
           <li>配乐 · {bgm ? '配置就绪，渲染后检查混音' : '配置就绪：不使用配乐'}</li>
           <li>画面动效与音效 · 配置就绪，渲染后检查效果</li>
-          <li>成片与导出 · {rendering || batchRenderingLangs ? `正在渲染 ${renderPct}%` : workbenchHasFormalVideo ? currentRenderReviewed ? '已检查当前成片，可导出' : '已生成成片，待检查确认后导出' : '待处理：尚未生成成片'}</li>
+          <li>成片与导出 · {rendering || batchRenderingLangs ? `正在渲染 ${renderPct}%` : workbenchHasFormalVideo ? mode === 'clone' ? '当前成片已生成，可导出' : currentRenderReviewed ? '已检查当前成片，可导出' : '已生成成片，待检查确认后导出' : '待处理：尚未生成成片'}</li>
         </ul>
         {previewRenderBlockers.length > 0 && <div role="status" className="mt-3 rounded border border-amber-200 bg-amber-50 p-2 text-amber-900">
           <p className="font-bold">当前暂不能渲染</p>
@@ -16200,7 +16273,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
             const previewIndex = activeSteps.findIndex(item => item.id === (contentMode === 'poster' ? 'poster' : 'preview'));
             if (previewIndex >= 0) setStepIdx(previewIndex);
           },
-          disabled: threeStepWorkflow && step === 'preview' ? !currentRenderReviewed || rendering || batchRenderingLangs : threeStepWorkflow && step === 'material' ? !storyboardSlots.length : replicationTimingBlocked || (localGateBypass ? false : socialViralTask && contentMode === 'video'
+          disabled: threeStepWorkflow && step === 'preview' ? Boolean(workbenchExportBlockReason({ replication: mode === 'clone', currentOutputPath: currentReviewedOutputPath, reviewedPath: reviewedRenderPath, qualityRecordPath: projectQualityRecord?.renderPath })) || rendering || batchRenderingLangs : threeStepWorkflow && step === 'material' ? !storyboardSlots.length : replicationTimingBlocked || (localGateBypass ? false : socialViralTask && contentMode === 'video'
             ? !storyboardSlots.length
             : contentMode === 'video'
             ? !storyboardSlots.length || !(voiceoverMode === 'none' || (voiceoverMode === 'upload' && Boolean(voiceoverUrl)) || (voiceoverMode === 'ai' && hasAnyVoiceover))

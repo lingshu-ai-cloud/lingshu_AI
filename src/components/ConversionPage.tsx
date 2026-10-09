@@ -1586,16 +1586,16 @@ function CustomerInfoRail({
           autoReplyReady={autoReplyReady}
           hasReplyReady={hasReplyReady}
         />
-        {customer.source !== 'messenger' && <QuoteSkillCard
+        <QuoteSkillCard
           key={customer.id}
           customer={customer}
           onInsertReply={onInsertQuoteReply}
           onToast={onToast}
-          channelReady={Boolean(customerServiceStatus?.messagingAuthorization?.providerReady)}
+          channelReady={Boolean((customer.source === 'messenger' ? customerServiceStatus?.messengerAuthorization : customerServiceStatus?.messagingAuthorization)?.providerReady)}
           onCardSent={onQuoteCardSent}
-        />}
+        />
         <BasicInfoWidget customer={customer} onCustomerPatch={onCustomerPatch} />
-        <TagsWidget customer={customer} />
+        <TagsWidget key={customer.id} customer={customer} onCustomerPatch={onCustomerPatch} onToast={onToast} />
         <RulesDisclosure
           customerServiceStatus={customerServiceStatus}
           customerServiceSaving={customerServiceSaving}
@@ -2549,7 +2549,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
           draftMeta={draftMeta}
           onMockBuyerMessage={pushMockBuyerMessage}
           sending={sendingReply}
-          channelReady={Boolean(customerServiceStatus?.messagingAuthorization?.providerReady)}
+          channelReady={Boolean((selected?.source === 'messenger' ? customerServiceStatus?.messengerAuthorization : customerServiceStatus?.messagingAuthorization)?.providerReady)}
           onToast={showToast}
         />
         </div>

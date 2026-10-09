@@ -8,6 +8,7 @@ import { requestOrganizationRoleStrict } from '../lib/organizationRole.js';
 import { applyQuoteDraftPatch, buildQuoteDraft, catalogProductsFromEnterprise, composeQuoteReply } from '../quoteSkill/engine.js';
 import type { QuoteCatalogProduct, QuoteSkillDraft } from '../quoteSkill/types.js';
 import { quoteCardDigest, quoteNumber, renderQuoteCard } from '../quoteSkill/card.js';
+import { getMessengerCustomers } from '../messenger/conversations.js';
 import { getWhatsAppCustomers, markWhatsAppHumanReply } from '../whatsapp/historyImport.js';
 import { sendTenantWhatsAppImageWithReceipt } from '../whatsapp/send.js';
 import { readCustomerMessagingAuthorization } from '../digitalEmployees/customerMessagingPolicy.js';
@@ -227,7 +228,7 @@ export function createQuoteSkillRouter(deps: QuoteSkillDeps = {}): Router {
   const withDraftLock = createKeyedLock();
   const renderCard = deps.renderCard || renderQuoteCard;
   const sendImage = deps.sendImage || sendTenantWhatsAppImageWithReceipt;
-  const findCustomer = deps.findCustomer || ((tenantId: string, customerId: string) => getWhatsAppCustomers(tenantId).find(item => item.id === customerId));
+  const findCustomer = deps.findCustomer || ((tenantId: string, customerId: string) => getWhatsAppCustomers(tenantId).find(item => item.id === customerId) || getMessengerCustomers(tenantId).find(item => item.id === customerId));
   const messagingReady = deps.messagingReady || (async (tenantId: string) => (await readCustomerMessagingAuthorization(tenantId)).providerReady);
   const recordOutbound = deps.recordOutbound || markWhatsAppHumanReply;
   const customerVisibleDraft = (tenantId: string, draft: QuoteSkillDraft): QuoteSkillDraft => {

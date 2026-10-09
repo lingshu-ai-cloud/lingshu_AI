@@ -32,6 +32,8 @@ try {
   assert.equal(otherTenant.existing, false);
   await budget.reserve({ ...base, tenantId: 'fingerprint', operationId: 'frame-input', inputFingerprint: 'version-1' });
   await assert.rejects(budget.reserve({ ...base, tenantId: 'fingerprint', operationId: 'frame-input', inputFingerprint: 'version-2' }), /参考资产或镜头输入已变化/);
+  const revised = await budget.reserve({ ...base, tenantId: 'fingerprint', operationId: 'frame-revised', inputFingerprint: 'version-2' });
+  assert.equal(revised.existing, false, 'a materially revised product/reference input gets its own retry bucket');
   const concurrent = await Promise.allSettled([
     budget.reserve({ tenantId: 'concurrent', projectId: 'one', shotId: 'a', stage: 'video', operationId: 'op-a', estimatedCostCny: 7 }),
     budget.reserve({ tenantId: 'concurrent', projectId: 'one', shotId: 'b', stage: 'video', operationId: 'op-b', estimatedCostCny: 7 }),

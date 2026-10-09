@@ -496,15 +496,29 @@ async function generateWeeklyTaskPreviews(input: {
       assets: selectedAssets,
       presenter: plan.presenter,
     });
+    // Exact clone orders use the managed per-shot bridge. Product/factory
+    // motion is generated or matched there, so the legacy editor's demand for
+    // pre-existing dynamic footage must not stop the order before the bridge
+    // can run. A missing static product identity asset remains a real blocker.
+    const managedClone = plan.route === 'clone'
+      && Boolean(reference)
+      && analysis.analysisMode === 'exact'
+      && ['video', 'video_review_required'].includes(String(analysis.analysisQuality || ''));
+    const materialBlockers = managedClone
+      ? materialReadiness.decisions
+        .filter(decision => decision.requirement === 'static_product')
+        .map(decision => decision.blocker)
+        .filter(Boolean)
+      : materialReadiness.blockers;
     const normalizedNeedle = `${plan.productName} ${plan.theme}`.toLowerCase();
     const shootTasks = pendingShooting.filter(item => {
       const label = `${item.payload.productLabel || ''} ${item.payload.themeTitle || ''}`.trim().toLowerCase();
       return Boolean(label && (normalizedNeedle.includes(label) || label.includes(plan.productName.toLowerCase())));
     });
-    const unresolvedShootTasks = materialReadiness.blockers.length ? shootTasks : [];
+    const unresolvedShootTasks = !managedClone && materialBlockers.length ? shootTasks : [];
     const blockers = [
       ...videoPlanErrors(plan),
-      ...materialReadiness.blockers,
+      ...materialBlockers,
       selectedAssets.some(asset => asset.authorization.status === 'unknown') ? '素材授权范围未确认' : '',
       unresolvedShootTasks.length ? `本条母版有 ${unresolvedShootTasks.length} 个待拍任务尚未回填素材` : '',
       budgetExceeded ? '本周预计制作成本超过生产预算' : '',
@@ -1394,7 +1408,9 @@ function scopedProof(metricKey: string, source: string, records: StoredRecord[],
 
 function exactVideoAnalysis(record: StoredRecord): boolean {
   const analysis = jsonObject<Record<string, unknown>>(record.aiAnalysis, {});
-  return analysis.analysisMode === 'exact' && analysis.analysisQuality === 'video' && Boolean(analysis.gemini);
+  return analysis.analysisMode === 'exact'
+    && ['video', 'video_review_required'].includes(String(analysis.analysisQuality || ''))
+    && Boolean(analysis.gemini);
 }
 
 function studioProjectCompleted(record: StoredRecord): boolean {
@@ -1895,6 +1911,25 @@ async function advanceRunUnlocked(tenantId: string, runId: string): Promise<void
   await store.update(COLLECTION.runs, run.id, { status: 'running', current_controller: 'business', pause_reason: '' });
   let businessSnapshot: BusinessSnapshot | null = null;
   for (const task of taskResult.items) {
+    // A content project can change after the worker recorded a terminal failure
+    // (for example, after a successful retry with a new presenter/reference
+    // version).  Do not leave the business workflow permanently owned by a
+    // historical provider error when its linked draft is newer than the task.
+    if (task.task_key === 'content_production' && task.status === 'failed') {
+      const refs = jsonObject<Array<Record<string, unknown>>>(task.business_refs, []);
+      const projectIds = refs.filter(ref => ref.type === 'studio_project').map(ref => String(ref.id || '')).filter(Boolean);
+      const projects = await Promise.all(projectIds.map(id => tenantRecord<StoredRecord & { tenant_id: string }>('studio_projects', id, tenantId)));
+      const taskUpdatedAt = Date.parse(String((task as any).updated || task.updated_at || (task as any).created || task.created_at || '')) || 0;
+      const superseded = projects.some(project => project && String(project.status) === 'draft'
+        && (Date.parse(String((project as any).updated || project.updated_at || (project as any).created || project.created_at || '')) || 0) > taskUpdatedAt);
+      if (superseded) {
+        const output = { ...jsonObject<Record<string, unknown>>(task.output, {}), dataStatus: 'reconciled',
+          executionFailure: undefined, waitState: undefined, reconciledAt: new Date().toISOString() };
+        await store.update(COLLECTION.tasks, task.id, { status: 'pending', output, blocked_reason: '', updated_at: new Date().toISOString() });
+        task.status = 'pending'; task.output = output; task.blocked_reason = '';
+        await appendEvent({ tenantId, runId: run.id, taskId: task.id, type: 'task.failure_superseded', level: 'success', summary: '制作草稿已有新版本，已撤销历史失败并重新核验' });
+      }
+    }
     if (['succeeded', 'skipped', 'cancelled', 'handed_off'].includes(task.status)) continue;
     if (task.status === 'failed' && !jsonObject<Record<string, any>>(task.output, {}).executionFailure?.retryAt) continue;
     if (!dependenciesReady(task, taskResult.items)) continue;
@@ -1911,7 +1946,7 @@ async function advanceRunUnlocked(tenantId: string, runId: string): Promise<void
     // An explicitly selected, fully analyzed reference is already collected.
     // Do not require creating a new recurring crawler for a one-off remake.
     if (task.task_key === 'scheduled_source_collection' && videoTask?.videoPlans?.length
-      && videoTask.videoPlans.every(video => video.route === 'clone' && video.referenceId && video.preproduction?.benchmark.status === 'ready')) {
+      && videoTask.videoPlans.every(video => video.route === 'clone' && video.referenceId)) {
       const referenceIds = [...new Set(videoTask.videoPlans.map(video => video.referenceId))];
       const references = await Promise.all(referenceIds.map(id => store.getById<StoredRecord>('trend_videos', id)));
       if (references.every(reference => reference && reference.tenantId === tenantId && exactVideoAnalysis(reference))) {

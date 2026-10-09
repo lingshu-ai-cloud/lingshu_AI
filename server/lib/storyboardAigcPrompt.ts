@@ -2,7 +2,7 @@ export type StoryboardSceneType = 'product' | 'factory' | 'usage' | 'general';
 export type StoryboardMode = 'replication' | 'free_creation';
 import type { StoryboardShotSpec } from '../../shared/storyboardShotSpec.js';
 
-export const STORYBOARD_FIRST_FRAME_PROMPT_VERSION = 'storyboard-first-frame-v4';
+export const STORYBOARD_FIRST_FRAME_PROMPT_VERSION = 'storyboard-first-frame-v7';
 
 export function buildStoryboardFirstFramePrompt(input: {
   mode: StoryboardMode;
@@ -53,6 +53,12 @@ export function buildStoryboardFirstFramePrompt(input: {
     `Create exactly one photorealistic ${input.ratio} first-frame still for a short continuous video shot.`,
     `Shot requirement: ${input.shotDescription.slice(0, 1800)}`,
     input.productNames?.length ? `Target enterprise products: ${input.productNames.map(name => name.slice(0, 160)).join('; ')}.` : input.productName ? `Target enterprise product: ${input.productName.slice(0, 160)}.` : '',
+    input.mode === 'replication' && input.hasProductImage
+      ? 'PRODUCT REPLACEMENT IS MANDATORY: every visible package, logo, colorway, label layout and product silhouette must come from the enterprise product reference. The source frame may supply composition only. Never retain, reproduce, blend, or treat as valid any source-video product, brand, package, logo, readable label, or colorway.'
+      : '',
+    input.mode === 'replication' && input.hasProductImage && names.length === 1
+      ? 'The enterprise reference contains ONE product identity. If the source frame shows several packages, boxes, pouches or bottles, show only repeated instances of that same enterprise product where composition needs multiples. Never preserve an unmatched package shape, pouch, bag, label or second brand from the source frame.'
+      : '',
     ...references,
     scene,
     singleViewProductIds.length ? `Only one knowledge-base view is available for product IDs ${singleViewProductIds.join(', ')}. Keep those products near the supplied orientation; do not invent unseen sides, back panels or hidden packaging text.` : '',

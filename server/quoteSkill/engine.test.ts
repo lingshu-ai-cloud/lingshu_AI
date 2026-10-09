@@ -135,3 +135,40 @@ test('价格区间不得被误识别为确定单价', () => {
   assert.equal(exactProduct.currency, 'USD');
   assert.equal(exactProduct.leadTime, '15 days');
 });
+
+test('会话更正数量采用最新需求，交货地点不能混入后续付款或贸易术语', () => {
+ const draft = buildQuoteDraft({ customerId: 'messenger-buyer', customerName: '', productHint: 'ABS-HOUSING', messages: ['Please quote 100 pcs ABS-HOUSING. Ship to Los Angeles. FOB. Budget is USD 9000.', 'Actually please quote 2000 pcs.'], products: [{ sku: 'ABS-HOUSING', name: 'ABS housing', material: 'ABS', unit: 'pcs', unitPrice: 3.8, currency: 'USD', moq: 1000, leadTime: '30 days', priceSource: 'catalog', attributes: {} }], rules: { paymentTerms: '30% deposit' } });
+ assert.equal(draft.quantity, 2000);
+ assert.equal(draft.destination, 'Los Angeles');
+ assert.equal(draft.subtotal, 7600);
+ assert.equal(draft.evidence.find(item => item.field === 'quantity')?.excerpt, '2000 pcs');
+});
+
+test('客户更换材料不能沿用目录规格价格，人工改材质也需要重新确认单价', () => {
+  const input = { customerId: 'spec-buyer', customerName: '', productHint: product.sku, messages: ['Quote 500 pcs in ABS. Ship to Shanghai. FOB.'], products: [product], rules: { paymentTerms: '30% deposit' } };
+  const draft = buildQuoteDraft(input);
+  assert.equal(draft.unitPrice, null);
+  assert.equal(draft.subtotal, null);
+  assert.ok(draft.blockers.some(item => item.includes('材料与目录规格不一致')));
+  const original = buildQuoteDraft({ ...input, messages: ['Quote 500 pcs in 6061-T6. Ship to Shanghai. FOB.'] });
+  assert.equal(applyQuoteDraftPatch(original, { material: 'ABS' }).unitPrice, null);
+  assert.equal(applyQuoteDraftPatch(original, { material: 'ABS', unitPrice: 12 }).unitPrice, 12);
+  const implicit = buildQuoteDraft({ ...input, messages: ['Quote 500 pcs. Ship to Shanghai. FOB.'] });
+  assert.equal(implicit.material, product.material, 'pcs must not be interpreted as PC plastic');
+  assert.equal(implicit.unitPrice, product.unitPrice);
+  const corrected = buildQuoteDraft({ ...input, messages: ['Quote 500 pcs in 6061-T6.', 'Actually use ABS.'] });
+  assert.equal(corrected.material, 'ABS');
+  assert.equal(corrected.unitPrice, null);
+});
+
+test('客户目标交期不能变为企业参考交期，非履约编辑不能解除阻塞', () => {
+  const draft = buildQuoteDraft({ customerId: 'deadline-buyer', customerName: '', productHint: product.sku, messages: ['Quote 500 pcs in 6061-T6. Ship to Shanghai. FOB. Delivery within 7 days.'], products: [{ ...product, leadTime: '' }], rules: { paymentTerms: '30% deposit' } });
+  assert.equal(draft.deliveryDate, '7 days');
+  assert.equal(draft.leadTime, '');
+  assert.ok(draft.blockers.some(item => item.includes('目标交期')));
+  assert.ok(applyQuoteDraftPatch(draft, { destination: 'Ningbo' }).blockers.some(item => item.includes('目标交期')));
+  assert.equal(applyQuoteDraftPatch(draft, { leadTime: '10 days' }).status, 'ready_for_review');
+  const reply = composeQuoteReply({ ...draft, status: 'confirmed' });
+  assert.doesNotMatch(reply, /Reference lead time: 7 days/);
+  assert.match(reply, /Requested delivery: 7 days/);
+});

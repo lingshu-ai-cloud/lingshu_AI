@@ -150,7 +150,12 @@ export function buildStoryboardQaReport(input: {
 /** Replication runs automatically. Keep uncertainties visible without claiming
  * they passed vision QA; retain every non-background hard failure. */
 export function applyStoryboardReplicationAutomation(report: StoryboardQaReport): StoryboardQaReport {
-  const findings = report.findings.filter(item => item.key !== 'environment_fidelity');
+  const findings = report.findings.filter(item => item.key !== 'environment_fidelity').map(item =>
+    item.key === 'product_identity' && item.severity !== 'hard_failure'
+      ? { ...item, severity: 'hard_failure' as const, action: 'needs_assets' as const,
+        code: item.code.replace(/_UNCERTAIN$/, '_UNVERIFIED'),
+        message: item.message || '企业产品身份未被可靠验证' }
+      : item);
   const hard = findings.filter(item => item.severity === 'hard_failure');
   const checks = Object.fromEntries(Object.entries(report.checks).filter(([key]) => key !== 'environment_fidelity'));
   const { reviewedAt: _at, reviewedBy: _by, reviewDecision: _decision, ...original } = report;

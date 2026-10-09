@@ -94,7 +94,7 @@ function exactVideoAnalysis(record: StoredRecord): boolean {
   const analysis = object(record.aiAnalysis);
   const gemini = object(analysis.gemini);
   return analysis.analysisMode === 'exact'
-    && analysis.analysisQuality === 'video'
+    && ['video', 'video_review_required'].includes(String(analysis.analysisQuality || ''))
     && Object.keys(gemini).length > 0
     && Boolean(text(gemini.structure) || Array.isArray(gemini.scriptDetails15s) || Array.isArray(gemini.coarseStructure));
 }

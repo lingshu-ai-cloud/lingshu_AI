@@ -1,0 +1,10 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { localFlowRenderRecovery, localFlowRenderInputIdentity, localFlowRenderInputsStillMatch } from './localFlowRenderRecovery';
+const versions = [{ key: 'a:en', code: 'en', plan: { id: 'a' }, inputSignature: 'current-real-derived-signature' }];
+function fixture() { const spec: any = { script: 'Frozen script', ratio: '9:16', shootingSlots: Array.from({length:17}, (_,i)=>({id:String(i)})), storyboardAssignments: {'0':'m'}, materialSnapshots: [{id:'m',contentSha256:'b'.repeat(64)}], subtitlesOn:true, localFlowTest:{enabled:true} }; spec.localFlowTest.renderRecovery={projectId:'p',assemblyId:'a',language:'en',path:'/file.mp4',previewUrl:'/preview',contentSha256:'a'.repeat(64),inputIdentity:localFlowRenderInputIdentity(spec)}; return spec; }
+test('local flagged project restores only matching current version',()=>{const spec=fixture();assert.equal(localFlowRenderRecovery(spec,'p',versions,'localhost')?.output.inputSignature,versions[0].inputSignature);assert.equal(localFlowRenderRecovery(spec,'p',[],'localhost'),null);});
+test('ordinary projects and production origins cannot recover historical output',()=>{const spec=fixture();assert.equal(localFlowRenderRecovery(spec,'p',versions,'example.com'),null);spec.localFlowTest.enabled=false;assert.equal(localFlowRenderRecovery(spec,'p',versions,'localhost'),null);});
+test('any bound script, shot, material hash or audio/subtitle edit invalidates recovery',()=>{for(const change of [(s:any)=>s.script+=' changed',(s:any)=>s.storyboardAssignments['0']='other',(s:any)=>s.materialSnapshots[0].contentSha256='c'.repeat(64),(s:any)=>s.subtitlesOn=false,(s:any)=>s.voiceoverUrl='/changed.wav']){const spec=fixture();change(spec);assert.equal(localFlowRenderRecovery(spec,'p',versions,'localhost'),null);}});
+
+test('edits during hydration cannot be rebound to an old export',()=>{const saved=fixture();const current=structuredClone(saved);assert.equal(localFlowRenderInputsStillMatch(saved,current),true);current.script='Edited before hydration finished';assert.equal(localFlowRenderInputsStillMatch(saved,current),false);});

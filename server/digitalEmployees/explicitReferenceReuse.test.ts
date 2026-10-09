@@ -51,8 +51,8 @@ try {
     records.trend_videos[0].aiAnalysis.analysisQuality = 'video_review_required';
     run.status = 'running'; collection.status = 'pending'; analysis.status = 'pending';
     await reconcileDigitalEmployeeRun(tenant, run.id);
-    assert.notEqual(collection.status, 'skipped', 'review-required references cannot waive collection');
-    assert.notEqual(analysis.status, 'succeeded');
+    assert.equal(collection.status, 'skipped', 'an exact reference with review diagnostics still waives duplicate collection');
+    assert.equal(analysis.status, 'succeeded', 'review diagnostics do not block the selected exact reference from automatic handoff');
   });
   console.log('Explicit reference reuse, tenant ownership and review gate tests passed');
 } finally { Object.assign(store, original); globalThis.fetch = originalFetch; }

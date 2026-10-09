@@ -424,7 +424,9 @@ export function createProductionRouter(store: DataStore, importVideo: (url: stri
       const clusterPlan = planPersonShotClusters(cues, Math.max(1, Number(process.env.DIGITAL_HUMAN_MAX_FIRST_FRAMES_PER_VIDEO) || 3));
       if (clusterPlan.state !== 'ready') throw new Error(clusterPlan.blockers.join('；'));
       if (!options.prepareSentenceFirstFrames) throw new Error('逐句首帧提取服务尚未配置');
-      res.json({ cues: await options.prepareSentenceFirstFrames({ tenantId, referenceMaterialId: resolvedMaterialId, cues, sourceMaterial }), clusterPlan });
+      const autoSplitPhysicalCuts = project.spec?.automation?.managedBy === 'digital_employee'
+        && project.spec?.creationPath === 'viral_replication';
+      res.json({ cues: await options.prepareSentenceFirstFrames({ tenantId, referenceMaterialId: resolvedMaterialId, cues, sourceMaterial, autoSplitPhysicalCuts }), clusterPlan });
     } catch (error) { res.status(400).json({ error: error instanceof Error ? error.message : '逐句首帧提取失败' }); }
   });
 

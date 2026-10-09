@@ -65,12 +65,24 @@ saveLocalMaterials([...readLocalMaterials(), { id: foreignCharacterMaterialId, t
   scope: 'own', type: 'image', name: '其他企业人物', folder: 'presenter', duration: 0, url: '', objectKey: characterObjectKey } as any]);
 let supplierVideoPosts = 0;
 let supplierImagePosts = 0;
+let supplierCleanupPosts = 0;
+let supplierProductCompositePosts = 0;
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   const url = String(input instanceof Request ? input.url : input);
   if (url === 'https://mock.storyboard/images/generations') {
     supplierImagePosts++;
     const payload = JSON.parse(String(init?.body || '{}'));
+    if (String(payload.prompt || '').includes('clean background plate for this source shot')) {
+      supplierCleanupPosts++;
+      assert.equal(payload.image?.length, 1, 'cleanup receives only the real source shot');
+      assert.match(payload.prompt, /Remove every source product, package, brand mark/);
+    }
+    if (String(payload.prompt || '').includes('cleaned version of the target shot')) {
+      supplierProductCompositePosts++;
+      assert.ok(payload.image?.length >= 2, 'target-frame synthesis receives the clean plate and enterprise product references');
+      assert.match(payload.prompt, /Do not restore, copy or invent any source-video product/);
+    }
     if (String(payload.prompt || '').includes('两款企业吊灯')) {
       assert.equal(payload.image?.length, 3, 'clone source frame, product sheet and named person fit provider reference limit');
       assert.match(payload.prompt, /Reference image 2 is a grid of SEPARATE enterprise products/);
@@ -97,7 +109,8 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     if (prompt.includes('企业工厂环境参考'))
       assert.ok(payload.messages?.[0]?.content?.some((item: any) => item.type === 'image_url'), 'factory reference enters visual QA');
     return json({ choices: [{ message: { content: JSON.stringify({ observations: keys.map(key => ({ key, verdict: 'pass',
-      evidenceFrames: key === 'environment_fidelity' && !firstFrame ? ['0s', '0.5s'] : [label], note: '模拟模型返回通过，仅检验工作流接线' })) }) } }] });
+      evidenceFrames: !firstFrame && ['product_identity', 'layout_continuity', 'environment_fidelity'].includes(key)
+        ? ['0s', '0.5s'] : [label], note: '模拟模型返回通过，仅检验工作流接线' })) }) } }] });
   }
   if (url === 'https://mock.seedance/contents/generations/tasks' && init?.method === 'POST') {
     supplierVideoPosts++;
@@ -400,7 +413,7 @@ try {
     assert.equal(premature.body.code, 'STORYBOARD_AIGC_ASSIGNMENT_UNVERIFIED', 'unreviewed candidate must not be adopted');
     const checked = await post('/storyboard-quality-check', { materialId: result.body.material.id, storyboard: shot.detail });
     assert.equal(checked.status, 200, `${shot.id} QA: ${JSON.stringify(checked.body)}`);
-    assert.equal(checked.body.quality.status, automaticReplication ? 'passed' : 'needs_review');
+    assert.equal(checked.body.quality.status, automaticReplication ? 'passed' : 'needs_review', `${shot.id} QA status: ${JSON.stringify(checked.body.quality)}`);
     if (shot.id === 'free-factory') assert.equal(checked.body.quality.checks.environment_fidelity.verdict, 'pass');
     if (automaticReplication) {
       assert.equal(checked.body.quality.acceptanceSource, 'automatic_policy');
@@ -444,7 +457,9 @@ try {
     const adopted = await post('/projects', { id: projectId, status: 'draft', spec: unreviewedSpec });
     assert.equal(adopted.status, 200, `${shot.id} adopt: ${JSON.stringify(adopted.body)}`);
   }
-  assert.equal(supplierImagePosts, shots.length + 1, 'factory without a reference also reaches image generation');
+  assert.equal(supplierImagePosts, shots.length + 3, 'each cloned product shot uses cleanup plus target-frame synthesis');
+  assert.equal(supplierCleanupPosts, 2);
+  assert.equal(supplierProductCompositePosts, 2);
   assert.equal(supplierVideoPosts, shots.length);
   // Exercise the business bridge against the actual native studio handlers,
   // using the same provider-only fixture as the six manual workbench cases.
@@ -466,7 +481,9 @@ try {
     assert.equal(advanced.state, 'pending', `bridge tick ${tick}: ${JSON.stringify(advanced)}`);
   }
   assert.equal((await advanceAutomatedReplication({ tenantId, projectId, store }, bridgeDeps)).state, 'ready');
-  assert.equal(supplierImagePosts, beforeBridgeImages + 1);
+  assert.equal(supplierImagePosts, beforeBridgeImages + 2);
+  assert.equal(supplierCleanupPosts, 3);
+  assert.equal(supplierProductCompositePosts, 3);
   assert.equal(supplierVideoPosts, beforeBridgeVideos + 1);
   assert.ok((project.spec as any).shotProductions[`bridge-assembly:${bridgeShotId}`].adoptedId);
   assert.equal((project.spec as any).automatedReplicationProgress[bridgeShotId].qualityChecked, true);

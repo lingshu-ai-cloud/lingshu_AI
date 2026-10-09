@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { DataStore } from '../storage/datastore.js';
-import { advanceManagedReplication, type ManagedReplicationPorts } from './replicationContentProduction.js';
+import { advanceManagedReplication, selectManagedReplicationPresenter, type ManagedReplicationPorts } from './replicationContentProduction.js';
 
 function fixture() {
   let row: any = { id: 'p', tenant_id: 't', status: 'draft', spec: { automation: { route: 'clone', stage: 'blocked', blocker: 'needs_per_shot_replication_bridge', referenceAnalysisId: 'r' }, workflowRunId: 'run' } };
@@ -52,4 +52,12 @@ test('an edit during final assembly cannot be overwritten by an older successful
   };
   assert.match((await advanceManagedReplication(f.input)).blocker, /参数已变化/);
   assert.equal(f.row().spec.script, 'newly edited narration'); assert.equal(f.row().spec.renderOutputPath, undefined);
+});
+test('managed replication prefers an executable Active Ark presenter over an uncertified default', () => {
+  const rightsEvidence = { permittedProviders: ['volcengine_ark'], permittedUses: ['person_replacement'] };
+  const selected = selectManagedReplicationPresenter({ defaultPresenterId: 'uncertified', presenters: [
+    { id: 'uncertified', authorized: true, referenceMaterialIds: ['photo'] },
+    { id: 'active', authorized: true, arkCertification: { status: 'active', assetUri: 'asset://active' }, referenceMaterialIds: ['photo'], rightsEvidence },
+  ] });
+  assert.equal(selected?.id, 'active');
 });

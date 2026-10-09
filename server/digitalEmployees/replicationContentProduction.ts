@@ -10,6 +10,19 @@ const renderInputs = (spec: Record<string, any>) => createHash('sha256').update(
   productions: spec.shotProductions, edits: spec.clipEdits, script: spec.script, ratio: spec.ratio, exportSpec: spec.exportSpec,
 })).digest('hex');
 
+export function selectManagedReplicationPresenter(defaults: Record<string, any>, requested?: string): Record<string, any> | undefined {
+  const presenters = (Array.isArray(defaults.presenters) ? defaults.presenters : []).filter((item: any) => item.authorized);
+  if (requested) return presenters.find((item: any) => item.id === requested || item.avatarId === requested);
+  const seedanceReady = (item: any) => item.arkCertification?.status === 'active'
+    && item.arkCertification?.assetUri
+    && (item.toolMappings?.seedance?.referenceMaterialIds?.length || item.referenceMaterialIds?.length)
+    && item.rightsEvidence?.permittedProviders?.includes('volcengine_ark')
+    && item.rightsEvidence?.permittedUses?.includes('person_replacement');
+  const preferred = presenters.find((item: any) => item.id === defaults.defaultPresenterId);
+  return (preferred && seedanceReady(preferred) ? preferred : presenters.find(seedanceReady))
+    || preferred || (presenters.length === 1 ? presenters[0] : undefined);
+}
+
 export interface ManagedReplicationPorts {
   initialize: typeof buildReplicationWorkbenchSpec;
   execute: (input: { tenantId: string; projectId: string; store: DataStore }) => Promise<{ state: string; changed: boolean; blocker?: string }>;
@@ -51,10 +64,8 @@ export async function advanceManagedReplication(input: {
       if (!reference) throw Error('经营复刻订单缺少指定的精确参考分析，不能改用普通剪辑');
       const defaultsRecord = (await input.store.list<any>('studio_production_defaults', { where: { tenant_id: input.tenantId }, perPage: 1 })).items[0];
       const defaults = object(defaultsRecord?.payload);
-      const presenters = (defaults.presenters || []).filter((item: any) => item.authorized);
       const requested = spec.contentOrder?.videoPlan?.heygenAvatarId;
-      const presenter = requested ? presenters.find((item: any) => item.id === requested || item.avatarId === requested)
-        : presenters.find((item: any) => item.id === defaults.defaultPresenterId) || (presenters.length === 1 ? presenters[0] : undefined);
+      const presenter = selectManagedReplicationPresenter(defaults, requested);
       const assets = await ports.materials(input.tenantId);
       const initialized = ports.initialize({ tenantId: input.tenantId, projectId: input.projectId, spec,
         reference, assets, presenterId: presenter?.id,
