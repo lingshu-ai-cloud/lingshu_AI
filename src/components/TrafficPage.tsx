@@ -1,3 +1,4 @@
+import { getScrollBehavior } from "../lib/usePrefersReducedMotion";
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { Alert, Button, Checkbox, Drawer, Input, Modal, Segmented, Tabs } from 'antd';
 import { LsPageHeader } from './ui/LsPageHeader';
@@ -726,7 +727,7 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview, workflowCont
       setActiveItemId(next.id);
     }
     setNotice(`已把当前视频安排到 ${scheduled.toLocaleString('zh-CN', { month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' })}，补齐素材后即可加入日历。`);
-    window.setTimeout(() => publishSettingsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 60);
+    window.setTimeout(() => publishSettingsRef.current?.scrollIntoView({ behavior: getScrollBehavior(), block: 'center' }), 60);
   };
 
   const openPendingContent = (id: string) => {
@@ -735,7 +736,7 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview, workflowCont
     setActiveItemId(id);
     setWorkspaceTab('publish');
     setNotice(`已打开“${item.title || titleFromVideoPath(item.videoPath)}”，可以继续编辑或安排发布时间。`);
-    window.setTimeout(() => document.getElementById('publishing-content-editor')?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 60);
+    window.setTimeout(() => document.getElementById('publishing-content-editor')?.scrollIntoView({ behavior: getScrollBehavior(), block: 'center' }), 60);
   };
 
   const saveCurrentContent = async () => {
@@ -811,7 +812,7 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview, workflowCont
         ? `“${activeItem.title.trim()}”已保存，拖入日历时再选择时间。`
         : `“${activeItem.title.trim()}”已保存，定点时间已经锁定。`);
     setWorkspaceTab('schedule');
-    window.setTimeout(() => document.getElementById('publishing-calendar')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80);
+    window.setTimeout(() => document.getElementById('publishing-calendar')?.scrollIntoView({ behavior: getScrollBehavior(), block: 'start' }), 80);
   };
 
   const schedulePendingContent = async (id: string, scheduledAt: Date): Promise<number> => {
@@ -935,7 +936,7 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview, workflowCont
       ? `已打开“${post.title}”，内容可以修改，定点发布时间保持锁定。`
       : `已打开“${post.title}”，内容可以修改，时间仍可在日历中调整。`);
     setWorkspaceTab('publish');
-    window.setTimeout(() => publishSettingsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 60);
+    window.setTimeout(() => publishSettingsRef.current?.scrollIntoView({ behavior: getScrollBehavior(), block: 'center' }), 60);
   };
 
   const loadAccounts = async () => {
@@ -1146,7 +1147,7 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview, workflowCont
       setActiveItemId(additions[0].id);
       setWorkspaceTab('publish');
       setNotice(`已加入 ${additions.length} 条视频，发布预览已启动。`);
-      window.setTimeout(() => document.getElementById('publishing-video-preview')?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 80);
+      window.setTimeout(() => document.getElementById('publishing-video-preview')?.scrollIntoView({ behavior: getScrollBehavior(), block: 'center' }), 80);
     }
     if (failures.length) setError(failures.join('；'));
     setUploadingVideos(false);
@@ -1169,7 +1170,7 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview, workflowCont
     setSystemLibraryOpen(false);
     setError('');
     setNotice(`已从系统成片库加入 ${additions.length} 条视频。`);
-    window.setTimeout(() => document.getElementById('publishing-video-preview')?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 80);
+    window.setTimeout(() => document.getElementById('publishing-video-preview')?.scrollIntoView({ behavior: getScrollBehavior(), block: 'center' }), 80);
   };
 
   const adaptCopy = async (platform?: PublishPlatform) => {

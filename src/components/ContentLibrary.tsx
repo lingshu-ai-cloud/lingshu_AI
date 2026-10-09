@@ -103,11 +103,7 @@ export default function ContentLibrary({ exportsOnly = false, onPublish }: { exp
 
   return <div className="h-full space-y-5 overflow-auto bg-ink p-5 sm:p-6">
     <header className="flex flex-wrap items-start justify-between gap-4 border-b border-border pb-4">
-      <div>
-        <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-accent">Production assets</p>
-        <h2 className="mt-1 text-xl font-bold text-text-primary">{exportsOnly ? '导出记录' : '已完成成片'}</h2>
-        <p className="mt-1 text-sm text-text-secondary">{exportsOnly ? '压缩包保留 7 天，过期后可重新导出。' : '查看成片、下载文件，或选择作品去发布。'}</p>
-      </div>
+      <h2 className="text-xl font-bold text-text-primary">{exportsOnly ? '导出记录' : '已完成成片'}</h2>
       <div className="flex flex-wrap items-center gap-2">
         <button type="button" className={secondaryButton} onClick={() => void load()}><RefreshCw size={14} />刷新</button>
         {!exportsOnly && <button type="button" className={secondaryButton} onClick={() => setExportsOpen(true)}><Download size={14} />导出记录{jobs.some(job => job.status === 'running') && <span className="ml-1 text-accent">处理中</span>}</button>}

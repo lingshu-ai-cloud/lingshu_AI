@@ -12,12 +12,40 @@ export interface NextRoundRecommendationCard {
   evidence: string[];
   systemActions: string[];
   links: Array<{ label: string; url: string; meta: string }>;
+  thumbnailUrl?: string;
+  hook?: string;
+  framework?: string[];
+  tagGroups?: Array<{ label: string; tone: 'hot' | 'new' | 'dropped' | 'published'; tags: string[] }>;
+  sellingPoints?: string[];
+  changeSummary?: string;
+  signals?: Array<{ id: string; title: string; platform: string; summary: string; sourceUrl: string; thumbnailUrl?: string }>;
 }
 
 const safeHttpUrl = (value: unknown): string => {
   const candidate = String(value || '').trim();
   return /^https?:\/\//i.test(candidate) ? candidate : '';
 };
+
+const safePreviewUrl = (value: unknown): string => {
+  const candidate = String(value || '').trim();
+  return /^(?:https?:\/\/|\/)/i.test(candidate) ? candidate : '';
+};
+
+const SELLING_POINT_RULES: Array<[RegExp, string]> = [
+  [/oem|odm|private.?label/i, 'OEM / ODM 定制能力'],
+  [/factory|manufactur|工厂/i, '工厂直供与生产透明度'],
+  [/small.?batch|low.?moq|小单/i, '小单起订与快速响应'],
+  [/formula|ingredient|配方|成分/i, '配方与成分开发能力'],
+  [/wholesale|b2b|批发/i, '批发采购与 B2B 服务'],
+  [/packag|lip.?gloss|包装/i, '包装与品类创新'],
+  [/quality|transparen|品质|透明/i, '品质证明与过程可追溯'],
+];
+
+function sellingPointCandidates(values: string[]) {
+  const corpus = values.join(' ');
+  const matched = SELLING_POINT_RULES.filter(([pattern]) => pattern.test(corpus)).map(([, label]) => label);
+  return [...new Set(matched)].slice(0, 4);
+}
 
 function emptyRecommendations(summary?: WeeklyReviewSummary): NextRoundRecommendations {
   const legacy = summary?.nextPlanRecommendations?.filter(Boolean) || [];
@@ -60,6 +88,9 @@ export function buildNextRoundRecommendationCards(summary?: WeeklyReviewSummary)
       ] : [inheritance.paidBoost.reason],
       systemActions: inheritance.systemActions,
       links: safeHttpUrl(inheritance.sourceUrl) ? [{ label: '查看本期优秀内容', url: inheritance.sourceUrl, meta: inheritance.platform }] : [],
+      thumbnailUrl: safePreviewUrl(inheritance.thumbnailUrl),
+      hook: inheritance.hook,
+      framework: inheritance.framework,
     },
     {
       kind: 'tags', index: '02', title: 'Tag 与卖点调整',
@@ -77,6 +108,15 @@ export function buildNextRoundRecommendationCards(summary?: WeeklyReviewSummary)
       ],
       systemActions: tags.systemActions,
       links: [],
+      tagGroups: [
+        { label: '热门', tone: 'hot', tags: tags.hotTags.slice(0, 8) },
+        { label: '新增', tone: 'new', tags: tags.newTags.slice(0, 8) },
+        { label: '退出', tone: 'dropped', tags: tags.droppedTags.slice(0, 8) },
+      ].filter(group => group.tags.length) as NextRoundRecommendationCard['tagGroups'],
+      sellingPoints: sellingPointCandidates([...tags.hotTags, ...tags.newTags]),
+      changeSummary: tags.status === 'changed'
+        ? `${tags.newTags.length} 个新增 · ${tags.droppedTags.length} 个退出`
+        : tags.status === 'baseline' ? '首轮基线 · 暂无上期可比' : '等待可比较数据',
     },
     {
       kind: 'trends', index: '03', title: '行业热点与变化',
@@ -91,6 +131,18 @@ export function buildNextRoundRecommendationCards(summary?: WeeklyReviewSummary)
         const url = safeHttpUrl(signal.sourceUrl);
         return url ? [{ label: signal.title, url, meta: signal.platform }] : [];
       }),
+      sellingPoints: sellingPointCandidates(trends.signals.flatMap(signal => [signal.title, signal.summary, ...signal.tags])),
+      changeSummary: tags.status === 'changed'
+        ? `行业关键词出现 ${tags.newTags.length} 个新增、${tags.droppedTags.length} 个退出`
+        : tags.status === 'baseline' ? '本轮为观察基线，下一轮开始给出升降变化' : '暂无连续周期，暂不宣称趋势升降',
+      signals: trends.signals.slice(0, 3).map(signal => ({
+        id: signal.id,
+        title: signal.title,
+        platform: signal.platform,
+        summary: signal.summary,
+        sourceUrl: safeHttpUrl(signal.sourceUrl),
+        thumbnailUrl: safePreviewUrl(signal.thumbnailUrl),
+      })),
     },
   ];
 }

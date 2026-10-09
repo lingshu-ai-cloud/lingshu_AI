@@ -1228,7 +1228,7 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
                   type="button"
                   onClick={event => { event.preventDefault(); event.stopPropagation(); if (!exists) void createTaskFromTemplate(template); }}
                   disabled={exists}
-                  className={`rounded-lg px-3 py-1.5 text-xs font-medium ${exists ? 'cursor-default bg-green-50 text-green-700' : 'bg-green-600 text-white hover:bg-green-700'}`}
+                  className={`rounded-lg px-3 py-1.5 text-xs font-medium ${exists ? 'cursor-default bg-green-50 text-green-700' : 'bg-blue-600 text-white hover:bg-blue-700'}`}
                 >
                   {exists ? '已创建' : '创建'}
                 </button>
@@ -1287,7 +1287,7 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
                 type="button"
                 onClick={() => void fetchBusinessDynamics(true)}
                 disabled={businessDynamicsLoading}
-                className="flex items-center gap-1.5 rounded-lg bg-green-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-green-700 disabled:opacity-60"
+                className="flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-60"
               >
                 <RefreshCw size={14} className={businessDynamicsLoading ? 'animate-spin' : ''} /> 刷新动态
               </button>

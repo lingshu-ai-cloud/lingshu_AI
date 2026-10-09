@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
+import { lsMotion } from '../lib/designTokens';
+import { usePrefersReducedMotion } from '../lib/usePrefersReducedMotion';
 import {
   CheckCircle2,
   CheckSquare2,
@@ -90,6 +92,7 @@ function needsChineseTranslation(text: string) {
 }
 
 export default function AccountActivity({ embedded = false }: { embedded?: boolean } = {}) {
+  const reducedMotion = usePrefersReducedMotion();
   const [tab, setTab] = useState<ActivityTab>('overview');
   const [filter, setFilter] = useState<CommentFilter>('all');
   const [comments, setComments] = useState<SocialComment[]>([]);
@@ -374,7 +377,7 @@ export default function AccountActivity({ embedded = false }: { embedded?: boole
 
           <AnimatePresence initial={false}>
             {selected && (
-              <motion.aside initial={{ x: 48, opacity: 0 }} animate={{ x: 0, opacity: 1 }} exit={{ x: 48, opacity: 0 }} transition={{ duration: 0.2 }} className="w-full flex-shrink-0 border-t border-border bg-surface p-4 sm:p-5 xl:w-[460px] xl:border-l xl:border-t-0">
+              <motion.aside initial={{ x: 48, opacity: 0 }} animate={{ x: 0, opacity: 1 }} exit={{ x: 48, opacity: 0 }} transition={reducedMotion ? { duration: 0 } : { ...lsMotion.spring.standard, opacity: { duration: lsMotion.duration.enter / 1000, ease: lsMotion.ease.enter } }} className="w-full flex-shrink-0 border-t border-border bg-surface p-4 sm:p-5 xl:w-[460px] xl:border-l xl:border-t-0">
               <div className="mb-4 flex items-center justify-between"><div><h2 className="text-sm font-bold text-text-primary">评论详情与回复</h2><p className="mt-1 text-[11px] text-text-muted">以首个选中评论生成，应用于已选 {selectedComments.length} 条</p></div><button type="button" onClick={() => setSelectedIds([])} aria-label="关闭评论详情" className="rounded-md p-2 text-text-muted hover:bg-white hover:text-text-primary"><X size={17} /></button></div>
               <div className="space-y-4">
                 <div className="rounded-lg border border-border bg-white p-4 sm:p-5">

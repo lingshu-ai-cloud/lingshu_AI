@@ -7,7 +7,7 @@ import {
   type DragEvent as ReactDragEvent,
   type PointerEvent as ReactPointerEvent,
 } from 'react';
-import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
+import { AnimatePresence, motion } from 'motion/react';
 import {
   ArrowLeft,
   ArrowUp,
@@ -17,9 +17,11 @@ import {
   Loader2,
   X,
 } from 'lucide-react';
-import { AGENT_ROLE_ICONS } from './ui/AgentRoleIcon';
+import { AGENT_ROLE_ICONS, AGENT_ROLE_PALETTE } from './ui/AgentRoleIcon';
 import type { AgentAction, AgentType, Message, Page } from '../App';
 import { authHeader } from '../lib/auth';
+import { lsMotion } from '../lib/designTokens';
+import { usePrefersReducedMotion } from '../lib/usePrefersReducedMotion';
 import { ASSISTANT_GUIDES, type AssistantGuide } from '../lib/assistantGuides';
 import { ORBIT_AGENT_IDS, type OrbitAgentId, useAssistantStore } from '../stores/assistantStore';
 import AgentReply from './AgentReply';
@@ -65,11 +67,11 @@ type AssistantSpeech = { id: number; message: string };
 
 const PERFORMANCE_LINES: Record<string, string[]> = {
   script: ['我正在把卖点排成能拍的镜头，马上就好。', '好内容值得多想几秒，我先帮你把逻辑捋顺。', '别急，我正在检查每个镜头能不能真正执行。'],
-  storyboard: ['分镜正在排队出场，我先来一段热身。', '镜头衔接交给我，我会把节奏接顺。', '正在逐镜检查，避免成片时才发现问题。'],
+  storyboard: ['分镜正在生成，请稍候。', '镜头衔接交给我，我会把节奏接顺。', '正在逐镜检查，避免成片时才发现问题。'],
   voice: ['正在逐句处理配音，不会漏掉后面的台词。', '我在给每句话找合适的停顿和节奏。', '配音还在生成，我陪你等一小会儿。'],
   material: ['我正在替每个分镜挑合适的素材。', '素材匹配中，先看动作，再看画面是否真的能用。', '稍等，我正在把重复镜头和不合适的素材筛掉。'],
   render: ['成片正在合成，我先替进度条加加油。', '最后几步通常最费功夫，马上就能看成片。', '正在把画面、字幕和声音稳稳地合在一起。'],
-  default: ['任务正在处理中，我会一直在这里陪你。', '稍等一下，好结果正在路上。', '我先表演一个原地小跳，进度交给后台继续跑。'],
+  default: ['任务正在处理中，我会一直在这里陪你。', '稍等一下，好结果正在路上。', '后台任务正在继续执行。'],
 };
 
 type GuideMemory = {
@@ -202,9 +204,6 @@ const SKILL_AGENTS: Array<{
   { id: 'content', label: '内容 Agent', agentType: 'traffic', Icon: AGENT_ROLE_ICONS.content, position: { x: -0.866, y: -0.5 } },
   { id: 'customer', label: '客服 Agent', agentType: 'conversion', Icon: AGENT_ROLE_ICONS.customer, position: { x: -1, y: 0 } },
 ];
-
-const ORBIT_AGENT_IDLE_STYLE = { color: '#53695F', borderColor: '#9AAEA4', backgroundColor: '#F1F6F2' };
-const ORBIT_AGENT_ACTIVE_STYLE = { color: '#117F51', borderColor: '#117F51', backgroundColor: '#E7F6EE' };
 
 const AGENT_DISPLAY_NAME: Record<OrbitAgentId, string> = {
   business: '经营 Agent',
@@ -369,7 +368,7 @@ function quickQuestions(context: AssistantContext) {
 }
 
 function todoToneClass(tone: AssistantTodoItem['tone'], completed: boolean) {
-  if (completed) return 'border-accent/20 bg-accent-glow text-accent';
+  if (completed) return 'border-green/20 bg-green/5 text-green';
   if (tone === 'red') return 'border-red/20 bg-red/5 text-red';
   if (tone === 'amber') return 'border-amber/20 bg-amber-dim text-amber';
   if (tone === 'blue') return 'border-accent/20 bg-accent-glow text-accent';
@@ -377,7 +376,7 @@ function todoToneClass(tone: AssistantTodoItem['tone'], completed: boolean) {
 }
 
 function todoDotClass(tone: AssistantTodoItem['tone'], completed: boolean) {
-  if (completed) return 'bg-accent';
+  if (completed) return 'bg-green';
   if (tone === 'red') return 'bg-red';
   if (tone === 'amber') return 'bg-amber';
   if (tone === 'blue') return 'bg-accent';
@@ -393,7 +392,10 @@ export default function GlobalAssistant({
   onAction,
   onSessionRefresh,
 }: Props) {
-  const reduceMotion = useReducedMotion();
+  const reduceMotion = usePrefersReducedMotion();
+  const fadeTransition = { duration: (reduceMotion ? lsMotion.duration.instant : lsMotion.duration.enter) / 1000, ease: lsMotion.ease.enter };
+  const fadeExit = { opacity: 0, transition: { duration: (reduceMotion ? lsMotion.duration.instant : lsMotion.duration.exit) / 1000, ease: lsMotion.ease.exit } };
+  const spatialTransition = reduceMotion ? { duration: 0 } : { ...lsMotion.spring.standard, opacity: fadeTransition };
   const [mode, setMode] = useState<'breathing' | 'expanded' | 'chat'>('breathing');
   const [launcherRetracted, setLauncherRetracted] = useState(false);
   const [panelView, setPanelView] = useState<'todo' | 'chat'>('chat');
@@ -1069,8 +1071,8 @@ export default function GlobalAssistant({
       ref={assistantRootRef}
       data-global-assistant="root"
       data-lingshu-assistant-dragged={assistantPosition ? 'true' : 'false'}
-      className={`fixed ${page === 'digitalEmployees' && mode === 'breathing' ? 'z-[35]' : 'z-[75]'} ${launcherDragging ? '' : 'transition-[left,right,top,bottom] duration-300'} ${assistantPosition ? '' : dockOnLeft ? 'bottom-5 left-4 lg:left-[292px]' : launcherAtEdge ? 'bottom-5 right-0' : 'bottom-5 right-5'}`}
-      style={assistantPosition ? { left: assistantPosition.x, top: assistantPosition.y } : undefined}
+      className={`fixed ${page === 'digitalEmployees' && mode === 'breathing' ? 'z-[35]' : 'z-[75]'} ${launcherDragging ? '' : 'transition-[left,right,top,bottom]'} ${assistantPosition ? '' : dockOnLeft ? 'bottom-5 left-4 lg:left-[292px]' : launcherAtEdge ? 'bottom-5 right-0' : 'bottom-5 right-5'}`}
+      style={{ ...(assistantPosition ? { left: assistantPosition.x, top: assistantPosition.y } : {}), transitionDuration: reduceMotion || launcherDragging ? '0ms' : 'var(--ls-motion-standard)', transitionTimingFunction: 'var(--ls-ease-standard)' }}
     >
       {mode === 'expanded' && (
         <button
@@ -1085,9 +1087,10 @@ export default function GlobalAssistant({
           <motion.div
             key={`performance-${performance.phase}`}
             data-lingshu-assistant-performance={performance.phase}
-            initial={{ opacity: 0, y: 10, scale: 0.94 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 7, scale: 0.96 }}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={fadeExit}
+            transition={fadeTransition}
             className={`absolute z-30 w-[248px] max-w-[calc(100vw-104px)] rounded-lg border border-border bg-surface p-3 shadow-lg ${assistantPosition ? '' : dockOnLeft ? 'left-[72px]' : 'right-[72px]'} ${dockOnTop ? 'top-1' : 'bottom-1'}`}
             style={assistantPosition ? { left: positionedPopupLeft(Math.min(248, viewport.width - 104)) } : undefined}
           >
@@ -1100,9 +1103,9 @@ export default function GlobalAssistant({
             >
               <X size={13} />
             </button>
-            <p className="pr-6 text-[10px] font-black uppercase tracking-[0.14em] text-accent">灵小枢陪你等</p>
-            <p className="mt-1 text-xs font-semibold leading-[1.65] text-text-secondary">{performanceMessage}</p>
-            <div className="mt-2 flex gap-1"><span className="h-1 w-5 animate-pulse rounded-full bg-accent"/><span className="h-1 w-3 animate-pulse rounded-full bg-accent/55 [animation-delay:160ms]"/><span className="h-1 w-2 animate-pulse rounded-full bg-accent/25 [animation-delay:320ms]"/></div>
+            <p className="ls-type-label-medium pr-6 text-accent">灵小枢陪你等</p>
+            <p className="ls-type-body-small mt-1 text-text-secondary">{performanceMessage}</p>
+            <span className="ls-type-label-medium mt-2 inline-flex items-center gap-1.5 text-accent"><Loader2 size={12} className="motion-safe:animate-spin" aria-hidden="true" />处理中</span>
             <span className={`absolute h-4 w-4 rotate-45 border-border bg-surface ${dockOnLeft ? '-left-2 border-b border-l' : '-right-2 border-r border-t'} ${dockOnTop ? 'top-6' : 'bottom-6'}`} />
           </motion.div>
         )}
@@ -1113,14 +1116,15 @@ export default function GlobalAssistant({
           <motion.div
             key={`speech-${speechBubble.id}`}
             data-lingshu-assistant-speech="true"
-            initial={{ opacity: 0, y: 8, scale: 0.96 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 6, scale: 0.97 }}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={fadeExit}
+            transition={fadeTransition}
             className={`absolute z-30 w-[248px] max-w-[calc(100vw-104px)] rounded-lg border border-border bg-surface p-3 shadow-lg ${assistantPosition ? '' : dockOnLeft ? 'left-[72px]' : 'right-[72px]'} ${dockOnTop ? 'top-1' : 'bottom-1'}`}
             style={assistantPosition ? { left: positionedPopupLeft(Math.min(248, viewport.width - 104)) } : undefined}
           >
-            <p className="text-[10px] font-black uppercase tracking-[0.14em] text-accent">灵小枢</p>
-            <p className="mt-1 text-xs font-semibold leading-[1.65] text-text-secondary">{speechBubble.message}</p>
+            <p className="ls-type-label-medium text-accent">灵小枢</p>
+            <p className="ls-type-body-small mt-1 text-text-secondary">{speechBubble.message}</p>
             <span className={`absolute h-4 w-4 rotate-45 border-border bg-surface ${dockOnLeft ? '-left-2 border-b border-l' : '-right-2 border-r border-t'} ${dockOnTop ? 'top-6' : 'bottom-6'}`} />
           </motion.div>
         )}
@@ -1131,9 +1135,10 @@ export default function GlobalAssistant({
           <motion.div
             key={featureGuide.id}
             data-lingshu-guide-bubble={featureGuide.id}
-            initial={{ opacity: 0, y: 8, scale: 0.96 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 6, scale: 0.97 }}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={fadeExit}
+            transition={fadeTransition}
             className={`absolute z-20 w-[236px] max-w-[calc(100vw-104px)] rounded-lg border border-border bg-surface p-3 shadow-lg ${assistantPosition ? '' : dockOnLeft ? 'left-[72px]' : 'right-[72px]'} ${dockOnTop ? 'top-1' : 'bottom-1'}`}
             style={assistantPosition ? { left: positionedPopupLeft(Math.min(236, viewport.width - 104)) } : undefined}
           >
@@ -1141,8 +1146,8 @@ export default function GlobalAssistant({
               <X size={13} />
             </button>
             <div className="pr-6">
-              <p className="text-xs font-black text-accent">{featureGuide.title}</p>
-              <p className="mt-1 text-xs leading-[1.65] text-text-secondary">{featureGuide.message}</p>
+              <p className="ls-type-label-medium text-accent">{featureGuide.title}</p>
+              <p className="ls-type-body-small mt-1 text-text-secondary">{featureGuide.message}</p>
             </div>
             <button
               type="button"
@@ -1151,7 +1156,7 @@ export default function GlobalAssistant({
                 setFeatureGuide(null);
                 openAgent(agentId);
               }}
-              className="mt-2 text-[11px] font-black text-accent hover:text-accent-dim"
+              className="ls-type-label-medium mt-2 text-accent hover:text-accent-dim"
             >
               问问灵小枢 →
             </button>
@@ -1164,11 +1169,12 @@ export default function GlobalAssistant({
         {page === 'enterprise' && mode === 'breathing' && enterpriseGuideSeen && !featureGuide && !speechBubble && (
           <motion.button
             type="button"
-            initial={{ opacity: 0, x: 6 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: 4 }}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={fadeExit}
+            transition={fadeTransition}
             onClick={openCurrentPageAgent}
-            className={`absolute z-10 whitespace-nowrap rounded-md border border-border bg-surface px-3 py-1.5 text-[11px] font-black text-accent shadow-sm hover:border-accent/30 hover:bg-accent-glow ${dockOnLeft ? 'left-[68px]' : 'right-[68px]'} ${dockOnTop ? 'top-5' : 'bottom-5'}`}
+            className={`ls-type-label-medium absolute z-10 whitespace-nowrap rounded-md border border-border bg-surface px-3 py-1.5 text-accent shadow-sm hover:border-accent/30 hover:bg-accent-glow ${dockOnLeft ? 'left-[68px]' : 'right-[68px]'} ${dockOnTop ? 'top-5' : 'bottom-5'}`}
           >
             要补资料？点我
           </motion.button>
@@ -1181,14 +1187,16 @@ export default function GlobalAssistant({
             className={`pointer-events-none absolute z-10 h-52 w-52 ${dockOnLeft ? 'left-0' : 'right-0'} ${dockOnTop ? 'top-0' : 'bottom-0'}`}
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
+            exit={fadeExit}
+            transition={fadeTransition}
           >
             <div className={`absolute h-36 w-36 rounded-full border border-dashed border-accent/25 ${dockOnLeft ? 'left-6' : 'right-6'} ${dockOnTop ? 'top-6' : 'bottom-6'}`} />
             <div className={`absolute h-24 w-24 rounded-full border border-dashed border-accent/15 ${dockOnLeft ? 'left-6' : 'right-6'} ${dockOnTop ? 'top-6' : 'bottom-6'}`} />
-            {SKILL_AGENTS.map((agent, index) => {
+            {SKILL_AGENTS.map(agent => {
               const Icon = agent.Icon;
               const unread = threads[agent.id].unreadCount;
               const current = agent.id === currentPageAgent;
+              const palette = AGENT_ROLE_PALETTE[agent.id];
               const x = (dockOnLeft ? -agent.position.x : agent.position.x) * radius;
               const y = (dockOnTop ? -agent.position.y : agent.position.y) * radius;
               return (
@@ -1200,17 +1208,17 @@ export default function GlobalAssistant({
                   aria-current={current ? 'page' : undefined}
                   onClick={() => openAgent(agent.id)}
                   className={`group pointer-events-auto absolute flex h-12 w-12 items-center justify-center rounded-full border bg-surface shadow-lg outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 ${dockOnLeft ? 'left-2' : 'right-2'} ${dockOnTop ? 'top-2' : 'bottom-2'}`}
-                  style={current ? ORBIT_AGENT_ACTIVE_STYLE : ORBIT_AGENT_IDLE_STYLE}
-                  initial={{ x: 0, y: 0, opacity: 0, scale: 0.72 }}
-                  animate={{ x, y, opacity: 1, scale: 1 }}
-                  exit={{ x: 0, y: 0, opacity: 0, scale: 0.72 }}
-                  transition={{ type: 'spring', stiffness: 260, damping: 18, delay: index * 0.06 }}
+                  style={{ color: palette.color, borderColor: current ? palette.color : '#E4E4E7', backgroundColor: current ? palette.tint : '#FFFFFF' }}
+                  initial={{ x: reduceMotion ? x : 0, y: reduceMotion ? y : 0, opacity: 0 }}
+                  animate={{ x, y, opacity: 1 }}
+                  exit={{ x: reduceMotion ? x : 0, y: reduceMotion ? y : 0, opacity: 0, transition: { ...spatialTransition, opacity: fadeExit.transition } }}
+                  transition={spatialTransition}
                 >
                   <Icon size={20} />
-                  <span className="pointer-events-none absolute bottom-full left-1/2 mb-2 -translate-x-1/2 whitespace-nowrap rounded-md bg-text-primary px-2.5 py-1 text-[11px] font-bold text-white opacity-0 shadow-md transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">
+                  <span className="ls-type-label-medium pointer-events-none absolute bottom-full left-1/2 mb-2 -translate-x-1/2 whitespace-nowrap rounded-md bg-text-primary px-2.5 py-1 text-white opacity-0 shadow-md transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">
                     {AGENT_DISPLAY_NAME[agent.id]}{current ? ' · 当前页面' : ''}
                   </span>
-                  {unread > 0 && <span className="absolute -right-1 -top-1 min-w-5 rounded-full bg-red px-1 text-[11px] font-bold text-white">{unread}</span>}
+                  {unread > 0 && <span className="ls-type-label-small absolute -right-1 -top-1 min-w-5 rounded-full bg-red px-1 text-white">{unread}</span>}
                 </motion.button>
               );
             })}
@@ -1225,15 +1233,14 @@ export default function GlobalAssistant({
             role="dialog"
             aria-label={panelTitle}
             tabIndex={-1}
-            layoutId={`assistant-${activeAgent}`}
-            initial={{ opacity: 0, y: 18, scale: 0.96 }}
-            animate={mode === 'chat' ? { opacity: 1, y: 0, scale: 1 } : { opacity: 0, y: 18, scale: 0.96 }}
-            exit={{ opacity: 0, y: 18, scale: 0.96 }}
-            transition={reduceMotion ? { duration: 0.16 } : { type: 'spring', stiffness: 240, damping: 24 }}
+            initial={{ opacity: 0, y: reduceMotion ? 0 : 8 }}
+            animate={mode === 'chat' ? { opacity: 1, y: 0 } : { opacity: 0, y: reduceMotion ? 0 : 8 }}
+            exit={{ y: reduceMotion ? 0 : 8, opacity: 0, transition: { ...spatialTransition, opacity: fadeExit.transition } }}
+            transition={spatialTransition}
             className={`absolute z-10 flex max-h-[calc(100dvh-32px)] max-w-[calc(100vw-32px)] flex-col overflow-hidden rounded-lg border border-border bg-surface shadow-xl outline-none ${assistantPosition ? '' : dockOnLeft ? 'left-0' : 'right-0'} ${dockOnTop ? 'top-14' : 'bottom-14'} ${assistantTool === 'knowledge-intake' ? 'w-[560px]' : 'w-[420px]'} ${mode === 'chat' ? 'pointer-events-auto visible' : 'pointer-events-none invisible'}`}
             style={{ height: assistantPanelHeight, ...(assistantPosition ? { left: positionedPanelLeft } : {}) }}
           >
-            <header className="flex h-12 shrink-0 items-center justify-between border-b border-border px-4">
+            <header className="flex h-12 shrink-0 items-center justify-between border-b border-border bg-gradient-to-r from-blue-50 via-violet-50 to-pink-50 px-4">
               <div className="flex min-w-0 items-center gap-2">
                 <button
                   type="button"
@@ -1251,8 +1258,8 @@ export default function GlobalAssistant({
                   <ArrowLeft size={16} />
                 </button>
                 <div className="min-w-0">
-                  <p className="truncate text-sm font-black text-text-primary">{panelTitle}</p>
-                  <p className="truncate text-[11px] text-text-muted">{panelSubtitle}</p>
+                  <p className="ls-type-title-small truncate text-text-primary">{panelTitle}</p>
+                  <p className="ls-type-body-small truncate text-text-muted">{panelSubtitle}</p>
                 </div>
               </div>
               <button type="button" onClick={() => { setAssistantTool(null); setPanelView('chat'); setMode('breathing'); }} className="rounded-md p-1.5 text-text-muted hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent" title="关闭" aria-label="关闭灵枢助手">
@@ -1275,14 +1282,14 @@ export default function GlobalAssistant({
               <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
                 <div className="space-y-3">
                   <div className="border-l-2 border-amber bg-amber-dim p-4">
-                    <p className="text-sm font-black text-text-primary">今日待办（{pendingCount}）</p>
-                    <p className="mt-2 text-sm leading-relaxed text-text-secondary">
+                    <p className="ls-type-title-small text-text-primary">今日待办（{pendingCount}）</p>
+                    <p className="ls-type-body-medium mt-2 text-text-secondary">
                       {pendingCount > 0 ? '需要你处理和确认的客户已按优先级排好。' : '今天的待办已处理完。'}
                     </p>
                     <button
                       type="button"
                       onClick={() => setPanelView('chat')}
-                      className="mt-4 rounded-md bg-accent px-3 py-2 text-xs font-black text-white hover:bg-accent-dim focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2"
+                      className="ls-type-label-medium mt-4 rounded-md bg-accent px-3 py-2 text-white hover:bg-accent-dim focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2"
                     >
                       客户助手
                     </button>
@@ -1303,15 +1310,15 @@ export default function GlobalAssistant({
                           <span className={`mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full ${todoDotClass(item.tone, item.completed)}`} />
                           <span className="min-w-0 flex-1">
                             <span className="flex items-center gap-2">
-                              <span className="truncate text-xs font-black text-text-primary">{item.name}</span>
+                              <span className="ls-type-title-small truncate text-text-primary">{item.name}</span>
                               {item.completed && (
-                                <span className="inline-flex shrink-0 items-center gap-1 border-l-2 border-accent bg-accent-glow px-2 py-0.5 text-[10px] font-black text-accent">
+                                <span className="ls-type-label-medium inline-flex shrink-0 items-center gap-1 border-l-2 border-green bg-green/5 px-2 py-0.5 text-green">
                                   <CheckCircle2 size={11} /> 已完成
                                 </span>
                               )}
                             </span>
-                            <span className="mt-1 block truncate text-[11px] font-bold opacity-80">{item.headline}</span>
-                            <span className="mt-1 block line-clamp-2 text-[11px] leading-5 text-text-secondary">{item.reason}</span>
+                            <span className="ls-type-label-medium mt-1 block truncate opacity-80">{item.headline}</span>
+                            <span className="ls-type-body-small mt-1 block line-clamp-2 text-text-secondary">{item.reason}</span>
                           </span>
                         </button>
                       ))}
@@ -1332,8 +1339,8 @@ export default function GlobalAssistant({
                   {!activeThread.messages.length ? (
                     <div className="flex h-full flex-col justify-center gap-4">
                       <div>
-                        <p className="text-sm font-bold text-text-primary">我是{activeAgentLabel}</p>
-                        <p className="mt-1 text-sm leading-relaxed text-text-muted">我会结合当前页面上下文继续帮你处理。</p>
+                        <p className="ls-type-title-small text-text-primary">我是{activeAgentLabel}</p>
+                        <p className="ls-type-body-medium mt-1 text-text-muted">我会结合当前页面上下文继续帮你处理。</p>
                       </div>
                       <div className="grid gap-2">
                         {quickQuestions(activeContext).map(item => (
@@ -1353,7 +1360,7 @@ export default function GlobalAssistant({
                       {activeThread.messages.map((msg, index) => (
                         <div key={index} className={`flex gap-2 ${msg.role === 'user' ? 'justify-end' : ''}`}>
                           {msg.role === 'assistant' && <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-text-primary text-white"><Bot size={13} /></div>}
-                          <div className={`max-w-[82%] rounded-lg px-3 py-2 text-sm leading-relaxed ${msg.role === 'user' ? 'rounded-tr-sm bg-accent text-white whitespace-pre-line' : 'rounded-tl-sm border border-border bg-surface-2 text-text-primary'}`}>
+                          <div className={`ls-type-body-large max-w-[82%] rounded-lg px-3 py-2 ${msg.role === 'user' ? 'rounded-tr-sm bg-accent text-white whitespace-pre-line' : 'rounded-tl-sm border border-border bg-surface-2 text-text-primary'}`}>
                             {msg.role === 'assistant'
                               ? (msg.content ? <AgentReply content={msg.content} sources={msg.sources} onAction={onAction} /> : <span className="opacity-40">...</span>)
                               : msg.content}
@@ -1406,20 +1413,20 @@ export default function GlobalAssistant({
           aria-label="唤出灵小枢智能助手"
           title="唤出灵小枢智能助手"
           onClick={() => setLauncherRetracted(false)}
-          initial={{ opacity: 0, x: 14, scale: 0.92 }}
-          animate={{ opacity: 1, x: 0, scale: 1 }}
-          exit={{ opacity: 0, x: 10, scale: 0.94 }}
-          transition={reduceMotion ? { duration: 0.12 } : { type: 'spring', stiffness: 320, damping: 24 }}
-          className="relative z-10 flex h-10 w-8 items-center justify-center rounded-l-md border border-r-0 border-border bg-surface text-accent shadow-md outline-none hover:w-9 hover:bg-accent-glow focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={fadeExit}
+          transition={fadeTransition}
+          className="relative z-10 flex h-10 w-8 items-center justify-center rounded-l-md border border-r-0 border-border bg-surface text-accent shadow-md outline-none hover:bg-accent-glow focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2"
         >
           <Bot size={16} />
-          {pendingCount > 0 && <span className="absolute -left-1.5 -top-1 min-w-4 rounded-full bg-red px-1 text-[9px] font-black text-white">{pendingBadge}</span>}
+          {pendingCount > 0 && <span className="ls-type-label-small absolute -left-1.5 -top-1 min-w-4 rounded-full bg-red px-1 text-white">{pendingBadge}</span>}
         </motion.button>
       )}
 
       {mode !== 'chat' && !launcherAtEdge && (
         <div className="relative z-10 h-[72px] w-[60px]">
-          <motion.button
+          <button
             type="button"
             draggable
             data-global-assistant="launcher"
@@ -1432,16 +1439,12 @@ export default function GlobalAssistant({
             onDragCapture={handleNativeDrag}
             onDragEndCapture={handleNativeDragEnd}
             onClick={handleLauncherClick}
-            className={`absolute inset-0 flex touch-none items-center justify-center rounded-lg bg-transparent outline-none transition-transform focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 ${launcherDragging ? 'cursor-grabbing' : 'cursor-grab hover:-translate-y-0.5'}`}
-            animate={performance && !reduceMotion
-              ? { scale: [1, 1.08, 1], y: [0, -9, 0], rotate: [0, -5, 5, 0] }
-              : mode === 'breathing' && pendingCount > 0 && !reduceMotion ? { scale: [1, 1.05, 1], y: [0, -2, 0] } : { scale: 1, y: 0 }}
-            transition={{ duration: performance ? 1.55 : 2.4, ease: 'easeInOut', repeat: (performance || (mode === 'breathing' && pendingCount > 0)) && !reduceMotion ? Infinity : 0 }}
+            className={`absolute inset-0 flex touch-none items-center justify-center rounded-lg bg-transparent outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 ${launcherDragging ? 'cursor-grabbing' : 'cursor-grab'}`}
             title={mode === 'expanded' ? `打开${AGENT_DISPLAY_NAME[currentPageAgent]}` : '拖动可移动，点击可展开灵枢助手'}
           >
             <AssistantLauncherMascot expression={assistantExpression} />
-            {pendingCount > 0 && <span className="absolute -right-1 -top-1 min-w-5 rounded-full bg-red px-1 text-[11px] font-black text-white">{pendingBadge}</span>}
-          </motion.button>
+            {pendingCount > 0 && <span className="ls-type-label-small absolute -right-1 -top-1 min-w-5 rounded-full bg-red px-1 text-white">{pendingBadge}</span>}
+          </button>
         </div>
       )}
     </div>

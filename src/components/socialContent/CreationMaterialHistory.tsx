@@ -48,7 +48,7 @@ function Detail({ project, authoritative, onClose, onOpen }: { project: StudioPr
         <p className="text-xs text-text-muted">以下为草稿保留的对标视频结构与分析。</p>
         <BenchmarkAnalysisSections analysis={data.reference} renderClip={clip => <video src={clip} controls playsInline className="max-h-64 w-full bg-black" />} />
         <section className="rounded-lg border p-4"><h3 className="text-sm font-bold">本次创作分镜 · {data.slots.length} 镜</h3>{data.slots.length ? data.slots.map((slot, index) => <article key={String(slot.id || index)} className="mt-2 rounded-lg bg-slate-50 p-3 text-xs leading-6"><strong>{index + 1}. {String(slot.time || '')} · {String(slot.title || '分镜')}{index === 0 ? ' · 钩子' : ''}</strong><p className="whitespace-pre-wrap">{String(slot.detail || '')}</p></article>) : <p className="mt-2 text-xs text-text-muted">此历史草稿尚未记录创作分镜。</p>}</section>
-      </div><footer className="border-t p-4"><button onClick={onOpen} className="rounded-lg bg-emerald-800 px-4 py-2 text-xs font-bold text-white">进入草稿制作</button></footer>
+      </div><footer className="border-t p-4"><button onClick={onOpen} className="rounded-lg bg-blue-600 px-4 py-2 text-xs font-bold text-white">进入草稿制作</button></footer>
     </div>
   </div>;
 }

@@ -65,6 +65,9 @@ const studioRouteSource = readFileSync(fileURLToPath(new URL('../../server/route
 assert.match(inspirationSource, /本次上传必须关联产品/, '上传必须关联具体产品');
 assert.match(inspirationSource, /选择关联产品（必选）/, '产品素材上传必须明确强绑定要求');
 assert.match(inspirationSource, /aria-label="本次上传素材归属"/, '紧凑上传入口仍必须有清晰的无障碍名称');
+assert.match(inspirationSource, /innerView === 'library' && <Button[\s\S]{0,400}>上传素材<\/Button>/, '我的素材上传按钮必须位于页签工具栏右侧');
+assert.doesNotMatch(inspirationSource, /id="material-upload-product"/, '我的素材主页面不得继续展示独立的上传产品选择行');
+assert.match(inspirationSource, /aria-label="我的素材筛选"[^]*?MaterialTaxonomyFilters[^]*?aria-label="内容形式"[^]*?aria-label="素材收藏状态"/, '我的素材主要筛选必须统一排列在同一工具栏');
 assert.match(inspirationSource, /updateMaterial\(result\.material\.id,[^]*?productId: uploadProductId/, '前端 P0 上传后必须保存产品归属');
 assert.match(inspirationSource, /material\.productId === filter\.productId/, '产品 ID 存在时必须按 ID 精确筛选');
 assert.doesNotMatch(inspirationSource, /manageTarget\.kind === 'material' && manageProductId === null/, '旧素材未关联产品不得成为保存卡点');
@@ -73,6 +76,7 @@ const taxonomySource = readFileSync(new URL('./material-library/MaterialTaxonomy
 assert.match(inspirationSource, /<MaterialTaxonomyFilters/, 'material library must use the current source/theme taxonomy');
 assert.match(taxonomySource, /MATERIAL_SOURCE_LABELS/, 'source categories must come from the shared contract');
 assert.match(taxonomySource, /MATERIAL_THEME_LABELS/, 'theme categories must come from the shared contract');
+assert.match(taxonomySource, /<Select[^]*?aria-label="素材来源"[^]*?<Select[^]*?aria-label="主题标签"/, '来源与主题必须使用一致的 Select 筛选样式');
 assert.doesNotMatch(inspirationSource, /系统已按创作主题整理素材|项可匹配|主题待确认/, '素材库不得残留旧主题卡片和派生主题标签');
 assert.doesNotMatch(inspirationSource, /任务中上传的图片、视频和音频也会归入这里/, '上传入口不得再使用大段说明文字');
 assert.match(inspirationSource, /<span className="text-xs font-bold">音频素材<\/span>/, '音频素材必须用专属占位画面识别，不得继续误标为图片');

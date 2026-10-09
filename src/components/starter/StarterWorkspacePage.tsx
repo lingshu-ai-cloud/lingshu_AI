@@ -1,3 +1,4 @@
+import { getScrollBehavior } from "../../lib/usePrefersReducedMotion";
 import { useMemo, useState } from 'react';
 import {
   AlertCircle,
@@ -259,7 +260,7 @@ export default function StarterWorkspacePage({
   const openWorkspaceTab = (nextTab: WorkspaceTab) => {
     setTab(nextTab);
     window.requestAnimationFrame(() => {
-      document.getElementById('starter-workspace-tabs')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      document.getElementById('starter-workspace-tabs')?.scrollIntoView({ behavior: getScrollBehavior(), block: 'start' });
     });
   };
 

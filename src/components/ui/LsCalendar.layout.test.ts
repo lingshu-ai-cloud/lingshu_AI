@@ -28,13 +28,17 @@ function evaluate(code: string, bindings: Record<string, unknown>) {
 
 assert.equal(attributes.has('height'), false, 'a height=auto override would disable the time scroller even with bounded contentHeight');
 for (const view of ['timeGridDay', 'timeGridWeek']) {
-  assert.equal(evaluate(expression('contentHeight'), { view }), 'clamp(320px, 65dvh, 720px)');
+  assert.equal(evaluate(expression('contentHeight'), { view, timeGridHeight: 'clamp(320px, 65dvh, 720px)' }), 'clamp(320px, 65dvh, 720px)');
 }
 for (const view of ['dayGridMonth', 'listWeek', 'multiMonthYear']) {
-  assert.equal(evaluate(expression('contentHeight'), { view }), 'auto', 'non-time views retain natural content height');
+  assert.equal(evaluate(expression('contentHeight'), { view, timeGridHeight: 'clamp(320px, 65dvh, 720px)' }), 'auto', 'non-time views retain natural content height');
 }
 assert.equal(attributes.get('scrollTime')?.initializer?.getText(file), '"08:00:00"');
+assert.equal(attributes.get('slotMinTime')?.initializer?.getText(file), '"08:00:00"');
+assert.equal(attributes.get('slotMaxTime')?.initializer?.getText(file), '"22:00:00"');
 assert.ok(attributes.has('scrollTimeReset'));
+assert.equal(evaluate(expression('allDaySlot'), { inputs: [{ allDay: false }] }), false, 'the empty all-day lane must not create a nested-looking calendar layer');
+assert.equal(evaluate(expression('allDaySlot'), { inputs: [{ allDay: true }] }), true, 'real all-day events retain their lane');
 assert.equal(attributes.has('dayMinWidth'), false, 'dayMinWidth requires scrollgrid at runtime and must not enter the Standard-only calendar');
 assert.doesNotMatch(source, /import.*scrollgrid|import.*resource-time|import.*resource-day/);
 assert.equal(evaluate(expression('eventMinHeight'), {}), 24);
@@ -43,7 +47,7 @@ assert.equal(evaluate(expression('eventShortHeight'), {}), 68);
 type RenderNode = { type: unknown; props: Record<string, unknown> | null; children: any[] };
 const render = evaluate(expression('eventContent'), {
   React: { createElement: (type: unknown, props: Record<string, unknown> | null, ...children: any[]): RenderNode => ({ type, props, children }) },
-  CalendarThumbnail: 'CalendarThumbnail', SocialPlatformIcon: 'SocialPlatformIcon', calendarStatusLabels: { planned: '待执行' },
+  CalendarThumbnail: 'CalendarThumbnail', SocialPlatformIcon: 'SocialPlatformIcon', calendarStatusLabels: { planned: '待执行' }, eventCardMode: 'media',
 });
 function nodes(node: RenderNode): RenderNode[] {
   return [node, ...node.children.filter(item => item && typeof item === 'object').flatMap(nodes)];
@@ -67,7 +71,8 @@ const event = { allDay: false, extendedProps: { item: { title: '新品短视频�
 }
 assert.match(css, /\.ls-calendar-surface\s*\{[^}]*min-width: 0;[^}]*max-width: 100%/);
 assert.match(css, /\.ls-calendar-event-content-timed[^}]*overflow: hidden/);
-assert.match(css, /white-space: nowrap; text-overflow: ellipsis; line-height: 16px/);
+assert.match(css, /white-space: nowrap; text-overflow: ellipsis; line-height: var\(--ls-type-body-small-line\)/);
 assert.match(css, /@container ls-calendar-slot \(max-height: 32px\)/, 'the smallest rendered segments suppress secondary time text instead of cropping the title');
+assert.match(css, /\.fc-timegrid-slot\s*\{[^}]*height:\s*48px/, 'hourly rows must be tall enough to make the day timeline readable');
 assert.match(source, /<Drawer title="排期详情"/);
 console.log('Calendar bounded time-grid height, 08:00 scrolling and compact event layout tests passed');

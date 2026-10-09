@@ -4,6 +4,7 @@ import test from 'node:test';
 import vm from 'node:vm';
 import ts from 'typescript';
 import type { LsDataChartProps } from './LsDataChart';
+import { lsFonts, lsMotion, lsTypography } from '../../lib/designTokens';
 
 // Execute the complete TSX component with deterministic hook/DOM/Chart.js adapters.
 // Assertions inspect rendered component props, actual chart configs and downloaded bytes.
@@ -20,9 +21,12 @@ function harness(initial: LsDataChartProps, options: { importFailure?: boolean; 
   let tree: RenderNode;
   let imports = 0;
   let destroyed = 0;
+  let stopped = 0;
   const cells: Cell[] = [];
   const effects: Array<() => void> = [];
   const configs: any[] = [];
+  const updates: string[] = [];
+  const canvasElement = { tagName: 'CANVAS' };
   const downloads: Array<{ blob: Blob; href: string; filename: string }> = [];
   const revoked: string[] = [];
   const timers: Array<() => void> = [];
@@ -43,13 +47,17 @@ function harness(initial: LsDataChartProps, options: { importFailure?: boolean; 
   };
   const jsx = (type: unknown, attributes: Record<string, any>) => {
     const node = { type, props: attributes || {} };
-    if (type === 'canvas' && attributes.ref) attributes.ref.current = { tagName: 'CANVAS' };
+    if (type === 'canvas' && attributes.ref) attributes.ref.current = canvasElement;
     return node;
   };
   class FakeChart {
     static register() {}
-    constructor(_canvas: unknown, config: unknown) { configs.push(config); }
+    data: any;
+    options: any;
+    constructor(_canvas: unknown, private config: any) { this.data = config.data; this.options = config.options; configs.push(config); }
     destroy() { destroyed += 1; }
+    stop() { stopped += 1; }
+    update(mode: string) { this.config.data = this.data; this.config.options = this.options; updates.push(mode); }
   }
   const exports: Record<string, any> = {};
   vm.runInNewContext(compiled, {
@@ -59,6 +67,8 @@ function harness(initial: LsDataChartProps, options: { importFailure?: boolean; 
       if (name === 'react/jsx-runtime') return { jsx, jsxs: jsx, Fragment: 'Fragment' };
       if (name === 'antd') return components;
       if (name === 'lucide-react') return { Download: 'Download' };
+      if (name === '../../lib/designTokens') return { lsFonts, lsMotion, lsTypography };
+      if (name === '../../lib/usePrefersReducedMotion') return { usePrefersReducedMotion: () => Boolean(options.reducedMotion) };
       if (name === 'chart.js') { imports += 1; if (options.importFailure) throw new Error('simulated chart import failure'); return { Chart: FakeChart }; }
       throw new Error(`Unexpected dependency: ${name}`);
     },
@@ -77,14 +87,15 @@ function harness(initial: LsDataChartProps, options: { importFailure?: boolean; 
   const runEffects = () => { for (const effect of effects.splice(0)) effect(); };
   const settle = () => new Promise<void>(resolve => setImmediate(resolve));
   return {
-    configs, downloads, revoked,
+    configs, updates, downloads, revoked,
     render, runEffects,
     async mount() { render(); runEffects(); await settle(); return tree; },
     async update(next: LsDataChartProps) { render(next); runEffects(); await settle(); return tree; },
     async settle() { await settle(); },
     cleanup() { cells.forEach(entry => entry.cleanup?.()); },
     runTimers() { timers.splice(0).forEach(run => run()); },
-    get imports() { return imports; }, get destroyed() { return destroyed; }, get tree() { return tree; },
+    setReducedMotion(value: boolean) { options.reducedMotion = value; },
+    get imports() { return imports; }, get destroyed() { return destroyed; }, get stopped() { return stopped; }, get tree() { return tree; },
   };
 }
 
@@ -241,14 +252,45 @@ test('failed chart imports expose table fallback and canceled mounts never insta
   assert.equal(canceled.configs.length, 0);
 });
 
-test('replacing a query snapshot destroys the old graph and updates chart/table together', async () => {
+test('query refresh updates the same graph without replaying its entrance and keeps the table in sync', async () => {
   const h = harness(base); await h.mount();
+  assert.equal(h.configs[0].options.animation.duration, lsMotion.duration.enter);
   await h.update({ ...base, labels: ['新日期'], series: [{ label: '新指标', values: [20] }] });
-  assert.equal(h.destroyed, 1); assert.equal(h.configs.length, 2);
-  assert.deepEqual(plain(h.configs[1].data.labels), ['新日期']);
-  assert.deepEqual(plain(h.configs[1].data.datasets[0].data), [20]);
+  assert.equal(h.destroyed, 0); assert.equal(h.configs.length, 1);
+  assert.deepEqual(h.updates, ['none']);
+  assert.equal(h.configs[0].options.animation, false);
+  assert.deepEqual(plain(h.configs[0].data.labels), ['新日期']);
+  assert.deepEqual(plain(h.configs[0].data.datasets[0].data), [20]);
   assert.equal(find(h.tree, 'Table').props.dataSource[0].label, '新日期');
   assert.equal(find(h.tree, 'Table').props.dataSource[0].value0, 20);
   await h.update({ ...base, labels: [] });
-  find(h.tree, 'Empty'); assert.equal(h.destroyed, 2); assert.equal(h.configs.length, 2, 'clearing a query snapshot destroys the previous graph without drawing a false zero');
+  find(h.tree, 'Empty'); assert.equal(h.destroyed, 1); assert.equal(h.configs.length, 1, 'clearing a query snapshot destroys the previous graph without drawing a false zero');
+});
+
+test('changing reduced motion stops the active chart immediately without recreating it', async () => {
+  const h = harness(base); await h.mount();
+  h.setReducedMotion(true);
+  h.render(); h.runEffects();
+  assert.equal(h.stopped, 1, 'the current animation stops before the async Chart.js module resolves');
+  assert.equal(h.configs[0].options.animation, false);
+  await h.settle();
+  assert.equal(h.configs.length, 1); assert.equal(h.destroyed, 0);
+  assert.ok(h.updates.every(mode => mode === 'none'));
+  h.setReducedMotion(false); await h.update(base);
+  assert.equal(h.configs[0].options.animation, false, 'restoring motion does not replay an existing chart');
+  await h.update({ ...base, loading: true });
+  assert.equal(find(h.tree, 'Skeleton').props.active, true);
+  h.setReducedMotion(true); await h.update({ ...base, loading: true });
+  assert.equal(find(h.tree, 'Skeleton').props.active, false);
+});
+
+test('changing chart type releases the previous instance and charts inherit the shared type scale', async () => {
+  const h = harness(base); await h.mount();
+  await h.update({ ...base, kind: 'bar' });
+  assert.equal(h.destroyed, 1); assert.equal(h.configs.length, 2);
+  const font = h.configs[1].options.font;
+  assert.equal(font.family, lsFonts.sans);
+  assert.equal(font.size, lsTypography['body-small'].size);
+  assert.equal(font.lineHeight, lsTypography['body-small'].line / lsTypography['body-small'].size);
+  h.cleanup(); assert.equal(h.destroyed, 2);
 });

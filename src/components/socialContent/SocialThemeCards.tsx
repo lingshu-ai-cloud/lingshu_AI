@@ -30,7 +30,7 @@ const THEME_VISUALS: Record<SocialContentThemeId, ThemeVisual> = {
     eyebrow: '产品介绍',
     example: '拍细节、演示用法，讲清产品优势',
     tint: 'from-[#e4f3ea] via-[#f3f8f4] to-[#dcece4]',
-    iconStyle: 'bg-[#173d31] text-white',
+    iconStyle: 'bg-blue-50 text-blue-600',
     chips: ['细节', '演示', '证据'],
   },
   scenario_solution: {
@@ -38,7 +38,7 @@ const THEME_VISUALS: Record<SocialContentThemeId, ThemeVisual> = {
     eyebrow: '使用演示',
     example: '拍真实使用过程，让客户看懂怎么用',
     tint: 'from-[#fcebdc] via-[#fff7ef] to-[#f3dfcf]',
-    iconStyle: 'bg-[#a45a3b] text-white',
+    iconStyle: 'bg-orange-50 text-orange-600',
     chips: ['场景', '痛点', '结果'],
   },
   supplier_capability: {
@@ -46,7 +46,7 @@ const THEME_VISUALS: Record<SocialContentThemeId, ThemeVisual> = {
     eyebrow: '工厂展示',
     example: '拍车间、设备和质检，展示生产实力',
     tint: 'from-[#e4ecef] via-[#f5f8f8] to-[#dce6e8]',
-    iconStyle: 'bg-[#315b63] text-white',
+    iconStyle: 'bg-cyan-50 text-cyan-600',
     chips: ['团队', '流程', '质检'],
   },
   customization_process: {
@@ -54,7 +54,7 @@ const THEME_VISUALS: Record<SocialContentThemeId, ThemeVisual> = {
     eyebrow: '合作流程',
     example: '讲清从沟通、打样到生产交付的步骤',
     tint: 'from-[#eee8f5] via-[#faf8fc] to-[#e5dced]',
-    iconStyle: 'bg-[#665079] text-white',
+    iconStyle: 'bg-violet-50 text-violet-600',
     chips: ['需求', '打样', '交付'],
   },
   customer_case: {
@@ -62,7 +62,7 @@ const THEME_VISUALS: Record<SocialContentThemeId, ThemeVisual> = {
     eyebrow: '合作案例',
     example: '展示真实成品和合作结果，增加信任',
     tint: 'from-[#e6eee1] via-[#f7faf4] to-[#dce8d5]',
-    iconStyle: 'bg-[#42613a] text-white',
+    iconStyle: 'bg-pink-50 text-pink-600',
     chips: ['问题', '方案', '成果'],
   },
 };

@@ -49,36 +49,36 @@ function LoginScreen({ initialError = '', onAuthed }: { initialError?: string; o
 
   return (
     <main className="relative flex min-h-[100dvh] items-center justify-center overflow-hidden px-5 py-12">
-      <div aria-hidden="true" className="absolute left-[-7rem] top-[-8rem] h-80 w-80 rounded-full border-[64px] border-emerald-900/[0.035]" />
-      <div className="relative grid w-full max-w-5xl overflow-hidden rounded-[28px] border border-white/70 bg-white/90 shadow-[0_32px_90px_rgba(22,61,49,0.14)] backdrop-blur md:grid-cols-[1.05fr_0.95fr]">
-        <section className="relative hidden min-h-[650px] overflow-hidden bg-[#123e31] p-12 text-white md:flex md:flex-col md:justify-between">
-          <div aria-hidden="true" className="absolute -right-20 -top-20 h-72 w-72 rounded-full border-[54px] border-white/[0.045]" />
+      <div aria-hidden="true" className="absolute left-[-7rem] top-[-8rem] h-80 w-80 rounded-full border-[64px] border-blue-600/[0.035]" />
+      <div className="relative grid w-full max-w-5xl overflow-hidden rounded-[28px] border border-zinc-200 bg-white shadow-[0_24px_72px_rgba(24,24,27,0.06)] md:grid-cols-[1.05fr_0.95fr]">
+        <section className="relative hidden min-h-[650px] overflow-hidden border-r border-zinc-200 bg-white p-12 text-zinc-900 md:flex md:flex-col md:justify-between">
+          <div aria-hidden="true" className="absolute -right-20 -top-20 h-72 w-72 rounded-full border-[54px] border-blue-100/40" />
           <div className="relative">
-            <div className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/10 px-3 py-1.5 text-xs font-bold tracking-wide text-emerald-50">
+            <div className="inline-flex items-center gap-2 rounded-full border border-blue-100 bg-blue-50 px-3 py-1.5 text-xs font-bold tracking-wide text-blue-600">
               <ServerCog size={14} /> 独立运维应用
             </div>
             <h1 className="mt-8 max-w-md text-4xl font-black leading-[1.12] tracking-[-0.04em]">
               团队 AI 账号管理台
             </h1>
-            <p className="mt-5 max-w-md text-sm leading-7 text-emerald-50/75">
+            <p className="mt-5 max-w-md text-sm leading-7 text-zinc-500">
               汇总脱敏 Token 遥测，管理账号归属与设备占用协调，同时保留每位成员的本地开发工作流。
             </p>
           </div>
           <div className="relative my-8 space-y-3">
-            <p className="text-xs font-black uppercase tracking-[0.18em] text-emerald-200/70">账号接入流程</p>
+            <p className="text-xs font-black uppercase tracking-[0.18em] text-violet-600">账号接入流程</p>
             {[
               ['1', '管理员先登录管理台'],
               ['2', '添加成员并创建账号槽位'],
               ['3', '成员在自己的电脑登录官方客户端'],
               ['4', '运行本地连接器，状态自动同步'],
             ].map(([step, text]) => (
-              <div key={step} className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/[0.06] px-3.5 py-3 text-sm text-emerald-50/85">
-                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-white/15 text-[11px] font-black text-white">{step}</span>
+              <div key={step} className="flex items-center gap-3 rounded-xl border border-zinc-200 bg-white px-3.5 py-3 text-sm text-zinc-700">
+                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-blue-50 text-[11px] font-black text-blue-600">{step}</span>
                 {text}
               </div>
             ))}
           </div>
-          <div className="relative space-y-4 text-sm text-emerald-50/80">
+          <div className="relative space-y-4 text-sm text-zinc-500">
             <div className="flex items-center gap-3"><ShieldCheck size={18} /> 只允许平台管理员访问</div>
             <div className="flex items-center gap-3"><KeyRound size={18} /> 成员本机登录，不收集密码，不自动轮换账号</div>
           </div>
@@ -87,7 +87,7 @@ function LoginScreen({ initialError = '', onAuthed }: { initialError?: string; o
         <section className="flex min-h-[650px] items-center p-7 sm:p-12">
           <div className="mx-auto w-full max-w-sm">
             <div className="mb-9 flex items-center gap-3 md:hidden">
-              <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[#123e31] text-white"><ServerCog size={21} /></span>
+              <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-blue-600 text-white"><ServerCog size={21} /></span>
               <div>
                 <p className="text-lg font-black text-text-primary">团队 AI 账号管理台</p>
                 <p className="text-xs text-text-muted">独立运维应用</p>
@@ -199,11 +199,11 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-[100dvh] bg-[#f6f8f5]">
+    <div className="min-h-[100dvh] bg-white">
       <header className="sticky top-0 z-30 border-b border-border/80 bg-white/90 backdrop-blur-xl">
         <div className="mx-auto flex h-16 max-w-7xl items-center justify-between gap-4 px-5 sm:px-7">
           <div className="flex min-w-0 items-center gap-3">
-            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[#123e31] text-white"><ServerCog size={18} /></span>
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-blue-600 text-white"><ServerCog size={18} /></span>
             <div className="min-w-0">
               <p className="truncate text-sm font-black text-text-primary">团队 AI 账号管理台</p>
               <p className="truncate text-[11px] text-text-muted">独立运维应用</p>

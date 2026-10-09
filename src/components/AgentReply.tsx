@@ -5,6 +5,7 @@ import {
 } from 'recharts';
 import type { AgentType } from '../App';
 import { CHART_CURSOR_STYLE, CHART_TOOLTIP_STYLE } from '../lib/uiStyles';
+import { chartPalette } from './ui/LsDataChart';
 
 /* 渲染 Agent 回复的轻量 Markdown：
    ## / ### 分级加粗标题，**加粗**强调结论，- / 1. 列表，[文字](链接) 可点跳转。
@@ -134,7 +135,7 @@ function MiniChart({ raw }: { raw: string }) {
     return <div className="my-2 rounded-xl border border-dashed border-border bg-surface px-3 py-2.5 text-xs text-text-muted">图表数据生成中…</div>;
   }
   const isLine = spec.type === 'line';
-  const axisTick = { fontSize: 10, fill: 'var(--color-text-muted, #64748b)' };
+  const axisTick = { fontSize: 10, fill: 'var(--color-text-muted, #71717a)' };
   return (
     <div className="my-2 rounded-xl border border-border bg-white/75 px-3 pb-1 pt-2.5">
       {spec.title && (
@@ -147,19 +148,19 @@ function MiniChart({ raw }: { raw: string }) {
         <ResponsiveContainer width="100%" height="100%">
           {isLine ? (
             <LineChart data={data} margin={{ top: 6, right: 8, left: -14, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="rgba(15,23,42,0.08)" vertical={false} />
+              <CartesianGrid strokeDasharray="3 3" stroke="#e4e4e7" vertical={false} />
               <XAxis dataKey="label" tick={axisTick} tickLine={false} axisLine={false} interval="preserveStartEnd" />
               <YAxis tick={axisTick} tickLine={false} axisLine={false} width={44} />
               <Tooltip contentStyle={CHART_TOOLTIP_STYLE} cursor={CHART_CURSOR_STYLE} />
-              <Line type="monotone" dataKey="value" stroke="var(--color-accent)" strokeWidth={2} dot={{ r: 2.5 }} />
+              <Line type="monotone" dataKey="value" stroke={chartPalette[0]} strokeWidth={2} dot={{ r: 2.5 }} />
             </LineChart>
           ) : (
             <BarChart data={data} margin={{ top: 6, right: 8, left: -14, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="rgba(15,23,42,0.08)" vertical={false} />
+              <CartesianGrid strokeDasharray="3 3" stroke="#e4e4e7" vertical={false} />
               <XAxis dataKey="label" tick={axisTick} tickLine={false} axisLine={false} interval={0} />
               <YAxis tick={axisTick} tickLine={false} axisLine={false} width={44} />
               <Tooltip contentStyle={CHART_TOOLTIP_STYLE} cursor={CHART_CURSOR_STYLE} />
-              <Bar dataKey="value" fill="var(--color-accent)" radius={[5, 5, 0, 0]} maxBarSize={26} />
+              <Bar dataKey="value" fill={chartPalette[0]} radius={[5, 5, 0, 0]} maxBarSize={26} />
             </BarChart>
           )}
         </ResponsiveContainer>

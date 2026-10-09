@@ -1,3 +1,4 @@
+import { getScrollBehavior } from "../lib/usePrefersReducedMotion";
 import EnterprisePresenters from "./enterprise/EnterprisePresenters";
 import ManagedPublishingGrantEditor from './ManagedPublishingGrantEditor';
 import { Alert, Button, Drawer, Modal, Tabs } from 'antd';
@@ -833,12 +834,12 @@ function OnboardingPanel({
     if (profileKeys.includes(firstKey)) {
       setProfileConfirmed(false);
       setSubmitted(false);
-      window.setTimeout(() => document.getElementById("onboarding-enterprise-profile")?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
+      window.setTimeout(() => document.getElementById("onboarding-enterprise-profile")?.scrollIntoView({ behavior: getScrollBehavior(), block: "start" }), 50);
       return;
     }
     if (firstKey === "focusProducts") {
       setSubmitted(false);
-      window.setTimeout(() => document.getElementById("onboarding-focus-products")?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
+      window.setTimeout(() => document.getElementById("onboarding-focus-products")?.scrollIntoView({ behavior: getScrollBehavior(), block: "start" }), 50);
       return;
     }
     const targetAgent = ["contentPublish", "publishingTargets", "managedPublishingGrant", "approvalOwner"].includes(firstKey) ? "business" : ["batchFollowup", "followupCadence"].includes(firstKey) ? "customer" : firstKey === "socialCadence" ? "director" : "business";
@@ -846,7 +847,7 @@ function OnboardingPanel({
     window.setTimeout(() => {
       const selector = firstKey === "approvalOwner" ? 'input[placeholder="姓名或岗位"]' : `[aria-invalid="true"]`;
       const target = document.querySelector<HTMLElement>(selector);
-      target?.scrollIntoView({ behavior: "smooth", block: "center" });
+      target?.scrollIntoView({ behavior: getScrollBehavior(), block: "center" });
       target?.focus();
     }, 50);
   };
@@ -1650,7 +1651,7 @@ function EventTimeline({
             {event.id === actionEventId && actionLabel && onAction && <Button
               htmlType="button"
               onClick={onAction}
-              className="!h-auto min-h-9 !whitespace-normal mt-3 inline-flex items-center gap-1.5 rounded-lg bg-emerald-700 px-3 py-2 text-xs font-bold text-white hover:bg-emerald-800"
+              className="!h-auto min-h-9 !whitespace-normal mt-3 inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-2 text-xs font-bold text-white hover:bg-blue-700"
             >
               {actionLabel} <ArrowRight size={13} />
             </Button>}
@@ -3721,7 +3722,7 @@ export default function DigitalEmployeePage({
   const scrollTo = (target: React.RefObject<HTMLDivElement | null>) => {
     window.setTimeout(
       () =>
-        target.current?.scrollIntoView({ behavior: "smooth", block: "start" }),
+        target.current?.scrollIntoView({ behavior: getScrollBehavior(), block: "start" }),
       50,
     );
   };
@@ -3977,8 +3978,8 @@ export default function DigitalEmployeePage({
 
   if (loading)
     return (
-      <div className="flex h-full items-center justify-center bg-slate-50">
-        <Loader2 size={24} className="animate-spin text-emerald-600" />
+      <div className="flex h-full items-center justify-center bg-white">
+        <Loader2 size={24} className="animate-spin text-accent" />
       </div>
     );
 
@@ -4112,7 +4113,7 @@ export default function DigitalEmployeePage({
       if (taskId) setSelectedTaskId(taskId);
       setSelectedContentItemId(contentItemId);
       setWorkspaceView("live");
-      window.setTimeout(() => document.querySelector('[data-testid="production-task-scene"]')?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
+      window.setTimeout(() => document.querySelector('[data-testid="production-task-scene"]')?.scrollIntoView({ behavior: getScrollBehavior(), block: "start" }), 50);
     };
     const weeklyPlanControls = <>
       <Button onClick={()=>{ setNewGoal(false); setWeeklyPlanOpen(true); }} icon={<CalendarRange size={15}/>}>查看本周计划</Button>
@@ -4122,18 +4123,15 @@ export default function DigitalEmployeePage({
     </>;
     return (
       <>
-      {!weeklyPlanOpen && <div className="h-full overflow-y-auto bg-surface-2">
+      {!weeklyPlanOpen && <div className="h-full overflow-y-auto bg-white">
         <div className="mx-auto w-full max-w-[1440px] px-4 py-5 sm:px-6 lg:px-8">
-          <header className="mb-5"><h1 className="text-[28px] font-semibold text-text-primary">{PAGE_REGISTRY.digitalEmployees.canonicalTitle}</h1><p className="mt-1 text-sm text-text-secondary">从本周计划到生产交付，持续跟进账号、内容与经营结果。</p></header>
+          <h1 className="sr-only">{PAGE_REGISTRY.digitalEmployees.canonicalTitle}</h1>
           <div aria-label="当前周计划">
             {goal ? <WeeklyCommandCenter
               data={data}
               statusLabel={currentPlanStatusLabel}
               actions={weeklyPlanControls}
-              notice={<>
-                {!activeRun && !viewGoalId && (!planDetailsReady || approvalBlocked) && <p className="mr-auto text-[10px] font-bold text-amber-700">{approvalBlocked ? `开始前需补齐：${firstMissingReadiness?.label || "经营基础信息"}` : missingReferenceMasters.length ? `爆款库还缺 ${missingReferenceMasters.length} 条母版所需的已分析视频` : missingProductMasters.length ? `还有 ${missingProductMasters.length} 条原创母版未绑定产品` : detailGeneration?.status === "blocked" ? `开始前需处理 ${detailGeneration.blockedCount} 条母版任务卡点` : "请确认周计划并开始工作"}</p>}
-              </>}
-            /> : <section className="overflow-hidden rounded-lg border border-emerald-200 bg-surface-2"><div className="flex flex-wrap items-start justify-between gap-4 px-5 py-4"><div><p className="text-xs font-semibold text-emerald-800">周经营计划</p><p className="mt-1 text-sm font-bold text-slate-800">本周还没有可执行计划</p><p className="mt-1 text-xs text-slate-500">点击“开始周任务”确定平台、账号、视频产量和预算，再选择产品并确认工作排期。</p></div><div aria-label="智能经营控制" className="flex max-w-full flex-wrap items-center justify-end gap-2">{weeklyPlanControls}</div></div></section>}
+            /> : <section className="overflow-hidden rounded-lg border border-border bg-white"><div className="flex flex-wrap items-start justify-between gap-4 px-5 py-4"><div><p className="text-xs font-semibold text-accent">周经营计划</p><p className="mt-1 text-sm font-bold text-slate-800">本周还没有可执行计划</p><p className="mt-1 text-xs text-slate-500">点击“开始周任务”确定平台、账号、视频产量和预算，再选择产品并确认工作排期。</p></div><div aria-label="智能经营控制" className="flex max-w-full flex-wrap items-center justify-end gap-2">{weeklyPlanControls}</div></div></section>}
           </div>
           <Tabs className="mt-6" aria-label="智能经营视图" activeKey={workspaceView === "live" ? "overview" : workspaceView} onChange={key => {setWorkspaceView(key as WorkspaceView); if(key !== "overview") setSelectedContentItemId("");}} items={views.map(view => ({key: view.id, label: view.label}))}/>
           {error && <Alert className="mt-5" type="error" showIcon title={error} closable onClose={()=>setError("")}/>}
@@ -4157,10 +4155,10 @@ export default function DigitalEmployeePage({
       <Drawer open={applicationGuideOpen} title="新手引导" size={880} mask={{ closable: false }} onClose={() => !busy && setApplicationGuideOpen(false)}>
         {applicationGuideOpen && <OnboardingPanel initial={data.config} readiness={data.businessSnapshot?.readiness || []} busy={Boolean(busy)} restartFromBeginning onOpenReadiness={openReadiness} onSave={async () => { setApplicationGuideOpen(false); return true; }}/>}
       </Drawer>
-      {weeklyPlanOpen && <div className="h-full overflow-y-auto bg-surface-2">
+      {weeklyPlanOpen && <div className="h-full overflow-y-auto bg-white">
         <section aria-label={goal && !newGoal ? "本周计划详情" : "周计划生成"} className="mx-auto w-full max-w-[1440px] p-4 sm:p-6">
           <header className="mb-5 flex flex-wrap items-start justify-between gap-4 border-b border-border pb-5">
-            <div><h1 className="text-[28px] font-semibold">{goal && !newGoal ? activeRun ? "数字员工工作排期" : "确认本周视频计划" : "制定本周目标"}</h1><p className="mt-2 text-sm text-text-secondary">{goal && !newGoal ? "按发布时间查看内容，检查产品与参考依据后确认排期。" : "确定各平台账号的产量、总产量和预计成本。"}</p></div>
+            <h1 className="text-[28px] font-semibold">{goal && !newGoal ? activeRun ? "数字员工工作排期" : "确认本周视频计划" : "制定本周目标"}</h1>
             <Button disabled={Boolean(busy)} onClick={() => setWeeklyPlanOpen(false)} icon={<ChevronLeft size={15}/>}>返回智能经营</Button>
           </header>
           {error && <Alert className="mb-4" type="error" showIcon title={error}/>}
@@ -4484,13 +4482,13 @@ export default function DigitalEmployeePage({
                 if (link.businessRef.taskKey === "weekly_review") { setWorkspaceView("review"); return; }
                 if (link.taskId) {
                   setSelectedTaskId(link.taskId);
-                  window.setTimeout(() => document.getElementById("task-production-scene")?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
+                  window.setTimeout(() => document.getElementById("task-production-scene")?.scrollIntoView({ behavior: getScrollBehavior(), block: "start" }), 50);
                 } else {
-                  document.getElementById("weekly-plan-preview")?.scrollIntoView({ behavior: "smooth", block: "start" });
+                  document.getElementById("weekly-plan-preview")?.scrollIntoView({ behavior: getScrollBehavior(), block: "start" });
                 }
               }}
               onLinkProject={async (taskId, projectId) => { if (!await act("link-project", () => digitalEmployeeApi.linkTaskProject(data.run!.id, taskId, projectId), true)) throw new Error("关联失败，请重试。"); }}
-              onTask={taskId => { setSelectedTaskId(taskId); window.setTimeout(() => document.getElementById("task-production-scene")?.scrollIntoView({ behavior: "smooth", block: "start" }), 50); }}
+              onTask={taskId => { setSelectedTaskId(taskId); window.setTimeout(() => document.getElementById("task-production-scene")?.scrollIntoView({ behavior: getScrollBehavior(), block: "start" }), 50); }}
               onSave={async pack => { const result = await act("save-package", () => digitalEmployeeApi.savePackage(goal!.id, pack), true); if (!result) throw new Error("经营包未保存，请检查页面提示后重试。"); return true; }}
               onApprove={async revision => { const result = await act("approve-goal", () => digitalEmployeeApi.approveGoal(goal!.id, revision), true); if (!result) throw new Error("未能启动，请检查账号、资料和授权范围后重试。"); }}
             />}

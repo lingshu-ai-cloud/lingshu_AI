@@ -1,3 +1,4 @@
+import { getScrollBehavior } from "../lib/usePrefersReducedMotion";
 import { cloneElement, isValidElement, useState, useEffect, useId, useRef } from 'react';
 import { Alert, Button, Checkbox, Form, Input, Modal, Pagination, Select, Tabs, Upload as AntUpload } from 'antd';
 import LsPageHeader from './ui/LsPageHeader';
@@ -712,7 +713,7 @@ export default function EnterprisePage() {
     setKnowledgeView('company');
     setLanguageSettingsHighlight(true);
     const scrollTimer = window.setTimeout(() => {
-      document.getElementById('enterprise-language-settings')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      document.getElementById('enterprise-language-settings')?.scrollIntoView({ behavior: getScrollBehavior(), block: 'center' });
     }, 120);
     const highlightTimer = window.setTimeout(() => setLanguageSettingsHighlight(false), 3000);
     return () => {
@@ -892,7 +893,7 @@ export default function EnterprisePage() {
       setEnterpriseArea('service');
       setKnowledgeView('faq');
       window.setTimeout(() => {
-        document.querySelector('[data-enterprise-faq]')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        document.querySelector('[data-enterprise-faq]')?.scrollIntoView({ behavior: getScrollBehavior(), block: 'start' });
       }, 100);
     } catch {
       // Ignore malformed prefill payload.
@@ -1131,7 +1132,7 @@ export default function EnterprisePage() {
     setEnterpriseArea('service');
     setKnowledgeView('advanced');
     setAutonomyHighlight(true);
-    window.setTimeout(() => document.getElementById('ai-autonomy')?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 80);
+    window.setTimeout(() => document.getElementById('ai-autonomy')?.scrollIntoView({ behavior: getScrollBehavior(), block: 'center' }), 80);
     window.setTimeout(() => setAutonomyHighlight(false), 3200);
   }, [loading]);
 
@@ -1141,7 +1142,7 @@ export default function EnterprisePage() {
     setEnterpriseArea('service');
     setKnowledgeView('advanced');
     setNotificationsHighlight(true);
-    window.setTimeout(() => document.getElementById('notifications')?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 120);
+    window.setTimeout(() => document.getElementById('notifications')?.scrollIntoView({ behavior: getScrollBehavior(), block: 'center' }), 120);
     window.setTimeout(() => setNotificationsHighlight(false), 3200);
   }, [loading]);
 
@@ -1151,7 +1152,7 @@ export default function EnterprisePage() {
     setEnterpriseArea('service');
     setKnowledgeView('bizRules');
     setBizRulesHighlight(true);
-    window.setTimeout(() => document.getElementById('biz-rules')?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 80);
+    window.setTimeout(() => document.getElementById('biz-rules')?.scrollIntoView({ behavior: getScrollBehavior(), block: 'center' }), 80);
     window.setTimeout(() => setBizRulesHighlight(false), 3200);
   }, [loading]);
 
@@ -1576,7 +1577,7 @@ export default function EnterprisePage() {
         ? document.getElementById('enterprise-language-settings')
         : document.getElementById(`enterprise-product-${todo.productIndex ?? 0}-${todo.kind}`)
           || document.getElementById(`enterprise-product-${todo.productIndex ?? 0}`);
-      target?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      target?.scrollIntoView({ behavior: getScrollBehavior(), block: 'center' });
       target?.querySelector<HTMLElement>('input,button,textarea,select')?.focus({ preventScroll: true });
     }, 100);
   };
@@ -2039,7 +2040,7 @@ export default function EnterprisePage() {
                         <p className="text-xs font-semibold text-emerald-950">产品素材统一在“我的素材”管理</p>
                         <p className="mt-1 text-[11px] leading-5 text-emerald-800">当前产品有 {productCreativeMaterialCount(product)} 项历史素材记录。进入素材库后可按产品查看、上传和复用。</p>
                       </div>
-                      <button type="button" onClick={() => openProductMaterials(product)} className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg bg-emerald-700 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-800">
+                      <button type="button" onClick={() => openProductMaterials(product)} className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg bg-blue-600 px-3 py-2 text-xs font-semibold text-white hover:bg-blue-700">
                         <Image size={13} />去我的素材
                       </button>
                     </div>

@@ -40,14 +40,7 @@ const GLYPHS: Record<DuotoneGlyphKind, LucideIcon> = {
   permissions: ShieldCheck,
 };
 
-/**
- * Sidebar navigation mark.
- *
- * The historical component name is retained to avoid churn at call sites, but
- * the visual language is intentionally monochrome and geometric. This keeps
- * the navigation aligned with a professional operations console rather than a
- * consumer-style illustrated icon set.
- */
+/** Sidebar icons stay neutral; color is reserved for content and primary actions. */
 export default function DuotoneGlyph({
   kind,
   active = false,

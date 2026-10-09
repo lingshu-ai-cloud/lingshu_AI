@@ -596,6 +596,7 @@ export interface ContentPerformanceReview {
   framework?: string[];
   publishedTags?: string[];
   sourceUrl?: string;
+  thumbnailUrl?: string;
   productionStatus: string;
   publicationStatus: string;
   performance: {
@@ -618,6 +619,7 @@ export interface NextRoundRecommendations {
     framework: string[];
     tags: string[];
     sourceUrl: string;
+    thumbnailUrl?: string;
     reason: string;
     paidBoost: { status: 'recommended_for_review' | 'not_enough_data'; reason: string };
     systemActions: string[];
@@ -641,6 +643,7 @@ export interface NextRoundRecommendations {
       sourceUrl: string;
       observedAt: string;
       tags: string[];
+      thumbnailUrl?: string;
     }>;
     systemActions: string[];
   };

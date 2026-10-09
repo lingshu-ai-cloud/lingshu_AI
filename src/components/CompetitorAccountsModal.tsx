@@ -51,11 +51,13 @@ export default function CompetitorAccountsModal({
   open,
   onClose,
   onCrawled,
+  onCountChange,
   embedded = false,
 }: {
   open: boolean;
   onClose: () => void;
   onCrawled: (importedCount: number) => void;
+  onCountChange?: (count: number) => void;
   embedded?: boolean;
 }) {
   const [accounts, setAccounts] = useState<CompetitorAccount[]>([]);
@@ -73,13 +75,15 @@ export default function CompetitorAccountsModal({
     try {
       const r = await fetch('/api/overseas/competitor-accounts', { headers: authHeader() });
       const data = await r.json().catch(() => ({})) as { items?: CompetitorAccount[] };
-      setAccounts(data.items || []);
+      const items = data.items || [];
+      setAccounts(items);
+      onCountChange?.(items.length);
     } catch {
       setAccounts([]);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [onCountChange]);
 
   useEffect(() => {
     if (open) {
@@ -143,7 +147,11 @@ export default function CompetitorAccountsModal({
         method: 'DELETE',
         headers: authHeader(),
       });
-      if (r.ok) setAccounts(prev => prev.filter(a => a.id !== account.id));
+      if (r.ok) setAccounts(prev => {
+        const next = prev.filter(a => a.id !== account.id);
+        onCountChange?.(next.length);
+        return next;
+      });
     } finally {
       setDeletingId('');
     }
@@ -151,19 +159,6 @@ export default function CompetitorAccountsModal({
 
   const panel = open ? (
           <section aria-label="对标账号" className="flex min-h-[480px] w-full flex-col overflow-hidden rounded-lg border border-border bg-surface">
-            {/* Header */}
-            <div className="flex items-start justify-between gap-4 border-b border-border px-4 py-4 sm:items-center sm:px-6">
-              <div className="flex items-center gap-2.5">
-                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-accent-glow text-accent">
-                  <Users size={18} />
-                </span>
-                <div>
-                  <h2 id="competitor-accounts-title" className="text-base font-bold text-text-primary">对标账号</h2>
-                  <p className="text-xs text-text-muted">集中查看已采集账号，并把最新内容送入灵感发现</p>
-                </div>
-              </div>
-            </div>
-
             {/* Add form */}
             <div className="border-b border-border bg-surface-2 px-4 py-4 sm:px-6">
               <div className="flex flex-col gap-2 sm:flex-row">
@@ -239,9 +234,6 @@ export default function CompetitorAccountsModal({
               )}
             </div>
 
-            <div className="border-t border-border bg-insight-soft px-4 py-3 text-xs text-insight-action sm:px-6">
-              采集到的视频会进入「灵感发现」，并由编导 Agent 验收定时采集结果。
-            </div>
           </section>
   ) : null;
 

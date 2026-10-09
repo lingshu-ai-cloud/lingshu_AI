@@ -376,7 +376,7 @@ export default function AdminDashboard({ onSupportSessionStarted }: { onSupportS
                           type="button"
                           onClick={() => void enterTenant({ tenantId: account.tenantId, tenantName: account.tenantName || account.email })}
                           disabled={busy || !account.tenantId}
-                          className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-2.5 py-1.5 font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
+                          className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-2.5 py-1.5 font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
                         >
                           {busy ? <Loader2 size={12} className="animate-spin" /> : <LogIn size={12} />}
                           {busy ? '正在进入' : '进入后台'}
@@ -450,7 +450,7 @@ export default function AdminDashboard({ onSupportSessionStarted }: { onSupportS
                           onClick={() => void enterTenant({ tenantId: account.tenantId, tenantName: account.companyName })}
                           disabled={busy || !registered}
                           title={registered ? `进入 ${account.companyName} 后台` : '客户注册后可进入后台'}
-                          className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-2.5 py-1.5 font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-40"
+                          className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-2.5 py-1.5 font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-40"
                         >
                           {busy ? <Loader2 size={12} className="animate-spin" /> : <LogIn size={12} />}
                           {busy ? '正在进入' : '进入后台'}

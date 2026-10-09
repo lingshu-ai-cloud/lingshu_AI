@@ -39,6 +39,11 @@ test('retry is exposed only for a retryable failed run', () => {
   assert.doesNotMatch(render(progress({ stage: 'failed', percent: null, retryable: false })), />重试分析</);
 });
 
+test('paused or cancelled analysis offers an explicit resume action', () => {
+  assert.match(render(progress({ stage: 'paused', stageLabel: '分析已暂停', percent: 42 })), />继续分析</);
+  assert.match(render(progress({ stage: 'cancelled', stageLabel: '分析已取消', percent: null })), />继续分析</);
+});
+
 test('completed analysis no longer keeps a progress panel on screen', () => {
   assert.equal(render(progress({ stage: 'completed', stageLabel: '全片精准分析已完成', percent: 100 }), false), '');
 });

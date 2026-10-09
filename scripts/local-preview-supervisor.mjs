@@ -11,12 +11,19 @@ const shuttingDown = { value: false };
 let monitoring = false;
 let backendRestartTimer;
 let repositoryRevision = '';
+const startupGraceMs = Number(process.env.LINGSHU_PREVIEW_STARTUP_GRACE_MS || 120_000);
+const healthCheckTimeoutMs = Number(process.env.LINGSHU_PREVIEW_HEALTH_TIMEOUT_MS || 20_000);
+const maxConsecutiveHealthFailures = Number(process.env.LINGSHU_PREVIEW_HEALTH_FAILURE_LIMIT || 5);
+const forceOptimizeDependencies = process.env.LINGSHU_PREVIEW_FORCE_OPTIMIZE === '1';
 
 function currentRevision() {
   try {
-    return execFileSync('git', ['rev-parse', 'HEAD'], { cwd: runtimeRoot, encoding: 'utf8', timeout: 2_000, stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+    const revision = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: runtimeRoot, encoding: 'utf8', timeout: 5_000, stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+    return /^[0-9a-f]{40}$/i.test(revision) ? revision : null;
   } catch {
-    return 'unknown';
+    // A busy working tree can make git briefly exceed the timeout. Absence of a
+    // trustworthy SHA is not a revision change and must never restart services.
+    return null;
   }
 }
 
@@ -66,7 +73,7 @@ const services = [
       '--port',
       '5177',
       '--strictPort',
-      '--force',
+      ...(forceOptimizeDependencies ? ['--force'] : []),
     ],
     env: { DEV_API_TARGET: 'http://127.0.0.1:8790' },
     // Serve source in the local workspace. A dist preview can keep an old HTML
@@ -85,7 +92,7 @@ const services = [
       '--port',
       '5178',
       '--strictPort',
-      '--force',
+      ...(forceOptimizeDependencies ? ['--force'] : []),
     ],
     env: {
       DEV_API_TARGET: 'http://127.0.0.1:8790',
@@ -102,9 +109,11 @@ function log(message) {
 function start(service) {
   if (shuttingDown.value) return;
   service.failures = 0;
+  service.startedAt = Date.now();
+  const revision = currentRevision() || repositoryRevision;
   const child = spawn(nodeExecutable, service.args, {
     cwd: runtimeRoot,
-    env: localNetworkEnvironment({ ...service.env, APP_BUILD_SHA: currentRevision(), VITE_APP_BUILD_SHA: currentRevision() }),
+    env: localNetworkEnvironment({ ...service.env, APP_BUILD_SHA: revision, VITE_APP_BUILD_SHA: revision }),
     stdio: 'inherit',
     detached: true,
   });
@@ -140,10 +149,14 @@ try {
   log(`backend source watch unavailable: ${error instanceof Error ? error.message : String(error)}`);
 }
 
-repositoryRevision = currentRevision();
+repositoryRevision = currentRevision() || '';
 setInterval(() => {
   const next = currentRevision();
-  if (next === repositoryRevision) return;
+  if (!next || next === repositoryRevision) return;
+  if (!repositoryRevision) {
+    repositoryRevision = next;
+    return;
+  }
   repositoryRevision = next;
   log(`repository revision changed to ${next.slice(0, 8)}; restarting preview services`);
   for (const service of services) terminate(service);
@@ -162,7 +175,7 @@ function terminate(service) {
 
 async function healthy(service) {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 5_000);
+  const timer = setTimeout(() => controller.abort(), healthCheckTimeoutMs);
   try {
     const response = await fetch(service.probe.url, {
       headers: service.probe.headers,
@@ -203,14 +216,15 @@ async function monitor() {
   try {
     await Promise.all(services.map(async service => {
       if (!service.child) return;
+      if (Date.now() - (service.startedAt || 0) < startupGraceMs) return;
       if (await healthy(service)) {
         service.failures = 0;
         return;
       }
       service.failures = (service.failures || 0) + 1;
-      log(`${service.name} health check failed (${service.failures}/3)`);
-      if (service.failures >= 3) {
-        log(`${service.name} failed three health checks; restarting`);
+      log(`${service.name} health check failed (${service.failures}/${maxConsecutiveHealthFailures})`);
+      if (service.failures >= maxConsecutiveHealthFailures) {
+        log(`${service.name} failed ${maxConsecutiveHealthFailures} consecutive health checks; restarting`);
         service.failures = 0;
         terminate(service);
       }
@@ -235,23 +249,10 @@ process.on('SIGINT', stop);
 process.on('SIGTERM', stop);
 process.on('SIGHUP', stop);
 
-const [backend, ...frontends] = services;
-start(backend);
-
-async function startFrontendsAfterBackend() {
-  let attempt = 0;
-  while (!shuttingDown.value && !(await healthy(backend))) {
-    attempt += 1;
-    if (attempt === 30 || attempt % 60 === 0) {
-      log(`backend is not ready after ${attempt} seconds; keeping frontends offline to avoid a broken preview`);
-    }
-    await new Promise(resolve => setTimeout(resolve, 1_000));
-  }
-  if (shuttingDown.value) return;
-  for (const frontend of frontends) start(frontend);
-}
-
-void startFrontendsAfterBackend();
+// Serve the application shell immediately. Backend startup can be expensive on
+// a cold TypeScript cache; keeping Vite offline during that work presents a
+// blank/unreachable page even though the frontend itself is healthy.
+for (const service of services) start(service);
 setTimeout(() => {
   void monitor();
   setInterval(() => void monitor(), 15_000);

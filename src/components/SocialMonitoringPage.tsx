@@ -203,12 +203,8 @@ export default function SocialMonitoringPage({ onNavigate }: { onNavigate?: (pag
   return (
     <main className="h-full min-h-0 overflow-y-auto bg-surface-2 p-4 md:p-6">
       <div className="mx-auto flex max-w-[1500px] flex-col gap-5">
-        <header className="flex flex-col justify-between gap-3 md:flex-row md:items-end">
-          <div>
-            <p className="text-xs font-bold text-accent">发布后的真实反馈</p>
-            <h1 className="mt-1 text-2xl font-black text-text-primary">{PAGE_REGISTRY.socialMonitoring.canonicalTitle}</h1>
-            <p className="mt-1 text-sm text-text-muted">每个数字都标明来源和采集时间；平台没有返回时保留“暂无数据”。</p>
-          </div>
+        <header className="flex justify-end gap-3">
+          <h1 className="sr-only">{PAGE_REGISTRY.socialMonitoring.canonicalTitle}</h1>
           <div className="flex flex-wrap gap-2">
             <button type="button" onClick={() => onNavigate?.('traffic')} className="inline-flex items-center gap-2 rounded-xl border border-border bg-white px-4 py-2 text-sm font-bold text-text-secondary">去发布<ArrowRight size={14} /></button>
             <button type="button" onClick={() => void sync()} disabled={syncing || loading || !syncTarget} title={syncTarget ? '同步当前渠道账号' : '请选择要同步的具体账号'} className="inline-flex items-center gap-2 rounded-xl bg-accent px-4 py-2 text-sm font-black text-white disabled:opacity-50">{syncing ? <Loader2 size={15} className="animate-spin" /> : <RefreshCw size={15} />}立即同步</button>

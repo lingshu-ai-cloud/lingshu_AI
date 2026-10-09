@@ -125,7 +125,7 @@ export function ContentOpsExecutionDialog({ intent, onClose }: {
         {error && <p className="rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">{error}</p>}
         {done && <p className="flex items-center gap-2 rounded-lg bg-emerald-50 px-3 py-2 text-xs font-bold text-emerald-700"><CheckCircle2 size={15} />{done}</p>}
       </div>
-      <footer className="flex justify-end gap-2 border-t border-border px-5 py-4"><button type="button" onClick={onClose} disabled={busy} className="rounded-xl border border-border px-4 py-2.5 text-xs font-black text-text-secondary">取消</button><button type="button" onClick={() => void confirm()} disabled={busy || Boolean(done)} className="flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-xs font-black text-white disabled:opacity-60">{busy && <Loader2 size={14} className="animate-spin" />}{isClone ? '确认并创建裂变草稿' : '确认并创建草稿'}</button></footer>
+      <footer className="flex justify-end gap-2 border-t border-border px-5 py-4"><button type="button" onClick={onClose} disabled={busy} className="rounded-xl border border-border px-4 py-2.5 text-xs font-black text-text-secondary">取消</button><button type="button" onClick={() => void confirm()} disabled={busy || Boolean(done)} className="flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-xs font-black text-white disabled:opacity-60">{busy && <Loader2 size={14} className="animate-spin" />}{isClone ? '确认并创建裂变草稿' : '确认并创建草稿'}</button></footer>
     </section>
   </div>;
 }

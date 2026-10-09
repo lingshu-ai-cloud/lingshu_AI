@@ -96,6 +96,7 @@ export default function VideoAnalysisProgressPanel({
   const backend = backendState(progress);
   const isActive = analysisProgressIsActive(progress);
   const isFailed = progress.stage === 'failed';
+  const isInterrupted = progress.stage === 'paused' || progress.stage === 'cancelled';
   const runToken = progress.runId?.trim() ? progress.runId.trim().slice(-8) : '';
   const tone = isFailed ? 'border-rose-200 bg-rose-50/60' : progress.stage === 'paused' || progress.stage === 'cancelled' ? 'border-slate-200 bg-slate-50' : 'border-amber-200 bg-amber-50/45';
 
@@ -126,5 +127,6 @@ export default function VideoAnalysisProgressPanel({
 
     {percent === null && isActive && <p className="mt-3 text-[11px] leading-4 text-text-muted">后台尚未提供可信百分比，界面不会模拟递增。</p>}
     {isFailed && <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-rose-200 pt-3"><p className="text-xs font-medium text-rose-800">{progress.retryable ? '本次运行已停止，可以从失败状态重新提交。' : '本次运行已停止，后台未标记为可重试。'}</p>{progress.retryable && <button type="button" onClick={onRetry} disabled={retryDisabled} className="inline-flex min-h-9 items-center gap-1.5 rounded-md border border-rose-300 bg-white px-3 text-xs font-semibold text-rose-700 disabled:opacity-50"><RotateCcw size={13} />重试分析</button>}</div>}
+    {isInterrupted && <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-slate-200 pt-3"><p className="text-xs font-medium text-slate-700">分析进度已保留，可从当前记录重新提交，不会让卡片一直停在暂停遮罩中。</p><button type="button" onClick={onRetry} disabled={retryDisabled} className="inline-flex min-h-9 items-center gap-1.5 rounded-md border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 disabled:opacity-50"><RotateCcw size={13} />继续分析</button></div>}
   </section>;
 }

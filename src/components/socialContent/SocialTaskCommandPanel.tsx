@@ -1,3 +1,4 @@
+import { getScrollBehavior } from "../../lib/usePrefersReducedMotion";
 import type { ReactNode } from 'react';
 import {
   BarChart3,
@@ -48,7 +49,7 @@ function primaryAction(props: SocialTaskCommandPanelProps): { label: string; ico
   if (action === 'resume' || action === 'continue_production') return { label: '重试自动生成', icon: <RotateCcw size={16} />, onClick: props.onStart };
   if (action === 'review_assets') {
     const assetAction = socialContentAssetReviewAction(task.artifacts);
-    if (assetAction === 'review') return { label: '验收成品', icon: <CheckCircle2 size={16} />, onClick: () => document.getElementById('social-task-artifacts')?.scrollIntoView({ behavior: 'smooth', block: 'center' }) };
+    if (assetAction === 'review') return { label: '验收成品', icon: <CheckCircle2 size={16} />, onClick: () => document.getElementById('social-task-artifacts')?.scrollIntoView({ behavior: getScrollBehavior(), block: 'center' }) };
     if (assetAction === 'package') return { label: '整理交付包', icon: <PackageCheck size={16} />, onClick: props.onCreateDeliveryPackage };
   }
   if (action === 'download') return { label: '下载交付包', icon: <Download size={16} />, onClick: props.onDownload };
@@ -61,7 +62,7 @@ function primaryAction(props: SocialTaskCommandPanelProps): { label: string; ico
 function PrimaryButton({ props, compact = false }: { props: SocialTaskCommandPanelProps; compact?: boolean }) {
   const action = primaryAction(props);
   return (
-    <button type="button" disabled={props.busy} onClick={action.onClick} className={`inline-flex items-center justify-center gap-2 rounded-lg bg-emerald-600 font-semibold text-white shadow-none transition hover:bg-emerald-700 disabled:opacity-50 ${compact ? 'h-11 shrink-0 px-4 text-xs' : 'w-full px-4 py-3 text-sm'}`}>
+    <button type="button" disabled={props.busy} onClick={action.onClick} className={`inline-flex items-center justify-center gap-2 rounded-lg bg-blue-600 font-semibold text-white shadow-none transition hover:bg-blue-700 disabled:opacity-50 ${compact ? 'h-11 shrink-0 px-4 text-xs' : 'w-full px-4 py-3 text-sm'}`}>
       {action.icon}{action.label}
     </button>
   );

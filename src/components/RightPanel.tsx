@@ -11,17 +11,17 @@ interface Props {
 }
 
 const AGENT_META = {
-  strategy:   { label: '首页', Icon: Compass,           color: '#117f51', bg: 'rgba(17,127,81,0.10)' },
-  traffic:    { label: '我的社媒', Icon: Zap,            color: '#a45a3b', bg: '#fff3e7' },
-  conversion: { label: '我的客户', Icon: MessageSquare, color: '#117f51', bg: 'rgba(17,127,81,0.10)' },
-  retention:  { label: '我的客户', Icon: RefreshCw,     color: '#173d31', bg: '#d7eadb' },
+  strategy:   { label: '首页', Icon: Compass,           color: '#2563EB', bg: '#EFF6FF' },
+  traffic:    { label: '我的社媒', Icon: Zap,            color: '#7C3AED', bg: '#F5F3FF' },
+  conversion: { label: '我的客户', Icon: MessageSquare, color: '#0F8B8D', bg: '#F0FDFA' },
+  retention:  { label: '我的客户', Icon: RefreshCw,     color: '#DB3D77', bg: '#FDF2F8' },
 };
 
 const WORKSPACE_STATUS: Record<AgentType, { label: string; color: string }> = {
-  strategy: { label: '运行中', color: '#117f51' },
-  traffic: { label: '执行中', color: '#a45a3b' },
-  conversion: { label: '待机', color: '#94a3b8' },
-  retention: { label: '运行中', color: '#117f51' },
+  strategy: { label: '运行中', color: '#2563EB' },
+  traffic: { label: '执行中', color: '#2563EB' },
+  conversion: { label: '待机', color: '#71717A' },
+  retention: { label: '运行中', color: '#2563EB' },
 };
 
 function SectionHeader({ label }: { label: string }) {
@@ -193,9 +193,9 @@ function TrafficPanel({ conversation, onAction }: { conversation: ConversationCo
           <SectionHeader label="采集快览" />
           <div className="space-y-2">
             {[
-              { label: '今日脚本', value: '—', color: '#a45a3b' },
-              { label: '覆盖平台', value: '—', color: '#117f51' },
-              { label: '去重命中', value: '—', color: '#173d31' },
+              { label: '今日脚本', value: '—', color: '#7C3AED' },
+              { label: '覆盖平台', value: '—', color: '#2563EB' },
+              { label: '去重命中', value: '—', color: '#0F8B8D' },
             ].map(({ label, value, color }) => (
               <div key={label} className="flex items-center justify-between rounded-md border border-border bg-surface-2 px-3 py-2">
                 <span className="text-[11px] text-text-secondary">{label}</span>
@@ -208,9 +208,9 @@ function TrafficPanel({ conversation, onAction }: { conversation: ConversationCo
           <SectionHeader label="快捷操作" />
           <div className="space-y-1.5">
             {[
-              { icon: <Zap size={11} />, label: '分析 TikTok 10 条假发爆款', color: '#a45a3b', task: '直接分析 10 条 TikTok 假发爆款的共性，输出表格：钩子、画面、卖点、评论区需求、可复刻脚本方向。' },
-              { icon: <Sparkles size={11} />, label: '生成斋月中东推广方案', color: '#117f51', task: '围绕斋月中东市场，直接生成 5 条短视频脚本方向，包含平台、前 3 秒钩子、画面、口播、CTA。' },
-              { icon: <TrendingUp size={11} />, label: '素材去重矩阵', color: '#173d31', task: '把同一产品拆成 6 个去重内容角度：人群、场景、痛点、证据、优惠、平台适配。用表格输出。' },
+              { icon: <Zap size={11} />, label: '分析 TikTok 10 条假发爆款', color: '#7C3AED', task: '直接分析 10 条 TikTok 假发爆款的共性，输出表格：钩子、画面、卖点、评论区需求、可复刻脚本方向。' },
+              { icon: <Sparkles size={11} />, label: '生成斋月中东推广方案', color: '#DB3D77', task: '围绕斋月中东市场，直接生成 5 条短视频脚本方向，包含平台、前 3 秒钩子、画面、口播、CTA。' },
+              { icon: <TrendingUp size={11} />, label: '素材去重矩阵', color: '#0F8B8D', task: '把同一产品拆成 6 个去重内容角度：人群、场景、痛点、证据、优惠、平台适配。用表格输出。' },
             ].map(({ icon, label, color, task }) => (
               <button type="button" key={label} onClick={() => onAction?.('traffic', task)} className="group flex w-full items-center gap-2.5 rounded-md border border-border bg-surface px-3 py-2 text-left transition-colors hover:border-border-bright hover:bg-surface-2">
                 <span style={{ color }}>{icon}</span>
@@ -267,9 +267,9 @@ function ConversionPanel({ conversation, onAction }: { conversation: Conversatio
           <SectionHeader label="快捷工具" />
           <div className="space-y-1.5">
             {[
-              { icon: <MessageSquare size={11} />, label: '生成WhatsApp跟单模板', color: '#117f51', task: '基于当前选中的真实客户会话，生成一条可发送的 WhatsApp 跟单话术；如果没有选中客户或缺少真实会话，请先说明需要接入 WhatsApp 客户数据，不要编造客户姓名、金额或历史记录。' },
-              { icon: <Users size={11} />, label: '转人工 · 标记大单', color: '#a45a3b', task: '基于当前选中的真实客户会话，整理转人工交接摘要；如果缺少客户、金额、报价或交期等真实字段，请列出缺失项，不要用示例数据补齐。' },
-              { icon: <TrendingUp size={11} />, label: '查看询盘转化漏斗', color: '#173d31', task: '只基于系统已接入的真实询盘、回复、报价和成交数据，指出转化卡点并给 3 条优化建议；如果数据未接入，请输出需要接入的数据清单，不要生成示例漏斗数字。' },
+              { icon: <MessageSquare size={11} />, label: '生成WhatsApp跟单模板', color: '#0F8B8D', task: '基于当前选中的真实客户会话，生成一条可发送的 WhatsApp 跟单话术；如果没有选中客户或缺少真实会话，请先说明需要接入 WhatsApp 客户数据，不要编造客户姓名、金额或历史记录。' },
+              { icon: <Users size={11} />, label: '转人工 · 标记大单', color: '#B7790A', task: '基于当前选中的真实客户会话，整理转人工交接摘要；如果缺少客户、金额、报价或交期等真实字段，请列出缺失项，不要用示例数据补齐。' },
+              { icon: <TrendingUp size={11} />, label: '查看询盘转化漏斗', color: '#2563EB', task: '只基于系统已接入的真实询盘、回复、报价和成交数据，指出转化卡点并给 3 条优化建议；如果数据未接入，请输出需要接入的数据清单，不要生成示例漏斗数字。' },
             ].map(({ icon, label, color, task }) => (
               <button type="button" key={label} onClick={() => onAction?.('conversion', task)} className="group flex w-full items-center gap-2.5 rounded-md border border-border bg-surface px-3 py-2 text-left transition-colors hover:border-border-bright hover:bg-surface-2">
                 <span style={{ color }}>{icon}</span>
@@ -293,9 +293,9 @@ function RetentionPanel({ conversation, onAction }: { conversation: Conversation
           <SectionHeader label="客户快览" />
           <div className="space-y-2">
             {[
-              { label: '老客总数', value: '—', color: '#117f51' },
-              { label: '30天沉默', value: '—', color: '#a45a3b' },
-              { label: '本月复购率', value: '—', color: '#173d31' },
+              { label: '老客总数', value: '—', color: '#0F8B8D' },
+              { label: '30天沉默', value: '—', color: '#B7790A' },
+              { label: '本月复购率', value: '—', color: '#DB3D77' },
             ].map(({ label, value, color }) => (
               <div key={label} className="flex items-center justify-between rounded-md border border-border bg-surface-2 px-3 py-2">
                 <span className="text-[11px] text-text-secondary">{label}</span>
@@ -308,9 +308,9 @@ function RetentionPanel({ conversation, onAction }: { conversation: Conversation
           <SectionHeader label="快捷操作" />
           <div className="space-y-1.5">
             {[
-              { icon: <RotateCcw size={11} />, label: '筛选60天未复购老客', color: '#117f51', task: '只基于已接入的真实订单和客户互动数据，筛选 60 天未复购老客；如果没有真实数据，请说明需要接入订单或客户互动记录，不要编造名单。' },
-              { icon: <Sparkles size={11} />, label: '生成个性化推品方案', color: '#a45a3b', task: '基于真实老客的历史购买、市场和偏好生成个性化推品方案；如果没有真实老客数据，请输出需要补齐的数据字段，不要使用示例客户。' },
-              { icon: <MessageSquare size={11} />, label: '批量发送唤醒消息', color: '#173d31', task: '基于真实老客分组生成可发送的唤醒消息；如果没有真实客户分组，请先给出接入和分组清单，不要编造发送对象或效果数据。' },
+              { icon: <RotateCcw size={11} />, label: '筛选60天未复购老客', color: '#0F8B8D', task: '只基于已接入的真实订单和客户互动数据，筛选 60 天未复购老客；如果没有真实数据，请说明需要接入订单或客户互动记录，不要编造名单。' },
+              { icon: <Sparkles size={11} />, label: '生成个性化推品方案', color: '#DB3D77', task: '基于真实老客的历史购买、市场和偏好生成个性化推品方案；如果没有真实老客数据，请输出需要补齐的数据字段，不要使用示例客户。' },
+              { icon: <MessageSquare size={11} />, label: '批量发送唤醒消息', color: '#2563EB', task: '基于真实老客分组生成可发送的唤醒消息；如果没有真实客户分组，请先给出接入和分组清单，不要编造发送对象或效果数据。' },
             ].map(({ icon, label, color, task }) => (
               <button type="button" key={label} onClick={() => onAction?.('retention', task)} className="group flex w-full items-center gap-2.5 rounded-md border border-border bg-surface px-3 py-2 text-left transition-colors hover:border-border-bright hover:bg-surface-2">
                 <span style={{ color }}>{icon}</span>

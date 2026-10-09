@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 const source = readFileSync(new URL('./AgentNotificationBell.tsx', import.meta.url), 'utf8');
 const layout = readFileSync(new URL('./Layout.tsx', import.meta.url), 'utf8');
 
-assert.match(layout, /AgentNotificationBell[^>]+onNavigate=/, 'the global shell must expose the notification bell');
+assert.doesNotMatch(layout, /AgentNotificationBell[^>]+onNavigate=/, 'notifications must not reserve a standalone rail in the global shell');
 assert.match(source, /feed\.unreadCount[^\n]+bg-red-600/, 'the bell must render a red numeric unread badge');
 assert.match(source, /setInterval\([\s\S]{0,180}10_000/, 'the feed must refresh recent activity while the application is open');
 assert.match(source, /agentNotificationsApi\.read\(item\.id\)/, 'opening a notification must persist read state');

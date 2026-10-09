@@ -693,7 +693,7 @@ function PlatformWizard({
                 <KeyRound size={13} /> 标记待换永久 token
               </button>
             )}
-            <button type="button" onClick={() => void onComplete(app)} className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-2 text-xs font-bold text-white">
+            <button type="button" onClick={() => void onComplete(app)} className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-2 text-xs font-bold text-white">
               <CheckCircle2 size={13} /> 交付完成
             </button>
           </div>

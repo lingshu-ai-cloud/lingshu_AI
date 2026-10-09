@@ -190,12 +190,8 @@ export default function WeComCustomerServicePage() {
   return (
     <main className="h-full min-h-0 overflow-y-auto bg-surface-2 p-4 md:p-6">
       <div className="mx-auto flex max-w-[1500px] flex-col gap-4">
-        <header className="flex flex-col justify-between gap-3 md:flex-row md:items-end">
-          <div>
-            <p className="text-xs font-bold text-accent">客户咨询承接</p>
-            <h1 className="mt-1 text-2xl font-black text-text-primary">{PAGE_REGISTRY.wecomCustomerService.canonicalTitle}</h1>
-            <p className="mt-1 text-sm text-text-muted">AI 负责整理和起草，客服负责确认承诺与处理高风险问题。</p>
-          </div>
+        <header className="flex justify-end gap-3">
+          <h1 className="sr-only">{PAGE_REGISTRY.wecomCustomerService.canonicalTitle}</h1>
           <button type="button" onClick={() => void loadOverview()} disabled={loading} className="inline-flex items-center justify-center gap-2 rounded-xl border border-border bg-white px-4 py-2 text-sm font-bold text-text-secondary disabled:opacity-50">
             <RefreshCw size={15} className={loading ? 'animate-spin' : ''} />刷新
           </button>
@@ -237,7 +233,7 @@ export default function WeComCustomerServicePage() {
             ) : conversations.length === 0 ? (
               <div className="p-8 text-center"><MessageSquareText size={28} className="mx-auto text-slate-300" /><p className="mt-3 text-sm font-bold text-text-primary">当前没有会话</p><p className="mt-1 text-xs leading-5 text-text-muted">连接微信客服并完成真实入站消息后，会话会出现在这里。</p></div>
             ) : conversations.map(item => (
-              <button key={item.id} type="button" onClick={() => setSelectedId(item.id)} className={`w-full border-b border-border px-4 py-4 text-left hover:bg-surface-2 ${selectedId === item.id ? 'bg-[#edf4ef]' : ''}`}>
+              <button key={item.id} type="button" onClick={() => setSelectedId(item.id)} className={`w-full border-b border-border px-4 py-4 text-left hover:bg-surface-2 ${selectedId === item.id ? 'bg-blue-50' : ''}`}>
                 <div className="flex items-center justify-between gap-2">
                   <p className="truncate text-sm font-black text-text-primary">{item.customerName || '微信客户'}</p>
                   <span className="shrink-0 text-[10px] text-text-muted">{timeLabel(item.lastMessageAt)}</span>
@@ -273,7 +269,7 @@ export default function WeComCustomerServicePage() {
                     <p className="py-10 text-center text-sm text-text-muted">尚未同步到可显示的消息</p>
                   ) : (detail?.messages ?? []).map(message => (
                     <div key={message.id} className={`flex ${message.direction === 'outbound' ? 'justify-end' : 'justify-start'}`}>
-                      <div className={`max-w-[82%] rounded-2xl px-4 py-3 text-sm leading-6 shadow-sm ${message.direction === 'outbound' ? 'bg-emerald-700 text-white' : 'border border-border bg-white text-text-primary'}`}>
+                      <div className={`max-w-[82%] rounded-2xl px-4 py-3 text-sm leading-6 shadow-sm ${message.direction === 'outbound' ? 'ls-messenger-bubble--outbound text-white' : 'border border-border bg-white text-text-primary'}`}>
                         <p>{message.body || '暂不支持预览的消息类型'}</p>
                         <p className={`mt-1 text-[10px] ${message.direction === 'outbound' ? 'text-emerald-100' : 'text-text-muted'}`}>{timeLabel(message.sentAt)}{message.status ? ` · ${message.status}` : ''}</p>
                       </div>

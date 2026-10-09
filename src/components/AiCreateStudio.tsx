@@ -89,7 +89,7 @@ import { CoverFace, ProjectFirstFrameThumb, RealThumb, Thumb, coverArtCss } from
 import { Field, Pill, SectionTitle } from './StudioFormPrimitives';
 export { StudioRequestTimeoutError, waitForStudioMediaReady, withStudioTimeout } from './studio/studioAuthenticatedMedia';
 // AI 生成内容工作台：创作设置 → 脚本与声音 → 成片制作。
-const TRAFFIC_GREEN = '#117f51';
+const STUDIO_ACCENT = 'var(--color-accent)';
 const CANVA_VIDEO_COVER_URL = 'https://www.canva.cn/create/video-covers/';
 const CANVA_COVER_RETURN_KEY = 'ow_canva_cover_return';
 const CANVA_COVER_RETURN_TTL = 6 * 60 * 60 * 1000;
@@ -7311,7 +7311,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
       let nextCoverUrl = coverUrl;
       const canGenerateCoverSvg = Boolean(coverFrameUrl && (capturedCoverFrameUrl || coverClip?.poster || coverClip?.type === 'image'));
       if (!nextCoverUrl && canGenerateCoverSvg) {
-        const cv = await studioApi.cover({ title: coverTitle, ratio, accent: TRAFFIC_GREEN, bgImageUrl: coverFrameUrl, ...coverStyle });
+        const cv = await studioApi.cover({ title: coverTitle, ratio, accent: '#117f51', bgImageUrl: coverFrameUrl, ...coverStyle });
         if (cv.url) {
           nextCoverUrl = cv.url;
           setCoverUrl(cv.url);
@@ -10263,7 +10263,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                           >
                             <span
                               className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border"
-                              style={active ? { borderColor: TRAFFIC_GREEN, background: TRAFFIC_GREEN, color: '#fff' } : { borderColor: 'var(--color-border)' }}
+                              style={active ? { borderColor: STUDIO_ACCENT, background: STUDIO_ACCENT, color: '#fff' } : { borderColor: 'var(--color-border)' }}
                             >
                               {active && <Check size={11} />}
                             </span>
@@ -10537,7 +10537,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                                 <span className="relative block aspect-video bg-slate-900">{clip.poster || clip.type === 'image' ? <img src={clip.poster || clip.url} alt="" className="h-full w-full object-cover" /> : <Film size={20} className="absolute inset-0 m-auto text-white/55" />}{checked && <span className="absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-full bg-accent text-white"><Check size={14} /></span>}</span>
                                 <span className="block truncate px-3 py-2 text-[11px] font-bold text-text-primary">{clip.name}</span>
                               </button>
-                              {checked && hookMaterialId && <button type="button" onClick={() => setHookMaterialId(clip.id)} className={`absolute left-2 top-2 rounded-full px-2 py-1 text-[9px] font-semibold shadow-none ${isHook ? 'bg-emerald-600 text-white' : 'bg-white/90 text-emerald-700 hover:bg-white'}`}>{isHook ? '开场钩子' : '设为钩子'}</button>}
+                              {checked && hookMaterialId && <button type="button" onClick={() => setHookMaterialId(clip.id)} className={`absolute left-2 top-2 rounded-full px-2 py-1 text-[9px] font-semibold shadow-none ${isHook ? 'bg-blue-600 text-white' : 'bg-white/90 text-emerald-700 hover:bg-white'}`}>{isHook ? '开场钩子' : '设为钩子'}</button>}
                             </div>;
                           })}
                         </div>
@@ -10884,14 +10884,14 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                         <button key={c.id}
                           onClick={() => setSelected(s => on ? s.filter(x => x !== c.id) : [...s, c.id])}
                           className="card !rounded-lg overflow-hidden text-left relative group"
-                          style={on ? { borderColor: TRAFFIC_GREEN, boxShadow: `0 0 0 1px ${TRAFFIC_GREEN}` } : undefined}>
+                          style={on ? { borderColor: STUDIO_ACCENT, boxShadow: `0 0 0 1px ${STUDIO_ACCENT}` } : undefined}>
                           <div className="relative">
                             {c.url
                               ? <RealThumb clip={c} onSourceError={() => { void refreshMaterialSource(c.id); }} />
                               : <Thumb seed={c.id} src={c.poster} label={c.type === 'image' ? 'IMG' : fmtDur(c.duration)} />}
                             {on && (
                               <span className="absolute top-1.5 left-1.5 w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold text-white z-10"
-                                style={{ background: TRAFFIC_GREEN }}>{idx + 1}</span>
+                                style={{ background: STUDIO_ACCENT }}>{idx + 1}</span>
                             )}
                             {c.folder === 'hot' && (
                               <span className="absolute top-1.5 right-1.5 px-1.5 py-0.5 rounded text-[8px] font-bold text-white bg-black/45 z-10">
@@ -10915,7 +10915,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                         {search.trim() ? '没有匹配的图文素材' : posterActiveFolder === 'hot' ? '暂无爆款图文参考，请从灵感中心采集或选择拍摄任务中的图文' : '这个分类还没有图片素材'}
                       </p>
                       {posterActiveFolder !== 'hot' && !search.trim() && (
-                        <button onClick={() => fileInputRef.current?.click()} className="mt-2 text-xs font-semibold" style={{ color: TRAFFIC_GREEN }}>
+                        <button onClick={() => fileInputRef.current?.click()} className="mt-2 text-xs font-semibold" style={{ color: STUDIO_ACCENT }}>
                           上传到{posterFolderName(posterActiveFolder)}
                         </button>
                       )}
@@ -11432,7 +11432,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                           }
                         }}
                         className="card !rounded-lg overflow-hidden text-left relative group"
-                        style={on ? { borderColor: TRAFFIC_GREEN, boxShadow: `0 0 0 1px ${TRAFFIC_GREEN}` } : undefined}>
+                        style={on ? { borderColor: STUDIO_ACCENT, boxShadow: `0 0 0 1px ${STUDIO_ACCENT}` } : undefined}>
                         <div className="relative">
 	                          {/* 真实素材显示实际预览；来源不可访问时明确显示不可预览。 */}
                           {c.url
@@ -11440,7 +11440,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                             : <Thumb seed={c.id} src={c.poster} label={c.type === 'image' ? 'IMG' : `0:${String(c.duration).padStart(2, '0')}`} />}
                           {on && (
                             <span className="absolute top-1.5 left-1.5 w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold text-white z-10"
-                              style={{ background: TRAFFIC_GREEN }}>{idx + 1}</span>
+                              style={{ background: STUDIO_ACCENT }}>{idx + 1}</span>
                           )}
                           {c.scope === 'shared' && !on && (
                             <span className="absolute top-1.5 left-1.5 px-1.5 py-0.5 rounded text-[8px] font-bold text-white z-10" style={{ background: '#0891b2' }}>在线</span>
@@ -11499,7 +11499,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
 		                    </p>
 		                    {activeFolder !== 'hot' && activeFolder !== 'recommend' && !search.trim() && (
 	                      <div className="mt-2 space-y-2">
-	                        <button onClick={() => fileInputRef.current?.click()} className="text-xs font-semibold" style={{ color: TRAFFIC_GREEN }}>
+	                        <button onClick={() => fileInputRef.current?.click()} className="text-xs font-semibold" style={{ color: STUDIO_ACCENT }}>
 	                          {activeFolder === 'presenter' ? '上传真人实拍视频' : '点此上传'}
 	                        </button>
 	                        {activeFolder === 'presenter' && (
@@ -11801,7 +11801,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                                   { key: 'width' as const, label: '产品宽度', value: sourcePlanFor(slot).placementOverride!.productBox.width, max: 1 - sourcePlanFor(slot).placementOverride!.productBox.x },
                                   { key: 'height' as const, label: '产品高度', value: sourcePlanFor(slot).placementOverride!.productBox.height, max: sourcePlanFor(slot).placementOverride!.contactSurfaceY },
                                   { key: 'contactSurfaceY' as const, label: placementScene === 'conveyor' ? '传送带接触线' : '桌面接触线', value: sourcePlanFor(slot).placementOverride!.contactSurfaceY, max: 1 },
-                                ]).map(field => <label key={field.key} className="flex items-center gap-2 text-[9px] text-text-secondary"><span className="w-20 shrink-0">{field.label}</span><input aria-label={`分镜${index + 1}${field.label}`} type="range" disabled={productionFor(slot).locked} min={field.key === 'x' ? 0 : field.key === 'contactSurfaceY' ? sourcePlanFor(slot).placementOverride!.productBox.height : .1} max={field.max} step="0.01" value={field.value} onChange={event => updateStoryboardPlacement(slot, adjustProductPlacement(sourcePlanFor(slot).placementOverride!, field.key, Number(event.target.value)), 'custom')} className="min-w-0 flex-1 accent-emerald-700" /><span className="w-7 text-right tabular-nums">{field.value.toFixed(2)}</span></label>)}
+                                ]).map(field => <label key={field.key} className="flex items-center gap-2 text-[9px] text-text-secondary"><span className="w-20 shrink-0">{field.label}</span><input aria-label={`分镜${index + 1}${field.label}`} type="range" disabled={productionFor(slot).locked} min={field.key === 'x' ? 0 : field.key === 'contactSurfaceY' ? sourcePlanFor(slot).placementOverride!.productBox.height : .1} max={field.max} step="0.01" value={field.value} onChange={event => updateStoryboardPlacement(slot, adjustProductPlacement(sourcePlanFor(slot).placementOverride!, field.key, Number(event.target.value)), 'custom')} className="min-w-0 flex-1 accent-blue-600" /><span className="w-7 text-right tabular-nums">{field.value.toFixed(2)}</span></label>)}
                               </div>}
                             </details>
                           )}
@@ -11930,7 +11930,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                           <p className="font-bold text-text-primary">视频候选质检 · {storyboardQualityChecking[slot.id] ? '检查中' : sourcePlanFor(slot).quality?.passed ? '已通过' : sourcePlanFor(slot).quality?.status === 'needs_review' ? '待人工复核' : sourcePlanFor(slot).quality?.status === 'retry_first_frame' ? '请重做首帧' : sourcePlanFor(slot).quality?.status === 'retry_video' ? '请重做视频' : sourcePlanFor(slot).quality?.status === 'needs_assets' ? '请补充资产' : '待检查'}</p>
                           {sourcePlanFor(slot).quality?.findings?.map((finding, findingIndex) => <p key={`${finding.code}-${findingIndex}`} className="mt-1">{finding.message}{finding.evidenceFrames?.length ? ` · 证据帧 ${finding.evidenceFrames.map(frame => typeof frame === 'number' ? `${frame}s` : typeof frame === 'string' ? frame : frame.seconds != null ? `${frame.seconds}s` : '已记录').join('、')}` : ''}</p>)}
                           {sourcePlanFor(slot).quality?.recommendation && <p className="mt-1">建议：{sourcePlanFor(slot).quality?.recommendation}</p>}
-                          {sourcePlanFor(slot).quality?.status === 'needs_review' && sourcePlanFor(slot).quality?.reportId && <div className="mt-2 flex gap-2"><button type="button" disabled={storyboardQualityChecking[slot.id]} onClick={() => void reviewStoryboardQuality(slot, 'accept')} className="rounded bg-emerald-700 px-2 py-1 font-bold text-white disabled:opacity-50">人工核对通过</button><button type="button" disabled={storyboardQualityChecking[slot.id]} onClick={() => void reviewStoryboardQuality(slot, 'reject')} className="rounded border border-border px-2 py-1 font-bold disabled:opacity-50">拒绝并重做</button></div>}
+                          {sourcePlanFor(slot).quality?.status === 'needs_review' && sourcePlanFor(slot).quality?.reportId && <div className="mt-2 flex gap-2"><button type="button" disabled={storyboardQualityChecking[slot.id]} onClick={() => void reviewStoryboardQuality(slot, 'accept')} className="rounded bg-blue-600 px-2 py-1 font-bold text-white disabled:opacity-50">人工核对通过</button><button type="button" disabled={storyboardQualityChecking[slot.id]} onClick={() => void reviewStoryboardQuality(slot, 'reject')} className="rounded border border-border px-2 py-1 font-bold disabled:opacity-50">拒绝并重做</button></div>}
                         </div>}
                         {sourcePlanFor(slot).error && <p role="alert" className="text-[10px] text-red-600">{sourcePlanFor(slot).error}</p>}
                         {sourcePlanFor(slot).qualityError && <p role="alert" className="text-[10px] text-red-600">{sourcePlanFor(slot).qualityError}</p>}
@@ -12469,7 +12469,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                     className={`flex items-center gap-2 rounded-lg px-3 py-2 text-left transition-all ${voiceoverMode === option.id ? 'bg-white text-text-primary shadow-none' : 'text-text-muted hover:text-text-secondary'}`}
                   >
                     <div className="flex h-6 w-6 items-center justify-center rounded-md"
-                      style={{ background: voiceoverMode === option.id ? TRAFFIC_GREEN : 'transparent', color: voiceoverMode === option.id ? '#fff' : 'var(--color-text-muted)' }}>
+                      style={{ background: voiceoverMode === option.id ? STUDIO_ACCENT : 'transparent', color: voiceoverMode === option.id ? '#fff' : 'var(--color-text-muted)' }}>
                       {option.icon}
                     </div>
                     <span>
@@ -12550,12 +12550,12 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                     <label className="block">
                       <span className="mb-1 flex justify-between text-[10px] font-bold text-text-muted"><span>情绪强度</span><span>{ttsEmotionIntensity}%</span></span>
                       <input type="range" min={0} max={100} value={ttsEmotionIntensity}
-                        onChange={e => { setTtsEmotionIntensity(+e.target.value); setVoiceoverUrl(null); }} className="w-full accent-[#16a34a]" />
+                        onChange={e => { setTtsEmotionIntensity(+e.target.value); setVoiceoverUrl(null); }} className="w-full accent-blue-600" />
                     </label>
                     <label className="block">
                       <span className="mb-1 flex justify-between text-[10px] font-bold text-text-muted"><span>语速</span><span>{ttsSpeed.toFixed(2)}x</span></span>
                       <input type="range" min={75} max={135} value={Math.round(ttsSpeed * 100)}
-                        onChange={e => { setTtsSpeed(+e.target.value / 100); setVoiceoverUrl(null); }} className="w-full accent-[#16a34a]" />
+                        onChange={e => { setTtsSpeed(+e.target.value / 100); setVoiceoverUrl(null); }} className="w-full accent-blue-600" />
                     </label>
                   </div>
                   <div className="mt-3 grid gap-3 md:grid-cols-2">
@@ -12972,7 +12972,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                     key={tab.id}
                     onClick={() => setBgmTab(tab.id as 'library' | 'favorites')}
                     className={`rounded-lg px-4 py-2 text-xs font-semibold transition ${on ? 'bg-white text-text-primary shadow-none' : 'text-text-muted hover:text-text-secondary'}`}
-                    style={on ? { color: TRAFFIC_GREEN } : undefined}
+                    style={on ? { color: STUDIO_ACCENT } : undefined}
                   >
                     {tab.label}
                   </button>
@@ -12983,22 +12983,22 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
               <div className="card !rounded-lg border-dashed text-center py-10 mb-7">
                 <Music size={24} className="mx-auto text-text-muted opacity-40 mb-2" />
                 <p className="text-sm text-text-muted">暂无背景音乐</p>
-                <button onClick={() => bgmInputRef.current?.click()} className="text-xs font-semibold mt-2" style={{ color: TRAFFIC_GREEN }}>上传一首</button>
+                <button onClick={() => bgmInputRef.current?.click()} className="text-xs font-semibold mt-2" style={{ color: STUDIO_ACCENT }}>上传一首</button>
               </div>
             )}
             <div className="space-y-2 pr-1">
               <button onClick={() => { assignBgm(''); setBgmCandidates([]); if (audioRef.current) audioRef.current.pause(); setPlayingBgm(null); }}
                 className="card !rounded-lg w-full p-3 flex items-center gap-3 text-left"
-                style={!bgm ? { borderColor: TRAFFIC_GREEN, boxShadow: `0 0 0 1px ${TRAFFIC_GREEN}` } : undefined}>
+                style={!bgm ? { borderColor: STUDIO_ACCENT, boxShadow: `0 0 0 1px ${STUDIO_ACCENT}` } : undefined}>
                 <span className="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0"
-                  style={{ background: !bgm ? TRAFFIC_GREEN : 'var(--color-surface-2)', color: !bgm ? '#fff' : 'var(--color-text-muted)' }}>
+                  style={{ background: !bgm ? STUDIO_ACCENT : 'var(--color-surface-2)', color: !bgm ? '#fff' : 'var(--color-text-muted)' }}>
                   <X size={15} />
                 </span>
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-semibold text-text-primary truncate">不配乐</p>
                   <p className="text-xs text-text-muted mt-0.5">只保留原素材声音和口播配音</p>
                 </div>
-                {!bgm && <Check size={16} style={{ color: TRAFFIC_GREEN }} />}
+                {!bgm && <Check size={16} style={{ color: STUDIO_ACCENT }} />}
               </button>
               {bgmTab === 'favorites' && visibleBgms.length === 0 && (
                 <div className="card !rounded-lg border-dashed p-8 text-center">
@@ -13025,20 +13025,20 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                     setPreviewBgmOn(true);
                   }}
                     className="card !rounded-lg w-full p-3 flex items-center gap-3 text-left"
-                    style={on ? { borderColor: TRAFFIC_GREEN, boxShadow: `0 0 0 1px ${TRAFFIC_GREEN}` } : undefined}>
+                    style={on ? { borderColor: STUDIO_ACCENT, boxShadow: `0 0 0 1px ${STUDIO_ACCENT}` } : undefined}>
                     {/* 试听播放/暂停 */}
                     <span onClick={e => { e.stopPropagation(); togglePlay(b); }}
                       className="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 transition-colors"
-                      style={{ background: playing ? TRAFFIC_GREEN : activePreview ? 'var(--color-accent-glow)' : 'var(--color-surface-2)', color: playing ? '#fff' : activePreview ? TRAFFIC_GREEN : 'var(--color-text-muted)' }}>
+                      style={{ background: playing ? STUDIO_ACCENT : activePreview ? 'var(--color-accent-glow)' : 'var(--color-surface-2)', color: playing ? '#fff' : activePreview ? STUDIO_ACCENT : 'var(--color-text-muted)' }}>
                       {playing ? <Pause size={15} /> : <Play size={15} />}
                     </span>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
                         <p className="text-sm font-semibold text-text-primary truncate">{b.name}</p>
                         {b.recommended && (
-                          <span className="text-[9px] font-bold px-1.5 py-0.5 rounded" style={{ background: TRAFFIC_GREEN, color: '#fff' }}>AI 推荐</span>
+                          <span className="text-[9px] font-bold px-1.5 py-0.5 rounded" style={{ background: STUDIO_ACCENT, color: '#fff' }}>AI 推荐</span>
                         )}
-                        {playing && <span className="text-[10px] font-medium" style={{ color: TRAFFIC_GREEN }}>♪ 试听中</span>}
+                        {playing && <span className="text-[10px] font-medium" style={{ color: STUDIO_ACCENT }}>♪ 试听中</span>}
                       </div>
                       <p className="text-xs text-text-muted mt-0.5">{b.mood}</p>
                       <p className="mt-0.5 text-[10px] font-semibold text-text-muted">
@@ -13058,12 +13058,12 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                         }
                       }}
                       className="w-8 h-8 rounded-lg flex items-center justify-center text-text-muted hover:bg-surface-2 transition-colors"
-                      style={favored ? { color: TRAFFIC_GREEN } : undefined}
+                      style={favored ? { color: STUDIO_ACCENT } : undefined}
                     >
                       <Heart size={15} fill={favored ? 'currentColor' : 'none'} />
                     </span>
                     <span className="text-xs font-mono text-text-muted">{fmtDur(b.duration)}</span>
-                    {on ? <Check size={16} style={{ color: TRAFFIC_GREEN }} /> : <Volume2 size={15} className="text-text-muted opacity-0" />}
+                    {on ? <Check size={16} style={{ color: STUDIO_ACCENT }} /> : <Volume2 size={15} className="text-text-muted opacity-0" />}
                   </button>
                 );
               })}
@@ -13143,7 +13143,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                     <span className={bgm ? 'text-text-primary' : 'text-text-muted'}>{bgm ? `${bgmVol}%` : '关闭'}</span>
                   </div>
                   <input type="range" min={0} max={100} value={bgmVol}
-                    onChange={e => setBgmVol(+e.target.value)} disabled={!bgm} className="w-full accent-[#16a34a] disabled:opacity-40" />
+                    onChange={e => setBgmVol(+e.target.value)} disabled={!bgm} className="w-full accent-blue-600 disabled:opacity-40" />
                 </label>
                 <label className="block">
                   <div className="mb-1.5 flex items-center justify-between text-xs font-semibold">
@@ -13151,7 +13151,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                     <span className={voiceoverMode === 'none' ? 'text-text-muted' : 'text-text-primary'}>{voiceoverMode === 'none' ? '关闭' : `${voiceVol}%`}</span>
                   </div>
                   <input type="range" min={0} max={150} value={voiceVol}
-                    onChange={e => setVoiceVol(+e.target.value)} disabled={voiceoverMode === 'none'} className="w-full accent-[#16a34a] disabled:opacity-40" />
+                    onChange={e => setVoiceVol(+e.target.value)} disabled={voiceoverMode === 'none'} className="w-full accent-blue-600 disabled:opacity-40" />
                 </label>
               </div>
             </div>
@@ -13265,7 +13265,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                       onClick={() => jumpToPreviewClip(index)}
                       title={`${index + 1}. ${item.name}`}
                       className="relative min-w-0 overflow-hidden rounded-md border-r border-white/70 px-1 text-[9px] font-bold transition"
-                      style={{ width, background: active ? TRAFFIC_GREEN : '#e8eef5', color: active ? '#fff' : '#64748b' }}
+                      style={{ width, background: active ? STUDIO_ACCENT : '#e8eef5', color: active ? '#fff' : '#64748b' }}
                     >
                       <span className="block truncate">{index + 1}</span>
                     </button>
@@ -13286,7 +13286,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                   onClick={item.toggle}
                   disabled={item.disabled}
                   className="rounded-lg border px-2 py-2 text-[11px] font-bold transition disabled:opacity-35"
-                  style={item.on ? { borderColor: TRAFFIC_GREEN, background: 'var(--color-accent-glow)', color: TRAFFIC_GREEN } : { borderColor: 'var(--color-border)', color: 'var(--color-text-muted)' }}
+                  style={item.on ? { borderColor: STUDIO_ACCENT, background: 'var(--color-accent-glow)', color: STUDIO_ACCENT } : { borderColor: 'var(--color-border)', color: 'var(--color-text-muted)' }}
                 >
                   <Volume2 size={13} className="mx-auto mb-1" />{item.label}
                 </button>
@@ -13479,7 +13479,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                     {SWATCHES.map(c => (
                       <button key={c} onClick={() => setCoverStyle(s => ({ ...s, color: c }))}
                         className="h-5 w-5 rounded-full border transition-all"
-                        style={{ background: c, borderColor: coverStyle.color === c ? TRAFFIC_GREEN : 'var(--color-border)', boxShadow: coverStyle.color === c ? `0 0 0 2px ${TRAFFIC_GREEN}` : undefined }} />
+                        style={{ background: c, borderColor: coverStyle.color === c ? STUDIO_ACCENT : 'var(--color-border)', boxShadow: coverStyle.color === c ? `0 0 0 2px ${STUDIO_ACCENT}` : undefined }} />
                     ))}
                   </div>
                   <div className="flex items-center gap-2">
@@ -15503,7 +15503,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
           <label className="text-[10px] font-bold text-text-secondary">字体<select value={coverStyle.font} onChange={event => setCoverStyle(current => ({ ...current, font: event.target.value as CoverStyle['font'] }))} className="mt-1 h-8 w-full rounded-lg border border-border bg-white px-2 text-[10px]">{COVER_FONTS.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>
           <label className="text-[10px] font-bold text-text-secondary">字号<select value={coverStyle.size} onChange={event => setCoverStyle(current => ({ ...current, size: event.target.value as CoverStyle['size'] }))} className="mt-1 h-8 w-full rounded-lg border border-border bg-white px-2 text-[10px]"><option value="S">小</option><option value="M">中</option><option value="L">大</option></select></label>
         </div>
-        <div className="mt-3 flex flex-wrap items-center gap-2">{['#ffffff', '#111827', '#16a34a', '#14b8a6', '#ef4444', '#3b82f6'].map(color => <button key={color} type="button" onClick={() => setCoverStyle(current => ({ ...current, color }))} className="h-6 w-6 rounded-full border" style={{ background: color, borderColor: coverStyle.color === color ? TRAFFIC_GREEN : 'var(--color-border)', boxShadow: coverStyle.color === color ? `0 0 0 2px ${TRAFFIC_GREEN}` : undefined }} />)}</div>
+        <div className="mt-3 flex flex-wrap items-center gap-2">{['#ffffff', '#111827', '#16a34a', '#14b8a6', '#ef4444', '#3b82f6'].map(color => <button key={color} type="button" onClick={() => setCoverStyle(current => ({ ...current, color }))} className="h-6 w-6 rounded-full border" style={{ background: color, borderColor: coverStyle.color === color ? STUDIO_ACCENT : 'var(--color-border)', boxShadow: coverStyle.color === color ? `0 0 0 2px ${STUDIO_ACCENT}` : undefined }} />)}</div>
       </div>
     </section>
   ) : step === 'preview' ? (
@@ -15530,7 +15530,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
         <p className="font-semibold text-text-primary">{currentProjectQualityRecord ? '当前版本质检已签发' : '当前版本等待重新质检'}</p>
         <p className="mt-1 leading-5 text-text-muted">脚本、分镜、素材、字幕、配音或成片变化后，旧记录会自动失效。导出、团队审核和发布前必须为当前输入重新签发。</p>
         {currentProjectQualityRecord && <p className="mt-1 font-mono text-[9px] text-emerald-800">记录 {currentProjectQualityRecord.id} · 指纹 {currentProjectQualityRecord.inputFingerprint.slice(0, 12)}</p>}
-        <button type="button" disabled={projectQualityBusy} onClick={() => void requalityCurrentProject()} className="mt-2 rounded-lg bg-emerald-700 px-3 py-2 font-semibold text-white disabled:opacity-45">{projectQualityBusy ? '正在质检…' : currentProjectQualityRecord ? '再次核验当前版本' : '重新质检并签发'}</button>
+        <button type="button" disabled={projectQualityBusy} onClick={() => void requalityCurrentProject()} className="mt-2 rounded-lg bg-blue-600 px-3 py-2 font-semibold text-white disabled:opacity-45">{projectQualityBusy ? '正在质检…' : currentProjectQualityRecord ? '再次核验当前版本' : '重新质检并签发'}</button>
         {projectQualityNotice && <p role="status" className="mt-2 leading-5 text-text-secondary">{projectQualityNotice}</p>}
       </div>}
       {freeThreeStep && workbenchHasFormalVideo && <div className="rounded-lg border border-border bg-white p-3 text-[11px]" aria-label="人工协作交付">
@@ -15645,17 +15645,17 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     } }));
   };
 
-  if (freeThreeStep && step === 'mode') return <div className="flex h-full min-h-0 flex-col bg-[#f2f7f4]">
+  if (freeThreeStep && step === 'mode') return <div className="flex h-full min-h-0 flex-col bg-white">
     <ReplicationWorkbenchHeader activeStep={0} stepLabels={['创意与口播确认', '分镜匹配与制作', '成片渲染和导出']} title={projectTitle} onStepChange={index => { if (index > 0) void navigateReplicationStep(index); }} />
     <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)_minmax(0,1fr)]">
       <aside className="min-h-0 overflow-y-auto border-r border-border bg-white p-5"><h2 className="text-sm font-semibold text-text-primary">Gemini 逐句口播与分镜</h2><pre className="mt-4 whitespace-pre-wrap text-xs leading-6 text-text-secondary">{script}</pre></aside>
       <main className="min-h-0 bg-slate-950 p-5"><p className="mb-3 text-xs font-bold text-white">指定开场钩子</p>{videoKickoff?.generatedVideo?.url ? <video src={videoKickoff.generatedVideo.url} controls playsInline className="h-[min(65vh,620px)] w-full object-contain" /> : <p className="text-xs text-white">开场视频暂不可预览</p>}</main>
       <aside className="border-l border-border bg-white p-5"><h2 className="text-sm font-semibold text-text-primary">本次创作</h2><p className="mt-3 text-xs text-text-secondary">企业产品：{activeProductLabel || videoKickoff?.productInfo || '待确认'}</p><p className="mt-2 text-xs text-text-secondary">开场钩子：{videoKickoff?.generatedVideo?.title || '已上传'}</p><p className="mt-4 text-xs leading-5 text-text-muted">口播由 Gemini 依据企业产品与钩子画面生成。请检查内容后进入逐镜制作。</p></aside>
     </div>
-    <footer className="flex min-h-[76px] items-center justify-end border-t border-border bg-white px-5"><button type="button" onClick={() => { void saveProject('draft').then(saved => { if (saved) setStepIdx(activeSteps.findIndex(item => item.id === 'material')); }); }} className="rounded-lg bg-emerald-700 px-5 py-3 text-sm font-semibold text-white">确认口播，进入分镜制作</button></footer>
+    <footer className="flex min-h-[76px] items-center justify-end border-t border-border bg-white px-5"><button type="button" onClick={() => { void saveProject('draft').then(saved => { if (saved) setStepIdx(activeSteps.findIndex(item => item.id === 'material')); }); }} className="rounded-lg bg-blue-600 px-5 py-3 text-sm font-semibold text-white">确认口播，进入分镜制作</button></footer>
   </div>;
 
-  if (socialViralTask && step === 'mode') return <div className="flex h-full flex-col bg-[#f2f7f4]">
+  if (socialViralTask && step === 'mode') return <div className="flex h-full flex-col bg-white">
     <ReplicationWorkbenchHeader activeStep={0} title={projectTitle} navigationDisabled />
     <div className="flex flex-1 flex-col items-center justify-center gap-4 p-6 text-center">
       <p role={replicationConfirmationError ? 'alert' : 'status'} className="max-w-xl text-sm text-text-secondary">{replicationConfirmationError || referenceSpeechPlan.error || modeActionStatus || (studioCreateRequest?.confirmedSpeech?.length ? '正在载入已确认的口播并建立分镜…' : '请在第一页完成口播替换、手动修改与确认。')}</p>
@@ -15796,7 +15796,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                 <p className="text-sm font-semibold text-text-primary">生成成片</p>
                 <p className="mt-1 text-[11px] text-text-muted">生成镜头使用口播脚本字幕，按镜头时长显示；已有实测字幕时沿用实测时间码。</p>
                 <p className="mt-1 text-[11px] leading-5 text-text-secondary">{workbenchHasFormalVideo ? '效果调整后，可在这里重新生成。' : replicationNeedsVoiceover ? '点击后自动生成配音并渲染成片。' : '点击后开始渲染成片。'}</p>
-                <button type="button" onClick={startReplicationRender} disabled={rendering || batchRenderingLangs || ttsLoading || Boolean(subtitleSourceBlockReason) && !freeCanGenerateVoiceover || Boolean(voiceoverAlignmentBlockReason) && !replicationNeedsVoiceover || replicationTimingBlocked} className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-emerald-700 px-4 py-3 text-xs font-semibold text-white shadow-none hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-50">
+                <button type="button" onClick={startReplicationRender} disabled={rendering || batchRenderingLangs || ttsLoading || Boolean(subtitleSourceBlockReason) && !freeCanGenerateVoiceover || Boolean(voiceoverAlignmentBlockReason) && !replicationNeedsVoiceover || replicationTimingBlocked} className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 py-3 text-xs font-semibold text-white shadow-none hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50">
                   {(rendering || batchRenderingLangs || ttsLoading) && <Loader2 size={15} className="animate-spin" />}
                   {rendering || batchRenderingLangs ? `正在生成 ${renderPct}%` : ttsLoading ? '正在生成配音…' : workbenchHasFormalVideo ? '重新生成成片' : replicationNeedsVoiceover ? '生成配音并渲染成片' : '生成成片'}
                 </button>
@@ -15808,7 +15808,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                   <section aria-label="配音设置">
                     <p className="text-[11px] font-semibold text-text-primary">配音</p>
                     <label className="mt-2 block text-[10px] font-bold text-text-secondary">音色<select aria-label="配音音色" value={voice} onChange={event => { setVoice(event.target.value); setTtsLanguageSettings(current => ({ ...current, [activeVoiceLang]: { ...(current[activeVoiceLang] || DEFAULT_TTS_SETTINGS), voiceId: event.target.value } })); setVoiceoverStaleLangs(current => [...new Set([...current, activeVoiceLang])]); invalidateMusicRender(); }} className="mt-1 w-full rounded-lg border border-border bg-white p-2 text-xs">{[...VOICES, ...customVoices.map(item => ({ id: item.voiceId, name: item.name }))].map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
-                    <label className="mt-2 block text-[10px] font-bold text-text-secondary">语速 · {replicationSpeechSpeed.toFixed(2)} 倍<input aria-label="配音语速" type="range" min="0.85" max="1.30" step="0.05" value={replicationSpeechSpeed} onChange={event => { const speed = Number(event.target.value); setReplicationSpeechSpeed(speed); setTtsLanguageSettings(current => ({ ...current, [activeVoiceLang]: { ...(current[activeVoiceLang] || DEFAULT_TTS_SETTINGS), speed } })); setVoiceoverStaleLangs(current => [...new Set([...current, activeVoiceLang])]); invalidateMusicRender(); }} className="mt-2 w-full accent-emerald-700" /></label>
+                    <label className="mt-2 block text-[10px] font-bold text-text-secondary">语速 · {replicationSpeechSpeed.toFixed(2)} 倍<input aria-label="配音语速" type="range" min="0.85" max="1.30" step="0.05" value={replicationSpeechSpeed} onChange={event => { const speed = Number(event.target.value); setReplicationSpeechSpeed(speed); setTtsLanguageSettings(current => ({ ...current, [activeVoiceLang]: { ...(current[activeVoiceLang] || DEFAULT_TTS_SETTINGS), speed } })); setVoiceoverStaleLangs(current => [...new Set([...current, activeVoiceLang])]); invalidateMusicRender(); }} className="mt-2 w-full accent-blue-600" /></label>
                     {activeVoiceoverUrl && <audio src={activeVoiceoverUrl} controls aria-label="成片配音试听" className="mt-2 w-full" />}
                   </section>
                   <section className="border-t border-border pt-3" aria-label="配乐设置"><p className="mb-2 text-[11px] font-semibold text-text-primary">配乐</p>{workbenchProductionPanel}</section>
@@ -15862,11 +15862,11 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                 <div className={`grid gap-2 ${isPresenter ? 'grid-cols-2' : 'grid-cols-3'}`}>{options.map(option => <button key={option.id} type="button" aria-pressed={selectedMode === option.id} disabled={shot.locked} onClick={() => chooseReplicationShotMode(slot, option.id)} className={`min-w-0 rounded-lg border p-2 text-left disabled:opacity-50 ${selectedMode === option.id ? 'border-emerald-600 bg-white text-emerald-900 shadow-none' : 'border-border bg-white/70 text-text-secondary'}`}><span className="block text-[11px] font-semibold">{option.title}</span><span className="mt-1 block text-[9px] leading-4">{option.detail}</span></button>)}</div>
                 {!isPresenter && selectedMode === 'smart' && <p className="text-[10px] leading-4 text-text-secondary">{[storyboardAssignments[slot.id], plan.referenceClipId].some(id => { const clip = id ? materialById.get(id) : undefined; return clip && isAutomaticViralMaterialCandidate(clip, videoKickoff); }) ? '已关联本地素材，生成时自动作为参考。' : '暂无关联本地素材，生成时直接使用 AIGC。'}</p>}
                 {activeWorkbenchClip && <div className="rounded-lg border border-border bg-white p-2 text-[10px]"><p className="font-bold text-text-primary">当前素材：{activeWorkbenchClip.name}</p><p className="mt-1 text-text-muted">{editForSlot(activeWorkbenchClip, slot).trimStart.toFixed(1)}–{editForSlot(activeWorkbenchClip, slot).trimEnd.toFixed(1)}s · {plan.matchReason || activeMaterialAssessment?.reason || '手动选择'}</p><div className="mt-2 flex gap-2"><button type="button" onClick={() => { setCanvasView('creation'); setPreviewClip(activeWorkbenchClip); }} className="font-bold text-emerald-700">预览</button><button type="button" onClick={() => { setShotLibraryError(''); setShotLibrarySlotId(slot.id); }} className="font-bold text-emerald-700">更换</button><button type="button" onClick={() => clearWorkbenchMaterial(slot.id)} className="font-bold text-red-700">移除</button></div></div>}
-                {isPresenter ? <><button type="button" onClick={() => openProduction(slot)} className="w-full rounded-lg bg-emerald-700 px-3 py-2 text-xs font-bold text-white">配置数字人分镜</button><div className="grid grid-cols-2 gap-2"><button type="button" onClick={() => { chooseReplicationShotMode(slot, 'local'); setShotLibraryError(''); setShotLibrarySlotId(slot.id); }} className="rounded-lg border border-border bg-white px-2 py-2 text-[10px] font-bold">改用企业素材</button><button type="button" onClick={() => { chooseReplicationShotMode(slot, 'shoot'); void createBoundShootingTask(storyboardSlotScript(slot.detail).visual || slot.title, slot.id); }} className="rounded-lg border border-border bg-white px-2 py-2 text-[10px] font-bold">列入待拍</button></div></>
-                  : selectedMode === 'local' ? <div className="grid grid-cols-2 gap-2"><button type="button" onClick={() => { setShotLibraryError(''); setShotLibrarySlotId(slot.id); }} className="rounded-lg bg-emerald-700 px-3 py-2 text-xs font-bold text-white">选择企业素材</button><button type="button" disabled={materialSelectLoading} onClick={() => void smartSelectMaterialsFast()} className="rounded-lg border border-emerald-300 bg-white px-3 py-2 text-xs font-bold text-emerald-800 disabled:opacity-50">一键分析匹配</button></div>
-                  : selectedMode === 'shoot' ? <button type="button" disabled={shootingBusy} onClick={() => void createBoundShootingTask(storyboardSlotScript(slot.detail).visual || slot.title, slot.id)} className="w-full rounded-lg bg-emerald-700 px-3 py-2 text-xs font-bold text-white disabled:opacity-50">创建待拍任务</button>
+                {isPresenter ? <><button type="button" onClick={() => openProduction(slot)} className="w-full rounded-lg bg-blue-600 px-3 py-2 text-xs font-bold text-white">配置数字人分镜</button><div className="grid grid-cols-2 gap-2"><button type="button" onClick={() => { chooseReplicationShotMode(slot, 'local'); setShotLibraryError(''); setShotLibrarySlotId(slot.id); }} className="rounded-lg border border-border bg-white px-2 py-2 text-[10px] font-bold">改用企业素材</button><button type="button" onClick={() => { chooseReplicationShotMode(slot, 'shoot'); void createBoundShootingTask(storyboardSlotScript(slot.detail).visual || slot.title, slot.id); }} className="rounded-lg border border-border bg-white px-2 py-2 text-[10px] font-bold">列入待拍</button></div></>
+                  : selectedMode === 'local' ? <div className="grid grid-cols-2 gap-2"><button type="button" onClick={() => { setShotLibraryError(''); setShotLibrarySlotId(slot.id); }} className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-bold text-white">选择企业素材</button><button type="button" disabled={materialSelectLoading} onClick={() => void smartSelectMaterialsFast()} className="rounded-lg border border-emerald-300 bg-white px-3 py-2 text-xs font-bold text-emerald-800 disabled:opacity-50">一键分析匹配</button></div>
+                  : selectedMode === 'shoot' ? <button type="button" disabled={shootingBusy} onClick={() => void createBoundShootingTask(storyboardSlotScript(slot.detail).visual || slot.title, slot.id)} className="w-full rounded-lg bg-blue-600 px-3 py-2 text-xs font-bold text-white disabled:opacity-50">创建待拍任务</button>
                   : <div className="space-y-2">
-                      <button type="button" disabled={shot.locked || Boolean(storyboardGenerating[slot.id])} onClick={() => void generateStoryboardShot(slot, { ...plan, mode: plan.mode === 'hybrid' ? 'hybrid' : 'ai', decided: true, confirmed: false })} className="w-full rounded-lg bg-emerald-700 px-3 py-2 text-xs font-bold text-white disabled:opacity-50">{storyboardGenerating[slot.id] ? '正在生成首帧…' : '生成首帧并预览'}</button>
+                      <button type="button" disabled={shot.locked || Boolean(storyboardGenerating[slot.id])} onClick={() => void generateStoryboardShot(slot, { ...plan, mode: plan.mode === 'hybrid' ? 'hybrid' : 'ai', decided: true, confirmed: false })} className="w-full rounded-lg bg-blue-600 px-3 py-2 text-xs font-bold text-white disabled:opacity-50">{storyboardGenerating[slot.id] ? '正在生成首帧…' : '生成首帧并预览'}</button>
                       {plan.error && <p role="alert" className="text-[10px] leading-4 text-red-700">{plan.error}</p>}
                     </div>}
               </section>;
@@ -16121,7 +16121,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
               <label className="mt-2 block text-[10px] font-bold text-text-secondary">选择人物<select aria-label="HeyGen 账号人物" value={heygenAvatarId} onChange={event => { setHeygenAvatarId(event.target.value); setDigitalHumanConsent(false); }} className="mt-1 w-full rounded border border-border bg-white p-2"><option value="">请选择</option>{heygenAvatars.map(avatar => <option key={avatar.id} value={avatar.id}>{avatar.name}</option>)}</select></label>
               <label className="mt-2 block text-[10px] font-bold text-text-secondary">素材原生画幅<select aria-label="HeyGen 人物画幅" value={heygenAvatarOrientation} onChange={event => setHeygenAvatarOrientation(event.target.value as 'unknown' | 'portrait' | 'landscape' | 'square')} className="mt-1 w-full rounded border border-border bg-white p-2"><option value="unknown">待确认</option><option value="portrait">竖屏</option><option value="landscape">横屏</option><option value="square">方形</option></select></label>
               <label className="mt-2 flex gap-2 text-[10px] leading-4 text-text-secondary"><input type="checkbox" checked={digitalHumanConsent} onChange={event => setDigitalHumanConsent(event.target.checked)} />我确认人物、声音和商业使用授权</label>
-              <button type="button" disabled={heygenAvatarBinding || !heygenAvatarId || !digitalHumanConsent} onClick={() => void bindHeygenAvatarToShot(activeWorkbenchSlot)} className="mt-2 w-full rounded bg-emerald-700 px-2 py-1.5 text-[10px] font-bold text-white disabled:opacity-50">{heygenAvatarBinding ? '绑定中…' : '绑定当前分镜'}</button>
+              <button type="button" disabled={heygenAvatarBinding || !heygenAvatarId || !digitalHumanConsent} onClick={() => void bindHeygenAvatarToShot(activeWorkbenchSlot)} className="mt-2 w-full rounded bg-blue-600 px-2 py-1.5 text-[10px] font-bold text-white disabled:opacity-50">{heygenAvatarBinding ? '绑定中…' : '绑定当前分镜'}</button>
             </details>}
       {!socialViralTask && <DigitalHumanProductionOverview
         shots={storyboardSlots.flatMap((slot, index) => {
@@ -16214,7 +16214,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
           ? '口播文本或音色已变化，请重新生成配音后渲染。'
           : activeVoiceoverUrl ? '成片配音已生成，可试听并渲染。' : '成片配音尚未生成，渲染时会自动生成。'}</p>
         <label className="mt-3 block text-[10px] font-bold text-text-secondary">配音音色<select aria-label="配音音色" value={voice} onChange={event => { setVoice(event.target.value); setTtsLanguageSettings(current => ({ ...current, [activeVoiceLang]: { ...(current[activeVoiceLang] || DEFAULT_TTS_SETTINGS), voiceId: event.target.value } })); setVoiceoverStaleLangs(current => [...new Set([...current, activeVoiceLang])]); invalidateMusicRender(); }} className="mt-1 w-full rounded-lg border border-border bg-white p-2 text-xs">{[...VOICES, ...customVoices.map(item => ({ id: item.voiceId, name: item.name }))].map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
-        <label className="mt-3 block text-[10px] font-bold text-text-secondary">配音语速 · {replicationSpeechSpeed.toFixed(2)} 倍<input aria-label="配音语速" type="range" min="0.85" max="1.30" step="0.05" value={replicationSpeechSpeed} onChange={event => { const speed = Number(event.target.value); setReplicationSpeechSpeed(speed); setTtsLanguageSettings(current => ({ ...current, [activeVoiceLang]: { ...(current[activeVoiceLang] || DEFAULT_TTS_SETTINGS), speed } })); setVoiceoverStaleLangs(current => [...new Set([...current, activeVoiceLang])]); invalidateMusicRender(); }} className="mt-2 w-full accent-emerald-700" /></label>
+        <label className="mt-3 block text-[10px] font-bold text-text-secondary">配音语速 · {replicationSpeechSpeed.toFixed(2)} 倍<input aria-label="配音语速" type="range" min="0.85" max="1.30" step="0.05" value={replicationSpeechSpeed} onChange={event => { const speed = Number(event.target.value); setReplicationSpeechSpeed(speed); setTtsLanguageSettings(current => ({ ...current, [activeVoiceLang]: { ...(current[activeVoiceLang] || DEFAULT_TTS_SETTINGS), speed } })); setVoiceoverStaleLangs(current => [...new Set([...current, activeVoiceLang])]); invalidateMusicRender(); }} className="mt-2 w-full accent-blue-600" /></label>
         <label className="mt-3 block text-[10px] font-bold text-text-secondary">上传个人声音样本<input aria-label="上传个人声音样本" type="file" accept=".mp3,.wav,.m4a,audio/mpeg,audio/wav,audio/mp4" onChange={event => { void handleVoiceSampleUpload(event.target.files); event.target.value = ''; }} className="mt-1 block w-full text-[10px]" /></label>
         <button type="button" disabled={ttsLoading || !storyboardSlots.length} onClick={() => void genTts(activeVoiceLang)} className="mt-3 w-full rounded-lg border border-emerald-500 bg-emerald-50 px-3 py-2 text-xs font-bold text-emerald-800 disabled:opacity-50">{ttsLoading ? '正在生成配音…' : activeVoiceoverUrl ? '重新生成成片配音' : '生成成片配音'}</button>
         {activeVoiceoverUrl && <audio src={activeVoiceoverUrl} controls aria-label="成片配音试听" className="mt-3 w-full" />}
@@ -16238,7 +16238,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
             </section> : workbenchProductionPanel}
             {step !== 'script' && step !== 'material' && step !== 'bgm' && step !== 'cover' && step !== 'preview' && (
               <AnimatePresence mode="wait">
-                <motion.div key={`${step}-${scriptStageTab}`} initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -5 }} transition={{ duration: 0.16 }}>
+                <motion.div key={`${step}-${scriptStageTab}`} initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -5 }}>
                   {renderStep()}
                 </motion.div>
               </AnimatePresence>
@@ -16299,7 +16299,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
           icon: primarySubmitsSocialArtifact || step === 'preview' && workbenchHasFormalVideo && !primaryGeneratesVideo ? <Send size={15} /> : <ChevronRight size={15} />,
         }}
       >
-        <div className={`relative flex h-full min-h-0 w-full items-center justify-center overflow-hidden ${canvasView === 'reference' && mode === 'clone' && videoKickoff ? 'bg-black' : 'rounded-lg border border-border bg-[#e7ece9]'}`}>
+        <div className={`relative flex h-full min-h-0 w-full items-center justify-center overflow-hidden ${canvasView === 'reference' && mode === 'clone' && videoKickoff ? 'bg-black' : 'rounded-lg border border-border bg-zinc-100'}`}>
           {canvasView !== 'reference' && step !== 'preview' && storyboardSlots.length > 0 && workbenchPlaybackError && <span role="alert" className="absolute right-4 top-4 z-30 max-w-56 rounded-md bg-rose-950/90 px-2 py-1 text-[10px] text-white">{workbenchPlaybackError}</span>}
           {canvasView === 'reference' && mode === 'clone' && videoKickoff && step !== 'preview' ? (
             <BenchmarkVideoPreview kickoff={videoKickoff} embedded seekRequest={referenceSeekRequest} onTimeUpdate={setReferenceTimelineTime} />
@@ -16804,7 +16804,7 @@ function ProjectsOverlay({ projects, batches, materials, currentId, workflowCont
           {items.map(p => (
             <div key={p.id}
               className="card !rounded-lg overflow-hidden group cursor-pointer relative"
-              style={p.id === currentId ? { borderColor: TRAFFIC_GREEN, boxShadow: `0 0 0 1px ${TRAFFIC_GREEN}` } : undefined}
+              style={p.id === currentId ? { borderColor: STUDIO_ACCENT, boxShadow: `0 0 0 1px ${STUDIO_ACCENT}` } : undefined}
               onClick={() => onLoad(p)}>
               <div className="relative">
                 <ProjectFirstFrameThumb project={p} materials={materials} />
@@ -16850,13 +16850,12 @@ function ProjectsOverlay({ projects, batches, materials, currentId, workflowCont
       initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
       className="absolute inset-0 z-50 flex bg-surface">
       <motion.div
-        initial={{ scale: 0.96, y: 10 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.96, y: 10 }}
-        transition={{ type: 'spring', damping: 26, stiffness: 320 }}
+        initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
         className="h-full w-full flex flex-col bg-surface overflow-hidden"
         onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between px-5 py-3.5 border-b border-border flex-shrink-0">
           <div className="flex items-center gap-2">
-            <FolderOpen size={15} style={{ color: TRAFFIC_GREEN }} />
+            <FolderOpen size={15} style={{ color: STUDIO_ACCENT }} />
             <div>
               <span id="projects-overlay-title" className="text-sm font-bold text-text-primary">{workflowContext ? '当前任务的内容项目' : '我的创作'}</span>
               {workflowContext && <p className="mt-0.5 text-[10px] text-text-muted">仅显示本次运行与任务关联的项目</p>}
