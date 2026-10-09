@@ -446,7 +446,7 @@ export function AccountHubPage() {
             type="button"
             onClick={() => setActiveTab('usage')}
             aria-current={activeTab === 'usage' ? 'page' : undefined}
-            className={`rounded-lg px-4 py-2 text-xs font-black transition ${activeTab === 'usage' ? 'bg-[#123e31] text-white' : 'text-text-muted hover:text-text-primary'}`}
+            className={`rounded-lg px-4 py-2 text-xs font-black transition ${activeTab === 'usage' ? 'bg-blue-600 text-white' : 'text-text-muted hover:text-text-primary'}`}
           >
             团队用量
           </button>
@@ -454,7 +454,7 @@ export function AccountHubPage() {
             type="button"
             onClick={() => setActiveTab('accounts')}
             aria-current={activeTab === 'accounts' ? 'page' : undefined}
-            className={`rounded-lg px-4 py-2 text-xs font-black transition ${activeTab === 'accounts' ? 'bg-[#123e31] text-white' : 'text-text-muted hover:text-text-primary'}`}
+            className={`rounded-lg px-4 py-2 text-xs font-black transition ${activeTab === 'accounts' ? 'bg-blue-600 text-white' : 'text-text-muted hover:text-text-primary'}`}
           >
             AI 账号
           </button>

@@ -109,14 +109,13 @@ export default function AuthScreen({ onAuthed }: { onAuthed: (s: AuthSession) =>
 
       <section className="auth-panel">
         <motion.div
-          initial={{ opacity: 0, y: 12 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: .34, ease: 'easeOut' }}
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
           className="auth-form-card"
         >
           <div className="auth-intro mb-8">
             <p className="mb-2 text-xs font-semibold uppercase tracking-[.18em] text-accent">Lingshu workspace</p>
-            <h1 aria-live="polite" className="text-[30px] font-semibold leading-tight tracking-[-.035em] text-text-primary">
+            <h1 aria-live="polite" className="ls-type-headline text-text-primary">
               {mode === 'register' ? '创建你的工作账号' : '欢迎回来'}
             </h1>
             <p className="mt-2 text-sm leading-6 text-text-secondary">

@@ -7,7 +7,7 @@ import {
   type DragEvent as ReactDragEvent,
   type PointerEvent as ReactPointerEvent,
 } from 'react';
-import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
+import { AnimatePresence, motion } from 'motion/react';
 import {
   ArrowLeft,
   ArrowDown,
@@ -20,6 +20,8 @@ import {
 } from 'lucide-react';
 import type { AgentAction, AgentType, Message, Page } from '../App';
 import { authHeader } from '../lib/auth';
+import { lsMotion } from '../lib/designTokens';
+import { usePrefersReducedMotion } from '../lib/usePrefersReducedMotion';
 import {
   ASSISTANT_GUIDES,
   ASSISTANT_NOTIFICATION_POLICY,
@@ -105,11 +107,11 @@ type AssistantPanelView = 'todo' | 'chat' | 'decision';
 
 const PERFORMANCE_LINES: Record<string, string[]> = {
   script: ['我正在把卖点排成能拍的镜头，马上就好。', '好内容值得多想几秒，我先帮你把逻辑捋顺。', '别急，我正在检查每个镜头能不能真正执行。'],
-  storyboard: ['分镜正在排队出场，我先来一段热身。', '镜头衔接交给我，我会把节奏接顺。', '正在逐镜检查，避免成片时才发现问题。'],
+  storyboard: ['分镜正在生成，请稍候。', '镜头衔接交给我，我会把节奏接顺。', '正在逐镜检查，避免成片时才发现问题。'],
   voice: ['正在逐句处理配音，不会漏掉后面的台词。', '我在给每句话找合适的停顿和节奏。', '配音还在生成，我陪你等一小会儿。'],
   material: ['我正在替每个分镜挑合适的素材。', '素材匹配中，先看动作，再看画面是否真的能用。', '稍等，我正在把重复镜头和不合适的素材筛掉。'],
   render: ['成片正在合成，我先替进度条加加油。', '最后几步通常最费功夫，马上就能看成片。', '正在把画面、字幕和声音稳稳地合在一起。'],
-  default: ['任务正在处理中，我会一直在这里陪你。', '稍等一下，好结果正在路上。', '我先表演一个原地小跳，进度交给后台继续跑。'],
+  default: ['任务正在处理中，我会一直在这里陪你。', '稍等一下，好结果正在路上。', '后台任务正在继续执行。'],
 };
 
 type GuideMemory = {
@@ -519,7 +521,7 @@ function quickQuestions(context: AssistantContext) {
 }
 
 function todoToneClass(tone: AssistantTodoItem['tone'], completed: boolean) {
-  if (completed) return 'border-accent/20 bg-accent-glow text-accent';
+  if (completed) return 'border-green/20 bg-green/5 text-green';
   if (tone === 'red') return 'border-red/20 bg-red/5 text-red';
   if (tone === 'amber') return 'border-amber/20 bg-amber-dim text-amber';
   if (tone === 'blue') return 'border-accent/20 bg-accent-glow text-accent';
@@ -527,7 +529,7 @@ function todoToneClass(tone: AssistantTodoItem['tone'], completed: boolean) {
 }
 
 function todoDotClass(tone: AssistantTodoItem['tone'], completed: boolean) {
-  if (completed) return 'bg-accent';
+  if (completed) return 'bg-green';
   if (tone === 'red') return 'bg-red';
   if (tone === 'amber') return 'bg-amber';
   if (tone === 'blue') return 'bg-accent';
@@ -709,7 +711,10 @@ export default function GlobalAssistant({
   onAction,
   onSessionRefresh,
 }: Props) {
-  const reduceMotion = useReducedMotion();
+  const reduceMotion = usePrefersReducedMotion();
+  const fadeTransition = { duration: (reduceMotion ? lsMotion.duration.instant : lsMotion.duration.enter) / 1000, ease: lsMotion.ease.enter };
+  const fadeExit = { opacity: 0, transition: { duration: (reduceMotion ? lsMotion.duration.instant : lsMotion.duration.exit) / 1000, ease: lsMotion.ease.exit } };
+  const spatialTransition = reduceMotion ? { duration: 0 } : { ...lsMotion.spring.standard, opacity: fadeTransition };
   const [mode, setMode] = useState<'breathing' | 'chat'>('breathing');
   const [launcherRetracted, setLauncherRetracted] = useState(false);
   const [panelView, setPanelView] = useState<AssistantPanelView>('chat');
@@ -1999,8 +2004,8 @@ export default function GlobalAssistant({
       ref={assistantRootRef}
       data-global-assistant="root"
       data-lingshu-assistant-dragged={assistantPosition ? 'true' : 'false'}
-      className={`fixed ${page === 'digitalEmployees' && mode === 'breathing' ? 'z-[35]' : 'z-[75]'} ${launcherDragging ? '' : 'transition-[left,right,top,bottom] duration-300'} ${assistantPosition ? '' : dockOnLeft ? 'bottom-5 left-4 lg:left-[292px]' : launcherAtEdge ? 'bottom-5 right-0' : 'bottom-5 right-5'}`}
-      style={assistantPosition ? { left: assistantPosition.x, top: assistantPosition.y } : undefined}
+      className={`fixed ${page === 'digitalEmployees' && mode === 'breathing' ? 'z-[35]' : 'z-[75]'} ${launcherDragging ? '' : 'transition-[left,right,top,bottom]'} ${assistantPosition ? '' : dockOnLeft ? 'bottom-5 left-4 lg:left-[292px]' : launcherAtEdge ? 'bottom-5 right-0' : 'bottom-5 right-5'}`}
+      style={{ ...(assistantPosition ? { left: assistantPosition.x, top: assistantPosition.y } : {}), transitionDuration: reduceMotion || launcherDragging ? '0ms' : 'var(--ls-motion-standard)', transitionTimingFunction: 'var(--ls-ease-standard)' }}
     >
       <AnimatePresence>
         {mode === 'breathing' && !launcherAtEdge && performance && shouldNotifyAssistant(performance.reason) && !performanceHidden && (
@@ -2008,9 +2013,10 @@ export default function GlobalAssistant({
             key={`performance-${performance.phase}`}
             data-assistant-surface="floating-reminder"
             data-lingshu-assistant-performance={performance.phase}
-            initial={{ opacity: 0, y: 10, scale: 0.94 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 7, scale: 0.96 }}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={fadeExit}
+            transition={fadeTransition}
             className={`absolute z-30 w-[248px] max-w-[calc(100vw-104px)] rounded-lg border border-border bg-surface p-3 shadow-lg ${assistantPosition ? '' : dockOnLeft ? 'left-[72px]' : 'right-[72px]'} ${dockOnTop ? 'top-1' : 'bottom-1'}`}
             style={assistantPosition ? { left: positionedPopupLeft(Math.min(248, viewport.width - 104)) } : undefined}
           >
@@ -2023,9 +2029,9 @@ export default function GlobalAssistant({
             >
               <X size={13} />
             </button>
-            <p className="pr-6 text-[10px] font-black uppercase tracking-[0.14em] text-accent">灵小枢陪你等</p>
-            <p className="mt-1 text-xs font-semibold leading-[1.65] text-text-secondary">{performanceMessage}</p>
-            <div className="mt-2 flex gap-1"><span className="h-1 w-5 animate-pulse rounded-full bg-accent"/><span className="h-1 w-3 animate-pulse rounded-full bg-accent/55 [animation-delay:160ms]"/><span className="h-1 w-2 animate-pulse rounded-full bg-accent/25 [animation-delay:320ms]"/></div>
+            <p className="ls-type-label-medium pr-6 text-accent">灵小枢陪你等</p>
+            <p className="ls-type-body-small mt-1 text-text-secondary">{performanceMessage}</p>
+            <span className="ls-type-label-medium mt-2 inline-flex items-center gap-1.5 text-accent"><Loader2 size={12} className="motion-safe:animate-spin" aria-hidden="true" />处理中</span>
             <span className={`absolute h-4 w-4 rotate-45 border-border bg-surface ${dockOnLeft ? '-left-2 border-b border-l' : '-right-2 border-r border-t'} ${dockOnTop ? 'top-6' : 'bottom-6'}`} />
           </motion.div>
         )}
@@ -2037,14 +2043,15 @@ export default function GlobalAssistant({
             key={`speech-${speechBubble.id}`}
             data-assistant-surface="floating-reminder"
             data-lingshu-assistant-speech="true"
-            initial={{ opacity: 0, y: 8, scale: 0.96 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 6, scale: 0.97 }}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={fadeExit}
+            transition={fadeTransition}
             className={`absolute z-30 w-[248px] max-w-[calc(100vw-104px)] rounded-lg border border-border bg-surface p-3 shadow-lg ${assistantPosition ? '' : dockOnLeft ? 'left-[72px]' : 'right-[72px]'} ${dockOnTop ? 'top-1' : 'bottom-1'}`}
             style={assistantPosition ? { left: positionedPopupLeft(Math.min(248, viewport.width - 104)) } : undefined}
           >
-            <p className="text-[10px] font-black uppercase tracking-[0.14em] text-accent">灵小枢</p>
-            <p className="mt-1 text-xs font-semibold leading-[1.65] text-text-secondary">{speechBubble.message}</p>
+            <p className="ls-type-label-medium text-accent">灵小枢</p>
+            <p className="ls-type-body-small mt-1 text-text-secondary">{speechBubble.message}</p>
             <span className={`absolute h-4 w-4 rotate-45 border-border bg-surface ${dockOnLeft ? '-left-2 border-b border-l' : '-right-2 border-r border-t'} ${dockOnTop ? 'top-6' : 'bottom-6'}`} />
           </motion.div>
         )}
@@ -2056,9 +2063,10 @@ export default function GlobalAssistant({
             key={featureGuide.id}
             data-assistant-surface="floating-reminder"
             data-lingshu-guide-bubble={featureGuide.id}
-            initial={{ opacity: 0, y: 8, scale: 0.96 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 6, scale: 0.97 }}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={fadeExit}
+            transition={fadeTransition}
             className={`absolute z-20 w-[236px] max-w-[calc(100vw-104px)] rounded-lg border border-border bg-surface p-3 shadow-lg ${assistantPosition ? '' : dockOnLeft ? 'left-[72px]' : 'right-[72px]'} ${dockOnTop ? 'top-1' : 'bottom-1'}`}
             style={assistantPosition ? { left: positionedPopupLeft(Math.min(236, viewport.width - 104)) } : undefined}
           >
@@ -2066,8 +2074,8 @@ export default function GlobalAssistant({
               <X size={13} />
             </button>
             <div className="pr-6">
-              <p className="text-xs font-black text-accent">{featureGuide.title}</p>
-              <p className="mt-1 text-xs leading-[1.65] text-text-secondary">{featureGuide.message}</p>
+              <p className="ls-type-label-medium text-accent">{featureGuide.title}</p>
+              <p className="ls-type-body-small mt-1 text-text-secondary">{featureGuide.message}</p>
             </div>
             <button
               type="button"
@@ -2076,7 +2084,7 @@ export default function GlobalAssistant({
                 setFeatureGuide(null);
                 openAgent(agentId);
               }}
-              className="mt-2 text-[11px] font-black text-accent hover:text-accent-dim"
+              className="ls-type-label-medium mt-2 text-accent hover:text-accent-dim"
             >
               问问灵小枢 →
             </button>
@@ -2089,11 +2097,12 @@ export default function GlobalAssistant({
         {page === 'enterprise' && mode === 'breathing' && enterpriseGuideSeen && !featureGuide && !speechBubble && (
           <motion.button
             type="button"
-            initial={{ opacity: 0, x: 6 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: 4 }}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={fadeExit}
+            transition={fadeTransition}
             onClick={openCurrentPageAgent}
-            className={`absolute z-10 whitespace-nowrap rounded-md border border-border bg-surface px-3 py-1.5 text-[11px] font-black text-accent shadow-sm hover:border-accent/30 hover:bg-accent-glow ${dockOnLeft ? 'left-[68px]' : 'right-[68px]'} ${dockOnTop ? 'top-5' : 'bottom-5'}`}
+            className={`ls-type-label-medium absolute z-10 whitespace-nowrap rounded-md border border-border bg-surface px-3 py-1.5 text-accent shadow-sm hover:border-accent/30 hover:bg-accent-glow ${dockOnLeft ? 'left-[68px]' : 'right-[68px]'} ${dockOnTop ? 'top-5' : 'bottom-5'}`}
           >
             要补资料？点我
           </motion.button>
@@ -2107,15 +2116,14 @@ export default function GlobalAssistant({
             role="dialog"
             aria-label={panelTitle}
             tabIndex={-1}
-            layoutId={`assistant-${activeAgent}`}
-            initial={{ opacity: 0, y: 18, scale: 0.96 }}
-            animate={mode === 'chat' ? { opacity: 1, y: 0, scale: 1 } : { opacity: 0, y: 18, scale: 0.96 }}
-            exit={{ opacity: 0, y: 18, scale: 0.96 }}
-            transition={reduceMotion ? { duration: 0.16 } : { type: 'spring', stiffness: 240, damping: 24 }}
+            initial={{ opacity: 0, y: reduceMotion ? 0 : 8 }}
+            animate={mode === 'chat' ? { opacity: 1, y: 0 } : { opacity: 0, y: reduceMotion ? 0 : 8 }}
+            exit={{ y: reduceMotion ? 0 : 8, opacity: 0, transition: { ...spatialTransition, opacity: fadeExit.transition } }}
+            transition={spatialTransition}
             className={`absolute z-10 flex max-h-[calc(100dvh-32px)] max-w-[calc(100vw-32px)] flex-col overflow-hidden rounded-lg border border-border bg-surface shadow-xl outline-none ${assistantPosition ? '' : dockOnLeft ? 'left-0' : 'right-0'} ${dockOnTop ? 'top-14' : 'bottom-14'} ${assistantTool === 'knowledge-intake' ? 'w-[560px]' : 'w-[420px]'} ${mode === 'chat' ? 'pointer-events-auto visible' : 'pointer-events-none invisible'}`}
             style={{ height: assistantPanelHeight, ...(assistantPosition ? { left: positionedPanelLeft } : {}) }}
           >
-            <header className="flex h-12 shrink-0 items-center justify-between border-b border-border px-4">
+            <header className="flex h-12 shrink-0 items-center justify-between border-b border-border bg-gradient-to-r from-blue-50 via-violet-50 to-pink-50 px-4">
               <div className="flex min-w-0 items-center gap-2">
                 <button
                   type="button"
@@ -2133,8 +2141,8 @@ export default function GlobalAssistant({
                   <ArrowLeft size={16} />
                 </button>
                 <div className="min-w-0">
-                  <p className="truncate text-sm font-black text-text-primary">{panelTitle}</p>
-                  <p className="truncate text-[11px] text-text-muted">{panelSubtitle}</p>
+                  <p className="ls-type-title-small truncate text-text-primary">{panelTitle}</p>
+                  <p className="ls-type-body-small truncate text-text-muted">{panelSubtitle}</p>
                 </div>
               </div>
               <div className="flex items-center gap-1">
@@ -2172,22 +2180,22 @@ export default function GlobalAssistant({
                 data-assistant-surface="decision"
                 className="min-h-0 flex-1 overflow-y-auto bg-surface-2 px-4 py-4"
               >
-                <article className="rounded-lg border border-border bg-surface p-4 shadow-sm">
+                <article className="rounded-lg border border-border bg-surface p-4">
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
-                      <p className="text-[11px] font-black uppercase tracking-[0.14em] text-accent">灵小枢已整理</p>
-                      <h3 className="mt-1 text-base font-black leading-snug text-text-primary">{focusedTaskCard.title}</h3>
+                      <p className="ls-type-label-medium text-accent">灵小枢已整理</p>
+                      <h3 className="ls-type-title-medium mt-1 text-text-primary">{focusedTaskCard.title}</h3>
                     </div>
-                    <span className="shrink-0 rounded-full border border-border bg-surface-2 px-2 py-1 text-[10px] font-black text-text-secondary">
+                    <span className="ls-type-label-medium shrink-0 rounded-full border border-border bg-surface-2 px-2 py-1 text-text-secondary">
                       {taskStatusLabel(focusedTaskCard)}
                     </span>
                   </div>
 
-                  <p className="mt-4 text-sm font-bold leading-6 text-text-primary">{focusedTaskCard.conclusion}</p>
+                  <p className="ls-type-body-medium mt-4 font-semibold text-text-primary">{focusedTaskCard.conclusion}</p>
                   {focusedTaskCard.details.length > 0 && (
                     <ul className="mt-3 space-y-2 border-l-2 border-accent/30 pl-3">
                       {focusedTaskCard.details.map(detail => (
-                        <li key={detail} className="text-xs leading-5 text-text-secondary">{detail}</li>
+                        <li key={detail} className="ls-type-body-small text-text-secondary">{detail}</li>
                       ))}
                     </ul>
                   )}
@@ -2200,15 +2208,15 @@ export default function GlobalAssistant({
                             {item.thumbnailUrl ? (
                               <img src={item.thumbnailUrl} alt="" className="h-full w-full object-cover" loading="lazy" />
                             ) : (
-                              <div className="flex h-full items-center justify-center px-1 text-center text-[9px] font-bold text-text-muted">暂无缩略图</div>
+                              <div className="ls-type-label-small flex h-full items-center justify-center px-1 text-center text-text-muted">暂无缩略图</div>
                             )}
                           </div>
                           <div className="min-w-0 flex-1">
-                            <p className="line-clamp-2 text-xs font-black leading-5 text-text-primary">{item.title}</p>
-                            {item.accountLabel && <p className="mt-1 truncate text-[10px] text-text-muted">{item.accountLabel}</p>}
+                            <p className="ls-type-label-medium line-clamp-2 text-text-primary">{item.title}</p>
+                            {item.accountLabel && <p className="ls-type-body-small mt-1 truncate text-text-muted">{item.accountLabel}</p>}
                             <div className="mt-1.5 flex flex-wrap gap-1.5">
-                              {item.transition && <span className="rounded bg-accent-glow px-1.5 py-0.5 text-[10px] font-black text-accent">{item.transition}</span>}
-                              {item.note && <span className="rounded bg-surface px-1.5 py-0.5 text-[10px] font-bold text-text-secondary">{item.note}</span>}
+                              {item.transition && <span className="ls-type-label-small rounded bg-accent-glow px-1.5 py-0.5 text-accent">{item.transition}</span>}
+                              {item.note && <span className="ls-type-label-small rounded bg-surface px-1.5 py-0.5 text-text-secondary">{item.note}</span>}
                             </div>
                           </div>
                         </div>
@@ -2223,7 +2231,7 @@ export default function GlobalAssistant({
                           type="button"
                           disabled={focusedTaskCard.primaryAction.disabled || loading}
                           onClick={() => void handleTaskCardAction(focusedTaskCard, focusedTaskCard.primaryAction!)}
-                          className="w-full rounded-md bg-accent px-3 py-2.5 text-sm font-black text-white hover:bg-accent-dim focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-40"
+                          className="btn-primary ls-type-label-large w-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2"
                         >
                           {focusedTaskCard.primaryAction.label}
                         </button>
@@ -2236,7 +2244,7 @@ export default function GlobalAssistant({
                               type="button"
                               disabled={action.disabled || loading}
                               onClick={() => void handleTaskCardAction(focusedTaskCard, action)}
-                              className="rounded-md border border-border bg-surface px-3 py-2 text-xs font-black text-text-secondary hover:border-accent/40 hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-40"
+                              className="ls-type-label-medium rounded-md border border-border bg-surface px-3 py-2 text-text-secondary hover:border-accent/40 hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-40"
                             >
                               {action.label}
                             </button>
@@ -2249,7 +2257,7 @@ export default function GlobalAssistant({
                   {focusedTaskCard.workspace && (
                     <a
                       href={focusedTaskCard.workspace.href}
-                      className="mt-4 block rounded-md border border-border bg-surface-2 px-3 py-2 text-center text-xs font-black text-accent hover:border-accent/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+                      className="ls-type-label-medium mt-4 block rounded-md border border-border bg-surface-2 px-3 py-2 text-center text-accent hover:border-accent/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
                     >
                       {focusedTaskCard.workspace.label}
                     </a>
@@ -2258,7 +2266,7 @@ export default function GlobalAssistant({
                 <button
                   type="button"
                   onClick={returnToConversation}
-                  className="mt-3 w-full rounded-md px-3 py-2 text-xs font-bold text-text-muted hover:bg-surface hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+                  className="ls-type-label-medium mt-3 w-full rounded-md px-3 py-2 text-text-muted hover:bg-surface hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
                 >
                   返回对话
                 </button>
@@ -2267,14 +2275,14 @@ export default function GlobalAssistant({
               <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
                 <div className="space-y-3">
                   <div className="border-l-2 border-amber bg-amber-dim p-4">
-                    <p className="text-sm font-black text-text-primary">今日待办（{pendingCount}）</p>
-                    <p className="mt-2 text-sm leading-relaxed text-text-secondary">
+                    <p className="ls-type-title-small text-text-primary">今日待办（{pendingCount}）</p>
+                    <p className="ls-type-body-medium mt-2 text-text-secondary">
                       {pendingCount > 0 ? '需要你处理和确认的客户已按优先级排好。' : '今天的待办已处理完。'}
                     </p>
                     <button
                       type="button"
                       onClick={returnToConversation}
-                      className="mt-4 rounded-md bg-accent px-3 py-2 text-xs font-black text-white hover:bg-accent-dim focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2"
+                      className="btn-primary ls-type-label-medium mt-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2"
                     >
                       客户助手
                     </button>
@@ -2295,21 +2303,21 @@ export default function GlobalAssistant({
                           <span className={`mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full ${todoDotClass(item.tone, item.completed)}`} />
                           <span className="min-w-0 flex-1">
                             <span className="flex items-center gap-2">
-                              <span className="truncate text-xs font-black text-text-primary">{item.name}</span>
+                              <span className="ls-type-title-small truncate text-text-primary">{item.name}</span>
                               {item.completed && (
-                                <span className="inline-flex shrink-0 items-center gap-1 border-l-2 border-accent bg-accent-glow px-2 py-0.5 text-[10px] font-black text-accent">
+                                <span className="ls-type-label-medium inline-flex shrink-0 items-center gap-1 border-l-2 border-green bg-green/5 px-2 py-0.5 text-green">
                                   <CheckCircle2 size={11} /> 已完成
                                 </span>
                               )}
                             </span>
-                            <span className="mt-1 block truncate text-[11px] font-bold opacity-80">{item.headline}</span>
-                            <span className="mt-1 block line-clamp-2 text-[11px] leading-5 text-text-secondary">{item.reason}</span>
+                            <span className="ls-type-label-medium mt-1 block truncate opacity-80">{item.headline}</span>
+                            <span className="ls-type-body-small mt-1 block line-clamp-2 text-text-secondary">{item.reason}</span>
                           </span>
                         </button>
                       ))}
                     </div>
                   ) : (
-                    <div className="rounded-lg border border-border bg-surface-2 px-3 py-4 text-center text-xs font-bold text-text-muted">
+                    <div className="ls-type-body-small rounded-lg border border-border bg-surface-2 px-3 py-4 text-center text-text-muted">
                       暂无今日待办
                     </div>
                   )}
@@ -2333,8 +2341,8 @@ export default function GlobalAssistant({
                   {!activeThread.messages.length ? (
                     <div className="flex h-full flex-col justify-center gap-4">
                       <div>
-                        <p className="text-sm font-bold text-text-primary">我是{activeAgentLabel}</p>
-                        <p className="mt-1 text-sm leading-relaxed text-text-muted">我会结合当前页面上下文继续帮你处理。</p>
+                        <p className="ls-type-title-small text-text-primary">我是{activeAgentLabel}</p>
+                        <p className="ls-type-body-medium mt-1 text-text-muted">我会结合当前页面上下文继续帮你处理。</p>
                       </div>
                       <div className="grid gap-2">
                         {quickQuestions(activeContext).map(item => (
@@ -2354,7 +2362,9 @@ export default function GlobalAssistant({
                       {activeThread.messages.map((msg, index) => (
                         <div key={index} className={`flex gap-2 ${msg.role === 'user' ? 'justify-end' : ''}`}>
                           {msg.role === 'assistant' && <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-text-primary text-white"><Bot size={13} /></div>}
-                          <div className={`max-w-[82%] rounded-lg px-3 py-2 text-sm leading-relaxed ${msg.role === 'user' ? 'rounded-tr-sm bg-accent text-white whitespace-pre-line' : 'rounded-tl-sm border border-border bg-surface-2 text-text-primary'}`}>
+                          <div className={msg.role === 'user'
+                            ? 'ls-messenger-bubble ls-messenger-bubble--outbound whitespace-pre-line'
+                            : 'ls-messenger-bubble ls-messenger-bubble--inbound'}>
                             {msg.role === 'assistant'
                               ? (msg.content ? <AgentReply content={msg.content} sources={msg.sources} onAction={onAction} /> : <span className="opacity-40">...</span>)
                               : msg.content}
@@ -2363,8 +2373,8 @@ export default function GlobalAssistant({
                       ))}
                       {loading && (
                         <div className="flex gap-2">
-                          <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-text-primary text-white"><Loader2 size={13} className="animate-spin" /></div>
-                          <div className="rounded-lg rounded-tl-sm border border-border bg-surface-2 px-3 py-2 text-sm text-text-muted">思考中...</div>
+                          <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-text-primary text-white"><Loader2 size={13} className="motion-safe:animate-spin" /></div>
+                          <div className="ls-type-body-medium rounded-lg rounded-tl-sm border border-border bg-surface-2 px-3 py-2 text-text-muted">思考中...</div>
                         </div>
                       )}
                     </div>
@@ -2381,7 +2391,7 @@ export default function GlobalAssistant({
                         setFollowingLatest(activeAgent, true);
                         setScrollPosition(activeAgent, scroller?.scrollHeight ?? activeThread.scrollPosition);
                       }}
-                      className="inline-flex items-center gap-1.5 rounded-full border border-border bg-surface-2 px-3 py-1 text-[11px] font-black text-accent shadow-sm hover:border-accent/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+                      className="ls-type-label-small inline-flex items-center gap-1.5 rounded-full border border-border bg-surface-2 px-3 py-1 text-accent hover:border-accent/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
                       aria-label="回到最新消息"
                     >
                       <ArrowDown size={12} /> 回到最新消息
@@ -2417,20 +2427,20 @@ export default function GlobalAssistant({
           aria-label="唤出灵小枢智能助手"
           title="唤出灵小枢智能助手"
           onClick={() => setLauncherRetracted(false)}
-          initial={{ opacity: 0, x: 14, scale: 0.92 }}
-          animate={{ opacity: 1, x: 0, scale: 1 }}
-          exit={{ opacity: 0, x: 10, scale: 0.94 }}
-          transition={reduceMotion ? { duration: 0.12 } : { type: 'spring', stiffness: 320, damping: 24 }}
-          className="relative z-10 flex h-10 w-8 items-center justify-center rounded-l-md border border-r-0 border-border bg-surface text-accent shadow-md outline-none hover:w-9 hover:bg-accent-glow focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={fadeExit}
+          transition={fadeTransition}
+          className="relative z-10 flex h-10 w-8 items-center justify-center rounded-l-md border border-r-0 border-border bg-surface text-accent shadow-md outline-none hover:bg-accent-glow focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2"
         >
           <Bot size={16} />
-          {pendingCount > 0 && <span className="absolute -left-1.5 -top-1 min-w-4 rounded-full bg-red px-1 text-[9px] font-black text-white">{pendingBadge}</span>}
+          {pendingCount > 0 && <span className="ls-type-label-small absolute -left-1.5 -top-1 min-w-4 rounded-full bg-red px-1 text-white">{pendingBadge}</span>}
         </motion.button>
       )}
 
       {mode !== 'chat' && !launcherAtEdge && (
         <div className="relative z-10 h-[72px] w-[60px]">
-          <motion.button
+          <button
             type="button"
             draggable
             data-global-assistant="launcher"
@@ -2443,16 +2453,12 @@ export default function GlobalAssistant({
             onDragCapture={handleNativeDrag}
             onDragEndCapture={handleNativeDragEnd}
             onClick={handleLauncherClick}
-            className={`absolute inset-0 flex touch-none items-center justify-center rounded-lg bg-transparent outline-none transition-transform focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 ${launcherDragging ? 'cursor-grabbing' : 'cursor-grab hover:-translate-y-0.5'}`}
-            animate={performance && shouldNotifyAssistant(performance.reason) && !reduceMotion
-              ? { scale: [1, 1.08, 1], y: [0, -9, 0], rotate: [0, -5, 5, 0] }
-              : mode === 'breathing' && pendingCount > 0 && !reduceMotion ? { scale: [1, 1.05, 1], y: [0, -2, 0] } : { scale: 1, y: 0 }}
-            transition={{ duration: performance && shouldNotifyAssistant(performance.reason) ? 1.55 : 2.4, ease: 'easeInOut', repeat: ((performance && shouldNotifyAssistant(performance.reason)) || (mode === 'breathing' && pendingCount > 0)) && !reduceMotion ? Infinity : 0 }}
+            className={`absolute inset-0 flex touch-none items-center justify-center rounded-lg bg-transparent outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 ${launcherDragging ? 'cursor-grabbing' : 'cursor-grab'}`}
             title="拖动可移动，点击打开灵小枢"
           >
             <AssistantLauncherMascot expression={assistantExpression} />
-            {pendingCount > 0 && <span className="absolute -right-1 -top-1 min-w-5 rounded-full bg-red px-1 text-[11px] font-black text-white">{pendingBadge}</span>}
-          </motion.button>
+            {pendingCount > 0 && <span className="ls-type-label-small absolute -right-1 -top-1 min-w-5 rounded-full bg-red px-1 text-white">{pendingBadge}</span>}
+          </button>
         </div>
       )}
     </div>

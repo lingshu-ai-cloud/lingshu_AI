@@ -40,8 +40,8 @@ function HookPanel({ hook, confirmed }: { hook: SocialThreeSecondHook; confirmed
   return (
     <section className="rounded-lg border border-emerald-200 bg-surface-2 p-4" aria-labelledby="social-primary-hook-title">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-2"><span className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-700 text-white"><Sparkles size={15} /></span><div><p className="text-[9px] font-semibold uppercase tracking-[0.1em] text-emerald-700">黄金前三秒</p><h4 id="social-primary-hook-title" className="text-sm font-semibold text-text-primary">主钩子方案</h4></div></div>
-        <span className="rounded-full bg-white px-2.5 py-1 text-[9px] font-semibold text-emerald-800 shadow-none">{confirmed || hook.status === 'confirmed' ? '已确认' : hook.status === 'recommended' ? '编导推荐' : '待确认'}</span>
+        <div className="flex items-center gap-2"><span className="flex h-8 w-8 items-center justify-center rounded-lg bg-violet-100 text-violet-700"><Sparkles size={15} /></span><div><p className="text-[9px] font-semibold uppercase tracking-[0.1em] text-violet-600">黄金前三秒</p><h4 id="social-primary-hook-title" className="text-sm font-semibold text-text-primary">主钩子方案</h4></div></div>
+        <span className="rounded-full bg-white px-2.5 py-1 text-[9px] font-semibold text-blue-700 shadow-none">{confirmed || hook.status === 'confirmed' ? '已确认' : hook.status === 'recommended' ? '编导推荐' : '待确认'}</span>
       </div>
       <dl className="mt-4 grid gap-3 sm:grid-cols-2">
         {[
@@ -105,7 +105,7 @@ export default function SocialReplicationAnalysisPanel({ task }: { task: SocialC
   if (analysis?.status !== 'ready' || !script) {
     return (
       <section data-social-replication-analysis className="rounded-lg border border-border bg-white p-5 shadow-none">
-        <div className="flex items-start gap-3"><span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-emerald-50 text-emerald-700"><Clock3 size={19} /></span><div><p className="text-[10px] font-semibold tracking-[0.08em] text-text-muted">爆款复刻</p><h3 className="mt-1 text-base font-semibold text-text-primary">编导分析中</h3><p className="mt-1 text-xs leading-5 text-text-muted">正在分析前三秒、逐镜结构和素材替换方式。分析完成后，这里会显示真实结果。</p></div></div>
+        <div className="flex items-start gap-3"><span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-blue-50 text-blue-600"><Clock3 size={19} /></span><div><p className="text-[10px] font-semibold tracking-[0.08em] text-text-muted">爆款复刻</p><h3 className="mt-1 text-base font-semibold text-text-primary">编导分析中</h3><p className="mt-1 text-xs leading-5 text-text-muted">正在分析前三秒、逐镜结构和素材替换方式。分析完成后，这里会显示真实结果。</p></div></div>
       </section>
     );
   }
@@ -124,7 +124,7 @@ export default function SocialReplicationAnalysisPanel({ task }: { task: SocialC
         <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-1.5 text-[10px] font-semibold text-emerald-800"><CheckCircle2 size={13} />编导分析完成</span>
       </div>
 
-      {primaryHook && <div className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50/70 p-4"><p className="text-[10px] font-semibold text-emerald-800">前三秒预演</p><p className="mt-1 text-sm font-semibold text-text-primary">{primaryHook.firstFrame}</p><p className="mt-1 text-xs leading-5 text-text-secondary">{primaryHook.spokenLine || primaryHook.caption || primaryHook.firstSecondAction}</p></div>}
+      {primaryHook && <div className="mt-4 rounded-lg border border-violet-100 bg-violet-50/40 p-4"><p className="text-[10px] font-semibold text-violet-600">前三秒预演</p><p className="mt-1 text-sm font-semibold text-text-primary">{primaryHook.firstFrame}</p><p className="mt-1 text-xs leading-5 text-text-secondary">{primaryHook.spokenLine || primaryHook.caption || primaryHook.firstSecondAction}</p></div>}
 
       <details className="mt-3 overflow-hidden rounded-lg border border-border bg-surface-2/30">
         <summary className="flex cursor-pointer list-none items-center justify-between gap-3 bg-white px-4 py-3 text-xs font-semibold text-text-primary"><span>查看完整逐镜分析</span><span className="text-[10px] font-bold text-text-muted">{script.shots.length} 个镜头 · 默认收起</span></summary>
@@ -144,10 +144,10 @@ export default function SocialReplicationAnalysisPanel({ task }: { task: SocialC
         const reference = shot.referenceShotId ? analysisByShot.get(shot.referenceShotId) : undefined;
         return (
           <article key={shot.shotId} className="rounded-lg border border-border bg-white p-4">
-            <div className="flex flex-wrap items-center justify-between gap-2"><div className="flex items-center gap-2"><span className="flex h-7 w-7 items-center justify-center rounded-lg bg-[#173d31] text-[10px] font-semibold text-white">{index + 1}</span><div><p className="text-xs font-semibold text-text-primary">{socialShotFunctionLabel(shot.purpose, index)}</p><p className="text-[9px] text-text-muted">新视频 {secondsRange(shot.startSeconds, shot.endSeconds)}{reference ? ` · 参考 ${secondsRange(reference.startSeconds, reference.endSeconds)}` : ''}</p></div></div><Film size={16} className="text-text-muted" /></div>
+            <div className="flex flex-wrap items-center justify-between gap-2"><div className="flex items-center gap-2"><span className="flex h-7 w-7 items-center justify-center rounded-lg bg-blue-600 text-[10px] font-semibold text-white">{index + 1}</span><div><p className="text-xs font-semibold text-text-primary">{socialShotFunctionLabel(shot.purpose, index)}</p><p className="text-[9px] text-text-muted">新视频 {secondsRange(shot.startSeconds, shot.endSeconds)}{reference ? ` · 参考 ${secondsRange(reference.startSeconds, reference.endSeconds)}` : ''}</p></div></div><Film size={16} className="text-text-muted" /></div>
             <div className="mt-3 grid gap-2 md:grid-cols-2">
               <div className="rounded-lg border border-border bg-surface-2/60 px-3 py-2.5"><p className="text-[9px] font-semibold text-text-muted">参考视频在做什么</p><p className="mt-1 text-xs leading-5 text-text-primary">{reference?.visualDescription || '编导分析中'}</p>{reference?.rhythmDescription && <p className="mt-1 text-[10px] leading-4 text-text-muted">节奏：{reference.rhythmDescription}</p>}</div>
-              <div className="rounded-lg border border-emerald-100 bg-emerald-50/45 px-3 py-2.5"><p className="text-[9px] font-semibold text-emerald-800">你的版本怎么拍或生成</p><p className="mt-1 text-xs leading-5 text-text-primary">{shot.visualInstruction}</p>{(shot.spokenText || shot.captionText) && <p className="mt-1 text-[10px] leading-4 text-text-secondary">{shot.spokenText ? `口播：${shot.spokenText}` : ''}{shot.spokenText && shot.captionText ? ' · ' : ''}{shot.captionText ? `字幕：${shot.captionText}` : ''}</p>}</div>
+              <div className="rounded-lg border border-blue-100 bg-blue-50/40 px-3 py-2.5"><p className="text-[9px] font-semibold text-blue-700">你的版本怎么拍或生成</p><p className="mt-1 text-xs leading-5 text-text-primary">{shot.visualInstruction}</p>{(shot.spokenText || shot.captionText) && <p className="mt-1 text-[10px] leading-4 text-text-secondary">{shot.spokenText ? `口播：${shot.spokenText}` : ''}{shot.spokenText && shot.captionText ? ' · ' : ''}{shot.captionText ? `字幕：${shot.captionText}` : ''}</p>}</div>
             </div>
             <div className="mt-2 grid gap-2 md:grid-cols-2"><PointList title="需要保留" items={shot.fidelityPoints} tone="keep" /><PointList title="必须改动" items={shot.mustDifferPoints} tone="change" /></div>
             <div className="mt-2"><MaterialSource shot={shot} material={materialByShot.get(shot.shotId)} execution={executionByShot.get(shot.shotId)} /></div>

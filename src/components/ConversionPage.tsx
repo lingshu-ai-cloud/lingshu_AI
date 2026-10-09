@@ -1,3 +1,4 @@
+import { getScrollBehavior } from "../lib/usePrefersReducedMotion";
 import { Alert, App, Avatar, Button, Checkbox, Collapse, Empty, Input, Modal, Popover, Select, Switch, Tabs, Tag, Tooltip } from "antd";
 import { PAGE_REGISTRY } from "../pageRegistry";
 import { sortCustomersByLatestMessage } from '../lib/customerRecency';
@@ -852,7 +853,7 @@ function ChatThread({
   useEffect(() => {
     if (!draftSuggestion) return;
     const timer = window.setTimeout(() => {
-      document.querySelector<HTMLElement>('[data-draft-suggestion]')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      document.querySelector<HTMLElement>('[data-draft-suggestion]')?.scrollIntoView({ behavior: getScrollBehavior(), block: 'center' });
     }, 50);
     return () => window.clearTimeout(timer);
   }, [customer?.id, Boolean(draftSuggestion)]);
@@ -2360,19 +2361,19 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
     setMobilePanel('chat');
     const inputEl = document.querySelector<HTMLTextAreaElement>('[data-customer-reply-input]');
     inputEl?.focus();
-    inputEl?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    inputEl?.scrollIntoView({ behavior: getScrollBehavior(), block: 'center' });
   };
 
   const viewDraftSuggestion = () => {
     setMobilePanel('chat');
     const draftEl = document.querySelector<HTMLElement>('[data-draft-suggestion]');
     if (draftEl) {
-      draftEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      draftEl.scrollIntoView({ behavior: getScrollBehavior(), block: 'center' });
       return;
     }
     if (selected?.pendingDraft?.trim() && !input.trim()) {
       setDraftSuggestion(selected.pendingDraft.trim());
-      window.setTimeout(() => document.querySelector<HTMLElement>('[data-draft-suggestion]')?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 0);
+      window.setTimeout(() => document.querySelector<HTMLElement>('[data-draft-suggestion]')?.scrollIntoView({ behavior: getScrollBehavior(), block: 'center' }), 0);
       return;
     }
     focusReplyInput();

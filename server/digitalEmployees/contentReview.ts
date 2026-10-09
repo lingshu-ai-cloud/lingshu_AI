@@ -19,6 +19,11 @@ const publicUrl = (value: unknown): string => {
   return /^https?:\/\//i.test(candidate) ? candidate : '';
 };
 
+const previewUrl = (value: unknown): string => {
+  const candidate = String(value || '').trim().slice(0, 2_000);
+  return /^(?:https?:\/\/|\/)/i.test(candidate) ? candidate : '';
+};
+
 function publicationUrl(post: Row | undefined): string {
   const stats = obj(post?.stats);
   const direct = [post?.permalink, post?.url, post?.sourceUrl, stats.permalink, stats.url]
@@ -40,6 +45,7 @@ export interface NextRoundRecommendations {
     framework: string[];
     tags: string[];
     sourceUrl: string;
+    thumbnailUrl?: string;
     reason: string;
     paidBoost: { status: 'recommended_for_review' | 'not_enough_data'; reason: string };
     systemActions: string[];
@@ -63,6 +69,7 @@ export interface NextRoundRecommendations {
       sourceUrl: string;
       observedAt: string;
       tags: string[];
+      thumbnailUrl?: string;
     }>;
     systemActions: string[];
   };
@@ -80,6 +87,7 @@ export function traceableIndustryTrends(trendVideos: Row[]): NextRoundRecommenda
     const tags = list(video.tags).slice(0, 8);
     const observedAt = String(video.updatedAt || video.updated_at || video.crawledAt || video.createdAt || video.created_at || '');
     const views = String(video.views || obj(video.aiAnalysis).views || '').trim();
+    const thumbnailUrl = previewUrl(video.thumbnailUrl || video.coverUrl || video.thumbnail || obj(video.aiAnalysis).thumbnailUrl);
     return [{
       id: video.id,
       title: String(video.title || '社媒行业信号').trim().slice(0, 240),
@@ -88,6 +96,7 @@ export function traceableIndustryTrends(trendVideos: Row[]): NextRoundRecommenda
       sourceUrl,
       observedAt,
       tags,
+      thumbnailUrl,
     }];
   }).slice(0, 5);
   return {
@@ -145,6 +154,7 @@ export function summarizeContentFeedback(input: {
       framework,
       publishedTags,
       sourceUrl: publicationUrl(post),
+      thumbnailUrl: previewUrl(project?.thumbnailUrl || project?.coverUrl || obj(project?.spec).thumbnailUrl || order.videoPlan?.planningEvidence?.referenceThumbnailUrl),
       productionStatus: project ? String(project.status || 'draft') : 'pending',
       publicationStatus: post && (String(post.platform_post_id || '') || receipt(stats.publishResults || post.publishResults)) ? 'published' : 'not_published',
       performance: hasPerformance ? { status: 'available', ...metrics } : { status: 'pending', ...metrics },
@@ -174,7 +184,7 @@ export function summarizeContentFeedback(input: {
   const nextRoundRecommendations: NextRoundRecommendations = {
     contentInheritance: top ? {
       status: 'ready', sourceContentId: top.orderId, title: top.title, platform: top.platform,
-      hook: top.hook, framework: top.framework, tags: top.publishedTags, sourceUrl: top.sourceUrl,
+      hook: top.hook, framework: top.framework, tags: top.publishedTags, sourceUrl: top.sourceUrl, thumbnailUrl: top.thumbnailUrl,
       reason: `本期综合表现最高：${top.performance.views} 播放、${top.performance.likes} 赞、${top.performance.comments} 评论、${top.performance.shares} 分享、${top.performance.leads} 条询盘。`,
       paidBoost: {
         status: paidBoostEligible ? 'recommended_for_review' : 'not_enough_data',

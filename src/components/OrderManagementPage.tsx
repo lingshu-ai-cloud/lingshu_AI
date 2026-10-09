@@ -280,7 +280,7 @@ export default function OrderManagementPage() {
   const statusColor = (value: OrderStatus) => value === '退款' ? 'error' : value === '已完成' || value === '已发货' ? 'success' : value === '待付款' ? 'warning' : value === '已取消' ? 'default' : 'processing';
   return <div className="h-full overflow-y-auto bg-surface-2" data-lingshu-guide="orders-workbench">
     <div className="mx-auto max-w-[1440px] space-y-5 px-4 py-6 sm:px-6">
-      <header className="flex flex-wrap items-start justify-between gap-4"><div><h1 className="text-[28px] font-semibold text-text-primary">{PAGE_REGISTRY.orders.canonicalTitle}</h1><p className="mt-1 text-sm text-text-secondary">跟进订单收入、履约状态与售后记录；金额统一按美元统计。</p></div><div className="flex gap-2"><Button icon={<Download size={15}/>} onClick={exportCsv}>导出 CSV</Button><Button type="primary" icon={<Plus size={15}/>} onClick={() => setCreateOpen(true)}>新增订单</Button></div></header>
+      <header className="flex flex-wrap justify-end gap-2"><h1 className="sr-only">{PAGE_REGISTRY.orders.canonicalTitle}</h1><Button icon={<Download size={15}/>} onClick={exportCsv}>导出 CSV</Button><Button type="primary" icon={<Plus size={15}/>} onClick={() => setCreateOpen(true)}>新增订单</Button></header>
       {isLocalForeignTradeMockEnabled() && <Alert type="info" showIcon title="本地演示订单" description="当前展示真实订单与外贸工厂演示订单；明细持续标记来源，含演示数据的指标仅用于预览。"/>}
       {loadError && <Alert type="error" showIcon title={loadError} description="已保留当前记录；刷新页面重新读取。"/>}
       {feedback && <Alert type="info" showIcon title={feedback} closable onClose={() => setFeedback('')}/>}

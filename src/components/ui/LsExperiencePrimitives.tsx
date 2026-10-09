@@ -17,12 +17,13 @@ import {
   type ProgressProps,
   type StepsProps,
 } from 'antd';
-import type { ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { lsMotion } from '../../lib/designTokens';
+import { usePrefersReducedMotion } from '../../lib/usePrefersReducedMotion';
 
 export const LINGSHU_PROGRESS_GRADIENT = {
-  '0%': '#117F51',
-  '56%': '#2F9DA5',
-  '100%': '#86C968',
+  '0%': '#36A2EB',
+  '100%': '#9966FF',
 } as const;
 
 export function LsBrandAction({ className = '', ...props }: ButtonProps) {
@@ -43,7 +44,7 @@ export function LsGradientProgress({
       className={`ls-gradient-progress ${className}`.trim()}
       percent={safePercent}
       strokeColor={strokeColor || LINGSHU_PROGRESS_GRADIENT}
-      railColor={props.railColor || '#E8EFEA'}
+      railColor={props.railColor || '#F4F4F5'}
     />
   );
 }
@@ -63,11 +64,12 @@ export function LsLoadingState({
   className?: string;
   children: ReactNode;
 }) {
+  const reducedMotion = usePrefersReducedMotion();
   if (!loading) return <>{children}</>;
   if (mode === 'spin') {
-    return <div className={`ls-loading-state ${className}`.trim()} role="status" aria-live="polite"><Spin description={label} />{description ? <p>{description}</p> : null}</div>;
+    return <div className={`ls-loading-state ${className}`.trim()} role="status" aria-live="polite"><Spin description={label} />{description ? <p className="ls-type-body-small">{description}</p> : null}</div>;
   }
-  return <div className={`ls-loading-state ${className}`.trim()} role="status" aria-label={label}><Skeleton active paragraph={{ rows: 4 }} />{description ? <p>{description}</p> : null}</div>;
+  return <div className={`ls-loading-state ${className}`.trim()} role="status" aria-label={label}><Skeleton active={!reducedMotion} paragraph={{ rows: 4 }} />{description ? <p className="ls-type-body-small">{description}</p> : null}</div>;
 }
 
 export function LsProgressiveMedia({
@@ -76,13 +78,18 @@ export function LsProgressiveMedia({
   fallback = '/image-placeholder.svg',
   ...props
 }: ImageProps) {
+  const [loadedSource, setLoadedSource] = useState<string | undefined>();
+  const ready = loadedSource === props.src;
   return (
     <Image
       {...props}
-      className={`ls-progressive-media ${className}`.trim()}
+      className={`ls-progressive-media ls-media-reveal ${className}`.trim()}
       rootClassName={`ls-progressive-media-root ${rootClassName}`.trim()}
       fallback={fallback}
       placeholder={{ progress: true }}
+      style={{ ...props.style, opacity: ready ? props.style?.opacity ?? 1 : 0 }}
+      onLoad={event => { setLoadedSource(props.src); props.onLoad?.(event); }}
+      onError={event => { setLoadedSource(props.src); props.onError?.(event); }}
     />
   );
 }
@@ -108,8 +115,8 @@ export function LsMediaStateFrame({
     {children}
     {state !== 'ready' && <div className="ls-media-state-frame__overlay" role="status" aria-live="polite">
       {state === 'loading' && <Spin size="small" />}
-      {state === 'processing' && <LsGradientProgress percent={safePercent ?? 0} showInfo={false} size="small" />}
-      <span>{safePercent !== null && state === 'processing' ? `${statusLabel} ${Math.round(safePercent)}%` : statusLabel}</span>
+      {state === 'processing' && (safePercent === null ? <Spin size="small" /> : <LsGradientProgress percent={safePercent} showInfo={false} size="small" />)}
+      <span className="ls-type-body-small">{safePercent !== null && state === 'processing' ? `${statusLabel} ${Math.round(safePercent)}%` : statusLabel}</span>
     </div>}
   </div>;
 }
@@ -125,10 +132,21 @@ export function LsFlowDialog({
   steps: NonNullable<StepsProps['items']>;
   children: ReactNode;
 }) {
+  const contentRef = useRef<HTMLDivElement>(null);
+  const reducedMotion = usePrefersReducedMotion();
+  useEffect(() => {
+    if (!props.open || reducedMotion) return;
+    // Animate the existing step container without remounting fields or stealing focus.
+    const animation = contentRef.current?.animate?.(
+      [{ opacity: 0, transform: 'translateY(8px)' }, { opacity: 1, transform: 'translateY(0)' }],
+      { duration: lsMotion.duration.standard, easing: `cubic-bezier(${lsMotion.ease.standard.join(', ')})` },
+    );
+    return () => animation?.cancel();
+  }, [current, props.open, reducedMotion]);
   return (
     <Modal {...props} className={`ls-flow-dialog ${className}`.trim()}>
       <Steps className="ls-flow-dialog__steps" size="small" responsive current={current} items={steps} />
-      <div className="ls-flow-dialog__content">{children}</div>
+      <div ref={contentRef} className="ls-flow-dialog__content ls-type-body-medium">{children}</div>
     </Modal>
   );
 }
@@ -164,7 +182,7 @@ export function LsAvatarGroup({
           src={person.src}
           icon={person.icon}
           aria-label={person.name}
-          style={{ backgroundColor: person.color || '#EAF6F2', color: '#173D31' }}
+          style={{ backgroundColor: person.color || '#EFF6FF', color: '#171717' }}
         >
           {!person.src && !person.icon ? person.name.trim().slice(0, 1).toUpperCase() : null}
         </Avatar>
@@ -186,12 +204,19 @@ export function LsMasonryGallery({
   items,
   emptyText = '暂无素材',
   className = '',
+  layout = 'masonry',
 }: {
   items: LsMasonryItem[];
   emptyText?: string;
   className?: string;
+  layout?: 'masonry' | 'grid';
 }) {
   if (!items.length) return <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={emptyText} />;
+  if (layout === 'grid') return (
+    <div className={`ls-uniform-media-grid ${className}`.trim()}>
+      {items.map(item => <div key={item.id} className="ls-uniform-media-grid__item">{item.content}</div>)}
+    </div>
+  );
   return (
     <Masonry
       className={`ls-masonry-gallery ${className}`.trim()}

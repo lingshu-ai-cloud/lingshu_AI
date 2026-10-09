@@ -25,7 +25,7 @@ function Drawer({ title, children, onClose, wide = false }: { title: string; chi
     if (bodyRef.current) bodyRef.current.scrollTop = scrollTopRef.current;
     return () => { dialog.close(); previous?.focus({ preventScroll: true }); };
   }, []);
-  return <dialog ref={ref} onCancel={e => { e.preventDefault(); onClose(); }} onClick={e => { if (e.target === e.currentTarget) onClose(); }} className={`fixed inset-y-0 left-auto right-0 m-0 h-dvh max-h-none w-full ${wide ? 'max-w-[min(1180px,calc(100vw-40px))]' : 'max-w-2xl'} border-0 border-l border-border bg-white p-0 text-text-primary shadow-[0_16px_48px_rgba(23,61,49,.16)] backdrop:bg-[#173d31]/25`}>
+  return <dialog ref={ref} onCancel={e => { e.preventDefault(); onClose(); }} onClick={e => { if (e.target === e.currentTarget) onClose(); }} className={`fixed inset-y-0 left-auto right-0 m-0 h-dvh max-h-none w-full ${wide ? 'max-w-[min(1180px,calc(100vw-40px))]' : 'max-w-2xl'} border-0 border-l border-border bg-white p-0 text-text-primary shadow-[0_16px_48px_rgba(24,24,27,.16)] backdrop:bg-blue-600/25`}>
     <div className="flex h-full flex-col"><header className="flex items-center justify-between border-b border-border px-5 py-4 sm:px-6"><h2 className="text-lg font-bold">{title}</h2><button aria-label="关闭" onClick={onClose} className="rounded-md p-2 text-text-secondary hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/25"><X size={20}/></button></header><div ref={bodyRef} onScroll={e => { scrollTopRef.current = e.currentTarget.scrollTop; }} className="flex-1 overflow-y-auto p-5 sm:p-6">{children}</div></div>
   </dialog>;
 }

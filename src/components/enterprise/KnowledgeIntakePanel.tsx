@@ -403,7 +403,7 @@ export default function KnowledgeIntakePanel({ mode = 'center', compact = false,
                 return (
                   <div key={`${faq.question}-${index}`} className={`rounded-lg border p-3 ${checked ? 'border-emerald-200 bg-emerald-50/40' : 'border-border bg-surface-2/40 opacity-65'}`}>
                     <div className="flex items-start gap-3">
-                      <button type="button" onClick={() => setSelectedFaqs(current => { const next = new Set(current); if (next.has(index)) next.delete(index); else next.add(index); return next; })} className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded border ${checked ? 'border-emerald-600 bg-emerald-600 text-white' : 'border-border bg-white text-transparent'}`}><Check size={12} /></button>
+                      <button type="button" onClick={() => setSelectedFaqs(current => { const next = new Set(current); if (next.has(index)) next.delete(index); else next.add(index); return next; })} className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded border ${checked ? 'border-emerald-600 bg-blue-600 text-white' : 'border-border bg-white text-transparent'}`}><Check size={12} /></button>
                       <div className="min-w-0 flex-1 space-y-2">
                         <input value={faq.question} onChange={event => setPreview({ ...preview, faqs: preview.faqs.map((item, faqIndex) => faqIndex === index ? { ...item, question: event.target.value } : item) })} className="w-full border-0 bg-transparent p-0 text-xs font-black text-text-primary outline-none" />
                         <textarea value={faq.answer} onChange={event => setPreview({ ...preview, faqs: preview.faqs.map((item, faqIndex) => faqIndex === index ? { ...item, answer: event.target.value } : item) })} rows={2} className="w-full resize-none border-0 bg-transparent p-0 text-xs leading-5 text-text-secondary outline-none" />
@@ -414,7 +414,7 @@ export default function KnowledgeIntakePanel({ mode = 'center', compact = false,
                             ...preview,
                             faqs: preview.faqs.map((item, faqIndex) => faqIndex === index ? { ...item, approvedForAuto: !item.approvedForAuto } : item),
                           })}
-                          className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-black transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${faq.approvedForAuto ? 'bg-emerald-600 text-white' : 'border border-border bg-white text-text-muted'}`}
+                          className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-black transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${faq.approvedForAuto ? 'bg-blue-600 text-white' : 'border border-border bg-white text-text-muted'}`}
                           title="只有你主动批准的标准答案，AI 才能在安全规则内自动发送"
                         >
                           {faq.approvedForAuto ? <CheckCircle2 size={11} /> : <CircleDashed size={11} />}
@@ -433,7 +433,7 @@ export default function KnowledgeIntakePanel({ mode = 'center', compact = false,
         </div>
         <div className="flex items-center justify-between gap-3 border-t border-border px-5 py-4">
           <p className="text-[11px] text-text-muted">保存后全系统共用，可在客服 Agent 配置中继续完善。</p>
-          <button type="button" onClick={() => void confirmPreview()} disabled={saving || !canConfirmPreview} className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2.5 text-xs font-black text-white disabled:cursor-not-allowed disabled:opacity-40">{saving ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />}确认并充能</button>
+          <button type="button" onClick={() => void confirmPreview()} disabled={saving || !canConfirmPreview} className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 text-xs font-black text-white disabled:cursor-not-allowed disabled:opacity-40">{saving ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />}确认并充能</button>
         </div>
       </section>
     );
@@ -451,7 +451,7 @@ export default function KnowledgeIntakePanel({ mode = 'center', compact = false,
       <section className="rounded-lg border border-border bg-white shadow-sm">
         <div className="border-b border-border px-5 py-4"><div className="flex items-center justify-between"><button type="button" onClick={() => { if (interviewStep) setInterviewStep(step => step - 1); else { setView('overview'); setMessage(''); } }} className="inline-flex items-center gap-1.5 text-xs font-bold text-text-secondary"><ArrowLeft size={14} />返回</button><span className="text-[11px] font-bold text-text-muted">{interviewStep + 1} / {steps.length}</span></div><div className="mt-3 h-1.5 overflow-hidden rounded-full bg-surface-2"><div className="h-full rounded-full bg-emerald-500 transition-all" style={{ width: `${((interviewStep + 1) / steps.length) * 100}%` }} /></div></div>
         <div className="min-h-[330px] p-5">{steps[interviewStep]}{message && <p className="mt-4 rounded-lg border border-red-100 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700">{message}</p>}</div>
-        <div className="flex justify-end border-t border-border px-5 py-4">{interviewStep < steps.length - 1 ? <button type="button" disabled={!canContinue} onClick={() => setInterviewStep(step => step + 1)} className="inline-flex items-center gap-2 rounded-lg bg-slate-950 px-4 py-2.5 text-xs font-black text-white disabled:opacity-40">下一题<ChevronRight size={14} /></button> : <button type="button" disabled={saving} onClick={() => void finishInterview()} className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2.5 text-xs font-black text-white disabled:opacity-50">{saving ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />}保存，开始辅助接待</button>}</div>
+        <div className="flex justify-end border-t border-border px-5 py-4">{interviewStep < steps.length - 1 ? <button type="button" disabled={!canContinue} onClick={() => setInterviewStep(step => step + 1)} className="inline-flex items-center gap-2 rounded-lg bg-slate-950 px-4 py-2.5 text-xs font-black text-white disabled:opacity-40">下一题<ChevronRight size={14} /></button> : <button type="button" disabled={saving} onClick={() => void finishInterview()} className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 text-xs font-black text-white disabled:opacity-50">{saving ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />}保存，开始辅助接待</button>}</div>
       </section>
     );
   }

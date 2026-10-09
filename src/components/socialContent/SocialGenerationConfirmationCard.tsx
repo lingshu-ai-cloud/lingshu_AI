@@ -121,7 +121,7 @@ export default function SocialGenerationConfirmationCard({
 
       <div className="flex flex-col gap-3 border-t border-border bg-white p-4 sm:flex-row sm:items-center sm:justify-between sm:px-5">
         <div className="flex items-start gap-2 text-[10px] leading-4 text-text-muted">{canConfirm ? <CheckCircle2 size={14} className="mt-0.5 shrink-0 text-emerald-700" /> : <AlertTriangle size={14} className="mt-0.5 shrink-0 text-amber-700" />}<span>{formalReplicationBlocked ? '正式生成已阻止：补充真实产品素材后会重新计算费用和效果。' : localBudgetOverride ? '预算上限已在本地演示中放行，其他质量检查均已通过。' : approved ? '费用为当前执行方案预估，最终账单按实际调用结算；重试或改稿前会重新提示。' : review.requiredRevision.join('；') || '方案存在阻断项，请先补齐信息。'}</span></div>
-        <button type="button" disabled={busy || !canConfirm} onClick={onConfirm} aria-busy={busy} className="inline-flex shrink-0 items-center justify-center gap-2 rounded-lg bg-emerald-600 px-5 py-3 text-xs font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50">{busy ? <Clock3 size={14} className="animate-spin" /> : <Bot size={14} />}{actionLabel}</button>
+        <button type="button" disabled={busy || !canConfirm} onClick={onConfirm} aria-busy={busy} className="inline-flex shrink-0 items-center justify-center gap-2 rounded-lg bg-blue-600 px-5 py-3 text-xs font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50">{busy ? <Clock3 size={14} className="animate-spin" /> : <Bot size={14} />}{actionLabel}</button>
       </div>
     </section>
   );

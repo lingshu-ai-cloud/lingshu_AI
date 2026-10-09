@@ -28,7 +28,7 @@ export default function EnterprisePresenterRouting() {
         <label className="text-xs">画面布局<select className="mt-1 w-full rounded-lg border p-2" value={route.layout} onChange={event => update(channel.id, { layout: event.target.value as ShotLayout })}>{(Object.keys(layoutLabel) as ShotLayout[]).map(id => <option key={id} value={id}>{layoutLabel[id]}</option>)}</select></label>
       </div>; })}
       {!value.presenters.length && <p className="text-sm text-amber-700">请先在“人物与音色资产”中选择或创建企业人物。</p>}
-      <button type="button" disabled={saving} onClick={() => void save()} className="rounded-lg bg-emerald-700 px-4 py-2 text-sm font-bold text-white disabled:opacity-50">{saving ? '保存中…' : '保存出镜策略'}</button>
+      <button type="button" disabled={saving} onClick={() => void save()} className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-bold text-white disabled:opacity-50">{saving ? '保存中…' : '保存出镜策略'}</button>
     </fieldset>
     {message && <p role="status" className="mt-3 text-xs text-text-secondary">{message}</p>}
   </section>;

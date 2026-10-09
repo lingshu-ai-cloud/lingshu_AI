@@ -1,3 +1,4 @@
+import { getScrollBehavior } from "../../lib/usePrefersReducedMotion";
 import { useEffect, useState } from 'react';
 import {
   BarChart3,
@@ -145,7 +146,7 @@ function ArtifactPanel({ task, busy, onArtifactDecision, onBatchDecision, onCrea
   const [previewArtifact, setPreviewArtifact] = useState<SocialContentArtifact | null>(null);
   return (
     <section id="social-task-artifacts" className="rounded-lg border border-border bg-white p-5 shadow-none">
-      <div className="flex flex-wrap items-center justify-between gap-3"><div><p className="text-[11px] font-bold text-text-muted">批次验收</p><h3 className="mt-1 text-base font-semibold text-text-primary">{currentArtifacts.length > 0 ? `${currentArtifacts.length} 项内容` : '内容制作'}</h3></div>{readyToPackage && <button type="button" disabled={busy} onClick={onCreateDeliveryPackage} className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-2 text-[11px] font-semibold text-white disabled:opacity-50"><PackageCheck size={13} />整理交付包</button>}</div>
+      <div className="flex flex-wrap items-center justify-between gap-3"><div><p className="text-[11px] font-bold text-text-muted">批次验收</p><h3 className="mt-1 text-base font-semibold text-text-primary">{currentArtifacts.length > 0 ? `${currentArtifacts.length} 项内容` : '内容制作'}</h3></div>{readyToPackage && <button type="button" disabled={busy} onClick={onCreateDeliveryPackage} className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-2 text-[11px] font-semibold text-white disabled:opacity-50"><PackageCheck size={13} />整理交付包</button>}</div>
       {pendingArtifacts.length > 0 && <div className="mt-4"><AgentDecisionCard
         kind="content_approval"
         title={`确认本批 ${pendingArtifacts.length} 项内容`}
@@ -159,7 +160,7 @@ function ArtifactPanel({ task, busy, onArtifactDecision, onBatchDecision, onCrea
       {currentArtifacts.length === 0 ? <div className="mt-5 rounded-lg bg-surface-2 px-4 py-6 text-center"><Sparkles size={18} className="mx-auto text-emerald-600" /><p className="mt-2 text-xs font-semibold text-text-muted">首批内容完成后将在这里出现</p></div> : <div role="list" aria-label={`全部 ${currentArtifacts.length} 项内容成品`} className="mt-4 max-h-[34rem] divide-y divide-border overflow-y-auto overscroll-contain pr-1">{currentArtifacts.map(artifact => {
         const preview = artifactPreview(artifact.content);
         const generation = socialArtifactGenerationDisclosure(artifact);
-        return <article role="listitem" key={artifact.artifactId} className="flex flex-wrap items-center gap-3 py-3 first:pt-0 last:pb-0"><span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-surface-2 text-text-muted"><FileCheck2 size={16} /></span><div className="min-w-0 flex-1"><p className="truncate text-xs font-bold text-text-primary">{artifactKindLabel(artifact.kind)}</p><p className="mt-0.5 text-[10px] text-text-muted">{[artifact.platform && optionLabel(PLATFORM_OPTIONS, artifact.platform), contentLanguageLabel(artifact.language), packageVersionLabel(artifact.version)].filter(Boolean).join(' · ')}</p><p className={`mt-1 text-[10px] font-bold ${generation.approvalAllowed ? 'text-emerald-700' : 'text-amber-700'}`}>{generation.sourceLabel} · {generation.verificationLabel}</p>{preview && <p className="mt-1 truncate text-[11px] text-text-secondary">{preview}</p>}</div><span className={`rounded-full px-2 py-1 text-[10px] font-bold ${artifact.status === 'review_required' ? 'bg-amber-50 text-amber-800' : artifact.status === 'approved' ? 'bg-emerald-50 text-emerald-800' : 'bg-surface-2 text-text-muted'}`}>{ARTIFACT_STATUS[artifact.status]}</span><button type="button" onClick={() => setPreviewArtifact(artifact)} className="rounded-lg border border-border px-2.5 py-1.5 text-[10px] font-bold text-text-secondary">预览</button>{artifact.status === 'review_required' && <div className="flex gap-1.5"><button type="button" disabled={busy} onClick={() => onArtifactDecision(artifact, 'changes_requested')} className="rounded-lg border border-border px-2.5 py-1.5 text-[10px] font-bold text-text-secondary">退回修改</button><button type="button" disabled={busy || !generation.approvalAllowed} title={generation.approvalAllowed ? undefined : generation.verificationLabel} onClick={() => onArtifactDecision(artifact, 'approved')} className="rounded-lg bg-emerald-600 px-2.5 py-1.5 text-[10px] font-bold text-white disabled:cursor-not-allowed disabled:opacity-40">确认</button></div>}</article>;
+        return <article role="listitem" key={artifact.artifactId} className="flex flex-wrap items-center gap-3 py-3 first:pt-0 last:pb-0"><span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-surface-2 text-text-muted"><FileCheck2 size={16} /></span><div className="min-w-0 flex-1"><p className="truncate text-xs font-bold text-text-primary">{artifactKindLabel(artifact.kind)}</p><p className="mt-0.5 text-[10px] text-text-muted">{[artifact.platform && optionLabel(PLATFORM_OPTIONS, artifact.platform), contentLanguageLabel(artifact.language), packageVersionLabel(artifact.version)].filter(Boolean).join(' · ')}</p><p className={`mt-1 text-[10px] font-bold ${generation.approvalAllowed ? 'text-emerald-700' : 'text-amber-700'}`}>{generation.sourceLabel} · {generation.verificationLabel}</p>{preview && <p className="mt-1 truncate text-[11px] text-text-secondary">{preview}</p>}</div><span className={`rounded-full px-2 py-1 text-[10px] font-bold ${artifact.status === 'review_required' ? 'bg-amber-50 text-amber-800' : artifact.status === 'approved' ? 'bg-emerald-50 text-emerald-800' : 'bg-surface-2 text-text-muted'}`}>{ARTIFACT_STATUS[artifact.status]}</span><button type="button" onClick={() => setPreviewArtifact(artifact)} className="rounded-lg border border-border px-2.5 py-1.5 text-[10px] font-bold text-text-secondary">预览</button>{artifact.status === 'review_required' && <div className="flex gap-1.5"><button type="button" disabled={busy} onClick={() => onArtifactDecision(artifact, 'changes_requested')} className="rounded-lg border border-border px-2.5 py-1.5 text-[10px] font-bold text-text-secondary">退回修改</button><button type="button" disabled={busy || !generation.approvalAllowed} title={generation.approvalAllowed ? undefined : generation.verificationLabel} onClick={() => onArtifactDecision(artifact, 'approved')} className="rounded-lg bg-blue-600 px-2.5 py-1.5 text-[10px] font-bold text-white disabled:cursor-not-allowed disabled:opacity-40">确认</button></div>}</article>;
       })}</div>}
       {previewArtifact && <SocialArtifactPreviewDialog artifact={previewArtifact} onClose={() => setPreviewArtifact(null)} />}
     </section>
@@ -218,7 +219,7 @@ export default function SocialTaskOverview(props: SocialTaskOverviewProps) {
   );
   const openProductionView = (view: ContentProductionView) => {
     setProductionView(view);
-    window.requestAnimationFrame(() => document.getElementById('social-production-experience')?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+    window.requestAnimationFrame(() => document.getElementById('social-production-experience')?.scrollIntoView({ behavior: getScrollBehavior(), block: 'start' }));
   };
   return (
     <div className="space-y-4 pb-8">
@@ -233,11 +234,11 @@ export default function SocialTaskOverview(props: SocialTaskOverviewProps) {
         onSelectTask={props.onSelectTask}
         onLoadMoreTasks={props.onLoadMoreTasks}
         onStart={props.onStart}
-        onPlanReview={() => document.getElementById('social-generation-confirmation')?.scrollIntoView({ behavior: 'smooth', block: 'center' })}
+        onPlanReview={() => document.getElementById('social-generation-confirmation')?.scrollIntoView({ behavior: getScrollBehavior(), block: 'center' })}
         onEdit={props.onEdit}
         onOpenShots={() => openProductionView('shots')}
         onOpenExceptions={() => openProductionView('exceptions')}
-        onReview={() => document.getElementById('social-task-artifacts')?.scrollIntoView({ behavior: 'smooth', block: 'center' })}
+        onReview={() => document.getElementById('social-task-artifacts')?.scrollIntoView({ behavior: getScrollBehavior(), block: 'center' })}
       />
       <div className="min-w-0 space-y-4">
         <SocialGenerationConfirmationCard task={task} busy={props.busy} onConfirm={props.onStart} />

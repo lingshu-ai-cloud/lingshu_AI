@@ -470,7 +470,7 @@ export default function SocialProductionProgressPanel({
             role="dialog"
             aria-modal="true"
             aria-labelledby={drawerTitleId}
-            className="absolute inset-y-0 right-0 flex w-full max-w-md flex-col bg-[#f7f9f7] "
+            className="absolute inset-y-0 right-0 flex w-full max-w-md flex-col bg-white "
           >
             <header className="flex items-center justify-between gap-3 border-b border-slate-200 bg-white px-5 py-4 sm:px-6">
               <div>
@@ -546,7 +546,7 @@ export default function SocialProductionProgressPanel({
                               setOpen(false);
                               currentAction.action();
                             }}
-                            className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-emerald-600 px-4 py-2.5 text-xs font-semibold text-white transition hover:bg-emerald-700 disabled:opacity-50"
+                            className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 text-xs font-semibold text-white transition hover:bg-blue-700 disabled:opacity-50"
                           >
                             {busy ? <Loader2 size={14} className="animate-spin" /> : currentAction.icon}
                             {currentAction.label}

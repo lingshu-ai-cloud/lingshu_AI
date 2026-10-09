@@ -56,36 +56,46 @@ export default function MatrixWorkSchedule({ calendarTasks, calendarDemo = false
     const accountTotal = Math.max(accountPlans.length, account.weeklyCount);
     return Array.from({ length: accountTotal }, (_, index) => ({ account, accountIndex, plan: accountPlans[index], index, accountTotal }));
   });
-  const events: LsCalendarEvent[] = rows.map(row => {
-    const { account, accountIndex, plan, index, accountTotal } = row;
+  const scheduledRows = rows.map(row => ({
+    ...row,
+    day: calendarDayKey(safeDate(row.plan?.plannedPublishDate, spreadAccountDate(goalStart, goalEnd, row.index, row.accountTotal))),
+  }));
+  const events: LsCalendarEvent[] = scheduledRows.map(row => {
+    const { account, accountIndex, plan, index } = row;
     const blockers = planBlockers(plan), frames = previewFrames(plan);
-    const publishDay = safeDate(plan?.plannedPublishDate, spreadAccountDate(goalStart, goalEnd, index, accountTotal));
-    const time = scheduleTime(publishDay, accountIndex, index);
+    const taskItem = visibleTasks.find(item => item.contentId === plan?.contentId && item.accountId === account.accountId)
+      || visibleTasks.find(item => item.contentId === plan?.contentId)
+      || null;
+    const confirmedPublishAt = taskItem?.contentPlan?.publishAt;
+    const hasConfirmedTime = Boolean(confirmedPublishAt && Number.isFinite(Date.parse(confirmedPublishAt)));
+    const fallbackTime = scheduleTime(safeDate(row.day), accountIndex, index);
+    const start = hasConfirmedTime ? confirmedPublishAt! : fallbackTime.start;
+    const end = hasConfirmedTime ? new Date(Date.parse(start) + 90 * 60_000).toISOString() : fallbackTime.end;
     return {
       id: `${account.accountId}-${plan?.contentId || index}`, title: plan?.publication?.title || plan?.theme || `待编排内容 ${index + 1}`,
-      start: time.start, end: time.end, allDay: false,
+      start, end, allDay: false,
       timeZone: 'Asia/Shanghai', status: blockers.length ? 'needs_action' : plan?.directorStatus === 'in_production' ? 'working' : 'planned',
       statusLabel: blockers.length ? '待处理' : plan?.directorStatus === 'in_production' ? '制作中' : '可执行', eventType: 'content',
       platform: account.platform, accountId: account.accountId, accountName: account.accountLabel,
       thumbnailUrl: frames[0]?.url || plan?.planningEvidence?.referenceThumbnailUrl || plan?.preproduction?.benchmark.thumbnailUrl,
       sourceId: plan?.contentId, ownerAgent: '内容 Agent', costEstimate: plan?.estimatedCost,
       description: plan ? `${plan.productName || '待选产品'} · ${plan.productionRole === 'platform_adaptation' ? '平台轻适配' : '原创母版'}` : '周目标已分配，等待可执行爆款参考',
-      data: row,
+      data: { ...row, taskItem, hasConfirmedTime },
     };
   });
-  return <section className="overflow-hidden rounded-lg border border-border bg-white" aria-label="数字员工工作排期">
-    <header className="flex flex-wrap items-start justify-between gap-4 border-b border-border p-5">
+  return <section className="bg-white" aria-label="数字员工工作排期">
+    <header className="flex flex-wrap items-center justify-between gap-4 border-b border-border px-5 py-4">
       <h2 className="text-xl font-semibold text-text-primary">数字员工工作排期</h2>
       {onOpenPublishing && <Button onClick={onOpenPublishing}>打开发布日历</Button>}
     </header>
     <div className="flex gap-2 border-b border-border p-3" role="tablist" aria-label="发布排期视图">{([['calendar', '发布日历'], ['board', 'Agent 任务看板']] as const).map(([id, label]) => <Button key={id} role="tab" id={`schedule-tab-${id}`} aria-selected={view === id} aria-controls={`schedule-panel-${id}`} type={view === id ? 'primary' : 'default'} onClick={() => setView(id)}>{label}</Button>)}</div>
     {view === 'board' ? <div id="schedule-panel-board" role="tabpanel" aria-labelledby="schedule-tab-board">{calendarTasks !== undefined || calendarDemo ? <AgentWeeklyCalendar startsAt={startsAt} demo={calendarDemo} tasks={calendarTasks ?? []}/> : <ConnectedAgentCalendar/>}</div> : <div id="schedule-panel-calendar" role="tabpanel" aria-labelledby="schedule-tab-calendar">
-    <LsCalendar events={events} initialDate={calendarDayKey(goalStart)} date={calendarDayKey(goalStart)} initialView="timeGridWeek" label="数字员工工作排期" renderDetails={(event, closeDetails) => {
-      const { plan } = event.data as typeof rows[number];
+    <LsCalendar events={events} initialDate={calendarDayKey(goalStart)} date={calendarDayKey(goalStart)} initialView="timeGridWeek" firstDay={goalStart.getDay()} eventCardMode="media" timeGridHeight={760} label="数字员工工作排期" renderDetails={(event, closeDetails) => {
+      const { plan, hasConfirmedTime } = event.data as (typeof scheduledRows)[number] & { taskItem: ContentQueueItem | null; hasConfirmedTime: boolean };
       const blockers = planBlockers(plan), frames = previewFrames(plan);
       return <div className="space-y-4">
         <div aria-label="素材结构预览" className="flex gap-2 overflow-x-auto">{frames.map((frame, index) => <figure key={index} className="w-24 shrink-0"><div className="aspect-video overflow-hidden rounded-lg border border-border bg-surface-2">{frame.url ? <img src={frame.url} alt={`${frame.label}首帧`} className="h-full w-full object-cover"/> : <span className="text-xs text-text-muted">待补素材</span>}</div><figcaption className="mt-1 text-xs text-text-secondary">{frame.label}</figcaption></figure>)}</div>
-        <dl className="ls-calendar-details"><div><dt>制作时长</dt><dd>待生产任务确认；成片 {plan?.duration || '—'} 秒</dd></div><div><dt>工期</dt><dd>目标周期 {calendarDayKey(goalStart)} 至 {calendarDayKey(goalEnd)}</dd></div><div><dt>发布时间</dt><dd>{event.start} · 具体时分待发布排期确认</dd></div><div><dt>发布账号</dt><dd>{event.accountName}</dd></div><div><dt>爆款参考</dt><dd>{plan?.planningEvidence?.referenceTitle || '等待精确分析'}</dd></div><div><dt>预计成本</dt><dd>{plan?.estimatedCostRange ? `¥${plan.estimatedCostRange.minCny}–${plan.estimatedCostRange.maxCny}` : plan?.estimatedCost !== undefined ? `¥${plan.estimatedCost}` : '尚未估算'}</dd></div><div><dt>产品</dt><dd>{plan?.productName || '未绑定产品'}</dd></div><div><dt>内容家族</dt><dd>{plan?.contentFamilyId || plan?.contentId || '待生成'}</dd></div></dl>
+        <dl className="ls-calendar-details"><div><dt>制作时长</dt><dd>待生产任务确认；成片 {plan?.duration || '—'} 秒</dd></div><div><dt>工期</dt><dd>目标周期 {calendarDayKey(goalStart)} 至 {calendarDayKey(goalEnd)}</dd></div><div><dt>{hasConfirmedTime ? '发布时间' : '执行窗口'}</dt><dd>{new Date(event.start).toLocaleString('zh-CN', { timeZone: event.timeZone, hour12: false })}{hasConfirmedTime ? '' : ' · 周计划自动排布，发布时分待确认'}</dd></div><div><dt>发布账号</dt><dd>{event.accountName}</dd></div><div><dt>爆款参考</dt><dd>{plan?.planningEvidence?.referenceTitle || '等待精确分析'}</dd></div><div><dt>预计成本</dt><dd>{plan?.estimatedCostRange ? `¥${plan.estimatedCostRange.minCny}–¥${plan.estimatedCostRange.maxCny}` : plan?.estimatedCost !== undefined ? `¥${plan.estimatedCost}` : '尚未估算'}</dd></div><div><dt>产品</dt><dd>{plan?.productName || '未绑定产品'}</dd></div><div><dt>内容家族</dt><dd>{plan?.contentFamilyId || plan?.contentId || '待生成'}</dd></div></dl>
         {blockers.length > 0 && <Alert type="warning" showIcon title="需要处理" description={blockers.join('；')}/>}
         {onOpenPublishing && <Button onClick={() => { closeDetails(); onOpenPublishing(); }}>打开发布与内容详情</Button>}
       </div>;

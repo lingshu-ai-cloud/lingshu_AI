@@ -1,3 +1,4 @@
+import { getScrollBehavior } from "../../lib/usePrefersReducedMotion";
 import { useCallback, useState } from 'react';
 import { AlertCircle, CheckCircle2, Loader2, RefreshCcw } from 'lucide-react';
 import type { Page } from '../../App';
@@ -66,7 +67,7 @@ export default function SocialContentWorkspace({
 
   const openDirectorReview = useCallback(() => {
     const panel = document.querySelector<HTMLElement>('[data-social-agent-workflow]');
-    panel?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    panel?.scrollIntoView({ behavior: getScrollBehavior(), block: 'start' });
     panel?.querySelector<HTMLDetailsElement>('details')?.setAttribute('open', '');
   }, []);
 

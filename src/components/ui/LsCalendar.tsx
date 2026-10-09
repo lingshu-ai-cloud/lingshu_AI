@@ -23,9 +23,12 @@ type Props = {
   label: string;
   initialDate?: string;
   initialView?: LsCalendarView;
+  firstDay?: number;
+  eventCardMode?: 'compact' | 'media';
   date?: string;
   timeZone?: string;
   loading?: boolean;
+  timeGridHeight?: number | string;
   primaryAction?: ReactNode;
   filters?: ReactNode;
   onRefresh?: () => void;
@@ -36,17 +39,19 @@ type Props = {
   renderDetails?: (event: LsCalendarEvent, closeDetails: () => void) => ReactNode;
 };
 
-function CalendarThumbnail({ src, title, large = false }: { src?: string; title: string; large?: boolean }) {
-  const [failed, setFailed] = useState(false);
-  useEffect(() => setFailed(false), [src]);
-  return <div className={large ? 'ls-calendar-media' : 'ls-calendar-thumb'}>
-    {src && !failed ? <img src={src} alt={title} loading="lazy" onError={() => setFailed(true)}/> : <span><ImageOff size={large ? 24 : 16}/>{large && <span>{failed ? '媒体加载失败' : '暂无缩略图'}</span>}</span>}
-    {large && failed && <Button size="small" onClick={() => setFailed(false)}>重新加载</Button>}
+function CalendarThumbnail({ src, title, large = false, card = false }: { src?: string; title: string; large?: boolean; card?: boolean }) {
+  const [failedSource, setFailedSource] = useState<string | undefined>();
+  const [loadedSource, setLoadedSource] = useState<string | undefined>();
+  const failed = Boolean(src && failedSource === src);
+  const ready = Boolean(src && loadedSource === src);
+  return <div className={large ? 'ls-calendar-media' : card ? 'ls-calendar-card-media' : 'ls-calendar-thumb'}>
+    {src && !failed ? <img src={src} alt={title} loading="lazy" className={ready ? 'is-ready' : undefined} onLoad={() => setLoadedSource(src)} onError={() => setFailedSource(src)}/> : <span><ImageOff size={large || card ? 24 : 16}/>{large && <span>{failed ? '媒体加载失败' : '暂无缩略图'}</span>}</span>}
+    {large && failed && <Button size="small" onClick={() => { setFailedSource(undefined); setLoadedSource(undefined); }}>重新加载</Button>}
   </div>;
 }
 
 /** Standard plugins only: all calendar pages share the same events, timezone and accessible detail path. */
-export function LsCalendar({ events, label, initialDate, initialView = 'dayGridMonth', date, timeZone = 'Asia/Shanghai', loading, primaryAction, filters, onRefresh, onDatesSet, onDateClick, onExternalDrop, onMoveEvent, renderDetails }: Props) {
+export function LsCalendar({ events, label, initialDate, initialView = 'dayGridMonth', firstDay = 1, eventCardMode = 'compact', date, timeZone = 'Asia/Shanghai', loading, timeGridHeight = 'clamp(320px, 65dvh, 720px)', primaryAction, filters, onRefresh, onDatesSet, onDateClick, onExternalDrop, onMoveEvent, renderDetails }: Props) {
   const calendarRef = useRef<CalendarRef>(null);
   const hostRef = useRef<HTMLDivElement>(null);
   const eventsRef = useRef(events);
@@ -123,11 +128,11 @@ export function LsCalendar({ events, label, initialDate, initialView = 'dayGridM
       const day = (event.target as HTMLElement).closest<HTMLElement>('[data-calendar-date]')?.dataset.calendarDate;
       if (pendingId && day) { event.preventDefault(); onExternalDrop(pendingId, day); }
     }}>
-      <FullCalendar ref={calendarRef} plugins={[themePlugin, dayGridPlugin, timeGridPlugin, listPlugin, multiMonthPlugin, interactionPlugin]} locale={zhLocale} timeZone={timeZone} firstDay={1} initialView={view} initialDate={initialDate || undefined}
+      <FullCalendar ref={calendarRef} plugins={[themePlugin, dayGridPlugin, timeGridPlugin, listPlugin, multiMonthPlugin, interactionPlugin]} locale={zhLocale} timeZone={timeZone} firstDay={firstDay} initialView={view} initialDate={initialDate || undefined}
         // In v7 either height="auto" or contentHeight="auto" disables the internal
         // time scroller. Bound only time views; month/list/year remain content-sized.
-        headerToolbar={false} contentHeight={view.startsWith('timeGrid') ? 'clamp(320px, 65dvh, 720px)' : 'auto'} events={inputs} editable={Boolean(onMoveEvent)} eventDurationEditable={false} eventInteractive dayMaxEvents={3} nowIndicator
-        allDayText="当天事项" noEventsText="当前周期没有排期" slotMinTime="00:00:00" slotMaxTime="24:00:00" scrollTime="08:00:00" scrollTimeReset eventTimeFormat={{ hour: '2-digit', minute: '2-digit', hour12: false }}
+        headerToolbar={false} contentHeight={view.startsWith('timeGrid') ? timeGridHeight : 'auto'} events={inputs} editable={Boolean(onMoveEvent)} eventDurationEditable={false} eventInteractive dayMaxEvents={3} nowIndicator expandRows tableHeaderSticky
+        allDaySlot={inputs.some(event => event.allDay)} allDayText="当天事项" noEventsText="当前周期没有排期" slotMinTime="08:00:00" slotMaxTime="22:00:00" slotDuration="01:00:00" slotHeaderInterval="01:00:00" scrollTime="08:00:00" scrollTimeReset slotHeaderFormat={{ hour: '2-digit', minute: '2-digit', hour12: false }} eventTimeFormat={{ hour: '2-digit', minute: '2-digit', hour12: false }}
         eventMinHeight={24} eventShortHeight={68} columnEventInnerClass="ls-calendar-time-inner"
         datesSet={info => { setTitle(info.view.title); setView(info.view.type as LsCalendarView); onDatesSet?.(info); }}
         dateClick={info => onDateClick?.(info.dateStr, info.allDay)}
@@ -154,6 +159,15 @@ export function LsCalendar({ events, label, initialDate, initialView = 'dayGridM
               </div>
             </div>;
           }
+          if (eventCardMode === 'media' && !['dayGridMonth', 'multiMonthYear', 'listWeek'].includes(info.view.type)) {
+            return <div className="ls-calendar-event-content ls-calendar-event-content-media">
+              <CalendarThumbnail src={item.thumbnailUrl} title={item.title} card/>
+              <div className="ls-calendar-event-copy">
+                <div className="ls-calendar-event-meta">{item.platform && <SocialPlatformIcon platform={item.platform} size={13}/>}<span>{item.statusLabel || calendarStatusLabels[item.status]}</span></div>
+                <strong>{item.title}</strong>
+              </div>
+            </div>;
+          }
           const showMedia = info.view.type !== 'dayGridMonth' && info.view.type !== 'multiMonthYear';
           return <div className="ls-calendar-event-content">
             {showMedia && <CalendarThumbnail src={item.thumbnailUrl} title={item.title}/>}
@@ -177,7 +191,7 @@ export function LsCalendar({ events, label, initialDate, initialView = 'dayGridM
     <Drawer title="排期详情" open={Boolean(selected)} onClose={() => setSelectedId(null)} size={520} destroyOnHidden>
       {selected && <div className="space-y-5">
         {['content', 'publish', 'shooting'].includes(selected.eventType) && <CalendarThumbnail src={selected.thumbnailUrl} title={selected.title} large/>}
-        <div><Tag>{selected.statusLabel || calendarStatusLabels[selected.status]}</Tag><h3 className="mt-3 text-lg font-semibold text-text-primary">{selected.title}</h3>{selected.description && <p className="mt-2 text-sm text-text-secondary">{selected.description}</p>}</div>
+        <div><Tag>{selected.statusLabel || calendarStatusLabels[selected.status]}</Tag><h3 className="mt-3 ls-type-title-medium text-text-primary">{selected.title}</h3>{selected.description && <p className="mt-2 ls-type-body-medium text-text-secondary">{selected.description}</p>}</div>
         <dl className="ls-calendar-details">
           <div><dt>交付时间</dt><dd>{selected.allDay ? selected.start.slice(0, 10) : new Date(selected.start).toLocaleString('zh-CN', { timeZone: selected.timeZone })} · {selected.timeZone}</dd></div>
           {selected.platform && <div><dt>平台账号</dt><dd className="flex items-center gap-2"><SocialPlatformIcon platform={selected.platform} size={16}/>{socialBrandLabel(selected.platform)} · {selected.accountName || '待绑定账号'}</dd></div>}

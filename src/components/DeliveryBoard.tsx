@@ -1,3 +1,4 @@
+import { getScrollBehavior } from "../lib/usePrefersReducedMotion";
 import { authHeader } from '../lib/auth';
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -77,12 +78,12 @@ export default function DeliveryBoard({ tasks, deliveries, events, goalTitle, no
     setSelectedId('');
     const blockedTask = tasks.find(task => card.taskIds.includes(task.id) && ['waiting_approval', 'waiting_human', 'failed', 'handed_off'].includes(task.status));
     onSelectTask(blockedTask?.id || card.taskId);
-    requestAnimationFrame(() => document.getElementById(blockedTask?.status === 'waiting_approval' ? 'delivery-approval' : 'task-production-scene')?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+    requestAnimationFrame(() => document.getElementById(blockedTask?.status === 'waiting_approval' ? 'delivery-approval' : 'task-production-scene')?.scrollIntoView({ behavior: getScrollBehavior(), block: 'start' }));
   };
   const today = new Date(now); today.setHours(0, 0, 0, 0);
   return <section className="border-y border-border bg-surface py-5">
     <div className="flex flex-wrap items-start justify-between gap-3">
-      <div><h2 className="text-lg font-bold text-text-primary">业务交付看板</h2><p className="mt-1 text-xs text-text-muted">查看真实生产进展、处理待办、领取业务结果</p></div>
+      <h2 className="text-lg font-bold text-text-primary">业务交付看板</h2>
       {onOpenMonitor && <button onClick={onOpenMonitor} type="button" className="inline-flex items-center gap-2 rounded-md border border-border bg-surface px-3 py-2 text-xs font-bold text-text-secondary transition hover:border-accent/40 hover:text-accent"><MonitorPlay size={14}/>打开监控大屏</button>}
     </div>
     {notice && <p role="alert" className="mt-3 border-l-2 border-amber bg-amber-dim p-3 text-xs text-amber">{notice}</p>}

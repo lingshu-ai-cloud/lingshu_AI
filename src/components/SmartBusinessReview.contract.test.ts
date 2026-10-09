@@ -11,6 +11,9 @@ for (const label of ['优秀内容继承', 'Tag 与卖点调整', '行业热点�
   assert.match(`${recommendations}\n${recommendationModel}`, new RegExp(label), `next-round recommendations must expose ${label}`);
 }
 assert.match(recommendations, /target="_blank" rel="noreferrer noopener"/, 'industry signals must open a safe, traceable source link');
-assert.match(recommendations, /产品事实、采集范围和投放预算不会被静默修改/, 'user-facing copy must separate suggestions from protected facts and budget');
+for (const visual of ['首镜钩子', '内容框架', '可验证卖点候选', '行业变化']) {
+  assert.match(recommendations, new RegExp(visual), `recommendations must visualize ${visual}`);
+}
+assert.match(recommendations, /lg:grid-cols-3/, 'the three recommendation cards must share one consistent horizontal layout');
 
 console.log('Smart Business review contract tests passed');

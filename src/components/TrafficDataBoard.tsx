@@ -228,7 +228,7 @@ export default function TrafficDataBoard({ onOpenAccounts, demo }: { windowDays?
 }
 
 function StatCard({ label, value, icon, onClick, hint }: { label: string; value: string; icon: React.ReactNode; onClick?: () => void; hint?: string }) {
-  const className = `secondary-stat-item w-full bg-transparent p-4 text-left transition-colors ${onClick ? 'cursor-pointer hover:bg-[#f5f8f6] focus:outline-none focus:ring-2 focus:ring-inset focus:ring-green-200' : ''}`;
+  const className = `secondary-stat-item w-full bg-transparent p-4 text-left transition-colors ${onClick ? 'cursor-pointer hover:bg-zinc-50 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-green-200' : ''}`;
   if (onClick) {
     return (
       <button type="button" onClick={onClick} className={className} title={hint}>

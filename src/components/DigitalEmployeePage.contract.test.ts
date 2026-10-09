@@ -82,7 +82,7 @@ for (const label of ['素材结构预览', '制作时长', '工期', '发布时�
 }
 assert.match(matrixScheduleSource, /<LsCalendar/, 'matrix scheduling must use the shared FullCalendar implementation');
 assert.match(matrixScheduleSource, /renderDetails=/, 'calendar details must be reachable by click and keyboard, not hover only');
-assert.match(matrixScheduleSource, /scheduleTime\(publishDay, accountIndex, index\)/, 'each account must receive a stable visible time lane');
+assert.match(matrixScheduleSource, /dayPositions|scheduleTime\(safeDate\(row\.day\), accountIndex, index\)/, 'same-day multi-account work must receive distinct time slots');
 assert.match(matrixScheduleSource, /allDay: false/, 'work items must live inside the time grid rather than stretching the all-day row');
 assert.match(matrixScheduleSource, /spreadAccountDate/, 'placeholder and generated tasks must use the same per-account distributed weekly axis');
 assert.doesNotMatch(matrixScheduleSource, /gridTemplateColumns|group-hover:max-h-72/, 'calendar must not retain a handwritten or hover-only schedule');
@@ -90,16 +90,12 @@ assert.match(smartBusinessSource, /当前节点[\s\S]{0,1000}来源[\s\S]{0,1000
 assert.doesNotMatch(smartBusinessSource, /数字员工协作状态|四位数字员工协作状态/, 'the dashboard must not create a separate Digital Employee section');
 assert.doesNotMatch(pageSource, /aria-label="开启或关闭智能经营"|智能经营已开启|已停止新计划/, 'the redundant Smart Operations switch must not remain beside the weekly task control');
 
-const assistantOrbitSource = assistantSource.slice(
-  assistantSource.indexOf('const SKILL_AGENTS'),
-  assistantSource.indexOf('function pageKey'),
-);
-for (const label of ['经营 Agent', '编导 Agent', '内容 Agent', '客服 Agent']) {
-  assert.match(assistantOrbitSource, new RegExp(label), `灵小枢子 Agent 必须显示现有角色：${label}`);
-}
-assert.doesNotMatch(assistantOrbitSource, /策略助手|唤醒助手|统筹 Agent/, '灵小枢不应再显示旧助手或重复的统筹 Agent');
+assert.match(assistantSource, /const PRIMARY_ASSISTANT_THREAD: OrbitAgentId = 'business'/, '灵小枢必须保持一个统一的主对话线程');
+assert.match(assistantSource, /const activeAgentLabel = '灵小枢'/, '唯一主入口必须使用灵小枢身份');
+assert.match(assistantSource, /const threadAgent = PRIMARY_ASSISTANT_THREAD/, '页面专业 Agent 只能作为内部路由上下文，不能拆成多个对话入口');
+assert.doesNotMatch(assistantSource, /const SKILL_AGENTS|策略助手|唤醒助手|统筹 Agent/, '灵小枢不应恢复旧助手、放射式 Agent 入口或重复的统筹 Agent');
 assert.match(assistantStoreSource, /\['business', 'director', 'content', 'customer'\]/, '灵小枢应只维护四个现有子 Agent 的独立会话');
-assert.match(assistantSource, /const current = agent\.id === currentPageAgent[\s\S]{0,1800}style=\{current \? ORBIT_AGENT_ACTIVE_STYLE : ORBIT_AGENT_IDLE_STYLE\}/, '只有当前页面对应的 Agent 可以使用不同强调色');
+assert.match(assistantSource, /const currentPageAgent = useMemo\(\(\) => orbitIdForPage\(page\)/, '灵小枢必须根据当前工作区选择内部专业 Agent 上下文');
 assert.match(assistantSource, /page === 'smartAssets'\) return 'content'/, '内容制作页应高亮内容 Agent');
 assert.match(assistantSource, /page === 'socialInspiration'[\s\S]{0,160}return 'director'/, '灵感与脚本页面应高亮编导 Agent');
 assert.match(assistantSource, /page === 'conversion'[\s\S]{0,220}return 'customer'/, '客户页面应高亮客服 Agent');
@@ -148,8 +144,7 @@ for (const label of ['经营总览', '账号矩阵', '内容队列', '数据复�
 assert.doesNotMatch(smartBusinessSource, /本周统一数据口径|One weekly plan/i, 'the four views must not repeat the weekly-plan summary already shown in the command center');
 for (const label of ['演示数据', '真实回传']) assert.match(smartBusinessSource, new RegExp(label), `missing performance data must keep its source label: ${label}`);
 assert.ok((smartBusinessSource.match(/buildSmartBusinessDisplayModel\(data\)/g) || []).length >= 5, 'the weekly command center and four Smart Business views must derive account, video and cost counts from one weekly-plan display model');
-assert.match(smartBusinessSource, /缺失的结果指标使用演示数据/, 'the overview must disclose mocked fallback metrics instead of presenting them as real data');
-assert.match(smartBusinessSource, /演示指标不会写入真实复盘/, 'demo performance must be visibly excluded from real review decisions');
+assert.doesNotMatch(smartBusinessSource, /缺失的结果指标使用演示数据/, 'the overview must not repeat implementation notes about demo fallbacks');
 assert.doesNotMatch(pageSource, /id: "live", label: "周计划"/, 'the repetitive standalone weekly-plan tab must be removed');
 assert.match(layoutSource, /\{accountMenuOpen && \([\s\S]{0,1800}新手引导/, 'the beginner guide must live in the expanded user menu');
 assert.doesNotMatch(layoutSource, /aria-label="主导航"[\s\S]{0,900}新手引导/, 'the beginner guide must not remain in the primary navigation');
@@ -160,15 +155,23 @@ assert.match(weeklyPlanControlsSource, /查看本周计划[\s\S]{0,900}Agent 设
 assert.match(currentPlanSource, /actions=\{weeklyPlanControls\}/, 'the current-plan header must receive the weekly-plan controls');
 assert.match(weeklyCommandCenterSource, /<h2[^>]*>周经营计划<\/h2>/, 'the weekly-plan header must retain its concise title');
 assert.match(weeklyCommandCenterSource, /aria-label="智能经营控制"/, 'the weekly-plan header must retain management controls');
-assert.match(weeklyCommandCenterSource, /计划周期：[\s\S]{0,100}planStart\.iso[\s\S]{0,100}planEnd\.iso/, 'the plan range must use a visual, accessible date treatment');
+assert.match(weeklyCommandCenterSource, /周经营计划[\s\S]{0,1800}aria-label="智能经营控制"/, 'the weekly-plan visual date range must keep the management controls in the same header');
+assert.match(weeklyCommandCenterSource, /WeeklyRangeVisual/, 'the weekly-plan header must visualize its operating range instead of appending a raw date string');
+assert.match(weeklyCommandCenterSource, /周经营计划[\s\S]{0,500}<WeeklyRangeVisual/, 'the compact week range must remain in the same title row instead of consuming its own line');
+assert.doesNotMatch(matrixScheduleSource, /每条视频就是一条日历任务/, 'the calendar section must not repeat an explanatory subtitle');
+assert.match(matrixScheduleSource, /allDay: false/, 'weekly content tasks must occupy readable hourly slots instead of the all-day lane');
+assert.match(matrixScheduleSource, /contentPlan\?\.publishAt/, 'confirmed publish timestamps must take precedence over generated execution windows');
+assert.match(matrixScheduleSource, /timeGridHeight=\{760\}/, 'the weekly calendar must retain a useful full-day working height');
+for (const label of ['本周生产状态', '各平台计划与完成']) assert.doesNotMatch(smartBusinessSource, new RegExp(label), `${label} must not add low-value charts to the overview`);
 assert.match(currentPlanSource, /WeeklyCommandCenter/, 'the full weekly command center must replace the simplified current-plan summary');
+assert.match(currentPlanSource, /notice=\{!activeRun[\s\S]{0,1200}detailGeneration\?\.blockedCount/, 'the weekly-plan header must retain actionable readiness and generation blockers');
 for (const label of ['开始周任务', '暂停周任务', '继续周任务']) assert.match(pageSource, new RegExp(label), `the merged weekly control must support ${label}`);
 assert.match(pageSource, /controlWeeklyWork[\s\S]{0,900}pauseRun[\s\S]{0,400}resumeRun|controlWeeklyWork[\s\S]{0,900}resumeRun[\s\S]{0,400}pauseRun/, 'the merged weekly control must pause and resume the persisted run');
 assert.match(weeklyPlanControlsSource, /controlWeeklyWork[\s\S]{0,900}weeklyControlLabel/, 'the weekly-plan header must own the merged start and pause control');
 assert.match(pageSource, /const startWeeklyWork[\s\S]{0,900}setWeeklyPlanOpen\(true\)/, 'the prominent start-work action must open the persisted plan confirmation workflow');
 assert.doesNotMatch(currentPlanSource, /查看内容队列|查看完整周计划|新手引导/, 'the current-plan card must not keep duplicate queue, full-plan, or guide buttons');
 assert.match(pageSource, /aria-label=\{goal && !newGoal \? "本周计划详情" : "周计划生成"\}/, 'the weekly-plan dialog must distinguish inspecting the current plan from generating a new one');
-assert.match(pageSource, /按发布时间查看内容，检查产品与参考依据后确认排期。/, 'the weekly-plan page must explain the calendar and confirmation workflow');
+assert.doesNotMatch(pageSource, /按发布时间查看内容，检查产品与参考依据后确认排期。|确定各平台账号的产量、总产量和预计成本。/, 'the weekly-plan page title must not repeat an explanatory subtitle');
 assert.match(pageSource, /<Tabs[^>]+aria-label="智能经营视图"/, 'Smart Operations must use accessible shared Ant tabs');
 assert.match(pageSource, /返回智能经营/, 'the full-page weekly plan must expose a return action');
 const outlineFlowSource = pageSource.slice(pageSource.indexOf('const createWeeklyOutline'), pageSource.indexOf('const generateCurrentPlanDetails'));
@@ -217,7 +220,9 @@ assert.match(smartBusinessSource, /按矩阵同步周任务包/, 'draft weekly p
 assert.match(smartBusinessSource, /\/api\/overseas\/competitor-accounts/, 'account details must use the persisted benchmark-account library');
 assert.match(smartBusinessSource, /\/api\/oauth\/whatsapp\/config/, 'account details must read the real WhatsApp connection state');
 assert.match(smartBusinessSource, /messengerSubscribed/, 'Facebook account details must read the real Messenger subscription state');
-assert.doesNotMatch(smartBusinessSource, /各账号周更稳定度/, 'an empty historical stability chart must not occupy the account matrix');
+assert.match(smartBusinessSource, /本周账号更新完成度[\s\S]{0,500}weeklyCompletionPercent/, 'the account matrix must summarize completion with one percentage instead of redundant charts');
+assert.doesNotMatch(smartBusinessSource, /各账号周更稳定度/, 'the account matrix must not render an empty stability chart');
+assert.match(matrixScheduleSource, /firstDay=\{goalStart\.getDay\(\)\}[\s\S]{0,120}eventCardMode="media"/, 'the schedule calendar must open on the operating-cycle start day and use media-first event cards');
 assert.match(smartBusinessSource, /const pageSize = 6/, 'long content queues must use a bounded page size');
 assert.match(smartBusinessSource, /aria-label="生成进度分页"/, 'long per-video progress lists must expose pagination controls inside the account matrix');
 assert.match(smartBusinessSource, /内容队列[\s\S]{0,1200}视频播放量/, 'the queue must open with video-specific performance data');
@@ -406,7 +411,7 @@ assert.match(appSource, /setSmartAssetsView\(detail\.view === ["']publish["'] \?
 
 assert.match(pageSource, /allowGeneratedVisuals:\s*false/, 'generated visuals must default to fail-closed');
 assert.match(pageSource, /setWorkspaceView\(["']matrix["']\)[\s\S]{0,500}setSelectedTaskId/, 'approving a plan must open the account work schedule while preserving task focus');
-assert.match(pageSource, /scrollIntoView\([\s\S]{0,120}behavior:\s*["']smooth["']/, 'first-run transitions must focus the next required panel');
+assert.match(pageSource, /scrollIntoView\([\s\S]{0,120}behavior:\s*getScrollBehavior\(\)/, 'first-run transitions must focus the next required panel while respecting reduced-motion preferences');
 assert.match(pageSource, /digitalEmployeeOnboarding:\s*\{\s*profileConfirmedAt:/, 'the first-step confirmation must be persisted instead of living only in component memory');
 assert.match(pageSource, /setProductConfirmed\(true\)/, 'confirming the product table must advance to the social-stage step');
 assert.match(pageSource, /第四步 · 社媒经营阶段[\s\S]{0,600}确认阶段并开始使用/, 'first-use onboarding must finish with the social operating stage');

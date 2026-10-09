@@ -49,7 +49,7 @@ export default function DiscoveryProductPicker({ onReference, disabled }: { onRe
         <label className="flex gap-2"><input type="checkbox" disabled={busy || disabled} checked={selected.includes(product.id)} onChange={() => setSelected(toggle(selected, product.id))} /><span>{product.name}{product.category ? ` · ${product.category}` : ''}</span></label>
         {product.files.map(file => <label key={file.id} className="ml-5 mt-1 flex gap-2"><input type="checkbox" disabled={busy || disabled || !file.available} checked={files.includes(file.id)} onChange={() => setFiles(toggle(files, file.id))} /><span>文件：{file.name}{!file.available && '（暂不支持直接读取，请上传文字版资料）'}</span></label>)}
       </div>)}</div>
-      <button type="button" disabled={busy || disabled || (!selected.length && !files.length)} onClick={() => void reference()} className="mt-3 rounded bg-emerald-700 px-3 py-2 font-bold text-white disabled:opacity-50">{busy ? '正在读取所选资料…' : `引用已选 ${selected.length} 个产品 / ${files.length} 份文件`}</button>
+      <button type="button" disabled={busy || disabled || (!selected.length && !files.length)} onClick={() => void reference()} className="mt-3 rounded bg-blue-600 px-3 py-2 font-bold text-white disabled:opacity-50">{busy ? '正在读取所选资料…' : `引用已选 ${selected.length} 个产品 / ${files.length} 份文件`}</button>
     </>}
     {error && <p role="alert" className="mt-2 text-amber-800">{error}</p>}
   </div>;

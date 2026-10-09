@@ -1,5 +1,12 @@
 # Repository working agreements
 
+## Frontend design policy
+
+- Every frontend change must follow `docs/product/PRD-灵枢AI全系统UI设计规范-v2-2026-10-09.md` as the sole product design authority, including motion, transitions, typography, accessibility, and component behavior. Reuse the shared theme, design tokens, and UI components; historical design documents are reference only.
+- If the product design specification does not cover a component or interaction, consult the official Ant Design documentation at `https://ant.design/components/overview-cn/` and its design guidance before implementation. Adapt the official pattern to the product tokens and document reusable decisions in the specification.
+- Current visual baseline: pure-white page surfaces, black/neutral body text, neutral sidebar navigation, blue–violet gradients for primary actions and outgoing conversation bubbles, and coordinated colored highlights/charts. Keep success, warning, error, and platform-logo semantics distinct.
+- Do not introduce page-specific palettes or a parallel component system when the existing shared components or Ant Design cover the need.
+
 ## Deployment policy
 
 - This repository is development-only unless the user explicitly requests deployment in the current task.
