@@ -16,9 +16,15 @@ const PRODUCT_CATALOG_FILE = path.join(FIXTURE_ROOT, 'product-catalog.json');
 const SOURCE_MEDIA_ROOT = path.resolve(ROOT, 'data', 'media', 'tenants', TENANT_ID);
 const FIXTURE_MEDIA_ROOT = path.join(FIXTURE_ROOT, 'media', 'tenants', TENANT_ID);
 const collections = [
-  'competitor_accounts', 'crawl_jobs', 'digital_employee_config_versions', 'digital_employee_configs',
-  'social_discovery_scopes', 'starter_social_content_files', 'starter_social_content_operations',
-  'starter_social_content_tasks', 'tenant_profiles', 'trend_videos',
+  'tenant_profiles',
+  'competitor_accounts', 'crawl_jobs', 'trend_videos',
+  'digital_employee_config_versions', 'digital_employee_configs',
+  'social_discovery_scopes', 'social_programs',
+  'weekly_goals', 'weekly_plans', 'workflow_runs', 'workflow_tasks',
+  'starter_social_content_tasks', 'starter_social_content_files', 'starter_social_content_operations',
+  'starter_social_content_artifacts', 'starter_social_director_plan_versions', 'starter_social_task_sources',
+  'studio_projects', 'studio_digital_human_plans', 'studio_shooting_tasks',
+  'scheduled_tasks',
 ] as const;
 
 type JsonRecord = Record<string, unknown>;
@@ -70,9 +76,11 @@ function filesBelow(root: string): string[] {
 function validateBundle(bundle: FixtureBundle): void {
   if (bundle.tenant.id !== TENANT_ID || bundle.account.tenantId !== TENANT_ID || bundle.account.email !== EMAIL) throw new Error('fixture account identity mismatch');
   if (Object.keys(bundle.account).some(key => ['password', 'passwordHash', 'salt', 'token', 'secret'].includes(key))) throw new Error('fixture contains authentication material');
-  if (bundle.collections.trend_videos?.length !== 30) throw new Error('fixture must contain exactly 30 trend videos');
-  if (bundle.collections.competitor_accounts?.length !== 27) throw new Error('fixture must contain exactly 27 competitor accounts');
-  if (bundle.materials.length !== 30) throw new Error('fixture must contain exactly 30 materials');
+  if ((bundle.collections.trend_videos?.length || 0) < 10) throw new Error('fixture must contain at least 10 trend videos');
+  if (bundle.collections.competitor_accounts?.length !== 5) throw new Error('fixture must contain exactly 5 current competitor accounts');
+  if ((bundle.collections.weekly_plans?.length || 0) < 1) throw new Error('fixture must contain the current weekly-plan history');
+  if ((bundle.collections.starter_social_content_tasks?.length || 0) < 1) throw new Error('fixture must contain current social content tasks');
+  if (bundle.materials.length < 1) throw new Error('fixture must contain current tenant materials');
   const catalog = JSON.parse(fs.readFileSync(PRODUCT_CATALOG_FILE, 'utf8')) as { products?: Array<{ number?: number; sku?: string; imageFile?: string | null }> };
   if (catalog.products?.length !== 41 || catalog.products.some((item, index) => item.number !== index + 1 || !item.sku?.startsWith('GUIANFA-RS-'))) {
     throw new Error('fixture product catalog must contain the ordered 41-product GUIANFA range');
@@ -120,7 +128,11 @@ function exportFixture(): void {
   }));
   if (files.some(item => item.bytes >= 100 * 1024 * 1024)) throw new Error('fixture contains a file at or above GitHub\'s 100 MiB limit');
   writeJson(MANIFEST_FILE, { schemaVersion: 1, tenantId: TENANT_ID, exportedAt: new Date().toISOString(),
-    counts: { trendVideos: 30, competitorAccounts: 27, materials: 30, mediaFiles: files.filter(item => item.path.startsWith('media/')).length }, files });
+    counts: {
+      ...Object.fromEntries(Object.entries(collectionData).map(([name, records]) => [name, records.length])),
+      materials: bundle.materials.length,
+      mediaFiles: files.filter(item => item.path.startsWith('media/')).length,
+    }, files });
   console.log(JSON.stringify({ ok: true, mode: 'export', files: files.length, mediaFiles: files.filter(item => item.path.startsWith('media/')).length }, null, 2));
 }
 

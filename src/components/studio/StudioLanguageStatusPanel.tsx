@@ -328,7 +328,7 @@ function SelectedLanguageDetails({
     >
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <div>
-          <h4 className="flex items-center gap-2 text-sm font-black text-text-primary">
+          <h4 className="flex items-center gap-2 text-sm font-semibold text-text-primary">
             <SlidersHorizontal aria-hidden="true" size={15} className="text-accent" />
             {item.language} · 配音与字幕
           </h4>
@@ -364,7 +364,7 @@ function SelectedLanguageDetails({
         <div>
           <div className="mb-3 flex items-center gap-2">
             <Volume2 aria-hidden="true" size={14} className="text-accent" />
-            <h5 className="text-xs font-black text-text-primary">配音属性</h5>
+            <h5 className="text-xs font-semibold text-text-primary">配音属性</h5>
             <span className="ml-auto text-[11px] font-semibold text-text-muted">
               真实时长 {formatDuration(item.durationSeconds)}
             </span>
@@ -463,7 +463,7 @@ function SelectedLanguageDetails({
         <div className="border-t border-border pt-4">
           <div className="flex items-center gap-2">
             <Subtitles aria-hidden="true" size={14} className="text-accent" />
-            <h5 className="text-xs font-black text-text-primary">字幕概要</h5>
+            <h5 className="text-xs font-semibold text-text-primary">字幕概要</h5>
             <ActionButton
               icon={<Pencil aria-hidden="true" size={12} />}
               onClick={onEditSubtitles ? () => onEditSubtitles(item.id) : undefined}
@@ -513,11 +513,11 @@ export default function StudioLanguageStatusPanel({
 
   if (!languages.length) {
     return (
-      <section className={`rounded-2xl border border-border bg-surface p-5 ${className}`}>
+      <section className={`rounded-lg border border-border bg-surface p-5 ${className}`}>
         {emptyState ?? (
           <div className="flex min-h-36 flex-col items-center justify-center text-center">
             <Volume2 aria-hidden="true" size={22} className="mb-2 text-text-muted" />
-            <h3 className="text-sm font-black text-text-primary">尚未添加输出语言</h3>
+            <h3 className="text-sm font-semibold text-text-primary">尚未添加输出语言</h3>
             <p className="mt-1 max-w-sm text-xs leading-5 text-text-muted">
               返回创作设置选择输出语言后，可在这里统一管理文案、配音与字幕。
             </p>
@@ -528,10 +528,10 @@ export default function StudioLanguageStatusPanel({
   }
 
   return (
-    <section className={`overflow-hidden rounded-2xl border border-border bg-surface ${className}`}>
+    <section className={`overflow-hidden rounded-lg border border-border bg-surface ${className}`}>
       <header className="flex flex-wrap items-start justify-between gap-2 border-b border-border px-4 py-3.5">
         <div>
-          <h3 className="text-sm font-black text-text-primary">多语言状态</h3>
+          <h3 className="text-sm font-semibold text-text-primary">多语言状态</h3>
           <p className="mt-1 text-[11px] leading-4 text-text-muted">
             每种语言独立生成与重试，已完成内容会立即保留。
           </p>
@@ -583,7 +583,7 @@ export default function StudioLanguageStatusPanel({
                         }`}
                       />
                       <div className="min-w-0">
-                        <div className="truncate text-xs font-black text-text-primary">
+                        <div className="truncate text-xs font-semibold text-text-primary">
                           {item.language}
                         </div>
                         <div className="mt-0.5 flex items-center gap-1.5 text-[10px] text-text-muted">
@@ -655,7 +655,7 @@ export default function StudioLanguageStatusPanel({
                   }`}
                 />
                 <span className="min-w-0 flex-1">
-                  <span className="block truncate text-xs font-black text-text-primary">
+                  <span className="block truncate text-xs font-semibold text-text-primary">
                     {item.language}
                   </span>
                   <span className="mt-0.5 block text-[10px] text-text-muted">

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { CalendarClock, Check, ChevronDown, Clock, Film, Loader2, LockKeyhole, Pencil, Play, Sparkles } from 'lucide-react';
+import { Alert, Button, Segmented, Tag } from 'antd';
 import { authHeader } from '../../lib/auth';
 import type { MarketId } from './marketingCalendar';
 import type { CalendarPost, PendingPublishContent } from './CalendarPlanner';
@@ -100,6 +100,7 @@ export function ContentQueuePanel({
   onOpenPending,
   onArrangePending,
   compact = false,
+  canEdit = true,
 }: {
   selectedPlatform: string;
   selectedMarket: MarketId;
@@ -111,6 +112,7 @@ export function ContentQueuePanel({
   onOpenPending?: (id: string) => void;
   onArrangePending?: (placements: PendingPlacement[]) => Promise<void>;
   compact?: boolean;
+  canEdit?: boolean;
 }) {
   const [schedule, setSchedule] = useState<PostingSchedule>({
     platform: selectedPlatform,
@@ -190,6 +192,8 @@ export function ContentQueuePanel({
   ));
 
   const savePreset = async (preset: RhythmPreset) => {
+    if (!canEdit) return;
+    const previousSchedule = schedule;
     const next: PostingSchedule = {
       ...schedule,
       platform: selectedPlatform,
@@ -218,13 +222,15 @@ export function ContentQueuePanel({
       setSchedule(previous => ({ ...previous, id: data.item.id }));
       setMessage('发布节奏已保存');
     } catch {
-      setMessage('当前页面已更新，保存失败请重试');
+      setSchedule(previousSchedule);
+      setMessage('保存失败，已恢复原发布节奏，请重试');
     } finally {
       setScheduleSaving(false);
     }
   };
 
   const arrangeWithAi = async () => {
+    if (!canEdit) return;
     const placements = arrangeableItems.slice(0, openSlots.length).map((item, index) => ({
       id: item.id,
       scheduledAt: openSlots[index].scheduledAt,
@@ -242,133 +248,32 @@ export function ContentQueuePanel({
     }
   };
 
-  return (
-    <div className={`grid items-start gap-3 ${compact ? '' : 'lg:grid-cols-[260px_minmax(0,1fr)]'}`}>
-      <section data-lingshu-guide="publishing-rhythm" className="h-[168px] overflow-hidden rounded-2xl border border-border bg-white p-3 shadow-sm">
-        <div className="flex items-center justify-between gap-2">
-          <div className="flex items-center gap-2">
-            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-sky-50 text-sky-700"><Clock size={14} /></span>
-            <div><h3 className="text-sm font-black text-text-primary">发布节奏</h3><p className="text-[9px] font-bold text-text-muted">{marketLabel}当地时间</p></div>
-          </div>
-          <button
-            type="button"
-            data-lingshu-guide="ai-layout"
-            onClick={() => void arrangeWithAi()}
-            disabled={arranging || scheduleLoading || scheduleSaving || arrangeableItems.length === 0 || openSlots.length === 0}
-            className="inline-flex items-center gap-1 rounded-lg border border-violet-200 bg-violet-50 px-2 py-1.5 text-[10px] font-black text-violet-700 hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            {arranging ? <Loader2 size={11} className="animate-spin" /> : <Sparkles size={11} />}
-            {arranging ? '排布中' : 'AI 帮我排布'}
-          </button>
-        </div>
-
-        <div className="mt-2 grid grid-cols-3 gap-1.5">
-          {PRESETS.map(preset => (
-            <button
-              key={preset.id}
-              type="button"
-              disabled={scheduleLoading || scheduleSaving || arranging}
-              onClick={() => void savePreset(preset.id)}
-              className={`rounded-lg border px-2 py-1.5 text-left transition ${
-                schedule.preset === preset.id
-                  ? 'border-emerald-300 bg-emerald-50 shadow-sm ring-1 ring-emerald-100'
-                  : 'border-border bg-surface hover:border-emerald-200 hover:bg-emerald-50/40'
-              }`}
-            >
-              <span className="flex items-center justify-between gap-1">
-                <span className="text-[11px] font-black text-text-primary">{preset.label}</span>
-                {schedule.preset === preset.id && <Check size={11} className="text-emerald-600" />}
-              </span>
-              <span className="mt-0.5 block whitespace-nowrap text-[9px] text-text-muted">{preset.summary}</span>
-            </button>
-          ))}
-        </div>
-
-        <div className="mt-2 flex max-h-[24px] flex-wrap gap-1 overflow-hidden">
-          {schedule.slots.map(slot => (
-            <span key={`${slot.weekday}-${slot.time}`} className="rounded-full border border-sky-100 bg-sky-50 px-1.5 py-0.5 text-[9px] font-bold text-sky-700">
-              {WEEKDAY_LABELS[slot.weekday]} {slot.time}
-            </span>
-          ))}
-        </div>
-        {message && <p className="mt-1 line-clamp-1 text-[9px] font-bold text-emerald-700">{message}</p>}
-      </section>
-
-      <section data-lingshu-guide="future-queue" className={`overflow-hidden rounded-2xl border border-border bg-white shadow-sm ${queueExpanded ? '' : 'h-[168px]'}`}>
-        <div className="flex h-10 items-center justify-between gap-2 border-b border-border px-3">
-          <div className="flex min-w-0 items-center gap-2">
-            <CalendarClock size={14} className="text-emerald-600" />
-            <h3 className="shrink-0 text-sm font-black text-text-primary">待发布内容</h3>
-            <span className="truncate text-[10px] font-bold text-text-muted">{pendingItems.length} 条 · {draggableItems.length} 条可排入日历</span>
-          </div>
-          {pendingItems.length > 0 && (
-            <button type="button" onClick={() => setQueueExpanded(previous => !previous)} className="inline-flex items-center gap-1 rounded-lg border border-border bg-white px-2 py-1.5 text-[10px] font-black text-text-secondary hover:border-emerald-200 hover:text-emerald-700" aria-expanded={queueExpanded}>
-              {queueExpanded ? '收起' : '展开'}<ChevronDown size={11} className={`transition-transform ${queueExpanded ? 'rotate-180' : ''}`} />
-            </button>
-          )}
-        </div>
-
-        <div
-          aria-label="待发布内容列表"
-          tabIndex={0}
-          className={`grid gap-2 p-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-emerald-400 ${
-            queueExpanded
-              ? `max-h-[360px] grid-cols-[repeat(auto-fill,minmax(172px,1fr))] overflow-y-auto [scrollbar-gutter:stable] ${compact ? 'max-h-[420px]' : ''}`
-              : 'h-[128px] auto-cols-[172px] grid-flow-col grid-rows-1 overflow-x-auto overflow-y-hidden'
-          }`}
-        >
-          {pendingItems.length === 0 ? (
-            <div className="col-span-full flex h-[108px] items-center justify-center gap-3 rounded-xl border border-dashed border-emerald-200 bg-emerald-50/40 px-4 text-center">
-              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white text-emerald-600 shadow-sm"><Film size={16} /></span>
-              <div className="text-left"><p className="text-[11px] font-black text-text-primary">还没有待发布视频</p><p className="mt-0.5 text-[9px] text-text-muted">视频编辑完成并保存后，会出现在这里</p></div>
-            </div>
-          ) : pendingItems.map(item => {
-            const fixedDate = item.scheduledAt ? new Date(item.scheduledAt) : null;
-            const hasFixedDate = Boolean(fixedDate && Number.isFinite(fixedDate.getTime()));
-            const canDrag = item.deliveryMode === 'flexible' || (item.deliveryMode === 'schedule' && hasFixedDate);
-            const isFlexible = item.deliveryMode === 'flexible';
-            const isFixed = item.deliveryMode === 'schedule';
-            const platforms = item.platforms?.length ? item.platforms : [item.sourcePlatform || selectedPlatform];
-            return (
-              <button
-                key={item.id}
-                type="button"
-                draggable={canDrag}
-                onDragStart={event => {
-                  if (!canDrag) {
-                    event.preventDefault();
-                    return;
-                  }
-                  event.dataTransfer.effectAllowed = 'move';
-                  event.dataTransfer.setData('application/x-lingshu-pending-content', item.id);
-                  event.dataTransfer.setData('text/plain', item.title);
-                }}
-                onClick={() => onOpenPending?.(item.id)}
-                title={canDrag ? (isFixed ? '拖入日历后仍按锁定时间发布；点击可编辑内容' : '拖入日历后选择具体时间；点击可编辑内容') : '点击可继续编辑；立即发布内容不会进入日历'}
-                className={`group flex min-w-0 flex-col rounded-xl border text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md ${canDrag ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer'} ${isFixed ? 'border-violet-200 bg-violet-50/55 hover:border-violet-400' : isFlexible ? 'border-sky-200 bg-sky-50/55 hover:border-sky-400' : 'border-emerald-200 bg-emerald-50/50 hover:border-emerald-400'} ${queueExpanded ? 'h-[154px] p-2.5' : 'h-[108px] p-2'}`}
-              >
-                <span className="flex items-center justify-between gap-2">
-                  <span className="flex min-w-0 items-center gap-1">{platforms.slice(0, 3).map(platform => <PlatformBadge key={platform} platform={platform} compact />)}</span>
-                  <span className={`inline-flex shrink-0 items-center gap-1 rounded-full bg-white px-1.5 py-0.5 text-[8px] font-black shadow-sm ${isFixed ? 'text-violet-700' : isFlexible ? 'text-sky-700' : 'text-emerald-700'}`}>
-                    {isFixed ? <LockKeyhole size={8} /> : isFlexible ? <Clock size={8} /> : <Play size={8} fill="currentColor" />}
-                    {isFixed ? '定点排期' : isFlexible ? '时间待定' : '立即发布'}
-                  </span>
-                </span>
-                <span className={`${queueExpanded ? 'mt-2 line-clamp-2' : 'mt-1.5 truncate'} text-[11px] font-black leading-[1.35] text-text-primary`}>{item.title || '待填写标题的视频'}</span>
-                {queueExpanded && item.description && <span className="mt-1 line-clamp-2 text-[9px] leading-relaxed text-text-muted">{item.description}</span>}
-                <span className="mt-auto flex items-center justify-between gap-2 text-[8px] font-bold text-text-muted">
-                  <span className="inline-flex min-w-0 items-center gap-1 truncate"><Pencil size={8} /> 点击可再编辑</span>
-                  <span className={`shrink-0 ${isFixed ? 'text-violet-700' : isFlexible ? 'text-sky-700' : 'text-emerald-700'}`}>
-                    {isFixed && hasFixedDate
-                      ? `锁定 ${fixedDate!.toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' })} ${fixedDate!.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}`
-                      : isFlexible ? '拖入后选时间' : '确认后马上发布'}
-                  </span>
-                </span>
-              </button>
-            );
-          })}
-        </div>
-      </section>
-    </div>
-  );
+  return <div className={`grid items-start gap-4 ${compact ? '' : 'lg:grid-cols-[320px_minmax(0,1fr)]'}`}>
+    <section data-lingshu-guide="publishing-rhythm" className="rounded-lg border border-border bg-white p-4">
+      <div className="flex items-center justify-between gap-2"><div><h3 className="text-base font-semibold text-text-primary">发布节奏</h3><p className="mt-1 text-xs text-text-secondary">{marketLabel} · {marketTimeZone}</p></div>
+        <Button data-lingshu-guide="ai-layout" size="small" onClick={() => void arrangeWithAi()} loading={arranging} disabled={!canEdit || !onArrangePending || scheduleLoading || scheduleSaving || arrangeableItems.length === 0 || openSlots.length === 0}>按节奏排布</Button>
+      </div>
+      <Segmented className="mt-4" block aria-label="发布频率" value={schedule.preset} disabled={!canEdit || scheduleLoading || scheduleSaving || arranging} onChange={value => void savePreset(value as RhythmPreset)} options={PRESETS.map(preset => ({ value: preset.id, label: <div className="py-1 text-sm">{preset.label}<span className="block text-xs text-text-secondary">{preset.summary}</span></div> }))}/>
+      <div className="mt-3 flex flex-wrap gap-1">{schedule.slots.map(slot => <Tag key={`${slot.weekday}-${slot.time}`}>{WEEKDAY_LABELS[slot.weekday]} {slot.time}</Tag>)}</div>
+      {message && <div className="mt-3" role="status"><Alert type="info" title={message}/></div>}
+    </section>
+    <section data-lingshu-guide="future-queue" className="overflow-hidden rounded-lg border border-border bg-white">
+      <header className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-3"><div><h3 className="text-base font-semibold text-text-primary">待发布内容</h3><p className="mt-1 text-xs text-text-secondary">{pendingItems.length} 条 · {draggableItems.length} 条可排入日历</p></div>{pendingItems.length > 0 && <Button size="small" onClick={() => setQueueExpanded(previous => !previous)} aria-expanded={queueExpanded}>{queueExpanded ? '收起' : '展开'}</Button>}</header>
+      <div aria-label="待发布内容列表" className={`grid gap-3 p-4 ${queueExpanded ? 'max-h-[480px] grid-cols-[repeat(auto-fill,minmax(220px,1fr))] overflow-y-auto' : 'auto-cols-[240px] grid-flow-col overflow-x-auto'}`}>
+        {pendingItems.length === 0 ? <div className="col-span-full py-6 text-center"><p className="text-sm text-text-primary">还没有待发布视频</p><p className="mt-1 text-xs text-text-secondary">视频编辑完成并保存后，会出现在这里</p></div> : pendingItems.map(item => {
+          const fixedDate = item.scheduledAt ? new Date(item.scheduledAt) : null;
+          const hasFixedDate = Boolean(fixedDate && Number.isFinite(fixedDate.getTime()));
+          const isFlexible = item.deliveryMode === 'flexible', isFixed = item.deliveryMode === 'schedule';
+          const canDrag = canEdit && (isFlexible || (isFixed && hasFixedDate));
+          const platforms = item.platforms?.length ? item.platforms : [item.sourcePlatform || selectedPlatform];
+          return <button key={item.id} type="button" draggable={canDrag} onDragStart={event => { if (!canDrag) { event.preventDefault(); return; } event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData('application/x-lingshu-pending-content', item.id); event.dataTransfer.setData('text/plain', item.title); }} onClick={() => onOpenPending?.(item.id)} className="flex min-h-36 min-w-0 flex-col gap-3 rounded-lg border border-border bg-white p-3 text-left hover:border-accent hover:bg-surface-2 focus-visible:outline-2 focus-visible:outline-accent" title={canDrag ? '拖入日历或使用上方日期控件安排时间；点击编辑内容' : '点击编辑内容'}>
+            <span className="flex items-center justify-between gap-2"><span className="flex gap-1">{platforms.slice(0, 3).map(platform => <PlatformBadge key={platform} platform={platform} compact/>)}</span><span className="text-xs text-text-secondary">{isFixed ? '定点排期' : isFlexible ? '时间待定' : '立即发布'}</span></span>
+            <span className="line-clamp-2 text-sm font-medium text-text-primary">{item.title || '待填写标题的视频'}</span>
+            {queueExpanded && item.description && <span className="line-clamp-2 text-xs text-text-secondary">{item.description}</span>}
+            <span className="mt-auto text-xs text-text-secondary">{isFixed && hasFixedDate ? `锁定 ${fixedDate!.toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })} 北京时间` : isFlexible ? '安排日期后选择具体时间' : '确认后发布'}</span>
+          </button>;
+        })}
+      </div>
+    </section>
+  </div>;
 }

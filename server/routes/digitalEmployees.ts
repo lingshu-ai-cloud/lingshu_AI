@@ -44,7 +44,7 @@ import { getWhatsAppCustomers as defaultGetWhatsAppCustomers } from '../whatsapp
 import { currentExecutionAdapters, readExecutionMaterialLibrary } from '../digitalEmployees/executionAdapters.js';
 const getWhatsAppCustomers: typeof defaultGetWhatsAppCustomers = (tenantId) => currentExecutionAdapters()?.customers?.(tenantId) ?? defaultGetWhatsAppCustomers(tenantId);
 import { ensureDigitalEmployeeSocialCollectionTask, runScheduledTaskNow } from './scheduler.js';
-import { readTenantEnterpriseProfile, updateTenantEnterpriseProfile } from './enterprise.js';
+import { readTenantEnterpriseProfile, updateTenantEnterpriseProfile, type EnterpriseProfile } from './enterprise.js';
 import { buildBusinessSnapshot as defaultBuildBusinessSnapshot, type BusinessSnapshot } from '../digitalEmployees/businessSnapshot.js';
 const buildBusinessSnapshot: typeof defaultBuildBusinessSnapshot = (tenantId, range) => currentExecutionAdapters()?.snapshot?.(tenantId, range) ?? defaultBuildBusinessSnapshot(tenantId, range);
 import { freezeStoryboardNarration, CONTENT_SCRIPT_QUALITY_RULE_VERSION, advanceAutomatedContentProduction, collectProductionAssets, generateDirectorScriptContracts, productIdentity, resolveEnterpriseAssetLocation, resumeContentProjectForTaskControl } from '../digitalEmployees/contentProduction.js';
@@ -57,6 +57,8 @@ import { summarizeContentFeedback, traceableIndustryTrends } from '../digitalEmp
 import { summarizeWeeklyMatrix } from '../digitalEmployees/weeklyMatrixReview.js';
 import {
   configurationSnapshot,
+  enterpriseProfileFromKnowledgeBinding,
+  resolveKnowledgeBinding,
   resolveDigitalEmployeeConfiguration,
   type ResolvedDigitalEmployeeConfiguration,
 } from '../digitalEmployees/configuration.js';
@@ -202,6 +204,40 @@ function executionConfigForPlan(plan: PlanRecord | null, fallback: DigitalEmploy
   return body.businessPackage ? packageConfig(body.businessPackage as WeeklyPackage, config) : config;
 }
 
+function frozenEnterpriseProfileForPlan(plan: PlanRecord | null, allowLegacy = true): EnterpriseProfile | null {
+  if (!plan) return null;
+  const body = jsonObject<Record<string, unknown>>(plan.plan, {});
+  const profile = enterpriseProfileFromKnowledgeBinding(body.knowledgeBinding, { allowLegacy });
+  return profile as EnterpriseProfile | null;
+}
+
+/**
+ * Migration bridge for runs created before enterprise snapshots were stored.
+ * A plan that already has a fact label may only use facts recoverable from its
+ * old binding. A plan with no label is bound once, before execution continues.
+ */
+async function ensureFrozenEnterpriseProfileForRun(
+  tenantId: string,
+  plan: PlanRecord | null,
+  fallbackConfig: DigitalEmployeeConfig,
+  boundAt: string,
+): Promise<EnterpriseProfile> {
+  if (!plan) throw new Error('run_fact_snapshot_missing');
+  const body = jsonObject<Record<string, unknown>>(plan.plan, {});
+  const binding = jsonObject<Record<string, unknown>>(body.knowledgeBinding, {});
+  const existing = frozenEnterpriseProfileForPlan(plan, true);
+  if (existing) return existing;
+  if (String(binding.factsVersion || '').trim()) throw new Error('run_fact_snapshot_mismatch');
+  const current = await readTenantEnterpriseProfile(tenantId);
+  const knowledgeBinding = resolveKnowledgeBinding(current, fallbackConfig, boundAt);
+  const nextBody = { ...body, knowledgeBinding };
+  if (!await store.update(COLLECTION.plans, plan.id, { plan: nextBody })) throw new Error('run_fact_snapshot_storage_unavailable');
+  plan.plan = nextBody;
+  const frozen = enterpriseProfileFromKnowledgeBinding(knowledgeBinding);
+  if (!frozen) throw new Error('run_fact_snapshot_missing');
+  return frozen as EnterpriseProfile;
+}
+
 function publicGoal(record: GoalRecord): WeeklyGoalInput & { id: string; status: string; version: number; createdAt: string; updatedAt: string } {
   return {
     id: record.id,
@@ -304,9 +340,9 @@ function enterpriseMaterialIds(tenantId: string, products: Array<Record<string, 
   return ids;
 }
 
-async function contentRoutingEvidence(tenantId: string, config: DigitalEmployeeConfig) {
+async function contentRoutingEvidence(tenantId: string, config: DigitalEmployeeConfig, frozenProfile?: EnterpriseProfile) {
   const [profile, analyses, materials] = await Promise.all([
-    readTenantEnterpriseProfile(tenantId),
+    frozenProfile ? Promise.resolve(structuredClone(frozenProfile)) : readTenantEnterpriseProfile(tenantId),
     store.list<StoredRecord>('trend_videos', { where: { tenantId }, perPage: 500 }),
     readExecutionMaterialLibrary(tenantId),
   ]);
@@ -355,13 +391,14 @@ async function recommendPackageWithTenantEvidence(
   config: DigitalEmployeeConfig,
   ownerId = '',
   ownerName = '',
+  frozenProfile?: EnterpriseProfile,
 ): Promise<WeeklyPackage> {
   const pack = recommendPackage(goal, config, ownerId, ownerName);
   const [videos, benchmarks, enterpriseProfile, routingEvidence] = await Promise.all([
     store.list<StoredRecord>('trend_videos', { where: { tenantId }, sort: '-updatedAt', perPage: 500 }).catch(() => ({ items: [] })),
     store.list<StoredRecord>('competitor_accounts', { where: { tenantId }, sort: '-createdAt', perPage: 200 }).catch(() => ({ items: [] })),
-    readTenantEnterpriseProfile(tenantId),
-    contentRoutingEvidence(tenantId, config),
+    frozenProfile ? Promise.resolve(structuredClone(frozenProfile)) : readTenantEnterpriseProfile(tenantId),
+    contentRoutingEvidence(tenantId, config, frozenProfile),
   ]);
   const enabledRoutes = enterpriseProfile.socialStrategy?.enabledRoutes || [];
   const enterprisePrimaryCta = enabledRoutes
@@ -435,14 +472,21 @@ async function generateWeeklyTaskPreviews(input: {
   const masterPlans = plans.filter(plan => plan.productionRole !== 'platform_adaptation');
   if (!production || !plans.length) throw new Error('周视频计划中还没有内容任务');
   const generatedAt = new Date().toISOString();
+  const frozenProfile = await ensureFrozenEnterpriseProfileForRun(
+    input.tenantId,
+    input.plan,
+    input.config,
+    String(input.plan.created_at || generatedAt),
+  );
+  const frozenPlanBody = jsonObject<Record<string, unknown>>(input.plan.plan, input.planBody);
   const versions = {
-    configVersion: Number(input.planBody.configVersion || 1),
-    policyVersion: String(input.planBody.policyVersion || 'unknown'),
-    factsVersion: String(jsonObject<Record<string, unknown>>(input.planBody.knowledgeBinding, {}).factsVersion || 'unknown'),
+    configVersion: Number(frozenPlanBody.configVersion || 1),
+    policyVersion: String(frozenPlanBody.policyVersion || 'unknown'),
+    factsVersion: String(jsonObject<Record<string, unknown>>(frozenPlanBody.knowledgeBinding, {}).factsVersion || 'unknown'),
   };
   const [evidence, profile, references, shootingRows] = await Promise.all([
-    contentRoutingEvidence(input.tenantId, input.config),
-    readTenantEnterpriseProfile(input.tenantId),
+    contentRoutingEvidence(input.tenantId, input.config, frozenProfile),
+    Promise.resolve(structuredClone(frozenProfile)),
     store.list<StoredRecord>('trend_videos', { where: { tenantId: input.tenantId }, sort: '-updatedAt', perPage: 500 }),
     store.list<StoredRecord>('studio_shooting_tasks', { where: { tenant_id: input.tenantId }, sort: '-created_at', perPage: 500 }).catch(() => ({ items: [] })),
   ]);
@@ -529,7 +573,7 @@ async function generateWeeklyTaskPreviews(input: {
   });
   const readyOrders = preflight.filter(item => !item.blockers.length).map(item => item.order);
   const directedOrders = readyOrders.length
-    ? await generateDirectorScriptContracts({ tenantId: input.tenantId, config: input.config, goal, orders: readyOrders, now: generatedAt })
+    ? await generateDirectorScriptContracts({ tenantId: input.tenantId, config: input.config, goal, orders: readyOrders, now: generatedAt, enterpriseProfile: profile })
     : [];
   const directedById = new Map(directedOrders.map(order => [order.id, order]));
   const nextMasterPlans = preflight.map(item => {
@@ -557,12 +601,14 @@ async function generateWeeklyTaskPreviews(input: {
       // Required shots must never fall back to an incompatible asset. For
       // example, a product image cannot make a dynamic usage shot look ready.
       if (readinessDecision?.required) return undefined;
+      if (materialType === 'unknown') return undefined;
       const keywords: Record<keyof typeof MATERIAL_TYPE_LABELS, RegExp> = {
         talking_head: /真人|口播|主播|人物|presenter|talking/i,
         factory: /工厂|生产|车间|设备|流水线|factory|production/i,
         product: /产品|商品|包装|展示|product|packaging/i,
         consumer_demo: /消费者|用户|使用|效果|试用|consumer|demo|before|after/i,
-        unknown: /./,
+        general: /环境|道具|办公|生活|户外|街景|会议|展会|图形|动画|转场|environment|prop|office|lifestyle|outdoor|street|meeting|exhibition|graphic|animation|transition/i,
+        unknown: /(?!)/,
       };
       const matchIndex = unusedAssets.findIndex(asset => keywords[materialType].test([asset.name, ...asset.tags, ...asset.visualObservations].join(' ')));
       const selectedIndex = matchIndex >= 0 ? matchIndex : unusedAssets.length ? 0 : -1;
@@ -653,6 +699,12 @@ async function generateWeeklyTaskPreviews(input: {
 }
 
 async function prepareContentBatchPlan(input: { tenantId: string; goal: GoalRecord; run: RunRecord; task: TaskRecord; plan: PlanRecord | null; config: DigitalEmployeeConfig }) {
+  const enterpriseProfile = await ensureFrozenEnterpriseProfileForRun(
+    input.tenantId,
+    input.plan,
+    input.config,
+    input.run.started_at,
+  );
   const existing = await first<ContentBatchPlanRecord>(COLLECTION.contentBatchPlans, { tenant_id: input.tenantId, task_id: input.task.id });
   if (existing?.status === 'planned') {
     const routing = jsonObject<{ blocker?: string; eligibleRoutes?: ContentBatchPlanDraft['eligibleRoutes']; disabledRoutes?: ContentBatchPlanDraft['disabledRoutes'] }>(existing.routing, {});
@@ -664,7 +716,7 @@ async function prepareContentBatchPlan(input: { tenantId: string; goal: GoalReco
       eligibleRoutes: routing.eligibleRoutes || [],
       disabledRoutes: routing.disabledRoutes || [],
     };
-    return { existing, draft, planBody: jsonObject<Record<string, unknown>>(input.plan?.plan, {}) };
+    return { existing, draft, planBody: jsonObject<Record<string, unknown>>(input.plan?.plan, {}), enterpriseProfile };
   }
   const planBody = jsonObject<Record<string, unknown>>(input.plan?.plan, {});
   const knowledgeBinding = jsonObject<Record<string, unknown>>(planBody.knowledgeBinding, {});
@@ -674,7 +726,7 @@ async function prepareContentBatchPlan(input: { tenantId: string; goal: GoalReco
     goalId: input.goal.id,
     goal: goalInput(input.goal),
     config: input.config,
-    evidence: await contentRoutingEvidence(input.tenantId, input.config),
+    evidence: await contentRoutingEvidence(input.tenantId, input.config, enterpriseProfile),
     versions: {
       configVersion: Number(planBody.configVersion || 1),
       policyVersion: String(planBody.policyVersion || 'unknown'),
@@ -688,7 +740,7 @@ async function prepareContentBatchPlan(input: { tenantId: string; goal: GoalReco
       industryTrends: jsonObject(priorRoutingEvidence.industryTrends, {}),
     },
   });
-  return { existing, draft, planBody };
+  return { existing, draft, planBody, enterpriseProfile };
 }
 
 async function ensureContentBatchPlan(input: { tenantId: string; goal: GoalRecord; run: RunRecord; task: TaskRecord; plan: PlanRecord | null; config: DigitalEmployeeConfig }, prepared: Awaited<ReturnType<typeof prepareContentBatchPlan>>) {
@@ -705,7 +757,7 @@ async function ensureContentBatchPlan(input: { tenantId: string; goal: GoalRecor
     constraints: [...new Set([...(order.constraints || []), ...(director?.qualityStandard ? [`编导确认的脚本与审片标准：${director.qualityStandard}`] : [])])],
     ...(director ? { operatingContext: { productionBudget: director.productionBudget, productionSpent: director.productionSpent, productionReserved: estimatedTotal, estimatedContentCost: Number(order.videoPlan?.estimatedCost || 0), originalTarget: director.originalTarget, platformVersionTarget: director.platformVersionTarget, publishTarget: director.publishTarget, qualityStandard: director.qualityStandard, packageRevision: Number(pack?.revision || 0) } } : {}),
   }));
-  const effectiveDraft = draft.status === 'planned' ? { ...draft, orders: await generateDirectorScriptContracts({ tenantId: input.tenantId, config: input.config, goal: goalInput(input.goal), orders: constrainedOrders, now }) } : draft;
+  const effectiveDraft = draft.status === 'planned' ? { ...draft, orders: await generateDirectorScriptContracts({ tenantId: input.tenantId, config: input.config, goal: goalInput(input.goal), orders: constrainedOrders, now, enterpriseProfile: prepared.enterpriseProfile }) } : draft;
   if (director && input.plan && director.productionReserved !== estimatedTotal) {
     const nextPack = { ...pack!, directorPlan: { ...director, productionReserved: estimatedTotal } };
     await store.update(COLLECTION.plans, input.plan.id, { plan: { ...planBody, businessPackage: nextPack } });
@@ -1686,6 +1738,13 @@ async function prepareObserveBusinessResourceDirect(input: {
 }): Promise<boolean> {
   const { tenantId, goal, run, task, config, snapshot } = input;
   const actorId = goal.owner_id || 'digital_employee_agent';
+  let runEnterpriseProfile: EnterpriseProfile | null = null;
+  const frozenRunFacts = async () => {
+    if (runEnterpriseProfile) return runEnterpriseProfile;
+    const plan = await tenantRecord<PlanRecord>(COLLECTION.plans, run.plan_id, tenantId);
+    runEnterpriseProfile = await ensureFrozenEnterpriseProfileForRun(tenantId, plan, config, run.started_at);
+    return runEnterpriseProfile;
+  };
   if (task.task_key === 'scheduled_source_collection') {
     const collectionSchedule = socialScheduleFromCadence(config.socialCadence);
     const ensured = await ensureDigitalEmployeeSocialCollectionTask({
@@ -1745,6 +1804,7 @@ async function prepareObserveBusinessResourceDirect(input: {
       taskId: task.id,
       config,
       goal: goalInput(goal),
+      enterpriseProfile: await frozenRunFacts(),
       ...(batchPlan ? { batchPlanId: batchPlan.id, contentOrders: jsonObject(batchPlan.orders, []) } : {}),
     });
     const refs: Array<Record<string, unknown>> = [...result.projectRefs, ...result.knowledgeGaps];
@@ -1814,6 +1874,7 @@ async function prepareObserveBusinessResourceDirect(input: {
         contactWindowDays: followupSchedule.contactWindowDays,
         maxContactsPerWindow: followupSchedule.maxContactsPerWindow,
       },
+      enterpriseProfile: await frozenRunFacts(),
     });
     const refs = [{ type: 'followup_batch', id: result.batch.id, version: result.batch.version, contentHash: result.batch.content_hash, itemCount: result.items.length }];
     await store.update(COLLECTION.tasks, task.id, { business_refs: refs, updated_at: new Date().toISOString() });
@@ -2737,9 +2798,18 @@ digitalEmployeesRouter.post('/goals/:goalId/package/recommend', async (req, res)
     ? { ...snapshot, companyName: resolved.config.companyName, publishingTargets: resolved.config.publishingTargets }
     : snapshot;
   const currentPackage = plan ? jsonObject<{ businessPackage?: WeeklyPackage }>(plan.plan, {}).businessPackage : undefined;
+  const planBody = plan ? jsonObject<Record<string, unknown>>(plan.plan, {}) : {};
+  const savedFactsVersion = String(jsonObject<Record<string, unknown>>(planBody.knowledgeBinding, {}).factsVersion || '').trim();
+  if (savedFactsVersion && resolved && savedFactsVersion !== resolved.knowledgeBinding.factsVersion) {
+    res.status(409).json({ error: 'enterprise_facts_changed', message: '企业事实已更新，请基于最新事实新建周目标。', factVersion: resolved.knowledgeBinding.factsVersion });
+    return;
+  }
+  const enterpriseProfile = frozenEnterpriseProfileForPlan(plan, false)
+    || (resolved ? enterpriseProfileFromKnowledgeBinding(resolved.knowledgeBinding) as EnterpriseProfile | null : null);
+  if (!enterpriseProfile) { res.status(409).json({ error: 'enterprise_fact_snapshot_missing' }); return; }
   const members = await listTenantEmployees(res.locals as AuthLocals, req.headers.authorization);
   const member = members.find(m => m.id === userId);
-  const proposal = await recommendPackageWithTenantEvidence(tenantId, goalInput(goal), { ...config, operatingMaturity: currentPackage?.maturity || config.operatingMaturity, operatingAssessment: currentPackage?.operatingAssessment || config.operatingAssessment, defaultParticipation: currentPackage?.participation || config.defaultParticipation }, userId, member?.name);
+  const proposal = await recommendPackageWithTenantEvidence(tenantId, goalInput(goal), { ...config, operatingMaturity: currentPackage?.maturity || config.operatingMaturity, operatingAssessment: currentPackage?.operatingAssessment || config.operatingAssessment, defaultParticipation: currentPackage?.participation || config.defaultParticipation }, userId, member?.name, enterpriseProfile);
   proposal.revision = currentPackage?.revision || 0;
   res.json(proposal);
 });
@@ -2766,6 +2836,15 @@ digitalEmployeesRouter.post('/goals/:goalId/package/details', async (req, res) =
     const currentConfig = publicConfig(configRecord);
     if (!currentConfig) { res.status(409).json({ error: 'onboarding_required' }); return; }
     const resolvedConfiguration = await resolveCurrentConfiguration(tenantId, configRecord);
+    const savedFactsVersion = String(jsonObject<Record<string, unknown>>(planBody.knowledgeBinding, {}).factsVersion || '').trim();
+    if (savedFactsVersion && resolvedConfiguration && savedFactsVersion !== resolvedConfiguration.knowledgeBinding.factsVersion) {
+      res.status(409).json({ error: 'enterprise_facts_changed', message: '企业事实已更新，请基于最新事实新建周目标。', factVersion: resolvedConfiguration.knowledgeBinding.factsVersion });
+      return;
+    }
+    if (resolvedConfiguration && !frozenEnterpriseProfileForPlan(plan, false)) {
+      planBody.knowledgeBinding = resolvedConfiguration.knowledgeBinding;
+      plan.plan = planBody;
+    }
     const config = localPublishingAccountMocksEnabled() && resolvedConfiguration
       ? resolvedConfiguration.config
       : configSnapshotForPlan(plan, currentConfig);
@@ -2861,6 +2940,11 @@ digitalEmployeesRouter.put('/goals/:goalId/package', async (req, res) => {
     const currentConfig = publicConfig(configRecord);
     if (!currentConfig) { res.status(409).json({ error: 'onboarding_required' }); return; }
     const resolvedConfiguration = await resolveCurrentConfiguration(tenantId, configRecord);
+    const savedFactsVersion = String(jsonObject<Record<string, unknown>>(body.knowledgeBinding, {}).factsVersion || '').trim();
+    if (savedFactsVersion && resolvedConfiguration && savedFactsVersion !== resolvedConfiguration.knowledgeBinding.factsVersion) {
+      res.status(409).json({ error: 'enterprise_facts_changed', message: '企业事实已更新，请基于最新事实新建周目标。', factVersion: resolvedConfiguration.knowledgeBinding.factsVersion });
+      return;
+    }
     const config = localPublishingAccountMocksEnabled() && resolvedConfiguration
       ? resolvedConfiguration.config
       : configSnapshotForPlan(plan, currentConfig);
@@ -2891,8 +2975,13 @@ digitalEmployeesRouter.put('/goals/:goalId/package', async (req, res) => {
     }
     pack.revision = (old?.revision || 0) + 1;
     const compiled = compilePackage(pack, goalInput(goal), config);
-    const localConfigurationSnapshot = localPublishingAccountMocksEnabled() && resolvedConfiguration
-      ? configurationSnapshot(resolvedConfiguration)
+    const needsFactSnapshot = !savedFactsVersion || !frozenEnterpriseProfileForPlan(plan, false);
+    const localConfigurationSnapshot = resolvedConfiguration
+      ? localPublishingAccountMocksEnabled()
+        ? configurationSnapshot(resolvedConfiguration)
+        : needsFactSnapshot
+          ? { knowledgeBinding: resolvedConfiguration.knowledgeBinding }
+          : {}
       : {};
     if (!await store.update(COLLECTION.plans, plan.id, { plan: { ...body, ...localConfigurationSnapshot, ...compiled } })) { res.status(503).json({ error: 'weekly_plan_storage_unavailable' }); return; }
     await appendAudit({ tenantId, userId, action: 'weekly_package.updated', targetType: 'weekly_plan', targetId: plan.id, metadata: { revision: pack.revision, tasks: pack.tasks } });
@@ -2906,6 +2995,8 @@ digitalEmployeesRouter.post('/goals', async (req, res) => {
   const resolvedConfiguration = await resolveCurrentConfiguration(tenantId, configRecord);
   const config = resolvedConfiguration?.config || null;
   if (!config || !resolvedConfiguration) { res.status(409).json({ error: 'onboarding_required' }); return; }
+  const enterpriseProfile = enterpriseProfileFromKnowledgeBinding(resolvedConfiguration.knowledgeBinding) as EnterpriseProfile | null;
+  if (!enterpriseProfile) { res.status(409).json({ error: 'enterprise_fact_snapshot_missing' }); return; }
   if (config.smartOperationsEnabled === false) {
     res.status(409).json({ error: 'smart_operations_disabled', message: '智能经营已关闭；历史任务仍可查看，开启后才能制定新的周目标。' });
     return;
@@ -2935,7 +3026,7 @@ digitalEmployeesRouter.post('/goals', async (req, res) => {
     updated_at: now,
   });
   const planDraft = buildWeeklyPlan(goal, config);
-  const recommendedPackage = await recommendPackageWithTenantEvidence(tenantId, goal, config, userId);
+  const recommendedPackage = await recommendPackageWithTenantEvidence(tenantId, goal, config, userId, '', enterpriseProfile);
   const plan = await requiredCreate<PlanRecord>(COLLECTION.plans, {
     tenant_id: tenantId,
     goal_id: created.id,
@@ -3035,12 +3126,23 @@ export async function approveGoalForReview(tenantId: string, userId: string, goa
   const resolvedConfiguration = await resolveCurrentConfiguration(tenantId, configRecord);
   const currentConfig = resolvedConfiguration?.config || null;
   if (!currentConfig || !resolvedConfiguration) { return { status: 409, body: { error: 'onboarding_required' } }; }
+  const savedBody = existingPlan ? jsonObject<Record<string, unknown>>(existingPlan.plan, {}) : {};
+  const savedFactsVersion = String(jsonObject<Record<string, unknown>>(savedBody.knowledgeBinding, {}).factsVersion || '').trim();
+  const canonicalFactsVersion = resolvedConfiguration.knowledgeBinding.factsVersion;
+  if (savedFactsVersion && savedFactsVersion !== canonicalFactsVersion) {
+    return { status: 409, body: {
+      error: 'enterprise_facts_changed',
+      message: '企业事实已更新；当前草稿仍引用旧事实，请基于最新事实新建周目标后再启动。',
+      expectedFactVersion: savedFactsVersion,
+      factVersion: canonicalFactsVersion,
+    } };
+  }
+  const needsFrozenFactSnapshot = !existingPlan || !frozenEnterpriseProfileForPlan(existingPlan, false);
   // A draft goal owns the configuration snapshot captured when it was created.
   // Later Agent-setting edits apply only to a newly created goal.
   const config = executionConfigForPlan(existingPlan, currentConfig);
   // Account and delivery readiness are checked by the affected task at runtime.
   // Do not clear the content production platforms when no publishing account exists.
-  const savedBody = existingPlan ? jsonObject<Record<string, unknown>>(existingPlan.plan, {}) : {};
   let pack = savedBody.businessPackage as WeeklyPackage | undefined;
   let managedPublishingGrantId = String(savedBody.managedPublishingGrantId || '');
   if (pack && !managedPublishingGrantId) {
@@ -3064,7 +3166,7 @@ export async function approveGoalForReview(tenantId: string, userId: string, goa
   if (productionTask?.videoPlans) goal.scope = { ...jsonObject<Record<string, unknown>>(goal.scope, {}), description: goalInput(goal).scope, videoPlans: productionTask.videoPlans };
   await store.update(COLLECTION.goals, goal.id, { status: 'active', updated_at: now, ...(pack ? { scope: goal.scope, content_platforms: goal.content_platforms } : {}) });
   const frozenPlanMetadata = existingPlan
-    ? jsonObject<Record<string, unknown>>(existingPlan.plan, {})
+    ? { ...savedBody, ...(needsFrozenFactSnapshot ? { knowledgeBinding: resolvedConfiguration.knowledgeBinding } : {}) }
     : configurationSnapshot(resolvedConfiguration);
   const approvedPlanBody = { ...frozenPlanMetadata, ...planDraft, ...(managedPublishingGrantId ? { managedPublishingGrantId } : {}), ...(pack ? { packageApprovedBy: userId, packageApprovedAt: now } : {}) };
   let plan: PlanRecord;
@@ -3321,6 +3423,18 @@ digitalEmployeesRouter.post('/customer-segments/:segmentId/followup-batches', as
     const task = tasks.items.find(item => item.task_key === 'followup_batch_draft');
     if (!run || !goal || !task) { res.status(409).json({ error: 'followup_batch_context_missing' }); return; }
     if (['succeeded', 'cancelled'].includes(run.status)) { res.status(409).json({ error: '历史运行只可查看，请新建目标' }); return; }
+    const [plan, configRecord] = await Promise.all([
+      tenantRecord<PlanRecord>(COLLECTION.plans, run.plan_id, tenantId),
+      configForTenant(tenantId),
+    ]);
+    const currentConfig = publicConfig(configRecord);
+    if (!currentConfig) { res.status(409).json({ error: 'onboarding_required' }); return; }
+    const enterpriseProfile = await ensureFrozenEnterpriseProfileForRun(
+      tenantId,
+      plan,
+      executionConfigForPlan(plan, currentConfig),
+      run.started_at,
+    );
     const result = await createFollowupBatch({
       tenantId,
       goalId: goal.id,
@@ -3330,6 +3444,7 @@ digitalEmployeesRouter.post('/customer-segments/:segmentId/followup-batches', as
       userId,
       name: String(req.body?.name || '').trim().slice(0, 200),
       idempotent: false,
+      enterpriseProfile,
     });
     const refs = [{ type: 'followup_batch', id: result.batch.id, version: result.batch.version, contentHash: result.batch.content_hash, itemCount: result.items.length }];
     await store.update(COLLECTION.tasks, task.id, { business_refs: refs, updated_at: new Date().toISOString() });
@@ -3372,8 +3487,20 @@ digitalEmployeesRouter.post('/followup-batches/:batchId/revise', async (req, res
       }
     }
     try {
+      const [plan, configRecord] = await Promise.all([
+        tenantRecord<PlanRecord>(COLLECTION.plans, run.plan_id, tenantId),
+        configForTenant(tenantId),
+      ]);
+      const currentConfig = publicConfig(configRecord);
+      if (!currentConfig) { res.status(409).json({ error: 'onboarding_required' }); return; }
+      const enterpriseProfile = await ensureFrozenEnterpriseProfileForRun(
+        tenantId,
+        plan,
+        executionConfigForPlan(plan, currentConfig),
+        run.started_at,
+      );
       const result = await createFollowupBatch({ tenantId, goalId: batch.goal_id, runId: batch.run_id, taskId: batch.task_id, segmentId: batch.segment_id, userId,
-        idempotent: false, revisionNote: String(req.body?.note || '').slice(0, 1500), draftOverrides: req.body?.regenerate === true ? undefined : overrides, deliveryPolicy: jsonObject(batch.delivery_policy, {}) });
+        idempotent: false, revisionNote: String(req.body?.note || '').slice(0, 1500), draftOverrides: req.body?.regenerate === true ? undefined : overrides, deliveryPolicy: jsonObject(batch.delivery_policy, {}), enterpriseProfile });
       const tasks = await store.list<TaskRecord>(COLLECTION.tasks, { where: { tenant_id: tenantId, run_id: run.id }, perPage: 100 });
       for (const task of tasks.items.filter(task => ['followup_batch_draft', 'followup_batch_approval', 'followup_dispatch', 'weekly_review'].includes(task.task_key))) {
         await store.update(COLLECTION.tasks, task.id, { status: 'pending', blocked_reason: '', output: {}, business_refs: task.task_key === 'followup_batch_draft' ? [{ type: 'followup_batch', id: result.batch.id }] : [], updated_at: new Date().toISOString() });

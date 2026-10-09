@@ -32,6 +32,7 @@ import {
 } from './publishSourceClaim.js';
 import { socialAccessToken, youtubeCredentials } from '../lib/accountCredentials.js';
 import { tikTokDirectPostApproved } from '../lib/socialOAuthScopes.js';
+import { assertPublishingCopyFactVersion, type PublishingCopyAudit } from './copyFactVersion.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -82,6 +83,8 @@ export interface PublishToAccountInput {
   trackingPost?: PostRecord;
   finalizeTracking?: boolean;
   publishAttemptId?: string;
+  enterpriseFactVersion?: string;
+  copyAudit?: PublishingCopyAudit;
 }
 
 export interface PublishToAccountResult {
@@ -124,6 +127,7 @@ function accountStatus(error: any): number {
 
 async function revalidatePublishSource(input: PublishToAccountInput): Promise<void> {
   if (input.trackingPost) await assertManagedPublishingAuthorization(input.trackingPost, input.accountId);
+  await assertPublishingCopyFactVersion(input.tenantId, input);
   if (!input.sourceClaim) throw publishError('发布来源校验记录缺失', 409);
   await verifyFrozenPublishSourceClaim(input.tenantId, input.sourceClaim, input.videoPath);
 }
@@ -140,7 +144,7 @@ async function trackingPost(input: PublishToAccountInput): Promise<PostRecord> {
     title: input.title,
     language: input.language,
     enabled: input.trackWaLink !== false,
-  });
+  }, input.copyAudit ? { stats: { enterpriseFactVersion: input.copyAudit.enterpriseFactVersion, copyAudit: input.copyAudit } } : undefined);
 }
 
 function validateLocalVideo(videoPath: string | undefined, extensions: string[], maxMb: number): string {
@@ -665,10 +669,16 @@ async function publishVideoToAccountWithLease(
 
 export async function publishVideoToAccount(input: PublishToAccountInput): Promise<PublishToAccountResult> {
   if (!input.title.trim()) throw publishError('发布标题不能为空', 400);
+  const copyAudit = await assertPublishingCopyFactVersion(input.tenantId, input);
   const sourceClaim = input.sourceClaim
     ? await verifyFrozenPublishSourceClaim(input.tenantId, input.sourceClaim, input.videoPath)
     : await freezePublishSourceClaim(input.tenantId, input);
-  const verifiedInput = { ...input, projectId: sourceClaim.projectId || undefined, sourceClaim };
+  const verifiedInput = {
+    ...input,
+    projectId: sourceClaim.projectId || undefined,
+    sourceClaim,
+    ...(copyAudit ? { enterpriseFactVersion: copyAudit.enterpriseFactVersion, copyAudit } : {}),
+  };
   return withDirectPublishingLease({
     tenantId: verifiedInput.tenantId,
     platform: verifiedInput.platform,

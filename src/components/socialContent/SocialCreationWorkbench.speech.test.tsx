@@ -9,9 +9,11 @@ const html = renderToStaticMarkup(<SocialCreationWorkbench
   seed={{ referenceTitle: '参考视频', referenceShots: [{ time: '0–1s', dialogue: 'Hello, boss!', visual: '产品展示' }] }}
   onOpenChooser={() => {}} onShowCreations={() => {}} onGenerate={() => {}}
 />);
-assert.ok(html.includes('1 口播替换与确认'));
-assert.ok(html.includes('2 分镜匹配与制作'));
-assert.ok(html.includes('3 成片渲染和导出'));
+assert.ok(html.includes('aria-label="内容制作步骤"'));
+assert.ok(html.includes('ant-steps'), 'three-step navigation uses the shared Ant Steps interaction');
+assert.ok(html.includes('口播替换与确认'));
+assert.ok(html.includes('分镜匹配与制作'));
+assert.ok(html.includes('成片渲染和导出'));
 assert.ok(html.includes('生成口播'));
 assert.ok(!html.includes('第 1 句新口播'), '生成前不应提前展示可编辑的替换结果');
 assert.ok(!html.includes('试听新口播'));

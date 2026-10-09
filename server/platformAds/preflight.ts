@@ -8,6 +8,7 @@ import { demandGenOperations } from './googleExecutionAdapter.js';
 import { getPlatformAdCreative } from './creatives.js';
 import { adReleasePolicy } from './releasePolicy.js';
 import type { AdPreflightCheck, AdPreflightResult } from '../../shared/platformAdPreflight.js';
+import { platformAdProposalFactIssue, platformAdProposalFactState } from './factVersion.js';
 
 /** Read-only snapshot. Execution must independently revalidate under its task lease. */
 export async function preflightAdAction(tenantId: string, taskId: string, input: Record<string, unknown>): Promise<AdPreflightResult> {
@@ -22,6 +23,16 @@ export async function preflightAdAction(tenantId: string, taskId: string, input:
   check('source', '计划来源', task.creationSource !== 'platform_import', '本地计划可进入执行检查', '导入计划仅支持查看，尚未建立可执行资源绑定');
   check('version', '计划版本', Number(input.expectedVersion) === task.version, '计划版本一致', '计划已变化，请刷新后重新预检');
   check('action', '执行动作', ['create', 'activate', 'pause', 'resume', 'adjust_budget'].includes(action), '动作有效', '不支持该投放动作');
+  if (task.proposal && action !== 'pause') {
+    const factState = await platformAdProposalFactState(tenantId, task);
+    check(
+      'enterprise_fact_version',
+      '企业事实版本',
+      factState.status === 'current',
+      'AI 方案与当前企业事实版本一致',
+      platformAdProposalFactIssue(factState),
+    );
+  }
   check('management', '控制模式', task.managementMode === 'manual', '人工控制模式', '请先人工接管；本预检不代替审批或托管执行授权');
   if (task.managementMode !== 'manual') {
     const grant = task.authorization;

@@ -49,9 +49,12 @@ export interface FaqMatch {
 
 export interface RetrieveContextOptions {
   conversation?: ConversationTurn[];
+  /** Reuse the request-scoped confirmed snapshot so a single reply cannot mix saves. */
+  enterpriseProfile?: EnterpriseProfile;
 }
 
 export interface RetrievedContext {
+  enterpriseFactVersion?: string;
   companyIntro: string;
   bizRules: BizRules;
   faqs: RetrievedFaq[];
@@ -514,8 +517,9 @@ export async function retrieveContext(
   message: string,
   options: RetrieveContextOptions = {},
 ): Promise<RetrievedContext> {
-  const profile = await readTenantEnterpriseProfile(tenantId);
+  const profile = options.enterpriseProfile || await readTenantEnterpriseProfile(tenantId);
   const evidence: string[] = [];
+  if (profile.factVersion?.id) evidence.push(`企业事实版本：${profile.factVersion.id}`);
   if (tenantId) evidence.push(`租户 ${tenantId} 使用企业知识库`);
   if (customer?.id || customer?.name) evidence.push(`客户上下文：${customer.name || customer.id}`);
   const conversation = recentConversation(options, message);
@@ -535,6 +539,7 @@ export async function retrieveContext(
   if (!knowledgeReady) evidence.push('企业知识尚未配置：AI 只能承接需求、追问必要信息或转人工，不能回答企业与产品事实');
   if (knowledgeMiss) evidence.push('知识库未覆盖：FAQ 与产品均无有效命中，且不是寒暄/流程类意图');
   return {
+    enterpriseFactVersion: profile.factVersion?.id,
     companyIntro: companyIntro(profile),
     bizRules: profile.bizRules ?? EMPTY_BIZ_RULES,
     faqs,

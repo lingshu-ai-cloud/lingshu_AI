@@ -11,4 +11,3 @@ test('render acceptance is saved in the tenant-scoped Studio project and restore
   assert.match(studio, /savedAcceptance[\s\S]*?setReviewedRenderPath/);
   assert.match(studio, /历史素材/);
 });
-

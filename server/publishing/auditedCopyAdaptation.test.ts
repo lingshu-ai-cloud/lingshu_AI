@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { generateAuditedPlatformCopies } from './auditedCopyAdaptation.js';
 
 const enterpriseContext = [
+  '企业事实版本：enterprise-facts-v7-publishing',
   '公司名称：Acme Industrial',
   '主营产品：Alignment equipment',
   '产品1：Alignment Station；卖点：visible alignment workflow',
@@ -45,6 +46,7 @@ assert.equal(success.body.source, 'ai');
 assert.equal(success.body.qualityStatus, 'passed');
 assert.equal(success.body.publishable, true);
 assert.match(String((success.body.audit as Record<string, unknown>).enterpriseFactsHash), /^[a-f0-9]{64}$/);
+assert.equal((success.body.audit as Record<string, unknown>).enterpriseFactVersion, 'enterprise-facts-v7-publishing');
 
 const missingPlatform = await generateAuditedPlatformCopies({ ...base, targetPlatforms: [...base.targetPlatforms] }, {
   ...dependencies,

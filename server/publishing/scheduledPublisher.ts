@@ -3,7 +3,7 @@ import { assertManagedPublishingAuthorization, ManagedPublishingAuthorizationErr
 import { randomUUID } from 'node:crypto';
 import type { PublishPlatform } from '../lib/publishHistory.js';
 import { store } from '../storage/index.js';
-import { publishVideoToAccount, resolvePendingPublishToAccount } from './platformPublisher.js';
+import { publishVideoToAccount, resolvePendingPublishToAccount, type PublishToAccountInput } from './platformPublisher.js';
 import { finalizeTrackedPost, type PostRecord } from './waLink.js';
 import { digitalEmployeeRunBlockedReason, withDigitalEmployeeExternalAction, WorkflowRunBlockedError } from '../digitalEmployees/runControl.js';
 import {
@@ -407,6 +407,8 @@ async function publishScheduledPost(
         finalizeTracking: false,
         publishAttemptId: attemptId,
         sourceClaim,
+        enterpriseFactVersion: text(initialStats.enterpriseFactVersion),
+        copyAudit: initialStats.copyAudit as PublishToAccountInput['copyAudit'],
       });
       const guardedPublish = () => isManagedSocialPublication(post)
         ? withManagedSocialPublication(post, accountId, publish)

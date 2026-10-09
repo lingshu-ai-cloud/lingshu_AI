@@ -1,8 +1,8 @@
 import { recognizePresenterShot, type ObservedPresenterRole } from './contracts/presenterShotRecognition.js';
 /** Evidence contract shared by Inspiration and the future business schedule consumer. */
 export const MATERIAL_TYPE_LABELS = {
-  talking_head: '真人口播', factory: '工厂生产', product: '产品展示',
-  consumer_demo: '消费者使用与效果演示', unknown: '待判断',
+  talking_head: '真人口播', factory: '工厂实拍', product: '产品实拍',
+  consumer_demo: 'D2C', general: '其他通用素材', unknown: '待判断',
 } as const;
 export const SHOT_ROLE_LABELS = {
   hook: '钩子', pain_point: '痛点', capability_proof: '能力证明', product_intro: '产品介绍',
@@ -37,6 +37,14 @@ export interface BenchmarkAnalysis {
 export const recordOf = (value: unknown): Record<string, unknown> =>
   value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
 const text = (value: unknown): string => typeof value === 'string' ? value.trim() : '';
+const missingObservation = (value: string): boolean => {
+  const normalized = value.toLocaleLowerCase().replace(/[\s，,。.!！?？:：;；()[\]【】{}'"“”‘’_\-/]+/g, '');
+  return /^(?:画面内容|画面|视觉|场景|环境|观察事实|内容|描述)?(?:尚未分析|未分析|未确认|未识别|无法分析|无法确认|无法判断|无法识别|未知|不清楚|不确定|待分析|待确认|待判断|暂无|暂无信息|无有效信息|无可用信息|无|unknown|na|none)$/.test(normalized);
+};
+const legacyObservations = (row: Record<string, unknown>): string[] =>
+  [row.visual, row.observedFacts, row.environment]
+    .flatMap(value => Array.isArray(value) ? value.map(text) : [text(value)])
+    .filter(value => value && !missingObservation(value));
 export function benchmarkMaterialType(value: unknown): BenchmarkMaterialType {
   return typeof value === 'string' && Object.hasOwn(MATERIAL_TYPE_LABELS, value) ? value as BenchmarkMaterialType : 'unknown';
 }
@@ -53,7 +61,8 @@ export function benchmarkTimeRange(value: unknown): { start: number; end: number
 /** Conservative compatibility mapping: use visible actions, never factory background alone. */
 function legacyMaterial(row: Record<string, unknown>): BenchmarkMaterialType {
   const visual = text(row.visual);
-  const facts = [visual, text(row.observedFacts), text(row.environment)].join('；');
+  const observations = legacyObservations(row);
+  const facts = observations.join('；');
   const role = text(row.observedPresenterRole) as ObservedPresenterRole;
   const presenter = row.salesPresenterConfirmed === true || role === 'sales_presenter'
     || recognizePresenterShot({ observedPresenterRole: role || undefined,
@@ -65,7 +74,10 @@ function legacyMaterial(row: Record<string, unknown>): BenchmarkMaterialType {
   if (/(生产线|流水线|灌装|包装工序|机器运转|钻床|车床|冲压|焊接|工[人厂]|女工|男工).{0,35}(操作|生产|组装|分拣|加工|装配|设备|零件)|生产线|流水线|灌装|钻床|工厂车间|factory|assembly line/i.test(facts)) return 'factory';
   // Product/showroom demonstrations are product material unless visible presenter evidence says otherwise.
   if (/产品|商品|瓶身|包装盒|灯具|吊灯|灯饰|灯罩|护肤品|展厅|陈列|product|showroom/i.test(facts)) return 'product';
-  return 'unknown';
+  // A concrete visible scene that does not belong to the four specialized
+  // production types is reusable general footage. Keep `unknown` reserved for
+  // records that do not contain enough visual evidence to classify at all.
+  return observations.length ? 'general' : 'unknown';
 }
 function legacyRole(row: Record<string, unknown>): BenchmarkShotRole {
   const purpose = text(row.purpose);
@@ -92,12 +104,14 @@ export function buildBenchmarkAnalysis(input: {
   const shots: BenchmarkShot[] = details.map((raw, index) => {
     const row = recordOf(raw); const range = benchmarkTimeRange(row.time || row.timestamp);
     const media = recordOf(row.materialEvidence);
-    const explicitType = benchmarkMaterialType(row.materialType);
-    const materialType = explicitType === 'unknown' ? legacyMaterial(row) : explicitType;
+    const rawMaterialType = text(row.materialType);
+    const explicitType = benchmarkMaterialType(rawMaterialType);
+    const materialType = rawMaterialType === 'unknown' ? 'unknown'
+      : explicitType === 'unknown' ? legacyMaterial(row) : explicitType;
     const explicitRole = benchmarkShotRole(row.narrativeRole);
     const narrativeRole = index === 0 ? 'hook' : explicitRole === 'unknown' ? legacyRole(row) : explicitRole;
     const derived = (explicitType === 'unknown' && materialType !== 'unknown') || (index > 0 && explicitRole === 'unknown' && narrativeRole !== 'unknown');
-    const classificationEvidence = text(row.classificationEvidence) || (derived ? `依据已有描述整理：${text(row.visual)}${text(row.purpose) ? `；原镜头作用：${text(row.purpose)}` : ''}` : '');
+    const classificationEvidence = text(row.classificationEvidence) || (derived ? `依据已有描述整理：${legacyObservations(row).slice(0, 3).join('；')}${text(row.purpose) ? `；原镜头作用：${text(row.purpose)}` : ''}` : '');
     return { shotId: `shot_${index + 1}`, index: index + 1, time: text(row.time || row.timestamp),
       start: range?.start ?? null, end: range?.end ?? null,
       materialType, narrativeRole,
@@ -152,8 +166,13 @@ export function buildBenchmarkAnalysis(input: {
   const review = payload.geminiStatus === 'needs_review' || payload.analysisQuality === 'video_review_required'
     || (Array.isArray(payload.analysisReviewReasons) && payload.analysisReviewReasons.length > 0);
   if (review) gaps.push('源分析仍待复核');
-  const failed = Boolean(payload.analysisError) || ['failed', 'video_failed', 'analysis_retryable'].includes(text(payload.geminiStatus));
-  const pending = !failed && (Boolean(payload.requestedAnalysisMode) || ['queued', 'running', 'analyzing', 'paused', 'waiting_for_video'].includes(text(payload.geminiStatus)));
+  const progress = recordOf(payload.analysisProgress);
+  const progressStage = text(progress.stage);
+  const hasProgress = Boolean(progressStage);
+  const failed = progressStage === 'failed' || Boolean(payload.analysisError) || ['failed', 'video_failed', 'analysis_retryable'].includes(text(payload.geminiStatus));
+  const pending = !failed && (hasProgress
+    ? ['queued', 'downloading', 'transcoding', 'analyzing', 'extracting_evidence'].includes(progressStage)
+    : Boolean(payload.requestedAnalysisMode) || ['queued', 'running', 'analyzing', 'paused', 'waiting_for_video'].includes(text(payload.geminiStatus)));
   if (pending) gaps.push('分析尚未完成或已暂停');
   if (failed) gaps.push('源分析失败，需要重试');
   if (payload.analysisQuality !== 'video' || payload.geminiStatus !== 'analyzed') gaps.push('缺少已完成的原片分析状态');

@@ -58,6 +58,7 @@ const validItem = normalizeStoredPublishQueueItem({
   publishable: true,
   generationRecordId: 'script-v1',
   copyAudit: {
+    enterpriseFactVersion: 'enterprise-facts-v7-publishing',
     enterpriseFactsHash: 'a'.repeat(64),
     sourceHash: 'b'.repeat(64),
     outputHash: 'c'.repeat(64),
@@ -74,11 +75,13 @@ assert.equal(validItem.status, 'ready');
 assert.equal(validItem.sourceVideoPath, validItem.videoPath);
 assert.equal(studioGenerationIsVerified(validItem), true);
 assert.equal(validItem.copyAudit?.projectId, 'project-1');
+assert.equal(validItem.copyAudit?.enterpriseFactVersion, 'enterprise-facts-v7-publishing');
 assert.equal(studioGenerationIsVerified({ ...validItem, generationProvenance: 'manual_draft' }), false);
 assert.deepEqual(publishSourceRequestFields(validItem), {
   sourceKind: 'project', projectId: 'project-1', sourceVideoPath: validItem.videoPath,
   generationKind: 'script', generationProvenance: 'ai', qualityStatus: 'passed',
   publishable: true, generationRecordId: 'script-v1',
+  enterpriseFactVersion: 'enterprise-facts-v7-publishing', copyAudit: validItem.copyAudit,
 });
 assert.equal(publishSourceRequestFields({ ...validItem, sourceProjectId: undefined }).sourceKind, 'manual_upload');
 

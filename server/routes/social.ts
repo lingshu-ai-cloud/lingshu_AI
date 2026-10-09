@@ -29,7 +29,7 @@ import {
   getTenantAwareInstagramOAuthClient,
 } from '../lib/oauthConfig.js';
 import { parseOAuthState, signOAuthState } from '../lib/tenantPlatformApps.js';
-import { publishVideoToAccount } from '../publishing/platformPublisher.js';
+import { publishVideoToAccount, type PublishToAccountInput } from '../publishing/platformPublisher.js';
 import { socialUploadHttpResponse } from '../publishing/directPublishHttp.js';
 export { socialUploadHttpResponse } from '../publishing/directPublishHttp.js';
 import { saveSocialMetricSnapshot } from '../socialMetrics/store.js';
@@ -1009,7 +1009,7 @@ socialRouter.post('/accounts/:id/upload', async (req, res) => {
     res.status(400).json({ error: 'Account is not connected' });
     return;
   }
-  const body = req.body as SocialUploadInput & { videoPath?: string; projectId?: string; generationVersionId?: string; ratio?: string; contentId?: string; language?: string; trackWaLink?: boolean; generationKind?: 'script' | 'poster'; generationProvenance?: string; qualityStatus?: string; publishable?: boolean; generationRecordId?: string; sourceKind?: 'project' | 'manual_upload'; sourceVideoPath?: string };
+  const body = req.body as SocialUploadInput & { videoPath?: string; projectId?: string; generationVersionId?: string; ratio?: string; contentId?: string; language?: string; trackWaLink?: boolean; generationKind?: 'script' | 'poster'; generationProvenance?: string; qualityStatus?: string; publishable?: boolean; generationRecordId?: string; sourceKind?: 'project' | 'manual_upload'; sourceVideoPath?: string; enterpriseFactVersion?: string; copyAudit?: PublishToAccountInput['copyAudit'] };
   if (!body.title || (!body.videoPath && !body.videoUrl)) {
     res.status(400).json({ error: 'title and videoPath/videoUrl are required' });
     return;
@@ -1033,6 +1033,7 @@ socialRouter.post('/accounts/:id/upload', async (req, res) => {
       generationKind: body.generationKind, generationProvenance: body.generationProvenance,
       qualityStatus: body.qualityStatus, publishable: body.publishable, generationRecordId: body.generationRecordId,
       sourceKind: body.sourceKind, sourceVideoPath: body.sourceVideoPath,
+      enterpriseFactVersion: body.enterpriseFactVersion, copyAudit: body.copyAudit,
     });
     const response = socialUploadHttpResponse(result);
     res.status(response.statusCode).json(response.body);

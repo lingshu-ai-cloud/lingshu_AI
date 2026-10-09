@@ -7,6 +7,7 @@ import { AdProviderError, MetaAdsAdapter, validateMetaVideoInput } from './metaA
 import { executeTikTokWithinLock, reconcileTikTokWithinLock } from './tiktokExecution.js';
 import { executeGoogleWithinLock, reconcileGoogleWithinLock } from './googleExecution.js';
 import type { PlatformAdTaskLeaseGuard } from './taskLock.js';
+import { platformAdProposalFactIssue, platformAdProposalFactState } from './factVersion.js';
 export const AD_EXECUTIONS = 'platform_ad_executions';
 export type AdExecution = { id: string; tenant_id: string; taskId: string; requestId: string; action: string; connectionId: string; resourceId: string; status: string; createdAt: string; result?: unknown; error?: string; expectedDailyBudget?: number };
 const publicReceipt = ({ tenant_id: _tenant, ...receipt }: AdExecution) => receipt;
@@ -35,6 +36,23 @@ async function execute(tenantId: string, taskId: string, input: Record<string, u
     if (Number(input.expectedVersion) !== task.version) throw new AdProviderError('计划已变化，请刷新后重试', 'VERSION_CONFLICT');
     const action = String(input.action || '');
     if (!['create', 'activate', 'pause', 'resume', 'adjust_budget'].includes(action)) throw new AdProviderError('不支持该投放动作', 'INVALID_INPUT');
+    const factSensitiveAction = Boolean(task.proposal) && action !== 'pause';
+    const assertProposalFactsCurrent = async () => {
+      const factState = await platformAdProposalFactState(tenantId, task);
+      if (factState.status !== 'current') {
+        throw new AdProviderError(platformAdProposalFactIssue(factState), 'ENTERPRISE_FACT_VERSION_CONFLICT');
+      }
+    };
+    if (factSensitiveAction) await assertProposalFactsCurrent();
+    const effectLeaseGuard: PlatformAdTaskLeaseGuard = factSensitiveAction
+      ? { beforeEffect: async now => {
+        await leaseGuard.beforeEffect(now);
+        // Enterprise facts are not protected by the ad-task lease. Re-read the
+        // canonical version immediately before each provider interaction so a
+        // concurrent enterprise update cannot slip through the initial check.
+        await assertProposalFactsCurrent();
+      } }
+      : leaseGuard;
     const allReceipts = await listAdExecutions(tenantId, taskId);
     if (allReceipts.some(receipt => ['EXECUTING', 'PROVIDER_ACCEPTED', 'UNKNOWN'].includes(receipt.status))) throw new AdProviderError('存在待核对操作，请完成平台对账后再执行', 'RECONCILIATION_REQUIRED');
     if (action === 'create' && allReceipts.some(receipt => receipt.action === 'create' && receipt.status !== 'FAILED')) throw new AdProviderError('该任务已创建广告，请管理已有广告或建立独立预算任务', 'ALREADY_CREATED');
@@ -42,8 +60,8 @@ async function execute(tenantId: string, taskId: string, input: Record<string, u
     const { connection, accessToken } = await getConnectionCredential(tenantId, connectionId);
     assertAdReleaseAction(connection.provider, action);
     if (input.creativeId && (connection.provider !== 'meta' || action !== 'create' || mode !== 'manual')) throw new AdProviderError('绑定成片当前仅用于 Meta 人工创建', 'NOT_SUPPORTED');
-    if (connection.provider === 'tiktok') return executeTikTokWithinLock(tenantId, task, connection, accessToken, input, mode, allReceipts, leaseGuard);
-    if (connection.provider === 'google') return executeGoogleWithinLock(tenantId, task, connection, accessToken, input, mode, allReceipts, leaseGuard);
+    if (connection.provider === 'tiktok') return executeTikTokWithinLock(tenantId, task, connection, accessToken, input, mode, allReceipts, effectLeaseGuard);
+    if (connection.provider === 'google') return executeGoogleWithinLock(tenantId, task, connection, accessToken, input, mode, allReceipts, effectLeaseGuard);
     if (connection.provider !== 'meta') throw new AdProviderError('此平台执行适配尚未开放', 'NOT_SUPPORTED');
     if (connection.status !== 'connected') throw new AdProviderError('账户受限，请重新验证账户', 'AUTH_REQUIRED');
     if (task.currency !== connection.currency) throw new AdProviderError('任务与广告账户币种不一致', 'CURRENCY_MISMATCH');
@@ -93,7 +111,7 @@ async function execute(tenantId: string, taskId: string, input: Record<string, u
     if (action !== 'create' && (!resources.adsetId || !resources.adId)) throw new AdProviderError('完整广告组和广告尚未关联，无法执行', 'PREFLIGHT_REQUIRED');
     const dailyBudget = Number(input.dailyBudget);
     if (action === 'adjust_budget' && (!Number.isFinite(dailyBudget) || dailyBudget < 1 || dailyBudget > task.budget)) throw new AdProviderError('日预算必须在任务预算范围内', 'INVALID_INPUT');
-    const adapter = new MetaAdsAdapter(accessToken, fetch, () => leaseGuard.beforeEffect());
+    const adapter = new MetaAdsAdapter(accessToken, fetch, () => effectLeaseGuard.beforeEffect());
     if (action === 'activate' || action === 'resume') {
       const campaignBudget = await adapter.request(resourceId, { fields: 'spend_cap' });
       const adsetBudget = await adapter.request(resources.adsetId, { fields: 'daily_budget' });
@@ -115,7 +133,7 @@ async function execute(tenantId: string, taskId: string, input: Record<string, u
       if (!Number(campaign.spend_cap) || Number(campaign.spend_cap) / 100 > grant.maxTotalBudget) throw new AdProviderError('平台总预算上限高于授权额度，需人工调整', 'BUDGET_LIMIT');
     }
     const now = new Date().toISOString();
-    await leaseGuard.beforeEffect();
+    await effectLeaseGuard.beforeEffect();
     const receipt = await store.create<AdExecution>(AD_EXECUTIONS, { tenant_id: tenantId, taskId, requestId, action, connectionId, resourceId, status: 'EXECUTING', createdAt: now, ...(action === 'create' ? { result: creativeInput.evidence } : {}), expectedDailyBudget: action === 'adjust_budget' ? dailyBudget : 0 });
     if (!receipt) throw new AdProviderError('无法保存执行记录，未发起操作', 'STORAGE_ERROR');
     let accepted = false;

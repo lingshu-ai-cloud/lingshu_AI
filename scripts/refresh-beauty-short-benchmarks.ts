@@ -14,6 +14,7 @@ const BATCH_ID = 'beauty_tiktok_short_benchmarks_v1';
 const TARGET_ACCOUNTS = 5;
 const VIDEOS_PER_ACCOUNT = 2;
 const ROOT = process.cwd();
+const ANALYSIS_HEARTBEAT_MS = 30_000;
 
 type CandidateAccount = {
   accountUrl: string;
@@ -107,19 +108,45 @@ async function analyzeExactly(recordId: string, account: CandidateAccount): Prom
       tags: JSON.stringify([...new Set([...jsonArray(record.tags), 'B2B', '美妆OEM', '工厂', 'TikTok短视频'])]),
       status: 'pending',
       seedBatchId: BATCH_ID,
+      maintenanceHeartbeatAt: analysisStartedAt,
       aiAnalysis: JSON.stringify(curatedAnalysis),
     });
     if (!updated) throw new Error(`无法更新分析任务：${recordId}`);
     const analysisRecord = await store.getById<Record<string, unknown>>('trend_videos', recordId);
     if (!analysisRecord) throw new Error(`更新后无法读取分析任务：${recordId}`);
-    await analyzeSourceVideoJob({
-      record: analysisRecord,
-      sourceUrl,
-      title: String(analysisRecord.title || account.accountName),
-      platform: inferPlatformFromUrl(sourceUrl),
-      suppressOpsRequeue: true,
-      suppressVisibleBackfill: true,
-    });
+    let heartbeatWrite: Promise<void> = Promise.resolve();
+    const heartbeat = setInterval(() => {
+      heartbeatWrite = heartbeatWrite.then(async () => {
+        const latest = await store.getById<Record<string, unknown>>('trend_videos', recordId);
+        const latestAnalysis = jsonRecord(latest?.aiAnalysis);
+        if (latestAnalysis.analysisRunId !== analysisRunId
+          || latestAnalysis.analysisQueueKind !== 'maintenance_exact'
+          || latestAnalysis.analysisQueueState !== 'running') return;
+        // Keep the heartbeat outside aiAnalysis so it cannot race a stage or
+        // completion write by replacing that whole JSON blob with stale state.
+        const heartbeatAt = new Date().toISOString();
+        const persisted = await store.update<Record<string, unknown>>('trend_videos', recordId, {
+          maintenanceHeartbeatAt: heartbeatAt,
+        });
+        if (!persisted) throw new Error(`无法更新分析心跳：${recordId}`);
+      }).catch(error => {
+        console.warn(`记录 ${recordId} 分析心跳写入失败：${error instanceof Error ? error.message : error}`);
+      });
+    }, ANALYSIS_HEARTBEAT_MS);
+    heartbeat.unref();
+    try {
+      await analyzeSourceVideoJob({
+        record: analysisRecord,
+        sourceUrl,
+        title: String(analysisRecord.title || account.accountName),
+        platform: inferPlatformFromUrl(sourceUrl),
+        suppressOpsRequeue: true,
+        suppressVisibleBackfill: true,
+      });
+    } finally {
+      clearInterval(heartbeat);
+      await heartbeatWrite;
+    }
     const completed = await store.getById<Record<string, unknown>>('trend_videos', recordId);
     const completedAnalysis = jsonRecord(completed?.aiAnalysis);
     if (completedAnalysis.analysisMode === 'exact'

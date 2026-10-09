@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { BarChart3, Loader2, Send, X } from 'lucide-react';
+import { useMemo, useState } from 'react';
+import { Alert, Button, Input, Modal, Select } from 'antd';
 import type {
   RegisterSocialPublicationInput,
   SocialContentArtifact,
@@ -11,8 +11,8 @@ import { SOCIAL_CONTENT_MAX_TASK_FILE_BYTES, validateSocialContentFile } from '.
 import { socialContentCanRegisterPublication, socialContentCurrentDelivery } from '../../lib/socialContentModel';
 import { PLATFORM_OPTIONS, artifactKindLabel, optionLabel, packageVersionLabel } from './socialContentUi';
 
-const INPUT_CLASS = 'mt-1.5 h-11 w-full rounded-xl border border-border bg-white px-3 text-sm text-text-primary outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100';
-const TEXTAREA_CLASS = 'mt-1.5 w-full resize-y rounded-xl border border-border bg-white px-3 py-2.5 text-sm leading-6 text-text-primary outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100';
+const INPUT_CLASS = 'mt-1.5 w-full';
+const TEXTAREA_CLASS = 'mt-1.5 w-full';
 
 function nowForInput(): string {
   const now = new Date(Date.now() - new Date().getTimezoneOffset() * 60_000);
@@ -20,21 +20,12 @@ function nowForInput(): string {
 }
 
 function DialogFrame({ title, eyebrow, busy, onClose, children, footer }: { title: string; eyebrow: string; busy: boolean; onClose: () => void; children: React.ReactNode; footer: React.ReactNode }) {
-  const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => { window.setTimeout(() => ref.current?.focus(), 0); }, []);
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => { if (event.key === 'Escape' && !busy) onClose(); };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [busy, onClose]);
   return (
-    <div className="fixed inset-0 z-[190] flex items-center justify-center bg-slate-950/45 p-4 backdrop-blur-sm" onMouseDown={event => { if (event.target === event.currentTarget && !busy) onClose(); }}>
-      <div ref={ref} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="social-action-dialog-title" className="ui-modal-frame ui-modal-frame--compact outline-none">
-        <header className="flex items-start justify-between gap-3 border-b border-border px-5 py-4"><div><p className="text-[11px] font-bold text-emerald-700">{eyebrow}</p><h2 id="social-action-dialog-title" className="mt-1 text-lg font-black text-text-primary">{title}</h2></div><button type="button" disabled={busy} aria-label="关闭" onClick={onClose} className="rounded-lg p-2 text-text-muted hover:bg-surface-2"><X size={18} /></button></header>
-        <div className="min-h-0 flex-1 overflow-y-auto p-5">{children}</div>
-        <footer className="flex justify-end gap-2 border-t border-border px-5 py-4">{footer}</footer>
-      </div>
-    </div>
+    <Modal open title={title} width={640} onCancel={onClose} keyboard={!busy} closable={!busy} mask={{ closable: false }}
+      footer={<div className="flex justify-end gap-2">{footer}</div>} styles={{ body: { maxHeight: '70vh', overflowY: 'auto' } }}>
+      <p className="mb-5 text-sm text-text-secondary">{eyebrow}</p>
+      {children}
+    </Modal>
   );
 }
 
@@ -72,17 +63,17 @@ export function PublicationDialog({ task, busy, onClose, onSubmit }: { task: Soc
     }
   };
   return (
-    <DialogFrame title="登记发布结果" eyebrow={task.brief.title} busy={busy} onClose={onClose} footer={<><button type="button" disabled={busy} onClick={onClose} className="rounded-xl border border-border px-4 py-2.5 text-xs font-bold text-text-secondary">取消</button><button type="button" disabled={busy} onClick={() => void submit()} className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-5 py-2.5 text-xs font-black text-white disabled:opacity-50">{busy ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}保存发布记录</button></>}>
+    <DialogFrame title="登记发布结果" eyebrow={task.brief.title} busy={busy} onClose={onClose} footer={<><Button disabled={busy} onClick={onClose}>取消</Button><Button type="primary" loading={busy} onClick={() => void submit()}>保存发布记录</Button></>}>
       <div className="grid gap-4 sm:grid-cols-2">
-        <label className="text-xs font-bold text-text-secondary">交付版本<select value={packageId} onChange={event => setPackageId(event.target.value)} className={INPUT_CLASS}>{readyPackages.map(item => <option key={item.packageId} value={item.packageId}>{packageVersionLabel(item.version)}</option>)}</select></label>
-        <label className="text-xs font-bold text-text-secondary">发布平台<select value={platform} onChange={event => setPlatform(event.target.value)} className={INPUT_CLASS}>{[...new Set([...task.brief.platforms, ...PLATFORM_OPTIONS.map(item => item[0])])].map(value => <option key={value} value={value}>{optionLabel(PLATFORM_OPTIONS, value)}</option>)}</select></label>
-        <label className="text-xs font-bold text-text-secondary">账号名称<input value={accountLabel} onChange={event => setAccountLabel(event.target.value)} maxLength={120} placeholder="选填" className={INPUT_CLASS} /></label>
-        <label className="text-xs font-bold text-text-secondary">实际发布时间<input type="datetime-local" value={publishedAt} onChange={event => setPublishedAt(event.target.value)} className={INPUT_CLASS} /></label>
-        <label className="text-xs font-bold text-text-secondary sm:col-span-2">发布链接<input type="url" value={publicUrl} onChange={event => { setPublicUrl(event.target.value); setError(''); }} placeholder="https://" className={INPUT_CLASS} /></label>
-        <label className="text-xs font-bold text-text-secondary sm:col-span-2">平台作品编号<input value={platformPostId} onChange={event => { setPlatformPostId(event.target.value); setError(''); }} maxLength={200} placeholder="发布链接和作品编号至少填写一项" className={INPUT_CLASS} /></label>
-        <label className="text-xs font-bold text-text-secondary sm:col-span-2">备注<textarea value={notes} onChange={event => setNotes(event.target.value)} maxLength={1000} rows={3} placeholder="选填" className={TEXTAREA_CLASS} /></label>
+        <label className="text-xs font-bold text-text-secondary">交付版本<Select aria-label="交付版本" value={packageId} onChange={setPackageId} className={INPUT_CLASS} options={readyPackages.map(item => ({ value: item.packageId, label: packageVersionLabel(item.version) }))} /></label>
+        <label className="text-xs font-bold text-text-secondary">发布平台<Select aria-label="发布平台" value={platform} onChange={setPlatform} className={INPUT_CLASS} options={[...new Set([...task.brief.platforms, ...PLATFORM_OPTIONS.map(item => item[0])])].map(value => ({ value, label: optionLabel(PLATFORM_OPTIONS, value) }))} /></label>
+        <label className="text-xs font-bold text-text-secondary">账号名称<Input value={accountLabel} onChange={event => setAccountLabel(event.target.value)} maxLength={120} placeholder="选填" className={INPUT_CLASS} /></label>
+        <label className="text-xs font-bold text-text-secondary">实际发布时间<Input type="datetime-local" value={publishedAt} onChange={event => setPublishedAt(event.target.value)} className={INPUT_CLASS} /></label>
+        <label className="text-xs font-bold text-text-secondary sm:col-span-2">发布链接<Input type="url" value={publicUrl} onChange={event => { setPublicUrl(event.target.value); setError(''); }} placeholder="https://" className={INPUT_CLASS} /></label>
+        <label className="text-xs font-bold text-text-secondary sm:col-span-2">平台作品编号<Input value={platformPostId} onChange={event => { setPlatformPostId(event.target.value); setError(''); }} maxLength={200} placeholder="发布链接和作品编号至少填写一项" className={INPUT_CLASS} /></label>
+        <label className="text-xs font-bold text-text-secondary sm:col-span-2">备注<Input.TextArea value={notes} onChange={event => setNotes(event.target.value)} maxLength={1000} rows={3} placeholder="选填" className={TEXTAREA_CLASS} /></label>
       </div>
-      {error && <p role="alert" className="mt-4 rounded-xl bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">{error}</p>}
+      {error && <Alert className="mt-4" type="error" showIcon title={error} />}
     </DialogFrame>
   );
 }
@@ -99,9 +90,9 @@ export function ArtifactChangesDialog({ artifact, busy, onClose, onSubmit }: { a
     }
   };
   return (
-    <DialogFrame title="退回修改" eyebrow={`${artifactKindLabel(artifact.kind)} · ${packageVersionLabel(artifact.version)}`} busy={busy} onClose={onClose} footer={<><button type="button" disabled={busy} onClick={onClose} className="rounded-xl border border-border px-4 py-2.5 text-xs font-bold text-text-secondary">取消</button><button type="button" disabled={busy} onClick={() => void submit()} className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-5 py-2.5 text-xs font-black text-white disabled:opacity-50">{busy && <Loader2 size={14} className="animate-spin" />}提交修改要求</button></>}>
-      <label className="block text-xs font-bold text-text-secondary">修改要求<textarea autoFocus value={note} onChange={event => { setNote(event.target.value); setError(''); }} maxLength={2000} rows={6} placeholder="请说明需要修改的画面、文案、事实或平台版本" className={TEXTAREA_CLASS} /></label>
-      {error && <p role="alert" className="mt-4 rounded-xl bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">{error}</p>}
+    <DialogFrame title="退回修改" eyebrow={`${artifactKindLabel(artifact.kind)} · ${packageVersionLabel(artifact.version)}`} busy={busy} onClose={onClose} footer={<><Button disabled={busy} onClick={onClose}>取消</Button><Button type="primary" loading={busy} onClick={() => void submit()}>提交修改要求</Button></>}>
+      <label className="block text-xs font-bold text-text-secondary">修改要求<Input.TextArea autoFocus value={note} onChange={event => { setNote(event.target.value); setError(''); }} maxLength={2000} rows={6} placeholder="请说明需要修改的画面、文案、事实或平台版本" className={TEXTAREA_CLASS} /></label>
+      {error && <Alert className="mt-4" type="error" showIcon title={error} />}
     </DialogFrame>
   );
 }
@@ -118,10 +109,10 @@ export function ArtifactBatchChangesDialog({ count, busy, onClose, onSubmit }: {
     }
   };
   return (
-    <DialogFrame title="批量退回修改" eyebrow={`本批 ${count} 项内容`} busy={busy} onClose={onClose} footer={<><button type="button" disabled={busy} onClick={onClose} className="rounded-xl border border-border px-4 py-2.5 text-xs font-bold text-text-secondary">取消</button><button type="button" disabled={busy} onClick={() => void submit()} className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-5 py-2.5 text-xs font-black text-white disabled:opacity-50">{busy && <Loader2 size={14} className="animate-spin" />}提交本批修改</button></>}>
-      <label className="block text-xs font-bold text-text-secondary">本批统一修改要求<textarea autoFocus value={note} onChange={event => { setNote(event.target.value); setError(''); }} maxLength={2000} rows={6} placeholder="例如：本批开头过于像广告，保留产品事实，统一改为客户问题切入" className={TEXTAREA_CLASS} /></label>
+    <DialogFrame title="批量退回修改" eyebrow={`本批 ${count} 项内容`} busy={busy} onClose={onClose} footer={<><Button disabled={busy} onClick={onClose}>取消</Button><Button type="primary" loading={busy} onClick={() => void submit()}>提交本批修改</Button></>}>
+      <label className="block text-xs font-bold text-text-secondary">本批统一修改要求<Input.TextArea autoFocus value={note} onChange={event => { setNote(event.target.value); setError(''); }} maxLength={2000} rows={6} placeholder="例如：本批开头过于像广告，保留产品事实，统一改为客户问题切入" className={TEXTAREA_CLASS} /></label>
       <p className="mt-3 text-xs leading-5 text-text-muted">这条要求会应用到本批所有待验收内容；单项例外可在内容创作页单独处理。</p>
-      {error && <p role="alert" className="mt-4 rounded-xl bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">{error}</p>}
+      {error && <Alert className="mt-4" type="error" showIcon title={error} />}
     </DialogFrame>
   );
 }
@@ -172,17 +163,17 @@ export function MetricsDialog({ task, busy, onClose, onSubmit }: { task: SocialC
     }
   };
   return (
-    <DialogFrame title="回传发布数据" eyebrow={task.brief.title} busy={busy} onClose={onClose} footer={<><button type="button" disabled={busy} onClick={onClose} className="rounded-xl border border-border px-4 py-2.5 text-xs font-bold text-text-secondary">取消</button><button type="button" disabled={busy} onClick={() => void submit()} className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-5 py-2.5 text-xs font-black text-white disabled:opacity-50">{busy ? <Loader2 size={14} className="animate-spin" /> : <BarChart3 size={14} />}保存数据</button></>}>
+    <DialogFrame title="回传发布数据" eyebrow={task.brief.title} busy={busy} onClose={onClose} footer={<><Button disabled={busy} onClick={onClose}>取消</Button><Button type="primary" loading={busy} onClick={() => void submit()}>保存数据</Button></>}>
       <div className="grid gap-4 sm:grid-cols-2">
-        <label className="text-xs font-bold text-text-secondary sm:col-span-2">发布记录<select value={publicationId} onChange={event => setPublicationId(event.target.value)} className={INPUT_CLASS}><option value="">请选择</option>{task.publications.map(item => <option key={item.publicationId} value={item.publicationId}>{optionLabel(PLATFORM_OPTIONS, item.platform)} · {new Date(item.publishedAt).toLocaleDateString('zh-CN')}</option>)}</select></label>
-        {selectedPublication && <div className="sm:col-span-2 rounded-xl bg-surface-2 px-3 py-2 text-xs text-text-secondary">{selectedPublication.accountLabel || optionLabel(PLATFORM_OPTIONS, selectedPublication.platform)}{selectedPublication.publicUrl ? ` · ${selectedPublication.publicUrl}` : ''}</div>}
-        <label className="text-xs font-bold text-text-secondary">数据时间<input type="datetime-local" value={capturedAt} onChange={event => setCapturedAt(event.target.value)} className={INPUT_CLASS} /></label>
-        <label className="text-xs font-bold text-text-secondary">回传方式<select value={method} onChange={event => { setMethod(event.target.value as SocialMetricSubmission['method']); setEvidenceFiles([]); setError(''); }} className={INPUT_CLASS}><option value="manual">手工填写</option><option value="link">发布链接</option><option value="platform_id">作品编号</option><option value="table">上传表格</option><option value="screenshot">上传截图</option></select></label>
-        {(method === 'table' || method === 'screenshot') && <label className="text-xs font-bold text-text-secondary sm:col-span-2">{method === 'table' ? '数据表格' : '数据截图'}<span className="mt-1.5 flex min-h-20 cursor-pointer items-center justify-center rounded-xl border border-dashed border-emerald-300 bg-emerald-50/40 px-4 text-center text-xs font-bold text-emerald-800"><input type="file" multiple={method === 'screenshot'} accept={method === 'table' ? '.csv,.xlsx' : '.jpg,.jpeg,.png,.webp,.gif'} className="sr-only" onChange={event => { selectEvidence(event.target.files); event.currentTarget.value = ''; }} />{evidenceFiles.length > 0 ? evidenceFiles.map(file => file.name).join('、') : method === 'table' ? '选择 CSV 或 XLSX 文件，单个不超过 110 MB' : '选择图片，单个不超过 110 MB'}</span></label>}
-        {METRIC_FIELDS.map(([key, label]) => <label key={key} className="text-xs font-bold text-text-secondary">{label}<input type="number" min={0} step={1} value={metrics[key] || ''} onChange={event => { setMetrics(current => ({ ...current, [key]: event.target.value })); setError(''); }} placeholder="未获取可留空" className={INPUT_CLASS} /></label>)}
-        <label className="text-xs font-bold text-text-secondary sm:col-span-2">备注<textarea value={notes} onChange={event => setNotes(event.target.value)} maxLength={1000} rows={3} placeholder="选填" className={TEXTAREA_CLASS} /></label>
+        <label className="text-xs font-bold text-text-secondary sm:col-span-2">发布记录<Select aria-label="发布记录" value={publicationId || undefined} placeholder="请选择" onChange={setPublicationId} className={INPUT_CLASS} options={task.publications.map(item => ({ value: item.publicationId, label: `${optionLabel(PLATFORM_OPTIONS, item.platform)} · ${new Date(item.publishedAt).toLocaleDateString('zh-CN')}` }))} /></label>
+        {selectedPublication && <div className="sm:col-span-2 rounded-lg bg-surface-2 px-3 py-2 text-xs text-text-secondary">{selectedPublication.accountLabel || optionLabel(PLATFORM_OPTIONS, selectedPublication.platform)}{selectedPublication.publicUrl ? ` · ${selectedPublication.publicUrl}` : ''}</div>}
+        <label className="text-xs font-bold text-text-secondary">数据时间<Input type="datetime-local" value={capturedAt} onChange={event => setCapturedAt(event.target.value)} className={INPUT_CLASS} /></label>
+        <label className="text-xs font-bold text-text-secondary">回传方式<Select aria-label="回传方式" value={method} onChange={value => { setMethod(value as SocialMetricSubmission['method']); setEvidenceFiles([]); setError(''); }} className={INPUT_CLASS} options={[{ value: 'manual', label: '手工填写' }, { value: 'link', label: '发布链接' }, { value: 'platform_id', label: '作品编号' }, { value: 'table', label: '上传表格' }, { value: 'screenshot', label: '上传截图' }]} /></label>
+        {(method === 'table' || method === 'screenshot') && <label className="text-xs font-bold text-text-secondary sm:col-span-2">{method === 'table' ? '数据表格' : '数据截图'}<span className="mt-1.5 flex min-h-20 cursor-pointer items-center justify-center rounded-lg border border-dashed border-emerald-300 bg-emerald-50/40 px-4 text-center text-xs font-bold text-emerald-800"><input type="file" multiple={method === 'screenshot'} accept={method === 'table' ? '.csv,.xlsx' : '.jpg,.jpeg,.png,.webp,.gif'} className="sr-only" onChange={event => { selectEvidence(event.target.files); event.currentTarget.value = ''; }} />{evidenceFiles.length > 0 ? evidenceFiles.map(file => file.name).join('、') : method === 'table' ? '选择 CSV 或 XLSX 文件，单个不超过 110 MB' : '选择图片，单个不超过 110 MB'}</span></label>}
+        {METRIC_FIELDS.map(([key, label]) => <label key={key} className="text-xs font-bold text-text-secondary">{label}<Input type="number" min={0} step={1} value={metrics[key] || ''} onChange={event => { setMetrics(current => ({ ...current, [key]: event.target.value })); setError(''); }} placeholder="未获取可留空" className={INPUT_CLASS} /></label>)}
+        <label className="text-xs font-bold text-text-secondary sm:col-span-2">备注<Input.TextArea value={notes} onChange={event => setNotes(event.target.value)} maxLength={1000} rows={3} placeholder="选填" className={TEXTAREA_CLASS} /></label>
       </div>
-      {error && <p role="alert" className="mt-4 rounded-xl bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">{error}</p>}
+      {error && <Alert className="mt-4" type="error" showIcon title={error} />}
     </DialogFrame>
   );
 }

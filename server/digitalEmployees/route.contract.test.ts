@@ -76,6 +76,9 @@ assert.doesNotMatch(approveGoal, /missing_required_resources|publishing_accounts
 assert.match(approveGoal, /active_goal_exists/, 'a tenant must not start overlapping active weekly goals');
 assert.match(approveGoal, /detailedMasters\.some\(item => item\.preproduction\?\.readiness\.canStart\)/, 'one ready master must allow independent content production to start');
 assert.match(approveGoal, /package_details_blocked/, 'activation must still fail when no master is production-ready');
+assert.match(approveGoal, /savedFactsVersion !== canonicalFactsVersion/, 'a new run must compare the draft fact label with the canonical enterprise fact version');
+assert.match(approveGoal, /enterprise_facts_changed/, 'a stale fact version must stop activation instead of relabeling old plan facts');
+assert.match(approveGoal, /knowledgeBinding: resolvedConfiguration\.knowledgeBinding/, 'legacy drafts without a frozen payload must bind the canonical snapshot before the run starts');
 
 const streamRoute = routeBlock("digitalEmployeesRouter.get('/runs/:runId/stream'");
 assert.match(streamRoute, /tenantRecord<RunRecord>/, 'SSE subscriptions must verify run ownership before streaming');
@@ -162,6 +165,8 @@ assert.match(source, /runScheduledTaskNow/, 'the first scheduled collection must
 assert.match(source, /ensureContentBatchPlan/, 'content mode routing must persist a real content batch plan');
 assert.match(source, /type: 'content_order'/, 'content mode routing must persist auditable content-order refs');
 assert.match(source, /batchPlanId: batchPlan\.id, contentOrders:/, 'content production must consume the frozen batch plan orders');
+assert.match(source, /ensureFrozenEnterpriseProfileForRun/, 'active runs must resolve enterprise and product facts from their frozen plan snapshot');
+assert.match(source, /enterpriseProfile: await frozenRunFacts\(\)/, 'content production and follow-up drafting must receive the frozen run facts explicitly');
 assert.match(source, /metadata\.executionMode === 'observe' \|\| metadata\.executionMode === 'draft_executor'/, 'draft production must use an explicit executor mode rather than masquerading as observation');
 assert.match(source, /record\.status === 'ready_for_approval'/, 'completed production and published delivery must remain separate states');
 

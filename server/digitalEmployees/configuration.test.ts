@@ -3,6 +3,8 @@ import {
   automaticExecutionAllowed,
   approvalRequiredFor,
   configurationSnapshot,
+  enterpriseProfileFromKnowledgeBinding,
+  knowledgeBindingFactState,
   parseFollowupCadence,
   parseReviewSchedule,
   parseSocialCadence,
@@ -32,10 +34,11 @@ const resolved = resolveDigitalEmployeeConfiguration({
     },
   },
   enterpriseProfile: {
+    factVersion: { id: 'enterprise-facts-v12-canonical', revision: 12, contentHash: 'canonical-hash' },
     company: { name: '知识库企业', industry: '机器人', mainMarkets: '美国', description: '仓储机器人' },
     strategy: { focusMarkets: '德国、法国', focusProducts: 'RB-100' },
     customers: { targetProfiles: '海外仓负责人' },
-    products: { items: [{ sku: 'RB-100', name: '搬运机器人' }, { sku: 'RB-200', name: '分拣机器人' }] },
+    products: { items: [{ sku: 'RB-100', name: '搬运机器人', material: '304 steel', images: [{ name: 'front', type: 'image/png', size: 12, updatedAt: '2026-09-04', url: '/api/overseas/enterprise/assets/rb-100.png' }] }, { sku: 'RB-200', name: '分拣机器人' }] },
   },
 });
 
@@ -44,6 +47,7 @@ assert.equal(resolved.config.targetMarkets, '德国、法国');
 assert.equal(resolved.config.customerProfile, '海外仓负责人');
 assert.equal(resolved.config.focusProducts, 'RB-100');
 assert.equal(resolved.configVersion, 7);
+assert.equal(resolved.knowledgeBinding.factsVersion, 'enterprise-facts-v12-canonical', 'digital employees must bind the canonical confirmed enterprise fact version');
 assert.equal(resolved.knowledgeBinding.references.products[0]?.sku, 'RB-100');
 assert.equal(resolved.runtimePolicy.agents.industry.collection.time, '08:30');
 assert.equal(resolved.runtimePolicy.agents.industry.collection.maxItems, 35);
@@ -64,6 +68,32 @@ assert.equal(snapshot.configVersion, 7);
 assert.equal(snapshot.configSnapshot.allowGeneratedVisuals, false, 'generated visuals consent must be frozen explicitly and default off');
 assert.equal(snapshot.knowledgeBinding.factsVersion, resolved.knowledgeBinding.factsVersion);
 assert.equal(snapshot.runtimePolicy.agents.industry.collection.maxItems, 35);
+const frozenProfile = enterpriseProfileFromKnowledgeBinding(snapshot.knowledgeBinding);
+assert.equal(frozenProfile?.products?.items?.[0]?.material, '304 steel', 'the run snapshot must retain complete product facts, not only display labels');
+assert.equal((frozenProfile?.products?.items?.[0]?.images as Array<{ url: string }> | undefined)?.[0]?.url, '/api/overseas/enterprise/assets/rb-100.png', 'the product asset facts used by production must be frozen with the version');
+assert.equal(enterpriseProfileFromKnowledgeBinding(JSON.parse(JSON.stringify(snapshot.knowledgeBinding)))?.products?.items?.[0]?.name, '搬运机器人', 'the snapshot hash must survive its JSON storage round trip');
+assert.equal(knowledgeBindingFactState(snapshot.knowledgeBinding, {
+  factVersion: { id: 'enterprise-facts-v12-canonical' },
+}), 'current');
+assert.equal(knowledgeBindingFactState(snapshot.knowledgeBinding, {
+  factVersion: { id: 'enterprise-facts-v13-canonical' },
+}), 'stale', 'a new run must compare its saved binding to the canonical enterprise version');
+
+const mismatchedBinding = structuredClone(snapshot.knowledgeBinding);
+mismatchedBinding.enterpriseSnapshot.factsVersion = 'enterprise-facts-v13-canonical';
+assert.equal(enterpriseProfileFromKnowledgeBinding(mismatchedBinding), null, 'a run must fail closed when the fact label and frozen payload disagree');
+
+const relabeledPayload = structuredClone(snapshot.knowledgeBinding);
+relabeledPayload.enterpriseSnapshot.profile.products!.items![0]!.name = '未更新版本标签的新名称';
+assert.equal(enterpriseProfileFromKnowledgeBinding(relabeledPayload), null, 'a frozen payload cannot change while retaining the old fact label and snapshot hash');
+
+const changedLiveProfile = structuredClone(frozenProfile!);
+changedLiveProfile.products!.items![0]!.name = '当前资料中的新名称';
+assert.equal(
+  enterpriseProfileFromKnowledgeBinding(snapshot.knowledgeBinding)?.products?.items?.[0]?.name,
+  '搬运机器人',
+  'active-run facts remain unchanged when the live enterprise profile changes',
+);
 
 assert.deepEqual(parseSocialCadence('Instagram；每天 7:05；近 3 天；每次 9 条；每周 2 条'), {
   raw: 'Instagram；每天 7:05；近 3 天；每次 9 条；每周 2 条', platforms: ['instagram'], time: '07:05', lookbackDays: 3, maxItems: 9, dedupeDays: 30, draftsPerWeek: 2,
@@ -88,5 +118,19 @@ const changedFacts = resolveDigitalEmployeeConfiguration({
   enterpriseProfile: { ...resolved.knowledgeBinding.snapshot, company: { name: '新名称' } } as never,
 });
 assert.notEqual(changedFacts.knowledgeBinding.factsVersion, resolved.knowledgeBinding.factsVersion);
+
+const changedSnapshotSameCanonicalVersion = resolveDigitalEmployeeConfiguration({
+  configVersion: 7,
+  config: resolved.config,
+  enterpriseProfile: {
+    factVersion: { id: 'enterprise-facts-v12-canonical', revision: 12, contentHash: 'canonical-hash' },
+    company: { name: '内存中的陈旧名称' },
+  },
+});
+assert.equal(
+  changedSnapshotSameCanonicalVersion.knowledgeBinding.factsVersion,
+  'enterprise-facts-v12-canonical',
+  'downstream snapshots must retain the enterprise center fact version instead of minting a parallel version',
+);
 
 console.log('digital employee configuration tests passed');

@@ -1,14 +1,19 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { buildBenchmarkAnalysis, benchmarkMaterialType, benchmarkTimeRange, normalizeBenchmarkAnalysisSnapshot, recordOf } from './benchmarkAnalysis.js';
+import { MATERIAL_TYPE_LABELS, buildBenchmarkAnalysis, benchmarkMaterialType, benchmarkTimeRange, normalizeBenchmarkAnalysisSnapshot, recordOf } from './benchmarkAnalysis.js';
 import { benchmarkVideoFixture, lightingBenchmarkFixture } from '../tests/fixtures/benchmarkVideo.js';
 
 const build = (analysis = benchmarkVideoFixture()) => buildBenchmarkAnalysis({ analysis, videoId: 'video-fixture', duration: 9, evidenceRevision: 'revision' });
 test('nine shots remain nine when a speech line covers six shots', () => {
   const result = build();
+  assert.deepEqual(MATERIAL_TYPE_LABELS, {
+    talking_head: '真人口播', factory: '工厂实拍', product: '产品实拍',
+    consumer_demo: 'D2C', general: '其他通用素材', unknown: '待判断',
+  });
   assert.equal(result.status, 'ready'); assert.equal(result.totalShots, 9);
   assert.equal(result.speechGroups.length, 3); assert.equal(result.speechGroups[2].shotIds.length, 6);
   assert.equal(result.materialCounts.product, 5); assert.equal(result.materialCounts.consumer_demo, 1);
+  assert.equal(result.materialCounts.general, 0);
   assert.equal(result.structure[2].shotIds.length, 5);
   assert.equal(result.shots[0].materialType, 'talking_head', 'factory background does not override the visible speaker');
   assert.equal(result.hookShotId, 'shot_1');
@@ -23,12 +28,30 @@ test('legacy visible actions are mapped transparently without clearing review', 
   assert.equal(result.status, 'partial'); assert.equal(result.shots[0].materialType, 'talking_head');
   assert.equal(result.shots[0].classificationSource, 'legacy_evidence');
   assert.equal(result.shots[1].materialType, 'factory'); assert.equal(result.hookShotId, 'shot_1');
+  assert.equal(benchmarkMaterialType('general'), 'general');
   assert.equal(benchmarkMaterialType('toString'), 'unknown');
+});
+
+test('general is a real fifth material type while unknown remains evidence uncertainty', () => {
+  const result = buildBenchmarkAnalysis({ analysis: { gemini: { scriptDetails15s: [
+    { time: '0-1s', visual: '办公室窗边的绿植与桌面道具' },
+    { time: '1-2s', visual: '画面内容无法确认', materialType: 'unknown', classificationEvidence: '' },
+    { time: '2-3s', visual: '品牌图形转场', materialType: 'general', classificationEvidence: '画面为图形转场，不属于口播、工厂、产品或消费者演示' },
+    { time: '3-4s', visual: '未分析' },
+    { time: '4-5s', visual: '', observedFacts: ['未知', '户外街景中车辆经过'] },
+  ] } } });
+  assert.deepEqual(result.shots.map(shot => shot.materialType), ['general', 'unknown', 'general', 'unknown', 'general']);
+  assert.equal(result.shots[0].classificationSource, 'legacy_evidence');
+  assert.equal(result.shots[1].needsReview, true);
+  assert.equal(result.materialCounts.general, 3);
+  assert.equal(result.materialCounts.unknown, 2);
 });
 test('failed, review and pending source states cannot reuse an old ready analysis', () => {
   assert.equal(build({ ...benchmarkVideoFixture(), analysisError: 'timeout' }).status, 'failed');
   assert.equal(build({ ...benchmarkVideoFixture(), geminiStatus: 'needs_review' }).status, 'needs_review');
   assert.equal(build({ ...benchmarkVideoFixture(), requestedAnalysisMode: 'exact' }).status, 'pending');
+  assert.equal(build({ ...benchmarkVideoFixture(), requestedAnalysisMode: 'exact', analysisProgress: { stage: 'failed' } }).status, 'failed', 'server progress overrides a stale requested mode');
+  assert.equal(build({ ...benchmarkVideoFixture(), requestedAnalysisMode: 'exact', analysisProgress: { stage: 'completed' } }).status, 'ready', 'completed server progress overrides a stale requested mode');
   assert.equal(build({ ...benchmarkVideoFixture(), analysisMode: 'strategy' }).totalShots, null);
   assert.equal(build({ ...benchmarkVideoFixture(), analysisMode: 'strategy' }).status, 'partial');
 });
@@ -59,7 +82,7 @@ test('media evidence only retains the existing source-video scoped route', () =>
   assert.ok(result.shots[1].firstFrameRef); assert.ok(!JSON.stringify(result).includes('secret'));
 });
 
-test('legacy microphone presenter is classified, factory setting alone remains unknown', () => {
+test('legacy microphone presenter is classified and a concrete background becomes general footage', () => {
   const result = buildBenchmarkAnalysis({ analysis: { gemini: { scriptDetails15s: [
     { time: '0-3.4s', visual: '女主播穿米白连衣裙，手持黑色麦克风与绿色吊灯，面带微笑挥手' },
     { time: '3.4-9s', visual: '厂房背景与窗户' },
@@ -67,7 +90,7 @@ test('legacy microphone presenter is classified, factory setting alone remains u
   assert.equal(result.shots[0].materialType, 'talking_head');
   assert.equal(result.shots[0].narrativeRole, 'hook');
   assert.equal(result.shots[0].needsReview, true);
-  assert.equal(result.shots[1].materialType, 'unknown');
+  assert.equal(result.shots[1].materialType, 'general');
 });
 
 test('existing lighting reference uses presenter evidence and factory actions for all six shots', () => {

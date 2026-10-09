@@ -1,7 +1,7 @@
 import { resolveTenantFollowupTemplate } from '../whatsapp/templates.js';
 import { withDigitalEmployeeRunLock } from './runControl.js';
 import { callLLM } from '../agents/llm.js';
-import { readTenantEnterpriseProfile } from '../routes/enterprise.js';
+import { readTenantEnterpriseProfile, type EnterpriseProfile } from '../routes/enterprise.js';
 import { createHash } from 'node:crypto';
 import { guardOutboundSync } from '../autonomy/outboundGuard.js';
 import { store } from '../storage/index.js';
@@ -476,6 +476,8 @@ export async function createFollowupBatch(input: {
   deliveryPolicy?: Partial<FollowupDeliveryPolicy>;
   revisionNote?: string;
   draftOverrides?: Record<string, string>;
+  /** Frozen run input. Active runs must not rebuild drafts from live facts. */
+  enterpriseProfile?: EnterpriseProfile;
 }, customersForTenant: (tenantId: string) => Array<Record<string, unknown>> = getWhatsAppCustomers): Promise<{ batch: FollowupBatchRecord; items: FollowupBatchItemRecord[]; created: boolean }> {
   if (input.idempotent !== false) {
     const existing = await store.list<FollowupBatchRecord>(COLLECTION.batches, {
@@ -498,7 +500,9 @@ export async function createFollowupBatch(input: {
     && Boolean(item.provider_message_id || item.sent_at)
     && Date.parse(item.sent_at || '') >= frequencyCutoff
   )).length;
-  const profile = await readTenantEnterpriseProfile(input.tenantId);
+  const profile = input.enterpriseProfile
+    ? structuredClone(input.enterpriseProfile)
+    : await readTenantEnterpriseProfile(input.tenantId);
   const facts = JSON.stringify({ company: profile.company, products: profile.products, knowledge: profile.knowledge }).slice(0, 10000);
   const generatedBodies = new Map<string, { body: string; error: string }>();
   for (let offset = 0; offset < members.length; offset += 2) {

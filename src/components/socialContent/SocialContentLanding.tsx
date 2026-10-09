@@ -1,4 +1,5 @@
-import { ArrowRight, Scissors, TrendingUp, X, type LucideIcon } from 'lucide-react';
+import { ArrowRight, Scissors, TrendingUp, type LucideIcon } from 'lucide-react';
+import { Modal } from 'antd';
 import type {
   SocialContentCreationPath,
   SocialContentMaterialInput,
@@ -25,16 +26,16 @@ const CREATION_PATHS: CreationPathCard[] = [
     title: '自由创作',
     description: '系统从“我的素材”和企业中心自动组织内容，你只需选择要宣传的产品。',
     icon: Scissors,
-    tint: 'border-emerald-200 bg-gradient-to-br from-emerald-50 via-white to-[#e8f4ed] hover:border-emerald-300',
-    iconTint: 'text-emerald-800',
+    tint: 'border-border bg-surface hover:border-accent hover:bg-surface-2',
+    iconTint: 'text-accent',
   },
   {
     id: 'viral_replication',
     title: '爆款复刻',
     description: '沿用爆款口播与结构，仅替换企业、品牌和产品名称，再自动匹配制作。',
     icon: TrendingUp,
-    tint: 'border-orange-200 bg-gradient-to-br from-orange-50 via-white to-[#f7eadb] hover:border-orange-300',
-    iconTint: 'text-orange-800',
+    tint: 'border-border bg-surface hover:border-accent hover:bg-surface-2',
+    iconTint: 'text-accent',
   },
 ];
 
@@ -48,18 +49,9 @@ export default function SocialContentLanding({
   onClose?: () => void;
 }) {
   return (
-    <div className="fixed inset-0 z-[175] flex items-center justify-center bg-slate-950/35 p-4 backdrop-blur-[2px]" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) onClose(); }}>
-      <section role="dialog" aria-modal="true" aria-labelledby="social-creation-path-title" className="ui-modal-frame ui-modal-frame--compact">
-        <div className="flex items-start justify-between gap-4 border-b border-slate-100 bg-gradient-to-r from-[#f2fbf7] via-white to-[#f6f3ff] p-5 sm:p-6">
-          <div>
-            <p className="text-[11px] font-black tracking-[0.12em] text-text-muted">第一步</p>
-            <h2 id="social-creation-path-title" className="mt-2 text-2xl font-black text-[#173d31]">你想怎么制作？</h2>
-            <p className="mt-2 text-xs leading-5 text-text-muted">选择一种方式，进入逐句口播与画面制作台。</p>
-          </div>
-          <button type="button" aria-label="收起制作方式" title="收起" onClick={onClose} className="rounded-xl p-2 text-text-muted hover:bg-surface-2 hover:text-text-primary"><X size={19} /></button>
-        </div>
-
-        <div className="ui-modal-body ui-choice-grid p-5 sm:p-6">
+    <Modal open title="选择内容制作方式" onCancel={onClose} footer={null} width={640} centered>
+        <p className="mb-5 text-sm leading-6 text-text-secondary">选择一种方式，进入逐句口播与画面制作台。</p>
+        <div className="grid gap-3">
           {CREATION_PATHS.map(path => {
             const Icon = path.icon;
             return (
@@ -73,21 +65,20 @@ export default function SocialContentLanding({
                   }
                   onStart({ creationPath: path.id, materialInput: path.id === 'viral_replication' ? 'ready' : 'none', managedMode: 'one_click_managed' });
                 }}
-                className={`group rounded-2xl border p-5 text-left transition hover:-translate-y-0.5 hover:shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/30 ${path.tint}`}
+                className={`group rounded-lg border p-5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 ${path.tint}`}
               >
                 <span className="flex items-start gap-4">
-                  <span className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-full border border-current/15 bg-white/80 ${path.iconTint}`}><Icon size={22} /></span>
+                  <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-surface-2 ${path.iconTint}`}><Icon size={20} /></span>
                   <span className="min-w-0 flex-1">
-                    <strong className="text-lg font-black text-[#173d31]">{path.title}</strong>
+                    <strong className="text-base font-semibold text-text-primary">{path.title}</strong>
                     <span className="mt-2 block text-xs leading-5 text-text-secondary">{path.description}</span>
-                    <span className="mt-4 inline-flex items-center gap-1.5 text-xs font-black text-[#173d31]">进入制作 <ArrowRight size={14} className="transition group-hover:translate-x-1" /></span>
+                    <span className="mt-4 inline-flex items-center gap-1.5 text-sm font-medium text-accent">进入制作 <ArrowRight size={14} /></span>
                   </span>
                 </span>
               </button>
             );
           })}
         </div>
-      </section>
-    </div>
+    </Modal>
   );
 }

@@ -1,7 +1,9 @@
-import { useState, useEffect, useId, useRef } from 'react';
+import { cloneElement, isValidElement, useState, useEffect, useId, useRef } from 'react';
+import { Alert, Button, Checkbox, Form, Input, Modal, Pagination, Select, Tabs, Upload as AntUpload } from 'antd';
+import LsPageHeader from './ui/LsPageHeader';
+import { LsGradientProgress } from './ui/LsExperiencePrimitives';
 import EnterprisePresenters from './enterprise/EnterprisePresenters';
 import EnterprisePresenterRouting from './enterprise/EnterprisePresenterRouting';
-import { motion } from 'motion/react';
 import { Building2, Package, Megaphone, BookOpen, Save, CheckCircle2, Loader2, Compass, Zap, MessageSquare, RotateCcw, Plus, Upload, X, Image, FileText, FileSpreadsheet, Bell, ChevronDown, ChevronLeft, ChevronRight, Globe2, ShieldCheck, ArrowRight, Users, Clapperboard, type LucideIcon } from 'lucide-react';
 import { authHeader } from '../lib/auth';
 import { completeDemoStep } from '../lib/demoProgress';
@@ -492,116 +494,37 @@ export function enterpriseProfileCompleteness(profile: Profile): {
 }
 
 function Toggle({ checked, onChange, disabled }: { checked: boolean; onChange: (checked: boolean) => void; disabled?: boolean }) {
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={checked}
-      disabled={disabled}
-      onClick={() => onChange(!checked)}
-      className={`relative h-6 w-11 shrink-0 rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60 ${checked ? 'bg-emerald-500' : 'bg-slate-300'}`}
-    >
-      <span className={`absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform ${checked ? 'translate-x-5' : 'translate-x-0'}`} />
-    </button>
-  );
+  return <Checkbox checked={checked} disabled={disabled} onChange={event => onChange(event.target.checked)} />;
 }
 
-function OptionSelector({ value, options, onChange, multiple = true, placeholder = '请选择' }: {
+function OptionSelector({ id, value, options, onChange, multiple = true, placeholder = '请选择' }: {
+  id?: string;
   value: string;
   options: string[];
   onChange: (value: string) => void;
   multiple?: boolean;
   placeholder?: string;
 }) {
-  const selectorId = useId();
-  const menuId = `${selectorId}-menu`;
-  const rootRef = useRef<HTMLDivElement>(null);
-  const [open, setOpen] = useState(false);
   const tokens = splitTokens(value);
   const customTokens = tokens.filter(item => !options.includes(item));
-  const toggleOpen = () => setOpen(current => !current);
-
-  const choose = (option: string) => {
-    if (!multiple) {
-      onChange(option);
-      return;
-    }
-    const next = tokens.includes(option) ? tokens.filter(item => item !== option) : [...tokens, option];
-    onChange(joinTokens(next));
-  };
-
-  const removeCustom = (option: string) => onChange(joinTokens(tokens.filter(item => item !== option)));
-
-  useEffect(() => {
-    if (!multiple) return;
-    const closeOnOutsideClick = (event: PointerEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
-    };
-    document.addEventListener('pointerdown', closeOnOutsideClick);
-    return () => {
-      document.removeEventListener('pointerdown', closeOnOutsideClick);
-    };
-  }, [multiple]);
-
-  if (!multiple) {
-    return (
-      <select className={inputCls} value={value} onChange={event => onChange(event.target.value)}>
-        <option value="">{placeholder}</option>
-        {options.map(option => <option key={option} value={option}>{option}</option>)}
-        {customTokens.map(option => <option key={option} value={option}>{option}（历史自定义）</option>)}
-      </select>
-    );
-  }
-
-  return (
-    <div ref={rootRef} className="group relative">
-      <button
-        type="button"
-        aria-expanded={open}
-        aria-controls={menuId}
-        onPointerDown={toggleOpen}
-        onClick={event => {
-          if (event.detail === 0) toggleOpen();
-        }}
-        onKeyDown={event => {
-          if (event.key === 'Escape') {
-            setOpen(false);
-            event.currentTarget.focus();
-          }
-        }}
-        className={`${inputCls} flex min-h-10 w-full cursor-pointer items-center justify-between gap-3 text-left`}
-      >
-        <span className={tokens.length ? 'truncate text-text-primary' : 'text-text-muted'}>{tokens.length ? tokens.join('、') : `${placeholder}（可多选）`}</span>
-        <ChevronDown size={15} className={`shrink-0 text-text-muted transition-transform ${open ? 'rotate-180' : ''}`} />
-      </button>
-      {open && <div id={menuId} className="mt-1 max-h-64 w-full overflow-y-auto rounded-lg border border-border bg-white p-2 shadow-lg">
-        {options.map(option => (
-          <label key={option} className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-2 text-xs text-text-primary hover:bg-surface-2">
-            <input type="checkbox" aria-label={option} className="h-3.5 w-3.5 accent-emerald-600" checked={tokens.includes(option)} onChange={() => choose(option)} />
-            {option}
-          </label>
-        ))}
-        {customTokens.length > 0 && <div className="mt-1 border-t border-border pt-1">
-          <p className="px-2 py-1 text-[10px] font-bold text-text-muted">历史自定义值</p>
-          {customTokens.map(option => <button type="button" key={option} onClick={() => removeCustom(option)} className="flex w-full items-center justify-between rounded-md px-2 py-2 text-left text-xs text-text-secondary hover:bg-surface-2">{option}<X size={12} /></button>)}
-        </div>}
-      </div>}
-    </div>
-  );
+  return <Select
+    id={id}
+    className="w-full"
+    mode={multiple ? 'multiple' : undefined}
+    value={multiple ? tokens : value || undefined}
+    placeholder={placeholder}
+    allowClear
+    maxTagCount="responsive"
+    onChange={next => onChange(Array.isArray(next) ? joinTokens(next) : next || '')}
+    options={[...options.map(option => ({ value: option, label: option })), ...customTokens.map(option => ({ value: option, label: `${option}（历史自定义）` }))]}
+  />;
 }
 
 function PaginationControls({ page, total, pageSize, onChange }: { page: number; total: number; pageSize: number; onChange: (page: number) => void }) {
-  const pageCount = Math.max(1, Math.ceil(total / pageSize));
-  if (pageCount <= 1) return null;
-  return (
-    <div className="mt-4 flex items-center justify-between border-t border-border pt-3">
-      <span className="text-[11px] text-text-muted">共 {total} 条 · 第 {page}/{pageCount} 页</span>
-      <div className="flex items-center gap-2">
-        <button type="button" disabled={page <= 1} onClick={() => onChange(page - 1)} className="flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-white text-text-secondary disabled:opacity-40" title="上一页"><ChevronLeft size={14} /></button>
-        <button type="button" disabled={page >= pageCount} onClick={() => onChange(page + 1)} className="flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-white text-text-secondary disabled:opacity-40" title="下一页"><ChevronRight size={14} /></button>
-      </div>
-    </div>
-  );
+  if (total <= pageSize) return null;
+  return <div className="mt-4 flex justify-end border-t border-border pt-3">
+    <Pagination current={page} total={total} pageSize={pageSize} onChange={onChange} showSizeChanger={false} showTotal={count => `共 ${count} 条`} />
+  </div>;
 }
 
 function KnowledgeCard({
@@ -624,16 +547,16 @@ function KnowledgeCard({
   highlight?: boolean;
 }) {
   return (
-    <section id={id} className={`rounded-lg border border-border bg-white p-5 shadow-sm transition-all ${highlight ? 'ring-2 ring-sky-300' : ''}`}>
+    <section id={id} className={`rounded-lg border border-border bg-white p-5 transition-all ${highlight ? 'ring-2 ring-accent/30' : ''}`}>
       <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
         <div className="flex min-w-0 items-start gap-3">
-          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-sky-50 text-sky-700">
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-surface-2 text-text-secondary">
             <Icon size={16} />
           </span>
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
-              <h3 className="text-sm font-black text-text-primary">{title}</h3>
-              <span className={`rounded-full px-2 py-0.5 text-[11px] font-black ${completed ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>
+              <h3 className="text-sm font-semibold text-text-primary">{title}</h3>
+              <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${completed ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>
                 {completed ? '已完成' : '未完成'}
               </span>
             </div>
@@ -648,17 +571,14 @@ function KnowledgeCard({
 }
 
 function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
-  return (
-    <div>
-      <label className="block text-xs font-semibold text-text-secondary mb-1.5">{label}</label>
-      {hint && <p className="text-[11px] text-text-muted mb-1.5">{hint}</p>}
-      {children}
-    </div>
-  );
+  const id = useId();
+  return <Form.Item label={label} htmlFor={id} extra={hint} layout="vertical">
+    {isValidElement<{ id?: string }>(children) ? cloneElement(children, { id }) : children}
+  </Form.Item>;
 }
 
-const inputCls = 'w-full px-3 py-2 text-sm bg-white border border-border rounded-lg outline-none focus:border-accent focus:ring-2 focus:ring-accent/10 transition-all placeholder:text-text-muted text-text-primary';
-const textareaCls = `${inputCls} resize-none`;
+const inputCls = 'w-full';
+const textareaCls = 'w-full resize-y';
 
 const MAX_PRODUCT_DOCUMENTS = 3;
 
@@ -1662,9 +1582,9 @@ export default function EnterprisePage() {
   };
 
   const aiAutonomySection = (
-    <section id="ai-autonomy" data-lingshu-guide="enterprise-autonomy" className={`rounded-lg border border-border bg-white p-5 shadow-sm transition-all ${autonomyHighlight ? 'ring-2 ring-amber-300' : ''}`}>
+    <section id="ai-autonomy" data-lingshu-guide="enterprise-autonomy" className={`rounded-lg border border-border bg-white p-5  transition-all ${autonomyHighlight ? 'ring-2 ring-amber-300' : ''}`}>
       <div className="flex items-start justify-between gap-3">
-        <p className="text-sm font-black text-text-primary">AI 参与程度</p>
+        <p className="text-sm font-semibold text-text-primary">AI 参与程度</p>
         <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-bold text-slate-600">
           当前：{AUTONOMY_OPTIONS.find(item => item.value === effectiveAutonomy)?.title}
         </span>
@@ -1675,7 +1595,7 @@ export default function EnterprisePage() {
           <button
             type="button"
             onClick={() => window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: { page: 'conversion' } }))}
-            className="rounded-lg bg-slate-950 px-3 py-1.5 text-[11px] font-black text-white"
+            className="rounded-lg bg-slate-950 px-3 py-1.5 text-[11px] font-semibold text-white"
           >
             去开启
           </button>
@@ -1692,7 +1612,7 @@ export default function EnterprisePage() {
           <button
             type="button"
             onClick={() => window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: { page: 'conversion' } }))}
-            className="rounded-lg bg-amber-600 px-3 py-1.5 text-[11px] font-black text-white"
+            className="rounded-lg bg-amber-600 px-3 py-1.5 text-[11px] font-semibold text-white"
           >
             去决定
           </button>
@@ -1709,12 +1629,12 @@ export default function EnterprisePage() {
               title={disabled ? autoReplyBlockReason : undefined}
               disabled={disabled}
               onClick={() => setAutonomy(option.value)}
-              className={`min-h-[118px] rounded-lg border p-3 text-left transition-all disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400 ${active ? 'border-slate-950 bg-slate-950 text-white shadow-sm' : 'border-border bg-white text-text-primary hover:border-slate-300 hover:bg-surface-2'}`}
+              className={`min-h-[118px] rounded-lg border p-3 text-left transition-all disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400 ${active ? 'border-slate-950 bg-slate-950 text-white ' : 'border-border bg-white text-text-primary hover:border-slate-300 hover:bg-surface-2'}`}
             >
-              <span className={`inline-flex h-5 w-5 items-center justify-center rounded-full border text-[10px] font-black ${active ? 'border-white bg-white text-slate-950' : 'border-border text-text-muted'}`}>
+              <span className={`inline-flex h-5 w-5 items-center justify-center rounded-full border text-[10px] font-semibold ${active ? 'border-white bg-white text-slate-950' : 'border-border text-text-muted'}`}>
                 {active ? '✓' : ''}
               </span>
-              <p className="mt-2 text-xs font-black">{option.title}</p>
+              <p className="mt-2 text-xs font-semibold">{option.title}</p>
               <p className={`mt-2 text-[11px] leading-5 ${active ? 'text-white/80' : disabled ? 'text-slate-400' : 'text-text-muted'}`}>{option.desc}</p>
               <p className={`text-[11px] leading-5 ${active ? 'text-white/80' : disabled ? 'text-slate-400' : 'text-text-muted'}`}>{disabled ? autoReplyBlockReason : option.detail}</p>
             </button>
@@ -1728,13 +1648,13 @@ export default function EnterprisePage() {
       )}
       <div className="mt-4 border-t border-border pt-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <p className="text-xs font-black text-text-primary">自动发送边界</p>
+          <p className="text-xs font-semibold text-text-primary">自动发送边界</p>
           <span className="text-[11px] font-bold text-text-muted">已审批 {approvedFaqCount} 条 · 启用要求 5 条</span>
         </div>
         <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-3">
           {AUTO_REPLY_SCOPE.map((item, index) => (
             <div key={item} className="flex items-start gap-2 rounded-md bg-emerald-50 px-3 py-2 text-[11px] font-semibold leading-5 text-emerald-900">
-              <span className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-emerald-600 text-[9px] font-black text-white">{index + 1}</span>
+              <span className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-emerald-600 text-[9px] font-semibold text-white">{index + 1}</span>
               {item}
             </div>
           ))}
@@ -1747,19 +1667,19 @@ export default function EnterprisePage() {
   );
 
   const handoffSafetySection = (
-    <section className="rounded-lg border border-border bg-white p-5 shadow-sm">
+    <section className="rounded-lg border border-border bg-white p-5 ">
       <div>
         <div className="flex items-start justify-between gap-4">
           <div>
-            <p className="text-sm font-black text-amber-950">转人工规则</p>
+            <p className="text-sm font-semibold text-amber-950">转人工规则</p>
             <p className="mt-1 text-[11px] font-semibold leading-5 text-amber-800">触发后，灵小枢会停下自动回复，交给你处理。</p>
           </div>
-          <span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-black text-red-700 shadow-sm">L4 永不自动</span>
+          <span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-semibold text-red-700 ">L4 永不自动</span>
         </div>
 
         <div className="mt-4 space-y-4">
           <div>
-            <p className="mb-2 text-xs font-black text-amber-950">触发人工的关键词</p>
+            <p className="mb-2 text-xs font-semibold text-amber-950">触发人工的关键词</p>
             <div className="flex flex-wrap gap-2">
               {(profile.handoffRules?.keywords ?? DEFAULT.handoffRules!.keywords).map(keyword => (
                 <button
@@ -1786,7 +1706,7 @@ export default function EnterprisePage() {
                 }}
                 placeholder="输入关键词，如 refund / 老板"
               />
-              <button type="button" onClick={addHandoffKeyword} className="rounded-lg bg-amber-600 px-3 py-2 text-xs font-black text-white hover:bg-amber-700">
+              <button type="button" onClick={addHandoffKeyword} className="rounded-lg bg-amber-600 px-3 py-2 text-xs font-semibold text-white hover:bg-amber-700">
                 添加
               </button>
             </div>
@@ -1794,7 +1714,7 @@ export default function EnterprisePage() {
 
           <div className="grid grid-cols-2 gap-3">
             <label className="rounded-lg border border-amber-100 bg-white p-3">
-              <span className="text-xs font-black text-amber-950">连续未命中阈值</span>
+              <span className="text-xs font-semibold text-amber-950">连续未命中阈值</span>
               <select
                 className="mt-2 w-full rounded-lg border border-border bg-white px-2 py-2 text-xs font-bold text-text-primary"
                 value={profile.handoffRules?.missStreakToDraft ?? 2}
@@ -1807,7 +1727,7 @@ export default function EnterprisePage() {
             </label>
             <label className="flex items-center justify-between gap-3 rounded-lg border border-amber-100 bg-white p-3">
               <span>
-                <span className="block text-xs font-black text-amber-950">负面情绪转人工</span>
+                <span className="block text-xs font-semibold text-amber-950">负面情绪转人工</span>
                 <span className="mt-1 block text-[11px] text-amber-700">投诉、退款、愤怒语气会提醒你亲自处理</span>
               </span>
               <input
@@ -1843,7 +1763,7 @@ export default function EnterprisePage() {
     <KnowledgeCard icon={Building2} title="公司介绍" purpose="AI 开场白和自我介绍的素材" completed={completions.company} stat={`已填写 ${profile.company.description.trim().length} 字 · 建议至少 50 字`}>
       <div className="grid grid-cols-2 gap-4">
         <Field label="公司名称">
-          <input className={inputCls} value={profile.company.name} onChange={e => set('company')('name', e.target.value)} placeholder="示例贸易有限公司" />
+          <Input className={inputCls} value={profile.company.name} onChange={e => set('company')('name', e.target.value)} placeholder="示例贸易有限公司" />
         </Field>
         <Field label="行业类目">
           <OptionSelector value={profile.company.industry} options={CATEGORY_OPTIONS} onChange={value => set('company')('industry', value)} placeholder="选择行业类目" />
@@ -1852,17 +1772,17 @@ export default function EnterprisePage() {
           <OptionSelector value={profile.company.companyType ?? ''} options={COMPANY_TYPE_OPTIONS} multiple={false} onChange={value => set('company')('companyType', value)} placeholder="选择企业类型" />
         </Field>
         <Field label="成立年份">
-          <input className={inputCls} value={profile.company.founded} onChange={e => set('company')('founded', e.target.value)} placeholder="2018" />
+          <Input className={inputCls} value={profile.company.founded} onChange={e => set('company')('founded', e.target.value)} placeholder="2018" />
         </Field>
         <Field label="海外平台经验">
           <OptionSelector value={profile.company.socialPlatformExperience ?? ''} options={['做过', '没做过', '正在准备']} multiple={false} onChange={value => set('company')('socialPlatformExperience', value)} placeholder="选择海外平台经验" />
         </Field>
       </div>
       <Field label="公司简介">
-        <textarea className={textareaCls} rows={4} value={profile.company.description} onChange={e => set('company')('description', e.target.value)} placeholder="介绍公司背景、主营品类、供应链优势、交付能力和海外服务经验。" />
+        <Input.TextArea className={textareaCls} rows={4} value={profile.company.description} onChange={e => set('company')('description', e.target.value)} placeholder="介绍公司背景、主营品类、供应链优势、交付能力和海外服务经验。" />
       </Field>
-      <button type="button" onClick={() => { setEnterpriseArea('social'); setKnowledgeView('socialStrategy'); }} className="mt-4 flex w-full items-center justify-between rounded-xl border border-emerald-200 bg-emerald-50/60 px-4 py-3 text-left hover:bg-emerald-50">
-        <span><span className="block text-xs font-black text-emerald-900">社媒脚本策略</span><span className="mt-1 block text-[11px] text-emerald-700">已启用 {profile.socialStrategy?.enabledRoutes.length ?? 0} 条合作路线 · 管理默认买家与主 CTA</span></span>
+      <button type="button" onClick={() => { setEnterpriseArea('social'); setKnowledgeView('socialStrategy'); }} className="mt-4 flex w-full items-center justify-between rounded-lg border border-emerald-200 bg-emerald-50/60 px-4 py-3 text-left hover:bg-emerald-50">
+        <span><span className="block text-xs font-semibold text-emerald-900">社媒脚本策略</span><span className="mt-1 block text-[11px] text-emerald-700">已启用 {profile.socialStrategy?.enabledRoutes.length ?? 0} 条合作路线 · 管理默认买家与主 CTA</span></span>
         <ChevronRight size={16} className="text-emerald-700" />
       </button>
     </KnowledgeCard>
@@ -1871,8 +1791,8 @@ export default function EnterprisePage() {
   const socialStrategySection = (
     <KnowledgeCard icon={Megaphone} title="社媒策略" purpose="为新建社媒脚本提供路线、默认买家和主 CTA" completed={Boolean(profile.socialStrategy?.enabledRoutes.length)}>
       <p className="mb-4 text-[11px] leading-5 text-text-muted">系统会参考企业资料预填；你修改过的内容会作为企业默认值保留。多条路线时，创作工作台会为单条视频再次确认路线。</p>
-      <div className="mb-4 rounded-xl border border-border bg-surface-2/60 p-3">
-        <p className="text-xs font-black text-text-primary">承接渠道</p>
+      <div className="mb-4 rounded-lg border border-border bg-surface-2/60 p-3">
+        <p className="text-xs font-semibold text-text-primary">承接渠道</p>
         <p className="mt-1 text-[11px] text-text-muted">状态仅从账号连接或官网配置同步，此处不可手动修改。</p>
         <div className="mt-2 flex flex-wrap gap-2">{['Messenger', '表单', '私信', '官网'].map(channel => <span key={channel} className="rounded-full border border-slate-200 bg-white px-2 py-1 text-[10px] font-bold text-slate-500">{channel} · 未验证</span>)}</div>
       </div>
@@ -1881,7 +1801,7 @@ export default function EnterprisePage() {
           const selected = profile.socialStrategy?.enabledRoutes.includes(option.value) ?? false;
           const route = profile.socialStrategy?.routeStrategies[option.value];
           return <div key={option.value} className={`rounded-lg border p-4 ${selected ? 'border-emerald-200 bg-emerald-50/40' : 'border-border bg-white'}`}>
-            <label className="flex cursor-pointer items-center gap-2 text-sm font-black text-text-primary">
+            <label className="flex cursor-pointer items-center gap-2 text-sm font-semibold text-text-primary">
               <input type="checkbox" className="h-4 w-4 accent-emerald-600" checked={selected} onChange={event => setProfile(prev => {
                 const current = prev.socialStrategy ?? DEFAULT.socialStrategy!;
                 const enabledRoutes = event.target.checked ? [...current.enabledRoutes, option.value] : current.enabledRoutes.filter(value => value !== option.value);
@@ -1892,8 +1812,8 @@ export default function EnterprisePage() {
               {option.label}
             </label>
             {selected && <div className="mt-4 grid gap-4 md:grid-cols-2">
-              <Field label="默认买家（顺序即优先级）"><input className={inputCls} value={(route?.targetBuyerRoles ?? option.buyers).join('、')} onChange={event => setProfile(prev => ({ ...prev, socialStrategy: { ...(prev.socialStrategy ?? DEFAULT.socialStrategy!), routeStrategies: { ...(prev.socialStrategy?.routeStrategies ?? {}), [option.value]: { targetBuyerRoles: splitTokens(event.target.value), primaryCta: route?.primaryCta ?? '引导通过 Messenger 联系' } } } }))} /></Field>
-              <Field label="默认主 CTA"><input className={inputCls} value={route?.primaryCta ?? '引导通过 Messenger 联系'} onChange={event => setProfile(prev => ({ ...prev, socialStrategy: { ...(prev.socialStrategy ?? DEFAULT.socialStrategy!), routeStrategies: { ...(prev.socialStrategy?.routeStrategies ?? {}), [option.value]: { targetBuyerRoles: route?.targetBuyerRoles ?? option.buyers, primaryCta: event.target.value } } } }))} /></Field>
+              <Field label="默认买家（顺序即优先级）"><Input className={inputCls} value={(route?.targetBuyerRoles ?? option.buyers).join('、')} onChange={event => setProfile(prev => ({ ...prev, socialStrategy: { ...(prev.socialStrategy ?? DEFAULT.socialStrategy!), routeStrategies: { ...(prev.socialStrategy?.routeStrategies ?? {}), [option.value]: { targetBuyerRoles: splitTokens(event.target.value), primaryCta: route?.primaryCta ?? '引导通过 Messenger 联系' } } } }))} /></Field>
+              <Field label="默认主 CTA"><Input className={inputCls} value={route?.primaryCta ?? '引导通过 Messenger 联系'} onChange={event => setProfile(prev => ({ ...prev, socialStrategy: { ...(prev.socialStrategy ?? DEFAULT.socialStrategy!), routeStrategies: { ...(prev.socialStrategy?.routeStrategies ?? {}), [option.value]: { targetBuyerRoles: route?.targetBuyerRoles ?? option.buyers, primaryCta: event.target.value } } } }))} /></Field>
             </div>}
           </div>;
         })}
@@ -1906,9 +1826,9 @@ export default function EnterprisePage() {
       <div className="mb-3 flex items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <Bell size={14} className="text-text-secondary" />
-          <h3 className="text-sm font-black text-text-primary">通知接收方式</h3>
+          <h3 className="text-sm font-semibold text-text-primary">通知接收方式</h3>
         </div>
-        <span className={`rounded-full px-2 py-0.5 text-[11px] font-black ${notificationCompleted ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>
+        <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${notificationCompleted ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>
           {notificationCompleted ? '已完成' : '未完成'}
         </span>
       </div>
@@ -1916,11 +1836,11 @@ export default function EnterprisePage() {
       <div className="space-y-3">
         {(profile.notifications?.receivers ?? []).map((receiver, index) => (
           <div key={index} className="grid grid-cols-1 gap-2 rounded-lg border border-border bg-white p-3 sm:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_130px_minmax(0,1.3fr)_auto_auto]">
-            <input className={inputCls} value={receiver.name} onChange={e => updateReceiver(index, { name: e.target.value })} placeholder="接收人姓名" />
+            <Input className={inputCls} value={receiver.name} onChange={e => updateReceiver(index, { name: e.target.value })} placeholder="接收人姓名" />
             <select className={inputCls} value={receiver.channel} onChange={e => updateReceiver(index, { channel: e.target.value as NotificationChannel })}>
               {CHANNEL_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
             </select>
-            <input className={`${inputCls} sm:col-span-2 xl:col-span-1`} value={receiver.target} onChange={e => updateReceiver(index, { target: e.target.value })} placeholder="Webhook / 手机号 / 账号" />
+            <Input className="w-full sm:col-span-2 xl:col-span-1" value={receiver.target} onChange={e => updateReceiver(index, { target: e.target.value })} placeholder="Webhook / 手机号 / 账号" />
             <div className="grid grid-cols-[1fr_auto] gap-2 sm:col-span-2 xl:contents">
               <button type="button" onClick={() => void testReceiver(receiver, index)} disabled={notificationTesting === String(index)} className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-slate-950 px-3 py-2 text-xs font-bold text-white disabled:opacity-60">
                 {notificationTesting === String(index) ? <Loader2 size={12} className="animate-spin" /> : <Bell size={12} />}测试
@@ -1936,10 +1856,10 @@ export default function EnterprisePage() {
       </div>
       <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
         <Field label="工作开始时间">
-          <input className={inputCls} type="time" value={profile.notifications?.workHours.start ?? '09:00'} onChange={e => setProfile(prev => ({ ...prev, notifications: { ...(prev.notifications ?? DEFAULT.notifications!), workHours: { ...(prev.notifications?.workHours ?? DEFAULT.notifications!.workHours), start: e.target.value } } }))} />
+          <Input className={inputCls} type="time" value={profile.notifications?.workHours.start ?? '09:00'} onChange={e => setProfile(prev => ({ ...prev, notifications: { ...(prev.notifications ?? DEFAULT.notifications!), workHours: { ...(prev.notifications?.workHours ?? DEFAULT.notifications!.workHours), start: e.target.value } } }))} />
         </Field>
         <Field label="工作结束时间">
-          <input className={inputCls} type="time" value={profile.notifications?.workHours.end ?? '22:00'} onChange={e => setProfile(prev => ({ ...prev, notifications: { ...(prev.notifications ?? DEFAULT.notifications!), workHours: { ...(prev.notifications?.workHours ?? DEFAULT.notifications!.workHours), end: e.target.value } } }))} />
+          <Input className={inputCls} type="time" value={profile.notifications?.workHours.end ?? '22:00'} onChange={e => setProfile(prev => ({ ...prev, notifications: { ...(prev.notifications ?? DEFAULT.notifications!), workHours: { ...(prev.notifications?.workHours ?? DEFAULT.notifications!.workHours), end: e.target.value } } }))} />
         </Field>
         <div className="sm:col-span-2 xl:col-span-1">
         <Field label="非工作时段">
@@ -1951,7 +1871,7 @@ export default function EnterprisePage() {
         </div>
       </div>
       <div data-lingshu-guide="enterprise-night-mode" className="mt-4 flex items-start justify-between gap-4 border-t border-border pt-4">
-        <p className="text-xs font-black text-text-primary">非工作时间继续接待</p>
+        <p className="text-xs font-semibold text-text-primary">非工作时间继续接待</p>
         <label className="inline-flex shrink-0 cursor-pointer items-center gap-2 text-xs font-bold text-text-secondary">
           <Toggle checked={Boolean(profile.notifications?.nightMode?.enabled)} onChange={setNightModeEnabled} />
           {profile.notifications?.nightMode?.enabled ? '已开启' : '未开启'}
@@ -1970,100 +1890,61 @@ export default function EnterprisePage() {
 
   return (
     <div className="flex h-full flex-col bg-white" data-lingshu-guide="enterprise-center">
-      <div className="shrink-0 bg-white px-4 sm:px-6">
-        <div className="flex w-full items-center gap-4 border-b border-border">
-          <div className="flex min-w-0 flex-1 gap-7 overflow-x-auto">
-          {([
-            { id: 'facts' as EnterpriseArea, label: '企业真实资料', icon: Building2, initialView: 'company' as KnowledgeView },
-            { id: 'social' as EnterpriseArea, label: '社媒策略', icon: Megaphone, initialView: 'socialStrategy' as KnowledgeView },
-            { id: 'appearance' as EnterpriseArea, label: '人物与出镜', icon: Users, initialView: 'presenters' as KnowledgeView },
-            { id: 'service' as EnterpriseArea, label: '智能客服规范', icon: MessageSquare, initialView: 'bizRules' as KnowledgeView },
-          ]).map(item => {
-            const active = enterpriseArea === item.id;
-            const Icon = item.icon;
-            return (
-              <button
-                key={item.id}
-                type="button"
-                onClick={() => {
-                  setEnterpriseArea(item.id);
-                  setKnowledgeView(item.initialView);
-                  if (item.id === 'service') openKnowledgeIntakeOnce();
-                }}
-                className={`flex h-12 shrink-0 items-center justify-center gap-2 border-b-2 px-1 text-sm font-semibold transition-colors ${active ? 'border-accent text-text-primary' : 'border-transparent text-text-muted hover:text-text-secondary'}`}
-              >
-                <Icon size={18} className={active ? 'text-accent' : 'text-text-muted'} />
-                <span className="min-w-0 truncate">{item.label}</span>
-              </button>
-            );
-          })}
-          </div>
-          <div className="flex shrink-0 items-center gap-2">
-            {saveError && <span className="hidden max-w-48 truncate text-[11px] font-bold text-red-600 sm:block" title={saveError}>{saveError}</span>}
-            <motion.button
-              onClick={handleSave}
-              disabled={saving || !hasUnsavedChanges}
-              title={saveError || (hasUnsavedChanges ? '保存后，灵小枢、客服和社媒创作会使用这些资料' : '资料已保存在企业空间，并授权给 AI 使用')}
-              className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold text-white transition-all disabled:opacity-60"
-              style={{ background: saveError ? '#b74d43' : 'var(--color-accent)' }}
-            >
-              {saving ? <Loader2 size={12} className="animate-spin" /> : saveError ? <X size={12} /> : !hasUnsavedChanges ? <CheckCircle2 size={12} /> : <Save size={12} />}
-              {saving ? '保存中' : saveError ? '保存失败' : !hasUnsavedChanges ? '已保存' : '保存'}
-            </motion.button>
-          </div>
-        </div>
+      <div className="shrink-0 border-b border-border bg-surface px-4 pt-5 sm:px-6">
+        <LsPageHeader title="企业知识库" description={hasUnsavedChanges ? '资料有未保存修改，保存后供内容制作、客服和报价统一使用。' : '统一管理已确认的企业事实、产品资料和沟通规则。'}
+          extra={<Button type="primary" onClick={handleSave} loading={saving} disabled={!hasUnsavedChanges}
+            icon={saveError ? <X size={14} /> : !hasUnsavedChanges ? <CheckCircle2 size={14} /> : <Save size={14} />}>
+            {saveError ? '重试保存' : !hasUnsavedChanges ? '已保存' : '保存资料'}
+          </Button>} />
+        {saveError && <Alert className="mb-3" type="error" showIcon title={saveError} />}
+        <Tabs activeKey={enterpriseArea} onChange={key => {
+          const area = key as EnterpriseArea;
+          setEnterpriseArea(area);
+          setKnowledgeView(area === 'facts' ? 'company' : area === 'social' ? 'socialStrategy' : area === 'appearance' ? 'presenters' : 'bizRules');
+          if (area === 'service') openKnowledgeIntakeOnce();
+        }} items={[
+          { key: 'facts', label: '企业真实资料', icon: <Building2 size={16} /> },
+          { key: 'social', label: '社媒策略', icon: <Megaphone size={16} /> },
+          { key: 'appearance', label: '人物与出镜', icon: <Users size={16} /> },
+          { key: 'service', label: '智能客服规范', icon: <MessageSquare size={16} /> },
+        ]} />
       </div>
 
       <div className="flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-5xl space-y-5 px-6 py-5">
-          <section className="rounded-xl border border-emerald-200 bg-gradient-to-r from-emerald-50 to-white p-4" aria-label="企业资料完整度">
+        <div className="mx-auto w-full max-w-[1440px] space-y-5 px-4 py-5 sm:px-6">
+          <section className="rounded-lg border border-emerald-200 bg-surface-2 p-4" aria-label="企业资料完整度">
             <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex items-center gap-3">
-                <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full border-4 border-emerald-100 bg-white text-sm font-black text-emerald-700">{profileCompleteness.percentage}%</div>
+                <span className="text-2xl font-semibold tabular-nums text-accent">{profileCompleteness.percentage}%</span>
                 <div>
-                  <div className="flex flex-wrap items-center gap-2"><h2 className="text-sm font-black text-text-primary">企业资料完整度</h2>{profile.factVersion && <span className="rounded-full bg-white px-2 py-1 text-[10px] font-bold text-emerald-700">事实版本 v{profile.factVersion.revision}</span>}</div>
+                  <div className="flex flex-wrap items-center gap-2"><h2 className="text-sm font-semibold text-text-primary">企业资料完整度</h2>{profile.factVersion && <span className="rounded-full bg-white px-2 py-1 text-[10px] font-bold text-emerald-700">事实版本 v{profile.factVersion.revision}</span>}</div>
                   <p className="mt-1 text-xs text-text-muted">产品图、价格、证书和市场信息统一供内容、客服、报价、投放与数字员工使用。</p>
                 </div>
               </div>
               <span className="text-xs font-bold text-emerald-800">已完成 {profileCompleteness.completed}/{profileCompleteness.total}</span>
             </div>
+            <LsGradientProgress percent={profileCompleteness.percentage} showInfo={false} className="mt-3" />
             {profileCompleteness.todos.length > 0 ? <div className="mt-4 grid gap-2 sm:grid-cols-2">
               {profileCompleteness.todos.map(todo => <button key={todo.id} type="button" onClick={() => openCompletenessTodo(todo)} className="flex items-center justify-between gap-3 rounded-lg border border-amber-200 bg-white px-3 py-2.5 text-left hover:border-amber-300 hover:bg-amber-50">
-                <span className="min-w-0"><span className="block text-xs font-black text-amber-900">{todo.label}</span><span className="mt-0.5 block truncate text-[11px] text-text-muted">{todo.description}</span></span><ArrowRight size={14} className="shrink-0 text-amber-700" />
+                <span className="min-w-0"><span className="block text-xs font-semibold text-amber-900">{todo.label}</span><span className="mt-0.5 block truncate text-[11px] text-text-muted">{todo.description}</span></span><ArrowRight size={14} className="shrink-0 text-amber-700" />
               </button>)}
             </div> : <p className="mt-3 rounded-lg bg-emerald-100/70 px-3 py-2 text-xs font-bold text-emerald-800">关键资料已补齐，所有 Agent 将读取同一已确认版本。</p>}
           </section>
-          {enterpriseArea !== 'social' && (
-            <div className="overflow-x-auto pb-0.5">
-              <div className={`flex gap-6 border-b border-border ${enterpriseArea === 'facts' || enterpriseArea === 'appearance' ? 'min-w-[360px]' : 'min-w-[680px]'}`}>
-                {(enterpriseArea === 'facts' ? FACT_VIEWS : enterpriseArea === 'appearance' ? APPEARANCE_VIEWS : SERVICE_VIEWS).map(item => {
-                  const active = knowledgeView === item.id;
-                  const Icon = KNOWLEDGE_VIEW_ICONS[item.id];
-                  return (
-                    <button
-                      key={item.id}
-                      type="button"
-                      onClick={() => setKnowledgeView(item.id)}
-                      title={`${item.label} · ${item.hint}`}
-                      className={`flex h-11 flex-1 items-center justify-center gap-2 border-b-2 px-2 text-sm font-semibold transition-colors ${active ? 'border-accent text-text-primary' : 'border-transparent text-text-muted hover:text-text-secondary'}`}
-                    >
-                      <Icon size={16} className={active ? (enterpriseArea === 'facts' ? 'text-emerald-600' : 'text-sky-600') : 'text-text-muted'} />
-                      <span className="min-w-0 truncate">{item.label}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          )}
+          {enterpriseArea !== 'social' && <Tabs activeKey={knowledgeView} onChange={key => setKnowledgeView(key as KnowledgeView)}
+            items={(enterpriseArea === 'facts' ? FACT_VIEWS : enterpriseArea === 'appearance' ? APPEARANCE_VIEWS : SERVICE_VIEWS).map(item => {
+              const Icon = KNOWLEDGE_VIEW_ICONS[item.id];
+              return { key: item.id, label: item.label, icon: <Icon size={16} /> };
+            })} />}
+
 
           <div className={`rounded-lg border p-4 ${enterpriseArea === 'facts' ? 'border-emerald-100 bg-emerald-50/60' : enterpriseArea === 'social' ? 'border-violet-100 bg-violet-50/60' : enterpriseArea === 'appearance' ? 'border-teal-100 bg-teal-50/60' : 'border-sky-100 bg-sky-50/60'}`}>
             <div className="flex items-start gap-3">
               {enterpriseArea === 'facts' ? <Building2 size={15} className="mt-0.5 shrink-0 text-emerald-700" /> : enterpriseArea === 'social' ? <Megaphone size={15} className="mt-0.5 shrink-0 text-violet-700" /> : enterpriseArea === 'appearance' ? <Users size={15} className="mt-0.5 shrink-0 text-teal-700" /> : <ShieldCheck size={15} className="mt-0.5 shrink-0 text-sky-700" />}
               <div className="min-w-0 flex-1">
-                <p className="text-xs font-black text-text-primary">{enterpriseArea === 'facts' ? '已保存资料可供 AI 使用' : enterpriseArea === 'social' ? '设置社媒创作默认策略' : enterpriseArea === 'appearance' ? '维护企业人物资产和各渠道出镜规则' : '设置客服边界'}</p>
+                <p className="text-xs font-semibold text-text-primary">{enterpriseArea === 'facts' ? '已保存资料可供 AI 使用' : enterpriseArea === 'social' ? '设置社媒创作默认策略' : enterpriseArea === 'appearance' ? '维护企业人物资产和各渠道出镜规则' : '设置客服边界'}</p>
               </div>
               {enterpriseArea === 'service' && (
-                <button type="button" onClick={openKnowledgeIntake} className="shrink-0 rounded-lg border border-sky-200 bg-white px-3 py-2 text-[11px] font-black text-sky-700 hover:bg-sky-50">
+                <button type="button" onClick={openKnowledgeIntake} className="shrink-0 rounded-lg border border-sky-200 bg-white px-3 py-2 text-[11px] font-semibold text-sky-700 hover:bg-sky-50">
                   打开灵小枢快速采集
                 </button>
               )}
@@ -2083,8 +1964,8 @@ export default function EnterprisePage() {
             completed={completions.products}
             stat={`${products.length} 个产品 · ${assetStats.documents} 份资质凭证 · ${assetStats.creative} 项历史素材记录`}
           >
-            <div className="mb-4 rounded-xl border border-emerald-200 bg-emerald-50/70 px-4 py-3">
-              <p className="text-sm font-black text-emerald-950">产品素材统一在“我的素材”管理</p>
+            <div className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50/70 px-4 py-3">
+              <p className="text-sm font-semibold text-emerald-950">产品素材统一在“我的素材”管理</p>
               <p className="mt-1 text-xs leading-5 text-emerald-800">企业知识库只维护产品事实和资质凭证。图片、视频和音频只需上传一次；从内容任务上传的素材也会归入同一个素材库。</p>
             </div>
             <div className="mb-4 grid gap-4 md:grid-cols-2">
@@ -2097,17 +1978,13 @@ export default function EnterprisePage() {
             </div>
             <p className="mb-4 rounded-lg border border-violet-100 bg-violet-50/60 px-3 py-2 text-[11px] leading-5 text-violet-800">社媒发现范围不在企业中心重复维护。这里保存真实产品资料；产品、市场和沟通对象会在“灵感中心”组合成可追溯的发现范围。</p>
             <Field label="产品核心优势">
-              <textarea className={textareaCls} rows={2} value={profile.products.highlights} onChange={e => set('products')('highlights', e.target.value)} placeholder="工厂直供、支持 OEM/ODM、备货稳定" />
+              <Input.TextArea className={textareaCls} rows={2} value={profile.products.highlights} onChange={e => set('products')('highlights', e.target.value)} placeholder="工厂直供、支持 OEM/ODM、备货稳定" />
             </Field>
             <div className="mt-4 flex flex-wrap items-center gap-2">
-              <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-border bg-white px-3 py-2 text-xs font-bold text-text-secondary hover:bg-surface-2">
-                {productImporting ? <Loader2 size={12} className="animate-spin" /> : <FileSpreadsheet size={12} />}
-                导入产品表
-                <input type="file" accept=".xlsx,.xls,.csv,.pdf,.docx" className="hidden" disabled={productImporting} onChange={e => { void importProductSheet(e.currentTarget.files?.[0] ?? null); e.currentTarget.value = ''; }} />
-              </label>
-              <button type="button" onClick={addProduct} className="inline-flex items-center gap-1.5 rounded-lg bg-slate-950 px-3 py-2 text-xs font-bold text-white">
-                <Plus size={12} />添加产品
-              </button>
+              <AntUpload accept=".xlsx,.xls,.csv,.pdf,.docx" showUploadList={false} disabled={productImporting} beforeUpload={file => { void importProductSheet(file); return false; }}>
+                <Button loading={productImporting} icon={<FileSpreadsheet size={14} />}>导入产品表</Button>
+              </AntUpload>
+              <Button onClick={addProduct} icon={<Plus size={14} />}>添加产品</Button>
               {productImportMessage && <span className="text-[11px] font-bold text-emerald-700">{productImportMessage}</span>}
             </div>
             <div className="mt-4 space-y-3">
@@ -2132,7 +2009,7 @@ export default function EnterprisePage() {
                 >
                   <summary className="flex cursor-pointer list-none items-center justify-between gap-3 pr-9 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2">
                     <div className="min-w-0">
-                      <p className="truncate text-xs font-black text-text-primary">{product.name.trim() || `产品 ${index + 1}`}</p>
+                      <p className="truncate text-xs font-semibold text-text-primary">{product.name.trim() || `产品 ${index + 1}`}</p>
                       <p className="mt-1 text-[10px] text-text-muted">产品事实 · 资质凭证 {product.documents?.length ?? 0} 份 · 现有素材记录 {productCreativeMaterialCount(product)} 项</p>
                     </div>
                     <ChevronDown size={14} className="shrink-0 text-text-muted transition-transform group-open:rotate-180" />
@@ -2141,28 +2018,28 @@ export default function EnterprisePage() {
                   <div className="mt-4 border-t border-border pt-4">
                   <div className="grid grid-cols-2 gap-3">
                     <Field label="产品名称">
-                      <input className={inputCls} value={product.name} onChange={e => updateProduct(index, { name: e.target.value })} placeholder={`产品${index + 1}`} />
+                      <Input className={inputCls} value={product.name} onChange={e => updateProduct(index, { name: e.target.value })} placeholder={`产品${index + 1}`} />
                     </Field>
                     <Field label="产品类目">
                       <OptionSelector value={product.category ?? ''} options={CATEGORY_OPTIONS} multiple={false} onChange={value => updateProduct(index, { category: value })} placeholder="选择产品类目" />
                     </Field>
                     <div id={`enterprise-product-${index}-price`}><Field label="参考价或标签价">
-                      <input className={inputCls} value={product.priceRange ?? product.retailPrice ?? product.tagPrice ?? ''} onChange={e => updateProduct(index, { priceRange: e.target.value })} placeholder="$5 - $500 USD" />
+                      <Input className={inputCls} value={product.priceRange ?? product.retailPrice ?? product.tagPrice ?? ''} onChange={e => updateProduct(index, { priceRange: e.target.value })} placeholder="$5 - $500 USD" />
                     </Field></div>
                     <Field label="起订量">
-                      <input className={inputCls} value={product.moq ?? ''} onChange={e => updateProduct(index, { moq: e.target.value })} placeholder="50 件起，支持混批" />
+                      <Input className={inputCls} value={product.moq ?? ''} onChange={e => updateProduct(index, { moq: e.target.value })} placeholder="50 件起，支持混批" />
                     </Field>
                   </div>
                   <Field label="产品卖点">
-                    <textarea className={textareaCls} rows={2} value={product.highlights ?? ''} onChange={e => updateProduct(index, { highlights: e.target.value })} placeholder="核心卖点、适用场景、可定制项、交付优势" />
+                    <Input.TextArea className={textareaCls} rows={2} value={product.highlights ?? ''} onChange={e => updateProduct(index, { highlights: e.target.value })} placeholder="核心卖点、适用场景、可定制项、交付优势" />
                   </Field>
                   <div className="mt-3 space-y-3 border-t border-border pt-3">
-                    <div className="flex flex-col gap-3 rounded-xl border border-emerald-200 bg-emerald-50/70 p-4 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="flex flex-col gap-3 rounded-lg border border-emerald-200 bg-emerald-50/70 p-4 sm:flex-row sm:items-center sm:justify-between">
                       <div>
-                        <p className="text-xs font-black text-emerald-950">产品素材统一在“我的素材”管理</p>
+                        <p className="text-xs font-semibold text-emerald-950">产品素材统一在“我的素材”管理</p>
                         <p className="mt-1 text-[11px] leading-5 text-emerald-800">当前产品有 {productCreativeMaterialCount(product)} 项历史素材记录。进入素材库后可按产品查看、上传和复用。</p>
                       </div>
-                      <button type="button" onClick={() => openProductMaterials(product)} className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg bg-emerald-700 px-3 py-2 text-xs font-black text-white hover:bg-emerald-800">
+                      <button type="button" onClick={() => openProductMaterials(product)} className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg bg-emerald-700 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-800">
                         <Image size={13} />去我的素材
                       </button>
                     </div>
@@ -2202,32 +2079,32 @@ export default function EnterprisePage() {
             {!completions.bizRules && <p className="mb-4 rounded-lg bg-sky-50 px-3 py-2 text-xs font-bold text-sky-800">补充样品、付款和交期后，AI 转人工时会替销售整理好询价条件。</p>}
             <div className="space-y-4">
               <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
-                <p className="text-sm font-black text-amber-900">客户询价 → 标记“等待人工报价”</p>
+                <p className="text-sm font-semibold text-amber-900">客户询价 → 标记“等待人工报价”</p>
                 <p className="mt-1 text-xs leading-5 text-amber-800">AI 不回复价格，也不发送“稍后报价”占位消息；系统提醒销售查看数量、规格和包装要求后亲自回复。</p>
               </div>
               <div className="rounded-lg border border-border bg-surface-2/50 p-4">
-                <p className="text-sm font-black text-text-primary">业务资料</p>
+                <p className="text-sm font-semibold text-text-primary">业务资料</p>
                 <p className="mt-1 text-[11px] text-text-muted">与“产品资料 → 资质文书”同步显示，同一文件不重复上传。</p>
                 <div className="mt-3 space-y-1">{products.flatMap(product => (product.documents ?? []).map(file => ({ product: product.name || '未命名产品', file }))).map(({ product, file }, index) => <div key={`${file.name}-${index}`} className="flex items-center gap-2 rounded bg-white px-2 py-1.5 text-[11px]"><FileText size={12} className="text-text-muted" /><span className="min-w-0 flex-1 truncate">{file.name}</span><span className="text-text-muted">{product}</span></div>)}</div>
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <Field label="内部参考价格（不会自动发给客户）">
-                  <input className={inputCls} value={profile.bizRules?.priceRange ?? ''} onChange={e => setBizRule('priceRange', e.target.value)} placeholder="$5 - $500 USD，仅供销售参考" />
+                  <Input className={inputCls} value={profile.bizRules?.priceRange ?? ''} onChange={e => setBizRule('priceRange', e.target.value)} placeholder="$5 - $500 USD，仅供销售参考" />
                 </Field>
                 <Field label="客户问 MOQ 时，AI 应怎么说">
-                  <input className={inputCls} value={profile.bizRules?.moq ?? ''} onChange={e => setBizRule('moq', e.target.value)} placeholder="常规 50 件起，支持混批" />
+                  <Input className={inputCls} value={profile.bizRules?.moq ?? ''} onChange={e => setBizRule('moq', e.target.value)} placeholder="常规 50 件起，支持混批" />
                 </Field>
                 <Field label="样品是否免费、运费谁出">
-                  <input className={inputCls} value={profile.bizRules?.samplePolicy ?? ''} onChange={e => setBizRule('samplePolicy', e.target.value)} placeholder="样品可付费申请，运费由买家承担" />
+                  <Input className={inputCls} value={profile.bizRules?.samplePolicy ?? ''} onChange={e => setBizRule('samplePolicy', e.target.value)} placeholder="样品可付费申请，运费由买家承担" />
                 </Field>
                 <Field label="付款方式和节点">
-                  <input className={inputCls} value={profile.bizRules?.paymentTerms ?? ''} onChange={e => setBizRule('paymentTerms', e.target.value)} placeholder="T/T 30% 预付，尾款出货前结清" />
+                  <Input className={inputCls} value={profile.bizRules?.paymentTerms ?? ''} onChange={e => setBizRule('paymentTerms', e.target.value)} placeholder="T/T 30% 预付，尾款出货前结清" />
                 </Field>
                 <Field label="交期怎么表述">
-                  <input className={inputCls} value={profile.bizRules?.leadTime ?? ''} onChange={e => setBizRule('leadTime', e.target.value)} placeholder="样品 3-7 天，大货 20-35 天" />
+                  <Input className={inputCls} value={profile.bizRules?.leadTime ?? ''} onChange={e => setBizRule('leadTime', e.target.value)} placeholder="样品 3-7 天，大货 20-35 天" />
                 </Field>
                 <Field label="议价底线说明">
-                  <input className={inputCls} value={profile.bizRules?.bargainFloor ?? ''} onChange={e => setBizRule('bargainFloor', e.target.value)} placeholder="可小幅让利，但不承诺低于成本线" />
+                  <Input className={inputCls} value={profile.bizRules?.bargainFloor ?? ''} onChange={e => setBizRule('bargainFloor', e.target.value)} placeholder="可小幅让利，但不承诺低于成本线" />
                 </Field>
               </div>
               <Field label="销售议价偏好（仅用于内部建议）：">
@@ -2251,9 +2128,9 @@ export default function EnterprisePage() {
           <div data-enterprise-faq>
           <KnowledgeCard icon={BookOpen} title="常见问答" purpose="客户问到这些，AI 直接用你的标准答案回复" completed={completions.faq} stat={`${profile.faq?.length ?? 0} 条 · ${approvedFaqCount} 条已审批`}>
             {faqPacks.length > 0 && (
-              <div data-lingshu-guide="enterprise-faq-pack" className="mb-4 rounded-xl border border-border bg-surface-2/40 p-3">
+              <div data-lingshu-guide="enterprise-faq-pack" className="mb-4 rounded-lg border border-border bg-surface-2/40 p-3">
                 <div className="mb-3 flex items-center justify-between gap-3">
-                  <p className="text-xs font-black text-text-primary">场景知识包</p>
+                  <p className="text-xs font-semibold text-text-primary">场景知识包</p>
                   <button type="button" onClick={() => setFaqPacksOpen(open => !open)} className="rounded-lg border border-border bg-white px-3 py-2 text-[11px] font-bold text-text-secondary hover:bg-surface-2">
                     {faqPacksOpen ? '收起知识包' : `打开知识包（推荐${faqPacks.find(pack => pack.industry === recommendedPackIndustry)?.industryLabel || '通用'}）`}
                   </button>
@@ -2265,10 +2142,10 @@ export default function EnterprisePage() {
                     const selected = selectedQuestionsForPack(pack);
                     const readyCount = pack.items.filter(item => item.ready && !item.exists).length;
                     return (
-                      <div key={pack.id} className={`rounded-xl border bg-white p-3 ${open ? 'border-sky-200 ring-2 ring-sky-50' : 'border-border'}`}>
+                      <div key={pack.id} className={`rounded-lg border bg-white p-3 ${open ? 'border-sky-200 ring-2 ring-sky-50' : 'border-border'}`}>
                         <button type="button" onClick={() => setOpenPackId(open ? '' : pack.id)} className="flex w-full items-start justify-between gap-3 text-left">
                           <div>
-                            <p className="text-xs font-black text-text-primary">{pack.industryLabel} · {pack.scenarioLabel}</p>
+                            <p className="text-xs font-semibold text-text-primary">{pack.industryLabel} · {pack.scenarioLabel}</p>
                             <p className="mt-1 text-[11px] text-text-muted">{pack.count} 条 · 可导入 {readyCount} 条</p>
                           </div>
                           <span className="rounded-full bg-surface-2 px-2 py-1 text-[10px] font-bold text-text-secondary">{open ? '收起' : '预览'}</span>
@@ -2290,7 +2167,7 @@ export default function EnterprisePage() {
                                     <div className="flex items-start gap-2">
                                       <input type="checkbox" checked={checked} disabled={disabled} onChange={() => togglePackQuestion(pack, item.q)} className="mt-0.5" />
                                       <div className="min-w-0 flex-1">
-                                        <p className="text-[11px] font-black text-text-primary">Q：{item.q}</p>
+                                        <p className="text-[11px] font-semibold text-text-primary">Q：{item.q}</p>
                                         <p className="mt-1 text-[11px] leading-5 text-text-secondary">A：{item.a}</p>
                                         {!item.ready && <p className="mt-1 text-[11px] font-bold text-amber-700">先完善报价规则板块：{item.missingVars.join('、')}</p>}
                                         {item.exists && <p className="mt-1 text-[11px] font-bold text-slate-500">已存在，重复导入会跳过</p>}
@@ -2325,7 +2202,7 @@ export default function EnterprisePage() {
             )}
             {faqPreview.length > 0 && (
               <div className="mb-4 rounded-lg border border-border bg-surface-2 p-3">
-                <p className="text-xs font-black text-text-primary">结构化预览</p>
+                <p className="text-xs font-semibold text-text-primary">结构化预览</p>
                 <div className="mt-2 space-y-2">
                   {faqPreview.map(item => <p key={item.id} className="text-xs text-text-secondary">Q：{item.question}<br />A：{item.answer}</p>)}
                 </div>
@@ -2343,7 +2220,7 @@ export default function EnterprisePage() {
               {visibleFaqs.map((item, index) => (
                 <details key={item.id} className="rounded-lg border border-border bg-surface-2/50 p-3" open={index === 0}>
                   <summary className="flex cursor-pointer list-none items-center justify-between gap-3">
-                    <input className={`${inputCls} flex-1`} value={item.question} onChange={e => updateFaq(item.id, { question: e.target.value })} placeholder="客户会怎么问？" />
+                    <Input className="w-full flex-1" value={item.question} onChange={e => updateFaq(item.id, { question: e.target.value })} placeholder="客户会怎么问？" />
                     <div className="flex items-center gap-2">
                       <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${item.source === 'pack' ? 'bg-sky-50 text-sky-700' : item.source === 'learned' ? 'bg-emerald-50 text-emerald-700' : 'bg-white text-text-muted'}`}>
                         {item.source === 'pack' ? '知识包' : item.source === 'learned' ? '学习' : '手动'}
@@ -2353,7 +2230,7 @@ export default function EnterprisePage() {
                       <button type="button" onClick={(event) => { event.preventDefault(); removeFaq(item.id); }} aria-label={`删除问答 ${item.question || index + 1}`} title="删除问答" className="rounded-md p-1 text-text-muted hover:text-red"><X size={13} /></button>
                     </div>
                   </summary>
-                  <textarea className={`${textareaCls} mt-3`} rows={3} value={item.answer} onChange={e => updateFaq(item.id, { answer: e.target.value })} placeholder="标准答案" />
+                  <Input.TextArea className={`${textareaCls} mt-3`} rows={3} value={item.answer} onChange={e => updateFaq(item.id, { answer: e.target.value })} placeholder="标准答案" />
                 </details>
               ))}
               {!(profile.faq ?? []).length && <p className="rounded-lg bg-surface-2 px-3 py-3 text-xs text-text-muted">还没有问答，先添加 5 条常见问题。</p>}
@@ -2364,10 +2241,10 @@ export default function EnterprisePage() {
           )}
 
           {knowledgeView === 'salesStyle' && (
-          <section className="rounded-lg border border-border bg-white p-5 shadow-sm">
+          <section className="rounded-lg border border-border bg-white p-5 ">
             <div className="flex items-start justify-between gap-3">
               <div>
-                <p className="text-sm font-black text-text-primary">你的销售风格</p>
+                <p className="text-sm font-semibold text-text-primary">你的销售风格</p>
                 <p className="mt-1 text-[11px] leading-relaxed text-text-muted">
                   AI 从你 {profile.salesStyleProfile?.learnedFromCount ?? 0} 次真实回复中学到的风格，持续更新，生成回复时会参考。
                 </p>
@@ -2394,7 +2271,7 @@ export default function EnterprisePage() {
                 return (
                   <div key={key} className="rounded-lg border border-border bg-surface-2/50 p-3">
                     <div className="mb-2 flex items-center justify-between gap-2">
-                      <p className="text-xs font-black text-text-primary">{label}</p>
+                      <p className="text-xs font-semibold text-text-primary">{label}</p>
                       <button type="button" onClick={() => deleteSalesStyleField(key)} aria-label={`删除${label}销售风格`} className="text-[11px] font-bold text-text-muted hover:text-red">删除</button>
                     </div>
                     <textarea
@@ -2412,7 +2289,7 @@ export default function EnterprisePage() {
             </div>
             <div className="mt-3 rounded-lg border border-border bg-surface-2/50 p-3">
               <div className="mb-2 flex items-center justify-between gap-2">
-                <p className="text-xs font-black text-text-primary">禁用表达</p>
+                <p className="text-xs font-semibold text-text-primary">禁用表达</p>
                 <button type="button" onClick={deleteTabooPhrases} aria-label="删除禁用表达" className="text-[11px] font-bold text-text-muted hover:text-red">删除</button>
               </div>
               <input
@@ -2425,7 +2302,7 @@ export default function EnterprisePage() {
             </div>
             {(profile.salesStyleProfile?.sample_pairs ?? []).length > 0 && (
               <div className="mt-3 rounded-lg border border-border bg-surface-2/50 p-3">
-                <p className="text-xs font-black text-text-primary">代表样本</p>
+                <p className="text-xs font-semibold text-text-primary">代表样本</p>
                 <div className="mt-2 grid grid-cols-2 gap-2">
                   {(profile.salesStyleProfile?.sample_pairs ?? []).slice(0, 4).map((pair, index) => (
                     <div key={`${pair.trigger}-${index}`} className="rounded-lg bg-white p-2 text-[11px] leading-5 text-text-secondary">
@@ -2440,10 +2317,10 @@ export default function EnterprisePage() {
           )}
 
           {knowledgeView === 'advanced' && (
-          <section className="rounded-lg border border-border bg-white shadow-sm">
+          <section className="rounded-lg border border-border bg-white ">
             <div className="flex w-full items-center justify-between px-5 py-4 text-left">
               <span>
-                <span className="block text-sm font-black text-text-primary">接待规则与高级设置</span>
+                <span className="block text-sm font-semibold text-text-primary">接待规则与高级设置</span>
                 <span className="mt-1 block text-[11px] text-text-muted">先选灵小枢参与到哪一步，再设置什么时候交给你。</span>
               </span>
             </div>
@@ -2455,38 +2332,38 @@ export default function EnterprisePage() {
                 <SupportAccessControl />
 
                 <div className="rounded-lg border border-border bg-surface-2/40 p-4">
-                  <div className="mb-3 flex items-center gap-2"><Compass size={14} className="text-text-secondary" /><h3 className="text-sm font-black text-text-primary">经营策略</h3></div>
+                  <div className="mb-3 flex items-center gap-2"><Compass size={14} className="text-text-secondary" /><h3 className="text-sm font-semibold text-text-primary">经营策略</h3></div>
                   <div className="grid grid-cols-2 gap-4">
-                    <Field label="当前阶段目标"><input className={inputCls} value={profile.strategy?.currentGoal ?? ''} onChange={e => set('strategy')('currentGoal', e.target.value)} /></Field>
-                    <Field label="本期重点产品"><input className={inputCls} value={profile.strategy?.focusProducts ?? ''} onChange={e => set('strategy')('focusProducts', e.target.value)} /></Field>
+                    <Field label="当前阶段目标"><Input className={inputCls} value={profile.strategy?.currentGoal ?? ''} onChange={e => set('strategy')('currentGoal', e.target.value)} /></Field>
+                    <Field label="本期重点产品"><Input className={inputCls} value={profile.strategy?.focusProducts ?? ''} onChange={e => set('strategy')('focusProducts', e.target.value)} /></Field>
                     <Field label="重点市场"><OptionSelector value={profile.strategy?.focusMarkets ?? ''} options={MARKET_OPTIONS} onChange={value => set('strategy')('focusMarkets', value)} placeholder="选择重点市场" /></Field>
                     <Field label="暂不经营市场"><OptionSelector value={profile.strategy?.excludedMarkets ?? ''} options={MARKET_OPTIONS} onChange={value => set('strategy')('excludedMarkets', value)} placeholder="选择暂不经营市场" /></Field>
-                    <Field label="最低利润率"><input className={inputCls} value={profile.strategy?.minMargin ?? ''} onChange={e => set('strategy')('minMargin', e.target.value)} /></Field>
+                    <Field label="最低利润率"><Input className={inputCls} value={profile.strategy?.minMargin ?? ''} onChange={e => set('strategy')('minMargin', e.target.value)} /></Field>
                   </div>
-                  <Field label="价格策略"><textarea className={textareaCls} rows={2} value={profile.strategy?.pricingStrategy ?? ''} onChange={e => set('strategy')('pricingStrategy', e.target.value)} /></Field>
+                  <Field label="价格策略"><Input.TextArea className={textareaCls} rows={2} value={profile.strategy?.pricingStrategy ?? ''} onChange={e => set('strategy')('pricingStrategy', e.target.value)} /></Field>
                 </div>
 
                 <div className="rounded-lg border border-border bg-surface-2/40 p-4">
-                  <div className="mb-3 flex items-center gap-2"><Megaphone size={14} className="text-text-secondary" /><h3 className="text-sm font-black text-text-primary">品牌调性</h3></div>
+                  <div className="mb-3 flex items-center gap-2"><Megaphone size={14} className="text-text-secondary" /><h3 className="text-sm font-semibold text-text-primary">品牌调性</h3></div>
                   <div className="grid grid-cols-2 gap-4">
-                    <Field label="品牌名称"><input className={inputCls} value={profile.brand.name ?? ''} onChange={e => set('brand')('name', e.target.value)} /></Field>
+                    <Field label="品牌名称"><Input className={inputCls} value={profile.brand.name ?? ''} onChange={e => set('brand')('name', e.target.value)} /></Field>
                     <Field label="品牌调性关键词"><OptionSelector value={profile.brand.tone} options={BRAND_TONE_OPTIONS} onChange={value => set('brand')('tone', value)} placeholder="选择品牌调性" /></Field>
                     <Field label="沟通风格"><OptionSelector value={profile.brand.style} options={COMMUNICATION_STYLE_OPTIONS} multiple={false} onChange={value => set('brand')('style', value)} placeholder="选择沟通风格" /></Field>
                     <Field label="首选输出语言"><OptionSelector value={profile.brand.preferredLanguages ?? ''} options={LANGUAGE_OPTIONS} onChange={value => set('brand')('preferredLanguages', value)} placeholder="选择首选输出语言" /></Field>
-                    <Field label="核心卖点"><input className={inputCls} value={profile.brand.usp} onChange={e => set('brand')('usp', e.target.value)} /></Field>
+                    <Field label="核心卖点"><Input className={inputCls} value={profile.brand.usp} onChange={e => set('brand')('usp', e.target.value)} /></Field>
                   </div>
-                  <Field label="禁忌话题"><input className={inputCls} value={profile.brand.taboos} onChange={e => set('brand')('taboos', e.target.value)} /></Field>
+                  <Field label="禁忌话题"><Input className={inputCls} value={profile.brand.taboos} onChange={e => set('brand')('taboos', e.target.value)} /></Field>
                 </div>
 
                 <div className="rounded-lg border border-border bg-surface-2/40 p-4">
-                  <div className="mb-3 flex items-center gap-2"><BookOpen size={14} className="text-text-secondary" /><h3 className="text-sm font-black text-text-primary">Agent 学习记录</h3></div>
+                  <div className="mb-3 flex items-center gap-2"><BookOpen size={14} className="text-text-secondary" /><h3 className="text-sm font-semibold text-text-primary">Agent 学习记录</h3></div>
                   <div className="grid grid-cols-2 gap-4">
-                    <Field label="已验证有效角度"><textarea className={textareaCls} rows={2} value={profile.agentLearning?.provenAngles ?? ''} onChange={e => set('agentLearning')('provenAngles', e.target.value)} /></Field>
-                    <Field label="低效角度 / 需降权"><textarea className={textareaCls} rows={2} value={profile.agentLearning?.weakAngles ?? ''} onChange={e => set('agentLearning')('weakAngles', e.target.value)} /></Field>
-                    <Field label="待确认推断"><textarea className={textareaCls} rows={2} value={profile.agentLearning?.pendingAssumptions ?? ''} onChange={e => set('agentLearning')('pendingAssumptions', e.target.value)} /></Field>
-                    <Field label="用户纠正偏好"><textarea className={textareaCls} rows={2} value={profile.agentLearning?.userCorrections ?? ''} onChange={e => set('agentLearning')('userCorrections', e.target.value)} /></Field>
+                    <Field label="已验证有效角度"><Input.TextArea className={textareaCls} rows={2} value={profile.agentLearning?.provenAngles ?? ''} onChange={e => set('agentLearning')('provenAngles', e.target.value)} /></Field>
+                    <Field label="低效角度 / 需降权"><Input.TextArea className={textareaCls} rows={2} value={profile.agentLearning?.weakAngles ?? ''} onChange={e => set('agentLearning')('weakAngles', e.target.value)} /></Field>
+                    <Field label="待确认推断"><Input.TextArea className={textareaCls} rows={2} value={profile.agentLearning?.pendingAssumptions ?? ''} onChange={e => set('agentLearning')('pendingAssumptions', e.target.value)} /></Field>
+                    <Field label="用户纠正偏好"><Input.TextArea className={textareaCls} rows={2} value={profile.agentLearning?.userCorrections ?? ''} onChange={e => set('agentLearning')('userCorrections', e.target.value)} /></Field>
                   </div>
-                  <Field label="自由填写"><textarea className={textareaCls} rows={5} value={profile.knowledge} onChange={e => setProfile(prev => ({ ...prev, knowledge: e.target.value }))} /></Field>
+                  <Field label="自由填写"><Input.TextArea className={textareaCls} rows={5} value={profile.knowledge} onChange={e => setProfile(prev => ({ ...prev, knowledge: e.target.value }))} /></Field>
                 </div>
 
                 <div className="rounded-lg border border-border bg-surface-2/40 p-4">
@@ -2503,23 +2380,22 @@ export default function EnterprisePage() {
           )}
 
           {pendingProductImport && (
-            <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/55 p-4" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) closeProductImport(); }}>
-              <section role="dialog" aria-modal="true" aria-labelledby="product-import-confirm-title" className="flex max-h-[88vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
-                <header className="flex items-start justify-between gap-4 border-b border-border px-5 py-4">
-                  <div>
-                    <h2 id="product-import-confirm-title" className="text-base font-black text-text-primary">确认产品导入结果</h2>
-                    <p className="mt-1 text-xs text-text-muted">{pendingProductImport.fileName} · {pendingProductImport.sourceLabel} · 识别 {pendingProductImport.products.length}/{pendingProductImport.totalRows} 行</p>
-                  </div>
-                  <button type="button" aria-label="关闭导入确认" disabled={productImportConfirming} onClick={closeProductImport} className="rounded-lg p-2 text-text-muted hover:bg-surface-2 disabled:opacity-40"><X size={18}/></button>
-                </header>
-                <div className="overflow-auto px-5 py-4">
+            <Modal open title="确认产品导入结果" width={840} onCancel={closeProductImport} mask={{ closable: false }}
+              keyboard={!productImportConfirming} closable={!productImportConfirming}
+              styles={{ body: { maxHeight: '65vh', overflowY: 'auto' } }}
+              footer={<div className="flex flex-wrap items-center justify-between gap-3 text-left">
+                <span className="text-xs text-text-secondary">{pendingProductImport.skippedRows ? `${pendingProductImport.skippedRows} 行因缺少产品名称或 SKU 将被跳过` : '未发现需要跳过的空行'}</span>
+                <div className="flex gap-2"><Button disabled={productImportConfirming} onClick={closeProductImport}>取消</Button><Button type="primary" disabled={!pendingProductImport.products.length} loading={productImportConfirming} onClick={() => void confirmProductImport()}>{productImportConfirming ? '正在保存图片…' : `确认导入 ${pendingProductImport.products.length} 个产品`}</Button></div>
+              </div>}>
+              <p className="mb-4 text-sm text-text-secondary">{pendingProductImport.fileName} · {pendingProductImport.sourceLabel} · 识别 {pendingProductImport.products.length}/{pendingProductImport.totalRows} 行</p>
+                <div>
                   <p className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">请核对产品名称、SKU、模型提取字段与图片归属。PDF / DOCX 的内容来自文档文本或表格提取，必须由用户复核后才会写入。</p>
-                  <div className="overflow-hidden rounded-xl border border-border">
+                  <div className="overflow-x-auto rounded-lg border border-border">
                     <table className="w-full min-w-[680px] text-left text-xs">
                       <thead className="bg-surface-2 text-text-muted"><tr><th className="px-3 py-2">图片</th><th className="px-3 py-2">产品名称</th><th className="px-3 py-2">SKU</th><th className="px-3 py-2">品牌 / 规格</th><th className="px-3 py-2">识别卖点</th><th className="w-16 px-3 py-2">操作</th></tr></thead>
                       <tbody className="divide-y divide-border">
                         {pendingProductImport.products.map((product, index) => { const transfer = pendingProductImport.remoteImageTransfers[index]; return <tr key={`${product.sku || product.name}-${index}`}>
-                          <td className="px-3 py-2"><div className="relative w-fit">{product.imageUrl ? <img src={product.imageUrl} alt="" className="h-12 w-12 rounded-lg border border-border object-cover" onError={event => { event.currentTarget.style.display = 'none'; }} /> : <span className="inline-flex h-12 w-12 items-center justify-center rounded-lg bg-surface-2 text-[10px] text-text-muted">无图片</span>}{transfer && <span title={transfer.error || transfer.originalUrl} className={`absolute -bottom-1 -right-2 rounded px-1 py-0.5 text-[8px] font-black text-white ${transfer.status === 'uploaded' ? 'bg-emerald-600' : transfer.status === 'failed' ? 'bg-red-600' : transfer.status === 'uploading' ? 'bg-slate-800' : 'bg-amber-600'}`}>{transfer.status === 'uploaded' ? '已转存' : transfer.status === 'failed' ? '转存失败' : transfer.status === 'uploading' ? '转存中' : '待转存'}</span>}</div>{transfer?.error && <p className="mt-2 max-w-32 text-[9px] leading-4 text-red-600">{transfer.error}</p>}</td>
+                          <td className="px-3 py-2"><div className="relative w-fit">{product.imageUrl ? <img src={product.imageUrl} alt="" className="h-12 w-12 rounded-lg border border-border object-cover" onError={event => { event.currentTarget.style.display = 'none'; }} /> : <span className="inline-flex h-12 w-12 items-center justify-center rounded-lg bg-surface-2 text-[10px] text-text-muted">无图片</span>}{transfer && <span title={transfer.error || transfer.originalUrl} className={`absolute -bottom-1 -right-2 rounded px-1 py-0.5 text-[8px] font-semibold text-white ${transfer.status === 'uploaded' ? 'bg-emerald-600' : transfer.status === 'failed' ? 'bg-red-600' : transfer.status === 'uploading' ? 'bg-slate-800' : 'bg-amber-600'}`}>{transfer.status === 'uploaded' ? '已转存' : transfer.status === 'failed' ? '转存失败' : transfer.status === 'uploading' ? '转存中' : '待转存'}</span>}</div>{transfer?.error && <p className="mt-2 max-w-32 text-[9px] leading-4 text-red-600">{transfer.error}</p>}</td>
                           <td className="px-3 py-2 font-bold text-text-primary">{product.name}</td>
                           <td className="px-3 py-2 text-text-secondary">{product.sku || '—'}</td>
                           <td className="px-3 py-2 text-text-secondary">{[product.brand, product.color, product.size].filter(Boolean).join(' · ') || '—'}</td>
@@ -2529,14 +2405,9 @@ export default function EnterprisePage() {
                       </tbody>
                     </table>
                   </div>
-                  {pendingProductImport.unassignedImages.length > 0 && <div className="mt-4 rounded-xl border border-sky-200 bg-sky-50 p-3"><p className="text-xs font-black text-sky-900">未归属图片（{pendingProductImport.unassignedImages.length}）</p><p className="mt-1 text-[11px] leading-5 text-sky-800">文档没有提供可验证的图片与产品对应关系，因此不会静默绑定。确认导入时会把这些图片持久化到“企业上传素材”，随后可手动关联产品。</p><div className="mt-3 flex flex-wrap gap-2">{pendingProductImport.unassignedImages.map(image => <figure key={image.name} className="w-24"><div className="relative"><img src={image.url} alt={image.name} className="h-20 w-24 rounded-lg border border-sky-200 bg-white object-cover"/>{image.status && image.status !== 'pending' && <span className={`absolute bottom-1 right-1 rounded px-1.5 py-0.5 text-[9px] font-black ${image.status === 'uploaded' ? 'bg-emerald-600 text-white' : image.status === 'failed' ? 'bg-red-600 text-white' : 'bg-slate-900 text-white'}`}>{image.status === 'uploaded' ? '已保存' : image.status === 'failed' ? '失败' : '上传中'}</span>}</div><figcaption className="mt-1 truncate text-[9px] text-sky-800" title={image.error || image.name}>{image.error || image.name}</figcaption></figure>)}</div></div>}
+                  {pendingProductImport.unassignedImages.length > 0 && <div className="mt-4 rounded-lg border border-sky-200 bg-sky-50 p-3"><p className="text-xs font-semibold text-sky-900">未归属图片（{pendingProductImport.unassignedImages.length}）</p><p className="mt-1 text-[11px] leading-5 text-sky-800">文档没有提供可验证的图片与产品对应关系，因此不会静默绑定。确认导入时会把这些图片持久化到“企业上传素材”，随后可手动关联产品。</p><div className="mt-3 flex flex-wrap gap-2">{pendingProductImport.unassignedImages.map(image => <figure key={image.name} className="w-24"><div className="relative"><img src={image.url} alt={image.name} className="h-20 w-24 rounded-lg border border-sky-200 bg-white object-cover"/>{image.status && image.status !== 'pending' && <span className={`absolute bottom-1 right-1 rounded px-1.5 py-0.5 text-[9px] font-semibold ${image.status === 'uploaded' ? 'bg-emerald-600 text-white' : image.status === 'failed' ? 'bg-red-600 text-white' : 'bg-slate-900 text-white'}`}>{image.status === 'uploaded' ? '已保存' : image.status === 'failed' ? '失败' : '上传中'}</span>}</div><figcaption className="mt-1 truncate text-[9px] text-sky-800" title={image.error || image.name}>{image.error || image.name}</figcaption></figure>)}</div></div>}
                 </div>
-                <footer className="flex items-center justify-between gap-3 border-t border-border px-5 py-4">
-                  <span className="text-xs text-text-muted">{pendingProductImport.skippedRows ? `${pendingProductImport.skippedRows} 行因缺少产品名称或 SKU 将被跳过` : '未发现需要跳过的空行'}</span>
-                  <div className="flex gap-2"><button type="button" disabled={productImportConfirming} onClick={closeProductImport} className="rounded-lg border border-border px-4 py-2 text-xs font-bold text-text-secondary disabled:opacity-40">取消</button><button type="button" disabled={!pendingProductImport.products.length || productImportConfirming} onClick={() => void confirmProductImport()} className="inline-flex items-center gap-1.5 rounded-lg bg-slate-950 px-4 py-2 text-xs font-bold text-white disabled:opacity-40">{productImportConfirming && <Loader2 size={12} className="animate-spin"/>}{productImportConfirming ? '正在保存图片…' : `确认导入 ${pendingProductImport.products.length} 个产品`}</button></div>
-                </footer>
-              </section>
-            </div>
+            </Modal>
           )}
 
           <div className="h-4" />

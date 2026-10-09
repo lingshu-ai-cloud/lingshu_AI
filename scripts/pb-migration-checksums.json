@@ -113,6 +113,10 @@
     "1791072008_create_content_execution_queue.js": "17082ecdb5a6228182507d1d2a01f55c6aac48922cd376c489fecce8c8fb2f07",
     "1791072018_create_social_weekly_customer_bindings.js": "1bcb66fd865587719249ddd139694a531be3f61d0484b7965df8a91fb58f9003",
     "1791535000_add_instagram_tenant_app.js": "f05cef6e9f9d4b95262184f557c84d9c0159697421137e7924dd21f4745d210b",
-    "1791535001_extend_social_accounts_instagram_login.js": "900e65b5e2cc78c6842f05501f064d457e7941bbd7c83194f7f184cfff1e4e28"
+    "1791535001_extend_social_accounts_instagram_login.js": "900e65b5e2cc78c6842f05501f064d457e7941bbd7c83194f7f184cfff1e4e28",
+    "1791072009_create_social_weekly_cancellations.js": "e2117f214d066c7d7427fc000fcc7507df68df525d0b54834fe47f4d9bdc44b3",
+    "1791072010_create_studio_render_jobs.js": "0c755711d7af26e942c4ec8f758a03854540331f3f05258ae2dc09edb60c6227",
+    "1791072011_create_social_weekly_agent_planning.js": "8d96d652ebeb1670d32242bc792f4a5f8e70f8b9767ef25df3c837b9642dec7d",
+    "1791072012_add_content_execution_checkpoints.js": "27f9ac16b1d8b070d1396d0bacbd2456dea0c359bc7ab6bff2c667db72e2b284"
   }
 }

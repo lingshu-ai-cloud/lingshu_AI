@@ -21,6 +21,19 @@ try {
     if (init.method === 'POST') return Response.json({ id: String(100 + ++writes) });
     return Response.json({ id: '101', status: 'PAUSED', account_id: '1', daily_budget: '500' });
   }) as typeof fetch;
+  const staleTask = await createPlatformAdTask('t1', 'u1', { name: 'Stale AI plan', video: 'video', market: 'US', budget: 100, goal: '提升网站访问', channels: ['Facebook'] }, {
+    creationSource: 'ai_assisted',
+    proposal: {
+      rationale: '待复核方案', audienceStrategy: '待核验受众', creativeStrategy: '待核验素材',
+      risks: ['待核验'], assumptions: ['待核验'], expectedOutcome: '暂不可预测', generatedAt: new Date().toISOString(),
+      enterpriseFactVersion: 'enterprise-facts-stale',
+    },
+  });
+  await assert.rejects(executeAdAction('t1', staleTask.id, {
+    requestId: 'stale_fact_request', expectedVersion: staleTask.version, connectionId: connection.id, action: 'create',
+    meta: { pageId: '1', videoId: '2', imageUrl: 'https://example.com/a.jpg', linkUrl: 'https://example.com', countries: ['US'], dailyBudget: 5 },
+  }), /\u4f01\u4e1a\u8d44\u6599\u5df2\u66f4\u65b0/);
+  assert.equal(writes, 0, 'stale enterprise facts must block execution before provider writes');
   const input = { requestId: 'request_1', expectedVersion: task.version, connectionId: connection.id, action: 'create', meta: { pageId: '1', videoId: '2', imageUrl: 'https://example.com/a.jpg', linkUrl: 'https://example.com', countries: ['US'], dailyBudget: 5 } };
   const first = await executeAdAction('t1', task.id, input);
   assert.equal(first.status, 'VERIFIED');

@@ -1,3 +1,4 @@
+import { Button, Input, Segmented, Steps } from 'antd';
 import { StoryboardFirstFrame } from './StoryboardFirstFrame';
 import ReplicationWorkbenchHeader from '../socialContent/ReplicationWorkbenchHeader';
 import { useEffect, useId, useState, type ReactNode } from 'react';
@@ -189,47 +190,16 @@ export function StudioStepProgress({
 
   return (
     <nav aria-label="内容创作步骤" className="w-full min-w-0">
-      <ol className="grid grid-cols-3 border-b border-border">
-        {steps.map((step, index) => {
-          const complete = step.status === 'complete' || index < activeIndex;
-          const active = step.status === 'active' || step.id === activeStepId;
-          const blocked = step.status === 'blocked';
-          const upcoming = step.status === 'upcoming' || index > activeIndex;
-          const canNavigate = Boolean(onStepChange) && !blocked && (!upcoming || allowForwardStepNavigation);
-          return (
-            <li key={step.id} className="relative min-w-0">
-              <button
-                type="button"
-                disabled={!canNavigate}
-                aria-current={active ? 'step' : undefined}
-                onClick={() => onStepChange?.(step.id)}
-                className={joinClassNames(
-                  '-mb-px flex h-10 w-full min-w-0 items-center justify-center gap-1.5 border-b-2 px-2 text-center transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/30',
-                  canNavigate && 'cursor-pointer',
-                  !canNavigate && 'cursor-default',
-                  active ? 'border-accent text-text-primary' : 'border-transparent text-text-muted',
-                  canNavigate && !active && 'hover:border-border-bright hover:bg-surface-2/50 hover:text-text-secondary',
-                )}
-              >
-                <span
-                  className={joinClassNames(
-                    'flex h-5 w-5 items-center justify-center text-[9px] font-black transition-colors',
-                    complete && 'text-emerald-700',
-                    active && !complete && 'text-accent',
-                    !active && !complete && 'text-text-muted',
-                    blocked && 'text-red-600',
-                  )}
-                >
-                  {complete ? <Check size={13} aria-hidden="true" /> : index + 1}
-                </span>
-                <span className={joinClassNames('truncate text-[11px] font-bold', active ? 'text-text-primary' : 'text-text-muted')}>
-                  {step.shortLabel || step.label}
-                </span>
-              </button>
-            </li>
-          );
-        })}
-      </ol>
+      <Steps
+        size="small"
+        current={activeIndex}
+        onChange={onStepChange ? index => onStepChange(steps[index].id) : undefined}
+        items={steps.map((step, index) => ({
+          title: step.shortLabel || step.label,
+          status: step.status === 'blocked' ? 'error' : step.status === 'complete' || index < activeIndex ? 'finish' : step.id === activeStepId ? 'process' : 'wait',
+          disabled: !onStepChange || step.status === 'blocked' || (!allowForwardStepNavigation && (step.status === 'upcoming' || index > activeIndex)),
+        }))}
+      />
     </nav>
   );
 }
@@ -241,23 +211,9 @@ function MobilePanelTabs({ active, onChange }: { active: MobilePanel; onChange: 
     { id: 'properties', label: '步骤设置', icon: <Settings2 size={15} /> },
   ];
   return (
-    <div className="grid grid-cols-3 border-b border-border bg-surface px-2 xl:hidden" role="tablist" aria-label="工作台面板">
-      {items.map(item => (
-        <button
-          key={item.id}
-          type="button"
-          role="tab"
-          aria-selected={active === item.id}
-          onClick={() => onChange(item.id)}
-          className={joinClassNames(
-            '-mb-px flex h-10 items-center justify-center gap-1.5 border-b-2 text-xs font-bold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/30',
-            active === item.id ? 'border-accent text-text-primary' : 'border-transparent text-text-muted hover:border-border-bright hover:text-text-secondary',
-          )}
-        >
-          {item.icon}
-          <span>{item.label}</span>
-        </button>
-      ))}
+    <div className="border-b border-border bg-surface p-2 xl:hidden">
+      <Segmented block value={active} onChange={value => onChange(value as MobilePanel)}
+        options={items.map(item => ({ value: item.id, label: item.label, icon: item.icon }))} aria-label="工作台面板" />
     </div>
   );
 }
@@ -266,7 +222,7 @@ function PanelHeading({ title, description, action }: { title: string; descripti
   return (
     <header className="flex min-h-12 shrink-0 items-center justify-between gap-3 border-b border-border/80 px-4 py-2.5">
       <div className="min-w-0">
-        <h2 className="truncate text-xs font-black text-text-primary">{title}</h2>
+        <h2 className="truncate text-xs font-semibold text-text-primary">{title}</h2>
         {description && <p className="mt-0.5 truncate text-[10px] leading-4 text-text-muted">{description}</p>}
       </div>
       {action}
@@ -326,18 +282,18 @@ export function StudioWorkbenchFrame({
       )}
       aria-label="内容创作工作台"
     >
-      {replicationWorkflow ? <ReplicationWorkbenchHeader activeStep={replicationActiveStep} stepLabels={replicationStepLabels} onStepChange={onReplicationStepChange} navigationDisabled={replicationNavigationDisabled} title={projectTitle} actions={<>{headerActions}<SaveStatusView status={saveStatus} compact />{onSave && <button type="button" onClick={onSave} disabled={saveStatus.state === 'saving'} className="rounded-lg border border-border px-3 py-2 text-xs font-bold">保存草稿</button>}</>} /> : <>      <header className="grid shrink-0 items-center gap-3 border-b border-border bg-surface px-4 py-2.5 xl:grid-cols-[minmax(180px,1fr)_minmax(320px,460px)_minmax(160px,1fr)] xl:px-5">
+      {replicationWorkflow ? <ReplicationWorkbenchHeader activeStep={replicationActiveStep} stepLabels={replicationStepLabels} onStepChange={onReplicationStepChange} navigationDisabled={replicationNavigationDisabled} title={projectTitle} actions={<>{headerActions}<SaveStatusView status={saveStatus} compact />{onSave && <Button onClick={onSave} loading={saveStatus.state === 'saving'} icon={<Save size={14} />}>保存草稿</Button>}</>} /> : <>      <header className="grid shrink-0 items-center gap-3 border-b border-border bg-surface px-4 py-2.5 xl:grid-cols-[minmax(180px,1fr)_minmax(320px,460px)_minmax(160px,1fr)] xl:px-5">
         <div className="min-w-0">
           {projectTitleIsEditable ? (
-            <input
+            <Input
               value={projectTitle}
               onChange={event => onProjectTitleChange?.(event.target.value)}
               placeholder={projectTitlePlaceholder}
               aria-label="项目名称"
-              className="h-8 w-full max-w-xl truncate rounded-md border border-transparent bg-transparent px-1.5 text-sm font-black text-text-primary outline-none transition hover:border-border hover:bg-surface-2 focus:border-accent focus:bg-surface"
+              className="h-8 w-full max-w-xl truncate rounded-md border border-transparent bg-transparent px-1.5 text-sm font-semibold text-text-primary outline-none transition hover:border-border hover:bg-surface-2 focus:border-accent focus:bg-surface"
             />
           ) : (
-            <h1 className="truncate px-1.5 text-sm font-black text-text-primary">{projectTitle || projectTitlePlaceholder}</h1>
+            <h1 className="truncate px-1.5 text-sm font-semibold text-text-primary">{projectTitle || projectTitlePlaceholder}</h1>
           )}
           {projectSubtitle && <p className="truncate px-1.5 text-[10px] text-text-muted">{projectSubtitle}</p>}
         </div>
@@ -346,7 +302,7 @@ export function StudioWorkbenchFrame({
         </div>
         <div className="flex items-center gap-3 justify-self-end">
           {headerActions}
-          {onSave && <button type="button" onClick={onSave} disabled={saveStatus.state === 'saving'} className="rounded-md border border-border bg-white px-3 py-1 text-xs font-bold text-text-primary transition-colors hover:bg-surface-2 disabled:opacity-50">保存草稿</button>}
+          {onSave && <Button onClick={onSave} loading={saveStatus.state === 'saving'} icon={<Save size={14} />}>保存草稿</Button>}
         </div>
       </header>
 
@@ -405,7 +361,7 @@ export function StudioWorkbenchFrame({
         <section className="flex h-[122px] shrink-0 flex-col border-t border-border bg-surface xl:h-[142px]" aria-label={timelineTitle}>
           <div className="flex h-9 shrink-0 items-center justify-between gap-3 border-b border-border/70 px-4">
             <div className="flex min-w-0 items-center gap-2">
-              <h2 className="shrink-0 text-[11px] font-black text-text-primary">{timelineTitle}</h2>
+              <h2 className="shrink-0 text-[11px] font-semibold text-text-primary">{timelineTitle}</h2>
               {timelineDescription && <p className="truncate text-[10px] text-text-muted">{timelineDescription}</p>}
             </div>
             {timelineToolbar}
@@ -414,20 +370,14 @@ export function StudioWorkbenchFrame({
         </section>
       )}
 
-      <footer className="sticky bottom-0 z-20 shrink-0 border-t border-border bg-surface px-4 py-2.5 shadow-[0_-2px_8px_rgba(15,23,42,0.025)] sm:px-5">
+      <footer className="sticky bottom-0 z-20 shrink-0 border-t border-border bg-surface px-4 py-2.5  sm:px-5">
         {actionTodos}
         <div className="grid items-center gap-3 sm:grid-cols-[1fr_auto_1fr]">
           <div className="flex min-w-0 items-center gap-3">
             {previousAction && (
-              <button
-                type="button"
-                disabled={previousAction.disabled || previousAction.loading}
-                onClick={previousAction.onClick}
-                className="inline-flex h-9 items-center gap-1 rounded-lg px-2 text-xs font-bold text-text-secondary transition hover:bg-surface-2 hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                {previousAction.loading ? <Loader2 size={14} className="animate-spin" /> : previousAction.icon || <ChevronLeft size={15} />}
+              <Button disabled={previousAction.disabled} loading={previousAction.loading} onClick={previousAction.onClick} icon={previousAction.icon || <ChevronLeft size={15} />}>
                 {previousAction.loading ? previousAction.loadingLabel || previousAction.label : previousAction.label}
-              </button>
+              </Button>
             )}
             <div className="hidden min-w-0 sm:block"><SaveStatusView status={saveStatus} /></div>
           </div>
@@ -442,28 +392,16 @@ export function StudioWorkbenchFrame({
 
           <div className="flex items-center justify-end gap-2">
             {previewAction && (
-              <button
-                type="button"
-                disabled={previewAction.disabled || previewAction.loading}
-                onClick={previewAction.onClick}
-                className="inline-flex h-10 items-center justify-center gap-1.5 rounded-md border border-border bg-surface px-4 text-xs font-bold text-text-secondary transition-colors hover:border-accent/40 hover:bg-surface-2 hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                {previewAction.loading ? <Loader2 size={14} className="animate-spin" /> : previewAction.icon || <Play size={14} />}
+              <Button disabled={previewAction.disabled} loading={previewAction.loading} onClick={previewAction.onClick} icon={previewAction.icon || <Play size={14} />}>
                 {previewAction.loading ? previewAction.loadingLabel || previewAction.label : previewAction.label}
-              </button>
+              </Button>
             )}
-            <button
-              data-agent-action="studio-primary"
-              data-agent-block-reason={primaryAction.blockReason || undefined}
-              type={primaryAction.type || 'button'}
-              disabled={primaryAction.disabled || primaryAction.loading}
-              onClick={primaryAction.onClick}
-              aria-describedby={primaryAction.blockReason ? blockReasonId : undefined}
-              className="inline-flex h-10 min-w-28 items-center justify-center gap-2 rounded-md bg-accent px-5 text-xs font-black text-white transition-colors hover:bg-accent-dim focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-45"
-            >
-              {primaryAction.loading ? <Loader2 size={15} className="animate-spin" /> : primaryAction.icon}
+            <Button type="primary" htmlType={primaryAction.type || 'button'} data-agent-action="studio-primary"
+              data-agent-block-reason={primaryAction.blockReason || undefined} disabled={primaryAction.disabled}
+              loading={primaryAction.loading} onClick={primaryAction.onClick} icon={primaryAction.icon}
+              aria-describedby={primaryAction.blockReason ? blockReasonId : undefined}>
               {primaryAction.loading ? primaryAction.loadingLabel || `${primaryAction.label}中` : primaryAction.label}
-            </button>
+            </Button>
           </div>
           {primaryAction.blockReason && (
             <p className="text-center text-[11px] font-medium leading-4 text-amber-700 sm:hidden">{primaryAction.blockReason}</p>
@@ -477,7 +415,7 @@ export function StudioWorkbenchFrame({
 export function StudioInputSummary({ items, title = '创作输入摘要', description, emptyAction }: StudioInputSummaryProps) {
   if (!items.length) {
     return (
-      <div className="rounded-xl border border-dashed border-border bg-surface-2 p-4 text-center">
+      <div className="rounded-lg border border-dashed border-border bg-surface-2 p-4 text-center">
         <ImageIcon size={22} className="mx-auto text-text-muted" aria-hidden="true" />
         <p className="mt-2 text-xs font-bold text-text-primary">尚未添加创作信息</p>
         <p className="mt-1 text-[11px] leading-4 text-text-muted">完善主题或添加素材后，这里会持续显示项目摘要。</p>
@@ -488,7 +426,7 @@ export function StudioInputSummary({ items, title = '创作输入摘要', descri
   return (
     <section aria-label={title}>
       <div className="mb-2 px-1">
-        <h3 className="text-[10px] font-black uppercase tracking-[0.12em] text-text-muted">{title}</h3>
+        <h3 className="text-[10px] font-semibold uppercase tracking-[0.12em] text-text-muted">{title}</h3>
         {description && <p className="mt-0.5 text-[10px] leading-4 text-text-muted">{description}</p>}
       </div>
       <div className="divide-y divide-border/70 border-y border-border/70">
@@ -530,7 +468,7 @@ function StoryboardStatus({ status = 'idle', label }: { status?: StudioStoryboar
 export function StudioStoryboardList({ items, selectedId, onSelect, onMore, onPresenterDecision, emptyState }: StudioStoryboardListProps) {
   if (!items.length) {
     return emptyState || (
-      <div className="rounded-xl border border-dashed border-border bg-surface-2 p-5 text-center">
+      <div className="rounded-lg border border-dashed border-border bg-surface-2 p-5 text-center">
         <Clock3 size={22} className="mx-auto text-text-muted" aria-hidden="true" />
         <p className="mt-2 text-xs font-bold text-text-primary">分镜尚未准备</p>
         <p className="mt-1 text-[11px] leading-4 text-text-muted">选择企业产品并生成逐句口播方案后，参考视频的分镜会显示在这里。</p>
@@ -546,7 +484,7 @@ export function StudioStoryboardList({ items, selectedId, onSelect, onMore, onPr
             <article
               className={joinClassNames(
                 'group relative rounded-lg border p-2 transition',
-                selected ? 'border-emerald-200 bg-emerald-50/80 shadow-sm' : 'border-transparent bg-white hover:border-emerald-100 hover:bg-emerald-50/35',
+                selected ? 'border-emerald-200 bg-emerald-50/80 shadow-none' : 'border-transparent bg-white hover:border-emerald-100 hover:bg-emerald-50/35',
               )}
             >
               <button
@@ -557,11 +495,11 @@ export function StudioStoryboardList({ items, selectedId, onSelect, onMore, onPr
               >
                 <span className="relative h-[72px] w-[86px] shrink-0 overflow-hidden rounded-lg bg-slate-950">
                   <StoryboardFirstFrame source={item.frameSource} firstFrameRef={item.firstFrameRef} imageUrl={item.thumbnailUrl} time={item.frameTime || 0} label={`分镜 ${item.index}`} className="h-full w-full" />
-                  <span className="absolute left-1 top-1 rounded bg-black/75 px-1.5 py-0.5 text-[8px] font-black text-white">{item.index}</span>
+                  <span className="absolute left-1 top-1 rounded bg-black/75 px-1.5 py-0.5 text-[8px] font-semibold text-white">{item.index}</span>
                 </span>
                 <span className="min-w-0 flex-1 pr-1">
                   <span className="flex items-start justify-between gap-1">
-                    <span className="line-clamp-1 text-[11px] font-black text-text-primary">{item.title || `分镜 ${String(item.index).padStart(2, '0')}`}</span>
+                    <span className="line-clamp-1 text-[11px] font-semibold text-text-primary">{item.title || `分镜 ${String(item.index).padStart(2, '0')}`}</span>
                     {item.duration && <span className="shrink-0 text-[9px] font-bold text-text-muted">{item.duration}</span>}
                   </span>
                   {item.topicLabel && <span className="mt-1 inline-flex rounded-full bg-emerald-50 px-2 py-0.5 text-[9px] font-bold text-emerald-800">题材：{item.topicLabel}</span>}

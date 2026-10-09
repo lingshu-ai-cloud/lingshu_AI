@@ -38,7 +38,7 @@ export function creationHistoryAnalysis(spec: Record<string, unknown>, authorita
   const activeKey = `${String(spec.activeAssemblyId || '')}:${String(productionId || '')}`;
   const production = productions[activeKey] || productions[String(productionId || '')]
     || Object.entries(productions).find(([key]) => productionId && key.endsWith(`:${productionId}`))?.[1];
-  const savedHook = recordOf(results.hook); 
+  const savedHook = recordOf(results.hook);
   const generated = recordOf(kickoff.generatedVideo);
   return { reference: analysis, slots, hook: {
     visual: String(savedHook.visual || first?.detail || generated.title || ''),

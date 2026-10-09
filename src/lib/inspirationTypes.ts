@@ -107,6 +107,7 @@ export interface VideoAnalysisPayload {
   analysisReviewReasons?: string[];
   analysisMode?: 'strategy' | 'exact';
   requestedAnalysisMode?: 'strategy' | 'exact';
+  analysisProgress?: VideoAnalysisProgress;
   analysisError?: string;
   videoLevelFailureStatus?: string;
   manualRequiredReason?: string;
@@ -144,6 +145,24 @@ export interface VideoAnalysisPayload {
   crawlerOpsReason?: string;
   crawlerOpsLastError?: string;
   gemini?: GeminiVideoAnalysis;
+}
+
+/** Server-authored analysis progress. Missing values must remain unknown in UI. */
+export interface VideoAnalysisProgress {
+  stage: 'metadata' | 'queued' | 'downloading' | 'transcoding' | 'analyzing' | 'extracting_evidence' | 'completed' | 'failed' | 'paused' | 'cancelled';
+  stageLabel: string;
+  percent: number | null;
+  currentStep: string;
+  queuePosition: number | null;
+  queuedAt: string | null;
+  startedAt: string | null;
+  updatedAt: string | null;
+  estimatedCompletedAt: string | null;
+  etaSeconds: number | null;
+  retryable: boolean;
+  backendAccepted: boolean;
+  workerStarted: boolean;
+  runId: string | null;
 }
 
 export interface AccountSpecialRecommendation {

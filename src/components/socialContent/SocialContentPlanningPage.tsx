@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
 import { ImagePlus } from 'lucide-react';
+import { Button } from 'antd';
+import LsPageHeader from '../ui/LsPageHeader';
 import type { Page } from '../../App';
 import SocialContentWorkspace, { type SocialContentCreateRequest } from './SocialContentWorkspace';
 import SocialContentLanding, { type SocialContentLaunchOptions } from './SocialContentLanding';
@@ -96,6 +98,8 @@ export default function SocialContentPlanningPage({
 
   const startGeneration = (request: SocialCreationWorkbenchSubmit) => {
     const primaryMaterial = request.uploadedMaterials[0];
+    const distinctProducts = request.productMappings.filter((mapping, index, mappings) =>
+      mapping.productId && mappings.findIndex(item => item.productId === mapping.productId) === index);
     if (request.creationPath === 'material_processing') {
       try {
         localStorage.setItem('ow_video_kickoff', JSON.stringify({
@@ -137,8 +141,8 @@ export default function SocialContentPlanningPage({
       },
       sourceContext: sourceRequest?.sourceContext,
       identityMappings: {
-        selectedProductIds: request.productMappings.map(mapping => mapping.productId).filter(Boolean),
-        selectedProductNames: request.productMappings.map(mapping => mapping.productName).filter(Boolean),
+        selectedProductIds: distinctProducts.map(mapping => mapping.productId),
+        selectedProductNames: distinctProducts.map(mapping => mapping.productName),
         products: request.productMappings,
         brand: request.brandMapping,
       },
@@ -162,7 +166,7 @@ export default function SocialContentPlanningPage({
   }
 
   return (
-    <div className="h-full min-h-0 bg-[#f6f8f5]">
+    <div className="h-full min-h-0 bg-ink">
       {view === 'workbench' && launch ? (
         <SocialCreationWorkbench
           key={`${launch.creationPath}:${seed?.referenceTitle || 'new'}`}
@@ -176,10 +180,7 @@ export default function SocialContentPlanningPage({
       ) : (
         <div className="h-full min-h-0 overflow-y-auto">
           <main className="mx-auto max-w-[1440px] px-4 py-5 sm:px-8 sm:py-7">
-            <header className="mb-5 flex flex-wrap items-center justify-between gap-4">
-              <div><p className="text-[10px] font-black uppercase tracking-[0.14em] text-accent">内容制作</p><h1 className="mt-1 text-xl font-black text-text-primary">我的创作</h1><p className="mt-1 text-xs text-text-muted">查看正在生成的任务、制作进度和待验收内容。</p></div>
-              <button type="button" onClick={() => setChooserOpen(true)} className="inline-flex items-center gap-2 rounded-xl bg-[#173d31] px-4 py-2.5 text-xs font-black text-white shadow-sm hover:bg-[#245644]"><ImagePlus size={15} />新建内容</button>
-            </header>
+            <LsPageHeader title="我的创作" description="查看正在生成的任务、制作进度和待验收内容。" extra={<Button type="primary" onClick={() => setChooserOpen(true)} icon={<ImagePlus size={15} />}>新建内容</Button>} />
             <SocialContentHistoryHome onRequestCreate={() => setChooserOpen(true)} />
           </main>
         </div>

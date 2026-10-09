@@ -1,4 +1,6 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
+import { Alert, Button, Checkbox, Drawer, Input, Modal, Segmented, Tabs } from 'antd';
+import { LsPageHeader } from './ui/LsPageHeader';
 import SocialAccountStrategies from './socialProgram/SocialAccountStrategies';
 import type { SocialContentCreateRequest } from './socialContent/SocialContentWorkspace';
 import {
@@ -59,7 +61,6 @@ export {
   publishStorageKey,
   studioGenerationIsVerified,
 } from '../lib/publishQueueState';
-import { useModalFocus } from '../hooks/useModalFocus';
 import { SocialPlatformIcon } from './SocialPlatformIcon';
 import { resolveInitialTrafficViewMode, resolveNavigationEventViewMode, resolveSignalViewMode, resolveWorkflowNavigationPage, type TrafficViewMode } from './trafficViewMode';
 import { useSocialContentNavigation } from './socialContent/useSocialContentNavigation';
@@ -586,14 +587,6 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview, workflowCont
   const materializedVideoPathsRef = useRef(new Set<string>());
   const videoInputRef = useRef<HTMLInputElement | null>(null);
   const publishSettingsRef = useRef<HTMLElement | null>(null);
-  const publishConfirmationRef = useModalFocus<HTMLDivElement>({
-    open: publishConfirmationOpen,
-    onClose: () => setPublishConfirmationOpen(false),
-  });
-  const systemLibraryDialogRef = useModalFocus<HTMLDivElement>({
-    open: systemLibraryOpen,
-    onClose: () => setSystemLibraryOpen(false),
-  });
   const handledWorkflowContextRef = useRef(
     workflowContext ? `${workflowContext.runId}:${workflowContext.taskId}` : '',
   );
@@ -772,6 +765,7 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview, workflowCont
           body: JSON.stringify({
             title: calendarPlatform ? platformTitle(calendarPlatform, copy, activeItem.title.trim()) : activeItem.title.trim(),
             description: calendarPlatform ? platformBody(calendarPlatform, copy, activeItem.description.trim()) : activeItem.description.trim(),
+            ...publishSourceRequestFields(activeItem),
             firstComment: copy?.firstComment || activeItem.firstComment,
             videoPath: activeItem.videoPath.trim(),
             targetAccountIds: platformTargets.map(account => account.id),
@@ -846,6 +840,7 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview, workflowCont
             title: platformTitle(platform, copy, item.title.trim()),
             description: platformBody(platform, copy, item.description.trim()),
             contentId: item.sourceProjectId,
+            ...publishSourceRequestFields(item),
             firstComment: copy?.firstComment || item.firstComment,
             videoPath: item.videoPath.trim(),
             targetAccountIds: platformAccounts.map(account => account.id),
@@ -911,10 +906,12 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview, workflowCont
       previewUrl: post.videoPreviewUrl || post.videoUrl || browserVideoUrl(post.videoPath),
       title: post.title,
       description: post.description || '',
+      sourceProjectId: post.contentId,
       sourcePlatform: post.platform in PLATFORM_META ? post.platform as PublishPlatform : undefined,
       workflowRunId: post.workflowRunId,
       workflowTaskId: post.workflowTaskId,
       workflowTaskKey: post.workflowTaskKey,
+      copyAudit: post.copyAudit,
       targetAccountIds: targetAccountIds.length ? targetAccountIds : fallbackTargetIds,
       firstComment: post.firstComment || '',
       trackWaLink: post.trackWaLink !== false,
@@ -1069,6 +1066,7 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview, workflowCont
       ),
       firstComment: activeItem.firstComment,
       trackWaLink: activeItem.trackWaLink,
+      copyAudit: item.sourceProjectId === activeItem.sourceProjectId ? activeItem.copyAudit : undefined,
       status: 'draft',
       error: undefined,
     } : item));
@@ -1205,7 +1203,7 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview, workflowCont
         }),
       });
       if (data.ok !== true || data.source !== 'ai' || data.provenance !== 'ai'
-        || data.qualityStatus !== 'passed' || data.publishable !== true || !data.audit) {
+        || data.qualityStatus !== 'passed' || data.publishable !== true || !data.audit?.enterpriseFactVersion) {
         throw new Error('平台文案未返回可审计的 AI 事实校验结果，原内容已保留。');
       }
       const first = platforms[0];
@@ -1425,31 +1423,13 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview, workflowCont
   const previewRatio = activeItem?.ratio || (selectedPlatforms.length > 0 && selectedPlatforms.every(platform => platform === 'youtube') ? '16:9' : '9:16');
 
   return (
-    <div className="px-6 pb-5 pt-3">
+    <div className="px-4 pb-5 pt-3 sm:px-6">
       <div className="mx-auto max-w-[1600px] space-y-4">
-        <div className="flex justify-center">
-          <div role="group" aria-label="发布工作区" className="flex w-full max-w-xl justify-center gap-8 border-b border-border">
-            <button
-              type="button"
-              onClick={() => setWorkspaceTab('schedule')}
-              aria-pressed={workspaceTab === 'schedule'}
-              className={`h-11 border-b-2 px-2 text-sm font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ${workspaceTab === 'schedule' ? 'border-accent text-text-primary' : 'border-transparent text-text-muted hover:text-text-secondary'}`}
-            >
-              内容日历
-            </button>
-            <button
-              type="button"
-              onClick={() => setWorkspaceTab('publish')}
-              aria-pressed={workspaceTab === 'publish'}
-              className={`h-11 border-b-2 px-2 text-sm font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ${workspaceTab === 'publish' ? 'border-accent text-text-primary' : 'border-transparent text-text-muted hover:text-text-secondary'}`}
-            >
-              新建发布
-            </button>
-          </div>
-        </div>
+        <LsPageHeader title="内容发布" description="安排发布时间，确认平台账号，并跟进真实发布回执。"/>
+        <Tabs aria-label="发布工作区" activeKey={workspaceTab} onChange={value => setWorkspaceTab(value as 'schedule' | 'publish')} items={[{ key: 'schedule', label: '内容日历' }, { key: 'publish', label: '新建发布' }]}/>
 
         {workspaceTab === 'schedule' ? (
-        <section id="publishing-calendar" className="scroll-mt-5 rounded-2xl border border-border bg-surface/60 p-3 shadow-sm">
+        <section id="publishing-calendar" className="scroll-mt-5">
           <CalendarPlanner
             refreshKey={calendarRefreshKey}
             onCreate={scheduleForCalendarDate}
@@ -1464,7 +1444,7 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview, workflowCont
 
         <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
           <section className="space-y-4">
-        <section data-lingshu-guide="publishing-workbench" className="rounded-2xl border border-emerald-200 bg-white p-4 shadow-sm ring-1 ring-emerald-50">
+        <section data-lingshu-guide="publishing-workbench" className="rounded-lg border border-border bg-white p-4">
           <div>
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
@@ -1480,13 +1460,8 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview, workflowCont
                   className="hidden"
                   onChange={event => void addSelectedVideoFiles(event.target.files)}
                 />
-                <button type="button" onClick={() => videoInputRef.current?.click()} disabled={uploadingVideos} className="inline-flex h-9 w-24 items-center justify-center gap-1.5 rounded-lg bg-accent text-xs font-bold text-white disabled:opacity-50">
-                  {uploadingVideos ? <Loader2 size={13} className="animate-spin" /> : <Upload size={13} />}
-                  {uploadingVideos ? '上传中' : '上传'}
-                </button>
-                <button type="button" onClick={() => setSystemLibraryOpen(true)} className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-accent/30 bg-accent-glow px-3 text-xs font-bold text-accent hover:border-accent">
-                  <Film size={13} />选择系统成片
-                </button>
+                <Button onClick={() => videoInputRef.current?.click()} loading={uploadingVideos} icon={<Upload size={14}/>}>上传视频</Button>
+                <Button onClick={() => setSystemLibraryOpen(true)} icon={<Film size={14}/>}>选择系统成片</Button>
                 <button
                   type="button"
                   onClick={applyContentToAll}
@@ -1605,32 +1580,25 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview, workflowCont
                   <h3 className="text-sm font-bold text-text-primary">发布内容编辑</h3>
                   <p className="mt-1 text-xs text-text-muted">统一编辑通用内容，或切换到各平台的差异化文案。</p>
                 </div>
-                <div className="inline-grid grid-cols-2 gap-1 rounded-xl border border-border bg-surface-2 p-1">
-                  <button type="button" onClick={() => setContentEditorMode('common')} className={`h-8 rounded-lg px-4 text-xs font-black transition ${contentEditorMode === 'common' ? 'bg-white text-text-primary shadow-sm' : 'text-text-muted hover:text-text-secondary'}`}>
-                    通用内容
-                  </button>
-                  <button type="button" onClick={() => setContentEditorMode('platform')} className={`h-8 rounded-lg px-4 text-xs font-black transition ${contentEditorMode === 'platform' ? 'bg-white text-text-primary shadow-sm' : 'text-text-muted hover:text-text-secondary'}`}>
-                    分平台内容
-                  </button>
-                </div>
+                <Segmented aria-label="内容编辑方式" value={contentEditorMode} onChange={value => setContentEditorMode(value as 'common' | 'platform')} options={[{ value: 'common', label: '通用内容' }, { value: 'platform', label: '分平台内容' }]}/>
               </div>
               {contentEditorMode === 'common' && (
               <div className="mt-4 space-y-3">
                 <label className="block">
                   <span className="mb-1.5 block text-[11px] font-semibold text-text-secondary">素材文件</span>
-                  <input value={activeItem?.videoPath || ''} onChange={event => activeItem && updateItem(activeItem.id, { videoPath: event.target.value, status: 'draft', error: undefined })} placeholder="/Users/.../rendered-video.mp4" className="w-full rounded-xl border border-border bg-surface px-3 py-2.5 text-sm outline-none focus:border-accent" />
+                  <Input value={activeItem?.videoPath || ''} onChange={event => activeItem && updateItem(activeItem.id, { videoPath: event.target.value, status: 'draft', error: undefined })} placeholder="已上传或生成的视频文件" />
                 </label>
                 <label className="block">
                   <span className="mb-1.5 block text-[11px] font-semibold text-text-secondary">作品标题</span>
-                  <input value={activeItem?.title || ''} onChange={event => activeItem && updateItem(activeItem.id, { title: event.target.value, status: 'draft', error: undefined })} placeholder="发布标题" className="w-full rounded-xl border border-border bg-surface px-3 py-2.5 text-sm outline-none focus:border-accent" />
+                  <Input value={activeItem?.title || ''} onChange={event => activeItem && updateItem(activeItem.id, { title: event.target.value, status: 'draft', error: undefined })} placeholder="发布标题" />
                 </label>
                 <label className="block">
                   <span className="mb-1.5 block text-[11px] font-semibold text-text-secondary">发布配文</span>
-                  <textarea value={activeItem?.description || ''} onChange={event => activeItem && updateItem(activeItem.id, { description: event.target.value, status: 'draft', error: undefined })} rows={3} placeholder="输入卖点、脚本摘要和 hashtag" className="w-full resize-none rounded-xl border border-border bg-surface px-3 py-2.5 text-sm outline-none focus:border-accent" />
+                  <Input.TextArea value={activeItem?.description || ''} onChange={event => activeItem && updateItem(activeItem.id, { description: event.target.value, status: 'draft', error: undefined })} rows={3} placeholder="输入卖点、脚本摘要和话题标签" />
                 </label>
                 <div className="rounded-xl border border-emerald-100 bg-emerald-50/80 p-3">
                   <label className="flex cursor-pointer items-start gap-3">
-                    <input type="checkbox" checked={activeItem?.trackWaLink ?? true} onChange={event => activeItem && updateItem(activeItem.id, { trackWaLink: event.target.checked, status: 'draft' })} className="mt-1 h-4 w-4 rounded border-border text-accent" />
+                    <Checkbox aria-label="附带 WhatsApp 询盘链接" checked={activeItem?.trackWaLink ?? true} onChange={event => activeItem && updateItem(activeItem.id, { trackWaLink: event.target.checked, status: 'draft' })} className="mt-1" />
                     <span>
                       <span className="flex items-center gap-1.5 text-xs font-black text-emerald-900"><SocialPlatformIcon platform="whatsapp" size={15} /> 已附带 WhatsApp 询盘链接</span>
                       <span className="mt-1 block text-[11px] leading-5 text-emerald-800">发布时自动生成短追踪码。买家首条消息带码后，客户来源会精确归因到这条内容。</span>
@@ -1643,19 +1611,19 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview, workflowCont
                       ? '保存只更新内容，日历中的发布时间和锁定状态保持不变。'
                       : '保存后进入待发布内容；立即发布、时间待定和定点排期互不混用。'}
                   </p>
-                  <button
-                    type="button"
+                  <Button
+                    type="primary"
                     onClick={() => void saveCurrentContent()}
                     disabled={savingContent || !activeItem || activeItem.status === 'publishing' || activeItem.status === 'provider_processing' || activeItem.status === 'scheduled' || activeItem.status === 'published'}
-                    className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-xs font-black text-white shadow-sm hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-45"
+                    loading={savingContent}
+                    icon={<CheckCircle2 size={14}/>}
                   >
-                    {savingContent ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />}
                     {savingContent
                       ? '正在保存...'
                       : activeCalendarPost
                         ? activeItem?.status === 'ready' ? '日历修改已保存' : '保存日历修改'
                       : activeItem?.status === 'ready' ? '已保存到待发布内容' : '保存并加入待发布内容'}
-                  </button>
+                  </Button>
                   {error && <p role="status" className="w-full text-right text-[11px] font-semibold text-red-600">{error}</p>}
                 </div>
               </div>
@@ -1724,32 +1692,7 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview, workflowCont
             </div>
             <div data-lingshu-guide="publish-mode" className="mt-4 rounded-2xl border border-border bg-surface p-3">
               <p className="text-[11px] font-bold text-text-secondary">当前视频的发布方式</p>
-              <div className="mt-2 grid grid-cols-3 gap-2">
-                <button
-                  type="button"
-                  onClick={() => setDeliveryMode('now')}
-                  disabled={activeCalendarPost}
-                  className={`rounded-xl border px-3 py-2 text-xs font-black ${activeItem?.deliveryMode === 'now' ? 'border-accent bg-accent text-white' : 'border-border bg-white text-text-secondary'}`}
-                >
-                  立即发布
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setDeliveryMode('flexible')}
-                  disabled={activeCalendarPost}
-                  className={`rounded-xl border px-3 py-2 text-xs font-black ${activeItem?.deliveryMode === 'flexible' ? 'border-sky-500 bg-sky-600 text-white' : 'border-border bg-white text-text-secondary'} disabled:cursor-not-allowed disabled:opacity-60`}
-                >
-                  时间待定
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setDeliveryMode('schedule')}
-                  disabled={activeCalendarPost}
-                  className={`rounded-xl border px-3 py-2 text-xs font-black ${activeItem?.deliveryMode === 'schedule' ? 'border-violet-500 bg-violet-600 text-white' : 'border-border bg-white text-text-secondary'}`}
-                >
-                  定点排期
-                </button>
-              </div>
+              <Segmented className="mt-2" block aria-label="发布方式" value={activeItem?.deliveryMode || 'flexible'} disabled={activeCalendarPost} onChange={value => setDeliveryMode(value as DeliveryMode)} options={[{ value: 'now', label: '立即发布' }, { value: 'flexible', label: '时间待定' }, { value: 'schedule', label: '定点排期' }]}/>
               {activeItem?.deliveryMode === 'schedule' && (
                 <label className="mt-3 block">
                   <span className="mb-1.5 block text-[11px] font-semibold text-text-secondary">计划发布时间</span>
@@ -1826,44 +1769,21 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview, workflowCont
             {notice && <div className="mt-4 flex items-start gap-2 rounded-xl border border-green-100 bg-green-50 px-3 py-2 text-xs text-green-700"><CheckCircle2 size={14} className="mt-0.5 flex-shrink-0" /><span>{notice}</span></div>}
             {error && <div className="mt-4 flex items-start gap-2 rounded-xl border border-red-100 bg-red-50 px-3 py-2 text-xs text-red-600"><AlertCircle size={14} className="mt-0.5 flex-shrink-0" /><span>{error}</span></div>}
 
-            <button type="button" onClick={requestPublishConfirmation} disabled={publishing || loading || publishableItems.length === 0} className="mt-5 flex w-full items-center justify-center gap-2 rounded-xl bg-accent px-4 py-3 text-sm font-bold text-white shadow-sm hover:brightness-95 disabled:opacity-50">
-              {publishing ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle2 size={16} />}
+            <Button type="primary" block onClick={requestPublishConfirmation} disabled={loading || publishableItems.length === 0} loading={publishing} icon={<CheckCircle2 size={16}/>} className="mt-5" style={{ height: 'auto', minHeight: 40, whiteSpace: 'normal' }}>
               {publishing
                 ? '正在提交已确认的发布任务...'
                   : `发布已确定时间的内容 · ${publishableItems.length} 条 / ${publishableAssignments} 个账号目标`}
-            </button>
+            </Button>
           </aside>
         </div>
-        {publishConfirmationOpen && (
-          <div ref={publishConfirmationRef} tabIndex={-1} className="fixed inset-0 z-[180] flex items-center justify-center bg-slate-950/45 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="publish-confirmation-title">
-            <div className="w-full max-w-md rounded-2xl border border-border bg-white p-5 shadow-2xl">
-              <div className="flex items-start gap-3">
-                <span className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-emerald-700"><Send size={18} /></span>
-                <div>
-                  <h3 id="publish-confirmation-title" className="text-base font-black text-text-primary">确认发布这些内容？</h3>
-                  <p className="mt-1 text-xs leading-5 text-text-muted">立即发布会直接调用已授权平台账号；定点排期会在锁定时间自动提交。时间待定内容需要先拖入日历选时，不会被误发布。</p>
-                </div>
-              </div>
-              <div className="mt-4 grid grid-cols-2 gap-2">
-                <div className="rounded-xl border border-emerald-100 bg-emerald-50 p-3"><p className="text-[10px] font-bold text-emerald-700">立即真实发布</p><p className="mt-1 text-lg font-black text-emerald-900">{immediateItems.length} 条</p></div>
-                <div className="rounded-xl border border-violet-100 bg-violet-50 p-3"><p className="text-[10px] font-bold text-violet-700">已确认定时提交</p><p className="mt-1 text-lg font-black text-violet-900">{scheduledItems.length} 条</p></div>
-              </div>
-              <p className="mt-3 rounded-xl bg-surface px-3 py-2 text-[11px] leading-5 text-text-secondary">共 {publishableAssignments} 个账号目标。部分平台可能因审核、权限或素材规范拒绝发布，失败项会保留在队列中供修改后重试。</p>
-              <div className="mt-5 flex justify-end gap-2">
-                <button type="button" data-modal-initial-focus onClick={() => setPublishConfirmationOpen(false)} className="rounded-xl border border-border px-4 py-2.5 text-xs font-black text-text-secondary hover:bg-surface">返回检查</button>
-                <button type="button" onClick={() => void publishConfirmed()} className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-xs font-black text-white hover:bg-emerald-700"><CheckCircle2 size={14} /> 确认真实发布</button>
-              </div>
-            </div>
-          </div>
-        )}
-        {systemLibraryOpen && (
-          <div ref={systemLibraryDialogRef} tabIndex={-1} className="fixed inset-0 z-[190] flex items-center justify-center bg-slate-950/50 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-label="选择系统生成成片" onClick={() => setSystemLibraryOpen(false)}>
-            <div className="relative h-[92vh] w-full max-w-6xl overflow-hidden rounded-2xl border border-border bg-ink shadow-2xl" onClick={event => event.stopPropagation()}>
-              <button type="button" data-modal-initial-focus aria-label="关闭成片选择" title="关闭" onClick={() => setSystemLibraryOpen(false)} className="absolute right-5 top-5 z-20 inline-flex h-9 w-9 items-center justify-center rounded-lg border border-border bg-white text-text-muted shadow-sm hover:text-text-primary"><X size={17} /></button>
-              <ContentLibrary onPublish={addSystemFinishedVideo} />
-            </div>
-          </div>
-        )}
+        <Modal title="确认发布这些内容？" open={publishConfirmationOpen} onCancel={() => setPublishConfirmationOpen(false)} onOk={() => void publishConfirmed()} confirmLoading={publishing} okText="确认真实发布" cancelText="返回检查" mask={{ closable: !publishing }} closable={!publishing} destroyOnHidden>
+          <p className="text-sm leading-6 text-text-secondary">立即发布会直接调用已授权平台账号；定点排期会在锁定时间自动提交。时间待定内容需要先在日历选择时间。</p>
+          <dl className="my-4 grid grid-cols-2 divide-x divide-border border-y border-border py-4"><div><dt className="text-xs text-text-secondary">立即真实发布</dt><dd className="mt-1 text-xl font-semibold">{immediateItems.length} 条</dd></div><div className="pl-4"><dt className="text-xs text-text-secondary">已确认定时提交</dt><dd className="mt-1 text-xl font-semibold">{scheduledItems.length} 条</dd></div></dl>
+          <Alert type="info" showIcon title={`共 ${publishableAssignments} 个账号目标`} description="失败项会保留在队列中，可修改后重试；平台受理不等同于已公开发布。"/>
+        </Modal>
+        <Drawer title="选择系统生成成片" open={systemLibraryOpen} onClose={() => setSystemLibraryOpen(false)} size="large" destroyOnHidden styles={{ body: { padding: 0 } }}>
+          <ContentLibrary onPublish={addSystemFinishedVideo} />
+        </Drawer>
         </>
         )}
       </div>

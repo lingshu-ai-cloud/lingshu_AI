@@ -13,6 +13,7 @@ export type StudioGenerationFields = {
 };
 
 export type CopyAuditRecord = {
+  enterpriseFactVersion: string;
   enterpriseFactsHash: string;
   sourceHash: string;
   outputHash: string;
@@ -198,13 +199,14 @@ function normalizedGenerationFields(value: Record<string, unknown>): StudioGener
 function normalizedCopyAudit(value: unknown): CopyAuditRecord | undefined {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
   const record = value as Record<string, unknown>;
+  const enterpriseFactVersion = storedString(record.enterpriseFactVersion).trim();
   const enterpriseFactsHash = storedString(record.enterpriseFactsHash);
   const sourceHash = storedString(record.sourceHash);
   const outputHash = storedString(record.outputHash);
   const checkedAt = storedString(record.checkedAt);
   const targetPlatforms = storedStringArray(record.targetPlatforms).filter(item => PUBLISH_PLATFORMS.has(item as PublishPlatform)) as PublishPlatform[];
-  if (![enterpriseFactsHash, sourceHash, outputHash].every(item => /^[a-f0-9]{64}$/i.test(item)) || !checkedAt || !targetPlatforms.length) return undefined;
-  return { enterpriseFactsHash, sourceHash, outputHash, checkedAt, targetPlatforms, projectId: storedOptionalString(record.projectId) || null };
+  if (!enterpriseFactVersion || ![enterpriseFactsHash, sourceHash, outputHash].every(item => /^[a-f0-9]{64}$/i.test(item)) || !Number.isFinite(Date.parse(checkedAt)) || !targetPlatforms.length) return undefined;
+  return { enterpriseFactVersion, enterpriseFactsHash, sourceHash, outputHash, checkedAt, targetPlatforms, projectId: storedOptionalString(record.projectId) || null };
 }
 
 export function studioGenerationIsVerified(value: StudioGenerationFields): boolean {
@@ -353,6 +355,8 @@ export function publishSourceRequestFields(item: PublishQueueItem) {
     qualityStatus: item.qualityStatus,
     publishable: item.publishable,
     generationRecordId: item.generationRecordId,
+    enterpriseFactVersion: item.copyAudit?.enterpriseFactVersion,
+    copyAudit: item.copyAudit,
   };
 }
 

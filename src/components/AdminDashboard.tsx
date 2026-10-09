@@ -1,5 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Loader2, LogIn, RefreshCcw, Settings2, ShieldCheck, UserCheck, X } from 'lucide-react';
+import { Alert, Button, Input, Modal } from 'antd';
+import LsPageHeader from './ui/LsPageHeader';
+import { LsGradientProgress } from './ui/LsExperiencePrimitives';
+import { Loader2, LogIn, RefreshCcw, Settings2, UserCheck } from 'lucide-react';
 import {
   authApi,
   authHeader,
@@ -291,20 +294,14 @@ export default function AdminDashboard({ onSupportSessionStarted }: { onSupportS
   };
 
   return (
-    <div className="h-full flex flex-col bg-white">
-      <header className="flex min-h-[68px] flex-shrink-0 items-center justify-between border-b border-border px-5 py-3 sm:px-6">
-        <div className="flex items-center gap-2.5">
-          <div className="flex h-6 w-6 items-center justify-center text-accent"><ShieldCheck size={13} /></div>
-          <div><h1 className="text-lg font-semibold text-text-primary">账号总控</h1><p className="mt-0.5 hidden text-[11px] text-text-muted sm:block">管理试用、客户与行业账号</p></div>
-        </div>
-        <button onClick={() => void load()} disabled={loading} className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-border text-xs font-semibold text-text-secondary hover:text-text-primary hover:bg-surface-2 disabled:opacity-60">
-          {loading ? <Loader2 size={13} className="animate-spin" /> : <RefreshCcw size={13} />} 刷新
-        </button>
-      </header>
+    <div className="h-full flex flex-col bg-ink">
+      <LsPageHeader title="账号总控" description="管理试用、客户与行业账号" extra={
+        <Button onClick={() => void load()} loading={loading} icon={<RefreshCcw size={16} />}>刷新</Button>
+      } />
 
       <div className="flex-1 min-h-0 overflow-auto p-5">
-        {error && <p className="mb-3 text-xs text-red">{error}</p>}
-        {notice && <p className="mb-3 rounded-lg bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700">{notice}</p>}
+        {error && <Alert className="mb-3" type="error" showIcon title={error} />}
+        {notice && <Alert className="mb-3" type="success" showIcon title={notice} />}
 
         <section className="mb-6 overflow-hidden rounded-lg border border-border bg-surface">
           <div className="flex items-center justify-between border-b border-border px-3 py-2">
@@ -319,7 +316,7 @@ export default function AdminDashboard({ onSupportSessionStarted }: { onSupportS
                   <div className="mt-3 space-y-2">
                     {items.slice(0, 6).reverse().map(item => (
                       <div key={`${tenantId}-${item.week}`} className="grid grid-cols-[64px_1fr_48px] items-center gap-2 text-[10px] text-text-muted">
-                        <span>{item.week}</span><div className="h-2 rounded-full bg-surface-2"><div className="h-2 rounded-full bg-accent" style={{ width: `${Math.max(4, Math.min(100, item.rate * 100))}%` }} /></div><span className="text-right">{Math.round(item.rate * 100)}%</span>
+                        <span>{item.week}</span><LsGradientProgress percent={Math.max(0, Math.min(100, item.rate * 100))} showInfo={false} size="small" /><span className="text-right">{Math.round(item.rate * 100)}%</span>
                       </div>
                     ))}
                   </div>
@@ -476,16 +473,11 @@ export default function AdminDashboard({ onSupportSessionStarted }: { onSupportS
       </div>
 
       {limitTenant && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4" role="dialog" aria-modal="true" aria-label="内容任务并发上限">
-          <div className="w-full max-w-lg rounded-2xl border border-border bg-white shadow-2xl">
-            <div className="flex items-start justify-between border-b border-border px-5 py-4">
-              <div>
-                <h2 className="text-base font-semibold text-text-primary">内容任务并发上限</h2>
-                <p className="mt-1 text-xs text-text-muted">{limitTenant.companyName} · 大批量任务会在数据库队列中等待，不挤占其他客户。</p>
-              </div>
-              <button type="button" onClick={() => setLimitTenant(null)} disabled={limitBusy} className="rounded-lg p-1.5 text-text-muted hover:bg-surface-2"><X size={16} /></button>
-            </div>
-            <div className="grid gap-4 p-5 sm:grid-cols-2">
+        <Modal open title="内容任务并发上限" width={560} onCancel={() => setLimitTenant(null)} mask={{ closable: false }} closable={!limitBusy} keyboard={!limitBusy}
+          footer={<><Button onClick={() => setLimitTenant(null)} disabled={limitBusy}>取消</Button><Button type="primary" onClick={() => void saveContentLimits()} loading={limitBusy}>保存上限</Button></>}
+        >
+            <p className="mb-4 text-sm text-text-secondary">{limitTenant.companyName} · 大批量任务会在数据库队列中等待，不挤占其他客户。</p>
+            <div className="grid gap-4 sm:grid-cols-2">
               {([
                 ['tenantMaxRunning', '客户总并发', '该客户所有内容任务合计'],
                 ['accountDefaultMaxRunning', '单账号并发', '避免一个账号占满客户额度'],
@@ -494,26 +486,19 @@ export default function AdminDashboard({ onSupportSessionStarted }: { onSupportS
               ] as const).map(([key, label, help]) => (
                 <label key={key} className="block">
                   <span className="text-xs font-semibold text-text-primary">{label}</span>
-                  <input
+                  <Input
                     type="number" min={1} max={100} step={1}
                     value={limitDraft[key]}
                     onChange={event => setLimitDraft(current => ({ ...current, [key]: event.target.value }))}
                     disabled={limitBusy}
-                    className="mt-1.5 w-full rounded-lg border border-border px-3 py-2 text-sm text-text-primary outline-none focus:border-accent"
+                    className="mt-1.5 w-full"
                   />
                   <span className="mt-1 block text-[10px] leading-4 text-text-muted">{help}</span>
                 </label>
               ))}
             </div>
-            {limitError && <p className="mx-5 mb-3 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">{limitError}</p>}
-            <div className="flex justify-end gap-2 border-t border-border px-5 py-4">
-              <button type="button" onClick={() => setLimitTenant(null)} disabled={limitBusy} className="rounded-lg border border-border px-3 py-2 text-xs font-semibold text-text-secondary disabled:opacity-50">取消</button>
-              <button type="button" onClick={() => void saveContentLimits()} disabled={limitBusy} className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white disabled:opacity-50">
-                {limitBusy && <Loader2 size={13} className="animate-spin" />}{limitBusy ? '处理中' : '保存上限'}
-              </button>
-            </div>
-          </div>
-        </div>
+            {limitError && <Alert className="mt-4" type="error" showIcon title={limitError} />}
+        </Modal>
       )}
     </div>
   );

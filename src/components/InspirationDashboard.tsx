@@ -1,4 +1,8 @@
-import BenchmarkAnalysisSections from './inspiration/BenchmarkAnalysisSections';
+import InspirationVideoAnalysisTabs from './inspiration/InspirationVideoAnalysisTabs';
+import VideoAnalysisProgressPanel, { analysisProgressIsActive } from './inspiration/VideoAnalysisProgressPanel';
+import { Alert, Button, Drawer, Input, Modal, Pagination, Segmented, Select, Tabs, Upload as AntUpload } from 'antd';
+import LsPageHeader from './ui/LsPageHeader';
+import { LsLoadingState, LsMasonryGallery, LsProgressiveMedia } from './ui/LsExperiencePrimitives';
 import { buildBenchmarkAnalysis } from '../../shared/benchmarkAnalysis';
 import MaterialLibraryStatus from './studio/MaterialLibraryStatus';
 import { useState, useEffect, useMemo, useRef } from 'react';
@@ -370,20 +374,45 @@ function exactAnalysisQuality(video: TrendVideo): AnalysisQualityGate {
     return { item, start: values[0], end: values[1] };
   });
   const valid = parsed.filter(item => Number.isFinite(item.start) && Number.isFinite(item.end) && item.end! > item.start!);
+  const progress = payload?.analysisProgress;
 
-  if (payload?.geminiStatus === 'needs_review' || payload?.analysisQuality === 'video_review_required' || payload?.analysisReviewReasons?.length) return { ready: false, reason: `编导交接待复核：${payload?.analysisReviewReasons?.join('；') || '逐镜证据未通过质量校验'}`, requiredFrames, actualFrames: valid.length };
-  if (payload?.videoLevelFailureStatus || payload?.analysisError) return { ready: false, reason: '精确分析未完成或已失败，请重试', requiredFrames, actualFrames: valid.length };
-  if (payload?.requestedAnalysisMode === 'exact' && ['queued', 'waiting_for_video', 'analyzing'].includes(String(payload?.geminiStatus || ''))) return { ready: false, reason: '全片精确分析正在排队或生成中', requiredFrames, actualFrames: valid.length };
+  if (progress?.stage === 'failed') return { ready: false, reason: `精确分析失败：${progress.currentStep || '后台未提供失败原因'}`, requiredFrames, actualFrames: valid.length };
+  if (progress?.stage === 'paused') return { ready: false, reason: `精确分析已暂停：${progress.currentStep || '进度已保留'}`, requiredFrames, actualFrames: valid.length };
+  if (progress?.stage === 'cancelled') return { ready: false, reason: '精确分析已取消，可重新提交', requiredFrames, actualFrames: valid.length };
+  if (analysisProgressIsActive(progress)) return { ready: false, reason: progress?.currentStep || '全片精确分析正在进行中', requiredFrames, actualFrames: valid.length };
+  if (payload?.geminiStatus === 'needs_review' || payload?.analysisQuality === 'video_review_required' || payload?.analysisReviewReasons?.length) {
+    const reviewCount = payload?.analysisReviewReasons?.length || 1;
+    return { ready: false, reason: `编导交接待复核：${reviewCount} 项镜头证据尚未通过质量校验`, requiredFrames, actualFrames: valid.length };
+  }
+  if (payload?.videoLevelFailureStatus || payload?.analysisError || ['failed', 'video_failed', 'analysis_retryable', 'paused', 'cancelled'].includes(String(payload?.geminiStatus || ''))) return { ready: false, reason: '精确分析未完成或已失败，请重试', requiredFrames, actualFrames: valid.length };
+  if (payload?.requestedAnalysisMode === 'exact' && payload?.geminiStatus !== 'analyzed') return { ready: false, reason: '全片精确分析正在排队或生成中', requiredFrames, actualFrames: valid.length };
   if (payload?.analysisMode !== 'exact') return { ready: false, reason: '当前仅有策略级分析，需先完成全片精确分析', requiredFrames, actualFrames: valid.length };
   if (valid.length < requiredFrames) return { ready: false, reason: '缺少可用的实际画面分镜', requiredFrames, actualFrames: valid.length };
   if (valid.some(({ item }) => isUnusableAnalysisText(item.visual))) return { ready: false, reason: '存在不可用分镜，请重试精确分析', requiredFrames, actualFrames: valid.length };
-  const ordered = [...valid].sort((a, b) => a.start! - b.start!);
-  if (ordered[0]!.start! > 0.75 || ordered.some((item, index) => index > 0 && Math.abs(item.start! - ordered[index - 1]!.end!) > 0.75)) {
-    return { ready: false, reason: '分镜时间线存在空档或重叠，请重试精确分析', requiredFrames, actualFrames: valid.length };
-  }
-  if (duration > 0 && ordered[ordered.length - 1]!.end! + 0.75 < duration) return { ready: false, reason: '分镜尚未覆盖视频结尾，请重试精确分析', requiredFrames, actualFrames: valid.length };
-  if (duration > 0 && ordered[ordered.length - 1]!.end! - 0.75 > duration) return { ready: false, reason: '分镜时间轴超出原视频结尾，请重试精确分析', requiredFrames, actualFrames: valid.length };
+  if (!Number.isFinite(video.duration) || video.duration <= 0) return { ready: false, reason: '原片时长尚未确认，无法核对分镜是否覆盖整片', requiredFrames, actualFrames: valid.length };
+  const benchmark = buildBenchmarkAnalysis({ analysis: payload, videoId: video.recordId || video.id, duration });
+  if (benchmark.totalShots === null || benchmark.shots.some(shot => shot.granularity !== 'shot')) return { ready: false, reason: '当前只有观察片段，尚无可用于创作的导演级逐镜切点', requiredFrames, actualFrames: valid.length };
+  if (!benchmark.timelineComplete || benchmark.shots.some(shot => shot.start === null || shot.end === null)) return { ready: false, reason: '导演级分镜的时间线未完整覆盖原片，需重新分析切点', requiredFrames, actualFrames: valid.length };
+  if (benchmark.shots.some(shot => isUnusableAnalysisText(shot.visual))) return { ready: false, reason: '导演级分镜仍有不可用画面描述，需重新分析', requiredFrames, actualFrames: valid.length };
   return { ready: true, reason: '精确分析已通过实际画面时间线校验', requiredFrames, actualFrames: valid.length };
+}
+
+export function inspirationCreationShotPreflight(video: TrendVideo): { ready: boolean; reason: string } {
+  if (video.contentFormat === 'image') return { ready: true, reason: '' };
+  const quality = exactAnalysisQuality(video);
+  return { ready: quality.ready, reason: quality.ready ? '' : quality.reason };
+}
+
+export function inspirationCreationAvailability(video: TrendVideo): { ready: boolean; reason: string } {
+  if (video.id.startsWith('material-')) return { ready: true, reason: '' };
+  if (video.contentFormat === 'image') {
+    const evidence = video.aiAnalysis?.imageEvidence;
+    const ready = evidence?.status === 'analyzed' && Boolean(evidence.observedFacts?.length);
+    return ready
+      ? { ready: true, reason: '' }
+      : { ready: false, reason: video.aiAnalysis?.imageAnalysisStatus === 'failed' || video.status === 'failed' ? '图文分析失败，请重新分析后再开始创作。' : '图文证据尚未完成，请等待或重新分析后再开始创作。' };
+  }
+  return inspirationCreationShotPreflight(video);
 }
 
 export function isDisplayableVideoAnalysis(analysis?: VideoAnalysisPayload, status?: TrendVideo['status']): boolean {
@@ -1136,8 +1165,8 @@ export function VideoThumbnail({ platform, title }: { platform: Exclude<Platform
     <div className="relative flex h-full w-full flex-col justify-between overflow-hidden bg-text-primary p-4">
       <div className="absolute inset-x-0 bottom-0 h-px bg-white/20" />
       <div className="relative">
-        <SocialPlatformIcon platform={platform} size={38} className="mb-3 drop-shadow-sm" />
-        <p className="line-clamp-3 text-sm font-semibold leading-snug text-white/90 drop-shadow-sm">{shortTitle}</p>
+        <SocialPlatformIcon platform={platform} size={38} className="mb-3 drop-shadow-none" />
+        <p className="line-clamp-3 text-sm font-semibold leading-snug text-white/90 drop-shadow-none">{shortTitle}</p>
       </div>
     </div>
   );
@@ -1182,8 +1211,8 @@ export function ThumbnailImage({
     };
   }, [src, isDirectUrl]);
   if (failed || !src) return null;
-  if (isDirectUrl) return <img src={src} alt="" className={className} draggable={false} loading="lazy" decoding="async" onError={() => setFailed(true)} />;
-  return blobUrl ? <img src={blobUrl} alt="" className={className} draggable={false} /> : null;
+  if (isDirectUrl) return <LsProgressiveMedia src={src} alt={`${title} · ${platform} 缩略图`} className={className} draggable={false} loading="lazy" preview={false} onError={() => setFailed(true)} />;
+  return blobUrl ? <LsProgressiveMedia src={blobUrl} alt={`${title} · ${platform} 缩略图`} className={className} draggable={false} preview={false} /> : null;
 }
 
 function AuthenticatedImage({ src, alt, className }: { src: string; alt: string; className: string }) {
@@ -1332,14 +1361,14 @@ function ImageBreakdownContent({ video, activeTab }: { video: TrendVideo; analys
   const EmptyEvidence = ({ title, desc }: { title: string; desc: string }) => (
     <div className="rounded-lg border border-dashed border-border bg-surface-2 px-5 py-8 text-center">
       <Images size={22} className="mx-auto text-text-muted" />
-      <p className="mt-3 text-xs font-black text-text-primary">{title}</p>
+      <p className="mt-3 text-xs font-semibold text-text-primary">{title}</p>
       <p className="mx-auto mt-1.5 max-w-[280px] text-[10px] leading-relaxed text-text-muted">{desc}</p>
     </div>
   );
 
   const EvidenceCard = ({ label, value }: { label: string; value: string }) => (
     <div className="rounded-md border border-border bg-surface p-3">
-      <div className="flex items-center justify-between gap-2"><p className="text-[10px] font-black text-text-primary">{label}</p><span className="rounded-full bg-surface-2 px-2 py-0.5 text-[9px] text-text-muted">来自 AI 原始结果</span></div>
+      <div className="flex items-center justify-between gap-2"><p className="text-[10px] font-semibold text-text-primary">{label}</p><span className="rounded-full bg-surface-2 px-2 py-0.5 text-[9px] text-text-muted">来自 AI 原始结果</span></div>
       <p className="mt-1.5 text-[10px] leading-relaxed text-text-secondary">{value}</p>
     </div>
   );
@@ -1347,36 +1376,36 @@ function ImageBreakdownContent({ video, activeTab }: { video: TrendVideo; analys
   if (activeTab === 'overview') return (
     <div className="space-y-4">
       <section className="rounded-lg border border-border bg-surface p-3.5">
-        <div className="flex items-center justify-between"><div><p className="text-xs font-black text-text-primary">公开表现</p><p className="mt-1 text-[9px] text-text-muted">无公开值就留空，不把播放当曝光、不估算收藏与点击</p></div>{baseline?.status === 'usable' && baseline.relativeMultiple != null && <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-black text-emerald-700">账号基线 {baseline.relativeMultiple}×</span>}</div>
-        <div className="mt-3 grid grid-cols-4 gap-1.5">{[['点赞', metrics?.likes || '—'], ['评论', metrics?.comments || '—'], ['分享', metrics?.shares || '—'], ['播放', metrics?.plays || '—']].map(([label, value]) => <div key={label} className="rounded-lg bg-surface-2 px-1.5 py-2 text-center"><p className="text-sm font-black text-text-primary">{value}</p><p className="text-[9px] text-text-muted">{label}</p></div>)}</div>
+        <div className="flex items-center justify-between"><div><p className="text-xs font-semibold text-text-primary">公开表现</p><p className="mt-1 text-[9px] text-text-muted">无公开值就留空，不把播放当曝光、不估算收藏与点击</p></div>{baseline?.status === 'usable' && baseline.relativeMultiple != null && <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700">账号基线 {baseline.relativeMultiple}×</span>}</div>
+        <div className="mt-3 grid grid-cols-4 gap-1.5">{[['点赞', metrics?.likes || '—'], ['评论', metrics?.comments || '—'], ['分享', metrics?.shares || '—'], ['播放', metrics?.plays || '—']].map(([label, value]) => <div key={label} className="rounded-lg bg-surface-2 px-1.5 py-2 text-center"><p className="text-sm font-semibold text-text-primary">{value}</p><p className="text-[9px] text-text-muted">{label}</p></div>)}</div>
         <div className="mt-2 rounded-lg bg-surface-2 p-2 text-[9px] leading-relaxed text-text-secondary">
           <p>账号：{video.aiAnalysis?.author || video.aiAnalysis?.sourceAccountName || '未抓取'} · 粉丝：{metrics?.followers ? metrics.followers.toLocaleString() : '未公开/未抓取'}</p>
           <p className="mt-1">投流信号：{adSignals?.isAd || adSignals?.isPaidPartnership ? '平台公开标记为广告/付费合作' : '未抓到公开标记（不代表未投流）'}</p>
         </div>
         <p className="mt-2 text-[9px] leading-relaxed text-text-muted">{baseline?.status === 'usable' ? `${baseline.sampleSize} 条同账号样本；${baseline.method}` : `同账号样本 ${baseline?.sampleSize || 0} 条，暂不足以确认相对爆款。`}</p>
       </section>
-      {!isAnalyzed ? <EmptyEvidence title="图片证据尚未提取" desc={video.aiAnalysis?.imageAnalysisError || '重新分析后，系统会逐图提取可见事实、OCR、轮播角色和可复用模块。'}/> : <section><div className="mb-2 flex items-center justify-between"><p className="text-[11px] font-black text-text-primary">可复用模块</p><span className="text-[9px] text-text-muted">{evidence!.observedFacts.length} 张图片 · 仅基于可见证据</span></div><div className="space-y-2">{evidence!.reusableModules.map((item, index) => <div key={`${item.module}-${index}`} className="rounded-xl border border-border bg-white p-3"><div className="flex items-center justify-between"><p className="text-[11px] font-black text-text-primary">{item.module}</p><span className="text-[9px] text-text-muted">置信度 {Math.round(item.confidence * 100)}%</span></div><p className="mt-1 text-[10px] text-text-secondary">证据：{item.evidence}</p><div className="mt-2 grid grid-cols-2 gap-2 text-[9px]"><p className="rounded-lg bg-emerald-50 p-2 text-emerald-800">保留结构：{item.preserve}</p><p className="rounded-lg bg-amber-50 p-2 text-amber-800">替换内容：{item.replace}</p></div></div>)}</div></section>}
+      {!isAnalyzed ? <EmptyEvidence title="图片证据尚未提取" desc={video.aiAnalysis?.imageAnalysisError || '重新分析后，系统会逐图提取可见事实、OCR、轮播角色和可复用模块。'}/> : <section><div className="mb-2 flex items-center justify-between"><p className="text-[11px] font-semibold text-text-primary">可复用模块</p><span className="text-[9px] text-text-muted">{evidence!.observedFacts.length} 张图片 · 仅基于可见证据</span></div><div className="space-y-2">{evidence!.reusableModules.map((item, index) => <div key={`${item.module}-${index}`} className="rounded-lg border border-border bg-white p-3"><div className="flex items-center justify-between"><p className="text-[11px] font-semibold text-text-primary">{item.module}</p><span className="text-[9px] text-text-muted">置信度 {Math.round(item.confidence * 100)}%</span></div><p className="mt-1 text-[10px] text-text-secondary">证据：{item.evidence}</p><div className="mt-2 grid grid-cols-2 gap-2 text-[9px]"><p className="rounded-lg bg-emerald-50 p-2 text-emerald-800">保留结构：{item.preserve}</p><p className="rounded-lg bg-amber-50 p-2 text-amber-800">替换内容：{item.replace}</p></div></div>)}</div></section>}
     </div>
   );
 
   if (activeTab === 'visual') return (
     <div className="space-y-3">
-      <div><p className="text-[11px] font-black text-text-primary">逐图视觉事实</p><p className="mt-1 text-[10px] text-text-muted">主体、场景、构图、颜色和实际可读文字</p></div>
-      {!isAnalyzed ? <EmptyEvidence title="尚未返回逐图拆解" desc="当前没有可验证的图片视觉结果。"/> : evidence!.observedFacts.map(fact => { const flow = evidence!.carouselFlow.find(item => item.imageIndex === fact.imageIndex); return <div key={fact.imageIndex} className="rounded-xl border border-border bg-white p-3"><div className="flex items-center justify-between"><p className="text-[11px] font-black text-text-primary">第 {fact.imageIndex} 张</p><span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[9px] font-bold text-emerald-700">{roleLabel[flow?.role || 'unknown']}</span></div><p className="mt-2 text-[10px] text-text-secondary">主体：{fact.subjects.join('、') || '未确认'}</p><p className="mt-1 text-[10px] text-text-secondary">场景：{fact.scene || '未确认'}</p><p className="mt-1 text-[10px] text-text-secondary">构图：{fact.composition || '未确认'}</p><p className="mt-1 text-[10px] text-text-secondary">颜色：{fact.colors.join('、') || '未确认'}</p>{fact.visibleText.length > 0 && <p className="mt-1 rounded-lg bg-surface-2 p-2 text-[10px] text-text-secondary">OCR：{fact.visibleText.join(' / ')}</p>}{flow?.evidence && <p className="mt-2 text-[9px] text-text-muted">轮播作用依据：{flow.evidence}</p>}</div>; })}
+      <div><p className="text-[11px] font-semibold text-text-primary">逐图视觉事实</p><p className="mt-1 text-[10px] text-text-muted">主体、场景、构图、颜色和实际可读文字</p></div>
+      {!isAnalyzed ? <EmptyEvidence title="尚未返回逐图拆解" desc="当前没有可验证的图片视觉结果。"/> : evidence!.observedFacts.map(fact => { const flow = evidence!.carouselFlow.find(item => item.imageIndex === fact.imageIndex); return <div key={fact.imageIndex} className="rounded-lg border border-border bg-white p-3"><div className="flex items-center justify-between"><p className="text-[11px] font-semibold text-text-primary">第 {fact.imageIndex} 张</p><span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[9px] font-bold text-emerald-700">{roleLabel[flow?.role || 'unknown']}</span></div><p className="mt-2 text-[10px] text-text-secondary">主体：{fact.subjects.join('、') || '未确认'}</p><p className="mt-1 text-[10px] text-text-secondary">场景：{fact.scene || '未确认'}</p><p className="mt-1 text-[10px] text-text-secondary">构图：{fact.composition || '未确认'}</p><p className="mt-1 text-[10px] text-text-secondary">颜色：{fact.colors.join('、') || '未确认'}</p>{fact.visibleText.length > 0 && <p className="mt-1 rounded-lg bg-surface-2 p-2 text-[10px] text-text-secondary">OCR：{fact.visibleText.join(' / ')}</p>}{flow?.evidence && <p className="mt-2 text-[9px] text-text-muted">轮播作用依据：{flow.evidence}</p>}</div>; })}
     </div>
   );
 
   if (activeTab === 'copy') return (
     <div className="space-y-3">
-      <section className="rounded-xl border border-border bg-white p-3"><div className="flex items-center justify-between"><p className="text-[10px] font-bold text-text-muted">原始帖文</p><span className="rounded-full bg-surface-2 px-2 py-0.5 text-[9px] text-text-muted">抓取原文</span></div><p className="mt-2 text-[11px] font-bold leading-relaxed text-text-primary">{rawCaption || '未抓取到原始帖文'}</p></section>
+      <section className="rounded-lg border border-border bg-white p-3"><div className="flex items-center justify-between"><p className="text-[10px] font-bold text-text-muted">原始帖文</p><span className="rounded-full bg-surface-2 px-2 py-0.5 text-[9px] text-text-muted">抓取原文</span></div><p className="mt-2 text-[11px] font-bold leading-relaxed text-text-primary">{rawCaption || '未抓取到原始帖文'}</p></section>
       {!evidence?.copyEvidence.hooks.length && !evidence?.copyEvidence.sellingPoints.length ? <EmptyEvidence title="没有可确认的文案模块" desc="仅展示原始帖文，不推断未出现的人群、痛点或承诺。"/> : <>{evidence?.copyEvidence.hooks.map((item, index) => <EvidenceCard key={`copy-hook-${index}`} label={`钩子 ${index + 1} · ${item.source}`} value={`${item.text}｜证据：${item.evidence}`}/>)}{evidence?.copyEvidence.sellingPoints.map((item, index) => <EvidenceCard key={`copy-point-${index}`} label={`卖点 ${index + 1} · ${item.source}`} value={`${item.text}｜证据：${item.evidence}`}/>)}</>}
     </div>
   );
 
   return (
     <div className="space-y-3">
-      <div><p className="text-[11px] font-black text-text-primary">套用到企业获客内容</p><p className="mt-1 text-[10px] text-text-muted">生成“吸引—解释—信任”三条连续内容，而不是三张相似测试图。</p></div>
-      {!isAnalyzed ? <EmptyEvidence title="暂不能生成内容包" desc="需要先完成逐图证据提取，才能安全复用布局和信息模块。"/> : <div className="space-y-2">{[['吸引目标买家', '复用首图停留结构，替换为企业产品和买家问题。'], ['解释合作能力', '复用产品、细节和流程模块，映射企业 MOQ、定制与交付资料。'], ['建立供应商信任', '复用证明模块，只使用企业真实工厂、认证和案例。']].map(([title, desc], index) => <div key={title} className="flex gap-3 rounded-xl border border-border bg-white p-3"><span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-emerald-50 text-[10px] font-black text-emerald-700">{index + 1}</span><div><p className="text-[11px] font-black text-text-primary">{title}</p><p className="mt-1 text-[10px] text-text-secondary">{desc}</p></div></div>)}{evidence!.uncertainties.length > 0 && <div className="rounded-xl bg-amber-50 p-3"><p className="text-[10px] font-black text-amber-800">生成前需确认</p>{evidence!.uncertainties.map(item => <p key={item} className="mt-1 text-[9px] text-amber-700">· {item}</p>)}</div>}</div>}
+      <div><p className="text-[11px] font-semibold text-text-primary">套用到企业获客内容</p><p className="mt-1 text-[10px] text-text-muted">生成“吸引—解释—信任”三条连续内容，而不是三张相似测试图。</p></div>
+      {!isAnalyzed ? <EmptyEvidence title="暂不能生成内容包" desc="需要先完成逐图证据提取，才能安全复用布局和信息模块。"/> : <div className="space-y-2">{[['吸引目标买家', '复用首图停留结构，替换为企业产品和买家问题。'], ['解释合作能力', '复用产品、细节和流程模块，映射企业 MOQ、定制与交付资料。'], ['建立供应商信任', '复用证明模块，只使用企业真实工厂、认证和案例。']].map(([title, desc], index) => <div key={title} className="flex gap-3 rounded-lg border border-border bg-white p-3"><span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-emerald-50 text-[10px] font-semibold text-emerald-700">{index + 1}</span><div><p className="text-[11px] font-semibold text-text-primary">{title}</p><p className="mt-1 text-[10px] text-text-secondary">{desc}</p></div></div>)}{evidence!.uncertainties.length > 0 && <div className="rounded-lg bg-amber-50 p-3"><p className="text-[10px] font-semibold text-amber-800">生成前需确认</p>{evidence!.uncertainties.map(item => <p key={item} className="mt-1 text-[9px] text-amber-700">· {item}</p>)}</div>}</div>}
     </div>
   );
 }
@@ -1456,7 +1485,7 @@ function AnalysisPanel({ video, onGenerateScript, onPersonReplace, onRetry, onEx
   if (!loaded) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center gap-4 px-6">
-        <div className="w-10 h-10 rounded-xl flex items-center justify-center"
+        <div className="w-10 h-10 rounded-lg flex items-center justify-center"
           style={{ background: 'rgba(22,163,74,0.1)' }}>
           <Loader2 size={18} className="text-accent animate-spin" />
         </div>
@@ -1477,7 +1506,7 @@ function AnalysisPanel({ video, onGenerateScript, onPersonReplace, onRetry, onEx
     const state = pipelineState(video);
     return (
       <div className="flex-1 flex flex-col items-center justify-center gap-4 px-6 text-center">
-        <div className="w-10 h-10 rounded-xl flex items-center justify-center bg-surface-2 border border-border">
+        <div className="w-10 h-10 rounded-lg flex items-center justify-center bg-surface-2 border border-border">
           {state.spinning ? <Loader2 size={18} className="text-accent animate-spin" /> : <X size={18} className={state.failed ? 'text-accent' : 'text-text-muted'} />}
         </div>
         <div className="space-y-1 max-w-xs">
@@ -1575,8 +1604,8 @@ function AnalysisPanel({ video, onGenerateScript, onPersonReplace, onRetry, onEx
             <motion.div key="reason" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }}
               className="space-y-3">
               {specialRecommendation && (
-                <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2.5 shadow-sm">
-                  <div className="flex items-center gap-1.5"><Flame size={13} className="text-red-600" /><p className="text-[11px] font-black text-red-700">特别推荐 · 借鉴价值{specialRecommendation.level}</p></div>
+                <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2.5 shadow-none">
+                  <div className="flex items-center gap-1.5"><Flame size={13} className="text-red-600" /><p className="text-[11px] font-semibold text-red-700">特别推荐 · 借鉴价值{specialRecommendation.level}</p></div>
                   <p className="mt-1 text-[10px] leading-relaxed text-red-700">{specialRecommendation.message}</p>
                 </div>
               )}
@@ -1627,7 +1656,7 @@ function AnalysisPanel({ video, onGenerateScript, onPersonReplace, onRetry, onEx
                         <div className="min-w-0">
                           <div className="flex flex-wrap items-center gap-1.5">
                             <span className="rounded bg-neutral-800 px-1.5 py-0.5 font-mono text-[9px] font-bold text-white">{match.detail.time}</span>
-                            <span className="text-[11px] font-black text-text-primary">{match.viralDna.purpose}</span>
+                            <span className="text-[11px] font-semibold text-text-primary">{match.viralDna.purpose}</span>
                           </div>
                           <p className="mt-1 text-[10px] text-text-muted">{match.detail.shot} · {match.detail.camera}</p>
                         </div>
@@ -1645,13 +1674,13 @@ function AnalysisPanel({ video, onGenerateScript, onPersonReplace, onRetry, onEx
                       </div>
 
                       <div className="mt-2 rounded-lg border border-border bg-white/90 px-2.5 py-2">
-                        <p className="text-[9px] font-black text-text-primary">为什么有效</p>
+                        <p className="text-[9px] font-semibold text-text-primary">为什么有效</p>
                         <p className="mt-1 text-[10px] leading-relaxed text-text-secondary">{match.viralPotential.whyEffective}</p>
                         <div className="mt-1.5 flex flex-wrap gap-1">{match.viralPotential.mechanisms.map(item => <span key={item} className="rounded bg-amber-dim px-1.5 py-0.5 text-[9px] font-bold text-amber">{item}</span>)}</div>
                       </div>
 
                       <div className="mt-2 rounded-lg border border-border bg-white/90 px-2.5 py-2">
-                        <p className="text-[9px] font-black text-text-primary">必须保留</p>
+                        <p className="text-[9px] font-semibold text-text-primary">必须保留</p>
                         <div className="mt-1 space-y-0.5">{match.viralDna.mustPreserve.slice(0, 4).map(item => <p key={item} className="text-[10px] leading-relaxed text-text-secondary">✓ {item}</p>)}</div>
                       </div>
 
@@ -1703,7 +1732,7 @@ function AnalysisPanel({ video, onGenerateScript, onPersonReplace, onRetry, onEx
                   {editingAnalysis ? <><button onClick={() => setEditingAnalysis(false)} className="text-[10px] font-bold text-text-muted">取消</button><button onClick={() => void saveAnalysisCorrections()} disabled={savingAnalysis} className="rounded-lg bg-accent px-2.5 py-1 text-[10px] font-bold text-white disabled:opacity-50">{savingAnalysis ? '保存中…' : '保存修正'}</button></> : <button onClick={() => setEditingAnalysis(true)} className="rounded-lg border border-border bg-white px-2.5 py-1 text-[10px] font-bold text-text-secondary">编辑校对</button>}
                 </div>
               </div>
-              <div className="overflow-hidden rounded-xl border border-border">
+              <div className="overflow-hidden rounded-lg border border-border">
                 <div className="space-y-1 border-b border-border bg-surface-2 px-3 py-2.5">
                   <p className="text-[11px] leading-relaxed text-text-secondary"><span className="font-semibold text-text-primary">基础要求：</span>{analysis.baseRequirements}</p>
                   <p className="text-[11px] text-text-secondary"><span className="font-semibold text-text-primary">指定画风：</span>{analysis.scriptSummary15s.visualStyle}</p>
@@ -1742,12 +1771,12 @@ function AnalysisPanel({ video, onGenerateScript, onPersonReplace, onRetry, onEx
           {activeBookmark === 'adapt' && (
             <motion.div key="adapt" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }}
               className="space-y-3">
-              <div className="rounded-xl border border-dashed p-3"
+              <div className="rounded-lg border border-dashed p-3"
                 style={{ borderColor: 'rgba(22,163,74,0.3)', background: 'rgba(22,163,74,0.04)' }}>
                 <p className="mb-1.5 text-[10px] font-semibold text-accent">改编建议</p>
                 <p className="text-[11px] leading-relaxed text-text-secondary">{analysis.adaptTip}</p>
               </div>
-              <div className="rounded-xl border border-border bg-surface-2 p-3">
+              <div className="rounded-lg border border-border bg-surface-2 p-3">
                 <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-text-muted">可复用爆点</p>
                 <div className="flex flex-wrap gap-1.5">
                   {referenceHighlights(video, analysis).slice(0, 6).map((item, index) => (
@@ -1763,15 +1792,15 @@ function AnalysisPanel({ video, onGenerateScript, onPersonReplace, onRetry, onEx
       </div>
 
       <div className="flex-shrink-0 border-t border-border bg-surface p-4 shadow-[0_-10px_24px_rgba(15,23,42,0.04)]">
-        {video.contentFormat !== 'image' && <div className="mb-3 rounded-xl border border-accent/20 bg-accent/5 p-3">
+        {video.contentFormat !== 'image' && <div className="mb-3 rounded-lg border border-accent/20 bg-accent/5 p-3">
           <div className="flex items-center justify-between gap-3">
-            <p className="text-[11px] font-black text-text-primary">{analysisQuality.ready ? '全片精确分析版 · 质量校验通过' : video.aiAnalysis?.requestedAnalysisMode === 'exact' ? '全片精确分析排队中' : video.aiAnalysis?.analysisMode === 'exact' ? '全片精确分析未通过校验' : showStrategyProgress ? '自动策略分析处理中' : '全片策略分析版'}</p>
-            {!analysisQuality.ready && <button type="button" onClick={onExactAnalysis} disabled={video.aiAnalysis?.requestedAnalysisMode === 'exact'} className="shrink-0 rounded-lg border border-accent bg-white px-2.5 py-1.5 text-[10px] font-black text-accent hover:bg-accent/5 disabled:cursor-wait disabled:opacity-50">{video.aiAnalysis?.requestedAnalysisMode === 'exact' ? '精确分析生成中…' : video.aiAnalysis?.analysisMode === 'exact' ? '重试全片精确分析' : '生成全片精确分析'}</button>}
+            <p className="text-[11px] font-semibold text-text-primary">{analysisQuality.ready ? '全片精确分析版 · 质量校验通过' : video.aiAnalysis?.requestedAnalysisMode === 'exact' ? '全片精确分析排队中' : video.aiAnalysis?.analysisMode === 'exact' ? '全片精确分析未通过校验' : showStrategyProgress ? '自动策略分析处理中' : '全片策略分析版'}</p>
+            {!analysisQuality.ready && <button type="button" onClick={onExactAnalysis} disabled={video.aiAnalysis?.requestedAnalysisMode === 'exact'} className="shrink-0 rounded-lg border border-accent bg-white px-2.5 py-1.5 text-[10px] font-semibold text-accent hover:bg-accent/5 disabled:cursor-wait disabled:opacity-50">{video.aiAnalysis?.requestedAnalysisMode === 'exact' ? '精确分析生成中…' : video.aiAnalysis?.analysisMode === 'exact' ? '重试全片精确分析' : '生成全片精确分析'}</button>}
           </div>
           {actionNotice && <p role="status" aria-live="polite" className="mt-2 rounded-lg border border-accent/20 bg-white px-2.5 py-2 text-[10px] font-semibold leading-relaxed text-text-secondary">{actionNotice}</p>}
           {video.aiAnalysis?.videoLevelFailureStatus && !video.aiAnalysis?.requestedAnalysisMode && <p role="status" aria-live="polite" className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-2 text-[10px] font-semibold leading-relaxed text-amber-700">全片精确分析未完成，已保留原分析。可稍后重试，或换用可直接下载的公开素材。</p>}
         </div>}
-        {video.contentFormat === 'image' && !hasTrustedImageAnalysis && <button type="button" onClick={() => void reanalyzeImage()} disabled={reanalyzingImage} className="mb-2 flex w-full items-center justify-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 py-2 text-xs font-black text-emerald-700 disabled:opacity-50">{reanalyzingImage ? <Loader2 size={13} className="animate-spin"/> : <Images size={13}/>}重新分析完整轮播</button>}
+        {video.contentFormat === 'image' && !hasTrustedImageAnalysis && <button type="button" onClick={() => void reanalyzeImage()} disabled={reanalyzingImage} className="mb-2 flex w-full items-center justify-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 py-2 text-xs font-semibold text-emerald-700 disabled:opacity-50">{reanalyzingImage ? <Loader2 size={13} className="animate-spin"/> : <Images size={13}/>}重新分析完整轮播</button>}
         {analysisSaveNotice && video.contentFormat === 'image' && <p className="mb-2 text-center text-[10px] text-red-500">{analysisSaveNotice}</p>}
         <button onClick={() => onGenerateScript(analysis || undefined)} disabled={(video.contentFormat === 'image' && !hasTrustedImageAnalysis) || videoGenerationBlocked}
           className="flex w-full items-center justify-center gap-2 rounded-md bg-accent py-3 text-sm font-bold text-white transition-colors enabled:hover:bg-accent-dim disabled:cursor-not-allowed disabled:opacity-50">
@@ -2180,7 +2209,7 @@ function ScriptPanel({ video, activePanelTab, onClose, onRetry, onExactAnalysis,
                   ] as const).map(({ type, icon, label }) => (
                     <button key={type} onClick={() => setScriptType(type)}
                       className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition-all ${
-                        scriptType === type ? 'bg-surface text-text-primary shadow-sm' : 'text-text-muted hover:text-text-secondary'
+                        scriptType === type ? 'bg-surface text-text-primary shadow-none' : 'text-text-muted hover:text-text-secondary'
                       }`}>
                       {icon}<span>{label}</span>
                     </button>
@@ -2196,7 +2225,7 @@ function ScriptPanel({ video, activePanelTab, onClose, onRetry, onExactAnalysis,
                   <AnimatePresence>
                     {showLangDropdown && (
                       <motion.div initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 4 }}
-                        className="absolute top-full left-0 right-0 mt-1 rounded-xl border border-border bg-surface z-10 overflow-hidden shadow-lg">
+                        className="absolute top-full left-0 right-0 mt-1 rounded-lg border border-border bg-surface z-10 overflow-hidden shadow-lg">
                         <div className="p-1 max-h-44 overflow-y-auto">
                           {LANGUAGES.map(lang => (
                             <button key={lang.code} onClick={() => { setLanguage(lang.code); setShowLangDropdown(false); }}
@@ -2306,7 +2335,7 @@ function ScriptPanel({ video, activePanelTab, onClose, onRetry, onExactAnalysis,
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className={`mb-2 rounded-lg border px-3 py-2 text-[10px] font-semibold leading-relaxed ${resultProvenance === 'ai' && resultQualityStatus === 'passed' ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : resultProvenance === 'ai' ? 'border-sky-200 bg-sky-50 text-sky-800' : 'border-amber-200 bg-amber-50 text-amber-800'}`}>
-                      <p className="font-black">{resultProvenance === 'ai'
+                      <p className="font-semibold">{resultProvenance === 'ai'
                         ? resultQualityStatus === 'passed' ? 'AI 生成 · 质量校验通过' : 'AI 草稿 · 待人工复核'
                         : resultProvenance === 'ai_rejected' ? 'AI 草稿 · 质量校验未通过' : '本地草稿模板 · 未调用 AI'}</p>
                       {resultNotice && <p className="mt-1">{resultNotice}</p>}
@@ -2330,7 +2359,7 @@ function ScriptPanel({ video, activePanelTab, onClose, onRetry, onExactAnalysis,
                             {seedanceVideoLocked ? (
                               <div className="overflow-hidden rounded-lg border border-border bg-surface">
                                 <div className="flex gap-3 p-3">
-                                  <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 bg-surface-2 border border-border">
+                                  <div className="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 bg-surface-2 border border-border">
                                     <Lock size={15} className="text-text-muted" />
                                   </div>
                                   <div className="min-w-0 flex-1">
@@ -2356,7 +2385,7 @@ function ScriptPanel({ video, activePanelTab, onClose, onRetry, onExactAnalysis,
                         ) : (
                           <div className="overflow-hidden rounded-lg border border-border bg-surface">
                             <div className="flex gap-3 p-3">
-                              <div className="relative w-24 aspect-[9/16] flex-shrink-0 overflow-hidden rounded-xl bg-black">
+                              <div className="relative w-24 aspect-[9/16] flex-shrink-0 overflow-hidden rounded-lg bg-black">
                                 {videoResult.url ? (
                                   <video src={videoResult.url} poster={videoResult.poster} controls playsInline className="absolute inset-0 h-full w-full object-cover" />
                                 ) : (
@@ -2686,7 +2715,6 @@ function sourceEmbedUrl(video: TrendVideo): string {
 
 function WatchModal({ video, onClose }: { video: TrendVideo; onClose: () => void }) {
   const embedUrl = sourceEmbedUrl(video);
-  const dialogRef = useModalFocus<HTMLDivElement>({ open: true, onClose });
   const [previewAttempt, setPreviewAttempt] = useState(0);
   const [previewLoading, setPreviewLoading] = useState(Boolean(video.videoUrl));
   const [previewError, setPreviewError] = useState('');
@@ -2698,34 +2726,9 @@ function WatchModal({ video, onClose }: { video: TrendVideo; onClose: () => void
     setPreviewAttempt(value => value + 1);
   };
   return (
-    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-      ref={dialogRef}
-      tabIndex={-1}
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="inspiration-watch-title"
-      className="fixed inset-0 z-[80] bg-black/70 backdrop-blur-sm flex items-center justify-center px-5 py-6"
-      onClick={onClose}>
-      <motion.div initial={{ opacity: 0, scale: 0.96, y: 12 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.96, y: 12 }}
-        className="w-full max-w-4xl overflow-hidden rounded-lg border border-border bg-surface shadow-xl"
-        onClick={e => e.stopPropagation()}>
-        <div className="flex items-start justify-between gap-4 px-4 py-3 border-b border-border">
-          <div className="min-w-0">
-            <p className="flex items-center gap-2 text-[10px] font-mono uppercase tracking-widest text-text-muted"><SocialPlatformIcon platform={video.platform} size={14}/><span className="sr-only">{PLATFORM_META[video.platform]?.label ?? video.platform}</span>预览</p>
-            <h3 id="inspiration-watch-title" className="mt-0.5 truncate text-sm font-semibold text-text-primary">{video.title}</h3>
-          </div>
-          <div className="flex items-center gap-2 flex-shrink-0">
-            {video.sourceUrl && (
-              <button onClick={() => window.open(video.sourceUrl, '_blank', 'noopener,noreferrer')}
-                className="px-3 py-1.5 rounded-lg border border-border bg-surface-2 text-xs font-semibold text-text-secondary hover:text-text-primary transition-colors">
-                原站打开
-              </button>
-            )}
-            <button type="button" data-modal-initial-focus onClick={onClose} aria-label="关闭视频预览" className="rounded-md p-1.5 text-text-muted transition-colors hover:bg-surface-2 hover:text-text-primary">
-              <X size={15} />
-            </button>
-          </div>
-        </div>
+    <Modal open title={video.title} width={840} zIndex={2200} onCancel={onClose}
+      footer={<div className="flex justify-end gap-2">{video.sourceUrl && <Button onClick={() => window.open(video.sourceUrl, '_blank', 'noopener,noreferrer')}>原站打开</Button>}<Button onClick={onClose}>关闭</Button></div>}>
+      <p className="mb-3 flex items-center gap-2 text-xs text-text-secondary"><SocialPlatformIcon platform={video.platform} size={14}/>{PLATFORM_META[video.platform]?.label ?? video.platform} · 视频预览</p>
         <div className="bg-black">
           {video.videoUrl && !useEmbedPlayer ? (
             <div className="relative flex min-h-64 items-center justify-center bg-black">
@@ -2773,8 +2776,7 @@ function WatchModal({ video, onClose }: { video: TrendVideo; onClose: () => void
             </div>
           )}
         </div>
-      </motion.div>
-    </motion.div>
+    </Modal>
   );
 }
 
@@ -2945,7 +2947,7 @@ function DirectorReviewWorkspace({ recordId, onPreview, handoff }: { recordId: s
     } catch (error) { setMessage(error instanceof Error ? error.message : '保存失败'); }
     finally { setBusy(false); }
   };
-  if (!review || !speech) return <section className="mb-4 rounded-xl border border-border bg-white p-4 text-xs text-text-muted" aria-label="六段结构编导复核">{message || '正在读取六段结构、镜头和口播证据…'}</section>;
+  if (!review || !speech) return <section className="mb-4 rounded-lg border border-border bg-white p-4 text-xs text-text-muted" aria-label="六段结构编导复核">{message || '正在读取六段结构、镜头和口播证据…'}</section>;
   const changeSectionBoundary = (index: number, edge: 'start' | 'end', value: number) => {
     setReview({ ...review, sections: review.sections.map((item, position) => {
       if (position === index) return { ...item, [edge]: value, confirmed: false };
@@ -2985,15 +2987,15 @@ function DirectorReviewWorkspace({ recordId, onPreview, handoff }: { recordId: s
   const sectionShots = section ? review.shots.filter(shot => shot.reviewStatus !== 'discarded' && shot.start < section.end && shot.end > section.start) : [];
   const sectionLines = section ? (timeline?.lines || []).filter(line => line.sectionIds.includes(section.sectionId)) : [];
   const sectionCoarse = section ? (timeline?.coarseWindows || []).filter(line => line.sectionIds.includes(section.sectionId)) : [];
-  return <section aria-label="六段结构编导复核" className="mb-4 rounded-xl border border-border bg-white p-4 text-xs">
-    <div className="flex flex-wrap items-center justify-between gap-2"><div><h3 className="font-black text-text-primary">六段内容结构与逐句口播</h3><p className="mt-1 text-text-muted">先确认叙事段，再复核分镜和原声逐句时间码。粗 ASR 可提供逐句大致时间码，界面会明确标记为估计；可按需人工修正。</p></div><span className={`rounded px-2 py-1 font-bold ${review.reviewComplete && timeline?.productionReady ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-800'}`}>{review.reviewComplete && timeline?.productionReady ? '待最终交接门槛' : '编导复核中'}</span></div>
+  return <section aria-label="六段结构编导复核" className="mb-4 rounded-lg border border-border bg-white p-4 text-xs">
+    <div className="flex flex-wrap items-center justify-between gap-2"><div><h3 className="font-semibold text-text-primary">六段内容结构与逐句口播</h3><p className="mt-1 text-text-muted">先确认叙事段，再复核分镜和原声逐句时间码。粗 ASR 可提供逐句大致时间码，界面会明确标记为估计；可按需人工修正。</p></div><span className={`rounded px-2 py-1 font-bold ${review.reviewComplete && timeline?.productionReady ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-800'}`}>{review.reviewComplete && timeline?.productionReady ? '待最终交接门槛' : '编导复核中'}</span></div>
     <div className="mt-3 rounded-lg bg-amber-50 px-3 py-2 leading-5 text-amber-900"><strong>内容 Agent 制作门槛</strong><p>年限、功效、交期等经营事实暂不作为交接门槛；原片宣称保留待核验标记。逐镜、口播、开场动作和企业“销售”人物资产仍须满足制作证据要求。</p><ul className="mt-1 list-inside list-disc">{['hook_action_unverified', 'presenter_asset_unlocked'].filter(code => handoff?.issues.some(issue => issue.code === code)).map(code => <li key={code}>{directorReviewAction(code).gap}：{directorReviewAction(code).next}</li>)}</ul><p className="mt-1 font-semibold">当前制作状态：{handoff?.productionExecutionAllowed ? '已通过后端交接门槛' : '待补齐制作证据'}</p></div>
     <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">{review.sections.map((item, index) => <button key={item.sectionId} type="button" onClick={() => setActiveSection(index)} className={`rounded-lg border px-2 py-2 text-left ${activeSection === index ? 'border-accent bg-accent-glow text-accent' : 'border-border text-text-secondary'}`}><strong className="block">{index + 1}. {item.title}</strong><span className="mt-1 block text-[10px]">{reviewSeconds(item.start)}–{reviewSeconds(item.end)} · {item.confirmed ? '已确认' : '待确认'}</span></button>)}</div>
     {section && <div className="mt-4 rounded-lg border border-border p-3"><div className="grid gap-2 sm:grid-cols-[1fr_80px_80px]"><label className="font-semibold">结构段名称<input aria-label="结构段名称" className="mt-1 w-full rounded border border-border px-2 py-1" value={section.title} onChange={event => setReview({ ...review, sections: review.sections.map((item, index) => index === activeSection ? { ...item, title: event.target.value, confirmed: false } : item) })} /></label><label>开始秒<input aria-label="结构段开始秒" disabled={activeSection === 0} type="number" step="0.01" className="mt-1 w-full rounded border border-border px-2 py-1" value={section.start} onChange={event => changeSectionBoundary(activeSection, 'start', Number(event.target.value))} /></label><label>结束秒<input aria-label="结构段结束秒" disabled={activeSection === review.sections.length - 1} type="number" step="0.01" className="mt-1 w-full rounded border border-border px-2 py-1" value={section.end} onChange={event => changeSectionBoundary(activeSection, 'end', Number(event.target.value))} /></label></div><label className="mt-2 block">表达目的<input aria-label="结构段表达目的" className="mt-1 w-full rounded border border-border px-2 py-1" value={section.purpose} onChange={event => setReview({ ...review, sections: review.sections.map((item, index) => index === activeSection ? { ...item, purpose: event.target.value, confirmed: false } : item) })} /></label><label className="mt-2 inline-flex items-center gap-2 font-semibold"><input type="checkbox" checked={section.confirmed} onChange={event => setReview({ ...review, sections: review.sections.map((item, index) => index === activeSection ? { ...item, confirmed: event.target.checked } : item) })} />已对照原片确认本段边界与内容</label></div>}
-    <div className="mt-4"><div className="flex items-center justify-between"><h4 className="font-black">本段分镜</h4><button type="button" onClick={() => setShowCandidates(!showCandidates)} className="text-accent underline">{showCandidates ? '收起候选切点' : `展开 ${sectionShots.length} 个候选切点`}</button></div>{showCandidates && <div className="mt-2 max-h-72 space-y-2 overflow-y-auto">{sectionShots.map(shot => <div key={shot.shotId} className="rounded-lg border border-border p-2"><div className="flex flex-wrap items-center gap-2"><strong>{shot.shotId} · {reviewSeconds(shot.start)}–{reviewSeconds(shot.end)}</strong><select aria-label={`${shot.shotId} 复核状态`} value={shot.reviewStatus} onChange={event => setReview({ ...review, shots: review.shots.map(item => item.shotId === shot.shotId ? { ...item, reviewStatus: event.target.value as typeof item.reviewStatus } : item) })} className="ml-auto rounded border border-border px-1 py-0.5"><option value="candidate">待复核</option><option value="confirmed">已确认</option><option value="discarded">废弃</option></select></div><div className="mt-2 grid gap-2 sm:grid-cols-[72px_72px_1fr]"><input aria-label={`${shot.shotId} 开始秒`} type="number" step="0.01" value={shot.start} onChange={event => setReview({ ...review, shots: review.shots.map(item => item.shotId === shot.shotId ? { ...item, start: Number(event.target.value), hookMotionConfirmed: false, evidenceRefs: [] } : item) })} className="w-full rounded border border-border px-1 py-1" /><input aria-label={`${shot.shotId} 结束秒`} type="number" step="0.01" value={shot.end} onChange={event => setReview({ ...review, shots: review.shots.map(item => item.shotId === shot.shotId ? { ...item, end: Number(event.target.value), hookMotionConfirmed: false, evidenceRefs: [] } : item) })} className="w-full rounded border border-border px-1 py-1" /><input aria-label={`${shot.shotId} 内容`} value={shot.content} onChange={event => setReview({ ...review, shots: review.shots.map(item => item.shotId === shot.shotId ? { ...item, content: event.target.value } : item) })} className="w-full rounded border border-border px-2 py-1" /></div><input aria-label={`${shot.shotId} 表达目的`} value={shot.purpose} onChange={event => setReview({ ...review, shots: review.shots.map(item => item.shotId === shot.shotId ? { ...item, purpose: event.target.value } : item) })} className="mt-2 w-full rounded border border-border px-2 py-1" /><input aria-label={`${shot.shotId} 素材类型标签`} placeholder="素材类型标签，逗号分隔，如真人口播、工厂实拍" value={shot.labels.join(",")} onChange={event => setReview({ ...review, shots: review.shots.map(item => item.shotId === shot.shotId ? { ...item, labels: event.target.value.split(/[,，]/).map(label => label.trim()).filter(Boolean) } : item) })} className="mt-2 w-full rounded border border-border px-2 py-1" /><div className="mt-2 flex flex-wrap gap-2 text-[10px]"><label><input type="checkbox" checked={shot.mixedScene} onChange={event => setReview({ ...review, shots: review.shots.map(item => item.shotId === shot.shotId ? { ...item, mixedScene: event.target.checked } : item) })} /> 混镜待拆</label><button type="button" onClick={() => splitShot(shot.shotId)} className="text-accent underline">按秒数拆分</button><label><input type="radio" name="selectedHookShotId" disabled={shot.start >= 1 || shot.end <= 0 || shot.end - shot.start < 0.2} checked={review.selectedHookShotId === shot.shotId} onChange={() => setReview({ ...review, selectedHookShotId: shot.shotId, shots: review.shots.map(item => ({ ...item, hookMotionConfirmed: false })) })} /> 开场钩子</label><button type="button" disabled={busy || JSON.stringify([review.sections, review.shots, review.selectedHookShotId]) !== savedReview} onClick={() => void materializeShot(shot.shotId)} className="text-accent underline disabled:opacity-40">重新抽取切片和首帧</button>{shot.evidenceRefs.length > 0 && <button type="button" onClick={() => setPreviewShotId(previewShotId === shot.shotId ? null : shot.shotId)} className="text-accent underline">{previewShotId === shot.shotId ? '收起证据' : '查看证据'}</button>}</div>{review.selectedHookShotId === shot.shotId && <div className="mt-2 rounded bg-sky-50 p-2"><label className="block font-semibold">开场钩子动作脚本（至少 20 字）<textarea aria-label="开场钩子动作脚本" className="mt-1 w-full rounded border border-border px-2 py-1" rows={3} value={shot.hookAction} onChange={event => setReview(reviseDirectorHookAction(review, shot.shotId, event.target.value))} placeholder="按首帧、第一秒、动作峰值、手势轨迹、声音进入点、转场描述" /></label><label className="mt-1 inline-flex items-center gap-1"><input type="checkbox" checked={shot.hookMotionConfirmed} disabled={shot.hookAction.trim().length < 20} onChange={event => setReview({ ...review, shots: review.shots.map(item => item.shotId === shot.shotId ? { ...item, hookMotionConfirmed: event.target.checked } : item) })} />已逐帧核对钩子动作与原片一致</label><div className="mt-2 grid gap-2 sm:grid-cols-2">{hookScriptKeys.map(key => <label key={key} className="text-xs">{hookScriptLabels[key]}<input aria-label={`开场钩子${hookScriptLabels[key]}`} value={shot.hookScript?.[key] || ''} placeholder="请按原片填写；确实没有填“无”" onChange={event => setReview({ ...review, shots: review.shots.map(item => item.shotId === shot.shotId ? { ...item, hookScript: { camera: '', visual: '', subject: '', music: '', voiceover: '', soundEffects: '', spokenWords: '', subjectAction: '', ...item.hookScript, [key]: event.target.value }, hookScriptConfirmed: false } : item) })} className="mt-1 w-full rounded border border-border px-2 py-1" /></label>)}</div><label className="mt-2 inline-flex items-center gap-1 text-xs"><input type="checkbox" checked={shot.hookScriptConfirmed === true} disabled={hookScriptKeys.some(key => !shot.hookScript?.[key]?.trim())} onChange={event => setReview({ ...review, shots: review.shots.map(item => item.shotId === shot.shotId ? { ...item, hookScriptConfirmed: event.target.checked } : item) })} />已逐项对照原片确认八项钩子脚本</label></div>}{previewShotId === shot.shotId && <div className="mt-2 grid gap-2 sm:grid-cols-2">{shot.evidenceRefs.filter(ref => ref.includes('/clip')).map(ref => <AuthenticatedVideo key={ref} apiUrl={ref} controls className="max-h-48 w-full rounded bg-black" />)}{shot.evidenceRefs.filter(ref => ref.includes('first-frame')).map(ref => <AuthenticatedImage key={ref} src={ref} alt={`${shot.shotId} 原片首帧`} className="max-h-48 w-full rounded object-contain" />)}</div>}</div>)}</div>}</div>
-    <div className="mt-4 border-t border-border pt-3"><h4 className="font-black">本段口播 · {sectionLines.length} 句已定位</h4>{sectionLines.length ? <ul className="mt-2 space-y-1">{sectionLines.map(line => <li key={line.speechId} className="rounded bg-emerald-50 px-2 py-1">{reviewSeconds(line.start)}–{reviewSeconds(line.end)} · {line.text} <span className="text-text-muted">{line.timingPrecision === 'coarse' ? '估计时间码' : '人工校时'} · {line.visibility === 'voiceover' ? '画外音' : line.visibility === 'on_camera' ? '画内口播' : '声音来源待判'} · {line.shotIds.join('、')}</span></li>)}</ul> : <p className="mt-1 text-amber-800">尚无可用的逐句口播。</p>}{sectionCoarse.length > 0 && <details className="mt-2 rounded bg-amber-50 p-2"><summary className="cursor-pointer font-semibold">{sectionCoarse.length} 条粗 ASR 估计口播时间窗</summary><ul className="mt-2 space-y-1">{sectionCoarse.map(item => <li key={item.speechId}>{reviewSeconds(item.start)}–{reviewSeconds(item.end)} · {item.text}</li>)}</ul></details>}</div>
-    <div className="mt-4 rounded-lg border border-sky-200 bg-sky-50 p-3"><h4 className="font-black">获取句级时间码候选</h4><p className="mt-1 leading-5 text-text-secondary">该操作调用千问句级 ASR，可能产生供应商费用。候选仍须逐句听原片、核对起止秒数及画内／画外音；不会自动确认为编导交接物。</p><p className="mt-1 text-text-muted">服务状态：{asrJob ? (asrJob.enabled ? '已启用' : '未启用付费转写') : '查询中'} · 任务：{asrJob?.status || '读取中'}</p><label className="mt-2 flex items-center gap-2"><input type="checkbox" checked={asrConsent} onChange={event => setAsrConsent(event.target.checked)} disabled={!asrJob?.enabled || asrBusy} />我确认启动可能计费的句级 ASR 分析</label><div className="mt-2 flex gap-2"><button type="button" disabled={!asrConsent || !asrJob?.enabled || asrBusy || asrJob.status === 'PENDING' || asrJob.status === 'RUNNING' || asrJob.status === 'SUCCEEDED' || asrJob.status === 'uncertain'} onClick={() => void readPhraseAsr(true)} className="rounded bg-accent px-2 py-1 font-bold text-white disabled:opacity-40">{asrBusy ? '处理中…' : '获取句级时间码'}</button><button type="button" disabled={asrBusy} onClick={() => void readPhraseAsr(false)} className="rounded border border-border px-2 py-1">刷新任务状态</button></div>{asrJob?.candidateLines?.length ? <div className="mt-3"><p className="font-semibold">{asrJob.candidateLines.length} 条机器候选（未核对）</p><div className="mt-2 max-h-48 space-y-1 overflow-y-auto">{asrJob.candidateLines.map((line, index) => <p key={`${line.start}-${index}`} className="rounded bg-white px-2 py-1">{reviewSeconds(line.start)}–{reviewSeconds(line.end)} · {line.text}</p>)}</div><button type="button" onClick={() => setSpeech(asrCandidatesToReviewDraft(speech, asrJob.candidateLines))} className="mt-2 text-accent underline">载入人工校对草稿（不会保存或确认）</button></div> : null}</div>
-    <div className="mt-4 border-t border-border pt-3"><h4 className="font-black">可选：逐句口播人工修正</h4><p className="mt-1 text-text-muted">粗 ASR 的大致时间码已可用于交接；如发现错字、漏句或错位，可听原片修正并保存。</p><button type="button" onClick={onPreview} className="mt-1 text-accent underline">播放原片核对</button><div className="mt-2 max-h-64 space-y-2 overflow-y-auto">{speech.lines.map((line, index) => <div key={index} className="grid gap-1 sm:grid-cols-[70px_70px_1fr_90px_24px]"><input aria-label={`第 ${index + 1} 句开始秒`} type="number" step="0.01" value={line.start} onChange={event => setSpeech({ ...speech, coverageConfirmed: false, lines: speech.lines.map((item, i) => i === index ? { ...item, start: Number(event.target.value) } : item) })} className="rounded border border-border px-1" /><input aria-label={`第 ${index + 1} 句结束秒`} type="number" step="0.01" value={line.end} onChange={event => setSpeech({ ...speech, coverageConfirmed: false, lines: speech.lines.map((item, i) => i === index ? { ...item, end: Number(event.target.value) } : item) })} className="rounded border border-border px-1" /><input aria-label={`第 ${index + 1} 句原文`} value={line.text} onChange={event => setSpeech({ ...speech, coverageConfirmed: false, lines: speech.lines.map((item, i) => i === index ? { ...item, text: event.target.value } : item) })} className="rounded border border-border px-2" /><select aria-label={`第 ${index + 1} 句画内或画外`} value={line.visibility} onChange={event => setSpeech({ ...speech, coverageConfirmed: false, lines: speech.lines.map((item, i) => i === index ? { ...item, visibility: event.target.value as typeof item.visibility } : item) })} className="rounded border border-border px-1"><option value="unknown">待判断</option><option value="on_camera">画内</option><option value="voiceover">画外</option></select><button type="button" aria-label={`删除第 ${index + 1} 句`} onClick={() => setSpeech({ ...speech, coverageConfirmed: false, lines: speech.lines.filter((_, i) => i !== index) })}>×</button></div>)}</div><div className="mt-2 flex flex-wrap gap-2"><button type="button" onClick={() => setSpeech({ ...speech, coverageConfirmed: false, lines: [...speech.lines, { text: '', start: 0, end: 0, visibility: 'unknown' }] })} className="rounded border border-border px-2 py-1">添加一句</button><label className="inline-flex items-center gap-1"><input type="checkbox" checked={speech.coverageConfirmed} onChange={event => setSpeech({ ...speech, coverageConfirmed: event.target.checked })} />已听完整片并确认无漏句</label><button type="button" disabled={busy} onClick={() => void saveSpeech()} className="rounded bg-accent px-2 py-1 font-bold text-white disabled:opacity-50">保存逐句校时</button></div></div>
+    <div className="mt-4"><div className="flex items-center justify-between"><h4 className="font-semibold">本段分镜</h4><button type="button" onClick={() => setShowCandidates(!showCandidates)} className="text-accent underline">{showCandidates ? '收起候选切点' : `展开 ${sectionShots.length} 个候选切点`}</button></div>{showCandidates && <div className="mt-2 max-h-72 space-y-2 overflow-y-auto">{sectionShots.map(shot => <div key={shot.shotId} className="rounded-lg border border-border p-2"><div className="flex flex-wrap items-center gap-2"><strong>{shot.shotId} · {reviewSeconds(shot.start)}–{reviewSeconds(shot.end)}</strong><select aria-label={`${shot.shotId} 复核状态`} value={shot.reviewStatus} onChange={event => setReview({ ...review, shots: review.shots.map(item => item.shotId === shot.shotId ? { ...item, reviewStatus: event.target.value as typeof item.reviewStatus } : item) })} className="ml-auto rounded border border-border px-1 py-0.5"><option value="candidate">待复核</option><option value="confirmed">已确认</option><option value="discarded">废弃</option></select></div><div className="mt-2 grid gap-2 sm:grid-cols-[72px_72px_1fr]"><input aria-label={`${shot.shotId} 开始秒`} type="number" step="0.01" value={shot.start} onChange={event => setReview({ ...review, shots: review.shots.map(item => item.shotId === shot.shotId ? { ...item, start: Number(event.target.value), hookMotionConfirmed: false, evidenceRefs: [] } : item) })} className="w-full rounded border border-border px-1 py-1" /><input aria-label={`${shot.shotId} 结束秒`} type="number" step="0.01" value={shot.end} onChange={event => setReview({ ...review, shots: review.shots.map(item => item.shotId === shot.shotId ? { ...item, end: Number(event.target.value), hookMotionConfirmed: false, evidenceRefs: [] } : item) })} className="w-full rounded border border-border px-1 py-1" /><input aria-label={`${shot.shotId} 内容`} value={shot.content} onChange={event => setReview({ ...review, shots: review.shots.map(item => item.shotId === shot.shotId ? { ...item, content: event.target.value } : item) })} className="w-full rounded border border-border px-2 py-1" /></div><input aria-label={`${shot.shotId} 表达目的`} value={shot.purpose} onChange={event => setReview({ ...review, shots: review.shots.map(item => item.shotId === shot.shotId ? { ...item, purpose: event.target.value } : item) })} className="mt-2 w-full rounded border border-border px-2 py-1" /><input aria-label={`${shot.shotId} 素材类型标签`} placeholder="素材类型标签，逗号分隔，如真人口播、工厂实拍" value={shot.labels.join(",")} onChange={event => setReview({ ...review, shots: review.shots.map(item => item.shotId === shot.shotId ? { ...item, labels: event.target.value.split(/[,，]/).map(label => label.trim()).filter(Boolean) } : item) })} className="mt-2 w-full rounded border border-border px-2 py-1" /><div className="mt-2 flex flex-wrap gap-2 text-[10px]"><label><input type="checkbox" checked={shot.mixedScene} onChange={event => setReview({ ...review, shots: review.shots.map(item => item.shotId === shot.shotId ? { ...item, mixedScene: event.target.checked } : item) })} /> 混镜待拆</label><button type="button" onClick={() => splitShot(shot.shotId)} className="text-accent underline">按秒数拆分</button><label><input type="radio" name="selectedHookShotId" disabled={shot.start >= 1 || shot.end <= 0 || shot.end - shot.start < 0.2} checked={review.selectedHookShotId === shot.shotId} onChange={() => setReview({ ...review, selectedHookShotId: shot.shotId, shots: review.shots.map(item => ({ ...item, hookMotionConfirmed: false })) })} /> 开场钩子</label><button type="button" disabled={busy || JSON.stringify([review.sections, review.shots, review.selectedHookShotId]) !== savedReview} onClick={() => void materializeShot(shot.shotId)} className="text-accent underline disabled:opacity-40">重新抽取切片和首帧</button>{shot.evidenceRefs.length > 0 && <button type="button" onClick={() => setPreviewShotId(previewShotId === shot.shotId ? null : shot.shotId)} className="text-accent underline">{previewShotId === shot.shotId ? '收起证据' : '查看证据'}</button>}</div>{review.selectedHookShotId === shot.shotId && <div className="mt-2 rounded bg-sky-50 p-2"><label className="block font-semibold">开场钩子动作脚本（至少 20 字）<textarea aria-label="开场钩子动作脚本" className="mt-1 w-full rounded border border-border px-2 py-1" rows={3} value={shot.hookAction} onChange={event => setReview(reviseDirectorHookAction(review, shot.shotId, event.target.value))} placeholder="按首帧、第一秒、动作峰值、手势轨迹、声音进入点、转场描述" /></label><label className="mt-1 inline-flex items-center gap-1"><input type="checkbox" checked={shot.hookMotionConfirmed} disabled={shot.hookAction.trim().length < 20} onChange={event => setReview({ ...review, shots: review.shots.map(item => item.shotId === shot.shotId ? { ...item, hookMotionConfirmed: event.target.checked } : item) })} />已逐帧核对钩子动作与原片一致</label><div className="mt-2 grid gap-2 sm:grid-cols-2">{hookScriptKeys.map(key => <label key={key} className="text-xs">{hookScriptLabels[key]}<input aria-label={`开场钩子${hookScriptLabels[key]}`} value={shot.hookScript?.[key] || ''} placeholder="请按原片填写；确实没有填“无”" onChange={event => setReview({ ...review, shots: review.shots.map(item => item.shotId === shot.shotId ? { ...item, hookScript: { camera: '', visual: '', subject: '', music: '', voiceover: '', soundEffects: '', spokenWords: '', subjectAction: '', ...item.hookScript, [key]: event.target.value }, hookScriptConfirmed: false } : item) })} className="mt-1 w-full rounded border border-border px-2 py-1" /></label>)}</div><label className="mt-2 inline-flex items-center gap-1 text-xs"><input type="checkbox" checked={shot.hookScriptConfirmed === true} disabled={hookScriptKeys.some(key => !shot.hookScript?.[key]?.trim())} onChange={event => setReview({ ...review, shots: review.shots.map(item => item.shotId === shot.shotId ? { ...item, hookScriptConfirmed: event.target.checked } : item) })} />已逐项对照原片确认八项钩子脚本</label></div>}{previewShotId === shot.shotId && <div className="mt-2 grid gap-2 sm:grid-cols-2">{shot.evidenceRefs.filter(ref => ref.includes('/clip')).map(ref => <AuthenticatedVideo key={ref} apiUrl={ref} controls className="max-h-48 w-full rounded bg-black" />)}{shot.evidenceRefs.filter(ref => ref.includes('first-frame')).map(ref => <AuthenticatedImage key={ref} src={ref} alt={`${shot.shotId} 原片首帧`} className="max-h-48 w-full rounded object-contain" />)}</div>}</div>)}</div>}</div>
+    <div className="mt-4 border-t border-border pt-3"><h4 className="font-semibold">本段口播 · {sectionLines.length} 句已定位</h4>{sectionLines.length ? <ul className="mt-2 space-y-1">{sectionLines.map(line => <li key={line.speechId} className="rounded bg-emerald-50 px-2 py-1">{reviewSeconds(line.start)}–{reviewSeconds(line.end)} · {line.text} <span className="text-text-muted">{line.timingPrecision === 'coarse' ? '估计时间码' : '人工校时'} · {line.visibility === 'voiceover' ? '画外音' : line.visibility === 'on_camera' ? '画内口播' : '声音来源待判'} · {line.shotIds.join('、')}</span></li>)}</ul> : <p className="mt-1 text-amber-800">尚无可用的逐句口播。</p>}{sectionCoarse.length > 0 && <details className="mt-2 rounded bg-amber-50 p-2"><summary className="cursor-pointer font-semibold">{sectionCoarse.length} 条粗 ASR 估计口播时间窗</summary><ul className="mt-2 space-y-1">{sectionCoarse.map(item => <li key={item.speechId}>{reviewSeconds(item.start)}–{reviewSeconds(item.end)} · {item.text}</li>)}</ul></details>}</div>
+    <div className="mt-4 rounded-lg border border-sky-200 bg-sky-50 p-3"><h4 className="font-semibold">获取句级时间码候选</h4><p className="mt-1 leading-5 text-text-secondary">该操作调用千问句级 ASR，可能产生供应商费用。候选仍须逐句听原片、核对起止秒数及画内／画外音；不会自动确认为编导交接物。</p><p className="mt-1 text-text-muted">服务状态：{asrJob ? (asrJob.enabled ? '已启用' : '未启用付费转写') : '查询中'} · 任务：{asrJob?.status || '读取中'}</p><label className="mt-2 flex items-center gap-2"><input type="checkbox" checked={asrConsent} onChange={event => setAsrConsent(event.target.checked)} disabled={!asrJob?.enabled || asrBusy} />我确认启动可能计费的句级 ASR 分析</label><div className="mt-2 flex gap-2"><button type="button" disabled={!asrConsent || !asrJob?.enabled || asrBusy || asrJob.status === 'PENDING' || asrJob.status === 'RUNNING' || asrJob.status === 'SUCCEEDED' || asrJob.status === 'uncertain'} onClick={() => void readPhraseAsr(true)} className="rounded bg-accent px-2 py-1 font-bold text-white disabled:opacity-40">{asrBusy ? '处理中…' : '获取句级时间码'}</button><button type="button" disabled={asrBusy} onClick={() => void readPhraseAsr(false)} className="rounded border border-border px-2 py-1">刷新任务状态</button></div>{asrJob?.candidateLines?.length ? <div className="mt-3"><p className="font-semibold">{asrJob.candidateLines.length} 条机器候选（未核对）</p><div className="mt-2 max-h-48 space-y-1 overflow-y-auto">{asrJob.candidateLines.map((line, index) => <p key={`${line.start}-${index}`} className="rounded bg-white px-2 py-1">{reviewSeconds(line.start)}–{reviewSeconds(line.end)} · {line.text}</p>)}</div><button type="button" onClick={() => setSpeech(asrCandidatesToReviewDraft(speech, asrJob.candidateLines))} className="mt-2 text-accent underline">载入人工校对草稿（不会保存或确认）</button></div> : null}</div>
+    <div className="mt-4 border-t border-border pt-3"><h4 className="font-semibold">可选：逐句口播人工修正</h4><p className="mt-1 text-text-muted">粗 ASR 的大致时间码已可用于交接；如发现错字、漏句或错位，可听原片修正并保存。</p><button type="button" onClick={onPreview} className="mt-1 text-accent underline">播放原片核对</button><div className="mt-2 max-h-64 space-y-2 overflow-y-auto">{speech.lines.map((line, index) => <div key={index} className="grid gap-1 sm:grid-cols-[70px_70px_1fr_90px_24px]"><input aria-label={`第 ${index + 1} 句开始秒`} type="number" step="0.01" value={line.start} onChange={event => setSpeech({ ...speech, coverageConfirmed: false, lines: speech.lines.map((item, i) => i === index ? { ...item, start: Number(event.target.value) } : item) })} className="rounded border border-border px-1" /><input aria-label={`第 ${index + 1} 句结束秒`} type="number" step="0.01" value={line.end} onChange={event => setSpeech({ ...speech, coverageConfirmed: false, lines: speech.lines.map((item, i) => i === index ? { ...item, end: Number(event.target.value) } : item) })} className="rounded border border-border px-1" /><input aria-label={`第 ${index + 1} 句原文`} value={line.text} onChange={event => setSpeech({ ...speech, coverageConfirmed: false, lines: speech.lines.map((item, i) => i === index ? { ...item, text: event.target.value } : item) })} className="rounded border border-border px-2" /><select aria-label={`第 ${index + 1} 句画内或画外`} value={line.visibility} onChange={event => setSpeech({ ...speech, coverageConfirmed: false, lines: speech.lines.map((item, i) => i === index ? { ...item, visibility: event.target.value as typeof item.visibility } : item) })} className="rounded border border-border px-1"><option value="unknown">待判断</option><option value="on_camera">画内</option><option value="voiceover">画外</option></select><button type="button" aria-label={`删除第 ${index + 1} 句`} onClick={() => setSpeech({ ...speech, coverageConfirmed: false, lines: speech.lines.filter((_, i) => i !== index) })}>×</button></div>)}</div><div className="mt-2 flex flex-wrap gap-2"><button type="button" onClick={() => setSpeech({ ...speech, coverageConfirmed: false, lines: [...speech.lines, { text: '', start: 0, end: 0, visibility: 'unknown' }] })} className="rounded border border-border px-2 py-1">添加一句</button><label className="inline-flex items-center gap-1"><input type="checkbox" checked={speech.coverageConfirmed} onChange={event => setSpeech({ ...speech, coverageConfirmed: event.target.checked })} />已听完整片并确认无漏句</label><button type="button" disabled={busy} onClick={() => void saveSpeech()} className="rounded bg-accent px-2 py-1 font-bold text-white disabled:opacity-50">保存逐句校时</button></div></div>
     <div className="mt-3 flex flex-wrap items-center gap-2"><button type="button" disabled={busy} onClick={() => void saveReview()} className="rounded bg-accent px-3 py-2 font-bold text-white disabled:opacity-50">保存六段与镜头复核</button><span className="text-text-muted">{review.shots.filter(shot => shot.reviewStatus === 'candidate').length} 个候选镜头待复核 · {timeline?.coarseWindows.length || 0} 个粗 ASR 窗口</span></div>{message && <p role="status" className="mt-2 text-amber-800">{message}</p>}{timeline?.reviewQuestions.length ? <details className="mt-3"><summary className="cursor-pointer font-semibold">交接前还需处理 {timeline.reviewQuestions.length} 项</summary><ul className="mt-1 list-inside list-disc space-y-1 text-amber-800">{timeline.reviewQuestions.map((item, index) => <li key={index}>{item}</li>)}</ul></details> : null}
   </section>;
 }
@@ -3004,7 +3006,9 @@ export function DirectorVideoDetailPanel({
   onPreview,
   onCreate,
   onRetry,
+  onReanalyzeImage,
   onExactAnalysis,
+  onReanalyze,
   onCancelAnalysis,
   analyzing,
   notice,
@@ -3017,7 +3021,9 @@ export function DirectorVideoDetailPanel({
   onPreview: () => void;
   onCreate: () => void;
   onRetry: () => void;
+  onReanalyzeImage: () => void;
   onExactAnalysis: () => void;
+  onReanalyze?: () => void;
   onCancelAnalysis: () => void;
   analyzing: boolean;
   notice?: string;
@@ -3025,35 +3031,55 @@ export function DirectorVideoDetailPanel({
   favoriting?: boolean;
   isFavorite?: boolean;
 }) {
-  const dialogRef = useModalFocus<HTMLDivElement>({ open: true, onClose });
   const analysis = getAnalysis(video);
   const exactQuality = exactAnalysisQuality(video);
   const payload = video.aiAnalysis;
-  const [reviewHandoff, setReviewHandoff] = useState<DirectorReviewHandoff | null>(null);
+  const imageEvidence = payload?.imageEvidence;
+  const isImagePost = video.contentFormat === 'image';
+  const imageAnalysisReady = imageEvidence?.status === 'analyzed' && Boolean(imageEvidence.observedFacts?.length);
+  const progressStage = payload?.analysisProgress?.stage;
+  const hasServerProgress = Boolean(payload?.analysisProgress);
+  const terminalAnalysisState = Boolean(payload?.analysisError)
+    || ['completed', 'failed', 'paused', 'cancelled'].includes(String(progressStage || ''))
+    || ['paused', 'cancelled', 'video_failed', 'failed', 'needs_review', 'analysis_retryable', 'analyzed'].includes(String(payload?.geminiStatus || ''));
+  const activeServerAnalysis = analysisProgressIsActive(payload?.analysisProgress);
+  const pending = analyzing
+    || (hasServerProgress
+      ? activeServerAnalysis
+      : (payload?.requestedAnalysisMode === 'exact' && !terminalAnalysisState)
+        || (video.status === 'pending' && !terminalAnalysisState));
+  const reviewHandoffRequestKey = [video.recordId || '', payload?.analyzedAt || '', payload?.geminiStatus || '', payload?.requestedAnalysisMode || '', payload?.analysisProgress?.runId || '', payload?.analysisProgress?.stage || ''].join(':');
+  const [reviewHandoffState, setReviewHandoffState] = useState<{ key: string; value: DirectorReviewHandoff } | null>(null);
+  const reviewHandoff = reviewHandoffState?.key === reviewHandoffRequestKey ? reviewHandoffState.value : null;
   useEffect(() => {
     const recordId = video.recordId;
-    if (!recordId || !['analyzed', 'needs_review'].includes(String(payload?.geminiStatus || ''))) { setReviewHandoff(null); return; }
+    if (activeServerAnalysis || !recordId || !['analyzed', 'needs_review'].includes(String(payload?.geminiStatus || ''))) { setReviewHandoffState(null); return; }
     let active = true;
     void fetch(`/api/overseas/videos/${encodeURIComponent(recordId)}/review-handoff`, { headers: authHeader() })
       .then(async response => response.ok ? await response.json() as DirectorReviewHandoff : null)
-      .then(result => { if (active) setReviewHandoff(result); })
-      .catch(() => { if (active) setReviewHandoff(null); });
+      .then(result => { if (active) setReviewHandoffState(result ? { key: reviewHandoffRequestKey, value: result } : null); })
+      .catch(() => { if (active) setReviewHandoffState(null); });
     return () => { active = false; };
-  }, [video.recordId, payload?.geminiStatus, payload?.analyzedAt, payload?.requestedAnalysisMode]);
+  }, [video.recordId, payload?.geminiStatus, activeServerAnalysis, reviewHandoffRequestKey]);
   const benchmark = payload?.benchmarkAnalysis || buildBenchmarkAnalysis({ analysis: payload, videoId: video.recordId || video.id, duration: video.duration });
-  const handoffReady = reviewHandoff?.status === 'production_ready' && reviewHandoff.productionExecutionAllowed === true;
-  const draftReady = reviewHandoff?.directorHandoffReady === true;
-  const imageEvidence = payload?.imageEvidence;
-  const isImagePost = video.contentFormat === 'image';
-  const imageEvidenceCount = imageEvidence?.observedFacts?.length || imageEvidence?.carouselFlow?.length || 0;
-  const terminalAnalysisState = Boolean(payload?.analysisError)
-    || ['paused', 'video_failed', 'failed', 'needs_review', 'analysis_retryable', 'analyzed'].includes(String(payload?.geminiStatus || ''));
-  const pending = analyzing
-    || (payload?.requestedAnalysisMode === 'exact' && !terminalAnalysisState)
-    || (video.status === 'pending' && !terminalAnalysisState);
-  const statusLabel = pending
-    ? '编导 Agent 分析中'
-    : isImagePost && imageEvidence
+  const handoffReady = !pending && reviewHandoff?.status === 'production_ready' && reviewHandoff.productionExecutionAllowed === true;
+  const draftReady = !pending && reviewHandoff?.directorHandoffReady === true;
+  const detailCreationReady = video.id.startsWith('material-') ? true : isImagePost ? imageAnalysisReady : draftReady && exactQuality.ready && !pending;
+  const isReadOnlySnapshot = payload?.analysisSource === 'weekly-plan-snapshot' || video.id.startsWith('weekly-reference-');
+  const canRunExactAnalysis = !isReadOnlySnapshot;
+  const detailedAnalysisReason = isReadOnlySnapshot
+    ? '原爆款已删除，仅可查看周计划保存的历史分析快照。'
+    : exactQuality.ready
+      ? '精确分析已通过实际画面时间线校验'
+      : exactQuality.reason;
+  const showAnalysisProgress = !isImagePost && progressStage !== 'completed'
+    && (pending || ['failed', 'paused', 'cancelled'].includes(String(progressStage || '')));
+  const statusLabel = payload?.analysisProgress && (analysisProgressIsActive(payload.analysisProgress)
+    || ['failed', 'paused', 'cancelled'].includes(payload.analysisProgress.stage))
+    ? payload.analysisProgress.stageLabel
+    : pending
+      ? '编导 Agent 分析中'
+    : isImagePost && imageAnalysisReady
       ? '图文证据分析已完成'
       : exactQuality.ready
       ? '全片精确分析已完成'
@@ -3066,119 +3092,75 @@ export function DirectorVideoDetailPanel({
           : '等待编导 Agent 分析';
 
   return (
-    <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-      className="fixed inset-0 z-[85] flex justify-end bg-black/25 backdrop-blur-[1px]"
-      onClick={onClose}
-    >
-      <motion.aside
-        ref={dialogRef}
-        tabIndex={-1}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="director-video-analysis-title"
-        initial={{ x: 40, opacity: 0 }}
-        animate={{ x: 0, opacity: 1 }}
-        exit={{ x: 40, opacity: 0 }}
-        className="flex h-full w-full max-w-[720px] flex-col border-l border-border bg-[#f8faf7] shadow-2xl"
-        onClick={event => event.stopPropagation()}
-      >
-        <header className="flex shrink-0 items-start justify-between gap-4 border-b border-border bg-white px-5 py-4">
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="rounded-md bg-accent px-2 py-1 text-[10px] font-black text-white">编导 Agent</span>
-              <span className={`rounded-md px-2 py-1 text-[10px] font-bold ${pending ? 'bg-amber-50 text-amber-700' : exactQuality.ready ? 'bg-emerald-50 text-emerald-700' : 'bg-sky-50 text-sky-700'}`}>{statusLabel}</span>
-            </div>
-            <h2 id="director-video-analysis-title" className="mt-2 line-clamp-2 text-base font-bold leading-6 text-text-primary">{video.title}</h2>
-            <p className="mt-1 flex items-center gap-1.5 text-[11px] text-text-muted"><SocialPlatformIcon platform={video.platform} size={13}/><span className="sr-only">{PLATFORM_META[video.platform]?.label || video.platform} · </span>{displayDuration(video.duration)} · {payload?.analysisSource || '待确认分析来源'}</p>
-          </div>
-          <div className="flex items-center gap-1"><button type="button" onClick={onFavorite} disabled={favoriting} aria-label={isFavorite ? `取消收藏 ${video.title}` : `收藏 ${video.title}`} title={isFavorite ? '取消收藏' : '收藏到我的素材'} className={`inline-flex h-9 w-9 items-center justify-center rounded-lg border transition disabled:cursor-wait disabled:opacity-60 ${isFavorite ? 'border-amber-300 bg-amber-50 text-amber-500' : 'border-border bg-white text-text-muted hover:border-amber-300 hover:text-amber-500'}`}>{favoriting ? <Loader2 size={15} className="animate-spin"/> : <Star size={16} fill={isFavorite ? 'currentColor' : 'none'}/>}</button><button type="button" data-modal-initial-focus onClick={onClose} aria-label="关闭编导分析" className="rounded-lg p-2 text-text-muted hover:bg-surface-2 hover:text-text-primary">
-            <X size={18} />
-          </button></div>
-        </header>
-
+    <Drawer open title={video.title} size={800} onClose={onClose}
+      extra={<Button onClick={onFavorite} loading={favoriting} aria-label={isFavorite ? `取消收藏 ${video.title}` : `收藏 ${video.title}`} icon={<Star size={16} fill={isFavorite ? 'currentColor' : 'none'} />}>{isFavorite ? '已收藏' : '收藏'}</Button>}
+      footer={<div className="flex flex-wrap items-center gap-2">
+        {!isImagePost && canRunExactAnalysis && !exactQuality.ready && (pending
+          ? <Button onClick={onCancelAnalysis} icon={<X size={13} />}>停止分析</Button>
+          : <Button onClick={onExactAnalysis} icon={<BarChart2 size={13} />}>全片精确分析</Button>)}
+        {!isImagePost && (payload?.analysisError || video.status === 'failed') && <Button onClick={onRetry} loading={analyzing}>重新分析</Button>}
+        {isImagePost && !imageAnalysisReady && <Button onClick={onReanalyzeImage} loading={analyzing} icon={<Images size={13} />}>重新分析图文</Button>}
+        <Button onClick={onPreview}>预览原内容</Button>
+        <Button type="primary" onClick={onCreate} disabled={!detailCreationReady} className="ml-auto">{isImagePost || video.id.startsWith('material-') ? '开始创作' : '爆款复刻'}</Button>
+        {!detailCreationReady && <p className="w-full text-xs text-text-secondary">{isImagePost ? '完成图文证据分析后可开始创作。' : pending ? '新的导演级分析完成前，上次结果不能用于复刻。' : '完成编导证据分析后可开始复刻。'}</p>}
+      </div>}
+      styles={{ body: { padding: 0 } }}>
+      <div className="border-b border-border px-5 py-3">
+        <p className="text-sm font-medium text-text-primary">编导 Agent · {statusLabel}</p>
+        <p className="mt-1 flex items-center gap-2 text-xs text-text-secondary"><SocialPlatformIcon platform={video.platform} size={14}/>{PLATFORM_META[video.platform]?.label || video.platform} · {displayDuration(video.duration)} · {payload?.analysisSource || '待确认分析来源'}</p>
+      </div>
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
-          {!isImagePost && <BenchmarkAnalysisSections analysis={benchmark} pending={pending} renderClip={url => <AuthenticatedVideo apiUrl={url} controls className="max-h-64 w-full rounded-lg bg-black" />} />}
-          {!isImagePost && <section aria-label="编导到内容 Agent 交接状态" className="mb-4 rounded-xl border border-border bg-white p-4">
-            <div className="flex flex-wrap items-center gap-2 text-xs font-black"><span className="rounded bg-emerald-50 px-2 py-1 text-emerald-700">原片入库</span><ChevronRight size={13} className="text-text-muted" /><span className={`rounded px-2 py-1 ${pending ? 'bg-amber-50 text-amber-700' : draftReady ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>{pending ? '编导分析中' : draftReady ? '可交接内容起稿' : '编导证据不足'}</span><ChevronRight size={13} className="text-text-muted" /><span className={`rounded px-2 py-1 ${draftReady ? 'bg-emerald-50 text-emerald-700' : 'bg-surface-2 text-text-muted'}`}>{handoffReady ? '可制作成片' : draftReady ? '可生成口播草稿' : '内容起稿未开放'}</span></div>
+          {!isImagePost && <section aria-label="编导到内容 Agent 交接状态" className="mb-4 rounded-lg border border-border bg-white p-4">
+            <div className="flex flex-wrap items-center gap-2 text-xs font-semibold"><span className="rounded bg-emerald-50 px-2 py-1 text-emerald-700">原片入库</span><ChevronRight size={13} className="text-text-muted" /><span className={`rounded px-2 py-1 ${pending ? 'bg-amber-50 text-amber-700' : draftReady ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>{pending ? '编导分析中' : draftReady ? '可交接内容起稿' : '编导证据不足'}</span><ChevronRight size={13} className="text-text-muted" /><span className={`rounded px-2 py-1 ${draftReady ? 'bg-emerald-50 text-emerald-700' : 'bg-surface-2 text-text-muted'}`}>{handoffReady ? '可制作成片' : draftReady ? '可生成口播草稿' : '内容起稿未开放'}</span></div>
             {!handoffReady && !pending && <p className="mt-2 text-[11px] leading-5 text-amber-800">系统将使用带估计时间码的原片口播，并继续检查镜头切片、钩子动作和企业“销售”人物资产。如需继续，编导 Agent 会按清单补证，无需人工逐句校时或逐镜勾选。</p>}
           </section>}
-          {!isImagePost && reviewHandoff && <details className="mb-4 rounded-xl border border-amber-200 bg-white p-4 text-xs"><summary className="cursor-pointer font-black text-text-primary">编导 Agent 待补证据 · {reviewHandoff.issues.length} 项</summary><ul className="mt-3 max-h-64 space-y-2 overflow-y-auto">{reviewHandoff.issues.map((issue, index) => <li key={`${issue.shotId || 'global'}-${issue.code}-${index}`}><strong>{issue.shotId || '全片'} · {directorReviewAction(issue.code).gap}</strong><p className="mt-0.5 text-text-secondary">{issue.action || directorReviewAction(issue.code).next}</p></li>)}</ul></details>}
-          <section className="grid gap-4 rounded-xl border border-border bg-white p-4 sm:grid-cols-[150px_minmax(0,1fr)]">
-            <button type="button" onClick={onPreview} className="group relative aspect-[9/16] overflow-hidden rounded-lg bg-surface-2 text-left">
-              <VideoThumbnail platform={video.platform} title={video.title} />
-              {video.thumbnail && <ThumbnailImage src={video.thumbnail} platform={video.platform} title={video.title} className="absolute inset-0 h-full w-full object-cover" />}
-              <span className="absolute inset-0 flex items-center justify-center bg-black/25 opacity-0 transition group-hover:opacity-100"><span className="rounded-full bg-white/95 p-3 text-text-primary shadow"><Play size={16} fill="currentColor" /></span></span>
-            </button>
-            <div className="min-w-0">
-              <p className="text-xs font-black text-text-primary">分析结论</p>
-              <p className="mt-2 text-sm leading-6 text-text-secondary">
-                {analysis?.referenceHighlights[0] || imageEvidence?.copyEvidence.hooks[0]?.text || payload?.analysisError || '编导 Agent 正在读取原视频证据，完成后会在这里给出可追溯的内容判断。'}
-              </p>
-              <div className="mt-3 grid grid-cols-2 gap-2 text-[11px]">
-                <div className="rounded-lg bg-surface-2 px-3 py-2"><span className="block text-text-muted">分析层级</span><strong className="mt-1 block text-text-primary">{isImagePost ? (imageEvidence ? '图文证据级' : '未完成') : exactQuality.ready ? '全片精确' : analysis ? '策略级' : '未完成'}</strong></div>
-                <div className="rounded-lg bg-surface-2 px-3 py-2"><span className="block text-text-muted">{isImagePost ? '证据覆盖' : '分镜覆盖'}</span><strong className="mt-1 block text-text-primary">{isImagePost ? `${imageEvidenceCount} 条` : `${exactQuality.actualFrames} / ${exactQuality.requiredFrames} 段`}</strong></div>
-              </div>
-              <p className={`mt-3 rounded-lg px-3 py-2 text-[11px] font-semibold leading-5 ${(isImagePost && imageEvidence) || exactQuality.ready ? 'bg-emerald-50 text-emerald-800' : 'bg-amber-50 text-amber-800'}`}>{isImagePost ? (imageEvidence ? '已按原图证据完成视觉、文案与轮播节奏拆解。' : '等待编导 Agent 提取图文证据。') : exactQuality.reason}</p>
-              {payload?.analysisReviewReasons?.length ? <div role="alert" className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] leading-5 text-amber-900"><strong>镜头级缺口与下一步</strong><ul className="mt-2 space-y-2">{payload.analysisReviewReasons.map(reason => { const action = directorReviewAction(reason); return <li key={reason}><span className="font-black">{action.gap}</span><span className="block">{action.next}</span><code className="text-[9px] opacity-60">{reason}</code></li>; })}</ul></div> : null}
-            </div>
-          </section>
+          {showAnalysisProgress && <VideoAnalysisProgressPanel
+            progress={payload?.analysisProgress}
+            pending={pending}
+            onRetry={onReanalyze || onExactAnalysis}
+            retryDisabled={analyzing}
+          />}
 
           {notice && <p role="status" className="mt-4 border-l-2 border-accent bg-accent-glow px-3 py-2 text-xs font-semibold text-accent">{notice}</p>}
 
-          {isImagePost && imageEvidence ? (
+          {isImagePost && imageAnalysisReady && imageEvidence ? (
             <div className="mt-4 space-y-4">
-              <section className="rounded-xl border border-border bg-white p-4">
-                <h3 className="text-sm font-black text-text-primary">图文证据与轮播节奏</h3>
+              <section className="rounded-lg border border-border bg-white p-4">
+                <h3 className="text-sm font-semibold text-text-primary">图文证据与轮播节奏</h3>
                 <div className="mt-3 space-y-2">
                   {imageEvidence.carouselFlow.map(item => <div key={`${item.imageIndex}-${item.role}`} className="rounded-lg bg-surface-2 px-3 py-2 text-xs leading-5"><strong className="text-text-primary">第 {item.imageIndex + 1} 张 · {item.role}</strong><p className="text-text-secondary">{item.evidence}</p></div>)}
                 </div>
               </section>
-              <section className="rounded-xl border border-border bg-white p-4">
-                <h3 className="text-sm font-black text-text-primary">可复用模块</h3>
+              <section className="rounded-lg border border-border bg-white p-4">
+                <h3 className="text-sm font-semibold text-text-primary">可复用模块</h3>
                 <div className="mt-3 grid gap-2 sm:grid-cols-2">{imageEvidence.reusableModules.map(item => <div key={item.module} className="rounded-lg border border-border p-3 text-xs"><strong>{item.module}</strong><p className="mt-1 leading-5 text-text-secondary">保留：{item.preserve}</p><p className="leading-5 text-text-muted">替换：{item.replace}</p></div>)}</div>
               </section>
             </div>
-          ) : analysis ? (
-            <div className="mt-4 space-y-4">
-              <section className="rounded-xl border border-border bg-white p-4">
-                <h3 className="text-sm font-black text-text-primary">核心原因 · 前 10 秒</h3>
-                <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                  {analysis.firstTenSeconds.map(item => <div key={item.dimension} className="rounded-lg bg-surface-2 px-3 py-2"><p className="text-[10px] font-black text-accent">{item.dimension}</p><p className="mt-1 text-xs leading-5 text-text-secondary">{item.detail}</p></div>)}
-                </div>
-                <div className="mt-3 flex flex-wrap gap-1.5">{analysis.referenceHighlights.slice(0, 7).map(item => <span key={item} className="rounded-md bg-accent-glow px-2 py-1 text-[10px] font-semibold text-accent">{item}</span>)}</div>
-              </section>
-
-
-              <section className="rounded-xl border border-border bg-white p-4">
-                <h3 className="text-sm font-black text-text-primary">编导改编建议</h3>
-                <p className="mt-2 text-xs leading-6 text-text-secondary">{analysis.adaptTip}</p>
-                {analysis.baseRequirements && <p className="mt-3 rounded-lg bg-surface-2 px-3 py-2 text-[11px] leading-5 text-text-muted">制作约束：{analysis.baseRequirements}</p>}
-              </section>
-            </div>
-          ) : (
-            <section className="mt-4 rounded-xl border border-dashed border-border bg-white px-6 py-12 text-center">
+          ) : isImagePost ? (
+            <section className="mt-4 rounded-lg border border-dashed border-border bg-white px-6 py-12 text-center">
               {pending ? <Loader2 size={24} className="mx-auto animate-spin text-accent" /> : <BarChart2 size={24} className="mx-auto text-text-muted" />}
-              <p className="mt-3 text-sm font-black text-text-primary">{statusLabel}</p>
-              <p className="mx-auto mt-1 max-w-md text-xs leading-5 text-text-muted">{pending ? '通常需要 1–3 分钟，可以先关闭此页；超过 5 分钟未完成会自动变为可重试。' : '完成后会展示前 10 秒原因、全片分镜、爆点评分、真实性边界和改编建议。'}</p>
+              <p className="mt-3 text-sm font-semibold text-text-primary">{statusLabel}</p>
+              <p className="mx-auto mt-1 max-w-md text-xs leading-5 text-text-muted">{pending ? '可以先关闭此页；完成时间与失败状态以后台返回为准。' : '完成后会展示图文证据与轮播节奏。'}</p>
             </section>
+          ) : (
+            <InspirationVideoAnalysisTabs
+              benchmark={benchmark}
+              gemini={payload?.gemini}
+              duration={video.duration}
+              pending={pending}
+              detailedReady={exactQuality.ready}
+              detailedReason={detailedAnalysisReason}
+              onAnalyze={onExactAnalysis}
+              onReanalyze={onReanalyze || onExactAnalysis}
+              analysisActionAvailable={canRunExactAnalysis}
+              renderClip={url => <AuthenticatedVideo apiUrl={url} controls className="max-h-64 w-full rounded-lg bg-black" />}
+              adaptTip={analysis?.adaptTip}
+              baseRequirements={analysis?.baseRequirements}
+            />
           )}
         </div>
 
-        <footer className="shrink-0 border-t border-border bg-white px-5 py-4">
-          <div className="flex flex-wrap items-center gap-2">
-            {!isImagePost && !exactQuality.ready && (pending
-              ? <button type="button" onClick={onCancelAnalysis} className="inline-flex min-h-10 items-center gap-1.5 rounded-lg border border-amber-300 px-3 text-xs font-bold text-amber-700"><X size={13} />停止分析</button>
-              : <button type="button" onClick={onExactAnalysis} className="inline-flex min-h-10 items-center gap-1.5 rounded-lg border border-accent px-3 text-xs font-bold text-accent"><BarChart2 size={13} />全片精确分析</button>)}
-            {(payload?.analysisError || video.status === 'failed') && <button type="button" onClick={onRetry} disabled={analyzing} className="min-h-10 rounded-lg border border-border px-3 text-xs font-bold text-text-secondary disabled:opacity-50">重新分析</button>}
-            <button type="button" onClick={onPreview} className="min-h-10 rounded-lg border border-border px-3 text-xs font-bold text-text-secondary">预览原内容</button>
-            <button type="button" onClick={onCreate} disabled={!isImagePost && !draftReady} className="ml-auto inline-flex min-h-10 items-center gap-1.5 rounded-lg bg-accent px-4 text-xs font-black text-white disabled:cursor-not-allowed disabled:opacity-45"><Sparkles size={14} />{isImagePost || video.id.startsWith('material-') ? '开始创作' : '爆款复刻'}</button>
-          </div>
-        </footer>
-      </motion.aside>
-    </motion.div>
+    </Drawer>
   );
 }
 
@@ -3266,10 +3248,6 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
   const [previewMaterialLoading, setPreviewMaterialLoading] = useState(false);
   const [previewMaterialError, setPreviewMaterialError] = useState('');
   const previewMaterialAutoRetryRef = useRef(0);
-  const previewMaterialDialogRef = useModalFocus<HTMLDivElement>({
-    open: Boolean(previewMaterial?.type === 'video' && previewMaterial.url),
-    onClose: () => setPreviewMaterial(null),
-  });
   const [detailMaterial, setDetailMaterial] = useState<Material | null>(null);
   const [updatingMaterialTheme, setUpdatingMaterialTheme] = useState(false);
   const detailMaterialDialogRef = useModalFocus<HTMLDivElement>({
@@ -3694,11 +3672,13 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
   }, [innerView, platform, businessModelFilter, discoveryDecision, minimumDiscoveryScore, search, sortMode]);
 
   const hasPendingVideos = crawledVideos.some(v =>
-    v.status === 'pending' ||
-    v.aiAnalysis?.downloadStatus === 'queued' ||
-    v.aiAnalysis?.downloadStatus === 'downloading' ||
-    v.aiAnalysis?.downloadStatus === 'analyzing' ||
-    v.aiAnalysis?.downloadStatus === 'ops_queued'
+    v.aiAnalysis?.analysisProgress
+      ? analysisProgressIsActive(v.aiAnalysis.analysisProgress)
+      : v.status === 'pending' ||
+        v.aiAnalysis?.downloadStatus === 'queued' ||
+        v.aiAnalysis?.downloadStatus === 'downloading' ||
+        v.aiAnalysis?.downloadStatus === 'analyzing' ||
+        v.aiAnalysis?.downloadStatus === 'ops_queued'
   );
 
   useEffect(() => {
@@ -4066,6 +4046,12 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
   };
 
   const enterInspirationWorkflow = async (video: TrendVideo) => {
+    const availability = inspirationCreationAvailability(video);
+    if (!availability.ready) {
+      setMaterialMessage(availability.reason);
+      showActionFeedback({ title: '当前内容还不能开始创作', description: availability.reason, tone: 'warning' });
+      return;
+    }
     if (video.contentFormat === 'image' || video.id.startsWith('material-')) {
       const analysis = getAnalysis(video);
       onEnterWorkflow?.({
@@ -4268,7 +4254,50 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     await analyzeVideoOnly(video);
   };
 
-  const requestExactFullAnalysis = async (video: TrendVideo) => {
+  const reanalyzeImagePost = async (video: TrendVideo) => {
+    const recordId = video.recordId || video.id.replace(/^crawl-/, '');
+    if (!recordId || analyzingVideoIds.includes(video.id)) return;
+    setAnalyzingVideoIds(ids => [...ids, video.id]);
+    setMaterialMessage(`正在重新分析图文证据：${video.title}`);
+    try {
+      const response = await fetch(`/api/overseas/videos/${encodeURIComponent(recordId)}/reanalyze-image`, {
+        method: 'POST',
+        headers: authHeader(),
+      });
+      const data = await response.json().catch(() => ({})) as {
+        error?: string;
+        analysis?: NonNullable<VideoAnalysisPayload['imageEvidence']>;
+      };
+      if (!response.ok || !data.analysis) throw new Error(data.error || '图文证据分析失败');
+      const markAnalyzed = (item: TrendVideo): TrendVideo => item.id !== video.id ? item : {
+        ...item,
+        status: 'analyzed',
+        aiAnalysis: {
+          ...(item.aiAnalysis || {}),
+          imageEvidence: data.analysis,
+          imageAnalysisStatus: 'analyzed',
+          imageAnalysisError: undefined,
+          analysisError: undefined,
+          analyzedAt: new Date().toISOString(),
+        },
+      };
+      setCrawledVideos(items => items.map(markAnalyzed));
+      setSelectedVideo(item => item ? markAnalyzed(item) : item);
+      setWatchVideo(item => item ? markAnalyzed(item) : item);
+      setMaterialMessage('图文证据分析已完成，可以开始创作。');
+      await refreshVideos(videoPage, true);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '图文证据分析失败';
+      setMaterialMessage(message);
+      showActionFeedback({ title: '图文分析失败', description: message, tone: 'error' });
+      await refreshVideos(videoPage, true);
+    } finally {
+      setAnalyzingVideoIds(ids => ids.filter(id => id !== video.id));
+      window.setTimeout(() => setMaterialMessage(''), 3500);
+    }
+  };
+
+  const requestExactFullAnalysis = async (video: TrendVideo, force = false) => {
     if (analyzingVideoIds.includes(video.id)) return;
     const materialId = video.id.startsWith('material-') ? video.id.slice('material-'.length) : '';
     if (!video.recordId && !materialId) {
@@ -4276,7 +4305,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
       return;
     }
     setAnalyzingVideoIds(ids => [...ids, video.id]);
-    setMaterialMessage(`正在全片精确分析，通常需要 1–3 分钟：${video.title}`);
+    setMaterialMessage(`正在提交全片精确分析：${video.title}`);
     try {
       const response = await fetch(video.recordId
         ? `/api/overseas/videos/${video.recordId}/reanalyze`
@@ -4284,7 +4313,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
         method: video.recordId ? 'PATCH' : 'POST',
         headers: { 'Content-Type': 'application/json', ...authHeader() },
         body: JSON.stringify(video.recordId
-          ? { analysisMode: 'exact' }
+          ? { analysisMode: 'exact', ...(force ? { force: true } : {}) }
           : { materialId, title: video.title, platform: video.platform, duration: video.duration }),
       });
       const data = parseExactAnalysisResponse(await response.text(), response.status);
@@ -4306,6 +4335,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
         status: 'pending',
         aiAnalysis: {
           ...(item.aiAnalysis || {}),
+          analysisProgress: undefined,
           requestedAnalysisMode: 'exact',
           geminiStatus: 'queued',
           analysisError: undefined,
@@ -4334,9 +4364,11 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
               };
               setCrawledVideos(items => items.map(applyLatest));
               setSelectedVideo(item => item ? applyLatest(item) : item);
-              if (!latestAnalysis.requestedAnalysisMode) {
+              const progressFinished = Boolean(latestAnalysis.analysisProgress)
+                && !analysisProgressIsActive(latestAnalysis.analysisProgress);
+              if (!latestAnalysis.requestedAnalysisMode || progressFinished) {
                 completed = true;
-                setMaterialMessage(latestAnalysis.analysisError
+                setMaterialMessage(latestAnalysis.analysisError || latestAnalysis.analysisProgress?.stage === 'failed'
                   ? `全片精确分析未完成，可重新尝试。`
                   : '全片精确分析已完成。');
                 window.setTimeout(() => setMaterialMessage(''), 3500);
@@ -4347,7 +4379,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
             }
           }
           if (!completed) {
-            setMaterialMessage('处理已超过 3 分钟，任务仍在后台。可以关闭此页；超过 5 分钟未完成会自动变为可重试。');
+            setMaterialMessage('暂未收到分析终态；请以详情中的后台进度凭证、当前步骤和预计完成时间为准。');
           }
         })();
       }
@@ -4380,7 +4412,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
       const markPaused = (item: TrendVideo): TrendVideo => item.id !== video.id ? item : {
         ...item,
         status: item.aiAnalysis?.gemini || item.aiAnalysis?.analysisQuality ? 'analyzed' : 'failed',
-        aiAnalysis: { ...(item.aiAnalysis || {}), requestedAnalysisMode: undefined, geminiStatus: 'paused' },
+        aiAnalysis: { ...(item.aiAnalysis || {}), analysisProgress: undefined, requestedAnalysisMode: undefined, geminiStatus: 'paused' },
       };
       setCrawledVideos(items => items.map(markPaused));
       setSelectedVideo(item => item ? markPaused(item) : item);
@@ -4561,34 +4593,15 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     <main className="relative min-h-full bg-ink text-text-primary">
       <div className="transition-all duration-300">
         <div className="px-4 py-5 sm:px-6 lg:py-6">
-          <div className="mb-4 border-b border-border">
-            <nav className="-mb-px flex min-w-0 max-w-full gap-1 overflow-x-auto" role="tablist" aria-label="灵感中心分类">
-              {([
-                { id: 'inspiration' as const, label: '灵感发现', count: tenantVideoTotalItems ?? '…', icon: <Flame size={16} /> },
-                { id: 'library' as const, label: '我的素材', count: localMaterials.length, icon: <Film size={16} /> },
-                { id: 'accounts' as const, label: '对标账号', count: '管理', icon: <Users size={16} /> },
-                { id: 'shooting' as const, label: '拍摄任务', count: shootingNeeds.length + scriptGapTasks.length, icon: <Lightbulb size={16} /> },
-              ]).map(item => {
-                const active = innerView === item.id;
-                return (
-                  <button
-                    key={item.id}
-                    type="button"
-                    role="tab"
-                    aria-selected={active}
-                    onClick={() => setInnerView(item.id)}
-                    className={`inline-flex min-h-11 shrink-0 items-center gap-2 border-b-2 px-3 text-sm font-bold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/30 ${
-                      active ? 'border-accent text-accent' : 'border-transparent text-text-muted hover:border-border-bright hover:text-text-primary'
-                    }`}
-                  >
-                    {item.icon}
-                    <span>{item.label}</span>
-                    <span className={`border-l pl-2 text-[10px] font-bold ${active ? 'border-accent/35 text-accent' : 'border-border text-text-muted'}`}>{item.count}</span>
-                  </button>
-                );
-              })}
-            </nav>
-          </div>
+          <LsPageHeader title="灵感中心" description="查看外部参考、管理产品素材，并将内容证据交接到制作流程。" />
+          <Tabs activeKey={innerView} onChange={key => setInnerView(key as InspirationInnerView)} aria-label="灵感中心分类"
+            items={[
+              { key: 'inspiration', label: `灵感发现 · ${tenantVideoTotalItems ?? '…'}`, icon: <Flame size={16} /> },
+              { key: 'library', label: `我的素材 · ${localMaterials.length}`, icon: <Film size={16} /> },
+              { key: 'accounts', label: '对标账号', icon: <Users size={16} /> },
+              { key: 'shooting', label: `拍摄任务 · ${shootingNeeds.length + scriptGapTasks.length}`, icon: <Lightbulb size={16} /> },
+            ]} />
+
 
             {materialMessage && (
               <div role="status" aria-live="polite" className="mb-3 border-l-2 border-accent bg-accent-glow px-4 py-2.5 text-sm font-semibold text-accent">
@@ -4608,175 +4621,46 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
             />}
             {innerView === 'inspiration' && <div className="mb-4 flex flex-wrap items-center gap-3 text-sm">
               <label htmlFor="inspiration-creation-account" className="font-semibold">创作账号</label>
-              <select id="inspiration-creation-account" value={creationAccountId} onChange={event => setCreationAccountId(event.target.value)} className="rounded-lg border border-border bg-surface px-3 py-2">
-                <option value="">暂不指定，仅制作内容</option>
-                {accounts.filter(account => account.status === 'active').map(account => <option key={account.accountId} value={account.accountId}>{account.displayName} · {account.platform}</option>)}
-              </select>
+              <Select id="inspiration-creation-account" value={creationAccountId} onChange={setCreationAccountId} className="w-full min-w-0 sm:w-64"
+                options={[{ value: '', label: '暂不指定，仅制作内容' }, ...accounts.filter(account => account.status === 'active').map(account => ({ value: account.accountId, label: `${account.displayName} · ${account.platform}` }))]} />
               <span className="text-xs text-text-muted">已授权账号的合格成片可进入托管发布；未指定账号不会自动发布。</span>
             </div>}
             {innerView === 'inspiration' && <DiscoveryScopePanel onAccountsCrawled={() => { setSortMode('crawlTime'); setPlatform('all'); setSearch(''); void refreshVideos(1, false); }} />}
             {innerView === 'inspiration' && <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-accent/25 bg-accent/5 px-4 py-3">
-              <div><p className="text-sm font-black text-text-primary">导入对标视频并分析</p><p className="mt-1 text-xs text-text-muted">上传本地 MP4，系统自动入库、全片逐镜拆解，再显示编导交接结果。对标原片仅用于分析，不进入企业可剪辑素材。</p></div>
-              <input ref={referenceUploadInputRef} aria-label="选择对标视频 MP4" type="file" accept="video/mp4,.mp4" className="sr-only" onChange={event => void importReferenceVideo(event.currentTarget.files?.[0])} />
-              <button type="button" onClick={() => referenceUploadInputRef.current?.click()} disabled={importingReference} className="inline-flex min-h-10 items-center gap-2 rounded-lg bg-accent px-4 py-2 text-xs font-black text-white disabled:cursor-wait disabled:opacity-60">{importingReference ? <Loader2 size={15} className="animate-spin" /> : <Upload size={15} />}{importingReference ? '正在导入…' : '导入 MP4 并分析'}</button>
+              <div><p className="text-sm font-semibold text-text-primary">导入对标视频并分析</p><p className="mt-1 text-xs text-text-muted">上传本地 MP4，系统自动入库、全片逐镜拆解，再显示编导交接结果。对标原片仅用于分析，不进入企业可剪辑素材。</p></div>
+              <AntUpload accept="video/mp4,.mp4" showUploadList={false} disabled={importingReference} beforeUpload={file => { void importReferenceVideo(file); return false; }}>
+                <Button type="primary" loading={importingReference} icon={<Upload size={15} />}>导入 MP4 并分析</Button>
+              </AntUpload>
             </div>}
-            {innerView === 'inspiration' && <div className="mb-4 space-y-3 rounded-lg border border-border bg-surface p-3 sm:p-4">
-              <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 xl:grid-cols-4">
-                <div className="relative w-full">
-                  <Search size={14} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
-                  <input type="search" value={search} onChange={e => { setLastCrawlVideoIds([]); setSearch(e.target.value); }}
-                    aria-label="搜索爆款灵感"
-                    placeholder="搜索标题或标签..."
-                    className="h-10 w-full rounded-md border border-border bg-surface pl-10 pr-4 text-sm text-text-primary outline-none transition-colors placeholder:text-text-muted focus:border-accent" />
-                </div>
-                <div className="contents">
-              <div className="relative h-10 min-w-0 rounded-md border border-border bg-surface transition-colors hover:border-border-bright focus-within:border-accent">
-                {contentFormat === 'video'
-                  ? <Film size={15} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
-                  : <Images size={15} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-text-muted" />}
-                <select
-                  value={contentFormat}
-                  onChange={e => handleContentFormatFilter(e.target.value as ContentFormat)}
-                  aria-label="内容形式"
-                  className="h-full w-full cursor-pointer appearance-none rounded-md bg-transparent pl-10 pr-9 text-sm font-bold text-text-primary outline-none"
-                >
-                  <option value="video">视频</option>
-                  <option value="image">图文</option>
-                </select>
-                <ChevronDown size={15} className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
-                <span className="sr-only">{contentFormatLabel}</span>
+            {innerView === 'inspiration' && <div className="mb-4 space-y-4 rounded-lg border border-border bg-surface p-4">
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                <Input allowClear prefix={<Search size={15} />} value={search}
+                  onChange={event => { setLastCrawlVideoIds([]); setSearch(event.target.value); }}
+                  aria-label="搜索爆款灵感" placeholder="搜索标题或标签" />
+                <Select value={contentFormat} onChange={value => handleContentFormatFilter(value as ContentFormat)} aria-label="内容形式"
+                  options={[{ value: 'video', label: '视频' }, { value: 'image', label: '图文' }]} />
+                <Select value={inspirationFavoriteFilter} onChange={value => setInspirationFavoriteFilter(value as FavoriteFilter)} aria-label="爆款收藏状态"
+                  options={[{ value: 'all', label: '全部收藏状态' }, { value: 'favorite', label: '仅看收藏' }]} />
+                <Button onClick={() => setInspirationFiltersOpen(value => !value)} icon={<SlidersHorizontal size={15} />} aria-expanded={inspirationFiltersOpen} aria-controls="inspiration-more-filters">
+                  更多筛选{inspirationFilterCount > 0 ? ` · ${inspirationFilterCount}` : ''}
+                </Button>
               </div>
-              <label className="relative block h-10 min-w-0 rounded-md border border-border bg-surface focus-within:border-accent">
-                <Star size={15} fill={inspirationFavoriteFilter === 'favorite' ? 'currentColor' : 'none'} className={`pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 ${inspirationFavoriteFilter === 'favorite' ? 'text-amber-500' : 'text-text-muted'}`} />
-                <select value={inspirationFavoriteFilter} onChange={event => setInspirationFavoriteFilter(event.target.value as FavoriteFilter)} aria-label="爆款收藏状态"
-                  className="h-full w-full cursor-pointer appearance-none rounded-md bg-transparent pl-10 pr-9 text-sm font-bold text-text-primary outline-none">
-                  <option value="all">全部收藏状态</option>
-                  <option value="favorite">仅看收藏</option>
-                </select>
-                <ChevronDown size={15} className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
-              </label>
-              <button type="button" onClick={() => setInspirationFiltersOpen(value => !value)} aria-expanded={inspirationFiltersOpen} aria-controls="inspiration-more-filters"
-                className={`inline-flex h-10 min-w-0 items-center justify-center gap-2 rounded-md border px-2 text-sm font-bold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 ${inspirationFiltersOpen ? 'border-accent bg-accent-glow text-accent' : 'border-border text-text-secondary hover:border-accent hover:text-accent'}`}>
-                <SlidersHorizontal size={15} />更多筛选
-                {inspirationFilterCount > 0 && <span className="rounded-full bg-accent px-1.5 py-0.5 text-[10px] font-black text-white">{inspirationFilterCount}</span>}
-                <ChevronDown size={14} className={`transition-transform ${inspirationFiltersOpen ? 'rotate-180' : ''}`} />
-              </button>
-              </div>
-            </div>
-
-            <AnimatePresence initial={false}>
-              {inspirationFiltersOpen && <motion.div id="inspiration-more-filters" initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
-                <div className="grid gap-3 border-t border-border pt-3 md:grid-cols-2 xl:grid-cols-4">
-                  <label className="relative block h-14 rounded-xl border border-border bg-surface-2 focus-within:border-accent">
-                    {platform === 'all'
-                      ? <Globe size={15} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
-                      : <SocialPlatformIcon platform={platform} size={16} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2" />}
-                    <span className="pointer-events-none absolute left-10 top-1.5 text-[10px] font-semibold text-text-muted">发布平台</span>
-                    <select value={platform} onChange={e => handlePlatformFilter(e.target.value as Platform)} aria-label="社媒平台"
-                      className="h-full w-full cursor-pointer appearance-none rounded-xl bg-transparent pl-10 pr-9 pt-3 text-sm font-bold text-text-primary outline-none">
-                      {PLATFORM_FILTERS.map(f => <option key={f.id} value={f.id}>{f.label}</option>)}
-                    </select>
-                    <ChevronDown size={15} className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
-                    <span className="sr-only">{platformLabel}</span>
-                  </label>
-                  <label className="relative block h-14 rounded-xl border border-border bg-surface-2 focus-within:border-accent">
-                    <Clock size={15} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
-                    <span className="pointer-events-none absolute left-10 top-1.5 text-[10px] font-semibold text-text-muted">入库时间</span>
-                <select
-                  value={crawlTimeRange}
-                  onChange={event => { setLastCrawlVideoIds([]); setCrawlTimeRange(event.target.value as CrawlTimeRange); }}
-                  aria-label="视频抓取入库时间"
-                      className="h-full w-full cursor-pointer appearance-none rounded-xl bg-transparent pl-10 pr-9 pt-3 text-sm font-bold text-text-primary outline-none"
-                >
-                  <option value="all">全部时间</option>
-                  <option value="today">今天入库</option>
-                  <option value="7d">近 7 天</option>
-                  <option value="30d">近 30 天</option>
-                </select>
-                    <ChevronDown size={15} className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
-                  </label>
-                  <label className="relative block h-14 rounded-xl border border-border bg-surface-2 focus-within:border-accent">
-                {sortMode === 'heat'
-                      ? <Flame size={15} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
-                      : <Clock size={15} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-text-muted" />}
-                    <span className="pointer-events-none absolute left-10 top-1.5 text-[10px] font-semibold text-text-muted">排序方法</span>
-                <select
-                  value={sortMode}
-                  onChange={e => { setLastCrawlVideoIds([]); setSortMode(e.target.value as SortMode); }}
-                  aria-label="排序方法"
-                      className="h-full w-full cursor-pointer appearance-none rounded-xl bg-transparent pl-10 pr-9 pt-3 text-sm font-bold text-text-primary outline-none"
-                >
-                  <option value="crawlTime">按爬取时间</option>
-                  <option value="heat">按内容机会</option>
-                </select>
-                    <ChevronDown size={15} className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
-                <span className="sr-only">{sortLabel}</span>
-                  </label>
-                  <label className="relative block h-14 rounded-xl border border-border bg-surface-2 focus-within:border-accent">
-                    <Check size={15} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
-                    <span className="pointer-events-none absolute left-10 top-1.5 text-[10px] font-semibold text-text-muted">服务端筛选结论</span>
-                    <select value={discoveryDecision} onChange={event => setDiscoveryDecision(event.target.value as DiscoveryDecisionFilter)} aria-label="服务端筛选结论"
-                      className="h-full w-full cursor-pointer appearance-none rounded-xl bg-transparent pl-10 pr-9 pt-3 text-sm font-bold text-text-primary outline-none">
-                      <option value="all">全部评分结果</option>
-                      <option value="accepted">已入选</option>
-                      <option value="review">待复核</option>
-                      <option value="rejected">已淘汰</option>
-                    </select>
-                    <ChevronDown size={15} className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
-                  </label>
-                  <label className="relative block h-14 rounded-xl border border-border bg-surface-2 focus-within:border-accent">
-                    <Users size={15} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
-                    <span className="pointer-events-none absolute left-10 top-1.5 text-[10px] font-semibold text-text-muted">业务类型</span>
-                    <select value={businessModelFilter} onChange={event => setBusinessModelFilter(event.target.value as BusinessModelFilter)} aria-label="业务类型"
-                      className="h-full w-full cursor-pointer appearance-none rounded-xl bg-transparent pl-10 pr-9 pt-3 text-sm font-bold text-text-primary outline-none">
-                      <option value="all">全部业务类型</option>
-                      <option value="b2b">B2B 对标</option>
-                      <option value="mixed">混合业务</option>
-                      <option value="d2c">DTC 卖货</option>
-                      <option value="unknown">待识别</option>
-                    </select>
-                    <ChevronDown size={15} className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
-                  </label>
-                  <label className="relative block h-14 rounded-xl border border-border bg-surface-2 focus-within:border-accent">
-                    <BarChart2 size={15} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
-                    <span className="pointer-events-none absolute left-10 top-1.5 text-[10px] font-semibold text-text-muted">最低综合评分</span>
-                    <select value={minimumDiscoveryScore} onChange={event => setMinimumDiscoveryScore(Number(event.target.value))} aria-label="最低综合评分"
-                      className="h-full w-full cursor-pointer appearance-none rounded-xl bg-transparent pl-10 pr-9 pt-3 text-sm font-bold text-text-primary outline-none">
-                      <option value={0}>不限分数</option>
-                      <option value={50}>50 分以上</option>
-                      <option value={70}>70 分以上</option>
-                      <option value={85}>85 分以上</option>
-                    </select>
-                    <ChevronDown size={15} className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
-                  </label>
-                  <label className="relative block h-14 rounded-xl border border-border bg-surface-2 focus-within:border-accent">
-                {viewMode === 'grid'
-                      ? <LayoutGrid size={15} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
-                      : <List size={15} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-text-muted" />}
-                    <span className="pointer-events-none absolute left-10 top-1.5 text-[10px] font-semibold text-text-muted">展示方式</span>
-                <select
-                  value={viewMode}
-                  onChange={e => setViewMode(e.target.value as 'grid' | 'list')}
-                  aria-label="大屏视图"
-                      className="h-full w-full cursor-pointer appearance-none rounded-xl bg-transparent pl-10 pr-9 pt-3 text-sm font-bold text-text-primary outline-none"
-                >
-                  <option value="grid">卡片视图</option>
-                  <option value="list">列表视图</option>
-                </select>
-                    <ChevronDown size={15} className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
-                  </label>
+              {inspirationFiltersOpen && <div id="inspiration-more-filters" className="space-y-3 border-t border-border pt-4">
+                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                  <label className="space-y-1 text-xs text-text-secondary"><span>发布平台</span><Select className="w-full" value={platform} onChange={value => handlePlatformFilter(value as Platform)} aria-label="社媒平台" options={PLATFORM_FILTERS.map(item => ({ value: item.id, label: item.label }))} /></label>
+                  <label className="space-y-1 text-xs text-text-secondary"><span>入库时间</span><Select className="w-full" value={crawlTimeRange} onChange={value => { setLastCrawlVideoIds([]); setCrawlTimeRange(value as CrawlTimeRange); }} aria-label="视频抓取入库时间" options={[{ value: 'all', label: '全部时间' }, { value: 'today', label: '今天入库' }, { value: '7d', label: '近 7 天' }, { value: '30d', label: '近 30 天' }]} /></label>
+                  <label className="space-y-1 text-xs text-text-secondary"><span>排序方法</span><Select className="w-full" value={sortMode} onChange={value => { setLastCrawlVideoIds([]); setSortMode(value as SortMode); }} aria-label="排序方法" options={[{ value: 'crawlTime', label: '按爬取时间' }, { value: 'heat', label: '按内容机会' }]} /></label>
+                  <label className="space-y-1 text-xs text-text-secondary"><span>筛选结论</span><Select className="w-full" value={discoveryDecision} onChange={value => setDiscoveryDecision(value as DiscoveryDecisionFilter)} aria-label="服务端筛选结论" options={[{ value: 'all', label: '全部评分结果' }, { value: 'accepted', label: '已入选' }, { value: 'review', label: '待复核' }, { value: 'rejected', label: '已淘汰' }]} /></label>
+                  <label className="space-y-1 text-xs text-text-secondary"><span>业务类型</span><Select className="w-full" value={businessModelFilter} onChange={value => setBusinessModelFilter(value as BusinessModelFilter)} aria-label="业务类型" options={[{ value: 'all', label: '全部业务类型' }, { value: 'b2b', label: 'B2B 对标' }, { value: 'mixed', label: '混合业务' }, { value: 'd2c', label: 'DTC 卖货' }, { value: 'unknown', label: '待识别' }]} /></label>
+                  <label className="space-y-1 text-xs text-text-secondary"><span>最低综合评分</span><Select className="w-full" value={minimumDiscoveryScore} onChange={setMinimumDiscoveryScore} aria-label="最低综合评分" options={[{ value: 0, label: '不限分数' }, { value: 50, label: '50 分以上' }, { value: 70, label: '70 分以上' }, { value: 85, label: '85 分以上' }]} /></label>
+                  <div className="space-y-1 text-xs text-text-secondary"><span>展示方式</span><Segmented block value={viewMode} onChange={value => setViewMode(value as 'grid' | 'list')} aria-label="大屏视图" options={[{ value: 'grid', label: '卡片', icon: <LayoutGrid size={14}/> }, { value: 'list', label: '列表', icon: <List size={14}/> }]} /></div>
                 </div>
-                <div className="mt-2 flex justify-end">
-                  <button type="button" onClick={clearInspirationFilters} disabled={inspirationFilterCount === 0}
-                    className="inline-flex min-h-8 items-center gap-1.5 rounded-lg px-2.5 text-xs font-bold text-text-muted transition hover:bg-surface-2 hover:text-accent disabled:cursor-not-allowed disabled:opacity-40">
-                    <X size={13} />清除全部筛选
-                  </button>
-                </div>
-              </motion.div>}
-            </AnimatePresence>
-          </div>}
+                <div className="flex justify-end"><Button type="text" onClick={clearInspirationFilters} disabled={inspirationFilterCount === 0} icon={<X size={13} />}>清除全部筛选</Button></div>
+              </div>}
+            </div>}
 
-        {innerView === 'inspiration' && videosError && <div role="alert" className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-xs font-semibold text-amber-900"><span>{videosError}</span><button type="button" onClick={() => void refreshVideos(videoPage)} className="rounded-md bg-white px-2.5 py-1 font-black text-amber-950">重试</button></div>}
+
+        {innerView === 'inspiration' && videosError && <div role="alert" className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-xs font-semibold text-amber-900"><span>{videosError}</span><button type="button" onClick={() => void refreshVideos(videoPage)} className="rounded-md bg-white px-2.5 py-1 font-semibold text-amber-950">重试</button></div>}
         {innerView === 'inspiration' && <div role="status" aria-live="polite" className="mb-4 flex flex-wrap items-center gap-x-4 gap-y-1 border-y border-border bg-surface-2/60 px-3.5 py-2 text-xs text-text-muted">
           <span className="inline-flex items-center gap-1.5"><strong className="text-sm text-text-primary">{tenantVideoTotalItems ?? '—'}</strong> 条{contentFormat === 'image' ? '图文' : '视频'}灵感{tenantVideoTotalItems === null && <Loader2 size={12} className="animate-spin text-accent" />}</span>
           <span>当前显示 <strong className="text-text-primary">{filtered.length}</strong> 条</span>
@@ -4792,39 +4676,34 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
           {innerView === 'inspiration' && (
             <>
               {!videosLoaded && videosLoading ? (
-                <div className="flex min-h-[360px] flex-col items-center justify-center rounded-lg border border-border bg-surface text-center" role="status" aria-live="polite">
-                  <div className="relative flex h-16 w-16 items-center justify-center rounded-full bg-accent-glow">
-                    <Loader2 size={28} className="animate-spin text-accent" />
-                    <Flame size={15} className="absolute text-accent" />
-                  </div>
-                  <p className="mt-4 text-sm font-bold text-text-primary">正在读取真实视频库存</p>
-                  <p className="mt-1 text-xs text-text-muted">加载最新 30 条灵感，不会先显示为 0</p>
-                </div>
+                <LsLoadingState loading mode="spin" label="正在读取真实视频库存" description="加载最新 30 条灵感，不会先显示为 0" className="min-h-[360px] rounded-lg border border-border bg-surface">
+                  <span />
+                </LsLoadingState>
               ) : filtered.length === 0 ? (
                 <InspirationEmptyState state={resultEmptyState(visibleVideos.length, search, platform !== 'all' || crawlTimeRange !== 'all')} contentFormat={contentFormat} search={search} localMaterialCount={localMaterials.length} onReset={resetInspirationFilters} onOpenLibrary={() => setInnerView('library')} />
               ) : viewMode === 'grid' ? (
-                <div className="grid grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 items-start">
-                  {filtered.map((video, i) => (
-                    <div key={video.id} className="relative">
+                <LsMasonryGallery items={filtered.map((video, i) => ({ id: video.id, content:
+                    <div className="relative">
                       <VideoCard video={video} index={i} isSelected={false}
                         onSelect={() => openDirectorAnalysis(video)}
                         onCreate={() => void enterInspirationWorkflow(video)}
                         createLabel={launchingReferences.includes(video.id) ? '正在启动…' : replicationTasks[`${video.id}:${creationAccountId}`] ? '继续制作' : video.contentFormat === 'image' || video.id.startsWith('material-') ? '开始创作' : '爆款复刻'}
                         creating={launchingReferences.includes(video.id)}
+                        createDisabled={!inspirationCreationAvailability(video).ready}
+                        createDisabledReason={inspirationCreationAvailability(video).reason}
                         onWatch={() => handleWatch(video)}
                         onFavoriteMaterial={() => void favoriteMaterial(video)}
                         favoritingMaterial={favoritingMaterialIds.includes(video.id)}
                         isFavoriteMaterial={favoritedVideoIds.includes(video.id) || favoriteSourceUrls.has(String(video.sourceUrl || '').trim())} />
               {video.canManage && (
                 <div className="absolute right-12 top-2 z-30 flex gap-1">
-                  <button type="button" title="编辑素材" aria-label="编辑素材" onClick={() => openManageDialog({ kind: 'video', item: video, action: 'edit' })} className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-white/95 text-text-secondary shadow backdrop-blur-sm transition hover:text-accent"><Pencil size={14} /></button>
-                  <button type="button" title="删除素材" aria-label="删除素材" onClick={() => openManageDialog({ kind: 'video', item: video, action: 'delete' })} className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-white/95 text-text-secondary shadow backdrop-blur-sm transition hover:text-red-600"><Trash2 size={14} /></button>
+                  <button type="button" title="编辑素材" aria-label="编辑素材" onClick={() => openManageDialog({ kind: 'video', item: video, action: 'edit' })} className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-white/95 text-text-secondary shadow transition hover:text-accent"><Pencil size={14} /></button>
+                  <button type="button" title="删除素材" aria-label="删除素材" onClick={() => openManageDialog({ kind: 'video', item: video, action: 'delete' })} className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-white/95 text-text-secondary shadow transition hover:text-red-600"><Trash2 size={14} /></button>
                 </div>
               )}
 
                     </div>
-                  ))}
-                </div>
+                }))} />
               ) : (
                 <div className="card overflow-hidden divide-y divide-border">
                   {filtered.map(video => (
@@ -4833,6 +4712,8 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                       onCreate={() => void enterInspirationWorkflow(video)}
                         createLabel={launchingReferences.includes(video.id) ? '正在启动…' : replicationTasks[`${video.id}:${creationAccountId}`] ? '继续制作' : video.contentFormat === 'image' || video.id.startsWith('material-') ? '开始创作' : '爆款复刻'}
                         creating={launchingReferences.includes(video.id)}
+                      createDisabled={!inspirationCreationAvailability(video).ready}
+                      createDisabledReason={inspirationCreationAvailability(video).reason}
                       onWatch={() => handleWatch(video)}
                       onFavoriteMaterial={() => void favoriteMaterial(video)}
                       favoritingMaterial={favoritingMaterialIds.includes(video.id)}
@@ -4841,27 +4722,10 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                 </div>
               )}
               {videosLoaded && !serverDiscoveryFilterActive && videoTotalPages > 1 && (
-                <nav className="flex flex-wrap items-center justify-center gap-2 pb-4 pt-4" aria-label="灵感发现分页">
-                  <button
-                    type="button"
-                    onClick={() => void refreshVideos(Math.max(1, videoPage - 1))}
-                    disabled={videosLoading || videoPage <= 1}
-                    className="btn-ghost !px-3 !py-2 disabled:opacity-40"
-                  >
-                    上一页
-                  </button>
-                  <span className="min-w-24 text-center text-xs font-bold text-text-secondary">
-                    第 {videoPage} / {videoTotalPages} 页
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => void refreshVideos(Math.min(videoTotalPages, videoPage + 1))}
-                    disabled={videosLoading || videoPage >= videoTotalPages}
-                    className="btn-ghost !px-3 !py-2 disabled:opacity-40"
-                  >
-                    下一页
-                  </button>
-                  <span className="w-full text-center text-[11px] text-text-muted">每页按最新入库时间展示 {INSPIRATION_PAGE_SIZE} 条</span>
+                <nav className="flex justify-center py-4" aria-label="灵感发现分页">
+                  <Pagination current={videoPage} total={videoTotalPages * INSPIRATION_PAGE_SIZE} pageSize={INSPIRATION_PAGE_SIZE}
+                    showSizeChanger={false} disabled={videosLoading} onChange={page => void refreshVideos(page)}
+                    showTotal={() => `第 ${videoPage} / ${videoTotalPages} 页`} />
                 </nav>
               )}
             </>
@@ -4903,12 +4767,12 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
               </div>
 
               {materialProductFilterEnabled && (
-                <div className="flex flex-col gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex flex-col gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
                   <div>
-                    <p className="text-sm font-black text-emerald-950">正在查看：{materialProductRef || (materialProductId ? '指定产品' : '企业通用素材')}</p>
+                    <p className="text-sm font-semibold text-emerald-950">正在查看：{materialProductRef || (materialProductId ? '指定产品' : '企业通用素材')}</p>
                     <p className="mt-1 text-xs text-emerald-800">从企业知识库进入时，系统会自动带上产品筛选；上传前仍需确认本次素材归属。</p>
                   </div>
-                  <button type="button" onClick={() => setMaterialProductSelection(MATERIAL_PRODUCT_ALL)} className="shrink-0 text-xs font-black text-emerald-700 hover:text-emerald-900">查看全部素材</button>
+                  <button type="button" onClick={() => setMaterialProductSelection(MATERIAL_PRODUCT_ALL)} className="shrink-0 text-xs font-semibold text-emerald-700 hover:text-emerald-900">查看全部素材</button>
                 </div>
               )}
 
@@ -4952,7 +4816,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                   <button type="button" onClick={() => setMaterialFiltersOpen(value => !value)} aria-expanded={materialFiltersOpen} aria-controls="material-more-filters"
                     className={`inline-flex h-10 min-w-0 items-center justify-center gap-1.5 rounded-md border px-2 text-sm font-bold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 ${materialFiltersOpen ? 'border-accent bg-accent-glow text-accent' : 'border-border text-text-secondary hover:border-accent hover:text-accent'}`}>
                     <SlidersHorizontal size={15} />更多筛选
-                    {materialFilterCount > 0 && <span className="rounded-full bg-accent px-1.5 py-0.5 text-[10px] font-black text-white">{materialFilterCount}</span>}
+                    {materialFilterCount > 0 && <span className="rounded-full bg-accent px-1.5 py-0.5 text-[10px] font-semibold text-white">{materialFilterCount}</span>}
                     <ChevronDown size={14} className={`transition-transform ${materialFiltersOpen ? 'rotate-180' : ''}`} />
                   </button>
                   </div>
@@ -4960,11 +4824,11 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                 <AnimatePresence initial={false}>
                   {materialFiltersOpen && <motion.div id="material-more-filters" initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
                     <div className="grid grid-cols-1 gap-3 border-t border-border pt-3 md:grid-cols-2 xl:grid-cols-3">
-                      <label className="relative block h-14 rounded-xl border border-border bg-surface-2 transition-colors focus-within:border-accent">
+                      <label className="relative block h-14 rounded-lg border border-border bg-surface-2 transition-colors focus-within:border-accent">
                         <Package size={15} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
                         <span className="pointer-events-none absolute left-10 top-1.5 text-[10px] font-semibold text-text-muted">关联产品</span>
                         <select value={materialProductFilterValue} onChange={event => setMaterialProductSelection(event.target.value)} aria-label="按产品筛选素材"
-                          className="h-full w-full cursor-pointer appearance-none rounded-xl bg-transparent pl-10 pr-9 pt-3 text-sm font-bold text-text-primary outline-none">
+                          className="h-full w-full cursor-pointer appearance-none rounded-lg bg-transparent pl-10 pr-9 pt-3 text-sm font-bold text-text-primary outline-none">
                           <option value={MATERIAL_PRODUCT_ALL}>全部产品素材</option>
                           <option value={MATERIAL_PRODUCT_COMMON}>企业通用素材</option>
                           {materialProductRef && !materialProductId && <option value={MATERIAL_PRODUCT_LINKED_REF}>{materialProductRef}</option>}
@@ -4979,11 +4843,11 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                         { label: '适用范围', value: materialApplicability, onChange: (value: string) => setMaterialApplicability(value as MaterialApplicabilityFilter), options: Object.entries(MATERIAL_APPLICABILITY_LABELS) },
                         { label: '画面方向', value: materialOrientation, onChange: (value: string) => setMaterialOrientation(value as MaterialOrientationFilter), options: [['all', '全部方向'], ['vertical', '竖屏 9:16'], ['horizontal', '横屏 16:9']] },
                       ].map(filter => (
-                        <label key={filter.label} className="relative block h-14 rounded-xl border border-border bg-surface-2 transition-colors focus-within:border-accent">
+                        <label key={filter.label} className="relative block h-14 rounded-lg border border-border bg-surface-2 transition-colors focus-within:border-accent">
                           <Film size={15} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
                           <span className="pointer-events-none absolute left-10 top-1.5 text-[10px] font-semibold text-text-muted">{filter.label}</span>
                           <select value={filter.value} onChange={e => filter.onChange(e.target.value)} aria-label={filter.label}
-                            className="h-full w-full cursor-pointer appearance-none rounded-xl bg-transparent pl-10 pr-9 pt-3 text-sm font-bold text-text-primary outline-none">
+                            className="h-full w-full cursor-pointer appearance-none rounded-lg bg-transparent pl-10 pr-9 pt-3 text-sm font-bold text-text-primary outline-none">
                             {filter.options.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
                           </select>
                           <ChevronDown size={15} className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
@@ -5004,7 +4868,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
               {materialTotal > 60 && <div className="flex items-center justify-center gap-3 py-4 text-xs font-bold text-text-secondary"><button type="button" disabled={materialPage <= 1 || materialsLoading} onClick={() => void refreshMaterials(materialPage - 1)} className="rounded-lg border border-border px-3 py-2 disabled:opacity-40">上一页</button><span>第 {materialPage} / {Math.ceil(materialTotal / 60)} 页</span><button type="button" disabled={materialPage >= Math.ceil(materialTotal / 60) || materialsLoading} onClick={() => void refreshMaterials(materialPage + 1)} className="rounded-lg border border-border px-3 py-2 disabled:opacity-40">下一页</button></div>}
 
               <MaterialLibraryStatus onRetry={refreshMaterials} />
-              <div className="grid grid-cols-3 gap-3 items-start lg:grid-cols-4 xl:grid-cols-5">
+              <div className="grid grid-cols-1 gap-3 items-start sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
                 {materialsLoading ? (
                   <div className="col-span-full flex items-center justify-center gap-2 py-16 text-sm text-text-muted">
                     <Loader2 size={16} className="animate-spin" /> 正在读取素材库...
@@ -5022,13 +4886,13 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                     <button type="button" onClick={clearMaterialFilters} className="mt-2 text-xs font-bold text-accent">清空筛选条件</button>
                   </div>
                 ) : filteredMaterials.map(material => (
-                  <article key={material.id} className="group flex h-full flex-col overflow-hidden rounded-xl border border-border bg-surface shadow-sm transition hover:border-border-bright hover:shadow-md">
+                  <article key={material.id} className="group flex h-full flex-col overflow-hidden rounded-lg border border-border bg-surface shadow-none transition hover:border-border-bright ">
                     <div className="relative aspect-[9/16] bg-surface-2">
                       <div className="absolute right-2 top-2 z-30 flex gap-1">
-                        {material.canManage && <button type="button" aria-label={`编辑 ${material.name}`} title="编辑" onClick={() => openManageDialog({ kind: 'material', item: material, action: 'edit' })} className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-white/70 bg-white/95 text-text-secondary shadow backdrop-blur-sm transition hover:text-accent"><Pencil size={14} /></button>}
-                        {material.canManage && <button type="button" aria-label={`删除 ${material.name}`} title="删除" onClick={() => openManageDialog({ kind: 'material', item: material, action: 'delete' })} className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-white/70 bg-white/95 text-text-secondary shadow backdrop-blur-sm transition hover:text-red-600"><Trash2 size={14} /></button>}
+                        {material.canManage && <button type="button" aria-label={`编辑 ${material.name}`} title="编辑" onClick={() => openManageDialog({ kind: 'material', item: material, action: 'edit' })} className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-white/70 bg-white/95 text-text-secondary shadow transition hover:text-accent"><Pencil size={14} /></button>}
+                        {material.canManage && <button type="button" aria-label={`删除 ${material.name}`} title="删除" onClick={() => openManageDialog({ kind: 'material', item: material, action: 'delete' })} className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-white/70 bg-white/95 text-text-secondary shadow transition hover:text-red-600"><Trash2 size={14} /></button>}
                         <button type="button" aria-label={`${isFavoriteMaterial(material) ? '取消收藏' : '收藏'} ${material.name}`} title={isFavoriteMaterial(material) ? '取消收藏' : '收藏'} onClick={() => void toggleMaterialFavorite(material)} disabled={favoritingMaterialIds.includes(material.id)}
-                          className={`inline-flex h-8 w-8 items-center justify-center rounded-lg border shadow backdrop-blur-sm transition disabled:cursor-wait disabled:opacity-60 ${isFavoriteMaterial(material) ? 'border-amber-300 bg-amber-50 text-amber-500' : 'border-white/70 bg-white/95 text-text-secondary hover:text-amber-500'}`}>
+                          className={`inline-flex h-8 w-8 items-center justify-center rounded-lg border shadow transition disabled:cursor-wait disabled:opacity-60 ${isFavoriteMaterial(material) ? 'border-amber-300 bg-amber-50 text-amber-500' : 'border-white/70 bg-white/95 text-text-secondary hover:text-amber-500'}`}>
                           {favoritingMaterialIds.includes(material.id) ? <Loader2 size={14} className="animate-spin" /> : <Star size={14} fill={isFavoriteMaterial(material) ? 'currentColor' : 'none'} />}
                         </button>
                       </div>
@@ -5060,10 +4924,10 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                       <p className="min-h-9 text-sm font-bold leading-snug text-text-primary line-clamp-2">{material.name}</p>
                       <p className="mt-1 line-clamp-1 min-h-5 text-xs font-semibold leading-5 text-text-muted" title={materialSemanticLabel(material)}>{materialSemanticLabel(material)}</p>
                       <div className="mt-1 flex min-h-5 flex-wrap gap-1">
-                        {(() => { const badge = materialAssetBadge(material); return <span className={`rounded-md px-1.5 py-0.5 text-[10px] font-black ${badge.className}`}>{badge.label}</span>; })()}
+                        {(() => { const badge = materialAssetBadge(material); return <span className={`rounded-md px-1.5 py-0.5 text-[10px] font-semibold ${badge.className}`}>{badge.label}</span>; })()}
                         {materialPrimaryThemeOf(material)
-                          ? <span className="rounded-md bg-emerald-50 px-1.5 py-0.5 text-[10px] font-black text-emerald-700">{MATERIAL_THEME_LABELS[materialPrimaryThemeOf(material)!]}</span>
-                          : <span className="rounded-md bg-amber-50 px-1.5 py-0.5 text-[10px] font-black text-amber-700">待识别</span>}
+                          ? <span className="rounded-md bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700">{MATERIAL_THEME_LABELS[materialPrimaryThemeOf(material)!]}</span>
+                          : <span className="rounded-md bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700">待识别</span>}
                         {visibleMaterialTags(material.tags).split(/[,，]/).map(tag => tag.trim()).filter(Boolean).map(tag => <span key={`tag-${tag}`} className="rounded-md bg-violet-50 px-1.5 py-0.5 text-[10px] font-semibold text-violet-700">{tag}</span>)}
                       </div>
                       <div className="mt-auto grid grid-cols-2 gap-2 pt-3">
@@ -5092,24 +4956,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
           )}
 
           {previewMaterial?.type === 'video' && previewMaterial.url && (
-            <div
-              ref={previewMaterialDialogRef}
-              tabIndex={-1}
-              className="fixed inset-0 z-[90] flex items-center justify-center bg-black/75 p-6"
-              role="dialog"
-              aria-modal="true"
-              aria-label="素材视频预览"
-              onClick={() => setPreviewMaterial(null)}
-            >
-              <div className="w-full max-w-4xl overflow-hidden rounded-lg border border-border bg-black shadow-xl" onClick={event => event.stopPropagation()}>
-                <div className="flex items-center justify-between gap-4 bg-surface px-4 py-3">
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-bold text-text-primary">{previewMaterial.name}</p>
-                  </div>
-                  <button type="button" data-modal-initial-focus aria-label="关闭视频预览" onClick={() => setPreviewMaterial(null)} className="rounded-md p-2 text-text-muted hover:bg-surface-2 hover:text-text-primary">
-                    <X size={18} />
-                  </button>
-                </div>
+            <Modal open title={previewMaterial.name} width={840} footer={null} onCancel={() => setPreviewMaterial(null)}>
                 <div className="relative flex min-h-64 items-center justify-center bg-black">
                   <AuthenticatedVideo
                     key={`${previewMaterial.id}:${previewMaterial.url}:${previewMaterialAttempt}`}
@@ -5125,27 +4972,13 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                   {previewMaterialLoading && !previewMaterialError && <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/40"><span className="inline-flex items-center gap-2 rounded-lg bg-black/65 px-3 py-2 text-xs font-semibold text-white"><Loader2 size={14} className="animate-spin" />正在准备视频…</span></div>}
                   {previewMaterialError && <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/80 px-6 text-center text-white"><Play size={26} className="opacity-70" /><p className="mt-3 text-sm font-semibold">素材预览暂时失败</p><p className="mt-1 text-xs text-white/65">{previewMaterialError}</p><button type="button" onClick={() => { previewMaterialAutoRetryRef.current = 0; void refreshMaterialPreviewUrl(); }} className="mt-4 rounded-lg bg-white px-3 py-2 text-xs font-bold text-neutral-900">重新获取播放地址</button></div>}
                 </div>
-              </div>
-            </div>
+            </Modal>
           )}
 
           {detailMaterial && (
-            <div
-              ref={detailMaterialDialogRef}
-              tabIndex={-1}
-              className="fixed inset-0 z-[95] flex items-center justify-center bg-slate-950/55 p-4 backdrop-blur-sm"
-              role="dialog"
-              aria-modal="true"
-              aria-labelledby="material-detail-title"
-              onClick={() => setDetailMaterial(null)}
-            >
-              <div className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-2xl border border-border bg-white shadow-2xl" onClick={event => event.stopPropagation()}>
-                <header className="sticky top-0 z-10 flex items-start justify-between gap-4 border-b border-border bg-white px-5 py-4">
-                  <div className="min-w-0"><p className="text-[10px] font-black uppercase tracking-[0.14em] text-accent">素材详情</p><h2 id="material-detail-title" className="mt-1 truncate text-base font-black text-text-primary">{detailMaterial.name}</h2></div>
-                  <button type="button" data-modal-initial-focus aria-label="关闭素材详情" onClick={() => setDetailMaterial(null)} className="rounded-lg p-2 text-text-muted hover:bg-surface-2 hover:text-text-primary"><X size={18} /></button>
-                </header>
+            <Drawer open title={detailMaterial.name} size={800} onClose={() => setDetailMaterial(null)}>
                 <div className="grid gap-5 p-5 md:grid-cols-[minmax(0,1.2fr)_minmax(240px,0.8fr)]">
-                  <div className="overflow-hidden rounded-xl border border-border bg-black">
+                  <div className="overflow-hidden rounded-lg border border-border bg-black">
                     {detailMaterial.type === 'video' ? <video src={detailMaterial.url} poster={detailMaterial.poster} controls playsInline preload="metadata" className="aspect-video h-full max-h-[54vh] w-full object-contain" />
                       : detailMaterial.type === 'image' ? <img src={detailMaterial.poster || detailMaterial.url} alt={detailMaterial.name} className="max-h-[54vh] w-full object-contain" />
                       : <div className="flex min-h-44 flex-col items-center justify-center gap-4 bg-surface-2 p-6"><Music2 size={28} className="text-text-muted" /><audio src={detailMaterial.url} controls className="w-full" /></div>}
@@ -5159,12 +4992,11 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                       ['素材来源', detailMaterial.sourceName || detailMaterial.sourceProvider || (detailMaterial.scope === 'shared' ? '共享素材' : '我的素材')],
                       ['时长', detailMaterial.type === 'video' || detailMaterial.type === 'audio' ? displayDuration(detailMaterial.duration) : '—'],
                       ['入库时间', detailMaterial.createdAt ? new Date(detailMaterial.createdAt).toLocaleString('zh-CN') : '—'],
-                    ].map(([label, value]) => <div key={label} className="rounded-xl border border-border bg-surface px-3 py-2.5"><p className="text-[10px] font-bold text-text-muted">{label}</p><p className="mt-1 break-words font-bold leading-5 text-text-primary">{value}</p></div>)}
-                    <button type="button" onClick={() => { const material = detailMaterial; setDetailMaterial(null); enterMaterialSmartGeneration(material); }} disabled={detailMaterial.type === 'audio' || (detailMaterial.type === 'video' && !canProcessVideo({ contentFormat: 'video', duration: detailMaterial.duration })) || !String(detailMaterial.url || detailMaterial.poster || '').trim()} title="带入内容制作的自由创作" className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-accent px-4 py-3 font-black text-white disabled:cursor-not-allowed disabled:opacity-45"><Sparkles size={15} />自由创作</button>
+                    ].map(([label, value]) => <div key={label} className="rounded-lg border border-border bg-surface px-3 py-2.5"><p className="text-[10px] font-bold text-text-muted">{label}</p><p className="mt-1 break-words font-bold leading-5 text-text-primary">{value}</p></div>)}
+                    <Button type="primary" block onClick={() => { const material = detailMaterial; setDetailMaterial(null); enterMaterialSmartGeneration(material); }} disabled={detailMaterial.type === 'audio' || (detailMaterial.type === 'video' && !canProcessVideo({ contentFormat: 'video', duration: detailMaterial.duration })) || !String(detailMaterial.url || detailMaterial.poster || '').trim()}>自由创作</Button>
                   </div>
                 </div>
-              </div>
-            </div>
+            </Drawer>
           )}
 
           {innerView === 'shooting' && (
@@ -5251,7 +5083,9 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
               setSelectedVideo(null);
             }}
             onRetry={() => void retryVideoPipeline(selectedVideo)}
+            onReanalyzeImage={() => void reanalyzeImagePost(selectedVideo)}
             onExactAnalysis={() => void requestExactFullAnalysis(selectedVideo)}
+            onReanalyze={() => void requestExactFullAnalysis(selectedVideo, true)}
             onCancelAnalysis={() => void cancelExactFullAnalysis(selectedVideo)}
             analyzing={analyzingVideoIds.includes(selectedVideo.id)}
             notice={materialMessage}
@@ -5265,33 +5099,22 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
         {watchVideo && <WatchModal key={watchVideo.id} video={watchVideo} onClose={() => setWatchVideo(null)} />}
       </AnimatePresence>
       {manageTarget && (
-        <div ref={manageDialogRef} tabIndex={-1} className="fixed inset-0 z-[120] flex items-center justify-center bg-black/50 px-4" role="dialog" aria-modal="true" aria-labelledby="material-manage-title">
-          <div className="w-full max-w-md rounded-lg border border-border bg-surface p-5 shadow-xl">
-            <div className="flex items-center justify-between">
-              <h3 id="material-manage-title" className="text-base font-bold text-text-primary">{manageTarget.action === 'delete' ? '删除' : '编辑'}{manageTarget.kind === 'video' ? '爆款视频' : '素材'}</h3>
-              <button type="button" data-modal-initial-focus title="关闭" aria-label="关闭" onClick={() => setManageTarget(null)} disabled={manageBusy} className="rounded-md p-1.5 text-text-muted hover:bg-surface-2 hover:text-text-primary"><X size={18} /></button>
-            </div>
+        <Modal open title={`${manageTarget.action === 'delete' ? '删除' : '编辑'}${manageTarget.kind === 'video' ? '爆款视频' : '素材'}`}
+          width={480} onCancel={() => setManageTarget(null)} mask={{ closable: false }} keyboard={!manageBusy} closable={!manageBusy}
+          confirmLoading={manageBusy} okText={manageTarget.action === 'delete' ? '确认删除' : '保存'} cancelText="取消"
+          okButtonProps={{ danger: manageTarget.action === 'delete', disabled: manageTarget.action === 'edit' && !manageName.trim() }}
+          cancelButtonProps={{ disabled: manageBusy }} onOk={() => void (manageTarget.action === 'delete' ? deleteManagedItem() : saveManagedItem())}>
             {manageTarget.action === 'edit' ? <>
               <label className="mt-4 block text-xs font-bold text-text-secondary">名称</label>
-              <input value={manageName} onChange={event => setManageName(event.target.value)} maxLength={160} className="mt-1 w-full rounded-md border border-border px-3 py-2 text-sm outline-none focus:border-accent" />
+              <Input value={manageName} onChange={event => setManageName(event.target.value)} maxLength={160} className="mt-1 w-full rounded-md border border-border px-3 py-2 text-sm outline-none focus:border-accent" />
               <label className="mt-3 block text-xs font-bold text-text-secondary">标签</label>
-              <input value={manageTags} onChange={event => setManageTags(event.target.value)} placeholder="用逗号分隔" className="mt-1 w-full rounded-md border border-border px-3 py-2 text-sm outline-none focus:border-accent" />
+              <Input value={manageTags} onChange={event => setManageTags(event.target.value)} placeholder="用逗号分隔" className="mt-1 w-full rounded-md border border-border px-3 py-2 text-sm outline-none focus:border-accent" />
               {manageTarget.kind === 'material' && <label className="mt-3 block text-xs font-bold text-text-secondary">关联产品
-                <select aria-label="素材关联产品" value={manageProductId || MATERIAL_PRODUCT_COMMON} onChange={event => setManageProductId(event.target.value === MATERIAL_PRODUCT_COMMON ? '' : event.target.value)} className="mt-1 w-full rounded-md border border-border bg-surface px-3 py-2 text-sm">
-                  <option value={MATERIAL_PRODUCT_COMMON}>不指定（系统自动匹配）</option>
-                  {materialProducts.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
-                </select><span className="mt-1 block font-normal text-text-muted">可选。未指定时系统会按口播与画面语义自动匹配，也可作为企业通用素材使用。</span>
+                <Select aria-label="素材关联产品" value={manageProductId || MATERIAL_PRODUCT_COMMON} onChange={value => setManageProductId(value === MATERIAL_PRODUCT_COMMON ? '' : value)} className="mt-1 w-full" options={[{ value: MATERIAL_PRODUCT_COMMON, label: '不指定（系统自动匹配）' }, ...materialProducts.map(item => ({ value: item.id, label: item.name }))]} /><span className="mt-1 block font-normal text-text-muted">可选。未指定时系统会按口播与画面语义自动匹配，也可作为企业通用素材使用。</span>
               </label>}
               <p className="mt-3 text-xs text-text-muted">仅当前租户自己采集或本地上传的素材可修改；共享素材保持只读。</p>
             </> : <p className="mt-4 border-l-2 border-red bg-red/5 p-3 text-sm text-red">确认删除“{manageName}”？删除后无法恢复。</p>}
-            <div className="mt-5 flex items-center justify-end gap-2">
-              <button type="button" onClick={() => setManageTarget(null)} disabled={manageBusy} className="rounded-md border border-border px-3 py-2 text-sm font-bold text-text-secondary hover:bg-surface-2">取消</button>
-              {manageTarget.action === 'delete'
-                ? <button type="button" onClick={() => void deleteManagedItem()} disabled={manageBusy} className="inline-flex items-center gap-1.5 rounded-md bg-red-600 px-4 py-2 text-sm font-bold text-white hover:bg-red-700 disabled:opacity-50"><Trash2 size={15} />{manageBusy ? '删除中...' : '确认删除'}</button>
-                : <button type="button" onClick={() => void saveManagedItem()} disabled={manageBusy || !manageName.trim()} className="rounded-md bg-accent px-4 py-2 text-sm font-bold text-white hover:brightness-110 disabled:opacity-50">{manageBusy ? '处理中...' : '保存'}</button>}
-            </div>
-          </div>
-        </div>
+        </Modal>
       )}
 
     </main>

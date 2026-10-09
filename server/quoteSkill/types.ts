@@ -27,6 +27,11 @@ export interface QuoteSkillDraft {
   supersedesId?: string;
   id?: string;
   quoteNumber?: string;
+  enterpriseFactVersion?: {
+    id: string;
+    revision: number;
+    contentHash: string;
+  };
   customerId: string;
   customerName: string;
   customerNameSource: 'whatsapp_profile' | 'safe_fallback';
