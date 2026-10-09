@@ -36,6 +36,7 @@ import {
   inferSocialReplicationReferenceMode,
 } from '../../shared/socialInspirationStrategy.js';
 import { socialRequestHash } from './socialContentValidation.js';
+import {publicationPreparationDeadline} from '../socialPrograms/publicationDeadlines.js';
 import type { BusinessContentGoal } from '../../shared/contracts/socialOperatingDecision.js';
 import type {
   SocialWeeklyPublicationTask,
@@ -1039,11 +1040,16 @@ function assertAuthoritativeContext(input: BuildSocialAgentWorkflowInput): void 
   const packageTask = authority.weeklyPackage.workflowTasks.find(item => item.taskId === authority.weeklyWorkflowTask.taskId);
   const publicationTask = authority.weeklyPackage.socialContentPackage.publicationTasks
     .find(item => item.publicationTaskId === authority.publicationTask.publicationTaskId);
+  const publicationInput = (item: typeof authority.publicationTask) => {
+    const {status, ...frozen} = item;
+    return frozen;
+  };
   if (authority.weeklyPackage.programId !== authority.programRef.id
     || authority.businessGoal.programId !== authority.weeklyPackage.programId
     || authority.weeklyPackage.businessContentGoalRef?.id !== authority.businessGoal.goalId
     || authority.weeklyPackage.enterpriseProfileRef?.id !== authority.enterpriseProfileRef.id
     || !packageTask || packageTask.kind !== 'content' || !publicationTask
+    || (publicationTask && socialRequestHash(publicationInput(publicationTask)) !== socialRequestHash(publicationInput(authority.publicationTask)))
     || !packageTask.subjectRefs.some(ref => ref.type === 'weekly_publication_task'
       && ref.id === publicationTask.publicationTaskId && ref.version === authority.weeklyPackage.version)
     || publicationTask.factRefs.some(factRef => !authority.businessGoal.publicFactRefs.some(goalFact => (
@@ -1068,6 +1074,11 @@ function assertAuthoritativeContext(input: BuildSocialAgentWorkflowInput): void 
  */
 export function buildSocialAgentWorkflow(input: BuildSocialAgentWorkflowInput): SocialContentAgentWorkflow {
   assertAuthoritativeContext(input);
+  if (input.authoritativeContext) {
+    input = {...input, brief: {...input.brief,
+      dueAt: publicationPreparationDeadline(input.authoritativeContext.publicationTask.publishWindow),
+    }};
+  }
   const context = buildBusinessContext(input);
   const discoveryBrief = buildDiscoveryBrief(input);
   const inspirationHandoffs = mergeInspirationHandoffs(

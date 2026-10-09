@@ -1,3 +1,4 @@
+import {createCustomerTaskNavigationRouter} from './customerTaskNavigation.js';
 import { requiresContentHumanAcceptance } from '../digitalEmployees/contentProductionAcceptancePolicy.js';
 import { nextManagedCycleWindow, prepareManagedCyclePackage } from '../digitalEmployees/managedOperatingCycle.js';
 import { acquireDurableOperationLease, assertDurableOperationLease, releaseDurableOperationLease } from '../runtime/durableLease.js';
@@ -3341,6 +3342,8 @@ digitalEmployeesRouter.post('/customer-segments/:segmentId/followup-batches', as
     res.status(201).json(await buildOverview(tenantId, goal.id));
   });
 });
+
+digitalEmployeesRouter.use('/runs/:runId/customer-task-navigation',createCustomerTaskNavigationRouter(store));
 
 digitalEmployeesRouter.get('/runs/:runId/customer-workspace', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;

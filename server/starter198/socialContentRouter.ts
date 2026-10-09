@@ -1,3 +1,4 @@
+import {createSocialInstagramDeliveryRouter} from './socialInstagramDeliveryRouter.js';import {createSocialInstagramDeliveryService} from './socialInstagramDeliveryService.js';
 import {createSocialWeeklyG6ReviewRouter} from './socialWeeklyG6ReviewRouter.js';import {createSocialWeeklyG6ReviewService} from './socialWeeklyG6ReviewService.js';
 import {createSocialDirectorG5ReviewRouter} from './socialDirectorG5ReviewRouter.js';
 import {createSocialDirectorG5ReviewService} from './socialDirectorG5ReviewService.js';
@@ -160,6 +161,7 @@ export function createSocialContentRouter(dependencies: SocialContentRouterDepen
   router.use(requireAuth);
   if(repository.dataStore) router.use('/tasks/:taskId/runs/:runId/artifacts/:artifactId/weekly-quality-recovery',createWeeklyContentQualityRecoveryRouter(createWeeklyContentQualityRecoveryService(repository.dataStore)));
   router.use('/tasks/:taskId/runs/:runId/artifacts/:artifactId/g5-reviews',createSocialDirectorG5ReviewRouter(createSocialDirectorG5ReviewService(repository)));
+router.use('/tasks/:taskId/runs/:runId/artifacts/:artifactId/instagram-delivery',createSocialInstagramDeliveryRouter(createSocialInstagramDeliveryService(repository)));
 router.use('/tasks/:taskId/runs/:runId/artifacts/:artifactId/g6-reviews',createSocialWeeklyG6ReviewRouter(createSocialWeeklyG6ReviewService(repository)));
   router.use('/tasks/:taskId/runs/:runId/artifacts/:artifactId/g4-reviews',createSocialSceneG4ReviewRouter(createSocialSceneG4ReviewService(repository)));
   router.use((req, res, next) => {

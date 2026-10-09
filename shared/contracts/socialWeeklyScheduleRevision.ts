@@ -10,6 +10,7 @@ export interface WeeklyScheduleSnapshot {
  snapshotId:string;proposalId:string;tenantId:string;programId:string;packageId:string;sourceVersion:number;targetVersion:number;confirmedBy:string;confirmedAt:string;inputEvidenceHash:string;
  assignments:Array<{sourceTaskId:string;signature:string;startAt:string;finishAt:string;resourceKey:string|null;mode?:'planned'|'completed_verified'|'running_reserved';sourceInputHash?:string}>;
  publicationTimes:Array<{publicationTaskId:string;publishWindow:string|null}>;
+ queueConfigurationHash?:string;queueCapacityEvidenceHash?:string;
  capacity:WeeklyScheduleCapacityInput;previousPublishingAuthorizationAllowed:boolean;
 }
 export type WeeklyScheduledPackage=WeeklyOperatingPackage&{scheduleRevisionRef?:VersionedSocialRef};

@@ -1,3 +1,4 @@
+import {publicationPreparationDeadline} from '../socialPrograms/publicationDeadlines.js';
 import {assertWeeklyProductionCoverage} from './weeklyProductionCoverageAdmission.js';
 import {readWeeklyTemplateStructure} from '../socialPrograms/weeklyTemplateStructure.js';
 import { checkWeeklyMaterialClassification, checkWeeklyHumanRequirementBindings } from './socialWeeklyMaterialClassificationAdmission.js';
@@ -85,8 +86,11 @@ export function createSocialWeeklyProductionAdapter(dataStore: DataStore, ports:
     const rows = await dataStore.list<PackageRow>(PACKAGES, { where: {
       tenant_id: task.tenantId, program_id: task.programId, package_id: task.packageId, version: task.packageVersion,
     }, perPage: 2 });
-    if (rows.items.length !== 1) return blocked('weekly_package_required', '缺少唯一的冻结周任务包。');
+    if (rows.totalItems !== 1 || rows.items.length !== 1) return blocked('weekly_package_required', '缺少唯一的冻结周任务包。');
     const pkg = rows.items[0]!.payload;
+    if (!pkg || pkg.programId !== task.programId || pkg.packageId !== task.packageId || pkg.version !== task.packageVersion) {
+      return blocked('weekly_production_package_scope_invalid', '真实周包内容与当前任务身份不一致，未创建或启动生产。');
+    }
     const planning = await createWeeklyPlanningAuthority(dataStore).get(task.tenantId, task.programId, task.packageId, task.packageVersion).catch(() => null);
     pkg.agentPlanning = planning ?? undefined;
     const dispatch = planning?.dispatch;
@@ -125,7 +129,7 @@ export function createSocialWeeklyProductionAdapter(dataStore: DataStore, ports:
         const value: CreateSocialContentTaskInput = {
           title: item.topic, objective: goal.objective, productRef: goal.products[0], audience: goal.audiences[0], markets: goal.markets, customTopic: item.topic,
           callToAction: publication.cta, platforms: [publication.platform], languages: goal.languages,
-          formats: ['short_video'], requestedOutputCount: 1, dueAt: publication.publishWindow,
+          formats: ['short_video'], requestedOutputCount: 1, dueAt: publicationPreparationDeadline(publication.publishWindow),
           weeklyPlanId: pkg.packageId, mode: 'weekly', managementMode: 'one_click_managed', productionApproach: 'ai_enhanced', productionMode: 'social_ready',
           weeklyBudgetCny: pkg.socialContentPackage.weeklyBudgetCny,
           perItemBudgetCny: pkg.socialContentPackage.perItemBudgetCny,

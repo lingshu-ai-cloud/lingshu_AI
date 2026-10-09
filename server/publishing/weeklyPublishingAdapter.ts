@@ -1,3 +1,5 @@
+import {materializeInstagramDelivery} from './instagramDeliveryMedia.js';
+import {instagramDeliveryPublishSourceClaim} from './publishSourceClaim.js';
 import { fileURLToPath } from 'node:url';
 import { socialAccessToken, youtubeCredentials } from '../lib/accountCredentials.js';
 import type { DataStore } from '../storage/datastore.js';
@@ -83,18 +85,20 @@ async function createSynchronousWeeklyPublishingAdapter(input: {
       const directPath = localVideoPath(video.downloadUrl);
       const materialized = directPath ? { videoPath: directPath, sourceUrl: '', async cleanup() {} }
         : await materializeSocialProductionVideo({ tenantId: assignment.tenantId, artifactId, attemptId, expectedHash: video.contentHash, dataStore });
+      let delivery:Awaited<ReturnType<typeof materializeInstagramDelivery>>|null=null;
       try {
-        const sourceClaim = await socialProductionPublishSourceClaim({
-          tenantId: assignment.tenantId, artifactId,
+        let sourceClaim = await socialProductionPublishSourceClaim({
+          tenantId: assignment.tenantId, artifactId, weeklyAssignment:assignment,
           productionResultId: assignment.lineage.productionResultRef.id,
           contentVersion: publicationPackage.contentVersion,
           contentHash: publicationPackage.contentHash,
           videoHash: video.contentHash, videoPath: materialized.videoPath,
           ...(materialized.sourceUrl ? { artifactVideoUrl: materialized.sourceUrl } : {}), dataStore,
         });
+        if(input.platform==='instagram'){if(!assignment.lineage.instagramDelivery)return {status:'rejected',failureCode:'instagram_delivery_frozen_proof_missing'};delivery=await materializeInstagramDelivery(dataStore,assignment.lineage.instagramDelivery);sourceClaim=await instagramDeliveryPublishSourceClaim({tenantId:assignment.tenantId,assignment,sourceClaim,videoPath:delivery.videoPath,dataStore});}
         const result = await ports.publish({
           tenantId: assignment.tenantId, accountId: assignment.accountId, platform: input.platform,
-          videoPath: materialized.videoPath, title: publicationPackage.copy.title,
+          videoPath: delivery?.videoPath??materialized.videoPath, title: publicationPackage.copy.title,
           description: publicationPackage.copy.body, tags: publicationPackage.copy.hashtags,
           contentId: publicationPackage.contentId, sourceClaim, publishAttemptId: attemptId,
         });
@@ -106,7 +110,7 @@ async function createSynchronousWeeklyPublishingAdapter(input: {
           platformPostId: result.platformPostId, ...(result.platformUrl ? { platformUrl: result.platformUrl } : {}),
         };
         return { status: 'unknown', providerReceiptId: result.providerReceiptId, failureCode: `${input.platform}_publish_outcome_unknown` };
-      } finally { await materialized.cleanup(); }
+      } finally { if(delivery)await delivery.cleanup();await materialized.cleanup(); }
     },
     async reconcile({ assignment, attempt }) {
       if (!attempt.provider_receipt_id) return { status: 'unknown', failureCode: 'provider_receipt_missing' };

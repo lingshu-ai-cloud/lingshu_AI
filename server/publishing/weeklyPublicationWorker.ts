@@ -1,3 +1,4 @@
+import {createInstagramDeliveryPublicationProof} from './instagramDeliveryPublicationProof.js';
 import path from 'node:path';
 import type { SocialProductionResult } from '../../shared/contracts/socialContentWorkflow.js';
 import type { VersionedSocialRef, WeeklyOperatingPackage, WeeklyExecutionTask } from '../../shared/contracts/socialProgram.js';
@@ -165,6 +166,7 @@ export async function runWeeklyPublicationPackageScan(input: {
       }
       const rawQuality=object(object(artifact.content).productionResult);
       const publishable = object(rawQuality.technicalReview).approved===true&&object(rawQuality.creativeReview).approved===true?productionFromArtifact(artifact,lineage,weekly):await productionFromApprovedWeeklyArtifact(dataStore,artifact,lineage,weekly);
+      if(publicationTask.platform==='instagram')publishable.instagramDelivery=await createInstagramDeliveryPublicationProof(dataStore,{tenantId,programId:weekly.programId,packageId:weekly.packageId,packageVersion:weekly.version,publicationTaskId:publicationTask.publicationTaskId,taskId:String(artifact.task_id),artifactId});
       const assignment = buildPublicationAssignment({ tenantId, operatingPackage: weekly, publicationTask, productionResult: publishable });
       const persisted = await persistPublicationAssignment(assignment, dataStore);
       if (persisted.created) result.createdAssignments += 1;

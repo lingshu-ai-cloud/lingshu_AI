@@ -12,6 +12,13 @@ export function publicationInstant(window: string | null | undefined): number | 
   return Number.isFinite(instant) ? instant : null;
 }
 
+/** The downstream production brief must finish before publication, too. Unknown
+ * publication instants remain unknown rather than falling back to week end. */
+export function publicationPreparationDeadline(window: string | null | undefined): string | null {
+  const instant = publicationInstant(window);
+  return instant === null ? null : new Date(instant - 86_400_000).toISOString();
+}
+
 /** Attach latest feasible deadlines without disguising forward-plan capacity or elapsed time. */
 export function applyPublicationDeadlines(tasks: WeeklyExecutionTask[], publications: SocialWeeklyPublicationTask[]): WeeklyExecutionTask[] {
   const latestFinish = new Map<string, number>();

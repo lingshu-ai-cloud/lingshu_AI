@@ -1,3 +1,7 @@
+import type {SocialInstagramDeliveryPublishProof} from '../../shared/contracts/socialInstagramDelivery.js';
+import {verifyInstagramDeliveryPublicationProof} from './instagramDeliveryPublicationProof.js';
+import type {PublicationAssignment} from '../digitalEmployees/publishingExecution.js';
+import {verifyWeeklyPublishSourceEvidence} from './weeklyPublishSourceEvidence.js';
 import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import fs from 'node:fs';
@@ -15,7 +19,7 @@ import type { DataStore } from '../storage/datastore.js';
 
 export const PUBLISH_VIDEO_EXTENSIONS = new Set(['.mp4', '.mov', '.webm', '.mkv', '.avi']);
 export type PublishSourceRequestKind = 'project' | 'manual_upload';
-export type FrozenPublishSourceKind = 'studio_project' | 'digital_employee_project' | 'manual_upload' | 'social_content_artifact' | 'social_production_artifact';
+export type FrozenPublishSourceKind = 'studio_project' | 'digital_employee_project' | 'manual_upload' | 'social_content_artifact' | 'social_production_artifact' | 'social_instagram_delivery';
 
 export interface PublishSourceRequest {
   sourceKind?: PublishSourceRequestKind;
@@ -31,6 +35,9 @@ export interface PublishSourceRequest {
 }
 
 export interface FrozenPublishSourceClaim {
+  instagramDeliveryProof?:SocialInstagramDeliveryPublishProof;
+  weeklyAssignment?:PublicationAssignment;
+  weeklySourceAuditHash?:string;
   schemaVersion: 1;
   sourceKind: FrozenPublishSourceKind;
   projectId: string;
@@ -274,6 +281,7 @@ function sameClaim(left: FrozenPublishSourceClaim, right: FrozenPublishSourceCla
 
 /** Freeze the approved social production row itself, never reclassify it as a manual upload. */
 export async function socialProductionPublishSourceClaim(input: {
+  weeklyAssignment?:PublicationAssignment;
   tenantId: string;
   artifactId: string;
   productionResultId: string;
@@ -301,11 +309,11 @@ export async function socialProductionPublishSourceClaim(input: {
   const videoPath = normalizedFilePath(input.videoPath);
   const artifactFileId = text(video.fileId);
   const artifactFileRef = text(video.fileRef);
+  const weeklyProof=input.weeklyAssignment?await verifyWeeklyPublishSourceEvidence(dataStore,input.weeklyAssignment,row):null;
   if (row.status !== 'approved' || text(production.version) !== input.contentVersion
     || text(production.productionResultId) !== input.productionResultId
     || production.status !== 'asset_review'
-    || record(production.technicalReview).approved !== true
-    || record(production.creativeReview).approved !== true
+    || (!weeklyProof&&(record(production.technicalReview).approved !== true||record(production.creativeReview).approved !== true))
     || (text(row.content_hash) || text(video.sha256)).toLowerCase() !== input.contentHash.toLowerCase()
     || text(video.sha256).toLowerCase() !== input.videoHash.toLowerCase()
     || !artifactFileId || artifactFileRef !== `socialfile:${artifactFileId}`
@@ -322,6 +330,7 @@ export async function socialProductionPublishSourceClaim(input: {
   if (actualVideoHash !== input.videoHash.toLowerCase()) throw new PublishSourceVerificationError('social_production_video_hash_mismatch');
   return {
     schemaVersion: 1, sourceKind: 'social_production_artifact', projectId: '',
+    ...(weeklyProof?{weeklyAssignment:input.weeklyAssignment,weeklySourceAuditHash:weeklyProof.sourceAuditHash}:{}),
     sourceVideoPath: videoPath, deliveryVideoPath: videoPath,
     generationKind: 'script', generationProvenance: 'ai', qualityStatus: 'passed',
     publishable: true, generationRecordId: input.productionResultId,
@@ -332,7 +341,7 @@ export async function socialProductionPublishSourceClaim(input: {
     sourceFingerprint: fingerprint({ rowId: row.id, artifactId: row.artifact_id, version: row.version,
       productionResultId: input.productionResultId, contentHash: input.contentHash.toLowerCase(),
       videoHash: input.videoHash.toLowerCase(), artifactVideoUrl: input.artifactVideoUrl || '',
-      artifactFileId, artifactFileRef, videoPath }),
+      artifactFileId, artifactFileRef, videoPath,...(weeklyProof?{weeklySourceAuditHash:weeklyProof.sourceAuditHash,weeklyAssignmentHash:input.weeklyAssignment!.assignmentHash}: {}) }),
   };
 }
 
@@ -366,6 +375,13 @@ export async function freezePublishSourceClaim(
   });
 }
 
+export async function instagramDeliveryPublishSourceClaim(input:{tenantId:string;assignment:PublicationAssignment;sourceClaim:FrozenPublishSourceClaim;videoPath:string;dataStore?:DataStore}):Promise<FrozenPublishSourceClaim>{
+ const dataStore=input.dataStore??store,proof=input.assignment.lineage.instagramDelivery;
+ if(!proof||input.assignment.platform!=='instagram'||input.sourceClaim.sourceKind!=='social_production_artifact'||input.sourceClaim.weeklyAssignment?.assignmentHash!==input.assignment.assignmentHash||proof.sourceFileSha256!==input.sourceClaim.videoHash||proof.scope.tenantId!==input.tenantId||proof.scope.programId!==input.assignment.lineage.programRef.id||proof.scope.packageId!==input.assignment.lineage.operatingPackageRef.id||proof.scope.packageVersion!==input.assignment.lineage.operatingPackageRef.version||proof.scope.publicationTaskId!==input.assignment.publicationTaskId||proof.scope.artifactId!==input.sourceClaim.artifactId)throw new PublishSourceVerificationError('instagram_delivery_frozen_proof_missing');
+ await verifyInstagramDeliveryPublicationProof(dataStore,proof);const deliveryVideoPath=normalizedFilePath(input.videoPath);assertReadableVideo(deliveryVideoPath);const hash=createHash('sha256');for await(const chunk of fs.createReadStream(deliveryVideoPath))hash.update(chunk);if(hash.digest('hex')!==proof.fileSha256)throw new PublishSourceVerificationError('instagram_delivery_file_hash_changed');
+ return {...input.sourceClaim,sourceKind:'social_instagram_delivery',deliveryVideoPath,instagramDeliveryProof:proof,sourceFingerprint:fingerprint({sourceFingerprint:input.sourceClaim.sourceFingerprint,proof,deliveryVideoPath})};
+}
+
 export async function verifyFrozenPublishSourceClaim(
   tenantId: string,
   claimValue: unknown,
@@ -379,12 +395,17 @@ export async function verifyFrozenPublishSourceClaim(
   if (claim.sourceKind === 'social_content_artifact') {
     const { verifySocialContentPublishSource } = await import('./socialContentSourceClaim.js');
     current = await verifySocialContentPublishSource(tenantId, claim);
+  } else if (claim.sourceKind === 'social_instagram_delivery') {
+    if(!claim.weeklyAssignment)throw new PublishSourceVerificationError('instagram_delivery_frozen_proof_missing');
+    const original=await socialProductionPublishSourceClaim({tenantId,artifactId:text(claim.artifactId),productionResultId:text(claim.productionResultId),contentVersion:text(claim.contentVersion),contentHash:text(claim.contentHash),videoHash:text(claim.videoHash),videoPath:text(claim.sourceVideoPath),artifactVideoUrl:text(claim.artifactVideoUrl),artifactFileId:text(claim.artifactFileId),artifactFileRef:text(claim.artifactFileRef),weeklyAssignment:claim.weeklyAssignment});
+    current=await instagramDeliveryPublishSourceClaim({tenantId,assignment:claim.weeklyAssignment,sourceClaim:original,videoPath:claim.deliveryVideoPath});
   } else if (claim.sourceKind === 'social_production_artifact') {
     current = await socialProductionPublishSourceClaim({
       tenantId, artifactId: text(claim.artifactId), productionResultId: text(claim.productionResultId),
       contentVersion: text(claim.contentVersion), contentHash: text(claim.contentHash),
       videoHash: text(claim.videoHash), videoPath: text(claim.deliveryVideoPath), artifactVideoUrl: text(claim.artifactVideoUrl),
       artifactFileId: text(claim.artifactFileId), artifactFileRef: text(claim.artifactFileRef),
+      ...(claim.weeklyAssignment?{weeklyAssignment:claim.weeklyAssignment}:{}),
     });
   } else if (claim.sourceKind === 'manual_upload') {
     current = manualUploadClaim(tenantId, claim.deliveryVideoPath);

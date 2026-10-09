@@ -123,6 +123,7 @@ function accountStatus(error: any): number {
 }
 
 async function revalidatePublishSource(input: PublishToAccountInput): Promise<void> {
+  if(input.sourceClaim?.weeklyAssignment&&input.videoUrl)throw Error('weekly_publish_remote_video_override_forbidden');
   if (input.trackingPost) await assertManagedPublishingAuthorization(input.trackingPost, input.accountId);
   if (!input.sourceClaim) throw publishError('发布来源校验记录缺失', 409);
   await verifyFrozenPublishSourceClaim(input.tenantId, input.sourceClaim, input.videoPath);
@@ -595,7 +596,8 @@ async function publishVideoToAccountWithLease(
       video = await uploadFacebookVideo(account.providerAccountId, accessToken, process.env.META_GRAPH_VERSION?.trim() || 'v25.0', socialInput);
     }
     if (account.platform === 'instagram') {
-      const compatibleFilePath = socialInput.videoUrl ? undefined : await instagramCompatibleVideo(filePath);
+      if(input.sourceClaim?.weeklyAssignment&&input.sourceClaim.sourceKind!=='social_instagram_delivery')throw Error('instagram_delivery_frozen_proof_missing');
+    const compatibleFilePath = input.sourceClaim?.sourceKind==='social_instagram_delivery'?filePath:socialInput.videoUrl?undefined:await instagramCompatibleVideo(filePath);
       if (!socialInput.videoUrl) {
         await publishLease.beforeEffect();
         await revalidatePublishSource(input);

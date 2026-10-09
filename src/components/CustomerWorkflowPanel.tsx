@@ -1,6 +1,8 @@
 import FollowupTemplateEditor, { needsFollowupTemplate } from './FollowupTemplateEditor';
 import { useAgentProductionAction } from '../lib/agentProductionSession';
-import { useEffect, useState } from 'react';
+import {readCustomerItemNavigation} from '../lib/weeklyCustomerProductionLink';
+import {getToken} from '../lib/auth';
+import { useEffect, useRef, useState } from 'react';
 import { authHeader } from '../lib/auth';
 import { buildTaskDeepLink, dispatchDigitalEmployeeDeepLink, type DigitalEmployeeDeepLink } from '../lib/digitalEmployees';
 
@@ -8,6 +10,9 @@ const secondaryButton = 'inline-flex min-h-9 items-center justify-center rounded
 const primaryButton = 'inline-flex min-h-9 items-center justify-center rounded-md bg-accent px-3 py-2 text-xs font-bold text-white transition hover:bg-accent-dim disabled:cursor-not-allowed disabled:opacity-40';
 
 export default function CustomerWorkflowPanel({ handoff, customers }: { handoff: DigitalEmployeeDeepLink; customers: Array<{ id: string; name: string }> }) {
+  const identity=JSON.stringify([handoff.runId,handoff.taskId,handoff.businessRef.followupItemId,getToken()]);
+  const live=useRef(identity);live.current=identity;
+  const panelRoot=useRef<HTMLElement|null>(null);
   const agentProduction = useAgentProductionAction('customer');
   const [workspace, setWorkspace] = useState<any>(null);
   const [selected, setSelected] = useState<string[]>([]);
@@ -21,18 +26,25 @@ export default function CustomerWorkflowPanel({ handoff, customers }: { handoff:
   const segmentMode = handoff.businessRef?.taskKey === 'customer_segmentation';
 
   const request = async (route: string, body?: unknown) => {
+    const headers=authHeader();
     const response = await fetch(`/api/overseas/digital-employees/${route}`, {
       method: body ? 'POST' : 'GET',
-      headers: { ...authHeader(), ...(body ? { 'Content-Type': 'application/json' } : {}) },
+      headers: { ...headers, ...(body ? { 'Content-Type': 'application/json' } : {}) },
       body: body ? JSON.stringify(body) : undefined,
     });
     const data = await response.json();
+    if(headers.Authorization!==authHeader().Authorization)throw Error('登录身份已变化，请重新读取原客服运行。');
     if (!response.ok) throw Error(data.message || data.error || '操作失败');
     return data;
   };
 
   const load = async () => {
-    const data = await request(`runs/${handoff.runId}/customer-workspace`);
+    const captured=identity;
+    const binding=handoff.businessRef.followupItemId?await readCustomerItemNavigation(handoff):null;
+    if(live.current!==captured)return;
+    const data = await request(binding?`runs/${handoff.runId}/customer-task-navigation/workspace?taskId=${encodeURIComponent(handoff.taskId)}&itemId=${encodeURIComponent(binding.itemId)}`:`runs/${handoff.runId}/customer-workspace`);
+    if(live.current!==captured)return;
+    if(binding&&!(data.items||[]).some((item:any)=>item.id===binding.itemId&&item.customer_id===binding.customerId))throw Error('原草稿条目不在核验后的实际批次中。');
     setWorkspace(data);
     setDrafts(Object.fromEntries((data.items || []).map((item: any) => [item.customer_id, item.draft_body || ''])));
     setSelected((data.members || []).filter((member: any) => member.membership === 'included').map((member: any) => member.customer_id));
@@ -40,25 +52,34 @@ export default function CustomerWorkflowPanel({ handoff, customers }: { handoff:
   useEffect(() => {
     let active = true;
     const refresh = () => { if (active) void load().catch(error => { if (active) setError(error.message); }); };
-    setWorkspace(null); setError(''); refresh();
+    setWorkspace(null); setError('');setBusy(false);setSelected([]);setDrafts({});setNote(''); refresh();
     window.addEventListener('lingshu:agent-business-refresh', refresh);
     return () => { active = false; window.removeEventListener('lingshu:agent-business-refresh', refresh); };
-  }, [handoff.runId, handoff.taskId]);
+  }, [identity]);
+
+  useEffect(()=>{
+    const itemId=handoff.businessRef.followupItemId;
+    if(!workspace||typeof itemId!=='string')return;
+    const target=Array.from(panelRoot.current?.querySelectorAll<HTMLElement>('[data-followup-item]')||[]).find(node=>node.dataset.followupItem===itemId);
+    target?.scrollIntoView({block:'nearest'});target?.focus({preventScroll:true});
+  },[workspace,identity]);
 
   const act = async (fn: () => Promise<unknown>) => {
+    const captured=identity;
     setBusy(true);
     setError('');
     try {
       await fn();
+      if(live.current!==captured)return;
       await load();
     } catch (error) {
-      setError(error instanceof Error ? error.message : '操作失败');
+      if(live.current===captured)setError(error instanceof Error ? error.message : '操作失败');
     } finally {
-      setBusy(false);
+      if(live.current===captured)setBusy(false);
     }
   };
 
-  return <section className="mx-4 mt-3 space-y-4 border-y border-border bg-surface py-4">
+  return <section ref={panelRoot} className="mx-4 mt-3 space-y-4 border-y border-border bg-surface py-4">
     <header className="flex flex-wrap items-start justify-between gap-3 border-b border-border px-1 pb-4">
       <div>
         <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-accent">Customer workflow</p>
@@ -74,7 +95,7 @@ export default function CustomerWorkflowPanel({ handoff, customers }: { handoff:
       <p className="text-xs text-text-secondary">由客户 Agent 基于当前批次生成逐客跟进草稿。</p>
       <button type="button" data-agent-action="customer-primary" disabled={!agentProduction.action || agentProduction.busy || busy} onClick={() => void act(agentProduction.execute)} className={`${primaryButton} shrink-0`}>{agentProduction.busy ? '正在生成草稿…' : agentProduction.action?.label || '等待生成跟进草稿'}</button>
     </div>}
-    {workspace?.readOnly && <p className="border-l-2 border-border-bright bg-surface-2 px-3 py-2 text-xs text-text-secondary">此历史运行仅供查看；如需继续，请制定新目标。</p>}
+    {workspace?.readOnly && <p className="border-l-2 border-border-bright bg-surface-2 px-3 py-2 text-xs text-text-secondary">当前历史运行或旧批次仅供查看；如需继续，请核对最新任务。</p>}
     {error && <p role="alert" className="border-l-2 border-red bg-surface-2 px-3 py-2 text-sm text-red">{error}</p>}
     {!workspace && !error && <p className="text-sm text-text-muted">正在加载本轮客户任务…</p>}
 
@@ -107,7 +128,7 @@ export default function CustomerWorkflowPanel({ handoff, customers }: { handoff:
     </> : workspace?.batch ? <>
       <p className="border-l-2 border-amber bg-amber-dim px-3 py-2 text-xs text-amber">批次 v{workspace.batch.version} · {workspace.batch.status}。修改后保存为新版本，原审批失效，需重新批准。</p>
       <div className="grid max-h-[28rem] overflow-auto border-y border-border md:grid-cols-2">
-        {(workspace.items || []).map((item: any, index: number) => <div key={item.id} className={`px-3 py-4 ${index % 2 === 0 && index < (workspace.items || []).length - 1 ? 'md:border-r md:border-border' : ''} ${index < (workspace.items || []).length - 1 ? 'border-b border-border' : ''} ${index < (workspace.items || []).length - ((workspace.items || []).length % 2 || 2) ? 'md:border-b' : 'md:border-b-0'}`}>
+        {(workspace.items || []).map((item: any, index: number) => <div key={item.id} data-followup-item={item.id} tabIndex={-1} className={`px-3 py-4 ${index % 2 === 0 && index < (workspace.items || []).length - 1 ? 'md:border-r md:border-border' : ''} ${index < (workspace.items || []).length - 1 ? 'border-b border-border' : ''} ${index < (workspace.items || []).length - ((workspace.items || []).length % 2 || 2) ? 'md:border-b' : 'md:border-b-0'}`}>
           <label className="block text-sm font-bold text-text-primary">
             {item.customer_name}
             <textarea readOnly={workspace?.readOnly} className="ui-field mt-2 min-h-28 !rounded-md !px-3 !py-2 !text-sm !leading-6" value={drafts[item.customer_id] || ''} onChange={event => setDrafts({ ...drafts, [item.customer_id]: event.target.value })} />

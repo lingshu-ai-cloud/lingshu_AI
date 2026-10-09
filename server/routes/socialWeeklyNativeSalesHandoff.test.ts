@@ -1,0 +1,44 @@
+import {confirmWeeklyCustomerChannelSelection,WEEKLY_CHANNEL_SELECTIONS} from '../socialPrograms/weeklyCustomerChannelSelections.js';
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {once} from 'node:events';
+import express from 'express';
+import {nativeDispatchFixture} from '../digitalEmployees/weeklyNativeFollowupDispatch.fixture.js';
+import {createSocialWeeklySalesHandoffsRouter} from './socialWeeklySalesHandoffs.js';
+import {createWeeklySalesHandoffService} from '../runtime/socialWeeklySalesHandoff.js';
+import {readWeeklySalesConversationEvidence} from '../socialPrograms/weeklySalesConversationEvidence.js';
+import {readNativeSalesEvidence} from '../socialPrograms/weeklyNativeSalesEvidence.js';
+import {createCustomerChannelSendRequestService} from '../digitalEmployees/customerChannelSendRequests.js';
+const authority={tenantId:'tenant',programId:'program',packageId:'week',packageVersion:1};
+for(const channel of ['messenger','instagram'] as const)test(`${channel} actual native inquiry has persistent sales ownership and post-claim receipt-backed feedback over HTTP`,async t=>{
+ t.mock.timers.enable({apis:['Date'],now:new Date('2026-10-07T10:00:00Z')});const f=await nativeDispatchFixture(channel);t.after(f.restore);f.data.whatsapp_customers=[];f.data.whatsapp_interactions=[];
+ const app=express();app.use(express.json());app.use((req,res,next)=>{res.locals.tenantId='tenant';res.locals.userId=req.headers['x-actor']||'owner';next();});app.use('/:programId/:packageId/sales-handoffs',createSocialWeeklySalesHandoffsRouter(f.store));const server=app.listen(0,'127.0.0.1');t.after(()=>server.close());await once(server,'listening');const addr=server.address();assert.ok(addr&&typeof addr==='object');const base=`http://127.0.0.1:${addr.port}/program/week/sales-handoffs`;
+ const sources=await (await fetch(base+'/sources?version=1')).json();assert.equal(sources.items.length,1,JSON.stringify(sources));const source=sources.items[0];assert.equal(source.sourceKind,'new_inquiry');assert.match(source.sourceInteractionId,/^native:/);assert.equal(f.data.whatsapp_customers?.some(row=>row.customer_id==='buyer'),false,'native buyer is not disguised as WA');
+ const command={packageVersion:1,runId:'run',memberId:'member',sourceInteractionId:source.sourceInteractionId,ownerUserId:'stranger',claimDueAt:'2026-10-08T10:00:00Z',feedbackDueAt:'2026-10-09T10:00:00Z'};
+ const createdResponse=await fetch(base,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(command)});assert.equal(createdResponse.status,201,await createdResponse.clone().text());const created=(await createdResponse.json()).item;assert.equal(created.sourceEvidence.native.channel,channel);assert.equal(created.status,'awaiting_claim');
+ const replay=(await (await fetch(base,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(command)})).json()).item;assert.equal(replay.id,created.id);assert.equal(f.data.social_weekly_sales_handoffs!.length,1);
+ const event=(actor:string,body:unknown)=>fetch(`${base}/${created.id}/events`,{method:'POST',headers:{'Content-Type':'application/json','x-actor':actor},body:JSON.stringify({packageVersion:1,...body as object})});
+ assert.equal((await event('owner',{expectedVersion:1,operationId:'forbidden-claim',action:'claim'})).status,403);
+ const claimed=(await (await event('stranger',{expectedVersion:1,operationId:'actual-native-sales-claim',action:'claim'})).json()).item;assert.equal(claimed.status,'in_progress');assert.equal(claimed.ownerUserId,'stranger');
+ assert.equal((await event('stranger',{expectedVersion:2,operationId:'no-provider-feedback',action:'feedback',feedback:{result:'answered',evidenceInteractionIds:['free-text-evidence'],nextStep:'Follow up',nextDueAt:'2026-10-10T10:00:00Z'}})).status,409);
+ t.mock.timers.setTime(new Date('2026-10-07T10:01:00Z').getTime());let controlledReceiptCalls=0;
+ const receipt=await createCustomerChannelSendRequestService(f.store).execute({tenantId:'tenant',actorUserId:'stranger',channel,requestId:'sales-controlled-receipt-0001',customerId:'buyer',accountId:'account',recipientId:'buyer-native',body:'Verified existing sales reply',send:async()=>{controlledReceiptCalls++;return {messageId:'mid.sales-actual',recipientId:'buyer-native',raw:{message_id:'mid.sales-actual'}};},recordHistory:async()=>{}});
+ f.source.messages.push({id:receipt.messageId,actor:'seller',body:'Verified existing sales reply',timestamp:Date.parse(receipt.acceptedAt),sendStatus:'sent',audit:{providerMessageId:receipt.messageId,providerRecipientId:receipt.recipientId}});
+ const evidence=await readWeeklySalesConversationEvidence(f.store,authority,{actorUserId:'stranger',handoffId:created.id,expectedHandoffVersion:2});assert.equal(evidence.messages.length,1);assert.equal(evidence.messages[0]!.providerMessageId,'mid.sales-actual');
+ const completedResponse=await event('stranger',{expectedVersion:2,operationId:'actual-native-sales-feedback',action:'feedback',feedback:{result:'Actual quoted next step recorded',evidenceInteractionIds:[evidence.messages[0]!.interactionId],nextStep:'Read buyer response',nextDueAt:'2026-10-10T10:00:00Z'}});assert.equal(completedResponse.status,200,await completedResponse.clone().text());assert.equal((await completedResponse.json()).item.status,'handled');
+ assert.equal(f.sends(),0,'weekly native send port never invoked');assert.equal(controlledReceiptCalls,1,'only local controlled receipt port, no external transport');
+ await assert.rejects(readNativeSalesEvidence(f.store,{...authority,tenantId:'foreign'},'run','member'));
+ f.source.nativeAccountId='foreign-native-account';await assert.rejects(createWeeklySalesHandoffService(f.store).get(authority,created.id,'stranger'));assert.equal((await fetch(`${base}/${created.id}?version=1`,{headers:{'x-actor':'stranger'}})).status,409);
+});
+
+test('native established contact remains a contact without fabricated purchase history, and cold-start profile cannot reuse it',async t=>{
+ t.mock.timers.enable({apis:['Date'],now:new Date('2026-10-07T10:00:00Z')});const f=await nativeDispatchFixture('instagram');t.after(f.restore);f.data.whatsapp_customers=[];f.data.whatsapp_interactions=[];
+ f.source.messages.unshift({id:'mid.prior-contact',actor:'buyer',body:'Previous genuine contact',timestamp:Date.parse('2026-10-01T10:00:00Z'),audit:{providerMessageId:'mid.prior-contact',providerRecipientId:'buyer-native'}});
+ f.data[WEEKLY_CHANNEL_SELECTIONS]=[];
+ const receipt=await confirmWeeklyCustomerChannelSelection(f.store,{...authority,actorUserId:'owner',runId:'run'},{runId:'run',packageId:'week',packageVersion:1,channel:'instagram',accountId:'account',customerId:'buyer',inboundMessageId:'mid.inbound',classification:'existing_contact',reason:'Confirmed prior native buyer contact only'});
+ f.data.customer_segment_members![0]!.customer_snapshot={weeklyChannelSelection:receipt};
+ const service=createWeeklySalesHandoffService(f.store),sources=await service.sources(authority,'owner');assert.equal(sources.items.length,2);assert.ok(sources.items.every(item=>item.sourceKind==='existing_contact'));
+ const source=sources.items.find(item=>item.timestamp>=Date.parse('2026-10-05T00:00:00Z'))!;
+ const created=await service.create(authority,'owner',{runId:'run',memberId:'member',sourceInteractionId:source.sourceInteractionId,ownerUserId:'stranger',claimDueAt:'2026-10-08T10:00:00Z',feedbackDueAt:'2026-10-09T10:00:00Z'});assert.equal(created.sourceKind,'existing_contact');assert.equal(created.sourceEvidence.relationship,null);
+ const program=f.data.social_programs![0]!.payload as {route:string};program.route='cold_start';await assert.rejects(service.get(authority,created.id,'stranger'));assert.equal(f.sends(),0);
+});

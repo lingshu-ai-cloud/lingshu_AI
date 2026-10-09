@@ -1,3 +1,4 @@
+import type {SocialInstagramDeliveryPublishProof} from '../../shared/contracts/socialInstagramDelivery.js';
 import { withManagedPublishingCycleLease, managedPublishingCapacity } from './managedPublishingCycleLease.js';
 import { assertDurableOperationLease, type DurableOperationLease } from '../runtime/durableLease.js';
 import { boundedPublishingSlots } from './continuationPolicy.js';
@@ -70,6 +71,7 @@ const record = (value: unknown): Record<string, unknown> => value && typeof valu
  * frozen, accepted artifact; it neither reconstructs nor copies production.
  */
 export interface PublishableProductionResult {
+  instagramDelivery?:SocialInstagramDeliveryPublishProof;
   /** Canonical producer version when supplied; legacy handoffs retain their original v1 convention. */
   productionResultRef?: VersionedSocialRef;
   productionResultId: string;
@@ -85,6 +87,7 @@ export interface PublishableProductionResult {
 }
 
 export interface PublicationAssignmentLineage {
+  instagramDelivery?:SocialInstagramDeliveryPublishProof;
   programRef: VersionedSocialRef;
   operatingPackageRef: VersionedSocialRef;
   contentPackageRef: VersionedSocialRef;
@@ -130,7 +133,10 @@ export function buildPublicationAssignment(input: {
   if (!task.publishWindow) throw new Error('publication_publish_window_required');
   if (!result.productionResultId || !result.contentId || !/^[a-f0-9]{32,128}$/i.test(result.contentHash)) throw new Error('production_result_invalid');
   if (result.productionResultRef && (result.productionResultRef.type !== 'production_result' || result.productionResultRef.id !== result.productionResultId || !Number.isSafeInteger(result.productionResultRef.version) || result.productionResultRef.version < 1)) throw new Error('production_result_ref_invalid');
+  if(task.platform==='instagram'&&!result.instagramDelivery)throw Error('instagram_delivery_required_for_assignment');
+  if(result.instagramDelivery){const p=result.instagramDelivery;if(task.platform!=='instagram'||p.scope.tenantId!==input.tenantId||p.scope.programId!==weekly.programId||p.scope.packageId!==weekly.packageId||p.scope.packageVersion!==weekly.version||p.scope.publicationTaskId!==task.publicationTaskId||p.scope.artifactId!==result.contentId||!result.assets.some(a=>a.kind==='video'&&a.contentHash===p.sourceFileSha256))throw Error('instagram_delivery_assignment_scope_changed');}
   const lineage: PublicationAssignmentLineage = {
+    ...(result.instagramDelivery?{instagramDelivery:result.instagramDelivery}:{}),
     programRef: { type: 'social_program', id: weekly.programId, version: 1 },
     operatingPackageRef: { type: 'weekly_operating_package', id: weekly.packageId, version: weekly.version },
     contentPackageRef: { type: 'social_weekly_content_package', id: weekly.socialContentPackage.contentPackageId, version: weekly.socialContentPackage.version },

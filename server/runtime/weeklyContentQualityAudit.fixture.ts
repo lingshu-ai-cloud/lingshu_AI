@@ -7,7 +7,7 @@ import type {SocialInspirationHandoff} from '../../shared/contracts/socialConten
 /** Actual local media/cache/G4, full frozen weekly context, and persisted dispatch.
  * No mocked authority/audit/persistence or provider execution. G5 and final approval
  * remain explicit caller actions. Caller must always invoke cleanup(). */
-export async function prepareWeeklyQualityAuditFixture(media?:{width:number;height:number;fps:number}){
+export async function prepareWeeklyQualityAuditFixture(media?:{width:number;height:number;fps:number;registeredOwnedMedia?:boolean}){
  const f=await prepareDirectorG5Fixture({},media);
  const contentTask=f.tables.starter_social_content_tasks![0]!;
  contentTask.brief={...(contentTask.brief as object),programRef:{objectType:'social_program',id:'p',version:'1'},title:'实际成片审批',objective:'核验同一条企业产品视频',markets:['US'],languages:['en'],platforms:['tiktok'],formats:['short_video'],restrictions:[]};

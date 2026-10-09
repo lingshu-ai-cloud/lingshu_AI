@@ -1,3 +1,4 @@
+import {buildSocialAgentWorkflow} from './socialContentAgentWorkflow.js';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createSocialAssetSupplyPlan } from '../../shared/socialContentAssetSupply.js';
@@ -51,6 +52,9 @@ test('authoritative adapter keeps ordinary multi-reference selection and frozen 
   assert.deepEqual(workflow.directorBrief.accountRefs, ['account-1']);
   assert.deepEqual(workflow.directorBrief.factSourceRefs, ['enterprise_fact:fact-1@3']);
   assert.equal(workflow.directorBrief.callToAction, '提交询盘');
+  assert.equal(workflow.directorBrief.dueAt, '2026-10-01T00:00:00.000Z');
+  assert.equal(workflow.executionPlan.deadlineAt, '2026-10-01T00:00:00.000Z');
+  assert.equal(workflow.weeklyPackage?.dueAt, '2026-10-01T00:00:00.000Z');
 });
 
 test('single-source fidelity fails closed unless T4 selected one production-ready primary', () => {
@@ -172,4 +176,22 @@ test('separate version-one production artifacts keep distinct authoritative line
     { type: 'production_result', id: 'original-result', version: 1 },
     { type: 'production_result', id: 'new-rework-result', version: 1 },
   ]);
+});
+
+test('same publication ID cannot substitute a different frozen CTA, account or publish instant',()=>{
+ for(const fields of [{cta:'另一行动'},{accountId:'another-account'},{publishWindow:'2026-10-03T00:00:00.000Z'},{platform:'instagram'}]){
+  const input=workflowInput(['candidate-1']);
+  input.publicationTask={...input.publicationTask,...fields};
+  assert.throws(()=>buildAuthoritativeSocialContentWorkflow(input),/social_content_authoritative_context_mismatch/);
+ }
+});
+
+test('direct stored-authority projection cannot reintroduce publish-day or week-end production deadline',()=>{
+ const f=workflowInput(['candidate-1']);
+ const authority={programRef:f.programRef,enterpriseProfileRef:f.enterpriseProfileRef,weeklyPackage:f.weeklyPackage,weeklyWorkflowTask:f.weeklyWorkflowTask,publicationTask:f.publicationTask,businessGoal:f.businessGoal,referenceSelection:f.referenceSelection,selectedHandoffs:f.selectedHandoffs};
+ for(const dueAt of [f.publicationTask.publishWindow,f.weeklyPackage.weekEnd,null]){
+  const result=buildSocialAgentWorkflow({...f,mode:'weekly',weeklyPlanId:f.weeklyPackage.packageId,brief:{...f.brief,dueAt},authoritativeContext:authority});
+  assert.equal(result.directorBrief.dueAt,'2026-10-01T00:00:00.000Z');
+  assert.equal(result.executionPlan.deadlineAt,'2026-10-01T00:00:00.000Z');
+ }
 });

@@ -64,6 +64,11 @@ export function buildRecoveryScenario(budget:string,changedTaskIds:string[],work
   return {remainingBudgetCny:number(budget,'剩余预算'),changedTaskIds:[...changedTaskIds],constraints,resources};
 }
 const reasonLabels:Record<string,string>={
+  queue_completed_generation_requires_result_evidence:'原生成作业已结束，需核验并承接真实产物凭据，不能重新生产',
+  queue_job_identity_required:'尚无可核验的真实生产任务身份',queue_planned_handler_authority_required:'未开工生产处理器与冻结账号或发布目标不一致',
+  persisted_tenant_queue_limit_missing:'尚未配置租户生产并发上限',persisted_account_queue_limit_missing:'尚未配置本账号生产并发上限',persisted_task_type_queue_limit_missing:'尚未配置该生产类型并发上限',
+  queue_production_remaining_work_unverified:'原生产已开工，剩余工作尚无真实核验',queue_running_finish_and_cost_unverified:'相关并发池已有运行占用，结束时间和剩余费用尚未核验',queue_resource_vector_incomplete:'租户、账号和生产类型三维产能证据不完整',queue_task_evidence_changed:'原任务输入已变化，需重新评估资源',
+
   human_completion_not_verified:'人工完成尚未核验',dependency_unavailable:'前置任务不可用',remaining_work_evidence_required:'缺少剩余工作估时',resource_capacity_evidence_required:'缺少产能证据',remaining_budget_insufficient:'剩余预算不足',work_window_or_capacity_insufficient:'工作时段或并发不足',publication_deadline_at_risk:'赶不上前置截止',precise_deadline_required:'缺少明确截止',task_requires_explicit_recovery:'需明确恢复失败或取消任务',blocking_state_requires_verification:'阻塞状态需重新核验',
   consumer_schedule_unavailable:'消费者任务尚无可执行排期',running_work_requires_observed_reservation:'执行中任务缺少真实容量占用证据',precise_publish_time_required:'缺少带时区的明确发布时间',
   operational_deadline_required:'需明确填写发布后观察或周复盘截止',

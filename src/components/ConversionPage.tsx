@@ -1,3 +1,4 @@
+import {readCustomerItemNavigation,matchCustomerItemNavigation} from '../lib/weeklyCustomerProductionLink';
 import { sortCustomersByLatestMessage } from '../lib/customerRecency';
 import { useAgentProductionAction } from '../lib/agentProductionSession';
 import CustomerWorkflowPanel from './CustomerWorkflowPanel';
@@ -1781,6 +1782,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
 
   useEffect(() => {
     if (deepLinkConsumedRef.current || !customers.length) return;
+    if(deliveryHandoff?.businessRef.followupItemId)return;
     const customerId = new URLSearchParams(window.location.search).get('customer');
     if (!customerId) {
       deepLinkConsumedRef.current = true;
@@ -1795,6 +1797,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
   }, [customers]);
 
   useEffect(() => {
+    if(deliveryHandoff?.businessRef.followupItemId)return;
     if (agentProduction.active && window.__agentProductionTarget?.customerId) {
       setSelectedId(window.__agentProductionTarget.customerId);
       return;
@@ -1802,11 +1805,27 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
     if (selectedId && customersInActiveView.some(customer => customer.id === selectedId)) return;
     if (!selectedId && filterEmptySelectionRef.current) return;
     setSelectedId(customersInActiveView[0]?.id ?? null);
-  }, [customersInActiveView, selectedId]);
+  }, [customersInActiveView, selectedId,deliveryHandoff]);
+
+  useEffect(() => {
+    const link=deliveryHandoff;
+    if (!link?.businessRef.followupItemId) return;
+    let active=true;
+    setSelectedId(null);
+    setDeliveryError('');
+    void readCustomerItemNavigation(link).then(binding=>{
+      if(!active)return;
+      const customer=matchCustomerItemNavigation(binding,customers);
+      if(!customer){if(customers.length)setDeliveryError('原任务客户或渠道当前不可访问，请核对实际渠道接入。');return;}
+      setSelectedId(customer.id);
+      setView(customer.stage==='won'?'won':['silent30','silent60'].includes(customer.stage)?'silent':'leads');
+    }).catch(cause=>{if(active)setDeliveryError(cause instanceof Error?cause.message:'原客服条目无法核验。');});
+    return()=>{active=false;};
+  },[deliveryHandoff,customers]);
 
   useEffect(() => {
     const ref = deliveryHandoff?.businessRef;
-    if (!ref?.entityId) return;
+    if (!ref?.entityId||ref.followupItemId) return;
     const customer = customers.find(item => item.id === ref.entityId);
     if (!customer) { if (customers.length) setDeliveryError('关联客户暂不可访问，请返回交付看板核对。'); return; }
     setDeliveryError('');
@@ -2502,6 +2521,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
     {includeMockCustomers && <div className="shrink-0 border-b border-emerald-200 bg-emerald-50 px-4 py-2 text-xs text-emerald-900"><strong>本地模拟 · 外贸客户全流程</strong>　收件箱、潜客、成交客户和沉默客户均已加入多语言工厂采购场景。</div>}
+    {deliveryHandoff?.runId&&deliveryError&&<p role="alert" className="mx-4 mt-3 text-sm text-red-700">{deliveryError}</p>}
     {deliveryHandoff?.runId && <div className="shrink-0"><CustomerWorkflowPanel handoff={deliveryHandoff} customers={customers} /></div>}
     {deliveryHandoff && !deliveryHandoff.runId && <section className="mx-4 mt-3 shrink-0 border-l-2 border-accent bg-accent-glow p-3">
       <div className="flex items-center justify-between gap-3"><p className="text-xs font-bold text-accent">来自业务交付看板 · 客户跟进草稿</p></div>

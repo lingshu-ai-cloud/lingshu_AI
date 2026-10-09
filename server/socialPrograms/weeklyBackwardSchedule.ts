@@ -1,3 +1,4 @@
+import type {WeeklyQueueSchedulingEvidence} from './weeklyQueueSchedulingEvidence.js';
 import { publicationInstant } from './publicationDeadlines.js';
 import type { WeeklyRecoveryInput } from './weeklyRecoveryAssessment.js';
 import { weeklyReviewWindowBounds } from '../socialReview/weeklyReviewTiming.js';
@@ -19,6 +20,8 @@ export type WeeklyBackwardScheduleInput = Pick<WeeklyRecoveryInput, 'tasks' | 'n
   /** Internal only: caller must verify live outputs / durable leases under its shared source gate. */
   completedEvidence?:Record<string,BackwardCompletedEvidence>;
   observedReservations?:Record<string,BackwardObservedReservation>;
+  /** Server-read independent queue dimensions, never client free-slot assumptions. */
+  queueCapacityEvidence?:WeeklyQueueSchedulingEvidence;
 };
 export interface WeeklyBackwardSchedule {
   assignments: Array<{ taskId: string; startAt: string | null; finishAt: string | null; resourceKey: string | null; reasons: string[];mode:'planned'|'completed_verified'|'running_reserved'|'unavailable' }>;
@@ -31,6 +34,8 @@ export interface WeeklyBackwardSchedule {
   fullGraphConditionallyReachable:boolean;
   unscheduledTaskIds:string[];
   crossWeekOperationalTaskIds:string[];
+  queueConfigurationHash?:string;
+  queueCapacityEvidenceHash?:string;
   revisionApplied: false;
 }
 const instant = (value: string): number => {
@@ -81,6 +86,10 @@ export function planWeeklyBackwardSchedule(input: WeeklyBackwardScheduleInput): 
     if (ranges.some((range,index) => range[1] <= range[0] || index > 0 && range[0] < ranges[index-1]![1])) throw new Error('Invalid or overlapping backward work windows');
     windows.set(key,ranges); slots.set(key,Array.from({length:resource.concurrency},()=>[]));
   }
+  const vector=input.queueCapacityEvidence;
+  if(vector&&(instant(vector.verifiedAt)!==now||! /^[a-f0-9]{64}$/.test(vector.configurationHash)||! /^[a-f0-9]{64}$/.test(vector.inputEvidenceHash)||Object.keys(vector.tasks).some(id=>!tasks.has(id))||Object.values(vector.pools).some(p=>!Number.isSafeInteger(p.concurrency)||p.concurrency<1)))throw Error('Invalid internal queue capacity evidence');
+  const vectorIntervals=new Map<string,Array<{start:number;finish:number;subject:string}>>(Object.keys(vector?.pools??{}).map(key=>[key,[]]));
+  const vectorFits=(taskId:string,start:number,finish:number)=>{const mapping=vector?.tasks[taskId];if(!mapping)return true;return mapping.resourceKeys.every(key=>{const pool=vector!.pools[key],intervals=vectorIntervals.get(key);if(!pool||!intervals)return false;const own=intervals.filter(x=>x.subject===mapping.productionSubjectId),begin=Math.min(start,...own.map(x=>x.start)),end=Math.max(finish,...own.map(x=>x.finish));const points=[begin,...intervals.filter(x=>x.start<end&&x.finish>begin).map(x=>Math.max(begin,x.start))];return points.every(at=>new Set([...intervals.filter(x=>x.start<=at&&x.finish>at).map(x=>x.subject),mapping.productionSubjectId!]).size<=pool.concurrency);});};
   const assignments = new Map<string, WeeklyBackwardSchedule['assignments'][number]>();
   const pending = [...input.tasks];
   let reservedCostCny = 0;
@@ -130,6 +139,8 @@ export function planWeeklyBackwardSchedule(input: WeeklyBackwardScheduleInput): 
       continue;
     }
     if(task.schedule.actualStartedAt||task.resultRefs?.length||task.productionProgress?.runId){row.reasons.push('started_work_requires_verified_continuation');continue;}
+    const queueMapping=vector?.tasks[task.taskId];
+    if(queueMapping){if(queueMapping.taskFingerprint!==backwardTaskEvidenceFingerprint(task)){row.reasons.push('queue_task_evidence_changed');continue;}if(queueMapping.reasons.length){row.reasons.push(...queueMapping.reasons);continue;}if(!queueMapping.productionSubjectId||queueMapping.resourceKeys.length!==3||new Set(queueMapping.resourceKeys).size!==3||queueMapping.resourceKeys.some(key=>!vector!.pools[key])){row.reasons.push('queue_resource_vector_incomplete');continue;}if(queueMapping.resourceKeys.some(key=>vector!.pools[key]!.unknownRunningOccupation)){row.reasons.push('queue_running_finish_and_cost_unverified');continue;}}
     if(unresolvedRunningCommitment){row.reasons.push('running_commitment_evidence_required');continue;}
     if (task.status === 'cancelled' || task.status === 'dead_letter') { row.reasons.push('task_requires_explicit_recovery'); continue; }
     if (task.ownBlockingReasons?.length) { row.reasons.push(...task.ownBlockingReasons); continue; }
@@ -152,13 +163,11 @@ export function planWeeklyBackwardSchedule(input: WeeklyBackwardScheduleInput): 
     if (reservedCostCny+constraint.remainingCostCny > input.remainingBudgetCny) { row.reasons.push('remaining_budget_insufficient'); continue; }
     let best: {start:number;finish:number;slot:Array<[number,number]>}|null=null;
     for (const slot of calendars) for (const [open,close] of ranges) {
-      let finish = Math.min(deadline,close);
-      for (const [busyStart,busyFinish] of [...slot].sort((a,b)=>b[0]-a[0])) {
-        if (finish-duration >= busyFinish) break;
-        if (finish > busyStart && finish-duration < busyFinish) finish=busyStart;
+      const finishes=[Math.min(deadline,close),...slot.map(([start])=>start),...(queueMapping?.resourceKeys.flatMap(key=>vectorIntervals.get(key)!.map(x=>x.start))??[])];
+      for(const finish of finishes){const start=finish-duration;
+       if(finish>Math.min(deadline,close)||start<Math.max(open,earliest)||!slot.every(([a,b])=>finish<=a||start>=b)||!vectorFits(task.taskId,start,finish))continue;
+       if(!best||finish>best.finish)best={start,finish,slot};
       }
-      const start=finish-duration;
-      if (start>=Math.max(open,earliest) && (!best || finish>best.finish)) best={start,finish,slot};
     }
     if (task.schedule.stepKind === 'publishing') {
       best=null;
@@ -167,6 +176,7 @@ export function planWeeklyBackwardSchedule(input: WeeklyBackwardScheduleInput): 
       for(const slot of calendars) if(start>=earliest && finish<=deadline && ranges.some(([open,close])=>start>=open&&finish<=close) && slot.every(([busyStart,busyFinish])=>finish<=busyStart||start>=busyFinish)) {best={start,finish,slot};break;}
     }
     if (!best) { row.reasons.push('work_window_or_capacity_insufficient'); continue; }
+    if(queueMapping)for(const key of queueMapping.resourceKeys){const rows=vectorIntervals.get(key)!,own=rows.filter(x=>x.subject===queueMapping.productionSubjectId);vectorIntervals.set(key,[...rows.filter(x=>x.subject!==queueMapping.productionSubjectId),{start:Math.min(best.start,...own.map(x=>x.start)),finish:Math.max(best.finish,...own.map(x=>x.finish)),subject:queueMapping.productionSubjectId!}]);}
     best.slot.push([best.start,best.finish]); reservedCostCny+=constraint.remainingCostCny;
     row.startAt=new Date(best.start).toISOString(); row.finishAt=new Date(best.finish).toISOString();row.mode='planned';
   }
@@ -180,5 +190,5 @@ export function planWeeklyBackwardSchedule(input: WeeklyBackwardScheduleInput): 
   });
   const reachable=publications.filter(publication=>publication.conditionallyReachable).length;
   const unscheduledTaskIds=[...assignments.values()].filter(row=>!row.startAt||!row.finishAt||row.reasons.some(reason=>!['human_completion_not_verified','running_lease_renewal_required'].includes(reason))).map(row=>row.taskId);
-  return {assignments:[...assignments.values()],publications,targetPublicationCount:publications.length,conditionallyReachableCount:reachable,publicationGap:publications.length-reachable,reservedCostCny,confirmationRequired:input.tasks.some(task=>task.status!=='succeeded'),fullGraphConditionallyReachable:unscheduledTaskIds.length===0,unscheduledTaskIds,crossWeekOperationalTaskIds:crossWeekOperationalTaskIds.sort(),revisionApplied:false};
+  return {...(vector?{queueConfigurationHash:vector.configurationHash,queueCapacityEvidenceHash:vector.inputEvidenceHash}:{}),assignments:[...assignments.values()],publications,targetPublicationCount:publications.length,conditionallyReachableCount:reachable,publicationGap:publications.length-reachable,reservedCostCny,confirmationRequired:input.tasks.some(task=>task.status!=='succeeded'),fullGraphConditionallyReachable:unscheduledTaskIds.length===0,unscheduledTaskIds,crossWeekOperationalTaskIds:crossWeekOperationalTaskIds.sort(),revisionApplied:false};
 }

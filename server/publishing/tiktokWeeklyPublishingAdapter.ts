@@ -74,7 +74,7 @@ export async function createTikTokWeeklyPublishingAdapter(input: {
         : await materializeSocialProductionVideo({ tenantId: assignment.tenantId, artifactId, attemptId, expectedHash: video.contentHash, dataStore });
       try {
         const sourceClaim = await socialProductionPublishSourceClaim({
-          tenantId: assignment.tenantId, artifactId,
+          tenantId: assignment.tenantId, artifactId, weeklyAssignment:assignment,
           productionResultId: assignment.lineage.productionResultRef.id,
           contentVersion: publicationPackage.contentVersion,
           contentHash: publicationPackage.contentHash,
