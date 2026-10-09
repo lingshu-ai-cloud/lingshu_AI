@@ -733,14 +733,18 @@ publishingRouter.get('/posts/effects', async (_req, res) => {
   });
 });
 
-publishingRouter.get('/briefing', async (_req, res) => {
-  const { tenantId } = res.locals as AuthLocals;
-  const result = await store.list<PostRecord>('posts', { where: { tenant_id: tenantId }, perPage: 50, sort: '-updated' });
-  const top = result.items
-    .map(publicPost)
-    .filter(item => item.inquiries > 0)
-    .sort((a, b) => b.inquiries - a.inquiries)[0];
-  res.json({ item: top || null });
+publishingRouter.get('/briefing', async (_req, res, next) => {
+  try {
+    const { tenantId } = res.locals as AuthLocals;
+    const result = await store.list<PostRecord>('posts', { where: { tenant_id: tenantId }, perPage: 50, sort: '-updated' });
+    const top = result.items
+      .map(publicPost)
+      .filter(item => item.inquiries > 0)
+      .sort((a, b) => b.inquiries - a.inquiries)[0];
+    res.json({ item: top || null });
+  } catch (error) {
+    next(error);
+  }
 });
 
 publishingRouter.get('/recycle-lists', async (_req, res) => {
