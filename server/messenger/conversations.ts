@@ -123,7 +123,7 @@ export function patchMessengerCustomer(tenantId: string, id: string, patch: Reco
 }
 
 const tagAnalyses = new Map<string, Promise<MessengerCustomer | null>>();
-const CONTEXT_ANALYSIS_VERSION = 3;
+const CONTEXT_ANALYSIS_VERSION = 4;
 function buyerFingerprint(customer: MessengerCustomer): string {
   return createHash('sha256').update(JSON.stringify(customer.timeline.filter(event => event.actor === 'buyer').slice(-40).map(event => [event.id, event.body]))).digest('hex');
 }
@@ -131,7 +131,7 @@ function buyerFingerprint(customer: MessengerCustomer): string {
 function refreshBuyerQualification(customer: MessengerCustomer): void {
   const oldEvidence = Array.isArray(customer.contextTagEvidence) ? customer.contextTagEvidence as ContextTagEvidence[] : [];
   const evidence = vetoRevokedContextTags(oldEvidence, customer.timeline);
-  const removed = new Set(oldEvidence.filter(item => !evidence.includes(item)).map(item => item.tag));
+  const removed = new Set(oldEvidence.filter(item => !evidence.some(current => current.tag === item.tag)).map(item => item.tag));
   const bant = assessBant({ turns: customer.timeline.map(event => ({ role: event.actor === 'buyer' ? 'buyer' as const : 'seller' as const, text: event.body })) });
   patchMessengerCustomer(customer.tenantId, customer.id, {
     contextTagEvidence: evidence,

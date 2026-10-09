@@ -86,7 +86,7 @@ test('unfinished context tags survive reload, back off on failure and recover fr
     const recovered = JSON.parse(fs.readFileSync(file, 'utf8'))[0];
     assert.deepEqual(recovered.tags, ['人工标签', 'Messenger', '预算已提供']);
     assert.equal(recovered.contextTagsAttempts, 0);
-    assert.equal(recovered.contextTagsAnalysisVersion, 3);
+    assert.equal(recovered.contextTagsAnalysisVersion, 4);
     assert.equal(await conversations.recoverMessengerContextTags(Date.now(), retry), 0, 'completed buyer context is not billed again');
     conversations.patchMessengerCustomer('retry-tenant', customer.id, { contextTagsAnalysisVersion: 2 });
     assert.equal(await conversations.recoverMessengerContextTags(Date.now(), retry), 1, 'a changed analysis version refreshes persisted stale qualification');

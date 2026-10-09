@@ -105,3 +105,27 @@ test('unrelated buyer corrections preserve active budget and business purpose', 
   ];
   assert.deepEqual(vetoRevokedContextTags(evidence, [original, { id: 'new', actor: 'buyer', body: 'No samples. There is no budget increase. We cannot increase our budget.' }]), evidence);
 });
+
+test('latest explicit buyer budget replaces stale model and persisted evidence', async () => {
+  const original = { id: 'old', actor: 'buyer', body: 'Our budget is USD 5000.' };
+  const latest = { id: 'latest', actor: 'buyer', body: 'Correction: no samples, budget USD 6000, destination Germany, the FOB port remains unconfirmed.' };
+  const evidence = [{ tag: '预算已提供', messageId: original.id, excerpt: original.body }];
+  for (const result of [vetoRevokedContextTags(evidence, [original, latest]), await classifyContextTags([original, latest], async () => JSON.stringify({ items: evidence }))]) {
+    assert.equal(result[0].messageId, latest.id);
+    assert.ok(result[0].excerpt.includes('budget USD 6000'));
+    assert.ok(latest.body.includes(result[0].excerpt));
+  }
+  const renewed = { id: 'renewed', actor: 'buyer', body: '预算改为7000美元。' };
+  assert.equal(vetoRevokedContextTags(evidence, [original, latest, renewed])[0].messageId, renewed.id);
+});
+
+test('seller amounts, denied or historical amounts and unchanged budget instructions cannot overwrite evidence', () => {
+  const original = { id: 'old', actor: 'buyer', body: 'Our budget is USD 5000.' };
+  const evidence = [{ tag: '预算已提供', messageId: original.id, excerpt: original.body }];
+  for (const body of ['Our budget is not USD 6000.', 'I cannot confirm budget USD 6000.', 'Our previous budget was USD 6000.', 'Do not change budget USD 6000.', 'Keep the same budget USD 6000.', '预算不是6000美元。', '不改预算6000美元。']) {
+    assert.deepEqual(vetoRevokedContextTags(evidence, [original, { id: 'new', actor: 'buyer', body }]), evidence, body);
+  }
+  assert.deepEqual(vetoRevokedContextTags(evidence, [original, { id: 'new', actor: 'seller', body: 'budget USD 6000' }]), evidence);
+  assert.deepEqual(vetoRevokedContextTags(evidence, [original, { id: 'new', actor: 'buyer', body: 'Budget cancelled. The old budget USD 6000 is withdrawn.' }]), []);
+  assert.deepEqual(vetoRevokedContextTags([], [original, { id: 'new', actor: 'buyer', body: 'budget USD 6000' }]), [], 'refresh does not invent a tag');
+});
