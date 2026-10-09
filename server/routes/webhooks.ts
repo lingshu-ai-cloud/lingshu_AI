@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { decryptSecret, getTenantPlatformApp, verifyMetaSignature } from '../lib/tenantPlatformApps.js';
 import { handleMessengerWebhook } from '../messenger/conversations.js';
+import { store } from '../storage/index.js';
 
 export const webhookRouter = Router();
 
@@ -55,7 +56,27 @@ webhookRouter.post('/meta/:tenantId', async (req, res) => {
   }
 
   try {
-    await handleMessengerWebhook(tenantId, req.body);
+    // An app signature authenticates Meta's payload, not the tenant in our URL.
+    // The same app can be configured by multiple tenants, so bind each Page to
+    // a connected account before it can create or update a conversation.
+    const payload = req.body;
+    const entries: unknown[] = [];
+    const ownedPages = new Map<string, boolean>();
+    if (payload?.object === 'page' && Array.isArray(payload.entry)) {
+      for (const entry of payload.entry) {
+        const pageId = text(entry?.id);
+        if (!pageId) continue;
+        if (!ownedPages.has(pageId)) {
+          const accounts = await store.list<Record<string, unknown>>('social_accounts', {
+            where: { tenantId, platform: 'facebook', status: 'connected', providerAccountId: pageId },
+            page: 1, perPage: 1,
+          });
+          ownedPages.set(pageId, accounts.items.length > 0);
+        }
+        if (ownedPages.get(pageId)) entries.push(entry);
+      }
+    }
+    await handleMessengerWebhook(tenantId, { object: 'page', entry: entries });
   } catch (error) {
     console.error('[meta-webhook-ingest]', error);
     res.status(500).json({ error: 'webhook_persistence_failed' });

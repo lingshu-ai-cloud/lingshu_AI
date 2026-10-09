@@ -17,3 +17,18 @@ test('无可核验输出时不产生标签，模型失败不能当成空分析�
  await assert.rejects(classifyContextTags([], async () => '{"error":"failed"}'));
  assert.deepEqual(await classifyContextTags([], async () => '{"items":[]}'), []);
 });
+
+test('后续明确否定会否决模型引用的旧证据，销售否定不会替客户撤销标签', async () => {
+ const original = { id: 'old', actor: 'buyer', body: 'I am the purchasing decision maker. We need OEM and samples.' };
+ const model = async () => JSON.stringify({ items: [
+  { tag: '采购决策人', messageId: 'old', excerpt: 'I am the purchasing decision maker.' },
+  { tag: '定制需求', messageId: 'old', excerpt: 'We need OEM and samples.' },
+  { tag: '索取样品', messageId: 'old', excerpt: 'We need OEM and samples.' },
+ ] });
+ const correction = { id: 'new', actor: 'buyer', body: 'I cannot approve purchases. No customization or OEM, and no samples.' };
+ assert.deepEqual(await classifyContextTags([original, correction], model), []);
+ assert.equal((await classifyContextTags([original, { ...correction, actor: 'seller' }], model)).length, 3);
+ const renewed = { id: 'renewed', actor: 'buyer', body: original.body };
+ const renewedModel = async () => JSON.stringify({ items: [{ tag: '定制需求', messageId: 'renewed', excerpt: 'We need OEM and samples.' }] });
+ assert.equal((await classifyContextTags([original, correction, renewed], renewedModel)).length, 1);
+});

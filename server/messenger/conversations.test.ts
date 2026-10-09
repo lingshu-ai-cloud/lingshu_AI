@@ -63,6 +63,40 @@ test('delivery and read callbacks update only matching outbound messages without
   assert.equal(conversations.getMessengerCustomers('tenant-b').length, 0);
 });
 
+test('unfinished context tags survive reload, back off on failure and recover from persisted buyer context', async () => {
+  const file = process.env.MESSENGER_CUSTOMERS_DATA_FILE!;
+  const previous = fs.readFileSync(file, 'utf8');
+  fs.writeFileSync(file, '[]');
+  try {
+    const payload = { object: 'page', entry: [{ id: 'retry-page', messaging: [{
+      sender: { id: 'retry-buyer' }, recipient: { id: 'retry-page' }, timestamp: Date.now(),
+      message: { mid: 'retry-message', text: 'Budget USD 6000' },
+    }] }] };
+    await conversations.handleMessengerWebhook('retry-tenant', payload, { analyzeTags: false });
+    const customer = conversations.getMessengerCustomers('retry-tenant')[0];
+    conversations.patchMessengerCustomer('retry-tenant', customer.id, { tags: ['人工标签', 'Messenger'] });
+    await assert.rejects(conversations.analyzeMessengerCustomerTags('retry-tenant', customer.id, async () => { throw new Error('provider_unavailable'); }));
+    const failed = JSON.parse(fs.readFileSync(file, 'utf8'))[0];
+    assert.equal(failed.contextTagsAttempts, 1);
+    assert.ok(failed.contextTagsRetryAt > Date.now());
+    assert.deepEqual(failed.tags, ['人工标签', 'Messenger']);
+    assert.equal(await conversations.recoverMessengerContextTags(Date.now(), async () => { throw new Error('backoff must prevent a retry'); }), 0);
+    const retry = (tenantId: string, id: string) => conversations.analyzeMessengerCustomerTags(tenantId, id, async () => [{ tag: '预算已提供', messageId: 'retry-message', excerpt: 'Budget USD 6000' }]);
+    assert.equal(await conversations.recoverMessengerContextTags(failed.contextTagsRetryAt + 1, retry), 1);
+    const recovered = JSON.parse(fs.readFileSync(file, 'utf8'))[0];
+    assert.deepEqual(recovered.tags, ['人工标签', 'Messenger', '预算已提供']);
+    assert.equal(recovered.contextTagsAttempts, 0);
+    assert.equal(await conversations.recoverMessengerContextTags(Date.now(), retry), 0, 'completed buyer context is not billed again');
+    conversations.patchMessengerCustomer('retry-tenant', customer.id, { contextTagsAnalysisVersion: 1 });
+    assert.equal(await conversations.recoverMessengerContextTags(Date.now(), retry), 1, 'a changed analysis version refreshes persisted stale qualification');
+    assert.equal(await conversations.recoverMessengerContextTags(Date.now(), retry), 0);
+    payload.entry[0].messaging[0].message = { mid: 'retry-correction', text: 'Budget cancelled' };
+    await conversations.handleMessengerWebhook('retry-tenant', payload, { analyzeTags: false });
+    assert.equal(await conversations.recoverMessengerContextTags(Date.now(), (tenantId, id) => conversations.analyzeMessengerCustomerTags(tenantId, id, async () => [])), 1);
+    assert.deepEqual(conversations.getMessengerCustomers('retry-tenant')[0].tags, ['人工标签', 'Messenger']);
+  } finally { fs.writeFileSync(file, previous); }
+});
+
 test('invalid persisted conversations fail without replacing customer data', async () => {
   const file = process.env.MESSENGER_CUSTOMERS_DATA_FILE!;
   for (const content of ['{broken', '{"unexpected":true}']) {

@@ -15,6 +15,21 @@ const product = {
   attributes: {},
 };
 
+test('后续明确 SKU 覆盖未知资料和早期泛化需求，未知 SKU 不沿用旧目录价', () => {
+  const input = {
+    customerId: 'messenger-live', customerName: 'Buyer', productHint: '待确认',
+    messages: ['I need 2000 customized products.', 'Please quote 2000 pcs of SKU CNC-6061-01 in 6061-T6.'],
+    products: [product], rules: {},
+  };
+  assert.equal(buildQuoteDraft(input).unitPrice, 40);
+  const changed = buildQuoteDraft({ ...input, messages: [...input.messages, 'Correction: quote SKU UNKNOWN-02 instead.'] });
+  assert.equal(changed.unitPrice, null);
+  assert.equal(changed.matchedProduct, null);
+  const budget = buildQuoteDraft({ ...input, messages: [...input.messages, 'Budget is USD 5000. Correction: budget is CNY 10,000.'] });
+  assert.deepEqual(budget.customerBudget, { amount: 10000, currency: 'CNY' });
+  assert.equal(budget.unitPrice, 40, '客户预算不能覆盖企业目录单价');
+});
+
 test('识别报价意图并从对话与目录构建可核验草稿', () => {
   assert.ok(quoteIntentScore('Please quote 500 pcs, material 6061-T6, delivery within 20 days') >= 80);
   const draft = buildQuoteDraft({
@@ -159,6 +174,33 @@ test('客户更换材料不能沿用目录规格价格，人工改材质也需�
   const corrected = buildQuoteDraft({ ...input, messages: ['Quote 500 pcs in 6061-T6.', 'Actually use ABS.'] });
   assert.equal(corrected.material, 'ABS');
   assert.equal(corrected.unitPrice, null);
+});
+
+test('客户更正数量、预算、目的地和贸易术语后以最新需求生成报价', () => {
+  const draft = buildQuoteDraft({
+    customerId: 'corrected', customerName: 'Buyer', productHint: '待确认', products: [product], rules: {},
+    messages: ['Quote 2000 pcs of SKU CNC-6061-01. Destination Germany. FOB. Budget USD 5000. Delivery within 30 days.',
+      'Correction: 1500 pcs of SKU CNC-6061-01. Destination is Shanghai. DDP. Budget is USD 6000. Delivery within 45 days.'],
+  });
+  assert.equal(draft.quantity, 1500);
+  assert.equal(draft.destination, 'Shanghai');
+  assert.equal(draft.incoterm, 'DDP');
+  assert.equal(draft.deliveryDate, '45 days');
+  assert.deepEqual(draft.customerBudget, { amount: 6000, currency: 'USD' });
+  assert.equal(draft.leadTime, product.leadTime);
+});
+
+test('客户明确 FOB 港口待确认时不能直接确认报价，改价格不能解除履约阻塞', () => {
+  const draft = buildQuoteDraft({ customerId: 'port', customerName: 'Buyer', products: [product], rules: { paymentTerms: 'deposit' },
+    messages: ['Quote 1500 pcs of SKU CNC-6061-01 in 6061-T6. Destination Germany. The named FOB port still needs confirmation.'] });
+  assert.equal(draft.status, 'needs_clarification');
+  assert.ok(draft.blockers.includes('FOB 指定装运港尚未确认'));
+  assert.ok(applyQuoteDraftPatch(draft, { unitPrice: 39 }).blockers.includes('FOB 指定装运港尚未确认'));
+  assert.ok(applyQuoteDraftPatch(draft, { unitPrice: 39 }).clarificationQuestions.some(question => question.includes('FOB')));
+  const followup = buildQuoteDraft({ customerId: 'fob-followup', customerName: '', productHint: product.sku, products: [product], rules: { paymentTerms: '30% deposit' },
+    messages: ['Quote 1500 pcs in 6061-T6. Destination Germany. The named FOB port still needs confirmation.', 'Please acknowledge receipt only.'] });
+  assert.ok(followup.blockers.includes('FOB 指定装运港尚未确认'), '无关的后续消息不能解除港口待确认状态');
+  assert.ok(!applyQuoteDraftPatch(draft, { destination: 'Shanghai port' }).blockers.includes('FOB 指定装运港尚未确认'));
 });
 
 test('客户目标交期不能变为企业参考交期，非履约编辑不能解除阻塞', () => {

@@ -33,5 +33,7 @@ test('Messenger subscription requests inbound message webhook fields', async () 
     assert.match(requestBody, /messages/);
     assert.match(requestBody, /messaging_postbacks/);
     assert.match(requestBody, /message_deliveries/);
+    assert.match(requestBody, /message_echoes/);
+    assert.match(requestBody, /message_reads/);
   } finally { globalThis.fetch = original; }
 });

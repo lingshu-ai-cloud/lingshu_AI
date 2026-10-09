@@ -98,6 +98,7 @@ function upsertMessage(input: {
   if (input.actor === 'buyer') {
     customer.hasUnread = true;
     customer.inboxReason = '客户发来新消息，等待回复';
+    customer.contextTagsRetryAt = 0;
   }
   items[index >= 0 ? index : items.length] = customer;
   writeCustomers(items);
@@ -122,7 +123,12 @@ export function patchMessengerCustomer(tenantId: string, id: string, patch: Reco
 }
 
 const tagAnalyses = new Map<string, Promise<MessengerCustomer | null>>();
-export function analyzeMessengerCustomerTags(tenantId: string, id: string): Promise<MessengerCustomer | null> {
+const CONTEXT_ANALYSIS_VERSION = 2;
+function buyerFingerprint(customer: MessengerCustomer): string {
+  return createHash('sha256').update(JSON.stringify(customer.timeline.filter(event => event.actor === 'buyer').slice(-40).map(event => [event.id, event.body]))).digest('hex');
+}
+
+export function analyzeMessengerCustomerTags(tenantId: string, id: string, classify = classifyContextTags): Promise<MessengerCustomer | null> {
   const key = `${tenantId}:${id}`;
   const pending = tagAnalyses.get(key);
   if (pending) return pending;
@@ -131,7 +137,7 @@ export function analyzeMessengerCustomerTags(tenantId: string, id: string): Prom
     const customer = getMessengerCustomers(tenantId).find(item => item.id === id);
     if (!customer) return null;
     const snapshot = JSON.stringify(customer.timeline);
-    const contextTagEvidence = await classifyContextTags(customer.timeline);
+    const contextTagEvidence = await classify(customer.timeline);
     const current = getMessengerCustomers(tenantId).find(item => item.id === id);
     if (!current) return null;
     if (JSON.stringify(current.timeline) !== snapshot) continue;
@@ -142,13 +148,53 @@ export function analyzeMessengerCustomerTags(tenantId: string, id: string): Prom
     return patchMessengerCustomer(tenantId, id, {
       tags: [...new Set([...manualTags, 'Messenger', ...contextTagEvidence.map(item => item.tag)])],
       contextTagEvidence, contextTagsUpdatedAt: new Date().toISOString(),
+      contextTagsBuyerFingerprint: buyerFingerprint(current), contextTagsRetryAt: 0, contextTagsAttempts: 0,
+      contextTagsAnalysisVersion: CONTEXT_ANALYSIS_VERSION,
       bant, intentScore: bant.total, progressionGoal: selectProgressionGoal(bant, String(current.language || 'English')),
     });
     }
     throw new Error('会话持续更新，请稍后重新分析标签');
-  })().finally(() => tagAnalyses.delete(key));
+  })().catch(error => {
+    const current = getMessengerCustomers(tenantId).find(item => item.id === id);
+    if (current) {
+      const attempts = Number(current.contextTagsAttempts || 0) + 1;
+      patchMessengerCustomer(tenantId, id, {
+        contextTagsAttempts: attempts,
+        contextTagsRetryAt: Date.now() + Math.min(15 * 60_000, 60_000 * 2 ** Math.min(attempts - 1, 4)),
+      });
+    }
+    throw error;
+  }).finally(() => tagAnalyses.delete(key));
   tagAnalyses.set(key, analysis);
   return analysis;
+}
+
+// Runs only in the HTTP writer process. The conversation file is the durable
+// work list, so a process exit cannot lose an unfinished classification.
+export async function recoverMessengerContextTags(now = Date.now(), analyze = analyzeMessengerCustomerTags): Promise<number> {
+  const pending = readCustomers().filter(customer => customer.timeline.some(event => event.actor === 'buyer')
+    && (customer.contextTagsBuyerFingerprint !== buyerFingerprint(customer) || customer.contextTagsAnalysisVersion !== CONTEXT_ANALYSIS_VERSION)
+    && Number(customer.contextTagsRetryAt || 0) <= now).slice(0, 5);
+  await Promise.all(pending.map(customer => analyze(customer.tenantId, customer.id).catch(error => {
+    console.warn('[messenger:context-tags-recovery]', error instanceof Error ? error.message : 'analysis_failed');
+  })));
+  return pending.length;
+}
+
+export function startMessengerContextTagRecovery(): () => void {
+  let running = false;
+  let stopped = false;
+  const recover = async () => {
+    if (running || stopped) return;
+    running = true;
+    try { await recoverMessengerContextTags(); }
+    catch (error) { console.warn('[messenger:context-tags-recovery]', error instanceof Error ? error.message : 'recovery_failed'); }
+    finally { running = false; }
+  };
+  const timer = setInterval(() => void recover(), 30_000);
+  timer.unref();
+  void recover();
+  return () => { stopped = true; clearInterval(timer); };
 }
 
 export async function handleMessengerWebhook(tenantId: string, payload: unknown, options: { analyzeTags?: boolean } = {}) {

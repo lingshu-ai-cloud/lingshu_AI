@@ -9,6 +9,7 @@ import { runtimeBuildInfo } from './buildInfo.js';
 export const SOCIAL_OPERATING_REQUIRED_COLLECTIONS = [
   'social_programs',
   'social_weekly_operating_packages',
+  'social_weekly_agent_planning',
   'social_business_content_goals',
   'social_operating_decisions',
   'social_candidate_evidence',

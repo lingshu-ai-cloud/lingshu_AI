@@ -481,6 +481,22 @@ async function requestHandoffSummary(customer: CustomerProfile): Promise<string>
   return fallbackHandoffSummary(customer);
 }
 
+function FilterSelect({ label, value, onChange, options, renderLabel }: {
+  label: string;
+  value: string;
+  onChange: (next: string) => void;
+  options: string[];
+  renderLabel?: (item: string) => string;
+}) {
+  return <label className="block">
+    <span className="text-[10px] font-bold text-text-muted">{label}</span>
+    <select aria-label={label} value={value} onChange={event => onChange(event.target.value)} className="ui-field ui-select mt-1 w-full !min-h-9 !rounded-md !px-2.5 !py-2 !text-xs">
+      <option value="all">全部</option>
+      {options.map(item => <option key={item} value={item}>{renderLabel ? renderLabel(item) : item}</option>)}
+    </select>
+  </label>;
+}
+
 function CompactCustomerList({
   view,
   selectedId,
@@ -525,25 +541,6 @@ function CompactCustomerList({
     if (selectedId && list.some(customer => customer.id === selectedId)) return;
     onVisibleSelectionChange(list[0]?.id ?? null, activeFilterCount > 0 && list.length === 0);
   }, [activeFilterCount, list, onVisibleSelectionChange, selectedId]);
-  const FilterSelect = ({ label, value, onChange, options, renderLabel }: {
-    label: string;
-    value: string;
-    onChange: (next: string) => void;
-    options: string[];
-    renderLabel?: (item: string) => string;
-  }) => (
-    <label className="block">
-      <span className="text-[10px] font-bold text-text-muted">{label}</span>
-      <select
-        value={value}
-        onChange={event => onChange(event.target.value)}
-        className="ui-field ui-select mt-1 w-full !min-h-9 !rounded-md !px-2.5 !py-2 !text-xs"
-      >
-        <option value="all">全部</option>
-        {options.map(item => <option key={item} value={item}>{renderLabel ? renderLabel(item) : item}</option>)}
-      </select>
-    </label>
-  );
   const renderCustomer = (customer: CustomerProfile) => {
     const lastMessage = customer.timeline[customer.timeline.length - 1];
     const statusColor = HANDLING_COLOR[customer.handlingMode];

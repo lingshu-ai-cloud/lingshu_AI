@@ -89,3 +89,21 @@ assert.equal(actionImpacts.need.score, 10);
 assert.equal(actionImpacts.timing.score, 25);
 
 console.log('BANT additive scoring, evidence and authenticity passed');
+
+const authorityCorrection = [
+  { role: 'buyer' as const, text: 'I am the owner. We need OEM products.' },
+  { role: 'buyer' as const, text: 'Correction: I cannot approve purchases. I am only researching for my manager.' },
+  { role: 'buyer' as const, text: 'Please quote 1500 pcs. Budget is USD 6000.' },
+];
+const revoked = assessBant({ turns: authorityCorrection });
+assert.equal(revoked.authority.score, 0, 'explicit denial supersedes historical owner and OEM signals');
+assert.equal(revoked.authority.status, 'unknown');
+assert.ok(!revoked.authority.evidence.some(item => item.includes('老板')));
+const incrementalRevoked = assessBant({ previous: highValue, turns: authorityCorrection.slice(1, 2) });
+assert.equal(incrementalRevoked.authority.score, 0, 'previous confirmed scores cannot survive explicit revocation');
+assert.equal(assessBant({ previous: incrementalRevoked, turns: authorityCorrection.slice(2) }).authority.score, 0, 'unrelated later messages do not restore decision rights');
+assert.equal(assessBant({ previous: incrementalRevoked, turns: [{ role: 'buyer', text: 'My boss is the owner and will review your quote.' }] }).authority.score, 0, 'another person being the owner cannot restore buyer authority');
+assert.equal(assessBant({ previous: incrementalRevoked, turns: [{ role: 'buyer', text: 'I approve purchases now.' }] }).authority.score, 16, 'new explicit authority can replace the denial');
+assert.equal(assessBant({ turns: [...authorityCorrection, { role: 'buyer', text: 'I approve purchases now.' }] }).authority.score, 16, 'restoration does not resurrect obsolete owner and OEM scores');
+assert.equal(assessBant({ previous: highValue, turns: [{ role: 'buyer', text: '我不能批准采购，先替经理了解产品。' }] }).authority.score, 0);
+assert.equal(assessBant({ previous: highValue, turns: [{ role: 'seller', text: 'I cannot approve purchases.' }] }).authority.score, highValue.authority.score, 'seller statements cannot revoke buyer authority');

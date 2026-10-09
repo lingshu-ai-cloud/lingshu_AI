@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { AlertCircle, CheckCircle2, Loader2, RefreshCw } from 'lucide-react';
 import { authHeader } from '../lib/auth';
 import { SocialPlatformIcon } from './SocialPlatformIcon';
@@ -18,6 +18,8 @@ export default function MessengerConnectionPanel() {
   const [loading, setLoading] = useState(true);
   const [connecting, setConnecting] = useState(false);
   const [error, setError] = useState('');
+  const oauthPopup = useRef<Window | null>(null);
+  const oauthOrigin = useRef(window.location.origin);
 
   const load = useCallback(async () => {
     setLoading(true); setError('');
@@ -38,7 +40,7 @@ export default function MessengerConnectionPanel() {
   useEffect(() => { void load(); }, [load]);
   useEffect(() => {
     const onMessage = (event: MessageEvent) => {
-      if (event.origin !== window.location.origin || event.data?.type !== 'social-oauth' || event.data?.platform !== 'facebook') return;
+      if (event.origin !== oauthOrigin.current || event.source !== oauthPopup.current || event.data?.type !== 'social-oauth' || event.data?.platform !== 'facebook') return;
       setConnecting(false);
       if (event.data.status === 'success') void load();
       else setError(event.data.message || 'Messenger 授权未完成');
@@ -50,13 +52,15 @@ export default function MessengerConnectionPanel() {
   const connect = async () => {
     setConnecting(true); setError('');
     const popup = window.open('', `messenger-oauth-${Date.now()}`, 'width=620,height=760,menubar=no,toolbar=no,location=yes,status=no');
+    oauthPopup.current = popup;
     try {
       const response = await fetch('/api/overseas/social/oauth/facebook/start', {
         method: 'POST', headers: { ...authHeader(), 'Content-Type': 'application/json' },
-        body: JSON.stringify({ returnTo: `${window.location.pathname}${window.location.search}` }),
+        body: JSON.stringify({ returnTo: `${window.location.pathname}${window.location.search}`, purpose: 'messenger' }),
       });
       const data = await response.json();
       if (!response.ok || !data.url) throw new Error(data.error || 'Messenger 授权地址生成失败');
+      oauthOrigin.current = new URL(data.redirectUri, window.location.origin).origin;
       if (popup) popup.location.replace(data.url); else window.location.assign(data.url);
     } catch (reason) {
       popup?.close(); setConnecting(false);
