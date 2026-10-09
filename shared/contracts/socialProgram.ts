@@ -172,6 +172,8 @@ export interface WeeklyExecutionTask {
   lease: WeeklyExecutionTaskLease | null;
   resultRefs: VersionedSocialRef[];
   lastError: { code: string; message: string; retryable: boolean; occurredAt: string } | null;
+  /** Explicit original-request quality recovery receipts; never stage completion. */
+  qualityRecoveries?: import('./weeklyContentQualityRecovery.js').WeeklyContentQualityRecoveryReceipt[];
   /** Observed upstream activity, independent from verified step completion. */
   productionProgress?: { contentTaskId: string; runId: string | null; step: string; activity: string; updatedAt: string } | null;
   /** Read-only API projection after verifying the original task's continuation receipt. */

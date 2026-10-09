@@ -257,9 +257,20 @@ export function createSocialWeeklyProductionAdapter(dataStore: DataStore, ports:
       const evidence = step === 'asset_generation' ? content.render?.selectedAssetIds?.length > 0
         : step === 'video_generation' ? content.render?.completed === true
         : content.productionResult?.technicalReview?.approved === true && content.productionResult?.creativeReview?.approved === true;
-      if (!evidence) return blocked('weekly_production_quality_review_required', '产物已保留，但该生产节点缺少通过验收的真实证据。');
       const v = version(artifact.version);
-      return v ? success({ type: 'starter_social_content_artifact', id: artifact.artifactId, version: v }) : blocked('weekly_production_version_invalid', '内容产物版本无效。');
+      if (!v) return blocked('weekly_production_version_invalid', '内容产物版本无效。');
+      if (!evidence) {
+        if (!['quality_check', 'rework'].includes(step)) return blocked('weekly_production_quality_review_required', '产物已保留，但该生产节点缺少通过验收的真实证据。');
+        // Immutable pending-review flags may be superseded only by independently verified,
+        // same-output G4 and G5 receipts; the artifact and final user approval stay separate.
+        const { assertWeeklyContentQualityAudit } = await import('./weeklyContentQualityAudit.js');
+        try {
+          await assertWeeklyContentQualityAudit(dataStore, task, { type: 'starter_social_content_artifact', id: artifact.artifactId, version: v });
+        } catch (error) {
+          return blocked('weekly_production_quality_review_required', error instanceof Error ? error.message : '产物缺少可核验的质量审核证据。');
+        }
+      }
+      return success({ type: 'starter_social_content_artifact', id: artifact.artifactId, version: v });
     }
     if (['attention', 'needs_input', 'paused'].includes(detail.status)) return blocked('weekly_production_user_action_required', detail.productionProgress?.activity || '生产已暂停，需处理输入、凭据、余额或质检问题。');
     return { ...pending('weekly_production_in_progress', detail.productionProgress?.activity || '后台生产进行中，正在等待真实产物或供应商回执对账。'), progress };

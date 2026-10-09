@@ -1,3 +1,6 @@
+import {createSocialWeeklyG6ReviewRouter} from './socialWeeklyG6ReviewRouter.js';import {createSocialWeeklyG6ReviewService} from './socialWeeklyG6ReviewService.js';
+import {createSocialDirectorG5ReviewRouter} from './socialDirectorG5ReviewRouter.js';
+import {createSocialDirectorG5ReviewService} from './socialDirectorG5ReviewService.js';
 import {createSocialSceneG4ReviewRouter} from './socialSceneG4ReviewRouter.js';
 import {createSocialSceneG4ReviewService} from './socialSceneG4ReviewService.js';
 import { readReferencePreparation } from './socialContentScriptSources.js';
@@ -155,6 +158,8 @@ export function createSocialContentRouter(dependencies: SocialContentRouterDepen
   const socialTaskMaterialPort = dependencies.socialTaskMaterialPort;
 
   router.use(requireAuth);
+  router.use('/tasks/:taskId/runs/:runId/artifacts/:artifactId/g5-reviews',createSocialDirectorG5ReviewRouter(createSocialDirectorG5ReviewService(repository)));
+router.use('/tasks/:taskId/runs/:runId/artifacts/:artifactId/g6-reviews',createSocialWeeklyG6ReviewRouter(createSocialWeeklyG6ReviewService(repository)));
   router.use('/tasks/:taskId/runs/:runId/artifacts/:artifactId/g4-reviews',createSocialSceneG4ReviewRouter(createSocialSceneG4ReviewService(repository)));
   router.use((req, res, next) => {
     res.setHeader('Cache-Control', 'private, no-store');

@@ -89,6 +89,10 @@ test('real generated artifact completes evidence-backed steps; creative quality 
   }
   f.task.schedule.stepKind='quality_check';
   assert.equal((await f.adapter.execute(f.task)).status,'blocked');
+  f.task.schedule.stepKind='rework';
+  assert.equal((await f.adapter.execute(f.task)).status,'blocked','a rendered rework without independent same-output review is not completed');
+  assert.equal(f.starts(),0,'review gaps must not restart paid production');
+  f.task.schedule.stepKind='quality_check';
   artifact.content.productionResult.creativeReview.approved=true;f.set({artifacts:[artifact]});
   assert.equal((await f.adapter.execute(f.task)).status,'succeeded');
   artifact.status='superseded';f.set({artifacts:[artifact]});

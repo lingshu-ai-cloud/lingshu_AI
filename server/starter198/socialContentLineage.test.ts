@@ -14,6 +14,7 @@ import {
   routeProductionReturn,
 } from './socialContentLineage.js';
 import { STARTER_COLLECTIONS, type Starter198Repository, type StarterRecord } from './repository.js';
+import { persistWeeklyProductionResultAuthority } from '../runtime/socialWeeklyProductionAuthority.js';
 import { persistSocialDiscoveryDirectorAuthority } from './socialDiscoveryAuthorityAdapter.js';
 
 const fact = { type: 'enterprise_fact', id: 'fact-1', version: 3 };
@@ -85,6 +86,10 @@ class MemoryRepository implements Starter198Repository {
 test('persists independent versions, preserves full lineage and invalidates only affected fact scenes', async () => {
   const workflow = buildAuthoritativeSocialContentWorkflow(workflowInput(['candidate-1', 'candidate-2']));
   const lineage = buildSocialContentAuthorityLineage({ version: '1', programRef: { type: 'social_program', id: 'program-1', version: 2 }, packageRef: { type: 'weekly_operating_package', id: 'package-1', version: 4 }, weeklyTaskRef: workflowTask.taskRef, publicationTaskRef: { type: 'weekly_publication_task', id: publicationTask.publicationTaskId, version: 4 }, businessGoalRef: weeklyPackage.businessContentGoalRef!, enterpriseProfileRef: weeklyPackage.enterpriseProfileRef!, enterpriseFactRefs: [fact], referenceSelectionRef: { type: 'reference_selection', id: 'selection-1', version: 1 }, candidateEvidenceRefs: [{ type: 'candidate_evidence', id: 'evidence-candidate-1', version: 2 }, { type: 'candidate_evidence', id: 'evidence-candidate-2', version: 2 }], inspirationHandoffs: workflow.inspirationHandoffs, directorBrief: workflow.directorBrief, now: new Date('2026-09-26T01:00:00.000Z') });
+  const resultInput = { ...lineage, version: '2', inspirationHandoffs: workflow.inspirationHandoffs, directorBrief: workflow.directorBrief };
+  assert.throws(() => buildSocialContentAuthorityLineage({ ...resultInput, productionResult: { productionResultId: 'new-rework-result', version: 'rework:operation' } as any }), /social_content_production_version_invalid/);
+  const newResultLineage = buildSocialContentAuthorityLineage({ ...resultInput, productionResult: { productionResultId: 'new-rework-result', version: '1' } as any });
+  assert.deepEqual(newResultLineage.productionResultRef, { type: 'production_result', id: 'new-rework-result', version: 1 });
   const repository = new MemoryRepository();
   await persistAuthoritativeContentBundle({ repository, tenantId: 'tenant-1', lineage, handoffs: workflow.inspirationHandoffs, directorBrief: workflow.directorBrief });
   await persistAuthoritativeContentBundle({ repository, tenantId: 'tenant-1', lineage, handoffs: workflow.inspirationHandoffs, directorBrief: workflow.directorBrief });
@@ -138,4 +143,33 @@ test('routes production reasons back to weekly work or the reshoot queue idempot
   assert.deepEqual(partial.affectedSceneIds, ['scene-1']);
   assert.deepEqual(partial.returnToTaskRef, workflowTask.taskRef);
   assert.throws(() => routeProductionReturn({ lineage, reason: 'partial_rework' }), /partial_rework_scene_required/);
+});
+
+test('separate version-one production artifacts keep distinct authoritative lineage and replay without duplication', async () => {
+  const input = workflowInput(['candidate-1']);
+  const workflow = buildAuthoritativeSocialContentWorkflow(input);
+  const repository = new MemoryRepository();
+  const authority = { programRef: input.programRef, enterpriseProfileRef: input.enterpriseProfileRef, weeklyPackage,
+    weeklyWorkflowTask: workflowTask, publicationTask, businessGoal: goal, referenceSelection: selection(['candidate-1']), selectedHandoffs: input.selectedHandoffs };
+  async function persist(artifactId: string, productionResultId: string) {
+    const resourceRef = `socialfile:${artifactId}`;
+    const detail = { agentWorkflow: workflow, artifacts: [{ artifactId, version: '1', status: 'review_required', kind: 'short_video', origin: 'agent', resourceRef,
+      createdAt: '2026-09-26T02:00:00.000Z', content: { productionResult: { productionResultId, version: '1', artifactResourceRef: resourceRef } } }] };
+    await persistWeeklyProductionResultAuthority({ repository, tenantId: 'tenant-1', authority: authority as any, detail: detail as any });
+  }
+  await persist('original-artifact', 'original-result');
+  await persist('rework-artifact', 'new-rework-result');
+  await persist('rework-artifact', 'new-rework-result');
+  const originalGoal = authority.businessGoal;
+  authority.businessGoal = { ...originalGoal, version: originalGoal.version + 1 };
+  await assert.rejects(persist('rework-artifact', 'new-rework-result'), /weekly_production_result_lineage_changed/);
+  authority.businessGoal = originalGoal;
+  const rows = repository.rows.get(STARTER_COLLECTIONS.socialContentLineage)!;
+  assert.equal(rows.length, 2);
+  assert.equal(rows[0]!.lineage_id, rows[1]!.lineage_id);
+  assert.notEqual(rows[0]!.lineage_version, rows[1]!.lineage_version);
+  assert.deepEqual(rows.map(row => (row.payload as any).productionResultRef), [
+    { type: 'production_result', id: 'original-result', version: 1 },
+    { type: 'production_result', id: 'new-rework-result', version: 1 },
+  ]);
 });

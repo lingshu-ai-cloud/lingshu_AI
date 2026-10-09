@@ -1,9 +1,10 @@
 import path from 'node:path';
 import type { SocialProductionResult } from '../../shared/contracts/socialContentWorkflow.js';
-import type { VersionedSocialRef, WeeklyOperatingPackage } from '../../shared/contracts/socialProgram.js';
+import type { VersionedSocialRef, WeeklyOperatingPackage, WeeklyExecutionTask } from '../../shared/contracts/socialProgram.js';
 import { buildPublicationAssignment, type PublishableProductionResult } from '../digitalEmployees/publishingExecution.js';
 import { parseSocialContentAuthorityLineage, type SocialContentAuthorityLineage } from '../starter198/socialContentLineage.js';
-import type { DataStore } from '../storage/datastore.js';
+import {socialRequestHash} from '../starter198/socialContentValidation.js';
+import type { DataStore,Record_ } from '../storage/datastore.js';
 import { store } from '../storage/index.js';
 import {
   createAssignedPublicationPackage,
@@ -47,16 +48,17 @@ function mediaAsset(value: unknown, kind: 'video' | 'cover') {
   return { kind, fileName, downloadUrl, contentHash } as const;
 }
 
-export function productionFromArtifact(
+function convertProductionFromArtifact(
   artifact: ArtifactRow,
   lineage: SocialContentAuthorityLineage,
   weekly: WeeklyOperatingPackage,
   options: { preserveProductionVersion?: boolean } = {},
+  audit?:{reviewId:string;reviewHash:string;receiptId:string;receiptHash:string;sourceHash:string},
 ): PublishableProductionResult {
   const content = object(artifact.content);
   const raw = object(content.productionResult) as unknown as SocialProductionResult;
   if (!text(raw.productionResultId) || raw.productionResultId !== lineage.productionResultRef?.id
-    || !text(raw.version) || raw.technicalReview?.approved !== true || raw.creativeReview?.approved !== true
+    || !text(raw.version) || (!audit&&(raw.technicalReview?.approved !== true || raw.creativeReview?.approved !== true))
     || raw.status !== 'asset_review') throw new Error('production_result_not_publishable');
   const storage = object(content.mediaStorage);
   const assets = [mediaAsset(storage.video, 'video'), mediaAsset(storage.cover, 'cover')].filter((item): item is NonNullable<typeof item> => Boolean(item));
@@ -80,9 +82,24 @@ export function productionFromArtifact(
     body,
     hashtags: [],
     assets,
-    sourceRefs,
+    sourceRefs:[...sourceRefs,...(audit?[{type:'social_director_g5_review',id:audit.reviewId,version:1},{type:'social_production_receipt',id:audit.receiptId,version:1}]:[])],
     acceptedAt: text(artifact.updated_at) || raw.createdAt,
   };
+}
+
+/** Existing automatic-summary conversion remains strict and cannot accept a caller approval override. */
+export function productionFromArtifact(artifact:ArtifactRow,lineage:SocialContentAuthorityLineage,weekly:WeeklyOperatingPackage,options:{preserveProductionVersion?:boolean}={}):PublishableProductionResult{return convertProductionFromArtifact(artifact,lineage,weekly,options);}
+/** An immutable pending summary requires actual final user approval and fresh same-source G4/G5. */
+export async function productionFromApprovedWeeklyArtifact(dataStore:DataStore,artifact:ArtifactRow,lineage:SocialContentAuthorityLineage,weekly:WeeklyOperatingPackage,options:{preserveProductionVersion?:boolean}={}):Promise<PublishableProductionResult>{
+ const rows=await dataStore.list<Record_>('starter_social_content_artifacts',{where:{tenant_id:artifact.tenant_id,artifact_id:artifact.artifact_id},perPage:2});const actual=rows.items[0];
+ if(rows.totalItems!==1||rows.items.length!==1||!actual||actual.status!=='approved'||actual.content_hash!==artifact.content_hash||socialRequestHash(actual.content)!==socialRequestHash(artifact.content)||String(actual.version)!==artifact.version||actual.task_id!==artifact.task_id)throw Error('production_result_actual_approval_changed');
+ const raw=object(object(actual.content).productionResult);if(raw.technicalReview&&object(raw.technicalReview).approved===true&&object(raw.creativeReview).approved===true)return productionFromArtifact(artifact,lineage,weekly,options);
+ if(weekly.packageId!==lineage.packageRef.id||weekly.version!==lineage.packageRef.version||weekly.programId!==lineage.programRef.id)throw Error('production_result_weekly_scope_changed');
+ const approvals=await dataStore.list<Record_>('social_weekly_execution_tasks',{where:{tenant_id:artifact.tenant_id,package_id:weekly.packageId,package_version:weekly.version},perPage:1000});if(approvals.items.length!==approvals.totalItems)throw Error('production_result_approval_scan_incomplete');
+ const matched=approvals.items.map(row=>object(row.payload)as unknown as WeeklyExecutionTask).filter(task=>task.tenantId===artifact.tenant_id&&task.programId===weekly.programId&&task.packageId===weekly.packageId&&task.packageVersion===weekly.version&&task.publicationTaskId===lineage.publicationTaskRef.id&&task.schedule?.stepKind==='user_approval'&&task.status==='succeeded'&&task.resultRefs?.some(ref=>ref.type==='user_content_approval')&&task.resultRefs.some(ref=>ref.type==='starter_social_content_artifact'&&ref.id===artifact.artifact_id&&ref.version===Number(String(artifact.version).replace(/^v/,''))));
+ if(matched.length!==1)throw Error('production_result_final_user_approval_required');
+ const {validateWeeklyPublicationAcceptance}=await import('../runtime/socialWeeklyResultValidation.js');await validateWeeklyPublicationAcceptance(dataStore,matched[0]!,String(raw.productionResultId));
+ const {readVerifiedWeeklyContentQualityAudit}=await import('../runtime/weeklyContentQualityAudit.js');const audit=await readVerifiedWeeklyContentQualityAudit(dataStore,{...matched[0]!,workflowKind:'content',schedule:{...matched[0]!.schedule,stepKind:'quality_check'}},{type:'starter_social_content_artifact',id:artifact.artifact_id,version:Number(String(artifact.version).replace(/^v/,''))});return convertProductionFromArtifact(artifact,lineage,weekly,options,audit);
 }
 
 export interface WeeklyPublicationWorkerResult {
@@ -146,7 +163,8 @@ export async function runWeeklyPublicationPackageScan(input: {
           && row.payload?.resultRefs?.some((ref: any) => ref.type === 'starter_social_content_artifact' && ref.id === artifactId && ref.version === Number(String(artifact.version).replace(/^v/, ''))));
         if (!accepted) { result.skipped += 1; continue; }
       }
-      const publishable = productionFromArtifact(artifact, lineage, weekly);
+      const rawQuality=object(object(artifact.content).productionResult);
+      const publishable = object(rawQuality.technicalReview).approved===true&&object(rawQuality.creativeReview).approved===true?productionFromArtifact(artifact,lineage,weekly):await productionFromApprovedWeeklyArtifact(dataStore,artifact,lineage,weekly);
       const assignment = buildPublicationAssignment({ tenantId, operatingPackage: weekly, publicationTask, productionResult: publishable });
       const persisted = await persistPublicationAssignment(assignment, dataStore);
       if (persisted.created) result.createdAssignments += 1;

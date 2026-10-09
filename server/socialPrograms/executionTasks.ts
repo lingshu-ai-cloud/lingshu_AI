@@ -731,12 +731,16 @@ export function createWeeklyExecutionTaskService(dataStore: DataStore) {
         if (task.inheritedBlockingTaskIds.length) throw new SocialProgramError('weekly_execution_upstream_incomplete', 409, '上游生产步骤尚未完成。');
         if (['cancelled', 'dead_letter'].includes(task.status)) throw new SocialProgramError('weekly_execution_task_terminal', 409, '终态任务不能审批。');
         if (task.status === 'succeeded') return task;
+        const approvalDependencies = await taskRows(dataStore, tenantId, task.dependsOnTaskIds);
+        if (approvalDependencies.length !== task.dependsOnTaskIds.length || approvalDependencies.some(row => row.payload.programId !== task.programId || row.payload.packageId !== task.packageId || row.payload.packageVersion !== task.packageVersion || row.payload.status !== 'succeeded')) {
+          throw new SocialProgramError('weekly_execution_upstream_incomplete', 409, '本周真实前置任务尚未完成，不能验收。');
+        }
+        if (task.status === 'pending_activation') throw new SocialProgramError('weekly_execution_package_not_active', 409, '草案尚未启用，不能绕过前置任务验收。');
         if (task.inputSnapshot.inventoryReuseRef) {
           const actualDependencies = await taskRows(dataStore, tenantId, task.dependsOnTaskIds);
           if (actualDependencies.length !== task.dependsOnTaskIds.length || actualDependencies.some(row => row.payload.programId !== task.programId || row.payload.packageId !== task.packageId || row.payload.packageVersion !== task.packageVersion || row.payload.status !== 'succeeded')) {
             throw new SocialProgramError('weekly_execution_upstream_incomplete', 409, '本周真实前置任务尚未完成，不能验收库存。');
           }
-          if (task.status === 'pending_activation') throw new SocialProgramError('weekly_execution_package_not_active', 409, '草案尚未启用，不能绕过前置任务验收库存。');
           const { createInventoryUserApproval } = await import('../runtime/weeklyInventoryApprovalEvidence.js');
           const receipt = await createInventoryUserApproval(dataStore, task, userId, now);
           return { ...task, ...receipt, status: 'succeeded', schedule: { ...task.schedule, actualStartedAt: task.schedule.actualStartedAt ?? now, actualFinishedAt: now }, updatedAt: now };
@@ -753,9 +757,7 @@ export function createWeeklyExecutionTaskService(dataStore: DataStore) {
         });
         const artifactsWithVideo = artifacts.items.map(item => ({ ...item, content: socialJson(item.content) })).filter(item => item.content?.productionResult?.productionResultId && item.content?.mediaStorage?.video?.fileId);
         const artifact = artifactsWithVideo[0];
-        if (!artifact || !['review_required', 'approved'].includes(artifact.status)
-          || artifact.content.productionResult.technicalReview?.approved !== true
-          || artifact.content.productionResult.creativeReview?.approved !== true) {
+        if (!artifact || !['review_required', 'approved'].includes(artifact.status)) {
           throw new SocialProgramError('weekly_production_artifact_not_reviewable', 409, '真实成片尚未就绪或质量检查未通过。');
         }
         await validateContentArtifact(dataStore, { ...task, workflowKind: 'content', schedule: { ...task.schedule, stepKind: 'quality_check' } }, {

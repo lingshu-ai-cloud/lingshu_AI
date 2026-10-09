@@ -30,11 +30,13 @@ export async function readWeeklyContentQualityAuditContext(store:DataStore,task:
  return {repository,artifact,content,context,scope:{tenantId:task.tenantId,taskId:String(artifact.task_id),runId,artifactId:ref.id}};
 }
 /** Explicit review route. G4 never substitutes for the independent director G5 review. */
-export async function assertWeeklyContentQualityAudit(store:DataStore,task:WeeklyExecutionTask,artifactRef:VersionedSocialRef):Promise<void>{
+export async function readVerifiedWeeklyContentQualityAudit(store:DataStore,task:WeeklyExecutionTask,artifactRef:VersionedSocialRef){
  const live=await readWeeklyContentQualityAuditContext(store,task,artifactRef);
  const {assertSocialDirectorG5Audit}=await import('../starter198/socialDirectorG5ReviewService.js');
  const audit=await assertSocialDirectorG5Audit(live.repository,{...live.scope,artifactHash:String(live.artifact.content_hash)});
  const result=object(live.content.productionResult),receipt=audit.receipt;
  requireAudit(receipt.gate==='G5'&&receipt.status==='passed'&&['director_agent','human_director_reviewer'].includes(receipt.actor)&&receipt.handoffId===live.context.handoffId&&receipt.handoffVersion===live.context.handoffVersion&&receipt.productionResultRef.id===result.productionResultId&&receipt.productionResultRef.version===result.version&&receipt.productionResultRef.recordHash===socialRequestHash(result)&&receipt.artifactRefs.includes(String(live.artifact.resource_ref)),'weekly_quality_audit_g5_source_changed');
- // The artifact remains immutable and still requires the separate final user approval.
+ return {reviewId:audit.review.reviewId,reviewHash:audit.review.recordHash,receiptId:receipt.receiptId,receiptHash:receipt.recordHash,sourceHash:audit.sourceHash};
 }
+/** The artifact remains immutable and still requires the separate final user approval. */
+export async function assertWeeklyContentQualityAudit(store:DataStore,task:WeeklyExecutionTask,artifactRef:VersionedSocialRef):Promise<void>{await readVerifiedWeeklyContentQualityAudit(store,task,artifactRef);}

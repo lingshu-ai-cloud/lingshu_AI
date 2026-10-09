@@ -6,7 +6,7 @@ import {assertDirectorG5QwenConfigured,reviewDirectorG5FramesWithQwen} from '../
 import type {SocialDirectorG5Context,SocialDirectorG5Check} from '../../shared/contracts/socialDirectorG5Review.js';
 export interface DirectorG5Frame{sceneId:string;timeSeconds:number;sha256:string;base64:string;mimeType:'image/jpeg'}
 export interface DirectorG5RuntimeDescriptor{configured:boolean;model:string;reservedCostCny:number|null;inputPricePerMillion:number|null;outputPricePerMillion:number|null}
-export interface DirectorG5RuntimeResult{model:string;providerResponseId:string;inputTokens:number|null;outputTokens:number|null;checks:SocialDirectorG5Check[];rawOutput:string}
+export interface DirectorG5RuntimeResult{model:string;providerResponseId:string;inputTokens:number|null;outputTokens:number|null;cacheTokens:number|null;checks:SocialDirectorG5Check[];rawOutput:string}
 export interface DirectorG5RuntimePort{descriptor():DirectorG5RuntimeDescriptor;execute(input:{requestId:string;context:SocialDirectorG5Context;frames:DirectorG5Frame[]}):Promise<DirectorG5RuntimeResult>}
 function configuredPositive(name:string){const v=Number(process.env[name]);return typeof process.env[name]==='string'&&Number.isFinite(v)&&v>0?v:null;}
 export const directorG5Runtime:DirectorG5RuntimePort={descriptor(){let configured=false;try{assertDirectorG5QwenConfigured();configured=true;}catch{}return {configured,model:(process.env.QWEN_EXACT_VL_MODEL??'qwen3-vl-flash').trim(),reservedCostCny:configuredPositive('DIRECTOR_G5_RESERVED_COST_CNY'),inputPricePerMillion:configuredPositive('DIRECTOR_G5_INPUT_PRICE_CNY_PER_MILLION'),outputPricePerMillion:configuredPositive('DIRECTOR_G5_OUTPUT_PRICE_CNY_PER_MILLION')};},execute:reviewDirectorG5FramesWithQwen};
