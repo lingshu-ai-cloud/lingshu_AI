@@ -96,6 +96,9 @@ test('报价 API：租户隔离、并发控制、人工确认、安全回复与�
   const { dataStore, records } = memoryStore();
   const sentImages: Array<{ to: string; caption: string; bytes: Buffer }> = [];
   let activeFactVersion = { id: 'enterprise-facts-v3-quote', revision: 3, contentHash: 'quote-facts-hash' };
+  let customerChannel: string | undefined;
+  let customerSource: string | undefined;
+  let customerTimeline: Array<{ actor: string; type?: string; timestamp: number }> | undefined;
   const app = express();
   app.use(express.json({ limit: '100kb' }));
   const auth = (req: express.Request, res: express.Response, next: express.NextFunction) => {
@@ -119,7 +122,7 @@ test('报价 API：租户隔离、并发控制、人工确认、安全回复与�
     } as any),
     renderCard: async () => Buffer.from('png-card'),
     messagingReady: async () => true,
-    findCustomer: (_tenantId, customerId) => ({ id: customerId, waNumber: '15550001111', whatsappProfileName: 'Emily WA', timeline: [{ actor: 'buyer', timestamp: Date.now() }] }),
+    findCustomer: (_tenantId, customerId) => ({ id: customerId, source: customerSource, messagingChannel: customerChannel, waNumber: '15550001111', whatsappProfileName: 'Emily WA', timeline: customerTimeline || [{ actor: 'buyer', timestamp: Date.now() }] }),
     sendImage: async input => {
       sentImages.push({ to: input.to, caption: input.caption, bytes: input.bytes });
       return { messageId: 'wamid.quote-1', recipientId: input.to, raw: {} };
@@ -212,6 +215,24 @@ test('报价 API：租户隔离、并发控制、人工确认、安全回复与�
     assert.equal(cardResponse.status, 200);
     assert.equal(cardResponse.headers.get('content-type'), 'image/png');
     assert.deepEqual(Buffer.from(await cardResponse.arrayBuffer()), Buffer.from('png-card'));
+    for (const channel of ['messenger', 'instagram']) {
+      customerSource = channel;
+      const mismatch = await call(`/drafts/${created.id}/send-card`, 'POST');
+      assert.equal(mismatch.status, 409);
+      assert.equal((await mismatch.json()).error, 'quote_delivery_channel_mismatch', 'an attached WhatsApp number must not reroute another channel conversation');
+    }
+    customerChannel = 'whatsapp';
+    customerSource = 'instagram';
+    customerTimeline = [{ actor: 'buyer', type: 'whatsapp', timestamp: Date.now() - 25 * 60 * 60 * 1000 }, { actor: 'buyer', type: 'messenger', timestamp: Date.now() }, { actor: 'buyer', type: 'instagram', timestamp: Date.now() }];
+    const wrongChannelWindow = await call(`/drafts/${created.id}/send-card`, 'POST');
+    assert.equal(wrongChannelWindow.status, 409);
+    assert.equal((await wrongChannelWindow.json()).error, 'whatsapp_template_required', 'a recent message from another channel must not extend the WhatsApp window');
+    assert.equal(sentImages.length, 0, 'rejected channel/window requests must not send externally');
+    customerTimeline = [{ actor: 'buyer', type: 'whatsapp', timestamp: Date.now() + 60 * 60 * 1000 }];
+    const futureWindow = await call(`/drafts/${created.id}/send-card`, 'POST');
+    assert.equal(futureWindow.status, 409, 'a future timestamp must not authorize sending');
+    assert.equal((await futureWindow.json()).error, 'whatsapp_template_required');
+    customerTimeline = [{ actor: 'buyer', type: 'whatsapp', timestamp: Date.now() }];
     const sentResponse = await call(`/drafts/${created.id}/send-card`, 'POST');
     assert.equal(sentResponse.status, 200);
     const sent = await sentResponse.json();

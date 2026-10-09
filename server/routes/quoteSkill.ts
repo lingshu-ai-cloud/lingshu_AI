@@ -39,7 +39,7 @@ type QuoteSkillDeps = {
   canConfirm?: (req: Request, userId: string) => Promise<boolean>;
   renderCard?: typeof renderQuoteCard;
   sendImage?: typeof sendTenantWhatsAppImageWithReceipt;
-  findCustomer?: (tenantId: string, customerId: string) => { id?: string; waNumber?: string; whatsappProfileName?: string; timeline?: Array<{ actor?: string; timestamp?: number }> } | undefined;
+  findCustomer?: (tenantId: string, customerId: string) => { id?: string; source?: string; messagingChannel?: string; waNumber?: string; whatsappProfileName?: string; timeline?: Array<{ actor?: string; type?: string; timestamp?: number }> } | undefined;
   messagingReady?: (tenantId: string) => Promise<boolean>;
   recordOutbound?: typeof markWhatsAppHumanReply;
 };
@@ -237,7 +237,16 @@ export function createQuoteSkillRouter(deps: QuoteSkillDeps = {}): Router {
   const withDraftLock = createKeyedLock();
   const renderCard = deps.renderCard || renderQuoteCard;
   const sendImage = deps.sendImage || sendTenantWhatsAppImageWithReceipt;
-  const findCustomer = deps.findCustomer || ((tenantId: string, customerId: string) => getWhatsAppCustomers(tenantId).find(item => item.id === customerId) || getMessengerCustomers(tenantId).find(item => item.id === customerId) || getInstagramCustomers(tenantId).find(item => item.id === customerId));
+  const findCustomer = deps.findCustomer || ((tenantId: string, customerId: string) => {
+    // Acquisition source can be Instagram even for a WhatsApp customer.
+    // Route delivery by the actual conversation store, not that attribution.
+    const whatsapp = getWhatsAppCustomers(tenantId).find(item => item.id === customerId);
+    if (whatsapp) return { ...whatsapp, messagingChannel: 'whatsapp' };
+    const messenger = getMessengerCustomers(tenantId).find(item => item.id === customerId);
+    if (messenger) return { ...messenger, messagingChannel: 'messenger' };
+    const instagram = getInstagramCustomers(tenantId).find(item => item.id === customerId);
+    return instagram ? { ...instagram, messagingChannel: 'instagram' } : undefined;
+  });
   const messagingReady = deps.messagingReady || (async (tenantId: string) => (await readCustomerMessagingAuthorization(tenantId)).providerReady);
   const recordOutbound = deps.recordOutbound || markWhatsAppHumanReply;
   const customerVisibleDraft = (tenantId: string, draft: QuoteSkillDraft): QuoteSkillDraft => {
@@ -495,11 +504,14 @@ export function createQuoteSkillRouter(deps: QuoteSkillDeps = {}): Router {
       if (!await canConfirm(req, userId)) { res.status(403).json({ error: 'quote_send_forbidden', message: '当前角色无权发送正式报价。' }); return; }
       if (!await messagingReady(tenantId)) { res.status(409).json({ error: 'whatsapp_not_ready', message: 'WhatsApp 通道尚未连接。' }); return; }
       const customer = findCustomer(tenantId, owned.draft.customerId);
+      const channel = customer?.messagingChannel || (['messenger', 'instagram'].includes(customer?.source || '') ? customer?.source : 'whatsapp');
+      if (channel !== 'whatsapp') { res.status(409).json({ error: 'quote_delivery_channel_mismatch', message: '该客户会话不是 WhatsApp，不能通过 WhatsApp 发送报价卡。请插入报价回复到当前会话。' }); return; }
       const to = boundedText(customer?.waNumber, 80);
       if (!customer || !to) { res.status(409).json({ error: 'whatsapp_recipient_required', message: '客户缺少可用的 WhatsApp 收件号码。' }); return; }
-      const timeline = Array.isArray(customer.timeline) ? customer.timeline as Array<{ actor?: string; timestamp?: number }> : [];
-      const latestBuyerAt = Math.max(0, ...timeline.filter(item => item.actor === 'buyer').map(item => Number(item.timestamp || 0)));
-      if (!latestBuyerAt || Date.now() - latestBuyerAt > 24 * 60 * 60 * 1000) {
+      const timeline: Array<{ actor?: string; type?: string; timestamp?: number }> = Array.isArray(customer.timeline) ? customer.timeline : [];
+      const windowNow = Date.now();
+      const latestBuyerAt = Math.max(0, ...timeline.filter(item => item.actor === 'buyer' && (!item.type || item.type === 'whatsapp')).map(item => Number(item.timestamp || 0)).filter(timestamp => Number.isFinite(timestamp) && timestamp <= windowNow));
+      if (!latestBuyerAt || windowNow - latestBuyerAt > 24 * 60 * 60 * 1000) {
         res.status(409).json({ error: 'whatsapp_template_required', message: '距客户上次消息已超过 24 小时，图片报价需通过已审核的 WhatsApp 模板发送。' }); return;
       }
       const bytes = await renderCard(customerVisibleDraft(tenantId, owned.draft));

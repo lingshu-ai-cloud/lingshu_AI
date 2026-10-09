@@ -21,6 +21,13 @@ export const MIGRATION_CHECKSUM_MANIFEST = 'scripts/pb-migration-checksums.json'
 // initial zero budget/spend and empty evidence valid. Existing installations are repaired
 // by 1790985601_lock_social_operating_rules.js.
 const APPROVED_COMPATIBILITY_REPAIRS: Record<string, { from: string; to: string }> = {
+  // Metadata correction only: the queue migration has these exact bytes since
+  // its first commit (1f36cf3). Its original manifest recorded a different hash.
+  // Pin both hashes; the normal on-disk hash check continues to reject changes.
+  '1791072008_create_content_execution_queue.js': {
+    from: '17082ecdb5a6228182507d1d2a01f55c6aac48922cd376c489fecce8c8fb2f07',
+    to: '2aed450a4c83a5f6133817f47eef9c1f08ecde5e65f22427aa7480c2c96f67f8',
+  },
   '1790899200_create_social_weekly_reviews.js': {
     from: '1806d2a05adcadbf5e043169509abc1602aae6ae11d9e3b15ab07c09b85d0a99',
     to: 'c931ba098ac2b421eee9e68b4b7d1887080fdea1455b46fac6d3d9c827f0035d',

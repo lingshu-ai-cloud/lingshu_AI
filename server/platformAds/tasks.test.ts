@@ -7,6 +7,9 @@ const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lingshu-platform-ads-'));
 process.env.LOCAL_STORE_DIR = tempDir;
 process.env.PB_URL = 'http://127.0.0.1:1';
 process.env.NODE_ENV = 'test';
+// Isolated test JSON records and mocked provider calls only.
+process.env.ENABLE_LOCAL_DEV_FALLBACK = 'true';
+process.env.TEST_ONLY_EXTERNAL_EFFECT_LEASE_FALLBACK = 'true';
 
 try {
   const { createPlatformAdTask, getPlatformAdTask, listPlatformAdTasks, updatePlatformAdTask, validatePlatformAdTask, changePlatformAdManagement, withPlatformAdTaskLock } = await import('./tasks.js');

@@ -12,6 +12,6 @@ assert.doesNotMatch(app, /page === 'socialWorkspace' &&/,
 assert.equal(resolvePage('socialWorkspace'), 'smartAssets');
 assert.equal(resolvePage('socialSetup'), 'smartAssets');
 assert.equal(resolvePage('socialPlanning'), 'smartAssets');
-assert.equal(resolvePage('socialAccounts'), 'socialMonitoring');
+assert.equal(resolvePage('socialAccounts'), 'digitalEmployees');
 
 console.log('removed social workbench navigation and legacy route compatibility passed');

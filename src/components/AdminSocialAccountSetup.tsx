@@ -1,3 +1,4 @@
+import { normalizeAdminOAuthConfig, type AdminOAuthConfig, type ClearableOAuthPlatform } from '../lib/adminOAuthConfig';
 import { useEffect, useRef, useState } from 'react';
 import {
   AlertTriangle,
@@ -17,43 +18,6 @@ import { validateOAuthCredentialPairs } from '../lib/socialOAuthCredentialValida
 import { SocialPlatformIcon } from './SocialPlatformIcon';
 import { SocialConnectionPanel, YouTubeConnectionPanel } from './YouTubeIntegration';
 import { useModalFocus } from '../hooks/useModalFocus';
-
-type ClearableOAuthPlatform = 'youtube' | 'meta' | 'instagram' | 'tiktok';
-
-interface AdminOAuthConfig {
-  admin: string;
-  updatedAt: string | null;
-  disabledPlatforms?: ClearableOAuthPlatform[];
-  callbacks: {
-    youtube: string;
-    instagram: string;
-    facebook: string;
-    tiktok: string;
-  };
-  values: {
-    youtubeOAuthClientId: string;
-    youtubeOAuthClientSecret: string;
-    metaSocialAppId: string;
-    metaSocialAppSecret: string;
-    instagramAppId: string;
-    instagramAppSecret: string;
-    tiktokClientKey: string;
-    tiktokClientSecret: string;
-    advancedManualConnectEnabled: boolean;
-  };
-  secretSet: {
-    youtubeOAuthClientSecret: boolean;
-    metaSocialAppSecret: boolean;
-    instagramAppSecret: boolean;
-    tiktokClientSecret: boolean;
-  };
-  secretLength?: {
-    youtubeOAuthClientSecret: number;
-    metaSocialAppSecret: number;
-    instagramAppSecret: number;
-    tiktokClientSecret: number;
-  };
-}
 
 interface OAuthForm {
   youtubeOAuthClientId: string;
@@ -221,8 +185,9 @@ export default function AdminSocialAccountSetup() {
       const response = await fetch('/api/overseas/admin/oauth-config', { headers: authHeader() });
       const data = await response.json().catch(() => ({})) as AdminOAuthConfig & { error?: string };
       if (!response.ok) throw new Error(data.error || '无法读取管理员平台配置');
-      setConfig(data);
-      setForm(formFromConfig(data));
+      const normalized = normalizeAdminOAuthConfig(data);
+      setConfig(normalized);
+      setForm(formFromConfig(normalized));
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : '无法读取管理员平台配置');
     } finally {
@@ -257,8 +222,9 @@ export default function AdminSocialAccountSetup() {
       });
       const data = await response.json().catch(() => ({})) as AdminOAuthConfig & { error?: string };
       if (!response.ok) throw new Error(data.error || '保存平台配置失败');
-      setConfig(data);
-      setForm(formFromConfig(data));
+      const normalized = normalizeAdminOAuthConfig(data);
+      setConfig(normalized);
+      setForm(formFromConfig(normalized));
       setNotice('平台凭证已保存。请确认下方回调地址已原样登记到平台后台，再让客户连接账号。');
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : '保存平台配置失败');
@@ -288,8 +254,9 @@ export default function AdminSocialAccountSetup() {
       if (!response.ok || !data.config) {
         throw new Error(data.detail || data.error || '清除平台配置失败');
       }
-      setConfig(data.config);
-      setForm(formFromConfig(data.config));
+      const normalized = normalizeAdminOAuthConfig(data.config);
+      setConfig(normalized);
+      setForm(formFromConfig(normalized));
       const label = target === 'youtube'
         ? 'YouTube / Google'
         : target === 'meta'

@@ -6,6 +6,9 @@ const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ad-execution-'));
 process.env.LOCAL_STORE_DIR = dir;
 process.env.PB_URL = 'http://127.0.0.1:1';
 process.env.NODE_ENV = 'test';
+// Isolated test JSON records and mocked provider calls only.
+process.env.ENABLE_LOCAL_DEV_FALLBACK = 'true';
+process.env.TEST_ONLY_EXTERNAL_EFFECT_LEASE_FALLBACK = 'true';
 process.env.META_ADS_API_VERSION = 'v25.0';
 const originalFetch = globalThis.fetch;
 try {

@@ -16,7 +16,7 @@ globalThis.fetch = async () => { throw Error('No external network allowed'); };
 try {
   const { continueManagedOperatingCycle, approveGoalForReview } = await import('../routes/digitalEmployees.js');
   const { runManagedOperatingContinuations } = await import('./runtimeOrchestrator.js');
-  const config = normalizeDigitalEmployeeConfig({ companyName: 'Tenant', industry: 'Tools', primaryBusiness: 'A', focusProducts: 'A', autonomyMode: 'automatic', allowRealPublishing: true, publishingTargets: [{ platform: 'youtube', accountId: 'a', accountLabel: 'A' }], managedPublishingGrant: { enabled: true, grantId: 'grant', authorizedBy: 'actor', accountIds: ['a'], maxPublishItems: 2, validUntil: '2099-02-01' } });
+  const config = normalizeDigitalEmployeeConfig({ companyName: 'Tenant', industry: 'Tools', primaryBusiness: 'A', focusProducts: 'A', autonomyMode: 'automatic', allowRealPublishing: true, publishingTargets: [{ platform: 'youtube', accountId: 'a', accountLabel: 'A' }], managedPublishingGrant: { enabled: true, grantId: 'grant', authorizedBy: 'actor', accountIds: ['a'], maxPublishItems: 3, validUntil: '2099-02-01' } });
   const input = normalizeWeeklyGoal({ startsAt: '2098-12-29', endsAt: '2099-01-04', contentPlatforms: ['youtube'] }, config);
   const pack = recommendPackage(input, config);
   pack.tasks = pack.tasks.filter(task => task.templateId !== 'director');

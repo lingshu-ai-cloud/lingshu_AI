@@ -37,6 +37,8 @@ export type DirectorContextView = {
 };
 
 export function buildDirectorContextView(overview: DigitalEmployeeOverview, link: DigitalEmployeeDeepLink): DirectorContextView | null {
+  if (link.runId && overview.run?.id !== link.runId) return null;
+  if (link.taskId && !overview.tasks.some(item => item.id === link.taskId)) return null;
   const pack = overview.plan?.businessPackage;
   const director = pack?.directorPlan;
   const plans = pack?.tasks.find(item => item.templateId === 'production')?.videoPlans || overview.goal?.videoPlans || [];
@@ -63,12 +65,16 @@ export function buildDirectorContextView(overview: DigitalEmployeeOverview, link
 
 type RuntimeContext = { runId: string; taskId: string; taskKey?: string; entityId?: string; contentId?: string; referenceId?: string };
 
-export default function DirectorTaskContext({ page, runtimeContext, className = '' }: { page: BusinessDestination; runtimeContext?: RuntimeContext; className?: string }) {
-  const stored = useDeliveryHandoff(page);
-  const link = useMemo<DigitalEmployeeDeepLink | null>(() => stored || (runtimeContext ? {
+export function resolveDirectorContextLink(page: BusinessDestination, stored: DigitalEmployeeDeepLink | null, runtimeContext?: RuntimeContext): DigitalEmployeeDeepLink | null {
+  return runtimeContext ? {
     page, runId: runtimeContext.runId, taskId: runtimeContext.taskId,
     businessRef: { taskKey: runtimeContext.taskKey || '', ...(runtimeContext.entityId ? { entityId: runtimeContext.entityId } : {}), ...(runtimeContext.contentId ? { contentId: runtimeContext.contentId } : {}), ...(runtimeContext.referenceId ? { referenceId: runtimeContext.referenceId } : {}) },
-  } : null), [page, stored, runtimeContext?.runId, runtimeContext?.taskId, runtimeContext?.taskKey, runtimeContext?.entityId, runtimeContext?.contentId, runtimeContext?.referenceId]);
+  } : stored;
+}
+
+export default function DirectorTaskContext({ page, runtimeContext, className = '' }: { page: BusinessDestination; runtimeContext?: RuntimeContext; className?: string }) {
+  const stored = useDeliveryHandoff(page);
+  const link = useMemo(() => resolveDirectorContextLink(page, stored, runtimeContext), [page, stored, runtimeContext?.runId, runtimeContext?.taskId, runtimeContext?.taskKey, runtimeContext?.entityId, runtimeContext?.contentId, runtimeContext?.referenceId]);
   const [overview, setOverview] = useState<DigitalEmployeeOverview | null>(null);
   const [error, setError] = useState('');
   const [decision, setDecision] = useState<DirectorDecision | ''>('');
@@ -86,7 +92,7 @@ export default function DirectorTaskContext({ page, runtimeContext, className = 
   if (!overview && !error) return <section data-testid="director-task-context-loading" className={`border-b border-emerald-100 bg-emerald-50/70 px-5 py-3 text-xs text-emerald-800 ${className}`}><Loader2 className="mr-2 inline animate-spin" size={14} />正在读取本周编导任务…</section>;
   if (error) return <section role="alert" className={`flex items-center gap-2 border-b border-amber-200 bg-amber-50 px-5 py-3 text-xs text-amber-900 ${className}`}><AlertCircle size={14} />{error}</section>;
   const view = overview ? buildDirectorContextView(overview, link) : null;
-  if (!view) return null;
+  if (!view) return <section role="alert" className={`border-b border-amber-200 bg-amber-50 px-5 py-3 text-xs text-amber-900 ${className}`}>关联任务不属于当前运行或已不可用，请返回数字员工看板重新打开对应任务。</section>;
   const isBusinessScheduling = (link.businessRef?.taskKey || '') === 'content_mode_routing' || view.stage === '详细选题与经营排期';
   const currency = overview?.plan?.businessPackage?.directorPlan?.currency === 'USD' ? '$' : '¥';
   const remaining = Math.max(0, view.productionBudget - view.productionSpent - view.productionReserved);
