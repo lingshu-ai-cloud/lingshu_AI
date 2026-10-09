@@ -736,7 +736,7 @@ publishingRouter.get('/posts/effects', async (_req, res) => {
 publishingRouter.get('/briefing', async (_req, res, next) => {
   try {
     const { tenantId } = res.locals as AuthLocals;
-    const result = await store.list<PostRecord>('posts', { where: { tenant_id: tenantId }, perPage: 50, sort: '-updated' });
+    const result = await store.list<PostRecord>('posts', { where: { tenant_id: tenantId }, perPage: 50, sort: '-published_at' });
     const top = result.items
       .map(publicPost)
       .filter(item => item.inquiries > 0)
