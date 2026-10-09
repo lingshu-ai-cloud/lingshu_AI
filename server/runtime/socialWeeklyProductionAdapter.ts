@@ -1,3 +1,7 @@
+import {createExactShotMaterializationService} from '../lib/referenceExactShotMaterialization.js';
+import { weeklyProductionAdmissionMessage } from './weeklyProductionAdmissionMessage.js';
+import {ensureOriginalSocialContentProductionQueued} from '../starter198/socialContentOriginalRunQueueRecovery.js';
+import {readWeeklyReferenceSources,weeklyReferenceResolver,assertWeeklyReferenceBindings} from './socialWeeklyReferenceSource.js';
 import {readVerifiedNoSharedMaterialDemand,freezeOriginalRunMaterialDemand} from './socialWeeklyOriginalRunMaterialDemand.js';
 import {publicationPreparationDeadline} from '../socialPrograms/publicationDeadlines.js';
 import {assertWeeklyProductionCoverage} from './weeklyProductionCoverageAdmission.js';
@@ -120,6 +124,7 @@ export function createSocialWeeklyProductionAdapter(dataStore: DataStore, ports:
     let scriptEvidence: VersionedSocialRef | null = null;
     let storyboardEvidence: VersionedSocialRef | null = null;
     let automaticMaterialEvidence:VersionedSocialRef|null=null;
+    let startedHere=false;
     try {
       if (!detail) {
         const goalRef = pkg.businessContentGoalRef;
@@ -131,7 +136,7 @@ export function createSocialWeeklyProductionAdapter(dataStore: DataStore, ports:
           title: item.topic, objective: goal.objective, productRef: goal.products[0], audience: goal.audiences[0], markets: goal.markets, customTopic: item.topic,
           callToAction: publication.cta, platforms: [publication.platform], languages: goal.languages,
           formats: ['short_video'], requestedOutputCount: 1, dueAt: publicationPreparationDeadline(publication.publishWindow),
-          weeklyPlanId: pkg.packageId, mode: 'weekly', managementMode: 'one_click_managed', productionApproach: 'ai_enhanced', productionMode: 'social_ready',
+          weeklyPlanId: pkg.packageId, mode: 'weekly', creationMode:'viral_replication', themeId:'product_value', managementMode: 'one_click_managed', productionApproach: 'ai_enhanced', productionMode: 'social_ready',
           weeklyBudgetCny: pkg.socialContentPackage.weeklyBudgetCny,
           perItemBudgetCny: pkg.socialContentPackage.perItemBudgetCny,
           programRef: { objectType: 'social_program', id: task.programId, version: String(programRows.items[0].payload.version) },
@@ -149,10 +154,41 @@ export function createSocialWeeklyProductionAdapter(dataStore: DataStore, ports:
       if(publication.contentTemplateBindingRef){const baseline=socialObject(socialJson(boundRow.script_baseline));if(JSON.stringify(baseline?.contentTemplateStructure)!==JSON.stringify(item.contentTemplateStructure)){scriptEvidence=null;storyboardEvidence=null;}}
       const brief = socialObject(socialJson(boundRow.brief))!;
       let authority = brief._weeklyAuthority as Awaited<ReturnType<typeof bindWeeklyProductionAuthority>> | undefined;
+      if (!authority && detail.artifacts.some(a=>a.content?.render&&(a.content.render as Record<string,unknown>).completed===true)) return blocked('weekly_production_result_authority_missing','原成片缺少冻结生产身份，不能补造历史来源凭据。');
       if (!authority) {
         authority = await (ports.bindAuthority ?? bindWeeklyProductionAuthority)({ dataStore, repository, tenantId: task.tenantId, pkg, publication, detail });
         await repository.update(STARTER_COLLECTIONS.socialContentTasks, task.tenantId, boundRow.id, { brief: { ...brief, _weeklyAuthority: authority } });
         detail = (await read({ repository, tenantId: task.tenantId, taskId: detail.taskId }))!;
+      }
+      // Existing owned output is consumed read only; fresh reference admission is
+      // reserved for creating or enqueueing production, never retrofitted into a run.
+      if (['asset_generation','video_generation','quality_check','rework'].includes(task.schedule.stepKind)) {
+        const completed = [...detail.artifacts].sort((a,b)=>Date.parse(b.createdAt)-Date.parse(a.createdAt)).find(a=>a.kind==='short_video'&&a.origin==='agent'&&!['changes_requested','superseded'].includes(a.status)&&a.resourceRef&&a.content?.render&&(a.content.render as Record<string,unknown>).completed===true);
+        if(completed){
+          const v=version(completed.version);if(!v)return blocked('weekly_production_version_invalid','内容产物版本无效。');
+          const ref={type:'starter_social_content_artifact',id:completed.artifactId,version:v};
+          const {validateContentArtifact}=await import('./socialWeeklyResultValidation.js');
+          await validateContentArtifact(dataStore,task,ref);
+          const {resolveSceneCacheSourceRun}=await import('../starter198/socialContentSceneCacheSource.js');
+          const sourceRun=await resolveSceneCacheSourceRun(repository,{tenantId:task.tenantId,taskId:detail.taskId,parentArtifactId:completed.artifactId});
+          const {createSocialSceneReworkService}=await import('../starter198/socialContentSceneReworkService.js');
+          await createSocialSceneReworkService(repository).readCache({tenantId:task.tenantId,taskId:detail.taskId,runId:sourceRun,parentArtifactId:completed.artifactId});
+          await (ports.persistResultAuthority ?? persistWeeklyProductionResultAuthority)({repository,tenantId:task.tenantId,authority,detail});
+          return success(ref);
+        }
+      }
+      const references=await readWeeklyReferenceSources(dataStore,task.tenantId,authority,planning.directorAnalyses.find(analysis=>analysis.analysisId===item.directorAnalysisRef?.id)!);
+      if(!detail.sources.some(source=>source.kind==='reference_link'&&source.status==='active')) {
+        if(detail.runId)return blocked('weekly_reference_binding_revision_required','原运行未冻结参考来源，请修订生产任务后再启动；不能修改已启动运行的来源。');
+        for(const reference of references){await assertAdmission();const attached=await addSource({repository,tenantId:task.tenantId,userId:planning.userConfirmation.confirmedBy,taskId:detail.taskId,idempotencyKey:`weekly-reference:${reference.sourceVersion}`,referenceResolver:weeklyReferenceResolver(references),value:{kind:'reference_link',sourceRef:reference.sourceRef,sourceVersion:reference.sourceVersion,label:reference.label,purpose:'冻结排期已确认参考；保留原来源与权利'}});detail=attached.task;}
+      }
+      assertWeeklyReferenceBindings(detail,references);
+      if(task.schedule.stepKind==='material_readiness'&&!detail.runId){
+        for(const reference of references){const sourceAnalysis=socialObject(socialJson(reference.record.aiAnalysis));
+          if(typeof sourceAnalysis?.analysisRunId!=='string'||!sourceAnalysis.analysisRunId||typeof sourceAnalysis.contentSha256!=='string'||!/^[a-f0-9]{64}$/.test(sourceAnalysis.contentSha256))return blocked('weekly_reference_source_evidence_required','参考原片缺少可信分析运行或原片字节校验，尚未补抽分镜；请先完成原片证据准备。');
+          await assertAdmission();await createExactShotMaterializationService(dataStore).materialize({tenantId:task.tenantId,recordId:String(reference.record.id),expectedSourceSha256:sourceAnalysis.contentSha256,expectedAnalysisRunId:sourceAnalysis.analysisRunId,expectedAnalysisHash:(await import('../starter198/socialContentValidation.js')).socialRequestHash(sourceAnalysis)});await assertAdmission();
+        }
+        detail=(await read({repository,tenantId:task.tenantId,taskId:detail.taskId}))!;
       }
       await (ports.persistResultAuthority ?? persistWeeklyProductionResultAuthority)({ repository, tenantId: task.tenantId, authority, detail });
       if ((classification.contract.items.some(item=>item.classification==='human_irreplaceable') || requiresFrozenHumanMaterialContract(item.materialRequirements ?? [])) && !publication.materialRequirement) {
@@ -228,13 +264,15 @@ export function createSocialWeeklyProductionAdapter(dataStore: DataStore, ports:
         if (!detail.readiness.complete) return { status: 'blocked', code: 'weekly_production_inputs_required', message: `内容输入待补全：${detail.readiness.missing.join('、')}`,
           progress: { contentTaskId: detail.taskId, runId: null, step: 'material_readiness', activity: '等待内容输入补齐', updatedAt: new Date().toISOString() } };
         await assertAdmission();
+        startedHere=true;
         detail = await start({ repository, orchestratorQueue, tenantId: task.tenantId,
           userId: planning.userConfirmation.confirmedBy, taskId: detail.taskId,
-          expectedVersion: detail.version, idempotencyKey: `${binding}:start` });
+          expectedVersion: detail.version, referenceResolver:weeklyReferenceResolver(references), idempotencyKey: `${binding}:start` });
       }
+      if(detail.runId&&!startedHere&&['asset_generation','video_generation','quality_check','rework'].includes(task.schedule.stepKind)&&!await readContentExecutionJob(dataStore,task.tenantId,detail.taskId,detail.runId)){await assertAdmission();await ensureOriginalSocialContentProductionQueued({repository,tenantId:task.tenantId,userId:planning.userConfirmation.confirmedBy,taskId:detail.taskId,runId:detail.runId});}
     } catch (error) {
       const code = error instanceof Error && /^weekly_/.test(error.message) ? error.message : error && typeof error === 'object' && 'code' in error ? String(error.code) : 'weekly_production_admission_failed';
-      return blocked(code, error instanceof Error ? error.message : '内容生产准入失败。');
+      return blocked(code, weeklyProductionAdmissionMessage(code, detail, error instanceof Error ? error.message : '内容生产准入失败。'));
     }
     if (!detail.runId) return blocked('weekly_production_confirmation_required', '内容任务已保留，等待既有生产准入确认。');
     const job = await readContentExecutionJob(dataStore, task.tenantId, detail.taskId, detail.runId);

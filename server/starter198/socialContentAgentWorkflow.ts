@@ -943,7 +943,9 @@ function buildReview(input: BuildSocialAgentWorkflowInput, directorBrief: Social
   ]);
   const requiredRevision = unique([
     ...(directorBlocked ? ['补齐参考分析覆盖或导演方案后重新规划'] : []),
-    ...(referenceBlocked ? ['按参考交接物 issues 补齐证据并重新计算生产门禁'] : []),
+    ...(referenceBlocked ? (input.referenceReviewHandoff?.issues?.length
+      ? input.referenceReviewHandoff.issues.map(issue => issue.action).filter(action => action.trim())
+      : ['补齐参考视频的动作、声音、分镜及授权证据后重新审核']) : []),
     ...sceneResults.flatMap(result => result.requiredRevision),
   ]);
   const reasonCodes = unique([
@@ -1009,7 +1011,7 @@ export interface BuildSocialAgentWorkflowInput {
   assetSupplyPlan: SocialAssetSupplyPlan;
   referenceAnalysis: SocialReferenceVideoAnalysis | null;
   /** Version-bound reference gate; Content may plan but cannot execute while false. */
-  referenceReviewHandoff?: Pick<SocialReferenceReviewHandoff, 'productionExecutionAllowed' | 'versionHash'> | null;
+  referenceReviewHandoff?: Pick<SocialReferenceReviewHandoff, 'productionExecutionAllowed' | 'versionHash'> & Partial<Pick<SocialReferenceReviewHandoff, 'issues'>> | null;
   replicationScript: SocialReplicationScriptVersion | null;
   /** Optional versioned account/content lineage; omitted on historic tasks. */
   replicationContext?: SocialReplicationJobContext;

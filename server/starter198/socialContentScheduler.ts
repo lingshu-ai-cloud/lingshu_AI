@@ -1,3 +1,4 @@
+import {buildWeeklySchedulerMaterialPlanProof} from './socialWeeklySchedulerMaterialPlan.js';
 import { createHash } from 'node:crypto';
 import type { SocialTaskSource } from '../../shared/contracts/socialContentWorkflow.js';
 import { Starter198QuotaError } from './quota.js';
@@ -12,6 +13,7 @@ import {
   withSocialContentSubjectLease,
 } from './socialContentMutation.js';
 import {
+  readSocialTaskDetail,
   requireSocialTask,
   socialTaskReadiness,
   socialTaskSource,
@@ -20,6 +22,8 @@ import {
 import {
   SocialContentWorkflowError,
   socialRequestHash,
+  socialJson,
+  socialObject,
   socialText,
 } from './socialContentValidation.js';
 import { resolveSelectedPackages } from './socialWorkPackages.js';
@@ -119,10 +123,14 @@ async function ensureAutomaticExecution(input: {
     packageSelection: normalizedPackages(input.queue.subject?.packageSelection ?? []),
   })).digest('hex');
   const createdAt = input.now.toISOString();
+  const weeklyTask=Boolean(socialObject(socialObject(socialJson(input.task.brief))?._weeklyAuthority));
+  const materialDetail=weeklyTask?await readSocialTaskDetail({repository:input.repository,tenantId,taskId}):null;
+  const weeklyMaterialPlan=materialDetail?buildWeeklySchedulerMaterialPlanProof({tenantId,taskId,commandId:input.queue.commandId,row:input.task,detail:materialDetail,sources:input.sources}):null;
   const lineage = {
     schemaVersion: 'starter-social-content.auto-execution.v1',
     socialTaskId: taskId,
     socialTaskVersion: taskSummary.version,
+    ...(weeklyMaterialPlan?{weeklyMaterialPlan}:{}),
     sourceRefs: normalizedSources(input.sources.map(source => ({
       id: source.sourceId,
       ...(source.sourceVersion ? { version: source.sourceVersion } : {}),
@@ -193,6 +201,7 @@ async function ensureAutomaticExecution(input: {
       && socialText(record.goal_id) === goalId
       && socialText(record.plan_id) === planId
       && socialText(record.product_profile) === SOCIAL_WORKFLOW_PROFILE
+      && (!weeklyMaterialPlan || socialRequestHash((record.starter_context as {weeklyMaterialPlan?:unknown})?.weeklyMaterialPlan)===socialRequestHash(weeklyMaterialPlan))
       && ['running', 'completed', 'waiting_external'].includes(socialText(record.status)),
   });
   await ensureRecord({

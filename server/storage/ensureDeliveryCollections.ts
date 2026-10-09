@@ -366,6 +366,7 @@ export const CUSTOMER_FEEDBACK_TOPIC_FIELDS: FieldDef[] = [
 ];
 
 export async function ensureDeliveryCollections(): Promise<void> {
+  await ensureCollection('reference_exact_shot_evidence', [...['tenant_id','record_id','source_sha256','analysis_run_id','analysis_hash','record_hash','created_at'].map(name=>({name,type:'text' as const,required:true})),{name:'payload',type:'json',required:true}]);
   await ensureCollection('weekly_customer_knowledge_quote_requests',[...['tenant_id','program_id','package_id','run_id','request_id','content_hash'].map(name=>({name,type:'text' as const,required:true})),{name:'package_version',type:'number',required:true},{name:'version',type:'number',required:true},{name:'payload',type:'json',required:true}]);
   await ensureCollection('customer_manual_takeovers',[...['tenant_id','scope_key','content_hash'].map(name=>({name,type:'text' as const,required:true})),{name:'version',type:'number',required:true},{name:'payload',type:'json',required:true}]);
   await ensureCollection('social_weekly_inventory_bindings',[...['tenant_id','program_id','target_package_id','publication_task_id','content_hash'].map(name=>({name,type:'text' as const,required:true})),{name:'target_version',type:'number',required:true},{name:'payload',type:'json',required:true}]);

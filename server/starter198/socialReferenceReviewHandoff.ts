@@ -202,7 +202,7 @@ export function buildSocialReferenceReviewHandoff(input: {
     if (!reviewedHookReady && !machineHookReady) {
       add('hook_action_unverified', selectedHook.shotId,
         [selectedHook.evidence.firstFrameRef, selectedHook.evidence.clipRef].filter((ref): ref is string => Boolean(ref)),
-        '编导 Agent 需自动补齐 0–1 秒快速靠近与敲门手势的逐帧动作证据，并标注约第 2 秒开始的站立口播');
+        '编导 Agent 需核验所选开场镜头的逐帧动作、节奏变化与声音进入点，按原片标注动作和口播时间');
     }
   }
   const reviewedHook = reviewedShots.find(shot => string(shot.shotId) === selectedHook?.shotId);

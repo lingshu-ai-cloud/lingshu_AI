@@ -265,3 +265,61 @@ YouTube 格式检查已独立实现，并通过真实小尺寸、低帧率 MP4 �
 - 上述恢复接口、正式 worker、三渠道审批和客户端联合 33 项测试通过；本轮未推送、迁移、部署、付费生成或外部发送。真实供应商执行和生产环境验收仍未完成。
 
 稳定源码全量 TypeScript 检查与前端构建通过。类型收窄使用显式 never 函数；日历恢复入口使用真实步骤与发布任务身份，无虚构任务标题。
+
+
+### 原运行素材凭据消费链补齐（2026-10-10，本地续修）
+
+- 周任务结果校验与跨周只读生产观察，改为通过真实存储异步核验原运行素材需求；带 runProof 的凭据不再走纯对象校验。校验关联租户、原运行、来源版本、冻结经营权威及素材计划哈希，漂移时阻塞。
+- 相关原运行素材需求、结果验证、跨周生产观察及素材延续共 27 项测试通过，日志 `/tmp/weekly-async-material-consumers.log`。这组证据尚不能证明付费制作或完整供应商端到端已完成。
+- 当前预览后端健康接口仍显示较早启动版本，生产和发布 worker 未显式启用；整体 ready 不作为本轮实际生产已执行的证据。未重启、启用付费 worker 或部署。
+- 本节修改发生在远端快照 b8d3f2f 之后，仍为本地修改。
+
+补充：最终联合测试 31 项通过（`/tmp/weekly-original-material-final-joint.log`）。生产门禁修正为按真实 `planning_version` 读取最新已派单规划，并校验原始记录身份；AI-only 生产入口读取真实原运行凭据，缺失凭据仅在现有经营准入锁内允许冻结。旧周只读签验允许 superseded/retired，历史写入冻结拒绝。新增观察器测试的延续任务投影和末端 validate 接口受控，不能作为实际完整延续派单证明。
+
+本地续修构建：Vite build 通过（`/tmp/weekly-material-consumers-build.log`），保留现有大块体积提示。Meta 官方开发者端点读取仍返回 429；官方 fbsamples 的 Instagram Reels README 可读取，但缺当前 Graph API 版本及规则生效日期，且内部上传格式说明存在冲突，暂不将其作为当前完整发布格式准入通过的依据：https://github.com/fbsamples/reels_publishing_apis/blob/main/insta_reels_publishing_api_sample/README.md 。Facebook page/videos 的正式格式证据仍未补齐。
+
+
+### 默认创建到生产准入的正向缺口（2026-10-10，继续修复）
+
+实际默认创建检查发现内容任务未绑定冻结参考视频来源，且创建模式未指定爆款复刻；因此旧测试中的创建/运行身份不能证明正式参考分析已接通。当前补齐 viral_replication 模式和实际来源绑定，需使用真实逐镜分析及正式确认，不能以手写脚本或替换整套 adapter 维持旧的成功结论。
+
+另发现队列素材拒准入被当作生产失败记录，可能终结尚未入队的原运行；后续补齐素材又因已有 runId 不再触达启动。已开始分离准入拒绝与执行失败，并建立同原运行的入队恢复服务。正向重新入队和默认 adapter 接线仍待验证；不得据此宣称端到端完成。
+
+参考来源绑定续修：默认创建已指定 viral_replication，并在首次运行前通过正式 addSource 绑定冻结参考；指定来源解析检查租户、URL、权利和意义字段版本，有基础账号自有来源另核验账号及自有内容身份。来源窄测试通过（`/tmp/weekly-reference-source-root.log`），仅证明该来源入口，不证明完整默认生产。完整默认 fixture 当前被真实 `social_content_execution_director_review_required` 阻塞，旧“默认创建即可启动”的断言已不成立；此前相关 green 日志仅为当时旧路径的历史证据，不代表最新完整路径通过。必须补齐逐句/分镜证据及可执行镜头候选，不能用单纯文本确认或手写 ready 绕过编导审核。
+
+原运行恢复服务当前两项测试通过（`/tmp/original-queue-recovery-root-current.log`）：独立受控已存在运行的素材缺口不终结运行，已有持久作业只读返回实际状态；跨租户、非法状态、错误类型、错误运行及重复作业拒绝。该受控原运行 fixture 明确不是默认编导审核通过的证据，仍不宣称素材齐备后实际新入队正向完成。注册接口返回 registered/existing 与实际 jobStatus，避免后台即时领取被误报入队失败。
+
+
+### 参考审核读取与已有成片观察修复（2026-10-10）
+
+默认内容详情现在从同租户正式视频目录读取参考交接物，并核对冻结来源版本；不再仅从上传素材库寻找目录参考。任务卡阻塞说明使用原执行方案的真实 failedCriteria，并给出编导、权利、事实、预算的处理方向，不改变准入状态。
+
+真实已有成片被新增参考门禁误拦的问题已修复：已完成产物先经过独立 G4/G5、原缓存运行、媒体字节及交接物核验，再持久化原产物权威并只读完成；任何新建、启动、入队仍走冻结参考与素材门禁。当前 24 项联合测试通过（`/tmp/weekly-reference-recovery-final-joint.log`），包括实际库存核验链与独立原运行恢复边界。
+
+默认正式新生产仍阻塞，实际参考交接物报告 shot_media_missing、hook_script_incomplete 等缺项。已有精确分析入口会按结构和时间码提前 already_ready，未继续补逐镜媒体与钩子证据，正在补本地逐镜提取服务。该服务及完整新生产正向尚未验收，不以已有库存成功替代新制作完成。
+
+
+### 旧素材凭据与逐镜补证续修（2026-10-10）
+
+旧版无 runProof 素材凭据：已有原运行时只读核验拒绝；未启动时复读实际计划和当前版本。迁移必须持有原周包锁，核对原启动版本、实际计划、来源和需求，漂移拒绝。当前 5 项联合测试通过（`/tmp/weekly-legacy-demand-root-current.log`），包含独立受控运行的正负边界，不代表正式首次启动已通过。
+
+实际调用顺序还揭示首次启动会递增内容任务版本，而素材计划的顶层 planVersion 从内容版本派生。正完善真实调度器冻结计划及启动版本凭据，解决可证明的生命周期版本映射，不能通过猜测语义相同或放宽版本校验放行。
+
+逐镜补证 HTTP 命令已注册于登录保护的视频路由：POST `/api/overseas/videos/:id/exact-shot-materialization`，显式携带原视频 SHA、分析运行及分析哈希。实际媒体提取和独立持久记录正在联调，路由测试尚待新存储服务稳定后验证；没有付费分析或生产发布。
+
+逐镜补证的真实本地媒体与注册 HTTP 联合测试 2 项通过（`/tmp/reference-shot-http-final.log`）。新存储集合已登记 ensureDeliveryCollections 及 2049 前向迁移校验清单，未运行数据库迁移。只读迁移完整性检查 exit 2（`/tmp/reference-shot-migration-integrity.log`）：当前清单已按要求排序，但 HEAD b8d3f2f 的历史基线清单排序不符合解析器要求，完整 append-only 验证尚未通过，不能宣称部署条件满足。没有改写历史迁移哈希或跳过完整性守卫。
+
+调度器素材计划续修：真实 scheduleSocialContentWork 启动前保存原素材计划、原/启动后版本、命令与完整来源/输入哈希，生产核心及素材凭据验证消费原冻结计划；仅承接已证明的顶层生命周期版本变化，不删除镜头、事实边界或业务字段。真实调度器测试采用受控已准入操作与无付费 productionRunner，不能证明前层编导审核已通过。补证 HTTP、素材核验及恢复当前 8 项联合测试通过（`/tmp/weekly-shot-scheduler-demand-joint.log`）；新增源码仍待最终全量类型检查。
+
+正式周素材消费者已接入本地补证：可信冻结参考在首次运行前生成独立分镜记录，原 aiAnalysis 和 sourceVersion 不改；实际 referenceReviewHandoff 的 shot_media_missing 消失，hook_action_unverified/hook_script_incomplete 仍保持阻塞。11 项补证/来源/调度器/恢复联合及 16 项结果校验/延续/库存回归分别通过（`/tmp/weekly-shot-consumer-final-joint.log`、`/tmp/weekly-shot-legacy-regressions.log`），Vite 构建通过（`/tmp/weekly-shot-consumer-final-build.log`）。初次类型检查发现持久 JSON 数组的闭包收窄问题，已改明确局部数组绑定，最终全量类型检查尚在运行。
+
+上述源码最终全量 TypeScript 检查通过（`/tmp/weekly-shot-consumer-final-types.log`），2049 迁移 JS 语法检查通过；完整迁移基线检查仍未通过，未执行迁移、推送或部署。
+
+
+### 钩子字段与实际待处理事项（2026-10-10）
+
+修复 Gemini/Qwen 逐镜字段合同中的画外旁白丢失：voiceover 与画内 dialogue 分别传递，未知或非字符串仍不作为有效证据，不自动确认。参考审核的实际 issues.action 进入执行方案 requiredRevision，并原样传递到周任务卡阻塞说明；移除固定套用某条参考“敲门手势/站立口播”的指令，按当前所选原片处理。
+
+6 项合同/编导/真实周素材消费者测试通过（`/tmp/weekly-hook-contract-final-joint.log`）；实际补证→参考审核→原周卡行动说明单项验证通过（`/tmp/weekly-reference-card-action-evidence.log`）。本轮不调用模型。Gemini 主成功分支仍缺独立开场动作核验，声音及话术缺项仍需真实证据或版本绑定的人工复核；没有将未知填写为“无”或自动勾选通过。
+
+本轮最终全量 TypeScript 检查通过（`/tmp/weekly-hook-contract-final-types.log`）。人工钩子复核当前入口仍在灵感中心原参考编辑器，周卡至具体原参考的导航闭环尚在核查；保存审核会改变冻结来源版本，必须显式修订排期，不能热改原周包或原运行。

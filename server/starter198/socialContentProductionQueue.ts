@@ -251,8 +251,9 @@ export async function enqueueSocialContentAutoProduction(input: {
   runId: string;
 }): Promise<void> {
   const dataStore = input.repository.dataStore ?? store;
-  try {
+  // Admission gaps precede all execution writes; an unqueued owned run has not failed production.
   await assertWeeklyProductionMaterialAdmission(input);
+  try {
     const record = await requireSocialTask(input);
     const task = socialTaskSummary(record);
     const job = await admitContentExecutionJob({

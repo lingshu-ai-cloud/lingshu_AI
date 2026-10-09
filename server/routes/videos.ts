@@ -1,3 +1,4 @@
+import { registerReferenceExactShotMaterializationRoutes } from './referenceExactShotMaterialization.js';
 import { prepareReferenceNarration } from '../lib/referenceNarration.js';
 import { lockReferenceSpeechTimeline, type ReferenceSpeechTranscript } from '../lib/referenceSpeechAnalysis.js';
 import { joinReferenceWords } from '../lib/referenceWordAlignment.js';
@@ -48,6 +49,7 @@ import { isDiscoveryVideoEligible, youtubeShortUrl } from '../../shared/contract
 
 export const videosRouter = Router();
 videosRouter.use(requireAuth);
+registerReferenceExactShotMaterializationRoutes(videosRouter, store);
 
 const COL = 'trend_videos';
 const execFileAsync = promisify(execFile);

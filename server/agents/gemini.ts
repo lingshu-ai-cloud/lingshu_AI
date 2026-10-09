@@ -271,6 +271,7 @@ function parseScriptDetails15s(value: unknown): VideoAiAnalysis['scriptDetails15
       note: String(item.note ?? '').trim(),
       purpose: String(item.purpose ?? '').trim(),
       dialogue: String(item.dialogue ?? '').trim(),
+      voiceover: typeof item.voiceover === 'string' ? item.voiceover.trim() : '',
       onScreenText: String(item.onScreenText ?? '').trim(),
       ambientSound: String(item.ambientSound ?? '').trim(),
       bgm: String(item.bgm ?? '').trim(),
@@ -367,7 +368,8 @@ ${GEMINI_ANALYSIS_DIRECTOR_CONTRACT}
   - observedPresenterRole: sales_presenter（已确认贯穿视频的固定销售主讲者对镜说话，须绑定稳定人物 ID；单独的动作演员、路人、D to C 插镜人物不属于此类）、presenter_action（同一主讲者动作展示但未确认说话）、background（工人/路人/会议背景人物）、none（无人）、unknown（证据不足）。必须依赖可见口型、面向镜头及讲话证据；画外音不算真人口播；工厂背景或手持产品不能排除前景销售。与 personContinuityId 联合记录，身份或角色不确定时 needsReview=true。
   - personContinuityId: string，同一个可确认出镜人物跨镜头使用同一个稳定 ID（如 person_1）；无人出镜或无法确认是否同一人时留空，不得仅凭性别推断
   - purpose: string，镜头营销功能，如“反常识钩子”“效果证明”“价格反差”“CTA”
-  - dialogue: string，只填写可确认的人物口播/旁白原文，听不清留空
+  - dialogue: string，只填写可确认的画内人物口播原文，听不清或画内/画外不能确认时留空
+  - voiceover: string，只填写实际听到且确认是画外旁白的原文；未知留空，不复制 dialogue，不用“无”代替缺证据
   - onScreenText: string，只填写画面真实可见字幕，不得与口播混写
   - ambientSound: string，环境声；bgm: string，配乐；soundEffects: string[]，明确音效
   - beats: array，镜头内节拍；长镜头中动作、台词重点或字幕变化时记录 time、action、dialogue、onScreenText
@@ -435,6 +437,7 @@ ${GEMINI_ANALYSIS_DIRECTOR_CONTRACT}
   - observedPresenterRole: sales_presenter（已确认贯穿视频的固定销售主讲者对镜说话，须绑定稳定人物 ID；单独的动作演员、路人、D to C 插镜人物不属于此类）、presenter_action（同一主讲者动作展示但未确认说话）、background（工人/路人/会议背景人物）、none（无人）、unknown（证据不足）。必须依赖可见口型、面向镜头及讲话证据；画外音不算真人口播；工厂背景或手持产品不能排除前景销售。与 personContinuityId 联合记录，身份或角色不确定时 needsReview=true。
   - personContinuityId: string，同一个可确认出镜人物跨镜头使用同一个稳定 ID（如 person_1）；无人出镜或无法确认是否同一人时留空，不得仅凭性别推断
   - subtitle: string，只填写画面中清晰可见的字幕或可确认的口播原句；看不清/听不清则填空字符串，禁止写“待补全”或猜测台词
+  - voiceover: string，只填写实际听到且确认是画外旁白的原文；未知留空，不复制画内 dialogue，不用“无”代替缺证据
   - audio: string，只填写可确认的配音、BGM、音效；无法确认则填空字符串，禁止写“可能有……”或猜测台词
   - note: string，可选，只记录确定可见的信息；禁止编造品牌、@账号、原台词或无法确认的提示
 每一个分镜的内容要能被前端按“时间戳 + 段落”展示；段落信息必须覆盖环境、景别、运镜、配乐、台词、画面，字段之间语义上可用分号连接。

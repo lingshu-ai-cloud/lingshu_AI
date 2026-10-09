@@ -1,3 +1,6 @@
+import fs from 'node:fs/promises';import path from 'node:path';import {fileURLToPath} from 'node:url';import {createHash} from 'node:crypto';import {execFile} from 'node:child_process';import {promisify} from 'node:util';import ffmpeg from 'ffmpeg-static';
+import {buildSocialReferenceReviewHandoff} from '../starter198/socialReferenceReviewHandoff.js';
+import {readSocialTaskDetail} from '../starter198/socialContentRecords.js';
 import {createSocialOperatingDecisionService} from '../socialOperating/service.js';
 import type {TestContext} from 'node:test';
 import assert from 'node:assert/strict';
@@ -7,7 +10,7 @@ import {createSocialWeeklyProductionAdapter} from './socialWeeklyProductionAdapt
 import {runSocialWeeklyExecutionScan} from './socialWeeklyExecutionRuntime.js';
 import type {WeeklyExecutionTask} from '../../shared/contracts/socialProgram.js';
 
-export async function prepareWeeklyPlanningProductionFixture(t:TestContext){
+export async function prepareWeeklyPlanningProductionFixture(t:TestContext,options:{ownedReferenceBytes?:boolean}={}){
  const f=await prepareWeeklyQualityAuditFixture();t.after(f.cleanup);
  f.tables.social_weekly_agent_planning=[];
  const pkg=f.pkg;pkg.referenceSourcePolicy={profile:'b2b_cold_start',ownedPercent:0,externalPercent:100,allocationUnit:'mother_content'};
@@ -27,7 +30,8 @@ export async function prepareWeeklyPlanningProductionFixture(t:TestContext){
     },
     g1: { sourceUrl: 'https://www.tiktok.com/@fixture/video/1' }, completeness: 'complete', createdAt: '2026-10-01T00:00:00Z', supersedesEvidenceId: null,
   });
-  await f.store.create('trend_videos', { id: 'decorative-reference', tenantId: 't', platform: 'tiktok', title: 'OEM factory capability proof', sourceUrl: 'https://www.tiktok.com/@fixture/video/1' });
+  await f.store.create('trend_videos', { id: 'decorative-reference', tenantId: 't', platform: 'tiktok', title: 'OEM factory capability proof', sourceUrl: 'https://www.tiktok.com/@fixture/video/1',duration:6,aiAnalysis:JSON.stringify({analysisMode:'exact',analysisQuality:'video',gemini:{scriptDetails15s:[{time:'0-3',purpose:'装饰转场',visual:'纯装饰抽象几何动画，不作企业证据',shot:'图形',camera:'固定',confidence:0.98},{time:'3-6',purpose:'装饰转场',visual:'纯装饰彩色图形动画，不作企业证据',shot:'图形',camera:'固定',confidence:0.98}]}}) });
+ if(options.ownedReferenceBytes){assert.ok(ffmpeg);const mediaRoot=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../../data/media');const folder=path.join(mediaRoot,'tenants/t/reference-videos');await fs.mkdir(folder,{recursive:true});const file=path.join(folder,'decorative-reference.mp4');await assert.rejects(fs.access(path.join(mediaRoot,'tenants/t/reference-evidence/decorative-reference')),'test must not delete existing owned evidence');await assert.rejects(fs.access(file),'test source must not overwrite an existing owned file');await promisify(execFile)(ffmpeg,['-hide_banner','-loglevel','error','-f','lavfi','-i','testsrc2=size=160x180:rate=10','-t','6','-c:v','libx264','-pix_fmt','yuv420p','-y',file]);t.after(()=>fs.rm(file,{force:true}));t.after(()=>fs.rm(path.join(mediaRoot,'tenants/t/reference-evidence/decorative-reference'),{recursive:true,force:true}));const record=f.tables.trend_videos!.find(row=>row.id==='decorative-reference')!;const original=JSON.parse(String(record.aiAnalysis));record.videoFileId='tenants/t/reference-videos/decorative-reference.mp4';record.aiAnalysis=JSON.stringify({...original,analysisRunId:'actual-local-analysis-run',contentSha256:createHash('sha256').update(await fs.readFile(file)).digest('hex')});}
   await f.store.create('social_tracked_accounts', {
     tenant_id: 't', accountId: 'https://www.tiktok.com/@oem_factory', decision: 'track', status: 'tracked', accountRole: 'brand_factory', reasons: ['OEM factory wholesale supplier'],
     evidenceVideoIds: ['decorative-reference', 'video-2', 'video-3'], relatedSceneIds: [], missingEvidence: [], confidence: 0.95,
@@ -49,17 +53,19 @@ export async function prepareWeeklyPlanningProductionFixture(t:TestContext){
  f.tables.starter_social_content_tasks=[];
  const task:WeeklyExecutionTask={...f.task,taskId:'actual-planning-production',workflowKind:'content',status:'queued',schedule:{...f.task.schedule,stepKind:'material_readiness',responsibleActor:'content_agent'},dependsOnTaskIds:[],upstreamVersionRefs:[],ownBlockingReasons:[],inheritedBlockingTaskIds:[],resultRefs:[],attempt:0,lease:null,nextAttemptAt:null,inputSnapshot:{publicationTask:structuredClone(pkg.socialContentPackage.publicationTasks[0])}};
  f.tables.social_weekly_execution_tasks=[{id:task.taskId,tenant_id:'t',program_id:'p',package_id:pkg.packageId,package_version:pkg.version,task_id:task.taskId,status:'queued',payload:task}];
+ const initialRunCount=f.tables.workflow_runs!.length;
  const report=await runSocialWeeklyExecutionScan({dataStore:f.store,adapters:{material_readiness:createSocialWeeklyProductionAdapter(f.store)},maxTasksPerTenant:1});
  const actual=f.tables.social_weekly_execution_tasks[0]!.payload as WeeklyExecutionTask;
  assert.equal(report.claimed,1);assert.ok(['pending','blocked','succeeded'].includes(actual.status),JSON.stringify(actual.lastError));
  assert.equal(f.tables.starter_usage_ledger?.length??0,0,'planning and prerequisite checks must not pay a supplier');
  assert.equal(f.tables.content_execution_jobs?.length??0,0);
- assert.equal(actual.lastError?.code,'weekly_material_contract_required',JSON.stringify(actual));
+ assert.equal(actual.lastError?.code,options.ownedReferenceBytes?'social_content_execution_director_review_required':'weekly_reference_source_evidence_required',JSON.stringify(actual));
  assert.equal(f.tables.starter_social_content_tasks.length,1,'actual default create stores exactly one production identity');
  const created=f.tables.starter_social_content_tasks[0]!;assert.equal(created.create_idempotency_key,`weekly-production:${pkg.packageId}:${pkg.version}:pub`);
- assert.ok(created.run_id,'actual default start creates an owned run');assert.ok(f.tables.workflow_runs!.some(run=>run.id===created.run_id&&run.tenant_id==='t'));
- assert.ok(created.orchestrator_item_id,'actual start stores the durable orchestrator queue identity');
+ assert.ok(!created.run_id,'actual director review blocks original run creation');assert.equal(f.tables.workflow_runs!.length,initialRunCount);assert.ok(!created.orchestrator_item_id);
+ const detail=await readSocialTaskDetail({repository:f.repository,tenantId:'t',taskId:String(created.task_id)});assert.ok(detail);assert.equal(detail.sources.filter(s=>s.kind==='reference_link'&&s.status==='active').length,1);assert.equal(detail.sources[0]!.sourceRef,'https://www.tiktok.com/@fixture/video/1');assert.equal(detail.agentWorkflow?.executionPlanReview.approved,false,JSON.stringify(detail.agentWorkflow?.executionPlanReview));assert.equal(detail.agentWorkflow?.executionPlanReview.approved,false);
  assert.equal((created.brief as {targetAccountRef:{objectType:string}}).targetAccountRef.objectType,'social_owned_account');
  const adapter=createSocialWeeklyProductionAdapter(f.store);await adapter.execute(actual);assert.equal(f.tables.starter_social_content_tasks.length,1);assert.equal(f.tables.content_execution_jobs?.length??0,0,'missing frozen material proof never claims paid execution completion');
- return {f,pkg,task,actual,created,report,dispatched};
+ const referenceReviewHandoff=buildSocialReferenceReviewHandoff({record:f.tables.trend_videos!.find(row=>row.id==='decorative-reference')!,verifiedEnterpriseFactRefs:pkg.socialContentPackage.publicationTasks[0]!.factRefs.map(ref=>`${ref.type}:${ref.id}@${ref.version}`)});
+ return {f,pkg,task,actual,created,report,dispatched,detail,referenceReviewHandoff};
 }

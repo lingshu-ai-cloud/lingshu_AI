@@ -11,7 +11,7 @@ import { weeklyScriptEvidence } from './socialWeeklyScriptEvidence.js';
 import { weeklyStoryboardEvidence } from './socialWeeklyStoryboardEvidence.js';
 import { createWeeklyRequiredMaterialAdmission } from '../socialPrograms/weeklyRequiredMaterialAdmission.js';
 import { socialContentSourceOptions } from '../starter198/socialContentSourceOptions.js';
-import { verifiedNoSharedMaterialDemand } from './socialWeeklyMaterialDemand.js';
+import { readVerifiedNoSharedMaterialDemand } from './socialWeeklyOriginalRunMaterialDemand.js';
 import { ownedDiagnosisReady } from '../socialPrograms/ownedReferenceDiagnosis.js';
 import { verifyMaterialEvidenceRequirements } from '../socialPrograms/materialEvidenceClassification.js';
 import { readMaterialEvidenceConfiguration } from '../socialPrograms/materialEvidenceConfiguration.js';
@@ -177,7 +177,7 @@ export async function validateWeeklyExecutionResults(store: DataStore, task: Wee
       const publications = object(pkg.socialContentPackage).publicationTasks;
       const matches = Array.isArray(publications) ? publications.filter((item: any) => item.publicationTaskId === task.publicationTaskId) : [];
       requireResult(pkg.programId === task.programId && matches.length === 1 && !matches[0].materialRequirement && Array.isArray(matches[0].factRefs));
-      const demand = verifiedNoSharedMaterialDemand(row, { taskId: ref.id, programId: task.programId, packageId: task.packageId, packageVersion: task.packageVersion, publicationTaskId: task.publicationTaskId!, accountId: matches[0].accountId, factRefs: matches[0].factRefs });
+      const demand = await readVerifiedNoSharedMaterialDemand(store, row, { tenantId: task.tenantId, taskId: ref.id, programId: task.programId, packageId: task.packageId, packageVersion: task.packageVersion, publicationTaskId: task.publicationTaskId!, accountId: matches[0].accountId, factRefs: matches[0].factRefs });
       requireResult(demand?.version === ref.version, 'weekly_material_demand_unverified');
       const classification = await materialClassification(store, task);
       requireResult(classification.items.every(item => item.classification === 'generatable_non_evidentiary'), 'weekly_required_materials_unverified');

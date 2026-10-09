@@ -35,6 +35,7 @@ import { STARTER_COLLECTIONS, type Starter198Repository, type StarterRecord } fr
 import {
   SocialContentWorkflowError,
   socialJson,
+  socialRequestHash,
   socialObject,
   socialText,
 } from './socialContentValidation.js';
@@ -901,9 +902,50 @@ export async function readSocialTaskDetail(input: {
     && !candidate.materialRoles.includes('customer_case')
   )));
   const licensedStockAssetIds = uniqueAssetIds(materialCandidates.filter(candidate => candidate.origin === 'shared_library'));
-  const referenceRecord = referenceVideoAnalysis?.referenceRecordId
+  let referenceRecord: MaterialRecord | undefined = referenceVideoAnalysis?.referenceRecordId
     ? materialById.get(referenceVideoAnalysis.referenceRecordId)
     : undefined;
+  // URL references are canonical catalog records, not uploaded library media.
+  // Resolve only this tenant's exact analyzed record and attached source identity.
+  if (!referenceRecord && referenceVideoAnalysis?.referenceRecordId && input.repository.dataStore) {
+    const catalog = await input.repository.dataStore.list<Record<string, unknown>>('trend_videos', {
+      where: { tenantId: input.tenantId, id: referenceVideoAnalysis.referenceRecordId }, perPage: 2,
+    });
+    const candidate = catalog.items[0];
+    if (catalog.totalItems === 1 && catalog.items.length === 1 && candidate?.tenantId === input.tenantId
+      && candidate.id === referenceVideoAnalysis.referenceRecordId
+      && activeSources.some(source => source.kind === 'reference_link' && source.sourceRef === candidate.sourceUrl)) {
+      if (weeklyAuthority) {
+        const plan = weeklyAuthority.weeklyPackage.agentPlanning;
+        const dispatched = plan?.dispatch?.scheduleItems.find(item => item.publicationTaskId === weeklyAuthority.publicationTask.publicationTaskId);
+        const analysis = plan?.directorAnalyses.find(item => item.analysisId === dispatched?.directorAnalysisRef?.id);
+        if (!analysis) throw new SocialContentWorkflowError('weekly_reference_source_missing', 409);
+        const {readWeeklyReferenceSources} = await import('../runtime/socialWeeklyReferenceSource.js');
+        const references = await readWeeklyReferenceSources(input.repository.dataStore, input.tenantId, weeklyAuthority, analysis);
+        if (!references.some(reference => reference.record.id === candidate.id && activeSources.some(source => source.kind === 'reference_link'
+          && source.sourceRef === reference.sourceRef && source.sourceVersion === reference.sourceVersion))) {
+          throw new SocialContentWorkflowError('weekly_reference_version_changed', 409);
+        }
+      }
+      referenceRecord = { ...candidate, id: referenceVideoAnalysis.referenceRecordId };
+      const originalAnalysis = socialObject(socialJson(candidate.aiAnalysis));
+      if (originalAnalysis && typeof originalAnalysis.analysisRunId === 'string' && typeof originalAnalysis.contentSha256 === 'string') {
+        const analysisHash = socialRequestHash(originalAnalysis);
+        const evidence = await input.repository.dataStore.list<Record<string, unknown>>('reference_exact_shot_evidence', {
+          where: { tenant_id: input.tenantId, record_id: String(candidate.id), source_sha256: originalAnalysis.contentSha256,
+            analysis_run_id: originalAnalysis.analysisRunId, analysis_hash: analysisHash }, perPage: 2,
+        });
+        if (evidence.totalItems > 0) {
+          const {createExactShotMaterializationService} = await import('../lib/referenceExactShotMaterialization.js');
+          const merged = await createExactShotMaterializationService(input.repository.dataStore).readVerifiedAnalysis({
+            tenantId: input.tenantId, recordId: String(candidate.id), expectedSourceSha256: originalAnalysis.contentSha256,
+            expectedAnalysisRunId: originalAnalysis.analysisRunId, expectedAnalysisHash: analysisHash,
+          });
+          if (merged) referenceRecord = {...candidate, id: referenceVideoAnalysis.referenceRecordId, aiAnalysis: JSON.stringify(merged)};
+        }
+      }
+    }
+  }
   const assetSupplyPlan = createSocialAssetSupplyPlan({
     creationMode: summary.brief.creationMode ?? 'material_processing',
     assetAvailability: summary.brief.assetAvailability,
