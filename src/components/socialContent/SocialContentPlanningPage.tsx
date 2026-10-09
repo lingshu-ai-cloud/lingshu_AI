@@ -96,6 +96,8 @@ export default function SocialContentPlanningPage({
 
   const startGeneration = (request: SocialCreationWorkbenchSubmit) => {
     const primaryMaterial = request.uploadedMaterials[0];
+    const distinctProducts = request.productMappings.filter((mapping, index, mappings) =>
+      mapping.productId && mappings.findIndex(item => item.productId === mapping.productId) === index);
     if (request.creationPath === 'material_processing') {
       try {
         localStorage.setItem('ow_video_kickoff', JSON.stringify({
@@ -137,8 +139,8 @@ export default function SocialContentPlanningPage({
       },
       sourceContext: sourceRequest?.sourceContext,
       identityMappings: {
-        selectedProductIds: request.productMappings.map(mapping => mapping.productId).filter(Boolean),
-        selectedProductNames: request.productMappings.map(mapping => mapping.productName).filter(Boolean),
+        selectedProductIds: distinctProducts.map(mapping => mapping.productId),
+        selectedProductNames: distinctProducts.map(mapping => mapping.productName),
         products: request.productMappings,
         brand: request.brandMapping,
       },

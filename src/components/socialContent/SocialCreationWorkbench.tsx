@@ -31,6 +31,27 @@ interface EnterpriseProductOption {
   name: string;
 }
 
+export function resolveReplicationProductMappings(
+  slots: Array<{ shotId: string; sourceLabel: string }>,
+  products: EnterpriseProductOption[],
+  primaryProductId: string,
+  assignments: Record<string, string>,
+) {
+  return slots.map(slot => {
+    const selectedId = Object.prototype.hasOwnProperty.call(assignments, slot.shotId)
+      ? assignments[slot.shotId] : primaryProductId;
+    const product = products.find(item => item.id === selectedId);
+    return { sourceTerm: slot.sourceLabel, productId: product?.id || '', productName: product?.name || '' };
+  });
+}
+
+export function assignReplicationDefaultProduct(
+  slots: Array<{ shotId: string }>,
+  productId: string,
+): Record<string, string> {
+  return Object.fromEntries(slots.map(slot => [slot.shotId, productId]));
+}
+
 export interface FreeCreationLine {
   id: string;
   time: string;
@@ -222,6 +243,7 @@ export default function SocialCreationWorkbench({
   const [productId, setProductId] = useState('');
   const [selectedProductIds, setSelectedProductIds] = useState<string[]>([]);
   const [productAssignments, setProductAssignments] = useState<Record<string, string>>({});
+  const [productSelectionChanged, setProductSelectionChanged] = useState(false);
   const [productSelectorOpen, setProductSelectorOpen] = useState(false);
   const [manualProductTerms, setManualProductTerms] = useState<string[]>([]);
   const [newProductTerm, setNewProductTerm] = useState('');
@@ -412,7 +434,7 @@ export default function SocialCreationWorkbench({
     .map((term, index) => ({ shotId: `manual-product-${index}`, sourceLabel: term, time: '', visual: '' }))];
   const productMentions = referenceProductMentions(referenceLines, productSlots.map(slot => slot.sourceLabel));
   useEffect(() => {
-    if (!seed?.productMappings?.length || !products.length) return;
+    if (productSelectionChanged || !seed?.productMappings?.length || !products.length) return;
     setProductAssignments(current => {
       const next = { ...current };
       for (const slot of productSlots) {
@@ -423,39 +445,36 @@ export default function SocialCreationWorkbench({
       }
       return JSON.stringify(next) === JSON.stringify(current) ? current : next;
     });
-  }, [seed?.productMappings, products, JSON.stringify(productSlots)]);
+  }, [seed?.productMappings, products, productSelectionChanged, JSON.stringify(productSlots)]);
   useEffect(() => {
     if (!seed?.productMappings?.length || !products.length) return;
     const mapped = seed.productMappings.map(mapping => products.find(item => item.id === mapping.productId || item.name === mapping.productName)?.id).filter((id): id is string => Boolean(id));
     setSelectedProductIds(current => [...new Set([...current, ...mapped])]);
   }, [seed?.productMappings, products]);
-  const explicitlyAssignedIds = new Set(productSlots.map(slot => productAssignments[slot.shotId]).filter(Boolean));
-  const availableSelectedIds = selectedProductIds.filter(id => !explicitlyAssignedIds.has(id));
-  let nextSelectedIndex = 0;
-  const productMappings = productSlots.map(slot => {
-    const assigned = productAssignments[slot.shotId];
-    const selectedId = Object.prototype.hasOwnProperty.call(productAssignments, slot.shotId)
-      ? (selectedProductIds.includes(assigned) ? assigned : '')
-      : availableSelectedIds[nextSelectedIndex++] || '';
-    const product = products.find(item => item.id === selectedId);
-    return { sourceTerm: slot.sourceLabel, productId: product?.id || '', productName: product?.name || '' };
-  });
-  const productsReady = productMappings.length === selectedProductIds.length
-    && productMappings.every(mapping => mapping.productId && mapping.sourceTerm.trim())
-    && new Set(productMappings.map(mapping => mapping.productId)).size === productMappings.length;
+  const primaryProductId = productId || selectedProductIds[0] || '';
+  const primaryProduct = products.find(item => item.id === primaryProductId);
+  const productMappings = resolveReplicationProductMappings(productSlots, products, primaryProductId, productAssignments);
+  const productsReady = productMappings.every(mapping => mapping.productId && mapping.sourceTerm.trim());
+  const productSelectionLoading = productsLoading && (!isReplication || productSlots.length > 0);
+  const chooseDefaultProduct = (id: string) => {
+    setProductSelectionChanged(true);
+    setProductAssignments(assignReplicationDefaultProduct(productSlots, id));
+    setProductId(id);
+    setProductSelectorOpen(false);
+  };
   const spokenLabel = (sourceTerm: string, catalogName: string, line: string, names = spokenNames) =>
     names[catalogName] || spokenIdentityLabel(sourceTerm, catalogName, line);
   const mappingKey = JSON.stringify({ products: productMappings, brandSourceTerm, enterpriseBrandName, lines: referenceLines.map(line => line.text) });
   useEffect(() => {
     const saved = seed?.confirmedSpeech;
-    if (!isReplication || !saved?.length || enterpriseProfileState === 'loading' || !productsReady || !referenceLines.length) return;
+    if (!isReplication || productSelectionChanged || !saved?.length || enterpriseProfileState === 'loading' || !productsReady || !referenceLines.length) return;
     const restoreKey = JSON.stringify([saved, mappingKey]);
     if (restoredSpeechRef.current === restoreKey) return;
     if (saved.length !== referenceLines.length || saved.some((line, index) => line.source.trim() !== referenceLines[index]?.text.trim())) return;
     restoredSpeechRef.current = restoreKey;
     setGeneratedSpeech(saved.map(line => line.draft));
     setGeneratedMappingKey(mappingKey);
-  }, [isReplication, seed?.confirmedSpeech, enterpriseProfileState, productsReady, mappingKey, referenceLines]);
+  }, [isReplication, productSelectionChanged, seed?.confirmedSpeech, enterpriseProfileState, productsReady, mappingKey, referenceLines]);
   const speechGenerated = productsReady && generatedSpeech !== null && generatedMappingKey === mappingKey;
   const confirmedSpeech = referenceLines.map((line, index) => ({ source: line.text, time: line.time, draft: speechEdits[index] ?? generatedSpeech?.[index] ?? '' })).filter(line => line.source.trim());
   const generateSpeech = async () => {
@@ -615,7 +634,7 @@ export default function SocialCreationWorkbench({
   }, []);
 
   const startGeneration = async (replicationStep: 1 | 2 | 3 = 1, navigationOnly = false) => {
-    if (submitting || productsLoading || (!isReplication && !selectedProductIds.length) || (!navigationOnly && isReplication && (!productsReady || !speechGenerated || confirmedSpeech.some(line => !line.draft.trim())))) return;
+    if (submitting || productSelectionLoading || (!isReplication && !selectedProductIds.length) || (!navigationOnly && isReplication && (!productsReady || !speechGenerated || confirmedSpeech.some(line => !line.draft.trim())))) return;
     setSubmitting(true); setGenerationNotice('');
     try {
       const presenterAssetId = '';
@@ -662,7 +681,7 @@ export default function SocialCreationWorkbench({
         setSubmitting(false);
         return;
       }
-      const productName = isReplication ? productMappings[0]?.productName || (navigationOnly ? seed?.productName || '' : '') : selectedFreeProducts.map(item => item.name).join('、');
+      const productName = isReplication ? productMappings[0]?.productName || '' : selectedFreeProducts.map(item => item.name).join('、');
       let resolvedDraftProjectId = draftProjectId;
       if (!isReplication) {
         resolvedDraftProjectId = resolvedDraftProjectId || await draftCreationRef.current || '';
@@ -693,7 +712,7 @@ export default function SocialCreationWorkbench({
         requestId: Date.now(),
         creationPath: mode,
         title: isReplication
-          ? `${productName || seed?.productName || '自动选品'} · 爆款复刻`
+          ? productName ? `${productName} · 爆款复刻` : '爆款复刻'
           : `${productName || '自由创作'} · 新内容`,
         productId: isReplication ? productMappings[0]?.productId || '' : selected?.id || '',
         productName,
@@ -793,7 +812,7 @@ export default function SocialCreationWorkbench({
 
   return (
     <section className="flex h-full min-h-0 flex-col bg-[#f2f7f4]">
-      <ReplicationWorkbenchHeader activeStep={0} stepLabels={isReplication ? undefined : ['创意与口播确认', '分镜匹配与制作', '成片渲染和导出']} onStepChange={index => { if (index > 0 && (isReplication ? speechGenerated : Boolean(freeScriptText))) void startGeneration(); }} navigationDisabled={submitting || productsLoading || (isReplication ? !speechGenerated : !freeScriptText)} title={isReplication ? seed?.referenceTitle : products.find(item => item.id === productId)?.name || '自由创作'} actions={<><button type="button" onClick={onShowCreations} className="rounded-lg border border-border px-3 py-2 text-xs font-bold">我的创作</button><button type="button" onClick={onOpenChooser} className="rounded-lg bg-[#173d31] px-3 py-2 text-xs font-bold text-white">切换制作方式</button></>} />
+      <ReplicationWorkbenchHeader activeStep={0} stepLabels={isReplication ? undefined : ['创意与口播确认', '分镜匹配与制作', '成片渲染和导出']} onStepChange={index => { if (index > 0 && (isReplication ? speechGenerated : Boolean(freeScriptText))) void startGeneration(); }} navigationDisabled={submitting || productSelectionLoading || (isReplication ? !speechGenerated : !freeScriptText)} title={isReplication ? seed?.referenceTitle : products.find(item => item.id === productId)?.name || '自由创作'} actions={<><button type="button" onClick={onShowCreations} className="rounded-lg border border-border px-3 py-2 text-xs font-bold">我的创作</button><button type="button" onClick={onOpenChooser} className="rounded-lg bg-[#173d31] px-3 py-2 text-xs font-bold text-white">切换制作方式</button></>} />
 
 
       <div className="social-creation-workbench-layout grid min-h-0 flex-1 grid-cols-1 overflow-y-auto lg:overflow-hidden">
@@ -883,42 +902,44 @@ export default function SocialCreationWorkbench({
 
         <aside className="flex min-h-0 flex-col border-t border-border bg-white lg:border-l lg:border-t-0">
           <div className="min-h-0 flex-1 overflow-y-auto p-4">
-            <div className="flex items-start justify-between gap-3"><div><p className="text-sm font-black text-text-primary">{isReplication ? '产品与品牌替换' : '生成设置'}</p><p className="mt-1 text-[11px] leading-5 text-text-muted">{isReplication ? '确认企业产品映射后，在左侧逐句检查新口播。' : '每一步都由你确认后再生成。'}</p></div></div>
+            <div className="flex items-start justify-between gap-3"><div><p className="text-sm font-black text-text-primary">{isReplication ? productSlots.length ? '产品与品牌替换' : '品牌替换' : '生成设置'}</p><p className="mt-1 text-[11px] leading-5 text-text-muted">{isReplication ? '在左侧逐句检查新口播。' : '每一步都由你确认后再生成。'}</p></div></div>
 
             {isReplication && <div className="mt-4">
-              <p className="text-xs font-black text-text-primary">主推产品 · 多选</p>
-              <p className="mt-1 text-[10px] leading-4 text-text-muted">原口播产品词共出现 {productMentions.length} 次，去重后有 {productSlots.length} 个替换对象。同一产品重复出现沿用同一映射；请选择 {productSlots.length} 款企业产品。</p>
+              {productSlots.length > 0 && <>
+              <p className="text-xs font-black text-text-primary">默认企业产品</p>
+              <p className="mt-1 text-[10px] leading-4 text-text-muted">原口播产品词出现 {productMentions.length} 次，去重后有 {productSlots.length} 个替换对象。选择默认产品会将所有对象设为同一款；之后可在下方逐项调整。</p>
               <details className="mt-2 text-[10px] text-text-secondary"><summary className="cursor-pointer font-bold">查看识别依据与出现次数</summary><div className="mt-1 space-y-1">{productMentions.map((mention, index) => <p key={`${mention.time}:${index}`}>{index + 1}. {mention.time} · 「{mention.sourceLabel}」：{mention.text}</p>)}<p className="text-text-muted">按口播文本统计；画面中的瓶数、配方数量、重复分镜不计为不同口播产品。产品类别词不能证明具体 SKU 数量。</p></div></details>
               <button type="button" aria-expanded={productSelectorOpen} aria-label="选择企业知识库产品" disabled={productsLoading || submitting} onClick={() => setProductSelectorOpen(value => !value)} className="mt-2 flex h-11 w-full items-center justify-between rounded-xl border border-border bg-white px-3 text-left text-xs font-bold text-text-primary disabled:bg-slate-100">
-                <span>{productsLoading ? '正在读取企业产品目录…' : selectedProductIds.length ? `已选 ${selectedProductIds.length}/${productSlots.length} 款产品` : '请选择主推产品'}</span><ChevronRight size={15} className={productSelectorOpen ? 'rotate-90' : ''} />
+                <span>{productsLoading ? '正在读取企业产品目录…' : primaryProduct ? `默认产品：${primaryProduct.name}` : '请选择默认企业产品'}</span><ChevronRight size={15} className={productSelectorOpen ? 'rotate-90' : ''} />
               </button>
               {productSelectorOpen && <div className="mt-2 max-h-56 space-y-1 overflow-y-auto rounded-xl border border-border bg-white p-2 shadow-sm">
                 {products.map(item => <label key={item.id} className="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-2 text-xs hover:bg-emerald-50">
-                  <input type="checkbox" checked={selectedProductIds.includes(item.id)} disabled={submitting || (!selectedProductIds.includes(item.id) && selectedProductIds.length >= productSlots.length)} onChange={event => setSelectedProductIds(current => event.target.checked ? [...current, item.id] : current.filter(id => id !== item.id))} className="accent-emerald-700" />
+                  <input type="radio" name="replication-primary-product" checked={primaryProductId === item.id} disabled={submitting} onChange={() => chooseDefaultProduct(item.id)} className="accent-emerald-700" />
                   <span className="min-w-0 truncate">{item.name}</span>
                 </label>)}
                 {!products.length && <div className="px-2 py-3 text-xs text-text-muted">企业知识库暂无产品。<button type="button" onClick={() => { try { sessionStorage.setItem('lingshu:enterprise-focus', 'products'); } catch { /* optional storage */ } window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: { page: 'enterprise' } })); }} className="ml-1 font-bold text-emerald-700 underline">前往录入产品</button></div>}
               </div>}
               {productsUnavailable && <p className="mt-2 flex items-center gap-1 text-[10px] text-amber-700"><CircleAlert size={11} />企业产品目录暂时无法读取</p>}
-              {productSlots.length > 0 && <section className="mt-3" aria-label="产品映射设置">
-                <div className="mb-2 flex items-center justify-between text-[10px] text-text-muted"><span className="font-bold">产品映射 · {productSlots.length} 项</span>{productSlots.length > 2 && <span>上下滚动查看全部</span>}</div>
+              <section className="mt-3" aria-label="产品映射设置">
+                <div className="mb-2 flex items-center justify-between text-[10px] text-text-muted"><span className="font-bold">产品映射 · {productSlots.length} 项</span>{primaryProduct && productMappings.some(mapping => mapping.productId !== primaryProductId) ? <button type="button" disabled={submitting} onClick={() => chooseDefaultProduct(primaryProductId)} className="font-bold text-emerald-700 disabled:opacity-50">全部使用默认产品</button> : productSlots.length > 2 && <span>上下滚动查看全部</span>}</div>
                 <div role="region" aria-label="产品映射列表" tabIndex={0} style={{ maxHeight: 160, overflowY: 'auto', flexShrink: 0 }} className="space-y-2 overscroll-contain pr-1 [scrollbar-gutter:stable]">
               {productSlots.map((slot, index) => <label key={slot.shotId} className="block min-h-[76px] rounded-lg border border-border bg-surface-2 p-2 text-[10px] font-bold text-text-secondary">
                 {index + 1}. 原口播「{slot.sourceLabel}」→ 企业产品
                 <select aria-label={`原口播产品 ${slot.sourceLabel} 对应企业产品`} value={productMappings[index]?.productId || ''} onChange={event => {
                   const id = event.target.value;
-                  const assignments = Object.fromEntries(productSlots.map((item, slotIndex) => [item.shotId, item.shotId === slot.shotId ? id : productMappings[slotIndex]?.productId || '']));
-                  setProductAssignments(assignments);
-                  setSelectedProductIds([...new Set(Object.values(assignments).filter(Boolean))]);
+                  setProductSelectionChanged(true);
+                  setProductAssignments(current => ({ ...current, [slot.shotId]: id }));
+                  if (!primaryProductId && id) setProductId(id);
                 }} className="mt-1 w-full rounded-md border border-border bg-white px-2 py-2 text-xs text-text-primary">
-                  <option value="">请选择对应产品</option>{products.map(item => <option key={item.id} value={item.id} disabled={productMappings.some((mapping, mappingIndex) => mappingIndex !== index && mapping.productId === item.id)}>{item.name}</option>)}
+                  <option value="">请选择对应产品</option>{products.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
                 </select>
               </label>)}
                 </div>
-              </section>}
-              {!productSlots.length && <p className="mt-2 text-[10px] leading-4 text-amber-700">未从原口播识别到产品词。若原片确有产品名，请在下方补充原词后再选择对应产品。</p>}
-              <div className="mt-2 flex gap-1.5"><input aria-label="补充原口播产品词" value={newProductTerm} onChange={event => setNewProductTerm(event.target.value)} placeholder="补充未识别的原产品词" className="min-w-0 flex-1 rounded-md border border-border px-2 py-1.5 text-[10px]" /><button type="button" disabled={!newProductTerm.trim()} onClick={() => { const term = newProductTerm.trim(); if (!script.join(' ').toLocaleLowerCase().includes(term.toLocaleLowerCase())) { setGenerationNotice('补充的产品词必须出现在原片口播中。'); return; } if (!productSlots.some(slot => slot.sourceLabel.toLocaleLowerCase() === term.toLocaleLowerCase())) setManualProductTerms(current => [...current, term]); setNewProductTerm(''); setGenerationNotice(''); }} className="rounded-md border border-border bg-white px-2 text-[10px] font-bold disabled:opacity-40">添加</button></div>
-              {productSlots.length > 0 && !productsReady && <p role="status" className="mt-2 text-[10px] font-bold text-amber-700">需选择 {productSlots.length} 款不同的企业产品，并完成一一对应。</p>}
+              </section>
+              {!productsReady && <p role="status" className="mt-2 text-[10px] font-bold text-amber-700">请选择默认企业产品，或为每个原口播产品词指定对应产品。</p>}
+              </>}
+              {!productSlots.length && referenceLines.length > 0 && <p className="text-[10px] leading-4 text-text-muted">原口播未识别到产品词，无需选择企业产品。若识别有遗漏，可补充原词。</p>}
+              {referenceLines.length > 0 && <div className="mt-2 flex gap-1.5"><input aria-label="补充原口播产品词" value={newProductTerm} onChange={event => setNewProductTerm(event.target.value)} placeholder="补充未识别的原产品词" className="min-w-0 flex-1 rounded-md border border-border px-2 py-1.5 text-[10px]" /><button type="button" disabled={!newProductTerm.trim()} onClick={() => { const term = newProductTerm.trim(); if (!script.join(' ').toLocaleLowerCase().includes(term.toLocaleLowerCase())) { setGenerationNotice('补充的产品词必须出现在原片口播中。'); return; } if (!productSlots.some(slot => slot.sourceLabel.toLocaleLowerCase() === term.toLocaleLowerCase())) setManualProductTerms(current => [...current, term]); setNewProductTerm(''); setGenerationNotice(''); }} className="rounded-md border border-border bg-white px-2 text-[10px] font-bold disabled:opacity-40">添加</button></div>}
               <div className="mt-3 rounded-lg border border-border bg-surface-2 p-2.5"><p className="text-[10px] font-bold text-text-secondary">企业品牌 · 自动读取</p><p className="mt-1 text-xs text-text-primary">{enterpriseBrandName || '企业知识库尚未填写品牌名称'}</p><p className="mt-1 text-[10px] text-text-muted">新口播使用企业知识库中的品牌信息，无需填写原片品牌名。</p></div>
             </div>}
 
@@ -953,7 +974,7 @@ export default function SocialCreationWorkbench({
             {/* GENERATION_INTEGRATION_GAP: the server calculates estimatedCostCny only
                 after a task plan exists; there is no preflight quote endpoint yet. */}
             {isReplication && <div className="flex items-center gap-3 text-[11px]"><span className="text-text-muted">预计消耗</span><span className="font-black text-text-primary" title="生成任务建立后由服务端返回真实预估">待生成服务核算</span></div>}
-            <button type="button" disabled={submitting || generatingSpeech || productsLoading || (!isReplication && (!selectedProductIds.length || (freeLines.length > 0 && !freeReady))) || (isReplication && (!productsReady || !confirmedSpeech.length || (speechGenerated && confirmedSpeech.some(line => !line.draft.trim()))))} onClick={() => { if (isReplication && !speechGenerated) void generateSpeech(); else void startGeneration(); }} className="flex min-w-[220px] items-center justify-center gap-2 rounded-xl bg-[#173d31] px-4 py-3 text-sm font-black text-white shadow-sm hover:bg-[#245644] disabled:cursor-not-allowed disabled:bg-slate-300">
+            <button type="button" disabled={submitting || generatingSpeech || productSelectionLoading || (!isReplication && (!selectedProductIds.length || (freeLines.length > 0 && !freeReady))) || (isReplication && (!productsReady || !confirmedSpeech.length || (speechGenerated && confirmedSpeech.some(line => !line.draft.trim()))))} onClick={() => { if (isReplication && !speechGenerated) void generateSpeech(); else void startGeneration(); }} className="flex min-w-[220px] items-center justify-center gap-2 rounded-xl bg-[#173d31] px-4 py-3 text-sm font-black text-white shadow-sm hover:bg-[#245644] disabled:cursor-not-allowed disabled:bg-slate-300">
               {submitting || generatingSpeech ? <Loader2 size={16} className="animate-spin" /> : <Film size={16} />}{submitting ? '正在处理…' : generatingSpeech ? '正在生成英文口播' : isReplication ? speechGenerated ? '确认口播，进入分镜匹配' : '生成口播' : freeScriptText ? '确认口播，进入分镜制作' : 'Gemini 生成逐句口播与分镜'}
             </button>
           </div></footer>

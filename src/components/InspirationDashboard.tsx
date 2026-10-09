@@ -1,4 +1,4 @@
-import BenchmarkAnalysisSections from './inspiration/BenchmarkAnalysisSections';
+import InspirationVideoAnalysisTabs from './inspiration/InspirationVideoAnalysisTabs';
 import { buildBenchmarkAnalysis } from '../../shared/benchmarkAnalysis';
 import MaterialLibraryStatus from './studio/MaterialLibraryStatus';
 import { useState, useEffect, useMemo, useRef } from 'react';
@@ -381,18 +381,26 @@ function exactAnalysisQuality(video: TrendVideo): AnalysisQualityGate {
   const valid = parsed.filter(item => Number.isFinite(item.start) && Number.isFinite(item.end) && item.end! > item.start!);
 
   if (payload?.geminiStatus === 'needs_review' || payload?.analysisQuality === 'video_review_required' || payload?.analysisReviewReasons?.length) return { ready: false, reason: `编导交接待复核：${payload?.analysisReviewReasons?.join('；') || '逐镜证据未通过质量校验'}`, requiredFrames, actualFrames: valid.length };
-  if (payload?.videoLevelFailureStatus || payload?.analysisError) return { ready: false, reason: '精确分析未完成或已失败，请重试', requiredFrames, actualFrames: valid.length };
-  if (payload?.requestedAnalysisMode === 'exact' && ['queued', 'waiting_for_video', 'analyzing'].includes(String(payload?.geminiStatus || ''))) return { ready: false, reason: '全片精确分析正在排队或生成中', requiredFrames, actualFrames: valid.length };
+  if (payload?.videoLevelFailureStatus || payload?.analysisError || ['failed', 'video_failed', 'analysis_retryable', 'paused'].includes(String(payload?.geminiStatus || ''))) return { ready: false, reason: '精确分析未完成或已失败，请重试', requiredFrames, actualFrames: valid.length };
+  // A completed response can retain requestedAnalysisMode briefly while the
+  // inventory refreshes. The terminal analyzed state, not that stale request
+  // field alone, decides whether a new Director run is still in flight.
+  if (payload?.requestedAnalysisMode === 'exact' && payload?.geminiStatus !== 'analyzed') return { ready: false, reason: '全片精确分析正在排队或生成中', requiredFrames, actualFrames: valid.length };
   if (payload?.analysisMode !== 'exact') return { ready: false, reason: '当前仅有策略级分析，需先完成全片精确分析', requiredFrames, actualFrames: valid.length };
   if (valid.length < requiredFrames) return { ready: false, reason: '缺少可用的实际画面分镜', requiredFrames, actualFrames: valid.length };
   if (valid.some(({ item }) => isUnusableAnalysisText(item.visual))) return { ready: false, reason: '存在不可用分镜，请重试精确分析', requiredFrames, actualFrames: valid.length };
-  const ordered = [...valid].sort((a, b) => a.start! - b.start!);
-  if (ordered[0]!.start! > 0.75 || ordered.some((item, index) => index > 0 && Math.abs(item.start! - ordered[index - 1]!.end!) > 0.75)) {
-    return { ready: false, reason: '分镜时间线存在空档或重叠，请重试精确分析', requiredFrames, actualFrames: valid.length };
-  }
-  if (duration > 0 && ordered[ordered.length - 1]!.end! + 0.75 < duration) return { ready: false, reason: '分镜尚未覆盖视频结尾，请重试精确分析', requiredFrames, actualFrames: valid.length };
-  if (duration > 0 && ordered[ordered.length - 1]!.end! - 0.75 > duration) return { ready: false, reason: '分镜时间轴超出原视频结尾，请重试精确分析', requiredFrames, actualFrames: valid.length };
+  if (!Number.isFinite(video.duration) || video.duration <= 0) return { ready: false, reason: '原片时长尚未确认，无法核对分镜是否覆盖整片', requiredFrames, actualFrames: valid.length };
+  const benchmark = buildBenchmarkAnalysis({ analysis: payload, videoId: video.recordId || video.id, duration });
+  if (benchmark.totalShots === null || benchmark.shots.some(shot => shot.granularity !== 'shot')) return { ready: false, reason: '当前只有观察片段，尚无可用于创作的导演级逐镜切点', requiredFrames, actualFrames: valid.length };
+  if (!benchmark.timelineComplete || benchmark.shots.some(shot => shot.start === null || shot.end === null)) return { ready: false, reason: '导演级分镜的时间线未完整覆盖原片，需重新分析切点', requiredFrames, actualFrames: valid.length };
+  if (benchmark.shots.some(shot => isUnusableAnalysisText(shot.visual))) return { ready: false, reason: '导演级分镜仍有不可用画面描述，需重新分析', requiredFrames, actualFrames: valid.length };
   return { ready: true, reason: '精确分析已通过实际画面时间线校验', requiredFrames, actualFrames: valid.length };
+}
+
+export function inspirationCreationShotPreflight(video: TrendVideo): { ready: boolean; reason: string } {
+  if (video.contentFormat === 'image') return { ready: true, reason: '' };
+  const quality = exactAnalysisQuality(video);
+  return { ready: quality.ready, reason: quality.ready ? '' : quality.reason };
 }
 
 export function isDisplayableVideoAnalysis(analysis?: VideoAnalysisPayload, status?: TrendVideo['status']): boolean {
@@ -3014,6 +3022,7 @@ export function DirectorVideoDetailPanel({
   onCreate,
   onRetry,
   onExactAnalysis,
+  onReanalyze,
   onCancelAnalysis,
   analyzing,
   notice,
@@ -3027,6 +3036,7 @@ export function DirectorVideoDetailPanel({
   onCreate: () => void;
   onRetry: () => void;
   onExactAnalysis: () => void;
+  onReanalyze?: () => void;
   onCancelAnalysis: () => void;
   analyzing: boolean;
   notice?: string;
@@ -3036,7 +3046,7 @@ export function DirectorVideoDetailPanel({
 }) {
   const dialogRef = useModalFocus<HTMLDivElement>({ open: true, onClose });
   const analysis = getAnalysis(video);
-  const exactQuality = exactAnalysisQuality(video);
+  const analysisReadiness = inspirationCreationShotPreflight(video);
   const payload = video.aiAnalysis;
   const [reviewHandoff, setReviewHandoff] = useState<DirectorReviewHandoff | null>(null);
   useEffect(() => {
@@ -3050,6 +3060,11 @@ export function DirectorVideoDetailPanel({
     return () => { active = false; };
   }, [video.recordId, payload?.geminiStatus, payload?.analyzedAt, payload?.requestedAnalysisMode]);
   const benchmark = payload?.benchmarkAnalysis || buildBenchmarkAnalysis({ analysis: payload, videoId: video.recordId || video.id, duration: video.duration });
+  const canRunExactAnalysis = Boolean(video.recordId || video.id.startsWith('material-'));
+  const isReadOnlySnapshot = video.id.startsWith('weekly-reference-') && !canRunExactAnalysis;
+  const readOnlyAnalysisReason = video.contentFormat === 'image' || canRunExactAnalysis ? '' : isReadOnlySnapshot
+    ? '原爆款已从灵感库删除，此处仅保留周计划分析快照。无法重新分析或用于创作；请重新导入原片后再启动导演级分镜分析。'
+    : '当前视频缺少可分析的入库记录或素材文件，仅可查看已有分析；请重新导入原片后再分析。';
   const handoffReady = reviewHandoff?.status === 'production_ready' && reviewHandoff.productionExecutionAllowed === true;
   const draftReady = reviewHandoff?.directorHandoffReady === true;
   const imageEvidence = payload?.imageEvidence;
@@ -3062,9 +3077,13 @@ export function DirectorVideoDetailPanel({
     || (video.status === 'pending' && !terminalAnalysisState);
   const statusLabel = pending
     ? '编导 Agent 分析中'
+    : isReadOnlySnapshot
+      ? '周计划分析快照 · 只读'
     : isImagePost && imageEvidence
       ? '图文证据分析已完成'
-      : exactQuality.ready
+      : isImagePost
+        ? '等待编导 Agent 分析'
+      : analysisReadiness.ready
       ? '全片精确分析已完成'
       : payload?.geminiStatus === 'needs_review'
         ? '逐镜分析待复核'
@@ -3098,7 +3117,7 @@ export function DirectorVideoDetailPanel({
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
               <span className="rounded-md bg-accent px-2 py-1 text-[10px] font-black text-white">编导 Agent</span>
-              <span className={`rounded-md px-2 py-1 text-[10px] font-bold ${pending ? 'bg-amber-50 text-amber-700' : exactQuality.ready ? 'bg-emerald-50 text-emerald-700' : 'bg-sky-50 text-sky-700'}`}>{statusLabel}</span>
+              <span className={`rounded-md px-2 py-1 text-[10px] font-bold ${pending ? 'bg-amber-50 text-amber-700' : (isImagePost ? Boolean(imageEvidence) : analysisReadiness.ready) ? 'bg-emerald-50 text-emerald-700' : 'bg-sky-50 text-sky-700'}`}>{statusLabel}</span>
             </div>
             <h2 id="director-video-analysis-title" className="mt-2 line-clamp-2 text-base font-bold leading-6 text-text-primary">{video.title}</h2>
             <p className="mt-1 flex items-center gap-1.5 text-[11px] text-text-muted"><SocialPlatformIcon platform={video.platform} size={13}/><span className="sr-only">{PLATFORM_META[video.platform]?.label || video.platform} · </span>{displayDuration(video.duration)} · {payload?.analysisSource || '待确认分析来源'}</p>
@@ -3109,7 +3128,6 @@ export function DirectorVideoDetailPanel({
         </header>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
-          {!isImagePost && <BenchmarkAnalysisSections analysis={benchmark} pending={pending} renderClip={url => <AuthenticatedVideo apiUrl={url} controls className="max-h-64 w-full rounded-lg bg-black" />} />}
           {!isImagePost && <section aria-label="编导到内容 Agent 交接状态" className="mb-4 rounded-xl border border-border bg-white p-4">
             <div className="flex flex-wrap items-center gap-2 text-xs font-black"><span className="rounded bg-emerald-50 px-2 py-1 text-emerald-700">原片入库</span><ChevronRight size={13} className="text-text-muted" /><span className={`rounded px-2 py-1 ${pending ? 'bg-amber-50 text-amber-700' : draftReady ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>{pending ? '编导分析中' : draftReady ? '可交接内容起稿' : '编导证据不足'}</span><ChevronRight size={13} className="text-text-muted" /><span className={`rounded px-2 py-1 ${draftReady ? 'bg-emerald-50 text-emerald-700' : 'bg-surface-2 text-text-muted'}`}>{handoffReady ? '可制作成片' : draftReady ? '可生成口播草稿' : '内容起稿未开放'}</span></div>
             {!handoffReady && !pending && <p className="mt-2 text-[11px] leading-5 text-amber-800">系统将使用带估计时间码的原片口播，并继续检查镜头切片、钩子动作和企业“销售”人物资产。如需继续，编导 Agent 会按清单补证，无需人工逐句校时或逐镜勾选。</p>}
@@ -3127,10 +3145,10 @@ export function DirectorVideoDetailPanel({
                 {analysis?.referenceHighlights[0] || imageEvidence?.copyEvidence.hooks[0]?.text || payload?.analysisError || '编导 Agent 正在读取原视频证据，完成后会在这里给出可追溯的内容判断。'}
               </p>
               <div className="mt-3 grid grid-cols-2 gap-2 text-[11px]">
-                <div className="rounded-lg bg-surface-2 px-3 py-2"><span className="block text-text-muted">分析层级</span><strong className="mt-1 block text-text-primary">{isImagePost ? (imageEvidence ? '图文证据级' : '未完成') : exactQuality.ready ? '全片精确' : analysis ? '策略级' : '未完成'}</strong></div>
-                <div className="rounded-lg bg-surface-2 px-3 py-2"><span className="block text-text-muted">{isImagePost ? '证据覆盖' : '分镜覆盖'}</span><strong className="mt-1 block text-text-primary">{isImagePost ? `${imageEvidenceCount} 条` : `${exactQuality.actualFrames} / ${exactQuality.requiredFrames} 段`}</strong></div>
+                <div className="rounded-lg bg-surface-2 px-3 py-2"><span className="block text-text-muted">分析层级</span><strong className="mt-1 block text-text-primary">{isImagePost ? (imageEvidence ? '图文证据级' : '未完成') : isReadOnlySnapshot ? '周计划快照' : analysisReadiness.ready ? '全片精确' : analysis ? '策略级' : '未完成'}</strong></div>
+                <div className="rounded-lg bg-surface-2 px-3 py-2"><span className="block text-text-muted">{isImagePost ? '证据覆盖' : '分镜证据'}</span><strong className="mt-1 block text-text-primary">{isImagePost ? `${imageEvidenceCount} 条` : benchmark.totalShots === null ? `${benchmark.shots.length} 个分析片段` : `${benchmark.totalShots} 个镜头`}</strong></div>
               </div>
-              <p className={`mt-3 rounded-lg px-3 py-2 text-[11px] font-semibold leading-5 ${(isImagePost && imageEvidence) || exactQuality.ready ? 'bg-emerald-50 text-emerald-800' : 'bg-amber-50 text-amber-800'}`}>{isImagePost ? (imageEvidence ? '已按原图证据完成视觉、文案与轮播节奏拆解。' : '等待编导 Agent 提取图文证据。') : exactQuality.reason}</p>
+              <p className={`mt-3 rounded-lg px-3 py-2 text-[11px] font-semibold leading-5 ${(isImagePost && imageEvidence) || (!isImagePost && analysisReadiness.ready) ? 'bg-emerald-50 text-emerald-800' : 'bg-amber-50 text-amber-800'}`}>{isImagePost ? (imageEvidence ? '已按原图证据完成视觉、文案与轮播节奏拆解。' : '等待编导 Agent 提取图文证据。') : readOnlyAnalysisReason || (analysisReadiness.ready ? '精确分析已通过实际画面时间线校验。' : analysisReadiness.reason)}</p>
               {payload?.analysisReviewReasons?.length ? <div role="alert" className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] leading-5 text-amber-900"><strong>镜头级缺口与下一步</strong><ul className="mt-2 space-y-2">{payload.analysisReviewReasons.map(reason => { const action = directorReviewAction(reason); return <li key={reason}><span className="font-black">{action.gap}</span><span className="block">{action.next}</span><code className="text-[9px] opacity-60">{reason}</code></li>; })}</ul></div> : null}
             </div>
           </section>
@@ -3150,38 +3168,36 @@ export function DirectorVideoDetailPanel({
                 <div className="mt-3 grid gap-2 sm:grid-cols-2">{imageEvidence.reusableModules.map(item => <div key={item.module} className="rounded-lg border border-border p-3 text-xs"><strong>{item.module}</strong><p className="mt-1 leading-5 text-text-secondary">保留：{item.preserve}</p><p className="leading-5 text-text-muted">替换：{item.replace}</p></div>)}</div>
               </section>
             </div>
-          ) : analysis ? (
-            <div className="mt-4 space-y-4">
-              <section className="rounded-xl border border-border bg-white p-4">
-                <h3 className="text-sm font-black text-text-primary">核心原因 · 前 10 秒</h3>
-                <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                  {analysis.firstTenSeconds.map(item => <div key={item.dimension} className="rounded-lg bg-surface-2 px-3 py-2"><p className="text-[10px] font-black text-accent">{item.dimension}</p><p className="mt-1 text-xs leading-5 text-text-secondary">{item.detail}</p></div>)}
-                </div>
-                <div className="mt-3 flex flex-wrap gap-1.5">{analysis.referenceHighlights.slice(0, 7).map(item => <span key={item} className="rounded-md bg-accent-glow px-2 py-1 text-[10px] font-semibold text-accent">{item}</span>)}</div>
-              </section>
-
-
-              <section className="rounded-xl border border-border bg-white p-4">
-                <h3 className="text-sm font-black text-text-primary">编导改编建议</h3>
-                <p className="mt-2 text-xs leading-6 text-text-secondary">{analysis.adaptTip}</p>
-                {analysis.baseRequirements && <p className="mt-3 rounded-lg bg-surface-2 px-3 py-2 text-[11px] leading-5 text-text-muted">制作约束：{analysis.baseRequirements}</p>}
-              </section>
-            </div>
-          ) : (
+          ) : isImagePost ? (
             <section className="mt-4 rounded-xl border border-dashed border-border bg-white px-6 py-12 text-center">
               {pending ? <Loader2 size={24} className="mx-auto animate-spin text-accent" /> : <BarChart2 size={24} className="mx-auto text-text-muted" />}
               <p className="mt-3 text-sm font-black text-text-primary">{statusLabel}</p>
-              <p className="mx-auto mt-1 max-w-md text-xs leading-5 text-text-muted">{pending ? '通常需要 1–3 分钟，可以先关闭此页；超过 5 分钟未完成会自动变为可重试。' : '完成后会展示前 10 秒原因、全片分镜、爆点评分、真实性边界和改编建议。'}</p>
+              <p className="mx-auto mt-1 max-w-md text-xs leading-5 text-text-muted">{pending ? '通常需要 1–3 分钟，可以先关闭此页；超过 5 分钟未完成会自动变为可重试。' : '完成后会展示图文证据与轮播节奏。'}</p>
             </section>
+          ) : (
+            <InspirationVideoAnalysisTabs
+              benchmark={benchmark}
+              gemini={payload?.gemini}
+              duration={video.duration}
+              pending={pending}
+              detailedReady={analysisReadiness.ready}
+              detailedReason={readOnlyAnalysisReason || (analysisReadiness.ready ? '精确分析已通过实际画面时间线校验' : analysisReadiness.reason)}
+              onAnalyze={onExactAnalysis}
+              onReanalyze={onReanalyze || onExactAnalysis}
+              analysisActionAvailable={canRunExactAnalysis}
+              renderClip={url => <AuthenticatedVideo apiUrl={url} controls className="max-h-64 w-full rounded-lg bg-black" />}
+              adaptTip={analysis?.adaptTip}
+              baseRequirements={analysis?.baseRequirements}
+            />
           )}
         </div>
 
         <footer className="shrink-0 border-t border-border bg-white px-5 py-4">
           <div className="flex flex-wrap items-center gap-2">
-            {!isImagePost && !exactQuality.ready && (pending
+            {!isImagePost && canRunExactAnalysis && (pending
               ? <button type="button" onClick={onCancelAnalysis} className="inline-flex min-h-10 items-center gap-1.5 rounded-lg border border-amber-300 px-3 text-xs font-bold text-amber-700"><X size={13} />停止分析</button>
-              : <button type="button" onClick={onExactAnalysis} className="inline-flex min-h-10 items-center gap-1.5 rounded-lg border border-accent px-3 text-xs font-bold text-accent"><BarChart2 size={13} />全片精确分析</button>)}
-            {(payload?.analysisError || video.status === 'failed') && <button type="button" onClick={onRetry} disabled={analyzing} className="min-h-10 rounded-lg border border-border px-3 text-xs font-bold text-text-secondary disabled:opacity-50">重新分析</button>}
+              : <button type="button" onClick={payload?.analysisMode === 'exact' ? (onReanalyze || onExactAnalysis) : onExactAnalysis} disabled={analyzing} className="inline-flex min-h-10 items-center gap-1.5 rounded-lg border border-accent px-3 text-xs font-bold text-accent disabled:opacity-50"><BarChart2 size={13} />{payload?.analysisMode === 'exact' ? '重新分析分镜' : '全片精确分析'}</button>)}
+            {isImagePost && (payload?.analysisError || video.status === 'failed') && <button type="button" onClick={onRetry} disabled={analyzing} className="min-h-10 rounded-lg border border-border px-3 text-xs font-bold text-text-secondary disabled:opacity-50">重新分析</button>}
             <button type="button" onClick={onPreview} className="min-h-10 rounded-lg border border-border px-3 text-xs font-bold text-text-secondary">预览原内容</button>
             <button type="button" onClick={onCreate} disabled={!isImagePost && !draftReady} className="ml-auto inline-flex min-h-10 items-center gap-1.5 rounded-lg bg-accent px-4 text-xs font-black text-white disabled:cursor-not-allowed disabled:opacity-45"><Sparkles size={14} />{isImagePost || video.id.startsWith('material-') ? '开始创作' : '爆款复刻'}</button>
           </div>
@@ -4040,7 +4056,14 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     }
   };
 
-  const enterInspirationWorkflow = async (video: TrendVideo) => {
+  const enterInspirationWorkflow = async (video: TrendVideo): Promise<boolean> => {
+    const preflight = inspirationCreationShotPreflight(video);
+    if (!preflight.ready) {
+      setSelectedVideo(video);
+      const nextAction = video.aiAnalysis?.analysisMode === 'exact' ? '重新分析分镜' : '开始全片精确分析';
+      setMaterialMessage(`暂不能进入内容创作：${preflight.reason}。请在“分镜与脚本”查看状态并${nextAction}。`);
+      return false;
+    }
     if (video.contentFormat === 'image' || video.id.startsWith('material-')) {
       const analysis = getAnalysis(video);
       onEnterWorkflow?.({
@@ -4049,9 +4072,9 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
         referenceAnalysis: analysis ? { title: video.title, visualStyle: analysis.scriptSummary15s.visualStyle,
           coreEmotion: analysis.scriptSummary15s.coreEmotion, details: analysis.scriptDetails15s } : undefined,
       });
-      return;
+      return true;
     }
-    if (inspirationLaunches.current.has(video.id)) return;
+    if (inspirationLaunches.current.has(video.id)) return false;
     const openTask = (taskId: string) => {
       window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: {
         page: 'smartAssets', view: 'create',
@@ -4085,7 +4108,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     };
     const candidateKey = `${video.id}:${creationAccountId}`;
     const existing = replicationTasks[candidateKey];
-    if (existing) { openTask(existing); return; }
+    if (existing) { openTask(existing); return true; }
     inspirationLaunches.current.add(video.id);
     setLaunchingReferences(ids => [...ids, video.id]);
     setMaterialMessage('正在关联参考与经营背景，交给编导 Agent 和内容 Agent 执行…');
@@ -4105,8 +4128,10 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
         setMaterialMessage(`${result.warning} 已保留原任务，点击“继续制作”查看和恢复。`);
       }
       openTask(result.task.taskId);
+      return true;
     } catch (error) {
       setMaterialMessage(error instanceof Error ? error.message : '复刻任务暂时无法创建，请重试。');
+      return false;
     } finally {
       inspirationLaunches.current.delete(video.id);
       setLaunchingReferences(ids => ids.filter(id => id !== video.id));
@@ -4243,7 +4268,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     await analyzeVideoOnly(video);
   };
 
-  const requestExactFullAnalysis = async (video: TrendVideo) => {
+  const requestExactFullAnalysis = async (video: TrendVideo, force = false) => {
     if (analyzingVideoIds.includes(video.id)) return;
     const materialId = video.id.startsWith('material-') ? video.id.slice('material-'.length) : '';
     if (!video.recordId && !materialId) {
@@ -4259,7 +4284,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
         method: video.recordId ? 'PATCH' : 'POST',
         headers: { 'Content-Type': 'application/json', ...authHeader() },
         body: JSON.stringify(video.recordId
-          ? { analysisMode: 'exact' }
+          ? { analysisMode: 'exact', ...(force ? { force: true } : {}) }
           : { materialId, title: video.title, platform: video.platform, duration: video.duration }),
       });
       const data = parseExactAnalysisResponse(await response.text(), response.status);
@@ -5231,11 +5256,14 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
             onClose={() => setSelectedVideo(null)}
             onPreview={() => handleWatch(selectedVideo)}
             onCreate={() => {
-              enterInspirationWorkflow(selectedVideo);
-              setSelectedVideo(null);
+              const video = selectedVideo;
+              void enterInspirationWorkflow(video).then(started => {
+                if (started) setSelectedVideo(current => current?.id === video.id ? null : current);
+              });
             }}
             onRetry={() => void retryVideoPipeline(selectedVideo)}
             onExactAnalysis={() => void requestExactFullAnalysis(selectedVideo)}
+            onReanalyze={() => void requestExactFullAnalysis(selectedVideo, true)}
             onCancelAnalysis={() => void cancelExactFullAnalysis(selectedVideo)}
             analyzing={analyzingVideoIds.includes(selectedVideo.id)}
             notice={materialMessage}

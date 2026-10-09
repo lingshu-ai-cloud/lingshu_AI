@@ -41,18 +41,18 @@ function ShotCard({ shot, renderClip }: { shot: BenchmarkShot; renderClip?: (url
     {shot.clipRef && renderClip && <details className="mt-2 text-[11px]"><summary className="cursor-pointer font-semibold text-accent">核对原片切片</summary><div className="mt-2">{renderClip(shot.clipRef)}</div></details>}
   </article>;
 }
-export default function BenchmarkAnalysisSections({ analysis, pending = false, renderClip }: {
-  analysis: BenchmarkAnalysis; pending?: boolean; renderClip?: (url: string) => ReactNode;
+export default function BenchmarkAnalysisSections({ analysis, pending = false, renderClip, mode = 'all' }: {
+  analysis: BenchmarkAnalysis; pending?: boolean; renderClip?: (url: string) => ReactNode; mode?: 'all' | 'shots';
 }) {
   const [view, setView] = useState<'shots' | 'speech'>('shots');
   const groupedIds = new Set(analysis.speechGroups.flatMap(group => group.shotIds));
   return <div className="mb-4 space-y-4" data-benchmark-analysis>
     <section className={panel} aria-labelledby="benchmark-structure-title">
-      <h3 id="benchmark-structure-title" className="text-sm font-black text-text-primary">全片结构与素材拆解</h3>
+      <h3 id="benchmark-structure-title" className="text-sm font-black text-text-primary">{mode === 'shots' ? '原片逐镜画面与脚本' : '全片结构与素材拆解'}</h3>
       <p className="mt-2 text-xs font-semibold text-text-secondary">{analysis.totalShots === null ? `已分析 ${analysis.shots.length} 个片段 · 实际镜头数待确认` : `已拆解 ${analysis.totalShots} 个镜头`}{analysis.speechGroups.length > 0 ? ` · ${analysis.speechGroups.length} 个口播段` : ''}</p>
       {analysis.shots.length > 0 ? <>
-        <div className="mt-3 flex flex-wrap gap-2">{Object.entries(analysis.materialCounts).filter(([, count]) => count > 0).map(([type, count]) => <span key={type} className="rounded-lg bg-surface-2 px-2 py-1 text-[10px] font-semibold">{MATERIAL_TYPE_LABELS[type as keyof typeof MATERIAL_TYPE_LABELS]} {count}</span>)}</div>
-        <div className="mt-3 rounded-lg bg-emerald-50 p-3 text-xs leading-6 text-emerald-900"><strong>结构顺序</strong><div className="mt-1 flex flex-wrap items-center gap-1">{analysis.structure.map((item, index) => <span key={index}>{index > 0 && <span className="mx-1 text-text-muted">→</span>}{MATERIAL_TYPE_LABELS[item.materialType]}<span className="text-[10px]">（{item.shotIds.includes(analysis.hookShotId || '') ? '首镜钩子 · ' : ''}{item.shotIds.length} 镜头）</span></span>)}</div></div>
+        {mode === 'all' && <><div className="mt-3 flex flex-wrap gap-2">{Object.entries(analysis.materialCounts).filter(([, count]) => count > 0).map(([type, count]) => <span key={type} className="rounded-lg bg-surface-2 px-2 py-1 text-[10px] font-semibold">{MATERIAL_TYPE_LABELS[type as keyof typeof MATERIAL_TYPE_LABELS]} {count}</span>)}</div>
+        <div className="mt-3 rounded-lg bg-emerald-50 p-3 text-xs leading-6 text-emerald-900"><strong>结构顺序</strong><div className="mt-1 flex flex-wrap items-center gap-1">{analysis.structure.map((item, index) => <span key={index}>{index > 0 && <span className="mx-1 text-text-muted">→</span>}{MATERIAL_TYPE_LABELS[item.materialType]}<span className="text-[10px]">（{item.shotIds.includes(analysis.hookShotId || '') ? '首镜钩子 · ' : ''}{item.shotIds.length} 镜头）</span></span>)}</div></div></>}
         {!analysis.timelineComplete && <p className="mt-2 text-[11px] text-amber-800">全片覆盖尚待核对，当前结构仅代表已有分析片段。</p>}
         {analysis.speechGroups.length > 0 && <div role="group" aria-label="分镜阅读方式" className="mt-4 flex flex-wrap gap-2">{(['shots', 'speech'] as const).map(mode => <button key={mode} type="button" aria-pressed={view === mode} onClick={() => setView(mode)} className={`rounded-lg border px-3 py-2 text-xs font-semibold ${view === mode ? 'border-accent bg-accent-glow text-accent' : 'border-border text-text-secondary'}`}>{mode === 'shots' ? '按镜头查看' : '按口播段查看'}</button>)}</div>}
         <div className="mt-3 space-y-3">{view === 'shots' ? analysis.shots.map(shot => <ShotCard key={shot.shotId} shot={shot} renderClip={renderClip} />) : <>

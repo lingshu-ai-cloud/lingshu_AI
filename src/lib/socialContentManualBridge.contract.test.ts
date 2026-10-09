@@ -55,8 +55,8 @@ assert.match(studio, /renderSelectedLanguageVersion\(undefined, Boolean\(socialC
   'task video recovery must request a server-readable preview without changing the legacy render path');
 assert.match(
   studio,
-  /任务资料已带入统一制作工作台[\s\S]{0,300}不再选择旧制作路线/,
-  'a bound social-content task must explain that it continues one unified workflow',
+  /useStudioSocialTaskHydration\(\{[\s\S]*?taskId: socialTaskProjectLookupDone \? socialContentTaskId : null/,
+  'a bound social-content task must hydrate into the unified workflow without a persistent banner',
 );
 assert.match(studio, /socialContentTaskId \? \([\s\S]{0,500}已从任务带入[\s\S]{0,500}\) : \([\s\S]{0,500}视频模式/,
   'a bound task must keep the confirmed content type instead of asking the user to choose it again');
