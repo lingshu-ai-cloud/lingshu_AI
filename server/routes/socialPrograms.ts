@@ -19,6 +19,7 @@ import { readWeeklyCancellation } from '../socialPrograms/weeklyCancellation.js'
 import {readWeeklyCancellationSettlements} from '../socialPrograms/weeklyCancellationSettlement.js';
 import {recheckWeeklyRequiredMaterials} from '../socialPrograms/weeklyRequiredMaterialRecovery.js';
 import {readWeeklyContentNavigation} from '../socialPrograms/weeklyContentNavigation.js';
+import {readWeeklyReferenceReviewNavigation} from '../socialPrograms/weeklyReferenceReviewNavigation.js';
 import { createWeeklyOperatingPackageService } from '../socialPrograms/weeklyOperatingPackages.js';
 import { createSocialOperatingOrchestrationService, weeklyAuthorityFromResolution } from '../socialOperating/orchestration.js';
 import { SocialOperatingDecisionError } from '../socialOperating/service.js';
@@ -322,6 +323,14 @@ export function createSocialProgramsRouter(dataStore: DataStore = store, authent
     if (!Number.isSafeInteger(version) || version < 1) throw new SocialProgramError('package_version_invalid', 400, '周包版本无效。');
     const summary = await readWeeklyCancellation(dataStore, tenantId, programId, packageId, version);
     res.json({ item: summary ? {...summary, currentSettlements: await readWeeklyCancellationSettlements({dataStore, tenantId, programId, packageId, packageVersion: version})} : null });
+  }));
+
+  router.get('/:programId/operating-packages/:packageId/execution-tasks/:taskId/reference-review-navigation', asyncRoute(async (req, res) => {
+    const {tenantId} = res.locals as AuthLocals;
+    const packageVersion = Number(req.query.version);
+    if (!Number.isSafeInteger(packageVersion) || packageVersion < 1 || typeof req.query.recordId !== 'string') throw new SocialProgramError('reference_navigation_scope_invalid', 400, '请选择当前周任务的具体参考视频。');
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.json({item: await readWeeklyReferenceReviewNavigation(dataStore, {tenantId, programId: String(req.params.programId), packageId: String(req.params.packageId), packageVersion, executionTaskId: String(req.params.taskId)}, req.query.recordId)});
   }));
 
   router.get('/:programId/operating-packages/:packageId/execution-tasks/:taskId/production-navigation', asyncRoute(async (req, res) => {

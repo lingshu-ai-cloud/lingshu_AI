@@ -539,6 +539,7 @@ export default function App() {
         workflowTaskId?: string;
         socialContentTaskId?: string;
         weeklyContentTarget?: import('../shared/contracts/weeklyContentNavigation').WeeklyContentNavigation;
+        exactReferenceReview?: import('./lib/exactReferenceReview').ExactReferenceReviewTarget;
         socialContentPage?: string;
         socialContentView?: 'managed';
         studioEntry?: boolean;

@@ -323,3 +323,56 @@ YouTube 格式检查已独立实现，并通过真实小尺寸、低帧率 MP4 �
 6 项合同/编导/真实周素材消费者测试通过（`/tmp/weekly-hook-contract-final-joint.log`）；实际补证→参考审核→原周卡行动说明单项验证通过（`/tmp/weekly-reference-card-action-evidence.log`）。本轮不调用模型。Gemini 主成功分支仍缺独立开场动作核验，声音及话术缺项仍需真实证据或版本绑定的人工复核；没有将未知填写为“无”或自动勾选通过。
 
 本轮最终全量 TypeScript 检查通过（`/tmp/weekly-hook-contract-final-types.log`）。人工钩子复核当前入口仍在灵感中心原参考编辑器，周卡至具体原参考的导航闭环尚在核查；保存审核会改变冻结来源版本，必须显式修订排期，不能热改原周包或原运行。
+
+### 原周任务进入具体参考审核（2026-10-10，本地新增）
+
+- 原周生产记录的灵感采用依据逐条提供“审核这条原参考”，用户选择具体参考；不自动选择第一条，也不按标题、URL或快照替代真实记录。
+- 新只读接口 `reference-review-navigation` 核验原周任务生产绑定、冻结排期采用的编导分析、实际内容任务、完整 active 来源与 canonical sourceVersion，再返回 recordId、executionTaskId、contentTaskId 和精确周包版本。不会创建生产任务、启动运行或调用付费模型。
+- 灵感中心接收端在加载前后复核来源回执，并读取真实记录及 review-handoff；记录ID、租户、管理权限、handoff记录身份或登录变化均拒绝。通过后挂载现有 DirectorReviewWorkspace，接原片预览与原生逐镜审核操作。
+- 人工审核会改变 canonical sourceVersion；原周任务不能热替换参考版本，需重新确认并发布排期。页面已提示这个后续动作；自动周包修订尚未在此入口实现。
+- `/tmp/weekly-reference-navigation-joint.log`：9项通过，包括真实默认创建的周任务到已注册HTTP导航接口、未选来源/跨租户/来源审核漂移拒绝、读取零写入；客户端编辑器 loader 的记录/handoff/登录验证为受控端口测试，不能代替实际视频HTTP和浏览器点击验收。
+- `/tmp/weekly-reference-navigation-build.log`：前端构建通过，仍有既有分块大小提示。完整浏览器验收和真实生产环境贯通仍未完成。本段改动在已推送 `f759ada` 之后，尚未推送或部署。
+- 首轮类型检查暴露服务端 `never` 箭头函数的控制流收窄不足；改为明确的 `function fail(...): never`，没有非空断言或放宽校验。`/tmp/weekly-reference-navigation-final-types.log` 全项目 TypeScript exit 0；修正后服务端来源导航测试再验证通过。
+
+### 实际审核读取及显式语音补证（2026-10-10，本地新增）
+
+- 两个正式视频只读处理器（详情、review-handoff）复用 `createReferenceReviewReadHandlers`，保留真实租户和测试租户可见性边界。读取独立镜头证据时核验来源、分析哈希及实际素材文件 SHA；不覆盖原目录分析，不改变原周 canonical 来源版本。损坏或过期证据不能消除素材缺口，镜头素材齐备也不会自动通过脚本、动作、权利和事实审核。
+- 原生逐镜编辑器各异步读取、保存和素材处理绑定挂载时的记录及登录身份；身份变化、卸载或迟到响应不能继续更新旧界面或启动后续请求。移除挂载时自动 ASR 和自动轮询。
+- `phrase-asr` 原实现忽略 `confirmed:false` 并可进入真实转写；现正式注册专用处理器，非严格 `true` 只读按租户、原片实际 SHA 和原缓存协议绑定的已有候选，不探测音轨、不创建目录或锁、不请求供应商。缺缓存如实返回 `not_found`；原片或分析漂移拒绝。成功响应前再次读取真实记录和原片字节，等待期间漂移不返回旧结果。
+- 显式新 ASR 须真实功能开关、实际服务配置和预算状态允许，再由用户明确勾选；页面区分缓存缺失与可提交能力，真实未知金额不填零。`manualSubmission` 单独接入实际持久预算预留与供应商功能开关；其他既有自动参考分析入口本轮未改，不能据此宣称整个分析栈预算已闭合。
+- `/tmp/weekly-review-final-joint.log`：21项通过。新增实际已创建周任务→已注册周导航接口→正式视频处理器工厂→strict 编辑器 loader 的 HTTP 联测，拒绝来源版本替换；真实本地短视频 FFmpeg 素材证据、只读零写入、权限/可见性拒绝、受控准备期间版本漂移、实际临时预算账本与预算不足零供应商请求均有覆盖。
+- HTTP 测试使用受控 auth locals，未证明真实 JWT、远端供应商或 Chrome 页面点击验收；本轮没有真实付费转写、生产部署或额外推送。
+- `/tmp/weekly-review-final-types.log`：全项目 TypeScript exit 0。`/tmp/weekly-review-final-build.log`：前端构建 exit 0，既有分块大小提示仍在。等待中的 ASR 原供应商任务如何只读定位和恢复仍需单独验证；不能把最终转写缓存读取测试视为待处理供应商任务完整恢复证明。
+
+### 原语音任务恢复与 H 自有来源（2026-10-10，本地新增）
+
+- 实际参考转写生产入口现在在 Qwen 每次保存真实任务记录后，持久保存租户、原视频 SHA、实际音频 SHA、音轨时钟政策、真实提取结果、时长、供应商地域与任务 ID 的 source-key 绑定。原始目录分析不变。缺绑定、缺原任务或提交不确定时不猜测、不新建任务。
+- `phrase-asr` 只读请求返回真实 `existingTaskId` 和原任务状态；显式 `action:'refresh_existing'` 必须携带一致原 ID，并且 `confirmed:false`。恢复仅查询原供应商任务及结果，禁止预算预留、供应商 POST、音轨探测、音频提取或新准备。新任务预算不足仍可查询已知原任务；既有原识别记录阻止 `confirmed:true` 再次提交。
+- 前端不自动轮询，只有用户明确点击“查询原识别任务”才查询；不依赖新任务预算权限。供应商已完成但候选缓存尚未保存时可恢复原结果；失败或不确定的原记录不可再次提交。原片或分析等待期间漂移拒绝返回旧结果。
+- `/tmp/weekly-original-asr-final-joint.log`：8项通过，包含真实 FFmpeg 带音轨视频→实际 prepare/extract/transcribe→首次受控查询故障保留实际 PENDING 绑定→同任务恢复实测字词；正式 HTTP 处理器在真实临时预算不足时仍恢复原任务且零新增提交/预留。供应商网络传输为受控测试，未发生真实付费或远端调用；较早直接服务测试使用声明的受控原音频，不能取代这项实际音轨测试。
+- H 来源测试通过实际 initialize/analyze/merge/confirm/dispatch 服务和实际内容任务创建，对 5 个冻结槽位验证 40/60 为 2 自有+3 外部、20/80 为 1 自有+4 外部。自有条目核验实际持久的发布内容、账号、播放/赞/转/评快照及冻结交接物；按每个所选来源 URL 唯一匹配自己的历史内容，修复原多自有参考仅能关联单条历史的问题，不允许混用外部身份。
+- 账号头部/载荷、账号版本、历史 URL、来源版本、诊断缺失或自有/外部身份混用均拒绝；历史内容改变会更新 sourceVersion，旧绑定不能沿用。测试使用受控冻结周包及持久样例，不证明真实平台历史采集、完整周包初建或成片生产。
+- `/tmp/weekly-asr-owned-final-joint.log`：23项通过；`/tmp/weekly-asr-owned-final-build.log`：前端构建通过，既有分块提示仍在。首轮 TypeScript 检查发现测试删除必需 id 字段不合法，改为解构排除旧 ID，不放宽业务类型；最终类型检查待记录。
+- 本轮仍未推送、部署或执行生产迁移。浏览器验收、实际平台任务和全部主副链路生产运行仍不完整。
+- `/tmp/weekly-asr-owned-final-types.log`：最终全项目 TypeScript exit 0；修正测试旧 ID 排除方式后 `/tmp/weekly-h-source-final.log` 两种 H 来源规划测试再次通过。
+
+### 原转写恢复的时钟绑定漂移（2026-10-10，本地新增）
+
+- 恢复原任务时，供应商查询前后现在核对完整原来源/时钟绑定，包括原视频、原音频、音轨政策、时长、提取结果、供应商地域和原任务 ID；仅状态变化可以继续。原时长或音轨证据在等待期间变化，不再写入看似完成的候选缓存。
+- `/tmp/reference-original-clock-drift.log`：6项通过；新增实际原任务记录→受控供应商 GET 期间改变绑定时长→拒绝保存候选，原提交仍只有一次。保留真实 FFmpeg 音轨恢复和实际 HTTP 原任务预算不足恢复回归。
+- 供应商传输仍为受控测试；未调用真实供应商、未推送或部署，完整生产运行验收仍未完成。
+- `/tmp/reference-original-clock-types.log`：全项目 TypeScript exit 0。
+
+### 开场源时间窗与人物资产门槛审计（2026-10-10，本地新增）
+
+- 参考交接 `hookActionInterval` 不再固定声明 0–1 秒，改为实际所选原镜头的起止时间；这表示需核验的源镜头窗口，不冒充已证明的精确动作区间。没有可选镜头时两端为 null，生产审核门槛不变。
+- `/tmp/weekly-hook-original-window.log`：3项通过，验证闪帧之后的实际开场窗口 0.1–3.47 秒及缺镜头未知，保留实际镜头素材读取和周任务材料交接回归。`/tmp/weekly-hook-original-window-types.log`：全项目 TypeScript exit 0。
+- 只读审计确认实际技术栈已有非主讲人物路线，但参考交接无条件要求人物资产。可豁免的证据必须来自同源、同时间窗、逐镜实际抽帧的人物连续性证据，重算正式 production routing；不能凭画面文本、旧角色标签或 summary.readyCount 判断。修复及验证另行记录。
+
+### 证据驱动的非主讲人物交接（2026-10-10，本地新增）
+
+- 修复参考交接无条件要求主讲人物资产的问题。新 helper 从原存储逐镜记录重算正式 identity-first production routing：真实来源 SHA、实际整片时长、唯一原镜头、一对一保留来源、同时间窗、完整连续覆盖、独立人物连续性及关键性证据均须完整；所有路线 ready 且均不要求主讲身份锁，才豁免主讲人物资产。
+- 人物、身份未知、证据缺失、来源 SHA/时间窗漂移、合并重切、重复来源或覆盖缺口仍不豁免；不根据视觉描述、旧 none 标签、summary.readyCount 或调用方声明判断。主讲路线仍要求真实授权资产和不可变版本。
+- 实际时长须来自原视频或原分析的明确时长，不再凭最后分析镜头结束时间证明整片覆盖；已有时长字段互相矛盾也不豁免。人物证据、时长依据纳入交接 versionHash，旧冻结版本不得自动继承新豁免。
+- `/tmp/weekly-non-presenter-final-joint.log`：10项通过。正向通过真实 `validatePresenterContinuity` 结构生产合同生成 no_person/hands_only 证据，再进入完整 handoff；供应商响应及帧为明确受控合同样例，不证明真实模型对影片的识别。另覆盖正式 HTTP 原参考 loader、真实短视频镜头素材读取及周任务素材消费者回归。本轮没有付费识别、生产启动、推送或部署。
+- `/tmp/weekly-non-presenter-duration-types.log`：最终全项目 TypeScript exit 0。真实人物识别供应商、默认内容启动与生产成片验收仍待核验。

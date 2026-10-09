@@ -33,7 +33,7 @@ import { validateVerifiedSpeechLines } from '../lib/verifiedReferenceSpeech.js';
 import { approximateSpeechLines } from '../lib/referenceApproxSpeech.js';
 import { hasCompletedExactVideoEvidence } from '../lib/videoAnalysisCodec.js';
 import { referenceFrameActionPrompt } from './referenceFrameActionPrompt.js';
-import { REFERENCE_PRODUCTION_ROUTING_VERSION, type ReferenceShotProductionRouting,
+import { buildReferenceShotProductionRouting, type ReferenceShotProductionRouting,
   type ReferencePresenterContinuityEvidence } from '../../shared/referenceShotProductionRouting.js';
 
 const THEME_TERMS: Record<SocialContentThemeId, readonly string[]> = {
@@ -798,10 +798,10 @@ function publicShot(input: {
   spokenLines?: SocialReferenceShotAnalysis['spokenLines'];
   captionText?: string;
   productRef?: string | null;
+  verifiedRouting:ReferenceShotProductionRouting;
 }): SocialReferenceShotAnalysis {
   const raw = input.row.detail;
-  const independentRouting = recordObject(raw.referenceProductionRouting) as unknown as ReferenceShotProductionRouting;
-  const referenceProductionRouting = independentRouting.version === REFERENCE_PRODUCTION_ROUTING_VERSION ? independentRouting : undefined;
+  const referenceProductionRouting = input.verifiedRouting;
   const presenterContinuityEvidence = raw.presenterContinuityEvidence as ReferencePresenterContinuityEvidence | undefined;
   const reliableRole = referenceProductionRouting?.state === 'ready' ? referenceProductionRouting.observedPresenterRole : undefined;
   const inferredPurpose = shotPurpose(input.row.detail, input.themeId);
@@ -837,7 +837,7 @@ function publicShot(input: {
   };
   return {
     shotId,
-    personContinuityId: referenceProductionRouting?.personContinuityId || socialText(raw.personContinuityId) || null,
+    personContinuityId: referenceProductionRouting.personContinuityId,
     observedPresenterRole: reliableRole || (referenceProductionRouting ? 'unknown' : ['sales_presenter', 'presenter_action', 'background', 'none', 'unknown'].includes(String(raw.observedPresenterRole)) ? raw.needsReview === true && raw.salesPresenterConfirmed !== true ? 'unknown' : raw.observedPresenterRole as SocialReferenceShotAnalysis['observedPresenterRole'] : undefined),
     ...(referenceProductionRouting ? { referenceProductionRouting: structuredClone(referenceProductionRouting) } : {}),
     ...(presenterContinuityEvidence ? { presenterContinuityEvidence: structuredClone(presenterContinuityEvidence) } : {}),
@@ -1066,10 +1066,17 @@ export function buildSocialTaskReferencePackage(input: {
     verifiedContext: input.verifiedContext,
     replacements: input.identityReplacements,
   });
+  const canonicalRouting=buildReferenceShotProductionRouting({sourceSha256:socialText(exact.analysis.contentSha256),shots:exact.details.map((row,index)=>({
+    shotId:socialText(row.detail.shotId)?`reference-${socialText(row.detail.shotId)}`:`reference-shot-${index+1}`,
+    time:`${row.timing.startSeconds}-${row.timing.endSeconds}`,
+    criticalShot:row.detail.criticalShot as Parameters<typeof buildReferenceShotProductionRouting>[0]['shots'][number]['criticalShot'],
+    presenterContinuityEvidence:row.detail.presenterContinuityEvidence as ReferencePresenterContinuityEvidence|undefined,
+  }))});
   const shots = exact.details.map((row, index) => publicShot({
     row,
     index,
     themeId: input.themeId,
+    verifiedRouting:canonicalRouting.shots[index]!.productionRouting,
     spokenText: referenceLines[index],
     spokenTextTiming: sourceSpeech.length
       ? reviewedShotSpeech(row, sourceSpeech, runId, sourcePrecision).timing

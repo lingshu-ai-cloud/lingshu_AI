@@ -80,7 +80,9 @@ const resolved = buildSocialTaskReferencePackage({
 
 assert.ok(resolved);
 const independentRolePayload = JSON.parse(record.aiAnalysis);
+independentRolePayload.contentSha256='current-source';
 const independentFirstShot = independentRolePayload.gemini.scriptDetails15s[0];
+independentFirstShot.criticalShot={classification:'non_critical',model:'actual-controlled-critical-model',provenance:'independent-controlled-test'};
 independentFirstShot.needsReview = true;
 independentFirstShot.confidence = .55;
 independentFirstShot.materialEvidence = { extractionStatus: 'ready', sourceVideoRef: '/api/source/media',
@@ -274,7 +276,8 @@ assert.equal(longResolved?.referenceVideoAnalysis.coverage?.fullTimelineCovered,
 assert.equal(longResolved?.referenceVideoAnalysis.hookAnalysis?.referencePoints[0], 'reference-shot-1', '前三秒钩子只属于第一个开场分镜');
 assert.equal(longResolved?.referenceVideoAnalysis.shots[0]?.purpose, 'hook');
 assert.equal(longResolved?.referenceVideoAnalysis.shots[1]?.purpose, 'd_to_c', '后续吸睛镜头应归为 D to C');
-assert.equal(longResolved?.referenceVideoAnalysis.shots[1]?.personContinuityId, 'person_1', '跨镜同一人物身份必须进入编导分析结果');
+assert.equal(longResolved?.referenceVideoAnalysis.shots[1]?.personContinuityId, null, '旧模型人物标签没有独立原片证据，不能成为已核验的跨镜身份');
+assert.equal(longResolved?.referenceVideoAnalysis.shots[1]?.referenceProductionRouting?.state,'awaiting_automatic_analysis');
 assert.equal(longResolved?.referenceVideoAnalysis.shots[1]?.observedPresenterRole, 'unknown', '需复核的角色证据不能自动路由至人物生成');
 assert.equal(longResolved?.replicationScript.shots[1]?.purpose, 'd_to_c', 'D to C 分类须传入内容 Agent 交接物');
 assert.equal(longResolved?.referenceVideoAnalysis.shots[1]?.semanticLabel?.intent, '开场钩子：人物伸手靠近镜头');
@@ -438,3 +441,25 @@ assert.deepEqual(parsed?.scenes[0]?.voiceoverReplacement, hook.voiceoverReplacem
 assert.equal(parsed?.scenes[2]?.voiceover, '');
 
 console.log('social content script source tests passed');
+
+const multiIndependentPayload=structuredClone(independentRolePayload);
+for(const [index,shot] of multiIndependentPayload.gemini.scriptDetails15s.entries()){
+ const match=String(shot.time).match(/([0-9.]+)-([0-9.]+)/);assert.ok(match);const start=Number(match[1]),end=Number(match[2]);
+ shot.criticalShot={classification:'non_critical',model:'controlled-critical',provenance:'independent-source'};
+ shot.presenterContinuityEvidence={time:shot.time,personPresence:'person',observedPresenterRole:index===0?'sales_presenter':'presenter_action',personContinuityId:'person_1',confidence:.95,evidence:['连续原片帧'],frameSeconds:[start+.1,end-.1],model:'controlled-vl',provenance:'source-frame-observation',sourceSha256:'current-source'};
+}
+const resolveRouting=(payload:typeof multiIndependentPayload)=>buildSocialTaskReferencePackage({record:{...record,aiAnalysis:JSON.stringify(payload)},source,themeId:'product_value',verifiedContext:{productName:'新产品',facts:[],source:'enterprise_product',confidence:1}});
+const samePerson=resolveRouting(multiIndependentPayload);assert.ok(samePerson);const group=samePerson.referenceVideoAnalysis.shots[0]!.referenceProductionRouting!.identityLock;assert.ok(group);assert.deepEqual(group.samePersonShotIds,samePerson.referenceVideoAnalysis.shots.map(shot=>shot.shotId));
+const staleSource=structuredClone(multiIndependentPayload);staleSource.contentSha256='changed-current-source';assert.equal(resolveRouting(staleSource)?.referenceVideoAnalysis.shots[0]?.referenceProductionRouting?.state,'awaiting_automatic_analysis','cached ready route cannot override changed original SHA');
+const retimed=structuredClone(multiIndependentPayload);retimed.gemini.scriptDetails15s[0].time='0-2.9';assert.equal(resolveRouting(retimed)?.referenceVideoAnalysis.shots[0]?.referenceProductionRouting?.state,'awaiting_automatic_analysis','cached ready route cannot override retained shot timing');
+const missingIndependent=structuredClone(multiIndependentPayload);delete missingIndependent.gemini.scriptDetails15s[0].presenterContinuityEvidence;assert.equal(resolveRouting(missingIndependent)?.referenceVideoAnalysis.shots[0]?.referenceProductionRouting?.state,'awaiting_automatic_analysis','a ready version marker is not independent evidence');
+const retainedIdentityAnalysis=structuredClone(reviewedAnalysis);
+for(const [index,shot] of retainedIdentityAnalysis.gemini.scriptDetails15s.entries()){
+ const match=String(shot.time).match(/([0-9.]+)-([0-9.]+)/);assert.ok(match);const start=Number(match[1]),end=Number(match[2]);
+ shot.criticalShot={classification:'non_critical'};
+ shot.presenterContinuityEvidence={time:shot.time,personPresence:'person',observedPresenterRole:index===0?'sales_presenter':'presenter_action',personContinuityId:'retained-person',confidence:.95,evidence:['原窗连续帧'],frameSeconds:[start+.1,end-.1],model:'controlled-vl',provenance:'source-frame-observation',sourceSha256:reviewedAnalysis.contentSha256};
+ shot.referenceProductionRouting=buildReferenceShotProductionRouting({sourceSha256:reviewedAnalysis.contentSha256,shots:[{shotId:`shot-${index+1}`,time:shot.time,criticalShot:shot.criticalShot,presenterContinuityEvidence:shot.presenterContinuityEvidence}]}).shots[0].productionRouting;
+}
+const retainedPackage=buildSocialTaskReferencePackage({record:{...reviewedRecord,aiAnalysis:JSON.stringify(retainedIdentityAnalysis)},source,themeId:'product_value',verifiedContext:{productName:'新产品',facts:[],source:'enterprise_product',confidence:1}});assert.ok(retainedPackage);
+assert.ok(retainedPackage.referenceVideoAnalysis.shots.every(shot=>shot.referenceProductionRouting?.state==='awaiting_automatic_analysis'),'human retime and merge must re-evaluate actual retained ranges instead of copying original ready summaries');
+assert.ok(retainedPackage.referenceVideoAnalysis.shots.every(shot=>!shot.referenceProductionRouting?.identityLock),'old-window person groups cannot bind new retained cuts');
