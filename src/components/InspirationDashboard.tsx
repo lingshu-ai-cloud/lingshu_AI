@@ -7,11 +7,12 @@ import {
   Search, Play, Sparkles, FileText, Layout as LayoutIcon,
   TrendingUp, Clock, Globe, ChevronDown, X, Loader2,
   Check, Copy, ArrowRight, Zap, LayoutGrid, List,
-  Lightbulb, Flame, BarChart2, ChevronRight, Film, Download,
+  Lightbulb, Flame, BarChart2, ChevronRight, Film,
   Bookmark, Maximize2, Minimize2, Lock, Upload, Users, Images, Pencil, Trash2, Music2,
-  SlidersHorizontal, Package, Cloud, ScanFace, Star, Eye,
+  SlidersHorizontal, Package, ScanFace, Star, Eye,
 } from 'lucide-react';
 import { studioApi, type Material, type MaterialSegment, type VideoGenerationVersion } from '../lib/studioApi';
+import type { MaterialLibraryFacets } from '../lib/studioDigitalHuman';
 import { authHeader } from '../lib/auth';
 import CompetitorAccountsModal from './CompetitorAccountsModal';
 import type { Page } from '../App';
@@ -35,6 +36,8 @@ import type { AccountSpecialRecommendation, ContentFormat, FirstTenSecondInsight
 import { socialDiscoveryApi } from '../lib/socialDiscoveryApi';
 import { openScriptLibrary } from '../lib/contentActionNavigation';
 import type { SocialBusinessModel, SocialDiscoveryScoreDecision, SocialDiscoverySupplyItem } from '../../shared/contracts/socialContentWorkflow';
+import { MATERIAL_SOURCE_LABELS, MATERIAL_THEME_LABELS, materialPrimaryThemeOf, materialSourceCategoryOf, materialThemeTagsOf } from '../../shared/materialTaxonomy';
+import MaterialTaxonomyFilters, { type MaterialSourceFilter, type MaterialThemeFilter } from './material-library/MaterialTaxonomyFilters';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 type ScriptType = 'voiceover' | 'storyboard';
@@ -44,8 +47,6 @@ type CrawlTimeRange = 'all' | 'today' | '7d' | '30d';
 type MaterialIndustryFilter = 'all' | 'beauty_skincare' | 'universal_manufacturing' | 'apparel_textile' | 'metalworking';
 type MaterialApplicabilityFilter = 'all' | 'universal' | 'cross_industry' | 'industry_specific';
 type MaterialOrientationFilter = 'all' | 'vertical' | 'horizontal';
-type MaterialSourceFilter = 'all' | 'local_upload' | 'seedance' | 'gemini' | 'official_import' | 'licensed_stock';
-type MaterialKindFilter = 'all' | 'product' | 'cloud';
 type MaterialTypeFilter = 'all' | 'video' | 'image' | 'audio';
 type FavoriteFilter = 'all' | 'favorite';
 export type MaterialAssetTab = 'enterprise' | 'ai' | 'cloud';
@@ -148,6 +149,17 @@ function initialMaterialLibraryEntry(): MaterialLibraryEntryContext {
     : parseMaterialLibraryEntry(window.location.search);
 }
 
+function initialMaterialTaxonomyFilters(): { source: MaterialSourceFilter; theme: MaterialThemeFilter } {
+  if (typeof window === 'undefined') return { source: 'all', theme: 'all' };
+  const params = new URLSearchParams(window.location.search);
+  const source = params.get('source') || 'all';
+  const theme = params.get('theme') || 'all';
+  return {
+    source: source === 'all' || Object.hasOwn(MATERIAL_SOURCE_LABELS, source) ? source as MaterialSourceFilter : 'all',
+    theme: theme === 'all' || Object.hasOwn(MATERIAL_THEME_LABELS, theme) ? theme as MaterialThemeFilter : 'all',
+  };
+}
+
 export function isEnterpriseCommonMaterial(material: Pick<Material, 'tags'>): boolean {
   return String(material.tags || '').split(/[,，]/).map(tag => tag.trim()).includes(ENTERPRISE_COMMON_MATERIAL_TAG);
 }
@@ -223,24 +235,6 @@ const MATERIAL_FUNCTION_LABELS: Record<string, string> = {
 const MATERIAL_APPLICABILITY_LABELS: Record<string, string> = {
   all: '全部适用范围', universal: '通用素材', cross_industry: '跨行业素材', industry_specific: '行业专属',
 };
-const MATERIAL_SOURCE_LABELS: Record<MaterialSourceFilter, string> = {
-  all: '全部来源', local_upload: '本地上传', seedance: 'Seedance 生成',
-  gemini: 'Gemini 生成', official_import: '官方爆款导入', licensed_stock: '授权图库',
-};
-
-function materialSourceOf(material: Material): Exclude<MaterialSourceFilter, 'all'> {
-  const source = String(material.sourceType || '').toLowerCase();
-  if (source.includes('licensed-stock') || source.includes('licensed_stock')) return 'licensed_stock';
-  if (source.includes('seedance')) return 'seedance';
-  if (source.includes('gemini')) return 'gemini';
-  if (source.includes('official') || source.includes('viral') || material.folder === 'hot' || material.scope === 'shared') return 'official_import';
-  return 'local_upload';
-}
-
-function materialKindOf(material: Material): Exclude<MaterialKindFilter, 'all'> {
-  return material.productId || material.sourceType === 'enterprise_product_table' ? 'product' : 'cloud';
-}
-
 /** Product-facing ownership groups. Upload entry only affects traceability, never ownership. */
 export function materialAssetTabOf(material: Pick<Material, 'sourceType' | 'folder' | 'scope'>): MaterialAssetTab {
   const source = String(material.sourceType || '').toLowerCase();
@@ -250,13 +244,10 @@ export function materialAssetTabOf(material: Pick<Material, 'sourceType' | 'fold
 }
 
 export function materialAssetBadge(material: Pick<Material, 'sourceType' | 'folder' | 'scope'>): { label: string; className: string } {
-  const tab = materialAssetTabOf(material);
-  if (tab === 'cloud') return { label: '云爆款', className: 'bg-orange-50 text-orange-700' };
-  if (tab === 'ai') return { label: 'AI 生成', className: 'bg-violet-50 text-violet-700' };
-  const source = String(material.sourceType || '').toLowerCase();
-  return source.includes('knowledge') || source.includes('enterprise')
-    ? { label: '企业知识库上传', className: 'bg-emerald-50 text-emerald-700' }
-    : { label: '内容工作台上传', className: 'bg-sky-50 text-sky-700' };
+  const category = materialSourceCategoryOf(material);
+  if (category === 'official_import') return { label: '官方导入', className: 'bg-orange-50 text-orange-700' };
+  if (category === 'user_generated') return { label: '用户生成', className: 'bg-violet-50 text-violet-700' };
+  return { label: '本地上传', className: 'bg-sky-50 text-sky-700' };
 }
 
 function isFavoriteMaterial(material: Material): boolean {
@@ -3280,10 +3271,22 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     onClose: () => setPreviewMaterial(null),
   });
   const [detailMaterial, setDetailMaterial] = useState<Material | null>(null);
+  const [updatingMaterialTheme, setUpdatingMaterialTheme] = useState(false);
   const detailMaterialDialogRef = useModalFocus<HTMLDivElement>({
     open: Boolean(detailMaterial),
     onClose: () => setDetailMaterial(null),
   });
+  const updateDetailMaterialTheme = async (theme: keyof typeof MATERIAL_THEME_LABELS) => {
+    if (!detailMaterial || updatingMaterialTheme) return;
+    setUpdatingMaterialTheme(true);
+    try {
+      const result = await studioApi.updateMaterial(detailMaterial.id, { name: detailMaterial.name, primaryTheme: theme });
+      if (!result.ok || !result.material) throw new Error(result.error || '主题标签保存失败');
+      setDetailMaterial(result.material);
+      setLocalMaterials(items => items.map(item => item.id === result.material!.id ? result.material! : item));
+    } catch (error) { setMaterialMessage(error instanceof Error ? error.message : '主题标签保存失败'); }
+    finally { setUpdatingMaterialTheme(false); }
+  };
   const manageDialogRef = useModalFocus<HTMLDivElement>({
     open: Boolean(manageTarget),
     onClose: () => { if (!manageBusy) setManageTarget(null); },
@@ -3294,12 +3297,16 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
   const [materialFunction, setMaterialFunction] = useState('all');
   const [materialApplicability, setMaterialApplicability] = useState<MaterialApplicabilityFilter>('all');
   const [materialOrientation, setMaterialOrientation] = useState<MaterialOrientationFilter>('all');
-  const [materialSource, setMaterialSource] = useState<MaterialSourceFilter>('all');
-  const [materialKind, setMaterialKind] = useState<MaterialKindFilter>('all');
+  const [initialTaxonomyFilters] = useState(initialMaterialTaxonomyFilters);
+  const [materialSource, setMaterialSource] = useState<MaterialSourceFilter>(initialTaxonomyFilters.source);
+  const [materialTheme, setMaterialTheme] = useState<MaterialThemeFilter>(initialTaxonomyFilters.theme);
   const [materialType, setMaterialType] = useState<MaterialTypeFilter>('all');
   const [materialFavoriteFilter, setMaterialFavoriteFilter] = useState<FavoriteFilter>('all');
   const [materialFiltersOpen, setMaterialFiltersOpen] = useState(false);
   const [materialsLoading, setMaterialsLoading] = useState(false);
+  const [materialTotal, setMaterialTotal] = useState(0);
+  const [materialPage, setMaterialPage] = useState(1);
+  const [materialFacets, setMaterialFacets] = useState<MaterialLibraryFacets | null>(null);
   const [uploadingMaterial, setUploadingMaterial] = useState(false);
   const [importingReference, setImportingReference] = useState(false);
   const referenceUploadInputRef = useRef<HTMLInputElement | null>(null);
@@ -3311,6 +3318,13 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     const taskId = new URLSearchParams(window.location.search).get('task');
     if (taskId) document.getElementById(`shooting-task-${taskId}`)?.scrollIntoView({ block: 'center' });
   }, [scriptGapTasks]);
+  useEffect(() => {
+    if (innerView !== 'library') return;
+    const url = new URL(window.location.href);
+    materialSource === 'all' ? url.searchParams.delete('source') : url.searchParams.set('source', materialSource);
+    materialTheme === 'all' ? url.searchParams.delete('theme') : url.searchParams.set('theme', materialTheme);
+    window.history.replaceState(window.history.state, '', url);
+  }, [innerView, materialSource, materialTheme]);
   const shootingCameraInputRef = useRef<HTMLInputElement | null>(null);
   const videoRequestRef = useRef(0);
   const inventoryRequestRef = useRef(0);
@@ -3407,13 +3421,20 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
   // Clean up on unmount
   useEffect(() => () => { onScriptPanelClose?.(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const refreshMaterials = async (): Promise<Material[]> => {
+  const refreshMaterials = async (page = materialPage): Promise<Material[]> => {
     if (!localMaterials.length) setMaterialsLoading(true);
     try {
-      // “我的素材”既是可编辑生产素材的入口，也是采集参考素材的可见库存。
-      const items = await studioApi.listMaterials('all');
-      setLocalMaterials(items);
-      return items;
+      const inventory = await studioApi.listMaterialLibrary('all', {
+        ...(materialSource !== 'all' ? { sourceCategory: materialSource } : {}),
+        ...(materialTheme !== 'all' ? { theme: materialTheme } : {}),
+        ...(materialSearch.trim() ? { query: materialSearch.trim() } : {}),
+        page, pageSize: 60,
+      });
+      setLocalMaterials(inventory.items);
+      setMaterialTotal(inventory.total ?? inventory.items.length);
+      setMaterialFacets(inventory.facets || null);
+      setMaterialPage(page);
+      return inventory.items;
     } catch {
       // Keep last successful items; callers can still decide whether the stale
       // signed media URL is usable.
@@ -3423,8 +3444,12 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     }
   };
 
-  useEffect(() => { void refreshMaterials(); }, []);
-  useEffect(() => { if (innerView === 'library') void refreshMaterials(); }, [innerView]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { void refreshMaterials(1); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (innerView !== 'library') return;
+    const timer = window.setTimeout(() => void refreshMaterials(1), 250);
+    return () => window.clearTimeout(timer);
+  }, [innerView, materialSource, materialTheme, materialSearch]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     previewMaterialAutoRetryRef.current = 0;
     setPreviewMaterialAttempt(0);
@@ -3853,22 +3878,22 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
         productRef: materialProductRef,
       });
       return (!q || searchable.includes(q))
-        && (materialKind === 'all' || materialKindOf(material) === materialKind)
+        && (materialTheme === 'all' || materialThemeTagsOf(material).includes(materialTheme))
         && (materialType === 'all' || material.type === materialType)
         && (materialIndustry === 'all' || material.industry === materialIndustry)
         && (materialFunction === 'all' || functions.includes(materialFunction))
         && (materialApplicability === 'all' || material.applicability === materialApplicability)
-        && (materialSource === 'all' || materialSource === materialSourceOf(material))
+        && (materialSource === 'all' || materialSource === materialSourceCategoryOf(material))
         && (materialFavoriteFilter === 'all' || isFavoriteMaterial(material))
         && productMatches
         && orientationMatches;
     }).sort((a, b) => {
       // User uploads are the primary working set. Seed/demo library records may
       // have a later migration timestamp, which must not push fresh uploads down.
-      const sourcePriority = Number(materialSourceOf(b) === 'local_upload') - Number(materialSourceOf(a) === 'local_upload');
+      const sourcePriority = Number(materialSourceCategoryOf(b) === 'local_upload') - Number(materialSourceCategoryOf(a) === 'local_upload');
       return sourcePriority || (Date.parse(String(b.createdAt || '')) || 0) - (Date.parse(String(a.createdAt || '')) || 0);
     });
-  }, [localMaterials, materialSearch, materialType, materialIndustry, materialFunction, materialApplicability, materialOrientation, materialSource, materialKind, materialFavoriteFilter, materialProductFilterEnabled, materialProductId, materialProductRef]);
+  }, [localMaterials, materialSearch, materialType, materialIndustry, materialFunction, materialApplicability, materialOrientation, materialSource, materialTheme, materialFavoriteFilter, materialProductFilterEnabled, materialProductId, materialProductRef]);
 
   const handleUploadMaterials = async (files: FileList | null) => {
     if (!files?.length) return;
@@ -4501,7 +4526,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
   const clearMaterialFilters = () => {
     setMaterialSearch('');
     setMaterialSource('all');
-    setMaterialKind('all');
+    setMaterialTheme('all');
     setMaterialType('all');
     setMaterialFavoriteFilter('all');
     setMaterialIndustry('all');
@@ -4522,7 +4547,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     + Number(sortMode !== 'crawlTime')
     + Number(viewMode !== 'grid');
   const materialFilterCount = Number(materialSearch.trim().length > 0)
-    + Number(materialKind !== 'all')
+    + Number(materialTheme !== 'all')
     + Number(materialSource !== 'all')
     + Number(materialType !== 'all')
     + Number(materialFavoriteFilter !== 'all')
@@ -4888,14 +4913,9 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
               )}
 
               <div className="space-y-3 rounded-lg border border-border bg-surface p-3 sm:p-4">
-                <div className="flex flex-wrap items-center gap-2" aria-label="素材分类">
-                  {([
-                    { id: 'all', label: '全部素材', icon: Images, count: localMaterials.length },
-                    { id: 'product', label: '产品素材', icon: Package, count: localMaterials.filter(item => materialKindOf(item) === 'product').length },
-                    { id: 'cloud', label: '云素材', icon: Cloud, count: localMaterials.filter(item => materialKindOf(item) === 'cloud').length },
-                  ] as const).map(item => { const Icon = item.icon; return <button key={item.id} type="button" onClick={() => setMaterialKind(item.id)} aria-pressed={materialKind === item.id} className={`inline-flex h-9 items-center gap-2 rounded-lg border px-3 text-xs font-black transition ${materialKind === item.id ? 'border-accent bg-accent text-white' : 'border-border bg-white text-text-secondary hover:border-accent hover:text-accent'}`}><Icon size={14}/>{item.label}<span className={`rounded-full px-1.5 py-0.5 text-[9px] ${materialKind === item.id ? 'bg-white/20' : 'bg-surface-2'}`}>{item.count}</span></button>; })}
-                  <p className="ml-auto text-[10px] text-text-muted">企业产品表图片自动进入产品素材；系统预置内容归入云素材。</p>
-                </div>
+                <MaterialTaxonomyFilters source={materialSource} theme={materialTheme} total={materialSource === 'all' && materialTheme === 'all' ? materialTotal : Object.values(materialFacets?.sources || {}).reduce((sum, count) => sum + count, 0)}
+                  sourceCounts={materialFacets?.sources || { local_upload: 0, official_import: 0, user_generated: 0 }}
+                  onSourceChange={setMaterialSource} onThemeChange={setMaterialTheme} />
                 <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 xl:grid-cols-4">
                   <div className="relative w-full">
                     <Search size={14} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
@@ -4953,15 +4973,6 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                         </select>
                         <ChevronDown size={15} className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
                       </label>
-                      <label className="relative block h-14 rounded-xl border border-border bg-surface-2 transition-colors focus-within:border-accent">
-                        <Download size={15} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
-                        <span className="pointer-events-none absolute left-10 top-1.5 text-[10px] font-semibold text-text-muted">素材来源</span>
-                        <select value={materialSource} onChange={event => setMaterialSource(event.target.value as MaterialSourceFilter)} aria-label="素材来源"
-                          className="h-full w-full cursor-pointer appearance-none rounded-xl bg-transparent pl-10 pr-9 pt-3 text-sm font-bold text-text-primary outline-none">
-                          {Object.entries(MATERIAL_SOURCE_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-                        </select>
-                        <ChevronDown size={15} className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
-                      </label>
                       {[
                         { label: '所属行业', value: materialIndustry, onChange: (value: string) => setMaterialIndustry(value as MaterialIndustryFilter), options: Object.entries(MATERIAL_INDUSTRY_LABELS) },
                         { label: '镜头功能', value: materialFunction, onChange: setMaterialFunction, options: [['all', MATERIAL_FUNCTION_LABELS.all], ...materialFunctionOptions.map(value => [value, MATERIAL_FUNCTION_LABELS[value] || value])] },
@@ -4980,7 +4991,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                       ))}
                     </div>
                     <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
-                      <span className="text-xs font-semibold text-text-muted">当前显示 {filteredMaterials.length}/{localMaterials.length} 条素材</span>
+                      <span className="text-xs font-semibold text-text-muted">当前显示 {filteredMaterials.length}/{materialTotal} 条素材</span>
                       <button type="button" onClick={clearMaterialFilters} disabled={materialFilterCount === 0}
                         className="inline-flex min-h-8 items-center gap-1.5 rounded-lg px-2.5 text-xs font-bold text-text-muted transition hover:bg-surface-2 hover:text-accent disabled:cursor-not-allowed disabled:opacity-40">
                         <X size={13} />清除全部筛选
@@ -4988,8 +4999,9 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                     </div>
                   </motion.div>}
                 </AnimatePresence>
-                {!materialFiltersOpen && <p className="px-1 text-xs font-semibold text-text-muted">当前显示 {filteredMaterials.length}/{localMaterials.length} 条素材</p>}
+                {!materialFiltersOpen && <p className="px-1 text-xs font-semibold text-text-muted">当前显示 {filteredMaterials.length}/{materialTotal} 条素材</p>}
               </div>
+              {materialTotal > 60 && <div className="flex items-center justify-center gap-3 py-4 text-xs font-bold text-text-secondary"><button type="button" disabled={materialPage <= 1 || materialsLoading} onClick={() => void refreshMaterials(materialPage - 1)} className="rounded-lg border border-border px-3 py-2 disabled:opacity-40">上一页</button><span>第 {materialPage} / {Math.ceil(materialTotal / 60)} 页</span><button type="button" disabled={materialPage >= Math.ceil(materialTotal / 60) || materialsLoading} onClick={() => void refreshMaterials(materialPage + 1)} className="rounded-lg border border-border px-3 py-2 disabled:opacity-40">下一页</button></div>}
 
               <MaterialLibraryStatus onRetry={refreshMaterials} />
               <div className="grid grid-cols-3 gap-3 items-start lg:grid-cols-4 xl:grid-cols-5">
@@ -5049,6 +5061,9 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                       <p className="mt-1 line-clamp-1 min-h-5 text-xs font-semibold leading-5 text-text-muted" title={materialSemanticLabel(material)}>{materialSemanticLabel(material)}</p>
                       <div className="mt-1 flex min-h-5 flex-wrap gap-1">
                         {(() => { const badge = materialAssetBadge(material); return <span className={`rounded-md px-1.5 py-0.5 text-[10px] font-black ${badge.className}`}>{badge.label}</span>; })()}
+                        {materialPrimaryThemeOf(material)
+                          ? <span className="rounded-md bg-emerald-50 px-1.5 py-0.5 text-[10px] font-black text-emerald-700">{MATERIAL_THEME_LABELS[materialPrimaryThemeOf(material)!]}</span>
+                          : <span className="rounded-md bg-amber-50 px-1.5 py-0.5 text-[10px] font-black text-amber-700">待识别</span>}
                         {visibleMaterialTags(material.tags).split(/[,，]/).map(tag => tag.trim()).filter(Boolean).map(tag => <span key={`tag-${tag}`} className="rounded-md bg-violet-50 px-1.5 py-0.5 text-[10px] font-semibold text-violet-700">{tag}</span>)}
                       </div>
                       <div className="mt-auto grid grid-cols-2 gap-2 pt-3">
@@ -5136,6 +5151,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                       : <div className="flex min-h-44 flex-col items-center justify-center gap-4 bg-surface-2 p-6"><Music2 size={28} className="text-text-muted" /><audio src={detailMaterial.url} controls className="w-full" /></div>}
                   </div>
                   <div className="space-y-3 text-xs">
+                    <div className="rounded-xl border border-border bg-surface px-3 py-2.5"><p className="text-[10px] font-bold text-text-muted">主题标签</p><div className="mt-2 flex flex-wrap gap-1.5">{Object.entries(MATERIAL_THEME_LABELS).map(([id,label]) => <button type="button" key={id} disabled={updatingMaterialTheme} onClick={() => void updateDetailMaterialTheme(id as keyof typeof MATERIAL_THEME_LABELS)} className={`rounded-full px-2.5 py-1 text-[11px] font-bold disabled:opacity-50 ${materialPrimaryThemeOf(detailMaterial) === id ? 'bg-accent text-white' : 'bg-surface-2 text-text-secondary'}`}>{label}</button>)}</div></div>
                     {[
                       ['素材类型', detailMaterial.type === 'video' ? '视频' : detailMaterial.type === 'image' ? '图片' : '音频'],
                       ['关联产品', detailMaterial.productName || '企业通用素材'],

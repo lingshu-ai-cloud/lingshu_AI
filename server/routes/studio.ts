@@ -153,6 +153,7 @@ import { assessTransformation, buildPersonExecutionStrategy, commercialDigitalHu
 import { objectStorageEnabled, objectStorageDelete, objectStorageDownload, objectStorageEnsureFile, objectStorageGetObject, objectStorageHead, objectStorageSignedGetUrl, objectStorageUpload } from '../storage/objectStorage.js';
 import { materialAssetContentType, materialAssetObjectKey, materialAssetTypeAllowed, materialContentAddressedObjectKey, materialPosterObjectKey, sharedObjectKey, tenantPrivateObjectKey } from '../storage/materialAssets.js';
 import { isSyntheticMaterial } from '../lib/materialTruthfulness.js';
+import { MATERIAL_SOURCE_CATEGORIES, MATERIAL_THEMES, materialSourceCategoryOf, materialThemeTagsOf } from '../../shared/materialTaxonomy.js';
 import { untrustedPromptData } from '../lib/untrustedPromptData.js';
 import { bindSocialProjectSpec, socialProjectBelongs, socialProjectTaskId } from '../starter198/socialProjectScope.js';
 import {
@@ -6435,7 +6436,22 @@ studioRouter.get('/materials', async (req, res) => {
   else if (scope === 'own') list = list.filter(m => (m.scope ?? 'own') === 'own');
   if (purpose === 'reference') list = list.filter(isReferenceOnlyMaterial);
   else if (purpose !== 'all') list = list.filter(m => !isReferenceOnlyMaterial(m));
-  const sorted = list.sort((a, b) => (Date.parse(String(b.createdAt || '')) || 0) - (Date.parse(String(a.createdAt || '')) || 0));
+  const facets = {
+    sources: Object.fromEntries(MATERIAL_SOURCE_CATEGORIES.map(value => [value, list.filter(item => materialSourceCategoryOf(item) === value).length])),
+    themes: Object.fromEntries(MATERIAL_THEMES.map(value => [value, list.filter(item => materialThemeTagsOf(item).includes(value)).length])),
+  };
+  const sourceCategory = String(req.query.sourceCategory || '');
+  const theme = String(req.query.theme || '');
+  const query = String(req.query.query || '').trim().toLowerCase();
+  if (MATERIAL_SOURCE_CATEGORIES.includes(sourceCategory as any)) list = list.filter(item => materialSourceCategoryOf(item) === sourceCategory);
+  if (MATERIAL_THEMES.includes(theme as any)) list = list.filter(item => materialThemeTagsOf(item).includes(theme as any));
+  if (query) list = list.filter(item => [item.name, item.productName, item.tags, item.industry, item.shotFunction].some(value => String(value || '').toLowerCase().includes(query)));
+  const total = list.length;
+  const paginated = req.query.page !== undefined || req.query.pageSize !== undefined;
+  const pageSize = paginated ? Math.min(100, Math.max(1, Number(req.query.pageSize || 60))) : Math.max(1, total);
+  const page = Math.max(1, Number(req.query.page || 1));
+  const ordered = list.sort((a, b) => (Date.parse(String(b.createdAt || '')) || 0) - (Date.parse(String(a.createdAt || '')) || 0));
+  const sorted = paginated ? ordered.slice((page - 1) * pageSize, page * pageSize) : ordered;
   const response = await Promise.all(sorted.map(async m => ({
     ...(await materialResponse(m, tenantId)),
     usage: materialUsage(m),
@@ -6443,7 +6459,7 @@ studioRouter.get('/materials', async (req, res) => {
       ? {segmentAnalysisStatus:'failed' as const, segmentAnalysisError:'分析任务已中断，请重试以继续处理原片'} : {}),
   })));
   res.setHeader('Cache-Control', 'private, no-store, max-age=0');
-  if (req.query.envelope === '1') res.status(inventory.status === 'unavailable' ? 503 : 200).json({ ...inventory, items: response });
+  if (req.query.envelope === '1') res.status(inventory.status === 'unavailable' ? 503 : 200).json({ ...inventory, items: response, total, page, pageSize, facets });
   else { res.setHeader('X-Material-Library-Status', inventory.status); res.json(response); }
 });
 
@@ -6928,6 +6944,14 @@ studioRouter.patch('/materials/:id', async (req, res) => {
       const product = (profile.products.items || []).find((item,index) => productIdentity(item,index) === id);
       if (id && !product) { res.status(400).json({ok:false,error:'关联产品不在当前企业资料中'}); return; }
       changes.productId = id; changes.productName = product?.name || '';
+    }
+    if ('primaryTheme' in (req.body || {})) {
+      const theme = String(req.body.primaryTheme || '');
+      if (!MATERIAL_THEMES.includes(theme as any)) { res.status(400).json({ok:false,error:'主题标签无效'}); return; }
+      changes.primaryTheme = theme;
+      changes.themeTags = [theme];
+      changes.classificationStatus = 'completed';
+      changes.classificationSource = 'user';
     }
     const saved = material.id.startsWith('pb-')
       ? Boolean(await getOwnedCloudMaterialRecord(material.id.slice(3), tenantId)) && await updateCloudMaterial(material.id.slice(3), {...changes,title:name})

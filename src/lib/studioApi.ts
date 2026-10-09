@@ -895,7 +895,7 @@ export const studioApi = {
     } catch { return { ok: false, error: '片段更新失败' }; }
   },
   materialProducts: () => get<{items:Array<{id:string;name:string}>}>('material-products', {items:[]}),
-  updateMaterial: async (id: string, changes: { name: string; tags?: string; productId?: string }): Promise<{ ok: boolean; material?: Material; error?: string }> => {
+  updateMaterial: async (id: string, changes: { name: string; tags?: string; productId?: string; primaryTheme?: import('../../shared/materialTaxonomy').MaterialTheme }): Promise<{ ok: boolean; material?: Material; error?: string }> => {
     try {
       const response = await fetch(`/api/overseas/studio/materials/${id}`, {
         method: 'PATCH',
@@ -1025,6 +1025,13 @@ export interface Material {
   usage?: 'editable' | 'reference_only';
   canManage?: boolean;
   sourceType?: string;
+  sourceCategory?: import('../../shared/materialTaxonomy').MaterialSourceCategory;
+  sourceChannel?: string;
+  primaryTheme?: import('../../shared/materialTaxonomy').MaterialTheme;
+  themeTags?: import('../../shared/materialTaxonomy').MaterialTheme[];
+  classificationStatus?: import('../../shared/materialTaxonomy').MaterialClassificationStatus;
+  classificationEvidence?: string[];
+  classificationSource?: 'model' | 'user';
   providerTaskId?: string;
   contentSha256?: string;
   sourceName?: string;

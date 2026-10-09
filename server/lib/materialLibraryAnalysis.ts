@@ -7,6 +7,7 @@ import { getOwnedCloudMaterialRecord, updateCloudMaterial } from './cloudMateria
 import { analyzeProductionMaterial } from '../digitalEmployees/productionMaterialAnalysis.js';
 import type { AssetCandidate } from '../digitalEmployees/contentProduction.js';
 import { buildMaterialScriptAnalysis, reusableMaterialScriptAnalysis, type MaterialScriptAnalysis } from '../../shared/materialScriptAnalysis.js';
+import { materialThemeTagsOf } from '../../shared/materialTaxonomy.js';
 const jobs = new KeyedWorkQueue(2);
 export const isMaterialAnalysisActive = (tenantId: string, id: string) => jobs.has(`${tenantId}:${id}`);
 export function localMaterialMediaPath(record: MaterialRecord, mediaRoot = path.resolve(process.cwd(), 'data/media')): string {
@@ -138,7 +139,10 @@ export async function requestMaterialAnalysis(tenantId: string, id: string, retr
         segments: result.segments,
         visualObservations: result.observations,
       });
+      const themeTags = materialThemeTagsOf({ name: record.name, segments: result.segments, visualObservations: result.observations, scriptAnalysis });
       await patch(tenantId, id, { duration: result.duration, segments: result.segments, visualObservations: result.observations, scriptAnalysis,
+        themeTags, primaryTheme: themeTags[0] || '', classificationStatus: themeTags.length ? 'completed' : 'review_required',
+        classificationSource: 'model', classificationEvidence: result.observations.slice(0, 8),
         segmentAnalysisStatus: 'completed', segmentAnalysisError: '', analysisSourceRevision: revision });
     } catch (error) {
       await patch(tenantId, id, { segmentAnalysisStatus: 'failed', segmentAnalysisError: materialAnalysisError(error) });

@@ -1,5 +1,6 @@
 import { authHeader } from './auth';
 import { studioApi, type Material } from './studioApi';
+import type { MaterialSourceCategory, MaterialTheme } from '../../shared/materialTaxonomy';
 
 export interface DigitalHumanCapabilities {
   available: boolean;
@@ -77,13 +78,20 @@ export interface DigitalHumanJob {
 }
 
 export type MaterialLibraryPurpose = 'library' | 'reference' | 'all';
-export type MaterialLibraryState = { items?: Material[]; status: 'ready' | 'partial' | 'unavailable'; sources: Array<{ source: string; state: string; message: string }> };
+export type MaterialLibraryFacets = { sources: Record<MaterialSourceCategory, number>; themes: Record<MaterialTheme, number> };
+export type MaterialLibraryQuery = { sourceCategory?: MaterialSourceCategory; theme?: MaterialTheme; query?: string; page?: number; pageSize?: number };
+export type MaterialLibraryState = { items?: Material[]; status: 'ready' | 'partial' | 'unavailable'; sources: Array<{ source: string; state: string; message: string }>; total?: number; page?: number; pageSize?: number; facets?: MaterialLibraryFacets };
 let latestMaterialLibraryState: MaterialLibraryState | null = null;
 export const getMaterialLibraryState = () => latestMaterialLibraryState;
 function publishMaterialLibraryState(state: MaterialLibraryState) { latestMaterialLibraryState = state; window.dispatchEvent(new CustomEvent('lingshu:material-library-status', { detail: state })); }
-export async function fetchMaterialLibrary(purpose: MaterialLibraryPurpose = 'library'): Promise<MaterialLibraryState & { items: Material[] }> {
+export async function fetchMaterialLibrary(purpose: MaterialLibraryPurpose = 'library', filters: MaterialLibraryQuery = {}): Promise<MaterialLibraryState & { items: Material[] }> {
   try {
     const query = new URLSearchParams({ envelope: '1', purpose });
+    if (filters.sourceCategory) query.set('sourceCategory', filters.sourceCategory);
+    if (filters.theme) query.set('theme', filters.theme);
+    if (filters.query) query.set('query', filters.query);
+    if (filters.page) query.set('page', String(filters.page));
+    if (filters.pageSize) query.set('pageSize', String(filters.pageSize));
     const response = await fetch(`/api/overseas/studio/materials?${query.toString()}`, { headers: authHeader(), cache: 'no-store', signal: AbortSignal.timeout(15000) });
     if (response.status === 401) throw Error('登录已失效，请重新登录后读取素材');
     const data = await response.json();
