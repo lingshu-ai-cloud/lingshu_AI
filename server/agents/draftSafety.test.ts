@@ -46,3 +46,35 @@ assert.ok(unsupportedHighRiskClaims('CE certification is available for IMH-ABS-0
 assert.deepEqual(unsupportedHighRiskClaims('I will check whether CE certification is available.', '{}'), []);
 assert.deepEqual(unsupportedHighRiskClaims('CE certification is not confirmed yet.', '{}'), []);
 assert.deepEqual(unsupportedHighRiskClaims('CE certification is available.', '{"certifications":"CE"}'), []);
+
+for (const name of ['CE', 'FCC', 'RoHS', 'ISO 9001', 'UL', 'REACH', 'GMP']) {
+  assert.ok(unsupportedHighRiskClaims(`${name} certification is available.`, '{}').length > 0);
+  assert.deepEqual(unsupportedHighRiskClaims(`Is ${name} certification available?`, '{}'), []);
+  assert.deepEqual(unsupportedHighRiskClaims(`We will verify whether ${name} certification is available.`, '{}'), []);
+  assert.deepEqual(unsupportedHighRiskClaims(`${name} certification is pending confirmation.`, '{}'), []);
+  assert.deepEqual(unsupportedHighRiskClaims(`${name} certification is not available.`, '{}'), []);
+  for (const evidence of [`${name} certification is not available`, `${name} pending verification`, `没有${name}认证`]) {
+    assert.ok(unsupportedHighRiskClaims(`${name} certification is available.`, JSON.stringify({ company: evidence })).length > 0);
+  }
+  assert.deepEqual(unsupportedHighRiskClaims(`${name} certification is available.`, JSON.stringify({ certifications: name })), []);
+  assert.deepEqual(unsupportedHighRiskClaims(`${name} certification is available.`, JSON.stringify({ company: `${name} certification is valid.` })), []);
+}
+assert.ok(unsupportedHighRiskClaims('Our product is FCC certified.', '{}').length > 0);
+assert.ok(unsupportedHighRiskClaims('产品已获RoHS认证。', '{}').length > 0);
+assert.deepEqual(unsupportedHighRiskClaims('产品尚未获得RoHS认证，需要核实。', '{}'), []);
+assert.ok(unsupportedHighRiskClaims('ISO 14001 certification is available.', '{"certifications":"ISO 9001"}').length > 0);
+assert.ok(unsupportedHighRiskClaims('CE certification is available.', '{"certifications":"CE","company":"CE certification is expired"}').length > 0);
+assert.ok(unsupportedHighRiskClaims('CE certification is not confirmed; FCC certification is available.', '{}').some(value => value.startsWith('FCC')));
+
+const differentSkuEvidence = JSON.stringify({ products: [{ sku: 'A-01', certifications: 'CE' }, { sku: 'B-02', material: 'ABS' }] });
+assert.ok(unsupportedHighRiskClaims('CE certification is available for B-02.', differentSkuEvidence).length > 0);
+assert.deepEqual(unsupportedHighRiskClaims('CE certification is available for A-01.', differentSkuEvidence), []);
+
+assert.ok(unsupportedHighRiskClaims('Our product is CE certified.', differentSkuEvidence).length > 0);
+
+assert.ok(unsupportedHighRiskClaims('We have CE certification, please confirm quantity.', '{}').length > 0);
+assert.ok(unsupportedHighRiskClaims('CE certification is available and no samples are needed.', '{}').length > 0);
+assert.ok(unsupportedHighRiskClaims('CE certification is available for SKUUNKNOWN.', '{"products":[{"sku":"A-01","certifications":"CE"}]}').length > 0);
+assert.ok(unsupportedHighRiskClaims('CE certification is available for UNKNOWN-02.', '{"products":[{"sku":"A-01","certifications":"CE"}]}').length > 0);
+
+assert.ok(unsupportedHighRiskClaims('CE认证可用。', '{}').length > 0);

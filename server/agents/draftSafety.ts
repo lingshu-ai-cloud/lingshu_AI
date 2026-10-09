@@ -53,11 +53,6 @@ export function requiresFactualVerification(signals: string[], knowledgeMiss: bo
 
 const HIGH_RISK_SUPPORT_RULES: Array<{ label: string; draft: RegExp; evidence: RegExp }> = [
   {
-    label: 'CE certification availability is not grounded',
-    draft: /(?:^|[.!?]\s*)CE\s+(?:cert(?:ification|ificate|ified)?|compliance)(?:\s+\w+){0,3}\s+(?:is|are)\s+(?:available|ready|valid|approved)|\b(?:we|our (?:product|products|factory|company))\s+(?:have|has|hold|holds|are|is)\s+(?:a\s+)?CE\b/i,
-    evidence: /\bCE\b/i,
-  },
-  {
     label: 'private-label capability is not grounded',
     draft: /\b(?:we|our (?:team|factory|company))\s+(?:can|support|offer|provide|do|handle)[^.!?]{0,80}\b(?:private[ -]?label|oem|odm)\b/i,
     evidence: /\b(?:private[ -]?label|oem|odm)\b|贴牌|代工/i,
@@ -94,10 +89,81 @@ const HIGH_RISK_SUPPORT_RULES: Array<{ label: string; draft: RegExp; evidence: R
   },
 ];
 
+const CERTIFICATION_NAMES = /\b(?:CE|FCC|RoHS|REACH|UL|GMP|ISO(?:[ -]?\d{4,5}(?::\d{4})?)?)\b/gi;
+const CERTIFICATION_UNCONFIRMED = /\b(?:not|no|without|lack|lacks|pending|unconfirmed|unknown(?![-_])|unverified|expired|revoked|whether|if|check|verify|confirm|checking|verifying|confirming|need|needs|require|requires|requested|request|seeking|may|might|could)\b|尚未|未获|没有|无认证|不具备|待核|待确认|需核|是否|过期|撤销/i;
+const CERTIFICATION_AFFIRMED = /\b(?:certified|approved|compliant|accredited|hold|holds|have|has|available|ready|valid|obtained|passed|meet|meets|carry|carries)\b|已获|通过|具备|持有|符合|认证齐全|认证(?:有效|可用)|可提供[^。！？]{0,30}(?:认证|证书)/i;
+
+function certificationClauses(text: string): string[] {
+  return text.split(/(?<=[.!?。！？;；,，])|\n|\band\b(?=\s+(?:no|not|please|we|you|the|our|samples)\b)|\bbut\b|但是|但(?=已|有|通过)/i).map(value => value.trim()).filter(Boolean);
+}
+
+function certificationNames(text: string): string[] {
+  return Array.from(text.matchAll(CERTIFICATION_NAMES), match => match[0].toUpperCase().replace(/[ -]/g, ''));
+}
+
+// The caller supplies only company knowledge, never customer requests or seller history.
+function certificationEvidence(source: string, draft: string): Set<string> {
+  let parsed: unknown;
+  try { parsed = JSON.parse(source); } catch { parsed = source; }
+  const namedSkus = new Set<string>();
+  const availableSkus = new Set<string>();
+  const explicitSkuReferences = new Set([
+    ...Array.from(draft.matchAll(/\b[A-Z0-9]+(?:-[A-Z0-9]+)+\b/g), match => match[0].toLowerCase()),
+    ...Array.from(draft.matchAll(/\bSKU\s*[:=]?\s*([A-Z0-9_-]+)/g), match => match[1].toLowerCase()),
+  ]);
+  const collectSkus = (value: unknown): void => {
+    if (Array.isArray(value)) value.forEach(collectSkus);
+    else if (value && typeof value === 'object') {
+      const record = value as Record<string, unknown>;
+      if (typeof record.sku === 'string') {
+        availableSkus.add(record.sku.toLowerCase());
+        if (draft.toLowerCase().includes(record.sku.toLowerCase())) namedSkus.add(record.sku.toLowerCase());
+      }
+      Object.values(record).forEach(collectSkus);
+    }
+  };
+  collectSkus(parsed);
+  const supported = new Set<string>();
+  const denied = new Set<string>();
+  const visit = (value: unknown, field = ''): void => {
+    if (typeof value === 'string') {
+      for (const clause of certificationClauses(value)) {
+        const names = certificationNames(clause);
+        if (CERTIFICATION_UNCONFIRMED.test(clause)) names.forEach(name => denied.add(name));
+        else if (CERTIFICATION_AFFIRMED.test(clause) || /certif|认证|证书/i.test(field)) {
+          names.forEach(name => supported.add(name));
+        }
+      }
+    } else if (Array.isArray(value)) value.forEach(item => visit(item, field));
+    else if (value && typeof value === 'object') {
+      const record = value as Record<string, unknown>;
+      if (typeof record.sku === 'string' && ((namedSkus.size && !namedSkus.has(record.sku.toLowerCase())) || (!namedSkus.size && (availableSkus.size > 1 || explicitSkuReferences.size > 0)))) return;
+      Object.entries(record).forEach(([key, item]) => visit(item, key));
+    }
+  };
+  visit(parsed);
+  // Contradictory enterprise records need manual verification rather than an affirmative claim.
+  denied.forEach(name => supported.delete(name));
+  return supported;
+}
+
+function unsupportedCertificationClaims(draft: string, source: string): string[] {
+  const supported = certificationEvidence(source, draft);
+  const unsupported = new Set<string>();
+  for (const clause of certificationClauses(draft)) {
+    if (CERTIFICATION_UNCONFIRMED.test(clause) || /\?$/.test(clause)) continue;
+    if (!CERTIFICATION_AFFIRMED.test(clause)) continue;
+    for (const name of certificationNames(clause)) {
+      if (!supported.has(name)) unsupported.add(`${name} certification availability is not grounded`);
+    }
+  }
+  return [...unsupported];
+}
+
 export function unsupportedHighRiskClaims(draft: string, factualSource: string): string[] {
-  return HIGH_RISK_SUPPORT_RULES
+  return [...unsupportedCertificationClaims(draft, factualSource), ...HIGH_RISK_SUPPORT_RULES
     .filter(rule => rule.draft.test(draft) && !rule.evidence.test(factualSource))
-    .map(rule => rule.label);
+    .map(rule => rule.label)];
 }
 
 export function hasInternalPromptLeak(draft: string): boolean {

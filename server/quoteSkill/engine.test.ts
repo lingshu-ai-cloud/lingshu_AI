@@ -208,6 +208,9 @@ test('客户明确 FOB 港口待确认时不能直接确认报价，改价格不
     assert.ok(corrected.blockers.includes('FOB 指定装运港尚未确认'), wording);
     assert.ok(applyQuoteDraftPatch(corrected, { unitPrice: 39 }).blockers.includes('FOB 指定装运港尚未确认'), wording);
   }
+  for (const destination of ['France', 'Shanghai', 'FOB port', 'Shanghai port unconfirmed']) {
+    assert.ok(applyQuoteDraftPatch(draft, { destination }).blockers.includes('FOB 指定装运港尚未确认'), destination);
+  }
   assert.ok(!applyQuoteDraftPatch(draft, { destination: 'Shanghai port' }).blockers.includes('FOB 指定装运港尚未确认'));
 });
 

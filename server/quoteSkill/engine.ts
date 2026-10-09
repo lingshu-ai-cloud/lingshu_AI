@@ -320,7 +320,10 @@ export function applyQuoteDraftPatch(draft: QuoteSkillDraft, patch: Record<strin
   next.subtotal = next.quantity != null && next.unitPrice != null ? Number((next.quantity * next.unitPrice).toFixed(2)) : null;
   next.missingFields = requiredQuoteFields(next);
   next.blockers = draft.blockers.filter(item => !/没有可核验单价|未匹配到企业产品目录|仅人工报价|数量低于 MOQ|客户材料与目录规格不一致|客户目标交期尚未获得企业履约信息确认/.test(item));
-  if (source === 'human' && 'destination' in patch && next.destination && next.destination !== draft.destination) next.blockers = next.blockers.filter(item => item !== 'FOB 指定装运港尚未确认');
+  const explicitlyNamedPort = /\bport\b|港/i.test(next.destination)
+    && !/unknown|unconfirmed|pending|not\s+confirmed|\bTBD\b|待确认|未确认|未知/i.test(next.destination)
+    && Boolean(next.destination.replace(/\b(?:port|of|FOB)\b|港口|港/gi, '').trim());
+  if (source === 'human' && 'destination' in patch && explicitlyNamedPort && next.destination !== draft.destination) next.blockers = next.blockers.filter(item => item !== 'FOB 指定装运港尚未确认');
   if (next.unitPrice == null) next.blockers.push('产品目录没有可核验单价');
   if (!next.leadTime && next.deliveryDate && draft.blockers.includes('客户目标交期尚未获得企业履约信息确认') && !(source === 'human' && 'deliveryDate' in patch)) next.blockers.push('客户目标交期尚未获得企业履约信息确认');
   if (next.matchedProduct?.moq != null && next.quantity != null && next.quantity < next.matchedProduct.moq) next.blockers.push(`数量低于 MOQ ${next.matchedProduct.moq}`);
