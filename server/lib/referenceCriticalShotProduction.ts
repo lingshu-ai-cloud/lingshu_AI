@@ -41,6 +41,24 @@ export async function produceReferenceCriticalShots(input: {
   filePath: string; analysis: VideoAiAnalysis; videoId: string; sourceSha256: string;
   duration: number; tenantId?: string;
 }, options: { cacheRoot?: string; classify?: typeof classifyReferenceCriticalShots } = {}): Promise<VideoAiAnalysis> {
+  // Identity/routing enrichment cannot invalidate a paid criticality result:
+  // they are independent dimensions and are not inputs to its prompt.
+  const mergeCritical = (cached: VideoAiAnalysis): VideoAiAnalysis => ({ ...input.analysis,
+    criticalShotSummary: cached.criticalShotSummary,
+    scriptDetails15s: input.analysis.scriptDetails15s?.map((shot,index)=>({ ...shot,
+      criticalShot: cached.scriptDetails15s?.[index]?.criticalShot })) });
+  const criticalInputs = (value: VideoAiAnalysis) => JSON.stringify({ audioTranscript:value.audioTranscript,
+    shots:value.scriptDetails15s?.map(s=>({time:s.time||s.timestamp,visual:s.visual,camera:s.camera,purpose:s.purpose,
+      dialogue:s.dialogue,beats:s.beats?.map(b=>({time:b.time,action:b.action,dialogue:b.dialogue})),speechAlignment:s.speechAlignment})) });
+  const priorSummary = input.analysis.criticalShotSummary as any;
+  if (priorSummary?.sourceSha256 === input.sourceSha256 && priorSummary.evidenceVersion === REFERENCE_CRITICAL_EVIDENCE_VERSION
+    && /^[a-f0-9]{64}$/.test(String(priorSummary.cacheKey))) {
+    const priorFile = path.join(options.cacheRoot || path.resolve('data/analysis-output/critical-shots'), `${priorSummary.cacheKey}.json`);
+    if (fs.existsSync(priorFile)) {
+      const prior = JSON.parse(fs.readFileSync(priorFile,'utf8'));
+      if (prior.analysis && criticalInputs(prior.analysis) === criticalInputs(input.analysis)) return mergeCritical(prior.analysis);
+    }
+  }
   const cleanAnalysis = { ...input.analysis, criticalShotSummary: undefined,
     scriptDetails15s: input.analysis.scriptDetails15s?.map(shot => ({ ...shot, criticalShot: undefined })) };
   const model = (process.env.QWEN_CRITICAL_SHOT_MODEL || 'qwen3-vl-flash').trim();
@@ -57,13 +75,13 @@ export async function produceReferenceCriticalShots(input: {
     && value.providerResponse.model === model;
   const existing = saved();
   if (existing?.cacheKey === cacheKey) {
-    if (existing.analysis) return existing.analysis as VideoAiAnalysis;
+    if (existing.analysis) return mergeCritical(existing.analysis as VideoAiAnalysis);
     if (!recoverable(existing)) throw new Error('该版本的千问卡点调用状态未确认；保留原记录，不重复提交');
   }
   return withPaidOperationLock(path.join(dir, '.locks'), cacheKey, async () => {
     const reusable = saved();
     if (reusable?.cacheKey === cacheKey) {
-      if (reusable.analysis) return reusable.analysis as VideoAiAnalysis;
+      if (reusable.analysis) return mergeCritical(reusable.analysis as VideoAiAnalysis);
       if (!recoverable(reusable)) throw new Error('该版本的千问卡点调用状态未确认；不重复提交');
     }
     const schedule = referenceCriticalFrameSchedule(input.analysis, input.duration);

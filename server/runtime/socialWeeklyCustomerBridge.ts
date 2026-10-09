@@ -1,3 +1,4 @@
+import {verifyWeeklyCustomerMemberProof} from '../socialPrograms/weeklyCustomerMemberProof.js';
 import {verifyWeeklyNativeMember} from '../socialPrograms/weeklyCustomerChannelSelections.js';
 import {readWeeklyCustomerRelationshipScope,verifyFrozenWeeklyCustomerRelationship} from '../socialPrograms/weeklyCustomerRelationshipScope.js';
 import { createHash } from 'node:crypto';
@@ -115,7 +116,7 @@ export async function readWeeklyCustomerStep(store: DataStore, authority: Weekly
   requireProof(included.length === segment.member_count && members.every(row => text(row.customer_id) && Object.keys(obj(row.customer_snapshot)).length));
   const relationshipScope=await readWeeklyCustomerRelationshipScope(store,authority.tenantId,runId);
   requireProof(relationshipScope?.programId===authority.programId&&relationshipScope.packageId===authority.packageId&&relationshipScope.packageVersion===authority.packageVersion,'weekly_customer_relationship_scope_mismatch');
-  try{for(const member of included){if(obj(member.customer_snapshot).weeklyChannelSelection)await verifyWeeklyNativeMember(store,relationshipScope!,String(member.customer_id),member.customer_snapshot);else await verifyFrozenWeeklyCustomerRelationship(store,relationshipScope!,String(member.customer_id),member.customer_snapshot);}}catch(error){return result('blocked',error instanceof Error?error.message:'weekly_customer_relationship_evidence_unverified');}
+  try{for(const member of included){await verifyWeeklyCustomerMemberProof(store,relationshipScope!,String(member.customer_id),member.customer_snapshot);}}catch(error){return result('blocked',error instanceof Error?error.message:'weekly_customer_relationship_evidence_unverified');}
   if(members.some(member=>Array.isArray(member.exclusion_reasons)&&member.exclusion_reasons.includes('weekly_customer_relationship_unknown')))return result('blocked','weekly_customer_relationship_unknown_requires_new_snapshot');
   if (included.length === 0) return segmentation?.status === 'succeeded' && segment.status === 'generated' ? result('no_data', 'weekly_customer_no_eligible_customers') : result('blocked', 'weekly_customer_segmentation_pending');
   if (step === 'customer_segmentation') {
@@ -145,7 +146,7 @@ export async function readWeeklyCustomerStep(store: DataStore, authority: Weekly
   const approved = approvals.some(row => row.goal_id === run.goal_id && row.id === batch.approval_id && row.status === 'approved' && row.subject_version === batch.version && row.content_hash === batch.content_hash && text(row.decided_by) && Number.isFinite(Date.parse(String(row.decided_at))));
   if (!approved || batch.approved_version !== batch.version || !text(batch.approved_by)) return result('blocked', 'weekly_customer_approval_required');
   if (step === 'customer_followup_approval') return task.status === 'succeeded' ? result('succeeded', null, refs) : result('blocked', 'weekly_customer_approval_pending');
-  if(items.some(row=>['messenger','instagram'].includes(String(row.channel))))return result('blocked','weekly_native_channel_dispatch_not_connected');
+  for(const item of active.filter(row=>['messenger','instagram'].includes(String(row.channel)))){try{const {validateWeeklyNativeSendReceipt}=await import('../digitalEmployees/weeklyNativeFollowupDispatch.js');await validateWeeklyNativeSendReceipt(store,item,{...authority,runId});}catch(error){return result('blocked',error instanceof Error&&error.message.startsWith('weekly_')?error.message:'weekly_native_dispatch_receipt_unverified');}}
   if (items.some(row => row.exclusion_reason === 'send_outcome_unknown' || row.status === 'partial_sent')) return result('blocked', 'weekly_customer_send_outcome_unknown');
   if (!active.every(row => ['sent', 'delivered', 'read'].includes(String(row.status)) && text(row.provider_message_id) && !/^(mock|simulat)/i.test(String(row.provider_message_id)) && Object.keys(obj(row.provider_receipt)).length > 0 && !obj(row.provider_receipt).synthetic && !obj(row.provider_receipt).mock && Number.isFinite(Date.parse(String(row.sent_at))))) return result('blocked', 'weekly_customer_delivery_receipt_pending');
   return task.status === 'succeeded' ? result('succeeded', null, refs) : result('blocked', 'weekly_customer_dispatch_pending');

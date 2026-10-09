@@ -1,3 +1,6 @@
+import type {CustomerExceptionTarget} from '../socialProgram/weeklyCustomerExceptionCalendar';
+import type {PublicationRecoveryTarget} from '../socialProgram/weeklyPublicationRecoveryCalendar';
+import type {NativeRecoveryTarget} from '../socialProgram/weeklyNativeRecoveryCalendar';
 import type {CustomerSendRecoveryTarget} from '../socialProgram/weeklyCustomerSendRecoveryNavigation';
 import {calendarClock,calendarDateTime,calendarTimestampLabel,type CalendarClock} from '../socialProgram/calendarTime';
 import {hasTemplateCalendarTarget,type TemplateCalendarTarget} from '../socialProgram/templateCalendarNavigation';
@@ -40,6 +43,9 @@ export type AgentCalendarTask = {
   reviewTarget?: ReviewCalendarTarget;
   planningTarget?: PlanningCalendarTarget;
   sendRecoveryTarget?: CustomerSendRecoveryTarget;
+  nativeRecoveryTarget?: NativeRecoveryTarget;
+  publicationRecoveryTarget?: PublicationRecoveryTarget;
+  customerExceptionTarget?: CustomerExceptionTarget;
   productionTaskId?: string;
   materialRequestId?: string;
   materialAction?: 'upload' | 'verification';
@@ -63,7 +69,7 @@ export function calendarDurationLabel(tasks: AgentCalendarTask[]): string {
   return known.length ? `${unknown?'已估':'预计'} ${hours} 小时${unknown?` · ${unknown} 项待估`:''}` : unknown ? `${unknown} 项工时待估` : '暂无工时';
 }
 export function hasCalendarProductionBinding(task: AgentCalendarTask): boolean {
-  return Boolean((task.agent==='human'&&task.sendRecoveryTarget&&task.id===`send-recovery:${task.sendRecoveryTarget.id}`&&task.sendRecoveryTarget.channel==='whatsapp'&&task.sendRecoveryTarget.tenantId&&task.sendRecoveryTarget.programId&&task.sendRecoveryTarget.packageId&&Number.isSafeInteger(task.sendRecoveryTarget.packageVersion)&&task.sendRecoveryTarget.packageVersion>0&&task.sendRecoveryTarget.runId&&task.sendRecoveryTarget.taskId&&task.sendRecoveryTarget.itemId)||(task.agent==='human'&&task.salesHandoffId&&task.salesPackageId&&Number.isSafeInteger(task.salesPackageVersion)&&task.salesPackageVersion!>0&&['claim','feedback'].includes(task.salesAction||'')) || task.productionTaskId || (task.agent === 'human' && task.materialRequestId && ['upload','verification'].includes(task.materialAction || '')) || (task.agent === 'customer' && task.customerRunId && task.customerWorkflowTaskId && task.customerTaskKey));
+  return Boolean((task.agent==='human'&&task.customerExceptionTarget&&task.id===`customer-exception:${task.customerExceptionTarget.requestId}:${task.customerExceptionTarget.action}`&&task.customerExceptionTarget.runId&&task.customerExceptionTarget.itemId&&task.customerExceptionTarget.memberId&&['submission','verification'].includes(task.customerExceptionTarget.action))||(task.agent==='human'&&task.publicationRecoveryTarget&&task.id===`publication-recovery:${task.publicationRecoveryTarget.id}`&&task.publicationRecoveryTarget.taskId&&task.publicationRecoveryTarget.attemptId&&task.publicationRecoveryTarget.tenantId&&task.publicationRecoveryTarget.programId&&task.publicationRecoveryTarget.packageId&&Number.isSafeInteger(task.publicationRecoveryTarget.packageVersion)&&task.publicationRecoveryTarget.packageVersion>0)||(task.agent==='human'&&task.nativeRecoveryTarget&&task.id===`native-send-recovery:${task.nativeRecoveryTarget.id}`&&task.nativeRecoveryTarget.requestId&&task.nativeRecoveryTarget.taskId&&task.nativeRecoveryTarget.runId&&task.nativeRecoveryTarget.itemId&&task.nativeRecoveryTarget.tenantId&&task.nativeRecoveryTarget.programId&&task.nativeRecoveryTarget.packageId&&Number.isSafeInteger(task.nativeRecoveryTarget.packageVersion)&&task.nativeRecoveryTarget.packageVersion>0&&['messenger','instagram'].includes(task.nativeRecoveryTarget.channel))||(task.agent==='human'&&task.sendRecoveryTarget&&task.id===`send-recovery:${task.sendRecoveryTarget.id}`&&task.sendRecoveryTarget.channel==='whatsapp'&&task.sendRecoveryTarget.tenantId&&task.sendRecoveryTarget.programId&&task.sendRecoveryTarget.packageId&&Number.isSafeInteger(task.sendRecoveryTarget.packageVersion)&&task.sendRecoveryTarget.packageVersion>0&&task.sendRecoveryTarget.runId&&task.sendRecoveryTarget.taskId&&task.sendRecoveryTarget.itemId)||(task.agent==='human'&&task.salesHandoffId&&task.salesPackageId&&Number.isSafeInteger(task.salesPackageVersion)&&task.salesPackageVersion!>0&&['claim','feedback'].includes(task.salesAction||'')) || task.productionTaskId || (task.agent === 'human' && task.materialRequestId && ['upload','verification'].includes(task.materialAction || '')) || (task.agent === 'customer' && task.customerRunId && task.customerWorkflowTaskId && task.customerTaskKey));
 }
 export function isHumanTaskOverdue(task: AgentCalendarTask, now = Date.now()): boolean {
   return task.agent === 'human' && task.availableForHuman !== false && !['completed','cancelled'].includes(task.status)

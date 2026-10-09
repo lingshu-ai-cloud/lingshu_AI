@@ -37,15 +37,15 @@ function ProductionRouting({ shot }: { shot: Record<string, unknown> }) {
   const identityLabel = identityRequired ? '需要锁定同一人物'
     : ready && (presence === 'none' || presence === 'hands_only' || nonPresenterOnly) ? '不要求主讲身份锁定'
       : '待自动识别';
-  const tier = ready ? routing.tier === 'high' ? '高还原生成' : routing.tier === 'standard' ? '标准生成'
-    : ['library_match', 'non_presenter_library_match'].includes(route) ? '素材复用' : '未分配' : '待自动识别';
+  const tier = ready ? ['library_match', 'non_presenter_library_match'].includes(route) ? '素材复用'
+    : routing.tier === 'high' ? '高还原生成' : routing.tier === 'standard' ? '标准生成' : '未分配' : '待自动识别';
   const source = recordOf(routing.source);
   return <div data-reference-production-route className="mt-2 rounded-lg border border-border bg-white p-3 text-[11px] leading-5" aria-label="人物连续性与生产方式">
     <p className="font-semibold text-text-primary">人物连续性与生产方式</p>
     <p className="mt-1 text-text-secondary">人物可见性：{ready ? personPresence[presence] || '待自动识别' : '待自动识别'}
       {ready && presenterRoles[role] && role !== 'unknown' && <span> · {presenterRoles[role]}</span>}</p>
     <p className="break-words text-text-secondary">人物连续性：{ready ? text(routing.personContinuityId)
-      || (presence === 'none' || presence === 'hands_only' ? '无可识别的连续人物' : '待自动识别') : '待自动识别'}</p>
+      || (role === 'background' ? '背景人物无需绑定主讲身份' : presence === 'none' || presence === 'hands_only' ? '无可识别的连续人物' : '待自动识别') : '待自动识别'}</p>
     <p className="text-text-secondary">身份锁定：{identityLabel}</p>
     {identityRequired && <p className="break-words text-text-muted">原片人物：{text(identity.sourcePersonId) || '未记录'} · 同组镜头：{list(identity.samePersonShotIds).join('、') || '未记录'}
       <span> · 目标人物：{text(identity.targetPresenterAssetId) || '待自动绑定'}</span></p>}

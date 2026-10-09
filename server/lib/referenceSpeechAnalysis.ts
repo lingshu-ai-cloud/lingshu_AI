@@ -52,7 +52,7 @@ export function lockReferenceSpeechTimeline(analysis: VideoAiAnalysis, transcrip
     if (owner && segment.end - segment.start <= Math.max(5, owner.range!.end - owner.range!.start + 1))
       legacyPhrases.set(owner.index, [...(legacyPhrases.get(owner.index) || []), segment.text]);
   }
-  return { ...analysis, criticalShotSummary: undefined,
+  return { ...analysis, criticalShotSummary: undefined, referenceProductionRoutingSummary: undefined,
     audioTranscript: { ...transcript, segments: transcript.segments.map(segment => ({ ...segment,
       timingPrecision: segment.timingPrecision === 'phrase' ? 'phrase' : 'coarse',
       needsReview: segment.needsReview ?? segment.timingPrecision !== 'phrase' })) },
@@ -62,13 +62,13 @@ export function lockReferenceSpeechTimeline(analysis: VideoAiAnalysis, transcrip
       limitations: result.limitations, fps: options.fps ?? null },
     scriptDetails15s: normalized.map(row => {
       const aligned = result.shots.find(shot => shot.shotId === `shot-${row.index + 1}`);
-      if (!aligned) return { ...row.detail, criticalShot: undefined, dialogue: '', audio: '分镜时间范围无效，未建立口播对齐',
+      if (!aligned) return { ...row.detail, criticalShot: undefined, referenceProductionRouting: undefined, dialogue: '', audio: '分镜时间范围无效，未建立口播对齐',
         speechAlignment: unknownAlignment,
         beats: row.detail.beats?.map(beat => ({ ...beat, dialogue: '', speechAlignment: unknownAlignment,
           speechSyncStatus: 'insufficient_evidence' as const })) };
       const coarse = aligned.speechAlignment.timingPrecision === 'coarse';
       const legacyText = (legacyPhrases.get(row.index) || []).join(' ');
-      return { ...row.detail, criticalShot: undefined, ...(row.clipped ? { originalTime: row.detail.time,
+      return { ...row.detail, criticalShot: undefined, referenceProductionRouting: undefined, ...(row.clipped ? { originalTime: row.detail.time,
         time: `${row.range!.start.toFixed(2)}s–${row.range!.end.toFixed(2)}s`,
         timelineCorrection: 'clipped_to_measured_video_duration' } : {}),
         dialogue: words.length ? aligned.dialogue : legacyText,

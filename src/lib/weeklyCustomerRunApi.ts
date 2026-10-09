@@ -3,9 +3,11 @@ import type { WeeklyCustomerRunCandidate } from '../../server/runtime/socialWeek
 export type { WeeklyCustomerRunCandidate };
 const path = (programId: string, packageId: string) => `/api/overseas/social-programs/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}`;
 async function request<T>(url: string, body?: unknown): Promise<T> {
-  const response = await fetch(url, { method:body ? 'POST' : 'GET', headers:{...authHeader(),...(body ? {'Content-Type':'application/json'} : {})}, ...(body ? {body:JSON.stringify(body)} : {}) });
+  const headers = authHeader();
+  const response = await fetch(url, { method:body ? 'POST' : 'GET', headers:{...headers,...(body ? {'Content-Type':'application/json'} : {})}, ...(body ? {body:JSON.stringify(body)} : {}) });
   const result=await response.json().catch(()=>{throw new Error('客服接口未返回有效数据，请检查本地服务。');});
-  if (!response.ok) throw new Error(result.message || '客服生产运行读取或绑定失败，请检查周包版本和运行归属。');
+  if (headers.Authorization !== authHeader().Authorization) throw new Error('登录身份已改变，请重新读取原客服运行。');
+  if (!response.ok) throw new Error(result.message || result.error || '客服生产运行读取或绑定失败，请检查周包版本和运行归属。');
   return result as T;
 }
 export const weeklyCustomerRunApi = {

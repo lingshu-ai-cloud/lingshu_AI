@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import type { EmojiClickData, PickerProps } from 'emoji-picker-react';
 import { authHeader } from '../lib/auth';
+import {customerManualTakeoverApi,type CustomerManualTakeoverView} from '../lib/customerManualTakeoverApi';
 import {assertSendScope,readCustomerSendScope,readCustomerSendRequest,readSendIntent,recoverSendIntent,sendIntentStorageKey,type CustomerSendIntent} from '../lib/customerSendIntent';
 import type { AgentAction, ConversationContext, KickoffSignal, RestoreSignal } from '../App';
 import { BasicInfoWidget } from './customers/widgets/BasicInfoWidget';
@@ -1706,6 +1707,10 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
   const [translatedInput, setTranslatedInput] = useState('');
   const [sendingReply, setSendingReply] = useState(false);
   const [pendingSendIntent,setPendingSendIntent]=useState<CustomerSendIntent|null>(null);
+  const [manualHold,setManualHold]=useState<{identity:string;view:CustomerManualTakeoverView}|null>(null);
+  const [manualHoldError,setManualHoldError]=useState<{identity:string;message:string}|null>(null);
+  const manualHoldBusy=useRef(false);
+  const [manualHoldUnknown,setManualHoldUnknown]=useState<string|null>(null);
   const preparingSendRef=useRef(false);
 
   const saveSendIntent=(intent:CustomerSendIntent)=>{localStorage.setItem(sendIntentStorageKey(intent.scope),JSON.stringify(intent));setPendingSendIntent(intent);};
@@ -1734,6 +1739,9 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
     selectedId ? customers.find(customer => customer.id === selectedId) ?? null : null
   ), [customers, selectedId]);
   useEffect(()=>{let live=true;setPendingSendIntent(null);if(selected&&!selected.isMock){void readCustomerSendScope(selected.id).then(scope=>{if(live)setPendingSendIntent(readSendIntent(localStorage,scope));}).catch(()=>{});}return()=>{live=false;};},[selected?.id]);
+  const manualHoldIdentity=JSON.stringify([selected?.id,authHeader().Authorization]);
+  const actualManualIdentity=useRef(manualHoldIdentity);actualManualIdentity.current=manualHoldIdentity;
+  useEffect(()=>{let active=true;setManualHold(null);setManualHoldError(null);setManualHoldUnknown(null);if(selected&&!selected.isMock){void customerManualTakeoverApi.read(selected.id).then(view=>{if(active&&actualManualIdentity.current===manualHoldIdentity)setManualHold({identity:manualHoldIdentity,view});}).catch(error=>{if(active&&actualManualIdentity.current===manualHoldIdentity)setManualHoldError({identity:manualHoldIdentity,message:error instanceof Error?error.message:'接管状态读取失败'});});}return()=>{active=false;};},[manualHoldIdentity,selected?.id]);
   const selectedLatestBuyerId = useMemo(() => (
     selected ? [...selected.timeline].reverse().find(event => (event.type === 'messenger' || event.type === 'instagram' || event.type === 'whatsapp') && event.actor === 'buyer')?.id ?? '' : ''
   ), [selected?.id, selected?.timeline]);
@@ -2405,14 +2413,14 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
     if (translationRequestRef.current === requestId) setTranslatedInput(translation.trim() === input.trim() ? '' : translation);
   }, [input, selected]);
 
+  const refreshManualHold=async()=>{if(!selected||selected.isMock)return;const captured=manualHoldIdentity;try{const view=await customerManualTakeoverApi.read(selected.id);if(actualManualIdentity.current!==captured)return;setManualHold({identity:captured,view});setManualHoldUnknown(null);setManualHoldError(null);}catch(error){if(actualManualIdentity.current===captured)setManualHoldError({identity:captured,message:error instanceof Error?error.message:'真实接管状态尚未恢复'});}};
   const reportManualActive = () => {
-    if (!selected) return;
-    fetch(`/api/overseas/customers/${encodeURIComponent(selected.id)}/manual-active`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...authHeader() },
-      body: JSON.stringify({ minutes: 10 }),
-    }).catch(() => {});
+    if(!selected||selected.isMock||manualHoldBusy.current||manualHoldUnknown===manualHoldIdentity)return;
+    const cached=manualHold?.identity===manualHoldIdentity?manualHold.view:null;if(cached?.active&&cached.item?.ownerUserId===cached.actorUserId&&Date.parse(cached.item.expiresAt)>Date.now()+60000)return;
+    const captured=manualHoldIdentity;manualHoldBusy.current=true;
+    void customerManualTakeoverApi.read(selected.id).then(async view=>{if(actualManualIdentity.current!==captured)return;await customerManualTakeoverApi.hold(view,10);if(actualManualIdentity.current!==captured)return;await refreshManualHold();}).catch(error=>{if(actualManualIdentity.current===captured){setManualHoldUnknown(captured);setManualHoldError({identity:captured,message:error instanceof Error?error.message:'接管结果未知，请只读恢复'});}}).finally(()=>{manualHoldBusy.current=false;});
   };
+  const releaseManualHold=async()=>{const view=manualHold?.identity===manualHoldIdentity?manualHold.view:null;if(!view||!view.item||!view.canRelease||manualHoldBusy.current||manualHoldUnknown===manualHoldIdentity)return;const captured=manualHoldIdentity;manualHoldBusy.current=true;try{await customerManualTakeoverApi.release(view);if(actualManualIdentity.current!==captured)return;await refreshManualHold();}catch(error){if(actualManualIdentity.current===captured){setManualHoldUnknown(captured);setManualHoldError({identity:captured,message:error instanceof Error?error.message:'释放结果未知，请只读恢复'});}}finally{manualHoldBusy.current=false;}};
 
   const openCustomer = (id: string) => {
     setMobilePanel('chat');
@@ -2523,6 +2531,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
         </div>
         <div className={mobilePanel === 'chat' ? 'flex min-h-0 min-w-0 flex-1 lg:contents' : 'hidden lg:contents'}>
         {pendingSendIntent&&pendingSendIntent.scope.customerId===selected?.id&&pendingSendIntent.state!=='accepted'&&<div className="border border-amber-200 bg-amber-50 p-3 text-xs">原发送结果未确认；不会自动重发。{pendingSendIntent.state==='prepared'&&<button type="button" className="ml-2 underline" onClick={()=>{if(undoSend?.eventId===pendingSendIntent.eventId){undoQueuedSend();return;}localStorage.removeItem(sendIntentStorageKey(pendingSendIntent.scope));removeTimelineEvent(pendingSendIntent.scope.customerId,pendingSendIntent.eventId);setPendingSendIntent(null);}}>取消尚未发起的请求</button>}<button type="button" className="ml-2 underline" onClick={()=>{void readCustomerSendRequest(pendingSendIntent).then(item=>{const next=recoverSendIntent(pendingSendIntent,item);saveSendIntent(next);updateTimelineEvent(next.scope.customerId,next.eventId,{sendStatus:next.state==='accepted'?'sent':'unknown',audit:{providerMessageId:item.providerMessageId||undefined}});showToast(next.state==='accepted'?'已读取真实平台发送回执':'平台结果仍未知，请勿重复发送');}).catch(error=>showToast(error instanceof Error?error.message:'无法读取发送状态'));}}>读取原发送状态</button></div>}
+        {selected&&!selected.isMock&&<div className="border border-slate-200 bg-slate-50 p-3 text-xs"><strong>真人接管</strong>{manualHold?.identity===manualHoldIdentity&&<span className="ml-2">{manualHold.view.active?`负责人 ${manualHold.view.item?.ownerUserId} · 截止 ${manualHold.view.item?.expiresAt}`:'当前没有有效临时接管'}{manualHold.view.humanHandling?'；客户仍处于持久人工处理状态，到期或释放临时接管不会自动切换 AI。':''}</span>}<button type="button" className="ml-2 underline" onClick={reportManualActive} disabled={manualHoldUnknown===manualHoldIdentity}>明确接管十分钟</button><button type="button" className="ml-2 underline" onClick={()=>void refreshManualHold()}>只读刷新状态</button>{manualHold?.identity===manualHoldIdentity&&manualHold.view.active&&manualHold.view.canRelease&&<button type="button" className="ml-2 underline" disabled={manualHoldUnknown===manualHoldIdentity} onClick={()=>void releaseManualHold()}>明确释放临时接管</button>}{manualHoldError?.identity===manualHoldIdentity&&<p role="alert" className="mt-1 text-amber-800">{manualHoldError.message}</p>}{manualHoldUnknown===manualHoldIdentity&&<p className="mt-1 text-amber-800">操作结果未恢复，禁止重复操作；请先只读刷新实际持久状态。</p>}</div>}
         <ChatThread
           customer={selected}
           draftSuggestion={draftSuggestion}

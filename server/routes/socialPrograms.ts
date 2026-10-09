@@ -1,3 +1,11 @@
+import { createSocialCrossWeekMaterialContinuationsRouter } from './socialCrossWeekMaterialContinuations.js';
+import { createSocialWeeklyCustomerKnowledgeQuoteRouter } from './socialWeeklyCustomerKnowledgeQuote.js';
+import { createSocialWeeklyPublicationRecoveryRouter } from './socialWeeklyPublicationRecovery.js';
+import { createWeeklyPublicationRecoveryService } from '../socialPrograms/weeklyPublicationRecovery.js';
+import { createSocialWeeklyNativeSendRecoveryRouter } from './socialWeeklyNativeSendRecovery.js';
+import { createWeeklyNativeSendRecoveryService } from '../socialPrograms/weeklyNativeSendRecovery.js';
+import { createSocialWeeklyNativeDispatchRouter } from './socialWeeklyNativeDispatch.js';
+import { createWeeklyNativeFollowupDispatchService } from '../digitalEmployees/weeklyNativeFollowupDispatch.js';
 import { Router, type RequestHandler } from 'express';
 import { requireAuth, enforceSupportSessionReadOnly, type AuthLocals } from '../middleware/auth.js';
 import { store } from '../storage/index.js';
@@ -77,6 +85,26 @@ export function createSocialProgramsRouter(dataStore: DataStore = store, authent
     await service.getProgram((res.locals as AuthLocals).tenantId, req.params.programId);
     next();
   }), createSocialWeeklyCustomerChannelScopeRouter(dataStore));
+  router.use('/:programId/operating-packages/:packageId/cross-week-material-continuations', asyncRoute(async (req, res, next) => {
+    await service.getProgram((res.locals as AuthLocals).tenantId, req.params.programId);
+    next();
+  }), createSocialCrossWeekMaterialContinuationsRouter(dataStore));
+  router.use('/:programId/operating-packages/:packageId/customer-knowledge-quote-requests', asyncRoute(async (req, res, next) => {
+    await service.getProgram((res.locals as AuthLocals).tenantId, req.params.programId);
+    next();
+  }), createSocialWeeklyCustomerKnowledgeQuoteRouter(dataStore));
+  router.use('/:programId/operating-packages/:packageId/publication-recoveries', asyncRoute(async (req, res, next) => {
+    await service.getProgram((res.locals as AuthLocals).tenantId, req.params.programId);
+    next();
+  }), createSocialWeeklyPublicationRecoveryRouter(createWeeklyPublicationRecoveryService(dataStore)));
+  router.use('/:programId/operating-packages/:packageId/native-send-recoveries', asyncRoute(async (req, res, next) => {
+    await service.getProgram((res.locals as AuthLocals).tenantId, req.params.programId);
+    next();
+  }), createSocialWeeklyNativeSendRecoveryRouter(createWeeklyNativeSendRecoveryService(dataStore)));
+  router.use('/:programId/operating-packages/:packageId/native-dispatch', asyncRoute(async (req, res, next) => {
+    await service.getProgram((res.locals as AuthLocals).tenantId, req.params.programId);
+    next();
+  }), createSocialWeeklyNativeDispatchRouter(dataStore, createWeeklyNativeFollowupDispatchService(dataStore)));
   router.use('/:programId/operating-packages/:packageId/send-recoveries', asyncRoute(async (req, res, next) => {
     await service.getProgram((res.locals as AuthLocals).tenantId, req.params.programId);
     next();

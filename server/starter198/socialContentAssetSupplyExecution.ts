@@ -192,6 +192,7 @@ export function alignSocialAssetSupplyPlanToBaseline(input: {
     ...aligned,
     shots: aligned.shots.map((shot, index) => {
       const original = originalById.get(shot.shotId) ?? input.plan.shots[index];
+      if (original?.referenceProductionRouting) return { ...shot, ...structuredClone(original), shotId: shot.shotId, function: shot.function };
       if (original?.selectedMaterialSegment) {
         return {
           ...shot,
@@ -277,6 +278,26 @@ export function assertSocialAssetSupplyTruthBoundary(input: {
 }
 
 function strategyOrder(shot: SocialAssetSupplyShotPlan): SocialShotSourceStrategy[] {
+  const routing = shot.referenceProductionRouting;
+  if (routing) {
+    if (routing.state !== 'ready' || routing.route === 'undetermined') throw new Error(`reference_person_automatic_analysis_required:${shot.shotId}`);
+    if (routing.route === 'reference_frame_presenter') {
+      if (shot.sourceStrategy !== 'authorized_digital_presenter' || !shot.digitalHumanPlan)
+        throw new Error(`reference_presenter_identity_route_violation:${shot.shotId}`);
+      if (!routing.identityLock?.required || !routing.identityLock.targetPresenterAssetId || !shot.digitalHumanPlan.accountPresenterLock
+        || !['preview_only', 'ready_for_capability_check'].includes(shot.digitalHumanPlan.executionState))
+        throw new Error(`reference_presenter_account_identity_required:${shot.shotId}`);
+      if (routing.identityLock?.targetPresenterAssetId && routing.identityLock.targetPresenterAssetId !== shot.digitalHumanPlan.accountPresenterLock.presenterAssetId)
+        throw new Error(`reference_presenter_account_identity_conflict:${shot.shotId}`);
+      if (!shot.digitalHumanPlan.referenceRequired || !shot.digitalHumanPlan.referenceMaterialIds.length)
+        throw new Error(`reference_presenter_source_evidence_required:${shot.shotId}`);
+      return ['authorized_digital_presenter'];
+    }
+    const permitted = ['library_match', 'non_presenter_library_match'].includes(routing.route)
+      ? ['customer_real_asset', 'licensed_stock_asset'] : ['aigc_product_scene_replication', 'non_evidentiary_ai_visual'];
+    if (!permitted.includes(shot.sourceStrategy)) throw new Error(`reference_production_route_violation:${shot.shotId}`);
+    return [shot.sourceStrategy];
+  }
   // The fee card promises a real product-scene generation. Provider or quality
   // failure must pause instead of silently returning a lower-quality graphic.
   if (shot.sourceStrategy === 'aigc_product_scene_replication'

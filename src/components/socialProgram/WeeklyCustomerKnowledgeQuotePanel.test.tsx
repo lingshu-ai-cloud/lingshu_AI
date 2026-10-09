@@ -1,0 +1,2 @@
+import test from 'node:test';import assert from 'node:assert/strict';import {renderToStaticMarkup} from 'react-dom/server';import Panel from './WeeklyCustomerKnowledgeQuotePanel';
+test('initial panel exposes only readonly recovery and actual-source gap before existing run data arrives',()=>{const html=renderToStaticMarkup(<Panel programId="program" packageId="week" packageVersion={2} runId="actual-bound-run"/>);assert.match(html,/只读刷新真实请求/);assert.match(html,/未读取完成不能创建任务/);assert.doesNotMatch(html,/创建人工补齐任务|核验实际版本及原消费者|发送按钮/);assert.match(html,/人工接管、报价安全规则和原批次继续保留/);});

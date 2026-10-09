@@ -75,6 +75,7 @@ try {
   assert.ok(analysis.presenterContinuitySummary, 'actual visual presenter evidence is persisted');
   assert.ok(analysis.referenceProductionRoutingSummary, 'routing summary is persisted');
   const identitySummary = analysis.presenterContinuitySummary;
+  assert.equal(identitySummary.version, 'source-person-visibility-continuity-v2');
   assert.equal(identitySummary.provider, 'qwen');
   assert.equal(identitySummary.sourceSha256, before.contentSha256);
   assert.equal(identitySummary.videoId, sourceId);
@@ -100,7 +101,14 @@ try {
     const evidence = shot.presenterContinuityEvidence;
     const original = provider.shots.find((row: any) => row.shotId === `shot-${index + 1}`);
     assert.ok(original);
-    for (const field of ['personPresence', 'observedPresenterRole', 'personContinuityId', 'confidence']) {
+    const projection: Record<string, [string, string]> = {
+      foreground_presenter: ['person', 'sales_presenter'], presenter_action: ['person', 'presenter_action'],
+      background_people: ['person', 'background'], hands_only: ['hands_only', 'none'], no_person: ['none', 'none'], unknown: ['unknown', 'unknown'],
+    };
+    assert.ok(projection[original.visibility], 'raw product model uses one mutually exclusive visual judgment');
+    assert.equal(evidence.personPresence, projection[original.visibility][0], 'presence is a fixed projection of original Qwen visibility');
+    assert.equal(evidence.observedPresenterRole, projection[original.visibility][1], 'role is a fixed projection of original Qwen visibility');
+    for (const field of ['personContinuityId', 'confidence']) {
       assert.equal(evidence[field], original[field], 'persisted identity labels come from actual product Qwen output');
     }
     assert.deepEqual(evidence.evidence, original.evidence, 'Qwen visual reasons are retained');
@@ -166,7 +174,7 @@ try {
         assert.equal(routing.identityLock, null);
       }
     }
-    return { shotId: index + 1, time: shot.time, criticalShot: shot.criticalShot, presenterContinuityEvidence: shot.presenterContinuityEvidence, referenceProductionRouting: shot.referenceProductionRouting };
+    return { shotId: index + 1, time: shot.time, rawVisibility: original.visibility, criticalShot: shot.criticalShot, presenterContinuityEvidence: shot.presenterContinuityEvidence, referenceProductionRouting: shot.referenceProductionRouting };
   });
   save('shot-routing.json', rows);
   const readBack = await request('');
@@ -192,6 +200,8 @@ try {
     speechAlignmentPreserved: true, criticalClassificationPreserved: true,
     routingOnlyNoMediaGenerated: true, accountTargetIdentityBound: false,
     additionalAsrSupplierCalls: 0, additionalCriticalShotSupplierCalls: 0,
+    presenterSupplierCalls: { total: 2, v1RejectedSemanticValidation: 1, v2MutuallyExclusiveVisibility: 1, replayAdditionalSupplierCalls: 0 },
+    earlierSemanticFailure: 'provider-semantic-diagnostic.json',
     presenterSupplierCache: { existedBeforeRequest: priorIdentityCacheKeys.includes(`${identitySummary.cacheKey}.json`), cacheFile: paidCacheFile, replayAdditionalSupplierCalls: 0 },
     presenterContinuitySummary: analysis.presenterContinuitySummary, referenceProductionRoutingSummary: analysis.referenceProductionRoutingSummary, shots: rows };
   save('report.json', report);

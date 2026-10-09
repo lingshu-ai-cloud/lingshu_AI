@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { freezeSocialScriptBaseline, parseStoredSocialScriptBaseline } from './socialContentScriptBaseline.js';
 import { buildSocialTaskReferencePackage, referencePreparationForRecord } from './socialContentScriptSources.js';
 import { reviewShotMaterialRefs } from '../lib/referenceShotReview.js';
+import { buildReferenceShotProductionRouting } from '../../shared/referenceShotProductionRouting.js';
 
 const source = {
   sourceId: 'source-reference-1',
@@ -78,6 +79,30 @@ const resolved = buildSocialTaskReferencePackage({
 });
 
 assert.ok(resolved);
+const independentRolePayload = JSON.parse(record.aiAnalysis);
+const independentFirstShot = independentRolePayload.gemini.scriptDetails15s[0];
+independentFirstShot.needsReview = true;
+independentFirstShot.confidence = .55;
+independentFirstShot.materialEvidence = { extractionStatus: 'ready', sourceVideoRef: '/api/source/media',
+  clipRef: '/api/source/clip', firstFrameRef: '/api/source/frame', firstFrameSeconds: 0 };
+independentFirstShot.observedPresenterRole = 'unknown';
+independentFirstShot.personContinuityId = '';
+independentFirstShot.presenterContinuityEvidence = { time: '0-3', personPresence: 'person',
+  observedPresenterRole: 'sales_presenter', personContinuityId: 'person_1', confidence: .95,
+  evidence: ['实际0.1和2.8秒帧中的人物'], frameSeconds: [.1, 2.8], model: 'qwen3-vl-flash',
+  provenance: 'qwen_vl:source_frames', sourceSha256: 'current-source' };
+independentFirstShot.referenceProductionRouting = buildReferenceShotProductionRouting({ sourceSha256: 'current-source',
+  shots: [{ shotId: 'shot-1', time: '0-3', criticalShot: { classification: 'non_critical' },
+    presenterContinuityEvidence: independentFirstShot.presenterContinuityEvidence }] }).shots[0].productionRouting;
+const independentResolved = buildSocialTaskReferencePackage({ record: { ...record, aiAnalysis: JSON.stringify(independentRolePayload) },
+  source, themeId: 'product_value', verifiedContext: { productName: '新产品', facts: [], source: 'enterprise_product', confidence: 1 } });
+assert.ok(independentResolved);
+assert.equal(independentResolved.referenceVideoAnalysis.shots[0].observedPresenterRole, 'sales_presenter', 'old speech review must not erase verified independent identity');
+assert.equal(independentResolved.referenceVideoAnalysis.shots[0].personContinuityId, 'person_1');
+assert.equal(independentResolved.referenceVideoAnalysis.shots[0].referenceProductionRouting?.route, 'reference_frame_presenter');
+assert.equal(independentResolved.referenceVideoAnalysis.shots[0].presenterContinuityEvidence?.sourceSha256, 'current-source');
+assert.equal(independentResolved.replicationScript.shots[0].materialPlan.sourceStrategy, 'authorized_digital_presenter');
+assert.equal(independentResolved.replicationScript.shots[0].materialPlan.referenceProductionRouting?.tier, 'standard');
 const publicHook = resolved.referenceVideoAnalysis.shots[0]!;
 assert.equal(publicHook.spokenText, 'OldCo 的 OldBrand OldProduct，先看质地……  再看上脸。');
 assert.equal(publicHook.spokenTextTiming?.precision, 'none', '原模型台词没有真实 ASR 时间证据');

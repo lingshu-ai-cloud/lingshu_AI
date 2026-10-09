@@ -2581,7 +2581,7 @@ videosRouter.post('/:id/align-speech', async (req, res) => {
     if (!await store.update(COL, recordId, { duration: clock.duration,
       aiAnalysis: JSON.stringify({ ...current, gemini: mapped, speechAlignment: alignment,
         // A previous semantic classification cannot survive a changed audio clock.
-        criticalShotAnalysis: undefined }) })) throw new Error('对齐结果保存失败');
+        criticalShotAnalysis: undefined, referenceProductionRoutingSummary: undefined }) })) throw new Error('对齐结果保存失败');
     res.setHeader('Cache-Control', 'private, no-store');
     res.json({ ok: true, status: 'aligned', alignment, analysisRunId: current.analysisRunId, sourceSha256: measuredHash });
   } catch (error) { res.status(422).json({ ok: false, status: 'unavailable',
@@ -2605,8 +2605,10 @@ videosRouter.post('/:id/classify-critical-shots', async (req, res) => {
     const sourceSha256 = createHash('sha256').update(fs.readFileSync(filePath)).digest('hex');
     if (before.contentSha256 && before.contentSha256 !== sourceSha256) { res.status(409).json({ error: '源视频已变化' }); return; }
     const clock = await probeReferenceMediaClock(filePath);
-    const classified = await produceReferenceCriticalShots({ filePath, analysis: before.gemini,
+    const critical = await produceReferenceCriticalShots({ filePath, analysis: before.gemini,
       videoId: id, sourceSha256, duration: clock.duration, tenantId });
+    const classified = before.gemini.presenterContinuitySummary
+      ? await produceReferenceProductionRouting({filePath,analysis:critical,videoId:id,sourceSha256,duration:clock.duration,tenantId}) : critical;
     const latest = await store.getById<Record<string, unknown>>(COL, id);
     const current = parseJsonRecord<Record<string, any>>(latest?.aiAnalysis, {});
     if (!latest || latest.tenantId !== tenantId || fingerprint(current) !== fingerprint(before)) {

@@ -306,6 +306,7 @@ export interface SocialProductSceneReplicationSpec {
 
 export interface SocialAssetSupplyShotPlan {
   shotId: string;
+  referenceProductionRouting?: import('../referenceShotProductionRouting.js').ReferenceShotProductionRouting;
   function: SocialShotFunction;
   requestedDescription: string | null;
   sourceStrategy: SocialShotSourceStrategy;
@@ -382,6 +383,8 @@ export interface SocialReferenceShotTags {
 /** A multimodal, shot-level reading of one reference video; never a reusable formula. */
 export interface SocialReferenceShotAnalysis {
   shotId: string;
+  referenceProductionRouting?: import('../referenceShotProductionRouting.js').ReferenceShotProductionRouting;
+  presenterContinuityEvidence?: import('../referenceShotProductionRouting.js').ReferencePresenterContinuityEvidence;
   /** Same verified source person across shots. Missing means identity continuity is unknown. */
   personContinuityId?: string | null;
     observedPresenterRole?: 'sales_presenter' | 'presenter_action' | 'background' | 'none' | 'unknown';

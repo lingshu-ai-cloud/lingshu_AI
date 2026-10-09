@@ -7,6 +7,7 @@ import type {
 } from '../../shared/contracts/socialContentWorkflow';
 import { buildSocialAgentWorkflow as buildWorkflowUnderTest, socialContentCapabilityRegistry } from './socialContentAgentWorkflow';
 import { alignSocialAssetSupplyPlanToBaseline } from './socialContentAssetSupplyExecution';
+import { buildReferenceShotProductionRouting } from '../../shared/referenceShotProductionRouting';
 
 const brief: SocialContentTaskBrief = {
   title: '面向采购商的产品介绍',
@@ -391,6 +392,36 @@ assert.ok(runtimeReadyDigitalHumanWorkflow.executionPlan.scenes.some(scene => (
   scene.candidates.some(candidate => candidate.sourceStrategy === 'authorized_digital_presenter'
     && candidate.providerId === 'heygen.v3')
 )));
+
+// Independent frame-based identity evidence is an execution constraint even
+// when this scene is noncritical and matching material is already available.
+const identityReference = structuredClone(referenceAnalysis);
+const identityEvidence = { time: '0–3s', personPresence: 'person' as const, observedPresenterRole: 'sales_presenter' as const,
+  personContinuityId: 'person_1', confidence: .95, evidence: ['0.1与2.8秒显示同一主讲人物'], frameSeconds: [.1, 2.8],
+  model: 'qwen3-vl-flash', provenance: 'qwen_vl:source_frames', sourceSha256: 'source-sha' };
+identityReference.shots[0]!.presenterContinuityEvidence = identityEvidence;
+identityReference.shots[0]!.referenceProductionRouting = buildReferenceShotProductionRouting({ sourceSha256: 'source-sha',
+  shots: [{ shotId: 'reference-hook', time: '0–3s', criticalShot: { classification: 'non_critical' },
+    presenterContinuityEvidence: identityEvidence }] }).shots[0]!.productionRouting;
+const identitySupply = createSocialAssetSupplyPlan({ creationMode: 'viral_replication', referenceShots: identityReference.shots,
+  accountPresenterLock: presenterLock,
+  inventory: { presenterAssetIds: ['presenter-enterprise-1'], referenceVideoIds: ['reference-video-1'],
+    customerVideoIds: ['generic-person'], licensedStockAssetIds: ['generic-stock'] },
+  shots: [{ shotId: 'scene-hook', referenceShotId: 'reference-hook', function: 'hook', requestedDescription: '普通主讲口播' }] });
+const identityWorkflow = buildSocialAgentWorkflow({ taskId: 'task-identity', taskVersion: '1', taskStatus: 'plan_review', mode: 'instant',
+  weeklyPlanId: null, brief, sources: [], factSourceRefs: ['knowledge:product-1'], assetSupplyPlan: identitySupply,
+  referenceAnalysis: identityReference, replicationScript: null,
+  materialCandidates: [{ assetId: 'generic-person', sourceRef: 'generic-person', label: '可复用人物素材', mediaType: 'video',
+    previewUrl: '/media/generic.mp4', origin: 'my_materials', matchedVoiceoverCueIds: ['scene-hook:voiceover'], matchScore: 999 }],
+  capabilityRuntime: [{ strategy: 'authorized_digital_presenter', adapterIds: ['heygen.v3'], environmentReady: true, reason: null }] });
+const identityScene = identityWorkflow.executionPlan.scenes[0]!;
+assert.equal(identityWorkflow.directorBrief.scenes[0]?.referenceProductionRouting?.tier, 'standard');
+assert.equal(identityScene.selectedSourceStrategy, 'authorized_digital_presenter');
+assert.ok(identityScene.candidates.length > 0);
+assert.ok(identityScene.candidates.every(candidate => candidate.kind === 'capability'
+  && candidate.sourceStrategy === 'authorized_digital_presenter'));
+assert.ok(identityScene.candidates.every(candidate => candidate.retryPolicy.fallbackStrategies.length === 0));
+assert.ok(identityScene.recommendedCandidateIds.length > 0);
 
 const digitalHumanSupply = createSocialAssetSupplyPlan({
   creationMode: 'viral_replication', planVersion: 'digital-human-1', confirmedFactRefs: ['knowledge:product-1'],

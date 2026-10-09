@@ -340,6 +340,32 @@ function generalStrategy(
   productionApproach: SocialProductionApproach = 'ai_enhanced',
 ): { strategy: SocialShotSourceStrategy; refs: string[]; instruction: string; productSceneReplication?: SocialProductSceneReplicationSpec } {
   const signals = shotSignals(shot, referenceShots);
+  const referenceRouting = referenceShot(shot, referenceShots)?.referenceProductionRouting;
+  if (referenceRouting) {
+    if (referenceRouting.state !== 'ready' || referenceRouting.route === 'undetermined')
+      throw new Error(`reference_person_automatic_analysis_required:${shot.shotId}`);
+    if (referenceRouting.route === 'reference_frame_presenter') return {
+      strategy: 'authorized_digital_presenter', refs: presenterLockReady(accountPresenterLock)
+        ? [accountPresenterLock.presenterAssetId] : inventory.presenterAssetIds,
+      instruction: `${referenceRouting.reason}；保留源人物连续身份约束，统一替换为当前账号授权人物；不得用普通人物素材、动态图文或其他人物替代。`,
+      ...(signals.personUsesProduct && inventory.productImageIds.length ? {
+        productSceneReplication: buildSocialProductSceneReplicationSpec({ shot, inventory, referenceShots }),
+      } : {}),
+    };
+    if (['library_match', 'non_presenter_library_match'].includes(referenceRouting.route)) {
+      const refs = [...new Set([...inventory.customerVideoIds, ...inventory.factoryEvidenceAssetIds,
+        ...inventory.customerCaseEvidenceAssetIds, ...inventory.productEffectEvidenceAssetIds])];
+      if (refs.length) return { strategy: 'customer_real_asset', refs,
+        instruction: `${referenceRouting.reason}；匹配实际视频片段，不得用产品图缩放充当镜头；保留无人/非主讲人物约束。` };
+      if (inventory.licensedStockAssetIds.length) return { strategy: 'licensed_stock_asset', refs: inventory.licensedStockAssetIds,
+        instruction: `${referenceRouting.reason}；仅匹配已授权库内视频，保留无人/非主讲人物约束。` };
+      throw new Error(`reference_material_automatic_search_required:${shot.shotId}`);
+    }
+    return inventory.productImageIds.length ? { strategy: 'aigc_product_scene_replication', refs: inventory.productImageIds,
+      instruction: `${referenceRouting.reason}；锁定完整场景和动作生成视频，禁止静态产品图缩放或普通人物替代。`,
+      productSceneReplication: buildSocialProductSceneReplicationSpec({ shot, inventory, referenceShots }) }
+      : { strategy: 'non_evidentiary_ai_visual', refs: [], instruction: `${referenceRouting.reason}；需要可执行的视频生成能力，不得降级为图文卡片或图片缩放。` };
+  }
   if (productionApproach !== 'ai_enhanced') {
     const localVideoRefs = signals.factory && inventory.factoryEvidenceAssetIds.length
       ? inventory.factoryEvidenceAssetIds
@@ -508,11 +534,12 @@ function planShot(
   const subject = shot.truthSensitiveSubject ?? 'none';
   const canonicalVisualContract = shot.visualContract ?? referenceShot(shot, referenceShots)?.visualContract;
   const signals = shotSignals(shot, referenceShots);
+  const referenceRouting = referenceShot(shot, referenceShots)?.referenceProductionRouting;
   const evidenceRefs = evidenceRefsFor(subject, inventory);
   const hasEvidence = subject !== 'none' && evidenceRefs.length > 0
     && !(subject === 'product_effect' && signals.hasPerson);
 
-  if (hasEvidence) {
+  if (hasEvidence && !referenceRouting) {
     const truthBoundary: SocialShotTruthBoundary = {
       subject,
       syntheticVisualAllowed: false,
@@ -549,6 +576,13 @@ function planShot(
   }
 
   const selected = generalStrategy(shot, inventory, confirmedFactRefs, accountPresenterLock, referenceShots, productionApproach);
+  const frozenReferenceRouting = referenceRouting ? structuredClone(referenceRouting) : undefined;
+  if (frozenReferenceRouting?.route === 'reference_frame_presenter' && frozenReferenceRouting.identityLock
+    && presenterLockReady(accountPresenterLock)) {
+    const target = frozenReferenceRouting.identityLock.targetPresenterAssetId;
+    if (target && target !== accountPresenterLock.presenterAssetId) throw new Error(`reference_presenter_account_identity_conflict:${shot.shotId}`);
+    frozenReferenceRouting.identityLock.targetPresenterAssetId = accountPresenterLock.presenterAssetId;
+  }
   const noFreeMaterial = productionApproach === 'material_cut'
     && !selected.refs.length;
   const lockedProductUnavailable = Boolean(selected.productSceneReplication
@@ -564,8 +598,9 @@ function planShot(
     function: shot.function,
     requestedDescription: shot.requestedDescription ?? null,
     sourceStrategy: selected.strategy,
+    ...(frozenReferenceRouting ? { referenceProductionRouting: frozenReferenceRouting } : {}),
     sourceRefs: selected.refs,
-    fallbackSourceStrategy: fallbackFor(selected.strategy, productionApproach),
+    fallbackSourceStrategy: referenceRouting ? null : fallbackFor(selected.strategy, productionApproach),
     productionInstruction: selected.instruction,
     truthBoundary: {
       subject,

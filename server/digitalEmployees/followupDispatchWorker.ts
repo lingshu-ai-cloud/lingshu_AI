@@ -1,3 +1,4 @@
+import {verifyWeeklyCustomerMemberProof} from '../socialPrograms/weeklyCustomerMemberProof.js';
 import {readWeeklyCustomerRelationshipScope,verifyFrozenWeeklyCustomerRelationship,verifyLatestWeeklyCustomerSegment} from '../socialPrograms/weeklyCustomerRelationshipScope.js';
 import { planMobileChatMessages } from '../agents/mobileChatStyle.js';
 import { resolveTenantFollowupTemplate } from '../whatsapp/templates.js';
@@ -318,6 +319,7 @@ export async function recoverStaleFollowupSending(batch: FollowupBatchRecord, no
   const items = await getFollowupBatchItems(batch.tenant_id, batch.id);
   let recovered = 0;
   for (const item of items) {
+    if (['messenger', 'instagram'].includes(String(item.channel))) continue;
     const receipt = jsonObject(item.provider_receipt);
     if (receipt.localHistoryPending) {
       const accepted = receiptMessages(receipt);
@@ -415,6 +417,7 @@ export async function preflightFollowupBatchDispatch(
   let skipped = 0;
   const items = await getFollowupBatchItems(tenantId, batch.id);
   for (const item of items) {
+    if (['messenger', 'instagram'].includes(String(item.channel))) { blocked += 1; addBlocker('weekly_native_explicit_dispatch_required'); continue; }
     if (['blocked', 'partial_sent', 'failed', 'rejected'].includes(item.status)) { blocked += 1; addBlocker(item.exclusion_reason || `followup_item_${item.status}`); continue; }
     if (!['approved', 'retry_wait'].includes(item.status)) { skipped += 1; continue; }
     const now = dependencies.now();
@@ -486,6 +489,7 @@ export async function dispatchFollowupBatch(
     };
     const items = await getFollowupBatchItems(tenantId, batch.id);
     for (const listedItem of items) {
+      if (['messenger', 'instagram'].includes(String(listedItem.channel))) { result.blocked += 1; continue; }
       if (!['approved', 'retry_wait'].includes(listedItem.status)) continue;
       const now = dependencies.now();
       if (timestamp(listedItem.scheduled_at) > now.getTime()) { result.future += 1; continue; }
@@ -502,7 +506,7 @@ export async function dispatchFollowupBatch(
         result.blocked += 1;
         continue;
       }
-      try{const scope=await readWeeklyCustomerRelationshipScope(store,tenantId,batch.run_id);if(scope){const member=await store.getById<Record<string,unknown>>('customer_segment_members',item.segment_member_id);if(!member||member.tenant_id!==tenantId||member.customer_id!==item.customer_id||member.segment_id!==batch.segment_id||member.membership!=='included')throw Error('weekly_customer_relationship_member_invalid');await verifyFrozenWeeklyCustomerRelationship(store,scope,item.customer_id,member.customer_snapshot);await verifyLatestWeeklyCustomerSegment(store,scope,batch.segment_id);}}catch(error){const reason=error instanceof Error?error.message:'weekly_customer_relationship_evidence_unverified';await persistFollowupItem(item.id,{status:'blocked',exclusion_reason:reason,updated_at:now.toISOString()});result.blocked+=1;continue;}
+      try{const scope=await readWeeklyCustomerRelationshipScope(store,tenantId,batch.run_id);if(scope){const member=await store.getById<Record<string,unknown>>('customer_segment_members',item.segment_member_id);if(!member||member.tenant_id!==tenantId||member.customer_id!==item.customer_id||member.segment_id!==batch.segment_id||member.membership!=='included')throw Error('weekly_customer_relationship_member_invalid');await verifyWeeklyCustomerMemberProof(store,scope,item.customer_id,member.customer_snapshot);await verifyLatestWeeklyCustomerSegment(store,scope,batch.segment_id);}}catch(error){const reason=error instanceof Error?error.message:'weekly_customer_relationship_evidence_unverified';await persistFollowupItem(item.id,{status:'blocked',exclusion_reason:reason,updated_at:now.toISOString()});result.blocked+=1;continue;}
       const safety = await runtimeSafety(tenantId, item, now, dependencies, batch.delivery_policy);
       if (!safety.allowed) {
         await persistFollowupItem(item.id, { status: 'blocked', exclusion_reason: safety.reason, last_error: '', updated_at: now.toISOString() });
@@ -539,7 +543,7 @@ export async function dispatchFollowupBatch(
         if (!currentBatch || currentBatch.status !== 'approved' || Number(currentBatch.version) !== approvedBatchVersion || Number(currentBatch.approved_version) !== approvedBatchVersion || !currentItem || currentItem.content_hash !== approvedContentHash) {
           throw new WorkflowRunBlockedError('followup_approval_changed_before_send');
         }
-        const relationScope=await readWeeklyCustomerRelationshipScope(store,tenantId,batch.run_id);if(relationScope){const member=await store.getById<Record<string,unknown>>('customer_segment_members',item.segment_member_id);if(!member||member.tenant_id!==tenantId||member.customer_id!==item.customer_id||member.segment_id!==currentBatch.segment_id||member.membership!=='included')throw new WorkflowRunBlockedError('weekly_customer_relationship_member_invalid');await verifyFrozenWeeklyCustomerRelationship(store,relationScope,item.customer_id,member.customer_snapshot);await verifyLatestWeeklyCustomerSegment(store,relationScope,currentBatch.segment_id);}
+        const relationScope=await readWeeklyCustomerRelationshipScope(store,tenantId,batch.run_id);if(relationScope){const member=await store.getById<Record<string,unknown>>('customer_segment_members',item.segment_member_id);if(!member||member.tenant_id!==tenantId||member.customer_id!==item.customer_id||member.segment_id!==currentBatch.segment_id||member.membership!=='included')throw new WorkflowRunBlockedError('weekly_customer_relationship_member_invalid');await verifyWeeklyCustomerMemberProof(store,relationScope,item.customer_id,member.customer_snapshot);await verifyLatestWeeklyCustomerSegment(store,relationScope,currentBatch.segment_id);}
         if (item.send_mode === 'template') {
           const variables = Array.isArray(item.template_variables) ? item.template_variables.map(value => String(value || '')) : [];
           const receipt = await dependencies.sendTemplate({ tenantId, to: item.wa_number, templateName: item.template_name, languageCode: item.template_language || 'en_US', variables, callbackData: `followup:${claimToken}:0` });

@@ -1,3 +1,5 @@
+import {attachSelectedWeeklyWhatsAppCustomers} from '../socialPrograms/weeklyCustomerChannelSelections.js';
+import {verifyWeeklyCustomerMemberProof} from '../socialPrograms/weeklyCustomerMemberProof.js';
 import {readSelectedWeeklyNativeCustomers,verifyWeeklyNativeMember} from '../socialPrograms/weeklyCustomerChannelSelections.js';
 import type {DataStore} from '../storage/datastore.js';
 import {readWeeklyCustomerRelationshipScope,evaluateWeeklyCustomerRelationship,verifyFrozenWeeklyCustomerRelationship} from '../socialPrograms/weeklyCustomerRelationshipScope.js';
@@ -102,6 +104,7 @@ export interface FollowupBatchItemRecord extends StoredRecord {
   draft_body: string;
   draft_version: number;
   content_hash: string;
+  weeklyKnowledgeQuoteEvidence?: unknown;
   status: string;
   risk_level: string;
   guard_rule: string;
@@ -327,9 +330,9 @@ export async function createCustomerSegmentSnapshot(input: {
   });
   const version = Number(allVersions.items[0]?.version || 0) + 1;
   const now = new Date();
-  const customers = customersForTenant(input.tenantId);
+  let customers = customersForTenant(input.tenantId);
   const relationshipScope=await readWeeklyCustomerRelationshipScope(segmentStore,input.tenantId,input.runId);
-  if(relationshipScope)customers.push(...await readSelectedWeeklyNativeCustomers(segmentStore,relationshipScope));
+  if(relationshipScope){customers=await attachSelectedWeeklyWhatsAppCustomers(segmentStore,relationshipScope,customers);customers.push(...await readSelectedWeeklyNativeCustomers(segmentStore,relationshipScope));}
   const evaluated = await Promise.all(customers.map(async customer => {
     const membership=segmentMembership(customer,criteria,now.getTime());
     const relation=relationshipScope&&!customer.weeklyChannelSelection?await evaluateWeeklyCustomerRelationship(segmentStore,relationshipScope,String(customer.id||'')):null;
@@ -490,7 +493,9 @@ export async function createFollowupBatch(input: {
   deliveryPolicy?: Partial<FollowupDeliveryPolicy>;
   revisionNote?: string;
   draftOverrides?: Record<string, string>;
+  knowledgeQuoteResolution?: {requestId:string;verifiedVersion:number};
 }, customersForTenant: (tenantId: string) => Array<Record<string, unknown>> = getWhatsAppCustomers): Promise<{ batch: FollowupBatchRecord; items: FollowupBatchItemRecord[]; created: boolean }> {
+  if(input.knowledgeQuoteResolution){const {materializeVerifiedKnowledgeQuoteBatch}=await import('../socialPrograms/weeklyCustomerKnowledgeQuote.js');return materializeVerifiedKnowledgeQuoteBatch(store,{...input,knowledgeQuoteResolution:input.knowledgeQuoteResolution});}
   if (input.idempotent !== false) {
     const existing = await store.list<FollowupBatchRecord>(COLLECTION.batches, {
       where: { tenant_id: input.tenantId, run_id: input.runId, task_id: input.taskId }, sort: '-version', page: 1, perPage: 100,
@@ -502,9 +507,11 @@ export async function createFollowupBatch(input: {
   if (!segment || segment.run_id !== input.runId) throw new Error('customer_segment_not_found');
   const members = (await getCustomerSegmentMembers(input.tenantId, segment.id)).filter(member => member.membership === 'included');
   const relationshipScope=await readWeeklyCustomerRelationshipScope(store,input.tenantId,input.runId);
-  if(relationshipScope)for(const member of members){if(jsonObject(member.customer_snapshot).weeklyChannelSelection)await verifyWeeklyNativeMember(store,relationshipScope,member.customer_id,member.customer_snapshot);else await verifyFrozenWeeklyCustomerRelationship(store,relationshipScope,member.customer_id,member.customer_snapshot);}
-  const customerMap = new Map(customersForTenant(input.tenantId).map(customer => [String(customer.id || ''), customer]));
-  if(relationshipScope)for(const customer of await readSelectedWeeklyNativeCustomers(store,relationshipScope))customerMap.set(String(customer.id),customer);
+  if(relationshipScope)for(const member of members){await verifyWeeklyCustomerMemberProof(store,relationshipScope,member.customer_id,member.customer_snapshot);}
+  const customerMap = new Map<string, Record<string, unknown>>(
+    customersForTenant(input.tenantId).map(customer => [String(customer.id || ''), customer] as const),
+  );
+  if(relationshipScope){for(const customer of await attachSelectedWeeklyWhatsAppCustomers(store,relationshipScope,[...customerMap.values()]))customerMap.set(String(customer.id),customer);for(const customer of await readSelectedWeeklyNativeCustomers(store,relationshipScope))customerMap.set(String(customer.id),customer);}
   const deliveryPolicy = normalizeDeliveryPolicy(input.deliveryPolicy);
   const priorItems = await store.list<FollowupBatchItemRecord>(COLLECTION.items, {
     where: { tenant_id: input.tenantId }, sort: '-sent_at', page: 1, perPage: 2000,
@@ -552,15 +559,15 @@ export async function createFollowupBatch(input: {
     const authenticityBand = customerAuthenticityBand(customer);
     const reasons = [
       ...(generatedBodies.get(member.customer_id)?.error ? ['draft_generation_failed'] : []),
-      ...(customer.weeklyChannelSelection?['weekly_native_channel_dispatch_not_connected']:[]),
+
       ...(memberRisk === 'high' ? ['high_risk_requires_individual_review'] : []),
       ...(customer.handlingMode === 'human_needed' ? ['human_handling_in_progress'] : []),
       ...(qualificationBand === 'black' ? ['customer_qualification_black'] : []),
       ...(['suspected_scraping', 'suspicious_scraping'].includes(authenticityBand) ? ['customer_suspected_scraping'] : []),
       ...(customerHasOptedOut(customer) ? ['customer_opted_out_or_blacklisted'] : []),
-      ...(!String(customer.waNumber || '').trim() ? ['missing_whatsapp_number'] : []),
+      ...(!['messenger','instagram'].includes(String(jsonObject(customer.weeklyChannelSelection).channel))&&!String(customer.waNumber || '').trim() ? ['missing_whatsapp_number'] : []),
       ...(!hasValidTimeZone(customer.timeZone) ? ['invalid_or_unknown_time_zone'] : []),
-      ...(outside24h ? ['whatsapp_template_required'] : []),
+      ...(outside24h ? [(['messenger','instagram'].includes(String(jsonObject(customer.weeklyChannelSelection).channel))?'native_messaging_window_closed':'whatsapp_template_required')] : []),
       ...(recentContactCount(member.customer_id) >= deliveryPolicy.maxContactsPerWindow ? ['contact_frequency_limit'] : []),
       ...(!guard.allowed ? [`outbound_guard:${guard.matchedRule || 'blocked'}`] : []),
       ...(!customerMap.has(member.customer_id) ? ['customer_no_longer_available'] : []),
@@ -628,9 +635,9 @@ export async function createFollowupBatch(input: {
       time_zone: timeZone,
       last_inbound_at: draft.inboundAt,
       outside_24h: draft.outside24h,
-      send_mode: draft.outside24h ? 'template_required' : 'session_message',
+      send_mode: !['messenger','instagram'].includes(String(jsonObject(customer.weeklyChannelSelection).channel))&&draft.outside24h ? 'template_required' : 'session_message',
       template_name: '',
-      template_status: draft.outside24h ? 'not_configured' : 'not_required',
+      template_status: !['messenger','instagram'].includes(String(jsonObject(customer.weeklyChannelSelection).channel))&&draft.outside24h ? 'not_configured' : 'not_required',
       template_language: '',
       template_variables: [],
       draft_body: draft.body,
@@ -724,7 +731,8 @@ export async function followupRunHasExternalReceipt(tenantId: string, runId: str
 }
 
 /** Fingerprint exactly what the provider will send. Legacy session-message hashes remain compatible. */
-export function followupItemContentHash(item: Pick<FollowupBatchItemRecord, 'draft_body' | 'send_mode' | 'template_name' | 'template_language' | 'template_variables'>): string {
+export function followupItemContentHash(item: Pick<FollowupBatchItemRecord, 'draft_body' | 'send_mode' | 'template_name' | 'template_language' | 'template_variables'> & {weeklyKnowledgeQuoteEvidence?:unknown}): string {
+  if(item.weeklyKnowledgeQuoteEvidence){const full=item as unknown as Record<string,unknown>;return createHash('sha256').update(JSON.stringify({body:item.draft_body,mode:item.send_mode,name:item.template_name,language:item.template_language,variables:item.template_variables,evidence:item.weeklyKnowledgeQuoteEvidence,channelSelection:full.channel_selection??null,accountId:full.account_id??null,nativeAccountId:full.native_account_id??null,recipientId:full.recipient_id??null,conversationId:full.conversation_id??null,channelEvidenceHash:full.weekly_channel_evidence_hash??null,scheduledAt:full.scheduled_at,guard:full.guard_rule,exclusion:full.exclusion_reason})).digest('hex');}
   return createHash('sha256').update(JSON.stringify(item.send_mode === 'template'
     ? { body: item.draft_body, mode: item.send_mode, name: item.template_name, language: item.template_language, variables: item.template_variables }
     : item.draft_body)).digest('hex');

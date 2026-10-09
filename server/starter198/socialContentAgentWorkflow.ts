@@ -197,7 +197,9 @@ function directorScene(input: {
     precision: startSeconds < 3 ? 'hook_high' : 'standard',
   });
   const reference = input.reference;
-  const presenterVisible = Boolean(reference && /真人|人物|人像|口播|数字人|主播|女性|男性|模特|presenter|person|human|face|talking/i.test([
+  const referenceRouting = reference?.referenceProductionRouting;
+  const identityLockedPresenter = referenceRouting?.state === 'ready' && referenceRouting.route === 'reference_frame_presenter';
+  const presenterVisible = referenceRouting ? Boolean(identityLockedPresenter) : Boolean(reference && /真人|人物|人像|口播|数字人|主播|女性|男性|模特|presenter|person|human|face|talking/i.test([
     reference.visualDescription, reference.semanticLabel?.content, ...reference.tags.subjects,
   ].filter(Boolean).join(' ')));
   const isPrimaryHook = Boolean(reference && input.primaryHook?.referencePoints.includes(reference.shotId));
@@ -207,7 +209,8 @@ function directorScene(input: {
   const needsCameraOrCompositionReconstruction = Boolean(isPrimaryHook || (reference && /推进|拉远|运镜|构图|特写|镜头|camera|composition|zoom|pan/i.test([
     reference.visualDescription, reference.shotLanguage?.movement, reference.shotLanguage?.composition,
   ].filter(Boolean).join(' '))));
-  const personRole = visualTopicFor(reference, targetVisual, input.supply.function).personRole;
+  const personRole = identityLockedPresenter ? referenceRouting.observedPresenterRole === 'presenter_action' ? 'expressive_action' : 'visible_speech'
+    : visualTopicFor(reference, targetVisual, input.supply.function).personRole;
   const visibleMouth = personRole === 'visible_speech' || (personRole === 'expressive_action'
     && /口播|说话|对镜|唇|talking|speaking/i.test([
       reference?.visualDescription, reference?.semanticLabel?.content,
@@ -217,6 +220,7 @@ function directorScene(input: {
     sceneId: input.script?.shotId || input.supply.shotId,
     order: input.index + 1,
     referenceShotId: input.script?.referenceShotId ?? input.reference?.shotId ?? null,
+    ...(referenceRouting ? { referenceProductionRouting: structuredClone(referenceRouting) } : {}),
     visualTopic: visualTopicFor(input.reference, targetVisual, input.supply.function),
     ...(reference ? {
       referenceMaterial: {
@@ -640,10 +644,24 @@ function capabilityCandidates(input: {
       clipId: null,
       timeRange: null,
       promptRef: null,
-      retryPolicy: { maxAttempts: 3, fallbackStrategies: [...capability.fallbackStrategies] },
+      retryPolicy: { maxAttempts: 3, fallbackStrategies: input.scene.referenceProductionRouting ? [] : [...capability.fallbackStrategies] },
       provenance: { origin: capability.strategy === 'licensed_stock_asset' ? 'licensed_library' : 'system_capability', inputVersion: input.taskVersion, authorizationRef: capability.rightsStatus === 'confirmed' ? `capability:${capability.strategy}` : null, executionRecordId: null },
     }));
   return [...actualAssets, ...capabilityRows]
+    .filter(candidate => {
+      const routing = input.scene.referenceProductionRouting;
+      if (!routing) return true;
+      if (routing.state !== 'ready' || routing.route === 'undetermined') return false;
+      if (routing.route === 'reference_frame_presenter') return candidate.kind === 'capability' && candidate.sourceStrategy === 'authorized_digital_presenter';
+      if (['aigc_video', 'non_presenter_aigc_video'].includes(routing.route)) return candidate.kind === 'capability'
+        && ['aigc_product_scene_replication', 'non_evidentiary_ai_visual'].includes(candidate.sourceStrategy);
+      if (!['customer_real_asset', 'licensed_stock_asset'].includes(candidate.sourceStrategy)) return false;
+      if (routing.route === 'library_match' && candidate.kind === 'asset') {
+        const material = input.materialCandidates?.find(item => item.sourceRef === candidate.sourceRef || item.assetId === candidate.sourceRef);
+        return Boolean(material?.visualContract && !material.visualContract.subjects.some(subject => subject.kind === 'person'));
+      }
+      return true;
+    })
     .sort((left, right) => right.semanticScore - left.semanticScore || right.estimatedSuccessRate - left.estimatedSuccessRate)
     .slice(0, 20);
 }
@@ -657,6 +675,8 @@ function executionScene(input: {
   materialCandidates?: SocialWorkflowMaterialCandidate[];
 }): SocialContentExecutionScenePlan {
   const candidates = capabilityCandidates({ ...input, sceneId: input.scene.sceneId });
+  const identityLockedPresenter = input.scene.referenceProductionRouting?.state === 'ready'
+    && input.scene.referenceProductionRouting.route === 'reference_frame_presenter';
   const topic = input.scene.visualTopic;
   const primaryHook = input.scene.referenceMaterial?.isPrimaryHook || input.supply.function === 'hook';
   const referenceHook = Boolean(input.scene.referenceMaterial?.isPrimaryHook
@@ -688,7 +708,7 @@ function executionScene(input: {
   const safeOriginalHookFallback = referenceHook
     ? undefined
     : capability('licensed_stock_asset') ?? capability('motion_graphics');
-  const preferred = expressivePerson ? undefined
+  const preferred = identityLockedPresenter ? capability('authorized_digital_presenter') : expressivePerson ? undefined
     : visibleSpeech ? capability('authorized_digital_presenter')
       : primaryHook && topic?.kind === 'product_introduction'
         ? capability('aigc_product_scene_replication') ?? capability('customer_product_image_animation') ?? matchingAsset ?? safeOriginalHookFallback
@@ -700,7 +720,7 @@ function executionScene(input: {
     routeDecision: {
       visualTopic: topic,
       policy,
-      reason: expressivePerson ? '人物明显动作需要已验收的首帧动作能力；当前注册能力不满足，退回补能力或改镜'
+      reason: identityLockedPresenter ? input.scene.referenceProductionRouting!.reason : expressivePerson ? '人物明显动作需要已验收的首帧动作能力；当前注册能力不满足，退回补能力或改镜'
         : visibleSpeech ? '可见口播需要企业授权人物与逐句口型能力'
           : primaryHook ? '开场钩子先保持参考表现机制，再核对可执行素材或能力'
             : matchingAsset ? '现有素材满足视觉主题、表达目的与画面契约'
