@@ -1,4 +1,6 @@
 import { readReferencePreparation } from './socialContentScriptSources.js';
+import { createSocialSceneReworkRouter } from './socialContentSceneReworkRouter.js';
+import { assertSocialSceneReworkQueueRegistered, wakeSocialSceneReworkJob } from './socialContentProductionQueue.js';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { Router, type NextFunction, type Request, type Response } from 'express';
@@ -190,6 +192,9 @@ export function createSocialContentRouter(dependencies: SocialContentRouterDepen
     if (!admin) throw new SocialContentWorkflowError('platform_admin_required', 403);
     return admin;
   }
+
+  router.use('/tasks/:taskId/scene-rework', createSocialSceneReworkRouter({ repository, authorize,
+    assertWorkerRegistered: assertSocialSceneReworkQueueRegistered, wake: wakeSocialSceneReworkJob }));
 
   router.get('/internal/work-packages', asyncRoute(async (req, res) => {
     await requirePlatformAdmin(req);

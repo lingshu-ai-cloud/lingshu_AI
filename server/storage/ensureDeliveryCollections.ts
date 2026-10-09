@@ -34,7 +34,7 @@ const TENANTS_FIELDS: FieldDef[] = [
 
 const TENANT_PLATFORM_APP_FIELDS: FieldDef[] = [
   { name: 'tenant_id', type: 'text', required: true },
-  { name: 'platform', type: 'select', required: true, values: ['meta', 'google', 'wecom'] },
+  { name: 'platform', type: 'select', required: true, values: ['meta', 'instagram', 'google', 'tiktok', 'wecom'] },
   { name: 'app_id', type: 'text' },
   { name: 'app_secret', type: 'text' },
   { name: 'wa_config_id', type: 'text' },
@@ -353,7 +353,52 @@ async function ensureCollection(name: string, fields: FieldDef[]): Promise<void>
   throw new Error(`更新集合 ${name} 失败：${lastDetail}`);
 }
 
+export const MATERIAL_EVIDENCE_CONFIGURATION_FIELDS: FieldDef[] = [
+  ...['tenant_id', 'program_id', 'package_id', 'slot_id', 'source_hash', 'record_hash'].map(name => ({ name, type: 'text' as const, required: true })),
+  { name: 'package_version', type: 'number', required: true },
+  { name: 'configuration_version', type: 'number', required: true },
+  { name: 'payload', type: 'json', required: true },
+];
+
+export const CUSTOMER_FEEDBACK_TOPIC_FIELDS: FieldDef[] = [
+  ...['tenant_id', 'program_id', 'record_hash'].map(name => ({ name, type: 'text' as const, required: true })),
+  { name: 'payload', type: 'json', required: true },
+];
+
 export async function ensureDeliveryCollections(): Promise<void> {
+  await ensureCollection('customer_manual_takeovers',[...['tenant_id','scope_key','content_hash'].map(name=>({name,type:'text' as const,required:true})),{name:'version',type:'number',required:true},{name:'payload',type:'json',required:true}]);
+  await ensureCollection('social_weekly_customer_channel_selections',[...['tenant_id','program_id','run_id','package_id','channel','record_hash'].map(name=>({name,type:'text' as const,required:true})),{name:'package_version',type:'number',required:true},{name:'payload',type:'json',required:true}]);
+  await ensureCollection('customer_channel_send_requests',[{name:'active_key',type:'text',required:false},{name:'tenant_id',type:'text',required:true},{name:'request_key',type:'text',required:true},{name:'content_hash',type:'text',required:true},{name:'payload',type:'json',required:true}]);
+  await ensureCollection('social_weekly_customer_send_recoveries', [{name:'tenant_id',type:'text',required:true},{name:'source_key',type:'text',required:true},{name:'content_hash',type:'text',required:true},{name:'payload',type:'json',required:true}]);
+  await ensureCollection('social_weekly_deadline_assessments', [
+    ...['tenant_id', 'program_id', 'package_id', 'assessment_id', 'evidence_hash', 'content_hash'].map(name => ({ name, type: 'text' as const, required: true })),
+    { name: 'package_version', type: 'number', required: true }, { name: 'payload', type: 'json', required: true },
+  ]);
+  const templateCommon: FieldDef[] = [...['tenant_id', 'program_id', 'record_hash'].map(name => ({ name, type: 'text' as const, required: true })), { name: 'payload', type: 'json', required: true }];
+  for (const name of ['social_content_template_candidates', 'social_content_template_confirmations']) await ensureCollection(name, [...templateCommon, { name: 'template_id', type: 'text', required: true }, { name: 'template_version', type: 'number', required: true }]);
+  await ensureCollection('social_weekly_content_template_bindings', [...templateCommon, { name: 'package_id', type: 'text', required: true }, { name: 'package_version', type: 'number', required: true }, { name: 'publication_task_id', type: 'text', required: true }]);
+  await ensureCollection('social_weekly_content_template_execution_selections', [...templateCommon, { name: 'package_id', type: 'text', required: true }, { name: 'package_version', type: 'number', required: true }, { name: 'task_id', type: 'text', required: true }]);
+  await ensureCollection('social_weekly_supplement_requests', [
+    { name: 'idempotency_key', type: 'text', required: true },
+    { name: 'tenant_id', type: 'text', required: true }, { name: 'program_id', type: 'text', required: true },
+    { name: 'package_id', type: 'text', required: true }, { name: 'package_version', type: 'number', required: true },
+    { name: 'payload', type: 'json', required: true },
+  ]);
+  await ensureCollection('social_weekly_supplement_events', [
+    { name: 'tenant_id', type: 'text', required: true }, { name: 'request_id', type: 'text', required: true },
+    { name: 'version', type: 'number', required: true }, { name: 'payload', type: 'json', required: true },
+  ]);
+  const sceneReworkFields: FieldDef[] = [...['tenant_id', 'task_id', 'run_id', 'parent_artifact_id', 'content_hash'].map(name => ({ name, type: 'text' as const, required: true })), { name: 'payload', type: 'json', required: true }];
+  await ensureCollection('starter_social_scene_media_caches', sceneReworkFields);
+  await ensureCollection('starter_social_scene_rework_intents', [...sceneReworkFields, { name: 'operation_id', type: 'text', required: true }, { name: 'execution', type: 'json', required: false }]);
+  await ensureCollection('starter_social_scene_rework_cost_policies', [
+    { name: 'tenant_id', type: 'text', required: true }, { name: 'operation_id', type: 'text', required: true },
+    { name: 'content_hash', type: 'text', required: true }, { name: 'payload', type: 'json', required: true },
+  ]);
+  await ensureCollection('social_weekly_material_evidence_configurations', MATERIAL_EVIDENCE_CONFIGURATION_FIELDS);
+  await ensureCollection('social_customer_relationship_confirmations', [...['tenant_id', 'customer_id', 'record_hash'].map(name => ({ name, type: 'text' as const, required: true })), { name: 'payload', type: 'json', required: true }]);
+  await ensureCollection('social_customer_feedback_topic_candidates', [...CUSTOMER_FEEDBACK_TOPIC_FIELDS, { name: 'source_package_id', type: 'text', required: true }, { name: 'source_package_version', type: 'number', required: true }]);
+  await ensureCollection('social_customer_feedback_topic_confirmations', [...CUSTOMER_FEEDBACK_TOPIC_FIELDS, { name: 'target_package_id', type: 'text', required: true }, { name: 'target_package_version', type: 'number', required: true }, { name: 'publication_task_id', type: 'text', required: true }]);
   await ensureCollection('studio_presenter_assets', [
     { name: 'tenant_id', type: 'text', required: true },
     { name: 'request_id', type: 'text', required: true },

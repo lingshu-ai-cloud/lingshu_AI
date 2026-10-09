@@ -1,0 +1,5 @@
+import test from 'node:test';import assert from 'node:assert/strict';
+import {fixture} from '../socialPrograms/weeklyContentTemplates.fixture.js';
+import {createStarter198Repository} from '../starter198/repository.js';
+import {runSocialContentAutoProduction} from '../starter198/socialContentProductionExecution.js';
+test('direct script production cannot bypass weekly authority by stripping the frozen brief',async()=>{const f=await fixture();try{const row=f.tables.starter_social_content_tasks![0]!;row.brief={title:'真实生产任务',platforms:['tiktok'],languages:['zh']};const before=JSON.stringify(f.tables);let paid=0;await assert.rejects(()=>runSocialContentAutoProduction({repository:createStarter198Repository(f.store),tenantId:'t',userId:'owner',taskId:'content',runId:'run',runtime:{synthesizeVoice:async()=>{paid++;throw Error('must not call');}}}),{code:'weekly_production_start_authority_invalid'});assert.equal(paid,0);assert.equal(JSON.stringify(f.tables),before);}finally{await f.cleanup();}});

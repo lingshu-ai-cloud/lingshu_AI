@@ -1,12 +1,17 @@
+import { runWeeklyDeadlineRecoveryScan, type DeadlineRecoveryEvidenceReader } from './socialWeeklyDeadlineRecovery.js';
 import { randomUUID } from 'node:crypto';
 import { SocialProgramError } from '../socialPrograms/service.js';
+import { SocialContentWorkflowError } from '../starter198/socialContentValidation.js';
+import { assertWeeklyPlanningCoverage } from '../socialPrograms/weeklyPlanningCoverage.js';
 import type { DataStore } from '../storage/datastore.js';
 import { store } from '../storage/index.js';
 import type { WeeklyAgentPlanningState, WeeklyExecutionTask, WeeklyProductionStepKind } from '../../shared/contracts/socialProgram.js';
 import { PACKAGES, type PackageRow } from '../socialPrograms/weeklyOperatingPackageSupport.js';
 import { WEEKLY_AGENT_PLANNING } from '../socialPrograms/planningAuthority.js';
+import { ownedDiagnosisReady } from '../socialPrograms/ownedReferenceDiagnosis.js';
 import { WEEKLY_EXECUTION_TASKS, type WeeklyExecutionTaskRow } from '../socialPrograms/executionTasks.js';
 import { createSocialWeeklyExecutionWorker } from './socialWeeklyExecutionWorker.js';
+import { createWeeklyExecutionContinuationService } from '../socialPrograms/weeklyExecutionContinuations.js';
 import type { SocialWeeklyExecutionAdapter, WeeklyExecutionAdapterResult } from './socialWeeklyExecutionAdapter.js';
 
 export const WEEKLY_PREPRODUCTION_STEPS: WeeklyProductionStepKind[] = ['business_outline', 'benchmark_collection', 'benchmark_scoring', 'director_analysis', 'business_schedule'];
@@ -32,9 +37,20 @@ export function createSocialWeeklyPlanningAdapter(dataStore: DataStore): SocialW
     }
     const step = task.schedule.stepKind;
     if (!WEEKLY_PREPRODUCTION_STEPS.includes(step)) return blocked('weekly_step_adapter_unavailable', '该步骤没有可用执行适配器。');
+    const coverage = plan.dispatch.coverage;
+    if (coverage) {
+      try { assertWeeklyPlanningCoverage(plan, coverage, plan.userConfirmation.selectedSlotIds); }
+      catch (error) { if (error instanceof SocialProgramError) return blocked(error.code, error.message); throw error; }
+      if (JSON.stringify(plan.detailedSchedule.coverage) !== JSON.stringify(coverage)) return blocked('weekly_partial_coverage_changed', '实际派单与确认排期的母版范围不一致。');
+      if (task.publicationTaskId && (!plan.skeleton.slots.some(slot => coverage.selectedSlotIds.includes(slot.slotId) && slot.publicationTaskIds.includes(task.publicationTaskId!)) || !plan.dispatch.scheduleItems.some(item => item.publicationTaskId === task.publicationTaskId))) return blocked('weekly_slot_not_dispatched', '此条目尚未确认派单，保留原来源配额等待补齐。');
+    }
     const motherId = String(task.inputSnapshot.motherContentId ?? '');
-    const slots = plan.skeleton.slots.filter(slot => !motherId || slot.motherContentId === motherId);
+    if ('referenceSourcePolicy' in task.inputSnapshot && (!task.inputSnapshot.referenceSourcePolicy || JSON.stringify(task.inputSnapshot.referenceSourcePolicy) !== JSON.stringify(plan.referenceSourcePolicy) || JSON.stringify(plan.referenceSourcePolicy) !== JSON.stringify(pkg.referenceSourcePolicy))) return blocked('reference_source_policy_required', '本任务参考来源配额尚未明确冻结或与计划版本不一致。');
+    const slots = plan.skeleton.slots.filter(slot => (!coverage || coverage.selectedSlotIds.includes(slot.slotId)) && (!motherId || slot.motherContentId === motherId) && (!task.accountId || slot.accountIds.includes(task.accountId)));
     const analyses = plan.directorAnalyses.filter(analysis => slots.some(slot => slot.slotId === analysis.slotId));
+    if (task.inputSnapshot.referenceSource && slots.some(slot => slot.referenceSource !== task.inputSnapshot.referenceSource)) return blocked('reference_source_allocation_mismatch', '母版来源与冻结任务不一致，不能用外部参考替换自有配额。');
+    if (plan.referenceSourcePolicy?.profile === 'b2b_cold_start' && slots.some(slot => slot.referenceSource === 'owned')) return blocked('cold_start_external_reference_required', '零基础首周仅允许外部参考。');
+    if (['benchmark_scoring', 'director_analysis'].includes(step) && slots.some(slot => slot.referenceSource === 'owned' && !analyses.some(analysis => analysis.slotId === slot.slotId && ownedDiagnosisReady(analysis) && JSON.stringify(analysis.ownedReferenceDiagnosis!.policy) === JSON.stringify(plan.referenceSourcePolicy)))) return blocked('owned_reference_diagnosis_pending', '自有参考需完整播放、赞转评和冻结调性分析；缺项保留待诊断，不改成外部。');
     if (!slots.length || (task.accountId && !slots.some(slot => slot.accountIds.includes(task.accountId!)))) {
       return blocked('frozen_schedule_input_missing', '冻结计划缺少对应内容或账号排期。');
     }
@@ -58,8 +74,11 @@ export async function runSocialWeeklyExecutionScan(input: {
   workerId?: string;
   maxTasksPerTenant?: number;
   leaseDurationMs?: number;
+  now?: Date;
+  readRecoveryEvidence?: DeadlineRecoveryEvidenceReader;
 }) {
   const dataStore = input.dataStore ?? store;
+  const deadlineRecovery = await runWeeklyDeadlineRecoveryScan({ dataStore, now: input.now, readEvidence: input.readRecoveryEvidence });
   const worker = createSocialWeeklyExecutionWorker(dataStore);
   const planningAuthority = createSocialWeeklyPlanningAdapter(dataStore);
   const workerId = input.workerId ?? `weekly-execution-${process.pid}-${randomUUID()}`;
@@ -75,48 +94,66 @@ export async function runSocialWeeklyExecutionScan(input: {
   const report = { claimed: 0, succeeded: 0, pending: 0, blocked: 0, failed: 0 };
   for (const tenantId of tenants) {
     for (let count = 0; count < (input.maxTasksPerTenant ?? 25); count++) {
-      let claim = await worker.claimNext({ tenantId, workerId, leaseDurationMs: input.leaseDurationMs ?? 120_000 });
+      let claim = await worker.claimNext({ tenantId, workerId, now: input.now, leaseDurationMs: input.leaseDurationMs ?? 120_000 });
       if (!claim) break;
       report.claimed++;
       let lostLease: unknown;
       let renewal = Promise.resolve();
       const timer = setInterval(() => {
         renewal = renewal.then(async () => {
-          if (!lostLease) { try { claim = await worker.renew(claim!, { leaseDurationMs: input.leaseDurationMs ?? 120_000 }); } catch (error) { lostLease = error; } }
+          if (!lostLease) { try { claim = await worker.renew(claim!, { leaseDurationMs: input.leaseDurationMs ?? 120_000, now: input.now }); } catch (error) { lostLease = error; } }
         });
       }, Math.max(100, Math.floor((input.leaseDurationMs ?? 120_000) / 3)));
       timer.unref?.();
+      let validatingCompletion = false;
       try {
         const adapter = input.adapters[claim.task.schedule.stepKind];
         const dispatchGate = await planningAuthority.execute({ ...claim.task, accountId: null, inputSnapshot: {}, schedule: { ...claim.task.schedule, stepKind: 'business_outline' } });
-        const result = dispatchGate.status !== 'succeeded' ? dispatchGate : adapter ? await adapter.execute(claim.task) : { status: 'blocked' as const, code: 'weekly_step_adapter_unavailable', message: '该生产步骤暂缺执行适配器。' };
+        const continuationPending = claim.task.inputSnapshot.weeklyContinuationPending;
+        const continuationRef = claim.task.inputSnapshot.weeklyContinuationRef;
+        let continuationResult: WeeklyExecutionAdapterResult | undefined;
+        if (dispatchGate.status === 'succeeded' && (continuationPending || continuationRef)) {
+          try {
+            if (!continuationRef) throw new SocialProgramError('weekly_execution_continuation_verification_required', 409, '等待核验原任务复用记录；不能重新启动制作。');
+            const ref = continuationRef as import('../../shared/contracts/socialProgram.js').VersionedSocialRef;
+            const read = await createWeeklyExecutionContinuationService(dataStore).readValidated({ tenantId: claim.task.tenantId, programId: claim.task.programId, packageId: claim.task.packageId, targetVersion: claim.task.packageVersion, targetTaskId: claim.task.taskId, ref });
+            continuationResult = read.status === 'ready' ? { status: 'succeeded', resultRefs: [ref] }
+              : { status: read.status, code: read.code ?? 'weekly_continuation_waiting_real_source_settlement', message: '正在核对原任务的真实产物或运行结果；不会启动新版本制作。' };
+          } catch (error) {
+            if (!(error instanceof SocialProgramError) && !(error instanceof SocialContentWorkflowError)) throw error;
+            continuationResult = { status: 'blocked', code: error.code, message: error.message };
+          }
+        }
+        const result = dispatchGate.status !== 'succeeded' ? dispatchGate : continuationResult
+          ? continuationResult
+          : adapter ? await adapter.execute(claim.task) : { status: 'blocked' as const, code: 'weekly_step_adapter_unavailable', message: '该生产步骤暂缺执行适配器。' };
         clearInterval(timer);
         await renewal;
         if (lostLease) throw lostLease;
-        if (result.status === 'succeeded') { await worker.complete(claim, result.resultRefs); report.succeeded++; }
-        else { await worker.defer(claim, { code: result.code, message: result.message, progress: result.progress, retryDelayMs: result.status === 'pending' ? result.retryDelayMs : undefined, blockingReason: result.status === 'blocked' ? result.code : undefined }); report[result.status]++; }
+        if (result.status === 'succeeded') { validatingCompletion = true; await worker.complete(claim, result.resultRefs, input.now); report.succeeded++; }
+        else { await worker.defer(claim, { now: input.now, code: result.code, message: result.message, progress: result.progress, retryDelayMs: result.status === 'pending' ? result.retryDelayMs : undefined, blockingReason: result.status === 'blocked' ? result.code : undefined }); report[result.status]++; }
       } catch (error) {
         clearInterval(timer);
         await renewal;
         report.failed++;
-        if (!lostLease && error instanceof SocialProgramError && error.status === 409 && error.code.startsWith('weekly_execution_result')) {
-          await worker.defer(claim, { code: error.code, message: error.message, blockingReason: error.code }).catch(() => undefined);
-        } else if (!lostLease) await worker.fail(claim, { code: 'weekly_execution_adapter_failed', message: error instanceof Error ? error.message : String(error), retryable: true }).catch(() => undefined);
+        if (!lostLease && validatingCompletion && ((error instanceof SocialProgramError && [400, 401, 403, 404, 409, 422].includes(error.status)) || (error instanceof SocialContentWorkflowError && ([400, 401, 403, 404, 409, 422].includes(error.status) || ['social_content_file_integrity_violation', 'social_content_file_record_invalid'].includes(error.code))))) {
+          await worker.defer(claim, { now: input.now, code: error.code, message: error.message, blockingReason: error.code }).catch(() => undefined);
+        } else if (!lostLease) await worker.fail(claim, { now: input.now, code: 'weekly_execution_adapter_failed', message: error instanceof Error ? error.message : String(error), retryable: true }).catch(() => undefined);
       } finally { clearInterval(timer); }
     }
   }
-  return report;
+  return { ...report, deadlineRecovery };
 }
 
 let timer: ReturnType<typeof setInterval> | null = null;
 let running = false;
-export function initSocialWeeklyExecutionRuntime(adapters: Partial<Record<WeeklyProductionStepKind, SocialWeeklyExecutionAdapter>>): void {
+export function initSocialWeeklyExecutionRuntime(adapters: Partial<Record<WeeklyProductionStepKind, SocialWeeklyExecutionAdapter>>, options: { readRecoveryEvidence?: DeadlineRecoveryEvidenceReader } = {}): void {
   if (timer || process.env.SOCIAL_WEEKLY_EXECUTION_WORKER_ENABLED !== 'true') return;
   const workerId = `weekly-execution-${process.pid}-${randomUUID()}`;
   const tick = () => {
     if (running) return;
     running = true;
-    void runSocialWeeklyExecutionScan({ adapters, workerId }).catch(error => console.error('[social-weekly-execution] scan unavailable:', error instanceof Error ? error.message : String(error))).finally(() => { running = false; });
+    void runSocialWeeklyExecutionScan({ adapters, workerId, readRecoveryEvidence: options.readRecoveryEvidence }).catch(error => console.error('[social-weekly-execution] scan unavailable:', error instanceof Error ? error.message : String(error))).finally(() => { running = false; });
   };
   timer = setInterval(tick, Math.max(1_000, Number(process.env.SOCIAL_WEEKLY_EXECUTION_INTERVAL_MS) || 15_000));
   timer.unref?.();

@@ -1,3 +1,4 @@
+import {readCanonicalWhatsAppAccount} from './canonicalAccount.js';
 import { hasStoredValue, storedCompleteness, mergeStoredObjects } from './storedValueMerge.js';
 import { createHash } from 'node:crypto';
 import fs from 'fs';
@@ -16,6 +17,7 @@ import { advanceSpinStage, selectSpinGuidance, type SpinState, type SpinGuidance
 import { matchSalesActions, shouldEscalateSalesAction } from '../sales/actionLibrary.js';
 import { objectStorageUpload } from '../storage/objectStorage.js';
 import { store } from '../storage/index.js';
+import {createCustomerManualTakeoverService} from '../customerService/customerManualTakeover.js';
 import { sendTenantWhatsAppTextWithReceipts } from './send.js';
 import { deliverAutoReply } from './autoReplyDelivery.js';
 import { isRealWhatsAppNumber } from './customerVisibility.js';
@@ -135,6 +137,7 @@ interface IncomingMessage {
   fromBusiness?: boolean;
   body: string;
   timestamp: number;
+  canonicalAccount?: {accountId:string;phoneNumberId:string;wabaId:string};
 }
 
 function customerFreshness(customer: StoredCustomer): number {
@@ -204,7 +207,7 @@ export function dedupeWhatsAppInteractionRecords(items: StoredInteraction[]): St
     const id = String(item?.id || '').trim();
     if (!tenantId || !id) { invalid.push(item); continue; }
     const providerId = whatsappInteractionProviderId(item);
-    const key = `${tenantId}\u0000${providerId ? 'provider:' + providerId : 'local:' + id}`;
+    const key = `${tenantId}\u0000${providerId ? 'provider:' + String(item.audit?.phoneNumberId||'') + ':' + providerId : 'local:' + id}`;
     const prior = records.get(key);
     records.set(key, prior ? mergeStoredInteractions(prior, item) : item);
   }
@@ -749,7 +752,7 @@ export function whatsappInteractionProviderId(item: Pick<StoredInteraction, 'met
 function addInteraction(item: StoredInteraction): boolean {
   const list = interactions();
   const providerId = whatsappInteractionProviderId(item);
-  const exists = list.some(existing => existing.tenantId === item.tenantId && (existing.id === item.id || (providerId && whatsappInteractionProviderId(existing) === providerId)));
+  const exists = list.some(existing => existing.tenantId === item.tenantId && (existing.id === item.id || (providerId && String(existing.audit?.phoneNumberId||'')===String(item.audit?.phoneNumberId||'') && whatsappInteractionProviderId(existing) === providerId)));
   if (exists) return false;
   list.push(item);
   list.sort((a, b) => a.timestamp - b.timestamp);
@@ -946,7 +949,7 @@ function evaluateCustomerHandoff(customer: StoredCustomer, input: Parameters<typ
 async function handleInboundMessage(tenantId: string, message: IncomingMessage, options: { skipAutonomy?: boolean } = {}): Promise<void> {
   // Meta retries the same event. Do not re-open inbox tasks, advance customer
   // qualification, or send another reply for an already recorded message.
-  if (interactions().some(item => item.tenantId === tenantId && whatsappInteractionProviderId(item) === message.id)) return;
+  if (interactions().some(item => item.tenantId === tenantId && String(item.audit?.phoneNumberId||'')===String(message.canonicalAccount?.phoneNumberId||'') && whatsappInteractionProviderId(item) === message.id)) return;
   const existingCustomer = customers().find(item => item.tenantId === tenantId && item.id === customerId(tenantId, message.waNumber));
   let attributedPost: PostRecord | null = null;
   const attributionPatch: Partial<StoredCustomer> = {};
@@ -988,7 +991,7 @@ async function handleInboundMessage(tenantId: string, message: IncomingMessage, 
     },
   });
   const inserted = addInteraction({
-    id: `${customer.id}-${message.id}`,
+    id: `${customer.id}-${message.canonicalAccount?.phoneNumberId?message.canonicalAccount.phoneNumberId+'-':''}${message.id}`,
     tenantId,
     customerId: customer.id,
     waNumber: message.waNumber,
@@ -996,7 +999,7 @@ async function handleInboundMessage(tenantId: string, message: IncomingMessage, 
     type: message.fromBusiness ? 'msg_out_human' : 'msg_in',
     body: message.body,
     timestamp: message.timestamp,
-    audit: {},
+    audit: message.canonicalAccount?{providerMessageId:message.id,providerRecipientId:message.waNumber,accountId:message.canonicalAccount.accountId,phoneNumberId:message.canonicalAccount.phoneNumberId,wabaId:message.canonicalAccount.wabaId,inboundSource:'verified_meta_webhook'}:{},
   });
   if (!inserted) return; // Another request may have won while attribution awaited.
   const conversationForQualification = recentConversationForCustomer(tenantId, customer.id);
@@ -1047,6 +1050,7 @@ async function handleInboundMessage(tenantId: string, message: IncomingMessage, 
     return;
   }
   if (options.skipAutonomy) return;
+  if (customer.handlingMode==='human_needed') return;
 
   const profile = await readTenantEnterpriseProfile(tenantId);
   const servicePolicy = customerServicePolicy(profile);
@@ -1189,7 +1193,7 @@ async function handleInboundMessage(tenantId: string, message: IncomingMessage, 
     let bridgeReceipts: Array<{ messageId: string; recipientId?: string; raw?: unknown }> = [];
     let bridgeFailureReason = '';
     if (shouldAutoBridge) {
-      const delivery = await deliverAutoReply({ tenantId, to: message.waNumber, body: gapPlan.draft,
+      const delivery = await createCustomerManualTakeoverService(store).withAutoSendPermission({tenantId,customerId:customer.id,channel:'whatsapp'},()=>deliverAutoReply({ tenantId, to: message.waNumber, body: gapPlan.draft,
         recordAccepted: ({ message: body, receipt, index, total }) => {
           bridgeMessages.push(body); bridgeReceipts.push(receipt);
           addInteraction({ id: `${customer.id}-ai-${receipt.messageId}`, tenantId, customerId: customer.id,
@@ -1201,7 +1205,7 @@ async function handleInboundMessage(tenantId: string, message: IncomingMessage, 
             meta: { provider: 'whatsapp', providerMessageId: receipt.messageId, providerRecipientId: receipt.recipientId },
           });
         },
-      }, sendTenantWhatsAppTextWithReceipts);
+      }, sendTenantWhatsAppTextWithReceipts));
       bridgeSent = delivery.complete;
       bridgeFailureReason = delivery.reason;
     }
@@ -1453,7 +1457,7 @@ async function handleInboundMessage(tenantId: string, message: IncomingMessage, 
     if (guard.allowed) {
       let sentMessages: string[] = [];
       let sentReceipts: Array<{ messageId: string; recipientId?: string; raw?: unknown }> = [];
-      const delivery = await deliverAutoReply({ tenantId, to: message.waNumber, body: draft,
+      const delivery = await createCustomerManualTakeoverService(store).withAutoSendPermission({tenantId,customerId:customer.id,channel:'whatsapp'},()=>deliverAutoReply({ tenantId, to: message.waNumber, body: draft,
         recordAccepted: ({ message: body, receipt, index, total }) => {
           sentMessages.push(body); sentReceipts.push(receipt);
           addInteraction({ id: `${customer.id}-ai-${receipt.messageId}`, tenantId, customerId: customer.id,
@@ -1464,7 +1468,7 @@ async function handleInboundMessage(tenantId: string, message: IncomingMessage, 
             meta: { provider: 'whatsapp', providerMessageId: receipt.messageId, providerRecipientId: receipt.recipientId },
           });
         },
-      }, sendTenantWhatsAppTextWithReceipts);
+      }, sendTenantWhatsAppTextWithReceipts));
       if (!delivery.complete) {
         const error = new Error(delivery.error);
         addInteraction({
@@ -1858,4 +1862,15 @@ export function getWhatsAppWinningStyleSamples(tenantId: string, maxSamples = 20
     }
   }
   return samples.slice(-Math.max(1, Math.min(500, maxSamples)));
+}
+
+/** Signed HTTP ingress calls only this after signature validation and owned metadata filtering.
+ * It persists messages and local qualification; never runs autonomy or sends a reply. */
+export async function handleVerifiedWhatsAppInbound(tenantId:string,payload:any,binding:{appId:string;phoneNumberId:string;wabaId:string}):Promise<void>{
+ if(!(Array.isArray(payload?.entry)?payload.entry:[]).some((entry:any)=>(Array.isArray(entry?.changes)?entry.changes:[]).some((change:any)=>change?.field==='messages'&&Array.isArray(change.value?.messages)&&change.value.messages.length)))return;
+ const proof=await readCanonicalWhatsAppAccount(store,tenantId,binding.appId);
+ if(proof.nativeAccountId!==binding.phoneNumberId||proof.wabaId!==binding.wabaId||payload?.object!=='whatsapp_business_account')throw Error('whatsapp_verified_ingress_scope_invalid');
+ for(const entry of Array.isArray(payload.entry)?payload.entry:[]){if(String(entry?.id)!==proof.wabaId)throw Error('whatsapp_verified_ingress_waba_invalid');for(const change of Array.isArray(entry.changes)?entry.changes:[]){if(change?.field!=='messages')continue;const value=change.value;if(String(value?.metadata?.phone_number_id)!==proof.nativeAccountId)throw Error('whatsapp_verified_ingress_phone_invalid');
+  for(const raw of Array.isArray(value.messages)?value.messages:[]){if(typeof raw.id!=='string'||!raw.id.startsWith('wamid.')||typeof raw.from!=='string'||!/^\d{6,20}$/.test(raw.from)||!/^\d+$/.test(String(raw.timestamp??''))||Number(raw.timestamp)<=0||raw.mock||raw.synthetic||raw.simulated||raw.from_me||raw.from_business||raw.direction==='outbound')continue;const parsed=messagesFromValue({...value,messages:[raw],history:undefined});for(const message of parsed){if(message.id!==raw.id||message.fromBusiness||!Number.isFinite(message.timestamp)||message.timestamp<=0||message.timestamp>Date.now())continue;await handleInboundMessage(tenantId,{...message,canonicalAccount:{accountId:proof.accountId,phoneNumberId:proof.nativeAccountId,wabaId:proof.wabaId}},{skipAutonomy:true});const saved=interactions().find(v=>v.tenantId===tenantId&&v.metaMessageId===message.id&&v.audit?.phoneNumberId===proof.nativeAccountId);if(!saved)throw Error('whatsapp_verified_ingress_persistence_missing');await mirrorInteractionToPocketBase(saved);const customer=customers().find(v=>v.tenantId===tenantId&&v.id===saved.customerId);if(customer)await mirrorCustomerToPocketBase(customer);}}
+ }}
 }

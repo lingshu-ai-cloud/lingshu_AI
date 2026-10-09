@@ -18,8 +18,9 @@ type AppInfo = {
 } | null;
 type Config = {
   callbacks: Record<'youtube' | 'instagram' | 'facebook' | 'messenger' | 'tiktok', string>;
+  instagramWebhook?: string;
   metaWebhookUrl: string;
-  apps: Record<'google' | 'meta' | 'tiktok', AppInfo>;
+  apps: Record<'google' | 'meta' | 'instagram' | 'tiktok', AppInfo>;
 };
 type ConfigPlatform = keyof Config['apps'];
 type Form = {
@@ -27,21 +28,26 @@ type Form = {
   youtubeOAuthClientSecret: string;
   metaSocialAppId: string;
   metaSocialAppSecret: string;
+  instagramAppId: string;
+  instagramAppSecret: string;
+  instagramWebhookVerifyToken: string;
   metaWebhookVerifyToken: string;
   tiktokClientKey: string;
   tiktokClientSecret: string;
 };
-const EMPTY: Form = { youtubeOAuthClientId: '', youtubeOAuthClientSecret: '', metaSocialAppId: '', metaSocialAppSecret: '', metaWebhookVerifyToken: '', tiktokClientKey: '', tiktokClientSecret: '' };
+const EMPTY: Form = { youtubeOAuthClientId: '', youtubeOAuthClientSecret: '', metaSocialAppId: '', metaSocialAppSecret: '', instagramAppId: '', instagramAppSecret: '', instagramWebhookVerifyToken: '', metaWebhookVerifyToken: '', tiktokClientKey: '', tiktokClientSecret: '' };
 
 const PLATFORM_LABELS: Record<ConfigPlatform, string> = {
   google: 'YouTube / Google',
-  meta: 'Instagram / Facebook / Messenger',
+  meta: 'Facebook / Messenger',
+  instagram: 'Instagram 私信',
   tiktok: 'TikTok',
 };
 
 function withoutPlatformCredentials(form: Form, platform: ConfigPlatform): Form {
   if (platform === 'google') return { ...form, youtubeOAuthClientId: '', youtubeOAuthClientSecret: '' };
   if (platform === 'meta') return { ...form, metaSocialAppId: '', metaSocialAppSecret: '', metaWebhookVerifyToken: '' };
+  if (platform === 'instagram') return { ...form, instagramAppId: '', instagramAppSecret: '', instagramWebhookVerifyToken: '' };
   return { ...form, tiktokClientKey: '', tiktokClientSecret: '' };
 }
 
@@ -90,20 +96,21 @@ export default function UserSocialAppCredentials() {
       const data = await response.json() as Config & { error?: string };
       if (!response.ok) throw new Error(data.error || '读取社媒应用配置失败');
       setConfig(data);
-      setForm(current => ({ ...current, youtubeOAuthClientId: data.apps.google?.appId || '', metaSocialAppId: data.apps.meta?.appId || '', tiktokClientKey: data.apps.tiktok?.appId || '' }));
+      setForm(current => ({ ...current, youtubeOAuthClientId: data.apps.google?.appId || '', metaSocialAppId: data.apps.meta?.appId || '', instagramAppId: data.apps.instagram?.appId || '', tiktokClientKey: data.apps.tiktok?.appId || '' }));
     } catch (reason) { setError(reason instanceof Error ? reason.message : '读取社媒应用配置失败'); }
     finally { setLoading(false); }
   }
   useEffect(() => { void load(); }, []);
   const field = <K extends keyof Form>(key: K, value: Form[K]) => setForm(current => ({ ...current, [key]: value }));
   async function save() {
-    if (form.metaWebhookVerifyToken.trim().length > 64) {
-      setError('Messenger Webhook 验证口令最多允许 64 个字符。');
+    if (form.metaWebhookVerifyToken.trim().length > 64 || form.instagramWebhookVerifyToken.trim().length > 64) {
+      setError('Webhook 验证口令最多允许 64 个字符。');
       return;
     }
     const validationError = validateOAuthCredentialPairs([
       { label: 'YouTube / Google', clientId: form.youtubeOAuthClientId, clientSecret: form.youtubeOAuthClientSecret, savedClientId: config?.apps.google?.appId || '', savedSecret: Boolean(config?.apps.google?.appSecretSet) },
-      { label: 'Instagram / Facebook', clientId: form.metaSocialAppId, clientSecret: form.metaSocialAppSecret, savedClientId: config?.apps.meta?.appId || '', savedSecret: Boolean(config?.apps.meta?.appSecretSet) },
+      { label: 'Facebook / Messenger', clientId: form.metaSocialAppId, clientSecret: form.metaSocialAppSecret, savedClientId: config?.apps.meta?.appId || '', savedSecret: Boolean(config?.apps.meta?.appSecretSet) },
+      { label: 'Instagram 私信', clientId: form.instagramAppId, clientSecret: form.instagramAppSecret, savedClientId: config?.apps.instagram?.appId || '', savedSecret: Boolean(config?.apps.instagram?.appSecretSet) },
       { label: 'TikTok', clientId: form.tiktokClientKey, clientSecret: form.tiktokClientSecret, savedClientId: config?.apps.tiktok?.appId || '', savedSecret: Boolean(config?.apps.tiktok?.appSecretSet) },
     ]);
     if (validationError) { setError(validationError); return; }
@@ -113,7 +120,7 @@ export default function UserSocialAppCredentials() {
       const data = await response.json().catch(() => ({})) as { error?: string };
       if (!response.ok) throw new Error(data.error || '保存失败');
       setMessage('已保存到你的企业空间。请把下方回调地址原样添加到各平台后台，再连接账号。');
-      setForm(current => ({ ...current, youtubeOAuthClientSecret: '', metaSocialAppSecret: '', metaWebhookVerifyToken: '', tiktokClientSecret: '' }));
+      setForm(current => ({ ...current, youtubeOAuthClientSecret: '', metaSocialAppSecret: '', instagramAppSecret: '', instagramWebhookVerifyToken: '', metaWebhookVerifyToken: '', tiktokClientSecret: '' }));
       await load();
     } catch (reason) { setError(reason instanceof Error ? reason.message : '保存失败'); }
     finally { setSaving(false); }
@@ -141,7 +148,8 @@ export default function UserSocialAppCredentials() {
   }
   const cards = config && [
     { key: 'google', title: 'YouTube / Google', icon: <SocialPlatformIcon platform="youtube" size={20} />, sub: 'Google Cloud OAuth Web application', idLabel: 'Client ID', idKey: 'youtubeOAuthClientId' as const, secretLabel: 'Client Secret', secretKey: 'youtubeOAuthClientSecret' as const, callbacks: [['Authorized redirect URI', config.callbacks.youtube]] },
-    { key: 'meta', title: 'Instagram / Facebook / Messenger', icon: <span className="flex gap-1"><SocialPlatformIcon platform="instagram" size={19} /><SocialPlatformIcon platform="facebook" size={19} /><SocialPlatformIcon platform="messenger" size={19} /></span>, sub: '三个能力共用一套 Meta App', idLabel: 'App ID', idKey: 'metaSocialAppId' as const, secretLabel: 'App Secret', secretKey: 'metaSocialAppSecret' as const, callbacks: [['Instagram redirect URI', config.callbacks.instagram], ['Facebook redirect URI', config.callbacks.facebook], ['Messenger Webhook Callback URL', config.callbacks.messenger || config.metaWebhookUrl]] },
+    { key: 'meta', title: 'Facebook / Messenger', icon: <SocialPlatformIcon platform="messenger" size={20} />, sub: '主页私信与 Facebook 授权', idLabel: 'App ID', idKey: 'metaSocialAppId' as const, secretLabel: 'App Secret', secretKey: 'metaSocialAppSecret' as const, callbacks: [['Facebook redirect URI', config.callbacks.facebook], ['Messenger Webhook Callback URL', config.callbacks.messenger || config.metaWebhookUrl]] },
+    { key: 'instagram', title: 'Instagram 私信', icon: <SocialPlatformIcon platform="instagram" size={20} />, sub: 'Instagram Login · 专业账号消息权限', idLabel: 'Instagram App ID', idKey: 'instagramAppId' as const, secretLabel: 'Instagram App Secret', secretKey: 'instagramAppSecret' as const, callbacks: [['Instagram redirect URI', config.callbacks.instagram], ['Instagram Webhook Callback URL', config.instagramWebhook || '']] },
     { key: 'tiktok', title: 'TikTok', icon: <SocialPlatformIcon platform="tiktok" size={20} />, sub: 'Login Kit + Content Posting API', idLabel: 'Client Key', idKey: 'tiktokClientKey' as const, secretLabel: 'Client Secret', secretKey: 'tiktokClientSecret' as const, callbacks: [['Redirect URI', config.callbacks.tiktok]] },
   ];
   return <>
@@ -153,7 +161,7 @@ export default function UserSocialAppCredentials() {
       <p className="border-l-2 border-insight bg-insight-soft px-3 py-2 text-[11px] leading-5 text-insight-action">先在 Google、Meta 或 TikTok 开发者后台创建应用，再填写凭证。Secret 会加密保存，页面不会再次明文显示。</p>
       {message && <p role="status" className="border-l-2 border-accent bg-accent-glow px-3 py-2 text-xs font-bold text-accent">{message}</p>}{error && <p role="alert" className="border-l-2 border-red bg-red/5 px-3 py-2 text-xs font-bold text-red">{error}</p>}
       {loading ? <div className="flex h-24 items-center justify-center gap-2 text-sm text-text-muted"><Loader2 size={16} className="animate-spin" />正在读取配置...</div> : <>
-        <div className="grid gap-3 xl:grid-cols-3">{cards?.map(card => <div key={card.key} className="space-y-3 rounded-lg border border-border p-4">
+        <div className="grid gap-3 xl:grid-cols-2">{cards?.map(card => <div key={card.key} className="space-y-3 rounded-lg border border-border p-4">
           <div className="flex items-start justify-between gap-3">
             <div><p className="flex items-center gap-2 text-sm font-black text-text-primary">{card.icon}{card.title}</p><p className="mt-1 text-[11px] text-text-muted">{card.sub}</p></div>
             <button
@@ -169,6 +177,7 @@ export default function UserSocialAppCredentials() {
           <Field label={card.idLabel} value={form[card.idKey]} onChange={value => field(card.idKey, value)} />
           <Field secret label={card.secretLabel} value={form[card.secretKey]} saved={config?.apps[card.key as keyof Config['apps']]?.appSecretSet} onChange={value => field(card.secretKey, value)} />
           {card.key === 'meta' && <Field secret label="Messenger Webhook Verify Token" value={form.metaWebhookVerifyToken} saved={config?.apps.meta?.webhookVerifyTokenSet} onChange={value => field('metaWebhookVerifyToken', value)} />}
+          {card.key === 'instagram' && <Field secret label="Instagram Webhook Verify Token" value={form.instagramWebhookVerifyToken} saved={config?.apps.instagram?.webhookVerifyTokenSet} onChange={value => field('instagramWebhookVerifyToken', value)} />}
           {card.callbacks.map(([label, value]) => <Callback key={label} label={label} value={value} />)}
         </div>)}</div>
         <div className="flex justify-end"><button type="button" disabled={saving} onClick={() => void save()} className="inline-flex items-center gap-1.5 rounded-md bg-accent px-4 py-2.5 text-xs font-bold text-white hover:bg-accent-dim disabled:opacity-50">{saving ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />}保存我的平台凭证</button></div>

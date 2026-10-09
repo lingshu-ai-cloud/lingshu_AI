@@ -1,3 +1,8 @@
+import {createWeeklyExecutionContinuationService} from './weeklyExecutionContinuations.js';
+import {withExecutionPackageGate,assertExecutionPackageGate,executionPackageFrozen} from './weeklyExecutionGate.js';
+import {applyFrozenWeeklySchedule,scheduleHash} from './weeklyScheduleSnapshots.js';
+import type {WeeklyScheduledPackage} from '../../shared/contracts/socialWeeklyScheduleRevision.js';
+import { applyPublicationDeadlines, publicationInstant } from "./publicationDeadlines.js";
 import { reconcileWeeklyCancellation } from './weeklyCancellation.js';
 import { createHash, randomUUID } from 'node:crypto';
 import type { DataStore } from '../storage/datastore.js';
@@ -17,6 +22,7 @@ import {
   type WeeklyOperatingWorkflowKind,
 } from '../../shared/contracts/socialProgram.js';
 import { SocialProgramError } from './service.js';
+import { allocateWeeklyReferenceSources } from './weeklyReferenceSources.js';
 import { createStarter198Repository } from '../starter198/repository.js';
 import { socialJson } from '../starter198/socialContentValidation.js';
 import { validateContentArtifact } from '../runtime/socialWeeklyResultValidation.js';
@@ -59,7 +65,7 @@ function normalizeExecutionTask(task: WeeklyExecutionTask): WeeklyExecutionTask 
   const legacy = task as WeeklyExecutionTask & { schedule?: WeeklyExecutionTask['schedule'] };
   const mapping: Record<WeeklyOperatingWorkflowKind, { stepKind: WeeklyProductionStepKind; responsibleActor: WeeklyResponsibleActor; duration: number }> = {
     readiness: { stepKind: 'business_outline', responsibleActor: 'business_agent', duration: 15 },
-    discovery: { stepKind: 'benchmark_collection', responsibleActor: 'business_agent', duration: 60 },
+    discovery: { stepKind: 'benchmark_collection', responsibleActor: 'director_agent', duration: 60 },
     directing: { stepKind: 'director_analysis', responsibleActor: 'director_agent', duration: 45 },
     content: { stepKind: 'video_generation', responsibleActor: 'content_agent', duration: 180 },
     publishing: { stepKind: 'publishing', responsibleActor: 'publishing_agent', duration: 10 },
@@ -76,8 +82,8 @@ function normalizeExecutionTask(task: WeeklyExecutionTask): WeeklyExecutionTask 
       estimatedDurationMinutes: value.duration,
       estimatedStartAt: start,
       estimatedFinishAt: new Date(Date.parse(start) + value.duration * 60_000).toISOString(),
-      actualStartedAt: task.status === 'leased' || task.status === 'succeeded' ? task.updatedAt : null,
-      actualFinishedAt: task.status === 'succeeded' ? task.updatedAt : null,
+      actualStartedAt: null,
+      actualFinishedAt: null,
     },
   };
 }
@@ -154,6 +160,7 @@ type TaskSeed = Pick<WeeklyExecutionTask,
     stepKind: WeeklyProductionStepKind;
     responsibleActor: WeeklyResponsibleActor;
     estimatedDurationMinutes: number;
+    notBeforeAt?: number | null;
   };
 
 function makeTask(tenantId: string, pkg: WeeklyOperatingPackage, seed: TaskSeed, createdAt: string, estimatedStartAt: string): WeeklyExecutionTask {
@@ -175,7 +182,7 @@ function makeTask(tenantId: string, pkg: WeeklyOperatingPackage, seed: TaskSeed,
     publicationTaskId: seed.publicationTaskId,
     dependsOnTaskIds: seed.dependsOnTaskIds,
     upstreamVersionRefs: authorityRefs(pkg),
-    inputSnapshot: structuredClone(seed.inputSnapshot),
+    inputSnapshot: structuredClone({ ...seed.inputSnapshot, referenceSourcePolicy: pkg.referenceSourcePolicy ?? null }),
     idempotencyKey,
     budget: seed.budget,
     schedule: {
@@ -225,8 +232,8 @@ export function planWeeklyExecutionTasks(
   const globalBlockers = pkg.planningBlockers.filter(blocker => ![...publicationIds].some(id => blocker.includes(id)));
   const add = (seed: TaskSeed) => {
     const dependencyFinishes = seed.dependsOnTaskIds.map(id => tasks.find(item => item.taskId === id)?.schedule.estimatedFinishAt).filter((value): value is string => Boolean(value));
-    const baseStart = new Date(`${pkg.weekStart}T00:00:00.000Z`).toISOString();
-    const estimatedStartAt = [...dependencyFinishes, createdAt, baseStart].sort().at(-1)!;
+    // Preparation can belong to the preceding week; publication has its own release time.
+    const estimatedStartAt = new Date(Math.max(Date.parse(createdAt), ...dependencyFinishes.map(value => Date.parse(value)), seed.notBeforeAt ?? 0)).toISOString();
     const item = makeTask(tenantId, pkg, seed, createdAt, estimatedStartAt);
     tasks.push(item);
     return item;
@@ -247,11 +254,12 @@ export function planWeeklyExecutionTasks(
     inputSnapshot: { accountId, weekStart: pkg.weekStart, objective: pkg.objective },
     budget: { category: 'discovery', limitCny: moneyShare(pkg.discoveryBudgetCny, accountIds.length) },
     ownBlockingReasons: [],
-    stepKind: 'benchmark_collection', responsibleActor: 'business_agent', estimatedDurationMinutes: 60,
+    stepKind: 'benchmark_collection', responsibleActor: 'director_agent', estimatedDurationMinutes: 60,
   }));
 
   const byMother = new Map<string, SocialWeeklyPublicationTask[]>();
   for (const item of publications) byMother.set(item.motherContentId, [...(byMother.get(item.motherContentId) ?? []), item]);
+  const sourceAllocation = allocateWeeklyReferenceSources(publications, pkg.referenceSourcePolicy);
   const productionBudget = moneyShare(pkg.socialContentPackage.weeklyBudgetCny, publications.length);
   const directingByMother = new Map<string, WeeklyExecutionTask>();
   const scheduleByMother = new Map<string, WeeklyExecutionTask>();
@@ -259,25 +267,32 @@ export function planWeeklyExecutionTasks(
   for (const [motherContentId, items] of byMother) {
     const scoring = add({
       workflowKind: 'directing', scope: 'content', subjectId: `${motherContentId}:benchmark-scoring`,
-      accountId: null, publicationTaskId: null, dependsOnTaskIds: discovery.map(item => item.taskId),
-      inputSnapshot: { motherContentId, candidatePolicy: 'server_score_required' }, budget: noBudget,
+      accountId: null, publicationTaskId: null,
+      dependsOnTaskIds: sourceAllocation.get(motherContentId) === 'owned' ? [readiness.taskId] : discovery.filter(task => items.some(item => item.accountId === task.accountId)).map(task => task.taskId),
+      inputSnapshot: { motherContentId, referenceSource: sourceAllocation.get(motherContentId), referenceWork: sourceAllocation.get(motherContentId) === 'owned' ? 'owned_history_metrics_diagnosis' : 'external_benchmark_scoring', candidatePolicy: 'server_score_required' }, budget: noBudget,
       ownBlockingReasons: [], stepKind: 'benchmark_scoring', responsibleActor: 'director_agent', estimatedDurationMinutes: 20,
     });
     const directing = add({
       workflowKind: 'directing', scope: 'content', subjectId: motherContentId,
       accountId: null, publicationTaskId: null, dependsOnTaskIds: [scoring.taskId],
-      inputSnapshot: { motherContentId, variants: items }, budget: noBudget,
+      inputSnapshot: { motherContentId, referenceSource: sourceAllocation.get(motherContentId), referenceWork: sourceAllocation.get(motherContentId) === 'owned' ? 'owned_tone_inheritance' : 'external_structure_adaptation', variants: items }, budget: noBudget,
       ownBlockingReasons: [...new Set(items.flatMap(publicationBlockers))],
       stepKind: 'director_analysis', responsibleActor: 'director_agent', estimatedDurationMinutes: 45,
     });
     directingByMother.set(motherContentId, directing);
-    const storyboards = items.map(item => {
+    scheduleByMother.set(motherContentId, add({
+      workflowKind: 'directing', scope: 'content', subjectId: `${motherContentId}:business-schedule`,
+      accountId: null, publicationTaskId: null, dependsOnTaskIds: [directing.taskId],
+      inputSnapshot: { motherContentId, directorTaskId: directing.taskId, variants: items }, budget: noBudget,
+      ownBlockingReasons: [], stepKind: 'business_schedule', responsibleActor: 'business_agent', estimatedDurationMinutes: 15,
+    }));
+    items.forEach(item => {
       const mode = item.adaptationOfPublicationTaskId === null ? 'original' : 'adaptation';
       const scope = mode === 'original' ? 'content' as const : 'adaptation' as const;
       const base = `${item.publicationTaskId}:${mode}`;
       const script = add({
         workflowKind: 'directing', scope, subjectId: `${base}:script`, accountId: item.accountId, publicationTaskId: item.publicationTaskId,
-        dependsOnTaskIds: [directing.taskId],
+        dependsOnTaskIds: [scheduleByMother.get(motherContentId)!.taskId],
         inputSnapshot: { publicationTask: item, motherContentId, mode, source: 'director_analysis_and_enterprise_facts' },
         budget: { category: 'production', limitCny: productionBudget }, ownBlockingReasons: [],
         stepKind: 'script', responsibleActor: 'director_agent', estimatedDurationMinutes: 30,
@@ -288,14 +303,8 @@ export function planWeeklyExecutionTasks(
         stepKind: 'storyboard', responsibleActor: 'director_agent', estimatedDurationMinutes: 35,
       });
       storyboardByPublication.set(item.publicationTaskId, storyboard);
-      return storyboard;
     });
-    scheduleByMother.set(motherContentId, add({
-      workflowKind: 'directing', scope: 'content', subjectId: `${motherContentId}:business-schedule`,
-      accountId: null, publicationTaskId: null, dependsOnTaskIds: storyboards.map(item => item.taskId),
-      inputSnapshot: { motherContentId, directorTaskId: directing.taskId, variants: items }, budget: noBudget,
-      ownBlockingReasons: [], stepKind: 'business_schedule', responsibleActor: 'business_agent', estimatedDurationMinutes: 15,
-    }));
+
   }
 
   const approvalByPublication = new Map<string, WeeklyExecutionTask>();
@@ -347,6 +356,7 @@ export function planWeeklyExecutionTasks(
   }
 
   const publishing = publications.map(item => add({
+    notBeforeAt: publicationInstant(item.publishWindow),
     workflowKind: 'publishing', scope: 'publication', subjectId: item.publicationTaskId,
     accountId: item.accountId, publicationTaskId: item.publicationTaskId,
     dependsOnTaskIds: [approvalByPublication.get(item.publicationTaskId)!.taskId],
@@ -366,14 +376,34 @@ export function planWeeklyExecutionTasks(
     budget: noBudget, ownBlockingReasons: [],
     stepKind: 'performance_monitoring', responsibleActor: 'business_agent', estimatedDurationMinutes: 60,
   }));
-  add({
+  const review = add({
     workflowKind: 'review', scope: 'package', subjectId: pkg.packageId,
     accountId: null, publicationTaskId: null, dependsOnTaskIds: engagement.map(item => item.taskId),
     inputSnapshot: { objective: pkg.objective, successCriteria: pkg.successCriteria },
     budget: noBudget, ownBlockingReasons: [],
     stepKind: 'weekly_review', responsibleActor: 'business_agent', estimatedDurationMinutes: 45,
   });
-  return tasks;
+  for (const publication of publications) {
+    const source = tasks.find(task => task.publicationTaskId === publication.publicationTaskId && task.schedule.stepKind === 'video_generation');
+    if (!source) throw new SocialProgramError('content_template_source_task_missing', 409, '模板提炼缺少对应真实成片任务。');
+    const extraction = add({
+      workflowKind: 'directing', scope: 'content', subjectId: `${publication.publicationTaskId}:template-extraction`,
+      accountId: publication.accountId, publicationTaskId: publication.publicationTaskId,
+      dependsOnTaskIds: [source.taskId, review.taskId],
+      inputSnapshot: { publicationTask: publication, sourceTaskId: source.taskId, reviewTaskId: review.taskId },
+      budget: noBudget, ownBlockingReasons: [],
+      stepKind: 'template_extraction', responsibleActor: 'director_agent', estimatedDurationMinutes: 20,
+    });
+    add({
+      workflowKind: 'review', scope: 'content', subjectId: `${publication.publicationTaskId}:template-performance-validation`,
+      accountId: publication.accountId, publicationTaskId: publication.publicationTaskId,
+      dependsOnTaskIds: [extraction.taskId],
+      inputSnapshot: { publicationTask: publication, sourceTaskId: source.taskId, reviewTaskId: review.taskId, extractionTaskId: extraction.taskId },
+      budget: noBudget, ownBlockingReasons: [],
+      stepKind: 'template_performance_validation', responsibleActor: 'business_agent', estimatedDurationMinutes: 15,
+    });
+  }
+  return applyPublicationDeadlines(tasks, publications);
 }
 
 function rowData(task: WeeklyExecutionTask): Record<string, unknown> {
@@ -413,11 +443,14 @@ export async function listWeeklyExecutionTasks(
   packageId: string,
   packageVersion: number,
 ): Promise<WeeklyExecutionTask[]> {
-  const result = await dataStore.list<WeeklyExecutionTaskRow>(WEEKLY_EXECUTION_TASKS, {
-    where: { tenant_id: tenantId, program_id: programId, package_id: packageId, package_version: packageVersion },
-    sort: 'created_at', page: 1, perPage: 500,
-  });
-  return result.items.map(row => normalizeExecutionTask(row.payload));
+  const tasks:WeeklyExecutionTask[]=[],seen=new Set<string>();let total:number|undefined;
+  for(let page=1;;page++){
+    const result=await dataStore.list<WeeklyExecutionTaskRow>(WEEKLY_EXECUTION_TASKS,{where:{tenant_id:tenantId,program_id:programId,package_id:packageId,package_version:packageVersion},sort:'created_at,id',page,perPage:500});
+    if(!Number.isSafeInteger(result.totalItems)||result.totalItems<0||!Number.isSafeInteger(result.totalPages)||total!==undefined&&total!==result.totalItems)throw new SocialProgramError('weekly_execution_task_pagination_invalid',409,'实际任务图分页发生变化，请重新读取。');total=result.totalItems;
+    for(const row of result.items){if(seen.has(row.id))throw new SocialProgramError('weekly_execution_task_pagination_duplicate',409,'实际任务图分页重复。');seen.add(row.id);tasks.push(normalizeExecutionTask(row.payload));}
+    if(page>=result.totalPages){if(tasks.length!==result.totalItems)throw new SocialProgramError('weekly_execution_task_pagination_truncated',409,'实际任务图分页不完整。');return tasks;}
+    if(!result.items.length)throw new SocialProgramError('weekly_execution_task_pagination_truncated',409,'实际任务图分页不完整。');
+  }
 }
 
 export async function materializeWeeklyExecutionTasks(
@@ -425,8 +458,30 @@ export async function materializeWeeklyExecutionTasks(
   tenantId: string,
   pkg: WeeklyOperatingPackage,
 ): Promise<WeeklyExecutionTask[]> {
-  const planned = planWeeklyExecutionTasks(tenantId, pkg, pkg.createdAt);
+  return withExecutionPackageGate(dataStore,{tenantId,programId:pkg.programId,packageId:pkg.packageId,packageVersion:pkg.version},async assert=>{
+  if(await executionPackageFrozen(dataStore,{tenantId,programId:pkg.programId,packageId:pkg.packageId,packageVersion:pkg.version}))throw new SocialProgramError('weekly_execution_package_frozen',409,'原周版本已冻结，不能新增执行任务。');
+  const planned = await applyFrozenWeeklySchedule(dataStore,tenantId,pkg,planWeeklyExecutionTasks(tenantId, pkg, pkg.createdAt));
   const existing = await listWeeklyExecutionTasks(dataStore, tenantId, pkg.programId, pkg.packageId, pkg.version);
+  const stripContinuation=(t:WeeklyExecutionTask)=>{const inputSnapshot={...t.inputSnapshot};delete inputSnapshot.weeklyContinuationRef;return {...t,inputSnapshot,upstreamVersionRefs:t.upstreamVersionRefs.filter(ref=>ref.type!=='weekly_execution_continuation')};};
+  const finishContinuations=async()=>{
+    const service=createWeeklyExecutionContinuationService(dataStore);
+    for(const plannedTask of planned.filter(t=>Boolean(t.inputSnapshot.weeklyContinuationPending))){
+      const record=await service.ensureForTarget({tenantId,programId:pkg.programId,packageId:pkg.packageId,targetVersion:pkg.version,targetTaskId:plannedTask.taskId});
+      if(!record)throw new SocialProgramError('weekly_execution_continuation_missing',409,'真实承接凭据缺失，未启动新生产。');
+      const row=await getWeeklyExecutionTaskRow(dataStore,tenantId,plannedTask.taskId),actual=row.payload;
+      const ref=actual.inputSnapshot.weeklyContinuationRef;
+      const refs=actual.upstreamVersionRefs.filter(r=>r.type==='weekly_execution_continuation');
+      if(ref||refs.length){if(scheduleHash(ref)!==scheduleHash(record.ref)||refs.length!==1||scheduleHash(refs[0])!==scheduleHash(record.ref))throw new SocialProgramError('weekly_execution_continuation_ref_changed',409,'承接引用与真实冻结凭据不一致。');continue;}
+      await assert();await writeWeeklyExecutionTask(dataStore,row,{...actual,inputSnapshot:{...actual.inputSnapshot,weeklyContinuationRef:record.ref},upstreamVersionRefs:[...actual.upstreamVersionRefs,record.ref]});
+    }
+    return listWeeklyExecutionTasks(dataStore,tenantId,pkg.programId,pkg.packageId,pkg.version);
+  };
+  if (existing.length && ((pkg as WeeklyScheduledPackage).scheduleRevisionRef || (pkg as WeeklyOperatingPackage&{templateApplicationRef?:VersionedSocialRef}).templateApplicationRef)) {
+    const expectedByKey=new Map(planned.map(t=>[t.idempotencyKey,t]));
+    if(existing.length>planned.length||new Set(existing.map(t=>t.idempotencyKey)).size!==existing.length||existing.some(t=>{const expected=expectedByKey.get(t.idempotencyKey);return !expected||scheduleHash(stripContinuation(t))!==scheduleHash(expected);} ))throw new SocialProgramError('weekly_schedule_existing_task_mismatch',409,'冻结倒排已有任务不一致，不能覆盖已运行工作。');
+    for(const task of planned.filter(t=>!existing.some(old=>old.idempotencyKey===t.idempotencyKey))){await assert();const row=await dataStore.create<WeeklyExecutionTaskRow>(WEEKLY_EXECUTION_TASKS,rowData(task));if(!row)throw new SocialProgramError('weekly_schedule_resume_storage_failed',503,'未完成的新草稿任务仍需恢复。');}
+    return finishContinuations();
+  }
   if (existing.length) {
     const expected = new Set(planned.map(item => item.idempotencyKey));
     if (existing.length !== planned.length || existing.some(item => !expected.has(item.idempotencyKey))) {
@@ -437,15 +492,16 @@ export async function materializeWeeklyExecutionTasks(
   const created: WeeklyExecutionTaskRow[] = [];
   try {
     for (const task of planned) {
-      const row = await dataStore.create<WeeklyExecutionTaskRow>(WEEKLY_EXECUTION_TASKS, rowData(task));
+      await assert();const row = await dataStore.create<WeeklyExecutionTaskRow>(WEEKLY_EXECUTION_TASKS, rowData(task));
       if (!row) throw new Error('create returned null');
       created.push(row);
     }
   } catch {
-    for (const row of created) await dataStore.delete(WEEKLY_EXECUTION_TASKS, row.id);
+    if(!(pkg as WeeklyOperatingPackage&{templateApplicationRef?:VersionedSocialRef}).templateApplicationRef)for (const row of created) await dataStore.delete(WEEKLY_EXECUTION_TASKS, row.id);
     throw new SocialProgramError('weekly_execution_task_storage_unavailable', 503, '周包执行任务暂时无法保存。');
   }
-  return planned;
+  return finishContinuations();
+  });
 }
 
 async function taskRows(dataStore: DataStore, tenantId: string, taskIds: string[]): Promise<WeeklyExecutionTaskRow[]> {
@@ -470,32 +526,20 @@ export async function getWeeklyExecutionTaskRow(
 }
 
 /** Serialize state transitions across API processes and worker processes. */
-export async function withWeeklyExecutionTaskMutation<T>(
-  dataStore: DataStore,
-  tenantId: string,
-  taskId: string,
-  operation: () => Promise<T>,
-): Promise<T> {
-  const lease = await acquireDurableOperationLease({
-    dataStore,
-    tenantId,
-    scope: SOCIAL_WEEKLY_EXECUTION_MUTATION_SCOPE,
-    subjectId: taskId,
-    ownerId: `mutation-${randomUUID()}`,
-    leaseDurationMs: 30_000,
-  });
-  if (!lease) throw new SocialProgramError('weekly_execution_task_busy', 409, '执行任务正在发生状态变更，请重试。');
-  try {
-    return await operation();
-  } finally {
-    await releaseDurableOperationLease({ dataStore, lease });
-  }
+export async function withWeeklyExecutionTaskMutation<T>(dataStore:DataStore,tenantId:string,taskId:string,operation:()=>Promise<T>,mode:'mutation'|'claim'|'settlement'|'cancellation'='mutation'):Promise<T>{
+ const initial=await getWeeklyExecutionTaskRow(dataStore,tenantId,taskId);const scope={tenantId,programId:initial.payload.programId,packageId:initial.payload.packageId,packageVersion:initial.payload.packageVersion};
+ return withExecutionPackageGate(dataStore,scope,async assert=>{
+  const frozen=await executionPackageFrozen(dataStore,scope);if(frozen){const current=await getWeeklyExecutionTaskRow(dataStore,tenantId,taskId);if(mode!=='cancellation'&&(mode!=='settlement'||current.payload.status!=='leased'))throw new SocialProgramError('weekly_execution_package_frozen',409,'原周版本已冻结，不再接受新领取或状态编排。');}
+  const lease=await acquireDurableOperationLease({dataStore,tenantId,scope:SOCIAL_WEEKLY_EXECUTION_MUTATION_SCOPE,subjectId:taskId,ownerId:`mutation-${randomUUID()}`,leaseDurationMs:30000});if(!lease)throw new SocialProgramError('weekly_execution_task_busy',409,'执行任务正在发生状态变更，请重试。');
+  try{await assert();return await operation();}finally{await releaseDurableOperationLease({dataStore,lease});}
+ });
 }
 
-export async function writeWeeklyExecutionTask(dataStore: DataStore, row: WeeklyExecutionTaskRow, task: WeeklyExecutionTask): Promise<void> {
-  if (!await dataStore.update(WEEKLY_EXECUTION_TASKS, row.id, rowData(task))) {
-    throw new SocialProgramError('weekly_execution_task_storage_unavailable', 503, '周包执行任务暂时无法更新。');
-  }
+export async function writeWeeklyExecutionTask(dataStore:DataStore,row:WeeklyExecutionTaskRow,task:WeeklyExecutionTask):Promise<void>{
+ if(task.taskId!==row.payload.taskId||task.tenantId!==row.payload.tenantId||task.programId!==row.payload.programId||task.packageId!==row.payload.packageId||task.packageVersion!==row.payload.packageVersion||task.idempotencyKey!==row.payload.idempotencyKey)throw new SocialProgramError('weekly_execution_task_authority_mutation',409,'执行状态更新不能改变任务归属。');
+ const scope={tenantId:task.tenantId,programId:task.programId,packageId:task.packageId,packageVersion:task.packageVersion};
+ if(!await assertExecutionPackageGate(dataStore,scope))return withExecutionPackageGate(dataStore,scope,async assert=>{if(await executionPackageFrozen(dataStore,scope))throw new SocialProgramError('weekly_execution_package_frozen',409,'原周版本已冻结。');await assert();await writeWeeklyExecutionTask(dataStore,row,task);});
+ if(!await dataStore.update(WEEKLY_EXECUTION_TASKS,row.id,rowData(task)))throw new SocialProgramError('weekly_execution_task_storage_unavailable',503,'周包执行任务暂时无法更新。');
 }
 
 function recompute(tasks: WeeklyExecutionTask[], now: string, activatePending: boolean): WeeklyExecutionTask[] {
@@ -518,6 +562,8 @@ export async function recomputePackageExecution(
   now = new Date().toISOString(),
   activatePending = true,
 ): Promise<WeeklyExecutionTask[]> {
+  return withExecutionPackageGate(dataStore,{tenantId,programId,packageId,packageVersion},async()=>{
+  if(await executionPackageFrozen(dataStore,{tenantId,programId,packageId,packageVersion}))return listWeeklyExecutionTasks(dataStore,tenantId,programId,packageId,packageVersion);
   let lease: DurableOperationLease | null = null;
   for (let attempt = 0; attempt < 40 && !lease; attempt += 1) {
     lease = await acquireDurableOperationLease({
@@ -544,6 +590,7 @@ export async function recomputePackageExecution(
   } finally {
     await releaseDurableOperationLease({ dataStore, lease });
   }
+  });
 }
 
 export async function activateWeeklyExecutionTasks(
@@ -568,7 +615,7 @@ export async function applyBusinessDispatchToExecutionTasks(
     throw new SocialProgramError('business_dispatch_authority_required', 403, '内容任务只能由经营 Agent 派给内容 Agent。');
   }
   const tasks = await listWeeklyExecutionTasks(dataStore, tenantId, programId, packageId, packageVersion);
-  const targets = tasks.filter(task => task.schedule.stepKind === 'material_readiness');
+  const targets = tasks.filter(task => task.schedule.stepKind === 'material_readiness' && (!dispatch.coverage || dispatch.scheduleItems.some(item => item.publicationTaskId === task.publicationTaskId)));
   for (const target of targets) {
     await withWeeklyExecutionTaskMutation(dataStore, tenantId, target.taskId, async () => {
       const row = await getWeeklyExecutionTaskRow(dataStore, tenantId, target.taskId);
@@ -609,7 +656,7 @@ export async function cancelWeeklyExecutionTasks(
         ...row.payload, status: 'cancelled', cancelReason: reason, lease: null, updatedAt: now,
       });
       if (priorLease) await releaseDurableOperationLease({ dataStore, lease: priorLease });
-    });
+    },'cancellation');
   }
     },
   });
@@ -649,6 +696,7 @@ export function createWeeklyExecutionTaskService(dataStore: DataStore) {
         return {
           ...task,
           ownBlockingReasons: reason ? task.ownBlockingReasons.filter(item => item !== reason) : [],
+          ...(reason && task.lastError?.code === reason ? { lastError: null } : {}),
           updatedAt: now,
         };
       });

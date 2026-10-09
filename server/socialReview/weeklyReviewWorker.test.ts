@@ -3,7 +3,7 @@ import type { DataStore, ListQuery } from '../storage/datastore.js';
 import type { WeeklyOperatingPackage } from '../../shared/contracts/socialProgram.js';
 import { createWeeklyOperatingPackageService } from '../socialPrograms/weeklyOperatingPackages.js';
 import { consumeAgentNotificationOutboxBatch } from '../notifications/agentNotificationOutbox.js';
-import { runWeeklyReviewForPackage, weeklyReviewScheduleDecision } from './weeklyReviewWorker.js';
+import { collectWeeklyReviewInput, runWeeklyReviewForPackage, weeklyReviewScheduleDecision } from './weeklyReviewWorker.js';
 
 function memoryStore(): DataStore & { rows: Map<string, Array<Record<string, any>>>; push: (name: string, value: Record<string, any>) => void } {
   const rows = new Map<string, Array<Record<string, any>>>();
@@ -102,3 +102,23 @@ assert.equal(unknown.snapshot?.sampleSufficiency.status, 'insufficient');
 assert.equal(unknown.quota?.allocations.length, 0, 'unknown publication and metrics remain observe-only');
 
 console.log('weekly review worker, promotion planning and notification loop passed');
+
+// Actual read model must retain unavailable counters, observed zero and later pages.
+const completeStore = memoryStore();
+for (let i = 0; i < 1001; i++) completeStore.push('social_metric_snapshots', { id: `metric-${String(i).padStart(4, '0')}`, tenant_id:'tenant-a', platform:'tiktok', account_id:'account-a', content_id:'content-a', captured_at:'2026-09-27T12:00:00Z', metrics:{views:i===1000?42:null,likes:0,shares:'',comments:false} });
+const completeInput = await collectWeeklyReviewInput({dataStore:completeStore,row,actorId:'owner',now:new Date('2026-09-28T00:01:00Z')});
+assert.equal(completeInput.metricSnapshots.length,1001,'all actual source pages are collected');
+assert.equal(completeInput.metricSnapshots[1000]?.metrics.views,42,'later-page observation reaches review');
+assert.equal(completeInput.metricSnapshots[0]?.metrics.views,undefined,'null is unknown rather than zero');
+assert.equal(completeInput.metricSnapshots[0]?.metrics.likes,0,'observed zero remains zero');
+assert.equal(completeInput.metricSnapshots[0]?.metrics.shares,undefined,'blank is unknown');
+assert.equal(completeInput.metricSnapshots[0]?.metrics.comments,undefined,'boolean is not a counter');
+const originalList = completeStore.list.bind(completeStore);
+completeStore.list = async (name,query) => { if(name==='social_metric_snapshots'&&query?.page===2)throw Error('source unavailable'); return originalList(name,query); };
+const partialInput = await collectWeeklyReviewInput({dataStore:completeStore,row,actorId:'owner',now:new Date('2026-09-28T00:01:00Z')});
+assert.equal(partialInput.metricSnapshots.length,0,'failed later page cannot become a complete observed sample');
+assert.ok(partialInput.unavailableMetricKeys?.includes('views'));
+
+dataStore.push('social_metric_snapshots',{id:'wrong-platform-baseline',tenant_id:'tenant-a',platform:'facebook',account_id:'account-a',content_id:'content-a',captured_at:'2026-09-21T00:00:00Z',metrics:{views:99999}});
+const scopedBaseline = await collectWeeklyReviewInput({dataStore,row,actorId:'owner',now:new Date('2026-09-28T00:01:00Z')});
+assert.equal(scopedBaseline.contents[0]?.baseline?.views,100,'another platform cannot replace the actual content baseline');

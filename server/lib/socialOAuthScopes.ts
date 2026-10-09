@@ -45,6 +45,17 @@ export function metaOAuthScopes(
   return Array.from(scopes);
 }
 
+/** Instagram Login grants IG User tokens independently of a Facebook Page. */
+export function instagramLoginOAuthScopes(env: ScopeEnvironment = process.env): string[] {
+  const scopes = [
+    'instagram_business_basic',
+    'instagram_business_manage_messages',
+  ];
+  if (enabled(env.INSTAGRAM_CONTENT_PUBLISH_ENABLED)) scopes.push('instagram_business_content_publish');
+  if (enabled(env.INSTAGRAM_COMMENTS_FEATURES_ENABLED)) scopes.push('instagram_business_manage_comments');
+  return scopes;
+}
+
 export function youtubeOAuthScopes(env: ScopeEnvironment = process.env): string[] {
   const scopes = [
     'https://www.googleapis.com/auth/youtube.upload',

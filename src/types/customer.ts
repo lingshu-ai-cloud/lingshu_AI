@@ -12,7 +12,7 @@ export type CustomerSource =
   | string;
 export type CustomerStage = 'lead' | 'inquiry' | 'quoted' | 'won' | 'silent30' | 'silent60';
 export type HandlingMode = 'ai_auto' | 'ai_draft' | 'human_needed';
-export type TimelineType = 'whatsapp' | 'messenger' | 'call' | 'note' | 'quote' | 'task' | 'system';
+export type TimelineType = 'whatsapp' | 'messenger' | 'instagram' | 'call' | 'note' | 'quote' | 'task' | 'system';
 export type AutonomyLevel = 'remind' | 'draft' | 'auto';
 
 export type AuthenticityBand = 'verified' | 'reduced' | 'suspected_scraping';
@@ -76,7 +76,8 @@ export interface TimelineEvent {
   time: string;
   timestamp?: number;
   autoSent?: boolean;
-  sendStatus?: 'draft' | 'queued' | 'sent' | 'delivered' | 'failed';
+  sendStatus?: 'draft' | 'queued' | 'sent' | 'delivered' | 'failed' | 'unknown';
+  sendRequestId?: string;
   sendMode?: 'free_text' | 'template';
   confirmedByHuman?: boolean;
   audit?: {
@@ -156,6 +157,8 @@ export interface CustomerProfile {
   waNumber?: string;
   messengerUserId?: string;
   pageId?: string;
+  instagramUserId?: string;
+  instagramAccountId?: string;
   newProductMatch?: boolean;
   blockedAutoReplyReason?: string;
   pendingDraft?: string;

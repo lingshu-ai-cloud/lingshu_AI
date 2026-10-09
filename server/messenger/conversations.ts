@@ -1,3 +1,4 @@
+import type {WeeklyNativeSendAuthority} from '../../shared/contracts/weeklyNativeSendAuthority.js';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -5,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { socialAccessToken } from '../lib/accountCredentials.js';
 import { store } from '../storage/index.js';
 import { sendMessengerText } from '../integrations/messenger.js';
+import {createCustomerChannelSendRequestService,resolveCustomerChannelOutboxContext} from '../digitalEmployees/customerChannelSendRequests.js';
 import { classifyContextTags, vetoRevokedContextTags, type ContextTagEvidence } from './contextTags.js';
 import { assessBant, selectProgressionGoal } from '../sales/qualification.js';
 
@@ -269,23 +271,20 @@ export async function handleMessengerWebhook(tenantId: string, payload: unknown,
   return { accepted };
 }
 
-export async function sendTenantMessengerText(input: { tenantId: string; customerId: string; body: string }) {
+export async function sendTenantMessengerText(input: { tenantId: string; customerId: string; body: string; requestId:string;actorUserId:string;weeklyAuthority?:WeeklyNativeSendAuthority }) {
   const customer = getMessengerCustomers(input.tenantId).find(item => item.id === input.customerId);
   if (!customer) throw new Error('messenger_customer_not_found');
   const lastBuyerAt = Math.max(0, ...customer.timeline.filter(event => event.actor === 'buyer').map(event => event.timestamp));
   if (!lastBuyerAt || Date.now() - lastBuyerAt > 24 * 60 * 60 * 1000) throw new Error('距客户上次互动已超过 24 小时，当前不能直接发送普通 Messenger 消息。');
-  const accounts = await store.list<Record<string, unknown>>('social_accounts', {
-    where: { tenantId: input.tenantId, platform: 'facebook', status: 'connected' }, page: 1, perPage: 100,
+  const context=await resolveCustomerChannelOutboxContext(store,{tenantId:input.tenantId,actorUserId:input.actorUserId,customerId:input.customerId,channel:'messenger',nativeAccountId:customer.pageId});
+  const account=(await store.getById<Record<string,unknown>>('social_accounts',context.accountId))!;
+  return createCustomerChannelSendRequestService(store).execute({
+    tenantId:input.tenantId,actorUserId:input.actorUserId,requestId:input.requestId,weeklyAuthority:input.weeklyAuthority,channel:'messenger',customerId:input.customerId,
+    accountId:String(account.id),recipientId:customer.messengerUserId,body:input.body,
+    send:()=>sendMessengerText({pageId:customer.pageId,pageAccessToken:socialAccessToken(account),recipientId:customer.messengerUserId,text:input.body}),
+    recordHistory:receipt=>{upsertMessage({tenantId:input.tenantId,pageId:customer.pageId,userId:customer.messengerUserId,messageId:receipt.messageId,body:input.body,timestamp:Date.parse(receipt.acceptedAt),actor:'seller',sendStatus:'sent'});}
   });
-  const account = accounts.items.find(item => String(item.providerAccountId || '') === customer.pageId);
-  if (!account) throw new Error('未找到对应的 Facebook Page 授权，请在集成中心重新连接 Messenger。');
-  const receipt = await sendMessengerText({
-    pageId: customer.pageId,
-    pageAccessToken: socialAccessToken(account),
-    recipientId: customer.messengerUserId,
-    text: input.body,
-  });
-  if (!receipt.messageId) throw new Error('messenger_provider_message_id_missing');
-  upsertMessage({ tenantId: input.tenantId, pageId: customer.pageId, userId: customer.messengerUserId, messageId: receipt.messageId, body: input.body, timestamp: Date.now(), actor: 'seller', sendStatus: 'sent' });
-  return receipt;
 }
+
+/** Trusted receipt history repair; does not contact the provider. */
+export {upsertMessage as upsertMessengerMessage};

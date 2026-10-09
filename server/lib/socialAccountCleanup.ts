@@ -1,6 +1,6 @@
 import { store } from '../storage/index.js';
 
-export type SocialAccountCleanupPlatform = 'youtube' | 'google' | 'meta' | 'tiktok';
+export type SocialAccountCleanupPlatform = 'youtube' | 'google' | 'meta' | 'instagram' | 'tiktok';
 
 export async function disconnectTenantPlatformAccounts(
   tenantId: string,
@@ -14,7 +14,9 @@ export async function disconnectTenantPlatformAccounts(
     perPage: 200,
   });
   const matching = platform === 'meta'
-    ? result.items.filter(item => item.platform === 'instagram' || item.platform === 'facebook')
+    ? result.items.filter(item => item.platform === 'facebook' || (item.platform === 'instagram' && item.oauthProvider !== 'instagram_login'))
+    : platform === 'instagram'
+      ? result.items.filter(item => item.platform === 'instagram' && item.oauthProvider === 'instagram_login')
     : platform === 'tiktok'
       ? result.items.filter(item => item.platform === 'tiktok')
       : result.items;

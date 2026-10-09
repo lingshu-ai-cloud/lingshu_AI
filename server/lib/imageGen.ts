@@ -63,19 +63,23 @@ async function generateQwenImage(input: {
   prompt: string;
   ratio: string;
   references?: ReferenceImage[];
+  idempotencyKey?: string;
+  recoveryOnly?: boolean;
 }): Promise<GeneratedImage> {
   const apiKey = (process.env.DASHSCOPE_API_KEY || '').trim();
   if (!apiKey) throw new Error('DASHSCOPE_API_KEY is not configured');
   const model = (process.env.QWEN_IMAGE_MODEL || 'qwen-image-3.0').trim();
-  const requestId = createHash('sha256').update(`${model}\0${input.ratio}\0${input.prompt}`).digest('hex');
+  const requestId = createHash('sha256').update(input.idempotencyKey ? JSON.stringify({operationKey:input.idempotencyKey,model,ratio:input.ratio,prompt:input.prompt,references:(input.references||[]).slice(0,3).map(ref=>({mimeType:normalizeMime(ref.mimeType),sha256:createHash('sha256').update(Buffer.from(ref.base64,'base64')).digest('hex')}))}) : `${model}\0${input.ratio}\0${input.prompt}`).digest('hex');
   const prior = currentContentProviderReceipt({ provider: 'qwen_image', requestId });
   if (prior && ['submitting', 'unknown'].includes(prior.state)) {
     throw new Error('provider_submission_unknown:qwen_image:requires_manual_reconciliation');
   }
+  if(prior&&['accepted','completed'].includes(prior.state)&&!/^https:\/\//i.test(String(prior.metadata.outputUrl||'')))throw new Error('provider_submission_unknown:qwen_image:accepted_output_reference_missing');
   // Qwen Image accepts at most three ordered reference images.
   const refs = (input.references || []).slice(0, 3);
   let url = String(prior?.metadata.outputUrl || '');
   if (!/^https:\/\//i.test(url)) {
+    if(input.recoveryOnly)throw new Error('provider_submission_unknown:qwen_image:recovery_requires_existing_output');
     await recordCurrentContentProviderReceipt({
       provider: 'qwen_image', requestId, state: 'submitting', metadata: { model },
     });
@@ -89,16 +93,17 @@ async function generateQwenImage(input: {
       });
     } catch (error) {
       await recordCurrentContentProviderReceipt({ provider: 'qwen_image', requestId, state: 'unknown', metadata: { model } });
-      throw error;
+      throw new Error('provider_submission_unknown:qwen_image:transport_outcome_uncertain');
     }
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
-      await recordCurrentContentProviderReceipt({ provider: 'qwen_image', requestId, state: 'failed', metadata: { model, statusCode: response.status } });
+      const definitive=[400,401,403,404,422].includes(response.status);
+      await recordCurrentContentProviderReceipt({ provider: 'qwen_image', requestId, state: definitive?'failed':'unknown', metadata: { model, statusCode: response.status } });
       const message = `Qwen Image ${response.status}: ${String(payload?.message || payload?.error?.message || response.statusText).slice(0, 500)}`;
       if ([400, 401, 403, 404, 422].includes(response.status)) throw new ImageProviderRejectedError(response.status, message);
-      throw new Error(message);
+      throw new Error('provider_submission_unknown:qwen_image:response_outcome_uncertain');
     }
-    url = qwenImageUrl(payload);
+    try{url=qwenImageUrl(payload);}catch{await recordCurrentContentProviderReceipt({provider:'qwen_image',requestId,state:'unknown',metadata:{model}});throw new Error('provider_submission_unknown:qwen_image:output_reference_missing');}
     await recordCurrentContentProviderReceipt({
       provider: 'qwen_image', requestId, state: 'accepted', metadata: { model, outputUrl: url },
     });
@@ -116,6 +121,8 @@ export async function generatePosterImage(input: {
   prompt: string;
   ratio: string;
   references?: ReferenceImage[];
+  idempotencyKey?: string;
+  recoveryOnly?: boolean;
 }): Promise<GeneratedImage> {
   // Provider choice is explicit at the product route. A failed paid request must
   // never fan out to another supplier and create an unreviewed second charge.

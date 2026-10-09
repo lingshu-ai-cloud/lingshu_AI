@@ -4,7 +4,7 @@ import type { DataStore, ListQuery, ListResult, Record_ } from '../storage/datas
 import { DURABLE_OPERATION_LEASE_COLLECTION } from '../runtime/durableLease.js';
 import { createSocialWeeklyExecutionWorker } from '../runtime/socialWeeklyExecutionWorker.js';
 import { createSocialProgramService } from './service.js';
-import { applyBusinessDispatchToExecutionTasks, createWeeklyExecutionTaskService, WEEKLY_EXECUTION_TASKS, getWeeklyExecutionTaskRow, writeWeeklyExecutionTask, recomputePackageExecution } from './executionTasks.js';
+import { planWeeklyExecutionTasks, applyBusinessDispatchToExecutionTasks, createWeeklyExecutionTaskService, WEEKLY_EXECUTION_TASKS, getWeeklyExecutionTaskRow, writeWeeklyExecutionTask, recomputePackageExecution } from './executionTasks.js';
 import { createWeeklyOperatingPackageService } from './weeklyOperatingPackages.js';
 import { createSocialOperatingRepository } from '../socialOperating/repository.js';
 
@@ -126,16 +126,31 @@ async function fixture() {
   return { dataStore, programs, packages, execution, worker, program, account, draft };
 }
 
+test('preparation can precede the operating week and publication follows its zoned release time', async () => {
+  const { draft } = await fixture();
+  draft.socialContentPackage.publicationTasks[0]!.publishWindow = '2026-10-05T10:00:00+08:00';
+  const tasks = planWeeklyExecutionTasks('tenant-a', draft, '2026-10-01T00:00:00Z');
+  const preparation = tasks.find(task => task.schedule.stepKind === 'business_outline')!;
+  assert.equal(preparation.schedule.estimatedStartAt, '2026-10-01T00:00:00.000Z');
+  const publicationId = draft.socialContentPackage.publicationTasks[0]!.publicationTaskId;
+  const publishing = tasks.find(task => task.publicationTaskId === publicationId && task.schedule.stepKind === 'publishing')!;
+  assert.equal(publishing.schedule.estimatedStartAt, '2026-10-05T02:00:00.000Z');
+  const approval = tasks.find(task => task.taskId === publishing.dependsOnTaskIds[0])!;
+  assert(Date.parse(approval.schedule.estimatedFinishAt) <= Date.parse(approval.schedule.latestFinishAt!));
+  const late = planWeeklyExecutionTasks('tenant-a', draft, '2026-10-05T03:00:00Z');
+  assert(late.find(task => task.taskId === publishing.taskId)!.schedule.planningRisks!.includes('publication_deadline_at_risk'));
+});
+
 test('weekly execution tasks freeze the full worker contract and aggregate real state', async () => {
   const { packages, execution, program, draft } = await fixture();
-  assert.equal(draft.executionSummary!.total, 25);
-  assert.equal(draft.executionSummary!.byStatus.pending_activation, 25);
+  assert.equal(draft.executionSummary!.total, 29);
+  assert.equal(draft.executionSummary!.byStatus.pending_activation, 29);
   assert.ok(draft.executionTaskRefs!.every(ref => ref.type === 'weekly_execution_task'));
   const active = await packages.activate('tenant-a', 'owner', program.programId, draft.packageId, {
     expectedVersion: 1, expectedProgramVersion: 1,
   });
   assert.equal(active.executionSummary!.byStatus.queued, 1);
-  assert.equal(active.executionSummary!.byStatus.blocked, 24);
+  assert.equal(active.executionSummary!.byStatus.blocked, 28);
   const tasks = await execution.list('tenant-a', program.programId, draft.packageId, 1);
   assert.ok(tasks.every(task => task.tenantId === 'tenant-a' && task.packageVersion === 1));
   assert.ok(tasks.every(task => task.idempotencyKey && task.inputSnapshot && task.budget && task.upstreamVersionRefs.length === 3));
@@ -152,18 +167,35 @@ test('weekly execution tasks freeze the full worker contract and aggregate real 
   const assetTask = tasks.find(task => task.schedule.stepKind === 'asset_generation' && task.publicationTaskId === scriptTask?.publicationTaskId);
   assert.equal(scheduleTask?.schedule.responsibleActor, 'business_agent');
   assert.ok(scriptTask && storyboardTask?.dependsOnTaskIds.includes(scriptTask.taskId));
-  assert.ok(storyboardTask && scheduleTask?.dependsOnTaskIds.includes(storyboardTask.taskId));
+  assert.ok(scheduleTask && scriptTask?.dependsOnTaskIds.includes(scheduleTask.taskId));
+  assert.ok(scheduleTask?.dependsOnTaskIds.includes(tasks.find(task => task.schedule.stepKind === 'director_analysis')!.taskId));
   assert.ok(scheduleTask && materialTask?.dependsOnTaskIds.includes(scheduleTask.taskId));
   assert.ok(materialTask && assetTask?.dependsOnTaskIds.includes(materialTask.taskId));
   assert.ok(tasks.some(task => task.scope === 'adaptation'));
+  const review = tasks.find(task => task.schedule.stepKind === 'weekly_review')!;
+  const extractions = tasks.filter(task => task.schedule.stepKind === 'template_extraction');
+  assert.equal(extractions.length, draft.socialContentPackage.publicationTasks.length);
+  for (const extraction of extractions) {
+    const video = tasks.find(task => task.taskId === extraction.inputSnapshot.sourceTaskId)!;
+    assert.equal(video.schedule.stepKind, 'video_generation');
+    assert.equal(video.publicationTaskId, extraction.publicationTaskId);
+    assert.deepEqual(extraction.dependsOnTaskIds, [video.taskId, review.taskId]);
+    assert.equal(extraction.schedule.responsibleActor, 'director_agent');
+    const validation = tasks.find(task => task.schedule.stepKind === 'template_performance_validation' && task.publicationTaskId === extraction.publicationTaskId)!;
+    assert.deepEqual(validation.dependsOnTaskIds, [extraction.taskId]);
+    assert.equal(validation.inputSnapshot.reviewTaskId, review.taskId);
+    assert.equal(validation.schedule.responsibleActor, 'business_agent');
+    assert.equal(validation.resultRefs.length, 0);
+    assert.equal(validation.status, 'blocked');
+  }
   const firstTask = (await packages.get('tenant-a', program.programId, draft.packageId)).executionSummary!;
-  assert.equal(firstTask.total, 25);
+  assert.equal(firstTask.total, 29);
 });
 
 test('worker leases, retries, dead letters and explicit recovery are durable', async () => {
   const { dataStore, packages, execution, worker, program, draft } = await fixture();
   await packages.activate('tenant-a', 'owner', program.programId, draft.packageId, { expectedVersion: 1, expectedProgramVersion: 1 });
-  const start = new Date('2026-10-05T00:00:00.000Z');
+  const start = new Date(Date.now() + 86_400_000);
   const readiness = await worker.claimNext({ tenantId: 'tenant-a', workerId: 'worker-a', now: start, leaseDurationMs: 30_000 });
   assert.ok(readiness);
   assert.equal(readiness.task.workflowKind, 'readiness');
@@ -196,7 +228,7 @@ test('worker leases, retries, dead letters and explicit recovery are durable', a
 test('expired leases are reclaimed with fencing and local blocks do not stop sibling publications', async () => {
   const { dataStore, packages, execution, worker, program, draft } = await fixture();
   await packages.activate('tenant-a', 'owner', program.programId, draft.packageId, { expectedVersion: 1, expectedProgramVersion: 1 });
-  const start = new Date('2026-10-05T00:00:00.000Z');
+  const start = new Date(Date.now() + 86_400_000);
   const stale = await worker.claimNext({ tenantId: 'tenant-a', workerId: 'worker-a', now: start, leaseDurationMs: 30_000 });
   assert.ok(stale);
   const reclaimed = await worker.claimNext({
@@ -250,7 +282,7 @@ test('expired leases are reclaimed with fencing and local blocks do not stop sib
 test('unverified completion preserves lease and durable polling does not consume retry budget', async () => {
   const { dataStore, packages, worker, program, draft } = await fixture();
   await packages.activate('tenant-a', 'owner', program.programId, draft.packageId, { expectedVersion: 1, expectedProgramVersion: 1 });
-  const now = new Date('2026-10-05T00:00:00Z');
+  const now = new Date(Date.now() + 86_400_000);
   const claim = await worker.claimNext({ tenantId: 'tenant-a', workerId: 'worker', now });
   assert.ok(claim);
   await assert.rejects(worker.complete(claim, [{ type: 'fake', id: 'fake', version: 1 }], now));

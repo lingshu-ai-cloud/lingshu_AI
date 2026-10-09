@@ -60,13 +60,13 @@ function memoryStore(): DataStore {
   };
 }
 
-async function fixture() {
+async function fixture(route: 'cold_start' | 'account_repair' = 'cold_start') {
   const dataStore = memoryStore();
   const programs = createSocialProgramService(dataStore);
   const packages = createWeeklyOperatingPackageService(dataStore);
   const program = await programs.createProgram('tenant-a', 'owner', {
     brandName: 'Factory A', market: '北美', targetAudience: '品牌采购',
-    candidatePlatforms: ['tiktok', 'facebook', 'instagram', 'youtube'], route: 'cold_start',
+    candidatePlatforms: ['tiktok', 'facebook', 'instagram', 'youtube'], route,
   });
   const accountIds: Record<string, string[]> = { tiktok: [], facebook: [], instagram: [], youtube: [] };
   for (const [platform, count] of [['tiktok', 2], ['facebook', 2], ['instagram', 1], ['youtube', 1]] as const) {
@@ -133,6 +133,22 @@ async function authoritativeInput(
     })),
   };
 }
+
+test('source quota is persisted across immutable revisions and allocated per mother', async () => {
+  const { packages, program } = await fixture('account_repair');
+  const policy = { profile: 'b2b_established', ownedPercent: 40, externalPercent: 60, allocationUnit: 'mother_content' };
+  const initial = await packages.create('tenant-a', 'owner', program.programId, {
+    weekStart: '2026-10-05', objective: '采购询盘', successCriteria: ['有效发布'], referenceSourcePolicy: policy,
+  });
+  assert.deepEqual(initial.referenceSourcePolicy, policy);
+  assert.equal(initial.agentPlanning?.skeleton.slots.filter(slot => slot.referenceSource === 'owned').length, 4);
+  const revised = await packages.revise('tenant-a', 'owner', program.programId, initial.packageId, { expectedVersion: 1, changeReason: '修改目标', objective: '验证采购需求' });
+  assert.deepEqual(revised.referenceSourcePolicy, policy);
+  const changed = await packages.revise('tenant-a', 'owner', program.programId, initial.packageId, { expectedVersion: 2, changeReason: '确认20/80', referenceSourcePolicy: { ...policy, ownedPercent: 20, externalPercent: 80 } });
+  assert.equal(changed.agentPlanning?.skeleton.slots.filter(slot => slot.referenceSource === 'owned').length, 2);
+  const history = await packages.list('tenant-a', program.programId);
+  assert.equal(history.find(item => item.version === 1)?.referenceSourcePolicy?.ownedPercent, 40);
+});
 
 test('weekly operating package: default six-account cadence creates seven workflows and 26 publication tasks', async () => {
   const { packages, program } = await fixture();
@@ -249,6 +265,10 @@ test('weekly operating package: revision preserves per-task fields for retained 
   const editedTasks = structuredClone(first.socialContentPackage.publicationTasks);
   editedTasks[0]!.cta = '查看产品页';
   editedTasks[0]!.businessProposition = '七天打样';
+  editedTasks[0]!.receptionRequirement = { required: true, bindingId: null };
+  editedTasks[0]!.customerFeedbackTopicRef = { type: 'customer_feedback_topic_confirmation', id: '123456789abcdef', version: 1 };
+  editedTasks[0]!.contentTemplateBindingRef = { type: 'weekly_content_template_binding', id: 'fedcba987654321', version: 1 };
+  editedTasks[0]!.materialRequirement = { required: true, requestIds: ['abcdef123456789'], bindings: [{ requirementId: 'abcdef987654321', requestId: 'abcdef123456789' }] };
   const withTaskEdit = await packages.revise('tenant-a', 'owner', program.programId, first.packageId, {
     expectedVersion: 1, publicationTasks: editedTasks,
   });
@@ -258,6 +278,25 @@ test('weekly operating package: revision preserves per-task fields for retained 
   assert.equal(budgetRevision.socialContentPackage.publicationTasks[0]!.publicationTaskId, withTaskEdit.socialContentPackage.publicationTasks[0]!.publicationTaskId);
   assert.equal(budgetRevision.socialContentPackage.publicationTasks[0]!.cta, '查看产品页');
   assert.equal(budgetRevision.socialContentPackage.publicationTasks[0]!.businessProposition, '七天打样');
+  assert.deepEqual(budgetRevision.socialContentPackage.publicationTasks[0]!.receptionRequirement, { required: true, bindingId: null });
+  assert.deepEqual(budgetRevision.socialContentPackage.publicationTasks[0]!.materialRequirement, editedTasks[0]!.materialRequirement);
+  assert.deepEqual(budgetRevision.socialContentPackage.publicationTasks[0]!.customerFeedbackTopicRef, editedTasks[0]!.customerFeedbackTopicRef);
+  assert.deepEqual(budgetRevision.socialContentPackage.publicationTasks[0]!.contentTemplateBindingRef, editedTasks[0]!.contentTemplateBindingRef);
+  const malformed = structuredClone(editedTasks) as any[];
+  malformed[0].receptionRequirement = { required: false, bindingId: null };
+  await assert.rejects(packages.revise('tenant-a', 'owner', program.programId, first.packageId, { expectedVersion: 3, publicationTasks: malformed }), { code: 'publication_reception_requirement_invalid' });
+  const invalidMaterial = structuredClone(editedTasks) as any[];
+  invalidMaterial[0].materialRequirement = { required: false, requestIds: [] };
+  await assert.rejects(packages.revise('tenant-a', 'owner', program.programId, first.packageId, { expectedVersion: 3, publicationTasks: invalidMaterial }), { code: 'publication_material_requirement_invalid' });
+  const invalidBinding = structuredClone(editedTasks);
+  invalidBinding[0]!.materialRequirement!.bindings![0]!.requestId = '111111111111111';
+  await assert.rejects(packages.revise('tenant-a', 'owner', program.programId, first.packageId, { expectedVersion: 3, publicationTasks: invalidBinding }), { code: 'publication_material_bindings_invalid' });
+  const invalidTopic = structuredClone(budgetRevision.socialContentPackage.publicationTasks);
+  invalidTopic[0]!.customerFeedbackTopicRef!.type = 'free_text';
+  await assert.rejects(packages.revise('tenant-a', 'owner', program.programId, first.packageId, { expectedVersion: 3, publicationTasks: invalidTopic }), { code: 'publication_feedback_topic_ref_invalid' });
+  const invalidTemplate = structuredClone(budgetRevision.socialContentPackage.publicationTasks);
+  invalidTemplate[0]!.contentTemplateBindingRef!.type = 'free_text';
+  await assert.rejects(packages.revise('tenant-a', 'owner', program.programId, first.packageId, { expectedVersion: 3, publicationTasks: invalidTemplate }), { code: 'publication_content_template_ref_invalid' });
 });
 
 test('weekly operating package: invalid calendar dates are rejected', async () => {

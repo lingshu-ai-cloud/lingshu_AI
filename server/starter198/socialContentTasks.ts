@@ -1,3 +1,4 @@
+import { withWeeklyProductionStartGuard } from '../runtime/weeklyProductionStartGuard.js';
 import type {
   AddSocialTaskSourceInput,
   CreateSocialContentTaskInput,
@@ -570,6 +571,10 @@ export async function startSocialContentTask(input: {
   referenceResolver?: SocialTaskReferenceResolver;
   now?: Date;
 }): Promise<SocialContentTaskDetail> {
+  return withWeeklyProductionStartGuard(input, async () => startSocialContentTaskUnderGuard(input));
+}
+
+async function startSocialContentTaskUnderGuard(input: Parameters<typeof startSocialContentTask>[0]): Promise<SocialContentTaskDetail> {
   const mutation = await executeSocialContentMutation<{ task: SocialContentTaskDetail }>({
     repository: input.repository,
     tenantId: input.tenantId,

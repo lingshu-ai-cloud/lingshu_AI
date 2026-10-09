@@ -75,9 +75,41 @@ test('business outline → director evidence → business schedule → user conf
   const analyzed = await service.runDirectorAnalysis({ tenantId: 'tenant-1', programId: 'program-1', packageId: 'package-1', packageVersion: 1, expectedPlanningVersion: outline.version, actor: 'director_agent' });
   assert.equal(analyzed.directorAnalyses[0]?.analyzedBy, 'director_agent');
   assert.equal(analyzed.directorAnalyses[0]?.benchmarkVideoRefs[0]?.id, 'video-1');
+  const tracked = (await dataStore.list<any>('social_tracked_accounts')).items[0]!;
+  await dataStore.update('social_tracked_accounts', tracked.id, { evidenceVideoIds: ['unrelated-1', 'unrelated-2', 'unrelated-3'] });
+  await assert.rejects(service.runDirectorAnalysis({ tenantId: 'tenant-1', programId: 'program-1', packageId: 'package-1', packageVersion: 1, expectedPlanningVersion: analyzed.version, actor: 'director_agent' }),
+    (error: unknown) => error instanceof SocialProgramError && error.code === 'benchmark_account_video_link_required');
+  assert.deepEqual(await service.get('tenant-1', 'program-1', 'package-1', 1), analyzed, 'missing linkage must not append a fabricated analysis');
+  await dataStore.update('social_tracked_accounts', tracked.id, { evidenceVideoIds: tracked.evidenceVideoIds });
+  await dataStore.create('social_owned_accounts', { tenant_id: 'tenant-1', program_id: 'program-1', payload: { accountId: 'owned-account-1', programId: 'program-1', platform: 'tiktok', displayName: '我的工厂', version: 3 } });
+  const ownPkg = { ...pkg(), packageId: 'own-week', referenceSourcePolicy: { profile: 'b2b_established' as const, ownedPercent: 100, externalPercent: 0, allocationUnit: 'mother_content' as const } };
+  const ownOutline = await service.initialize('tenant-1', ownPkg);
+  const ownInput = { tenantId: 'tenant-1', programId: 'program-1', packageId: ownPkg.packageId, packageVersion: 1, expectedPlanningVersion: ownOutline.version, actor: 'director_agent' as const };
+  await assert.rejects(service.runDirectorAnalysis(ownInput), (error: unknown) => error instanceof SocialProgramError && error.code === 'owned_reference_evidence_required');
+  await dataStore.create('social_external_contents', { tenant_id: 'tenant-1', account_id: 'owned-account-1', channel_id: 'tiktok', external_content_id: 'provider-video-1', content: { tenantId: 'tenant-1', accountId: 'owned-account-1', channelId: 'tiktok', externalContentId: 'provider-video-1', status: 'published', publicUrl: 'https://www.tiktok.com/video-1' } });
+  const metric = { snapshotId: 'snapshot-own', tenantId: 'tenant-1', accountId: 'owned-account-1', channelId: 'tiktok', externalContentId: 'provider-video-1', capturedAt: '2026-10-02T00:00:00Z', source: 'official_api', metrics: { views: 1200, likes: 0, shares: null, comments: 4 } };
+  const metricRow = { tenant_id: 'tenant-1', account_id: metric.accountId, channel_id: metric.channelId, external_content_id: metric.externalContentId };
+  await dataStore.create('social_channel_metric_snapshots', { ...metricRow, snapshot_id: metric.snapshotId, snapshot: metric });
+  await dataStore.create('social_channel_metric_snapshots', { ...metricRow, snapshot_id: 'wrong-tenant', snapshot: { ...metric, snapshotId: 'wrong-tenant', tenantId: 'tenant-other', capturedAt: '2026-10-03T00:00:00Z', metrics: { views: 99999 } } });
+  await dataStore.create('social_channel_metric_snapshots', { ...metricRow, snapshot_id: 'future', snapshot: { ...metric, snapshotId: 'future', capturedAt: '2099-10-03T00:00:00Z', metrics: { views: 99999 } } });
+  for (let index = 0; index < 501; index++) await dataStore.create('social_channel_metric_snapshots', { ...metricRow, external_content_id: 'other-video', snapshot_id: `unrelated-${index}`, snapshot: { ...metric, snapshotId: `unrelated-${index}`, externalContentId: 'other-video' } });
+  await dataStore.create('social_channel_metric_snapshots', { ...metricRow, snapshot_id: 'snapshot-latest', snapshot: { ...metric, snapshotId: 'snapshot-latest', capturedAt: '2026-10-04T00:00:00Z' } });
+  const ownAnalysis = await service.runDirectorAnalysis(ownInput);
+  assert.deepEqual(ownAnalysis.directorAnalyses[0]?.benchmarkAccountRefs, [{ type: 'owned_social_account', id: 'owned-account-1', version: 3 }]);
+  assert.match(ownAnalysis.directorAnalyses[0]!.contentDirection, /本账号/);
+  assert.deepEqual(ownAnalysis.directorAnalyses[0]?.historicalPerformance?.metrics, { views: 1200, likes: 0, shares: null, comments: 4 });
+  assert.equal(ownAnalysis.directorAnalyses[0]?.historicalPerformance?.snapshotRef.id, 'snapshot-latest');
+  assert.equal(ownAnalysis.directorAnalyses[0]?.ownedReferenceDiagnosis?.performanceStatus, 'partial');
+  assert.deepEqual(ownAnalysis.directorAnalyses[0]?.ownedReferenceDiagnosis?.missingMetrics, ['shares']);
+  assert.equal(ownAnalysis.directorAnalyses[0]?.ownedReferenceDiagnosis?.toneStatus, 'pending');
+  const coldPkg = { ...pkg(), packageId: 'cold-check', referenceSourcePolicy: { profile: 'b2b_cold_start' as const, ownedPercent: 0, externalPercent: 100, allocationUnit: 'mother_content' as const } };
+  const cold = await service.initialize('tenant-1', coldPkg);
+  await assert.rejects(service.runDirectorAnalysis({ ...ownInput, packageId: coldPkg.packageId, expectedPlanningVersion: cold.version }), (error: unknown) => error instanceof SocialProgramError && error.code === 'benchmark_account_video_link_required');
   const merged = await service.mergeDetailedSchedule({ tenantId: 'tenant-1', programId: 'program-1', package: pkg(), expectedPlanningVersion: analyzed.version, actor: 'business_agent' });
   assert.equal(merged.detailedSchedule?.mergedBy, 'business_agent');
   assert.equal(merged.detailedSchedule?.items[0]?.qualityTier, 'premium');
+  assert.equal(merged.detailedSchedule?.items[0]?.materialPlan.canStartWithExistingAssets, false, 'planning cannot certify uninspected assets');
+  assert.deepEqual(merged.detailedSchedule?.items[0]?.materialPlan.optionalShootTaskIds, [], 'uncreated shooting tasks must not acquire fabricated IDs');
   await assert.rejects(
     service.dispatch({ tenantId: 'tenant-1', programId: 'program-1', packageId: 'package-1', packageVersion: 1, expectedPlanningVersion: merged.version, actor: 'business_agent' }),
     (error: unknown) => error instanceof SocialProgramError && error.code === 'confirmed_detailed_schedule_required',
@@ -96,6 +128,9 @@ test('business outline → director evidence → business schedule → user conf
   const dispatched = await service.dispatch({ tenantId: 'tenant-1', programId: 'program-1', packageId: 'package-1', packageVersion: 1, expectedPlanningVersion: confirmed.version, actor: 'business_agent' });
   assert.equal(dispatched.dispatch?.issuedBy, 'business_agent');
   assert.equal(dispatched.dispatch?.assignedTo, 'content_agent');
+  assert.deepEqual(dispatched.dispatch?.scheduleItems[0]?.materialEvidenceRequirements, merged.detailedSchedule?.items[0]?.materialEvidenceRequirements);
+  assert.equal(dispatched.dispatch?.scheduleItems[0]?.materialEvidenceRequirements?.items[0]?.classification, 'unknown');
+  assert.equal(dispatched.dispatch?.scheduleItems[0]?.materialEvidenceRequirements?.scope.packageVersion, 1);
   assert.ok(dispatched.dispatch?.detailedScheduleRef.id);
   await assertFrozen(dispatched);
 });
@@ -104,7 +139,7 @@ async function preparedPlanning(dataStore: DataStore) {
   const authority = createWeeklyPlanningAuthority(dataStore);
   const outline = await authority.initialize('tenant-1', pkg());
   const slot = outline.skeleton.slots[0]!;
-  const state = { ...outline, version: 2, status: 'director_analyzing', directorAnalyses: [{ analysisId: 'analysis-concurrent', slotId: slot.slotId, packageId: outline.packageId, packageVersion: 1, analyzedBy: 'director_agent', benchmarkAccountRefs: [], benchmarkVideoRefs: [], benchmarkEvidenceRefs: [], contentDirection: 'verified direction', styleRules: [], updateRhythm: 'weekly', materialRequirements: [], estimatedProductionMinutes: 30, createdAt: outline.createdAt }] };
+  const state = { ...outline, version: 2, status: 'director_analyzing', directorAnalyses: [{ analysisId: 'analysis-concurrent', slotId: slot.slotId, packageId: outline.packageId, packageVersion: 1, analyzedBy: 'director_agent', benchmarkAccountRefs: [{type:'social_benchmark_account',id:'account-fixture',version:1}], benchmarkVideoRefs: [{type:'social_discovery_video',id:'video-fixture',version:1}], benchmarkEvidenceRefs: ['evidence-fixture'], contentDirection: 'verified direction', styleRules: [], updateRhythm: 'weekly', materialRequirements: [], estimatedProductionMinutes: 30, createdAt: outline.createdAt }] };
   await dataStore.create('social_weekly_agent_planning', { tenant_id: 'tenant-1', program_id: outline.programId, package_id: outline.packageId, package_version: 1, planning_version: 2, payload: state, created_at: outline.createdAt });
   return state;
 }
@@ -175,4 +210,37 @@ test('create-only version identity fences a delayed stale write after a successo
   const history = await dataStore.list<any>('social_weekly_agent_planning', { sort: 'planning_version' });
   assert.deepEqual(history.items.map(row => row.planning_version), [1, 2, 3]);
   assert.deepEqual(history.items.at(-1).payload, winner, 'delayed stale creator cannot overwrite the successor history');
+});
+
+test('stored unknown material configuration is read by actual director reanalysis and frozen into schedule',async()=>{
+  const dataStore = memoryStore();
+  const service = createWeeklyPlanningAuthority(dataStore);
+  await dataStore.create('social_discovery_scopes', {
+    tenant_id: 'tenant-1', program_id: 'program-1', status: 'active', keyword_set_id: 'set-1', version: 1,
+    payload: { approval: { status: 'approved', scopeVersion: 1 }, keywordSet: { scope: { audienceRole: 'brand_buyer' }, graph: { sceneClusters: [] } } },
+  });
+  await dataStore.create('social_candidate_evidence', {
+    tenant_id: 'tenant-1', evidenceId: 'evidence-video-1', version: 1, tenantId: 'tenant-1', candidateId: 'video-1', inputFingerprint: 'fp',
+    evidence: {
+      inspirationId: 'video-1', discoveryPath: ['keyword'], sceneIds: [], relevance: { level: 'high', reasons: [] }, momentum: { level: 'high_performance', reasons: [], confidence: 0.8 },
+      transferability: { level: 'high', mechanisms: ['demo'], limitations: [] }, evidenceRefs: ['source'],
+      qualityScore: { ruleVersion: 'discovery-score-v1', overall: 90, dimensions: { relevance: 90, transferability: 90, momentum: 75, evidence: 80, platformPriority: 100, businessModelFit: 100 }, decision: 'accepted', reasons: ['B2B'], blockers: [], scoredAt: '2026-10-01T00:00:00Z' },
+      classification: { businessModel: 'b2b', platform: 'tiktok', keywordTier: 'medium' },
+    },
+    g1: { sourceUrl: 'https://www.tiktok.com/video-1' }, completeness: 'complete', createdAt: '2026-10-01T00:00:00Z', supersedesEvidenceId: null,
+  });
+  await dataStore.create('trend_videos', { id: 'video-1', tenantId: 'tenant-1', platform: 'tiktok', title: 'OEM factory capability proof', sourceUrl: 'https://www.tiktok.com/video-1' });
+  await dataStore.create('social_tracked_accounts', {
+    tenant_id: 'tenant-1', accountId: 'https://www.tiktok.com/@oem_factory', decision: 'track', status: 'tracked', accountRole: 'brand_factory', reasons: ['OEM factory wholesale supplier'],
+    evidenceVideoIds: ['video-1', 'video-2', 'video-3'], relatedSceneIds: [], missingEvidence: [], confidence: 0.95,
+    businessConfirmation: { status: 'confirmed', confirmedBy: 'business_agent', decisionRef: 'decision-1', reason: null, confirmedAt: '2026-10-01T00:00:00Z' },
+  });
+
+ const {socialRequestHash}=await import('../starter198/socialContentValidation.js');const {saveMaterialEvidenceConfiguration}=await import('./materialEvidenceConfiguration.js');
+ const handoff:any={inspirationId:'video-1',version:'1',analysisVersion:'1',readiness:'production_reference',source:{sourceUrl:'https://www.tiktok.com/video-1'},rights:{mayAnalyze:true,mayAdapt:true},productionImplications:{requiredEvidence:['产品细节镜头'],likelyAssetNeeds:[]},adaptationBoundary:{reusable:[],mustReplace:[],prohibited:[]}};
+ await dataStore.create('starter_social_inspiration_handoff_versions',{tenant_id:'tenant-1',handoff_version:'1',record_hash:socialRequestHash(handoff),payload:handoff});await dataStore.create('users',{id:'operator',tenantId:'tenant-1',role:'social_operator'});
+ const outline=await service.initialize('tenant-1',pkg());const input={tenantId:'tenant-1',programId:'program-1',packageId:'package-1',packageVersion:1,expectedPlanningVersion:outline.version,actor:'director_agent' as const};const analyzed=await service.runDirectorAnalysis(input);const requirement=analyzed.directorAnalyses[0]!.materialEvidenceRequirements!;assert.equal(requirement.items[0]!.classification,'unknown');
+ const config=await saveMaterialEvidenceConfiguration(dataStore,{tenantId:'tenant-1',programId:'program-1',scope:requirement.scope,actorUserId:'operator',expectedPlanningVersion:analyzed.version,decisions:[{requirementId:requirement.items[0]!.requirementId,classification:'human_irreplaceable',reason:'要求自有真实产品',shotUsage:'第二镜头细节实拍'}]});
+ const reanalyzed=await service.runDirectorAnalysis({...input,expectedPlanningVersion:analyzed.version});const next=reanalyzed.directorAnalyses[0]!.materialEvidenceRequirements!;assert.equal(next.items[0]!.classification,'human_irreplaceable');assert.equal(next.configurationRef?.recordHash,config.recordHash);assert.equal(analyzed.directorAnalyses[0]!.materialEvidenceRequirements!.items[0]!.classification,'unknown','old plan immutable');
+ const merged=await service.mergeDetailedSchedule({tenantId:'tenant-1',programId:'program-1',package:pkg(),expectedPlanningVersion:reanalyzed.version,actor:'business_agent'});assert.deepEqual(merged.detailedSchedule!.items[0]!.materialEvidenceRequirements,next);
 });

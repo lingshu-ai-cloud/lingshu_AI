@@ -1,11 +1,19 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  instagramLoginOAuthScopes,
   metaOAuthScopes,
   tikTokDirectPostApproved,
   tikTokOAuthScopes,
   youtubeOAuthScopes,
 } from './socialOAuthScopes.js';
+
+test('Instagram Login requests professional account messaging access without Page scopes', () => {
+  assert.deepEqual(instagramLoginOAuthScopes(), [
+    'instagram_business_basic',
+    'instagram_business_manage_messages',
+  ]);
+});
 
 test('review defaults request only the first-release scopes', () => {
   assert.deepEqual(tikTokOAuthScopes({}), ['user.info.basic']);
@@ -39,5 +47,6 @@ test('higher-risk scopes require explicit feature flags', () => {
     TIKTOK_DIRECT_POST_RELEASE_MODE: 'approved',
   }).includes('video.publish'));
   assert.ok(metaOAuthScopes('combined', { META_INSIGHTS_FEATURES_ENABLED: 'true' }).includes('instagram_manage_insights'));
+  assert.deepEqual(instagramLoginOAuthScopes({ INSTAGRAM_CONTENT_PUBLISH_ENABLED: 'true', INSTAGRAM_COMMENTS_FEATURES_ENABLED: 'true' }), ['instagram_business_basic', 'instagram_business_manage_messages', 'instagram_business_content_publish', 'instagram_business_manage_comments']);
   assert.ok(youtubeOAuthScopes({ YOUTUBE_COMMENT_FEATURES_ENABLED: 'true' }).includes('https://www.googleapis.com/auth/youtube.force-ssl'));
 });

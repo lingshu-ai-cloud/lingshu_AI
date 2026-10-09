@@ -77,61 +77,46 @@ type PageModuleLoader = () => Promise<unknown>;
 const ADS_PAGES: Page[] = [...PLATFORM_ADS_PAGE_IDS];
 const INTEGRATION_PAGES: Page[] = ['plugins', 'channels', 'youtube'];
 
-const LOCAL_PREVIEW_PAGE_LOADERS: PageModuleLoader[] = [
-  loadDigitalEmployeePage,
-  loadTrafficPage,
-  () => import('./components/AiCreateStudio'),
-  () => import('./components/InspirationDashboard'),
-  () => import('./components/publishing/CalendarPlanner'),
-  loadStrategyPage,
-  ...(PLATFORM_ADS_SURFACE_ENABLED ? [loadPlatformAdsPage] : []),
-  loadConversionPage,
-  loadOrderManagementPage,
-  loadEnterprisePage,
-  loadWorkspaceManagementPages,
-  loadIntegrationsPage,
-  loadScheduledPage,
-  loadAgentMonitorPage,
-  loadGlobalAssistant,
-  loadAdminDashboard,
-  loadAdminDeliveryPage,
-  loadStarterWorkspacePage,
-  loadSocialContentPlanningPage,
-  loadSocialTaskContextBar,
-  loadStarterWorkflowContextBar,
-];
+const PAGE_MODULE_LOADERS: Partial<Record<Page, PageModuleLoader[]>> = {
+  digitalEmployees: [loadDigitalEmployeePage],
+  agentMonitor: [loadAgentMonitorPage],
+  strategy: [loadStrategyPage],
+  traffic: [loadTrafficPage, () => import('./components/publishing/CalendarPlanner')],
+  socialInspiration: [loadTrafficPage, () => import('./components/InspirationDashboard')],
+  smartAssets: [loadTrafficPage, () => import('./components/AiCreateStudio'), loadSocialContentPlanningPage],
+  socialMonitoring: [loadTrafficPage, () => import('./components/AccountActivity')],
+  scriptLibrary: [loadWorkspaceManagementPages],
+  adsOverview: [loadPlatformAdsPage],
+  adsPlans: [loadPlatformAdsPage],
+  adsCreatives: [loadPlatformAdsPage],
+  adsManaged: [loadPlatformAdsPage],
+  conversion: [loadConversionPage],
+  orders: [loadOrderManagementPage],
+  enterprise: [loadEnterprisePage],
+  agentMemory: [loadWorkspaceManagementPages],
+  organizationPermissions: [loadWorkspaceManagementPages],
+  plugins: [loadIntegrationsPage],
+  channels: [loadIntegrationsPage],
+  youtube: [loadIntegrationsPage],
+  scheduled: [loadScheduledPage],
+  admin: [loadAdminDashboard],
+  adminDelivery: [loadAdminDeliveryPage],
+};
+
+const prefetchedPages = new Set<Page>();
+function prefetchPageModule(page: Page) {
+  if (prefetchedPages.has(page)) return;
+  prefetchedPages.add(page);
+  for (const loader of PAGE_MODULE_LOADERS[page] || []) void loader().catch(() => prefetchedPages.delete(page));
+}
 
 const isLocalPreviewHost = () => window.location.hostname === '127.0.0.1' || window.location.hostname === 'localhost';
 
 function scheduleLocalPreviewPreload(preferredPage: Page) {
   if (!isLocalPreviewHost()) return () => {};
-  const preferredLoaders: Partial<Record<Page, PageModuleLoader[]>> = {
-    digitalEmployees: [loadDigitalEmployeePage],
-    agentMonitor: [loadAgentMonitorPage],
-    strategy: [loadStrategyPage],
-    traffic: [loadTrafficPage, () => import('./components/publishing/CalendarPlanner')],
-    socialInspiration: [loadTrafficPage, () => import('./components/InspirationDashboard')],
-    smartAssets: [loadTrafficPage, () => import('./components/AiCreateStudio'), loadSocialContentPlanningPage],
-    socialMonitoring: [loadTrafficPage, () => import('./components/AccountActivity')],
-    scriptLibrary: [loadWorkspaceManagementPages],
-    adsOverview: [loadPlatformAdsPage],
-    adsPlans: [loadPlatformAdsPage],
-    adsCreatives: [loadPlatformAdsPage],
-    adsManaged: [loadPlatformAdsPage],
-    conversion: [loadConversionPage],
-    orders: [loadOrderManagementPage],
-    enterprise: [loadEnterprisePage],
-    agentMemory: [loadWorkspaceManagementPages],
-    organizationPermissions: [loadWorkspaceManagementPages],
-    plugins: [loadIntegrationsPage],
-    channels: [loadIntegrationsPage],
-    youtube: [loadIntegrationsPage],
-    scheduled: [loadScheduledPage],
-    admin: [loadAdminDashboard],
-    adminDelivery: [loadAdminDeliveryPage],
-  };
-  const queue = [...(preferredLoaders[preferredPage] || []), ...LOCAL_PREVIEW_PAGE_LOADERS];
-  const uniqueQueue = queue.filter((loader, index) => queue.indexOf(loader) === index);
+  // Compile only the visible page. Other workspaces are warmed on navigation
+  // intent so background transforms cannot delay the user's current clicks.
+  const uniqueQueue = [...new Set(PAGE_MODULE_LOADERS[preferredPage] || [])];
   let cancelled = false;
   let timeoutId: ReturnType<typeof setTimeout> | null = null;
   let idleId: number | null = null;
@@ -145,7 +130,7 @@ function scheduleLocalPreviewPreload(preferredPage: Page) {
       void loader().catch(() => {}).finally(scheduleNext);
     };
     if ('requestIdleCallback' in window) {
-      idleId = window.requestIdleCallback(run, { timeout: 1_500 });
+      idleId = window.requestIdleCallback(run, { timeout: 4_000 });
     } else {
       timeoutId = globalThis.setTimeout(run, 160);
     }
@@ -217,7 +202,7 @@ export default function App() {
       // Keep the home and production workbench warm, but cap other retained
       // pages so a long session does not accumulate every heavy workspace.
       const sticky = new Set<Page>(['digitalEmployees', 'smartAssets']);
-      while (next.size > 6) {
+      while (next.size > 4) {
         const removable = [...next].find(item => item !== page && !sticky.has(item));
         if (!removable) break;
         next.delete(removable);
@@ -815,7 +800,7 @@ export default function App() {
 
   return (
     <SocialProgramProvider scope={session.tenant?.id || session.user.tenantId} enabled={!starterMode}>
-    <Layout page={page} onNavigate={handleNavigate} conversation={conversation} session={session} onLogout={handleLogout}
+    <Layout page={page} onNavigate={handleNavigate} onPrefetchPage={prefetchPageModule} conversation={conversation} session={session} onLogout={handleLogout}
       starterMode={starterMode}
       onSessionUpdate={setSession}
       demoGuideActive={false}

@@ -538,7 +538,16 @@ export class DurableContentExecutionWorker {
         action: () => this.options.execute(job),
       });
       await finishSucceeded(this.options.dataStore, job, this.options.now?.() ?? new Date());
-      await this.options.onSucceeded?.(job);
+      // Execution is already durably successful. A completion projection or
+      // notification failure must not put paid production back in the queue.
+      // Domain recovery reconciles its saved output without executing again.
+      try {
+        await this.options.onSucceeded?.(job);
+      } catch (error) {
+        console.error('[content-execution] success callback requires reconciliation', {
+          jobId: job.id, error: error instanceof Error ? error.message : String(error),
+        });
+      }
     } catch (error) {
       const decision = await finishFailed({
         dataStore: this.options.dataStore, job, error,

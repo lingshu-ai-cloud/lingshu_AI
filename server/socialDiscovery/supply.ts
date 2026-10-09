@@ -162,7 +162,7 @@ async function querySocialDiscoverySupply(input: {
         score,
         evidenceRef: `account_decision:${account.id}`,
         evidenceVersion: 1,
-        raw: { status: account.status, decision: account.decision, accountRole: account.accountRole, businessConfirmation: account.businessConfirmation },
+        raw: { status: account.status, decision: account.decision, accountRole: account.accountRole, businessConfirmation: account.businessConfirmation, evidenceVideoIds: account.evidenceVideoIds },
       });
     }
   }

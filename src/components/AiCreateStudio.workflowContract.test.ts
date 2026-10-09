@@ -146,7 +146,7 @@ assert.match(studioSource, /setProductionDefaults\(saved\);await refreshMaterial
 assert.match(studioSource, /defaultPresenterId:productionDefaults\.defaultPresenterId\|\|presenterId/, 'the first inline presenter becomes the enterprise default while remaining selected in the originating shot');
 assert.doesNotMatch(studioSource, /showProjects \|\| linkedProductionContext/, 'a linked Agent task must not hide the three-column Studio behind a status scene');
 assert.match(studioSource, /<details[^>]*>[\s\S]{0,450}<ProductionTaskScene[^>]*embedded/, 'the linked task status must stay collapsible while the Studio workbench remains accessible');
-assert.match(studioSource, /className=\{showProjects \? 'hidden' : 'flex min-h-0 flex-1 flex-col'\}/, 'the Studio is hidden only while its project chooser is open');
+assert.match(studioSource, /className=\{showProjects \|\| \(rawSceneTarget && !sceneNavigationReceipt\) \? 'hidden' : 'flex min-h-0 flex-1 flex-col'\}/, 'the Studio hides its chooser and unverified scoped navigation until the actual snapshot is verified');
 assert.match(studioSource, /digitalHumanJob\?\.status === 'review'[\s\S]{0,180}<video/, 'generated digital-human candidates must be directly previewable before approval');
 assert.match(studioSource, /<RenderedVideoPlayer[^>]+src=\{formalPreviewUrl\}/, 'formal AIGC output must be directly playable in the final preview step');
 assert.match(studioSource, /<DigitalHumanProductionOverview/, 'the production page must retain per-shot digital-human progress and settlement UI');

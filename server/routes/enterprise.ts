@@ -1708,11 +1708,13 @@ async function customerServiceRuntimeStatus(tenantId: string, profile: Enterpris
   const status = customerServiceStatus(profile);
   const messagingAuthorization = await readCustomerMessagingAuthorization(tenantId);
   const messengerAuthorization = await readCustomerMessagingAuthorization(tenantId, 'messenger');
+  const instagramAuthorization = await readCustomerMessagingAuthorization(tenantId, 'instagram');
   return {
     ...status,
     autoReplyReady: status.autoReplyReady && messagingAuthorization.inboundAutoSendAllowed,
     messagingAuthorization,
     messengerAuthorization,
+    instagramAuthorization,
   };
 }
 

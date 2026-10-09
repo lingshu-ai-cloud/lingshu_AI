@@ -7,12 +7,12 @@ import type { DataStore } from '../storage/datastore.js';
 import { store } from '../storage/index.js';
 import { withLegacyExternalEffectAllowed } from '../starter198/legacyEffectGuard.js';
 import { createStarter198Repository } from '../starter198/repository.js';
-import { getPublicOrigin, getMetaOAuthClient, getTikTokOAuthClient, getYouTubeOAuthClient } from './oauthConfig.js';
+import { getPublicOrigin, getInstagramOAuthClient, getMetaOAuthClient, getTikTokOAuthClient, getYouTubeOAuthClient } from './oauthConfig.js';
 import { sendDingTalkMarkdown, sendDingTalkText } from '../integrations/dingtalk.js';
 import { sendFeishuCard, sendFeishuText } from '../integrations/feishu.js';
 import { sendWeComMarkdown } from '../integrations/wecom.js';
 
-export type TenantPlatform = 'meta' | 'google' | 'tiktok' | 'wecom';
+export type TenantPlatform = 'meta' | 'instagram' | 'google' | 'tiktok' | 'wecom';
 export type TenantTokenType = 'user_60d' | 'system_user_permanent';
 export type TenantPlatformStatus =
   | 'pending'
@@ -186,7 +186,7 @@ export async function deleteTenantPlatformApp(tenantId: string, platform: Tenant
 }
 
 export function tenantWebhookUrl(req: Request, tenantId: string, platform: TenantPlatform = 'meta'): string {
-  const path = platform === 'wecom' ? 'wecom' : 'meta';
+  const path = platform === 'wecom' ? 'wecom' : platform === 'instagram' ? 'instagram' : 'meta';
   return `${getPublicOrigin(req)}/api/webhooks/${path}/${encodeURIComponent(tenantId)}`;
 }
 
@@ -223,9 +223,11 @@ export function publicTenantPlatformApp(req: Request, app: TenantPlatformAppReco
     webhookVerifyTokenLength: text(app.webhook_verify_token).length,
     wecomEncodingAesKeySet: Boolean(wecomEncodingAesKey),
     wecomEncodingAesKeyLength: wecomEncodingAesKey.length,
-    webhookUrl: app.platform === 'meta' || app.platform === 'wecom' ? tenantWebhookUrl(req, app.tenant_id, app.platform) : '',
+    webhookUrl: app.platform === 'meta' || app.platform === 'instagram' || app.platform === 'wecom' ? tenantWebhookUrl(req, app.tenant_id, app.platform) : '',
     oauthRedirectUri: app.platform === 'google'
       ? `${getPublicOrigin(req)}/api/overseas/youtube/oauth/callback`
+      : app.platform === 'instagram'
+        ? `${getPublicOrigin(req)}/api/overseas/social/oauth/instagram/callback`
       : app.platform === 'tiktok'
         ? `${getPublicOrigin(req)}/api/overseas/social/oauth/tiktok/callback`
         : '',
@@ -314,6 +316,16 @@ export async function getTenantMetaOAuthClient(tenantId?: string): Promise<{ app
     if (appId && appSecret) return { appId, appSecret };
   }
   return getMetaOAuthClient();
+}
+
+export async function getTenantInstagramOAuthClient(tenantId?: string): Promise<{ appId: string; appSecret: string } | null> {
+  if (tenantId) {
+    const app = await getTenantPlatformApp(tenantId, 'instagram');
+    const appId = text(app?.app_id);
+    const appSecret = decryptSecret(app?.app_secret);
+    if (appId && appSecret) return { appId, appSecret };
+  }
+  return getInstagramOAuthClient();
 }
 
 export async function getTenantGoogleOAuthClient(tenantId?: string): Promise<{ clientId: string; clientSecret: string } | null> {

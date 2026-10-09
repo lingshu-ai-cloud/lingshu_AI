@@ -1,3 +1,4 @@
+import {readWeeklyCustomerRelationshipScope,verifyFrozenWeeklyCustomerRelationship,verifyLatestWeeklyCustomerSegment} from '../socialPrograms/weeklyCustomerRelationshipScope.js';
 import { planMobileChatMessages } from '../agents/mobileChatStyle.js';
 import { resolveTenantFollowupTemplate } from '../whatsapp/templates.js';
 import { followupOutcome } from './executionDiagnostics.js';
@@ -501,6 +502,7 @@ export async function dispatchFollowupBatch(
         result.blocked += 1;
         continue;
       }
+      try{const scope=await readWeeklyCustomerRelationshipScope(store,tenantId,batch.run_id);if(scope){const member=await store.getById<Record<string,unknown>>('customer_segment_members',item.segment_member_id);if(!member||member.tenant_id!==tenantId||member.customer_id!==item.customer_id||member.segment_id!==batch.segment_id||member.membership!=='included')throw Error('weekly_customer_relationship_member_invalid');await verifyFrozenWeeklyCustomerRelationship(store,scope,item.customer_id,member.customer_snapshot);await verifyLatestWeeklyCustomerSegment(store,scope,batch.segment_id);}}catch(error){const reason=error instanceof Error?error.message:'weekly_customer_relationship_evidence_unverified';await persistFollowupItem(item.id,{status:'blocked',exclusion_reason:reason,updated_at:now.toISOString()});result.blocked+=1;continue;}
       const safety = await runtimeSafety(tenantId, item, now, dependencies, batch.delivery_policy);
       if (!safety.allowed) {
         await persistFollowupItem(item.id, { status: 'blocked', exclusion_reason: safety.reason, last_error: '', updated_at: now.toISOString() });
@@ -537,6 +539,7 @@ export async function dispatchFollowupBatch(
         if (!currentBatch || currentBatch.status !== 'approved' || Number(currentBatch.version) !== approvedBatchVersion || Number(currentBatch.approved_version) !== approvedBatchVersion || !currentItem || currentItem.content_hash !== approvedContentHash) {
           throw new WorkflowRunBlockedError('followup_approval_changed_before_send');
         }
+        const relationScope=await readWeeklyCustomerRelationshipScope(store,tenantId,batch.run_id);if(relationScope){const member=await store.getById<Record<string,unknown>>('customer_segment_members',item.segment_member_id);if(!member||member.tenant_id!==tenantId||member.customer_id!==item.customer_id||member.segment_id!==currentBatch.segment_id||member.membership!=='included')throw new WorkflowRunBlockedError('weekly_customer_relationship_member_invalid');await verifyFrozenWeeklyCustomerRelationship(store,relationScope,item.customer_id,member.customer_snapshot);await verifyLatestWeeklyCustomerSegment(store,relationScope,currentBatch.segment_id);}
         if (item.send_mode === 'template') {
           const variables = Array.isArray(item.template_variables) ? item.template_variables.map(value => String(value || '')) : [];
           const receipt = await dependencies.sendTemplate({ tenantId, to: item.wa_number, templateName: item.template_name, languageCode: item.template_language || 'en_US', variables, callbackData: `followup:${claimToken}:0` });
@@ -700,7 +703,16 @@ export async function ingestFollowupDeliveryStatuses(tenantId: string, payload: 
       .map(entry => String(entry.status || 'sent'))
       .sort((left, right) => (RECEIPT_RANK[right] || 0) - (RECEIPT_RANK[left] || 0))[0];
     if (priorMessageStatus && (RECEIPT_RANK[nextStatus] || 0) < (RECEIPT_RANK[priorMessageStatus] || 0)) return;
-    const nextStatuses = [...receiptStatuses.filter(entry => entry.messageId !== messageId), { messageId, status: nextStatus, occurredAt, conversation: status.conversation || {}, pricing: status.pricing || {}, errors: status.errors || [] }];
+    const callbackIdentity = String(status.biz_opaque_callback_data || '').match(/^followup:([0-9a-f-]{36}):(\d+)$/i);
+    const signedIndex = callbackIdentity ? Number(callbackIdentity[2]) : -1;
+    const expectedMessages = Array.isArray(receipt.expectedMessages) ? receipt.expectedMessages.map(String) : [];
+    const matchedMessage = receiptMessages(receipt).find(entry => entry.messageId === messageId && Number(entry.index) === signedIndex);
+    const signedClaimEvidence = options.verifiedSignature && callbackIdentity && callbackIdentity[1] === receipt.claimToken
+      && receipt.approvedContentHash === item.content_hash && signedIndex >= 0 && signedIndex < expectedMessages.length
+      && matchedMessage && matchedMessage.body === expectedMessages[signedIndex]
+      && String(status.recipient_id || '').replace(/\D/g, '') === item.wa_number.replace(/\D/g, '')
+      ? { verifiedSignature: true, claimToken: receipt.claimToken, index: signedIndex, recipientId: String(status.recipient_id), approvedBatchVersion: receipt.approvedBatchVersion, approvedContentHash: receipt.approvedContentHash } : undefined;
+    const nextStatuses = [...receiptStatuses.filter(entry => entry.messageId !== messageId), { messageId, status: nextStatus, occurredAt, conversation: status.conversation || {}, pricing: status.pricing || {}, errors: status.errors || [], ...(signedClaimEvidence ? {signedClaimEvidence} : {}) }];
     const nextReceipt = { ...receipt, statuses: nextStatuses };
     const messageIds = receiptMessages(receipt).map(entry => String(entry.messageId || '')).filter(Boolean);
     const statusByMessage = new Map(nextStatuses.map(entry => [String(entry.messageId || ''), String(entry.status || 'sent')]));

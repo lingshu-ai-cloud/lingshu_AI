@@ -78,6 +78,9 @@ test('weekly publishing persists unknown receipt and restarts with reconciliatio
   };
   const options = { now: () => new Date('2026-09-26T12:00:00Z'), publishingEnabled: () => true, adapterFactory: async () => provider };
   assert.equal((await createSocialWeeklyPublicationAdapter(dataStore, options).execute(publicationTask)).status, 'pending');
+  const weeklyRow = dataStore.rows.get('social_weekly_operating_packages')![0]!;
+  weeklyRow.payload = structuredClone(weeklyRow.payload);
+  weeklyRow.payload.socialContentPackage.publicationTasks[0].receptionRequirement = { required: true, bindingId: null };
   const completed = await createSocialWeeklyPublicationAdapter(dataStore, options).execute(publicationTask);
   assert.equal(completed.status, 'succeeded');
   assert.equal(submissions, 1);
@@ -104,14 +107,45 @@ test('publishing gates remain independent of content acceptance and provider sta
   }
 });
 
+test('required reception without an explicit binding cannot submit a new publication', async context => {
+  const { dataStore, publicationTask } = await setup(context);
+  const row = dataStore.rows.get('social_weekly_operating_packages')![0]!;
+  row.payload = structuredClone(row.payload);
+  row.payload.socialContentPackage.publicationTasks[0].receptionRequirement = { required: true, bindingId: null };
+  let submissions = 0;
+  const provider: WeeklyPublishingProviderAdapter = { provider: 'isolated', platform: 'youtube', capability: 'available', async publish() { submissions++; throw new Error('Missing reception cannot publish'); }, async reconcile() { throw new Error('No attempt'); } };
+  const result = await createSocialWeeklyPublicationAdapter(dataStore, { publishingEnabled: () => true, now: () => new Date('2026-09-26T12:00:00Z'), adapterFactory: async () => provider }).execute(publicationTask);
+  assert.equal(result.status, 'blocked');
+  assert.equal('code' in result ? result.code : '', 'reception_binding_required');
+  assert.equal(submissions, 0);
+});
+
+test('publication rejects ambiguous or normalized invalid timestamps before submitting to a provider', async context => {
+  for (const publishWindow of ['2026-09-22', '2026-09-22T10:00:00', '2026-02-30T10:00:00Z', '2026-09-22T24:00:00Z']) {
+    const { dataStore, publicationTask } = await setup(context);
+    const row = dataStore.rows.get('social_weekly_operating_packages')![0]!;
+    row.payload = structuredClone(row.payload);
+    row.payload.socialContentPackage.publicationTasks[0].publishWindow = publishWindow;
+    let submissions = 0;
+    const provider: WeeklyPublishingProviderAdapter = { provider: 'isolated', platform: 'youtube', capability: 'available', async publish() { submissions++; throw new Error('Invalid timestamp must not publish'); }, async reconcile() { throw new Error('No existing attempt'); } };
+    const result = await createSocialWeeklyPublicationAdapter(dataStore, { publishingEnabled: () => true, now: () => new Date('2026-09-26T12:00:00Z'), adapterFactory: async () => provider }).execute(publicationTask);
+    assert.equal(result.status, 'blocked', publishWindow);
+    assert.equal('code' in result ? result.code : '', 'publish_window_invalid');
+    assert.equal(submissions, 0);
+  }
+});
+
 test('performance completion requires actual in-window owned numeric metric data', async context => {
-  const { dataStore, tasks } = await setup(context);
+  const { dataStore, tasks, publicationTask } = await setup(context);
   const task = tasks.find(item => item.schedule.stepKind === 'performance_monitoring')!;
   const adapter = createSocialWeeklyPublicationAdapter(dataStore, { now: () => new Date('2026-09-26T12:00:00Z') });
   assert.equal((await adapter.execute(task)).status, 'pending');
   await dataStore.create('social_metric_snapshots', { tenant_id: 'tenant-b', account_id: 'account-1', captured_at: '2026-09-25T10:00:00Z', metrics: { views: 10 } });
   await dataStore.create('social_metric_snapshots', { tenant_id: 'tenant-a', account_id: 'account-1', captured_at: '2026-09-20T10:00:00Z', metrics: { views: 10 } });
   assert.equal((await adapter.execute(task)).status, 'pending');
-  await dataStore.create('social_metric_snapshots', { tenant_id: 'tenant-a', account_id: 'account-1', captured_at: '2026-09-25T10:00:00Z', metrics: { views: 0 } });
-  assert.equal((await adapter.execute(task)).status, 'succeeded');
+  await dataStore.create('social_metric_snapshots', { tenant_id: 'tenant-a', account_id: 'account-1', platform:'youtube',content_id:'old-history-post',captured_at: '2026-09-25T10:00:00Z', metrics: { views: 0 } });assert.equal((await adapter.execute(task)).status,'pending','historical posts sampled this week cannot fulfill current delivery');
+  const provider:WeeklyPublishingProviderAdapter={provider:'isolated-real-provider',platform:'youtube',capability:'available',publish:async()=>({status:'published',providerReceiptId:'receipt-real',platformPostId:'post-real'}),reconcile:async()=>{throw Error('not needed');}};assert.equal((await createSocialWeeklyPublicationAdapter(dataStore,{now:()=>new Date('2026-09-24T12:00:00Z'),publishingEnabled:()=>true,adapterFactory:async()=>provider}).execute(publicationTask)).status,'succeeded');const attempt=dataStore.rows.get('social_publication_attempts')![0]!;attempt.resolved_at='2026-09-24T12:00:00Z';
+  for(let index=0;index<110;index++)await dataStore.create('social_metric_snapshots',{tenant_id:'tenant-a',account_id:'account-1',platform:'youtube',content_id:`unrelated-${index}`,captured_at:'2026-09-26T10:00:00Z',metrics:{views:10}});
+  await dataStore.create('social_metric_snapshots', { tenant_id: 'tenant-a', account_id: 'account-1',id:'zz-real-current',platform:'youtube',content_id:'post-real', captured_at: '2026-09-25T10:00:00Z', metrics: { views: 0,likes:null } });
+  const result=await adapter.execute(task);assert.equal(result.status,'succeeded');if(result.status==='succeeded'){assert.equal(result.resultRefs.length,1);const {validateWeeklyPublicationMetricRefs}=await import('./weeklyPublicationMetricEvidence.js');await validateWeeklyPublicationMetricRefs(dataStore,task,result.resultRefs,new Date('2026-09-26T12:00:00Z'));const {validateWeeklyExecutionResults}=await import('./socialWeeklyResultValidation.js');await validateWeeklyExecutionResults(dataStore,task,result.resultRefs,new Date('2026-09-26T12:00:00Z'));await assert.rejects(()=>validateWeeklyExecutionResults(dataStore,{...task,workflowKind:'content'},result.resultRefs,new Date('2026-09-26T12:00:00Z')),{code:'weekly_metrics_task_scope_invalid'});const unrelated=dataStore.rows.get('social_metric_snapshots')!.find(row=>row.content_id==='old-history-post')!;await assert.rejects(()=>validateWeeklyPublicationMetricRefs(dataStore,task,[{type:'social_metric_snapshot',id:unrelated.id,version:1}],new Date('2026-09-26T12:00:00Z')),{code:'weekly_metrics_publication_attribution_required'});}const actual=dataStore.rows.get('social_metric_snapshots')!.find(row=>row.id==='zz-real-current')!;actual.captured_at='2026-09-23T10:00:00Z';assert.equal((await adapter.execute(task)).status,'pending','sampling before actual publication cannot count');actual.captured_at='2026-09-25T10:00:00Z';actual.mock=true;assert.equal((await adapter.execute(task)).status,'pending');actual.mock=false;const weeklyRow=dataStore.rows.get('social_weekly_operating_packages')![0]!;weeklyRow.payload=structuredClone(weeklyRow.payload);weeklyRow.payload.socialContentPackage.publicationTasks.push({...weeklyRow.payload.socialContentPackage.publicationTasks[0],publicationTaskId:'still-unpublished',motherContentId:'second-mother'});assert.equal((await adapter.execute(task)).status,'pending','one delivered video cannot complete monitoring for a second required weekly video');const truncatedStore:DataStore={...dataStore,list:async<T>(collection:string,query:ListQuery={})=>{const result=await dataStore.list<T>(collection,query);return collection==='social_metric_snapshots'&&query.page===2?{...result,items:[]}:result;}};const truncated=await createSocialWeeklyPublicationAdapter(truncatedStore,{now:()=>new Date('2026-09-26T12:00:00Z')}).execute(task);assert.equal(truncated.status,'blocked');assert.equal('code' in truncated?truncated.code:'','weekly_metrics_scan_incomplete');
 });

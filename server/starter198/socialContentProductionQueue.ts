@@ -107,6 +107,7 @@ const { composite } = require('../../desktop/render.cjs') as {
 import { MEDIA_ROOT, type ProductionAsset, type SocialProductionBaseline, type SocialProductionAdaptation, type SocialReviewRevisionDirective, automaticSocialMaterialEligible, detectDistinctTaskVideoSegments, hasExactTaskProductAssociation, resolveTaskProductionMaterialLocation, taskProductionAssets, systemThemeGraphicAssets, applyZeroAssetTruthSafeNarration, socialReviewRevisionDirective, applySocialReviewRevision, createVideoCover, type SocialContentAutoProductionRuntime } from './socialContentAutoProduction.js';
 import { runSocialContentAutoProduction } from './socialContentProductionExecution.js';
 import { failExecution, writeExecutionStage } from './socialContentProductionRuntimeSupport.js';
+import { executeSocialSceneReworkJob, completeSocialSceneReworkRun, isSocialSceneReworkJob } from './socialContentSceneReworkExecution.js';
 export async function runSocialContentAutoProductionWithRetry(input: {
   repository: Starter198Repository;
   tenantId: string;
@@ -120,9 +121,32 @@ export async function runSocialContentAutoProductionWithRetry(input: {
 }
 
 let productionWorker: DurableContentExecutionWorker | null = null;
+const dedicatedExecutors = new Map<string, (repository: Starter198Repository, job: ContentExecutionJob) => Promise<void>>([
+  ['social_scene_rework', executeSocialSceneReworkJob],
+]);
+
+export async function assertSocialSceneReworkQueueRegistered(): Promise<void> {
+  if (dedicatedExecutors.get('social_scene_rework') !== executeSocialSceneReworkJob) {
+    throw new Error('scene_rework_worker_not_registered');
+  }
+}
+
+export async function wakeSocialSceneReworkJob(jobId: string): Promise<void> {
+  await assertSocialSceneReworkQueueRegistered();
+  if (selectedQueueBackend() === 'bullmq') {
+    await enqueueBullJob({ queue: 'social-content-production', name: 'wake-durable-job', data: { jobId }, jobId });
+  }
+  await productionWorker?.drain();
+}
 
 async function executePersistedProduction(job: ContentExecutionJob): Promise<void> {
   const repository = createStarter198Repository(store);
+  if (job.taskType.startsWith('social_scene_rework:')) {
+    if (!isSocialSceneReworkJob(job)) throw new Error('scene_rework_job_type_invalid');
+    await assertSocialSceneReworkQueueRegistered();
+    await dedicatedExecutors.get('social_scene_rework')!(repository, job);
+    return;
+  }
   const record = await requireSocialTask({ repository, tenantId: job.tenantId, taskId: job.taskId });
   const task = socialTaskSummary(record);
   if (['asset_review', 'packaging', 'delivered', 'awaiting_publish', 'awaiting_metrics', 'reviewed'].includes(task.status)) return;
@@ -144,6 +168,7 @@ function ensureProductionWorker(): DurableContentExecutionWorker {
     dataStore: store,
     execute: executePersistedProduction,
     async onSucceeded(job) {
+      if (isSocialSceneReworkJob(job)) await completeSocialSceneReworkRun(createStarter198Repository(store), job);
       await createAgentNotification({
         tenantId: job.tenantId,
         eventKey: `content-execution:${job.id}:review-ready`,
@@ -181,7 +206,14 @@ function ensureProductionWorker(): DurableContentExecutionWorker {
     },
     async onBlocked(job, error, decision) {
       const repository = createStarter198Repository(store);
-      await failExecution({
+      if (isSocialSceneReworkJob(job)) {
+        // Repair failures belong to the independent run. The original reviewed
+        // content task and its passed scenes must remain intact.
+        const run = await store.getById<Record<string, unknown>>('workflow_runs', job.runId);
+        if (run?.tenant_id === job.tenantId && run.status === 'running') await store.update('workflow_runs', job.runId, {
+          current_controller: 'human', pause_reason: decision.publicReason,
+        });
+      } else await failExecution({
         repository, tenantId: job.tenantId, userId: job.userId, taskId: job.taskId, runId: job.runId,
         error: new Error(`${decision.failureClass}:${decision.publicReason}:${String(error instanceof Error ? error.message : error || '').slice(0, 800)}`),
       }).catch(() => undefined);

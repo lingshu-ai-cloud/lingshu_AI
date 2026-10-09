@@ -1,4 +1,5 @@
 import BenchmarkAnalysisSections from './inspiration/BenchmarkAnalysisSections';
+import ReferenceSpeechAlignmentPanel from './inspiration/ReferenceSpeechAlignmentPanel';
 import { buildBenchmarkAnalysis } from '../../shared/benchmarkAnalysis';
 import MaterialLibraryStatus from './studio/MaterialLibraryStatus';
 import { useState, useEffect, useMemo, useRef } from 'react';
@@ -3101,6 +3102,7 @@ export function DirectorVideoDetailPanel({
 
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
           {!isImagePost && <BenchmarkAnalysisSections analysis={benchmark} pending={pending} renderClip={url => <AuthenticatedVideo apiUrl={url} controls className="max-h-64 w-full rounded-lg bg-black" />} />}
+          {!isImagePost && <ReferenceSpeechAlignmentPanel details={payload?.gemini?.scriptDetails15s} transcript={payload?.gemini?.audioTranscript} />}
           {!isImagePost && <section aria-label="编导到内容 Agent 交接状态" className="mb-4 rounded-xl border border-border bg-white p-4">
             <div className="flex flex-wrap items-center gap-2 text-xs font-black"><span className="rounded bg-emerald-50 px-2 py-1 text-emerald-700">原片入库</span><ChevronRight size={13} className="text-text-muted" /><span className={`rounded px-2 py-1 ${pending ? 'bg-amber-50 text-amber-700' : draftReady ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>{pending ? '编导分析中' : draftReady ? '可交接内容起稿' : '编导证据不足'}</span><ChevronRight size={13} className="text-text-muted" /><span className={`rounded px-2 py-1 ${draftReady ? 'bg-emerald-50 text-emerald-700' : 'bg-surface-2 text-text-muted'}`}>{handoffReady ? '可制作成片' : draftReady ? '可生成口播草稿' : '内容起稿未开放'}</span></div>
             {!handoffReady && !pending && <p className="mt-2 text-[11px] leading-5 text-amber-800">系统将使用带估计时间码的原片口播，并继续检查镜头切片、钩子动作和企业“销售”人物资产。如需继续，编导 Agent 会按清单补证，无需人工逐句校时或逐镜勾选。</p>}

@@ -76,6 +76,15 @@ assert.equal(capturedVisualControl.precision, 'hook_high');
 assert.equal(capturedVisualControl.interaction, 'talking');
 assert.match(capturedVisualControl.action.path, /口播说明/);
 assert.deepEqual(capturedVisualControl.requiredCapabilities, ['scripted_speech', 'timing_control']);
+const originalKey = capturedKey;
+const repairInput = { tenantId: 'tenant-a', taskId: 'task-a', outputDirectory: root,
+  operationId: `scene_rework_${'b'.repeat(24)}`, plan, baseline, availableAssets: [],
+  adapters: [createSocialDigitalPresenterAdapter(ports)] };
+await executeSocialAssetSupplyPlan(repairInput);
+const repairKey = capturedKey;
+assert.notEqual(repairKey, originalKey);
+await executeSocialAssetSupplyPlan(repairInput);
+assert.equal(capturedKey, repairKey);
 
 const complexShot = {
   ...plan.shots[0]!,

@@ -13,6 +13,14 @@ import type {
 import { advanceWeeklyPlanning } from '../../lib/weeklyPlanningActions';
 import { socialProgramApi } from '../../lib/socialProgramApi';
 import { projectWeeklyWorkbench, type WorkbenchEvidenceKind } from './weeklyWorkbenchModel';
+import WeeklyCustomerCalendar from './WeeklyCustomerCalendar';
+import { projectExecutionCalendar } from './weeklyExecutionCalendar';
+import { STEP_LABEL } from './weeklyExecutionLabels';
+import WeeklyRecoveryPanel from './WeeklyRecoveryPanel';
+import PublicationReceptionSetup from './PublicationReceptionSetup';
+import WeeklyMaterialRequestsPanel from './WeeklyMaterialRequestsPanel';
+import { bindWeeklyMaterialRequest } from '../../lib/weeklyMaterialBinding';
+import WeeklyCustomerRunBinding from './WeeklyCustomerRunBinding';
 
 const KIND_LABEL: Record<WeeklyOperatingWorkflowKind, string> = {
   readiness: '范围与就绪', discovery: '发现', directing: '编导', content: '生产', publishing: '发布', engagement: '互动', review: '复盘',
@@ -26,34 +34,17 @@ const ACTOR_LABEL: Record<WeeklyResponsibleActor, string> = {
   director_agent: '编导 Agent',
   content_agent: '内容 Agent',
   quality_agent: '内容 Agent · 质检能力',
-  publishing_agent: '发布 Agent',
+  publishing_agent: '经营 Agent · 发布能力',
   user: '用户',
 };
-const STEP_LABEL: Record<WeeklyProductionStepKind, string> = {
-  business_outline: '1. 生成任务总纲',
-  benchmark_collection: '2. 采集对标账号与视频',
-  benchmark_scoring: '3. 服务端评分与筛选',
-  director_analysis: '4. 编导拆解对标结论',
-  business_schedule: '5. 合并详细内容排期',
-  material_readiness: '6. 核对素材与授权',
-  script: '7. 生成口播与脚本',
-  storyboard: '8. 生成逐镜分镜',
-  asset_generation: '9. 匹配或生成素材',
-  video_generation: '10. 合成、配音与渲染',
-  quality_check: '11. 事实、画面、音频与版权质检',
-  rework: '12. 按质检结果局部返工',
-  user_approval: '13. 用户确认成片',
-  publishing: '14. 发布到目标账号',
-  performance_monitoring: '15. 回传表现与线索',
-  weekly_review: '16. 周复盘与下轮建议',
-};
+
 const STEP_DETAIL: Record<WeeklyProductionStepKind, string> = {
   business_outline: '仅列目标、数量、账号、日期和预算，不消耗生成式 Agent token。',
   benchmark_collection: '按 TikTok 主阵地、中词主供给采集候选。',
   benchmark_scoring: '按 B2B 匹配、证据完整度和可迁移性筛选。',
   director_analysis: '输出对标账号、具体视频、结构、风格和迁移边界。',
   business_schedule: '经营 Agent 把编导结论合并成数量、账号、日期和预算均明确的排期。',
-  material_readiness: '核对现有素材、人物授权和待拍建议；默认保留最高档 AIGC 兜底。',
+  material_readiness: '核对必需素材、产品事实和人物授权；缺少必需输入时等待补齐。',
   script: '编导 Agent 对照爆款原脚本与企业已确认事实，生成可核对的适配脚本。',
   storyboard: '编导 Agent 将适配脚本拆成可单独制作、验收和返工的逐镜分镜。',
   asset_generation: '逐镜选用企业素材、合法库存或最高档 AIGC。',
@@ -64,6 +55,8 @@ const STEP_DETAIL: Record<WeeklyProductionStepKind, string> = {
   publishing: '在授权范围内发布，保留平台回执。',
   performance_monitoring: '按账号回传播放、互动、询盘和成本信号。',
   weekly_review: '用真实结果生成周复盘和下一轮数量、内容与预算建议。',
+  template_extraction: '从真实已发布企业成片及原周复盘提炼结构，保留原脚本、分镜和来源版本。',
+  template_performance_validation: '核验模板的播放、赞转评和适用条件；明确确认试验或保留用途后交付。',
 };
 const EXECUTION_STATUS_LABEL: Record<WeeklyExecutionTaskStatus, string> = {
   pending_activation: '待激活', queued: '排队中', leased: '执行中', blocked: '有卡点', succeeded: '已完成', cancelled: '已取消', dead_letter: '失败待处理',
@@ -89,12 +82,24 @@ function taskTone(status: WeeklyExecutionTaskStatus): string {
   return 'border-border bg-white';
 }
 
-export default function WeeklyOperatingWorkbench({ pkg, loading, error, selectedTaskId, onRefresh }: {
+function TaskDeadlineNotice({ task }: { task: WeeklyExecutionTask }) {
+  if (!task.schedule.latestFinishAt && !task.schedule.planningRisks?.length) return null;
+  const late = task.status !== 'succeeded' && task.status !== 'cancelled' && Boolean(task.schedule.latestFinishAt && Date.now() > Date.parse(task.schedule.latestFinishAt));
+  return <div className={`mt-2 rounded-lg px-3 py-2 text-xs ${late || task.schedule.planningRisks?.length ? 'bg-red-50 text-red-800' : 'bg-amber-50 text-amber-800'}`}>
+    {task.schedule.latestFinishAt && <p>发布前置最晚完成：{timeLabel(task.schedule.latestFinishAt)}{late ? ' · 已超过截止' : ''}</p>}
+    {task.schedule.planningRisks?.includes('publication_deadline_at_risk') && <p>当前估时不能满足发布前置截止，需要提前准备或调整排期。</p>}
+    {task.schedule.planningRisks?.includes('precise_publish_time_required') && <p>请补充包含时区的具体发布时间，才能核验前置排期。</p>}
+  </div>;
+}
+
+export default function WeeklyOperatingWorkbench({ pkg, loading, error, selectedTaskId, onRefresh, programRoute, onRevision }: {
   pkg: WeeklyOperatingPackage | null;
   loading: boolean;
   error: string;
   selectedTaskId?: string | null;
   onRefresh: () => void;
+  programRoute?: 'cold_start' | 'account_repair' | null;
+  onRevision?: (pkg: WeeklyOperatingPackage) => void;
 }) {
   const [planning, setPlanning] = useState<WeeklyAgentPlanningState | null>(pkg?.agentPlanning ?? null);
   const [executionTasks, setExecutionTasks] = useState<WeeklyExecutionTask[]>([]);
@@ -104,11 +109,29 @@ export default function WeeklyOperatingWorkbench({ pkg, loading, error, selected
   const [planningBusy, setPlanningBusy] = useState(false);
   const [planningError, setPlanningError] = useState('');
   const [selectedPublicationTaskId, setSelectedPublicationTaskId] = useState('');
+  const [ownedPercent, setOwnedPercent] = useState('');
+  useEffect(() => { setOwnedPercent(pkg?.referenceSourcePolicy ? String(pkg.referenceSourcePolicy.ownedPercent) : ''); }, [pkg?.packageId, pkg?.version]);
+
+  const saveSourceQuota = async () => {
+    if (!pkg || planningBusy || ownedPercent === '' || !programRoute || !onRevision) return;
+    setPlanningBusy(true); setPlanningError('');
+    try {
+      const own = programRoute === 'cold_start' ? 0 : Number(ownedPercent);
+      const next = await socialProgramApi.reviseOperatingPackage(pkg.programId, pkg.packageId, {
+        expectedVersion: pkg.version,
+        referenceSourcePolicy: { profile: programRoute === 'cold_start' ? 'b2b_cold_start' : 'b2b_established', ownedPercent: own, externalPercent: 100-own, allocationUnit: 'mother_content' },
+        changeReason: '用户确认本周自有与外部参考配额',
+      });
+      onRevision(next);
+    } catch (cause) { setPlanningError(cause instanceof Error ? cause.message : '来源配额保存失败。'); }
+    finally { setPlanningBusy(false); }
+  };
 
   useEffect(() => { setPlanning(pkg?.agentPlanning ?? null); }, [pkg?.agentPlanning]);
   useEffect(() => {
     if (!pkg) { setExecutionTasks([]); setCancellation(null); return; }
     let cancelled = false;
+    setExecutionTasks([]);
     setCancellation(null);
     setExecutionLoading(true);
     setExecutionError('');
@@ -148,6 +171,13 @@ export default function WeeklyOperatingWorkbench({ pkg, loading, error, selected
   const refreshExecutionTasks = async (currentPackage: WeeklyOperatingPackage): Promise<void> => {
     setExecutionTasks(await socialProgramApi.listExecutionTasks(currentPackage.programId, currentPackage.packageId, currentPackage.version));
   };
+  const recheckMaterials = async (task: WeeklyExecutionTask) => {
+    if (!pkg || planningBusy || task.status !== 'blocked' || !task.ownBlockingReasons.includes('weekly_required_materials_missing')) return;
+    setPlanningBusy(true); setPlanningError('');
+    try { setExecutionTasks(await socialProgramApi.recheckRequiredMaterials(pkg.programId, pkg.packageId, task.taskId)); }
+    catch (cause) { setPlanningError(cause instanceof Error ? cause.message : '素材重新核验请求失败。'); }
+    finally { setPlanningBusy(false); }
+  };
   const advancePlanning = async (): Promise<void> => {
     if (!pkg || !planning || planningBusy) return;
     setPlanningBusy(true);
@@ -166,12 +196,13 @@ export default function WeeklyOperatingWorkbench({ pkg, loading, error, selected
     setPlanningBusy(true);
     setPlanningError('');
     try {
-      await socialProgramApi.reviseOperatingPackage(pkg.programId, pkg.packageId, {
+      const next = await socialProgramApi.reviseOperatingPackage(pkg.programId, pkg.packageId, {
         expectedVersion: pkg.version,
         changeReason: '用户在周工作台修订已确认计划并重新规划',
       });
       // Reload the whole package: a revision changes package identity/version too.
-      onRefresh();
+      if (onRevision) onRevision(next);
+      else onRefresh();
     } catch (cause) {
       setPlanningError(cause instanceof Error ? cause.message : '创建计划修订失败。');
     } finally { setPlanningBusy(false); }
@@ -200,6 +231,42 @@ export default function WeeklyOperatingWorkbench({ pkg, loading, error, selected
       : planning?.status === 'confirmed' ? '由经营 Agent 派单开始制作' : '';
   const selectedScheduleItem = planning?.detailedSchedule?.items.find(item => item.publicationTaskId === selectedPublicationTaskId) ?? null;
   return <section aria-label="统一周工作台" className="space-y-4">
+    {pkg && <section className="rounded-xl border border-border bg-white p-5">
+      <h3 className="text-sm font-bold">本周复刻来源配额</h3>
+      <p className="mt-2 text-xs text-text-secondary">{pkg.referenceSourcePolicy ? `自有 ${pkg.referenceSourcePolicy.ownedPercent}% / 外部 ${pkg.referenceSourcePolicy.externalPercent}% · 按母版计数` : '尚未确认来源配额'}</p>
+      {planning && <p className="mt-1 text-xs text-text-muted">实际分配：自有 {planning.skeleton.slots.filter(slot => slot.referenceSource === 'owned').length} 条 / 外部 {planning.skeleton.slots.filter(slot => slot.referenceSource === 'external').length} 条；未标来源 {planning.skeleton.slots.filter(slot => !slot.referenceSource).length} 条。</p>}
+      {planning?.directorAnalyses.filter(item => item.benchmarkAccountRefs.some(ref => ref.type === 'owned_social_account')).map(item => <p key={item.analysisId} className="mt-2 rounded-lg bg-surface-2 p-3 text-xs text-text-secondary">
+        自有参考 {item.benchmarkVideoRefs.map(ref => ref.id).join('、')}：{item.historicalPerformance ? `播放 ${item.historicalPerformance.metrics.views ?? '未知'} · 赞 ${item.historicalPerformance.metrics.likes ?? '未知'} · 转 ${item.historicalPerformance.metrics.shares ?? '未知'} · 评 ${item.historicalPerformance.metrics.comments ?? '未知'}；采集 ${item.historicalPerformance.capturedAt}，来源 ${item.historicalPerformance.source}` : '尚无匹配的播放和赞转评快照'}
+      </p>)}
+      {programRoute === 'account_repair' && onRevision && <div className="mt-3 flex flex-wrap gap-2">
+        <select aria-label="自有与外部来源比例" value={ownedPercent} onChange={event => setOwnedPercent(event.target.value)} disabled={planningBusy} className="rounded-lg border border-border px-3 py-2 text-xs">
+          <option value="">请选择来源比例</option>
+          <option value="40">40 / 60 · 调性清晰、获客一般或增长停滞</option>
+          <option value="20">20 / 80 · 历史素材不足或播放、赞转评偏弱</option>
+        </select>
+        <button type="button" disabled={planningBusy || loading || !['20','40'].includes(ownedPercent)} onClick={() => void saveSourceQuota()} className="rounded-lg bg-accent px-3 py-2 text-xs font-bold text-white disabled:opacity-50">确认配额并创建新修订</button>
+      </div>}
+      <p className="mt-2 text-xs text-text-muted">新修订需要重新生成排期并确认；已有执行保留。自有证据不足时提示补齐，不自动转成全部外部。</p>
+    </section>}
+    {pkg && onRevision && <details className="rounded-xl border border-border bg-white p-4"><summary className="cursor-pointer text-sm font-semibold">配置视频发布承接入口</summary><PublicationReceptionSetup key={`reception:${pkg.packageId}:${pkg.version}`} pkg={pkg} onCreateRevision={async publicationTasks => {
+      const next = await socialProgramApi.reviseOperatingPackage(pkg.programId, pkg.packageId, { expectedVersion: pkg.version, publicationTasks, changeReason: '确认逐视频发布承接要求' });
+      onRevision(next);
+    }} /></details>}
+    {pkg && <WeeklyMaterialRequestsPanel key={`materials:${pkg.packageId}:${pkg.version}`} programId={pkg.programId} packageId={pkg.packageId} packageVersion={pkg.version} tasks={executionTasks} requiredRequestIds={pkg.socialContentPackage.publicationTasks.flatMap(item => item.materialRequirement?.requestIds ?? [])} onBindRequiredRequests={onRevision ? async request => {
+      try { await bindWeeklyMaterialRequest({ pkg, tasks: executionTasks, request, onRevision }); }
+      catch (cause) { setPlanningError(cause instanceof Error ? cause.message : '素材已创建，冻结排期关联尚未完成。'); throw cause; }
+    } : undefined} />}
+    {pkg && programRoute && <details className="rounded-xl border border-border bg-white p-4"><summary className="cursor-pointer text-sm font-semibold">选择本周客服运行</summary><WeeklyCustomerRunBinding key={`customer:${pkg.packageId}:${pkg.version}`} programId={pkg.programId} packageId={pkg.packageId} packageVersion={pkg.version} profile={programRoute === 'cold_start' ? 'b2b_cold_start' : 'b2b_established'} /></details>}
+    {pkg && !executionLoading && !executionError && <WeeklyCustomerCalendar programId={pkg.programId} packageId={pkg.packageId} packageVersion={pkg.version} weekStart={pkg.weekStart} weekEnd={pkg.weekEnd} executionTasks={executionTasks} onOpenMaterial={requestId => document.getElementById(`weekly-material-request:${pkg.programId}:${pkg.packageId}:${pkg.version}:${requestId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })} mainTasks={projectExecutionCalendar(executionTasks, STEP_LABEL)} onOpenContent={task => {
+      if (!task.productionTaskId) return;
+      window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: { page: 'smartAssets', socialContentTaskId: task.productionTaskId, socialContentPage: 'smartAssets', socialContentView: 'managed' } }));
+    }} />}
+    {pkg && !executionLoading && !executionError && executionTasks.length > 0 && <WeeklyRecoveryPanel
+      key={`${pkg.packageId}:${pkg.version}`}
+      tasks={executionTasks}
+      packageVersion={pkg.version}
+      onAssess={input => socialProgramApi.assessRecovery(pkg.programId, pkg.packageId, pkg.version, input)}
+    />}
     {cancellation && <div role="status" className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-xs leading-6 text-amber-900">撤回处理：{cancellation.status === 'partial_failure' ? '部分完成，需重试继续处理' : cancellation.status === 'completed' ? '后续任务已停止' : cancellation.status === 'completed_with_external_effects' ? '后续任务已停止，保留已发生的外部结果' : '处理中'}。{cancellation.effects.some(effect => effect.outcome === 'unknown_requires_reconciliation') && '存在结果未知的供应商或平台调用，仍需核对回执。'}{cancellation.effects.some(effect => effect.outcome === 'irreversible') && '已付费或已发布结果不会因撤回自动撤销。'}{cancellation.lastError && <p>处理原因：{cancellation.lastError}</p>}</div>}
     <header className="rounded-xl border border-border bg-white p-5 sm:p-6">
       <div className="flex flex-wrap items-start justify-between gap-4"><div><p className="text-xs font-semibold text-accent">{pkg.weekStart} — {pkg.weekEnd}</p><h2 className="mt-1 text-lg font-bold text-text-primary">{pkg.objective}</h2><p className="mt-2 text-xs text-text-muted">Program {pkg.programId} · Package {pkg.packageId} · v{pkg.version}</p></div><button type="button" onClick={onRefresh} disabled={loading} className="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-xs font-semibold text-text-secondary disabled:opacity-50"><RefreshCcw size={14} className={loading ? 'animate-spin' : ''}/>从后端刷新</button></div>
@@ -229,12 +296,12 @@ export default function WeeklyOperatingWorkbench({ pkg, loading, error, selected
       {executionLoading&&<p className="mt-4 inline-flex items-center gap-2 text-xs text-text-muted"><Loader2 size={14} className="animate-spin"/>正在读取真实执行任务…</p>}
       {executionError&&<p role="alert" className="mt-4 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">{executionError}</p>}
       {!executionLoading&&!executionError&&selectedPublication&&<>
-        <div className="mt-4 grid gap-3 sm:grid-cols-4"><div className="rounded-lg bg-surface-2 p-3"><p className="text-[10px] text-text-muted">平台 / 账号</p><p className="mt-1 text-xs font-bold">{selectedPublication.platform.toUpperCase()} · {selectedPublication.accountId}</p></div><div className="rounded-lg bg-surface-2 p-3"><p className="text-[10px] text-text-muted">发布窗口</p><p className="mt-1 text-xs font-bold">{selectedPublication.publishWindow || '待经营 Agent 排期'}</p></div><div className="rounded-lg bg-surface-2 p-3"><p className="text-[10px] text-text-muted">单条制作预计</p><p className="mt-1 text-xs font-bold">{selectedScheduleItem ? durationLabel(selectedScheduleItem.estimatedProductionMinutes) : durationLabel(selectedProductionTasks.reduce((sum, item) => sum + item.schedule.estimatedDurationMinutes, 0))}</p></div><div className="rounded-lg bg-surface-2 p-3"><p className="text-[10px] text-text-muted">素材可否开始</p><p className="mt-1 text-xs font-bold">{selectedScheduleItem?.materialPlan.canStartWithExistingAssets ? '可立即开始 · Premium AIGC 兜底' : '等待详细预览'}</p></div></div>
+        <div className="mt-4 grid gap-3 sm:grid-cols-4"><div className="rounded-lg bg-surface-2 p-3"><p className="text-[10px] text-text-muted">平台 / 账号</p><p className="mt-1 text-xs font-bold">{selectedPublication.platform.toUpperCase()} · {selectedPublication.accountId}</p></div><div className="rounded-lg bg-surface-2 p-3"><p className="text-[10px] text-text-muted">发布窗口</p><p className="mt-1 text-xs font-bold">{selectedPublication.publishWindow || '待经营 Agent 排期'}</p></div><div className="rounded-lg bg-surface-2 p-3"><p className="text-[10px] text-text-muted">单条制作预计</p><p className="mt-1 text-xs font-bold">{selectedScheduleItem ? durationLabel(selectedScheduleItem.estimatedProductionMinutes) : durationLabel(selectedProductionTasks.reduce((sum, item) => sum + item.schedule.estimatedDurationMinutes, 0))}</p></div><div className="rounded-lg bg-surface-2 p-3"><p className="text-[10px] text-text-muted">素材可否开始</p><p className="mt-1 text-xs font-bold">{selectedProductionTasks.some(task => task.schedule.stepKind === 'material_readiness' && task.status === 'succeeded') ? '素材任务已核验通过' : '等待素材任务实际核验'}</p></div></div>
         {selectedScheduleItem&&<div className="mt-3 rounded-lg border border-violet-100 bg-violet-50/50 p-3 text-xs leading-5 text-text-secondary"><strong className="text-text-primary">对标与素材依据：</strong>视频 {selectedScheduleItem.benchmarkVideoRefs.map(ref => ref.id).join('、') || '无'} · 账号 {selectedScheduleItem.benchmarkAccountRefs.map(ref => ref.id).join('、') || '无'}<br/><strong className="text-text-primary">素材规划：</strong>{selectedScheduleItem.materialPlan.note}</div>}
-        <ol className="mt-5 space-y-3">{selectedProductionTasks.map((task, index) => <li id={`weekly-execution-${task.taskId}`} key={task.taskId} className={`relative rounded-xl border p-4 ${taskTone(task.status)} ${selectedTaskId === task.taskId ? 'ring-2 ring-accent/20' : ''}`}><div className="flex flex-wrap items-start justify-between gap-3"><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><span className="flex h-6 w-6 items-center justify-center rounded-full bg-white text-[10px] font-black text-text-secondary">{index + 1}</span><h4 className="text-sm font-bold text-text-primary">{STEP_LABEL[task.schedule.stepKind]}</h4><span className="rounded-full bg-white px-2 py-1 text-[10px] font-bold text-text-secondary">{ACTOR_LABEL[task.schedule.responsibleActor]}</span></div><p className="mt-2 text-xs leading-5 text-text-secondary">{STEP_DETAIL[task.schedule.stepKind]}</p></div><span className="rounded-full bg-white px-2.5 py-1 text-[10px] font-black text-text-secondary">{EXECUTION_STATUS_LABEL[task.status]}</span></div><div className="mt-3 flex flex-wrap gap-x-5 gap-y-1 border-t border-black/5 pt-3 text-[10px] text-text-muted"><span>预计耗时：<strong className="text-text-secondary">{durationLabel(task.schedule.estimatedDurationMinutes)}</strong></span><span>预计开始：<strong className="text-text-secondary">{timeLabel(task.schedule.estimatedStartAt)}</strong></span><span>预计完成：<strong className="text-text-secondary">{timeLabel(task.schedule.estimatedFinishAt)}</strong></span>{task.schedule.actualStartedAt&&<span>实际开始：<strong className="text-text-secondary">{timeLabel(task.schedule.actualStartedAt)}</strong></span>}{task.schedule.actualFinishedAt&&<span>实际完成：<strong className="text-text-secondary">{timeLabel(task.schedule.actualFinishedAt)}</strong></span>}</div>{(task.ownBlockingReasons.length>0||task.inheritedBlockingTaskIds.length>0)&&<p className="mt-3 rounded-lg bg-white/70 px-3 py-2 text-xs leading-5 text-red-700">卡点：{[...task.ownBlockingReasons, ...task.inheritedBlockingTaskIds.map(id => `等待上游 ${id}`)].join('；')}</p>}{task.productionProgress&&<p className="mt-2 rounded-lg bg-blue-50 px-3 py-2 text-xs leading-5 text-blue-800">当前制作：{task.productionProgress.step} · {task.productionProgress.activity} · 更新于 {timeLabel(task.productionProgress.updatedAt)}</p>}{task.lastError&&<p className="mt-2 text-xs text-red-700">{task.status === 'queued' ? '等待原因' : '处理原因'}：{task.lastError.message}（{task.lastError.retryable ? '系统会继续核对或分级重试' : '需要用户或人工处理'}）</p>}{task.schedule.stepKind==='user_approval'&&task.status==='queued'&&<button type="button" disabled={planningBusy} onClick={() => void approveTask(task)} className="btn-primary mt-3 inline-flex items-center gap-2 disabled:opacity-50">{planningBusy&&<Loader2 size={13} className="animate-spin"/>}确认这条成片</button>}</li>)}</ol>
+        <ol className="mt-5 space-y-3">{selectedProductionTasks.map((task, index) => <li id={`weekly-execution-${task.taskId}`} key={task.taskId} className={`relative rounded-xl border p-4 ${taskTone(task.status)} ${selectedTaskId === task.taskId ? 'ring-2 ring-accent/20' : ''}`}><div className="flex flex-wrap items-start justify-between gap-3"><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><span className="flex h-6 w-6 items-center justify-center rounded-full bg-white text-[10px] font-black text-text-secondary">{index + 1}</span><h4 className="text-sm font-bold text-text-primary">{STEP_LABEL[task.schedule.stepKind]}</h4><span className="rounded-full bg-white px-2 py-1 text-[10px] font-bold text-text-secondary">{ACTOR_LABEL[task.schedule.responsibleActor]}</span></div><p className="mt-2 text-xs leading-5 text-text-secondary">{STEP_DETAIL[task.schedule.stepKind]}</p></div><span className="rounded-full bg-white px-2.5 py-1 text-[10px] font-black text-text-secondary">{EXECUTION_STATUS_LABEL[task.status]}</span></div><div className="mt-3 flex flex-wrap gap-x-5 gap-y-1 border-t border-black/5 pt-3 text-[10px] text-text-muted"><span>预计耗时：<strong className="text-text-secondary">{durationLabel(task.schedule.estimatedDurationMinutes)}</strong></span><span>预计开始：<strong className="text-text-secondary">{timeLabel(task.schedule.estimatedStartAt)}</strong></span><span>预计完成：<strong className="text-text-secondary">{timeLabel(task.schedule.estimatedFinishAt)}</strong></span>{task.schedule.actualStartedAt&&<span>实际开始：<strong className="text-text-secondary">{timeLabel(task.schedule.actualStartedAt)}</strong></span>}{task.schedule.actualFinishedAt&&<span>实际完成：<strong className="text-text-secondary">{timeLabel(task.schedule.actualFinishedAt)}</strong></span>}</div>{(task.ownBlockingReasons.length>0||task.inheritedBlockingTaskIds.length>0)&&<p className="mt-3 rounded-lg bg-white/70 px-3 py-2 text-xs leading-5 text-red-700">卡点：{[...task.ownBlockingReasons, ...task.inheritedBlockingTaskIds.map(id => `等待上游 ${id}`)].join('；')}</p>}<TaskDeadlineNotice task={task}/>{task.productionProgress&&<p className="mt-2 rounded-lg bg-blue-50 px-3 py-2 text-xs leading-5 text-blue-800">当前制作：{task.productionProgress.step} · {task.productionProgress.activity} · 更新于 {timeLabel(task.productionProgress.updatedAt)}</p>}{task.status === 'blocked' && task.ownBlockingReasons.includes('weekly_required_materials_missing') && <button type="button" disabled={planningBusy} onClick={() => void recheckMaterials(task)} className="mt-3 rounded-lg border border-border bg-white px-3 py-2 text-xs font-semibold disabled:opacity-50">已补交素材，重新核验</button>}{task.lastError&&<p className="mt-2 text-xs text-red-700">{task.status === 'queued' ? '等待原因' : '处理原因'}：{task.lastError.message}（{task.lastError.retryable ? '系统会继续核对或分级重试' : '需要用户或人工处理'}）</p>}{task.schedule.stepKind==='user_approval'&&task.status==='queued'&&<button type="button" disabled={planningBusy} onClick={() => void approveTask(task)} className="btn-primary mt-3 inline-flex items-center gap-2 disabled:opacity-50">{planningBusy&&<Loader2 size={13} className="animate-spin"/>}确认这条成片</button>}</li>)}</ol>
         {!selectedProductionTasks.length&&<p className="mt-5 rounded-lg border border-dashed border-border px-4 py-8 text-center text-xs text-text-muted">这条内容的制作节点尚未物化，请先完成任务总纲。</p>}
       </>}
-      {!!sharedExecutionTasks.length&&<details className="mt-5 rounded-xl border border-border bg-surface-2/40"><summary className="cursor-pointer px-4 py-3 text-xs font-bold text-text-primary">查看本周共同前置与收尾任务（{sharedExecutionTasks.length} 个后端节点）</summary><div className="grid gap-2 border-t border-border p-3 md:grid-cols-2">{sharedExecutionTasks.map(task => <article key={task.taskId} className={`rounded-lg border p-3 ${taskTone(task.status)}`}><div className="flex items-start justify-between gap-2"><div><p className="text-xs font-bold text-text-primary">{STEP_LABEL[task.schedule.stepKind]}</p><p className="mt-1 text-[10px] text-text-muted">{ACTOR_LABEL[task.schedule.responsibleActor]} · {durationLabel(task.schedule.estimatedDurationMinutes)} · {timeLabel(task.schedule.estimatedFinishAt)} 前</p></div><span className="shrink-0 text-[10px] font-bold text-text-secondary">{EXECUTION_STATUS_LABEL[task.status]}</span></div>{task.ownBlockingReasons.length>0&&<p className="mt-2 text-[10px] leading-4 text-red-700">卡点：{task.ownBlockingReasons.join('；')}</p>}</article>)}</div></details>}
+      {!!sharedExecutionTasks.length&&<details className="mt-5 rounded-xl border border-border bg-surface-2/40"><summary className="cursor-pointer px-4 py-3 text-xs font-bold text-text-primary">查看本周共同前置与收尾任务（{sharedExecutionTasks.length} 个后端节点）</summary><div className="grid gap-2 border-t border-border p-3 md:grid-cols-2">{sharedExecutionTasks.map(task => <article key={task.taskId} className={`rounded-lg border p-3 ${taskTone(task.status)}`}><div className="flex items-start justify-between gap-2"><div><p className="text-xs font-bold text-text-primary">{STEP_LABEL[task.schedule.stepKind]}</p><p className="mt-1 text-[10px] text-text-muted">{ACTOR_LABEL[task.schedule.responsibleActor]} · {durationLabel(task.schedule.estimatedDurationMinutes)} · {timeLabel(task.schedule.estimatedFinishAt)} 前</p></div><span className="shrink-0 text-[10px] font-bold text-text-secondary">{EXECUTION_STATUS_LABEL[task.status]}</span></div><TaskDeadlineNotice task={task}/>{task.ownBlockingReasons.length>0&&<p className="mt-2 text-[10px] leading-4 text-red-700">卡点：{task.ownBlockingReasons.join('；')}</p>}</article>)}</div></details>}
     </section>
 
     <div className="grid gap-3 lg:grid-cols-2">{lanes.map(lane => <article key={lane.kind} className="rounded-xl border border-border bg-white p-4">

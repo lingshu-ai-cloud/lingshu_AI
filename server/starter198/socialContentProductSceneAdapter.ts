@@ -55,6 +55,7 @@ export interface ProductSceneExecutionPorts {
 function stableKey(input: {
   tenantId: string;
   taskId: string;
+  operationId?: string;
   shotId: string;
   spec: SocialProductSceneReplicationSpec;
   references: ProductSceneReferenceImage[];
@@ -62,6 +63,7 @@ function stableKey(input: {
   return `social-product-scene:${createHash('sha256').update(JSON.stringify({
     tenantId: input.tenantId,
     taskId: input.taskId,
+    operationId: input.operationId,
     shotId: input.shotId,
     spec: input.spec,
     references: input.references.map(item => ({
@@ -167,7 +169,7 @@ export function createSocialProductSceneAdapter(ports: ProductSceneExecutionPort
       const productReferences = references(context, spec);
       if (!productReferences) return null;
       const idempotencyKey = stableKey({ tenantId: context.tenantId, taskId: context.taskId,
-        shotId: context.shot.shotId, spec, references: productReferences });
+        operationId: context.operationId, shotId: context.shot.shotId, spec, references: productReferences });
       const execution = await ports.execute({ tenantId: context.tenantId, taskId: context.taskId,
         shotId: context.shot.shotId, idempotencyKey, spec: structuredClone(spec),
         referenceImages: productReferences, outputDirectory: context.outputDirectory, maximumCostCny });

@@ -1,3 +1,4 @@
+import {validContentTemplateStructure} from '../../shared/socialContentTemplateStructure.js';
 import type {
   SocialContentThemeId,
   SocialDirectorPlanSummary,
@@ -379,6 +380,7 @@ export function buildSocialDirectorPlan(input: {
     themeId: input.baseline.themeId,
     duration: input.productionPlan.maxDuration,
   });
+  if(input.baseline.contentTemplateStructure){const c=input.baseline.contentTemplateStructure;if(!validContentTemplateStructure(c))throw new SocialContentWorkflowError('content_template_structure_invalid',409);direction.pace=c.pace;direction.voiceover.speed=c.voiceSpeed;direction.voiceover.pauseStyle=c.pauseStyle;}
   const baselineById = new Map(input.baseline.scenes.map(scene => [scene.sceneId, scene]));
   const scenes = input.productionPlan.scenes.map((scene, index) => {
     const baselineScene = baselineById.get(scene.sceneId);

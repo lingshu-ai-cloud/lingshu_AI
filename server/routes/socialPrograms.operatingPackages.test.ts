@@ -145,6 +145,38 @@ test('social program routes expose the weekly operating package lifecycle', asyn
   assert.equal(executionItems.length, 278);
   assert.ok(executionItems.every((item: { schedule?: { responsibleActor?: string; estimatedDurationMinutes?: number } }) => item.schedule?.responsibleActor && Number(item.schedule.estimatedDurationMinutes) > 0));
 
+  const recoveryPath = `${base}/operating-packages/${created.packageId}/recovery-assessment`;
+  const recoveryBody = { packageVersion: 1, changedTaskIds: [], constraints: {}, resources: {}, remainingBudgetCny: 0,
+    tasks: [{ taskId: 'forged-completed-publication', status: 'succeeded', publicationTaskId: 'fake' }] };
+  const assessedResponse = await fetch(recoveryPath, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(recoveryBody) });
+  assert.equal(assessedResponse.status, 200);
+  const assessed = await assessedResponse.json();
+  assert.equal(assessed.inputAuthority, 'stored_tasks_with_user_supplied_capacity_assumptions');
+  assert.equal(assessed.item.forecast.length, executionItems.length);
+  assert.ok(assessed.item.forecast.every((item: { taskId: string }) => item.taskId !== 'forged-completed-publication'));
+  assert.equal(assessed.item.revisionApplied, false);
+  const afterAssessment = await fetch(`${base}/operating-packages/${created.packageId}/execution-tasks?version=1`);
+  assert.deepEqual((await afterAssessment.json()).items, executionItems, 'recovery forecast must not mutate persisted execution evidence');
+  const missingVersion = await fetch(recoveryPath, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ...recoveryBody, packageVersion: undefined }) });
+  assert.equal(missingVersion.status, 400);
+  assert.equal((await missingVersion.json()).error, 'package_version_invalid');
+  const isolatedRecovery = await fetch(recoveryPath, { method: 'POST', headers: { 'content-type': 'application/json', 'x-isolated-test-tenant': 'tenant-other' }, body: JSON.stringify(recoveryBody) });
+  assert.equal(isolatedRecovery.status, 404, 'recovery must not expose another tenant task graph');
+  const backwardPath = `${base}/operating-packages/${created.packageId}/backward-schedule`;
+  const backwardBody = { packageVersion: 1, constraints: {}, resources: {}, remainingBudgetCny: 0 };
+  const backwardResponse = await fetch(backwardPath, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(backwardBody) });
+  assert.equal(backwardResponse.status, 200);
+  const backward = await backwardResponse.json();
+  assert.equal(backward.inputAuthority, 'stored_tasks_with_user_supplied_capacity_assumptions');
+  assert.equal(backward.item.assignments.length, executionItems.length);
+  assert.equal(backward.item.revisionApplied, false);
+  assert.equal(backward.item.conditionallyReachableCount, 0, 'missing capacity cannot imply publish targets are feasible');
+  const forgedBackward = await fetch(backwardPath, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ...backwardBody, tasks: recoveryBody.tasks }) });
+  assert.equal(forgedBackward.status, 400);
+  const foreignBackward = await fetch(backwardPath, { method: 'POST', headers: { 'content-type': 'application/json', 'x-isolated-test-tenant': 'tenant-other' }, body: JSON.stringify(backwardBody) });
+  assert.equal(foreignBackward.status, 404);
+  assert.deepEqual((await (await fetch(`${base}/operating-packages/${created.packageId}/execution-tasks?version=1`)).json()).items, executionItems);
+
   const listResponse = await fetch(`${base}/operating-packages?weekStart=2026-10-05`);
   assert.equal(listResponse.status, 200);
   assert.equal((await listResponse.json()).items.length, 1);

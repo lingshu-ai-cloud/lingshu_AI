@@ -9,13 +9,15 @@ const CONFIG_FILE = process.env.NODE_ENV === 'test' && process.env.OAUTH_CONFIG_
   ? path.resolve(process.env.OAUTH_CONFIG_FILE)
   : path.join(__dirname, '../../data/oauth-config.json');
 
-export type OAuthPlatform = 'youtube' | 'meta' | 'tiktok';
+export type OAuthPlatform = 'youtube' | 'meta' | 'instagram' | 'tiktok';
 
 export interface StoredOAuthConfig {
   youtubeOAuthClientId?: string;
   youtubeOAuthClientSecret?: string;
   metaSocialAppId?: string;
   metaSocialAppSecret?: string;
+  instagramAppId?: string;
+  instagramAppSecret?: string;
   tiktokClientKey?: string;
   tiktokClientSecret?: string;
   disabledPlatforms?: OAuthPlatform[];
@@ -28,6 +30,8 @@ export interface EffectiveOAuthConfig {
   youtubeOAuthClientSecret: string;
   metaSocialAppId: string;
   metaSocialAppSecret: string;
+  instagramAppId: string;
+  instagramAppSecret: string;
   tiktokClientKey: string;
   tiktokClientSecret: string;
   advancedManualConnectEnabled: boolean;
@@ -44,9 +48,10 @@ export class OAuthConfigUnavailableError extends Error {
 
 const allowedKeys = new Set([
   'youtubeOAuthClientId', 'youtubeOAuthClientSecret', 'metaSocialAppId', 'metaSocialAppSecret',
+  'instagramAppId', 'instagramAppSecret',
   'tiktokClientKey', 'tiktokClientSecret', 'disabledPlatforms', 'advancedManualConnectEnabled', 'updatedAt',
 ]);
-const oauthPlatforms = new Set<OAuthPlatform>(['youtube', 'meta', 'tiktok']);
+const oauthPlatforms = new Set<OAuthPlatform>(['youtube', 'meta', 'instagram', 'tiktok']);
 let mutationQueue: Promise<void> = Promise.resolve();
 
 function text(value: unknown): string {
@@ -134,12 +139,15 @@ export async function writeOAuthConfig(patch: Partial<StoredOAuthConfig>): Promi
 export function effectiveOAuthConfig(stored: StoredOAuthConfig = readOAuthConfig()): EffectiveOAuthConfig {
   const youtubeDisabled = platformDisabled(stored, 'youtube');
   const metaDisabled = platformDisabled(stored, 'meta');
+  const instagramDisabled = platformDisabled(stored, 'instagram');
   const tiktokDisabled = platformDisabled(stored, 'tiktok');
   return {
     youtubeOAuthClientId: youtubeDisabled ? '' : text(stored.youtubeOAuthClientId) || envText('YOUTUBE_OAUTH_CLIENT_ID'),
     youtubeOAuthClientSecret: youtubeDisabled ? '' : text(stored.youtubeOAuthClientSecret) || envText('YOUTUBE_OAUTH_CLIENT_SECRET'),
     metaSocialAppId: metaDisabled ? '' : text(stored.metaSocialAppId) || envText('META_SOCIAL_APP_ID') || envText('WHATSAPP_EMBEDDED_SIGNUP_APP_ID'),
     metaSocialAppSecret: metaDisabled ? '' : text(stored.metaSocialAppSecret) || envText('META_SOCIAL_APP_SECRET') || envText('WHATSAPP_EMBEDDED_SIGNUP_APP_SECRET'),
+    instagramAppId: instagramDisabled ? '' : text(stored.instagramAppId) || envText('INSTAGRAM_APP_ID'),
+    instagramAppSecret: instagramDisabled ? '' : text(stored.instagramAppSecret) || envText('INSTAGRAM_APP_SECRET'),
     tiktokClientKey: tiktokDisabled ? '' : text(stored.tiktokClientKey) || envText('TIKTOK_CLIENT_KEY'),
     tiktokClientSecret: tiktokDisabled ? '' : text(stored.tiktokClientSecret) || envText('TIKTOK_CLIENT_SECRET'),
     advancedManualConnectEnabled: stored.advancedManualConnectEnabled ?? envText('ADVANCED_MANUAL_CONNECT_ENABLED') === 'true',
@@ -156,6 +164,12 @@ export function getMetaOAuthClient(): { appId: string; appSecret: string } | nul
   const config = effectiveOAuthConfig();
   if (!config.metaSocialAppId || !config.metaSocialAppSecret) return null;
   return { appId: config.metaSocialAppId, appSecret: config.metaSocialAppSecret };
+}
+
+export function getInstagramOAuthClient(): { appId: string; appSecret: string } | null {
+  const config = effectiveOAuthConfig();
+  if (!config.instagramAppId || !config.instagramAppSecret) return null;
+  return { appId: config.instagramAppId, appSecret: config.instagramAppSecret };
 }
 
 export function getTikTokOAuthClient(): { clientKey: string; clientSecret: string } | null {
@@ -191,6 +205,11 @@ export function oauthCallbackUrls(req: Request) {
 export async function getTenantAwareMetaOAuthClient(tenantId?: string): Promise<{ appId: string; appSecret: string } | null> {
   const { getTenantMetaOAuthClient } = await import('./tenantPlatformApps.js');
   return getTenantMetaOAuthClient(tenantId);
+}
+
+export async function getTenantAwareInstagramOAuthClient(tenantId?: string): Promise<{ appId: string; appSecret: string } | null> {
+  const { getTenantInstagramOAuthClient } = await import('./tenantPlatformApps.js');
+  return getTenantInstagramOAuthClient(tenantId);
 }
 
 export async function getTenantAwareGoogleOAuthClient(tenantId?: string): Promise<{ clientId: string; clientSecret: string } | null> {

@@ -13,7 +13,7 @@ export function timelineEventAgeHours(event?: TimelineEvent): number {
 }
 
 export function lastBuyerEvent(customer: CustomerProfile): TimelineEvent | undefined {
-  return [...customer.timeline].reverse().find(event => (event.type === 'messenger' || event.type === 'whatsapp') && event.actor === 'buyer');
+  return [...customer.timeline].reverse().find(event => (event.type === 'messenger' || event.type === 'instagram' || event.type === 'whatsapp') && event.actor === 'buyer');
 }
 
 export function isOutsideWhatsAppWindow(customer: CustomerProfile): boolean {
@@ -22,7 +22,7 @@ export function isOutsideWhatsAppWindow(customer: CustomerProfile): boolean {
 
 export function sceneChips(customer: CustomerProfile): { intent: ConversationDraftIntent; label: string }[] {
   const chips: { intent: ConversationDraftIntent; label: string }[] = [];
-  const hasSellerOrAi = customer.timeline.some(event => (event.type === 'messenger' || event.type === 'whatsapp') && (event.actor === 'seller' || event.actor === 'ai'));
+  const hasSellerOrAi = customer.timeline.some(event => (event.type === 'messenger' || event.type === 'instagram' || event.type === 'whatsapp') && (event.actor === 'seller' || event.actor === 'ai'));
   const last = customer.timeline[customer.timeline.length - 1];
   const lastBuyer = lastBuyerEvent(customer);
   if (customer.stage === 'lead' && !hasSellerOrAi) chips.push({ intent: 'opener', label: '写一条开场白' });

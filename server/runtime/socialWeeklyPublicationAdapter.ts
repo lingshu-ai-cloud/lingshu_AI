@@ -1,3 +1,4 @@
+import {readWeeklyPublicationMetricEvidence} from './weeklyPublicationMetricEvidence.js';
 import type { WeeklyExecutionTask, WeeklyOperatingPackage } from '../../shared/contracts/socialProgram.js';
 import { withWeeklyProductionAdmissionGuard } from '../socialPrograms/weeklyCancellation.js';
 import type { DataStore } from '../storage/datastore.js';
@@ -8,6 +9,9 @@ import { PUBLICATION_ASSIGNMENTS, PUBLICATION_ATTEMPTS, executeWeeklyPublication
 import { runWeeklyReviewForPackage } from '../socialReview/weeklyReviewWorker.js';
 import { validateWeeklyPublicationAcceptance } from './socialWeeklyResultValidation.js';
 import { SOCIAL_METRIC_KEYS } from '../socialMetrics/aggregation.js';
+import { publicationInstant } from '../socialPrograms/publicationDeadlines.js';
+import { checkPublicationReceptionAdmission } from '../socialPrograms/publicationReceptionService.js';
+import type { ReceptionCheckPorts } from '../socialPrograms/publicationReceptionReadiness.js';
 import type { SocialWeeklyExecutionAdapter, WeeklyExecutionAdapterResult } from './socialWeeklyExecutionAdapter.js';
 
 type Row = { id: string } & Record<string, any>;
@@ -18,6 +22,7 @@ const blocked = (code: string, message: string): WeeklyExecutionAdapterResult =>
 export function createSocialWeeklyPublicationAdapter(dataStore: DataStore, options: {
   now?: () => Date;
   publishingEnabled?: () => boolean;
+  receptionPorts?: ReceptionCheckPorts;
   adapterFactory?: (assignment: StoredPublicationAssignment) => Promise<WeeklyPublishingProviderAdapter>;
 } = {}): SocialWeeklyExecutionAdapter {
   const now = options.now ?? (() => new Date());
@@ -36,18 +41,7 @@ export function createSocialWeeklyPublicationAdapter(dataStore: DataStore, optio
       }
     }
     if (task.schedule.stepKind === 'performance_monitoring') {
-      const rows = await dataStore.list<Row>('social_metric_snapshots', { where: { tenant_id: task.tenantId, account_id: task.accountId! }, sort: '-captured_at', page: 1, perPage: 100 });
-      const starts = Date.parse(`${pkg.weekStart}T00:00:00Z`);
-      const ends = Date.parse(`${pkg.weekEnd}T23:59:59.999Z`);
-      const sources = rows.items.filter(item => {
-        const captured = Date.parse(item.captured_at || item.capturedAt || '');
-        const metrics = typeof item.metrics === 'object' && item.metrics ? item.metrics : {};
-        return captured >= starts && captured <= ends && captured <= now().getTime()
-          && !item.mock && !item.simulated && !['mock', 'simulated'].includes(item.source)
-          && SOCIAL_METRIC_KEYS.some(key => typeof metrics[key] === 'number' && Number.isFinite(metrics[key]) && metrics[key] >= 0);
-      });
-      if (!sources.length) return pending('weekly_metrics_pending', '尚未取得本周真实平台指标，保留待回流状态。');
-      return { status: 'succeeded', resultRefs: sources.map(item => ({ type: 'social_metric_snapshot', id: item.id, version: 1 })) };
+      try{const read=await readWeeklyPublicationMetricEvidence(dataStore,task,pkg,now());if(read.missingPublicationIds.length)return pending('weekly_metrics_pending',`本周真实发布仍有 ${read.missingPublicationIds.length} 条未取得对应平台指标，保留待回流状态。`);return {status:'succeeded',resultRefs:read.sources.map(row=>({type:'social_metric_snapshot',id:row.id,version:1}))};}catch(error){return blocked(error instanceof Error&&'code' in error?String(error.code):'weekly_metrics_evidence_invalid','本周实际发布或指标来源无法核验，未完成回流任务。');}
     }
     if (task.schedule.stepKind === 'weekly_review') {
       const result = await runWeeklyReviewForPackage({ dataStore, row: row as Parameters<typeof runWeeklyReviewForPackage>[0]['row'], now: now() });
@@ -89,8 +83,8 @@ export function createSocialWeeklyPublicationAdapter(dataStore: DataStore, optio
       // Status lookup only: never submit a second publish for an ambiguous receipt.
       attempt = await reconcileWeeklyPublication({ assignment: assignment.payload, publicationPackage, adapter: provider, dataStore, now: now() });
     } else {
-      const window = Date.parse(publication.publishWindow || '');
-      if (!Number.isFinite(window)) return blocked('publish_window_invalid', '发布窗口缺失。');
+      const window = publicationInstant(publication.publishWindow);
+      if (window === null) return blocked('publish_window_invalid', '发布需要包含时区的有效具体时间。');
       if (now().getTime() < window) return pending('publish_window_not_due', '尚未到达本条排期的发布窗口。');
       const assigned = await dataStore.list<StoredPublicationAssignment>(PUBLICATION_ASSIGNMENTS, { where: { tenant_id: task.tenantId, operating_package_id: task.packageId, operating_package_version: task.packageVersion }, page: 1, perPage: 1000 });
       if (assigned.totalItems > assigned.items.length) return blocked('publication_assignment_scan_truncated', '无法完整核验发布额度。');
@@ -101,6 +95,12 @@ export function createSocialWeeklyPublicationAdapter(dataStore: DataStore, optio
       }
       const authorizationIssue = validateWeeklyAssignmentBoundary({ assignment: assignment.payload, contentPackage: pkg.socialContentPackage, existingPublishedCount: publishedCount, now: now().toISOString() });
       if (authorizationIssue) return blocked(authorizationIssue, '发布授权未就绪、已失效或额度已用尽。');
+      const reception = await checkPublicationReceptionAdmission({
+        dataStore, scope: { tenantId: task.tenantId, programId: task.programId, packageId: task.packageId, packageVersion: task.packageVersion, publicationId: publication.publicationTaskId },
+        cta: publication.cta ?? '', required: publication.receptionRequirement?.required === true,
+        bindingId: publication.receptionRequirement?.bindingId, ports: options.receptionPorts, now: now(),
+      });
+      if (reception.status === 'blocked') return blocked(reception.reason, '发布承接检查未通过，请补齐入口、资料或接待配置。');
       await assertAdmission();
       attempt = await executeWeeklyPublication({ assignment: assignment.payload, publicationPackage, contentPackage: pkg.socialContentPackage, adapter: provider, existingPublishedCount: publishedCount, dataStore, now: now() });
     }

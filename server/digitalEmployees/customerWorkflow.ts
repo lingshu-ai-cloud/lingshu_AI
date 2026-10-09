@@ -1,3 +1,7 @@
+import {readSelectedWeeklyNativeCustomers,verifyWeeklyNativeMember} from '../socialPrograms/weeklyCustomerChannelSelections.js';
+import type {DataStore} from '../storage/datastore.js';
+import {readWeeklyCustomerRelationshipScope,evaluateWeeklyCustomerRelationship,verifyFrozenWeeklyCustomerRelationship} from '../socialPrograms/weeklyCustomerRelationshipScope.js';
+import { orderedFollowupItems, freezeFollowupSchedules } from './followupDraftFreeze.js';
 import { resolveTenantFollowupTemplate } from '../whatsapp/templates.js';
 import { withDigitalEmployeeRunLock } from './runControl.js';
 import { callLLM } from '../agents/llm.js';
@@ -153,6 +157,8 @@ function hash(value: unknown): string {
   return createHash('sha256').update(JSON.stringify(stableValue(value))).digest('hex');
 }
 
+export const customerSegmentCriteriaHash=(criteria:unknown)=>hash(criteria);
+
 function stringList(value: unknown, max = 100): string[] {
   if (!Array.isArray(value)) return [];
   return [...new Set(value.map(item => String(item || '').trim()).filter(Boolean))].slice(0, max);
@@ -279,8 +285,8 @@ function riskLevel(customer: Record<string, unknown>): 'low' | 'medium' | 'high'
   return 'low';
 }
 
-async function requiredCreate<T extends StoredRecord>(collection: string, payload: Record<string, unknown>): Promise<T> {
-  const record = await store.create<T>(collection, payload);
+async function requiredCreate<T extends StoredRecord>(collection: string, payload: Record<string, unknown>,targetStore:DataStore=store): Promise<T> {
+  const record = await targetStore.create<T>(collection, payload);
   if (!record) throw new Error(`${collection}_storage_unavailable`);
   return record;
 }
@@ -290,8 +296,8 @@ export async function getCustomerSegment(tenantId: string, segmentId: string): P
   return segment?.tenant_id === tenantId ? segment : null;
 }
 
-export async function getCustomerSegmentMembers(tenantId: string, segmentId: string): Promise<CustomerSegmentMemberRecord[]> {
-  const result = await store.list<CustomerSegmentMemberRecord>(COLLECTION.members, {
+export async function getCustomerSegmentMembers(tenantId: string, segmentId: string,targetStore:DataStore=store): Promise<CustomerSegmentMemberRecord[]> {
+  const result = await targetStore.list<CustomerSegmentMemberRecord>(COLLECTION.members, {
     where: { tenant_id: tenantId, segment_id: segmentId }, sort: 'created_at', perPage: 1000,
   });
   return result.items;
@@ -306,23 +312,30 @@ export async function createCustomerSegmentSnapshot(input: {
   name?: string;
   criteria?: unknown;
   idempotent?: boolean;
-}, customersForTenant: (tenantId: string) => Array<Record<string, unknown>> = getWhatsAppCustomers): Promise<{ segment: CustomerSegmentRecord; members: CustomerSegmentMemberRecord[]; created: boolean }> {
+}, customersForTenant: (tenantId: string) => Array<Record<string, unknown>> = getWhatsAppCustomers, segmentStore:DataStore=store): Promise<{ segment: CustomerSegmentRecord; members: CustomerSegmentMemberRecord[]; created: boolean }> {
   if (input.idempotent !== false) {
-    const existing = await store.list<CustomerSegmentRecord>(COLLECTION.segments, {
+    const existing = await segmentStore.list<CustomerSegmentRecord>(COLLECTION.segments, {
       where: { tenant_id: input.tenantId, run_id: input.runId, task_id: input.taskId }, sort: '-version', page: 1, perPage: 100,
     });
     const segment = existing.items.find(item => !['superseded', 'cancelled', 'failed'].includes(item.status));
-    if (segment) return { segment, members: await getCustomerSegmentMembers(input.tenantId, segment.id), created: false };
+    if (segment) return { segment, members: await getCustomerSegmentMembers(input.tenantId, segment.id,segmentStore), created: false };
   }
 
   const criteria = normalizeCustomerSegmentCriteria(input.criteria);
-  const allVersions = await store.list<CustomerSegmentRecord>(COLLECTION.segments, {
+  const allVersions = await segmentStore.list<CustomerSegmentRecord>(COLLECTION.segments, {
     where: { tenant_id: input.tenantId, run_id: input.runId }, sort: '-version', page: 1, perPage: 1,
   });
   const version = Number(allVersions.items[0]?.version || 0) + 1;
   const now = new Date();
   const customers = customersForTenant(input.tenantId);
-  const evaluated = customers.map(customer => ({ customer, membership: segmentMembership(customer, criteria, now.getTime()) }));
+  const relationshipScope=await readWeeklyCustomerRelationshipScope(segmentStore,input.tenantId,input.runId);
+  if(relationshipScope)customers.push(...await readSelectedWeeklyNativeCustomers(segmentStore,relationshipScope));
+  const evaluated = await Promise.all(customers.map(async customer => {
+    const membership=segmentMembership(customer,criteria,now.getTime());
+    const relation=relationshipScope&&!customer.weeklyChannelSelection?await evaluateWeeklyCustomerRelationship(segmentStore,relationshipScope,String(customer.id||'')):null;
+    if(relation?.reason){membership.included=false;membership.exclusionReasons.push(relation.reason);}
+    return {customer,membership,relation};
+  }));
   const exclusionSummary: Record<string, number> = {};
   for (const item of evaluated) {
     for (const reason of item.membership.exclusionReasons) exclusionSummary[reason] = (exclusionSummary[reason] || 0) + 1;
@@ -345,7 +358,7 @@ export async function createCustomerSegmentSnapshot(input: {
     created_by: input.userId,
     created_at: nowIso,
     updated_at: nowIso,
-  });
+  },segmentStore);
 
   const members: CustomerSegmentMemberRecord[] = [];
   for (const item of evaluated) {
@@ -358,10 +371,10 @@ export async function createCustomerSegmentSnapshot(input: {
       membership: item.membership.included ? 'included' : 'excluded',
       inclusion_reasons: item.membership.inclusionReasons,
       exclusion_reasons: item.membership.exclusionReasons,
-      customer_snapshot: frozenCustomer(customer),
+      customer_snapshot: {...frozenCustomer(customer),...(customer.weeklyChannelSelection?{weeklyChannelSelection:customer.weeklyChannelSelection}:{}),...(item.relation?{weeklyRelationship:item.relation.frozen}:{})},
       risk_level: riskLevel(customer),
       created_at: nowIso,
-    }));
+    },segmentStore));
   }
   return { segment, members, created: true };
 }
@@ -461,7 +474,8 @@ export async function getFollowupBatchItems(tenantId: string, batchId: string): 
   const result = await store.list<FollowupBatchItemRecord>(COLLECTION.items, {
     where: { tenant_id: tenantId, batch_id: batchId }, sort: 'created_at', perPage: 1000,
   });
-  return result.items;
+  const batch = await getFollowupBatch(tenantId, batchId);
+  return orderedFollowupItems(result.items, batch?.delivery_policy);
 }
 
 export async function createFollowupBatch(input: {
@@ -487,7 +501,10 @@ export async function createFollowupBatch(input: {
   const segment = await getCustomerSegment(input.tenantId, input.segmentId);
   if (!segment || segment.run_id !== input.runId) throw new Error('customer_segment_not_found');
   const members = (await getCustomerSegmentMembers(input.tenantId, segment.id)).filter(member => member.membership === 'included');
+  const relationshipScope=await readWeeklyCustomerRelationshipScope(store,input.tenantId,input.runId);
+  if(relationshipScope)for(const member of members){if(jsonObject(member.customer_snapshot).weeklyChannelSelection)await verifyWeeklyNativeMember(store,relationshipScope,member.customer_id,member.customer_snapshot);else await verifyFrozenWeeklyCustomerRelationship(store,relationshipScope,member.customer_id,member.customer_snapshot);}
   const customerMap = new Map(customersForTenant(input.tenantId).map(customer => [String(customer.id || ''), customer]));
+  if(relationshipScope)for(const customer of await readSelectedWeeklyNativeCustomers(store,relationshipScope))customerMap.set(String(customer.id),customer);
   const deliveryPolicy = normalizeDeliveryPolicy(input.deliveryPolicy);
   const priorItems = await store.list<FollowupBatchItemRecord>(COLLECTION.items, {
     where: { tenant_id: input.tenantId }, sort: '-sent_at', page: 1, perPage: 2000,
@@ -523,10 +540,11 @@ export async function createFollowupBatch(input: {
       for (const item of priorItems) await store.update(COLLECTION.items, item.id, { status: 'superseded', updated_at: new Date().toISOString() });
     }
   }
-  const drafts = members.map(member => {
+  const snapshotTime = new Date();
+  const drafts = freezeFollowupSchedules(members.map(member => {
     const customer = customerMap.get(member.customer_id) || jsonObject(member.customer_snapshot);
     const inboundAt = lastInboundAt(customer);
-    const outside24h = !inboundAt || Date.now() - Date.parse(inboundAt) > 24 * 60 * 60 * 1000;
+    const outside24h = !inboundAt || snapshotTime.getTime() - Date.parse(inboundAt) > 24 * 60 * 60 * 1000;
     const body = generatedBodies.get(member.customer_id)?.body || '';
     const guard = guardOutboundSync(body);
     const memberRisk = String(member.risk_level || riskLevel(customer));
@@ -534,6 +552,7 @@ export async function createFollowupBatch(input: {
     const authenticityBand = customerAuthenticityBand(customer);
     const reasons = [
       ...(generatedBodies.get(member.customer_id)?.error ? ['draft_generation_failed'] : []),
+      ...(customer.weeklyChannelSelection?['weekly_native_channel_dispatch_not_connected']:[]),
       ...(memberRisk === 'high' ? ['high_risk_requires_individual_review'] : []),
       ...(customer.handlingMode === 'human_needed' ? ['human_handling_in_progress'] : []),
       ...(qualificationBand === 'black' ? ['customer_qualification_black'] : []),
@@ -547,8 +566,8 @@ export async function createFollowupBatch(input: {
       ...(!customerMap.has(member.customer_id) ? ['customer_no_longer_available'] : []),
     ];
     return { member, customer, inboundAt, outside24h, body, guard, memberRisk, reasons };
-  });
-  const contentHash = hash(drafts.map(item => ({ customerId: item.member.customer_id, body: item.body, scheduledAt: nextCustomerWorkTime(String(item.customer.timeZone || ''), deliveryPolicy) })));
+  }), (timeZone, capturedAt) => nextCustomerWorkTime(timeZone, deliveryPolicy, capturedAt), snapshotTime);
+  const contentHash = hash(drafts.map(item => ({ customerId: item.member.customer_id, body: item.body, scheduledAt: item.scheduledAt })));
   const versions = await store.list<FollowupBatchRecord>(COLLECTION.batches, {
     where: { tenant_id: input.tenantId, run_id: input.runId }, sort: '-version', page: 1, perPage: 1,
   });
@@ -569,6 +588,9 @@ export async function createFollowupBatch(input: {
     content_hash: contentHash,
     delivery_policy: {
       mode: 'per_customer_draft',
+      frozenMemberOrder: drafts.map(item => item.member.id),
+      hashAlgorithm: 'stable_customer_body_schedule_v1',
+      scheduleFrozenAt: snapshotTime.toISOString(),
       timeZoneAware: true,
       ...deliveryPolicy,
       whatsapp24HourWindowRequired: true,
@@ -601,6 +623,7 @@ export async function createFollowupBatch(input: {
       customer_id: customerId,
       customer_name: String(customer.name || draft.member.customer_name || '').slice(0, 200),
       wa_number: String(customer.waNumber || ''),
+      ...(customer.weeklyChannelSelection?{channel:jsonObject(customer.weeklyChannelSelection).channel,channel_selection:customer.weeklyChannelSelection,account_id:jsonObject(customer.weeklyChannelSelection).accountId,native_account_id:jsonObject(customer.weeklyChannelSelection).nativeAccountId,recipient_id:jsonObject(customer.weeklyChannelSelection).recipientId,conversation_id:jsonObject(customer.weeklyChannelSelection).conversationId,weekly_channel_evidence_hash:jsonObject(customer.weeklyChannelSelection).recordHash}:{}),
       language: String(customer.language || 'en').slice(0, 40),
       time_zone: timeZone,
       last_inbound_at: draft.inboundAt,
@@ -617,7 +640,7 @@ export async function createFollowupBatch(input: {
       risk_level: draft.memberRisk,
       guard_rule: draft.guard.allowed ? '' : String(draft.guard.matchedRule || 'blocked'),
       exclusion_reason: draft.reasons.join(', '),
-      scheduled_at: nextCustomerWorkTime(timeZone, deliveryPolicy),
+      scheduled_at: draft.scheduledAt,
       idempotency_key: hash(`${input.tenantId}:${batch.id}:${customerId}:${version}`),
       provider_message_id: '',
       provider_receipt: {},
@@ -737,7 +760,7 @@ export async function configureFollowupItemTemplate(input: {
     const next = { ...item, send_mode: 'template', template_name: template.name, template_status: 'approved', template_language: template.language, template_variables: input.variables, draft_body: body };
     await store.update(COLLECTION.items, item.id, { ...next, content_hash: followupItemContentHash(next), draft_version: Number(item.draft_version) + 1, status: remainingReasons.length ? 'blocked' : 'draft', exclusion_reason: remainingReasons.join(';'), approved_at: '', updated_at: now });
     const freshItems = await getFollowupBatchItems(input.tenantId, batch.id);
-    await store.update(COLLECTION.batches, batch.id, { content_hash: createHash('sha256').update(JSON.stringify(freshItems.map(i => i.content_hash))).digest('hex'), counts: { total: freshItems.length, draft: freshItems.filter(i => i.status === 'draft').length, blocked: freshItems.filter(i => i.status === 'blocked').length, sent: freshItems.filter(i => ['sent','delivered','read'].includes(i.status) && Boolean(i.provider_message_id)).length } });
+    await store.update(COLLECTION.batches, batch.id, { delivery_policy: { ...jsonObject(batch.delivery_policy), hashAlgorithm: 'ordered_item_content_hashes_v1' }, content_hash: createHash('sha256').update(JSON.stringify(freshItems.map(i => i.content_hash))).digest('hex'), counts: { total: freshItems.length, draft: freshItems.filter(i => i.status === 'draft').length, blocked: freshItems.filter(i => i.status === 'blocked').length, sent: freshItems.filter(i => ['sent','delivered','read'].includes(i.status) && Boolean(i.provider_message_id)).length } });
     return { batch: (await getFollowupBatch(input.tenantId, batch.id))!, items: freshItems };
   });
 }
