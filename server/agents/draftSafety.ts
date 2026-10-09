@@ -63,11 +63,6 @@ const HIGH_RISK_SUPPORT_RULES: Array<{ label: string; draft: RegExp; evidence: R
     evidence: /\b(?:arabic|bilingual|english[- +]arabic)\b[^.!?]{0,80}\b(?:packaging|label)\b|阿拉伯语包装|双语包装/i,
   },
   {
-    label: 'quality document promise is not grounded',
-    draft: /\b(?:we|i)\s+(?:can|will|['’]ll|are able to)\s+(?:send|share|provide|forward|arrange)[^.!?]{0,100}\b(?:gmp|iso|coa|lab report|test report|certificate|compliance document|inspection)\b/i,
-    evidence: /\b(?:gmp|iso|coa|lab report|test report|certificate|compliance document|inspection)\b|认证|证书|检测报告|验货/i,
-  },
-  {
     label: 'certification validity claim is not grounded',
     draft: /\b(?:accredited bod(?:y|ies)|all certifications? (?:are|is)|certifications? (?:are|is) live|match(?:es)? our production|internationally recognized quality standard|made under international)\b/i,
     evidence: /\b(?:accredited bod(?:y|ies)|certifications? (?:are|is) live|internationally recognized|gmp|iso)\b|认可机构|国际认证/i,
@@ -90,7 +85,7 @@ const HIGH_RISK_SUPPORT_RULES: Array<{ label: string; draft: RegExp; evidence: R
 ];
 
 const CERTIFICATION_NAMES = /\b(?:CE|FCC|RoHS|REACH|UL|GMP|ISO(?:[ -]?\d{4,5}(?::\d{4})?)?)\b/gi;
-const CERTIFICATION_UNCONFIRMED = /\b(?:not|no|without|lack|lacks|pending|unconfirmed|unknown(?![-_])|unverified|expired|revoked|whether|if|check|verify|confirm|checking|verifying|confirming|need|needs|require|requires|requested|request|seeking|may|might|could)\b|尚未|未获|没有|无认证|不具备|待核|待确认|需核|是否|过期|撤销/i;
+const CERTIFICATION_UNCONFIRMED = /\b(?:not|no|without|lack|lacks|pending|unconfirmed|unknown(?![-_])|unverified|expired|revoked|whether|if|check|verify|confirm|checking|verifying|confirming|need|needs|require|requires|requested|request|seeking|may|might|could)\b|\b(?:isn|aren|wasn|weren|don|doesn|haven|hasn|can|won)['’]t\b|尚未|未获|没有|无认证|不具备|待核|待确认|需核|是否|过期|撤销/i;
 const CERTIFICATION_AFFIRMED = /\b(?:certified|approved|compliant|accredited|hold|holds|have|has|available|ready|valid|obtained|passed|meet|meets|carry|carries)\b|已获|通过|具备|持有|符合|认证齐全|认证(?:有效|可用)|可提供[^。！？]{0,30}(?:认证|证书)/i;
 
 function certificationClauses(text: string): string[] {
@@ -160,8 +155,49 @@ function unsupportedCertificationClaims(draft: string, source: string): string[]
   return [...unsupported];
 }
 
+const QUALITY_DOCUMENT = /\b(?:certificates?|certifications?|coa|lab reports?|test reports?|compliance documents?|inspection reports?|gmp|iso(?:[ -]?\d{4,5})?)\b/i;
+const QUALITY_DOCUMENT_PROMISE = /\b(?:(?:we|i)(?:['’]ll|\s+(?:can|will|are able to))|let\s+me)\s+(?:send|share|provide|forward|arrange|pull(?: up)?|get(?!\s+back\b)|retrieve|attach|download)[^.!?]{0,100}\b(?:certificates?|certifications?|coa|lab reports?|test reports?|compliance documents?|inspection|gmp|iso)\b/i;
+
+function hasDocumentExistenceEvidence(source: string, draft: string): boolean {
+  const requiredCertifications = certificationNames(draft);
+  const documentTypes = [/\bcertificat(?:e|es|ion|ions)\b/i, /\bcoa\b/i, /\blab reports?\b/i, /\btest reports?\b/i, /\bcompliance documents?\b/i, /\binspection(?: reports?)?\b/i];
+  const requiredDocumentTypes = documentTypes.filter(pattern => pattern.test(draft));
+  const explicitSkus = Array.from(draft.matchAll(/\b[A-Z0-9]+(?:-[A-Z0-9]+)+\b/g), match => match[0].toLowerCase());
+  let parsed: unknown;
+  try { parsed = JSON.parse(source); } catch { parsed = source; }
+  let supported = false;
+  let denied = false;
+  const visit = (value: unknown, field = ''): void => {
+    if (typeof value === 'string') {
+      for (const clause of certificationClauses(value)) {
+        if (!QUALITY_DOCUMENT.test(clause) && !/certificate|certification|document|证书|报告/i.test(field)) continue;
+        if (CERTIFICATION_UNCONFIRMED.test(clause) || /isn['’]t|aren['’]t|doesn['’]t|don['’]t/i.test(clause)) denied = true;
+        else if (/\b(?:on file|in our files|available|attached|have|has|hold|holds|stored|downloadable)\b|已有|持有|已上传|可下载|文件齐全/i.test(clause)
+          || (/certificate|document|证书|报告/i.test(field) && /https?:\/\/|\.(?:pdf|docx?)(?:$|[?#])/i.test(clause))) {
+          const names = certificationNames(clause);
+          if ((!requiredCertifications.length || requiredCertifications.every(name => names.includes(name)))
+            && requiredDocumentTypes.every(pattern => pattern.test(`${field.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/[_-]/g, ' ')} ${clause}`))) supported = true;
+        }
+      }
+    } else if (Array.isArray(value)) value.forEach(item => visit(item, field));
+    else if (value && typeof value === 'object') {
+      const record = value as Record<string, unknown>;
+      if (explicitSkus.length && typeof record.sku === 'string' && !explicitSkus.includes(record.sku.toLowerCase())) return;
+      Object.entries(record).forEach(([key, item]) => visit(item, key));
+    }
+  };
+  visit(parsed);
+  return supported && !denied;
+}
+
+function unsupportedQualityDocumentPromise(draft: string, source: string): string[] {
+  const promised = certificationClauses(draft).some(clause => QUALITY_DOCUMENT_PROMISE.test(clause)
+    && !/\b(?:if|whether|may|might|could)\b|是否|待核实/i.test(clause));
+  return promised && !hasDocumentExistenceEvidence(source, draft) ? ['quality document promise is not grounded'] : [];
+}
+
 export function unsupportedHighRiskClaims(draft: string, factualSource: string): string[] {
-  return [...unsupportedCertificationClaims(draft, factualSource), ...HIGH_RISK_SUPPORT_RULES
+  return [...unsupportedCertificationClaims(draft, factualSource), ...unsupportedQualityDocumentPromise(draft, factualSource), ...HIGH_RISK_SUPPORT_RULES
     .filter(rule => rule.draft.test(draft) && !rule.evidence.test(factualSource))
     .map(rule => rule.label)];
 }

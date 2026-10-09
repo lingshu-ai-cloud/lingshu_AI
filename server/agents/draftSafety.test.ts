@@ -78,3 +78,29 @@ assert.ok(unsupportedHighRiskClaims('CE certification is available for SKUUNKNOW
 assert.ok(unsupportedHighRiskClaims('CE certification is available for UNKNOWN-02.', '{"products":[{"sku":"A-01","certifications":"CE"}]}').length > 0);
 
 assert.ok(unsupportedHighRiskClaims('CE认证可用。', '{}').length > 0);
+
+const certificatePromise = 'CE certification for IMH-ABS-01 isn’t confirmed in our files yet — I’ll pull the exact certificate and match it to this ABS housing right away.';
+assert.ok(unsupportedHighRiskClaims(certificatePromise, '{}').includes('quality document promise is not grounded'));
+for (const verb of ['pull', 'get', 'retrieve', 'provide']) {
+  assert.ok(unsupportedHighRiskClaims(`I’ll ${verb} the exact certificate.`, '{}').includes('quality document promise is not grounded'));
+  assert.ok(unsupportedHighRiskClaims(`I’ll ${verb} the exact certificate.`, '{"certifications":"CE"}').includes('quality document promise is not grounded'));
+}
+assert.deepEqual(unsupportedHighRiskClaims('I’ll check whether the certificate exists.', '{}'), []);
+assert.deepEqual(unsupportedHighRiskClaims('I’ll check our files for a certificate.', '{}'), []);
+assert.ok(unsupportedHighRiskClaims('I’ll retrieve the certificate.', '{"company":"Certificate is not available"}').includes('quality document promise is not grounded'));
+assert.deepEqual(unsupportedHighRiskClaims('I’ll retrieve the certificate.', '{"company":"We have the certificate on file."}'), []);
+assert.deepEqual(unsupportedHighRiskClaims('I’ll retrieve the certificate.', '{"certificateDocument":"https://example.test/files/certificate.pdf"}'), []);
+
+assert.ok(unsupportedHighRiskClaims('I’ll pull the exact certificate and verify it.', '{}').includes('quality document promise is not grounded'));
+
+assert.ok(unsupportedHighRiskClaims('I’ll retrieve the CE certificate.', '{"company":"We have FCC certificate on file."}').includes('quality document promise is not grounded'));
+assert.ok(unsupportedHighRiskClaims('I’ll retrieve the certificate for B-02.', '{"products":[{"sku":"A-01","certificate":"Certificate is on file"}]}').includes('quality document promise is not grounded'));
+
+assert.ok(unsupportedHighRiskClaims('I’ll pull the CE certificate.', '{"company":"CE lab report is on file."}').includes('quality document promise is not grounded'));
+for (const verb of ['pull', 'get', 'retrieve', 'send']) {
+  assert.ok(unsupportedHighRiskClaims(`Let me ${verb} the exact certificate.`, '{}').includes('quality document promise is not grounded'));
+}
+assert.deepEqual(unsupportedHighRiskClaims('Let me check whether the certificate exists.', '{}'), []);
+
+assert.deepEqual(unsupportedHighRiskClaims('CE certification isn’t available.', '{}'), []);
+assert.ok(unsupportedHighRiskClaims('CE certification is available.', '{"company":"CE certification isn’t available."}').length > 0);
