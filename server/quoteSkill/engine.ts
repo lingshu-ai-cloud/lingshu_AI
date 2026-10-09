@@ -100,16 +100,35 @@ function extractMaterial(text: string): string {
 }
 
 function extractDelivery(text: string): string {
-  const iso = [...text.matchAll(/(20\d{2})[-/.年](\d{1,2})[-/.月](\d{1,2})/g)].at(-1);
-  if (iso) return `${iso[1]}-${String(iso[2]).padStart(2, '0')}-${String(iso[3]).padStart(2, '0')}`;
-  const relative = [...text.matchAll(/(?:within|in|交期|需要)\s*(\d+)\s*(days?|weeks?|天|周)/gi)].at(-1);
-  if (relative) return `${relative[1]} ${/week|周/i.test(relative[2]) ? 'weeks' : 'days'}`;
-  return '';
+  // Resolve corrections in dialogue order. A withdrawn customer deadline does
+  // not change the independent lead time supplied by the enterprise catalog.
+  const events: Array<{ index: number; value: string }> = [];
+  for (const iso of text.matchAll(/(20\d{2})[-/.年](\d{1,2})[-/.月](\d{1,2})/g)) {
+    events.push({ index: iso.index, value: `${iso[1]}-${String(iso[2]).padStart(2, '0')}-${String(iso[3]).padStart(2, '0')}` });
+  }
+  for (const relative of text.matchAll(/(?:within|in|交期|需要)\s*(\d+)\s*(days?|weeks?|天|周)/gi)) {
+    events.push({ index: relative.index, value: `${relative[1]} ${/week|周/i.test(relative[2]) ? 'weeks' : 'days'}` });
+  }
+  const withdrawal = /\b(?:no\s+(?:longer\s+)?(?:any\s+)?(?:delivery\s+(?:deadline|date|requirement|target)|delivery\s+deadline\s+requirement|lead\s+time\s+requirement)|(?:withdraw|cancel|remove)\s+(?:the\s+|my\s+|our\s+)?(?:delivery\s+(?:deadline|date|requirement|target)))\b|(?:取消|撤销|不再要求|不再需要)(?:之前的|原先的|原定的)?(?:交期|交货日期|交付日期|交付期限)|(?:没有|无需|不需要)(?:交期|交货日期|交付日期|交付期限)(?:要求)?/gi;
+  for (const match of text.matchAll(withdrawal)) events.push({ index: match.index, value: '' });
+  return events.sort((left, right) => left.index - right.index).at(-1)?.value || '';
 }
 
 function extractDestination(text: string): string {
   const match = [...text.matchAll(/(?:ship(?:ping)?\s+to|deliver(?:y)?\s+to|destination(?:\s+(?:is|remains))?|发往|发到|目的地|目的港)\s*[:：]?\s*([A-Za-z\u4e00-\u9fff][A-Za-z\u4e00-\u9fff .-]{1,40})/gi)].at(-1);
   return match?.[1]?.split(/[;,。\n]|\.(?:\s|$)/)[0]?.trim() || '';
+}
+
+function extractCustomerBudget(text: string): { amount: number; currency: string } | undefined {
+  const events: Array<{ index: number; value: { amount: number; currency: string } | undefined }> = [];
+  for (const match of text.matchAll(/(?:\bbudget\s*(?:is|of|:)?|预算\s*[:：]?)\s*(USD|CNY|RMB|EUR|GBP|US\$|\$|¥|￥)\s*([\d,]+(?:\.\d+)?)/gi)) {
+    const amount = numberFrom(match[2]);
+    if (amount) events.push({ index: match.index, value: { amount, currency: match[1].toUpperCase().replace(/^(?:US\$|\$)$/, 'USD').replace(/^(?:RMB|¥|￥)$/, 'CNY') } });
+  }
+  // A refusal to increase a budget is not a withdrawal of the existing amount.
+  const withdrawal = /\b(?:no\s+(?:longer\s+)?(?:any\s+)?budget(?=\s*(?:anymore\b|[.;,\n]|$))|(?:withdraw|cancel|remove)\s+(?:the\s+|my\s+|our\s+)?budget\b|budget\s+(?:is\s+)?(?:withdrawn|cancelled|canceled|no\s+longer\s+(?:available|confirmed)))|(?:取消|撤销|不再提供)(?:之前的|原先的|原定的)?预算|(?:预算)(?:已取消|已撤销|不再有效)/gi;
+  for (const match of text.matchAll(withdrawal)) events.push({ index: match.index, value: undefined });
+  return events.sort((left, right) => left.index - right.index).at(-1)?.value;
 }
 
 function extractIncoterm(text: string): string {
@@ -202,10 +221,7 @@ export function buildQuoteDraft(input: BuildQuoteDraftInput): QuoteSkillDraft {
   const currency = matchedProduct?.currency || (/\busd\b|\$/i.test(message) ? 'USD' : 'CNY');
   const unit = matchedProduct?.unit || '件';
   const subtotal = quantity != null && unitPrice != null ? Number((quantity * unitPrice).toFixed(2)) : null;
-  const budgetMatch = [...message.matchAll(/(?:\bbudget\s*(?:is|of|:)?|预算\s*[:：]?)\s*(USD|CNY|RMB|EUR|GBP|US\$|\$|¥|￥)\s*([\d,]+(?:\.\d+)?)/gi)].at(-1);
-  const budgetAmount = budgetMatch ? numberFrom(budgetMatch[2]) : null;
-  const budgetCurrency = budgetMatch?.[1].toUpperCase().replace(/^(?:US\$|\$)$/, 'USD').replace(/^(?:RMB|¥|￥)$/, 'CNY');
-  const customerBudget = budgetAmount && budgetCurrency ? { amount: budgetAmount, currency: budgetCurrency } : undefined;
+  const customerBudget = extractCustomerBudget(message);
   const leadTime = matchedProduct?.leadTime || clean(input.rules.leadTime);
   const fieldEvidence: QuoteFieldEvidence[] = [];
   if (productName) fieldEvidence.push(evidence('productName', productName, matchedProduct ? 'product_catalog' : 'customer_profile', matchedProduct ? `${matchedProduct.sku} ${matchedProduct.name}` : productName));
@@ -325,7 +341,7 @@ export function applyQuoteDraftPatch(draft: QuoteSkillDraft, patch: Record<strin
     && Boolean(next.destination.replace(/\b(?:port|of|FOB)\b|港口|港/gi, '').trim());
   if (source === 'human' && 'destination' in patch && explicitlyNamedPort && next.destination !== draft.destination) next.blockers = next.blockers.filter(item => item !== 'FOB 指定装运港尚未确认');
   if (next.unitPrice == null) next.blockers.push('产品目录没有可核验单价');
-  if (!next.leadTime && next.deliveryDate && draft.blockers.includes('客户目标交期尚未获得企业履约信息确认') && !(source === 'human' && 'deliveryDate' in patch)) next.blockers.push('客户目标交期尚未获得企业履约信息确认');
+  if (!next.leadTime && next.deliveryDate && !(source === 'human' && 'deliveryDate' in patch)) next.blockers.push('客户目标交期尚未获得企业履约信息确认');
   if (next.matchedProduct?.moq != null && next.quantity != null && next.quantity < next.matchedProduct.moq) next.blockers.push(`数量低于 MOQ ${next.matchedProduct.moq}`);
   next.pricingExplanation = [
     next.matchedProduct

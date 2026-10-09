@@ -175,7 +175,7 @@ export function QuoteSkillCard({ customer, onInsertReply, onToast, channelReady,
       unit: product.unit || current.unit,
       unitPrice: product.unitPrice == null ? '' : String(product.unitPrice),
       currency: product.currency || current.currency,
-      leadTime: product.leadTime || current.leadTime,
+      leadTime: product.leadTime,
     }));
   };
   const selectCatalogPriceMode = (mode: CatalogPriceMode) => {

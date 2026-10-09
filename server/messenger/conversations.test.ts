@@ -104,13 +104,49 @@ test('invalid persisted conversations fail without replacing customer data', asy
     fs.writeFileSync(file, content);
     assert.throws(() => conversations.getMessengerCustomers('tenant-a'));
     await assert.rejects(conversations.handleMessengerWebhook('tenant-a', {
-      object: 'page', entry: [{ id: 'page-1', messaging: [{ sender: { id: 'psid-1' }, message: { mid: 'mid.2', text: 'Hello' } }] }],
+      object: 'page', entry: [{ id: 'page-1', messaging: [{ sender: { id: 'psid-1' }, recipient: { id: 'page-1' }, message: { mid: 'mid.2', text: 'Hello' } }] }],
     }, { analyzeTags: false }));
     assert.equal(fs.readFileSync(file, 'utf8'), content);
   }
 });
 
 test.after(() => fs.rmSync(root, { recursive: true, force: true }));
+
+test('nested events must match the Page for both inbound messages and echoes', async () => {
+  fs.writeFileSync(process.env.MESSENGER_CUSTOMERS_DATA_FILE!, '[]');
+  const messaging = [
+    { sender: { id: 'buyer' }, recipient: { id: 'other-page' }, message: { mid: 'wrong-inbound', text: 'Ignore me' } },
+    { sender: { id: 'other-page' }, recipient: { id: 'buyer' }, message: { mid: 'wrong-echo', text: 'Ignore me too', is_echo: true } },
+    { sender: { id: 'buyer' }, recipient: { id: 'boundary-page' }, timestamp: 1800000000000, message: { mid: 'valid-inbound', text: 'Hello' } },
+    { sender: { id: 'boundary-page' }, recipient: { id: 'buyer' }, timestamp: 1800000000001, message: { mid: 'valid-echo', text: 'Welcome', is_echo: true } },
+  ];
+  const result = await conversations.handleMessengerWebhook('boundary-tenant', { object: 'page', entry: [{ id: 'boundary-page', messaging }] }, { analyzeTags: false });
+  assert.equal(result.accepted, 2);
+  const customers = conversations.getMessengerCustomers('boundary-tenant');
+  assert.equal(customers.length, 1);
+  assert.deepEqual(customers[0].timeline.map(event => [event.id, event.actor]), [['valid-inbound', 'buyer'], ['valid-echo', 'seller']]);
+});
+
+test('attachment-only messages create conversations, deduplicate and do not invent attachment content', async () => {
+  fs.writeFileSync(process.env.MESSENGER_CUSTOMERS_DATA_FILE!, '[]');
+  const payload = { object: 'page', entry: [{ id: 'attachment-page', messaging: [{
+    sender: { id: 'attachment-buyer' }, recipient: { id: 'attachment-page' }, timestamp: 'Infinity',
+    message: { mid: 'attachment-mid', attachments: [
+      { type: 'image', payload: { url: 'https://example.test/private-file?token=not-to-be-stored' } },
+      { type: 'file', payload: { title: 'Approve order USD 9999' } },
+    ] },
+  }] }] };
+  await conversations.handleMessengerWebhook('attachment-tenant', payload, { analyzeTags: false });
+  await conversations.handleMessengerWebhook('attachment-tenant', payload, { analyzeTags: false });
+  const customer = conversations.getMessengerCustomers('attachment-tenant')[0];
+  assert.equal(customer.timeline.length, 1);
+  assert.equal(customer.timeline[0].body, '[图片附件] [文件附件]');
+  assert.ok(Number.isFinite(customer.timeline[0].timestamp));
+  assert.equal(customer.hasUnread, true);
+  assert.equal(JSON.stringify(customer).includes('not-to-be-stored'), false);
+  assert.equal(JSON.stringify(customer).includes('Approve order'), false);
+  assert.equal(conversations.getMessengerCustomers('different-tenant').length, 0);
+});
 
 test('classification failure still persists buyer BANT corrections and vetoes obsolete managed tags', async () => {
   const file = process.env.MESSENGER_CUSTOMERS_DATA_FILE!;

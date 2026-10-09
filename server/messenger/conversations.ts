@@ -246,10 +246,20 @@ export async function handleMessengerWebhook(tenantId: string, payload: unknown,
         continue;
       }
       const isEcho = event.message?.is_echo === true;
+      // The entry Page is tenant-bound by the route. Each nested event must
+      // also belong to that Page; an app signature alone is not this binding.
+      if (isEcho ? senderId !== pageId : recipientId !== pageId) continue;
       const userId = isEcho ? recipientId : senderId;
-      const body = String(event.message?.text || event.postback?.title || event.postback?.payload || '').trim();
+      const attachmentLabels: Record<string, string> = { image: '图片', audio: '音频', video: '视频', file: '文件', location: '位置' };
+      const attachments = Array.isArray(event.message?.attachments) ? event.message.attachments : [];
+      const attachmentBody = attachments.map((attachment: unknown) => {
+        const type = attachment && typeof attachment === 'object' ? String((attachment as Record<string, unknown>).type || '') : '';
+        return `[${attachmentLabels[type] || '未知类型'}附件]`;
+      }).join(' ');
+      const body = String(event.message?.text || event.postback?.title || event.postback?.payload || attachmentBody).trim();
       if (!pageId || !userId || userId === pageId || !body) continue;
-      const timestamp = Number(event.timestamp) || Date.now();
+      const providerTimestamp = Number(event.timestamp);
+      const timestamp = Number.isFinite(providerTimestamp) && providerTimestamp > 0 && providerTimestamp <= 8.64e15 ? providerTimestamp : Date.now();
       const messageId = String(event.message?.mid || `messenger_${timestamp}_${userId}`);
       const customer = upsertMessage({ tenantId, pageId, userId, messageId, body, timestamp, actor: isEcho ? 'seller' : 'buyer', sendStatus: isEcho ? 'sent' : undefined });
       if (!isEcho && options.analyzeTags !== false) void analyzeMessengerCustomerTags(tenantId, customer.id).catch(error => console.warn('[messenger:context-tags]', error instanceof Error ? error.message : 'analysis_failed'));

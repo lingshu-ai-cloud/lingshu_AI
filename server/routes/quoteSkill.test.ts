@@ -37,6 +37,61 @@ function memoryStore(): { dataStore: DataStore; records: Map<string, Record<stri
   return { dataStore, records };
 }
 
+test('切换目录产品不能沿用旧产品交期，客户目标日期不能替代企业履约依据', async () => {
+  const { dataStore } = memoryStore();
+  const app = express();
+  app.use(express.json());
+  app.use('/quotes', createQuoteSkillRouter({
+    dataStore,
+    authMiddleware: (_req, res, next) => { res.locals.tenantId = 'A'; res.locals.userId = 'user-A'; next(); },
+    canConfirm: async () => true,
+    readEnterpriseProfile: async () => ({
+      products: { items: [
+        { sku: 'OLD-01', name: 'Old housing', material: 'ABS', attributes: { unit: 'pcs', unitPrice: 3.8, currency: 'USD', leadTime: '30 days' } },
+        { sku: 'NEW-01', name: 'New housing', material: 'ABS', attributes: { unit: 'pcs', unitPrice: 5, currency: 'USD' } },
+      ] },
+      bizRules: { paymentTerms: '30% deposit' },
+    } as any),
+  }));
+  const server = app.listen(0, '127.0.0.1');
+  await new Promise<void>(resolve => server.once('listening', resolve));
+  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/quotes`;
+  const call = (path: string, method: string, body: unknown) => fetch(base + path, {
+    method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  });
+  try {
+    for (const targetDate of ['', ' Delivery within 20 days.']) {
+      const createdResponse = await call('/drafts', 'POST', {
+        customerId: `buyer-${targetDate ? 'date' : 'no-date'}`,
+        messages: [`Quote 1500 pcs of SKU OLD-01 in ABS. Destination Germany. DAP.${targetDate}`],
+      });
+      assert.equal(createdResponse.status, 201);
+      const created = (await createdResponse.json()).draft;
+      assert.equal(created.leadTime, '30 days');
+      assert.equal(created.status, 'ready_for_review');
+      const patchedResponse = await call(`/drafts/${created.id}`, 'PATCH', {
+        expectedRevision: 1, catalogProductRef: 'NEW-01', leadTime: '30 days',
+      });
+      assert.equal(patchedResponse.status, 200);
+      const patched = (await patchedResponse.json()).draft;
+      assert.equal(patched.unitPrice, 5);
+      assert.equal(patched.leadTime, '');
+      assert.equal(patched.status, 'needs_clarification');
+      assert.ok(targetDate ? patched.blockers.some((item: string) => item.includes('目标交期')) : patched.missingFields.includes('交期'));
+      assert.equal((await call(`/drafts/${created.id}/confirm`, 'POST', { expectedRevision: 2 })).status, 409);
+      const reviewedResponse = await call(`/drafts/${created.id}`, 'PATCH', {
+        expectedRevision: 2, catalogProductRef: 'NEW-01', leadTime: '45 days',
+      });
+      assert.equal(reviewedResponse.status, 200);
+      const reviewed = (await reviewedResponse.json()).draft;
+      assert.equal(reviewed.leadTime, '45 days', '同一产品经人工重新核实的履约信息允许保存');
+      assert.equal(reviewed.status, 'ready_for_review');
+    }
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+  }
+});
+
 test('报价 API：租户隔离、并发控制、人工确认、安全回复与审计', async () => {
   const { dataStore, records } = memoryStore();
   const sentImages: Array<{ to: string; caption: string; bytes: Buffer }> = [];

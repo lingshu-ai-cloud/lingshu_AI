@@ -72,3 +72,36 @@ test('channel test messages cannot become sample requests, including persisted m
     assert.equal((await classifyContextTags(turns, async () => JSON.stringify({ items: [{ tag: '索取样品', messageId: 'buyer', excerpt: body }] }))).length, 1);
   }
 });
+
+test('explicit buyer revocations remove obsolete budget, quotation, wholesale and replenishment evidence', async () => {
+  const cases = [
+    { tag: '预算已提供', original: 'Our budget is USD 6000.', correction: 'Budget cancelled.' },
+    { tag: '询价中', original: 'Please send a quotation.', correction: 'I no longer need a quotation.' },
+    { tag: '批发采购', original: 'We buy wholesale for resale.', correction: 'We no longer buy wholesale.' },
+    { tag: '补货采购', original: 'We need to restock.', correction: 'We no longer need to restock.' },
+    { tag: '预算已提供', original: '预算6000美元。', correction: '撤销之前的预算。' },
+    { tag: '询价中', original: '请提供报价。', correction: '不再需要报价。' },
+    { tag: '批发采购', original: '我们做批发。', correction: '我们不再做批发。' },
+    { tag: '补货采购', original: '需要补货。', correction: '取消补货。' },
+  ];
+  for (const item of cases) {
+    const original = { id: 'old', actor: 'buyer', body: item.original };
+    const correction = { id: 'new', actor: 'buyer', body: item.correction };
+    const evidence = [{ tag: item.tag, messageId: original.id, excerpt: original.body }];
+    assert.deepEqual(vetoRevokedContextTags(evidence, [original, correction]), [], item.correction);
+    assert.deepEqual(await classifyContextTags([original, correction], async () => JSON.stringify({ items: evidence })), []);
+    assert.deepEqual(vetoRevokedContextTags(evidence, [original, { ...correction, actor: 'seller' }]), evidence);
+    const renewed = { ...original, id: 'renewed' };
+    const freshEvidence = [{ ...evidence[0], messageId: renewed.id }];
+    assert.deepEqual(vetoRevokedContextTags(freshEvidence, [original, correction, renewed]), freshEvidence);
+  }
+});
+
+test('unrelated buyer corrections preserve active budget and business purpose', () => {
+  const original = { id: 'old', actor: 'buyer', body: 'We buy wholesale. Our budget is USD 6000.' };
+  const evidence = [
+    { tag: '预算已提供', messageId: original.id, excerpt: 'Our budget is USD 6000.' },
+    { tag: '批发采购', messageId: original.id, excerpt: 'We buy wholesale.' },
+  ];
+  assert.deepEqual(vetoRevokedContextTags(evidence, [original, { id: 'new', actor: 'buyer', body: 'No samples. There is no budget increase. We cannot increase our budget.' }]), evidence);
+});

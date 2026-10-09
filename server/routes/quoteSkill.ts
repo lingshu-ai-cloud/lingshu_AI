@@ -347,6 +347,7 @@ export function createQuoteSkillRouter(deps: QuoteSkillDeps = {}): Router {
       const product = products.find(item => (item.sku || item.name) === catalogProductRef);
       if (!product) { res.status(409).json({ error: 'catalog_product_changed', message: '该产品已从企业知识库中移除或变更，请重新选择。' }); return; }
       const catalogPriceMode = requestedCatalogPriceMode || 'catalog';
+      const catalogProductChanged = (owned.draft.matchedProduct?.sku || owned.draft.matchedProduct?.name) !== catalogProductRef;
       patch = {
         ...patch,
         productName: product.name,
@@ -355,7 +356,8 @@ export function createQuoteSkillRouter(deps: QuoteSkillDeps = {}): Router {
         unit: product.unit,
         ...(catalogPriceMode === 'catalog' ? { unitPrice: product.unitPrice, currency: product.currency } : {}),
         unitPriceSource: catalogPriceMode === 'catalog' ? 'product_catalog' : 'human',
-        ...(product.leadTime ? { leadTime: product.leadTime } : {}),
+        // A newly selected product must not inherit another product's fulfillment promise.
+        ...(product.leadTime || catalogProductChanged ? { leadTime: product.leadTime } : {}),
         matchedProduct: product satisfies QuoteCatalogProduct,
       };
       patchSource = 'product_catalog';

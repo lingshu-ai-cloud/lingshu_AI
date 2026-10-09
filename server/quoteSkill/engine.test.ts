@@ -225,3 +225,39 @@ test('客户目标交期不能变为企业参考交期，非履约编辑不能�
   assert.doesNotMatch(reply, /Reference lead time: 7 days/);
   assert.match(reply, /Requested delivery: 7 days/);
 });
+
+test('客户撤销交期后清除旧目标，保留目录履约信息及 FOB 港口阻塞', () => {
+  const catalogProduct = { ...product, sku: 'IMH-ABS-01', name: 'ABS housing', material: 'ABS', unitPrice: 3.8, leadTime: '30 days' };
+  const initial = 'Quote 1500 pcs of SKU IMH-ABS-01 in ABS. Destination Germany. FOB. Requested delivery within 30 days.';
+  for (const correction of ['no delivery deadline anymore', 'no longer any delivery deadline', 'withdraw the delivery deadline', '取消之前的交期', '不再要求交期']) {
+    const draft = buildQuoteDraft({ customerId: 'withdrawn-deadline', customerName: '', products: [catalogProduct], rules: { paymentTerms: '30% deposit' },
+      messages: [initial, `Correction: ${correction}. The FOB port remains unconfirmed.`, 'Please acknowledge receipt only.'] });
+    assert.equal(draft.deliveryDate, '', correction);
+    assert.equal(draft.leadTime, '30 days', correction);
+    assert.equal(draft.unitPrice, 3.8);
+    assert.ok(!draft.evidence.some(item => item.field === 'deliveryDate'), correction);
+    assert.equal(draft.status, 'needs_clarification');
+    assert.ok(draft.blockers.includes('FOB 指定装运港尚未确认'));
+    const reply = composeQuoteReply({ ...draft, status: 'confirmed' });
+    assert.doesNotMatch(reply, /Requested delivery:/);
+    assert.match(reply, /Reference lead time: 30 days/);
+  }
+  const restored = buildQuoteDraft({ customerId: 'restored-deadline', customerName: '', products: [catalogProduct], rules: { paymentTerms: '30% deposit' },
+    messages: [initial, 'No delivery deadline anymore.', 'Actually requested delivery by 2026-12-15.', 'Correction: delivery within 45 days.'] });
+  assert.equal(restored.deliveryDate, '45 days', '重新给出的最新目标可恢复，且相对日期覆盖早期绝对日期');
+  assert.equal(restored.leadTime, '30 days');
+});
+
+test('客户预算撤销与不涨预算语义不同，预算始终不替代目录报价', () => {
+  const initial = 'Quote 1500 pcs of SKU CNC-6061-01 in 6061-T6. Destination Germany. DAP. Budget USD 6000.';
+  const build = (correction: string, followup?: string) => buildQuoteDraft({ customerId: 'budget-correction', customerName: '', products: [product], rules: { paymentTerms: '30% deposit' }, messages: [initial, correction, followup || 'Please acknowledge receipt only.'] });
+  for (const correction of ['No budget anymore.', 'Withdraw the budget.', 'The budget is no longer confirmed.', '取消之前的预算']) {
+    const draft = build(correction);
+    assert.equal(draft.customerBudget, undefined, correction);
+    assert.equal(draft.unitPrice, product.unitPrice);
+  }
+  for (const correction of ['No budget increase.', 'No longer any budget increase.', '不增加预算。']) {
+    assert.deepEqual(build(correction).customerBudget, { amount: 6000, currency: 'USD' }, correction);
+  }
+  assert.deepEqual(build('No budget anymore.', 'Correction: budget EUR 7000.').customerBudget, { amount: 7000, currency: 'EUR' });
+});
