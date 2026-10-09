@@ -32,6 +32,7 @@ import { reviewShotMaterialRefs } from '../lib/referenceShotReview.js';
 import { validateVerifiedSpeechLines } from '../lib/verifiedReferenceSpeech.js';
 import { approximateSpeechLines } from '../lib/referenceApproxSpeech.js';
 import { hasCompletedExactVideoEvidence } from '../lib/videoAnalysisCodec.js';
+import { referenceFrameActionPrompt } from './referenceFrameActionPrompt.js';
 
 const THEME_TERMS: Record<SocialContentThemeId, readonly string[]> = {
   product_value: ['产品', '卖点', '细节', '成分', '材质', '性能', 'product', 'feature', 'detail'],
@@ -1169,6 +1170,7 @@ export function buildSocialTaskReferencePackage(input: {
     });
   const scriptShots: SocialReplicationScriptShot[] = shots.map((shot, index) => {
     const rawDetail = exact.details[index]!.detail;
+    const frameAction = referenceFrameActionPrompt(rawDetail);
     const referenceSpokenText = referenceLines[index] ?? '';
     const adjustedVoiceover = replaceIdentityOnly(referenceSpokenText, replacements);
     const adjustedCaption = replaceIdentityOnly(referenceCaptions[index] ?? '', replacements);
@@ -1185,7 +1187,7 @@ export function buildSocialTaskReferencePackage(input: {
     purpose: shot.purpose,
     visualInstruction: [
       `按${shot.visualDescription}的镜头功能制作全新内容。`,
-      socialText(rawDetail.omniPrompt) ? `逐时段动作参考：${socialText(rawDetail.omniPrompt)}` : '',
+      `抽帧动作证据（${frameAction.evidenceKind}，${frameAction.sampleCount}组）：${frameAction.prompt}`,
       socialText(rawDetail.omniNegativePrompt) ? `须避免：${socialText(rawDetail.omniNegativePrompt)}` : '',
       shot.materialEvidence?.firstFrameRef ? `参考首帧：${shot.materialEvidence.firstFrameRef}` : '',
     ].filter(Boolean).join(' '),

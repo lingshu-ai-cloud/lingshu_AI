@@ -1,9 +1,13 @@
+import { useState } from "react";
+import type { ContentQueueItem } from "../../lib/digitalEmployees";
 import { AlertTriangle, CalendarRange, Clapperboard } from "lucide-react";
 import type { VideoCreationPlan } from "../../lib/videoCreationPlan";
 import { SocialPlatformIcon } from "../SocialPlatformIcon";
 import type { MatrixScheduleAccount } from "../SmartBusinessDashboard";
 
 type Props = {
+  taskItems?: ContentQueueItem[];
+  onOpenTask?: (taskId: string, contentItemId: string) => void;
   startsAt?: string;
   endsAt?: string;
   accounts: MatrixScheduleAccount[];
@@ -77,7 +81,16 @@ function planBlockers(plan?: VideoCreationPlan) {
   ];
 }
 
-export default function MatrixWorkSchedule({ startsAt, endsAt, accounts, plans, selectedAccountId, onOpenPublishing }: Props) {
+export default function MatrixWorkSchedule({ taskItems = [], onOpenTask, startsAt, endsAt, accounts, plans, selectedAccountId, onOpenPublishing }: Props) {
+  const [view, setView] = useState<"calendar" | "board">("calendar");
+  const visibleTasks = taskItems.filter(item => !selectedAccountId || item.accountId === selectedAccountId);
+  const columns = [
+    { id: "pending", label: "待执行", statuses: ["planned", "queued"], tone: "bg-slate-100 text-slate-700" },
+    { id: "active", label: "进行中", statuses: ["producing"], tone: "bg-sky-100 text-sky-700" },
+    { id: "review", label: "待验收", statuses: ["waiting_review"], tone: "bg-violet-100 text-violet-700" },
+    { id: "blocked", label: "需处理", statuses: ["blocked"], tone: "bg-amber-100 text-amber-800" },
+    { id: "completed", label: "已完成", statuses: ["completed"], tone: "bg-emerald-100 text-emerald-700" },
+  ];
   const goalStart = safeDate(startsAt);
   const goalEnd = safeDate(endsAt, addDays(goalStart, 6));
   const anchor = goalStart;
@@ -121,7 +134,28 @@ export default function MatrixWorkSchedule({ startsAt, endsAt, accounts, plans, 
       <div className="bg-white px-5 py-3"><p className="text-[9px] font-bold text-slate-400">发布版本</p><p className="mt-1 text-sm font-black text-slate-900">{plannedCount}/{rows.length} 条已编排</p></div>
       <div className="bg-white px-5 py-3"><p className="text-[9px] font-bold text-slate-400">母版卡点</p><p className={`mt-1 text-sm font-black ${blockedCount ? "text-amber-700" : "text-emerald-700"}`}>{blockedCount ? `${blockedCount} 个母版待处理` : "无生产卡点"}</p></div>
     </div>
-    <div className="overflow-x-auto">
+    <div className="flex gap-2 border-b border-slate-100 px-5 py-3" role="tablist" aria-label="发布排期视图">
+      {([['calendar', '发布日历'], ['board', 'Agent 任务看板']] as const).map(([id, label]) => <button key={id} type="button" role="tab" id={`schedule-tab-${id}`} aria-selected={view === id} aria-controls={`schedule-panel-${id}`} onClick={() => setView(id)} className={`rounded-xl px-4 py-2 text-xs font-black ${view === id ? 'bg-emerald-700 text-white' : 'bg-slate-100 text-slate-600 hover:bg-emerald-50'}`}>{label}</button>)}
+    </div>
+    {view === "board" ? <div id="schedule-panel-board" role="tabpanel" aria-labelledby="schedule-tab-board" className="p-5">
+      <p className="mb-4 text-xs text-slate-500">按当前执行状态查看 Agent 内容任务，点击卡片查看执行进度。</p>
+      {!visibleTasks.length && <p role="status" className="mb-4 rounded-xl border border-dashed border-slate-200 p-6 text-center text-sm text-slate-500">暂无 Agent 内容任务，确认周计划并生成任务后将在这里展示。</p>}
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">{columns.map(column => {
+        const items = visibleTasks.filter(item => column.statuses.includes(item.status));
+        return <section key={column.id} aria-label={column.label} className="min-w-0 rounded-2xl bg-slate-50 p-3">
+          <h3 className={`flex items-center justify-between rounded-xl px-3 py-2 text-xs font-black ${column.tone}`}>{column.label}<span>{items.length}</span></h3>
+          <div className="mt-3 space-y-3">{items.map(item => <button key={item.id} type="button" disabled={!onOpenTask} onClick={() => onOpenTask?.(item.taskId, item.id)} className="w-full rounded-xl border border-slate-200 bg-white p-3 text-left shadow-sm hover:border-emerald-300 disabled:cursor-default">
+            <p className="text-[10px] font-bold text-emerald-700">{item.status === 'planned' ? '编导 Agent → 经营 Agent' : item.status === 'queued' || item.status === 'producing' ? '内容 Agent' : item.status === 'waiting_review' ? '内容 Agent · 质检' : '经营 Agent / 内容 Agent'}</p>
+            <h4 className="mt-2 break-words text-xs font-black text-slate-900">{item.title}</h4>
+            <p className="mt-2 text-[10px] text-slate-500">{item.accountLabel || '仅制作'} · {item.platform}</p>
+            <p className="mt-1 text-[10px] text-slate-500">发布日期：{item.plannedPublishDate || '待排期'}</p>
+            <p className="mt-2 text-[10px] font-bold text-slate-600">{item.stage || column.label}</p>
+            <progress aria-label={`${item.title}执行进度`} max={100} value={Math.max(0, Math.min(100, item.progress || 0))} className="mt-2 h-1.5 w-full accent-emerald-600" />
+            {item.reason && <p className="mt-2 break-words text-[10px] leading-4 text-amber-800">{item.reason}</p>}
+          </button>)}{!items.length && <p className="py-6 text-center text-[10px] text-slate-400">暂无任务</p>}</div>
+        </section>;
+      })}</div>
+    </div> : <div id="schedule-panel-calendar" role="tabpanel" aria-labelledby="schedule-tab-calendar" className="overflow-x-auto">
       <div style={{ minWidth: `${days.length * 112}px` }}>
         <div className="grid border-b border-slate-200 bg-slate-50" style={{ gridTemplateColumns: `repeat(${days.length}, minmax(112px, 1fr))` }}>
           {days.map(day => { const key = dayKey(day); const inGoal = key >= dayKey(goalStart) && key <= dayKey(goalEnd); const load = dayLoads.get(key); return <div key={key} className={`border-r border-slate-100 px-2 py-2.5 text-center ${key === today ? "bg-emerald-50" : inGoal ? "bg-white" : "bg-slate-50"}`}><p className={`text-[9px] font-black ${key === today ? "text-emerald-700" : "text-slate-400"}`}>{day.toLocaleDateString("zh-CN", { weekday: "short" })}</p><p className="mt-1 text-[10px] font-black text-slate-700">{day.toLocaleDateString("zh-CN", { month: "numeric", day: "numeric" })}</p>{load?<p className="mt-1 rounded-full bg-sky-50 px-1.5 py-0.5 text-[7px] font-black text-sky-700">{load.accounts.size} 账号并行 · {load.tasks} 条</p>:<p className="mt-1 text-[7px] font-bold text-slate-300">无发布</p>}{key === today&&<span className="mt-1 inline-block rounded-full bg-emerald-600 px-1.5 py-0.5 text-[7px] font-black text-white">今天</span>}</div>; })}
@@ -174,6 +208,7 @@ export default function MatrixWorkSchedule({ startsAt, endsAt, accounts, plans, 
         })}{!rows.length&&<div className="px-6 py-16 text-center"><CalendarRange size={28} className="mx-auto text-slate-300"/><p className="mt-3 text-sm font-black text-slate-600">还没有账号内容排期</p><p className="mt-1 text-xs text-slate-400">先制定周目标，系统会为每个平台账号生成视频任务卡。</p></div>}</div>
       </div>
     </div>
+    }
     <footer className="flex flex-wrap items-center gap-3 bg-slate-50 px-5 py-3 text-[9px] font-bold text-slate-400"><span>排期规则：每个账号独立均匀铺满本周；同一天允许多个账号并行制作与发布。</span><span className="ml-auto">窄工期卡片会扩展到可读宽度；准确工期与发布时间以卡内字段为准。</span></footer>
   </section>;
 }

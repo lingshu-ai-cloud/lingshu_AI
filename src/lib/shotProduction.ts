@@ -9,6 +9,13 @@ export type ShotSource = 'material' | 'avatar' | 'ai' | 'shoot';
 export type ShotContentType = 'enterprise_presenter' | 'ugc' | 'product' | 'factory_scene' | 'broll' | 'information';
 export type ShotSound = 'voiceover' | 'source' | 'silent';
 export type ShotLayout = 'full' | 'split' | 'pip';
+export type PresenterChannel = 'default' | 'tiktok' | 'youtube' | 'facebook' | 'instagram' | 'live';
+export interface PresenterRoute {
+  channel: PresenterChannel;
+  presenterId: string;
+  voiceId: string;
+  layout: ShotLayout;
+}
 export type PresenterCapability = 'talking' | 'reference_image' | 'reference_video' | 'person_replacement';
 export type ArkCertificationStatus = 'profile_incomplete' | 'authorization_pending' | 'ark_pending' | 'processing' | 'active' | 'failed' | 'disabled';
 export interface ArkPresenterCertification {
@@ -59,6 +66,7 @@ export interface ProductionDefaults {
   defaultPresenterId: string;
   defaultSound: ShotSound;
   defaultLayout: ShotLayout;
+  presenterRoutes: PresenterRoute[];
 }
 export interface ShotCandidate { id: string; materialId: string; fingerprint: string; createdAt: string; source: ShotSource; jobId?: string }
 export interface ShotProduction {
@@ -75,7 +83,7 @@ export interface ShotProduction {
   transparent: boolean; narration: string; locked: boolean; factsConfirmed: boolean;
   candidates: ShotCandidate[]; adoptedId: string; revision: number;
 }
-export const EMPTY_DEFAULTS: ProductionDefaults = { preference: 'auto', presenters: [], defaultPresenterId: '', defaultSound: 'voiceover', defaultLayout: 'full' };
+export const EMPTY_DEFAULTS: ProductionDefaults = { preference: 'auto', presenters: [], defaultPresenterId: '', defaultSound: 'voiceover', defaultLayout: 'full', presenterRoutes: [] };
 export function presenterCapabilities(asset: PresenterAsset): PresenterCapability[] {
   const inferred: PresenterCapability[] = Array.isArray(asset.capabilities) ? [...asset.capabilities] : [];
   const avatarId = asset.toolMappings?.heygen?.avatarId || asset.avatarId;
@@ -147,8 +155,9 @@ export function shotFingerprint(shot: ShotProduction, context: string, shotId?: 
     normalizedContext = JSON.stringify(value);
   } catch { /* opaque legacy context */ }
   const digitalHuman = shot.digitalHuman ? structuredClone(shot.digitalHuman) : undefined;
+  if (digitalHuman?.workflow==='viral_replication' && digitalHuman.method==='reenact' && digitalHuman.replicationMode!=='direct_reference') { delete digitalHuman.targetFramesConfirmed; digitalHuman.contentConfirmed=true; }
   if (digitalHuman?.reference?.cues) digitalHuman.reference.cues = digitalHuman.reference.cues.map(cue => {
-    const { targetFirstFrame: _targetFirstFrame, generatedClip: _generatedClip, ...inputCue } = cue;
+    const { sourceFirstFrame: _sourceFirstFrame, targetFirstFrame: _targetFirstFrame, generatedClip: _generatedClip, draftFirstFrame: _draftFirstFrame, ...inputCue } = cue;
     return inputCue;
   });
   return JSON.stringify({ source: shot.source, contentType: shot.contentType || (shot.source === 'avatar' ? 'enterprise_presenter' : 'product'), sound: shot.sound, narration: shot.source === 'avatar' || shot.sound === 'source' ? shot.narration : '',
@@ -170,6 +179,26 @@ export function patchShot(current: ShotProduction, patch: Partial<ShotProduction
     || (patch.digitalHuman && JSON.stringify({ ...patch.digitalHuman, contentConfirmed: false }) !== JSON.stringify({ ...current.digitalHuman, contentConfirmed: false })))) {
     next.digitalHuman = { ...next.digitalHuman, contentConfirmed: false };
   }
+  if (next.digitalHuman?.reference?.cues) {
+    const before=current.digitalHuman; const after=next.digitalHuman;
+    const globalFrameChanged = next.presenterId!==current.presenterId || next.productId!==current.productId
+      || before?.presenterMode!==after.presenterMode || before?.replacementScope!==after.replacementScope
+      || before?.scene!==after.scene || before?.action!==after.action || before?.preserve!==after.preserve
+      || before?.reference?.materialId!==after.reference?.materialId || before?.reference?.videoUrl!==after.reference?.videoUrl;
+    let frameChanged=false;
+    const cues=after.reference!.cues!.map(cue=>{
+      const old=before?.reference?.cues?.find(item=>item.id===cue.id);
+      if (!old) return cue;
+      const changed=globalFrameChanged || old.start!==cue.start || old.end!==cue.end
+        || old.personShot!==cue.personShot || JSON.stringify(old.composition)!==JSON.stringify(cue.composition)
+        || old.compositionClusterId!==cue.compositionClusterId;
+      if(!changed)return cue;
+      frameChanged=true;
+      return {...cue,targetFirstFrame:undefined,generatedClip:undefined};
+    });
+    if(frameChanged) next.digitalHuman={...after,targetFramesConfirmed:false,reference:{...after.reference!,cues}};
+  }
+  if(next.digitalHuman?.workflow==='viral_replication' && next.digitalHuman.method==='reenact' && next.digitalHuman.replicationMode!=='direct_reference') next.digitalHuman={...next.digitalHuman,contentConfirmed:true};
   return next;
 }
 export function recommendShot(input: { detail: string; preference: AppearancePreference; locked: boolean; hasMaterial: boolean; hasPresenter: boolean }): { source: ShotSource; reason: string } {

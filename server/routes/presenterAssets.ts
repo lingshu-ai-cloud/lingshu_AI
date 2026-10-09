@@ -7,7 +7,7 @@ import { objectStorageUpload, objectStorageHead } from '../storage/objectStorage
 import { Router, raw } from 'express';
 import { createHash } from 'node:crypto';
 import type { DataStore } from '../storage/datastore.js';
-import { HeyGenPresenterClient, mediaUrl, presenterLook } from '../lib/heygenPresenters.js';
+import { HeyGenPresenterClient, asianPresenterLook, mediaUrl, presenterLook } from '../lib/heygenPresenters.js';
 import type { PresenterCreation, PresenterLook } from '../../src/lib/presenterAssets.js';
 import type { ProductionDefaults, PresenterAsset } from '../../src/lib/shotProduction.js';
 import { EMPTY_DEFAULTS } from '../../src/lib/shotProduction.js';
@@ -22,6 +22,23 @@ const validId = (v: unknown) => typeof v === 'string' && /^[A-Za-z0-9_:.-]{1,150
 const message = (e: unknown) => e instanceof Error ? e.message : '人物服务暂时不可用';
 const hash = (v: string | Buffer) => createHash('sha256').update(v).digest('hex');
 const consentAccepted = (value: unknown) => ['accepted', 'approved'].includes(String(value || '').toLowerCase());
+type CuratedPresenterGroup = { name: string; groupId: string; asian?: boolean };
+const presenterCuration = (tenantId: string): { favoriteNames: Set<string>; asianNames: Set<string>; favoriteGroups: CuratedPresenterGroup[] } => {
+  try {
+    const document = JSON.parse(fs.readFileSync(path.resolve('data/heygen-presenter-curation.json'), 'utf8'));
+    const tenantEntries = document?.tenants && typeof document.tenants === 'object' ? Object.values(document.tenants) : [];
+    const entry = document?.tenants?.[tenantId] || (currentDataAuthority() === 'local' && tenantEntries.length === 1 ? tenantEntries[0] : {}) || {};
+    const names = (value: unknown) => new Set((Array.isArray(value) ? value : []).map(item => String(item).trim().toLowerCase()).filter(Boolean));
+    const favoriteGroups = (Array.isArray((entry as any).favoriteGroups) ? (entry as any).favoriteGroups : [])
+      .filter((item: any) => item && typeof item.name === 'string' && typeof item.groupId === 'string' && /^[A-Za-z0-9_-]{1,100}$/.test(item.groupId))
+      .map((item: any) => ({ name: item.name.trim().slice(0, 100), groupId: item.groupId, asian: item.asian === true }));
+    return { favoriteNames: names((entry as any).favoriteNames), asianNames: names((entry as any).asianNames), favoriteGroups };
+  } catch { return { favoriteNames: new Set(), asianNames: new Set(), favoriteGroups: [] }; }
+};
+const curatedName = (names: Set<string>, value: string): string | undefined => {
+  const normalized = value.trim().toLowerCase();
+  return [...names].find(name => normalized === name || normalized.startsWith(`${name} `));
+};
 export function createPresenterAssetsRouter(store: DataStore, exclusive: Exclusive, options: {
   client?: HeyGenPresenterClient; configured?: () => boolean; enabled?: () => boolean; directConsent?: () => boolean;
   reserve?: (id: string) => Promise<void>;
@@ -138,10 +155,61 @@ export function createPresenterAssetsRouter(store: DataStore, exclusive: Exclusi
       if (isPrivate && !privateCatalog(tenant)) { res.status(403).json({ error: '企业专属人物账号尚未连接' }); return; }
       if (isPrivate) await checkPrivateAccount(tenant);
       const page = await client().looks(String(req.query.token || '').slice(0, 2000), isPrivate ? 'private' : 'public');
+      const curation = presenterCuration(tenant);
+      const favorite = (look: PresenterLook) => look.favorite || Boolean(curatedName(curation.favoriteNames, look.name));
+      const asian = (look: PresenterLook) => asianPresenterLook(look) || Boolean(curatedName(curation.asianNames, look.name));
       for (const [id, entry] of publicLooks) if (Date.now() - entry.at > 300000) publicLooks.delete(id);
       for (const look of page.items) publicLooks.set(`${tenant}:${look.id}`, { look, at: Date.now(), private: isPrivate });
       while (publicLooks.size > 3000) publicLooks.delete(publicLooks.keys().next().value!);
-      res.json(page);
+      res.json({ ...page, items: [...page.items].sort((a, b) => Number(asian(b)) - Number(asian(a)) || Number(favorite(b)) - Number(favorite(a))) });
+    } catch (e) { res.status(503).json({ error: message(e) }); }
+  });
+  router.post('/favorites/sync', async (_req, res) => {
+    try {
+      const tenant = res.locals.tenantId as string;
+      const curation = presenterCuration(tenant);
+      const favorites: PresenterLook[] = [];
+      if (curation.favoriteGroups.length) {
+        const groups = await Promise.all(curation.favoriteGroups.map(async group => ({ group, looks: await client().groupLooks(group.groupId) })));
+        for (const { group, looks } of groups) {
+          const preferred = looks.find(item => item.status === 'completed' && item.voiceId) || looks.find(item => item.status === 'completed');
+          if (preferred) favorites.push({ ...preferred, name: group.name, favorite: true, tags: [...(preferred.tags || []), ...(group.asian ? ['asian'] : [])] });
+        }
+      } else {
+        let token = '';
+        for (let pageNumber = 0; pageNumber < 30; pageNumber++) {
+          const page = await client().looks(token, 'public');
+          favorites.push(...page.items.filter(item => (item.favorite || curatedName(curation.favoriteNames, item.name)) && item.status === 'completed'));
+          if (!page.nextToken || page.nextToken === token) break;
+          token = page.nextToken;
+        }
+      }
+      const result = await exclusive(`defaults:${tenant}`, async () => {
+        const row = (await store.list<Row>('studio_production_defaults', { where: { tenant_id: tenant }, perPage: 1 })).items[0];
+        const defaults: ProductionDefaults = row?.payload || EMPTY_DEFAULTS;
+        const existing = new Set(defaults.presenters.map(item => item.avatarId));
+        const preferred = new Map<string, PresenterLook>();
+        for (const look of favorites) {
+          const group = curatedName(curation.favoriteNames, look.name) || look.groupId || look.id;
+          const current = preferred.get(group);
+          if (!current || (!current.voiceId && look.voiceId)) preferred.set(group, look);
+        }
+        const selectedFavorites = [...preferred.values()];
+        const importable = selectedFavorites.filter(item => item.voiceId && !existing.has(item.id));
+        const capacity = Math.max(0, 50 - defaults.presenters.length);
+        const selected = importable.slice(0, capacity);
+        const additions: PresenterAsset[] = selected.map(look => ({ id: `presenter-${hash(`${look.id}:${look.voiceId}`).slice(0, 24)}`, name: look.name.slice(0, 100), avatarId: look.id, voiceId: look.voiceId!, authorized: true,
+          supportsAlpha: false, nativeOrientation: look.orientation, imageUrl: look.imageUrl, videoUrl: look.videoUrl, assetVersion: 1, capabilities: ['talking'], toolMappings: { heygen: { avatarId: look.id, voiceId: look.voiceId! } }, rightsEvidence: { authorizationRef: `document://studio_presenter_assets/catalog/${look.id}`, consentRef: `consent://heygen/${look.groupId || look.id}`, grantedAt: new Date().toISOString(), subjectAdultConfirmed: true, permittedProviders: ['heygen'], permittedUses: ['digital_presenter', 'voice_synthesis'] } }));
+        const isAsian = (presenter: PresenterAsset) => Boolean(curatedName(curation.asianNames, presenter.name)) || asianPresenterLook(favorites.find(item => item.id === presenter.avatarId) || { id: '', name: '', orientation: 'unknown', status: '' });
+        const presenters = [...defaults.presenters, ...additions].sort((a, b) => Number(isAsian(b)) - Number(isAsian(a)));
+        const payload = { ...defaults, presenters, defaultPresenterId: defaults.defaultPresenterId || additions[0]?.id || '' };
+        if (additions.length) {
+          const saved = row ? await store.update('studio_production_defaults', row.id, { payload }) : await store.create('studio_production_defaults', { tenant_id: tenant, payload });
+          if (!saved) throw new Error('收藏人物保存失败，请重试');
+        }
+        return { defaults: payload, favoriteCount: selectedFavorites.length, importedCount: additions.length, skippedWithoutVoice: selectedFavorites.filter(item => !item.voiceId).length, capacityReached: importable.length > selected.length };
+      });
+      res.json(result);
     } catch (e) { res.status(503).json({ error: message(e) }); }
   });
   router.get('/voices', async (req, res) => {
@@ -297,7 +365,7 @@ export function createPresenterAssetsRouter(store: DataStore, exclusive: Exclusi
   router.post('/creations', async (req, res) => {
     try {
       const b = req.body || {}, tenant = res.locals.tenantId as string;
-      if (!validId(b.requestId) || !['photo', 'digital_twin'].includes(b.type) || typeof b.name !== 'string' || !b.name.trim() || b.name.length > 100 || b.authorized !== true || b.confirmed !== true) throw new Error('请填写人物名称、确认本人授权与创建费用');
+      if (!validId(b.requestId) || !['photo', 'digital_twin'].includes(b.type) || typeof b.name !== 'string' || !b.name.trim() || b.name.length > 100 || b.authorized !== true || b.adultConfirmed !== true || b.confirmed !== true) throw new Error('请填写人物名称，并确认肖像授权、主体已成年与创建费用');
       const result = await exclusive(`presenter:${tenant}`, async () => {
         const reusePresenterId = String(b.reusePresenterId || '');
         const fingerprint = hash(JSON.stringify([b.type, b.name.trim(), b.uploadId, b.voiceId, reusePresenterId]));
@@ -326,7 +394,7 @@ export function createPresenterAssetsRouter(store: DataStore, exclusive: Exclusi
         if (existing.some(row => row.payload.sourceDigest === upload.payload.digest && row.payload.status !== 'failed')) throw new Error('此素材已有创建任务，请查看并刷新原任务');
         if (b.voiceId && (!validId(b.voiceId) || (!validVoice(b.voiceId) && !(privateCatalog(tenant) && await privateVoice(b.voiceId))))) throw new Error('请重新加载声音列表后选择可用声音');
         const row = await store.create<Row>(COLLECTION, { tenant_id: tenant, kind: 'creation', request_id: b.requestId,
-          payload: { name: b.name.trim(), type: b.type, voiceId: b.voiceId, uploadId: b.uploadId, sourceDigest: upload.payload.digest, fingerprint, authorized: true, ...(reusePresenterId ? { reusePresenterId } : {}), status: 'submitting', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() } });
+          payload: { name: b.name.trim(), type: b.type, voiceId: b.voiceId, uploadId: b.uploadId, sourceDigest: upload.payload.digest, fingerprint, authorized: true, subjectAdultConfirmed: true, ...(reusePresenterId ? { reusePresenterId } : {}), status: 'submitting', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() } });
         if (!row) throw new Error('人物任务登记失败，未创建人物');
         try { await (options.reserve ? options.reserve(`presenter:${row.id}`) : creationBudget(b.type).reserve('heygen', `presenter:${row.id}`)); }
         catch (e) { await write(row, { status: 'failed', error: message(e) }); throw e; }
@@ -376,7 +444,7 @@ export function createPresenterAssetsRouter(store: DataStore, exclusive: Exclusi
   router.post('/import', async (req, res) => {
     try {
       const b = req.body || {}, tenant = res.locals.tenantId as string;
-      if (b.authorized !== true || b.reviewed !== true) throw new Error('请预览人物并确认人物和声音使用授权');
+      if (b.reviewed !== true) throw new Error('请预览并确认使用所选人物和声音');
       let look: PresenterLook;
       let defaultVoice: string | undefined;
       let creationMode: PresenterAsset['creationMode'];
@@ -407,8 +475,11 @@ export function createPresenterAssetsRouter(store: DataStore, exclusive: Exclusi
         const previous = defaults.presenters.find(p => p.avatarId === look.id && p.voiceId === voiceId);
         if (previous) return defaults;
         if (defaults.presenters.length >= 50) throw new Error('企业人物已达到 50 个上限');
+        const createdByTenant = Boolean(b.creationId);
         const presenter: PresenterAsset = { id: `presenter-${hash(`${look.id}:${voiceId}`).slice(0, 24)}`, name: String(b.name || look.name).slice(0, 100), avatarId: look.id, voiceId, authorized: true,
-          supportsAlpha: false, nativeOrientation: look.orientation, imageUrl: look.imageUrl, videoUrl: look.videoUrl, creationMode, assetVersion: 1, capabilities: ['talking'], toolMappings: { heygen: { avatarId: look.id, voiceId } }, rightsEvidence: { authorizationRef: `document://studio_presenter_assets/${String(b.creationId || 'catalog')}/${look.id}`, consentRef: `consent://heygen/${look.groupId || look.id}`, grantedAt: new Date().toISOString(), subjectAdultConfirmed: true, permittedProviders: ['heygen'], permittedUses: ['digital_presenter', 'voice_synthesis'] } };
+          supportsAlpha: false, nativeOrientation: look.orientation, imageUrl: look.imageUrl, videoUrl: look.videoUrl, creationMode, assetVersion: 1, capabilities: ['talking'], toolMappings: { heygen: { avatarId: look.id, voiceId } }, rightsEvidence: createdByTenant
+            ? { authorizationRef: `document://studio_presenter_assets/${String(b.creationId)}/${look.id}`, consentRef: `consent://heygen/${look.groupId || look.id}`, grantedAt: new Date().toISOString(), subjectAdultConfirmed: true, permittedProviders: ['heygen'], permittedUses: ['digital_presenter', 'voice_synthesis'] }
+            : { authorizationRef: `license://heygen/public-catalog/${look.id}`, consentRef: `license://heygen/public-catalog/${look.groupId || look.id}`, grantedAt: new Date().toISOString(), subjectAdultConfirmed: false, permittedProviders: ['heygen'], permittedUses: ['digital_presenter', 'voice_synthesis'] } };
         const payload = { ...defaults, presenters: [...defaults.presenters, presenter], defaultPresenterId: defaults.defaultPresenterId || presenter.id };
         const saved = row ? await store.update('studio_production_defaults', row.id, { payload }) : await store.create('studio_production_defaults', { tenant_id: tenant, payload });
         if (!saved) throw new Error('企业人物保存失败，请重试导入');

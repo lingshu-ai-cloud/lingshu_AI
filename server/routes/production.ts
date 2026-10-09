@@ -1,3 +1,4 @@
+import { sentenceReplicationPreview } from '../lib/sentenceReplicationPreview.js';
 import { sentenceCueQualityState } from '../lib/sentenceCueQuality.js';
 import { preparePhotoTalkingFirstFrames } from '../lib/photoTalkingFirstFrames.js';
 import { photoTalkingBudget } from '../lib/photoTalkingBudget.js';
@@ -435,19 +436,37 @@ export function createProductionRouter(store: DataStore, importVideo: (url: stri
       const maxCostCny=Number(b.maxCostCny); if(!Number.isFinite(maxCostCny)||maxCostCny<=0) throw new Error('请填写本次照片口播费用上限');
       const project=await store.getById<any>('studio_projects',String(b.projectId||'')); if(!project||project.tenant_id!==tenantId||project.status!=='draft') throw new Error('创作草稿不存在');
       const shot=project.spec?.shotProductions?.[`${b.assemblyId}:${b.shotId}`] as ShotProduction|undefined;
-      if(shot?.digitalHuman?.presenterMode!=='photo_talking'||shot.digitalHuman.workflow!=='viral_replication') throw new Error('当前分镜不是爆款照片口播');
+      if(!shot?.digitalHuman || shot.digitalHuman.workflow!=='viral_replication' || shot.digitalHuman.method!=='reenact' || usesDirectReferenceVideo(shot.digitalHuman)) throw new Error('当前分镜不是逐句首帧重建路线');
       if(shotFingerprint(shot,String(project.spec?.shotProductionContext||''),String(b.shotId))!==b.fingerprint) throw new Error('请先保存当前人物配置');
       const sourceAuthorization=shot.digitalHuman.reference;
       if(sourceAuthorization?.modelInputAuthorized!==true||!String(sourceAuthorization.modelInputAuthorizationEvidence||'').trim()) throw new Error('请先确认原片首帧可作为方舟构图参考，并填写授权依据；未调用供应商');
       const defaults=(await readDefaults(tenantId))?.payload as ProductionDefaults|undefined; const presenter=defaults?.presenters.find(item=>item.id===shot.presenterId&&item.authorized); if(!presenter) throw new Error('请选择企业人物照片');
       const cues=referenceCues(shot.digitalHuman);assertSplitCueAssignments(cues);const clusters=planPersonShotClusters(cues,Math.max(1,Number(process.env.DIGITAL_HUMAN_MAX_FIRST_FRAMES_PER_VIDEO)||3));if(clusters.state!=='ready')throw new Error(clusters.blockers.join('；'));
-      const quote=photoTalkingBudget({cues,frameCount:clusters.clusters.length,fixedHeygenReserveCny:Number(process.env.STUDIO_HEYGEN_RESERVE_CNY)});
+      const quote=shot.digitalHuman.presenterMode === 'photo_talking'
+        ? photoTalkingBudget({cues,frameCount:clusters.clusters.length,fixedHeygenReserveCny:Number(process.env.STUDIO_HEYGEN_RESERVE_CNY)})
+        : {totalCny:clusters.clusters.length * Number(process.env.SEEDREAM_FIRST_FRAME_ESTIMATED_CNY || 0.22)};
       if(quote.totalCny>maxCostCny)throw new Error(`首帧与口播合计预估费用 ¥${quote.totalCny.toFixed(2)} 超过本次上限 ¥${maxCostCny.toFixed(2)}，未调用供应商`);
-      const result=await exclusive(`photo-first-frames:${tenantId}:${b.projectId}`,()=>(options.preparePhotoTalkingFirstFrames || preparePhotoTalkingFirstFrames)({tenantId,projectId:project.id,assemblyId:String(b.assemblyId),presenter,cues}));res.json(result);
+      const result=await exclusive(`photo-first-frames:${tenantId}:${b.projectId}`,()=>(options.preparePhotoTalkingFirstFrames || preparePhotoTalkingFirstFrames)({tenantId,projectId:project.id,assemblyId:String(b.assemblyId),presenter,cues,certifyForSeedance:shot.digitalHuman!.presenterMode!=='photo_talking',requirements:shot.digitalHuman}));res.json(result);
     } catch(error) {res.status(400).json({error:error instanceof Error?error.message:'目标首帧生成失败'});}
   });
   router.post('/sentence-first-frame-drafts',async(req,res)=>{
     try{const tenantId=res.locals.tenantId as string;const b=req.body||{};const requestId=String(b.requestId||'');if(b.confirmed!==true||!/^[A-Za-z0-9_:.-]{1,150}$/.test(requestId))throw new Error('请确认千问首帧草稿生成及计费，并提供有效请求标识');const result=await exclusive(`qwen-first-frame-draft:${tenantId}:${requestId}`,async()=>{const prior=(await store.list<FirstFrameDraftJobRecord>('studio_first_frame_draft_jobs',{where:{tenant_id:tenantId,request_id:requestId},perPage:1})).items[0];if(prior){if(prior.payload.state==='completed'&&prior.payload.result)return prior.payload.result;throw new Error(prior.payload.state==='failed'?`该千问草稿请求已失败并留档：${prior.payload.error||'原因未知'}；修正后请使用新请求标识`:'该千问草稿请求状态未确认，请核对原任务，勿重复提交计费');}const project=await store.getById<any>('studio_projects',String(b.projectId||''));if(!project||project.tenant_id!==tenantId||project.status!=='draft')throw new Error('创作草稿不存在或不可编辑');const assemblyId=String(b.assemblyId||''),shotId=String(b.shotId||''),fingerprint=String(b.fingerprint||'');const shot=project.spec?.shotProductions?.[`${assemblyId}:${shotId}`] as ShotProduction|undefined;if(!shot?.digitalHuman||shot.digitalHuman.workflow!=='viral_replication'||shot.digitalHuman.method!=='reenact'||usesDirectReferenceVideo(shot.digitalHuman))throw new Error('当前分镜不是逐句首帧重建路线');if(shotFingerprint(shot,String(project.spec?.shotProductionContext||''),shotId)!==fingerprint)throw new Error('数字人参数与已保存草稿不一致，请保存后重试');const defaults=(await readDefaults(tenantId))?.payload as ProductionDefaults|undefined;const presenter=defaults?.presenters.find(item=>item.id===shot.presenterId&&item.authorized);if(!presenter)throw new Error('请选择已授权企业人物');const cues=referenceCues(shot.digitalHuman);assertSplitCueAssignments(cues);if(shot.digitalHuman.presenterMode!=='photo_talking')assertSeedanceCueDurations(cues);if(!cues.length||cues.some(cue=>cue.personShot!==false&&!cue.sourceFirstFrame?.materialId))throw new Error('请先完成全部人物镜头的逐句源首帧提取');if(!options.generateSentenceFirstFrameDrafts)throw new Error('千问首帧草稿服务尚未配置');const now=new Date().toISOString();const created=await store.create<FirstFrameDraftJobRecord>('studio_first_frame_draft_jobs',{tenant_id:tenantId,project_id:project.id,request_id:requestId,payload:{state:'running',fingerprint,assemblyId,shotId,createdAt:now,updatedAt:now}});if(!created)throw new Error('千问首帧草稿作业留档失败，未发起计费');try{const generated=await options.generateSentenceFirstFrameDrafts({tenantId,projectId:project.id,assemblyId,presenter,cues});await store.update('studio_first_frame_draft_jobs',created.id,{payload:{...created.payload,state:'completed',result:generated,updatedAt:new Date().toISOString()}});return generated;}catch(error){await store.update('studio_first_frame_draft_jobs',created.id,{payload:{...created.payload,state:'failed',error:error instanceof Error?error.message:'生成失败',updatedAt:new Date().toISOString()}});throw error;}});res.json(result);}catch(error){res.status(400).json({error:error instanceof Error?error.message:'千问首帧草稿生成失败'});}
+  });
+
+  router.post('/sentence-replication-preview', async (req,res) => {
+    try {
+      const tenantId=res.locals.tenantId as string; const b=req.body||{};
+      const project=await store.getById<any>('studio_projects',String(b.projectId||''));
+      if(!project || project.tenant_id!==tenantId) throw new Error('创作草稿不存在');
+      const shot=b.shot as ShotProduction;
+      if(!shot?.digitalHuman || !Array.isArray(shot.digitalHuman.reference?.cues)) throw new Error('请先配置逐镜制作方案');
+      const presenter=((await readDefaults(tenantId))?.payload as ProductionDefaults|undefined)?.presenters.find(item=>item.id===shot.presenterId && item.authorized);
+      if(!presenter) throw new Error('请选择已授权企业人物');
+      const jobs=(await store.list<SentenceJobRecord>('studio_sentence_replication_jobs',{where:{tenant_id:tenantId,project_id:project.id},perPage:500})).items;
+      const previous=jobs.filter(item=>item.tenant_id===tenantId && item.project_id===project.id && item.payload.assemblyId===b.assemblyId && item.payload.shotId===b.shotId && item.payload.state==='completed' && item.payload.result).map(item=>item.payload.result!);
+      const preview=sentenceReplicationPreview(shot,presenter,String(b.language||project.spec?.activeVoiceLang||project.spec?.lang||''),previous);
+      res.json({impacts:preview.impacts,estimatedCostCny:preview.estimatedCostCny,estimateError:preview.estimateError});
+    } catch(error) {res.status(400).json({error:error instanceof Error?error.message:'修改影响与费用读取失败'});}
   });
 
   router.get('/sentence-replication-readiness', (_req, res) => {
@@ -523,11 +542,10 @@ export function createProductionRouter(store: DataStore, importVideo: (url: stri
         if (reprocessJobId && (!reprocessRecord || reprocessRecord.tenant_id !== tenantId || reprocessRecord.project_id !== project.id || !['completed','failed'].includes(reprocessRecord.payload.state) || reprocessRecord.payload.assemblyId !== b.assemblyId || reprocessRecord.payload.shotId !== b.shotId || reprocessRecord.payload.fingerprint !== fingerprint || cues.some(cue => cue.personShot !== false && !reprocessRecord.payload.providerTasks?.[cue.id]))) throw new Error('原逐句作业不完整或与当前分镜不一致，不能恢复供应商结果');
         if (shot.digitalHuman.presenterMode !== 'photo_talking') assertSeedanceCueDurations(cues);
         if (resumeJobId && cues.some(cue => cue.personShot !== false && !existing?.payload.providerTasks?.[cue.id])) throw new Error('原作业缺少完整供应商任务 ID，需人工核对，不能重新提交计费');
-        if (shot.digitalHuman.presenterMode === 'photo_talking' && cues.some(cue => cue.personShot !== false && cue.targetFirstFrame?.state !== 'ready')) throw new Error('请先重建并确认目标人物首帧');
         const clusterPlan = planPersonShotClusters(cues, Math.max(1, Number(process.env.DIGITAL_HUMAN_MAX_FIRST_FRAMES_PER_VIDEO) || 3));
         if (clusterPlan.state !== 'ready') throw new Error(clusterPlan.blockers.join('；'));
         if (!clusterPlan.personCueIds.length) throw new Error('当前视频没有人物镜头，不应调用人物首帧或数字人口播生成；请按普通素材混剪路线制作');
-        if (!cues.length || cues.some(cue => cue.personShot !== false && !cue.sourceFirstFrame?.materialId)) throw new Error('请先完成全部人物镜头的逐句源首帧提取');
+        if (!cues.length) throw new Error('缺少逐镜口播时间轴');
         if (!options.runSentenceReplication) throw new Error('逐句目标人物首帧与视频编排器尚未配置');
         const readiness = shot.digitalHuman.presenterMode === 'photo_talking' ? photoSentenceReadiness(process.env, 'heygen') : sentenceReadiness();
         if (!readiness.ready) throw new Error(readiness.reason);
@@ -540,7 +558,10 @@ export function createProductionRouter(store: DataStore, importVideo: (url: stri
         if (!record) throw new Error('逐句生成请求记录保存失败，尚未调用供应商');
         if (resumeJobId) { record.payload = { ...record.payload, state: 'running', error: '', updatedAt: now }; if (!await store.update('studio_sentence_replication_jobs', record.id, { payload: record.payload })) throw new Error('原作业恢复状态保存失败'); }
         try {
-          const generated = await options.runSentenceReplication({ tenantId, projectId: project.id, assemblyId: String(b.assemblyId), shotId: String(b.shotId), fingerprint, shot, presenter, cues, requestId, maxCostCny: b.maxCostCny, targetLanguage: String(project.spec?.activeVoiceLang || project.spec?.lang || ''), sourceMaterial, existingProviderTasks: resumeJobId || reprocessJobId ? record.payload.providerTasks : undefined,
+          const priorResults = (await store.list<SentenceJobRecord>('studio_sentence_replication_jobs', {where:{tenant_id:tenantId,project_id:project.id},perPage:500})).items
+            .filter(item=>item.tenant_id===tenantId && item.project_id===project.id && item.payload.assemblyId===b.assemblyId && item.payload.shotId===b.shotId && item.payload.state==='completed' && item.payload.result).map(item=>item.payload.result!);
+          const reuse = sentenceReplicationPreview(shot,presenter,String(project.spec?.activeVoiceLang||project.spec?.lang||''),priorResults);
+          const generated = await options.runSentenceReplication({ tenantId, projectId: project.id, assemblyId: String(b.assemblyId), shotId: String(b.shotId), fingerprint, shot, presenter, cues, requestId, maxCostCny: b.maxCostCny, targetLanguage: String(project.spec?.activeVoiceLang || project.spec?.lang || ''), sourceMaterial, reuseCueMaterialIds:reuse.reuseCueMaterialIds,reuseCueQuality:reuse.reuseCueQuality, existingProviderTasks: resumeJobId || reprocessJobId ? record.payload.providerTasks : undefined,
             onProviderTaskSubmitted: async (cueId,taskId)=>{ const providerTasks={...(record.payload.providerTasks||{}),[cueId]:taskId}; record.payload={...record.payload,providerTasks,updatedAt:new Date().toISOString()}; if(!await store.update('studio_sentence_replication_jobs',record.id,{payload:record.payload})) throw new Error('供应商已受理任务但任务 ID 持久化失败；请核对原任务，勿重复提交'); } });
           if (!generated.candidateOutput) throw new Error('逐句拼接候选缺少可复核的对象版本与内容哈希');
           const quality = sentenceExecutionQuality(generated.cueQuality, generated.materialId);
@@ -705,9 +726,14 @@ export function createProductionRouter(store: DataStore, importVideo: (url: stri
       }
       const payload = await exclusive(`defaults:${tenantId}`, async () => {
         const existing = await readDefaults(tenantId); const previous = (existing?.payload as ProductionDefaults | undefined)?.presenters || [];
+        const presenterRoutes = (Array.isArray(b.presenterRoutes) ? b.presenterRoutes : []).map(route => ({
+          channel: String(route.channel), presenterId: String(route.presenterId || ''), voiceId: String(route.voiceId || ''), layout: String(route.layout || 'full'),
+        }));
+        if (presenterRoutes.length > 6 || presenterRoutes.some(route => !['default','tiktok','youtube','facebook','instagram','live'].includes(route.channel)
+          || !['full','split','pip'].includes(route.layout) || (route.presenterId && !b.presenters.some(item => item.id === route.presenterId)))) throw new Error('渠道出镜策略包含无效人物或布局');
         const next: ProductionDefaults = { preference: b.preference, defaultPresenterId: String(b.defaultPresenterId || ''),
           defaultSound: ['voiceover', 'source', 'silent'].includes(b.defaultSound) ? b.defaultSound : 'voiceover',
-          defaultLayout: ['full', 'split', 'pip'].includes(b.defaultLayout) ? b.defaultLayout : 'full', presenters: b.presenters.map(item => {
+          defaultLayout: ['full', 'split', 'pip'].includes(b.defaultLayout) ? b.defaultLayout : 'full', presenterRoutes: presenterRoutes as ProductionDefaults['presenterRoutes'], presenters: b.presenters.map(item => {
         const referenceMaterialIds = Array.isArray(item.referenceMaterialIds) ? [...new Set(item.referenceMaterialIds.map(id => String(id).trim()).filter(Boolean))].slice(0, 30) : [];
         const avatarId = String(item.toolMappings?.heygen?.avatarId || item.avatarId).slice(0, 200);
         const voiceId = String(item.toolMappings?.heygen?.voiceId || item.voiceId).slice(0, 200);

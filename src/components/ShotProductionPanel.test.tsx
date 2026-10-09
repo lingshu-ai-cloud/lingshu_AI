@@ -146,7 +146,7 @@ test('viral reenact defaults to sentence first-frame reconstruction without sour
   assert.match(html, /逐句首帧重建 · 默认/);
   assert.match(html, /爆款原视频不会直接提交给视频生成模型/);
   assert.match(html, /首帧 0\.00 秒 · 待重建目标人物首帧/);
-  for (const step of ['按口播逐句切分原片并提取首帧', '将每句首帧重建为目标企业人物', '按目标口播逐句生成短视频', '按原节奏拼接并预览确认']) assert.match(html, new RegExp(step));
+  for (const step of ['按口播逐句切分原片并提取首帧', '将每句首帧重建为目标企业人物', '按目标口播逐句生成短视频', '按实际片长拼接并自动检测']) assert.match(html, new RegExp(step));
   assert.doesNotMatch(html, /允许将源视频直接提交给生成模型/);
 });
 
@@ -163,9 +163,8 @@ test('sentence replication exposes per-cue evidence and failed-only repair', () 
     { key: 'background', status: 'passed', evidence: 'SSIM 0.92' }, { key: 'audio_sync', status: 'pending', evidence: '等待口型确认' },
     { key: 'reuse_risk', status: 'passed', evidence: '相似度 0.7' },
   ] }] }} />);
-  for (const label of ['逐镜质量验收', '独立检测异常会直接标记失败', '停帧差异 30%', '等待独立身份模型', '只重做失败镜头']) assert.match(html, new RegExp(label));
-  assert.match(html, /镜头 1 identity验收结果/);
-  assert.match(html, /镜头 1验收证据/);
+  for (const label of ['逐镜自动检测', '自动检测未通过会标记失败', '停帧差异 30%', '等待独立身份模型', '只重做失败镜头']) assert.match(html, new RegExp(label));
+  assert.doesNotMatch(html, /identity验收结果|验收证据|保存该镜头验收/);
   assert.match(html, /返工将复用其他已通过镜头/);
 });
 
@@ -330,9 +329,9 @@ test('viral photo preview requires target frame, script, and an explicit cost li
   const shot={...newShotProduction('Hello','photo'),source:'avatar' as const,digitalHuman:{...newDigitalHumanRequirements(),presenterMode:'photo_talking' as const,workflow:'viral_replication' as const,method:'reenact' as const,contentConfirmed:true,reference:{videoUrl:'/source.mp4',start:0,end:2,originalText:'Hello',derivativeAuthorized:false,cues:[{id:'cue',start:0,end:2,originalText:'Hello',targetText:'Hello',shotIds:['s1'],personShot:true,targetFirstFrame:{materialId:'target',imageUrl:'/target.jpg',state:'ready' as const}}]}}};
   const defaults={...EMPTY_DEFAULTS,presenters:[{id:'photo',name:'Photo',avatarId:'',voiceId:'voice',authorized:true,supportsAlpha:false,authorizationConfirmation:{subjectAdultConfirmed:true,heygenProcessingAuthorized:true},arkCertification:{projectName:'default',materialId:'portrait',assetUri:'asset://asset-test',assetType:'image' as const,status:'active' as const}}]};
   const before=renderToStaticMarkup(<ShotProductionPanel {...props} defaults={defaults} shot={shot} salesConfiguration viralReplication />);
-  assert.match(before,/alt="目标人物首帧"/);assert.match(before,/<button[^>]*disabled=""[^>]*>生成照片口播素材/);assert.match(before,/照片口播费用上限/);
+  assert.match(before,/alt="目标人物首帧"/);assert.match(before,/<button[^>]*disabled=""[^>]*>自动生成照片口播素材/);assert.match(before,/照片口播费用上限/);
   const after=renderToStaticMarkup(<ShotProductionPanel {...props} defaults={defaults} shot={{...shot,digitalHuman:{...shot.digitalHuman,targetFramesConfirmed:true}}} salesConfiguration viralReplication />);
-  assert.match(after,/<button[^>]*disabled=""[^>]*>生成照片口播素材/);
+  assert.match(after,/<button[^>]*disabled=""[^>]*>自动生成照片口播素材/);
   const withoutArk = renderToStaticMarkup(<ShotProductionPanel {...props} defaults={{...defaults,presenters:defaults.presenters.map(({arkCertification, ...item})=>item)}} shot={{...shot,digitalHuman:{...shot.digitalHuman,targetFramesConfirmed:true}}} salesConfiguration viralReplication />);
   assert.match(withoutArk,/照片口播费用上限/);assert.doesNotMatch(withoutArk,/方舟人物认证/);
   assert.doesNotMatch(withoutArk,/确认已获成年本人授权/);
@@ -355,4 +354,14 @@ test('photo talking hides internal shot type and composition inputs', () => {
   assert.match(html,/确认本镜头口播文案/);
   assert.match(html,/待生成，可生成后预览确认/);
   assert.match(html,/高级设置 · 原片取帧范围/);
+});
+
+
+test('pipeline 3 uses automatic first-frame checks and has no human review controls', () => {
+  const shot={...newShotProduction('Hello','photo'),source:'avatar' as const,digitalHuman:{...newDigitalHumanRequirements(),presenterMode:'photo_talking' as const,workflow:'viral_replication' as const,method:'reenact' as const,targetFramesConfirmed:false,reference:{videoUrl:'/source.mp4',start:0,end:4,originalText:'Hello',derivativeAuthorized:false,cues:[{id:'cue',start:0,end:4,originalText:'Hello',targetText:'Hello',shotIds:['s1'],personShot:true,targetFirstFrame:{materialId:'target',imageUrl:'/target.jpg',state:'ready' as const}}]}}};
+  const html=renderToStaticMarkup(<ShotProductionPanel {...props} shot={shot} salesConfiguration viralReplication />);
+  assert.match(html,/系统自动校验首帧人物版本与素材归属/);
+  assert.match(html,/<button[^>]*disabled=""[^>]*>自动生成照片口播素材/);
+  assert.match(html,/修改影响与费用/);assert.match(html,/实测时间码/);
+  assert.doesNotMatch(html,/复核首帧|保存该镜头验收|已复核口播文案/);
 });

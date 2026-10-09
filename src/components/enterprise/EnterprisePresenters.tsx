@@ -14,7 +14,7 @@ function toggleDashscopeUse(current:RightsEvidence|undefined,use:'quality_inspec
   return{...existing,permittedProviders:nextUses.length?[...new Set([...existing.permittedProviders,'dashscope' as const])]:existing.permittedProviders.filter(item=>item!=='dashscope'),permittedUses:[...new Set([...existing.permittedUses,...nextUses])],providerScopes};
 }
 
-export default function EnterprisePresenters({ contentProduction = false }: { contentProduction?: boolean } = {}) {
+export default function EnterprisePresenters({ contentProduction = false, initialConfiguration = false }: { contentProduction?: boolean; initialConfiguration?: boolean } = {}) {
   const [value, setValue] = useState<ProductionDefaults>(EMPTY_DEFAULTS);
   const [draft, setDraft] = useState<PresenterAsset>({ id: '', name: '', avatarId: '', voiceId: '', authorized: false, supportsAlpha: false });
   const [editingId, setEditingId] = useState('');
@@ -31,7 +31,7 @@ export default function EnterprisePresenters({ contentProduction = false }: { co
   return <section className="rounded-xl border border-border bg-white p-5">
     <h3 className="text-sm font-bold">数字人社媒 · 企业出镜设置</h3><p className="mt-1 text-xs text-text-muted">与镜头编辑共用同一套人物资产。可管理已有 HeyGen 音色，或在本人授权后主动提交新录音克隆。</p>
     {!contentProduction && creationJobs.length > 0 && <details className="mt-3 rounded-lg border p-3 text-xs"><summary className="cursor-pointer font-bold">内容制作同步的人物任务 · {creationJobs.length}</summary><ul className="mt-2 space-y-1">{creationJobs.map(job => <li key={job.id}>{job.name} · {{ submitting: '提交中', processing: '处理中', pending_consent: '等待本人验证', completed: '可预览并导入', failed: '处理失败', uncertain: '原任务待核对' }[job.status]}</li>)}</ul><p className="mt-2 text-text-muted">创建、本人验证和导入请在内容制作页的原分镜完成；这里保留同步记录供管理。</p></details>}
-    {contentProduction && <button type="button" onClick={() => setShowHeyGenManager(true)} className="mt-3 rounded-lg border border-emerald-600 px-3 py-2 text-xs font-bold text-emerald-800">创建或导入 HeyGen 人物</button>}
+    {(contentProduction || initialConfiguration) && <button type="button" onClick={() => setShowHeyGenManager(true)} className="mt-3 rounded-lg border border-emerald-600 px-3 py-2 text-xs font-bold text-emerald-800">创建或导入 HeyGen 人物</button>}
     <fieldset disabled={!loaded || busy} className="mt-3 space-y-3 disabled:opacity-50">
       <label className="block text-xs">默认出镜偏好<select value={value.preference} onChange={event => void save({ ...value, preference: event.target.value as ProductionDefaults['preference'] })} className="mt-1 w-full rounded-lg border p-2"><option value="auto">AI推荐</option><option value="avatar">优先数字人</option><option value="real">优先真人实拍</option><option value="none">不出镜</option></select></label>
       <div className="grid gap-3 sm:grid-cols-2">
@@ -111,6 +111,6 @@ export default function EnterprisePresenters({ contentProduction = false }: { co
       </details>}
     </fieldset>
     {message && <p role="status" className="mt-3 text-xs text-text-secondary">{message}</p>}
-    {showHeyGenManager && <PresenterManager onClose={() => setShowHeyGenManager(false)} onSaved={next => { setValue(next); setShowHeyGenManager(false); setMessage('人物已同步到企业资产'); }} />}
+    {showHeyGenManager && <PresenterManager initialConfiguration={initialConfiguration} onClose={() => setShowHeyGenManager(false)} onSynced={next => setValue(next)} onSaved={next => { setValue(next); setShowHeyGenManager(false); setMessage(initialConfiguration ? '初始人物和音色已保存为企业资产' : '人物已同步到企业资产'); }} />}
   </section>;
 }

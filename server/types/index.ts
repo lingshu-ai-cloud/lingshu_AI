@@ -92,6 +92,14 @@ export interface VideoAiAnalysis {
     bgm?: string;
     soundEffects?: string[];
     beats?: Array<{ time?: string; action?: string; dialogue?: string; onScreenText?: string }>;
+    /** Frame-derived performance category; walking narration must not collapse into standing narration. */
+    motionClass?: '走播' | '站播' | '坐播' | '其他' | string;
+    /** Time-ordered subject translation observed across sampled frames. */
+    bodyMovement?: string;
+    /** Camera translation/pan/track observed independently from subject motion. */
+    cameraMovement?: string;
+    /** Frame-derived speed changes, especially a fast opening hook followed by slower narration. */
+    tempoPhases?: Array<{ time?: string; tempo?: '快速冲击' | '中速' | '慢速稳定' | string; action?: string }>;
     persistentState?: string;
     startState?: string;
     endState?: string;

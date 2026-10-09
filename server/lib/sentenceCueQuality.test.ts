@@ -103,3 +103,11 @@ test('background mismatch is diagnostic while identity and product hard failures
   const identity = sentenceCueQualityFromEvidence({cueId:'wrong-person',mediaEvidence:'media verified',technical,semantic:{version:1,model:'independent-model',identity:{status:'fail',confidence:.9,evidence:'wrong person',frameRefs:['presenter','candidate_start']},actionMotion:{status:'unknown',confidence:.1,evidence:'unknown',frameRefs:[]},productBrandText:{status:'unknown',confidence:.1,evidence:'unknown',frameRefs:[]},limitations:[]}});
   assert.equal(identity.state,'failed');
 });
+
+
+test('automatic pipeline fails missing evidence without creating a manual review node',()=>{
+  const report=sentenceCueQualityFromEvidence({automaticOnly:true,cueId:'auto',mediaEvidence:'media verified',technical});
+  assert.equal(report.state,'failed');
+  assert.ok(report.checks.every(check=>check.status!=='pending'));
+  assert.match(report.checks.find(check=>check.key==='identity')!.evidence,/自动检测证据不足/);
+});

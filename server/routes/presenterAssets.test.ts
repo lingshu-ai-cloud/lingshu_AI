@@ -65,8 +65,9 @@ test('presenter creation, consent, import, tenant isolation, pagination and unce
     const asset = await (await upload('upload1')).json(); assert.ok(asset.id);
     const assetsBeforeRepeat = calls.filter(c => c.url.endsWith('/assets')).length;
     assert.equal((await (await upload('upload1')).json()).id, asset.id); assert.equal(calls.filter(c => c.url.endsWith('/assets')).length, assetsBeforeRepeat);
-    const input = { name: 'Our presenter', type: 'photo', voiceId: 'voice1', uploadId: asset.id, requestId: 'creation1', authorized: true, confirmed: true };
+    const input = { name: 'Our presenter', type: 'photo', voiceId: 'voice1', uploadId: asset.id, requestId: 'creation1', authorized: true, adultConfirmed: true, confirmed: true };
     assert.equal((await request('/creations', { ...input, authorized: false })).status, 400);
+    assert.equal((await request('/creations', { ...input, adultConfirmed: false })).status, 400);
     assert.equal((await request('/creations', input, 'B')).status, 400); assert.equal(creates(), 0);
     const pair = await Promise.all([request('/creations', input), request('/creations', input)]); const first = await pair[0].json();
     assert.equal((await pair[1].json()).id, first.id); assert.equal(creates(), 1); assert.equal(first.status, 'pending_consent');
@@ -92,7 +93,9 @@ test('presenter creation, consent, import, tenant isolation, pagination and unce
     assert.equal((await request('/import', bind, 'B')).status, 400);
     assert.equal((await request('/import', { lookId: 'private-other', authorized: true, reviewed: true })).status, 400);
     const catalog = await (await request('/catalog')).json(); assert.equal(catalog.items[0].id, 'public1'); assert.equal(catalog.nextToken, 'page2');
-    const stock = await (await request('/import', { lookId: 'public1', authorized: true, reviewed: true })).json(); assert.equal(stock.presenters.length, 2);
+    const stock = await (await request('/import', { lookId: 'public1', reviewed: true })).json(); assert.equal(stock.presenters.length, 2);
+    assert.equal(stock.presenters[1].rightsEvidence.subjectAdultConfirmed, false);
+    assert.match(stock.presenters[1].rightsEvidence.authorizationRef, /^license:\/\/heygen\/public-catalog\//);
     const previousPrivateTenant = process.env.HEYGEN_PRIVATE_ASSET_TENANT_ID;
     try {
       process.env.HEYGEN_PRIVATE_ASSET_TENANT_ID = 'A';

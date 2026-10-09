@@ -8,8 +8,9 @@ export default function DigitalHumanRequirementsEditor({ value, plan, compact = 
 }) {
   const [splitTimes, setSplitTimes] = useState<Record<string, string>>({});
   const current = value || newDigitalHumanRequirements();
+  const automaticPipeline=current.workflow==='viral_replication' && current.method==='reenact' && current.replicationMode!=='direct_reference';
   const reference = current.reference || { videoUrl: '', start: 0, end: 0, originalText: '', derivativeAuthorized: false };
-  const patch = (change: Partial<DigitalHumanRequirements>) => onChange({ ...current, ...change, contentConfirmed: false });
+  const patch = (change: Partial<DigitalHumanRequirements>) => onChange({ ...current, ...change, contentConfirmed: automaticPipeline });
   const patchReference = (change: Partial<typeof reference>) => patch({ reference: { ...reference, ...change } });
   const cues = referenceCues(current);
   const patchCue = (id: string, change: Partial<DigitalHumanReferenceCue>) => {
@@ -49,7 +50,7 @@ export default function DigitalHumanRequirementsEditor({ value, plan, compact = 
       {current.replacementScope === 'person_keep_scene' && <p className="text-xs text-text-muted">沿用原镜头场景与构图；生成后需检查背景一致性。</p>}
       {current.replacementScope === 'person_and_scene' && <label className="block text-xs">场景要求<textarea aria-label="场景要求" placeholder="例如：企业展厅，人物站在产品陈列柜前" rows={2} className="mt-2 w-full rounded-lg border p-2" value={current.scene} onChange={event => patch({ scene: event.target.value })} /></label>}
       {current.replacementScope === 'face_only' && <p role="status" className="text-xs text-amber-700">换脸接口尚待验证，可保存配置，暂不可生成。</p>}
-      <label className="flex gap-2 text-xs"><input type="checkbox" checked={current.contentConfirmed} onChange={event => onChange({ ...current, contentConfirmed: event.target.checked })} />确认应用此人物和效果</label>
+      {!automaticPipeline && <label className="flex gap-2 text-xs"><input type="checkbox" checked={current.contentConfirmed} onChange={event => onChange({ ...current, contentConfirmed: event.target.checked })} />确认应用此人物和效果</label>}
     </div>}
   </section>;
   return <section className="space-y-3 rounded-xl border border-violet-200 bg-white p-3" aria-label="数字人镜头要求">
@@ -88,7 +89,7 @@ export default function DigitalHumanRequirementsEditor({ value, plan, compact = 
           <label className="mt-1 block text-xs">原片对应语句<textarea rows={2} className="mt-1 w-full rounded-lg border p-2" value={cue.originalText} onChange={e => patchCue(cue.id, { originalText: e.target.value })} placeholder="填写当前物理镜头中的原片语句" /></label>
           <div className="mt-2 flex items-end gap-2"><label className="text-xs">物理镜头切点（秒）<input type="number" min={cue.start + 0.05} max={cue.end - 0.05} step="0.01" aria-label={`句 ${index + 1} 物理镜头切点`} className="mt-1 w-28 rounded-lg border p-2" value={splitTimes[cue.id] || ''} onChange={e => setSplitTimes(previous => ({ ...previous, [cue.id]: e.target.value }))} /></label><button type="button" className="rounded-lg border px-3 py-2 text-xs" disabled={!Number.isFinite(Number(splitTimes[cue.id])) || Number(splitTimes[cue.id]) <= cue.start + 0.05 || Number(splitTimes[cue.id]) >= cue.end - 0.05} onClick={() => splitCue(cue)}>按物理镜头拆分</button></div>
           {cue.splitFromCueId && <p className="mt-1 text-xs text-amber-700">拆分后请分别填写原片语句、选择人物或非人物镜头；人物镜头必须填写本片对应语句，避免整段口播重复。</p>}
-          {current.method === 'reenact' && current.presenterMode !== 'photo_talking' && cue.personShot === true && (cue.end - cue.start < 4 || cue.end - cue.start > 15) && <p role="alert" className="mt-1 text-xs text-amber-700">当前 Seedance 人物逐句镜头仅支持 4–15 秒；本段 {Math.max(0, cue.end - cue.start).toFixed(2)} 秒不会提交付费生成。短镜头可评估照片口播，并单独确认目标首帧、人物授权与费用；也可调整镜头方案。</p>}
+          {current.method === 'reenact' && current.presenterMode !== 'photo_talking' && cue.personShot === true && (cue.end - cue.start < 4 || cue.end - cue.start > 15) && <p role="alert" className="mt-1 text-xs text-amber-700">当前 Seedance 人物逐句镜头仅支持 4–15 秒；本段 {Math.max(0, cue.end - cue.start).toFixed(2)} 秒不会提交付费生成。短镜头可评估照片口播，并记录人物授权与费用上限；也可调整镜头方案。</p>}
           <div className="mt-2 grid gap-2 sm:grid-cols-2"><label className="text-xs">镜头类型<select aria-label={`句 ${index + 1} 镜头类型`} value={cue.personShot === true ? 'person' : cue.personShot === false ? 'non_person' : 'unknown'} onChange={e => patchCue(cue.id, { personShot:e.target.value==='person'?true:e.target.value==='non_person'?false:undefined, classificationSource:'manual', ...(e.target.value==='person'?{nonPersonMaterialId:undefined}:{compositionClusterId:undefined,composition:undefined}) })} className="mt-1 w-full rounded-lg border p-2"><option value="unknown">待确认</option><option value="person">人物镜头 · 需要换人首帧</option><option value="non_person">产品／工厂／B-roll · 不生人物首帧</option></select></label>
           {cue.personShot===false?<label className="text-xs">替换视频素材<select aria-label={`句 ${index + 1} 非人物替换素材`} value={cue.nonPersonMaterialId || ''} onChange={e=>patchCue(cue.id,{nonPersonMaterialId:e.target.value})} className="mt-1 w-full rounded-lg border p-2"><option value="">请选择本企业视频</option>{referenceMaterials.map(item=><option key={item.id} value={item.id}>{item.name}</option>)}</select></label>:null}</div>
           {current.method === 'reenact' && (current.replicationMode || 'sentence_first_frame') === 'sentence_first_frame' && <div className="mt-1 flex items-center gap-2 text-[10px] text-violet-700">
@@ -113,7 +114,7 @@ export default function DigitalHumanRequirementsEditor({ value, plan, compact = 
       </div>}
       <p className="text-xs text-amber-700">人物替换与重新演绎不会自动互换。{plan.state === 'preview_only' ? '当前参考人物制作仅支持方案预览。' : plan.state === 'ready' ? '执行前仍需保存方案并确认供应商计费。' : '请先补齐资料并确认当前镜头要求。'}</p>
     </div>}
-    <label className="flex gap-2 text-xs"><input type="checkbox" checked={current.contentConfirmed} onChange={e => onChange({ ...current, contentConfirmed: e.target.checked })} />已确认本镜头人物、口播和画面要求</label>
+    {!automaticPipeline && <label className="flex gap-2 text-xs"><input type="checkbox" checked={current.contentConfirmed} onChange={e => onChange({ ...current, contentConfirmed: e.target.checked })} />已确认本镜头人物、口播和画面要求</label>}
     <div className="rounded-lg bg-surface-2 p-2" role="status">
       <p className="text-xs font-bold">{{ needs_input: '待补资料', needs_confirmation: '待确认内容', preview_only: '仅支持方案预览', ready: '可制作' }[plan.state]}</p>
       {plan.reasons.map(reason => <p key={reason} className="mt-1 text-xs">{reason}</p>)}

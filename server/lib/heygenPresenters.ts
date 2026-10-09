@@ -6,9 +6,18 @@ export function mediaUrl(value: unknown): string | undefined {
 export function presenterLook(value: any): PresenterLook {
   if (!value || typeof value.id !== 'string') throw new Error('人物接口未返回有效形象');
   const w = Number(value.image_width), h = Number(value.image_height);
+  const tags = Array.isArray(value.tags) ? value.tags.map((tag: unknown) => String(tag).trim()).filter(Boolean).slice(0, 30) : [];
   return { id: value.id, name: String(value.name || '企业人物'), groupId: value.group_id || undefined,
     voiceId: value.default_voice_id || undefined, imageUrl: mediaUrl(value.preview_image_url), videoUrl: mediaUrl(value.preview_video_url),
+    gender: String(value.gender || '').trim().toLowerCase() || undefined,
+    ethnicity: String(value.ethnicity || value.race || value.appearance || '').trim().toLowerCase() || undefined,
+    tags,
+    favorite: value.is_favorite === true || value.favorite === true || value.favorited === true || tags.some((tag: string) => /^(favorite|favourite|收藏)$/i.test(tag)),
     orientation: w > 0 && h > 0 ? (w === h ? 'square' : w > h ? 'landscape' : 'portrait') : 'unknown', status: value.status || 'completed' };
+}
+
+export function asianPresenterLook(look: PresenterLook): boolean {
+  return /(?:^|[ _-])(asian|east[ _-]?asian|chinese|japanese|korean)(?:$|[ _-])|亚洲|东亚|中国|日本|韩国/i.test([look.ethnicity, ...(look.tags || [])].filter(Boolean).join(' '));
 }
 
 /** Defaults to public assets. Private catalogs require an explicit tenant binding in the router. */
