@@ -65,6 +65,12 @@ export interface SocialAssetSupplyShotExecution {
     disclosure: string | null;
   };
   attempts: SocialAssetSupplyExecutionAttempt[];
+  archivedMaterial?: {
+    materialId: string;
+    materialRevision: string;
+    generationExecutionId: string;
+    adoptedAt: string;
+  };
 }
 
 export interface SocialAssetSupplyExecution {

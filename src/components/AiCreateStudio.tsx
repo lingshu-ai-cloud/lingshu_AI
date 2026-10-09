@@ -86,6 +86,7 @@ import { newDigitalHumanRequirements, planDigitalHumanShot, type DigitalHumanExe
 import { shotKeyframeCues } from '../lib/shotKeyframes';
 import { CoverFace, ProjectFirstFrameThumb, RealThumb, Thumb, coverArtCss } from './StudioMediaPreviews';
 import { Field, Pill, SectionTitle } from './StudioFormPrimitives';
+import { GENERATED_MATERIAL_KIND_FILTERS, generatedMaterialKindLabel, matchesGeneratedMaterialKind, type GeneratedMaterialKindFilter } from '../lib/generatedMaterial';
 export { StudioRequestTimeoutError, waitForStudioMediaReady, withStudioTimeout } from './studio/studioAuthenticatedMedia';
 // AI 生成内容工作台：创作设置 → 脚本与声音 → 成片制作。
 const TRAFFIC_GREEN = '#117f51';
@@ -151,6 +152,7 @@ const probeClipAspect = (clip: Clip) => new Promise<{ width: number; height: num
 const materialToClip = (m: Material): Clip => ({
   id: m.id, name: m.name, folder: m.folder, type: m.type, duration: m.duration, width: m.width, height: m.height, aspectRatio: m.aspectRatio, size: m.size, url: m.url, poster: m.poster, scope: m.scope ?? 'own',
   usage: m.usage, sourceType: m.sourceType, providerTaskId: m.providerTaskId, contentSha256: m.contentSha256, industry: m.industry, shotFunction: m.shotFunction, applicability: m.applicability, tags: m.tags,
+  generation: m.generation, lineage: m.lineage, quality: m.quality, reuse: m.reuse, rightsScope: m.rightsScope, provenance: m.provenance,
   productId: m.productId, productName: m.productName,
   transcript: m.transcript, transcriptCues: m.transcriptCues, transcriptCuesProvenance: m.transcriptCuesProvenance,
   transcriptSourceHash: m.transcriptSourceHash,
@@ -253,6 +255,7 @@ interface MaterialFolder { id: string; name: string; count: number }
 const FOLDERS: MaterialFolder[] = [
   { id: 'recommend', name: '当前选择', count: 0 },
   { id: 'all',     name: '全部素材',   count: 0 },
+  { id: 'generated', name: '我的生成', count: 0 },
   { id: 'hot',     name: '爆款素材',   count: 0 },
   { id: 'upload',  name: '本地素材',   count: 0 },
   { id: 'presenter', name: '真人口播', count: 0 },
@@ -265,6 +268,7 @@ const FOLDERS: MaterialFolder[] = [
 const POSTER_FOLDERS: MaterialFolder[] = [
   { id: 'recommend', name: '素材推荐', count: 0 },
   { id: 'all', name: '全部图文素材', count: 0 },
+  { id: 'generated', name: '我的生成', count: 0 },
   { id: 'hot', name: '爆款图文参考', count: 0 },
   { id: 'upload', name: '我的上传', count: 0 },
   { id: 'product', name: '产品主图', count: 0 },
@@ -301,6 +305,12 @@ export interface Clip {
   scope?: 'shared' | 'own'; // 公共库 / 我的（缺省按 own）
   usage?: 'editable' | 'reference_only';
   sourceType?: string;
+  generation?: Material['generation'];
+  lineage?: Material['lineage'];
+  quality?: Material['quality'];
+  reuse?: Material['reuse'];
+  rightsScope?: string;
+  provenance?: Record<string, unknown>;
   providerTaskId?: string;
   contentSha256?: string;
   industry?: string;
@@ -3014,6 +3024,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
   };
 
   const [activeFolder, setActiveFolder] = useState('recommend');
+  const [generatedAssetFilter, setGeneratedAssetFilter] = useState<GeneratedMaterialKindFilter>('all');
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState<string[]>([]);
   const [hookMaterialId, setHookMaterialId] = useState('');
@@ -10757,7 +10768,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
         const folderName = (id: string) => FOLDERS.find(f => f.id === id)?.name ?? '';
         // 按内容相关性搜索：匹配素材名 + 所属文件夹（分类）名
         const q = search.trim().toLowerCase();
-        const matchSearch = (c: Clip) => q === '' || [c.name, folderName(c.folder), c.industry, c.shotFunction, c.applicability, c.tags]
+        const matchSearch = (c: Clip) => q === '' || [c.name, folderName(c.folder), generatedMaterialKindLabel(c), c.industry, c.shotFunction, c.applicability, c.tags]
           .filter(Boolean).some(value => String(value).toLowerCase().includes(q));
         // 「当前选择」跟随当前视频版本的分镜分配，不能读取跨版本的全局勾选状态。
         // 同一素材若用于多个分镜，只在素材网格中展示一次，并保持首次出现顺序。
@@ -10768,7 +10779,10 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
           .filter((item): item is Clip => Boolean(item && item.type !== 'audio'));
         const visible = (activeFolder === 'recommend'
           ? recommended
-          : materials.filter(c => activeFolder === 'all' || c.folder === activeFolder)
+          : materials.filter(c => activeFolder === 'all'
+            || (activeFolder === 'generated'
+              ? matchesGeneratedMaterialKind(c, generatedAssetFilter)
+              : c.folder === activeFolder))
         ).filter(matchSearch);
         const materialQualityIssueCount = storyboardSlots.filter(slot => {
           const plan = storyboardSourcePlans[slot.id];
@@ -10788,11 +10802,16 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
             : posterMaterials.filter(c => ['product', 'factory', 'packaging', 'certificate', 'scene', 'brand', 'hot'].includes(c.folder));
           const visiblePoster = (posterActiveFolder === 'recommend'
             ? posterRecommended
-            : posterMaterials.filter(c => posterActiveFolder === 'all' || c.folder === posterActiveFolder)
-          ).filter(c => q === '' || c.name.toLowerCase().includes(q) || posterFolderName(c.folder).toLowerCase().includes(q));
+            : posterMaterials.filter(c => posterActiveFolder === 'all'
+              || (posterActiveFolder === 'generated'
+                ? matchesGeneratedMaterialKind(c, generatedAssetFilter)
+                : c.folder === posterActiveFolder))
+          ).filter(c => q === '' || [c.name, posterFolderName(c.folder), generatedMaterialKindLabel(c)]
+            .filter(Boolean).some(value => String(value).toLowerCase().includes(q)));
           const folderCount = (folderId: string) => {
             if (folderId === 'recommend') return posterRecommended.length;
             if (folderId === 'all') return posterMaterials.length;
+            if (folderId === 'generated') return posterMaterials.filter(c => matchesGeneratedMaterialKind(c, 'all')).length;
             return posterMaterials.filter(c => c.folder === folderId).length;
           };
           const clipsForFolders = (folders: readonly string[]) =>
@@ -10869,6 +10888,18 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                   <span className="text-xs text-text-muted">已选 {selectedPosterClips.length}</span>
                 </div>
 
+                {posterActiveFolder === 'generated' && (
+                  <div className="flex flex-wrap gap-2 border-b border-border bg-surface px-5 py-2.5">
+                    {GENERATED_MATERIAL_KIND_FILTERS.map(filter => (
+                      <button key={filter.id} type="button" onClick={() => setGeneratedAssetFilter(filter.id)}
+                        className={`rounded-full px-3 py-1 text-[11px] font-bold transition ${generatedAssetFilter === filter.id ? 'bg-accent text-white' : 'border border-border bg-white text-text-secondary hover:bg-surface-2'}`}>
+                        {filter.label}
+                        <span className="ml-1 opacity-70">{posterMaterials.filter(item => matchesGeneratedMaterialKind(item, filter.id)).length}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+
                 <div className="flex-1 overflow-y-auto p-5">
                   <div className={`mb-4 rounded-xl border px-4 py-3 text-xs leading-relaxed ${activeProductLabel ? 'border-accent/20 bg-accent-glow text-text-secondary' : 'border-amber-200 bg-amber-50 text-amber-800'}`}>
                     <span className="font-bold text-text-primary">当前产品：</span>
@@ -10907,6 +10938,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                             <p className="text-[11px] font-medium text-text-primary truncate">{c.name}</p>
                             <MaterialAnalysisStatus material={c} onRefresh={refreshMaterials} />
                             <p className="text-[10px] text-text-muted mt-0.5">{posterFolderName(c.folder)} · {c.size}</p>
+                            {generatedMaterialKindLabel(c) && <p className="mt-1 text-[9px] font-bold text-accent">AI 生成 · {generatedMaterialKindLabel(c)}</p>}
                           </div>
                         </button>
                       );
@@ -11299,6 +11331,8 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                   ? recommended.length
                   : f.id === 'all'
                     ? materials.length
+                    : f.id === 'generated'
+                      ? materials.filter(c => matchesGeneratedMaterialKind(c, 'all')).length
                     : materials.filter(c => c.folder === f.id).length;
                 return (
                   <button key={f.id} onClick={() => setActiveFolder(f.id)}
@@ -11339,6 +11373,18 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
 		                </button>
 	                <span className="text-xs text-text-muted">已选 {activeFolder === 'recommend' ? recommendationSource.length : selected.length}</span>
 	              </div>
+
+                {activeFolder === 'generated' && (
+                  <div className="flex flex-wrap gap-2 border-b border-border bg-surface px-5 py-2.5">
+                    {GENERATED_MATERIAL_KIND_FILTERS.map(filter => (
+                      <button key={filter.id} type="button" onClick={() => setGeneratedAssetFilter(filter.id)}
+                        className={`rounded-full px-3 py-1 text-[11px] font-bold transition ${generatedAssetFilter === filter.id ? 'bg-accent text-white' : 'border border-border bg-white text-text-secondary hover:bg-surface-2'}`}>
+                        {filter.label}
+                        <span className="ml-1 opacity-70">{materials.filter(item => matchesGeneratedMaterialKind(item, filter.id)).length}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
 
 	              <div className="flex-1 overflow-y-auto p-5">
 	                {activeFolder === 'presenter' && digitalHumanNotice && (
@@ -11473,6 +11519,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
 	                          <p className="text-[11px] font-medium text-text-primary truncate">{c.name}</p>
                             <MaterialAnalysisStatus material={c} onRefresh={refreshMaterials} />
 	                          <p className="text-[10px] text-text-muted mt-0.5">{c.folder === 'presenter' ? '真人口播素材 · ' : ''}{c.size}</p>
+	                          {generatedMaterialKindLabel(c) && <p className="mt-1 text-[9px] font-bold text-accent">AI 生成 · {generatedMaterialKindLabel(c)}</p>}
 	                          {(c.industry || c.shotFunction) && (
 	                            <p className="mt-1 truncate text-[9px] text-text-muted">{[c.industry, c.shotFunction].filter(Boolean).join(' · ')}</p>
 	                          )}

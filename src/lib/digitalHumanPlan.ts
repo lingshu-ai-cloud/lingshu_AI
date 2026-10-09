@@ -168,8 +168,7 @@ export function digitalHumanRouteSteps(method: DigitalHumanRequirements['method'
     { id: 'source_alignment', label: method === 'talking' ? '确认人物与口播输入' : '确认原片、逐句映射与保留要求', actor: 'system', tool: null, dependsOn: [], status: inputStatus },
     { id: 'generation', label: generationLabel, actor: 'provider', tool: provider, dependsOn: ['source_alignment'], status: executable ? 'ready' : 'blocked' },
     { id: 'automatic_quality', label: '自动媒体与画面检查', actor: 'system', tool: null, dependsOn: ['generation'], status: 'blocked' },
-    { id: 'manual_review', label: '可选人物与口型复核', actor: 'user', tool: null, dependsOn: ['automatic_quality'], status: 'blocked' },
-    { id: 'assembly', label: '确认候选并填入分镜', actor: 'user', tool: null, dependsOn: ['automatic_quality'], status: 'blocked' },
+    { id: 'assembly', label: '自动采用合格候选并填入分镜', actor: 'system', tool: null, dependsOn: ['automatic_quality'], status: 'blocked' },
   ];
 }
 

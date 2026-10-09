@@ -195,7 +195,8 @@ test('production router persists jobs, never resubmits uncertain operations, iso
     assert.equal(executionAfterCompletion.costStatus, 'awaiting_invoice'); assert.equal(executionAfterCompletion.actualCostCny, null);
     assert.equal(executionAfterCompletion.quality.state, 'accepted');
     assert.equal(executionAfterCompletion.routeSteps.find((step: any) => step.id === 'generation').status, 'completed');
-    assert.equal(executionAfterCompletion.routeSteps.find((step: any) => step.id === 'manual_review').status, 'ready');
+    assert.equal(executionAfterCompletion.routeSteps.some((step: any) => step.id === 'manual_review'), false);
+    assert.equal(executionAfterCompletion.routeSteps.find((step: any) => step.id === 'assembly').status, 'ready');
     assert.equal(executionAfterCompletion.quality.checks.find((item: any) => item.key === 'media_import').status, 'passed');
     assert.equal(executionAfterCompletion.quality.checks.find((item: any) => item.key === 'identity').status, 'pending');
     assert.equal((await request(`/executions/${executionAfterCompletion.id}/quality`, { decisions: { unknown: { passed: true, evidence: 'x' } } })).status, 400);
@@ -419,7 +420,8 @@ test('reference adapter uses durable idempotent execution records and refreshes 
     assert.equal(duplicateCost.actualCostCny, 3.4568); assert.equal(costCalls, 1, 'reconciled cost lookup is idempotent');
     assert.equal(completed.quality.state, 'accepted');
     assert.equal(completed.routeSteps.find((step: any) => step.id === 'automatic_quality').status, 'completed');
-    assert.equal(completed.routeSteps.find((step: any) => step.id === 'manual_review').status, 'ready');
+    assert.equal(completed.routeSteps.some((step: any) => step.id === 'manual_review'), false);
+    assert.equal(completed.routeSteps.find((step: any) => step.id === 'assembly').status, 'ready');
     for (const key of ['media_import', 'reference_duration', 'reference_audio', 'reference_motion', 'reference_pose_proxy', 'reference_background_proxy', 'reference_artifacts_proxy']) assert.equal(completed.quality.checks.find((item: any) => item.key === key).status, 'passed');
     assert.equal(completed.quality.checks.find((item: any) => item.key === 'identity').status, 'passed');
     assert.equal(completed.quality.checks.find((item: any) => item.key === 'identity').mode, 'automatic');

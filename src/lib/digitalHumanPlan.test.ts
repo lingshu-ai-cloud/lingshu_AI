@@ -112,18 +112,18 @@ test('changed reference, identity or narration revokes content approval and inva
   const unconfirmed = { ...shot, digitalHuman: { ...reference, contentConfirmed: false } };
   assert.equal(patchShot(unconfirmed, { digitalHuman: reference }).digitalHuman?.contentConfirmed, true);
 });
-test('route dependencies expose generation, automatic checks, manual review and assembly truthfully', () => {
+test('route dependencies expose generation, automatic checks and automatic assembly without a manual checkpoint', () => {
   const planned = digitalHumanRouteSteps('replace', 'runway_act_two', true);
-  assert.deepEqual(planned.map(step => step.dependsOn), [[], ['source_alignment'], ['generation'], ['automatic_quality'], ['automatic_quality']]);
+  assert.deepEqual(planned.map(step => step.dependsOn), [[], ['source_alignment'], ['generation'], ['automatic_quality']]);
+  assert.equal(planned.some(step => step.id === 'manual_review'), false);
   assert.equal(planned.find(step => step.id === 'generation')?.tool, 'runway_act_two');
   const initial = initialDigitalHumanQuality(undefined, '2026-01-01T00:00:00Z');
   assert.equal(routeStepsForExecution(planned, 'pending', initial).find(step => step.id === 'generation')?.status, 'running');
   const admitted = recordDigitalHumanMediaCheck(initial, { passed: true, evidence: 'material:m1' });
-  assert.equal(routeStepsForExecution(planned, 'completed', admitted).find(step => step.id === 'manual_review')?.status, 'ready');
+  assert.equal(routeStepsForExecution(planned, 'completed', admitted).find(step => step.id === 'assembly')?.status, 'ready');
   const decisions = Object.fromEntries(admitted.checks.filter(check => check.mode === 'manual').map(check => [check.key, { passed: true, evidence: '人工确认' }]));
   const accepted = reviewDigitalHumanQuality(admitted, decisions, '2026-01-01T00:01:00Z');
   const completed = routeStepsForExecution(planned, 'completed', accepted);
-  assert.equal(completed.find(step => step.id === 'manual_review')?.status, 'completed');
   assert.equal(completed.find(step => step.id === 'assembly')?.status, 'ready');
   assert.equal(routeStepsForExecution(planned, 'completed', accepted, true).find(step => step.id === 'assembly')?.status, 'completed');
   assert.equal(digitalHumanRouteSteps('replace', null, false, 'needs_input')[0]?.status, 'attention');

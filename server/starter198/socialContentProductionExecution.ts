@@ -13,7 +13,7 @@ import { automationBgmAudio, automationBgmCatalog, readTenantEnterpriseProfile, 
 import { analyzeProductionMaterial } from '../digitalEmployees/productionMaterialAnalysis.js';
 import { objectStorageEnabled, objectStorageSignedGetUrl } from '../storage/objectStorage.js';
 import { createSocialContentArtifact } from './socialContentOutputs.js';
-import { registerSocialContentFile, socialContentFileDownloadUrl, storeTransientSocialContentFile, type SocialContentBackendFilePort } from './socialContentFiles.js';
+import { archiveGeneratedSocialContentFile, registerSocialContentFile, socialContentFileDownloadUrl, storeTransientSocialContentFile, type SocialContentBackendFilePort } from './socialContentFiles.js';
 import { materializeSocialContentCloudMaterial, socialContentCloudMaterialRecordId, type SocialContentCloudMaterialPort } from './socialContentMaterialAccess.js';
 import { withSocialContentRenderWorkspace } from './socialContentRenderWorkspace.js';
 import { readSocialTaskDetail, requireSocialTask } from './socialContentRecords.js';
@@ -58,6 +58,7 @@ import type { InternalSocialContentFormula } from './socialContentThemes.js';
 import { socialProductionCollaborationFailures, socialProductionCollaborationTrace, socialProductionExecutionSceneForFinal } from './socialContentProductionCollaboration.js';
 import { socialContentReviewAdmissionAllowed } from './socialContentTestBypass.js';
 import { voiceLearningReadiness } from '../videoProduction/voiceQualityLearning.js';
+import { generatedAssetArchive } from '../lib/generatedAssetArchive.js';
 const require = createRequire(import.meta.url);
 const { composite } = require('../../desktop/render.cjs') as { composite: (manifest: unknown, onProgress?: (progress: number) => void, outputDir?: string) => Promise<{ ok: boolean; outputPath?: string; error?: string }> };
 import { MEDIA_ROOT, type ProductionAsset, type SocialProductionBaseline, type SocialProductionAdaptation, type SocialReviewRevisionDirective, automaticSocialMaterialEligible, detectDistinctTaskVideoSegments, hasExactTaskProductAssociation, resolveTaskProductionMaterialLocation, taskProductionAssets, systemThemeGraphicAssets, applyZeroAssetTruthSafeNarration, socialReviewRevisionDirective, applySocialReviewRevision, createVideoCover } from './socialContentAutoProduction.js';
@@ -76,6 +77,121 @@ export interface SocialContentAutoProductionRuntime {
 }
 
 export const SOCIAL_SHOOTING_PLAN_SCHEMA = 'social-content.shooting-plan.v1';
+
+export type SocialGeneratedShotArchiveCandidate = {
+  sceneId: string;
+  assetGenerationKind: 'product_scene' | 'concept_visual' | 'motion_graphics';
+  asset: SocialProductionAsset;
+  execution: SocialAssetSupplyExecution['shots'][number];
+};
+
+/** Select only media created by this supply run. Customer uploads, licensed
+ * stock and digital presenters already have their own ownership/archive path
+ * and must not be duplicated into the non-person generation collection. */
+export function socialGeneratedShotArchiveCandidates(input: {
+  assets: SocialProductionAsset[];
+  execution: SocialAssetSupplyExecution | null;
+}): SocialGeneratedShotArchiveCandidate[] {
+  if (!input.execution) return [];
+  const assets = new Map(input.assets.map(asset => [asset.id, asset]));
+  return input.execution.shots.flatMap(execution => {
+    if (!execution.provenance.synthetic) return [];
+    const assetGenerationKind = execution.sourceStrategy === 'aigc_product_scene_replication'
+      ? 'product_scene' as const
+      : execution.sourceStrategy === 'non_evidentiary_ai_visual'
+        ? 'concept_visual' as const
+        : ['motion_graphics', 'verified_fact_card'].includes(execution.sourceStrategy)
+          ? 'motion_graphics' as const
+          : null;
+    if (!assetGenerationKind) return [];
+    const asset = assets.get(execution.assetId);
+    return asset ? [{ sceneId: execution.sceneId, assetGenerationKind, asset, execution }] : [];
+  });
+}
+
+function archiveMimeType(asset: SocialProductionAsset): string {
+  if (asset.type === 'image') {
+    const ext = path.extname(asset.localPath || asset.url).toLowerCase();
+    return ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg' : ext === '.webp' ? 'image/webp' : 'image/png';
+  }
+  return path.extname(asset.localPath || asset.url).toLowerCase() === '.webm' ? 'video/webm' : 'video/mp4';
+}
+
+export async function archiveSocialGeneratedShots(input: {
+  tenantId: string;
+  taskId: string;
+  assets: SocialProductionAsset[];
+  execution: SocialAssetSupplyExecution | null;
+  now?: Date;
+  archiveMedia?: typeof generatedAssetArchive.archiveNewMedia;
+}): Promise<void> {
+  const adoptedAt = (input.now ?? new Date()).toISOString();
+  for (const candidate of socialGeneratedShotArchiveCandidates(input)) {
+    const { asset, execution } = candidate;
+    if (!asset.localPath && !asset.objectKey) {
+      throw new Error(`generated_asset_archive_media_missing:${candidate.sceneId}`);
+    }
+    let contentSha256 = socialText(asset.contentHash).toLowerCase();
+    if (!/^[a-f0-9]{64}$/.test(contentSha256) && asset.localPath) {
+      contentSha256 = createHash('sha256').update(await fsp.readFile(asset.localPath)).digest('hex');
+    }
+    const segment = socialObject(asset.segments[0]) ?? {};
+    const providerTaskId = socialText(asset.providerTaskId || segment.providerTaskId);
+    const idempotencyKey = socialText(asset.idempotencyKey || segment.idempotencyKey)
+      || socialRequestHash({ taskId: input.taskId, sceneId: candidate.sceneId, assetId: asset.id });
+    const generationExecutionId = providerTaskId || idempotencyKey;
+    const qualityReport = segment.quality ?? null;
+    const archived = await (input.archiveMedia ?? generatedAssetArchive.archiveNewMedia)({
+      tenantId: input.tenantId,
+      name: asset.name,
+      media: {
+        type: asset.type,
+        ...(asset.localPath ? { localPath: asset.localPath } : {}),
+        ...(asset.objectKey ? { objectKey: asset.objectKey } : {}),
+        mimeType: archiveMimeType(asset),
+        duration: asset.duration,
+        contentSha256,
+      },
+      generation: {
+        pipelineId: 'non_person_generation',
+        assetGenerationKind: candidate.assetGenerationKind,
+        pipelineVersion: 'social-content.asset-supply-execution.v1',
+        executionId: generationExecutionId,
+        provider: execution.providerId,
+        model: socialText(segment.model) || execution.providerId,
+        ...(providerTaskId ? { providerTaskId } : {}),
+        idempotencyKey,
+        inputFingerprint: socialRequestHash({ taskId: input.taskId, sceneId: candidate.sceneId, assetId: asset.id, idempotencyKey }),
+        promptOrSpecHash: socialRequestHash({ sceneId: candidate.sceneId, segment, strategy: execution.sourceStrategy }),
+        inputMaterialIds: Array.from(new Set([
+          ...(execution.truthBoundary.customerEvidenceRefs ?? []),
+          ...[segment.productIdentityRefs].flatMap(value => Array.isArray(value) ? value.map(socialText) : []),
+        ].filter(Boolean))),
+        ...(Number.isFinite(Number(segment.estimatedCostCny)) ? { estimatedCostCny: Number(segment.estimatedCostCny) } : {}),
+        ...(Number.isFinite(Number(segment.actualCostCny)) ? { actualCostCny: Number(segment.actualCostCny) } : {}),
+      },
+      lineage: { sourceTaskId: input.taskId, sourceShotId: candidate.sceneId },
+      quality: {
+        state: 'accepted',
+        policyVersion: 'social-generated-shot.v1',
+        checkedAt: adoptedAt,
+        checks: [
+          { key: 'provider_completed', status: 'passed', evidence: `${execution.providerId}:${providerTaskId || asset.sourceId}` },
+          { key: 'truth_boundary', status: 'passed', evidence: execution.provenance.representation },
+          ...(qualityReport ? [{ key: 'pipeline_quality', status: 'passed' as const, evidence: 'adapter_quality_gate_passed' }] : []),
+        ],
+        ...(qualityReport ? { rawReport: qualityReport } : {}),
+      },
+      rightsScope: 'tenant_generated_reusable',
+    });
+    execution.archivedMaterial = {
+      materialId: archived.id,
+      materialRevision: contentSha256,
+      generationExecutionId,
+      adoptedAt,
+    };
+  }
+}
 
 /** Freeze the Content Agent's reviewed candidate back into the executable
  * supply plan. This makes the keyframe/range shown for review authoritative. */
@@ -493,6 +609,13 @@ export async function runSocialContentAutoProduction(input: {
 	    // Only assets selected by the Director's per-shot router enter the edit.
 	    assets = supplied.assets;
 	    assetSupplyExecution = supplied.execution;
+	    await archiveSocialGeneratedShots({
+	      tenantId: input.tenantId,
+	      taskId: input.taskId,
+	      assets,
+	      execution: assetSupplyExecution,
+	      now: input.now,
+	    });
 	    for (const selection of presenterExecutions) {
         const receipt = assetSupplyExecution.shots.find(shot => shot.sceneId === selection.sceneId);
         if (selection.providerId === 'heygen' && (!receipt || receipt.providerId !== 'heygen'
@@ -921,6 +1044,11 @@ export async function runSocialContentAutoProduction(input: {
   const plannedCostCny = +agentWorkflow.executionPlan.scenes
     .reduce((sum, scene) => sum + scene.estimatedCostCny, 0).toFixed(2);
   const selectedAssetIds = new Set(contentHandoff.scenes.map(scene => scene.source.assetId));
+  const archivedMaterialIdByAssetId = new Map((assetSupplyExecution?.shots ?? [])
+    .filter(shot => shot.archivedMaterial)
+    .map(shot => [shot.assetId, shot.archivedMaterial!.materialId]));
+  const finalInputMaterialIds = [...selectedAssetIds]
+    .map(assetId => archivedMaterialIdByAssetId.get(assetId) || assetId);
   const recordedProviderCostCny = +assets
     .filter(asset => selectedAssetIds.has(asset.id))
     .flatMap(asset => asset.segments ?? [])
@@ -931,6 +1059,57 @@ export async function runSocialContentAutoProduction(input: {
     : replicationEvaluation && replicationEvaluation.status !== 'passed'
       ? 'requires_revision'
       : 'publish_candidate';
+  const finalQualityAccepted = !replicationEvaluation || replicationEvaluation.status === 'passed';
+  const finalGeneratedMaterial = await archiveGeneratedSocialContentFile({
+    file,
+    stored,
+    archive: {
+      tenantId: input.tenantId,
+      name: `${detail.brief.title || '社媒内容'}-成品.mp4`,
+      media: {
+      type: 'video',
+      localPath: result.outputPath,
+      ...(stored.storageKind === 'object' ? { objectKey: stored.storageKey } : {}),
+      duration,
+      },
+      generation: {
+      pipelineId: 'non_person_generation',
+      assetGenerationKind: 'final_video',
+      pipelineVersion: AUTO_SCHEMA,
+      executionId: productionResultId,
+      provider: 'local_compositor',
+      model: 'desktop/render.cjs',
+      idempotencyKey: `social-auto-final:${input.taskId}:${stored.sha256}`,
+      inputFingerprint: socialRequestHash({
+        taskId: input.taskId,
+        directorPlanHash: directorPlan.lineageHash,
+        selectedAssetIds: finalInputMaterialIds,
+      }),
+      promptOrSpecHash: directorPlan.lineageHash,
+      inputMaterialIds: finalInputMaterialIds,
+      estimatedCostCny: plannedCostCny,
+      actualCostCny: recordedProviderCostCny,
+      },
+      lineage: { sourceTaskId: input.taskId, sourceAssemblyId: productionResultId },
+      quality: {
+      state: finalQualityAccepted ? 'accepted' : 'repair_required',
+      policyVersion: 'social-final-video.v1',
+      checkedAt: new Date().toISOString(),
+      checks: [
+        { key: 'visual_decode', status: 'passed', evidence: `checked_scenes:${sceneQuality.checkedScenes}` },
+        { key: 'audio_decode', status: 'passed', evidence: 'ffmpeg_audio_decode_passed' },
+        { key: 'director_review', status: 'passed', evidence: agentWorkflow.directorBrief.directorBriefId },
+        ...(replicationEvaluation ? [{
+          key: 'replication_evaluation',
+          status: replicationEvaluation.status === 'passed' ? 'passed' as const : 'failed' as const,
+          evidence: replicationEvaluation.evaluationId,
+        }] : []),
+      ],
+      rawReport: { visual: quality, scenes: sceneQuality, replicationEvaluation },
+      },
+      rightsScope: 'tenant_generated_reusable',
+    },
+  });
   const productionResult: SocialProductionResult = {
     productionResultId,
     version: detail.version,
@@ -994,6 +1173,12 @@ export async function runSocialContentAutoProduction(input: {
             sha256: coverFile.sha256,
             url: coverFile.downloadUrl || socialContentFileDownloadUrl(coverFile.fileId),
           },
+        },
+        generatedMaterial: {
+          materialId: finalGeneratedMaterial.id,
+          materialRevision: stored.sha256,
+          generationExecutionId: productionResultId,
+          adoptedAt: new Date().toISOString(),
         },
         scriptBaseline: {
           version: activeBaseline.version,

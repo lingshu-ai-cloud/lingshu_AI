@@ -22,6 +22,8 @@ import { enterpriseAssetStableId } from '../digitalEmployees/contentBatchPlan.js
 import { resolveMaterialProductAssociation } from '../digitalEmployees/materialProductionReadiness.js';
 import { requestMaterialAnalysis, waitForMaterialAnalysis, isMaterialAnalysisActive, saveMaterialSegmentsWithScriptAnalysis, startPendingLocalMaterialAnalyses } from '../lib/materialLibraryAnalysis.js';
 import { readMaterialLibrary, readLocalMaterials, saveLocalMaterials, updateLocalMaterial } from '../lib/materialLibrary.js';
+import { filterMyGeneratedMaterials, projectGeneratedMaterial } from '../../src/lib/generatedMaterial.js';
+import { ASSET_GENERATION_KINDS } from '../../shared/contracts/generatedMaterial.js';
 import { currentDataAuthority } from '../storage/dataAuthority.js';
 import { mixedStoryboardRules, mixedStoryboardIssues } from './mixedStoryboardContract.js';
 import { alignQwenFile } from '../integrations/qwenAlignment.js';
@@ -6406,7 +6408,7 @@ export function productionAnalysisSegments(id: string, duration: number, analysi
   });
 }
 
-// GET /studio/materials?scope=shared|own&purpose=library|reference|all
+// GET /studio/materials?scope=shared|own&purpose=library|reference|all&origin=generated
 // 素材库是统一使用边界：所有已入库视觉素材都可进入创作。
 studioRouter.get('/materials', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
@@ -6436,6 +6438,25 @@ studioRouter.get('/materials', async (req, res) => {
   else if (scope === 'own') list = list.filter(m => (m.scope ?? 'own') === 'own');
   if (purpose === 'reference') list = list.filter(isReferenceOnlyMaterial);
   else if (purpose !== 'all') list = list.filter(m => !isReferenceOnlyMaterial(m));
+  const origin = String(req.query.origin || '');
+  const assetGenerationKind = String(req.query.assetGenerationKind || '');
+  const qualityState = String(req.query.qualityState || '');
+  if (assetGenerationKind && !ASSET_GENERATION_KINDS.includes(assetGenerationKind as any)) {
+    res.status(400).json({ error: '生成素材类型无效' }); return;
+  }
+  if (qualityState && !['accepted', 'repair_required', 'failed'].includes(qualityState)) {
+    res.status(400).json({ error: '生成素材质量状态无效' }); return;
+  }
+  if (origin === 'generated' || assetGenerationKind || qualityState || req.query.reusableOnly === '1') {
+    list = filterMyGeneratedMaterials(list, {
+      tenantId,
+      ...(assetGenerationKind ? { assetGenerationKind: assetGenerationKind as any } : {}),
+      ...(qualityState ? { qualityState: qualityState as any } : {}),
+      reusableOnly: req.query.reusableOnly === '1',
+    }) as Material[];
+  } else if (origin === 'uploaded') {
+    list = list.filter(item => !projectGeneratedMaterial(item));
+  }
   const facets = {
     sources: Object.fromEntries(MATERIAL_SOURCE_CATEGORIES.map(value => [value, list.filter(item => materialSourceCategoryOf(item) === value).length])),
     themes: Object.fromEntries(MATERIAL_THEMES.map(value => [value, list.filter(item => materialThemeTagsOf(item).includes(value)).length])),
@@ -6964,6 +6985,25 @@ studioRouter.patch('/materials/:id', async (req, res) => {
 // DELETE /studio/materials/:id
 studioRouter.delete('/materials/:id', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
+  const projects = await store.list<any>('studio_projects', { where: { tenant_id: tenantId }, perPage: 500 });
+  const materialId = String(req.params.id);
+  const referencedBy = projects.items.filter(project => {
+    const visit = (value: unknown, key = ''): boolean => {
+      if (Array.isArray(value)) return value.some(item => visit(item, key));
+      if (value && typeof value === 'object') return Object.entries(value as Record<string, unknown>)
+        .some(([childKey, child]) => visit(child, childKey));
+      if (key === 'spec' && typeof value === 'string') {
+        try { return visit(JSON.parse(value), ''); } catch { return false; }
+      }
+      return /materialid$/i.test(key) && String(value || '') === materialId;
+    };
+    return visit(project.spec, 'spec');
+  });
+  if (referencedBy.length) {
+    res.status(409).json({ ok: false, error: '素材仍被制作项目引用，请先从相关分镜移除',
+      references: referencedBy.map(project => ({ projectId: project.id, title: project.title })) });
+    return;
+  }
   if (req.params.id.startsWith('pb-')) {
     try {
       const result = await deleteOwnedCloudMaterial(req.params.id.slice(3), tenantId);

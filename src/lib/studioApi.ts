@@ -1025,6 +1025,12 @@ export interface Material {
   usage?: 'editable' | 'reference_only';
   canManage?: boolean;
   sourceType?: string;
+  /** Canonical generated-library metadata. Physical folders remain presentation metadata. */
+  generation?: import('../../shared/contracts/generatedMaterial').GeneratedAssetGeneration;
+  lineage?: import('../../shared/contracts/generatedMaterial').GeneratedAssetLineage;
+  quality?: import('../../shared/contracts/generatedMaterial').GeneratedAssetQuality;
+  reuse?: import('../../shared/contracts/generatedMaterial').GeneratedAssetReuse;
+  rightsScope?: string;
   sourceCategory?: import('../../shared/materialTaxonomy').MaterialSourceCategory;
   sourceChannel?: string;
   primaryTheme?: import('../../shared/materialTaxonomy').MaterialTheme;

@@ -109,6 +109,15 @@ export async function importRunwayReferenceOutput(rawUrl: string, execution: Dig
       scope: 'own', tenantId, usage: 'editable', sourceType: 'runway_act_two', sourceExecutionId: execution.id,
       sourceReferenceMaterialId: evidence.materialId, sourceReferenceClipObjectKey: evidence.clipObjectKey,
       contentSha256: hash, objectEtag: String(storedObject.etag), referenceTechnicalMetrics: metrics, ...(visualMetrics ? { referenceVisualMetrics: visualMetrics } : {}),
+      generation: { pipelineId:'digital_human_2',assetGenerationKind:'digital_human',pipelineVersion:'reference-reenact.v1',executionId:execution.id,
+        provider:execution.provider,model:execution.model||execution.tool,providerTaskId:execution.externalTaskId||undefined,idempotencyKey:execution.id,
+        inputFingerprint:execution.fingerprint,promptOrSpecHash:createHash('sha256').update(JSON.stringify(execution.inputSnapshot?.requirements||{})).digest('hex'),
+        inputMaterialIds:[evidence.materialId] },
+      lineage:{sourceProjectId:execution.projectId,sourceAssemblyId:execution.assemblyId,sourceShotId:execution.shotId},
+      quality:{state:visualMetrics?'accepted':'repair_required',policyVersion:'reference-reenact-automatic.v1',checkedAt:new Date().toISOString(),
+        checks:[{key:'technical',status:'passed',evidence:JSON.stringify(metrics)},...(visualMetrics?[{key:'visual',status:'passed' as const,evidence:JSON.stringify(visualMetrics)}]:[{key:'visual',status:'unavailable' as const,evidence:'automatic_visual_check_unavailable'}])],
+        rawReport:{technical:metrics,visual:visualMetrics}},
+      reuse:{eligible:Boolean(visualMetrics),reason:visualMetrics?'quality_accepted':'automatic_visual_check_unavailable',usageCount:0},rightsScope:'tenant_generated_reusable',generationState:'archived',
       createdAt: existing?.createdAt || new Date().toISOString(), updatedAt: new Date().toISOString() };
     deps.saveMaterials([...current.filter(item => !(item.id === id && String(item.tenantId || item.tenant_id || '') === tenantId)), material]);
     return { materialId: id, objectKey, contentSha256: hash, objectEtag: String(storedObject.etag), technicalMetrics: metrics, ...(visualMetrics ? { visualMetrics } : {}) };
