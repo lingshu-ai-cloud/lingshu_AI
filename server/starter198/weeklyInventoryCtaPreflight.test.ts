@@ -1,0 +1,4 @@
+import test from 'node:test';import assert from 'node:assert/strict';import {inventoryCtaPreflightGap} from './weeklyInventoryCtaPreflight.js';
+test('exact frozen source CTA supports unchanged target reception',()=>{assert.equal(inventoryCtaPreflightGap({sourceCta:'询问产品信息',targetCta:'询问产品信息',bindingCta:'询问产品信息'}),null);});
+test('same target and binding labels do not prove that the actual old video changed',()=>{assert.equal(inventoryCtaPreflightGap({sourceCta:'询问产品信息',targetCta:'领取报价',bindingCta:'领取报价'}),'inventory_target_cta_requires_explicit_source_compatibility');});
+test('semantic similarity or missing source requirements remains unverified',()=>{assert.equal(inventoryCtaPreflightGap({sourceCta:'询问产品信息',targetCta:'咨询产品',bindingCta:'咨询产品'}),'inventory_target_cta_requires_explicit_source_compatibility');assert.equal(inventoryCtaPreflightGap({sourceCta:null,targetCta:'咨询产品',bindingCta:'咨询产品'}),'inventory_actual_source_cta_unverified');});

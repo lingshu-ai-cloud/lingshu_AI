@@ -141,6 +141,7 @@
     "1791072043_create_weekly_profile_upgrades.js": "b40a6e03c06ad2d05fdd383d401206f2f21870d95429be81086ccf1549173008",
     "1791072044_create_scene_g4_reviews.js": "ea05c1a31afc4928a1e2a29195bc27cc10bb1729b2b4b92913493a328eb5e85d",
     "1791072045_create_director_g5_reviews.js": "599edb991f2c8066d423d203e8b806b2a71727064d3691585accbdef77806bfb",
-    "1791072046_create_weekly_g6_reviews.js": "1f045114578d9ea6b536b7c2670daa34479345c9e89e4b1f6ec3b2ee635b21c7"
+    "1791072046_create_weekly_g6_reviews.js": "1f045114578d9ea6b536b7c2670daa34479345c9e89e4b1f6ec3b2ee635b21c7",
+    "1791072047_fence_platform_capability_account.js": "99a23a31217bfd272b7f7f1b88cf9112006f6ebec71c6889a0aba6d4549f2d81"
   }
 }

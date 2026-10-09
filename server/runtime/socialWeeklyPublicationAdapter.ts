@@ -108,6 +108,8 @@ export function createSocialWeeklyPublicationAdapter(dataStore: DataStore, optio
         bindingId: publication.receptionRequirement?.bindingId, ports: options.receptionPorts, now: now(),
       });
       if (reception.status === 'blocked') return blocked(reception.reason, '发布承接检查未通过，请补齐入口、资料或接待配置。');
+      try { await assertWeeklyPublicationG6Admission(dataStore,task,assignment,publicationPackage,{now,reception:options.receptionPorts}); }
+      catch(error) { return blocked(error instanceof Error&&'code' in error?String(error.code):'weekly_g6_current_preflight_required','本条成片尚未通过同源发布预检，请在生产页核验 G6。'); }
       await assertAdmission();
       attempt = await executeWeeklyPublication({ assignment: assignment.payload, publicationPackage, contentPackage: pkg.socialContentPackage, adapter: provider, existingPublishedCount: publishedCount, dataStore, now: now() });
     }
@@ -120,3 +122,4 @@ function publicationResult(attempt: DurablePublicationAttempt): WeeklyExecutionA
   if (attempt.status === 'failed') return blocked(attempt.failure_code || 'publication_rejected', '平台已明确拒绝发布，需要人工处理。');
   return pending('publication_receipt_reconciliation_pending', '平台受理或结果未知，等待回执对账，不重复提交发布。');
 }
+import {assertWeeklyPublicationG6Admission} from './weeklyPublicationG6Admission.js';

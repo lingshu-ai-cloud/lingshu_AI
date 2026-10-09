@@ -158,6 +158,7 @@ export function createSocialContentRouter(dependencies: SocialContentRouterDepen
   const socialTaskMaterialPort = dependencies.socialTaskMaterialPort;
 
   router.use(requireAuth);
+  if(repository.dataStore) router.use('/tasks/:taskId/runs/:runId/artifacts/:artifactId/weekly-quality-recovery',createWeeklyContentQualityRecoveryRouter(createWeeklyContentQualityRecoveryService(repository.dataStore)));
   router.use('/tasks/:taskId/runs/:runId/artifacts/:artifactId/g5-reviews',createSocialDirectorG5ReviewRouter(createSocialDirectorG5ReviewService(repository)));
 router.use('/tasks/:taskId/runs/:runId/artifacts/:artifactId/g6-reviews',createSocialWeeklyG6ReviewRouter(createSocialWeeklyG6ReviewService(repository)));
   router.use('/tasks/:taskId/runs/:runId/artifacts/:artifactId/g4-reviews',createSocialSceneG4ReviewRouter(createSocialSceneG4ReviewService(repository)));
@@ -698,3 +699,5 @@ router.use('/tasks/:taskId/runs/:runId/artifacts/:artifactId/g6-reviews',createS
 
   return router;
 }
+import {createWeeklyContentQualityRecoveryRouter} from './weeklyContentQualityRecoveryRouter.js';
+import {createWeeklyContentQualityRecoveryService} from '../socialPrograms/weeklyContentQualityRecovery.js';

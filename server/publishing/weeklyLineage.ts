@@ -291,10 +291,7 @@ export async function executeWeeklyPublication(input: {
     normalized = { status: 'unknown', failure_code: 'provider_outcome_unknown' };
   }
   const resolvedAt = new Date().toISOString();
-  if (!await dataStore.update(PUBLICATION_ATTEMPTS, created.id, { ...normalized, resolved_at: resolvedAt, updated_at: resolvedAt })) {
-    throw new Error('publication_attempt_result_storage_failed');
-  }
-  return { ...created, ...normalized, resolved_at: resolvedAt, updated_at: resolvedAt };
+  return settlePublicationAttempt({dataStore,original:created,observation:normalized,resolvedAt});
 }
 
 /** Reconciliation is status-only. It cannot call publish again. */
@@ -317,8 +314,7 @@ export async function reconcileWeeklyPublication(input: {
       ? { status: 'failed' as const, failure_code: result.failureCode || 'provider_rejected' }
       : { status: 'unknown' as const, ...(result.providerReceiptId ? { provider_receipt_id: result.providerReceiptId } : {}), failure_code: result.failureCode || 'provider_outcome_unknown' };
   const resolvedAt = (input.now ?? new Date()).toISOString();
-  if (!await dataStore.update(PUBLICATION_ATTEMPTS, current.id, { ...normalized, resolved_at: resolvedAt, updated_at: resolvedAt })) throw new Error('publication_attempt_result_storage_failed');
-  return { ...current, ...normalized, resolved_at: resolvedAt, updated_at: resolvedAt };
+  return settlePublicationAttempt({dataStore,original:current,observation:normalized,resolvedAt});
 }
 
 export function validateWeeklyAssignmentBoundary(input: {
@@ -399,3 +395,4 @@ export function realPublishingCapabilities(evidence: PlatformCapabilityEvidence[
       : { platform, status: 'unavailable', reason: 'provider_publish_permission_not_verified' };
   });
 }
+import {settlePublicationAttempt} from './publicationAttemptSettlement.js';

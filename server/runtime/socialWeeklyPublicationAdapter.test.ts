@@ -7,8 +7,12 @@ import type { DataStore, ListQuery } from '../storage/datastore.js';
 import { buildPublicationAssignment, type PublishableProductionResult } from '../digitalEmployees/publishingExecution.js';
 import type { WeeklyOperatingPackage, WeeklyExecutionTask } from '../../shared/contracts/socialProgram.js';
 import { planWeeklyExecutionTasks } from '../socialPrograms/executionTasks.js';
-import { createAssignedPublicationPackage, persistPublicationAssignment, markPublicationAssignmentPackageReady, type WeeklyPublishingProviderAdapter } from '../publishing/weeklyLineage.js';
+import { createAssignedPublicationPackage, persistPublicationAssignment, markPublicationAssignmentPackageReady, executeWeeklyPublication, type StoredPublicationAssignment, type WeeklyPublishingProviderAdapter } from '../publishing/weeklyLineage.js';
 import { createSocialWeeklyPublicationAdapter } from './socialWeeklyPublicationAdapter.js';
+import {readStarterPublicationPackage} from '../publishing/starterPublicationPackage.js';
+import {assertWeeklyPublicationG6Admission} from './weeklyPublicationG6Admission.js';
+import {SOCIAL_WEEKLY_G6_REVIEWS} from '../starter198/socialWeeklyG6ReviewService.js';
+import {socialRequestHash} from '../starter198/socialContentValidation.js';
 type Row = { id: string; [key: string]: any };
 function memoryStore(): DataStore & { rows: Map<string, Row[]> } {
   const rows = new Map<string, Row[]>();
@@ -68,8 +72,30 @@ async function setup(context: TestContext) {
   return { dataStore, tasks, publicationTask, assignment };
 }
 
+test('actual weekly adapter refuses a new publish without a current G6 proof and performs zero provider POSTs',async context=>{
+ const {dataStore,publicationTask}=await setup(context);let submissions=0,reconciliations=0;
+ const provider:WeeklyPublishingProviderAdapter={provider:'controlled-provider',platform:'youtube',capability:'available',async publish(){submissions++;throw Error('must not POST without G6');},async reconcile(){reconciliations++;throw Error('no original attempt');}};
+ const result=await createSocialWeeklyPublicationAdapter(dataStore,{now:()=>new Date('2026-09-26T12:00:00Z'),publishingEnabled:()=>true,adapterFactory:async()=>provider}).execute(publicationTask);
+ assert.equal(result.status,'blocked');if(result.status==='blocked')assert.equal(result.code,'weekly_g6_current_preflight_required');
+ assert.equal(submissions,0);assert.equal(reconciliations,0);assert.equal(dataStore.rows.get('social_publication_attempts')?.length??0,0);
+});
+
+test('G6 admission rejects missing reviews, altered scope/manifest and fake passed metadata without a true receipt',async context=>{
+ const {dataStore,publicationTask,assignment}=await setup(context);
+ const actual=(await dataStore.list<StoredPublicationAssignment>('social_publication_assignments',{where:{tenant_id:'tenant-a',assignment_id:assignment.assignmentId}})).items[0]!;
+ const publicationPackage=await readStarterPublicationPackage('tenant-a',assignment.packageId,dataStore);assert.ok(publicationPackage);
+ await assert.rejects(assertWeeklyPublicationG6Admission(dataStore,publicationTask,actual,publicationPackage),{code:'weekly_g6_current_preflight_required'});
+ await assert.rejects(assertWeeklyPublicationG6Admission(dataStore,{...publicationTask,tenantId:'foreign'},actual,publicationPackage),{code:'weekly_g6_assignment_scope_changed'});
+ await assert.rejects(assertWeeklyPublicationG6Admission(dataStore,{...publicationTask,accountId:'different-account'},actual,publicationPackage),{code:'weekly_g6_assignment_scope_changed'});
+ await assert.rejects(assertWeeklyPublicationG6Admission(dataStore,publicationTask,{...actual,assignment_hash:'0'.repeat(64)},publicationPackage),{code:'weekly_g6_assignment_lineage_changed'});
+ await assert.rejects(assertWeeklyPublicationG6Admission(dataStore,publicationTask,actual,{...publicationPackage,tenantId:'foreign'}),{code:'weekly_g6_publication_package_changed'});
+ const payload={review:{status:'passed',tenantId:'tenant-a',programId:publicationTask.programId,packageId:publicationTask.packageId,packageVersion:publicationTask.packageVersion,publicationTaskId:publicationTask.publicationTaskId,receiptId:'invented-receipt'}};
+ await dataStore.create(SOCIAL_WEEKLY_G6_REVIEWS,{tenant_id:'tenant-a',program_id:publicationTask.programId,package_id:publicationTask.packageId,package_version:publicationTask.packageVersion,publication_task_id:publicationTask.publicationTaskId,payload,content_hash:socialRequestHash(payload)});
+ await assert.rejects(assertWeeklyPublicationG6Admission(dataStore,publicationTask,actual,publicationPackage),{code:'weekly_g6_current_preflight_required'});
+});
+
 test('weekly publishing persists unknown receipt and restarts with reconciliation only', async context => {
-  const { dataStore, publicationTask } = await setup(context);
+  const { dataStore, publicationTask,assignment } = await setup(context);
   let submissions = 0, reconciliations = 0;
   const provider: WeeklyPublishingProviderAdapter = {
     provider: 'isolated-provider', platform: 'youtube', capability: 'available',
@@ -77,7 +103,10 @@ test('weekly publishing persists unknown receipt and restarts with reconciliatio
     async reconcile() { reconciliations += 1; return { status: 'published', providerReceiptId: 'receipt-1', platformPostId: 'post-1' }; },
   };
   const options = { now: () => new Date('2026-09-26T12:00:00Z'), publishingEnabled: () => true, adapterFactory: async () => provider };
-  assert.equal((await createSocialWeeklyPublicationAdapter(dataStore, options).execute(publicationTask)).status, 'pending');
+  // Historical attempt is produced by the actual durable publisher with a controlled
+  // provider. The current weekly adapter may only reconcile it, never create one.
+  const publicationPackage=await readStarterPublicationPackage('tenant-a',assignment.packageId,dataStore);assert.ok(publicationPackage);
+  assert.equal((await executeWeeklyPublication({assignment,publicationPackage,contentPackage:weekly.socialContentPackage,adapter:provider,existingPublishedCount:0,dataStore,now:options.now()})).status,'unknown');
   const weeklyRow = dataStore.rows.get('social_weekly_operating_packages')![0]!;
   weeklyRow.payload = structuredClone(weeklyRow.payload);
   weeklyRow.payload.socialContentPackage.publicationTasks[0].receptionRequirement = { required: true, bindingId: null };
@@ -88,6 +117,21 @@ test('weekly publishing persists unknown receipt and restarts with reconciliatio
   assert.deepEqual(await createSocialWeeklyPublicationAdapter(dataStore, options).execute(publicationTask), completed);
   assert.equal(submissions, 1);
   assert.equal(reconciliations, 1);
+});
+
+test('an actual in-flight historical attempt keeps status-only reconciliation without a new G6 publish',async context=>{
+ const {dataStore,publicationTask,assignment}=await setup(context);
+ const publicationPackage=await readStarterPublicationPackage('tenant-a',assignment.packageId,dataStore);assert.ok(publicationPackage);
+ let submissions=0,reconciliations=0;let finishPublish:((value:{status:'published';providerReceiptId:string;platformPostId:string})=>void)|undefined;
+ let started:()=>void=()=>{};const publishStarted=new Promise<void>(resolve=>{started=resolve;});
+ const result={status:'published' as const,providerReceiptId:'actual-inflight-receipt',platformPostId:'actual-inflight-post'};
+ const provider:WeeklyPublishingProviderAdapter={provider:'controlled-inflight-provider',platform:'youtube',capability:'available',async publish(){submissions++;started();return new Promise<Awaited<ReturnType<WeeklyPublishingProviderAdapter['publish']>>>(resolve=>{finishPublish=resolve;});},async reconcile(){reconciliations++;return result;}};
+ const original=executeWeeklyPublication({assignment,publicationPackage,contentPackage:weekly.socialContentPackage,adapter:provider,existingPublishedCount:0,dataStore,now:new Date('2026-09-26T12:00:00Z')});
+ await publishStarted;assert.equal(dataStore.rows.get('social_publication_attempts')![0]!.status,'in_flight');
+ const observed=await createSocialWeeklyPublicationAdapter(dataStore,{now:()=>new Date('2026-09-26T12:00:00Z'),publishingEnabled:()=>true,adapterFactory:async()=>provider}).execute(publicationTask);
+ assert.equal(observed.status,'succeeded');assert.equal(submissions,1);assert.equal(reconciliations,1);
+ assert.ok(finishPublish);finishPublish(result);await original;
+ assert.equal(dataStore.rows.get('social_publication_attempts')!.length,1);assert.equal(dataStore.rows.get(SOCIAL_WEEKLY_G6_REVIEWS)?.length??0,0);
 });
 
 test('publishing gates remain independent of content acceptance and provider state', async context => {
@@ -136,7 +180,10 @@ test('publication rejects ambiguous or normalized invalid timestamps before subm
 });
 
 test('performance completion requires actual in-window owned numeric metric data', async context => {
-  const { dataStore, tasks, publicationTask } = await setup(context);
+  // Produce the historical provider receipt under its actual controlled clock;
+  // never rewrite a persisted receipt timestamp to fit the metric window.
+  context.mock.timers.enable({apis:['Date'],now:new Date('2026-09-24T12:00:00Z')});
+  const { dataStore, tasks, assignment } = await setup(context);
   const task = tasks.find(item => item.schedule.stepKind === 'performance_monitoring')!;
   const adapter = createSocialWeeklyPublicationAdapter(dataStore, { now: () => new Date('2026-09-26T12:00:00Z') });
   assert.equal((await adapter.execute(task)).status, 'pending');
@@ -144,7 +191,7 @@ test('performance completion requires actual in-window owned numeric metric data
   await dataStore.create('social_metric_snapshots', { tenant_id: 'tenant-a', account_id: 'account-1', captured_at: '2026-09-20T10:00:00Z', metrics: { views: 10 } });
   assert.equal((await adapter.execute(task)).status, 'pending');
   await dataStore.create('social_metric_snapshots', { tenant_id: 'tenant-a', account_id: 'account-1', platform:'youtube',content_id:'old-history-post',captured_at: '2026-09-25T10:00:00Z', metrics: { views: 0 } });assert.equal((await adapter.execute(task)).status,'pending','historical posts sampled this week cannot fulfill current delivery');
-  const provider:WeeklyPublishingProviderAdapter={provider:'isolated-real-provider',platform:'youtube',capability:'available',publish:async()=>({status:'published',providerReceiptId:'receipt-real',platformPostId:'post-real'}),reconcile:async()=>{throw Error('not needed');}};assert.equal((await createSocialWeeklyPublicationAdapter(dataStore,{now:()=>new Date('2026-09-24T12:00:00Z'),publishingEnabled:()=>true,adapterFactory:async()=>provider}).execute(publicationTask)).status,'succeeded');const attempt=dataStore.rows.get('social_publication_attempts')![0]!;attempt.resolved_at='2026-09-24T12:00:00Z';
+  const provider:WeeklyPublishingProviderAdapter={provider:'isolated-real-provider',platform:'youtube',capability:'available',publish:async()=>({status:'published',providerReceiptId:'receipt-real',platformPostId:'post-real'}),reconcile:async()=>{throw Error('not needed');}};const publicationPackage=await readStarterPublicationPackage('tenant-a',assignment.packageId,dataStore);assert.ok(publicationPackage);assert.equal((await executeWeeklyPublication({assignment,publicationPackage,contentPackage:weekly.socialContentPackage,adapter:provider,existingPublishedCount:0,dataStore,now:new Date('2026-09-24T12:00:00Z')})).status,'published');
   for(let index=0;index<110;index++)await dataStore.create('social_metric_snapshots',{tenant_id:'tenant-a',account_id:'account-1',platform:'youtube',content_id:`unrelated-${index}`,captured_at:'2026-09-26T10:00:00Z',metrics:{views:10}});
   await dataStore.create('social_metric_snapshots', { tenant_id: 'tenant-a', account_id: 'account-1',id:'zz-real-current',platform:'youtube',content_id:'post-real', captured_at: '2026-09-25T10:00:00Z', metrics: { views: 0,likes:null } });
   const result=await adapter.execute(task);assert.equal(result.status,'succeeded');if(result.status==='succeeded'){assert.equal(result.resultRefs.length,1);const {validateWeeklyPublicationMetricRefs}=await import('./weeklyPublicationMetricEvidence.js');await validateWeeklyPublicationMetricRefs(dataStore,task,result.resultRefs,new Date('2026-09-26T12:00:00Z'));const {validateWeeklyExecutionResults}=await import('./socialWeeklyResultValidation.js');await validateWeeklyExecutionResults(dataStore,task,result.resultRefs,new Date('2026-09-26T12:00:00Z'));await assert.rejects(()=>validateWeeklyExecutionResults(dataStore,{...task,workflowKind:'content'},result.resultRefs,new Date('2026-09-26T12:00:00Z')),{code:'weekly_metrics_task_scope_invalid'});const unrelated=dataStore.rows.get('social_metric_snapshots')!.find(row=>row.content_id==='old-history-post')!;await assert.rejects(()=>validateWeeklyPublicationMetricRefs(dataStore,task,[{type:'social_metric_snapshot',id:unrelated.id,version:1}],new Date('2026-09-26T12:00:00Z')),{code:'weekly_metrics_publication_attribution_required'});}const actual=dataStore.rows.get('social_metric_snapshots')!.find(row=>row.id==='zz-real-current')!;actual.captured_at='2026-09-23T10:00:00Z';assert.equal((await adapter.execute(task)).status,'pending','sampling before actual publication cannot count');actual.captured_at='2026-09-25T10:00:00Z';actual.mock=true;assert.equal((await adapter.execute(task)).status,'pending');actual.mock=false;const weeklyRow=dataStore.rows.get('social_weekly_operating_packages')![0]!;weeklyRow.payload=structuredClone(weeklyRow.payload);weeklyRow.payload.socialContentPackage.publicationTasks.push({...weeklyRow.payload.socialContentPackage.publicationTasks[0],publicationTaskId:'still-unpublished',motherContentId:'second-mother'});assert.equal((await adapter.execute(task)).status,'pending','one delivered video cannot complete monitoring for a second required weekly video');const truncatedStore:DataStore={...dataStore,list:async<T>(collection:string,query:ListQuery={})=>{const result=await dataStore.list<T>(collection,query);return collection==='social_metric_snapshots'&&query.page===2?{...result,items:[]}:result;}};const truncated=await createSocialWeeklyPublicationAdapter(truncatedStore,{now:()=>new Date('2026-09-26T12:00:00Z')}).execute(task);assert.equal(truncated.status,'blocked');assert.equal('code' in truncated?truncated.code:'','weekly_metrics_scan_incomplete');

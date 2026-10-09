@@ -1,3 +1,4 @@
+import {weeklyFormalPublicationBoundary,assertWeeklyPublicationStoredScope} from './weeklyFormalPublicationBoundary.js';
 import type { WeeklyOperatingPackage } from '../../shared/contracts/socialProgram.js';
 import type { DataStore } from '../storage/datastore.js';
 import { store } from '../storage/index.js';
@@ -22,23 +23,19 @@ export async function runWeeklyPublicationExecutionScan(input: {
   for (const row of rows.items) {
     try {
       const weeklyRows = await dataStore.list<WeeklyPackageRow>('social_weekly_operating_packages', { where: { tenant_id: row.tenant_id, package_id: row.operating_package_id, version: row.operating_package_version }, page: 1, perPage: 2 });
-      if (weeklyRows.totalItems !== 1 || !weeklyRows.items[0]) throw new Error('weekly_operating_package_not_found');
-      // Formal weekly tasks are executed by their leased consumer, with explicit content acceptance.
-      // Keep the legacy scanner from submitting the same assignment outside that boundary.
-      const weeklyExecutors = await dataStore.list<any>('social_weekly_execution_tasks', {
-        where: { tenant_id: row.tenant_id, package_id: row.operating_package_id, package_version: row.operating_package_version }, page: 1, perPage: 1000,
-      });
-      if (weeklyExecutors.totalItems > weeklyExecutors.items.length) throw new Error('weekly_task_scan_truncated');
-      if (weeklyExecutors.items.some(item => item.payload?.publicationTaskId === row.publication_task_id && item.payload?.schedule?.stepKind === 'publishing')) {
-        result.skipped += 1; continue;
-      }
+      if (weeklyRows.totalItems !== 1 || weeklyRows.items.length!==1 || !weeklyRows.items[0] || weeklyRows.items[0].tenant_id!==row.tenant_id || weeklyRows.items[0].package_id!==row.operating_package_id || weeklyRows.items[0].version!==row.operating_package_version) throw new Error('weekly_operating_package_not_found');
+      assertWeeklyPublicationStoredScope(row,weeklyRows.items[0].payload);
+      const attempts = await dataStore.list<DurablePublicationAttempt>(PUBLICATION_ATTEMPTS, { where: { tenant_id: row.tenant_id, assignment_id: row.assignment_id }, page: 1, perPage: 2 });
+      if(attempts.totalItems!==attempts.items.length||attempts.items.length>1||attempts.items.some(attempt=>attempt.tenant_id!==row.tenant_id||attempt.assignment_id!==row.assignment_id||attempt.package_id!==row.package_id))throw Error('publication_attempt_scope_ambiguous');
+      const existing=attempts.items[0];
+      if(existing?.status==='published'||existing?.status==='failed'){result.skipped++;continue;}
+      const reconciling=Boolean(existing&&['unknown','in_flight'].includes(existing.status));
+      if(!reconciling&&await weeklyFormalPublicationBoundary(dataStore,row,weeklyRows.items[0].payload)==='formal'){result.skipped++;continue;}
       const publicationPackage = await readStarterPublicationPackage(row.tenant_id, row.package_id, dataStore);
       if (!publicationPackage) throw new Error('publication_package_not_found');
       const adapter = input.adapterFactory ? await input.adapterFactory(row) : await createWeeklyPublishingAdapter({ tenantId: row.tenant_id, accountId: row.account_id, platform: row.platform, dataStore, now: input.now });
       if (adapter.capability !== 'available') { result.errors.push({ tenantId: row.tenant_id, assignmentId: row.assignment_id, code: adapter.unavailableReason || 'publishing_provider_unavailable' }); continue; }
-      const attempts = await dataStore.list<DurablePublicationAttempt>(PUBLICATION_ATTEMPTS, { where: { tenant_id: row.tenant_id, assignment_id: row.assignment_id }, page: 1, perPage: 2 });
-      const existing = attempts.items[0];
-      if (existing?.status === 'published' || existing?.status === 'failed') { result.skipped += 1; continue; }
+      if(reconciling){const attempt=await reconcileWeeklyPublication({assignment:row.payload,publicationPackage,adapter,now:input.now,dataStore});if(attempt.status==='published')result.published++;else if(attempt.status==='failed')result.failed++;else result.pending++;continue;}
       const operatingAssignments = await dataStore.list<StoredPublicationAssignment>(PUBLICATION_ASSIGNMENTS, { where: { tenant_id: row.tenant_id, operating_package_id: row.operating_package_id, operating_package_version: row.operating_package_version }, page: 1, perPage: 500 });
       if (operatingAssignments.totalItems > operatingAssignments.items.length) throw new Error('publication_assignment_scan_truncated');
       let existingPublishedCount = 0;
@@ -46,9 +43,7 @@ export async function runWeeklyPublicationExecutionScan(input: {
         const terminal = await dataStore.list<DurablePublicationAttempt>(PUBLICATION_ATTEMPTS, { where: { tenant_id: row.tenant_id, assignment_id: assigned.assignment_id, status: 'published' }, page: 1, perPage: 1 });
         if (terminal.totalItems) existingPublishedCount += 1;
       }
-      const attempt = existing && ['unknown', 'in_flight'].includes(existing.status)
-        ? await reconcileWeeklyPublication({ assignment: row.payload, publicationPackage, adapter, now: input.now, dataStore })
-        : await executeWeeklyPublication({ assignment: row.payload, publicationPackage, contentPackage: weeklyRows.items[0].payload.socialContentPackage, adapter, existingPublishedCount, now: input.now, dataStore });
+      const attempt = await executeWeeklyPublication({ assignment: row.payload, publicationPackage, contentPackage: weeklyRows.items[0].payload.socialContentPackage, adapter, existingPublishedCount, now: input.now, dataStore });
       if (attempt.status === 'published') result.published += 1;
       else if (attempt.status === 'failed') result.failed += 1;
       else result.pending += 1;

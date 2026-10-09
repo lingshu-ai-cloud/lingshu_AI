@@ -21,7 +21,7 @@ function memoryStore(): DataStore & { rows: Map<string, Row[]> } {
     async getById<T>(collection: string, id: string) { return ((rows.get(collection) || []).find(item => item.id === id) as T | undefined) ?? null; },
     async create<T>(collection: string, data: Record<string, unknown>) { const item = { id: `${collection}-${(rows.get(collection)?.length || 0) + 1}`, ...data }; rows.set(collection, [...(rows.get(collection) || []), item]); return item as T; },
     async update(collection: string, id: string, data: Record<string, unknown>) { const item = (rows.get(collection) || []).find(row => row.id === id); if (!item) return false; Object.assign(item, data); return true; },
-    async delete() { return false; },
+    async delete(collection:string,id:string) {const before=rows.get(collection)||[];const after=before.filter(row=>row.id!==id);rows.set(collection,after);return after.length!==before.length;},
   };
 }
 

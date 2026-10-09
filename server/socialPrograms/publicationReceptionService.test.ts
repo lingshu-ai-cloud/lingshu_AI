@@ -4,6 +4,7 @@ import type { DataStore } from '../storage/datastore.js';
 import { savePublicationReceptionBinding, checkPublicationReceptionAdmission, RECEPTION_CHECKS, productionReceptionPorts } from './publicationReceptionService.js';
 import type { ReceptionBinding, ReceptionCheckPorts } from './publicationReceptionReadiness.js';
 import { resolveCustomerMessagingAuthorization } from '../digitalEmployees/customerMessagingPolicy.js';
+import {prepareWeeklyG6Fixture} from '../starter198/socialWeeklyG6ReviewService.fixture.js';
 const binding = (): ReceptionBinding => ({ tenantId: 'tenant', programId: 'program', packageId: 'package', packageVersion: 1, publicationId: 'publication', cta: 'Message us', enterpriseFactHash: 'facts1', targets: [{ id: 'consultation', required: true, ownerId: 'salesperson', destination: { kind: 'messaging', channel: 'whatsapp', receptionMode: 'human' }, requiredDocumentUrls: [] }] });
 function fixture() {
   const rows = new Map<string, any>();
@@ -49,4 +50,16 @@ test('invalid targets cannot be saved and tampered persisted requirements cannot
   for (const version of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
     await assert.rejects(savePublicationReceptionBinding(store, { ...b, packageVersion: version }, 'user'), /binding_invalid/);
   }
+});
+
+test('production reception facts and channel authorization use the supplied actual store and never a global fallback',async t=>{
+ const f=await prepareWeeklyG6Fixture();t.after(f.cleanup);
+ const p=productionReceptionPorts(f.store),pub=f.pkg.socialContentPackage.publicationTasks[0]!;
+ const facts=await p.facts('t');assert.equal(facts.contentHash,f.profile.factVersion!.contentHash);
+ assert.equal((await p.messaging('t','messenger')).providerReady,true);
+ const admitted=await checkPublicationReceptionAdmission({dataStore:f.store,scope:{tenantId:'t',programId:f.pkg.programId,packageId:f.pkg.packageId,packageVersion:f.pkg.version,publicationId:pub.publicationTaskId},cta:pub.cta!,bindingId:pub.receptionRequirement!.bindingId,required:true});
+ assert.equal(admitted.status,'passed');
+ await assert.rejects(p.facts('foreign'),/confirmed_facts_unavailable/);
+ f.tables.social_accounts=[];assert.equal((await p.messaging('t','messenger')).providerReady,false);
+ f.profile.brand.tone='Changed real enterprise facts';await assert.rejects(p.facts('t'),/confirmed_facts_unavailable/);
 });

@@ -7,17 +7,19 @@ import { createReceptionPublicUrlProbe } from './publicationReceptionUrlProbe.js
 export function createPublicationReceptionPorts(input: {
   ownerExists: ReceptionCheckPorts['ownerExists'];
   probePublicUrl?: ReceptionCheckPorts['probePublicUrl'];
+  facts?: ReceptionCheckPorts['facts'];
+  messaging?: ReceptionCheckPorts['messaging'];
 }): ReceptionCheckPorts {
   return {
-    async facts(tenantId) {
+    facts: input.facts ?? (async (tenantId) => {
       const facts = await readTenantEnterpriseFacts(tenantId);
       return {
         contentHash: facts.version.contentHash,
         revision: facts.version.revision,
         documentUrls: (facts.profile.products.items ?? []).flatMap(product => (product.documents ?? []).flatMap(document => document.url ? [document.url] : [])),
       };
-    },
-    messaging: readCustomerMessagingAuthorization,
+    }),
+    messaging: input.messaging ?? readCustomerMessagingAuthorization,
     ownerExists: input.ownerExists,
     probePublicUrl: input.probePublicUrl ?? createReceptionPublicUrlProbe(),
   };
