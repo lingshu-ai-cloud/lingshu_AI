@@ -41,3 +41,8 @@ assert.equal(hasInternalPromptLeak('Intent instruction: return one directly-send
 assert.equal(hasInternalPromptLeak('Tell me the quantity you need and I’ll check it.'), false);
 
 console.log('draft factual safety policy passed');
+
+assert.ok(unsupportedHighRiskClaims('CE certification is available for IMH-ABS-01.', '{"products":[{"sku":"IMH-ABS-01"}]}').includes('CE certification availability is not grounded'));
+assert.deepEqual(unsupportedHighRiskClaims('I will check whether CE certification is available.', '{}'), []);
+assert.deepEqual(unsupportedHighRiskClaims('CE certification is not confirmed yet.', '{}'), []);
+assert.deepEqual(unsupportedHighRiskClaims('CE certification is available.', '{"certifications":"CE"}'), []);

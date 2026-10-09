@@ -53,6 +53,11 @@ export function requiresFactualVerification(signals: string[], knowledgeMiss: bo
 
 const HIGH_RISK_SUPPORT_RULES: Array<{ label: string; draft: RegExp; evidence: RegExp }> = [
   {
+    label: 'CE certification availability is not grounded',
+    draft: /(?:^|[.!?]\s*)CE\s+(?:cert(?:ification|ificate|ified)?|compliance)(?:\s+\w+){0,3}\s+(?:is|are)\s+(?:available|ready|valid|approved)|\b(?:we|our (?:product|products|factory|company))\s+(?:have|has|hold|holds|are|is)\s+(?:a\s+)?CE\b/i,
+    evidence: /\bCE\b/i,
+  },
+  {
     label: 'private-label capability is not grounded',
     draft: /\b(?:we|our (?:team|factory|company))\s+(?:can|support|offer|provide|do|handle)[^.!?]{0,80}\b(?:private[ -]?label|oem|odm)\b/i,
     evidence: /\b(?:private[ -]?label|oem|odm)\b|贴牌|代工/i,
