@@ -281,7 +281,7 @@ export function createSocialOperatingOrchestrationService(
       const status = goal.status === 'blocked' || capacity.plan.status === 'blocked' || automation.policy.status === 'blocked' || reference.resolution.status === 'blocked'
         ? 'blocked' as const : capacity.plan.status === 'degraded' || automation.policy.status === 'approval_required' || reference.resolution.status === 'degraded' ? 'degraded' as const : 'ready' as const;
       const snapshot: OperatingAuthoritySnapshot = {
-        snapshotId: stableId('operating_snapshot', { tenantId, programId }), programId, version, status,
+        snapshotId: stableId('operating_snapshot', { tenantId, programId }), programId, version, status, planningWeekStart: weekStart,
         programRef: ref('social_program', programId, programRow.payload.version), enterprise,
         accountRefs: accounts.map(item => ref('owned_social_account', item.accountId, item.version)),
         conversionRouteRefs: conversionRoutes.map(item => item.ref),

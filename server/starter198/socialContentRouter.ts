@@ -1,3 +1,5 @@
+import {createSocialSceneG4ReviewRouter} from './socialSceneG4ReviewRouter.js';
+import {createSocialSceneG4ReviewService} from './socialSceneG4ReviewService.js';
 import { readReferencePreparation } from './socialContentScriptSources.js';
 import { createSocialSceneReworkRouter } from './socialContentSceneReworkRouter.js';
 import { assertSocialSceneReworkQueueRegistered, wakeSocialSceneReworkJob } from './socialContentProductionQueue.js';
@@ -153,6 +155,7 @@ export function createSocialContentRouter(dependencies: SocialContentRouterDepen
   const socialTaskMaterialPort = dependencies.socialTaskMaterialPort;
 
   router.use(requireAuth);
+  router.use('/tasks/:taskId/runs/:runId/artifacts/:artifactId/g4-reviews',createSocialSceneG4ReviewRouter(createSocialSceneG4ReviewService(repository)));
   router.use((req, res, next) => {
     res.setHeader('Cache-Control', 'private, no-store');
     next();

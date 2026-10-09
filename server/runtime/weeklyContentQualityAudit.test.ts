@@ -1,0 +1,8 @@
+import test from 'node:test';
+import {SocialProgramError} from '../socialPrograms/service.js';
+import assert from 'node:assert/strict';
+import { assertNoFrozenTechnicalFailure } from './weeklyContentQualityAudit.js';
+test('immutable pending summaries do not themselves represent an actual detector failure or passing proof',()=>{assert.doesNotThrow(()=>assertNoFrozenTechnicalFailure({productionResult:{technicalReview:{approved:false,failures:['字幕与敏感信息仍待独立核验']}},render:{completed:true,qualityPassed:false}}));});
+test('frozen visual, audio, scene or explicit detector failures require actual repair',()=>{for(const report of [{visual:{passed:false},audio:{ok:true},scenes:{passed:true,issues:[]}},{visual:{passed:true},audio:{ok:false},scenes:{passed:true,issues:[]}},{visual:{passed:true},audio:{ok:true},scenes:{passed:false,issues:[]}},{visual:{passed:true},audio:{ok:true},scenes:{passed:true,issues:[{sceneIndex:0,code:'black_scene'}]}},{visual:{passed:true,failures:['wrong duration']},audio:{ok:true},scenes:{passed:true,issues:[]}}])assert.throws(()=>assertNoFrozenTechnicalFailure({technicalQualityReport:{schemaVersion:'initial-scene-quality.v1',...report}}),(error:unknown)=>error instanceof SocialProgramError&&error.code==='weekly_quality_audit_actual_repair_required');});
+
+test('unrecognized stored detector report cannot hide an actual failure behind an unknown schema',()=>{assert.throws(()=>assertNoFrozenTechnicalFailure({technicalQualityReport:{schemaVersion:'unrecognized',visual:{passed:false}}}),(error:unknown)=>error instanceof SocialProgramError&&error.code==='weekly_quality_audit_detector_report_unverified');});

@@ -49,7 +49,7 @@ async function materialClassification(store: DataStore, task: WeeklyExecutionTas
 /** Verify persisted authority, never accept a client-supplied success label. */
 export async function validateWeeklyExecutionResults(store: DataStore, task: WeeklyExecutionTask, refs: VersionedSocialRef[], now = new Date()): Promise<void> {
   requireResult(Array.isArray(refs) && refs.length > 0 && refs.every(ref => text(ref?.type) && text(ref?.id) && Number.isSafeInteger(ref?.version) && ref.version > 0), 'weekly_execution_result_refs_invalid');
-  if (task.inputSnapshot.inventoryReuseRef && task.schedule.stepKind === 'user_approval') {
+  if (task.inputSnapshot?.inventoryReuseRef && task.schedule.stepKind === 'user_approval') {
     requireResult(task.schedule.stepKind === 'user_approval' && task.schedule.responsibleActor === 'user', 'inventory_result_step_unsupported');
     const { validateInventoryUserApproval } = await import('./weeklyInventoryApprovalEvidence.js');
     await validateInventoryUserApproval(store, task, refs);
@@ -245,12 +245,25 @@ export async function validateContentArtifact(store: DataStore, task: WeeklyExec
   await assertSocialContentFilePersisted({ record: file, tenantId: task.tenantId });
   const { validateWeeklyTemplateProductionOutput } = await import('../socialPrograms/weeklyTemplateStructure.js');
   await validateWeeklyTemplateProductionOutput({ store, task, contentRow: source, artifactRow: row });
+  const productionId=text(content.productionResult?.productionResultId);
+  if(productionId){
+    // actor is payload authority; do not rely on optional indexed actor metadata.
+    const allReceipts=await store.list<Record_>('starter_social_production_receipts',{where:{tenant_id:task.tenantId,production_result_id:productionId},perPage:500});requireResult(allReceipts.totalItems===allReceipts.items.length);
+    const {parseSocialProductionReceiptRecord}=await import('../starter198/socialContentProductionHandoff.js');const {verifyTrustedHumanProductionReceipt}=await import('../starter198/socialSceneG4ReviewService.js');
+    const {createStarter198Repository}=await import('../starter198/repository.js');for(const receiptRow of allReceipts.items){const receipt=parseSocialProductionReceiptRecord(receiptRow as import('../starter198/repository.js').StarterRecord);if(receipt.actor==='human_reviewer')await verifyTrustedHumanProductionReceipt(createStarter198Repository(store),task.tenantId,receipt);}
+  }
   const step = task.schedule.stepKind;
   if (step === 'script') requireResult(content.scriptBaseline?.scenes?.length && content.scriptBaseline.scenes.every((scene: any) => text(scene.script) || text(scene.voiceover)));
   else if (step === 'storyboard') requireResult(content.directorPlan?.sceneCount > 0);
   else if (step === 'asset_generation') requireResult(content.render?.selectedAssetIds?.length > 0);
   else if (step === 'video_generation') requireResult(text(content.mediaStorage?.video?.url) && text(content.mediaStorage?.video?.sha256));
-  else if (['quality_check', 'rework'].includes(step)) requireResult(content.productionResult?.technicalReview?.approved === true && content.productionResult?.creativeReview?.approved === true && text(content.mediaStorage?.video?.url));
+  else if (['quality_check', 'rework'].includes(step)) {
+    requireResult(text(content.mediaStorage?.video?.url));
+    if (!(content.productionResult?.technicalReview?.approved === true && content.productionResult?.creativeReview?.approved === true)) {
+      const { assertWeeklyContentQualityAudit } = await import('./weeklyContentQualityAudit.js');
+      await assertWeeklyContentQualityAudit(store, task, ref);
+    }
+  }
   else requireResult(false, 'weekly_execution_result_type_unsupported');
 }
 

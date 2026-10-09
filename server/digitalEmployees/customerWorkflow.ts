@@ -468,16 +468,16 @@ export function customerHasOptedOut(customer: Record<string, unknown>): boolean 
   return markers.some(item => /unsubscribe|opt[ -]?out|do not contact|blacklist|退订|拒收|黑名单|勿扰/.test(item));
 }
 
-export async function getFollowupBatch(tenantId: string, batchId: string): Promise<FollowupBatchRecord | null> {
-  const batch = await store.getById<FollowupBatchRecord>(COLLECTION.batches, batchId);
+export async function getFollowupBatch(tenantId: string, batchId: string, dataStore: DataStore = store): Promise<FollowupBatchRecord | null> {
+  const batch = await dataStore.getById<FollowupBatchRecord>(COLLECTION.batches, batchId);
   return batch?.tenant_id === tenantId ? batch : null;
 }
 
-export async function getFollowupBatchItems(tenantId: string, batchId: string): Promise<FollowupBatchItemRecord[]> {
-  const result = await store.list<FollowupBatchItemRecord>(COLLECTION.items, {
+export async function getFollowupBatchItems(tenantId: string, batchId: string, dataStore: DataStore = store): Promise<FollowupBatchItemRecord[]> {
+  const result = await dataStore.list<FollowupBatchItemRecord>(COLLECTION.items, {
     where: { tenant_id: tenantId, batch_id: batchId }, sort: 'created_at', perPage: 1000,
   });
-  const batch = await getFollowupBatch(tenantId, batchId);
+  const batch = await getFollowupBatch(tenantId, batchId, dataStore);
   return orderedFollowupItems(result.items, batch?.delivery_policy);
 }
 
@@ -669,16 +669,16 @@ export async function applyFollowupBatchDecision(input: {
   decision: 'approved' | 'rejected';
   userId: string;
   approvalId?: string;
-}): Promise<{ batch: FollowupBatchRecord; items: FollowupBatchItemRecord[] }> {
-  const batch = await getFollowupBatch(input.tenantId, input.batchId);
+}, dataStore: DataStore = store): Promise<{ batch: FollowupBatchRecord; items: FollowupBatchItemRecord[] }> {
+  const batch = await getFollowupBatch(input.tenantId, input.batchId, dataStore);
   if (!batch) throw new Error('followup_batch_not_found');
   if (!['draft', 'pending_approval', 'approved', 'rejected'].includes(batch.status)) throw new Error('followup_batch_not_decidable');
   const now = new Date().toISOString();
-  const items = await getFollowupBatchItems(input.tenantId, batch.id);
+  const items = await getFollowupBatchItems(input.tenantId, batch.id, dataStore);
   for (const item of items) {
     if (item.status === 'blocked') continue;
     if (!['draft', 'approved', 'rejected'].includes(item.status)) continue;
-    await store.update(COLLECTION.items, item.id, {
+    await dataStore.update(COLLECTION.items, item.id, {
       status: input.decision,
       approved_at: input.decision === 'approved' ? now : '',
       updated_at: now,
@@ -696,7 +696,7 @@ export async function applyFollowupBatchDecision(input: {
     partial: items.filter(item => item.status === 'partial_sent').length,
     failed: items.filter(item => item.status === 'failed').length,
   };
-  await store.update(COLLECTION.batches, batch.id, {
+  await dataStore.update(COLLECTION.batches, batch.id, {
     status: input.decision,
     approval_id: input.approvalId || batch.approval_id || '',
     approved_version: input.decision === 'approved' ? batch.version : 0,

@@ -1,3 +1,4 @@
+import {weeklyProductionPopulation} from './weeklyProductionPopulation.js';
 import { createHash, randomUUID } from 'node:crypto';
 import type { DataStore } from '../storage/datastore.js';
 import {
@@ -259,6 +260,7 @@ function publicationTasks(
   const accountTaskIndexes = new Map<string, number>();
   const generated: SocialWeeklyPublicationTask[] = [];
   let index = 0;
+  let productionIndex = 0;
   for (const plan of plans) {
     for (let accountIndex = 0; accountIndex < plan.publicationCount; accountIndex += 1) {
       const accountTaskIndex = accountTaskIndexes.get(plan.accountId) ?? 0;
@@ -308,12 +310,14 @@ function publicationTasks(
         }
         receptionRequirement = { required: true, bindingId: requirement.bindingId as string | null };
       }
-      const motherIndex = index % originalContentTarget;
-      const firstTask = generated.find(item => item.motherContentId === `mother-${motherIndex + 1}`);
+      const motherIndex = productionIndex % originalContentTarget;
+      const publicationTaskId = text(override.publicationTaskId, 160) || randomUUID();
+      const motherContentId = text(override.motherContentId, 160) || (inventoryReuseRef ? `inventory-${publicationTaskId}` : `mother-${motherIndex + 1}`);
+      const firstTask = inventoryReuseRef ? undefined : generated.find(item => !item.inventoryReuseRef && item.motherContentId === motherContentId);
       generated.push({
-        publicationTaskId: text(override.publicationTaskId, 160) || randomUUID(),
-        motherContentId: text(override.motherContentId, 160) || `mother-${motherIndex + 1}`,
-        adaptationOfPublicationTaskId: firstTask?.publicationTaskId ?? null,
+        publicationTaskId,
+        motherContentId,
+        adaptationOfPublicationTaskId: inventoryReuseRef ? text(override.adaptationOfPublicationTaskId, 160) || null : firstTask?.publicationTaskId ?? null,
         platform: plan.platform,
         accountId: plan.accountId,
         accountPositioning: text(override.accountPositioning, 300) || plan.accountPositioning,
@@ -333,6 +337,7 @@ function publicationTasks(
       });
       accountTaskIndexes.set(plan.accountId, accountTaskIndex + 1);
       index += 1;
+      if (!inventoryReuseRef) productionIndex += 1;
     }
   }
   return generated;
@@ -441,8 +446,14 @@ export function packageFromInput(args: {
     : customAccountPlans(proposedAccountPlans, args.accounts);
   const publicationTaskTarget = plans.reduce((sum, plan) => sum + plan.publicationCount, 0);
   if (publicationTaskTarget > 100) throw new SocialProgramError('publication_target_too_large', 400, '单周发布任务不能超过 100 条。');
-  const originalContentTarget = positiveInteger(capacity?.status === 'ready' ? capacity.originalContentTarget : args.input.originalContentTarget, Math.min(10, publicationTaskTarget), publicationTaskTarget);
-  const tasks = publicationTasks(plans, originalContentTarget, args.input);
+  const requestedMotherTarget = capacity?.status === 'ready' ? capacity.originalContentTarget : args.input.originalContentTarget;
+  // A zero target is meaningful only after all normalized publications prove they use inventory.
+  // The generation divisor is an internal placeholder and never a reported production quota.
+  const generationMotherTarget = positiveInteger(requestedMotherTarget === 0 ? 1 : requestedMotherTarget, Math.min(10, publicationTaskTarget), publicationTaskTarget);
+  const tasks = publicationTasks(plans, generationMotherTarget, args.input);
+  const population = weeklyProductionPopulation(tasks);
+  if (requestedMotherTarget === 0 && population.productionPublications.length) throw new SocialProgramError('weekly_new_mother_target_required',400,'含新制作内容的排期不能使用零新增母版配额，请明确新制作计划。');
+  const originalContentTarget = population.newMotherContentTarget;
   const status = 'draft' as const;
   const timestamp = at();
   const contentPackage: SocialWeeklyContentPackage = {
@@ -451,7 +462,7 @@ export function packageFromInput(args: {
     version: args.version,
     status,
     originalContentTarget,
-    adaptationVersionTarget: publicationTaskTarget - originalContentTarget,
+    adaptationVersionTarget: population.newAdaptationVersionTarget,
     publicationTaskTarget,
     publicationTasks: tasks,
     weeklyBudgetCny: finiteBudget(capacity?.status === 'ready' ? capacity.productionBudgetCny : args.input.weeklyBudgetCny),

@@ -433,6 +433,15 @@ export interface WeeklyReferenceSourcePolicy {
 }
 
 export interface WeeklyOperatingPackage {
+  /** Server-written evidence of an explicitly confirmed upgrade consumed by a new week. */
+  profileUpgradeConsumption?: {
+    schemaVersion:'weekly-profile-upgrade-consumption.v1';
+    upgradeId:string;sourcePackageId:string;sourcePackageVersion:number;
+    confirmationHash:string;evidenceHash:string;confirmedBy:string;confirmedAt:string;
+    creationRequestId:string;creationInputHash:string;createdBy:string;createdAt:string;
+    targetPackageId:string;targetPackageVersion:1;targetWeekStart:string;timeZone:string;
+    publicationTaskIds:string[];publicationInputHash:string;targetInputHash:string;recordHash:string;
+  };
   referenceSourcePolicy?: WeeklyReferenceSourcePolicy | null;
   packageId: string;
   programId: string;

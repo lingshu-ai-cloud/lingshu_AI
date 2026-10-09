@@ -155,6 +155,8 @@ export interface SocialOperatingConstraints {
 }
 
 export interface OperatingAuthoritySnapshot {
+  /** Explicit planning week on new snapshots; legacy rows remain unknown. */
+  planningWeekStart?: string;
   snapshotId: string;
   programId: string;
   version: number;

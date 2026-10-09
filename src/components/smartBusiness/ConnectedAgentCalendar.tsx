@@ -1,3 +1,4 @@
+import {parseWeeklyProfileCreation,type WeeklyProfileUpgrade,type WeeklyProfileCreationIntent} from '../../lib/weeklyProfileUpgradeApi';
 import WeeklyInventoryReusePanel from '../socialProgram/WeeklyInventoryReusePanel';
 import WeeklyProfileUpgradePanel from '../socialProgram/WeeklyProfileUpgradePanel';
 import {projectCrossWeekMaterials,validCrossWeekMaterialTarget,crossWeekMaterialPanelId} from '../socialProgram/crossWeekMaterialCalendar';
@@ -142,6 +143,17 @@ export default function ConnectedAgentCalendar() {
     currentSelection.current=JSON.stringify([program?.programId,identity(next)]);
     setPackages(current=>[...current.filter(item=>!(item.packageId===next.packageId&&item.version===next.version)),next]);setSelected(identity(next));setTasks([]);return true;
   };
+  async function selectProfilePackage(next:WeeklyOperatingPackage,proposal:WeeklyProfileUpgrade,intent:WeeklyProfileCreationIntent){
+    const captured=currentSelection.current,token=getToken(),source=recoveryScope;
+    if(!source||!pkg||next.packageId===pkg.packageId||next.programId!==source.programId||next.version!==1)throw Error('下一周必须为当前来源周确认的全新任务包。');
+    const actual=await socialProgramApi.getOperatingPackage(source.programId,next.packageId);
+    if(currentSelection.current!==captured||getToken()!==token)throw Error('来源周或登录已变化，请只读查回已创建的新周包。');
+    const checked=parseWeeklyProfileCreation(actual,source,proposal,intent);
+    if(!checked||checked.status!=='draft')throw Error('实际新周草稿与原创建意图不一致。');
+    taskReadGeneration.current++;currentSelection.current=JSON.stringify([source.programId,identity(checked)]);
+    setPackages(items=>[...items.filter(item=>!(item.packageId===checked.packageId&&item.version===checked.version)),checked]);
+    setSelected(identity(checked));setTasks([]);setScheduleOutcome(null);window.dispatchEvent(new Event('lingshu:agent-business-refresh'));
+  }
   async function selectFeedbackRevision(next: WeeklyOperatingPackage) {
     const captured = currentSelection.current;
     if (!program || next.programId !== program.programId || !next.socialContentPackage.publicationTasks.some(publication => publication.customerFeedbackTopicRef)) throw Error('反馈选题修订与当前经营项目不一致。');
@@ -168,7 +180,7 @@ export default function ConnectedAgentCalendar() {
     setSelected(identity(actual)); setTasks([]); setScheduleOutcome(null);
     window.dispatchEvent(new Event('lingshu:agent-business-refresh'));
   }
-  async function reloadAfterEvidenceResume(actual:WeeklyExecutionTask){if(!pkg||actual.programId!==pkg.programId||actual.packageId!==pkg.packageId||actual.packageVersion!==pkg.version||!scopedTasks.some(task=>task.taskId===actual.taskId&&task.tenantId===actual.tenantId))throw Error('恢复回执与当前真实执行任务不一致。');const captured=currentSelection.current;const generation=++taskReadGeneration.current;const refreshed=await socialProgramApi.listExecutionTasks(pkg.programId,pkg.packageId,pkg.version);if(refreshed.some(task=>task.programId!==pkg.programId||task.packageId!==pkg.packageId||task.packageVersion!==pkg.version||task.tenantId!==actual.tenantId))throw Error('恢复后的执行任务身份不一致。');if(currentSelection.current!==captured||taskReadGeneration.current!==generation)return;setTasks(refreshed);window.dispatchEvent(new Event('lingshu:agent-business-refresh'));}
+  async function reloadAfterEvidenceResume(actual:WeeklyExecutionTask){if(!pkg||actual.programId!==pkg.programId||actual.packageId!==pkg.packageId||actual.packageVersion!==pkg.version||!scopedTasks.some(task=>task.taskId===actual.taskId&&task.tenantId===actual.tenantId))throw Error('恢复回执与当前真实执行任务不一致。');const captured=currentSelection.current,token=getToken();const generation=++taskReadGeneration.current;const [refreshed,actualPackage]=await Promise.all([socialProgramApi.listExecutionTasks(pkg.programId,pkg.packageId,pkg.version),socialProgramApi.getOperatingPackage(pkg.programId,pkg.packageId)]);if(refreshed.some(task=>task.programId!==pkg.programId||task.packageId!==pkg.packageId||task.packageVersion!==pkg.version||task.tenantId!==actual.tenantId)||actualPackage.programId!==pkg.programId||actualPackage.packageId!==pkg.packageId||actualPackage.version!==pkg.version)throw Error('恢复后的执行任务或周包版本已变化，请核验实际新修订。');if(currentSelection.current!==captured||taskReadGeneration.current!==generation||getToken()!==token)return;setPackages(items=>items.map(item=>item.programId===actualPackage.programId&&item.packageId===actualPackage.packageId&&item.version===actualPackage.version?actualPackage:item));setTasks(refreshed);window.dispatchEvent(new Event('lingshu:agent-business-refresh'));}
   async function bindMaterial(request:WeeklyMaterialRequest,bindings:WeeklyHumanMaterialBinding[]=retryBindings){
     if(!pkg||!program)throw Error('当前经营项目或周包尚未读取，素材未关联。');
     if(bindingBusy)throw Error('已有素材关联正在核验，请等待结果后修复同一请求。');
@@ -232,7 +244,7 @@ export default function ConnectedAgentCalendar() {
     {!loading&&!error&&pkg&&<div className="px-6 pb-6"><WeeklyCustomerChannelScopePanel key={`${pkg.programId}:${pkg.packageId}:${pkg.version}`} programId={pkg.programId} packageId={pkg.packageId} packageVersion={pkg.version}/></div>}
     {!loading&&!error&&pkg&&<div ref={materialPanel} className="px-6 pb-6"><WeeklyMaterialRequestsPanel pkg={pkg} programId={pkg.programId} packageId={pkg.packageId} packageVersion={pkg.version} tasks={scopedTasks} requiredRequestIds={[...new Set(pkg.socialContentPackage.publicationTasks.flatMap(item=>item.materialRequirement?.requestIds??[]))]} onBindRequiredRequests={bindMaterial}/></div>}
     {!loading&&!error&&pkg&&recoveryScope&&pkg.referenceSourcePolicy?.profile==='b2b_established'&&<div className="px-6 pb-6"><WeeklyInventoryReusePanel key={recoveryIdentity} {...recoveryScope} pkg={pkg} onRevision={next=>{selectRevision(next);}}/></div>}
-    {!loading&&!error&&pkg&&recoveryScope&&pkg.referenceSourcePolicy?.profile==='b2b_cold_start'&&<div className="px-6 pb-6"><WeeklyProfileUpgradePanel key={recoveryIdentity} {...recoveryScope}/></div>}
+    {!loading&&!error&&pkg&&recoveryScope&&pkg.referenceSourcePolicy?.profile==='b2b_cold_start'&&<div className="px-6 pb-6"><WeeklyProfileUpgradePanel key={recoveryIdentity} {...recoveryScope} onCreated={selectProfilePackage}/></div>}
     {!loading&&!error&&pkg&&recoveryScope&&<div className="px-6 pb-6"><CrossWeekMaterialContinuationPanel key={recoveryIdentity} {...recoveryScope} onOpenMaterial={openMaterial} onChanged={items=>{if(sendRecoveryIdentity.current===recoveryIdentity&&getToken()===recoveryToken)setCrossWeekMaterials({identity:recoveryIdentity,items});}}/></div>}
     {!loading&&!error&&pkg&&recoveryScope&&<div className="px-6 pb-6"><BoundWeeklyCustomerKnowledgeQuotePanel key={recoveryIdentity} {...recoveryScope} onChanged={items=>{if(sendRecoveryIdentity.current!==recoveryIdentity||getToken()!==recoveryToken)return;setCustomerExceptions({identity:recoveryIdentity,items});}}/></div>}
     {!loading&&!error&&pkg&&recoveryScope&&<div className="px-6 pb-6"><WeeklyPublicationRecoveryPanel key={recoveryIdentity} {...recoveryScope} onChanged={items=>{if(sendRecoveryIdentity.current!==recoveryIdentity||getToken()!==recoveryToken)return;setPublicationRecoveries({identity:recoveryIdentity,items});}}/></div>}

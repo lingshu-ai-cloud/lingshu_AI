@@ -138,6 +138,7 @@
     "1791072038_create_weekly_native_send_recoveries.js": "417f82d056e1823864ffed5c162a2aeeecc83843b14b69dc61e27bb24d9ee916",
     "1791072040_create_weekly_publication_recoveries.js": "d42b723d27b6238e459fa5ab432ff914b8258ce56519cb0d0c9a560e6571a11a",
     "1791072039_create_weekly_customer_knowledge_quote_requests.js": "123de6323d2f443ffe9dea3b647e8aecd226046cb13a6b05d3d7cc6aae206649",
-    "1791072043_create_weekly_profile_upgrades.js": "b40a6e03c06ad2d05fdd383d401206f2f21870d95429be81086ccf1549173008"
+    "1791072043_create_weekly_profile_upgrades.js": "b40a6e03c06ad2d05fdd383d401206f2f21870d95429be81086ccf1549173008",
+    "1791072044_create_scene_g4_reviews.js": "ea05c1a31afc4928a1e2a29195bc27cc10bb1729b2b4b92913493a328eb5e85d"
   }
 }

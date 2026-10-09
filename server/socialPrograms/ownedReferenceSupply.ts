@@ -1,3 +1,4 @@
+import {normalizeSocialChannelId} from '../../shared/contracts/socialChannels.js';
 import type { DataStore } from '../storage/datastore.js';
 import type { OwnedSocialAccount, WeeklyDirectorPlanningAnalysis } from '../../shared/contracts/socialProgram.js';
 import type { SocialDiscoverySupplyItem } from '../../shared/contracts/socialContentWorkflow.js';
@@ -25,6 +26,8 @@ async function allRows(dataStore: DataStore, collection: string, where: Record<s
   }
 }
 
+export function ownedReferenceChannelId(platform: string){return platform==='douyin'?'douyin_cn':normalizeSocialChannelId(platform);}
+
 /** Only exact owned account IDs or explicitly bound connection IDs establish ownership. */
 export async function ownedReferenceSupply(dataStore: DataStore, tenantId: string, programId: string, videos: SocialDiscoverySupplyItem[], now = new Date()) {
   const [accounts, contents, metrics] = await Promise.all([
@@ -42,7 +45,7 @@ export async function ownedReferenceSupply(dataStore: DataStore, tenantId: strin
       if (row.tenant_id !== tenantId || content?.tenantId !== tenantId || content.status !== 'published'
         || content.accountId !== row.account_id || content.channelId !== row.channel_id || content.externalContentId !== row.external_content_id
         || url(content.publicUrl) !== source) return [];
-      return owned.filter(account => account.platform === video.platform && account.platform === content.channelId
+      return owned.filter(account => account.platform === video.platform && ownedReferenceChannelId(account.platform)!==null && ownedReferenceChannelId(account.platform) === ownedReferenceChannelId(String(content.channelId))
         && (account.accountId === content.accountId || account.connectionId === content.accountId))
         .map(account => {
           const snapshots = metrics.items.flatMap(metricRow => {

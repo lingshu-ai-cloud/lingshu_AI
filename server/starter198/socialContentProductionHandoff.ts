@@ -105,8 +105,8 @@ export interface SocialProductionReceipt {
   checks: Array<{ code: string; passed: boolean; message: string }>;
   shotTraceHash: string | null;
   productionResultRef: { id: string; version: string; recordHash: string };
-  evidenceKind: 'technical_detection' | 'director_expression_review' | 'business_publication_preflight';
-  actor: 'content_agent' | 'director_agent' | 'business_agent' | 'rules_engine';
+  evidenceKind: 'technical_detection' | 'human_technical_review' | 'director_expression_review' | 'business_publication_preflight';
+  actor: 'content_agent' | 'human_reviewer' | 'director_agent' | 'business_agent' | 'rules_engine';
   createdAt: string;
   recordHash: string;
 }
@@ -346,7 +346,7 @@ export function buildSocialProductionReceipt(input: {
     fail('social_production_receipt_gate_checks_incomplete');
   }
   if (input.status === 'passed' && input.checks.some(check => !check.passed)) fail('social_production_receipt_check_failed');
-  if (input.gate === 'G4' && (!sceneId || input.actor !== 'content_agent' || !(input.artifactRefs?.length))) {
+  if (input.gate === 'G4' && (!sceneId || !['content_agent','human_reviewer'].includes(input.actor) || !(input.artifactRefs?.length))) {
     fail('social_production_receipt_g4_invalid');
   }
   if (input.gate === 'G5' && (sceneId || input.actor !== 'director_agent')) {
@@ -355,7 +355,7 @@ export function buildSocialProductionReceipt(input: {
   if (input.gate === 'G6' && (sceneId || !['business_agent', 'rules_engine'].includes(input.actor))) {
     fail('social_production_receipt_g6_business_preflight_required');
   }
-  const evidenceKind = input.gate === 'G4' ? 'technical_detection'
+  const evidenceKind = input.gate === 'G4' ? (input.actor==='human_reviewer'?'human_technical_review':'technical_detection')
     : input.gate === 'G5' ? 'director_expression_review' : 'business_publication_preflight';
   const createdAt = (input.now ?? new Date()).toISOString();
   const identity = { handoffId: input.handoff.handoffId, version: input.handoff.version, gate: input.gate, sceneId, attempt: input.attempt };
@@ -439,6 +439,7 @@ export async function persistSocialProductionReceipt(repository: Starter198Repos
   if (handoffs.totalItems !== 1) fail('social_production_receipt_handoff_not_found');
   const handoff = parseSocialProductionHandoffRecord(handoffs.items[0]!);
   assertReceiptIntegrity(receipt, handoff);
+  if(receipt.actor==='human_reviewer'){const {verifyTrustedHumanProductionReceipt}=await import('./socialSceneG4ReviewService.js');await verifyTrustedHumanProductionReceipt(repository,tenantId,receipt);}
   const existing = await repository.list(STARTER_COLLECTIONS.socialProductionReceipts, tenantId, { where: { receipt_id: receipt.receiptId }, perPage: 2 });
   if (existing.totalItems > 1) fail('social_production_receipt_storage_integrity_violation');
   if (existing.items[0]) {
@@ -450,6 +451,7 @@ export async function persistSocialProductionReceipt(repository: Starter198Repos
       where: { handoff_id: receipt.handoffId, handoff_version: receipt.handoffVersion }, perPage: 500,
     });
     const prior = stored.items.map(parseSocialProductionReceiptRecord);
+    for(const r of prior){if(r.actor==='human_reviewer'){const {verifyTrustedHumanProductionReceipt}=await import('./socialSceneG4ReviewService.js');await verifyTrustedHumanProductionReceipt(repository,tenantId,r);}}
     if (prior.some(item => item.productionResultRef.id !== receipt.productionResultRef.id
       || item.productionResultRef.version !== receipt.productionResultRef.version
       || item.productionResultRef.recordHash !== receipt.productionResultRef.recordHash)) {
@@ -521,5 +523,6 @@ export async function readSocialProductionState(input: {
   });
   if (rows.totalItems > rows.items.length) fail('social_production_receipt_storage_integrity_violation');
   const receipts = rows.items.map(parseSocialProductionReceiptRecord);
+  for(const receipt of receipts){if(receipt.actor==='human_reviewer'){const {verifyTrustedHumanProductionReceipt}=await import('./socialSceneG4ReviewService.js');await verifyTrustedHumanProductionReceipt(input.repository,input.tenantId,receipt);}}
   return { handoff, receipts, gates: evaluateSocialProductionGates(handoff, receipts) };
 }

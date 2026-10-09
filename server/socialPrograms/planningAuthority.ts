@@ -165,6 +165,8 @@ function unguardedPlanningAuthority(dataStore: DataStore, beforeAppend: () => Pr
       expectedPlanningVersion: number;
       actor: 'director_agent';
       selectedSlotIds?:string[];
+      /** Server-only supplement path: retain the already frozen owned reference and handoff. */
+      preserveOwnedReferences?:boolean;
       now?: Date;
     }): Promise<WeeklyAgentPlanningState> {
       if (input.actor !== 'director_agent') throw new SocialProgramError('director_analysis_authority_required', 403, '只有编导 Agent 可以写入对标分析。');
@@ -196,14 +198,18 @@ function unguardedPlanningAuthority(dataStore: DataStore, beforeAppend: () => Pr
         const own = slot.referenceSource === 'owned' ? ownedPairs.filter(pair => slot.accountIds.includes(pair.account.accountId)) : [];
         if (slot.referenceSource === 'owned' && !own.length) throw new SocialProgramError('owned_reference_account_required', 409, '该母版目标账号缺少已核验的自有参考，需补齐或明确修订配额。');
         if(slot.referenceSource!=='owned'&&!pairs.length)throw new SocialProgramError('benchmark_account_video_link_required',409,'该外部条目缺少可核验的账号与视频关联，暂不能继续。');
-        const selected = slot.referenceSource === 'owned' ? own[index % own.length]! : pairs[index % pairs.length]!;
+        const previousOwned=input.preserveOwnedReferences&&slot.referenceSource==='owned'?current.directorAnalyses.find(x=>x.slotId===slot.slotId):undefined;
+        const frozenOwned=previousOwned?own.find(pair=>previousOwned.benchmarkVideoRefs.length===1&&previousOwned.benchmarkVideoRefs[0]!.id===pair.video.candidateId&&previousOwned.benchmarkVideoRefs[0]!.version===pair.video.evidenceVersion&&previousOwned.benchmarkAccountRefs.length===1&&previousOwned.benchmarkAccountRefs[0]!.id===pair.account.accountId&&previousOwned.benchmarkAccountRefs[0]!.version===pair.account.version):undefined;
+        if(input.preserveOwnedReferences&&slot.referenceSource==='owned'&&!frozenOwned)throw new SocialProgramError('owned_reference_frozen_binding_changed',409,'原自有视频及账号证据已变化，补指标不能替换参考。');
+        const selected = frozenOwned??(slot.referenceSource === 'owned' ? own[index % own.length]! : pairs[index % pairs.length]!);
         const feedbackTopics = await Promise.all(slot.publicationTaskIds.flatMap(id => { const publication = feedbackPackage?.socialContentPackage?.publicationTasks?.find(p=>p.publicationTaskId===id); return publication?.customerFeedbackTopicRef ? [{publication,ref:publication.customerFeedbackTopicRef}] : []; }).map(({publication,ref})=>createCustomerFeedbackTopicService(dataStore).verifiedPlanningReference({tenantId:input.tenantId,programId:input.programId,pkg:feedbackPackage!,publicationTaskId:publication.publicationTaskId,ref})));
         const contentTemplateEvidence=await Promise.all(slot.publicationTaskIds.flatMap(id=>{const publication=feedbackPackage?.socialContentPackage?.publicationTasks?.find(p=>p.publicationTaskId===id);return publication?.contentTemplateBindingRef?[{publication,ref:publication.contentTemplateBindingRef}]:[];}).map(async({publication,ref})=>({publicationTaskId:publication.publicationTaskId,bindingRef:ref,structure:await readWeeklyTemplateStructure(dataStore,{tenantId:input.tenantId,programId:input.programId,packageId:current.packageId,packageVersion:current.packageVersion,publicationTaskId:publication.publicationTaskId},ref)})));
         const { video } = selected;
         const frozenHandoff = handoffs.items.filter(row => row.tenant_id === input.tenantId && row.record_hash === socialRequestHash(socialJson(row.payload)))
           .map(row => ({ row, handoff: socialJson(row.payload) as SocialInspirationHandoff }))
-          .filter(({ handoff }) => handoff?.inspirationId === video.candidateId && handoff.source?.sourceUrl === video.sourceUrl)
+          .filter(({ row,handoff }) => handoff?.inspirationId === video.candidateId && handoff.source?.sourceUrl === video.sourceUrl&&(!input.preserveOwnedReferences||slot.referenceSource!=='owned'||previousOwned?.frozenHandoffRefs?.some(ref=>ref.inspirationId===video.candidateId&&ref.version===String(handoff.version??handoff.analysisVersion)&&ref.recordHash===row.record_hash)))
           .sort((a,b) => Number(b.handoff.version ?? b.handoff.analysisVersion) - Number(a.handoff.version ?? a.handoff.analysisVersion))[0];
+        if(input.preserveOwnedReferences&&previousOwned?.frozenHandoffRefs?.length&&!frozenHandoff)throw new SocialProgramError('owned_reference_frozen_handoff_changed',409,'原参考分镜证据缺失，补指标不能换成新版本。');
         const accountTitle = 'evidenceRef' in selected ? selected.account.displayName : selected.account.title;
         const benchmarkVideoRef: VersionedSocialRef = { type: 'social_discovery_video', id: video.candidateId, version: video.evidenceVersion };
         const benchmarkAccountRef: VersionedSocialRef = 'evidenceRef' in selected ? { type: 'owned_social_account', id: selected.account.accountId, version: selected.account.version } : { type: 'social_benchmark_account', id: selected.account.candidateId, version: selected.account.evidenceVersion };

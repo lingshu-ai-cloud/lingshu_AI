@@ -1,3 +1,5 @@
+import {SocialDirectorG5ReviewPanel} from './SocialDirectorG5ReviewPanel';
+import {SocialSceneG4ReviewPanel} from './SocialSceneG4ReviewPanel';
 import { useCallback, useState } from 'react';
 import { AlertCircle, CheckCircle2, Loader2, RefreshCcw } from 'lucide-react';
 import type { Page } from '../../App';
@@ -151,6 +153,9 @@ export default function SocialContentWorkspace({
         onRefresh={() => void state.refresh()}
         onNavigate={navigateWithTask}
       />
+
+      {task?.runId&&<SocialDirectorG5ReviewPanel key={`g5:${task.taskId}:${task.runId}`} task={task} onChanged={()=>void state.refresh()}/> }
+      {task?.runId&&<SocialSceneG4ReviewPanel key={`${task.taskId}:${task.runId}`} task={task} onChanged={()=>void state.refresh()}/> }
 
       {publicationOpen && task && socialContentCanRegisterPublication(task) && <PublicationDialog task={task} busy={state.busy} onClose={() => { if (!state.busy) setPublicationOpen(false); }} onSubmit={submitPublication} />}
       {metricsOpen && task && <MetricsDialog task={task} busy={state.busy} onClose={() => { if (!state.busy) setMetricsOpen(false); }} onSubmit={submitMetrics} />}
