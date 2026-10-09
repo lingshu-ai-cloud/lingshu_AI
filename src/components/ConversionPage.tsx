@@ -2552,6 +2552,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
         </div>
         <div className={mobilePanel === 'profile' ? 'flex min-h-0 min-w-0 flex-1 lg:contents' : 'hidden lg:contents'}>
         <CustomerInfoRail
+          key={selected?.id || 'no-customer'}
           customer={selected}
           customerServiceStatus={customerServiceStatus}
           customerServiceSaving={customerServiceSaving}
