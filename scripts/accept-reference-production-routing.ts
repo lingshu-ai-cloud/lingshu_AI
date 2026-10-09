@@ -32,6 +32,8 @@ const beforeRecord = await runWithDataAuthority('local', () => store.getById<any
 assert.ok(beforeRecord);
 const before = parse(beforeRecord.aiAnalysis);
 if (!fs.existsSync(path.join(reportDir, 'before-record.json'))) save('before-record.json', beforeRecord);
+const identityCacheRoot = path.resolve('data/analysis-output/presenter-continuity');
+const priorIdentityCacheKeys = fs.existsSync(identityCacheRoot) ? fs.readdirSync(identityCacheRoot).filter(file => file.endsWith('.json')) : [];
 if (process.argv.includes('--preflight')) {
   console.log(JSON.stringify({ status: 'preflight', sourceId, shotCount: before.gemini.scriptDetails15s.length, criticalShotIds: stage2.criticalShotIds, submitted: false }));
   process.exit(0);
@@ -59,6 +61,7 @@ try {
   if (response.statusCode !== 200) save(`failed-api-attempt-${Date.now()}.json`, response);
   assert.equal(response.statusCode, 200, `production routing succeeds: ${JSON.stringify(response.body)}`);
   assert.equal(response.body.ok, true);
+  assert.equal(response.body.status, 'routed');
   const saved = await runWithDataAuthority('local', () => store.getById<any>('trend_videos', sourceId));
   save('after-record.json', saved);
   const analysis = parse(saved.aiAnalysis);
@@ -77,10 +80,14 @@ try {
   assert.equal(identitySummary.videoId, sourceId);
   assert.ok(identitySummary.providerResponse.raw && identitySummary.cacheKey, 'raw provider decision and paid fingerprint are durable');
   assert.equal(identitySummary.frameCount, identitySummary.frameEvidence.length);
+  assert.deepEqual(analysis.gemini.presenterContinuitySummary, identitySummary);
+  assert.deepEqual(analysis.gemini.referenceProductionRoutingSummary, analysis.referenceProductionRoutingSummary);
   const parsedProvider = JSON.parse(identitySummary.providerResponse.raw);
   const provider = Array.isArray(parsedProvider) && parsedProvider.length === 1 ? parsedProvider[0] : parsedProvider;
   assert.equal(provider.shots.length, shots.length);
   assert.equal(new Set(provider.shots.map((shot: any) => shot.shotId)).size, shots.length);
+  const speakerIds = new Set(shots.filter((shot: any) => shot.presenterContinuityEvidence?.observedPresenterRole === 'sales_presenter'
+    && shot.presenterContinuityEvidence.confidence >= .85).map((shot: any) => shot.presenterContinuityEvidence.personContinuityId));
   for (const frame of identitySummary.frameEvidence) {
     assert.ok(Number.isFinite(frame.seconds) && Number.isFinite(frame.requestedSeconds));
     assert.ok(Math.abs(frame.seconds * 30 - Math.round(frame.seconds * 30)) < .01, 'identity images retain actual source 30fps decoded PTS');
@@ -118,6 +125,47 @@ try {
     }
     if (evidence.observedPresenterRole === 'background') assert.equal(evidence.personPresence, 'person');
     if (evidence.observedPresenterRole === 'none') assert.ok(['none', 'hands_only'].includes(evidence.personPresence));
+    const routing = shot.referenceProductionRouting;
+    assert.equal(routing.version, 'reference_identity_first_v1');
+    assert.ok(typeof routing.reason === 'string' && routing.reason.trim(), 'product route includes a concrete reason');
+    assert.equal(routing.source.sourceSha256, before.contentSha256);
+    assert.equal(routing.criticality, shot.criticalShot.classification);
+    const uncertain = evidence.personPresence === 'unknown' || evidence.observedPresenterRole === 'unknown'
+      || evidence.confidence < .85 || (evidence.observedPresenterRole === 'presenter_action' && !speakerIds.has(evidence.personContinuityId));
+    if (uncertain) {
+      assert.equal(routing.state, 'awaiting_automatic_analysis');
+      assert.equal(routing.route, 'undetermined');
+      assert.equal(routing.automaticAnalysisRequired, true);
+      assert.equal(routing.constraints.forbidGenericPersonMatch, true, 'uncertain person never admits stock person matching');
+    } else {
+      assert.equal(routing.state, 'ready', 'ready describes a route plan, not generated media');
+      assert.equal(routing.automaticAnalysisRequired, false);
+      assert.equal(routing.tier, shot.criticalShot.classification === 'critical' ? 'high' : 'standard');
+      if (['sales_presenter', 'presenter_action'].includes(evidence.observedPresenterRole)) {
+        assert.equal(routing.route, 'reference_frame_presenter', 'confirmed main presenter remains reference-driven even in noncritical shots');
+        assert.equal(routing.constraints.forbidGenericPersonMatch, true);
+        assert.equal(routing.constraints.mustUseReferenceFrames, true);
+        assert.equal(routing.identityLock.required, true);
+        assert.equal(routing.identityLock.sourcePersonId, evidence.personContinuityId);
+        assert.equal(routing.identityLock.groupKey, `${before.contentSha256}:${evidence.personContinuityId}`);
+        const samePersonIds = shots.flatMap((candidate: any, candidateIndex: number) => {
+          const other = candidate.presenterContinuityEvidence;
+          return other.confidence >= .85 && other.personPresence === 'person'
+            && ['sales_presenter', 'presenter_action'].includes(other.observedPresenterRole)
+            && other.personContinuityId === evidence.personContinuityId ? [`shot-${candidateIndex + 1}`] : [];
+        });
+        assert.deepEqual(routing.identityLock.samePersonShotIds, samePersonIds, 'same source presenter receives a shared immutable identity lock');
+        assert.equal(routing.identityLock.targetPresenterAssetId, null, 'source identity grouping does not invent an account avatar asset');
+      } else if (evidence.observedPresenterRole === 'background' || evidence.personPresence === 'hands_only') {
+        assert.equal(routing.route, shot.criticalShot.classification === 'critical' ? 'non_presenter_aigc_video' : 'non_presenter_library_match');
+        assert.equal(routing.constraints.nonPresenterBrollOnly, true);
+        assert.equal(routing.identityLock, null, 'background workers and isolated hands are not automatically the main presenter');
+      } else {
+        assert.equal(evidence.personPresence, 'none');
+        assert.equal(routing.route, shot.criticalShot.classification === 'critical' ? 'aigc_video' : 'library_match');
+        assert.equal(routing.identityLock, null);
+      }
+    }
     return { shotId: index + 1, time: shot.time, criticalShot: shot.criticalShot, presenterContinuityEvidence: shot.presenterContinuityEvidence, referenceProductionRouting: shot.referenceProductionRouting };
   });
   save('shot-routing.json', rows);
@@ -127,6 +175,9 @@ try {
   const publicAnalysis = parse(readBack.body.aiAnalysis);
   for (const field of ['presenterContinuitySummary', 'referenceProductionRoutingSummary']) assert.deepEqual(publicAnalysis[field], analysis[field]);
   assert.deepEqual(publicAnalysis.gemini.scriptDetails15s.map((shot: any) => ({ evidence: shot.presenterContinuityEvidence, routing: shot.referenceProductionRouting })), shots.map((shot: any) => ({ evidence: shot.presenterContinuityEvidence, routing: shot.referenceProductionRouting })), 'actual authenticated API returns persisted identity evidence and routes');
+  const paidCacheFile = path.join(identityCacheRoot, `${identitySummary.cacheKey}.json`);
+  const cacheBeforeReplay = fs.readFileSync(paidCacheFile, 'utf8');
+  const cacheMtimeBeforeReplay = fs.statSync(paidCacheFile).mtimeMs;
   const replay = await request('/route-production', 'POST');
   save('cache-replay-response.json', replay);
   assert.equal(replay.statusCode, 200);
@@ -135,8 +186,14 @@ try {
   const replayAnalysis = parse(replayRecord.aiAnalysis);
   assert.deepEqual(replayAnalysis.presenterContinuitySummary, analysis.presenterContinuitySummary, 'second POST keeps same paid visual evidence');
   assert.deepEqual(replayAnalysis.referenceProductionRoutingSummary, analysis.referenceProductionRoutingSummary);
+  assert.equal(fs.readFileSync(paidCacheFile, 'utf8'), cacheBeforeReplay, 'replay does not rewrite paid supplier cache or raw response');
+  assert.equal(fs.statSync(paidCacheFile).mtimeMs, cacheMtimeBeforeReplay, 'replay uses existing paid artifact without a new submission');
   const report = { status: 'passed', sourceId, at: new Date().toISOString(), authenticatedApiReadback: true, durableStorageReadback: true, cacheReplaySameResult: true,
-    speechAlignmentPreserved: true, criticalClassificationPreserved: true, presenterContinuitySummary: analysis.presenterContinuitySummary, referenceProductionRoutingSummary: analysis.referenceProductionRoutingSummary, shots: rows };
+    speechAlignmentPreserved: true, criticalClassificationPreserved: true,
+    routingOnlyNoMediaGenerated: true, accountTargetIdentityBound: false,
+    additionalAsrSupplierCalls: 0, additionalCriticalShotSupplierCalls: 0,
+    presenterSupplierCache: { existedBeforeRequest: priorIdentityCacheKeys.includes(`${identitySummary.cacheKey}.json`), cacheFile: paidCacheFile, replayAdditionalSupplierCalls: 0 },
+    presenterContinuitySummary: analysis.presenterContinuitySummary, referenceProductionRoutingSummary: analysis.referenceProductionRoutingSummary, shots: rows };
   save('report.json', report);
   console.log(JSON.stringify({ status: 'passed', sourceId, shotCount: rows.length, reportDir }));
 } catch (error) {
