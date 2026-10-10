@@ -37,7 +37,7 @@ export function answerMobileAssistant(context: Awaited<ReturnType<typeof buildMo
     qualified_inquiries: `本周销售或 CRM 确认的有效询盘 ${value(m.qualifiedInquiries)} 条。`,
     exposure: `本周可核实曝光：${value(m.exposure)}。`,
   };
-  const source = topic === 'agent_status' ? context.agents.source : topic === 'weekly_progress' ? m.tasks.source : topic === 'published_videos' ? m.publishedVideos.source : topic === 'qualified_inquiries' ? m.qualifiedInquiries.source : m.exposure.source;
+  const source = topic === 'agent_status' ? 'workflow_tasks' : topic === 'weekly_progress' ? m.tasks.source : topic === 'published_videos' ? m.publishedVideos.source : topic === 'qualified_inquiries' ? m.qualifiedInquiries.source : m.exposure.source;
   return { type: 'query_result', text: answers[topic], topic, range: context.range, generatedAt: context.generatedAt,
     evidence: [{ source, route: '/overview', topic }], performedAction: false,
     links: topic === 'weekly_progress' ? context.taskDrilldown.items.map(t => ({ type: 'task', id: t.id, title: t.title }))
