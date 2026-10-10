@@ -179,7 +179,7 @@ Page({
         return; if (item.type === 'starter') { this.setData({detail:{...item.starterItem,title:item.title,reason:item.reason,starter:true,actions:item.actions},sheet:null}); return; } if (item.type === 'shoot') {
         wx.navigateTo({ url: '/pages/index/index?taskId=' + encodeURIComponent(item.shootingId) });
         return;
-    } this.setData({ detail: { ...item.task, title: item.title, reason: item.reason, approval: item.approval, type: item.type, route: item.route || model.actionRoute(item) }, sheet: null }); this.loadTaskEvents(item.task); },
+    } this.setData({ detail: { ...item.task, title: item.title, reason: item.reason, approval: item.approval, type: item.type, interventionType: item.interventionType, route: item.route || model.actionRoute(item), outputText: item.task?.output && Object.keys(item.task.output).length ? JSON.stringify(item.task.output, null, 2) : '' }, sheet: null }); this.loadTaskEvents(item.task); },
     askMatterAssistant() { const d = this.data.detail; if (!d) return; this.setData({ detail:null, tab:'assistant', input:'请根据真实工作数据告诉我“' + d.title + '”为什么停下、我需要补充什么，以及提交后如何确认它已恢复。' }); },
     openTask(e) { const task = this.data.tasks.find(t => t.id === e.currentTarget.dataset.id); if (task) {
         this.setData({ detail: task });
@@ -268,6 +268,34 @@ Page({
         finally {
             if (epoch === (this.epoch || 0)) this.setData({ processing: false });
         } } }); },
+    retryWithMode(e) {
+        const task = this.data.detail;
+        if (!task?.id || this.data.processing) return;
+        const mode = e.currentTarget.dataset.mode;
+        const definitions = {
+            retry_failed_shots: { title: '只重做未通过分镜', placeholder: '可补充画面、口播或字幕要求', prefix: '保留已通过分镜，只重做质检未通过的分镜并重新合成。' },
+            increase_cost_limit: { title: '设置本次费用上限', placeholder: '输入本次允许增加的金额（元）', prefix: '仅本次返工允许的新增费用上限（元）：' },
+            retry_failed_step: { title: '只重试失败步骤', placeholder: '可补充恢复说明', prefix: '保留已完成成果，只从失败节点安全重试。' },
+            rerun_downstream: { title: '重跑失败节点及下游', placeholder: '请说明为什么需要重跑下游', prefix: '从失败节点开始重跑相关下游步骤。' },
+            authorization_fixed: { title: '确认授权已恢复', placeholder: '可填写已重新授权的账号', prefix: '我已完成账号重新授权，请先校验连接，再从失败节点重试。' },
+            supply_instruction: { title: '补充处理指令', placeholder: '填写 Agent 继续工作所需的决定或约束', prefix: '' }
+        };
+        const def = definitions[mode]; if (!def) return;
+        const epoch = this.epoch || 0;
+        wx.showModal({ title: def.title, editable: true, placeholderText: def.placeholder, confirmText: '提交并继续', success: async r => {
+            if (!r.confirm || epoch !== (this.epoch || 0) || this.disposed) return;
+            const value = String(r.content || '').trim();
+            if (mode === 'increase_cost_limit' && (!/^\d+(\.\d{1,2})?$/.test(value) || Number(value) <= 0)) { this.setData({error:'请输入有效的本次费用上限'}); return; }
+            if (mode === 'supply_instruction' && !value) { this.setData({error:'请填写 Agent 继续工作所需的信息'}); return; }
+            this.setData({processing:true,error:''});
+            try {
+                await this.submitWorkbenchAction('retry_task', task.id, task.task_version || task.version || task.updated_at, { instruction: def.prefix + value, rerunDownstream: mode === 'rerun_downstream' });
+                if (epoch !== (this.epoch || 0) || this.disposed) return;
+                this.setData({detail:null}); await this.refresh(); wx.showToast({title:'已提交，Agent 正在恢复',icon:'none'});
+            } catch (err) { if (epoch === (this.epoch || 0)) this.setData({error:err.message}); }
+            finally { if (epoch === (this.epoch || 0)) this.setData({processing:false}); }
+        }});
+    },
     starterAction(e) {
         if (this.data.processing) return;
         const detail = this.data.detail;
