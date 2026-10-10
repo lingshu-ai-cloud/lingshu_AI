@@ -1,4 +1,6 @@
-# Chrome 本地可用性与返回位置审计
+# Chrome 本地可用性与返回位置审计（第一轮证据）
+
+第二轮已把 `--strict-return-position` 迁移到真实 App / 三渠道 API fixture 验收。以下控制壳的缺口是第一轮机制证据，不能覆盖最新 App 的返回实现；当前结果见 [第二轮报告](agent-card-e2e-round2.md)。默认命令保留控制壳诊断，严格命令使用 `agent-calendar-return-chrome-audit.mjs`，缺 fixture/缺渠道/异常请求均失败。
 
 2026-10-10；只审计本地开发代码，不调用业务后端、外部平台、发布、外发、付费、部署。主功能与既有脏文件未修改。
 

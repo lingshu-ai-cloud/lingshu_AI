@@ -43,15 +43,17 @@ try {
     }
     return route.continue();
   });
-  await page.goto(`${origin}/agent-calendar-audit?page=digitalEmployees`);
-  await page.waitForFunction(()=>window.audit?.modules?.every(value=>value==='function'));
+  // Real App cold compilation can exceed the per-control timeout. This only
+  // extends startup; visibility, identity and restoration assertions stay strict.
+  await page.goto(`${origin}/agent-calendar-audit?page=digitalEmployees`,{waitUntil:'domcontentloaded',timeout:60000});
+  await page.waitForFunction(()=>window.audit?.modules?.every(value=>value==='function'),null,{timeout:60000});
   evidence.realAppRendered=true; evidence.realProductionModulesImported=true;
   for(const channel of (process.env.AGENT_CALENDAR_AUDIT_CHANNEL?[process.env.AGENT_CALENDAR_AUDIT_CHANNEL]:['whatsapp','messenger','instagram'])){
     const scenario=fixtures.cases.find(value=>value.channel===channel);
     if(!scenario){evidence.gaps.push(`${channel}: no declared real weekly calendar/API fixture`);continue;}
     try {
       await page.evaluate(()=>{localStorage.setItem('overseas_token','read-only-audit');sessionStorage.clear();});
-      await page.goto(`${origin}/agent-calendar-audit?page=digitalEmployees`);
+      await page.goto(`${origin}/agent-calendar-audit?page=digitalEmployees`,{waitUntil:'domcontentloaded',timeout:60000});
       for(const step of scenario.prepare||[]){const locator=page.locator(step.selector);if(step.value!==undefined)await locator.selectOption(step.value);else await locator.click();}
       const accountFilter=page.getByRole('region',{name:'智能经营账号列表'}).locator('button[aria-pressed]').nth(1);
       await accountFilter.click();
