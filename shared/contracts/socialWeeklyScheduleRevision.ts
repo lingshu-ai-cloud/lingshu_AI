@@ -19,3 +19,7 @@ export interface WeeklyScheduleSnapshot {
 }
 export type WeeklyScheduledPackage=WeeklyOperatingPackage&{scheduleRevisionRef?:VersionedSocialRef};
 export interface WeeklyScheduleConfirmation {item:WeeklyScheduledPackage;snapshot:WeeklyScheduleSnapshot;materialConsumerRepairs:Array<{requestId:string;reason:string}>;activated:false;previousPublishingAuthorizationRevoked:boolean;}
+export type WeeklyScheduleConfirmationReceipt=
+ | {status:'not_committed';proposalId:string;sourceVersion:number;targetVersion:number}
+ | {status:'pending_recovery';proposalId:string;sourceVersion:number;targetVersion:number;snapshot:WeeklyScheduleSnapshot}
+ | {status:'committed';proposalId:string;sourceVersion:number;targetVersion:number;snapshot:WeeklyScheduleSnapshot;item:WeeklyScheduledPackage;activated:false};

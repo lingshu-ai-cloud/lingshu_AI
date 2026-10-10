@@ -4,7 +4,7 @@ import type { WeeklyExecutionTask } from '../../../shared/contracts/socialProgra
 import type { WeeklyRecoveryAssessment, RecoveryResource, RecoveryTaskConstraint } from '../../../server/socialPrograms/weeklyRecoveryAssessment';
 import { STEP_LABEL } from './weeklyExecutionLabels';
 import type { WeeklyBackwardSchedule } from '../../../server/socialPrograms/weeklyBackwardSchedule';
-import type { WeeklyScheduleProposal, WeeklyScheduleConfirmation, WeeklyScheduleTargetGraph } from '../../../shared/contracts/socialWeeklyScheduleRevision';
+import type { WeeklyScheduleProposal, WeeklyScheduleConfirmation, WeeklyScheduleConfirmationReceipt, WeeklyScheduleTargetGraph } from '../../../shared/contracts/socialWeeklyScheduleRevision';
 
 export interface WeeklyRecoveryScenario {
   changedTaskIds: string[];
@@ -23,6 +23,7 @@ export interface WeeklyRecoveryPanelProps {
   onPreviewTarget?:()=>Promise<WeeklyScheduleTargetGraph>;
   onPropose?:(input:Omit<WeeklyRecoveryScenario,'changedTaskIds'>)=>Promise<WeeklyScheduleProposal>;
   onReadProposal?:(proposalId:string)=>Promise<WeeklyScheduleProposal>;
+  onReadConfirmation?:(proposalId:string)=>Promise<WeeklyScheduleConfirmationReceipt>;
   onConfirm?:(input:{proposalId:string;expectedVersion:number;inputEvidenceHash:string;confirmedTemplateCarryoverPlanHashes:string[]})=>Promise<WeeklyScheduleConfirmation>;
 }
 type WorkDraft = { resourceKey: string; remainingMinutes: string; remainingCostCny: string; bufferMinutes: string; availableAt: string };
@@ -97,7 +98,7 @@ export function buildBackwardScenario(scenario:WeeklyRecoveryScenario,tasks:Week
   return {...input,...(Object.keys(operationalDeadlines).length?{operationalDeadlines}:{})};
 }
 export function assertTargetGraphCapacity(graph:WeeklyScheduleTargetGraph,input:Omit<WeeklyRecoveryScenario,'changedTaskIds'>){for(const binding of graph.bindings.filter(b=>b.origin==='new_planned')){const c=input.constraints[binding.planningTaskId];if(!c||![c.remainingMinutes,c.remainingCostCny,c.bufferMinutes].every(v=>typeof v==='number'&&Number.isFinite(v)&&v>=0)||!c.availableAt||!input.resources[c.resourceKey])throw Error('新增素材前置需逐项明确工时、费用、缓冲、实际产能和可开始时间。');}}
-export default function WeeklyRecoveryPanel({mode='recovery',tasks,packageVersion,onAssess,onPlanBackward,weekStart,onPropose,onConfirm,onPreviewTarget,onReadProposal}:WeeklyRecoveryPanelProps) {
+export default function WeeklyRecoveryPanel({mode='recovery',tasks,packageVersion,onAssess,onPlanBackward,weekStart,onPropose,onConfirm,onPreviewTarget,onReadProposal,onReadConfirmation}:WeeklyRecoveryPanelProps) {
   const [targetGraph,setTargetGraph]=useState<WeeklyScheduleTargetGraph|null>(null);
   const [budget,setBudget]=useState('');
   const [changed,setChanged]=useState<string[]>([]);
@@ -109,6 +110,7 @@ export default function WeeklyRecoveryPanel({mode='recovery',tasks,packageVersio
   const [proposal,setProposal]=useState<WeeklyScheduleProposal|null>(null);
   const [templateConsent,setTemplateConsent]=useState<string[]>([]);
   const [confirmation,setConfirmation]=useState<WeeklyScheduleConfirmation|null>(null);
+  const [confirmationReceipt,setConfirmationReceipt]=useState<WeeklyScheduleConfirmationReceipt|null>(null);
   const [error,setError]=useState('');
   const [busy,setBusy]=useState(false);
   const generation=useRef(0);
@@ -144,15 +146,15 @@ export default function WeeklyRecoveryPanel({mode='recovery',tasks,packageVersio
   const capacityTasks=targetGraph?.tasks??tasks;
   const previewTarget=async()=>{if(!onPreviewTarget)return;const requestId=++generation.current;setTargetGraph(null);setBusy(true);setError('');setProposal(null);setTemplateConsent([]);setBackward(null);try{const graph=await onPreviewTarget();if(generation.current===requestId)setTargetGraph(graph);}catch(cause){if(generation.current===requestId)setError(cause instanceof Error?cause.message:'无法读取新草稿完整任务。');}finally{if(generation.current===requestId)setBusy(false);}};
   const propose=async()=> {
-    if(!onPropose)return;const requestId=++generation.current;setBusy(true);setError('');setProposal(null);setTemplateConsent([]);setConfirmation(null);
+    if(!onPropose)return;const requestId=++generation.current;setBusy(true);setError('');setProposal(null);setTemplateConsent([]);setConfirmation(null);setConfirmationReceipt(null);
     try {if(onPreviewTarget&&!targetGraph)throw Error('请先读取新草稿完整任务，并明确新增素材准备的产能与成本。');const input=buildBackwardScenario(buildRecoveryScenario(budget,changed,work,resources),capacityTasks,packageVersion,operational);if(targetGraph)assertTargetGraphCapacity(targetGraph,input);const response=await onPropose(input);if(generation.current===requestId){setProposal(response);setBackward(response.plan);}}
     catch(cause){if(generation.current===requestId)setError(cause instanceof Error?cause.message:'提案读取失败。');}finally{if(generation.current===requestId)setBusy(false);}
   };
   const readProposal=async()=>{if(!proposal||!onReadProposal)return;const requestId=++generation.current;setBusy(true);setError('');try{const value=await onReadProposal(proposal.proposalId);if(generation.current===requestId){setProposal(value);setTemplateConsent([]);setBackward(value.plan);}}catch(cause){if(generation.current===requestId)setError(cause instanceof Error?cause.message:'原排期提案读取失败。');}finally{if(generation.current===requestId)setBusy(false);}};
   const confirm=async()=> {
     if(!onConfirm||!proposal)return;const requestId=++generation.current;setBusy(true);setError('');
-    try {const confirmedTemplateCarryoverPlanHashes=explicitlyConfirmedTemplatePlans(proposal,templateConsent);const response=await onConfirm({proposalId:proposal.proposalId,expectedVersion:proposal.packageVersion,inputEvidenceHash:proposal.inputEvidenceHash,confirmedTemplateCarryoverPlanHashes});if(generation.current===requestId){setConfirmation(response);setProposal(null);setTemplateConsent([]);}}
-    catch(cause){if(generation.current===requestId)setError(cause instanceof Error?cause.message:'修订确认失败。');}finally{if(generation.current===requestId)setBusy(false);}
+    try {const confirmedTemplateCarryoverPlanHashes=explicitlyConfirmedTemplatePlans(proposal,templateConsent);const response=await onConfirm({proposalId:proposal.proposalId,expectedVersion:proposal.packageVersion,inputEvidenceHash:proposal.inputEvidenceHash,confirmedTemplateCarryoverPlanHashes});if(generation.current===requestId){setConfirmation(response);setConfirmationReceipt(null);setProposal(null);setTemplateConsent([]);}}
+    catch(cause){if(generation.current===requestId){if(onReadConfirmation){try{const receipt=await onReadConfirmation(proposal.proposalId);if(generation.current===requestId){setConfirmationReceipt(receipt);if(receipt.status!=='not_committed'){setProposal(null);setTemplateConsent([]);}setError(receipt.status==='committed'?'确认响应中断，但新草稿已核实落地。':receipt.status==='pending_recovery'?'确认写入尚未完整落地，已停止重复提交，请等待恢复。':'确认尚未提交，可核对原提案后再次操作。');}}catch{setError(cause instanceof Error?cause.message:'修订确认失败。');}}else setError(cause instanceof Error?cause.message:'修订确认失败。');}}finally{if(generation.current===requestId)setBusy(false);}
   };
   const carryovers=proposal?readTemplateCarryoverPlans(proposal):[];
   const remaining=capacityTasks.filter(task=>task.status!=='succeeded');
@@ -174,6 +176,7 @@ export default function WeeklyRecoveryPanel({mode='recovery',tasks,packageVersio
     {onPropose&&<button type="button" disabled={busy||!tasks.length} onClick={()=>void propose()} className="ml-2 mt-4 rounded-lg border border-border px-4 py-2 text-xs font-semibold disabled:opacity-50">生成可确认的排期提案</button>}
     {proposal&&<div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs leading-5"><p>已保存当前 v{proposal.packageVersion} 排期提案，尚未应用。确认将创建新草稿并重新核验真实输入和当前容量。</p><p>{mode==='initial'?'确认只保存首次排期新草稿，不自动启用发布授权或执行。':'先前发布授权将撤销，新草稿不会自动激活；本次确认不代表旧任务已停止。'}</p>{carryovers.length>0&&<div className="mt-3 space-y-2"><p className="font-semibold">模板绑定需逐条同意承接到新版本</p>{carryovers.map(plan=><label key={plan.planHash} className="block rounded border border-amber-300 bg-white p-3"><input type="checkbox" disabled={busy} checked={templateConsent.includes(plan.planHash)} onChange={event=>setTemplateConsent(ids=>event.target.checked?[...ids,plan.planHash]:ids.filter(id=>id!==plan.planHash))}/><span className="ml-2">同意将视频 {plan.sourceScope.publicationTaskId} 的模板 v{plan.templateRef.version}（{plan.templateRef.id}）用于新排期</span><span className="mt-1 block">原周 v{plan.sourceScope.packageVersion} · {plan.sourceBindingRef.id} → 新周 v{plan.targetScope.packageVersion} · {plan.targetBindingRef.id}</span><span className="mt-1 block break-all text-text-muted">原模板确认：{plan.confirmationId} · 承接计划：{plan.planHash}</span></label>)}<p>不自动替换模板或沿用审批；未同意全部冻结承接计划时不能确认此排期。</p></div>}{onReadProposal&&<button type="button" disabled={busy} onClick={()=>void readProposal()} className="mr-2 mt-2 rounded-lg border border-border px-3 py-2 font-semibold">只读核对原排期提案</button>}<button type="button" disabled={busy||!onConfirm||!proposal.plan.fullGraphConditionallyReachable||carryovers.some(plan=>!templateConsent.includes(plan.planHash))} onClick={()=>void confirm()} className="mt-2 rounded-lg bg-accent px-3 py-2 font-semibold text-white disabled:opacity-50">确认完整排期并创建新草稿</button>{!proposal.plan.fullGraphConditionallyReachable&&<p className="mt-1 text-amber-800">完整任务图仍有缺口，需补齐后重新生成提案。</p>}</div>}
     {confirmation&&<div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-xs leading-5"><p>已创建 v{confirmation.item.version} 新草稿 · {confirmation.activated===false?'未自动激活':'请核对激活状态'}</p><p>{confirmation.previousPublishingAuthorizationRevoked?'先前发布授权已撤销，需重新明确授权。':'先前没有开放真实发布授权。'}</p><p>原有任务未在此被宣称停止；新增素材消费者仍需核验。</p>{confirmation.materialConsumerRepairs.length?<><p className="mt-2 font-semibold">素材消费者关联尚有缺口：</p>{confirmation.materialConsumerRepairs.map((repair,index)=><p key={`${repair.requestId}:${index}`}>{repair.requestId} · {repair.reason}</p>)}</>:<p>素材消费者关联未返回修复缺口；仍需真实核验通过才能生产。</p>}</div>}
+    {confirmationReceipt&&<div className={`mt-3 rounded-lg border p-3 text-xs leading-5 ${confirmationReceipt.status==='committed'?'border-emerald-200 bg-emerald-50':'border-amber-200 bg-amber-50'}`}><p className="font-semibold">确认结果只读核验：{confirmationReceipt.status==='committed'?`v${confirmationReceipt.targetVersion} 已落地`:confirmationReceipt.status==='pending_recovery'?'写入待恢复':'尚未提交'}</p><p>提案 {confirmationReceipt.proposalId}；系统未自动重复提交。</p></div>}
     {backward&&<div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-xs leading-5">
       <p className="font-semibold">倒排建议 · 目标 {backward.targetPublicationCount} 条 · 条件可达 {backward.conditionallyReachableCount} 条 · 缺口 {backward.publicationGap} 条</p>
       <p>完整任务图：{backward.fullGraphConditionallyReachable?'条件可排入工作窗口':`仍有 ${backward.unscheduledTaskIds?.length??0} 项未排入`}；发布可达不代表观察与复盘已经完成。</p>

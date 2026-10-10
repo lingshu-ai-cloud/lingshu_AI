@@ -46,6 +46,7 @@ test('first draft explicit capacity confirmation freezes actual full graph witho
  await assert.rejects(service.confirm(authority,{proposalId:incomplete.proposalId,expectedVersion:source.version,inputEvidenceHash:incomplete.inputEvidenceHash}),{code:'weekly_schedule_fresh_capacity_not_feasible'});
  assert.equal((await f.store.list(WEEKLY_EXECUTION_FREEZES)).totalItems,0);assert.equal(scheduleHash(await listWeeklyExecutionTasks(f.store,'t','p',source.packageId,source.version)),oldHash);
  const proposal=await service.propose(authority,userCapacity);
+ assert.deepEqual(await service.readConfirmation(authority,proposal.proposalId),{status:'not_committed',proposalId:proposal.proposalId,sourceVersion:source.version,targetVersion:source.version+1});
  const sourceRow=(await f.store.list<Record_>('social_weekly_operating_packages',{where:{tenant_id:'t',package_id:source.packageId,version:source.version},perPage:2})).items[0]!;
  const originalPayload=sourceRow.payload;
  await f.store.update('social_weekly_operating_packages',sourceRow.id,{payload:{...source,status:'active'}});
@@ -54,12 +55,14 @@ test('first draft explicit capacity confirmation freezes actual full graph witho
  await f.store.update('social_weekly_operating_packages',sourceRow.id,{payload:originalPayload});
  assert.equal(proposal.plan.publicationGap,0,JSON.stringify(proposal.plan.assignments.filter(a=>a.reasons.length)));
  const result=await service.confirm(authority,{proposalId:proposal.proposalId,expectedVersion:source.version,inputEvidenceHash:proposal.inputEvidenceHash});
+ const committed=await service.readConfirmation(authority,proposal.proposalId);assert.equal(committed.status,'committed');if(committed.status==='committed'){assert.equal(committed.item.version,result.item.version);assert.equal(committed.snapshot.snapshotId,result.snapshot.snapshotId);}
  const retried=await service.confirm(authority,{proposalId:proposal.proposalId,expectedVersion:source.version,inputEvidenceHash:proposal.inputEvidenceHash});assert.equal(retried.item.version,result.item.version);
  assert.equal(result.item.version,source.version+1);assert.equal(result.item.executionGraphVersion,2);assert.equal(result.activated,false);
  const actual=await listWeeklyExecutionTasks(f.store,'t','p',source.packageId,result.item.version),prep=actual.find(task=>task.schedule.stepKind==='material_preparation')!,script=actual.find(task=>task.schedule.stepKind==='script')!,video=actual.find(task=>task.schedule.stepKind==='video_generation')!,publish=actual.find(task=>task.schedule.stepKind==='publishing')!;
  assert.equal(result.snapshot.assignments.find(row=>row.targetTaskId===prep.taskId)!.sourceTaskId,newPreparation.sourceTaskId);assert.equal(result.snapshot.assignments.find(row=>row.targetTaskId===prep.taskId)!.mode,'planned');
  assert(prep);assert(!prep.ownBlockingReasons.includes(INITIAL_CAPACITY_SCHEDULE_REQUIRED));assert(!script.ownBlockingReasons.includes(INITIAL_CAPACITY_SCHEDULE_REQUIRED));assert(script.dependsOnTaskIds.includes(prep.taskId));assert(Date.parse(prep.schedule.estimatedFinishAt)<=Date.parse(script.schedule.estimatedStartAt));assert(Date.parse(video.schedule.estimatedFinishAt)<=Date.parse(publish.schedule.estimatedStartAt)-86_400_000);
  assert.equal(scheduleHash(await listWeeklyExecutionTasks(f.store,'t','p',source.packageId,source.version)),oldHash);assert.equal((await f.store.list(WEEKLY_EXECUTION_FREEZES)).totalItems,1);
+ const targetRow=(await f.store.list<Record_>('social_weekly_operating_packages',{where:{tenant_id:'t',package_id:source.packageId,version:result.item.version},perPage:2})).items[0]!;await f.store.delete('social_weekly_operating_packages',targetRow.id);const pending=await service.readConfirmation(authority,proposal.proposalId);assert.equal(pending.status,'pending_recovery');if(pending.status==='pending_recovery')assert.equal(pending.snapshot.snapshotId,result.snapshot.snapshotId);
  const drifted=structuredClone(actual);drifted.find(task=>task.taskId===prep.taskId)!.inputSnapshot.injectedFact='changed after confirmation';await assert.rejects(applyFrozenWeeklySchedule(f.store,'t',result.item,drifted),{code:'weekly_schedule_target_graph_changed'});
  assert.equal(f.tables.content_execution_jobs?.length??0,0);assert.equal(f.tables.social_publication_attempts?.length??0,0);
 });

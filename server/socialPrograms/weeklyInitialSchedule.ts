@@ -32,5 +32,6 @@ export function createWeeklyInitialScheduleService(store:DataStore,ports:{now?:(
    return scheduling.confirm(a,request);
   },
   read:scheduling.read,
+  readConfirmation:scheduling.readConfirmation,
  };
 }
