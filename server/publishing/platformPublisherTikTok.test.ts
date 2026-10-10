@@ -11,6 +11,7 @@ const originalAxios = { post: axios.post, put: axios.put };
 const originalTikTokReleaseMode = process.env.TIKTOK_DIRECT_POST_RELEASE_MODE;
 process.env.TIKTOK_DIRECT_POST_RELEASE_MODE = 'approved';
 const originalStore = {
+  supportsAtomicOperationLease: store.supportsAtomicOperationLease,
   list: store.list,
   getById: store.getById,
   create: store.create,
@@ -38,6 +39,8 @@ let releaseUpload!: () => void;
 const uploadStarted = new Promise<void>(resolve => { uploadEntered = resolve; });
 const uploadGate = new Promise<void>(resolve => { releaseUpload = resolve; });
 try {
+  // The controlled store below arbitrates the tenant/scope/subject unique key.
+  store.supportsAtomicOperationLease = () => true;
   store.list = (async (collection: string, query: { where?: Record<string, unknown>; page?: number; perPage?: number } = {}) => {
     const matching = (rows[collection] || []).filter(row => Object.entries(query.where || {})
       .every(([key, value]) => String(row[key] ?? '') === String(value)));
