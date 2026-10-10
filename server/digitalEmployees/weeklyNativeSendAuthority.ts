@@ -21,3 +21,25 @@ export async function readWeeklyNativeDispatchAuthority(store:DataStore,input:{t
  const approval=await store.getById<Record_>('approval_requests',String(batch.approval_id));check(approval?.tenant_id===input.tenantId&&approval.run_id===run.id&&approval.goal_id===run.goal_id&&approval.task_id===approvals[0]!.id&&approval.status==='approved'&&approval.subject_version===batch.version&&approval.content_hash===batch.content_hash&&typeof approval.decided_by==='string'&&approval.decided_by&&Number.isFinite(Date.parse(String(approval.decided_at)))&&approval.decided_by===batch.approved_by,'weekly_native_dispatch_approval_changed');
  return {tenantId:input.tenantId,programId:scope.programId,packageId:scope.packageId,packageVersion:scope.packageVersion,runId:run.id,goalId:String(run.goal_id),planId:String(run.plan_id),actorUserId:input.actorUserId,batchId:batch.id,batchVersion:Number(batch.version),batchHash:String(batch.content_hash),itemId:item.id,itemHash:String(item.content_hash),memberId:member.id,customerId:String(item.customer_id),channel:item.channel as 'messenger'|'instagram',accountId:selection.accountId,nativeAccountId:selection.nativeAccountId,recipientId:selection.recipientId,conversationId:selection.conversationId,selectionHash:selection.recordHash};
 }
+
+/** Scheduled execution retains the actual approver as authorization principal; it is not a human-send action. */
+export async function readWeeklyNativeScheduledDispatchAuthority(store:DataStore,input:{tenantId:string;batchId:string;itemId:string}):Promise<WeeklyNativeSendAuthority>{
+ const batch=await store.getById<Record_>('followup_batches',input.batchId);
+ check(batch?.tenant_id===input.tenantId&&typeof batch.approved_by==='string'&&batch.approved_by.trim(),'weekly_native_dispatch_scheduled_approver_missing');
+ const authority=await readWeeklyNativeDispatchAuthority(store,{...input,actorUserId:batch.approved_by});
+ const tasks=await rows(store,'workflow_tasks',{tenant_id:input.tenantId,run_id:authority.runId});
+ const dispatch=tasks.filter(task=>task.task_key==='followup_dispatch'&&task.agent_role==='customer');
+ check(dispatch.length===1&&!['cancelled','failed','skipped','running'].includes(String(dispatch[0]!.status))&&!dispatch[0]!.lease_token,'weekly_native_dispatch_task_not_recoverable');
+ const item=await store.getById<Record_>('followup_batch_items',authority.itemId);
+ if(dispatch[0]!.status==='succeeded'&&!['sent','delivered','read'].includes(String(item?.status))){
+  const requestId=obj(item?.provider_receipt).requestId;
+  check(typeof requestId==='string'&&requestId==='weekly-native-'+socialRequestHash(authority).slice(0,40),'weekly_native_dispatch_completed_task_new_send_forbidden');
+  const {createCustomerChannelSendRequestService}=await import('./customerChannelSendRequests.js');
+  const request=await createCustomerChannelSendRequestService(store).get(authority.tenantId,authority.actorUserId,authority.channel,requestId);
+  check(request?.weeklyAuthorityHash===socialRequestHash(authority),'weekly_native_dispatch_completed_task_new_send_forbidden');
+ }
+ const rawDependencies=dispatch[0]!.depends_on;let dependencies:unknown=rawDependencies??[];
+ if(typeof dependencies==='string'){try{dependencies=JSON.parse(dependencies);}catch{throw Error('weekly_native_dispatch_dependencies_invalid');}}
+ check(Array.isArray(dependencies)&&dependencies.every(key=>typeof key==='string'&&tasks.filter(task=>task.task_key===key).length===1&&['succeeded','skipped'].includes(String(tasks.find(task=>task.task_key===key)?.status))),'weekly_native_dispatch_dependencies_pending');
+ return authority;
+}
