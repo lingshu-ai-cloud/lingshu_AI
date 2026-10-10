@@ -9,17 +9,19 @@ import {verifiedNoSharedMaterialDemand} from './socialWeeklyMaterialDemand.js';
 import {createSocialAssetSupplyPlan} from '../../shared/socialContentAssetSupply.js';
 import type {SocialReplicationScriptVersion} from '../../shared/contracts/socialContentWorkflow.js';
 
+const tenant='material-original-run-isolated';
+
 test('original owned run with unsafe actual plan cannot freeze generated readiness',async t=>{
- const {f,pkg,created}=await prepareWeeklyControlledOriginalRunFixture(t);
- const scope:OriginalRunMaterialDemandScope={tenantId:'t',taskId:String(created.task_id),programId:'p',packageId:pkg.packageId,packageVersion:pkg.version,publicationTaskId:'pub',accountId:'account',factRefs:pkg.socialContentPackage.publicationTasks[0]!.factRefs};
- assert.equal(await freezeOriginalRunMaterialDemand(f.store,scope),null);
+ const {f,pkg,created}=await prepareWeeklyControlledOriginalRunFixture(t,tenant);
+ const scope:OriginalRunMaterialDemandScope={tenantId:tenant,taskId:String(created.task_id),programId:'p',packageId:pkg.packageId,packageVersion:pkg.version,publicationTaskId:'pub',accountId:'account',factRefs:pkg.socialContentPackage.publicationTasks[0]!.factRefs};
+ await assert.rejects(freezeOriginalRunMaterialDemand(f.store,scope),/reference_person_automatic_analysis_required/);
  assert.equal(await freezeOriginalRunMaterialDemand(f.store,{...scope,tenantId:'foreign'}),null);
  assert.equal(f.tables.content_execution_jobs?.length??0,0);
 });
 
 test('actual server-resolved generated plan freezes only same original run and rejects source/plan drift',async t=>{
- const {f,pkg,created,actual}=await prepareWeeklyControlledOriginalRunFixture(t);
- const scope:OriginalRunMaterialDemandScope={tenantId:'t',taskId:String(created.task_id),programId:'p',packageId:pkg.packageId,packageVersion:pkg.version,publicationTaskId:'pub',accountId:'account',factRefs:pkg.socialContentPackage.publicationTasks[0]!.factRefs};
+ const {f,pkg,created,actual}=await prepareWeeklyControlledOriginalRunFixture(t,tenant);
+ const scope:OriginalRunMaterialDemandScope={tenantId:tenant,taskId:String(created.task_id),programId:'p',packageId:pkg.packageId,packageVersion:pkg.version,publicationTaskId:'pub',accountId:'account',factRefs:pkg.socialContentPackage.publicationTasks[0]!.factRefs};
  // Controlled producer record input, parsed by the actual task reader; no review/pass or provider evidence is invented.
  const plan=createSocialAssetSupplyPlan({creationMode:'material_processing',planVersion:'1',confirmedFactRefs:scope.factRefs.map(r=>`${r.type}:${r.id}@${r.version}`),shots:[{shotId:'decorative-transition',function:'transition',requestedDescription:'非证据装饰图形动画'}]});
  const script:SocialReplicationScriptVersion={version:'1',referenceAnalysisId:'decorative-analysis',status:'draft',primaryHookId:'hook',hookOptions:[0,1,2].map(i=>({hookId:`hook-${i}`,role:i===0?'primary':'alternative',status:'draft',firstFrame:'非证据图形',firstSecondAction:'装饰转场',spokenLine:null,caption:null,mechanism:'节奏示意',audiovisualPlan:'静音图形',sourceStrategy:'motion_graphics',truthBoundary:{subject:'none',syntheticVisualAllowed:true,customerEvidenceRequired:false,customerEvidenceRefs:[],confirmedFactRefs:[],mustNotImplyCustomerReality:true,prohibitedRepresentations:[]},referencePoints:[],mustDifferPoints:[]})),shots:[{shotId:'decorative-transition',referenceShotId:'decorative-transition',startSeconds:0,endSeconds:3,purpose:'transition',visualInstruction:'非证据装饰图形动画',spokenText:'',captionText:'',audioAndTransition:'静音',fidelityPoints:[],mustDifferPoints:[],materialPlan:plan.shots[0]!,lockedRegions:[],risks:[]}],structureFidelitySummary:'装饰转场',originalityDifferenceSummary:'不作为企业证据',createdAt:new Date().toISOString()};
@@ -41,7 +43,7 @@ test('actual server-resolved generated plan freezes only same original run and r
  created.version=legacyCurrentVersion;created.run_id=legacyRun;
 
  assert.equal(await freezeOriginalRunMaterialDemand(f.store,scope),null,'migration requires held actual package gate');
- const migrationScope={tenantId:'t',programId:'p',packageId:pkg.packageId,packageVersion:pkg.version};
+ const migrationScope={tenantId:tenant,programId:'p',packageId:pkg.packageId,packageVersion:pkg.version};
  const oldVersion=legacy.version;legacy.version=oldVersion+1;const {recordHash:ignoredVersionHash,...versionPayload}=legacy;legacy.recordHash=socialRequestHash(versionPayload);
  await f.store.update('starter_social_content_tasks',String(created.id),{brief:{...brief,_weeklyMaterialDemand:legacy}});
  assert.equal(await withExecutionPackageGate(f.store,migrationScope,()=>freezeOriginalRunMaterialDemand(f.store,scope)),null,'wrong original start version cannot migrate');
@@ -76,8 +78,8 @@ test('actual server-resolved generated plan freezes only same original run and r
 
 
 test('actual scheduler freezes pre-start material plan across its own V to V+1 transition',async t=>{
- const {f,pkg,created}=await prepareWeeklyControlledOriginalRunFixture(t);
- const scope:OriginalRunMaterialDemandScope={tenantId:'t',taskId:String(created.task_id),programId:'p',packageId:pkg.packageId,packageVersion:pkg.version,publicationTaskId:'pub',accountId:'account',factRefs:pkg.socialContentPackage.publicationTasks[0]!.factRefs};
+ const {f,pkg,created}=await prepareWeeklyControlledOriginalRunFixture(t,tenant);
+ const scope:OriginalRunMaterialDemandScope={tenantId:tenant,taskId:String(created.task_id),programId:'p',packageId:pkg.packageId,packageVersion:pkg.version,publicationTaskId:'pub',accountId:'account',factRefs:pkg.socialContentPackage.publicationTasks[0]!.factRefs};
  const plan=createSocialAssetSupplyPlan({creationMode:'material_processing',planVersion:'1',confirmedFactRefs:scope.factRefs.map(r=>`${r.type}:${r.id}@${r.version}`),shots:[{shotId:'decorative-transition',function:'transition',requestedDescription:'非证据装饰图形动画'}]});
  const script:SocialReplicationScriptVersion={version:'1',referenceAnalysisId:'decorative-analysis',status:'draft',primaryHookId:'hook',hookOptions:[0,1,2].map(i=>({hookId:`hook-${i}`,role:i===0?'primary':'alternative',status:'draft',firstFrame:'非证据图形',firstSecondAction:'装饰转场',spokenLine:null,caption:null,mechanism:'节奏示意',audiovisualPlan:'静音图形',sourceStrategy:'motion_graphics',truthBoundary:{subject:'none',syntheticVisualAllowed:true,customerEvidenceRequired:false,customerEvidenceRefs:[],confirmedFactRefs:[],mustNotImplyCustomerReality:true,prohibitedRepresentations:[]},referencePoints:[],mustDifferPoints:[]})),shots:[{shotId:'decorative-transition',referenceShotId:'decorative-transition',startSeconds:0,endSeconds:3,purpose:'transition',visualInstruction:'非证据装饰图形动画',spokenText:'',captionText:'',audioAndTransition:'静音',fidelityPoints:[],mustDifferPoints:[],materialPlan:plan.shots[0]!,lockedRegions:[],risks:[]}],structureFidelitySummary:'装饰转场',originalityDifferenceSummary:'不作为企业证据',createdAt:new Date().toISOString()};
  created.replication_script=script;created.material_requirements=[];
@@ -86,21 +88,24 @@ test('actual scheduler freezes pre-start material plan across its own V to V+1 t
  const {buildNoSharedMaterialDemand}=await import('./socialWeeklyMaterialDemand.js');
  const {scheduleSocialContentWork}=await import('../starter198/socialContentScheduler.js');
  const {readWeeklySchedulerMaterialPlan}=await import('../starter198/socialWeeklySchedulerMaterialPlan.js');
+ // This test exercises material-plan lifecycle, using the non-replication route;
+ // target-account replication authority has its own admission tests.
+ created.brief={...(created.brief as Record<string,unknown>),creationMode:'material_processing'};
  created.run_id=null;created.status='plan_review';
- const before=await readSocialTaskDetail({repository:f.repository,tenantId:'t',taskId:scope.taskId});assert.ok(before?.assetSupplyPlan);
+ const before=await readSocialTaskDetail({repository:f.repository,tenantId:tenant,taskId:scope.taskId});assert.ok(before?.assetSupplyPlan);
  const {tenantId:omittedTenant,...preScope}=scope;const declaration=buildNoSharedMaterialDemand(created,before,preScope);assert.ok(declaration);
  const brief={...(created.brief as Record<string,unknown>),_weeklyMaterialDemand:declaration};await f.store.update('starter_social_content_tasks',String(created.id),{brief});
  const commandId='actual-scheduler-material-start',idempotencyKey='actual-scheduler-material-key';
- await f.repository.create('starter_social_content_operations','t',{operation_id:commandId,idempotency_key:idempotencyKey,operation:'start_social_content_task',target_id:scope.taskId,request_hash:socialRequestHash({expectedVersion:before.version}),created_by:'owner',status:'processing'});
+ await f.repository.create('starter_social_content_operations',tenant,{operation_id:commandId,idempotency_key:idempotencyKey,operation:'start_social_content_task',target_id:scope.taskId,request_hash:socialRequestHash({expectedVersion:before.version}),created_by:'owner',status:'processing'});
  let callbacks=0;
- const scheduled=await scheduleSocialContentWork({repository:f.repository,now:new Date(),queue:{tenantId:'t',userId:'owner',commandId,idempotencyKey,input:'执行原排期',workflowScope:'social_content',subject:{type:'social_content_task',id:scope.taskId,admissionVersion:before.version,version:before.version,sourceRefs:before.sources.filter(x=>x.status==='active').map(x=>({id:x.sourceId,...(x.sourceVersion?{version:x.sourceVersion}:{})})),packageSelection:before.packageSelection,conversionObjective:Boolean(before.brief.callToAction)}},productionRunner:async()=>{callbacks++;}});
+ const scheduled=await scheduleSocialContentWork({repository:f.repository,now:new Date(),queue:{tenantId:tenant,userId:'owner',commandId,idempotencyKey,input:'执行原排期',workflowScope:'social_content',subject:{type:'social_content_task',id:scope.taskId,admissionVersion:before.version,version:before.version,sourceRefs:before.sources.filter(x=>x.status==='active').map(x=>({id:x.sourceId,...(x.sourceVersion?{version:x.sourceVersion}:{})})),packageSelection:before.packageSelection,conversionObjective:Boolean(before.brief.callToAction)}},productionRunner:async()=>{callbacks++;}});
  assert.ok(scheduled.runId);assert.equal(callbacks,1);
- const after=await readSocialTaskDetail({repository:f.repository,tenantId:'t',taskId:scope.taskId});assert.ok(after);
+ const after=await readSocialTaskDetail({repository:f.repository,tenantId:tenant,taskId:scope.taskId});assert.ok(after);
  assert.equal(Number(after.version),Number(before.version)+1);
  const current=f.tables.starter_social_content_tasks!.find(r=>r.task_id===scope.taskId)!;
  const frozen=await readWeeklySchedulerMaterialPlan(f.repository,current,after);assert.deepEqual(frozen,before.assetSupplyPlan);
  assert.equal(await readVerifiedNoSharedMaterialDemand(f.store,current,scope),null,'readonly legacy cannot become paid authorization');
- const migrated=await withExecutionPackageGate(f.store,{tenantId:'t',programId:'p',packageId:pkg.packageId,packageVersion:pkg.version},()=>freezeOriginalRunMaterialDemand(f.store,scope));assert.ok(migrated?.runProof);assert.deepEqual(migrated.assetSupplyPlan,before.assetSupplyPlan);
+ const migrated=await withExecutionPackageGate(f.store,{tenantId:tenant,programId:'p',packageId:pkg.packageId,packageVersion:pkg.version},()=>freezeOriginalRunMaterialDemand(f.store,scope));assert.ok(migrated?.runProof);assert.deepEqual(migrated.assetSupplyPlan,before.assetSupplyPlan);
  const savedOperation=current.last_operation_id;current.last_operation_id='other-operation';assert.equal(await readWeeklySchedulerMaterialPlan(f.repository,current,after),null);current.last_operation_id=savedOperation;
  const savedVersion=current.version;current.version=String(Number(savedVersion)+1);assert.equal(await readWeeklySchedulerMaterialPlan(f.repository,current,{...after,version:String(current.version)}),null);current.version=savedVersion;
  const savedScript=current.replication_script;current.replication_script={...(savedScript as object),structureFidelitySummary:'changed business input'};assert.equal(await readWeeklySchedulerMaterialPlan(f.repository,current,after),null);current.replication_script=savedScript;
