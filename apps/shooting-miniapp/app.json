@@ -1,7 +1,9 @@
 {
   "pages": [
     "pages/workbench/index",
-    "pages/index/index"
+    "pages/index/index",
+    "pages/action/index",
+    "pages/action/connect"
   ],
   "window": {
     "navigationBarTitleText": "灵枢工作",
