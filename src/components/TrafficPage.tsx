@@ -63,6 +63,7 @@ import { useModalFocus } from '../hooks/useModalFocus';
 import { SocialPlatformIcon } from './SocialPlatformIcon';
 import { resolveInitialTrafficViewMode, resolveNavigationEventViewMode, resolveSignalViewMode, resolveWorkflowNavigationPage, type TrafficViewMode } from './trafficViewMode';
 import { useSocialContentNavigation } from './socialContent/useSocialContentNavigation';
+import {SOCIAL_CONTENT_NAVIGATION_EVENT,attachSocialContentNavigationState,hasWeeklyContentNavigationTarget,readWeeklyContentNavigationTarget} from '../lib/socialContentContext';
 import { resumeOrCreateInspirationTask } from '../lib/socialInspirationTask';
 import { PAGE_REGISTRY } from '../pageRegistry';
 import ContentLibrary from './ContentLibrary';
@@ -72,6 +73,7 @@ import { PageLoading, WorkspaceErrorBoundary } from './AppPageBoundary';
 // 账号动态和发布日历。外层 App 的 Suspense 会提供统一加载态。
 const InspirationDashboard = lazy(() => import('./InspirationDashboard'));
 const AiCreateStudio = lazy(() => import('./AiCreateStudio'));
+const WeeklyContentProductionView = lazy(() => import('./socialContent/WeeklyContentProductionView'));
 const AccountActivity = lazy(() => import('./AccountActivity'));
 const CalendarPlanner = lazy(() => import('./publishing/CalendarPlanner').then(module => ({ default: module.CalendarPlanner })));
 
@@ -242,6 +244,23 @@ export default function TrafficPage({
     return 'materials';
   });
   const [studioMounted, setStudioMounted] = useState(() => initialView === 'create');
+  const readWeeklyTargetState = () => ({
+    present: typeof window !== 'undefined' && hasWeeklyContentNavigationTarget(window.history.state),
+    target: typeof window === 'undefined' ? null : readWeeklyContentNavigationTarget(window.history.state),
+  });
+  const [weeklyTargetState,setWeeklyTargetState]=useState(readWeeklyTargetState);
+  const weeklyTarget=weeklyTargetState.target?.contentTaskId===socialContentTaskId?weeklyTargetState.target:null;
+  useEffect(()=>{
+    let disposed=false;
+    const read=()=>{if(!disposed)setWeeklyTargetState(readWeeklyTargetState());};
+    // App writes the handoff during its navigation listener; read after all listeners finish.
+    const navigated=()=>queueMicrotask(read);
+    read();
+    window.addEventListener(SOCIAL_CONTENT_NAVIGATION_EVENT,read);
+    window.addEventListener('popstate',read);
+    window.addEventListener('lingshu:navigate',navigated);
+    return()=>{disposed=true;window.removeEventListener(SOCIAL_CONTENT_NAVIGATION_EVENT,read);window.removeEventListener('popstate',read);window.removeEventListener('lingshu:navigate',navigated);};
+  },[socialContentTaskId,studioCreateRequest]);
   const [publishDraft, setPublishDraft] = useState<PublishDraft | null>(null);
   const [inspirationLaunchError, setInspirationLaunchError] = useState('');
   const [workflowContext, setWorkflowContext] = useState<DigitalEmployeeWorkflowContext | null>(consumeDigitalEmployeeWorkflowContext);
@@ -517,7 +536,7 @@ export default function TrafficPage({
           <Suspense fallback={<PageLoading />}>
             {(studioMounted || viewMode === 'create') && (
               <div ref={studioRootRef} id="traffic-panel-create" role={showModeTabs ? 'tabpanel' : undefined} aria-labelledby={showModeTabs ? 'traffic-tab-create' : undefined} className={viewMode === 'create' ? 'h-full' : 'hidden'} aria-hidden={viewMode !== 'create'}>
-                <AiCreateStudio key={socialContentTaskId || studioCreateRequest?.requestId || 'general-studio'} onNavigate={navigateWithinSocialTask} onOpenCreationHome={onOpenCreationHome} onLaunchContentStudio={onLaunchContentStudio} onReturnToContentPlanning={onReturnToContentPlanning} onGoPublish={handleGoPublish} openProjectsSignal={openProjectsSignal} workflowContext={(workflowContextSignal !== undefined ? workflowContextSignal : workflowContext) || undefined} publishStorageScope={storageScope} socialContentTaskId={socialContentTaskId} studioCreateRequest={studioCreateRequest} />
+                {weeklyTargetState.present ? <div className="h-full overflow-y-auto p-4">{weeklyTarget ? <><WeeklyContentProductionView key={JSON.stringify(weeklyTarget)} target={weeklyTarget}/><button type="button" className="mt-3 rounded-lg border px-3 py-2 text-sm" onClick={()=>attachSocialContentNavigationState(weeklyTarget.contentTaskId,'smartAssets')}>打开该内容任务的当前制作工作区</button></> : <p role="alert">周任务生产目标与当前内容任务不一致，请返回原任务重新打开。</p>}</div> : <AiCreateStudio key={socialContentTaskId || studioCreateRequest?.requestId || 'general-studio'} onNavigate={navigateWithinSocialTask} onOpenCreationHome={onOpenCreationHome} onLaunchContentStudio={onLaunchContentStudio} onReturnToContentPlanning={onReturnToContentPlanning} onGoPublish={handleGoPublish} openProjectsSignal={openProjectsSignal} workflowContext={(workflowContextSignal !== undefined ? workflowContextSignal : workflowContext) || undefined} publishStorageScope={storageScope} socialContentTaskId={socialContentTaskId} studioCreateRequest={studioCreateRequest} />}
               </div>
             )}
             <AnimatePresence mode="wait">

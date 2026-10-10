@@ -567,6 +567,7 @@ export default function App() {
           setActiveSocialContentTaskId(null);
           delete nextHistoryState.socialContentTaskId;
           delete nextHistoryState.socialContentPage;
+          delete nextHistoryState.weeklyContentTarget;
         }
         if (nextPage === 'smartAssets' && detail.contentCreationRequest
           && (!detail.socialContentTaskId || (detail.contentCreationRequest.creationPath === 'viral_replication' && detail.directStudio === false))) {
@@ -655,6 +656,7 @@ export default function App() {
     const nextHistoryState = { ...window.history.state };
     delete nextHistoryState.socialContentTaskId;
     delete nextHistoryState.socialContentPage;
+    delete nextHistoryState.weeklyContentTarget;
     window.history.replaceState({
       ...nextHistoryState,
       productionDetail: { page: 'smartAssets', view: 'create' },
