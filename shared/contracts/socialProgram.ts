@@ -447,7 +447,7 @@ export interface WeeklyReferenceSourcePolicy {
 
 export interface WeeklyOperatingPackage {
   /** Missing means the immutable legacy graph; new drafts explicitly use v2. */
-  executionGraphVersion?: 2;
+  executionGraphVersion?: 2 | 3;
   /** Server-written evidence of an explicitly confirmed upgrade consumed by a new week. */
   profileUpgradeConsumption?: {
     schemaVersion:'weekly-profile-upgrade-consumption.v1';

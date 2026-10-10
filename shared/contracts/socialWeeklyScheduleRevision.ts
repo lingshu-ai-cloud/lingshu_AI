@@ -3,7 +3,7 @@ import type { VersionedSocialRef, WeeklyOperatingPackage,WeeklyExecutionTask } f
 import type { WeeklyBackwardSchedule } from '../../server/socialPrograms/weeklyBackwardSchedule.js';
 import type { RecoveryResource,RecoveryTaskConstraint } from '../../server/socialPrograms/weeklyRecoveryAssessment.js';
 export interface WeeklyScheduleCapacityInput {constraints:Record<string,RecoveryTaskConstraint>;resources:Record<string,RecoveryResource>;remainingBudgetCny:number;operationalDeadlines?:Record<string,string>;}
-export interface WeeklyScheduleTargetGraph {tenantId:string;programId:string;packageId:string;sourceVersion:number;targetVersion:number;executionGraphVersion:1|2;targetGraphHash:string;tasks:WeeklyExecutionTask[];bindings:Array<{planningTaskId:string;targetTaskId:string;sourceTaskId:string|null;signature:string;origin:'existing_source'|'new_planned'}>;}
+export interface WeeklyScheduleTargetGraph {tenantId:string;programId:string;packageId:string;sourceVersion:number;targetVersion:number;executionGraphVersion:1|2|3;targetGraphHash:string;tasks:WeeklyExecutionTask[];bindings:Array<{planningTaskId:string;targetTaskId:string;sourceTaskId:string|null;signature:string;origin:'existing_source'|'new_planned'}>;}
 export interface WeeklyScheduleProposal {
  proposalId:string;tenantId:string;programId:string;packageId:string;packageVersion:number;createdBy:string;createdAt:string;inputEvidenceHash:string;
  templateCarryovers?:WeeklyContentTemplateRevisionPlan[];

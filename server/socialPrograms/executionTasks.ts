@@ -196,7 +196,7 @@ function makeTask(tenantId: string, pkg: WeeklyOperatingPackage, seed: TaskSeed,
       actualFinishedAt: null,
     },
     status: 'pending_activation',
-    ownBlockingReasons: [...new Set([...seed.ownBlockingReasons,...(pkg.executionGraphVersion===2&&seed.publicationTaskId&&(seed.workflowKind==='content'||['script','storyboard'].includes(seed.stepKind))?[INITIAL_CAPACITY_SCHEDULE_REQUIRED]:[])])],
+    ownBlockingReasons: [...new Set([...seed.ownBlockingReasons,...((pkg.executionGraphVersion??1)>=2&&seed.publicationTaskId&&(seed.workflowKind==='content'||['script','storyboard'].includes(seed.stepKind))?[INITIAL_CAPACITY_SCHEDULE_REQUIRED]:[])])],
     inheritedBlockingTaskIds: [],
     attempt: 0,
     maxAttempts: 3,
@@ -291,7 +291,7 @@ export function planWeeklyExecutionTasks(
       const mode = item.adaptationOfPublicationTaskId === null ? 'original' : 'adaptation';
       const scope = mode === 'original' ? 'content' as const : 'adaptation' as const;
       const base = `${item.publicationTaskId}:${mode}`;
-      const preparation = pkg.executionGraphVersion===2 ? add({
+      const preparation = (pkg.executionGraphVersion??1)>=2 ? add({
         workflowKind:'content',scope,subjectId:`${base}:material-preparation`,accountId:item.accountId,publicationTaskId:item.publicationTaskId,
         dependsOnTaskIds:[scheduleByMother.get(motherContentId)!.taskId],
         inputSnapshot:{publicationTask:item,motherContentId,mode},budget:noBudget,ownBlockingReasons:[],
@@ -347,17 +347,17 @@ export function planWeeklyExecutionTasks(
         dependsOnTaskIds: [video.taskId], inputSnapshot: { publicationTask: item, checks: ['facts', 'visual', 'audio', 'rights', 'platform'] }, budget: noBudget, ownBlockingReasons: [],
         stepKind: 'quality_check', responsibleActor: 'quality_agent', estimatedDurationMinutes: 25,
       });
-      const rework = add({
+      const approvalDependency = pkg.executionGraphVersion===3 ? quality : add({
         workflowKind: 'content', scope, subjectId: `${base}:rework`, accountId: item.accountId, publicationTaskId: item.publicationTaskId,
         dependsOnTaskIds: [quality.taskId], inputSnapshot: { publicationTask: item, conditional: true }, budget: { category: 'production', limitCny: productionBudget }, ownBlockingReasons: [],
         stepKind: 'rework', responsibleActor: 'content_agent', estimatedDurationMinutes: 30,
       });
       const approval = add({
         workflowKind: 'content', scope, subjectId: `${base}:user-approval`, accountId: item.accountId, publicationTaskId: item.publicationTaskId,
-        dependsOnTaskIds: [rework.taskId], inputSnapshot: { publicationTask: item, decisionCard: 'content_approval' }, budget: noBudget, ownBlockingReasons: [],
+        dependsOnTaskIds: [approvalDependency.taskId], inputSnapshot: { publicationTask: item, decisionCard: 'content_approval' }, budget: noBudget, ownBlockingReasons: [],
         stepKind: 'user_approval', responsibleActor: 'user', estimatedDurationMinutes: 10,
       });
-      if (mode === 'original') originalQualityTask = rework;
+      if (mode === 'original') originalQualityTask = approvalDependency;
       approvalByPublication.set(item.publicationTaskId, approval);
     }
   }

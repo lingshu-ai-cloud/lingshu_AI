@@ -328,7 +328,7 @@ export function createWeeklyOperatingPackageService(dataStore: DataStore) {
         previousPackage: projectedCurrent,
         createdAt,
       });
-      item.executionGraphVersion=2;
+      item.executionGraphVersion=3;
       return item;
 
   }
@@ -391,7 +391,7 @@ export function createWeeklyOperatingPackageService(dataStore: DataStore) {
         input, programId, userId, accounts, program: packageProgram,
         packageId: randomUUID(), contentPackageId: randomUUID(), version: 1, previousVersion: null,
       });
-      item.executionGraphVersion=2;
+      item.executionGraphVersion=3;
       if(consumedUpgrade){
         for(const publication of item.socialContentPackage.publicationTasks)assertProfileUpgradePublicationWindow(publication.publishWindow,item.weekStart,String(input.profileUpgradeTimeZone));
         const targets=input.publicationTasks as Array<Record<string,unknown>>;

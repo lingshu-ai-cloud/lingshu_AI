@@ -155,12 +155,12 @@ export function createSocialWeeklyProductionAdapter(dataStore: DataStore, ports:
       const boundRow = boundRows.items[0];
       if (!boundRow || boundRows.totalItems !== 1) return blocked('weekly_production_binding_missing', '内容任务身份无法核对。');
       if (task.schedule.stepKind === 'script') scriptEvidence = weeklyScriptEvidence(boundRow, (item.benchmarkVideoRefs ?? []).map(ref => ref.id));
-      if(task.schedule.stepKind==='script'&&pkg.executionGraphVersion===2){
+      if(task.schedule.stepKind==='script'&&(pkg.executionGraphVersion??1)>=2){
         scriptEvidence=null;
         if(boundRow.run_id){const {readWeeklyReplicationAuthority}=await import('../starter198/socialWeeklyReplicationAuthority.js');const proof=await readWeeklyReplicationAuthority(repository,boundRow);const {freezeSocialAccountProductionConstraints}=await import('../starter198/socialAccountProductionConstraints.js');const baseline=socialObject(socialJson(boundRow.script_baseline));const expected=proof?freezeSocialAccountProductionConstraints(proof.context,detail.brief.callToAction):undefined;if(expected&&socialRequestHash(baseline?.accountPlaybookConstraints)===socialRequestHash(expected))scriptEvidence=weeklyScriptEvidence(boundRow,(item.benchmarkVideoRefs??[]).map(ref=>ref.id));}
       }
       if (task.schedule.stepKind === 'storyboard') storyboardEvidence = weeklyStoryboardEvidence(boundRow, (item.benchmarkVideoRefs ?? []).map(ref => ref.id));
-      if(task.schedule.stepKind==='storyboard'&&pkg.executionGraphVersion===2&&boundRow.run_id){
+      if(task.schedule.stepKind==='storyboard'&&(pkg.executionGraphVersion??1)>=2&&boundRow.run_id){
         const {readWeeklyPreSupplyHandoff}=await import('../starter198/socialWeeklyPreSupplyHandoff.js');
         const handoff=await readWeeklyPreSupplyHandoff(repository,task.tenantId,detail.taskId);
         if(handoff&&handoff.programId===task.programId&&handoff.packageId===task.packageId&&handoff.packageVersion===task.packageVersion&&handoff.publicationTaskId===task.publicationTaskId)storyboardEvidence={type:'starter_weekly_pre_supply_handoff',id:handoff.runId,version:1};
@@ -178,7 +178,7 @@ export function createSocialWeeklyProductionAdapter(dataStore: DataStore, ports:
       // reserved for creating or enqueueing production, never retrofitted into a run.
       if (['asset_generation','video_generation','quality_check','rework'].includes(task.schedule.stepKind)) {
         let pinnedArtifactRef:VersionedSocialRef|null=null;
-        const requiresPinnedQualityArtifact=pkg.executionGraphVersion===2&&['quality_check','rework'].includes(task.schedule.stepKind);
+        const requiresPinnedQualityArtifact=(pkg.executionGraphVersion??1)>=2&&['quality_check','rework'].includes(task.schedule.stepKind);
         if(requiresPinnedQualityArtifact){
           const recovery=task.schedule.stepKind==='quality_check'&&task.qualityRecoveries?.length?task.qualityRecoveries.at(-1)!.artifactRef:null;
           if(recovery)pinnedArtifactRef=recovery;
