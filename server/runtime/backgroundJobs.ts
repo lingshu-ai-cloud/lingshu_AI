@@ -3,6 +3,7 @@ import { createSocialWeeklyPlanningAdapter, initSocialWeeklyExecutionRuntime, WE
 import { createSocialWeeklyProductionAdapter, WEEKLY_PRODUCTION_STEPS } from './socialWeeklyProductionAdapter.js';
 import { createSocialWeeklyPublicationAdapter } from './socialWeeklyPublicationAdapter.js';
 import { createWeeklyContentTemplateExecutionAdapter } from './socialWeeklyContentTemplateAdapter.js';
+import { createSocialWeeklyCustomerChannelAdapter } from './socialWeeklyCustomerChannelAdapter.js';
 import type { WeeklyProductionStepKind } from '../../shared/contracts/socialProgram.js';
 import type { SocialWeeklyExecutionAdapter } from './socialWeeklyExecutionAdapter.js';
 import { initDigitalEmployeeRuntime } from '../digitalEmployees/runtimeOrchestrator.js';
@@ -63,11 +64,13 @@ export async function startBackgroundJobs(role: ProcessRole = 'all'): Promise<vo
     const productionAdapter = createSocialWeeklyProductionAdapter(store);
     const publicationAdapter = createSocialWeeklyPublicationAdapter(store);
     const templateAdapter = createWeeklyContentTemplateExecutionAdapter(store);
+    const customerChannelAdapter = createSocialWeeklyCustomerChannelAdapter(store);
     const weeklyAdapters: Partial<Record<WeeklyProductionStepKind, SocialWeeklyExecutionAdapter>> = {};
     for (const step of WEEKLY_PREPRODUCTION_STEPS) weeklyAdapters[step] = planningAdapter;
     for (const step of WEEKLY_PRODUCTION_STEPS) weeklyAdapters[step] = productionAdapter;
     for (const step of ['publishing', 'performance_monitoring', 'weekly_review'] as const) weeklyAdapters[step] = publicationAdapter;
     for (const step of ['template_extraction', 'template_performance_validation'] as const) weeklyAdapters[step] = templateAdapter;
+    for (const step of ['customer_channel_readiness', 'customer_inquiry_handoff'] as const) weeklyAdapters[step] = customerChannelAdapter;
     initSocialWeeklyExecutionRuntime(weeklyAdapters);
     initDigitalEmployeeRuntime();
     markBackgroundJobsReady();

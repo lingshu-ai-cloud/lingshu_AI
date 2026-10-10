@@ -15,6 +15,9 @@ import {
   type WeeklyBusinessContentDispatch,
   type WeeklyExecutionStatusSummary,
   type WeeklyExecutionTask,
+  type WeeklyAgentChainContract,
+  type WeeklyAgentChainProfile,
+  type WeeklyAgentChainTaskCode,
   type WeeklyProductionStepKind,
   type WeeklyResponsibleActor,
   type WeeklyExecutionTaskStatus,
@@ -164,6 +167,41 @@ type TaskSeed = Pick<WeeklyExecutionTask,
     notBeforeAt?: number | null;
   };
 
+const MAIN_CHAIN_BY_STEP: Record<WeeklyProductionStepKind, number> = {
+  business_outline:1, benchmark_collection:2, benchmark_scoring:2, director_analysis:2,
+  business_schedule:3, material_preparation:4, material_readiness:4, script:4, storyboard:4,
+  asset_generation:5, video_generation:5, quality_check:5, rework:5, user_approval:5,
+  publishing:6, customer_channel_readiness:7, customer_inquiry_handoff:7, performance_monitoring:7, weekly_review:8,
+  template_extraction:8, template_performance_validation:8,
+};
+
+const SIDE_CHAIN_BY_STEP: Partial<Record<WeeklyProductionStepKind, number[]>> = {
+  business_outline:[2], business_schedule:[8], material_preparation:[1], material_readiness:[2],
+  quality_check:[3], rework:[3], publishing:[4], customer_channel_readiness:[2], customer_inquiry_handoff:[7], performance_monitoring:[5,7],
+  template_extraction:[6], template_performance_validation:[9], weekly_review:[9],
+};
+
+function chainIdentity(pkg:WeeklyOperatingPackage,seed:TaskSeed):{
+  chainProfile?:WeeklyAgentChainProfile;chainTaskCode?:WeeklyAgentChainTaskCode;
+  chainSupportTaskCodes?:WeeklyAgentChainTaskCode[];chainContract?:WeeklyAgentChainContract;
+}{
+  const profile=pkg.referenceSourcePolicy?.profile;if(!profile)return {};
+  const prefix=profile==='b2b_cold_start'?'Z':'H';
+  const source=seed.inputSnapshot.referenceSource;
+  const route=profile==='b2b_cold_start'?'external_cold_start':source==='owned'?'owned_history_iteration':source==='external'?'external_incremental_exploration':'mixed_history_and_external';
+  const taskCode=`${prefix}-M${MAIN_CHAIN_BY_STEP[seed.stepKind]}` as WeeklyAgentChainTaskCode;
+  const chainSupportTaskCodes=(SIDE_CHAIN_BY_STEP[seed.stepKind]??[]).map(index=>`${prefix}-S${index}` as WeeklyAgentChainTaskCode);
+  const commonInputs=['frozen_weekly_package','verified_enterprise_facts','confirmed_schedule_scope'];
+  const commonOutputs:[string,string]=[`verified_${seed.stepKind}_receipt`,`profile_route:${route}`];
+  const requiredInputKinds=profile==='b2b_cold_start'
+    ?[...commonInputs,'external_reference_evidence','first_week_baseline_gap']
+    :[...commonInputs,'historical_account_baseline','confirmed_owned_external_quota',source==='owned'?'owned_video_metrics_and_tone':'external_reference_evidence'];
+  const deliverableKinds=profile==='b2b_cold_start'
+    ?[...commonOutputs,'cold_start_enterprise_expression']
+    :[...commonOutputs,source==='owned'?'tone_preserving_iteration':'brand_adapted_exploration'];
+  return {chainProfile:profile,chainTaskCode:taskCode,chainSupportTaskCodes,chainContract:{requiredInputKinds,deliverableKinds}};
+}
+
 function makeTask(tenantId: string, pkg: WeeklyOperatingPackage, seed: TaskSeed, createdAt: string, estimatedStartAt: string): WeeklyExecutionTask {
   const idempotencyKey = hash([
     tenantId, pkg.packageId, pkg.version, seed.workflowKind, seed.scope, seed.subjectId, seed.stepKind,
@@ -181,6 +219,7 @@ function makeTask(tenantId: string, pkg: WeeklyOperatingPackage, seed: TaskSeed,
     subjectId: seed.subjectId,
     accountId: seed.accountId,
     publicationTaskId: seed.publicationTaskId,
+    ...chainIdentity(pkg,seed),
     dependsOnTaskIds: seed.dependsOnTaskIds,
     upstreamVersionRefs: authorityRefs(pkg),
     inputSnapshot: structuredClone({ ...seed.inputSnapshot, referenceSourcePolicy: pkg.referenceSourcePolicy ?? null }),
@@ -266,17 +305,18 @@ export function planWeeklyExecutionTasks(
   const scheduleByMother = new Map<string, WeeklyExecutionTask>();
   const storyboardByPublication = new Map<string, WeeklyExecutionTask>();
   for (const [motherContentId, items] of byMother) {
+    const referenceSource=sourceAllocation.get(motherContentId);
     const scoring = add({
       workflowKind: 'directing', scope: 'content', subjectId: `${motherContentId}:benchmark-scoring`,
       accountId: null, publicationTaskId: null,
-      dependsOnTaskIds: sourceAllocation.get(motherContentId) === 'owned' ? [readiness.taskId] : discovery.filter(task => items.some(item => item.accountId === task.accountId)).map(task => task.taskId),
-      inputSnapshot: { motherContentId, referenceSource: sourceAllocation.get(motherContentId), referenceWork: sourceAllocation.get(motherContentId) === 'owned' ? 'owned_history_metrics_diagnosis' : 'external_benchmark_scoring', candidatePolicy: 'server_score_required' }, budget: noBudget,
+      dependsOnTaskIds: referenceSource === 'owned' ? [readiness.taskId] : discovery.filter(task => items.some(item => item.accountId === task.accountId)).map(task => task.taskId),
+      inputSnapshot: { motherContentId, referenceSource, referenceWork: referenceSource === 'owned' ? 'owned_history_metrics_diagnosis' : 'external_benchmark_scoring', candidatePolicy: 'server_score_required' }, budget: noBudget,
       ownBlockingReasons: [], stepKind: 'benchmark_scoring', responsibleActor: 'director_agent', estimatedDurationMinutes: 20,
     });
     const directing = add({
       workflowKind: 'directing', scope: 'content', subjectId: motherContentId,
       accountId: null, publicationTaskId: null, dependsOnTaskIds: [scoring.taskId],
-      inputSnapshot: { motherContentId, referenceSource: sourceAllocation.get(motherContentId), referenceWork: sourceAllocation.get(motherContentId) === 'owned' ? 'owned_tone_inheritance' : 'external_structure_adaptation', variants: items }, budget: noBudget,
+      inputSnapshot: { motherContentId, referenceSource, referenceWork: referenceSource === 'owned' ? 'owned_tone_inheritance' : 'external_structure_adaptation', variants: items }, budget: noBudget,
       ownBlockingReasons: [...new Set(items.flatMap(publicationBlockers))],
       stepKind: 'director_analysis', responsibleActor: 'director_agent', estimatedDurationMinutes: 45,
     });
@@ -284,7 +324,7 @@ export function planWeeklyExecutionTasks(
     scheduleByMother.set(motherContentId, add({
       workflowKind: 'directing', scope: 'content', subjectId: `${motherContentId}:business-schedule`,
       accountId: null, publicationTaskId: null, dependsOnTaskIds: [directing.taskId],
-      inputSnapshot: { motherContentId, directorTaskId: directing.taskId, variants: items }, budget: noBudget,
+      inputSnapshot: { motherContentId, referenceSource, directorTaskId: directing.taskId, variants: items }, budget: noBudget,
       ownBlockingReasons: [], stepKind: 'business_schedule', responsibleActor: 'business_agent', estimatedDurationMinutes: 15,
     }));
     items.forEach(item => {
@@ -294,19 +334,19 @@ export function planWeeklyExecutionTasks(
       const preparation = (pkg.executionGraphVersion??1)>=2 ? add({
         workflowKind:'content',scope,subjectId:`${base}:material-preparation`,accountId:item.accountId,publicationTaskId:item.publicationTaskId,
         dependsOnTaskIds:[scheduleByMother.get(motherContentId)!.taskId],
-        inputSnapshot:{publicationTask:item,motherContentId,mode},budget:noBudget,ownBlockingReasons:[],
+        inputSnapshot:{publicationTask:item,motherContentId,mode,referenceSource},budget:noBudget,ownBlockingReasons:[],
         stepKind:'material_preparation',responsibleActor:'content_agent',estimatedDurationMinutes:20,
       }):null;
       const script = add({
         workflowKind: 'directing', scope, subjectId: `${base}:script`, accountId: item.accountId, publicationTaskId: item.publicationTaskId,
         dependsOnTaskIds: [preparation?.taskId??scheduleByMother.get(motherContentId)!.taskId],
-        inputSnapshot: { publicationTask: item, motherContentId, mode, source: 'director_analysis_and_enterprise_facts' },
+        inputSnapshot: { publicationTask: item, motherContentId, mode, referenceSource, source: 'director_analysis_and_enterprise_facts' },
         budget: { category: 'production', limitCny: productionBudget }, ownBlockingReasons: [],
         stepKind: 'script', responsibleActor: 'director_agent', estimatedDurationMinutes: 30,
       });
       const storyboard = add({
         workflowKind: 'directing', scope, subjectId: `${base}:storyboard`, accountId: item.accountId, publicationTaskId: item.publicationTaskId,
-        dependsOnTaskIds: [script.taskId], inputSnapshot: { publicationTask: item, motherContentId, mode }, budget: noBudget, ownBlockingReasons: [],
+        dependsOnTaskIds: [script.taskId], inputSnapshot: { publicationTask: item, motherContentId, mode, referenceSource }, budget: noBudget, ownBlockingReasons: [],
         stepKind: 'storyboard', responsibleActor: 'director_agent', estimatedDurationMinutes: 35,
       });
       storyboardByPublication.set(item.publicationTaskId, storyboard);
@@ -316,6 +356,7 @@ export function planWeeklyExecutionTasks(
 
   const approvalByPublication = new Map<string, WeeklyExecutionTask>();
   for (const [motherContentId, items] of byMother) {
+    const referenceSource=sourceAllocation.get(motherContentId);
     const original = items.find(item => item.adaptationOfPublicationTaskId === null) ?? items[0]!;
     let originalQualityTask: WeeklyExecutionTask | null = null;
     for (const item of [original, ...items.filter(candidate => candidate.publicationTaskId !== original.publicationTaskId)]) {
@@ -326,35 +367,35 @@ export function planWeeklyExecutionTasks(
       const material = add({
         workflowKind: 'content', scope, subjectId: `${base}:material-readiness`, accountId: item.accountId, publicationTaskId: item.publicationTaskId,
         dependsOnTaskIds: [scheduleByMother.get(motherContentId)!.taskId, storyboard.taskId, ...(mode === 'adaptation' && originalQualityTask ? [originalQualityTask.taskId] : [])],
-        inputSnapshot: { publicationTask: item, motherContentId, mode, qualityTier: 'premium' },
+        inputSnapshot: { publicationTask: item, motherContentId, mode, referenceSource, qualityTier: 'premium' },
         budget: noBudget, ownBlockingReasons: ['business_dispatch_required'],
         stepKind: 'material_readiness', responsibleActor: 'content_agent', estimatedDurationMinutes: 20,
       });
       const assets = add({
         workflowKind: 'content', scope, subjectId: `${base}:asset-generation`, accountId: item.accountId, publicationTaskId: item.publicationTaskId,
-        dependsOnTaskIds: [material.taskId], inputSnapshot: { publicationTask: item, motherContentId, mode, generationPolicy: 'premium_max_available' },
+        dependsOnTaskIds: [material.taskId], inputSnapshot: { publicationTask: item, motherContentId, mode, referenceSource, generationPolicy: 'premium_max_available' },
         budget: { category: 'production', limitCny: productionBudget }, ownBlockingReasons: [],
         stepKind: 'asset_generation', responsibleActor: 'content_agent', estimatedDurationMinutes: 45,
       });
       const video = add({
         workflowKind: 'content', scope, subjectId: `${base}:video-generation`, accountId: item.accountId, publicationTaskId: item.publicationTaskId,
-        dependsOnTaskIds: [assets.taskId], inputSnapshot: { publicationTask: item, motherContentId, mode, qualityTier: 'premium' },
+        dependsOnTaskIds: [assets.taskId], inputSnapshot: { publicationTask: item, motherContentId, mode, referenceSource, qualityTier: 'premium' },
         budget: { category: 'production', limitCny: productionBudget }, ownBlockingReasons: [],
         stepKind: 'video_generation', responsibleActor: 'content_agent', estimatedDurationMinutes: 90,
       });
       const quality = add({
         workflowKind: 'content', scope, subjectId: `${base}:quality-check`, accountId: item.accountId, publicationTaskId: item.publicationTaskId,
-        dependsOnTaskIds: [video.taskId], inputSnapshot: { publicationTask: item, checks: ['facts', 'visual', 'audio', 'rights', 'platform'] }, budget: noBudget, ownBlockingReasons: [],
+        dependsOnTaskIds: [video.taskId], inputSnapshot: { publicationTask: item, motherContentId, referenceSource, checks: ['facts', 'visual', 'audio', 'rights', 'platform'] }, budget: noBudget, ownBlockingReasons: [],
         stepKind: 'quality_check', responsibleActor: 'quality_agent', estimatedDurationMinutes: 25,
       });
       const approvalDependency = pkg.executionGraphVersion===3 ? quality : add({
         workflowKind: 'content', scope, subjectId: `${base}:rework`, accountId: item.accountId, publicationTaskId: item.publicationTaskId,
-        dependsOnTaskIds: [quality.taskId], inputSnapshot: { publicationTask: item, conditional: true }, budget: { category: 'production', limitCny: productionBudget }, ownBlockingReasons: [],
+        dependsOnTaskIds: [quality.taskId], inputSnapshot: { publicationTask: item, motherContentId, referenceSource, conditional: true }, budget: { category: 'production', limitCny: productionBudget }, ownBlockingReasons: [],
         stepKind: 'rework', responsibleActor: 'content_agent', estimatedDurationMinutes: 30,
       });
       const approval = add({
         workflowKind: 'content', scope, subjectId: `${base}:user-approval`, accountId: item.accountId, publicationTaskId: item.publicationTaskId,
-        dependsOnTaskIds: [approvalDependency.taskId], inputSnapshot: { publicationTask: item, decisionCard: 'content_approval' }, budget: noBudget, ownBlockingReasons: [],
+        dependsOnTaskIds: [approvalDependency.taskId], inputSnapshot: { publicationTask: item, motherContentId, referenceSource, decisionCard: 'content_approval' }, budget: noBudget, ownBlockingReasons: [],
         stepKind: 'user_approval', responsibleActor: 'user', estimatedDurationMinutes: 10,
       });
       if (mode === 'original') originalQualityTask = approvalDependency;
@@ -376,24 +417,62 @@ export function planWeeklyExecutionTasks(
     dependsOnTaskIds: [approvalByPublication.get(item.publicationTaskId)!.taskId],
     inputSnapshot: {
       publicationTask: item,
+      referenceSource: sourceAllocation.get(item.motherContentId),
       authorization: pkg.socialContentPackage.authorization,
     },
     budget: noBudget, ownBlockingReasons: publicationBlockers(item),
     stepKind: 'publishing', responsibleActor: 'publishing_agent', estimatedDurationMinutes: 10,
   }));
 
+  const customerChannels = ['whatsapp', 'messenger', 'instagram'] as const;
+  const customerReadiness = new Map<string, WeeklyExecutionTask[]>();
+  for (const item of publications) {
+    const approval = approvalByPublication.get(item.publicationTaskId)!;
+    const tasksForPublication = customerChannels.map(channel => add({
+      workflowKind: 'engagement', scope: 'publication',
+      subjectId: `${item.publicationTaskId}:customer:${channel}:readiness`,
+      accountId: item.accountId, publicationTaskId: item.publicationTaskId,
+      dependsOnTaskIds: [approval.taskId],
+      inputSnapshot: { publicationTask: item, referenceSource: sourceAllocation.get(item.motherContentId), customerChannel: channel, publicationAccountId: item.accountId },
+      budget: noBudget, ownBlockingReasons: [],
+      stepKind: 'customer_channel_readiness', responsibleActor: 'customer_agent', estimatedDurationMinutes: 10,
+    }));
+    customerReadiness.set(item.publicationTaskId, tasksForPublication);
+    const publish = publishing.find(task => task.publicationTaskId === item.publicationTaskId)!;
+    publish.dependsOnTaskIds = [...publish.dependsOnTaskIds, ...tasksForPublication.map(task => task.taskId)];
+  }
+
+  const customerHandoffs = publications.flatMap(item => {
+    const publish = publishing.find(task => task.publicationTaskId === item.publicationTaskId)!;
+    return customerChannels.map(channel => {
+      const readiness = customerReadiness.get(item.publicationTaskId)!.find(task => task.inputSnapshot.customerChannel === channel)!;
+      return add({
+        workflowKind: 'engagement', scope: 'publication',
+        subjectId: `${item.publicationTaskId}:customer:${channel}:handoff`,
+        accountId: item.accountId, publicationTaskId: item.publicationTaskId,
+        dependsOnTaskIds: [publish.taskId, readiness.taskId],
+        inputSnapshot: { publicationTask: item, referenceSource: sourceAllocation.get(item.motherContentId), customerChannel: channel, publicationAccountId: item.accountId },
+        budget: noBudget, ownBlockingReasons: [],
+        stepKind: 'customer_inquiry_handoff', responsibleActor: 'customer_agent', estimatedDurationMinutes: 30,
+      });
+    });
+  });
+
   const engagement = accountIds.map(accountId => add({
     workflowKind: 'engagement', scope: 'account', subjectId: accountId,
     accountId, publicationTaskId: null,
-    dependsOnTaskIds: publishing.filter(item => item.accountId === accountId).map(item => item.taskId),
-    inputSnapshot: { accountId, weekStart: pkg.weekStart, weekEnd: pkg.weekEnd },
+    dependsOnTaskIds: [
+      ...publishing.filter(item => item.accountId === accountId).map(item => item.taskId),
+      ...customerHandoffs.filter(item => item.accountId === accountId).map(item => item.taskId),
+    ],
+    inputSnapshot: { accountId, weekStart: pkg.weekStart, weekEnd: pkg.weekEnd, profileWork: pkg.referenceSourcePolicy?.profile==='b2b_established'?'existing_customer_and_dual_source_attribution':'new_inquiry_and_first_baseline_attribution' },
     budget: noBudget, ownBlockingReasons: [],
     stepKind: 'performance_monitoring', responsibleActor: 'business_agent', estimatedDurationMinutes: 60,
   }));
   const review = add({
     workflowKind: 'review', scope: 'package', subjectId: pkg.packageId,
     accountId: null, publicationTaskId: null, dependsOnTaskIds: engagement.map(item => item.taskId),
-    inputSnapshot: { objective: pkg.objective, successCriteria: pkg.successCriteria },
+    inputSnapshot: { objective: pkg.objective, successCriteria: pkg.successCriteria, profileWork: pkg.referenceSourcePolicy?.profile==='b2b_established'?'dual_source_performance_and_quota_review':'cold_start_baseline_and_profile_upgrade_review' },
     budget: noBudget, ownBlockingReasons: [],
     stepKind: 'weekly_review', responsibleActor: 'business_agent', estimatedDurationMinutes: 45,
   });
@@ -404,7 +483,7 @@ export function planWeeklyExecutionTasks(
       workflowKind: 'directing', scope: 'content', subjectId: `${publication.publicationTaskId}:template-extraction`,
       accountId: publication.accountId, publicationTaskId: publication.publicationTaskId,
       dependsOnTaskIds: [source.taskId, review.taskId],
-      inputSnapshot: { publicationTask: publication, sourceTaskId: source.taskId, reviewTaskId: review.taskId },
+      inputSnapshot: { publicationTask: publication, referenceSource: sourceAllocation.get(publication.motherContentId), sourceTaskId: source.taskId, reviewTaskId: review.taskId },
       budget: noBudget, ownBlockingReasons: [],
       stepKind: 'template_extraction', responsibleActor: 'director_agent', estimatedDurationMinutes: 20,
     });
@@ -412,7 +491,7 @@ export function planWeeklyExecutionTasks(
       workflowKind: 'review', scope: 'content', subjectId: `${publication.publicationTaskId}:template-performance-validation`,
       accountId: publication.accountId, publicationTaskId: publication.publicationTaskId,
       dependsOnTaskIds: [extraction.taskId],
-      inputSnapshot: { publicationTask: publication, sourceTaskId: source.taskId, reviewTaskId: review.taskId, extractionTaskId: extraction.taskId },
+      inputSnapshot: { publicationTask: publication, referenceSource: sourceAllocation.get(publication.motherContentId), sourceTaskId: source.taskId, reviewTaskId: review.taskId, extractionTaskId: extraction.taskId },
       budget: noBudget, ownBlockingReasons: [],
       stepKind: 'template_performance_validation', responsibleActor: 'business_agent', estimatedDurationMinutes: 15,
     });

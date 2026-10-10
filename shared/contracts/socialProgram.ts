@@ -86,12 +86,24 @@ export const WEEKLY_EXECUTION_TASK_STATUSES = [
 export type WeeklyExecutionTaskStatus = typeof WEEKLY_EXECUTION_TASK_STATUSES[number];
 export type WeeklyExecutionTaskScope = 'package' | 'content' | 'adaptation' | 'account' | 'publication';
 
+/** Business identity of the two B2B operating chains. Legacy persisted tasks may omit it. */
+export type WeeklyAgentChainProfile = 'b2b_cold_start' | 'b2b_established';
+export type WeeklyAgentChainTaskCode = `${'Z' | 'H'}-${`M${1 | 2 | 3 | 4 | 5 | 6 | 7 | 8}` | `S${1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9}`}`;
+
+export interface WeeklyAgentChainContract {
+  /** Frozen business inputs required by this profile-specific task, in addition to inputSnapshot. */
+  requiredInputKinds: string[];
+  /** Auditable business outputs expected from the existing step executor. */
+  deliverableKinds: string[];
+}
+
 export type WeeklyResponsibleActor =
   | 'business_agent'
   | 'director_agent'
   | 'content_agent'
   | 'quality_agent'
   | 'publishing_agent'
+  | 'customer_agent'
   | 'user';
 
 export type WeeklyProductionStepKind =
@@ -110,6 +122,8 @@ export type WeeklyProductionStepKind =
   | 'rework'
   | 'user_approval'
   | 'publishing'
+  | 'customer_channel_readiness'
+  | 'customer_inquiry_handoff'
   | 'performance_monitoring'
   | 'weekly_review'
   | 'template_extraction'
@@ -158,6 +172,12 @@ export interface WeeklyExecutionTask {
   subjectId: string;
   accountId: string | null;
   publicationTaskId: string | null;
+  /** Profile-specific business identity; stepKind remains the stable executor protocol. */
+  chainProfile?: WeeklyAgentChainProfile;
+  chainTaskCode?: WeeklyAgentChainTaskCode;
+  /** Conditional side-chain identities this durable task owns if their trigger is observed. */
+  chainSupportTaskCodes?: WeeklyAgentChainTaskCode[];
+  chainContract?: WeeklyAgentChainContract;
   dependsOnTaskIds: string[];
   upstreamVersionRefs: VersionedSocialRef[];
   inputSnapshot: Record<string, unknown>;

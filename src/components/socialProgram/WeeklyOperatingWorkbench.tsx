@@ -38,6 +38,7 @@ const ACTOR_LABEL: Record<WeeklyResponsibleActor, string> = {
   content_agent: '内容 Agent',
   quality_agent: '内容 Agent · 质检能力',
   publishing_agent: '经营 Agent · 发布能力',
+  customer_agent: '客服 Agent',
   user: '用户',
 };
 
@@ -57,6 +58,8 @@ const STEP_DETAIL: Record<WeeklyProductionStepKind, string> = {
   rework: '只重做不合格镜头，保留已通过的结果。',
   user_approval: '用统一决策卡确认成片，未确认不会真实发布。',
   publishing: '在授权范围内发布，保留平台回执。',
+  customer_channel_readiness: '逐条发布核验 WhatsApp、Messenger、Instagram 的租户授权、真实账号和可用凭据。',
+  customer_inquiry_handoff: '发布后承接真实私信询盘；绑定周客服运行、原会话身份和平台回执，未知结果保持待对账。',
   performance_monitoring: '按账号回传播放、互动、询盘和成本信号。',
   weekly_review: '用真实结果生成周复盘和下一轮数量、内容与预算建议。',
   template_extraction: '从真实已发布企业成片及原周复盘提炼结构，保留原脚本、分镜和来源版本。',

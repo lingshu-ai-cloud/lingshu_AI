@@ -16,6 +16,8 @@ export const STEP_LABEL: Record<WeeklyProductionStepKind, string> = {
   rework: '12. 按质检结果局部返工',
   user_approval: '13. 用户确认成片',
   publishing: '14. 发布到目标账号',
+  customer_channel_readiness: '客服 Agent · 三渠道授权与账号就绪',
+  customer_inquiry_handoff: '客服 Agent · 私信询盘承接与真实回执',
   performance_monitoring: '15. 回传表现与线索',
   weekly_review: '16. 周复盘与下轮建议',
   template_extraction: '提炼企业成片结构模板',

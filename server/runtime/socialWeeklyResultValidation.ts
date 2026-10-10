@@ -70,6 +70,7 @@ export async function validateWeeklyExecutionResults(store: DataStore, task: Wee
   requireResult(!task.inputSnapshot?.weeklyContinuationPending && !task.inputSnapshot?.weeklyContinuationRef, 'weekly_execution_continuation_result_required');
   if (['template_extraction','template_performance_validation'].includes(String(task.schedule?.stepKind))) {const {createWeeklyContentTemplateService}=await import('../socialPrograms/weeklyContentTemplates.js');await createWeeklyContentTemplateService(store,{now:()=>now.toISOString()}).validateTemplateExecutionEvidence(task,refs);return;}
   if(refs.some(ref=>ref.type==='weekly_inventory_outline')){const {validateWeeklyInventoryOutlineRefs}=await import('./weeklyInventoryOutlineEvidence.js');await validateWeeklyInventoryOutlineRefs(store,task,refs);return;}
+  if(refs.some(ref=>ref.type==='weekly_customer_channel_execution')){const {validateWeeklyCustomerChannelExecution}=await import('./socialWeeklyCustomerChannelAdapter.js');await validateWeeklyCustomerChannelExecution(store,task,refs);return;}
   if (refs.some(ref => ref.type === 'social_metric_snapshot')) {
     const { validateWeeklyPublicationMetricRefs } = await import('./weeklyPublicationMetricEvidence.js');
     await validateWeeklyPublicationMetricRefs(store, task, refs, now);
