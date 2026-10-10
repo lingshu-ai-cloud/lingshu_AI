@@ -72,6 +72,8 @@ M1 首次成片基线与任务卡核销：首次成片不能冒充“相对基�
 
 严格身份修复后的 M1 完整复验 `/tmp/weekly-m1-strict-scene-reference.log` 实际退出0：run `22f2e141a30f83f`、job `bc1d1f60ae6dee5`、artifact `socialart_5a32190a90632540e3ec13f9@1`。两镜均为 `script sceneId = supply shotId = execution sceneId`，分别绑定自己的受控视频，没有序号回退；逐镜缓存、资产卡和视频卡继续由正式路径完成，外部/付费调用为0。
 
+M1 质量卡首次真实领取：`/tmp/weekly-m1-quality-actual-hardfailure.log` 实际退出0，测试通过的是“拒绝真实不合格成片”，不是质量通过。原 quality 任务经正式worker领取后，adapter 返回 `weekly_quality_audit_actual_repair_required` 并按原原因延期；实际检测认定第1镜清晰度不足，G4为 `failed`，第2镜为 `review_required`。G5只读上下文另显示脚本基线、企业事实与执行授权缺口。正式合同要求先对硬失败镜头产生新媒体，不能用人工勾选覆盖；未失败但待复核镜头仍须真实审核人逐项查看七项G4。只有同成片全部G4及独立G5通过后，质量恢复服务才可重新排队原质量任务。因此当前下一业务动作是实际局部返工与人工复核，不能直接进入用户终验或发布。
+
 素材分类权威：来源分类只使用 `local_upload / official_import / user_generated`，用户主题只使用 `talking_head / factory / product / consumer_demo`，其中 `consumer_demo` 的现有显示名仍为 `DtoC`；逐镜视觉角色是另一维度，不能混写成新主题枚举。云素材读取已补齐 `primaryTheme`、`themeTags`、`classificationStatus`、`classificationSource`、`classificationEvidence` 和 `sourceCategory` 的无损投影；缺字段或坏JSON保持未知，不根据误导性标题伪造已完成分类。读回保真、租户隔离及原写入回归已通过。
 
 M1 首次协议审查结果：当前提案 GET 只返回 proposal，不能证明确认新版本已实际落地；前端丢确认响应后仍可再次 POST。snapshot、旧图冻结、新版本保存为分步写入，有 snapshot 不等于 committed。需增加只读确认结果查询，明确未提交/待恢复/已落地；故障链逐一验证丢响应、保存中断、身份和输入漂移，不能重复生产或将半完成状态显示成功。这是已核源码缺口，尚无故障注入通过证据，纳入 M1 而不另开版本补丁。
