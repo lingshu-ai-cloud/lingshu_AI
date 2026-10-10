@@ -68,6 +68,31 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 
 const json = (body: unknown): RequestInit => ({ body: JSON.stringify(body) });
 
+function requireResponseObject<T>(value: unknown, message: string): T {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new SocialProgramRequestError(502, 'social_program_invalid_response', message);
+  }
+  return value as T;
+}
+
+function parseTechnicalRepairCapacityPreview(value: unknown): WeeklyTechnicalRepairCapacityPreview {
+  const item = requireResponseObject<WeeklyTechnicalRepairCapacityPreview>(value, '返工容量预览格式不正确。');
+  const preview = requireResponseObject<SceneReworkAdmissionPreview>(item.preview, '返工执行方案格式不正确。');
+  if (!/^[a-f0-9]{64}$/.test(item.caseRecordHash) || !/^[a-f0-9]{64}$/.test(preview.previewHash)) {
+    throw new SocialProgramRequestError(502, 'social_program_invalid_response', '返工容量预览缺少可核验版本。');
+  }
+  return item;
+}
+
+function parseRepairCaseMutation(value: unknown, expectedState: WeeklyProductionRepairCase['state'] | WeeklyProductionRepairCase['state'][]): WeeklyProductionRepairCase {
+  const item = requireResponseObject<WeeklyProductionRepairCase>(value, '返工任务响应格式不正确。');
+  const states = Array.isArray(expectedState) ? expectedState : [expectedState];
+  if (!states.includes(item.state)) {
+    throw new SocialProgramRequestError(502, 'social_program_invalid_response', '返工任务状态与本次操作不一致。');
+  }
+  return item;
+}
+
 export const socialProgramApi = {
   async list(): Promise<SocialProgram[]> {
     const payload = await request<{ items: SocialProgram[] }>('/');
@@ -159,9 +184,9 @@ export const socialProgramApi = {
   async listRepairCases(programId:string,packageId:string,version:number):Promise<WeeklyProductionRepairCase[]>{
     return (await request<{items:WeeklyProductionRepairCase[]}>(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/repair-cases?version=${version}`)).items;
   },
-  async previewTechnicalRepairCapacity(programId:string,packageId:string,version:number,caseId:string):Promise<WeeklyTechnicalRepairCapacityPreview>{return(await request<{item:WeeklyTechnicalRepairCapacityPreview}>(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/repair-cases/${encodeURIComponent(caseId)}/capacity-preview?version=${version}`)).item;},
-  async confirmTechnicalRepairCapacity(programId:string,packageId:string,version:number,caseId:string,input:{expectedCaseRecordHash:string;expectedPreviewHash:string;expectedQuoteHash?:string;authorizedMaximumCostCny:number}):Promise<WeeklyProductionRepairCase>{return(await request<{item:WeeklyProductionRepairCase}>(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/repair-cases/${encodeURIComponent(caseId)}/confirm-capacity`,{method:'POST',...json({packageVersion:version,...input})})).item;},
-  async startTechnicalRepair(programId:string,packageId:string,version:number,caseId:string,expectedCaseRecordHash:string):Promise<WeeklyProductionRepairCase>{return(await request<{item:WeeklyProductionRepairCase}>(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/repair-cases/${encodeURIComponent(caseId)}/start`,{method:'POST',...json({packageVersion:version,expectedCaseRecordHash})})).item;},
+  async previewTechnicalRepairCapacity(programId:string,packageId:string,version:number,caseId:string):Promise<WeeklyTechnicalRepairCapacityPreview>{const payload=await request<{item:unknown}>(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/repair-cases/${encodeURIComponent(caseId)}/capacity-preview?version=${version}`);return parseTechnicalRepairCapacityPreview(payload.item);},
+  async confirmTechnicalRepairCapacity(programId:string,packageId:string,version:number,caseId:string,input:{expectedCaseRecordHash:string;expectedPreviewHash:string;expectedQuoteHash?:string;authorizedMaximumCostCny:number}):Promise<WeeklyProductionRepairCase>{const payload=await request<{item:unknown}>(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/repair-cases/${encodeURIComponent(caseId)}/confirm-capacity`,{method:'POST',...json({packageVersion:version,expectedCaseRecordHash:input.expectedCaseRecordHash,expectedPreviewHash:input.expectedPreviewHash,...(input.expectedQuoteHash===undefined?{}:{expectedQuoteHash:input.expectedQuoteHash}),authorizedMaximumCostCny:input.authorizedMaximumCostCny})});return parseRepairCaseMutation(payload.item,'ready');},
+  async startTechnicalRepair(programId:string,packageId:string,version:number,caseId:string,expectedCaseRecordHash:string):Promise<WeeklyProductionRepairCase>{const payload=await request<{item:unknown}>(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/repair-cases/${encodeURIComponent(caseId)}/start`,{method:'POST',...json({packageVersion:version,expectedCaseRecordHash})});return parseRepairCaseMutation(payload.item,'running');},
   async assessRecovery(programId: string, packageId: string, packageVersion: number, input: Pick<WeeklyRecoveryInput, 'changedTaskIds' | 'constraints' | 'resources' | 'remainingBudgetCny'>): Promise<WeeklyRecoveryAssessment> {
     return (await request<{ item: WeeklyRecoveryAssessment }>(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/recovery-assessment`, { method: 'POST', ...json({ changedTaskIds: input.changedTaskIds, constraints: input.constraints, resources: input.resources, remainingBudgetCny: input.remainingBudgetCny, packageVersion }) })).item;
   },

@@ -69,8 +69,7 @@ test('lost start response is propagated without repeating paid admission',async(
   },async()=>{throw new Error('connection lost');});
 });
 
-test('runtime input cannot override the selected package or add client execution authority',
-  {todo:'生产 API 仍展开 input；需显式挑选允许字段'},async()=>{
+test('runtime input cannot override the selected package or add client execution authority',async()=>{
   await transport(async calls=>{
     await socialProgramApi.confirmTechnicalRepairCapacity('p/a','w/b',3,'c/c',{
       expectedCaseRecordHash:caseHash,expectedPreviewHash:previewHash,authorizedMaximumCostCny:0,
@@ -81,8 +80,7 @@ test('runtime input cannot override the selected package or add client execution
   },async()=>Response.json({item:{state:'ready',execution:null}}));
 });
 
-test('malformed successful capacity response is rejected before reaching task-card state',
-  {todo:'生产 API 未核验容量预览 item 结构'},async()=>{
+test('malformed successful capacity response is rejected before reaching task-card state',async()=>{
   await transport(async()=>{
     await assert.rejects(socialProgramApi.previewTechnicalRepairCapacity('p/a','w/b',3,'c/c'));
   },async()=>Response.json({item:null}));
