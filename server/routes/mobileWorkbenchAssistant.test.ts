@@ -26,3 +26,10 @@ test('free text cannot be an executable action or smuggle budget',async()=>{
  await assert.rejects(previewMobileAssistantAction(store(),{tenantId:'a',userId:'u'},'直接加预算'),/invalid/);
  await assert.rejects(previewMobileAssistantAction(store(),{tenantId:'a',userId:'u'},{kind:'retry_task',targetId:'task-a',payload:{budget:100}}),/invalid/);
 });
+test('action candidates isolate tenant and readonly roles',async()=>{
+ const {mobileAssistantActionCandidates}=await import('./mobileWorkbenchAssistant.js');
+ const db=store(); db.list=async<T>(collection:string)=>({items:(collection==='approval_requests'?[{id:'a',tenant_id:'a',status:'pending'},{id:'secret',tenant_id:'b',status:'pending'}]:[]) as T[],totalItems:2,totalPages:1,page:1,perPage:200});
+ const candidates=await mobileAssistantActionCandidates(db,{tenantId:'a',userId:'u'},'admin');
+ assert.equal(candidates.length,1); assert.equal(candidates[0].matterId,'approval:a');
+ assert.deepEqual(await mobileAssistantActionCandidates(db,{tenantId:'a',userId:'u'},null),[]);
+});
