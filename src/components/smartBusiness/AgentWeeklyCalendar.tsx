@@ -1,5 +1,5 @@
 import {agentCalendarAuthIdentity, captureAgentCalendarReturnContext, readAgentCalendarReturnContext, registerAgentCalendarReturnState, restoreAgentCalendarReturnContext} from '../../lib/agentCalendarReturnContext';
-import type {LsCalendarView} from '../../lib/calendarModel';
+import type {LsCalendarView} from '../ui/LsCalendar';
 import {validWeeklySalesTaskBinding,type WeeklySalesNavigationTarget} from '../socialProgram/weeklySalesNavigation';
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Button, Tag } from 'antd';

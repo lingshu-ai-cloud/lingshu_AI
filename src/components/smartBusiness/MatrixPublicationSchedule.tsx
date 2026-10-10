@@ -29,6 +29,7 @@ const materialLabels = {
   product: "产品展示",
   consumer_demo: "使用与效果",
   unknown: "待判断",
+  general: "通用素材",
 } as const;
 
 function safeDate(value: string | undefined, fallback = new Date()) {

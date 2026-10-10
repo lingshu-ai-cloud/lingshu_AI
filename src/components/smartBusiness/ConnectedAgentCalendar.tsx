@@ -1,3 +1,4 @@
+import {getScrollBehavior} from '../../lib/usePrefersReducedMotion';
 import { agentCalendarAuthIdentity, readAgentCalendarReturnContext, registerAgentCalendarReturnState } from '../../lib/agentCalendarReturnContext';
 import {openCustomerCalendarTask,type CustomerCalendarProjection} from '../socialProgram/CustomerWeeklyCalendar';
 import {readWeeklyContentNavigation,weeklyContentNavigationDetail} from '../../lib/weeklyContentNavigationApi';
