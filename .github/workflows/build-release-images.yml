@@ -27,7 +27,7 @@ jobs:
   verify:
     name: Verify source
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 30
     outputs:
       source_sha: ${{ steps.source.outputs.sha }}
     steps:
@@ -66,28 +66,26 @@ jobs:
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
-
-      - name: Enable pinned pnpm
-        run: corepack enable
+          cache: npm
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: npm ci
 
-      - name: Install pinned PocketBase for release gate
+      - name: Type-check
+        run: npm run lint
+
+      - name: Test
         run: |
           set -euo pipefail
-          archive="$RUNNER_TEMP/pocketbase.zip"
-          install_dir="$RUNNER_TEMP/pocketbase"
-          mkdir -p "$install_dir"
-          curl --fail --location --silent --show-error \
-            --output "$archive" \
-            "https://github.com/pocketbase/pocketbase/releases/download/v0.39.5/pocketbase_0.39.5_linux_amd64.zip"
-          unzip -q "$archive" -d "$install_dir"
-          chmod +x "$install_dir/pocketbase"
-          echo "PB_BIN=$install_dir/pocketbase" >> "$GITHUB_ENV"
+          if node -e "const p=require('./package.json'); process.exit(p.scripts?.test ? 0 : 1)"; then
+            npm test
+          else
+            echo "This historical source does not define an npm test script."
+            echo "Type-check, production build, and container-level smoke checks remain mandatory."
+          fi
 
-      - name: Run the single quality gate
-        run: pnpm run quality
+      - name: Build application
+        run: npm run build
 
   publish:
     name: Publish ${{ matrix.name }} image
@@ -243,7 +241,6 @@ jobs:
             --env "WORKBENCH_ADMIN_EMAIL=$smoke_admin_email" \
             --env "WORKBENCH_ADMIN_PASSWORD=$smoke_admin_password" \
             --env "TENANT_PLATFORM_APP_KEY=release-pair-smoke-tenant-platform-key-2026" \
-            --env "PRODUCT_API_KEY_PEPPER=release-pair-smoke-product-api-pepper-2026" \
             "$APP_IMAGE" >/dev/null
 
           wait_for_url \

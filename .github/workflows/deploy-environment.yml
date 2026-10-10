@@ -1,0 +1,309 @@
+name: Deploy environment
+
+on:
+  workflow_dispatch:
+    inputs:
+      authorization_id:
+        description: One-time release-console authorization ID
+        required: true
+        type: string
+      authorization_token:
+        description: Short-lived one-time release-console token
+        required: true
+        type: string
+      release_request_id:
+        description: Release-console request ID
+        required: true
+        type: string
+      environment:
+        description: Target environment
+        required: true
+        type: choice
+        options:
+          - internal
+          - presales
+          - production
+      operation:
+        description: Must be deploy
+        required: true
+        type: string
+      version:
+        description: Full 40-character commit SHA already published by Build release images
+        required: true
+        type: string
+      expected_current_sha:
+        description: Current immutable commit SHA observed when this deployment was authorized
+        required: true
+        type: string
+      source_ref:
+        description: Remote branch that contains the locked version
+        required: true
+        type: string
+      rollback_of_request_id:
+        description: Must be empty for a deployment
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-${{ inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  pilot-scope:
+    name: Enforce internal-only pilot
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Refuse environments outside the internal pilot
+        env:
+          TARGET_ENVIRONMENT: ${{ inputs.environment }}
+        run: |
+          set -euo pipefail
+          if [[ "$TARGET_ENVIRONMENT" != "internal" ]]; then
+            echo "The current execution pilot is limited to internal." >&2
+            exit 1
+          fi
+
+  authorize:
+    name: Consume one-time console authorization
+    needs: pilot-scope
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require the trusted workflow from main
+        if: github.ref != 'refs/heads/main'
+        run: |
+          echo "Deployments must be started from the main branch." >&2
+          exit 1
+
+      - name: Validate operation
+        if: inputs.operation != 'deploy' || inputs.rollback_of_request_id != ''
+        run: |
+          echo "This workflow accepts deploy requests only." >&2
+          exit 1
+
+      - name: Validate the bound execution context
+        env:
+          EXPECTED_CURRENT_SHA: ${{ inputs.expected_current_sha }}
+          SOURCE_REF: ${{ inputs.source_ref }}
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_CURRENT_SHA" =~ ^[0-9a-f]{40}$ ]] || {
+            echo "expected_current_sha must be a full lowercase commit SHA." >&2
+            exit 1
+          }
+          git check-ref-format --branch "$SOURCE_REF" >/dev/null || {
+            echo "source_ref is not a valid Git branch name." >&2
+            exit 1
+          }
+
+      - name: Consume release-console authorization
+        env:
+          CONSOLE_URL: ${{ secrets.RELEASE_CONSOLE_URL }}
+          WEBHOOK_SECRET: ${{ secrets.RELEASE_AUTHORIZATION_WEBHOOK_SECRET }}
+          AUTHORIZATION_ID: ${{ inputs.authorization_id }}
+          AUTHORIZATION_TOKEN: ${{ inputs.authorization_token }}
+          RELEASE_REQUEST_ID: ${{ inputs.release_request_id }}
+          TARGET_ENVIRONMENT: ${{ inputs.environment }}
+          RELEASE_OPERATION: ${{ inputs.operation }}
+          RELEASE_VERSION: ${{ inputs.version }}
+          EXPECTED_CURRENT_SHA: ${{ inputs.expected_current_sha }}
+          SOURCE_REF: ${{ inputs.source_ref }}
+        run: |
+          set -euo pipefail
+          : "${CONSOLE_URL:?RELEASE_CONSOLE_URL secret is required}"
+          : "${WEBHOOK_SECRET:?RELEASE_AUTHORIZATION_WEBHOOK_SECRET secret is required}"
+          echo "::add-mask::$AUTHORIZATION_TOKEN"
+          request_file="$(mktemp)"
+          trap 'rm -f "$request_file"' EXIT
+          chmod 600 "$request_file"
+          node <<'NODE' > "$request_file"
+          const payload = {
+            authorizationId: process.env.AUTHORIZATION_ID,
+            token: process.env.AUTHORIZATION_TOKEN,
+            releaseRequestId: process.env.RELEASE_REQUEST_ID,
+            environment: process.env.TARGET_ENVIRONMENT,
+            operation: process.env.RELEASE_OPERATION,
+            version: process.env.RELEASE_VERSION,
+            expectedCurrentVersion: process.env.EXPECTED_CURRENT_SHA,
+            sourceRef: process.env.SOURCE_REF,
+          };
+          process.stdout.write(JSON.stringify(payload));
+          NODE
+          curl --fail --silent --show-error \
+            --request POST \
+            --header "Authorization: Bearer $WEBHOOK_SECRET" \
+            --header "Content-Type: application/json" \
+            --data-binary "@$request_file" \
+            "$CONSOLE_URL/api/execution/consume" >/dev/null
+
+  validate:
+    name: Validate immutable release
+    needs: authorize
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      image_sha: ${{ steps.validate.outputs.image_sha }}
+      source_ref: ${{ steps.validate.outputs.source_ref }}
+    steps:
+      - name: Check out complete main history
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Validate commit
+        id: validate
+        env:
+          IMAGE_SHA: ${{ inputs.version }}
+          SOURCE_REF: ${{ inputs.source_ref }}
+          TARGET_ENVIRONMENT: ${{ inputs.environment }}
+        run: |
+          set -euo pipefail
+
+          if [[ ! "$IMAGE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "version must be a full lowercase 40-character Git commit SHA." >&2
+            exit 1
+          fi
+
+          git check-ref-format --branch "$SOURCE_REF" >/dev/null || {
+            echo "source_ref is not a valid Git branch name." >&2
+            exit 1
+          }
+          git fetch --no-tags origin \
+            "+refs/heads/${SOURCE_REF}:refs/remotes/origin/release-source"
+          if ! git cat-file -e "${IMAGE_SHA}^{commit}"; then
+            echo "Commit $IMAGE_SHA does not exist in the fetched source branch history." >&2
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "$IMAGE_SHA" refs/remotes/origin/release-source; then
+            echo "Commit $IMAGE_SHA is not contained in the authorized source branch history." >&2
+            exit 1
+          fi
+
+          case "$TARGET_ENVIRONMENT" in
+            internal)
+              ;;
+            presales|production)
+              [[ "$SOURCE_REF" == "main" ]] || {
+                echo "Presales and production releases must use the main source branch." >&2
+                exit 1
+              }
+              if ! git merge-base --is-ancestor "$IMAGE_SHA" origin/main; then
+                echo "Commit $IMAGE_SHA is not contained in main." >&2
+                exit 1
+              fi
+              ;;
+            *)
+              echo "Unsupported target environment." >&2
+              exit 1
+              ;;
+          esac
+
+          echo "image_sha=$IMAGE_SHA" >> "$GITHUB_OUTPUT"
+          echo "source_ref=$SOURCE_REF" >> "$GITHUB_OUTPUT"
+
+  deploy:
+    name: Deploy internal
+    needs: validate
+    runs-on:
+      - self-hosted
+      - linux
+      - x64
+      - internal
+    timeout-minutes: 20
+    environment:
+      name: internal
+    permissions:
+      contents: read
+      packages: read
+      deployments: write
+    steps:
+      - name: Check out trusted deployment scripts
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: main
+          fetch-depth: 1
+
+      - name: Sign in to GitHub Container Registry
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        env:
+          DOCKER_CONFIG: ${{ runner.temp }}/lingshu-docker-config
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Deploy immutable release with automatic image rollback
+        env:
+          APP_IMAGE: ghcr.io/${{ github.repository_owner }}/lingshu-ai-app
+          POCKETBASE_IMAGE: ghcr.io/${{ github.repository_owner }}/lingshu-ai-pocketbase
+          DEPLOY_ACTOR: ${{ github.actor }}
+          DEPLOY_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          EXPECTED_CURRENT_SHA: ${{ inputs.expected_current_sha }}
+          SOURCE_REF: ${{ needs.validate.outputs.source_ref }}
+          DOCKER_CONFIG: ${{ runner.temp }}/lingshu-docker-config
+        run: bash deploy/release.sh deploy internal "${{ needs.validate.outputs.image_sha }}" "$EXPECTED_CURRENT_SHA" "$SOURCE_REF"
+
+      - name: Report verified post-deployment inventory
+        env:
+          RELEASE_CONSOLE_URL: ${{ secrets.RELEASE_CONSOLE_URL }}
+          RELEASE_INVENTORY_WEBHOOK_SECRET: ${{ secrets.RELEASE_INVENTORY_WEBHOOK_SECRET }}
+        run: bash deploy/report-environment-inventory.sh internal
+
+      - name: Record deployment in job summary
+        env:
+          RELEASE_REQUEST_ID: ${{ inputs.release_request_id }}
+          TARGET_ENVIRONMENT: ${{ inputs.environment }}
+          DEPLOYED_COMMIT: ${{ needs.validate.outputs.image_sha }}
+          SOURCE_REF: ${{ needs.validate.outputs.source_ref }}
+          RUNNER_NAME: ${{ runner.name }}
+        run: |
+          echo "### Deployment complete" >> "$GITHUB_STEP_SUMMARY"
+          printf '%s\n' "- Release request: $RELEASE_REQUEST_ID" >> "$GITHUB_STEP_SUMMARY"
+          printf '%s\n' "- Environment: $TARGET_ENVIRONMENT" >> "$GITHUB_STEP_SUMMARY"
+          printf '%s\n' "- Commit: $DEPLOYED_COMMIT" >> "$GITHUB_STEP_SUMMARY"
+          printf '%s\n' "- Source branch: $SOURCE_REF" >> "$GITHUB_STEP_SUMMARY"
+          printf '%s\n' "- Runner: $RUNNER_NAME" >> "$GITHUB_STEP_SUMMARY"
+
+  report:
+    name: Report execution result
+    if: ${{ always() && needs.authorize.result == 'success' }}
+    needs:
+      - authorize
+      - validate
+      - deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Report final state to release console
+        env:
+          CONSOLE_URL: ${{ secrets.RELEASE_CONSOLE_URL }}
+          WEBHOOK_SECRET: ${{ secrets.RELEASE_RESULT_WEBHOOK_SECRET }}
+          RELEASE_REQUEST_ID: ${{ inputs.release_request_id }}
+          DEPLOY_RESULT: ${{ needs.deploy.result }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          : "${CONSOLE_URL:?RELEASE_CONSOLE_URL secret is required}"
+          : "${WEBHOOK_SECRET:?RELEASE_RESULT_WEBHOOK_SECRET secret is required}"
+          request_file="$(mktemp)"
+          trap 'rm -f "$request_file"' EXIT
+          chmod 600 "$request_file"
+          node <<'NODE' > "$request_file"
+          const succeeded = process.env.DEPLOY_RESULT === 'success';
+          process.stdout.write(JSON.stringify({
+            status: succeeded ? 'SUCCEEDED' : 'FAILED',
+            summary: succeeded ? 'GitHub Actions deployment succeeded' : `Deployment job ended with ${process.env.DEPLOY_RESULT}`,
+            workflowUrl: process.env.RUN_URL,
+          }));
+          NODE
+          curl --fail --silent --show-error \
+            --request POST \
+            --header "Authorization: Bearer $WEBHOOK_SECRET" \
+            --header "Content-Type: application/json" \
+            --data-binary "@$request_file" \
+            "$CONSOLE_URL/api/releases/$RELEASE_REQUEST_ID/result" >/dev/null

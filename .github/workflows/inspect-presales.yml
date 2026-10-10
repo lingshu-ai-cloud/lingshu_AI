@@ -1,0 +1,25 @@
+name: Inspect presales onboarding
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: [self-hosted, linux, x64, presales]
+    timeout-minutes: 5
+    steps:
+      - name: Read host identity and container topology
+        run: |
+          hostname
+          hostname -I
+          curl --fail --silent --show-error --max-time 10 https://api.ipify.org
+          echo
+          docker ps --format '{{.Names}} {{.Image}} {{.Status}}'
+          python3 - <<'PYCODE'
+          import json,subprocess,os
+          ids=subprocess.check_output(['docker','ps','-q'],text=True).split()
+          for c in json.loads(subprocess.check_output(['docker','inspect',*ids])) if ids else []:
+            print(json.dumps({'name':c['Name'],'id':c['Id'],'image':c['Image'],'mounts':c['Mounts'],'ports':c['NetworkSettings']['Ports'],'compose':{k:v for k,v in c['Config'].get('Labels',{}).items() if k.startswith('com.docker.compose.')},'revision':c['Config'].get('Labels',{}).get('org.opencontainers.image.revision')},ensure_ascii=False))
+          for p in ['/opt/lingshu/presales','/opt/lingshu_AI','/opt/actions-runner']:
+            print(p,os.path.exists(p))
+          PYCODE

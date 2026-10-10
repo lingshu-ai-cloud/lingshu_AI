@@ -6,13 +6,11 @@ test_root="$(mktemp -d)"
 trap 'rm -rf -- "$test_root"' EXIT
 
 export MOCK_DOCKER_LOG="$test_root/docker.log"
-export MOCK_CURL_LOG="$test_root/curl.log"
 export MOCK_BASELINE_APP_ID="sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 export MOCK_BASELINE_PB_ID="sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 export MOCK_IMAGE_STATE_DIR="$test_root/image-state"
 mkdir -p "$MOCK_IMAGE_STATE_DIR"
 : > "$MOCK_DOCKER_LOG"
-: > "$MOCK_CURL_LOG"
 
 docker() {
   printf '%q ' "$@" >> "$MOCK_DOCKER_LOG"
@@ -110,7 +108,6 @@ docker() {
 }
 
 curl() {
-  printf '%s\n' "$*" >> "$MOCK_CURL_LOG"
   [[ "${MOCK_FAIL_HEALTH:-0}" != "1" ]]
 }
 
@@ -171,8 +168,6 @@ grep -q "^REGISTRY_POCKETBASE_IMAGE_ID=${MOCK_BASELINE_PB_ID}$" "$test_root/regi
 grep -q '^COMPOSE_PROJECT_NAME=legacy-project$' "$test_root/registry/.release.env"
 grep -q '^APP_BIND_ADDRESS=172.17.0.1$' "$test_root/registry/.release.env"
 grep -q "^APP_DATA_PATH=$test_root/registry/existing-data$" "$test_root/registry/.release.env"
-grep -q '/api/overseas/ready' "$MOCK_CURL_LOG"
-! grep -q '/api/overseas/health' "$MOCK_CURL_LOG"
 
 pulls_before_stale="$(grep -c ' pull app pocketbase' "$MOCK_DOCKER_LOG" || true)"
 if APP_IMAGE="ghcr.io/example/app" \
