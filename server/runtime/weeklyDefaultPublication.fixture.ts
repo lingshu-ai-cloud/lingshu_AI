@@ -19,10 +19,10 @@ import {createSocialWeeklyPublicationAdapter} from './socialWeeklyPublicationAda
 import type {WeeklyExecutionTask} from '../../shared/contracts/socialProgram.js';
 import type {StoredPublicationAssignment} from '../publishing/weeklyLineage.js';
 
-export async function prepareDefaultPublication(t:TestContext){
+export async function prepareDefaultPublication(t:TestContext,options:{profile?:'b2b_cold_start'|'b2b_existing'}={}){
  const originalNodeEnv=process.env.NODE_ENV;process.env.NODE_ENV='test';t.after(()=>{if(originalNodeEnv===undefined)delete process.env.NODE_ENV;else process.env.NODE_ENV=originalNodeEnv;});
  t.mock.timers.enable({apis:['Date'],now:new Date('2026-10-02T12:00:00Z')});
- const f=await prepareWeeklyG6Fixture({registeredOwnedMedia:true});t.after(f.cleanup);
+ const f=await prepareWeeklyG6Fixture({registeredOwnedMedia:true,...options});t.after(f.cleanup);
  f.pkg.workflowTasks.push({taskId:'actual-publishing-workflow',kind:'publishing',taskRef:{type:'weekly_workflow_task',id:'actual-publishing-workflow',version:1},dependsOnTaskIds:['content-workflow'],subjectRefs:[{type:'weekly_publication_task',id:'pub',version:1}],status:'planned',ownBlockingReasons:[],inheritedBlockingTaskIds:[],carriedFromTaskId:null});
  const preflight=await f.service.context(f.scope,'owner');assert.deepEqual(preflight.gaps,[]);
  const checked=await f.service.check(f.scope,'owner',{programId:f.scope.programId,packageId:f.scope.packageId,packageVersion:f.scope.packageVersion,publicationTaskId:f.scope.publicationTaskId,requestId:'g6-complete-consumer-0001',expectedContextHash:preflight.contextHash});
@@ -51,4 +51,3 @@ export async function prepareDefaultPublication(t:TestContext){
  assert.ok(ownedRow.last_operation_id,'owned-file id must come from actual registerSocialContentFile mutation');assert.equal(ownedRow.content_sha256,ownedVideo.sha256);assert.equal(ownedVideo.fileRef,f.artifact.resource_ref);assert.match(ownedRow.file_id as string,/^socialfile_[a-f0-9]{24}$/);
  return {f,preflight,assignment,publicationPackage,publishing};
 }
-

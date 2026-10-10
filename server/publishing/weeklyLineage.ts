@@ -306,6 +306,9 @@ export async function reconcileWeeklyPublication(input: {
   const current = await assignmentAttempt(input.assignment.tenantId, input.assignment.assignmentId, dataStore);
   if (!current) throw new Error('publication_attempt_not_found');
   if (current.status !== 'unknown' && current.status !== 'in_flight') return current;
+  if (current.tenant_id !== input.assignment.tenantId || current.assignment_id !== input.assignment.assignmentId || current.package_id !== input.assignment.packageId) throw new Error('publication_attempt_scope_mismatch');
+  if (current.provider !== input.adapter.provider) throw new Error('publication_receipt_provider_mismatch');
+  if (input.publicationPackage.tenantId !== input.assignment.tenantId || input.publicationPackage.packageId !== input.assignment.packageId || input.publicationPackage.platform !== input.assignment.platform || input.publicationPackage.operatingLineage?.assignmentId !== input.assignment.assignmentId || input.publicationPackage.operatingLineage.assignmentHash !== input.assignment.assignmentHash) throw new Error('publication_package_assignment_mismatch');
   if (input.adapter.platform !== input.assignment.platform || input.adapter.capability !== 'available') throw new Error('publishing_receipt_lookup_unavailable');
   const result = await input.adapter.reconcile({ assignment: input.assignment, publicationPackage: input.publicationPackage, attempt: current });
   const normalized = result.status === 'published'

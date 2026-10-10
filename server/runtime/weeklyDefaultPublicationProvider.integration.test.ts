@@ -22,7 +22,9 @@ import type {StoredPublicationAssignment} from '../publishing/weeklyLineage.js';
 import {prepareDefaultPublication} from './weeklyDefaultPublication.fixture.js';
 
 test('default TikTok provider consumes actual false-summary G4/G5/G6 media through real source claim before one controlled terminal publish',async t=>{
- const {f,assignment,publicationPackage,publishing}=await prepareDefaultPublication(t);
+ const {f,assignment,publicationPackage,publishing}=await prepareDefaultPublication(t,{profile:'b2b_cold_start'});
+ assert.deepEqual(f.pkg.referenceSourcePolicy,{profile:'b2b_cold_start',allocationUnit:'mother_content',ownedPercent:0,externalPercent:100});
+ const planning=f.tables.social_weekly_agent_planning![0]!.payload as Record<string,any>;assert.equal(planning.referenceSourcePolicy.profile,'b2b_cold_start');assert.ok(planning.skeleton.slots.every((slot:Record<string,unknown>)=>slot.referenceSource==='external'));
  let posts=0;
  const defaultProvider=await createTikTokWeeklyPublishingAdapter({tenantId:assignment.tenant_id,accountId:assignment.account_id,dataStore:f.store,now:new Date(),ports:{
   async publish(input){posts++;assert.equal(input.tenantId,'t');assert.equal(input.accountId,'account');assert.equal(input.platform,'tiktok');assert.equal(input.contentId,publicationPackage.contentId);assert.ok(input.publishAttemptId);assert.ok(input.sourceClaim);assert.equal(input.sourceClaim.sourceKind,'social_production_artifact');assert.equal(input.sourceClaim.artifactId,'artifact');assert.equal(input.sourceClaim.productionResultId,assignment.payload.lineage.productionResultRef.id);assert.equal(input.sourceClaim.contentHash,publicationPackage.contentHash);assert.equal(input.sourceClaim.videoHash,publicationPackage.assets.find(a=>a.kind==='video')!.contentHash);assert.ok(input.videoPath);const actualVideoPath=input.videoPath;const bytes=await readFile(actualVideoPath);assert.equal(createHash('sha256').update(bytes).digest('hex'),input.sourceClaim.videoHash);assert.equal(f.result.technicalReview.approved,false);assert.equal(f.result.creativeReview.approved,false);return {video:{id:'controlled-terminal'},tracking:{id:'controlled-tracking',tenant_id:'t',platform:'tiktok',track_code:'controlled'},publishRecord:null,platformPostId:'controlled-default-tiktok-post',providerReceiptId:'controlled-default-tiktok-receipt',deliveryStatus:'published'};},
@@ -41,7 +43,7 @@ test('default TikTok provider consumes actual false-summary G4/G5/G6 media throu
 });
 
 for(const originalStatus of ['unknown','in_flight'] as const)test(`outer actual weekly card reads original ${originalStatus} receipt after withdrawal, revoked assignment, disabled publishing and removed approval with no new publish`,async t=>{
- const {f,assignment,publicationPackage,publishing}=await prepareDefaultPublication(t);let posts=0,lookups=0;
+ const {f,assignment,publicationPackage,publishing}=await prepareDefaultPublication(t,{profile:'b2b_cold_start'});let posts=0,lookups=0;
  const provider=await createTikTokWeeklyPublishingAdapter({tenantId:assignment.tenant_id,accountId:assignment.account_id,dataStore:f.store,now:new Date(),ports:{
  async publish(input){posts++;assert.ok(input.videoPath);const actualVideoPath=input.videoPath;const bytes=await readFile(actualVideoPath);assert.equal(createHash('sha256').update(bytes).digest('hex'),input.sourceClaim!.videoHash);return {video:{},tracking:{id:'controlled-unknown-tracking',tenant_id:'t',platform:'tiktok',track_code:'controlled'},publishRecord:null,platformPostId:'',providerReceiptId:'actual-original-unknown-receipt',deliveryStatus:'provider_accepted'};},
  async reconcile(input){lookups++;assert.equal(input.providerReceiptId,'actual-original-unknown-receipt');assert.equal(input.accountId,assignment.account_id);return {status:'published',providerReceiptId:input.providerReceiptId,platformPostId:'actual-original-resolved-post',platformUrl:'',providerStatus:'PUBLISH_COMPLETE',error:''};}}});

@@ -61,6 +61,9 @@ const unknown = await executeWeeklyPublication({ assignment, publicationPackage:
 assert.equal(unknown.status, 'unknown');
 assert.equal((await executeWeeklyPublication({ assignment, publicationPackage: packageResult.package, contentPackage: weekly.socialContentPackage, adapter, existingPublishedCount: 0, now: new Date('2026-09-25T01:00:00Z'), dataStore })).status, 'unknown');
 assert.equal(publishCalls, 1, 'unknown provider outcome is never resubmitted');
+const foreignProvider={...adapter,provider:'replacement-provider',async reconcile(){throw Error('a replacement provider must not inspect the original receipt');}};
+await assert.rejects(reconcileWeeklyPublication({assignment,publicationPackage:packageResult.package,adapter:foreignProvider,dataStore,now:new Date('2026-09-25T01:30:00Z')}),/publication_receipt_provider_mismatch/);
+assert.equal(reconcileCalls,0,'provider identity drift cannot consume or replace the original attempt');
 const recovered = await reconcileWeeklyPublication({ assignment, publicationPackage: packageResult.package, adapter, dataStore, now: new Date('2026-09-25T02:00:00Z') });
 assert.equal(recovered.status, 'published');
 assert.equal(recovered.platform_post_id, 'mock-post-1');
