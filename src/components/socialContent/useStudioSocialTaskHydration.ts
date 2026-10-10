@@ -3,6 +3,8 @@ import type { VideoKickoff } from '../AiCreateStudio';
 import type { SocialAccountPresenterLock, SocialContentTaskDetail } from '../../../shared/contracts/socialContentWorkflow';
 import { socialContentApi } from '../../lib/socialContentApi';
 import { localReferenceMediaUrl } from '../studio/studioReferenceMedia';
+import { AUTH_TOKEN_CHANGED_EVENT, getToken } from '../../lib/auth';
+import { readCurrentStudioSocialTask } from '../../lib/studioSocialTaskRead';
 
 export type StudioContentTheme = 'product_proof' | 'use_case' | 'supplier_capability' | 'customization' | 'customer_case';
 
@@ -111,8 +113,9 @@ export function socialTaskShotMaterialBindings(
 export function socialTaskReferenceKickoff(task: SocialContentTaskDetail): VideoKickoff | null {
   if (task.brief.creationMode !== 'viral_replication') return null;
   const analysis = task.referenceVideoAnalysis;
-  const source = task.sources.find(item => item.status === 'active' && item.sourceId === analysis?.referenceSourceId)
-    || task.sources.find(item => item.status === 'active' && item.kind === 'reference_link');
+  const source = analysis?.referenceSourceId
+    ? task.sources.find(item => item.status === 'active' && item.sourceId === analysis.referenceSourceId)
+    : task.sources.find(item => item.status === 'active' && item.kind === 'reference_link');
   if (!source) return null;
   const replication = task.replicationScript as (typeof task.replicationScript & {
     narrationSourceStatus?: 'asr_aligned' | 'missing_source_asr';
@@ -213,17 +216,28 @@ export function useStudioSocialTaskHydration(input: {
     const taskId = input.taskId?.trim();
     if (!taskId) return;
     const controller = new AbortController();
+    const token = getToken();
+    const invalidate = () => controller.abort();
+    window.addEventListener(AUTH_TOKEN_CHANGED_EVENT, invalidate);
+    window.addEventListener('storage', invalidate);
     let timer: ReturnType<typeof setTimeout> | undefined;
     const refresh = async () => {
       try {
-        const task = await socialContentApi.getTask(taskId, controller.signal);
-        if (controller.signal.aborted) return;
-        if (canApplyRef.current()) onHydrateRef.current(socialTaskToStudioSeed(task));
-        refreshRef.current?.(task);
+        await readCurrentStudioSocialTask(taskId,
+          () => socialContentApi.getTask(taskId, controller.signal),
+          () => !controller.signal.aborted && getToken() === token,
+          task => {
+            if (canApplyRef.current()) onHydrateRef.current(socialTaskToStudioSeed(task));
+            refreshRef.current?.(task);
+          });
       } catch { /* Preserve the loaded editor during a temporary read failure. */ }
       if (!controller.signal.aborted) timer = setTimeout(refresh, 8000);
     };
     void refresh();
-    return () => { controller.abort(); clearTimeout(timer); };
+    return () => {
+      controller.abort(); clearTimeout(timer);
+      window.removeEventListener(AUTH_TOKEN_CHANGED_EVENT, invalidate);
+      window.removeEventListener('storage', invalidate);
+    };
   }, [input.taskId]);
 }
