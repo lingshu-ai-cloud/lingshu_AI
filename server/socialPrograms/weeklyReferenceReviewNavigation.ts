@@ -4,8 +4,8 @@ import type {WeeklyReferenceReviewNavigation} from '../../shared/contracts/weekl
 import type {WeeklyOperatingPackage} from '../../shared/contracts/socialProgram.js';
 import {readWeeklyContentNavigation} from './weeklyContentNavigation.js';
 import {readWeeklyReferenceSources,assertWeeklyReferenceBindings} from '../runtime/socialWeeklyReferenceSource.js';
-import {createStarter198Repository} from '../starter198/repository.js';
-import {readSocialTaskDetail} from '../starter198/socialContentRecords.js';
+import {createStarter198Repository,STARTER_COLLECTIONS} from '../starter198/repository.js';
+import {socialTaskSource} from '../starter198/socialContentRecords.js';
 import {socialJson,socialObject} from '../starter198/socialContentValidation.js';
 import {loadReferenceShotReview} from '../lib/referenceShotReview.js';
 import {SocialProgramError} from './service.js';
@@ -26,9 +26,11 @@ export async function readWeeklyReferenceReviewNavigation(store:DataStore,scope:
  const content=bound.items[0];if(bound.totalItems!==1||!content||content.tenant_id!==scope.tenantId||content.task_id!==navigation.contentTaskId)fail('weekly_reference_navigation_binding_invalid');
  const brief=socialObject(socialJson(content.brief));
  const references=await readWeeklyReferenceSources(store,scope.tenantId,brief?._weeklyAuthority,analyses[0]!);
- const detail=await readSocialTaskDetail({repository:createStarter198Repository(store),tenantId:scope.tenantId,taskId:navigation.contentTaskId});
- if(!detail)fail('weekly_reference_navigation_binding_invalid');
- assertWeeklyReferenceBindings(detail,references);
+ // Review navigation only needs immutable source bindings. Building a production
+ // asset plan here can reject references that still need human review.
+ const sources=await createStarter198Repository(store).list(STARTER_COLLECTIONS.socialTaskSources,scope.tenantId,{where:{task_id:navigation.contentTaskId},sort:'created_at',perPage:500});
+ if(sources.totalItems!==sources.items.length||sources.items.some(source=>source.tenant_id!==scope.tenantId||source.task_id!==navigation.contentTaskId))fail('weekly_reference_navigation_binding_invalid');
+ assertWeeklyReferenceBindings({sources:sources.items.map(socialTaskSource)},references);
  const selected=references.filter(reference=>reference.record.id===recordId);
  if(selected.length!==1||selected[0]!.record.tenantId!==scope.tenantId)fail('weekly_reference_navigation_record_not_selected');
  return {...scope,contentTaskId:navigation.contentTaskId,recordId,sourceVersion:selected[0]!.sourceVersion,analysisVersion:loadReferenceShotReview(selected[0]!.record).version};
