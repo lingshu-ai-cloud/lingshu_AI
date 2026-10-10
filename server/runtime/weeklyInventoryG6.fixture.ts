@@ -23,6 +23,7 @@ import {createWeeklyOperatingPackageService} from '../socialPrograms/weeklyOpera
 import {createSocialOperatingRepository} from '../socialOperating/repository.js';
 import type {OperatingAuthoritySnapshot} from '../../shared/contracts/socialOperatingDecision.js';
 import {createSocialWeeklyPlanningAdapter,runSocialWeeklyExecutionScan} from './socialWeeklyExecutionRuntime.js';
+import {createMessengerCapabilityScope} from '../messenger/capabilityAuthority.js';
 
 /** Full real local media/cache, default persisted authority, two separate human approvals, immutable inventory binding and target G6. Caller controls Date and must cleanup. */
 export async function prepareWeeklyInventoryG6Fixture(){
@@ -72,7 +73,8 @@ export async function prepareWeeklyInventoryG6Fixture(){
  assert.ok(targetPub.cta,'use the actual frozen source CTA');
  const reception=await savePublicationReceptionBinding(f.store,{tenantId:'t',programId:'p',packageId:'week2',packageVersion:2,publicationId:targetPub.publicationTaskId,cta:targetPub.cta,enterpriseFactHash:f.profile.factVersion!.contentHash,targets:[{id:'inventory-sales',required:true,ownerId:'owner',destination:{kind:'messaging',channel:'messenger',receptionMode:'human'},requiredDocumentUrls:[]}]},'owner');
  targetPub.receptionRequirement={required:true,bindingId:reception.bindingId};
- f.tables.social_accounts=[{id:'account',tenantId:'t',platform:'tiktok',status:'connected',providerAccountId:'actual-inventory-account',scope:'video.publish',accessToken:sealAccountCredential('controlled-inventory-token')},{id:'inventory-sales',tenantId:'t',platform:'facebook',status:'connected',providerAccountId:'actual-inventory-sales',messengerSubscribed:true,accessToken:sealAccountCredential('controlled-inventory-sales-token')}];
+ const messengerToken='controlled-inventory-sales-token';
+ f.tables.social_accounts=[{id:'account',tenantId:'t',platform:'tiktok',status:'connected',providerAccountId:'actual-inventory-account',scope:'video.publish',accessToken:sealAccountCredential('controlled-inventory-token')},{id:'inventory-sales',tenantId:'t',platform:'facebook',status:'connected',providerAccountId:'actual-inventory-sales',messengerSubscribed:true,scope:createMessengerCapabilityScope({tenantId:'t',accountId:'inventory-sales',pageId:'actual-inventory-sales',appId:'controlled-inventory-app',accessToken:messengerToken,grantedScopes:['pages_messaging','pages_manage_metadata']}),accessToken:sealAccountCredential(messengerToken)}];
  await refreshPlatformCapabilityEvidence({tenantId:'t',accountId:'account',platform:'tiktok',capability:'publishing.official',dataStore:f.store,providers:{async tiktok(){return {openId:'actual-inventory-account',publishGranted:true};},async youtube(){throw Error('unused');},async instagram(){throw Error('unused');},async facebook(){throw Error('unused');},async tiktokReceipt(){throw Error('unused');}}});
  f.tables.social_weekly_operating_packages=f.tables.social_weekly_operating_packages!.filter(row=>row.package_id!=='week2');
  await f.store.create('social_weekly_operating_packages',{tenant_id:'t',program_id:'p',package_id:'week2',version:1,payload:target});

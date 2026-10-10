@@ -133,13 +133,14 @@ export async function runSocialWeeklyExecutionScan(input: {
       try {
         const adapter = input.adapters[claim.task.schedule.stepKind];
         let dispatchGate:WeeklyExecutionAdapterResult;
-        try{const {readWeeklyInventoryExecutionGate}=await import('./weeklyInventoryOutlineEvidence.js');const inventoryGate=await readWeeklyInventoryExecutionGate(dataStore,claim.task);dispatchGate=inventoryGate?{status:'succeeded',resultRefs:inventoryGate.resultRefs}:await planningAuthority.execute({ ...claim.task, accountId: null, inputSnapshot: {}, schedule: { ...claim.task.schedule, stepKind: 'business_outline' } });}
+        let inventoryGateReady=false;
+        try{const {readWeeklyInventoryExecutionGate}=await import('./weeklyInventoryOutlineEvidence.js');const inventoryGate=await readWeeklyInventoryExecutionGate(dataStore,claim.task);inventoryGateReady=Boolean(inventoryGate);dispatchGate=inventoryGate?{status:'succeeded',resultRefs:inventoryGate.resultRefs}:await planningAuthority.execute({ ...claim.task, accountId: null, inputSnapshot: {}, schedule: { ...claim.task.schedule, stepKind: 'business_outline' } });}
         catch(error){if(error instanceof SocialProgramError)dispatchGate={status:'blocked',code:error.code,message:error.message};else throw error;}
         if (dispatchGate.status === 'succeeded' && WEEKLY_ENTERPRISE_FACT_STEPS.has(claim.task.schedule.stepKind)) {
           const facts = await checkWeeklyEnterpriseFactSupplement({ store: dataStore, task: claim.task, now: input.now });
           if (facts.applicable && !facts.ready) dispatchGate = { status: 'blocked', code: facts.code, message: facts.reason };
         }
-        if (dispatchGate.status === 'succeeded' && ['business_outline', 'benchmark_collection'].includes(claim.task.schedule.stepKind)) {
+        if (dispatchGate.status === 'succeeded' && !inventoryGateReady && ['business_outline', 'benchmark_collection'].includes(claim.task.schedule.stepKind)) {
           const preproductionGate = await readWeeklyPreproductionExecutionGate(dataStore, claim.task);
           if (!preproductionGate.ready) dispatchGate = { status: 'blocked', code: preproductionGate.code ?? 'weekly_preproduction_evidence_required', message: '前置经营或采集尚缺绑定原任务的正式执行证据。' };
         }
