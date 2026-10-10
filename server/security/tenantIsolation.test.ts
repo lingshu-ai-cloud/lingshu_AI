@@ -93,7 +93,7 @@ assert.doesNotMatch(socialSetupGuide, /https:\/\/lingshu\.site\/api\//, 'product
 assert.match(socialSetupGuide, /https:\/\/app\.lingshu\.site\/api\/overseas\/youtube\/oauth\/callback/, 'the canonical YouTube callback must remain documented');
 
 const tenantPlatformApps = read('server/lib/tenantPlatformApps.ts');
-assert.match(tenantPlatformApps, /export type TenantPlatform = 'meta' \| 'google' \| 'tiktok' \| 'wecom'/, 'tenant platform applications must include TikTok');
+assert.match(tenantPlatformApps, /export type TenantPlatform = [^\n]*'tiktok'/, 'tenant platform applications must include TikTok even when additional platforms are supported');
 assert.match(tenantPlatformApps, /getTenantTikTokOAuthClient[\s\S]*?getTenantPlatformApp\(tenantId, 'tiktok'\)[\s\S]*?getTikTokOAuthClient\(\)/, 'TikTok OAuth must prefer tenant credentials and retain the global fallback');
 const publicPlatformApp = tenantPlatformApps.slice(
   tenantPlatformApps.indexOf('export function publicTenantPlatformApp'),
