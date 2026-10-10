@@ -1,4 +1,4 @@
-import { assertLegacyInstagramPublishingProvider } from './platformCapabilities.js';
+import { resolveInstagramPublishingContract, assertInstagramPublishingScopes } from './instagramPublishingContract.js';
 import {assertPublicationAtomicStore} from './publicationAtomicStore.js';
 import { assertManagedPublishingAuthorization } from './managedPublishingAuthorization.js';
 import {
@@ -54,6 +54,7 @@ interface SocialAccountRecord {
   providerAccountId: string;
   accessToken: string;
   oauthProvider?: string;
+  scope?: string;
   status: 'connected' | 'error' | 'expired';
 }
 
@@ -86,6 +87,7 @@ export interface PublishToAccountInput {
   finalizeTracking?: boolean;
   publishAttemptId?: string;
   onProviderReceipt?: (receiptId: string) => Promise<void>;
+  onPublishedMedia?: (mediaId: string) => Promise<void>;
 }
 
 export interface PublishToAccountResult {
@@ -386,6 +388,7 @@ export async function resolvePendingPublishToAccount(input: {
   accountId: string;
   platform: PublishPlatform;
   providerReceiptId: string;
+  platformPostId?: string;
 }): Promise<PendingPublishResolution> {
   const receipt = input.providerReceiptId.trim();
   if (!receipt) throw publishError('平台发布回执为空', 400);
@@ -422,29 +425,48 @@ export async function resolvePendingPublishToAccount(input: {
     const account = await store.getById<SocialAccountRecord>('social_accounts', input.accountId);
     if (!account || account.tenantId !== input.tenantId || account.platform !== input.platform) throw publishError('Social account not found', 404);
     if (account.status !== 'connected') throw publishError('Social account is not connected', 400);
-    if (input.platform === 'instagram') assertLegacyInstagramPublishingProvider(account);
-    if (input.platform === 'instagram' && receipt.startsWith('ig-container:')) {
+    if (input.platform === 'instagram') {
+      const contract = resolveInstagramPublishingContract(account);
+      if (contract.oauthProvider === 'instagram_login' && !String(account.scope || '').split(/[\s,]+/).includes('instagram_business_basic')) throw publishError('provider_read_scope_missing', 403);
+    }
+    const lookupReceipt = input.platform === 'instagram' && receipt.startsWith('ig-container:') && input.platformPostId?.trim() ? input.platformPostId.trim() : receipt;
+    if (input.platform === 'instagram' && receipt.startsWith('ig-container:') && lookupReceipt === receipt) {
       const containerId = receipt.slice('ig-container:'.length);
       if (!containerId) throw publishError('Instagram container receipt missing', 400);
-      const response = await axios.get(`https://graph.facebook.com/${process.env.META_GRAPH_VERSION?.trim() || 'v25.0'}/${encodeURIComponent(containerId)}`, {
+      const response = await axios.get(`${resolveInstagramPublishingContract(account).graphHost}/${process.env.META_GRAPH_VERSION?.trim() || 'v25.0'}/${encodeURIComponent(containerId)}`, {
+        maxRedirects: 0,
         params: { access_token: socialAccessToken(account as unknown as Record<string, unknown>), fields: 'id,status,status_code' },
       });
       const status = String(response.data?.status_code || '');
       if (String(response.data?.id || '') !== containerId) return { status: 'unknown', providerReceiptId: receipt, platformPostId: '', platformUrl: '', providerStatus: 'CONTAINER_MISMATCH', error: 'Instagram 容器回执不匹配' };
       return { status: ['ERROR', 'EXPIRED'].includes(status) ? 'failed' : status === 'IN_PROGRESS' ? 'processing' : 'unknown', providerReceiptId: receipt, platformPostId: '', platformUrl: '', providerStatus: status, error: status === 'PUBLISHED' ? '容器已发布，需核对最终媒体 ID；禁止重新发布' : '仅查询原容器，禁止重新创建或发布' };
     }
-    const response = await axios.get(`https://graph.facebook.com/${process.env.META_GRAPH_VERSION?.trim() || 'v25.0'}/${encodeURIComponent(receipt)}`, {
+    const response = await axios.get(`${input.platform === 'instagram' ? resolveInstagramPublishingContract(account).graphHost : 'https://graph.facebook.com'}/${process.env.META_GRAPH_VERSION?.trim() || 'v25.0'}/${encodeURIComponent(lookupReceipt)}`, {
       params: {
         access_token: socialAccessToken(account as unknown as Record<string, unknown>),
         fields: input.platform === 'facebook' ? 'id,permalink_url,status' : 'id,permalink,media_type',
       },
+      maxRedirects: 0,
     });
     const id = String(response.data?.id || '').trim();
-    if (!id) return { status: 'unknown', providerReceiptId: receipt, platformPostId: '', platformUrl: '', providerStatus: 'NOT_FOUND', error: `${input.platform} 未找到该内容，需人工核对` };
+    if (!id || (input.platform === 'instagram' && id !== lookupReceipt)) return { status: 'unknown', providerReceiptId: receipt, platformPostId: '', platformUrl: '', providerStatus: 'NOT_FOUND', error: `${input.platform} 未找到该内容，需人工核对` };
     if (input.platform === 'facebook') {
       const videoStatus = String(response.data?.status?.video_status || response.data?.status || '').toLowerCase();
       if (videoStatus === 'error' || videoStatus === 'failed') return { status: 'failed', providerReceiptId: receipt, platformPostId: id, platformUrl: String(response.data?.permalink_url || ''), providerStatus: videoStatus, error: 'Facebook 视频处理失败' };
       if (videoStatus && !['ready', 'published', 'complete', 'completed'].includes(videoStatus)) return { status: 'processing', providerReceiptId: receipt, platformPostId: id, platformUrl: String(response.data?.permalink_url || ''), providerStatus: videoStatus, error: '' };
+    }
+    if (input.platform === 'instagram' && resolveInstagramPublishingContract(account).oauthProvider === 'instagram_login') {
+      let owned = false, after: string | undefined;
+      for (let page = 0; page < 5; page++) {
+        const media = await axios.get(`${resolveInstagramPublishingContract(account).graphHost}/${process.env.META_GRAPH_VERSION?.trim() || 'v25.0'}/${encodeURIComponent(account.providerAccountId)}/media`, {
+          maxRedirects: 0, params: { access_token: socialAccessToken(account as unknown as Record<string, unknown>), fields: 'id', limit: 100, ...(after ? { after } : {}) },
+        });
+        owned = Array.isArray(media.data?.data) && media.data.data.some((item: { id?: unknown }) => String(item.id || '') === id);
+        if (owned) break;
+        after = String(media.data?.paging?.cursors?.after || '');
+        if (!media.data?.paging?.next || !after) break;
+      }
+      if (!owned) return { status: 'unknown', providerReceiptId: receipt, platformPostId: '', platformUrl: '', providerStatus: 'ACCOUNT_MEDIA_UNVERIFIED', error: 'Instagram 原媒体不属于目标账号或暂未可核验，禁止重新发布' };
     }
     return {
       status: 'published', providerReceiptId: receipt, platformPostId: id,
@@ -574,7 +596,10 @@ async function publishVideoToAccountWithLease(
   const account = await store.getById<SocialAccountRecord>('social_accounts', input.accountId);
   if (!account || account.tenantId !== input.tenantId || account.platform !== input.platform) throw publishError('Social account not found', 404);
   if (account.status !== 'connected') throw publishError('Social account is not connected', 400);
-  if (input.platform === 'instagram') assertLegacyInstagramPublishingProvider(account);
+  if (input.platform === 'instagram') {
+    const contract = resolveInstagramPublishingContract(account);
+    if (contract.oauthProvider === 'instagram_login') assertInstagramPublishingScopes(account);
+  }
   const filePath = input.videoPath
     ? validateLocalVideo(input.videoPath, ['.mp4', '.mov', '.webm'], Number(process.env.SOCIAL_MAX_UPLOAD_MB ?? 2048))
     : undefined;
@@ -613,6 +638,7 @@ async function publishVideoToAccountWithLease(
     }
     if (account.platform === 'instagram') {
       if (input.finalizeTracking === false && !input.onProviderReceipt) throw publishError('instagram_container_persistence_required', 503);
+      if (input.finalizeTracking === false && !input.onPublishedMedia) throw publishError('instagram_media_persistence_required', 503);
       if(input.sourceClaim?.weeklyAssignment&&input.sourceClaim.sourceKind!=='social_instagram_delivery')throw Error('instagram_delivery_frozen_proof_missing');
     const compatibleFilePath = input.sourceClaim?.sourceKind==='social_instagram_delivery'?filePath:socialInput.videoUrl?undefined:await instagramCompatibleVideo(filePath);
       if (!socialInput.videoUrl) {
@@ -628,7 +654,7 @@ async function publishVideoToAccountWithLease(
         ...socialInput,
         filePath: compatibleFilePath,
         videoUrl: publicVideoUrl,
-      }, { async onContainerCreated(creationId) {
+      }, { graphHost: resolveInstagramPublishingContract(account).graphHost, async onContainerCreated(creationId) {
         const receipt = `ig-container:${creationId}`;
         if (input.onProviderReceipt) await input.onProviderReceipt(receipt);
         if (input.finalizeTracking === false && !input.onProviderReceipt) throw publishError('instagram_container_persistence_required', 503);
@@ -641,6 +667,16 @@ async function publishVideoToAccountWithLease(
           if (existing.attemptId !== directAttempt?.attemptId || existing.status !== 'in_flight') throw publishError('instagram_container_attempt_changed', 409);
           const saved = await store.update('posts', tracked.id, { stats: { ...stats, publishResults: { ...results, [input.accountId]: { ...existing, providerReceiptId: receipt, instagramContainerId: creationId } } } });
           if (!saved) throw publishError('instagram_container_persistence_failed', 503);
+        }
+      }, async onPublishedMedia(mediaId) {
+        if (input.onPublishedMedia) await input.onPublishedMedia(mediaId);
+        if (input.finalizeTracking !== false) {
+          const current = await store.getById<PostRecord>('posts', tracked.id);
+          if (!current) throw publishError('instagram_media_persistence_failed', 503);
+          const stats = recordObject(current.stats), results = recordObject(stats.publishResults), existing = recordObject(results[input.accountId]);
+          if (existing.attemptId !== directAttempt?.attemptId || existing.status !== 'in_flight') throw publishError('instagram_media_attempt_changed', 409);
+          const saved = await store.update('posts', tracked.id, { stats: { ...stats, publishResults: { ...results, [input.accountId]: { ...existing, platformPostId: mediaId, instagramMediaId: mediaId } } } });
+          if (!saved) throw publishError('instagram_media_persistence_failed', 503);
         }
       }, async beforePublish() {
         await publishLease.beforeEffect();
@@ -689,7 +725,7 @@ async function publishVideoToAccountWithLease(
     } catch (error) {
       console.error(`[publishing] ${account.platform} history write failed:`, error);
     }
-    return { video, tracking: tracked, publishRecord, platformPostId: id, deliveryStatus: 'published' };
+    return { video, tracking: tracked, publishRecord, platformPostId: id, deliveryStatus: 'published', ...(providerReceiptId ? { providerReceiptId } : {}) };
   } catch (error) {
     if (providerStarted) await markDirectAttemptUnknown(input, tracked, directAttempt, error);
     else await markDirectAttemptNotSubmitted(input, tracked, directAttempt, error);
@@ -704,7 +740,10 @@ export async function publishVideoToAccount(input: PublishToAccountInput): Promi
   if(input.platform === 'instagram') {
     const account = await store.getById<SocialAccountRecord>('social_accounts',input.accountId);
     if(!account || account.tenantId !== input.tenantId || account.platform !== 'instagram') throw publishError('Social account not found',404);
-    assertLegacyInstagramPublishingProvider(account);
+    const contract = resolveInstagramPublishingContract(account);
+    if (contract.oauthProvider === 'instagram_login') assertInstagramPublishingScopes(account);
+    if (input.finalizeTracking === false && !input.onProviderReceipt) throw publishError('instagram_container_persistence_required', 503);
+    if (input.finalizeTracking === false && !input.onPublishedMedia) throw publishError('instagram_media_persistence_required', 503);
   }
   await assertPublicationAtomicStore(store);
   if (!input.title.trim()) throw publishError('发布标题不能为空', 400);

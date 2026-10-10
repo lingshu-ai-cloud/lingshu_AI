@@ -9,6 +9,8 @@ import type { PostRecord } from './waLink.js';
 import { store } from '../storage/index.js';
 import { Starter198LegacyEffectError } from '../starter198/legacyEffectGuard.js';
 import { PublishSourceVerificationError } from './publishSourceClaim.js';
+import { ManagedPublishingAuthorizationError } from './managedPublishingAuthorization.js';
+import { WorkflowRunBlockedError } from '../digitalEmployees/runControl.js';
 import { buildBoundedPublishingAuthorization } from '../digitalEmployees/publishingExecution.js';
 
 const now = Date.parse('2026-07-29T10:00:00.000Z');
@@ -352,6 +354,64 @@ try {
   assert.equal(tiktokStatusChecks, 2);
   assert.equal((rows[0].stats as any).status, 'published');
   assert.equal((rows[0].stats as any).publishResults['tiktok-account'].platformPostId, 'tiktok-public-post-1');
+  for (const oauthProvider of ['instagram_login', 'facebook_login']) {
+    rows = [post('scheduled', { platform: 'instagram' }, { oauthProvider, targetAccountIds: ['ig'], videoUrl: 'https://controlled.invalid/v.mp4' })];
+    let submissions = 0, checks = 0, attempt = '';
+    const igDependencies = { ...localDependencies, publish: async (input: import('./platformPublisher.js').PublishToAccountInput) => {
+      submissions++; attempt = String(input.publishAttemptId);
+      await input.onProviderReceipt!('ig-container:original');
+      await input.onPublishedMedia!('original-media');
+      throw Error('controlled response lost after durable media');
+    }, resolvePending: async (input: Parameters<typeof import('./platformPublisher.js').resolvePendingPublishToAccount>[0]) => {
+      checks++; assert.equal(input.providerReceiptId, 'ig-container:original'); assert.equal(input.platformPostId, 'original-media');
+      return { status: 'published' as const, providerReceiptId: input.providerReceiptId, platformPostId: 'original-media', platformUrl: '', providerStatus: 'PUBLISHED', error: '' };
+    } };
+    await runScheduledPublishingCycle(now, igDependencies);
+    const unknown = (rows[0].stats as any).publishResults.ig;
+    assert.equal(unknown.status, 'unknown'); assert.equal(unknown.platformPostId, 'original-media'); assert.equal(unknown.providerReceiptId, 'ig-container:original');
+    await runScheduledPublishingCycle(now + 30000, igDependencies);
+    const recovered = (rows[0].stats as any).publishResults.ig;
+    assert.equal(recovered.status, 'published'); assert.equal(recovered.attemptId, attempt); assert.equal(recovered.providerReceiptId, 'ig-container:original');
+    assert.equal(submissions, 1); assert.equal(checks, 1);
+    await runScheduledPublishingCycle(now + 60000, igDependencies); assert.equal(submissions, 1);
+
+    rows = [post('scheduled', { platform: 'instagram' }, { targetAccountIds: ['ig'], videoUrl: 'https://controlled.invalid/v.mp4' })];
+    const previousUpdate = store.update;
+    let mediaSubmissions = 0;
+    store.update = (async (collection: string, id: string, patch: any) => patch.stats?.publishResults?.ig?.platformPostId ? false : previousUpdate(collection, id, patch)) as typeof store.update;
+    try {
+      await runScheduledPublishingCycle(now, { ...localDependencies, publish: async (input: import('./platformPublisher.js').PublishToAccountInput) => {
+        await input.onProviderReceipt!('ig-container:failed-write');
+        mediaSubmissions++;
+        await input.onPublishedMedia!('unsaved-media');
+        throw Error('must not reach');
+      } });
+      assert.equal((rows[0].stats as any).publishResults.ig.status, 'unknown');
+      assert.equal((rows[0].stats as any).publishResults.ig.platformPostId, undefined);
+      assert.equal((rows[0].stats as any).publishResults.ig.providerReceiptId, 'ig-container:failed-write');
+      assert.equal(mediaSubmissions, 1);
+    } finally { store.update = previousUpdate; }
+  }
+  for (const error of [new PublishSourceVerificationError('publish_source_claim_stale'), new ManagedPublishingAuthorizationError(), new WorkflowRunBlockedError('controlled paused'), new Starter198LegacyEffectError('starter_198_orchestrator_only', 403)]) {
+    rows = [post('scheduled', { platform: 'instagram' }, { targetAccountIds: ['ig'], videoUrl: 'https://controlled.invalid/v.mp4' })];
+    let creates = 0, attemptId = '';
+    const dependencies = { ...localDependencies, publish: async (input: import('./platformPublisher.js').PublishToAccountInput) => {
+      creates++; attemptId = String(input.publishAttemptId);
+      await input.onProviderReceipt!('ig-container:preblocked');
+      throw error;
+    }, resolvePending: async (input: Parameters<typeof import('./platformPublisher.js').resolvePendingPublishToAccount>[0]) => {
+      assert.equal(input.providerReceiptId, 'ig-container:preblocked'); assert.equal(input.platformPostId, undefined);
+      return { status: 'unknown' as const, providerReceiptId: input.providerReceiptId, platformPostId: '', platformUrl: '', providerStatus: 'PUBLISHED', error: 'missing original media identity' };
+    } };
+    await runScheduledPublishingCycle(now, dependencies);
+    assert.equal((rows[0].stats as any).status, 'needs_attention');
+    assert.equal((rows[0].stats as any).publishResults.ig.status, 'unknown');
+    assert.equal((rows[0].stats as any).publishResults.ig.providerReceiptId, 'ig-container:preblocked');
+    await runScheduledPublishingCycle(now + 30000, dependencies);
+    assert.equal((rows[0].stats as any).publishResults.ig.attemptId, attemptId);
+    assert.equal((rows[0].stats as any).publishResults.ig.providerReceiptId, 'ig-container:preblocked');
+    assert.equal(creates, 1, 'post-container policy errors cannot erase the original attempt or create again');
+  }
   // A previously queued automatic post must be stopped after its current consent disappears.
   const callsBeforeRevocation = providerCalls;
   rows = [post('scheduled', {}, {

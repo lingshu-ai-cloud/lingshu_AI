@@ -64,7 +64,7 @@ try {
   // Neither a new submission nor recovery may send IG User tokens to legacy Graph.
   let wrongProviderCalls = 0;
   axios.get = (async () => { wrongProviderCalls++; throw new Error('wrong provider called'); }) as typeof axios.get;
-  for (const oauthProvider of ['instagram_login', 'unknown_login']) {
+  for (const oauthProvider of ['unknown_login']) {
     accounts.instagram!.oauthProvider = oauthProvider;
     accounts.instagram!.scope = 'instagram_business_content_publish instagram_content_publish';
     for (const providerReceiptId of ['ig-container:original-container', 'instagram-media-1']) {

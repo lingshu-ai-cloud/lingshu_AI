@@ -734,13 +734,15 @@ export async function replyToInstagramComment(commentId: string, pageAccessToken
   return { id: String(res.data?.id || '') };
 }
 
-export async function publishInstagramReel(igUserId: string, pageAccessToken: string, graphVersion: string, input: SocialUploadInput, lifecycle?: { onContainerCreated: (creationId: string) => Promise<void>; beforePublish?: () => Promise<void> }): Promise<SocialUploadResult> {
+export async function publishInstagramReel(igUserId: string, pageAccessToken: string, graphVersion: string, input: SocialUploadInput, lifecycle?: { onContainerCreated: (creationId: string) => Promise<void>; beforePublish?: () => Promise<void>; graphHost?: 'https://graph.instagram.com' | 'https://graph.facebook.com'; onPublishedMedia?: (mediaId: string) => Promise<void> }): Promise<SocialUploadResult> {
   if (!input.videoUrl) {
     throw new Error('Instagram 发布需要公网可访问的视频 URL。请配置 R2_PUBLIC_URL 或传入 videoUrl。');
   }
   if (!lifecycle) throw new Error('instagram_container_persistence_required');
+  const graphHost = lifecycle.graphHost || META_GRAPH;
   const caption = input.description || input.title || '';
-  const create = await axios.post(`${META_GRAPH}/${graphVersion}/${igUserId}/media`, null, {
+  const create = await axios.post(`${graphHost}/${graphVersion}/${igUserId}/media`, null, {
+    maxRedirects: 0,
     params: {
       access_token: pageAccessToken,
       media_type: 'REELS',
@@ -753,10 +755,11 @@ export async function publishInstagramReel(igUserId: string, pageAccessToken: st
   // Persist before polling or submitting: a lost publish response must retain this identity.
   await lifecycle.onContainerCreated(creationId);
 
-  await waitForInstagramContainer(creationId, pageAccessToken, graphVersion);
+  await waitForInstagramContainer(creationId, pageAccessToken, graphVersion, graphHost);
   await lifecycle.beforePublish?.();
 
-  const publish = await axios.post(`${META_GRAPH}/${graphVersion}/${igUserId}/media_publish`, null, {
+  const publish = await axios.post(`${graphHost}/${graphVersion}/${igUserId}/media_publish`, null, {
+    maxRedirects: 0,
     params: {
       access_token: pageAccessToken,
       creation_id: creationId,
@@ -764,27 +767,31 @@ export async function publishInstagramReel(igUserId: string, pageAccessToken: st
   });
   const id = String(publish.data?.id || '');
   if (!id) throw new Error('Instagram 未返回最终媒体 ID，禁止重新创建容器');
+  await lifecycle.onPublishedMedia?.(id);
   return {
     id,
+    providerReceiptId: `ig-container:${creationId}`,
     title: input.title,
     privacyStatus: 'public',
     url: `https://www.instagram.com/reel/${id}`,
   };
 }
 
-async function waitForInstagramContainer(creationId: string, pageAccessToken: string, graphVersion: string) {
+async function waitForInstagramContainer(creationId: string, pageAccessToken: string, graphVersion: string, graphHost: string) {
   const maxAttempts = Number(process.env.INSTAGRAM_MEDIA_PUBLISH_MAX_ATTEMPTS ?? 30);
   const intervalMs = Number(process.env.INSTAGRAM_MEDIA_PUBLISH_POLL_MS ?? 3000);
   let lastStatus = '';
   let lastError = '';
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    const res = await axios.get(`${META_GRAPH}/${graphVersion}/${creationId}`, {
-      params: {
+    const res = await axios.get(`${graphHost}/${graphVersion}/${creationId}`, {
+      maxRedirects: 0,
+    params: {
         access_token: pageAccessToken,
         fields: 'id,status,status_code',
       },
     });
+    if (String(res.data?.id || '') !== creationId) throw new Error('Instagram 容器回执不匹配，禁止发布');
     lastStatus = String(res.data?.status_code || res.data?.status || '');
     lastError = String(res.data?.status || '');
     if (lastStatus === 'FINISHED') return;

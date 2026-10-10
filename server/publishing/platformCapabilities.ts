@@ -1,3 +1,5 @@
+import axios from 'axios';
+import { assertInstagramPublishingScopes, resolveInstagramPublishingContract } from './instagramPublishingContract.js';
 import {createHash} from 'node:crypto';
 import type { DataStore } from '../storage/datastore.js';
 import { store } from '../storage/index.js';
@@ -100,6 +102,10 @@ export async function platformCapabilityDecision(input: {
       verifiedAt: evidence.verified_at, evidenceRef: evidence.evidence_ref,
     };
   }
+  if(input.platform === 'instagram' && LIVE_PROBE_REQUIRED.has(input.capability)) {
+    const account = await dataStore.getById<AccountRecord>('social_accounts',text(input.accountId));
+    if(!account || evidence.account_identity_hash !== platformAccountIdentityHash(account,input.platform)) return {platform:input.platform,accountId:input.accountId,capability:input.capability,status:'unavailable',reason:'provider_account_identity_changed'};
+  }
   return {
     platform: input.platform, accountId: input.accountId, capability: input.capability,
     status: 'available', reason: 'provider_capability_verified', verifiedAt: evidence.verified_at, evidenceRef: evidence.evidence_ref,
@@ -112,6 +118,7 @@ export interface PlatformCapabilityProbeProviders {
   youtube(config: ReturnType<typeof youtubeCredentials>): Promise<{ id: string; publishGranted: boolean }>;
   facebook(accessToken: string, graphVersion: string, accountId: string): Promise<{ id: string; publishGranted: boolean }>;
   instagram(accountId: string, accessToken: string, graphVersion: string): Promise<{ id: string; publishGranted: boolean }>;
+  instagramLogin?(accountId: string, accessToken: string, graphVersion: string): Promise<{ id: string; publishGranted: boolean }>;
   tiktok(accessToken: string): Promise<{ openId: string; publishGranted: boolean }>;
   tiktokReceipt(accessToken: string, receiptId: string): Promise<{ publishId: string }>;
 }
@@ -129,6 +136,17 @@ const liveProviders: PlatformCapabilityProbeProviders = {
     const [account, permissions] = await Promise.all([getInstagramAccount(id, token, version), getMetaGrantedPermissions(token, version)]);
     return { id: account.id, publishGranted: permissions.includes('instagram_content_publish') };
   },
+  instagramLogin: async (id, token, version) => {
+    const host = resolveInstagramPublishingContract({oauthProvider:'instagram_login'}).graphHost;
+    // /me binds the IG User token itself; a path containing the expected ID is insufficient.
+    const account = await axios.get(`${host}/${version}/me`, {params:{fields:'id,user_id',access_token:token},maxRedirects:0});
+    if(String(account.data?.id ?? '') !== id) throw new Error('provider_account_mismatch');
+    // This read requires the native publishing permission; stored scope text alone is not proof.
+    const permission = await axios.get(`${host}/${version}/${encodeURIComponent(id)}/content_publishing_limit`, {params:{fields:'quota_usage,config',access_token:token},maxRedirects:0});
+    const rows = permission.data?.data;
+    if(!Array.isArray(rows) || rows.length !== 1 || !Number.isSafeInteger(rows[0]?.quota_usage) || rows[0].quota_usage < 0 || !Number.isSafeInteger(rows[0]?.config?.quota_total) || rows[0].config.quota_total <= 0) throw new Error('provider_permission_response_invalid');
+    return {id:String(account.data.id),publishGranted:true};
+  },
   tiktok: async token => {
     const [user, permission] = await Promise.all([getTikTokUser(token), probeTikTokPublishingPermission(token)]);
     return { openId: user.openId, publishGranted: permission.granted };
@@ -136,18 +154,12 @@ const liveProviders: PlatformCapabilityProbeProviders = {
   tiktokReceipt: getTikTokPublishStatus,
 };
 
-/** The publishing adapter currently implements Facebook Login Graph only. */
-export function assertLegacyInstagramPublishingProvider(account: { oauthProvider?: unknown }): void {
-  const provider = text(account.oauthProvider);
-  if (provider && provider !== 'facebook_login') throw new Error('instagram_publishing_oauth_provider_unsupported');
-}
-
 async function instagramPublishingBoundary(input: {tenantId:string;accountId:string;platform:RuntimeSocialPlatform;capability:RuntimePlatformCapability}, dataStore:DataStore): Promise<PlatformCapabilityDecision | null> {
   if(input.platform !== 'instagram' || !LIVE_PROBE_REQUIRED.has(input.capability)) return null;
   const account = await dataStore.getById<AccountRecord>('social_accounts',text(input.accountId));
   let reason = '';
   if(!account || account.tenantId !== input.tenantId || account.platform !== 'instagram' || account.status !== 'connected') reason = 'provider_account_not_connected';
-  else { try { assertLegacyInstagramPublishingProvider(account); } catch { reason = 'instagram_publishing_oauth_provider_unsupported'; } }
+  else { try { resolveInstagramPublishingContract(account); } catch { reason = 'instagram_publishing_oauth_provider_unsupported'; } }
   return reason ? {platform:input.platform,accountId:input.accountId,capability:input.capability,status:'unavailable',reason} : null;
 }
 
@@ -217,7 +229,7 @@ export async function refreshPlatformCapabilityEvidence(input: {
 
   const accountIdentityHash=platformAccountIdentityHash(account,input.platform);
   try {
-    if(input.platform === 'instagram') assertLegacyInstagramPublishingProvider(account);
+    if(input.platform === 'instagram') resolveInstagramPublishingContract(account);
     let providerRef = '';
     if (input.capability === 'publishing.receipt_lookup') {
       if (input.platform !== 'tiktok' || !text(input.receiptId)) {
@@ -238,8 +250,10 @@ export async function refreshPlatformCapabilityEvidence(input: {
       if (!result.publishGranted) throw new Error('provider_publish_permission_not_granted');
       providerRef = `account:${text(result.id)}`;
     } else if (input.platform === 'instagram') {
-      if (!scopeSet(account).has('instagram_content_publish')) throw new Error('provider_publish_scope_missing');
-      const result = await providers.instagram(text(account.providerAccountId), socialAccessToken(account), process.env.META_GRAPH_VERSION?.trim() || 'v25.0');
+      const contract = assertInstagramPublishingScopes(account);
+      const probe = contract.oauthProvider === 'instagram_login' ? providers.instagramLogin : providers.instagram;
+      if(!probe) throw new Error('instagram_login_capability_probe_unavailable');
+      const result = await probe(text(account.providerAccountId), socialAccessToken(account), process.env.META_GRAPH_VERSION?.trim() || 'v25.0');
       if (text(result.id) !== text(account.providerAccountId)) throw new Error('provider_account_mismatch');
       if (!result.publishGranted) throw new Error('provider_publish_permission_not_granted');
       providerRef = `account:${text(result.id)}`;

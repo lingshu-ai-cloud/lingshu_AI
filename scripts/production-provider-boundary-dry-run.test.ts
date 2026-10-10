@@ -79,8 +79,8 @@ test('production adapter admission and controlled reconciliation never submit or
       runtimeEvidenceObserved: false, tenantAuthorizationVerified: false, providerCredentialValidityVerified: false,
       actualDatabaseAndQueueVerified: false, qualityOrHumanApprovalExecuted: false, publicationPerformed: false,
       remainingEvidence: configured.runtimeEvidenceRequired,
-      remainingCodeGaps: ['instagram_login_production_adapter_unsupported'],
-      limitations: ['Instagram Login production publishing/capability/recovery adapter is unsupported and must remain fail-closed; credentials or platform approval alone cannot unblock it.', 'Credentials and dependency ports are placeholders; configured presence proves no credential validity.', 'Supplier status/cost responses are injected and prove adapter interpretation only.', 'No live tenant authorization, provider receipt, worker heartbeat, quality approval or platform release review was observed.'],
+      remainingCodeGaps: [],
+      limitations: ['Instagram Login native adapter is covered by separate controlled tests; this dry-run provides no live token, permission, account-membership or publication evidence.', 'Credentials and dependency ports are placeholders; configured presence proves no credential validity.', 'Supplier status/cost responses are injected and prove adapter interpretation only.', 'No live tenant authorization, provider receipt, worker heartbeat, quality approval or platform release review was observed.'],
     };
     await fs.mkdir('work', { recursive: true });
     await fs.writeFile('work/production-provider-boundary-dry-run.json', JSON.stringify(report, null, 2));

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import type { DataStore, ListQuery } from '../storage/datastore.js';
 import { sealAccountCredential } from '../lib/accountCredentials.js';
+import { platformAccountIdentityHash } from './platformCapabilities.js';
 import { createWeeklyPublishingAdapter } from './weeklyPublishingAdapter.js';
 
 type Row = { id: string; [key: string]: any };
@@ -43,6 +44,7 @@ dataStore.rows.set('social_platform_capability_evidence', ['youtube', 'facebook'
   capability: 'publishing.official', status: 'verified', evidence_source: 'provider_probe',
   evidence_ref: `provider:${platform}:account:${platform}-1`, verified_at: '2026-09-25T23:50:00Z',
   expires_at: '2026-09-26T00:05:00Z',
+  ...(platform === 'instagram' ? { account_identity_hash: platformAccountIdentityHash(dataStore.rows.get('social_accounts')!.find(row => row.id === 'instagram-1')!, 'instagram') } : {}),
   created_at: '2026-09-25T23:50:00Z', updated_at: '2026-09-25T23:50:00Z',
 })));
 
