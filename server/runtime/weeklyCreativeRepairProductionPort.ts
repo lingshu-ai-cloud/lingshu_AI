@@ -1,4 +1,5 @@
 import type {CreateSocialContentTaskInput,SocialContentTaskDetail} from '../../shared/contracts/socialContentWorkflow.js';
+import type {WeeklyAgentPlanningState} from '../../shared/contracts/socialProgram.js';
 import type {WeeklyCreativeRepairCapacityPreview,WeeklyCreativeRepairChildExecution} from '../../shared/contracts/weeklyCreativeRepairExecution.js';
 import type {DataStore,Record_} from '../storage/datastore.js';
 import {readContentExecutionJob} from '../contentExecution/durableQueue.js';
@@ -10,6 +11,7 @@ import {addSocialTaskSource,createSocialContentTask,startSocialContentTask} from
 import {assertSocialTaskCapacity} from '../starter198/socialContentLimits.js';
 import {socialJson,socialObject,socialRequestHash,SocialContentWorkflowError} from '../starter198/socialContentValidation.js';
 import {inspectWeeklyCreativeRepairAuthority,issueWeeklyCreativeRepairAuthority} from './weeklyCreativeRepairAuthority.js';
+import {readWeeklyReferenceSources,weeklyReferenceResolver} from './socialWeeklyReferenceSource.js';
 import type {WeeklyCreativeRepairProductionPort} from '../socialPrograms/weeklyCreativeRepairExecution.js';
 
 export const WEEKLY_CREATIVE_REPAIR_CAPACITY_RESERVATIONS='social_weekly_creative_repair_capacity_reservations';
@@ -74,13 +76,24 @@ export function createWeeklyCreativeRepairProductionPort(store:DataStore,clock:(
    const capacity=await readReservation(input.case.tenantId,input.case.caseId);if(!capacity||capacity.reservationId!==input.mapping.capacityReservationId||capacity.previewHash!==input.mapping.previewHash||capacity.authorityHash!==input.mapping.authorityHash||capacity.configurationHash!==input.configuration.recordHash||capacity.authorizedMaximumCostCny!==input.mapping.authorizedMaximumCostCny||capacity.startIdempotencyKey!==input.mapping.startIdempotencyKey)return fail('capacity_invalid');if(clock().getTime()>Date.parse(capacity.expiresAt))fail('capacity_expired');
    const taskId=childId(input.case.tenantId,input.case.caseId),issued=await issueWeeklyCreativeRepairAuthority({store,tenantId:input.case.tenantId,caseId:input.case.caseId,childTaskId:taskId,expectedCaseHash:input.case.recordHash,expectedConfigurationHash:input.configuration.recordHash,now:clock()});if(issued.proof.originalAuthorityHash!==input.mapping.authorityHash)fail('authority_changed');
    const parent=await readSocialTaskDetail({repository,tenantId:input.case.tenantId,taskId:input.case.parent.taskId});if(!parent)return fail('parent_missing',503);
+   const planningRows=await store.list<Record_>('social_weekly_agent_planning',{where:{tenant_id:input.case.tenantId,package_id:input.case.packageId,package_version:input.case.packageVersion},perPage:100});
+   if(planningRows.totalItems!==planningRows.items.length)return fail('planning_ambiguous',503);
+   const dispatched=planningRows.items.map(row=>socialObject(socialJson(row.payload)) as unknown as WeeklyAgentPlanningState|null).filter((value):value is WeeklyAgentPlanningState=>value?.status==='dispatched'&&value.packageId===input.case.packageId&&value.packageVersion===input.case.packageVersion);
+   if(dispatched.length!==1)return fail(dispatched.length?'planning_ambiguous':'planning_missing',503);
+   const planning=dispatched[0]!;
+   const slots=planning.skeleton.slots.filter(slot=>slot.publicationTaskIds.includes(input.case.publicationTaskId));
+   if(slots.length!==1)return fail('planning_ambiguous',503);
+   const analyses=planning.directorAnalyses.filter(analysis=>analysis.slotId===slots[0]!.slotId);
+   if(analyses.length!==1)return fail('planning_ambiguous',503);
+   const references=await readWeeklyReferenceSources(store,input.case.tenantId,issued.authority,analyses[0]!);
+   const referenceResolver=weeklyReferenceResolver(references);
    let child=await createSocialContentTask({repository,tenantId:input.case.tenantId,userId:input.actorUserId,taskId,idempotencyKey:issued.bindingKey,value:childInput(parent,input.configuration,input.case.trigger.type==='user_changes_requested'?input.case.trigger.note:''),now:clock()});
    const childRow=await requireSocialTask({repository,tenantId:input.case.tenantId,taskId});const briefRaw=socialObject(socialJson(childRow.brief));if(!briefRaw)return fail('child_corrupt',503);const brief=briefRaw;
    const bound=socialObject(brief._weeklyCreativeRepairProof);if(bound&&socialRequestHash(bound)!==socialRequestHash(issued.proof))fail('child_authority_conflict');
    if(!bound){await repository.update(STARTER_COLLECTIONS.socialContentTasks,input.case.tenantId,childRow.id,{brief:{...brief,_weeklyAuthority:issued.authority,_weeklyCreativeRepairProof:issued.proof,_weeklyCreativeRepair:{caseId:input.case.caseId,configurationHash:input.configuration.recordHash,parentTaskId:input.case.parent.taskId,parentRunId:input.case.parent.runId,parentArtifactRef:input.case.parent.artifactRef,parentArtifactHash:input.case.parent.artifactHash,revisionScope:input.configuration.revisionScope,feedbackHash:input.configuration.feedbackHash,authorizedMaximumCostCny:input.mapping.authorizedMaximumCostCny,capacityReservationId:input.mapping.capacityReservationId}},updated_at:clock().toISOString()});child=(await readSocialTaskDetail({repository,tenantId:input.case.tenantId,taskId}))!;}
-   for(const source of parent.sources.filter(value=>value.status==='active')){if(child.sources.some(value=>value.kind===source.kind&&value.sourceRef===source.sourceRef&&value.sourceVersion===source.sourceVersion&&value.status==='active'))continue;const attached=await addSocialTaskSource({repository,tenantId:input.case.tenantId,userId:input.actorUserId,taskId,idempotencyKey:`${input.mapping.startIdempotencyKey}:source:${source.sourceId}`,value:{kind:source.kind,sourceRef:source.sourceRef,sourceVersion:source.sourceVersion,label:source.label,purpose:`创意返工继承原任务已冻结来源：${source.purpose??source.label}`},now:clock()});child=attached.task;}
+   for(const source of parent.sources.filter(value=>value.status==='active')){if(child.sources.some(value=>value.kind===source.kind&&value.sourceRef===source.sourceRef&&value.sourceVersion===source.sourceVersion&&value.status==='active'))continue;const attached=await addSocialTaskSource({repository,tenantId:input.case.tenantId,userId:input.actorUserId,taskId,idempotencyKey:`${input.mapping.startIdempotencyKey}:source:${source.sourceId}`,referenceResolver,value:{kind:source.kind,sourceRef:source.sourceRef,sourceVersion:source.sourceVersion,label:source.label,purpose:`创意返工继承原任务已冻结来源：${source.purpose??source.label}`},now:clock()});child=attached.task;}
    const queue=createStarter198OrchestratorQueue({repository,dataStore:store,now:clock});
-   if(!child.runId)child=await startSocialContentTask({repository,orchestratorQueue:queue,tenantId:input.case.tenantId,userId:input.actorUserId,taskId,expectedVersion:child.version,idempotencyKey:`${input.mapping.startIdempotencyKey}:starter-run`,now:clock()});
+   if(!child.runId)child=await startSocialContentTask({repository,orchestratorQueue:queue,tenantId:input.case.tenantId,userId:input.actorUserId,taskId,expectedVersion:child.version,referenceResolver,idempotencyKey:`${input.mapping.startIdempotencyKey}:starter-run`,now:clock()});
    if(!child.runId)return{status:'unknown'};
    let job=await readContentExecutionJob(store,input.case.tenantId,taskId,child.runId);if(!job){await enqueueSocialContentAutoProduction({repository,tenantId:input.case.tenantId,userId:input.actorUserId,taskId,runId:child.runId});job=await readContentExecutionJob(store,input.case.tenantId,taskId,child.runId);}
    if(!job)return{status:'unknown'};return{status:'started',childTaskId:taskId,childBindingKey:issued.bindingKey,runId:child.runId,jobId:job.id};
