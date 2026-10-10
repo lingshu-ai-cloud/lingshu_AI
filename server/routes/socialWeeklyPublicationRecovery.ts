@@ -4,6 +4,7 @@ export interface WeeklyPublicationRecoveryAuthority { tenantId: string; programI
 import { SocialProgramError } from '../socialPrograms/service.js';
 
 export interface WeeklyPublicationRecoveryPort {
+  detail(authority: WeeklyPublicationRecoveryAuthority, taskId: string, actor: string): Promise<unknown>;
   list(authority: WeeklyPublicationRecoveryAuthority, actor: string): Promise<unknown>;
   sources(authority: WeeklyPublicationRecoveryAuthority, actor: string): Promise<unknown>;
   get(authority: WeeklyPublicationRecoveryAuthority, id: string, actor: string): Promise<unknown>;
@@ -33,6 +34,7 @@ export function createSocialWeeklyPublicationRecoveryRouter(service: WeeklyPubli
     return { authority: { tenantId: auth.tenantId, programId: text(req.params.programId), packageId: text(req.params.packageId), packageVersion: version(v) }, actor: auth.userId };
   };
   router.get('/', route(async (req, res) => { const a = scope(req, res, req.query.version); res.json({ items: await service.list(a.authority, a.actor) }); }));
+  router.get('/execution/:taskId', route(async (req, res) => { const a = scope(req, res, req.query.version); res.json({ item: await service.detail(a.authority, text(req.params.taskId), a.actor) }); }));
   router.get('/sources', route(async (req, res) => { const a = scope(req, res, req.query.version); res.json(await service.sources(a.authority, a.actor)); }));
   router.get('/:id', route(async (req, res) => { const a = scope(req, res, req.query.version); res.json({ item: await service.get(a.authority, text(req.params.id), a.actor) }); }));
   router.post('/', route(async (req, res) => {

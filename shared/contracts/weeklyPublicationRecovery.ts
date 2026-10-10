@@ -8,3 +8,10 @@ export interface WeeklyPublicationRecovery {
  completionProof?:{actualFinishedAt:string;taskId:string;attemptId:string;platformPostId:string;providerReceiptId:string;evidenceHash:string;verifiedAt:string};
 }
 export interface WeeklyPublicationRecoverySource{taskId:string;publicationTaskId:string;motherContentId:string;adaptationOfPublicationTaskId:string|null;accountId:string;platform:string;attemptId:string;attemptStatus:string;gap:string}
+export interface WeeklyPublicationExecutionDetail extends WeeklyPublicationRecoveryScope {
+ taskId:string;publicationTaskId:string;accountId:string;platform:string;
+ assignmentId:string;assignmentHash:string;assignmentStatus:string;publicationPackageId:string;productionResultId:string;
+ attemptId:string;attemptStatus:'in_flight'|'published'|'failed'|'unknown';attemptProvider:string;attemptStartedAt:string;
+ providerReceiptId:string|null;platformPostId:string|null;platformUrl:string|null;resolvedAt:string|null;
+ taskStatus:string;gap:string;canRecoverOriginalAttempt:boolean;
+}
