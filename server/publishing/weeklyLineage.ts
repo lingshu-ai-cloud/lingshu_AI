@@ -262,8 +262,11 @@ export async function executeWeeklyPublication(input: {
   if (existing) return existing;
   const lease=await acquireDurableOperationLease({dataStore,tenantId:input.assignment.tenantId,scope:'weekly_publication_quota',subjectId:digest(`${input.assignment.lineage.operatingPackageRef.id}:${input.assignment.lineage.operatingPackageRef.version}`),ownerId:randomUUID(),leaseDurationMs:30000});
   if(!lease)throw Error('publication_quota_busy');
+  let sourceLease: Awaited<ReturnType<typeof acquireDurableOperationLease>> = null;
   let created:DurablePublicationAttempt|null=null;
   try{
+    sourceLease=await acquireDurableOperationLease({dataStore,tenantId:input.assignment.tenantId,scope:'weekly_publication_source_account',subjectId:digest(`${input.assignment.lineage.productionResultRef.id}:${input.assignment.lineage.productionResultRef.version}:${input.assignment.accountId}`),ownerId:randomUUID(),leaseDurationMs:30000});
+    if(!sourceLease)throw Error('inventory_publication_busy');
     const raced=await assignmentAttempt(input.assignment.tenantId,input.assignment.assignmentId,dataStore);
     if(raced)return raced;
     const assignments = await dataStore.list<StoredPublicationAssignment>(PUBLICATION_ASSIGNMENTS, {
@@ -291,8 +294,33 @@ export async function executeWeeklyPublication(input: {
       || input.publicationPackage.operatingLineage?.assignmentHash !== input.assignment.assignmentHash) {
       throw new Error('publication_package_assignment_mismatch');
     }
+    const publication = input.contentPackage.publicationTasks.find(task => task.publicationTaskId === input.assignment.publicationTaskId);
+    if (publication?.inventoryReuseRef) {
+      const candidates = await dataStore.list<StoredPublicationAssignment>(PUBLICATION_ASSIGNMENTS, {where:{tenant_id:input.assignment.tenantId,production_result_id:input.assignment.lineage.productionResultRef.id},page:1,perPage:1000});
+      if(candidates.totalItems!==candidates.items.length)throw Error('publication_assignment_scan_truncated');
+      for(const candidate of candidates.items){
+        if(candidate.assignment_id===input.assignment.assignmentId||candidate.account_id!==input.assignment.accountId)continue;
+        const version=candidate.payload?.lineage?.productionResultRef?.version;
+        if(Number.isSafeInteger(version)&&version!==input.assignment.lineage.productionResultRef.version)continue;
+        const prior=await assignmentAttempt(input.assignment.tenantId,candidate.assignment_id,dataStore);
+        if(prior&&['published','unknown','in_flight'].includes(prior.status))throw Error('inventory_same_account_publication_exists');
+      }
+      // Canonical receipts can predate the assignment ledger. Preserve that gate.
+      const packages=await dataStore.list<{manifest?:StarterPublicationPackage|string;status?:string;content_version?:string}>('starter_publication_packages',{where:{tenant_id:input.assignment.tenantId,account_id:input.assignment.accountId},page:1,perPage:1000});
+      if(packages.totalItems!==packages.items.length)throw Error('publication_package_scan_truncated');
+      for(const candidate of packages.items){
+        let manifest:StarterPublicationPackage|undefined;
+        if(typeof candidate.manifest==='string'){try{manifest=JSON.parse(candidate.manifest) as StarterPublicationPackage;}catch{throw Error('inventory_publication_manifest_invalid');}}else manifest=candidate.manifest;
+        const lineage=manifest?.operatingLineage;
+        if(lineage?.assignmentId===input.assignment.assignmentId)continue;
+        if(manifest?.contentVersion!==undefined&&candidate.content_version!==undefined&&manifest.contentVersion!==candidate.content_version)throw Error('inventory_publication_version_changed');
+        const version=Number(String(manifest?.contentVersion??candidate.content_version??'').replace(/^v/,''));
+        if(lineage?.productionResultRef.id===input.assignment.lineage.productionResultRef.id&&(!Number.isSafeInteger(version)||version<1||version===input.assignment.lineage.productionResultRef.version)&&['published','unknown','in_flight','publishing'].includes(String(candidate.status)))throw Error('inventory_same_account_publication_exists');
+      }
+    }
     const startedAt = (input.now ?? new Date()).toISOString();
     await assertDurableOperationLease({dataStore,lease});
+    await assertDurableOperationLease({dataStore,lease:sourceLease});
     created = await dataStore.create<DurablePublicationAttempt>(PUBLICATION_ATTEMPTS, {
       tenant_id: input.assignment.tenantId, attempt_id: attemptId(input.assignment),
       assignment_id: input.assignment.assignmentId, package_id: input.assignment.packageId,
@@ -303,7 +331,7 @@ export async function executeWeeklyPublication(input: {
       if (raced) return raced;
       throw new Error('publication_attempt_storage_unavailable');
     }
-  }finally{await releaseDurableOperationLease({dataStore,lease});}
+  }finally{if(sourceLease)await releaseDurableOperationLease({dataStore,lease:sourceLease});await releaseDurableOperationLease({dataStore,lease});}
   if(!created)throw Error('publication_attempt_storage_unavailable');
   let normalized: ReturnType<typeof normalizedAttemptResult>;
   try {
