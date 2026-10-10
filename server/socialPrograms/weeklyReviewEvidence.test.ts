@@ -14,6 +14,7 @@ test('actual task metric refs preserve true zero and unknown shares/comments wit
  const monitor=structuredClone(f.targetPublishing);monitor.taskId='review-view-monitor';monitor.workflowKind='engagement';monitor.schedule.stepKind='performance_monitoring';monitor.status='queued';monitor.resultRefs=[{type:'social_metric_snapshot',id:'review-view-metric',version:1}];
  await f.store.create('social_weekly_execution_tasks',{tenant_id:'t',program_id:'p',package_id:monitor.packageId,package_version:monitor.packageVersion,task_id:monitor.taskId,payload:monitor});
  const metric=await f.store.create<Record_>('social_metric_snapshots',{id:'review-view-metric',tenant_id:'t',account_id:'account',platform:'tiktok',content_id:'review-view-post',captured_at:'2026-10-08T12:00:00Z',source:'platform_api',metrics:{views:0,likes:2}});
+ assert.ok(metric,'the metric must actually persist before it can authorize monitoring');
  // Some stores generate IDs; freeze the actual persisted identity into the task.
  monitor.resultRefs[0]!.id=metric.id;
  const taskRow=f.tables.social_weekly_execution_tasks!.find(row=>row.task_id===monitor.taskId)!;await f.store.update('social_weekly_execution_tasks',taskRow.id,{payload:monitor});
