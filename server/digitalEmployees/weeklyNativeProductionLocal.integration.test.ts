@@ -63,7 +63,9 @@ for (const channel of ['messenger', 'instagram'] as const) {
       assert.equal(f.sends(), 1);
       const requests = f.data.customer_channel_send_requests!;
       assert.equal(requests.length, 1);
-      assert.equal(requests[0]!.payload.status, 'sending');
+      const pendingPayload = requests[0]!.payload;
+      assert.ok(pendingPayload && typeof pendingPayload === 'object' && 'status' in pendingPayload);
+      assert.equal(pendingPayload.status, 'sending');
       for (let retry = 0; retry < 3; retry++) await assert.rejects(f.service.dispatch(f.command));
       assert.equal(f.sends(), 1);
       assert.notEqual(f.item.status, 'sent');
@@ -86,7 +88,9 @@ for (const channel of ['messenger', 'instagram'] as const) {
       await assert.rejects(f.service.dispatch(f.command), /receipt_save_failed/);
       assert.equal(f.sends(), 1);
       assert.equal(f.data.customer_channel_send_requests!.length, 1);
-      assert.equal(f.data.customer_channel_send_requests![0]!.payload.status, 'accepted');
+      const acceptedPayload = f.data.customer_channel_send_requests![0]!.payload;
+      assert.ok(acceptedPayload && typeof acceptedPayload === 'object' && 'status' in acceptedPayload);
+      assert.equal(acceptedPayload.status, 'accepted');
       assert.notEqual(f.item.status, 'sent');
       const recovered = await f.service.dispatch(f.command);
       assert.equal(recovered.messagesSent, 0);
