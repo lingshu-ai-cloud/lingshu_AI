@@ -14,6 +14,9 @@ assert.match(source, /startupGraceMs/, '健康检查必须给 Vite 和后端留�
 assert.match(source, /healthCheckTimeoutMs/, '大型页面首次编译时健康探测必须允许足够响应时间');
 assert.match(source, /maxConsecutiveHealthFailures/, '短暂编译繁忙不能立即重启健康的预览进程');
 assert.match(source, /for \(const service of services\) start\(service\)/, '后端冷启动期间也必须立即提供前端页面，不能让浏览器显示白屏或拒绝连接');
+assert.match(source, /stableLocalAuthSecret/, '本地预览必须持久化独立签名密钥，后端重启不能让浏览器会话失效');
+assert.match(source, /LOCAL_DEMO_TOKEN_SECRET: localAuthSecret/, '本地预览后端必须复用机器本地的稳定签名密钥');
+assert.match(source, /LOCAL_DEMO_TOKEN_TTL_SECONDS: '86400'/, '本地预览登录应保持完整一天，不能在工作过程中提前失效');
 assert.match(viteSource, /optimizeDeps:\s*\{[^}]*exclude:\s*\['xlsx'\]/s, '本地预览不能给 vendored xlsx 生成会失效的优化哈希');
 
 console.log('local preview supervisor contract passed');

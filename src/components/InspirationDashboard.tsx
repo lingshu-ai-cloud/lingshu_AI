@@ -4926,25 +4926,25 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                         <div className="flex h-full items-center justify-center text-text-muted"><Film size={22} /></div>
                       )}
                     </div>
-                    <div className="flex min-h-52 flex-1 flex-col p-3">
-                      <p className="min-h-11 text-sm font-bold leading-snug text-text-primary line-clamp-2">{material.name}</p>
-                      <p className="mt-1 line-clamp-1 min-h-5 text-xs font-semibold leading-5 text-text-muted" title={materialSemanticLabel(material)}>{materialSemanticLabel(material)}</p>
-                      <div className="mt-auto grid grid-cols-2 gap-2 pt-3">
+                    <div className="flex flex-1 flex-col p-3">
+                      <p className="line-clamp-2 text-sm font-bold leading-snug text-text-primary">{material.name}</p>
+                      <p className="mt-1 line-clamp-1 text-xs font-semibold leading-5 text-text-muted" title={materialSemanticLabel(material)}>{materialSemanticLabel(material)}</p>
+                      <div className="mt-3 grid grid-cols-2 gap-2">
                         <button
                           type="button"
                           onClick={() => setDetailMaterial(material)}
-                          className="inline-flex min-h-9 items-center justify-center gap-1.5 rounded-lg border border-border bg-white px-2 py-2 text-xs font-bold text-text-secondary transition hover:border-accent hover:text-accent"
+                          className="inline-flex h-9 min-w-0 flex-nowrap items-center justify-center gap-0.5 rounded-lg border border-border bg-white px-1.5 text-[11px] font-bold text-text-secondary transition hover:border-accent hover:text-accent"
                         >
-                          <Eye size={14} />查看详情
+                          <Eye size={12} className="shrink-0" /><span className="whitespace-nowrap">查看详情</span>
                         </button>
                         <button
                           type="button"
                           onClick={() => enterMaterialSmartGeneration(material)}
                           disabled={material.type === 'audio' || (material.type === 'video' && !canProcessVideo({ contentFormat: 'video', duration: material.duration })) || !String(material.url || material.poster || '').trim()}
                           title={material.type === 'audio' ? '音频素材不能单独进入画面创作' : material.type === 'video' && !canProcessVideo({ contentFormat: 'video', duration: material.duration }) ? '视频时长尚未识别完成' : '带入内容制作的自由创作'}
-                          className="inline-flex min-h-9 items-center justify-center gap-1.5 rounded-lg bg-accent px-2 py-2 text-xs font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-45"
+                          className="inline-flex h-9 min-w-0 flex-nowrap items-center justify-center gap-0.5 rounded-lg bg-accent px-1.5 text-[11px] font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-45"
                         >
-                          <Sparkles size={14} />自由创作
+                          <Sparkles size={12} className="shrink-0" /><span className="whitespace-nowrap">自由创作</span>
                         </button>
                       </div>
                     </div>

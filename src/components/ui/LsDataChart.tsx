@@ -110,18 +110,18 @@ export function LsDataChart({ title, description, kind, labels, series, horizont
       return `"${safeText.replaceAll('"', '""')}"`;
     };
     const columns = series.flatMap(item => kind === 'scatter' ? [`${item.label} · X${xUnit ? ` (${xUnit})` : ''}`, `${item.label} · Y${unit ? ` (${unit})` : ''}`] : [item.label]);
-    const body = [[demo ? '演示数据 · 日期/对象' : '日期/对象', ...columns], ...rows.map(row => [row.label, ...series.flatMap((_, i) => kind === 'scatter' ? [displayValue(row[`x${i}`]), displayValue(row[`value${i}`])] : [displayValue(row[`value${i}`], unit || (percent ? '%' : ''))])])].map(row => row.map(csv).join(',')).join('\r\n');
+    const body = [[demo ? '参考预览 · 日期/对象' : '日期/对象', ...columns], ...rows.map(row => [row.label, ...series.flatMap((_, i) => kind === 'scatter' ? [displayValue(row[`x${i}`]), displayValue(row[`value${i}`])] : [displayValue(row[`value${i}`], unit || (percent ? '%' : ''))])])].map(row => row.map(csv).join(',')).join('\r\n');
     const url = URL.createObjectURL(new Blob(['\uFEFF', body], { type: 'text/csv;charset=utf-8' }));
-    const link = document.createElement('a'); link.href = url; link.download = `${demo ? '演示数据-' : ''}${title}.csv`; link.click();
+    const link = document.createElement('a'); link.href = url; link.download = `${demo ? '参考预览-' : ''}${title}.csv`; link.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
   return <section className="ls-chart" aria-labelledby={titleId}>
-    <header className="ls-chart__header"><div><h3 id={titleId} className="ls-type-title-small">{title}</h3>{description && <p className="ls-type-body-small">{description}</p>}</div>{demo && <Tag color="warning">演示数据</Tag>}</header>
+    <header className="ls-chart__header"><div><h3 id={titleId} className="ls-type-title-small">{title}</h3>{description && <p className="ls-type-body-small">{description}</p>}</div>{demo && <Tag color="warning">参考预览</Tag>}</header>
     {(error || renderError) && <Alert type="warning" showIcon title={error || renderError} style={{ marginBottom: 12 }} />}
     {loading ? <Skeleton active={!reducedMotion} paragraph={{ rows: 5 }} /> : !hasData ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无可展示的数据" /> : <>
-      <div style={{ height, position: 'relative' }}><canvas ref={canvas} role="img" aria-label={`${demo ? '演示数据。' : ''}${title}。${description || ''}完整数值请查看下方数据表。`} /></div>
+      <div style={{ height, position: 'relative' }}><canvas ref={canvas} role="img" aria-label={`${demo ? '参考预览。' : ''}${title}。${description || ''}完整数值请查看下方数据表。`} /></div>
       {(plottedCount < labels.length || series.length > 5) && <p className="ls-chart__note">图中展示前 {plottedCount} 项、最多 5 个序列，完整数值见数据表。</p>}
-      <Collapse ghost items={[{ key: 'data', label: '查看数据表', children: <><Table size="small" rowKey="key" dataSource={rows} pagination={rows.length > 10 ? { pageSize: 10, showSizeChanger: false } : false} scroll={{ x: 'max-content' }} columns={[{ title: '日期 / 对象', dataIndex: 'label' }, ...series.flatMap((item, i) => [...(kind === 'scatter' ? [{ title: `${item.label} · ${xUnit || 'X'}`, dataIndex: `x${i}`, align: 'right' as const, render: (value: unknown) => displayValue(value, xUnit) }] : []), { title: kind === 'scatter' ? `${item.label} · ${unit || 'Y'}` : item.label, dataIndex: `value${i}`, align: 'right' as const, render: (value: unknown) => displayValue(value, unit || (percent ? '%' : '')) }])]} /><Button type="text" size="small" icon={<Download size={14} />} onClick={download}>下载 CSV{demo ? '（演示数据）' : ''}</Button></> }]} />
+      <Collapse ghost items={[{ key: 'data', label: '查看数据表', children: <><Table size="small" rowKey="key" dataSource={rows} pagination={rows.length > 10 ? { pageSize: 10, showSizeChanger: false } : false} scroll={{ x: 'max-content' }} columns={[{ title: '日期 / 对象', dataIndex: 'label' }, ...series.flatMap((item, i) => [...(kind === 'scatter' ? [{ title: `${item.label} · ${xUnit || 'X'}`, dataIndex: `x${i}`, align: 'right' as const, render: (value: unknown) => displayValue(value, xUnit) }] : []), { title: kind === 'scatter' ? `${item.label} · ${unit || 'Y'}` : item.label, dataIndex: `value${i}`, align: 'right' as const, render: (value: unknown) => displayValue(value, unit || (percent ? '%' : '')) }])]} /><Button type="text" size="small" icon={<Download size={14} />} onClick={download}>下载 CSV{demo ? '（参考预览）' : ''}</Button></> }]} />
     </>}
   </section>;
 }

@@ -281,7 +281,7 @@ export default function OrderManagementPage() {
   return <div className="h-full overflow-y-auto bg-surface-2" data-lingshu-guide="orders-workbench">
     <div className="mx-auto max-w-[1440px] space-y-5 px-4 py-6 sm:px-6">
       <header className="flex flex-wrap justify-end gap-2"><h1 className="sr-only">{PAGE_REGISTRY.orders.canonicalTitle}</h1><Button icon={<Download size={15}/>} onClick={exportCsv}>导出 CSV</Button><Button type="primary" icon={<Plus size={15}/>} onClick={() => setCreateOpen(true)}>新增订单</Button></header>
-      {isLocalForeignTradeMockEnabled() && <Alert type="info" showIcon title="本地演示订单" description="当前展示真实订单与外贸工厂演示订单；明细持续标记来源，含演示数据的指标仅用于预览。"/>}
+      {isLocalForeignTradeMockEnabled() && <Alert type="info" showIcon title="本地参考订单" description="当前展示真实订单与外贸工厂参考订单；明细持续标记来源，含参考预览的指标仅用于界面确认。"/>}
       {loadError && <Alert type="error" showIcon title={loadError} description="已保留当前记录；刷新页面重新读取。"/>}
       {feedback && <Alert type="info" showIcon title={feedback} closable onClose={() => setFeedback('')}/>}
       <div className="grid rounded-lg border border-border bg-white sm:grid-cols-2 xl:grid-cols-4">{[
@@ -289,7 +289,7 @@ export default function OrderManagementPage() {
         { label: '平均客单价', value: money(summary.aov), note: '按有效订单计算' },
         { label: '毛利率', value: pct(summary.margin), note: `毛利 ${money(summary.gmv - summary.cost)}` },
         { label: '待履约', value: summary.pending, note: `退款金额 ${money(summary.refund)}` },
-      ].map(item => <div key={item.label} className="border-border p-5 sm:border-r last:border-r-0"><Statistic title={<span>{item.label} {hasDemo && <Tag>含演示数据</Tag>}</span>} value={item.value}/><p className="mt-2 text-xs text-text-secondary">{item.note}</p></div>)}</div>
+      ].map(item => <div key={item.label} className="border-border p-5 sm:border-r last:border-r-0"><Statistic title={<span>{item.label} {hasDemo && <Tag>参考预览</Tag>}</span>} value={item.value}/><p className="mt-2 text-xs text-text-secondary">{item.note}</p></div>)}</div>
       <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_400px]">
         <LsDataChart title="成交额趋势" description="单位：美元；按当前筛选订单的完整订单日期汇总，仅计有效订单。包含演示订单时仅供预览。" kind="line" labels={dailyTrend.map(item => item.day)} series={[{ label: hasDemo ? '成交额（含演示）' : '成交额', values: dailyTrend.map(item => item.gmv) }]} unit="美元" demo={hasDemo} loading={loading && !orders.length}/>
         <LsDataChart title="市场贡献" description="单位：美元；当前筛选的有效订单成交额，最多展示 10 个市场。" kind="bar" horizontal labels={marketBars.slice(0, 10).map(item => item.name)} series={[{ label: hasDemo ? '成交额（含演示）' : '成交额', values: marketBars.slice(0, 10).map(item => item.value) }]} unit="美元" demo={hasDemo} loading={loading && !orders.length}/>

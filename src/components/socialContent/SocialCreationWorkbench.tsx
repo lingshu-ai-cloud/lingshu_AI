@@ -3,16 +3,19 @@ import { StoryboardFirstFrame } from '../studio/StoryboardFirstFrame';
 export { StoryboardFirstFrame } from '../studio/StoryboardFirstFrame';
 import ReplicationWorkbenchHeader from './ReplicationWorkbenchHeader';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { Button, Modal } from 'antd';
 import {
   ChevronDown,
   ChevronRight,
   CircleAlert,
   Film,
+  FolderOpen,
   GripVertical,
   Loader2,
   Megaphone,
   Plus,
   RefreshCw,
+  Sparkles,
   Trash2,
   Upload,
 } from 'lucide-react';
@@ -268,6 +271,7 @@ export default function SocialCreationWorkbench({
   const aiHookRequestRef = useRef<{ frame: string; video: string } | null>(null);
   const [freeLines, setFreeLines] = useState<FreeCreationLine[]>([]);
   const [hookMode, setHookMode] = useState<'none' | 'upload' | 'library' | 'ai'>('none');
+  const [hookChooserOpen, setHookChooserOpen] = useState(mode !== 'viral_replication');
   const [libraryHooks, setLibraryHooks] = useState<Material[]>([]);
   const [libraryLoading, setLibraryLoading] = useState(false);
   const [draftProjectId, setDraftProjectId] = useState('');
@@ -317,6 +321,9 @@ export default function SocialCreationWorkbench({
   }, [seed?.confirmedSpeech]);
   const uploadRef = useRef<HTMLInputElement>(null);
   const isReplication = mode === 'viral_replication';
+  useEffect(() => {
+    if (!isReplication) setHookChooserOpen(true);
+  }, [isReplication]);
   const selectedFreeProducts = useMemo(() => products.filter(item => selectedProductIds.includes(item.id)), [products, selectedProductIds]);
   const freeDraftCreatedAt = useRef(new Date().toISOString());
   const freeCreationState = useMemo<FreeCreationState>(() => ({
@@ -808,20 +815,66 @@ export default function SocialCreationWorkbench({
     setFreeHookMaterial(aiHookCandidate); setHookMode('ai'); setFiles([]);
     setGenerationNotice('AI 钩子已采纳并写入素材库，草稿正在自动保存。');
   };
+  const chooseHookMode = (value: 'none' | 'upload' | 'library' | 'ai') => {
+    setHookMode(value);
+    setHookChooserOpen(false);
+    if (value === 'upload') window.setTimeout(() => uploadRef.current?.click(), 0);
+    if (value === 'library' && !libraryHooks.length) {
+      setLibraryLoading(true);
+      void studioApi.listMaterials('library')
+        .then(items => setLibraryHooks(items.filter(item => item.type === 'video' || item.type === 'image')))
+        .finally(() => setLibraryLoading(false));
+    }
+    if (value === 'none' || value === 'ai') {
+      setFiles([]);
+      setFreeHookMaterial(null);
+    }
+  };
   const freeReady = selectedProductIds.length > 0 && Boolean(contentGoal.trim()) && Boolean(targetAudience.trim()) && freeLines.length > 0
     && freeLines.every(line => line.visual.trim() && (line.silent || line.speech.trim())) && freeLines.filter(line => line.hook).length === 1;
 
   return (
     <section className="flex h-full min-h-0 flex-col bg-white">
-      <ReplicationWorkbenchHeader activeStep={0} stepLabels={isReplication ? undefined : ['创意与口播确认', '分镜匹配与制作', '成片渲染和导出']} onStepChange={index => { if (index > 0 && (isReplication ? speechGenerated : Boolean(freeScriptText))) void startGeneration(); }} navigationDisabled={submitting || productSelectionLoading || (isReplication ? !speechGenerated : !freeScriptText)} title={isReplication ? seed?.referenceTitle : products.find(item => item.id === productId)?.name || '自由创作'} actions={<><button type="button" onClick={onShowCreations} className="rounded-lg border border-border px-3 py-2 text-xs font-bold">我的创作</button><button type="button" onClick={onOpenChooser} className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-bold text-white">切换制作方式</button></>} />
+      <ReplicationWorkbenchHeader activeStep={0} compact={!isReplication} showTaskIdentity={isReplication} stepLabels={isReplication ? undefined : ['创意与口播确认', '分镜匹配与制作', '成片渲染和导出']} onStepChange={index => { if (index > 0 && (isReplication ? speechGenerated : Boolean(freeScriptText))) void startGeneration(); }} navigationDisabled={submitting || productSelectionLoading || (isReplication ? !speechGenerated : !freeScriptText)} title={isReplication ? seed?.referenceTitle : undefined} actions={<><Button htmlType="button" onClick={onShowCreations} className="whitespace-nowrap font-semibold">我的创作</Button><Button type="primary" htmlType="button" onClick={onOpenChooser} className="whitespace-nowrap font-semibold">切换制作方式</Button></>} />
+
+      <Modal
+        open={!isReplication && hookChooserOpen}
+        centered
+        getContainer={false}
+        width={760}
+        footer={null}
+        title="选择开场方式"
+        onCancel={() => setHookChooserOpen(false)}
+      >
+        <p className="mb-5 text-sm text-text-secondary">选择本次内容如何开始；稍后仍可在画面预览区更换。</p>
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          {([
+            ['ai', 'AI 生成', '根据产品与受众生成钩子', Sparkles],
+            ['upload', '上传素材', '使用本地图片或视频', Upload],
+            ['library', '素材库', '从已有素材中选择', FolderOpen],
+            ['none', '暂不指定', '进入分镜后再补充', Film],
+          ] as const).map(([value, label, description, Icon]) => (
+            <button
+              key={value}
+              type="button"
+              onClick={() => chooseHookMode(value)}
+              className="group flex min-h-40 flex-col rounded-lg border border-border bg-white p-4 text-left transition hover:border-accent hover:bg-accent-glow focus:outline-none focus:ring-2 focus:ring-accent/30"
+            >
+              <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-surface-2 text-text-primary group-hover:bg-white group-hover:text-accent"><Icon size={20} /></span>
+              <span className="mt-auto whitespace-nowrap text-sm font-semibold text-text-primary">{label}</span>
+              <span className="mt-1 text-xs leading-5 text-text-secondary">{description}</span>
+            </button>
+          ))}
+        </div>
+      </Modal>
 
 
       <div className="social-creation-workbench-layout grid min-h-0 flex-1 grid-cols-1 overflow-y-auto lg:overflow-hidden">
         <aside className="min-h-0 border-b border-border bg-white lg:overflow-y-auto lg:border-b-0 lg:border-r">
-          <div className="sticky top-0 z-10 border-b border-border bg-white px-4 py-4">
-            <p className="text-sm font-semibold text-text-primary">{isReplication ? '口播替换与确认' : '创意与口播确认'}</p>
-            <p className="mt-1 text-[11px] leading-5 text-text-muted">{isReplication ? '先在右侧完成产品映射并生成口播，再检查高亮产品词、修改并确认。' : '选择一个或多个产品填写创作简报；钩子与口播均可按本次内容需要选择。'}</p>
-          </div>
+          {isReplication && <div className="sticky top-0 z-10 border-b border-border bg-white px-4 py-4">
+            <p className="text-sm font-semibold text-text-primary">口播替换与确认</p>
+            <p className="mt-1 text-[11px] leading-5 text-text-muted">先在右侧完成产品映射并生成口播，再检查高亮产品词、修改并确认。</p>
+          </div>}
           <ol ref={cardListRef} className="space-y-2 p-3">
             {!isReplication && !freeLines.length && <li className="rounded-lg border border-dashed border-blue-200 bg-blue-50/40 p-4 text-xs leading-5 text-zinc-700">填写右侧创作简报即可生成分镜。钩子素材为可选项，也可以在第二页再完成首镜。</li>}
             {!isReplication && freeLines.map((freeLine, index) => <li key={freeLine.id} draggable onDragStart={event => { draggedFreeLineIndex.current = index; event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData('text/plain', freeLine.id); }} onDragOver={event => { event.preventDefault(); event.dataTransfer.dropEffect = 'move'; }} onDrop={event => { event.preventDefault(); const from = draggedFreeLineIndex.current; draggedFreeLineIndex.current = null; if (from == null || from === index) return; const next = [...freeLines]; const [moved] = next.splice(from, 1); next.splice(index, 0, moved); commitFreeLines(next); }} onDragEnd={() => { draggedFreeLineIndex.current = null; }} className={`rounded-lg border p-3 ${freeLine.hook ? 'border-blue-400 bg-blue-50/50' : 'border-border bg-white'}`}>
@@ -873,10 +926,9 @@ export default function SocialCreationWorkbench({
 
         <main className="flex min-h-[560px] min-w-0 flex-col bg-[#f5f8f5] lg:min-h-0">
           <div className="flex items-center justify-between border-b border-black/5 px-5 py-3">
-            <div><p className="text-xs font-semibold text-text-primary">画面预览</p><p className="mt-0.5 text-[10px] text-text-muted">{isReplication ? `当前对应第 ${activeLine + 1} 句口播` : `当前对应第 ${activeLine + 1} 个分镜`}</p></div>
-            {!isReplication && <span className="text-[10px] font-bold text-zinc-700">钩子素材可选</span>}
+            <div><p className="text-xs font-semibold text-text-primary">画面预览</p>{isReplication && <p className="mt-0.5 text-[10px] text-text-muted">当前对应第 {activeLine + 1} 句口播</p>}</div>
+            {!isReplication && <Button size="small" htmlType="button" onClick={() => setHookChooserOpen(true)} className="whitespace-nowrap">更换开场方式</Button>}
           </div>
-          {!isReplication && <div className="flex flex-wrap gap-2 border-b border-black/5 px-4 py-3">{([['none', '暂不指定'], ['upload', '上传素材'], ['library', '素材库'], ['ai', 'AI 生成']] as const).map(([value, label]) => <button key={value} type="button" onClick={() => { setHookMode(value); if (value === 'upload') uploadRef.current?.click(); if (value === 'library' && !libraryHooks.length) { setLibraryLoading(true); void studioApi.listMaterials('library').then(items => setLibraryHooks(items.filter(item => item.type === 'video' || item.type === 'image'))).finally(() => setLibraryLoading(false)); } if (value === 'none' || value === 'ai') { setFiles([]); setFreeHookMaterial(null); } }} className={`rounded-lg border px-3 py-1.5 text-[10px] font-bold ${hookMode === value ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-border bg-white text-text-secondary'}`}>{label}</button>)}</div>}
           <input ref={uploadRef} type="file" accept="video/*,image/*" className="hidden" onChange={event => { setFiles(Array.from(event.currentTarget.files || []).slice(0, 1)); setHookMode('upload'); setFreeScriptText(''); setFreeLines([]); setFreeGeneration(null); setFreeHookMaterial(null); }} />
           {!isReplication && hookMode === 'library' && <div className="max-h-36 overflow-y-auto border-b border-border p-3">{libraryLoading ? <p className="text-xs text-text-muted">正在读取素材库…</p> : libraryHooks.length ? <div className="grid grid-cols-2 gap-2">{libraryHooks.map(item => <button type="button" key={item.id} onClick={() => { setFreeHookMaterial(item); setFiles([]); }} className={`rounded-lg border p-2 text-left text-[10px] ${freeHookMaterial?.id === item.id ? 'border-blue-500 bg-blue-50' : 'border-border'}`}><span className="line-clamp-2 font-bold">{item.name}</span></button>)}</div> : <p className="text-xs text-text-muted">素材库暂无可用图片或视频，可改用上传或暂不指定。</p>}</div>}
           <div className="flex min-h-0 flex-1 items-center justify-center overflow-hidden p-4 sm:p-5">
@@ -889,7 +941,7 @@ export default function SocialCreationWorkbench({
                 : seed?.referenceThumbnail ? <img src={seed.referenceThumbnail} alt={isReplication ? '爆款视频预览' : '已选素材预览'} className="h-full w-full object-contain" />
                 : <div className="flex h-full w-full flex-col items-center justify-center gap-4 px-8 text-center text-[#294c40]">
                     <span className="flex h-16 w-16 items-center justify-center rounded-full bg-white text-[#607b71] shadow-none"><Film size={27} /></span>
-                    <div><p className="text-base font-semibold">{isReplication ? '等待爆款视频' : hookMode === 'ai' ? aiHookPhase === 'frame' ? '正在生成钩子首帧…' : aiHookPhase === 'video' ? '正在生成 4 秒钩子视频…' : '在第一页生成 AI 钩子' : '尚未指定钩子素材'}</p><p className="mt-2 text-xs leading-5 text-[#789087]">{isReplication ? '从灵感中心选择爆款后，会在这里显示原视频。' : hookMode === 'ai' ? '将按已选产品、内容目标和目标受众生成，预览满意后再采纳。' : '不影响脚本生成；进入分镜制作后仍可完成首镜。'}</p></div>
+                    <div><p className="text-base font-semibold">{isReplication ? '等待爆款视频' : hookMode === 'ai' ? aiHookPhase === 'frame' ? '正在生成钩子首帧…' : aiHookPhase === 'video' ? '正在生成 4 秒钩子视频…' : '生成 AI 开场画面' : '尚未指定钩子素材'}</p>{(isReplication || hookMode === 'ai') && <p className="mt-2 text-xs leading-5 text-[#789087]">{isReplication ? '从灵感中心选择爆款后，会在这里显示原视频。' : '将按已选产品、内容目标和目标受众生成，预览满意后再采纳。'}</p>}</div>
                   </div>}
             </div>
           </div>
@@ -898,12 +950,12 @@ export default function SocialCreationWorkbench({
               <div className="flex gap-2">{aiHookCandidate && freeHookMaterial?.id !== aiHookCandidate.id && <button type="button" onClick={adoptAiHook} className="rounded-lg bg-blue-600 px-3 py-1.5 font-semibold text-white">采纳此钩子</button>}<button type="button" disabled={['saving','frame','video'].includes(aiHookPhase)} onClick={() => void generateAiHook()} className="rounded-lg border border-blue-200 px-3 py-1.5 font-semibold text-blue-700 disabled:opacity-50">{aiHookPhase === 'failed' ? '重试生成' : aiHookCandidate ? '重新生成' : '确认费用并生成'}</button></div></div>
             {aiHookFrame && !aiHookCandidate && <p className="mt-1 text-text-muted">首帧已生成并入库，正在继续生成视频。</p>}{aiHookEstimatedCost > 0 && <p className="mt-1 text-text-muted">本次已核算预计费用约 ¥{aiHookEstimatedCost.toFixed(2)}</p>}{aiHookError && <p role="alert" className="mt-1 text-red-600">{aiHookError}</p>}{freeHookMaterial && freeHookMaterial.id === aiHookCandidate?.id && <p className="mt-1 font-bold text-emerald-700">已采纳并保存到素材库；刷新后可从当前草稿恢复。</p>}
           </div>}
-          <div className="flex items-center justify-between border-t border-black/5 px-5 py-3 text-[11px] text-text-muted"><span>{files.length ? `已选择开场钩子：${files[0]?.name}` : freeHookMaterial ? `已选择开场钩子：${freeHookMaterial.name}` : isReplication ? '原片仅供分析' : hookMode === 'ai' ? '请生成、预览并采纳 AI 钩子' : '本次未指定钩子素材'}</span>{!isReplication && hookMode === 'upload' && <button type="button" onClick={()=>uploadRef.current?.click()} className="font-semibold text-emerald-700">更换钩子</button>}</div>
+          {(files.length > 0 || freeHookMaterial || isReplication || hookMode === 'ai') && <div className="flex items-center justify-between border-t border-black/5 px-5 py-3 text-[11px] text-text-muted"><span>{files.length ? `已选择开场钩子：${files[0]?.name}` : freeHookMaterial ? `已选择开场钩子：${freeHookMaterial.name}` : isReplication ? '原片仅供分析' : '请生成、预览并采纳 AI 钩子'}</span>{!isReplication && hookMode === 'upload' && <button type="button" onClick={()=>uploadRef.current?.click()} className="whitespace-nowrap font-semibold text-emerald-700">更换钩子</button>}</div>}
         </main>
 
         <aside className="flex min-h-0 flex-col border-t border-border bg-white lg:border-l lg:border-t-0">
           <div className="min-h-0 flex-1 overflow-y-auto p-4">
-            <div className="flex items-start justify-between gap-3"><div><p className="text-sm font-semibold text-text-primary">{isReplication ? productSlots.length ? '产品与品牌替换' : '品牌替换' : '生成设置'}</p><p className="mt-1 text-[11px] leading-5 text-text-muted">{isReplication ? '在左侧逐句检查新口播。' : '每一步都由你确认后再生成。'}</p></div></div>
+            <div className="flex items-start justify-between gap-3"><div><p className="text-sm font-semibold text-text-primary">{isReplication ? productSlots.length ? '产品与品牌替换' : '品牌替换' : '生成设置'}</p>{isReplication && <p className="mt-1 text-[11px] leading-5 text-text-muted">在左侧逐句检查新口播。</p>}</div></div>
 
             {isReplication && <div className="mt-4">
               {productSlots.length > 0 && <>

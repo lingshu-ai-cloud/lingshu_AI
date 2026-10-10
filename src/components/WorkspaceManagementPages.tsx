@@ -139,7 +139,7 @@ const socialMetricsOpsOverview = (overviewPayload: unknown, trendPayload: unknow
 
 const MOCK_CONTENT_OPS_OVERVIEW: ContentOpsOverview = {
   generatedAt: new Date().toISOString(),
-  periodLabel: '演示数据 · 最近 30 天',
+  periodLabel: '参考预览 · 最近 30 天',
   kpis: [
     { id: 'views', label: '总播放量', value: '286,430', change: '环比 +28.6%', note: '四平台已同步内容汇总' },
     { id: 'reach', label: '覆盖人数', value: '174,820', change: '环比 +19.4%', note: 'Facebook 与 Instagram 可用口径' },
@@ -172,7 +172,7 @@ const MOCK_CONTENT_OPS_OVERVIEW: ContentOpsOverview = {
     { id: 'l3', occurredAt: '2026-08-12T11:20:00+08:00', title: '调整对纯品牌口播的判断', detail: '不再建议直接停止该类内容，改为先用小样本测试新开场，防止短期流量波动被误判为长期经验。', source: '管理员纠正', evidenceCount: 7, status: 'adjusted' },
     { id: 'l4', occurredAt: '2026-08-09T14:00:00+08:00', title: '确认 YouTube 观看百分比作为开场质量指标', detail: '经过连续 6 条内容验证，平均观看百分比与效果画面前置呈现正相关，该经验已用于创作建议。', source: 'YouTube Analytics', evidenceCount: 6, status: 'confirmed' },
   ],
-  coverage: ['facebook', 'instagram', 'tiktok', 'youtube'].map(platform => ({ platform, status: 'ready', note: '本地演示数据' })),
+  coverage: ['facebook', 'instagram', 'tiktok', 'youtube'].map(platform => ({ platform, status: 'ready', note: '本地参考预览' })),
 };
 
 const hasContentOpsData = (overview: ContentOpsOverview | null) => Boolean(overview && (overview.kpis?.length || overview.trends?.length || overview.conclusions?.length || overview.topContents?.length || overview.learningEvents?.length));

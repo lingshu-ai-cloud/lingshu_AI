@@ -12,6 +12,7 @@ export interface NextRoundRecommendationCard {
   evidence: string[];
   systemActions: string[];
   links: Array<{ label: string; url: string; meta: string }>;
+  sourceContentId?: string;
   thumbnailUrl?: string;
   hook?: string;
   framework?: string[];
@@ -88,6 +89,7 @@ export function buildNextRoundRecommendationCards(summary?: WeeklyReviewSummary)
       ] : [inheritance.paidBoost.reason],
       systemActions: inheritance.systemActions,
       links: safeHttpUrl(inheritance.sourceUrl) ? [{ label: '查看本期优秀内容', url: inheritance.sourceUrl, meta: inheritance.platform }] : [],
+      sourceContentId: inheritance.sourceContentId,
       thumbnailUrl: safePreviewUrl(inheritance.thumbnailUrl),
       hook: inheritance.hook,
       framework: inheritance.framework,

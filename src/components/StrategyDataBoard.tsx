@@ -440,7 +440,7 @@ export default function StrategyDataBoard({
           <section className="home-board home-overview-panel mx-auto max-w-[1440px]">
             {enterpriseDemo && (
               <div data-testid="enterprise-homepage-demo-notice" className="mb-4 border-l-4 border-amber-400 bg-amber-50 px-4 py-3 text-xs text-amber-950">
-                <p className="font-bold">企业资料演示数据 · {enterpriseDemo.companyName}</p>
+                <p className="font-bold">企业资料参考预览 · {enterpriseDemo.companyName}</p>
                 <p className="mt-1 leading-5">{enterpriseDemo.notice}</p>
                 {enterpriseDemo.warnings.map(warning => <p key={warning} className="mt-1 font-semibold leading-5">资料提醒：{warning}</p>)}
               </div>

@@ -925,7 +925,7 @@
 .is-compact .pixel-bubble, .is-compact .pixel-signal, .is-compact .pixel-clap, .is-compact .pixel-tripod, .is-compact .pixel-record-light, .is-compact .pixel-message, .is-compact .pixel-keyboard { display: none; }
 
 .social-creation-workbench-layout {
-  grid-template-columns: minmax(280px, 320px) minmax(0, 1fr) minmax(300px, 360px);
+  grid-template-columns: minmax(240px, .75fr) minmax(420px, 1.7fr) minmax(260px, .8fr);
 }
 
 @media (max-width: 980px) {

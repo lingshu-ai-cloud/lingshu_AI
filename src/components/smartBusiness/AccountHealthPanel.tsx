@@ -55,6 +55,7 @@ export type AccountHealthResult = {
   currentScore: number | null;
   targetScore: number | null;
   scoreCoverage: number;
+  milestones: Array<{ label: string; complete: boolean }>;
   systemActions: string[];
   userActions: string[];
 };
@@ -227,7 +228,13 @@ export function scoreAccountHealth(account: AccountHealthAccount, sources: Accou
     sources.channelsLoaded && messengerApplicable && !messengerConnected ? '完成 Facebook Messenger 订阅。' : '',
     attributedInquiries === null ? '在会话或 CRM 中保留账号来源，补齐询盘归因。' : '',
   ].filter(Boolean);
-  return { accountId: account.accountId, accountLabel: account.accountLabel, platform: account.platform, dimensions, baselineScore, currentScore, targetScore, scoreCoverage, systemActions, userActions };
+  const milestones = [
+    { label: `资料完整 ${profileComplete}/${profileChecks.length}`, complete: profileScore === 100 },
+    { label: targetCount > 0 ? `稳定周更 ${currentCount ?? '—'}/${targetCount}` : '设置周更目标', complete: cadenceScore === 100 },
+    { label: messengerApplicable ? '接通 WhatsApp + Messenger' : '接通 WhatsApp', complete: handoffScore === 100 },
+    { label: performanceTarget === null ? '积累 2 条真实样本' : `达到账号 P75 · ${numberLabel(performanceTarget)}`, complete: performanceScore !== null && performanceScore >= 100 },
+  ];
+  return { accountId: account.accountId, accountLabel: account.accountLabel, platform: account.platform, dimensions, baselineScore, currentScore, targetScore, scoreCoverage, milestones, systemActions, userActions };
 }
 
 function scoreLabel(value: number | null): string {
@@ -239,6 +246,27 @@ function scoreStatus(row: AccountHealthResult): { label: string; color?: string 
   if (row.currentScore >= 80) return { label: '基础稳健', color: 'success' };
   if (row.currentScore >= 60) return { label: '持续建设', color: 'processing' };
   return { label: '优先补齐', color: 'warning' };
+}
+
+function AccountGrowthJourney({ row }: { row: AccountHealthResult }) {
+  const current = row.currentScore ?? 0;
+  const target = Math.max(current, row.targetScore ?? 100, 1);
+  const progress = Math.min(100, Math.round(current / target * 100));
+  return <div className="min-w-[480px] py-1">
+    <div className="flex items-center justify-between gap-3 text-[11px]">
+      <span className="text-text-muted">启用基线 {row.baselineScore === null ? '建立中' : scoreLabel(row.baselineScore)}</span>
+      <strong className="text-text-primary">当前 {scoreLabel(row.currentScore)}</strong>
+      <span className="font-medium text-accent">阶段目标 {scoreLabel(row.targetScore)}</span>
+    </div>
+    <div className="relative mt-2 h-2 overflow-hidden rounded-full bg-surface-2" aria-label={`当前阶段进度 ${progress}%`}>
+      <span className="absolute inset-y-0 left-0 rounded-full bg-accent" style={{ width: `${progress}%` }}/>
+    </div>
+    <div className="mt-3 grid grid-cols-4 gap-2">
+      {row.milestones.map((milestone, index) => <div key={milestone.label} className={`rounded-md border px-2 py-2 text-[10px] leading-4 ${milestone.complete ? 'border-border bg-accent-glow text-accent' : 'border-border bg-surface-2 text-text-secondary'}`}>
+        <span className="mb-1 block font-semibold">{milestone.complete ? '✓ 已完成' : `阶段 ${index + 1}`}</span>{milestone.label}
+      </div>)}
+    </div>
+  </div>;
 }
 
 export default function AccountHealthPanel({ accounts, startsAt, endsAt, channelsLoaded, whatsappConnected, messengerPages, inquiryEvidence }: { accounts: AccountHealthAccount[]; startsAt: string; endsAt: string; channelsLoaded: boolean; whatsappConnected: boolean; messengerPages: AccountHealthMessengerPage[]; inquiryEvidence: AccountInquiryEvidence[] }) {
@@ -256,8 +284,8 @@ export default function AccountHealthPanel({ accounts, startsAt, endsAt, channel
   const columns: TableColumnsType<AccountHealthResult> = [
     { title: '账号', key: 'account', width: 240, render: (_, row) => <div className="flex items-center gap-2"><SocialPlatformIcon platform={row.platform} size={18}/><div><strong className="block text-sm text-text-primary">{row.accountLabel}</strong><span className="text-xs text-text-muted">{platformLabels[row.platform]}</span></div></div> },
     { title: '当前健康度', key: 'score', width: 150, render: (_, row) => { const status = scoreStatus(row); return <div><div className="flex items-center gap-2"><strong className="text-lg text-text-primary">{scoreLabel(row.currentScore)}</strong><Tag color={status.color}>{status.label}</Tag></div><span className="text-xs text-text-muted">评分覆盖 {row.scoreCoverage}/{row.dimensions.length} 个维度</span></div>; } },
-    { title: '使用灵枢前基线 → 当前 → 可提升目标', key: 'journey', render: (_, row) => <div className="flex min-w-[360px] items-center gap-2 text-xs"><span className="min-w-20 text-text-muted">{row.baselineScore === null ? '当前暂无快照' : scoreLabel(row.baselineScore)}</span><span aria-hidden="true" className="text-text-muted">→</span><strong className="min-w-20 text-text-primary">{scoreLabel(row.currentScore)}</strong><span aria-hidden="true" className="text-text-muted">→</span><span className="min-w-20 font-medium text-accent">{scoreLabel(row.targetScore)}</span>{row.baselineScore !== null && row.currentScore !== null && row.currentScore >= row.baselineScore && <Tag color="success">已提升 {row.currentScore - row.baselineScore} 分</Tag>}</div> },
-    { title: '优先建议', key: 'action', width: 280, render: (_, row) => <div className="space-y-1 text-xs leading-5"><p className="text-text-secondary"><span className="font-medium text-text-primary">系统：</span>{row.systemActions[0] || '保持现有自动优化节奏。'}</p><p className="text-text-secondary"><span className="font-medium text-text-primary">你：</span>{row.userActions[0] || '当前无需额外补充。'}</p></div> },
+    { title: '阶段成长目标', key: 'journey', render: (_, row) => <AccountGrowthJourney row={row}/> },
+    { title: '用户动作建议', key: 'action', width: 280, render: (_, row) => <div className="space-y-1 text-xs leading-5 text-text-secondary">{(row.userActions.length ? row.userActions.slice(0, 2) : ['当前无需额外补充，请保持账号授权与承接渠道有效。']).map(item => <p key={item}>{item}</p>)}</div> },
   ];
   return <section className="overflow-hidden rounded-lg border border-border bg-white" aria-labelledby="account-health-title">
     <header className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-4">
@@ -265,7 +293,14 @@ export default function AccountHealthPanel({ accounts, startsAt, endsAt, channel
       <Button icon={<RefreshCcw size={15}/>} loading={loading} onClick={() => void refresh()}>同步账号表现</Button>
     </header>
     {error && <div className="px-5 pt-5"><Alert type="warning" showIcon title={error}/></div>}
-    <div className="border-b border-border p-5"><LsDataChart title="账号健康度提升空间" description="单位：分；图中只显示可核验值。当前暂无使用前快照时不补假低分，首次启用后自动建立基线；上一周期数据只作参考。表现目标取账号自身真实内容 P75，其余目标来自已配置的周更、资料和承接要求。" kind="bar" horizontal percent labels={rows.map(row => row.accountLabel)} series={[{ label: '使用灵枢前基线', values: rows.map(row => row.baselineScore) }, { label: '当前', values: rows.map(row => row.currentScore) }, { label: '可提升目标', values: rows.map(row => row.targetScore) }]} loading={loading && !performance} height={Math.max(240, rows.length * 58)}/></div>
+    <div className="border-b border-border p-5">
+      <div className="grid grid-cols-[180px_minmax(0,1fr)] gap-2">
+        <div aria-label="账号平台" className="grid pb-[68px] pt-[54px]" style={{ gridTemplateRows: `repeat(${Math.max(rows.length, 1)}, minmax(0, 1fr))` }}>
+          {rows.map(row => <div key={row.accountId} className="flex min-w-0 items-center gap-2 pr-2 text-xs text-text-secondary"><SocialPlatformIcon platform={row.platform} size={17}/><span className="truncate">{row.accountLabel}</span></div>)}
+        </div>
+        <LsDataChart title="账号健康度提升空间" kind="bar" horizontal percent labels={rows.map(() => '')} series={[{ label: '使用灵枢前基线', values: rows.map(row => row.baselineScore) }, { label: '当前', values: rows.map(row => row.currentScore) }, { label: '可提升目标', values: rows.map(row => row.targetScore) }]} loading={loading && !performance} height={Math.max(240, rows.length * 58)}/>
+      </div>
+    </div>
     <Table<AccountHealthResult> rowKey="accountId" columns={columns} dataSource={rows} pagination={false} scroll={{ x: 1160 }} expandable={{ expandedRowRender: row => <div className="space-y-4 px-2 py-1">
       <Table<AccountHealthDimension> rowKey="key" size="small" pagination={false} dataSource={row.dimensions} scroll={{ x: 820 }} columns={[
         { title: '评分维度', dataIndex: 'label', width: 170 },

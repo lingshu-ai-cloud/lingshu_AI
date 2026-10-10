@@ -303,7 +303,7 @@ export function CalendarPlanner({ onCreate, onOpenPost, pendingItems = [], onOpe
   };
 
   return <div className="space-y-4" data-lingshu-guide="content-planner">
-    <header className="flex flex-wrap items-center justify-between gap-3"><div className="flex flex-wrap items-center gap-2"><h2 className="flex items-center gap-2 text-xl font-semibold text-text-primary"><CalendarDays size={19}/>内容排产工作台</h2><Tag>{enterpriseMarketLabel}</Tag></div>{import.meta.env.DEV && <Button onClick={() => setDemoMode(value => !value)}>{demoMode ? '退出演示数据' : '预览演示数据'}</Button>}</header>
+    <header className="flex flex-wrap items-center justify-between gap-3"><div className="flex flex-wrap items-center gap-2"><h2 className="flex items-center gap-2 text-xl font-semibold text-text-primary"><CalendarDays size={19}/>内容排产工作台</h2><Tag>{enterpriseMarketLabel}</Tag></div>{import.meta.env.DEV && <Button onClick={() => setDemoMode(value => !value)}>{demoMode ? '退出参考预览' : '预览参考排期'}</Button>}</header>
     {demoMode && <Alert type="info" showIcon title="模拟数据 · 仅供页面预览，不会提交发布" description="TikTok / Facebook 各 5 条/周 · YouTube / Instagram 各 3 条/周"/>}
     {error && <Alert type="error" showIcon title={error} action={<Button onClick={() => void load()}>重试</Button>}/>}
     {interactionMessage && <div role="status"><Alert type="info" showIcon closable title={interactionMessage} onClose={() => setInteractionMessage('')}/></div>}

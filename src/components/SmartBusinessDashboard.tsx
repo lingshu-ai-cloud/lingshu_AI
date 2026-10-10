@@ -40,6 +40,7 @@ import MatrixWorkSchedule from "./smartBusiness/MatrixWorkSchedule";
 import NextRoundRecommendationsSection from "./NextRoundRecommendationsSection";
 import AccountActivity from "./AccountActivity";
 import AccountHealthPanel from "./smartBusiness/AccountHealthPanel";
+import { LsCalendar, calendarDayKey, type LsCalendarEvent } from "./ui/LsCalendar";
 
 export type SmartBusinessView = "home" | "matrix" | "queue" | "production" | "review";
 
@@ -98,6 +99,14 @@ function productionDurationLabel(minutes: number | null | undefined) {
   const hours = Math.floor(minutes / 60);
   const rest = minutes % 60;
   return `约 ${hours} 小时${rest ? ` ${rest} 分钟` : ""}`;
+}
+
+const contentTitleEmojis = ["✨", "🧴", "🏭", "🔬", "💡", "📦"];
+
+function engagingContentTitle(value: string, index: number) {
+  const title = value.trim();
+  if (!title) return `${contentTitleEmojis[index % contentTitleEmojis.length]} 本周内容 ${index + 1}`;
+  return /\p{Extended_Pictographic}/u.test(title) ? title : `${contentTitleEmojis[index % contentTitleEmojis.length]} ${title}`;
 }
 
 function deliveryMetric(card: DeliveryResource, pattern: RegExp) {
@@ -295,6 +304,38 @@ export function WeeklyCommandCenter({
     blocked: Math.max(display.totals.blockedCount, queuedBlockedCount, preproductionBlockedCount),
     completed: display.totals.completedCount,
   };
+  const calendarStatus: Record<ContentQueueItem["status"], LsCalendarEvent["status"]> = {
+    planned: "planned",
+    queued: "queued",
+    producing: "working",
+    waiting_review: "needs_action",
+    completed: "done",
+    blocked: "needs_action",
+  };
+  const calendarStatusLabel: Record<ContentQueueItem["status"], string> = {
+    planned: "已计划",
+    queued: "待制作",
+    producing: "制作中",
+    waiting_review: "待验收",
+    completed: "已完成",
+    blocked: "需要处理",
+  };
+  const calendarEvents: LsCalendarEvent[] = display.contents.map((item): LsCalendarEvent => ({
+    id: `weekly-publish-${item.id}`,
+    title: item.title,
+    start: item.plannedPublishDate || display.startsAt,
+    timeZone: "Asia/Shanghai",
+    allDay: true,
+    status: calendarStatus[item.status],
+    statusLabel: calendarStatusLabel[item.status],
+    eventType: "publish",
+    platform: item.platform,
+    accountId: item.accountId,
+    accountName: item.accountLabel,
+    sourceId: item.contentId,
+    description: `${item.productName} · ${item.caption || "发布文案待完善"}`,
+    data: item,
+  })).filter(event => Boolean(event.start));
 
   return <section className={`overflow-hidden rounded-lg border border-border bg-white ${className}`.trim()} aria-label="本周任务驾驶舱">
     <div className="flex flex-wrap items-start justify-between gap-5 border-b border-border px-5 py-5 text-text-primary sm:px-6">
@@ -309,7 +350,7 @@ export function WeeklyCommandCenter({
       </div>
       {actions && <div aria-label="智能经营控制" className="flex max-w-full flex-wrap items-center justify-end gap-2">{actions}</div>}
     </div>
-    <div className="grid gap-px bg-slate-100 sm:grid-cols-2 xl:grid-cols-6">
+    <div className="grid gap-px bg-slate-100 sm:grid-cols-3 lg:grid-cols-6">
       {[
         { label: "待验收成片", value: `${weeklyStatusCounts.review} 条`, color: "var(--color-accent)", note: weeklyStatusCounts.review > 0 ? "等待你确认成片效果" : "当前没有待验收成片" },
         { label: "本周计划视频", value: `${plannedOutputCount} 条`, color: "var(--color-visual-lavender)", note: `${plannedPublishCount} 个发布任务 · ${operatingContext?.accounts.length || 0} 个账号` },
@@ -319,15 +360,12 @@ export function WeeklyCommandCenter({
         { label: "已结算成本", value: settledContentCost > 0 ? `¥${settledContentCost.toFixed(2)}` : "暂无结算", color: "var(--color-text-primary)", note: "仅统计供应商对账回执" },
       ].map(item => <article key={item.label} className="bg-white px-4 py-4"><Statistic title={item.label} value={item.value} valueStyle={{ color: item.color }}/><p className="mt-2 text-xs text-text-secondary">{item.note}</p></article>)}
     </div>
-    <div className="flex flex-wrap items-center gap-2 border-t border-slate-100 px-5 py-4">
-      {[
-        ["排队中", weeklyStatusCounts.queued, "bg-sky-50 text-sky-700"],
-        ["制作中", weeklyStatusCounts.producing, "bg-blue-50 text-blue-700"],
-        ["待验收", weeklyStatusCounts.review, "bg-amber-50 text-amber-700"],
-        ["需要处理", weeklyStatusCounts.blocked, "bg-red-50 text-red-700"],
-        ["已完成", weeklyStatusCounts.completed, "bg-emerald-50 text-emerald-700"],
-      ].map(([label, value, tone]) => <span key={String(label)} className={`rounded-full px-3 py-1.5 text-[10px] font-semibold ${tone}`}>{label} {value}</span>)}
-      <span className="text-[10px] font-bold text-text-muted xl:ml-auto">本周计划视频 {display.totals.versionCount} 条</span>
+    <div className="border-t border-border px-4 py-5 sm:px-5">
+      <div className="mb-4 flex items-center justify-between gap-3"><h3 className="text-lg font-semibold text-text-primary">发布日历</h3><span className="text-xs text-text-secondary">{calendarEvents.length} 条本周内容</span></div>
+      <LsCalendar events={calendarEvents} label="本周发布日历" initialDate={display.startsAt ? calendarDayKey(display.startsAt) : undefined} date={display.startsAt ? calendarDayKey(display.startsAt) : undefined} initialView="timeGridWeek" firstDay={display.startsAt ? new Date(`${display.startsAt}T00:00:00+08:00`).getDay() : 1} timeGridHeight={520} renderDetails={event => {
+        const item = event.data as UnifiedPlanContent;
+        return <div className="space-y-3"><div className="flex flex-wrap gap-2">{item.tags.map(tag => <Tag key={tag}>#{tag}</Tag>)}</div><dl className="ls-calendar-details"><div><dt>产品</dt><dd>{item.productName}</dd></div><div><dt>发布文案</dt><dd>{item.caption || "待完善"}</dd></div></dl></div>;
+      }}/>
     </div>
     {notice && <div className="flex flex-wrap items-center gap-2 border-t border-slate-100 bg-slate-50/70 px-5 py-3">{notice}</div>}
   </section>;
@@ -340,6 +378,8 @@ type UnifiedPlanContent = {
   contentId: string;
   familyId: string;
   title: string;
+  caption: string;
+  tags: string[];
   productName: string;
   platform: Platform;
   accountId: string;
@@ -480,8 +520,10 @@ function buildSmartBusinessDisplayModel(data: DigitalEmployeeOverview, selectedA
       id: identity,
       contentId: plan.contentId || identity,
       familyId: plan.contentFamilyId || plan.masterContentId || plan.contentId || identity,
-      title: plan.publication?.title || plan.theme || plan.planningEvidence?.referenceTitle || `本周视频 ${index + 1}`,
-      productName: plan.productName || data.config?.focusProducts || "待绑定产品",
+      title: engagingContentTitle(plan.publication?.title || plan.theme || plan.planningEvidence?.referenceTitle || `本周视频 ${index + 1}`, index),
+      caption: plan.publication?.caption || "",
+      tags: plan.publication?.tags || [],
+      productName: queueItem?.productName || plan.productName || data.config?.focusProducts || "待绑定产品",
       platform: plan.platform,
       accountId,
       accountLabel: account?.accountLabel || target?.accountLabel || `${data.config?.companyName || "企业"} · ${platformLabels[plan.platform]}`,
@@ -595,11 +637,10 @@ function buildSmartBusinessDisplayModel(data: DigitalEmployeeOverview, selectedA
 }
 
 function PlanDataSourceBadge({ source }: { source: DisplayMetricSource }) {
-  return <Tag color={source === "real" ? "success" : "default"}>{source === "real" ? "真实回传" : "演示数据"}</Tag>;
+  return <Tag color={source === "real" ? "success" : "default"}>{source === "real" ? "真实回传" : "参考估算"}</Tag>;
 }
 
 function HomeView({ calendarTasks, calendarDemo, data, onRefresh, onNavigate, onOpenProductionProgress, selectedAccountId = "" }: { calendarTasks?: AgentCalendarTask[]; calendarDemo?: boolean; data: DigitalEmployeeOverview; onRefresh?: () => void; onNavigate?: (page: Page) => void; onOpenProductionProgress?: (taskId: string, contentItemId: string) => void; selectedAccountId?: string }) {
-  const [monitor, setMonitor] = useState<AgentCard | null>(null);
   const display = useMemo(() => buildSmartBusinessDisplayModel(data), [data]);
   const snapshot = data.businessSnapshot;
   const days = [...new Set(display.contents.map(item => item.plannedPublishDate).filter(Boolean))].sort();
@@ -613,40 +654,13 @@ function HomeView({ calendarTasks, calendarDemo, data, onRefresh, onNavigate, on
     { label: "成交客户", value: metricValue(wonAvailable ? snapshot?.customer.won.value : Math.max(1, Math.round(demoInquiryCount * 0.22))), note: "按成交客户记录", demo: !wonAvailable },
     { label: "投流消耗", value: adSpend.length === 1 ? `${adSpend[0].currency} ${adSpend[0].amount.toLocaleString("zh-CN", { maximumFractionDigits: 2 })}` : adSpend.length > 1 ? `${adSpend.length} 种币种` : "—", note: snapshot?.ads?.note || "等待平台费用回执", demo: false },
   ];
-  const productionPlans = data.plan?.businessPackage?.tasks.find(task => task.templateId === "production")?.videoPlans || [];
-  const matrixRows = data.plan?.businessPackage?.matrixPlan || [];
-  const accountRows: MatrixScheduleAccount[] = display.accounts.length ? display.accounts.map(account => {
-    const matrix = matrixRows.find(item => item.accountId === account.accountId && item.platform === account.platform);
-    return { accountId: account.accountId, accountLabel: account.accountLabel, platform: account.platform, weeklyCount: matrix?.weeklyCount || account.plannedCount, contentDirection: matrix?.contentDirection || account.positioning, connected: account.source === "connected" };
-  }) : (data.config?.publishingTargets || []).map(target => {
-    const matrix = matrixRows.find(item => item.accountId === target.accountId && item.platform === target.platform);
-    return { accountId: target.accountId, accountLabel: target.accountLabel, platform: target.platform, weeklyCount: matrix?.weeklyCount || 0, contentDirection: matrix?.contentDirection || "待配置内容方向", connected: true };
-  });
   return <div className="space-y-6">
-    <header className="flex flex-wrap items-center justify-between gap-4"><h2 className="text-xl font-semibold text-text-primary">经营总览</h2>{onRefresh && <Button icon={<RefreshCcw size={15}/>} onClick={onRefresh}>刷新</Button>}</header>
-    <MatrixWorkSchedule calendarTasks={calendarTasks} calendarDemo={calendarDemo} taskItems={data.contentQueue?.items} workflowTasks={data.tasks} planTasks={data.plan?.tasks} agentStatuses={data.agents} onOpenTask={onOpenProductionProgress} startsAt={display.startsAt} endsAt={display.endsAt} accounts={accountRows} plans={productionPlans} selectedAccountId={selectedAccountId} onOpenPublishing={() => onNavigate?.("traffic")}/>
-    <div className="grid divide-y divide-border rounded-lg border border-border bg-white sm:grid-cols-2 sm:divide-y-0 xl:grid-cols-4">{metrics.map(item => <div key={item.label} className="border-border p-5 sm:border-r last:border-r-0"><Statistic title={<span>{item.label} {item.demo && <Tag>演示数据</Tag>}</span>} value={item.value}/><p className="mt-2 text-xs text-text-secondary">{item.note}</p></div>)}</div>
+    <MatrixWorkSchedule calendarTasks={calendarTasks} calendarDemo={calendarDemo} taskItems={data.contentQueue?.items} workflowTasks={data.tasks} planTasks={data.plan?.tasks} agentStatuses={data.agents} onOpenTask={onOpenProductionProgress} startsAt={display.startsAt} selectedAccountId={selectedAccountId}/>
+    <div className="grid divide-y divide-border rounded-lg border border-border bg-white sm:grid-cols-2 sm:divide-y-0 xl:grid-cols-4">{metrics.map(item => <div key={item.label} className="border-border p-5 sm:border-r last:border-r-0"><Statistic title={item.label} value={item.value}/><p className="mt-2 text-xs text-text-secondary">{item.note}</p></div>)}</div>
     <LsDataChart title="本周计划与完成" description="单位：条视频；按计划发布日期归组，完成数为当前已完成状态，不代表该日实际完成量。" kind="line" labels={days} series={[
       { label: "计划版本", values: days.map(day => display.contents.filter(item => item.plannedPublishDate === day).length) },
       { label: "已完成版本", values: days.map(day => display.contents.filter(item => item.plannedPublishDate === day && item.status === "completed").length) },
     ]} unit="条"/>
-    <section className="rounded-lg border border-border bg-white p-5"><h2 className="mb-4 text-lg font-semibold">Agent 工作轨道</h2><div className="divide-y divide-border">{agentCards.map(agent => {
-      const status = data.agents.find(item => roleAliases[agent.role].includes(item.role)); const tasks = relatedTasks(data, agent.role);
-      const latestTask = [...tasks].sort((left, right) => Date.parse(right.updated_at) - Date.parse(left.updated_at))[0];
-      const live = Boolean(status && runningStatuses.has(status.status)) || tasks.some(task => runningStatuses.has(task.status));
-      const taskIds = new Set(tasks.map(item => item.id));
-      const latestEvent = [...data.events].filter(item => taskIds.has(item.task_id) || agent.role === "business" && item.type.startsWith("business.")).sort((a, b) => b.sequence - a.sequence)[0];
-      const source = latestTask?.business_refs?.length ? `${latestTask.business_refs.length} 条业务记录` : data.plan?.businessPackage ? `本周计划 v${data.plan.businessPackage.revision || 1}` : "等待计划";
-      const result = latestEvent?.summary || (status?.completed ? `已完成 ${status.completed}/${status.total} 个节点` : "尚无新结果");
-      const next = latestTask?.status === "waiting_approval" ? "等待你确认后继续" : ["failed", "waiting_human"].includes(latestTask?.status || "") ? "处理卡点或从当前节点重试" : live ? "完成当前节点并写回业务页面" : "等待下一项任务";
-      return <article key={agent.role} className="grid items-center gap-4 py-4 sm:grid-cols-[150px_minmax(0,1fr)_140px_auto]">
-        <div><h3 className="font-semibold">{agent.name}</h3><p className="mt-1 text-xs text-text-secondary">{agent.description}</p></div>
-        <dl className="grid grid-cols-[64px_minmax(0,1fr)] gap-x-2 gap-y-1 text-xs"><dt className="text-text-secondary">当前节点</dt><dd className="font-medium">{status?.currentTask || latestTask?.title || "等待下一项任务"}</dd><dt className="text-text-secondary">来源</dt><dd>{source}</dd><dt className="text-text-secondary">结果</dt><dd>{result}</dd><dt className="text-text-secondary">下一步</dt><dd>{next}</dd></dl>
-        <div><Tag color={live ? "processing" : "default"}>{live ? "执行中" : "未开始"}</Tag><LsGradientProgress percent={status?.total ? Math.round(status.completed / status.total * 100) : 0} size="small" format={() => `${status?.completed || 0}/${status?.total || 0}`}/></div>
-        <Button aria-label={`查看${agent.name}详情`} onClick={() => setMonitor(agent)}>查看记录</Button>
-      </article>;
-    })}</div></section>
-    {monitor && <AgentMonitor data={data} agent={monitor} onClose={() => setMonitor(null)}/>}
   </div>;
 }
 
@@ -902,7 +916,6 @@ function MatrixView({ data, onRefresh, onNavigate, onGeneratePlan, selectedAccou
       {!saved&&<div className="mt-5 flex justify-end"><Button type="primary" htmlType="button" onClick={onGeneratePlan} className="ls-brand-action !h-auto min-h-9 !whitespace-normal inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 text-xs font-semibold text-white"><CalendarRange size={14}/>生成周计划并应用矩阵</Button></div>}
       {saved&&!saved.matrixPlan?.length&&defaultRows.length>0&&editable&&<div className="mt-5 flex justify-end"><Button htmlType="button" disabled={saving} onClick={() => void save({ ...saved, matrixPlan: defaultRows })} className="!h-auto min-h-9 !whitespace-normal inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 text-xs font-semibold text-white disabled:opacity-50"><LayoutGrid size={14}/>应用默认矩阵</Button></div>}
     </section>
-    <ContentGenerationProgress data={data} selectedAccountId={selectedAccountId} onOpenContent={onOpenContent} onOpenProductionProgress={onOpenProductionProgress} onRetryTask={onRetryTask}/>
     <section aria-labelledby="account-monitor-title" className="overflow-hidden rounded-lg border border-border bg-white">
       <header className="border-b border-border px-5 py-4"><h2 id="account-monitor-title" className="text-lg font-semibold">账号监控</h2></header>
       <AccountActivity embedded/>
@@ -1013,6 +1026,9 @@ type AccountContentPerformanceRow = {
   title: string;
   subject: string;
   accountId: string;
+  platform: Platform | null;
+  productName: string;
+  tags: string[];
   views: number;
   likes: number | null;
   comments: number | null;
@@ -1048,11 +1064,14 @@ function AccountContentPerformanceDetail({ data, display, selectedAccountId, pla
   };
   const liveRows: AccountContentPerformanceRow[] = (performance?.contents || [])
     .filter(item => (!selectedAccountId || item.accountId === selectedAccountId) && matchesPlatform(item.platform) && matchesDate(item.publishedAt) && item.metrics.views !== null)
-    .map(item => ({
+    .map((item, index) => ({
       id: item.id,
-      title: item.title,
+      title: engagingContentTitle(item.title, index),
       subject: `${item.accountTitle} · 真实账号回传`,
       accountId: item.accountId,
+      platform: item.platform,
+      productName: "",
+      tags: [],
       views: item.metrics.views || 0,
       likes: item.metrics.likes,
       comments: item.metrics.comments,
@@ -1065,6 +1084,9 @@ function AccountContentPerformanceDetail({ data, display, selectedAccountId, pla
       title: card.title,
       subject: `${card.subject} · 经营交付记录`,
       accountId: "",
+      platform: deliveryPlatform(card),
+      productName: "",
+      tags: [],
       views: deliveryMetric(card, /播放|浏览|view/i) || 0,
       likes: null,
       comments: null,
@@ -1077,6 +1099,9 @@ function AccountContentPerformanceDetail({ data, display, selectedAccountId, pla
       title: item.title,
       subject: `${item.accountLabel} · 本周计划`,
       accountId: item.accountId,
+      platform: item.platform,
+      productName: item.productName,
+      tags: item.tags,
       views: item.metrics.views,
       likes: item.metrics.likes,
       comments: item.metrics.comments,
@@ -1093,7 +1118,7 @@ function AccountContentPerformanceDetail({ data, display, selectedAccountId, pla
     </header>
     {(error || unavailableCount > 0) && <div className="px-5 pt-5"><Alert type="warning" showIcon title={error || `${unavailableCount} 个账号暂时无法同步；已保留其他账号的真实数据。`} action={<Button onClick={() => onNavigate?.("accountManagement")}>检查账号授权</Button>}/></div>}
     <div className="p-5"><Table<AccountContentPerformanceRow> rowKey="id" dataSource={rows} loading={loading && !rows.length} pagination={{ pageSize: 8, showSizeChanger: false, showTotal: total => `共 ${total} 条` }} columns={[
-      { title: "内容", key: "content", render: (_, item) => <div><p className="font-medium">{item.title}</p><p className="mt-1 text-xs text-text-secondary">{item.subject}</p><div className="mt-1"><PlanDataSourceBadge source={item.source}/></div></div> },
+      { title: "内容", key: "content", render: (_, item) => <div><p className="font-medium">{item.title}</p>{item.productName && <p className="mt-1 text-xs text-text-secondary">产品：{item.productName}</p>}{item.tags.length > 0 && <div className="mt-1 flex flex-wrap gap-1">{item.tags.slice(0, 6).map(tag => <span key={tag} className="text-xs font-medium text-accent">#{tag}</span>)}</div>}<p className="mt-1 flex items-center gap-1 text-xs text-text-secondary">{item.platform && <SocialPlatformIcon platform={item.platform} size={14}/>}<span>{item.platform ? `${platformLabels[item.platform]} · ` : ""}{item.subject}</span></p><div className="mt-1"><PlanDataSourceBadge source={item.source}/></div></div> },
       { title: "播放量", dataIndex: "views", align: "right", sorter: (a, b) => a.views - b.views, defaultSortOrder: "descend", render: value => metricValue(value) },
       { title: "点赞", dataIndex: "likes", align: "right", responsive: ["md"], sorter: (a, b) => (a.likes ?? -1) - (b.likes ?? -1), render: value => metricValue(value) },
       { title: "评论", dataIndex: "comments", align: "right", responsive: ["md"], sorter: (a, b) => (a.comments ?? -1) - (b.comments ?? -1), render: value => metricValue(value) },
@@ -1160,13 +1185,12 @@ function QueueView({ data, onRefresh, onNavigate, onGenerateDetails, selectedAcc
   const durations = [...stageDurations].slice(0, 10);
   const statusLabels: Record<ContentQueueItem["status"], string> = { planned: "未开始", queued: "排队中", producing: "制作中", waiting_review: "待验收", completed: "已完成", blocked: "需要处理" };
   return <div className="space-y-5">
-    <header className="flex flex-wrap items-center justify-between gap-4"><div className="flex flex-wrap items-center gap-2"><h2 className="text-xl font-semibold">内容队列</h2>{cycleStart && cycleEnd && <Tag>{cycleStart} — {cycleEnd}</Tag>}<Tag>{display.totals.versionCount} 条本周视频</Tag></div>{onRefresh && <Button onClick={onRefresh} icon={<RefreshCcw size={15}/>}>刷新</Button>}</header>
     <div className="grid rounded-lg border border-border bg-white sm:grid-cols-2 xl:grid-cols-4">{[
       { label: "视频播放量", value: metricValue(display.totals.views), demo: display.totals.performanceSource === "demo" },
       { label: "互动总数", value: metricValue(display.totals.interactions), demo: display.totals.performanceSource === "demo" },
       { label: "已发布视频", value: display.totals.publishedCount, demo: false },
       { label: "本周计划视频", value: display.totals.versionCount, demo: false },
-    ].map(metric => <div key={metric.label} className="border-border p-5 sm:border-r last:border-0"><Statistic title={<span>{metric.label} {metric.demo && <Tag>演示数据</Tag>}</span>} value={metric.value}/></div>)}</div>
+    ].map(metric => <div key={metric.label} className="border-border p-5 sm:border-r last:border-0"><Statistic title={metric.label} value={metric.value}/></div>)}</div>
     <div className="flex flex-wrap items-center gap-3">
       <Segmented aria-label="内容时间周期" value={periodFilter} onChange={value => setPeriodFilter(value as typeof periodFilter)} options={[{ value: "current", label: "本周期" }, { value: "previous", label: "上周期" }, { value: "30d", label: "近 30 天" }, { value: "all", label: "全部" }]}/>
       <Select aria-label="内容平台" value={platformFilter} onChange={setPlatformFilter} className="min-w-40" options={[{ value: "all", label: "全部平台" }, ...platformOptions.map(platform => ({ value: platform, label: platformLabels[platform] }))]}/>
@@ -1176,7 +1200,7 @@ function QueueView({ data, onRefresh, onNavigate, onGenerateDetails, selectedAcc
     <LsDataChart title="平均制作工期" description="单位：分钟；仅统计同时存在真实开始与完成时间的节点，不使用预计用时补齐。" kind="bar" horizontal labels={durations.map(([label]) => label)} series={[{ label: "平均实际工期", values: durations.map(([, values]) => Math.round(values.reduce((sum, value) => sum + value, 0) / values.length * 10) / 10) }]} unit="分钟" height={240}/>
     <section className="rounded-lg border border-border bg-white p-5"><h2 className="mb-4 text-lg font-semibold">内容明细与热度</h2>
       <Table<UnifiedPlanContent> rowKey="id" dataSource={filteredItems} pagination={{ pageSize: 8, showSizeChanger: false, showTotal: total => `共 ${total} 条` }} columns={[
-        { title: "内容", key: "title", render: (_, item) => <div><Button type="link" className="!h-auto !whitespace-normal !p-0 !text-left" onClick={() => item.queueItem ? onOpenProductionProgress?.(item.queueItem.taskId, item.queueItem.id) : onNavigate?.("socialInspiration")}>{item.title}</Button><p className="mt-1 flex items-center gap-1 text-xs text-text-secondary"><SocialPlatformIcon platform={item.platform} size={14}/>{item.accountLabel}</p><p className="mt-1 text-xs text-text-secondary sm:hidden">{statusLabels[item.status]} · {item.plannedPublishDate || "待排期"}</p></div> },
+        { title: "内容", key: "title", render: (_, item) => <div><Button type="link" className="!h-auto !whitespace-normal !p-0 !text-left" onClick={() => item.queueItem ? onOpenProductionProgress?.(item.queueItem.taskId, item.queueItem.id) : onNavigate?.("socialInspiration")}>{item.title}</Button><p className="mt-1 text-xs text-text-secondary">产品：{item.productName}</p>{item.tags.length > 0 && <div className="mt-1 flex flex-wrap gap-1">{item.tags.slice(0, 6).map(tag => <span key={tag} className="text-xs font-medium text-accent">#{tag}</span>)}</div>}<p className="mt-1 flex items-center gap-1 text-xs text-text-secondary"><SocialPlatformIcon platform={item.platform} size={14}/><span>{platformLabels[item.platform]} · {item.accountLabel}</span></p><p className="mt-1 text-xs text-text-secondary sm:hidden">{statusLabels[item.status]} · {item.plannedPublishDate || "待排期"}</p></div> },
         { title: "状态", dataIndex: "status", responsive: ["sm"], render: (status: ContentQueueItem["status"]) => <Tag color={status === "blocked" ? "error" : status === "completed" ? "success" : status === "waiting_review" ? "warning" : "default"}>{statusLabels[status]}</Tag> },
         { title: "发布日期", dataIndex: "plannedPublishDate", responsive: ["lg"], sorter: (a, b) => a.plannedPublishDate.localeCompare(b.plannedPublishDate) },
         { title: "播放量", key: "views", align: "right", sorter: (a, b) => a.metrics.views - b.metrics.views, render: (_, item) => <div>{metricValue(item.metrics.views)}<div className="mt-1"><PlanDataSourceBadge source={item.metrics.source}/></div></div> },
@@ -1184,7 +1208,6 @@ function QueueView({ data, onRefresh, onNavigate, onGenerateDetails, selectedAcc
       ]}/>
     </section>
     <AccountContentPerformanceDetail data={data} display={display} selectedAccountId={selectedAccountId} platform={platformFilter} startsAt={start} endsAt={end} onNavigate={onNavigate}/>
-    <ContentGenerationProgress data={data} selectedAccountId={selectedAccountId} onOpenContent={onOpenContent} onOpenProductionProgress={onOpenProductionProgress} onRetryTask={onRetryTask}/>
   </div>;
 }
 
@@ -1350,10 +1373,10 @@ function ReviewView({ data, selectedAccountId = "", onNavigate }: { data: Digita
   const demoRecommendations: NextRoundRecommendations = {
     contentInheritance: {
       status: "ready", sourceContentId: demoContent?.contentId || "demo", title: demoContent?.title || "本周首条产品视频", platform: demoContent?.platform || platform,
-      hook: "演示：前三秒直接呈现买家问题与产品证据", framework: ["买家问题", "产品证据", "行动引导"], tags: demoTags, sourceUrl: "",
+      hook: "参考结构：前三秒直接呈现买家问题与产品证据", framework: ["买家问题", "产品证据", "行动引导"], tags: demoTags, sourceUrl: "",
       thumbnailUrl: demoContent?.queueItem?.preproduction?.benchmark.thumbnailUrl || "",
-      reason: "演示复盘：该内容在示例数据中的播放与互动综合得分最高；真实回传后将自动替换。",
-      paidBoost: { status: "not_enough_data", reason: "演示数据不能触发追加投放，需等待真实播放、互动或询盘回流。" },
+      reason: "参考复盘：该内容在当前预览中的播放与互动综合得分最高；真实回传后将自动替换。",
+      paidBoost: { status: "not_enough_data", reason: "参考预览不能触发追加投放，需等待真实播放、互动或询盘回流。" },
       systemActions: ["把示例高表现结构带入下一轮候选", "真实数据回流后重新排序", "不自动消耗投放预算"],
     },
     tagAdaptation: {
@@ -1370,7 +1393,7 @@ function ReviewView({ data, selectedAccountId = "", onNavigate }: { data: Digita
   } : {
     completionRate: demoCompleted / demoTotal * 100, automationRate: 78, approvalRate: 86, handoffRate: 75,
     completedTasks: demoCompleted, totalTasks: demoTotal, failedTasks: 1,
-    highlights: ["演示数据，仅用于页面预览"], nextGoalSuggestion: "等待真实复盘后生成", knowledgeCandidates: [],
+    highlights: ["参考预览，仅用于页面布局确认"], nextGoalSuggestion: "等待真实复盘后生成", knowledgeCandidates: [],
     nextRoundRecommendations: demoRecommendations,
   };
 
@@ -1383,13 +1406,13 @@ function ReviewView({ data, selectedAccountId = "", onNavigate }: { data: Digita
   return <div className="space-y-5">
     <header className="flex flex-wrap items-center justify-between gap-4"><div className="flex flex-wrap items-center gap-2"><h2 className="text-xl font-semibold">数据复盘</h2><Tag>{display.totals.accountCount} 个账号</Tag><Tag>{display.totals.versionCount} 条本周视频</Tag><Tag>同步 {dateLabel(performance?.loadedAt)}</Tag></div><Button loading={performanceBusy} icon={<RefreshCcw size={15}/>} onClick={() => void refreshPerformance()}>同步账号数据</Button></header>
     <section className="rounded-lg border border-border bg-white">
-      <div className="flex items-center justify-between border-b border-border px-5 py-3"><h3 className="font-semibold">计划完成与业务回流</h3><Tag color={useDemoReview ? "default" : "success"}>{useDemoReview ? "演示复盘" : "真实复盘"}</Tag></div>
+      <div className="flex items-center justify-between border-b border-border px-5 py-3"><h3 className="font-semibold">计划完成与业务回流</h3><Tag color={useDemoReview ? "default" : "success"}>{useDemoReview ? "参考预览" : "真实复盘"}</Tag></div>
       <div className="grid sm:grid-cols-2 xl:grid-cols-4">{[
         { label: "完成率", value: useDemoReview ? `${Math.round(recommendationSummary.completionRate)}%` : `${Math.round(reviewSummary?.completionRate || 0)}%`, demo: useDemoReview },
         { label: "周计划内容", value: `${display.totals.completedCount}/${display.totals.versionCount}`, demo: false },
         { label: "阻塞项", value: liveReview?.blockedTasks.length ?? reviewSummary?.failedTasks ?? "—", demo: false },
         { label: "已结算制作费", value: settledReviewItems.length ? `¥${settledReviewCost.toFixed(2)}` : "待回传", demo: false },
-      ].map(item => <div key={item.label} className="border-border p-5 sm:border-r last:border-r-0"><Statistic title={<span>{item.label} {item.demo && <Tag>演示数据</Tag>}</span>} value={item.value}/></div>)}</div>
+      ].map(item => <div key={item.label} className="border-border p-5 sm:border-r last:border-r-0"><Statistic title={item.label} value={item.value}/></div>)}</div>
     </section>
     {(performanceError || performance?.unavailable.length) ? <Alert type="warning" showIcon title={performanceError || `${performance?.unavailable.length} 个账号暂时无法同步；已保留其他账号的真实数据。`} action={<Button onClick={() => onNavigate?.("accountManagement")}>检查账号授权</Button>}/> : null}
     {liveReview?.dataGaps.length ? <Alert type="info" showIcon title="数据尚未完整" description={liveReview.dataGaps.slice(0, 3).join("；")}/> : null}
@@ -1400,10 +1423,10 @@ function ReviewView({ data, selectedAccountId = "", onNavigate }: { data: Digita
     <LsDataChart title="询盘趋势" description="单位：条；当前快照只提供周期询盘汇总，待接入日级询盘来源后展示趋势。" kind="line" labels={[]} series={[{ label: "每日询盘", values: [] }]} unit="条" height={220}/>
     <Tabs aria-label="复盘平台" activeKey={platform} onChange={value => setPlatform(value as Platform)} items={platformOptions.map(item => ({ key: item, label: <span className="inline-flex items-center gap-2"><SocialPlatformIcon platform={item} size={17}/>{platformLabels[item]}</span> }))}/>
     <div className="grid gap-5 xl:grid-cols-2">
-      <LsDataChart title="高播放内容 Top 10" description={`${platformLabels[platform]} · 单位：次；按已回传累计播放量排序。演示值仅用于预览，不进入正式决策。`} kind="bar" horizontal labels={chartRanking.slice(0, 10).map(item => item.title)} series={[{ label: "播放量", values: chartRanking.slice(0, 10).map(item => item.views) }]} demo={chartRanking.length > 0 && chartRanking.every(item => item.source === "demo")} loading={performanceBusy && !chartRanking.length} unit="次"/>
-      <LsDataChart title="制作成本与播放结果" description="横轴：已结算制作费（元）；纵轴：真实累计播放（次）。仅展示同时存在费用回执与平台回传的内容，不使用演示费用。" kind="scatter" labels={costResults.map(item => item.title)} xValues={costResults.map(item => item.cost)} xUnit="元" series={[{ label: "已结算内容", values: costResults.map(item => item.views) }]} unit="次"/>
+      <LsDataChart title="高播放内容 Top 10" description={`${platformLabels[platform]} · 单位：次；按已回传累计播放量排序。参考估算仅用于预览，不进入正式决策。`} kind="bar" horizontal labels={chartRanking.slice(0, 10).map(item => item.title)} series={[{ label: "播放量", values: chartRanking.slice(0, 10).map(item => item.views) }]} demo={chartRanking.length > 0 && chartRanking.every(item => item.source === "demo")} loading={performanceBusy && !chartRanking.length} unit="次"/>
+      <LsDataChart title="制作成本与播放结果" description="横轴：已结算制作费（元）；纵轴：真实累计播放（次）。仅展示同时存在费用回执与平台回传的内容，不使用估算费用。" kind="scatter" labels={costResults.map(item => item.title)} xValues={costResults.map(item => item.cost)} xUnit="元" series={[{ label: "已结算内容", values: costResults.map(item => item.views) }]} unit="次"/>
     </div>
-    <NextRoundRecommendationsSection summary={recommendationSummary} demo={useDemoReview} onOpen={(page) => onNavigate?.(page as Page)}/>
+    <NextRoundRecommendationsSection summary={recommendationSummary} onOpen={(page) => onNavigate?.(page as Page)}/>
   </div>;
 }
 

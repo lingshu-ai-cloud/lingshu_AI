@@ -168,11 +168,11 @@ test('line chart preserves zero and missing-value gaps in graph, table and CSV',
 
 test('demonstration data is labeled in the view, accessible canvas and downloaded CSV', async () => {
   const h = harness({ ...base, demo: true }); await h.mount();
-  assert.equal(text(find(h.tree, 'Tag')), '演示数据');
-  assert.ok(find(h.tree, 'canvas').props['aria-label'].startsWith('演示数据。'));
-  assert.equal(text(find(h.tree, 'Button')), '下载 CSV（演示数据）');
+  assert.equal(text(find(h.tree, 'Tag')), '参考预览');
+  assert.ok(find(h.tree, 'canvas').props['aria-label'].startsWith('参考预览。'));
+  assert.equal(text(find(h.tree, 'Button')), '下载 CSV（参考预览）');
   const csv = await download(h);
-  assert.equal(csv[0][0], '演示数据 · 日期/对象'); assert.equal(h.downloads[0].filename, '演示数据-指标趋势.csv');
+  assert.equal(csv[0][0], '参考预览 · 日期/对象'); assert.equal(h.downloads[0].filename, '参考预览-指标趋势.csv');
   assert.deepEqual(Array.from(new Uint8Array(await h.downloads[0].blob.arrayBuffer()).slice(0, 3)), [239, 187, 191], 'Chinese CSV keeps its UTF-8 BOM');
   assert.equal(h.downloads[0].blob.type, 'text/csv;charset=utf-8');
   h.runTimers(); assert.deepEqual(h.revoked, [h.downloads[0].href], 'object URL is released after download');

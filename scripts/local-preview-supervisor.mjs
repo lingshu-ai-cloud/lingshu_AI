@@ -3,6 +3,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import fs from 'node:fs';
 import { execFileSync } from 'node:child_process';
+import os from 'node:os';
+import { randomBytes } from 'node:crypto';
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const runtimeRoot = path.resolve(process.env.LINGSHU_PREVIEW_ROOT || repositoryRoot);
@@ -15,6 +17,33 @@ const startupGraceMs = Number(process.env.LINGSHU_PREVIEW_STARTUP_GRACE_MS || 12
 const healthCheckTimeoutMs = Number(process.env.LINGSHU_PREVIEW_HEALTH_TIMEOUT_MS || 20_000);
 const maxConsecutiveHealthFailures = Number(process.env.LINGSHU_PREVIEW_HEALTH_FAILURE_LIMIT || 5);
 const forceOptimizeDependencies = process.env.LINGSHU_PREVIEW_FORCE_OPTIMIZE === '1';
+
+function stableLocalAuthSecret() {
+  const configured = String(process.env.LOCAL_DEMO_TOKEN_SECRET || '').trim();
+  if (configured) return configured;
+  const secretFile = path.resolve(
+    process.env.LINGSHU_PREVIEW_AUTH_SECRET_FILE
+      || path.join(os.homedir(), '.lingshu-ai', 'local-preview-auth-secret'),
+  );
+  try {
+    const existing = fs.readFileSync(secretFile, 'utf8').trim();
+    if (existing.length >= 32) return existing;
+  } catch (error) {
+    if (!(error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT')) throw error;
+  }
+  const secret = randomBytes(48).toString('base64url');
+  fs.mkdirSync(path.dirname(secretFile), { recursive: true, mode: 0o700 });
+  const descriptor = fs.openSync(secretFile, 'wx', 0o600);
+  try {
+    fs.writeFileSync(descriptor, `${secret}\n`, 'utf8');
+    fs.fsyncSync(descriptor);
+  } finally {
+    fs.closeSync(descriptor);
+  }
+  return secret;
+}
+
+const localAuthSecret = stableLocalAuthSecret();
 
 function currentRevision() {
   try {
@@ -58,6 +87,11 @@ const services = [
       // queue/scheduler migration makes a split local worker safe.
       PROCESS_ROLE: 'all',
       ENABLE_LOCAL_DEV_FALLBACK: 'true',
+      // Local preview sessions must survive backend hot restarts. The server's
+      // secure default is intentionally process-ephemeral, so the supervisor
+      // supplies a private, machine-local secret only for this dev service.
+      LOCAL_DEMO_TOKEN_SECRET: localAuthSecret,
+      LOCAL_DEMO_TOKEN_TTL_SECONDS: '86400',
     },
     // Health monitoring must stay cheap and independent of business data.
     // Business queries can be temporarily slow while background jobs are busy;

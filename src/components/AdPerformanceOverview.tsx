@@ -107,6 +107,6 @@ export default function AdPerformanceOverview({ tasks, loading, onOpen }: { task
     <section className="ads-card"><h2>报告来源与核对</h2><p className="ads-muted">保留平台原始报告口径，与上方日期筛选小计分开显示。未建立跨计划资源去重口径；请勿将重复映射的计划合计当作账户总账。</p><div className="ad-table-scroll"><table><thead><tr><th>计划</th><th>来源 / 状态</th><th>报告窗口</th><th>原报告花费</th><th>更新时间</th></tr></thead><tbody>{scopedEntries.map(e => <tr key={e.id}><td><button className="ads-text-button" onClick={() => onOpen(e.id)}>{e.name}</button></td><td>{isForeignTradeMockId(e.id) ? '本地演示快照' : e.error ? `读取失败：${e.error}` : e.report?.stale || e.report?.source === 'provider_snapshot' ? '历史快照 · 非实时' : e.report?.source === 'provider' ? '平台报告' : e.report?.reason || '数据未就绪'}</td><td>{e.report?.window ? `${e.report.window.since} — ${e.report.window.until}` : '—'}</td><td>{e.report?.currency || e.currency} {format(e.report?.spend ?? null, 2)}</td><td>{e.report?.reportedAt ? new Date(e.report.reportedAt).toLocaleString('zh-CN') : '—'}</td></tr>)}</tbody></table></div></section>
     {tasks.some(task => !isForeignTradeMockId(task.id))
       ? <AdMetricHistoryPanel tasks={tasks.filter(task => !isForeignTradeMockId(task.id))} />
-      : <section className="ads-card"><h2>投放绩效历史表</h2><p className="ads-muted">当前为本地外贸工厂演示数据。连接真实广告账户后，这里会按广告资源展示可核验的逐日历史指标。</p></section>}
+      : <section className="ads-card"><h2>投放绩效历史表</h2><p className="ads-muted">当前为本地外贸工厂参考预览。连接真实广告账户后，这里会按广告资源展示可核验的逐日历史指标。</p></section>}
   </div>;
 }

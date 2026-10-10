@@ -1,4 +1,5 @@
 import { ArrowRight, ArrowUpRight, Hash, ImageOff, Radar, RefreshCw, ShieldCheck } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
 import type { BusinessDestination, WeeklyReviewSummary } from '../lib/digitalEmployees';
 import { buildNextRoundRecommendationCards, type NextRoundRecommendationCard, type NextRoundRecommendationKind } from '../lib/nextRoundRecommendations';
 
@@ -11,9 +12,19 @@ const tagTone = {
   published: 'border-blue-200 bg-blue-50 text-blue-700',
 };
 
+function CoverImage({ sources, alt }: { sources: Array<string | undefined>; alt: string }) {
+  const candidates = useMemo(() => [...new Set(sources.map(value => String(value || '').trim()).filter(Boolean))], [sources.join('|')]);
+  const [index, setIndex] = useState(0);
+  useEffect(() => setIndex(0), [candidates.join('|')]);
+  const src = candidates[index];
+  return src
+    ? <img src={src} alt={alt} loading="lazy" className="h-full w-full object-cover" onError={() => setIndex(current => current + 1)}/>
+    : <span className="grid h-full w-full place-items-center bg-gradient-to-br from-blue-100 via-violet-50 to-pink-100 text-zinc-400"><ImageOff size={28}/></span>;
+}
+
 function ContentInheritanceVisual({ card }: { card: NextRoundRecommendationCard }) {
   const media = <div className="relative aspect-video overflow-hidden rounded-lg bg-gradient-to-br from-blue-100 via-violet-50 to-pink-100">
-    {card.thumbnailUrl ? <img src={card.thumbnailUrl} alt={card.conclusion} className="h-full w-full object-cover"/> : <span className="grid h-full place-items-center text-zinc-400"><ImageOff size={28}/></span>}
+    <CoverImage sources={[card.thumbnailUrl, card.sourceContentId ? `/api/overseas/videos/${encodeURIComponent(card.sourceContentId)}/thumbnail` : undefined]} alt={card.conclusion}/>
     <span className="absolute left-2 top-2 rounded-full bg-black/65 px-2 py-1 text-[10px] font-semibold text-white">{card.links[0]?.meta || '本期优秀内容'}</span>
     <span className="absolute inset-x-0 bottom-0 line-clamp-2 bg-gradient-to-t from-black/80 to-transparent px-3 pb-3 pt-10 text-xs font-semibold leading-5 text-white">{card.conclusion}</span>
   </div>;
@@ -36,14 +47,14 @@ function TrendVisual({ card }: { card: NextRoundRecommendationCard }) {
   return <div className="space-y-3">
     <div className="rounded-lg border border-violet-100 bg-violet-50/70 p-3"><p className="text-[10px] font-semibold text-violet-700">行业变化</p><p className="mt-1 text-sm font-bold leading-5 text-text-primary">{card.changeSummary}</p></div>
     {card.sellingPoints?.length ? <div><p className="mb-2 text-[10px] font-semibold text-text-muted">本轮信号集中卖点</p><div className="flex flex-wrap gap-1.5">{card.sellingPoints.map(point => <span key={point} className="rounded-full bg-gradient-to-r from-blue-600 to-violet-600 px-2.5 py-1.5 text-[10px] font-semibold text-white">{point}</span>)}</div></div> : null}
-    <div className="space-y-2">{card.signals?.length ? card.signals.map(signal => <a key={signal.id} href={signal.sourceUrl || undefined} target="_blank" rel="noreferrer noopener" className="grid min-w-0 grid-cols-[64px_minmax(0,1fr)_16px] items-center gap-3 rounded-lg border border-border p-2.5 transition hover:border-blue-300 hover:bg-blue-50/30"><span className="flex aspect-video items-center justify-center overflow-hidden rounded-md bg-zinc-100">{signal.thumbnailUrl ? <img src={signal.thumbnailUrl} alt="" className="h-full w-full object-cover"/> : <Radar size={18} className="text-blue-500"/>}</span><span className="min-w-0"><strong className="line-clamp-2 text-xs leading-5 text-text-primary">{signal.title}</strong><span className="mt-0.5 block truncate text-[10px] text-text-muted">{signal.platform || '社媒'} · {signal.summary}</span></span><ArrowUpRight size={14} className="text-text-muted"/></a>) : <div className="rounded-lg border border-dashed border-zinc-200 p-4 text-center text-xs text-text-muted">等待可追溯行业信号</div>}</div>
+    <div className="space-y-2">{card.signals?.length ? card.signals.map(signal => <a key={signal.id} href={signal.sourceUrl || undefined} target="_blank" rel="noreferrer noopener" className="grid min-w-0 grid-cols-[64px_minmax(0,1fr)_16px] items-center gap-3 rounded-lg border border-border p-2.5 transition hover:border-blue-300 hover:bg-blue-50/30"><span className="flex aspect-video items-center justify-center overflow-hidden rounded-md bg-zinc-100"><CoverImage sources={[signal.thumbnailUrl, signal.id ? `/api/overseas/videos/${encodeURIComponent(signal.id)}/thumbnail` : undefined]} alt={signal.title}/></span><span className="min-w-0"><strong className="line-clamp-2 text-xs leading-5 text-text-primary">{signal.title}</strong><span className="mt-0.5 block truncate text-[10px] text-text-muted">{signal.platform || '社媒'} · {signal.summary}</span></span><ArrowUpRight size={14} className="text-text-muted"/></a>) : <div className="rounded-lg border border-dashed border-zinc-200 p-4 text-center text-xs text-text-muted">等待可追溯行业信号</div>}</div>
   </div>;
 }
 
-export default function NextRoundRecommendationsSection({ summary, onOpen, demo = false }: { summary?: WeeklyReviewSummary; onOpen: (page: BusinessDestination, view?: 'create' | 'publish') => void; demo?: boolean }) {
+export default function NextRoundRecommendationsSection({ summary, onOpen }: { summary?: WeeklyReviewSummary; onOpen: (page: BusinessDestination, view?: 'create' | 'publish') => void }) {
   const cards = buildNextRoundRecommendationCards(summary);
   return <section aria-label="下一轮建议" className="rounded-xl border border-border bg-white p-5 sm:p-6">
-    <div className="mb-5 flex flex-wrap items-center justify-between gap-3"><h2 className="text-xl font-bold text-text-primary">下一轮建议</h2>{demo && <span className="rounded-full bg-violet-50 px-3 py-1.5 text-[11px] font-semibold text-violet-700">演示复盘 · 不写入经营决策</span>}</div>
+    <div className="mb-5 flex flex-wrap items-center justify-between gap-3"><h2 className="text-xl font-bold text-text-primary">下一轮建议</h2></div>
     <div className="grid gap-4 lg:grid-cols-3">{cards.map(card => {
       const Icon = icons[card.kind];
       const target = card.kind === 'inherit' ? 'smartAssets' : 'socialInspiration';

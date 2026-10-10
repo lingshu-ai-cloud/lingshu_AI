@@ -308,11 +308,11 @@ export default function AgentWeeklyCalendar({
         <h3 className="ls-type-title-large text-text-primary">{demo ? 'B2B 零基础 · 首周任务日历' : 'Agent 周任务日历'}</h3>
         <div className="flex flex-wrap gap-2">{Object.entries(agentLabels).map(([agent, label]) => <Tag key={agent}>{label}</Tag>)}</div>
       </div>
-      <p className="mt-1 text-xs text-text-secondary">{demo ? '演示数据会持续标记；真实任务以执行回执为准。' : `${tasks.length} 项真实交付 · ${calendarDurationLabel(tasks)}`}</p>
+      <p className="mt-1 text-xs text-text-secondary">{demo ? '参考预览会持续标记；真实任务以执行回执为准。' : `${tasks.length} 项真实交付 · ${calendarDurationLabel(tasks)}`}</p>
     </div>
     {!demo && tasks.length === 0 && <Alert className="m-4" type="info" showIcon title="尚无 Agent 执行排期" description="发布计划不会自动视为制作任务；生成执行排期后将在此显示。"/>}
     {pendingReferences.length > 0 && <Alert className="m-4" type="error" showIcon title={`当前待处理 · ${pendingReferences.length} 项原任务（按各任务冻结时区）`} description={<div><p>引用原任务，原计划卡保留；不计为新增交付。</p><p className="mt-1">{pendingReferences.map(task => `${task.title} · 原计划 ${task.date} · 逾期 ${calendarOverdueDuration(task, now)}`).join('；')}</p></div>}/>}
-    {demo && <Alert className="m-4" type="warning" showIcon title="演示排期" description="任务、工时与执行状态为演示数据，异常副链路仅用于验收。"/>}
+    {demo && <Alert className="m-4" type="warning" showIcon title="参考排期" description="任务、工时与执行状态为参考预览，异常副链路仅用于验收。"/>}
     <ul className="sr-only">{events.map(event => {
       const task = event.data as AgentCalendarTask;
       return <li key={event.id}>{event.title} · {event.statusLabel}{task.affectedPublicationIds?.length ? ` · 受影响发布 ${task.affectedPublicationIds.join('、')}` : ''}</li>;

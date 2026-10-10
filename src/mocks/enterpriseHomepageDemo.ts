@@ -42,7 +42,7 @@ export interface EnterpriseHomepageDemoAccount {
 
 export interface EnterpriseHomepageDemoDataset {
   synthetic: true;
-  label: '企业资料演示数据';
+  label: '企业资料参考预览';
   notice: string;
   companyName: string;
   industry: string;
@@ -133,7 +133,7 @@ function demoCustomer(input: {
       createdAt: isoDaysAgo(input.daysAgo).slice(0, 10),
       items: [{ name: input.product, qty: input.index + 1 }],
     }] : [],
-    tags: ['演示数据', input.market, input.product],
+    tags: ['参考预览', input.market, input.product],
     summary: `${input.market} 的${input.targetProfile || '潜在买家'}正在评估 ${input.product}，当前处于${stageLabel[input.stage]}阶段。`,
     nextStep: input.stage === 'quoted' || input.stage === 'won'
       ? '由人工核对价格、交期和承诺后再推进'
@@ -233,7 +233,7 @@ export function createEnterpriseHomepageDemo(profile: EnterpriseHomepageProfile)
   }));
   return {
     synthetic: true,
-    label: '企业资料演示数据',
+    label: '企业资料参考预览',
     notice: `以下客户、账号、订单和经营指标均为基于「${companyName}」企业资料生成的产品演示，不代表真实经营结果。`,
     companyName,
     industry,
