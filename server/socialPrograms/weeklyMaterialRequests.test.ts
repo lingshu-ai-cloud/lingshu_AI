@@ -156,3 +156,35 @@ test('actual factory task graph requires shared human preparation before script 
  await assert.rejects(f.service.create({...input,dueAt:new Date(start+60000).toISOString(),verificationDueAt:new Date(start+120000).toISOString()}),{code:'weekly_material_deadline_after_first_production'});
  const request=await f.service.create({...input,dueAt:new Date(start-3600000).toISOString(),verificationDueAt:new Date(start-1800000).toISOString()});assert.equal(request.preparation?.earliestRequiredAt,script.schedule.estimatedStartAt);assert.deepEqual(request.consumers.map(c=>c.taskId),[consumer.taskId]);const after=await listWeeklyExecutionTasks(f.store,'tenant',program.programId,pkg.packageId,pkg.version);assert.deepEqual(after,tasks,'human preparation must not rewrite dependencies, statuses or completion evidence');
 });
+
+test('five structured consumers share one upload and are automatically accepted without human review',async()=>{
+ const f=fixture();const assetRequirement={subjectRef:'product-1',action:'front',scene:'studio',evidenceRequirement:'product_identity',aspectRatio:'9:16',minimumDurationSeconds:0,authorizationScope:'enterprise-video'};
+ const consumers=[];for(let i=0;i<5;i++){const taskId=`consumer-${i}`;await f.seed(taskId);consumers.push({taskId,packageId:'week1',packageVersion:1,requirement:'产品正面',assetRequirement});}
+ const service=createWeeklyMaterialRequestService(f.store,{...f.ports,automaticEvidence:async()=>({...assetRequirement,sha256:f.hash,durationSeconds:0,authorizationScopes:['enterprise-video'],rightsEvidenceRef:'enterprise-consent',qualityPassed:true,model:'controlled-actual-check'})});
+ const request=await service.create({...f.input,consumers});
+ const result=await service.submit({tenantId:'tenant',programId:'program',requestId:request.requestId,actorUserId:'uploader',materialRecordIds:['material0000001'],expectedSubmissionVersion:0});
+ assert.equal(result.status,'accepted');assert.equal(result.submissions[0]!.verification!.reviewedBy,'content_agent');assert.equal(materialRequestAcceptedConsumers(result).length,5);
+ assert.equal((await f.store.list(WEEKLY_MATERIAL_REQUESTS)).totalItems,1);assert.equal(f.fetched.length,2,'submission and automatic check both revalidate actual bytes');
+});
+test('structured sharing rejects a different product or authorization and missing automatic evidence becomes exception',async()=>{
+ const f=fixture();await f.seed('one');await f.seed('two');
+ const assetRequirement={subjectRef:'product-1',action:'front',scene:'studio',evidenceRequirement:'product_identity',aspectRatio:'9:16',minimumDurationSeconds:0,authorizationScope:'enterprise-video'};
+ const consumer={...f.input.consumers[0]!,assetRequirement};
+ await assert.rejects(f.service.create({...f.input,consumers:[consumer,{...consumer,taskId:'two',assetRequirement:{...assetRequirement,subjectRef:'product-2'}}]}),/共享素材/);
+ const request=await f.service.create({...f.input,consumers:[consumer]});
+ const result=await f.service.submit({tenantId:'tenant',programId:'program',requestId:request.requestId,actorUserId:'uploader',materialRecordIds:['material0000001'],expectedSubmissionVersion:0});
+ assert.equal(result.status,'rejected');assert.equal(result.submissions[0]!.verification!.reviewedBy,'content_agent');assert.deepEqual(materialRequestAcceptedConsumers(result),[]);
+});
+
+test('persisted byte-bound analysis drives automatic admission and fresh checking for a new consumer',async()=>{
+ const f=fixture();await f.seed('one');await f.seed('two');
+ const assetRequirement={subjectRef:'product-1',action:'front',scene:'studio',evidenceRequirement:'product_identity',aspectRatio:'9:16',minimumDurationSeconds:0,authorizationScope:'enterprise-video'};
+ f.raw.provenance={weeklyAutomaticMaterialEvidence:{...assetRequirement,sha256:f.hash,durationSeconds:0,authorizationScopes:['enterprise-video'],rightsEvidenceRef:'enterprise-consent',qualityPassed:true,model:'actual-vision-receipt'}};
+ const request=await f.service.create({...f.input,consumers:[{...f.input.consumers[0]!,assetRequirement}]});
+ const submitted=await f.service.submit({tenantId:'tenant',programId:'program',requestId:request.requestId,actorUserId:'uploader',materialRecordIds:['material0000001'],expectedSubmissionVersion:0});
+ assert.equal(submitted.status,'accepted');
+ const revised=await f.service.revise({tenantId:'tenant',programId:'program',requestId:request.requestId,actorUserId:'reviewer',reason:'同一素材增加第二消费者',addConsumers:[{taskId:'two',packageId:'week1',packageVersion:1,requirement:'同一正面',assetRequirement}]});
+ assert.equal(revised.status,'accepted');assert.deepEqual(materialRequestAcceptedConsumers(revised),['one','two']);assert.equal(revised.submissions.length,1);
+ const ready=await createWeeklyRequiredMaterialAdmission(f.store,f.ports)({tenantId:'tenant',programId:'program',consumerTaskId:'two',requirement:{required:true,requestIds:[request.requestId]}});
+ assert.equal(ready.status,'ready');assert.equal(ready.materials[0]!.sha256,f.hash);
+});

@@ -102,3 +102,14 @@ test('missing critical decision does not become cheap generic material, and inpu
   assert.equal(result.shots[0].productionRouting.route, 'undetermined');
   assert.equal(JSON.stringify(item), original);
 });
+
+test('actual Director hook and audiovisual sync evidence upgrade coarse noncritical shots to high fidelity', () => {
+  for (const flag of ['primaryHook', 'uniqueVisualMechanism', 'explicitAudioVisualSync'] as const) {
+    const item = shot('fast-cut', 'none', 'none');
+    item.criticalShot = { ...item.criticalShot!, [flag]: true };
+    const route = build([item]).shots[0].productionRouting;
+    assert.equal(route.route, 'aigc_video');
+    assert.equal(route.tier, 'high');
+    assert.equal(route.constraints.mustUseReferenceFrames, true);
+  }
+});

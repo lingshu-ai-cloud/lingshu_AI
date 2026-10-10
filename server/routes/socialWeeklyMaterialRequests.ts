@@ -1,3 +1,4 @@
+import {weeklyAssetRequirementIdentity,type WeeklyAssetRequirement} from '../../shared/weeklyAutomaticMaterial.js';
 import { Router, type ErrorRequestHandler, type RequestHandler } from 'express';
 import type { AuthLocals } from '../middleware/auth.js';
 import type { DataStore } from '../storage/datastore.js';
@@ -15,7 +16,7 @@ function required(value:unknown):string{if(typeof value!=='string'||!value.trim(
 function integer(value:unknown,min=0):number{if(typeof value!=='number'||!Number.isSafeInteger(value)||value<min)return invalid();return value;}
 function consumers(value:unknown):MaterialConsumer[]{
  if(!Array.isArray(value)||!value.length)return invalid();
- return value.map(item=>{const body=object(item,['taskId','packageId','packageVersion','requirement']);return {taskId:required(body.taskId),packageId:required(body.packageId),packageVersion:integer(body.packageVersion,1),requirement:required(body.requirement)};});
+ return value.map(item=>{const body=object(item,['taskId','packageId','packageVersion','requirement','assetRequirement']);let assetRequirement:WeeklyAssetRequirement|undefined;if(body.assetRequirement){const a=object(body.assetRequirement,['subjectRef','action','scene','evidenceRequirement','aspectRatio','minimumDurationSeconds','authorizationScope']);assetRequirement={subjectRef:required(a.subjectRef),action:required(a.action),scene:required(a.scene),evidenceRequirement:required(a.evidenceRequirement),aspectRatio:required(a.aspectRatio),minimumDurationSeconds:Number(a.minimumDurationSeconds),authorizationScope:required(a.authorizationScope)};try{weeklyAssetRequirementIdentity(assetRequirement);}catch{return invalid();}}return {taskId:required(body.taskId),packageId:required(body.packageId),packageVersion:integer(body.packageVersion,1),requirement:required(body.requirement),...(assetRequirement?{assetRequirement}:{})};});
 }
 const asyncRoute=(action:RequestHandler):RequestHandler=>(req,res,next)=>Promise.resolve(action(req,res,next)).catch(next);
 /** Mounted beneath an authenticated /:programId/material-requests parent. No upload server or client identity authority. */

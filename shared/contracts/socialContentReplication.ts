@@ -349,6 +349,7 @@ export interface SocialAssetSupplyShotPlan {
  * the system; only unconfirmed facts or rights may remain as customer actions.
  */
 export interface SocialAssetSupplyPlan {
+  inventoryAudit?: { scannedAt:string; records:Array<{id:string;sha256:string|null;mediaType:string;productRef:string|null;width:number|null;height:number|null;durationSeconds:number|null;rightsEvidenceRef:string|null;productionEligible:boolean;gaps:string[]}> };
   planVersion: string;
   creationMode: SocialContentCreationMode;
   /** Optional only on plans created before customer-selectable production routes. */

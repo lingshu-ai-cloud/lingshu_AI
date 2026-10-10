@@ -93,3 +93,20 @@ test('execution preserves the source reference requirement instead of submitting
       async execute() { calls++; throw new Error('must not submit'); } }] }), /reference_presenter_source_evidence_required/);
   assert.equal(calls, 0);
 });
+
+test('ordinary supporting shot with empty library automatically chooses generated video instead of asking a human',()=>{
+ const source=reference();source.referenceProductionRouting=buildReferenceShotProductionRouting({sourceSha256:'sha',shots:[{shotId:'reference-person',time:'0–3s',criticalShot:{classification:'non_critical'},presenterContinuityEvidence:{...source.presenterContinuityEvidence!,observedPresenterRole:'none',personPresence:'none',personContinuityId:null}}]}).shots[0].productionRouting;
+ const result=createSocialAssetSupplyPlan({creationMode:'viral_replication',referenceShots:[source],inventory:{},shots:[{shotId:'support',referenceShotId:'reference-person',function:'transition',requestedDescription:'环境过渡'}]});
+ assert.equal(result.shots[0]!.sourceStrategy,'non_evidentiary_ai_visual');assert.equal(result.shots[0]!.customerShootRequired,false);assert.equal(result.shots[0]!.fallbackSourceStrategy,null);
+});
+test('legacy spoken presenter still uses AIGC avatar instead of abundant factory stock',()=>{
+ const result=createSocialAssetSupplyPlan({creationMode:'viral_replication',accountPresenterLock:lock,inventory:{factoryEvidenceAssetIds:['generic-factory'],presenterAssetIds:['account-presenter']},shots:[{shotId:'presenter',function:'proof',truthSensitiveSubject:'customer_factory',requestedDescription:'人物口播介绍工厂'}]});
+ assert.equal(result.shots[0]!.sourceStrategy,'authorized_digital_presenter');assert.deepEqual(result.shots[0]!.sourceRefs,['account-presenter']);
+});
+
+test('library miss continues the same scoped execution through a generated-video adapter',async()=>{
+ const source=reference();source.referenceProductionRouting=buildReferenceShotProductionRouting({sourceSha256:'sha',shots:[{shotId:'reference-person',time:'0–3s',criticalShot:{classification:'non_critical'},presenterContinuityEvidence:{...source.presenterContinuityEvidence!,observedPresenterRole:'none',personPresence:'none',personContinuityId:null}}]}).shots[0].productionRouting;
+ const supplied=createSocialAssetSupplyPlan({creationMode:'viral_replication',referenceShots:[source],inventory:{},shots:[{shotId:'scene-person',referenceShotId:'reference-person',function:'transition',requestedDescription:'环境过渡'}]});
+ let calls=0;const result=await executeSocialAssetSupplyPlan({tenantId:'tenant',taskId:'task',outputDirectory:'/tmp',plan:supplied,baseline,availableAssets:[],adapters:[{adapterId:'controlled-video',sourceStrategies:['non_evidentiary_ai_visual'],async execute(context){calls++;assert.equal(context.taskId,'task');return {asset:{id:'generated-video',name:'生成过渡',type:'video',sourceId:'controlled',url:'/actual-result.mp4',duration:3,visualObservations:[],segments:[]},sourceStrategy:'non_evidentiary_ai_visual',providerId:'controlled-video',sourceRef:null,synthetic:true,representation:'non_evidentiary_visual',authorizationRef:null,disclosure:'AIGC示意镜头'};}}]});
+ assert.equal(calls,1);assert.equal(result.execution.shots[0]!.sourceStrategy,'non_evidentiary_ai_visual');assert.equal(result.plan.shots[0]!.referenceProductionRouting?.route,'aigc_video');
+});

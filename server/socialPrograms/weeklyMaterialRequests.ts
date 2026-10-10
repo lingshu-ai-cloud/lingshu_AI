@@ -1,3 +1,4 @@
+import {checkWeeklyMaterialAutomatically,weeklyAssetRequirementIdentity,type WeeklyAssetRequirement,type AutomaticMaterialEvidence} from '../../shared/weeklyAutomaticMaterial.js';
 import {assessWeeklyMaterialPreparation,assertWeeklyMaterialPreparation,type WeeklyMaterialPreparationAssessment} from './weeklyMaterialPreparationDeadline.js';
 import { createHash } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -15,7 +16,7 @@ import { organizationRoleOrNull } from '../lib/organizationRole.js';
 import { SocialProgramError } from './service.js';
 
 export const WEEKLY_MATERIAL_REQUESTS='social_weekly_material_requests';
-export interface MaterialConsumer { taskId:string; packageId:string; packageVersion:number; requirement:string }
+export interface MaterialConsumer { taskId:string; packageId:string; packageVersion:number; requirement:string; assetRequirement?:WeeklyAssetRequirement }
 export interface MaterialSubmission {
   version:number; submittedAt:string; submittedBy:string;
   materials:Array<{recordId:string;sha256:string;type:'image'|'video';byteSize:number}>;
@@ -36,6 +37,7 @@ export interface WeeklyMaterialPorts {
   allowSelfReview?:boolean;
   getMaterial?:(tenantId:string,recordId:string)=>Promise<Record<string,unknown>|null>;
   materialBytes?:SocialContentCloudMaterialPort;
+  automaticEvidence?:(tenantId:string,recordId:string,sha256:string)=>Promise<AutomaticMaterialEvidence|null>;
   now?:()=>string;
 }
 const fail=(code:string,message:string,status=409):never=>{throw new SocialProgramError(code,status,message);};
@@ -80,6 +82,7 @@ export function createWeeklyMaterialRequestService(store:DataStore,ports:WeeklyM
     if(!Array.isArray(items)||!items.length||new Set(items.map(item=>item.taskId)).size!==items.length)fail('weekly_material_consumers_invalid','需要真实、去重的素材消费者。',400);
     for(const consumer of items) {
       text(consumer.requirement,'该视频的镜头要求');
+      if(consumer.assetRequirement)weeklyAssetRequirementIdentity(consumer.assetRequirement);
       const result=await store.list<Record_>('social_weekly_execution_tasks',{where:{tenant_id:tenantId,task_id:consumer.taskId},page:1,perPage:2});
       if(result.items.length!==1||result.totalItems!==1)fail('weekly_material_consumer_missing','消费者执行任务不存在或不唯一。');
       const row=result.items[0]!;
@@ -103,6 +106,22 @@ export function createWeeklyMaterialRequestService(store:DataStore,ports:WeeklyM
       return {recordId,sha256:verified.sha256,type:record.type as 'image'|'video',byteSize:verified.byteSize};
     } finally {await rm(directory,{recursive:true,force:true});}
   };
+  const checkAutomatic=async(request:WeeklyMaterialRequest)=>{
+    if(!request.submissions.length || !request.consumers.every(c=>c.assetRequirement))return;
+    const materials=request.submissions.at(-1)!.materials;
+    for(const m of materials)await material(request.tenantId,m.recordId,m.sha256);
+    {
+          const evidence=await Promise.all(materials.map(async m=>{
+            if(ports.automaticEvidence)return ports.automaticEvidence(request.tenantId,m.recordId,m.sha256);
+            const raw=await (ports.getMaterial??((tenant,id)=>getOwnedCloudMaterialRecord(id,tenant)))(request.tenantId,m.recordId);
+            let provenance:Record<string,unknown>={};try{provenance=typeof raw?.provenance==='string'?JSON.parse(raw.provenance):raw?.provenance as Record<string,unknown>??{};}catch{}
+            return provenance.weeklyAutomaticMaterialEvidence as AutomaticMaterialEvidence|null??null;
+          }));
+          const decisions=request.consumers.map(c=>{const checks=materials.map((m,index)=>checkWeeklyMaterialAutomatically(c.assetRequirement!,m.sha256,evidence[index]));return {taskId:c.taskId,...(checks.find(check=>check.accepted)??checks[0]!)};});
+          const latest=request.submissions.at(-1)!;latest.verification={reviewedAt:now(),reviewedBy:'content_agent',decision:decisions.every(d=>d.accepted)?'accepted':'rejected',consumerDecisions:decisions};
+          request.status=latest.verification.decision;request.history.push({at:now(),actor:'content_agent',action:'automatic_checked',verification:structuredClone(latest.verification)});
+        }
+  };
   return {
     async get(tenantId:string,programId:string,id:string,actorUserId:string){await assertUser(tenantId,actorUserId);return read(tenantId,programId,id);},
     async list(tenantId:string,programId:string,actorUserId:string){
@@ -112,9 +131,11 @@ export function createWeeklyMaterialRequestService(store:DataStore,ports:WeeklyM
     async create(input:{tenantId:string;programId:string;requirementKey:string;requirements:string;assigneeUserId:string;reviewerUserId:string;dueAt:string;verificationDueAt?:string|null;timeZone:string;consumers:MaterialConsumer[];actorUserId:string}) {
       const {tenantId,programId}=input;
       await assertUser(tenantId,input.actorUserId);await assertUser(tenantId,input.assigneeUserId);await assertUser(tenantId,input.reviewerUserId);
-      if(input.assigneeUserId===input.reviewerUserId&&ports.allowSelfReview===false)fail('weekly_material_self_review_forbidden','当前策略要求提交人与核验人为不同真人。',403);
+      if(input.assigneeUserId===input.reviewerUserId&&ports.allowSelfReview===false&&!input.consumers.every(c=>c.assetRequirement))fail('weekly_material_self_review_forbidden','当前策略要求提交人与核验人为不同真人。',403);
       text(programId,'经营项目');text(input.requirements,'素材要求');text(input.requirementKey,'共享素材身份');zoned(input.dueAt);if(input.verificationDueAt)zoned(input.verificationDueAt);timezone(input.timeZone);
-      const id=createHash('sha256').update(JSON.stringify([tenantId,programId,input.requirementKey])).digest('hex').slice(0,15);
+      const identities=input.consumers.flatMap(c=>c.assetRequirement?[weeklyAssetRequirementIdentity(c.assetRequirement)]:[]);
+      if(identities.length&& (identities.length!==input.consumers.length||new Set(identities).size!==1))fail('weekly_material_shared_identity_mismatch','共享素材的主体、动作、场景、证据、规格和授权范围必须一致。',400);
+      const id=createHash('sha256').update(JSON.stringify([tenantId,programId,identities[0]??input.requirementKey])).digest('hex').slice(0,15);
       return locked(tenantId,id,async(guard)=> {
         const existing=await store.getById<Record_>(WEEKLY_MATERIAL_REQUESTS,id);
         if(existing) {const prior=await read(tenantId,programId,id);if(prior.requirements!==input.requirements||prior.assigneeUserId!==input.assigneeUserId||prior.reviewerUserId!==input.reviewerUserId||prior.dueAt!==input.dueAt||prior.timeZone!==input.timeZone||(prior.verificationDueAt??null)!==(input.verificationDueAt??null)||JSON.stringify(prior.consumers)!==JSON.stringify(input.consumers))fail('weekly_material_request_conflict','共享任务已存在；新增消费者或调整截止需显式操作。');return prior;}
@@ -138,11 +159,13 @@ export function createWeeklyMaterialRequestService(store:DataStore,ports:WeeklyM
         const previous=request.submissions.at(-1)?.version??0;
         if(previous!==input.expectedSubmissionVersion)fail('weekly_material_submission_version_conflict','提交版本已变化，请重新读取。');
         if(!input.materialRecordIds.length||new Set(input.materialRecordIds).size!==input.materialRecordIds.length)fail('weekly_material_submission_empty','请提交去重后的真实素材。',400);
-        const materials=[];
+        const materials:MaterialSubmission['materials']=[];
         for(const id of input.materialRecordIds)materials.push(await material(input.tenantId,id));
         if(new Set(materials.map(item=>item.sha256)).size!==materials.length)fail('weekly_material_duplicate_bytes','重复素材字节不能充当多个独立素材。');
         request.submissions.push({version:previous+1,submittedBy:input.actorUserId,submittedAt:now(),materials,verification:null});
-        request.status='pending_verification';request.history.push({at:now(),actor:input.actorUserId,action:'submitted'});
+        request.status='pending_verification';
+        await checkAutomatic(request);
+        request.history.push({at:now(),actor:input.actorUserId,action:'submitted'});
         return save(request,guard);
       });
     },
@@ -189,8 +212,9 @@ export function createWeeklyMaterialRequestService(store:DataStore,ports:WeeklyM
         const previousDueAt=request.dueAt;const previousVerificationDueAt=request.verificationDueAt??null;
         if(input.verificationDueAt)request.verificationDueAt=zoned(input.verificationDueAt);
         if(input.dueAt){request.dueAt=zoned(input.dueAt);request.timeZone=timezone(input.timeZone??request.timeZone);}
-        if(input.addConsumers?.length){const added=await consumers(input.tenantId,input.programId,input.addConsumers);if(added.some(item=>request.consumers.some(old=>old.taskId===item.taskId)))fail('weekly_material_consumer_duplicate','消费者已存在。');request.consumers.push(...added);if(request.submissions.length)request.status='pending_verification';}
+        if(input.addConsumers?.length){const added=await consumers(input.tenantId,input.programId,input.addConsumers);const identities=[...request.consumers,...added].flatMap(c=>c.assetRequirement?[weeklyAssetRequirementIdentity(c.assetRequirement)]:[]);if(identities.length&&(identities.length!==request.consumers.length+added.length||new Set(identities).size!==1))fail('weekly_material_shared_identity_mismatch','共享素材的主体、动作、场景、证据、规格和授权范围必须一致。',400);if(added.some(item=>request.consumers.some(old=>old.taskId===item.taskId)))fail('weekly_material_consumer_duplicate','消费者已存在。');request.consumers.push(...added);if(request.submissions.length)request.status='pending_verification';}
         await consumers(input.tenantId,input.programId,request.consumers);
+        if(input.addConsumers?.length)await checkAutomatic(request);
         const accepted=materialRequestAcceptedConsumers(request);
         if(accepted.length)for(const evidence of request.submissions.at(-1)!.materials)await material(input.tenantId,evidence.recordId,evidence.sha256);
         if(!request.submissions.length&&request.verificationDueAt&&Date.parse(request.dueAt)>Date.parse(request.verificationDueAt))fail('weekly_material_deadline_order_invalid','上传必须先于或等于核验截止。',400);
