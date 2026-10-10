@@ -1,4 +1,5 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
+import {acquireDurableOperationLease,assertDurableOperationLease,releaseDurableOperationLease} from '../runtime/durableLease.js';
 import type { SocialWeeklyContentPackage } from '../../shared/contracts/socialProgram.js';
 import type { PublicationAssignment } from '../digitalEmployees/publishingExecution.js';
 import type { PublishableProductionResult } from '../digitalEmployees/publishingExecution.js';
@@ -257,33 +258,51 @@ export async function executeWeeklyPublication(input: {
   const dataStore = input.dataStore ?? store;
   const existing = await assignmentAttempt(input.assignment.tenantId, input.assignment.assignmentId, dataStore);
   if (existing) return existing;
-  const assignments = await dataStore.list<StoredPublicationAssignment>(PUBLICATION_ASSIGNMENTS, {
-    where: { tenant_id: input.assignment.tenantId, assignment_id: input.assignment.assignmentId }, page: 1, perPage: 2,
-  });
-  if (assignments.totalItems !== 1 || !assignments.items[0]) throw new Error('publication_assignment_not_found');
-  if (assignments.items[0].assignment_hash !== input.assignment.assignmentHash) throw new Error('publication_assignment_identity_conflict');
-  if (assignments.items[0].status === 'revoked') throw new Error('authorization_revoked');
-  if (assignments.items[0].status !== 'package_ready') throw new Error('publication_package_not_ready');
-  const issue = validateWeeklyAssignmentBoundary({ assignment: input.assignment, contentPackage: input.contentPackage, existingPublishedCount: input.existingPublishedCount, now: (input.now ?? new Date()).toISOString() });
-  if (issue) throw new Error(issue);
-  if (input.adapter.platform !== input.assignment.platform || input.adapter.capability !== 'available') {
-    throw new Error(input.adapter.unavailableReason || 'publishing_provider_unavailable');
-  }
-  if (input.publicationPackage.packageId !== input.assignment.packageId
-    || input.publicationPackage.operatingLineage?.assignmentHash !== input.assignment.assignmentHash) {
-    throw new Error('publication_package_assignment_mismatch');
-  }
-  const startedAt = (input.now ?? new Date()).toISOString();
-  const created = await dataStore.create<DurablePublicationAttempt>(PUBLICATION_ATTEMPTS, {
-    tenant_id: input.assignment.tenantId, attempt_id: attemptId(input.assignment),
-    assignment_id: input.assignment.assignmentId, package_id: input.assignment.packageId,
-    provider: input.adapter.provider, status: 'in_flight', started_at: startedAt, updated_at: startedAt,
-  });
-  if (!created) {
-    const raced = await assignmentAttempt(input.assignment.tenantId, input.assignment.assignmentId, dataStore);
-    if (raced) return raced;
-    throw new Error('publication_attempt_storage_unavailable');
-  }
+  const lease=await acquireDurableOperationLease({dataStore,tenantId:input.assignment.tenantId,scope:'weekly_publication_quota',subjectId:digest(`${input.assignment.lineage.operatingPackageRef.id}:${input.assignment.lineage.operatingPackageRef.version}`),ownerId:randomUUID(),leaseDurationMs:30000});
+  if(!lease)throw Error('publication_quota_busy');
+  let created:DurablePublicationAttempt|null=null;
+  try{
+    const raced=await assignmentAttempt(input.assignment.tenantId,input.assignment.assignmentId,dataStore);
+    if(raced)return raced;
+    const assignments = await dataStore.list<StoredPublicationAssignment>(PUBLICATION_ASSIGNMENTS, {
+      where: { tenant_id: input.assignment.tenantId, assignment_id: input.assignment.assignmentId }, page: 1, perPage: 2,
+    });
+    if (assignments.totalItems !== 1 || !assignments.items[0]) throw new Error('publication_assignment_not_found');
+    if (assignments.items[0].assignment_hash !== input.assignment.assignmentHash) throw new Error('publication_assignment_identity_conflict');
+    if (assignments.items[0].status === 'revoked') throw new Error('authorization_revoked');
+    if (assignments.items[0].status !== 'package_ready') throw new Error('publication_package_not_ready');
+    const siblings=await dataStore.list<StoredPublicationAssignment>(PUBLICATION_ASSIGNMENTS,{where:{tenant_id:input.assignment.tenantId,operating_package_id:input.assignment.lineage.operatingPackageRef.id,operating_package_version:input.assignment.lineage.operatingPackageRef.version},page:1,perPage:1000});
+    if(siblings.totalItems!==siblings.items.length)throw Error('publication_assignment_scan_truncated');
+    let reservedCount=0;
+    for(const sibling of siblings.items){
+      const prior=await assignmentAttempt(input.assignment.tenantId,sibling.assignment_id,dataStore);
+      // A request with an uncertain outcome may already be live on the platform.
+      // Its authorization slot remains reserved until explicit rejection.
+      if(prior&&['published','unknown','in_flight'].includes(prior.status))reservedCount++;
+    }
+    const issue = validateWeeklyAssignmentBoundary({ assignment: input.assignment, contentPackage: input.contentPackage, existingPublishedCount: Math.max(input.existingPublishedCount,reservedCount), now: (input.now ?? new Date()).toISOString() });
+    if (issue) throw new Error(issue);
+    if (input.adapter.platform !== input.assignment.platform || input.adapter.capability !== 'available') {
+      throw new Error(input.adapter.unavailableReason || 'publishing_provider_unavailable');
+    }
+    if (input.publicationPackage.packageId !== input.assignment.packageId
+      || input.publicationPackage.operatingLineage?.assignmentHash !== input.assignment.assignmentHash) {
+      throw new Error('publication_package_assignment_mismatch');
+    }
+    const startedAt = (input.now ?? new Date()).toISOString();
+    await assertDurableOperationLease({dataStore,lease});
+    created = await dataStore.create<DurablePublicationAttempt>(PUBLICATION_ATTEMPTS, {
+      tenant_id: input.assignment.tenantId, attempt_id: attemptId(input.assignment),
+      assignment_id: input.assignment.assignmentId, package_id: input.assignment.packageId,
+      provider: input.adapter.provider, status: 'in_flight', started_at: startedAt, updated_at: startedAt,
+    });
+    if (!created) {
+      const raced = await assignmentAttempt(input.assignment.tenantId, input.assignment.assignmentId, dataStore);
+      if (raced) return raced;
+      throw new Error('publication_attempt_storage_unavailable');
+    }
+  }finally{await releaseDurableOperationLease({dataStore,lease});}
+  if(!created)throw Error('publication_attempt_storage_unavailable');
   let normalized: ReturnType<typeof normalizedAttemptResult>;
   try {
     normalized = normalizedAttemptResult(await input.adapter.publish({ assignment: input.assignment, publicationPackage: input.publicationPackage, attemptId: created.attempt_id }));

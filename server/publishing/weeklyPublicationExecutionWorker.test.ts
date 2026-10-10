@@ -181,3 +181,32 @@ for (const invalidEvidence of [
   assert.ok(refused.errors.some(error => error.code === 'publication_recovery_terminal_evidence_invalid'));
   Object.assign(invalidTerminal, previous);
 }
+
+// An uncertain first publication reserves the sole authorized slot. Counting
+// only confirmed receipts would allow this scan to submit both videos.
+const quotaStore = memoryStore();
+const quotaWeekly = { ...weekly, socialContentPackage: { ...weekly.socialContentPackage, authorization: { ...weekly.socialContentPackage.authorization, maxPublishItems: 1 } } };
+await seed(quotaStore, quotaWeekly);
+let quotaSubmissions = 0;
+const quotaAdapter: WeeklyPublishingProviderAdapter = { ...adapter, async publish() { quotaSubmissions++; return { status: 'unknown', providerReceiptId: 'quota-uncertain-receipt' }; }, async reconcile() { return { status: 'unknown', providerReceiptId: 'quota-uncertain-receipt' }; } };
+const quotaScan = await runWeeklyPublicationExecutionScan({ dataStore: quotaStore, now: new Date('2026-09-25T00:00:00Z'), adapterFactory: async () => quotaAdapter });
+assert.equal(quotaSubmissions, 1, 'unknown reserves the slot before another assignment can submit');
+assert.equal(quotaScan.errors.some(item => item.code === 'authorization_limit_exceeded'), true);
+await runWeeklyPublicationExecutionScan({ dataStore: quotaStore, now: new Date('2026-09-25T00:01:00Z'), adapterFactory: async () => quotaAdapter });
+assert.equal(quotaSubmissions, 1, 'status lookup and scan replay cannot release an unknown slot');
+
+const parallelQuotaStore = memoryStore();
+await seed(parallelQuotaStore, quotaWeekly);
+let releaseFirst!: () => void, signalStarted!: () => void;
+const firstStarted = new Promise<void>(resolve => { signalStarted = resolve; });
+const firstResponse = new Promise<void>(resolve => { releaseFirst = resolve; });
+let parallelSubmissions = 0;
+const parallelQuotaAdapter: WeeklyPublishingProviderAdapter = { ...quotaAdapter, async publish() { parallelSubmissions++; signalStarted(); await firstResponse; return { status: 'unknown', providerReceiptId: 'parallel-quota-receipt' }; } };
+const firstQuotaScan = runWeeklyPublicationExecutionScan({ dataStore: parallelQuotaStore, now: new Date('2026-09-25T00:00:00Z'), adapterFactory: async () => parallelQuotaAdapter });
+await firstStarted;
+const competingQuotaScan = await runWeeklyPublicationExecutionScan({ dataStore: parallelQuotaStore, now: new Date('2026-09-25T00:00:00Z'), adapterFactory: async () => parallelQuotaAdapter });
+assert.equal(parallelSubmissions, 1, 'in-flight durable reservation blocks the other assignment across scans');
+assert.equal(competingQuotaScan.errors.some(item => item.code === 'authorization_limit_exceeded'), true);
+releaseFirst();
+await firstQuotaScan;
+assert.equal(parallelSubmissions, 1);
