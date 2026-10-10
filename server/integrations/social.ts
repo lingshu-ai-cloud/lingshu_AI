@@ -1,3 +1,4 @@
+import { normalizeMetricValues } from '../socialMetrics/aggregation.js';
 import { createHash } from 'node:crypto';
 import { prepareTikTokAttemptReceipt, probeTikTokVideoDuration, validateTikTokCreatorInfo, tikTokContractHash, type TikTokAttemptPreparedReceipt, type TikTokDirectPostOptions } from '../lib/tikTokDirectPostContract.js';
 import axios from 'axios';
@@ -284,10 +285,10 @@ export async function getTikTokVideos(accessToken: string, maxResults = 20) {
     description: String(v.video_description || ''),
     publishedAt: v.create_time ? new Date(Number(v.create_time) * 1000).toISOString() : '',
     thumbnailUrl: String(v.cover_image_url || ''),
-    viewCount: Number(v.view_count || 0),
-    likeCount: Number(v.like_count || 0),
-    commentCount: Number(v.comment_count || 0),
-    shareCount: Number(v.share_count || 0),
+    viewCount: normalizeMetricValues({ views: v.view_count }).views,
+    likeCount: normalizeMetricValues({ likes: v.like_count }).likes,
+    commentCount: normalizeMetricValues({ comments: v.comment_count }).comments,
+    shareCount: normalizeMetricValues({ shares: v.share_count }).shares,
     duration: String(v.duration || ''),
     permalinkUrl: String(v.share_url || ''),
   }));
@@ -614,9 +615,9 @@ export async function getFacebookVideos(pageId: string, pageAccessToken: string,
     description: String(v.description || ''),
     publishedAt: String(v.created_time || ''),
     thumbnailUrl: String(v.thumbnails?.data?.[0]?.uri || ''),
-    viewCount: Number(v.views || 0),
-    likeCount: Number(v.likes?.summary?.total_count || 0),
-    commentCount: Number(v.comments?.summary?.total_count || 0),
+    viewCount: normalizeMetricValues({ views: v.views }).views,
+    likeCount: normalizeMetricValues({ likes: v.likes?.summary?.total_count }).likes,
+    commentCount: normalizeMetricValues({ comments: v.comments?.summary?.total_count }).comments,
     duration: '',
     permalinkUrl: String(v.permalink_url || ''),
   }));
@@ -689,9 +690,9 @@ export async function getInstagramMedia(igUserId: string, pageAccessToken: strin
     description: String(m.caption || ''),
     publishedAt: String(m.timestamp || ''),
     thumbnailUrl: String(m.thumbnail_url || m.media_url || ''),
-    viewCount: 0,
-    likeCount: Number(m.like_count || 0),
-    commentCount: Number(m.comments_count || 0),
+    viewCount: undefined,
+    likeCount: normalizeMetricValues({ likes: m.like_count }).likes,
+    commentCount: normalizeMetricValues({ comments: m.comments_count }).comments,
     duration: '',
     permalinkUrl: String(m.permalink || ''),
   }));

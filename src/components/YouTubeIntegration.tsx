@@ -54,9 +54,9 @@ interface YouTubeVideo {
   description: string;
   publishedAt: string;
   thumbnailUrl: string;
-  viewCount: number;
-  likeCount: number;
-  commentCount: number;
+  viewCount?: number;
+  likeCount?: number;
+  commentCount?: number;
   duration: string;
 }
 
@@ -1082,8 +1082,8 @@ export function ChannelOverview() {
                         <span className="min-w-0 flex-1">
                           <span className="block line-clamp-2 text-sm font-semibold text-text-primary">{video.title}</span>
                           <span className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-text-muted">
-                            <span className="inline-flex items-center gap-1"><Eye size={11} />{compactNumber.format(video.viewCount || 0)}</span>
-                            <span className="inline-flex items-center gap-1"><MessageSquare size={11} />{compactNumber.format(video.commentCount || 0)}</span>
+                            <span className="inline-flex items-center gap-1"><Eye size={11} />{typeof video.viewCount === 'number' ? compactNumber.format(video.viewCount) : '暂无数据'}</span>
+                            <span className="inline-flex items-center gap-1"><MessageSquare size={11} />{typeof video.commentCount === 'number' ? compactNumber.format(video.commentCount) : '暂无数据'}</span>
                             <span>{formatDate(video.publishedAt)}</span>
                           </span>
                         </span>

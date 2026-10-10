@@ -1,3 +1,4 @@
+import { normalizeMetricValues } from '../socialMetrics/aggregation.js';
 import {refreshMessengerCapability} from '../messenger/capabilityRefresh.js';
 import {createMessengerCapabilityScope} from '../messenger/capabilityAuthority.js';
 import { readTikTokCreatorConsent } from '../publishing/tiktokCreatorConsent.js';
@@ -980,14 +981,14 @@ socialRouter.get('/accounts/:id/videos', async (req, res) => {
     }
     const capturedAt = new Date().toISOString();
     await Promise.all((videos as Array<Record<string, unknown>>).map(video => {
-      const metrics: Record<string, number> = {
-        likes: Number(video.likeCount || 0),
-        comments: Number(video.commentCount || 0),
-      };
+      const metrics = normalizeMetricValues({
+        likes: video.likeCount,
+        comments: video.commentCount,
+        ...(account.platform !== 'instagram' ? { views: video.viewCount } : {}),
+        ...(account.platform === 'tiktok' ? { shares: video.shareCount } : {}),
+      });
       // Instagram media listing does not return plays, and Facebook listing does
       // not return shares. Omit unavailable metrics instead of writing fake zeroes.
-      if (account.platform !== 'instagram') metrics.views = Number(video.viewCount || 0);
-      if (account.platform === 'tiktok') metrics.shares = Number(video.shareCount || 0);
       return saveSocialMetricSnapshot({
         tenantId,
         platform: account.platform,
