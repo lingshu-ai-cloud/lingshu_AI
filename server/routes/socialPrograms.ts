@@ -46,10 +46,31 @@ import { createSocialWeeklyReviewEvidenceRouter } from './socialWeeklyReviewEvid
 import { createSocialWeeklyRunningResourceEvidenceRouter } from './socialWeeklyRunningResourceEvidence.js';
 import { createSocialWeeklySupplementRequestsRouter } from './socialWeeklySupplementRequests.js';
 import {createWeeklyProductionRepairCaseService} from '../socialPrograms/weeklyProductionRepairCases.js';
+import {createWeeklyTechnicalRepairCompletionService} from '../socialPrograms/weeklyTechnicalRepairCompletion.js';
+import {createWeeklyCreativeRepairConfigurationService} from '../socialPrograms/weeklyCreativeRepairConfiguration.js';
 import {assertSocialSceneReworkQueueRegistered,wakeSocialSceneReworkJob} from '../starter198/socialContentProductionQueue.js';
 
 function asyncRoute(handler: RequestHandler): RequestHandler {
   return (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
+}
+
+type RouteBody = Record<string, unknown>;
+function routeBody(value: unknown): RouteBody | null {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as RouteBody : null;
+}
+export function parseWeeklyCreativeRepairConfigurationBody(value: unknown) {
+  const body=routeBody(value);
+  if(!body||Object.keys(body).some(key=>!['packageVersion','expectedCaseHash','revisionScope','estimatedDurationMinutes','maximumCostCny','deadlineAt'].includes(key))||typeof body.expectedCaseHash!=='string'||!/^[a-f0-9]{64}$/.test(body.expectedCaseHash)||typeof body.revisionScope!=='string'||body.revisionScope!==body.revisionScope.trim()||!body.revisionScope||body.revisionScope.length>4000||!Number.isSafeInteger(body.estimatedDurationMinutes)||Number(body.estimatedDurationMinutes)<1||Number(body.estimatedDurationMinutes)>1440||typeof body.maximumCostCny!=='number'||!Number.isFinite(body.maximumCostCny)||body.maximumCostCny<0||typeof body.deadlineAt!=='string'||!Number.isFinite(Date.parse(body.deadlineAt)))throw new SocialProgramError('weekly_creative_repair_input_invalid',400,'创意修订配置无效。');
+  return{expectedCaseHash:body.expectedCaseHash,revisionScope:body.revisionScope,estimatedDurationMinutes:Number(body.estimatedDurationMinutes),maximumCostCny:body.maximumCostCny,deadlineAt:body.deadlineAt};
+}
+export function assertWeeklyTechnicalRepairReconcileBody(value: unknown): void {
+  const body=routeBody(value);
+  if(!body||Object.keys(body).some(key=>key!=='packageVersion'))throw new SocialProgramError('weekly_repair_reconcile_input_invalid',400,'返工结果核验参数无效。');
+}
+export function parseWeeklyTechnicalQualityRecoveryBody(value: unknown) {
+  const body=routeBody(value);
+  if(!body||Object.keys(body).some(key=>!['packageVersion','requestId','expectedContextHash'].includes(key))||typeof body.requestId!=='string'||!/^[A-Za-z0-9_-]{16,160}$/.test(body.requestId)||typeof body.expectedContextHash!=='string'||!/^[a-f0-9]{64}$/.test(body.expectedContextHash))throw new SocialProgramError('weekly_repair_quality_recovery_input_invalid',400,'质量复核恢复参数无效。');
+  return{requestId:body.requestId,expectedContextHash:body.expectedContextHash};
 }
 
 export function createSocialProgramsRouter(dataStore: DataStore = store, authenticate = true): Router {
@@ -60,6 +81,8 @@ export function createSocialProgramsRouter(dataStore: DataStore = store, authent
   const operating = createSocialOperatingOrchestrationService(dataStore);
   const executionTasks = createWeeklyExecutionTaskService(dataStore);
   const repairCases=createWeeklyProductionRepairCaseService(dataStore);
+  const technicalRepairCompletion=createWeeklyTechnicalRepairCompletionService(dataStore);
+  const creativeRepairConfiguration=createWeeklyCreativeRepairConfigurationService(dataStore);
   router.use('/:programId/operating-packages/:packageId/supplement-requests', asyncRoute(async (req, res, next) => {
     await service.getProgram((res.locals as AuthLocals).tenantId, req.params.programId);
     next();
@@ -370,6 +393,18 @@ export function createSocialProgramsRouter(dataStore: DataStore = store, authent
   router.get('/:programId/operating-packages/:packageId/repair-cases/:caseId/capacity-preview',asyncRoute(async(req,res)=>{const scope=await repairCaseScope(req,res);if(Object.keys(req.query).some(key=>key!=='version'))throw new SocialProgramError('weekly_repair_case_query_invalid',400,'容量预览参数无效。');res.setHeader('Cache-Control','private, no-store');res.json({item:await repairCases.previewTechnicalCapacity(scope.tenantId,scope.userId,scope.caseId)});}));
   router.post('/:programId/operating-packages/:packageId/repair-cases/:caseId/confirm-capacity',asyncRoute(async(req,res)=>{const scope=await repairCaseScope(req,res),body=req.body;if(!body||typeof body!=='object'||Array.isArray(body)||Object.keys(body).some(key=>!['packageVersion','expectedCaseRecordHash','expectedPreviewHash','expectedQuoteHash','authorizedMaximumCostCny'].includes(key))||typeof body.expectedCaseRecordHash!=='string'||!/^[a-f0-9]{64}$/.test(body.expectedCaseRecordHash)||typeof body.expectedPreviewHash!=='string'||!/^[a-f0-9]{64}$/.test(body.expectedPreviewHash)||body.expectedQuoteHash!==undefined&&(typeof body.expectedQuoteHash!=='string'||!/^[a-f0-9]{64}$/.test(body.expectedQuoteHash))||typeof body.authorizedMaximumCostCny!=='number'||!Number.isFinite(body.authorizedMaximumCostCny)||body.authorizedMaximumCostCny<0)throw new SocialProgramError('weekly_repair_case_capacity_input_invalid',400,'容量确认参数无效。');res.json({item:await repairCases.confirmTechnicalCapacity(scope.tenantId,scope.userId,scope.caseId,{expectedCaseRecordHash:body.expectedCaseRecordHash,expectedPreviewHash:body.expectedPreviewHash,...(body.expectedQuoteHash?{expectedQuoteHash:body.expectedQuoteHash}:{}),authorizedMaximumCostCny:body.authorizedMaximumCostCny})});}));
   router.post('/:programId/operating-packages/:packageId/repair-cases/:caseId/start',asyncRoute(async(req,res)=>{const scope=await repairCaseScope(req,res),body=req.body;if(!body||typeof body!=='object'||Array.isArray(body)||Object.keys(body).some(key=>!['packageVersion','expectedCaseRecordHash'].includes(key))||typeof body.expectedCaseRecordHash!=='string'||!/^[a-f0-9]{64}$/.test(body.expectedCaseRecordHash))throw new SocialProgramError('weekly_repair_case_start_input_invalid',400,'返工作业启动参数无效。');await assertSocialSceneReworkQueueRegistered();const item=await repairCases.startTechnical(scope.tenantId,scope.userId,scope.caseId,{expectedCaseRecordHash:body.expectedCaseRecordHash});if(item.execution)await wakeSocialSceneReworkJob(item.execution.jobId).catch(()=>undefined);res.status(202).json({item});}));
+  router.post('/:programId/operating-packages/:packageId/repair-cases/:caseId/configure',asyncRoute(async(req,res)=>{
+    const scope=await repairCaseScope(req,res),input=parseWeeklyCreativeRepairConfigurationBody(req.body);
+    res.json({item:await creativeRepairConfiguration.configure(scope.tenantId,scope.userId,scope.caseId,input)});
+  }));
+  router.post('/:programId/operating-packages/:packageId/repair-cases/:caseId/reconcile',asyncRoute(async(req,res)=>{
+    const scope=await repairCaseScope(req,res);assertWeeklyTechnicalRepairReconcileBody(req.body);
+    res.setHeader('Cache-Control','private, no-store');res.json({item:await technicalRepairCompletion.reconcile(scope.tenantId,scope.userId,scope.caseId)});
+  }));
+  router.post('/:programId/operating-packages/:packageId/repair-cases/:caseId/recover-quality',asyncRoute(async(req,res)=>{
+    const scope=await repairCaseScope(req,res),input=parseWeeklyTechnicalQualityRecoveryBody(req.body);
+    res.json({item:await technicalRepairCompletion.recoverQuality(scope.tenantId,scope.userId,scope.caseId,input)});
+  }));
 
   router.post('/:programId/operating-packages/:packageId/publications/:publicationId/reception-binding', asyncRoute(async (req, res) => {
     const { tenantId, userId } = res.locals as AuthLocals;
