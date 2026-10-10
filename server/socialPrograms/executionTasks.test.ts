@@ -143,20 +143,20 @@ test('preparation can precede the operating week and publication follows its zon
 
 test('weekly execution tasks freeze the full worker contract and aggregate real state', async () => {
   const { packages, execution, program, draft } = await fixture();
-  assert.equal(draft.executionSummary!.total, 31);
-  assert.equal(draft.executionSummary!.byStatus.pending_activation, 31);
+  assert.equal(draft.executionSummary!.total, 29);
+  assert.equal(draft.executionSummary!.byStatus.pending_activation, 29);
   assert.ok(draft.executionTaskRefs!.every(ref => ref.type === 'weekly_execution_task'));
   const active = await packages.activate('tenant-a', 'owner', program.programId, draft.packageId, {
     expectedVersion: 1, expectedProgramVersion: 1,
   });
   assert.equal(active.executionSummary!.byStatus.queued, 1);
-  assert.equal(active.executionSummary!.byStatus.blocked, 30);
+  assert.equal(active.executionSummary!.byStatus.blocked, 28);
   const tasks = await execution.list('tenant-a', program.programId, draft.packageId, 1);
   assert.ok(tasks.every(task => task.tenantId === 'tenant-a' && task.packageVersion === 1));
   assert.ok(tasks.every(task => task.idempotencyKey && task.inputSnapshot && task.budget && task.upstreamVersionRefs.length === 3));
   assert.ok(tasks.every(task => task.schedule.responsibleActor && task.schedule.estimatedDurationMinutes > 0 && task.schedule.estimatedFinishAt >= task.schedule.estimatedStartAt));
   assert.deepEqual([...new Set(tasks.filter(task => task.workflowKind === 'content').map(task => task.schedule.stepKind))], [
-    'material_preparation', 'material_readiness', 'asset_generation', 'video_generation', 'quality_check', 'rework', 'user_approval',
+    'material_preparation', 'material_readiness', 'asset_generation', 'video_generation', 'quality_check', 'user_approval',
   ]);
   assert.ok(tasks.filter(task => ['script', 'storyboard'].includes(task.schedule.stepKind)).every(task => task.schedule.responsibleActor === 'director_agent'));
   assert.ok(tasks.filter(task => task.schedule.stepKind === 'quality_check').every(task => task.schedule.responsibleActor === 'quality_agent'));
@@ -168,7 +168,11 @@ test('weekly execution tasks freeze the full worker contract and aggregate real 
   assert.equal(scheduleTask?.schedule.responsibleActor, 'business_agent');
   assert.ok(scriptTask && storyboardTask?.dependsOnTaskIds.includes(scriptTask.taskId));
   const preparationTask=tasks.find(task=>task.schedule.stepKind==='material_preparation'&&task.publicationTaskId===scriptTask?.publicationTaskId);
-  assert.equal(draft.executionGraphVersion,2);
+  assert.equal(draft.executionGraphVersion,3);
+  assert.ok(!tasks.some(task => task.schedule.stepKind === 'rework'));
+  for (const approval of tasks.filter(task => task.schedule.stepKind === 'user_approval' && task.inputSnapshot.inventoryReuseRef === undefined)) {
+    assert.equal(tasks.find(task => task.taskId === approval.dependsOnTaskIds[0])?.schedule.stepKind, 'quality_check');
+  }
   assert.ok(preparationTask&&scriptTask?.dependsOnTaskIds.includes(preparationTask.taskId));
   assert.ok(scheduleTask&&preparationTask?.dependsOnTaskIds.includes(scheduleTask.taskId));
   assert.ok(scheduleTask?.dependsOnTaskIds.includes(tasks.find(task => task.schedule.stepKind === 'director_analysis')!.taskId));
@@ -192,7 +196,7 @@ test('weekly execution tasks freeze the full worker contract and aggregate real 
     assert.equal(validation.status, 'blocked');
   }
   const firstTask = (await packages.get('tenant-a', program.programId, draft.packageId)).executionSummary!;
-  assert.equal(firstTask.total, 31);
+  assert.equal(firstTask.total, 29);
 });
 
 test('worker leases, retries, dead letters and explicit recovery are durable', async () => {
@@ -255,6 +259,19 @@ test('expired leases are reclaimed with fencing and local blocks do not stop sib
     issuedAt: start.toISOString(),
   });
 
+  // This test isolates lease fencing and sibling publication blocking. Model
+  // the already-confirmed capacity gate explicitly; the schedule confirmation
+  // integration suite verifies the real gate-removal transaction.
+  for (const task of await execution.list('tenant-a', program.programId, draft.packageId, 1)) {
+    if (!task.ownBlockingReasons.includes('weekly_initial_capacity_schedule_required')) continue;
+    const row = await getWeeklyExecutionTaskRow(dataStore, 'tenant-a', task.taskId);
+    await writeWeeklyExecutionTask(dataStore, row, {
+      ...row.payload,
+      ownBlockingReasons: row.payload.ownBlockingReasons.filter(reason => reason !== 'weekly_initial_capacity_schedule_required'),
+    });
+  }
+  await recomputePackageExecution(dataStore, 'tenant-a', program.programId, draft.packageId, 1, start.toISOString(), true);
+
   // Drain prerequisite work until both independent publication tasks are ready.
   for (let index = 0; index < 40; index += 1) {
     const claim = await worker.claimNext({ tenantId: 'tenant-a', workerId: 'worker-b', kinds: ['discovery', 'directing', 'content'], now: new Date(start.getTime() + 38_000 + index) });
@@ -273,7 +290,7 @@ test('expired leases are reclaimed with fencing and local blocks do not stop sib
   let tasks = await execution.list('tenant-a', program.programId, draft.packageId, 1);
   const publications = tasks.filter(task => task.workflowKind === 'publishing');
   assert.equal(publications.length, 2);
-  assert.ok(publications.every(task => task.status === 'queued'));
+  assert.ok(publications.every(task => task.status === 'queued'), JSON.stringify(tasks.filter(task => task.status !== 'succeeded').map(task => ({ taskId: task.taskId, workflowKind: task.workflowKind, stepKind: task.schedule.stepKind, status: task.status, ownBlockingReasons: task.ownBlockingReasons, inheritedBlockingTaskIds: task.inheritedBlockingTaskIds }))));
   tasks = await execution.block('tenant-a', program.programId, draft.packageId, publications[0]!.taskId, 'account_review_required');
   assert.equal(tasks.find(task => task.taskId === publications[0]!.taskId)!.status, 'blocked');
   assert.equal(tasks.find(task => task.taskId === publications[1]!.taskId)!.status, 'queued');
@@ -402,6 +419,6 @@ test('legacy graph has no synthetic preparation and current immutable graph cann
 
 test('revision preview builds the exact new graph without storing tasks or revoking old authority',async()=>{
  const {dataStore,packages,execution,program,draft}=await fixture();const before=await execution.list('tenant-a',program.programId,draft.packageId,draft.version);const fixed='2026-10-01T12:00:00.000Z';const input={expectedVersion:1,changeReason:'制作前先准备实物素材'};
- const preview=await packages.previewRevision('tenant-a','owner',program.programId,draft.packageId,input,{createdAt:fixed});assert.equal(preview.version,2);assert.equal(preview.executionGraphVersion,2);assert.equal(preview.createdAt,fixed);assert.equal((await packages.get('tenant-a',program.programId,draft.packageId)).version,1);assert.deepEqual(await execution.list('tenant-a',program.programId,draft.packageId,draft.version),before);
+ const preview=await packages.previewRevision('tenant-a','owner',program.programId,draft.packageId,input,{createdAt:fixed});assert.equal(preview.version,2);assert.equal(preview.executionGraphVersion,3);assert.equal(preview.createdAt,fixed);assert.equal((await packages.get('tenant-a',program.programId,draft.packageId)).version,1);assert.deepEqual(await execution.list('tenant-a',program.programId,draft.packageId,draft.version),before);
  const actual=await packages.revise('tenant-a','owner',program.programId,draft.packageId,input,{createdAt:fixed});assert.deepEqual(planWeeklyExecutionTasks('tenant-a',preview).map(t=>({id:t.taskId,dep:t.dependsOnTaskIds,input:t.inputSnapshot})),planWeeklyExecutionTasks('tenant-a',actual).map(t=>({id:t.taskId,dep:t.dependsOnTaskIds,input:t.inputSnapshot})));assert.equal(actual.createdAt,fixed);
 });

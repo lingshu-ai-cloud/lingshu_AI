@@ -499,12 +499,13 @@ export async function runSocialContentAutoProduction(input: {
   // A resumed weekly run must execute the baseline already sealed into its
   // pre-supply handoff. Re-grounding after the asset card is claimed changes
   // the very evidence that authorized continuation of the original job.
-  const existingWeeklyPreSupply = (weeklyPackage?.executionGraphVersion??1)>=2
+  const weeklyExecutionGraphVersion=Number(weeklyPackage?.executionGraphVersion??1);
+  const existingWeeklyPreSupply = weeklyExecutionGraphVersion>=2
     ? await readWeeklyPreSupplyHandoff(input.repository,input.tenantId,input.taskId)
     : null;
   let baseline = existingWeeklyPreSupply?.baseline ?? parseStoredSocialScriptBaseline(taskRecord.script_baseline);
   let initialAuthorityBaselineVersion:number|null=null;
-  if(baseline&&originalReplication?.context.verifiedAccountPlaybook&&(weeklyPackage?.executionGraphVersion??1)>=2&&!baseline.accountPlaybookConstraints){
+  if(baseline&&originalReplication?.context.verifiedAccountPlaybook&&weeklyExecutionGraphVersion>=2&&!baseline.accountPlaybookConstraints){
     // Creation precedes the weekly authority binding. Such an initial script
     // cannot be a production lock until the original scheduler rules are captured.
     const {readContentExecutionJob}=await import('../contentExecution/durableQueue.js');

@@ -11,7 +11,7 @@ export interface WeeklyScheduleProposal {
 }
 export interface WeeklyScheduleSnapshot {
  snapshotId:string;proposalId:string;tenantId:string;programId:string;packageId:string;sourceVersion:number;targetVersion:number;confirmedBy:string;confirmedAt:string;inputEvidenceHash:string;
- targetGraphHash?:string;targetExecutionGraphVersion?:1|2;templateCarryovers?:WeeklyContentTemplateRevisionPlan[];
+ targetGraphHash?:string;targetExecutionGraphVersion?:1|2|3;templateCarryovers?:WeeklyContentTemplateRevisionPlan[];
  assignments:Array<{sourceTaskId:string|null;targetTaskId?:string;origin?:'existing_source'|'new_planned';signature:string;startAt:string;finishAt:string;resourceKey:string|null;mode?:'planned'|'completed_verified'|'running_reserved';sourceInputHash?:string}>;
  publicationTimes:Array<{publicationTaskId:string;publishWindow:string|null}>;
  queueConfigurationHash?:string;queueCapacityEvidenceHash?:string;

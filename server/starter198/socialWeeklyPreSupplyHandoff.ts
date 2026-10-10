@@ -44,7 +44,7 @@ export async function readWeeklyPreSupplyHandoff(repository:Starter198Repository
 export async function freezeWeeklyPreSupplyHandoff(input:{repository:Starter198Repository;tenantId:string;taskId:string;runId:string;detail:SocialContentTaskDetail;baseline:NonNullable<ReturnType<typeof parseStoredSocialScriptBaseline>>}):Promise<WeeklyPreSupplyHandoff|null>{
  const row=await requireSocialTask(input),brief=socialObject(socialJson(row.brief)),authority=socialObject(brief?._weeklyAuthority),pkg=socialObject(authority?.weeklyPackage);
  const rowHash=socialRequestHash(row);
- if((pkg?.executionGraphVersion??1)<2)return null;
+ if(Number(pkg?.executionGraphVersion??1)<2)return null;
  const existing=await readWeeklyPreSupplyHandoff(input.repository,input.tenantId,input.taskId);if(existing)return existing;
  const proof=await readWeeklyReplicationAuthority(input.repository,row),workflow=input.detail.agentWorkflow;if(!proof||!workflow||!workflow.executionPlanReview.approved||row.run_id!==input.runId||!input.repository.dataStore)return fail();
  const actual=await readSocialTaskDetail({repository:input.repository,tenantId:input.tenantId,taskId:input.taskId});

@@ -328,7 +328,10 @@ export function createWeeklyOperatingPackageService(dataStore: DataStore) {
         previousPackage: projectedCurrent,
         createdAt,
       });
-      item.executionGraphVersion=3;
+      // A normal revision keeps the source graph contract. Historical packages
+      // without an explicit version continue through the established v2
+      // schedule-upgrade path; only newly-created packages opt in to v3.
+      item.executionGraphVersion=current.payload.executionGraphVersion??2;
       return item;
 
   }
