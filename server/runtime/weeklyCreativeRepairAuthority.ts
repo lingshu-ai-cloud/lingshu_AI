@@ -7,7 +7,7 @@ import {socialJson,socialObject,socialRequestHash,SocialContentWorkflowError} fr
 
 export interface WeeklyCreativeRepairProof {
  type:'weekly_creative_repair_authority';version:1;tenantId:string;caseId:string;caseRecordHash:string;
- configurationRecordHash:string;childTaskId:string;parentTaskId:string;parentRunId:string;parentArtifactHash:string;
+ caseRequestHash:string;configurationRecordHash:string;childTaskId:string;parentTaskId:string;parentRunId:string;parentArtifactHash:string;
  packageId:string;packageVersion:number;publicationTaskId:string;originalAuthorityHash:string;issuedAt:string;recordHash:string;
 }
 type AuthorityContext={proof:WeeklyCreativeRepairProof;authority:Record<string,unknown>;bindingKey:string;repairCase:WeeklyProductionRepairCase;configuration:CreativeRepairConfiguration};
@@ -37,7 +37,7 @@ export async function issueWeeklyCreativeRepairAuthority(input:{store:DataStore;
  if(!input.childTaskId||input.childTaskId!==input.childTaskId.trim())fail();
  const actual=await source({...input,now:input.now??new Date(),allowExpired:false,requireReady:true});
  if(actual.item.recordHash!==input.expectedCaseHash||actual.configuration.recordHash!==input.expectedConfigurationHash)fail();
- const body={type:'weekly_creative_repair_authority' as const,version:1 as const,tenantId:input.tenantId,caseId:input.caseId,caseRecordHash:actual.item.recordHash,configurationRecordHash:actual.configuration.recordHash,childTaskId:input.childTaskId,parentTaskId:actual.item.parent.taskId,parentRunId:actual.item.parent.runId,parentArtifactHash:actual.item.parent.artifactHash,packageId:actual.item.packageId,packageVersion:actual.item.packageVersion,publicationTaskId:actual.item.publicationTaskId,originalAuthorityHash:socialRequestHash(actual.authority),issuedAt:(input.now??new Date()).toISOString()};
+ const body={type:'weekly_creative_repair_authority' as const,version:1 as const,tenantId:input.tenantId,caseId:input.caseId,caseRecordHash:actual.item.recordHash,caseRequestHash:actual.item.requestHash,configurationRecordHash:actual.configuration.recordHash,childTaskId:input.childTaskId,parentTaskId:actual.item.parent.taskId,parentRunId:actual.item.parent.runId,parentArtifactHash:actual.item.parent.artifactHash,packageId:actual.item.packageId,packageVersion:actual.item.packageVersion,publicationTaskId:actual.item.publicationTaskId,originalAuthorityHash:socialRequestHash(actual.authority),issuedAt:(input.now??new Date()).toISOString()};
  const proof={...body,recordHash:socialRequestHash(body)},bindingKey=`weekly-creative-repair:${actual.item.packageId}:${actual.item.packageVersion}:${actual.item.publicationTaskId}:${actual.item.caseId}`;
  return{proof,bindingKey,authority:actual.authority};
 }
@@ -50,7 +50,11 @@ export async function resolveWeeklyCreativeRepairAuthority(input:{store:DataStor
  const bindingKey=`weekly-creative-repair:${proof.packageId}:${proof.packageVersion}:${proof.publicationTaskId}:${proof.caseId}`;if(input.task.create_idempotency_key!==bindingKey)fail();
  const started=Boolean(String(input.task.run_id??'').trim()||String(input.task.orchestrator_item_id??'').trim());
  const actual=await source({store:input.store,tenantId:input.tenantId,caseId:proof.caseId,now:input.now??new Date(),allowExpired:started,requireReady:false});
- if(!started&&actual.item.state!=='ready')fail();
- if(proof.caseRecordHash!==actual.item.recordHash||proof.configurationRecordHash!==actual.configuration.recordHash||proof.parentTaskId!==actual.item.parent.taskId||proof.parentRunId!==actual.item.parent.runId||proof.parentArtifactHash!==actual.item.parent.artifactHash||proof.packageId!==actual.item.packageId||proof.packageVersion!==actual.item.packageVersion||proof.publicationTaskId!==actual.item.publicationTaskId||proof.originalAuthorityHash!==socialRequestHash(actual.authority)||socialRequestHash(socialObject(brief?._weeklyAuthority))!==socialRequestHash(actual.authority))fail();
+ if(proof.caseRequestHash!==actual.item.requestHash||proof.configurationRecordHash!==actual.configuration.recordHash||proof.parentTaskId!==actual.item.parent.taskId||proof.parentRunId!==actual.item.parent.runId||proof.parentArtifactHash!==actual.item.parent.artifactHash||proof.packageId!==actual.item.packageId||proof.packageVersion!==actual.item.packageVersion||proof.publicationTaskId!==actual.item.publicationTaskId||proof.originalAuthorityHash!==socialRequestHash(actual.authority)||socialRequestHash(socialObject(brief?._weeklyAuthority))!==socialRequestHash(actual.authority))fail();
+ if(!started){if(actual.item.state!=='ready'||actual.item.execution||proof.caseRecordHash!==actual.item.recordHash)fail();}
+ else{
+  if(!['running','awaiting_audit','resolved'].includes(actual.item.state)||!actual.item.execution)fail();
+  const mappingRow=await exact(input.store,'social_weekly_creative_repair_child_executions',{tenant_id:input.tenantId,case_id:proof.caseId}),mapping=socialObject(socialJson(mappingRow.payload));if(!mapping||mappingRow.content_hash!==socialRequestHash(mapping))fail();const mappingHash=mapping.recordHash,{recordHash:_,...mappingBody}=mapping;if(typeof mappingHash!=='string'||mappingHash!==socialRequestHash(mappingBody)||mapping.state!=='running'||mapping.caseRequestHash!==proof.caseRequestHash||mapping.configurationHash!==proof.configurationRecordHash||mapping.parentTaskId!==proof.parentTaskId||mapping.parentRunId!==proof.parentRunId||mapping.parentArtifactHash!==proof.parentArtifactHash||mapping.childTaskId!==proof.childTaskId||mapping.childBindingKey!==bindingKey||mapping.runId!==input.task.run_id||actual.item.execution.operationId!==proof.childTaskId||actual.item.execution.runId!==mapping.runId||actual.item.execution.jobId!==mapping.jobId)fail();
+ }
  return{proof,authority:actual.authority,bindingKey,repairCase:actual.item,configuration:actual.configuration};
 }
