@@ -54,3 +54,15 @@ test('successful customer dispatch without the requested channel receipt cannot 
  const result=await createSocialWeeklyCustomerChannelAdapter(f.store,{readAuthorization:f.authorization as any,openSocialToken:()=> 'token',verifySelection:async()=>f.selection as any,readStep:async()=>({status:'succeeded',reason:null,runId:'run',taskId:'dispatch',resultRefs:[{type:'weekly_customer_followup_batch',id:'batch',version:1}]})}).execute(f.task('customer_inquiry_handoff'));
  assert.equal(result.status,'blocked');assert.equal('code' in result?result.code:'','weekly_customer_channel_dispatch_missing');
 });
+
+ test('another valid account cannot mask the selected expired or malformed account',async()=>{
+ for(const channel of ['messenger','instagram'] as const){for(const expiry of ['2026-10-04T00:00:00Z','not-a-date']){
+ const f=fixture();const platform=channel==='messenger'?'facebook':'instagram';const account=f.rows.social_accounts![0]!;Object.assign(account,{platform,tokenExpiresAt:expiry,oauthProvider:'instagram_login',scope:'instagram_business_manage_messages',instagramWebhookSubscribed:true});
+ f.rows.social_accounts!.push({...account,id:'valid-other',providerAccountId:'native-other',tokenExpiresAt:'2026-11-01T00:00:00Z'});
+ const task={...f.task('customer_channel_readiness'),inputSnapshot:{customerChannel:channel}};
+ const ports={readAuthorization:async()=>({...await f.authorization(),channel}),openSocialToken:()=> 'token',now:()=>new Date('2026-10-05T00:00:00Z')};
+ const result=await createSocialWeeklyCustomerChannelAdapter(f.store,ports).execute(task);assert.equal(result.status,'blocked');assert.equal('code' in result?result.code:'',`${channel}_selected_account_unavailable`);assert.equal(f.rows[WEEKLY_CUSTOMER_CHANNEL_EXECUTIONS]?.length??0,0);
+ account.tokenExpiresAt='2026-11-01T00:00:00Z';const ready=await createSocialWeeklyCustomerChannelAdapter(f.store,ports).execute(task);assert.equal(ready.status,'succeeded');if(ready.status!=='succeeded')continue;
+ account.tokenExpiresAt=expiry;await assert.rejects(validateWeeklyCustomerChannelExecution(f.store,task,ready.resultRefs,ports),new RegExp(`${channel}_selected_account_unavailable`));
+ }}
+ });
