@@ -13,11 +13,12 @@ import '@fullcalendar/react/skeleton.css';
 import '@fullcalendar/react/themes/classic/theme.css';
 import '@fullcalendar/react/themes/classic/palette.css';
 import { calendarDateTimeValue, calendarDayKey, calendarInstant, calendarMovedInstant, calendarStatusLabels, type LsCalendarEvent } from '../../lib/calendarModel';
+import { authHeader } from '../../lib/auth';
 import { SocialPlatformIcon, socialBrandLabel } from '../SocialPlatformIcon';
 import './calendar.css';
 
 export { calendarDayKey, type LsCalendarEvent } from '../../lib/calendarModel';
-export type LsCalendarView = 'dayGridMonth' | 'timeGridWeek' | 'timeGridDay' | 'listWeek' | 'multiMonthYear';
+export type LsCalendarView = 'dayGridMonth' | 'dayGridWeek' | 'dayGridDay' | 'timeGridWeek' | 'timeGridDay' | 'listWeek' | 'multiMonthYear';
 type Props = {
   events: LsCalendarEvent[];
   label: string;
@@ -29,6 +30,7 @@ type Props = {
   timeZone?: string;
   loading?: boolean;
   timeGridHeight?: number | string;
+  fixedHeight?: number | string;
   primaryAction?: ReactNode;
   filters?: ReactNode;
   onRefresh?: () => void;
@@ -39,19 +41,79 @@ type Props = {
   renderDetails?: (event: LsCalendarEvent, closeDetails: () => void) => ReactNode;
 };
 
+const THUMBNAIL_TIMEOUT_MS = 4_000;
+const protectedThumbnailCache = new Map<string, Promise<Blob | null>>();
+
+function loadProtectedThumbnail(src: string, refresh = false): Promise<Blob | null> {
+  if (refresh) protectedThumbnailCache.delete(src);
+  const cached = protectedThumbnailCache.get(src);
+  if (cached) return cached;
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), THUMBNAIL_TIMEOUT_MS);
+  const request = fetch(src, { headers: authHeader(), signal: controller.signal })
+    .then(response => {
+      if (!response.ok || !response.headers.get('Content-Type')?.startsWith('image/')) throw new Error('thumbnail_unavailable');
+      return response.blob();
+    })
+    .catch(() => null)
+    .finally(() => window.clearTimeout(timeout));
+  protectedThumbnailCache.set(src, request);
+  return request;
+}
+
 function CalendarThumbnail({ src, title, large = false, card = false }: { src?: string; title: string; large?: boolean; card?: boolean }) {
   const [failedSource, setFailedSource] = useState<string | undefined>();
   const [loadedSource, setLoadedSource] = useState<string | undefined>();
+  const [resolvedSource, setResolvedSource] = useState('');
+  const [retryKey, setRetryKey] = useState(0);
+  useEffect(() => {
+    setFailedSource(undefined);
+    setLoadedSource(undefined);
+    setResolvedSource('');
+    if (!src) return;
+    let protectedSource = '';
+    try {
+      const absolute = new URL(src, window.location.href);
+      protectedSource = absolute.origin === window.location.origin && absolute.pathname.startsWith('/api/')
+        ? `${absolute.pathname}${absolute.search}`
+        : '';
+    } catch {
+      setFailedSource(src);
+      return;
+    }
+    const direct = !protectedSource;
+    if (direct) {
+      setResolvedSource(src);
+      return;
+    }
+    let disposed = false;
+    let objectUrl = '';
+    void loadProtectedThumbnail(protectedSource, retryKey > 0)
+      .then(blob => {
+        if (disposed) return;
+        if (!blob) {
+          setFailedSource(src);
+          return;
+        }
+        objectUrl = URL.createObjectURL(blob);
+        setResolvedSource(objectUrl);
+      });
+    return () => {
+      disposed = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [src, retryKey]);
   const failed = Boolean(src && failedSource === src);
-  const ready = Boolean(src && loadedSource === src);
+  const ready = Boolean(resolvedSource && loadedSource === resolvedSource);
+  const loading = Boolean(src && !failed && !resolvedSource);
   return <div className={large ? 'ls-calendar-media' : card ? 'ls-calendar-card-media' : 'ls-calendar-thumb'}>
-    {src && !failed ? <img src={src} alt={title} loading="lazy" className={ready ? 'is-ready' : undefined} onLoad={() => setLoadedSource(src)} onError={() => setFailedSource(src)}/> : <span><ImageOff size={large || card ? 24 : 16}/>{large && <span>{failed ? '媒体加载失败' : '暂无缩略图'}</span>}</span>}
-    {large && failed && <Button size="small" onClick={() => { setFailedSource(undefined); setLoadedSource(undefined); }}>重新加载</Button>}
+    {resolvedSource && !failed ? <img src={resolvedSource} alt={title} loading={card ? 'eager' : 'lazy'} decoding="async" className={ready ? 'is-ready' : undefined} onLoad={() => setLoadedSource(resolvedSource)} onError={() => setFailedSource(src)}/> : <span>{loading ? <Spin size="small"/> : <ImageOff size={large || card ? 24 : 16}/>} {(large || card) && <span>{loading ? '正在加载封面' : failed ? '封面暂不可用' : '暂无封面'}</span>}</span>}
+    {large && failed && <Button size="small" onClick={() => setRetryKey(value => value + 1)}>重新加载</Button>}
   </div>;
 }
 
 /** Standard plugins only: all calendar pages share the same events, timezone and accessible detail path. */
-export function LsCalendar({ events, label, initialDate, initialView = 'dayGridMonth', firstDay = 1, eventCardMode = 'compact', date, timeZone = 'Asia/Shanghai', loading, timeGridHeight = 'clamp(320px, 65dvh, 720px)', primaryAction, filters, onRefresh, onDatesSet, onDateClick, onExternalDrop, onMoveEvent, renderDetails }: Props) {
+export function LsCalendar({ events, label, initialDate, initialView = 'dayGridMonth', firstDay = 1, eventCardMode = 'compact', date, timeZone = 'Asia/Shanghai', loading, timeGridHeight = 'clamp(320px, 65dvh, 720px)', fixedHeight, primaryAction, filters, onRefresh, onDatesSet, onDateClick, onExternalDrop, onMoveEvent, renderDetails }: Props) {
   const calendarRef = useRef<CalendarRef>(null);
   const hostRef = useRef<HTMLDivElement>(null);
   const eventsRef = useRef(events);
@@ -65,6 +127,8 @@ export function LsCalendar({ events, label, initialDate, initialView = 'dayGridM
   const moveInputId = useId();
   const [moving, setMoving] = useState(false);
   const previousWidth = useRef<boolean | undefined>(undefined);
+  const weekView: LsCalendarView = eventCardMode === 'media' ? 'dayGridWeek' : 'timeGridWeek';
+  const dayView: LsCalendarView = eventCardMode === 'media' ? 'dayGridDay' : 'timeGridDay';
   const moveRef = useRef(onMoveEvent);
   moveRef.current = onMoveEvent;
 
@@ -89,11 +153,20 @@ export function LsCalendar({ events, label, initialDate, initialView = 'dayGridM
     observer.observe(hostRef.current);
     return () => observer.disconnect();
   }, []);
-  const inputs = useMemo<EventInput[]>(() => events.map(event => ({
-    id: event.id, title: event.title, start: event.start, end: event.end, allDay: event.allDay,
-    startEditable: Boolean(event.editable && onMoveEvent), durationEditable: false,
-    interactive: true, extendedProps: { item: event },
-  })), [events, Boolean(onMoveEvent)]);
+  const inputs = useMemo<EventInput[]>(() => [...events]
+    .sort((left, right) => {
+      const leftInstant = new Date(left.start).getTime();
+      const rightInstant = new Date(right.start).getTime();
+      const startOrder = Number.isFinite(leftInstant) && Number.isFinite(rightInstant)
+        ? leftInstant - rightInstant
+        : left.start.localeCompare(right.start);
+      return startOrder || left.id.localeCompare(right.id);
+    })
+    .map(event => ({
+      id: event.id, title: event.title, start: event.start, end: event.end, allDay: event.allDay,
+      startEditable: Boolean(event.editable && onMoveEvent), durationEditable: false,
+      interactive: true, extendedProps: { item: event },
+    })), [events, Boolean(onMoveEvent)]);
 
   const move = async (event: LsCalendarEvent, newStart: string) => {
     if (!event.editable || !moveRef.current) throw new Error('当前事件不允许调整排期');
@@ -111,13 +184,13 @@ export function LsCalendar({ events, label, initialDate, initialView = 'dayGridM
     }
     await moveRef.current(event, next.toISOString());
   };
-  return <div className="ls-calendar" ref={hostRef} aria-label={label}>
+  return <div className={`ls-calendar${eventCardMode === 'media' ? ' ls-calendar-media-cards' : ''}`} ref={hostRef} aria-label={label}>
     <div className="ls-calendar-toolbar">
       {primaryAction}
       <Button onClick={() => calendarRef.current?.getApi().today()}>今天</Button>
       <div className="ls-calendar-navigation"><Button aria-label="上一周期" icon={<ChevronLeft size={16}/>} onClick={() => calendarRef.current?.getApi().prev()}/><Button aria-label="下一周期" icon={<ChevronRight size={16}/>} onClick={() => calendarRef.current?.getApi().next()}/></div>
       <h3 aria-live="polite">{title}</h3>
-      <Segmented aria-label="日历视图" value={view} options={[{ label: '月', value: 'dayGridMonth' }, { label: '周', value: 'timeGridWeek' }, { label: '日', value: 'timeGridDay' }, { label: '列表', value: 'listWeek' }, { label: '全年', value: 'multiMonthYear' }]} onChange={value => { setView(value as LsCalendarView); calendarRef.current?.getApi().changeView(value); }}/>
+      <Segmented aria-label="日历视图" value={view} options={[{ label: '月', value: 'dayGridMonth' }, { label: '周', value: weekView }, { label: '日', value: dayView }, { label: '列表', value: 'listWeek' }, { label: '全年', value: 'multiMonthYear' }]} onChange={value => { setView(value as LsCalendarView); calendarRef.current?.getApi().changeView(value); }}/>
       {filters}
       {onRefresh && <Button aria-label="刷新日历" icon={<RefreshCw size={15}/>} onClick={onRefresh} loading={loading}/>}
     </div>
@@ -131,8 +204,8 @@ export function LsCalendar({ events, label, initialDate, initialView = 'dayGridM
       <FullCalendar ref={calendarRef} plugins={[themePlugin, dayGridPlugin, timeGridPlugin, listPlugin, multiMonthPlugin, interactionPlugin]} locale={zhLocale} timeZone={timeZone} firstDay={firstDay} initialView={view} initialDate={initialDate || undefined}
         // In v7 either height="auto" or contentHeight="auto" disables the internal
         // time scroller. Bound only time views; month/list/year remain content-sized.
-        headerToolbar={false} contentHeight={view.startsWith('timeGrid') ? timeGridHeight : 'auto'} events={inputs} editable={Boolean(onMoveEvent)} eventDurationEditable={false} eventInteractive dayMaxEvents={3} nowIndicator expandRows tableHeaderSticky
-        allDaySlot={inputs.some(event => event.allDay)} allDayText="当天事项" noEventsText="当前周期没有排期" slotMinTime="08:00:00" slotMaxTime="22:00:00" slotDuration="01:00:00" slotHeaderInterval="01:00:00" scrollTime="08:00:00" scrollTimeReset slotHeaderFormat={{ hour: '2-digit', minute: '2-digit', hour12: false }} eventTimeFormat={{ hour: '2-digit', minute: '2-digit', hour12: false }}
+        headerToolbar={false} contentHeight={fixedHeight ?? (view.startsWith('timeGrid') ? timeGridHeight : 'auto')} events={inputs} eventOrder="start,id" eventOrderStrict slotEventOverlap={false} editable={Boolean(onMoveEvent)} eventDurationEditable={false} eventInteractive dayMaxEvents={eventCardMode === 'media' && ['dayGridWeek', 'dayGridDay'].includes(view) ? false : 3} nowIndicator expandRows tableHeaderSticky
+        allDaySlot={eventCardMode === 'media' ? false : inputs.some(event => event.allDay)} noEventsText="当前周期没有排期" slotMinTime="08:00:00" slotMaxTime="22:00:00" slotDuration="01:00:00" slotHeaderInterval="01:00:00" scrollTime="08:00:00" scrollTimeReset slotHeaderFormat={{ hour: '2-digit', minute: '2-digit', hour12: false }} eventTimeFormat={{ hour: '2-digit', minute: '2-digit', hour12: false }}
         eventMinHeight={24} eventShortHeight={68} columnEventInnerClass="ls-calendar-time-inner"
         datesSet={info => { setTitle(info.view.title); setView(info.view.type as LsCalendarView); onDatesSet?.(info); }}
         dateClick={info => onDateClick?.(info.dateStr, info.allDay)}
@@ -163,8 +236,9 @@ export function LsCalendar({ events, label, initialDate, initialView = 'dayGridM
             return <div className="ls-calendar-event-content ls-calendar-event-content-media">
               <CalendarThumbnail src={item.thumbnailUrl} title={item.title} card/>
               <div className="ls-calendar-event-copy">
-                <div className="ls-calendar-event-meta">{item.platform && <SocialPlatformIcon platform={item.platform} size={13}/>}<span>{item.statusLabel || calendarStatusLabels[item.status]}</span></div>
+                <div className="ls-calendar-event-meta"><span className="ls-calendar-event-account">{item.platform && <SocialPlatformIcon platform={item.platform} size={13}/>}<span>{item.accountName || item.ownerAgent || '待绑定账号'}</span></span><span>{item.statusLabel || calendarStatusLabels[item.status]}</span></div>
                 <strong>{item.title}</strong>
+                {item.description && <span className="ls-calendar-event-summary">{item.description}</span>}
               </div>
             </div>;
           }

@@ -154,6 +154,7 @@
     "1791536000_extend_assistant_thread_state.js": "a2ab723874522e85bed9bba19241cda64b0687beca3e0685f1ca7d69af04a777",
     "1791536100_create_assistant_schedule_changes.js": "5bd29eeba2d252bcdee2581d7a7f8c5c1178046e1a942afea156c7d0b466f0f6",
     "1791536200_isolate_and_version_assistant_threads.js": "9d9506c1abf6d3564339422058a809e465e85da90b85e3be175f171c87f6fb35",
-    "1791536300_create_datastore_cas_claims.js": "aa2a60175ede923ac2294b669e13be4d96f20c6a44957e890e6b66a6edb40166"
+    "1791536300_create_datastore_cas_claims.js": "aa2a60175ede923ac2294b669e13be4d96f20c6a44957e890e6b66a6edb40166",
+    "1791586800_create_assistant_decision_memories.js": "c0c6b1aaf9ca68024d9d53597460bec90de278e555073ebdfd2558075e8749fa"
   }
 }

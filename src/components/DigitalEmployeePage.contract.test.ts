@@ -175,15 +175,15 @@ assert.doesNotMatch(layoutSource, /aria-label="主导航"[\s\S]{0,900}新手引�
 assert.match(layoutSource, /lingshu:open-digital-employee-guide/, 'the user-menu guide entry must open the Digital Employee guide');
 assert.match(pageSource, /addEventListener\('lingshu:open-digital-employee-guide'/, 'Smart Business must respond to the sidebar guide entry');
 assert.doesNotMatch(pageSource, /SMART OPERATIONS/, 'the redundant Smart Operations masthead must be removed');
-assert.match(weeklyPlanControlsSource, /查看本周计划[\s\S]{0,900}Agent 设置[\s\S]{0,900}历史计划/, 'the current-plan controls must retain all weekly-plan management actions');
+assert.doesNotMatch(weeklyPlanControlsSource, /查看本周计划/, 'the redundant weekly-plan viewer must not remain in the current-plan controls');
+assert.match(weeklyPlanControlsSource, /Agent 设置[\s\S]{0,900}历史计划[\s\S]{0,900}weeklyControlLabel/, 'the current-plan controls must retain settings, history and the primary execution action');
 assert.match(currentPlanSource, /actions=\{weeklyPlanControls\}/, 'the current-plan header must receive the weekly-plan controls');
 assert.match(weeklyCommandCenterSource, /<h2[^>]*>周经营计划<\/h2>/, 'the weekly-plan header must retain its concise title');
 assert.match(weeklyCommandCenterSource, /aria-label="智能经营控制"/, 'the weekly-plan header must retain management controls');
 assert.match(weeklyCommandCenterSource, /周经营计划[\s\S]{0,1800}aria-label="智能经营控制"/, 'the weekly-plan visual date range must keep the management controls in the same header');
 assert.match(weeklyCommandCenterSource, /WeeklyRangeVisual/, 'the weekly-plan header must visualize its operating range instead of appending a raw date string');
 assert.match(weeklyCommandCenterSource, /周经营计划[\s\S]{0,500}<WeeklyRangeVisual/, 'the compact week range must remain in the same title row instead of consuming its own line');
-assert.match(weeklyCommandCenterSource, /initialView="timeGridWeek"/, 'the weekly publishing calendar must open in the standard week view');
-assert.match(weeklyCommandCenterSource, /timeGridHeight=\{520\}/, 'the embedded publishing calendar must keep a useful bounded height');
+assert.match(weeklyCommandCenterSource, /initialView="dayGridWeek"[^>]*eventCardMode="media"[^>]*fixedHeight=\{640\}/, 'the weekly publishing calendar must open as a fixed, media-first cascading card window');
 for (const label of ['本周生产状态', '各平台计划与完成']) assert.doesNotMatch(smartBusinessSource, new RegExp(label), `${label} must not add low-value charts to the overview`);
 assert.match(currentPlanSource, /WeeklyCommandCenter/, 'the full weekly command center must replace the simplified current-plan summary');
 assert.match(currentPlanSource, /notice=\{!activeRun[\s\S]{0,1200}detailGeneration\?\.blockedCount/, 'the weekly-plan header must retain actionable readiness and generation blockers');

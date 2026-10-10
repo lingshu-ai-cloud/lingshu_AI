@@ -4427,7 +4427,6 @@ export default function DigitalEmployeePage({
       window.setTimeout(() => document.querySelector('[data-testid="production-task-scene"]')?.scrollIntoView({ behavior: getScrollBehavior(), block: "start" }), 50);
     };
     const weeklyPlanControls = <>
-      <Button onClick={()=>{ setNewGoal(false); setWeeklyPlanOpen(true); }} icon={<CalendarRange size={15}/>}>查看本周计划</Button>
       <Button onClick={()=>setWorkspaceView("rules")} icon={<Settings2 size={15}/>}>Agent 设置</Button>
       <Button onClick={()=>setPlanHistoryOpen(true)} icon={<History size={15}/>}>历史计划</Button>
       <Button type="primary" loading={Boolean(busy)} onClick={()=>void controlWeeklyWork()} icon={activeRun && data.run?.status !== "paused" ? <Pause size={15}/> : <Play size={15}/>}>{weeklyControlLabel}</Button>

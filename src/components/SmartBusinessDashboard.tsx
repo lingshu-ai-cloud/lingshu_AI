@@ -332,6 +332,7 @@ export function WeeklyCommandCenter({
     platform: item.platform,
     accountId: item.accountId,
     accountName: item.accountLabel,
+    thumbnailUrl: item.thumbnailUrl,
     sourceId: item.contentId,
     description: `${item.productName} · ${item.caption || "发布文案待完善"}`,
     data: item,
@@ -362,7 +363,7 @@ export function WeeklyCommandCenter({
     </div>
     <div className="border-t border-border px-4 py-5 sm:px-5">
       <div className="mb-4 flex items-center justify-between gap-3"><h3 className="text-lg font-semibold text-text-primary">发布日历</h3><span className="text-xs text-text-secondary">{calendarEvents.length} 条本周内容</span></div>
-      <LsCalendar events={calendarEvents} label="本周发布日历" initialDate={display.startsAt ? calendarDayKey(display.startsAt) : undefined} date={display.startsAt ? calendarDayKey(display.startsAt) : undefined} initialView="timeGridWeek" firstDay={display.startsAt ? new Date(`${display.startsAt}T00:00:00+08:00`).getDay() : 1} timeGridHeight={520} renderDetails={event => {
+      <LsCalendar events={calendarEvents} label="本周发布日历" initialDate={display.startsAt ? calendarDayKey(display.startsAt) : undefined} date={display.startsAt ? calendarDayKey(display.startsAt) : undefined} initialView="dayGridWeek" eventCardMode="media" fixedHeight={640} firstDay={display.startsAt ? new Date(`${display.startsAt}T00:00:00+08:00`).getDay() : 1} renderDetails={event => {
         const item = event.data as UnifiedPlanContent;
         return <div className="space-y-3"><div className="flex flex-wrap gap-2">{item.tags.map(tag => <Tag key={tag}>#{tag}</Tag>)}</div><dl className="ls-calendar-details"><div><dt>产品</dt><dd>{item.productName}</dd></div><div><dt>发布文案</dt><dd>{item.caption || "待完善"}</dd></div></dl></div>;
       }}/>
@@ -381,6 +382,7 @@ type UnifiedPlanContent = {
   caption: string;
   tags: string[];
   productName: string;
+  thumbnailUrl: string;
   platform: Platform;
   accountId: string;
   accountLabel: string;
@@ -472,6 +474,20 @@ function demoMetrics(platform: Platform, identity: string) {
   return { views, likes, comments, shares, interactions, engagementRate, source: "demo" as const };
 }
 
+function contentThumbnailUrl(plan: VideoCreationPlan, queueItem: ContentQueueItem | null) {
+  const previews = [queueItem?.preproduction, plan.preproduction];
+  for (const preview of previews) {
+    const storyboardFrame = preview?.materials.storyboard?.find(item => item.status === "ready" && item.materialPreviewUrl)?.materialPreviewUrl;
+    if (storyboardFrame) return storyboardFrame;
+    const readyMaterial = preview?.materials.items.find(item => item.type === "image" && item.status === "ready" && item.previewUrl)?.previewUrl;
+    if (readyMaterial) return readyMaterial;
+  }
+  return queueItem?.preproduction?.benchmark.thumbnailUrl
+    || plan.preproduction?.benchmark.thumbnailUrl
+    || plan.planningEvidence?.referenceThumbnailUrl
+    || "";
+}
+
 function buildSmartBusinessDisplayModel(data: DigitalEmployeeOverview, selectedAccountId = ""): SmartBusinessDisplayModel {
   const operatingContext = data.plan?.businessPackage?.operatingContext;
   const packagePlans = data.plan?.businessPackage?.tasks.find(task => task.templateId === "production")?.videoPlans || [];
@@ -524,6 +540,7 @@ function buildSmartBusinessDisplayModel(data: DigitalEmployeeOverview, selectedA
       caption: plan.publication?.caption || "",
       tags: plan.publication?.tags || [],
       productName: queueItem?.productName || plan.productName || data.config?.focusProducts || "待绑定产品",
+      thumbnailUrl: contentThumbnailUrl(plan, queueItem),
       platform: plan.platform,
       accountId,
       accountLabel: account?.accountLabel || target?.accountLabel || `${data.config?.companyName || "企业"} · ${platformLabels[plan.platform]}`,

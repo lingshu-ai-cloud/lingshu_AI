@@ -4,6 +4,9 @@ import fs from 'node:fs';
 const source = fs.readFileSync(new URL('./GlobalAssistant.tsx', import.meta.url), 'utf8');
 const appSource = fs.readFileSync(new URL('../App.tsx', import.meta.url), 'utf8');
 const composerSource = fs.readFileSync(new URL('./assistant/AssistantComposer.tsx', import.meta.url), 'utf8');
+const decisionMemoryPanelSource = fs.readFileSync(new URL('./AssistantDecisionMemoryPanel.tsx', import.meta.url), 'utf8');
+const decisionMemoryHookSource = fs.readFileSync(new URL('../lib/useAssistantDecisionMemory.ts', import.meta.url), 'utf8');
+const conversationContextSource = fs.readFileSync(new URL('../lib/assistantConversationContext.ts', import.meta.url), 'utf8');
 const assistantGuidesSource = fs.readFileSync(new URL('../lib/assistantGuides.ts', import.meta.url), 'utf8');
 const globalStylesSource = fs.readFileSync(new URL('../index.css', import.meta.url), 'utf8');
 
@@ -21,22 +24,23 @@ assert.doesNotMatch(source, /data-assistant-surface=["']quick-actions["']|SKILL_
 assert.equal(source.match(/data-global-assistant=["']root["']/g)?.length, 1, '页面只能渲染一个灵小枢根入口');
 
 const launcherClickSource = sourceSection('const handleLauncherClick', '\n  useEffect(', '灵小枢点击处理');
-const launcherMarkup = sourceSection('<Badge count={pendingCount}', '</Button>', '灵小枢右上角入口');
+const launcherMarkup = sourceSection('<Badge count={pendingCount}', '</Button>', '灵小枢右下角入口');
 assert.match(launcherClickSource, /openCurrentPageAgent\(\)/, '主入口点击灵小枢必须直接进入当前工作对话');
 assert.doesNotMatch(launcherClickSource, /setMode\('expanded'\)|quick-actions|SKILL_AGENTS/, '点击灵小枢不得打开四助手快捷轮盘');
 assert.match(source, /data-global-assistant="root"[\s\S]{0,220}className="fixed bottom-\[calc\(env\(safe-area-inset-bottom\)\+1rem\)\] right-4 z-\[75\]/, '灵小枢入口必须固定在页面右下角并避让设备安全区');
-assert.match(source, /data-global-assistant="launcher"[\s\S]{0,300}aria-label=\{mode === 'chat' \? '收起灵小枢对话' : '询问灵小枢'\}/, '右上角入口必须以清晰文本直接打开或收起对话');
+assert.match(source, /data-global-assistant="launcher"[\s\S]{0,300}aria-label=\{mode === 'chat' \? '收起灵小枢对话' : '询问灵小枢'\}/, '右下角入口必须以清晰文本直接打开或收起对话');
 assert.match(launcherMarkup, /shape="round"/, '灵小枢入口必须采用紧凑胶囊形态');
 assert.match(launcherMarkup, /!h-11/, '灵小枢入口必须保留 44px 触控高度');
 assert.match(source, /aria-expanded=\{mode === 'chat'\}[\s\S]{0,80}aria-controls="global-assistant-panel"/, '入口必须暴露弹窗展开关系');
 assert.match(launcherMarkup, /aria-haspopup="dialog"/, '灵小枢入口必须声明它会打开对话浮层');
 assert.match(launcherMarkup, /var\(--ls-action-gradient\)/, '灵小枢入口图标必须复用全局主操作渐变 Token');
-assert.doesNotMatch(source, /handlePointerDown|ASSISTANT_POSITION_KEY|data-global-assistant="edge-launcher"|setLauncherRetracted/, '右上角入口不得再保留拖动、旧坐标或自动缩边交互');
+assert.doesNotMatch(source, /handlePointerDown|ASSISTANT_POSITION_KEY|data-global-assistant="edge-launcher"|setLauncherRetracted/, '右下角入口不得再保留拖动、旧坐标或自动缩边交互');
 assert.doesNotMatch(globalStylesSource, /data-lingshu-assistant-clearance="bottom-navigation"/, '灵小枢入口不得依赖已经失效的旧底部导航标记');
 assert.match(source, /id="global-assistant-panel"[\s\S]{0,720}bottom-14 right-0/, '灵小枢弹窗必须锚定在右下角入口上方');
+assert.match(source, /max-h-\[calc\(100dvh-env\(safe-area-inset-bottom\)-96px\)\]/, '灵小枢弹窗高度必须避让移动设备底部安全区');
 assert.match(source, /role="dialog"[\s\S]{0,160}aria-modal="false"[\s\S]{0,160}aria-labelledby="global-assistant-panel-title"[\s\S]{0,160}aria-describedby="global-assistant-panel-description"/, '灵小枢必须以有名称和说明的非模态对话浮层呈现');
 assert.match(source, /mode !== 'chat'\) return;[\s\S]{0,200}getElementById\('global-assistant-panel'\)\?\.focus\(\)/, '打开弹窗后必须把焦点移入对话区域');
-assert.match(source, /setMode\('breathing'\);\s*window\.requestAnimationFrame\(\(\) => launcherButtonRef\.current\?\.focus\(\)\)/, '关闭弹窗后必须把焦点归还右上角入口');
+assert.match(source, /setMode\('breathing'\);\s*window\.requestAnimationFrame\(\(\) => launcherButtonRef\.current\?\.focus\(\)\)/, '关闭弹窗后必须把焦点归还右下角入口');
 assert.match(appSource, /\(!isAgentProductionSession\(\) \|\| page === 'digitalEmployees'\) && <GlobalAssistant/, '智能经营页不得因制作会话状态卸载灵小枢');
 assert.match(appSource, /suppressForRightSidebar=\{page !== 'digitalEmployees' && \(/, '智能经营页必须保留入口，其他页仍遵守右侧栏避让规则');
 assert.match(source, /width: assistantPanelWidth,\s*maxWidth: 'calc\(100vw - 32px\)'/, '灵小枢面板必须用视口宽度约束，不能被零宽定位根节点压缩');
@@ -106,6 +110,29 @@ assert.match(
   /signedFocusedMutationActionId \? \{ deterministicActionId: signedFocusedMutationActionId \} : undefined/,
   '明确的自然语言确定性操作必须把动作意图传给操作请求错误处理',
 );
+assert.match(sendSource, /selectAssistantConversationContext\(mergeConsecutiveAssistant\(thread\.messages\)\)/, '长对话必须按完整轮次和预算选择上下文');
+assert.match(sendSource, /renderAssistantConversationBoundary\(conversationContext\)/, '被裁剪的较早对话必须向模型声明范围边界');
+assert.match(sendSource, /strategyRequest \? '' : await loadLiveIntegrationFacts\(\)/, '经营主对话必须使用服务端核验事实而不是客户端汇总作为权威依据');
+assert.match(sendSource, /userQuestion: visibleText[\s\S]{0,260}retainedUserInstructions/, '经营主对话必须把当前问题与有界历史约束交给服务端组装上下文');
+assert.match(sendSource, /requestToken === getToken\(\)/, '身份切换后旧请求的异步响应必须被丢弃');
+
+assert.match(source, /useAssistantDecisionMemory\(persistenceScopeKey, responseErrorMessage\)/, '经营决策记忆必须绑定当前租户与用户范围');
+assert.match(source, /<AssistantDecisionMemoryPanel memory=\{decisionMemory\}/, '灵小枢对话顶部必须提供已确认决策查看与撤销入口');
+assert.match(source, /<AssistantDecisionSaveButton memory=\{decisionMemory\} text=\{msg\.content\}/, '每条用户原话必须可明确保存为经营决策');
+assert.match(decisionMemoryPanelSource, /对话记忆/, '用户必须能直接识别对话记忆操作区');
+assert.match(decisionMemoryPanelSource, /撤销决策/, '已确认决策必须支持显式撤销');
+assert.match(decisionMemoryPanelSource, /from 'antd'/, '对话记忆操作必须复用 Ant Design 组件');
+assert.match(decisionMemoryPanelSource, /disabled=\{memory\.busy \|\| Boolean\(unavailableReason\)\}/, '超过经营决策长度上限时保存按钮必须不可用');
+assert.match(decisionMemoryPanelSource, /unavailableReason && <span role="status"/, '保存不可用时必须显示明确原因');
+assert.match(decisionMemoryHookSource, /createAssistantDecisionRequestGuard/, '决策记忆请求必须防止旧身份响应污染当前用户');
+assert.match(decisionMemoryHookSource, /ASSISTANT_DECISION_MEMORY_MAX_CHARACTERS = 2000/, '经营决策保存上限必须与服务端 2000 字约束一致');
+assert.match(decisionMemoryHookSource, /operation === 'save' \? assistantDecisionSaveUnavailableReason\(text\) : ''[\s\S]{0,140}if \(unavailableReason\)/, '直接调用决策保存请求时也必须拦截超长内容');
+assert.match(conversationContextSource, /较早用户原话/, '历史用户约束必须保留原文且不得升级为已核验事实');
+
+const responseErrorSource = sourceSection('async function responseErrorMessage', '\n}\n\nfunction quickQuestions', '助手请求错误提示');
+const localizedMessageIndex = responseErrorSource.indexOf("if (typeof data?.message === 'string'");
+const rawErrorIndex = responseErrorSource.indexOf('if (data?.error) return data.error;');
+assert.ok(localizedMessageIndex >= 0 && rawErrorIndex > localizedMessageIndex, '额度错误特殊处理后必须优先展示服务端本地化 message，而不是原始错误码');
 
 const actionExecutionSource = sourceSection('const executeAssistantAction = useCallback', 'const presentActionResponse', '确定性操作请求');
 assert.match(actionExecutionSource, /httpStatus === 409/, '冲突 HTTP 状态必须转换成过期操作卡');
@@ -130,8 +157,8 @@ assert.match(
 );
 
 const integrationFactsSource = sourceSection('async function loadLiveIntegrationFacts', 'function mergeConsecutiveAssistant', '实时接入事实');
-assert.match(integrationFactsSource, /socialAccounts\.filter\([^\n]+=== 'connected'\)/, '社媒账号只可统计 connected 状态');
-assert.match(integrationFactsSource, /youtubeAccounts\.filter\([^\n]+=== 'connected'\)/, 'YouTube 账号只可统计 connected 状态');
+assert.match(integrationFactsSource, /\(socialAccounts \?\? \[\]\)\.filter\([^\n]+=== 'connected'\)/, '社媒账号只可统计 connected 状态');
+assert.match(integrationFactsSource, /\(youtubeAccounts \?\? \[\]\)\.filter\([^\n]+=== 'connected'\)/, 'YouTube 账号只可统计 connected 状态');
 assert.match(integrationFactsSource, /\[\.\.\.connectedSocialAccounts, \.\.\.connectedYoutubeAccounts\]\.reduce/, '曝光汇总只能使用已接通账号');
 assert.match(integrationFactsSource, /if \(connectedSocialAccounts\.length\)[^\n]+已接入社媒账号/, '社媒账号数量只能来自已接通账号');
 assert.match(integrationFactsSource, /if \(connectedYoutubeAccounts\.length\)[^\n]+已接入 YouTube 账号/, 'YouTube 账号数量只能来自已接通账号');

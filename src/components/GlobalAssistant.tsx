@@ -18,9 +18,11 @@ import {
   X,
 } from 'lucide-react';
 import type { AgentAction, AgentType, Message, Page } from '../App';
-import { authHeader } from '../lib/auth';
+import { authHeader, getToken } from '../lib/auth';
 import { lsMotion } from '../lib/designTokens';
 import { usePrefersReducedMotion } from '../lib/usePrefersReducedMotion';
+import { renderAssistantConversationBoundary, selectAssistantConversationContext } from '../lib/assistantConversationContext';
+import { useAssistantDecisionMemory } from '../lib/useAssistantDecisionMemory';
 import {
   ASSISTANT_GUIDES,
   ASSISTANT_NOTIFICATION_POLICY,
@@ -39,6 +41,7 @@ import {
   useAssistantStore,
 } from '../stores/assistantStore';
 import AgentReply from './AgentReply';
+import AssistantDecisionMemoryPanel, { AssistantDecisionSaveButton } from './AssistantDecisionMemoryPanel';
 import AssistantComposer, { assistantAttachmentKind } from './assistant/AssistantComposer';
 import KnowledgeIntakePanel, { type AppliedProfile } from './enterprise/KnowledgeIntakePanel';
 import { studioApi } from '../lib/studioApi';
@@ -370,25 +373,26 @@ function compactText(text: string, maxLength = 900) {
 }
 
 async function loadLiveIntegrationFacts(): Promise<string> {
-  const readItems = async (path: string): Promise<Record<string, unknown>[]> => {
+  const readItems = async (path: string): Promise<Record<string, unknown>[] | null> => {
     try {
       const response = await fetch(path, { headers: authHeader() });
-      if (!response.ok) return [];
+      if (!response.ok) return null;
       const data = await response.json() as { items?: Record<string, unknown>[] };
-      return Array.isArray(data.items) ? data.items : [];
+      return Array.isArray(data.items) ? data.items : null;
     } catch {
-      return [];
+      return null;
     }
   };
 
-  const readVideoInventory = async (): Promise<number> => {
+  const readVideoInventory = async (): Promise<number | null> => {
     try {
       const response = await fetch('/api/overseas/videos?page=1&perPage=1&contentFormat=video', { headers: authHeader() });
-      if (!response.ok) return 0;
+      if (!response.ok) return null;
       const data = await response.json() as { inventoryTotalItems?: number; totalItems?: number };
-      return Math.max(0, Number(data.inventoryTotalItems ?? data.totalItems ?? 0));
+      const count = Number(data.inventoryTotalItems ?? data.totalItems);
+      return Number.isFinite(count) && count >= 0 ? count : null;
     } catch {
-      return 0;
+      return null;
     }
   };
 
@@ -398,15 +402,15 @@ async function loadLiveIntegrationFacts(): Promise<string> {
     readItems('/api/overseas/customers'),
     readVideoInventory(),
   ]);
-  const connectedSocialAccounts = socialAccounts.filter(item => String(item.status || '').trim().toLowerCase() === 'connected');
-  const connectedYoutubeAccounts = youtubeAccounts.filter(item => String(item.status || '').trim().toLowerCase() === 'connected');
+  const connectedSocialAccounts = (socialAccounts ?? []).filter(item => String(item.status || '').trim().toLowerCase() === 'connected');
+  const connectedYoutubeAccounts = (youtubeAccounts ?? []).filter(item => String(item.status || '').trim().toLowerCase() === 'connected');
   const socialPlatforms = Array.from(new Set(connectedSocialAccounts
     .map(item => String(item.platform || item.provider || '').trim())
     .filter(Boolean)));
   // `/customers` returns customer profiles imported from WhatsApp. A profile is
   // not itself an inquiry event, so keep that distinction explicit in the
   // grounding context supplied to the model.
-  const whatsappCustomers = customers.filter(item => String(item.source || '').toLowerCase() === 'whatsapp');
+  const whatsappCustomers = (customers ?? []).filter(item => String(item.source || '').toLowerCase() === 'whatsapp');
   const accountViews = [...connectedSocialAccounts, ...connectedYoutubeAccounts].reduce(
     (sum, item) => sum + Math.max(0, Number(item.viewCount ?? item.views ?? 0)),
     0,
@@ -414,13 +418,18 @@ async function loadLiveIntegrationFacts(): Promise<string> {
   const confirmed: string[] = [];
   if (connectedSocialAccounts.length) confirmed.push(`已接入社媒账号 ${connectedSocialAccounts.length} 个${socialPlatforms.length ? `（${socialPlatforms.join('、')}）` : ''}`);
   if (connectedYoutubeAccounts.length) confirmed.push(`已接入 YouTube 账号 ${connectedYoutubeAccounts.length} 个`);
-  if (collectedVideos > 0) confirmed.push(`已采集视频 ${collectedVideos} 条`);
+  if (collectedVideos !== null && collectedVideos > 0) confirmed.push(`已采集视频 ${collectedVideos} 条`);
   if (accountViews > 0) confirmed.push(`账号内容曝光 ${accountViews.toLocaleString('zh-CN')}`);
   if (whatsappCustomers.length) confirmed.push(`WhatsApp 客户档案 ${whatsappCustomers.length} 条`);
   return [
     `核验时间：${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false })}`,
     `已确认接入/真实数据：${confirmed.length ? confirmed.join('；') : '本次实时接口未返回可确认项目'}`,
-    `客户档案总数：${customers.length} 条；其中 WhatsApp 来源客户档案：${whatsappCustomers.length} 条。`,
+    customers === null
+      ? '客户档案接口读取失败，本次数量未知。'
+      : `本次接口返回客户档案 ${customers.length} 条；其中 WhatsApp 来源客户档案 ${whatsappCustomers.length} 条。此处仅统计当前接口返回范围，不能视为全量总数。`,
+    socialAccounts === null || youtubeAccounts === null || collectedVideos === null
+      ? '部分账号或素材接口未成功读取；未返回数据不代表数量为零。'
+      : '',
     '统计边界：客户档案数量不等于询盘事件数量。当前事实未提供消息正文、关键词命中数、询盘事件数或历史订单数；不得推断或编造这些数字。',
     '判定规则：以上来自当前租户授权接口，优先级高于企业摘要；接口未返回某项只能说“本次未核验到”，不得说“未接入”。',
   ].join('\n');
@@ -440,22 +449,10 @@ function mergeConsecutiveAssistant(list: Message[]): Message[] {
   return merged;
 }
 
-function apiHistory(list: Message[]): Message[] {
-  return mergeConsecutiveAssistant(list)
-    .filter(msg => {
-      const text = msg.content.trim();
-      return text && text !== '请求失败，请稍后重试。' && text !== 'API error';
-    })
-    .slice(-8)
-    .map(msg => ({
-      ...msg,
-      content: compactText(msg.content, msg.role === 'assistant' ? 1200 : 800),
-    }));
-}
-
 async function responseErrorMessage(resp: Response): Promise<string> {
   const data = await resp.json().catch(() => null) as {
     error?: string;
+    message?: string;
     quota?: string;
     tokenCost?: number;
     demo?: {
@@ -477,6 +474,7 @@ async function responseErrorMessage(resp: Response): Promise<string> {
     return `${label}已用完，请明天再试或联系服务顾问开通更多额度。`;
   }
   if (data?.error === 'demo_expired') return '试用已到期，请联系服务顾问开通或延长试用。';
+  if (typeof data?.message === 'string' && data.message.trim()) return data.message.trim();
   if (data?.error) return data.error;
   return `请求失败（HTTP ${resp.status}），请稍后重试。`;
 }
@@ -721,6 +719,7 @@ export default function GlobalAssistant({
     userId: persistenceScope.userId.trim(),
   }), [persistenceScope.tenantId, persistenceScope.userId]);
   const persistenceScopeKey = `${stablePersistenceScope.tenantId}\u0000${stablePersistenceScope.userId}`;
+  const decisionMemory = useAssistantDecisionMemory(persistenceScopeKey, responseErrorMessage);
   const persistenceFenceRef = useRef({ scopeKey: persistenceScopeKey, active: true });
   if (persistenceFenceRef.current.scopeKey !== persistenceScopeKey) {
     persistenceFenceRef.current.active = false;
@@ -731,6 +730,8 @@ export default function GlobalAssistant({
     const fence = persistenceFenceRef.current;
     return () => {
       fence.active = false;
+      abortRef.current?.abort();
+      abortRef.current = null;
       for (const queue of assistantThreadSaveQueuesRef.current.values()) {
         queue.abortController?.abort();
         queue.abortController = null;
@@ -1199,6 +1200,13 @@ export default function GlobalAssistant({
   ) => {
     const userText = text.trim();
     if ((!userText && !uploadedAttachments.length) || loading) return;
+    const requestFence = persistenceFenceRef.current;
+    const requestToken = getToken();
+    const currentScope = () => (
+      requestFence.active
+      && persistenceFenceRef.current === requestFence
+      && requestToken === getToken()
+    );
     const visibleText = userText || '请基于这次附件继续处理。';
     const visibleAttachmentSummary = uploadedAttachments.length
       ? `\n\n附件（已保存到我的素材）：${uploadedAttachments.map(item => item.name).join('、')}`
@@ -1208,8 +1216,10 @@ export default function GlobalAssistant({
     const threadAgent = PRIMARY_ASSISTANT_THREAD;
     const thread = useAssistantStore.getState().threads[threadAgent];
     const context = forcedContext ?? contextForOrbit(routeAgent, pageContext);
+    const strategyRequest = agentForOrbit(routeAgent) === 'strategy';
     const enterpriseBrief = compactText(enterpriseContext);
-    const historyForApi = apiHistory(thread.messages);
+    const conversationContext = selectAssistantConversationContext(mergeConsecutiveAssistant(thread.messages));
+    const historyForApi = conversationContext.messages;
     const nextVisible = [...mergeConsecutiveAssistant(thread.messages), { role: 'user' as const, content: visibleMessage }];
     setMessages(threadAgent, nextVisible);
     setDraftInput(threadAgent, '');
@@ -1242,6 +1252,7 @@ export default function GlobalAssistant({
         deterministicRequest,
         signedFocusedMutationActionId ? { deterministicActionId: signedFocusedMutationActionId } : undefined,
       );
+    if (!currentScope()) return;
     if (actionResponse && actionResponse.status !== 'delegated' && actionResponse.status !== 'not_handled') {
       presentActionResponse(threadAgent, deterministicRequest, actionResponse);
       setLoading(false);
@@ -1250,17 +1261,20 @@ export default function GlobalAssistant({
       return;
     }
 
-    const liveIntegrationFacts = await loadLiveIntegrationFacts();
+    const liveIntegrationFacts = strategyRequest ? '' : await loadLiveIntegrationFacts();
+    if (!currentScope()) return;
     const apiMessages: Message[] = [
       ...historyForApi,
       {
         role: 'user',
         content: [
-          `【当前页面上下文】${context.summary}`,
+          `【当前页面导航提示${strategyRequest ? '，未经后端核验，不得作为经营事实' : ''}】${context.summary}`,
           `【当前模块】${context.label}`,
           `【当前时间】${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false })}（北京时间）。未注明年份时，“当前/最新/近期/今年”均指当前年份；不得把 2024 年或更早的公开数据表述为当前数据。`,
-          enterpriseBrief ? `【企业中心摘要】${enterpriseBrief}` : '【企业中心摘要】当前未读取到企业中心资料。',
-          `【实时接入事实】\n${liveIntegrationFacts}`,
+          ...(!strategyRequest ? [
+            enterpriseBrief ? `【企业中心摘要】${enterpriseBrief}` : '【企业中心摘要】当前未读取到企业中心资料。',
+            `【实时接入事实】\n${liveIntegrationFacts}`,
+          ] : []),
           uploadedAttachments.length
             ? [
               '【本次附件】以下文件已通过真实“我的素材”上传接口完成租户内持久化：',
@@ -1268,9 +1282,12 @@ export default function GlobalAssistant({
               '【附件事实边界】本轮只确认文件名、类型、大小、素材编号和链接；除非下游能力真实读取并返回证据，否则不得声称已经看见、听见或分析附件内容。',
             ].join('\n')
             : '',
-          '【经营事实要求】描述、脚本、卖点、市场、客户、MOQ、价格、交期、认证、联系方式和语种，只能使用企业中心摘要、用户明确输入或当前页面真实素材证据。语种必须沿用企业中心主要业务语言/首选输出语言，禁止根据地区自行推断。没有来源的经营细节直接省略，不要用示例补齐。',
+          strategyRequest
+            ? '【经营事实要求】经营事实以服务端当前租户核验数据为准；历史聊天、页面导航提示和历史助手回答均不是已核验经营事实。明确引用用户提供的事实时说明来源。缺少后端证据表示本次未核验到，不代表业务未发生或数量为零。描述、MOQ、价格、交期、认证和语种不得猜测。'
+            : '【经营事实要求】描述、脚本、卖点、市场、客户、MOQ、价格、交期、认证、联系方式和语种，只能使用企业中心摘要、用户明确输入或当前页面真实素材证据。语种必须沿用企业中心主要业务语言/首选输出语言，禁止根据地区自行推断。没有来源的经营细节直接省略，不要用示例补齐。',
           '【联网要求】涉及外贸行业趋势、目标市场、平台规则、竞品或品类机会时，请联网检索公开来源，并在回答中保留可核验来源；不要把假设当成事实。',
-          '【连续对话要求】请承接本窗口已有上下文回答，直接基于页面现有数据给出可执行结果；不要用“当前缺少数据”“无法判断”“无法筛选”开头。必要的数据范围说明放在结尾并保持中性简短。',
+          '【连续对话要求】承接已提供的对话和真实数据。证据不足或过期时，直接说明哪些结论无法确认，并给出可执行的核验步骤；区分事实、建议与待确认事项，禁止编造完成状态或数字。',
+          renderAssistantConversationBoundary(conversationContext),
           `【回答与操作规范】\n${ASSISTANT_RESPONSE_CONTRACT}\n${ASSISTANT_NOTIFICATION_POLICY}`,
           `用户问题：${visibleText}`,
         ].join('\n'),
@@ -1279,6 +1296,7 @@ export default function GlobalAssistant({
 
     let assistantStarted = false;
     const ensureAssistant = () => {
+      if (!currentScope()) return;
       if (assistantStarted) return;
       assistantStarted = true;
       const current = useAssistantStore.getState().threads[threadAgent].messages;
@@ -1286,7 +1304,9 @@ export default function GlobalAssistant({
       setLoading(false);
     };
     const patchAssistant = (patch: (msg: Message) => Message) => {
+      if (!currentScope()) return;
       ensureAssistant();
+      if (!assistantStarted) return;
       const current = [...useAssistantStore.getState().threads[threadAgent].messages];
       current[current.length - 1] = patch(current[current.length - 1]);
       setMessages(threadAgent, current);
@@ -1299,9 +1319,21 @@ export default function GlobalAssistant({
       const resp = await fetch(API_PATH[agentForOrbit(routeAgent)], {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...authHeader() },
-        body: JSON.stringify({ messages: apiMessages, deepThinking: false }),
+        body: JSON.stringify({
+          messages: apiMessages,
+          deepThinking: false,
+          ...(strategyRequest ? {
+            userQuestion: visibleText,
+            pageContext: { label: context.label, summary: compactText(context.summary, 2000) },
+            conversationContext: {
+              omittedTurns: conversationContext.omittedTurns,
+              retainedUserInstructions: conversationContext.retainedUserInstructions,
+            },
+          } : {}),
+        }),
         signal: controller.signal,
       });
+      if (!currentScope()) return;
       if (!resp.ok) throw new Error(await responseErrorMessage(resp));
       if (!resp.body) throw new Error('模型响应为空，请稍后重试。');
       ensureAssistant();
@@ -1331,14 +1363,17 @@ export default function GlobalAssistant({
       }
       if (buffer.trim()) consumeLine(buffer);
     } catch (err: any) {
+      if (!currentScope()) return;
       const message = err?.name === 'AbortError' ? '这次响应已停止。' : (err?.message || '请求失败，请稍后重试。');
       if (assistantStarted) patchAssistant(msg => ({ ...msg, content: msg.content ? `${msg.content}\n\n${message}` : message }));
       else setMessages(threadAgent, [...useAssistantStore.getState().threads[threadAgent].messages, { role: 'assistant', content: message }]);
     } finally {
-      setLoading(false);
-      abortRef.current = null;
-      persistThread(threadAgent);
-      onSessionRefresh?.();
+      if (currentScope()) {
+        setLoading(false);
+        abortRef.current = null;
+        persistThread(threadAgent);
+        onSessionRefresh?.();
+      }
     }
   }, [currentPageAgent, enterpriseContext, executeAssistantAction, loading, onSessionRefresh, openAgent, page, pageContext, persistThread, presentActionResponse, setDraftInput, setFollowingLatest, setMessages]);
 
@@ -1513,13 +1548,24 @@ export default function GlobalAssistant({
   }, [executeAssistantAction, focusTaskCard, hydrateThread, persistRecoveredThread, stablePersistenceScope, upsertTaskCard]);
 
   useEffect(() => {
+    let cancelled = false;
+    const requestFence = persistenceFenceRef.current;
+    const requestToken = getToken();
+    const currentScope = () => (
+      !cancelled
+      && requestFence.active
+      && persistenceFenceRef.current === requestFence
+      && requestToken === getToken()
+    );
+    setEnterpriseContext('');
     fetch('/api/overseas/enterprise/context', { headers: authHeader() })
       .then(resp => resp.ok ? resp.json() : null)
       .then(data => {
-        if (typeof data?.context === 'string') setEnterpriseContext(data.context);
+        if (currentScope() && typeof data?.context === 'string') setEnterpriseContext(data.context);
       })
-      .catch(() => setEnterpriseContext(''));
-  }, []);
+      .catch(() => { if (currentScope()) setEnterpriseContext(''); });
+    return () => { cancelled = true; };
+  }, [persistenceScopeKey]);
 
   useEffect(() => {
     const handler = (event: Event) => {
@@ -1931,7 +1977,7 @@ export default function GlobalAssistant({
             animate={mode === 'chat' ? { opacity: 1, y: 0 } : { opacity: 0, y: reduceMotion ? 0 : 8 }}
             exit={{ y: reduceMotion ? 0 : 8, opacity: 0, transition: { ...spatialTransition, opacity: fadeExit.transition } }}
             transition={spatialTransition}
-            className={`absolute bottom-14 right-0 z-10 flex max-h-[calc(100dvh-96px)] max-w-[calc(100vw-32px)] flex-col overflow-hidden rounded-lg border border-border bg-surface shadow-xl outline-none ${assistantTool === 'knowledge-intake' ? 'w-[560px]' : 'w-[420px]'} ${mode === 'chat' ? 'pointer-events-auto visible' : 'pointer-events-none invisible'}`}
+            className={`absolute bottom-14 right-0 z-10 flex max-h-[calc(100dvh-env(safe-area-inset-bottom)-96px)] max-w-[calc(100vw-32px)] flex-col overflow-hidden rounded-lg border border-border bg-surface shadow-xl outline-none ${assistantTool === 'knowledge-intake' ? 'w-[560px]' : 'w-[420px]'} ${mode === 'chat' ? 'pointer-events-auto visible' : 'pointer-events-none invisible'}`}
             style={{
               height: assistantPanelHeight,
               width: assistantPanelWidth,
@@ -2140,6 +2186,7 @@ export default function GlobalAssistant({
               </div>
             ) : (
               <>
+                <AssistantDecisionMemoryPanel memory={decisionMemory} />
                 <div
                   ref={messageScrollRef}
                   data-assistant-surface="conversation"
@@ -2182,7 +2229,12 @@ export default function GlobalAssistant({
                             : 'ls-messenger-bubble ls-messenger-bubble--inbound'}>
                             {msg.role === 'assistant'
                               ? (msg.content ? <AgentReply content={msg.content} sources={msg.sources} onAction={onAction} /> : <span className="opacity-40">...</span>)
-                              : msg.content}
+                              : (
+                                <>
+                                  {msg.content}
+                                  <AssistantDecisionSaveButton memory={decisionMemory} text={msg.content} />
+                                </>
+                              )}
                           </div>
                         </div>
                       ))}

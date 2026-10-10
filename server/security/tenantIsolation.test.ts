@@ -44,14 +44,14 @@ for (const brand of ['youtube', 'tiktok', 'instagram', 'facebook', 'whatsapp']) 
 const assistantUi = read('src/components/GlobalAssistant.tsx');
 assert.match(assistantUi, /ENTERPRISE_GUIDE_MEMORY_ID[\s\S]*?enterpriseGuideSeen/, 'enterprise center must remember its single proactive assistant guide');
 assert.match(assistantUi, /要补资料？点我/, 'enterprise center must leave a concise click-to-open reminder after the proactive guide');
-assert.match(assistantUi, /setAssistantTool\(null\); setPanelView\('chat'\); setMode\('breathing'\)/, 'assistant panels must fully close instead of leaving a hidden intake tool active');
-assert.match(assistantUi, /ASSISTANT_AUTO_RETRACT_MS = 5_000/, 'the conversation launcher must automatically retract after a short delay');
-assert.match(assistantUi, /const dockOnLeft = assistantPosition \? assistantPosition\.x < viewport\.width \/ 2 : false/, 'all pages must default to the right and share the same persisted draggable assistant position');
-assert.match(assistantUi, /const launcherAtEdge = mode === 'breathing' && launcherRetracted/, 'all pages must share the same auto-retract behavior');
+assert.match(assistantUi, /const closeAssistant = useCallback\(\(\) => \{[\s\S]*?setAssistantTool\(null\)[\s\S]*?setPanelView\('chat'\)[\s\S]*?setMode\('breathing'\)/, 'assistant panels must fully close instead of leaving a hidden intake tool active');
+assert.match(assistantUi, /data-global-assistant="root"[\s\S]{0,220}className="fixed bottom-\[calc\(env\(safe-area-inset-bottom\)\+1rem\)\] right-4 z-\[75\]/, 'the assistant launcher must stay in the bottom-right safe area');
+assert.match(assistantUi, /const handleLauncherClick[\s\S]{0,500}openCurrentPageAgent\(\)/, 'the assistant launcher must open the current-page conversation directly');
+assert.match(assistantUi, /data-global-assistant="launcher"[\s\S]{0,300}aria-label=\{mode === 'chat' \? '收起灵小枢对话' : '询问灵小枢'\}/, 'the launcher must expose its direct open/close conversation behavior');
+assert.doesNotMatch(assistantUi, /ASSISTANT_AUTO_RETRACT_MS|assistantPosition|launcherRetracted|data-global-assistant="edge-launcher"/, 'the assistant must not restore the obsolete draggable or auto-retract launcher');
 assert.match(assistantUi, /lingshu-assistant-performance/, 'content generation must be able to wake the assistant for a waiting-time performance');
-assert.match(assistantUi, /data-global-assistant="edge-launcher"[\s\S]*?aria-label="唤出灵小枢智能助手"/, 'the retracted assistant must leave an accessible edge launcher');
 const enterpriseUi = read('src/components/EnterprisePage.tsx');
-assert.match(enterpriseUi, /function OptionSelector[\s\S]*?<select[\s\S]*?aria-expanded=\{open\}[\s\S]*?type="checkbox"/, 'enterprise selectable fields must use accessible single-select or multi-select dropdown controls');
+assert.match(enterpriseUi, /function OptionSelector[\s\S]*?<Select[\s\S]*?mode=\{multiple \? 'multiple' : undefined\}[\s\S]*?allowClear[\s\S]*?options=/, 'enterprise selectable fields must use the shared accessible Ant single-select or multi-select control');
 assert.doesNotMatch(enterpriseUi.slice(enterpriseUi.indexOf('function OptionSelector'), enterpriseUi.indexOf('function PaginationControls')), /<Chip/, 'enterprise option selectors must not fall back to chip-only selection');
 const globalStyles = read('src/index.css');
 for (const styleClass of ['.ui-field', '.ui-select', '.ui-chart-panel', '.ui-floating-panel']) {
@@ -93,7 +93,7 @@ assert.doesNotMatch(socialSetupGuide, /https:\/\/lingshu\.site\/api\//, 'product
 assert.match(socialSetupGuide, /https:\/\/app\.lingshu\.site\/api\/overseas\/youtube\/oauth\/callback/, 'the canonical YouTube callback must remain documented');
 
 const tenantPlatformApps = read('server/lib/tenantPlatformApps.ts');
-assert.match(tenantPlatformApps, /export type TenantPlatform = 'meta' \| 'google' \| 'tiktok' \| 'wecom'/, 'tenant platform applications must include TikTok');
+assert.match(tenantPlatformApps, /export type TenantPlatform = [^\n]*'tiktok'/, 'tenant platform applications must include TikTok even when additional platforms are supported');
 assert.match(tenantPlatformApps, /getTenantTikTokOAuthClient[\s\S]*?getTenantPlatformApp\(tenantId, 'tiktok'\)[\s\S]*?getTikTokOAuthClient\(\)/, 'TikTok OAuth must prefer tenant credentials and retain the global fallback');
 const publicPlatformApp = tenantPlatformApps.slice(
   tenantPlatformApps.indexOf('export function publicTenantPlatformApp'),

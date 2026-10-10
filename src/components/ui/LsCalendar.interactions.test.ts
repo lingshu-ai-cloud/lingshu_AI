@@ -7,7 +7,7 @@ import { calendarDayKey, type LsCalendarEvent } from '../../lib/calendarModel';
 // Exercise the real async move handler without a browser or a CSS test loader.
 const source = fs.readFileSync('src/components/ui/LsCalendar.tsx', 'utf8');
 const start = source.indexOf('  const move = async ');
-const end = source.indexOf('\n  return <div className="ls-calendar"', start);
+const end = source.indexOf('\n  return <div className=', start);
 assert.ok(start >= 0 && end > start);
 const script = ts.transpileModule(`${source.slice(start, end)}\nglobalThis.move = move;`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
 function harness(confirm = true, rejectSave = false) {
