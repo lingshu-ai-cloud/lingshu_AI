@@ -7,20 +7,23 @@ import {parseSocialContentAuthorityLineage} from '../starter198/socialContentLin
 import {withExecutionPackageGate,executionPackageFrozen} from '../socialPrograms/weeklyExecutionGate.js';
 import type {WeeklyOperatingPackage} from '../../shared/contracts/socialProgram.js';
 import type {SocialContentTaskDetail} from '../../shared/contracts/socialContentWorkflow.js';
+import {resolveWeeklyCreativeRepairAuthority} from './weeklyCreativeRepairAuthority.js';
 
 const frozenWorkflow=(t:any)=>({taskId:t.taskId,kind:t.kind,taskRef:t.taskRef,dependsOnTaskIds:t.dependsOnTaskIds,subjectRefs:t.subjectRefs,carriedFromTaskId:t.carriedFromTaskId});
 const frozenPublication=(t:any)=>{const {status,...rest}=t;return rest;};
 /** Scope comes exclusively from the stored creation receipt and durable lineage. */
 export async function withWeeklyProductionStartGuard(input:{repository:Starter198Repository;tenantId:string;taskId:string},start:()=>Promise<SocialContentTaskDetail>,ports:{read?:typeof readSocialTaskDetail}={}):Promise<SocialContentTaskDetail>{
- const row=await requireSocialTask(input),brief=socialObject(socialJson(row.brief)),authority=socialObject(brief?._weeklyAuthority);
+ const row=await requireSocialTask(input),brief=socialObject(socialJson(row.brief));let authority=socialObject(brief?._weeklyAuthority),creativeBinding:string|null=null;
  const binding=socialText(row.create_idempotency_key);
- if(!binding.startsWith('weekly-production:')&&!authority)return start();
+ const creative=binding.startsWith('weekly-creative-repair:')||Boolean(brief?._weeklyCreativeRepairProof);
+ if(creative){if(!input.repository.dataStore)throw new SocialContentWorkflowError('weekly_creative_repair_authority_invalid',409);const resolved=await resolveWeeklyCreativeRepairAuthority({store:input.repository.dataStore,tenantId:input.tenantId,task:row});if(!resolved)throw new SocialContentWorkflowError('weekly_creative_repair_authority_invalid',409);authority=resolved.authority;creativeBinding=resolved.bindingKey;}
+ if(!binding.startsWith('weekly-production:')&&!creative&&!authority)return start();
  const fail=()=>{throw new SocialContentWorkflowError('weekly_production_start_authority_invalid',409);};
  const pkg=authority?.weeklyPackage as WeeklyOperatingPackage|undefined;
  const programRef=socialObject(authority?.programRef),publication=socialObject(authority?.publicationTask),workflow=socialObject(authority?.weeklyWorkflowTask);
  if(!pkg||!programRef||!publication||!workflow||!input.repository.dataStore)return fail();
  const scope={tenantId:input.tenantId,programId:pkg.programId,packageId:pkg.packageId,packageVersion:pkg.version};
- if(binding!==`weekly-production:${pkg.packageId}:${pkg.version}:${publication.publicationTaskId}`||programRef.id!==pkg.programId)return fail();
+ if(binding!==(creative?creativeBinding:`weekly-production:${pkg.packageId}:${pkg.version}:${publication.publicationTaskId}`)||programRef.id!==pkg.programId)return fail();
  const store=input.repository.dataStore;
  return withExecutionPackageGate(store,scope,async assert=>{
   const programs=await store.list<any>('social_programs',{where:{tenant_id:input.tenantId,program_id:pkg.programId},perPage:2});

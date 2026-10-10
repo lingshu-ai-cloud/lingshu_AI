@@ -6,14 +6,17 @@ import {socialObject,socialJson,socialRequestHash,SocialContentWorkflowError} fr
 import {verifyWeeklyTargetAccountPlaybook} from '../socialPrograms/weeklyTargetAccountPlaybook.js';
 import {readWeeklyReferenceSources} from '../runtime/socialWeeklyReferenceSource.js';
 import {listSocialDiscoverySupply} from '../socialDiscovery/supply.js';
+import {resolveWeeklyCreativeRepairAuthority} from '../runtime/weeklyCreativeRepairAuthority.js';
 const obj=(v:unknown)=>socialObject(socialJson(v));
 function fail():never{throw new SocialContentWorkflowError('weekly_replication_context_changed',409);}
 /** References retain their actual persisted object types. No fabricated snapshots or latest playbooks. */
 export async function readWeeklyReplicationContext(input:{store:DataStore;tenantId:string;task:Record<string,unknown>;sources:Array<{kind:string;status:string;sourceRef:string;sourceVersion:string|null;sourceId?:string}>}):Promise<SocialReplicationJobContext|undefined>{
- const authority=obj(obj(input.task.brief)?._weeklyAuthority);
+ let authority=obj(obj(input.task.brief)?._weeklyAuthority),creativeBinding:string|null=null;
+ const creative=String(input.task.create_idempotency_key??'').startsWith('weekly-creative-repair:')||Boolean(obj(input.task.brief)?._weeklyCreativeRepairProof);
+ if(creative){const resolved=await resolveWeeklyCreativeRepairAuthority({store:input.store,tenantId:input.tenantId,task:input.task});if(!resolved)return fail();authority=resolved.authority;creativeBinding=resolved.bindingKey;}
  if(!authority)return undefined;
  const frozen=authority.weeklyPackage as WeeklyOperatingPackage|undefined,pub=obj(authority.publicationTask);
- if(!frozen||typeof frozen.packageId!=='string'||typeof frozen.programId!=='string'||!Number.isSafeInteger(frozen.version)||!pub||typeof pub.publicationTaskId!=='string'||input.task.tenant_id!==input.tenantId||input.task.create_idempotency_key!==`weekly-production:${frozen.packageId}:${frozen.version}:${pub.publicationTaskId}`)return fail();
+ if(!frozen||typeof frozen.packageId!=='string'||typeof frozen.programId!=='string'||!Number.isSafeInteger(frozen.version)||!pub||typeof pub.publicationTaskId!=='string'||input.task.tenant_id!==input.tenantId||input.task.create_idempotency_key!==(creative?creativeBinding:`weekly-production:${frozen.packageId}:${frozen.version}:${pub.publicationTaskId}`))return fail();
  const rows=await input.store.list<Record_>('social_weekly_operating_packages',{where:{tenant_id:input.tenantId,program_id:frozen.programId,package_id:frozen.packageId,version:frozen.version},perPage:2});
  const pkg=obj(rows.items[0]?.payload) as WeeklyOperatingPackage|null;
  if(rows.totalItems!==1||rows.items.length!==1||!pkg||pkg.packageId!==frozen.packageId||pkg.programId!==frozen.programId||pkg.version!==frozen.version)return fail();
