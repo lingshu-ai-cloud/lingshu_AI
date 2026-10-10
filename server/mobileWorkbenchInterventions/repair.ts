@@ -52,9 +52,12 @@ export function prepareScopedRepair(snapshot: RepairSnapshot, payload: ScopedRep
   }), assets: snapshot.assets }) : planSceneRepair({ scenes: snapshot.scenes, assets: snapshot.assets, issues,
     current: sourcePlan, attempts: Number(snapshot.spec.automation?.sceneRepairAttempts || 0),
     userLocked: snapshot.spec.scenePlanOrigin !== 'director',
-    previousFailures: (snapshot.spec.automation?.sceneRepairHistory || []).flatMap((entry: any) => entry.failedSources || []) });
+    previousFailures: (snapshot.spec.automation?.sceneRepairHistory || []).flatMap((entry: Record<string, unknown>) =>
+      Array.isArray(entry.failedSources) ? entry.failedSources as Array<{ identity: string; start: number; end?: number }> : []) });
   if (repair.gaps.length) throw new RepairInterventionError('repair_not_executable', repair.gaps.join('；'));
-  const spec = applySceneRepair(snapshot.spec, { ...repair, failedSources: 'failedSources' in repair ? repair.failedSources : [] }, issues);
+  const failedSources: Array<{ identity: string; start: number; end?: number }> = 'failedSources' in repair
+    ? repair.failedSources as Array<{ identity: string; start: number; end?: number }> : [];
+  const spec = applySceneRepair(snapshot.spec, { ...repair, failedSources }, issues);
   spec.automation.mobileRepair = { sceneIds: [...payload.sceneIds], problemType: payload.problemType,
     repairPlanVersion: payload.repairPlanVersion, ...(manual ? { replacements: manual, mode: 'human_material_selection' } : {}) };
   return { spec, stage: spec.automation.stage, repairedSceneIds: [...payload.sceneIds],

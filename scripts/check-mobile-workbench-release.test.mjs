@@ -11,6 +11,8 @@ test('repository contract passes while missing external release evidence fails c
   assert.equal(report.status, 'blocked');
   assert.deepEqual(report.blockers.map(item => item.code), [
     'request_domain_unverified',
+    'asset_request_domains_unverified',
+    'business_domain_unverified',
     'privacy_declaration_unverified',
     'real_device_acceptance_unverified',
   ]);
@@ -18,11 +20,16 @@ test('repository contract passes while missing external release evidence fails c
   assert.ok(report.checks.some(item => item.code === 'network_domain_types' && item.detail === 'request'));
   assert.ok(report.checks.some(item => item.code === 'record_permission_description'));
   assert.ok(report.checks.some(item => item.code === 'privacy_api_inventory' && /chooseMedia/.test(item.detail) && /getRecorderManager/.test(item.detail)));
+  assert.ok(report.checks.some(item => item.code === 'privacy_api_inventory' && /saveVideoToPhotosAlbum/.test(item.detail) && /saveImageToPhotosAlbum/.test(item.detail)));
+  assert.ok(report.checks.some(item => item.code === 'web_view_inventory'));
+  assert.ok(report.checks.some(item => item.code === 'photo_album_write_inventory'));
 });
 
 test('explicit external evidence can complete the preflight', () => {
   const report = checkMobileWorkbenchRelease(root, {
     WECHAT_REQUEST_DOMAIN_VERIFIED: '1',
+    WECHAT_ASSET_REQUEST_DOMAINS_VERIFIED: '1',
+    WECHAT_BUSINESS_DOMAIN_VERIFIED: '1',
     WECHAT_PRIVACY_DECLARATION_VERIFIED: '1',
     WECHAT_REAL_DEVICE_ACCEPTANCE_VERIFIED: '1',
   });

@@ -20,24 +20,15 @@ function api() {
   return module.exports
 }
 
-test('workspace kind uses the server-authoritative session profile without a workspace request', () => {
+test('the client exposes no product-profile classifier', () => {
   const client = api()
-  assert.equal(client.workspaceKind({ productProfile: 'starter_198' }), 'starter')
-  assert.equal(client.workspaceKind({ productProfile: 'advanced_customer' }), 'legacy')
+  assert.equal(client.workspaceKind, undefined)
 })
 
-test('missing or unknown profile fails closed instead of guessing from a subscription label', () => {
-  const client = api()
-  assert.throws(
-    () => client.workspaceKind({ subscription: { plan: '198' } }),
-    /能力边界暂时无法核验/,
-  )
-  assert.throws(() => client.workspaceKind(null), /能力边界暂时无法核验/)
-})
-
-test('the miniapp no longer probes the protected starter workspace to classify accounts', () => {
-  const source = fs.readFileSync(path.join(__dirname, 'lib/api.js'), 'utf8')
-  const classifier = source.slice(source.indexOf('module.exports.workspaceKind'), source.indexOf('module.exports.command'))
-  assert.doesNotMatch(classifier, /request\s*\(/)
-  assert.doesNotMatch(classifier, /403|profile_not_enabled|workspace_not_entitled/)
+test('the workbench always reads the unified overview and queue endpoints', () => {
+  const source = fs.readFileSync(path.join(__dirname, 'pages/workbench/index.js'), 'utf8')
+  assert.match(source, /mobile-workbench\/overview/)
+  assert.match(source, /mobile-workbench\/queue/)
+  assert.doesNotMatch(source, /starter-198\/mobile\/(?:queue|snooze|transcribe)/)
+  assert.doesNotMatch(source, /workspaceKind|productProfile/)
 })

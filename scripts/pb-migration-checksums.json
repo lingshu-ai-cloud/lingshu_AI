@@ -113,6 +113,7 @@
     "1791072008_create_content_execution_queue.js": "2aed450a4c83a5f6133817f47eef9c1f08ecde5e65f22427aa7480c2c96f67f8",
     "1791586800_create_assistant_decision_memories.js": "c0c6b1aaf9ca68024d9d53597460bec90de278e555073ebdfd2558075e8749fa",
     "1791597600_mobile_workbench_snoozes.js": "4b3516773faa85aad806ef2cc6faae3f70b5cd64604686586f8a457886220d6a",
-    "1791597601_mobile_workbench_action_receipts.js": "3d8a8381cd9e6473416078bb09a89c17aa244a9308d00b6d92ad94273bb7b427"
+    "1791597601_mobile_workbench_action_receipts.js": "3d8a8381cd9e6473416078bb09a89c17aa244a9308d00b6d92ad94273bb7b427",
+    "1791640000_mobile_assistant_sessions.js": "58d06c09d811e0d1c70b9c2c282773ea6972d5b660660a275d624215ec7c5f10"
   }
 }
