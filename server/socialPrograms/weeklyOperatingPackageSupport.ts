@@ -424,6 +424,8 @@ export function requireExpectedVersion(actual: number, expected: unknown): void 
 }
 
 export function packageFromInput(args: {
+  /** Server-only stable preview/revision timestamp; never read from client input. */
+  createdAt?: string;
   input: Record<string, unknown>;
   programId: string;
   userId: string;
@@ -455,7 +457,7 @@ export function packageFromInput(args: {
   if (requestedMotherTarget === 0 && population.productionPublications.length) throw new SocialProgramError('weekly_new_mother_target_required',400,'含新制作内容的排期不能使用零新增母版配额，请明确新制作计划。');
   const originalContentTarget = population.newMotherContentTarget;
   const status = 'draft' as const;
-  const timestamp = at();
+  const timestamp = args.createdAt ?? at();
   const contentPackage: SocialWeeklyContentPackage = {
     contentPackageId: args.contentPackageId,
     operatingPackageId: args.packageId,

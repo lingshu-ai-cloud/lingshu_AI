@@ -11,7 +11,7 @@ export function projectExecutionCalendar(tasks: WeeklyExecutionTask[], labels: R
   const bindings = new Map<string, Set<string>>();
   for (const task of tasks) {
     if (!task.publicationTaskId) continue;
-    const id = (task.continuationObservation?.status === 'ready' ? task.continuationObservation.contentTaskId : undefined) || task.productionProgress?.contentTaskId || task.resultRefs.find(ref => ['starter_social_content_task','starter_social_content_script_baseline','starter_social_content_director_plan','starter_social_content_material_demand'].includes(ref.type))?.id;
+    const id = (task.continuationObservation?.status === 'ready' ? task.continuationObservation.contentTaskId : undefined) || task.productionProgress?.contentTaskId || task.resultRefs.find(ref => ['starter_social_content_task','starter_social_content_script_baseline','starter_social_content_director_plan','starter_social_content_material_demand','starter_social_owned_product_identity_demand','starter_social_material_preparation'].includes(ref.type))?.id;
     if (!id) continue;
     const ids = bindings.get(bindingKey(task)) ?? new Set<string>();
     ids.add(id);

@@ -1,4 +1,4 @@
-import {assessWeeklyOwnedProductIdentity} from './weeklyOwnedProductIdentityDemand.js';
+import {assessWeeklyOwnedProductIdentity,type WeeklyOwnedProductIdentityPorts} from './weeklyOwnedProductIdentityDemand.js';
 import {createExactShotMaterializationService} from '../lib/referenceExactShotMaterialization.js';
 import { weeklyProductionAdmissionMessage } from './weeklyProductionAdmissionMessage.js';
 import {ensureOriginalSocialContentProductionQueued} from '../starter198/socialContentOriginalRunQueueRecovery.js';
@@ -31,7 +31,7 @@ import { buildNoSharedMaterialDemand, verifiedNoSharedMaterialDemand } from './s
 import { createHash } from 'node:crypto';
 import { weeklyStoryboardEvidence } from './socialWeeklyStoryboardEvidence.js';
 
-export const WEEKLY_PRODUCTION_STEPS = ['material_readiness', 'script', 'storyboard', 'asset_generation', 'video_generation', 'quality_check', 'rework'] as const;
+export const WEEKLY_PRODUCTION_STEPS = ['material_preparation', 'material_readiness', 'script', 'storyboard', 'asset_generation', 'video_generation', 'quality_check', 'rework'] as const;
 export function weeklyProductionBindingKey(task: Pick<WeeklyExecutionTask, 'packageId' | 'packageVersion' | 'publicationTaskId'>): string {
   return `weekly-production:${task.packageId}:${task.packageVersion}:${task.publicationTaskId}`;
 }
@@ -49,6 +49,7 @@ export async function findWeeklyProductionTask(dataStore: DataStore, task: Weekl
 
 export interface WeeklyProductionPorts {
   repository?: Starter198Repository;
+  ownedProductIdentity?:Omit<WeeklyOwnedProductIdentityPorts,'repository'>;
   create?: typeof createSocialContentTask;
   start?: typeof startSocialContentTask;
   read?: typeof readSocialTaskDetail;
@@ -184,7 +185,7 @@ export function createSocialWeeklyProductionAdapter(dataStore: DataStore, ports:
         for(const reference of references){await assertAdmission();const attached=await addSource({repository,tenantId:task.tenantId,userId:planning.userConfirmation.confirmedBy,taskId:detail.taskId,idempotencyKey:`weekly-reference:${reference.sourceVersion}`,referenceResolver:weeklyReferenceResolver(references),value:{kind:'reference_link',sourceRef:reference.sourceRef,sourceVersion:reference.sourceVersion,label:reference.label,purpose:'冻结排期已确认参考；保留原来源与权利'}});detail=attached.task;}
       }
       assertWeeklyReferenceBindings(detail,references);
-      if(task.schedule.stepKind==='material_readiness'&&!detail.runId){
+      if(['material_preparation','material_readiness'].includes(task.schedule.stepKind)&&!detail.runId){
         for(const reference of references){const sourceAnalysis=socialObject(socialJson(reference.record.aiAnalysis));
           if(typeof sourceAnalysis?.analysisRunId!=='string'||!sourceAnalysis.analysisRunId||typeof sourceAnalysis.contentSha256!=='string'||!/^[a-f0-9]{64}$/.test(sourceAnalysis.contentSha256))return blocked('weekly_reference_source_evidence_required','参考原片缺少可信分析运行或原片字节校验，尚未补抽分镜；请先完成原片证据准备。');
           await assertAdmission();await createExactShotMaterializationService(dataStore).materialize({tenantId:task.tenantId,recordId:String(reference.record.id),expectedSourceSha256:sourceAnalysis.contentSha256,expectedAnalysisRunId:sourceAnalysis.analysisRunId,expectedAnalysisHash:(await import('../starter198/socialContentValidation.js')).socialRequestHash(sourceAnalysis)});await assertAdmission();
@@ -200,7 +201,7 @@ export function createSocialWeeklyProductionAdapter(dataStore: DataStore, ports:
         };
       }
       if(!publication.materialRequirement) {
-        const owned=await assessWeeklyOwnedProductIdentity(dataStore,{tenantId:task.tenantId,programId:task.programId,packageId:task.packageId,packageVersion:task.packageVersion,publicationTaskId:task.publicationTaskId!,contentTaskId:detail.taskId},{repository,sourceOptions});
+        const owned=await assessWeeklyOwnedProductIdentity(dataStore,{tenantId:task.tenantId,programId:task.programId,packageId:task.packageId,packageVersion:task.packageVersion,publicationTaskId:task.publicationTaskId!,contentTaskId:detail.taskId},{...ports.ownedProductIdentity,repository,sourceOptions});
         if(owned.required){if(owned.status!=='ready')return blocked(owned.gaps[0]??'weekly_owned_product_identity_verification_required','产品身份素材尚未完成指定消费者的事实、权利与镜头核验，请先关联真实素材任务；未启动生产。');const frozen=socialObject(socialJson(boundRow.brief))?._weeklyOwnedProductIdentityDemand as {version:number};automaticMaterialEvidence={type:'starter_social_owned_product_identity_demand',id:detail.taskId,version:frozen.version};}
         else {
         const demandScope={taskId:detail.taskId,programId:task.programId,packageId:task.packageId,packageVersion:task.packageVersion,publicationTaskId:task.publicationTaskId,accountId:publication.accountId,factRefs:publication.factRefs};
@@ -255,6 +256,14 @@ export function createSocialWeeklyProductionAdapter(dataStore: DataStore, ports:
           detail=added.task;
           if(!(detail.sources??[]).some(source=>source.kind==='material'&&source.sourceRef===sourceRef&&source.sourceVersion===option.sourceVersion&&source.status==='active'))return blocked('weekly_material_source_binding_missing','真实素材来源绑定尚未持久保存。');
         }
+      }
+      if(task.schedule.stepKind==='material_preparation'){
+        const current=await repository.list(STARTER_COLLECTIONS.socialContentTasks,task.tenantId,{where:{task_id:detail.taskId},perPage:2});
+        const v=current.totalItems===1?version(String(current.items[0]?.version??'')):null;if(!v)return blocked('weekly_material_preparation_content_changed','素材准备所依赖的原内容版本已变化。');
+        const ref={type:'starter_social_material_preparation',id:detail.taskId,version:v};
+        const {validateWeeklyMaterialPreparationEvidence}=await import('./weeklyMaterialPreparationEvidence.js');
+        await validateWeeklyMaterialPreparationEvidence(dataStore,task,ref,{...ports.ownedProductIdentity,repository,sourceOptions,materialPorts:ports.ownedProductIdentity?.materialPorts,getMaterial:ports.materialRecord??ports.ownedProductIdentity?.getMaterial});
+        return success(ref);
       }
       const unmetMaterials = new Set([
         ...(detail.materialReadiness?.blockingRequirementIds ?? []),

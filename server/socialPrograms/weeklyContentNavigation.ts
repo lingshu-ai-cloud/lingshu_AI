@@ -1,3 +1,4 @@
+import {isWeeklyContentNavigationExecution} from '../../shared/contracts/weeklyContentNavigation.js';
 import type {WeeklyContentNavigation,WeeklyContentNavigationScope} from '../../shared/contracts/weeklyContentNavigation.js';
 import type {WeeklyExecutionTask,WeeklyOperatingPackage,VersionedSocialRef} from '../../shared/contracts/socialProgram.js';
 import type {DataStore,Record_} from '../storage/datastore.js';
@@ -15,7 +16,7 @@ export async function readWeeklyContentNavigation(store:DataStore,scope:WeeklyCo
  if(!pkg||pkg.programId!==scope.programId||pkg.packageId!==scope.packageId||pkg.version!==scope.packageVersion)fail('weekly_content_navigation_scope_invalid');
  const taskRow=await unique('social_weekly_execution_tasks',{tenant_id:scope.tenantId,program_id:scope.programId,package_id:scope.packageId,package_version:scope.packageVersion,task_id:scope.executionTaskId});
  const task=socialJson(taskRow.payload) as WeeklyExecutionTask|null;
- if(!task||task.tenantId!==scope.tenantId||task.programId!==scope.programId||task.packageId!==scope.packageId||task.packageVersion!==scope.packageVersion||task.taskId!==scope.executionTaskId||!task.publicationTaskId||!['content','publishing'].includes(task.workflowKind))fail('weekly_content_navigation_task_invalid');
+ if(!task||task.tenantId!==scope.tenantId||task.programId!==scope.programId||task.packageId!==scope.packageId||task.packageVersion!==scope.packageVersion||task.taskId!==scope.executionTaskId||!task.publicationTaskId||!isWeeklyContentNavigationExecution(task))fail('weekly_content_navigation_task_invalid');
  if(task.inputSnapshot?.inventoryReuseRef)fail('inventory_navigation_required');
  const pubs=pkg.socialContentPackage.publicationTasks.filter(p=>p.publicationTaskId===task.publicationTaskId);
  if(pubs.length!==1||pubs[0]!.inventoryReuseRef||pubs[0]!.accountId!==task.accountId)fail('weekly_content_navigation_publication_invalid');

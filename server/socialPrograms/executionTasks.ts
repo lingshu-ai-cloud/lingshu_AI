@@ -290,9 +290,15 @@ export function planWeeklyExecutionTasks(
       const mode = item.adaptationOfPublicationTaskId === null ? 'original' : 'adaptation';
       const scope = mode === 'original' ? 'content' as const : 'adaptation' as const;
       const base = `${item.publicationTaskId}:${mode}`;
+      const preparation = pkg.executionGraphVersion===2 ? add({
+        workflowKind:'content',scope,subjectId:`${base}:material-preparation`,accountId:item.accountId,publicationTaskId:item.publicationTaskId,
+        dependsOnTaskIds:[scheduleByMother.get(motherContentId)!.taskId],
+        inputSnapshot:{publicationTask:item,motherContentId,mode},budget:noBudget,ownBlockingReasons:[],
+        stepKind:'material_preparation',responsibleActor:'content_agent',estimatedDurationMinutes:20,
+      }):null;
       const script = add({
         workflowKind: 'directing', scope, subjectId: `${base}:script`, accountId: item.accountId, publicationTaskId: item.publicationTaskId,
-        dependsOnTaskIds: [scheduleByMother.get(motherContentId)!.taskId],
+        dependsOnTaskIds: [preparation?.taskId??scheduleByMother.get(motherContentId)!.taskId],
         inputSnapshot: { publicationTask: item, motherContentId, mode, source: 'director_analysis_and_enterprise_facts' },
         budget: { category: 'production', limitCny: productionBudget }, ownBlockingReasons: [],
         stepKind: 'script', responsibleActor: 'director_agent', estimatedDurationMinutes: 30,
@@ -491,7 +497,7 @@ export async function materializeWeeklyExecutionTasks(
   }
   if (existing.length) {
     const expected = new Set(planned.map(item => item.idempotencyKey));
-    if (existing.length !== planned.length || existing.some(item => !expected.has(item.idempotencyKey))) {
+    if (existing.length !== planned.length || existing.some(item => !expected.has(item.idempotencyKey)||scheduleHash(item.dependsOnTaskIds)!==scheduleHash(planned.find(p=>p.idempotencyKey===item.idempotencyKey)!.dependsOnTaskIds))) {
       throw new SocialProgramError('weekly_execution_task_integrity_violation', 409, '周包执行任务集与当前版本不一致。');
     }
     return existing;

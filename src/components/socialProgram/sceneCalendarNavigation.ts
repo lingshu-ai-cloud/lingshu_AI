@@ -2,7 +2,7 @@ import type {WeeklyExecutionTask,WeeklyOperatingPackage} from '../../../shared/c
 import type {SocialContentTaskDetail} from '../../../shared/contracts/socialContentWorkflow';
 import type {SocialSceneReworkAvailability} from '../../../shared/contracts/socialSceneRework';
 import {validateScopedSceneTarget,type ScopedSceneTarget} from '../../lib/scopedSceneNavigation';
-export const isWeeklyContentNavigationExecution=(task:WeeklyExecutionTask)=>(task.workflowKind==='content'&&['script','storyboard','material_readiness','asset_generation','video_generation','quality_check','rework','user_approval'].includes(task.schedule.stepKind))||(task.workflowKind==='publishing'&&task.schedule.stepKind==='publishing');
+export {isWeeklyContentNavigationExecution} from '../../../shared/contracts/weeklyContentNavigation';
 export const isSceneContentExecution=(task:WeeklyExecutionTask)=>task.workflowKind==='content'&&['material_readiness','asset_generation','video_generation','quality_check','rework'].includes(task.schedule.stepKind);
 export function sceneCalendarExecution(pkg:Pick<WeeklyOperatingPackage,'programId'|'packageId'|'version'>,tasks:WeeklyExecutionTask[],card:{id:string;productionTaskId?:string}){
  const scoped=tasks.filter(t=>t.programId===pkg.programId&&t.packageId===pkg.packageId&&t.packageVersion===pkg.version);

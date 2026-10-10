@@ -42,6 +42,18 @@ test('shared physical requests deduplicate cards and cross-week consumers refere
 test('pre-week upload is referenced but genuine current-week verification remains a single dated task',()=>{
  const value=projectWeeklyMaterialCalendar([{...request,dueAt:'2026-10-04T18:00:00+08:00'}],scope,tasks);assert.equal(value.tasks.length,1);assert.equal(value.tasks[0]!.materialAction,'verification');assert.equal(value.sharedReferences.length,1);assert.equal(value.sharedReferences[0]!.action,'upload');assert.equal(materialReferenceIsOverdue(value.sharedReferences[0]!,Date.parse(request.dueAt)+1),true);
 });
+test('material deadlines use their frozen timezone at week boundaries regardless of viewer timezone',()=>{
+ const value=projectWeeklyMaterialCalendar([{...request,timeZone:'America/Los_Angeles',dueAt:'2026-10-05T06:30:00Z',verificationDueAt:'2026-10-05T08:30:00Z'}],scope,tasks);
+ assert.equal(value.sharedReferences.length,1);
+ assert.equal(value.sharedReferences[0]!.action,'upload');
+ assert.equal(value.tasks.length,1);
+ assert.equal(value.tasks[0]!.date,'2026-10-05');
+ assert.equal(value.tasks[0]!.time,'01:30');
+ assert.equal(value.tasks[0]!.calendarClock?.timeZone,'America/Los_Angeles');
+ const fallback=projectWeeklyMaterialCalendar([{...request,timeZone:'',dueAt:'2026-10-05T00:30:00+08:00'}],scope,tasks);
+ assert.equal(fallback.tasks.find(card=>card.materialAction==='upload')!.date,'2026-10-05');
+ assert.equal(fallback.tasks.find(card=>card.materialAction==='upload')!.time,'00:30');
+});
 test('cancelled requests never become overdue and conflicting or unsupported completion proof fails closed',()=>{
  const cancelled=projectWeeklyMaterialCalendar([{...request,status:'cancelled'}],scope,tasks);assert.ok(cancelled.tasks.every(task=>task.status==='cancelled'&&!isHumanTaskOverdue(task,Date.parse(request.verificationDueAt!)+1)));
  const conflict=projectWeeklyMaterialCalendar([request,{...request,requirements:'冲突镜头'}],scope,tasks);assert.equal(conflict.tasks.length,0);assert.equal(conflict.issues.length,1);

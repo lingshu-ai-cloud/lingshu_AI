@@ -143,20 +143,20 @@ test('preparation can precede the operating week and publication follows its zon
 
 test('weekly execution tasks freeze the full worker contract and aggregate real state', async () => {
   const { packages, execution, program, draft } = await fixture();
-  assert.equal(draft.executionSummary!.total, 29);
-  assert.equal(draft.executionSummary!.byStatus.pending_activation, 29);
+  assert.equal(draft.executionSummary!.total, 31);
+  assert.equal(draft.executionSummary!.byStatus.pending_activation, 31);
   assert.ok(draft.executionTaskRefs!.every(ref => ref.type === 'weekly_execution_task'));
   const active = await packages.activate('tenant-a', 'owner', program.programId, draft.packageId, {
     expectedVersion: 1, expectedProgramVersion: 1,
   });
   assert.equal(active.executionSummary!.byStatus.queued, 1);
-  assert.equal(active.executionSummary!.byStatus.blocked, 28);
+  assert.equal(active.executionSummary!.byStatus.blocked, 30);
   const tasks = await execution.list('tenant-a', program.programId, draft.packageId, 1);
   assert.ok(tasks.every(task => task.tenantId === 'tenant-a' && task.packageVersion === 1));
   assert.ok(tasks.every(task => task.idempotencyKey && task.inputSnapshot && task.budget && task.upstreamVersionRefs.length === 3));
   assert.ok(tasks.every(task => task.schedule.responsibleActor && task.schedule.estimatedDurationMinutes > 0 && task.schedule.estimatedFinishAt >= task.schedule.estimatedStartAt));
   assert.deepEqual([...new Set(tasks.filter(task => task.workflowKind === 'content').map(task => task.schedule.stepKind))], [
-    'material_readiness', 'asset_generation', 'video_generation', 'quality_check', 'rework', 'user_approval',
+    'material_preparation', 'material_readiness', 'asset_generation', 'video_generation', 'quality_check', 'rework', 'user_approval',
   ]);
   assert.ok(tasks.filter(task => ['script', 'storyboard'].includes(task.schedule.stepKind)).every(task => task.schedule.responsibleActor === 'director_agent'));
   assert.ok(tasks.filter(task => task.schedule.stepKind === 'quality_check').every(task => task.schedule.responsibleActor === 'quality_agent'));
@@ -167,7 +167,10 @@ test('weekly execution tasks freeze the full worker contract and aggregate real 
   const assetTask = tasks.find(task => task.schedule.stepKind === 'asset_generation' && task.publicationTaskId === scriptTask?.publicationTaskId);
   assert.equal(scheduleTask?.schedule.responsibleActor, 'business_agent');
   assert.ok(scriptTask && storyboardTask?.dependsOnTaskIds.includes(scriptTask.taskId));
-  assert.ok(scheduleTask && scriptTask?.dependsOnTaskIds.includes(scheduleTask.taskId));
+  const preparationTask=tasks.find(task=>task.schedule.stepKind==='material_preparation'&&task.publicationTaskId===scriptTask?.publicationTaskId);
+  assert.equal(draft.executionGraphVersion,2);
+  assert.ok(preparationTask&&scriptTask?.dependsOnTaskIds.includes(preparationTask.taskId));
+  assert.ok(scheduleTask&&preparationTask?.dependsOnTaskIds.includes(scheduleTask.taskId));
   assert.ok(scheduleTask?.dependsOnTaskIds.includes(tasks.find(task => task.schedule.stepKind === 'director_analysis')!.taskId));
   assert.ok(scheduleTask && materialTask?.dependsOnTaskIds.includes(scheduleTask.taskId));
   assert.ok(materialTask && assetTask?.dependsOnTaskIds.includes(materialTask.taskId));
@@ -189,7 +192,7 @@ test('weekly execution tasks freeze the full worker contract and aggregate real 
     assert.equal(validation.status, 'blocked');
   }
   const firstTask = (await packages.get('tenant-a', program.programId, draft.packageId)).executionSummary!;
-  assert.equal(firstTask.total, 29);
+  assert.equal(firstTask.total, 31);
 });
 
 test('worker leases, retries, dead letters and explicit recovery are durable', async () => {
@@ -359,3 +362,20 @@ test('weekly user approval rejects missing binding/media and accepts an actual r
 test('inventory reuse graph creates independent approval and publishing without new production or template extraction',async()=>{const {draft}=await fixture();const inventory={...draft,referenceSourcePolicy:{profile:'b2b_established' as const,ownedPercent:20 as const,externalPercent:80 as const,allocationUnit:'mother_content' as const},socialContentPackage:{...draft.socialContentPackage,publicationTasks:draft.socialContentPackage.publicationTasks.map(p=>({...p,inventoryReuseRef:{type:'weekly_inventory_binding',id:'actualbinding',version:1}}))}};const tasks=planWeeklyExecutionTasks('tenant-a',inventory);assert.ok(!tasks.some(t=>['script','storyboard','material_readiness','asset_generation','video_generation','quality_check','rework','template_extraction','template_performance_validation','benchmark_collection','benchmark_scoring','director_analysis'].includes(t.schedule.stepKind)));for(const pub of inventory.socialContentPackage.publicationTasks){const approval=tasks.find(t=>t.publicationTaskId===pub.publicationTaskId&&t.schedule.stepKind==='user_approval');const publishing=tasks.find(t=>t.publicationTaskId===pub.publicationTaskId&&t.schedule.stepKind==='publishing');assert.ok(approval&&publishing);assert.deepEqual(publishing.dependsOnTaskIds,[approval.taskId]);assert.equal(approval.inputSnapshot.startsProduction,false);assert.equal(approval.inputSnapshot.countsAsNewMotherContent,false);assert.deepEqual(approval.inputSnapshot.inventoryReuseRef,pub.inventoryReuseRef);}assert.throws(()=>planWeeklyExecutionTasks('tenant-a',{...inventory,referenceSourcePolicy:draft.referenceSourcePolicy}),/库存任务/);});
 
 test('inventory refs cannot be injected into a new package or revised without the real confirmation record',async()=>{const {dataStore,packages,program,draft}=await fixture();await dataStore.create('users',{id:'owner',tenantId:'tenant-a',role:'admin',active:true});const publications=draft.socialContentPackage.publicationTasks.map(p=>({...p,inventoryReuseRef:{type:'weekly_inventory_binding',id:'a'.repeat(15),version:1}}));await assert.rejects(()=>packages.create('tenant-a','owner',program.programId,{weekStart:'2026-10-12',publicationTasks:publications}),{code:'inventory_create_not_revision'});await assert.rejects(()=>packages.revise('tenant-a','owner',program.programId,draft.packageId,{expectedVersion:1,publicationTasks:publications}),{code:'inventory_binding_integrity_invalid'});const actual=await packages.get('tenant-a',program.programId,draft.packageId);assert.equal(actual.version,1);assert.ok(actual.socialContentPackage.publicationTasks.every(p=>!p.inventoryReuseRef));});
+
+test('legacy graph has no synthetic preparation and current immutable graph cannot be silently replaced',async()=>{
+ const {draft,execution,dataStore:store}=await fixture();const legacy=structuredClone(draft);delete legacy.executionGraphVersion;
+ const old=planWeeklyExecutionTasks('tenant-a',legacy);assert.ok(!old.some(t=>t.schedule.stepKind==='material_preparation'));
+ for(const script of old.filter(t=>t.schedule.stepKind==='script'))assert.ok(old.find(t=>t.taskId===script.dependsOnTaskIds[0])?.schedule.stepKind==='business_schedule');
+ const before=await execution.list('tenant-a',draft.programId,draft.packageId,draft.version);
+ const {materializeWeeklyExecutionTasks}=await import('./executionTasks.js');
+ await assert.rejects(materializeWeeklyExecutionTasks(store,'tenant-a',legacy),{code:'weekly_execution_task_integrity_violation'});
+ const after=await execution.list('tenant-a',draft.programId,draft.packageId,draft.version);assert.deepEqual(after,before);
+});
+
+
+test('revision preview builds the exact new graph without storing tasks or revoking old authority',async()=>{
+ const {dataStore,packages,execution,program,draft}=await fixture();const before=await execution.list('tenant-a',program.programId,draft.packageId,draft.version);const fixed='2026-10-01T12:00:00.000Z';const input={expectedVersion:1,changeReason:'制作前先准备实物素材'};
+ const preview=await packages.previewRevision('tenant-a','owner',program.programId,draft.packageId,input,{createdAt:fixed});assert.equal(preview.version,2);assert.equal(preview.executionGraphVersion,2);assert.equal(preview.createdAt,fixed);assert.equal((await packages.get('tenant-a',program.programId,draft.packageId)).version,1);assert.deepEqual(await execution.list('tenant-a',program.programId,draft.packageId,draft.version),before);
+ const actual=await packages.revise('tenant-a','owner',program.programId,draft.packageId,input,{createdAt:fixed});assert.deepEqual(planWeeklyExecutionTasks('tenant-a',preview).map(t=>({id:t.taskId,dep:t.dependsOnTaskIds,input:t.inputSnapshot})),planWeeklyExecutionTasks('tenant-a',actual).map(t=>({id:t.taskId,dep:t.dependsOnTaskIds,input:t.inputSnapshot})));assert.equal(actual.createdAt,fixed);
+});

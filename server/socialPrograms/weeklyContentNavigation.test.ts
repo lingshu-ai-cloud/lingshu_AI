@@ -24,6 +24,14 @@ test('real bound pre-run input task is navigable without inventing a production 
  task.resultRefs=[];content.run_id=null;content.status='needs_input';task.productionProgress={contentTaskId:'content',runId:null,step:'inputs',activity:'待补真实输入',updatedAt:'2026-10-01T00:00:00Z'};
  const scope={tenantId:task.tenantId,programId:task.programId,packageId:task.packageId,packageVersion:task.packageVersion,executionTaskId:task.taskId};
  const binding=await readWeeklyContentNavigation(f.store,scope);assert.equal(binding.runId,null);assert.equal(binding.contentTaskId,'content');assert.equal(binding.artifactRef,null);
+ for(const [kind,step] of [['content','material_preparation'],['directing','script'],['directing','storyboard']] as const){
+  task.workflowKind=kind;task.schedule.stepKind=step;
+  const actual=await readWeeklyContentNavigation(f.store,scope);
+  assert.equal(actual.contentTaskId,'content');assert.equal(actual.runId,null);assert.equal(actual.artifactRef,null);
+ }
+ task.workflowKind='directing';task.schedule.stepKind='director_analysis';
+ await assert.rejects(readWeeklyContentNavigation(f.store,scope),{code:'weekly_content_navigation_task_invalid'});
+ task.workflowKind='content';task.schedule.stepKind='material_preparation';
  content.status='running';await assert.rejects(readWeeklyContentNavigation(f.store,scope));content.status='needs_input';task.productionProgress.runId='foreign';await assert.rejects(readWeeklyContentNavigation(f.store,scope));
  task.productionProgress.runId=null;task.resultRefs=[{type:'starter_social_content_artifact',id:'artifact',version:1}];await assert.rejects(readWeeklyContentNavigation(f.store,scope));
 });

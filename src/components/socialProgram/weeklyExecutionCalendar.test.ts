@@ -33,6 +33,14 @@ test('production entry uses bound task identity rather than publication or artif
   assert.equal(rows[2].productionTaskId, 'real-content-2');
   readiness.resultRefs = [{ type: 'starter_social_content_material_demand', id: 'real-content-2', version: 2 }];
   assert.equal(projectExecutionCalendar([readiness], labels)[0].productionTaskId, 'real-content-2');
+  for(const type of ['starter_social_material_preparation','starter_social_owned_product_identity_demand']) {
+    readiness.schedule.stepKind=type==='starter_social_material_preparation'?'material_preparation':'material_readiness';
+    readiness.resultRefs=[{type,id:'real-content-2',version:2}];
+    const card=projectExecutionCalendar([readiness],labels)[0]!;
+    assert.equal(card.productionTaskId,'real-content-2');
+    assert.equal(card.agent,'content');
+    assert.equal(card.status,'completed');
+  }
   bound.status = 'blocked';
   bound.productionProgress!.runId = null;
   assert.equal(projectExecutionCalendar([bound], labels)[0].productionTaskId, 'real-content-1', 'material upload entry does not require a fabricated run identity');

@@ -449,3 +449,49 @@ YouTube 格式检查已独立实现，并通过真实小尺寸、低帧率 MP4 �
 - 新产品身份合同准入已前移至 scheduler 创建运行前：未核验产品素材时真实返回 `weekly_owned_product_identity_verification_required`，原任务保留，运行及作业数量为 0。先前未核验产品 fixture 的启动正向因此不再成立，不能继续用旧日志证明当前默认启动可执行。
 - 产品身份合同 helper 尚在接入真实申请、审批和来源绑定；并发写入采用产品包与内容任务租约及最后版本/brief/运行复读，避免跨 await 覆盖用户编辑。已有运行不通过补写当前来源解除门禁。
 - 正向仍需实际已接受消费者审批、canonical 已入库产品图、原字节与来源绑定全部核验，才能证明启动和队列闭环；没有把产品路线加入纯 AI safePlan 白名单。
+
+### 最新快照后排期回归（2026-10-10）
+
+远端未完成快照为 `494adad6ca0b587a2b8c3b06591c5942b9467527`；此后修复仍在本地。对实际倒排算法、跨周运行日历投影及 Agent 日历组件运行针对回归，共 25 项通过，日志 `/tmp/weekly-schedule-current-regression.log`。覆盖共享前置任务早于消费者、真实资源与预算约束、跨周观察和复盘、缺少真实人工工时不可按零计、运行或阻塞任务逾期显示等；这不证明云素材启动、付费供应商、发布或生产环境端到端已完成。
+
+实际检查发现新增产品身份核验路由虽位于 requireAuth 后，但没有复用生产页面的 capability 授权；已安排补齐统一 read/write 授权后再验收。产品身份面板页面挂载和默认云源启动正向仍未完成，不能以受控素材端口测试代替。
+
+### 产品身份入口与来源配额回归（2026-10-10）
+
+产品身份面板已挂入实际周生产页面，使用真实任务与原运行绑定；路由复用 read/write capability 授权。HTTP、parser 与预览凭据隔离 4 项测试通过（`/tmp/owned-product-ui-final.log`）。来源策略与画像升级 8 项回归通过（`/tmp/weekly-profile-current-regression.log`），覆盖零基础全部外部、40/60 和 20/80 按母版分配及下一周确认。
+
+完整 TypeScript 检查退出 0（`/tmp/weekly-owned-ui-g5-current-types.log`）；前端构建退出 0（`/tmp/weekly-owned-ui-current-build.log`），有已有 chunk 体积提示。后续契约修改需重新验证。实际本地 ready 为 HTTP 200，但报告 commit `86c225a49c05dca4051be265d0a5618f89ac98b0`，不能证明当前源码已在运行或生产部署。默认云源完整启动与真实租户视觉验收仍未完成。
+
+### 素材日历时区修复（2026-10-10）
+
+发现素材上传和核验卡片使用浏览器本地日期分周，跨时区查看时可能把周日前置任务移动到周一。本轮改为请求保存的 IANA 时区；旧缺时区记录使用截止时间真实 offset，并在卡片保留 calendarClock。未改动实际截止瞬间或伪造新排期。UTC、Asia/Shanghai、America/New_York 三个进程时区下素材投影各 9 项通过（`/tmp/material-calendar-*.log`）；最终素材投影及共用时钟 13 项通过（`/tmp/material-calendar-final-regression.log`）。客服、销售交接、配置补齐投影同类问题另行修复中，不能宣称全部日历时区已一致。
+
+### 当前迁移清单与任务表隔离检查（2026-10-10）
+
+当前只读预检首次实际结果是三项未登记和一项 checksum mismatch，而非此前历史阶段的清单排序阻塞。已登记现有 execution continuations、cross-week material continuations、inventory bindings 三份迁移真实 SHA256，未修改已登记校验值；对应七项 schema 合同测试通过（`/tmp/weekly-migration-table-contracts-final.log`），检查后台专用读写权限和真实租户唯一身份。登记后 146 份迁移检查仍拒绝 `1791072008_create_content_execution_queue.js`：清单期望 `17082ecdb5a6228182507d1d2a01f55c6aac48922cd376c489fecce8c8fb2f07`，实际 `2aed450a4c83a5f6133817f47eef9c1f08ecde5e65f22427aa7480c2c96f67f8`。该文件在所有现有分支历史仅有 `1f36cf3`，其 blob 同为实际值。尚未找到期望字节，不能覆盖校验值或宣称发布预检通过；日志 `/tmp/weekly-current-migration-preflight-after-registration.log`。未访问或修改任何数据库、生产主机。
+
+客服、销售、补齐三投影现已返回各任务真实 calendarClock；客服原开始时间与截止偏移不同也不会错误借用截止时区。三环境各十四项针对测试通过（`/tmp/weekly-card-clock-*.log`）。此证据限于实际投影及日历引用，不代替租户浏览器效果验收。
+
+### 真实队列初始化与事实审核推进（2026-10-10）
+
+PocketBase 0.39.5 在独立 mkdtemp 数据目录实际运行旧2008迁移并尝试保存三表初始记录：零尝试/零容量/空供应商凭据被拒。新增前向2050仅放宽这五字段 required，不改 min、onlyInt、JSON限制、索引或后台权限；应用后同样实际保存成功，演练测试通过（`/tmp/content-queue-schema-rehearsal.log`）。已登记2050真实SHA256；旧2008校验矛盾仍未解除，不宣称迁移预检/生产升级完成。未触及用户库。
+
+G5带账号规则的新审核可枚举当前 tenant_profiles 已确认事实版本及原确认者，逐规则来源引用按真实记录哈希复核；支持事实字面声明与当前确认事实对比，权利原文未核验时不能用 opaque authorizationRef 自动放行。实际HTTP→明确人审提交→原回执查询→parser测试通过（旁支最终9项）；不证明供应商语义审查已执行。完整TypeScript检查退出0（`/tmp/weekly-worker-facts-schema-current-types.log`），之后源码变更需新验证。
+
+素材consumer已通过正式worker领取、adapter执行、validator及complete，但当前正向fixture仅一条实际消费者，并非完整工厂生成的任务图。完整script/storyboard/material/assets身份及下游解锁仍在接线，未把自造单卡作为整周完成证据。
+
+本地预览supervisor已补shared契约目录监听，避免仅修改共享契约时后端不刷新；忽略测试与fixture写入，减少联测触发重启。Node语法检查与既有supervisor合同检查通过；未重启现有服务，此代码检查不等于当前后端已经运行最新源码。
+
+### 周卡生产审核与制作前准备图缺口（2026-10-10）
+
+已补周卡进入实际 G4/G5/质量继续入口，严格使用原binding/artifact/cache scope；真实持久化导航测试两项通过（`/tmp/weekly-content-review-entry-final.log`）。后续完整types实际发现新测试3处 nullable收窄错误，已修并针对复跑通过（`/tmp/weekly-content-review-fixture-types-fix.log`），未宣称后续完整types已经重新通过。前端构建本阶段退出0（`/tmp/weekly-card-review-preparation-current-build.log`），有已有chunk提示；随后前端继续补异步身份守卫，需要后续统一验证。
+
+产品素材面板现显示请求实际 preparation 的最早生产时间、缺排期及晚截止提示，时间使用保存的时区；不是依据消费者较晚核验任务倒推。周生产页读取与参考跳转增加卸载/登录事件/目标切换 epoch检查，登录或目标切回原值不能让旧异步响应导航。G5旁支也已补真实版本、确认时间、事实正文与异步身份守卫，15项针对测试通过。
+
+完整factory图真实顺序仍是script→storyboard→material_readiness→assets。材料service允许在consumer不可领取时提前提交/核验，故不存在服务强制互相依赖死循环；但前置工作不在任务图显式显示，单卡完成不能作为完整图闭环。PRD更新v1.8 §5.1明确经营排期→material_preparation→script→storyboard→material_readiness→assets，以及图版本显式冻结与旧版本不可静默改写。新版工厂、前置实际执行及证据合同仍在实现，不宣称目标已完成。
+
+### 新任务图前端映射与生产导航（2026-10-10）
+
+新版工厂与建包/修订已冻结 executionGraphVersion=2，缺字段旧图保留；前置 material_preparation 的实际 adapter/validator已接线，受控实际PNG审核正向与字节漂移拒绝通过。旁支27项回归通过（`/tmp/weekly-material-preparation-final-tests-v2.log`），该证据不表示整周已逐任务执行。前置曾blocked后的明确恢复入口仍在接入，不能仅靠后置consumer恢复声称前置已queued。
+
+Root补前端制作前/分镜后素材标签、Z/H-M4归属及真实preparation/owned素材resultRef内容任务定位。又发现既有脚本与分镜实际workflowKind=directing，却被前后端生产导航过滤器排除；现统一shared严格允许directing仅script/storyboard，content仅真实制作阶段含preparation，publishing仅publishing。完整租户/周包/实际内容创建绑定、原运行和产物检查保持。28项日历与真实持久化导航测试通过（`/tmp/weekly-preparation-production-navigation-final.log`）；对应完整TypeScript退出0（`/tmp/weekly-preparation-navigation-final-types.log`）。后续恢复接口新增仍需再验证。

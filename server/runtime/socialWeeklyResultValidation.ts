@@ -1,3 +1,5 @@
+import type {WeeklyOwnedProductIdentityPorts} from './weeklyOwnedProductIdentityDemand.js';
+export interface WeeklyExecutionResultValidationPorts {ownedProductIdentity?:WeeklyOwnedProductIdentityPorts}
 import type { VersionedSocialRef, WeeklyExecutionTask, WeeklyOperatingPackage } from '../../shared/contracts/socialProgram.js';
 import {assertWeeklyPublicationStoredScope} from '../publishing/weeklyFormalPublicationBoundary.js';
 import type {StoredPublicationAssignment} from '../publishing/weeklyLineage.js';
@@ -51,7 +53,7 @@ async function materialClassification(store: DataStore, task: WeeklyExecutionTas
 }
 
 /** Verify persisted authority, never accept a client-supplied success label. */
-export async function validateWeeklyExecutionResults(store: DataStore, task: WeeklyExecutionTask, refs: VersionedSocialRef[], now = new Date()): Promise<void> {
+export async function validateWeeklyExecutionResults(store: DataStore, task: WeeklyExecutionTask, refs: VersionedSocialRef[], now = new Date(),ports:WeeklyExecutionResultValidationPorts={}): Promise<void> {
   requireResult(Array.isArray(refs) && refs.length > 0 && refs.every(ref => text(ref?.type) && text(ref?.id) && Number.isSafeInteger(ref?.version) && ref.version > 0), 'weekly_execution_result_refs_invalid');
   if (task.inputSnapshot?.inventoryReuseRef && task.schedule.stepKind === 'user_approval') {
     requireResult(task.schedule.stepKind === 'user_approval' && task.schedule.responsibleActor === 'user', 'inventory_result_step_unsupported');
@@ -167,12 +169,18 @@ export async function validateWeeklyExecutionResults(store: DataStore, task: Wee
       requireResult(verified?.id === ref.id && verified.version === ref.version);
       const { validateWeeklyTemplateProductionOutput } = await import('../socialPrograms/weeklyTemplateStructure.js');
       await validateWeeklyTemplateProductionOutput({ store, task, contentRow: row });
+    } else if(ref.type==='starter_social_material_preparation') {
+      const {validateWeeklyMaterialPreparationEvidence}=await import('./weeklyMaterialPreparationEvidence.js');
+      await validateWeeklyMaterialPreparationEvidence(store,task,ref,ports.ownedProductIdentity);
     } else if(ref.type==='starter_social_owned_product_identity_demand') {
       requireResult(task.workflowKind==='content'&&task.schedule.stepKind==='material_readiness'&&Boolean(task.publicationTaskId),'weekly_owned_product_identity_consumer_invalid');
+      const consumer=await unique(store,'social_weekly_execution_tasks',{tenant_id:task.tenantId,task_id:task.taskId});const persisted=object(consumer.payload);
+      requireResult(consumer.program_id===task.programId&&consumer.package_id===task.packageId&&consumer.package_version===task.packageVersion&&consumer.task_id===task.taskId&&persisted.taskId===task.taskId&&persisted.tenantId===task.tenantId&&persisted.programId===task.programId&&persisted.packageId===task.packageId&&persisted.packageVersion===task.packageVersion&&persisted.publicationTaskId===task.publicationTaskId&&persisted.accountId===task.accountId&&persisted.workflowKind===task.workflowKind&&persisted.schedule?.stepKind===task.schedule.stepKind&&socialRequestHash(persisted.inputSnapshot)===socialRequestHash(task.inputSnapshot)&&socialRequestHash(persisted.upstreamVersionRefs)===socialRequestHash(task.upstreamVersionRefs),'weekly_owned_product_identity_consumer_invalid');
       const row=await unique(store,'starter_social_content_tasks',{tenant_id:task.tenantId,task_id:ref.id});
       requireResult(row.create_idempotency_key===`weekly-production:${task.packageId}:${task.packageVersion}:${task.publicationTaskId}`&&text(row.run_id)&&!['cancelled','paused','attention','needs_input'].includes(String(row.status)));
+      const run=await store.getById<Record_>('workflow_runs',String(row.run_id));requireResult(run?.tenant_id===task.tenantId&&!['cancelled','failed','dead_letter'].includes(String(run.status)),'weekly_owned_product_identity_original_run_invalid');
       const {assessWeeklyOwnedProductIdentity}=await import('./weeklyOwnedProductIdentityDemand.js');const {createStarter198Repository}=await import('../starter198/repository.js');
-      const result=await assessWeeklyOwnedProductIdentity(store,{tenantId:task.tenantId,programId:task.programId,packageId:task.packageId,packageVersion:task.packageVersion,publicationTaskId:task.publicationTaskId!,contentTaskId:ref.id},{repository:createStarter198Repository(store)});
+      const result=await assessWeeklyOwnedProductIdentity(store,{tenantId:task.tenantId,programId:task.programId,packageId:task.packageId,packageVersion:task.packageVersion,publicationTaskId:task.publicationTaskId!,contentTaskId:ref.id},ports.ownedProductIdentity??{repository:createStarter198Repository(store)});
       const frozen=object(row.brief)._weeklyOwnedProductIdentityDemand;
       requireResult(result.status==='ready'&&result.consumerTaskId===task.taskId&&frozen?.version===ref.version&&result.materials.length>0&&result.materials.every(material=>material.sourceBound),'weekly_owned_product_identity_unverified');
       const classification=await materialClassification(store,task);requireResult(classification.items.every(item=>item.classification==='generatable_non_evidentiary'),'weekly_required_materials_unverified');

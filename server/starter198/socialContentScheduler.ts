@@ -1,4 +1,4 @@
-import {assessWeeklyOwnedProductIdentity} from '../runtime/weeklyOwnedProductIdentityDemand.js';
+import {assessWeeklyOwnedProductIdentity,type WeeklyOwnedProductIdentityPorts} from '../runtime/weeklyOwnedProductIdentityDemand.js';
 import {freezeWeeklyReplicationAuthority} from './socialWeeklyReplicationAuthority.js';
 import {buildWeeklySchedulerMaterialPlanProof} from './socialWeeklySchedulerMaterialPlan.js';
 import { createHash } from 'node:crypto';
@@ -105,6 +105,7 @@ async function ensureAutomaticExecution(input: {
   task: StarterRecord;
   sources: SocialTaskSource[];
   now: Date;
+  materialEvidencePorts?:Omit<WeeklyOwnedProductIdentityPorts,'repository'>;
 }): Promise<string> {
   const tenantId = input.queue.tenantId;
   const taskId = socialText(input.queue.subject?.id);
@@ -127,7 +128,7 @@ async function ensureAutomaticExecution(input: {
   const createdAt = input.now.toISOString();
   const weeklyTask=Boolean(socialObject(socialObject(socialJson(input.task.brief))?._weeklyAuthority));
   const materialDetail=weeklyTask?await readSocialTaskDetail({repository:input.repository,tenantId,taskId}):null;
-  if(materialDetail&&input.repository.dataStore){const authority=socialObject(socialObject(socialJson(input.task.brief))?._weeklyAuthority),pkg=socialObject(authority?.weeklyPackage),pub=socialObject(authority?.publicationTask);if(pkg&&pub){const owned=await assessWeeklyOwnedProductIdentity(input.repository.dataStore,{tenantId,programId:String(pkg.programId),packageId:String(pkg.packageId),packageVersion:Number(pkg.version),publicationTaskId:String(pub.publicationTaskId),contentTaskId:taskId},{repository:input.repository});if(owned.required&&owned.status!=='ready')throw new SocialContentWorkflowError(owned.gaps[0]??'weekly_owned_product_identity_verification_required',409);}}
+  if(materialDetail&&input.repository.dataStore){const authority=socialObject(socialObject(socialJson(input.task.brief))?._weeklyAuthority),pkg=socialObject(authority?.weeklyPackage),pub=socialObject(authority?.publicationTask);if(pkg&&pub){const owned=await assessWeeklyOwnedProductIdentity(input.repository.dataStore,{tenantId,programId:String(pkg.programId),packageId:String(pkg.packageId),packageVersion:Number(pkg.version),publicationTaskId:String(pub.publicationTaskId),contentTaskId:taskId},{...input.materialEvidencePorts,repository:input.repository,startAdmission:{commandId:input.queue.commandId,admissionVersion:String(input.queue.subject?.admissionVersion),actorUserId:input.queue.userId}});if(owned.required&&owned.status!=='ready')throw new SocialContentWorkflowError(owned.gaps[0]??'weekly_owned_product_identity_verification_required',409);}}
   const weeklyReplicationAuthority=materialDetail?await freezeWeeklyReplicationAuthority(input.repository,input.task,materialDetail):null;
   const weeklyMaterialPlan=materialDetail?buildWeeklySchedulerMaterialPlanProof({tenantId,taskId,commandId:input.queue.commandId,row:input.task,detail:materialDetail,sources:input.sources}):null;
   const lineage = {
@@ -135,6 +136,7 @@ async function ensureAutomaticExecution(input: {
     socialTaskId: taskId,
     socialTaskVersion: taskSummary.version,
     ...(weeklyMaterialPlan?{weeklyMaterialPlan}:{}),
+    ...(socialObject(socialObject(socialJson(input.task.brief))?._weeklyOwnedProductIdentityDemand)?{weeklyOwnedProductIdentityDemand:structuredClone(socialObject(socialObject(socialJson(input.task.brief))?._weeklyOwnedProductIdentityDemand))}:{}),
     ...(weeklyReplicationAuthority?{weeklyReplicationAuthority}:{}),
     sourceRefs: normalizedSources(input.sources.map(source => ({
       id: source.sourceId,
@@ -394,6 +396,7 @@ export async function scheduleSocialContentWork(input: {
   queue: SocialQueueInput;
   now: Date;
   accessResolver?: SocialContentAccessResolver;
+  materialEvidencePorts?:Omit<WeeklyOwnedProductIdentityPorts,'repository'>;
   productionRunner?: (input: {
     repository: Starter198Repository;
     tenantId: string;
@@ -480,6 +483,7 @@ export async function scheduleSocialContentWork(input: {
         repository: input.repository,
         queue: input.queue,
         task: record,
+        materialEvidencePorts:input.materialEvidencePorts,
         sources,
         now: input.now,
       });

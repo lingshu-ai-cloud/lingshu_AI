@@ -283,6 +283,55 @@ export function createWeeklyOperatingPackageService(dataStore: DataStore) {
     }, dataStore);
   }
 
+  async function buildRevisionDraft(tenantId:string,userId:string,programId:string,packageId:string,input:Record<string,unknown>,current:PackageRow,createdAt?:string):Promise<WeeklyOperatingPackage>{
+      const projectedCurrent = await projectWorkflowState(dataStore, tenantId, current);
+      const program = await programRow(dataStore, tenantId, programId);
+      const accounts = await accountsForProgram(dataStore, tenantId, programId);
+      const merged = {
+        objective: current.payload.objective,
+        weekStart: current.payload.weekStart,
+        enterpriseProfileRef: current.payload.enterpriseProfileRef,
+        monthlyPlanRef: current.payload.monthlyPlanRef,
+        businessContentGoalRef: current.payload.businessContentGoalRef,
+        capacityPlanRef: current.payload.capacityPlanRef,
+        automationPolicyRef: current.payload.automationPolicyRef,
+        operatingDecisionSnapshotRef: current.payload.operatingDecisionSnapshotRef,
+        referenceModeRef: current.payload.referenceModeRef,
+        referenceSourcePolicy: current.payload.referenceSourcePolicy,
+        promotionQuotaRef: current.payload.promotionQuotaRef,
+        originalContentTarget: current.payload.socialContentPackage.originalContentTarget,
+        weeklyBudgetCny: current.payload.socialContentPackage.weeklyBudgetCny,
+        perItemBudgetCny: current.payload.socialContentPackage.perItemBudgetCny,
+        capacityNotes: current.payload.socialContentPackage.capacityNotes,
+        publicationTasks: current.payload.socialContentPackage.publicationTasks,
+        authorizationMode: current.payload.socialContentPackage.authorization.mode,
+        successCriteria: current.payload.successCriteria,
+        accountPlans: current.payload.socialContentPackage.publicationTasks.reduce<Array<Record<string, unknown>>>((plans, task) => {
+          const existing = plans.find(plan => plan.accountId === task.accountId);
+          if (existing) existing.publicationCount = Number(existing.publicationCount) + 1;
+          else plans.push({ accountId: task.accountId, publicationCount: 1, accountPositioning: task.accountPositioning });
+          return plans;
+        }, []),
+        ...input,
+      };
+      const orchestrated = await withAuthoritativeDecisions(tenantId, programId, merged);
+      const resolved = await withAuthoritativePlanning(tenantId, programId, orchestrated);
+      const resolvedWithQuota = await withPromotionQuota(tenantId, programId, resolved.input);
+      const effectiveOriginalTarget=(resolvedWithQuota.capacityPlan as WeeklyCapacitySnapshot|null|undefined)?.originalContentTarget??resolvedWithQuota.originalContentTarget;
+      if(input.publicationTasks===undefined&&input.originalContentTarget!==undefined&&Number(input.originalContentTarget)!==current.payload.socialContentPackage.originalContentTarget&&Number(effectiveOriginalTarget)!==current.payload.socialContentPackage.originalContentTarget){
+        resolvedWithQuota.publicationTasks=current.payload.socialContentPackage.publicationTasks.map(p=>{if(p.inventoryReuseRef)return p;const {motherContentId:oldMother,adaptationOfPublicationTaskId:oldParent,...freshGrouping}=p;return freshGrouping;});
+      }
+      const item = packageFromInput({
+        input: resolvedWithQuota, programId, userId, accounts, program: {...program.payload,route:current.payload.referenceSourcePolicy?.profile==='b2b_established'?'account_repair':program.payload.route},
+        packageId, contentPackageId: current.payload.socialContentPackage.contentPackageId,
+        version: current.payload.version + 1, previousVersion: current.payload.version,
+        previousPackage: projectedCurrent,
+        createdAt,
+      });
+      item.executionGraphVersion=2;
+      return item;
+
+  }
   return {
     async list(tenantId: string, programId: string, weekStart?: string): Promise<WeeklyOperatingPackage[]> {
       await programRow(dataStore, tenantId, programId);
@@ -342,6 +391,7 @@ export function createWeeklyOperatingPackageService(dataStore: DataStore) {
         input, programId, userId, accounts, program: packageProgram,
         packageId: randomUUID(), contentPackageId: randomUUID(), version: 1, previousVersion: null,
       });
+      item.executionGraphVersion=2;
       if(consumedUpgrade){
         for(const publication of item.socialContentPackage.publicationTasks)assertProfileUpgradePublicationWindow(publication.publishWindow,item.weekStart,String(input.profileUpgradeTimeZone));
         const targets=input.publicationTasks as Array<Record<string,unknown>>;
@@ -366,7 +416,15 @@ export function createWeeklyOperatingPackageService(dataStore: DataStore) {
       }
     },
 
-    async revise(tenantId: string, userId: string, programId: string, packageId: string, input: Record<string, unknown>, internal?: {scheduleRevisionRef?:VersionedSocialRef;templateApplicationRef?:VersionedSocialRef}): Promise<WeeklyOperatingPackage> {
+    async previewRevision(tenantId:string,userId:string,programId:string,packageId:string,input:Record<string,unknown>,options?:{createdAt?:string}):Promise<WeeklyOperatingPackage>{
+      rejectClientAuthorityObjects(input);if(input.profileUpgradeRef!==undefined)throw new SocialProgramError('profile_upgrade_next_week_only',400,'画像升级仅下一周创建消费。');
+      const current=await latestPackageRow(dataStore,tenantId,programId,packageId);if(!current)throw new SocialProgramError('weekly_operating_package_not_found',404,'周任务包不存在。');requireExpectedVersion(current.payload.version,input.expectedVersion);
+      const createdAt=options?.createdAt;if(createdAt!==undefined&&(!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(createdAt)||!Number.isFinite(Date.parse(createdAt))))throw new SocialProgramError('weekly_revision_preview_time_invalid',400,'排期预览时间必须为明确服务器时刻。');
+      const item=await buildRevisionDraft(tenantId,userId,programId,packageId,input,current,createdAt);
+      if(!item.objective||!item.successCriteria.length)throw new SocialProgramError('weekly_operating_package_incomplete',400,'周任务包必须包含经营目标和成功标准。');
+      return item;
+    },
+    async revise(tenantId: string, userId: string, programId: string, packageId: string, input: Record<string, unknown>, internal?: {scheduleRevisionRef?:VersionedSocialRef;templateApplicationRef?:VersionedSocialRef;createdAt?:string}): Promise<WeeklyOperatingPackage> {
       rejectClientAuthorityObjects(input);
       if(input.profileUpgradeRef!==undefined)throw new SocialProgramError('profile_upgrade_next_week_only',400,'画像升级只允许下一周创建时消费。');
       const current = await latestPackageRow(dataStore, tenantId, programId, packageId);
@@ -374,49 +432,7 @@ export function createWeeklyOperatingPackageService(dataStore: DataStore) {
       const gateScope={tenantId,programId,packageId,packageVersion:current.payload.version};
       if(!await assertExecutionPackageGate(dataStore,gateScope))return withExecutionPackageGate(dataStore,gateScope,()=>createWeeklyOperatingPackageService(dataStore).revise(tenantId,userId,programId,packageId,input,internal));
       requireExpectedVersion(current.payload.version, input.expectedVersion);
-      const projectedCurrent = await projectWorkflowState(dataStore, tenantId, current);
-      const program = await programRow(dataStore, tenantId, programId);
-      const accounts = await accountsForProgram(dataStore, tenantId, programId);
-      const merged = {
-        objective: current.payload.objective,
-        weekStart: current.payload.weekStart,
-        enterpriseProfileRef: current.payload.enterpriseProfileRef,
-        monthlyPlanRef: current.payload.monthlyPlanRef,
-        businessContentGoalRef: current.payload.businessContentGoalRef,
-        capacityPlanRef: current.payload.capacityPlanRef,
-        automationPolicyRef: current.payload.automationPolicyRef,
-        operatingDecisionSnapshotRef: current.payload.operatingDecisionSnapshotRef,
-        referenceModeRef: current.payload.referenceModeRef,
-        referenceSourcePolicy: current.payload.referenceSourcePolicy,
-        promotionQuotaRef: current.payload.promotionQuotaRef,
-        originalContentTarget: current.payload.socialContentPackage.originalContentTarget,
-        weeklyBudgetCny: current.payload.socialContentPackage.weeklyBudgetCny,
-        perItemBudgetCny: current.payload.socialContentPackage.perItemBudgetCny,
-        capacityNotes: current.payload.socialContentPackage.capacityNotes,
-        publicationTasks: current.payload.socialContentPackage.publicationTasks,
-        authorizationMode: current.payload.socialContentPackage.authorization.mode,
-        successCriteria: current.payload.successCriteria,
-        accountPlans: current.payload.socialContentPackage.publicationTasks.reduce<Array<Record<string, unknown>>>((plans, task) => {
-          const existing = plans.find(plan => plan.accountId === task.accountId);
-          if (existing) existing.publicationCount = Number(existing.publicationCount) + 1;
-          else plans.push({ accountId: task.accountId, publicationCount: 1, accountPositioning: task.accountPositioning });
-          return plans;
-        }, []),
-        ...input,
-      };
-      const orchestrated = await withAuthoritativeDecisions(tenantId, programId, merged);
-      const resolved = await withAuthoritativePlanning(tenantId, programId, orchestrated);
-      const resolvedWithQuota = await withPromotionQuota(tenantId, programId, resolved.input);
-      const effectiveOriginalTarget=(resolvedWithQuota.capacityPlan as WeeklyCapacitySnapshot|null|undefined)?.originalContentTarget??resolvedWithQuota.originalContentTarget;
-      if(input.publicationTasks===undefined&&input.originalContentTarget!==undefined&&Number(input.originalContentTarget)!==current.payload.socialContentPackage.originalContentTarget&&Number(effectiveOriginalTarget)!==current.payload.socialContentPackage.originalContentTarget){
-        resolvedWithQuota.publicationTasks=current.payload.socialContentPackage.publicationTasks.map(p=>{if(p.inventoryReuseRef)return p;const {motherContentId:oldMother,adaptationOfPublicationTaskId:oldParent,...freshGrouping}=p;return freshGrouping;});
-      }
-      const item = packageFromInput({
-        input: resolvedWithQuota, programId, userId, accounts, program: {...program.payload,route:current.payload.referenceSourcePolicy?.profile==='b2b_established'?'account_repair':program.payload.route},
-        packageId, contentPackageId: current.payload.socialContentPackage.contentPackageId,
-        version: current.payload.version + 1, previousVersion: current.payload.version,
-        previousPackage: projectedCurrent,
-      });
+      const item=await buildRevisionDraft(tenantId,userId,programId,packageId,input,current,internal?.createdAt);
       if(internal?.scheduleRevisionRef){await readScheduleSnapshot(dataStore,tenantId,item,internal.scheduleRevisionRef);(item as WeeklyScheduledPackage).scheduleRevisionRef=internal.scheduleRevisionRef;}
       if(internal?.templateApplicationRef){
         const ref=internal.templateApplicationRef,bindingRow=await dataStore.getById<import('../storage/datastore.js').Record_>('social_weekly_content_template_bindings',ref.id);

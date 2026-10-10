@@ -161,7 +161,6 @@ export function createSocialContentRouter(dependencies: SocialContentRouterDepen
   const socialTaskMaterialPort = dependencies.socialTaskMaterialPort;
 
   router.use(requireAuth);
-  if(repository.dataStore)router.use('/tasks/:taskId/weekly-owned-product-identity',createWeeklyOwnedProductIdentityRouter(createWeeklyOwnedProductIdentityUI(repository.dataStore,{repository,sourceOptions})));
   if(repository.dataStore) router.use('/tasks/:taskId/runs/:runId/artifacts/:artifactId/weekly-quality-recovery',createWeeklyContentQualityRecoveryRouter(createWeeklyContentQualityRecoveryService(repository.dataStore)));
   router.use('/tasks/:taskId/runs/:runId/artifacts/:artifactId/g5-reviews',createSocialDirectorG5ReviewRouter(createSocialDirectorG5ReviewService(repository)));
 router.use('/tasks/:taskId/runs/:runId/artifacts/:artifactId/instagram-delivery',createSocialInstagramDeliveryRouter(createSocialInstagramDeliveryService(repository)));
@@ -194,6 +193,8 @@ router.use('/tasks/:taskId/runs/:runId/artifacts/:artifactId/g6-reviews',createS
     }
     return { tenantId, userId };
   }
+
+  if(repository.dataStore)router.use('/tasks/:taskId/weekly-owned-product-identity',createWeeklyOwnedProductIdentityRouter(createWeeklyOwnedProductIdentityUI(repository.dataStore,{repository,sourceOptions}),authorize));
 
   function asyncRoute(handler: (req: Request, res: Response) => Promise<void>) {
     return (req: Request, res: Response, _next: NextFunction) => {

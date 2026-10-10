@@ -15,3 +15,6 @@ test('real timestamp projects execution start and explicit customer identity whi
   assert.equal(projectCustomerCalendarTask('run',{...task,evidenceStatus:'no_data'})!.status,'no_data');
   assert.equal(projectCustomerCalendarTask('run',{...task,evidenceStatus:'succeeded'})!.status,'completed');
 });
+test('customer start uses frozen offset across viewer date and rejects missing clock',()=>{const card=projectCustomerCalendarTask('run',{...task,scheduledAt:'2026-10-05T00:15:00+14:00'})!;assert.equal(card.date,'2026-10-05');assert.equal(card.time,'00:15');assert.equal(projectCustomerCalendarTask('run',{...task,scheduledAt:'2026-10-05T00:15:00'}),null);});
+import {calendarPendingReferences} from '../smartBusiness/AgentWeeklyCalendar';
+test('customer pending reference keeps start clock even when its deadline uses another offset',()=>{const card=projectCustomerCalendarTask('run',{...task,scheduledAt:'2026-10-05T00:15:00+14:00',latestFinishAt:'2026-10-04T01:00:00-10:00'})!;assert.equal(card.calendarClock?.label,'UTC+14:00');assert.equal(card.calendarClock?.offsetMinutes,840);assert.equal(calendarPendingReferences([card],Date.parse('2026-10-05T11:00:00Z')).length,1);});

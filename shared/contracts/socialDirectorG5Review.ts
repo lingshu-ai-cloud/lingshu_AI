@@ -1,3 +1,4 @@
+import type {DirectorG5RuleCheck,DirectorG5SourceRecordEvidence} from './socialDirectorG5AccountRules';
 import type {SocialReplicationJobContext} from './socialContentReplication';
 export interface DirectorG5AccountPlaybookRequirement {
  accountRef:NonNullable<SocialReplicationJobContext['targetAccountRef']>;
@@ -9,10 +10,11 @@ export interface DirectorG5AccountPlaybookRequirement {
 export const DIRECTOR_G5_CHECK_CODES=['hook','evidence_order','account_tone','cta','truth_boundary','variant_difference'] as const;
 export type DirectorG5CheckCode=typeof DIRECTOR_G5_CHECK_CODES[number];
 export interface SocialDirectorG5Scope{tenantId:string;taskId:string;runId:string;artifactId:string}
-export interface SocialDirectorG5Check{code:DirectorG5CheckCode;outcome:'passed'|'failed'|'unknown';observation:string;evidenceSceneIds:string[]}
+export interface SocialDirectorG5Check{code:DirectorG5CheckCode;outcome:'passed'|'failed'|'unknown';observation:string;evidenceSceneIds:string[];accountRuleChecks?:DirectorG5RuleCheck[]}
 export interface SocialDirectorG5Context extends SocialDirectorG5Scope{
  sourceHash:string;contextHash:string;artifactHash:string;fileRef:string;fileSha256:string;previewUrl:string;
  handoffId:string;handoffVersion:string;g4:{ready:boolean;scenes:Array<{sceneId:string;productionSceneId:string;status:'passed'|'failed'|'review_required';receiptId:string;receiptHash:string}>};
+ sourceRecordEvidence?:DirectorG5SourceRecordEvidence[];
  requirements:{accountPlaybook?:DirectorG5AccountPlaybookRequirement;accountTone:string[];script:Array<{sceneId:string;startSeconds:number;endSeconds:number;purpose:string;visual:string;voiceover:string|null;dialogue:string|null;caption:string|null;acceptanceCriteria:string[]}>;facts:Array<{key:string;label:string;value:string}>;truthBoundaries:Array<{sceneId:string;requirements:unknown}>;cta:string|null;variantDifference:unknown};
  reviewerUserId:string|null;reviewerAuthorityHash:string|null;agent:{reviewCostCny:number|null;taskBudgetCny:number|null;remainingBudgetCny:number|null;authorization:SocialDirectorG5ExecutionAuthorization|null;configured:boolean;executionPermitted:boolean;model:string|null;gaps:string[]};gaps:string[];
 }
