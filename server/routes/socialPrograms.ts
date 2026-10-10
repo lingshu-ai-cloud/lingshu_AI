@@ -45,6 +45,7 @@ import { createSocialWeeklyContentTemplatesRouter } from './socialWeeklyContentT
 import { createSocialWeeklyReviewEvidenceRouter } from './socialWeeklyReviewEvidence.js';
 import { createSocialWeeklyRunningResourceEvidenceRouter } from './socialWeeklyRunningResourceEvidence.js';
 import { createSocialWeeklySupplementRequestsRouter } from './socialWeeklySupplementRequests.js';
+import {createWeeklyProductionRepairCaseService} from '../socialPrograms/weeklyProductionRepairCases.js';
 
 function asyncRoute(handler: RequestHandler): RequestHandler {
   return (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
@@ -57,6 +58,7 @@ export function createSocialProgramsRouter(dataStore: DataStore = store, authent
   const weeklyPackages = createWeeklyOperatingPackageService(dataStore);
   const operating = createSocialOperatingOrchestrationService(dataStore);
   const executionTasks = createWeeklyExecutionTaskService(dataStore);
+  const repairCases=createWeeklyProductionRepairCaseService(dataStore);
   router.use('/:programId/operating-packages/:packageId/supplement-requests', asyncRoute(async (req, res, next) => {
     await service.getProgram((res.locals as AuthLocals).tenantId, req.params.programId);
     next();
@@ -355,6 +357,13 @@ export function createSocialProgramsRouter(dataStore: DataStore = store, authent
       throw new SocialProgramError('package_version_invalid', 400, '周包版本无效。');
     }
     res.json({ items: await projectWeeklyContinuationCalendar(dataStore, await executionTasks.list(tenantId, programId, packageId, requestedVersion)) });
+  }));
+
+  router.get('/:programId/operating-packages/:packageId/repair-cases',asyncRoute(async(req,res)=>{
+    const {tenantId}=res.locals as AuthLocals,programId=String(req.params.programId||''),packageId=String(req.params.packageId||'');
+    await service.getProgram(tenantId,programId);const pkg=await weeklyPackages.get(tenantId,programId,packageId),requestedVersion=Number(req.query.version??pkg.version);
+    if(!Number.isSafeInteger(requestedVersion)||requestedVersion<1)throw new SocialProgramError('package_version_invalid',400,'周包版本无效。');
+    res.setHeader('Cache-Control','private, no-store');res.json({items:await repairCases.list(tenantId,programId,packageId,requestedVersion)});
   }));
 
   router.post('/:programId/operating-packages/:packageId/publications/:publicationId/reception-binding', asyncRoute(async (req, res) => {

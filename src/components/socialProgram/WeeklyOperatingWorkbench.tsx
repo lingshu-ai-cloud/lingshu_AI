@@ -22,6 +22,7 @@ import PublicationReceptionSetup from './PublicationReceptionSetup';
 import WeeklyMaterialRequestsPanel from './WeeklyMaterialRequestsPanel';
 import { bindWeeklyMaterialRequest } from '../../lib/weeklyMaterialBinding';
 import WeeklyCustomerRunBinding from './WeeklyCustomerRunBinding';
+import type {WeeklyProductionRepairCase} from '../../../shared/contracts/weeklyProductionRepairCase';
 
 const KIND_LABEL: Record<WeeklyOperatingWorkflowKind, string> = {
   readiness: '范围与就绪', discovery: '发现', directing: '编导', content: '生产', publishing: '发布', engagement: '互动', review: '复盘',
@@ -105,6 +106,7 @@ export default function WeeklyOperatingWorkbench({ pkg, loading, error, selected
 }) {
   const [planning, setPlanning] = useState<WeeklyAgentPlanningState | null>(pkg?.agentPlanning ?? null);
   const [executionTasks, setExecutionTasks] = useState<WeeklyExecutionTask[]>([]);
+  const [repairCases,setRepairCases]=useState<WeeklyProductionRepairCase[]>([]);
   const [executionLoading, setExecutionLoading] = useState(false);
   const [executionError, setExecutionError] = useState('');
   const [cancellation, setCancellation] = useState<WeeklyCancellationSummary | null>(null);
@@ -131,9 +133,10 @@ export default function WeeklyOperatingWorkbench({ pkg, loading, error, selected
 
   useEffect(() => { setPlanning(pkg?.agentPlanning ?? null); }, [pkg?.agentPlanning]);
   useEffect(() => {
-    if (!pkg) { setExecutionTasks([]); setCancellation(null); return; }
+    if (!pkg) { setExecutionTasks([]); setRepairCases([]); setCancellation(null); return; }
     let cancelled = false;
     setExecutionTasks([]);
+    setRepairCases([]);
     setCancellation(null);
     setExecutionLoading(true);
     setExecutionError('');
@@ -142,8 +145,8 @@ export default function WeeklyOperatingWorkbench({ pkg, loading, error, selected
       if (reading || cancelled) return;
       reading = true;
       try {
-        const [items, receipt] = await Promise.all([socialProgramApi.listExecutionTasks(pkg.programId, pkg.packageId, pkg.version), socialProgramApi.readCancellation(pkg.programId, pkg.packageId, pkg.version)]);
-        if (!cancelled) { setExecutionTasks(items); setCancellation(receipt); setExecutionError(''); }
+        const [items, receipt,repairs] = await Promise.all([socialProgramApi.listExecutionTasks(pkg.programId, pkg.packageId, pkg.version), socialProgramApi.readCancellation(pkg.programId, pkg.packageId, pkg.version),socialProgramApi.listRepairCases(pkg.programId,pkg.packageId,pkg.version)]);
+        if (!cancelled) { setExecutionTasks(items); setRepairCases(repairs); setCancellation(receipt); setExecutionError(''); }
       } catch (cause) {
         if (!cancelled) setExecutionError(cause instanceof Error ? cause.message : '制作排期读取失败。');
       } finally { reading = false; if (!cancelled) setExecutionLoading(false); }
@@ -166,6 +169,7 @@ export default function WeeklyOperatingWorkbench({ pkg, loading, error, selected
   const selectedProductionTasks = useMemo(() => executionTasks
     .filter(item => item.publicationTaskId === selectedPublicationTaskId)
     .sort((left, right) => Date.parse(left.schedule.estimatedStartAt) - Date.parse(right.schedule.estimatedStartAt)), [executionTasks, selectedPublicationTaskId]);
+  const selectedRepairCases=useMemo(()=>repairCases.filter(item=>item.publicationTaskId===selectedPublicationTaskId&&!['resolved','cancelled'].includes(item.state)),[repairCases,selectedPublicationTaskId]);
   const sharedExecutionTasks = useMemo(() => executionTasks
     .filter(item => item.publicationTaskId === null)
     .sort((left, right) => Date.parse(left.schedule.estimatedStartAt) - Date.parse(right.schedule.estimatedStartAt)), [executionTasks]);
@@ -300,6 +304,7 @@ export default function WeeklyOperatingWorkbench({ pkg, loading, error, selected
       {!executionLoading&&!executionError&&selectedPublication&&<>
         <div className="mt-4 grid gap-3 sm:grid-cols-4"><div className="rounded-lg bg-surface-2 p-3"><p className="text-[10px] text-text-muted">平台 / 账号</p><p className="mt-1 text-xs font-bold">{selectedPublication.platform.toUpperCase()} · {selectedPublication.accountId}</p></div><div className="rounded-lg bg-surface-2 p-3"><p className="text-[10px] text-text-muted">发布窗口</p><p className="mt-1 text-xs font-bold">{selectedPublication.publishWindow || '待经营 Agent 排期'}</p></div><div className="rounded-lg bg-surface-2 p-3"><p className="text-[10px] text-text-muted">单条制作预计</p><p className="mt-1 text-xs font-bold">{selectedScheduleItem ? durationLabel(selectedScheduleItem.estimatedProductionMinutes) : durationLabel(selectedProductionTasks.reduce((sum, item) => sum + item.schedule.estimatedDurationMinutes, 0))}</p></div><div className="rounded-lg bg-surface-2 p-3"><p className="text-[10px] text-text-muted">素材可否开始</p><p className="mt-1 text-xs font-bold">{selectedProductionTasks.some(task => task.schedule.stepKind === 'material_readiness' && task.status === 'succeeded') ? '素材任务已核验通过' : '等待素材任务实际核验'}</p></div></div>
         {selectedScheduleItem&&<div className="mt-3 rounded-lg border border-violet-100 bg-violet-50/50 p-3 text-xs leading-5 text-text-secondary"><strong className="text-text-primary">对标与素材依据：</strong>视频 {selectedScheduleItem.benchmarkVideoRefs.map(ref => ref.id).join('、') || '无'} · 账号 {selectedScheduleItem.benchmarkAccountRefs.map(ref => ref.id).join('、') || '无'}<br/><strong className="text-text-primary">素材规划：</strong>{selectedScheduleItem.materialPlan.note}</div>}
+        {!!selectedRepairCases.length&&<div className="mt-5 space-y-3">{selectedRepairCases.map(item=><article key={item.caseId} data-repair-case={item.caseId} className="rounded-xl border border-red-200 bg-red-50 p-4"><div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-[10px] font-black text-red-700">动态返工任务 · 内容 Agent主负责</p><h4 className="mt-1 text-sm font-bold text-text-primary">{item.kind==='technical_scene_repair'?`修复 ${item.affectedSceneIds.length} 个质检失败镜头`:'按用户反馈重新编导并生成成片'}</h4></div><span className="rounded-full bg-white px-2.5 py-1 text-[10px] font-black text-red-700">{{awaiting_configuration:'待补范围与预算',awaiting_capacity:'待确认容量',ready:'待执行',running:'执行中',awaiting_audit:'待复检',resolved:'已完成',cancelled:'已取消'}[item.state]}</span></div><div className="mt-3 grid gap-2 text-xs text-text-secondary sm:grid-cols-2"><p>负责人：{item.ownerUserId}</p><p>复检人：{item.reviewerUserId}</p><p>截止：{item.deadlineAt?timeLabel(item.deadlineAt):'待明确确认'}</p><p>预算上限：{item.maximumCostCny===null?'待明确确认':`¥${item.maximumCostCny}`}</p></div>{item.trigger.type==='user_changes_requested'&&<p className="mt-3 rounded-lg bg-white/80 px-3 py-2 text-xs text-text-secondary">用户反馈：{item.trigger.note}</p>}{item.configurationGaps.length>0&&<p className="mt-2 text-xs text-red-700">待补：{item.configurationGaps.join('、')}</p>}</article>)}</div>}
         <ol className="mt-5 space-y-3">{selectedProductionTasks.map((task, index) => <li id={`weekly-execution-${task.taskId}`} key={task.taskId} className={`relative rounded-xl border p-4 ${taskTone(task.status)} ${selectedTaskId === task.taskId ? 'ring-2 ring-accent/20' : ''}`}><div className="flex flex-wrap items-start justify-between gap-3"><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><span className="flex h-6 w-6 items-center justify-center rounded-full bg-white text-[10px] font-black text-text-secondary">{index + 1}</span><h4 className="text-sm font-bold text-text-primary">{STEP_LABEL[task.schedule.stepKind]}</h4><span className="rounded-full bg-white px-2 py-1 text-[10px] font-bold text-text-secondary">{ACTOR_LABEL[task.schedule.responsibleActor]}</span></div><p className="mt-2 text-xs leading-5 text-text-secondary">{STEP_DETAIL[task.schedule.stepKind]}</p></div><span className="rounded-full bg-white px-2.5 py-1 text-[10px] font-black text-text-secondary">{EXECUTION_STATUS_LABEL[task.status]}</span></div><div className="mt-3 flex flex-wrap gap-x-5 gap-y-1 border-t border-black/5 pt-3 text-[10px] text-text-muted"><span>预计耗时：<strong className="text-text-secondary">{durationLabel(task.schedule.estimatedDurationMinutes)}</strong></span><span>预计开始：<strong className="text-text-secondary">{timeLabel(task.schedule.estimatedStartAt)}</strong></span><span>预计完成：<strong className="text-text-secondary">{timeLabel(task.schedule.estimatedFinishAt)}</strong></span>{task.schedule.actualStartedAt&&<span>实际开始：<strong className="text-text-secondary">{timeLabel(task.schedule.actualStartedAt)}</strong></span>}{task.schedule.actualFinishedAt&&<span>实际完成：<strong className="text-text-secondary">{timeLabel(task.schedule.actualFinishedAt)}</strong></span>}</div>{(task.ownBlockingReasons.length>0||task.inheritedBlockingTaskIds.length>0)&&<p className="mt-3 rounded-lg bg-white/70 px-3 py-2 text-xs leading-5 text-red-700">卡点：{[...task.ownBlockingReasons, ...task.inheritedBlockingTaskIds.map(id => `等待上游 ${id}`)].join('；')}</p>}<TaskDeadlineNotice task={task}/>{task.productionProgress&&<p className="mt-2 rounded-lg bg-blue-50 px-3 py-2 text-xs leading-5 text-blue-800">当前制作：{task.productionProgress.step} · {task.productionProgress.activity} · 更新于 {timeLabel(task.productionProgress.updatedAt)}</p>}{task.status === 'blocked' && task.ownBlockingReasons.includes('weekly_required_materials_missing') && <button type="button" disabled={planningBusy} onClick={() => void recheckMaterials(task)} className="mt-3 rounded-lg border border-border bg-white px-3 py-2 text-xs font-semibold disabled:opacity-50">已补交素材，重新核验</button>}{task.lastError&&<p className="mt-2 text-xs text-red-700">{task.status === 'queued' ? '等待原因' : '处理原因'}：{task.lastError.message}（{task.lastError.retryable ? '系统会继续核对或分级重试' : '需要用户或人工处理'}）</p>}{task.schedule.stepKind==='user_approval'&&task.status==='queued'&&<button type="button" disabled={planningBusy} onClick={() => void approveTask(task)} className="btn-primary mt-3 inline-flex items-center gap-2 disabled:opacity-50">{planningBusy&&<Loader2 size={13} className="animate-spin"/>}确认这条成片</button>}</li>)}</ol>
         {!selectedProductionTasks.length&&<p className="mt-5 rounded-lg border border-dashed border-border px-4 py-8 text-center text-xs text-text-muted">这条内容的制作节点尚未物化，请先完成任务总纲。</p>}
       </>}
