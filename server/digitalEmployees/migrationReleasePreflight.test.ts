@@ -150,6 +150,22 @@ try {
     item.code === 'immutable_manifest_conflict' && item.path === `pb_migrations/${appendedName}`
   )));
 
+  // The one reviewed manifest-defect correction cannot be transplanted into
+  // another repository. Even the exact filename and exact from/to hashes stay
+  // blocked unless Git contains the pinned historical introduction commit.
+  const transplantedFixture = createFixture();
+  const correctedName = '1791072008_create_content_execution_queue.js';
+  const correctedContent = fs.readFileSync(path.join(process.cwd(), 'pb_migrations', correctedName), 'utf8');
+  const erroneousChecksum = '17082ecdb5a6228182507d1d2a01f55c6aac48922cd376c489fecce8c8fb2f07';
+  fs.writeFileSync(migrationPath(transplantedFixture, correctedName), correctedContent);
+  writeManifest(transplantedFixture, { [correctedName]: erroneousChecksum });
+  const transplantedBaseline = commit(transplantedFixture, 'Transplanted manifest defect fixture');
+  writeManifest(transplantedFixture, { [correctedName]: checksum(correctedContent) });
+  const transplantedCorrection = checkDigitalEmployeeMigrations(transplantedFixture, { baselineRef: transplantedBaseline });
+  assert.ok(transplantedCorrection.blockers.some(item => (
+    item.code === 'immutable_manifest_conflict' && item.path === `pb_migrations/${correctedName}`
+  )), 'the reviewed correction must fail closed outside its pinned Git provenance');
+
   // The first manifest rollout uses tracked baseline migration blobs as its
   // trust root; changing an old migration and the new manifest together fails.
   const partialFixture = createFixture();
