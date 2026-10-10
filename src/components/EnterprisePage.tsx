@@ -15,6 +15,7 @@ import { parseProductDocument } from '../lib/productDocumentImport';
 import SupportAccessControl from './SupportAccessControl';
 import EnterpriseProductImportCard, { type ProductApiStatus } from './EnterpriseProductImportCard';
 import type { AppliedProfile } from './enterprise/KnowledgeIntakePanel';
+import {readWeeklyEnterpriseFactTarget} from '../lib/weeklyEnterpriseFactNavigation';
 
 interface ProductAsset {
   name: string;
@@ -745,6 +746,7 @@ async function importProductEvidenceUrl(url: string, name: string): Promise<Prod
 }
 
 export default function EnterprisePage() {
+  const weeklyFactTarget=readWeeklyEnterpriseFactTarget();
   const [profile, setProfile] = useState<Profile>(DEFAULT);
   const [saving, setSaving] = useState(false);
   const [, setSaved] = useState(false);
@@ -800,6 +802,8 @@ export default function EnterprisePage() {
       window.clearTimeout(highlightTimer);
     };
   }, []);
+
+  useEffect(()=>{if(!weeklyFactTarget)return;setEnterpriseArea('facts');setKnowledgeView('company');window.setTimeout(()=>document.getElementById('weekly-enterprise-fact-target')?.scrollIntoView({behavior:'smooth',block:'start'}),100);},[weeklyFactTarget?.exceptionId,weeklyFactTarget?.consumerInputHash]);
 
   useEffect(() => {
     let active = true;
@@ -1970,6 +1974,7 @@ export default function EnterprisePage() {
 
   return (
     <div className="flex h-full flex-col bg-white" data-lingshu-guide="enterprise-center">
+      {weeklyFactTarget&&<section id="weekly-enterprise-fact-target" tabIndex={-1} data-exception={weeklyFactTarget.exceptionId} data-consumer={weeklyFactTarget.consumerTaskId} data-package={weeklyFactTarget.packageId} data-version={weeklyFactTarget.packageVersion} className="mx-4 mt-4 rounded-xl border border-emerald-300 bg-emerald-50 p-4 text-xs text-emerald-950 sm:mx-6"><p className="font-black">本周任务需要补齐企业事实</p><p className="mt-1">原任务 {weeklyFactTarget.consumerTaskId} · 发布项 {weeklyFactTarget.publicationTaskId} · 周包 {weeklyFactTarget.packageId} v{weeklyFactTarget.packageVersion}</p><p className="mt-1">冻结企业版本 {weeklyFactTarget.enterpriseProfileRef?`${weeklyFactTarget.enterpriseProfileRef.id} v${weeklyFactTarget.enterpriseProfileRef.version}`:'原周包未冻结企业资料版本'} · 事实版本 {weeklyFactTarget.factRefs.map(ref=>`${ref.id} v${ref.version}`).join('、')||'缺少冻结事实引用'}</p><p className="mt-1">需核对字段：公司名称、产品类目、具体产品名称。保存后仍由原周任务复核事实版本，不会在本页直接解锁生产。</p><button type="button" className="mt-2 rounded border border-emerald-400 bg-white px-3 py-1.5 font-bold" onClick={()=>{setEnterpriseArea('facts');setKnowledgeView('products');}}>查看并补齐产品字段</button></section>}
       <div className="shrink-0 bg-white px-4 sm:px-6">
         <div className="flex w-full items-center gap-4 border-b border-border">
           <div className="flex min-w-0 flex-1 gap-7 overflow-x-auto">

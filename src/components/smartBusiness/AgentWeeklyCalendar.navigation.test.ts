@@ -48,6 +48,7 @@ const identity = {tenantId:'tenant', programId:'program', packageId:'package', p
 const cases: Array<{name:string; patch:Partial<AgentCalendarTask>; callback:string; demo?:boolean}> = [
   {name:'production',patch:{productionTaskId:'content-object'},callback:'onOpenProduction'},
   {name:'account binding',patch:{accountBindingTarget:{platform:'instagram',accountId:null,consumerIds:['consumer']}},callback:'onBindAccount'},
+  {name:'enterprise facts',patch:{enterpriseFactExceptionId:'exception'},callback:'onOpenEnterpriseFacts'},
   {name:'customer execution',patch:{customerExecutionTarget:{} as AgentCalendarTask['customerExecutionTarget']},callback:'onOpenCustomerExecution'},
   {name:'supplement',patch:{supplementTarget:{} as AgentCalendarTask['supplementTarget']},callback:'onOpenSupplement'},
   {name:'template',patch:{templateTarget:{...identity,stepKind:'template_extraction'}},callback:'onOpenTemplate'},
