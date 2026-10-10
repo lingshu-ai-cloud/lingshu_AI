@@ -1,0 +1,40 @@
+import assert from 'node:assert/strict';
+import {readFile,access} from 'node:fs/promises';
+import {createHash} from 'node:crypto';
+import {createServer,transformWithEsbuild} from 'vite';
+import react from '@vitejs/plugin-react';
+import tailwind from '@tailwindcss/vite';
+import {chromium} from 'playwright-core';
+import {program,pkg,tasks,inventoryRecord,mockRead} from './agent-card-click-connected-fixture.mjs';
+
+const fixture=`import React from 'react';import{createRoot}from'react-dom/client';import Connected from '/src/components/smartBusiness/ConnectedAgentCalendar.tsx';import'/src/index.css';localStorage.setItem('overseas_token','isolated-audit-token');createRoot(document.getElementById('root')).render(<Connected/>);`;
+let vite,browser;
+try{
+ const chrome='/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';await access(chrome);
+ vite=await createServer({configFile:false,cacheDir:'work/agent-card-click-connected-vite',resolve:{dedupe:['react','react-dom']},optimizeDeps:{entries:[],include:['react','react-dom/client','react-dom','react/jsx-runtime','lucide-react']},plugins:[{name:'audit-readonly-context',enforce:'pre',transform(_code,id){if(id.split('?')[0].endsWith('/src/contexts/SocialProgramContext.tsx'))return `export const useOptionalSocialProgram=()=>({activeProgram:${JSON.stringify(program)}});export const useSocialProgram=useOptionalSocialProgram;export const SocialProgramProvider=({children})=>children;`;}},react(),tailwind(),{name:'audit-html',configureServer(server){server.middlewares.use(async(req,res,next)=>{if(req.url!=='/agent-card-click-connected')return next();const compiled=await transformWithEsbuild(fixture,'fixture.tsx',{loader:'tsx',jsx:'automatic'});res.setHeader('Content-Type','text/html');res.end(await server.transformIndexHtml('/agent-card-click-connected',`<html><body><div id="root"></div><script type="module">${compiled.code}</script></body></html>`));});}}],server:{host:'127.0.0.1',port:0,hmr:false}});
+ await vite.listen();browser=await chromium.launch({executablePath:chrome,headless:true});const page=await browser.newPage({viewport:{width:1440,height:900}}),errors=[],blocked=[],reads=[];
+ page.on('pageerror',e=>errors.push(e.message));const origin=`http://127.0.0.1:${vite.httpServer.address().port}`;
+ await page.route('**/*',route=>{const req=route.request(),url=new URL(req.url());if(url.origin!==origin||!['GET','HEAD'].includes(req.method())){blocked.push(`${req.method()} ${req.url()}`);return route.abort();}if(url.pathname.startsWith('/api/')){reads.push(url.pathname+url.search);const data=mockRead(url);return route.fulfill(data===undefined?{status:404,json:{error:`GET fixture missing ${url.pathname}`}}:{json:data});}return route.continue();});
+ await page.goto(`${origin}/agent-card-click-connected`);
+ await page.getByText(/^经营项目：/).waitFor();
+ await page.getByRole('combobox',{name:'查看周任务包版本'}).selectOption(JSON.stringify([pkg.packageId,pkg.version]));
+ await page.getByRole('button').filter({has:page.getByText('13. 用户确认成片 · 待编导明确',{exact:true})}).waitFor();
+ const inventoryId=`inventory-workspace:${tasks[0].tenantId}:${pkg.programId}:${pkg.packageId}:${pkg.version}:${inventoryRecord.item.bindingId}`;
+ const calendarCard=title=>page.getByRole('button').filter({has:page.getByText(title,{exact:true})});
+ await calendarCard('13. 用户确认成片 · 待编导明确').click();
+ await page.getByRole('dialog',{name:'任务详情'}).getByRole('button',{name:'核验此任务生产对象与上游'}).click();
+ await page.waitForFunction(id=>document.activeElement?.id===id,inventoryId);
+ assert.equal(await page.locator(`[id="${inventoryId}"]`).getAttribute('data-publication'),'next');
+ console.log('PASS inventory: actual Connected card → bound inventory panel, publication next and focused exact binding.');
+ await calendarCard('14. 发布到目标账号 · 待编导明确').click();
+ await page.getByRole('dialog',{name:'任务详情'}).getByRole('button',{name:'查看真实发布安排与平台尝试'}).click();
+ await page.getByRole('dialog',{name:'任务详情'}).waitFor({state:'hidden'});
+ const publicationId=`publication-execution:${tasks[1].tenantId}:${pkg.programId}:${pkg.packageId}:${pkg.version}:${tasks[1].taskId}`;
+ const result={publicationPanelCount:await page.locator(`[id="${publicationId}"]`).count(),focused:await page.evaluate(()=>document.activeElement?.id),publicationDetailGet:reads.some(url=>url.includes('/publication-recoveries/execution/'))};
+ console.log('PUBLICATION ROUTE',JSON.stringify(result));
+ assert.deepEqual(errors,[]);assert.deepEqual(blocked,[]);
+ console.log('SUPPORTED GET READS',JSON.stringify([...new Set(reads)]));
+ console.log('SOURCE SHA256',createHash('sha256').update(await readFile('src/components/smartBusiness/ConnectedAgentCalendar.tsx')).digest('hex'));
+ assert.equal(result.publicationPanelCount,1,'AC-PUB-ROUTE: inventory publication card promises publication attempts but routes to inventory panel; publication detail GET absent.');
+ assert.equal(result.publicationDetailGet,true);
+}finally{await browser?.close();await vite?.close();}
