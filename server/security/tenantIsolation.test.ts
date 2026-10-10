@@ -32,7 +32,7 @@ const channelStatus = read('server/routes/channels.ts');
 assert.match(channelStatus, /where: \{ tenantId, status: 'connected' \}/, 'connected channel lookups must remain tenant scoped');
 
 const oauth = read('server/routes/whatsappOAuth.ts');
-assert.match(oauth, /if \(supportAccess\) return null/, 'support sessions must not switch to a second tenant');
+assert.match(oauth, /if \(!requestedTenantId \|\| requestedTenantId === tenantId\) return tenantId;\s*return null;/, 'all sessions including support sessions must reject a different tenant');
 
 const oauthUi = read('src/components/YouTubeIntegration.tsx');
 assert.match(oauthUi, /const popup = prepareOAuthPopup\('youtube-oauth'[\s\S]*?await fetch\('\/api\/overseas\/youtube\/oauth\/start'/, 'YouTube must open its OAuth window before awaiting the start request');
@@ -50,7 +50,7 @@ assert.match(assistantUi, /const closeAssistant = useCallback\(\(\) => \{[\s\S]*
 assert.match(assistantUi, /data-global-assistant="root"[\s\S]{0,220}fixed right-4 z-\[75\][\s\S]{0,220}bottom-\[calc\(env\(safe-area-inset-bottom\)\+1rem\)\]/, 'the assistant launcher must stay in the bottom-right safe area');
 assert.match(assistantUi, /page === 'conversion' \? 'bottom-\[calc\(env\(safe-area-inset-bottom\)\+8rem\)\]'/, 'the mobile conversation launcher must clear the message composer');
 assert.match(assistantUi, /const handleLauncherClick[\s\S]{0,500}openCurrentPageAgent\(\)/, 'the assistant launcher must open the current-page panel directly');
-assert.match(assistantUi, /openAgent\(currentPageAgent, 'approvals'\)/, 'the assistant opens the real decision feed first without restoring an agent selector');
+assert.match(assistantUi, /openAgent\(currentPageAgent, 'chat'\)/, 'the confirmed unified assistant opens the current-page conversation without an agent selector');
 assert.match(assistantUi, /<AssistantDecisionCenter[\s\S]{0,300}page=\{page\}/, 'the assistant decision feed must be scoped to the current page');
 assert.match(assistantUi, /data-global-assistant="launcher"[\s\S]{0,300}aria-label=\{mode === 'chat' \? '收起灵小枢对话' : '询问灵小枢'\}/, 'the launcher must expose its direct open/close conversation behavior');
 assert.doesNotMatch(assistantUi, /ASSISTANT_AUTO_RETRACT_MS|assistantPosition|launcherRetracted|data-global-assistant="edge-launcher"/, 'the assistant must not restore the obsolete draggable or auto-retract launcher');
@@ -123,7 +123,7 @@ assert.match(socialSetupGuide, /https:\/\/app\.lingshu\.site\/api\/overseas\/you
 
 const tenantPlatformApps = read('server/lib/tenantPlatformApps.ts');
 assert.match(tenantPlatformApps, /export type TenantPlatform = [^\n]*'tiktok'/, 'tenant platform applications must include TikTok even when additional platforms are supported');
-assert.match(tenantPlatformApps, /getTenantTikTokOAuthClient[\s\S]*?getTenantPlatformApp\(tenantId, 'tiktok'\)[\s\S]*?getTikTokOAuthClient\(\)/, 'TikTok OAuth must prefer tenant credentials and retain the global fallback');
+assert.match(tenantPlatformApps, /getTenantTikTokOAuthClient[\s\S]*?getTenantPlatformAppFrom\(dataStore, tenantId, 'tiktok'\)[\s\S]*?app\?\.tenant_id === tenantId[\s\S]*?return null;[\s\S]*?return getTikTokOAuthClient\(\)/, 'tenant TikTok credentials must remain isolated; only unscoped requests use global credentials');
 const publicPlatformApp = tenantPlatformApps.slice(
   tenantPlatformApps.indexOf('export function publicTenantPlatformApp'),
   tenantPlatformApps.indexOf('export async function upsertTenantPlatformApp'),

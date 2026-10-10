@@ -28,7 +28,7 @@ services:
       # the private Compose network, so the API is never published directly.
       - "127.0.0.1:${APP_HOST_PORT:-18788}:8788"
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8788/api/overseas/ready"]
+      test: ["CMD", "node", "scripts/check-runtime-readiness.mjs", "http://127.0.0.1:8788/api/overseas/ready"]
       interval: 15s
       timeout: 5s
       retries: 10

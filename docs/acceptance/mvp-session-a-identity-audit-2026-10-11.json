@@ -1,0 +1,110 @@
+{
+  "schemaVersion": 1,
+  "recordedAtUtc": "2026-10-10T16:39:07.264Z",
+  "authority": "current_persisted_local_authority_not_production_database",
+  "sources": [
+    {
+      "file": "data/local-store/studio_projects.json",
+      "sha256": "2eb234d119d8b49182bdbdf6d775e1defd2be706e2937af0f9e7804b9dd61f50"
+    },
+    {
+      "file": "data/local-store/tenant_profiles.json",
+      "sha256": "3188018957beca86a2b14b44e9990194fa000a6502108c034d06d2d87330d4e5"
+    },
+    {
+      "file": "data/local-store/social_accounts.json",
+      "sha256": "f5335b1e47f2f9450d764f74d764038ad25412689e58070bb96f78c562588e92"
+    },
+    {
+      "file": "data/local-store/workflow_tasks.json",
+      "sha256": "1f2542cb565da1ae312e15a041e86a0218f45e2f1ab3c33220502d0cbdadab64"
+    },
+    {
+      "file": "data/local-store/workflow_runs.json",
+      "sha256": "6425c8efeae95a94df5bfb649837e25efddce74c3778c34e6130e551e50ac658"
+    },
+    {
+      "file": "data/local-store/weekly_plans.json",
+      "sha256": "55c7a5e46cbddd277291860dcb90bb07c5a4ce9c181af85d62b65449216b7f48"
+    }
+  ],
+  "state": "blocked_business_identity_unresolved",
+  "executable": false,
+  "uniqueExecutableCandidate": null,
+  "soleTraceableCandidate": {
+    "projectId": "studio_projects_b251759707fa43a499a5dc48f070843f",
+    "tenantId": "local_tenant_customer_1b2913131e2c46deab66172228c4df0a",
+    "projectUpdated": "2026-10-08T16:42:29.017Z",
+    "projectStatus": "draft",
+    "accountId": "local-tiktok-local_tenant_customer_1b2913131e2c46deab66172228c4df0a",
+    "accountLabel": "宏昱智能光学照明",
+    "productId": "GUIANFA-RS-001",
+    "taskId": "workflow_tasks_4d563d4969114a51b1cb31aa1a93a953",
+    "runId": "workflow_runs_4f7c1a1b054146b3925ad0aac87b308b",
+    "assemblyId": "video-1",
+    "version": null
+  },
+  "findings": {
+    "configuredZeroFoundation": true,
+    "realOperatingHistoryVerified": false,
+    "zeroFoundationPaths": [
+      "tenant_profiles.profile.socialStrategy.contentStage",
+      "tenant_profiles.profile.socialStrategy.weeklyTaskPackagePreset"
+    ],
+    "weeklyMaturity": "starting",
+    "company": {
+      "name": "宏昱智能光学照明",
+      "description": "主营室内照明产品，产品目录包括洗墙灯、筒射灯、磁吸轨道灯、灯带、吊灯、壁灯、床头灯和台灯。面向越南市场的B2B批发及工程采购客户提供产品选型与询盘沟通。具体规格以产品目录为准。"
+    },
+    "buyerRoles": [
+      "越南灯具经销商",
+      "工程采购",
+      "室内设计与项目承包商"
+    ],
+    "product": [
+      {
+        "sku": "GUIANFA-RS-001",
+        "name": "云朵泡沫卸妆蜜",
+        "sourceFile": "融尚货盘报价表_零售价7.14.pdf",
+        "sourcePage": 1
+      },
+      {
+        "sku": "GUIANFA-RS-014",
+        "name": "丝蛋白生物基抗皱干膜",
+        "sourceFile": "融尚货盘报价表_零售价7.14.pdf",
+        "sourcePage": 14
+      }
+    ],
+    "currentCandidateBExists": false,
+    "sameTenantRealAccountExists": false,
+    "task": {
+      "id": "workflow_tasks_4d563d4969114a51b1cb31aa1a93a953",
+      "tenantId": "local_tenant_customer_1b2913131e2c46deab66172228c4df0a",
+      "runId": "workflow_runs_4f7c1a1b054146b3925ad0aac87b308b",
+      "status": "failed",
+      "taskVersion": 9,
+      "correctionVersion": 8
+    },
+    "run": {
+      "id": "workflow_runs_4f7c1a1b054146b3925ad0aac87b308b",
+      "tenantId": "local_tenant_customer_1b2913131e2c46deab66172228c4df0a",
+      "planId": "weekly_plans_7b3d362d7fa6489993ad2f6de492b7ec",
+      "status": "waiting_human"
+    }
+  },
+  "operationOrigin": {
+    "file": "scripts/import-rongshang-local-preview.ts",
+    "effect": "imports beauty catalog into target tenant and preserves pre-existing socialStrategy",
+    "establishesBusinessOwnershipAuthorization": false
+  },
+  "neededDecision": {
+    "owner": "business_responsible_person_via_main_session",
+    "question": "Is this tenant authorized to conduct this skincare MVP, or must the MVP use the lighting business or an independently authorized skincare tenant?",
+    "customerMustCoordinateAgents": false
+  },
+  "budgetA": {
+    "confirmedLimitCny": 5,
+    "permitsBSpending": false,
+    "paidExecutionAuthorized": false
+  }
+}

@@ -147,23 +147,26 @@ export function buildStoryboardQaReport(input: {
   };
 }
 
-/** Replication runs automatically. Keep uncertainties visible without claiming
- * they passed vision QA; retain every non-background hard failure. */
+/** Automatic admission needs complete QA evidence. A generated environment is
+ * never exempt from fidelity checks, and automation cannot sign human review. */
 export function applyStoryboardReplicationAutomation(report: StoryboardQaReport): StoryboardQaReport {
-  const findings = report.findings.filter(item => item.key !== 'environment_fidelity').map(item =>
+  const findings = report.findings.map(item =>
     item.key === 'product_identity' && item.severity !== 'hard_failure'
       ? { ...item, severity: 'hard_failure' as const, action: 'needs_assets' as const,
         code: item.code.replace(/_UNCERTAIN$/, '_UNVERIFIED'),
         message: item.message || '企业产品身份未被可靠验证' }
       : item);
   const hard = findings.filter(item => item.severity === 'hard_failure');
-  const checks = Object.fromEntries(Object.entries(report.checks).filter(([key]) => key !== 'environment_fidelity'));
-  const { reviewedAt: _at, reviewedBy: _by, reviewDecision: _decision, ...original } = report;
-  return { ...original, checks, findings, reasonCodes: findings.map(item => item.code),
-    automatedPassed: findings.length === 0, passed: hard.length === 0, requiresHumanReview: false,
+  const { reviewedAt: _at, reviewedBy: _by, reviewDecision: _decision,
+    backgroundCheckPolicy: _background, acceptanceSource: _source, ...original } = report;
+  const passed = findings.length === 0;
+  const requiresHumanReview = !hard.length && !passed;
+  return { ...original, checks: { ...report.checks }, findings, reasonCodes: findings.map(item => item.code),
+    automatedPassed: passed, passed, requiresHumanReview,
     status: hard.some(item => item.action === 'needs_assets') ? 'needs_assets'
-      : hard.length ? report.phase === 'first_frame' ? 'retry_first_frame' : 'retry_video' : 'passed',
-    acceptanceSource: 'automatic_policy', backgroundCheckPolicy: 'disabled' };
+      : hard.length ? report.phase === 'first_frame' ? 'retry_first_frame' : 'retry_video'
+      : requiresHumanReview ? 'needs_review' : 'passed',
+    ...(passed ? { acceptanceSource: 'automatic_policy' as const } : {}) };
 }
 
 export function automaticStoryboardFrameAdmission(provenance: Record<string, any> | undefined): boolean {

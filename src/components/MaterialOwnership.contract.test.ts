@@ -83,7 +83,7 @@ assert.match(taxonomySource, /<Select[^]*?aria-label="素材来源"[^]*?<Select[
 assert.doesNotMatch(inspirationSource, /系统已按创作主题整理素材|项可匹配|主题待确认/, '素材库不得残留旧主题卡片和派生主题标签');
 assert.doesNotMatch(inspirationSource, /任务中上传的图片、视频和音频也会归入这里/, '上传入口不得再使用大段说明文字');
 assert.match(inspirationSource, /<span className="text-xs font-bold">音频素材<\/span>/, '音频素材必须用专属占位画面识别，不得继续误标为图片');
-assert.match(inspirationSource, /studioApi\.listMaterialLibrary\('all',/, '我的素材必须展示账号下可编辑素材和采集参考素材');
+assert.match(inspirationSource, /studioApi\.listMaterialLibrary\('all'/, '我的素材必须通过统一素材库读取账号下可编辑素材和采集参考素材');
 assert.doesNotMatch(inspirationSource, /enterMaterialSmartGeneration[\s\S]*?material\.usage === 'reference_only'/, '所有进入素材库的视觉素材都必须可以进入创作链路');
 assert.doesNotMatch(inspirationSource, /pinnedMaterialVideos/, '素材库内容不得反向混入爆款视频列表');
 assert.doesNotMatch(inspirationSource, /<MaterialAnalysisStatus material=\{material\}/, '我的素材卡片不得展示内部分析进度和区间标注');
@@ -93,8 +93,8 @@ assert.match(inspirationSource, /title=\{materialSemanticLabel\(material\)\}>\{m
 const materialCardSource = inspirationSource.slice(inspirationSource.indexOf('<LsMasonryGallery layout="grid" items={filteredMaterials.map'), inspirationSource.indexOf('aria-label="我的素材分页"'));
 assert.doesNotMatch(materialCardSource, /visibleMaterialTags\(material\.tags\)|materialAssetBadge\(material\)/, '素材卡首页不得展示标签');
 assert.match(inspirationSource, /aria-label="素材标签"[^]*?materialAssetBadge\(detailMaterial\)[^]*?visibleMaterialTags\(detailMaterial\.tags\)/, '素材标签必须集中展示在详情顶部');
-assert.match(inspirationSource, /<Eye size=\{14\} \/>查看详情/, '每张素材卡必须提供查看详情入口');
-assert.match(inspirationSource, /<Sparkles size=\{14\} \/>自由创作/, '每张素材卡必须提供自由创作入口');
+assert.match(inspirationSource, /onClick=\{\(\) => setDetailMaterial\(material\)\}[\s\S]{0,600}查看详情/, '每张素材卡必须提供查看详情入口');
+assert.match(inspirationSource, /enterMaterialSmartGeneration\(material\)[\s\S]{0,1000}自由创作/, '每张素材卡必须提供自由创作入口');
 assert.match(inspirationSource, /\{ key: 'library'[\s\S]{0,220}\{ key: 'accounts'/, '对标账号必须排列在我的素材之后');
 assert.match(inspirationSource, /aria-label=\{`\$\{isFavoriteMaterial\(material\) \? '取消收藏' : '收藏'\} \$\{material\.name\}`\}/, '素材卡必须提供可持久化的收藏按钮');
 assert.match(studioRouteSource, /function enterpriseProductMaterials[\s\S]{0,5000}sourceType: 'enterprise_product_table'/, '产品表图片必须自动投影到正式素材接口并保留来源');

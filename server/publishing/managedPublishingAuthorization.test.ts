@@ -29,6 +29,16 @@ const port = {
 const check = () => assertManagedPublishingAuthorization(post, 'account-a', { store: port, now: () => now });
 await check();
 assert.ok(reads > 0);
+const firstScopeReads = reads;
+await check();
+assert.ok(reads > firstScopeReads, 'reuse valid scope consent without another approval, but reread authority before each submission');
+savedConfig = { ...config, allowRealPublishing: false, productionAuthorized: true, deploymentAuthorized: true, productionBudget: 5, directorApproved: true };
+await assert.rejects(check, ManagedPublishingAuthorizationError, 'production/director/deployment permissions cannot replace publishing consent');
+savedConfig = { ...config, managedPublishingGrant: { ...grant, enabled: false } };
+await assert.rejects(check, ManagedPublishingAuthorizationError, 'revoked scope cannot submit');
+savedConfig = config;
+await assert.rejects(() => assertManagedPublishingAuthorization(post, 'other-account', { store: port, now: () => now }), ManagedPublishingAuthorizationError, 'an existing scope cannot authorize a new account');
+await assert.rejects(() => assertManagedPublishingAuthorization({ ...post, tenant_id: 'other-tenant' }, 'account-a', { store: port, now: () => now }), ManagedPublishingAuthorizationError, 'a grant cannot be borrowed across tenants');
 savedConfig = { ...config, managedPublishingGrant: undefined };
 await assert.rejects(check, ManagedPublishingAuthorizationError);
 savedConfig = { ...config, managedPublishingGrant: { ...grant, grantId: 'new-grant' } };

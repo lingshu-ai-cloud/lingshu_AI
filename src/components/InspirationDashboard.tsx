@@ -3338,6 +3338,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     closeOnEscape: () => !manageBusy,
   });
   const [materialSearch, setMaterialSearch] = useState('');
+  const [materialAssetTab, setMaterialAssetTab] = useState<MaterialAssetTab>('enterprise');
   const [materialIndustry, setMaterialIndustry] = useState<MaterialIndustryFilter>('all');
   const [materialFunction, setMaterialFunction] = useState('all');
   const [materialApplicability, setMaterialApplicability] = useState<MaterialApplicabilityFilter>('all');
@@ -3920,6 +3921,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
         productRef: materialProductRef,
       });
       return (!q || searchable.includes(q))
+        && materialAssetTabOf(material) === materialAssetTab
         && (materialTheme === 'all' || materialThemeTagsOf(material).includes(materialTheme))
         && (materialType === 'all' || material.type === materialType)
         && (materialIndustry === 'all' || material.industry === materialIndustry)
@@ -3935,7 +3937,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
       const sourcePriority = Number(materialSourceCategoryOf(b) === 'local_upload') - Number(materialSourceCategoryOf(a) === 'local_upload');
       return sourcePriority || (Date.parse(String(b.createdAt || '')) || 0) - (Date.parse(String(a.createdAt || '')) || 0);
     });
-  }, [localMaterials, materialSearch, materialType, materialIndustry, materialFunction, materialApplicability, materialOrientation, materialSource, materialTheme, materialFavoriteFilter, materialProductFilterEnabled, materialProductId, materialProductRef]);
+  }, [localMaterials, materialSearch, materialAssetTab, materialType, materialIndustry, materialFunction, materialApplicability, materialOrientation, materialSource, materialTheme, materialFavoriteFilter, materialProductFilterEnabled, materialProductId, materialProductRef]);
 
   const handleUploadMaterials = async (files: FileList | null) => {
     if (!files?.length) return;
@@ -4844,6 +4846,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
 
               <div className="space-y-3 rounded-lg border border-border bg-surface p-3 sm:p-4">
                 <div className="flex flex-nowrap items-center gap-2 overflow-x-auto pb-1" aria-label="我的素材筛选">
+                  <Select className="w-32 shrink-0" aria-label="素材分类" value={materialAssetTab} onChange={setMaterialAssetTab} options={[{value:"enterprise",label:"产品素材"},{value:"ai",label:"AI 素材"},{value:"cloud",label:"云素材"}]} />
                   <Input allowClear prefix={<Search size={15} />} value={materialSearch} onChange={event => setMaterialSearch(event.target.value)}
                     aria-label="搜索我的素材" placeholder="搜索素材名称、产品或主要内容" className="min-w-60 flex-1" />
                   <MaterialTaxonomyFilters source={materialSource} theme={materialTheme} total={materialSource === 'all' && materialTheme === 'all' ? materialTotal : Object.values(materialFacets?.sources || {}).reduce((sum, count) => sum + count, 0)}

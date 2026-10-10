@@ -3,6 +3,8 @@ import { socialProgramApi } from '../lib/socialProgramApi';
 import { socialSceneReworkApi } from '../lib/socialSceneReworkApi';
 import { frozenSceneSlotId, verifiedProductionSlots, verifyProductionSnapshotHash, type BoundProductionSlot } from '../lib/socialSceneReworkNavigation';
 import { SocialSceneReworkPanel } from './socialContent/SocialSceneReworkPanel';
+import SocialMvpHandoffPanel from './socialContent/SocialMvpHandoffPanel';
+import { readCurrentStudioSocialTask } from '../lib/studioSocialTaskRead';
 import type { SocialContentTaskDetail } from '../../shared/contracts/socialContentWorkflow';
 import { localFlowRenderRecovery, localFlowRenderInputIdentity } from '../lib/localFlowRenderRecovery';
 import { App as AntApp, Button, Modal } from 'antd';
@@ -47,7 +49,7 @@ import { createPresetEffectPlan, type EffectIntensity, type EffectPresetId } fro
 import type { Page } from '../App';
 import type { SocialContentCreateRequest } from './socialContent/SocialContentWorkspace';
 import { completeDemoStep } from '../lib/demoProgress';
-import { authHeader } from '../lib/auth';
+import { authHeader, AUTH_TOKEN_CHANGED_EVENT, getToken } from '../lib/auth';
 import { useDismissibleLayer } from '../hooks/useDismissibleLayer';
 import { useModalFocus } from '../hooks/useModalFocus';
 import { createScriptGapTask, readScriptGapTasks, SCRIPT_GAP_QUEUE_EVENT, type ScriptGapTask } from '../lib/scriptGapQueue';
@@ -2906,11 +2908,21 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
   const [sceneReworkReadVersion, setSceneReworkReadVersion] = useState(0);
   useEffect(() => {
     let live = true;
+    const token = getToken();
+    const invalidate = () => { live = false; setSceneReworkTask(null); };
+    window.addEventListener(AUTH_TOKEN_CHANGED_EVENT, invalidate);
+    window.addEventListener('storage', invalidate);
     setSceneReworkTask(current => current?.taskId === socialContentTaskId ? current : null);
-    if (socialContentTaskId) void socialContentApi.getTask(socialContentTaskId).then(value => {
-      if (live && value.taskId === socialContentTaskId) setSceneReworkTask(value);
-    }).catch(() => { if (live) { setSceneReworkTask(null); if (rawSceneTarget) setSceneNavigationError('指定内容任务不存在或无法读取，请返回原周任务核对真实上游。'); } });
-    return () => { live = false; };
+    if (socialContentTaskId) void readCurrentStudioSocialTask(socialContentTaskId,
+      () => socialContentApi.getTask(socialContentTaskId),
+      () => live && getToken() === token,
+      setSceneReworkTask,
+    ).catch(() => { if (live) { setSceneReworkTask(null); if (rawSceneTarget) setSceneNavigationError('指定内容任务不存在或无法读取，请返回原周任务核对真实上游。'); } });
+    return () => {
+      live = false;
+      window.removeEventListener(AUTH_TOKEN_CHANGED_EVENT, invalidate);
+      window.removeEventListener('storage', invalidate);
+    };
   }, [socialContentTaskId, sceneReworkReadVersion, sceneTargetKey]);
   const studioCreateRequest = incomingCreateRequest || restoredCreateRequest;
   const [replicationSpeechDraft, setReplicationSpeechDraft] = useState<{ signature: string; edits: Record<string, string>; deletedIds?: string[]; deletedShotIds?: string[] }>({ signature: '', edits: {} });
@@ -3603,6 +3615,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     canApply: () => (!projectId && !autoGen.current && !studioSettingsEditedRef.current)
       || Boolean(projectId && socialContentTaskId && !hasTimestampScript),
     onRefresh: task => {
+      setSceneReworkTask(task);
       rememberSocialShotMaterialBindings(socialTaskShotMaterialBindings(task));
       const reference = socialTaskReferenceKickoff(task);
       if (reference) setVideoKickoff(reference);
@@ -15998,7 +16011,10 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
           </div>
         ) : <button key={index} type="button" className="block w-full rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-left text-[10px] text-amber-900" onClick={() => { const slot = storyboardSlots.find(item => item.id === todo.slotId); if (todo.target === 'system') { void navigateReplicationStep(0); return; } if (!slot) return; focusWorkbenchStoryboardSlot(slot.id); if (todo.target === 'digital') openProduction(slot); else void createBoundShootingTask(storyboardSlotScript(slot.detail).visual || slot.title, slot.id); }}>{todo.label}</button>)}</div>)}
         propertyPanel={(
-          threeStepWorkflow && step === 'preview' ? (
+          <>
+          {socialContentTaskId && <SocialMvpHandoffPanel value={sceneReworkTask?.taskId === socialContentTaskId ? sceneReworkTask.socialMvpHandoff : null}
+            expected={{ taskId: socialContentTaskId, runId: sceneReworkTask?.runId || '', version: sceneReworkTask?.version || '', projectId: projectId || '' }} />}
+          {threeStepWorkflow && step === 'preview' ? (
             <section className="space-y-3" aria-label="成片操作">
               {subtitleSourceBlockReason && <div role="alert" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs leading-5">
                 <p>{subtitleSourceBlockReason}</p>
@@ -16457,7 +16473,8 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                 </motion.div>
               </AnimatePresence>
             )}
-          </div>
+          </div>}
+          </>
         )}
         timelineTitle={canvasView === 'reference' && mode === 'clone' ? '爆款视频时间轴' : '新建视频时间轴'}
         timelineDescription={canvasView === 'reference' && mode === 'clone' ? `${referenceStoryboardItems.length} 个原片分镜 · 可点击定位原片` : storyboardSlots.length ? `${storyboardSlots.length} 个新片分镜 · 可拖动定位画面` : undefined}

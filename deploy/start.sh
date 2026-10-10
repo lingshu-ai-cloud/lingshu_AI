@@ -58,6 +58,6 @@ compose=(env -u COMPOSE_FILE -u COMPOSE_PROJECT_NAME
 "${compose[@]}" up -d --force-recreate --wait --wait-timeout 180 pocketbase
 "${compose[@]}" run --rm --no-deps -T app node scripts/bootstrap-workbench-admin.mjs
 "${compose[@]}" up -d --no-build --wait --wait-timeout 180 worker app caddy
-curl -fsS "http://127.0.0.1:${app_host_port}/api/overseas/ready" >/dev/null
+"${compose[@]}" exec -T app node scripts/check-runtime-readiness.mjs http://127.0.0.1:8788/api/overseas/ready
 "${compose[@]}" ps
 echo "All containers are running and the application readiness gate passed."

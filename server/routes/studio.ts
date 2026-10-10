@@ -1,3 +1,4 @@
+import { mvpBudgetAdmission } from '../lib/mvpBudgetAdmission.js';
 import { isTrustedSocialOutputWorkspace, socialOutputWorkspaceClientWriteBlocked } from '../starter198/socialContentProductionWorkspace.js';
 import { MINIMAX_ENGLISH_PRESETS, ttsPostProcessingSpeed } from '../lib/studioVoiceSelection.js';
 import { parseMiniMaxSubtitleTiming } from '../lib/minimaxSubtitleTiming.js';
@@ -72,6 +73,7 @@ import { secureStudioRenderManifest, studioRenderAssetPath, studioRenderManifest
 import { studioBgmMediaPath, studioBgmObjectKey } from '../lib/studioBgmAccess.js';
 import { consumeDemoQuota, isDemoMode } from '../lib/demo.js';
 import { generatePosterImage, ImageProviderRejectedError, imageExt, type ReferenceImage } from '../lib/imageGen.js';
+import { SeedanceProductRecovery } from '../lib/seedanceProductRecovery.js';
 import { SeedreamFirstFrameGenerator } from '../lib/seedreamFirstFrameGenerator.js';
 import { FirstFrameProviderError, firstFrameInputFingerprint, type FirstFrameReferenceRole } from '../lib/firstFrameGenerator.js';
 import { storyboardFirstFrameExecutionRoute } from '../lib/storyboardFirstFrameRouting.js';
@@ -2148,7 +2150,14 @@ studioRouter.post('/storyboard-first-frame', async (req, res) => {
   const reservedFirstFrameCostCny = Number(planned.estimatedFirstFrameCostCny || 0)
     * (seedreamProductComposite ? 2 : 1);
   const frameOperationId = `firstframe:${createHash('sha256').update(`${tenantId}:${String(body.projectId)}:${shotId}:${requestId}`).digest('hex')}`;
+  const frameMvpScope = firstFrameProject.spec?.mvpExecutionPackage?.scopes?.first_frame || firstFrameProject.spec?.mvpExecutionPackage;
+  const frameMvpIdentity = firstFrameProject.spec?.mvpExecutionPackage?.identity || firstFrameProject.spec;
   try {
+    await mvpBudgetAdmission.reserve({ scope: frameMvpScope, tenantId,
+      accountId: String(frameMvpIdentity.accountId || ''), productId: String(frameMvpIdentity.productId || ''), runId: String(frameMvpIdentity.runId || ''),
+      action: 'generate_media', taskId: String(frameMvpIdentity.taskId || ''), version: Number(frameMvpIdentity.version), session: 'B',
+      provider: 'seedream', model: new SeedreamFirstFrameGenerator().model, shotId, estimatedCostCny: reservedFirstFrameCostCny,
+      operationId: frameOperationId, fingerprint });
     const admission = await storyboardAigcProjectBudget.reserve({ tenantId, projectId: String(body.projectId), shotId,
       stage: 'first_frame', operationId: frameOperationId,
       estimatedCostCny: reservedFirstFrameCostCny, inputFingerprint: fingerprint });
@@ -2176,6 +2185,8 @@ studioRouter.post('/storyboard-first-frame', async (req, res) => {
       error: error instanceof Error ? error.message : '项目 AIGC 预算不足，未调用供应商' }); return;
   }
   const generationStartedAt = Date.now();
+  let seedreamAcceptedStages = 0;
+  const seedreamReceipts: Record<string, unknown>[] = [];
   let geometryObserverAttempted = false;
   try {
     if (mode === 'replication' && firstFrameProject.spec?.mode === 'clone'
@@ -2257,6 +2268,9 @@ studioRouter.post('/storyboard-first-frame', async (req, res) => {
       };
       cleanupRequest.idempotencyKey = firstFrameInputFingerprint(cleanupRequest, seedream.provider, seedream.model);
       const cleanPlate = await seedream.generate(cleanupRequest);
+      seedreamAcceptedStages++;
+      seedreamReceipts.push({ stage: 'cleanup', providerRequestId: cleanPlate.providerRequestId, model: cleanPlate.model, estimatedCostCny: cleanPlate.estimatedCostCny });
+      await storyboardAigcProjectBudget.mark(tenantId, String(body.projectId), frameOperationId, 'reserved', { seedreamReceipts });
       const plate: ReferenceImage = { mimeType: cleanPlate.mimeType, base64: cleanPlate.bytes.toString('base64') };
       const compositePrompt = [
         `Create exactly one photorealistic ${ratio} first frame for a continuous commercial video shot.`,
@@ -2273,6 +2287,9 @@ studioRouter.post('/storyboard-first-frame', async (req, res) => {
       };
       compositeRequest.idempotencyKey = firstFrameInputFingerprint(compositeRequest, seedream.provider, seedream.model);
       const result = await seedream.generate(compositeRequest);
+      seedreamAcceptedStages++;
+      seedreamReceipts.push({ stage: 'composite', providerRequestId: result.providerRequestId, model: result.model, estimatedCostCny: result.estimatedCostCny });
+      await storyboardAigcProjectBudget.mark(tenantId, String(body.projectId), frameOperationId, 'reserved', { seedreamReceipts });
       generated = { ...result, source: result.provider };
       identityLayer = { strategy: 'seedream_reference_composite', cleanupModel: cleanPlate.model,
         cleanupProviderRequestId: cleanPlate.providerRequestId, compositeProviderRequestId: result.providerRequestId };
@@ -2295,6 +2312,9 @@ studioRouter.post('/storyboard-first-frame', async (req, res) => {
       };
       seedreamRequest.idempotencyKey = firstFrameInputFingerprint(seedreamRequest, seedream.provider, seedream.model);
       const seedreamResult = await seedream.generate(seedreamRequest);
+      seedreamAcceptedStages++;
+      seedreamReceipts.push({ stage: 'first_frame', providerRequestId: seedreamResult.providerRequestId, model: seedreamResult.model, estimatedCostCny: seedreamResult.estimatedCostCny });
+      await storyboardAigcProjectBudget.mark(tenantId, String(body.projectId), frameOperationId, 'reserved', { seedreamReceipts });
       generated = { ...seedreamResult, source: seedreamResult.provider };
     }
     if (useExactProductLayer && !directCompositionUsed && !seedreamProductComposite) {
@@ -2357,16 +2377,17 @@ studioRouter.post('/storyboard-first-frame', async (req, res) => {
       model: generated.model, firstFrameQuality, identityNotice: storyboardIdentityNotice(identityLayer, productReferences.length > 0) });
   } catch (error) {
     if (error instanceof ImageProviderRejectedError || error instanceof FirstFrameProviderError && error.status === 'rejected') {
-      if (geometryObserverAttempted) {
+      if (geometryObserverAttempted || seedreamAcceptedStages > 0) {
         await storyboardAigcProjectBudget.settlePartial(tenantId, String(body.projectId), frameOperationId,
-          Number(planned.estimatedGeometryObservationCostCny || 0)).catch(markError =>
+          seedreamAcceptedStages * Number(planned.estimatedFirstFrameCostCny || 0) + (geometryObserverAttempted ? Number(planned.estimatedGeometryObservationCostCny || 0) : 0), { seedreamReceipts, partialFailure: true }).catch(markError =>
           console.error('[studio] first-frame geometry partial settlement unavailable:', markError));
       } else {
+        if (frameMvpScope) await mvpBudgetAdmission.releaseRejected(frameMvpScope.budgetPoolId, frameOperationId);
         await storyboardAigcProjectBudget.releaseRejected(tenantId, String(body.projectId), frameOperationId).catch(markError =>
           console.error('[studio] first-frame rejected budget release unavailable:', markError));
       }
     } else {
-      await storyboardAigcProjectBudget.mark(tenantId, String(body.projectId), frameOperationId, 'uncertain').catch(markError =>
+      await storyboardAigcProjectBudget.mark(tenantId, String(body.projectId), frameOperationId, 'uncertain', { seedreamReceipts, ...(error instanceof FirstFrameProviderError ? { uncertainProviderRequestId: error.providerRequestId } : {}) }).catch(markError =>
         console.error('[studio] first-frame budget state unavailable:', markError));
     }
     res.status(502).json(upstreamGenerationFailure(error, '分镜首帧'));
@@ -2796,7 +2817,29 @@ studioRouter.post('/seedance-video', async (req, res) => {
       res.status(422).json({ ok: false, code: 'USAGE_ACTION_PLAN_NOT_READY', error: '当前使用动作需要补关键状态或拆成可逐段验收的短镜头', actionPlan }); return;
     }
   }
+  const prompt = [
+    `Create a ${duration}-second vertical commercial social video in ${langName(language)}.`,
+    `Aspect ratio: ${ratio}. Resolution: ${resolution}.`,
+    `Use this script/storyboard as the primary direction:\n${firstFrame && storyboardShotSpec ? buildStoryboardVideoActionPrompt(storyboardShotSpec) : String(script).slice(0, 4000)}`,
+    productInfo ? `Product and brand context:\n${String(productInfo).slice(0, 1800)}` : '',
+    'Style: realistic UGC product video, clear product focus, clean lighting, smooth camera movement, high conversion pacing.',
+    firstFrame ? 'This is non-presenter B-roll. No dialogue, narration, lip sync or generated voiceover.' : 'Generate synchronized natural audio. Dialogue or voiceover lines should follow the quoted script language.',
+    firstFrame ? 'Preserve the confirmed first frame exactly as the opening composition. Keep the target product identity, shape, color and visible packaging stable across the shot. Complete one clear action without changing the scene or adding objects.' : '固定提示词：全程不要出现任何文字、符号、标识。',
+    firstFrame ? 'Do not add captions, subtitles, UI, watermarks or invented labels. Existing target product packaging may remain visible.' : 'No text, symbols, logos, captions, subtitles, labels, UI, watermarks, brand marks, written characters, numbers, or signage may appear at any point in the video.',
+    firstFrame ? 'Keep the visible action aligned with the storyboard description.' : 'Keep visual actions aligned with the spoken lines.',
+  ].filter(Boolean).join('\n\n');
+
   const config = seedanceVideoConfig();
+  const frozenFrameObject = firstFrame?.objectKey ? await objectStorageDownload(firstFrame.objectKey) : null;
+  const frozenFrameBytes = frozenFrameObject?.buf?.length ? frozenFrameObject.buf : firstFrame?.file && fs.existsSync(path.join(MEDIA_DIR, firstFrame.file)) ? fs.readFileSync(path.join(MEDIA_DIR, firstFrame.file)) : null;
+  if (firstFrame && !frozenFrameBytes) { res.status(409).json({ ok: false, code: 'STORYBOARD_FIRST_FRAME_BYTES_UNAVAILABLE', error: '确认首帧字节不可读取，无法冻结真实供应商输入；未调用供应商' }); return; }
+  const firstFrameContentSha256 = frozenFrameBytes ? createHash('sha256').update(frozenFrameBytes).digest('hex') : '';
+  const videoInputFingerprint = createHash('sha256').update(JSON.stringify({ prompt, model: config.model, baseUrl: config.baseUrl, ratio, duration, resolution, firstFrameMaterialId, firstFrameFingerprint, firstFrameContentSha256, firstFrameObjectKey: firstFrame?.objectKey, firstFrameFile: firstFrame?.file, shotSpec: storyboardShotSpec, generateAudio: !firstFrame })).digest('hex');
+  const productRecovery = new SeedanceProductRecovery(storyboardAigcProjectBudget);
+  let recoveredTaskId = '';
+  let recoveredVideoUrl = '';
+  let videoMvpScope: any = null;
+  let videoMvpIdentity: any = null;
   let storyboardProjectId = '';
   let storyboardOperationId = '';
   const storyboardEstimatedCostCny = estimateSeedanceCostCny(duration, String(resolution));
@@ -2810,6 +2853,8 @@ studioRouter.post('/seedance-video', async (req, res) => {
     if (!project || project.tenant_id !== tenantId) {
       res.status(404).json({ ok: false, code: 'STORYBOARD_PROJECT_UNAVAILABLE', error: '分镜项目已不存在或不可访问' }); return;
     }
+    videoMvpScope = project.spec?.mvpExecutionPackage?.scopes?.video || project.spec?.mvpExecutionPackage;
+    videoMvpIdentity = project.spec?.mvpExecutionPackage?.identity || project.spec;
     const currentShotInput = storyboardProjectShotInput(project.spec ?? {}, String(shotId));
     if (!currentShotInput || currentShotInput.fingerprint !== firstFrame.provenance?.projectShotFingerprint) {
       res.status(409).json({ ok: false, code: 'STORYBOARD_PROJECT_INPUT_CHANGED', error: '当前分镜输入已变化，请重新生成并确认首帧' }); return;
@@ -2846,16 +2891,20 @@ studioRouter.post('/seedance-video', async (req, res) => {
     res.json({ ok: false, source: 'seedance', error: 'SEEDANCE_API_KEY not set' });
     return;
   }
-  if (!await consumeDemoQuota(req, res, 'videoGeneration')) return;
 
   if (firstFrame) {
     if (!storyboardProjectId || !storyboardOperationId) {
       res.status(422).json({ ok: false, code: 'STORYBOARD_PROJECT_REQUIRED', error: '分镜视频需要当前项目，未调用供应商' }); return;
     }
     try {
+      await mvpBudgetAdmission.reserve({ scope: videoMvpScope, tenantId,
+        accountId: String(videoMvpIdentity?.accountId || ''), productId: String(videoMvpIdentity?.productId || ''), runId: String(videoMvpIdentity?.runId || ''),
+        action: 'generate_media', taskId: String(videoMvpIdentity?.taskId || ''), version: Number(videoMvpIdentity?.version), session: 'B',
+        provider: 'seedance', model: config.model, shotId: String(shotId), estimatedCostCny: storyboardEstimatedCostCny,
+        operationId: storyboardOperationId, fingerprint: videoInputFingerprint });
       const reserved = await storyboardAigcProjectBudget.reserve({ tenantId, projectId: storyboardProjectId,
         shotId: String(shotId), stage: 'video', operationId: storyboardOperationId,
-        estimatedCostCny: storyboardEstimatedCostCny });
+        estimatedCostCny: storyboardEstimatedCostCny, inputFingerprint: videoInputFingerprint });
       if (reserved.existing) {
         const materialId = reserved.entry.status === 'completed' ? String(reserved.entry.output?.materialId || '') : '';
         const recovered = materialId ? loadMaterials().find(item => item.id === materialId && item.tenantId === tenantId
@@ -2867,11 +2916,14 @@ studioRouter.post('/seedance-video', async (req, res) => {
           res.json({ ok: true, reused: true, source: 'seedance', id: visible.id, url: visible.url,
             poster: visible.poster, duration: visible.duration, material: visible }); return;
         }
-        res.status(reserved.entry.status === 'reserved' ? 202 : 409).json({ ok: false,
-          code: reserved.entry.status === 'reserved' ? 'STORYBOARD_VIDEO_IN_PROGRESS' : 'STORYBOARD_VIDEO_RECONCILIATION_REQUIRED',
-          error: reserved.entry.status === 'reserved' ? '原视频请求仍在处理，请稍后查询；未重复调用供应商'
-            : '原视频请求已提交但产物暂不可核验，请核对任务记录；未重复调用供应商',
-          operationId: storyboardOperationId }); return;
+        if (reserved.entry.output?.providerTaskId) {
+          const recovery = await productRecovery.recover({ tenantId, projectId: storyboardProjectId, shotId: String(shotId), operationId: storyboardOperationId, inputFingerprint: videoInputFingerprint }, config);
+          if (recovery.state === 'ready') { recoveredTaskId = recovery.taskId; recoveredVideoUrl = recovery.videoUrl; }
+          else { res.status(recovery.state === 'processing' ? 202 : 409).json({ ok: false, code: 'STORYBOARD_VIDEO_ORIGINAL_TASK_PENDING', recovery, operationId: storyboardOperationId }); return; }
+        } else {
+          res.status(409).json({ ok: false, code: 'STORYBOARD_VIDEO_RECONCILIATION_REQUIRED', operationId: storyboardOperationId,
+            error: '原视频请求未取得可恢复任务 ID，需核账；未重复调用供应商' }); return;
+        }
       }
     } catch (error) {
       res.status(429).json({ ok: false, code: 'STORYBOARD_PROJECT_BUDGET_EXCEEDED',
@@ -2879,11 +2931,16 @@ studioRouter.post('/seedance-video', async (req, res) => {
     }
   }
 
+  if (!recoveredTaskId && !await consumeDemoQuota(req, res, 'videoGeneration')) {
+    if (storyboardOperationId) await storyboardAigcProjectBudget.releaseRejected(tenantId, storyboardProjectId, storyboardOperationId);
+    return;
+  }
+
   const subscription = await getTenantSubscription(tenantId);
   const plan = String(subscription?.plan || '').toLowerCase();
   const isFormalTenant = subscription?.status === 'active' && !['admin', 'local', 'trial'].includes(plan);
   let budget: SeedanceBudgetReservation | null = null;
-  if (isFormalTenant) {
+  if (isFormalTenant && !recoveredTaskId) {
     budget = reserveSeedanceBudget({ tenantId, duration, resolution: String(resolution) });
     if (!budget.ok) {
       if (storyboardOperationId) await storyboardAigcProjectBudget.releaseRejected(tenantId, storyboardProjectId, storyboardOperationId);
@@ -2898,19 +2955,9 @@ studioRouter.post('/seedance-video', async (req, res) => {
     }
   }
 
-  const prompt = [
-    `Create a ${duration}-second vertical commercial social video in ${langName(language)}.`,
-    `Aspect ratio: ${ratio}. Resolution: ${resolution}.`,
-    `Use this script/storyboard as the primary direction:\n${firstFrame && storyboardShotSpec ? buildStoryboardVideoActionPrompt(storyboardShotSpec) : String(script).slice(0, 4000)}`,
-    productInfo ? `Product and brand context:\n${String(productInfo).slice(0, 1800)}` : '',
-    'Style: realistic UGC product video, clear product focus, clean lighting, smooth camera movement, high conversion pacing.',
-    firstFrame ? 'This is non-presenter B-roll. No dialogue, narration, lip sync or generated voiceover.' : 'Generate synchronized natural audio. Dialogue or voiceover lines should follow the quoted script language.',
-    firstFrame ? 'Preserve the confirmed first frame exactly as the opening composition. Keep the target product identity, shape, color and visible packaging stable across the shot. Complete one clear action without changing the scene or adding objects.' : '固定提示词：全程不要出现任何文字、符号、标识。',
-    firstFrame ? 'Do not add captions, subtitles, UI, watermarks or invented labels. Existing target product packaging may remain visible.' : 'No text, symbols, logos, captions, subtitles, labels, UI, watermarks, brand marks, written characters, numbers, or signage may appear at any point in the video.',
-    firstFrame ? 'Keep the visible action aligned with the storyboard description.' : 'Keep visual actions aligned with the spoken lines.',
-  ].filter(Boolean).join('\n\n');
 
-  let taskAccepted = false;
+  let taskAccepted = !!recoveredTaskId;
+  const recoveryScope = { tenantId, projectId: storyboardProjectId, shotId: String(shotId), operationId: storyboardOperationId, inputFingerprint: videoInputFingerprint };
   const generationStartedAt = Date.now();
   try {
     const content: any[] = [{ type: 'text', text: prompt }];
@@ -2921,7 +2968,7 @@ studioRouter.post('/seedance-video', async (req, res) => {
     // dependency of the provider's image fetch.
     let rawReferenceImageUrl = String(referenceImageUrl).trim();
     if (firstFrame) {
-      const object = firstFrame.objectKey ? await objectStorageDownload(firstFrame.objectKey) : null;
+      const object = frozenFrameObject;
       if (object?.buf?.length) {
         if (object.buf.length > 30 * 1024 * 1024) throw new Error('分镜首帧超过 Seedance 允许的 30MB 上限');
         const contentType = /^image\/(?:jpeg|png|webp|bmp|tiff|gif|heic|heif)$/i.test(object.contentType)
@@ -2945,7 +2992,8 @@ studioRouter.post('/seedance-video', async (req, res) => {
         ...(firstFrame ? { role: 'first_frame' } : {}),
       });
     }
-    const created = await seedanceFetchJson(`${config.baseUrl}/contents/generations/tasks`, config.apiKey, {
+    if (firstFrame && !recoveredTaskId) await productRecovery.recordPrepared(recoveryScope, { model: config.model, baseUrl: config.baseUrl, firstFrameMaterialId: firstFrame.id, firstFrameFingerprint: String(firstFrameFingerprint) });
+    const created = recoveredTaskId ? { id: recoveredTaskId } : await seedanceFetchJson(`${config.baseUrl}/contents/generations/tasks`, config.apiKey, {
       method: 'POST',
       body: JSON.stringify({
         model: config.model,
@@ -2960,8 +3008,9 @@ studioRouter.post('/seedance-video', async (req, res) => {
     const taskId = seedanceTaskId(created);
     if (!taskId) throw new Error('Seedance 未返回任务 ID');
     taskAccepted = true;
-    const task = await waitForSeedanceTask(config, taskId);
-    const remoteUrl = findUrlDeep(task);
+    if (firstFrame && !recoveredTaskId) await productRecovery.recordAccepted(recoveryScope, taskId);
+    const task = recoveredVideoUrl ? { content: { video_url: recoveredVideoUrl } } : await waitForSeedanceTask(config, taskId);
+    const remoteUrl = recoveredVideoUrl || findUrlDeep(task);
     if (!remoteUrl) throw new Error('Seedance 未返回可下载的视频地址');
     const filename = `seedance-${taskId.replace(/[^\w.-]+/g, '-')}-${Date.now()}.mp4`;
     let url = remoteUrl;
@@ -3047,6 +3096,7 @@ studioRouter.post('/seedance-video', async (req, res) => {
     });
   } catch (e: any) {
     const definitelyRejected = !taskAccepted && e?.providerRejected === true;
+    if (definitelyRejected && videoMvpScope) await mvpBudgetAdmission.releaseRejected(videoMvpScope.budgetPoolId, storyboardOperationId).catch(() => undefined);
     if (storyboardOperationId) {
       if (definitelyRejected) await storyboardAigcProjectBudget.releaseRejected(tenantId, storyboardProjectId, storyboardOperationId).catch(() => undefined);
       else await storyboardAigcProjectBudget.mark(tenantId, storyboardProjectId, storyboardOperationId, 'uncertain').catch(() => undefined);

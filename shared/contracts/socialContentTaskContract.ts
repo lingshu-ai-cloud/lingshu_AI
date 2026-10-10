@@ -1,3 +1,4 @@
+import type { SocialMvpHandoffRead } from './socialMvpHandoff.js';
 import {
   SOCIAL_CONTENT_TASK_STATUSES,
   SOCIAL_WORK_PACKAGE_KINDS,
@@ -415,6 +416,8 @@ export interface SocialMetricSubmission {
 }
 
 export interface SocialContentTaskDetail extends SocialContentTaskSummary {
+  /** Server-owned read projection; absent or missing evidence stays unverified. */
+  socialMvpHandoff?: SocialMvpHandoffRead;
   referencePreparation?: { status: 'pending' | 'review_required' | 'blocked'; reason: string | null };
   /** Read-only recovery checkpoints; no grant secrets or private binding data. */
   managedExecution?: {

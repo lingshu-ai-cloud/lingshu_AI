@@ -1,7 +1,7 @@
 {
   "schemaVersion": "mvp-b-review-input-v1",
   "date": "2026-10-10",
-  "status": "blocked_before_paid_call",
+  "status": "superseded_historical_candidate_not_default",
   "projectId": "studio_projects_1f987e702c8e4e4e8b40e6432b80ae32",
   "tenantId": "local_tenant_customer_1b2913131e2c46deab66172228c4df0a",
   "taskId": null,
@@ -39,7 +39,8 @@
     "proposedTotalLimitCny": 6.6,
     "priceBasis": "repository_estimate_not_verified_supplier_price",
     "actualSupplierCostCny": null,
-    "submittedThisRun": false
+    "submittedThisRun": false,
+    "executionEligible": false
   },
   "files": [
     {
@@ -70,5 +71,6 @@
       "file": "server/lib/storyboardAigcQuality.ts",
       "sha256": "4d4e4b05383b39689bdfe7c0fff0aed6027c89130cd33b26547afb4868da6fc7"
     }
-  ]
+  ],
+  "supersededBy": "5bd6708 sections 11-12; identity must be reconciled with A"
 }
