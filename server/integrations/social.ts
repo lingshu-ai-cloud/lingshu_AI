@@ -734,10 +734,11 @@ export async function replyToInstagramComment(commentId: string, pageAccessToken
   return { id: String(res.data?.id || '') };
 }
 
-export async function publishInstagramReel(igUserId: string, pageAccessToken: string, graphVersion: string, input: SocialUploadInput): Promise<SocialUploadResult> {
+export async function publishInstagramReel(igUserId: string, pageAccessToken: string, graphVersion: string, input: SocialUploadInput, lifecycle?: { onContainerCreated: (creationId: string) => Promise<void>; beforePublish?: () => Promise<void> }): Promise<SocialUploadResult> {
   if (!input.videoUrl) {
     throw new Error('Instagram 发布需要公网可访问的视频 URL。请配置 R2_PUBLIC_URL 或传入 videoUrl。');
   }
+  if (!lifecycle) throw new Error('instagram_container_persistence_required');
   const caption = input.description || input.title || '';
   const create = await axios.post(`${META_GRAPH}/${graphVersion}/${igUserId}/media`, null, {
     params: {
@@ -749,8 +750,11 @@ export async function publishInstagramReel(igUserId: string, pageAccessToken: st
   });
   const creationId = String(create.data?.id || '');
   if (!creationId) throw new Error('Instagram 未返回媒体容器 ID');
+  // Persist before polling or submitting: a lost publish response must retain this identity.
+  await lifecycle.onContainerCreated(creationId);
 
   await waitForInstagramContainer(creationId, pageAccessToken, graphVersion);
+  await lifecycle.beforePublish?.();
 
   const publish = await axios.post(`${META_GRAPH}/${graphVersion}/${igUserId}/media_publish`, null, {
     params: {
@@ -758,7 +762,8 @@ export async function publishInstagramReel(igUserId: string, pageAccessToken: st
       creation_id: creationId,
     },
   });
-  const id = String(publish.data?.id || creationId);
+  const id = String(publish.data?.id || '');
+  if (!id) throw new Error('Instagram 未返回最终媒体 ID，禁止重新创建容器');
   return {
     id,
     title: input.title,

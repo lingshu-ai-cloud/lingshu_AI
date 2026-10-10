@@ -83,6 +83,7 @@ export interface PublishToAccountInput {
   trackingPost?: PostRecord;
   finalizeTracking?: boolean;
   publishAttemptId?: string;
+  onProviderReceipt?: (receiptId: string) => Promise<void>;
 }
 
 export interface PublishToAccountResult {
@@ -419,6 +420,16 @@ export async function resolvePendingPublishToAccount(input: {
     const account = await store.getById<SocialAccountRecord>('social_accounts', input.accountId);
     if (!account || account.tenantId !== input.tenantId || account.platform !== input.platform) throw publishError('Social account not found', 404);
     if (account.status !== 'connected') throw publishError('Social account is not connected', 400);
+    if (input.platform === 'instagram' && receipt.startsWith('ig-container:')) {
+      const containerId = receipt.slice('ig-container:'.length);
+      if (!containerId) throw publishError('Instagram container receipt missing', 400);
+      const response = await axios.get(`https://graph.facebook.com/${process.env.META_GRAPH_VERSION?.trim() || 'v25.0'}/${encodeURIComponent(containerId)}`, {
+        params: { access_token: socialAccessToken(account as unknown as Record<string, unknown>), fields: 'id,status,status_code' },
+      });
+      const status = String(response.data?.status_code || '');
+      if (String(response.data?.id || '') !== containerId) return { status: 'unknown', providerReceiptId: receipt, platformPostId: '', platformUrl: '', providerStatus: 'CONTAINER_MISMATCH', error: 'Instagram 容器回执不匹配' };
+      return { status: ['ERROR', 'EXPIRED'].includes(status) ? 'failed' : status === 'IN_PROGRESS' ? 'processing' : 'unknown', providerReceiptId: receipt, platformPostId: '', platformUrl: '', providerStatus: status, error: status === 'PUBLISHED' ? '容器已发布，需核对最终媒体 ID；禁止重新发布' : '仅查询原容器，禁止重新创建或发布' };
+    }
     const response = await axios.get(`https://graph.facebook.com/${process.env.META_GRAPH_VERSION?.trim() || 'v25.0'}/${encodeURIComponent(receipt)}`, {
       params: {
         access_token: socialAccessToken(account as unknown as Record<string, unknown>),
@@ -597,6 +608,7 @@ async function publishVideoToAccountWithLease(
       video = await uploadFacebookVideo(account.providerAccountId, accessToken, process.env.META_GRAPH_VERSION?.trim() || 'v25.0', socialInput);
     }
     if (account.platform === 'instagram') {
+      if (input.finalizeTracking === false && !input.onProviderReceipt) throw publishError('instagram_container_persistence_required', 503);
       if(input.sourceClaim?.weeklyAssignment&&input.sourceClaim.sourceKind!=='social_instagram_delivery')throw Error('instagram_delivery_frozen_proof_missing');
     const compatibleFilePath = input.sourceClaim?.sourceKind==='social_instagram_delivery'?filePath:socialInput.videoUrl?undefined:await instagramCompatibleVideo(filePath);
       if (!socialInput.videoUrl) {
@@ -612,7 +624,24 @@ async function publishVideoToAccountWithLease(
         ...socialInput,
         filePath: compatibleFilePath,
         videoUrl: publicVideoUrl,
-      });
+      }, { async onContainerCreated(creationId) {
+        const receipt = `ig-container:${creationId}`;
+        if (input.onProviderReceipt) await input.onProviderReceipt(receipt);
+        if (input.finalizeTracking === false && !input.onProviderReceipt) throw publishError('instagram_container_persistence_required', 503);
+        if (input.finalizeTracking !== false) {
+          const current = await store.getById<PostRecord>('posts', tracked.id);
+          if (!current) throw publishError('instagram_container_persistence_failed', 503);
+          const stats = recordObject(current.stats);
+          const results = recordObject(stats.publishResults);
+          const existing = recordObject(results[input.accountId]);
+          if (existing.attemptId !== directAttempt?.attemptId || existing.status !== 'in_flight') throw publishError('instagram_container_attempt_changed', 409);
+          const saved = await store.update('posts', tracked.id, { stats: { ...stats, publishResults: { ...results, [input.accountId]: { ...existing, providerReceiptId: receipt, instagramContainerId: creationId } } } });
+          if (!saved) throw publishError('instagram_container_persistence_failed', 503);
+        }
+      }, async beforePublish() {
+        await publishLease.beforeEffect();
+        await revalidatePublishSource(input);
+      } });
     }
     const deliveryStatus = (video as { deliveryStatus?: unknown } | undefined)?.deliveryStatus;
     const providerReceiptId = String((video as { providerReceiptId?: unknown } | undefined)?.providerReceiptId || '').trim();

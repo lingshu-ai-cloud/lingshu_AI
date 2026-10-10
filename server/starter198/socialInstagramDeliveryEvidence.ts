@@ -1,3 +1,4 @@
+import {inspectInstagramArchivedStreamProof} from './instagramArchivedStreamProof.js';
 import {createHash} from 'node:crypto';
 import type {Starter198Repository} from './repository.js';
 import type {SocialWeeklyG6Scope,SocialWeeklyG6Context} from '../../shared/contracts/socialWeeklyG6Review.js';
@@ -43,5 +44,5 @@ export async function readInstagramDeliveryEvidence(repository:Starter198Reposit
   if(review.actorRole!==(review.kind==='technical'?'human_technical_reviewer':'human_director_reviewer')||!Array.isArray(review.checks)||review.checks.length!==codes.length||!codes.every(code=>review.checks.filter(c=>c.code===code&&['passed','failed','unknown'].includes(c.outcome)&&typeof c.observation==='string'&&c.observation.trim().length>0&&c.observation.length<=4000).length===1))throw Error('instagram_delivery_review_checks_invalid');
   const status=review.checks.some(c=>c.outcome==='failed')?'failed':review.checks.every(c=>c.outcome==='passed')?'passed':'review_required';if(review.status!==status||!/^\d{4}-\d\d-\d\dT.*(?:Z|[+-]\d\d:\d\d)$/.test(review.reviewedAt)||!Number.isFinite(Date.parse(review.reviewedAt)))throw Error('instagram_delivery_review_status_invalid');
   const user=await store.getById('users',review.actorUserId);if(!user||user.tenantId!==a.tenantId||user.disabled===true||user.enabled===false||user.active===false||['disabled','suspended'].includes(String(user.status))||!['admin','super_admin','social_operator'].includes(String(user.role)))throw Error('instagram_delivery_reviewer_unavailable');}
- return {item,reviews,bytes};
+ return {item,reviews,bytes,streamProof:inspectInstagramArchivedStreamProof(bytes)};
 }

@@ -73,6 +73,13 @@ try {
   assert.equal(rows.posts[0]?.stats?.publishResults?.['instagram-account']?.status,'unknown');
   await assert.rejects(publishVideoToAccount(instagramInput), /禁止重复提交/);
   assert.equal(containers,1);assert.equal(submissions,1);
+  assert.equal(rows.posts[0]?.stats?.publishResults?.['instagram-account']?.providerReceiptId, 'ig-container:ig-container');
+  axios.get = (async (url: string) => { lookups++; assert.ok(url.endsWith('/ig-container')); return { data: { id: 'ig-container', status_code: 'PUBLISHED' } }; }) as typeof axios.get;
+  const containerRecovered = await resolvePendingPublishToAccount({tenantId:'tenant-1',accountId:'instagram-account',platform:'instagram',providerReceiptId:'ig-container:ig-container'});
+  assert.equal(containerRecovered.status, 'unknown');
+  assert.equal(containerRecovered.platformPostId, '');
+  assert.equal(containers,1); assert.equal(submissions,1);
+  lookups = 0;
   // An externally reconciled original receipt may be queried, never re-created.
   axios.get = (async (url: string) => {lookups++;assert.ok(url.endsWith('/ig-original-media'));return {data:{id:'ig-original-media',permalink:'https://instagram.invalid/reel/original',media_type:'VIDEO'}};}) as typeof axios.get;
   const recovered = await resolvePendingPublishToAccount({tenantId:'tenant-1',accountId:'instagram-account',platform:'instagram',providerReceiptId:'ig-original-media'});

@@ -6,8 +6,8 @@ import {createInstagramDeliveryPublicationProof} from './instagramDeliveryPublic
 
 // This exercises the actual owned-byte archive and review services. It deliberately
 // does not replace G6 with a provider mock or claim an unavailable platform pass.
-test('Instagram local acceptance exposes unresolved format evidence before formal assignment',async t=>{
-  const f=await prepareInstagramDeliveryFixture();
+test('Instagram local acceptance verifies exact archived format evidence before formal assignment',async t=>{
+  const f=await prepareInstagramDeliveryFixture({fullyConfigured:true});
   t.after(f.cleanup);
   const initial=await f.g6.context(f.scope,'owner');
   const prepared=await f.delivery.prepare(f.scope,'owner',{
@@ -29,17 +29,22 @@ test('Instagram local acceptance exposes unresolved format evidence before forma
   const context=await f.g6.context(f.scope,'owner');
   const format=context.checks.find(check=>check.code==='platform_format');
   assert.ok(format);
-  assert.equal(format.status,'unknown');
-  assert.ok(format.reasons.includes('instagram_reels_current_file_limit_unverified'));
-  assert.ok(format.reasons.includes('instagram_reels_stream_structure_unverified'));
+  assert.equal(format.status,'passed');
+  assert.deepEqual(format.reasons,[]);
+  assert.ok(format.evidenceRefs.some(ref=>ref.startsWith('instagram_stream_proof:')));
+  const {checkWeeklyMetaFormat}=await import('../starter198/weeklyMetaFormat.js');
+  assert.equal(checkWeeklyMetaFormat('instagram',context.metadata,{deliveryProofHash:prepared.item.recordHash}).status,'unknown');
+
   const checked=await f.g6.check(f.scope,'owner',{
     requestId:'platform_acceptance_preflight_0001',expectedContextHash:context.contextHash,
     programId:f.scope.programId,packageId:f.scope.packageId,
     packageVersion:f.scope.packageVersion,publicationTaskId:f.scope.publicationTaskId,
   });
-  assert.notEqual(checked.item?.status,'passed');
-  assert.equal(checked.item?.receiptId,null);
-  await assert.rejects(createInstagramDeliveryPublicationProof(f.store,f.scope),/g6_not_passed/);
+  assert.equal(checked.item?.status,'passed',JSON.stringify(context.checks));
+  assert.ok(checked.item?.receiptId);
+  const proof=await createInstagramDeliveryPublicationProof(f.store,f.scope);
+  assert.equal(proof.fileSha256,prepared.item.fileSha256);
+  assert.equal(proof.deliveryHash,prepared.item.recordHash);
   assert.equal(f.tables.social_publication_assignments?.length??0,0);
   assert.equal(f.tables.social_publication_attempts?.length??0,0);
   assert.equal(f.tables.publish_attempts?.length??0,0);

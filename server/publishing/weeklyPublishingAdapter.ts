@@ -110,6 +110,13 @@ async function createSynchronousWeeklyPublishingAdapter(input: {
           videoPath: delivery?.videoPath??materialized.videoPath, title: publicationPackage.copy.title,
           description: publicationPackage.copy.body, tags: publicationPackage.copy.hashtags,
           contentId: publicationPackage.contentId, sourceClaim, publishAttemptId: attemptId,
+          ...(input.platform === 'instagram' ? { async onProviderReceipt(receiptId: string) {
+            const attempts = await dataStore.list<{ id: string; tenant_id: string; attempt_id: string; assignment_id: string; package_id: string; status: string; provider_receipt_id?: string }>('social_publication_attempts', { where: { tenant_id: assignment.tenantId, attempt_id: attemptId }, perPage: 2 });
+            const attempt = attempts.items[0];
+            if (attempts.items.length !== 1 || !attempt || attempt.assignment_id !== assignment.assignmentId || attempt.package_id !== assignment.packageId || attempt.status !== 'in_flight' || (attempt.provider_receipt_id && attempt.provider_receipt_id !== receiptId)) throw new Error('instagram_container_attempt_mismatch');
+            const saved = await dataStore.update('social_publication_attempts', attempt.id, { provider_receipt_id: receiptId, updated_at: new Date().toISOString() });
+            if (!saved) throw new Error('instagram_container_persistence_failed');
+          } } : {}),
         });
         if (result.deliveryStatus === 'provider_accepted' && result.providerReceiptId) {
           return { status: 'accepted', providerReceiptId: result.providerReceiptId };
