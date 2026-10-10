@@ -47,7 +47,7 @@ import { fetchCloudMaterial, getCloudMaterialRecord } from '../lib/cloudMaterial
 import { localFallbacksEnabled } from '../lib/localFallbackPolicy.js';
 import { currentDataAuthority, runWithDataAuthority } from '../storage/dataAuthority.js';
 import { analysisTimelineQualityError, canPromoteExistingAnalysisToExact, exactVideoReviewReasons, hasCompleteVideoGeminiAnalysis, hasCompletedExactVideoEvidence, isAutoSeededVideo, isVideoLevelAnalysis, parseAnalysisTimeRange, serializeImagePostAnalysis, videoAnalysisOf } from '../lib/videoAnalysisCodec.js';
-import { applyOpeningHookMotionEvidence, firstSubstantiveOpeningShot } from './hookMotionEvidence.js';
+import { applyOpeningHookMotionEvidence, firstSubstantiveOpeningShot, reconcileStoredOpeningHookMotionEvidence } from './hookMotionEvidence.js';
 import { isDiscoveryVideoEligible, youtubeShortUrl } from '../../shared/contracts/discoveryVideoPolicy.js';
 import {
   buildVideoAnalysisProgress,
@@ -2662,7 +2662,7 @@ videosRouter.post('/:id/classify-critical-shots', async (req, res) => {
   const record = await store.getById<Record<string, unknown>>(COL, id);
   if (!record || record.tenantId !== tenantId) { res.status(404).json({ error: 'Not found' }); return; }
   const before = parseJsonRecord<Record<string, any>>(record.aiAnalysis, {});
-  const filePath = localReferenceVideoPath(String(record.videoFileId || ''), tenantId);
+  const filePath = await ensureLocalReferenceVideoPath(record, tenantId);
   if (!filePath || !fs.existsSync(filePath)) { res.status(422).json({ error: '原片不可用，不能观察实际动作' }); return; }
   if (!before.gemini?.audioTranscript?.words?.length || !before.gemini?.speechAlignmentSummary?.acceptedWordCount) {
     res.status(422).json({ error: '缺少真实词级对齐，不能判定动作台词卡点' }); return;
@@ -2697,7 +2697,7 @@ videosRouter.post('/:id/route-production', async (req, res) => {
   const id = String(req.params.id), record = await store.getById<Record<string, unknown>>(COL, id);
   if (!record || record.tenantId !== tenantId) { res.status(404).json({ error: 'Not found' }); return; }
   const before = parseJsonRecord<Record<string, any>>(record.aiAnalysis, {});
-  const filePath = localReferenceVideoPath(String(record.videoFileId || ''), tenantId);
+  const filePath = await ensureLocalReferenceVideoPath(record, tenantId);
   if (!filePath || !fs.existsSync(filePath)) { res.status(422).json({ error: '原片不可用，不能识别人物连续性' }); return; }
   if (!before.gemini?.scriptDetails15s?.length || !before.gemini.scriptDetails15s.every((s:any)=>s.criticalShot)) {
     res.status(422).json({ error: '缺少独立关键性证据，先完成原片分析' }); return;
@@ -2839,6 +2839,28 @@ function localReferenceVideoPath(filename: string, tenantId: string): string | n
   const fullPath = path.resolve(MEDIA_DIR, clean);
   const tenantRoot = path.resolve(tenantAssetDir(MEDIA_DIR, tenantId));
   return fullPath.startsWith(`${tenantRoot}${path.sep}`) ? fullPath : null;
+}
+
+async function ensureLocalReferenceVideoPath(record: Record<string, unknown>, tenantId: string): Promise<string | null> {
+  const existing = localReferenceVideoPath(String(record.videoFileId || ''), tenantId);
+  if (existing && fs.existsSync(existing)) return existing;
+  const sourceUrl = String(record.sourceUrl || '').trim();
+  const platform = (record.platform || inferPlatformFromUrl(sourceUrl)) as Platform;
+  if (!sourceUrl || !validatePublicVideoSourceUrl(sourceUrl, platform)) return null;
+  const downloaded = await downloadVideoForAnalysis({ record, sourceUrl, title: String(record.title || `${platform}-video`), platform });
+  try {
+    const analysis = videoAnalysisOf(record);
+    const measured = createHash('sha256').update(fs.readFileSync(downloaded.filePath)).digest('hex');
+    if (analysis.contentSha256 && analysis.contentSha256 !== measured) throw new Error('reference_source_bytes_changed');
+    const destination = path.join(tenantAssetDir(MEDIA_DIR, tenantId), 'reference-videos', `${String(record.id)}.mp4`);
+    fs.mkdirSync(path.dirname(destination), { recursive: true });
+    fs.copyFileSync(downloaded.filePath, destination);
+    const videoFileId = path.posix.join('tenants', tenantId, 'reference-videos', `${String(record.id)}.mp4`);
+    await store.update(COL, String(record.id), { videoFileId });
+    return destination;
+  } finally {
+    cleanupTempVideo(downloaded.filePath);
+  }
 }
 
 videosRouter.get('/:id/shot/:number/:kind', async (req, res) => {
@@ -3401,13 +3423,20 @@ videosRouter.patch('/:id/reanalyze', async (req, res) => {
   if (analysisMode === 'exact'
     && req.body?.force !== true
     && Boolean(fileId)
-    && previous.analysisQuality === 'video'
+    && ['video', 'video_review_required'].includes(String(previous.analysisQuality || ''))
     && canPromoteExistingAnalysisToExact(previous.gemini, Number(record.duration || 0))) {
+    const localReference = localReferenceVideoPath(String(fileId), String(record.tenantId || tenantId));
+    const sourceSha256 = localReference && fs.existsSync(localReference)
+      ? createHash('sha256').update(fs.readFileSync(localReference)).digest('hex') : '';
+    const promotedGemini = reconcileStoredOpeningHookMotionEvidence(previous.gemini as VideoAiAnalysis);
     resetCrawlerOpsTaskForExplicitRetry({ recordId: req.params.id, tenantId: recordTenantId, userId, usesSourceQueue: false });
     await store.update(COL, req.params.id, {
       status: 'analyzed',
       aiAnalysis: JSON.stringify({
         ...previous,
+        gemini: promotedGemini,
+        ...(sourceSha256 ? { contentSha256: sourceSha256 } : {}),
+        durationSeconds: Number(record.duration || 0),
         ...videoSuccessVisibilityPatch(),
         analysisMode: 'exact',
         analysisQuality: 'video',
@@ -3419,6 +3448,10 @@ videosRouter.patch('/:id/reanalyze', async (req, res) => {
         videoLevelFailureStatus: undefined,
         manualRequiredReason: undefined,
         analysisError: undefined,
+        analysisQueueState: 'completed',
+        analysisStage: 'completed',
+        analysisReviewReasons: (Array.isArray(previous.analysisReviewReasons) ? previous.analysisReviewReasons : [])
+          .filter(reason => reason !== 'opening_hook_observation_uncertainty'),
         downloadError: undefined,
         analysisPausedAt: undefined,
         analysisPausedBy: undefined,
@@ -5562,7 +5595,14 @@ async function crawlSocialUrlOrFallback(platform: Platform, keyword: string, lim
 
 async function crawlTikTokWithApifyFallback(keyword: string, limit: number, dateFrom = '', dateTo = ''): Promise<CrawledVideo[]> {
   const input = keyword.trim();
-  if (isPlatformUrl(input, 'tiktok')) return [await crawlYtDlpMetadata('tiktok', input, keyword)];
+  if (isPlatformUrl(input, 'tiktok')) {
+    try {
+      return [await crawlYtDlpMetadata('tiktok', input, keyword)];
+    } catch (error) {
+      console.warn('[videos] TikTok direct metadata via yt-dlp failed, trying public API:', error instanceof Error ? error.message : error);
+      return [await crawlTikTokPublicApi(input)];
+    }
+  }
 
   const items: CrawledVideo[] = [];
   try {
@@ -5591,6 +5631,47 @@ async function crawlTikTokWithApifyFallback(keyword: string, limit: number, date
 
   if (items.length === 0) throw new Error('TikTok keyword search returned no usable videos');
   return sortByHeat(items).slice(0, limit);
+}
+
+type TikTokPublicApiData = {
+  id?: string; title?: string; duration?: number; cover?: string; origin_cover?: string;
+  play?: string; hdplay?: string; play_count?: number; digg_count?: number;
+  comment_count?: number; share_count?: number; create_time?: number;
+  author?: { nickname?: string; unique_id?: string; };
+};
+
+async function readTikTokPublicApi(sourceUrl: string): Promise<TikTokPublicApiData> {
+  const endpoint = String(process.env.TIKTOK_PUBLIC_DOWNLOAD_API || 'https://www.tikwm.com/api/').trim();
+  const url = new URL(endpoint);
+  url.searchParams.set('url', sourceUrl);
+  url.searchParams.set('hd', '1');
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 30_000);
+  try {
+    const response = await fetch(url, { signal: controller.signal, headers: { 'User-Agent': browserUserAgent(), Accept: 'application/json' } });
+    const raw = await response.text();
+    if (!response.ok) throw new Error(`TikTok public API HTTP ${response.status}`);
+    const body = JSON.parse(raw) as { code?: number; msg?: string; data?: TikTokPublicApiData };
+    if (body.code !== 0 || !body.data?.id) throw new Error(`TikTok public API rejected: ${String(body.msg || body.code || 'invalid_response')}`);
+    return body.data;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function crawlTikTokPublicApi(sourceUrl: string): Promise<CrawledVideo> {
+  const data = await readTikTokPublicApi(sourceUrl);
+  const uploadedAt = Number.isFinite(Number(data.create_time)) && Number(data.create_time) > 0
+    ? new Date(Number(data.create_time) * 1000).toISOString() : undefined;
+  return {
+    platform: 'tiktok', title: String(data.title || `TikTok ${data.id}`).trim(), sourceUrl,
+    thumbnailUrl: String(data.origin_cover || data.cover || '').trim(), duration: Number(data.duration || 0),
+    views: compactNumber(Number(data.play_count || 0)), tags: [...String(data.title || '').matchAll(/#([^\s#]+)/g)].map(match => match[1]!).slice(0, 20),
+    uploadedAt, dateEvidence: uploadedAt ? 'provider_create_time' : undefined,
+    author: String(data.author?.nickname || data.author?.unique_id || '').trim() || undefined,
+    likes: compactNumber(Number(data.digg_count || 0)), comments: compactNumber(Number(data.comment_count || 0)),
+    shares: compactNumber(Number(data.share_count || 0)), plays: compactNumber(Number(data.play_count || 0)), source: 'tiktok-public-api',
+  };
 }
 
 async function crawlTikTokApify(keyword: string, limit: number, dateFrom = '', dateTo = ''): Promise<CrawledVideo[]> {
@@ -6435,6 +6516,15 @@ export async function downloadVideoForAnalysis(input: {
   input = { ...input, ...source };
   fs.mkdirSync(ANALYSIS_DIR, { recursive: true });
   const tenantId = apifyTenantIdFromRecord(input.record);
+  if (input.platform === 'tiktok') {
+    try {
+      return await downloadTikTokViaPublicApi(input.sourceUrl, budget);
+    } catch (error) {
+      budget.record('TikTok public API', error);
+      budget.remaining();
+      console.warn('[videos] TikTok public API download failed, trying authenticated yt-dlp:', error instanceof Error ? error.message : error);
+    }
+  }
   // Facebook's public page frequently blocks yt-dlp or makes it retry several
   // formats before failing. The configured posts actor already exposes the
   // playable CDN URL, so use it first for an explicit analysis request.
@@ -6519,6 +6609,14 @@ export async function downloadVideoForAnalysis(input: {
         console.warn('[videos] TikTok Apify analysis video fallback failed:', apifyError instanceof Error ? apifyError.message : apifyError);
       }
     }
+    if (input.platform === 'tiktok') {
+      try {
+        return await downloadTikTokViaPublicApi(input.sourceUrl, budget);
+      } catch (publicApiError) {
+        budget.record('TikTok public API', publicApiError);
+        console.warn('[videos] TikTok public API analysis fallback failed:', publicApiError instanceof Error ? publicApiError.message : publicApiError);
+      }
+    }
     if (input.platform === 'instagram' && canUseApifyVideoFallback(tenantId, 'instagram')) {
       try {
         console.warn('[videos] Instagram yt-dlp analysis download failed, trying Apify video fallback:', lastError instanceof Error ? lastError.message : lastError);
@@ -6543,6 +6641,32 @@ export async function downloadVideoForAnalysis(input: {
     mimeType: mimeFromPath(filePath),
     size: fs.statSync(filePath).size,
   };
+}
+
+async function downloadTikTokViaPublicApi(sourceUrl: string, budget: DownloadBudget): Promise<{ filePath: string; fileName: string; mimeType: string; size: number }> {
+  const data = await readTikTokPublicApi(sourceUrl);
+  const mediaUrl = String(data.hdplay || data.play || '').trim();
+  if (!/^https:\/\//i.test(mediaUrl)) throw new Error('TikTok public API did not return HTTPS media');
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), budget.remaining());
+  const fileName = `${randomUUID()}.mp4`;
+  const filePath = path.join(ANALYSIS_DIR, fileName);
+  try {
+    const response = await fetch(mediaUrl, { signal: controller.signal, redirect: 'follow', headers: { 'User-Agent': browserUserAgent(), Referer: 'https://www.tiktok.com/' } });
+    if (!response.ok) throw new Error(`TikTok media HTTP ${response.status}`);
+    const declared = Number(response.headers.get('content-length') || 0);
+    const maximum = 80 * 1024 * 1024;
+    if (declared > maximum) throw new Error('TikTok media exceeds analysis limit');
+    const bytes = Buffer.from(await response.arrayBuffer());
+    if (bytes.length < 1024 || bytes.length > maximum || bytes.toString('ascii', 4, 8) !== 'ftyp') throw new Error('TikTok public API returned invalid MP4');
+    fs.writeFileSync(filePath, bytes, { flag: 'wx' });
+    return { filePath, fileName, mimeType: 'video/mp4', size: bytes.length };
+  } catch (error) {
+    try { fs.unlinkSync(filePath); } catch { /* not written */ }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function pickDownloadedVideoFile(id: string, dir = MEDIA_DIR): string | undefined {
@@ -7228,6 +7352,60 @@ export function groupExactObservationWindows(analysis: VideoAiAnalysis, sceneCut
   return { ...analysis, scriptDetails15s: grouped } as VideoAiAnalysis;
 }
 
+/** Gemini returns semantic beats which may span several physical edits. Exact
+ * production needs those edits as independent shots so extraction, routing and
+ * validation never treat a multi-cut montage as one continuous camera take. */
+export function splitExactGeminiShotsAtSceneCuts(analysis: VideoAiAnalysis, sceneCuts: number[]): VideoAiAnalysis {
+  const rows = analysis.scriptDetails15s || [];
+  if (!rows.length || !sceneCuts.length) return analysis;
+  const split = rows.flatMap(detail => {
+    const range = parseAnalysisTimeRange(String(detail.time || detail.timestamp || ''));
+    if (!range) return [detail];
+    const boundaries = [range.start, ...sceneCuts.filter(cut => cut > range.start + 0.08 && cut < range.end - 0.08), range.end]
+      .sort((a, b) => a - b);
+    const compact: number[] = [];
+    for (const value of boundaries) {
+      if (!compact.length || value - compact.at(-1)! >= 0.12) compact.push(value);
+      else compact[compact.length - 1] = value;
+    }
+    if (compact.length < 3) return [detail];
+    return compact.slice(0, -1).map((start, index) => {
+      const end = compact[index + 1]!;
+      const fmt = (value: number) => value.toFixed(2).replace(/\.00$/, '').replace(/(\.\d)0$/, '$1');
+      const beats = detail.beats?.filter(beat => {
+        const beatRange = parseAnalysisTimeRange(String(beat.time || ''));
+        return !beatRange || (beatRange.start < end && beatRange.end > start);
+      });
+      return {
+        ...detail,
+        time: `${fmt(start)}s–${fmt(end)}s`,
+        ...(beats?.length ? { beats } : {}),
+        analysisGranularity: 'physical_scene_cut',
+      };
+    });
+  });
+  return { ...analysis, scriptDetails15s: split } as VideoAiAnalysis;
+}
+
+async function enrichExactGeminiEvidence(filePath: string, analysis: VideoAiAnalysis): Promise<VideoAiAnalysis> {
+  const detectedSceneCuts = await detectVideoSceneCuts(filePath);
+  let enriched = splitExactGeminiShotsAtSceneCuts(analysis, detectedSceneCuts);
+  let hookReviewReasons: string[] = [];
+  const hookIndex = firstSubstantiveOpeningShot(enriched);
+  if (hookIndex >= 0) {
+    try {
+      const hookFrames = await extractOpeningHookFrames(filePath);
+      const applied = applyOpeningHookMotionEvidence(enriched, await inspectOpeningHookMotionWithGemini({ frames: hookFrames }));
+      enriched = applied.analysis;
+      hookReviewReasons = applied.reviewReasons;
+    } catch (error) {
+      console.warn('[videos] opening hook motion inspection unavailable:', error instanceof Error ? error.message : error);
+      hookReviewReasons = ['opening_hook_motion_inspection_failed'];
+    }
+  } else hookReviewReasons = ['opening_hook_no_substantive_shot'];
+  return { ...enriched, detectedSceneCuts, hookReviewReasons } as VideoAiAnalysis;
+}
+
 async function detectVideoSceneCuts(filePath: string): Promise<number[]> {
   if (!ffmpegBin) return [];
   try {
@@ -7390,7 +7568,12 @@ async function analyzeExactLongVideoChunks(input: {
   const analyzeWithRetry = async (chunk: { start: number; end: number }) => {
     try {
       return await runWithTimeout(chunk, primaryFrameLimit, 1);
-    } catch {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      // Changing the frame count cannot repair authentication, quota or
+      // billing failures. Repeating those requests only burns time and can
+      // create ambiguous provider-side usage.
+      if (/\b(?:401|402|403)\b|quota exhausted|insufficient (?:quota|balance|funds)|billing|invalid api key/i.test(message)) throw error;
       return await runWithTimeout(chunk, retryFrameLimit, 2);
     }
   };
@@ -7444,17 +7627,24 @@ export async function analyzeDownloadedVideoWithFallback(opts: {
   const finishSourceAnalysis = async (analysis: VideoAiAnalysis) => {
     const locked = lockReferenceSpeechTimeline(analysis, await sourceSpeech(),
       { duration: sourceClock.duration, fps: sourceClock.fps ?? undefined });
-    if (opts.analysisMode !== 'exact' || !locked.audioTranscript?.words?.length) return locked;
+    // Bind every successful analysis to the exact bytes and measured media
+    // clock. Review, presenter continuity and test-tenant visibility all use
+    // this immutable source identity; keeping it only in a downstream local
+    // variable made valid analyses unreadable after completion.
+    const sourceSha256 = createHash('sha256').update(fs.readFileSync(opts.filePath)).digest('hex');
+    const sourceBound = { ...locked, contentSha256: sourceSha256,
+      durationSeconds: sourceClock.duration } as VideoAiAnalysis;
+    if (opts.analysisMode !== 'exact' || !sourceBound.audioTranscript?.words?.length) return sourceBound;
     try {
-      const sourceInput = { filePath: opts.filePath, analysis: locked,
+      const sourceInput = { filePath: opts.filePath, analysis: sourceBound,
         videoId: opts.videoId || path.basename(opts.filePath, path.extname(opts.filePath)),
-        sourceSha256: createHash('sha256').update(fs.readFileSync(opts.filePath)).digest('hex'),
+        sourceSha256,
         duration: sourceClock.duration, tenantId: opts.tenantId };
       const classified = await produceReferenceCriticalShots(sourceInput);
       try { return await produceReferenceProductionRouting({ ...sourceInput, analysis: classified }); }
       catch (error) { return { ...classified, referenceProductionRoutingError: error instanceof Error ? error.message : 'person_continuity_unavailable' }; }
     } catch (error) {
-      return { ...locked, criticalShotError: error instanceof Error ? error.message : 'critical_shot_unavailable' };
+      return { ...sourceBound, criticalShotError: error instanceof Error ? error.message : 'critical_shot_unavailable' };
     }
   };
   const runQwen = async () => {
@@ -7535,24 +7725,31 @@ export async function analyzeDownloadedVideoWithFallback(opts: {
         mimeType: opts.mimeType,
         analysisMode: opts.analysisMode || 'strategy',
       });
-    const analysis = isQwenConfigured()
+    let analysis = isQwenConfigured()
       ? await withTimeout(geminiPromise, qwenFallbackTimeoutMs(), 'Gemini analysis timed out before Qwen fallback')
       : await geminiPromise;
+    if (opts.analysisMode === 'exact') analysis = await enrichExactGeminiEvidence(opts.filePath, analysis);
     assertFullVideoTimeline(analysis, Number(opts.duration || 0), 'gemini');
     const qualityError = analysisTimelineQualityError(analysis, Number(opts.duration || 0), opts.analysisMode || 'strategy');
     if (qualityError) throw new Error(`analysis_quality_retryable_${qualityError}`);
     return { analysis: await finishSourceAnalysis(analysis), source: opts.sourceLabel };
   } catch (e) {
+    // Promise timeouts do not prove that Gemini rejected or cancelled the
+    // upstream request. Starting Qwen here could create a second paid analysis
+    // while the first provider is still running. Fail closed and let the saved
+    // run be reconciled instead of switching providers on an unknown outcome.
+    if (/Gemini analysis timed out before Qwen fallback/i.test(e instanceof Error ? e.message : String(e))) throw e;
     if (shouldRetryGeminiWithNormalizedVideo(e)) {
       const normalizedPath = await normalizeVideoForGemini(opts.filePath);
       if (normalizedPath) {
         try {
           const buf = fs.readFileSync(normalizedPath);
-          const analysis = await analyzeVideo({
+          let analysis = await analyzeVideo({
             videoBase64: buf.toString('base64'),
             mimeType: 'video/mp4',
             analysisMode: opts.analysisMode || 'strategy',
           });
+          if (opts.analysisMode === 'exact') analysis = await enrichExactGeminiEvidence(normalizedPath, analysis);
           assertFullVideoTimeline(analysis, Number(opts.duration || 0), 'gemini_normalized');
           const qualityError = analysisTimelineQualityError(analysis, Number(opts.duration || 0), opts.analysisMode || 'strategy');
           if (qualityError) throw new Error(`analysis_quality_retryable_${qualityError}`);

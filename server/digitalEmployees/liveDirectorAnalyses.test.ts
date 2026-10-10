@@ -96,6 +96,9 @@ test('reference scope comes only from plan references and typed workflow binding
   assert.deepEqual(directorAnalysisReferenceIds({ businessPackage: { tasks: [{ videoPlans: [{ referenceId: 'video-1' }] }] } }, [
     { business_refs: [{ type: 'trend_video', id: 'video-2' }, { type: 'studio_project', id: 'project-1' }] },
   ]), ['video-1', 'video-2']);
+  assert.deepEqual(directorAnalysisReferenceIds({}, [
+    { business_refs: { productSku: 'legacy-seed' } as never },
+  ]), [], 'legacy non-array bindings cannot crash the overview');
 });
 
 test('overview projects analysis only into agent status, never executable workflow tasks', () => {

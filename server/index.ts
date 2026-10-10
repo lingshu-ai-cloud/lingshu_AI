@@ -81,6 +81,7 @@ import { createRuntimeReadinessProbe, runtimeCapabilities } from './runtime/read
 import { dataAuthorityRequestScope } from './storage/dataAuthority.js';
 import { objectStorageConfigurationIssues, objectStorageDriver, objectStorageLocalRoot } from './storage/objectStorage.js';
 import { runtimeBuildInfo } from './runtime/buildInfo.js';
+import { createGracefulShutdown } from './runtime/gracefulShutdown.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const processRole = parseProcessRole(process.env.PROCESS_ROLE);
@@ -320,24 +321,10 @@ if (processRoleStartsHttp(processRole)) {
     console.log(`[overseas-agent] http://0.0.0.0:${PORT}`);
   });
   configureHttpServer(server);
-  let shuttingDown = false;
-  const shutdown = (signal: string) => {
-    if (shuttingDown) return;
-    shuttingDown = true;
-    stopBackgroundJobs();
-    stopMessengerContextTagRecovery();
-    console.log(`[runtime] ${signal} received; draining HTTP connections`);
-    server.close(error => {
-      if (error) console.error('[runtime] graceful shutdown failed:', error);
-      process.exitCode = error ? 1 : 0;
-    });
-    server.closeIdleConnections?.();
-    setTimeout(() => {
-      console.error('[runtime] graceful shutdown deadline exceeded');
-      process.exitCode = 1;
-      server.closeAllConnections?.();
-    }, 30_000).unref();
-  };
+  const shutdown = createGracefulShutdown({
+    server,
+    stop: [stopBackgroundJobs, stopMessengerContextTagRecovery],
+  });
   process.once('SIGTERM', () => shutdown('SIGTERM'));
   process.once('SIGINT', () => shutdown('SIGINT'));
 } else {

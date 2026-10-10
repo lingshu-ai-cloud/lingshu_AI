@@ -102,6 +102,16 @@ function localCreate<T = Record_>(collection: string, data: Record<string, unkno
   const now = new Date().toISOString();
   const requestedId = String(data.id || '');
   if (requestedId && records.some(record => record.id === requestedId)) return null;
+  // Production databases arbitrate durable operation leases with a unique
+  // tenant/scope/subject index. Keep the local preview store equivalent at
+  // creation time: two callers may both have observed an empty list before
+  // reaching this synchronous write, so the second create must re-check the
+  // composite key instead of introducing two live owners.
+  if (collection === 'durable_operation_leases' && records.some(record => (
+    String(record.tenant_id ?? '') === String(data.tenant_id ?? '')
+    && String(record.lease_scope ?? '') === String(data.lease_scope ?? '')
+    && String(record.subject_id ?? '') === String(data.subject_id ?? '')
+  ))) return null;
   const record = {
     id: String(data.id || `${collection}_${randomUUID().replaceAll('-', '')}`),
     created: data.created || now,

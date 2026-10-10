@@ -123,6 +123,18 @@ async function main() {
     const visualDeviation = Math.sqrt([...pixels].reduce((sum, value) => sum + (value - visualMean) ** 2, 0) / pixels.length);
     assert.ok(visualDeviation > 10, `owned image must appear in output instead of a solid fallback (deviation=${visualDeviation})`);
 
+    const manyScenes = await composite({
+      jobId: 'bounded-many-scene-render', requireVisualAssets: true,
+      spec: { ratio: '9:16', resolution: '720p', duration: 2.04, bgmVol: 0, voiceVol: 0 },
+      timeline: Array.from({ length: 17 }, (_, index) => ({
+        sceneId: `scene-${index + 1}`, name: `镜头 ${index + 1}`, type: 'image',
+        url: productDataUrl, targetStart: index * .12, targetDuration: .12,
+      })),
+      bgm: { url: null }, voiceover: { url: null }, subtitles: { mode: 'off', cues: [] },
+    }, () => {}, outDir);
+    assert.equal(manyScenes.ok, true, manyScenes.error || 'large timelines must use bounded visual decoding');
+    assert.ok(fs.statSync(manyScenes.outputPath).size > 0);
+
     const result = await composite({
       jobId: 'voiceover-regression',
       spec: { ratio: '1:1', duration: 1.2, bgmVol: 20, voiceVol: 100 },

@@ -324,7 +324,15 @@ function canRun(job: ContentExecutionJob, running: ContentExecutionJob[], limits
 
 async function recoverAbandonedJobs(dataStore: DataStore, jobs: ContentExecutionJob[], now: Date): Promise<void> {
   for (const job of jobs) {
-    if (job.status !== 'running' || !job.leaseExpiresAt || Date.parse(job.leaseExpiresAt) > now.getTime()) continue;
+    if (job.status !== 'running' || !job.leaseExpiresAt) continue;
+    const worker = /^(.+)-(\d+)-[0-9a-f-]{20,}$/i.exec(job.workerId || '');
+    const sameHost = worker?.[1] === os.hostname().replace(/[^a-zA-Z0-9._-]/g, '-').slice(0, 80);
+    let localOwnerAlive = true;
+    if (sameHost && worker) {
+      try { process.kill(Number(worker[2]), 0); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code === 'ESRCH') localOwnerAlive = false; }
+    }
+    if (Date.parse(job.leaseExpiresAt) > now.getTime() && localOwnerAlive) continue;
     const reconcile = hasProviderWork(job);
     await dataStore.update(CONTENT_EXECUTION_JOB_COLLECTION, job.id, {
       status: reconcile ? 'reconciling' : 'retry_wait',
@@ -334,6 +342,14 @@ async function recoverAbandonedJobs(dataStore: DataStore, jobs: ContentExecution
       last_error: reconcile ? 'worker_interrupted_after_provider_handoff' : 'worker_interrupted_before_provider_handoff',
       updated_at: now.toISOString(),
     });
+    if (!localOwnerAlive) {
+      const leases = await dataStore.list<Record<string, unknown>>('durable_operation_leases', {
+        where: { tenant_id: job.tenantId, lease_scope: 'content_execution_job', subject_id: job.id }, perPage: 2,
+      });
+      for (const lease of leases.items) {
+        if (String(lease.owner_id || '') === job.workerId) await dataStore.delete('durable_operation_leases', String(lease.id));
+      }
+    }
   }
 }
 
@@ -366,6 +382,18 @@ async function claimNextJob(input: {
     });
     for (const candidate of candidates) {
       if (!canRun(candidate, running, limits.filter(item => item.tenantId === candidate.tenantId), input.env)) continue;
+      const priorLeases = await input.dataStore.list<Record<string, unknown>>('durable_operation_leases', {
+        where: { tenant_id: candidate.tenantId, lease_scope: 'content_execution_job', subject_id: candidate.id }, perPage: 2,
+      });
+      for (const prior of priorLeases.items) {
+        const owner = String(prior.owner_id || '');
+        const match = /^(.+)-(\d+)-[0-9a-f-]{20,}$/i.exec(owner);
+        if (match?.[1] !== os.hostname().replace(/[^a-zA-Z0-9._-]/g, '-').slice(0, 80)) continue;
+        try { process.kill(Number(match[2]), 0); }
+        catch (error) {
+          if ((error as NodeJS.ErrnoException).code === 'ESRCH') await input.dataStore.delete('durable_operation_leases', String(prior.id));
+        }
+      }
       const lease = await acquireDurableOperationLease({
         dataStore: input.dataStore, tenantId: candidate.tenantId, scope: 'content_execution_job',
         subjectId: candidate.id, ownerId: input.workerId, now: input.now,

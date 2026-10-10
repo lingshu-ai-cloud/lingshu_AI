@@ -109,9 +109,9 @@ const fourPlatformPlans = enrichPackageWithContentSignals({
   benchmarks,
 }).tasks.find(task => task.templateId === 'production')?.videoPlans || [];
 const fourPlatformMasters = fourPlatformPlans.filter(plan => plan.productionRole === 'master');
-assert.equal(fourPlatformPlans.length, 18, 'four accounts keep 18 distinct publish versions');
-assert.equal(fourPlatformMasters.length, 5, '18 publish versions must collapse into five paid original masters');
-assert.deepEqual(Object.fromEntries(['youtube', 'tiktok', 'instagram', 'facebook'].map(platform => [platform, fourPlatformPlans.filter(plan => plan.platform === platform).length])), { youtube: 3, tiktok: 5, instagram: 5, facebook: 5 });
+assert.equal(fourPlatformPlans.length, 16, 'four accounts keep 16 distinct publish versions');
+assert.equal(fourPlatformMasters.length, 5, '16 publish versions must collapse into five paid original masters');
+assert.deepEqual(Object.fromEntries(['youtube', 'tiktok', 'instagram', 'facebook'].map(platform => [platform, fourPlatformPlans.filter(plan => plan.platform === platform).length])), { youtube: 3, tiktok: 5, instagram: 3, facebook: 5 });
 for (const platform of ['youtube', 'tiktok', 'instagram', 'facebook']) {
   const platformPlans = fourPlatformPlans.filter(plan => plan.platform === platform);
   assert.equal(new Set(platformPlans.map(plan => plan.contentFamilyId)).size, platformPlans.length, `${platform} must not publish the same master twice`);
@@ -138,8 +138,8 @@ const fourPlatformBatch = buildContentBatchPlan({
   versions: { configVersion: 1, policyVersion: '1', factsVersion: '1' },
 });
 assert.equal(fourPlatformBatch.status, 'planned', fourPlatformBatch.blocker);
-assert.equal(fourPlatformBatch.orders.length, 5, 'production receives five orders instead of resubmitting all 18 versions');
-assert.equal(fourPlatformBatch.orders.flatMap(order => order.deliveryVariants || []).length, 18, 'five production orders retain every platform delivery destination');
+assert.equal(fourPlatformBatch.orders.length, 5, 'production receives five orders instead of resubmitting all 16 versions');
+assert.equal(fourPlatformBatch.orders.flatMap(order => order.deliveryVariants || []).length, 16, 'five production orders retain every platform delivery destination');
 
 console.log('content plan recommendation tests passed');
 

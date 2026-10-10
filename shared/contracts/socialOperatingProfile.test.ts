@@ -15,8 +15,8 @@ for (const profile of Object.values(SOCIAL_OPERATING_PROFILES)) {
 assert.deepEqual(SOCIAL_OPERATING_PROFILES.starter_four_platform.weeklyTargets, {
   baseVideoOriginals: 5,
   baseNonVideoOriginals: 1,
-  adaptationVersions: 14,
-  publicationTasks: 20,
+  adaptationVersions: 12,
+  publicationTasks: 18,
 });
 assert.equal(SOCIAL_OPERATING_PROFILES.dual_account_growth.accounts.filter(row => row.platform === 'tiktok').length, 2);
 assert.equal(SOCIAL_OPERATING_PROFILES.dual_account_growth.accounts.filter(row => row.platform === 'facebook').length, 2);

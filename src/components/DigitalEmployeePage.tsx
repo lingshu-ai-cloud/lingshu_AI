@@ -1,3 +1,7 @@
+import WeeklyPlanCalendar from './smartBusiness/WeeklyPlanCalendar';
+import { socialOperatingProfile } from '../../shared/contracts/socialOperatingProfile';
+import WeeklyGoalScheduleCards from './smartBusiness/WeeklyGoalScheduleCards';
+import { scheduleWeeklyVideos } from '../lib/weeklyGoalSchedule';
 import { getScrollBehavior } from "../lib/usePrefersReducedMotion";
 import { PAGE_REGISTRY, type Page } from "../pageRegistry";
 import { readAgentCalendarReturnContext, registerAgentCalendarReturnState } from '../lib/agentCalendarReturnContext';
@@ -21,7 +25,7 @@ import WeeklyPackagePanel from "./WeeklyPackagePanel";
 import { nodeDeepLink } from './WeeklyExecutionNodes';
 import { agentRuleFields } from '../lib/agentRuleFields';
 import VideoPlanEditor from './VideoPlanEditor';
-import { videoPlanErrors } from '../lib/videoCreationPlan';
+import { videoSchedulingErrors } from '../lib/videoCreationPlan';
 import {
   buildPresetMatrixVideoPlans,
   WEEKLY_TASK_PACKAGE_PRESETS,
@@ -33,8 +37,6 @@ import DeliveryBoard from "./DeliveryBoard";
 import ProductionTaskScene from "./ProductionTaskScene";
 import AgentDecisionCard, { type AgentDecisionKind } from "./AgentDecisionCard";
 import SmartBusinessDashboard, { WeeklyCommandCenter } from "./SmartBusinessDashboard";
-import SmartOperationsAccountRail, { type SmartOperationsAccount } from "./SmartOperationsAccountRail";
-import WeeklyPlanCalendar from "./smartBusiness/WeeklyPlanCalendar";
 import PlanHistoryDialog from "./PlanHistoryDialog";
 import SocialContentStageOnboarding from "./socialContent/SocialContentStageOnboarding";
 import { LsBrandAction, LsFlowDialog } from "./ui/LsExperiencePrimitives";
@@ -405,9 +407,8 @@ function humanizeValue(value: unknown): string {
 }
 
 function isoDay(offset: number): string {
-  const date = new Date();
-  date.setDate(date.getDate() + offset);
-  return date.toISOString().slice(0, 10);
+  const date = new Date(Date.now() + offset * 86_400_000);
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' }).format(date);
 }
 
 const EMPTY_GOAL = {
@@ -1493,7 +1494,7 @@ function GoalPanel({
   contentPlatform: ContentPlatform;
   onOpenSettings?: () => void;
 }) {
-  const configuredPlatforms = config.enabledWorkflows.includes("content_publish") && config.publishingTargets.length ? [...new Set(config.publishingTargets.map(target => target.platform))] : (["youtube", "tiktok", "instagram", "facebook"] as const).slice();
+  const configuredPlatforms = [...new Set([...socialOperatingProfile(config.socialOperatingProfile).accounts.map(account => account.platform), ...config.publishingTargets.map(target => target.platform)])];
   const initialPlatforms = contentPlatform !== "all" && configuredPlatforms.includes(contentPlatform)
     ? [contentPlatform]
     : config.enabledWorkflows.includes("content_publish") ? configuredPlatforms : [configuredPlatforms[0]];
@@ -1522,6 +1523,8 @@ function GoalPanel({
   const [goalEditorOpen, setGoalEditorOpen] = useState(false);
   const [form, setForm] = useState<GoalDraft>(() => ({
     ...EMPTY_GOAL,
+    startsAt: isoDay(0),
+    endsAt: isoDay(6),
     businessLine,
     videoPlans: initialVideoPlans,
     contentPlatforms: businessLine === 'customer_conversion' ? initialPlatforms : initialPresetPlatforms,
@@ -1545,12 +1548,12 @@ function GoalPanel({
     contentPlatforms: businessLine !== "customer_conversion" && !form.contentPlatforms.length ? "请至少选择一个内容制作平台" : "",
     product: businessLine !== 'customer_conversion' && !initialProduct ? '请先在 Agent 设置中选择重点产品' : '',
   };
-  const hasErrors = Object.values(errors).some(Boolean) || (form.videoPlans || []).some(plan => videoPlanErrors(plan).length > 0 || !form.contentPlatforms.includes(plan.platform));
+  const hasErrors = Object.values(errors).some(Boolean) || (form.videoPlans || []).some(plan => videoSchedulingErrors(plan).length > 0 || !form.contentPlatforms.includes(plan.platform));
   const goalErrorLabels: Record<keyof typeof errors, string> = {
     title: '目标名称', objective: '本周重点结果', scope: '业务范围（目标市场）', target: '目标值', dates: '目标周期', contentPlatforms: '内容制作平台', product: '重点产品',
   };
   const missingGoalFields = (Object.entries(errors) as Array<[keyof typeof errors, string]>).filter(([, error]) => Boolean(error)).map(([key, error]) => `${goalErrorLabels[key]}：${error}`);
-  const videoPlanIssues = (form.videoPlans || []).flatMap((plan, index) => videoPlanErrors(plan).map(error => `第 ${index + 1} 条：${error}`));
+  const videoPlanIssues = (form.videoPlans || []).flatMap((plan, index) => videoSchedulingErrors(plan).map(error => `第 ${index + 1} 条：${error}`));
   const platformPlanCounts = form.contentPlatforms.map(platform => ({ platform, count: (form.videoPlans || []).filter(plan => plan.platform === platform).length }));
   const submit = () => {
     setSubmitted(true);
@@ -1559,7 +1562,7 @@ function GoalPanel({
       return;
     }
     setGoalEditorOpen(false);
-    onSave(form);
+    onSave({ ...form, videoPlans: scheduleWeeklyVideos(form.videoPlans || [], form.startsAt, form.endsAt) });
   };
   const choosePreset = (presetId: WeeklyTaskPackagePresetId) => {
     const preset = weeklyTaskPackagePreset(presetId);
@@ -1613,20 +1616,7 @@ function GoalPanel({
           <div className="rounded-lg bg-slate-50 p-4"><p className="text-[10px] font-bold text-slate-400">预计成本</p><p className="mt-1 text-sm font-semibold text-slate-900">{estimatedPlanCost > 0 ? `¥${estimatedPlanCost.toFixed(2)}` : '待真实核算'}</p><p className="mt-1 text-[9px] text-slate-400">实际以服务费用回执为准</p></div>
         </div>
         <div className="mt-4 rounded-lg border border-emerald-100 bg-emerald-50/55 px-4 py-3"><p className="text-xs font-semibold text-emerald-950">本周重点结果</p><p className="mt-1 text-xs leading-5 text-emerald-800">{form.objective}</p></div>
-        {businessLine !== 'customer_conversion' && Boolean(form.videoPlans?.length) && <section aria-label="社媒视频矩阵" className="mt-4 rounded-lg border border-slate-200 bg-slate-50/60 p-4">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div><p className="text-sm font-semibold text-slate-900">社媒视频矩阵</p><p className="mt-1 text-xs text-slate-500">已按平台拆成 {form.videoPlans?.length || 0} 条视频任务，确认前仍可逐条调整。</p></div>
-            <Button htmlType="button" onClick={() => setGoalEditorOpen(true)} className="!h-auto min-h-9 !whitespace-normal rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:border-emerald-300">编辑完整矩阵</Button>
-          </div>
-          <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
-            {form.videoPlans?.slice(0, 8).map((plan, index) => <div key={`${plan.platform}-${index}`} className="rounded-lg border border-slate-200 bg-white p-3">
-              <div className="flex items-center justify-between gap-2"><span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-emerald-700">{contentPlatformLabel[plan.platform]}</span><span className="text-[10px] font-semibold text-slate-400">{plan.duration} 秒 · {plan.language}</span></div>
-              <p className="mt-2 truncate text-xs font-semibold text-slate-900">{plan.productName || '待选择产品'}</p>
-              <p className="mt-1 line-clamp-2 text-[11px] leading-5 text-slate-500">{plan.theme || '待补充视频主题'}</p>
-            </div>)}
-          </div>
-          {(form.videoPlans?.length || 0) > 8 && <p className="mt-3 text-[10px] font-bold text-slate-500">当前先展示 8 条，另有 {(form.videoPlans?.length || 0) - 8} 条可在“编辑完整矩阵”中查看。</p>}
-        </section>}
+        {businessLine !== 'customer_conversion' && <WeeklyGoalScheduleCards plans={form.videoPlans || []} accounts={config.publishingTargets} startsAt={form.startsAt} endsAt={form.endsAt} onEdit={() => setGoalEditorOpen(true)}/>}
         {submitted && hasErrors && <div role="alert" className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900"><p className="font-semibold">暂时不能确认，具体缺少：</p><ul className="mt-2 list-disc space-y-1 pl-4">{[...missingGoalFields, ...videoPlanIssues.slice(0, 3)].map(item => <li key={item}>{item}</li>)}</ul>{errors.product && onOpenSettings && <Button htmlType="button" onClick={onOpenSettings} className="!h-auto min-h-9 !whitespace-normal mt-3 rounded-lg bg-amber-900 px-3 py-2 text-[11px] font-semibold text-white">去 Agent 设置选择重点产品</Button>}</div>}
         <div className="mt-5 flex flex-wrap justify-end gap-2"><Button htmlType="button" onClick={() => setGoalEditorOpen(true)} className="!h-auto min-h-9 !whitespace-normal rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-50">调整本周设置</Button><Button type="primary" htmlType="button" disabled={busy} onClick={submit} className="!h-auto min-h-9 !whitespace-normal inline-flex items-center gap-2 rounded-lg px-5 py-2.5 text-sm font-semibold">{busy ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />}确认周计划</Button></div>
       </section>
@@ -3682,6 +3672,7 @@ export default function DigitalEmployeePage({
   const [applicationGuideOpen, setApplicationGuideOpen] = useState(false);
   const [onboardingWelcomeOpen, setOnboardingWelcomeOpen] = useState(false);
   const [weeklyPlanOpen, setWeeklyPlanOpen] = useState(false);
+  const [weeklyPlanDetailsOpen, setWeeklyPlanDetailsOpen] = useState(false);
   const [planHistoryOpen, setPlanHistoryOpen] = useState(false);
   const [planningOptions, setPlanningOptions] = useState<Awaited<ReturnType<typeof digitalEmployeeApi.planningOptions>> | null>(null);
   const goalPanelRef = useRef<HTMLDivElement>(null);
@@ -4188,8 +4179,19 @@ export default function DigitalEmployeePage({
       overviewRequestVersionRef.current += 1;
       setData(created);
       setNewGoal(false);
-      setWeeklyPlanOpen(true);
-      showActionSuccess("周目标已生成", "请核对账号产量、爆款参考并为每条视频选择产品。");
+      setWeeklyPlanOpen(false);
+      setWorkspaceView("matrix");
+      if (goalInput.businessLine === 'customer_conversion') {
+        setWeeklyPlanOpen(true);
+        showActionSuccess("周目标已生成", "请核对客户转化目标并确认任务。");
+        return;
+      }
+      if (!created.plan?.businessPackage) throw new Error("周计划任务包未能创建");
+      await digitalEmployeeApi.confirmWeeklyPreparation(created.goal.id, created.plan.businessPackage.revision);
+      const confirmed = await digitalEmployeeApi.overview(created.goal.id);
+      overviewRequestVersionRef.current += 1;
+      setData(confirmed);
+      showActionSuccess("周目标已确认", "已进入数字员工任务日历，编导采集与制作准备按前置依赖推进。");
     } catch (actionError) {
       setError(actionError instanceof Error ? actionError.message : "周目标生成失败");
       await load();
@@ -4266,44 +4268,20 @@ export default function DigitalEmployeePage({
   };
 
   const confirmWeeklyPlan = async () => {
-    if (!goal || !data?.plan?.businessPackage || approvalBlocked || busy) return;
-    const plans = data.plan.businessPackage.tasks.find(task => task.templateId === "production")?.videoPlans || [];
-    const masters = plans.filter(plan => plan.productionRole !== "platform_adaptation");
-    const missingProducts = masters.filter(plan => !plan.productName).length;
-    const missingReferences = masters.filter(plan => !plan.referenceId).length;
-    if (missingProducts || missingReferences) {
-      setError([missingProducts ? `${missingProducts} 条原创母版未选择产品` : "", missingReferences ? `爆款库还缺 ${missingReferences} 条母版所需的可执行参考` : ""].filter(Boolean).join("；"));
-      return;
-    }
+    if (!goal || !data?.plan?.businessPackage || busy) return;
     setBusy("confirm-weekly-plan");
     setError("");
     try {
-      let prepared = data;
-      const currentPlans = prepared.plan?.businessPackage?.tasks.find(task => task.templateId === "production")?.videoPlans || [];
-      const currentMasters = currentPlans.filter(plan => plan.productionRole !== "platform_adaptation");
-      const ready = prepared.plan?.businessPackage?.detailGeneration?.status === "ready"
-        && currentMasters.some(plan => plan.preproduction?.readiness.canStart);
-      if (!ready) {
-        prepared = await digitalEmployeeApi.generatePackageDetails(goal.id);
-        overviewRequestVersionRef.current += 1;
-        setData(prepared);
-      }
-      const detail = prepared.plan?.businessPackage?.detailGeneration;
-      const preparedPlans = prepared.plan?.businessPackage?.tasks.find(task => task.templateId === "production")?.videoPlans || [];
-      const preparedMasters = preparedPlans.filter(plan => plan.productionRole !== "platform_adaptation");
-      if (detail?.status !== "ready" || !preparedMasters.some(plan => plan.preproduction?.readiness.canStart)) {
-        throw new Error(`当前没有可开工内容：${detail?.blockers.slice(0, 3).join("；") || "请为至少一条母版补齐对应素材、授权或产品资料"}`);
-      }
-      const next = await digitalEmployeeApi.approveGoal(goal.id, prepared.plan?.businessPackage?.revision);
+      await digitalEmployeeApi.confirmWeeklyPreparation(goal.id, data.plan.businessPackage.revision);
+      const next = await digitalEmployeeApi.overview(goal.id);
       overviewRequestVersionRef.current += 1;
       setData(next);
+      setNewGoal(false);
       setWorkspaceView("matrix");
-      setSelectedTaskId(next.tasks.find(task => ["running", "waiting_external", "waiting_approval"].includes(task.status))?.id || next.tasks[0]?.id || "");
-      showActionSuccess("本周任务已启动", detail.blockedCount
-        ? `${detail.readyCount} 条母版开始生产，${detail.blockedCount} 条仅在各自缺失镜头处等待补素材。`
-        : "经营 Agent 已把编导结论、内容制作、发布文案与复盘节点排入 To Do List。");
+      setWeeklyPlanOpen(false);
+      showActionSuccess("周目标已确认", "编导 Agent 开始采集与分析，后续制作、分发和复盘按任务依赖推进。");
     } catch (actionError) {
-      setError(actionError instanceof Error ? actionError.message : "周任务启动失败");
+      setError(actionError instanceof Error ? actionError.message : "周计划确认失败");
     } finally {
       setBusy("");
     }
@@ -4375,7 +4353,7 @@ export default function DigitalEmployeePage({
           : workspaceView === "review" ? "review" : "home";
     const views: Array<{ id: "today" | "matrix" | "review"; label: string; caption: string }> = [
       { id: "today", label: "经营总览", caption: "资产健康度与下一轮建议" },
-      { id: "matrix", label: "账号矩阵", caption: "职责、策略与连接" },
+      { id: "matrix", label: "数字员工", caption: "Agent 职责与工作排期" },
       { id: "review", label: "数据复盘", caption: "账号、询盘与投流明细" },
     ];
     const currentVideoPlans = data.plan?.businessPackage?.tasks.find(task => task.templateId === "production")?.videoPlans || goal?.videoPlans || [];
@@ -4385,43 +4363,6 @@ export default function DigitalEmployeePage({
     const detailGeneration = data.plan?.businessPackage?.detailGeneration;
     const planDetailsReady = detailGeneration?.status === 'ready'
       && currentMasterPlans.some(plan => plan.preproduction?.readiness.canStart);
-    const currentMatrix = data.plan?.businessPackage?.matrixPlan || [];
-    const plannedAccountTaskCounts = currentVideoPlans.reduce<Record<string, number>>((counts, plan) => {
-      const accountId = plan.matrix?.accountId;
-      if (accountId) counts[accountId] = (counts[accountId] || 0) + 1;
-      return counts;
-    }, {});
-    const queuedAccountTaskCounts = (data.contentQueue?.items || []).reduce<Record<string, number>>((counts, item) => {
-      if (item.accountId) counts[item.accountId] = (counts[item.accountId] || 0) + 1;
-      return counts;
-    }, {});
-    const accountTaskCounts = Object.keys({ ...plannedAccountTaskCounts, ...queuedAccountTaskCounts }).reduce<Record<string, number>>((counts, accountId) => {
-      counts[accountId] = Math.max(plannedAccountTaskCounts[accountId] || 0, queuedAccountTaskCounts[accountId] || 0);
-      return counts;
-    }, {});
-    const matrixPlatforms = goal?.contentPlatforms?.length
-      ? goal.contentPlatforms
-      : data.config.publishingTargets.length
-        ? [...new Set(data.config.publishingTargets.map(target => target.platform))]
-        : (["youtube", "tiktok", "instagram", "facebook"] as const).slice();
-    const accountMatrixForRail = currentMatrix.length
-      ? currentMatrix
-      : defaultMatrixPlan(data.config, [...matrixPlatforms], goal?.objective || "验证本周内容方向并获得有效询盘");
-    const matrixRoleLabels: Record<string, string> = {
-      brand_capability: "品牌能力号",
-      buyer_advisor: "买家顾问号",
-      brand_combined: "品牌综合账号",
-    };
-    const publishingTargets = data.config.publishingTargets;
-    const smartOperationsAccounts: SmartOperationsAccount[] = accountMatrixForRail.map(row => {
-      const connected = publishingTargets.find(target => target.accountId === row.accountId && target.platform === row.platform);
-      return {
-        platform: row.platform,
-        accountId: row.accountId,
-        accountLabel: connected?.accountLabel || `${contentPlatformLabel[row.platform]} · ${matrixRoleLabels[row.accountRole || "brand_combined"]}`,
-        connected: Boolean(connected),
-      };
-    });
     const operatingContext = data.plan?.businessPackage?.operatingContext;
     const currentEstimatedCost = operatingContext?.budget.totalCny || currentVideoPlans.reduce((sum, plan) => sum + Number(plan.estimatedCost || 0), 0) || Number(data.plan?.estimatedCost || 0);
     const currentCostMin = operatingContext?.budget.totalMinCny ?? currentVideoPlans.reduce((sum, plan) => sum + Number(plan.estimatedCostRange?.minCny || 0), 0);
@@ -4518,7 +4459,6 @@ export default function DigitalEmployeePage({
           <Tabs className="mt-3" aria-label="智能经营视图" activeKey={workspaceView === "live" || workspaceView === "overview" ? "review" : workspaceView} onChange={key => {setWorkspaceView(key as WorkspaceView); setSelectedContentItemId("");}} items={views.map(view => ({key: view.id, label: view.label}))}/>
           {error && <Alert className="mt-5" type="error" showIcon title={error} closable onClose={()=>setError("")}/>}
           <div className="grid grid-cols-1 gap-4 pb-6 pt-2">
-            {workspaceView === "matrix" && <SmartOperationsAccountRail targets={smartOperationsAccounts} selectedAccountId={selectedAccountId} taskCounts={accountTaskCounts} onSelect={setSelectedAccountId} onManage={() => onNavigate?.('plugins')}/>}
             <main className="min-w-0">
             {workspaceView === "rules"
               ? <OnboardingPanel initial={data.config} readiness={data.businessSnapshot?.readiness || []} busy={Boolean(busy)} mode="rules" activeRun={activeRun} onOpenReadiness={openReadiness} onSave={(config) => void saveConfig(config)} />
@@ -4572,6 +4512,8 @@ export default function DigitalEmployeePage({
                   <div className="min-w-0"><div className="flex items-center gap-2"><h3 className="truncate text-sm font-semibold text-slate-950">{goal.title}</h3><span className={`shrink-0 rounded-full px-2.5 py-1 text-[9px] font-semibold ${activeRun?"bg-emerald-50 text-emerald-700":"bg-amber-50 text-amber-700"}`}>{activeRun?"执行中":"待确认"}</span></div><p className="mt-1 text-[10px] text-slate-500">{goal.startsAt} 至 {goal.endsAt}</p></div>
                   <div className="grid grid-cols-4 gap-4 text-right"><div><p className="text-[9px] font-bold text-slate-400">发布内容</p><p className="mt-0.5 text-sm font-semibold text-slate-900">{currentVideoPlans.length} 条</p></div><div><p className="text-[9px] font-bold text-slate-400">原创母版</p><p className="mt-0.5 text-sm font-semibold text-slate-900">{currentMasterPlans.length} 条</p></div><div><p className="text-[9px] font-bold text-slate-400">母版时长</p><p className="mt-0.5 text-sm font-semibold text-slate-900">{plannedDurationSeconds>0?`${plannedDurationSeconds} 秒`:"待确认"}</p></div><div><p className="text-[9px] font-bold text-slate-400">预计成本</p><p className="mt-0.5 text-sm font-semibold text-slate-900">{currentCostMax>0?`¥${currentCostMin.toFixed(0)}–${currentCostMax.toFixed(0)}`:currentEstimatedCost>0?`约 ¥${currentEstimatedCost.toFixed(0)}`:"待核算"}</p></div></div>
                 </section>
+                <WeeklyGoalScheduleCards plans={currentVideoPlans} accounts={activeConfig.publishingTargets} startsAt={goal.startsAt} endsAt={goal.endsAt} onEdit={() => setWeeklyPlanDetailsOpen(open => !open)}/>
+                {weeklyPlanDetailsOpen && <>
                 <WeeklyPlanCalendar
                   startsAt={goal.startsAt}
                   endsAt={goal.endsAt}
@@ -4604,7 +4546,8 @@ export default function DigitalEmployeePage({
                     } }));
                   }}
                 />
-                {!activeRun && <div className="flex flex-wrap items-center justify-between gap-4"><p className={`text-xs ${approvalBlocked||missingProductMasters.length||missingReferenceMasters.length?'font-bold text-amber-700':'text-slate-500'}`}>{approvalBlocked?`开始前需补齐：${firstMissingReadiness?.label||'企业资料或社媒账号'}`:missingReferenceMasters.length?`爆款库还缺 ${missingReferenceMasters.length} 条母版所需的已分析视频`:missingProductMasters.length?`还有 ${missingProductMasters.length} 条原创母版未选择产品`:'确认后系统只生产 5 条母版，并生成各平台标题、文案、Tag 与轻适配版本。'}</p><Button type="primary" htmlType="button" disabled={Boolean(busy)||approvalBlocked||Boolean(missingProductMasters.length)||Boolean(missingReferenceMasters.length)} onClick={()=>void confirmWeeklyPlan()} className="!h-auto min-h-9 !whitespace-normal shrink-0 rounded-lg px-5 py-2.5 text-sm font-semibold">{busy==='confirm-weekly-plan'?<span className="inline-flex items-center gap-2"><Loader2 size={14} className="animate-spin"/>正在编排并启动…</span>:"确认周计划并开始工作"}</Button></div>}
+                </>}
+                {!activeRun && <div className="flex justify-end"><Button type="primary" disabled={Boolean(busy)} onClick={() => void confirmWeeklyPlan()}>{busy === 'confirm-weekly-plan' ? '正在确认…' : '确认周计划并开始工作'}</Button></div>}
                 {activeRun&&<section aria-label="Agent To Do List" className="overflow-hidden rounded-lg border border-slate-200"><div className="border-b border-slate-100 bg-slate-950 px-5 py-4 text-white"><p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-emerald-300">Agent 工作清单</p><h3 className="mt-1 text-lg font-semibold">数字员工工作排期</h3><p className="mt-1 text-[10px] text-slate-300">每一步都标明负责 Agent、预计用时、输出和下一节点。</p></div><div className="divide-y divide-slate-100">{(data.plan?.tasks||[]).map((task,index)=>{const runtime=data.tasks.find(item=>item.task_key===task.key);return <article key={task.key} className="grid gap-3 px-5 py-4 sm:grid-cols-[40px_150px_minmax(0,1fr)_100px]"><span className={`flex h-8 w-8 items-center justify-center rounded-full text-xs font-semibold ${runtime?.status==='succeeded'?'bg-emerald-100 text-emerald-700':runtime?.status==='running'?'bg-blue-100 text-blue-700':'bg-slate-100 text-slate-500'}`}>{index+1}</span><div><p className="text-xs font-semibold text-slate-900">{agentLabel[task.agentRole]||task.agentRole}</p><p className="mt-1 text-[10px] text-slate-500">预计 {task.expectedMinutes} 分钟</p></div><div><p className="text-sm font-semibold text-slate-950">{task.title}</p><p className="mt-1 text-[10px] leading-5 text-slate-500">{task.description}</p><p className="mt-1 text-[10px] font-bold text-emerald-700">结果：{runtime?outputSummary(runtime)||'完成后自动保存到对应业务页面':task.statusSource||'完成后持久化'} · 下一步：{data.plan?.tasks[index+1]?.title||'进入周复盘'}</p></div><span className={`h-fit rounded-full border px-2 py-1 text-center text-[9px] font-semibold ${statusTone[runtime?.status||'']||'border-slate-200 bg-slate-50 text-slate-500'}`}>{runtime?.status==='running'?'进行中':runtime?.status==='succeeded'?'已完成':runtime?.status==='failed'?'需处理':'待执行'}</span></article>})}</div></section>}
                 {activeRun&&<div className="flex justify-end"><Button htmlType="button" onClick={()=>{setWeeklyPlanOpen(false);setWorkspaceView("matrix");}} className="!h-auto min-h-9 !whitespace-normal rounded-lg bg-slate-950 px-5 py-2.5 text-sm font-semibold text-white">查看账号排期甘特图</Button></div>}
               </div> : null}

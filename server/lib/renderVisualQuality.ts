@@ -210,7 +210,11 @@ export async function inspectRenderedScenes(input: {
 }): Promise<{ passed: boolean; issues: SceneVisualIssue[]; checkedScenes: number }> {
   const issues: SceneVisualIssue[] = [];
   const previous: Array<{ sceneIndex: number; frames: Buffer[] }> = [];
-  if (!input.scenes.length || input.scenes.length > 32) return { passed: false, issues: [{ sceneIndex: 0, start: 0, end: 0, code: 'decode', reason: '缺少有效分镜时间轴或超过32镜检查上限' }], checkedScenes: 0 };
+  // Reference-driven edits can legitimately contain many short cuts. The
+  // inspector runs one bounded ffmpeg decode at a time, so a 32-scene cap did
+  // not protect memory; it only rejected valid finished videos before looking
+  // at any bytes. Keep a generous abuse bound while checking every scene.
+  if (!input.scenes.length || input.scenes.length > 128) return { passed: false, issues: [{ sceneIndex: 0, start: 0, end: 0, code: 'decode', reason: '缺少有效分镜时间轴或超过128镜检查上限' }], checkedScenes: 0 };
   for (const [sceneIndex, scene] of input.scenes.entries()) {
     const add = (code: SceneVisualIssue['code'], reason: string, duplicateOf?: number) => issues.push({ sceneIndex, ...scene, code, reason, ...(duplicateOf !== undefined ? { duplicateOf } : {}) });
     const duration = scene.end - scene.start;

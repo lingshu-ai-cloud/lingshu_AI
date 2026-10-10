@@ -22,10 +22,10 @@ test('AI storyboard candidate can be adopted only after its own quality review',
   const shot = { ...base, candidates: [{ id: 'ai-v1', materialId: 'generated-1', source: 'ai' as const,
     fingerprint: shotFingerprint(base, '', 'shot-1'), createdAt: '2026-10-03T00:00:00Z' }] };
   const pending = renderToStaticMarkup(<ShotProductionPanel {...props} shotId="shot-1" shot={shot} aiCandidateApproved={() => false} />);
-  assert.match(pending, /创意画面.*存在质量失败或待检查/);
+  assert.match(pending, /创意画面.*待人工验收/);
   assert.match(pending, /disabled=""[^>]*>采用 \/ 恢复/);
   const approved = renderToStaticMarkup(<ShotProductionPanel {...props} shotId="shot-1" shot={shot} aiCandidateApproved={id => id === 'generated-1'} />);
-  assert.doesNotMatch(approved, /创意画面.*存在质量失败或待检查/);
+  assert.doesNotMatch(approved, /创意画面.*待人工验收/);
   assert.match(approved, /<button type="button" class="text-accent disabled:opacity-40">采用 \/ 恢复<\/button>/);
 });
 test('unconfigured enterprise presenter cannot be billed and keeps only presenter-appropriate routes', () => {

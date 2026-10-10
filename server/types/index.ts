@@ -134,6 +134,13 @@ export interface VideoAiAnalysis {
     needsReview?: boolean;
     estimatedSpeechDuration?: number;
     dialogueFits?: boolean;
+    /** Independently sampled, time ordered evidence for the opening action hook. */
+    hookMotionEvidence?: {
+      observations: Array<{ time: number; visibleState: string; confidence: number }>;
+      transitions: Array<{ from: number; to: number; action: string; evidence: string; confidence: number }>;
+      uncertainties: string[];
+      status?: 'verified' | 'needs_review';
+    };
     /**
      * 该镜头的爆款潜力判断，由模型基于实际画面给出。
      * 缺失时前端回退到关键词启发式（历史记录没有这个字段）。

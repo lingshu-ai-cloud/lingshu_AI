@@ -56,6 +56,7 @@ import {
   publicSocialDirectorPlanSummary,
 } from './socialContentDirectorPlan.js';
 import { createSocialAssetSupplyPlan } from '../../shared/socialContentAssetSupply.js';
+import type { SocialShotFunction } from '../../shared/contracts/socialContentReplication.js';
 import {
   parseStoredSocialReferenceVideoAnalysis,
   parseStoredSocialReplicationScript,
@@ -63,6 +64,7 @@ import {
 } from './socialContentScriptSources.js';
 import { buildSocialAgentWorkflow, type SocialWorkflowMaterialCandidate } from './socialContentAgentWorkflow.js';
 import { buildSocialReferenceReviewHandoff } from './socialReferenceReviewHandoff.js';
+import { validateHeyGenPresenterRecord } from '../lib/presenterAssetTrust.js';
 import { readMaterialLibrary, type MaterialRecord } from '../lib/materialLibrary.js';
 import {
   AUTO_TASK_KEY,
@@ -96,11 +98,26 @@ type StoredPresenter = Record<string, unknown> & {
   referenceMaterialIds?: unknown[];
 };
 
+function assetSupplyShotFunction(value: string, index: number, total: number): SocialShotFunction {
+  const normalized = value.normalize('NFKC').trim().toLocaleLowerCase();
+  if (/hook|开场|吸引/.test(normalized)) return 'hook';
+  if (/problem|痛点|问题/.test(normalized)) return 'problem';
+  if (/proof|证据|证明|质量|结果/.test(normalized)) return 'proof';
+  if (/trust|信任|背书/.test(normalized)) return 'trust';
+  if (/transition|转场|衔接/.test(normalized)) return 'transition';
+  if (/call[_\s-]?to[_\s-]?action|cta|行动|收束|结尾|交付/.test(normalized) || index === total - 1) {
+    return 'call_to_action';
+  }
+  if (/demonstration|演示|展示|过程|步骤|操作|使用/.test(normalized)) return 'demonstration';
+  return 'value';
+}
+
 export async function readAuthorizedPresenterInventory(repository: Starter198Repository, tenantId: string, socialAccountId?: string | null, requestedPresenterAssetId?: string | null): Promise<{
   assetIds: string[];
   accountPresenterLock: SocialAccountPresenterLock | null;
+  selectedPresenterEvidence: { assetId: string; assetVersion: string; rightsVerified: true; rightsEvidenceRef: string } | null;
 }> {
-  if (!repository.dataStore) return { assetIds: [], accountPresenterLock: null };
+  if (!repository.dataStore) return { assetIds: [], accountPresenterLock: null, selectedPresenterEvidence: null };
   try {
     const defaults = await repository.dataStore.list<{ tenant_id: string; payload?: { presenters?: StoredPresenter[] } }>('studio_production_defaults', { where: { tenant_id: tenantId }, perPage: 2 });
     if (defaults.totalItems > 1 || defaults.items.length > 1) throw new Error('duplicate_defaults');
@@ -113,7 +130,14 @@ export async function readAuthorizedPresenterInventory(repository: Starter198Rep
     });
     const requested = String(requestedPresenterAssetId || '').trim();
     const selected = requested ? usable.filter(item => String(item.id) === requested) : usable;
-    if (!socialAccountId) return { assetIds: selected.map(item => String(item.id)), accountPresenterLock: null };
+    const validatedSelected = selected.length === 1 ? validateHeyGenPresenterRecord(selected[0]!) : null;
+    const selectedPresenterEvidence = validatedSelected?.ok ? {
+      assetId: validatedSelected.presenterAssetId,
+      assetVersion: String(validatedSelected.assetVersion),
+      rightsVerified: true as const,
+      rightsEvidenceRef: validatedSelected.rights.authorizationRef,
+    } : null;
+    if (!socialAccountId) return { assetIds: selected.map(item => String(item.id)), accountPresenterLock: null, selectedPresenterEvidence };
     const profiles = selected.flatMap(item => {
       const avatarId = String(item.toolMappings?.heygen?.avatarId || item.avatarId || '').trim();
       const voiceProfileId = String(item.toolMappings?.heygen?.voiceId || item.voiceId || '').trim();
@@ -137,7 +161,7 @@ export async function readAuthorizedPresenterInventory(repository: Starter198Rep
         : [];
     });
     if (profiles.length > 1) throw new Error('duplicate_published_account_presenter');
-    return { assetIds: profiles.map(item => item.presenterAssetId), accountPresenterLock: profiles[0] ?? null };
+    return { assetIds: profiles.map(item => item.presenterAssetId), accountPresenterLock: profiles[0] ?? null, selectedPresenterEvidence };
   } catch {
     throw new SocialContentWorkflowError('social_content_presenter_assets_unavailable', 503);
   }
@@ -805,6 +829,7 @@ export async function readSocialTaskDetail(input: {
     taskRows(input.repository, STARTER_COLLECTIONS.socialMetricSubmissions, input.tenantId, input.taskId),
   ]);
   const summary = socialTaskSummary(task);
+  const storedScriptBaseline = parseStoredSocialScriptBaseline(task.script_baseline);
   const executionTaskRows = summary.runId
     ? await input.repository.list(STARTER_COLLECTIONS.tasks, input.tenantId, {
       where: { run_id: summary.runId, task_key: AUTO_TASK_KEY }, perPage: 2,
@@ -980,6 +1005,10 @@ export async function readSocialTaskDetail(input: {
       requestedDescription: shot.visualInstruction,
       truthSensitiveSubject: shot.materialPlan.truthBoundary.subject,
       referenceShotId: shot.referenceShotId,
+    })) ?? storedScriptBaseline?.scenes.map((scene, index, scenes) => ({
+      shotId: scene.sceneId,
+      function: assetSupplyShotFunction(scene.shotFunction, index, scenes.length),
+      requestedDescription: [scene.shotFunction, scene.subject, scene.action].map(socialText).filter(Boolean).join(' · '),
     })),
     rightsConfirmationRequired: false,
   });
@@ -993,7 +1022,7 @@ export async function readSocialTaskDetail(input: {
         assetVersion: presenterLock.presenterProfileVersion,
         rightsVerified: presenterLock.commercialRightsStatus === 'cleared' && presenterLock.status === 'published',
         rightsEvidenceRef: presenterLock.consentRef,
-      } : null,
+      } : presenterInventory.selectedPresenterEvidence,
       verifiedEnterpriseFactRefs: confirmedFactRefs,
     }) : { productionExecutionAllowed: false as const, versionHash: 'reference-record-unavailable' }
     : null;
@@ -1014,6 +1043,7 @@ export async function readSocialTaskDetail(input: {
     replicationScript,
     materialCandidates,
     inferredProductRef: candidateSet.productPolicy === 'preferred' ? primaryProductRef : null,
+    enterprisePresenterAssetRef: presenterInventory.selectedPresenterEvidence?.assetId ?? null,
     referencePreviewUrl: referenceVideoAnalysis?.referenceRecordId
       ? `/api/overseas/videos/${encodeURIComponent(referenceVideoAnalysis.referenceRecordId)}/thumbnail`
       : referenceRecord ? safeMaterialPreview(referenceRecord) : null,

@@ -120,6 +120,10 @@ await assert.rejects(() => talkingOnly.execute(complexContext),
   /digital_presenter_capability_unsupported:controls:.*guided_action.*product_interaction/,
   '当前 talking-head provider 不支持产品上脸时必须显式报告能力不足');
 assert.equal(unsupportedExecuted, false, '不得向不具备复杂动作能力的 provider 提交付费任务');
+await talkingOnly.execute({ ...complexContext, shot: { ...complexShot,
+  digitalHumanPlan: { ...complexShot.digitalHumanPlan, workflow: 'viral_replication', method: 'talking' } } });
+assert.deepEqual(capturedVisualControl.requiredCapabilities, ['scripted_speech', 'timing_control'],
+  '爆款复刻的口播人物只提交 HeyGen 真正支持的语音与时序控制，动作画面由独立视觉镜头承担');
 
 const governedKeys: string[] = [];
 let governedControl: any = null;

@@ -18,11 +18,11 @@ export interface ReferenceCriticalShot {
   model: string; provenance: string; actionEvents: ReferenceActionEvent[]; syncPoints: ReferenceSyncPoint[];
 }
 export interface ReferenceCriticalShotSummary {
-  ruleVersion: string; evidenceVersion: string; model: string; provider: 'qwen'; videoId: string; sourceSha256: string;
+  ruleVersion: string; evidenceVersion: string; model: string; provider: 'qwen' | 'gemini'; videoId: string; sourceSha256: string;
   analyzedAt: string; frameCount: number; usage?: Record<string, unknown>; validationWarnings: string[];
   providerResponse: ReferenceCriticalProviderResponse;
 }
-export interface ReferenceCriticalProviderResponse { raw: string; usage: Record<string, unknown>; model: string }
+export interface ReferenceCriticalProviderResponse { raw: string; usage: Record<string, unknown>; model: string; provider?: 'qwen' | 'gemini' }
 export class ReferenceCriticalValidationError extends Error {
   constructor(message: string, public readonly providerResponse: ReferenceCriticalProviderResponse) {
     super(message); this.name = 'ReferenceCriticalValidationError';
@@ -38,7 +38,7 @@ function fail(message: string): never { throw new Error(`reference_critical_evid
 
 /** Gate Qwen decisions against source word IDs and supplied frame clocks.
  * This validates evidence; it never replaces a model decision with a heuristic. */
-export function validateReferenceCriticalShots(input: ClassificationInput, output: unknown, model: string): {
+export function validateReferenceCriticalShots(input: ClassificationInput, output: unknown, model: string, provider = 'qwen'): {
   details: NonNullable<VideoAiAnalysis['scriptDetails15s']>; validationWarnings: string[];
 } {
   const details = input.analysis.scriptDetails15s || [];
@@ -104,7 +104,7 @@ export function validateReferenceCriticalShots(input: ClassificationInput, outpu
     const criticalShot: ReferenceCriticalShot = { classification: expected, primaryHook: row.primaryHook as boolean,
       uniqueVisualMechanism: row.uniqueVisualMechanism as boolean, explicitAudioVisualSync: row.explicitAudioVisualSync as boolean,
       confidence: row.confidence as number, reason, evidence, actionEvents, syncPoints, model,
-      provenance: 'qwen_vl:source_frames_and_measured_asr_words' };
+      provenance: `${provider}_vl:source_frames_and_measured_asr_words` };
     return { ...detail, criticalShot };
   });
   return { details: validated, validationWarnings: warnings };
@@ -113,12 +113,17 @@ export function validateReferenceCriticalShots(input: ClassificationInput, outpu
 /** One batched, product-side Qwen-VL call; ASR timestamps are supplied evidence.
  * Provider/validation failures propagate and never manufacture classifications. */
 export async function classifyReferenceCriticalShots(input: ClassificationInput, options: {
-  fetcher?: typeof fetch; apiKey?: string; model?: string; baseUrl?: string;
+  fetcher?: typeof fetch; apiKey?: string; model?: string; baseUrl?: string; provider?: 'qwen' | 'gemini';
 } = {}): Promise<VideoAiAnalysis> {
   const details = input.analysis.scriptDetails15s || [];
   if (!details.length || !input.frames.length || input.frames.length > 80) fail('missing_or_oversized_input');
-  const model = options.model || process.env.QWEN_CRITICAL_SHOT_MODEL || 'qwen3-vl-flash';
-  const base = (options.baseUrl || process.env.DASHSCOPE_BASE_URL || 'https://dashscope.aliyuncs.com/compatible-mode/v1').trim().replace(/\/+$/, '');
+  const provider = options.provider || (process.env.REFERENCE_CRITICAL_PROVIDER === 'gemini' ? 'gemini' : 'qwen');
+  const model = options.model || (provider === 'gemini'
+    ? process.env.GEMINI_CRITICAL_SHOT_MODEL || process.env.GEMINI_MODEL || 'gemini-2.5-flash'
+    : process.env.QWEN_CRITICAL_SHOT_MODEL || 'qwen3-vl-flash');
+  const base = (options.baseUrl || (provider === 'gemini'
+    ? 'https://generativelanguage.googleapis.com/v1beta/openai'
+    : process.env.DASHSCOPE_BASE_URL || 'https://dashscope.aliyuncs.com/compatible-mode/v1')).trim().replace(/\/+$/, '');
   const frames = input.frames.filter(frame => {
     const index = Number(frame.shotId.replace(/^shot-/, '')) - 1;
     const range = details[index] && benchmarkTimeRange(details[index].time || details[index].timestamp || '');
@@ -147,7 +152,7 @@ syncPoints只输出wordIds、eventIndex、reason，不要生成syncTime。仅引
     content.push({ type: 'image_url', image_url: { url: `data:${frame.mimeType};base64,${frame.base64}` } });
   }
   const response = await (options.fetcher || fetch)(`${base}/chat/completions`, { method: 'POST',
-    headers: { Authorization: `Bearer ${options.apiKey || dashscopeApiKey()}`, 'Content-Type': 'application/json' },
+    headers: { Authorization: `Bearer ${options.apiKey || (provider === 'gemini' ? process.env.GEMINI_API_KEY?.trim() : dashscopeApiKey())}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({ model, temperature: 0, response_format: { type: 'json_object' }, max_tokens: 14000,
       messages: [{ role: 'user', content }] }), signal: AbortSignal.timeout(120_000) });
   if (!response.ok) throw new Error(`reference_critical_qwen_http_${response.status}`);
@@ -155,7 +160,7 @@ syncPoints只输出wordIds、eventIndex、reason，不要生成syncTime。仅引
   const choice = recordOf(Array.isArray(payload.choices) ? payload.choices[0] : null);
   const contentValue = recordOf(choice.message).content;
   const raw = typeof contentValue === 'string' ? contentValue : '';
-  const providerResponse: ReferenceCriticalProviderResponse = { raw, usage: recordOf(payload.usage), model };
+  const providerResponse: ReferenceCriticalProviderResponse = { raw, usage: recordOf(payload.usage), model, provider };
   if (choice.finish_reason === 'length') throw new ReferenceCriticalValidationError('reference_critical_qwen_output_truncated', providerResponse);
   return restoreReferenceCriticalResponse({ ...input, frames }, providerResponse);
 }
@@ -168,10 +173,10 @@ export function restoreReferenceCriticalResponse(input: ClassificationInput,
   let parsed: unknown;
   try { parsed = JSON.parse(raw); } catch { throw new ReferenceCriticalValidationError('reference_critical_qwen_invalid_json', providerResponse); }
   let checked: ReturnType<typeof validateReferenceCriticalShots>;
-  try { checked = validateReferenceCriticalShots(input, parsed, model); }
+  try { checked = validateReferenceCriticalShots(input, parsed, model, providerResponse.provider || 'qwen'); }
   catch (error) { throw new ReferenceCriticalValidationError(error instanceof Error ? error.message : 'reference_critical_evidence_invalid', providerResponse); }
   const summary: ReferenceCriticalShotSummary = { ruleVersion: REFERENCE_CRITICAL_RULE_VERSION,
-    evidenceVersion: REFERENCE_CRITICAL_EVIDENCE_VERSION, model, provider: 'qwen', providerResponse,
+    evidenceVersion: REFERENCE_CRITICAL_EVIDENCE_VERSION, model, provider: providerResponse.provider || 'qwen', providerResponse,
     videoId: input.videoId, sourceSha256: input.sourceSha256, analyzedAt: new Date().toISOString(), frameCount: input.frames.length,
     usage: providerResponse.usage, validationWarnings: checked.validationWarnings };
   return { ...input.analysis, scriptDetails15s: checked.details, criticalShotSummary: summary };

@@ -52,6 +52,7 @@ import {
 import { resolveSocialContentFormulaReference } from './socialContentFormulas.js';
 import { runOutsideSocialContentMutationScope } from './socialContentMutation.js';
 import { resolveSocialInspirationScript } from './socialContentScriptSources.js';
+import { socialExecutionExternalCost } from './socialContentAgentWorkflow.js';
 import {
   buildSocialProductionPlan,
   type SocialProductionAsset,
@@ -99,6 +100,7 @@ export interface SocialContentAutoProductionRuntime {
   runFfmpeg?: typeof runVisualFfmpeg;
   createCover?: typeof createVideoCover;
   evaluateReplication?: typeof evaluateSocialReplicationResult;
+  archiveGeneratedMedia?: typeof generatedAssetArchive.archiveNewMedia;
   backendFilePort?: SocialContentBackendFilePort;
 }
 
@@ -245,6 +247,8 @@ export function assetSupplyPlanWithExecutionSelections(
         ...structuredClone(shot),
         sourceStrategy: execution.selectedSourceStrategy,
         fallbackSourceStrategy: execution.fallbackSourceStrategy,
+        ...(candidate.kind === 'capability' && execution.selectedSourceStrategy !== 'authorized_digital_presenter'
+          ? { sourceRefs: [] } : {}),
         ...(candidate.kind === 'asset' && candidate.sourceRef ? {
           sourceRefs: [candidate.sourceRef],
           selectedMaterialSegment: segment ? {
@@ -409,6 +413,7 @@ export async function runSocialContentAutoProduction(input: {
         tenantId: input.tenantId,
         name: detail.brief.requestedPresenterName,
         requestedPresenterAssetId: detail.brief.requestedPresenterAssetId,
+        selectedEnterprisePresenterAssetId: detail.brief.presenterAssetId,
         lock: agentWorkflow.directorBrief.accountPresenterLock,
       });
       if (!namedPresenter.ok) {
@@ -459,7 +464,7 @@ export async function runSocialContentAutoProduction(input: {
       executionPlanReviewId: agentWorkflow.executionPlanReview.reviewId,
       reviewRound: agentWorkflow.executionPlan.reviewRound,
       maxReviewRounds: agentWorkflow.executionPlan.maxReviewRounds,
-      plannedCostCny: agentWorkflow.executionPlan.scenes.reduce((sum, scene) => sum + scene.estimatedCostCny, 0),
+      plannedCostCny: socialExecutionExternalCost(agentWorkflow.executionPlan, agentWorkflow.directorBrief),
       plannedSeconds: agentWorkflow.executionPlan.scenes.reduce((sum, scene) => sum + scene.estimatedSeconds, 0),
     },
   });
@@ -668,9 +673,20 @@ export async function runSocialContentAutoProduction(input: {
 	    if (zeroAssetRoute) return [];
 	    throw error;
 	  });
+	  const reviewedSupplyPlan = detail.assetSupplyPlan
+	    ? assetSupplyPlanWithExecutionSelections(detail.assetSupplyPlan, agentWorkflow)
+	    : null;
+	  const requiredAssetRefs = new Set(reviewedSupplyPlan?.shots.flatMap(shot => shot.sourceRefs) ?? []);
+	  const needsProductImage = reviewedSupplyPlan?.shots.some(shot => shot.sourceStrategy === 'customer_product_image_animation') ?? false;
+	  // Analyze only assets that the reviewed execution can consume. Scanning an
+	  // unrelated tenant video can add minutes, provider cost, and make a bad
+	  // legacy timeline block a production that never selected that material.
+	  const productionAssetsToAnalyze = reviewedSupplyPlan ? rawAssets.filter(asset =>
+	    requiredAssetRefs.has(asset.id) || requiredAssetRefs.has(asset.sourceId)
+	      || (needsProductImage && asset.type === 'image')) : rawAssets;
 	  const analyzed = await analyzeSocialProductionAssetsWithCheckpoint({
       tenantId: input.tenantId,
-      assets: rawAssets,
+      assets: productionAssetsToAnalyze,
       analyze: analyzeProductionAssets,
     });
 	  let assets = analyzed.assets;
@@ -747,6 +763,7 @@ export async function runSocialContentAutoProduction(input: {
           assets,
           execution: assetSupplyExecution,
           now: input.now,
+          archiveMedia: input.runtime?.archiveGeneratedMedia,
         });
       }
       for (const selection of presenterExecutions) {
@@ -1344,8 +1361,7 @@ export async function runSocialContentAutoProduction(input: {
   });
 
   const evaluationFailures = [...creativeReviewFailures,...(replicationEvaluation?.status === 'passed'?[]:replicationEvaluation?.directorDecision.failedCriteria??[])];
-  const plannedCostCny = +agentWorkflow.executionPlan.scenes
-    .reduce((sum, scene) => sum + scene.estimatedCostCny, 0).toFixed(2);
+  const plannedCostCny = socialExecutionExternalCost(agentWorkflow.executionPlan, agentWorkflow.directorBrief);
   const selectedAssetIds = new Set(contentHandoff.scenes.map(scene => scene.source.assetId));
   const archivedMaterialIdByAssetId = new Map((assetSupplyExecution?.shots ?? [])
     .filter(shot => shot.archivedMaterial)
@@ -1366,6 +1382,7 @@ export async function runSocialContentAutoProduction(input: {
   const finalGeneratedMaterial = await archiveGeneratedSocialContentFile({
     file,
     stored,
+    archiveMedia: input.runtime?.archiveGeneratedMedia,
     archive: {
       tenantId: input.tenantId,
       name: `${detail.brief.title || '社媒内容'}-成品.mp4`,

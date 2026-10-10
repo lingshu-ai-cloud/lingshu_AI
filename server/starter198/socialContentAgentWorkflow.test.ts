@@ -236,7 +236,10 @@ assert.equal(personScene.productionRouting?.enterprisePresenterAssetRef, present
 assert.equal(personScene.productionRouting?.needsExpressiveAction, true);
 assert.equal(personScene.productionRouting?.needsPreciseLipSync, true);
 assert.equal(personWorkflow.executionPlan.scenes[0]?.routeDecision?.policy, 'expressive_action');
-assert.deepEqual(personWorkflow.executionPlan.scenes[0]?.recommendedCandidateIds, []);
+assert.equal(personWorkflow.executionPlan.scenes[0]?.recommendedCandidateIds.length, 1);
+assert.equal(personWorkflow.executionPlan.scenes[0]?.candidates.find(candidate => (
+  personWorkflow.executionPlan.scenes[0]?.recommendedCandidateIds.includes(candidate.candidateId)
+))?.kind, 'capability');
 assert.ok(personScene.acceptanceCriteria.some(item => item.includes('企业人物资产替换')));
 assert.ok(workflow.directorBrief.scenes[0]?.acceptanceCriteria.some(item => item.includes('前三秒钩子必须逐帧核对')));
 assert.equal(workflow.directorBrief.contentRequirements?.product.required, true);
@@ -269,11 +272,13 @@ assert.ok(runtimeCapabilities.every(capability => (
   && capability.concurrencyLimit > 0
   && capability.rateLimitPerMinute > 0
   && capability.planningAvailability === 'supported'
-  && capability.availability === (capability.executable ? 'available' : 'unavailable')
+  && capability.availability === (capability.executable ? 'available'
+    : capability.registeredAdapterIds.length ? 'degraded' : 'unavailable')
   && capability.applicableScenes.length > 0
 )));
-assert.equal(runtimeCapabilities.find(item => item.strategy === 'authorized_digital_presenter')?.executable, false);
-assert.equal(runtimeCapabilities.find(item => item.strategy === 'authorized_digital_presenter')?.availabilityReason, '未注册执行适配器');
+assert.equal(runtimeCapabilities.find(item => item.strategy === 'authorized_digital_presenter')?.registeredAdapterIds[0],
+  'controlled_digital_presenter.v1');
+assert.ok(runtimeCapabilities.find(item => item.strategy === 'authorized_digital_presenter')?.availabilityReason !== '未注册执行适配器');
 assert.deepEqual(runtimeCapabilities.find(item => item.strategy === 'motion_graphics')?.registeredAdapterIds, ['system_safe_motion_graphics.v1']);
 
 const localMaterialSupply = createSocialAssetSupplyPlan({

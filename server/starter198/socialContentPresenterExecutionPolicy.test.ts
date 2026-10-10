@@ -40,14 +40,22 @@ assert.equal(route({}).decision.route, 'heygen_talking');
 assert.equal(route({}).providerId, 'heygen');
 assert.equal(route({}).decision.measurements.enterprisePresenterAssetRef, 'authorized-person-1');
 assert.equal(route({}).decision.measurements.sourceFirstFrameRef, 'server-frame-1');
-assert.equal(route({}, 'aigc_product_scene_replication').executionStatus, 'blocked');
-assert.ok(route({}, 'aigc_product_scene_replication').reasonCodes.includes('execution_strategy_does_not_match_heygen'));
+assert.equal(selectPresenterExecutions({ detail: detail({}, 'aigc_product_scene_replication'), heygenReady: true,
+  seedancePresenterReady: false, budgetReady: true }).length, 0,
+  'a visual person observed in the reference does not enter the presenter provider when the execution plan selected another strategy');
 const motion = route({ specificGestureCount: 1, visibleSpeechSeconds: 0, lipSyncRequired: false });
 assert.equal(motion.decision.route, 'blocked');
 assert.ok(motion.reasonCodes.includes('seedance_capability_unavailable'));
 const split = route({ specificGestureCount: 1 });
 assert.equal(split.decision.route, 'split_motion_and_speech');
 assert.equal(split.executionStatus, 'blocked');
+const phraseMeasured = detail({ visibleSpeechSeconds: null, lipSyncRequired: null,
+  specificGestureCount: null, bodyCenterTravelFrameWidth: null, cameraTravelFrameDiagonal: null,
+  compositionLockRequired: null, physicalProductContact: null, decisionConfidence: 0 });
+phraseMeasured.referenceVideoAnalysis.shots[0].spokenLines = [{ text: 'hello', precision: 'phrase',
+  provenance: 'qwen_filetrans:measured_words', startSeconds: 0.1, endSeconds: 1.8 }];
+assert.equal(selectPresenterExecutions({ detail: phraseMeasured, heygenReady: true,
+  seedancePresenterReady: false, budgetReady: true })[0].providerId, 'heygen');
 const contact = route({ physicalProductContact: true, specificGestureCount: 1 });
 assert.equal(contact.decision.route, 'blocked');
 assert.equal(contact.providerId, null);
@@ -75,6 +83,9 @@ const exactStore: any = { list: async () => ({ totalItems: 1, items: [{ payload:
 }] } }] }) };
 assert.deepEqual(await verifyNamedPresenterLock({ store: exactStore, tenantId: 'tenant', lock }),
   { ok: true, presenterAssetId: 'one', assetVersion: 3 });
+assert.deepEqual(await verifyNamedPresenterLock({ store: exactStore, tenantId: 'tenant', name: '客户顾问',
+  selectedEnterprisePresenterAssetId: 'one', lock: null }),
+  { ok: true, presenterAssetId: 'one', assetVersion: 3 });
 assert.deepEqual(await verifyNamedPresenterLock({ store: exactStore, tenantId: 'tenant', name: '销售', lock }),
   { ok: false, reason: 'requested_presenter_missing_or_lock_mismatch' });
 const explicitBrief = parseSocialTaskBrief(defaultBrief(parseCreateSocialTask({
@@ -100,7 +111,11 @@ handoff.agentWorkflow.directorBrief.scenes[0].action = { startState: '面对镜�
 const gaps = replicationExecutionGaps(handoff);
 assert.ok(gaps.some(gap => gap.reasonCodes.includes('source_phrase_timing_unverified')));
 assert.ok(gaps.some(gap => gap.reasonCodes.includes('primary_hook_script_unverified')));
-assert.ok(gaps.some(gap => gap.reasonCodes.includes('enterprise_presenter_version_unlocked')));
+assert.ok(!gaps.some(gap => gap.reasonCodes.includes('enterprise_presenter_version_unlocked')),
+  'an exact selected enterprise asset is verified asynchronously before provider execution');
+handoff.agentWorkflow.directorBrief.scenes[0].productionRouting.enterprisePresenterAssetRef = null;
+assert.ok(replicationExecutionGaps(handoff).some(gap => gap.reasonCodes.includes('enterprise_presenter_version_unlocked')));
+handoff.agentWorkflow.directorBrief.scenes[0].productionRouting.enterprisePresenterAssetRef = 'authorized-person-1';
 assert.ok(gaps.every(gap => gap.nextActions.length > 0));
 handoff.referenceVideoAnalysis.shots[0].spokenText = '示范口播';
 handoff.referenceVideoAnalysis.shots[0].startSeconds = 0;
@@ -137,4 +152,37 @@ handoff.referenceVideoAnalysis.shots[0].spokenLines.push({ text: '第二句', pr
 assert.deepEqual(replicationExecutionGaps(handoff), []);
 handoff.agentWorkflow.directorBrief.scenes[0].audioLayers.dialogue = null;
 assert.ok(replicationExecutionGaps(handoff).some(gap => gap.reasonCodes.includes('source_speech_missing_from_handoff')));
+
+// A word-measured Qwen phrase may span multiple physical cuts. Only its owner
+// emits narration; intersecting visual cuts retain the shared line mapping and
+// must not be rejected for intentionally having no duplicate voiceover.
+const crossCut: any = structuredClone(handoff);
+crossCut.referenceVideoAnalysis.shots = [{
+  ...crossCut.referenceVideoAnalysis.shots[0], shotId: 'ref-1', startSeconds: 0, endSeconds: 1.5,
+  spokenText: '原品牌卸妆很快', spokenLines: [{ text: '原品牌卸妆很快', precision: 'phrase',
+    provenance: 'qwen_filetrans:measured_words', startSeconds: 0.2, endSeconds: 2.8 }],
+}, {
+  ...crossCut.referenceVideoAnalysis.shots[0], shotId: 'ref-2', startSeconds: 1.5, endSeconds: 3,
+  spokenText: '原品牌卸妆很快', spokenLines: [{ text: '原品牌卸妆很快', precision: 'phrase',
+    provenance: 'qwen_filetrans:measured_words', startSeconds: 0.2, endSeconds: 2.8 }],
+}];
+const owner = crossCut.agentWorkflow.directorBrief.scenes[0];
+owner.sceneId = 'replication-ref-1';
+owner.referenceShotId = 'ref-1';
+owner.audioLayers = { ...owner.audioLayers, dialogue: null, voiceover: '新品牌卸妆很快' };
+owner.voiceoverAlignment = { cueId: 'line-1', text: '新品牌卸妆很快', startSeconds: 0.2,
+  endSeconds: 2.8, matchMode: 'verbatim_semantic', secondaryVisualTags: [] };
+owner.voiceoverLines = [{ lineId: 'line-1', text: '新品牌卸妆很快', sourceStartSeconds: 0.2,
+  sourceEndSeconds: 2.8, narrationOwnerShotId: 'replication-ref-1',
+  visualShotIds: ['replication-ref-1', 'replication-ref-2'], isNarrationOwner: true }];
+const visualCut = structuredClone(owner);
+visualCut.sceneId = 'replication-ref-2';
+visualCut.referenceShotId = 'ref-2';
+visualCut.referenceMaterial.isPrimaryHook = false;
+visualCut.audioLayers.voiceover = null;
+visualCut.voiceoverAlignment = undefined;
+visualCut.voiceoverLines = [{ ...owner.voiceoverLines[0], isNarrationOwner: false }];
+crossCut.agentWorkflow.directorBrief.scenes = [owner, visualCut];
+assert.deepEqual(replicationExecutionGaps(crossCut), [],
+  'measured cross-cut speech is emitted once and remains source-auditable from every visual cut');
 console.log('social content presenter execution policy tests passed');

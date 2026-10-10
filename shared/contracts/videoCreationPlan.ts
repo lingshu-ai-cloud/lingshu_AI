@@ -297,6 +297,12 @@ export function videoPlanErrors(plan: VideoCreationPlan): string[] {
     usesDigitalPresenter(plan) && (!plan.heygenAvatarId || !plan.avatarConsent) && '请选择 HeyGen 人物并确认使用权',
   ].filter(Boolean) as string[];
 }
+// Scheduling can precede reference collection; production still uses videoPlanErrors.
+export function videoSchedulingErrors(plan: VideoCreationPlan): string[] {
+  return videoPlanErrors(plan).filter(error => !(
+    plan.route === 'clone' && plan.directorStatus === 'candidate' && error === '请选择爆款参考'
+  ));
+}
 export function spokenLanguageMatches(text: string, language: string): boolean {
   const code = normalizeVideoLanguage(language);
   const letters = (text.match(/[\p{L}]/gu) || []).length;

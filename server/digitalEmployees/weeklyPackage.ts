@@ -1,6 +1,6 @@
 import { normalizeTodo } from '../../src/lib/reviewTodos.js';
 import { normalizeAssessment, maturityProfiles, taskGuidance } from '../../shared/contracts/operatingMaturity.js';
-import { normalizeVideoPlan, videoPlanErrors } from '../../shared/contracts/videoCreationPlan.js';
+import { normalizeVideoPlan, videoSchedulingErrors } from '../../shared/contracts/videoCreationPlan.js';
 import { defaultMatrixPlan, fillMatrixVideos, normalizeMatrixPlan, matrixScopeIssues } from '../../src/lib/weeklyMatrix.js';
 import { LEGACY_TASK_TEMPLATE_IDS, TASK_TEMPLATES, packageIssues, type WeeklyPackage, type PackageTask, type TemplateId, type WeeklyOperatingContext } from '../../src/lib/weeklyPackage.js';
 import { defaultDirectorPlan, normalizeDirectorPlan } from '../../src/lib/contentDirector.js';
@@ -197,11 +197,7 @@ export function validatePackage(pack: WeeklyPackage, goal: WeeklyGoalInput, conf
           : []),
       ]
     : [];
-  return [...packageIssues(pack, goal.startsAt, goal.endsAt), ...versionIssues, ...growthIssues, ...(config ? matrixScopeIssues(pack, config.publishingTargets, goal.contentPlatforms) : []), ...pack.tasks.flatMap(t => (t.videoPlans || []).flatMap((p, i) => videoPlanErrors(p)
-    // A candidate clone slot is a scheduling intention. The Director attaches
-    // an exact reference during detail generation; execution remains blocked
-    // by buildContentBatchPlan until that evidence exists.
-    .filter(error => !(p.route === 'clone' && p.directorStatus === 'candidate' && error === '请选择爆款参考'))
+  return [...packageIssues(pack, goal.startsAt, goal.endsAt), ...versionIssues, ...growthIssues, ...(config ? matrixScopeIssues(pack, config.publishingTargets, goal.contentPlatforms) : []), ...pack.tasks.flatMap(t => (t.videoPlans || []).flatMap((p, i) => videoSchedulingErrors(p)
     .map(e => `第 ${i + 1} 条视频：${e}`)))];
 }
 

@@ -50,6 +50,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const digitalEmployeeApi = {
+  confirmWeeklyPreparation: (goalId: string, revision: number) => request<{ preparation: InitialPreparation }>(`/goals/${encodeURIComponent(goalId)}/initial-preparation`, { method: 'POST', body: JSON.stringify({ revision, requestId: `weekly-${goalId.replace(/[^a-zA-Z0-9-]/g, '-').slice(0, 80)}` }) }),
   startInitialPreparation: (goalId:string,revision:number,plan:InitialOperatingPlan,requestId:string)=>request<{preparation:InitialPreparation}>(`/goals/${encodeURIComponent(goalId)}/initial-preparation`,{method:"POST",body:JSON.stringify({...plan,revision,requestId})}),
   initialPreparation:(goalId:string)=>request<{preparation:InitialPreparation|null}>(`/goals/${encodeURIComponent(goalId)}/initial-preparation`),
   resumeInitialPreparation:(goalId:string)=>request<{preparation:InitialPreparation}>(`/goals/${encodeURIComponent(goalId)}/initial-preparation`,{method:"POST",body:JSON.stringify({resume:true})}),

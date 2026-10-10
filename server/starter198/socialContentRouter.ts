@@ -134,6 +134,7 @@ function sendFailure(res: Response, error: unknown): void {
     res.status(error.code === 'starter_198_not_provisioned' ? 403 : 503).json({ error: code, message: code });
     return;
   }
+  console.error('[social-content] unhandled request failure:', error);
   res.status(503).json({ error: 'social_content_unavailable', message: 'social_content_unavailable' });
 }
 

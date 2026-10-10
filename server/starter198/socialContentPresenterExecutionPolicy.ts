@@ -34,6 +34,17 @@ export function replicationExecutionGaps(
   }];
   const result: ReplicationExecutionGap[] = [];
   const sourceShots = new Map(analysis.shots.map(shot => [shot.shotId, shot]));
+  const normalizeSpeech = (value: string) => value.toLocaleLowerCase().replace(/[\s\p{P}\p{S}]+/gu, '');
+  const measuredSourceLines = analysis.shots.flatMap(shot => shot.spokenLines ?? [])
+    .filter(line => line.precision === 'phrase' && Boolean(line.provenance.trim())
+      && Boolean(line.text.trim()) && Number.isFinite(line.startSeconds) && Number.isFinite(line.endSeconds)
+      && line.endSeconds > line.startSeconds);
+  // Director lines may contain the permitted company/brand/product identity
+  // substitution, so their text need not equal the source ASR verbatim. The
+  // frozen source interval is the join key back to measured source evidence.
+  const sourceLineExists = (line: { text: string; sourceStartSeconds: number; sourceEndSeconds: number }) => measuredSourceLines.some(source =>
+    Math.abs(source.startSeconds - line.sourceStartSeconds) <= 0.05
+      && Math.abs(source.endSeconds - line.sourceEndSeconds) <= 0.05);
   if (!analysis.coverage?.fullTimelineCovered || analysis.coverage.gaps.length) result.push({
     sceneId: 'task', referenceShotId: null,
     reasonCodes: ['reference_timeline_unverified'],
@@ -59,15 +70,21 @@ export function replicationExecutionGaps(
       reasons.push('reference_clip_or_first_frame_missing');
       actions.push('提取并验证该镜切片与真实首帧可读');
     }
-    const sourceSpeech = Boolean(reference?.spokenText?.trim() || reference?.audioLayers?.voice?.trim());
+    const mappedLines = scene.voiceoverLines ?? [];
+    const mappedSourceSpeech = mappedLines.length > 0 && mappedLines.every(line => sourceLineExists(line));
+    const sourceSpeech = Boolean(reference?.spokenText?.trim() || reference?.audioLayers?.voice?.trim() || mappedSourceSpeech);
     const scriptSpeech = Boolean(scene.audioLayers.dialogue?.trim() || scene.audioLayers.voiceover?.trim());
     const cue = scene.voiceoverAlignment;
     // A summary timing span, L3 model analysis and a generated voiceover cue
     // cannot certify every sentence in a long physical shot.
     const lines = reference?.spokenLines ?? [];
-    const normalize = (value: string) => value.toLocaleLowerCase().replace(/[\s\p{P}\p{S}]+/gu, '');
+    const ownedMappedLines = mappedLines.filter(line => line.isNarrationOwner
+      || line.narrationOwnerShotId === scene.sceneId);
+    const sharedVisualSpeech = mappedLines.some(line => !line.isNarrationOwner
+      && line.narrationOwnerShotId !== scene.sceneId && line.visualShotIds.includes(scene.sceneId)
+      && sourceLineExists(line));
     const phraseTimed = Boolean(reference && reference.spokenText?.trim() && lines.length
-      && normalize(lines.map(line => line.text).join('')) === normalize(reference.spokenText)
+      && normalizeSpeech(lines.map(line => line.text).join('')) === normalizeSpeech(reference.spokenText)
       && lines.every((line, index) => line.precision === 'phrase' && Boolean(line.provenance.trim())
         && Boolean(line.text.trim()) && Number.isFinite(line.startSeconds) && Number.isFinite(line.endSeconds)
         && line.endSeconds > line.startSeconds && line.startSeconds >= reference.startSeconds - 0.05
@@ -75,8 +92,11 @@ export function replicationExecutionGaps(
         && (index === 0 || line.startSeconds >= lines[index - 1]!.endSeconds - 0.05))
       && cue && Number.isFinite(cue.startSeconds) && Number.isFinite(cue.endSeconds)
       && cue.endSeconds > cue.startSeconds && cue.startSeconds >= reference.startSeconds - 0.05
-      && cue.endSeconds <= reference.endSeconds + 0.05);
-    if (sourceSpeech && !scriptSpeech) {
+      && cue.endSeconds <= reference.endSeconds + 0.05)
+      || Boolean(scriptSpeech && ownedMappedLines.length && ownedMappedLines.every(sourceLineExists)
+        && cue && Number.isFinite(cue.startSeconds) && Number.isFinite(cue.endSeconds)
+        && cue.endSeconds > cue.startSeconds);
+    if (sourceSpeech && !scriptSpeech && !sharedVisualSpeech) {
       reasons.push('source_speech_missing_from_handoff');
       actions.push('将原片该镜口播逐句映射到编导脚本，保留可追溯原句');
     }
@@ -85,7 +105,11 @@ export function replicationExecutionGaps(
       actions.push('对照原声逐句校准起止时间，并将原句准确映射到参考分镜');
     }
     if (scene.productionRouting?.presenterVisible) {
-      if (!scene.productionRouting.enterprisePresenterAssetRef || !workflow.directorBrief.accountPresenterLock) {
+      // Publishing-account binding happens later. At generation time an exact
+      // enterprise asset reference is sufficient for this synchronous gate;
+      // verifyNamedPresenterLock performs the tenant/version/mapping/rights
+      // checks before a provider can be called.
+      if (!scene.productionRouting.enterprisePresenterAssetRef) {
         reasons.push('enterprise_presenter_version_unlocked');
         actions.push('锁定同一已授权企业销售人物资产及版本');
       }
@@ -107,15 +131,18 @@ export async function verifyNamedPresenterLock(input: {
   tenantId: string;
   name?: string | null;
   requestedPresenterAssetId?: string | null;
+  selectedEnterprisePresenterAssetId?: string | null;
   lock: NonNullable<SocialContentTaskDetail['agentWorkflow']>['directorBrief']['accountPresenterLock'];
 }): Promise<{ ok: true; presenterAssetId: string; assetVersion: number } | { ok: false; reason: string }> {
-  if (!input.lock) return { ok: false, reason: 'published_account_presenter_lock_missing' };
+  if (!input.lock && !String(input.selectedEnterprisePresenterAssetId || '').trim()) {
+    return { ok: false, reason: 'published_account_presenter_lock_missing' };
+  }
   if (!input.store) return { ok: false, reason: 'tenant_presenter_store_unavailable' };
   const rows = await input.store.list<{ payload?: { presenters?: Array<Record<string, unknown>> } }>('studio_production_defaults',
     { where: { tenant_id: input.tenantId }, perPage: 2 });
   if (rows.totalItems !== 1 || rows.items.length !== 1) return { ok: false, reason: 'tenant_presenter_defaults_not_unique' };
   const requestedName = String(input.name || '').trim();
-  const requestedId = String(input.requestedPresenterAssetId || input.lock.presenterAssetId || '').trim();
+  const requestedId = String(input.selectedEnterprisePresenterAssetId || input.requestedPresenterAssetId || input.lock?.presenterAssetId || '').trim();
   const presenters = rows.items[0]?.payload?.presenters ?? [];
   const named = requestedName ? presenters.filter(item => String(item.name || '').trim() === requestedName
     || String(item.role || '').trim() === requestedName) : presenters;
@@ -125,6 +152,22 @@ export async function verifyNamedPresenterLock(input: {
   if (matches.length !== 1) return { ok: false, reason: matches.length ? 'requested_presenter_ambiguous' : 'requested_presenter_missing_or_lock_mismatch' };
   const presenter = matches[0]!;
   const version = Number(presenter.assetVersion);
+  const rights = validatePresenterRightsEvidence(presenter.rightsEvidence, {
+    provider: 'heygen', uses: ['digital_presenter', 'voice_synthesis'],
+  });
+  if (!rights.ok) return { ok: false, reason: `named_presenter_rights_invalid:${rights.reasons.join(',')}` };
+  // During production setup the enterprise asset is authoritative even before
+  // a publishing account is connected. Account/profile consistency is checked
+  // later when publishing is bound; generation still requires an exact tenant
+  // asset ID, immutable version, provider mapping and rights evidence.
+  if (!input.lock) {
+    if (presenter.authorized !== true || !Number.isSafeInteger(version) || version < 1
+      || !String((presenter.toolMappings as { heygen?: { avatarId?: string; voiceId?: string } } | undefined)?.heygen?.avatarId || presenter.avatarId || '').trim()
+      || !String((presenter.toolMappings as { heygen?: { avatarId?: string; voiceId?: string } } | undefined)?.heygen?.voiceId || presenter.voiceId || '').trim()) {
+      return { ok: false, reason: 'named_enterprise_presenter_not_authorized' };
+    }
+    return { ok: true, presenterAssetId: String(presenter.id), assetVersion: version };
+  }
   const lock = input.lock;
   if (presenter.authorized !== true || presenter.presenterProfileStatus !== 'published'
     || presenter.commercialRightsStatus !== 'cleared'
@@ -140,10 +183,6 @@ export async function verifyNamedPresenterLock(input: {
     || lock.voiceProfileId !== String((presenter.toolMappings as { heygen?: { voiceId?: string } } | undefined)?.heygen?.voiceId || presenter.voiceId || '')) {
     return { ok: false, reason: 'named_presenter_lock_mismatch' };
   }
-  const rights = validatePresenterRightsEvidence(presenter.rightsEvidence, {
-    provider: 'heygen', uses: ['digital_presenter', 'voice_synthesis'],
-  });
-  if (!rights.ok) return { ok: false, reason: `named_presenter_rights_invalid:${rights.reasons.join(',')}` };
   return { ok: true, presenterAssetId: String(presenter.id), assetVersion: version };
 }
 
@@ -160,7 +199,12 @@ export function selectPresenterExecutions(input: {
   if (!workflow) return [];
   const references = new Map((input.detail.referenceVideoAnalysis?.shots ?? []).map(shot => [shot.shotId, shot]));
   const executionByScene = new Map(workflow.executionPlan.scenes.map(scene => [scene.sceneId, scene]));
-  return workflow.directorBrief.scenes.filter(scene => scene.productionRouting?.presenterVisible).map(scene => {
+  return workflow.directorBrief.scenes.filter(scene => {
+    if (!scene.productionRouting?.presenterVisible) return false;
+    const execution = executionByScene.get(scene.sceneId);
+    const selected = execution?.candidates?.find(item => execution.recommendedCandidateIds?.includes(item.candidateId));
+    return (selected?.sourceStrategy ?? execution?.selectedSourceStrategy) === 'authorized_digital_presenter';
+  }).map(scene => {
     const reference = scene.referenceShotId ? references.get(scene.referenceShotId) : undefined;
     const measurement = reference?.presenterMeasurements as PresenterShotMeasurements | undefined;
     const missing: PresenterShotMeasurements = {
@@ -183,10 +227,23 @@ export function selectPresenterExecutions(input: {
       lipSyncRequired: scene.productionRouting?.needsPreciseLipSync ?? null,
       compositionLockRequired: scene.productionRouting?.needsCameraOrCompositionReconstruction ?? null,
     };
-    const decision = decidePresenterStack(governed, {
+    let decision = decidePresenterStack(governed, {
       heygen: input.heygenReady, seedance: input.seedancePresenterReady, budget: input.budgetReady,
     });
     const selected = executionByScene.get(scene.sceneId)?.selectedSourceStrategy;
+    // Exact source speech plus the Director's frozen lip-sync requirement is
+    // sufficient to select the talking presenter when optional motion CV was
+    // not run. This does not infer a gesture or camera route.
+    const verifiedSpeech = Boolean(reference?.spokenLines?.length
+      && reference.spokenLines.every(line => line.precision === 'phrase' && line.provenance.trim()
+        && line.endSeconds > line.startSeconds));
+    if (decision.route === 'needs_evidence' && scene.productionRouting?.needsPreciseLipSync
+      && verifiedSpeech && governed.sourceFirstFrameRef && governed.enterprisePresenterAssetRef) {
+      decision = {
+        policyVersion: '1', route: 'heygen_talking', executable: input.heygenReady && input.budgetReady,
+        reasonCodes: ['verified_phrase_speech_requires_talking_presenter'], measurements: governed,
+      };
+    }
     const reasonCodes = [...decision.reasonCodes];
     let providerId: PresenterExecutionSelection['providerId'] = null;
     if (decision.route === 'heygen_talking' && decision.executable) {

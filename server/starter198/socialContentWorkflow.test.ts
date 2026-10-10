@@ -1346,6 +1346,7 @@ try {
         fs.writeFileSync(coverPath, Buffer.from([0xff, 0xd8, 0xff, 0xd9]));
         return coverPath;
       },
+      archiveGeneratedMedia: async input => ({ id: `archived-${input.lineage.sourceShotId}` }) as any,
       backendFilePort,
     },
   });

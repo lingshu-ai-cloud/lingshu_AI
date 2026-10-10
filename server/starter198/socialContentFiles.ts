@@ -827,6 +827,7 @@ export async function registerSocialContentFile(input: {
 export async function archiveGeneratedSocialContentFile(input: {
   file: SocialContentFile;
   stored: StoredSocialContentFile;
+  archiveMedia?: typeof generatedAssetArchive.archiveNewMedia;
   archive: Omit<GeneratedAssetArchiveInput, 'media'> & {
     media: Omit<GeneratedAssetArchiveInput['media'], 'contentSha256' | 'mimeType' | 'type'> & {
       type: GeneratedAssetArchiveInput['media']['type'];
@@ -836,7 +837,7 @@ export async function archiveGeneratedSocialContentFile(input: {
   if (input.file.sha256 !== input.stored.sha256) {
     throw new SocialContentWorkflowError('social_content_file_integrity_violation', 503);
   }
-  return generatedAssetArchive.archiveNewMedia({
+  return (input.archiveMedia ?? generatedAssetArchive.archiveNewMedia)({
     ...input.archive,
     media: {
       ...input.archive.media,

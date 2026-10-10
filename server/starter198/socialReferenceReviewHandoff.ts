@@ -209,11 +209,28 @@ export function buildSocialReferenceReviewHandoff(input: {
   }
   const reviewedHook = reviewedShots.find(shot => string(shot.shotId) === selectedHook?.shotId);
   const rawHook = selectedHook ? details[shots.indexOf(selectedHook)] : undefined;
+  const rawHookRange = parseAnalysisTimeRange(string(rawHook?.time || rawHook?.timestamp));
+  const transcriptSegments = list(object(gemini.audioTranscript).segments).map(object);
+  const hookTranscriptSpeech = rawHookRange ? transcriptSegments.filter(segment =>
+    usable(segment.text) && Number(segment.start) < rawHookRange.end && Number(segment.end) > rawHookRange.start)
+    .map(segment => string(segment.text)).filter(Boolean).join(' ') : '';
+  const hookHasObservedSpeech = Boolean(hookTranscriptSpeech);
+  const observedSpeech = string(rawHook?.voiceover) || string(rawHook?.dialogue) || hookTranscriptSpeech;
+  const observedSoundEffects = list(rawHook?.soundEffects).map(string).filter(Boolean).join('；');
   const rawCandidates: HookScript = {
-    camera: string(rawHook?.camera), visual: string(rawHook?.visual), subject: string(rawHook?.observedFacts),
-    music: string(rawHook?.bgm), voiceover: string(rawHook?.voiceover),
-    soundEffects: list(rawHook?.soundEffects).map(string).filter(Boolean).join('；'),
-    spokenWords: string(rawHook?.dialogue),
+    camera: string(rawHook?.camera), visual: string(rawHook?.visual),
+    subject: string(rawHook?.observedFacts) || string(rawHook?.visual),
+    music: string(rawHook?.bgm),
+    // Providers do not agree on whether visible presenter speech belongs in
+    // `voiceover` or `dialogue`. Both fields are source evidence, so preserve
+    // the observed line in both review dimensions instead of manufacturing a
+    // false "missing voiceover" gate for an on-camera hook.
+    voiceover: observedSpeech || (!hookHasObservedSpeech && transcriptSegments.length
+      ? '无（原片该镜头未检测到口播）' : ''),
+    soundEffects: observedSoundEffects || (Array.isArray(rawHook?.soundEffects)
+      ? '无（原片该镜头未检测到独立音效）' : ''),
+    spokenWords: observedSpeech || (!hookHasObservedSpeech && transcriptSegments.length
+      ? '无（原片该镜头未检测到人物台词）' : ''),
     subjectAction: list(rawHook?.beats).map(object).map(beat => string(beat.action)).filter(Boolean).join('；'),
   };
   const scriptFields = Object.fromEntries(hookScriptFields.map(key => [key,

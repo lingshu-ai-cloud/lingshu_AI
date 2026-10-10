@@ -122,4 +122,22 @@ const revokedMotionRecord = { ...reviewedHookRecord, referenceShotReview: JSON.s
 }) };
 assert.ok(buildSocialReferenceReviewHandoff({ record: revokedMotionRecord }).issues.some(issue => issue.code === 'hook_action_unverified'));
 
+const visibleSpeechMachineRecord = { id: 'machine-visible-speech', duration: 2, aiAnalysis: JSON.stringify({
+  analysisRunId: 'machine-run', analysisMode: 'exact', analysisQuality: 'video', contentSha256: 'machine-sha',
+  geminiStatus: 'analyzed', gemini: { detectedSceneCuts: [], scriptDetails15s: [{
+    time: '0-2s', camera: '固定中景', visual: '销售人物面对镜头快速口播', observedFacts: '销售人物与产品均清晰可见',
+    bgm: '轻快节奏配乐', voiceover: '', dialogue: 'Stop guessing what your customers want.',
+    soundEffects: ['开场提示音'], beats: [{ action: '人物抬手并指向产品' }],
+    hookMotionEvidence: { status: 'verified' },
+    materialEvidence: { extractionStatus: 'ready', clipRef: 'clip:machine', firstFrameRef: 'frame:machine' },
+  }] },
+}) };
+const visibleSpeechMachine = buildSocialReferenceReviewHandoff({ record: visibleSpeechMachineRecord,
+  presenter: { assetId: 'sales-asset', assetVersion: 'v3', rightsVerified: true, rightsEvidenceRef: 'rights:sales-asset:v3' },
+});
+assert.equal(visibleSpeechMachine.hookScript.fields.voiceover, 'Stop guessing what your customers want.');
+assert.equal(visibleSpeechMachine.hookScript.fields.spokenWords, 'Stop guessing what your customers want.');
+assert.ok(!visibleSpeechMachine.issues.some(issue => issue.code === 'hook_script_incomplete'),
+  'verified on-camera dialogue is valid source evidence for both spoken words and the speech track');
+
 console.log('social reference review handoff quality gate passed');
