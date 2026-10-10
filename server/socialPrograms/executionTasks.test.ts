@@ -340,6 +340,8 @@ test('weekly user approval rejects missing binding/media and accepts an actual r
     content: { render: { completed: true }, mediaStorage: { video: { fileId: 'approval-media', sha256: hash, url: '/fixture.mp4' } }, productionResult: { productionResultId: 'approval-production-result', technicalReview: { approved: true }, creativeReview: { approved: true } } },
     created_at: timestamp, updated_at: timestamp,
   });
+  const reworkRow = await getWeeklyExecutionTaskRow(dataStore, 'tenant-a', approval.dependsOnTaskIds[0]!);
+  await writeWeeklyExecutionTask(dataStore, reworkRow, { ...reworkRow.payload, resultRefs: [{ type: 'starter_social_content_artifact', id: 'approval-artifact', version: 1 }] });
   await assert.rejects(approve());
   await dataStore.create('starter_social_content_files', {
     tenant_id: 'tenant-a', task_id: 'approval-production-task', file_id: 'approval-media', usage: 'artifact_media', name: 'video.mp4', mime_type: 'video/mp4', byte_size: bytes.length, content_sha256: hash,
@@ -357,6 +359,30 @@ test('weekly user approval rejects missing binding/media and accepts an actual r
   const artifact = (await dataStore.list<Record_>('starter_social_content_artifacts', { where: { tenant_id: 'tenant-a', artifact_id: 'approval-artifact' } })).items[0]!;
   assert.equal(artifact.status, 'approved');
   assert.deepEqual((await approve()).find(task => task.taskId === approval.taskId)!.resultRefs, approved.resultRefs);
+});
+
+test('weekly user approval is pinned to the artifact completed by the rework dependency', async () => {
+  const { dataStore, packages, execution, program, draft } = await fixture();
+  await packages.activate('tenant-a', 'owner', program.programId, draft.packageId, { expectedVersion: 1, expectedProgramVersion: 1 });
+  const tasks = await execution.list('tenant-a', program.programId, draft.packageId, 1);
+  const approval = tasks.find(task => task.schedule.stepKind === 'user_approval')!;
+  for (const task of tasks.filter(task => task.workflowKind !== 'publishing' && task.schedule.stepKind !== 'user_approval' && !['review', 'engagement'].includes(task.workflowKind))) await seedCompleted(dataStore, task, new Date());
+  const dependency = await getWeeklyExecutionTaskRow(dataStore, 'tenant-a', approval.dependsOnTaskIds[0]!);
+  await writeWeeklyExecutionTask(dataStore, dependency, { ...dependency.payload, resultRefs: [{ type: 'starter_social_content_artifact', id: 'expected-child', version: 1 }] });
+  await dataStore.create('starter_social_content_tasks', {
+    tenant_id: 'tenant-a', task_id: 'approval-bound-task', weekly_plan_id: draft.packageId,
+    create_idempotency_key: `weekly-production:${draft.packageId}:1:${approval.publicationTaskId}`,
+    status: 'asset_review', version: '1', brief: { programRef: { id: program.programId } },
+  });
+  const content = { render: { completed: true }, mediaStorage: { video: { fileId: 'other-video' } }, productionResult: { productionResultId: 'other-result' } };
+  await dataStore.create('starter_social_content_artifacts', {
+    tenant_id: 'tenant-a', task_id: 'approval-bound-task', artifact_id: 'newer-unrelated', artifact_kind: 'short_video', origin: 'agent', status: 'review_required', version: '1', resource_ref: 'socialfile:other', content,
+    created_at: '2026-10-10T12:00:00Z', updated_at: '2026-10-10T12:00:00Z',
+  });
+  await assert.rejects(
+    execution.approve('tenant-a', program.programId, draft.packageId, approval.taskId, 'owner'),
+    (error: unknown) => error instanceof Error && 'code' in error && error.code === 'weekly_production_artifact_not_reviewable',
+  );
 });
 
 test('inventory reuse graph creates independent approval and publishing without new production or template extraction',async()=>{const {draft}=await fixture();const inventory={...draft,referenceSourcePolicy:{profile:'b2b_established' as const,ownedPercent:20 as const,externalPercent:80 as const,allocationUnit:'mother_content' as const},socialContentPackage:{...draft.socialContentPackage,publicationTasks:draft.socialContentPackage.publicationTasks.map(p=>({...p,inventoryReuseRef:{type:'weekly_inventory_binding',id:'actualbinding',version:1}}))}};const tasks=planWeeklyExecutionTasks('tenant-a',inventory);assert.ok(!tasks.some(t=>['script','storyboard','material_readiness','asset_generation','video_generation','quality_check','rework','template_extraction','template_performance_validation','benchmark_collection','benchmark_scoring','director_analysis'].includes(t.schedule.stepKind)));for(const pub of inventory.socialContentPackage.publicationTasks){const approval=tasks.find(t=>t.publicationTaskId===pub.publicationTaskId&&t.schedule.stepKind==='user_approval');const publishing=tasks.find(t=>t.publicationTaskId===pub.publicationTaskId&&t.schedule.stepKind==='publishing');assert.ok(approval&&publishing);assert.deepEqual(publishing.dependsOnTaskIds,[approval.taskId]);assert.equal(approval.inputSnapshot.startsProduction,false);assert.equal(approval.inputSnapshot.countsAsNewMotherContent,false);assert.deepEqual(approval.inputSnapshot.inventoryReuseRef,pub.inventoryReuseRef);}assert.throws(()=>planWeeklyExecutionTasks('tenant-a',{...inventory,referenceSourcePolicy:draft.referenceSourcePolicy}),/库存任务/);});

@@ -1,5 +1,5 @@
 import test from 'node:test';import assert from 'node:assert/strict';
-import {prepareWeeklyQualityRecoveryFixture} from './weeklyContentQualityRecovery.fixture.js';
+import {prepareWeeklyQualityRecoveryFixture,prepareWeeklyHardQualityRepairFixture} from './weeklyContentQualityRecovery.fixture.js';
 import {createWeeklyContentQualityRecoveryService,WEEKLY_QUALITY_REVIEW_BLOCK} from './weeklyContentQualityRecovery.js';
 import {socialRequestHash} from '../starter198/socialContentValidation.js';
 import {SocialProgramError} from './service.js';
@@ -73,10 +73,36 @@ test('hard-failed original artifact cannot be recovered by adding real audits to
  assert.equal(f.tables.starter_social_content_artifacts!.length,1);assert.equal(f.tables.content_execution_jobs?.length??0,0);
 });
 
-test('hard failure context must identify that a verified descendant repair artifact is required (contract red)',async t=>{
+test('hard failure context identifies that a verified descendant repair artifact is required',async t=>{
  const f=await prepareWeeklyQualityRecoveryFixture({hardFailure:true});t.after(f.cleanup);await f.completeG5();
  const context=await f.service.context(f.scope,'owner'),consumer=context.consumers.find(c=>c.executionTaskId===f.task.taskId);assert.ok(consumer);
  // A passing audit of the original output is deliberately insufficient. The service
  // must expose the repair-parent requirement, rather than treating this as an unrelated blocker.
  assert.equal(consumer.gap?.code,'weekly_quality_recovery_repair_artifact_required');
+});
+
+
+test('actual locally rendered child with fresh G4/G5 repairs the original hard-blocked quality task idempotently',async t=>{
+ const f=await prepareWeeklyHardQualityRepairFixture();t.after(f.cleanup);
+ assert.equal((await f.service.context(f.childScope,'owner')).consumers[0]!.resumeAvailable,false);
+ await f.auditChildG4();
+ // Original G5 cannot be borrowed by the new artifact: no child audit has been submitted.
+ assert.equal((await f.service.context(f.childScope,'owner')).consumers[0]!.resumeAvailable,false);
+ await f.auditChildG5();const ctx=await f.service.context(f.childScope,'owner'),consumer=ctx.consumers.find(c=>c.executionTaskId===f.task.taskId);assert.ok(consumer);assert.equal(consumer.resumeAvailable,true);
+ const body={executionTaskId:f.task.taskId,requestId:'actual-child-hard-recovery-0001',expectedContextHash:consumer.contextHash};
+ const resumed=await f.service.resume(f.childScope,'owner',body);assert.ok(resumed.item);assert.equal(resumed.item.clearedBlocker,'weekly_quality_audit_actual_repair_required');assert.deepEqual(resumed.item.repairParentArtifactRef,{type:'starter_social_content_artifact',id:'artifact',version:1});assert.equal(resumed.task.status,'queued');assert.equal(resumed.task.taskId,f.task.taskId);assert.deepEqual(resumed.task.resultRefs,[]);
+ const count=f.supplierCalls();assert.deepEqual((await f.service.resume(f.childScope,'owner',body)).item,resumed.item);assert.equal(f.supplierCalls(),count);assert.equal(count,1);assert.equal(f.tables.content_execution_jobs!.length,1);assert.equal(f.current().qualityRecoveries!.length,1);
+ assert.equal(f.tables.starter_social_content_tasks![0]!.run_id,'run');assert.notEqual(f.childScope.runId,'run');
+});
+
+
+test('real audited repair child cannot recover quality after its actual parent header is forged',async t=>{
+ const f=await prepareWeeklyHardQualityRepairFixture();t.after(f.cleanup);await f.auditChildG4();await f.auditChildG5();
+ const ctx=await f.service.context(f.childScope,'owner'),consumer=ctx.consumers.find(c=>c.executionTaskId===f.task.taskId);assert.ok(consumer);assert.equal(consumer.resumeAvailable,true);
+ const child=f.tables.starter_social_content_artifacts!.find(row=>row.artifact_id===f.result.artifactId);assert.ok(child);
+ const actualParent=child.parent_artifact_id;child.parent_artifact_id='unrelated-artifact';
+ const body={executionTaskId:f.task.taskId,requestId:'actual-child-wrong-parent-0001',expectedContextHash:consumer.contextHash};
+ await assert.rejects(f.service.resume(f.childScope,'owner',body));
+ assert.equal(f.current().status,'blocked');assert.equal(f.current().qualityRecoveries?.length??0,0);assert.deepEqual(f.current().ownBlockingReasons,['weekly_quality_audit_actual_repair_required']);
+ assert.equal(f.supplierCalls(),1);child.parent_artifact_id=actualParent;
 });

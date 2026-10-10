@@ -1,0 +1,35 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import type {WeeklyExecutionTask} from '../../shared/contracts/socialProgram.js';
+import {prepareWeeklyHardQualityRepairFixture} from '../socialPrograms/weeklyContentQualityRecovery.fixture.js';
+import {createWeeklyExecutionTaskService,WEEKLY_EXECUTION_TASKS} from '../socialPrograms/executionTasks.js';
+import {createSocialWeeklyExecutionWorker} from './socialWeeklyExecutionWorker.js';
+import {createSocialWeeklyProductionAdapter} from './socialWeeklyProductionAdapter.js';
+
+test('actual repair child completes the original quality and conditional rework cards before explicit user approval',async t=>{
+ const f=await prepareWeeklyHardQualityRepairFixture();t.after(f.cleanup);
+ Object.assign(f.pkg,{executionGraphVersion:2});
+ const now='2026-10-10T02:00:00Z';
+ const rework:WeeklyExecutionTask={...f.task,taskId:'weekly-rework-verification',subjectId:'pub:rework',status:'blocked',dependsOnTaskIds:[f.task.taskId],inheritedBlockingTaskIds:[f.task.taskId],ownBlockingReasons:[],resultRefs:[],attempt:0,idempotencyKey:'weekly-rework-verification',schedule:{...f.task.schedule,stepKind:'rework',responsibleActor:'content_agent',actualStartedAt:null,actualFinishedAt:null},lastError:null,createdAt:now,updatedAt:now};
+ const approval:WeeklyExecutionTask={...f.task,taskId:'weekly-user-approval',subjectId:'pub:approval',status:'blocked',dependsOnTaskIds:[rework.taskId],inheritedBlockingTaskIds:[rework.taskId],ownBlockingReasons:[],resultRefs:[],attempt:0,idempotencyKey:'weekly-user-approval',budget:{category:'none',limitCny:null},schedule:{...f.task.schedule,stepKind:'user_approval',responsibleActor:'user',actualStartedAt:null,actualFinishedAt:null},lastError:null,createdAt:now,updatedAt:now};
+ for(const task of [rework,approval])await f.store.create(WEEKLY_EXECUTION_TASKS,{tenant_id:'t',program_id:'p',package_id:'week1',package_version:1,task_id:task.taskId,workflow_kind:task.workflowKind,status:task.status,idempotency_key:task.idempotencyKey,next_attempt_at:'',payload:task,created_at:now,updated_at:now});
+ await f.auditChildG4();await f.auditChildG5();
+ const context=await f.service.context(f.childScope,'owner'),consumer=context.consumers.find(item=>item.executionTaskId===f.task.taskId);assert.ok(consumer?.resumeAvailable);
+ await f.service.resume(f.childScope,'owner',{executionTaskId:f.task.taskId,requestId:'actual-card-chain-recovery-0001',expectedContextHash:consumer.contextHash});
+ const worker=createSocialWeeklyExecutionWorker(f.store),adapter=createSocialWeeklyProductionAdapter(f.store,{repository:f.repository});
+ const workerNow=new Date(Date.parse(f.current().nextAttemptAt!)+1000);
+ const qualityClaim=await worker.claimNext({tenantId:'t',workerId:'quality-worker',now:workerNow});assert.equal(qualityClaim?.task.taskId,f.task.taskId);assert.ok(qualityClaim);
+ const qualityResult=await adapter.execute(qualityClaim.task);assert.equal(qualityResult.status,'succeeded',JSON.stringify(qualityResult));if(qualityResult.status!=='succeeded')return;
+ assert.deepEqual(qualityResult.resultRefs,[{type:'starter_social_content_artifact',id:f.result.artifactId,version:1}]);
+ const quality=await worker.complete(qualityClaim,qualityResult.resultRefs,workerNow);assert.equal(quality.status,'succeeded');
+ const reworkClaim=await worker.claimNext({tenantId:'t',workerId:'rework-verifier',now:workerNow});assert.equal(reworkClaim?.task.taskId,rework.taskId);assert.ok(reworkClaim);
+ const reworkResult=await adapter.execute(reworkClaim.task);assert.equal(reworkResult.status,'succeeded',JSON.stringify(reworkResult));if(reworkResult.status!=='succeeded')return;
+ assert.deepEqual(reworkResult.resultRefs,qualityResult.resultRefs);
+ const verified=await worker.complete(reworkClaim,reworkResult.resultRefs,workerNow);assert.equal(verified.status,'succeeded');
+ const beforeApproval=f.tables.social_weekly_execution_tasks!.find(row=>row.task_id===approval.taskId)!.payload as WeeklyExecutionTask;assert.equal(beforeApproval.status,'queued');
+ const accepted=(await createWeeklyExecutionTaskService(f.store).approve('t','p','week1',approval.taskId,'owner')).find(task=>task.taskId===approval.taskId)!;
+ assert.equal(accepted.status,'succeeded');const acceptedArtifact=accepted.resultRefs.find(ref=>ref.type==='starter_social_content_artifact');assert.deepEqual(acceptedArtifact,{type:'starter_social_content_artifact',id:f.result.artifactId,version:2});
+ assert.equal(f.supplierCalls(),1,'quality, conditional rework and approval must not start another supplier call');
+ assert.equal(f.tables.content_execution_jobs!.length,1,'the independent repair job remains the only added production job');
+ assert.equal(f.tables.social_publication_attempts?.length??0,0,'user approval does not publish');
+});

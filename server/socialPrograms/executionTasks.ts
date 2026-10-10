@@ -759,11 +759,20 @@ export function createWeeklyExecutionTaskService(dataStore: DataStore) {
         if (bindings.totalItems !== 1 || !binding || binding.weekly_plan_id !== packageId) {
           throw new SocialProgramError('weekly_production_binding_required', 409, '尚未取得本条内容的真实生产身份，不能验收。');
         }
+        const upstreamArtifactRefs = approvalDependencies.flatMap(row => row.payload.resultRefs)
+          .filter(ref => ref.type === 'starter_social_content_artifact');
+        const uniqueArtifactRefs = [...new Map(upstreamArtifactRefs.map(ref => [`${ref.id}:${ref.version}`, ref])).values()];
+        if (uniqueArtifactRefs.length !== 1) {
+          throw new SocialProgramError('weekly_production_approval_artifact_required', 409, '上游质检与返工任务没有唯一绑定同一条待验收成片。');
+        }
+        const upstreamArtifactRef = uniqueArtifactRefs[0]!;
         const artifacts = await dataStore.list<any>('starter_social_content_artifacts', {
-          where: { tenant_id: tenantId, task_id: binding.task_id }, sort: '-created_at', page: 1, perPage: 100,
+          where: { tenant_id: tenantId, task_id: binding.task_id, artifact_id: upstreamArtifactRef.id }, page: 1, perPage: 2,
         });
-        const artifactsWithVideo = artifacts.items.map(item => ({ ...item, content: socialJson(item.content) })).filter(item => item.content?.productionResult?.productionResultId && item.content?.mediaStorage?.video?.fileId);
-        const artifact = artifactsWithVideo[0];
+        const artifact = artifacts.totalItems === 1 ? { ...artifacts.items[0], content: socialJson(artifacts.items[0]?.content) } : null;
+        if (artifact && Number(String(artifact.version).replace(/^v/, '')) !== upstreamArtifactRef.version) {
+          throw new SocialProgramError('weekly_production_approval_artifact_changed', 409, '上游已核验成片版本发生变化，请重新完成对应质量任务。');
+        }
         if (!artifact || !['review_required', 'approved'].includes(artifact.status)) {
           throw new SocialProgramError('weekly_production_artifact_not_reviewable', 409, '真实成片尚未就绪或质量检查未通过。');
         }

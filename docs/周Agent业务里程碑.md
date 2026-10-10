@@ -17,7 +17,7 @@
 
 ## 当前基线与冻结范围
 
-- 已上传远端：`e84671f93d5ffc29b6d28fafbe9a1613c4114b5b`，分支 `XIXI改数字员工联调（未完成版）`。
+- 已上传远端：`d33f477481e344fb57d592d598f3269cb46793a2`，分支 `XIXI改数字员工联调（未完成版）`。其后的恢复闭环修改仍在本地工作区，未再次上传前不得写成远端已具备。
 - 当前远端快照包含截至首次成片联调前的源码、测试和文档；运行数据、客户数据、媒体、临时产物未纳入源码快照。本记录后续更新在工作区继续保存，未再次上传前不得将其写成远端已具备。
 - 三个子 Agent 已保存文件、停止新增编辑并确认工具终态。Root 统筹集成，版本链由一个负责人持有；并发仅用于独立验证。
 - 容量、阶段等待和供给前核验已有受控证据；模板迁移后半接线为未验证首稿。不能把此前通过计为当前全源码通过。
@@ -75,6 +75,10 @@ M1 首次成片基线与任务卡核销：首次成片不能冒充“相对基�
 M1 质量卡首次真实领取：`/tmp/weekly-m1-quality-actual-hardfailure.log` 实际退出0，测试通过的是“拒绝真实不合格成片”，不是质量通过。原 quality 任务经正式worker领取后，adapter 返回 `weekly_quality_audit_actual_repair_required` 并按原原因延期；实际检测认定第1镜清晰度不足，G4为 `failed`，第2镜为 `review_required`。G5只读上下文另显示脚本基线、企业事实与执行授权缺口。正式合同要求先对硬失败镜头产生新媒体，不能用人工勾选覆盖；未失败但待复核镜头仍须真实审核人逐项查看七项G4。只有同成片全部G4及独立G5通过后，质量恢复服务才可重新排队原质量任务。因此当前下一业务动作是实际局部返工与人工复核，不能直接进入用户终验或发布。
 
 M1 硬失败恢复架构缺口：周图中的 `rework` 卡当前依赖 `quality_check` 成功，故质量硬失败后不能直接领取；现有 `weeklyContentQualityRecovery` 又只清理“审核证据待完成”原因，不处理 `weekly_quality_audit_actual_repair_required`。正式 scene-rework API 能建立独立授权run、不可变返工意图、新媒体、新artifact、新handoff和新G4，并保持原task run不变；但修复产物完成新G4/G5后，仍缺一条验证父子产物与完整新审核后重新排队原quality卡的窄恢复合同。不得通过通用unblock、改依赖状态或复用旧G4绕过；下一修复必须补该合同及故障/幂等测试。
+
+M1 硬失败恢复闭环已补：受控集成测试 `weeklyContentQualityRecovery.test.ts` 9/9 通过。原成片冻结真实 detector failure 后，正式返工准入创建独立 run、intent 和 job；本地实际 FFmpeg 生成新 MP4，正式 supply/output 端口保存新 owned file、child artifact、cache、handoff 和 G4。只有 child 逐镜真人 G4 与独立 G5 均通过，恢复服务才清除原 quality 卡的 `weekly_quality_audit_actual_repair_required`；旧 G5、同父补勾、伪造 parent header 均不能恢复，同一请求幂等且不增加供应调用。
+
+M1 卡片同片核销已补：`weeklyHardQualityRecovery.integration.test.ts` 通过正式 worker 依次完成原 quality 与条件 rework 卡，再由正式审批服务显式批准 child；三步均绑定同一个 child artifact，只有审批导致其版本递增。质量、条件返工及审批没有新增供应调用、生产 job 或发布尝试。adapter 与审批服务不再按“最新成片”猜测；当前图必须读取恢复回执或上游任务唯一 `resultRefs`，目标成片失效时明确阻塞，不能回选 sibling/旧 parent 或重启生产。发布 G6 与平台回执仍未完成，M1 尚未通过。
 
 素材分类权威：来源分类只使用 `local_upload / official_import / user_generated`，用户主题只使用 `talking_head / factory / product / consumer_demo`，其中 `consumer_demo` 的现有显示名仍为 `DtoC`；逐镜视觉角色是另一维度，不能混写成新主题枚举。云素材读取已补齐 `primaryTheme`、`themeTags`、`classificationStatus`、`classificationSource`、`classificationEvidence` 和 `sourceCategory` 的无损投影；缺字段或坏JSON保持未知，不根据误导性标题伪造已完成分类。读回保真、租户隔离及原写入回归已通过。
 

@@ -7,8 +7,8 @@ import type {SocialInspirationHandoff} from '../../shared/contracts/socialConten
 /** Actual local media/cache/G4, full frozen weekly context, and persisted dispatch.
  * No mocked authority/audit/persistence or provider execution. G5 and final approval
  * remain explicit caller actions. Caller must always invoke cleanup(). */
-export async function prepareWeeklyQualityAuditFixture(media?:{width:number;height:number;fps:number;registeredOwnedMedia?:boolean}){
- const f=await prepareDirectorG5Fixture({},media);
+export async function prepareWeeklyQualityAuditFixture(media?:{width:number;height:number;fps:number;registeredOwnedMedia?:boolean},options:Parameters<typeof prepareDirectorG5Fixture>[3]={}){
+ const f=await prepareDirectorG5Fixture({},media,undefined,options);
  const contentTask=f.tables.starter_social_content_tasks![0]!;
  contentTask.brief={...(contentTask.brief as object),programRef:{objectType:'social_program',id:'p',version:'1'},title:'实际成片审批',objective:'核验同一条企业产品视频',markets:['US'],languages:['en'],platforms:['tiktok'],formats:['short_video'],restrictions:[]};
  Object.assign(contentTask,{status:'asset_review',version:'1',created_at:'2026-10-01T00:00:00Z',updated_at:'2026-10-01T00:00:00Z',source_count:0,knowledge_source_count:0,material_source_count:0,artifact_count:1,approved_artifact_count:0,delivery_package_count:0,publication_count:0,metric_submission_count:0});

@@ -177,7 +177,27 @@ export function createSocialWeeklyProductionAdapter(dataStore: DataStore, ports:
       // Existing owned output is consumed read only; fresh reference admission is
       // reserved for creating or enqueueing production, never retrofitted into a run.
       if (['asset_generation','video_generation','quality_check','rework'].includes(task.schedule.stepKind)) {
-        const completed = [...detail.artifacts].sort((a,b)=>Date.parse(b.createdAt)-Date.parse(a.createdAt)).find(a=>a.kind==='short_video'&&a.origin==='agent'&&!['changes_requested','superseded'].includes(a.status)&&a.resourceRef&&a.content?.render&&(a.content.render as Record<string,unknown>).completed===true);
+        let pinnedArtifactRef:VersionedSocialRef|null=null;
+        const requiresPinnedQualityArtifact=pkg.executionGraphVersion===2&&['quality_check','rework'].includes(task.schedule.stepKind);
+        if(requiresPinnedQualityArtifact){
+          const recovery=task.schedule.stepKind==='quality_check'&&task.qualityRecoveries?.length?task.qualityRecoveries.at(-1)!.artifactRef:null;
+          if(recovery)pinnedArtifactRef=recovery;
+          else{
+            const refs:VersionedSocialRef[]=[];
+            for(const dependencyId of task.dependsOnTaskIds){
+              const dependencyRows=await dataStore.list<{payload:WeeklyExecutionTask}>('social_weekly_execution_tasks',{where:{tenant_id:task.tenantId,task_id:dependencyId},perPage:2});
+              if(dependencyRows.totalItems!==1)continue;
+              const dependency=dependencyRows.items[0]!.payload;
+              if(dependency.programId!==task.programId||dependency.packageId!==task.packageId||dependency.packageVersion!==task.packageVersion||dependency.status!=='succeeded')continue;
+              refs.push(...dependency.resultRefs.filter(ref=>ref.type==='starter_social_content_artifact'));
+            }
+            const unique=[...new Map(refs.map(ref=>[`${ref.id}:${ref.version}`,ref])).values()];
+            if(unique.length===1)pinnedArtifactRef=unique[0]!;
+          }
+          if(!pinnedArtifactRef)return blocked('weekly_production_quality_artifact_required','质量与返工任务必须绑定唯一的上游成片，不能按最新产物猜测。');
+        }
+        const completed = [...detail.artifacts].sort((a,b)=>Date.parse(b.createdAt)-Date.parse(a.createdAt)).find(a=>a.kind==='short_video'&&a.origin==='agent'&&!['changes_requested','superseded'].includes(a.status)&&a.resourceRef&&a.content?.render&&(a.content.render as Record<string,unknown>).completed===true&&(!pinnedArtifactRef||(a.artifactId===pinnedArtifactRef.id&&version(a.version)===pinnedArtifactRef.version)));
+        if(requiresPinnedQualityArtifact&&!completed)return blocked('weekly_production_pinned_artifact_missing','上游已核验成片已失效或版本不一致，不能回选其他产物或重新发起生产。');
         if(completed){
           const v=version(completed.version);if(!v)return blocked('weekly_production_version_invalid','内容产物版本无效。');
           const ref={type:'starter_social_content_artifact',id:completed.artifactId,version:v};

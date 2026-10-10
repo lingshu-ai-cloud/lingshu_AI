@@ -98,6 +98,26 @@ test('real generated artifact completes evidence-backed steps; creative quality 
   artifact.status='superseded';f.set({artifacts:[artifact]});
   assert.equal((await f.adapter.execute(f.task)).status,'pending');
 });
+test('current quality and conditional rework cards consume only the exact upstream artifact',async()=>{
+  const f=await fixture();
+  Object.assign(f.pkg,{executionGraphVersion:2});
+  const packageRow=(await f.store.list<any>('social_weekly_operating_packages')).items[0]!;
+  await f.store.update('social_weekly_operating_packages',packageRow.id,{payload:f.pkg});
+  const expected:any={artifactId:'expected-child',taskId:'content',version:'1',kind:'short_video',origin:'agent',resourceRef:'socialfile:expected',status:'review_required',createdAt:'2026-10-09T00:00:00Z',content:{render:{completed:true},productionResult:{technicalReview:{approved:true},creativeReview:{approved:true}}}};
+  const sibling:any={...expected,artifactId:'newer-sibling',resourceRef:'socialfile:sibling',createdAt:'2026-10-10T00:00:00Z'};
+  f.set({status:'asset_review',artifacts:[expected,sibling]});
+  f.task.dependsOnTaskIds=['video-task'];f.task.schedule.stepKind='quality_check';
+  await f.store.create('social_weekly_execution_tasks',{tenant_id:'tenant',task_id:'video-task',payload:{...f.task,taskId:'video-task',status:'succeeded',resultRefs:[{type:'starter_social_content_artifact',id:'expected-child',version:1}]}});
+  const exact=await f.adapter.execute(f.task);
+  assert.notEqual(exact.status,'succeeded','fixture lacks exact persisted quality evidence, but must not accept the newer sibling');
+  if(exact.status==='blocked')assert.notEqual(exact.code,'weekly_production_pinned_artifact_missing');
+  expected.status='changes_requested';f.set({artifacts:[expected,sibling]});
+  const rejected=await f.adapter.execute(f.task);assert.equal(rejected.status,'blocked');
+  if(rejected.status==='blocked')assert.equal(rejected.code,'weekly_production_pinned_artifact_missing');
+  f.task.dependsOnTaskIds=[];f.set({artifacts:[sibling]});
+  const missing=await f.adapter.execute(f.task);assert.equal(missing.status,'blocked');
+  if(missing.status==='blocked')assert.equal(missing.code,'weekly_production_quality_artifact_required');
+});
 test('paused production preserves progress and awaits user action without restarting',async()=>{
   const f=await fixture();f.set({status:'attention',productionProgress:{step:'provider_reconciliation',activity:'供应商回执未知，需对账',estimatedRemainingSeconds:0,updatedAt:new Date().toISOString()}});
   const result=await f.adapter.execute(f.task);assert.equal(result.status,'blocked');
