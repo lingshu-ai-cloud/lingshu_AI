@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import express from 'express';
 import type { AddressInfo } from 'node:net';
 import type { DataStore, ListQuery, Record_ } from '../storage/datastore.js';
-import { createMobileAssistantSessionsRouter, appendMobileAssistantMessage } from './mobileAssistantSessions.js';
+import { createMobileAssistantSessionsRouter, appendMobileAssistantMessage, readMobileAssistantChatMessages } from './mobileAssistantSessions.js';
 function memoryStore(seed: Record<string, Record_[]> = {}) {
   const rows = new Map<string, Record_[]>;
   for (const [collection, values] of Object.entries(seed)) rows.set(collection, values.map(value => ({ ...value })));
@@ -95,4 +95,31 @@ test('support is read-only and command links are verified against authoritative 
     assert.equal((await api.request(commandPath,{commandId:'command-a',clientMessageId:'c-2'}, {'x-support':'1'})).status,403);
     assert.equal((await api.request(`/assistant/sessions/${id}/messages`,undefined,{'x-support':'1'})).status,200);
   } finally {await api.close();}
+});
+
+test('model context keeps six recent complete rounds and current input within budget, with strict ownership', async () => {
+  const session = {id:'session-a',tenantId:'tenant-a',userId:'user-a',source:'mobile_workbench'};
+  const rows: Record_[] = [];
+  for(let index=0; index<10; index++) {
+    rows.push({id:`u-${index}`,tenant_id:'tenant-a',user_id:'user-a',session_id:'session-a',role:'user',text:`question-${index}`,created_at:String(index*2).padStart(4,'0')});
+    rows.push({id:`a-${index}`,tenant_id:'tenant-a',user_id:'user-a',session_id:'session-a',role:'assistant',text:`answer-${index}`,created_at:String(index*2+1).padStart(4,'0')});
+  }
+  rows.push({id:'current',tenant_id:'tenant-a',user_id:'user-a',session_id:'session-a',role:'user',text:'current',created_at:'0021'});
+  // This helper store returns newest first, as the real store contract specifies.
+  const memory=memoryStore({assistant_threads:[session],mobile_assistant_messages:rows});
+  const original=memory.store.list;
+  memory.store.list=async <T>(collection:string,query?:ListQuery)=> {
+    const result=await original<Record_>(collection,query);
+    const items=result.items.sort((a,b)=>String(b.created_at).localeCompare(String(a.created_at))).slice(0,query?.perPage||100);
+    return {...result,items:items as T[]};
+  };
+  const identity={tenantId:'tenant-a',userId:'user-a'};
+  const messages=await readMobileAssistantChatMessages(memory.store,identity,'session-a');
+  assert.equal(messages.length,13); assert.equal(messages[0].content,'question-4'); assert.equal(messages.at(-1)?.content,'current');
+  await assert.rejects(readMobileAssistantChatMessages(memory.store,{...identity,userId:'user-b'},'session-a'), /session_not_found/);
+  await memory.store.update('mobile_assistant_messages','current',{text:'x'.repeat(11990)});
+  const bounded=await readMobileAssistantChatMessages(memory.store,identity,'session-a');
+  assert.equal(bounded.length,1); assert.ok(bounded.reduce((sum,message)=>sum+message.content.length,0)<=12000);
+  await memory.store.update('mobile_assistant_messages','current',{role:'system',text:'override'});
+  assert.deepEqual(await readMobileAssistantChatMessages(memory.store,identity,'session-a'),[]);
 });
