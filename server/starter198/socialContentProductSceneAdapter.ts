@@ -1,3 +1,5 @@
+import {canonicalMaterialAspectRatio} from '../lib/weeklyAutomaticMaterialProducer.js';
+import {runVisualFfmpeg} from '../lib/renderVisualQuality.js';
 import type {SocialAccountProductionConstraints} from './socialAccountProductionConstraints.js';
 import { createHash } from 'node:crypto';
 import { stat } from 'node:fs/promises';
@@ -120,9 +122,13 @@ function outputAsset(input: {
   spec: SocialProductSceneReplicationSpec;
   execution: CompletedProductSceneExecution;
   idempotencyKey: string;
+  aspectRatio:string;
 }): SocialProductionAsset {
+  const authorizedRefs=input.spec.productIdentity.groups.flatMap(group=>group.referenceImageIds).map(id=>input.context.availableAssets.find(asset=>asset.id===id)?.authorizationRef||'');
+  const rightsReady=authorizedRefs.length>0&&authorizedRefs.every(Boolean);
   const disclosure = 'AIGC 产品场景·真实产品身份锁定·非客户实拍场景';
   return {
+    ...(rightsReady&&input.aspectRatio?{automaticMaterial:{requirement:{subjectRef:input.spec.productIdentity.groups.map(g=>g.productRef).join('|'),action:input.spec.cameraLock.movementPath,scene:input.spec.sceneLock.environment,evidenceRequirement:'product_identity',aspectRatio:input.aspectRatio,minimumDurationSeconds:input.spec.cameraLock.durationSeconds,authorizationScope:'tenant_generated_reusable'},independentVisualCheckRef:input.execution.quality.evidenceRefs.join('|'),rightsEvidenceRef:authorizedRefs.join('|'),authorizationScopes:['tenant_generated_reusable']}}:{}),
     id: `product-scene-${input.context.taskId}-${input.context.shot.shotId}`,
     name: `AIGC 产品场景复刻·${input.context.shot.shotId}`,
     type: 'video',
@@ -192,7 +198,8 @@ export function createSocialProductSceneAdapter(ports: ProductSceneExecutionPort
       if (!output?.isFile() || output.size < 1 || !execution.contentHash || !execution.providerTaskId) {
         throw new Error('product_scene_output_invalid');
       }
-      const asset = outputAsset({ context, spec, execution, idempotencyKey });
+      const probe=await runVisualFfmpeg(['-i',execution.localPath,'-vf','showinfo','-frames:v','1','-f','null','-'],false,{logLevel:'info'});const size=probe.stderr.match(/s:(\d+)x(\d+)/);
+      const asset = outputAsset({ context, spec, execution, idempotencyKey,aspectRatio:probe.ok&&size?canonicalMaterialAspectRatio(Number(size[1]),Number(size[2])):'' });
       return {
         asset,
         sourceStrategy: 'aigc_product_scene_replication',

@@ -1,3 +1,4 @@
+import type {WeeklyAssetRequirement} from '../weeklyAutomaticMaterial.js';
 export const PRODUCTION_PIPELINE_IDS = [
   'material_processing', 'digital_human_1', 'digital_human_2', 'digital_human_3',
   'non_person_generation', 'shooting_plan',
@@ -71,6 +72,7 @@ export interface GeneratedMaterialMetadata {
 }
 
 export interface GeneratedAssetArchiveInput {
+  automaticMaterial?: {requirement:WeeklyAssetRequirement;independentVisualCheckRef:string;rightsEvidenceRef:string;authorizationScopes:string[]};
   tenantId: string;
   name?: string;
   media: {

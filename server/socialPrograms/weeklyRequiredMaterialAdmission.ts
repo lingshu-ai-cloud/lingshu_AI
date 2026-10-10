@@ -34,7 +34,7 @@ export async function assessWeeklyRequiredMaterialAdmission(input:WeeklyRequired
    const decision=evidence.verification?.consumerDecisions.find(item=>item.taskId===input.consumerTaskId);
    if(!decision?.accepted||!evidence.verification?.reviewedBy||!decision.factCheck||!decision.rightsCheck||!decision.visualCheck){gaps.push({requestId,code:'weekly_required_material_review_evidence_missing'});continue;}
    for(const material of evidence.materials) {
-    if(!/^[a-z0-9]{15}$/.test(material.recordId)||!/^[a-f0-9]{64}$/.test(material.sha256)||!['image','video'].includes(material.type)||!Number.isSafeInteger(material.byteSize)||material.byteSize<1){gaps.push({requestId,code:'weekly_required_material_revision_invalid'});continue;}
+    if(!(/^[a-z0-9]{15}$/.test(material.recordId)||/^generated-[a-f0-9]{24}$/.test(material.recordId))||!/^[a-f0-9]{64}$/.test(material.sha256)||!['image','video'].includes(material.type)||!Number.isSafeInteger(material.byteSize)||material.byteSize<1){gaps.push({requestId,code:'weekly_required_material_revision_invalid'});continue;}
     const previous=materials.get(material.recordId);
     if(previous&&(previous.sha256!==material.sha256||previous.byteSize!==material.byteSize||previous.type!==material.type)){gaps.push({requestId,code:'weekly_required_material_revision_conflict'});continue;}
     materials.set(material.recordId,{...material});

@@ -1,3 +1,4 @@
+import {generatedAutomaticMaterialEvidence} from './weeklyAutomaticMaterialProducer.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
@@ -70,6 +71,7 @@ function mergeRecord(existing: MaterialRecord | undefined, input: GeneratedAsset
     url: existing?.url || '', sourceType: existing?.sourceType || 'ai-generated',
     generation: metadata.generation, lineage: metadata.lineage, quality: metadata.quality, reuse: metadata.reuse,
     rightsScope: metadata.rightsScope, generationState: 'archived',
+    provenance:{...(existing?.provenance&&typeof existing.provenance==='object'?existing.provenance:{}),weeklyAutomaticMaterialEvidence:generatedAutomaticMaterialEvidence(input,digest)},
     createdAt: existing?.createdAt || now, updatedAt: now,
   };
 }
@@ -113,7 +115,7 @@ export function createGeneratedAssetArchiveService(overrides: Partial<ArchiveDep
       if (sha256(bytes) !== input.media.contentSha256.toLowerCase()) throw new Error('待归档素材内容哈希校验失败');
       const metadata = metadataOf(input, existing);
       const record = { ...existing, generation: metadata.generation, lineage: metadata.lineage, quality: metadata.quality,
-        reuse: metadata.reuse, rightsScope: metadata.rightsScope, generationState: 'archived', updatedAt: deps.now().toISOString() };
+        reuse: metadata.reuse, rightsScope: metadata.rightsScope, generationState: 'archived', provenance:{...(existing.provenance&&typeof existing.provenance==='object'?existing.provenance:{}),weeklyAutomaticMaterialEvidence:generatedAutomaticMaterialEvidence(input,input.media.contentSha256)}, updatedAt: deps.now().toISOString() };
       records[index] = record;
       deps.saveMaterials(records);
       return record;

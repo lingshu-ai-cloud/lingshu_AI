@@ -1,3 +1,4 @@
+import {uploadAutomaticMaterialEvidence} from './weeklyAutomaticMaterialProducer.js';
 import { KeyedWorkQueue } from './keyedWorkQueue.js';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -91,10 +92,10 @@ async function patch(tenantId: string, id: string, changes: Record<string, unkno
     else if (typeof rawProvenance === 'string') {
       try { provenance = JSON.parse(rawProvenance) as Record<string, unknown>; } catch { provenance = {}; }
     }
-    const { scriptAnalysis, ...cloudChanges } = changes;
+    const { scriptAnalysis, contentSha256: _verifiedHash, ...cloudChanges } = changes;
     ok = await updateCloudMaterial(cloudId, {
       ...cloudChanges,
-      provenance: { ...provenance, materialScriptAnalysis: scriptAnalysis },
+      provenance: { ...provenance, ...(cloudChanges.provenance&&typeof cloudChanges.provenance==='object'?cloudChanges.provenance:{}), materialScriptAnalysis: scriptAnalysis },
     });
   } else {
     ok = id.startsWith('pb-') ? await updateCloudMaterial(id.slice(3), changes) : updateAccessibleLocalMaterial(id, tenantId, changes);
@@ -139,8 +140,11 @@ export async function requestMaterialAnalysis(tenantId: string, id: string, retr
         segments: result.segments,
         visualObservations: result.observations,
       });
+      const automaticVisual=result.automaticVisual;
+      if(automaticVisual&&current.contentSha256&&current.contentSha256!==automaticVisual.sha256)throw Error('素材字节版本与实际分析不一致');
+      const automaticEvidence=automaticVisual?uploadAutomaticMaterialEvidence({...automaticVisual,commercialUseApproved:current.commercialUseApproved===true,rightsEvidenceRef:String(current.licenseEvidence||''),authorizationScopes:Array.isArray(current.provenance?.authorizationScopes)?current.provenance.authorizationScopes:current.commercialUseApproved===true&&current.derivativesApproved===true?['enterprise-video']:[]}):[];
       const themeTags = materialThemeTagsOf({ name: record.name, segments: result.segments, visualObservations: result.observations, scriptAnalysis });
-      await patch(tenantId, id, { duration: result.duration, segments: result.segments, visualObservations: result.observations, scriptAnalysis,
+      await patch(tenantId, id, { ...(automaticVisual?{contentSha256:automaticVisual.sha256}:{}),provenance:{...(current.provenance&&typeof current.provenance==='object'?current.provenance:{}),weeklyAutomaticMaterialEvidence:automaticEvidence},duration: result.duration, segments: result.segments, visualObservations: result.observations, scriptAnalysis,
         themeTags, primaryTheme: themeTags[0] || '', classificationStatus: themeTags.length ? 'completed' : 'review_required',
         classificationSource: 'model', classificationEvidence: result.observations.slice(0, 8),
         segmentAnalysisStatus: 'completed', segmentAnalysisError: '', analysisSourceRevision: revision });

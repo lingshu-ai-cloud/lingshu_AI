@@ -188,3 +188,15 @@ test('persisted byte-bound analysis drives automatic admission and fresh checkin
  const ready=await createWeeklyRequiredMaterialAdmission(f.store,f.ports)({tenantId:'tenant',programId:'program',consumerTaskId:'two',requirement:{required:true,requestIds:[request.requestId]}});
  assert.equal(ready.status,'ready');assert.equal(ready.materials[0]!.sha256,f.hash);
 });
+
+test('generated archive is adopted automatically by five consumers and replay keeps one submission and check',async()=>{
+ const f=fixture();const assetRequirement={subjectRef:'product-1',action:'orbit',scene:'studio',evidenceRequirement:'product_identity',aspectRatio:'9:16',minimumDurationSeconds:3,authorizationScope:'tenant_generated_reusable'};
+ const evidence={...assetRequirement,sha256:f.hash,durationSeconds:4,authorizationScopes:['tenant_generated_reusable'],rightsEvidenceRef:'product-license',qualityPassed:true,model:'controlled-independent-quality'};
+ const generated:any={id:'generated-'+'a'.repeat(24),tenantId:'tenant',type:'image',generationState:'archived',contentSha256:f.hash,quality:{state:'accepted',checks:[{key:'product_identity',status:'passed',evidence:'inspection'}]},provenance:{weeklyAutomaticMaterialEvidence:evidence}};
+ const service=createWeeklyMaterialRequestService(f.store,{...f.ports,getMaterial:async()=>generated,listMaterials:async()=>[generated]});
+ const consumers=[];for(let i=0;i<5;i++){const taskId=`generated-consumer-${i}`;await f.seed(taskId);consumers.push({taskId,packageId:'week1',packageVersion:1,requirement:'产品环绕',assetRequirement});}
+ const request=await service.create({...f.input,consumers});
+ for(let pass=0;pass<2;pass++)for(const consumer of consumers){const accepted=await service.acceptedForConsumer({tenantId:'tenant',programId:'program',requestId:request.requestId,consumerTaskId:consumer.taskId});assert.equal(accepted?.submissionVersion,1);assert.equal(accepted?.materials[0]?.recordId,generated.id);}
+ const current=await service.get('tenant','program',request.requestId,'reviewer');assert.equal(current.submissions.length,1);assert.equal(materialRequestAcceptedConsumers(current).length,5);assert.equal(current.history.filter(h=>h.action==='automatic_checked').length,1);assert.equal(current.history.filter(h=>h.action==='generated_material_adopted').length,1);
+ generated.contentSha256='b'.repeat(64);await assert.rejects(service.acceptedForConsumer({tenantId:'tenant',programId:'program',requestId:request.requestId,consumerTaskId:consumers[0]!.taskId}),/已变化/);
+});
