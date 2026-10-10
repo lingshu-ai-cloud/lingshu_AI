@@ -9,7 +9,17 @@ function requireAudit(value:unknown,code:string):asserts value{if(!value)throw n
 const object=(value:unknown)=>socialObject(socialJson(value))??{};
 async function unique(store:DataStore,collection:string,where:Record<string,string>){const rows=await store.list<Record_>(collection,{where,perPage:2});requireAudit(rows.totalItems===1&&rows.items.length===1,'weekly_quality_audit_source_ambiguous');const row=rows.items[0]!;requireAudit(Object.entries(where).every(([k,v])=>row[k]===v),'weekly_quality_audit_scope_changed');return row;}
 /** Detect actual frozen detector failures separately from immutable pending-review summaries. */
-export function assertNoFrozenTechnicalFailure(content:Record<string,unknown>){if(content.technicalQualityReport==null)return;const report=object(content.technicalQualityReport);requireAudit(report.schemaVersion==='initial-scene-quality.v1','weekly_quality_audit_detector_report_unverified');const visual=object(report.visual),audio=object(report.audio),scenes=object(report.scenes);requireAudit(visual.passed!==false&&audio.ok!==false&&scenes.passed!==false&&(!Array.isArray(scenes.issues)||scenes.issues.length===0)&&(!Array.isArray(visual.failures)||visual.failures.length===0),'weekly_quality_audit_actual_repair_required');}
+export function assertNoFrozenTechnicalFailure(content:Record<string,unknown>){
+ if(content.technicalQualityReport==null)return;
+ const report=object(content.technicalQualityReport);
+ requireAudit(report.schemaVersion==='initial-scene-quality.v1','weekly_quality_audit_detector_report_unverified');
+ const visual=object(report.visual),audio=object(report.audio),scenes=object(report.scenes);
+ // Preserve an actual detector failure even when the rest of its report is incomplete.
+ requireAudit(visual.passed!==false&&audio.ok!==false&&scenes.passed!==false&&(!Array.isArray(scenes.issues)||scenes.issues.length===0)&&(!Array.isArray(visual.failures)||visual.failures.length===0),'weekly_quality_audit_actual_repair_required');
+ // Missing/unknown detector fields are not a passing report. G4 human checkboxes
+ // cannot repair a truncated detector receipt or replace actual media inspection.
+ requireAudit(visual.passed===true&&audio.ok===true&&audio.error===null&&scenes.passed===true&&Array.isArray(visual.failures)&&Array.isArray(scenes.issues)&&Number.isSafeInteger(scenes.checkedScenes)&&Number(scenes.checkedScenes)>0,'weekly_quality_audit_detector_report_unverified');
+}
 /** Server-read context only. A pending immutable boolean is never itself a passing receipt. */
 export async function readWeeklyContentQualityAuditContext(store:DataStore,task:WeeklyExecutionTask,ref:VersionedSocialRef){
  requireAudit(task.workflowKind==='content'&&['quality_check','rework'].includes(task.schedule.stepKind)&&ref.type==='starter_social_content_artifact'&&Number.isSafeInteger(ref.version)&&ref.version>0,'weekly_quality_audit_not_applicable');
@@ -25,6 +35,7 @@ export async function readWeeklyContentQualityAuditContext(store:DataStore,task:
  requireAudit(run?.tenant_id===task.tenantId&&!['cancelled','failed','dead_letter'].includes(String(run.status)),'weekly_quality_audit_run_stopped');
  // This validates physical full-output, clip and audio bytes, immutable lineage, and latest G4 receipts.
  const context=await createSocialSceneReworkService(repository).readCache({...scope,runId});
+ if(content.technicalQualityReport!=null)requireAudit(object(object(content.technicalQualityReport).scenes).checkedScenes===context.cache.scenes.length,'weekly_quality_audit_detector_scene_count_changed');
  requireAudit(context.cache.parentArtifactHash===artifact.content_hash&&context.cache.scenes.length>0&&context.cache.scenes.every(scene=>scene.status==='passed'),'weekly_quality_audit_g4_pending');
  const productionResult=object(content.productionResult);requireAudit(typeof productionResult.productionResultId==='string'&&!!productionResult.productionResultId,'weekly_quality_audit_production_missing');
  return {repository,artifact,content,context,scope:{tenantId:task.tenantId,taskId:String(artifact.task_id),runId,artifactId:ref.id}};

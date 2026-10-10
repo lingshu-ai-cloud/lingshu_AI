@@ -22,3 +22,15 @@ test('default production persistence and actual G4/G5 plus separate weekly human
  await assert.rejects(inventory.prepareAssignment(targetPublishing));
  await assert.rejects(assertWeeklyPublicationG6Admission(f.store,targetPublishing,assignment,actualPackage));
 });
+
+import {prepareWeeklyQualityAuditFixture} from './weeklyContentQualityAudit.fixture.js';
+import {readWeeklyContentQualityAuditContext} from './weeklyContentQualityAudit.js';
+import {socialRequestHash} from '../starter198/socialContentValidation.js';
+import {SocialProgramError} from '../socialPrograms/service.js';
+test('actual weekly admission refuses a truncated detector report before cached human audits can pass it',async t=>{
+ const f=await prepareWeeklyQualityAuditFixture({width:360,height:640,fps:30});t.after(f.cleanup);
+ const content=f.artifact.content as Record<string,unknown>;
+ content.technicalQualityReport={schemaVersion:'initial-scene-quality.v1',visual:{passed:true},audio:{ok:true},scenes:{passed:true}};
+ f.artifact.content_hash=socialRequestHash({resourceRef:f.artifact.resource_ref,content});
+ await assert.rejects(readWeeklyContentQualityAuditContext(f.store,f.task,f.ref),(error:unknown)=>error instanceof SocialProgramError&&error.code==='weekly_quality_audit_detector_report_unverified');
+});
