@@ -95,7 +95,16 @@ export function createSocialWeeklyPublicationAdapter(dataStore: DataStore, optio
     } else {
     const bindings = await dataStore.list<Row>('starter_social_content_tasks', { where: { tenant_id: task.tenantId, create_idempotency_key: `weekly-production:${task.packageId}:${task.packageVersion}:${task.publicationTaskId}` }, page: 1, perPage: 2 });
     if (bindings.totalItems !== 1 || !bindings.items[0]) return pending('weekly_production_binding_pending', '尚未取得本周成片的生产身份。');
-    const packageScan = await runWeeklyPublicationPackageScan({ dataStore, tenantId: task.tenantId, taskId: bindings.items[0].task_id });
+    let productionTaskId = bindings.items[0].task_id;
+    try {
+      const { resolveWeeklyCreativeRepairApprovalEvidence } = await import('../socialPrograms/weeklyCreativeRepairApprovalEvidence.js');
+      const repair = await resolveWeeklyCreativeRepairApprovalEvidence(dataStore, task);
+      if (repair) {
+        await validateWeeklyPublicationAcceptance(dataStore, task);
+        productionTaskId = String(repair.contentTask.task_id);
+      }
+    } catch (error) { return blocked('weekly_content_acceptance_unverified', error instanceof Error ? error.message : '修订成片验收证据已变化。'); }
+    const packageScan = await runWeeklyPublicationPackageScan({ dataStore, tenantId: task.tenantId, taskId: productionTaskId });
     if (packageScan.errors.length) return blocked(packageScan.errors[0]!.code, '成片发布交接校验失败，请检查产物和授权。');
     }
     const assignments = await dataStore.list<StoredPublicationAssignment>(PUBLICATION_ASSIGNMENTS, { where: { tenant_id: task.tenantId, operating_package_id: task.packageId, operating_package_version: task.packageVersion, publication_task_id: publication.publicationTaskId }, page: 1, perPage: 2 });

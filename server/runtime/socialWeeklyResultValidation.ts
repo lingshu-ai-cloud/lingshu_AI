@@ -280,7 +280,13 @@ export async function validateContentArtifact(store: DataStore, task: WeeklyExec
   requireResult(version(row.version) === ref.version && ['draft', 'review_required', 'approved'].includes(String(row.status)));
   const content = object(row.content);
   const source = await unique(store, 'starter_social_content_tasks', { tenant_id: task.tenantId, task_id: String(row.task_id) });
-  requireResult(source.create_idempotency_key === `weekly-production:${task.packageId}:${task.packageVersion}:${task.publicationTaskId}` && object(source.brief).programRef?.id === task.programId);
+  const { resolveWeeklyCreativeRepairApprovalEvidence } = await import('../socialPrograms/weeklyCreativeRepairApprovalEvidence.js');
+  const creativeRepair = await resolveWeeklyCreativeRepairApprovalEvidence(store, task);
+  if (creativeRepair) {
+    requireResult(creativeRepair.contentTask.task_id === source.task_id && creativeRepair.artifactRef.id === ref.id && creativeRepair.artifactRef.version === ref.version, 'weekly_creative_repair_approval_artifact_changed');
+  } else {
+    requireResult(source.create_idempotency_key === `weekly-production:${task.packageId}:${task.packageVersion}:${task.publicationTaskId}` && object(source.brief).programRef?.id === task.programId);
+  }
   requireResult(text(source.run_id) && !['cancelled', 'paused', 'attention', 'needs_input'].includes(String(source.status)));
   const run = await store.getById<Record_>('workflow_runs', String(source.run_id));
   requireResult(run?.tenant_id === task.tenantId && !['cancelled', 'failed', 'dead_letter'].includes(String(run.status)));
@@ -306,7 +312,7 @@ export async function validateContentArtifact(store: DataStore, task: WeeklyExec
   else if (step === 'video_generation') requireResult(text(content.mediaStorage?.video?.url) && text(content.mediaStorage?.video?.sha256));
   else if (['quality_check', 'rework'].includes(step)) {
     requireResult(text(content.mediaStorage?.video?.url));
-    if (!(content.productionResult?.technicalReview?.approved === true && content.productionResult?.creativeReview?.approved === true)) {
+    if (!creativeRepair && !(content.productionResult?.technicalReview?.approved === true && content.productionResult?.creativeReview?.approved === true)) {
       const { assertWeeklyContentQualityAudit } = await import('./weeklyContentQualityAudit.js');
       await assertWeeklyContentQualityAudit(store, task, ref);
     }
@@ -318,12 +324,16 @@ export async function validateContentArtifact(store: DataStore, task: WeeklyExec
 export async function validateWeeklyPublicationAcceptance(store: DataStore, task: WeeklyExecutionTask, assignmentProductionId?: string): Promise<void> {
   const approvals = await store.list<Record_>('social_weekly_execution_tasks', { where: { tenant_id: task.tenantId, package_id: task.packageId, package_version: task.packageVersion }, page: 1, perPage: 1000 });
   requireResult(approvals.totalItems <= approvals.items.length);
-  const approval = approvals.items.find(row => {
+  const matchingApprovals = approvals.items.filter(row => {
     const item = object(row.payload);
-    return row.tenant_id === task.tenantId && item.tenantId === task.tenantId && item.publicationTaskId === task.publicationTaskId && item.schedule?.stepKind === 'user_approval' && item.status === 'succeeded' && item.resultRefs?.some((ref: any) => ref.type === 'user_content_approval');
+    return row.tenant_id === task.tenantId && item.tenantId === task.tenantId && item.programId === task.programId && item.packageId === task.packageId && item.packageVersion === task.packageVersion && item.publicationTaskId === task.publicationTaskId && item.schedule?.stepKind === 'user_approval' && item.status === 'succeeded' && item.resultRefs?.some((ref: any) => ref.type === 'user_content_approval');
   });
-  requireResult(approval);
+  requireResult(matchingApprovals.length === 1, 'weekly_production_approval_ambiguous');
+  const approval = matchingApprovals[0]!;
   const acceptedTask = object(approval.payload) as WeeklyExecutionTask;
+  const { resolveWeeklyCreativeRepairApprovalEvidence } = await import('../socialPrograms/weeklyCreativeRepairApprovalEvidence.js');
+  const creativeRepair = await resolveWeeklyCreativeRepairApprovalEvidence(store, task);
+  if (creativeRepair) requireResult(creativeRepair.caseItem.approvalTaskId === acceptedTask.taskId && !acceptedTask.ownBlockingReasons.length, 'weekly_creative_repair_approval_scope_changed');
   if (acceptedTask.inputSnapshot?.inventoryReuseRef) {
     const { validateInventoryUserApproval } = await import('./weeklyInventoryApprovalEvidence.js');
     await validateInventoryUserApproval(store, acceptedTask, acceptedTask.resultRefs);

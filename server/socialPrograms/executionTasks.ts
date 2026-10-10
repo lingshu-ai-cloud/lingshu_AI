@@ -842,7 +842,19 @@ export function createWeeklyExecutionTaskService(dataStore: DataStore) {
         }
         if (task.inheritedBlockingTaskIds.length) throw new SocialProgramError('weekly_execution_upstream_incomplete', 409, '上游生产步骤尚未完成。');
         if (['cancelled', 'dead_letter'].includes(task.status)) throw new SocialProgramError('weekly_execution_task_terminal', 409, '终态任务不能审批。');
-        if (task.status === 'succeeded') return task;
+        const { resolveWeeklyCreativeRepairApprovalEvidence } = await import('./weeklyCreativeRepairApprovalEvidence.js');
+        const creativeRepair = await resolveWeeklyCreativeRepairApprovalEvidence(dataStore, task);
+        if (creativeRepair && creativeRepair.caseItem.approvalTaskId !== task.taskId) {
+          throw new SocialProgramError('weekly_creative_repair_approval_scope_changed', 409, '修订证据不属于当前审批任务。');
+        }
+        if (creativeRepair && task.ownBlockingReasons.length) throw new SocialProgramError('weekly_execution_upstream_incomplete', 409, '当前修订审批仍有未解除的阻断。');
+        if (task.status === 'succeeded') {
+          if (creativeRepair && (creativeRepair.artifact.status !== 'approved' || !task.resultRefs.some(ref =>
+            ref.type === 'starter_social_content_artifact' && ref.id === creativeRepair.artifactRef.id && ref.version === creativeRepair.artifactRef.version))) {
+            throw new SocialProgramError('weekly_creative_repair_approval_artifact_changed', 409, '已验收修订成片的身份或版本发生变化。');
+          }
+          return task;
+        }
         const approvalDependencies = await taskRows(dataStore, tenantId, task.dependsOnTaskIds);
         if (approvalDependencies.length !== task.dependsOnTaskIds.length || approvalDependencies.some(row => row.payload.programId !== task.programId || row.payload.packageId !== task.packageId || row.payload.packageVersion !== task.packageVersion || row.payload.status !== 'succeeded')) {
           throw new SocialProgramError('weekly_execution_upstream_incomplete', 409, '本周真实前置任务尚未完成，不能验收。');
@@ -860,17 +872,19 @@ export function createWeeklyExecutionTaskService(dataStore: DataStore) {
         const bindings = await dataStore.list<any>('starter_social_content_tasks', {
           where: { tenant_id: tenantId, create_idempotency_key: `weekly-production:${packageId}:${task.packageVersion}:${task.publicationTaskId}` }, page: 1, perPage: 2,
         });
-        const binding = bindings.items[0];
+        const binding = creativeRepair?.contentTask ?? bindings.items[0];
         if (bindings.totalItems !== 1 || !binding || binding.weekly_plan_id !== packageId) {
           throw new SocialProgramError('weekly_production_binding_required', 409, '尚未取得本条内容的真实生产身份，不能验收。');
         }
         const upstreamArtifactRefs = approvalDependencies.flatMap(row => row.payload.resultRefs)
           .filter(ref => ref.type === 'starter_social_content_artifact');
         const uniqueArtifactRefs = [...new Map(upstreamArtifactRefs.map(ref => [`${ref.id}:${ref.version}`, ref])).values()];
-        if (uniqueArtifactRefs.length !== 1) {
+        if (!creativeRepair && uniqueArtifactRefs.length !== 1) {
           throw new SocialProgramError('weekly_production_approval_artifact_required', 409, '上游质检与返工任务没有唯一绑定同一条待验收成片。');
         }
-        const upstreamArtifactRef = uniqueArtifactRefs[0]!;
+        // A resolved revision has its own independent G4/G5 evidence. Preserve the
+        // original quality task history and select the child only from sealed server records.
+        const upstreamArtifactRef = creativeRepair?.artifactRef ?? uniqueArtifactRefs[0]!;
         const artifacts = await dataStore.list<any>('starter_social_content_artifacts', {
           where: { tenant_id: tenantId, task_id: binding.task_id, artifact_id: upstreamArtifactRef.id }, page: 1, perPage: 2,
         });
@@ -888,7 +902,9 @@ export function createWeeklyExecutionTaskService(dataStore: DataStore) {
           repository: createStarter198Repository(dataStore), tenantId, userId,
           taskId: binding.task_id, artifactId: artifact.artifact_id,
           idempotencyKey: `weekly-content-approval:${task.taskId}:${artifact.artifact_id}`,
-          value: { decision: 'approved', expectedVersion: String(artifact.version), note: '用户在周工作台确认本条真实成片' },
+          value: { decision: 'approved', expectedVersion: creativeRepair
+            ? `${String(artifact.version).startsWith('v') ? 'v' : ''}${creativeRepair.audit.childArtifactRef.version}`
+            : String(artifact.version), note: '用户在周工作台确认本条真实成片' },
           now: new Date(now),
         });
         return {
