@@ -32,6 +32,18 @@ test('Z/H publication fixtures preserve a full day after both production and rev
   }
 });
 
+test('Z/H fixture deadlines avoid same-agent simultaneous delivery commitments',()=>{
+  for(const tasks of [cold,established]) {
+    const deadlines=new Map<string,string>();
+    for(const task of tasks) {
+      const key=`${task.date} ${task.time} ${task.agent}`;
+      assert(!deadlines.has(key),`${task.id} conflicts with ${deadlines.get(key)} at ${key}`);
+      deadlines.set(key,task.id);
+    }
+  }
+  assert.match(established.find(task=>task.id==='h-task-17')!.context,/按需触发/);
+});
+
 test('calendar UI renders horizontal week, owner, overdue upload, channels, publishing and repair entries',()=>{
   for(const [tasks,profile] of [[cold,'B2B 零基础'],[established,'B2B 有基础']] as const){
     const html=renderToStaticMarkup(<AgentWeeklyCalendar startsAt="2026-10-05" tasks={[...tasks]} demo/>);

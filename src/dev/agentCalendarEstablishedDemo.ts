@@ -21,7 +21,7 @@ const rows: Row[] = [
   [3,'H-S3','content','处理自有视频技术返工','失败分镜重渲染、G4/G5 复检与原审批恢复','进入技术返工生产实况；保留原 job/run 血缘',60,['h-task-13']],
   [4,'H-M6','business','发布自有迭代平台版本','真实发布安排、平台 attempt 与未知回执对账','周四成片审核，周五发布；未知结果只核对原尝试，不重复发布',45,['h-task-13','h-task-2']],
   [4,'H-M5','content','完成外部探索 C/D/E 成片','3 条母版及对应平台版本','外部新方向转化为企业自己的表达',360,['h-task-9','h-task-10']],
-  [4,'H-S3','director','发起外部探索创意返工','冻结反馈、容量报价与新子任务范围','进入创意返工生产实况；不覆盖原成片',45,['h-task-16']],
+  [4,'H-S3','director','发起外部探索创意返工','冻结反馈、容量报价与新子任务范围','收到具体反馈后按需触发创意返工；不覆盖原成片',45,['h-task-16']],
   [4,'H-S4','business','核验发布异常与原平台回执','原 publication、attempt 和可恢复结论','不创建第二次发布',30,['h-task-15']],
   [4,'H-M7','customer','处理 Messenger 与 Instagram 私信','按真实会话生成并审批回复','分别记录平台 message identity',75,['h-task-11','h-task-15']],
   [5,'H-M6','business','发布外部探索版本','真实平台发布回执和等待原因','周五成片审核，周六发布；全部发布依赖成片验收与客服渠道就绪',60,['h-task-28','h-task-2']],
@@ -38,7 +38,7 @@ const rows: Row[] = [
 export const agentCalendarEstablishedDemo: AgentCalendarTask[] = rows.map(([day, chain, agent, title, output, context, minutes, dependsOn], index) => ({
   id:`h-task-${index}`,
   date:`2026-10-${String(5 + day).padStart(2,'0')}`,
-  time:index===15?'11:00':index===20?'12:00':index===28?'11:00':`${String(9 + rows.slice(0,index).filter(row=>row[0]===day).length).padStart(2,'0')}:00`,
+  time:index===15?'11:00':index===17?'12:00':index===20?'12:00':index===23?'13:00':index===28?'11:00':`${String(9 + rows.slice(0,index).filter(row=>row[0]===day).length).padStart(2,'0')}:00`,
   agent,title,output,context,minutes,chain,dependsOn:dependsOn ?? [],status:index===7?'blocked':'planned',
   ...(index===7?{assignee:'陈晨',dueAt:'2026-10-06T17:00:00+08:00',deadlineTracked:true,availableForHuman:true,submission:'missing' as const,humanAction:'upload' as const,reason:'五条视频共用实拍尚未上传；所有母版生产保持阻塞',affectedPublicationIds:['H-video-A','H-video-B','H-video-C','H-video-D','H-video-E']}:{}),
 }));
