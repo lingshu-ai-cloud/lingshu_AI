@@ -140,13 +140,16 @@ function scheduleBackendRestart(reason) {
   }, 800);
 }
 
-try {
-  fs.watch(path.join(runtimeRoot, 'server'), { recursive: true }, (_event, filename) => {
-    if (!filename || /(?:^|\/)(?:data|dist|node_modules)(?:\/|$)/.test(filename)) return;
-    if (/\.(?:ts|tsx|js|mjs|json)$/.test(filename)) scheduleBackendRestart(filename);
-  });
-} catch (error) {
-  log(`backend source watch unavailable: ${error instanceof Error ? error.message : String(error)}`);
+for (const directory of ['server', 'shared']) {
+  try {
+    fs.watch(path.join(runtimeRoot, directory), { recursive: true }, (_event, filename) => {
+      if (!filename || /(?:^|\/)(?:data|dist|node_modules)(?:\/|$)/.test(filename)) return;
+      if (/\.(?:test|fixture)\.(?:ts|tsx|js|mjs)$/.test(filename)) return;
+      if (/\.(?:ts|tsx|js|mjs|json)$/.test(filename)) scheduleBackendRestart(`${directory}/${filename}`);
+    });
+  } catch (error) {
+    log(`backend ${directory} source watch unavailable: ${error instanceof Error ? error.message : String(error)}`);
+  }
 }
 
 repositoryRevision = currentRevision() || '';

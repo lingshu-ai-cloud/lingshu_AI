@@ -142,6 +142,8 @@ test('same-person action keeps identity while background B-roll route is shown e
   assert.ok(html.includes('生产路由：按对标镜头生成人物视频'));
   assert.ok(html.includes('生产路由：匹配素材库（仅非主讲画面）'));
   assert.ok(html.includes('当前素材需求仅包含非主讲画面。'));
+  assert.ok(html.includes('背景人物无需绑定主讲身份'));
+  assert.ok(html.includes('生产档位：素材复用'));
 });
 
 test('legacy role and non-critical labels cannot invent a production route; pending and invalid enums stay automatic unknown', () => {

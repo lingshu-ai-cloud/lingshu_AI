@@ -1,3 +1,7 @@
+import {createReferenceReviewReadHandlers} from '../lib/referenceReviewReadHandlers.js';
+import {createReferencePhraseAsrHandler} from './referencePhraseAsr.js';
+import {readCachedReferenceNarration} from '../lib/referenceNarration.js';
+import { registerReferenceExactShotMaterializationRoutes } from './referenceExactShotMaterialization.js';
 import { prepareReferenceNarration } from '../lib/referenceNarration.js';
 import { lockReferenceSpeechTimeline, type ReferenceSpeechTranscript } from '../lib/referenceSpeechAnalysis.js';
 import { joinReferenceWords } from '../lib/referenceWordAlignment.js';
@@ -55,6 +59,7 @@ import {
 
 export const videosRouter = Router();
 videosRouter.use(requireAuth);
+registerReferenceExactShotMaterializationRoutes(videosRouter, store);
 
 const COL = 'trend_videos';
 const execFileAsync = promisify(execFile);
@@ -2473,21 +2478,11 @@ videosRouter.get('/:id/shot-review/:shotId/:kind', async (req, res) => {
 
 /** Read-only Director -> Content review packet. A failed exact analysis remains
  * available for planning, while its productionExecutionAllowed gate stays false. */
-videosRouter.get('/:id/review-handoff', async (req, res) => {
-  const { tenantId } = res.locals as AuthLocals;
-  const record = await store.getById<Record<string, unknown>>(COL, req.params.id);
-  if (!record || String(record.tenantId || '') !== tenantId) {
-    res.status(404).json({ error: 'Not found' }); return;
-  }
-  if (await isTestTenantId(tenantId) && !isPublicTestTenantVideo(record) && !isVisibleVideoPipelineRecord(record)) {
-    res.status(404).json({ error: 'Not found' }); return;
-  }
-  const defaults = await store.list<{ payload?: { presenters?: Array<Record<string, unknown>> } }>('studio_production_defaults',
-    { where: { tenant_id: tenantId }, perPage: 2 });
-  const presenter = defaults.totalItems === 1 ? resolveReferenceSalesPresenter(defaults.items) : null;
-  res.setHeader('Cache-Control', 'private, no-store');
-  res.json(buildSocialReferenceReviewHandoff({ record, presenter }));
-});
+const referenceReviewReadHandlers=createReferenceReviewReadHandlers({store,isTestTenantId,isPublicTestTenantVideo,isVisibleVideoPipelineRecord,publicVideoRecord,presenter:async tenantId=>{
+ const defaults=await store.list<{payload?:{presenters?:Array<Record<string,unknown>>}}>('studio_production_defaults',{where:{tenant_id:tenantId},perPage:2});
+ return defaults.totalItems===1?resolveReferenceSalesPresenter(defaults.items):null;
+}});
+videosRouter.get('/:id/review-handoff',referenceReviewReadHandlers.handoff);
 
 /** Exact transcript corrections are a reviewer's assertion about the original
  * audio, version-bound to this upload. They do not change analysisQuality. */
@@ -2648,7 +2643,7 @@ videosRouter.post('/:id/align-speech', async (req, res) => {
     if (!await store.update(COL, recordId, { duration: clock.duration,
       aiAnalysis: JSON.stringify({ ...current, gemini: mapped, speechAlignment: alignment,
         // A previous semantic classification cannot survive a changed audio clock.
-        criticalShotAnalysis: undefined }) })) throw new Error('对齐结果保存失败');
+        criticalShotAnalysis: undefined, referenceProductionRoutingSummary: undefined }) })) throw new Error('对齐结果保存失败');
     res.setHeader('Cache-Control', 'private, no-store');
     res.json({ ok: true, status: 'aligned', alignment, analysisRunId: current.analysisRunId, sourceSha256: measuredHash });
   } catch (error) { res.status(422).json({ ok: false, status: 'unavailable',
@@ -2672,8 +2667,10 @@ videosRouter.post('/:id/classify-critical-shots', async (req, res) => {
     const sourceSha256 = createHash('sha256').update(fs.readFileSync(filePath)).digest('hex');
     if (before.contentSha256 && before.contentSha256 !== sourceSha256) { res.status(409).json({ error: '源视频已变化' }); return; }
     const clock = await probeReferenceMediaClock(filePath);
-    const classified = await produceReferenceCriticalShots({ filePath, analysis: before.gemini,
+    const critical = await produceReferenceCriticalShots({ filePath, analysis: before.gemini,
       videoId: id, sourceSha256, duration: clock.duration, tenantId });
+    const classified = before.gemini.presenterContinuitySummary
+      ? await produceReferenceProductionRouting({filePath,analysis:critical,videoId:id,sourceSha256,duration:clock.duration,tenantId}) : critical;
     const latest = await store.getById<Record<string, unknown>>(COL, id);
     const current = parseJsonRecord<Record<string, any>>(latest?.aiAnalysis, {});
     if (!latest || latest.tenantId !== tenantId || fingerprint(current) !== fingerprint(before)) {
@@ -2721,25 +2718,14 @@ videosRouter.post('/:id/route-production', async (req, res) => {
 
 /** Compatibility response for the existing detail editor. It shares the
  * automatic reference ASR cache; no separate timestamp implementation. */
-videosRouter.post('/:id/phrase-asr', async (req, res) => {
-  const { tenantId } = res.locals as AuthLocals;
-  const record = await store.getById<Record<string, unknown>>(COL, req.params.id);
-  if (!record || String(record.tenantId || '') !== tenantId) { res.status(404).json({ error: 'Not found' }); return; }
-  const analysis = parseJsonRecord<Record<string, unknown>>(record.aiAnalysis, {});
-  const videoPath = localReferenceVideoPath(String(record.videoFileId || ''), tenantId);
-  if (!videoPath || !fs.existsSync(videoPath)) { res.status(422).json({ error: '本地原片不可用' }); return; }
-  try {
-    const clock = await probeReferenceMediaClock(videoPath);
-    const result = await prepareReferenceNarration(videoPath, clock.duration, { tenantId });
-    res.setHeader('Cache-Control', 'private, no-store');
-    res.json({ ok: true, status: 'SUCCEEDED', taskId: result.taskId, enabled: true,
-      analysisRunId: analysis.analysisRunId, sourceSha256: analysis.contentSha256,
-      transcript: result.text, candidateLines: result.segments.map((segment: any) => ({
-        text: segment.text, start: segment.start, end: segment.end, words: segment.words,
-        precision: 'phrase', provenance: result.provenance, visibility: 'unknown',
-      })) });
-  } catch (error) { res.status(422).json({ ok: false, status: 'unavailable', error: error instanceof Error ? error.message : '词级对齐不可用' }); }
-});
+videosRouter.post('/:id/phrase-asr', createReferencePhraseAsrHandler({
+  readRecord: id => store.getById(COL,id),
+  localPath: localReferenceVideoPath,
+  exists: fs.existsSync,
+  probe: probeReferenceMediaClock,
+  prepare: prepareReferenceNarration,
+  readCache: readCachedReferenceNarration,
+}));
 
 /** Align observed ASR to an editor-confirmed narrative structure. This is a
  * review artifact; caller flags cannot promote an unverified source analysis. */
@@ -2793,23 +2779,7 @@ videosRouter.post('/:id/speech-timeline', async (req, res) => {
   res.json({ referenceRecordId: req.params.id, analysisRunId: analysis.analysisRunId || null, ...timeline });
 });
 
-videosRouter.get('/:id', async (req, res) => {
-  const { tenantId } = res.locals as AuthLocals;
-  const record = await store.getById(COL, req.params.id);
-
-  if (!record || record.tenantId !== tenantId) {
-    res.status(404).json({ error: 'Not found' });
-    return;
-  }
-
-  if (await isTestTenantId(tenantId) && !isPublicTestTenantVideo(record) && !isVisibleVideoPipelineRecord(record)) {
-    res.status(404).json({ error: 'Not found' });
-    return;
-  }
-
-  const queuePositions = await tenantAnalysisQueuePositions(tenantId);
-  res.json(publicVideoRecord(record, { queuePosition: queuePositions.get(req.params.id) || null }));
-});
+videosRouter.get('/:id',referenceReviewReadHandlers.video);
 
 videosRouter.get('/:id/media', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;

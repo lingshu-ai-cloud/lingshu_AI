@@ -118,7 +118,7 @@ function SceneRow({
   );
 }
 
-export default function SocialAgentWorkflowPanel({ task }: { task: SocialContentTaskDetail }) {
+export default function SocialAgentWorkflowPanel({ task, expanded = false, onReviewReference }: { task: SocialContentTaskDetail; expanded?: boolean; onReviewReference?: (recordId:string)=>void }) {
   const workflow = task.agentWorkflow;
   if (!workflow) return null;
   const context = workflow.weeklyPackage ?? workflow.adHocBusinessContext;
@@ -138,10 +138,10 @@ export default function SocialAgentWorkflowPanel({ task }: { task: SocialContent
         <span className={`rounded-full px-3 py-1.5 text-[10px] font-semibold ${blocked ? 'bg-amber-50 text-amber-900' : 'bg-emerald-50 text-emerald-800'}`}>{STAGE_LABEL[workflow.stage]}</span>
       </div>
 
-      <details className="mt-4 overflow-hidden rounded-lg border border-border bg-surface-2/30">
+      <details open={expanded} className="mt-4 overflow-hidden rounded-lg border border-border bg-surface-2/30">
         <summary className="flex cursor-pointer list-none items-center justify-between gap-3 bg-white px-4 py-3 text-xs font-semibold text-text-primary">
           <span>查看编导、逐镜方案与检测依据</span>
-          <span className="flex items-center gap-1 text-[10px] font-bold text-text-muted">{workflow.directorBrief.scenes.length} 个镜头 · 默认收起<ChevronRight size={13} /></span>
+          <span className="flex items-center gap-1 text-[10px] font-bold text-text-muted">{workflow.directorBrief.scenes.length} 个镜头{expanded ? '' : ' · 默认收起'}<ChevronRight size={13} /></span>
         </summary>
         <div className="border-t border-border p-4">
       <div className="grid gap-2 md:grid-cols-3">
@@ -167,6 +167,7 @@ export default function SocialAgentWorkflowPanel({ task }: { task: SocialContent
           <div className="flex flex-wrap items-center justify-between gap-2">
             <p className="text-xs font-semibold text-text-primary">{READINESS_LABEL[handoff.readiness]} · {handoff.source.platform}</p>
             <span className="text-[9px] font-bold text-text-muted">分析 {handoff.analysisVersion}</span>
+            {onReviewReference && <button type="button" className="text-xs font-bold text-violet-900 underline" onClick={()=>onReviewReference(handoff.inspirationId)}>审核这条原参考</button>}
           </div>
           <p className="mt-1.5 text-[10px] leading-4 text-violet-950">为什么选它：{handoff.whySelected.join('；') || '作为本次表达结构参考'}</p>
           <p className="mt-1 text-[10px] leading-4 text-amber-900">必须替换：{handoff.adaptationBoundary.mustReplace.join('；') || '原作者身份、画面素材与品牌元素'}</p>

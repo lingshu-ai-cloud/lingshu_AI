@@ -402,6 +402,7 @@ try {
   const recoveredTenants:string[]=[];
   const dispatchedTenants:string[]=[];
   assert.equal(await runFollowupDispatchScan({
+    getItems:async()=>[], // This fixture isolates product guards, not item loading.
     assertLegacyAccess:async scannedTenant=>{if(scannedTenant==='starter-scan-tenant')throw new Starter198LegacyEffectError('starter_198_orchestrator_only',403);},
     recover:async scannedBatch=>{recoveredTenants.push(scannedBatch.tenant_id);return 0;},
     getBatch:async(_tenant,scannedId)=>scannedId===enterpriseScanBatch.id?enterpriseScanBatch:null,

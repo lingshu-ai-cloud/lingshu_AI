@@ -13,3 +13,10 @@ test('HTML fallback, missing list and mismatched binding receipt fail instead of
  try{for(const response of [new Response('<html>fallback</html>'),Response.json({}),Response.json({items:[{runId:''}],boundRunId:null})]){globalThis.fetch=async()=>response;await assert.rejects(weeklyCustomerRunApi.candidates('p','w',1));}globalThis.fetch=async()=>Response.json({item:{run_id:'other'}});await assert.rejects(weeklyCustomerRunApi.bind('p','w',1,'selected'));}
  finally{globalThis.fetch=previousFetch;Object.defineProperty(globalThis,'localStorage',{configurable:true,value:previousStorage});}
 });
+
+test('late binding response after login change cannot establish current weekly run and never retries', async () => {
+ const originalFetch=globalThis.fetch,originalStorage=globalThis.localStorage;let token='first',calls=0;
+ Object.defineProperty(globalThis,'localStorage',{configurable:true,value:{getItem:()=>token}});
+ globalThis.fetch=async()=>{calls++;token='second';return new Response(JSON.stringify({item:{run_id:'run'}}),{status:200});};
+ try{await assert.rejects(()=>weeklyCustomerRunApi.bind('program','week',1,'run'),/登录身份已改变/);assert.equal(calls,1);}finally{globalThis.fetch=originalFetch;Object.defineProperty(globalThis,'localStorage',{configurable:true,value:originalStorage});}
+});

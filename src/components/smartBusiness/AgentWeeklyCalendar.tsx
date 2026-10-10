@@ -1,5 +1,11 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import { Alert, Button, Tag } from 'antd';
+import type { CrossWeekMaterialTarget } from '../socialProgram/crossWeekMaterialCalendar';
+import type { CustomerExecutionCalendarTarget } from '../socialProgram/customerExecutionCalendarNavigation';
+import type { CustomerExceptionTarget } from '../socialProgram/weeklyCustomerExceptionCalendar';
+import type { NativeRecoveryTarget } from '../socialProgram/weeklyNativeRecoveryCalendar';
+import type { PublicationExecutionTarget } from '../socialProgram/publicationExecutionCalendarNavigation';
+import type { PublicationRecoveryTarget } from '../socialProgram/weeklyPublicationRecoveryCalendar';
 import type { CustomerSendRecoveryTarget } from '../socialProgram/weeklyCustomerSendRecoveryNavigation';
 import { calendarClock, calendarDateTime, calendarTimestampLabel, type CalendarClock } from '../socialProgram/calendarTime';
 import { hasTemplateCalendarTarget, type TemplateCalendarTarget } from '../socialProgram/templateCalendarNavigation';
@@ -47,7 +53,14 @@ export type AgentCalendarTask = {
   templateTarget?: TemplateCalendarTarget;
   reviewTarget?: ReviewCalendarTarget;
   planningTarget?: PlanningCalendarTarget;
+  customerExecutionTarget?: CustomerExecutionCalendarTarget;
   sendRecoveryTarget?: CustomerSendRecoveryTarget;
+  nativeRecoveryTarget?: NativeRecoveryTarget;
+  publicationRecoveryTarget?: PublicationRecoveryTarget;
+  publicationExecutionTarget?: PublicationExecutionTarget;
+  inventoryTarget?: { tenantId: string; programId: string; packageId: string; packageVersion: number; bindingId: string; publicationTaskId: string; taskId: string };
+  crossWeekMaterialTarget?: CrossWeekMaterialTarget;
+  customerExceptionTarget?: CustomerExceptionTarget;
   productionTaskId?: string;
   materialRequestId?: string;
   materialAction?: 'upload' | 'verification';
@@ -84,6 +97,47 @@ export function calendarDurationLabel(tasks: AgentCalendarTask[]): string {
 }
 
 export function hasCalendarProductionBinding(task: AgentCalendarTask): boolean {
+  const publicationExecution = Boolean(task.publicationExecutionTarget
+    && task.id === task.publicationExecutionTarget.taskId);
+  const inventory = Boolean(task.inventoryTarget
+    && task.id === task.inventoryTarget.taskId
+    && task.inventoryTarget.bindingId
+    && task.inventoryTarget.publicationTaskId);
+  const crossWeekMaterial = task.agent === 'human'
+    && Boolean(task.crossWeekMaterialTarget
+      && task.id === `cross-week-material:${task.crossWeekMaterialTarget.continuationId}:verification`
+      && task.crossWeekMaterialTarget.requestId
+      && task.crossWeekMaterialTarget.consumerTaskId);
+  const customerException = task.agent === 'human'
+    && Boolean(task.customerExceptionTarget
+      && task.id === `customer-exception:${task.customerExceptionTarget.requestId}:${task.customerExceptionTarget.action}`
+      && task.customerExceptionTarget.runId
+      && task.customerExceptionTarget.itemId
+      && task.customerExceptionTarget.memberId
+      && ['submission', 'verification'].includes(task.customerExceptionTarget.action));
+  const publicationRecovery = task.agent === 'human'
+    && Boolean(task.publicationRecoveryTarget
+      && task.id === `publication-recovery:${task.publicationRecoveryTarget.id}`
+      && task.publicationRecoveryTarget.taskId
+      && task.publicationRecoveryTarget.attemptId
+      && task.publicationRecoveryTarget.tenantId
+      && task.publicationRecoveryTarget.programId
+      && task.publicationRecoveryTarget.packageId
+      && Number.isSafeInteger(task.publicationRecoveryTarget.packageVersion)
+      && task.publicationRecoveryTarget.packageVersion > 0);
+  const nativeRecovery = task.agent === 'human'
+    && Boolean(task.nativeRecoveryTarget
+      && task.id === `native-send-recovery:${task.nativeRecoveryTarget.id}`
+      && task.nativeRecoveryTarget.requestId
+      && task.nativeRecoveryTarget.taskId
+      && task.nativeRecoveryTarget.runId
+      && task.nativeRecoveryTarget.itemId
+      && task.nativeRecoveryTarget.tenantId
+      && task.nativeRecoveryTarget.programId
+      && task.nativeRecoveryTarget.packageId
+      && Number.isSafeInteger(task.nativeRecoveryTarget.packageVersion)
+      && task.nativeRecoveryTarget.packageVersion > 0
+      && ['messenger', 'instagram'].includes(task.nativeRecoveryTarget.channel));
   const sendRecovery = task.agent === 'human'
     && task.sendRecoveryTarget
     && task.id === `send-recovery:${task.sendRecoveryTarget.id}`
@@ -102,7 +156,8 @@ export function hasCalendarProductionBinding(task: AgentCalendarTask): boolean {
     && ['upload', 'verification'].includes(task.materialAction || '');
   const customer = task.agent === 'customer'
     && Boolean(task.customerRunId && task.customerWorkflowTaskId && task.customerTaskKey);
-  return Boolean(sendRecovery || sales || task.productionTaskId || material || customer);
+  return Boolean(publicationExecution || inventory || crossWeekMaterial || customerException
+    || publicationRecovery || nativeRecovery || sendRecovery || sales || task.productionTaskId || material || customer);
 }
 
 export function isHumanTaskOverdue(task: AgentCalendarTask, now = Date.now()): boolean {
@@ -110,7 +165,9 @@ export function isHumanTaskOverdue(task: AgentCalendarTask, now = Date.now()): b
     && task.availableForHuman !== false
     && !['completed', 'cancelled'].includes(task.status)
     && Boolean(task.dueAt && Number.isFinite(Date.parse(task.dueAt)) && now > Date.parse(task.dueAt)
-      && (task.supplementTarget || task.salesHandoffId || task.sendRecoveryTarget || ['missing', 'rejected'].includes(task.submission || '')));
+      && (task.supplementTarget || task.salesHandoffId || task.sendRecoveryTarget || task.nativeRecoveryTarget
+        || task.publicationRecoveryTarget || task.crossWeekMaterialTarget || task.customerExceptionTarget
+        || ['missing', 'rejected'].includes(task.submission || '')));
 }
 
 export function isCalendarTaskOverdue(task: AgentCalendarTask, now = Date.now()): boolean {
@@ -159,6 +216,7 @@ type Props = {
   onOpenReview?: (task: AgentCalendarTask) => void;
   onOpenSupplement?: (task: AgentCalendarTask) => void;
   onOpenTemplate?: (task: AgentCalendarTask) => void;
+  onOpenCustomerExecution?: (task: AgentCalendarTask) => void;
   scopeKey?: string;
   canOpenContentTask?: (task: AgentCalendarTask) => boolean;
 };
@@ -172,6 +230,7 @@ export default function AgentWeeklyCalendar({
   onOpenReview,
   onOpenSupplement,
   onOpenTemplate,
+  onOpenCustomerExecution,
   scopeKey,
   canOpenContentTask,
 }: Props) {
@@ -211,7 +270,9 @@ export default function AgentWeeklyCalendar({
       closeDetails();
       action(task);
     };
-    const action = !demo && task.supplementTarget && onOpenSupplement
+    const action = !demo && task.customerExecutionTarget && onOpenCustomerExecution
+      ? { label: '进入真实客服承接任务', run: () => open(onOpenCustomerExecution) }
+      : !demo && task.supplementTarget && onOpenSupplement
       ? { label: '处理当前真实补齐任务', run: () => open(onOpenSupplement) }
       : !demo && hasTemplateCalendarTarget(task) && onOpenTemplate
         ? { label: '查看真实模板来源与经营核验', run: () => open(onOpenTemplate) }
@@ -220,7 +281,7 @@ export default function AgentWeeklyCalendar({
           : !demo && hasPlanningCalendarTarget(task) && onOpenPlanning
             ? { label: '查看本周真实参考分析与排期', run: () => open(onOpenPlanning) }
             : !demo && (hasCalendarProductionBinding(task) || canOpenContentTask?.(task)) && onOpenProduction
-              ? { label: task.sendRecoveryTarget ? '核验原发送异常与真实回执' : task.productionTaskId ? '进入这条任务的生产实况' : '核验此任务生产对象与上游', run: () => open(onOpenProduction) }
+              ? { label: task.publicationExecutionTarget ? '查看真实发布安排与平台尝试' : task.nativeRecoveryTarget ? '核验原生发送异常与真实回执' : task.publicationRecoveryTarget ? '处理发布恢复任务' : task.sendRecoveryTarget ? '核验原发送异常与真实回执' : task.productionTaskId ? '进入这条任务的生产实况' : '核验此任务生产对象与上游', run: () => open(onOpenProduction) }
               : null;
 
     return <div className="space-y-4">

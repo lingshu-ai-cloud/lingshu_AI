@@ -47,7 +47,11 @@ assert.match(hook, /mergeSocialContentTaskSummaries\(current\.tasks, \[/);
 assert.doesNotMatch(workspace, /SocialTaskEditorDialog|setEditor|submitTask/,
   'task creation and editing must not open the removed modal');
 assert.match(workspace, /onEdit=\{\(\) => task && navigateWithTask\('smartAssets', task\.taskId\)\}/);
-assert.match(workspace, /onStart=\{\(\) => task && navigateWithTask\('smartAssets', task\.taskId\)\}/);
+assert.match(workspace, /onStart=\{\(\) => \{ if \(task && !state\.busy\) void state\.startTask\(\)\.catch/);
+assert.match(hook, /socialContentApi\.startTask\(task\.taskId, task\.version,/);
+assert.match(hook, /error instanceof SocialContentRequestError && error\.status === 409/);
+assert.match(workspace, /if \(weeklyTarget\) return/);
+assert.match(generationConfirmation, /onClick=\{onConfirm\}/);
 assert.match(workspace, /onSelectTask=\{taskId => navigateWithTask\('smartAssets', taskId\)\}/,
   '最近任务点击必须直接进入带任务上下文的制作工作台');
 assert.match(workspace, /contentCreationRequest:/,

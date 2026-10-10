@@ -438,7 +438,8 @@ export interface SocialContentTaskDetail extends SocialContentTaskSummary {
   productionProgress?: {
     step: string;
     activity: string;
-    estimatedRemainingSeconds: number;
+    estimatedRemainingSeconds: number | null;
+    waitingForScheduledAssets?: boolean;
     updatedAt: string;
   } | null;
 }

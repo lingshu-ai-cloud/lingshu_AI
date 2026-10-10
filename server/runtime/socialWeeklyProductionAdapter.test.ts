@@ -6,7 +6,7 @@ import type { DataStore, Record_, ListQuery } from '../storage/datastore.js';
 import type { WeeklyExecutionTask } from '../../shared/contracts/socialProgram.js';
 import type { SocialContentTaskDetail } from '../../shared/contracts/socialContentWorkflow.js';
 import { createStarter198Repository } from '../starter198/repository.js';
-import { createSocialWeeklyProductionAdapter, weeklyProductionBindingKey } from './socialWeeklyProductionAdapter.js';
+import { createSocialWeeklyProductionAdapter, weeklyProductionBindingKey, weeklySourceBindingIdempotencyKey } from './socialWeeklyProductionAdapter.js';
 function memory(): DataStore {
   const data = new Map<string, Record_[]>();
   return {
@@ -89,10 +89,34 @@ test('real generated artifact completes evidence-backed steps; creative quality 
   }
   f.task.schedule.stepKind='quality_check';
   assert.equal((await f.adapter.execute(f.task)).status,'blocked');
+  f.task.schedule.stepKind='rework';
+  assert.equal((await f.adapter.execute(f.task)).status,'blocked','a rendered rework without independent same-output review is not completed');
+  assert.equal(f.starts(),0,'review gaps must not restart paid production');
+  f.task.schedule.stepKind='quality_check';
   artifact.content.productionResult.creativeReview.approved=true;f.set({artifacts:[artifact]});
   assert.equal((await f.adapter.execute(f.task)).status,'succeeded');
   artifact.status='superseded';f.set({artifacts:[artifact]});
   assert.equal((await f.adapter.execute(f.task)).status,'pending');
+});
+test('current quality and conditional rework cards consume only the exact upstream artifact',async()=>{
+  const f=await fixture();
+  Object.assign(f.pkg,{executionGraphVersion:2});
+  const packageRow=(await f.store.list<any>('social_weekly_operating_packages')).items[0]!;
+  await f.store.update('social_weekly_operating_packages',packageRow.id,{payload:f.pkg});
+  const expected:any={artifactId:'expected-child',taskId:'content',version:'1',kind:'short_video',origin:'agent',resourceRef:'socialfile:expected',status:'review_required',createdAt:'2026-10-09T00:00:00Z',content:{render:{completed:true},productionResult:{technicalReview:{approved:true},creativeReview:{approved:true}}}};
+  const sibling:any={...expected,artifactId:'newer-sibling',resourceRef:'socialfile:sibling',createdAt:'2026-10-10T00:00:00Z'};
+  f.set({status:'asset_review',artifacts:[expected,sibling]});
+  f.task.dependsOnTaskIds=['video-task'];f.task.schedule.stepKind='quality_check';
+  await f.store.create('social_weekly_execution_tasks',{tenant_id:'tenant',task_id:'video-task',payload:{...f.task,taskId:'video-task',status:'succeeded',resultRefs:[{type:'starter_social_content_artifact',id:'expected-child',version:1}]}});
+  const exact=await f.adapter.execute(f.task);
+  assert.notEqual(exact.status,'succeeded','fixture lacks exact persisted quality evidence, but must not accept the newer sibling');
+  if(exact.status==='blocked')assert.notEqual(exact.code,'weekly_production_pinned_artifact_missing');
+  expected.status='changes_requested';f.set({artifacts:[expected,sibling]});
+  const rejected=await f.adapter.execute(f.task);assert.equal(rejected.status,'blocked');
+  if(rejected.status==='blocked')assert.equal(rejected.code,'weekly_production_pinned_artifact_missing');
+  f.task.dependsOnTaskIds=[];f.set({artifacts:[sibling]});
+  const missing=await f.adapter.execute(f.task);assert.equal(missing.status,'blocked');
+  if(missing.status==='blocked')assert.equal(missing.code,'weekly_production_quality_artifact_required');
 });
 test('paused production preserves progress and awaits user action without restarting',async()=>{
   const f=await fixture();f.set({status:'attention',productionProgress:{step:'provider_reconciliation',activity:'供应商回执未知，需对账',estimatedRemainingSeconds:0,updatedAt:new Date().toISOString()}});
@@ -181,6 +205,20 @@ test('AI-only legacy production keeps its existing source readiness admission wi
  const f=await fixture();f.set({runId:null,status:'draft'});
  const result=await f.adapter.execute(f.task);assert.equal(result.status,'pending');assert.equal(f.starts(),1);
 });
+
+test('weekly source binding keys isolate different target tasks while preserving compatible legacy replay',async()=> {
+ const store=memory(),repository=createStarter198Repository(store),legacyKey='weekly-reference:shared-version';
+ assert.equal(await weeklySourceBindingIdempotencyKey({repository,tenantId:'tenant',taskId:'content-a',legacyKey}),`${legacyKey}:task:content-a`);
+ await store.create('starter_social_content_operations',{tenant_id:'tenant',idempotency_key:legacyKey,operation:'add_social_task_source',target_id:'content-a'});
+ assert.equal(await weeklySourceBindingIdempotencyKey({repository,tenantId:'tenant',taskId:'content-a',legacyKey}),legacyKey,'the original target keeps its persisted replay key');
+ assert.equal(await weeklySourceBindingIdempotencyKey({repository,tenantId:'tenant',taskId:'content-b',legacyKey}),`${legacyKey}:task:content-b`,'another target receives an isolated key for the same source version');
+});
+
+test('legacy keys from another operation are never adopted as source replay authority',async()=> {
+ const store=memory(),repository=createStarter198Repository(store),legacyKey='weekly-material:shared-input';
+ await store.create('starter_social_content_operations',{tenant_id:'tenant',idempotency_key:legacyKey,operation:'start_social_content_task',target_id:'content-a'});
+ assert.equal(await weeklySourceBindingIdempotencyKey({repository,tenantId:'tenant',taskId:'content-a',legacyKey}),`${legacyKey}:task:content-a`);
+});
 test('indispensable customer evidence promise blocks before paid start even with a safe automatic plan', async () => {
  const {createSocialAssetSupplyPlan}=await import('../../shared/socialContentAssetSupply.js');
  const f=await fixture();
@@ -258,3 +296,15 @@ test('continuation markers cannot fall through to new version paid production ev
  assert.equal(starts,0);assert.equal(creates,0);
 });
 test('actual partial dispatch admits selected external publication and refuses pending owned or confirmation drift before start',async()=>{const f=await fixture(),policy={profile:'b2b_existing',allocationUnit:'mother_content',ownedPercent:40,externalPercent:60},coverage={selectedSlotIds:['slot'],pendingSlotIds:['owned'],referenceSourcePolicy:policy};const item={...f.planning.dispatch.scheduleItems[0]!,scheduleItemId:'selected'};const plan:any={...f.planning,programId:'program',packageId:'package',packageVersion:2,referenceSourcePolicy:policy,skeleton:{packageId:'package',packageVersion:2,slots:[{slotId:'slot',motherContentId:'selected-mother',referenceSource:'external',publicationTaskIds:['publication']},{slotId:'owned',motherContentId:'owned-mother',referenceSource:'owned',publicationTaskIds:['pending']}]},userConfirmation:{confirmedBy:'human',confirmedAt:'2026-10-09T00:00:00Z',selectedSlotIds:['slot']},detailedSchedule:{ref:{type:'weekly_detailed_schedule',id:'detailed',version:1},coverage,items:[item]},dispatch:{...f.planning.dispatch,coverage:structuredClone(coverage),scheduleItems:[item],scheduleItemIds:['selected'],detailedScheduleRef:{type:'weekly_detailed_schedule',id:'detailed',version:1}}};const pkgrow=(await f.store.list<any>('social_weekly_operating_packages')).items[0],planrow=(await f.store.list<any>('social_weekly_agent_planning')).items[0];const pending={...f.pkg.socialContentPackage.publicationTasks[0]!,publicationTaskId:'pending',motherContentId:'owned-mother'};await f.store.update('social_weekly_operating_packages',pkgrow.id,{payload:{...f.pkg,referenceSourcePolicy:policy,socialContentPackage:{...f.pkg.socialContentPackage,publicationTasks:[pending,...f.pkg.socialContentPackage.publicationTasks.map(pub=>({...pub,motherContentId:'selected-mother'}))]}}});await f.store.update('social_weekly_agent_planning',planrow.id,{payload:plan});assert.equal((await f.adapter.execute(f.task)).status,'pending');f.task.publicationTaskId='pending';assert.equal((await f.adapter.execute(f.task)).status,'blocked');f.task.publicationTaskId='publication';plan.userConfirmation.selectedSlotIds=['owned'];await f.store.update('social_weekly_agent_planning',planrow.id,{payload:plan});assert.equal((await f.adapter.execute(f.task)).status,'blocked');assert.equal(f.starts(),0);});
+
+test('stored package payload scope drift blocks before content creation or paid start',async()=>{
+ for(const field of ['programId','packageId','version'] as const){
+  const f=await fixture();let creates=0,starts=0;
+  const row=(await f.store.list<any>('social_weekly_operating_packages')).items[0]!;
+  await f.store.update('social_weekly_operating_packages',row.id,{payload:{...f.pkg,[field]:field==='version'?3:'foreign'}});
+  const adapter=createSocialWeeklyProductionAdapter(f.store,{create:async()=>{creates++;throw Error('unexpected create');},start:async()=>{starts++;throw Error('unexpected paid start');}});
+  const result=await adapter.execute(f.task);
+  assert.equal(result.status,'blocked');assert.equal('code'in result?result.code:null,'weekly_production_package_scope_invalid');
+  assert.equal(creates,0);assert.equal(starts,0);
+ }
+});

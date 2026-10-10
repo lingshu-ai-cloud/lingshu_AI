@@ -1,3 +1,11 @@
+import {createWeeklyOwnedProductIdentityRouter} from './weeklyOwnedProductIdentityRouter.js';
+import {createWeeklyOwnedProductIdentityUI} from './weeklyOwnedProductIdentityUI.js';
+import {createSocialInstagramDeliveryRouter} from './socialInstagramDeliveryRouter.js';import {createSocialInstagramDeliveryService} from './socialInstagramDeliveryService.js';
+import {createSocialWeeklyG6ReviewRouter} from './socialWeeklyG6ReviewRouter.js';import {createSocialWeeklyG6ReviewService} from './socialWeeklyG6ReviewService.js';
+import {createSocialDirectorG5ReviewRouter} from './socialDirectorG5ReviewRouter.js';
+import {createSocialDirectorG5ReviewService} from './socialDirectorG5ReviewService.js';
+import {createSocialSceneG4ReviewRouter} from './socialSceneG4ReviewRouter.js';
+import {createSocialSceneG4ReviewService} from './socialSceneG4ReviewService.js';
 import { readReferencePreparation } from './socialContentScriptSources.js';
 import { createSocialSceneReworkRouter } from './socialContentSceneReworkRouter.js';
 import { assertSocialSceneReworkQueueRegistered, wakeSocialSceneReworkJob } from './socialContentProductionQueue.js';
@@ -151,8 +159,14 @@ export function createSocialContentRouter(dependencies: SocialContentRouterDepen
   const accessResolver = dependencies.accessResolver ?? socialContentAccessResolver;
   const backendFilePort = dependencies.backendFilePort;
   const socialTaskMaterialPort = dependencies.socialTaskMaterialPort;
+  const weeklyRepairCases=repository.dataStore?createWeeklyProductionRepairCaseService(repository.dataStore,now):null;
 
   router.use(requireAuth);
+  if(repository.dataStore) router.use('/tasks/:taskId/runs/:runId/artifacts/:artifactId/weekly-quality-recovery',createWeeklyContentQualityRecoveryRouter(createWeeklyContentQualityRecoveryService(repository.dataStore)));
+  router.use('/tasks/:taskId/runs/:runId/artifacts/:artifactId/g5-reviews',createSocialDirectorG5ReviewRouter(createSocialDirectorG5ReviewService(repository)));
+router.use('/tasks/:taskId/runs/:runId/artifacts/:artifactId/instagram-delivery',createSocialInstagramDeliveryRouter(createSocialInstagramDeliveryService(repository)));
+router.use('/tasks/:taskId/runs/:runId/artifacts/:artifactId/g6-reviews',createSocialWeeklyG6ReviewRouter(createSocialWeeklyG6ReviewService(repository)));
+  router.use('/tasks/:taskId/runs/:runId/artifacts/:artifactId/g4-reviews',createSocialSceneG4ReviewRouter(createSocialSceneG4ReviewService(repository)));
   router.use((req, res, next) => {
     res.setHeader('Cache-Control', 'private, no-store');
     next();
@@ -180,6 +194,8 @@ export function createSocialContentRouter(dependencies: SocialContentRouterDepen
     }
     return { tenantId, userId };
   }
+
+  if(repository.dataStore)router.use('/tasks/:taskId/weekly-owned-product-identity',createWeeklyOwnedProductIdentityRouter(createWeeklyOwnedProductIdentityUI(repository.dataStore,{repository,sourceOptions}),authorize));
 
   function asyncRoute(handler: (req: Request, res: Response) => Promise<void>) {
     return (req: Request, res: Response, _next: NextFunction) => {
@@ -602,6 +618,10 @@ export function createSocialContentRouter(dependencies: SocialContentRouterDepen
       artifactId: requireSocialId(req.params.artifactId, 'social_artifact_id_invalid'),
       idempotencyKey: requireIdempotencyKey(req.headers['idempotency-key']),
       value: parseArtifactDecision(req.body),
+      ...(weeklyRepairCases?{weeklyRevisionBridge:{
+        handles:({tenantId,taskId,artifactId}:{tenantId:string;taskId:string;artifactId:string})=>weeklyRepairCases.handlesCreativeDecision(tenantId,taskId,artifactId),
+        persist:(value:{tenantId:string;actorUserId:string;taskId:string;artifactId:string;operationId:string;operationRequestHash:string;note:string})=>weeklyRepairCases.createCreativeFromDecision(value),
+      }}:{}),
       now: now(),
     }));
   }));
@@ -690,3 +710,6 @@ export function createSocialContentRouter(dependencies: SocialContentRouterDepen
 
   return router;
 }
+import {createWeeklyContentQualityRecoveryRouter} from './weeklyContentQualityRecoveryRouter.js';
+import {createWeeklyContentQualityRecoveryService} from '../socialPrograms/weeklyContentQualityRecovery.js';
+import {createWeeklyProductionRepairCaseService} from '../socialPrograms/weeklyProductionRepairCases.js';

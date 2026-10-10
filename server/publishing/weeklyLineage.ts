@@ -1,4 +1,6 @@
-import { createHash } from 'node:crypto';
+import {assertPublicationAtomicStore} from './publicationAtomicStore.js';
+import { createHash, randomUUID } from 'node:crypto';
+import {acquireDurableOperationLease,assertDurableOperationLease,releaseDurableOperationLease} from '../runtime/durableLease.js';
 import type { SocialWeeklyContentPackage } from '../../shared/contracts/socialProgram.js';
 import type { PublicationAssignment } from '../digitalEmployees/publishingExecution.js';
 import type { PublishableProductionResult } from '../digitalEmployees/publishingExecution.js';
@@ -255,35 +257,82 @@ export async function executeWeeklyPublication(input: {
   dataStore?: DataStore;
 }): Promise<DurablePublicationAttempt> {
   const dataStore = input.dataStore ?? store;
+  await assertPublicationAtomicStore(dataStore);
   const existing = await assignmentAttempt(input.assignment.tenantId, input.assignment.assignmentId, dataStore);
   if (existing) return existing;
-  const assignments = await dataStore.list<StoredPublicationAssignment>(PUBLICATION_ASSIGNMENTS, {
-    where: { tenant_id: input.assignment.tenantId, assignment_id: input.assignment.assignmentId }, page: 1, perPage: 2,
-  });
-  if (assignments.totalItems !== 1 || !assignments.items[0]) throw new Error('publication_assignment_not_found');
-  if (assignments.items[0].assignment_hash !== input.assignment.assignmentHash) throw new Error('publication_assignment_identity_conflict');
-  if (assignments.items[0].status === 'revoked') throw new Error('authorization_revoked');
-  if (assignments.items[0].status !== 'package_ready') throw new Error('publication_package_not_ready');
-  const issue = validateWeeklyAssignmentBoundary({ assignment: input.assignment, contentPackage: input.contentPackage, existingPublishedCount: input.existingPublishedCount, now: (input.now ?? new Date()).toISOString() });
-  if (issue) throw new Error(issue);
-  if (input.adapter.platform !== input.assignment.platform || input.adapter.capability !== 'available') {
-    throw new Error(input.adapter.unavailableReason || 'publishing_provider_unavailable');
-  }
-  if (input.publicationPackage.packageId !== input.assignment.packageId
-    || input.publicationPackage.operatingLineage?.assignmentHash !== input.assignment.assignmentHash) {
-    throw new Error('publication_package_assignment_mismatch');
-  }
-  const startedAt = (input.now ?? new Date()).toISOString();
-  const created = await dataStore.create<DurablePublicationAttempt>(PUBLICATION_ATTEMPTS, {
-    tenant_id: input.assignment.tenantId, attempt_id: attemptId(input.assignment),
-    assignment_id: input.assignment.assignmentId, package_id: input.assignment.packageId,
-    provider: input.adapter.provider, status: 'in_flight', started_at: startedAt, updated_at: startedAt,
-  });
-  if (!created) {
-    const raced = await assignmentAttempt(input.assignment.tenantId, input.assignment.assignmentId, dataStore);
-    if (raced) return raced;
-    throw new Error('publication_attempt_storage_unavailable');
-  }
+  const lease=await acquireDurableOperationLease({dataStore,tenantId:input.assignment.tenantId,scope:'weekly_publication_quota',subjectId:digest(`${input.assignment.lineage.operatingPackageRef.id}:${input.assignment.lineage.operatingPackageRef.version}`),ownerId:randomUUID(),leaseDurationMs:30000});
+  if(!lease)throw Error('publication_quota_busy');
+  let sourceLease: Awaited<ReturnType<typeof acquireDurableOperationLease>> = null;
+  let created:DurablePublicationAttempt|null=null;
+  try{
+    sourceLease=await acquireDurableOperationLease({dataStore,tenantId:input.assignment.tenantId,scope:'weekly_publication_source_account',subjectId:digest(`${input.assignment.lineage.productionResultRef.id}:${input.assignment.lineage.productionResultRef.version}:${input.assignment.accountId}`),ownerId:randomUUID(),leaseDurationMs:30000});
+    if(!sourceLease)throw Error('inventory_publication_busy');
+    const raced=await assignmentAttempt(input.assignment.tenantId,input.assignment.assignmentId,dataStore);
+    if(raced)return raced;
+    const assignments = await dataStore.list<StoredPublicationAssignment>(PUBLICATION_ASSIGNMENTS, {
+      where: { tenant_id: input.assignment.tenantId, assignment_id: input.assignment.assignmentId }, page: 1, perPage: 2,
+    });
+    if (assignments.totalItems !== 1 || !assignments.items[0]) throw new Error('publication_assignment_not_found');
+    if (assignments.items[0].assignment_hash !== input.assignment.assignmentHash) throw new Error('publication_assignment_identity_conflict');
+    if (assignments.items[0].status === 'revoked') throw new Error('authorization_revoked');
+    if (assignments.items[0].status !== 'package_ready') throw new Error('publication_package_not_ready');
+    const siblings=await dataStore.list<StoredPublicationAssignment>(PUBLICATION_ASSIGNMENTS,{where:{tenant_id:input.assignment.tenantId,operating_package_id:input.assignment.lineage.operatingPackageRef.id,operating_package_version:input.assignment.lineage.operatingPackageRef.version},page:1,perPage:1000});
+    if(siblings.totalItems!==siblings.items.length)throw Error('publication_assignment_scan_truncated');
+    let reservedCount=0;
+    for(const sibling of siblings.items){
+      const prior=await assignmentAttempt(input.assignment.tenantId,sibling.assignment_id,dataStore);
+      // A request with an uncertain outcome may already be live on the platform.
+      // Its authorization slot remains reserved until explicit rejection.
+      if(prior&&['published','unknown','in_flight'].includes(prior.status))reservedCount++;
+    }
+    const issue = validateWeeklyAssignmentBoundary({ assignment: input.assignment, contentPackage: input.contentPackage, existingPublishedCount: Math.max(input.existingPublishedCount,reservedCount), now: (input.now ?? new Date()).toISOString() });
+    if (issue) throw new Error(issue);
+    if (input.adapter.platform !== input.assignment.platform || input.adapter.capability !== 'available') {
+      throw new Error(input.adapter.unavailableReason || 'publishing_provider_unavailable');
+    }
+    if (input.publicationPackage.packageId !== input.assignment.packageId
+      || input.publicationPackage.operatingLineage?.assignmentHash !== input.assignment.assignmentHash) {
+      throw new Error('publication_package_assignment_mismatch');
+    }
+    const publication = input.contentPackage.publicationTasks.find(task => task.publicationTaskId === input.assignment.publicationTaskId);
+    if (publication?.inventoryReuseRef) {
+      const candidates = await dataStore.list<StoredPublicationAssignment>(PUBLICATION_ASSIGNMENTS, {where:{tenant_id:input.assignment.tenantId,production_result_id:input.assignment.lineage.productionResultRef.id},page:1,perPage:1000});
+      if(candidates.totalItems!==candidates.items.length)throw Error('publication_assignment_scan_truncated');
+      for(const candidate of candidates.items){
+        if(candidate.assignment_id===input.assignment.assignmentId||candidate.account_id!==input.assignment.accountId)continue;
+        const version=candidate.payload?.lineage?.productionResultRef?.version;
+        if(Number.isSafeInteger(version)&&version!==input.assignment.lineage.productionResultRef.version)continue;
+        const prior=await assignmentAttempt(input.assignment.tenantId,candidate.assignment_id,dataStore);
+        if(prior&&['published','unknown','in_flight'].includes(prior.status))throw Error('inventory_same_account_publication_exists');
+      }
+      // Canonical receipts can predate the assignment ledger. Preserve that gate.
+      const packages=await dataStore.list<{manifest?:StarterPublicationPackage|string;status?:string;content_version?:string}>('starter_publication_packages',{where:{tenant_id:input.assignment.tenantId,account_id:input.assignment.accountId},page:1,perPage:1000});
+      if(packages.totalItems!==packages.items.length)throw Error('publication_package_scan_truncated');
+      for(const candidate of packages.items){
+        let manifest:StarterPublicationPackage|undefined;
+        if(typeof candidate.manifest==='string'){try{manifest=JSON.parse(candidate.manifest) as StarterPublicationPackage;}catch{throw Error('inventory_publication_manifest_invalid');}}else manifest=candidate.manifest;
+        const lineage=manifest?.operatingLineage;
+        if(lineage?.assignmentId===input.assignment.assignmentId)continue;
+        if(manifest?.contentVersion!==undefined&&candidate.content_version!==undefined&&manifest.contentVersion!==candidate.content_version)throw Error('inventory_publication_version_changed');
+        const version=Number(String(manifest?.contentVersion??candidate.content_version??'').replace(/^v/,''));
+        if(lineage?.productionResultRef.id===input.assignment.lineage.productionResultRef.id&&(!Number.isSafeInteger(version)||version<1||version===input.assignment.lineage.productionResultRef.version)&&['published','unknown','in_flight','publishing'].includes(String(candidate.status)))throw Error('inventory_same_account_publication_exists');
+      }
+    }
+    const startedAt = (input.now ?? new Date()).toISOString();
+    await assertDurableOperationLease({dataStore,lease});
+    await assertDurableOperationLease({dataStore,lease:sourceLease});
+    created = await dataStore.create<DurablePublicationAttempt>(PUBLICATION_ATTEMPTS, {
+      tenant_id: input.assignment.tenantId, attempt_id: attemptId(input.assignment),
+      assignment_id: input.assignment.assignmentId, package_id: input.assignment.packageId,
+      provider: input.adapter.provider, status: 'in_flight', started_at: startedAt, updated_at: startedAt,
+    });
+    if (!created) {
+      const raced = await assignmentAttempt(input.assignment.tenantId, input.assignment.assignmentId, dataStore);
+      if (raced) return raced;
+      throw new Error('publication_attempt_storage_unavailable');
+    }
+  }finally{if(sourceLease)await releaseDurableOperationLease({dataStore,lease:sourceLease});await releaseDurableOperationLease({dataStore,lease});}
+  if(!created)throw Error('publication_attempt_storage_unavailable');
   let normalized: ReturnType<typeof normalizedAttemptResult>;
   try {
     normalized = normalizedAttemptResult(await input.adapter.publish({ assignment: input.assignment, publicationPackage: input.publicationPackage, attemptId: created.attempt_id }));
@@ -291,10 +340,7 @@ export async function executeWeeklyPublication(input: {
     normalized = { status: 'unknown', failure_code: 'provider_outcome_unknown' };
   }
   const resolvedAt = new Date().toISOString();
-  if (!await dataStore.update(PUBLICATION_ATTEMPTS, created.id, { ...normalized, resolved_at: resolvedAt, updated_at: resolvedAt })) {
-    throw new Error('publication_attempt_result_storage_failed');
-  }
-  return { ...created, ...normalized, resolved_at: resolvedAt, updated_at: resolvedAt };
+  return settlePublicationAttempt({dataStore,original:created,observation:normalized,resolvedAt});
 }
 
 /** Reconciliation is status-only. It cannot call publish again. */
@@ -309,6 +355,9 @@ export async function reconcileWeeklyPublication(input: {
   const current = await assignmentAttempt(input.assignment.tenantId, input.assignment.assignmentId, dataStore);
   if (!current) throw new Error('publication_attempt_not_found');
   if (current.status !== 'unknown' && current.status !== 'in_flight') return current;
+  if (current.tenant_id !== input.assignment.tenantId || current.assignment_id !== input.assignment.assignmentId || current.package_id !== input.assignment.packageId) throw new Error('publication_attempt_scope_mismatch');
+  if (current.provider !== input.adapter.provider) throw new Error('publication_receipt_provider_mismatch');
+  if (input.publicationPackage.tenantId !== input.assignment.tenantId || input.publicationPackage.packageId !== input.assignment.packageId || input.publicationPackage.platform !== input.assignment.platform || input.publicationPackage.operatingLineage?.assignmentId !== input.assignment.assignmentId || input.publicationPackage.operatingLineage.assignmentHash !== input.assignment.assignmentHash) throw new Error('publication_package_assignment_mismatch');
   if (input.adapter.platform !== input.assignment.platform || input.adapter.capability !== 'available') throw new Error('publishing_receipt_lookup_unavailable');
   const result = await input.adapter.reconcile({ assignment: input.assignment, publicationPackage: input.publicationPackage, attempt: current });
   const normalized = result.status === 'published'
@@ -317,8 +366,7 @@ export async function reconcileWeeklyPublication(input: {
       ? { status: 'failed' as const, failure_code: result.failureCode || 'provider_rejected' }
       : { status: 'unknown' as const, ...(result.providerReceiptId ? { provider_receipt_id: result.providerReceiptId } : {}), failure_code: result.failureCode || 'provider_outcome_unknown' };
   const resolvedAt = (input.now ?? new Date()).toISOString();
-  if (!await dataStore.update(PUBLICATION_ATTEMPTS, current.id, { ...normalized, resolved_at: resolvedAt, updated_at: resolvedAt })) throw new Error('publication_attempt_result_storage_failed');
-  return { ...current, ...normalized, resolved_at: resolvedAt, updated_at: resolvedAt };
+  return settlePublicationAttempt({dataStore,original:current,observation:normalized,resolvedAt});
 }
 
 export function validateWeeklyAssignmentBoundary(input: {
@@ -399,3 +447,4 @@ export function realPublishingCapabilities(evidence: PlatformCapabilityEvidence[
       : { platform, status: 'unavailable', reason: 'provider_publish_permission_not_verified' };
   });
 }
+import {settlePublicationAttempt} from './publicationAttemptSettlement.js';

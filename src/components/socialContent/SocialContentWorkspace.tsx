@@ -1,5 +1,8 @@
 import { getScrollBehavior } from "../../lib/usePrefersReducedMotion";
-import { useCallback, useState } from 'react';
+import {SocialDirectorG5ReviewPanel} from './SocialDirectorG5ReviewPanel';
+import {SocialSceneG4ReviewPanel} from './SocialSceneG4ReviewPanel';
+import { useCallback, useEffect, useState } from 'react';
+import WeeklyContentProductionView from './WeeklyContentProductionView';
 import { AlertCircle, CheckCircle2, Loader2, RefreshCcw } from 'lucide-react';
 import type { Page } from '../../App';
 import type {
@@ -8,7 +11,7 @@ import type {
   SocialContentThemeId,
   SubmitSocialMetricsInput,
 } from '../../../shared/contracts/socialContentWorkflow';
-import { attachSocialContentNavigationState } from '../../lib/socialContentContext';
+import { attachSocialContentNavigationState, hasWeeklyContentNavigationTarget, readWeeklyContentNavigationTarget, SOCIAL_CONTENT_NAVIGATION_EVENT } from '../../lib/socialContentContext';
 import { socialContentCanRegisterPublication, type SocialContentCreationPath, type SocialContentDraft, type SocialContentMaterialInput } from '../../lib/socialContentModel';
 import { ArtifactBatchChangesDialog, ArtifactChangesDialog, MetricsDialog, PublicationDialog } from './SocialTaskActionDialogs';
 import SocialTaskOverview from './SocialTaskOverview';
@@ -57,6 +60,9 @@ export default function SocialContentWorkspace({
   onRequestCreate?: () => void;
 }) {
   const state = useSocialContentWorkspace();
+  const [weeklyTarget,setWeeklyTarget]=useState(()=>typeof window==='undefined'?null:readWeeklyContentNavigationTarget(window.history.state));
+  const [weeklyTargetPresent,setWeeklyTargetPresent]=useState(()=>typeof window!=='undefined'&&hasWeeklyContentNavigationTarget(window.history.state));
+  useEffect(()=>{const read=()=>{setWeeklyTarget(readWeeklyContentNavigationTarget(window.history.state));setWeeklyTargetPresent(hasWeeklyContentNavigationTarget(window.history.state));};window.addEventListener(SOCIAL_CONTENT_NAVIGATION_EVENT,read);window.addEventListener('popstate',read);return()=>{window.removeEventListener(SOCIAL_CONTENT_NAVIGATION_EVENT,read);window.removeEventListener('popstate',read);};},[]);
   const [publicationOpen, setPublicationOpen] = useState(false);
   const [metricsOpen, setMetricsOpen] = useState(false);
   const [changeArtifact, setChangeArtifact] = useState<SocialContentArtifact | null>(null);
@@ -91,6 +97,9 @@ export default function SocialContentWorkspace({
     onNavigate(page);
     if (taskId) attachSocialContentNavigationState(taskId, page);
   }, [onNavigate, onNavigateWithTask, task]);
+
+  if (weeklyTargetPresent&&!weeklyTarget) return <p role="alert">原周任务生产绑定无效，请返回任务日历重新打开。</p>;
+  if (weeklyTarget) return <div className="space-y-3"><WeeklyContentProductionView key={JSON.stringify(weeklyTarget)} target={weeklyTarget}/><button type="button" className="rounded-lg border px-3 py-2 text-sm" onClick={()=>attachSocialContentNavigationState(weeklyTarget.contentTaskId,'smartAssets')}>打开该内容任务的当前制作工作区</button></div>;
 
   if (state.loading && !state.workspace) {
     return (
@@ -136,7 +145,7 @@ export default function SocialContentWorkspace({
         onLoadMoreTasks={() => void state.loadMoreTasks()}
         onCreate={() => openNewTask()}
         onEdit={() => task && navigateWithTask('smartAssets', task.taskId)}
-        onStart={() => task && navigateWithTask('smartAssets', task.taskId)}
+        onStart={() => { if (task && !state.busy) void state.startTask().catch(() => {}); }}
         onDownload={() => void state.downloadLatest().catch(() => {})}
         onOpenPublication={() => { if (task && socialContentCanRegisterPublication(task)) setPublicationOpen(true); }}
         onOpenMetrics={() => setMetricsOpen(true)}
@@ -152,6 +161,9 @@ export default function SocialContentWorkspace({
         onRefresh={() => void state.refresh()}
         onNavigate={navigateWithTask}
       />
+
+      {task?.runId&&<SocialDirectorG5ReviewPanel key={`g5:${task.taskId}:${task.runId}`} task={task} onChanged={()=>void state.refresh()}/> }
+      {task?.runId&&<SocialSceneG4ReviewPanel key={`${task.taskId}:${task.runId}`} task={task} onChanged={()=>void state.refresh()}/> }
 
       {publicationOpen && task && socialContentCanRegisterPublication(task) && <PublicationDialog task={task} busy={state.busy} onClose={() => { if (!state.busy) setPublicationOpen(false); }} onSubmit={submitPublication} />}
       {metricsOpen && task && <MetricsDialog task={task} busy={state.busy} onClose={() => { if (!state.busy) setMetricsOpen(false); }} onSubmit={submitMetrics} />}

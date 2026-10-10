@@ -298,6 +298,9 @@ export function createSocialProgramService(dataStore: DataStore) {
         created_by: userId, created_at: at,
       });
       if (!saved) throw new SocialProgramError('playbook_storage_unavailable', 503, '账号规则暂时无法保存。');
+      // A draft is not the account's executable rule version. Keep the active
+      // reference and conversion route until explicit activation.
+      if (input.activate !== true) return playbook;
       const account = { ...accountRecord.payload, playbookRef: versionedRef('account_playbook', playbook.playbookId, version), conversionRoute: playbook.conversionRoute, version: accountRecord.payload.version + 1, updatedAt: at };
       if (!await dataStore.update(ACCOUNTS, accountRecord.id, { payload: account, version: account.version, status: account.status, updated_by: userId, updated_at: at })) {
         await dataStore.update(PLAYBOOKS, saved.id, { status: 'retired' });

@@ -25,6 +25,8 @@ function memoryStore(): DataStore & { rows: Map<string, Row[]> } {
     return { items: items.slice((page - 1) * perPage, page * perPage) as T[], totalItems, totalPages: Math.ceil(totalItems / perPage), page, perPage };
   };
   return {
+    // Explicit isolated, controlled provider fixture capability.
+    supportsAtomicOperationLease: () => true,
     rows, list,
     async getById<T>(collection: string, id: string) { return ((rows.get(collection) || []).find(item => item.id === id) as T | undefined) ?? null; },
     async create<T>(collection: string, data: Record<string, unknown>) { const item = { id: `${collection}-${(rows.get(collection)?.length || 0) + 1}`, ...data }; rows.set(collection, [...(rows.get(collection) || []), item]); return item as T; },
@@ -61,6 +63,9 @@ const unknown = await executeWeeklyPublication({ assignment, publicationPackage:
 assert.equal(unknown.status, 'unknown');
 assert.equal((await executeWeeklyPublication({ assignment, publicationPackage: packageResult.package, contentPackage: weekly.socialContentPackage, adapter, existingPublishedCount: 0, now: new Date('2026-09-25T01:00:00Z'), dataStore })).status, 'unknown');
 assert.equal(publishCalls, 1, 'unknown provider outcome is never resubmitted');
+const foreignProvider={...adapter,provider:'replacement-provider',async reconcile(){throw Error('a replacement provider must not inspect the original receipt');}};
+await assert.rejects(reconcileWeeklyPublication({assignment,publicationPackage:packageResult.package,adapter:foreignProvider,dataStore,now:new Date('2026-09-25T01:30:00Z')}),/publication_receipt_provider_mismatch/);
+assert.equal(reconcileCalls,0,'provider identity drift cannot consume or replace the original attempt');
 const recovered = await reconcileWeeklyPublication({ assignment, publicationPackage: packageResult.package, adapter, dataStore, now: new Date('2026-09-25T02:00:00Z') });
 assert.equal(recovered.status, 'published');
 assert.equal(recovered.platform_post_id, 'mock-post-1');
@@ -105,22 +110,23 @@ weeklyBoundStore.rows.set('starter_social_content_tasks', [{ id: 'bound-content-
 const awaitingAcceptance = await runWeeklyPublicationPackageScan({ dataStore: weeklyBoundStore });
 assert.deepEqual({ assignments: awaitingAcceptance.createdAssignments, packages: awaitingAcceptance.createdPackages, skipped: awaitingAcceptance.skipped, errors: awaitingAcceptance.errors.length }, { assignments: 0, packages: 0, skipped: 1, errors: 0 }, 'automatic QC approval must not create a weekly publication package');
 const approval = { publicationTaskId: task.publicationTaskId, schedule: { stepKind: 'user_approval' }, status: 'succeeded', resultRefs: [{ type: 'starter_social_content_artifact', id: 'artifact-1', version: 1 }] };
+const approvalRow=(id:string,tenantId:string,packageVersion:number,payload:typeof approval)=>({id,tenant_id:tenantId,program_id:weekly.programId,package_id:weekly.packageId,package_version:packageVersion,task_id:id,payload:{...payload,taskId:id,tenantId,programId:weekly.programId,packageId:weekly.packageId,packageVersion,accountId:task.accountId,workflowKind:'approval'}});
 weeklyBoundStore.rows.set('social_weekly_execution_tasks', [
-  { id: 'other-tenant-approval', tenant_id: 'tenant-b', package_id: weekly.packageId, package_version: weekly.version, payload: approval },
-  { id: 'other-artifact-approval', tenant_id: 'tenant-a', package_id: weekly.packageId, package_version: weekly.version, payload: { ...approval, resultRefs: [{ type: 'starter_social_content_artifact', id: 'artifact-old', version: 1 }] } },
-  { id: 'other-artifact-version-approval', tenant_id: 'tenant-a', package_id: weekly.packageId, package_version: weekly.version, payload: { ...approval, resultRefs: [{ type: 'starter_social_content_artifact', id: 'artifact-1', version: 2 }] } },
-  { id: 'other-package-version-approval', tenant_id: 'tenant-a', package_id: weekly.packageId, package_version: weekly.version - 1, payload: approval },
+  approvalRow('other-tenant-approval','tenant-b',weekly.version,approval),
+  approvalRow('other-artifact-approval','tenant-a',weekly.version,{ ...approval, resultRefs: [{ type: 'starter_social_content_artifact', id: 'artifact-old', version: 1 }] }),
+  approvalRow('other-artifact-version-approval','tenant-a',weekly.version,{ ...approval, resultRefs: [{ type: 'starter_social_content_artifact', id: 'artifact-1', version: 2 }] }),
+  approvalRow('other-package-version-approval','tenant-a',weekly.version-1,approval),
 ]);
 const mismatchedAcceptance = await runWeeklyPublicationPackageScan({ dataStore: weeklyBoundStore });
 assert.equal(mismatchedAcceptance.createdPackages, 0, 'cross-tenant, obsolete package, different artifact and wrong artifact version acceptance cannot release packaging');
-weeklyBoundStore.rows.get('social_weekly_execution_tasks')!.push({ id: 'actual-approval', tenant_id: 'tenant-a', package_id: weekly.packageId, package_version: weekly.version, payload: approval });
+weeklyBoundStore.rows.get('social_weekly_execution_tasks')!.push(approvalRow('actual-approval','tenant-a',weekly.version,approval));
 const acceptedScan = await runWeeklyPublicationPackageScan({ dataStore: weeklyBoundStore });
 assert.deepEqual({ assignments: acceptedScan.createdAssignments, packages: acceptedScan.createdPackages, errors: acceptedScan.errors.length }, { assignments: 1, packages: 1, errors: 0 }, 'matching actual user acceptance releases packaging');
 const acceptedReplay = await runWeeklyPublicationPackageScan({ dataStore: weeklyBoundStore });
 assert.equal(acceptedReplay.createdPackages, 0, 'accepted package reconciliation remains idempotent');
 weeklyBoundStore.rows.get('social_weekly_execution_tasks')!.push({
-  id: 'formal-weekly-publishing-task', tenant_id: 'tenant-a', package_id: weekly.packageId, package_version: weekly.version,
-  payload: { publicationTaskId: task.publicationTaskId, schedule: { stepKind: 'publishing' }, status: 'blocked' },
+  id: 'formal-weekly-publishing-task', tenant_id: 'tenant-a', program_id: weekly.programId, package_id: weekly.packageId, package_version: weekly.version, task_id: 'formal-weekly-publishing-task',
+  payload: { taskId: 'formal-weekly-publishing-task', tenantId: 'tenant-a', programId: weekly.programId, packageId: weekly.packageId, packageVersion: weekly.version, publicationTaskId: task.publicationTaskId, accountId: task.accountId, workflowKind: 'publishing', schedule: { stepKind: 'publishing' }, status: 'blocked' },
 });
 let legacyAdapterCalls = 0, legacyProviderCalls = 0;
 const delegatedExecution = await runWeeklyPublicationExecutionScan({

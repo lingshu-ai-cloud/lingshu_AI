@@ -68,6 +68,7 @@ test('formal orchestration reads server authorities, persists decisions, and hyd
     weekStart: '2026-09-28', desiredOriginalContents: 2, desiredAdaptations: 2, requestedReferenceMode: 'ordinary_inspiration', expectedSnapshotVersion: 0,
   });
   assert.equal(resolution.goal.status, 'ready');
+  assert.equal(resolution.snapshot.planningWeekStart, '2026-09-28');
   assert.equal(resolution.capacityPlan.publicationQuota, 4);
   assert.equal(resolution.automationPolicy.mode, 'managed');
   assert.equal(resolution.referenceMode.productMode, 'ordinary_inspiration');
@@ -81,6 +82,8 @@ test('formal orchestration reads server authorities, persists decisions, and hyd
     ...authority, weekStart: '2026-09-28', successCriteria: ['qualified inquiry'],
     accountPlans: [{ accountId: 'account-a', publicationCount: 50 }], originalContentTarget: 50, weeklyBudgetCny: 999_999,
   });
+  await assert.rejects(weekly.create('tenant-a', 'owner-a', 'program-a', {...authority, weekStart:'2026-10-05', successCriteria:['fresh new week']}), (error: unknown) => (error as {code?:string}).code === 'operating_snapshot_week_conflict');
+  assert.equal(store.rows.get('social_weekly_operating_packages')?.length, 1, 'old-week authority cannot save a new-week package');
   assert.deepEqual(pkg.operatingDecisionSnapshotRef, authority.operatingDecisionSnapshotRef);
   assert.deepEqual(pkg.capacityPlanRef, resolution.snapshot.capacityPlanRef);
   assert.equal(pkg.socialContentPackage.publicationTaskTarget, 4);

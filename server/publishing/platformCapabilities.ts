@@ -1,3 +1,4 @@
+import {createHash} from 'node:crypto';
 import type { DataStore } from '../storage/datastore.js';
 import { store } from '../storage/index.js';
 import { socialAccessToken, youtubeCredentials } from '../lib/accountCredentials.js';
@@ -15,6 +16,7 @@ export type RuntimePlatformCapability =
 
 export interface PlatformCapabilityEvidence {
   id: string;
+  account_identity_hash?: string;
   tenant_id: string;
   account_id: string;
   platform: RuntimeSocialPlatform;
@@ -132,16 +134,20 @@ const liveProviders: PlatformCapabilityProbeProviders = {
   tiktokReceipt: getTikTokPublishStatus,
 };
 
+/** Frozen actual native identity and credential configuration; never exposed as raw secrets. */
+export function platformAccountIdentityHash(record:Record<string,unknown>,platform:RuntimeSocialPlatform):string{return createHash('sha256').update(JSON.stringify({id:record.id,tenantId:record.tenantId,platform,nativeId:platform==='youtube'?record.channelId:record.providerAccountId,scope:record.scope,status:record.status,accessToken:record.accessToken,refreshToken:record.refreshToken,clientId:record.clientId,clientSecret:record.clientSecret})).digest('hex');}
+
 function scopeSet(record: AccountRecord): Set<string> {
   return new Set(text(record.scope).split(/[\s,]+/).filter(Boolean));
 }
 
 async function persistProbeEvidence(input: {
   tenantId: string; accountId: string; platform: RuntimeSocialPlatform; capability: RuntimePlatformCapability;
-  status: PlatformCapabilityEvidence['status']; reasonCode?: string; providerRef: string; now: Date; dataStore: DataStore;
+  status: PlatformCapabilityEvidence['status']; reasonCode?: string; providerRef: string; accountIdentityHash?:string; now: Date; dataStore: DataStore;
 }): Promise<PlatformCapabilityEvidence> {
   const verifiedAt = input.now.toISOString();
-  const record = await input.dataStore.create<PlatformCapabilityEvidence>(PLATFORM_CAPABILITY_EVIDENCE_COLLECTION, {
+  const payload = {
+    ...(input.accountIdentityHash?{account_identity_hash:input.accountIdentityHash}:{}),
     tenant_id: input.tenantId,
     account_id: input.accountId,
     platform: input.platform,
@@ -154,7 +160,12 @@ async function persistProbeEvidence(input: {
     reason_code: input.reasonCode || '',
     created_at: verifiedAt,
     updated_at: verifiedAt,
-  });
+  };
+  const where={tenant_id:input.tenantId,account_id:input.accountId,capability:input.capability,evidence_ref:payload.evidence_ref};
+  async function existing(){const rows=await input.dataStore.list<PlatformCapabilityEvidence>(PLATFORM_CAPABILITY_EVIDENCE_COLLECTION,{where,perPage:2});if(rows.totalItems!==rows.items.length||rows.items.length>1||rows.items.some(row=>Object.entries(where).some(([key,value])=>row[key as keyof PlatformCapabilityEvidence]!==value)))throw Error('platform_capability_evidence_ambiguous');return rows.items[0]??null;}
+  async function replace(prior:PlatformCapabilityEvidence){if(prior.platform!==input.platform)throw Error('platform_capability_evidence_identity_changed');if(prior.verified_at>verifiedAt)return prior;if(input.accountIdentityHash){const collection=input.platform==='youtube'?'youtube_accounts':'social_accounts';const current=await input.dataStore.getById<AccountRecord>(collection,input.accountId);if(!current||platformAccountIdentityHash(current,input.platform)!==input.accountIdentityHash)throw Error('provider_account_changed_during_probe');}if(!await input.dataStore.update(PLATFORM_CAPABILITY_EVIDENCE_COLLECTION,prior.id,{...payload,created_at:prior.created_at,account_identity_hash:input.accountIdentityHash??''}))throw Error('platform_capability_evidence_persist_failed');const saved=await existing();if(!saved)throw Error('platform_capability_evidence_persist_failed');return saved;}
+  const prior=await existing();if(prior)return replace(prior);
+  let record:PlatformCapabilityEvidence|null=null;try{record=await input.dataStore.create<PlatformCapabilityEvidence>(PLATFORM_CAPABILITY_EVIDENCE_COLLECTION,payload);}catch(error){const winner=await existing();if(!winner)throw error;return replace(winner);}
   if (!record) throw new Error('platform_capability_evidence_persist_failed');
   return record;
 }
@@ -187,6 +198,7 @@ export async function refreshPlatformCapabilityEvidence(input: {
     return persistProbeEvidence({ ...input, status: 'unavailable', reasonCode: 'provider_account_not_connected', providerRef: 'account-unavailable', now, dataStore });
   }
 
+  const accountIdentityHash=platformAccountIdentityHash(account,input.platform);
   try {
     let providerRef = '';
     if (input.capability === 'publishing.receipt_lookup') {
@@ -220,7 +232,8 @@ export async function refreshPlatformCapabilityEvidence(input: {
       if (!result.publishGranted) throw new Error('provider_publish_permission_not_granted');
       providerRef = `account:${text(result.openId)}`;
     }
-    return persistProbeEvidence({ ...input, status: 'verified', providerRef, now, dataStore });
+    const fresh=await dataStore.getById<AccountRecord>(collection,text(input.accountId));if(!fresh||platformAccountIdentityHash(fresh,input.platform)!==accountIdentityHash)throw Error('provider_account_changed_during_probe');
+    return persistProbeEvidence({ ...input, status: 'verified', providerRef,accountIdentityHash, now, dataStore });
   } catch (error) {
     const reason = text(error instanceof Error ? error.message : error) || 'provider_probe_failed';
     // Keep a failed receipt probe tied to the requested receipt. Otherwise a

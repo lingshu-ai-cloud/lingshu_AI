@@ -33,6 +33,14 @@ test('production entry uses bound task identity rather than publication or artif
   assert.equal(rows[2].productionTaskId, 'real-content-2');
   readiness.resultRefs = [{ type: 'starter_social_content_material_demand', id: 'real-content-2', version: 2 }];
   assert.equal(projectExecutionCalendar([readiness], labels)[0].productionTaskId, 'real-content-2');
+  for(const type of ['starter_social_material_preparation','starter_social_owned_product_identity_demand']) {
+    readiness.schedule.stepKind=type==='starter_social_material_preparation'?'material_preparation':'material_readiness';
+    readiness.resultRefs=[{type,id:'real-content-2',version:2}];
+    const card=projectExecutionCalendar([readiness],labels)[0]!;
+    assert.equal(card.productionTaskId,'real-content-2');
+    assert.equal(card.agent,'content');
+    assert.equal(card.status,'completed');
+  }
   bound.status = 'blocked';
   bound.productionProgress!.runId = null;
   assert.equal(projectExecutionCalendar([bound], labels)[0].productionTaskId, 'real-content-1', 'material upload entry does not require a fabricated run identity');
@@ -132,3 +140,5 @@ test('foreign package timezone cannot alter scoped execution date',()=>{
  const projected=projectExecutionCalendar([actual],labels,Date.now(),{pkg})[0];
  assert.equal(projected.date,'2026-10-10'); assert.equal(projected.time,'02:30'); assert.equal(projected.calendarClock?.label,'UTC');
 });
+test('inventory approval links the frozen binding instead of inventing a production task',()=>{const actual={...task('queued'),tenantId:'tenant',programId:'program',packageVersion:2,inputSnapshot:{publicationTask:{inventoryReuseRef:{type:'weekly_inventory_binding',id:'actual-binding',version:1}}},schedule:{...task('queued').schedule,stepKind:'user_approval' as const,responsibleActor:'user' as const}};const card=projectExecutionCalendar([actual],{...labels,user_approval:'本周库存审批'})[0];assert.deepEqual(card.inventoryTarget,{tenantId:'tenant',programId:'program',packageId:'week-1',packageVersion:2,bindingId:'actual-binding',publicationTaskId:'video-1',taskId:'queued'});assert.equal(card.productionTaskId,undefined);});
+test('publishing card links exact publication execution instead of generic content production',()=>{const actual={...task('blocked'),tenantId:'tenant',programId:'program',packageVersion:2,workflowKind:'publishing' as const,accountId:'account-1',schedule:{...task('blocked').schedule,stepKind:'publishing' as const},resultRefs:[{type:'starter_social_content_task',id:'content-wrong-entry',version:1}]};const card=projectExecutionCalendar([actual],{...labels,publishing:'发布'})[0];assert.deepEqual(card.publicationExecutionTarget,{tenantId:'tenant',programId:'program',packageId:'week-1',packageVersion:2,taskId:'blocked',publicationTaskId:'video-1',accountId:'account-1'});assert.equal(card.productionTaskId,undefined);});

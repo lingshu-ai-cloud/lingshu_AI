@@ -46,7 +46,7 @@ test('expired or stale leases block; forecasts beyond a live lease explicitly re
 });
 test('running output that will finish after its publication slot is not predicted reachable',()=>{
  const request=runningInput();request.tasks[1]!.schedule.latestStartAt='2026-10-04T08:00:00Z';request.tasks[1]!.schedule.latestFinishAt='2026-10-04T09:00:00Z';request.resources.content!.concurrency=2;
- const result=planWeeklyBackwardSchedule(request);assert.equal(result.publicationGap,1);assert(result.publications[0]!.reasons.includes('dependency_finish_after_consumer_start'));
+ const result=planWeeklyBackwardSchedule(request);assert.equal(result.publicationGap,1);assert(result.publications[0]!.reasons.some(reason=>['dependency_finish_after_consumer_start','work_window_or_capacity_insufficient'].includes(reason)));
 });
 test('a deferred task with prior production start cannot silently become unstarted work',()=>{
  const request=input([task('prior-run'),task('pub',['prior-run'],'p1')]);request.tasks[0]!.schedule.actualStartedAt='2026-10-04T07:00:00Z';
@@ -63,6 +63,17 @@ test('capacity collision never publishes earlier to disguise an impossible simul
  const result=planWeeklyBackwardSchedule(request);assert.equal(result.conditionallyReachableCount,1);assert.equal(result.publicationGap,1);
  assert.equal(result.assignments.filter(row=>row.startAt).length,1);
  request.resources.content!.concurrency=2;assert.equal(planWeeklyBackwardSchedule(request).publicationGap,0);
+});
+test('one Agent cannot gain fictional parallel capacity by using multiple resource keys',()=>{
+ const tasks=[task('a'),task('b')];
+ tasks.forEach(item=>item.schedule.latestFinishAt='2026-10-04T10:00:00Z');
+ const request=input(tasks);
+ request.constraints.b={...request.constraints.b!,resourceKey:'content-second-column'};
+ request.resources['content-second-column']={concurrency:1,workingWindows:[{startAt:now,finishAt:'2026-10-04T10:00:00Z'}]};
+ assert.throws(()=>planWeeklyBackwardSchedule(request),/one capacity resource/i,'columns do not create another content Agent');
+ request.tasks[1]!.schedule.responsibleActor='quality_agent';
+ const separateAgents=planWeeklyBackwardSchedule(request);
+ assert.equal(separateAgents.assignments.filter(row=>row.mode==='planned').length,2,'a distinct Agent may use its own confirmed work window');
 });
 test('human nonworking days and missing estimates block without fabricating capacity',()=>{
  const tasks=[task('human'),task('render',['human']),task('pub',['render'],'p1')];tasks[0]!.schedule.responsibleActor='user';

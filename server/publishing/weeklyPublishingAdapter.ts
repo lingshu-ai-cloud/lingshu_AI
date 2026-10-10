@@ -1,3 +1,7 @@
+import {assertPublicationAtomicStore} from './publicationAtomicStore.js';
+import {weeklyReceiptLookupAuthority,type WeeklyPublishingPurpose} from './weeklyReceiptLookupAuthority.js';
+import {materializeInstagramDelivery} from './instagramDeliveryMedia.js';
+import {instagramDeliveryPublishSourceClaim} from './publishSourceClaim.js';
 import { fileURLToPath } from 'node:url';
 import { socialAccessToken, youtubeCredentials } from '../lib/accountCredentials.js';
 import type { DataStore } from '../storage/datastore.js';
@@ -6,7 +10,7 @@ import { ensurePlatformCapability } from './platformCapabilities.js';
 import { publishVideoToAccount, resolvePendingPublishToAccount, type PendingPublishResolution, type PublishToAccountInput, type PublishToAccountResult } from './platformPublisher.js';
 import { socialProductionPublishSourceClaim } from './publishSourceClaim.js';
 import { materializeSocialProductionVideo } from './socialProductionMedia.js';
-import { createTikTokWeeklyPublishingAdapter } from './tiktokWeeklyPublishingAdapter.js';
+import { createTikTokWeeklyPublishingAdapter,type TikTokWeeklyPublishingPorts } from './tiktokWeeklyPublishingAdapter.js';
 import type { WeeklyPublishingProviderAdapter } from './weeklyLineage.js';
 
 type Platform = WeeklyPublishingProviderAdapter['platform'];
@@ -53,10 +57,14 @@ async function createSynchronousWeeklyPublishingAdapter(input: {
   dataStore?: DataStore;
   now?: Date;
   ports?: WeeklyPublishingPorts;
+  purpose?:WeeklyPublishingPurpose;
+  providerReceiptId?:string;
+  tiktokPorts?:TikTokWeeklyPublishingPorts;
 }): Promise<WeeklyPublishingProviderAdapter> {
   const dataStore = input.dataStore ?? store;
   let unavailableReason = await accountUnavailableReason({ ...input, dataStore });
-  if (!unavailableReason) {
+  const lookup=input.purpose==='receipt_lookup'?await weeklyReceiptLookupAuthority({...input,dataStore}):null;if(lookup)unavailableReason=lookup.reason;
+  if (!unavailableReason&&!lookup) {
     const decision = await ensurePlatformCapability({
       tenantId: input.tenantId, accountId: input.accountId, platform: input.platform,
       capability: 'publishing.official', now: input.now, dataStore,
@@ -71,6 +79,9 @@ async function createSynchronousWeeklyPublishingAdapter(input: {
     capability: unavailableReason ? 'unavailable' : 'available',
     ...(unavailableReason ? { unavailableReason } : {}),
     async publish({ assignment, publicationPackage, attemptId }) {
+      await assertPublicationAtomicStore(dataStore);
+      if(input.purpose==='receipt_lookup')return {status:'rejected',failureCode:'receipt_lookup_adapter_read_only'};
+      if(unavailableReason)return {status:'rejected',failureCode:unavailableReason};
       if (assignment.tenantId !== input.tenantId || assignment.accountId !== input.accountId
         || assignment.platform !== input.platform) return { status: 'rejected', failureCode: 'adapter_account_scope_mismatch' };
       const video = publicationPackage.assets.find(asset => asset.kind === 'video');
@@ -83,20 +94,29 @@ async function createSynchronousWeeklyPublishingAdapter(input: {
       const directPath = localVideoPath(video.downloadUrl);
       const materialized = directPath ? { videoPath: directPath, sourceUrl: '', async cleanup() {} }
         : await materializeSocialProductionVideo({ tenantId: assignment.tenantId, artifactId, attemptId, expectedHash: video.contentHash, dataStore });
+      let delivery:Awaited<ReturnType<typeof materializeInstagramDelivery>>|null=null;
       try {
-        const sourceClaim = await socialProductionPublishSourceClaim({
-          tenantId: assignment.tenantId, artifactId,
+        let sourceClaim = await socialProductionPublishSourceClaim({
+          tenantId: assignment.tenantId, artifactId, weeklyAssignment:assignment,
           productionResultId: assignment.lineage.productionResultRef.id,
           contentVersion: publicationPackage.contentVersion,
           contentHash: publicationPackage.contentHash,
           videoHash: video.contentHash, videoPath: materialized.videoPath,
           ...(materialized.sourceUrl ? { artifactVideoUrl: materialized.sourceUrl } : {}), dataStore,
         });
+        if(input.platform==='instagram'){if(!assignment.lineage.instagramDelivery)return {status:'rejected',failureCode:'instagram_delivery_frozen_proof_missing'};delivery=await materializeInstagramDelivery(dataStore,assignment.lineage.instagramDelivery);sourceClaim=await instagramDeliveryPublishSourceClaim({tenantId:assignment.tenantId,assignment,sourceClaim,videoPath:delivery.videoPath,dataStore});}
         const result = await ports.publish({
           tenantId: assignment.tenantId, accountId: assignment.accountId, platform: input.platform,
-          videoPath: materialized.videoPath, title: publicationPackage.copy.title,
+          videoPath: delivery?.videoPath??materialized.videoPath, title: publicationPackage.copy.title,
           description: publicationPackage.copy.body, tags: publicationPackage.copy.hashtags,
           contentId: publicationPackage.contentId, sourceClaim, publishAttemptId: attemptId,
+          ...(input.platform === 'instagram' ? { async onProviderReceipt(receiptId: string) {
+            const attempts = await dataStore.list<{ id: string; tenant_id: string; attempt_id: string; assignment_id: string; package_id: string; status: string; provider_receipt_id?: string }>('social_publication_attempts', { where: { tenant_id: assignment.tenantId, attempt_id: attemptId }, perPage: 2 });
+            const attempt = attempts.items[0];
+            if (attempts.items.length !== 1 || !attempt || attempt.assignment_id !== assignment.assignmentId || attempt.package_id !== assignment.packageId || attempt.status !== 'in_flight' || (attempt.provider_receipt_id && attempt.provider_receipt_id !== receiptId)) throw new Error('instagram_container_attempt_mismatch');
+            const saved = await dataStore.update('social_publication_attempts', attempt.id, { provider_receipt_id: receiptId, updated_at: new Date().toISOString() });
+            if (!saved) throw new Error('instagram_container_persistence_failed');
+          } } : {}),
         });
         if (result.deliveryStatus === 'provider_accepted' && result.providerReceiptId) {
           return { status: 'accepted', providerReceiptId: result.providerReceiptId };
@@ -106,14 +126,17 @@ async function createSynchronousWeeklyPublishingAdapter(input: {
           platformPostId: result.platformPostId, ...(result.platformUrl ? { platformUrl: result.platformUrl } : {}),
         };
         return { status: 'unknown', providerReceiptId: result.providerReceiptId, failureCode: `${input.platform}_publish_outcome_unknown` };
-      } finally { await materialized.cleanup(); }
+      } finally { if(delivery)await delivery.cleanup();await materialized.cleanup(); }
     },
     async reconcile({ assignment, attempt }) {
+      if(input.purpose==='receipt_lookup'){if(assignment.tenantId!==input.tenantId||assignment.accountId!==input.accountId||assignment.platform!==input.platform||attempt.tenant_id!==input.tenantId||attempt.assignment_id!==assignment.assignmentId||attempt.package_id!==assignment.packageId||!['unknown','in_flight'].includes(attempt.status)||attempt.provider!==(input.platform==='youtube'?'youtube-data-api':'meta-graph-api')||attempt.provider_receipt_id!==input.providerReceiptId)return {status:'unknown',failureCode:'receipt_lookup_scope_mismatch'};const fresh=await weeklyReceiptLookupAuthority({...input,dataStore});if(fresh.reason||fresh.identityHash!==lookup?.identityHash)return {status:'unknown',failureCode:fresh.reason||'receipt_lookup_account_changed'};}
       if (!attempt.provider_receipt_id) return { status: 'unknown', failureCode: 'provider_receipt_missing' };
       const result = await ports.reconcile({
         tenantId: assignment.tenantId, accountId: assignment.accountId,
         platform: input.platform, providerReceiptId: attempt.provider_receipt_id,
       });
+      if(input.purpose==='receipt_lookup'){const after=await weeklyReceiptLookupAuthority({...input,dataStore});if(after.reason||after.identityHash!==lookup?.identityHash)return {status:'unknown',providerReceiptId:attempt.provider_receipt_id,failureCode:after.reason||'receipt_lookup_account_changed'};}
+      if(result.providerReceiptId!==attempt.provider_receipt_id||(result.platformPostId&&result.platformPostId!==attempt.provider_receipt_id))return {status:'unknown',failureCode:'provider_receipt_mismatch'};
       if (result.status === 'published' && result.platformPostId) return {
         status: 'published', providerReceiptId: result.providerReceiptId,
         platformPostId: result.platformPostId, platformUrl: result.platformUrl,
@@ -138,9 +161,12 @@ export async function createWeeklyPublishingAdapter(input: {
   dataStore?: DataStore;
   now?: Date;
   ports?: WeeklyPublishingPorts;
+  purpose?:WeeklyPublishingPurpose;
+  providerReceiptId?:string;
+  tiktokPorts?:TikTokWeeklyPublishingPorts;
 }): Promise<WeeklyPublishingProviderAdapter> {
   if (input.platform === 'tiktok') return createTikTokWeeklyPublishingAdapter({
-    tenantId: input.tenantId, accountId: input.accountId, dataStore: input.dataStore, now: input.now,
+    tenantId: input.tenantId, accountId: input.accountId, dataStore: input.dataStore, now: input.now,purpose:input.purpose,providerReceiptId:input.providerReceiptId,ports:input.tiktokPorts,
   });
   return createSynchronousWeeklyPublishingAdapter(input as Parameters<typeof createSynchronousWeeklyPublishingAdapter>[0]);
 }

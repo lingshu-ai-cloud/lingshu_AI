@@ -3,6 +3,7 @@ import test from 'node:test';
 import type { DataStore, ListQuery, ListResult } from '../storage/datastore.js';
 import { sealAccountCredential } from '../lib/accountCredentials.js';
 import {
+  platformAccountIdentityHash,
   PLATFORM_CAPABILITY_EVIDENCE_COLLECTION,
   ensurePlatformCapability,
   platformCapabilityDecision,
@@ -22,7 +23,7 @@ class MemoryStore implements DataStore {
     this.rows.set(collection, [...(this.rows.get(collection) || []), row]);
     return row as T;
   }
-  async update(): Promise<boolean> { return true; }
+  async update(collection:string,id:string,data:Record<string,unknown>): Promise<boolean> {const row=this.rows.get(collection)?.find(r=>r.id===id);if(!row)return false;Object.assign(row,data);return true; }
   async delete(): Promise<boolean> { return true; }
   async list<T>(collection: string, query: ListQuery = {}): Promise<ListResult<T>> {
     let items = [...(this.rows.get(collection) || [])];
@@ -199,4 +200,33 @@ test('a newer receipt failure does not hide a previous receipt success', async (
   assert.equal((await ensurePlatformCapability({ ...input, receiptId: 'receipt-b' })).status, 'unavailable');
   assert.equal((await ensurePlatformCapability({ ...input, receiptId: 'receipt-a' })).status, 'available');
   assert.deepEqual(calls, ['receipt-a', 'receipt-b']);
+});
+
+
+test('provider observation is frozen to actual native identity and encrypted credential bytes', async () => {
+ const store=new MemoryStore();const account={id:'account-a',tenantId:'tenant-a',status:'connected',channelId:'channel-a',clientId:'client',clientSecret:sealAccountCredential('secret'),refreshToken:sealAccountCredential('refresh')};store.rows.set('youtube_accounts',[account]);
+ const evidence=await refreshPlatformCapabilityEvidence({tenantId:'tenant-a',accountId:'account-a',platform:'youtube',capability:'publishing.official',now,dataStore:store,providers:providers([])});
+ assert.equal(evidence.account_identity_hash,platformAccountIdentityHash(account,'youtube'));
+ assert.notEqual(evidence.account_identity_hash,platformAccountIdentityHash({...account,refreshToken:sealAccountCredential('new-secret')},'youtube'));
+ assert.notEqual(evidence.account_identity_hash,platformAccountIdentityHash({...account,channelId:'foreign-channel'},'youtube'));
+});
+test('account changes during actual provider probe do not produce a verified proof', async () => {
+ const store=new MemoryStore();const account={id:'account-a',tenantId:'tenant-a',status:'connected',channelId:'channel-a',clientId:'client',clientSecret:sealAccountCredential('secret'),refreshToken:sealAccountCredential('refresh')};store.rows.set('youtube_accounts',[account]);let calls=0;
+ const port={...providers([]),async youtube(){calls++;store.rows.set('youtube_accounts',[{...account,refreshToken:sealAccountCredential('changed')}]);return {id:'channel-a',publishGranted:true};}};
+ const evidence=await refreshPlatformCapabilityEvidence({tenantId:'tenant-a',accountId:'account-a',platform:'youtube',capability:'publishing.official',now,dataStore:store,providers:port});
+ assert.equal(calls,1);assert.equal(evidence.status,'unavailable');assert.equal(evidence.reason_code,'provider_account_changed_during_probe');assert.equal(evidence.account_identity_hash,undefined);
+});
+
+test('repeated actual probes update the unique scope instead of inserting duplicate rows', async()=>{
+ const store=new MemoryStore();store.rows.set('youtube_accounts',[{id:'account-a',tenantId:'tenant-a',status:'connected',channelId:'channel-a',clientId:'client',clientSecret:sealAccountCredential('secret'),refreshToken:sealAccountCredential('refresh')}]);
+ const first=await refreshPlatformCapabilityEvidence({tenantId:'tenant-a',accountId:'account-a',platform:'youtube',capability:'publishing.official',now,dataStore:store,providers:providers([])});
+ const second=await refreshPlatformCapabilityEvidence({tenantId:'tenant-a',accountId:'account-a',platform:'youtube',capability:'publishing.official',now:new Date(now.getTime()+1000),dataStore:store,providers:providers([])});
+ assert.equal(first.id,second.id);assert.equal(store.rows.get(PLATFORM_CAPABILITY_EVIDENCE_COLLECTION)?.length,1);assert.equal(second.verified_at,'2026-09-26T08:00:01.000Z');
+});
+
+test('unique-index create conflict reconciles only the exact persisted provider scope',async()=>{
+ class ConflictStore extends MemoryStore {conflict=true;override async create<T>(collection:string,data:Record<string,unknown>):Promise<T|null>{if(collection===PLATFORM_CAPABILITY_EVIDENCE_COLLECTION&&this.conflict){this.conflict=false;await super.create(collection,data);throw Error('unique index conflict');}return super.create<T>(collection,data);}}
+ const store=new ConflictStore();store.rows.set('youtube_accounts',[{id:'account-a',tenantId:'tenant-a',status:'connected',channelId:'channel-a',clientId:'client',clientSecret:sealAccountCredential('secret'),refreshToken:sealAccountCredential('refresh')}]);
+ const result=await refreshPlatformCapabilityEvidence({tenantId:'tenant-a',accountId:'account-a',platform:'youtube',capability:'publishing.official',now,dataStore:store,providers:providers([])});
+ assert.equal(result.status,'verified');assert.equal(store.rows.get(PLATFORM_CAPABILITY_EVIDENCE_COLLECTION)?.length,1);assert.match(result.account_identity_hash??'',/^[a-f0-9]{64}$/);
 });

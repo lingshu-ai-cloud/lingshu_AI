@@ -20,6 +20,9 @@ const cases=[
  ['1791072010_create_studio_render_jobs.js','studio_render_jobs',['tenant_id','project_id','idempotency_key']],
  ['1791072020_create_social_weekly_material_requests.js','social_weekly_material_requests',['tenant_id','program_id','requirement_key']],
  ['1791072011_create_social_weekly_agent_planning.js','social_weekly_agent_planning',['tenant_id','program_id','package_id','package_version','planning_version']],
+ ['1791072026_create_weekly_execution_continuations.js','social_weekly_execution_continuations',['tenant_id','target_task_id']],
+ ['1791072041_create_cross_week_material_continuations.js','social_cross_week_material_continuations',['tenant_id','program_id','target_package_id','target_version','source_request_id','target_consumer_task_id']],
+ ['1791072042_create_weekly_inventory_bindings.js','social_weekly_inventory_bindings',['tenant_id','program_id','target_package_id','target_version','publication_task_id']],
 ] as const;
 for(const [filename,name,identity] of cases) test(`${name} schema locks client access and scopes durable identity to tenant`,()=> {
  const collection=schema(filename);
@@ -30,12 +33,12 @@ for(const [filename,name,identity] of cases) test(`${name} schema locks client a
  for(const field of identity) assert.equal(fields.get(field)?.required,true);
  const unique=collection.indexes.find((index:string)=>index.startsWith('CREATE UNIQUE INDEX'));
  assert.ok(unique);
- assert.ok(unique.endsWith(`(${identity.join(', ')})`));
+ assert.ok(unique.replace(/\s/g,'').endsWith(`(${identity.join(',')})`));
  if(name==='studio_render_jobs') {
    for(const name of ['progress','attempts']) {assert.equal(fields.get(name)?.required,undefined);assert.equal(fields.get(name)?.min,0);}
  }
  if(name==='social_weekly_cancellations') {
    for(const name of ['checkpoints','effects']) assert.notEqual(fields.get(name)?.required,true,'empty receipt sets remain valid');
  }
- for(const name of ['package_version','planning_version']) if(fields.has(name)) assert.equal(fields.get(name)?.min,1);
+ for(const name of ['package_version','planning_version','target_version']) if(fields.has(name)) assert.equal(fields.get(name)?.min,1);
 });

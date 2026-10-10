@@ -6,6 +6,7 @@ import { controlContentExecutionJob } from '../contentExecution/durableQueue.js'
 import { parseContentProviderReceipts } from '../contentExecution/context.js';
 import { acquireDurableOperationLease, assertDurableOperationLease, renewDurableOperationLease, releaseDurableOperationLease } from '../runtime/durableLease.js';
 import { SocialProgramError } from './service.js';
+import { socialJson, socialObject, socialRequestHash } from '../starter198/socialContentValidation.js';
 
 export const WEEKLY_CANCELLATIONS = 'social_weekly_cancellations';
 type Effect = { resourceType: 'production_job' | 'publication_attempt'; resourceId: string; outcome: 'irreversible' | 'unknown_requires_reconciliation'; receiptRefs: string[] };
@@ -76,6 +77,41 @@ export async function reconcileWeeklyCancellation(input: {
       }
       await checkpoint(`binding:${binding.id}`, async () => {
         if (!['completed', 'cancelled'].includes(text(binding.status)) && !await store.update('starter_social_content_tasks', binding.id, { status: 'paused', updated_at: input.now, cancellation_reason: input.reason })) throw new Error('weekly_cancellation_binding_unavailable');
+      });
+    }
+    // Creative repairs use a child task/run/job rather than the original weekly-production
+    // idempotency key. Follow the durable case-to-child mapping so package withdrawal cannot
+    // leave that child running. Provider receipts remain evidence even after the local job is
+    // cancelled; an unknown provider outcome is never rewritten as a successful rollback.
+    const repairCases = await all(store, 'social_weekly_production_repair_cases', { tenant_id: tenantId, package_id: packageId, package_version: packageVersion });
+    for (const repairCase of repairCases.filter(row => text((row.payload as Record<string, unknown> | undefined)?.kind) === 'creative_revision')) {
+      const caseId = text(repairCase.case_id);
+      const mappings = await all(store, 'social_weekly_creative_repair_child_executions', { tenant_id: tenantId, case_id: caseId });
+      if (mappings.length > 1) throw new Error('weekly_cancellation_creative_mapping_ambiguous');
+      if (!mappings.length) continue;
+      const mapped = mappings[0]!, casePayload = socialObject(socialJson(repairCase.payload)), payload = socialObject(socialJson(mapped.payload));
+      if (!casePayload || !payload || payload.schemaVersion !== 'weekly-creative-repair-child-execution.v1' || mapped.content_hash !== socialRequestHash(payload) || payload.caseId !== caseId || payload.caseRequestHash !== casePayload.requestHash) throw new Error('weekly_cancellation_creative_mapping_invalid');
+      const mappingHash = payload.recordHash, { recordHash: _recordHash, ...mappingBody } = payload;
+      if (typeof mappingHash !== 'string' || mappingHash !== socialRequestHash(mappingBody)) throw new Error('weekly_cancellation_creative_mapping_invalid');
+      const childTaskId = text(payload.childTaskId), runId = text(payload.runId), jobId = text(payload.jobId);
+      if (![childTaskId, runId, jobId].every(Boolean)) continue; // Capacity may be confirmed before a child exists.
+      const job = await store.getById<Record_>('content_execution_jobs', jobId);
+      if (!job || job.tenant_id !== tenantId || text(job.task_id) !== childTaskId || text(job.run_id) !== runId) throw new Error('weekly_cancellation_creative_job_identity_invalid');
+      await checkpoint(`creative-job:${jobId}`, async () => {
+        const receipts = parseContentProviderReceipts(job.provider_receipts);
+        const unknown = ['running', 'reconciling'].includes(text(job.status)) || receipts.some(item => ['unknown', 'submitting', 'accepted'].includes(text(item.state)));
+        if (receipts.length || unknown || job.status === 'succeeded') receipt!.effects = [...receipt!.effects.filter(effect => effect.resourceId !== jobId), { resourceType: 'production_job', resourceId: jobId, outcome: unknown ? 'unknown_requires_reconciliation' : 'irreversible', receiptRefs: receipts.map(item => text(item.providerTaskId || item.requestId)).filter(Boolean) }];
+        if (!['succeeded', 'cancelled'].includes(text(job.status))) await controlContentExecutionJob({ dataStore: store, tenantId, jobId, action: 'cancel', now: new Date(input.now) });
+      });
+      await checkpoint(`creative-run:${runId}`, async () => withStarter198RunMutationLease({ dataStore: store, tenantId, runId, action: async () => {
+        const run = await store.getById<Record_>('workflow_runs', runId);
+        if (!run || run.tenant_id !== tenantId) throw new Error('weekly_cancellation_creative_run_identity_invalid');
+        if (!['succeeded', 'failed', 'completed', 'cancelled'].includes(text(run.status))) await cancelDigitalEmployeeRun({ dataStore: store, tenantId, userId: 'weekly-cancellation', runId, reason: input.reason, now: new Date(input.now) });
+      } }));
+      await checkpoint(`creative-binding:${childTaskId}`, async () => {
+        const rows = await all(store, 'starter_social_content_tasks', { tenant_id: tenantId, task_id: childTaskId });
+        if (rows.length !== 1 || text(rows[0]!.run_id) !== runId) throw new Error('weekly_cancellation_creative_binding_identity_invalid');
+        if (!['completed', 'cancelled'].includes(text(rows[0]!.status)) && !await store.update('starter_social_content_tasks', rows[0]!.id, { status: 'paused', updated_at: input.now, cancellation_reason: input.reason })) throw new Error('weekly_cancellation_creative_binding_unavailable');
       });
     }
     for (const assignment of await all(store, 'social_publication_assignments', { tenant_id: tenantId, operating_package_id: packageId, operating_package_version: packageVersion })) {

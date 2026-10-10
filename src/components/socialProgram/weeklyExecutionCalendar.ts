@@ -11,7 +11,7 @@ export function projectExecutionCalendar(tasks: WeeklyExecutionTask[], labels: R
   const bindings = new Map<string, Set<string>>();
   for (const task of tasks) {
     if (!task.publicationTaskId) continue;
-    const id = (task.continuationObservation?.status === 'ready' ? task.continuationObservation.contentTaskId : undefined) || task.productionProgress?.contentTaskId || task.resultRefs.find(ref => ['starter_social_content_task','starter_social_content_script_baseline','starter_social_content_director_plan','starter_social_content_material_demand'].includes(ref.type))?.id;
+    const id = (task.continuationObservation?.status === 'ready' ? task.continuationObservation.contentTaskId : undefined) || task.productionProgress?.contentTaskId || task.resultRefs.find(ref => ['starter_social_content_task','starter_social_content_script_baseline','starter_social_content_director_plan','starter_social_content_material_demand','starter_social_owned_product_identity_demand','starter_social_material_preparation'].includes(ref.type))?.id;
     if (!id) continue;
     const ids = bindings.get(bindingKey(task)) ?? new Set<string>();
     ids.add(id);
@@ -36,7 +36,7 @@ export function projectExecutionCalendar(tasks: WeeklyExecutionTask[], labels: R
     const planned = calendarDateTime(task.schedule.estimatedFinishAt,clock);
     const presentation=executionCalendarPresentation(task,labels[task.schedule.stepKind]||'阶段交付',options);
     const actor = task.schedule.responsibleActor;
-    const agent: AgentCalendarTask['agent'] = actor === 'director_agent' ? 'director' : actor === 'content_agent' || actor === 'quality_agent' ? 'content' : actor === 'user' ? 'human' : 'business';
+    const agent: AgentCalendarTask['agent'] = actor === 'director_agent' ? 'director' : actor === 'content_agent' || actor === 'quality_agent' ? 'content' : actor === 'customer_agent' ? 'customer' : actor === 'user' ? 'human' : 'business';
     const status: AgentCalendarTask['status'] = task.status === 'succeeded' ? 'completed' : task.status === 'leased' ? 'active' : task.status === 'cancelled' ? 'cancelled' : task.status === 'dead_letter' ? 'failed' : task.status === 'blocked' ? 'blocked' : 'planned';
     const terminal = ['succeeded','cancelled'].includes(task.status);
     const latestStart = Date.parse(task.schedule.latestStartAt || '');
@@ -76,10 +76,13 @@ export function projectExecutionCalendar(tasks: WeeklyExecutionTask[], labels: R
       dueAt: task.schedule.latestFinishAt ?? task.schedule.estimatedFinishAt,
         submission: task.status === 'succeeded' ? 'accepted' as const : 'missing' as const,
       } : {}),
+      ...(['customer_channel_readiness','customer_inquiry_handoff'].includes(task.schedule.stepKind)&&task.publicationTaskId&&['whatsapp','messenger','instagram'].includes(String(task.inputSnapshot.customerChannel))?{customerExecutionTarget:{tenantId:task.tenantId,programId:task.programId,packageId:task.packageId,packageVersion:task.packageVersion,taskId:task.taskId,publicationTaskId:task.publicationTaskId,stepKind:task.schedule.stepKind as 'customer_channel_readiness'|'customer_inquiry_handoff',channel:task.inputSnapshot.customerChannel as 'whatsapp'|'messenger'|'instagram'}}:{}),
       ...(['performance_monitoring','weekly_review'].includes(task.schedule.stepKind)&&task.tenantId&&task.programId&&task.packageId&&Number.isSafeInteger(task.packageVersion)&&task.packageVersion>0?{reviewTarget:{tenantId:task.tenantId,programId:task.programId,packageId:task.packageId,packageVersion:task.packageVersion,taskId:task.taskId,stepKind:task.schedule.stepKind as 'performance_monitoring'|'weekly_review'}}:{}),
       ...(isTemplateCalendarStep(task.schedule.stepKind)?{templateTarget:{tenantId:task.tenantId,programId:task.programId,packageId:task.packageId,packageVersion:task.packageVersion,taskId:task.taskId,stepKind:task.schedule.stepKind}}:{}),
       ...(isPlanningCalendarStep(task.schedule.stepKind)&&task.tenantId&&task.programId&&task.packageId&&Number.isSafeInteger(task.packageVersion)&&task.packageVersion>0?{planningTarget:{tenantId:task.tenantId,programId:task.programId,packageId:task.packageId,packageVersion:task.packageVersion,taskId:task.taskId,stepKind:task.schedule.stepKind}}:{}),
-      productionTaskId: (isTemplateCalendarStep(task.schedule.stepKind)||isPlanningCalendarStep(task.schedule.stepKind)||['performance_monitoring','weekly_review'].includes(task.schedule.stepKind)) ? undefined : boundIds?.size === 1 ? [...boundIds][0] : undefined,
+      ...((task.inputSnapshot?.publicationTask as {inventoryReuseRef?:{type:string;id:string;version:number}})?.inventoryReuseRef?.type==='weekly_inventory_binding'?{inventoryTarget:{tenantId:task.tenantId,programId:task.programId,packageId:task.packageId,packageVersion:task.packageVersion,bindingId:(task.inputSnapshot.publicationTask as {inventoryReuseRef:{id:string}}).inventoryReuseRef.id,publicationTaskId:task.publicationTaskId!,taskId:task.taskId}}:{}),
+      ...(task.schedule.stepKind==='publishing'&&task.workflowKind==='publishing'&&task.publicationTaskId&&task.accountId?{publicationExecutionTarget:{tenantId:task.tenantId,programId:task.programId,packageId:task.packageId,packageVersion:task.packageVersion,taskId:task.taskId,publicationTaskId:task.publicationTaskId,accountId:task.accountId}}:{}),
+      productionTaskId: (task.schedule.stepKind==='publishing'||isTemplateCalendarStep(task.schedule.stepKind)||isPlanningCalendarStep(task.schedule.stepKind)||['performance_monitoring','weekly_review'].includes(task.schedule.stepKind)) ? undefined : boundIds?.size === 1 ? [...boundIds][0] : undefined,
       reason: reason || undefined,
     }];
   });

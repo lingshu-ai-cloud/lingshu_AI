@@ -1,3 +1,4 @@
+import {assertSocialAccountProductionConstraints,type SocialAccountProductionConstraints} from './socialAccountProductionConstraints.js';
 import {validContentTemplateStructure} from '../../shared/socialContentTemplateStructure.js';
 import type {
   SocialContentThemeId,
@@ -52,6 +53,7 @@ export interface SocialDirectorOutputSpec {
 }
 
 export interface StoredSocialDirectorPlan {
+  accountPlaybookConstraints?:SocialAccountProductionConstraints;
   schemaVersion: typeof SOCIAL_DIRECTOR_PLAN_SCHEMA;
   directorPlanId: string;
   version: string;
@@ -133,6 +135,7 @@ export interface StoredSocialDirectorPlan {
     }>;
   }>;
   scenes: Array<{
+    accountPlaybookConstraints?:SocialAccountProductionConstraints;
     sceneId: string;
     order: number;
     /** Safe timing/camera grammar copied from this task's analyzed reference
@@ -237,6 +240,10 @@ function stableDirectorPlanId(taskId: string): string {
   const id = socialText(taskId);
   if (!id) throw new SocialContentWorkflowError('social_content_director_plan_identity_invalid', 503);
   return `director_plan_${socialRequestHash({ scope: 'social_content_task', taskId: id }).slice(0, 24)}`;
+}
+
+export function applyLockedTemplateDirection(direction: StoredSocialDirectorPlan['direction'], baseline: StoredSocialScriptBaseline): StoredSocialDirectorPlan['direction'] {
+ const c=baseline.contentTemplateStructure;if(!c)return direction;if(!validContentTemplateStructure(c))throw new SocialContentWorkflowError('content_template_structure_invalid',409);return {...direction,pace:c.pace,voiceover:{...direction.voiceover,speed:c.voiceSpeed,pauseStyle:c.pauseStyle}};
 }
 
 function directionFor(input: {
@@ -375,12 +382,12 @@ export function buildSocialDirectorPlan(input: {
   if (input.previous && input.previous.directorPlanId !== directorPlanId) {
     throw new SocialContentWorkflowError('social_content_director_plan_identity_invalid', 503);
   }
-  const direction = directionFor({
+  const direction = applyLockedTemplateDirection(directionFor({
     formula: input.formula,
     themeId: input.baseline.themeId,
     duration: input.productionPlan.maxDuration,
-  });
-  if(input.baseline.contentTemplateStructure){const c=input.baseline.contentTemplateStructure;if(!validContentTemplateStructure(c))throw new SocialContentWorkflowError('content_template_structure_invalid',409);direction.pace=c.pace;direction.voiceover.speed=c.voiceSpeed;direction.voiceover.pauseStyle=c.pauseStyle;}
+  }),input.baseline);
+  if(input.baseline.accountPlaybookConstraints)assertSocialAccountProductionConstraints(input.baseline.accountPlaybookConstraints);
   const baselineById = new Map(input.baseline.scenes.map(scene => [scene.sceneId, scene]));
   const scenes = input.productionPlan.scenes.map((scene, index) => {
     const baselineScene = baselineById.get(scene.sceneId);
@@ -395,10 +402,11 @@ export function buildSocialDirectorPlan(input: {
     const caption = sameSpokenContent(scene.narration, baselineScene.voiceover || baselineScene.narration)
       ? socialText(baselineScene.caption) || voiceover
       : voiceover;
-    if (!voiceover || !caption || Object.values(script).some(value => !value)) {
+    if (Object.values(script).some(value => !value)) {
       throw new SocialContentWorkflowError('social_content_director_plan_script_invalid', 503);
     }
     return {
+      ...(input.baseline.accountPlaybookConstraints?{accountPlaybookConstraints:structuredClone(input.baseline.accountPlaybookConstraints)}:{}),
       sceneId: scene.sceneId,
       order: index + 1,
       ...(baselineScene.referenceStructure ? {
@@ -427,6 +435,9 @@ export function buildSocialDirectorPlan(input: {
       },
     };
   });
+  if (!scenes.some(scene => socialText(scene.voiceover))) {
+    throw new SocialContentWorkflowError('social_content_director_plan_script_invalid', 503);
+  }
   const qualityGates: StoredSocialDirectorPlan['qualityGates'] = [
     {
       gateId: 'script_grounding',
@@ -499,6 +510,7 @@ export function buildSocialDirectorPlan(input: {
     protectedVisual: false,
   })), 2, 198, input.bgmSelection.primary.beatEvidence);
   return withDirectorPlanHash({
+    ...(input.baseline.accountPlaybookConstraints?{accountPlaybookConstraints:structuredClone(input.baseline.accountPlaybookConstraints)}:{}),
     schemaVersion: SOCIAL_DIRECTOR_PLAN_SCHEMA,
     directorPlanId,
     version: nextVersion(input.previous),
@@ -722,19 +734,22 @@ export function parseStoredSocialDirectorPlan(value: unknown): StoredSocialDirec
     || Number(bgmSelection.volume) !== Number(music.volume)) {
     throw new SocialContentWorkflowError('social_content_director_plan_record_invalid', 503);
   }
+  let spokenSceneCount = 0;
   for (const value of scenesValue) {
     const scene = socialObject(value);
     const script = socialObject(scene?.script);
     const shotPlan = socialObject(scene?.shotPlan);
     const mapping = socialObject(scene?.materialMapping);
     if (!scene || !script || !shotPlan || !mapping
-      || !socialText(scene.sceneId) || !socialText(scene.voiceover) || !socialText(scene.caption)
+      || !socialText(scene.sceneId) || typeof scene.voiceover !== 'string' || typeof scene.caption !== 'string'
       || !socialText(script.text) || !socialText(script.shotFunction) || !socialText(script.subject) || !socialText(script.action)
       || !socialText(shotPlan.clipId) || !socialText(shotPlan.assetId) || !socialText(shotPlan.assetName)
       || !['video', 'image'].includes(socialText(shotPlan.type))) {
       throw new SocialContentWorkflowError('social_content_director_plan_record_invalid', 503);
     }
+    if (socialText(scene.voiceover)) spokenSceneCount += 1;
   }
+  if (!spokenSceneCount) throw new SocialContentWorkflowError('social_content_director_plan_record_invalid', 503);
   for (const value of materialsValue) {
     const material = socialObject(value);
     const clips = socialJson(material?.clips);
@@ -790,6 +805,7 @@ export function parseStoredSocialDirectorPlan(value: unknown): StoredSocialDirec
     throw new SocialContentWorkflowError('social_content_director_plan_record_invalid', 503);
   }
   const plan = row as unknown as StoredSocialDirectorPlan;
+  if(plan.accountPlaybookConstraints)assertSocialAccountProductionConstraints(plan.accountPlaybookConstraints);
   assertDirectorPlanIntegrity(plan);
   return plan;
 }

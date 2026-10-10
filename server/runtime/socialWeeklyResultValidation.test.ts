@@ -61,20 +61,7 @@ test('all automatic content steps require actual persisted media, identity and s
     for (const step of ['script', 'storyboard', 'asset_generation', 'video_generation', 'quality_check', 'rework']) await validateWeeklyExecutionResults(store(rows), task('content', step), ref);
     for (const changes of [{ tenant_id: 'tenant-b' }, { version: '2' }, { status: 'superseded' }, { task_id: 'another-source' }]) await assert.rejects(validateWeeklyExecutionResults(store({ ...rows, starter_social_content_artifacts: [{ ...artifact, ...changes }] }), task('content', 'video_generation'), ref));
     await assert.rejects(validateWeeklyExecutionResults(store({ ...rows, starter_social_content_artifacts: [{ ...artifact, content: { ...content, productionResult: { technicalReview: { approved: false }, creativeReview: { approved: true } } } }] }), task('content', 'quality_check'), ref));
-    const publishingRows = {
-      ...rows,
-      starter_social_content_artifacts: [{ ...artifact, status: 'approved', content: { ...content, productionResult: { ...content.productionResult, productionResultId: 'production' } } }],
-      social_publication_attempts: [{ id: 'receipt-row', tenant_id: 'tenant-a', attempt_id: 'attempt', assignment_id: 'assignment', package_id: 'publication-package', status: 'published', provider: 'youtube', provider_receipt_id: 'real-receipt', platform_post_id: 'real-post', resolved_at: '2026-10-01T00:00:00Z' }],
-      social_publication_assignments: [{ id: 'assignment-row', tenant_id: 'tenant-a', assignment_id: 'assignment', package_id: 'publication-package', operating_package_id: 'package-a', operating_package_version: 1, publication_task_id: 'pub-a', account_id: 'account-a', status: 'package_ready', production_result_id: 'production' }],
-      social_weekly_operating_packages: [{ id: 'package-row', tenant_id: 'tenant-a', program_id: 'program-a', package_id: 'package-a', version: 1, payload: { programId: 'program-a', packageId: 'package-a', version: 1, socialContentPackage: { publicationTasks: [{ publicationTaskId: 'pub-a' }], authorization: { allowRealPublishing: true, accountIds: ['account-a'] } } } }],
-      social_weekly_execution_tasks: [{ id: 'approval-row', tenant_id: 'tenant-a', package_id: 'package-a', package_version: 1, payload: { tenantId: 'tenant-a', publicationTaskId: 'pub-a', schedule: { stepKind: 'user_approval' }, status: 'succeeded', resultRefs: [{ type: 'user_content_approval', id: 'approval', version: 1 }, ...ref] } }],
-    };
-    const publishRef = [{ type: 'weekly_publication_attempt', id: 'attempt', version: 1 }];
-    await validateWeeklyExecutionResults(store(publishingRows), task('publishing', 'publishing'), publishRef);
-    await assert.rejects(validateWeeklyExecutionResults(store({ ...publishingRows, social_weekly_execution_tasks: [] }), task('publishing', 'publishing'), publishRef));
-    await assert.rejects(validateWeeklyExecutionResults(store({ ...publishingRows, social_publication_assignments: [{ ...publishingRows.social_publication_assignments[0]!, production_result_id: 'forged' }] }), task('publishing', 'publishing'), publishRef));
     await fs.unlink(local);
-    await assert.rejects(validateWeeklyExecutionResults(store(publishingRows), task('publishing', 'publishing'), publishRef));
     await assert.rejects(validateWeeklyExecutionResults(store(rows), task('content', 'video_generation'), ref));
   } finally { await fs.rm(folder, { recursive: true, force: true }); }
 });
@@ -114,4 +101,25 @@ test('planning completion requires actual dispatched, confirmed matching step ev
   await validateWeeklyExecutionResults(store({ social_weekly_agent_planning: [classified], social_weekly_operating_packages: [frozenWeek] }), classificationTask, refs);
   classified.payload.directorAnalyses[0].materialEvidenceRequirements.items[0].classification = 'generatable_non_evidentiary';
   await assert.rejects(validateWeeklyExecutionResults(store({ social_weekly_agent_planning: [classified], social_weekly_operating_packages: [frozenWeek] }), classificationTask, refs), { code: 'weekly_material_classification_unverified' });
+});
+
+
+test('published completion verifies actual built assignment and frozen manifest, provider and timestamps',async t=>{
+ t.mock.timers.enable({apis:['Date'],now:new Date('2026-10-07T10:00:00Z')});
+ const {prepareWeeklyInventoryG6Fixture}=await import('./weeklyInventoryG6.fixture.js');
+ const {executeWeeklyPublication}=await import('../publishing/weeklyLineage.js');
+ const f=await prepareWeeklyInventoryG6Fixture();t.after(f.cleanup);t.mock.timers.setTime(new Date('2026-10-07T13:00:00Z').getTime());let posts=0;
+ const actual=(await f.store.list<{payload:typeof f.next}>('social_weekly_operating_packages',{where:{tenant_id:'t',package_id:'week2',version:2},perPage:2})).items[0]!.payload;
+ const attempt=await executeWeeklyPublication({assignment:f.assignment.payload,publicationPackage:f.actualPackage,dataStore:f.store,contentPackage:actual.socialContentPackage,existingPublishedCount:0,adapter:{provider:'tiktok-content-posting-api',platform:'tiktok',capability:'available',async publish(){posts++;return {status:'published',providerReceiptId:'actual-validation-receipt',platformPostId:'actual-validation-post'};},async reconcile(){throw Error('unused');}}});
+ const refs=[{type:'weekly_publication_attempt',id:attempt.attempt_id,version:1}];
+ await validateWeeklyExecutionResults(f.store,f.targetPublishing,refs);assert.equal(posts,1);
+ const attemptRow=f.tables.social_publication_attempts![0]!;
+ const rejectMutation=async(row:Record<string,unknown>,key:string,value:unknown)=>{const prior=row[key];row[key]=value;try{await assert.rejects(validateWeeklyExecutionResults(f.store,f.targetPublishing,refs));}finally{row[key]=prior;}};
+ const weeklyRow=f.tables.social_weekly_operating_packages!.find(row=>row.package_id==='week2'&&row.version===2);assert.ok(weeklyRow);await rejectMutation(weeklyRow,'program_id','foreign-program');
+ await rejectMutation(attemptRow,'provider','instagram');
+ await rejectMutation(attemptRow,'resolved_at','2099-10-07T13:00:00Z');
+ await rejectMutation(attemptRow,'started_at','2026-10-07T14:00:00Z');
+ const manifests=f.tables.starter_publication_packages;assert.ok(manifests?.length);const manifest=manifests.find(row=>row.package_id===attempt.package_id);assert.ok(manifest);
+ const storedManifest=manifest.manifest as Record<string,unknown>;assert.ok(storedManifest);await rejectMutation(storedManifest,'platform','instagram');await rejectMutation(storedManifest,'packageId','foreign-manifest');const sourceFile=f.tables.starter_social_content_files!.find(row=>row.usage==='artifact_media');assert.ok(sourceFile);await rejectMutation(sourceFile,'content_sha256','f'.repeat(64));
+ await validateWeeklyExecutionResults(f.store,f.targetPublishing,refs);assert.equal(posts,1);
 });

@@ -6,7 +6,7 @@ import type { VersionedCandidateEvidence } from '../socialDiscovery/qualityOrche
 import { createSocialOperatingRepository } from '../socialOperating/repository.js';
 import { STARTER_COLLECTIONS, type Starter198Repository } from '../starter198/repository.js';
 import { persistSocialDiscoveryDirectorAuthority } from '../starter198/socialDiscoveryAuthorityAdapter.js';
-import { buildSocialContentAuthorityLineage, persistAuthoritativeContentBundle } from '../starter198/socialContentLineage.js';
+import { buildSocialContentAuthorityLineage, parseSocialContentAuthorityLineage, persistAuthoritativeContentBundle } from '../starter198/socialContentLineage.js';
 import { socialJson, socialRequestHash } from '../starter198/socialContentValidation.js';
 import type { BuildSocialAgentWorkflowInput } from '../starter198/socialContentAgentWorkflow.js';
 
@@ -92,11 +92,12 @@ export async function persistWeeklyProductionResultAuthority(input: {
   if (productionResult.artifactResourceRef !== artifact.resourceRef) throw new Error('weekly_production_result_resource_mismatch');
   const existing = await input.repository.list(STARTER_COLLECTIONS.socialContentLineage, input.tenantId, { where: { production_result_id: productionResult.productionResultId }, perPage: 2 });
   if (existing.totalItems > 1) throw new Error('weekly_production_result_lineage_ambiguous');
-  if (existing.items[0]) return;
   const workflow = detail.agentWorkflow;
   const artifactVersion = Number(artifact.version.replace(/^v/, ''));
   if (!Number.isSafeInteger(artifactVersion) || artifactVersion < 1) throw new Error('weekly_production_artifact_version_invalid');
-  const lineage = buildSocialContentAuthorityLineage({ version: String(authority.weeklyPackage.version * 1_000_000 + authority.referenceSelection.version + artifactVersion * 1000),
+  // Separate artifacts each begin at their own version 1. Their lineage identities
+  // must therefore include the actual artifact identity, not only its local version.
+  const lineage = buildSocialContentAuthorityLineage({ version: `${authority.weeklyPackage.version * 1_000_000 + authority.referenceSelection.version + artifactVersion * 1000}:${artifact.artifactId}`,
     programRef: authority.programRef, packageRef: { type: 'weekly_operating_package', id: authority.weeklyPackage.packageId, version: authority.weeklyPackage.version },
     weeklyTaskRef: authority.weeklyWorkflowTask.taskRef, publicationTaskRef: { type: 'weekly_publication_task', id: authority.publicationTask.publicationTaskId, version: authority.weeklyPackage.version },
     businessGoalRef: { type: 'business_content_goal', id: authority.businessGoal.goalId, version: authority.businessGoal.version },
@@ -106,5 +107,15 @@ export async function persistWeeklyProductionResultAuthority(input: {
     inspirationHandoffs: workflow.inspirationHandoffs, directorBrief: workflow.directorBrief, productionResult,
     now: new Date(artifact.createdAt),
   });
+  if (existing.items[0]) {
+    const previous = parseSocialContentAuthorityLineage(existing.items[0]);
+    if (previous.upstreamFingerprint !== lineage.upstreamFingerprint
+      || socialRequestHash(previous.productionResultRef) !== socialRequestHash(lineage.productionResultRef)
+      || socialRequestHash(previous.directorBriefRef) !== socialRequestHash(lineage.directorBriefRef)
+      || socialRequestHash(previous.inspirationHandoffRefs) !== socialRequestHash(lineage.inspirationHandoffRefs)) {
+      throw new Error('weekly_production_result_lineage_changed');
+    }
+    return;
+  }
   await persistAuthoritativeContentBundle({ ...input, lineage, handoffs: workflow.inspirationHandoffs, directorBrief: workflow.directorBrief });
 }

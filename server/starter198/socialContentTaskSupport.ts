@@ -1,3 +1,4 @@
+import {publicationPreparationDeadline} from '../socialPrograms/publicationDeadlines.js';
 import type {
   AddSocialTaskSourceInput,
   CreateSocialContentTaskInput,
@@ -102,7 +103,7 @@ export function buildAuthoritativeSocialContentWorkflow(input: Omit<BuildSocialA
       languages: [...input.businessGoal.languages],
       platforms: [input.publicationTask.platform],
       callToAction: input.publicationTask.cta,
-      dueAt: input.publicationTask.publishWindow ?? input.weeklyPackage.weekEnd,
+      dueAt: publicationPreparationDeadline(input.publicationTask.publishWindow),
       weeklyBudgetCny: input.weeklyPackage.socialContentPackage.weeklyBudgetCny,
       perItemBudgetCny: input.weeklyPackage.socialContentPackage.perItemBudgetCny,
     },

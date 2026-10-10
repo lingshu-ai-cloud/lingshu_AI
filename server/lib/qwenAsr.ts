@@ -93,11 +93,11 @@ export function qwenAsrCues(raw: any, duration: number, expected = ''): { text: 
   return { text: transcript.text, cues, matches };
 }
 
-export type QwenAsrRecord = { id: string; sourceSha256: string; model: string; status: string; taskId?: string; raw?: any; usage?: any; error?: string };
+export type QwenAsrRecord = { id: string; sourceSha256: string; model: string; status: string; providerEndpoint?: string; taskId?: string; raw?: any; usage?: any; error?: string };
 type RecordData = QwenAsrRecord;
 export class QwenAsrService {
   private locks = new Map<string, Promise<RecordData>>();
-  constructor(private root: string, private request: typeof fetch = fetch, private reserve: (id: string) => Promise<void> = id => studioPaidBudget.reserve('qwen_asr', id), private options: { automaticSubmission?: boolean; signal?: AbortSignal } = {}) {}
+  constructor(private root: string, private request: typeof fetch = fetch, private reserve: (id: string) => Promise<void> = id => studioPaidBudget.reserve('qwen_asr', id), private options: { automaticSubmission?: boolean; signal?: AbortSignal; onRecord?:(record:QwenAsrRecord)=>Promise<void> } = {}) {}
   async run(tenant: string, bytes: Buffer, mimeType: string, confirmed = false): Promise<RecordData> {
     if (!/^[\w-]{1,128}$/.test(tenant)) throw new Error('企业身份无效');
     if (!bytes.length || bytes.length > 20 * 1024 * 1024) throw new Error('转写音频需小于20MB');
@@ -108,15 +108,29 @@ export class QwenAsrService {
     this.locks.set(key, promise);
     try { return await promise; } finally { this.locks.delete(key); }
   }
-  private async perform(tenant: string, hash: string, bytes: Buffer, mime: string, confirmed: boolean): Promise<RecordData> {
+  async pollExisting(tenant:string,audioSha:string,taskId:string):Promise<QwenAsrRecord> {
+    if(!/^[\w-]{1,128}$/.test(tenant)||!/^[a-f0-9]{64}$/.test(audioSha)||!taskId)throw new Error('原转写任务身份无效');
+    return withPaidOperationLock(path.join(this.root,'.locks'),`${tenant}:${audioSha}`,async()=>{
+      const file=path.join(this.root,tenant,`${audioSha}.json`);
+      if(!fs.existsSync(file))throw new Error('原转写任务记录缺失');
+      const record:QwenAsrRecord=JSON.parse(fs.readFileSync(file,'utf8'));
+      if(record.id!==audioSha||record.sourceSha256!==audioSha||record.model!==ASR_MODEL||record.taskId!==taskId||!record.providerEndpoint||record.providerEndpoint!==(process.env.QWEN_ASR_BASE_URL||'https://dashscope.aliyuncs.com/api/v1'))throw new Error('原转写任务身份或地域已变化');
+      if(['uncertain','submitting','needs_confirmation'].includes(record.status))throw new Error('原提交状态未知，不能重新提交');
+      return this.perform(tenant,audioSha,Buffer.alloc(0),'audio/wav',false,true);
+    });
+  }
+  private async perform(tenant: string, hash: string, bytes: Buffer, mime: string, confirmed: boolean, existingOnly=false): Promise<RecordData> {
     const dir = path.join(this.root, tenant); const file = path.join(dir, `${hash}.json`);
     let record: RecordData = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : { id: hash, sourceSha256: hash, model: ASR_MODEL, status: 'needs_confirmation' };
     if (record.sourceSha256 !== hash || record.model !== ASR_MODEL) throw new Error('转写缓存不匹配');
     if (['SUCCEEDED', 'FAILED', 'uncertain', 'submitting'].includes(record.status)) return record;
+    if(existingOnly&&!record.taskId)throw new Error('原转写任务ID缺失');
     if (!record.taskId && !confirmed) return record;
-    const save = () => { fs.mkdirSync(dir, { recursive: true }); const temp = `${file}.${randomUUID()}.tmp`; fs.writeFileSync(temp, JSON.stringify(record), { mode: 0o600 }); fs.renameSync(temp, file); };
+    const save = async () => { fs.mkdirSync(dir, { recursive: true }); const temp = `${file}.${randomUUID()}.tmp`; fs.writeFileSync(temp, JSON.stringify(record), { mode: 0o600 }); fs.renameSync(temp, file); await this.options.onRecord?.({...record}); };
     const endpoint = process.env.QWEN_ASR_BASE_URL || 'https://dashscope.aliyuncs.com/api/v1';
     if (!['https://dashscope.aliyuncs.com/api/v1', 'https://dashscope-intl.aliyuncs.com/api/v1'].includes(endpoint)) throw new Error('ASR地域端点不在许可列表');
+    if(record.providerEndpoint&&record.providerEndpoint!==endpoint)throw new Error('原转写地域已变化');
+    record.providerEndpoint=endpoint;
     let apiKey = process.env.DASHSCOPE_API_KEY?.trim() || '';
     if (!apiKey) { try { apiKey = fs.readFileSync(process.env.DASHSCOPE_API_KEY_FILE || path.join(os.homedir(), '.config/lingshu/dashscope.key'), 'utf8').trim(); } catch {} }
     if (!apiKey) throw new Error('未配置 DashScope 密钥');
@@ -130,7 +144,7 @@ export class QwenAsrService {
     if (!record.taskId) {
       if (!this.options.automaticSubmission && process.env.QWEN_ASR_GENERATION_ENABLED !== 'true') throw new Error('付费转写尚未启用；已有缓存仍可使用');
       await this.reserve(`${tenant}:${hash}`);
-      record.status = 'submitting'; save(); // Persist before any external operation; never auto-resubmit after crash.
+      record.status = 'submitting'; await save(); // Persist before any external operation; never auto-resubmit after crash.
       try {
         const { data: policy } = await json(`${endpoint}/uploads?action=getPolicy&model=${ASR_MODEL}`, { headers });
         const host = new URL(policy.upload_host);
@@ -145,8 +159,8 @@ export class QwenAsrService {
         if (!upload.ok) throw new Error(`音频上传 HTTP ${upload.status}`);
         const submitted = await json(`${endpoint}/services/audio/asr/transcription`, { method: 'POST', headers: { ...headers, 'X-DashScope-Async': 'enable', 'X-DashScope-OssResourceResolve': 'enable' }, body: JSON.stringify({ model: ASR_MODEL, input: { file_url: `oss://${objectKey}` }, parameters: { channel_id: [0], enable_words: true, enable_itn: false } }) });
         if (!submitted.output?.task_id) throw new Error('未返回任务ID，禁止自动重试');
-        record = { ...record, taskId: submitted.output.task_id, status: 'PENDING' }; save(); return record;
-      } catch (error) { record.status = 'uncertain'; record.error = error instanceof Error ? error.message : '提交状态未知'; save(); return record; }
+        record = { ...record, taskId: submitted.output.task_id, status: 'PENDING' }; await save(); return record;
+      } catch (error) { record.status = 'uncertain'; record.error = error instanceof Error ? error.message : '提交状态未知'; await save(); return record; }
     }
     const result = await json(`${endpoint}/tasks/${encodeURIComponent(record.taskId)}`, { headers });
     if (result.output?.task_status === 'SUCCEEDED') {
@@ -158,7 +172,7 @@ export class QwenAsrService {
     }
     record.status = result.output?.task_status || 'PENDING';
     if (record.status === 'FAILED') record.error = '千问转写任务失败；请核对供应商任务，不自动重新扣费';
-    save(); return record;
+    await save(); return record;
   }
 }
 
@@ -170,10 +184,10 @@ export class QwenAsrService {
 export async function transcribeWordAudioWithQwen(input: {
   tenant: string; audio: Buffer; mimeType: string; duration: number; cacheRoot?: string;
   signal?: AbortSignal; timeoutMs?: number; pollIntervalMs?: number;
-  request?: typeof fetch; reserve?: (id: string) => Promise<void>;
+  request?: typeof fetch; reserve?: (id: string) => Promise<void>; automaticSubmission?: boolean; onRecord?:(record:QwenAsrRecord)=>Promise<void>;
 }) {
   if (!Number.isFinite(input.duration) || input.duration <= 0) throw new Error('音频时长无效');
-  const service = new QwenAsrService(input.cacheRoot || path.resolve('data/analysis-output/qwen-word-asr-v1'), input.request || fetch, input.reserve || (async () => {}), { automaticSubmission: true, signal: input.signal });
+  const service = new QwenAsrService(input.cacheRoot || path.resolve('data/analysis-output/qwen-word-asr-v1'), input.request || fetch, input.reserve || (async () => {}), { automaticSubmission: input.automaticSubmission ?? true, signal: input.signal, onRecord: input.onRecord });
   const deadline = Date.now() + (input.timeoutMs ?? 120_000);
   let record: QwenAsrRecord;
   while (true) {

@@ -92,7 +92,8 @@ function dateLabel(value?: string) {
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 
-function productionDurationLabel(minutes: number) {
+function productionDurationLabel(minutes: number | null | undefined) {
+  if (typeof minutes !== "number" || !Number.isFinite(minutes) || minutes < 0) return "工期待核验";
   if (minutes < 60) return `约 ${minutes} 分钟`;
   const hours = Math.floor(minutes / 60);
   const rest = minutes % 60;
@@ -1213,7 +1214,8 @@ function ProductionDetailView({ data, contentItemId, onBack, onNavigate, onOpenC
     || data.executionRuntime?.jobs.find(job => job.taskId === item.taskId)
     || null;
   const currentProductionStep = item.steps.find(step => step.state === "active") || item.steps.at(-1);
-  const remainingProductionMinutes = item.steps.filter(step => step.state !== "done").reduce((sum, step) => sum + step.estimatedMinutes, 0);
+  const remainingSteps = item.steps.filter(step => step.state !== "done");
+  const remainingProductionMinutes = remainingSteps.every(step => typeof step.estimatedMinutes === "number" && Number.isFinite(step.estimatedMinutes) && step.estimatedMinutes >= 0) ? remainingSteps.reduce((sum, step) => sum + step.estimatedMinutes, 0) : null;
   const contentPlan = item.contentPlan || {
     summary: `${item.route === "clone" ? "爆款结构复刻" : item.route === "material" ? "现有素材再创作" : "产品内容制作"} · ${item.languages.join(" / ").toUpperCase() || "语言待确认"} · ${item.outputSummary.formats[0] || "短视频"}`,
     source: "confirmed" as const,
@@ -1238,7 +1240,7 @@ function ProductionDetailView({ data, contentItemId, onBack, onNavigate, onOpenC
           ["当前节点", currentProductionStep?.label || item.stage],
           ["当前责任人", currentProductionStep?.responsibleAgent || "待分配"],
           ["整体进度", `${item.progress}%`],
-          ["剩余预计时间", remainingProductionMinutes ? productionDurationLabel(remainingProductionMinutes) : "已完成"],
+          ["剩余预计时间", item.status === "completed" && !remainingSteps.length ? "已完成" : !remainingSteps.length ? "工期待核验" : productionDurationLabel(remainingProductionMinutes)],
           ["预计输出", `${item.outputSummary.count} 条 · ${item.outputSummary.durationSeconds ? `约 ${item.outputSummary.durationSeconds} 秒` : "时长待确认"}`],
           ["本条成本", item.settledCostCny !== null ? `已结算 ¥${item.settledCostCny.toFixed(2)}` : item.estimatedCostCny !== null ? `预计 ¥${item.estimatedCostCny.toFixed(2)}` : "待核算"],
         ].map(([label,value]) => <div key={label} className="bg-white px-4 py-4"><p className="text-[9px] font-bold text-slate-400">{label}</p><p className="mt-1 text-xs font-semibold leading-5 text-slate-800">{value}</p></div>)}

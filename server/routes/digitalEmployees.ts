@@ -1,3 +1,4 @@
+import {createCustomerTaskNavigationRouter} from './customerTaskNavigation.js';
 import { requiresContentHumanAcceptance } from '../digitalEmployees/contentProductionAcceptancePolicy.js';
 import { nextManagedCycleWindow, prepareManagedCyclePackage } from '../digitalEmployees/managedOperatingCycle.js';
 import { acquireDurableOperationLease, assertDurableOperationLease, releaseDurableOperationLease } from '../runtime/durableLease.js';
@@ -3457,6 +3458,8 @@ digitalEmployeesRouter.post('/customer-segments/:segmentId/followup-batches', as
   });
 });
 
+digitalEmployeesRouter.use('/runs/:runId/customer-task-navigation',createCustomerTaskNavigationRouter(store));
+
 digitalEmployeesRouter.get('/runs/:runId/customer-workspace', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   const run = await tenantRecord<RunRecord>(COLLECTION.runs, req.params.runId, tenantId);
@@ -3788,6 +3791,8 @@ async function decideDigitalEmployeeApproval(req: Request, res: Response): Promi
       approvalId: req.params.approvalId,
       decision: String(req.body?.decision || '') as 'approved' | 'rejected',
       note: String(req.body?.note || ''),
+      ...(req.body?.expectedContentHash!==undefined?{expectedContentHash:String(req.body.expectedContentHash)}:{}),
+      ...(req.body?.expectedRequestHash!==undefined?{expectedRequestHash:String(req.body.expectedRequestHash)}:{}),
       ...(req.body?.expectedSubjectVersion !== undefined
         ? { expectedSubjectVersion: String(req.body.expectedSubjectVersion).trim() }
         : {}),

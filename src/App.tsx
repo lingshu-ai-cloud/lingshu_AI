@@ -537,6 +537,8 @@ export default function App() {
         workflowRunId?: string;
         workflowTaskId?: string;
         socialContentTaskId?: string;
+        weeklyContentTarget?: import('../shared/contracts/weeklyContentNavigation').WeeklyContentNavigation;
+        exactReferenceReview?: import('./lib/exactReferenceReview').ExactReferenceReviewTarget;
         socialContentPage?: string;
         socialContentView?: 'managed';
         studioEntry?: boolean;
@@ -573,7 +575,7 @@ export default function App() {
         const socialTaskId = String(detail.socialContentTaskId || '').trim();
         if (socialTaskId && isSocialTaskContextPage(nextPage)
           && (!detail.socialContentPage || detail.socialContentPage === nextPage)) {
-          attachSocialContentNavigationState(socialTaskId, nextPage);
+          attachSocialContentNavigationState(socialTaskId, nextPage, detail.weeklyContentTarget);
         }
       }
       if (nextPage === 'smartAssets') {

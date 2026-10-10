@@ -21,13 +21,6 @@ export const MIGRATION_CHECKSUM_MANIFEST = 'scripts/pb-migration-checksums.json'
 // initial zero budget/spend and empty evidence valid. Existing installations are repaired
 // by 1790985601_lock_social_operating_rules.js.
 const APPROVED_COMPATIBILITY_REPAIRS: Record<string, { from: string; to: string }> = {
-  // Metadata correction only: the queue migration has these exact bytes since
-  // its first commit (1f36cf3). Its original manifest recorded a different hash.
-  // Pin both hashes; the normal on-disk hash check continues to reject changes.
-  '1791072008_create_content_execution_queue.js': {
-    from: '17082ecdb5a6228182507d1d2a01f55c6aac48922cd376c489fecce8c8fb2f07',
-    to: '2aed450a4c83a5f6133817f47eef9c1f08ecde5e65f22427aa7480c2c96f67f8',
-  },
   '1790899200_create_social_weekly_reviews.js': {
     from: '1806d2a05adcadbf5e043169509abc1602aae6ae11d9e3b15ab07c09b85d0a99',
     to: 'c931ba098ac2b421eee9e68b4b7d1887080fdea1455b46fac6d3d9c827f0035d',
@@ -35,6 +28,26 @@ const APPROVED_COMPATIBILITY_REPAIRS: Record<string, { from: string; to: string 
   '1790985600_create_social_operating_evidence.js': {
     from: '17d77979799b7924748962b37e7222be19daa841dbe3b57deb8cb59b367628f7',
     to: 'a2227a71afa8c7ed82ce8fb75cb44a89d3d1892759ec6a07a6a4433a28819a65',
+  },
+};
+
+// A manifest typo shipped in the same commit that first introduced this
+// migration. The migration blob has always had `to`; no blob with `from`
+// exists in the reviewed repository history. Unlike a compatibility repair,
+// this exception is accepted only when Git proves the exact introduction
+// commit added the immutable migration bytes together with the erroneous
+// manifest entry, and its parent contained neither entry. This keeps the
+// exception tied to one historical defect instead of creating a general way
+// to bless rewritten migrations.
+const REVIEWED_MANIFEST_DEFECT_CORRECTIONS: Record<string, {
+  from: string;
+  to: string;
+  introducedAt: string;
+}> = {
+  '1791072008_create_content_execution_queue.js': {
+    from: '17082ecdb5a6228182507d1d2a01f55c6aac48922cd376c489fecce8c8fb2f07',
+    to: '2aed450a4c83a5f6133817f47eef9c1f08ecde5e65f22427aa7480c2c96f67f8',
+    introducedAt: '1f36cf356d5c2f95a2f3494f81a3d35b263bd48d',
   },
 };
 
@@ -260,6 +273,47 @@ function loadBaselineManifest(
   }
 }
 
+function isReviewedManifestDefectCorrection(
+  root: string,
+  name: string,
+  baselineCommit: string | null,
+  baselineSha256: string,
+  currentSha256: string | undefined,
+): boolean {
+  const correction = REVIEWED_MANIFEST_DEFECT_CORRECTIONS[name];
+  if (!correction || !baselineCommit) return false;
+  if (correction.from !== baselineSha256 || correction.to !== currentSha256) return false;
+
+  const migrationPath = `pb_migrations/${name}`;
+  try {
+    execFileSync('git', ['-C', root, 'merge-base', '--is-ancestor', correction.introducedAt, baselineCommit], {
+      stdio: 'ignore', timeout: 15_000,
+    });
+    const introducedMigration = gitRaw(root, ['show', `${correction.introducedAt}:${migrationPath}`]);
+    if (sha256(introducedMigration) !== correction.to) return false;
+
+    const introducedManifest = parseManifest(
+      gitRaw(root, ['show', `${correction.introducedAt}:${MIGRATION_CHECKSUM_MANIFEST}`]),
+      `${correction.introducedAt}:${MIGRATION_CHECKSUM_MANIFEST}`,
+    );
+    if (introducedManifest.migrations[name] !== correction.from) return false;
+
+    // The correction is only valid for a migration and manifest entry first
+    // introduced by this exact commit. A pre-existing migration rewrite must
+    // remain blocked even if the resulting hashes happen to match this pair.
+    const parent = gitText(root, ['rev-parse', `${correction.introducedAt}^`]).trim();
+    const parentMigration = gitText(root, ['ls-tree', '--name-only', parent, '--', migrationPath]).trim();
+    if (parentMigration) return false;
+    const parentManifest = parseManifest(
+      gitRaw(root, ['show', `${parent}:${MIGRATION_CHECKSUM_MANIFEST}`]),
+      `${parent}:${MIGRATION_CHECKSUM_MANIFEST}`,
+    );
+    return !(name in parentManifest.migrations);
+  } catch {
+    return false;
+  }
+}
+
 export function checkDigitalEmployeeMigrations(
   root: string,
   options: MigrationReleaseCheckOptions = {},
@@ -338,7 +392,10 @@ export function checkDigitalEmployeeMigrations(
         const currentSha256 = manifest.migrations[name];
         const repair = APPROVED_COMPATIBILITY_REPAIRS[name];
         const exactApprovedRepair = repair?.from === baselineSha256 && repair.to === currentSha256;
-        if (currentSha256 !== baselineSha256 && !exactApprovedRepair) {
+        const exactManifestDefectCorrection = isReviewedManifestDefectCorrection(
+          root, name, baseline.commit, baselineSha256, currentSha256,
+        );
+        if (currentSha256 !== baselineSha256 && !exactApprovedRepair && !exactManifestDefectCorrection) {
           blockers.push({
             code: 'immutable_manifest_conflict',
             path: `pb_migrations/${name}`,

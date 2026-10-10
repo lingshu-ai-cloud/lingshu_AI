@@ -1,9 +1,11 @@
 import {projectCustomerSendRecoveries,validCustomerSendRecoveryTarget} from './weeklyCustomerSendRecoveryNavigation';
 import type {WeeklyCustomerSendRecovery} from '../../../shared/contracts/weeklyCustomerSendRecovery';
-import {isSceneContentExecution} from './sceneCalendarNavigation';
+import {isWeeklyContentNavigationExecution} from './sceneCalendarNavigation';
 import {validatedTemplateCalendarTask} from './templateCalendarNavigation';
 import {validatedReviewCalendarTask} from './reviewCalendarNavigation';
 import {validatedPlanningCalendarTask} from './planningCalendarNavigation';
+import {validCustomerExecutionTarget} from './customerExecutionCalendarNavigation';
+import {validPublicationExecutionTarget} from './publicationExecutionCalendarNavigation';
 import {weeklySalesHandoffApi} from '../../lib/weeklySalesHandoffApi';
 import {projectWeeklySalesCalendar} from './weeklySalesCalendarProjection';
 import type {WeeklySalesHandoff} from '../../../shared/contracts/socialWeeklySalesHandoff';
@@ -18,11 +20,26 @@ import { openCustomerCalendarTask, type CustomerCalendarProjection } from './Cus
 import AgentWeeklyCalendar, { type AgentCalendarTask } from '../smartBusiness/AgentWeeklyCalendar';
 import { customerCalendarTasks } from './weeklyCustomerCalendarProjection';
 
-export default function WeeklyCustomerCalendar({ programId, packageId, packageVersion, weekStart, weekEnd, executionTasks = [], mainTasks = [], onOpenContent, onOpenMaterial, onOpenSales,onOpenPlanning,onOpenReview,onOpenTemplate,onOpenSupplement,sendRecoveries=[],onOpenSendRecovery }: {
+export function forwardCalendarExecution(card:AgentCalendarTask,scope:{programId:string;packageId:string;packageVersion:number},tasks:WeeklyExecutionTask[],handlers:{customer?:(task:WeeklyExecutionTask)=>void;publication?:(card:AgentCalendarTask)=>void}):boolean {
+  if(card.customerExecutionTarget){
+    const actual=validCustomerExecutionTarget(card,scope,tasks);
+    if(!actual)throw Error('客服执行卡片与当前周版本、渠道或任务身份不一致，请刷新。');
+    if(!handlers.customer)throw Error('真实客服任务入口尚未加载，请刷新。');
+    handlers.customer(actual);return true;
+  }
+  if(card.publicationExecutionTarget){
+    if(!validPublicationExecutionTarget(card,scope,tasks))throw Error('发布执行卡片与当前周版本或任务身份不一致，请刷新。');
+    if(!handlers.publication)throw Error('真实发布任务入口尚未加载，请刷新。');
+    handlers.publication(card);return true;
+  }
+  return false;
+}
+
+export default function WeeklyCustomerCalendar({ programId, packageId, packageVersion, weekStart, weekEnd, executionTasks = [], mainTasks = [], onOpenContent, onOpenExecutionTask, onOpenMaterial, onOpenSales,onOpenPlanning,onOpenReview,onOpenTemplate,onOpenSupplement,sendRecoveries=[],onOpenSendRecovery }: {
   programId: string; packageId: string; packageVersion: number; weekStart: string;
   weekEnd?: string; executionTasks?: WeeklyExecutionTask[];
   sendRecoveries?:WeeklyCustomerSendRecovery[];onOpenSendRecovery?:(card:AgentCalendarTask)=>void;
-  onOpenSupplement?:(task:AgentCalendarTask)=>void;onOpenTemplate?:(task:AgentCalendarTask)=>void;onOpenReview?:(task:AgentCalendarTask)=>void;onOpenPlanning?:(task:AgentCalendarTask)=>void; mainTasks?: AgentCalendarTask[]; onOpenContent?: (task: AgentCalendarTask) => void; onOpenMaterial?: (requestId: string, action: 'upload'|'verification') => void; onOpenSales?:(id:string,packageId:string,version:number)=>void;
+  onOpenSupplement?:(task:AgentCalendarTask)=>void;onOpenExecutionTask?:(task:WeeklyExecutionTask)=>void;onOpenTemplate?:(task:AgentCalendarTask)=>void;onOpenReview?:(task:AgentCalendarTask)=>void;onOpenPlanning?:(task:AgentCalendarTask)=>void; mainTasks?: AgentCalendarTask[]; onOpenContent?: (task: AgentCalendarTask) => void; onOpenMaterial?: (requestId: string, action: 'upload'|'verification') => void; onOpenSales?:(id:string,packageId:string,version:number)=>void;
 }) {
   const identity = JSON.stringify([programId, packageId, packageVersion]);
   const ownedExecutions=executionTasks.filter(task=>task.programId===programId&&task.packageId===packageId&&task.packageVersion===packageVersion);
@@ -67,15 +84,16 @@ export default function WeeklyCustomerCalendar({ programId, packageId, packageVe
   const missing = item?.tasks.filter(task => !task.scheduledAt || !Number.isFinite(Date.parse(task.scheduledAt))) ?? [];
   const recoveryScope=tenantId?{tenantId,programId,packageId,packageVersion}:null;
   const recoveryTasks=recoveryScope?projectCustomerSendRecoveries(sendRecoveries,recoveryScope):[];
-  const canOpenContentTask=(card:AgentCalendarTask)=>ownedExecutions.filter(t=>t.taskId===card.id&&t.tenantId===tenantId&&isSceneContentExecution(t)).length===1;
+  const canOpenContentTask=(card:AgentCalendarTask)=>ownedExecutions.filter(t=>t.taskId===card.id&&t.tenantId===tenantId&&isWeeklyContentNavigationExecution(t)).length===1;
   return <div>
-    <AgentWeeklyCalendar canOpenContentTask={canOpenContentTask} onOpenSupplement={onOpenSupplement?task=>{const t=task.supplementTarget;if(!t||!['submission','verification'].includes(t.action)||!t.tenantId||t.programId!==programId||t.packageId!==packageId||t.packageVersion!==packageVersion||task.id!==`supplement:${t.requestId}:${t.action}`){setError({identity,message:"补齐任务与当前周版本不一致，请刷新。"});return;}onOpenSupplement(task);}:undefined} onOpenTemplate={onOpenTemplate?task=>{if(!validatedTemplateCalendarTask({programId,packageId,packageVersion},ownedExecutions,task)){setError({identity,message:"模板任务与来源身份不一致，请刷新。"});return;}onOpenTemplate(task);}:undefined} onOpenReview={onOpenReview?task=>{if(!validatedReviewCalendarTask({programId,packageId,packageVersion},ownedExecutions,task)){setError({identity,message:"复盘卡片与所选周包执行身份不一致，请刷新。"});return;}onOpenReview(task);}:undefined} scopeKey={materialIdentity} startsAt={weekStart} onOpenPlanning={onOpenPlanning?task=>{if(!validatedPlanningCalendarTask({programId,packageId,packageVersion},ownedExecutions,task)){setError({identity,message:"规划卡片与所选周包执行身份不一致，请刷新。"});return;}onOpenPlanning(task);}:undefined} tasks={[...mainTasks,...recoveryTasks, ...(item ? customerCalendarTasks(item) : []), ...(materialProjection?.tasks??[]),...(salesProjection?.tasks??[])]} onOpenProduction={task => {
+    <AgentWeeklyCalendar onOpenCustomerExecution={task=>{try{forwardCalendarExecution(task,{programId,packageId,packageVersion},ownedExecutions,{customer:onOpenExecutionTask});}catch(cause){setError({identity,message:cause instanceof Error?cause.message:'客服入口读取失败。'});}}} canOpenContentTask={canOpenContentTask} onOpenSupplement={onOpenSupplement?task=>{const t=task.supplementTarget;if(!t||!['submission','verification'].includes(t.action)||!t.tenantId||t.programId!==programId||t.packageId!==packageId||t.packageVersion!==packageVersion||task.id!==`supplement:${t.requestId}:${t.action}`){setError({identity,message:"补齐任务与当前周版本不一致，请刷新。"});return;}onOpenSupplement(task);}:undefined} onOpenTemplate={onOpenTemplate?task=>{if(!validatedTemplateCalendarTask({programId,packageId,packageVersion},ownedExecutions,task)){setError({identity,message:"模板任务与来源身份不一致，请刷新。"});return;}onOpenTemplate(task);}:undefined} onOpenReview={onOpenReview?task=>{if(!validatedReviewCalendarTask({programId,packageId,packageVersion},ownedExecutions,task)){setError({identity,message:"复盘卡片与所选周包执行身份不一致，请刷新。"});return;}onOpenReview(task);}:undefined} scopeKey={materialIdentity} startsAt={weekStart} onOpenPlanning={onOpenPlanning?task=>{if(!validatedPlanningCalendarTask({programId,packageId,packageVersion},ownedExecutions,task)){setError({identity,message:"规划卡片与所选周包执行身份不一致，请刷新。"});return;}onOpenPlanning(task);}:undefined} tasks={[...mainTasks,...recoveryTasks, ...(item ? customerCalendarTasks(item) : []), ...(materialProjection?.tasks??[]),...(salesProjection?.tasks??[])]} onOpenProduction={task => {
+      if(task.publicationExecutionTarget){try{forwardCalendarExecution(task,{programId,packageId,packageVersion},ownedExecutions,{publication:onOpenContent});}catch(cause){setError({identity,message:cause instanceof Error?cause.message:'发布入口读取失败。'});}return;}
       if(task.sendRecoveryTarget){if(!recoveryScope||!validCustomerSendRecoveryTarget(task,recoveryScope)){setError({identity,message:'发送异常任务与当前租户或周包版本不一致，请刷新。'});return;}onOpenSendRecovery?.(task);}
       else if(task.salesHandoffId&&task.salesPackageId&&task.salesPackageVersion){onOpenSales?.(task.salesHandoffId,task.salesPackageId,task.salesPackageVersion);}
       else if(isMaterialCalendarTask(task)){onOpenMaterial?.(task.materialRequestId,task.materialAction);}
       else if (task.agent === 'customer' && task.customerRunId && task.customerWorkflowTaskId && task.customerTaskKey) {
         openCustomerCalendarTask(task.customerRunId, { taskId: task.customerWorkflowTaskId, taskKey: task.customerTaskKey });
-      } else if (task.productionTaskId||canOpenContentTask(task)) onOpenContent?.(task);
+      } else if (task.inventoryTarget||task.crossWeekMaterialTarget||task.customerExceptionTarget||task.publicationRecoveryTarget||task.nativeRecoveryTarget||task.productionTaskId||canOpenContentTask(task)) onOpenContent?.(task);
     }} />
     {salesState?.identity===identity&&salesState.error&&<p role="alert" className="mx-5 my-3 text-xs text-red-700">销售交接读取失败：{salesState.error}</p>}
     {Boolean(salesProjection?.references.length)&&<section className="mx-5 mb-4 space-y-2"><h4 className="text-xs font-bold text-slate-700">跨周销售交接引用 · 不重复计入本周交付</h4>{salesProjection?.references.map(item=><button key={item.id} className="block rounded border p-2 text-xs" onClick={()=>onOpenSales?.(item.id,item.packageId,item.packageVersion)}>{item.customerId} · 原周包 v{item.packageVersion} · 查看原交接任务</button>)}</section>}

@@ -58,6 +58,8 @@ export interface DecideDigitalEmployeeApprovalInput {
   note?: string;
   /** Required by versioned command surfaces; optional for the legacy route. */
   expectedSubjectVersion?: string;
+  expectedContentHash?: string;
+  expectedRequestHash?: string;
   policy?: 'legacy' | 'starter_198';
 }
 
@@ -292,6 +294,8 @@ export function createDigitalEmployeeApprovalDecisionApplication(
         });
       }
 
+      if(input.expectedContentHash!==undefined&&(!/^[a-f0-9]{64}$/.test(input.expectedContentHash)||input.expectedContentHash!==text(approval.content_hash)))throw new DigitalEmployeeApprovalDecisionError('approval_content_changed',409);
+      if(input.expectedRequestHash!==undefined){const {customerApprovalRequestHash}=await import('./customerTaskApprovalNavigation.js');if(!/^[a-f0-9]{64}$/.test(input.expectedRequestHash)||customerApprovalRequestHash({...approval})!==input.expectedRequestHash)throw new DigitalEmployeeApprovalDecisionError('approval_request_changed',409);}
       const note = text(input.note).slice(0, 1000);
       const now = (dependencies.now?.() ?? new Date()).toISOString();
       const task = await tenantRecord<ApprovalDecisionTask>(
@@ -314,6 +318,9 @@ export function createDigitalEmployeeApprovalDecisionApplication(
       ) : null;
       if (!task || !run || !goal) {
         throw new DigitalEmployeeApprovalDecisionError('approval_context_missing', 409);
+      }
+      if(task.task_key==='followup_batch_approval'){const weeklyBindings=await dependencies.store.list<{id:string;tenant_id:string;run_id:string}>('social_weekly_customer_bindings',{where:{tenant_id:input.tenantId,run_id:approval.run_id},perPage:2});
+      if(weeklyBindings.items.length||weeklyBindings.totalItems){if(weeklyBindings.totalItems!==1||weeklyBindings.items.length!==1||!input.expectedContentHash||!input.expectedRequestHash||!input.expectedSubjectVersion)throw new DigitalEmployeeApprovalDecisionError('weekly_customer_approval_frozen_request_required',409);const {readCustomerTaskApprovalNavigation}=await import('./customerTaskApprovalNavigation.js');const actual=await readCustomerTaskApprovalNavigation(dependencies.store,{tenantId:input.tenantId,runId:run.id,taskId:task.id});if(actual.approvalId!==approval.id||actual.requestHash!==input.expectedRequestHash||!actual.canDecide)throw new DigitalEmployeeApprovalDecisionError('weekly_customer_approval_source_changed',409);}
       }
       const runBlocker = approvalRunBlockedReason(run, input.tenantId, task.status);
       if (runBlocker) {
@@ -430,6 +437,10 @@ export function createDigitalEmployeeApprovalDecisionApplication(
         publicationPackageTaskId = queued.taskId;
       }
 
+      if (input.decision === 'approved' && followupBatch) {
+        const { assertAppliedKnowledgeQuoteBatchEvidence } = await import('../socialPrograms/weeklyCustomerKnowledgeQuote.js');
+        await assertAppliedKnowledgeQuoteBatchEvidence(dependencies.store, followupBatch, approval.evidence);
+      }
       await requiredUpdate(dependencies.store, COLLECTIONS.approvals, approval.id, {
         status: input.decision,
         decided_by: input.userId,

@@ -29,7 +29,7 @@ test('real decoded frame clocks are retained and replay after saved classificati
     for (const frame of input.frames) assert.ok(Math.abs(frame.seconds * 30 - Math.round(frame.seconds * 30)) < .001);
     return { ...input.analysis, scriptDetails15s: input.analysis.scriptDetails15s.map((shot: any) => ({ ...shot,
       criticalShot: { classification: 'non_critical', reason: 'test model response' } })),
-    criticalShotSummary: { ruleVersion: 'test', model: 'mock', provider: 'qwen', videoId: input.videoId,
+    criticalShotSummary: { evidenceVersion: 'frame-word-id-projection-v2', ruleVersion: 'test', model: 'mock', provider: 'qwen', videoId: input.videoId,
       sourceSha256: input.sourceSha256, analyzedAt: 'test', frameCount: input.frames.length, validationWarnings: [] } };
   };
   try {
@@ -38,6 +38,12 @@ test('real decoded frame clocks are retained and replay after saved classificati
     const replay = await produceReferenceCriticalShots({ ...input, analysis: result }, { cacheRoot: path.join(dir, 'cache'), classify });
     assert.deepEqual(result, replay);
     assert.equal(calls, 1);
+    const enriched = { ...result, scriptDetails15s: result.scriptDetails15s?.map(s=>({...s,
+      presenterContinuityEvidence:{personPresence:'person',personContinuityId:'person_1'} as any,
+      referenceProductionRouting:{route:'reference_frame_presenter'} as any})) };
+    const preserved = await produceReferenceCriticalShots({ ...input, analysis: enriched }, { cacheRoot: path.join(dir, 'cache'), classify });
+    assert.equal(calls,1,'independent identity enrichment must not create a new paid criticality call');
+    assert.equal(preserved.scriptDetails15s?.[0].referenceProductionRouting?.route,'reference_frame_presenter');
     const summary: any = result.criticalShotSummary;
     assert.ok(summary.frameEvidence.some((frame: any) => frame.seconds !== frame.requestedSeconds));
     await produceReferenceCriticalShots({ ...input, tenantId: 'B' }, { cacheRoot: path.join(dir, 'cache'), classify });

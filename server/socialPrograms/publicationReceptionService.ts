@@ -4,6 +4,10 @@ import { organizationRoleOrNull } from '../lib/organizationRole.js';
 import { checkPublicationReception, type ReceptionBinding, type ReceptionCheckPorts } from './publicationReceptionReadiness.js';
 import { createPublicationReceptionPorts } from './publicationReceptionPorts.js';
 import { createReceptionPublicUrlProbe } from './publicationReceptionUrlProbe.js';
+import {enterpriseFactContentHash,type EnterpriseProfile} from '../routes/enterprise.js';
+import {readCustomerMessagingAuthorization} from '../digitalEmployees/customerMessagingPolicy.js';
+import {socialObject,socialJson} from '../starter198/socialContentValidation.js';
+import {publicationInstant} from './publicationDeadlines.js';
 
 export const RECEPTION_BINDINGS = 'social_weekly_reception_bindings';
 export const RECEPTION_CHECKS = 'social_weekly_reception_checks';
@@ -27,12 +31,23 @@ function validStoredBinding(value: unknown): value is ReceptionBinding {
   } catch { return false; }
 }
 
-export function productionReceptionPorts(dataStore: DataStore): ReceptionCheckPorts {
+export function productionReceptionPorts(dataStore: DataStore,now:()=>Date=()=>new Date()): ReceptionCheckPorts {
   return createPublicationReceptionPorts({
+    async facts(tenantId) {
+      const rows=await dataStore.list<Record<string,unknown>>('tenant_profiles',{where:{tenant_id:tenantId},perPage:2});
+      if(rows.totalItems!==1||rows.items.length!==1||rows.items[0]?.tenant_id!==tenantId)throw Error('reception_confirmed_facts_unavailable');
+      const profile=socialObject(socialJson(rows.items[0].profile)) as unknown as EnterpriseProfile|null;
+      const version=profile?.factVersion;
+      if(!profile||!version?.confirmedBy||!Number.isSafeInteger(version.revision)||version.revision<=0||version.contentHash!==enterpriseFactContentHash(profile)||publicationInstant(version.confirmedAt)===null||Date.parse(version.confirmedAt)>now().getTime())throw Error('reception_confirmed_facts_unavailable');
+      const authorizer=await dataStore.getById<Record<string,unknown>>('users',version.confirmedBy),role=organizationRoleOrNull(authorizer?.role);
+      if(!authorizer||authorizer.tenantId!==tenantId||!['admin','super_admin','social_operator'].includes(role??'')||authorizer.disabled===true||authorizer.active===false||['disabled','suspended'].includes(String(authorizer.status)))throw Error('reception_confirmed_facts_authorizer_unavailable');
+      return {contentHash:version.contentHash,revision:version.revision,documentUrls:(profile.products.items??[]).flatMap(product=>(product.documents??[]).flatMap(document=>document.url?[document.url]:[]))};
+    },
+    messaging:(tenantId,channel)=>readCustomerMessagingAuthorization(tenantId,channel,{dataStore,now:now()}),
     async ownerExists(tenantId, ownerId) {
       const owner = await dataStore.getById<Record<string, unknown>>('users', ownerId);
       return Boolean(owner && owner.tenantId === tenantId && organizationRoleOrNull(owner.role)
-        && owner.disabled !== true && owner.status !== 'disabled');
+        && owner.disabled !== true && owner.active !== false && !['disabled','suspended'].includes(String(owner.status)));
     },
     probePublicUrl: createReceptionPublicUrlProbe(),
   });
@@ -66,7 +81,7 @@ export async function checkPublicationReceptionAdmission(input: {
   if (!input.bindingId) return { status: input.required ? 'blocked' as const : 'legacy_unconfigured' as const, reason: input.required ? 'reception_binding_required' : 'legacy_contract_without_reception_requirement' };
   const row = await input.dataStore.getById<Row>(RECEPTION_BINDINGS, input.bindingId);
   if (!row || !validStoredBinding(row.payload) || typeof row.binding_hash !== 'string' || row.tenant_id !== input.scope.tenantId || !sameScope(row.payload, input.scope) || row.payload.cta !== input.cta || identity(row.payload) !== row.binding_hash || row.binding_hash.slice(0, 15) !== row.id) return { status: 'blocked' as const, reason: 'reception_binding_scope_mismatch' };
-  const checked = await checkPublicationReception(row.payload, input.ports ?? productionReceptionPorts(input.dataStore), input.now ?? new Date());
+  const checked = await checkPublicationReception(row.payload, input.ports ?? productionReceptionPorts(input.dataStore,()=>input.now??new Date()), input.now ?? new Date());
   const checkId = randomUUID().replaceAll('-', '').slice(0, 15);
   const saved = await input.dataStore.create(RECEPTION_CHECKS, { id: checkId, tenant_id: input.scope.tenantId, program_id: input.scope.programId, package_id: input.scope.packageId, package_version: input.scope.packageVersion, publication_id: input.scope.publicationId, binding_id: row.id, binding_hash: checked.bindingHash, checked_at: checked.checkedAt, status: checked.status, payload: checked });
   if (!saved) throw Error('reception_check_write_failed');

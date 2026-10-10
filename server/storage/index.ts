@@ -14,6 +14,7 @@ import { postgresStore, selectedDataBackend } from './postgres.js';
 
 export const dataBackend = selectedDataBackend();
 const postgresCutoverStore: DataStore = {
+  supportsAtomicOperationLease: () => postgresStore.supportsAtomicOperationLease?.() ?? false,
   getById: (collection, id) => collection === 'users' ? pbStore.getById(collection, id) : postgresStore.getById(collection, id),
   create: (collection, data) => collection === 'users' ? pbStore.create(collection, data) : postgresStore.create(collection, data),
   update: (collection, id, data) => collection === 'users' ? pbStore.update(collection, id, data) : postgresStore.update(collection, id, data),

@@ -38,6 +38,8 @@ export interface ListResult<T = Record_> {
 
 /** CRUD surface every backend must implement. Collection = table name. */
 export interface DataStore {
+  /** Database-arbitrated unique tenant/scope/subject lease support. */
+  supportsAtomicOperationLease?(): boolean | Promise<boolean>;
   getById<T = Record_>(collection: string, id: string): Promise<T | null>;
   create<T = Record_>(collection: string, data: Record<string, unknown>): Promise<T | null>;
   update(collection: string, id: string, data: Record<string, unknown>): Promise<boolean>;

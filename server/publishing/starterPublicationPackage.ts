@@ -1,3 +1,4 @@
+import type {SocialInstagramDeliveryPublishProof} from '../../shared/contracts/socialInstagramDelivery.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { store } from '../storage/index.js';
@@ -50,6 +51,7 @@ export interface StarterPublicationPackage {
 }
 
 export interface StarterPublicationOperatingLineage {
+  instagramDelivery?:SocialInstagramDeliveryPublishProof;
   assignmentId: string;
   assignmentHash: string;
   programRef: VersionedSocialRef;

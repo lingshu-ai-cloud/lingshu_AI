@@ -1,3 +1,4 @@
+import {accountProductionConstraintPrompt} from './socialAccountProductionConstraints.js';
 import { createHash } from 'node:crypto';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
@@ -56,6 +57,7 @@ function idempotencyKey(context: SocialAssetSupplyAdapterContext): string {
     tenantId: context.tenantId,
     taskId: context.taskId,
     operationId: context.operationId,
+    ...(context.accountPlaybookConstraints?{accountConstraintHash:context.accountPlaybookConstraints.constraintHash}:{}),
     shotId: context.shot.shotId,
     strategy: context.shot.sourceStrategy,
     instruction: context.shot.productionInstruction,
@@ -77,6 +79,7 @@ function controlledPrompt(context: SocialAssetSupplyAdapterContext): string {
     'Do not depict or imply the customer\'s real factory, workshop, production line, warehouse, client case, testimonial, certification, measured result, before/after result, or exact product performance.',
     'Do not add logos, company names, product claims, statistics, certificates, UI text, labels, or readable text.',
     'Use generic people, locations, objects, and abstract visual metaphors. No identifiable real customer or facility.',
+    accountProductionConstraintPrompt(context.accountPlaybookConstraints),
   ].join('\n');
 }
 

@@ -81,6 +81,15 @@ test('social program: one versioned operating chain from foundation to active we
   });
   assert.equal(playbook.version, 1);
   assert.equal(playbook.status, 'active');
+  const activeAccount = (await service.listAccounts('tenant-a', program.programId)).find(item => item.accountId === account.accountId)!;
+  const draft = await service.savePlaybook('tenant-a', 'owner', program.programId, account.accountId, {
+    expectedAccountVersion: activeAccount.version, activate: false, audience: ['新受众草稿'], pillars: ['新栏目草稿'], evidenceRules: ['待启用规则'],
+    conversionRoute: { entryType: 'direct_message', callToAction: '草稿咨询入口' },
+  });
+  assert.equal(draft.status, 'draft');
+  assert.equal(draft.version, 2);
+  assert.deepEqual((await service.listAccounts('tenant-a', program.programId)).find(item => item.accountId === account.accountId), activeAccount,
+    'saving a draft must not replace active rules, conversion route or frozen account version');
 
   const month = await service.saveMonthlyPlan('tenant-a', 'owner', program.programId, {
     expectedProgramVersion: ready.version, activate: true, month: '2026-10', objective: '验证屏障修护系列内容',

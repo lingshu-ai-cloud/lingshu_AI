@@ -1,7 +1,7 @@
 import { Router, type Request, type Response } from 'express';
 import type { Starter198Repository } from './repository.js';
 import { readSocialSceneReworkAvailability, readSocialSceneReworkStatus } from './socialContentSceneReworkRead.js';
-import { admitSocialSceneRework } from './socialContentSceneReworkAdmission.js';
+import { admitSocialSceneRework, confirmSocialSceneReworkAdmissionCost, previewSocialSceneReworkAdmission } from './socialContentSceneReworkAdmission.js';
 import { requireSocialTask } from './socialContentRecords.js';
 import { socialObject } from './socialContentValidation.js';
 import { createSocialSceneReworkCostPolicyRouter } from './socialContentSceneReworkCostPolicyRouter.js';
@@ -33,6 +33,25 @@ export function createSocialSceneReworkRouter(input: {
     if (!/^[a-zA-Z0-9._:@-]{1,200}$/.test(req.params.taskId)) throw new Error('scene_rework_identity_invalid');
     return req.params.taskId;
   };
+  const selection = async (req: Request, res: Response, level: 'read' | 'start') => {
+    const identity = await input.authorize(req, res, level);
+    const body = socialObject(req.body);
+    const allowed = ['parentArtifactId', 'affectedSceneIds', 'expectedCacheHash', 'expectedPreviewHash',
+      'expectedQuoteHash', 'authorizedMaximumCostCny', 'expectedPolicyHash'];
+    if (!body || Object.keys(body).some(key => !allowed.includes(key))
+      || typeof body.parentArtifactId !== 'string' || !/^[a-zA-Z0-9._:@-]{1,200}$/.test(body.parentArtifactId)
+      || typeof body.expectedCacheHash !== 'string' || !/^[a-f0-9]{64}$/.test(body.expectedCacheHash)
+      || !Array.isArray(body.affectedSceneIds) || body.affectedSceneIds.length < 1 || body.affectedSceneIds.length > 100
+      || body.affectedSceneIds.some(id => typeof id !== 'string' || !/^[a-zA-Z0-9._:@-]{1,200}$/.test(id))
+      || new Set(body.affectedSceneIds).size !== body.affectedSceneIds.length) throw new Error('scene_rework_selection_invalid');
+    const id = taskId(req);
+    await requireSocialTask({ repository: input.repository, tenantId: identity.tenantId, taskId: id });
+    const sourceRunId = await resolveSceneCacheSourceRun(input.repository, { tenantId: identity.tenantId,
+      taskId: id, parentArtifactId: body.parentArtifactId });
+    return { identity, body, id, sourceRunId, base: { repository: input.repository, tenantId: identity.tenantId,
+      actorUserId: identity.userId, taskId: id, sourceRunId, parentArtifactId: body.parentArtifactId,
+      expectedCacheHash: body.expectedCacheHash, affectedSceneIds: body.affectedSceneIds as string[] } };
+  };
   router.get('/', safe(async (req, res) => {
     const identity = await input.authorize(req, res, 'read');
     if (Object.keys(req.query).some(key => key !== 'parentArtifactId')
@@ -46,6 +65,25 @@ export function createSocialSceneReworkRouter(input: {
     if (Object.keys(req.query).length) throw new Error('scene_rework_query_invalid');
     res.json({ item: await readSocialSceneReworkStatus({ repository: input.repository, tenantId: identity.tenantId,
       actorUserId: identity.userId, taskId: taskId(req), operationId: req.params.operationId }) });
+  }));
+  router.post('/preview', safe(async (req, res) => {
+    const actual = await selection(req, res, 'read');
+    if (Object.keys(actual.body).some(key => !['parentArtifactId', 'affectedSceneIds', 'expectedCacheHash'].includes(key))) {
+      throw new Error('scene_rework_selection_invalid');
+    }
+    res.json({ item: await previewSocialSceneReworkAdmission(actual.base) });
+  }));
+  router.post('/confirm-admission-cost', safe(async (req, res) => {
+    const actual = await selection(req, res, 'start');
+    if (Object.keys(actual.body).some(key => !['parentArtifactId', 'affectedSceneIds', 'expectedCacheHash',
+      'expectedPreviewHash', 'expectedQuoteHash', 'authorizedMaximumCostCny'].includes(key))
+      || typeof actual.body.expectedPreviewHash !== 'string' || !/^[a-f0-9]{64}$/.test(actual.body.expectedPreviewHash)
+      || typeof actual.body.expectedQuoteHash !== 'string' || !/^[a-f0-9]{64}$/.test(actual.body.expectedQuoteHash)
+      || typeof actual.body.authorizedMaximumCostCny !== 'number'
+      || !Number.isFinite(actual.body.authorizedMaximumCostCny)) throw new Error('scene_rework_cost_confirmation_invalid');
+    res.json({ item: await confirmSocialSceneReworkAdmissionCost({ ...actual.base,
+      expectedPreviewHash: actual.body.expectedPreviewHash, expectedQuoteHash: actual.body.expectedQuoteHash,
+      authorizedMaximumCostCny: actual.body.authorizedMaximumCostCny }) });
   }));
   router.post('/:operationId/resume', safe(async (req, res) => {
     const identity = await input.authorize(req, res, 'start');
@@ -63,26 +101,21 @@ export function createSocialSceneReworkRouter(input: {
     res.json({ item });
   }));
   router.post('/', safe(async (req, res) => {
-    const identity = await input.authorize(req, res, 'start');
-    const body = socialObject(req.body);
-    if (!body || Object.keys(body).some(key => !['parentArtifactId', 'affectedSceneIds', 'expectedCacheHash'].includes(key))
-      || typeof body.parentArtifactId !== 'string' || !/^[a-zA-Z0-9._:@-]{1,200}$/.test(body.parentArtifactId)
-      || typeof body.expectedCacheHash !== 'string' || !/^[a-f0-9]{64}$/.test(body.expectedCacheHash)
-      || !Array.isArray(body.affectedSceneIds) || body.affectedSceneIds.length < 1 || body.affectedSceneIds.length > 100
-      || body.affectedSceneIds.some(id => typeof id !== 'string' || !/^[a-zA-Z0-9._:@-]{1,200}$/.test(id))
-      || new Set(body.affectedSceneIds).size !== body.affectedSceneIds.length) throw new Error('scene_rework_selection_invalid');
-    const id = taskId(req);
-    await requireSocialTask({ repository: input.repository, tenantId: identity.tenantId, taskId: id });
-    const sourceRunId = await resolveSceneCacheSourceRun(input.repository, { tenantId: identity.tenantId, taskId: id,
-      parentArtifactId: body.parentArtifactId });
+    const actual = await selection(req, res, 'start');
+    if (Object.keys(actual.body).some(key => !['parentArtifactId', 'affectedSceneIds', 'expectedCacheHash',
+      'expectedPreviewHash', 'expectedPolicyHash'].includes(key))
+      || typeof actual.body.expectedPreviewHash !== 'string' || !/^[a-f0-9]{64}$/.test(actual.body.expectedPreviewHash)
+      || actual.body.expectedPolicyHash !== undefined && (typeof actual.body.expectedPolicyHash !== 'string'
+        || !/^[a-f0-9]{64}$/.test(actual.body.expectedPolicyHash))) throw new Error('scene_rework_admission_confirmation_invalid');
     await input.assertWorkerRegistered();
-    const result = await admitSocialSceneRework({ repository: input.repository, tenantId: identity.tenantId,
-      actorUserId: identity.userId, taskId: id, sourceRunId, parentArtifactId: body.parentArtifactId,
-      expectedCacheHash: body.expectedCacheHash, affectedSceneIds: body.affectedSceneIds as string[] });
+    const result = await admitSocialSceneRework({ ...actual.base,
+      expectedPreviewHash: actual.body.expectedPreviewHash,
+      expectedPolicyHash: actual.body.expectedPolicyHash as string | undefined });
     // Database admission is authoritative even if the optional wake-up fails.
     await input.wake(result.job.id).catch(() => undefined);
     res.status(202).json({ item: await readSocialSceneReworkStatus({ repository: input.repository,
-      tenantId: identity.tenantId, actorUserId: identity.userId, taskId: id, operationId: result.intent.operationId }) });
+      tenantId: actual.identity.tenantId, actorUserId: actual.identity.userId, taskId: actual.id,
+      operationId: result.intent.operationId }) });
   }));
   return router;
 }

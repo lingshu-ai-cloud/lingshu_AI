@@ -6,6 +6,7 @@ export interface WeeklyMaterialDemandScope {taskId:string;programId:string;packa
 export interface FrozenNoSharedMaterialDemand extends WeeklyMaterialDemandScope {
  schemaVersion:'weekly-material-demand.v1';mode:'no_shared_requests';version:number;
  materialRequirements:unknown[];assetSupplyPlan:NonNullable<SocialContentTaskDetail['assetSupplyPlan']>;
+ runProof?:{runId:string;runContextHash:string;sourceDigest:string;authorityHash:string;planHash:string};
  recordHash:string;
 }
 function safePlan(plan:FrozenNoSharedMaterialDemand['assetSupplyPlan'],facts:VersionedSocialRef[],accountId?:string) {
@@ -32,7 +33,7 @@ export function buildNoSharedMaterialDemand(row:Record<string,unknown>,detail:So
  return {...payload,recordHash:socialRequestHash(payload)};
 }
 /** Validator and adapter share this verifier; a stored demand is immutable and scoped to the frozen publication. */
-export function verifiedNoSharedMaterialDemand(row:Record<string,unknown>,scope:WeeklyMaterialDemandScope):FrozenNoSharedMaterialDemand|null {
+function verifiedDemandPayload(row:Record<string,unknown>,scope:WeeklyMaterialDemandScope):FrozenNoSharedMaterialDemand|null {
  const brief=socialObject(socialJson(row.brief));
  const demand=brief?._weeklyMaterialDemand as FrozenNoSharedMaterialDemand|undefined;
  if(!demand||row.task_id!==scope.taskId||demand.schemaVersion!=='weekly-material-demand.v1'||demand.mode!=='no_shared_requests'||!Number.isSafeInteger(demand.version)||demand.version<1)return null;
@@ -43,4 +44,9 @@ export function verifiedNoSharedMaterialDemand(row:Record<string,unknown>,scope:
  const currentRequirements=socialJson(row.material_requirements);
  if(!Array.isArray(currentRequirements)||socialRequestHash(currentRequirements)!==socialRequestHash(demand.materialRequirements)||currentRequirements.some(item=>!item||typeof item!=='object'||(item as {required?:unknown}).required!==false))return null;
  return demand;
+}
+
+/** A run-bound demand requires actual store lookup; its self-declared hash is insufficient. */
+export function verifiedNoSharedMaterialDemand(row:Record<string,unknown>,scope:WeeklyMaterialDemandScope):FrozenNoSharedMaterialDemand|null {
+ const demand=verifiedDemandPayload(row,scope);return demand?.runProof?null:demand;
 }

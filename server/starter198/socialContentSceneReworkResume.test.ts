@@ -46,3 +46,14 @@ test('foreign actor, wrong job and a live worker lease cannot resume or duplicat
     assert.equal(f.tables.content_execution_jobs!.length, 1);
   } finally { await f.cleanup(); }
 });
+
+test('completed provider receipt without sealed supply checkpoint cannot fall through to normal resubmission', async () => {
+  const f = await fixture();
+  try {
+    (f.row.provider_receipts as Array<{ state: string }>)[0]!.state = 'completed';
+    await assert.rejects(resumeSocialSceneRework(f.input), /completed_provider_result_recovery_required/);
+    assert.equal(f.row.status, 'blocked');
+    assert.equal(f.tables.content_execution_jobs!.length, 1);
+    assert.equal(f.tables.starter_usage_ledger?.length ?? 0, 0);
+  } finally { await f.cleanup(); }
+});

@@ -208,14 +208,20 @@ export async function decideSocialContentArtifact(input: {
   artifactId: string;
   idempotencyKey: string;
   value: DecideSocialArtifactInput;
+  weeklyRevisionBridge?: {
+    handles(input:{tenantId:string;taskId:string;artifactId:string}):Promise<boolean>;
+    persist(input:{tenantId:string;actorUserId:string;taskId:string;artifactId:string;operationId:string;operationRequestHash:string;note:string}):Promise<unknown>;
+  };
   now?: Date;
 }): Promise<{ artifact: SocialContentArtifact; task: SocialContentTaskDetail }> {
+  const weeklyRevisionHandled=input.value.decision==='changes_requested'&&!!input.weeklyRevisionBridge&&await input.weeklyRevisionBridge.handles({tenantId:input.tenantId,taskId:input.taskId,artifactId:input.artifactId});
+  const operationRequestHash=socialRequestHash(weeklyRevisionHandled?{artifactId:input.artifactId,value:input.value}:input.value);
   const mutation = await executeSocialContentMutation<{ artifact: SocialContentArtifact; task: SocialContentTaskDetail }>({
     repository: input.repository,
     tenantId: input.tenantId,
     userId: input.userId,
     idempotencyKey: input.idempotencyKey,
-    requestHash: socialRequestHash(input.value),
+    requestHash: operationRequestHash,
     operation: 'decide_social_content_artifact',
     targetId: input.taskId,
     now: input.now,
@@ -228,6 +234,8 @@ export async function decideSocialContentArtifact(input: {
       });
       if (input.value.decision === 'approved') {
         await reconcileSocialContentTask({ ...input, operationId, preferredStatus: 'asset_review' });
+      } else if(weeklyRevisionHandled){
+        await input.weeklyRevisionBridge!.persist({tenantId:input.tenantId,actorUserId:input.userId,taskId:input.taskId,artifactId:input.artifactId,operationId,operationRequestHash,note:input.value.note??''});
       }
       return { artifact: socialArtifact(artifact), task: (await readSocialTaskDetail(input))! };
     },
@@ -241,6 +249,10 @@ export async function decideSocialContentArtifact(input: {
       });
       if (socialText(artifact.last_operation_id) === operationId) {
         if (input.value.decision === 'changes_requested') {
+          if(weeklyRevisionHandled){
+            await input.weeklyRevisionBridge!.persist({tenantId:input.tenantId,actorUserId:input.userId,taskId:input.taskId,artifactId:input.artifactId,operationId,operationRequestHash,note:input.value.note??''});
+            return {artifact:socialArtifact(artifact),task:(await readSocialTaskDetail(input))!};
+          }
           const taskDetail = await scheduleSocialArtifactRevision({
             ...input, operationId, artifactIds: [input.artifactId],
           });
@@ -255,10 +267,10 @@ export async function decideSocialContentArtifact(input: {
       if (socialText(artifact.status) !== 'review_required') {
         throw new SocialContentWorkflowError('social_artifact_not_decidable', 409);
       }
-      if (input.value.decision === 'changes_requested' && !input.orchestratorQueue) {
+      if (input.value.decision === 'changes_requested' && !weeklyRevisionHandled && !input.orchestratorQueue) {
         throw new SocialContentWorkflowError('social_content_orchestrator_not_configured', 503);
       }
-      if (input.value.decision === 'changes_requested'
+      if (input.value.decision === 'changes_requested' && !weeklyRevisionHandled
         && !['asset_review', 'attention', 'paused'].includes(socialText(task.status))) {
         throw new SocialContentWorkflowError('social_content_revision_not_startable', 409);
       }
@@ -286,6 +298,10 @@ export async function decideSocialContentArtifact(input: {
         notFoundCode: 'social_artifact_not_found',
       });
       if (input.value.decision === 'changes_requested') {
+        if(weeklyRevisionHandled){
+          await input.weeklyRevisionBridge!.persist({tenantId:input.tenantId,actorUserId:input.userId,taskId:input.taskId,artifactId:input.artifactId,operationId,operationRequestHash,note:input.value.note??''});
+          return {artifact:socialArtifact(updated),task:(await readSocialTaskDetail(input))!};
+        }
         const taskDetail = await scheduleSocialArtifactRevision({
           ...input, operationId, artifactIds: [input.artifactId],
         });

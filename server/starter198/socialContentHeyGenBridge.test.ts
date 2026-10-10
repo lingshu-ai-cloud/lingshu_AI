@@ -1,3 +1,4 @@
+import {freezeSocialAccountProductionConstraints} from './socialAccountProductionConstraints.js';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -80,6 +81,20 @@ assert.equal(store.rows.get('studio_social_presenter_jobs')?.[0]?.visual_control
 await adapter.execute(context);
 assert.equal(creates, 1);
 assert.equal(reserves, 2); // budget ledger reserve is itself idempotent by request key
+
+const rules = {recordHash:'a'.repeat(64),audience:['采购'],pillars:['证据'],recurringFormats:[],conversionRoute:{routeId:'route',entryType:'whatsapp' as const,entryRef:'contact',callToAction:'咨询',qualificationFields:[],handoffTarget:null,verifiedAt:null},evidenceRules:['真实参数'],visualRules:[],languageRules:['中文'],presenterRules:['已授权人物'],fixedFactors:[],experimentFactors:[]};
+context.accountPlaybookConstraints=freezeSocialAccountProductionConstraints({targetAccountRef:{objectType:'owned_social_account',id:'account',version:'1'},accountPlaybookRef:{objectType:'account_playbook',id:'playbook',version:'1',accountRef:'account'},verifiedAccountPlaybook:rules});
+await adapter.execute(context);
+assert.equal(creates,2);
+const ruleRow=store.rows.get('studio_social_presenter_jobs')![1]!;
+const originalConstraints=ruleRow.visual_control.accountPlaybookConstraints;
+ruleRow.visual_control.accountPlaybookConstraints=Object.fromEntries(Object.entries(originalConstraints).reverse());
+ruleRow.visual_control.accountPlaybookConstraints.rules=Object.fromEntries(Object.entries(originalConstraints.rules).reverse());
+await adapter.execute(context);
+assert.equal(creates,2,'same canonical rules recover original provider job without POST');
+ruleRow.visual_control.accountPlaybookConstraints.rules.languageRules=['changed actual content'];
+await assert.rejects(adapter.execute(context),/uncertain:.*digital_presenter_account_constraints_changed/);
+assert.equal(creates,2,'drift never creates another provider job');
 
 store.rows.set('studio_production_defaults', [{ id: 'defaults', tenant_id: 'tenant-a', payload: { presenters: [{
   id: 'presenter-a', authorized: true, avatarId: 'avatar-a', voiceId: 'voice-a', rightsEvidence: {

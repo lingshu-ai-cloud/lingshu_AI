@@ -1,3 +1,4 @@
+import {verifyWeeklyCustomerMemberProof} from '../socialPrograms/weeklyCustomerMemberProof.js';
 import {readWeeklyCustomerRelationshipScope,verifyFrozenWeeklyCustomerRelationship,verifyLatestWeeklyCustomerSegment} from '../socialPrograms/weeklyCustomerRelationshipScope.js';
 import { planMobileChatMessages } from '../agents/mobileChatStyle.js';
 import { resolveTenantFollowupTemplate } from '../whatsapp/templates.js';
@@ -5,6 +6,7 @@ import { followupOutcome } from './executionDiagnostics.js';
 import { randomUUID } from 'node:crypto';
 import { guardOutbound } from '../autonomy/outboundGuard.js';
 import { store } from '../storage/index.js';
+import type { DataStore } from '../storage/datastore.js';
 import { isRealWhatsAppNumber } from '../whatsapp/customerVisibility.js';
 import { getWhatsAppCustomers, markWhatsAppHumanReply } from '../whatsapp/historyImport.js';
 import { sendTenantWhatsAppTemplateWithReceipt, sendTenantWhatsAppTextWithReceipts } from '../whatsapp/send.js';
@@ -137,6 +139,8 @@ interface DispatchDependencies {
   recipientDelayMs: number;
   assertLegacyAccess: (tenantId: string) => Promise<void>;
   executeLegacyEffect: LegacyEffectExecutor;
+  nativeAuthorization: (tenantId: string, channel: 'messenger' | 'instagram') => Promise<CustomerMessagingAuthorization>;
+  nativePreflight: (input: Parameters<NativeScheduledService['preflightScheduled']>[0]) => ReturnType<NativeScheduledService['preflightScheduled']>;
 }
 
 const listeners = new Set<(event: FollowupWorkerEvent) => void | Promise<void>>();
@@ -318,6 +322,7 @@ export async function recoverStaleFollowupSending(batch: FollowupBatchRecord, no
   const items = await getFollowupBatchItems(batch.tenant_id, batch.id);
   let recovered = 0;
   for (const item of items) {
+    if (['messenger', 'instagram'].includes(String(item.channel))) continue;
     const receipt = jsonObject(item.provider_receipt);
     if (receipt.localHistoryPending) {
       const accepted = receiptMessages(receipt);
@@ -363,6 +368,11 @@ function defaultDependencies(): DispatchDependencies {
     recipientDelayMs: Number.isFinite(delay) ? Math.max(0, delay) : 1000,
     assertLegacyAccess: assertLegacyExternalEffectAllowed,
     executeLegacyEffect: withLegacyExternalEffectAllowed,
+    nativeAuthorization: (tenantId, channel) => readCustomerMessagingAuthorization(tenantId, channel),
+    nativePreflight: async input => {
+      const { createWeeklyNativeFollowupDispatchService } = await import('./weeklyNativeFollowupDispatch.js');
+      return createWeeklyNativeFollowupDispatchService(store).preflightScheduled(input);
+    },
   };
 }
 
@@ -385,15 +395,21 @@ export async function preflightFollowupBatchDispatch(
   const batchApproved = batch.status === 'approved'
     && Number(batch.approved_version || 0) === Number(batch.version || 0)
     && hasApprovalEvidence;
-  const authorization = await dependencies.authorization(tenantId);
-  const authorized = mode === 'scheduled'
+  const items = await getFollowupBatchItems(tenantId, batch.id);
+  if (items.some(item => item.tenant_id !== tenantId || item.batch_id !== batch.id)) throw new Error('followup_scan_item_scope_invalid');
+  const nativeItems = items.filter(item => ['messenger', 'instagram'].includes(String(item.channel)));
+  const hasWhatsApp = !items.length || items.some(item => !item.channel || item.channel === 'whatsapp');
+  const authorization = mode === 'scheduled' && !hasWhatsApp && nativeItems.length
+    ? await dependencies.nativeAuthorization(tenantId, nativeItems[0]!.channel as 'messenger' | 'instagram')
+    : await dependencies.authorization(tenantId);
+  let authorized = mode === 'scheduled'
     ? authorization.scheduledFollowupSendAllowed
     : authorization.manualFollowupSendAllowed;
   const blockers: Record<string, number> = {};
   const addBlocker = (reason: string) => { blockers[reason] = (blockers[reason] || 0) + 1; };
   let legacyAccessBlocked = false;
   try {
-    await dependencies.assertLegacyAccess(tenantId);
+    if (mode !== 'scheduled' || hasWhatsApp) await dependencies.assertLegacyAccess(tenantId);
   } catch (error) {
     if (!(error instanceof Starter198LegacyEffectError)) throw error;
     legacyAccessBlocked = true;
@@ -402,7 +418,7 @@ export async function preflightFollowupBatchDispatch(
   const runBlocker = await digitalEmployeeRunBlockedReason(tenantId, batch.run_id);
   if (runBlocker) addBlocker(runBlocker);
   if (!batchApproved) addBlocker('followup_batch_not_approved_for_current_version');
-  if (!authorized) {
+  if (!authorized && (mode !== 'scheduled' || hasWhatsApp)) {
     const relevantReasons = mode === 'manual'
       ? authorization.reasons.filter(reason => reason !== 'followup_background_worker_disabled')
       : authorization.reasons;
@@ -413,8 +429,20 @@ export async function preflightFollowupBatchDispatch(
   let blocked = 0;
   let future = 0;
   let skipped = 0;
-  const items = await getFollowupBatchItems(tenantId, batch.id);
+  let nativeEligible = 0;
+  let whatsappEligible = 0;
+  const nativeScope = mode === 'scheduled' && nativeItems.length ? await readWeeklyCustomerRelationshipScope(store, tenantId, batch.run_id) : null;
   for (const item of items) {
+    if (['messenger', 'instagram'].includes(String(item.channel))) {
+      if (mode !== 'scheduled') { blocked += 1; addBlocker('weekly_native_explicit_dispatch_required'); continue; }
+      if (!nativeScope) { blocked += 1; addBlocker('weekly_native_dispatch_week_binding_missing'); continue; }
+      const result = await dependencies.nativePreflight({ tenantId, batchId, itemId: item.id, expectedBatchVersion: batch.version, expectedItemHash: item.content_hash, expectedScope: { runId: batch.run_id, programId: nativeScope.programId, packageId: nativeScope.packageId, packageVersion: nativeScope.packageVersion } });
+      if (result.status === 'eligible') { eligible += 1; nativeEligible += 1; }
+      else if (result.status === 'future') future += 1;
+      else { blocked += 1; addBlocker(result.code ?? 'weekly_native_dispatch_preflight_failed'); }
+      continue;
+    }
+    if (item.channel && item.channel !== 'whatsapp') { blocked += 1; addBlocker('unsupported_customer_channel'); continue; }
     if (['blocked', 'partial_sent', 'failed', 'rejected'].includes(item.status)) { blocked += 1; addBlocker(item.exclusion_reason || `followup_item_${item.status}`); continue; }
     if (!['approved', 'retry_wait'].includes(item.status)) { skipped += 1; continue; }
     const now = dependencies.now();
@@ -435,12 +463,17 @@ export async function preflightFollowupBatchDispatch(
       continue;
     }
     eligible += 1;
+    whatsappEligible += 1;
   }
+  const whatsappAuthorized = authorized;
+  if (mode === 'scheduled' && nativeEligible > 0) authorized = true;
   if (!eligible && !future && !blocked) addBlocker('no_dispatchable_items');
   return {
     batchId,
     mode,
-    ready: !legacyAccessBlocked && !runBlocker && batchApproved && authorized && eligible > 0,
+    ready: !runBlocker && batchApproved && (mode === 'scheduled'
+      ? nativeEligible > 0 || (!legacyAccessBlocked && whatsappAuthorized && whatsappEligible > 0)
+      : !legacyAccessBlocked && authorized && eligible > 0),
     batchApproved,
     authorized,
     eligible,
@@ -486,6 +519,7 @@ export async function dispatchFollowupBatch(
     };
     const items = await getFollowupBatchItems(tenantId, batch.id);
     for (const listedItem of items) {
+      if (['messenger', 'instagram'].includes(String(listedItem.channel))) { result.blocked += 1; continue; }
       if (!['approved', 'retry_wait'].includes(listedItem.status)) continue;
       const now = dependencies.now();
       if (timestamp(listedItem.scheduled_at) > now.getTime()) { result.future += 1; continue; }
@@ -502,7 +536,7 @@ export async function dispatchFollowupBatch(
         result.blocked += 1;
         continue;
       }
-      try{const scope=await readWeeklyCustomerRelationshipScope(store,tenantId,batch.run_id);if(scope){const member=await store.getById<Record<string,unknown>>('customer_segment_members',item.segment_member_id);if(!member||member.tenant_id!==tenantId||member.customer_id!==item.customer_id||member.segment_id!==batch.segment_id||member.membership!=='included')throw Error('weekly_customer_relationship_member_invalid');await verifyFrozenWeeklyCustomerRelationship(store,scope,item.customer_id,member.customer_snapshot);await verifyLatestWeeklyCustomerSegment(store,scope,batch.segment_id);}}catch(error){const reason=error instanceof Error?error.message:'weekly_customer_relationship_evidence_unverified';await persistFollowupItem(item.id,{status:'blocked',exclusion_reason:reason,updated_at:now.toISOString()});result.blocked+=1;continue;}
+      try{const scope=await readWeeklyCustomerRelationshipScope(store,tenantId,batch.run_id);if(scope){const member=await store.getById<Record<string,unknown>>('customer_segment_members',item.segment_member_id);if(!member||member.tenant_id!==tenantId||member.customer_id!==item.customer_id||member.segment_id!==batch.segment_id||member.membership!=='included')throw Error('weekly_customer_relationship_member_invalid');await verifyWeeklyCustomerMemberProof(store,scope,item.customer_id,member.customer_snapshot);await verifyLatestWeeklyCustomerSegment(store,scope,batch.segment_id);}}catch(error){const reason=error instanceof Error?error.message:'weekly_customer_relationship_evidence_unverified';await persistFollowupItem(item.id,{status:'blocked',exclusion_reason:reason,updated_at:now.toISOString()});result.blocked+=1;continue;}
       const safety = await runtimeSafety(tenantId, item, now, dependencies, batch.delivery_policy);
       if (!safety.allowed) {
         await persistFollowupItem(item.id, { status: 'blocked', exclusion_reason: safety.reason, last_error: '', updated_at: now.toISOString() });
@@ -539,7 +573,7 @@ export async function dispatchFollowupBatch(
         if (!currentBatch || currentBatch.status !== 'approved' || Number(currentBatch.version) !== approvedBatchVersion || Number(currentBatch.approved_version) !== approvedBatchVersion || !currentItem || currentItem.content_hash !== approvedContentHash) {
           throw new WorkflowRunBlockedError('followup_approval_changed_before_send');
         }
-        const relationScope=await readWeeklyCustomerRelationshipScope(store,tenantId,batch.run_id);if(relationScope){const member=await store.getById<Record<string,unknown>>('customer_segment_members',item.segment_member_id);if(!member||member.tenant_id!==tenantId||member.customer_id!==item.customer_id||member.segment_id!==currentBatch.segment_id||member.membership!=='included')throw new WorkflowRunBlockedError('weekly_customer_relationship_member_invalid');await verifyFrozenWeeklyCustomerRelationship(store,relationScope,item.customer_id,member.customer_snapshot);await verifyLatestWeeklyCustomerSegment(store,relationScope,currentBatch.segment_id);}
+        const relationScope=await readWeeklyCustomerRelationshipScope(store,tenantId,batch.run_id);if(relationScope){const member=await store.getById<Record<string,unknown>>('customer_segment_members',item.segment_member_id);if(!member||member.tenant_id!==tenantId||member.customer_id!==item.customer_id||member.segment_id!==currentBatch.segment_id||member.membership!=='included')throw new WorkflowRunBlockedError('weekly_customer_relationship_member_invalid');await verifyWeeklyCustomerMemberProof(store,relationScope,item.customer_id,member.customer_snapshot);await verifyLatestWeeklyCustomerSegment(store,relationScope,currentBatch.segment_id);}
         if (item.send_mode === 'template') {
           const variables = Array.isArray(item.template_variables) ? item.template_variables.map(value => String(value || '')) : [];
           const receipt = await dependencies.sendTemplate({ tenantId, to: item.wa_number, templateName: item.template_name, languageCode: item.template_language || 'en_US', variables, callbackData: `followup:${claimToken}:0` });
@@ -758,10 +792,53 @@ export async function getTenantFollowupDispatchStatus(tenantId: string): Promise
   };
 }
 
+type NativeScheduledService = Pick<ReturnType<typeof import('./weeklyNativeFollowupDispatch.js').createWeeklyNativeFollowupDispatchService>, 'preflightScheduled' | 'dispatchScheduled'>;
+
+/** Internal driver shared by the scanner and controlled integration tests. */
+export async function dispatchScheduledNativeFollowupBatch(dataStore: DataStore, input: { tenantId: string; batchId: string; runId: string }, ports: {
+  serviceFactory?: (dataStore: DataStore) => NativeScheduledService;
+  reconcile?: typeof import('./weeklyNativeFollowupDispatch.js').reconcileWeeklyNativeAcceptedRequest;
+} = {}) {
+  const native = await import('./weeklyNativeFollowupDispatch.js');
+  const batch = await getFollowupBatch(input.tenantId, input.batchId, dataStore);
+  if (!batch || batch.tenant_id !== input.tenantId || batch.run_id !== input.runId) throw new Error('followup_scan_batch_scope_invalid');
+  const items = await getFollowupBatchItems(input.tenantId, input.batchId, dataStore);
+  if (items.some(item => item.tenant_id !== input.tenantId || item.batch_id !== input.batchId)) throw new Error('followup_scan_item_scope_invalid');
+  const scope = await readWeeklyCustomerRelationshipScope(dataStore, input.tenantId, input.runId);
+  if (!scope) throw new Error('weekly_native_dispatch_week_binding_missing');
+  const service = (ports.serviceFactory ?? native.createWeeklyNativeFollowupDispatchService)(dataStore);
+  const expectedScope = { runId: input.runId, programId: scope.programId, packageId: scope.packageId, packageVersion: scope.packageVersion };
+  const outcomes: Array<{ itemId: string; status: 'dispatched' | 'reconciled' | 'future' | 'blocked'; code: string | null }> = [];
+  for (const item of items.filter(row => ['messenger', 'instagram'].includes(String(row.channel)))) {
+    try {
+      const requestId = jsonObject(item.provider_receipt).requestId;
+      if (typeof requestId === 'string' && requestId) {
+        // Existing attempts only reconcile the original receipt; never resubmit.
+        await (ports.reconcile ?? native.reconcileWeeklyNativeAcceptedRequest)(dataStore, { tenantId: input.tenantId, channel: item.channel as 'messenger' | 'instagram', requestId, expectedScope });
+        outcomes.push({ itemId: item.id, status: 'reconciled', code: null });
+        continue;
+      }
+      const source = { tenantId: input.tenantId, batchId: input.batchId, itemId: item.id, expectedBatchVersion: batch.version, expectedItemHash: item.content_hash, expectedScope };
+      const preflight = await service.preflightScheduled(source);
+      if (preflight.status === 'eligible') {
+        await service.dispatchScheduled(source);
+        outcomes.push({ itemId: item.id, status: 'dispatched', code: null });
+      } else outcomes.push({ itemId: item.id, status: preflight.status, code: preflight.code });
+    } catch (error) {
+      const code = safeError(error).code;
+      outcomes.push({ itemId: item.id, status: 'blocked', code });
+      console.error('[followup-worker:native-item]', input.batchId, item.id, code);
+    }
+  }
+  return { batchId: input.batchId, outcomes };
+}
+
 export async function runFollowupDispatchScan(scanDependencies: {
   assertLegacyAccess?: (tenantId: string) => Promise<void>;
   recover?: typeof recoverStaleFollowupSending;
   getBatch?: typeof getFollowupBatch;
+  getItems?: typeof getFollowupBatchItems;
+  nativeScheduled?: (input: { tenantId: string; batchId: string; runId: string }) => Promise<unknown>;
   dispatch?: typeof dispatchFollowupBatch;
 } = {}): Promise<number> {
   if (scanRunning) return 0;
@@ -774,18 +851,39 @@ export async function runFollowupDispatchScan(scanDependencies: {
       if (page >= result.totalPages || !result.items.length) break;
     }
     for (const batch of batches) {
-      try {
-        await (scanDependencies.assertLegacyAccess ?? assertLegacyExternalEffectAllowed)(batch.tenant_id);
-        await (scanDependencies.recover ?? recoverStaleFollowupSending)(batch);
-        if ((await (scanDependencies.getBatch ?? getFollowupBatch)(batch.tenant_id, batch.id))?.status !== 'approved') continue;
-        await (scanDependencies.dispatch ?? dispatchFollowupBatch)(batch.tenant_id, batch.id, { mode: 'scheduled' });
-      } catch (error) {
+      const reportFailure = (error: unknown) => {
         const failure = safeError(error);
         if (!failure.code.startsWith('customer_message_send_not_authorized:')
           && failure.code !== 'starter_198_orchestrator_only'
           && failure.code !== 'starter_198_access_unavailable') {
           console.error('[followup-worker:batch]', batch.id, failure.code);
         }
+      };
+      let items: FollowupBatchItemRecord[];
+      try {
+        items = await (scanDependencies.getItems ?? getFollowupBatchItems)(batch.tenant_id, batch.id);
+        if (items.some(item => item.tenant_id !== batch.tenant_id || item.batch_id !== batch.id)) {
+          throw new Error('followup_scan_item_scope_invalid');
+        }
+      } catch (error) { reportFailure(error); continue; }
+      // Native channels own their authority, request ledger and recovery. Do not
+      // pass them through WhatsApp authorization, claims or stale-send recovery.
+      if (items.some(item => ['messenger', 'instagram'].includes(String(item.channel)))) {
+        try {
+          const dispatchNative = scanDependencies.nativeScheduled ?? (input => dispatchScheduledNativeFollowupBatch(store, input));
+          await dispatchNative({ tenantId: batch.tenant_id, batchId: batch.id, runId: batch.run_id });
+        } catch (error) { reportFailure(error); }
+      }
+      // Missing channel is the historical WhatsApp representation. Unknown
+      // channels never acquire WhatsApp sending authority by falling through.
+      if (items.length && !items.some(item => !item.channel || item.channel === 'whatsapp')) continue;
+      try {
+        await (scanDependencies.assertLegacyAccess ?? assertLegacyExternalEffectAllowed)(batch.tenant_id);
+        await (scanDependencies.recover ?? recoverStaleFollowupSending)(batch);
+        if ((await (scanDependencies.getBatch ?? getFollowupBatch)(batch.tenant_id, batch.id))?.status !== 'approved') continue;
+        await (scanDependencies.dispatch ?? dispatchFollowupBatch)(batch.tenant_id, batch.id, { mode: 'scheduled' });
+      } catch (error) {
+        reportFailure(error);
       }
     }
     return batches.length;

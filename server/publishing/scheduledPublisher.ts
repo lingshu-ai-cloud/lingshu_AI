@@ -434,6 +434,16 @@ async function publishScheduledPost(
         trackingPost: post,
         finalizeTracking: false,
         publishAttemptId: attemptId,
+        ...(platform === 'instagram' ? { async onProviderReceipt(receiptId: string) {
+          const current = await store.getById<PostRecord>('posts', post.id);
+          if (!current || current.tenant_id !== post.tenant_id) throw new Error('instagram_container_attempt_missing');
+          const currentStats = statsOf(current);
+          const currentResults = resultMap(currentStats);
+          const currentAttempt = currentResults[accountId];
+          if (currentAttempt?.attemptId !== attemptId || currentAttempt.status !== 'in_flight') throw new Error('instagram_container_attempt_changed');
+          results[accountId] = { ...currentAttempt, providerReceiptId: receiptId };
+          if (!await store.update('posts', post.id, { stats: { ...currentStats, publishResults: { ...currentResults, [accountId]: results[accountId] } } })) throw new Error('instagram_container_persistence_failed');
+        } } : {}),
         sourceClaim,
         enterpriseFactVersion: text(initialStats.enterpriseFactVersion),
         copyAudit: initialStats.copyAudit as PublishToAccountInput['copyAudit'],
@@ -495,6 +505,7 @@ async function publishScheduledPost(
         return;
       }
       results[accountId] = {
+        ...results[accountId],
         status: 'unknown', attemptId, startedAt: attemptStartedAt,
         error: errorMessage(error),
         failedAt: new Date().toISOString(),

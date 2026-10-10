@@ -348,8 +348,10 @@ async function mirrorCustomerToPocketBase(customer: StoredCustomer): Promise<voi
       perPage: 1,
     });
     const id = existing.items[0]?.id;
-    if (id) await store.update('whatsapp_customers', id, payload);
-    else await store.create('whatsapp_customers', payload);
+    const written=id?(await store.update('whatsapp_customers',id,payload)===true?{id}:null):await store.create<{id:string}>('whatsapp_customers',payload);
+    if(!written?.id)throw Error('whatsapp_customer_persistence_failed');
+    const saved=await store.getById<Record<string,unknown>>('whatsapp_customers',written.id);
+    if(!saved||saved.id!==written.id||saved.tenant_id!==customer.tenantId||saved.customer_id!==customer.id||saved.payload!==payload.payload)throw Error('whatsapp_customer_persistence_failed');
   });
 }
 
@@ -368,8 +370,10 @@ async function mirrorInteractionToPocketBase(interaction: StoredInteraction): Pr
       perPage: 1,
     });
     const id = existing.items[0]?.id;
-    if (id) await store.update('whatsapp_interactions', id, payload);
-    else await store.create('whatsapp_interactions', payload);
+    const written=id?(await store.update('whatsapp_interactions',id,payload)===true?{id}:null):await store.create<{id:string}>('whatsapp_interactions',payload);
+    if(!written?.id)throw Error('whatsapp_interaction_persistence_failed');
+    const saved=await store.getById<Record<string,unknown>>('whatsapp_interactions',written.id);
+    if(!saved||saved.id!==written.id||saved.tenant_id!==interaction.tenantId||saved.interaction_id!==interaction.id||saved.payload!==payload.payload)throw Error('whatsapp_interaction_persistence_failed');
   });
 }
 

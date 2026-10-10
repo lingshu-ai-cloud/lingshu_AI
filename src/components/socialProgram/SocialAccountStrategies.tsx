@@ -1,3 +1,4 @@
+import AccountPlaybookEditor from './AccountPlaybookEditor';
 import { useState, type FormEvent } from 'react';
 import { ArrowRight, CheckCircle2, Loader2, Plus, RefreshCcw, Users } from 'lucide-react';
 import type { Page } from '../../pageRegistry';
@@ -85,10 +86,11 @@ export default function SocialAccountStrategies({ onNavigate, embedded = false }
           <div className="mt-5 rounded-lg border border-dashed border-border-bright px-5 py-10 text-center text-sm text-text-muted">当前业务尚未保存账号定义。</div>
         ) : (
           <div className="mt-5 grid gap-3 lg:grid-cols-2">{accounts.map(account => (
-            <article key={account.accountId} className="rounded-lg border border-border p-4">
+            <article key={`${activeProgram.programId}:${account.accountId}`} className="rounded-lg border border-border p-4">
               <div className="flex items-start justify-between gap-3"><div className="flex items-start gap-3">{normalizeSocialBrand(account.platform) && <span title={PLATFORM_LABELS[account.platform]} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-border bg-white"><SocialPlatformIcon platform={account.platform} size={20}/></span>}<div><h3 className="font-bold text-text-primary">{account.displayName}</h3><p className="mt-1 text-xs text-text-muted"><span className="sr-only">{PLATFORM_LABELS[account.platform]} · </span>{account.handle || '尚未填写账号 handle'}</p></div></div><span className="tag">{account.connectionId ? '已连接' : '未授权'}</span></div>
               <dl className="mt-4 grid gap-3 text-sm"><div><dt className="text-xs text-text-muted">业务角色</dt><dd className="mt-1 text-text-primary">{account.businessRole}</dd></div><div><dt className="text-xs text-text-muted">受众承诺</dt><dd className="mt-1 text-text-primary">{account.audiencePromise}</dd></div><div><dt className="text-xs text-text-muted">内容承诺</dt><dd className="mt-1 text-text-primary">{account.contentPromise}</dd></div></dl>
               <div className="mt-4 flex flex-wrap gap-2 text-xs"><span className="tag">{account.playbookRef ? `账号规则 v${account.playbookRef.version}` : '账号规则未建立'}</span><span className="tag">{account.conversionRoute ? '获客路径已配置' : '获客路径未配置'}</span></div>
+              <AccountPlaybookEditor key={`${activeProgram.programId}:${account.accountId}`} programId={activeProgram.programId} accountId={account.accountId} onSaved={refreshAccounts}/>
             </article>
           ))}</div>
         )}

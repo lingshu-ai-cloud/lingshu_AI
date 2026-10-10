@@ -4,11 +4,11 @@ import { createHash, randomUUID } from 'node:crypto';
 import { dashscopeApiKey } from '../agents/qwen.js';
 import { benchmarkTimeRange, recordOf } from '../../shared/benchmarkAnalysis.js';
 import type { VideoAiAnalysis } from '../types/index.js';
-import { extractReferenceEvidenceFrames, referenceCriticalFrameSchedule } from './referenceCriticalShotProduction.js';
+import { CRITICAL_SHOT_FRAME_POLICY, extractReferenceEvidenceFrames, referenceCriticalFrameSchedule } from './referenceCriticalShotProduction.js';
 import { withPaidOperationLock } from './paidOperationLock.js';
 import type { ReferenceCriticalFrame } from './referenceCriticalShots.js';
 
-export const PRESENTER_CONTINUITY_VERSION = 'source-person-visibility-continuity-v1';
+export const PRESENTER_CONTINUITY_VERSION = 'source-person-visibility-continuity-v2';
 export interface PresenterContinuityEvidence {
   personPresence: 'person' | 'hands_only' | 'none' | 'unknown';
   observedPresenterRole: 'sales_presenter' | 'presenter_action' | 'background' | 'none' | 'unknown';
@@ -16,8 +16,6 @@ export interface PresenterContinuityEvidence {
   time: string; model: string; provenance: string; sourceSha256: string;
 }
 type Input = { analysis: VideoAiAnalysis; frames: ReferenceCriticalFrame[]; sourceSha256: string; videoId: string };
-const roles = ['sales_presenter','presenter_action','background','none','unknown'];
-const presences = ['person','hands_only','none','unknown'];
 const text = (v: unknown) => typeof v === 'string' ? v.trim() : '';
 function invalid(reason: string): never { throw new Error(`presenter_continuity_invalid:${reason}`); }
 
@@ -29,7 +27,12 @@ export function validatePresenterContinuity(input: Input, output: unknown, model
   return details.map((shot, index) => {
     const id = `shot-${index + 1}`, row = rows.find(r => r.shotId === id) || invalid(`${id}:missing`);
     const range = benchmarkTimeRange(shot.time || shot.timestamp) || invalid(`${id}:invalid_time`);
-    if (!roles.includes(text(row.observedPresenterRole)) || !presences.includes(text(row.personPresence))) invalid(`${id}:invalid_role_or_presence`);
+    // One mutually exclusive model verdict; deterministic enum projection
+    // cannot manufacture a visual judgment or cross-shot identity.
+    const mappings: Record<string, [PresenterContinuityEvidence['personPresence'],PresenterContinuityEvidence['observedPresenterRole']]> = {
+      foreground_presenter:['person','sales_presenter'],presenter_action:['person','presenter_action'],
+      background_people:['person','background'],hands_only:['hands_only','none'],no_person:['none','none'],unknown:['unknown','unknown'] };
+    const mapping = mappings[text(row.visibility)] || invalid(`${id}:invalid_visibility`);
     if (typeof row.confidence !== 'number' || row.confidence < 0 || row.confidence > 1) invalid(`${id}:invalid_confidence`);
     const evidence = Array.isArray(row.evidence) ? row.evidence.map(text).filter(Boolean) : [];
     const seconds = Array.isArray(row.frameSeconds) ? row.frameSeconds : [];
@@ -37,8 +40,7 @@ export function validatePresenterContinuity(input: Input, output: unknown, model
     if (!evidence.length || seconds.length < 2 || !seconds.every(v => typeof v === 'number' && actual.some(f => Math.abs(f.seconds-v) < .005))) invalid(`${id}:missing_or_fabricated_frames`);
     const frameSeconds = [...new Set(seconds.map(v => actual.find(f => Math.abs(f.seconds-Number(v)) < .005)!.seconds))];
     if (frameSeconds.length < 2) invalid(`${id}:duplicate_frames`);
-    const role = row.observedPresenterRole as PresenterContinuityEvidence['observedPresenterRole'];
-    const presence = row.personPresence as PresenterContinuityEvidence['personPresence'];
+    const [presence, role] = mapping;
     const personId = text(row.personContinuityId);
     if ((role === 'sales_presenter' || role === 'presenter_action') && (presence !== 'person' || !personId)) invalid(`${id}:identity_missing`);
     if (role === 'background' && presence !== 'person') invalid(`${id}:background_without_person`);
@@ -60,9 +62,9 @@ export async function recognizePresenterContinuity(input: Input, options: { fetc
     frameSeconds: input.frames.filter(f=>f.shotId===`shot-${index+1}`).map(f=>f.seconds) }));
   const prompt = `你是产品侧原片人物可见性和跨镜人物身份分析器。这与关键镜头分类无关，不能用关键/非关键猜人物。
 仅根据各镜提供的实际原片帧判断。ASR词只是原音频证据，画外音不等于画中人物讲话。不要按旧描述猜人物。
-personPresence分别为person（可见整个人/身体/脸/背景工人，即使脸不可见也算person）、hands_only（仅局部手部，不能确认主讲者身份）、none（完全无人或身体部分）、unknown（图像不足）。observedPresenterRole为sales_presenter（可见固定主讲者对镜口播）、presenter_action（可确认同主讲者的动作镜头）、background（有非主讲人物/工人，无须绑定固定主讲）、none（真正无人或仅手部展示）、unknown（无法确认角色或跨镜身份）。无正面脸不意味着personPresence=none。非关键真人口播仍为sales_presenter。
-所有可确认的同一主讲人物跨镜共用稳定personContinuityId（person_1等），用脸部特征、身形及跨镜相同人物证据识别，不得仅凭性别/服装断言。同一主讲者即使侧身/走动，明确身份时仍连续，观察讲话/面对镜头行为。背景工人与仅手部不绑定主讲ID。sales_presenter/presenter_action必须有personPresence=person和ID，否则unknown；置信不足0.85保持unknown，不能猜。每镜至少引用两帧实际秒值，evidence写具体中文视觉和身份依据，不需要人工确认节点。
-只输出JSON对象 {"shots":[{"shotId":"shot-1","personPresence":"person|hands_only|none|unknown","observedPresenterRole":"sales_presenter|presenter_action|background|none|unknown","personContinuityId":"person_1或空字符串","confidence":0.95,"evidence":["中文具体帧和跨镜证据"],"frameSeconds":[实际提供帧秒数]}]}，每镜完整一次，共${shots.length}镜。数据:${JSON.stringify(shots)}`;
+每镜只选择一个互斥visibility枚举：foreground_presenter（可见固定主讲者对镜说话/讲解）、presenter_action（明确同一主讲人物的动作展示）、background_people（可见其他人、背身工人、背景人员，即使无正面脸也属于本项）、hands_only（仅手部产品展示，无可识别主讲脸/人物身体）、no_person（完全无人物及身体部分，只有产品/机器/环境）、unknown（视觉/身份无法确认）。请先检查身体是否出现，再区分是否主讲者。背景环境不等于background_people；无人产品柜/无人展厅/仅机器必须no_person。ASR讲产品不证明手部属于主讲者，只有手必须hands_only，不能填presenter_action。关键性不影响此枚举。
+所有可确认的同一主讲人物跨镜共用稳定personContinuityId（person_1等），用脸部特征、身形及跨镜相同人物证据识别，不得仅凭性别/服装断言。同一主讲者即使侧身/走动，明确身份时仍连续，观察讲话/面对镜头行为。背景工人与仅手部不绑定主讲ID。foreground_presenter/presenter_action必须有可识别人物和ID，否则unknown；hands_only/background_people/no_person/unknown必须ID空字符串；置信不足0.85保持unknown，不能猜。每镜至少引用两帧实际秒值，evidence写具体中文视觉和身份依据，不需要人工确认节点。
+只输出JSON对象 {"shots":[{"shotId":"shot-1","visibility":"foreground_presenter|presenter_action|background_people|hands_only|no_person|unknown","personContinuityId":"person_1或空字符串","confidence":0.95,"evidence":["中文具体帧和跨镜证据"],"frameSeconds":[实际提供帧秒数]}]}，每镜完整一次，共${shots.length}镜。数据:${JSON.stringify(shots)}`;
   const content: Array<Record<string,unknown>> = [{type:'text',text:prompt}];
   for(const frame of input.frames) { content.push({type:'text',text:`${frame.shotId} 实际源帧 ${frame.seconds.toFixed(3)}s`}); content.push({type:'image_url',image_url:{url:`data:${frame.mimeType};base64,${frame.base64}`}}); }
   const response = await (options.fetcher || fetch)('https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions', {
@@ -76,13 +78,19 @@ personPresence分别为person（可见整个人/身体/脸/背景工人，即使
 
 export async function producePresenterContinuity(input: { filePath:string;analysis:VideoAiAnalysis;sourceSha256:string;videoId:string;tenantId?:string;duration:number },
   options:{cacheRoot?:string;recognize?:typeof recognizePresenterContinuity}={}) {
+  const assertOriginalBytes = () => {
+    if (!/^[a-f0-9]{64}$/.test(input.sourceSha256) || createHash('sha256').update(fs.readFileSync(input.filePath)).digest('hex') !== input.sourceSha256)
+      throw new Error('presenter_continuity_source_changed');
+  };
+  assertOriginalBytes();
   const model=process.env.QWEN_CRITICAL_SHOT_MODEL || 'qwen3-vl-flash';
-  const key=createHash('sha256').update(JSON.stringify({version:PRESENTER_CONTINUITY_VERSION,model,tenantId:input.tenantId,
+  const key=createHash('sha256').update(JSON.stringify({version:PRESENTER_CONTINUITY_VERSION,framePolicy:CRITICAL_SHOT_FRAME_POLICY,model,tenantId:input.tenantId,
     videoId:input.videoId,source:input.sourceSha256,duration:input.duration,
     shots:input.analysis.scriptDetails15s?.map(s=>[s.time||s.timestamp]),words:input.analysis.audioTranscript?.words})).digest('hex');
   const root=options.cacheRoot || path.resolve('data/analysis-output/presenter-continuity');fs.mkdirSync(root,{recursive:true});
   const file=path.join(root,`${key}.json`), read=()=>fs.existsSync(file)?JSON.parse(fs.readFileSync(file,'utf8')):null;
   return withPaidOperationLock(path.join(root,'.locks'),key,async()=>{
+    assertOriginalBytes();
     const prior=read();
     if(prior?.evidence) return {...input.analysis,scriptDetails15s:input.analysis.scriptDetails15s?.map((s,i)=>({...s,...prior.evidence[i]})),presenterContinuitySummary:prior.summary};
     if(prior && !prior.providerResponse?.raw) throw new Error('人物识别提交状态未知，不重复付费；等待原任务自动恢复');
@@ -93,6 +101,7 @@ export async function producePresenterContinuity(input: { filePath:string;analys
       if(range && range.end-range.start>3 && i!==0) for(const fraction of [.15,.3,.65,.8]) schedule.push({shotId:`shot-${i+1}`,seconds:Number((range.start+(Math.min(range.end,input.duration)-range.start)*fraction).toFixed(3))});
     }
     const frames=await extractReferenceEvidenceFrames(input.filePath,input.analysis,input.duration,schedule,root);
+    assertOriginalBytes();
     const classificationInput={analysis:input.analysis,frames,sourceSha256:input.sourceSha256,videoId:input.videoId};
     try {
       let supplier=prior;
@@ -101,9 +110,11 @@ export async function producePresenterContinuity(input: { filePath:string;analys
         supplier=await (options.recognize||recognizePresenterContinuity)(classificationInput);
         fs.writeFileSync(file,JSON.stringify({key,status:'received',...supplier}),{mode:0o600});
       }
+      assertOriginalBytes();
       if(supplier.finishReason==='length') throw new Error('人物识别JSON截断，保留原请求不重复付费');
       const details=validatePresenterContinuity(classificationInput,JSON.parse(supplier.providerResponse.raw),model);
       const summary={version:PRESENTER_CONTINUITY_VERSION,provider:'qwen',model,sourceSha256:input.sourceSha256,videoId:input.videoId,
+        framePolicy:CRITICAL_SHOT_FRAME_POLICY,
         cacheKey:key,analyzedAt:new Date().toISOString(),frameCount:frames.length,
         frameEvidence:frames.map(({shotId,seconds,requestedSeconds})=>({shotId,seconds,requestedSeconds})),providerResponse:supplier.providerResponse};
       const evidence=details.map(s=>({presenterContinuityEvidence:s.presenterContinuityEvidence,observedPresenterRole:s.observedPresenterRole,

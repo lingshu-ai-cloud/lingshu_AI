@@ -1,0 +1,21 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import express from 'express';
+import {createWeeklyOwnedProductIdentityUI} from './weeklyOwnedProductIdentityUI.js';
+import {createWeeklyOwnedProductIdentityRouter} from './weeklyOwnedProductIdentityRouter.js';
+import {parseWeeklyOwnedProductIdentityRead} from '../../src/lib/weeklyOwnedProductIdentityApi.js';
+import {prepareWeeklyNonPresenterProductionFixture} from '../runtime/weeklyNonPresenterProduction.fixture.js';
+test('actual scoped product prerequisite HTTP read parses, capability denial and run drift never bind or start',async t=>{
+ const {repository,f,pkg,task,created}=await prepareWeeklyNonPresenterProductionFixture(t,{ownedReferenceBytes:true,productInventory:true,primaryStructure:true});
+ const scope={tenantId:task.tenantId,programId:pkg.programId,packageId:pkg.packageId,packageVersion:pkg.version,publicationTaskId:task.publicationTaskId!,contentTaskId:String(created.task_id)};
+ const app=express();app.use(express.json());let allowed=true,authenticated=true;const levels:string[]=[];
+ app.use((_req,res,next)=>{if(authenticated){res.locals.tenantId=scope.tenantId;res.locals.userId='owner';}next();});
+ app.use('/tasks/:taskId/identity',createWeeklyOwnedProductIdentityRouter(createWeeklyOwnedProductIdentityUI(f.store,{repository}),async(_req,_res,level)=>{levels.push(level);if(!allowed)throw Object.assign(Error('starter_capability_missing'),{status:403});return {tenantId:scope.tenantId,userId:'owner'};}));
+ const server=app.listen(0);t.after(()=>server.close());const address=server.address();assert.ok(address&&typeof address!=='string');const base=`http://127.0.0.1:${address.port}/tasks/${scope.contentTaskId}/identity`;
+ const query=new URLSearchParams({programId:scope.programId,packageId:scope.packageId,packageVersion:String(scope.packageVersion),publicationTaskId:scope.publicationTaskId,expectedRunId:''});
+ const first=await fetch(`${base}?${query}`);assert.equal(first.status,200);const parsed=parseWeeklyOwnedProductIdentityRead((await first.json()).item,scope,null);assert.equal(parsed.assessment.required,true);assert.equal(parsed.assessment.status,'blocked');assert.equal(parsed.readOnly,false);assert.ok(parsed.assessment.consumerTaskId);assert.ok(parsed.candidateGaps.length);assert.equal(parsed.candidates.length,0);
+ const post=()=>fetch(`${base}/bind`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({programId:scope.programId,packageId:scope.packageId,packageVersion:scope.packageVersion,publicationTaskId:scope.publicationTaskId,expectedRunId:null,expectedTaskVersion:parsed.assessment.contentTaskVersion,expectedRequirementHash:parsed.assessment.requirementHash,bindings:parsed.assessment.requirements.map(r=>({requirementId:r.requirementId,requestId:'not-a-real-request'}))})});
+ allowed=false;assert.equal((await fetch(`${base}?${query}`)).status,403);assert.equal((await post()).status,403);allowed=true;authenticated=false;assert.equal((await fetch(`${base}?${query}`)).status,401);authenticated=true;
+ const row=f.tables.starter_social_content_tasks!.find(row=>row.task_id===scope.contentTaskId);assert.ok(row);row.run_id='different-run';assert.equal((await fetch(`${base}?${query}`)).status,409);assert.equal((await post()).status,409);row.run_id=null;
+ assert.deepEqual(levels.slice(0,3),['read','read','write']);assert.equal(f.tables.content_execution_jobs?.length??0,0);assert.equal(f.tables.starter_usage_ledger?.length??0,0);
+});

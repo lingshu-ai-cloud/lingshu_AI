@@ -1,3 +1,4 @@
+import {INITIAL_CAPACITY_SCHEDULE_REQUIRED} from './weeklyInitialScheduleGate.js';
 import {createWeeklyExecutionContinuationService} from './weeklyExecutionContinuations.js';
 import {withExecutionPackageGate,assertExecutionPackageGate,executionPackageFrozen} from './weeklyExecutionGate.js';
 import {applyFrozenWeeklySchedule,scheduleHash} from './weeklyScheduleSnapshots.js';
@@ -14,6 +15,9 @@ import {
   type WeeklyBusinessContentDispatch,
   type WeeklyExecutionStatusSummary,
   type WeeklyExecutionTask,
+  type WeeklyAgentChainContract,
+  type WeeklyAgentChainProfile,
+  type WeeklyAgentChainTaskCode,
   type WeeklyProductionStepKind,
   type WeeklyResponsibleActor,
   type WeeklyExecutionTaskStatus,
@@ -163,6 +167,41 @@ type TaskSeed = Pick<WeeklyExecutionTask,
     notBeforeAt?: number | null;
   };
 
+const MAIN_CHAIN_BY_STEP: Record<WeeklyProductionStepKind, number> = {
+  business_outline:1, benchmark_collection:2, benchmark_scoring:2, director_analysis:2,
+  business_schedule:3, material_preparation:4, material_readiness:4, script:4, storyboard:4,
+  asset_generation:5, video_generation:5, quality_check:5, rework:5, user_approval:5,
+  publishing:6, customer_channel_readiness:7, customer_inquiry_handoff:7, performance_monitoring:8, weekly_review:8,
+  template_extraction:8, template_performance_validation:8,
+};
+
+const SIDE_CHAIN_BY_STEP: Partial<Record<WeeklyProductionStepKind, number[]>> = {
+  business_outline:[2], business_schedule:[8], material_preparation:[1], material_readiness:[2],
+  quality_check:[3], rework:[3], publishing:[4], customer_channel_readiness:[2], customer_inquiry_handoff:[7], performance_monitoring:[5,7],
+  template_extraction:[6], template_performance_validation:[9], weekly_review:[9],
+};
+
+function chainIdentity(pkg:WeeklyOperatingPackage,seed:TaskSeed):{
+  chainProfile?:WeeklyAgentChainProfile;chainTaskCode?:WeeklyAgentChainTaskCode;
+  chainSupportTaskCodes?:WeeklyAgentChainTaskCode[];chainContract?:WeeklyAgentChainContract;
+}{
+  const profile=pkg.referenceSourcePolicy?.profile;if(!profile)return {};
+  const prefix=profile==='b2b_cold_start'?'Z':'H';
+  const source=seed.inputSnapshot.referenceSource;
+  const route=profile==='b2b_cold_start'?'external_cold_start':source==='owned'?'owned_history_iteration':source==='external'?'external_incremental_exploration':'mixed_history_and_external';
+  const taskCode=`${prefix}-M${MAIN_CHAIN_BY_STEP[seed.stepKind]}` as WeeklyAgentChainTaskCode;
+  const chainSupportTaskCodes=(SIDE_CHAIN_BY_STEP[seed.stepKind]??[]).map(index=>`${prefix}-S${index}` as WeeklyAgentChainTaskCode);
+  const commonInputs=['frozen_weekly_package','verified_enterprise_facts','confirmed_schedule_scope'];
+  const commonOutputs:[string,string]=[`verified_${seed.stepKind}_receipt`,`profile_route:${route}`];
+  const requiredInputKinds=profile==='b2b_cold_start'
+    ?[...commonInputs,'external_reference_evidence','first_week_baseline_gap']
+    :[...commonInputs,'historical_account_baseline','confirmed_owned_external_quota',source==='owned'?'owned_video_metrics_and_tone':'external_reference_evidence'];
+  const deliverableKinds=profile==='b2b_cold_start'
+    ?[...commonOutputs,'cold_start_enterprise_expression']
+    :[...commonOutputs,source==='owned'?'tone_preserving_iteration':'brand_adapted_exploration'];
+  return {chainProfile:profile,chainTaskCode:taskCode,chainSupportTaskCodes,chainContract:{requiredInputKinds,deliverableKinds}};
+}
+
 function makeTask(tenantId: string, pkg: WeeklyOperatingPackage, seed: TaskSeed, createdAt: string, estimatedStartAt: string): WeeklyExecutionTask {
   const idempotencyKey = hash([
     tenantId, pkg.packageId, pkg.version, seed.workflowKind, seed.scope, seed.subjectId, seed.stepKind,
@@ -180,6 +219,7 @@ function makeTask(tenantId: string, pkg: WeeklyOperatingPackage, seed: TaskSeed,
     subjectId: seed.subjectId,
     accountId: seed.accountId,
     publicationTaskId: seed.publicationTaskId,
+    ...chainIdentity(pkg,seed),
     dependsOnTaskIds: seed.dependsOnTaskIds,
     upstreamVersionRefs: authorityRefs(pkg),
     inputSnapshot: structuredClone({ ...seed.inputSnapshot, referenceSourcePolicy: pkg.referenceSourcePolicy ?? null }),
@@ -195,7 +235,7 @@ function makeTask(tenantId: string, pkg: WeeklyOperatingPackage, seed: TaskSeed,
       actualFinishedAt: null,
     },
     status: 'pending_activation',
-    ownBlockingReasons: [...new Set(seed.ownBlockingReasons)],
+    ownBlockingReasons: [...new Set([...seed.ownBlockingReasons,...((pkg.executionGraphVersion??1)>=2&&seed.publicationTaskId&&(seed.workflowKind==='content'||['script','storyboard'].includes(seed.stepKind))?[INITIAL_CAPACITY_SCHEDULE_REQUIRED]:[])])],
     inheritedBlockingTaskIds: [],
     attempt: 0,
     maxAttempts: 3,
@@ -218,6 +258,25 @@ function publicationBlockers(item: SocialWeeklyPublicationTask): string[] {
     !item.metricTargets.length ? 'metric_targets_required' : null,
     !item.publishWindow ? 'publish_window_required' : null,
   ].filter((value): value is string => Boolean(value));
+}
+
+/** A repeated immutable request id is the only authority for treating material
+ * as shared. Descriptions are deliberately ignored: similar prose does not
+ * prove that the bytes, rights or review request are the same. Each consumer
+ * keeps its executable binding task; the earliest consumer's preparation is
+ * the single barrier that waits for every binding and gates every script. */
+function applySharedMaterialPreparation(tasks:WeeklyExecutionTask[],publications:SocialWeeklyPublicationTask[]):void{
+ const byRequest=new Map<string,SocialWeeklyPublicationTask[]>();
+ for(const publication of publications)for(const requestId of publication.materialRequirement?.requestIds??[])byRequest.set(requestId,[...(byRequest.get(requestId)??[]),publication]);
+ for(const [requestId,rawConsumers] of byRequest){const consumers=[...new Map(rawConsumers.map(p=>[p.publicationTaskId,p])).values()];if(consumers.length<2)continue;
+  const ordered=consumers.sort((a,b)=>(publicationInstant(a.publishWindow)??Infinity)-(publicationInstant(b.publishWindow)??Infinity)||a.publicationTaskId.localeCompare(b.publicationTaskId));
+  const preparationByPublication=new Map(ordered.map(publication=>{const rows=tasks.filter(task=>task.publicationTaskId===publication.publicationTaskId&&task.schedule.stepKind==='material_preparation');if(rows.length!==1)throw new SocialProgramError('weekly_shared_material_preparation_ambiguous',409,'共享素材缺少唯一可执行准备任务。');return[publication.publicationTaskId,rows[0]!] as const;}));
+  const canonical=preparationByPublication.get(ordered[0]!.publicationTaskId)!;
+  const preparationIds=[...preparationByPublication.values()].map(task=>task.taskId);
+  canonical.dependsOnTaskIds=[...new Set([...canonical.dependsOnTaskIds,...preparationIds.filter(id=>id!==canonical.taskId)])];
+  canonical.inputSnapshot={...canonical.inputSnapshot,sharedMaterialBarrier:{requestId,consumerPublicationTaskIds:ordered.map(p=>p.publicationTaskId),preparationTaskIds:preparationIds}};
+  for(const publication of ordered){const scripts=tasks.filter(task=>task.publicationTaskId===publication.publicationTaskId&&task.schedule.stepKind==='script');if(scripts.length!==1)throw new SocialProgramError('weekly_shared_material_script_ambiguous',409,'共享素材消费者缺少唯一脚本任务。');scripts[0]!.dependsOnTaskIds=[...new Set([...scripts[0]!.dependsOnTaskIds,canonical.taskId])];}
+ }
 }
 
 /** Convert the seven package summaries into independently durable units. */
@@ -248,7 +307,7 @@ export function planWeeklyExecutionTasks(
   });
 
   const accountIds = [...new Set(publications.map(item => item.accountId))];
-  const discovery = accountIds.map(accountId => add({
+  const discovery = accountIds.filter(accountId=>publications.some(p=>p.accountId===accountId&&!p.inventoryReuseRef)).map(accountId => add({
     workflowKind: 'discovery', scope: 'account', subjectId: accountId,
     accountId, publicationTaskId: null, dependsOnTaskIds: [readiness.taskId],
     inputSnapshot: { accountId, weekStart: pkg.weekStart, objective: pkg.objective },
@@ -258,24 +317,25 @@ export function planWeeklyExecutionTasks(
   }));
 
   const byMother = new Map<string, SocialWeeklyPublicationTask[]>();
-  for (const item of publications) byMother.set(item.motherContentId, [...(byMother.get(item.motherContentId) ?? []), item]);
-  const sourceAllocation = allocateWeeklyReferenceSources(publications, pkg.referenceSourcePolicy);
-  const productionBudget = moneyShare(pkg.socialContentPackage.weeklyBudgetCny, publications.length);
+  for (const item of publications.filter(p=>!p.inventoryReuseRef)) byMother.set(item.motherContentId, [...(byMother.get(item.motherContentId) ?? []), item]);
+  const sourceAllocation = allocateWeeklyReferenceSources(publications.filter(p=>!p.inventoryReuseRef), pkg.referenceSourcePolicy);
+  const productionBudget = moneyShare(pkg.socialContentPackage.weeklyBudgetCny, publications.filter(p=>!p.inventoryReuseRef).length);
   const directingByMother = new Map<string, WeeklyExecutionTask>();
   const scheduleByMother = new Map<string, WeeklyExecutionTask>();
   const storyboardByPublication = new Map<string, WeeklyExecutionTask>();
   for (const [motherContentId, items] of byMother) {
+    const referenceSource=sourceAllocation.get(motherContentId);
     const scoring = add({
       workflowKind: 'directing', scope: 'content', subjectId: `${motherContentId}:benchmark-scoring`,
       accountId: null, publicationTaskId: null,
-      dependsOnTaskIds: sourceAllocation.get(motherContentId) === 'owned' ? [readiness.taskId] : discovery.filter(task => items.some(item => item.accountId === task.accountId)).map(task => task.taskId),
-      inputSnapshot: { motherContentId, referenceSource: sourceAllocation.get(motherContentId), referenceWork: sourceAllocation.get(motherContentId) === 'owned' ? 'owned_history_metrics_diagnosis' : 'external_benchmark_scoring', candidatePolicy: 'server_score_required' }, budget: noBudget,
+      dependsOnTaskIds: referenceSource === 'owned' ? [readiness.taskId] : discovery.filter(task => items.some(item => item.accountId === task.accountId)).map(task => task.taskId),
+      inputSnapshot: { motherContentId, referenceSource, referenceWork: referenceSource === 'owned' ? 'owned_history_metrics_diagnosis' : 'external_benchmark_scoring', candidatePolicy: 'server_score_required' }, budget: noBudget,
       ownBlockingReasons: [], stepKind: 'benchmark_scoring', responsibleActor: 'director_agent', estimatedDurationMinutes: 20,
     });
     const directing = add({
       workflowKind: 'directing', scope: 'content', subjectId: motherContentId,
       accountId: null, publicationTaskId: null, dependsOnTaskIds: [scoring.taskId],
-      inputSnapshot: { motherContentId, referenceSource: sourceAllocation.get(motherContentId), referenceWork: sourceAllocation.get(motherContentId) === 'owned' ? 'owned_tone_inheritance' : 'external_structure_adaptation', variants: items }, budget: noBudget,
+      inputSnapshot: { motherContentId, referenceSource, referenceWork: referenceSource === 'owned' ? 'owned_tone_inheritance' : 'external_structure_adaptation', variants: items }, budget: noBudget,
       ownBlockingReasons: [...new Set(items.flatMap(publicationBlockers))],
       stepKind: 'director_analysis', responsibleActor: 'director_agent', estimatedDurationMinutes: 45,
     });
@@ -283,23 +343,29 @@ export function planWeeklyExecutionTasks(
     scheduleByMother.set(motherContentId, add({
       workflowKind: 'directing', scope: 'content', subjectId: `${motherContentId}:business-schedule`,
       accountId: null, publicationTaskId: null, dependsOnTaskIds: [directing.taskId],
-      inputSnapshot: { motherContentId, directorTaskId: directing.taskId, variants: items }, budget: noBudget,
+      inputSnapshot: { motherContentId, referenceSource, directorTaskId: directing.taskId, variants: items }, budget: noBudget,
       ownBlockingReasons: [], stepKind: 'business_schedule', responsibleActor: 'business_agent', estimatedDurationMinutes: 15,
     }));
     items.forEach(item => {
       const mode = item.adaptationOfPublicationTaskId === null ? 'original' : 'adaptation';
       const scope = mode === 'original' ? 'content' as const : 'adaptation' as const;
       const base = `${item.publicationTaskId}:${mode}`;
+      const preparation = (pkg.executionGraphVersion??1)>=2 ? add({
+        workflowKind:'content',scope,subjectId:`${base}:material-preparation`,accountId:item.accountId,publicationTaskId:item.publicationTaskId,
+        dependsOnTaskIds:[scheduleByMother.get(motherContentId)!.taskId],
+        inputSnapshot:{publicationTask:item,motherContentId,mode,referenceSource},budget:noBudget,ownBlockingReasons:[],
+        stepKind:'material_preparation',responsibleActor:'content_agent',estimatedDurationMinutes:20,
+      }):null;
       const script = add({
         workflowKind: 'directing', scope, subjectId: `${base}:script`, accountId: item.accountId, publicationTaskId: item.publicationTaskId,
-        dependsOnTaskIds: [scheduleByMother.get(motherContentId)!.taskId],
-        inputSnapshot: { publicationTask: item, motherContentId, mode, source: 'director_analysis_and_enterprise_facts' },
+        dependsOnTaskIds: [preparation?.taskId??scheduleByMother.get(motherContentId)!.taskId],
+        inputSnapshot: { publicationTask: item, motherContentId, mode, referenceSource, source: 'director_analysis_and_enterprise_facts' },
         budget: { category: 'production', limitCny: productionBudget }, ownBlockingReasons: [],
         stepKind: 'script', responsibleActor: 'director_agent', estimatedDurationMinutes: 30,
       });
       const storyboard = add({
         workflowKind: 'directing', scope, subjectId: `${base}:storyboard`, accountId: item.accountId, publicationTaskId: item.publicationTaskId,
-        dependsOnTaskIds: [script.taskId], inputSnapshot: { publicationTask: item, motherContentId, mode }, budget: noBudget, ownBlockingReasons: [],
+        dependsOnTaskIds: [script.taskId], inputSnapshot: { publicationTask: item, motherContentId, mode, referenceSource }, budget: noBudget, ownBlockingReasons: [],
         stepKind: 'storyboard', responsibleActor: 'director_agent', estimatedDurationMinutes: 35,
       });
       storyboardByPublication.set(item.publicationTaskId, storyboard);
@@ -309,6 +375,7 @@ export function planWeeklyExecutionTasks(
 
   const approvalByPublication = new Map<string, WeeklyExecutionTask>();
   for (const [motherContentId, items] of byMother) {
+    const referenceSource=sourceAllocation.get(motherContentId);
     const original = items.find(item => item.adaptationOfPublicationTaskId === null) ?? items[0]!;
     let originalQualityTask: WeeklyExecutionTask | null = null;
     for (const item of [original, ...items.filter(candidate => candidate.publicationTaskId !== original.publicationTaskId)]) {
@@ -319,40 +386,47 @@ export function planWeeklyExecutionTasks(
       const material = add({
         workflowKind: 'content', scope, subjectId: `${base}:material-readiness`, accountId: item.accountId, publicationTaskId: item.publicationTaskId,
         dependsOnTaskIds: [scheduleByMother.get(motherContentId)!.taskId, storyboard.taskId, ...(mode === 'adaptation' && originalQualityTask ? [originalQualityTask.taskId] : [])],
-        inputSnapshot: { publicationTask: item, motherContentId, mode, qualityTier: 'premium' },
+        inputSnapshot: { publicationTask: item, motherContentId, mode, referenceSource, qualityTier: 'premium' },
         budget: noBudget, ownBlockingReasons: ['business_dispatch_required'],
         stepKind: 'material_readiness', responsibleActor: 'content_agent', estimatedDurationMinutes: 20,
       });
       const assets = add({
         workflowKind: 'content', scope, subjectId: `${base}:asset-generation`, accountId: item.accountId, publicationTaskId: item.publicationTaskId,
-        dependsOnTaskIds: [material.taskId], inputSnapshot: { publicationTask: item, motherContentId, mode, generationPolicy: 'premium_max_available' },
+        dependsOnTaskIds: [material.taskId], inputSnapshot: { publicationTask: item, motherContentId, mode, referenceSource, generationPolicy: 'premium_max_available' },
         budget: { category: 'production', limitCny: productionBudget }, ownBlockingReasons: [],
         stepKind: 'asset_generation', responsibleActor: 'content_agent', estimatedDurationMinutes: 45,
       });
       const video = add({
         workflowKind: 'content', scope, subjectId: `${base}:video-generation`, accountId: item.accountId, publicationTaskId: item.publicationTaskId,
-        dependsOnTaskIds: [assets.taskId], inputSnapshot: { publicationTask: item, motherContentId, mode, qualityTier: 'premium' },
+        dependsOnTaskIds: [assets.taskId], inputSnapshot: { publicationTask: item, motherContentId, mode, referenceSource, qualityTier: 'premium' },
         budget: { category: 'production', limitCny: productionBudget }, ownBlockingReasons: [],
         stepKind: 'video_generation', responsibleActor: 'content_agent', estimatedDurationMinutes: 90,
       });
       const quality = add({
         workflowKind: 'content', scope, subjectId: `${base}:quality-check`, accountId: item.accountId, publicationTaskId: item.publicationTaskId,
-        dependsOnTaskIds: [video.taskId], inputSnapshot: { publicationTask: item, checks: ['facts', 'visual', 'audio', 'rights', 'platform'] }, budget: noBudget, ownBlockingReasons: [],
+        dependsOnTaskIds: [video.taskId], inputSnapshot: { publicationTask: item, motherContentId, referenceSource, checks: ['facts', 'visual', 'audio', 'rights', 'platform'] }, budget: noBudget, ownBlockingReasons: [],
         stepKind: 'quality_check', responsibleActor: 'quality_agent', estimatedDurationMinutes: 25,
       });
-      const rework = add({
+      const approvalDependency = pkg.executionGraphVersion===3 ? quality : add({
         workflowKind: 'content', scope, subjectId: `${base}:rework`, accountId: item.accountId, publicationTaskId: item.publicationTaskId,
-        dependsOnTaskIds: [quality.taskId], inputSnapshot: { publicationTask: item, conditional: true }, budget: { category: 'production', limitCny: productionBudget }, ownBlockingReasons: [],
+        dependsOnTaskIds: [quality.taskId], inputSnapshot: { publicationTask: item, motherContentId, referenceSource, conditional: true }, budget: { category: 'production', limitCny: productionBudget }, ownBlockingReasons: [],
         stepKind: 'rework', responsibleActor: 'content_agent', estimatedDurationMinutes: 30,
       });
       const approval = add({
         workflowKind: 'content', scope, subjectId: `${base}:user-approval`, accountId: item.accountId, publicationTaskId: item.publicationTaskId,
-        dependsOnTaskIds: [rework.taskId], inputSnapshot: { publicationTask: item, decisionCard: 'content_approval' }, budget: noBudget, ownBlockingReasons: [],
+        dependsOnTaskIds: [approvalDependency.taskId], inputSnapshot: { publicationTask: item, motherContentId, referenceSource, decisionCard: 'content_approval' }, budget: noBudget, ownBlockingReasons: [],
         stepKind: 'user_approval', responsibleActor: 'user', estimatedDurationMinutes: 10,
       });
-      if (mode === 'original') originalQualityTask = rework;
+      if (mode === 'original') originalQualityTask = approvalDependency;
       approvalByPublication.set(item.publicationTaskId, approval);
     }
+  }
+
+  for(const item of publications.filter(p=>p.inventoryReuseRef)){
+    const ref=item.inventoryReuseRef!;
+    if(pkg.referenceSourcePolicy?.profile!=='b2b_established'||ref.type!=='weekly_inventory_binding'||ref.version!==1||!ref.id)throw new SocialProgramError('inventory_execution_ref_invalid',409,'库存任务必须绑定已确认的有基础周版本。');
+    const approval=add({workflowKind:'content',scope:'content',subjectId:`${item.publicationTaskId}:inventory-user-approval`,accountId:item.accountId,publicationTaskId:item.publicationTaskId,dependsOnTaskIds:[readiness.taskId],inputSnapshot:{publicationTask:item,decisionCard:'content_approval',inventoryReuseRef:ref,countsAsNewMotherContent:false,startsProduction:false},budget:noBudget,ownBlockingReasons:[],stepKind:'user_approval',responsibleActor:'user',estimatedDurationMinutes:10});
+    approvalByPublication.set(item.publicationTaskId,approval);
   }
 
   const publishing = publications.map(item => add({
@@ -362,35 +436,77 @@ export function planWeeklyExecutionTasks(
     dependsOnTaskIds: [approvalByPublication.get(item.publicationTaskId)!.taskId],
     inputSnapshot: {
       publicationTask: item,
+      referenceSource: sourceAllocation.get(item.motherContentId),
       authorization: pkg.socialContentPackage.authorization,
     },
     budget: noBudget, ownBlockingReasons: publicationBlockers(item),
     stepKind: 'publishing', responsibleActor: 'publishing_agent', estimatedDurationMinutes: 10,
   }));
 
+  const customerChannels = ['whatsapp', 'messenger', 'instagram'] as const;
+  const customerReadiness = new Map<string, WeeklyExecutionTask[]>();
+  for (const item of publications) {
+    const approval = approvalByPublication.get(item.publicationTaskId)!;
+    const tasksForPublication = customerChannels.map(channel => add({
+      workflowKind: 'engagement', scope: 'publication',
+      subjectId: `${item.publicationTaskId}:customer:${channel}:readiness`,
+      accountId: item.accountId, publicationTaskId: item.publicationTaskId,
+      dependsOnTaskIds: [approval.taskId],
+      inputSnapshot: { publicationTask: item, referenceSource: sourceAllocation.get(item.motherContentId), customerChannel: channel, publicationAccountId: item.accountId },
+      budget: noBudget, ownBlockingReasons: [],
+      stepKind: 'customer_channel_readiness', responsibleActor: 'customer_agent', estimatedDurationMinutes: 10,
+    }));
+    customerReadiness.set(item.publicationTaskId, tasksForPublication);
+    const publish = publishing.find(task => task.publicationTaskId === item.publicationTaskId)!;
+    publish.dependsOnTaskIds = [...publish.dependsOnTaskIds, ...tasksForPublication.map(task => task.taskId)];
+    const readinessFinish = Math.max(...tasksForPublication.map(task => Date.parse(task.schedule.estimatedFinishAt)));
+    const publishStart = Math.max(Date.parse(publish.schedule.estimatedStartAt), readinessFinish);
+    publish.schedule.estimatedStartAt = new Date(publishStart).toISOString();
+    publish.schedule.estimatedFinishAt = new Date(publishStart + publish.schedule.estimatedDurationMinutes * 60_000).toISOString();
+  }
+
+  const customerHandoffs = publications.flatMap(item => {
+    const publish = publishing.find(task => task.publicationTaskId === item.publicationTaskId)!;
+    return customerChannels.map(channel => {
+      const readiness = customerReadiness.get(item.publicationTaskId)!.find(task => task.inputSnapshot.customerChannel === channel)!;
+      return add({
+        workflowKind: 'engagement', scope: 'publication',
+        subjectId: `${item.publicationTaskId}:customer:${channel}:handoff`,
+        accountId: item.accountId, publicationTaskId: item.publicationTaskId,
+        dependsOnTaskIds: [publish.taskId, readiness.taskId],
+        inputSnapshot: { publicationTask: item, referenceSource: sourceAllocation.get(item.motherContentId), customerChannel: channel, publicationAccountId: item.accountId },
+        budget: noBudget, ownBlockingReasons: [],
+        stepKind: 'customer_inquiry_handoff', responsibleActor: 'customer_agent', estimatedDurationMinutes: 30,
+      });
+    });
+  });
+
   const engagement = accountIds.map(accountId => add({
     workflowKind: 'engagement', scope: 'account', subjectId: accountId,
     accountId, publicationTaskId: null,
-    dependsOnTaskIds: publishing.filter(item => item.accountId === accountId).map(item => item.taskId),
-    inputSnapshot: { accountId, weekStart: pkg.weekStart, weekEnd: pkg.weekEnd },
+    dependsOnTaskIds: [
+      ...publishing.filter(item => item.accountId === accountId).map(item => item.taskId),
+      ...customerHandoffs.filter(item => item.accountId === accountId).map(item => item.taskId),
+    ],
+    inputSnapshot: { accountId, weekStart: pkg.weekStart, weekEnd: pkg.weekEnd, profileWork: pkg.referenceSourcePolicy?.profile==='b2b_established'?'existing_customer_and_dual_source_attribution':'new_inquiry_and_first_baseline_attribution' },
     budget: noBudget, ownBlockingReasons: [],
     stepKind: 'performance_monitoring', responsibleActor: 'business_agent', estimatedDurationMinutes: 60,
   }));
   const review = add({
     workflowKind: 'review', scope: 'package', subjectId: pkg.packageId,
     accountId: null, publicationTaskId: null, dependsOnTaskIds: engagement.map(item => item.taskId),
-    inputSnapshot: { objective: pkg.objective, successCriteria: pkg.successCriteria },
+    inputSnapshot: { objective: pkg.objective, successCriteria: pkg.successCriteria, profileWork: pkg.referenceSourcePolicy?.profile==='b2b_established'?'dual_source_performance_and_quota_review':'cold_start_baseline_and_profile_upgrade_review' },
     budget: noBudget, ownBlockingReasons: [],
     stepKind: 'weekly_review', responsibleActor: 'business_agent', estimatedDurationMinutes: 45,
   });
-  for (const publication of publications) {
+  for (const publication of publications.filter(p=>!p.inventoryReuseRef)) {
     const source = tasks.find(task => task.publicationTaskId === publication.publicationTaskId && task.schedule.stepKind === 'video_generation');
     if (!source) throw new SocialProgramError('content_template_source_task_missing', 409, '模板提炼缺少对应真实成片任务。');
     const extraction = add({
       workflowKind: 'directing', scope: 'content', subjectId: `${publication.publicationTaskId}:template-extraction`,
       accountId: publication.accountId, publicationTaskId: publication.publicationTaskId,
       dependsOnTaskIds: [source.taskId, review.taskId],
-      inputSnapshot: { publicationTask: publication, sourceTaskId: source.taskId, reviewTaskId: review.taskId },
+      inputSnapshot: { publicationTask: publication, referenceSource: sourceAllocation.get(publication.motherContentId), sourceTaskId: source.taskId, reviewTaskId: review.taskId },
       budget: noBudget, ownBlockingReasons: [],
       stepKind: 'template_extraction', responsibleActor: 'director_agent', estimatedDurationMinutes: 20,
     });
@@ -398,11 +514,14 @@ export function planWeeklyExecutionTasks(
       workflowKind: 'review', scope: 'content', subjectId: `${publication.publicationTaskId}:template-performance-validation`,
       accountId: publication.accountId, publicationTaskId: publication.publicationTaskId,
       dependsOnTaskIds: [extraction.taskId],
-      inputSnapshot: { publicationTask: publication, sourceTaskId: source.taskId, reviewTaskId: review.taskId, extractionTaskId: extraction.taskId },
+      inputSnapshot: { publicationTask: publication, referenceSource: sourceAllocation.get(publication.motherContentId), sourceTaskId: source.taskId, reviewTaskId: review.taskId, extractionTaskId: extraction.taskId },
       budget: noBudget, ownBlockingReasons: [],
       stepKind: 'template_performance_validation', responsibleActor: 'business_agent', estimatedDurationMinutes: 15,
     });
   }
+  // Legacy immutable graphs have no preparation stage; retain their original
+  // dependencies until an explicit revision upgrades them to the current graph.
+  if((pkg.executionGraphVersion??1)>=2)applySharedMaterialPreparation(tasks,publications);
   return applyPublicationDeadlines(tasks, publications);
 }
 
@@ -484,7 +603,7 @@ export async function materializeWeeklyExecutionTasks(
   }
   if (existing.length) {
     const expected = new Set(planned.map(item => item.idempotencyKey));
-    if (existing.length !== planned.length || existing.some(item => !expected.has(item.idempotencyKey))) {
+    if (existing.length !== planned.length || existing.some(item => !expected.has(item.idempotencyKey)||scheduleHash(item.dependsOnTaskIds)!==scheduleHash(planned.find(p=>p.idempotencyKey===item.idempotencyKey)!.dependsOnTaskIds))) {
       throw new SocialProgramError('weekly_execution_task_integrity_violation', 409, '周包执行任务集与当前版本不一致。');
     }
     return existing;
@@ -695,7 +814,7 @@ export function createWeeklyExecutionTaskService(dataStore: DataStore) {
         if (['succeeded', 'cancelled', 'dead_letter'].includes(task.status)) throw new SocialProgramError('weekly_execution_task_terminal', 409, '终态任务不能解除阻塞。');
         return {
           ...task,
-          ownBlockingReasons: reason ? task.ownBlockingReasons.filter(item => item !== reason) : [],
+          ownBlockingReasons: task.ownBlockingReasons.filter(item => item===INITIAL_CAPACITY_SCHEDULE_REQUIRED || (reason ? item!==reason : false)),
           ...(reason && task.lastError?.code === reason ? { lastError: null } : {}),
           updatedAt: now,
         };
@@ -723,22 +842,57 @@ export function createWeeklyExecutionTaskService(dataStore: DataStore) {
         }
         if (task.inheritedBlockingTaskIds.length) throw new SocialProgramError('weekly_execution_upstream_incomplete', 409, '上游生产步骤尚未完成。');
         if (['cancelled', 'dead_letter'].includes(task.status)) throw new SocialProgramError('weekly_execution_task_terminal', 409, '终态任务不能审批。');
-        if (task.status === 'succeeded') return task;
+        const { resolveWeeklyCreativeRepairApprovalEvidence } = await import('./weeklyCreativeRepairApprovalEvidence.js');
+        const creativeRepair = await resolveWeeklyCreativeRepairApprovalEvidence(dataStore, task);
+        if (creativeRepair && creativeRepair.caseItem.approvalTaskId !== task.taskId) {
+          throw new SocialProgramError('weekly_creative_repair_approval_scope_changed', 409, '修订证据不属于当前审批任务。');
+        }
+        if (creativeRepair && task.ownBlockingReasons.length) throw new SocialProgramError('weekly_execution_upstream_incomplete', 409, '当前修订审批仍有未解除的阻断。');
+        if (task.status === 'succeeded') {
+          if (creativeRepair && (creativeRepair.artifact.status !== 'approved' || !task.resultRefs.some(ref =>
+            ref.type === 'starter_social_content_artifact' && ref.id === creativeRepair.artifactRef.id && ref.version === creativeRepair.artifactRef.version))) {
+            throw new SocialProgramError('weekly_creative_repair_approval_artifact_changed', 409, '已验收修订成片的身份或版本发生变化。');
+          }
+          return task;
+        }
+        const approvalDependencies = await taskRows(dataStore, tenantId, task.dependsOnTaskIds);
+        if (approvalDependencies.length !== task.dependsOnTaskIds.length || approvalDependencies.some(row => row.payload.programId !== task.programId || row.payload.packageId !== task.packageId || row.payload.packageVersion !== task.packageVersion || row.payload.status !== 'succeeded')) {
+          throw new SocialProgramError('weekly_execution_upstream_incomplete', 409, '本周真实前置任务尚未完成，不能验收。');
+        }
+        if (task.status === 'pending_activation') throw new SocialProgramError('weekly_execution_package_not_active', 409, '草案尚未启用，不能绕过前置任务验收。');
+        if (task.inputSnapshot.inventoryReuseRef) {
+          const actualDependencies = await taskRows(dataStore, tenantId, task.dependsOnTaskIds);
+          if (actualDependencies.length !== task.dependsOnTaskIds.length || actualDependencies.some(row => row.payload.programId !== task.programId || row.payload.packageId !== task.packageId || row.payload.packageVersion !== task.packageVersion || row.payload.status !== 'succeeded')) {
+            throw new SocialProgramError('weekly_execution_upstream_incomplete', 409, '本周真实前置任务尚未完成，不能验收库存。');
+          }
+          const { createInventoryUserApproval } = await import('../runtime/weeklyInventoryApprovalEvidence.js');
+          const receipt = await createInventoryUserApproval(dataStore, task, userId, now);
+          return { ...task, ...receipt, status: 'succeeded', schedule: { ...task.schedule, actualStartedAt: task.schedule.actualStartedAt ?? now, actualFinishedAt: now }, updatedAt: now };
+        }
         const bindings = await dataStore.list<any>('starter_social_content_tasks', {
           where: { tenant_id: tenantId, create_idempotency_key: `weekly-production:${packageId}:${task.packageVersion}:${task.publicationTaskId}` }, page: 1, perPage: 2,
         });
-        const binding = bindings.items[0];
+        const binding = creativeRepair?.contentTask ?? bindings.items[0];
         if (bindings.totalItems !== 1 || !binding || binding.weekly_plan_id !== packageId) {
           throw new SocialProgramError('weekly_production_binding_required', 409, '尚未取得本条内容的真实生产身份，不能验收。');
         }
+        const upstreamArtifactRefs = approvalDependencies.flatMap(row => row.payload.resultRefs)
+          .filter(ref => ref.type === 'starter_social_content_artifact');
+        const uniqueArtifactRefs = [...new Map(upstreamArtifactRefs.map(ref => [`${ref.id}:${ref.version}`, ref])).values()];
+        if (!creativeRepair && uniqueArtifactRefs.length !== 1) {
+          throw new SocialProgramError('weekly_production_approval_artifact_required', 409, '上游质检与返工任务没有唯一绑定同一条待验收成片。');
+        }
+        // A resolved revision has its own independent G4/G5 evidence. Preserve the
+        // original quality task history and select the child only from sealed server records.
+        const upstreamArtifactRef = creativeRepair?.artifactRef ?? uniqueArtifactRefs[0]!;
         const artifacts = await dataStore.list<any>('starter_social_content_artifacts', {
-          where: { tenant_id: tenantId, task_id: binding.task_id }, sort: '-created_at', page: 1, perPage: 100,
+          where: { tenant_id: tenantId, task_id: binding.task_id, artifact_id: upstreamArtifactRef.id }, page: 1, perPage: 2,
         });
-        const artifactsWithVideo = artifacts.items.map(item => ({ ...item, content: socialJson(item.content) })).filter(item => item.content?.productionResult?.productionResultId && item.content?.mediaStorage?.video?.fileId);
-        const artifact = artifactsWithVideo[0];
-        if (!artifact || !['review_required', 'approved'].includes(artifact.status)
-          || artifact.content.productionResult.technicalReview?.approved !== true
-          || artifact.content.productionResult.creativeReview?.approved !== true) {
+        const artifact = artifacts.totalItems === 1 ? { ...artifacts.items[0], content: socialJson(artifacts.items[0]?.content) } : null;
+        if (artifact && Number(String(artifact.version).replace(/^v/, '')) !== upstreamArtifactRef.version) {
+          throw new SocialProgramError('weekly_production_approval_artifact_changed', 409, '上游已核验成片版本发生变化，请重新完成对应质量任务。');
+        }
+        if (!artifact || !['review_required', 'approved'].includes(artifact.status)) {
           throw new SocialProgramError('weekly_production_artifact_not_reviewable', 409, '真实成片尚未就绪或质量检查未通过。');
         }
         await validateContentArtifact(dataStore, { ...task, workflowKind: 'content', schedule: { ...task.schedule, stepKind: 'quality_check' } }, {
@@ -748,7 +902,9 @@ export function createWeeklyExecutionTaskService(dataStore: DataStore) {
           repository: createStarter198Repository(dataStore), tenantId, userId,
           taskId: binding.task_id, artifactId: artifact.artifact_id,
           idempotencyKey: `weekly-content-approval:${task.taskId}:${artifact.artifact_id}`,
-          value: { decision: 'approved', expectedVersion: String(artifact.version), note: '用户在周工作台确认本条真实成片' },
+          value: { decision: 'approved', expectedVersion: creativeRepair
+            ? `${String(artifact.version).startsWith('v') ? 'v' : ''}${creativeRepair.audit.childArtifactRef.version}`
+            : String(artifact.version), note: '用户在周工作台确认本条真实成片' },
           now: new Date(now),
         });
         return {

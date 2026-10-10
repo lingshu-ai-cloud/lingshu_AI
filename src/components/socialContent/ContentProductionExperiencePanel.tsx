@@ -158,6 +158,7 @@ function ShotProgressView({ task, onOpenWorkbench }: Pick<ContentProductionExper
 
 function ExceptionView({ task, busy, onOpenWorkbench, onRetry }: Pick<ContentProductionExperiencePanelProps, 'task' | 'busy' | 'onOpenWorkbench' | 'onRetry'>) {
   const exceptions = contentProductionExceptions(task);
+  if(task.productionProgress?.waitingForScheduledAssets)return <div role="status" className="rounded border p-4 text-sm">原运行正在等待对应素材核验与资产任务排期；任务领取后将继续原作业。这里不会重开制作。</div>;
   if (!exceptions.length) {
     return (
       <div className="rounded-lg border border-emerald-200 bg-emerald-50/60 px-4 py-8 text-center" data-content-exception-empty>
@@ -191,7 +192,7 @@ function ExceptionView({ task, busy, onOpenWorkbench, onRetry }: Pick<ContentPro
               <div className="bg-white px-4 py-3"><dt className="text-[9px] font-semibold text-slate-500">完成后从哪里继续</dt><dd className="mt-1 text-[11px] leading-5 text-slate-800">{exception.resumeFrom}</dd></div>
             </dl>
             <div className="flex justify-end border-t border-slate-100 px-4 py-3">
-              <button type="button" disabled={busy || exception.recovering} onClick={canRetry ? onRetry : onOpenWorkbench} className="inline-flex items-center gap-1.5 rounded-lg bg-amber-700 px-3 py-2 text-[10px] font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">
+              <button type="button" disabled={busy || exception.recovering || task.productionProgress?.waitingForScheduledAssets === true} onClick={canRetry ? onRetry : onOpenWorkbench} className="inline-flex items-center gap-1.5 rounded-lg bg-amber-700 px-3 py-2 text-[10px] font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">
                 {busy || exception.recovering ? <Loader2 size={12} className="animate-spin motion-reduce:animate-none" /> : <ChevronRight size={12} />}
                 {exception.recovering ? '系统正在恢复' : canRetry ? '重试当前节点' : exception.kind === 'quality_failed' ? '查看修改要求' : '补充对应资料'}
               </button>

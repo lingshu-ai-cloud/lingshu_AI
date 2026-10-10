@@ -120,7 +120,7 @@ test('social program routes expose the weekly operating package lifecycle', asyn
   assert.equal(createdResponse.status, 201);
   const created = (await createdResponse.json()).item;
   assert.equal(created.socialContentPackage.publicationTaskTarget, 26);
-  assert.equal(created.executionSummary.total, 330);
+  assert.ok(created.executionSummary.total > 0);
   assert.equal(created.agentPlanning.status, 'outline_ready');
   assert.equal(created.agentPlanning.skeleton.generatedBy, 'business_agent');
   assert.equal(created.agentPlanning.skeleton.tokenCost, 0);
@@ -142,7 +142,15 @@ test('social program routes expose the weekly operating package lifecycle', asyn
   const executionResponse = await fetch(`${base}/operating-packages/${created.packageId}/execution-tasks?version=1`);
   assert.equal(executionResponse.status, 200);
   const executionItems = (await executionResponse.json()).items;
-  assert.equal(executionItems.length, 330);
+  assert.equal(executionItems.length, created.executionSummary.total, 'summary matches the actual persisted task graph');
+  for (const publication of created.socialContentPackage.publicationTasks) {
+    const selected = (kind: string) => executionItems.filter((task: any) => task.publicationTaskId === publication.publicationTaskId && task.schedule.stepKind === kind);
+    const generation = selected('video_generation'); const extraction = selected('template_extraction'); const validation = selected('template_performance_validation');
+    assert.equal(generation.length, 1); assert.equal(extraction.length, 1); assert.equal(validation.length, 1);
+    assert.ok(extraction[0].dependsOnTaskIds.includes(generation[0].taskId));
+    assert.ok(extraction[0].dependsOnTaskIds.some((id: string) => executionItems.some((task: any) => task.taskId === id && task.schedule.stepKind === 'weekly_review')));
+    assert.deepEqual(validation[0].dependsOnTaskIds, [extraction[0].taskId]);
+  }
   assert.ok(executionItems.every((item: { schedule?: { responsibleActor?: string; estimatedDurationMinutes?: number } }) => item.schedule?.responsibleActor && Number(item.schedule.estimatedDurationMinutes) > 0));
 
   const recoveryPath = `${base}/operating-packages/${created.packageId}/recovery-assessment`;
@@ -329,6 +337,6 @@ test('social program routes expose the weekly operating package lifecycle', asyn
   assert.deepEqual(sanitized.item.effects, [{ resourceType: 'production_job', resourceId: 'job-trace', outcome: 'unknown_requires_reconciliation', receiptCount: 1 }]);
   assert.equal(sanitized.item.lastError, '部分清理未完成，请重试撤回以继续补偿。');
   assert.ok(!JSON.stringify(sanitized).includes('secret-provider'), 'summary excludes raw receipts, reasons and provider error secrets');
-  assert.deepEqual(Object.keys(sanitized.item).sort(), ['boundary', 'effects', 'lastError', 'status', 'updatedAt']);
+  assert.deepEqual(Object.keys(sanitized.item).sort(), ['boundary', 'currentSettlements', 'effects', 'lastError', 'status', 'updatedAt']);
 
 });

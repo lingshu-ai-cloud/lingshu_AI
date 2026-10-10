@@ -294,3 +294,12 @@ async function expectDecisionError(action: () => Promise<unknown>, code: string,
 }
 
 console.log('Digital Employee approval application: immutable subject, tenant account binding, downstream state, audit/event, follow-up and serialization passed');
+
+{
+ const {store,calls,decide}=harness();const {customerApprovalRequestHash}=await import('./customerTaskApprovalNavigation.js');const row=store.rows.approval_requests[0];row.content_hash='a'.repeat(64);const originalHash=customerApprovalRequestHash(row);row.content_hash='b'.repeat(64);
+ await expectDecisionError(()=>decide({tenantId:'tenant-1',userId:'owner-1',approvalId:'approval-1',decision:'approved',expectedContentHash:'a'.repeat(64),expectedRequestHash:originalHash}),'approval_content_changed');assert.equal(calls.calendarInputs.length,0);assert.equal(row.status,'pending');
+ row.content_hash='a'.repeat(64);row.evidence=[{changed:'same-version new evidence'}];await expectDecisionError(()=>decide({tenantId:'tenant-1',userId:'owner-1',approvalId:'approval-1',decision:'approved',expectedContentHash:'a'.repeat(64),expectedRequestHash:originalHash}),'approval_request_changed');assert.equal(calls.calendarInputs.length,0);assert.equal(calls.continuations.length,0);
+}
+{
+ const {store,calls,decide}=harness();store.rows.workflow_tasks[0].task_key='followup_batch_approval';store.rows.social_weekly_customer_bindings=[{id:'actual-week-binding',tenant_id:'tenant-1',run_id:'run-1'}];await expectDecisionError(()=>decide({tenantId:'tenant-1',userId:'owner-1',approvalId:'approval-1',decision:'approved'}),'weekly_customer_approval_frozen_request_required');assert.equal(calls.calendarInputs.length,0);assert.equal(calls.continuations.length,0);assert.equal(store.rows.approval_requests[0].status,'pending');
+}

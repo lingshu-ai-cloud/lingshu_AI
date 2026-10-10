@@ -1,3 +1,4 @@
+import {verifiedNonPresenterReference} from './referencePresenterRequirement.js';
 import { createHash } from 'node:crypto';
 import { parseAnalysisTimeRange } from '../lib/videoAnalysisCodec.js';
 import { reviewShotMaterialRefs } from '../lib/referenceShotReview.js';
@@ -60,7 +61,8 @@ export interface SocialReferenceReviewHandoff {
   analysisQuality: string;
   sourceVideoRef: string | null;
   selectedHookShotId: string | null;
-  hookActionInterval: { startSeconds: 0; endSeconds: 1; sourceVideoRef: string | null };
+  /** Source window of the selected hook; it does not attest motion verification. */
+  hookActionInterval: { startSeconds: number | null; endSeconds: number | null; sourceVideoRef: string | null };
   hookScript: { shotId: string | null; fields: HookScript; confirmed: boolean; evidenceRefs: string[] };
   presenterLock: { assetId: string; assetVersion: string } | null;
   verifiedEnterpriseFactRefs: string[];
@@ -202,7 +204,7 @@ export function buildSocialReferenceReviewHandoff(input: {
     if (!reviewedHookReady && !machineHookReady) {
       add('hook_action_unverified', selectedHook.shotId,
         [selectedHook.evidence.firstFrameRef, selectedHook.evidence.clipRef].filter((ref): ref is string => Boolean(ref)),
-        '编导 Agent 需自动补齐 0–1 秒快速靠近与敲门手势的逐帧动作证据，并标注约第 2 秒开始的站立口播');
+        '编导 Agent 需核验所选开场镜头的逐帧动作、节奏变化与声音进入点，按原片标注动作和口播时间');
     }
   }
   const reviewedHook = reviewedShots.find(shot => string(shot.shotId) === selectedHook?.shotId);
@@ -226,7 +228,10 @@ export function buildSocialReferenceReviewHandoff(input: {
     && input.presenter?.rightsVerified === true && usable(input.presenter?.rightsEvidenceRef) ? {
     assetId: input.presenter.assetId, assetVersion: input.presenter.assetVersion,
   } : null;
-  if (!presenter) add('presenter_asset_unlocked', null, [], '提供已授权企业人物资产 ID、不可变版本及可核验授权证据；不能仅靠 rightsVerified 声明');
+  const presenterDuration = Number(input.record.durationSeconds || input.record.duration || analysis.durationSeconds || 0);
+  const presenterDurationConsistent = [input.record.durationSeconds, input.record.duration, analysis.durationSeconds]
+    .filter(value => value !== undefined && value !== null && value !== '').every(value => Number.isFinite(Number(value)) && Math.abs(Number(value) - presenterDuration) <= .01);
+  if (!presenter && !(presenterDurationConsistent && verifiedNonPresenterReference({sourceSha256:analysis.contentSha256,duration:presenterDuration,originalDetails:allRawDetails,retainedDetails:details,reviewComplete}))) add('presenter_asset_unlocked', null, [], '提供已授权企业人物资产 ID、不可变版本及可核验授权证据；不能仅靠 rightsVerified 声明');
   const verifiedEnterpriseFactRefs = [...new Set((input.verifiedEnterpriseFactRefs ?? []).filter(usable))].sort();
   if (details.some(detail => string(detail.dialogue) || string(detail.onScreenText)) && !verifiedEnterpriseFactRefs.length) {
     add('reference_claim_unverified', null, sourceVideoRef ? [sourceVideoRef] : [], '年限、功效、交期等经营事实暂不设交接门槛；保留待核验标记，生成脚本时不得将未经核实的原片宣称写成企业事实');
@@ -244,13 +249,13 @@ export function buildSocialReferenceReviewHandoff(input: {
     'hook_action_unverified', 'hook_script_incomplete',
   ].includes(issue.code));
   const stable = { recordId, analysisRunId: string(analysis.analysisRunId), sourceSha256: string(analysis.contentSha256),
-    shotReviewVersion: string(reviewed.version), presenter, verifiedEnterpriseFactRefs, shots, issues, status };
+    shotReviewVersion: string(reviewed.version), presenter, presenterDuration, presenterDurationConsistent, presenterEvidence: allRawDetails.map(detail=>({shotId:detail.shotId,time:detail.time||detail.timestamp,criticalShot:detail.criticalShot,presenterContinuityEvidence:detail.presenterContinuityEvidence})), verifiedEnterpriseFactRefs, shots, issues, status };
   return {
     schemaVersion: 1, referenceRecordId: recordId, analysisRunId: string(analysis.analysisRunId) || null,
     versionHash: createHash('sha256').update(JSON.stringify(stable)).digest('hex'), status,
     analysisQuality: string(analysis.analysisQuality), sourceVideoRef,
     selectedHookShotId: selectedHook?.shotId ?? null, presenterLock: presenter,
-    hookActionInterval: { startSeconds: 0, endSeconds: 1, sourceVideoRef },
+    hookActionInterval: { startSeconds: selectedHook?.startSeconds ?? null, endSeconds: selectedHook?.endSeconds ?? null, sourceVideoRef },
     hookScript: { shotId: selectedHook?.shotId ?? null, fields: scriptFields, confirmed: hookScriptConfirmed,
       evidenceRefs: [selectedHook?.evidence.firstFrameRef, selectedHook?.evidence.clipRef].filter((ref): ref is string => Boolean(ref)) },
     verifiedEnterpriseFactRefs, sourceClaimsAreEnterpriseFacts: false,

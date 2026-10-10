@@ -1,3 +1,5 @@
+import {socialRequestHash} from './socialContentValidation.js';
+import {assertSocialAccountProductionConstraints} from './socialAccountProductionConstraints.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
@@ -137,10 +139,12 @@ export function createSocialHeyGenBridgePorts(deps: SocialHeyGenBridgeDependenci
       return { allowed: true, reservationRef: idempotencyKey };
     },
     async execute(input) {
+      if(input.accountPlaybookConstraints)assertSocialAccountProductionConstraints(input.accountPlaybookConstraints);
       const existing = await deps.store.list<any>('studio_social_presenter_jobs',
         { where: { tenant_id: input.tenantId, request_id: input.idempotencyKey }, perPage: 2 });
       if (existing.totalItems > 1) return { status: 'uncertain', error: 'duplicate_provider_job_records' };
       let record = existing.items[0];
+      if(record && socialRequestHash(record.visual_control?.accountPlaybookConstraints??null)!==socialRequestHash(input.accountPlaybookConstraints??null))return {status:'uncertain',error:'digital_presenter_account_constraints_changed'};
       let providerTaskId = String(record?.provider_task_id || '');
       if (!record) {
         record = await deps.store.create<any>('studio_social_presenter_jobs', { tenant_id: input.tenantId,
@@ -148,7 +152,7 @@ export function createSocialHeyGenBridgePorts(deps: SocialHeyGenBridgeDependenci
           provider: 'heygen', presenter_asset_id: input.presenter.presenterAssetId, authorization_ref: input.presenter.authorizationRef,
           consent_ref: input.presenter.consentRef, social_account_id: input.presenter.socialAccountId || '',
           presenter_profile_id: input.presenter.presenterProfileId || '', presenter_profile_version: input.presenter.presenterProfileVersion || '',
-          presenter_consistency_key: input.presenter.consistencyKey || '', visual_control: input.visualControl,
+          presenter_consistency_key: input.presenter.consistencyKey || '', visual_control: {...input.visualControl,...(input.accountPlaybookConstraints?{accountPlaybookConstraints:structuredClone(input.accountPlaybookConstraints)}:{})},
           created_at: new Date().toISOString(), updated_at: new Date().toISOString() });
         if (!record) return { status: 'uncertain', error: 'provider_job_claim_failed' };
         try {

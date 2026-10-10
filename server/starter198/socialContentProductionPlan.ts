@@ -437,6 +437,10 @@ export function buildSocialProductionPlan(input: {
   baseline: StoredSocialScriptBaseline;
   assets: SocialProductionAsset[];
   themeId?: SocialContentThemeId | null;
+  /** Exact per-scene outputs from the reviewed asset-supply execution. These
+   * bind generated media to its frozen scene; they are not a visual-quality
+   * pass and every resulting scene remains marked for independent review. */
+  routedSceneAssets?: Array<{ sceneId: string; assetId: string }>;
 }): SocialProductionPlan {
   const materialPolicy = socialContentMaterialPolicy(input.themeId ?? input.baseline.themeId ?? null);
   const fullReplication = input.baseline.source === 'inspiration_script';
@@ -465,6 +469,25 @@ export function buildSocialProductionPlan(input: {
     }
     seen.add(key);
     uniqueAssets.push(asset);
+  }
+  if (input.routedSceneAssets) {
+    const routed = new Map(input.routedSceneAssets.map(item => [item.sceneId, item.assetId]));
+    if (routed.size !== input.routedSceneAssets.length || routed.size !== input.baseline.scenes.length) {
+      return { ok:false,reasonCode:'insufficient_visual_coverage',message:'逐镜供应结果与冻结脚本数量不一致。',scenes:[],pendingScenes:pendingScenes([]),selectedAssetIds:[],unusedAssets,narrationChanged:false,maxDuration:0,sourceClipSeconds:0,averageConfidence:0,notes:['生成结果必须逐镜绑定，不能回退到未绑定素材。'] };
+    }
+    const assetsById = new Map(uniqueAssets.map(asset => [asset.id, asset]));
+    const scenes = input.baseline.scenes.flatMap((scene, sceneIndex) => {
+      const assetId = routed.get(scene.sceneId), asset = assetId ? assetsById.get(assetId) : null;
+      if (!asset || asset.type !== 'video' || !asset.localPath || !asset.contentHash
+        || !Number.isFinite(asset.duration) || asset.duration < 1.2 || !asset.visualObservations.length) return [];
+      const clip:ProductionClip={clipId:`${asset.id}:routed:${scene.sceneId}`,evidenceShotId:`${asset.id}:routed:${scene.sceneId}`,assetId:asset.id,assetName:asset.name,type:'video',start:0,end:asset.duration,sourceDuration:asset.duration,observations:[...asset.visualObservations],confidence:1,needsReview:true,evidenceBasis:'visual_analysis',boundaryConfidence:1,cleanEntry:true,cleanExit:true};
+      const review=buildMaterialSceneReview({sceneId:scene.sceneId,intent:sceneIntent(scene),selectedClipId:clip.clipId,candidates:[{type:'video',assetId:asset.id,clipId:clip.clipId,sourceStart:0,sourceEnd:asset.duration,score:100,analysisConfidence:1,boundaryConfidence:1,cleanEntry:true,cleanExit:true,needsReview:true,evidenceBasis:'visual_analysis'}]});
+      return [{sceneId:scene.sceneId,baselineSceneIndex:sceneIndex,shotFunction:scene.shotFunction,subject:scene.subject,action:scene.action,baselineNarration:scene.narration,narration:scene.narration,clip,semanticScore:100,matchBasis:{primary:'voiceover_verbatim' as const,voiceover:frozenVoiceover(scene),primaryVoiceoverScore:100,secondaryVisualIntent:secondaryVisualIntent(scene),secondaryVisualScore:100,productCompatibilityScore:100,hookHighPrecision:isHookScene(scene,sceneIndex),lockedSourceRange:{evidenceShotId:clip.evidenceShotId,startSeconds:0,endSeconds:asset.duration}},materialReview:review}];
+    });
+    if(scenes.length!==input.baseline.scenes.length)return {ok:false,reasonCode:'material_analysis_required',message:'逐镜供应结果缺少可验证的视频字节、哈希、时长或场景绑定。',scenes:[],pendingScenes:pendingScenes(scenes.map(scene=>scene.baselineSceneIndex)),selectedAssetIds:[],unusedAssets,narrationChanged:false,maxDuration:0,sourceClipSeconds:0,averageConfidence:0,notes:['不能用原始产品图或系统说明图代替已承诺的生成镜头。']};
+    const selectedAssetIds=[...new Set(scenes.map(scene=>scene.clip.assetId))],sourceClipSeconds=scenes.reduce((sum,scene)=>sum+scene.clip.sourceDuration,0),referenceDuration=Math.max(0,...input.baseline.scenes.map(scene=>Number(scene.referenceStructure?.sourceTiming.endSeconds)||0));
+    for(const asset of uniqueAssets.filter(asset=>!selectedAssetIds.includes(asset.id)))unusedAssets.push({assetId:asset.id,assetName:asset.name,reason:'该逐镜供应结果未绑定当前冻结场景，未进入剪辑'});
+    return {ok:true,reasonCode:'ready',message:'已按审核后的逐镜供应回执绑定生成视频；最终画面质量仍需独立验收。',scenes,selectedAssetIds,unusedAssets,narrationChanged:false,maxDuration:Math.max(sourceClipSeconds,referenceDuration),sourceClipSeconds,averageConfidence:1,notes:['供应回执只证明生成结果与场景身份绑定，不代表G4/G5质量检查通过。']};
   }
   const taskAssociatedAssetCount = uniqueAssets.filter(hasTaskUploadAssociation).length;
   const associationSafe = isAssociationSafeBaseline(input.baseline)

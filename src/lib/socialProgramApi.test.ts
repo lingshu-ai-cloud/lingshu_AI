@@ -33,12 +33,12 @@ test('material recheck clears only its named blocker and preserves exact task id
   const previousStorage = globalThis.localStorage;
   Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: storage });
   globalThis.fetch = async (input, init) => {
-    assert.equal(String(input), '/api/overseas/social-programs/program%2Fa/operating-packages/package%2Fb/execution-tasks/task%2Fc/unblock');
+    assert.equal(String(input), '/api/overseas/social-programs/program%2Fa/operating-packages/package%2Fb/execution-tasks/task%2Fc/recheck-required-materials');
     assert.equal(init?.method, 'POST');
-    assert.deepEqual(JSON.parse(String(init?.body)), { reason: 'weekly_required_materials_missing' });
+    assert.deepEqual(JSON.parse(String(init?.body)), { expectedPackageVersion: 2 });
     return Response.json({ items: [] });
   };
-  try { assert.deepEqual(await socialProgramApi.recheckRequiredMaterials('program/a', 'package/b', 'task/c'), []); }
+  try { assert.deepEqual(await socialProgramApi.recheckRequiredMaterials('program/a', 'package/b', 'task/c', 2), []); }
   finally { globalThis.fetch = previousFetch; Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: previousStorage }); }
 });
 

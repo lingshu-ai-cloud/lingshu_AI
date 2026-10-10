@@ -1,0 +1,20 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {prepareWeeklyNonPresenterProductionFixture} from '../runtime/weeklyNonPresenterProduction.fixture.js';
+import {readWeeklyReplicationContext} from './weeklyReplicationContext.js';
+test('actual planning and bound canonical source resolve real frozen rules; foreign/source drift rejected',async t=>{
+ const f=await prepareWeeklyNonPresenterProductionFixture(t,{ownedReferenceBytes:true,primaryStructure:true});
+ const taskId=f.created.task_id;assert.equal(typeof taskId,'string');if(typeof taskId!=='string')throw new Error('actual created task identity missing');
+ const rows=await f.f.store.list<Record<string,unknown>>('starter_social_content_tasks',{where:{tenant_id:'t',task_id:taskId},perPage:2});
+ assert.equal(rows.totalItems,1);const task=rows.items[0]!;
+ const sources=f.detail.sources;
+ const input={store:f.f.store,tenantId:'t',task,sources};
+ const context=await readWeeklyReplicationContext(input);assert.ok(context);
+ assert.equal(context.benchmarkAccountSnapshotRef?.objectType,'social_benchmark_account');
+ assert.equal(context.referenceContentAnalysisRef?.objectType,'social_inspiration_handoff');
+ assert.equal(context.primaryReferenceAnalysisId,'non-presenter-analysis');assert.equal(context.verifiedPrimaryReference?.recordId,f.referenceId);assert.ok(context.verifiedPrimaryReference?.runtimeAnalysisId.startsWith('reference-analysis-'));assert.ok(context.verifiedPrimaryReference?.sourceSha256.match(/^[a-f0-9]{64}$/));
+ assert.deepEqual(context.verifiedAccountPlaybook?.evidenceRules,['仅展示已确认产品资料']);
+ assert.equal(context.verifiedAccountPlaybook?.conversionRoute.callToAction,'Contact sales');
+ await assert.rejects(readWeeklyReplicationContext({...input,tenantId:'foreign'}));
+ await assert.rejects(readWeeklyReplicationContext({...input,sources:sources.map(value=>value.kind==='reference_link'?{...value,sourceVersion:'0'.repeat(64)}:value)}));
+});

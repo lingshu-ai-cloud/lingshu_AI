@@ -21,7 +21,7 @@ import {
   writeWeeklyExecutionTask,
   type WeeklyExecutionTaskRow,
 } from '../socialPrograms/executionTasks.js';
-import { validateWeeklyExecutionResults } from './socialWeeklyResultValidation.js';
+import { validateWeeklyExecutionResults,type WeeklyExecutionResultValidationPorts } from './socialWeeklyResultValidation.js';
 import { SocialProgramError } from '../socialPrograms/service.js';
 
 export interface WeeklyExecutionClaim {
@@ -66,7 +66,7 @@ async function candidates(dataStore: DataStore, tenantId: string): Promise<Weekl
  * generation, production or publishing adapter; callers execute the claimed
  * snapshot and return versioned result references through complete().
  */
-export function createSocialWeeklyExecutionWorker(dataStore: DataStore) {
+export function createSocialWeeklyExecutionWorker(dataStore: DataStore,validationPorts:WeeklyExecutionResultValidationPorts={}) {
   async function currentClaim(claim: WeeklyExecutionClaim, now: Date): Promise<WeeklyExecutionTaskRow> {
     await assertDurableOperationLease({ dataStore, lease: claim.lease, now, minimumRemainingMs: 1 });
     const row = await getWeeklyExecutionTaskRow(dataStore, claim.task.tenantId, claim.task.taskId);
@@ -177,7 +177,7 @@ export function createSocialWeeklyExecutionWorker(dataStore: DataStore) {
       const task = await withWeeklyExecutionTaskMutation(dataStore, claim.task.tenantId, claim.task.taskId, async () => {
         const row = await currentClaim(claim, now);
         const validationStartedAt = Date.now();
-        await validateWeeklyExecutionResults(dataStore, row.payload, resultRefs, now);
+        await validateWeeklyExecutionResults(dataStore, row.payload, resultRefs, now,validationPorts);
         await currentClaim(claim, new Date(now.getTime() + Math.max(0, Date.now() - validationStartedAt)));
         const next: WeeklyExecutionTask = {
           ...row.payload, status: 'succeeded', resultRefs: structuredClone(resultRefs), lease: null, productionProgress: null, lastError: null,

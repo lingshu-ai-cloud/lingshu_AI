@@ -86,12 +86,24 @@ export const WEEKLY_EXECUTION_TASK_STATUSES = [
 export type WeeklyExecutionTaskStatus = typeof WEEKLY_EXECUTION_TASK_STATUSES[number];
 export type WeeklyExecutionTaskScope = 'package' | 'content' | 'adaptation' | 'account' | 'publication';
 
+/** Business identity of the two B2B operating chains. Legacy persisted tasks may omit it. */
+export type WeeklyAgentChainProfile = 'b2b_cold_start' | 'b2b_established';
+export type WeeklyAgentChainTaskCode = `${'Z' | 'H'}-${`M${1 | 2 | 3 | 4 | 5 | 6 | 7 | 8}` | `S${1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9}`}`;
+
+export interface WeeklyAgentChainContract {
+  /** Frozen business inputs required by this profile-specific task, in addition to inputSnapshot. */
+  requiredInputKinds: string[];
+  /** Auditable business outputs expected from the existing step executor. */
+  deliverableKinds: string[];
+}
+
 export type WeeklyResponsibleActor =
   | 'business_agent'
   | 'director_agent'
   | 'content_agent'
   | 'quality_agent'
   | 'publishing_agent'
+  | 'customer_agent'
   | 'user';
 
 export type WeeklyProductionStepKind =
@@ -100,6 +112,7 @@ export type WeeklyProductionStepKind =
   | 'benchmark_scoring'
   | 'director_analysis'
   | 'business_schedule'
+  | 'material_preparation'
   | 'material_readiness'
   | 'script'
   | 'storyboard'
@@ -109,6 +122,8 @@ export type WeeklyProductionStepKind =
   | 'rework'
   | 'user_approval'
   | 'publishing'
+  | 'customer_channel_readiness'
+  | 'customer_inquiry_handoff'
   | 'performance_monitoring'
   | 'weekly_review'
   | 'template_extraction'
@@ -146,6 +161,7 @@ export interface WeeklyExecutionTaskBudget {
  * read a newer package, policy or planning decision while executing it.
  */
 export interface WeeklyExecutionTask {
+  inventoryUserApproval?: {actorUserId:string;confirmedAt:string;bindingRef:VersionedSocialRef;bindingHash:string;sourceHash:string;artifactRef:VersionedSocialRef};
   taskId: string;
   tenantId: string;
   programId: string;
@@ -156,6 +172,12 @@ export interface WeeklyExecutionTask {
   subjectId: string;
   accountId: string | null;
   publicationTaskId: string | null;
+  /** Profile-specific business identity; stepKind remains the stable executor protocol. */
+  chainProfile?: WeeklyAgentChainProfile;
+  chainTaskCode?: WeeklyAgentChainTaskCode;
+  /** Conditional side-chain identities this durable task owns if their trigger is observed. */
+  chainSupportTaskCodes?: WeeklyAgentChainTaskCode[];
+  chainContract?: WeeklyAgentChainContract;
   dependsOnTaskIds: string[];
   upstreamVersionRefs: VersionedSocialRef[];
   inputSnapshot: Record<string, unknown>;
@@ -171,6 +193,8 @@ export interface WeeklyExecutionTask {
   lease: WeeklyExecutionTaskLease | null;
   resultRefs: VersionedSocialRef[];
   lastError: { code: string; message: string; retryable: boolean; occurredAt: string } | null;
+  /** Explicit original-request quality recovery receipts; never stage completion. */
+  qualityRecoveries?: import('./weeklyContentQualityRecovery.js').WeeklyContentQualityRecoveryReceipt[];
   /** Observed upstream activity, independent from verified step completion. */
   productionProgress?: { contentTaskId: string; runId: string | null; step: string; activity: string; updatedAt: string } | null;
   /** Read-only API projection after verifying the original task's continuation receipt. */
@@ -225,7 +249,16 @@ export interface WeeklyMaterialEvidenceRequirements {
   recordHash: string;
 }
 
+/** Actual account and immutable playbook versions explicitly frozen during planning. */
+export interface WeeklyTargetAccountPlaybook {
+  accountId: string;
+  accountRef: VersionedSocialRef;
+  playbookRef: VersionedSocialRef;
+  playbookHash: string;
+}
+
 export interface WeeklyDirectorPlanningAnalysis {
+  targetAccountPlaybooks?: WeeklyTargetAccountPlaybook[];
   contentTemplateEvidence?: Array<{publicationTaskId:string;bindingRef:VersionedSocialRef;structure:ContentTemplateStructureConstraint}>;
   customerFeedbackTopicRefs?: VersionedSocialRef[];
   customerFeedbackTopicEvidence?: Array<{ publicationTaskId: string; confirmationRef: VersionedSocialRef; candidateRef: { id: string; version: number; recordHash: string }; question: string; topicAngle: string }>;
@@ -268,6 +301,7 @@ export interface WeeklyDirectorPlanningAnalysis {
 }
 
 export interface WeeklyDetailedContentScheduleItem {
+  targetAccountPlaybook?: WeeklyTargetAccountPlaybook;
   contentTemplateStructure?: ContentTemplateStructureConstraint;
   scheduleItemId: string;
   slotId: string;
@@ -390,6 +424,7 @@ export interface SocialWeeklyPublicationTask {
   customerFeedbackTopicRef?: VersionedSocialRef;
   /** Explicit confirmed structure binding for this exact immutable publication version. */
   contentTemplateBindingRef?: VersionedSocialRef;
+  inventoryReuseRef?: VersionedSocialRef;
   materialRequirement?: { required: true; requestIds: string[]; bindings?: Array<{ requirementId: string; requestId: string }> };
   factRefs: VersionedSocialRef[];
   metricTargets: string[];
@@ -431,6 +466,17 @@ export interface WeeklyReferenceSourcePolicy {
 }
 
 export interface WeeklyOperatingPackage {
+  /** Missing means the immutable legacy graph; new drafts explicitly use v2. */
+  executionGraphVersion?: 2 | 3;
+  /** Server-written evidence of an explicitly confirmed upgrade consumed by a new week. */
+  profileUpgradeConsumption?: {
+    schemaVersion:'weekly-profile-upgrade-consumption.v1';
+    upgradeId:string;sourcePackageId:string;sourcePackageVersion:number;
+    confirmationHash:string;evidenceHash:string;confirmedBy:string;confirmedAt:string;
+    creationRequestId:string;creationInputHash:string;createdBy:string;createdAt:string;
+    targetPackageId:string;targetPackageVersion:1;targetWeekStart:string;timeZone:string;
+    publicationTaskIds:string[];publicationInputHash:string;targetInputHash:string;recordHash:string;
+  };
   referenceSourcePolicy?: WeeklyReferenceSourcePolicy | null;
   packageId: string;
   programId: string;
@@ -622,6 +668,7 @@ export function weeklyPlanActivationIssues(program: SocialProgram, plan: SocialW
 
 /** Cancellation reports preserved external effects rather than claiming rollback. */
 export interface WeeklyCancellationSummary {
+  currentSettlements?: import('./weeklyCancellationSettlement.js').WeeklyCancellationSettlement[];
   status: string;
   boundary: string;
   effects: Array<{ resourceType: string; resourceId: string; outcome: 'irreversible' | 'unknown_requires_reconciliation'; receiptCount: number }>;

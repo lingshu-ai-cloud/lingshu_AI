@@ -105,8 +105,8 @@ export interface SocialProductionReceipt {
   checks: Array<{ code: string; passed: boolean; message: string }>;
   shotTraceHash: string | null;
   productionResultRef: { id: string; version: string; recordHash: string };
-  evidenceKind: 'technical_detection' | 'director_expression_review' | 'business_publication_preflight';
-  actor: 'content_agent' | 'director_agent' | 'business_agent' | 'rules_engine';
+  evidenceKind: 'technical_detection' | 'human_technical_review' | 'human_director_review' | 'director_expression_review' | 'business_publication_preflight';
+  actor: 'content_agent' | 'human_reviewer' | 'human_director_reviewer' | 'director_agent' | 'business_agent' | 'rules_engine';
   createdAt: string;
   recordHash: string;
 }
@@ -346,17 +346,17 @@ export function buildSocialProductionReceipt(input: {
     fail('social_production_receipt_gate_checks_incomplete');
   }
   if (input.status === 'passed' && input.checks.some(check => !check.passed)) fail('social_production_receipt_check_failed');
-  if (input.gate === 'G4' && (!sceneId || input.actor !== 'content_agent' || !(input.artifactRefs?.length))) {
+  if (input.gate === 'G4' && (!sceneId || !['content_agent','human_reviewer'].includes(input.actor) || !(input.artifactRefs?.length))) {
     fail('social_production_receipt_g4_invalid');
   }
-  if (input.gate === 'G5' && (sceneId || input.actor !== 'director_agent')) {
+  if (input.gate === 'G5' && (sceneId || !['director_agent','human_director_reviewer'].includes(input.actor))) {
     fail('social_production_receipt_g5_independence_required');
   }
   if (input.gate === 'G6' && (sceneId || !['business_agent', 'rules_engine'].includes(input.actor))) {
     fail('social_production_receipt_g6_business_preflight_required');
   }
-  const evidenceKind = input.gate === 'G4' ? 'technical_detection'
-    : input.gate === 'G5' ? 'director_expression_review' : 'business_publication_preflight';
+  const evidenceKind = input.gate === 'G4' ? (input.actor==='human_reviewer'?'human_technical_review':'technical_detection')
+    : input.gate === 'G5' ? (input.actor==='human_director_reviewer'?'human_director_review':'director_expression_review') : 'business_publication_preflight';
   const createdAt = (input.now ?? new Date()).toISOString();
   const identity = { handoffId: input.handoff.handoffId, version: input.handoff.version, gate: input.gate, sceneId, attempt: input.attempt };
   const payload: Omit<SocialProductionReceipt, 'recordHash'> = {
@@ -439,6 +439,9 @@ export async function persistSocialProductionReceipt(repository: Starter198Repos
   if (handoffs.totalItems !== 1) fail('social_production_receipt_handoff_not_found');
   const handoff = parseSocialProductionHandoffRecord(handoffs.items[0]!);
   assertReceiptIntegrity(receipt, handoff);
+  if(receipt.actor==='human_reviewer'){const {verifyTrustedHumanProductionReceipt}=await import('./socialSceneG4ReviewService.js');await verifyTrustedHumanProductionReceipt(repository,tenantId,receipt);}
+  if(receipt.gate==='G6'&&receipt.actor==='rules_engine'){const {verifySocialWeeklyG6Receipt}=await import('./socialWeeklyG6ReviewService.js');await verifySocialWeeklyG6Receipt(repository,tenantId,receipt);}
+  if(receipt.gate==='G5'&&(receipt.actor==='human_director_reviewer'||receipt.evidenceRefs.some(r=>r.startsWith('director_g5_review:')))){const {verifySocialDirectorG5Receipt}=await import('./socialDirectorG5ReviewService.js');await verifySocialDirectorG5Receipt(repository,tenantId,receipt);}
   const existing = await repository.list(STARTER_COLLECTIONS.socialProductionReceipts, tenantId, { where: { receipt_id: receipt.receiptId }, perPage: 2 });
   if (existing.totalItems > 1) fail('social_production_receipt_storage_integrity_violation');
   if (existing.items[0]) {
@@ -450,11 +453,14 @@ export async function persistSocialProductionReceipt(repository: Starter198Repos
       where: { handoff_id: receipt.handoffId, handoff_version: receipt.handoffVersion }, perPage: 500,
     });
     const prior = stored.items.map(parseSocialProductionReceiptRecord);
+    for(const r of prior){if(r.gate==='G5'&&(r.actor==='human_director_reviewer'||r.evidenceRefs.some(e=>e.startsWith('director_g5_review:')))){const {verifySocialDirectorG5Receipt}=await import('./socialDirectorG5ReviewService.js');await verifySocialDirectorG5Receipt(repository,tenantId,r);}}
+    for(const r of prior){if(r.actor==='human_reviewer'){const {verifyTrustedHumanProductionReceipt}=await import('./socialSceneG4ReviewService.js');await verifyTrustedHumanProductionReceipt(repository,tenantId,r);}}
     if (prior.some(item => item.productionResultRef.id !== receipt.productionResultRef.id
       || item.productionResultRef.version !== receipt.productionResultRef.version
       || item.productionResultRef.recordHash !== receipt.productionResultRef.recordHash)) {
       fail('social_production_receipt_result_version_conflict');
     }
+    for(const r of prior){if(r.gate==='G6'&&r.actor==='rules_engine'){const {verifySocialWeeklyG6Receipt}=await import('./socialWeeklyG6ReviewService.js');await verifySocialWeeklyG6Receipt(repository,tenantId,r);}}
     const gates = evaluateSocialProductionGates(handoff, prior);
     if (receipt.gate === 'G5' && gates.G4 !== 'passed') fail('social_production_receipt_g4_incomplete');
     if (receipt.gate === 'G6' && gates.G5 !== 'passed') fail('social_production_receipt_g5_incomplete');
@@ -521,5 +527,8 @@ export async function readSocialProductionState(input: {
   });
   if (rows.totalItems > rows.items.length) fail('social_production_receipt_storage_integrity_violation');
   const receipts = rows.items.map(parseSocialProductionReceiptRecord);
+  for(const receipt of receipts){if(receipt.actor==='human_reviewer'){const {verifyTrustedHumanProductionReceipt}=await import('./socialSceneG4ReviewService.js');await verifyTrustedHumanProductionReceipt(input.repository,input.tenantId,receipt);}}
+  for(const receipt of receipts){if(receipt.gate==='G6'&&receipt.actor==='rules_engine'){const {verifySocialWeeklyG6Receipt}=await import('./socialWeeklyG6ReviewService.js');await verifySocialWeeklyG6Receipt(input.repository,input.tenantId,receipt);}}
+  for(const receipt of receipts){if(receipt.gate==='G5'&&(receipt.actor==='human_director_reviewer'||receipt.evidenceRefs.some(e=>e.startsWith('director_g5_review:')))){const {verifySocialDirectorG5Receipt}=await import('./socialDirectorG5ReviewService.js');await verifySocialDirectorG5Receipt(input.repository,input.tenantId,receipt);}}
   return { handoff, receipts, gates: evaluateSocialProductionGates(handoff, receipts) };
 }

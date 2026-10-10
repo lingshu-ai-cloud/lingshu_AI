@@ -1,9 +1,10 @@
+import {readTemplateCarryoverPlans,explicitlyConfirmedTemplatePlans} from '../../lib/weeklyTemplateCarryoverConfirmation';
 import { useEffect, useRef, useState } from 'react';
 import type { WeeklyExecutionTask } from '../../../shared/contracts/socialProgram';
 import type { WeeklyRecoveryAssessment, RecoveryResource, RecoveryTaskConstraint } from '../../../server/socialPrograms/weeklyRecoveryAssessment';
 import { STEP_LABEL } from './weeklyExecutionLabels';
 import type { WeeklyBackwardSchedule } from '../../../server/socialPrograms/weeklyBackwardSchedule';
-import type { WeeklyScheduleProposal, WeeklyScheduleConfirmation } from '../../../shared/contracts/socialWeeklyScheduleRevision';
+import type { WeeklyScheduleProposal, WeeklyScheduleConfirmation, WeeklyScheduleConfirmationReceipt, WeeklyScheduleTargetGraph } from '../../../shared/contracts/socialWeeklyScheduleRevision';
 
 export interface WeeklyRecoveryScenario {
   changedTaskIds: string[];
@@ -13,13 +14,17 @@ export interface WeeklyRecoveryScenario {
   operationalDeadlines?:Record<string,string>;
 }
 export interface WeeklyRecoveryPanelProps {
+  mode?:'initial'|'recovery';
   tasks: WeeklyExecutionTask[];
   packageVersion: number;
   onAssess: (input: WeeklyRecoveryScenario) => Promise<WeeklyRecoveryAssessment>;
   onPlanBackward?: (input: Omit<WeeklyRecoveryScenario, 'changedTaskIds'>) => Promise<WeeklyBackwardSchedule>;
   weekStart?: string;
+  onPreviewTarget?:()=>Promise<WeeklyScheduleTargetGraph>;
   onPropose?:(input:Omit<WeeklyRecoveryScenario,'changedTaskIds'>)=>Promise<WeeklyScheduleProposal>;
-  onConfirm?:(input:{proposalId:string;expectedVersion:number;inputEvidenceHash:string})=>Promise<WeeklyScheduleConfirmation>;
+  onReadProposal?:(proposalId:string)=>Promise<WeeklyScheduleProposal>;
+  onReadConfirmation?:(proposalId:string)=>Promise<WeeklyScheduleConfirmationReceipt>;
+  onConfirm?:(input:{proposalId:string;expectedVersion:number;inputEvidenceHash:string;confirmedTemplateCarryoverPlanHashes:string[]})=>Promise<WeeklyScheduleConfirmation>;
 }
 type WorkDraft = { resourceKey: string; remainingMinutes: string; remainingCostCny: string; bufferMinutes: string; availableAt: string };
 type ResourceDraft = { key:string; concurrency:string; startAt:string; finishAt:string };
@@ -64,6 +69,11 @@ export function buildRecoveryScenario(budget:string,changedTaskIds:string[],work
   return {remainingBudgetCny:number(budget,'剩余预算'),changedTaskIds:[...changedTaskIds],constraints,resources};
 }
 const reasonLabels:Record<string,string>={
+  queue_completed_generation_requires_result_evidence:'原生成作业已结束，需核验并承接真实产物凭据，不能重新生产',
+  queue_job_identity_required:'尚无可核验的真实生产任务身份',queue_planned_handler_authority_required:'未开工生产处理器与冻结账号或发布目标不一致',
+  persisted_tenant_queue_limit_missing:'尚未配置租户生产并发上限',persisted_account_queue_limit_missing:'尚未配置本账号生产并发上限',persisted_task_type_queue_limit_missing:'尚未配置该生产类型并发上限',
+  queue_production_remaining_work_unverified:'原生产已开工，剩余工作尚无真实核验',queue_running_finish_and_cost_unverified:'相关并发池已有运行占用，结束时间和剩余费用尚未核验',queue_resource_vector_incomplete:'租户、账号和生产类型三维产能证据不完整',queue_task_evidence_changed:'原任务输入已变化，需重新评估资源',
+
   human_completion_not_verified:'人工完成尚未核验',dependency_unavailable:'前置任务不可用',remaining_work_evidence_required:'缺少剩余工作估时',resource_capacity_evidence_required:'缺少产能证据',remaining_budget_insufficient:'剩余预算不足',work_window_or_capacity_insufficient:'工作时段或并发不足',publication_deadline_at_risk:'赶不上前置截止',precise_deadline_required:'缺少明确截止',task_requires_explicit_recovery:'需明确恢复失败或取消任务',blocking_state_requires_verification:'阻塞状态需重新核验',
   consumer_schedule_unavailable:'消费者任务尚无可执行排期',running_work_requires_observed_reservation:'执行中任务缺少真实容量占用证据',precise_publish_time_required:'缺少带时区的明确发布时间',
   operational_deadline_required:'需明确填写发布后观察或周复盘截止',
@@ -87,7 +97,9 @@ export function buildBackwardScenario(scenario:WeeklyRecoveryScenario,tasks:Week
   const {changedTaskIds: _changed,...input}=scenario;
   return {...input,...(Object.keys(operationalDeadlines).length?{operationalDeadlines}:{})};
 }
-export default function WeeklyRecoveryPanel({tasks,packageVersion,onAssess,onPlanBackward,weekStart,onPropose,onConfirm}:WeeklyRecoveryPanelProps) {
+export function assertTargetGraphCapacity(graph:WeeklyScheduleTargetGraph,input:Omit<WeeklyRecoveryScenario,'changedTaskIds'>){for(const binding of graph.bindings.filter(b=>b.origin==='new_planned')){const c=input.constraints[binding.planningTaskId];if(!c||![c.remainingMinutes,c.remainingCostCny,c.bufferMinutes].every(v=>typeof v==='number'&&Number.isFinite(v)&&v>=0)||!c.availableAt||!input.resources[c.resourceKey])throw Error('新增素材前置需逐项明确工时、费用、缓冲、实际产能和可开始时间。');}}
+export default function WeeklyRecoveryPanel({mode='recovery',tasks,packageVersion,onAssess,onPlanBackward,weekStart,onPropose,onConfirm,onPreviewTarget,onReadProposal,onReadConfirmation}:WeeklyRecoveryPanelProps) {
+  const [targetGraph,setTargetGraph]=useState<WeeklyScheduleTargetGraph|null>(null);
   const [budget,setBudget]=useState('');
   const [changed,setChanged]=useState<string[]>([]);
   const [work,setWork]=useState<Record<string,WorkDraft>>({});
@@ -96,15 +108,17 @@ export default function WeeklyRecoveryPanel({tasks,packageVersion,onAssess,onPla
   const [backward,setBackward]=useState<WeeklyBackwardSchedule|null>(null);
   const [operational,setOperational]=useState<Record<string,string>>({});
   const [proposal,setProposal]=useState<WeeklyScheduleProposal|null>(null);
+  const [templateConsent,setTemplateConsent]=useState<string[]>([]);
   const [confirmation,setConfirmation]=useState<WeeklyScheduleConfirmation|null>(null);
+  const [confirmationReceipt,setConfirmationReceipt]=useState<WeeklyScheduleConfirmationReceipt|null>(null);
   const [error,setError]=useState('');
   const [busy,setBusy]=useState(false);
   const generation=useRef(0);
   const identity=tasks[0] ? `${tasks[0].tenantId}/${tasks[0].programId}/${tasks[0].packageId}/${packageVersion}` : `empty/${packageVersion}`;
   const evidence=JSON.stringify(tasks);
-  useEffect(()=>{generation.current++;setResult(null);setBackward(null);setProposal(null);setConfirmation(null);setError('');setBusy(false);return ()=>{generation.current++;};},[evidence]);
+  useEffect(()=>{generation.current++;setTargetGraph(null);setResult(null);setBackward(null);setProposal(null);setTemplateConsent([]);setConfirmation(null);setError('');setBusy(false);return ()=>{generation.current++;};},[evidence]);
   useEffect(()=>{setBudget('');setChanged([]);setWork({});setResources([]);setOperational({});},[identity]);
-  const invalidate=()=> { generation.current++;setResult(null);setBackward(null);setProposal(null);setConfirmation(null);setError('');setBusy(false); };
+  const invalidate=()=> { generation.current++;setResult(null);setBackward(null);setProposal(null);setTemplateConsent([]);setConfirmation(null);setError('');setBusy(false); };
   const assess=async()=> {
     const requestId=++generation.current;
     setError('');setResult(null);setBackward(null);
@@ -129,43 +143,49 @@ export default function WeeklyRecoveryPanel({tasks,packageVersion,onAssess,onPla
     } catch(cause) {if(generation.current===requestId)setError(cause instanceof Error?cause.message:'倒排失败，请重试。');}
     finally {if(generation.current===requestId)setBusy(false);}
   };
+  const capacityTasks=targetGraph?.tasks??tasks;
+  const previewTarget=async()=>{if(!onPreviewTarget)return;const requestId=++generation.current;setTargetGraph(null);setBusy(true);setError('');setProposal(null);setTemplateConsent([]);setBackward(null);try{const graph=await onPreviewTarget();if(generation.current===requestId)setTargetGraph(graph);}catch(cause){if(generation.current===requestId)setError(cause instanceof Error?cause.message:'无法读取新草稿完整任务。');}finally{if(generation.current===requestId)setBusy(false);}};
   const propose=async()=> {
-    if(!onPropose)return;const requestId=++generation.current;setBusy(true);setError('');setProposal(null);setConfirmation(null);
-    try {const input=buildBackwardScenario(buildRecoveryScenario(budget,changed,work,resources),tasks,packageVersion,operational);const response=await onPropose(input);if(generation.current===requestId){setProposal(response);setBackward(response.plan);}}
+    if(!onPropose)return;const requestId=++generation.current;setBusy(true);setError('');setProposal(null);setTemplateConsent([]);setConfirmation(null);setConfirmationReceipt(null);
+    try {if(onPreviewTarget&&!targetGraph)throw Error('请先读取新草稿完整任务，并明确新增素材准备的产能与成本。');const input=buildBackwardScenario(buildRecoveryScenario(budget,changed,work,resources),capacityTasks,packageVersion,operational);if(targetGraph)assertTargetGraphCapacity(targetGraph,input);const response=await onPropose(input);if(generation.current===requestId){setProposal(response);setBackward(response.plan);}}
     catch(cause){if(generation.current===requestId)setError(cause instanceof Error?cause.message:'提案读取失败。');}finally{if(generation.current===requestId)setBusy(false);}
   };
+  const readProposal=async()=>{if(!proposal||!onReadProposal)return;const requestId=++generation.current;setBusy(true);setError('');try{const value=await onReadProposal(proposal.proposalId);if(generation.current===requestId){setProposal(value);setTemplateConsent([]);setBackward(value.plan);}}catch(cause){if(generation.current===requestId)setError(cause instanceof Error?cause.message:'原排期提案读取失败。');}finally{if(generation.current===requestId)setBusy(false);}};
   const confirm=async()=> {
     if(!onConfirm||!proposal)return;const requestId=++generation.current;setBusy(true);setError('');
-    try {const response=await onConfirm({proposalId:proposal.proposalId,expectedVersion:proposal.packageVersion,inputEvidenceHash:proposal.inputEvidenceHash});if(generation.current===requestId){setConfirmation(response);setProposal(null);}}
-    catch(cause){if(generation.current===requestId)setError(cause instanceof Error?cause.message:'修订确认失败。');}finally{if(generation.current===requestId)setBusy(false);}
+    try {const confirmedTemplateCarryoverPlanHashes=explicitlyConfirmedTemplatePlans(proposal,templateConsent);const response=await onConfirm({proposalId:proposal.proposalId,expectedVersion:proposal.packageVersion,inputEvidenceHash:proposal.inputEvidenceHash,confirmedTemplateCarryoverPlanHashes});if(generation.current===requestId){setConfirmation(response);setConfirmationReceipt(null);setProposal(null);setTemplateConsent([]);}}
+    catch(cause){if(generation.current===requestId){if(onReadConfirmation){try{const receipt=await onReadConfirmation(proposal.proposalId);if(generation.current===requestId){setConfirmationReceipt(receipt);if(receipt.status!=='not_committed'){setProposal(null);setTemplateConsent([]);}setError(receipt.status==='committed'?'确认响应中断，但新草稿已核实落地。':receipt.status==='pending_recovery'?'确认写入尚未完整落地，已停止重复提交，请等待恢复。':'确认尚未提交，可核对原提案后再次操作。');}}catch{setError(cause instanceof Error?cause.message:'修订确认失败。');}}else setError(cause instanceof Error?cause.message:'修订确认失败。');}}finally{if(generation.current===requestId)setBusy(false);}
   };
-  const remaining=tasks.filter(task=>task.status!=='succeeded');
-  return <section className="rounded-lg border border-border bg-white p-5 sm:p-6">
-    <h3 className="text-base font-bold text-text-primary">异常影响与补救评估</h3>
-    <p className="mt-1 text-xs leading-5 text-text-muted">使用当前版本真实任务和依赖；下方工时、费用与产能由你明确填写。结果是条件预测，修改任务后需重新评估。</p>
+  const carryovers=proposal?readTemplateCarryoverPlans(proposal):[];
+  const remaining=capacityTasks.filter(task=>task.status!=='succeeded');
+  return <section className="rounded-xl border border-border bg-white p-5 sm:p-6">
+    <h3 className="text-base font-bold text-text-primary">{mode==='initial'?'首次容量排期 · 未执行草稿':'异常影响与补救评估'}</h3>
+    <p className="mt-1 text-xs leading-5 text-text-muted">{mode==='initial'?'任务估时仅作辅助。请明确每项工时、成本、产能与工作窗口，系统核验后保存新草稿；不要求先撤回未执行的原草稿，不自动激活或生产。':'使用当前版本真实任务和依赖；下方工时、费用与产能由你明确填写。结果是条件预测，修改任务后需重新评估。'}</p>
     <label className="mt-4 block max-w-xs text-xs font-semibold">剩余预算（元）<input aria-label="剩余预算（元）" type="number" min="0" value={budget} onChange={event=>{invalidate();setBudget(event.target.value);}} className={`${inputClass} mt-1`} /></label>
     <div className="mt-4"><p className="text-xs font-semibold">高级评估：容量假设与工作时段</p><p className="mt-1 text-xs text-text-muted">共用同一供应商或人工时使用相同产能名称；同名可添加多个工作窗口。时间必须包含时区。</p>
       {resources.map((resource,index)=><div key={index} className="mt-2 grid gap-2 sm:grid-cols-4">{(['key','concurrency','startAt','finishAt'] as const).map(field=><label key={field} className="text-[11px] text-text-muted">{{key:'产能名称',concurrency:'实际并发',startAt:'窗口开始（带时区）',finishAt:'窗口结束（带时区）'}[field]}<input value={resource[field]} type={field==='concurrency'?'number':'text'} onChange={event=>{invalidate();setResources(rows=>rows.map((row,i)=>i===index?{...row,[field]:event.target.value}:row));}} className={`${inputClass} mt-1`} /></label>)}</div>)}
       <button type="button" onClick={()=>{invalidate();setResources(rows=>[...rows,{key:'',concurrency:'',startAt:'',finishAt:''}]);}} className="mt-2 rounded-lg border border-border px-3 py-2 text-xs font-semibold">添加工作窗口</button>
     </div>
-    <details className="mt-4 rounded-lg border border-border p-3"><summary className="cursor-pointer text-xs font-semibold">选择变化任务并填写剩余工作 · {remaining.length} 项</summary><p className="mt-2 text-xs text-text-muted">勾选实际发生变化的任务。未填写估时的任务显示证据缺口；输入预计完成时间不会解除现有阻塞或人工验收。</p>
-      <div className="mt-3 space-y-3">{remaining.map(task=>{const draft=work[task.taskId]??blankWork();return <div key={task.taskId} className="rounded-lg bg-surface-2 p-3"><label className="flex items-start gap-2 text-xs font-semibold"><input type="checkbox" checked={changed.includes(task.taskId)} onChange={event=>{invalidate();setChanged(ids=>event.target.checked?[...ids,task.taskId]:ids.filter(id=>id!==task.taskId));}} /><span>{STEP_LABEL[task.schedule.stepKind]} · {task.taskId}<span className="mt-1 block font-normal text-text-muted">{actorLabel[task.schedule.responsibleActor]??task.schedule.responsibleActor} · {statusLabel[task.status]??task.status}</span></span></label><div className="mt-2 grid gap-2 sm:grid-cols-5">{(['resourceKey','remainingMinutes','remainingCostCny','bufferMinutes','availableAt'] as const).map(field=><label key={field} className="text-[11px] text-text-muted">{{resourceKey:'使用产能',remainingMinutes:'剩余分钟',remainingCostCny:'剩余成本（元）',bufferMinutes:'缓冲分钟',availableAt:'可开始时间（带时区）'}[field]}<input value={draft[field]} type={field==='resourceKey'||field==='availableAt'?'text':'number'} min="0" onChange={event=>{invalidate();setWork(rows=>({...rows,[task.taskId]:{...draft,[field]:event.target.value}}));}} className={`${inputClass} mt-1`} /></label>)}</div></div>;})}</div>
+    <details className="mt-4 rounded-lg border border-border p-3"><summary className="cursor-pointer text-xs font-semibold">{mode==='initial'?'逐项填写首次执行容量':'选择变化任务并填写剩余工作'} · {remaining.length} 项</summary><p className="mt-2 text-xs text-text-muted">{mode==='initial'?'为完整首次任务图逐项填写容量，不能用辅助估时替代真实资源窗口或预算。保存排期不代表任务已完成。':'勾选实际发生变化的任务。未填写估时的任务显示证据缺口；输入预计完成时间不会解除现有阻塞或人工验收。'}</p>
+      <div className="mt-3 space-y-3">{remaining.map(task=>{const draft=work[task.taskId]??blankWork();return <div key={task.taskId} className="rounded-lg bg-surface-2 p-3"><label className="flex items-start gap-2 text-xs font-semibold">{mode!=='initial'&&<input type="checkbox" checked={changed.includes(task.taskId)} onChange={event=>{invalidate();setChanged(ids=>event.target.checked?[...ids,task.taskId]:ids.filter(id=>id!==task.taskId));}} />}<span>{STEP_LABEL[task.schedule.stepKind]}{targetGraph?.bindings.some(b=>b.planningTaskId===task.taskId&&b.origin==='new_planned')?' · 新草稿新增前置（尚未执行）':''} · {task.taskId}<span className="mt-1 block font-normal text-text-muted">{actorLabel[task.schedule.responsibleActor]??task.schedule.responsibleActor} · {statusLabel[task.status]??task.status}{mode==='initial'?` · 任务估时约 ${task.schedule.estimatedDurationMinutes} 分钟（辅助参考）`:''}</span></span></label><div className="mt-2 grid gap-2 sm:grid-cols-5">{(['resourceKey','remainingMinutes','remainingCostCny','bufferMinutes','availableAt'] as const).map(field=><label key={field} className="text-[11px] text-text-muted">{{resourceKey:'使用产能',remainingMinutes:'剩余分钟',remainingCostCny:'剩余成本（元）',bufferMinutes:'缓冲分钟',availableAt:'可开始时间（带时区）'}[field]}<input value={draft[field]} type={field==='resourceKey'||field==='availableAt'?'text':'number'} min="0" onChange={event=>{invalidate();setWork(rows=>({...rows,[task.taskId]:{...draft,[field]:event.target.value}}));}} className={`${inputClass} mt-1`} /></label>)}</div></div>;})}</div>
     </details>
     {(onPlanBackward||onPropose)&&<div className="mt-4 rounded-lg border border-border p-3"><p className="text-xs font-semibold">发布后观察、周复盘与模板承接截止</p><p className="mt-1 text-xs text-text-muted">逐项填写带时区的实际截止，并在剩余工作中明确观察开始时间。周日晚发布可以显式跨周承接；不会猜测观察天数或周日截止时刻。现有真实复盘规则要求运营周结束次日 00:00 UTC 后开始；此前截止会保留缺口。</p>{remaining.filter(task=>['performance_monitoring','weekly_review','template_extraction','template_performance_validation'].includes(task.schedule.stepKind)).map(task=><label key={task.taskId} className="mt-2 block text-xs">{STEP_LABEL[task.schedule.stepKind]} · {task.accountId??'本周整体'}<input aria-label={`运营截止 ${task.taskId}`} value={operational[task.taskId]??''} onChange={event=>{invalidate();setOperational(values=>({...values,[task.taskId]:event.target.value}));}} placeholder="2026-10-11T18:00:00+08:00" className={`${inputClass} mt-1`}/></label>)}</div>}
-    <button type="button" disabled={busy||!tasks.length} onClick={()=>void assess()} className="mt-4 rounded-lg bg-accent px-4 py-2 text-xs font-semibold text-white disabled:opacity-50">{busy?'正在评估…':'评估影响与可达数量'}</button>
-    {onPlanBackward&&<button type="button" disabled={busy||!tasks.length} onClick={()=>void planBackward()} className="ml-2 mt-4 rounded-lg border border-border px-4 py-2 text-xs font-semibold disabled:opacity-50">从发布时间倒排建议</button>}
+    {mode!=='initial'&&<button type="button" disabled={busy||!tasks.length||!!targetGraph} onClick={()=>void assess()} className="mt-4 rounded-lg bg-accent px-4 py-2 text-xs font-semibold text-white disabled:opacity-50">{busy?'正在评估…':'评估影响与可达数量'}</button>}
+    {mode!=='initial'&&onPlanBackward&&<button type="button" disabled={busy||!tasks.length||!!targetGraph} onClick={()=>void planBackward()} className="ml-2 mt-4 rounded-lg border border-border px-4 py-2 text-xs font-semibold disabled:opacity-50">从发布时间倒排建议</button>}
+    {onPreviewTarget&&<div className="mt-3 rounded border p-3 text-xs"><button disabled={busy} onClick={()=>void previewTarget()}>读取新草稿完整任务与新增素材前置</button>{targetGraph&&<p>新草稿含 {targetGraph.bindings.filter(b=>b.origin==='new_planned').length} 项新增前置。逐项明确实际工时、产能、费用和开始时间；不复制生成成本，不默认免费。旧版影响评估请先重新加载原任务。</p>}</div>}
     {onPropose&&<button type="button" disabled={busy||!tasks.length} onClick={()=>void propose()} className="ml-2 mt-4 rounded-lg border border-border px-4 py-2 text-xs font-semibold disabled:opacity-50">生成可确认的排期提案</button>}
-    {proposal&&<div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs leading-5"><p>已保存当前 v{proposal.packageVersion} 排期提案，尚未应用。确认将创建新草稿并重新核验真实输入和当前容量。</p><p>先前发布授权将撤销，新草稿不会自动激活；本次确认不代表旧任务已停止。</p><button type="button" disabled={busy||!onConfirm||!proposal.plan.fullGraphConditionallyReachable} onClick={()=>void confirm()} className="mt-2 rounded-lg bg-accent px-3 py-2 font-semibold text-white disabled:opacity-50">确认完整排期并创建新草稿</button>{!proposal.plan.fullGraphConditionallyReachable&&<p className="mt-1 text-amber-800">完整任务图仍有缺口，需补齐后重新生成提案。</p>}</div>}
+    {proposal&&<div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs leading-5"><p>已保存当前 v{proposal.packageVersion} 排期提案，尚未应用。确认将创建新草稿并重新核验真实输入和当前容量。</p><p>{mode==='initial'?'确认只保存首次排期新草稿，不自动启用发布授权或执行。':'先前发布授权将撤销，新草稿不会自动激活；本次确认不代表旧任务已停止。'}</p>{carryovers.length>0&&<div className="mt-3 space-y-2"><p className="font-semibold">模板绑定需逐条同意承接到新版本</p>{carryovers.map(plan=><label key={plan.planHash} className="block rounded border border-amber-300 bg-white p-3"><input type="checkbox" disabled={busy} checked={templateConsent.includes(plan.planHash)} onChange={event=>setTemplateConsent(ids=>event.target.checked?[...ids,plan.planHash]:ids.filter(id=>id!==plan.planHash))}/><span className="ml-2">同意将视频 {plan.sourceScope.publicationTaskId} 的模板 v{plan.templateRef.version}（{plan.templateRef.id}）用于新排期</span><span className="mt-1 block">原周 v{plan.sourceScope.packageVersion} · {plan.sourceBindingRef.id} → 新周 v{plan.targetScope.packageVersion} · {plan.targetBindingRef.id}</span><span className="mt-1 block break-all text-text-muted">原模板确认：{plan.confirmationId} · 承接计划：{plan.planHash}</span></label>)}<p>不自动替换模板或沿用审批；未同意全部冻结承接计划时不能确认此排期。</p></div>}{onReadProposal&&<button type="button" disabled={busy} onClick={()=>void readProposal()} className="mr-2 mt-2 rounded-lg border border-border px-3 py-2 font-semibold">只读核对原排期提案</button>}<button type="button" disabled={busy||!onConfirm||!proposal.plan.fullGraphConditionallyReachable||carryovers.some(plan=>!templateConsent.includes(plan.planHash))} onClick={()=>void confirm()} className="mt-2 rounded-lg bg-accent px-3 py-2 font-semibold text-white disabled:opacity-50">确认完整排期并创建新草稿</button>{!proposal.plan.fullGraphConditionallyReachable&&<p className="mt-1 text-amber-800">完整任务图仍有缺口，需补齐后重新生成提案。</p>}</div>}
     {confirmation&&<div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-xs leading-5"><p>已创建 v{confirmation.item.version} 新草稿 · {confirmation.activated===false?'未自动激活':'请核对激活状态'}</p><p>{confirmation.previousPublishingAuthorizationRevoked?'先前发布授权已撤销，需重新明确授权。':'先前没有开放真实发布授权。'}</p><p>原有任务未在此被宣称停止；新增素材消费者仍需核验。</p>{confirmation.materialConsumerRepairs.length?<><p className="mt-2 font-semibold">素材消费者关联尚有缺口：</p>{confirmation.materialConsumerRepairs.map((repair,index)=><p key={`${repair.requestId}:${index}`}>{repair.requestId} · {repair.reason}</p>)}</>:<p>素材消费者关联未返回修复缺口；仍需真实核验通过才能生产。</p>}</div>}
+    {confirmationReceipt&&<div className={`mt-3 rounded-lg border p-3 text-xs leading-5 ${confirmationReceipt.status==='committed'?'border-emerald-200 bg-emerald-50':'border-amber-200 bg-amber-50'}`}><p className="font-semibold">确认结果只读核验：{confirmationReceipt.status==='committed'?`v${confirmationReceipt.targetVersion} 已落地`:confirmationReceipt.status==='pending_recovery'?'写入待恢复':'尚未提交'}</p><p>提案 {confirmationReceipt.proposalId}；系统未自动重复提交。</p></div>}
     {backward&&<div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-xs leading-5">
       <p className="font-semibold">倒排建议 · 目标 {backward.targetPublicationCount} 条 · 条件可达 {backward.conditionallyReachableCount} 条 · 缺口 {backward.publicationGap} 条</p>
       <p>完整任务图：{backward.fullGraphConditionallyReachable?'条件可排入工作窗口':`仍有 ${backward.unscheduledTaskIds?.length??0} 项未排入`}；发布可达不代表观察与复盘已经完成。</p>
-      {!!backward.crossWeekOperationalTaskIds?.length&&<p>明确跨周承接观察或复盘：{backward.crossWeekOperationalTaskIds.map(id=>{const task=tasks.find(task=>task.taskId===id);return task?STEP_LABEL[task.schedule.stepKind]:id;}).join('、')}</p>}
+      {!!backward.crossWeekOperationalTaskIds?.length&&<p>明确跨周承接观察或复盘：{backward.crossWeekOperationalTaskIds.map(id=>{const task=capacityTasks.find(task=>task.taskId===id);return task?STEP_LABEL[task.schedule.stepKind]:id;}).join('、')}</p>}
       <p>建议预留预算 {backward.reservedCostCny} 元。当前容量是你填写的假设，人工任务尚未核验。</p>
       <p className="mt-2 font-semibold">尚未确认或应用；日历、真实任务状态及发布窗口未修改。</p>
       <p>前置任务可安排到上周，但必须具备真实工作时段与输入；建议时间不代表已完成。</p>
       {backward.publications.map(publication=><p key={publication.publicationId} className="mt-2">{publication.publicationId} · {publication.conditionallyReachable?'条件可达':'存在缺口'} · {publication.reasons.map(reason=>reasonLabels[reason]??reason).join('；')||'仍需真实执行与核验'}</p>)}
-      <div className="mt-3 space-y-2">{backward.assignments.map(row=>{const task=tasks.find(task=>task.taskId===row.taskId);const previousWeek=!!(weekStart&&row.startAt&&row.startAt.slice(0,10)<weekStart.slice(0,10));return <div key={row.taskId} className="border-t border-amber-200 pt-2"><strong>{task?STEP_LABEL[task.schedule.stepKind]:row.taskId} · {task?(actorLabel[task.schedule.responsibleActor]??task.schedule.responsibleActor):''}{previousWeek?' · 跨周前置候选（需确认当地日期）':''}</strong><p>{row.startAt&&row.finishAt?`${row.startAt} → ${row.finishAt}`:'无法排入真实工作窗口'}{row.resourceKey?` · 产能：${row.resourceKey}`:''}</p><p>{row.reasons.map(reason=>reasonLabels[reason]??reason).join('；')||'建议时间，等待确认与执行'}</p></div>;})}</div>
+      <div className="mt-3 space-y-2">{backward.assignments.map(row=>{const task=capacityTasks.find(task=>task.taskId===row.taskId);const previousWeek=!!(weekStart&&row.startAt&&row.startAt.slice(0,10)<weekStart.slice(0,10));return <div key={row.taskId} className="border-t border-amber-200 pt-2"><strong>{task?STEP_LABEL[task.schedule.stepKind]:row.taskId} · {task?(actorLabel[task.schedule.responsibleActor]??task.schedule.responsibleActor):''}{previousWeek?' · 跨周前置候选（需确认当地日期）':''}</strong><p>{row.startAt&&row.finishAt?`${row.startAt} → ${row.finishAt}`:'无法排入真实工作窗口'}{row.resourceKey?` · 产能：${row.resourceKey}`:''}</p><p>{row.reasons.map(reason=>reasonLabels[reason]??reason).join('；')||'建议时间，等待确认与执行'}</p></div>;})}</div>
     </div>}
     {error&&<p role="alert" className="mt-3 rounded-lg bg-red-50 p-3 text-xs text-red-700">{error}</p>}
     {result&&<div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-xs leading-5"><p className="font-semibold">目标 {result.targetPublicationCount} 条 · 条件可达 {result.conditionallyReachableCount} 条 · 缺口 {result.publicationGap} 条</p><p>预测占用预算：{result.reservedCostCny} 元；受影响发布：{result.affectedPublicationIds.join('、')||'无直接依赖影响'}</p><p className="mt-2 font-semibold">{result.revisionApplied===false?'修订尚未生效；任务、审批和来源配额均未修改。':'请核对修订状态。'}</p><p>人工任务预测可完成，不代表已提交、已验收或已批准。</p><p>{result.confirmationRequired?'需要完成相应人工处理或确认修订后，才能继续按新方案执行。':'该预测仍依赖已填写的产能假设和真实任务完成。'}</p>{result.publications.map(publication=><div key={publication.taskId} className="mt-2 border-t border-amber-200 pt-2"><strong>{publication.publicationId} · {publication.conditionallyReachable?'条件可达':'存在缺口'}</strong><p>{publication.reasons.map(reason=>reasonLabels[reason]??reason).join('；')||'未发现排期缺口，仍需真实执行'}</p></div>)}</div>}

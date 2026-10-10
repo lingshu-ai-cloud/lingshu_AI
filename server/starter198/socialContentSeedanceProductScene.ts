@@ -1,3 +1,4 @@
+import {accountProductionConstraintPrompt} from './socialAccountProductionConstraints.js';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
@@ -130,6 +131,7 @@ export function createEnvironmentSeedanceProductScenePorts(): ProductSceneExecut
         presenterVersion: `${input.spec.sceneTemplateKey}:${compositionReference.sha256}`,
         prompt: [
           'Generate a photorealistic vertical commercial environment plate from the supplied reference frame.',
+          accountProductionConstraintPrompt(input.accountPlaybookConstraints),
           `Preserve only this environment and composition: ${input.spec.sceneLock.environment}; ${input.spec.sceneLock.background}; ${input.spec.sceneLock.lighting}.`,
           'Remove every product, person, caption, logo, watermark and readable text. Leave a clean foreground photography surface for exact product pixels to be composited later.',
         ].join('\n'),
@@ -236,8 +238,8 @@ export function createEnvironmentSeedanceProductScenePorts(): ProductSceneExecut
         model: seedanceModel,
         baseUrl: process.env.SEEDANCE_BASE_URL,
         prompt: supportsFullModalReference
-          ? `${productScenePrompt(input.spec)}\nREFERENCE MAP: @image1 is the exact opening composition and product layout. Preserve it as the opening visual. The later images lock product identity. @video1 supplies environment, camera motion and timing only.`
-          : `${productScenePrompt(input.spec)}\nThe supplied first frame is the exact opening composition and product layout. Animate it with the camera path described above while preserving every product.`,
+          ? `${productScenePrompt(input.spec)}\n${accountProductionConstraintPrompt(input.accountPlaybookConstraints)}\nREFERENCE MAP: @image1 is the exact opening composition and product layout. Preserve it as the opening visual. The later images lock product identity. @video1 supplies environment, camera motion and timing only.`
+          : `${productScenePrompt(input.spec)}\n${accountProductionConstraintPrompt(input.accountPlaybookConstraints)}\nThe supplied first frame is the exact opening composition and product layout. Animate it with the camera path described above while preserving every product.`,
         durationSeconds: duration,
         ratio: '9:16',
         resolution: '720p',

@@ -36,6 +36,7 @@ import {
   inferSocialReplicationReferenceMode,
 } from '../../shared/socialInspirationStrategy.js';
 import { socialRequestHash } from './socialContentValidation.js';
+import {publicationPreparationDeadline} from '../socialPrograms/publicationDeadlines.js';
 import type { BusinessContentGoal } from '../../shared/contracts/socialOperatingDecision.js';
 import type {
   SocialWeeklyPublicationTask,
@@ -60,7 +61,7 @@ import {
   buildInspirationHandoffs,
   buildReplicationJob,
   authoritativeHandoffs,
-  EMBEDDED_RUNTIME_REGISTRATIONS,
+  socialContentEmbeddedRuntimeRegistrations,
   mergeInspirationHandoffs,
   positiveNumber,
   socialContentCapabilityRegistry,
@@ -197,7 +198,9 @@ function directorScene(input: {
     precision: startSeconds < 3 ? 'hook_high' : 'standard',
   });
   const reference = input.reference;
-  const presenterVisible = Boolean(reference && /真人|人物|人像|口播|数字人|主播|女性|男性|模特|presenter|person|human|face|talking/i.test([
+  const referenceRouting = reference?.referenceProductionRouting;
+  const identityLockedPresenter = referenceRouting?.state === 'ready' && referenceRouting.route === 'reference_frame_presenter';
+  const presenterVisible = referenceRouting ? Boolean(identityLockedPresenter) : Boolean(reference && /真人|人物|人像|口播|数字人|主播|女性|男性|模特|presenter|person|human|face|talking/i.test([
     reference.visualDescription, reference.semanticLabel?.content, ...reference.tags.subjects,
   ].filter(Boolean).join(' ')));
   const isPrimaryHook = Boolean(reference && input.primaryHook?.referencePoints.includes(reference.shotId));
@@ -207,7 +210,8 @@ function directorScene(input: {
   const needsCameraOrCompositionReconstruction = Boolean(isPrimaryHook || (reference && /推进|拉远|运镜|构图|特写|镜头|camera|composition|zoom|pan/i.test([
     reference.visualDescription, reference.shotLanguage?.movement, reference.shotLanguage?.composition,
   ].filter(Boolean).join(' '))));
-  const personRole = visualTopicFor(reference, targetVisual, input.supply.function).personRole;
+  const personRole = identityLockedPresenter ? referenceRouting.observedPresenterRole === 'presenter_action' ? 'expressive_action' : 'visible_speech'
+    : visualTopicFor(reference, targetVisual, input.supply.function).personRole;
   const visibleMouth = personRole === 'visible_speech' || (personRole === 'expressive_action'
     && /口播|说话|对镜|唇|talking|speaking/i.test([
       reference?.visualDescription, reference?.semanticLabel?.content,
@@ -217,6 +221,7 @@ function directorScene(input: {
     sceneId: input.script?.shotId || input.supply.shotId,
     order: input.index + 1,
     referenceShotId: input.script?.referenceShotId ?? input.reference?.shotId ?? null,
+    ...(referenceRouting ? { referenceProductionRouting: structuredClone(referenceRouting) } : {}),
     visualTopic: visualTopicFor(input.reference, targetVisual, input.supply.function),
     ...(reference ? {
       referenceMaterial: {
@@ -347,18 +352,29 @@ function buildDirectorBrief(
   const scriptShots = input.replicationScript?.shots ?? [];
   const supplyShots = input.assetSupplyPlan.shots;
   const supplyById = new Map(supplyShots.map(shot => [shot.shotId, shot]));
-  const referenceById = new Map((input.referenceAnalysis?.shots ?? []).map(shot => [shot.shotId, shot]));
+  const referenceShots = input.referenceAnalysis?.shots ?? [];
+  const referenceById = new Map(referenceShots.map(shot => [shot.shotId, shot]));
+  const scriptIdentityReady = !scriptShots.length || (
+    new Set(scriptShots.map(shot => shot.shotId)).size === scriptShots.length
+    && new Set(supplyShots.map(shot => shot.shotId)).size === supplyShots.length
+    && new Set(referenceShots.map(shot => shot.shotId)).size === referenceShots.length
+    && scriptShots.every(shot => supplyById.has(shot.shotId)
+      && (!shot.referenceShotId || referenceById.has(shot.referenceShotId)))
+  );
   const productSelection = sceneProductSelection(input);
   const scenes = (scriptShots.length ? scriptShots : supplyShots.map(() => null)).map((script, index) => {
-    const supply = (script ? supplyById.get(script.shotId) : undefined) ?? supplyShots[index] ?? supplyShots[0];
+    const supply = script ? supplyById.get(script.shotId) : supplyShots[index] ?? supplyShots[0];
     if (!supply) return null;
+    const reference = script
+      ? referenceById.get(script.referenceShotId || '')
+      : referenceShots[index];
     return directorScene({
       index,
       script,
       supply,
-      reference: referenceById.get(script?.referenceShotId || '') ?? input.referenceAnalysis?.shots[index],
+      reference,
       replicationFactors: replicationJob?.factorSpecs.filter(factor => (
-        factor.referenceShotId === (script?.referenceShotId ?? input.referenceAnalysis?.shots[index]?.shotId ?? null)
+        factor.referenceShotId === (script?.referenceShotId ?? reference?.shotId ?? null)
       )) ?? [],
       productSelection,
       primaryHook: input.referenceAnalysis?.hookAnalysis ?? null,
@@ -384,7 +400,9 @@ function buildDirectorBrief(
     const capacity = /[\u3400-\u9fff]/.test(speech) ? scene.duration.targetSeconds * 5 : scene.duration.targetSeconds * 2.7;
     return units <= Math.max(1, capacity);
   });
-  const status = scenes.length > 0 && referenceReady && factorsReady && timelineValid && dialogueFits ? 'ready' : 'blocked';
+  const expectedSceneCount = scriptShots.length || supplyShots.length;
+  const status = scenes.length > 0 && scenes.length === expectedSceneCount && scriptIdentityReady
+    && referenceReady && factorsReady && timelineValid && dialogueFits ? 'ready' : 'blocked';
   const totalDurationSeconds = Math.max(0, ...scenes.map(scene => scene.duration.endSeconds));
   const inferredProductRef = productSelection.productRef;
   const requirementText = [
@@ -428,7 +446,7 @@ function buildDirectorBrief(
     } : null,
     inspirationHandoffIds: inspirationHandoffs.map(item => item.handoffId ?? item.inspirationId),
     topic: input.brief.title,
-    audience: input.brief.audience,
+    audience: unique([input.brief.audience,...(input.replicationContext?.verifiedAccountPlaybook?.audience??[])]).join('；'),
     platforms: input.brief.platforms,
     accountRefs: input.authoritativeContext ? [input.authoritativeContext.publicationTask.accountId] : [],
     creativeIntent: input.brief.objective,
@@ -440,7 +458,7 @@ function buildDirectorBrief(
     totalDurationSeconds,
     aspectRatio: input.brief.aspectRatio,
     languages: input.brief.languages,
-    brandRequirements: unique([input.brief.brandNotes || '', ...input.brief.restrictions].filter(Boolean)),
+    brandRequirements: unique([input.brief.brandNotes || '', ...input.brief.restrictions, ...(input.replicationContext?.verifiedAccountPlaybook?.evidenceRules??[]), ...(input.replicationContext?.verifiedAccountPlaybook?.visualRules??[]), ...(input.replicationContext?.verifiedAccountPlaybook?.languageRules??[]), ...(input.replicationContext?.verifiedAccountPlaybook?.presenterRules??[]), ...(input.replicationContext?.verifiedAccountPlaybook?.fixedFactors??[]), ...(input.replicationContext?.verifiedAccountPlaybook?.pillars??[]).map(value=>`账号栏目要求：${value}`), ...(input.replicationContext?.verifiedAccountPlaybook?.recurringFormats??[]).map(value=>`账号固定内容形式：${value}`), ...(input.replicationContext?.verifiedAccountPlaybook?[`账号行动引导要求：${input.replicationContext.verifiedAccountPlaybook.conversionRoute.callToAction}`,`账号获客入口：${input.replicationContext.verifiedAccountPlaybook.conversionRoute.entryType} ${input.replicationContext.verifiedAccountPlaybook.conversionRoute.entryRef??''}`]:[])].filter(Boolean)),
     factSourceRefs: input.authoritativeContext
       ? unique(input.authoritativeContext.publicationTask.factRefs.map(ref => `${ref.type}:${ref.id}@${ref.version}`))
       : input.factSourceRefs,
@@ -499,7 +517,7 @@ function capabilityCandidates(input: {
   capabilityRuntime?: SocialContentCapabilityRuntimeRegistration[];
   materialCandidates?: SocialWorkflowMaterialCandidate[];
 }): SocialExecutionCandidate[] {
-  const runtimeRegistration = new Map((input.capabilityRuntime ?? EMBEDDED_RUNTIME_REGISTRATIONS)
+  const runtimeRegistration = new Map((input.capabilityRuntime ?? socialContentEmbeddedRuntimeRegistrations())
     .map(item => [item.strategy, item]));
   const sourceRuntime = runtimeRegistration.get(input.supply.sourceStrategy);
   // Product image refs are inputs to the paid scene-generation capability,
@@ -640,10 +658,24 @@ function capabilityCandidates(input: {
       clipId: null,
       timeRange: null,
       promptRef: null,
-      retryPolicy: { maxAttempts: 3, fallbackStrategies: [...capability.fallbackStrategies] },
+      retryPolicy: { maxAttempts: 3, fallbackStrategies: input.scene.referenceProductionRouting ? [] : [...capability.fallbackStrategies] },
       provenance: { origin: capability.strategy === 'licensed_stock_asset' ? 'licensed_library' : 'system_capability', inputVersion: input.taskVersion, authorizationRef: capability.rightsStatus === 'confirmed' ? `capability:${capability.strategy}` : null, executionRecordId: null },
     }));
   return [...actualAssets, ...capabilityRows]
+    .filter(candidate => {
+      const routing = input.scene.referenceProductionRouting;
+      if (!routing) return true;
+      if (routing.state !== 'ready' || routing.route === 'undetermined') return false;
+      if (routing.route === 'reference_frame_presenter') return candidate.kind === 'capability' && candidate.sourceStrategy === 'authorized_digital_presenter';
+      if (['aigc_video', 'non_presenter_aigc_video'].includes(routing.route)) return candidate.kind === 'capability'
+        && ['aigc_product_scene_replication', 'non_evidentiary_ai_visual'].includes(candidate.sourceStrategy);
+      if (!['customer_real_asset', 'licensed_stock_asset'].includes(candidate.sourceStrategy)) return false;
+      if (routing.route === 'library_match' && candidate.kind === 'asset') {
+        const material = input.materialCandidates?.find(item => item.sourceRef === candidate.sourceRef || item.assetId === candidate.sourceRef);
+        return Boolean(material?.visualContract && !material.visualContract.subjects.some(subject => subject.kind === 'person'));
+      }
+      return true;
+    })
     .sort((left, right) => right.semanticScore - left.semanticScore || right.estimatedSuccessRate - left.estimatedSuccessRate)
     .slice(0, 20);
 }
@@ -657,6 +689,8 @@ function executionScene(input: {
   materialCandidates?: SocialWorkflowMaterialCandidate[];
 }): SocialContentExecutionScenePlan {
   const candidates = capabilityCandidates({ ...input, sceneId: input.scene.sceneId });
+  const identityLockedPresenter = input.scene.referenceProductionRouting?.state === 'ready'
+    && input.scene.referenceProductionRouting.route === 'reference_frame_presenter';
   const topic = input.scene.visualTopic;
   const primaryHook = input.scene.referenceMaterial?.isPrimaryHook || input.supply.function === 'hook';
   const referenceHook = Boolean(input.scene.referenceMaterial?.isPrimaryHook
@@ -688,7 +722,7 @@ function executionScene(input: {
   const safeOriginalHookFallback = referenceHook
     ? undefined
     : capability('licensed_stock_asset') ?? capability('motion_graphics');
-  const preferred = expressivePerson ? undefined
+  const preferred = identityLockedPresenter ? capability('authorized_digital_presenter') : expressivePerson ? undefined
     : visibleSpeech ? capability('authorized_digital_presenter')
       : primaryHook && topic?.kind === 'product_introduction'
         ? capability('aigc_product_scene_replication') ?? capability('customer_product_image_animation') ?? matchingAsset ?? safeOriginalHookFallback
@@ -700,7 +734,7 @@ function executionScene(input: {
     routeDecision: {
       visualTopic: topic,
       policy,
-      reason: expressivePerson ? '人物明显动作需要已验收的首帧动作能力；当前注册能力不满足，退回补能力或改镜'
+      reason: identityLockedPresenter ? input.scene.referenceProductionRouting!.reason : expressivePerson ? '人物明显动作需要已验收的首帧动作能力；当前注册能力不满足，退回补能力或改镜'
         : visibleSpeech ? '可见口播需要企业授权人物与逐句口型能力'
           : primaryHook ? '开场钩子先保持参考表现机制，再核对可执行素材或能力'
             : matchingAsset ? '现有素材满足视觉主题、表达目的与画面契约'
@@ -737,7 +771,7 @@ function executionScene(input: {
 function buildExecutionPlan(input: BuildSocialAgentWorkflowInput, directorBrief: SocialDirectorBrief): SocialContentExecutionPlan {
   const supplyById = new Map(input.assetSupplyPlan.shots.map(shot => [shot.shotId, shot]));
   const scenes = directorBrief.scenes.flatMap(scene => {
-    const supply = supplyById.get(scene.sceneId) ?? input.assetSupplyPlan.shots[scene.order - 1];
+    const supply = supplyById.get(scene.sceneId);
     return supply ? [executionScene({
       taskId: input.taskId,
       taskVersion: input.taskVersion,
@@ -922,7 +956,9 @@ function buildReview(input: BuildSocialAgentWorkflowInput, directorBrief: Social
   ]);
   const requiredRevision = unique([
     ...(directorBlocked ? ['补齐参考分析覆盖或导演方案后重新规划'] : []),
-    ...(referenceBlocked ? ['按参考交接物 issues 补齐证据并重新计算生产门禁'] : []),
+    ...(referenceBlocked ? (input.referenceReviewHandoff?.issues?.length
+      ? input.referenceReviewHandoff.issues.map(issue => issue.action).filter(action => action.trim())
+      : ['补齐参考视频的动作、声音、分镜及授权证据后重新审核']) : []),
     ...sceneResults.flatMap(result => result.requiredRevision),
   ]);
   const reasonCodes = unique([
@@ -988,7 +1024,7 @@ export interface BuildSocialAgentWorkflowInput {
   assetSupplyPlan: SocialAssetSupplyPlan;
   referenceAnalysis: SocialReferenceVideoAnalysis | null;
   /** Version-bound reference gate; Content may plan but cannot execute while false. */
-  referenceReviewHandoff?: Pick<SocialReferenceReviewHandoff, 'productionExecutionAllowed' | 'versionHash'> | null;
+  referenceReviewHandoff?: Pick<SocialReferenceReviewHandoff, 'productionExecutionAllowed' | 'versionHash'> & Partial<Pick<SocialReferenceReviewHandoff, 'issues'>> | null;
   replicationScript: SocialReplicationScriptVersion | null;
   /** Optional versioned account/content lineage; omitted on historic tasks. */
   replicationContext?: SocialReplicationJobContext;
@@ -1019,11 +1055,16 @@ function assertAuthoritativeContext(input: BuildSocialAgentWorkflowInput): void 
   const packageTask = authority.weeklyPackage.workflowTasks.find(item => item.taskId === authority.weeklyWorkflowTask.taskId);
   const publicationTask = authority.weeklyPackage.socialContentPackage.publicationTasks
     .find(item => item.publicationTaskId === authority.publicationTask.publicationTaskId);
+  const publicationInput = (item: typeof authority.publicationTask) => {
+    const {status, ...frozen} = item;
+    return frozen;
+  };
   if (authority.weeklyPackage.programId !== authority.programRef.id
     || authority.businessGoal.programId !== authority.weeklyPackage.programId
     || authority.weeklyPackage.businessContentGoalRef?.id !== authority.businessGoal.goalId
     || authority.weeklyPackage.enterpriseProfileRef?.id !== authority.enterpriseProfileRef.id
     || !packageTask || packageTask.kind !== 'content' || !publicationTask
+    || (publicationTask && socialRequestHash(publicationInput(publicationTask)) !== socialRequestHash(publicationInput(authority.publicationTask)))
     || !packageTask.subjectRefs.some(ref => ref.type === 'weekly_publication_task'
       && ref.id === publicationTask.publicationTaskId && ref.version === authority.weeklyPackage.version)
     || publicationTask.factRefs.some(factRef => !authority.businessGoal.publicFactRefs.some(goalFact => (
@@ -1048,6 +1089,11 @@ function assertAuthoritativeContext(input: BuildSocialAgentWorkflowInput): void 
  */
 export function buildSocialAgentWorkflow(input: BuildSocialAgentWorkflowInput): SocialContentAgentWorkflow {
   assertAuthoritativeContext(input);
+  if (input.authoritativeContext) {
+    input = {...input, brief: {...input.brief,
+      dueAt: publicationPreparationDeadline(input.authoritativeContext.publicationTask.publishWindow),
+    }};
+  }
   const context = buildBusinessContext(input);
   const discoveryBrief = buildDiscoveryBrief(input);
   const inspirationHandoffs = mergeInspirationHandoffs(

@@ -1,3 +1,4 @@
+import {weeklyExecutionObservation} from './weeklyExecutionObservation.js';
 import { runWeeklyDeadlineRecoveryScan, type DeadlineRecoveryEvidenceReader } from './socialWeeklyDeadlineRecovery.js';
 import { randomUUID } from 'node:crypto';
 import { SocialProgramError } from '../socialPrograms/service.js';
@@ -14,6 +15,8 @@ import { createSocialWeeklyExecutionWorker } from './socialWeeklyExecutionWorker
 import { createWeeklyExecutionContinuationService } from '../socialPrograms/weeklyExecutionContinuations.js';
 import type { SocialWeeklyExecutionAdapter, WeeklyExecutionAdapterResult } from './socialWeeklyExecutionAdapter.js';
 
+import {TEMPLATE_EXECUTION_INPUT_BLOCKERS} from '../socialPrograms/templateExecutionBlockingCodes.js';
+
 export const WEEKLY_PREPRODUCTION_STEPS: WeeklyProductionStepKind[] = ['business_outline', 'benchmark_collection', 'benchmark_scoring', 'director_analysis', 'business_schedule'];
 
 /** Reconcile work already performed before formal dispatch against its frozen authority. */
@@ -22,6 +25,10 @@ export function createSocialWeeklyPlanningAdapter(dataStore: DataStore): SocialW
     const packages = await dataStore.list<PackageRow>(PACKAGES, { where: { tenant_id: task.tenantId, program_id: task.programId, package_id: task.packageId, version: task.packageVersion }, page: 1, perPage: 1 });
     const pkg = packages.items[0]?.payload;
     if (!pkg || !['draft', 'active'].includes(pkg.status) || pkg.packageId !== task.packageId || pkg.version !== task.packageVersion) return { status: 'blocked', code: 'weekly_package_not_executable', message: '本周任务包已被替代、停用或不存在。' };
+    if(task.schedule.stepKind==='business_outline'&&pkg.socialContentPackage?.publicationTasks?.length&&pkg.socialContentPackage.publicationTasks.every(p=>p.inventoryReuseRef)){
+      try{const {readWeeklyInventoryOutlineEvidence}=await import('./weeklyInventoryOutlineEvidence.js');const result=await readWeeklyInventoryOutlineEvidence(dataStore,task);return {status:'succeeded',resultRefs:result.resultRefs};}
+      catch(error){if(error instanceof SocialProgramError)return {status:'blocked',code:error.code,message:error.message};throw error;}
+    }
     const rows = await dataStore.list<{ id: string; payload: WeeklyAgentPlanningState }>(WEEKLY_AGENT_PLANNING, {
       where: { tenant_id: task.tenantId, program_id: task.programId, package_id: task.packageId, package_version: task.packageVersion },
       sort: '-planning_version', page: 1, perPage: 1,
@@ -108,7 +115,9 @@ export async function runSocialWeeklyExecutionScan(input: {
       let validatingCompletion = false;
       try {
         const adapter = input.adapters[claim.task.schedule.stepKind];
-        const dispatchGate = await planningAuthority.execute({ ...claim.task, accountId: null, inputSnapshot: {}, schedule: { ...claim.task.schedule, stepKind: 'business_outline' } });
+        let dispatchGate:WeeklyExecutionAdapterResult;
+        try{const {readWeeklyInventoryExecutionGate}=await import('./weeklyInventoryOutlineEvidence.js');const inventoryGate=await readWeeklyInventoryExecutionGate(dataStore,claim.task);dispatchGate=inventoryGate?{status:'succeeded',resultRefs:inventoryGate.resultRefs}:await planningAuthority.execute({ ...claim.task, accountId: null, inputSnapshot: {}, schedule: { ...claim.task.schedule, stepKind: 'business_outline' } });}
+        catch(error){if(error instanceof SocialProgramError)dispatchGate={status:'blocked',code:error.code,message:error.message};else throw error;}
         const continuationPending = claim.task.inputSnapshot.weeklyContinuationPending;
         const continuationRef = claim.task.inputSnapshot.weeklyContinuationRef;
         let continuationResult: WeeklyExecutionAdapterResult | undefined;
@@ -136,8 +145,10 @@ export async function runSocialWeeklyExecutionScan(input: {
         clearInterval(timer);
         await renewal;
         report.failed++;
-        if (!lostLease && validatingCompletion && ((error instanceof SocialProgramError && [400, 401, 403, 404, 409, 422].includes(error.status)) || (error instanceof SocialContentWorkflowError && ([400, 401, 403, 404, 409, 422].includes(error.status) || ['social_content_file_integrity_violation', 'social_content_file_record_invalid'].includes(error.code))))) {
+        const templateInputBlocked = error instanceof SocialProgramError && [400,403,409].includes(error.status) && TEMPLATE_EXECUTION_INPUT_BLOCKERS.has(error.code);
+        if (!lostLease && ((error instanceof SocialProgramError && [400,403,409].includes(error.status) && TEMPLATE_EXECUTION_INPUT_BLOCKERS.has(error.code)) || validatingCompletion && ((error instanceof SocialProgramError && [400, 401, 403, 404, 409, 422].includes(error.status)) || (error instanceof SocialContentWorkflowError && ([400, 401, 403, 404, 409, 422].includes(error.status) || ['social_content_file_integrity_violation', 'social_content_file_record_invalid'].includes(error.code)))))) {
           await worker.defer(claim, { now: input.now, code: error.code, message: error.message, blockingReason: error.code }).catch(() => undefined);
+          if(templateInputBlocked){report.failed--;report.blocked++;}
         } else if (!lostLease) await worker.fail(claim, { now: input.now, code: 'weekly_execution_adapter_failed', message: error instanceof Error ? error.message : String(error), retryable: true }).catch(() => undefined);
       } finally { clearInterval(timer); }
     }
@@ -148,14 +159,16 @@ export async function runSocialWeeklyExecutionScan(input: {
 let timer: ReturnType<typeof setInterval> | null = null;
 let running = false;
 export function initSocialWeeklyExecutionRuntime(adapters: Partial<Record<WeeklyProductionStepKind, SocialWeeklyExecutionAdapter>>, options: { readRecoveryEvidence?: DeadlineRecoveryEvidenceReader } = {}): void {
-  if (timer || process.env.SOCIAL_WEEKLY_EXECUTION_WORKER_ENABLED !== 'true') return;
+  if(timer)return;
+  if(process.env.SOCIAL_WEEKLY_EXECUTION_WORKER_ENABLED!=='true'){weeklyExecutionObservation.initialize(false);return;}
   const workerId = `weekly-execution-${process.pid}-${randomUUID()}`;
   const tick = () => {
     if (running) return;
     running = true;
-    void runSocialWeeklyExecutionScan({ adapters, workerId, readRecoveryEvidence: options.readRecoveryEvidence }).catch(error => console.error('[social-weekly-execution] scan unavailable:', error instanceof Error ? error.message : String(error))).finally(() => { running = false; });
+    void weeklyExecutionObservation.scan(()=>runSocialWeeklyExecutionScan({ adapters, workerId, readRecoveryEvidence: options.readRecoveryEvidence })).catch(error => console.error('[social-weekly-execution] scan unavailable:', error instanceof Error ? error.message : String(error))).finally(() => { running = false; });
   };
   timer = setInterval(tick, Math.max(1_000, Number(process.env.SOCIAL_WEEKLY_EXECUTION_INTERVAL_MS) || 15_000));
   timer.unref?.();
+  weeklyExecutionObservation.initialize(true,workerId);
   tick();
 }

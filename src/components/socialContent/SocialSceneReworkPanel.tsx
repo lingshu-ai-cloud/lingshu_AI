@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import type { SocialContentTaskDetail } from '../../../shared/contracts/socialContentWorkflow';
 import type { SocialSceneReworkAvailability, SocialSceneReworkStatus } from '../../../shared/contracts/socialSceneRework';
+import type { SceneReworkAdmissionPreview } from '../../../server/starter198/socialContentSceneReworkAdmission';
+import type { SceneReworkCostPolicy } from '../../../server/starter198/socialContentSceneReworkCostPolicy';
 import { socialContentApi } from '../../lib/socialContentApi';
 import {
   sceneReworkSelectionAllowed,
@@ -12,6 +14,9 @@ import {
   socialSceneReworkCostApi,
   type SceneReworkCostEvidence,
 } from '../../lib/socialSceneReworkCostApi';
+import { SocialDirectorG5ReviewPanel } from './SocialDirectorG5ReviewPanel';
+import { SocialSceneG4ReviewPanel } from './SocialSceneG4ReviewPanel';
+import { WeeklyContentQualityRecoveryPanel } from './WeeklyContentQualityRecoveryPanel';
 
 export interface SocialSceneReworkPanelProps {
   task: SocialContentTaskDetail;
@@ -43,6 +48,8 @@ export function SocialSceneReworkPanel({
   const [cost, setCost] = useState<SceneReworkCostEvidence | null>(null);
   const [cap, setCap] = useState('');
   const [costUncertain, setCostUncertain] = useState(false);
+  const [admissionPreview, setAdmissionPreview] = useState<SceneReworkAdmissionPreview | null>(null);
+  const [admissionPolicy, setAdmissionPolicy] = useState<SceneReworkCostPolicy | null>(null);
   const identity = `${expectedTenantId || ''}:${task.taskId}:${task.runId}:${parent}`;
   const current = useRef(identity);
   current.current = identity;
@@ -57,6 +64,8 @@ export function SocialSceneReworkPanel({
     setAvailability(null);
     setIds([]);
     setStatus(null);
+    setAdmissionPreview(null);
+    setAdmissionPolicy(null);
     setError('');
     setBusy(false);
     setUncertain(false);
@@ -98,12 +107,12 @@ export function SocialSceneReworkPanel({
   }, [identity, initialParentArtifactId, focusedSceneId]);
 
   async function submit() {
-    if (!availability) return;
+    if (!availability || !admissionPreview) return;
     const token = identity;
     setBusy(true);
     setError('');
     try {
-      const value = await socialSceneReworkApi.submit(scope(), availability, ids);
+      const value = await socialSceneReworkApi.submit(scope(), availability, ids, admissionPreview, admissionPolicy || undefined);
       if (current.current !== token) return;
       setStatus(value);
       onChanged?.();
@@ -111,6 +120,43 @@ export function SocialSceneReworkPanel({
       if (current.current === token) {
         setError(cause instanceof Error ? cause.message : String(cause));
         setUncertain(true);
+      }
+    } finally {
+      if (current.current === token) setBusy(false);
+    }
+  }
+
+  async function previewAdmission() {
+    if (!availability) return;
+    const token = identity;
+    setBusy(true);
+    setError('');
+    try {
+      const value = await socialSceneReworkApi.preview(scope(), availability, ids);
+      if (current.current !== token) return;
+      setAdmissionPreview(value);
+      setAdmissionPolicy(null);
+      setCap(value.quote ? String(value.quote.totalUpperBoundCny) : '');
+    } catch (cause) {
+      if (current.current === token) setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      if (current.current === token) setBusy(false);
+    }
+  }
+
+  async function confirmAdmissionCost() {
+    if (!availability || !admissionPreview?.quote || !cap.trim()) return;
+    const token = identity;
+    setBusy(true);
+    setError('');
+    try {
+      const value = await socialSceneReworkApi.confirmAdmissionCost(scope(), availability, ids, admissionPreview, Number(cap));
+      if (current.current !== token) return;
+      setAdmissionPolicy(value);
+    } catch (cause) {
+      if (current.current === token) {
+        setError(cause instanceof Error ? cause.message : String(cause));
+        setCostUncertain(true);
       }
     } finally {
       if (current.current === token) setBusy(false);
@@ -197,7 +243,7 @@ export function SocialSceneReworkPanel({
   return (
     <section aria-label="逐镜局部返工" className="rounded-lg border border-border bg-white p-4">
       <h3 className="text-sm font-bold">失败镜头局部返工</h3>
-      <p className="my-2 text-xs text-text-muted">保留原成片，只修复已核验失败镜头。提交会申请独立生产作业，仍须服务端核验授权、预算和保留镜头凭据；完成后需真实质量审核。</p>
+      <p className="my-2 text-xs text-text-muted">保留原成片，只修复已核验失败镜头。系统先核验真实路线并生成报价；付费路线确认上限后才创建独立生产作业。</p>
       <div className="flex flex-wrap items-center gap-2">
         <select aria-label="返工原成片" value={parent} disabled={busy || uncertain} onChange={event => setParent(event.target.value)} className={inputClass}>
           <option value="">选择本任务真实成片</option>
@@ -214,7 +260,7 @@ export function SocialSceneReworkPanel({
             <label className="flex items-start gap-2">
               <input
                 type="checkbox"
-                disabled={busy || uncertain || Boolean(status) || scene.status !== 'failed'}
+                disabled={busy || uncertain || Boolean(status) || Boolean(admissionPreview) || scene.status !== 'failed'}
                 checked={ids.includes(scene.sceneId)}
                 onChange={event => setIds(currentIds => event.target.checked ? [...currentIds, scene.sceneId] : currentIds.filter(id => id !== scene.sceneId))}
               />
@@ -228,7 +274,16 @@ export function SocialSceneReworkPanel({
         {availability.existingOperations?.map(operation => (
           <button type="button" key={operation.operationId} disabled={busy} onClick={() => setStatus(operation)} className={secondaryButtonClass}>查看已持久返工 · {operation.jobStatus} · {operation.operationId}</button>
         ))}
-        <button type="button" disabled={busy || uncertain || Boolean(status) || !sceneReworkSelectionAllowed(availability, ids)} onClick={() => void submit()} className="btn-primary">明确提交所选失败镜头返工</button>
+        {!admissionPreview && <button type="button" disabled={busy || uncertain || Boolean(status) || !sceneReworkSelectionAllowed(availability, ids)} onClick={() => void previewAdmission()} className="btn-primary">核验路线并生成执行方案</button>}
+        {admissionPreview && <div className="space-y-2 rounded-lg border border-border bg-surface-2 p-3 text-xs">
+          <p>执行方案 {admissionPreview.operationId} · 尚未创建生产作业</p>
+          {admissionPreview.gaps.map(gap => <p key={gap} className="text-amber-800">{gap}</p>)}
+          {admissionPreview.localOnly ? <p>当前为已验证本地素材路线，无外部生成费用。</p> : admissionPreview.quote ? <>
+            <p>付费路线 {admissionPreview.quote.provider} / {admissionPreview.quote.model} · 报价上界 ¥{admissionPreview.quote.totalUpperBoundCny.toFixed(2)}</p>
+            <div className="flex flex-wrap items-end gap-2"><label>明确允许的本次费用上限（元）<input type="number" min="0" step="0.01" value={cap} disabled={busy || Boolean(admissionPolicy)} onChange={event => setCap(event.target.value)} className={`mt-1 block ${inputClass}`}/></label>{admissionPolicy ? <p>已确认费用上限 ¥{admissionPolicy.authorizedMaximumCostCny.toFixed(2)}；仍未创建生产作业。</p> : <button type="button" disabled={busy || !cap.trim() || Number(cap) < admissionPreview.quote.totalUpperBoundCny || Number(cap) > admissionPreview.quote.maximumOriginalBudgetCny} onClick={() => void confirmAdmissionCost()} className={secondaryButtonClass}>确认费用上限</button>}</div>
+          </> : <p>缺少可信报价，不能创建生产作业。</p>}
+          <button type="button" disabled={busy || uncertain || admissionPreview.gaps.length > 0 || (!admissionPreview.localOnly && !admissionPolicy)} onClick={() => void submit()} className="btn-primary">创建并开始返工作业</button>
+        </div>}
       </div>}
 
       {status && <div className="mt-4 space-y-2 rounded-lg border border-border bg-surface-2 p-3 text-xs">
@@ -260,6 +315,9 @@ export function SocialSceneReworkPanel({
       </div>}
       {uncertain && <p role="alert" className="mt-3 rounded-lg bg-amber-50 p-3 text-xs text-amber-900">提交结果未知，已停止重复提交。请刷新任务并核对实际返工记录；本界面不会自动重试付费操作。</p>}
       {error && <p role="alert" className="mt-3 rounded-lg bg-red-50 p-3 text-xs text-red-700">{error}</p>}
+      {availability && availability.taskId === task.taskId && availability.parentArtifactId === parent && <WeeklyContentQualityRecoveryPanel key={`${availability.tenantId}:${availability.taskId}:${availability.sourceRunId}:${availability.parentArtifactId}`} scope={{ tenantId: availability.tenantId, taskId: availability.taskId, runId: availability.sourceRunId, artifactId: availability.parentArtifactId }} onChanged={() => { void load(); onChanged?.(); }}/>}
+      <SocialDirectorG5ReviewPanel task={task} initialArtifactId={parent || initialParentArtifactId} expectedTenantId={expectedTenantId} onChanged={() => { void load(); onChanged?.(); }}/>
+      <SocialSceneG4ReviewPanel task={task} initialArtifactId={parent || initialParentArtifactId} initialSceneId={focusedSceneId} expectedTenantId={expectedTenantId} onChanged={() => { void load(); onChanged?.(); }}/>
     </section>
   );
 }

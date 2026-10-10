@@ -1,3 +1,5 @@
+import {readWeeklyStageObservation} from './socialWeeklyStageObservation.js';
+import {readWeeklyReplicationContext} from './weeklyReplicationContext.js';
 import { parseSocialReplicationContext } from './socialContentValidation.js';
 import {
   SOCIAL_ARTIFACT_STATUSES,
@@ -35,6 +37,7 @@ import { STARTER_COLLECTIONS, type Starter198Repository, type StarterRecord } fr
 import {
   SocialContentWorkflowError,
   socialJson,
+  socialRequestHash,
   socialObject,
   socialText,
 } from './socialContentValidation.js';
@@ -826,7 +829,7 @@ export async function readSocialTaskDetail(input: {
     throw new SocialContentWorkflowError('social_content_task_projection_out_of_sync', 503);
   }
   const activeMaterials = activeSources.filter(source => source.kind === 'material');
-  const materialInventory = await readMaterialLibrary(input.tenantId).catch(() => ({ items: [] as MaterialRecord[] }));
+  const materialInventory = await (input.repository.materialLibrary ?? readMaterialLibrary)(input.tenantId).catch(() => ({ items: [] as MaterialRecord[] }));
   const materialById = new Map(materialInventory.items.map(item => [socialText(item.id), item]));
   const linkedMaterialRows = activeMaterials.flatMap(source => {
     const record = materialById.get(decodeMaterialRef(source.sourceRef));
@@ -858,6 +861,8 @@ export async function readSocialTaskDetail(input: {
     return values.map(socialText).find(value => /^\/(?:media|studio-media|api\/overseas\/(?:studio\/materials\/pb|videos)\/)/.test(value)) ?? null;
   };
   const linkedRecordIds = new Set(linkedMaterialRows.map(item => socialText(item.record.id)));
+  const frozenRaw=socialObject(socialJson(task.brief))?._weeklyOwnedProductIdentityDemand,frozen=socialObject(socialJson(frozenRaw));
+  if(frozen){const {resolveWeeklyCreativeRepairAuthority}=await import('../runtime/weeklyCreativeRepairAuthority.js'),creative=input.repository.dataStore?await resolveWeeklyCreativeRepairAuthority({store:input.repository.dataStore,tenantId:input.tenantId,task}):null;if(creative){const {recordHash,...body}=frozen;if(frozen.schemaVersion!=='weekly-owned-product-identity.v1'||recordHash!==socialRequestHash(body)||frozen.tenantId!==input.tenantId||frozen.contentTaskId!==summary.taskId||frozen.packageId!==creative.repairCase.packageId||frozen.packageVersion!==creative.repairCase.packageVersion||frozen.publicationTaskId!==creative.repairCase.publicationTaskId||!Array.isArray(frozen.requirements)||!Array.isArray(frozen.verifiedMaterials))throw new SocialContentWorkflowError('weekly_owned_product_identity_binding_changed',409);for(const value of frozen.verifiedMaterials){const material=socialObject(value);if(!material||typeof material.sha256!=='string'||!activeMaterials.some(source=>source.sourceRef===material.sourceRef&&source.sourceVersion===material.sourceVersion&&material.sourceVersion===material.sha256))throw new SocialContentWorkflowError('weekly_owned_product_identity_material_changed',409);const matches=materialInventory.items.filter(item=>String(item.tenantId||item.tenant_id)===input.tenantId&&item.type==='image'&&item.contentSha256===material.sha256&&(frozen.requirements as unknown[]).some((value:unknown)=>{const requirement=socialObject(value);return Array.isArray(requirement?.imageIds)&&requirement.imageIds.includes(item.id)&&Array.isArray(requirement.imageHashes)&&requirement.imageHashes.includes(material.sha256)&&String(item.productRef||item.productName)===requirement.productRef;}));if(matches.length!==1)throw new SocialContentWorkflowError('weekly_owned_product_identity_material_changed',409);linkedRecordIds.add(matches[0]!.id);}}}
   const selectedTaskProductId = socialText(summary.brief.productId) || null;
   const selectedTaskProductRef = socialText(summary.brief.productRef) || null;
   const candidateSet = buildSocialWorkflowMaterialCandidates({
@@ -901,9 +906,50 @@ export async function readSocialTaskDetail(input: {
     && !candidate.materialRoles.includes('customer_case')
   )));
   const licensedStockAssetIds = uniqueAssetIds(materialCandidates.filter(candidate => candidate.origin === 'shared_library'));
-  const referenceRecord = referenceVideoAnalysis?.referenceRecordId
+  let referenceRecord: MaterialRecord | undefined = referenceVideoAnalysis?.referenceRecordId
     ? materialById.get(referenceVideoAnalysis.referenceRecordId)
     : undefined;
+  // URL references are canonical catalog records, not uploaded library media.
+  // Resolve only this tenant's exact analyzed record and attached source identity.
+  if (!referenceRecord && referenceVideoAnalysis?.referenceRecordId && input.repository.dataStore) {
+    const catalog = await input.repository.dataStore.list<Record<string, unknown>>('trend_videos', {
+      where: { tenantId: input.tenantId, id: referenceVideoAnalysis.referenceRecordId }, perPage: 2,
+    });
+    const candidate = catalog.items[0];
+    if (catalog.totalItems === 1 && catalog.items.length === 1 && candidate?.tenantId === input.tenantId
+      && candidate.id === referenceVideoAnalysis.referenceRecordId
+      && activeSources.some(source => source.kind === 'reference_link' && source.sourceRef === candidate.sourceUrl)) {
+      if (weeklyAuthority) {
+        const plan = weeklyAuthority.weeklyPackage.agentPlanning;
+        const dispatched = plan?.dispatch?.scheduleItems.find(item => item.publicationTaskId === weeklyAuthority.publicationTask.publicationTaskId);
+        const analysis = plan?.directorAnalyses.find(item => item.analysisId === dispatched?.directorAnalysisRef?.id);
+        if (!analysis) throw new SocialContentWorkflowError('weekly_reference_source_missing', 409);
+        const {readWeeklyReferenceSources} = await import('../runtime/socialWeeklyReferenceSource.js');
+        const references = await readWeeklyReferenceSources(input.repository.dataStore, input.tenantId, weeklyAuthority, analysis);
+        if (!references.some(reference => reference.record.id === candidate.id && activeSources.some(source => source.kind === 'reference_link'
+          && source.sourceRef === reference.sourceRef && source.sourceVersion === reference.sourceVersion))) {
+          throw new SocialContentWorkflowError('weekly_reference_version_changed', 409);
+        }
+      }
+      referenceRecord = { ...candidate, id: referenceVideoAnalysis.referenceRecordId };
+      const originalAnalysis = socialObject(socialJson(candidate.aiAnalysis));
+      if (originalAnalysis && typeof originalAnalysis.analysisRunId === 'string' && typeof originalAnalysis.contentSha256 === 'string') {
+        const analysisHash = socialRequestHash(originalAnalysis);
+        const evidence = await input.repository.dataStore.list<Record<string, unknown>>('reference_exact_shot_evidence', {
+          where: { tenant_id: input.tenantId, record_id: String(candidate.id), source_sha256: originalAnalysis.contentSha256,
+            analysis_run_id: originalAnalysis.analysisRunId, analysis_hash: analysisHash }, perPage: 2,
+        });
+        if (evidence.totalItems > 0) {
+          const {createExactShotMaterializationService} = await import('../lib/referenceExactShotMaterialization.js');
+          const merged = await createExactShotMaterializationService(input.repository.dataStore).readVerifiedAnalysis({
+            tenantId: input.tenantId, recordId: String(candidate.id), expectedSourceSha256: originalAnalysis.contentSha256,
+            expectedAnalysisRunId: originalAnalysis.analysisRunId, expectedAnalysisHash: analysisHash,
+          });
+          if (merged) referenceRecord = {...candidate, id: referenceVideoAnalysis.referenceRecordId, aiAnalysis: JSON.stringify(merged)};
+        }
+      }
+    }
+  }
   const assetSupplyPlan = createSocialAssetSupplyPlan({
     creationMode: summary.brief.creationMode ?? 'material_processing',
     assetAvailability: summary.brief.assetAvailability,
@@ -957,6 +1003,7 @@ export async function readSocialTaskDetail(input: {
     weeklyPlanId: summary.weeklyPlanId ?? null,
     brief: summary.brief,
     authoritativeContext: weeklyAuthority,
+    replicationContext: input.repository.dataStore && weeklyAuthority?.weeklyPackage.agentPlanning?.dispatch ? await readWeeklyReplicationContext({store:input.repository.dataStore,tenantId:input.tenantId,task,sources:activeSources}) : undefined,
     sources: activeSources,
     factSourceRefs: confirmedFactRefs,
     assetSupplyPlan,
@@ -1000,11 +1047,12 @@ export async function readSocialTaskDetail(input: {
     waiting_for_user_input: '等待确认',
     automatic_recovery_exhausted: '等待重试',
   };
-  const productionProgress = productionStage && productionMessage
+  const stageObservation=input.repository.dataStore&&summary.runId?await readWeeklyStageObservation(input.repository.dataStore,{tenantId:input.tenantId,taskId:input.taskId,runId:summary.runId}):null;
+  const productionProgress = stageObservation ? {step:'等待素材与资产排期',activity:'原运行已保存分镜意图，等待素材二次核验及资产任务领取；对应任务到期后继续原作业，不重新启动。',estimatedRemainingSeconds:null,waitingForScheduledAssets:true,updatedAt:stageObservation.updatedAt||summary.updatedAt} : productionStage && productionMessage
     ? {
       step: productionStepByStage[productionStage] ?? '自动制作',
       activity: productionMessage,
-      estimatedRemainingSeconds: Math.max(0, Math.round(
+      estimatedRemainingSeconds: remainingRatioByStage[productionStage]===undefined?null:Math.max(0, Math.round(
         agentWorkflow.executionPlan.estimatedTotalSeconds
           * (remainingRatioByStage[productionStage] ?? 0.75),
       )),

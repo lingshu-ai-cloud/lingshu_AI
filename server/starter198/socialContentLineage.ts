@@ -84,6 +84,9 @@ export function buildSocialContentAuthorityLineage(input: {
   productionResult?: SocialProductionResult | null;
   now?: Date;
 }): SocialContentAuthorityLineage {
+  if (input.productionResult && (!Number.isSafeInteger(Number(input.productionResult.version)) || Number(input.productionResult.version) < 1)) {
+    throw new Error('social_content_production_version_invalid');
+  }
   const upstream = {
     programRef: input.programRef, packageRef: input.packageRef, weeklyTaskRef: input.weeklyTaskRef,
     publicationTaskRef: input.publicationTaskRef, businessGoalRef: input.businessGoalRef,

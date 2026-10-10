@@ -1,3 +1,4 @@
+import {publicationPreparationDeadline} from '../socialPrograms/publicationDeadlines.js';
 import type {
   SocialAdHocBusinessContext,
   SocialContentTaskStatus,
@@ -56,10 +57,6 @@ export interface SocialContentCapabilityRuntimeRegistration {
   reason: string | null;
 }
 
-const PRODUCT_SCENE_RUNTIME_READY = process.env.SEEDANCE_VIDEO_ENABLED === 'true'
-  && Boolean(String(process.env.SEEDANCE_API_KEY || '').trim())
-  && Boolean(String(process.env.SEEDREAM_API_KEY || process.env.SEEDANCE_API_KEY || '').trim());
-
 export type SocialContentCapabilityRuntime = CapabilityDefinition & {
   availability: 'available' | 'degraded' | 'unavailable';
   executable: boolean;
@@ -69,19 +66,27 @@ export type SocialContentCapabilityRuntime = CapabilityDefinition & {
 
 /** Runtime registrations advertised to the planner. Provider-backed capabilities
  * become executable only after this process has verified their environment. */
-export const EMBEDDED_RUNTIME_REGISTRATIONS: SocialContentCapabilityRuntimeRegistration[] = [
-  { strategy: 'customer_real_asset', adapterIds: ['existing_customer_asset.v1'], environmentReady: true, reason: null },
-  { strategy: 'customer_product_image_animation', adapterIds: ['existing_customer_asset.v1'], environmentReady: true, reason: null },
-  { strategy: 'licensed_stock_asset', adapterIds: ['authorized_shared_library.v1'], environmentReady: true, reason: '执行仍取决于租户可见库存与逐条授权记录' },
-  { strategy: 'motion_graphics', adapterIds: ['system_safe_motion_graphics.v1'], environmentReady: true, reason: null },
-  { strategy: 'verified_fact_card', adapterIds: ['system_safe_motion_graphics.v1'], environmentReady: true, reason: null },
-  ...(PRODUCT_SCENE_RUNTIME_READY ? [{
-    strategy: 'aigc_product_scene_replication',
-    adapterIds: ['controlled_product_scene_replication.v1'],
-    environmentReady: true,
-    reason: null,
-  } satisfies SocialContentCapabilityRuntimeRegistration] : []),
-];
+/** Resolve runtime-backed capabilities when a workflow is built. Reading the
+ * environment at module import made a worker keep an obsolete capability set
+ * after its verified runtime configuration was refreshed. */
+export function socialContentEmbeddedRuntimeRegistrations(): SocialContentCapabilityRuntimeRegistration[] {
+  const productSceneReady = process.env.SEEDANCE_VIDEO_ENABLED === 'true'
+    && Boolean(String(process.env.SEEDANCE_API_KEY || '').trim())
+    && Boolean(String(process.env.SEEDREAM_API_KEY || process.env.SEEDANCE_API_KEY || '').trim());
+  return [
+    { strategy: 'customer_real_asset', adapterIds: ['existing_customer_asset.v1'], environmentReady: true, reason: null },
+    { strategy: 'customer_product_image_animation', adapterIds: ['existing_customer_asset.v1'], environmentReady: true, reason: null },
+    { strategy: 'licensed_stock_asset', adapterIds: ['authorized_shared_library.v1'], environmentReady: true, reason: '执行仍取决于租户可见库存与逐条授权记录' },
+    { strategy: 'motion_graphics', adapterIds: ['system_safe_motion_graphics.v1'], environmentReady: true, reason: null },
+    { strategy: 'verified_fact_card', adapterIds: ['system_safe_motion_graphics.v1'], environmentReady: true, reason: null },
+    ...(productSceneReady ? [{
+      strategy: 'aigc_product_scene_replication',
+      adapterIds: ['controlled_product_scene_replication.v1'],
+      environmentReady: true,
+      reason: null,
+    } satisfies SocialContentCapabilityRuntimeRegistration] : []),
+  ];
+}
 
 const CAPABILITIES: CapabilityDefinition[] = [
   { strategy: 'customer_product_image_animation', label: '产品图基础动效（兼容）', evidenceStrength: 'supporting', estimatedCostCny: 0.35, estimatedSeconds: 45, estimatedSuccessRate: 0.94, dataTransfer: 'local_only', rightsStatus: 'confirmed', canDo: ['在不具备产品场景生成能力时制作受控的基础运镜'], cannotDo: ['宣称完整复刻参考场景或镜头语言', '重绘包装文字、商标或证明真实使用效果'], inputRequirements: ['已授权且清晰的客户产品图'], outputSpec: '基础产品图短镜头', qualityRange: '仅作为兼容回退路线', concurrencyLimit: 4, rateLimitPerMinute: 30, planningAvailability: 'supported', authorizationScope: '当前租户产品素材', dataRestriction: '本地处理优先', fallbackStrategies: ['motion_graphics'], applicableScenes: ['hook', 'value', 'demonstration', 'call_to_action'] },
@@ -94,7 +99,7 @@ const CAPABILITIES: CapabilityDefinition[] = [
 ];
 
 export function socialContentCapabilityRegistry(
-  registrations: SocialContentCapabilityRuntimeRegistration[] = EMBEDDED_RUNTIME_REGISTRATIONS,
+  registrations: SocialContentCapabilityRuntimeRegistration[] = socialContentEmbeddedRuntimeRegistrations(),
 ): ReadonlyArray<Readonly<SocialContentCapabilityRuntime>> {
   const byStrategy = new Map(registrations.map(item => [item.strategy, item]));
   return CAPABILITIES.map(capability => {
@@ -155,7 +160,7 @@ export function buildBusinessContext(input: BuildSocialAgentWorkflowInput): {
           })),
           weeklyBudgetCny: content.weeklyBudgetCny,
           perItemBudgetCny: content.perItemBudgetCny,
-          dueAt: authority.weeklyPackage.weekEnd,
+          dueAt: publicationPreparationDeadline(authority.publicationTask.publishWindow),
           availableAssetRefs: input.sources.filter(source => source.kind === 'material').map(source => source.sourceId),
           customerCanShoot: false,
           availableCapabilities: socialContentCapabilityRegistry(input.capabilityRuntime)
@@ -435,7 +440,7 @@ export function buildReplicationJob(input: BuildSocialAgentWorkflowInput, contex
       role: handoff.referenceRole,
       primary,
       purpose: handoff.whySelected.join('；') || `作为${handoff.referenceRole}参考`,
-      chain: handoff.analysisId === input.referenceAnalysis?.analysisId ? chain : referenceChain({
+      chain: handoff.analysisId === input.referenceAnalysis?.analysisId || (replicationContext.verifiedPrimaryReference?.sourceAnalysisId===handoff.analysisId && replicationContext.verifiedPrimaryReference.sourceAnalysisVersion===handoff.analysisVersion && replicationContext.verifiedPrimaryReference.runtimeAnalysisId===input.referenceAnalysis?.analysisId && replicationContext.verifiedPrimaryReference.runtimeAnalysisVersion===input.referenceAnalysis?.version && replicationContext.verifiedPrimaryReference.recordId===input.referenceAnalysis?.referenceRecordId) ? chain : referenceChain({
         context: replicationContext,
         analysis: null,
         analysisId: handoff.analysisId,

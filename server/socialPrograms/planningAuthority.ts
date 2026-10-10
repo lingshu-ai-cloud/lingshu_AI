@@ -1,3 +1,5 @@
+import {freezeWeeklyTargetAccountPlaybook,verifyWeeklyPlanningPlaybooks} from './weeklyTargetAccountPlaybook.js';
+import {weeklyProductionPopulation} from './weeklyProductionPopulation.js';
 import {selectWeeklyPlanningCoverage,assertWeeklyPlanningCoverage,assertWeeklyDetailedCoverage,type WeeklyDirectorSlotGap} from './weeklyPlanningCoverage.js';
 import {SocialContentWorkflowError} from '../starter198/socialContentValidation.js';
 import {readWeeklyTemplateStructure} from './weeklyTemplateStructure.js';
@@ -46,7 +48,7 @@ function minutes(value: number): number {
 
 export function buildWeeklyOperatingScheduleSkeleton(pkg: WeeklyOperatingPackage): WeeklyOperatingScheduleSkeleton {
   const byMother = new Map<string, typeof pkg.socialContentPackage.publicationTasks>();
-  for (const item of pkg.socialContentPackage.publicationTasks) {
+  for (const item of weeklyProductionPopulation(pkg.socialContentPackage.publicationTasks).productionPublications) {
     byMother.set(item.motherContentId, [...(byMother.get(item.motherContentId) ?? []), item]);
   }
   const createdAt = pkg.createdAt;
@@ -164,6 +166,8 @@ function unguardedPlanningAuthority(dataStore: DataStore, beforeAppend: () => Pr
       expectedPlanningVersion: number;
       actor: 'director_agent';
       selectedSlotIds?:string[];
+      /** Server-only supplement path: retain the already frozen owned reference and handoff. */
+      preserveOwnedReferences?:boolean;
       now?: Date;
     }): Promise<WeeklyAgentPlanningState> {
       if (input.actor !== 'director_agent') throw new SocialProgramError('director_analysis_authority_required', 403, '只有编导 Agent 可以写入对标分析。');
@@ -192,17 +196,22 @@ function unguardedPlanningAuthority(dataStore: DataStore, beforeAppend: () => Pr
       if(feedbackPackageRows.totalItems>1)throw new SocialProgramError('weekly_feedback_package_ambiguous',409,'客户反馈引用需要唯一的冻结周任务包。');
       const feedbackPackage = feedbackPackageRows.items[0] ? socialJson(feedbackPackageRows.items[0].payload) as WeeklyOperatingPackage : null;
       const outcomes = await Promise.allSettled(analysisSlots.map(async (slot, index) => {
+        const targetAccountPlaybooks=(await Promise.all(slot.accountIds.map(accountId=>freezeWeeklyTargetAccountPlaybook(dataStore,input.tenantId,input.programId,accountId)))).filter((value): value is NonNullable<typeof value>=>value!==null);
         const own = slot.referenceSource === 'owned' ? ownedPairs.filter(pair => slot.accountIds.includes(pair.account.accountId)) : [];
         if (slot.referenceSource === 'owned' && !own.length) throw new SocialProgramError('owned_reference_account_required', 409, '该母版目标账号缺少已核验的自有参考，需补齐或明确修订配额。');
         if(slot.referenceSource!=='owned'&&!pairs.length)throw new SocialProgramError('benchmark_account_video_link_required',409,'该外部条目缺少可核验的账号与视频关联，暂不能继续。');
-        const selected = slot.referenceSource === 'owned' ? own[index % own.length]! : pairs[index % pairs.length]!;
+        const previousOwned=input.preserveOwnedReferences&&slot.referenceSource==='owned'?current.directorAnalyses.find(x=>x.slotId===slot.slotId):undefined;
+        const frozenOwned=previousOwned?own.find(pair=>previousOwned.benchmarkVideoRefs.length===1&&previousOwned.benchmarkVideoRefs[0]!.id===pair.video.candidateId&&previousOwned.benchmarkVideoRefs[0]!.version===pair.video.evidenceVersion&&previousOwned.benchmarkAccountRefs.length===1&&previousOwned.benchmarkAccountRefs[0]!.id===pair.account.accountId&&previousOwned.benchmarkAccountRefs[0]!.version===pair.account.version):undefined;
+        if(input.preserveOwnedReferences&&slot.referenceSource==='owned'&&!frozenOwned)throw new SocialProgramError('owned_reference_frozen_binding_changed',409,'原自有视频及账号证据已变化，补指标不能替换参考。');
+        const selected = frozenOwned??(slot.referenceSource === 'owned' ? own[index % own.length]! : pairs[index % pairs.length]!);
         const feedbackTopics = await Promise.all(slot.publicationTaskIds.flatMap(id => { const publication = feedbackPackage?.socialContentPackage?.publicationTasks?.find(p=>p.publicationTaskId===id); return publication?.customerFeedbackTopicRef ? [{publication,ref:publication.customerFeedbackTopicRef}] : []; }).map(({publication,ref})=>createCustomerFeedbackTopicService(dataStore).verifiedPlanningReference({tenantId:input.tenantId,programId:input.programId,pkg:feedbackPackage!,publicationTaskId:publication.publicationTaskId,ref})));
         const contentTemplateEvidence=await Promise.all(slot.publicationTaskIds.flatMap(id=>{const publication=feedbackPackage?.socialContentPackage?.publicationTasks?.find(p=>p.publicationTaskId===id);return publication?.contentTemplateBindingRef?[{publication,ref:publication.contentTemplateBindingRef}]:[];}).map(async({publication,ref})=>({publicationTaskId:publication.publicationTaskId,bindingRef:ref,structure:await readWeeklyTemplateStructure(dataStore,{tenantId:input.tenantId,programId:input.programId,packageId:current.packageId,packageVersion:current.packageVersion,publicationTaskId:publication.publicationTaskId},ref)})));
         const { video } = selected;
         const frozenHandoff = handoffs.items.filter(row => row.tenant_id === input.tenantId && row.record_hash === socialRequestHash(socialJson(row.payload)))
           .map(row => ({ row, handoff: socialJson(row.payload) as SocialInspirationHandoff }))
-          .filter(({ handoff }) => handoff?.inspirationId === video.candidateId && handoff.source?.sourceUrl === video.sourceUrl)
+          .filter(({ row,handoff }) => handoff?.inspirationId === video.candidateId && handoff.source?.sourceUrl === video.sourceUrl&&(!input.preserveOwnedReferences||slot.referenceSource!=='owned'||previousOwned?.frozenHandoffRefs?.some(ref=>ref.inspirationId===video.candidateId&&ref.version===String(handoff.version??handoff.analysisVersion)&&ref.recordHash===row.record_hash)))
           .sort((a,b) => Number(b.handoff.version ?? b.handoff.analysisVersion) - Number(a.handoff.version ?? a.handoff.analysisVersion))[0];
+        if(input.preserveOwnedReferences&&previousOwned?.frozenHandoffRefs?.length&&!frozenHandoff)throw new SocialProgramError('owned_reference_frozen_handoff_changed',409,'原参考分镜证据缺失，补指标不能换成新版本。');
         const accountTitle = 'evidenceRef' in selected ? selected.account.displayName : selected.account.title;
         const benchmarkVideoRef: VersionedSocialRef = { type: 'social_discovery_video', id: video.candidateId, version: video.evidenceVersion };
         const benchmarkAccountRef: VersionedSocialRef = 'evidenceRef' in selected ? { type: 'owned_social_account', id: selected.account.accountId, version: selected.account.version } : { type: 'social_benchmark_account', id: selected.account.candidateId, version: selected.account.evidenceVersion };
@@ -213,6 +222,7 @@ function unguardedPlanningAuthority(dataStore: DataStore, beforeAppend: () => Pr
         const materialEvidenceRequirements = classifyMaterialEvidence({ scope: materialScope, handoff: frozenHandoff?.handoff, handoffRef, configuration:materialConfiguration });
         const inheritedStyle = diagnosis?.tone ? [`开场结构：${diagnosis.tone.hookTypes.join('、')}`, `信息顺序：${diagnosis.tone.revealOrder.join('→')}`, `表达节奏：${diagnosis.tone.pacing}`, `行动引导位置：${diagnosis.tone.ctaPosition}`] : ['自有调性尚待真实分镜分析核验，不默认继承外部风格'];
         return {
+          targetAccountPlaybooks,
           analysisId: stableId('director_analysis', { planningId: current.planningId, planningVersion: current.version + 1, slotId: slot.slotId, benchmarkVideoRef, benchmarkAccountRef }),
           slotId: slot.slotId,
           packageId: current.packageId,
@@ -267,6 +277,7 @@ function unguardedPlanningAuthority(dataStore: DataStore, beforeAppend: () => Pr
       const current = await this.get(input.tenantId, input.programId, input.package.packageId, input.package.version);
       requirePlanningVersion(current, input.expectedPlanningVersion);
       requireEditablePlanning(current);
+      await verifyWeeklyPlanningPlaybooks(dataStore,input.tenantId,input.programId,current.directorAnalyses);
       const analysisBySlot = new Map(current.directorAnalyses.map(item => [item.slotId, item]));
       const coverage=selectWeeklyPlanningCoverage(current,input.selectedSlotIds);
       const selectedSlots=current.skeleton.slots.filter(slot=>coverage.selectedSlotIds.includes(slot.slotId));
@@ -287,6 +298,7 @@ function unguardedPlanningAuthority(dataStore: DataStore, beforeAppend: () => Pr
             platform: publication.platform,
             topic: analysis.customerFeedbackTopicEvidence?.find(e=>e.publicationTaskId===publicationTaskId&&e.confirmationRef.id===publication.customerFeedbackTopicRef?.id)?.topicAngle || publication.businessProposition || analysis.contentDirection,
             directorAnalysisRef: { type: 'weekly_director_analysis', id: analysis.analysisId, version: 1 },
+            ...(analysis.targetAccountPlaybooks?.find(value=>value.accountId===publication.accountId)?{targetAccountPlaybook:structuredClone(analysis.targetAccountPlaybooks.find(value=>value.accountId===publication.accountId)!)}:{}),
             benchmarkAccountRefs: analysis.benchmarkAccountRefs,
             benchmarkVideoRefs: analysis.benchmarkVideoRefs,
             ...(publication.contentTemplateBindingRef?{contentTemplateStructure:structuredClone(analysis.contentTemplateEvidence?.find(e=>e.publicationTaskId===publication.publicationTaskId&&e.bindingRef.id===publication.contentTemplateBindingRef?.id)?.structure??(()=>{throw new SocialProgramError('content_template_analysis_required',409,'模板绑定缺少实际新周编导分析。');})())}:{}),
@@ -326,6 +338,7 @@ function unguardedPlanningAuthority(dataStore: DataStore, beforeAppend: () => Pr
       const current = await this.get(input.tenantId, input.programId, input.packageId, input.packageVersion);
       requirePlanningVersion(current, input.expectedPlanningVersion);
       if (!current.detailedSchedule) throw new SocialProgramError('detailed_schedule_required', 409, '详细内容排期尚未生成。');
+      await verifyWeeklyPlanningPlaybooks(dataStore,input.tenantId,input.programId,current.directorAnalyses);
       assertWeeklyDetailedCoverage(current);
       if(current.detailedSchedule.coverage)assertWeeklyPlanningCoverage(current,current.detailedSchedule.coverage,input.selectedSlotIds);
       if (current.status === 'confirmed' || current.status === 'dispatched') return current;
@@ -343,6 +356,7 @@ function unguardedPlanningAuthority(dataStore: DataStore, beforeAppend: () => Pr
       if (input.actor !== 'business_agent') throw new SocialProgramError('business_dispatch_authority_required', 403, '只有经营 Agent 可以向内容 Agent 派单。');
       const current = await this.get(input.tenantId, input.programId, input.packageId, input.packageVersion);
       requirePlanningVersion(current, input.expectedPlanningVersion);
+      await verifyWeeklyPlanningPlaybooks(dataStore,input.tenantId,input.programId,current.directorAnalyses);
       assertWeeklyDetailedCoverage(current);
       if(current.detailedSchedule?.coverage){assertWeeklyPlanningCoverage(current,current.detailedSchedule.coverage,input.selectedSlotIds);if(current.userConfirmation&&JSON.stringify(current.userConfirmation.selectedSlotIds)!==JSON.stringify(current.detailedSchedule.coverage.selectedSlotIds))throw new SocialProgramError('weekly_partial_confirmation_changed',409,'确认的母版范围与详细排期不一致。');}
       if (current.dispatch) return current;

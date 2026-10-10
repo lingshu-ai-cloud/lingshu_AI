@@ -13,6 +13,7 @@ import { sendTenantInstagramText } from '../instagram/send.js';
 import {createCustomerChannelSendRequestService,resolveCustomerChannelOutboxContext} from '../digitalEmployees/customerChannelSendRequests.js';
 import {store} from '../storage/index.js';
 import {createCustomerManualTakeoverService} from '../customerService/customerManualTakeover.js';
+import {createCustomerManualTakeoverRouter} from './customerManualTakeover.js';
 import { customerServicePolicy, customerServiceStatus, readTenantEnterpriseProfile } from './enterprise.js';
 import { readCustomerMessagingAuthorization } from '../digitalEmployees/customerMessagingPolicy.js';
 
@@ -97,9 +98,7 @@ customerSuggestionsRouter.post('/knowledge-misses/recompute', async (_req, res) 
 });
 
 function manualCustomerChannel(tenantId:string,id:string){return getWhatsAppCustomers(tenantId).some(c=>c.id===id)?'whatsapp' as const:customerChannel(tenantId,id);}
-customerSuggestionsRouter.get('/:id/manual-active',async(req,res)=>{const{tenantId,userId}=res.locals as AuthLocals;const id=String(req.params.id),channel=manualCustomerChannel(tenantId,id);if(!channel){res.status(404).json({error:'customer_not_found'});return;}try{res.json(await manualTakeoverService.read({tenantId,actorUserId:userId,customerId:id,channel}));}catch(error){res.status(error instanceof Error&&'status' in error?Number(error.status):409).json({error:error instanceof Error?error.message:'manual_takeover_read_failed'});}});
-customerSuggestionsRouter.post('/:id/manual-active',async(req,res)=>{const{tenantId,userId}=res.locals as AuthLocals;const id=String(req.params.id),channel=manualCustomerChannel(tenantId,id);if(!channel){res.status(404).json({error:'customer_not_found'});return;}try{const item=await manualTakeoverService.hold({tenantId,actorUserId:userId,customerId:id,channel,minutes:Number(req.body?.minutes??10),expectedVersion:req.body?.expectedVersion,ownerUserId:req.body?.ownerUserId});res.json({ok:true,item,suspendedUntil:item.expiresAt});}catch(error){res.status(error instanceof Error&&'status' in error?Number(error.status):409).json({error:error instanceof Error?error.message:'manual_takeover_failed'});}});
-customerSuggestionsRouter.post('/:id/manual-active/release',async(req,res)=>{const{tenantId,userId}=res.locals as AuthLocals;const id=String(req.params.id),channel=manualCustomerChannel(tenantId,id);if(!channel){res.status(404).json({error:'customer_not_found'});return;}try{const item=await manualTakeoverService.release({tenantId,actorUserId:userId,customerId:id,channel,expectedVersion:req.body?.expectedVersion});res.json({ok:true,item});}catch(error){res.status(error instanceof Error&&'status' in error?Number(error.status):409).json({error:error instanceof Error?error.message:'manual_takeover_release_failed'});}});
+customerSuggestionsRouter.use('/:id/manual-active',createCustomerManualTakeoverRouter({service:manualTakeoverService,resolveChannel:manualCustomerChannel}));
 
 customerSuggestionsRouter.patch('/:id', (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
@@ -197,7 +196,7 @@ customerSuggestionsRouter.post('/:id/outbox', requireAuth, async (req, res) => {
   }
   try {
     const send=()=>channel==='instagram'?sendTenantInstagramText({tenantId,customerId,body,requestId,actorUserId:userId}):sendTenantMessengerText({tenantId,customerId,body,requestId,actorUserId:userId});
-    const receipt=req.body?.auto===true?await manualTakeoverService.withAutoSendPermission({tenantId,customerId,channel},send):await send();
+    const receipt=req.body?.auto===true?await manualTakeoverService.withAutoSendPermission({tenantId,customerId,channel},send):await manualTakeoverService.withHumanSendPermission({tenantId,customerId,channel,actorUserId:userId},send);
     await maybeRecordStyleMemory(req, tenantId, customerId, body);
     const item=await createCustomerChannelSendRequestService(store).get(tenantId,userId,channel,requestId);
     res.json({

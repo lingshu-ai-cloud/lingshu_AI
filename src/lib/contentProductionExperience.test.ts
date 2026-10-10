@@ -91,3 +91,18 @@ assert.equal(achievement.completedScenes, 2);
 assert.equal(achievement.artifactCount, 1);
 
 console.log('content production experience tests passed');
+
+const waitingForAssets = {
+ ...task,
+ directorPlan: null,
+ productionProgress: {step:'等待素材与资产排期',activity:'原运行已保存分镜意图',estimatedRemainingSeconds:null,waitingForScheduledAssets:true,updatedAt:task.updatedAt},
+ agentWorkflow:{...task.agentWorkflow!,stage:'producing',productionResult:null,replicationEvaluation:null},
+} as unknown as SocialContentTaskDetail;
+const waitingNodes=contentProgressNodes(waitingForAssets);
+assert.equal(waitingNodes.find(node=>node.id==='script')!.state,'complete');
+assert.match(waitingNodes.find(node=>node.id==='script')!.result,/已保存/);
+assert.equal(waitingNodes.find(node=>node.id==='shots')!.state,'blocked');
+assert.match(waitingNodes.find(node=>node.id==='shots')!.result,/继续原作业/);
+assert.equal(waitingNodes.some(node=>node.state==='active'||node.state==='failed'),false);
+assert.equal(waitingNodes.find(node=>node.id==='edit')!.state,'pending');
+assert.equal(contentAchievementSummary(waitingForAssets).visible,false);

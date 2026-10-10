@@ -110,7 +110,7 @@ export default function WeeklySalesHandoffPanel({
       <div className="mt-3 grid gap-2 sm:grid-cols-2">
         <select aria-label="选择真实客户询盘" value={sourceIndex} onChange={event => setSourceIndex(event.target.value)} className={inputClass}>
           <option value="">请选择真实客户会话</option>
-          {visible?.sources.map((source, index) => <option key={`${source.memberId}:${source.sourceInteractionId}`} value={index}>{source.customerName} · {source.sourceKind === 'new_inquiry' ? '新询盘' : '既有客户'} · {source.body.slice(0, 70)}</option>)}
+          {visible?.sources.map((source, index) => <option key={`${source.memberId}:${source.sourceInteractionId}`} value={index}>{source.channel || 'whatsapp'} · {source.customerName} · {source.sourceKind === 'new_inquiry' ? '新询盘' : source.sourceKind === 'existing_contact' ? '既有联系（非采购证明）' : '既有客户'} · {source.body.slice(0, 70)}</option>)}
         </select>
         <select aria-label="指定销售负责人" value={owner} onChange={event => setOwner(event.target.value)} className={inputClass}>
           <option value="">请选择真实租户成员</option>

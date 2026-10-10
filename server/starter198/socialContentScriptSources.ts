@@ -33,6 +33,8 @@ import { validateVerifiedSpeechLines } from '../lib/verifiedReferenceSpeech.js';
 import { approximateSpeechLines } from '../lib/referenceApproxSpeech.js';
 import { hasCompletedExactVideoEvidence } from '../lib/videoAnalysisCodec.js';
 import { referenceFrameActionPrompt } from './referenceFrameActionPrompt.js';
+import { buildReferenceShotProductionRouting, type ReferenceShotProductionRouting,
+  type ReferencePresenterContinuityEvidence } from '../../shared/referenceShotProductionRouting.js';
 
 const THEME_TERMS: Record<SocialContentThemeId, readonly string[]> = {
   product_value: ['产品', '卖点', '细节', '成分', '材质', '性能', 'product', 'feature', 'detail'],
@@ -796,8 +798,12 @@ function publicShot(input: {
   spokenLines?: SocialReferenceShotAnalysis['spokenLines'];
   captionText?: string;
   productRef?: string | null;
+  verifiedRouting:ReferenceShotProductionRouting;
 }): SocialReferenceShotAnalysis {
   const raw = input.row.detail;
+  const referenceProductionRouting = input.verifiedRouting;
+  const presenterContinuityEvidence = raw.presenterContinuityEvidence as ReferencePresenterContinuityEvidence | undefined;
+  const reliableRole = referenceProductionRouting?.state === 'ready' ? referenceProductionRouting.observedPresenterRole : undefined;
   const inferredPurpose = shotPurpose(input.row.detail, input.themeId);
   const purpose: SocialShotFunction = input.index === 0 ? 'hook'
     : inferredPurpose === 'hook' ? 'd_to_c' : inferredPurpose;
@@ -831,8 +837,10 @@ function publicShot(input: {
   };
   return {
     shotId,
-    personContinuityId: socialText(raw.personContinuityId) || null,
-    observedPresenterRole: ['sales_presenter', 'presenter_action', 'background', 'none', 'unknown'].includes(String(raw.observedPresenterRole)) ? raw.needsReview === true && raw.salesPresenterConfirmed !== true ? 'unknown' : raw.observedPresenterRole as SocialReferenceShotAnalysis['observedPresenterRole'] : undefined,
+    personContinuityId: referenceProductionRouting.personContinuityId,
+    observedPresenterRole: reliableRole || (referenceProductionRouting ? 'unknown' : ['sales_presenter', 'presenter_action', 'background', 'none', 'unknown'].includes(String(raw.observedPresenterRole)) ? raw.needsReview === true && raw.salesPresenterConfirmed !== true ? 'unknown' : raw.observedPresenterRole as SocialReferenceShotAnalysis['observedPresenterRole'] : undefined),
+    ...(referenceProductionRouting ? { referenceProductionRouting: structuredClone(referenceProductionRouting) } : {}),
+    ...(presenterContinuityEvidence ? { presenterContinuityEvidence: structuredClone(presenterContinuityEvidence) } : {}),
     startSeconds: structure.sourceTiming.startSeconds,
     endSeconds: structure.sourceTiming.endSeconds,
     visualDescription: observedVisual ? `${observedVisual}；${structure.shotScale}，${structure.cameraMovement}` : `${subject}；${structure.shotScale}，${structure.cameraMovement}`,
@@ -968,7 +976,8 @@ function hookOption(input: {
 
 function materialPlanForShot(shot: SocialReferenceShotAnalysis): SocialReplicationScriptShot['materialPlan'] {
   const truthBoundary = truthBoundaryFor({ purpose: shot.purpose, subject: shot.visualDescription });
-  const sourceStrategy = productionStrategyFor(truthBoundary, shot.purpose, shot.visualContract);
+  const sourceStrategy = shot.referenceProductionRouting?.route === 'reference_frame_presenter'
+    ? 'authorized_digital_presenter' : productionStrategyFor(truthBoundary, shot.purpose, shot.visualContract);
   const usesDigitalHuman = sourceStrategy === 'authorized_digital_presenter';
   const usesProductAigc = sourceStrategy === 'aigc_product_scene_replication';
   return {
@@ -976,6 +985,7 @@ function materialPlanForShot(shot: SocialReferenceShotAnalysis): SocialReplicati
     function: shot.purpose,
     requestedDescription: shot.visualDescription,
     sourceStrategy,
+    ...(shot.referenceProductionRouting ? { referenceProductionRouting: structuredClone(shot.referenceProductionRouting) } : {}),
     sourceRefs: [],
     fallbackSourceStrategy: usesDigitalHuman || usesProductAigc ? null : 'motion_graphics',
     productionInstruction: usesDigitalHuman
@@ -1056,10 +1066,17 @@ export function buildSocialTaskReferencePackage(input: {
     verifiedContext: input.verifiedContext,
     replacements: input.identityReplacements,
   });
+  const canonicalRouting=buildReferenceShotProductionRouting({sourceSha256:socialText(exact.analysis.contentSha256),shots:exact.details.map((row,index)=>({
+    shotId:socialText(row.detail.shotId)?`reference-${socialText(row.detail.shotId)}`:`reference-shot-${index+1}`,
+    time:`${row.timing.startSeconds}-${row.timing.endSeconds}`,
+    criticalShot:row.detail.criticalShot as Parameters<typeof buildReferenceShotProductionRouting>[0]['shots'][number]['criticalShot'],
+    presenterContinuityEvidence:row.detail.presenterContinuityEvidence as ReferencePresenterContinuityEvidence|undefined,
+  }))});
   const shots = exact.details.map((row, index) => publicShot({
     row,
     index,
     themeId: input.themeId,
+    verifiedRouting:canonicalRouting.shots[index]!.productionRouting,
     spokenText: referenceLines[index],
     spokenTextTiming: sourceSpeech.length
       ? reviewedShotSpeech(row, sourceSpeech, runId, sourcePrecision).timing

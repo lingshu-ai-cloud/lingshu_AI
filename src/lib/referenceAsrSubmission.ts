@@ -1,0 +1,6 @@
+export interface ReferenceAsrAvailability {canSubmit?:boolean;status:string;existingTaskId?:string|null;candidateLines?:unknown[];submissionGap?:string|null;budgetReason?:string;reservationCny?:number|null;remainingCny?:number|null}
+export function canExplicitlySubmitReferenceAsr(job:ReferenceAsrAvailability|null,consent:boolean,busy:boolean){return !!job&&job.canSubmit===true&&consent&&!busy&&job.status==='not_found'&&!job.existingTaskId;}
+export function referenceAsrAvailabilityLabel(job:ReferenceAsrAvailability|null){if(!job)return '尚未查询已有候选';if(job.status==='not_found')return job.canSubmit?'暂无已有候选，可明确确认补证':'暂无已有候选；提交能力尚未就绪';return `已有任务：${job.status}`;}
+
+export function canRefreshExistingReferenceAsr(job:(ReferenceAsrAvailability&{existingTaskId?:string|null})|null,busy:boolean){return !!job&&!busy&&typeof job.existingTaskId==='string'&&!!job.existingTaskId.trim()&&job.existingTaskId===job.existingTaskId.trim()&&(['PENDING','RUNNING'].includes(job.status)||(job.status==='SUCCEEDED'&&!job.candidateLines?.length));}
+export function existingReferenceAsrRefreshBody(job:ReferenceAsrAvailability&{existingTaskId?:string|null}){if(!canRefreshExistingReferenceAsr(job,false)||typeof job.existingTaskId!=='string')throw Error('original_asr_task_unavailable');return {confirmed:false,action:'refresh_existing' as const,expectedTaskId:job.existingTaskId};}

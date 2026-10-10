@@ -217,6 +217,8 @@ export interface SocialDirectorBriefScene {
     needsCameraOrCompositionReconstruction: boolean;
     decisionReason: string[];
   };
+  /** Independent source-person routing; never substitutes for capability measurements. */
+  referenceProductionRouting?: import('../referenceShotProductionRouting.js').ReferenceShotProductionRouting;
   purpose: SocialShotFunction;
   targetVisual: string;
   /** Shared Director-to-Content visual contract. Optional on historic briefs. */

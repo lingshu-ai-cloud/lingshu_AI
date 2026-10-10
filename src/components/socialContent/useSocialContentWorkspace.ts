@@ -1,3 +1,5 @@
+import { getToken, AUTH_TOKEN_CHANGED_EVENT } from '../../lib/auth';
+import { applyCurrentSocialContentOperation, socialContentOperationCurrent } from '../../lib/socialContentOperationIdentity';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type {
   RegisterSocialPublicationInput,
@@ -42,6 +44,9 @@ export function useSocialContentWorkspace() {
   const [error, setError] = useState('');
   const [errorCode, setErrorCode] = useState('');
   const [notice, setNotice] = useState('');
+  const selectedIdentity=useRef(workspace?.currentTask);selectedIdentity.current=workspace?.currentTask;
+  const currentOperationIdentity=()=>({token:mounted.current?getToken():null,taskId:selectedIdentity.current?.taskId??null,version:selectedIdentity.current?.version??null,generation:readGeneration.current});
+  useEffect(()=>{const changed=()=>{readGeneration.current++;selectedIdentity.current=undefined;setWorkspace(null);setError('登录身份已变化，请重新读取内容任务');setNotice('');};window.addEventListener(AUTH_TOKEN_CHANGED_EVENT,changed);window.addEventListener('storage',changed);return()=>{window.removeEventListener(AUTH_TOKEN_CHANGED_EVENT,changed);window.removeEventListener('storage',changed);};},[]);
 
   const fileOperationKey = useCallback((file: File): string => {
     const existing = fileOperationIds.current.get(file);
@@ -55,7 +60,7 @@ export function useSocialContentWorkspace() {
 
   useEffect(() => {
     mounted.current = true;
-    return () => { mounted.current = false; };
+    return () => { mounted.current = false; readGeneration.current += 1; selectedIdentity.current=undefined; };
   }, []);
 
   const applyTask = useCallback((task: SocialContentTaskDetail) => {
@@ -80,6 +85,7 @@ export function useSocialContentWorkspace() {
   }, []);
 
   const load = useCallback(async () => {
+    const token=getToken();
     const generation = ++readGeneration.current;
     setError('');
     setErrorCode('');
@@ -87,13 +93,13 @@ export function useSocialContentWorkspace() {
       let next = await socialContentApi.getWorkspace();
       const savedTaskId = readActiveSocialContentTaskId();
       next = await restoreSavedSocialContentTask(next, savedTaskId, taskId => socialContentApi.getTask(taskId));
-      if (!mounted.current || generation !== readGeneration.current) return;
+      if (!mounted.current || generation !== readGeneration.current || getToken()!==token) return;
       setWorkspace(next);
       setActiveSocialContentTaskId(next.currentTask?.taskId || null);
     } catch (loadError) {
-      if (mounted.current && generation === readGeneration.current) setError(loadError instanceof Error ? loadError.message : '内容任务暂时无法读取');
+      if (mounted.current && generation === readGeneration.current && getToken()===token) setError(loadError instanceof Error ? loadError.message : '内容任务暂时无法读取');
     } finally {
-      if (mounted.current && generation === readGeneration.current) setLoading(false);
+      if (mounted.current && generation === readGeneration.current && getToken()===token) setLoading(false);
     }
   }, []);
 
@@ -155,6 +161,8 @@ export function useSocialContentWorkspace() {
     operation: () => Promise<T>,
     success: string | ((result: T) => string),
   ): Promise<T> => {
+    const operationToken=getToken(),operationTaskId=selectedIdentity.current?.taskId;
+    const stillCurrent=()=>mounted.current&&getToken()===operationToken&&selectedIdentity.current?.taskId===operationTaskId;
     busyOperations.current += 1;
     setBusy(true);
     setError('');
@@ -162,10 +170,10 @@ export function useSocialContentWorkspace() {
     setNotice('');
     try {
       const result = await operation();
-      if (mounted.current) setNotice(typeof success === 'function' ? success(result) : success);
+      if (stillCurrent()) setNotice(typeof success === 'function' ? success(result) : success);
       return result;
     } catch (operationError) {
-      if (mounted.current) {
+      if (stillCurrent()) {
         setError(operationError instanceof Error ? operationError.message : '操作未完成，请重试');
         setErrorCode(operationError instanceof SocialContentRequestError ? operationError.code : '');
       }
@@ -224,18 +232,18 @@ export function useSocialContentWorkspace() {
   const startTask = useCallback(async () => {
     const task = workspace?.currentTask;
     if (!task) return;
+    const expected=currentOperationIdentity();
     return run(async () => {
       try {
-        const next = await socialContentApi.startTask(task.taskId, task.version, `social:start:${operationSuffix(`${task.taskId}:${task.version}`)}`);
-        applyTask(next);
+        const next = await applyCurrentSocialContentOperation(expected,currentOperationIdentity,()=>socialContentApi.startTask(task.taskId, task.version, `social:start:${operationSuffix(`${task.taskId}:${task.version}`)}`),applyTask);
         return next;
       } catch (error) {
         // Reference analysis may advance the task projection before production
         // is admitted. Refresh that new version so the beginner does not get
         // stuck retrying with a stale task while the Director Agent works.
-        if (error instanceof SocialContentRequestError && error.status === 409) {
+        if (error instanceof SocialContentRequestError && error.status === 409 && socialContentOperationCurrent(expected,currentOperationIdentity())) {
           const latest = await socialContentApi.getTask(task.taskId).catch(() => null);
-          if (latest) applyTask(latest);
+          if (latest && socialContentOperationCurrent(expected,currentOperationIdentity())) applyTask(latest);
         }
         throw error;
       }

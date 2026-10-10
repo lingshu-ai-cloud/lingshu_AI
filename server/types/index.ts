@@ -97,6 +97,8 @@ export interface VideoAiAnalysis {
     note?: string;
     purpose?: string;
     dialogue?: string;
+    /** Confirmed off-screen narration; unknown remains absent, separate from on-screen speech. */
+    voiceover?: string;
     onScreenText?: string;
     ambientSound?: string;
     bgm?: string;

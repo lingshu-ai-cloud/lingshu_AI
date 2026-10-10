@@ -1,3 +1,5 @@
+import {saveReferenceNarrationBinding} from './referenceNarrationRecovery.js';
+export {readExistingReferenceNarration,resumeExistingReferenceNarration} from './referenceNarrationRecovery.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
@@ -6,9 +8,11 @@ import { promisify } from 'node:util';
 import ffmpeg from 'ffmpeg-static';
 import { transcribeWordAudioWithQwen } from './qwenAsr.js';
 import { type TimedCue } from '../integrations/qwenAlignment.js';
+import { studioPaidBudget } from './studioPaidBudget.js';
 import { withPaidOperationLock } from './paidOperationLock.js';
 const execute = promisify(execFile);
-export const REFERENCE_AUDIO_CLOCK_POLICY = 'media-origin-first-pts-zero-no-stretch-v1';
+import {REFERENCE_AUDIO_CLOCK_POLICY} from './referenceNarrationClockPolicy.js';
+export {REFERENCE_AUDIO_CLOCK_POLICY} from './referenceNarrationClockPolicy.js';
 
 /** Normalize the same media origin used by video seeking. Pad/trim only the
  * initial audio PTS; async=0 forbids ongoing stretching or gap compensation.
@@ -72,10 +76,25 @@ export function parseProofreadNarration(raw: string) {
   const brands = strings(value.brands).filter(p => sentences.some((s: any) => s.text.includes(p)));
   return { sentences, products, brands, uncertainties: strings(value.uncertainties), removedFragments: strings(value.removedFragments) };
 }
+/** Read existing measured-word cache only. Never creates a directory, lock,
+ * audio probe, extraction or provider request. Actual original bytes bind cache. */
+export function readCachedReferenceNarration(filePath: string, tenantId: string) {
+  const sourceVideoSha256 = createHash('sha256').update(fs.readFileSync(filePath)).digest('hex');
+  const hash = createHash('sha256').update(`${tenantId}:${sourceVideoSha256}:measured-word-v2:${REFERENCE_AUDIO_CLOCK_POLICY}`).digest('hex');
+  const cache = path.resolve('data/analysis-output/narration-cache', `${hash}.json`);
+  if (!fs.existsSync(cache)) return null;
+  let saved;
+  try { saved = JSON.parse(fs.readFileSync(cache, 'utf8')); } catch { return null; }
+  return saved?.version === 2 && saved.sourceVideoSha256 === sourceVideoSha256
+    && saved.sourceHash === hash && saved.alignmentStatus === 'aligned'
+    && Array.isArray(saved.words) && saved.words.length > 0
+    && Array.isArray(saved.segments) && typeof saved.text === 'string' ? saved : null;
+}
+
 /** The single reference-analysis ASR entry point. Text correction can never
  * create timestamps. Legacy proofread/equal-duration caches are not promoted. */
 export async function prepareReferenceNarration(filePath: string, duration: number, options: {
-  tenantId?: string; signal?: AbortSignal;
+  tenantId?: string; signal?: AbortSignal; manualSubmission?: boolean; request?: typeof fetch;
 } = {}) {
   if (!(duration > 0 && duration <= 180)) throw new Error('真实词级转写支持 180 秒以内视频');
   const sourceVideoSha256 = createHash('sha256').update(fs.readFileSync(filePath)).digest('hex');
@@ -92,7 +111,7 @@ export async function prepareReferenceNarration(filePath: string, duration: numb
     try {
       const audioExtraction = await extractReferenceSourceAudio(filePath, audioPath, options);
       const measured = await transcribeWordAudioWithQwen({ tenant, audio: fs.readFileSync(audioPath),
-        mimeType: 'audio/wav', duration, signal: options.signal });
+        mimeType: 'audio/wav', duration, signal: options.signal, request: options.request, onRecord: record => saveReferenceNarrationBinding({tenantId:tenant,filePath,expectedSourceSha256:sourceVideoSha256},duration,audioExtraction,record), ...(options.manualSubmission ? {automaticSubmission:false,reserve:(id:string)=>studioPaidBudget.reserve('qwen_asr',id)} : {}) });
       const result = { ...measured, version: 2, sourceVideoSha256, sourceHash: hash,
         rawText: measured.text, alignmentError: '', durationSeconds: duration,
         audioExtraction, createdAt: new Date().toISOString() };

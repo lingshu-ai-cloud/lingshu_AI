@@ -1,3 +1,4 @@
+import type {SocialAccountProductionConstraints} from './socialAccountProductionConstraints.js';
 import { createHash } from 'node:crypto';
 import { stat } from 'node:fs/promises';
 import type { SocialProductSceneReplicationSpec } from '../../shared/contracts/socialContentWorkflow.js';
@@ -49,6 +50,7 @@ export interface ProductSceneExecutionPorts {
     referenceImages: ProductSceneReferenceImage[];
     outputDirectory: string;
     maximumCostCny: number;
+    accountPlaybookConstraints?:SocialAccountProductionConstraints;
   }): Promise<CompletedProductSceneExecution | { status: 'failed' | 'pending' | 'uncertain'; providerTaskId?: string; error: string }>;
 }
 
@@ -56,6 +58,7 @@ function stableKey(input: {
   tenantId: string;
   taskId: string;
   operationId?: string;
+  accountConstraintHash?:string;
   shotId: string;
   spec: SocialProductSceneReplicationSpec;
   references: ProductSceneReferenceImage[];
@@ -64,6 +67,7 @@ function stableKey(input: {
     tenantId: input.tenantId,
     taskId: input.taskId,
     operationId: input.operationId,
+    ...(input.accountConstraintHash?{accountConstraintHash:input.accountConstraintHash}:{}),
     shotId: input.shotId,
     spec: input.spec,
     references: input.references.map(item => ({
@@ -169,9 +173,10 @@ export function createSocialProductSceneAdapter(ports: ProductSceneExecutionPort
       const productReferences = references(context, spec);
       if (!productReferences) return null;
       const idempotencyKey = stableKey({ tenantId: context.tenantId, taskId: context.taskId,
-        operationId: context.operationId, shotId: context.shot.shotId, spec, references: productReferences });
+        operationId: context.operationId, accountConstraintHash:context.accountPlaybookConstraints?.constraintHash,shotId: context.shot.shotId, spec, references: productReferences });
       const execution = await ports.execute({ tenantId: context.tenantId, taskId: context.taskId,
         shotId: context.shot.shotId, idempotencyKey, spec: structuredClone(spec),
+        ...(context.accountPlaybookConstraints?{accountPlaybookConstraints:structuredClone(context.accountPlaybookConstraints)}:{}),
         referenceImages: productReferences, outputDirectory: context.outputDirectory, maximumCostCny });
       if (execution.status !== 'completed') {
         throw new Error(`product_scene_not_completed:${execution.status}:${execution.providerTaskId || 'no_task'}:${execution.error}`);

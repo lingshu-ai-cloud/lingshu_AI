@@ -1,4 +1,5 @@
 import { withWeeklyProductionStartGuard } from '../runtime/weeklyProductionStartGuard.js';
+import type {WeeklyOwnedProductIdentityPorts} from '../runtime/weeklyOwnedProductIdentityDemand.js';
 import type {
   AddSocialTaskSourceInput,
   CreateSocialContentTaskInput,
@@ -122,9 +123,15 @@ export async function createSocialContentTask(input: {
   tenantId: string;
   userId: string;
   idempotencyKey: string;
+  /** Server-owned deterministic identity for workflows which must bind an
+   * authorization proof before the first run is admitted. */
+  taskId?: string;
   value: CreateSocialContentTaskInput;
   now?: Date;
 }): Promise<SocialContentTaskDetail> {
+  if (input.taskId !== undefined && !/^[a-zA-Z0-9._:@-]{1,240}$/.test(input.taskId)) {
+    throw new SocialContentWorkflowError('social_content_task_id_invalid', 400);
+  }
   const packageSelection = (await listActiveSocialWorkPackageCards(input)).map(card => ({
     kind: card.kind,
     packageKey: card.packageKey,
@@ -157,7 +164,7 @@ export async function createSocialContentTask(input: {
       }
       await assertSocialTaskCapacity(input);
       const timestamp = (input.now ?? new Date()).toISOString();
-      const taskId = socialPublicId('socialtask');
+      const taskId = input.taskId ?? socialPublicId('socialtask');
       const theme = resolveSocialThemeSelection(input.value);
       const brief = defaultBrief(input.value);
       const scriptBaseline = theme?.classificationStatus === 'confirmed' && theme.themeId
@@ -569,6 +576,7 @@ export async function startSocialContentTask(input: {
   expectedVersion: string;
   idempotencyKey: string;
   referenceResolver?: SocialTaskReferenceResolver;
+  weeklyOwnedProductIdentity?:Omit<WeeklyOwnedProductIdentityPorts,'repository'>;
   now?: Date;
 }): Promise<SocialContentTaskDetail> {
   return withWeeklyProductionStartGuard(input, async () => startSocialContentTaskUnderGuard(input));
@@ -602,6 +610,7 @@ async function startSocialContentTaskUnderGuard(input: Parameters<typeof startSo
         && !(projectionAlreadyApplied && socialText(record.status) === 'asset_review')) {
         throw new SocialContentWorkflowError('social_content_task_not_startable', 409);
       }
+      if(input.weeklyOwnedProductIdentity&&input.repository.dataStore){const {resolveWeeklyCreativeRepairAuthority}=await import('../runtime/weeklyCreativeRepairAuthority.js'),creative=await resolveWeeklyCreativeRepairAuthority({store:input.repository.dataStore,tenantId:input.tenantId,task:record});if(creative){const {inheritWeeklyOwnedProductIdentity}=await import('../runtime/weeklyOwnedProductIdentityDemand.js'),item=creative.repairCase,common={tenantId:input.tenantId,programId:item.programId,packageId:item.packageId,packageVersion:item.packageVersion,publicationTaskId:item.publicationTaskId};await inheritWeeklyOwnedProductIdentity(input.repository.dataStore,{parentScope:{...common,contentTaskId:item.parent.taskId},childScope:{...common,contentTaskId:input.taskId},actorUserId:input.userId},{...input.weeklyOwnedProductIdentity,repository:input.repository});record=await requireSocialTask(input);}}
       // Refresh counters and advisory material suggestions before deciding
       // whether the task can start. This also migrates older theme tasks whose
       // shot lists were incorrectly stored as hard requirements.
@@ -657,6 +666,7 @@ async function startSocialContentTaskUnderGuard(input: Parameters<typeof startSo
           record = await requireSocialTask(input);
         }
       }
+      if(input.weeklyOwnedProductIdentity&&input.repository.dataStore){const {resolveWeeklyCreativeRepairAuthority}=await import('../runtime/weeklyCreativeRepairAuthority.js'),creative=await resolveWeeklyCreativeRepairAuthority({store:input.repository.dataStore,tenantId:input.tenantId,task:record});if(creative){const {inheritWeeklyOwnedProductIdentity}=await import('../runtime/weeklyOwnedProductIdentityDemand.js'),item=creative.repairCase,common={tenantId:input.tenantId,programId:item.programId,packageId:item.packageId,packageVersion:item.packageVersion,publicationTaskId:item.publicationTaskId};await inheritWeeklyOwnedProductIdentity(input.repository.dataStore,{parentScope:{...common,contentTaskId:item.parent.taskId},childScope:{...common,contentTaskId:input.taskId},actorUserId:input.userId},{...input.weeklyOwnedProductIdentity,repository:input.repository});record=await requireSocialTask(input);}}
       const summary = socialTaskSummary(record);
       const coverage = await readSocialContentSourceCoverage(input);
       const readiness = socialTaskReadiness(summary.brief, coverage, summary.theme ? {

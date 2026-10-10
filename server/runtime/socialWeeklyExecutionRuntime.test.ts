@@ -234,3 +234,23 @@ test('partial dispatch admits only explicitly confirmed slots and cannot borrow 
   await dataStore.update('social_weekly_agent_planning', row.id, { payload: plan });
   assert.equal((await adapter.execute(task())).status, 'blocked');
 });
+
+test('actual template service input error blocks original task with exact reason without consuming retries', async () => {
+  const {fixture}=await import('../socialPrograms/weeklyContentTemplates.fixture.js');
+  const f=await fixture();
+  try {
+    const dataStore=memoryStore(),value=task();value.workflowKind='directing';value.schedule.stepKind='template_extraction';value.schedule.responsibleActor='director_agent';
+    await saveTask(dataStore,value);
+    let calls=0;
+    const result=await runSocialWeeklyExecutionScan({dataStore,adapters:{template_extraction:{async execute(){calls++;await f.service.candidateRead({tenantId:'t',programId:'p'},{type:'weekly_content_template',id:'missing-real-candidate',version:0});throw Error('unreachable');}}}});
+    const row=(await dataStore.list<{payload:WeeklyExecutionTask}>(WEEKLY_EXECUTION_TASKS)).items[0]!.payload;
+    assert.equal(calls,1);assert.equal(result.blocked,1);assert.equal(result.failed,0);
+    assert.equal(row.status,'blocked');assert.equal(row.attempt,0);assert.equal(row.lastError?.code,'content_template_ref_invalid');assert.deepEqual(row.resultRefs,[]);
+  }finally{await f.cleanup();}
+});
+
+test('unknown provider domain outcome is not misclassified as a permanent template input blocker',async()=>{
+ const {SocialProgramError}=await import('../socialPrograms/service.js');const dataStore=memoryStore(),value=task();value.workflowKind='directing';value.schedule.stepKind='template_extraction';value.schedule.responsibleActor='director_agent';await saveTask(dataStore,value);
+ const result=await runSocialWeeklyExecutionScan({dataStore,adapters:{template_extraction:{async execute(){throw new SocialProgramError('provider_outcome_unknown',409,'供应商结果未知');}}}});
+ const row=(await dataStore.list<{payload:WeeklyExecutionTask}>(WEEKLY_EXECUTION_TASKS)).items[0]!.payload;assert.equal(result.blocked,0);assert.equal(result.failed,1);assert.equal(row.attempt,1);assert.equal(row.lastError?.code,'weekly_execution_adapter_failed');
+});
