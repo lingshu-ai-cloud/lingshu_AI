@@ -16,6 +16,8 @@ test('repository contract passes while missing external release evidence fails c
   ]);
   assert.ok(report.checks.some(item => item.code === 'server_derived_scope'));
   assert.ok(report.checks.some(item => item.code === 'network_domain_types' && item.detail === 'request'));
+  assert.ok(report.checks.some(item => item.code === 'record_permission_description'));
+  assert.ok(report.checks.some(item => item.code === 'privacy_api_inventory' && /chooseMedia/.test(item.detail) && /getRecorderManager/.test(item.detail)));
 });
 
 test('explicit external evidence can complete the preflight', () => {

@@ -55,6 +55,7 @@ import {
 } from '../auth/inviteRegistration.js';
 import { issueVerifiedLocalIdentityToken, verifyLocalIdentity, type VerifiedLocalIdentity } from '../auth/localIdentity.js';
 import { bindDataAuthority, currentDataAuthority } from '../storage/dataAuthority.js';
+import { resolveServerProductProfile } from '../starter198/productProfile.js';
 
 export const authRouter = Router();
 interface PbUser { id: string; email?: string; name?: string; tenantId?: string; role?: OrganizationRole }
@@ -534,7 +535,7 @@ authRouter.get('/me', async (req, res) => {
         ? getLocalTenant(id.tenantId)
         : await pbGetStrict('tenants', id.tenantId);
       res.setHeader('Cache-Control', 'no-store');
-      res.json({ user: { id: id.userId, email: '', name: 'Agent 生产会话', tenantId: id.tenantId, role: id.browserReadRole }, tenant: publicTenant(tenant as Record<string, unknown> | null) });
+      res.json({ user: { id: id.userId, email: '', name: 'Agent 生产会话', tenantId: id.tenantId, role: id.browserReadRole }, tenant: publicTenant(tenant as Record<string, unknown> | null), productProfile: 'advanced_customer' });
       return;
     }
     const local = (id.dataAuthority ?? currentDataAuthority()) === 'local'
@@ -562,6 +563,7 @@ authRouter.get('/me', async (req, res) => {
       const storedTenant = getLocalTenant(id.tenantId);
       const admin = await adminUserForHttp(req, res);
       if (admin === undefined) return;
+      const productProfile = await resolveServerProductProfile(id.tenantId);
       res.json({
         user: { id: id.userId, email: local.email || '', name, tenantId: id.tenantId, role: normalizedRole(local.role) },
         tenant: publicTenant({
@@ -574,6 +576,7 @@ authRouter.get('/me', async (req, res) => {
         subscription,
         demo,
         platformAdmin: Boolean(admin),
+        productProfile,
       });
       return;
     }
@@ -597,6 +600,7 @@ authRouter.get('/me', async (req, res) => {
         }),
         subscription,
         supportAccess: id.supportAccess,
+        productProfile: 'advanced_customer',
       });
       return;
     }
@@ -613,11 +617,13 @@ authRouter.get('/me', async (req, res) => {
     );
     const admin = await adminUserForHttp(req, res);
     if (admin === undefined) return;
+    const productProfile = await resolveServerProductProfile(id.tenantId);
     res.json({
       user: user ? publicUser(user as unknown as PbUser) : { id: id.userId, email: '', name: '', tenantId: id.tenantId },
       tenant: publicTenant(tenant),
       subscription,
       platformAdmin: Boolean(admin),
+      productProfile,
       demo: {
         ...demo,
         guideTrigger: guide.pending,

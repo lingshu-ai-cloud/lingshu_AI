@@ -9,5 +9,10 @@
     "navigationBarTextStyle": "black",
     "backgroundColor": "#f5f8f5"
   },
+  "permission": {
+    "scope.record": {
+      "desc": "用于将你主动录制的语音转成可编辑的工作指令"
+    }
+  },
   "style": "v2"
 }

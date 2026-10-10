@@ -30,7 +30,7 @@ Page({
     finally {
         if (!this.disposed && (epoch === (this.epoch || 0) || this.data.loggedIn)) this.setData({ loading: false });
     } },
-    session(s) { this.epoch = (this.epoch || 0) + 1; this.setData({tab:'work', detail:null, sheet:null, messages:[], matters:[], snoozed:[], activeMatter:null, tasks:[], agents:[], metrics:[], notifications:[], calendarItems:[], posts:[], dayPosts:[], input:'', processing:false, sending:false, transcribing:false}); this.workspaceKind = null; const user = s.user || {}; this.scope = String(user.tenantId || user.tenant_id || '') + ':' + String(user.id || user.email || ''); this.chatKey = 'mobile-chat:' + this.scope; this.snoozes = {}; this.setData({ loggedIn: true, userName: user.name || user.email || '', password: '', messages: wx.getStorageSync(this.chatKey) || [] }); this.startSync(); },
+    session(s) { this.epoch = (this.epoch || 0) + 1; this.setData({tab:'work', detail:null, sheet:null, messages:[], matters:[], snoozed:[], activeMatter:null, tasks:[], agents:[], metrics:[], notifications:[], calendarItems:[], posts:[], dayPosts:[], input:'', processing:false, sending:false, transcribing:false}); this.sessionProfile = s; this.workspaceKind = null; const user = s.user || {}; this.scope = String(user.tenantId || user.tenant_id || '') + ':' + String(user.id || user.email || ''); this.chatKey = 'mobile-chat:' + this.scope; this.snoozes = {}; const stored = wx.getStorageSync(this.chatKey) || []; this.setData({ loggedIn: true, userName: user.name || user.email || '', password: '', messages: stored.map(message => message.role === 'assistant' ? {...message,content:model.managerAnswer(message.content)} : message) }); this.startSync(); },
     async restore() { const epoch = this.epoch || 0; try {
         const s = await api.me();
         if (epoch !== (this.epoch || 0) || this.disposed) return;
@@ -54,12 +54,13 @@ Page({
         const epoch = this.epoch || 0;
         this.setData({ loading: true, error: '' });
         try {
-            if (!this.workspaceKind) { const kind = api.workspaceKind ? await api.workspaceKind() : 'legacy'; if (epoch !== (this.epoch || 0) || this.disposed) return; this.workspaceKind = kind; }
+            if (!this.workspaceKind) { const kind = api.workspaceKind ? await api.workspaceKind(this.sessionProfile) : 'legacy'; if (epoch !== (this.epoch || 0) || this.disposed) return; this.workspaceKind = kind; }
             if (this.workspaceKind === 'starter') {
                 const queue = await api.request('starter-198/mobile/queue');
                 if (epoch !== (this.epoch || 0) || this.disposed) return;
                 this.snoozes = queue.snoozes || {};
                 this.setData({ ...starter.project(queue.workspace, this.snoozes), workspaceKind: 'starter', error: '' });
+                this.scheduleNextSnoozeWake();
                 this.updateDay(); return;
             }
             this.setData({workspaceKind:'legacy',workspaceNote:''});
@@ -105,6 +106,7 @@ Page({
                 currentTask: agent.currentTask?.title || '', observedAt: agent.updatedAt
             }));
             this.setData({ overview, tasks, calendarItems, agents, posts, matters, snoozed, activeMatter: matters[0] || null, metrics, notifications: [], cardX: 0, updatedAt: overview.generatedAt ? new Date(overview.generatedAt).toLocaleTimeString() : new Date().toLocaleTimeString(), error: results[1].status === 'rejected' ? results[1].reason.message : '' });
+            this.scheduleNextSnoozeWake();
             this.updateDay();
         }
         catch (e) {
@@ -162,16 +164,18 @@ Page({
                 const matters = this.data.matters.filter(i => i.id !== item.id);
                 const snoozedItem = { ...item, snoozedUntil: until, snoozeLabel: '将于 ' + new Date(until).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) + ' 回到待处理' };
                 this.setData({ matters, activeMatter: matters[0] || null, snoozed: [...this.data.snoozed.filter(i => i.id !== item.id), snoozedItem], undoVisible: true });
-                this.scheduleSnoozeWake(until);
+                this.scheduleNextSnoozeWake();
             } else {
                 delete this.snoozes[item.id];
                 const matters = model.sortUrgency([...this.data.matters.filter(i => i.id !== item.id), item]);
                 this.setData({ matters, activeMatter: matters[0] || null, snoozed: this.data.snoozed.filter(i => i.id !== item.id), undoVisible: false });
+                this.scheduleNextSnoozeWake();
             }
         } catch (e) { if (epoch === (this.epoch || 0)) this.setData({ error: e.message }); }
         finally { if (epoch === (this.epoch || 0) && !this.disposed) this.setData({ processing: false }); }
     },
-    scheduleSnoozeWake(until) { if (this.snoozeWakeTimer) clearTimeout(this.snoozeWakeTimer); const delay = Math.max(0, Math.min(until - Date.now() + 200, 2147483647)); this.snoozeWakeTimer = setTimeout(() => { if (this.data.loggedIn && !this.disposed) this.refresh(); }, delay); if (this.snoozeWakeTimer?.unref) this.snoozeWakeTimer.unref(); },
+    scheduleSnoozeWake(until) { if (typeof setTimeout !== 'function') return; if (this.snoozeWakeTimer) clearTimeout(this.snoozeWakeTimer); const delay = Math.max(0, Math.min(until - Date.now() + 200, 2147483647)); this.snoozeWakeTimer = setTimeout(() => { if (this.data.loggedIn && !this.disposed) this.refresh(); }, delay); if (this.snoozeWakeTimer?.unref) this.snoozeWakeTimer.unref(); },
+    scheduleNextSnoozeWake() { const now=Date.now(); const next=Object.values(this.snoozes || {}).map(Number).filter(value=>value>now).sort((a,b)=>a-b)[0]; if(next)this.scheduleSnoozeWake(next); else if(this.snoozeWakeTimer){clearTimeout(this.snoozeWakeTimer);this.snoozeWakeTimer=null;} },
     async undoSnooze() { const item = this.data.snoozed.find(i => i.id === this.lastSnooze); if (item) await this.saveSnooze(item, 0); },
     showSnoozed() { this.setData({ sheet: '稍后处理', sheetItems: this.data.snoozed.map(i => ({ ...i, subtitle: i.snoozeLabel || i.reason, kind: 'matter' })) }); },
     viewMatter() { if (Date.now() - (this.lastGestureAt || 0) < 400) return; this.processMatter(); },
@@ -179,7 +183,8 @@ Page({
         return; if (item.type === 'starter') { this.setData({detail:{...item.starterItem,title:item.title,reason:item.reason,starter:true,actions:item.actions},sheet:null}); return; } if (item.type === 'shoot') {
         wx.navigateTo({ url: '/pages/index/index?taskId=' + encodeURIComponent(item.shootingId) });
         return;
-    } this.setData({ detail: { ...item.task, title: item.title, reason: item.reason, approval: item.approval, type: item.type, interventionType: item.interventionType, route: item.route || model.actionRoute(item), outputText: item.task?.output && Object.keys(item.task.output).length ? JSON.stringify(item.task.output, null, 2) : '' }, sheet: null }); this.loadTaskEvents(item.task); },
+    } const actionDetail = model.actionDetail(item.task); this.setData({ detail: { ...item.task, ...actionDetail, title: item.title, reason: item.reason, approval: item.approval, type: item.type, interventionType: item.interventionType, route: item.route || model.actionRoute(item), receipt: null }, sheet: null }); this.loadTaskEvents(item.task); },
+    selectFailedShots(e) { const ids = (e.detail.value || []).map(String); this.setData({'detail.selectedShotIds':ids,'detail.failedShots':(this.data.detail?.failedShots || []).map(shot=>({...shot,selected:ids.includes(String(shot.id))}))}); },
     askMatterAssistant() { const d = this.data.detail; if (!d) return; this.setData({ detail:null, tab:'assistant', input:'请根据真实工作数据告诉我“' + d.title + '”为什么停下、我需要补充什么，以及提交后如何确认它已恢复。' }); },
     openTask(e) { const task = this.data.tasks.find(t => t.id === e.currentTarget.dataset.id); if (task) {
         this.setData({ detail: task });
@@ -240,6 +245,29 @@ Page({
         this.actionKeyScope = null;
         return receipt;
     },
+    async submitQualityRetry(e) {
+        const task = this.data.detail;
+        if (!task?.id || this.data.processing) return;
+        const shotIds = task.selectedShotIds || [];
+        if (!shotIds.length) { this.setData({error:'请至少选择一个需要重做的分镜'}); return; }
+        const mode = e.currentTarget.dataset.mode;
+        const costLimit = mode === 'budget' ? Number(task.costLimitInput) : null;
+        if (mode === 'budget' && (!Number.isFinite(costLimit) || costLimit <= 0)) { this.setData({error:'请输入有效的本次费用上限'}); return; }
+        const selected = (task.failedShots || []).filter(shot => shotIds.includes(String(shot.id)));
+        const summary = selected.map(shot => `${shot.label}(${shot.reason})`).join('、');
+        const instruction = `保留已通过分镜，仅重做：${summary}。${mode === 'budget' ? `本次新增费用上限为¥${costLimit.toFixed(2)}。` : '费用上限沿用当前任务授权，超出时停止并再次请求确认。'}重新质检后再合成，不重跑其他已完成步骤。`;
+        const epoch = this.epoch || 0;
+        wx.showModal({title:'确认提交局部重做？',content:`将重做 ${selected.length} 个分镜。${(task.impact || []).join('；')}`,confirmText:'确认执行',success:async r=>{
+            if(!r.confirm || epoch !== (this.epoch || 0) || this.disposed) return;
+            this.setData({processing:true,error:''});
+            try { const receipt=await this.submitWorkbenchAction('retry_task',task.id,task.task_version || task.version || task.updated_at,{instruction,rerunDownstream:false});
+                if(epoch !== (this.epoch || 0) || this.disposed)return;
+                this.setData({'detail.receipt':{...receipt,statusLabel:'已提交并由后端受理',summary:`${selected.length} 个分镜已进入重做队列`}}); await this.refresh();
+            } catch(err) { if(epoch === (this.epoch || 0))this.setData({error:err.message}); }
+            finally { if(epoch === (this.epoch || 0))this.setData({processing:false}); }
+        }});
+    },
+    inputCostLimit(e) { this.setData({'detail.costLimitInput':e.detail.value}); },
     async decideApproval(e) { if (this.data.processing || !this.data.detail?.approval)
         return; const a = this.data.detail.approval; const decision = e.currentTarget.dataset.decision; const epoch = this.epoch || 0; wx.showModal({ title: decision === 'approved' ? '确认批准此事项？' : '退回此事项？', content: a.action_summary, success: async (r) => { if (!r.confirm || epoch !== (this.epoch || 0) || this.disposed)
             return; this.setData({ processing: true }); try {
@@ -317,12 +345,12 @@ Page({
     switchAssistant(e) { this.setData({ assistantMode: e.currentTarget.dataset.mode }); }, inputText(e) { this.inputCommandKey = null; this.setData({ input: e.detail.value }); }, askSuggestion(e) { this.setData({ input: e.currentTarget.dataset.text }); this.send(); },
     async send() { const input = this.data.input.trim(); if (!input || this.data.sending)
         return; const epoch = this.epoch || 0; const messages = [...this.data.messages, { id: 'm' + Date.now(), role: 'user', content: input }]; this.setData({ messages, input: '', sending: true, error: '' }); try {
-        const context = JSON.stringify({ week: this.data.week, metrics: this.data.metrics, tasks: this.data.tasks, agents: this.data.agents });
-        const answer = this.workspaceKind === 'starter' ? starter.answer(this.data.starterWorkspace, input) : await api.chat([{ role: 'user', content: '以下为当前账号工作数据，仅据此回答实际进度；未提供数据明确说未知；任何执行请求仅提出操作建议，不宣称已执行。\n' + context }, ...messages.slice(-12).map(m => ({ role: m.role, content: m.content }))]);
+        const context = JSON.stringify({ currentTime: new Date().toISOString(), timeZone: 'Asia/Shanghai', week: this.data.week, metrics: this.data.metrics, tasks: this.data.tasks.map(t => ({title:t.title,status:t.statusLabel,agent:t.agentLabel,reason:t.reason,dueAt:t.due_at || t.dueAt})), agents: this.data.agents.map(a => ({name:a.label,status:a.statusLabel,currentTask:a.currentTask})) });
+        const answer = this.workspaceKind === 'starter' ? starter.answer(this.data.starterWorkspace, input) : await api.chat([{ role: 'user', content: '以下是当前账号的工作数据。用管理者能直接理解的简洁中文回答，先说结论和影响，再说建议动作。不输出 Markdown、任务 ID、运行 ID、英文内部状态、代码块或 next 字段。未提供的数据要明确说未知。时间判断必须以 currentTime 与 timeZone 计算。\n' + context }, ...messages.slice(-12).map(m => ({ role: m.role, content: m.content }))]);
         if (epoch !== (this.epoch || 0) || this.disposed)
             return;
         this.inputCommandKey = null;
-        const next = [...messages, { id: 'm' + Date.now(), role: 'assistant', content: answer }];
+        const next = [...messages, { id: 'm' + Date.now(), role: 'assistant', content: model.managerAnswer(answer), actions: model.assistantActions(input, this.data.matters) }];
         this.setData({ messages: next, chatAnchor: next[next.length - 1].id });
         wx.setStorageSync(this.chatKey, next.slice(-40));
     }
@@ -334,6 +362,7 @@ Page({
         if (epoch === (this.epoch || 0) && !this.disposed)
             this.setData({ sending: false });
     } },
+    assistantAction(e) { const id=e.currentTarget.dataset.id; const action=this.data.messages.flatMap(message=>message.actions||[]).find(item=>item.id===id); if(!action)return; if(action.kind==='matter'){const item=this.data.matters.find(matter=>matter.id===action.matterId);if(!item){this.setData({error:'该事项已更新，请刷新后查看最新状态。'});return;}this.setData({activeMatter:item,tab:'todo',sheet:null,detail:null,error:''});this.processMatter();return;}if(action.kind==='metric'){this.setData({tab:'work',sheet:null,detail:null,error:''});this.openMetric({currentTarget:{dataset:{key:action.metric}}});} },
     submitInstruction() {
         const input = this.data.input.trim();
         if (!input || this.data.sending || this.data.offline || this.workspaceKind !== 'starter') return;

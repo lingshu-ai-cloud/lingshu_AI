@@ -25,6 +25,10 @@ export function checkMobileWorkbenchRelease(root, evidence = process.env) {
     for (const required of ['pages/workbench/index', 'pages/index/index']) {
       if (!app.pages?.includes(required)) block('missing_page', `app.json 缺少 ${required}`);
     }
+    const recordDescription = app.permission?.['scope.record']?.desc;
+    if (typeof recordDescription !== 'string' || !recordDescription.trim()) {
+      block('missing_record_permission_description', 'app.json 必须声明 scope.record 的用户可读用途。');
+    } else pass('record_permission_description', recordDescription.trim());
   }
   if (project?.appid !== EXPECTED_APP_ID) block('unexpected_app_id', 'project.config.json 的 AppID 与已确认的小程序不一致。');
   else pass('app_id', EXPECTED_APP_ID);
@@ -44,6 +48,11 @@ export function checkMobileWorkbenchRelease(root, evidence = process.env) {
   const networkApis = [...new Set([...clientSource.matchAll(/wx\.(request|uploadFile|downloadFile|connectSocket)\s*\(/g)].map(match => match[1]))].sort();
   if (!networkApis.length) block('network_api_not_detected', '无法从客户端源码确认微信网络 API。');
   else pass('network_domain_types', networkApis.join(','));
+  const privacyApis = [...new Set([...clientSource.matchAll(/wx\.(chooseMedia|getRecorderManager|authorize|openSetting)\s*\(/g)].map(match => match[1]))].sort();
+  for (const required of ['chooseMedia', 'getRecorderManager']) {
+    if (!privacyApis.includes(required)) block('privacy_api_not_detected', `无法从客户端源码确认 ${required} 的隐私声明范围。`);
+  }
+  if (privacyApis.length) pass('privacy_api_inventory', privacyApis.join(','));
   const apiSource = clientSource.split('\n').slice(0, read(root, 'apps/shooting-miniapp/lib/api.js').split('\n').length).join('\n');
   if (/tenantId|tenant_id|userId|user_id/.test(apiSource)) block('client_scope_parameter', '客户端 API 层不应提交租户或用户作用域。');
   else pass('server_derived_scope', '客户端 API 层未发现租户/用户作用域参数');

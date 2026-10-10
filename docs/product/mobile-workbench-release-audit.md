@@ -6,6 +6,28 @@
 
 产品应提供统一工作台体验，账号登录后由后端确定租户、用户和能力，底栏、指标、队列和动作遵循同一份契约。现有后端数据结构差异属于适配问题，不应表现为用户套餐选择。
 
+## 2026-10-10 微信发布配置复核
+
+本节只记录仓库可复现证据，不等同于微信公众平台或真机验收结果。
+
+| 项目 | 仓库证据 | 结论 |
+| --- | --- | --- |
+| 小程序 AppID | `apps/shooting-miniapp/project.config.json` 为 `wxe47d8e0f74fe1403` | 代码通过；AppID 归属仍需后台确认 |
+| 正式 API | `apps/shooting-miniapp/config.js` 为 `https://app.lingshu.site` | 代码通过；只使用 HTTPS |
+| 网络域名类型 | 客户端网络调用只检测到 `wx.request`；视频以 ArrayBuffer 经 `wx.request` 上传 | 只需核验 `request` 合法域名；当前源码不需要 `uploadFile`、`downloadFile` 或 `socket` 域名 |
+| 麦克风用途 | `app.json` 已声明 `scope.record` 用于把主动录音转成可编辑工作指令 | 代码通过；仍需后台隐私保护指引匹配 |
+| 隐私 API | 检测到 `chooseMedia`、`getRecorderManager`、`authorize`、`openSetting` | 微信后台需覆盖麦克风及相册/视频选择用途 |
+| 入口页 | `pages/workbench/index` 是 `app.json` 第一页 | 代码通过 |
+| 账号作用域 | 客户端 API 层未提交 tenant/user scope，由认证服务端确定 | 静态检查通过 |
+
+执行 `npm run check:mobile-workbench-release` 时，仓库检查通过，发布仍会因以下三项缺少外部证据而以 exit 2 关闭：
+
+1. 微信公众平台已为该 AppID 配置 `https://app.lingshu.site` 为 `request` 合法域名。
+2. 隐私保护指引已声明麦克风和相册/视频用途，且审核版本与代码一致。
+3. iOS、Android 真机已完成登录、三 Tab、录音授权、视频选择/上传、弱网与版本冲突验收。
+
+外部验收完成后，只能在当次发布流程中显式提供三个 `WECHAT_*_VERIFIED=1` 证据标记；不得将其写入仓库作为永久绕过。
+
 ## 2026-10-10 开发补足记录
 
 - 周播报已切换为服务端统一接口：完整分页、跨周排除、指标与下钻同口径，并返回数据来源、区间和可用性。

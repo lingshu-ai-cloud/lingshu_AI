@@ -32,7 +32,10 @@ async function login(email, password) {
   const result = await request('auth/login', 'POST', { email, password }, false)
   if (!result.token) throw new Error('登录失败')
   wx.setStorageSync(TOKEN_KEY, result.token)
-  return result
+  // `/auth/me` includes the server-authoritative product profile. Keeping the
+  // login response free of client-side plan inference also works for accounts
+  // whose product access changes independently of their subscription label.
+  return request('auth/me')
 }
 
 function uploadVideo(file, onProgress) {
@@ -100,8 +103,9 @@ module.exports.chat = messages => new Promise((resolve, reject) => {
   })
 })
 
-module.exports.workspaceKind = async () => {
-  try { await request('starter-198/workspace'); return 'starter'; }
-  catch (e) { if (e.status === 403 && ['starter_198_workspace_not_entitled', 'profile_not_enabled'].includes(e.code)) return 'legacy'; throw e; }
+module.exports.workspaceKind = session => {
+  if (session && session.productProfile === 'starter_198') return 'starter'
+  if (session && session.productProfile === 'advanced_customer') return 'legacy'
+  throw new Error('账号能力边界暂时无法核验')
 };
 module.exports.command = body => request('starter-198/commands', 'POST', body);

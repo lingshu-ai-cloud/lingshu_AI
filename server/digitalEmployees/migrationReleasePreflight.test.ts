@@ -150,6 +150,29 @@ try {
     item.code === 'immutable_manifest_conflict' && item.path === `pb_migrations/${appendedName}`
   )));
 
+  // 1791072008 was committed once with stable migration bytes but an incorrect
+  // manifest fingerprint. The compatibility repair must accept only that exact
+  // audited manifest correction; it must not create a general escape hatch for
+  // changing an immutable checksum.
+  const typoFixture = createFixture();
+  const typoName = '1791072008_create_content_execution_queue.js';
+  const typoContent = fs.readFileSync(path.resolve('pb_migrations', typoName), 'utf8');
+  const recordedTypo = '17082ecdb5a6228182507d1d2a01f55c6aac48922cd376c489fecce8c8fb2f07';
+  const auditedChecksum = '2aed450a4c83a5f6133817f47eef9c1f08ecde5e65f22427aa7480c2c96f67f8';
+  assert.equal(checksum(typoContent), auditedChecksum, 'the regression fixture must use the reviewed migration bytes');
+  fs.writeFileSync(migrationPath(typoFixture, typoName), typoContent);
+  writeManifest(typoFixture, { [typoName]: recordedTypo });
+  const typoBaseline = commit(typoFixture, 'Record historical manifest typo');
+  writeManifest(typoFixture, { [typoName]: auditedChecksum });
+  const auditedRepair = checkDigitalEmployeeMigrations(typoFixture, { baselineRef: typoBaseline });
+  assert.equal(auditedRepair.status, 'passed', 'the exact reviewed typo repair should pass');
+
+  writeManifest(typoFixture, { [typoName]: '0'.repeat(64) });
+  const unrelatedRewrite = checkDigitalEmployeeMigrations(typoFixture, { baselineRef: typoBaseline });
+  assert.ok(unrelatedRewrite.blockers.some(item => (
+    item.code === 'immutable_manifest_conflict' && item.path === `pb_migrations/${typoName}`
+  )), 'any checksum other than the exact audited repair must remain blocked');
+
   // The first manifest rollout uses tracked baseline migration blobs as its
   // trust root; changing an old migration and the new manifest together fails.
   const partialFixture = createFixture();
