@@ -1,6 +1,9 @@
-import { Router, type Request } from 'express';
+import { transcribeMobileVoice } from '../routes/mobileWorkbench.js';
+import { createMobileWorkbenchQueueRouter } from '../routes/mobileWorkbenchQueue.js';
+import { store } from '../storage/index.js';
+import { json, Router, type Request } from 'express';
 import { requestOrganizationRoleStrict } from '../lib/organizationRole.js';
-import { requireAuth, type AuthLocals } from '../middleware/auth.js';
+import { enforceSupportSessionReadOnly, requireAuth, type AuthLocals } from '../middleware/auth.js';
 import {
   parseStarter198CommandInput,
   runStarter198Command,
@@ -52,9 +55,10 @@ function sendFailure(res: import('express').Response, error: unknown): void {
   }
   const code = error instanceof Error && [
     'starter_198_workspace_not_entitled',
+    'starter_198_role_required',
     'starter_198_workspace_projection_incomplete',
   ].includes(error.message) ? error.message : 'starter_198_unavailable';
-  res.status(code === 'starter_198_workspace_not_entitled' ? 403 : 503).json({ error: code, message: code });
+  res.status(['starter_198_workspace_not_entitled', 'starter_198_role_required'].includes(code) ? 403 : 503).json({ error: code, message: code });
 }
 
 export function createStarter198Router(dependencies: Starter198RouterDependencies = {}): Router {
@@ -69,6 +73,22 @@ export function createStarter198Router(dependencies: Starter198RouterDependencie
     orchestratorQueue: dependencies.orchestratorQueue,
     resolveRole,
   }));
+
+  const mobileWorkspace = async (req: Request, res: import('express').Response) => {
+    const { tenantId, userId } = res.locals as AuthLocals;
+    const role = starter198OrgRole(await resolveRole(req, userId));
+    if (!role) throw new Error('starter_198_role_required');
+    return buildStarter198Workspace({ tenantId, role, repository,
+      now: dependencies.now?.(), orchestratorAvailable: Boolean(dependencies.orchestratorQueue),
+      decisionAvailable: Boolean(dependencies.approvalDecision), quoteDecisionAvailable: Boolean(dependencies.quoteDecision),
+      quoteEvidenceAvailable: Boolean(dependencies.quoteEvidence), quoteSelfServiceAvailable: Boolean(dependencies.quoteSelfService),
+      setupAvailable: Boolean(dependencies.initialSetup), loadProductionReadModel: dependencies.readProductionModel });
+  };
+  router.use('/mobile', createMobileWorkbenchQueueRouter(store, mobileWorkspace));
+
+  router.post('/mobile/transcribe', json({limit:'3mb'}), enforceSupportSessionReadOnly, async (req, res) => {
+    try { await mobileWorkspace(req, res); await transcribeMobileVoice(req, res); } catch (error) { sendFailure(res, error); }
+  });
 
   router.get('/workspace', async (req, res) => {
     res.setHeader('Cache-Control', 'private, no-store');

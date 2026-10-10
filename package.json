@@ -163,7 +163,9 @@
     "migrate:pocketbase-postgres": "tsx scripts/migrate-pocketbase-to-postgres.ts",
     "test:cloud-backend": "tsx server/storage/postgres.test.ts && tsx server/storage/postgresCutover.contract.test.ts && tsx server/queues/bullmq.test.ts && tsx scripts/migrate-pocketbase-to-postgres.test.ts",
     "test:social-managed": "tsx src/lib/socialInspirationTask.test.ts && tsx src/lib/socialMonitoringReview.test.ts && tsx src/lib/socialChannels.monitor.test.ts && tsx server/starter198/socialContentManagedReview.test.ts && tsx server/starter198/socialContentManagedRecovery.test.ts && tsx server/starter198/socialContentManagedPublishing.test.ts && tsx server/publishing/socialContentSourceClaim.test.ts && tsx server/publishing/managedPublishingAuthorization.test.ts && tsx server/publishing/managedSocialEffect.test.ts && tsx server/digitalEmployees/managedPublishingGrant.test.ts && tsx server/digitalEmployees/managedOperatingCycle.test.ts && tsx server/digitalEmployees/managedOperatingCycle.integration.test.ts && tsx server/digitalEmployees/managedPublishingCycleLease.test.ts",
-    "test:assistant-quality": "tsx --test server/assistantContext/*.test.ts server/routes/strategy.decisions.test.ts server/routes/strategy.grounding.integration.test.ts src/lib/assistantConversationContext.test.ts src/lib/assistantDecisionRequestGuard.test.ts"
+    "test:assistant-quality": "tsx --test server/assistantContext/*.test.ts server/routes/strategy.decisions.test.ts server/routes/strategy.grounding.integration.test.ts src/lib/assistantConversationContext.test.ts src/lib/assistantDecisionRequestGuard.test.ts",
+    "check:mobile-workbench-release": "node scripts/check-mobile-workbench-release.mjs",
+    "test:mobile-workbench-release-gate": "node --test scripts/check-mobile-workbench-release.test.mjs"
   },
   "packageManager": "pnpm@11.19.0",
   "dependencies": {

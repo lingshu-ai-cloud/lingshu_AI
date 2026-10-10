@@ -1,0 +1,28 @@
+<view class="page">
+  <view wx:if="{{loading}}" class="empty">正在读取最新证据与处理选项…</view>
+  <block wx:if="{{detail}}">
+    <view class="title">{{detail.title}}</view>
+    <view class="reason">{{detail.whyUser}}</view>
+    <view class="impact">{{detail.blockingImpact}}</view>
+    <view class="meta">版本 {{detail.subjectVersion}} · {{detail.observedAt}}</view>
+    <view wx:if="{{detail.videoUrl}}" class="panel"><video src="{{detail.videoUrl}}" controls class="video"/></view>
+    <view wx:if="{{detail.evidence.length}}" class="panel"><view class="heading">判断依据</view><view wx:for="{{detail.evidence}}" wx:key="id" class="row"><view>{{item.label || item.summary}}</view><view class="meta">{{item.source}} · {{item.observedAt}}</view><image wx:if="{{item.imageUrl}}" src="{{item.imageUrl}}" mode="widthFix" class="evidence-image"/></view></view>
+    <view wx:if="{{detail.failedScenes.length}}" class="panel"><view class="heading">选择需要修复的分镜</view><checkbox-group bindchange="selectScenes"><label wx:for="{{detail.failedScenes}}" wx:key="id" class="scene row"><checkbox value="{{item.id}}" checked="{{item.status !== 'passed'}}" disabled="{{item.status === 'passed'}}" color="#117F51"/><view class="grow"><view>{{item.label}}</view><view class="reason">{{item.reason}}</view><view wx:if="{{item.status === 'passed'}}" class="meta">已通过 · 保留该分镜</view><video wx:if="{{item.previewUrl}}" src="{{item.previewUrl}}" controls class="video"/></view></label></checkbox-group></view>
+    <view wx:if="{{detail.cost}}" class="panel"><view class="heading">本次费用</view><view>当前授权：{{detail.cost.currentLimitLabel}}</view><view>已用：{{detail.cost.usedLabel}}</view><view>预计新增：{{detail.cost.incrementLabel}}</view><view class="meta">{{detail.cost.source}} · {{detail.cost.expiresAt}}</view><view>{{detail.cost.alternative}}</view></view>
+    <view wx:if="{{detail.resume}}" class="panel"><view class="heading">恢复位置</view><view>{{detail.resume.checkpointLabel}}</view><view class="meta">保留成果</view><view wx:for="{{detail.resume.retainedArtifacts}}" wx:key="id">✓ {{item.label}}</view></view>
+    <view wx:if="{{detail.connection}}" class="panel"><view class="heading">账号连接</view><view>{{detail.connection.accountLabel || detail.connection.title}}</view><view>{{detail.connection.reason}}</view><view class="meta">缺少权限：{{detail.connection.missingScopesLabel}}</view><button wx:if="{{detail.connection.authorizationUrl || detail.connection.startRoute}}" bindtap="openConnection">前往重新授权</button></view>
+    <view wx:if="{{detail.materials}}" class="panel"><view class="heading">补齐素材</view><view>{{detail.materials.requirement || detail.materials.requirements}}</view><button wx:if="{{detail.materials.shootingTaskId}}" bindtap="openShooting">拍摄或从相册上传</button><view wx:for="{{detail.materials.items}}" wx:key="id" data-id="{{item.id}}" bindtap="chooseMaterial" class="row"><view>{{fields.materialId === item.id ? '●' : '○'}} {{item.title}}</view><view class="meta">{{item.validationSummary}}</view></view></view>
+    <view wx:if="{{detail.external}}" class="panel"><view class="heading">完成平台操作</view><button wx:if="{{detail.external.packageUrl}}" bindtap="downloadPackage">获取发布包</button><button wx:if="{{detail.external.copy}}" data-value="{{detail.external.copy}}" bindtap="copy">复制发布文案</button><view wx:for="{{detail.external.assets}}" wx:key="contentHash" class="row"><view>{{item.fileName}}</view><button data-id="{{item.contentHash}}" disabled="{{submitting}}" bindtap="downloadAsset">下载并保存素材</button><button data-value="{{item.downloadUrl}}" bindtap="copy">复制下载链接</button></view><view class="meta">{{detail.external.platformInstruction}}</view></view>
+    <view wx:if="{{detail.conversation}}" class="panel"><view class="heading">客户会话</view><view wx:for="{{detail.conversation.messages}}" wx:key="id" class="row"><view class="meta">{{item.sender}} · {{item.occurredAt}}</view><view>{{item.body}}</view></view><view class="meta">草稿建议：{{detail.conversation.draft}}</view></view>
+    <view class="heading">选择处理方案</view>
+    <view wx:for="{{options}}" wx:key="id" class="panel option">
+      <view class="heading">{{item.label}}</view><view>{{item.summary}}</view><view class="meta">{{item.timeImpact}} {{item.qualityImpact}} {{item.costImpact}}</view>
+      <block wx:for="{{item.fields}}" wx:for-item="field" wx:key="key"><view class="field" wx:if="{{field.type !== 'scenes' && field.type !== 'materials'}}"><view>{{field.label}}</view><textarea wx:if="{{field.type === 'text'}}" value="{{fields[field.key]}}" placeholder="{{field.placeholder}}" data-key="{{field.key}}" bindinput="inputField"/><input wx:else type="{{field.type === 'number' ? 'digit' : 'text'}}" value="{{fields[field.key]}}" placeholder="{{field.placeholder}}" data-key="{{field.key}}" bindinput="inputField"/></view></block>
+      <view wx:if="{{item.disabledReason}}" class="warning">{{item.disabledReason}}</view>
+      <button class="primary" disabled="{{item.disabled || submitting || receipt.status === 'running' || receipt.status === 'accepted' || receipt.status === 'queued'}}" loading="{{submitting}}" data-id="{{item.id}}" bindtap="submit">{{item.label}}</button>
+    </view>
+    <view wx:if="{{!options.length}}" class="warning">当前没有可执行的处理方案，请刷新或联系任务负责人。</view>
+    <view wx:if="{{receipt}}" class="panel receipt"><view class="heading">{{receiptLabel}}</view><view>{{receipt.result.summary}}</view><view wx:if="{{receipt.error}}" class="warning">{{receipt.error.message || receipt.error.code}}</view><view class="meta">回执 {{receipt.id}}</view><button bindtap="pollReceipt">刷新执行结果</button></view>
+  </block>
+  <view wx:if="{{error}}" class="warning">{{error}}</view><button class="secondary" bindtap="refresh">刷新事项</button>
+</view>

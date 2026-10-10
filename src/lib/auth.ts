@@ -26,6 +26,8 @@ export interface AuthTenant {
 export interface AuthSession {
   user: AuthUser;
   tenant: AuthTenant | null;
+  /** Server-authoritative product boundary; subscription labels do not grant access. */
+  productProfile?: 'starter_198' | 'advanced_customer';
   /** Server-verified platform operator identity; subscription names are never authority. */
   platformAdmin?: boolean;
   subscription?: { status: string; plan: string | null; expiresAt: string | null };

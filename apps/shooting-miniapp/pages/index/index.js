@@ -3,7 +3,7 @@ const emptyDraft = () => ({ title: '', shotBrief: '', productIds: [], themeTitle
 
 Page({
   data: { products: [], productsLoading: false, productsError: '', productsOpen: false, selectedProductText: '', draft: emptyDraft(), ratios: ['9:16', '16:9', '1:1', '4:5'], creating: false, loggedIn: false, loading: false, email: '', password: '', userName: '', tasks: [], visibleTasks: [], selected: null, filter: 'pending', busy: false, progress: 0, message: '', pendingMaterialId: '' },
-  onLoad() { if (api.token()) this.restore() },
+  onLoad(options) { this.initialTaskId = options && options.taskId; if (api.token()) this.restore() },
   onShow() { if (this.data.loggedIn && !this.data.busy) this.refresh() },
   inputEmail(e) { this.setData({ email: e.detail.value }) },
   inputPassword(e) { this.setData({ password: e.detail.value }) },
@@ -93,6 +93,7 @@ Page({
       const displayTasks = tasks.map(task => this.displayTask(task))
       const filter = this.data.filter
       this.setData({ tasks: displayTasks, visibleTasks: displayTasks.filter(task => filter === 'all' || (filter === 'pending' && !task.done) || (filter === 'done' && task.done)) })
+      if (this.initialTaskId) { this.setData({ selected: displayTasks.find(task => task.id === this.initialTaskId) || null }); this.initialTaskId = '' }
       if (this.data.selected) this.setData({ selected: this.data.tasks.find(task => task.id === this.data.selected.id) || null })
     } catch (e) { this.setData({ message: e.message }) }
     finally { this.setData({ loading: false }) }

@@ -19,7 +19,7 @@ function request(path, method = 'GET', data, authorized = true) {
       header: { 'Content-Type': 'application/json', ...(authorized && token() ? { Authorization: 'Bearer ' + token() } : {}) },
       success(res) {
         if (res.statusCode === 401) clearToken()
-        if (res.statusCode < 200 || res.statusCode >= 300) return reject(new Error(((res.data && res.data.error) || (res.statusCode === 404 ? '当前服务器未提供此功能接口' : res.statusCode === 401 ? '登录已过期，请退出后重新登录' : '请求失败')) + '（HTTP ' + res.statusCode + '）'))
+        if (res.statusCode < 200 || res.statusCode >= 300) { const error = new Error(((res.data && (res.data.message || res.data.error)) || '请求失败') + '（HTTP ' + res.statusCode + '）'); error.status = res.statusCode; error.code = res.data && res.data.error; return reject(error) }
         if (!res.data || typeof res.data !== 'object') return reject(new Error('服务器未返回接口数据，请检查服务版本（HTTP ' + res.statusCode + '）'))
         resolve(res.data)
       },
@@ -32,7 +32,10 @@ async function login(email, password) {
   const result = await request('auth/login', 'POST', { email, password }, false)
   if (!result.token) throw new Error('登录失败')
   wx.setStorageSync(TOKEN_KEY, result.token)
-  return result
+  // `/auth/me` includes the server-authoritative product profile. Keeping the
+  // login response free of client-side plan inference also works for accounts
+  // whose product access changes independently of their subscription label.
+  return request('auth/me')
 }
 
 function uploadVideo(file, onProgress) {
@@ -92,3 +95,12 @@ module.exports = {
   tasks: () => request('studio/shooting-tasks'),
   attach: (id, materialId) => request('studio/shooting-tasks/' + encodeURIComponent(id) + '/uploads', 'POST', { uploadedMaterialIds: [materialId] })
 }
+
+module.exports.request = request
+module.exports.chat = messages => new Promise((resolve, reject) => {
+  wx.request({ url: base() + '/api/overseas/strategy/chat', method: 'POST', data: { messages, deepThinking: false }, timeout: 120000, dataType: 'text', responseType: 'text', header: { 'Content-Type':'application/json', Authorization:'Bearer '+token() },
+    success(res) { if (res.statusCode === 401) clearToken(); if (res.statusCode !== 200) return reject(new Error('助手请求失败（HTTP '+res.statusCode+'）')); let answer = ''; let failure = ''; String(res.data).split('\n').forEach(line => { if (!line.startsWith('data: ') || line.includes('[DONE]')) return; try { const event = JSON.parse(line.slice(6)); if (event.text) answer += event.text; if (event.error) failure = event.error } catch (_) {} }); if (failure) reject(new Error(failure)); else if (answer) resolve(answer); else reject(new Error('助手未返回回答，请重试')) }, fail(e) { reject(new Error(e.errMsg || '助手连接失败')) }
+  })
+})
+
+module.exports.command = body => request('starter-198/commands', 'POST', body);

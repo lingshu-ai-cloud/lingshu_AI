@@ -1,3 +1,4 @@
+import { mobileWorkbenchRouter } from './routes/mobileWorkbench.js';
 import './loadEnvironment.js';
 import { startMessengerContextTagRecovery } from './messenger/conversations.js';
 import path from 'path';
@@ -194,6 +195,8 @@ app.use('/api/overseas/studio/voice-samples', requireAuth, jsonBody(`${limits.vo
 app.use('/api/overseas/studio/voiceover', requireAuth, jsonBody(`${limits.voiceUpload}mb`));
 app.use('/api/overseas/studio/bgm', requireAuth, jsonBody(`${limits.voiceUpload}mb`));
 app.use('/api/overseas/studio/product-document-ocr', requireAuth, jsonBody('9mb'));
+app.use('/api/overseas/mobile-workbench', mobileWorkbenchRouter);
+app.use('/api/overseas/starter-198/mobile/transcribe', requireAuth, jsonBody('3mb'));
 app.use(jsonBody(`${limits.default}mb`));
 app.use(syncAssetSession);
 
