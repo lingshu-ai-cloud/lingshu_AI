@@ -18,7 +18,7 @@ import {prepareWeeklyQualityAuditFixture} from './weeklyContentQualityAudit.fixt
 import {createWeeklyPlanningAuthority} from '../socialPrograms/planningAuthority.js';
 import {createSocialWeeklyProductionAdapter} from './socialWeeklyProductionAdapter.js';
 import {runSocialWeeklyExecutionScan} from './socialWeeklyExecutionRuntime.js';
-import type {WeeklyExecutionTask} from '../../shared/contracts/socialProgram.js';
+import type {OwnedSocialAccount,WeeklyExecutionTask} from '../../shared/contracts/socialProgram.js';
 
 export interface WeeklyNonPresenterFixtureOptions {controlledSourceTone?:boolean;sourceUrl?:string;weeklyBudgetCny?:number;sourceSpeech?:string;ownedReferenceBytes?:boolean;productInventory?:boolean;primaryStructure?:boolean;metricTargets?:string[];successCriteria?:string[];targetCta?:string;confirmedTemplate?:boolean}
 /** Real initialize/analyze/merge/confirm/dispatch over owned media and a controlled
@@ -81,7 +81,8 @@ export async function prepareWeeklyNonPresenterPlanningFixture(t:TestContext,opt
     businessConfirmation: { status: 'confirmed', confirmedBy: 'business_agent', decisionRef: 'decision-1', reason: null, confirmedAt: '2026-10-01T00:00:00Z' },
   });
  await f.store.create('social_programs',{tenant_id:'t',program_id:'p',payload:{version:1}});
- await f.store.create('social_owned_accounts',{tenant_id:'t',program_id:'p',account_id:'account',version:1,status:'active',payload:{accountId:'account',programId:'p',version:1,status:'active',platform:'tiktok'}});
+ const initialOwnedAccount:OwnedSocialAccount={accountId:'account',programId:'p',version:1,status:'active',platform:'tiktok',displayName:'受控企业核心账号',handle:null,businessRole:'核心账号',audiencePromise:'企业采购',contentPromise:'已核实企业产品事实',connectionId:null,connectionCapabilities:[],playbookRef:null,conversionRoute:null,createdAt:'2026-10-01T00:00:00Z',updatedAt:'2026-10-01T00:00:00Z'};
+ await f.store.create('social_owned_accounts',{tenant_id:'t',program_id:'p',account_id:initialOwnedAccount.accountId,version:initialOwnedAccount.version,status:initialOwnedAccount.status,payload:initialOwnedAccount});
  await createSocialProgramService(f.store).savePlaybook('t','owner','p','account',{expectedAccountVersion:1,activate:true,audience:['企业采购'],pillars:['产品介绍'],evidenceRules:['仅展示已确认产品资料'],visualRules:['保留清晰产品外观'],languageRules:['英文说明'],conversionRoute:{entryType:'direct_message',callToAction:options.targetCta??'Contact sales'}});
  const goalResult=await createSocialOperatingDecisionService(f.store).buildAndSave({tenantId:'t',operator:{type:'user',id:'owner'},input:{programRef:{type:'social_program',id:'p',version:1},enterprise:{ref:{type:'enterprise_profile',id:'profile',version:1},products:['企业产品'],markets:['US'],audiences:['企业采购'],languages:['en'],publicFacts:pkg.socialContentPackage.publicationTasks[0]!.factRefs.map(ref=>({ref,statement:'已确认的企业产品信息'})),prohibitedClaims:['编造产品性能'],weeklyBudgetCny:options.weeklyBudgetCny??10,salesOwnerId:'owner'},accounts:[{ref:{type:'owned_social_account',id:'account',version:1},accountId:'account',platform:'tiktok',role:'核心账号',status:'active',conversionRouteId:'test-contact'}],conversionRoutes:[{ref:{type:'conversion_route',id:'test-contact',version:1},routeId:'test-contact',kind:'website',target:'https://example.test/contact',verified:true}]}});
  assert.equal(goalResult.goal.status,'ready');pkg.businessContentGoalRef={type:'business_content_goal',id:goalResult.goal.goalId,version:goalResult.goal.version};

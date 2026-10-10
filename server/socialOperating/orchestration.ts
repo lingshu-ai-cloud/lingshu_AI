@@ -212,10 +212,11 @@ export function createSocialOperatingOrchestrationService(
         conversionRoutes,
         objective: text(profile.strategy?.currentGoal) || undefined,
       };
+      const legacyGoal = previous ? null : await repository.latestGoal(tenantId, programId);
       const goalResult = await goals.buildAndSave({
         tenantId, operator: { type: 'user', id: userId }, input: goalInput,
         ...(previous && changed ? { previousEnterprise: previous.enterprise } : {}),
-        expectedVersion: previous ? previous.businessContentGoalRef.version : 0,
+        expectedVersion: previous ? previous.businessContentGoalRef.version : legacyGoal?.version ?? 0,
       });
       const goal = goalResult.goal;
       const configRef = configRow ? ref('digital_employee_config', text(configRow.id), sourceVersion(configRow)) : null;

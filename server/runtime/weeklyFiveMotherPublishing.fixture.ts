@@ -15,11 +15,12 @@ import {runWeeklyPublicationPackageScan} from '../publishing/weeklyPublicationWo
 import {createTikTokWeeklyPublishingAdapter} from '../publishing/tiktokWeeklyPublishingAdapter.js';
 import {bindWeeklyCustomerRun} from './socialWeeklyCustomerBridge.js';
 import {sealAccountCredential} from '../lib/accountCredentials.js';
+import type {WeeklyPublishingProviderAdapter} from '../publishing/weeklyLineage.js';
 import {encryptSecret} from '../lib/tenantPlatformApps.js';
 
 /** Actual G6, explicit approval, publication scan, channel readiness and the
  * official publishing factory. Only the final provider transport is controlled. */
-export async function publishFiveMotherWeek(t:TestContext,input:{store:DataStore;repository:Starter198Repository;pkg:WeeklyOperatingPackage;now:Date}){
+export async function publishFiveMotherWeek(t:TestContext,input:{store:DataStore;repository:Starter198Repository;pkg:WeeklyOperatingPackage;now:Date;beforePublishing?:(input:{published:number;publicationTaskId:string;provider:WeeklyPublishingProviderAdapter;now:Date})=>Promise<void>}){
  const {store,repository,pkg}=input,tenantId='t',actorUserId='owner';
  const service=createWeeklyExecutionTaskService(store),worker=createSocialWeeklyExecutionWorker(store),g6=createSocialWeeklyG6ReviewService(repository);
  const prior=process.env.FOLLOWUP_WORKER_ENABLED;process.env.FOLLOWUP_WORKER_ENABLED='true';t.after(()=>{if(prior===undefined)delete process.env.FOLLOWUP_WORKER_ENABLED;else process.env.FOLLOWUP_WORKER_ENABLED=prior;});
@@ -50,15 +51,15 @@ export async function publishFiveMotherWeek(t:TestContext,input:{store:DataStore
   const approved=await service.approve(tenantId,pkg.programId,pkg.packageId,approval.taskId,actorUserId);assert.equal(approved.find(task=>task.taskId===approval.taskId)?.status,'succeeded');
   const scan=await runWeeklyPublicationPackageScan({dataStore:store,tenantId,taskId:scope.taskId});assert.deepEqual(scan.errors,[]);assert.equal(scan.createdAssignments,1);
  }
- let posts=0;const submittedArtifacts=new Set<string>();
- const provider=await createTikTokWeeklyPublishingAdapter({tenantId,accountId:'account',dataStore:store,now:publishNow,ports:{async publish(claim){assert.ok(claim.videoPath);assert.ok(claim.sourceClaim);assert.equal(createHash('sha256').update(await readFile(claim.videoPath)).digest('hex'),claim.sourceClaim.videoHash);assert.ok(claim.sourceClaim.artifactId);assert.ok(!submittedArtifacts.has(claim.sourceClaim.artifactId));submittedArtifacts.add(claim.sourceClaim.artifactId);posts++;return{video:{id:`five-controlled-${posts}`},tracking:{id:`five-tracking-${posts}`,tenant_id:tenantId,platform:'tiktok',track_code:`five-${posts}`},publishRecord:null,platformPostId:`five-controlled-post-${posts}`,providerReceiptId:`five-controlled-receipt-${posts}`};},async reconcile(){throw Error('immediate controlled acceptance needs no reconciliation');}}});
+ let posts=0,lookups=0;const submittedArtifacts=new Set<string>();const providerReceipts=new Map<string,string>();
+ const provider=await createTikTokWeeklyPublishingAdapter({tenantId,accountId:'account',dataStore:store,now:publishNow,ports:{async publish(claim){assert.ok(claim.videoPath);assert.ok(claim.sourceClaim);assert.equal(createHash('sha256').update(await readFile(claim.videoPath)).digest('hex'),claim.sourceClaim.videoHash);assert.ok(claim.sourceClaim.artifactId);assert.ok(!submittedArtifacts.has(claim.sourceClaim.artifactId));submittedArtifacts.add(claim.sourceClaim.artifactId);posts++;const receiptId=`five-controlled-receipt-${posts}`,postId=`five-controlled-post-${posts}`;providerReceipts.set(receiptId,postId);await refreshPlatformCapabilityEvidence({tenantId,accountId:'account',platform:'tiktok',capability:'publishing.receipt_lookup',receiptId,dataStore:store,providers:{async tiktok(){throw Error('unused');},async youtube(){throw Error('unused');},async instagram(){throw Error('unused');},async facebook(){throw Error('unused');},async tiktokReceipt(_token,id){assert.ok(providerReceipts.has(id));return{publishId:id};}}});return{video:{id:`five-controlled-${posts}`},tracking:{id:`five-tracking-${posts}`,tenant_id:tenantId,platform:'tiktok',track_code:`five-${posts}`},publishRecord:null,platformPostId:`five-controlled-post-${posts}`,providerReceiptId:`five-controlled-receipt-${posts}`};},async reconcile(input){lookups++;const postId=providerReceipts.get(input.providerReceiptId);assert.ok(postId);return{status:'published',providerReceiptId:input.providerReceiptId,platformPostId:postId,platformUrl:'',providerStatus:'PUBLISH_COMPLETE',error:''};}}});
  assert.equal(provider.capability,'available');
  const publishingAdapter=createSocialWeeklyPublicationAdapter(store,{publishingEnabled:()=>true,now:()=>publishNow,adapterFactory:async()=>provider}),channelAdapter=createSocialWeeklyCustomerChannelAdapter(store,{now:()=>publishNow});
  let readiness=0,published=0;
  for(let iteration=0;iteration<20;iteration++){
   const claim=await worker.claimNext({tenantId,workerId:'five-mother-publishing-worker',kinds:iteration<15?['engagement']:['publishing'],now:publishNow});assert.ok(claim);
   const step=claim.task.schedule.stepKind;assert.equal(step,iteration<15?'customer_channel_readiness':'publishing');
-  if(step==='publishing'){const scope=g6Scopes.get(String(claim.task.publicationTaskId));assert.ok(scope);const current=await g6.context(scope,actorUserId);assert.deepEqual(current.gaps,[]);const checked=await g6.check(scope,actorUserId,{...scope,requestId:`five-g6-publish-${claim.task.publicationTaskId}`,expectedContextHash:current.contextHash});assert.equal(checked.item?.status,'passed');}
+  if(step==='publishing'){const scope=g6Scopes.get(String(claim.task.publicationTaskId));assert.ok(scope);const current=await g6.context(scope,actorUserId);assert.deepEqual(current.gaps,[]);const checked=await g6.check(scope,actorUserId,{...scope,requestId:`five-g6-publish-${claim.task.publicationTaskId}`,expectedContextHash:current.contextHash});assert.equal(checked.item?.status,'passed');await input.beforePublishing?.({published,publicationTaskId:String(claim.task.publicationTaskId),provider,now:publishNow});}
   const result=await (step==='publishing'?publishingAdapter:channelAdapter).execute(claim.task);assert.equal(result.status,'succeeded',JSON.stringify({step,result}));if(result.status!=='succeeded')throw Error('controlled publication proof missing');
   await worker.complete(claim,result.resultRefs,publishNow);
   if(step==='publishing'){published++;const again=await publishingAdapter.execute(claim.task);assert.equal(again.status,'succeeded');}else readiness++;
@@ -67,5 +68,5 @@ export async function publishFiveMotherWeek(t:TestContext,input:{store:DataStore
  const attempts=await store.list<Record_>('social_publication_attempts',{where:{tenant_id:tenantId},perPage:100});assert.equal(attempts.totalItems,5);assert.ok(attempts.items.every(row=>row.status==='published'));
  const {executeNativeEmptyCustomerSegmentation}=await import('./weeklyNativeEmptyCustomerSegment.fixture.js');
  await executeNativeEmptyCustomerSegmentation(store,{tenantId,runId:'five-customer-run',userId:actorUserId});
- return{now:publishNow,posts,published,readiness,customerRunId:'five-customer-run',graph:await service.list(tenantId,pkg.programId,pkg.packageId,pkg.version)};
+ return{now:publishNow,posts,lookups,published,readiness,customerRunId:'five-customer-run',graph:await service.list(tenantId,pkg.programId,pkg.packageId,pkg.version)};
 }

@@ -1,5 +1,6 @@
 import {assertWeeklyScheduleActor} from './weeklyScheduleActor.js';
 import type {WeeklyInitialSchedulePreview} from '../../shared/contracts/weeklyInitialSchedule.js';
+import type {WeeklyMaterialPorts} from './weeklyMaterialRequests.js';
 import type {DataStore} from '../storage/datastore.js';
 import type {WeeklyScheduleCapacityInput} from '../../shared/contracts/socialWeeklyScheduleRevision.js';
 import {latestPackageRow} from './weeklyOperatingPackageSupport.js';
@@ -9,8 +10,8 @@ import {SocialProgramError} from './service.js';
 interface Scope {tenantId:string;programId:string;packageId:string;packageVersion:number;actorUserId:string;}
 /** First-week planning uses the same durable capacity proof as later revisions.
  * Suggestions are estimates; no resource calendar or cost is invented here. */
-export function createWeeklyInitialScheduleService(store:DataStore,ports:{now?:()=>string}={}){
- const scheduling=createWeeklyScheduleRevisionService(store,{initialOnly:true,now:ports.now});
+export function createWeeklyInitialScheduleService(store:DataStore,ports:{now?:()=>string;materialPorts?:WeeklyMaterialPorts}={}){
+ const scheduling=createWeeklyScheduleRevisionService(store,{initialOnly:true,now:ports.now,materialPorts:ports.materialPorts});
  async function initial(a:Scope){
   await assertWeeklyScheduleActor(store,a);
   const row=await latestPackageRow(store,a.tenantId,a.programId,a.packageId);

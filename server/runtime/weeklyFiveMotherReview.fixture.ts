@@ -11,9 +11,9 @@ import {createWeeklyContentTemplateExecutionAdapter} from './socialWeeklyContent
 
 /** Finish the actual persisted post-publication graph using controlled metric
  * port records. No task status or completion receipt is manufactured here. */
-export async function finishFiveMotherReview(input:{store:DataStore;pkg:WeeklyOperatingPackage;tenantId:string;actorUserId:string;now:Date}){
+export async function recordFiveMotherMetrics(input:{store:DataStore;pkg:WeeklyOperatingPackage;tenantId:string;actorUserId:string;now:Date}){
  const {store,pkg,tenantId,actorUserId,now}=input;
- const tasks=createWeeklyExecutionTaskService(store),worker=createSocialWeeklyExecutionWorker(store);
+
  const assignments=await store.list<Record_>('social_publication_assignments',{where:{tenant_id:tenantId,operating_package_id:pkg.packageId,operating_package_version:pkg.version},perPage:100});
  assert.equal(assignments.totalItems,5,'five actual publication assignments are required before review');
  const capturedAt=`${pkg.weekEnd}T23:00:00Z`;
@@ -25,6 +25,12 @@ export async function finishFiveMotherReview(input:{store:DataStore;pkg:WeeklyOp
   const manifest=await readStarterPublicationPackage(tenantId,String(assignment.package_id),store);assert.ok(manifest);
   for(const contentId of new Set([String(attempt.platform_post_id),String(manifest.contentId)]))await store.create('social_metric_snapshots',{tenant_id:tenantId,account_id:publication.accountId,platform:publication.platform,content_id:contentId,captured_at:capturedAt,source:'controlled_provider_contract',value_kind:'cumulative',metrics:{views:1000+index*100,likes:20+index,shares:5+index,comments:5+index}});
  }
+}
+
+export async function finishFiveMotherReview(input:{store:DataStore;pkg:WeeklyOperatingPackage;tenantId:string;actorUserId:string;now:Date;seedMetrics?:boolean}){
+ const {store,pkg,tenantId,actorUserId,now}=input;
+ if(input.seedMetrics!==false)await recordFiveMotherMetrics(input);
+ const tasks=createWeeklyExecutionTaskService(store),worker=createSocialWeeklyExecutionWorker(store);
  const publicationAdapter=createSocialWeeklyPublicationAdapter(store,{now:()=>now}),channelAdapter=createSocialWeeklyCustomerChannelAdapter(store,{now:()=>now});
  const templateAdapter=createWeeklyContentTemplateExecutionAdapter(store),templates=createWeeklyContentTemplateService(store,{now:()=>now.toISOString()});
  const tailSteps=['customer_inquiry_handoff','performance_monitoring','weekly_review','template_extraction','template_performance_validation'];
