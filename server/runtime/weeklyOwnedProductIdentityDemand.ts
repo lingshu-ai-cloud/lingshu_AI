@@ -14,6 +14,7 @@ import {socialContentSourceOptions,type SocialContentSourceOptionsPort} from '..
 import {createWeeklyMaterialRequestService,type WeeklyMaterialPorts} from '../socialPrograms/weeklyMaterialRequests.js';
 import {withExecutionPackageGate,executionPackageFrozen} from '../socialPrograms/weeklyExecutionGate.js';
 import {organizationRoleOrNull} from '../lib/organizationRole.js';
+import {resolveWeeklyCreativeRepairAuthority} from './weeklyCreativeRepairAuthority.js';
 export interface WeeklyOwnedProductIdentityPorts {repository:Starter198Repository;materialPorts?:WeeklyMaterialPorts;sourceOptions?:SocialContentSourceOptionsPort;getMaterial?:typeof getOwnedCloudMaterialRecord;startAdmission?:{commandId:string;admissionVersion:string;actorUserId:string}}
 function fail(code:string):never{throw new SocialContentWorkflowError(code,409);}
 const obj=(v:unknown)=>socialObject(socialJson(v));
@@ -21,7 +22,12 @@ function currentRun(row:Record_){return typeof row.run_id==='string'&&row.run_id
 async function source(store:DataStore,scope:WeeklyOwnedProductIdentityScope,ports:WeeklyOwnedProductIdentityPorts){
  if(ports.repository.dataStore!==store)return fail('weekly_material_repository_authority_invalid');
  const rows=await store.list<Record_>('starter_social_content_tasks',{where:{tenant_id:scope.tenantId,task_id:scope.contentTaskId},perPage:2});const row=rows.items[0];
- if(rows.totalItems!==1||rows.items.length!==1||!row||row.tenant_id!==scope.tenantId||row.task_id!==scope.contentTaskId||row.create_idempotency_key!==`weekly-production:${scope.packageId}:${scope.packageVersion}:${scope.publicationTaskId}`)return fail('weekly_owned_product_identity_scope_invalid');
+ if(rows.totalItems!==1||rows.items.length!==1||!row||row.tenant_id!==scope.tenantId||row.task_id!==scope.contentTaskId)return fail('weekly_owned_product_identity_scope_invalid');
+ const ordinaryBinding=`weekly-production:${scope.packageId}:${scope.packageVersion}:${scope.publicationTaskId}`;
+ if(row.create_idempotency_key!==ordinaryBinding){
+  const creative=await resolveWeeklyCreativeRepairAuthority({store,tenantId:scope.tenantId,task:row});
+  if(!creative||row.create_idempotency_key!==creative.bindingKey||creative.repairCase.packageId!==scope.packageId||creative.repairCase.packageVersion!==scope.packageVersion||creative.repairCase.publicationTaskId!==scope.publicationTaskId)return fail('weekly_owned_product_identity_scope_invalid');
+ }
  const authority=obj(obj(row.brief)?._weeklyAuthority),pkg=authority?.weeklyPackage as WeeklyOperatingPackage|undefined,pub=obj(authority?.publicationTask);
  if(!pkg||pkg.programId!==scope.programId||pkg.packageId!==scope.packageId||pkg.version!==scope.packageVersion||pub?.publicationTaskId!==scope.publicationTaskId)return fail('weekly_owned_product_identity_scope_invalid');
  const stored=await store.list<Record_>('social_weekly_operating_packages',{where:{tenant_id:scope.tenantId,program_id:scope.programId,package_id:scope.packageId,version:scope.packageVersion},perPage:2}),actual=obj(stored.items[0]?.payload) as WeeklyOperatingPackage|null;
