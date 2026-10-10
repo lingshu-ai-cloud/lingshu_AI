@@ -2,6 +2,8 @@ import { createHash, randomBytes } from 'node:crypto';
 import { Router, json } from 'express';
 import type { DataStore, Record_ } from '../storage/datastore.js';
 import { enforceSupportSessionReadOnly, type AuthLocals } from '../middleware/auth.js';
+import { validateChatMessages } from '../assistantContext/chatInput.js';
+import type { ChatMessage } from '../agents/llm.js';
 
 export const MOBILE_ASSISTANT_SESSIONS = 'assistant_threads';
 export const MOBILE_ASSISTANT_MESSAGES = 'mobile_assistant_messages';
@@ -31,6 +33,32 @@ export async function findMobileAssistantMessage(store: DataStore, identity: Mob
   const id = digest([identity.tenantId, identity.userId, sessionId, clientMessageId]).slice(0, 24);
   const row = await store.getById<Record_>(MOBILE_ASSISTANT_MESSAGES, id);
   return row?.tenant_id === identity.tenantId && row?.user_id === identity.userId && row?.session_id === sessionId ? visibleMessage(row) : null;
+}
+/** Model context is bounded independently of persisted history; keep entire rounds, never promote stored text to system role. */
+export async function readMobileAssistantChatMessages(store: DataStore, identity: MobileAssistantIdentity, sessionId: string): Promise<ChatMessage[]> {
+  if (!await ownedSession(store, identity, sessionId)) throw new MobileAssistantSessionError(404, 'mobile_assistant_session_not_found');
+  const result = await store.list<Record_>(MOBILE_ASSISTANT_MESSAGES, { where: { tenant_id: identity.tenantId, user_id: identity.userId, session_id: sessionId }, sort: '-created_at', page: 1, perPage: 100 });
+  const rows = result.items.filter(row => row.tenant_id === identity.tenantId && row.user_id === identity.userId && row.session_id === sessionId
+    && (row.role === 'user' || row.role === 'assistant') && typeof row.text === 'string' && row.text.trim() && !row.command_id).reverse();
+  const rounds: ChatMessage[][] = [];
+  for (const row of rows) {
+    const message = { role: row.role, content: row.text } as ChatMessage;
+    if (message.role === 'user') rounds.push([message]);
+    else if (rounds.at(-1)?.length === 1) rounds.at(-1)!.push(message);
+  }
+  // Queries call this after persisting the current input. No pending user means there is nothing to ask the model.
+  const current = rounds.at(-1);
+  if (!current || current.length !== 1) return [];
+  if (current[0].content.length > 12000) throw new MobileAssistantSessionError(413, 'mobile_assistant_context_too_large');
+  const selected = [current];
+  let characters = current[0].content.length;
+  for (const round of rounds.slice(0, -1).reverse()) {
+    if (round.length !== 2) continue;
+    const size = round.reduce((sum, message) => sum + message.content.length, 0);
+    if (characters + size > 12000 || selected.length >= 7) break;
+    selected.unshift(round); characters += size;
+  }
+  return validateChatMessages(selected.flat());
 }
 /** Server-only writer. Client routes may append user messages only; assistant results come from trusted orchestration. */
 export async function appendMobileAssistantMessage(store: DataStore, identity: MobileAssistantIdentity, sessionId: string, input: MobileAssistantMessageInput) {

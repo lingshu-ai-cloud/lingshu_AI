@@ -7,6 +7,20 @@ const EXPECTED_API_ORIGIN = 'https://app.lingshu.site';
 
 const read = (root, file) => fs.readFileSync(path.join(root, file), 'utf8');
 
+const readClientSources = (root) => {
+  const base = path.join(root, 'apps/shooting-miniapp');
+  const files = [];
+  const visit = directory => {
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      const absolute = path.join(directory, entry.name);
+      if (entry.isDirectory()) visit(absolute);
+      else if (/\.(?:js|wxml)$/.test(entry.name)) files.push(absolute);
+    }
+  };
+  visit(base);
+  return files.sort().map(file => fs.readFileSync(file, 'utf8')).join('\n');
+};
+
 export function checkMobileWorkbenchRelease(root, evidence = process.env) {
   const blockers = [];
   const checks = [];
@@ -37,8 +51,7 @@ export function checkMobileWorkbenchRelease(root, evidence = process.env) {
   let clientSource = '';
   try {
     config = read(root, 'apps/shooting-miniapp/config.js');
-    clientSource = ['apps/shooting-miniapp/lib/api.js', 'apps/shooting-miniapp/pages/workbench/index.js', 'apps/shooting-miniapp/pages/index/index.js']
-      .map(file => read(root, file)).join('\n');
+    clientSource = readClientSources(root);
   } catch (error) { block('missing_client_source', String(error)); }
   const origin = config.match(/apiBase\s*:\s*['"]([^'"]+)['"]/)?.[1];
   if (origin !== EXPECTED_API_ORIGIN) block('unexpected_api_origin', `config.js 必须明确指向 ${EXPECTED_API_ORIGIN}`);
@@ -48,19 +61,26 @@ export function checkMobileWorkbenchRelease(root, evidence = process.env) {
   const networkApis = [...new Set([...clientSource.matchAll(/wx\.(request|uploadFile|downloadFile|connectSocket)\s*\(/g)].map(match => match[1]))].sort();
   if (!networkApis.length) block('network_api_not_detected', '无法从客户端源码确认微信网络 API。');
   else pass('network_domain_types', networkApis.join(','));
-  const privacyApis = [...new Set([...clientSource.matchAll(/wx\.(chooseMedia|getRecorderManager|authorize|openSetting)\s*\(/g)].map(match => match[1]))].sort();
+  const privacyApis = [...new Set([...clientSource.matchAll(/wx\.(chooseMedia|getRecorderManager|authorize|openSetting|saveVideoToPhotosAlbum|saveImageToPhotosAlbum)\s*\(/g)].map(match => match[1]))].sort();
   for (const required of ['chooseMedia', 'getRecorderManager']) {
     if (!privacyApis.includes(required)) block('privacy_api_not_detected', `无法从客户端源码确认 ${required} 的隐私声明范围。`);
   }
   if (privacyApis.length) pass('privacy_api_inventory', privacyApis.join(','));
-  const apiSource = clientSource.split('\n').slice(0, read(root, 'apps/shooting-miniapp/lib/api.js').split('\n').length).join('\n');
+  const usesWebView = /<web-view\b/.test(clientSource);
+  if (usesWebView) pass('web_view_inventory', 'web-view');
+  else block('web_view_not_detected', '行动页需要 OAuth web-view，但源码中未检测到 web-view。');
+  const savesToAlbum = privacyApis.some(api => api === 'saveVideoToPhotosAlbum' || api === 'saveImageToPhotosAlbum');
+  if (savesToAlbum) pass('photo_album_write_inventory', privacyApis.filter(api => api.startsWith('save')).join(','));
+  const apiSource = read(root, 'apps/shooting-miniapp/lib/api.js');
   if (/tenantId|tenant_id|userId|user_id/.test(apiSource)) block('client_scope_parameter', '客户端 API 层不应提交租户或用户作用域。');
   else pass('server_derived_scope', '客户端 API 层未发现租户/用户作用域参数');
 
   for (const [code, key, message] of [
     ['request_domain_unverified', 'WECHAT_REQUEST_DOMAIN_VERIFIED', `微信公众平台尚无证据证明已配置 request 合法域名 ${EXPECTED_API_ORIGIN}`],
-    ['privacy_declaration_unverified', 'WECHAT_PRIVACY_DECLARATION_VERIFIED', '微信公众平台隐私保护指引尚无证据证明已声明麦克风和相册/视频用途。'],
-    ['real_device_acceptance_unverified', 'WECHAT_REAL_DEVICE_ACCEPTANCE_VERIFIED', '尚无真机验收证据（登录、三 Tab、录音授权、视频选择/上传、弱网与版本冲突）。'],
+    ['asset_request_domains_unverified', 'WECHAT_ASSET_REQUEST_DOMAINS_VERIFIED', '外部发布素材由动态 HTTPS 地址通过 wx.request 下载；尚无证据证明所有实际素材主机均已配置为 request 合法域名，或统一改由已配置域名代理。'],
+    ['business_domain_unverified', 'WECHAT_BUSINESS_DOMAIN_VERIFIED', '社媒 OAuth 使用 web-view；尚无证据证明所有实际授权/回调页面主机均已配置为小程序业务域名。'],
+    ['privacy_declaration_unverified', 'WECHAT_PRIVACY_DECLARATION_VERIFIED', '微信公众平台隐私保护指引尚无证据证明已覆盖麦克风、相册/视频选择，以及保存图片/视频到相册的用途。'],
+    ['real_device_acceptance_unverified', 'WECHAT_REAL_DEVICE_ACCEPTANCE_VERIFIED', '尚无真机验收证据（登录、三 Tab、录音授权、视频选择/上传、素材保存、OAuth、弱网与版本冲突）。'],
   ]) {
     if (evidence[key] === '1') pass(code.replace('_unverified', '_verified'), key);
     else block(code, message);
@@ -74,7 +94,7 @@ export function checkMobileWorkbenchRelease(root, evidence = process.env) {
     blockers,
     limitations: [
       '本检查不登录微信公众平台，不读取生产账号，也不发布小程序。',
-      '三个 WECHAT_*_VERIFIED 环境变量只能由人工查验后台配置或完成真机验收后在当次发布流程中提供。',
+      '五个 WECHAT_*_VERIFIED 环境变量只能由人工查验后台配置、实际运行域名清单或完成真机验收后在当次发布流程中提供。',
     ],
   };
 }

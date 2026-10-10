@@ -14,19 +14,22 @@
 | --- | --- | --- |
 | 小程序 AppID | `apps/shooting-miniapp/project.config.json` 为 `wxe47d8e0f74fe1403` | 代码通过；AppID 归属仍需后台确认 |
 | 正式 API | `apps/shooting-miniapp/config.js` 为 `https://app.lingshu.site` | 代码通过；只使用 HTTPS |
-| 网络域名类型 | 客户端网络调用只检测到 `wx.request`；视频以 ArrayBuffer 经 `wx.request` 上传 | 只需核验 `request` 合法域名；当前源码不需要 `uploadFile`、`downloadFile` 或 `socket` 域名 |
+| 网络域名类型 | 客户端网络调用检测到 `wx.request`；上传及行动页素材下载均经 ArrayBuffer 传输 | 不需要 `uploadFile`、`downloadFile` 或 `socket` 域名；除主 API 外，必须核验发布包返回的每个实际素材主机均属于 `request` 合法域名，或由主 API 同源代理 |
+| OAuth 业务域名 | `pages/action/connect.wxml` 使用 `<web-view>` 打开服务端返回的 HTTPS 授权地址 | 必须逐一核验实际 OAuth 授权及回调页面主机已配置为小程序业务域名；仅校验 HTTPS 不能满足微信发布要求 |
 | 麦克风用途 | `app.json` 已声明 `scope.record` 用于把主动录音转成可编辑工作指令 | 代码通过；仍需后台隐私保护指引匹配 |
-| 隐私 API | 检测到 `chooseMedia`、`getRecorderManager`、`authorize`、`openSetting` | 微信后台需覆盖麦克风及相册/视频选择用途 |
+| 隐私 API | 检测到 `chooseMedia`、`getRecorderManager`、`authorize`、`openSetting`、`saveVideoToPhotosAlbum`、`saveImageToPhotosAlbum` | 微信后台需覆盖麦克风、相册/视频选择及保存图片/视频到相册用途 |
 | 入口页 | `pages/workbench/index` 是 `app.json` 第一页 | 代码通过 |
 | 账号作用域 | 客户端 API 层未提交 tenant/user scope，由认证服务端确定 | 静态检查通过 |
 
-执行 `npm run check:mobile-workbench-release` 时，仓库检查通过，发布仍会因以下三项缺少外部证据而以 exit 2 关闭：
+执行 `npm run check:mobile-workbench-release` 时，仓库检查通过，发布仍会因以下五项缺少外部证据而以 exit 2 关闭：
 
 1. 微信公众平台已为该 AppID 配置 `https://app.lingshu.site` 为 `request` 合法域名。
-2. 隐私保护指引已声明麦克风和相册/视频用途，且审核版本与代码一致。
-3. iOS、Android 真机已完成登录、三 Tab、录音授权、视频选择/上传、弱网与版本冲突验收。
+2. 发布包可能返回的全部素材下载主机均已加入 `request` 合法域名，或下载统一由 `https://app.lingshu.site` 同源代理。
+3. OAuth 授权及回调页面的全部实际主机均已配置为小程序业务域名。
+4. 隐私保护指引已声明麦克风、相册/视频选择和保存图片/视频到相册用途，且审核版本与代码一致。
+5. iOS、Android 真机已完成登录、三 Tab、录音授权、视频选择/上传、素材保存、OAuth、弱网与版本冲突验收。
 
-外部验收完成后，只能在当次发布流程中显式提供三个 `WECHAT_*_VERIFIED=1` 证据标记；不得将其写入仓库作为永久绕过。
+外部验收完成后，只能在当次发布流程中显式提供五个 `WECHAT_*_VERIFIED=1` 证据标记：`WECHAT_REQUEST_DOMAIN_VERIFIED`、`WECHAT_ASSET_REQUEST_DOMAINS_VERIFIED`、`WECHAT_BUSINESS_DOMAIN_VERIFIED`、`WECHAT_PRIVACY_DECLARATION_VERIFIED`、`WECHAT_REAL_DEVICE_ACCEPTANCE_VERIFIED`；不得将其写入仓库作为永久绕过。
 
 ## 2026-10-10 开发补足记录
 

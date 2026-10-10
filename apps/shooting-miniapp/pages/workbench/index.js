@@ -173,10 +173,13 @@ Page({
     showSnoozed() { this.setData({ sheet: '稍后处理', sheetItems: this.data.snoozed.map(i => ({ ...i, subtitle: i.snoozeLabel || i.reason, kind: 'matter' })) }); },
     viewMatter() { if (Date.now() - (this.lastGestureAt || 0) < 400) return; this.processMatter(); },
     processMatter() { const item = this.data.activeMatter; if (!item)
-        return; if (item.type === 'command') { this.setData({detail:{...item.starterItem,title:item.title,reason:item.reason,starter:true,actions:item.actions},sheet:null}); return; } if (item.type === 'shoot') {
-        wx.navigateTo({ url: '/pages/index/index?taskId=' + encodeURIComponent(item.shootingId) });
-        return;
-    } const actionDetail = model.actionDetail(item.task); this.setData({ detail: { ...item.task, ...actionDetail, title: item.title, reason: item.reason, approval: item.approval, type: item.type, interventionType: item.interventionType, route: item.route || model.actionRoute(item), receipt: null }, sheet: null }); this.loadTaskEvents(item.task); },
+        return; if (item.type === 'command') { this.setData({detail:{...item.starterItem,title:item.title,reason:item.reason,starter:true,actions:item.actions},sheet:null}); return; }
+        const matterId = item.matterId || item.id;
+        if (matterId && /^(approval|task|shoot|external|conversation|connection):/.test(matterId)) {
+            wx.navigateTo({ url: '/pages/action/index?matterId=' + encodeURIComponent(matterId) });
+            return;
+        }
+        const actionDetail = model.actionDetail(item.task); this.setData({ detail: { ...item.task, ...actionDetail, title: item.title, reason: item.reason, approval: item.approval, type: item.type, interventionType: item.interventionType, route: item.route || model.actionRoute(item), receipt: null }, sheet: null }); this.loadTaskEvents(item.task); },
     selectFailedShots(e) { const ids = (e.detail.value || []).map(String); this.setData({'detail.selectedShotIds':ids,'detail.failedShots':(this.data.detail?.failedShots || []).map(shot=>({...shot,selected:ids.includes(String(shot.id))}))}); },
     askMatterAssistant() { const d = this.data.detail; if (!d) return; this.setData({ detail:null, tab:'assistant', input:'请根据真实工作数据告诉我“' + d.title + '”为什么停下、我需要补充什么，以及提交后如何确认它已恢复。' }); },
     async openAgentAssignment(e) {

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { executeProductionScopedRepair, loadProductionRepairSnapshot } from './repairProduction.js';
+import { executeProductionScopedRepair, loadProductionRepairSnapshot, productionRepairDetail, resolveProductionRepairProject } from './repairProduction.js';
 import type { DataStore, Record_ } from '../storage/datastore.js';
 
 function fixture() {
@@ -65,4 +65,19 @@ test('failed project persistence cannot resume tasks or report success', async (
     replacements: [{ sceneId: 'scene:1', materialId: 'replacement', trimStart: 0 }] } }, f.deps), /保存失败/);
   assert.equal(f.rows.get('workflow_tasks:task')!.status, 'blocked');
   assert.equal(f.invalidations(), 0);
+});
+test('production detail offers matching manual materials after automatic repair exhaustion', async () => {
+  const f = fixture();
+  const detail = await productionRepairDetail({ tenantId: 't', targetId: 'p' }, f.deps);
+  assert.equal(detail.failedScenes.length, 1);
+  assert.equal(detail.failedScenes[0].id, 'scene:1');
+  assert.equal(detail.failedScenes[0].eligibleMaterialOptions[0].materialId, 'replacement');
+  assert.equal(detail.actionOptions[0].enabled, true);
+  assert.equal(detail.actionOptions[0].requiresMaterialSelection, true);
+  assert.equal(detail.actionOptions[0].payload.repairPlanVersion, detail.subjectVersion);
+  assert.equal(detail.source.entityId, 'p');
+  assert.equal(detail.evidence[0].videoUrl, '');
+  f.rows.get('workflow_tasks:task')!.output = { projectRefs: [{ type: 'studio_project', id: 'p' }] };
+  assert.equal(await resolveProductionRepairProject('t', 'task', f.deps.store), 'p');
+  assert.equal(await resolveProductionRepairProject('other', 'task', f.deps.store), null);
 });

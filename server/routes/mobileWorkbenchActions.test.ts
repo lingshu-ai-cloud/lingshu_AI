@@ -48,6 +48,7 @@ async function serve(
   store: DataStore,
   executor?: Parameters<typeof createMobileWorkbenchActionsRouter>[1],
   resolveRole: Parameters<typeof createMobileWorkbenchActionsRouter>[2] = async req => String(req.headers['x-role'] || 'super_admin') as OrganizationRole,
+  resolveSubject?: Parameters<typeof createMobileWorkbenchActionsRouter>[3],
 ) {
   const app = express();
   app.use((req, res, next) => {
@@ -56,7 +57,7 @@ async function serve(
     if (req.headers['x-support']) res.locals.supportAccess = { requestId: 'support' };
     next();
   });
-  app.use('/mobile', createMobileWorkbenchActionsRouter(store, executor, resolveRole));
+  app.use('/mobile', createMobileWorkbenchActionsRouter(store, executor, resolveRole, resolveSubject));
   const server = app.listen(0, '127.0.0.1'); await new Promise<void>(resolve => server.once('listening', resolve));
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   const request = async (path: string, init: RequestInit = {}, tenant = 'tenant-a', user = 'user-a') => {
@@ -238,4 +239,27 @@ test('domain executor delegates approval and retry without weakening scoped inpu
     { type: 'approval', tenantId: 'tenant-a', userId: 'user-a', approvalId: 'approval-a', decision: 'approved', note: '可以执行', expectedSubjectVersion: '3' },
     { type: 'retry', tenantId: 'tenant-a', userId: 'user-a', taskId: 'task-a', expectedTaskVersion: '7', instruction: '再试一次', rerunDownstream: false },
   ]);
+});
+
+test('structured intervention keeps queued and unverified business outcomes in flight', async () => {
+  const scenarios = ['queued', 'running', 'waiting_verification', 'accepted_unconfirmed'];
+  for (const domainStatus of scenarios) {
+    const { store } = memoryStore({ studio_projects: [{ id: 'project-a', tenant_id: 'tenant-a', version: 'v1' }] });
+    const api = await serve(store, async () => ({ status: domainStatus, projectId: 'project-a' }), undefined,
+      async (dataStore, tenantId, action) => {
+        const subject = await dataStore.getById<Record_>('studio_projects', action.targetId);
+        return subject?.tenant_id === tenantId ? subject : null;
+      });
+    try {
+      const response = await api.request('/mobile/actions', { method: 'POST', body: JSON.stringify({
+        kind: 'scoped_repair', targetId: 'project-a', expectedVersion: 'v1', idempotencyKey: `repair-${domainStatus}`,
+        payload: { sceneIds: ['scene-1'], repairPlanVersion: 'v1', problemType: 'blur' },
+      }) });
+      assert.equal(response.status, 202);
+      assert.equal(response.body.receipt.status, 'running');
+      assert.equal(response.body.receipt.terminal, false);
+      assert.equal(response.body.receipt.result.status, domainStatus);
+      assert.equal(response.body.receipt.finishedAt, null);
+    } finally { await api.close(); }
+  }
 });

@@ -19,7 +19,8 @@ Page({
       if(!this.validSession()) return
       const detail = response.matter || response.detail
       if(!detail || !detail.subjectVersion) throw Error('服务未返回有效事项版本，请刷新工作台')
-      const fields = {sceneIds:(detail.failedScenes || []).filter(s=>s.status !== 'passed').map(s=>String(s.id))}
+      detail.failedScenes=(detail.failedScenes || []).map(scene=>{const materialOptions=(scene.materialOptions || scene.eligibleMaterialOptions || []).map(item=>({...item,id:item.id || item.materialId}));return {...scene,reason:scene.reason || (scene.problems || []).map(problem=>problem.message || problem.code).join('、'),materialOptions,materialLabels:['由 Agent 自动匹配',...materialOptions.map(item=>item.title || item.label || item.id)],materialSelection:0}})
+      const fields = {replacements:[],sceneIds:(detail.failedScenes || []).filter(s=>s.status !== 'passed').map(s=>String(s.id))}
       this.setData({detail,options:model.options(detail),fields})
       const stored = wx.getStorageSync(this.pendingKey())
       if(stored?.receiptId) { this.receiptId = stored.receiptId; this.pollReceipt() }
@@ -29,13 +30,32 @@ Page({
   pendingKey() { return 'mobile-action-pending:' + this.accountKey + ':' + this.matterId },
   inputField(event) { this.setData({['fields.' + event.currentTarget.dataset.key]:event.detail.value}) },
   selectScenes(event) { this.setData({'fields.sceneIds':event.detail.value}) },
+  selectReplacement(event) {
+    const id=event.currentTarget.dataset.id,index=Number(event.detail.value)
+    const scenes=this.data.detail.failedScenes.map(scene=>scene.id===id?{...scene,materialSelection:index}:scene)
+    const replacements=scenes.filter(scene=>scene.materialSelection>0).map(scene=>({sceneId:scene.id,materialId:scene.materialOptions[scene.materialSelection-1].id,trimStart:Number(scene.materialOptions[scene.materialSelection-1].trimStart || 0)}))
+    this.setData({'detail.failedScenes':scenes,'fields.replacements':replacements})
+  },
   chooseMaterial(event) { this.setData({'fields.materialId':event.currentTarget.dataset.id,'fields.materialIds':[event.currentTarget.dataset.id]}) },
   async submit(event) {
     if(this.data.submitting) return
     const option = this.data.options.find(o=>o.id===event.currentTarget.dataset.id)
     if(!option || option.disabled) return
     let payload
-    try { payload = model.buildPayload(option,this.data.fields) } catch(error) { this.setData({error:error.message}); return }
+    try {
+      payload = model.buildPayload(option,this.data.fields)
+      if(option.kind==='scoped_repair') {
+        const eligible=option.payload.sceneIds || []
+        payload.sceneIds=(this.data.fields.sceneIds || []).filter(id=>eligible.includes(id))
+        if(!payload.sceneIds.length)throw Error('请选择该问题类型对应的失败分镜')
+        const replacements=(this.data.fields.replacements || []).filter(item=>payload.sceneIds.includes(item.sceneId))
+        if(option.requiresMaterialSelection && replacements.length!==payload.sceneIds.length)throw Error('自动修复已耗尽，请为每个选中分镜选择替代素材')
+        if(replacements.length) {
+          if(replacements.length!==payload.sceneIds.length)throw Error('请为所有选中分镜选择替代素材，或全部使用自动匹配')
+          payload.replacements=replacements
+        }
+      }
+    } catch(error) { this.setData({error:error.message}); return }
     const confirmation = await new Promise(resolve=>wx.showModal({title:option.label,content:option.confirmation || this.data.detail.blockingImpact || '确认提交此决定？',confirmText:'确认提交',success:r=>resolve(r.confirm),fail:()=>resolve(false)}))
     if(!confirmation || !this.validSession()) return
     this.setData({submitting:true,error:''})

@@ -6,17 +6,34 @@ import { requestOrganizationRoleStrict, type OrganizationRole } from '../lib/org
 
 export const MOBILE_WORKBENCH_ACTION_RECEIPTS = 'mobile_workbench_action_receipts';
 export type MobileWorkbenchActionStatus = 'accepted' | 'running' | 'succeeded' | 'failed';
-export type MobileWorkbenchActionKind = 'approval_decision' | 'retry_task' | 'starter_command';
-export type MobileWorkbenchActionCapability = 'approval.decide' | 'task.retry';
+export type MobileWorkbenchActionKind = 'approval_decision' | 'retry_task' | 'starter_command'
+  | 'scoped_repair' | 'material_fulfillment' | 'connection_repair'
+  | 'publication_evidence_submit' | 'publication_receipt_verify'
+  | 'conversation_reply_send' | 'conversation_assign' | 'dependency_retry';
+export type MobileWorkbenchActionCapability = 'approval.decide' | 'task.retry' | 'content.repair'
+  | 'material.fulfill' | 'connection.repair' | 'publication.manage' | 'conversation.manage';
 
 const ACTION_CAPABILITY: Readonly<Partial<Record<MobileWorkbenchActionKind, MobileWorkbenchActionCapability>>> = {
   approval_decision: 'approval.decide',
   retry_task: 'task.retry',
+  dependency_retry: 'task.retry',
+  scoped_repair: 'content.repair',
+  material_fulfillment: 'material.fulfill',
+  connection_repair: 'connection.repair',
+  publication_evidence_submit: 'publication.manage',
+  publication_receipt_verify: 'publication.manage',
+  conversation_reply_send: 'conversation.manage',
+  conversation_assign: 'conversation.manage',
 };
 
 const CAPABILITY_ROLES: Readonly<Record<MobileWorkbenchActionCapability, ReadonlySet<OrganizationRole>>> = {
   'approval.decide': new Set<OrganizationRole>(['super_admin', 'admin']),
   'task.retry': new Set<OrganizationRole>(['super_admin', 'admin', 'social_operator', 'customer_service']),
+  'content.repair': new Set<OrganizationRole>(['super_admin', 'admin', 'social_operator']),
+  'material.fulfill': new Set<OrganizationRole>(['super_admin', 'admin', 'social_operator']),
+  'connection.repair': new Set<OrganizationRole>(['super_admin', 'admin', 'social_operator']),
+  'publication.manage': new Set<OrganizationRole>(['super_admin', 'admin', 'social_operator']),
+  'conversation.manage': new Set<OrganizationRole>(['super_admin', 'admin', 'customer_service']),
 };
 
 export function mobileWorkbenchActionCapabilityAllowed(
@@ -133,7 +150,7 @@ function parseAction(value: unknown): MobileWorkbenchActionInput | null {
   const expectedVersion = text(source.expectedVersion);
   const idempotencyKey = text(source.idempotencyKey, 128);
   const payload = source.payload;
-  if (!['approval_decision', 'retry_task', 'starter_command'].includes(kind)
+  if (!Object.prototype.hasOwnProperty.call(ACTION_CAPABILITY, kind) && kind !== 'starter_command'
     || !/^[A-Za-z0-9:_-]{1,200}$/.test(targetId)
     || !/^[A-Za-z0-9:._-]{1,128}$/.test(expectedVersion)
     || !/^[A-Za-z0-9:._-]{8,128}$/.test(idempotencyKey)
@@ -155,6 +172,12 @@ async function authoritativeSubject(store: DataStore, tenantId: string, action: 
   if (!subject || subject.tenant_id !== tenantId) return null;
   return subject;
 }
+
+export type MobileWorkbenchSubjectResolver = (
+  store: DataStore,
+  tenantId: string,
+  action: MobileWorkbenchActionInput,
+) => Promise<Record_ | null>;
 
 function actionConflict(subject: Record_, action: MobileWorkbenchActionInput): string | null {
   if (subjectVersion(subject, action.kind) !== action.expectedVersion) return 'mobile_action_version_conflict';
@@ -187,6 +210,7 @@ export function createMobileWorkbenchActionsRouter(
   store: DataStore,
   executor?: MobileWorkbenchActionExecutor,
   resolveRole: MobileWorkbenchRoleResolver = (request, userId) => requestOrganizationRoleStrict(request.headers.authorization, userId),
+  resolveSubject: MobileWorkbenchSubjectResolver = authoritativeSubject,
 ) {
   const router = Router();
   router.use(enforceSupportSessionReadOnly);
@@ -226,9 +250,9 @@ export function createMobileWorkbenchActionsRouter(
         // This shared route records no unverified command as if it had executed.
         res.status(409).json({ error: 'mobile_action_executor_required' }); return;
       }
-      const subject = await authoritativeSubject(store, tenantId, action);
+      const subject = await resolveSubject(store, tenantId, action);
       if (!subject) { res.status(404).json({ error: 'mobile_action_target_not_found' }); return; }
-      const conflict = actionConflict(subject, action);
+      const conflict = ['approval_decision', 'retry_task'].includes(action.kind) ? actionConflict(subject, action) : null;
       if (conflict) { res.status(conflict.endsWith('payload_invalid') ? 400 : 409).json({ error: conflict }); return; }
       const now = new Date().toISOString();
       const data = {
@@ -255,8 +279,12 @@ export function createMobileWorkbenchActionsRouter(
       receipt = await persistStatus(store, receipt, 'running', { started_at: new Date().toISOString() });
       try {
         const result = await executor({ tenantId, userId, receiptId, action, subject });
-        receipt = await persistStatus(store, receipt, 'succeeded', { result: result ?? {}, error: null, finished_at: new Date().toISOString() });
-        res.status(200).json({ ...receiptEnvelope(receipt), replayed: false });
+        const domainStatus = result && typeof result === 'object' ? text((result as Record<string, unknown>).status, 64) : '';
+        const remainsInFlight = ['accepted', 'queued', 'running', 'waiting_user', 'waiting_verification', 'accepted_unconfirmed'].includes(domainStatus);
+        receipt = await persistStatus(store, receipt, remainsInFlight ? 'running' : 'succeeded', {
+          result: result ?? {}, error: null, ...(remainsInFlight ? {} : { finished_at: new Date().toISOString() }),
+        });
+        res.status(remainsInFlight ? 202 : 200).json({ ...receiptEnvelope(receipt), replayed: false });
       } catch (error) {
         const failure = { code: error instanceof Error ? text(error.message, 160) || 'mobile_action_failed' : 'mobile_action_failed' };
         receipt = await persistStatus(store, receipt, 'failed', { error: failure, finished_at: new Date().toISOString() });

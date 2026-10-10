@@ -10,6 +10,9 @@ import { invalidatePublishingApprovalForProject } from '../digitalEmployees/publ
 import { jsonObject } from '../routes/digitalEmployeeRecords.js';
 import { prepareScopedRepair, RepairInterventionError, type ScopedRepairPayload, type RepairSnapshot } from './repair.js';
 import { allocateEvidenceClips, evidenceClips } from '../digitalEmployees/sceneEvidence.js';
+import fs from 'node:fs';
+import path from 'node:path';
+import { signAssetUrl } from '../lib/assetAccess.js';
 
 interface RepairProductionDependencies {
   store: DataStore;
@@ -43,7 +46,9 @@ export async function loadProductionRepairSnapshot(tenantId: string, projectId: 
   const routePlan = spec.automation?.routePlan || {}, route = spec.contentOrder?.route || spec.mode;
   const assets = (await dependencies.collectAssets(tenantId)).filter(asset => !asset.synthetic && asset.authorization.status !== 'unknown'
     && (route === 'material' ? (routePlan.assetIds || []).includes(asset.id) : Boolean(routePlan.productId && asset.productId === routePlan.productId)));
-  return { version: contentAcceptanceHash(spec), spec,
+  const effectiveSpec = { ...spec, sceneSourcePlan: source.map((item: any) => ({ ...item,
+    sourceStart: Number(spec.sceneOverrides?.[item.sceneIndex]?.trimStart ?? item.sourceStart ?? 0) })) };
+  return { version: contentAcceptanceHash(spec), spec: effectiveSpec,
     scenes: source.map((item: any, sceneIndex: number) => ({ id: String(item.sceneId || item.id || `scene:${item.sceneIndex ?? sceneIndex}`),
       sceneIndex: item.sceneIndex ?? sceneIndex, intent: item.intent || sceneIntent(String(spec.script || ''), item.start, item.end), duration: timing.sceneDurations[sceneIndex] })),
     assets, issues: spec.automation?.quality?.sceneDiagnostics?.issues || [] };
@@ -77,6 +82,12 @@ export async function productionRepairDetail(input: { tenantId: string; targetId
   const snapshot = await loadProductionRepairSnapshot(input.tenantId, projectId, dependencies);
   if (!project || !snapshot) throw new RepairInterventionError('project_not_found', '生产项目不可用');
   const quality = snapshot.spec.automation?.quality || {};
+  let videoUrl = '';
+  const output = String(snapshot.spec.automation?.renderOutputPath || snapshot.spec.renderOutputPath || '');
+  const root = path.resolve(process.cwd(), 'data', 'publishing-uploads', input.tenantId.replace(/[^\w.-]+/g, '-'));
+  if (output && fs.existsSync(root) && fs.existsSync(output) && fs.statSync(output).isFile()
+    && path.dirname(path.resolve(output)) === root && path.dirname(fs.realpathSync(output)) === fs.realpathSync(root))
+    videoUrl = signAssetUrl(`/api/overseas/publishing/local-videos/${encodeURIComponent(path.basename(output))}`, input.tenantId);
   const failedScenes = snapshot.scenes.filter(scene => snapshot.issues.some(issue => issue.sceneIndex === scene.sceneIndex)).map(scene => {
     const eligibleMaterialOptions = snapshot.assets.flatMap(asset => evidenceClips(asset).flatMap(clip => {
       const match = allocateEvidenceClips({ scenes: [{ ...scene, materialId: asset.id, trimStart: clip.start }], assets: [asset] });
@@ -84,12 +95,13 @@ export async function productionRepairDetail(input: { tenantId: string; targetId
       const plan = match.plan[0];
       const current = snapshot.spec.sceneSourcePlan.find((item: any) => item.sceneIndex === scene.sceneIndex);
       if (current?.assetId === asset.id && Number(current.sourceStart || 0) === plan.start) return [];
-      return [{ materialId: asset.id, label: asset.id, trimStart: plan.start, duration: scene.duration,
+      return [{ id: asset.id, materialId: asset.id, label: asset.id, title: asset.id, trimStart: plan.start, duration: scene.duration,
         evidenceSegmentId: plan.segmentId, observations: plan.observations }];
     }));
-    return { id: scene.id, sceneId: scene.id, sceneIndex: scene.sceneIndex, label: `分镜 ${scene.sceneIndex + 1}`,
+    return { id: scene.id, sceneId: scene.id, sceneIndex: scene.sceneIndex, label: `分镜 ${scene.sceneIndex + 1}`, status: 'failed',
+      reason: snapshot.issues.filter(issue => issue.sceneIndex === scene.sceneIndex).map(issue => issue.reason).join('；'),
       intent: scene.intent, duration: scene.duration,
-      problems: snapshot.issues.filter(issue => issue.sceneIndex === scene.sceneIndex), eligibleMaterialOptions };
+      problems: snapshot.issues.filter(issue => issue.sceneIndex === scene.sceneIndex), eligibleMaterialOptions, materialOptions: eligibleMaterialOptions };
   });
   const actionOptions = [...new Set(snapshot.issues.map(issue => issue.code))].map(problemType => {
     const scenes = failedScenes.filter(scene => scene.problems.some(issue => issue.code === problemType));
@@ -100,17 +112,22 @@ export async function productionRepairDetail(input: { tenantId: string; targetId
     return { id: `repair:${problemType}`, label: autoReason ? '选择替代素材并局部重做' : '局部重做失败分镜', kind: 'scoped_repair',
       enabled: !autoReason || manualEnabled, disabledReason: !autoReason || manualEnabled ? '' : `${autoReason}；需要先补充匹配素材`,
       payload, requiresConfirmation: true, requiresMaterialSelection: Boolean(autoReason),
+      fields: [{ key: 'sceneIds', id: 'sceneIds', label: '失败分镜', type: 'scenes', required: true }],
       impact: '保留其他镜头、已确认口播及字幕，重做后重新渲染与质检' };
   });
-  return { matterId: input.targetId, subjectVersion: snapshot.version, title: String(project.name || '处理成片质检异常'),
+  return { matterId: input.targetId, subjectVersion: snapshot.version, title: String(project.name || '处理成片质检异常'), videoUrl,
+    observedAt: quality.checkedAt || quality.checked_at || project.updated_at || '',
     whyUser: '成片存在可定位的质检问题，需要决定局部修复方案', blockingImpact: '本成片尚不能进入发布；修复后自动重新渲染和质检',
     source: { entityId: projectId, projectId, runId: snapshot.spec.workflowRunId, taskId: snapshot.spec.workflowTaskId, type: 'studio_project' },
-    evidence: [{ label: '成片质检', source: 'production_quality_gate', version: snapshot.version,
+    evidence: [{ id: 'production-quality', label: '成片质检', source: 'production_quality_gate', version: snapshot.version, videoUrl,
+      observedAt: quality.checkedAt || quality.checked_at || project.updated_at || '',
       checkedAt: quality.checkedAt || quality.checked_at || project.updated_at || '', passed: quality.passed,
       failures: quality.failures || [], sceneDiagnostics: quality.sceneDiagnostics || {} }],
     failedScenes, actionOptions, requiresUserAction: actionOptions.some(option => option.enabled),
-    cost: { known: false, label: '本次使用已有素材重新渲染；未取得收费生成报价，不授权付费生成' },
-    resume: { checkpointLabel: '成片渲染', stage: 'render', retainedArtifacts: ['已通过镜头', '已确认口播', '对齐字幕'] } };
+    cost: { known: false, label: '本次使用已有素材重新渲染；未取得收费生成报价，不授权付费生成',
+      currentLimitLabel: '未申请额外预算', usedLabel: '此路线不增加供应商生成调用', incrementLabel: '已有素材重新渲染',
+      source: 'production_material_evidence', alternative: '付费生成必须另行报价与授权，此动作不批准付费调用' },
+    resume: { checkpointLabel: '成片渲染', stage: 'render', retainedArtifacts: ['已通过镜头', '已确认口播', '对齐字幕'].map((label, index) => ({ id: String(index), label })) } };
 }
 
 /** Production adapter: writes the studio project used by the existing renderer,
@@ -140,6 +157,9 @@ export async function executeProductionScopedRepair(input: { tenantId: string; u
         return stats.sourceProjectId === input.projectId && ['published', 'partial'].includes(stats.status);
       })) throw new RepairInterventionError('project_already_published', '已有真实发布结果，请复制为新计划');
       const prepared = prepareScopedRepair(snapshot, input.payload);
+      prepared.spec.selectedMaterialEvidence = snapshot.assets.filter(asset => prepared.spec.selectedMaterialIds.includes(asset.id)).map(asset => ({
+        id: asset.id, type: asset.type, visualObservations: asset.visualObservations,
+        ...(asset.segments ? { segments: asset.segments } : {}) }));
       prepared.spec.automation.mobileRepair.commandId = input.commandId;
       await update('studio_projects', input.projectId, { status: 'draft', spec: prepared.spec,
         ...contentProjectLineageFields({ tenantId: input.tenantId, spec: prepared.spec, current: project }), updated_at: now });
