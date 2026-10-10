@@ -55,10 +55,10 @@ const date=(day:number)=>`2026-10-${String(5+day).padStart(2,'0')}`;
 const aggregateIds=new Set(['h-task-12','h-task-13','h-task-15','h-task-16','h-task-28','h-task-20']);
 const individualTasks:AgentCalendarTask[]=videoPlan.flatMap(([video,day,finish,review,publishDay,publishTime,productionId,reviewId,publishId])=>{
   const source=video==='A'||video==='B'?'自有迭代':'外部探索';
-  const common={status:'planned' as const,context:`${source} · 视频 ${video} · 示例任务；共享素材未核验时保持阻塞`,affectedPublicationIds:[`H-video-${video}`]};
+  const common={deliverableGroup:`preview:H:${video}`,status:'planned' as const,context:`${source} · 视频 ${video} · 示例任务；共享素材未核验时保持阻塞`,affectedPublicationIds:[`H-video-${video}`]};
   return [
-    {...common,id:productionId,date:date(day),time:finish,agent:'content' as const,chain:'H-M5',minutes:132,title:`完成视频 ${video} ${source}成片`,output:`视频 ${video} 母版、字幕封面与技术质检`,dependsOn:[video==='A'||video==='B'?'h-task-8':'h-task-9','h-task-10']},
-    {...common,id:reviewId,date:date(day),time:review,agent:'director' as const,chain:'H-M5',minutes:20,title:`审核视频 ${video} ${source}成片`,output:`视频 ${video} 逐镜事实、表达与验收结论`,dependsOn:[productionId]},
+    {...common,id:productionId,executionStep:'video_generation',date:date(day),time:finish,agent:'content' as const,chain:'H-M5',minutes:132,title:`完成视频 ${video} ${source}成片`,output:`视频 ${video} 母版、字幕封面与技术质检`,dependsOn:[video==='A'||video==='B'?'h-task-8':'h-task-9','h-task-10']},
+    {...common,id:reviewId,executionStep:'quality_check',date:date(day),time:review,agent:'director' as const,chain:'H-M5',minutes:20,title:`审核视频 ${video} ${source}成片`,output:`视频 ${video} 逐镜事实、表达与验收结论`,dependsOn:[productionId]},
     {...common,id:publishId,date:date(publishDay),time:publishTime,agent:'business' as const,chain:'H-M6',minutes:20,title:`发布视频 ${video} ${source}平台版本`,output:`视频 ${video} 平台发布审批、原 attempt 与回执核验`,context:`${source} · 视频 ${video} · 审核后至少 24 小时发布；待用户验收与客服就绪，未知回执不重复发布`,dependsOn:[reviewId,'h-task-2']},
   ];
 });
@@ -79,4 +79,4 @@ for(let day=0;day<7;day++)for(const agent of ['business','director','content','c
   const purpose={business:'核验当日容量与下游发布风险',director:'复核下一条视频的表达与参考边界',content:day===0?'盘点已有产品素材与可复用资产':day===6?'准备下周首条视频的素材缺口':'准备下一条视频的素材与生成输入',customer:'检查三渠道待处理会话与人工接管事项'}[agent];
   dailyPreparation.push({id:`h-daily-${day}-${agent}`,date:date(day),time:'08:00',agent,chain:agent==='customer'?'H-M7':agent==='business'?'H-M3':'H-M4',title:purpose,output:{business:'逐条发布风险、当日容量缺口与修订建议',director:'逐镜表达与事实问题、参考采用边界及审核清单',content:'逐镜素材库存、权利与待补文件清单；绑定下一条消费者',customer:'渠道缺口、待审批、人工接管及无询盘时 no_data 清单'}[agent],context:'示例准备任务；按实际数据执行，不代表已完成生产或已发送消息',minutes:30,status:'planned',dependsOn:[]});
 }
-export const agentCalendarEstablishedDemo:AgentCalendarTask[]=[...all,...dailyPreparation];
+export const agentCalendarEstablishedDemo:AgentCalendarTask[]=[...all,...dailyPreparation].map(task=>({...task,calendarInternal:task.agent!=='human'&&(task.id.startsWith('h-daily-')||task.chain==='H-M4'||['h-task-10'].includes(task.id))}));

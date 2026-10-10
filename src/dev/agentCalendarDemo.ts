@@ -49,6 +49,8 @@ const rows: Row[] = [
 [6,'Z-M8','customer','交付首批客户与知识缺口总结','询盘、回复/发送状态、人工未结事项','进入复盘与下周客服准备',45,['task-32','task-38']],
 ];
 export const agentCalendarDemo: AgentCalendarTask[] = rows.map(([day, chain, agent, title, output, context, minutes, dependsOn], index) => ({
+ ...({7:'script',8:'asset_generation',9:'storyboard',14:'video_generation',15:'quality_check',21:'asset_generation',22:'storyboard',27:'video_generation',28:'quality_check'}[index] ? {executionStep:({7:'script',8:'asset_generation',9:'storyboard',14:'video_generation',15:'quality_check',21:'asset_generation',22:'storyboard',27:'video_generation',28:'quality_check'} as Record<number,string>)[index],deliverableGroup:index<20?'preview:Z:A':'preview:Z:C'} : {}),
+ calendarInternal:agent!=='human'&&(chain==='Z-M4'||[4,10,20].includes(index)),
  id:`task-${index}`, date:`2026-10-${String(5+day).padStart(2,'0')}`, time: index === 11 ? '17:00' : index === 16 ? '11:00' : index === 19 ? '12:00' : `${String(9 + rows.slice(0, index).filter(row => row[0] === day).length).padStart(2, '0')}:00`, agent, title, output, context, minutes, chain, dependsOn:dependsOn || [],
  status: [20,33].includes(index) ? 'blocked' : 'planned',
  ...(index === 11 ? {assignee:'李明', dueAt:'2026-10-06T17:00:00+08:00', submission:'missing' as const,reason:'安装特写 2 段未上传，请及时提交；影响产品 B 镜头 3/4'} : {}),

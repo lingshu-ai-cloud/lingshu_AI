@@ -53,6 +53,9 @@ export function projectExecutionCalendar(tasks: WeeklyExecutionTask[], labels: R
     const boundIds = task.publicationTaskId ? bindings.get(bindingKey(task)) : undefined;
     return [{
       id: task.taskId,
+      executionStep: task.schedule.stepKind,
+      calendarInternal: task.schedule.responsibleActor !== 'user' && ['material_preparation','material_readiness'].includes(task.schedule.stepKind),
+      deliverableGroup: task.publicationTaskId ? bindingKey(task) : undefined,
       date: planned.date,
       time: planned.time,
       calendarClock: clock,
