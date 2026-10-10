@@ -93,6 +93,8 @@ export function createSocialWeeklyProductionAdapter(dataStore: DataStore, ports:
     if (!task.publicationTaskId || !WEEKLY_PRODUCTION_STEPS.includes(task.schedule.stepKind as typeof WEEKLY_PRODUCTION_STEPS[number])) {
       return blocked('weekly_production_step_unsupported', '该排期节点没有内容生产执行器。');
     }
+    const {readWeeklyCreativeRepairExecutionLineage}=await import('./weeklyCreativeRepairExecutionGraph.js');
+    if(readWeeklyCreativeRepairExecutionLineage(task)){const {executeWeeklyCreativeRepairStage}=await import('./weeklyCreativeRepairExecutionAdapter.js');return executeWeeklyCreativeRepairStage({store:dataStore,repository,task,now:now(),ownedProductIdentity:ports.ownedProductIdentity,assertAdmission});}
     const rows = await dataStore.list<PackageRow>(PACKAGES, { where: {
       tenant_id: task.tenantId, program_id: task.programId, package_id: task.packageId, version: task.packageVersion,
     }, perPage: 2 });
