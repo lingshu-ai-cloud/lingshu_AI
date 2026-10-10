@@ -49,6 +49,11 @@ export function evaluateWeeklyProductionEnvironment(
       reason: present(env, 'META_SOCIAL_APP_ID') && present(env, 'META_SOCIAL_APP_SECRET') ? null : 'meta_social_oauth_not_configured',
     },
     {
+      key: 'instagram_login_oauth',
+      ready: present(env, 'INSTAGRAM_APP_ID') && present(env, 'INSTAGRAM_APP_SECRET'),
+      reason: present(env, 'INSTAGRAM_APP_ID') && present(env, 'INSTAGRAM_APP_SECRET') ? null : 'instagram_login_oauth_not_configured',
+    },
+    {
       key: 'instagram_publication_scope',
       ready: enabled(env, 'INSTAGRAM_CONTENT_PUBLISH_ENABLED'),
       reason: enabled(env, 'INSTAGRAM_CONTENT_PUBLISH_ENABLED') ? null : 'instagram_publication_disabled',

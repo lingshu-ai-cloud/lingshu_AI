@@ -1,7 +1,12 @@
 import { store } from '../server/storage/index.js';
-import { evaluateWeeklyProductionEnvironment } from '../server/socialPrograms/weeklyProductionEnvironmentReadiness.js';
+import { probeWeeklyProductionEnvironment } from '../server/socialPrograms/weeklyProductionEnvironmentProbe.js';
+import { checkBullMq, closeBullMq } from '../server/queues/bullmq.js';
 
-const atomic = await store.supportsAtomicOperationLease?.() === true;
-const report = evaluateWeeklyProductionEnvironment(process.env, atomic);
+const report = await probeWeeklyProductionEnvironment({
+  env: process.env,
+  atomicStore: () => store.supportsAtomicOperationLease?.() ?? false,
+  queue: checkBullMq,
+});
+await closeBullMq();
 process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
 if (!report.ready) process.exitCode = 1;

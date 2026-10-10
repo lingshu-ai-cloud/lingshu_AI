@@ -4,15 +4,22 @@ export type QueueBackend = 'local' | 'bullmq';
 
 export function selectedQueueBackend(env: NodeJS.ProcessEnv = process.env): QueueBackend {
   const value = String(env.QUEUE_BACKEND || 'local').trim().toLowerCase();
-  if (value !== 'local' && value !== 'bullmq') throw new Error(`Unsupported QUEUE_BACKEND "${value}"`);
+  if (value !== 'local' && value !== 'bullmq') throw new Error('Unsupported QUEUE_BACKEND');
+  if (env.NODE_ENV === 'production' && value !== 'bullmq') {
+    throw new Error('QUEUE_BACKEND=bullmq is required in production; local queue fallback is disabled');
+  }
   return value;
 }
 
 export function redisConnectionOptions(env: NodeJS.ProcessEnv = process.env): ConnectionOptions {
   const url = String(env.REDIS_URL || '').trim();
   if (!url) throw new Error('REDIS_URL is required when QUEUE_BACKEND=bullmq');
-  const parsed = new URL(url);
+  let parsed: URL;
+  try { parsed = new URL(url); } catch { throw new Error('REDIS_URL must be a valid Redis URL'); }
   if (!['redis:', 'rediss:'].includes(parsed.protocol)) throw new Error('REDIS_URL must use redis:// or rediss://');
+  if (!parsed.hostname || parsed.hash || (parsed.pathname !== '/' && parsed.pathname !== '' && !/^\/\d+$/.test(parsed.pathname))) {
+    throw new Error('REDIS_URL must specify a host and an optional numeric database');
+  }
   return {
     url,
     maxRetriesPerRequest: null,
@@ -92,11 +99,30 @@ export function startBullWorker<Data, Result = void>(input: {
   return worker;
 }
 
-export async function checkBullMq(): Promise<void> {
+export async function checkBullMq(input: {
+  timeoutMs?: number;
+  probe?: () => Promise<void>;
+} = {}): Promise<void> {
   if (selectedQueueBackend() !== 'bullmq') return;
-  const queue = bullQueue('__health');
-  await queue.waitUntilReady();
-  await queue.getJobCounts('waiting', 'active', 'delayed', 'failed');
+  const configured = input.timeoutMs ?? Number(process.env.BULLMQ_HEALTH_TIMEOUT_MS || 2_000);
+  const timeoutMs = Number.isFinite(configured) ? Math.min(Math.max(Math.floor(configured), 1), 30_000) : 2_000;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      (input.probe || (async () => {
+        const queue = bullQueue('__health');
+        await queue.waitUntilReady();
+        await queue.getJobCounts('waiting', 'active', 'delayed', 'failed');
+      }))(),
+      new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('BullMQ health check timed out')), timeoutMs); }),
+    ]);
+  } catch {
+    // Redis client errors can embed connection credentials. Public readiness
+    // records must expose a stable failure category only.
+    throw new Error('BullMQ health check failed or timed out');
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 export async function closeBullMq(): Promise<void> {
@@ -104,6 +130,8 @@ export async function closeBullMq(): Promise<void> {
   const activeQueues = [...queues.values()];
   workers.clear();
   queues.clear();
-  await Promise.allSettled(activeWorkers.map(worker => worker.close()));
-  await Promise.allSettled(activeQueues.map(queue => queue.close()));
+  await Promise.allSettled(activeWorkers.map(worker => worker.close(true)));
+  // Disconnect queue clients directly: graceful Redis QUIT can wait forever
+  // when the endpoint is unreachable, including after a failed readiness probe.
+  await Promise.allSettled(activeQueues.map(queue => queue.disconnect()));
 }

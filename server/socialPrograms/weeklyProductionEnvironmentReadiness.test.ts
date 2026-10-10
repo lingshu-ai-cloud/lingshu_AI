@@ -7,6 +7,7 @@ const configured = {
   QUEUE_BACKEND: 'bullmq', REDIS_URL: 'rediss://redacted',
   DISABLE_LOCAL_AUTH_FALLBACK: 'true', ENABLE_LOCAL_DEV_FALLBACK: 'false',
   META_SOCIAL_APP_ID: 'configured', META_SOCIAL_APP_SECRET: 'configured',
+  INSTAGRAM_APP_ID: 'configured', INSTAGRAM_APP_SECRET: 'configured',
   INSTAGRAM_CONTENT_PUBLISH_ENABLED: 'true',
   TIKTOK_CLIENT_KEY: 'configured', TIKTOK_CLIENT_SECRET: 'configured',
   TIKTOK_DIRECT_POST_RELEASE_MODE: 'approved',
