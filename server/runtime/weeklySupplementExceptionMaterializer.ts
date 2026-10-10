@@ -1,3 +1,4 @@
+import {ENTERPRISE_FACT_GAP,checkWeeklyEnterpriseFactSupplement} from './weeklyEnterpriseFactSupplement.js';
 import type { DataStore, Record_ } from '../storage/datastore.js';
 import type { WeeklyExecutionTask, WeeklyOperatingPackage, VersionedSocialRef } from '../../shared/contracts/socialProgram.js';
 import { SUPPLEMENT_EVENTS, supplementConsumerHash } from '../socialPrograms/weeklySupplementRequests.js';
@@ -5,9 +6,11 @@ import { ACCOUNT_AUTHORIZATION_GAP_CODES, checkWeeklyAccountAuthorizationSupplem
 import { socialObject, socialJson, socialRequestHash } from '../starter198/socialContentValidation.js';
 import { executionPackageFrozen, withExecutionPackageGate } from '../socialPrograms/weeklyExecutionGate.js';
 import { createWeeklyExecutionTaskService } from '../socialPrograms/executionTasks.js';
+const supportedGap=(code:string)=>code===ENTERPRISE_FACT_GAP||ACCOUNT_AUTHORIZATION_GAP_CODES.has(code);
+const checkSupplement=async(store:DataStore,task:WeeklyExecutionTask,platform:string,now?:Date)=>task.lastError?.code===ENTERPRISE_FACT_GAP?checkWeeklyEnterpriseFactSupplement({store,task,now}):checkWeeklyAccountAuthorizationSupplement({store,tenantId:task.tenantId,accountId:task.accountId!,platform,now});
 const seal = (value: WeeklySupplementException) => ({ ...value, recordHash: socialRequestHash({ ...value, recordHash: '' }) });
 const valid = (value: WeeklySupplementException) => value && value.recordHash === socialRequestHash({ ...value, recordHash: '' });
-const assertReceipt = (row: Record_, exception: WeeklySupplementException, version: number) => { const value = parsed<WeeklySupplementException>(row.payload); if (row.id !== socialRequestHash({ exceptionId: exception.exceptionId, version }).slice(0, 15) || value.type !== 'scheduler_supplement_exception' || value.kind !== 'account_authorization' || value.status !== (version === 2 ? 'assignment_pending' : 'resolved') || version === 3 && value.verificationRef?.type !== 'platform_capability_evidence' || value.dueAt !== exception.dueAt || value.responsibleActor !== exception.responsibleActor || row.tenant_id !== exception.tenantId || row.request_id !== exception.exceptionId || row.version !== version || !valid(value) || ['tenantId', 'programId', 'packageId', 'packageVersion', 'consumerTaskId', 'consumerInputHash', 'gapCode', 'exceptionId'].some(k => (value as unknown as Record<string, unknown>)[k] !== (exception as unknown as Record<string, unknown>)[k]))
+const assertReceipt = (row: Record_, exception: WeeklySupplementException, version: number) => { const value = parsed<WeeklySupplementException>(row.payload); if (row.id !== socialRequestHash({ exceptionId: exception.exceptionId, version }).slice(0, 15) || value.type !== 'scheduler_supplement_exception' || value.kind !== exception.kind || value.status !== (version === 2 ? 'assignment_pending' : 'resolved') || version === 3 && value.verificationRef?.type !== (exception.kind==='enterprise_facts'?'enterprise_fact':'platform_capability_evidence') || value.dueAt !== exception.dueAt || value.responsibleActor !== exception.responsibleActor || row.tenant_id !== exception.tenantId || row.request_id !== exception.exceptionId || row.version !== version || !valid(value) || ['tenantId', 'programId', 'packageId', 'packageVersion', 'consumerTaskId', 'consumerInputHash', 'gapCode', 'exceptionId'].some(k => (value as unknown as Record<string, unknown>)[k] !== (exception as unknown as Record<string, unknown>)[k]))
     throw Error('supplement_exception_resolution_corrupt'); return value; };
 const packageMatches = (pkg: WeeklyOperatingPackage, task: WeeklyExecutionTask) => pkg && pkg.programId === task.programId && pkg.packageId === task.packageId && pkg.version === task.packageVersion && ['active', 'draft'].includes(pkg.status);
 const parsed = <T>(value: unknown) => socialObject(socialJson(value)) as unknown as T;
@@ -32,7 +35,7 @@ export interface WeeklySupplementException {
     consumerTaskId: string;
     consumerInputHash: string;
     gapCode: string;
-    kind: 'account_authorization';
+    kind: 'account_authorization'|'enterprise_facts';
     status: 'assignment_pending' | 'resolved';
     dueAt: string;
     responsibleActor: string;
@@ -47,7 +50,7 @@ async function materialize(input: {
     gapCode: string;
     now?: Date;
 }): Promise<WeeklySupplementException | null> {
-    if (!ACCOUNT_AUTHORIZATION_GAP_CODES.has(input.gapCode))
+    if (!supportedGap(input.gapCode))
         return null;
     const found = await rows(input.store, 'social_weekly_execution_tasks', { tenant_id: input.task.tenantId, program_id: input.task.programId, task_id: input.task.taskId });
     if (found.length !== 1)
@@ -66,11 +69,11 @@ async function materialize(input: {
     const prior = await input.store.getById<Record_>(SUPPLEMENT_EVENTS, id);
     if (prior) {
         const value = parsed<WeeklySupplementException>(prior.payload);
-        if (prior.tenant_id !== task.tenantId || prior.request_id !== exceptionId || prior.version !== 2 || !valid(value) || value.tenantId !== task.tenantId || value.programId !== task.programId || value.packageId !== task.packageId || value.packageVersion !== task.packageVersion || value.type !== 'scheduler_supplement_exception' || value.exceptionId !== exceptionId || value.consumerInputHash !== supplementConsumerHash(task) || value.gapCode !== input.gapCode || value.consumerTaskId !== task.taskId || value.dueAt !== dueAt || value.responsibleActor !== task.schedule.responsibleActor)
+        if (prior.tenant_id !== task.tenantId || prior.request_id !== exceptionId || prior.version !== 2 || !valid(value) || value.tenantId !== task.tenantId || value.programId !== task.programId || value.packageId !== task.packageId || value.packageVersion !== task.packageVersion || value.type !== 'scheduler_supplement_exception' || value.kind !== (input.gapCode===ENTERPRISE_FACT_GAP?'enterprise_facts':'account_authorization') || value.status !== 'assignment_pending' || value.exceptionId !== exceptionId || value.consumerInputHash !== supplementConsumerHash(task) || value.gapCode !== input.gapCode || value.consumerTaskId !== task.taskId || value.dueAt !== dueAt || value.responsibleActor !== task.schedule.responsibleActor)
             throw Error('supplement_exception_corrupt');
         return value;
     }
-    const value: WeeklySupplementException = { type: 'scheduler_supplement_exception', exceptionId, tenantId: task.tenantId, programId: task.programId, packageId: task.packageId, packageVersion: task.packageVersion, consumerTaskId: task.taskId, consumerInputHash: supplementConsumerHash(task), gapCode: input.gapCode, kind: 'account_authorization', status: 'assignment_pending', dueAt, responsibleActor: task.schedule.responsibleActor, createdAt: (input.now ?? new Date()).toISOString() };
+    const value: WeeklySupplementException = { type: 'scheduler_supplement_exception', exceptionId, tenantId: task.tenantId, programId: task.programId, packageId: task.packageId, packageVersion: task.packageVersion, consumerTaskId: task.taskId, consumerInputHash: supplementConsumerHash(task), gapCode: input.gapCode, kind: input.gapCode===ENTERPRISE_FACT_GAP?'enterprise_facts':'account_authorization', status: 'assignment_pending', dueAt, responsibleActor: task.schedule.responsibleActor, createdAt: (input.now ?? new Date()).toISOString() };
     if (!await input.store.create(SUPPLEMENT_EVENTS, { id, tenant_id: task.tenantId, request_id: exceptionId, version: 2, payload: seal(value) })) {
         const reread = await input.store.getById<Record_>(SUPPLEMENT_EVENTS, id);
         if (!reread)
@@ -85,7 +88,7 @@ export async function materializeWeeklySupplementException(input: {
     gapCode: string;
     now?: Date;
 }): Promise<WeeklySupplementException | null> {
-    if (!ACCOUNT_AUTHORIZATION_GAP_CODES.has(input.gapCode))
+    if (!supportedGap(input.gapCode))
         return null;
     return withExecutionPackageGate(input.store, input.task, async (assert) => { await assert(); if (await executionPackageFrozen(input.store, input.task))
         return null; return materialize(input); });
@@ -99,7 +102,7 @@ export async function runWeeklySupplementExceptionScan(input: {
     const tasks = await rows(input.store, 'social_weekly_execution_tasks', {});
     for (const row of tasks) {
         const task = parsed<WeeklyExecutionTask>(row.payload);
-        if (!task || input.tenantIds && !input.tenantIds.includes(task.tenantId) || task.status !== 'blocked' || !ACCOUNT_AUTHORIZATION_GAP_CODES.has(task.lastError?.code ?? ''))
+        if (!task || input.tenantIds && !input.tenantIds.includes(task.tenantId) || task.status !== 'blocked' || !supportedGap(task.lastError?.code ?? ''))
             continue;
         let exception: WeeklySupplementException | null;
         try {
@@ -127,7 +130,7 @@ export async function runWeeklySupplementExceptionScan(input: {
                 const pub = pkg.socialContentPackage.publicationTasks.find(p => p.publicationTaskId === task.publicationTaskId && p.accountId === task.accountId);
                 if (!pub || !['active', 'draft'].includes(pkg.status) || task.lease || await executionPackageFrozen(input.store, task))
                     return;
-                const check = await checkWeeklyAccountAuthorizationSupplement({ store: input.store, tenantId: task.tenantId, accountId: pub.accountId, platform: pub.platform, now: input.now });
+                const check = await checkSupplement(input.store,{...task,lastError:{code:exception.gapCode,message:'',occurredAt:'',retryable:false}},pub.platform,input.now);
                 if (!check.ready)
                     return;
                 await assert();
@@ -189,7 +192,7 @@ export async function runWeeklySupplementExceptionScan(input: {
                 const pub = pkg.socialContentPackage.publicationTasks.find(p => p.publicationTaskId === task.publicationTaskId && p.accountId === task.accountId);
                 if (!pub || !['active', 'draft'].includes(pkg.status) || await executionPackageFrozen(input.store, task))
                     return;
-                const check = await checkWeeklyAccountAuthorizationSupplement({ store: input.store, tenantId: exception.tenantId, accountId: pub.accountId, platform: pub.platform, now: input.now });
+                const check = await checkSupplement(input.store,{...task,lastError:{code:exception.gapCode,message:'',occurredAt:'',retryable:false}},pub.platform,input.now);
                 if (!check.ready)
                     return;
                 if (currentResolution) {

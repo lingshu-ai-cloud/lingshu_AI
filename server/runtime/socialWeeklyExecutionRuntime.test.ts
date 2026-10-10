@@ -1,3 +1,4 @@
+import { prepareWeeklyEnterpriseFactFixture } from './weeklyEnterpriseFactSupplement.fixture.js';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { DataStore, ListQuery, ListResult, Record_ } from '../storage/datastore.js';
@@ -87,15 +88,17 @@ test('planning reconciliation requires formal dispatch and matching immutable sc
   const discovery = task(); discovery.schedule.stepKind = 'benchmark_collection';
   assert.equal((await adapter.execute(discovery)).status, 'blocked');
 });
-test('missing real media blocks completion without consuming supplier retries', async () => {
-  const dataStore = memoryStore();
-  const value = task(); value.workflowKind = 'content'; value.schedule.stepKind = 'video_generation'; value.publicationTaskId = 'publication-a';
-  await saveTask(dataStore, value);
+test('missing real media blocks completion without consuming supplier retries', async context => {
+  const fixture = await prepareWeeklyEnterpriseFactFixture(context);
+  const dataStore = fixture.store, value = fixture.task; value.schedule.stepKind = 'video_generation';
+  const plan = planning(); plan.skeleton.slots[0]!.accountIds = [value.accountId!];
+  await dataStore.create('social_weekly_agent_planning', { tenant_id:value.tenantId, program_id:value.programId, package_id:value.packageId, package_version:1, planning_version:4, payload:plan });
+  await dataStore.create(WEEKLY_EXECUTION_TASKS, { tenant_id:value.tenantId, task_id:value.taskId, program_id:value.programId, package_id:value.packageId, package_version:1, status:value.status, idempotency_key:value.idempotencyKey, payload:value });
   await dataStore.create('workflow_runs', { id: 'real-run', tenant_id: value.tenantId, status: 'succeeded' });
-  await dataStore.create('starter_social_content_tasks', { tenant_id: value.tenantId, task_id: 'content', run_id: 'real-run', status: 'asset_review', create_idempotency_key: 'weekly-production:package-a:1:publication-a', brief: { programRef: { id: value.programId } } });
+  await dataStore.create('starter_social_content_tasks', { tenant_id: value.tenantId, task_id: 'content', run_id: 'real-run', status: 'asset_review', create_idempotency_key: 'weekly-production:package-a:1:pub', brief: { programRef: { id: value.programId } } });
   await dataStore.create('starter_social_content_files', { tenant_id: value.tenantId, task_id: 'content', file_id: 'missing-file', usage: 'artifact_media', name: 'video.mp4', mime_type: 'video/mp4', byte_size: 12, content_sha256: 'a'.repeat(64), storage_kind: 'local', storage_key: 'missing-weekly-runtime-fixture/video.mp4' });
   await dataStore.create('starter_social_content_artifacts', { tenant_id: value.tenantId, task_id: 'content', artifact_id: 'artifact', version: '1', artifact_kind: 'short_video', origin: 'agent', status: 'review_required', resource_ref: 'socialfile:missing-file', content: { render: { completed: true }, mediaStorage: { video: { fileId: 'missing-file', sha256: 'a'.repeat(64), url: '/video' } } } });
-  await runSocialWeeklyExecutionScan({ dataStore, adapters: { video_generation: { async execute() { return { status: 'succeeded', resultRefs: [{ type: 'starter_social_content_artifact', id: 'artifact', version: 1 }] }; } } } });
+  await runSocialWeeklyExecutionScan({ dataStore, now: new Date('2026-10-12T00:00:00Z'), adapters: { video_generation: { async execute() { return { status: 'succeeded', resultRefs: [{ type: 'starter_social_content_artifact', id: 'artifact', version: 1 }] }; } } } });
   const row = (await dataStore.list<any>(WEEKLY_EXECUTION_TASKS)).items[0].payload;
   assert.equal(row.status, 'blocked', JSON.stringify(row.lastError)); assert.equal(row.attempt, 0); assert.deepEqual(row.resultRefs, []);
   assert.equal(row.lastError.code, 'social_content_file_integrity_violation');

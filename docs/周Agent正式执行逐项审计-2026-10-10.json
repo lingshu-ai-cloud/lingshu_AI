@@ -76,7 +76,8 @@
       "title": "双路线脚本与执行复核",
       "worker": [
         "server/runtime/socialWeeklyProductionAdapter.ts",
-        "server/starter198/socialContentProductionExecution.ts"
+        "server/starter198/socialContentProductionExecution.ts",
+        "server/runtime/weeklyEnterpriseFactSupplement.ts"
       ],
       "collections": [
         "starter_social_content_tasks",
@@ -86,12 +87,13 @@
         "starter_social_production_receipts"
       ],
       "execution": "formal_original_run_pre_supply_stages",
-      "recoveryAndEmpty": "Same original task/run/job and immutable script/storyboard; paused before asset claim. Exact sceneId mapping: missing/duplicate IDs fail before provider. Missing material, facts, rights or reference-shot identity blocks only actual dependencies; no inferred completion.",
+      "recoveryAndEmpty": "Same original task/run/job and immutable script/storyboard; paused before asset claim. Exact sceneId mapping: missing/duplicate IDs fail before provider. Missing material, facts, rights or reference-shot identity blocks only actual dependencies; no inferred completion. 正式runtime在生产或continuation前重验官方确认事实与冻结snapshot，缺失先持久阻塞，adapter不执行。",
       "status": "controlled_formal_evidence_passed",
       "tests": [
         "server/runtime/socialWeeklyScriptEvidence.test.ts",
         "server/runtime/socialWeeklyStoryboardEvidence.test.ts",
-        "server/starter198/socialContentAssetSupplySceneIdentity.test.ts"
+        "server/starter198/socialContentAssetSupplySceneIdentity.test.ts",
+        "server/runtime/weeklyEnterpriseFactSupplement.test.ts"
       ],
       "productionGap": "Real model script/storyboard, actual enterprise reviewer and supplier media evidence remain absent."
     },
@@ -101,7 +103,8 @@
       "worker": [
         "server/contentExecution/durableQueue.ts:DurableContentExecutionWorker",
         "server/starter198/socialContentProductionExecution.ts",
-        "server/runtime/socialWeeklyProductionAdapter.ts"
+        "server/runtime/socialWeeklyProductionAdapter.ts",
+        "server/runtime/weeklyEnterpriseFactSupplement.ts"
       ],
       "collections": [
         "content_execution_jobs",
@@ -112,11 +115,12 @@
         "starter_social_director_g5_reviews"
       ],
       "execution": "formal_durable_job_physical_local_artifact_g4_g5",
-      "recoveryAndEmpty": "Exact artifact version/hash, separate G4/G5, separate final approval; no borrowing old parent audit for repair child. Missing bytes/G4/G5 stays blocked or awaiting_audit; immutable false summary does not fabricate acceptance.",
+      "recoveryAndEmpty": "Exact artifact version/hash, separate G4/G5, separate final approval; no borrowing old parent audit for repair child. Missing bytes/G4/G5 stays blocked or awaiting_audit; immutable false summary does not fabricate acceptance. 正式runtime在生产或continuation前重验官方确认事实与冻结snapshot，缺失先持久阻塞，adapter不执行。",
       "status": "controlled_formal_evidence_passed",
       "tests": [
         "server/runtime/weeklyContentQualityAudit.integration.test.ts",
-        "server/runtime/weeklyCreativeRepairE2E.integration.test.ts"
+        "server/runtime/weeklyCreativeRepairE2E.integration.test.ts",
+        "server/runtime/weeklyEnterpriseFactSupplement.test.ts"
       ],
       "productionGap": "Actual paid supplier, natural voice/visual quality and five real weekly outputs absent; controlled physical media proves wiring only."
     },
@@ -143,7 +147,8 @@
       "title": "老客推进＋新询盘承接",
       "worker": [
         "backgroundJobs.initFollowupDispatchWorker → runFollowupDispatchScan",
-        "server/runtime/socialWeeklyCustomerChannelAdapter.ts"
+        "server/runtime/socialWeeklyCustomerChannelAdapter.ts",
+        "server/runtime/weeklyCustomerChannelAuthorizationExceptions.ts"
       ],
       "collections": [
         "followup_batches",
@@ -153,11 +158,13 @@
         "social_weekly_customer_channel_executions"
       ],
       "execution": "受控 provider 经正式扫描/队列、批准版本和原渠道身份，持久 accepted ledger 与任务完成证据。",
-      "recoveryAndEmpty": "native scheduled authority and approved current version; original channel/account/customer; actual controlled provider call; durable accepted ledger, sent item, succeeded original dispatch task, completed batch fully generated empty segment persists no_data with no fabricated customer/draft/provider receipt; pending or truncated reads fail closed",
+      "recoveryAndEmpty": "native scheduled authority and approved current version; original channel/account/customer; actual controlled provider call; durable accepted ledger, sent item, succeeded original dispatch task, completed batch fully generated empty segment persists no_data with no fabricated customer/draft/provider receipt; pending or truncated reads fail closed 渠道准备任务正式scan持久授权异常，原selection账号删除时即使存在有效其他账号也拒绝恢复。",
       "status": "verified_controlled_execution",
       "tests": [
         "server/digitalEmployees/weeklyCustomerScheduledQueue.integration.test.ts",
-        "server/digitalEmployees/weeklyCustomerNoData.execution.test.ts"
+        "server/digitalEmployees/weeklyCustomerNoData.execution.test.ts",
+        "server/runtime/weeklyCustomerChannelAuthorizationExceptions.test.ts",
+        "server/runtime/weeklyCustomerAuthorizationFormalRuntime.integration.test.ts"
       ],
       "productionGap": "真实 Meta/WABA 权限、生产交付回执、真实客户结果和长期运行证据未执行。"
     },
@@ -188,20 +195,24 @@
       "worker": [
         "server/socialPrograms/weeklyMaterialRequests.ts",
         "server/runtime/weeklyMaterialPreparationRecovery.ts",
-        "server/runtime/socialWeeklyProductionAdapter.ts"
+        "server/runtime/socialWeeklyProductionAdapter.ts",
+        "server/runtime/weeklyHumanMaterialRecoveryScan.ts"
       ],
       "collections": [
         "social_weekly_material_requests",
         "starter_social_content_tasks",
-        "social_weekly_execution_tasks"
+        "social_weekly_execution_tasks",
+        "social_weekly_supplement_events"
       ],
-      "execution": "persistent_material_checks_and_scoped_consumer_recovery",
-      "recoveryAndEmpty": "Byte hash, factual/rights/visual checks per consumer; new consumer rechecks; shared request reused, narrow original task resume. Upload is not acceptance; missing independent evidence creates exception or consumer blocker.",
-      "status": "controlled_formal_evidence_passed",
+      "execution": "persistent_material_checks_and_scoped_consumer_recovery 正式周扫描开头及执行后扫描实际material_readiness阻塞，逐消费者写human_material_exception v2。",
+      "recoveryAndEmpty": "Byte hash, factual/rights/visual checks per consumer; new consumer rechecks; shared request reused, narrow original task resume. Upload is not acceptance; missing independent evidence creates exception or consumer blocker. 实际字节hash与独立逐消费者事实/权益/视觉receipt通过后持久v3，原task移除对应gap；跨周显式新增consumer并独立审核，不借旧周证据，输入漂移/未知写结果不盲解锁或重复创建。",
+      "status": "controlled_formal_runtime_and_authenticated_http_verified",
       "tests": [
         "server/socialPrograms/weeklyMaterialRequests.test.ts",
         "server/socialPrograms/weeklyMaterialNewConsumerAcceptance.test.ts",
-        "server/runtime/weeklyMaterialConsumerRecovery.integration.test.ts"
+        "server/runtime/weeklyMaterialConsumerRecovery.integration.test.ts",
+        "server/runtime/weeklyHumanMaterialRecoveryScan.test.ts",
+        "server/runtime/weeklyHumanMaterialRuntime.integration.test.ts"
       ],
       "productionGap": "Real tenant inventory/upload rights and production consumption absent; legacy factory fixtures need real initial capacity confirmation."
     },
@@ -209,20 +220,30 @@
       "id": "H-S2",
       "title": "历史证据/授权/事实/预算补齐",
       "worker": [
-        "server/runtime/socialWeeklyExecutionRuntime.ts → server/runtime/weeklySupplementExceptionMaterializer.ts"
+        "server/runtime/socialWeeklyExecutionRuntime.ts → server/runtime/weeklySupplementExceptionMaterializer.ts",
+        "server/runtime/weeklyEnterpriseFactSupplement.ts",
+        "server/runtime/weeklyCustomerChannelAuthorizationExceptions.ts"
       ],
       "collections": [
-        "social_weekly_supplement_events"
+        "social_weekly_supplement_events",
+        "tenant_profiles",
+        "social_operating_authority_snapshots",
+        "social_business_content_goals"
       ],
-      "execution": "正式调度补扫blocked发布授权消费者，稳定异常ID+consumerInputHash+schedule截止/责任角色，assignment_pending无假用户；official scopes/current provider probe修复后持久resolution再恢复原gap。范围仅平台发布授权；企业事实/客服渠道未覆盖。",
-      "recoveryAndEmpty": "正式调度补扫崩溃窗口；官方账号 scope/current capability proof 后先持久 resolved 再仅解除原缺口；保留其他阻塞。缺负责人待指派；仅平台发布授权已自动化，企业事实/客服渠道仍缺自动创建。",
-      "status": "account_authorization_vertical_slice_verified",
+      "execution": "正式周扫描首次阻塞写逐消费者v2异常，重启补扫企业事实、发布账号和三渠道客服授权；事实准入在生产adapter前执行。已鉴权scheduler-exceptions合并三类只读异常。Instagram Login发布provider未分派时持久provider_capability_not_verified，不借旧Meta scope或其他账号。",
+      "recoveryAndEmpty": "官方人类确认及canonical逐条事实引用关联原冻结周；官方渠道授权和原客服selection/account/native/oauth身份重读，v3持久后仅移除原阻塞。多消费者独立恢复；no_data/旧周/旧版本/错tenant/身份或hash漂移不解锁。",
+      "status": "controlled_formal_runtime_and_authenticated_http_verified",
       "tests": [
         "server/runtime/weeklySupplementExceptionMaterializer.test.ts",
         "server/routes/socialWeeklySupplementExceptions.integration.test.ts",
-        "server/socialPrograms/weeklySupplementRequests.test.ts"
+        "server/socialPrograms/weeklySupplementRequests.test.ts",
+        "server/runtime/weeklyEnterpriseFactSupplement.test.ts",
+        "server/routes/weeklyEnterpriseFactExceptions.integration.test.ts",
+        "server/runtime/weeklyCustomerChannelAuthorizationExceptions.test.ts",
+        "server/runtime/weeklyCustomerAuthorizationFormalRuntime.integration.test.ts",
+        "server/runtime/weeklyInstagramLoginSupplement.test.ts"
       ],
-      "productionGap": "尚缺真实租户整周运行、平台回执和指标；受控 DataStore/provider 结果不等于生产验收。"
+      "productionGap": "Instagram Login发布provider分派归发布owner，本组持续持久阻塞；实际平台授权/真实交付/生产数据整周验收未执行。事实变更需要正式重规划，不能替换旧冻结事实。"
     },
     {
       "id": "H-S3",
@@ -286,7 +307,7 @@
         "server/runtime/socialWeeklyPublicationAdapter.test.ts",
         "server/socialPrograms/weeklyReviewEvidence.test.ts"
       ],
-      "productionGap": "尚缺真实租户整周运行、平台回执和指标；受控 DataStore/provider 结果不等于生产验收。"
+      "productionGap": "已有HTTP/SDK采集未绑定正式周worker；SDK缺指标归零导致presence丢失，自主no_data-safe collector仍缺。尚缺真实租户整周运行、平台回执和指标；受控 DataStore/provider 结果不等于生产验收。"
     },
     {
       "id": "H-S6",
@@ -317,7 +338,8 @@
       "title": "既有客户/新询盘转人工",
       "worker": [
         "backgroundJobs.initFollowupDispatchWorker → runFollowupDispatchScan",
-        "server/runtime/socialWeeklyCustomerChannelAdapter.ts"
+        "server/runtime/socialWeeklyCustomerChannelAdapter.ts",
+        "server/runtime/weeklyCustomerChannelAuthorizationExceptions.ts"
       ],
       "collections": [
         "followup_batches",
@@ -327,12 +349,14 @@
         "social_weekly_customer_channel_executions"
       ],
       "execution": "受控 provider 经正式扫描/队列、批准版本和原渠道身份，持久 accepted ledger 与任务完成证据。",
-      "recoveryAndEmpty": "unknown original request is reconciled over three fresh service scans with zero resends accepted original ledger repairs a failed task projection on next scan without another provider call tenant/approval-version/approval-state/account/customer/conversation/member drift prevents provider call and accepted ledger",
+      "recoveryAndEmpty": "unknown original request is reconciled over three fresh service scans with zero resends accepted original ledger repairs a failed task projection on next scan without another provider call tenant/approval-version/approval-state/account/customer/conversation/member drift prevents provider call and accepted ledger 渠道准备任务正式scan持久授权异常，原selection账号删除时即使存在有效其他账号也拒绝恢复。",
       "status": "verified_controlled_execution",
       "tests": [
         "server/digitalEmployees/weeklyCustomerScheduledQueue.integration.test.ts",
         "server/socialPrograms/weeklyNativeSendRecovery.test.ts",
-        "server/socialPrograms/weeklyCustomerSendRecovery.test.ts"
+        "server/socialPrograms/weeklyCustomerSendRecovery.test.ts",
+        "server/runtime/weeklyCustomerChannelAuthorizationExceptions.test.ts",
+        "server/runtime/weeklyCustomerAuthorizationFormalRuntime.integration.test.ts"
       ],
       "productionGap": "真实 Meta/WABA 权限、生产交付回执、真实客户结果和长期运行证据未执行。"
     },
@@ -359,18 +383,21 @@
       "id": "H-S9",
       "title": "跨周库存/未结任务衔接",
       "worker": [
-        "server/socialPrograms/weeklyCrossWeekMaterialContinuations.ts"
+        "server/socialPrograms/weeklyCrossWeekMaterialContinuations.ts",
+        "server/runtime/weeklyCustomerChannelAuthorizationExceptions.ts"
       ],
       "collections": [
         "social_weekly_cross_week_material_continuations"
       ],
       "execution": "不同真实week保留原请求/owner/deadline；独立新消费者review，旧receipt不能批准新周；不触发付费生产重放。",
-      "recoveryAndEmpty": "跨周素材为新 consumer 重验；同 package 跨 version 与不同 week 区分，旧产物不重复付费生产。",
+      "recoveryAndEmpty": "跨周素材为新 consumer 重验；同 package 跨 version 与不同 week 区分，旧产物不重复付费生产。 渠道准备任务正式scan持久授权异常，原selection账号删除时即使存在有效其他账号也拒绝恢复。",
       "status": "controlled_chain_verified",
       "tests": [
         "server/socialPrograms/weeklyCrossWeekMaterialContinuations.test.ts",
         "server/socialPrograms/weeklyExecutionContinuations.test.ts",
-        "server/socialPrograms/weeklyProfileUpgrade.test.ts"
+        "server/socialPrograms/weeklyProfileUpgrade.test.ts",
+        "server/runtime/weeklyCustomerChannelAuthorizationExceptions.test.ts",
+        "server/runtime/weeklyCustomerAuthorizationFormalRuntime.integration.test.ts"
       ],
       "productionGap": "尚缺真实租户整周运行、平台回执和指标；受控 DataStore/provider 结果不等于生产验收。"
     },
@@ -437,7 +464,8 @@
       "title": "企业化脚本与执行方案",
       "worker": [
         "server/runtime/socialWeeklyProductionAdapter.ts",
-        "server/starter198/socialContentProductionExecution.ts"
+        "server/starter198/socialContentProductionExecution.ts",
+        "server/runtime/weeklyEnterpriseFactSupplement.ts"
       ],
       "collections": [
         "starter_social_content_tasks",
@@ -447,12 +475,13 @@
         "starter_social_production_receipts"
       ],
       "execution": "formal_original_run_pre_supply_stages",
-      "recoveryAndEmpty": "Same original task/run/job and immutable script/storyboard; paused before asset claim. Exact sceneId mapping: missing/duplicate IDs fail before provider. Missing material, facts, rights or reference-shot identity blocks only actual dependencies; no inferred completion.",
+      "recoveryAndEmpty": "Same original task/run/job and immutable script/storyboard; paused before asset claim. Exact sceneId mapping: missing/duplicate IDs fail before provider. Missing material, facts, rights or reference-shot identity blocks only actual dependencies; no inferred completion. 正式runtime在生产或continuation前重验官方确认事实与冻结snapshot，缺失先持久阻塞，adapter不执行。",
       "status": "controlled_formal_evidence_passed",
       "tests": [
         "server/runtime/socialWeeklyScriptEvidence.test.ts",
         "server/runtime/socialWeeklyStoryboardEvidence.test.ts",
-        "server/starter198/socialContentAssetSupplySceneIdentity.test.ts"
+        "server/starter198/socialContentAssetSupplySceneIdentity.test.ts",
+        "server/runtime/weeklyEnterpriseFactSupplement.test.ts"
       ],
       "productionGap": "Real model script/storyboard, actual enterprise reviewer and supplier media evidence remain absent."
     },
@@ -462,7 +491,8 @@
       "worker": [
         "server/contentExecution/durableQueue.ts:DurableContentExecutionWorker",
         "server/starter198/socialContentProductionExecution.ts",
-        "server/runtime/socialWeeklyProductionAdapter.ts"
+        "server/runtime/socialWeeklyProductionAdapter.ts",
+        "server/runtime/weeklyEnterpriseFactSupplement.ts"
       ],
       "collections": [
         "content_execution_jobs",
@@ -473,11 +503,12 @@
         "starter_social_director_g5_reviews"
       ],
       "execution": "formal_durable_job_physical_local_artifact_g4_g5",
-      "recoveryAndEmpty": "Exact artifact version/hash, separate G4/G5, separate final approval; no borrowing old parent audit for repair child. Missing bytes/G4/G5 stays blocked or awaiting_audit; immutable false summary does not fabricate acceptance.",
+      "recoveryAndEmpty": "Exact artifact version/hash, separate G4/G5, separate final approval; no borrowing old parent audit for repair child. Missing bytes/G4/G5 stays blocked or awaiting_audit; immutable false summary does not fabricate acceptance. 正式runtime在生产或continuation前重验官方确认事实与冻结snapshot，缺失先持久阻塞，adapter不执行。",
       "status": "controlled_formal_evidence_passed",
       "tests": [
         "server/runtime/weeklyContentQualityAudit.integration.test.ts",
-        "server/runtime/weeklyCreativeRepairE2E.integration.test.ts"
+        "server/runtime/weeklyCreativeRepairE2E.integration.test.ts",
+        "server/runtime/weeklyEnterpriseFactSupplement.test.ts"
       ],
       "productionGap": "Actual paid supplier, natural voice/visual quality and five real weekly outputs absent; controlled physical media proves wiring only."
     },
@@ -504,7 +535,8 @@
       "title": "新询盘承接与知识补充",
       "worker": [
         "backgroundJobs.initFollowupDispatchWorker → runFollowupDispatchScan",
-        "server/runtime/socialWeeklyCustomerChannelAdapter.ts"
+        "server/runtime/socialWeeklyCustomerChannelAdapter.ts",
+        "server/runtime/weeklyCustomerChannelAuthorizationExceptions.ts"
       ],
       "collections": [
         "followup_batches",
@@ -514,11 +546,13 @@
         "social_weekly_customer_channel_executions"
       ],
       "execution": "受控 provider 经正式扫描/队列、批准版本和原渠道身份，持久 accepted ledger 与任务完成证据。",
-      "recoveryAndEmpty": "native scheduled authority and approved current version; original channel/account/customer; actual controlled provider call; durable accepted ledger, sent item, succeeded original dispatch task, completed batch fully generated empty segment persists no_data with no fabricated customer/draft/provider receipt; pending or truncated reads fail closed",
+      "recoveryAndEmpty": "native scheduled authority and approved current version; original channel/account/customer; actual controlled provider call; durable accepted ledger, sent item, succeeded original dispatch task, completed batch fully generated empty segment persists no_data with no fabricated customer/draft/provider receipt; pending or truncated reads fail closed 渠道准备任务正式scan持久授权异常，原selection账号删除时即使存在有效其他账号也拒绝恢复。",
       "status": "verified_controlled_execution",
       "tests": [
         "server/digitalEmployees/weeklyCustomerScheduledQueue.integration.test.ts",
-        "server/digitalEmployees/weeklyCustomerNoData.execution.test.ts"
+        "server/digitalEmployees/weeklyCustomerNoData.execution.test.ts",
+        "server/runtime/weeklyCustomerChannelAuthorizationExceptions.test.ts",
+        "server/runtime/weeklyCustomerAuthorizationFormalRuntime.integration.test.ts"
       ],
       "productionGap": "真实 Meta/WABA 权限、生产交付回执、真实客户结果和长期运行证据未执行。"
     },
@@ -549,20 +583,24 @@
       "worker": [
         "server/socialPrograms/weeklyMaterialRequests.ts",
         "server/runtime/weeklyMaterialPreparationRecovery.ts",
-        "server/runtime/socialWeeklyProductionAdapter.ts"
+        "server/runtime/socialWeeklyProductionAdapter.ts",
+        "server/runtime/weeklyHumanMaterialRecoveryScan.ts"
       ],
       "collections": [
         "social_weekly_material_requests",
         "starter_social_content_tasks",
-        "social_weekly_execution_tasks"
+        "social_weekly_execution_tasks",
+        "social_weekly_supplement_events"
       ],
-      "execution": "persistent_material_checks_and_scoped_consumer_recovery",
-      "recoveryAndEmpty": "Byte hash, factual/rights/visual checks per consumer; new consumer rechecks; shared request reused, narrow original task resume. Upload is not acceptance; missing independent evidence creates exception or consumer blocker.",
-      "status": "controlled_formal_evidence_passed",
+      "execution": "persistent_material_checks_and_scoped_consumer_recovery 正式周扫描开头及执行后扫描实际material_readiness阻塞，逐消费者写human_material_exception v2。",
+      "recoveryAndEmpty": "Byte hash, factual/rights/visual checks per consumer; new consumer rechecks; shared request reused, narrow original task resume. Upload is not acceptance; missing independent evidence creates exception or consumer blocker. 实际字节hash与独立逐消费者事实/权益/视觉receipt通过后持久v3，原task移除对应gap；跨周显式新增consumer并独立审核，不借旧周证据，输入漂移/未知写结果不盲解锁或重复创建。",
+      "status": "controlled_formal_runtime_and_authenticated_http_verified",
       "tests": [
         "server/socialPrograms/weeklyMaterialRequests.test.ts",
         "server/socialPrograms/weeklyMaterialNewConsumerAcceptance.test.ts",
-        "server/runtime/weeklyMaterialConsumerRecovery.integration.test.ts"
+        "server/runtime/weeklyMaterialConsumerRecovery.integration.test.ts",
+        "server/runtime/weeklyHumanMaterialRecoveryScan.test.ts",
+        "server/runtime/weeklyHumanMaterialRuntime.integration.test.ts"
       ],
       "productionGap": "Real tenant inventory/upload rights and production consumption absent; legacy factory fixtures need real initial capacity confirmation."
     },
@@ -570,20 +608,30 @@
       "id": "Z-S2",
       "title": "首次配置/事实/权利/预算补齐",
       "worker": [
-        "server/runtime/socialWeeklyExecutionRuntime.ts → server/runtime/weeklySupplementExceptionMaterializer.ts"
+        "server/runtime/socialWeeklyExecutionRuntime.ts → server/runtime/weeklySupplementExceptionMaterializer.ts",
+        "server/runtime/weeklyEnterpriseFactSupplement.ts",
+        "server/runtime/weeklyCustomerChannelAuthorizationExceptions.ts"
       ],
       "collections": [
-        "social_weekly_supplement_events"
+        "social_weekly_supplement_events",
+        "tenant_profiles",
+        "social_operating_authority_snapshots",
+        "social_business_content_goals"
       ],
-      "execution": "正式调度补扫blocked发布授权消费者，稳定异常ID+consumerInputHash+schedule截止/责任角色，assignment_pending无假用户；official scopes/current provider probe修复后持久resolution再恢复原gap。范围仅平台发布授权；企业事实/客服渠道未覆盖。",
-      "recoveryAndEmpty": "正式调度补扫崩溃窗口；官方账号 scope/current capability proof 后先持久 resolved 再仅解除原缺口；保留其他阻塞。缺负责人待指派；仅平台发布授权已自动化，企业事实/客服渠道仍缺自动创建。",
-      "status": "account_authorization_vertical_slice_verified",
+      "execution": "正式周扫描首次阻塞写逐消费者v2异常，重启补扫企业事实、发布账号和三渠道客服授权；事实准入在生产adapter前执行。已鉴权scheduler-exceptions合并三类只读异常。Instagram Login发布provider未分派时持久provider_capability_not_verified，不借旧Meta scope或其他账号。",
+      "recoveryAndEmpty": "官方人类确认及canonical逐条事实引用关联原冻结周；官方渠道授权和原客服selection/account/native/oauth身份重读，v3持久后仅移除原阻塞。多消费者独立恢复；no_data/旧周/旧版本/错tenant/身份或hash漂移不解锁。",
+      "status": "controlled_formal_runtime_and_authenticated_http_verified",
       "tests": [
         "server/runtime/weeklySupplementExceptionMaterializer.test.ts",
         "server/routes/socialWeeklySupplementExceptions.integration.test.ts",
-        "server/socialPrograms/weeklySupplementRequests.test.ts"
+        "server/socialPrograms/weeklySupplementRequests.test.ts",
+        "server/runtime/weeklyEnterpriseFactSupplement.test.ts",
+        "server/routes/weeklyEnterpriseFactExceptions.integration.test.ts",
+        "server/runtime/weeklyCustomerChannelAuthorizationExceptions.test.ts",
+        "server/runtime/weeklyCustomerAuthorizationFormalRuntime.integration.test.ts",
+        "server/runtime/weeklyInstagramLoginSupplement.test.ts"
       ],
-      "productionGap": "尚缺真实租户整周运行、平台回执和指标；受控 DataStore/provider 结果不等于生产验收。"
+      "productionGap": "Instagram Login发布provider分派归发布owner，本组持续持久阻塞；实际平台授权/真实交付/生产数据整周验收未执行。事实变更需要正式重规划，不能替换旧冻结事实。"
     },
     {
       "id": "Z-S3",
@@ -647,7 +695,7 @@
         "server/runtime/socialWeeklyPublicationAdapter.test.ts",
         "server/socialPrograms/weeklyReviewEvidence.test.ts"
       ],
-      "productionGap": "尚缺真实租户整周运行、平台回执和指标；受控 DataStore/provider 结果不等于生产验收。"
+      "productionGap": "已有HTTP/SDK采集未绑定正式周worker；SDK缺指标归零导致presence丢失，自主no_data-safe collector仍缺。尚缺真实租户整周运行、平台回执和指标；受控 DataStore/provider 结果不等于生产验收。"
     },
     {
       "id": "Z-S6",
@@ -678,7 +726,8 @@
       "title": "首批客户转人工/发送异常",
       "worker": [
         "backgroundJobs.initFollowupDispatchWorker → runFollowupDispatchScan",
-        "server/runtime/socialWeeklyCustomerChannelAdapter.ts"
+        "server/runtime/socialWeeklyCustomerChannelAdapter.ts",
+        "server/runtime/weeklyCustomerChannelAuthorizationExceptions.ts"
       ],
       "collections": [
         "followup_batches",
@@ -688,12 +737,14 @@
         "social_weekly_customer_channel_executions"
       ],
       "execution": "受控 provider 经正式扫描/队列、批准版本和原渠道身份，持久 accepted ledger 与任务完成证据。",
-      "recoveryAndEmpty": "unknown original request is reconciled over three fresh service scans with zero resends accepted original ledger repairs a failed task projection on next scan without another provider call tenant/approval-version/approval-state/account/customer/conversation/member drift prevents provider call and accepted ledger",
+      "recoveryAndEmpty": "unknown original request is reconciled over three fresh service scans with zero resends accepted original ledger repairs a failed task projection on next scan without another provider call tenant/approval-version/approval-state/account/customer/conversation/member drift prevents provider call and accepted ledger 渠道准备任务正式scan持久授权异常，原selection账号删除时即使存在有效其他账号也拒绝恢复。",
       "status": "verified_controlled_execution",
       "tests": [
         "server/digitalEmployees/weeklyCustomerScheduledQueue.integration.test.ts",
         "server/socialPrograms/weeklyNativeSendRecovery.test.ts",
-        "server/socialPrograms/weeklyCustomerSendRecovery.test.ts"
+        "server/socialPrograms/weeklyCustomerSendRecovery.test.ts",
+        "server/runtime/weeklyCustomerChannelAuthorizationExceptions.test.ts",
+        "server/runtime/weeklyCustomerAuthorizationFormalRuntime.integration.test.ts"
       ],
       "productionGap": "真实 Meta/WABA 权限、生产交付回执、真实客户结果和长期运行证据未执行。"
     },
@@ -720,18 +771,21 @@
       "id": "Z-S9",
       "title": "跨周延续与画像升级建议",
       "worker": [
-        "server/socialPrograms/weeklyCrossWeekMaterialContinuations.ts"
+        "server/socialPrograms/weeklyCrossWeekMaterialContinuations.ts",
+        "server/runtime/weeklyCustomerChannelAuthorizationExceptions.ts"
       ],
       "collections": [
         "social_weekly_cross_week_material_continuations"
       ],
       "execution": "不同真实week保留原请求/owner/deadline；独立新消费者review，旧receipt不能批准新周；不触发付费生产重放。",
-      "recoveryAndEmpty": "跨周素材为新 consumer 重验；同 package 跨 version 与不同 week 区分，旧产物不重复付费生产。",
+      "recoveryAndEmpty": "跨周素材为新 consumer 重验；同 package 跨 version 与不同 week 区分，旧产物不重复付费生产。 渠道准备任务正式scan持久授权异常，原selection账号删除时即使存在有效其他账号也拒绝恢复。",
       "status": "controlled_chain_verified",
       "tests": [
         "server/socialPrograms/weeklyCrossWeekMaterialContinuations.test.ts",
         "server/socialPrograms/weeklyExecutionContinuations.test.ts",
-        "server/socialPrograms/weeklyProfileUpgrade.test.ts"
+        "server/socialPrograms/weeklyProfileUpgrade.test.ts",
+        "server/runtime/weeklyCustomerChannelAuthorizationExceptions.test.ts",
+        "server/runtime/weeklyCustomerAuthorizationFormalRuntime.integration.test.ts"
       ],
       "productionGap": "尚缺真实租户整周运行、平台回执和指标；受控 DataStore/provider 结果不等于生产验收。"
     }
@@ -759,10 +813,16 @@
       "chain": "H-M1",
       "criterion": "异常恢复与空数据",
       "finding": "原冻结规划/version/事实及账号边界重验；缺必要输入阻塞，规划 worker 主要复核已生成决策。",
-      "status": "边界有定向验证；细节与剩余缺口见源审计",
+      "status": "reconciliation_only",
       "tests": [
         "server/runtime/weeklyM1ContinuousProduction.integration.test.ts",
         "server/runtime/socialWeeklyExecutionRuntime.test.ts"
+      ],
+      "worker": [
+        "server/socialPrograms/planningAuthority.ts"
+      ],
+      "collections": [
+        "social_weekly_agent_planning"
       ]
     },
     {
@@ -791,10 +851,20 @@
       "chain": "H-M2",
       "criterion": "异常恢复与空数据",
       "finding": "Exact source allocation and reference rights re-read; missing owned source stays pending, never borrowed external. qualified_benchmark_supply_required / owned_reference_diagnosis_pending; no fabricated source or scoring.",
-      "status": "边界有定向验证；细节与剩余缺口见源审计",
+      "status": "controlled_formal_evidence_passed",
       "tests": [
         "server/runtime/socialWeeklyReferenceSource.test.ts",
         "server/runtime/weeklyEstablishedReferenceSource.integration.test.ts"
+      ],
+      "worker": [
+        "server/runtime/socialWeeklyExecutionRuntime.ts:createSocialWeeklyPlanningAdapter",
+        "server/socialPrograms/planningAuthority.ts:runDirectorAnalysis"
+      ],
+      "collections": [
+        "social_weekly_agent_planning",
+        "social_weekly_execution_tasks",
+        "trend_videos",
+        "starter_social_inspiration_handoff_versions"
       ]
     },
     {
@@ -819,10 +889,16 @@
       "chain": "H-M3",
       "criterion": "异常恢复与空数据",
       "finding": "明确用户确认、固定 selected/pending 与来源配额；缺容量不派单，不自动改配额。",
-      "status": "边界有定向验证；细节与剩余缺口见源审计",
+      "status": "controlled_chain_verified",
       "tests": [
         "server/socialPrograms/weeklyInitialSchedule.integration.test.ts",
         "server/socialPrograms/weeklyIndependentPlanning.test.ts"
+      ],
+      "worker": [
+        "server/socialPrograms/weeklyInitialSchedule.ts"
+      ],
+      "collections": [
+        "social_weekly_execution_tasks"
       ]
     },
     {
@@ -831,7 +907,8 @@
       "criterion": "正式执行器与持久证据",
       "worker": [
         "server/runtime/socialWeeklyProductionAdapter.ts",
-        "server/starter198/socialContentProductionExecution.ts"
+        "server/starter198/socialContentProductionExecution.ts",
+        "server/runtime/weeklyEnterpriseFactSupplement.ts"
       ],
       "collections": [
         "starter_social_content_tasks",
@@ -845,19 +922,33 @@
       "tests": [
         "server/runtime/socialWeeklyScriptEvidence.test.ts",
         "server/runtime/socialWeeklyStoryboardEvidence.test.ts",
-        "server/starter198/socialContentAssetSupplySceneIdentity.test.ts"
+        "server/starter198/socialContentAssetSupplySceneIdentity.test.ts",
+        "server/runtime/weeklyEnterpriseFactSupplement.test.ts"
       ]
     },
     {
       "id": "H-M4-B",
       "chain": "H-M4",
       "criterion": "异常恢复与空数据",
-      "finding": "Same original task/run/job and immutable script/storyboard; paused before asset claim. Exact sceneId mapping: missing/duplicate IDs fail before provider. Missing material, facts, rights or reference-shot identity blocks only actual dependencies; no inferred completion.",
-      "status": "边界有定向验证；细节与剩余缺口见源审计",
+      "finding": "Same original task/run/job and immutable script/storyboard; paused before asset claim. Exact sceneId mapping: missing/duplicate IDs fail before provider. Missing material, facts, rights or reference-shot identity blocks only actual dependencies; no inferred completion. 正式runtime在生产或continuation前重验官方确认事实与冻结snapshot，缺失先持久阻塞，adapter不执行。",
+      "status": "controlled_formal_evidence_passed",
       "tests": [
         "server/runtime/socialWeeklyScriptEvidence.test.ts",
         "server/runtime/socialWeeklyStoryboardEvidence.test.ts",
-        "server/starter198/socialContentAssetSupplySceneIdentity.test.ts"
+        "server/starter198/socialContentAssetSupplySceneIdentity.test.ts",
+        "server/runtime/weeklyEnterpriseFactSupplement.test.ts"
+      ],
+      "worker": [
+        "server/runtime/socialWeeklyProductionAdapter.ts",
+        "server/starter198/socialContentProductionExecution.ts",
+        "server/runtime/weeklyEnterpriseFactSupplement.ts"
+      ],
+      "collections": [
+        "starter_social_content_tasks",
+        "starter_social_director_plan_versions",
+        "workflow_runs",
+        "content_execution_jobs",
+        "starter_social_production_receipts"
       ]
     },
     {
@@ -867,7 +958,8 @@
       "worker": [
         "server/contentExecution/durableQueue.ts:DurableContentExecutionWorker",
         "server/starter198/socialContentProductionExecution.ts",
-        "server/runtime/socialWeeklyProductionAdapter.ts"
+        "server/runtime/socialWeeklyProductionAdapter.ts",
+        "server/runtime/weeklyEnterpriseFactSupplement.ts"
       ],
       "collections": [
         "content_execution_jobs",
@@ -881,18 +973,34 @@
       "status": "controlled_formal_evidence_passed",
       "tests": [
         "server/runtime/weeklyContentQualityAudit.integration.test.ts",
-        "server/runtime/weeklyCreativeRepairE2E.integration.test.ts"
+        "server/runtime/weeklyCreativeRepairE2E.integration.test.ts",
+        "server/runtime/weeklyEnterpriseFactSupplement.test.ts"
       ]
     },
     {
       "id": "H-M5-B",
       "chain": "H-M5",
       "criterion": "异常恢复与空数据",
-      "finding": "Exact artifact version/hash, separate G4/G5, separate final approval; no borrowing old parent audit for repair child. Missing bytes/G4/G5 stays blocked or awaiting_audit; immutable false summary does not fabricate acceptance.",
-      "status": "边界有定向验证；细节与剩余缺口见源审计",
+      "finding": "Exact artifact version/hash, separate G4/G5, separate final approval; no borrowing old parent audit for repair child. Missing bytes/G4/G5 stays blocked or awaiting_audit; immutable false summary does not fabricate acceptance. 正式runtime在生产或continuation前重验官方确认事实与冻结snapshot，缺失先持久阻塞，adapter不执行。",
+      "status": "controlled_formal_evidence_passed",
       "tests": [
         "server/runtime/weeklyContentQualityAudit.integration.test.ts",
-        "server/runtime/weeklyCreativeRepairE2E.integration.test.ts"
+        "server/runtime/weeklyCreativeRepairE2E.integration.test.ts",
+        "server/runtime/weeklyEnterpriseFactSupplement.test.ts"
+      ],
+      "worker": [
+        "server/contentExecution/durableQueue.ts:DurableContentExecutionWorker",
+        "server/starter198/socialContentProductionExecution.ts",
+        "server/runtime/socialWeeklyProductionAdapter.ts",
+        "server/runtime/weeklyEnterpriseFactSupplement.ts"
+      ],
+      "collections": [
+        "content_execution_jobs",
+        "workflow_runs",
+        "starter_social_content_artifacts",
+        "starter_social_production_receipts",
+        "starter_social_scene_g4_reviews",
+        "starter_social_director_g5_reviews"
       ]
     },
     {
@@ -917,9 +1025,16 @@
       "chain": "H-M6",
       "criterion": "异常恢复与空数据",
       "finding": "独立发布准入、原 assignment/attempt 和 provider 回执；没有回执不完成。",
-      "status": "边界有定向验证；细节与剩余缺口见源审计",
+      "status": "controlled_chain_verified",
       "tests": [
         "server/runtime/socialWeeklyPublicationAdapter.test.ts"
+      ],
+      "worker": [
+        "server/socialPrograms/weeklyPublicationRecovery.ts"
+      ],
+      "collections": [
+        "social_publication_assignments",
+        "social_publication_attempts"
       ]
     },
     {
@@ -928,7 +1043,8 @@
       "criterion": "正式执行器与持久证据",
       "worker": [
         "backgroundJobs.initFollowupDispatchWorker → runFollowupDispatchScan",
-        "server/runtime/socialWeeklyCustomerChannelAdapter.ts"
+        "server/runtime/socialWeeklyCustomerChannelAdapter.ts",
+        "server/runtime/weeklyCustomerChannelAuthorizationExceptions.ts"
       ],
       "collections": [
         "followup_batches",
@@ -941,18 +1057,34 @@
       "status": "verified_controlled_execution",
       "tests": [
         "server/digitalEmployees/weeklyCustomerScheduledQueue.integration.test.ts",
-        "server/digitalEmployees/weeklyCustomerNoData.execution.test.ts"
+        "server/digitalEmployees/weeklyCustomerNoData.execution.test.ts",
+        "server/runtime/weeklyCustomerChannelAuthorizationExceptions.test.ts",
+        "server/runtime/weeklyCustomerAuthorizationFormalRuntime.integration.test.ts"
       ]
     },
     {
       "id": "H-M7-B",
       "chain": "H-M7",
       "criterion": "异常恢复与空数据",
-      "finding": "native scheduled authority and approved current version; original channel/account/customer; actual controlled provider call; durable accepted ledger, sent item, succeeded original dispatch task, completed batch fully generated empty segment persists no_data with no fabricated customer/draft/provider receipt; pending or truncated reads fail closed",
-      "status": "边界有定向验证；细节与剩余缺口见源审计",
+      "finding": "native scheduled authority and approved current version; original channel/account/customer; actual controlled provider call; durable accepted ledger, sent item, succeeded original dispatch task, completed batch fully generated empty segment persists no_data with no fabricated customer/draft/provider receipt; pending or truncated reads fail closed 渠道准备任务正式scan持久授权异常，原selection账号删除时即使存在有效其他账号也拒绝恢复。",
+      "status": "verified_controlled_execution",
       "tests": [
         "server/digitalEmployees/weeklyCustomerScheduledQueue.integration.test.ts",
-        "server/digitalEmployees/weeklyCustomerNoData.execution.test.ts"
+        "server/digitalEmployees/weeklyCustomerNoData.execution.test.ts",
+        "server/runtime/weeklyCustomerChannelAuthorizationExceptions.test.ts",
+        "server/runtime/weeklyCustomerAuthorizationFormalRuntime.integration.test.ts"
+      ],
+      "worker": [
+        "backgroundJobs.initFollowupDispatchWorker → runFollowupDispatchScan",
+        "server/runtime/socialWeeklyCustomerChannelAdapter.ts",
+        "server/runtime/weeklyCustomerChannelAuthorizationExceptions.ts"
+      ],
+      "collections": [
+        "followup_batches",
+        "followup_batch_items",
+        "digital_employee_tasks",
+        "customer_channel_send_requests",
+        "social_weekly_customer_channel_executions"
       ]
     },
     {
@@ -980,10 +1112,19 @@
       "chain": "H-M8",
       "criterion": "异常恢复与空数据",
       "finding": "完整分页稳定计数与身份；缺页/不可用 pending 不冻结，完整空集保留 unknown/insufficient，不补零。",
-      "status": "边界有定向验证；细节与剩余缺口见源审计",
+      "status": "fixed_verified",
       "tests": [
         "server/socialReview/weeklyReviewWorker.test.ts",
         "server/socialPrograms/weeklyReviewEvidence.test.ts"
+      ],
+      "worker": [
+        "server/socialReview/weeklyReviewWorker.ts"
+      ],
+      "collections": [
+        "social_weekly_review_snapshots",
+        "social_weekly_quota_references",
+        "social_creative_learnings",
+        "agent_notification_outbox"
       ]
     },
     {
@@ -993,31 +1134,49 @@
       "worker": [
         "server/socialPrograms/weeklyMaterialRequests.ts",
         "server/runtime/weeklyMaterialPreparationRecovery.ts",
-        "server/runtime/socialWeeklyProductionAdapter.ts"
+        "server/runtime/socialWeeklyProductionAdapter.ts",
+        "server/runtime/weeklyHumanMaterialRecoveryScan.ts"
       ],
       "collections": [
         "social_weekly_material_requests",
         "starter_social_content_tasks",
-        "social_weekly_execution_tasks"
+        "social_weekly_execution_tasks",
+        "social_weekly_supplement_events"
       ],
-      "finding": "persistent_material_checks_and_scoped_consumer_recovery",
-      "status": "controlled_formal_evidence_passed",
+      "finding": "persistent_material_checks_and_scoped_consumer_recovery 正式周扫描开头及执行后扫描实际material_readiness阻塞，逐消费者写human_material_exception v2。",
+      "status": "controlled_formal_runtime_and_authenticated_http_verified",
       "tests": [
         "server/socialPrograms/weeklyMaterialRequests.test.ts",
         "server/socialPrograms/weeklyMaterialNewConsumerAcceptance.test.ts",
-        "server/runtime/weeklyMaterialConsumerRecovery.integration.test.ts"
+        "server/runtime/weeklyMaterialConsumerRecovery.integration.test.ts",
+        "server/runtime/weeklyHumanMaterialRecoveryScan.test.ts",
+        "server/runtime/weeklyHumanMaterialRuntime.integration.test.ts"
       ]
     },
     {
       "id": "H-S1-B",
       "chain": "H-S1",
       "criterion": "异常恢复与空数据",
-      "finding": "Byte hash, factual/rights/visual checks per consumer; new consumer rechecks; shared request reused, narrow original task resume. Upload is not acceptance; missing independent evidence creates exception or consumer blocker.",
-      "status": "边界有定向验证；细节与剩余缺口见源审计",
+      "finding": "Byte hash, factual/rights/visual checks per consumer; new consumer rechecks; shared request reused, narrow original task resume. Upload is not acceptance; missing independent evidence creates exception or consumer blocker. 实际字节hash与独立逐消费者事实/权益/视觉receipt通过后持久v3，原task移除对应gap；跨周显式新增consumer并独立审核，不借旧周证据，输入漂移/未知写结果不盲解锁或重复创建。",
+      "status": "controlled_formal_runtime_and_authenticated_http_verified",
       "tests": [
         "server/socialPrograms/weeklyMaterialRequests.test.ts",
         "server/socialPrograms/weeklyMaterialNewConsumerAcceptance.test.ts",
-        "server/runtime/weeklyMaterialConsumerRecovery.integration.test.ts"
+        "server/runtime/weeklyMaterialConsumerRecovery.integration.test.ts",
+        "server/runtime/weeklyHumanMaterialRecoveryScan.test.ts",
+        "server/runtime/weeklyHumanMaterialRuntime.integration.test.ts"
+      ],
+      "worker": [
+        "server/socialPrograms/weeklyMaterialRequests.ts",
+        "server/runtime/weeklyMaterialPreparationRecovery.ts",
+        "server/runtime/socialWeeklyProductionAdapter.ts",
+        "server/runtime/weeklyHumanMaterialRecoveryScan.ts"
+      ],
+      "collections": [
+        "social_weekly_material_requests",
+        "starter_social_content_tasks",
+        "social_weekly_execution_tasks",
+        "social_weekly_supplement_events"
       ]
     },
     {
@@ -1025,29 +1184,55 @@
       "chain": "H-S2",
       "criterion": "正式执行器与持久证据",
       "worker": [
-        "server/runtime/socialWeeklyExecutionRuntime.ts → server/runtime/weeklySupplementExceptionMaterializer.ts"
+        "server/runtime/socialWeeklyExecutionRuntime.ts → server/runtime/weeklySupplementExceptionMaterializer.ts",
+        "server/runtime/weeklyEnterpriseFactSupplement.ts",
+        "server/runtime/weeklyCustomerChannelAuthorizationExceptions.ts"
       ],
       "collections": [
-        "social_weekly_supplement_events"
+        "social_weekly_supplement_events",
+        "tenant_profiles",
+        "social_operating_authority_snapshots",
+        "social_business_content_goals"
       ],
-      "finding": "正式调度补扫blocked发布授权消费者，稳定异常ID+consumerInputHash+schedule截止/责任角色，assignment_pending无假用户；official scopes/current provider probe修复后持久resolution再恢复原gap。范围仅平台发布授权；企业事实/客服渠道未覆盖。",
-      "status": "account_authorization_vertical_slice_verified",
+      "finding": "正式周扫描首次阻塞写逐消费者v2异常，重启补扫企业事实、发布账号和三渠道客服授权；事实准入在生产adapter前执行。已鉴权scheduler-exceptions合并三类只读异常。Instagram Login发布provider未分派时持久provider_capability_not_verified，不借旧Meta scope或其他账号。",
+      "status": "controlled_formal_runtime_and_authenticated_http_verified",
       "tests": [
         "server/runtime/weeklySupplementExceptionMaterializer.test.ts",
         "server/routes/socialWeeklySupplementExceptions.integration.test.ts",
-        "server/socialPrograms/weeklySupplementRequests.test.ts"
+        "server/socialPrograms/weeklySupplementRequests.test.ts",
+        "server/runtime/weeklyEnterpriseFactSupplement.test.ts",
+        "server/routes/weeklyEnterpriseFactExceptions.integration.test.ts",
+        "server/runtime/weeklyCustomerChannelAuthorizationExceptions.test.ts",
+        "server/runtime/weeklyCustomerAuthorizationFormalRuntime.integration.test.ts",
+        "server/runtime/weeklyInstagramLoginSupplement.test.ts"
       ]
     },
     {
       "id": "H-S2-B",
       "chain": "H-S2",
       "criterion": "异常恢复与空数据",
-      "finding": "正式调度补扫崩溃窗口；官方账号 scope/current capability proof 后先持久 resolved 再仅解除原缺口；保留其他阻塞。缺负责人待指派；仅平台发布授权已自动化，企业事实/客服渠道仍缺自动创建。",
-      "status": "边界有定向验证；细节与剩余缺口见源审计",
+      "finding": "官方人类确认及canonical逐条事实引用关联原冻结周；官方渠道授权和原客服selection/account/native/oauth身份重读，v3持久后仅移除原阻塞。多消费者独立恢复；no_data/旧周/旧版本/错tenant/身份或hash漂移不解锁。",
+      "status": "controlled_formal_runtime_and_authenticated_http_verified",
       "tests": [
         "server/runtime/weeklySupplementExceptionMaterializer.test.ts",
         "server/routes/socialWeeklySupplementExceptions.integration.test.ts",
-        "server/socialPrograms/weeklySupplementRequests.test.ts"
+        "server/socialPrograms/weeklySupplementRequests.test.ts",
+        "server/runtime/weeklyEnterpriseFactSupplement.test.ts",
+        "server/routes/weeklyEnterpriseFactExceptions.integration.test.ts",
+        "server/runtime/weeklyCustomerChannelAuthorizationExceptions.test.ts",
+        "server/runtime/weeklyCustomerAuthorizationFormalRuntime.integration.test.ts",
+        "server/runtime/weeklyInstagramLoginSupplement.test.ts"
+      ],
+      "worker": [
+        "server/runtime/socialWeeklyExecutionRuntime.ts → server/runtime/weeklySupplementExceptionMaterializer.ts",
+        "server/runtime/weeklyEnterpriseFactSupplement.ts",
+        "server/runtime/weeklyCustomerChannelAuthorizationExceptions.ts"
+      ],
+      "collections": [
+        "social_weekly_supplement_events",
+        "tenant_profiles",
+        "social_operating_authority_snapshots",
+        "social_business_content_goals"
       ]
     },
     {
@@ -1083,11 +1268,27 @@
       "chain": "H-S3",
       "criterion": "异常恢复与空数据",
       "finding": "Lost lease reuses first createdAt and exact durable stage evidence; unknown create only reads winner. Payload tenant/task/case/lineage plus predecessor hash fully checked. Missing G5 awaits_audit; absent cache/material/authority or unknown provider blocks, no duplicate production.",
-      "status": "边界有定向验证；细节与剩余缺口见源审计",
+      "status": "controlled_formal_evidence_passed",
       "tests": [
         "server/runtime/weeklyCreativeRepairE2E.integration.test.ts",
         "server/runtime/weeklyCreativeRepairStageRecovery.test.ts",
         "server/socialPrograms/weeklyTechnicalRepairCompletion.test.ts"
+      ],
+      "worker": [
+        "server/runtime/weeklyCreativeRepairExecutionAdapter.ts",
+        "server/runtime/weeklyCreativeRepairProductionPort.ts",
+        "server/contentExecution/durableQueue.ts",
+        "server/socialPrograms/weeklyCreativeRepairCompletion.ts"
+      ],
+      "collections": [
+        "social_weekly_production_repair_cases",
+        "social_weekly_creative_repair_capacity_reservations",
+        "social_weekly_creative_repair_execution_mappings",
+        "social_weekly_creative_repair_stage_evidence",
+        "content_execution_jobs",
+        "starter_social_content_artifacts",
+        "starter_social_scene_g4_reviews",
+        "starter_social_director_g5_reviews"
       ]
     },
     {
@@ -1111,9 +1312,15 @@
       "chain": "H-S4",
       "criterion": "异常恢复与空数据",
       "finding": "unknown 只对账原 attempt；未确认失败不重发，其他可执行分支独立继续。",
-      "status": "边界有定向验证；细节与剩余缺口见源审计",
+      "status": "controlled_chain_verified",
       "tests": [
         "server/socialPrograms/weeklyPublicationRecovery.test.ts"
+      ],
+      "worker": [
+        "server/socialPrograms/weeklyPublicationRecovery.ts"
+      ],
+      "collections": [
+        "social_publication_attempts"
       ]
     },
     {
@@ -1138,10 +1345,16 @@
       "chain": "H-S5",
       "criterion": "异常恢复与空数据",
       "finding": "按原发布、平台、账号、观察窗口重验指标；未观测 pending/unknown，真实观测零保留，验证器不等于自主采集器。",
-      "status": "边界有定向验证；细节与剩余缺口见源审计",
+      "status": "controlled_chain_verified",
       "tests": [
         "server/runtime/socialWeeklyPublicationAdapter.test.ts",
         "server/socialPrograms/weeklyReviewEvidence.test.ts"
+      ],
+      "worker": [
+        "server/runtime/weeklyPublicationMetricEvidence.ts"
+      ],
+      "collections": [
+        "social_metric_snapshots"
       ]
     },
     {
@@ -1172,11 +1385,22 @@
       "chain": "H-S6",
       "criterion": "异常恢复与空数据",
       "finding": "Exact candidate/version/hash and original confirmation recovered; explicit selection permits narrow resume, never auto confirms intent or changes quota. content_template_execution_selection_required / content_template_confirmation_required; unknown metrics not zero and external views not owned success.",
-      "status": "边界有定向验证；细节与剩余缺口见源审计",
+      "status": "controlled_formal_evidence_passed",
       "tests": [
         "server/runtime/socialWeeklyContentTemplateAdapter.test.ts",
         "server/socialPrograms/weeklyContentTemplates.test.ts",
         "server/socialPrograms/weeklyTemplateRevisionCarryover.test.ts"
+      ],
+      "worker": [
+        "server/runtime/socialWeeklyContentTemplateAdapter.ts",
+        "server/socialPrograms/weeklyContentTemplates.ts"
+      ],
+      "collections": [
+        "social_content_template_candidates",
+        "social_content_template_confirmations",
+        "social_weekly_content_template_bindings",
+        "social_weekly_content_template_execution_selections",
+        "social_weekly_execution_tasks"
       ]
     },
     {
@@ -1185,7 +1409,8 @@
       "criterion": "正式执行器与持久证据",
       "worker": [
         "backgroundJobs.initFollowupDispatchWorker → runFollowupDispatchScan",
-        "server/runtime/socialWeeklyCustomerChannelAdapter.ts"
+        "server/runtime/socialWeeklyCustomerChannelAdapter.ts",
+        "server/runtime/weeklyCustomerChannelAuthorizationExceptions.ts"
       ],
       "collections": [
         "followup_batches",
@@ -1199,19 +1424,35 @@
       "tests": [
         "server/digitalEmployees/weeklyCustomerScheduledQueue.integration.test.ts",
         "server/socialPrograms/weeklyNativeSendRecovery.test.ts",
-        "server/socialPrograms/weeklyCustomerSendRecovery.test.ts"
+        "server/socialPrograms/weeklyCustomerSendRecovery.test.ts",
+        "server/runtime/weeklyCustomerChannelAuthorizationExceptions.test.ts",
+        "server/runtime/weeklyCustomerAuthorizationFormalRuntime.integration.test.ts"
       ]
     },
     {
       "id": "H-S7-B",
       "chain": "H-S7",
       "criterion": "异常恢复与空数据",
-      "finding": "unknown original request is reconciled over three fresh service scans with zero resends accepted original ledger repairs a failed task projection on next scan without another provider call tenant/approval-version/approval-state/account/customer/conversation/member drift prevents provider call and accepted ledger",
-      "status": "边界有定向验证；细节与剩余缺口见源审计",
+      "finding": "unknown original request is reconciled over three fresh service scans with zero resends accepted original ledger repairs a failed task projection on next scan without another provider call tenant/approval-version/approval-state/account/customer/conversation/member drift prevents provider call and accepted ledger 渠道准备任务正式scan持久授权异常，原selection账号删除时即使存在有效其他账号也拒绝恢复。",
+      "status": "verified_controlled_execution",
       "tests": [
         "server/digitalEmployees/weeklyCustomerScheduledQueue.integration.test.ts",
         "server/socialPrograms/weeklyNativeSendRecovery.test.ts",
-        "server/socialPrograms/weeklyCustomerSendRecovery.test.ts"
+        "server/socialPrograms/weeklyCustomerSendRecovery.test.ts",
+        "server/runtime/weeklyCustomerChannelAuthorizationExceptions.test.ts",
+        "server/runtime/weeklyCustomerAuthorizationFormalRuntime.integration.test.ts"
+      ],
+      "worker": [
+        "backgroundJobs.initFollowupDispatchWorker → runFollowupDispatchScan",
+        "server/runtime/socialWeeklyCustomerChannelAdapter.ts",
+        "server/runtime/weeklyCustomerChannelAuthorizationExceptions.ts"
+      ],
+      "collections": [
+        "followup_batches",
+        "followup_batch_items",
+        "digital_employee_tasks",
+        "customer_channel_send_requests",
+        "social_weekly_customer_channel_executions"
       ]
     },
     {
@@ -1237,10 +1478,17 @@
       "chain": "H-S8",
       "criterion": "异常恢复与空数据",
       "finding": "显式确认新版本及冻结资源/目标图；不擅自重排，不把缺来源改成外部。",
-      "status": "边界有定向验证；细节与剩余缺口见源审计",
+      "status": "contract_verified",
       "tests": [
         "server/routes/socialWeeklyScheduleRevisions.integration.test.ts",
         "server/socialPrograms/weeklyInitialSchedule.integration.test.ts"
+      ],
+      "worker": [
+        "server/socialPrograms/weeklyExecutionContinuations.ts"
+      ],
+      "collections": [
+        "social_weekly_execution_continuations",
+        "social_weekly_operating_packages"
       ]
     },
     {
@@ -1248,7 +1496,8 @@
       "chain": "H-S9",
       "criterion": "正式执行器与持久证据",
       "worker": [
-        "server/socialPrograms/weeklyCrossWeekMaterialContinuations.ts"
+        "server/socialPrograms/weeklyCrossWeekMaterialContinuations.ts",
+        "server/runtime/weeklyCustomerChannelAuthorizationExceptions.ts"
       ],
       "collections": [
         "social_weekly_cross_week_material_continuations"
@@ -1258,19 +1507,30 @@
       "tests": [
         "server/socialPrograms/weeklyCrossWeekMaterialContinuations.test.ts",
         "server/socialPrograms/weeklyExecutionContinuations.test.ts",
-        "server/socialPrograms/weeklyProfileUpgrade.test.ts"
+        "server/socialPrograms/weeklyProfileUpgrade.test.ts",
+        "server/runtime/weeklyCustomerChannelAuthorizationExceptions.test.ts",
+        "server/runtime/weeklyCustomerAuthorizationFormalRuntime.integration.test.ts"
       ]
     },
     {
       "id": "H-S9-B",
       "chain": "H-S9",
       "criterion": "异常恢复与空数据",
-      "finding": "跨周素材为新 consumer 重验；同 package 跨 version 与不同 week 区分，旧产物不重复付费生产。",
-      "status": "边界有定向验证；细节与剩余缺口见源审计",
+      "finding": "跨周素材为新 consumer 重验；同 package 跨 version 与不同 week 区分，旧产物不重复付费生产。 渠道准备任务正式scan持久授权异常，原selection账号删除时即使存在有效其他账号也拒绝恢复。",
+      "status": "controlled_chain_verified",
       "tests": [
         "server/socialPrograms/weeklyCrossWeekMaterialContinuations.test.ts",
         "server/socialPrograms/weeklyExecutionContinuations.test.ts",
-        "server/socialPrograms/weeklyProfileUpgrade.test.ts"
+        "server/socialPrograms/weeklyProfileUpgrade.test.ts",
+        "server/runtime/weeklyCustomerChannelAuthorizationExceptions.test.ts",
+        "server/runtime/weeklyCustomerAuthorizationFormalRuntime.integration.test.ts"
+      ],
+      "worker": [
+        "server/socialPrograms/weeklyCrossWeekMaterialContinuations.ts",
+        "server/runtime/weeklyCustomerChannelAuthorizationExceptions.ts"
+      ],
+      "collections": [
+        "social_weekly_cross_week_material_continuations"
       ]
     },
     {
@@ -1295,10 +1555,16 @@
       "chain": "Z-M1",
       "criterion": "异常恢复与空数据",
       "finding": "原冻结规划/version/事实及账号边界重验；缺必要输入阻塞，规划 worker 主要复核已生成决策。",
-      "status": "边界有定向验证；细节与剩余缺口见源审计",
+      "status": "reconciliation_only",
       "tests": [
         "server/runtime/weeklyM1ContinuousProduction.integration.test.ts",
         "server/runtime/socialWeeklyExecutionRuntime.test.ts"
+      ],
+      "worker": [
+        "server/socialPrograms/planningAuthority.ts"
+      ],
+      "collections": [
+        "social_weekly_agent_planning"
       ]
     },
     {
@@ -1327,10 +1593,20 @@
       "chain": "Z-M2",
       "criterion": "异常恢复与空数据",
       "finding": "Exact source allocation and reference rights re-read; missing owned source stays pending, never borrowed external. qualified_benchmark_supply_required / owned_reference_diagnosis_pending; no fabricated source or scoring.",
-      "status": "边界有定向验证；细节与剩余缺口见源审计",
+      "status": "controlled_formal_evidence_passed",
       "tests": [
         "server/runtime/socialWeeklyReferenceSource.test.ts",
         "server/runtime/weeklyEstablishedReferenceSource.integration.test.ts"
+      ],
+      "worker": [
+        "server/runtime/socialWeeklyExecutionRuntime.ts:createSocialWeeklyPlanningAdapter",
+        "server/socialPrograms/planningAuthority.ts:runDirectorAnalysis"
+      ],
+      "collections": [
+        "social_weekly_agent_planning",
+        "social_weekly_execution_tasks",
+        "trend_videos",
+        "starter_social_inspiration_handoff_versions"
       ]
     },
     {
@@ -1355,10 +1631,16 @@
       "chain": "Z-M3",
       "criterion": "异常恢复与空数据",
       "finding": "明确用户确认、固定 selected/pending 与来源配额；缺容量不派单，不自动改配额。",
-      "status": "边界有定向验证；细节与剩余缺口见源审计",
+      "status": "controlled_chain_verified",
       "tests": [
         "server/socialPrograms/weeklyInitialSchedule.integration.test.ts",
         "server/socialPrograms/weeklyIndependentPlanning.test.ts"
+      ],
+      "worker": [
+        "server/socialPrograms/weeklyInitialSchedule.ts"
+      ],
+      "collections": [
+        "social_weekly_execution_tasks"
       ]
     },
     {
@@ -1367,7 +1649,8 @@
       "criterion": "正式执行器与持久证据",
       "worker": [
         "server/runtime/socialWeeklyProductionAdapter.ts",
-        "server/starter198/socialContentProductionExecution.ts"
+        "server/starter198/socialContentProductionExecution.ts",
+        "server/runtime/weeklyEnterpriseFactSupplement.ts"
       ],
       "collections": [
         "starter_social_content_tasks",
@@ -1381,19 +1664,33 @@
       "tests": [
         "server/runtime/socialWeeklyScriptEvidence.test.ts",
         "server/runtime/socialWeeklyStoryboardEvidence.test.ts",
-        "server/starter198/socialContentAssetSupplySceneIdentity.test.ts"
+        "server/starter198/socialContentAssetSupplySceneIdentity.test.ts",
+        "server/runtime/weeklyEnterpriseFactSupplement.test.ts"
       ]
     },
     {
       "id": "Z-M4-B",
       "chain": "Z-M4",
       "criterion": "异常恢复与空数据",
-      "finding": "Same original task/run/job and immutable script/storyboard; paused before asset claim. Exact sceneId mapping: missing/duplicate IDs fail before provider. Missing material, facts, rights or reference-shot identity blocks only actual dependencies; no inferred completion.",
-      "status": "边界有定向验证；细节与剩余缺口见源审计",
+      "finding": "Same original task/run/job and immutable script/storyboard; paused before asset claim. Exact sceneId mapping: missing/duplicate IDs fail before provider. Missing material, facts, rights or reference-shot identity blocks only actual dependencies; no inferred completion. 正式runtime在生产或continuation前重验官方确认事实与冻结snapshot，缺失先持久阻塞，adapter不执行。",
+      "status": "controlled_formal_evidence_passed",
       "tests": [
         "server/runtime/socialWeeklyScriptEvidence.test.ts",
         "server/runtime/socialWeeklyStoryboardEvidence.test.ts",
-        "server/starter198/socialContentAssetSupplySceneIdentity.test.ts"
+        "server/starter198/socialContentAssetSupplySceneIdentity.test.ts",
+        "server/runtime/weeklyEnterpriseFactSupplement.test.ts"
+      ],
+      "worker": [
+        "server/runtime/socialWeeklyProductionAdapter.ts",
+        "server/starter198/socialContentProductionExecution.ts",
+        "server/runtime/weeklyEnterpriseFactSupplement.ts"
+      ],
+      "collections": [
+        "starter_social_content_tasks",
+        "starter_social_director_plan_versions",
+        "workflow_runs",
+        "content_execution_jobs",
+        "starter_social_production_receipts"
       ]
     },
     {
@@ -1403,7 +1700,8 @@
       "worker": [
         "server/contentExecution/durableQueue.ts:DurableContentExecutionWorker",
         "server/starter198/socialContentProductionExecution.ts",
-        "server/runtime/socialWeeklyProductionAdapter.ts"
+        "server/runtime/socialWeeklyProductionAdapter.ts",
+        "server/runtime/weeklyEnterpriseFactSupplement.ts"
       ],
       "collections": [
         "content_execution_jobs",
@@ -1417,18 +1715,34 @@
       "status": "controlled_formal_evidence_passed",
       "tests": [
         "server/runtime/weeklyContentQualityAudit.integration.test.ts",
-        "server/runtime/weeklyCreativeRepairE2E.integration.test.ts"
+        "server/runtime/weeklyCreativeRepairE2E.integration.test.ts",
+        "server/runtime/weeklyEnterpriseFactSupplement.test.ts"
       ]
     },
     {
       "id": "Z-M5-B",
       "chain": "Z-M5",
       "criterion": "异常恢复与空数据",
-      "finding": "Exact artifact version/hash, separate G4/G5, separate final approval; no borrowing old parent audit for repair child. Missing bytes/G4/G5 stays blocked or awaiting_audit; immutable false summary does not fabricate acceptance.",
-      "status": "边界有定向验证；细节与剩余缺口见源审计",
+      "finding": "Exact artifact version/hash, separate G4/G5, separate final approval; no borrowing old parent audit for repair child. Missing bytes/G4/G5 stays blocked or awaiting_audit; immutable false summary does not fabricate acceptance. 正式runtime在生产或continuation前重验官方确认事实与冻结snapshot，缺失先持久阻塞，adapter不执行。",
+      "status": "controlled_formal_evidence_passed",
       "tests": [
         "server/runtime/weeklyContentQualityAudit.integration.test.ts",
-        "server/runtime/weeklyCreativeRepairE2E.integration.test.ts"
+        "server/runtime/weeklyCreativeRepairE2E.integration.test.ts",
+        "server/runtime/weeklyEnterpriseFactSupplement.test.ts"
+      ],
+      "worker": [
+        "server/contentExecution/durableQueue.ts:DurableContentExecutionWorker",
+        "server/starter198/socialContentProductionExecution.ts",
+        "server/runtime/socialWeeklyProductionAdapter.ts",
+        "server/runtime/weeklyEnterpriseFactSupplement.ts"
+      ],
+      "collections": [
+        "content_execution_jobs",
+        "workflow_runs",
+        "starter_social_content_artifacts",
+        "starter_social_production_receipts",
+        "starter_social_scene_g4_reviews",
+        "starter_social_director_g5_reviews"
       ]
     },
     {
@@ -1453,9 +1767,16 @@
       "chain": "Z-M6",
       "criterion": "异常恢复与空数据",
       "finding": "独立发布准入、原 assignment/attempt 和 provider 回执；没有回执不完成。",
-      "status": "边界有定向验证；细节与剩余缺口见源审计",
+      "status": "controlled_chain_verified",
       "tests": [
         "server/runtime/socialWeeklyPublicationAdapter.test.ts"
+      ],
+      "worker": [
+        "server/socialPrograms/weeklyPublicationRecovery.ts"
+      ],
+      "collections": [
+        "social_publication_assignments",
+        "social_publication_attempts"
       ]
     },
     {
@@ -1464,7 +1785,8 @@
       "criterion": "正式执行器与持久证据",
       "worker": [
         "backgroundJobs.initFollowupDispatchWorker → runFollowupDispatchScan",
-        "server/runtime/socialWeeklyCustomerChannelAdapter.ts"
+        "server/runtime/socialWeeklyCustomerChannelAdapter.ts",
+        "server/runtime/weeklyCustomerChannelAuthorizationExceptions.ts"
       ],
       "collections": [
         "followup_batches",
@@ -1477,18 +1799,34 @@
       "status": "verified_controlled_execution",
       "tests": [
         "server/digitalEmployees/weeklyCustomerScheduledQueue.integration.test.ts",
-        "server/digitalEmployees/weeklyCustomerNoData.execution.test.ts"
+        "server/digitalEmployees/weeklyCustomerNoData.execution.test.ts",
+        "server/runtime/weeklyCustomerChannelAuthorizationExceptions.test.ts",
+        "server/runtime/weeklyCustomerAuthorizationFormalRuntime.integration.test.ts"
       ]
     },
     {
       "id": "Z-M7-B",
       "chain": "Z-M7",
       "criterion": "异常恢复与空数据",
-      "finding": "native scheduled authority and approved current version; original channel/account/customer; actual controlled provider call; durable accepted ledger, sent item, succeeded original dispatch task, completed batch fully generated empty segment persists no_data with no fabricated customer/draft/provider receipt; pending or truncated reads fail closed",
-      "status": "边界有定向验证；细节与剩余缺口见源审计",
+      "finding": "native scheduled authority and approved current version; original channel/account/customer; actual controlled provider call; durable accepted ledger, sent item, succeeded original dispatch task, completed batch fully generated empty segment persists no_data with no fabricated customer/draft/provider receipt; pending or truncated reads fail closed 渠道准备任务正式scan持久授权异常，原selection账号删除时即使存在有效其他账号也拒绝恢复。",
+      "status": "verified_controlled_execution",
       "tests": [
         "server/digitalEmployees/weeklyCustomerScheduledQueue.integration.test.ts",
-        "server/digitalEmployees/weeklyCustomerNoData.execution.test.ts"
+        "server/digitalEmployees/weeklyCustomerNoData.execution.test.ts",
+        "server/runtime/weeklyCustomerChannelAuthorizationExceptions.test.ts",
+        "server/runtime/weeklyCustomerAuthorizationFormalRuntime.integration.test.ts"
+      ],
+      "worker": [
+        "backgroundJobs.initFollowupDispatchWorker → runFollowupDispatchScan",
+        "server/runtime/socialWeeklyCustomerChannelAdapter.ts",
+        "server/runtime/weeklyCustomerChannelAuthorizationExceptions.ts"
+      ],
+      "collections": [
+        "followup_batches",
+        "followup_batch_items",
+        "digital_employee_tasks",
+        "customer_channel_send_requests",
+        "social_weekly_customer_channel_executions"
       ]
     },
     {
@@ -1516,10 +1854,19 @@
       "chain": "Z-M8",
       "criterion": "异常恢复与空数据",
       "finding": "完整分页稳定计数与身份；缺页/不可用 pending 不冻结，完整空集保留 unknown/insufficient，不补零。",
-      "status": "边界有定向验证；细节与剩余缺口见源审计",
+      "status": "fixed_verified",
       "tests": [
         "server/socialReview/weeklyReviewWorker.test.ts",
         "server/socialPrograms/weeklyReviewEvidence.test.ts"
+      ],
+      "worker": [
+        "server/socialReview/weeklyReviewWorker.ts"
+      ],
+      "collections": [
+        "social_weekly_review_snapshots",
+        "social_weekly_quota_references",
+        "social_creative_learnings",
+        "agent_notification_outbox"
       ]
     },
     {
@@ -1529,31 +1876,49 @@
       "worker": [
         "server/socialPrograms/weeklyMaterialRequests.ts",
         "server/runtime/weeklyMaterialPreparationRecovery.ts",
-        "server/runtime/socialWeeklyProductionAdapter.ts"
+        "server/runtime/socialWeeklyProductionAdapter.ts",
+        "server/runtime/weeklyHumanMaterialRecoveryScan.ts"
       ],
       "collections": [
         "social_weekly_material_requests",
         "starter_social_content_tasks",
-        "social_weekly_execution_tasks"
+        "social_weekly_execution_tasks",
+        "social_weekly_supplement_events"
       ],
-      "finding": "persistent_material_checks_and_scoped_consumer_recovery",
-      "status": "controlled_formal_evidence_passed",
+      "finding": "persistent_material_checks_and_scoped_consumer_recovery 正式周扫描开头及执行后扫描实际material_readiness阻塞，逐消费者写human_material_exception v2。",
+      "status": "controlled_formal_runtime_and_authenticated_http_verified",
       "tests": [
         "server/socialPrograms/weeklyMaterialRequests.test.ts",
         "server/socialPrograms/weeklyMaterialNewConsumerAcceptance.test.ts",
-        "server/runtime/weeklyMaterialConsumerRecovery.integration.test.ts"
+        "server/runtime/weeklyMaterialConsumerRecovery.integration.test.ts",
+        "server/runtime/weeklyHumanMaterialRecoveryScan.test.ts",
+        "server/runtime/weeklyHumanMaterialRuntime.integration.test.ts"
       ]
     },
     {
       "id": "Z-S1-B",
       "chain": "Z-S1",
       "criterion": "异常恢复与空数据",
-      "finding": "Byte hash, factual/rights/visual checks per consumer; new consumer rechecks; shared request reused, narrow original task resume. Upload is not acceptance; missing independent evidence creates exception or consumer blocker.",
-      "status": "边界有定向验证；细节与剩余缺口见源审计",
+      "finding": "Byte hash, factual/rights/visual checks per consumer; new consumer rechecks; shared request reused, narrow original task resume. Upload is not acceptance; missing independent evidence creates exception or consumer blocker. 实际字节hash与独立逐消费者事实/权益/视觉receipt通过后持久v3，原task移除对应gap；跨周显式新增consumer并独立审核，不借旧周证据，输入漂移/未知写结果不盲解锁或重复创建。",
+      "status": "controlled_formal_runtime_and_authenticated_http_verified",
       "tests": [
         "server/socialPrograms/weeklyMaterialRequests.test.ts",
         "server/socialPrograms/weeklyMaterialNewConsumerAcceptance.test.ts",
-        "server/runtime/weeklyMaterialConsumerRecovery.integration.test.ts"
+        "server/runtime/weeklyMaterialConsumerRecovery.integration.test.ts",
+        "server/runtime/weeklyHumanMaterialRecoveryScan.test.ts",
+        "server/runtime/weeklyHumanMaterialRuntime.integration.test.ts"
+      ],
+      "worker": [
+        "server/socialPrograms/weeklyMaterialRequests.ts",
+        "server/runtime/weeklyMaterialPreparationRecovery.ts",
+        "server/runtime/socialWeeklyProductionAdapter.ts",
+        "server/runtime/weeklyHumanMaterialRecoveryScan.ts"
+      ],
+      "collections": [
+        "social_weekly_material_requests",
+        "starter_social_content_tasks",
+        "social_weekly_execution_tasks",
+        "social_weekly_supplement_events"
       ]
     },
     {
@@ -1561,29 +1926,55 @@
       "chain": "Z-S2",
       "criterion": "正式执行器与持久证据",
       "worker": [
-        "server/runtime/socialWeeklyExecutionRuntime.ts → server/runtime/weeklySupplementExceptionMaterializer.ts"
+        "server/runtime/socialWeeklyExecutionRuntime.ts → server/runtime/weeklySupplementExceptionMaterializer.ts",
+        "server/runtime/weeklyEnterpriseFactSupplement.ts",
+        "server/runtime/weeklyCustomerChannelAuthorizationExceptions.ts"
       ],
       "collections": [
-        "social_weekly_supplement_events"
+        "social_weekly_supplement_events",
+        "tenant_profiles",
+        "social_operating_authority_snapshots",
+        "social_business_content_goals"
       ],
-      "finding": "正式调度补扫blocked发布授权消费者，稳定异常ID+consumerInputHash+schedule截止/责任角色，assignment_pending无假用户；official scopes/current provider probe修复后持久resolution再恢复原gap。范围仅平台发布授权；企业事实/客服渠道未覆盖。",
-      "status": "account_authorization_vertical_slice_verified",
+      "finding": "正式周扫描首次阻塞写逐消费者v2异常，重启补扫企业事实、发布账号和三渠道客服授权；事实准入在生产adapter前执行。已鉴权scheduler-exceptions合并三类只读异常。Instagram Login发布provider未分派时持久provider_capability_not_verified，不借旧Meta scope或其他账号。",
+      "status": "controlled_formal_runtime_and_authenticated_http_verified",
       "tests": [
         "server/runtime/weeklySupplementExceptionMaterializer.test.ts",
         "server/routes/socialWeeklySupplementExceptions.integration.test.ts",
-        "server/socialPrograms/weeklySupplementRequests.test.ts"
+        "server/socialPrograms/weeklySupplementRequests.test.ts",
+        "server/runtime/weeklyEnterpriseFactSupplement.test.ts",
+        "server/routes/weeklyEnterpriseFactExceptions.integration.test.ts",
+        "server/runtime/weeklyCustomerChannelAuthorizationExceptions.test.ts",
+        "server/runtime/weeklyCustomerAuthorizationFormalRuntime.integration.test.ts",
+        "server/runtime/weeklyInstagramLoginSupplement.test.ts"
       ]
     },
     {
       "id": "Z-S2-B",
       "chain": "Z-S2",
       "criterion": "异常恢复与空数据",
-      "finding": "正式调度补扫崩溃窗口；官方账号 scope/current capability proof 后先持久 resolved 再仅解除原缺口；保留其他阻塞。缺负责人待指派；仅平台发布授权已自动化，企业事实/客服渠道仍缺自动创建。",
-      "status": "边界有定向验证；细节与剩余缺口见源审计",
+      "finding": "官方人类确认及canonical逐条事实引用关联原冻结周；官方渠道授权和原客服selection/account/native/oauth身份重读，v3持久后仅移除原阻塞。多消费者独立恢复；no_data/旧周/旧版本/错tenant/身份或hash漂移不解锁。",
+      "status": "controlled_formal_runtime_and_authenticated_http_verified",
       "tests": [
         "server/runtime/weeklySupplementExceptionMaterializer.test.ts",
         "server/routes/socialWeeklySupplementExceptions.integration.test.ts",
-        "server/socialPrograms/weeklySupplementRequests.test.ts"
+        "server/socialPrograms/weeklySupplementRequests.test.ts",
+        "server/runtime/weeklyEnterpriseFactSupplement.test.ts",
+        "server/routes/weeklyEnterpriseFactExceptions.integration.test.ts",
+        "server/runtime/weeklyCustomerChannelAuthorizationExceptions.test.ts",
+        "server/runtime/weeklyCustomerAuthorizationFormalRuntime.integration.test.ts",
+        "server/runtime/weeklyInstagramLoginSupplement.test.ts"
+      ],
+      "worker": [
+        "server/runtime/socialWeeklyExecutionRuntime.ts → server/runtime/weeklySupplementExceptionMaterializer.ts",
+        "server/runtime/weeklyEnterpriseFactSupplement.ts",
+        "server/runtime/weeklyCustomerChannelAuthorizationExceptions.ts"
+      ],
+      "collections": [
+        "social_weekly_supplement_events",
+        "tenant_profiles",
+        "social_operating_authority_snapshots",
+        "social_business_content_goals"
       ]
     },
     {
@@ -1619,11 +2010,27 @@
       "chain": "Z-S3",
       "criterion": "异常恢复与空数据",
       "finding": "Lost lease reuses first createdAt and exact durable stage evidence; unknown create only reads winner. Payload tenant/task/case/lineage plus predecessor hash fully checked. Missing G5 awaits_audit; absent cache/material/authority or unknown provider blocks, no duplicate production.",
-      "status": "边界有定向验证；细节与剩余缺口见源审计",
+      "status": "controlled_formal_evidence_passed",
       "tests": [
         "server/runtime/weeklyCreativeRepairE2E.integration.test.ts",
         "server/runtime/weeklyCreativeRepairStageRecovery.test.ts",
         "server/socialPrograms/weeklyTechnicalRepairCompletion.test.ts"
+      ],
+      "worker": [
+        "server/runtime/weeklyCreativeRepairExecutionAdapter.ts",
+        "server/runtime/weeklyCreativeRepairProductionPort.ts",
+        "server/contentExecution/durableQueue.ts",
+        "server/socialPrograms/weeklyCreativeRepairCompletion.ts"
+      ],
+      "collections": [
+        "social_weekly_production_repair_cases",
+        "social_weekly_creative_repair_capacity_reservations",
+        "social_weekly_creative_repair_execution_mappings",
+        "social_weekly_creative_repair_stage_evidence",
+        "content_execution_jobs",
+        "starter_social_content_artifacts",
+        "starter_social_scene_g4_reviews",
+        "starter_social_director_g5_reviews"
       ]
     },
     {
@@ -1647,9 +2054,15 @@
       "chain": "Z-S4",
       "criterion": "异常恢复与空数据",
       "finding": "unknown 只对账原 attempt；未确认失败不重发，其他可执行分支独立继续。",
-      "status": "边界有定向验证；细节与剩余缺口见源审计",
+      "status": "controlled_chain_verified",
       "tests": [
         "server/socialPrograms/weeklyPublicationRecovery.test.ts"
+      ],
+      "worker": [
+        "server/socialPrograms/weeklyPublicationRecovery.ts"
+      ],
+      "collections": [
+        "social_publication_attempts"
       ]
     },
     {
@@ -1674,10 +2087,16 @@
       "chain": "Z-S5",
       "criterion": "异常恢复与空数据",
       "finding": "按原发布、平台、账号、观察窗口重验指标；未观测 pending/unknown，真实观测零保留，验证器不等于自主采集器。",
-      "status": "边界有定向验证；细节与剩余缺口见源审计",
+      "status": "controlled_chain_verified",
       "tests": [
         "server/runtime/socialWeeklyPublicationAdapter.test.ts",
         "server/socialPrograms/weeklyReviewEvidence.test.ts"
+      ],
+      "worker": [
+        "server/runtime/weeklyPublicationMetricEvidence.ts"
+      ],
+      "collections": [
+        "social_metric_snapshots"
       ]
     },
     {
@@ -1708,11 +2127,22 @@
       "chain": "Z-S6",
       "criterion": "异常恢复与空数据",
       "finding": "Exact candidate/version/hash and original confirmation recovered; explicit selection permits narrow resume, never auto confirms intent or changes quota. content_template_execution_selection_required / content_template_confirmation_required; unknown metrics not zero and external views not owned success.",
-      "status": "边界有定向验证；细节与剩余缺口见源审计",
+      "status": "controlled_formal_evidence_passed",
       "tests": [
         "server/runtime/socialWeeklyContentTemplateAdapter.test.ts",
         "server/socialPrograms/weeklyContentTemplates.test.ts",
         "server/socialPrograms/weeklyTemplateRevisionCarryover.test.ts"
+      ],
+      "worker": [
+        "server/runtime/socialWeeklyContentTemplateAdapter.ts",
+        "server/socialPrograms/weeklyContentTemplates.ts"
+      ],
+      "collections": [
+        "social_content_template_candidates",
+        "social_content_template_confirmations",
+        "social_weekly_content_template_bindings",
+        "social_weekly_content_template_execution_selections",
+        "social_weekly_execution_tasks"
       ]
     },
     {
@@ -1721,7 +2151,8 @@
       "criterion": "正式执行器与持久证据",
       "worker": [
         "backgroundJobs.initFollowupDispatchWorker → runFollowupDispatchScan",
-        "server/runtime/socialWeeklyCustomerChannelAdapter.ts"
+        "server/runtime/socialWeeklyCustomerChannelAdapter.ts",
+        "server/runtime/weeklyCustomerChannelAuthorizationExceptions.ts"
       ],
       "collections": [
         "followup_batches",
@@ -1735,19 +2166,35 @@
       "tests": [
         "server/digitalEmployees/weeklyCustomerScheduledQueue.integration.test.ts",
         "server/socialPrograms/weeklyNativeSendRecovery.test.ts",
-        "server/socialPrograms/weeklyCustomerSendRecovery.test.ts"
+        "server/socialPrograms/weeklyCustomerSendRecovery.test.ts",
+        "server/runtime/weeklyCustomerChannelAuthorizationExceptions.test.ts",
+        "server/runtime/weeklyCustomerAuthorizationFormalRuntime.integration.test.ts"
       ]
     },
     {
       "id": "Z-S7-B",
       "chain": "Z-S7",
       "criterion": "异常恢复与空数据",
-      "finding": "unknown original request is reconciled over three fresh service scans with zero resends accepted original ledger repairs a failed task projection on next scan without another provider call tenant/approval-version/approval-state/account/customer/conversation/member drift prevents provider call and accepted ledger",
-      "status": "边界有定向验证；细节与剩余缺口见源审计",
+      "finding": "unknown original request is reconciled over three fresh service scans with zero resends accepted original ledger repairs a failed task projection on next scan without another provider call tenant/approval-version/approval-state/account/customer/conversation/member drift prevents provider call and accepted ledger 渠道准备任务正式scan持久授权异常，原selection账号删除时即使存在有效其他账号也拒绝恢复。",
+      "status": "verified_controlled_execution",
       "tests": [
         "server/digitalEmployees/weeklyCustomerScheduledQueue.integration.test.ts",
         "server/socialPrograms/weeklyNativeSendRecovery.test.ts",
-        "server/socialPrograms/weeklyCustomerSendRecovery.test.ts"
+        "server/socialPrograms/weeklyCustomerSendRecovery.test.ts",
+        "server/runtime/weeklyCustomerChannelAuthorizationExceptions.test.ts",
+        "server/runtime/weeklyCustomerAuthorizationFormalRuntime.integration.test.ts"
+      ],
+      "worker": [
+        "backgroundJobs.initFollowupDispatchWorker → runFollowupDispatchScan",
+        "server/runtime/socialWeeklyCustomerChannelAdapter.ts",
+        "server/runtime/weeklyCustomerChannelAuthorizationExceptions.ts"
+      ],
+      "collections": [
+        "followup_batches",
+        "followup_batch_items",
+        "digital_employee_tasks",
+        "customer_channel_send_requests",
+        "social_weekly_customer_channel_executions"
       ]
     },
     {
@@ -1773,10 +2220,17 @@
       "chain": "Z-S8",
       "criterion": "异常恢复与空数据",
       "finding": "显式确认新版本及冻结资源/目标图；不擅自重排，不把缺来源改成外部。",
-      "status": "边界有定向验证；细节与剩余缺口见源审计",
+      "status": "contract_verified",
       "tests": [
         "server/routes/socialWeeklyScheduleRevisions.integration.test.ts",
         "server/socialPrograms/weeklyInitialSchedule.integration.test.ts"
+      ],
+      "worker": [
+        "server/socialPrograms/weeklyExecutionContinuations.ts"
+      ],
+      "collections": [
+        "social_weekly_execution_continuations",
+        "social_weekly_operating_packages"
       ]
     },
     {
@@ -1784,7 +2238,8 @@
       "chain": "Z-S9",
       "criterion": "正式执行器与持久证据",
       "worker": [
-        "server/socialPrograms/weeklyCrossWeekMaterialContinuations.ts"
+        "server/socialPrograms/weeklyCrossWeekMaterialContinuations.ts",
+        "server/runtime/weeklyCustomerChannelAuthorizationExceptions.ts"
       ],
       "collections": [
         "social_weekly_cross_week_material_continuations"
@@ -1794,19 +2249,30 @@
       "tests": [
         "server/socialPrograms/weeklyCrossWeekMaterialContinuations.test.ts",
         "server/socialPrograms/weeklyExecutionContinuations.test.ts",
-        "server/socialPrograms/weeklyProfileUpgrade.test.ts"
+        "server/socialPrograms/weeklyProfileUpgrade.test.ts",
+        "server/runtime/weeklyCustomerChannelAuthorizationExceptions.test.ts",
+        "server/runtime/weeklyCustomerAuthorizationFormalRuntime.integration.test.ts"
       ]
     },
     {
       "id": "Z-S9-B",
       "chain": "Z-S9",
       "criterion": "异常恢复与空数据",
-      "finding": "跨周素材为新 consumer 重验；同 package 跨 version 与不同 week 区分，旧产物不重复付费生产。",
-      "status": "边界有定向验证；细节与剩余缺口见源审计",
+      "finding": "跨周素材为新 consumer 重验；同 package 跨 version 与不同 week 区分，旧产物不重复付费生产。 渠道准备任务正式scan持久授权异常，原selection账号删除时即使存在有效其他账号也拒绝恢复。",
+      "status": "controlled_chain_verified",
       "tests": [
         "server/socialPrograms/weeklyCrossWeekMaterialContinuations.test.ts",
         "server/socialPrograms/weeklyExecutionContinuations.test.ts",
-        "server/socialPrograms/weeklyProfileUpgrade.test.ts"
+        "server/socialPrograms/weeklyProfileUpgrade.test.ts",
+        "server/runtime/weeklyCustomerChannelAuthorizationExceptions.test.ts",
+        "server/runtime/weeklyCustomerAuthorizationFormalRuntime.integration.test.ts"
+      ],
+      "worker": [
+        "server/socialPrograms/weeklyCrossWeekMaterialContinuations.ts",
+        "server/runtime/weeklyCustomerChannelAuthorizationExceptions.ts"
+      ],
+      "collections": [
+        "social_weekly_cross_week_material_continuations"
       ]
     }
   ],
@@ -3299,5 +3765,610 @@
       "exitCode": 0
     },
     "productionProviderRun": false
+  },
+  "stage2": {
+    "status": "controlled_formal_runtime_and_authenticated_http_verified",
+    "evidence": {
+      "operations": {
+        "schemaVersion": 1,
+        "scope": [
+          "Z-S2",
+          "H-S2"
+        ],
+        "prdCount": {
+          "perProfile": 17,
+          "combined": 34,
+          "note": "PRD每画像8主链+9副链，两画像34合计；本文件只本阶段经营增量，不生成重复任务"
+        },
+        "status": "implemented_and_controlled_verified",
+        "changes": [
+          {
+            "file": "server/runtime/weeklyEnterpriseFactSupplement.ts",
+            "purpose": "persisted canonical enterprise facts read-only admission",
+            "sourceCollections": [
+              "tenant_profiles",
+              "users",
+              "social_operating_authority_snapshots",
+              "social_business_content_goals",
+              "social_weekly_operating_packages"
+            ],
+            "proof": "official profile confirmation contentHash+actual member; frozen canonical per-statement refs and exact operating snapshot/goal/week; no fallback-generated version or alias"
+          },
+          {
+            "file": "server/runtime/weeklySupplementExceptionMaterializer.ts",
+            "purpose": "enterprise_facts typed durable exception and recovery",
+            "worker": "runSocialWeeklyExecutionScan blocked hook and scan-start convergence",
+            "evidence": "social_weekly_supplement_events version2 assignment_pending/version3 resolved",
+            "identity": [
+              "tenant",
+              "program",
+              "package",
+              "packageVersion",
+              "consumerTaskId",
+              "consumerInputHash",
+              "schedule dueAt",
+              "responsibleActor"
+            ],
+            "recovery": "fresh readonly actual facts check under same package gate; durable resolution before remove only original gap"
+          },
+          {
+            "file": "server/socialPrograms/weeklyAccountAuthorizationSupplement.ts",
+            "purpose": "Instagram Login cannot resolve from legacy Meta credentials/scopes/provider proof while official publisher dispatch absent",
+            "result": "provider_capability_not_verified; durable assignment_pending remains"
+          }
+        ],
+        "tests": {
+          "command": "NODE_OPTIONS='--import ./scripts/production-gate-next-loopback-guard.mjs' node --import tsx --test server/runtime/weeklyEnterpriseFactSupplement.test.ts server/runtime/weeklyInstagramLoginSupplement.test.ts server/runtime/weeklySupplementExceptionMaterializer.test.ts server/socialPrograms/weeklyAccountAuthorizationSupplement.test.ts",
+          "pass": 9,
+          "fail": 0,
+          "exitCode": 0,
+          "log": "work/operations-stage2-tests.log",
+          "cases": [
+            "official updateTenantEnterpriseProfile plus createSocialOperatingOrchestrationService.resolve produce canonical statement IDs validated positive",
+            "no_data repeated scans never resolve or fabricate facts",
+            "missing frozen refs requires replan, disabled human confirmation rejected",
+            "confirmed content hash drift rejected",
+            "two actual consumers yield distinct durable IDs and repair exact originals only",
+            "new-week consumer referencing old-week snapshot remains blocked",
+            "actual formal worker block -> persist typed exception -> official confirmation -> scan recovers consumer -> actual downstream stays pending rather than fictitious completion",
+            "Instagram Login connected token+legacy scope+current probe remains unavailable and pending",
+            "account existing exact identity and unknown/expired/revoked probe tests retain failclosed"
+          ]
+        },
+        "integration": {
+          "ownedFiles": [
+            "server/runtime/weeklyEnterpriseFactSupplement.ts",
+            "server/runtime/weeklyEnterpriseFactSupplement.fixture.ts",
+            "server/runtime/weeklyEnterpriseFactSupplement.test.ts",
+            "server/runtime/weeklyInstagramLoginSupplement.test.ts",
+            "server/runtime/weeklySupplementExceptionMaterializer.ts",
+            "server/socialPrograms/weeklyAccountAuthorizationSupplement.ts"
+          ],
+          "rootOwns": [
+            "runtime universal production-step fact admission",
+            "authenticated routes",
+            "matrix",
+            "commit"
+          ],
+          "guardExport": "WEEKLY_ENTERPRISE_FACT_STEPS, checkWeeklyEnterpriseFactSupplement, ENTERPRISE_FACT_GAP"
+        },
+        "limits": [
+          "No external publication, outbound calls or paid execution were performed",
+          "Unknown publication attempts remain reconcile-only via existing S4",
+          "Canonical profile facts newly changed require a new goal/operating snapshot/package revision; checker never replaces frozen refs",
+          "Enterprise facts repair test uses actual confirmation service with controlled DataStore, not production data"
+        ],
+        "networkAudit": {
+          "defaultGuard": "scripts/production-gate-next-loopback-guard.mjs",
+          "finalRejectedTraffic": 0,
+          "initialHarnessIssue": "tsx CLI IPC listener was denied; direct node --import tsx used; first uncached module IPC was denied, final strict command passes"
+        },
+        "remainingExecutionGaps": {
+          "status": "blocking_inputs_and_formal_registration_missing",
+          "verifiedExistingServiceTests": {
+            "pass": 19,
+            "fail": 0,
+            "exitCode": 0,
+            "guard": "scripts/production-gate-next-loopback-guard.mjs",
+            "log": "work/operations-remaining-executors-tests.log",
+            "files": [
+              "server/socialPrograms/planningAuthority.test.ts",
+              "server/socialDiscovery/service.test.ts",
+              "server/socialDiscovery/productionGapWorker.test.ts",
+              "server/runtime/socialWeeklyPublicationAdapter.test.ts"
+            ]
+          },
+          "items": [
+            {
+              "profile": "Z",
+              "taskId": "M1",
+              "status": "remaining_execution_gap",
+              "current": "Formal package create automatically persists initial outline and task graph; weekly business_outline executor reconciles a dispatched plan. This is not autonomous business-goal/history-baseline generation.",
+              "formalServices": [
+                "createSocialOperatingOrchestrationService(store).resolve(tenantId,userId,programId,request)",
+                "createWeeklyPlanningAuthority(store).initialize(tenantId,pkg)",
+                "createWeeklyOperatingPackageService(store).create(...)"
+              ],
+              "sourceEvidence": [
+                {
+                  "file": "server/socialPrograms/weeklyOperatingPackages.ts",
+                  "line": 412,
+                  "fact": "create initializes planning and materializes tasks"
+                },
+                {
+                  "file": "server/socialOperating/orchestration.ts",
+                  "line": 148,
+                  "fact": "resolve reads current authorities with explicit userId and new planning request"
+                },
+                {
+                  "file": "server/runtime/socialWeeklyExecutionRuntime.ts",
+                  "line": 42,
+                  "fact": "adapter requires plan dispatched with userConfirmation/detailedSchedule/dispatch"
+                }
+              ],
+              "missing": [
+                "Pre-dispatch producer lifecycle independent from the execution scan dispatch prerequisite",
+                "Exact frozen operating snapshot/goal/history source provenance in the M1 task deliverable; existing result is only weekly_agent_planning",
+                "Agent operator authority contract rather than passing a made-up userId to an explicit user planning service"
+              ],
+              "unsafeShortcut": "Do not run resolve against latest mutable business sources or impersonate package creator, and do not call reanalysis on a confirmed/dispatched plan."
+            },
+            {
+              "profile": "Z",
+              "taskId": "M2",
+              "status": "remaining_execution_gap",
+              "current": "Approved discovery collection and CandidateEvidence worker exist and execute via the separate scheduler. Weekly benchmark_collection task reconciles previously completed director planning.",
+              "formalServices": [
+                "executeApprovedDiscoveryRun({tenantId,triggerType,expectedScopeId,expectedScopeVersion,requestedModes,productionGapContext?},dependencies)",
+                "runProductionGapWorker(task,{loadInventory,resumeUpstreamTask,executeRun?,persistSelection?,saveTask?})",
+                "createWeeklyPlanningAuthority(store).runDirectorAnalysis({tenantId,programId,packageId,packageVersion,expectedPlanningVersion,actor,selectedSlotIds?})"
+              ],
+              "sourceEvidence": [
+                {
+                  "file": "server/routes/scheduler.ts",
+                  "line": 1158,
+                  "fact": "existing scheduled executor pins discovery scope/version"
+                },
+                {
+                  "file": "server/socialPrograms/executionTasks.ts",
+                  "line": 313,
+                  "fact": "weekly discovery snapshot only account/week/objective; budget allocated but no scope/run identity"
+                },
+                {
+                  "file": "server/socialDiscovery/service.ts",
+                  "line": 155,
+                  "fact": "each discovery invocation allocates random runId, no consumer idempotency key"
+                },
+                {
+                  "file": "server/socialPrograms/planningAuthority.ts",
+                  "line": 120,
+                  "fact": "confirmed/dispatched plans reject mutation"
+                },
+                {
+                  "file": "server/runtime/socialWeeklyResultValidation.ts",
+                  "line": 81,
+                  "fact": "preproduction result contract validates planning rather than weekly discovery run receipts"
+                }
+              ],
+              "missing": [
+                "Frozen approved discovery scope ID/version and exact modes tied to the weekly consumer",
+                "Durable idempotent original run binding plus lease/reconciliation for lost return before top-up retry; no duplicate paid collection",
+                "Exact selected-slot/reference source allocation and planning version for preconfirmation worker",
+                "Validated discovery run/evidence result reference contract and subscriber to update original weekly consumer"
+              ],
+              "unsafeShortcut": "Latest tenant active scope is not the frozen weekly authorization; random new-run replay may duplicate paid work. Existing production-gap wrapper has no weekly registered default loadInventory/resumeUpstreamTask binding."
+            },
+            {
+              "profile": "Z",
+              "taskId": "S5",
+              "status": "remaining_execution_gap",
+              "current": "performance_monitoring validates stored exact current publication metrics and waits for missing data. Existing social/YouTube HTTP reads fetch and persist metrics, but there is no registered weekly collector.",
+              "formalServices": [
+                "saveSocialMetricSnapshot(input) global-store day upsert",
+                "GET social/accounts/:id/videos and account insights",
+                "GET youtube/accounts/:id/videos via getMyVideos",
+                "socialChannels POST /monitor/sync with capability context (generic overseas adapters have no syncAccountContent)"
+              ],
+              "sourceEvidence": [
+                {
+                  "file": "server/runtime/socialWeeklyPublicationAdapter.ts",
+                  "line": 53,
+                  "fact": "monitoring reads evidence only"
+                },
+                {
+                  "file": "server/runtime/backgroundJobs.ts",
+                  "line": 72,
+                  "fact": "performance registered to publication adapter, no collector registration"
+                },
+                {
+                  "file": "server/routes/social.ts",
+                  "line": 949,
+                  "fact": "HTTP collector writes numbers from normalized video list"
+                },
+                {
+                  "file": "server/routes/youtube.ts",
+                  "line": 624,
+                  "fact": "HTTP owned-video listing writes metric snapshot"
+                },
+                {
+                  "file": "server/integrations/social.ts",
+                  "line": 285,
+                  "fact": "missing raw provider counts converted to zero"
+                },
+                {
+                  "file": "server/integrations/youtube.ts",
+                  "line": 460,
+                  "fact": "missing statistics converted to zero"
+                },
+                {
+                  "file": "server/socialChannels/registry.ts",
+                  "line": 75,
+                  "fact": "generic overseas adapters unavailable; no syncAccountContent"
+                }
+              ],
+              "missing": [
+                "Reusable raw provider observation port preserving numeric presence vs unknown, provider observation time and provenance",
+                "Exact owned current publication post IDs from validated assignments/original published attempts/manifest, plus official read capability and account identity",
+                "Durable capture intent/idempotency and retry/submission recovery with immutable observation receipt",
+                "Mapping social_channel_metric_snapshots into exact social_metric_snapshots contract if using monitoring, without pretending different schema is already consumed"
+              ],
+              "unsafeShortcut": "Do not call existing SDK lists directly then accept normalized 0: original missing-field presence is lost. Do not turn account-wide insights or historical video listing into current publication completion."
+            },
+            {
+              "profile": "H",
+              "taskId": "M1",
+              "status": "remaining_execution_gap",
+              "current": "Formal package create automatically persists initial outline and task graph; weekly business_outline executor reconciles a dispatched plan. This is not autonomous business-goal/history-baseline generation.",
+              "formalServices": [
+                "createSocialOperatingOrchestrationService(store).resolve(tenantId,userId,programId,request)",
+                "createWeeklyPlanningAuthority(store).initialize(tenantId,pkg)",
+                "createWeeklyOperatingPackageService(store).create(...)"
+              ],
+              "sourceEvidence": [
+                {
+                  "file": "server/socialPrograms/weeklyOperatingPackages.ts",
+                  "line": 412,
+                  "fact": "create initializes planning and materializes tasks"
+                },
+                {
+                  "file": "server/socialOperating/orchestration.ts",
+                  "line": 148,
+                  "fact": "resolve reads current authorities with explicit userId and new planning request"
+                },
+                {
+                  "file": "server/runtime/socialWeeklyExecutionRuntime.ts",
+                  "line": 42,
+                  "fact": "adapter requires plan dispatched with userConfirmation/detailedSchedule/dispatch"
+                }
+              ],
+              "missing": [
+                "Pre-dispatch producer lifecycle independent from the execution scan dispatch prerequisite",
+                "Exact frozen operating snapshot/goal/history source provenance in the M1 task deliverable; existing result is only weekly_agent_planning",
+                "Agent operator authority contract rather than passing a made-up userId to an explicit user planning service"
+              ],
+              "unsafeShortcut": "Do not run resolve against latest mutable business sources or impersonate package creator, and do not call reanalysis on a confirmed/dispatched plan."
+            },
+            {
+              "profile": "H",
+              "taskId": "M2",
+              "status": "remaining_execution_gap",
+              "current": "Approved discovery collection and CandidateEvidence worker exist and execute via the separate scheduler. Weekly benchmark_collection task reconciles previously completed director planning.",
+              "formalServices": [
+                "executeApprovedDiscoveryRun({tenantId,triggerType,expectedScopeId,expectedScopeVersion,requestedModes,productionGapContext?},dependencies)",
+                "runProductionGapWorker(task,{loadInventory,resumeUpstreamTask,executeRun?,persistSelection?,saveTask?})",
+                "createWeeklyPlanningAuthority(store).runDirectorAnalysis({tenantId,programId,packageId,packageVersion,expectedPlanningVersion,actor,selectedSlotIds?})"
+              ],
+              "sourceEvidence": [
+                {
+                  "file": "server/routes/scheduler.ts",
+                  "line": 1158,
+                  "fact": "existing scheduled executor pins discovery scope/version"
+                },
+                {
+                  "file": "server/socialPrograms/executionTasks.ts",
+                  "line": 313,
+                  "fact": "weekly discovery snapshot only account/week/objective; budget allocated but no scope/run identity"
+                },
+                {
+                  "file": "server/socialDiscovery/service.ts",
+                  "line": 155,
+                  "fact": "each discovery invocation allocates random runId, no consumer idempotency key"
+                },
+                {
+                  "file": "server/socialPrograms/planningAuthority.ts",
+                  "line": 120,
+                  "fact": "confirmed/dispatched plans reject mutation"
+                },
+                {
+                  "file": "server/runtime/socialWeeklyResultValidation.ts",
+                  "line": 81,
+                  "fact": "preproduction result contract validates planning rather than weekly discovery run receipts"
+                }
+              ],
+              "missing": [
+                "Frozen approved discovery scope ID/version and exact modes tied to the weekly consumer",
+                "Durable idempotent original run binding plus lease/reconciliation for lost return before top-up retry; no duplicate paid collection",
+                "Exact selected-slot/reference source allocation and planning version for preconfirmation worker",
+                "Validated discovery run/evidence result reference contract and subscriber to update original weekly consumer"
+              ],
+              "unsafeShortcut": "Latest tenant active scope is not the frozen weekly authorization; random new-run replay may duplicate paid work. Existing production-gap wrapper has no weekly registered default loadInventory/resumeUpstreamTask binding."
+            },
+            {
+              "profile": "H",
+              "taskId": "S5",
+              "status": "remaining_execution_gap",
+              "current": "performance_monitoring validates stored exact current publication metrics and waits for missing data. Existing social/YouTube HTTP reads fetch and persist metrics, but there is no registered weekly collector.",
+              "formalServices": [
+                "saveSocialMetricSnapshot(input) global-store day upsert",
+                "GET social/accounts/:id/videos and account insights",
+                "GET youtube/accounts/:id/videos via getMyVideos",
+                "socialChannels POST /monitor/sync with capability context (generic overseas adapters have no syncAccountContent)"
+              ],
+              "sourceEvidence": [
+                {
+                  "file": "server/runtime/socialWeeklyPublicationAdapter.ts",
+                  "line": 53,
+                  "fact": "monitoring reads evidence only"
+                },
+                {
+                  "file": "server/runtime/backgroundJobs.ts",
+                  "line": 72,
+                  "fact": "performance registered to publication adapter, no collector registration"
+                },
+                {
+                  "file": "server/routes/social.ts",
+                  "line": 949,
+                  "fact": "HTTP collector writes numbers from normalized video list"
+                },
+                {
+                  "file": "server/routes/youtube.ts",
+                  "line": 624,
+                  "fact": "HTTP owned-video listing writes metric snapshot"
+                },
+                {
+                  "file": "server/integrations/social.ts",
+                  "line": 285,
+                  "fact": "missing raw provider counts converted to zero"
+                },
+                {
+                  "file": "server/integrations/youtube.ts",
+                  "line": 460,
+                  "fact": "missing statistics converted to zero"
+                },
+                {
+                  "file": "server/socialChannels/registry.ts",
+                  "line": 75,
+                  "fact": "generic overseas adapters unavailable; no syncAccountContent"
+                }
+              ],
+              "missing": [
+                "Reusable raw provider observation port preserving numeric presence vs unknown, provider observation time and provenance",
+                "Exact owned current publication post IDs from validated assignments/original published attempts/manifest, plus official read capability and account identity",
+                "Durable capture intent/idempotency and retry/submission recovery with immutable observation receipt",
+                "Mapping social_channel_metric_snapshots into exact social_metric_snapshots contract if using monitoring, without pretending different schema is already consumed"
+              ],
+              "unsafeShortcut": "Do not call existing SDK lists directly then accept normalized 0: original missing-field presence is lost. Do not turn account-wide insights or historical video listing into current publication completion."
+            }
+          ],
+          "implementationDecision": "No additional autonomous worker was added: required frozen inputs/run binding/read presence are absent, and modifying confirmed planning or reusing the lossy metric collector would violate the requested identity/recovery/no_data behavior. Existing formal service tests pass but do not establish missing weekly producer integration."
+        }
+      },
+      "content": {
+        "schema": "content-stage2-execution-evidence.v1",
+        "files": [
+          "server/runtime/weeklyHumanMaterialRecoveryScan.ts",
+          "server/runtime/weeklyHumanMaterialRecoveryScan.test.ts"
+        ],
+        "initialDirtyFilesTouched": [],
+        "worker": "runWeeklyHumanMaterialRecoveryScan",
+        "reader": "listWeeklyHumanMaterialExceptions",
+        "registration": "root integration required: invoke scan in formal runtime and authenticated exact-scope reader API",
+        "store": "social_weekly_supplement_events via SUPPLEMENT_EVENTS",
+        "versions": {
+          "2": "human_material_exception pending_verification",
+          "3": "human_material_exception resolved, actual material hashes and exact consumer submission references"
+        },
+        "semantics": {
+          "no_data": "No supported blocked material_readiness consumer; no records created.",
+          "missing": "Durable unique exception; no human review synthesized.",
+          "cross_week": "New consumer explicitly added to request and independently reviewed before original task unblock.",
+          "input_drift": "Existing same-task exception with differing complete input identity remains blocked; explicit rebind workflow needed.",
+          "hash_drift": "Live authoritative material/bytes check refuses stale receipt.",
+          "other_blockers": "Unblock only matching material gap; independent review stays blocked.",
+          "unknown_write": "One create attempt followed by exact durable readback; no blind duplicate create."
+        },
+        "tests": {
+          "path": "server/runtime/weeklyHumanMaterialRecoveryScan.test.ts",
+          "log": "work/content-stage2-tests.log",
+          "pass": 3,
+          "fail": 0,
+          "strictGuard": "scripts/production-gate-next-loopback-guard.mjs",
+          "command": "NODE_OPTIONS=--import ./scripts/production-gate-next-loopback-guard.mjs node --test work/content-stage2-build/server/runtime/weeklyHumanMaterialRecoveryScan.test.js",
+          "build": "Offline esbuild transpilation with preserved source layout and JS-relative-extension normalization in scratch output only; avoids tsx CLI/loader Unix IPC blocked by strict guard.",
+          "rejectedNetworkInFinalRun": []
+        },
+        "productionGap": [
+          "Real tenant deployment/supplier evidence not asserted.",
+          "Input-drift exception requires explicit consumer rebind; this scanner deliberately does not authorize it.",
+          "Unsupported missing material contracts remain blocked without fabricated request."
+        ],
+        "commit": "not_created"
+      },
+      "customer": {
+        "scope": "customer_channel_readiness authorization exceptions and exact consumer recovery",
+        "files": [
+          "server/runtime/weeklyCustomerChannelAuthorizationExceptions.ts",
+          "server/runtime/weeklyCustomerChannelAuthorizationExceptions.test.ts",
+          "server/runtime/socialWeeklyCustomerChannelAdapter.ts",
+          "server/runtime/weeklyCustomerAuthorizationFormalRuntime.integration.test.ts"
+        ],
+        "collection": "social_weekly_supplement_events",
+        "eventType": "customer_channel_authorization_exception",
+        "appendOnlyVersions": {
+          "2": "missing",
+          "3": "resolved"
+        },
+        "uniqueKey": [
+          "tenant_id",
+          "request_id",
+          "version"
+        ],
+        "interface": [
+          "materializeWeeklyCustomerChannelAuthorizationException",
+          "runWeeklyCustomerChannelAuthorizationExceptionScan",
+          "listWeeklyCustomerChannelAuthorizationExceptions"
+        ],
+        "channels": [
+          {
+            "channel": "whatsapp",
+            "defaultOfficialPorts": true,
+            "storedConsentFalseThenTrue": true,
+            "missingUniqueEvent": true,
+            "exactConsumerRestored": true,
+            "driftCases": [
+              "tenant",
+              "account",
+              "native",
+              "run",
+              "customer",
+              "version",
+              "expired",
+              "oauth_provider",
+              "deadline",
+              "no_data",
+              "deleted_selected_with_other"
+            ],
+            "realSendCalls": 0,
+            "instagramLoginMessagesSupported": false
+          },
+          {
+            "channel": "messenger",
+            "defaultOfficialPorts": true,
+            "storedConsentFalseThenTrue": true,
+            "missingUniqueEvent": true,
+            "exactConsumerRestored": true,
+            "driftCases": [
+              "tenant",
+              "account",
+              "native",
+              "run",
+              "customer",
+              "version",
+              "expired",
+              "oauth_provider",
+              "deadline",
+              "no_data",
+              "deleted_selected_with_other"
+            ],
+            "realSendCalls": 0,
+            "instagramLoginMessagesSupported": false
+          },
+          {
+            "channel": "instagram",
+            "defaultOfficialPorts": true,
+            "storedConsentFalseThenTrue": true,
+            "missingUniqueEvent": true,
+            "exactConsumerRestored": true,
+            "driftCases": [
+              "tenant",
+              "account",
+              "native",
+              "run",
+              "customer",
+              "version",
+              "expired",
+              "oauth_provider",
+              "deadline",
+              "no_data",
+              "deleted_selected_with_other"
+            ],
+            "realSendCalls": 0,
+            "instagramLoginMessagesSupported": true
+          }
+        ],
+        "validation": {
+          "build": "node work/customer-stage2-build-strict.mjs",
+          "strictCommand": "NODE_OPTIONS='--import ./scripts/production-gate-next-loopback-guard.mjs' node --test work/customer-stage2.strict.mjs",
+          "exit": 0,
+          "tests": 24,
+          "pass": 24,
+          "fail": 0,
+          "log": "work/customer-stage2-strict-tests.log",
+          "sourceCommand": "bundled four original TypeScript test files via work/customer-stage2-build-strict.mjs"
+        },
+        "fetchAndTransport": {
+          "newTests": "global fetch throws",
+          "strictRuntime": "root loopback TCP+fetch guard on bundled original tests, no tsx IPC socket dependency",
+          "realOutbound": false,
+          "providerSendCalls": 0
+        },
+        "durability": [
+          "missing event unique per original consumer scope/hash/deadline",
+          "two consumers maintain independent missing/resolved events",
+          "accepted resolution before failed task write repairs on next scan",
+          "package gate and final fresh consumer/authority/identity recheck"
+        ],
+        "boundaries": [
+          "no_data never bypasses authorization",
+          "expiry and tenant/account/nativeaccount/run/customer/packageVersion/deadline/oauthProvider drift do not unblock",
+          "missing selected account cannot fall back to another account",
+          "unknown/terminal task states do not recover",
+          "old consumer task ID cannot migrate to another package version",
+          "readiness directly binds run selection even when publication account differs; deleting selected native account cannot borrow valid replacement"
+        ],
+        "integration": {
+          "runtimeEntry": "runSocialWeeklyExecutionScan",
+          "initialTask": "queued",
+          "adapter": "actual createSocialWeeklyCustomerChannelAdapter with default official authorization ports",
+          "firstScan": "claims task, official stored consent rejection, defer blocked, blocked hook materializes exact v2",
+          "secondScan": "stored official consent repair, scan-start authorization recovery restores same taskId queued, no fresh send",
+          "httpEntry": "actual createSocialWeeklySupplementRequestsRouter GET scheduler-exceptions",
+          "httpAssertions": [
+            "200 typed customer exception exact consumer resolved",
+            "409 old/nonexistent version",
+            "409 wrong program",
+            "403 foreign tenant",
+            "403 missing actor",
+            "create/update/delete zero writes"
+          ],
+          "channels": [
+            "whatsapp",
+            "messenger",
+            "instagram"
+          ]
+        },
+        "limitations": [
+          "Local controlled store evidence; no live provider delivery claimed.",
+          "Typecheck owned by root."
+        ]
+      }
+    },
+    "network": "最终运行strict loopback guard，受控字节/本地数据库，不真实发消息、发布或付费供应商调用。",
+    "remainingExecutionGaps": [
+      "M1基础规划worker仍只复核显式服务生成的已派单决策",
+      "M2自主前置采集/评分worker缺口",
+      "S5已有HTTP指标采集没有weekly注册，SDK missing || 0丢失presence；不能将指标验证器通过等同自主采集",
+      "S6自主候选提炼worker缺口；现有adapter只消费既有候选和显式确认"
+    ],
+    "validation": {
+      "combinedFiles": 12,
+      "tests": 50,
+      "pass": 50,
+      "fail": 0,
+      "exitCode": 0,
+      "strictGuard": "scripts/production-gate-next-loopback-guard.mjs",
+      "log": "work/stage2-final-tests.log",
+      "staticBuild": "work/stage2-build.py",
+      "typescript": {
+        "exitCode": 2,
+        "log": "work/stage2-tsc-final.log",
+        "errors": [
+          "server/socialPrograms/weeklyContentTemplates.ts(52,3375): TS18047 produced possibly null"
+        ],
+        "scope": "other owner initially dirty file; this group has no reported error"
+      },
+      "diffCheck": 0,
+      "externalPublicationOrMessageSend": false
+    }
   }
 }

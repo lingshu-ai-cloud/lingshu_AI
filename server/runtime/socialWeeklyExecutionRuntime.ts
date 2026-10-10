@@ -1,3 +1,7 @@
+import type { WeeklyMaterialPorts } from '../socialPrograms/weeklyMaterialRequests.js';
+import { checkWeeklyEnterpriseFactSupplement, WEEKLY_ENTERPRISE_FACT_STEPS } from './weeklyEnterpriseFactSupplement.js';
+import { runWeeklyHumanMaterialRecoveryScan } from './weeklyHumanMaterialRecoveryScan.js';
+import { materializeWeeklyCustomerChannelAuthorizationException, runWeeklyCustomerChannelAuthorizationExceptionScan } from './weeklyCustomerChannelAuthorizationExceptions.js';
 import { materializeWeeklySupplementException, runWeeklySupplementExceptionScan } from './weeklySupplementExceptionMaterializer.js';
 import {weeklyExecutionObservation} from './weeklyExecutionObservation.js';
 import { runWeeklyDeadlineRecoveryScan, type DeadlineRecoveryEvidenceReader } from './socialWeeklyDeadlineRecovery.js';
@@ -84,10 +88,13 @@ export async function runSocialWeeklyExecutionScan(input: {
   leaseDurationMs?: number;
   now?: Date;
   readRecoveryEvidence?: DeadlineRecoveryEvidenceReader;
+  humanMaterialPorts?: WeeklyMaterialPorts;
 }) {
   const dataStore = input.dataStore ?? store;
   const deadlineRecovery = await runWeeklyDeadlineRecoveryScan({ dataStore, now: input.now, readEvidence: input.readRecoveryEvidence });
   const supplementRecovery = await runWeeklySupplementExceptionScan({ store: dataStore, now: input.now });
+  const customerAuthorizationRecovery = await runWeeklyCustomerChannelAuthorizationExceptionScan({ store: dataStore, now: input.now });
+  const humanMaterialRecovery = await runWeeklyHumanMaterialRecoveryScan({ store: dataStore, now: input.now, materialPorts: input.humanMaterialPorts });
   const worker = createSocialWeeklyExecutionWorker(dataStore);
   const planningAuthority = createSocialWeeklyPlanningAdapter(dataStore);
   const workerId = input.workerId ?? `weekly-execution-${process.pid}-${randomUUID()}`;
@@ -120,6 +127,10 @@ export async function runSocialWeeklyExecutionScan(input: {
         let dispatchGate:WeeklyExecutionAdapterResult;
         try{const {readWeeklyInventoryExecutionGate}=await import('./weeklyInventoryOutlineEvidence.js');const inventoryGate=await readWeeklyInventoryExecutionGate(dataStore,claim.task);dispatchGate=inventoryGate?{status:'succeeded',resultRefs:inventoryGate.resultRefs}:await planningAuthority.execute({ ...claim.task, accountId: null, inputSnapshot: {}, schedule: { ...claim.task.schedule, stepKind: 'business_outline' } });}
         catch(error){if(error instanceof SocialProgramError)dispatchGate={status:'blocked',code:error.code,message:error.message};else throw error;}
+        if (dispatchGate.status === 'succeeded' && WEEKLY_ENTERPRISE_FACT_STEPS.has(claim.task.schedule.stepKind)) {
+          const facts = await checkWeeklyEnterpriseFactSupplement({ store: dataStore, task: claim.task, now: input.now });
+          if (facts.applicable && !facts.ready) dispatchGate = { status: 'blocked', code: facts.code, message: facts.reason };
+        }
         const continuationPending = claim.task.inputSnapshot.weeklyContinuationPending;
         const continuationRef = claim.task.inputSnapshot.weeklyContinuationRef;
         let continuationResult: WeeklyExecutionAdapterResult | undefined;
@@ -144,7 +155,10 @@ export async function runSocialWeeklyExecutionScan(input: {
         if (result.status === 'succeeded') { validatingCompletion = true; await worker.complete(claim, result.resultRefs, input.now); report.succeeded++; }
         else {
           await worker.defer(claim, { now: input.now, code: result.code, message: result.message, progress: result.progress, retryDelayMs: result.status === 'pending' ? result.retryDelayMs : undefined, blockingReason: result.status === 'blocked' ? result.code : undefined });
-          if (result.status === 'blocked') await materializeWeeklySupplementException({ store: dataStore, task: claim.task, gapCode: result.code, now: input.now });
+          if (result.status === 'blocked') {
+            await materializeWeeklySupplementException({ store: dataStore, task: claim.task, gapCode: result.code, now: input.now });
+            await materializeWeeklyCustomerChannelAuthorizationException({ store: dataStore, task: claim.task, gapCode: result.code, now: input.now });
+          }
           report[result.status]++;
         }
       } catch (error) {
@@ -159,7 +173,8 @@ export async function runSocialWeeklyExecutionScan(input: {
       } finally { clearInterval(timer); }
     }
   }
-  return { ...report, deadlineRecovery, supplementRecovery };
+  const humanMaterialAfterExecution = await runWeeklyHumanMaterialRecoveryScan({ store: dataStore, now: input.now, materialPorts: input.humanMaterialPorts });
+  return { ...report, deadlineRecovery, supplementRecovery, customerAuthorizationRecovery, humanMaterialRecovery, humanMaterialAfterExecution };
 }
 
 let timer: ReturnType<typeof setInterval> | null = null;
