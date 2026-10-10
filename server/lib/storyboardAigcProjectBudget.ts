@@ -108,13 +108,13 @@ export class StoryboardAigcProjectBudget {
     });
   }
   async mark(tenantId: string, projectId: string, operationId: string,
-    status: 'uncertain' | 'completed', output?: Record<string, unknown>) {
+    status: 'reserved' | 'uncertain' | 'completed', output?: Record<string, unknown>) {
     return this.lock(tenantId, projectId, async () => {
       const ledger = this.read(tenantId, projectId);
       const entry = ledger.entries[operationId];
       if (!entry) throw new Error('分镜 AIGC 预算预留不存在');
       entry.status = status;
-      if (output) entry.output = output;
+      if (output) entry.output = { ...entry.output, ...output };
       this.write(ledger);
       return entry;
     });
@@ -147,7 +147,7 @@ export class StoryboardAigcProjectBudget {
       }
       entry.amountMicros = acceptedMicros;
       entry.status = 'completed';
-      if (output) entry.output = output;
+      if (output) entry.output = { ...entry.output, ...output };
       this.write(ledger);
       return entry;
     });
