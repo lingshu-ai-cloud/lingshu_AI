@@ -78,7 +78,9 @@ M1 硬失败恢复架构缺口：周图中的 `rework` 卡当前依赖 `quality_
 
 M1 硬失败恢复闭环已补：受控集成测试 `weeklyContentQualityRecovery.test.ts` 9/9 通过。原成片冻结真实 detector failure 后，正式返工准入创建独立 run、intent 和 job；本地实际 FFmpeg 生成新 MP4，正式 supply/output 端口保存新 owned file、child artifact、cache、handoff 和 G4。只有 child 逐镜真人 G4 与独立 G5 均通过，恢复服务才清除原 quality 卡的 `weekly_quality_audit_actual_repair_required`；旧 G5、同父补勾、伪造 parent header 均不能恢复，同一请求幂等且不增加供应调用。
 
-M1 卡片同片核销已补：`weeklyHardQualityRecovery.integration.test.ts` 通过正式 worker 依次完成原 quality 与条件 rework 卡，再由正式审批服务显式批准 child；三步均绑定同一个 child artifact，只有审批导致其版本递增。质量、条件返工及审批没有新增供应调用、生产 job 或发布尝试。adapter 与审批服务不再按“最新成片”猜测；当前图必须读取恢复回执或上游任务唯一 `resultRefs`，目标成片失效时明确阻塞，不能回选 sibling/旧 parent 或重启生产。发布 G6 与平台回执仍未完成，M1 尚未通过。
+M1 卡片同片核销已补：`weeklyHardQualityRecovery.integration.test.ts` 通过正式 worker 依次完成原 quality 与条件 rework 卡，再由正式审批服务显式批准 child；三步均绑定同一个 child artifact，只有审批导致其版本递增。质量、条件返工及审批没有新增供应调用、生产 job 或发布尝试。adapter 与审批服务不再按“最新成片”猜测；当前图必须读取恢复回执或上游任务唯一 `resultRefs`，目标成片失效时明确阻塞，不能回选 sibling/旧 parent 或重启生产。该段完成同片核销，发布证据见下一段。
+
+M1 返工尾链已延伸至发布回执：同一集成测试现从已真实生成的 repair child 继续执行正式 G6、发布包扫描、原 publishing 任务领取与平台回执恢复。G6 使用显式 child run/artifact，并核真实文件、child G4/G5、账号能力、发布授权和 Messenger 承接；发布 assignment 的 production result 与该 child 一致，重复扫描不新增派单或发布包。受控 TikTok provider 首次返回 unknown 时原任务 defer，推进到 nextAttemptAt 后只对账同一 attempt，确认 published 才由 worker 完成；统计为发布提交 1 次、查询 1 次、attempt 1 条。该证据关闭的是“返工成片至发布回执”尾链，仍未把前述从新周创建开始的完整 M1 runner 与这条尾链合并为同一运行，M1 整体继续保持未通过。
 
 素材分类权威：来源分类只使用 `local_upload / official_import / user_generated`，用户主题只使用 `talking_head / factory / product / consumer_demo`，其中 `consumer_demo` 的现有显示名仍为 `DtoC`；逐镜视觉角色是另一维度，不能混写成新主题枚举。云素材读取已补齐 `primaryTheme`、`themeTags`、`classificationStatus`、`classificationSource`、`classificationEvidence` 和 `sourceCategory` 的无损投影；缺字段或坏JSON保持未知，不根据误导性标题伪造已完成分类。读回保真、租户隔离及原写入回归已通过。
 
