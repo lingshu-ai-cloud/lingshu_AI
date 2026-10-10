@@ -260,6 +260,25 @@ function publicationBlockers(item: SocialWeeklyPublicationTask): string[] {
   ].filter((value): value is string => Boolean(value));
 }
 
+/** A repeated immutable request id is the only authority for treating material
+ * as shared. Descriptions are deliberately ignored: similar prose does not
+ * prove that the bytes, rights or review request are the same. Each consumer
+ * keeps its executable binding task; the earliest consumer's preparation is
+ * the single barrier that waits for every binding and gates every script. */
+function applySharedMaterialPreparation(tasks:WeeklyExecutionTask[],publications:SocialWeeklyPublicationTask[]):void{
+ const byRequest=new Map<string,SocialWeeklyPublicationTask[]>();
+ for(const publication of publications)for(const requestId of publication.materialRequirement?.requestIds??[])byRequest.set(requestId,[...(byRequest.get(requestId)??[]),publication]);
+ for(const [requestId,rawConsumers] of byRequest){const consumers=[...new Map(rawConsumers.map(p=>[p.publicationTaskId,p])).values()];if(consumers.length<2)continue;
+  const ordered=consumers.sort((a,b)=>(publicationInstant(a.publishWindow)??Infinity)-(publicationInstant(b.publishWindow)??Infinity)||a.publicationTaskId.localeCompare(b.publicationTaskId));
+  const preparationByPublication=new Map(ordered.map(publication=>{const rows=tasks.filter(task=>task.publicationTaskId===publication.publicationTaskId&&task.schedule.stepKind==='material_preparation');if(rows.length!==1)throw new SocialProgramError('weekly_shared_material_preparation_ambiguous',409,'共享素材缺少唯一可执行准备任务。');return[publication.publicationTaskId,rows[0]!] as const;}));
+  const canonical=preparationByPublication.get(ordered[0]!.publicationTaskId)!;
+  const preparationIds=[...preparationByPublication.values()].map(task=>task.taskId);
+  canonical.dependsOnTaskIds=[...new Set([...canonical.dependsOnTaskIds,...preparationIds.filter(id=>id!==canonical.taskId)])];
+  canonical.inputSnapshot={...canonical.inputSnapshot,sharedMaterialBarrier:{requestId,consumerPublicationTaskIds:ordered.map(p=>p.publicationTaskId),preparationTaskIds:preparationIds}};
+  for(const publication of ordered){const scripts=tasks.filter(task=>task.publicationTaskId===publication.publicationTaskId&&task.schedule.stepKind==='script');if(scripts.length!==1)throw new SocialProgramError('weekly_shared_material_script_ambiguous',409,'共享素材消费者缺少唯一脚本任务。');scripts[0]!.dependsOnTaskIds=[...new Set([...scripts[0]!.dependsOnTaskIds,canonical.taskId])];}
+ }
+}
+
 /** Convert the seven package summaries into independently durable units. */
 export function planWeeklyExecutionTasks(
   tenantId: string,
@@ -500,6 +519,7 @@ export function planWeeklyExecutionTasks(
       stepKind: 'template_performance_validation', responsibleActor: 'business_agent', estimatedDurationMinutes: 15,
     });
   }
+  applySharedMaterialPreparation(tasks,publications);
   return applyPublicationDeadlines(tasks, publications);
 }
 

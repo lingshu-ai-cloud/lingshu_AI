@@ -35,6 +35,7 @@ export interface WeeklyBackwardSchedule {
   fullGraphConditionallyReachable:boolean;
   unscheduledTaskIds:string[];
   crossWeekOperationalTaskIds:string[];
+  agentDailyLoads:Array<{responsibleActor:WeeklyExecutionTask['schedule']['responsibleActor'];localDate:string;plannedMinutes:number;taskIds:string[]}>;
   queueConfigurationHash?:string;
   queueCapacityEvidenceHash?:string;
   revisionApplied: false;
@@ -77,13 +78,19 @@ export function planWeeklyBackwardSchedule(input: WeeklyBackwardScheduleInput): 
     visiting.add(id); tasks.get(id)!.dependsOnTaskIds.forEach(visit); visiting.delete(id); visited.add(id);
   };
   input.tasks.forEach(task => visit(task.taskId));
+  // Do not smooth a successor onto an early, quiet day that is earlier than
+  // the fastest possible completion of its prerequisite chain. This lower
+  // bound is conservative; resource collisions are still checked below.
+  const earliestFinishMemo=new Map<string,number>();
+  const earliestPossibleFinish=(id:string):number=>{const cached=earliestFinishMemo.get(id);if(cached!==undefined)return cached;const task=tasks.get(id)!,constraint=input.constraints[id];let start=Math.max(now,constraint?instant(constraint.availableAt):now,...task.dependsOnTaskIds.map(earliestPossibleFinish));if(task.schedule.stepKind==='weekly_review'&&input.frozenOperationalWeek)start=Math.max(start,instant(weeklyReviewWindowBounds(input.frozenOperationalWeek).endsAt));const duration=constraint?(constraint.remainingMinutes+constraint.bufferMinutes)*60000:task.schedule.estimatedDurationMinutes*60000;const finish=start+duration;earliestFinishMemo.set(id,finish);return finish;};
+  input.tasks.forEach(task=>earliestPossibleFinish(task.taskId));
   const publishing = input.tasks.filter(task => task.schedule.stepKind === 'publishing' && task.publicationTaskId);
   if (new Set(publishing.map(task => task.publicationTaskId)).size !== publishing.length) throw new Error('Duplicate backward scheduling publication');
-  const windows = new Map<string, Array<[number, number]>>();
+  const windows = new Map<string, Array<[number, number,string]>>();
   const slots = new Map<string, Array<Array<[number, number]>>>();
   for (const [key, resource] of Object.entries(input.resources)) {
     if (!Number.isInteger(resource.concurrency) || resource.concurrency < 1) throw new Error('Invalid backward resource concurrency');
-    const ranges = resource.workingWindows.map(window => [instant(window.startAt), instant(window.finishAt)] as [number, number]).sort((a,b) => a[0]-b[0]);
+    const ranges = resource.workingWindows.map(window => [instant(window.startAt), instant(window.finishAt),window.startAt.slice(0,10)] as [number,number,string]).sort((a,b) => a[0]-b[0]);
     if (ranges.some((range,index) => range[1] <= range[0] || index > 0 && range[0] < ranges[index-1]![1])) throw new Error('Invalid or overlapping backward work windows');
     windows.set(key,ranges); slots.set(key,Array.from({length:resource.concurrency},()=>[]));
   }
@@ -97,6 +104,9 @@ export function planWeeklyBackwardSchedule(input: WeeklyBackwardScheduleInput): 
   for(const task of input.tasks){const key=input.constraints[task.taskId]?.resourceKey;if(!key)continue;const current=resourceByActor.get(task.schedule.responsibleActor);if(current&&current!==key)throw Error('One backward scheduling Agent requires one capacity resource');resourceByActor.set(task.schedule.responsibleActor,key);}
   const vectorFits=(taskId:string,start:number,finish:number)=>{const mapping=vector?.tasks[taskId];if(!mapping)return true;return mapping.resourceKeys.every(key=>{const pool=vector!.pools[key],intervals=vectorIntervals.get(key);if(!pool||!intervals)return false;const own=intervals.filter(x=>x.subject===mapping.productionSubjectId),begin=Math.min(start,...own.map(x=>x.start)),end=Math.max(finish,...own.map(x=>x.finish));const points=[begin,...intervals.filter(x=>x.start<end&&x.finish>begin).map(x=>Math.max(begin,x.start))];return points.every(at=>new Set([...intervals.filter(x=>x.start<=at&&x.finish>at).map(x=>x.subject),mapping.productionSubjectId!]).size<=pool.concurrency);});};
   const assignments = new Map<string, WeeklyBackwardSchedule['assignments'][number]>();
+  const agentDailyLoad=new Map<string,{responsibleActor:WeeklyExecutionTask['schedule']['responsibleActor'];localDate:string;plannedMinutes:number;taskIds:string[]}>();
+  const loadKey=(actor:WeeklyExecutionTask['schedule']['responsibleActor'],localDate:string)=>`${actor}:${localDate}`;
+  const reserveLoad=(task:WeeklyExecutionTask,localDate:string,minutes:number)=>{const key=loadKey(task.schedule.responsibleActor,localDate),row=agentDailyLoad.get(key)??{responsibleActor:task.schedule.responsibleActor,localDate,plannedMinutes:0,taskIds:[]};row.plannedMinutes+=minutes;row.taskIds.push(task.taskId);agentDailyLoad.set(key,row);};
   const pending = [...input.tasks];
   let reservedCostCny = 0;
   const liveReservations=new Map<string,{evidence:BackwardObservedReservation;reasons:string[]}>();
@@ -118,7 +128,7 @@ export function planWeeklyBackwardSchedule(input: WeeklyBackwardScheduleInput): 
     const calendars=slots.get(evidence.resourceKey),ranges=windows.get(evidence.resourceKey),finish=instant(evidence.expectedFinishAt);
     const slot=calendars?.find(slot=>slot.every(([start,end])=>finish<=start||now>=end));
     if(!slot||!ranges?.some(([start,end])=>start<=now&&end>=finish)){unresolvedRunningCommitment=true;reasons.push('observed_running_capacity_conflict');}
-    else slot.push([now,finish]);
+    else {slot.push([now,finish]);reserveLoad(task,new Date(now).toISOString().slice(0,10),Math.max(0,(finish-now)/60000));}
     reservedCostCny+=Math.max(constraint.remainingCostCny,evidence.remainingCostCny);
     if(reservedCostCny>input.remainingBudgetCny)reasons.push('remaining_budget_insufficient');
     if(finish>instant(evidence.leaseExpiresAt))reasons.push('running_lease_renewal_required');
@@ -164,29 +174,30 @@ export function planWeeklyBackwardSchedule(input: WeeklyBackwardScheduleInput): 
     const deadline = Math.min(ownDeadline(task.taskId),...successors.map(child => instant(child.startAt!)));
     if(task.schedule.stepKind==='weekly_review'&&!input.frozenOperationalWeek){row.reasons.push('weekly_review_window_evidence_required');continue;}
     const reviewAvailableAt=task.schedule.stepKind==='weekly_review'?instant(weeklyReviewWindowBounds(input.frozenOperationalWeek!).endsAt):-Infinity;
-    const earliest = Math.max(now,instant(constraint.availableAt),reviewAvailableAt);
+    const earliest = Math.max(now,instant(constraint.availableAt),reviewAvailableAt,...task.dependsOnTaskIds.map(earliestPossibleFinish));
     const duration = (constraint.remainingMinutes+constraint.bufferMinutes)*60_000;
     if(task.schedule.stepKind==='weekly_review'&&deadline<reviewAvailableAt+duration){row.reasons.push('weekly_review_window_still_open');continue;}
     const calendars = slots.get(constraint.resourceKey), ranges = windows.get(constraint.resourceKey);
     if (!calendars || !ranges) { row.reasons.push('resource_capacity_evidence_required'); continue; }
     if (reservedCostCny+constraint.remainingCostCny > input.remainingBudgetCny) { row.reasons.push('remaining_budget_insufficient'); continue; }
-    let best: {start:number;finish:number;slot:Array<[number,number]>}|null=null;
-    for (const slot of calendars) for (const [open,close] of ranges) {
+    let best: {start:number;finish:number;slot:Array<[number,number]>;localDate:string;resultingLoad:number}|null=null;
+    for (const slot of calendars) for (const [open,close,localDate] of ranges) {
       const finishes=[Math.min(deadline,close),...slot.map(([start])=>start),...(queueMapping?.resourceKeys.flatMap(key=>vectorIntervals.get(key)!.map(x=>x.start))??[])];
       for(const finish of finishes){const start=finish-duration;
        if(finish>Math.min(deadline,close)||start<Math.max(open,earliest)||!slot.every(([a,b])=>finish<=a||start>=b)||!vectorFits(task.taskId,start,finish))continue;
-       if(!best||finish>best.finish)best={start,finish,slot};
+       const resultingLoad=(agentDailyLoad.get(loadKey(task.schedule.responsibleActor,localDate))?.plannedMinutes??0)+duration/60000;
+       if(!best||resultingLoad<best.resultingLoad||resultingLoad===best.resultingLoad&&finish>best.finish)best={start,finish,slot,localDate,resultingLoad};
       }
     }
     if (task.schedule.stepKind === 'publishing') {
       best=null;
       if (!task.schedule.latestStartAt) { row.reasons.push('precise_publish_time_required'); continue; }
       const start=instant(task.schedule.latestStartAt),finish=start+duration;
-      for(const slot of calendars) if(start>=earliest && finish<=deadline && ranges.some(([open,close])=>start>=open&&finish<=close) && slot.every(([busyStart,busyFinish])=>finish<=busyStart||start>=busyFinish)) {best={start,finish,slot};break;}
+      for(const slot of calendars){const range=ranges.find(([open,close])=>start>=open&&finish<=close);if(start>=earliest&&finish<=deadline&&range&&slot.every(([busyStart,busyFinish])=>finish<=busyStart||start>=busyFinish)){const localDate=range[2];best={start,finish,slot,localDate,resultingLoad:(agentDailyLoad.get(loadKey(task.schedule.responsibleActor,localDate))?.plannedMinutes??0)+duration/60000};break;}}
     }
     if (!best) { row.reasons.push('work_window_or_capacity_insufficient'); continue; }
     if(queueMapping)for(const key of queueMapping.resourceKeys){const rows=vectorIntervals.get(key)!,own=rows.filter(x=>x.subject===queueMapping.productionSubjectId);vectorIntervals.set(key,[...rows.filter(x=>x.subject!==queueMapping.productionSubjectId),{start:Math.min(best.start,...own.map(x=>x.start)),finish:Math.max(best.finish,...own.map(x=>x.finish)),subject:queueMapping.productionSubjectId!}]);}
-    best.slot.push([best.start,best.finish]); reservedCostCny+=constraint.remainingCostCny;
+    best.slot.push([best.start,best.finish]);reserveLoad(task,best.localDate,duration/60000); reservedCostCny+=constraint.remainingCostCny;
     row.startAt=new Date(best.start).toISOString(); row.finishAt=new Date(best.finish).toISOString();row.mode='planned';
   }
   for(const task of input.tasks){const row=assignments.get(task.taskId)!;if(row.startAt&&task.dependsOnTaskIds.some(id=>{const parent=assignments.get(id)!;return parent.finishAt&&instant(parent.finishAt)>instant(row.startAt!);})){row.reasons.push('dependency_finish_after_consumer_start');}}
@@ -199,5 +210,5 @@ export function planWeeklyBackwardSchedule(input: WeeklyBackwardScheduleInput): 
   });
   const reachable=publications.filter(publication=>publication.conditionallyReachable).length;
   const unscheduledTaskIds=[...assignments.values()].filter(row=>!row.startAt||!row.finishAt||row.reasons.some(reason=>!['human_completion_not_verified','running_lease_renewal_required'].includes(reason))).map(row=>row.taskId);
-  return {...(vector?{queueConfigurationHash:vector.configurationHash,queueCapacityEvidenceHash:vector.inputEvidenceHash}:{}),assignments:[...assignments.values()],publications,targetPublicationCount:publications.length,conditionallyReachableCount:reachable,publicationGap:publications.length-reachable,reservedCostCny,confirmationRequired:input.tasks.some(task=>task.status!=='succeeded'),fullGraphConditionallyReachable:unscheduledTaskIds.length===0,unscheduledTaskIds,crossWeekOperationalTaskIds:crossWeekOperationalTaskIds.sort(),revisionApplied:false};
+  return {...(vector?{queueConfigurationHash:vector.configurationHash,queueCapacityEvidenceHash:vector.inputEvidenceHash}:{}),assignments:[...assignments.values()],publications,targetPublicationCount:publications.length,conditionallyReachableCount:reachable,publicationGap:publications.length-reachable,reservedCostCny,confirmationRequired:input.tasks.some(task=>task.status!=='succeeded'),fullGraphConditionallyReachable:unscheduledTaskIds.length===0,unscheduledTaskIds,crossWeekOperationalTaskIds:crossWeekOperationalTaskIds.sort(),agentDailyLoads:[...agentDailyLoad.values()].sort((a,b)=>a.responsibleActor.localeCompare(b.responsibleActor)||a.localDate.localeCompare(b.localDate)),revisionApplied:false};
 }

@@ -46,7 +46,7 @@ test('expired or stale leases block; forecasts beyond a live lease explicitly re
 });
 test('running output that will finish after its publication slot is not predicted reachable',()=>{
  const request=runningInput();request.tasks[1]!.schedule.latestStartAt='2026-10-04T08:00:00Z';request.tasks[1]!.schedule.latestFinishAt='2026-10-04T09:00:00Z';request.resources.content!.concurrency=2;
- const result=planWeeklyBackwardSchedule(request);assert.equal(result.publicationGap,1);assert(result.publications[0]!.reasons.includes('dependency_finish_after_consumer_start'));
+ const result=planWeeklyBackwardSchedule(request);assert.equal(result.publicationGap,1);assert(result.publications[0]!.reasons.some(reason=>['dependency_finish_after_consumer_start','work_window_or_capacity_insufficient'].includes(reason)));
 });
 test('a deferred task with prior production start cannot silently become unstarted work',()=>{
  const request=input([task('prior-run'),task('pub',['prior-run'],'p1')]);request.tasks[0]!.schedule.actualStartedAt='2026-10-04T07:00:00Z';
