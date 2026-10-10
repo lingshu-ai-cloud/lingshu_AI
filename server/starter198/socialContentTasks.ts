@@ -1,4 +1,5 @@
 import { withWeeklyProductionStartGuard } from '../runtime/weeklyProductionStartGuard.js';
+import type {WeeklyOwnedProductIdentityPorts} from '../runtime/weeklyOwnedProductIdentityDemand.js';
 import type {
   AddSocialTaskSourceInput,
   CreateSocialContentTaskInput,
@@ -230,6 +231,7 @@ export async function updateSocialContentTask(input: {
   idempotencyKey: string;
   value: UpdateSocialContentTaskInput;
   referenceResolver?: SocialTaskReferenceResolver;
+  weeklyOwnedProductIdentity?:Omit<WeeklyOwnedProductIdentityPorts,'repository'>;
   now?: Date;
 }): Promise<SocialContentTaskDetail> {
   const mutation = await executeSocialContentMutation<{ task: SocialContentTaskDetail }>({
@@ -608,6 +610,7 @@ async function startSocialContentTaskUnderGuard(input: Parameters<typeof startSo
         && !(projectionAlreadyApplied && socialText(record.status) === 'asset_review')) {
         throw new SocialContentWorkflowError('social_content_task_not_startable', 409);
       }
+      if(input.weeklyOwnedProductIdentity&&input.repository.dataStore){const {resolveWeeklyCreativeRepairAuthority}=await import('../runtime/weeklyCreativeRepairAuthority.js'),creative=await resolveWeeklyCreativeRepairAuthority({store:input.repository.dataStore,tenantId:input.tenantId,task:record});if(creative){const {inheritWeeklyOwnedProductIdentity}=await import('../runtime/weeklyOwnedProductIdentityDemand.js'),item=creative.repairCase,common={tenantId:input.tenantId,programId:item.programId,packageId:item.packageId,packageVersion:item.packageVersion,publicationTaskId:item.publicationTaskId};await inheritWeeklyOwnedProductIdentity(input.repository.dataStore,{parentScope:{...common,contentTaskId:item.parent.taskId},childScope:{...common,contentTaskId:input.taskId},actorUserId:input.userId},{...input.weeklyOwnedProductIdentity,repository:input.repository});record=await requireSocialTask(input);}}
       // Refresh counters and advisory material suggestions before deciding
       // whether the task can start. This also migrates older theme tasks whose
       // shot lists were incorrectly stored as hard requirements.
@@ -663,6 +666,7 @@ async function startSocialContentTaskUnderGuard(input: Parameters<typeof startSo
           record = await requireSocialTask(input);
         }
       }
+      if(input.weeklyOwnedProductIdentity&&input.repository.dataStore){const {resolveWeeklyCreativeRepairAuthority}=await import('../runtime/weeklyCreativeRepairAuthority.js'),creative=await resolveWeeklyCreativeRepairAuthority({store:input.repository.dataStore,tenantId:input.tenantId,task:record});if(creative){const {inheritWeeklyOwnedProductIdentity}=await import('../runtime/weeklyOwnedProductIdentityDemand.js'),item=creative.repairCase,common={tenantId:input.tenantId,programId:item.programId,packageId:item.packageId,packageVersion:item.packageVersion,publicationTaskId:item.publicationTaskId};await inheritWeeklyOwnedProductIdentity(input.repository.dataStore,{parentScope:{...common,contentTaskId:item.parent.taskId},childScope:{...common,contentTaskId:input.taskId},actorUserId:input.userId},{...input.weeklyOwnedProductIdentity,repository:input.repository});record=await requireSocialTask(input);}}
       const summary = socialTaskSummary(record);
       const coverage = await readSocialContentSourceCoverage(input);
       const readiness = socialTaskReadiness(summary.brief, coverage, summary.theme ? {

@@ -12,7 +12,7 @@ import {assertSocialTaskCapacity} from '../starter198/socialContentLimits.js';
 import {socialJson,socialObject,socialRequestHash,SocialContentWorkflowError} from '../starter198/socialContentValidation.js';
 import {inspectWeeklyCreativeRepairAuthority,issueWeeklyCreativeRepairAuthority} from './weeklyCreativeRepairAuthority.js';
 import {readWeeklyReferenceSources,weeklyReferenceResolver} from './socialWeeklyReferenceSource.js';
-import {inheritWeeklyOwnedProductIdentity,type WeeklyOwnedProductIdentityPorts} from './weeklyOwnedProductIdentityDemand.js';
+import type {WeeklyOwnedProductIdentityPorts} from './weeklyOwnedProductIdentityDemand.js';
 import type {WeeklyCreativeRepairProductionPort} from '../socialPrograms/weeklyCreativeRepairExecution.js';
 
 export const WEEKLY_CREATIVE_REPAIR_CAPACITY_RESERVATIONS='social_weekly_creative_repair_capacity_reservations';
@@ -41,7 +41,7 @@ function childInput(parent:SocialContentTaskDetail,configuration:{revisionScope:
 /** Production adapter backed by the same Starter198 task, workflow run and
  * durable content queue used by ordinary weekly production. */
 export function createWeeklyCreativeRepairProductionPort(store:DataStore,clock:()=>Date=()=>new Date(),materialPorts:Omit<WeeklyOwnedProductIdentityPorts,'repository'>={}):WeeklyCreativeRepairProductionPort{
- const repository=createStarter198Repository(store);
+ const repository=createStarter198Repository(store,{materialLibrary:materialPorts.materialLibrary});
  async function preview(input:Parameters<WeeklyCreativeRepairProductionPort['preview']>[0]):Promise<WeeklyCreativeRepairCapacityPreview>{
   await assertSocialTaskCapacity({repository,tenantId:input.case.tenantId});
   const authority=await inspectWeeklyCreativeRepairAuthority({store,tenantId:input.case.tenantId,caseId:input.case.caseId,expectedCaseHash:input.case.recordHash,expectedConfigurationHash:input.configuration.recordHash,now:clock()});
@@ -93,12 +93,13 @@ export function createWeeklyCreativeRepairProductionPort(store:DataStore,clock:(
    const bound=socialObject(brief._weeklyCreativeRepairProof);if(bound&&socialRequestHash(bound)!==socialRequestHash(issued.proof))fail('child_authority_conflict');
    if(!bound){await repository.update(STARTER_COLLECTIONS.socialContentTasks,input.case.tenantId,childRow.id,{brief:{...brief,_weeklyAuthority:issued.authority,_weeklyCreativeRepairProof:issued.proof,_weeklyCreativeRepair:{caseId:input.case.caseId,configurationHash:input.configuration.recordHash,parentTaskId:input.case.parent.taskId,parentRunId:input.case.parent.runId,parentArtifactRef:input.case.parent.artifactRef,parentArtifactHash:input.case.parent.artifactHash,revisionScope:input.configuration.revisionScope,feedbackHash:input.configuration.feedbackHash,authorizedMaximumCostCny:input.mapping.authorizedMaximumCostCny,capacityReservationId:input.mapping.capacityReservationId}},updated_at:clock().toISOString()});child=(await readSocialTaskDetail({repository,tenantId:input.case.tenantId,taskId}))!;}
    for(const source of parent.sources.filter(value=>value.status==='active')){if(child.sources.some(value=>value.kind===source.kind&&value.sourceRef===source.sourceRef&&value.sourceVersion===source.sourceVersion&&value.status==='active'))continue;const attached=await addSocialTaskSource({repository,tenantId:input.case.tenantId,userId:input.actorUserId,taskId,idempotencyKey:`${input.mapping.startIdempotencyKey}:source:${source.sourceId}`,referenceResolver,sourceOptions:materialPorts.sourceOptions,value:{kind:source.kind,sourceRef:source.sourceRef,sourceVersion:source.sourceVersion,label:source.label,purpose:`创意返工继承原任务已冻结来源：${source.purpose??source.label}`},now:clock()});child=attached.task;}
-   const parentRows=await repository.list(STARTER_COLLECTIONS.socialContentTasks,input.case.tenantId,{where:{task_id:input.case.parent.taskId},perPage:2}),parentBrief=socialObject(socialJson(parentRows.items[0]?.brief));
+   const parentRows=await repository.list(STARTER_COLLECTIONS.socialContentTasks,input.case.tenantId,{where:{task_id:input.case.parent.taskId},perPage:2});
    if(parentRows.totalItems!==1||parentRows.items.length!==1)return fail('parent_missing',503);
-   if(parentBrief?._weeklyOwnedProductIdentityDemand)await inheritWeeklyOwnedProductIdentity(store,{parentScope:{tenantId:input.case.tenantId,programId:input.case.programId,packageId:input.case.packageId,packageVersion:input.case.packageVersion,publicationTaskId:input.case.publicationTaskId,contentTaskId:input.case.parent.taskId},childScope:{tenantId:input.case.tenantId,programId:input.case.programId,packageId:input.case.packageId,packageVersion:input.case.packageVersion,publicationTaskId:input.case.publicationTaskId,contentTaskId:taskId},actorUserId:input.actorUserId},{...materialPorts,repository});
+   // The child requirement is projected during start. Revalidation and resealing
+   // happen there under the same subject lease, after the projection is current.
    child=(await readSocialTaskDetail({repository,tenantId:input.case.tenantId,taskId}))!;
    const queue=createStarter198OrchestratorQueue({repository,dataStore:store,now:clock});
-   if(!child.runId)child=await startSocialContentTask({repository,orchestratorQueue:queue,tenantId:input.case.tenantId,userId:input.actorUserId,taskId,expectedVersion:child.version,referenceResolver,idempotencyKey:`${input.mapping.startIdempotencyKey}:starter-run`,now:clock()});
+   if(!child.runId)child=await startSocialContentTask({repository,orchestratorQueue:queue,tenantId:input.case.tenantId,userId:input.actorUserId,taskId,expectedVersion:child.version,referenceResolver,weeklyOwnedProductIdentity:materialPorts,idempotencyKey:`${input.mapping.startIdempotencyKey}:starter-run`,now:clock()});
    if(!child.runId)return{status:'unknown'};
    let job=await readContentExecutionJob(store,input.case.tenantId,taskId,child.runId);if(!job){await enqueueSocialContentAutoProduction({repository,tenantId:input.case.tenantId,userId:input.actorUserId,taskId,runId:child.runId});job=await readContentExecutionJob(store,input.case.tenantId,taskId,child.runId);}
    if(!job)return{status:'unknown'};return{status:'started',childTaskId:taskId,childBindingKey:issued.bindingKey,runId:child.runId,jobId:job.id};

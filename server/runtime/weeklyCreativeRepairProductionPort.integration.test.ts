@@ -10,7 +10,7 @@ import{prepareWeeklyQualityRecoveryFixture}from'../socialPrograms/weeklyContentQ
 import{createWeeklyProductionRepairCaseService}from'../socialPrograms/weeklyProductionRepairCases.js';
 import{createWeeklyCreativeRepairProductionPort,WEEKLY_CREATIVE_REPAIR_CAPACITY_RESERVATIONS}from'./weeklyCreativeRepairProductionPort.js';
 
-test('real creative repair adapter creates its child and run but fails closed before job when frozen material evidence is incomplete',async t=>{
+test('real creative repair adapter creates its child but fails closed before run and job when frozen material evidence is incomplete',async t=>{
  const f=await prepareWeeklyQualityRecoveryFixture();t.after(f.cleanup);
  f.pkg.executionGraphVersion=3;f.pkg.status='active';f.pkg.socialContentPackage.publicationTasks[0]!.publishWindow='2026-10-15T10:00:00Z';f.task.status='succeeded';f.task.ownBlockingReasons=[];f.task.lastError=null;
  const planningRow=f.tables.social_weekly_agent_planning![0]!,planning=planningRow.payload as any;planning.version=1;planning.programId='p';planningRow.planning_version=1;f.pkg.agentPlanning=structuredClone(planning);
@@ -42,6 +42,6 @@ test('real creative repair adapter creates its child and run but fails closed be
  assert.equal(ready.state,'ready');assert.equal(f.tables[WEEKLY_CREATIVE_REPAIR_CAPACITY_RESERVATIONS]?.length,1);assert.equal(f.tables.content_execution_jobs?.length??0,0);
  const mapping=await service.read('t',created.caseId);assert(mapping);assert.equal((await port.reconcileStart({case:ready,configuration,mapping})).status,'absent');assert.equal(f.tables.starter_social_content_tasks!.filter(row=>String(row.create_idempotency_key).startsWith('weekly-creative-repair:')).length,0);assert.equal(f.tables.content_execution_jobs?.length??0,0);
  await assert.rejects(service.start('t','owner',created.caseId,{expectedCaseRecordHash:ready.recordHash}),{code:'weekly_creative_repair_execution_start_outcome_unknown'});
- const children=f.tables.starter_social_content_tasks!.filter(row=>String(row.create_idempotency_key).startsWith('weekly-creative-repair:'));assert.equal(children.length,1);assert.match(String(children[0]!.run_id),/^[a-f0-9]{15}$/);assert.equal(children[0]!.status,'producing');
+ const children=f.tables.starter_social_content_tasks!.filter(row=>String(row.create_idempotency_key).startsWith('weekly-creative-repair:'));assert.equal(children.length,1);assert.equal(children[0]!.run_id,'');assert.notEqual(children[0]!.status,'producing');
  assert.equal(f.tables.content_execution_jobs?.length??0,0);assert.equal((await service.read('t',created.caseId))?.state,'reconciling');
 });
