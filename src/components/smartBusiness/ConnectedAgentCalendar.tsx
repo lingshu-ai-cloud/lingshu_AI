@@ -1,4 +1,5 @@
 import { agentCalendarAuthIdentity, readAgentCalendarReturnContext, registerAgentCalendarReturnState } from '../../lib/agentCalendarReturnContext';
+import {openAccountBindingNavigation} from '../../lib/accountBindingNavigation';
 import {openCustomerCalendarTask,type CustomerCalendarProjection} from '../socialProgram/CustomerWeeklyCalendar';
 import {readWeeklyContentNavigation,weeklyContentNavigationDetail} from '../../lib/weeklyContentNavigationApi';
 import {parseWeeklyProfileCreation,type WeeklyProfileUpgrade,type WeeklyProfileCreationIntent} from '../../lib/weeklyProfileUpgradeApi';
@@ -267,7 +268,7 @@ export default function ConnectedAgentCalendar({accountBindingTasks=[]}:{account
     }catch(cause){if(stillCurrent()){setBindingContext(selection);setBindingError(cause instanceof Error?cause.message:'真实生产对象读取失败，请核对原周任务上游。');}}
     finally{if(sceneReadGeneration.current===generation)setSceneReading(null);}
   }
-  if (!program) return accountBindingTasks.length ? <AgentWeeklyCalendar tasks={accountBindingTasks} startsAt={accountBindingTasks[0]?.date} onBindAccount={()=>window.dispatchEvent(new CustomEvent('lingshu:navigate',{detail:{page:'accountManagement'}}))}/> : <p className="p-6 text-sm text-slate-500">请先选择社媒经营项目，再查看真实 Agent 周任务排期。</p>;
+  if (!program) return accountBindingTasks.length ? <AgentWeeklyCalendar tasks={accountBindingTasks} startsAt={accountBindingTasks[0]?.date} onBindAccount={openAccountBindingNavigation}/> : <p className="p-6 text-sm text-slate-500">请先选择社媒经营项目，再查看真实 Agent 周任务排期。</p>;
   return <div>
     <div className="flex flex-wrap items-center gap-3 px-6 pt-5 text-xs">
       <span className="font-bold text-slate-700">经营项目：{program.brandName}</span>
@@ -307,7 +308,7 @@ export default function ConnectedAgentCalendar({accountBindingTasks=[]}:{account
     {!loading&&!error&&pkg&&<div className="px-6 pb-6"><WeeklySupplementRequestsPanel pkg={pkg} tasks={scopedTasks} onExecutionResume={reloadAfterEvidenceResume} onChanged={items=>{if(items.some(item=>item.programId!==pkg.programId||item.packageId!==pkg.packageId||item.packageVersion!==pkg.version||!scopedTasks.some(task=>task.taskId===item.consumerTaskId&&task.tenantId===item.tenantId)))throw Error('补齐任务与实际周包执行身份不一致。');setSupplements({selection:currentSelection.current,items});}}/></div>}
     {!loading&&!error&&pkg&&<div className="px-6 pb-6"><WeeklyReviewEvidencePanel pkg={pkg} tasks={scopedTasks} taskId={selectedReview?.selection===currentSelection.current?selectedReview.taskId:undefined}/></div>}
     {!loading&&!error&&pkg&&<div className="px-6 pb-6"><WeeklyContentTemplatesPanel pkg={pkg} tasks={scopedTasks} taskId={selectedTemplate?.selection===currentSelection.current?selectedTemplate.taskId:undefined} onExecutionResume={reloadAfterEvidenceResume} onTemplateRevision={selectTemplateRevision}/></div>}
-    {!loading && !error && !pkg && accountBindingTasks.length>0 && <AgentWeeklyCalendar tasks={accountBindingTasks} startsAt={accountBindingTasks[0]?.date} onBindAccount={()=>window.dispatchEvent(new CustomEvent('lingshu:navigate',{detail:{page:'accountManagement'}}))}/>}
+    {!loading && !error && !pkg && accountBindingTasks.length>0 && <AgentWeeklyCalendar tasks={accountBindingTasks} startsAt={accountBindingTasks[0]?.date} onBindAccount={openAccountBindingNavigation}/>}
     {!loading && !error && !pkg && <p className="p-6 text-xs text-slate-500">选择已有周包查看排期；无周包时需先生成经营周计划。</p>}
   </div>;
 }

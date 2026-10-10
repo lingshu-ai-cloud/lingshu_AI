@@ -1,0 +1,9 @@
+import type {AgentCalendarTask} from '../components/smartBusiness/AgentWeeklyCalendar';
+
+const key='lingshu:account-binding-navigation';
+export type AccountBindingNavigation={platform:string;accountId:string|null;consumerIds:string[];createdAt:number};
+function valid(value:unknown):value is AccountBindingNavigation{const item=value as AccountBindingNavigation|null;return !!item&&typeof item.platform==='string'&&!!item.platform.trim()&&(item.accountId===null||typeof item.accountId==='string')&&Array.isArray(item.consumerIds)&&item.consumerIds.length>0&&item.consumerIds.every(id=>typeof id==='string'&&!!id.trim())&&Number.isFinite(item.createdAt);}
+export function accountBindingNavigation(task:AgentCalendarTask,now=Date.now()):AccountBindingNavigation{const target=task.accountBindingTarget;if(!target||!target.platform.trim()||!target.consumerIds.length||target.consumerIds.some(id=>!id.trim()))throw Error('账号绑定任务身份不完整，请刷新原周任务。');return {platform:target.platform,accountId:target.accountId,consumerIds:[...new Set(target.consumerIds)],createdAt:now};}
+export function saveAccountBindingNavigation(value:AccountBindingNavigation){if(typeof sessionStorage!=='undefined')sessionStorage.setItem(key,JSON.stringify(value));}
+export function readAccountBindingNavigation(now=Date.now()):AccountBindingNavigation|null{try{const value=JSON.parse(sessionStorage.getItem(key)||'null');return valid(value)&&now-value.createdAt>=0&&now-value.createdAt<=300_000?value:null;}catch{return null;}}
+export function openAccountBindingNavigation(task:AgentCalendarTask){const target=accountBindingNavigation(task);saveAccountBindingNavigation(target);window.dispatchEvent(new CustomEvent('lingshu:navigate',{detail:{page:'channels',businessRef:{taskKey:'weekly_account_binding',entityId:target.accountId??target.platform}}}));}
