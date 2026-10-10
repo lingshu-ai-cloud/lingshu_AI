@@ -41,3 +41,24 @@ node scripts/mvp-session-c-intake.mjs work/mvp-c-handoff.json work/mvp-c-intake.
 - 工作台：加载回包必须匹配当前 taskId，并防止登录凭据变化或过期读取回写其他任务数据。
 
 这些改动保护已有流程，不替代 A/B 真实片段和最终媒体的验收。工作台合同测试也不替代本轮真实任务的浏览器页面验收。
+
+## 回归与独立提交
+
+- `b5e91f6`：交接接收器、空模板与 2 项回归。空模板实际运行输出 blocked，进程 exit 1 符合预期。
+- `ef3d462`：冻结技术报告完整性及镜头数门禁；子 Agent 5 套测试 25/25。
+- `96509ca`：G5 时间线连续性；子 Agent 3 套测试 32/32。
+- 主会话合并回归运行技术入口、G5、工作台接收护栏及既有 hydration 共 7 个测试文件，45/45 通过。测试使用本地夹具生成真实媒体字节，不构成真实供应商 MVP 成片。
+
+页面另有两个未完成项：完整冻结 `task.replicationScript` 尚未通用投影到三栏工程；全片实际费用尚无权威账本投影接口。当前前端护栏与导航合同不能宣称脚本/分镜/口播/素材/费用/成片全一致的真实页面验收已通过。
+
+## 已接收的 A/B 候选审计（非媒体交接）
+
+共享权威目录在本轮新增了 A 的 `mvp-session-a-input-freeze.json` / `mvp-session-a-provider-preflight.json` 和 B 的 `mvp-b-aigc-shot-plan-2026-10-10.md` / inputs JSON。已读取，均没有新生成视频，不能填入完整 intake。
+
+- A 候选项目 `studio_projects_b251759707fa43a499a5dc48f070843f`，产品 `GUIANFA-RS-001`，有 workflow task/run 候选；账户标签为“宏昱智能光学照明”，产品与账号身份冲突待确认，当前未统一 MVP 版本。只读 HeyGen 预检成功不等于生成成功或人物/口型通过。
+- B 候选项目 `studio_projects_1f987e702c8e4e4e8b40e6432b80ae32`，产品 `GUIANFA-RS-014`，产品关键镜头 5.10–5.97 秒；首帧仍 needs_review，没有本镜头视频，tenant/task/run/version 仍未冻结。
+- 两个项目/产品不一致，**禁止直接拼接**。共用参考视频也不能证明同一任务；先由权威业务冻结统一项目、产品、账号、脚本分镜与版本，再让 A/B 沿同一 scope 输出。A/B 当前各自 budget/authorization 阻塞不由 C 擅自覆盖。
+
+- `76de5f1`：三栏工作台身份/参考来源护栏；8/8 身份与原运行回归、既有 hydration 测试、`tsc --noEmit` 退出 0。详细合同缺口见 `docs/acceptance/mvp-c-workbench-audit-2026-10-10.md`。
+
+会话 C 完成可独立开发部分并提交；实际合成与人工验收保持阻塞，下一次接收必须是统一后的真实 A/B 媒体及权威交接记录。
