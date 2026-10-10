@@ -51,6 +51,6 @@ echo "==> Bootstrapping the workbench administrator"
 echo "==> Updating application services"
 "${compose[@]}" up -d --no-build --wait --wait-timeout 180 worker app caddy
 
-curl -fsS "http://127.0.0.1:${app_host_port}/api/overseas/ready" >/dev/null
+"${compose[@]}" exec -T app node scripts/check-runtime-readiness.mjs http://127.0.0.1:8788/api/overseas/ready
 "${compose[@]}" ps
 echo "Fast update completed and readiness passed."
