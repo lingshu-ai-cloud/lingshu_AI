@@ -1,6 +1,6 @@
 import {assertProfileUpgradeCreationInput,assertProfileUpgradePublicationWindow,findProfileUpgradeCreation,profileUpgradePublicationHash,profileUpgradeTargetHash,type ProfileUpgradeConsumption} from './profileUpgradeCreation.js';
 import {socialRequestHash} from '../starter198/socialContentValidation.js';
-import {createWeeklyInventoryReuseService,inventoryPublicationHash} from './weeklyInventoryReuse.js';
+import {createWeeklyInventoryReuseService,inventoryPublicationHash,assertInventoryMaterialContract} from './weeklyInventoryReuse.js';
 import {createWeeklyProfileUpgradeService} from './weeklyProfileUpgrade.js';
 import {assertExecutionPackageGate,withExecutionPackageGate} from './weeklyExecutionGate.js';
 import {scheduleHash,readScheduleSnapshot} from './weeklyScheduleSnapshots.js';
@@ -463,6 +463,7 @@ export function createWeeklyOperatingPackageService(dataStore: DataStore) {
       if(current.payload.profileUpgradeConsumption)item.profileUpgradeConsumption=structuredClone(current.payload.profileUpgradeConsumption);
       const inventoryService=createWeeklyInventoryReuseService(dataStore);
       for(const publication of item.socialContentPackage.publicationTasks.filter(p=>p.inventoryReuseRef)){
+        assertInventoryMaterialContract(publication);
         const receipt=await inventoryService.get({tenantId,programId,packageId,packageVersion:current.payload.version,actorUserId:userId},publication.inventoryReuseRef!.id);
         if(receipt.item.target.packageVersion!==item.version||receipt.item.target.publicationTaskId!==publication.publicationTaskId||receipt.item.confirmedBy!==userId||receipt.item.target.publicationHash!==inventoryPublicationHash(publication)||item.referenceSourcePolicy?.profile!=='b2b_established')throw new SocialProgramError('inventory_revision_binding_changed',409,'库存确认与实际新版本发布目标不一致。');
       }
