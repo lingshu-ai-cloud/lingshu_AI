@@ -6,6 +6,7 @@ import { createFilePlaybackUrl } from '../storage/files.js';
 import { materialAssetPolicy, type MaterialSourceEntry } from './materialAssetPolicy.js';
 import { objectStorageGetObject } from '../storage/objectStorage.js';
 import { postgresListWithPocketBaseFilter, postgresStore, selectedDataBackend } from '../storage/postgres.js';
+import type { DataStore } from '../storage/datastore.js';
 
 export interface CloudMaterialRecord extends Record<string, unknown> {
   id: string;
@@ -299,12 +300,12 @@ export function cloudMaterialView(item: CloudMaterialRecord): Record<string, unk
 }
 
 export type MaterialSourceStatus = { source: 'server' | 'database'; state: 'ready' | 'unavailable' | 'unauthorized'; message: string };
-export async function readCloudMaterialLibrary(tenantId: string, request: typeof adminFetch = adminFetch): Promise<{ items: Array<Record<string, unknown>>; source: MaterialSourceStatus }> {
+export async function readCloudMaterialLibrary(tenantId: string, request: typeof adminFetch = adminFetch, dataStore?: DataStore): Promise<{ items: Array<Record<string, unknown>>; source: MaterialSourceStatus }> {
   try {
     const rows: CloudMaterialRecord[] = [];
-    if (usePostgresMaterials(request)) {
+    if (dataStore || usePostgresMaterials(request)) {
       for (let page = 1; ; page += 1) {
-        const data = await postgresStore.list<CloudMaterialRecord>('materials', { page, perPage: 500 });
+        const data = await (dataStore ?? postgresStore).list<CloudMaterialRecord>('materials', { page, perPage: 500 });
         rows.push(...data.items.filter(item => canAccessCloudMaterial(item, tenantId)));
         if (page >= data.totalPages) break;
         if (page >= 100) throw Error('material_pagination_limit');
