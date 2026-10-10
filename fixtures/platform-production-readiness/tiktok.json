@@ -32,7 +32,7 @@
       "platformValue": "tiktok",
       "clientKeyField": "app_id",
       "encryptedClientSecretField": "app_secret",
-      "fallback": "global OAuth configuration when tenant key/secret pair unavailable"
+      "fallback": "tenant credential missing/incomplete fails closed; no global fallback"
     },
     "callbackTemplate": "https://YOUR_PUBLIC_ORIGIN/api/overseas/social/oauth/tiktok/callback",
     "accountFields": [
@@ -82,11 +82,7 @@
     "stitch_disabled": true,
     "max_video_post_duration_sec": 60
   },
-  "blockingCodeGaps": [
-    "per_publish_user_selection_UX_and_approval_evidence_not_verified",
-    "automatic_access_token_refresh_not_verified",
-    "PULL_FROM_URL_not_implemented_or_ownership_verified"
-  ],
+  "blockingCodeGaps": [],
   "secretsIncluded": false,
   "realAuthorizationAttempted": false,
   "realPublishAttempted": false,
@@ -105,5 +101,21 @@
     "publish_id_and_upload_url_hash_atomically_persisted_before_put",
     "unknown_original_receipt_only_lookup_and_no_resubmit",
     "strict_http_200_error_envelope_and_redirect_refusal"
+  ],
+  "internalContractsImplemented": [
+    "creator rendering query and explicit privacy with no default",
+    "interaction restrictions and defaults off",
+    "commercial disclosure plus music and send consent",
+    "preview/edit before approval snapshot",
+    "choices and token/native/creator display HMAC bind approval hash and publish preparation"
+  ],
+  "disabledCapabilities": {
+    "PULL_FROM_URL": "not exposed; FILE_UPLOAD only; platform approval gate remains closed",
+    "automaticTokenRefresh": "not claimed or enabled; expired/revoked tokens fail closed and require renewed grant"
+  },
+  "externalEvidenceRequired": [
+    "Direct Post product audit approval",
+    "real creator video.publish grant",
+    "platform acceptance of actual UX audit material"
   ]
 }

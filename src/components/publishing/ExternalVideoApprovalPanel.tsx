@@ -1,3 +1,5 @@
+import { TikTokPostSettings } from './TikTokPostSettings';
+import { emptyTikTokPostSettings, invalidateTikTokConsent, buildTikTokPostOptions, validateTikTokCreatorResponse, type TikTokCreatorResponse, type TikTokDirectPostOptions } from '../../lib/tikTokPostSettings';
 import { useEffect, useState } from 'react';
 import { authHeader } from '../../lib/auth';
 import {
@@ -24,6 +26,8 @@ type Approval = {
   platformPostId?: string;
   platformUrl?: string;
   publishError?: string;
+  tiktokPostOptions?: TikTokDirectPostOptions;
+  tiktokCreatorReceiptHash?: string;
 };
 
 const LABEL: Record<PublishPlatform, string> = {
@@ -60,8 +64,30 @@ export function ExternalVideoApprovalPanel({ storageScope }: { storageScope?: st
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [approvalsLoaded, setApprovalsLoaded] = useState(false);
+  const [tikTokDraft, setTikTokDraft] = useState(emptyTikTokPostSettings);
+  const [tikTokCreator, setTikTokCreator] = useState<TikTokCreatorResponse | null>(null);
+  const [tikTokLoading, setTikTokLoading] = useState(false);
+  const [tikTokError, setTikTokError] = useState('');
+  const [tikTokRefreshKey, setTikTokRefreshKey] = useState(0);
   const approvalStorageKey = publishStorageKey('external_video_approvals', storageScope);
   const historyStorageKey = publishStorageKey('external_video_approval_history', storageScope);
+
+  useEffect(() => { setTikTokDraft(current => invalidateTikTokConsent(current)); }, [videoPath, title, description, scheduledAt]);
+  useEffect(() => {
+    let active = true;
+    const accountId = accountIds.tiktok || '';
+    setTikTokCreator(null); setTikTokDraft(emptyTikTokPostSettings()); setTikTokError('');
+    if (!accountId) { setTikTokLoading(false); return () => { active = false; }; }
+    setTikTokLoading(true);
+    void json<TikTokCreatorResponse>(`/api/overseas/social/accounts/${encodeURIComponent(accountId)}/tiktok/creator-info`).then(value => {
+      if (active) {
+        const fresh = validateTikTokCreatorResponse(value, accountId); setTikTokCreator(fresh);
+        const frozen = approvals.tiktok;
+        if (frozen?.tiktokPostOptions && frozen.tiktokCreatorReceiptHash === fresh.creatorReceiptHash && frozen.targetAccountIds[0] === accountId) setTikTokDraft({ ...frozen.tiktokPostOptions, disclosureEnabled: frozen.tiktokPostOptions.commercial.ownBrand || frozen.tiktokPostOptions.commercial.brandedContent });
+      }
+    }).catch(cause => { if (active) setTikTokError(cause instanceof Error ? cause.message : 'TikTok 最新账号设置读取失败'); }).finally(() => { if (active) setTikTokLoading(false); });
+    return () => { active = false; };
+  }, [accountIds.tiktok, tikTokRefreshKey, approvals.tiktok?.id]);
 
   useEffect(() => {
     let active = true;
@@ -75,6 +101,8 @@ export function ExternalVideoApprovalPanel({ storageScope }: { storageScope?: st
       })).then(items => {
         if (!active) return;
         setApprovals(Object.fromEntries(items.filter((item): item is Approval => Boolean(item)).map(item => [item.platform, item])));
+        const savedTikTok = items.find(item => item?.platform === 'tiktok');
+        if (savedTikTok?.targetAccountIds[0]) setAccountIds(current => ({ ...current, tiktok: savedTikTok.targetAccountIds[0] }));
         setApprovalsLoaded(true);
       }).catch(() => { if (active) setError('已有审批单状态暂时无法读取，请刷新后重试。'); });
     } catch { setApprovalsLoaded(true); }
@@ -159,7 +187,11 @@ export function ExternalVideoApprovalPanel({ storageScope }: { storageScope?: st
   const submit = async () => {
     setBusy(true); setError(''); setNotice('');
     try {
-      const requests = buildExternalVideoApprovalRequests({ videoPath, title, description, scheduledAt, accountIds, accounts, trackWaLink: false });
+      if (!tikTokCreator) throw new Error('请先读取 TikTok 最新账号设置');
+      const tiktokPostOptions = buildTikTokPostOptions(tikTokDraft, tikTokCreator, accountIds.tiktok || '');
+      const freshCreator = validateTikTokCreatorResponse(await json<TikTokCreatorResponse>(`/api/overseas/social/accounts/${encodeURIComponent(accountIds.tiktok || '')}/tiktok/creator-info`), accountIds.tiktok || '');
+      if (freshCreator.creatorReceiptHash !== tikTokCreator.creatorReceiptHash || !freshCreator.directPostApproved) { setTikTokCreator(freshCreator); setTikTokDraft(emptyTikTokPostSettings()); throw new Error('TikTok 账号设置已变化，请重新选择并授权'); }
+      const requests = buildExternalVideoApprovalRequests({ videoPath, title, description, scheduledAt, accountIds, accounts, trackWaLink: false, tiktokPostOptions, tiktokCreatorReceiptHash: freshCreator.creatorReceiptHash });
       const next = { ...approvals };
       for (const request of requests) {
         if (next[request.platform]) continue;
@@ -177,6 +209,12 @@ export function ExternalVideoApprovalPanel({ storageScope }: { storageScope?: st
   const approve = async (approval: Approval) => {
     setBusy(true); setError(''); setNotice('');
     try {
+      if (approval.platform === 'tiktok') {
+        if (!approval.tiktokCreatorReceiptHash || !approval.tiktokPostOptions) throw new Error('旧 TikTok 审批单缺少发布设置，请重新创建');
+        const accountId = approval.targetAccountIds[0];
+        const fresh = validateTikTokCreatorResponse(await json<TikTokCreatorResponse>(`/api/overseas/social/accounts/${encodeURIComponent(accountId)}/tiktok/creator-info`), accountId);
+        if (!fresh.directPostApproved || fresh.creatorReceiptHash !== approval.tiktokCreatorReceiptHash) throw new Error('TikTok 平台审核未确认或账号设置已变化，请重新审批');
+      }
       const result = await json<{ approval: Approval; calendarPostId: string }>(`${BASE}/${encodeURIComponent(approval.id)}/approve`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ contentHash: approval.contentHash }),
       });
@@ -195,6 +233,9 @@ export function ExternalVideoApprovalPanel({ storageScope }: { storageScope?: st
     finally { setBusy(false); }
   };
 
+  let tikTokSettingsReady = false;
+  try { if (tikTokCreator) { buildTikTokPostOptions(tikTokDraft, tikTokCreator, accountIds.tiktok || ''); tikTokSettingsReady = true; } } catch { /* incomplete user choices keep submission disabled */ }
+
   return <section aria-label="获授权外部素材发布审批" className="rounded-2xl border border-amber-200 bg-amber-50/40 p-4 shadow-sm">
     <h3 className="text-sm font-bold text-text-primary">获授权外部素材 · 四平台审批发布</h3>
     <p className="mt-1 text-xs text-text-secondary">从灵枢上传原视频，分别核对四个平台的账号与内容。此素材作为外部素材单独审批，不标记为经营编导自动生产结果；批准前不会提交平台。</p>
@@ -208,18 +249,20 @@ export function ExternalVideoApprovalPanel({ storageScope }: { storageScope?: st
     </div>
     <label className="mt-3 block text-xs font-bold text-text-secondary">配文<textarea value={description} disabled={busy || Object.keys(approvals).length > 0} onChange={event => setDescription(event.target.value)} rows={2} className="mt-1 w-full rounded-lg border border-border bg-white p-2 text-xs" /></label>
     <div className="mt-3 grid gap-2 md:grid-cols-4">{EXTERNAL_VIDEO_PLATFORMS.map(platform => <label key={platform} className="text-xs font-bold text-text-secondary">{LABEL[platform]} 目标账号<select value={accountIds[platform] || ''} disabled={busy || Object.keys(approvals).length > 0} onChange={event => setAccountIds(current => ({ ...current, [platform]: event.target.value }))} className="mt-1 w-full rounded-lg border border-border bg-white p-2 text-xs"><option value="">请选择已授权账号</option>{accounts.filter(account => account.platform === platform && account.status === 'connected').map(account => <option key={account.id} value={account.id}>{account.label}</option>)}</select></label>)}</div>
-    <button type="button" onClick={() => void submit()} disabled={busy || !approvalsLoaded || !videoPath || Object.keys(approvals).length === 4} className="mt-4 rounded-lg bg-amber-700 px-4 py-2 text-xs font-bold text-white disabled:opacity-50">提交四平台审批</button>
+    <TikTokPostSettings accountId={accountIds.tiktok || ''} creator={tikTokCreator} draft={tikTokDraft} onChange={setTikTokDraft} disabled={busy || Object.keys(approvals).length > 0} loading={tikTokLoading} error={tikTokError} onRefresh={() => setTikTokRefreshKey(value => value + 1)} />
+    <button type="button" onClick={() => void submit()} disabled={busy || !approvalsLoaded || !videoPath || Object.keys(approvals).length === 4 || !tikTokSettingsReady} className="mt-4 rounded-lg bg-amber-700 px-4 py-2 text-xs font-bold text-white disabled:opacity-50">提交四平台审批</button>
     {canRestart && <button type="button" disabled={busy || !historyLoaded} onClick={restartApproval} className="ml-2 rounded-lg border border-amber-400 bg-white px-4 py-2 text-xs font-bold text-amber-800 disabled:opacity-50">旧单过期或被拒绝 · 重新准备审批</button>}
     {canStartNextExternalVideo(EXTERNAL_VIDEO_PLATFORMS.map(platform => approvals[platform])) && <button type="button" disabled={busy} onClick={() => { setPreviousApprovals(current => [...current, ...Object.values(approvals).filter((item): item is Approval => Boolean(item))]); setPreviousApprovalIds(current => [...new Set([...current, ...Object.values(approvals).map(item => item?.id).filter((id): id is string => Boolean(id))])]); setApprovals({}); setVideoPath(''); setPreviewUrl(''); setTitle(''); setDescription(''); setScheduledAt(futureLocalValue()); setNotice('四个平台均有最终作品回执，可以上传下一份获授权外部素材。'); }} className="ml-2 rounded-lg border border-border bg-white px-4 py-2 text-xs font-bold text-text-secondary disabled:opacity-50">开始下一份素材</button>}
     {Object.values(approvals).length > 0 && <div className="mt-4 grid gap-2 md:grid-cols-2">{Object.values(approvals).map(approval => approval && <div key={approval.id} className="rounded-xl border border-border bg-white p-3">
       <strong className="text-xs">{LABEL[approval.platform]} · {approval.status}</strong>
       <p className="mt-1 text-xs">{approval.title}</p>
+      {approval.platform === 'tiktok' && approval.tiktokPostOptions && <p className="mt-1 text-xs">已冻结 TikTok 设置：{approval.tiktokPostOptions.privacyLevel} · 评论 {approval.tiktokPostOptions.allowComment ? '允许' : '关闭'} · 合拍 {approval.tiktokPostOptions.allowDuet ? '允许' : '关闭'} · 拼接 {approval.tiktokPostOptions.allowStitch ? '允许' : '关闭'} · {approval.tiktokPostOptions.commercial.brandedContent ? 'Paid partnership' : approval.tiktokPostOptions.commercial.ownBrand ? 'Promotional content' : '未披露商业推广'} · AIGC {approval.tiktokPostOptions.isAigc ? '是' : '否'}</p>}
       <p className="mt-1 break-all text-[10px] text-text-muted">账号 {approval.targetAccountIds.map(id => accounts.find(account => account.id === id)?.label || id).join(', ')} · {new Date(approval.scheduledAt).toLocaleString('zh-CN')}</p>
       {approval.providerReceiptId && <p className="mt-1 break-all text-[10px] text-text-secondary">平台受理回执：{approval.providerReceiptId}</p>}
       {approval.platformPostId && <p className="mt-1 break-all text-[10px] text-emerald-700">平台作品 ID：{approval.platformPostId}</p>}
       {approval.platformUrl && <a href={approval.platformUrl} target="_blank" rel="noopener noreferrer" className="mt-1 block break-all text-[10px] text-emerald-700 underline">查看平台作品</a>}
       {approval.publishError && <p role="alert" className="mt-1 text-[10px] text-red-700">{approval.publishError}</p>}
-      <div className="mt-2 flex gap-2"><button type="button" disabled={busy} onClick={() => void refresh(approval)} className="rounded border border-border px-2 py-1 text-[10px]">刷新状态</button>{approval.status === 'awaiting_approval' && <button type="button" disabled={busy} onClick={() => void approve(approval)} className="rounded bg-emerald-600 px-2 py-1 text-[10px] font-bold text-white">核对后批准排期</button>}</div>
+      <div className="mt-2 flex gap-2"><button type="button" disabled={busy} onClick={() => void refresh(approval)} className="rounded border border-border px-2 py-1 text-[10px]">刷新状态</button>{approval.status === 'awaiting_approval' && <button type="button" disabled={busy || (approval.platform === 'tiktok' && (!tikTokCreator?.directPostApproved || !approval.tiktokPostOptions || !approval.tiktokCreatorReceiptHash || approval.tiktokCreatorReceiptHash !== tikTokCreator.creatorReceiptHash))} onClick={() => void approve(approval)} className="rounded bg-emerald-600 px-2 py-1 text-[10px] font-bold text-white">核对后批准排期</button>}</div>
     </div>)}</div>}
     {previousApprovalIds.length > 0 && <details className="mt-4 text-xs text-text-secondary"><summary className="cursor-pointer font-bold">历史审批单（{previousApprovalIds.length}）</summary><ul className="mt-2 space-y-1">{previousApprovalIds.map(id => { const approval = previousApprovals.find(item => item.id === id); return <li key={id} className="break-all">{approval ? `${LABEL[approval.platform]} · ${approval.status} · ` : ''}审批单 {id}{approval?.platformUrl && <> · <a href={approval.platformUrl} target="_blank" rel="noopener noreferrer" className="text-emerald-700 underline">平台作品</a></>}</li>; })}</ul></details>}
   </section>;

@@ -1,3 +1,5 @@
+import {readAuthorizedMessengerCustomers} from '../messenger/authorizedCustomerRead.js';
+import {assertMessengerCapabilityAuthority} from '../messenger/capabilityAuthority.js';
 import {readCanonicalWhatsAppAccount} from '../whatsapp/canonicalAccount.js';
 import {store as runtimeStore} from '../storage/index.js';
 import {socialJson,socialObject} from '../starter198/socialContentValidation.js';
@@ -26,7 +28,7 @@ export interface WeeklyChannelConversationPort {read(tenantId:string,channel:Wee
 /** M/IG source is the actual webhook conversation store. WA remains the existing canonical workflow source. */
 export const nativeWeeklyConversationPort:WeeklyChannelConversationPort={async read(tenantId,channel){
  if(channel==='whatsapp')return readCanonicalWeeklyWhatsAppConversations(runtimeStore,tenantId);
- const customers=channel==='messenger'?getMessengerCustomers(tenantId):getInstagramCustomers(tenantId);
+ const customers=channel==='messenger'?await readAuthorizedMessengerCustomers(tenantId,runtimeStore):getInstagramCustomers(tenantId);
  return customers.map(c=>{const account=String(channel==='messenger'?c.pageId:c.instagramAccountId),recipient=String(channel==='messenger'?c.messengerUserId:c.instagramUserId);return {tenantId:c.tenantId,customerId:c.id,channel,nativeAccountId:account,recipientId:recipient,conversationId:`${channel}:${account}:${recipient}`,messages:c.timeline,customerSnapshot:c};});
 }};
 async function account(store:DataStore,scope:WeeklyCustomerRelationshipScope,channel:WeeklyCustomerChannel,accountId:string){
@@ -34,6 +36,7 @@ async function account(store:DataStore,scope:WeeklyCustomerRelationshipScope,cha
  const a=await store.getById<Record_>('social_accounts',accountId);
  const platform=channel==='messenger'?'facebook':channel;
  if(!a||a.tenantId!==scope.tenantId||a.platform!==platform||a.status!=='connected'||!text(a.providerAccountId)||a.mock||a.synthetic)fail('weekly_customer_channel_not_connected');
+ if(channel==='messenger')assertMessengerCapabilityAuthority(a!);
  return a!;
 }
 /** Freeze one actual provider inbound and connected account, after the caller has checked run/actor authority. No send or relation inference. */
@@ -52,7 +55,7 @@ export async function selectWeeklyChannelConversation(store:DataStore,input:{sco
  const m=messages[0]!,audit=obj(m.audit);
  if(m.actor!=='buyer'||!text(m.body)||typeof m.timestamp!=='number'||!Number.isFinite(m.timestamp)||m.timestamp<=0||m.timestamp>Date.now()||m.mock||m.synthetic||m.simulated||audit?.providerMessageId!==m.id||audit?.providerRecipientId!==c.recipientId)fail('weekly_customer_channel_real_inbound_required');
  // Existing relationships may intentionally use a prior true conversation. New inquiry classification is checked separately.
- const payload={scope:{...scope},channel:input.channel,accountId:input.accountId,nativeAccountId:c.nativeAccountId,customerId:c.customerId,recipientId:c.recipientId,conversationId:c.conversationId,inboundMessageId:String(m.id),inboundAt:new Date(m.timestamp).toISOString(),accountHash:typeof a.canonicalAuthorityHash==='string'?a.canonicalAuthorityHash:hash({platform:a.platform,providerAccountId:a.providerAccountId,parentPageId:a.parentPageId??null,oauthProvider:a.oauthProvider??null}),inboundHash:hash(m)};
+ const payload={scope:{...scope},channel:input.channel,accountId:input.accountId,nativeAccountId:c.nativeAccountId,customerId:c.customerId,recipientId:c.recipientId,conversationId:c.conversationId,inboundMessageId:String(m.id),inboundAt:new Date(m.timestamp).toISOString(),accountHash:typeof a.canonicalAuthorityHash==='string'?a.canonicalAuthorityHash:hash({platform:a.platform,providerAccountId:a.providerAccountId,parentPageId:a.parentPageId??null,oauthProvider:a.oauthProvider??null,...(a.platform==='facebook'?{messengerCapability:assertMessengerCapabilityAuthority(a)}:{})}),inboundHash:hash(m)};
  return {...payload,recordHash:hash(payload)};
 }
 export async function verifyWeeklyChannelSelection(store:DataStore,scope:WeeklyCustomerRelationshipScope,value:unknown,port:WeeklyChannelConversationPort=weeklyConversationPortForStore(store)){

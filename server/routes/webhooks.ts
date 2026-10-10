@@ -212,7 +212,7 @@ webhookRouter.post(['/meta/:tenantId', '/instagram/:tenantId'], async (req, res)
         if (ownedPages.get(pageId)) entries.push(entry);
       }
     }
-    await handleMessengerWebhook(tenantId, { object: 'page', entry: entries });
+    await handleMessengerWebhook(tenantId, { object: 'page', entry: entries }, {verifiedSignature:true});
     const instagramEntries = selectInstagramWebhookEntries(payload, instagramAccountsWithMessagingIds);
     const instagramResult = await handleInstagramWebhook(tenantId, { object: 'instagram', entry: instagramEntries });
     const receiptService = createCustomerChannelSendRequestService(store);

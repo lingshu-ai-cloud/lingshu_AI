@@ -416,6 +416,7 @@ async function publishScheduledPost(
         finalizeTracking: false,
         publishAttemptId: attemptId,
         ...(platform === 'tiktok' ? {
+          tiktokCreatorReceiptHash: typeof initialStats.tiktokCreatorReceiptHash === 'string' ? initialStats.tiktokCreatorReceiptHash : undefined,
           tiktokPostOptions: initialStats.tiktokPostOptions === undefined ? undefined : parseTikTokDirectPostOptions(initialStats.tiktokPostOptions),
           async onTikTokAttemptPrepared(receipt) {
             const current = await store.getById<PostRecord>('posts', post.id);

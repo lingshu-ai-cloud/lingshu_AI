@@ -32,6 +32,11 @@ export function metaOAuthScopes(
     scopes.add('instagram_basic');
     scopes.add('instagram_content_publish');
   }
+  if (enabled(env.META_INSTAGRAM_MESSAGING_FEATURES_ENABLED)) {
+    scopes.add('instagram_basic');
+    scopes.add('instagram_manage_messages');
+    scopes.add('pages_manage_metadata');
+  }
   if (enabled(env.META_COMMENTS_FEATURES_ENABLED)) {
     scopes.add('pages_read_user_content');
     scopes.add('instagram_manage_comments');

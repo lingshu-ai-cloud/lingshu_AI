@@ -1,3 +1,4 @@
+import {readAuthorizedMessengerCustomers} from '../messenger/authorizedCustomerRead.js';
 import { readAuthorizedWhatsAppCustomers } from '../whatsapp/authorizedCustomerRead.js';
 import { Router } from 'express';
 import { callLLM } from '../agents/llm.js';
@@ -8,7 +9,7 @@ import { buildStrategyPromptBlock, retrieveResponseStrategies, strategyEvidence 
 import { aggregateKnowledgeMisses } from '../knowledge/misses.js';
 import { recordStyleMemory } from '../knowledge/styleMemory.js';
 import { getNightModeMorningBriefing } from '../whatsapp/historyImport.js';
-import { analyzeMessengerCustomerTags, getMessengerCustomers, patchMessengerCustomer, sendTenantMessengerText,upsertMessengerMessage } from '../messenger/conversations.js';
+import { analyzeMessengerCustomerTags, patchMessengerCustomer, sendTenantMessengerText,upsertMessengerMessage } from '../messenger/conversations.js';
 import { analyzeInstagramCustomerTags, getInstagramCustomers, patchInstagramCustomer,upsertInstagramMessage } from '../instagram/conversations.js';
 import { sendTenantInstagramText } from '../instagram/send.js';
 import {createCustomerChannelSendRequestService,resolveCustomerChannelOutboxContext} from '../digitalEmployees/customerChannelSendRequests.js';
@@ -45,22 +46,22 @@ async function maybeRecordStyleMemory(req: any, tenantId: string, customerId: st
   }).catch(error => console.warn('[style-memory:record-failed]', error));
 }
 
-customerSuggestionsRouter.get('/', requireAuth, (req, res) => {
+customerSuggestionsRouter.get('/', requireAuth, async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   const source = String(req.query.source || '');
   if (source && source !== 'messenger' && source !== 'instagram') {
     res.json({ items: [], source });
     return;
   }
-  const items = source === 'messenger' ? getMessengerCustomers(tenantId)
+  const items = source === 'messenger' ? (await readAuthorizedMessengerCustomers(tenantId))
     : source === 'instagram' ? getInstagramCustomers(tenantId)
-      : [...getMessengerCustomers(tenantId), ...getInstagramCustomers(tenantId)].sort((a, b) => b.lastActiveAt - a.lastActiveAt);
+      : [...(await readAuthorizedMessengerCustomers(tenantId)), ...getInstagramCustomers(tenantId)].sort((a, b) => b.lastActiveAt - a.lastActiveAt);
   res.json({ items, source: source || 'all' });
 });
 
-function customerChannel(tenantId: string, id: string): 'instagram' | 'messenger' | null {
+async function customerChannel(tenantId: string, id: string): Promise<'instagram' | 'messenger' | null> {
   if (id.startsWith('instagram_')) return getInstagramCustomers(tenantId).some(item => item.id === id) ? 'instagram' : null;
-  return getMessengerCustomers(tenantId).some(item => item.id === id) ? 'messenger' : null;
+  return (await readAuthorizedMessengerCustomers(tenantId)).some(item => item.id === id) ? 'messenger' : null;
 }
 
 customerSuggestionsRouter.get('/templates', (_req, res) => {
@@ -71,11 +72,11 @@ customerSuggestionsRouter.post('/:id/context-tags', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   try {
     const id = String(req.params.id);
-    const channel = customerChannel(tenantId, id);
+    const channel = await customerChannel(tenantId, id);
     const customer = channel === 'instagram' ? await analyzeInstagramCustomerTags(tenantId, id)
       : channel === 'messenger' ? await analyzeMessengerCustomerTags(tenantId, id) : null;
     if (!customer) { res.status(404).json({ error: 'customer_not_found' }); return; }
-    res.json({ customer });
+    res.json({ customer: channel === 'messenger' ? (await readAuthorizedMessengerCustomers(tenantId)).find(item => item.id === id) : customer });
   } catch (error) {
     res.status(503).json({ error: 'context_tag_analysis_failed', message: error instanceof Error ? error.message : '标签分析失败，请重试' });
   }
@@ -101,7 +102,7 @@ customerSuggestionsRouter.post('/knowledge-misses/recompute', async (_req, res) 
 async function manualCustomerChannel(tenantId:string,id:string){return (await readAuthorizedWhatsAppCustomers(tenantId)).some(c=>c.id===id)?'whatsapp' as const:customerChannel(tenantId,id);}
 customerSuggestionsRouter.use('/:id/manual-active',createCustomerManualTakeoverRouter({service:manualTakeoverService,resolveChannel:manualCustomerChannel}));
 
-customerSuggestionsRouter.patch('/:id', (req, res) => {
+customerSuggestionsRouter.patch('/:id', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   const customerId = String(req.params.id || '');
   if (!customerId) {
@@ -112,7 +113,9 @@ customerSuggestionsRouter.patch('/:id', (req, res) => {
     res.status(422).json({ error: '请通过订单台账登记和更新订单，客户备注不再接受订单状态修改', code: 'use_order_ledger' }); return;
   }
   const patch = req.body && typeof req.body === 'object' ? req.body as Record<string, unknown> : {};
-  const customer = customerChannel(tenantId, customerId) === 'instagram'
+  const channel = await customerChannel(tenantId, customerId);
+  if (!channel) { res.status(404).json({ error: 'customer_not_found' }); return; }
+  const customer = channel === 'instagram'
     ? patchInstagramCustomer(tenantId, customerId, patch)
     : patchMessengerCustomer(tenantId, customerId, patch);
   if (!customer) {
@@ -130,7 +133,8 @@ customerSuggestionsRouter.post('/:id/source-attribution', async (req, res) => {
     res.status(400).json({ error: 'customer_id_and_post_id_required' });
     return;
   }
-  const channel = customerChannel(tenantId, customerId);
+  const channel = await customerChannel(tenantId, customerId);
+  if (!channel) { res.status(404).json({ error: 'customer_not_found' }); return; }
   const patch = {
     sourcePostId: postId,
     sourcePostPlatform: channel === 'instagram' ? 'instagram' : 'facebook',
@@ -144,30 +148,30 @@ customerSuggestionsRouter.post('/:id/source-attribution', async (req, res) => {
   res.json({
     ok: true,
     source: customer.source,
-    sourcePostId: customer.sourcePostId,
-    sourceTrackCode: customer.sourceTrackCode,
-    sourcePostTitle: customer.sourcePostTitle,
-    sourcePostPlatform: customer.sourcePostPlatform,
+    sourcePostId: channel === 'instagram' ? customer.sourcePostId : undefined,
+    sourceTrackCode: channel === 'instagram' ? customer.sourceTrackCode : undefined,
+    sourcePostTitle: channel === 'instagram' ? customer.sourcePostTitle : undefined,
+    sourcePostPlatform: channel === 'instagram' ? customer.sourcePostPlatform : undefined,
   });
 });
 
 customerSuggestionsRouter.get('/:id/outbox/context',requireAuth,async(req,res)=>{
- const{tenantId,userId}=res.locals as AuthLocals;const customerId=String(req.params.id||'');const channel=customerChannel(tenantId,customerId);if(!channel){res.status(404).json({error:'customer_not_found'});return;}
- const customer=channel==='instagram'?getInstagramCustomers(tenantId).find(c=>c.id===customerId):getMessengerCustomers(tenantId).find(c=>c.id===customerId);
+ const{tenantId,userId}=res.locals as AuthLocals;const customerId=String(req.params.id||'');const channel=await customerChannel(tenantId,customerId);if(!channel){res.status(404).json({error:'customer_not_found'});return;}
+ const customer=channel==='instagram'?getInstagramCustomers(tenantId).find(c=>c.id===customerId):(await readAuthorizedMessengerCustomers(tenantId)).find(c=>c.id===customerId);
  try{const item=await resolveCustomerChannelOutboxContext(store,{tenantId,actorUserId:userId,customerId,channel,nativeAccountId:String(channel==='instagram'?customer?.instagramAccountId:customer?.pageId)});res.json({item});}catch(error){const code=error instanceof Error?error.message:'channel_send_context_unavailable';res.status(/forbidden$/.test(code)?403:409).json({error:code});}
 });
 
 customerSuggestionsRouter.get('/:id/outbox/:requestId',requireAuth,async(req,res)=>{
  const {tenantId,userId}=res.locals as AuthLocals;const customerId=String(req.params.id||''),requestId=String(req.params.requestId||'');
  if(!/^[a-zA-Z0-9_-]{8,120}$/.test(requestId)){res.status(400).json({error:'channel_send_request_id_required'});return;}
- const channel=customerChannel(tenantId,customerId);if(!channel){res.status(404).json({error:'customer_not_found'});return;}
+ const channel=await customerChannel(tenantId,customerId);if(!channel){res.status(404).json({error:'customer_not_found'});return;}
  try{const item=await createCustomerChannelSendRequestService(store).get(tenantId,userId,channel,requestId);if(!item||item.customerId!==customerId){res.status(404).json({error:'channel_send_request_not_found'});return;}res.json({item});}catch(error){const code=error instanceof Error?error.message:'channel_send_request_read_failed';res.status(/forbidden$/.test(code)?403:409).json({error:code});}
 });
 
 customerSuggestionsRouter.post('/:id/outbox/:requestId/reconcile',requireAuth,async(req,res)=>{
  const{tenantId,userId}=res.locals as AuthLocals;const customerId=String(req.params.id||''),requestId=String(req.params.requestId||'');if(req.body!==undefined&&(!req.body||Array.isArray(req.body)||typeof req.body!=='object'||Object.keys(req.body).length)){res.status(400).json({error:'channel_send_reconcile_body_invalid'});return;}
- const channel=customerChannel(tenantId,customerId);if(!channel){res.status(404).json({error:'customer_not_found'});return;}
- const customer=channel==='instagram'?getInstagramCustomers(tenantId).find(c=>c.id===customerId):getMessengerCustomers(tenantId).find(c=>c.id===customerId);
+ const channel=await customerChannel(tenantId,customerId);if(!channel){res.status(404).json({error:'customer_not_found'});return;}
+ const customer=channel==='instagram'?getInstagramCustomers(tenantId).find(c=>c.id===customerId):(await readAuthorizedMessengerCustomers(tenantId)).find(c=>c.id===customerId);
  try{const item=await createCustomerChannelSendRequestService(store).repairHistory({tenantId,actorUserId:userId,channel,requestId,customerId,recordHistory:(receipt,body,account)=>{if(channel==='instagram'){if(customer?.instagramAccountId!==account.providerAccountId||customer?.instagramUserId!==receipt.recipientId)throw Error('channel_send_history_customer_drift');upsertInstagramMessage({tenantId,instagramAccountId:String(account.providerAccountId),userId:receipt.recipientId,messageId:receipt.messageId,body,timestamp:Date.parse(receipt.acceptedAt),actor:'seller',sendStatus:'sent'});}else{if(customer?.pageId!==account.providerAccountId||customer?.messengerUserId!==receipt.recipientId)throw Error('channel_send_history_customer_drift');upsertMessengerMessage({tenantId,pageId:String(account.providerAccountId),userId:receipt.recipientId,messageId:receipt.messageId,body,timestamp:Date.parse(receipt.acceptedAt),actor:'seller',sendStatus:'sent'});}}});res.json({item,messagesSent:0});}catch(error){const code=error instanceof Error?error.message:'channel_send_history_writeback_failed';res.status(/forbidden$/.test(code)?403:409).json({error:code,requestId});}
 });
 
@@ -181,7 +185,7 @@ customerSuggestionsRouter.post('/:id/outbox', requireAuth, async (req, res) => {
     res.status(400).json({ error: 'customer_id_and_body_required' });
     return;
   }
-  const channel = customerChannel(tenantId, customerId);
+  const channel = await customerChannel(tenantId, customerId);
   if (!channel) { res.status(404).json({ error: 'customer_not_found' }); return; }
   if (req.body?.auto === true) {
     const status = customerServiceStatus(await readTenantEnterpriseProfile(tenantId));
@@ -238,7 +242,7 @@ customerSuggestionsRouter.get('/:id/suggestions', async (req, res) => {
   const id = String(req.params.id ?? '');
   const customer = id.startsWith('instagram_')
     ? getInstagramCustomers(tenantId).find(item => item.id === id)
-    : getMessengerCustomers(tenantId).find(item => item.id === id);
+    : (await readAuthorizedMessengerCustomers(tenantId)).find(item => item.id === id);
   if (!customer) {
     res.status(404).json({ items: [], error: 'customer_not_found' });
     return;

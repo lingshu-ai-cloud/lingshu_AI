@@ -191,7 +191,7 @@
     {
       "code": "messenger_subscription_success_and_granted_scope_unverified",
       "source": "server/integrations/messenger.ts; server/routes/social.ts",
-      "status": "open"
+      "status": "implemented_controlled_live_unverified"
     },
     {
       "code": "oauth_signed_state_not_durably_consumed",
@@ -201,7 +201,7 @@
     {
       "code": "legacy_instagram_messaging_oauth_scope_missing",
       "source": "server/lib/socialOAuthScopes.ts",
-      "status": "open"
+      "status": "implemented_controlled_live_unverified"
     }
   ],
   "externalEvidenceRequired": [
@@ -286,6 +286,28 @@
       "live tenant authorization",
       "external app review",
       "provider delivery evidence"
+    ]
+  },
+  "messengerRuntimeCorrection": {
+    "liveReady": false,
+    "controlledOnly": true,
+    "proofMaxValiditySeconds": 600,
+    "existingStorageField": "scope",
+    "proofMarkerIsPermission": false,
+    "guards": [
+      "actual_provider_grants",
+      "exact_native_page",
+      "local_foreign_owner",
+      "subscription_success_true",
+      "subscription_readback_current_app",
+      "tenant_account_token_bound_proof",
+      "proof_expiry",
+      "fresh_sender_provider_probe"
+    ],
+    "remaining": [
+      "live app review",
+      "production granted permissions",
+      "live tenant asset and delivery evidence"
     ]
   }
 }

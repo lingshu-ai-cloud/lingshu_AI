@@ -167,10 +167,14 @@
         "platform",
         "returnTo",
         "nonce",
-        "expiresAt"
+        "expiresAt",
+        "redirectUri",
+        "clientCredentialHash"
       ],
-      "durableNonceConsumptionImplemented": false,
-      "replayValidationEvidenceRef": null
+      "durableNonceConsumptionImplemented": true,
+      "replayValidationEvidenceRef": null,
+      "productionRequiresAtomicStorage": true,
+      "controlledTests": "server/lib/oauthNonceStore.test.ts"
     },
     "realGrantEvidenceRef": null
   },
@@ -274,14 +278,14 @@
   ],
   "knownPreparationGaps": [
     {
-      "code": "oauth_state_durable_nonce_consumption_unverified",
+      "code": "oauth_nonce_production_storage_live_validation",
       "category": "livevalidationmissing",
-      "evidence": "signed-state fallback exists after in-memory state removal; no durable consumed nonce ledger found"
+      "evidence": "durable consumption implemented; live atomic backend verification remains required"
     },
     {
-      "code": "tenant_app_global_fallback_policy_unapproved",
-      "category": "productionapproval",
-      "evidence": "incomplete tenant app can use global OAuth config/env"
+      "code": "tenant_app_strict_selection",
+      "category": "implemented",
+      "evidence": "tenant-specific config fails closed without global fallback"
     },
     {
       "code": "native_oauth_callback_requires_messaging_grant",

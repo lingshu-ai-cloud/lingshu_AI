@@ -1,3 +1,4 @@
+import { tikTokCreatorConsentHash } from './tiktokCreatorConsent.js';
 import type { DataStore } from '../storage/datastore.js';
 import { assertTikTokAttemptReceipt, tikTokAccountIdentityHash, type TikTokAttemptPreparedReceipt, type TikTokDirectPostOptions } from '../lib/tikTokDirectPostContract.js';
 import { resolveInstagramPublishingContract, assertInstagramPublishingScopes } from './instagramPublishingContract.js';
@@ -91,6 +92,7 @@ export interface PublishToAccountInput {
   onProviderReceipt?: (receiptId: string) => Promise<void>;
   onPublishedMedia?: (mediaId: string) => Promise<void>;
   tiktokPostOptions?: TikTokDirectPostOptions;
+  tiktokCreatorReceiptHash?: string;
   onTikTokAttemptPrepared?: (receipt: TikTokAttemptPreparedReceipt) => Promise<void>;
 }
 
@@ -692,6 +694,7 @@ async function publishVideoToAccountWithLease(
         tenantId: input.tenantId, accountId: input.accountId, attemptId: directAttempt.attemptId, accountIdentityHash, options: input.tiktokPostOptions!,
         async onTikTokAttemptPrepared(receipt) {
           await assertAccount();
+          if (input.tiktokCreatorReceiptHash && input.tiktokCreatorReceiptHash !== tikTokCreatorConsentHash({ tenantId: input.tenantId, accountId: input.accountId, providerAccountId: account.providerAccountId, accessToken, creator: receipt.creator })) throw publishError('tiktok_creator_display_changed', 409);
           if (input.onTikTokAttemptPrepared) await input.onTikTokAttemptPrepared(structuredClone(receipt));
           assertTikTokAttemptReceipt(receipt, { tenantId: input.tenantId, accountId: input.accountId, accountIdentityHash, attemptId: directAttempt!.attemptId });
           await persistAttempt({ tiktokValidationReceipt: receipt });

@@ -38,13 +38,16 @@ export function parseTikTokDirectPostOptions(value: unknown): TikTokDirectPostOp
     || !options.commercial || typeof options.commercial.ownBrand !== 'boolean' || typeof options.commercial.brandedContent !== 'boolean') throw Error('tiktok_explicit_post_consent_required');
   return { privacyLevel: options.privacyLevel, allowComment: options.allowComment, allowDuet: options.allowDuet, allowStitch: options.allowStitch, commercial: { ownBrand: options.commercial.ownBrand, brandedContent: options.commercial.brandedContent }, isAigc: options.isAigc, musicUsageConfirmed: true, userConsent: true };
 }
+export function validateTikTokPostChoices(creator: TikTokCreatorInfo, options: TikTokDirectPostOptions): void {
+  if (!creator.privacy_level_options.includes(options.privacyLevel)) throw Error('tiktok_privacy_level_mismatch');
+  if ((creator.comment_disabled && options.allowComment) || (creator.duet_disabled && options.allowDuet) || (creator.stitch_disabled && options.allowStitch)) throw Error('tiktok_interaction_disabled');
+  if (options.commercial.brandedContent && options.privacyLevel === 'SELF_ONLY') throw Error('tiktok_branded_content_cannot_be_private');
+}
 export function prepareTikTokAttemptReceipt(input: Omit<TikTokAttemptPreparedReceipt, 'version' | 'receiptHash'>): TikTokAttemptPreparedReceipt {
   const creator = validateTikTokCreatorInfo(input.creator), options = parseTikTokDirectPostOptions(input.options);
   if (!input.tenantId || !input.accountId || !input.attemptId || !/^[a-f0-9]{64}$/.test(input.accountIdentityHash) || !/^[a-f0-9]{64}$/.test(input.videoSha256)) throw Error('tiktok_attempt_identity_invalid');
   if (!options || options.userConsent !== true || options.musicUsageConfirmed !== true || !['allowComment','allowDuet','allowStitch','isAigc'].every(key => typeof (options as unknown as Record<string, unknown>)[key] === 'boolean') || !options.commercial || typeof options.commercial.ownBrand !== 'boolean' || typeof options.commercial.brandedContent !== 'boolean') throw Error('tiktok_explicit_post_consent_required');
-  if (!creator.privacy_level_options.includes(options.privacyLevel)) throw Error('tiktok_privacy_level_mismatch');
-  if ((creator.comment_disabled && options.allowComment) || (creator.duet_disabled && options.allowDuet) || (creator.stitch_disabled && options.allowStitch)) throw Error('tiktok_interaction_disabled');
-  if (options.commercial.brandedContent && options.privacyLevel === 'SELF_ONLY') throw Error('tiktok_branded_content_cannot_be_private');
+  validateTikTokPostChoices(creator, options);
   if (!Number.isFinite(input.durationSeconds) || input.durationSeconds <= 0 || input.durationSeconds > creator.max_video_post_duration_sec) throw Error('tiktok_video_duration_invalid');
   if (!Number.isInteger(input.videoSize) || input.videoSize <= 0 || input.videoSize > 64 * 1024 * 1024) throw Error('tiktok_single_chunk_size_invalid');
   if (!Number.isFinite(Date.parse(input.validatedAt)) || Date.parse(input.validatedAt) > Date.now() + 60_000) throw Error('tiktok_validation_timestamp_invalid');

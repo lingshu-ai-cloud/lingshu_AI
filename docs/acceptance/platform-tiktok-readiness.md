@@ -24,7 +24,7 @@
 
 canonical 元数据写在已有 `posts.stats.publishResults[accountId]`，无需新 migration。先保存同一 attempt 的版本化 creator/settings/options/video SHA/身份 hash 回执，再 init；响应返回 publish_id 与上传 URL hash 后原子保存，最后 PUT。raw token 和带签名上传 URL 不进入该回执。PUT失败保留原publish_id；init响应丢失没有真实远端ID，只保留原attempt未知，禁止伪造查询ID或重发。外部 weekly/scheduled 使用同attempt callbacks；正式 weekly worker 的丢失外层回执恢复仅从同 tenant/account/attempt 的 canonical 已持久真实 publish_id 修复，再走原回执状态查询；没有真实 ID 保持 unknown，不重新提交。回执 ID 允许官方示例中的 `~` 与 `.`，仅拒绝空值、控制字符和过长值。creator/preinit/receipt持久化失败均不能越过对应effect。HTTP200非ok也拒绝，所有TikTokHTTP禁止重定向。
 
-当前只支持 FILE_UPLOAD，URL pull尚未实现/证明域名所有权。供应商 audit、用户操作页的完整审核UX、自动token刷新仍需独立真实证据；本轮后端保护不能自动生成用户选择或供应商批准。init需明确用户授权和合法privacy；官方限6请求/分钟，URL pull另需域名所有权。[Direct Post](https://developers.tiktok.com/docs/en/content-posting-api-reference-direct-post)
+当前只支持 FILE_UPLOAD，URL pull尚未实现/证明域名所有权。用户操作页已接完整选择、披露、音乐与发送同意及预览编辑合同；creator展示HMAC和choices纳入审批hash，创建/审批fresh查询及真实发布prepared callback再重验。供应商 audit与真实grant仍需独立证据；自动token刷新未开放，失效凭据拒绝并要求重新授权。本轮后端保护不能自动生成用户选择或供应商批准。init需明确用户授权和合法privacy；官方限6请求/分钟，URL pull另需域名所有权。[Direct Post](https://developers.tiktok.com/docs/en/content-posting-api-reference-direct-post)
 
 成功上传只表示 provider_accepted，publish_id不是公开帖子ID。现 status/fetch仅查询原publish_id；PUBLISH_COMPLETE且publicaly_available_post_id非空才计公开终态，空ID保持unknown；PROCESSING_*保持处理中，FAILED失败。官方状态接口限30请求/分钟，公开post ID需审核完成；私密帖子可能没有公开ID。[Get Post Status](https://developers.tiktok.com/docs/en/content-posting-api-reference-get-video-status)
 
@@ -35,3 +35,5 @@ weekly/direct/scheduled层已有accepted receipt恢复与重复提交阻断，�
 运行 `node --import tsx --test scripts/platform-tiktok-readiness.controlled.test.ts`；可叠加主任务的全出站阻断runner。测试只mock axios，未监听本地端口，默认拒绝未登记请求。它验证scope gate、token请求合同、creator探测、异步accepted语义和原receipt状态查询，并验证准备/原回执持久化、creator变化拒绝以及上传失败窗口；不把后端受控通过当作供应商合规批准。
 
 后续需填写门户审批reference（无secret）、回调截图/登记证明、当前账户scope/身份probe、审核UX证据、正式修复测试及明确批准的单次验收记录。保持 productionReady=false，直到每项真实证据齐备。
+
+内部UX受控覆盖：`src/lib/tikTokPostSettings.test.ts`、`src/components/publishing/TikTokPostSettings.test.tsx`、`server/publishing/tiktokCreatorConsent.test.ts` 和 publisher display-hash mismatch 集成负例。真实平台审核结论仍未取得。

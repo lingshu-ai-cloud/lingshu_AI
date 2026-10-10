@@ -6,6 +6,14 @@ import { fileURLToPath } from 'node:url';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const scratch = mkdtempSync(path.join(tmpdir(), 'platform-readiness-'));
 const tests = [
+  'server/lib/oauthNonceStore.test.ts',
+  'server/lib/tenantPlatformApps.oauthCredentials.test.ts',
+  'server/integrations/messengerAdmission.test.ts',
+  'server/messenger/authorizedCustomerRead.test.ts',
+  'server/publishing/tiktokCreatorConsent.test.ts',
+  'src/lib/tikTokPostSettings.test.ts',
+  'src/components/publishing/TikTokPostSettings.test.tsx',
+  'src/lib/externalVideoApproval.test.ts',
   'scripts/platform-production-readiness.controlled.test.ts',
   'scripts/platform-tiktok-readiness.controlled.test.ts',
   'scripts/platform-messaging-readiness.controlled.test.ts',

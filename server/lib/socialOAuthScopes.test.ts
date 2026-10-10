@@ -50,3 +50,8 @@ test('higher-risk scopes require explicit feature flags', () => {
   assert.deepEqual(instagramLoginOAuthScopes({ INSTAGRAM_CONTENT_PUBLISH_ENABLED: 'true', INSTAGRAM_COMMENTS_FEATURES_ENABLED: 'true' }), ['instagram_business_basic', 'instagram_business_manage_messages', 'instagram_business_content_publish', 'instagram_business_manage_comments']);
   assert.ok(youtubeOAuthScopes({ YOUTUBE_COMMENT_FEATURES_ENABLED: 'true' }).includes('https://www.googleapis.com/auth/youtube.force-ssl'));
 });
+
+test('legacy Instagram messaging explicitly requests official permissions only when enabled',()=>{
+ for(const platform of ['facebook','instagram','combined'] as const){const scopes=metaOAuthScopes(platform,{META_INSTAGRAM_MESSAGING_FEATURES_ENABLED:'true'});for(const required of ['instagram_basic','instagram_manage_messages','pages_manage_metadata'])assert.ok(scopes.includes(required));assert.equal(metaOAuthScopes(platform,{}).includes('instagram_manage_messages'),false);}
+ assert.equal(metaOAuthScopes('messenger',{META_INSTAGRAM_MESSAGING_FEATURES_ENABLED:'true'}).includes('instagram_manage_messages'),false);
+});

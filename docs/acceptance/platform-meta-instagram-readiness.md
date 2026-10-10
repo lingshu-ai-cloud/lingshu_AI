@@ -23,8 +23,8 @@
 | `TENANT_PLATFORM_APP_KEY` | production 强制必填；AES-256-GCM 租户 app secret/账号 token 加密及 OAuth state HMAC 共用 key；需持久且所有实例一致 | implemented / livevalidationmissing |
 | `OAUTH_STATE_SECRET` | 只在非 production 且没有上述 key 时作为 fallback；不能替代 production 的 `TENANT_PLATFORM_APP_KEY` | implemented |
 | `META_GRAPH_VERSION` | 未填源码使用 `v25.0`；需与平台应用支持的实际版本核对，不将默认值当批准 | livevalidationmissing |
-| `META_SOCIAL_APP_ID`, `META_SOCIAL_APP_SECRET` | Meta 全局 fallback；还可回落 `WHATSAPP_EMBEDDED_SIGNUP_APP_ID/SECRET` | implemented / livevalidationmissing |
-| `INSTAGRAM_APP_ID`, `INSTAGRAM_APP_SECRET` | Instagram Login 全局 fallback，与 Meta app 配置分离 | implemented / livevalidationmissing |
+| `META_SOCIAL_APP_ID`, `META_SOCIAL_APP_SECRET` | 仅无 tenant 的全局调用可用；租户不可 fallback。全局别名为 `WHATSAPP_EMBEDDED_SIGNUP_APP_ID/SECRET` | implemented / livevalidationmissing |
+| `INSTAGRAM_APP_ID`, `INSTAGRAM_APP_SECRET` | 仅无 tenant 的全局调用可用；租户不可 fallback，与 Meta app 配置分离 | implemented / livevalidationmissing |
 | `INSTAGRAM_CONTENT_PUBLISH_ENABLED` | `1/true/yes/on/enabled` 才在新 OAuth 请求中加入 native publish scope；不是发布批准 | implemented / productionapproval |
 | `INSTAGRAM_COMMENTS_FEATURES_ENABLED` | 可选 native comments scope，发布不依赖它 | implemented |
 | `META_COMMENTS_FEATURES_ENABLED`, `META_INSIGHTS_FEATURES_ENABLED`, `META_WEBHOOK_FEATURES_ENABLED`, `META_BUSINESS_ASSET_FEATURES_ENABLED` | 各自增加额外旧 Meta scopes；只开获批用途 | implemented / productionapproval |
@@ -40,14 +40,14 @@
 
 源码 migration 存在：`1783000000_created_tenant_platform_apps.js`、后续 delivery/schema 扩展、`1791535000_add_instagram_tenant_app.js`、`1791535001_extend_social_accounts_instagram_login.js`，另有发布/attempt/receipt/交付集合迁移。`livevalidationmissing`：尚未验证目标部署已经应用全部迁移与唯一索引。本阶段不执行迁移。
 
-`livevalidationmissing`：租户 getter 在该租户没有完整 app ID/secret 时回落全局 `data/oauth-config.json` 或 env；上线前需明确是否允许共享 app，验证跨租户不会选错 app。不要把全局 fallback 误写成租户隔离已实测。
+`implemented`: Tenant-specific OAuth config must be unique, owned by that tenant/platform and complete. Missing, foreign, ambiguous or incomplete config fails closed without global fallback.
 
 ## 3. Callback、state 与 scopes
 
 - `implemented`：`POST /api/overseas/social/oauth/facebook/start` 与 `.../instagram/start` 需要登录态。`GET .../oauth/:platform/status` 返回当前租户配置、回调和请求 scopes。callback 在 `socialRouter.use(requireAuth)` 前接收 provider 回跳。
 - 白名单精确地址：`${PUBLIC_BASE_URL}/api/overseas/social/oauth/facebook/callback`、`${PUBLIC_BASE_URL}/api/overseas/social/oauth/instagram/callback`。授权请求和 code exchange 使用同一 `redirectUri`。Meta 用户授权 host 为 `www.facebook.com/{version}/dialog/oauth`，native 为 `www.instagram.com/oauth/authorize`。
 - `implemented`：state HMAC-SHA256，包含 tenantId/userId/platform/returnTo/随机 nonce/10 分钟过期；签名恒定时间比较，callback 比对 platform，returnTo 只允许本地 `/` 路径且拒绝 `//`。
-- `livevalidationmissing` / 安全验证项：Map 消费后有 signed-state fallback，源码没有 durable consumed-nonce ledger。不能宣称 state 已严格一次性消费；需验证重复 callback、进程重启、多实例及同 state 新 code 的拒绝/幂等行为，provider code 一次性不能替代应用级 replay 合同。
+- `implemented`: Durable issued/consumed nonce is consumed once before token exchange and never released after failure. Production requires the existing atomic durable_operation_leases uniqueness capability; otherwise it fails closed. Local exclusive files + fsync reject replay across processes/restarts. PUBLIC_BASE_URL requires a strict HTTPS origin, and exact redirectUri plus client credential identity are bound to state. Controlled tests: 10/10; real deployment storage and platform allowlist remain livevalidationmissing.
 - Meta base scopes `pages_show_list/pages_read_engagement`；Facebook default 再请求 `pages_manage_posts/pages_messaging/pages_manage_metadata`；Facebook `purpose=messenger` 只走 messaging 组合。旧 IG 由 Meta 账号绑定流程产生，普通 `/oauth/instagram/start` 已使用 native Login。
 - native base scopes `instagram_business_basic/instagram_business_manage_messages`；开启发布 flag 再加 `instagram_business_content_publish`。当前 callback 强制消息权限，即使仅发布权限已获准，缺消息权限也不能完成这条现有连接流程。用户重授权后保存实际返回 `tokens.permissions`，开 env 本身不会升级旧 token。
 - `implemented`：native code exchange `api.instagram.com/oauth/access_token`，long-lived exchange `graph.instagram.com/access_token`；账号查询 `graph.instagram.com/{version}/me`。60 天 token 续期路径已有：未过期且进入 14 天窗口时尝试 refresh，过期标记 `expired` 需要重连。`livevalidationmissing`：真实续期、撤回权限、真实 token expiry 尚未本次验证。
@@ -75,4 +75,4 @@
 
 现有测试：`server/lib/socialOAuthScopes.test.ts`、`server/lib/tenantPlatformApps.oauthCredentials.test.ts`、`server/security/oauthConfigPersistence.test.ts`、`server/integrations/instagramLogin.test.ts`、`server/publishing/instagramPublishingContract.test.ts`、`server/publishing/platformCapabilities.test.ts`、`server/publishing/instagramContainerPersistence.test.ts`、`server/publishing/instagramNativePublishing.test.ts`、`server/publishing/instagramWeeklyReceiptIsolation.integration.test.ts`、`server/publishing/scheduledPublisher.test.ts`、`server/publishing/weeklyProviderRecoveryAcceptance.test.ts`。
 
-补充建议：用假 OAuth provider+禁止未声明 network 出口测试 callback replay/过期/platform串用/跨租户app fallback；续期与撤权模拟；强制断网与持久化失败后多周期 same-attempt 只查原 receipt、POST计数始终1；native↔legacy 切换不得复用 capability hash；公开视频 URL 与存储对象字节/hash重验。文档模板变更只检查 JSON 解析、必填证据字段和无 secret 值；本阶段没有重新运行 runtime tests。
+补充建议：用假 OAuth provider+禁止未声明 network 出口测试 callback replay/过期/platform串用/跨租户app fallback；续期与撤权模拟；强制断网与持久化失败后多周期 same-attempt 只查原 receipt、POST计数始终1；native↔legacy 切换不得复用 capability hash；公开视频 URL 与存储对象字节/hash重验。文档模板变更只检查 JSON 解析、必填证据字段和无 secret 值；本阶段已执行受控 runtime 回归，结果见独立提交的证据记录。

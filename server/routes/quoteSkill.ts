@@ -9,7 +9,7 @@ import { requestOrganizationRoleStrict } from '../lib/organizationRole.js';
 import { applyQuoteDraftPatch, buildQuoteDraft, catalogProductsFromEnterprise, composeQuoteReply, quoteQuestions } from '../quoteSkill/engine.js';
 import type { QuoteCatalogProduct, QuoteSkillDraft } from '../quoteSkill/types.js';
 import { quoteCardDigest, quoteNumber, renderQuoteCard } from '../quoteSkill/card.js';
-import { getMessengerCustomers } from '../messenger/conversations.js';
+import { readAuthorizedMessengerCustomers } from '../messenger/authorizedCustomerRead.js';
 import { getInstagramCustomers } from '../instagram/conversations.js';
 import { markWhatsAppHumanReply } from '../whatsapp/historyImport.js';
 import { sendTenantWhatsAppImageWithReceipt } from '../whatsapp/send.js';
@@ -213,7 +213,7 @@ export function createQuoteSkillRouter(deps: QuoteSkillDeps = {}): Router {
   const withDraftLock = createKeyedLock();
   const renderCard = deps.renderCard || renderQuoteCard;
   const sendImage = deps.sendImage || sendTenantWhatsAppImageWithReceipt;
-  const findCustomer = deps.findCustomer || (async (tenantId: string, customerId: string) => (await readAuthorizedWhatsAppCustomers(tenantId, dataStore)).find(item => item.id === customerId) || getMessengerCustomers(tenantId).find(item => item.id === customerId) || getInstagramCustomers(tenantId).find(item => item.id === customerId));
+  const findCustomer = deps.findCustomer || (async (tenantId: string, customerId: string) => (await readAuthorizedWhatsAppCustomers(tenantId, dataStore)).find(item => item.id === customerId) || (await readAuthorizedMessengerCustomers(tenantId, dataStore)).find(item => item.id === customerId) || getInstagramCustomers(tenantId).find(item => item.id === customerId));
   const messagingReady = deps.messagingReady || (async (tenantId: string) => (await readCustomerMessagingAuthorization(tenantId)).providerReady);
   const recordOutbound = deps.recordOutbound || markWhatsAppHumanReply;
   const customerVisibleDraft = async (tenantId: string, draft: QuoteSkillDraft): Promise<QuoteSkillDraft> => {
