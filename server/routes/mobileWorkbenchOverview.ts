@@ -1,9 +1,11 @@
 import { Router, type Request, type Response } from 'express';
+import { projectMobileWorkbenchAgentSchedule } from './mobileWorkbenchAgentSchedule.js';
 import type { DataStore, Record_, Where } from '../storage/datastore.js';
 import type { AuthLocals } from '../middleware/auth.js';
 import { DIGITAL_EMPLOYEE_COLLECTION as C, jsonObject } from './digitalEmployeeRecords.js';
 import { VISIBLE_DIGITAL_EMPLOYEE_AGENT_ROLES, visibleDigitalEmployeeAgentRole } from '../digitalEmployees/agentRoles.js';
 import { buildDailyTotals, normalizeMetricValues, type MetricSnapshot } from '../socialMetrics/aggregation.js';
+import { starterWorkspaceOverview, type MobileWorkbenchProductAdapter } from './mobileWorkbenchProductAdapter.js';
 
 const DAY = 86_400_000;
 const TIME_ZONE = 'Asia/Shanghai' as const;
@@ -96,13 +98,14 @@ function publicInquiry(row: Record_, qualification: Record_) {
 }
 
 export async function buildMobileWorkbenchOverview(store: DataStore, tenantId: string, range: WeekRange) {
-  const [goalsRead, tasksRead, postsRead, interactionsRead, qualificationsRead, metricsRead] = await Promise.all([
+  const [goalsRead, tasksRead, postsRead, interactionsRead, qualificationsRead, metricsRead, eventsRead] = await Promise.all([
     readAll(store, C.goals, { tenant_id: tenantId }),
     readAll(store, C.tasks, { tenant_id: tenantId }),
     readAll(store, 'posts', { tenant_id: tenantId }),
     readAll(store, 'social_interaction_writebacks', { tenant_id: tenantId }),
     readAll(store, 'social_sales_qualifications', { tenant_id: tenantId }),
     readAll(store, 'social_metric_snapshots', { tenant_id: tenantId }),
+    readAll(store, C.events, { tenant_id: tenantId }),
   ]);
   const start = millis(range.startsAt); const end = millis(range.endsAt);
   const goalIds = new Set(goalsRead.items.filter(goal => millis(goal.starts_at) <= end && millis(goal.ends_at) >= start).map(goal => goal.id));
@@ -192,6 +195,7 @@ export async function buildMobileWorkbenchOverview(store: DataStore, tenantId: s
       exposure: metric(metricsRead.availability === 'available' && views !== null ? views : null, metricsRead.availability === 'available' && views !== null ? 'available' : 'unavailable', 'social_metric_snapshots.metrics.views', range, views === null ? '缺少足够的日值或累计快照，不能把缺失曝光显示为 0' : undefined),
       qualifiedInquiries: metric(inquiryAvailable ? inquiries.length : null, inquiryAvailable ? 'available' : 'unavailable', 'social_interaction_writebacks + latest sales/CRM social_sales_qualifications', range),
     },
+    agentSchedule: projectMobileWorkbenchAgentSchedule(tasksRead, tenantId, range, eventsRead),
     agents: { availability: tasksRead.availability, coverage: 'all_open_tasks_in_authenticated_tenant', items: agents },
     taskDrilldown: { availability: taskAvailable ? 'available' : 'unavailable', source: `${C.goals} + ${C.tasks}`, range, total: taskAvailable ? taskDrilldown.length : null, items: taskAvailable ? taskDrilldown : [] },
     contentSchedule: { availability: postsRead.availability, source: 'posts', range, items: postsRead.availability === 'available' ? schedule : [] },
@@ -199,13 +203,17 @@ export async function buildMobileWorkbenchOverview(store: DataStore, tenantId: s
   };
 }
 
-export function createMobileWorkbenchOverviewRouter(store: DataStore) {
+export function createMobileWorkbenchOverviewRouter(store: DataStore, productAdapter?: MobileWorkbenchProductAdapter) {
   const router = Router();
   router.get('/overview', async (req: Request, res: Response) => {
     const { tenantId } = res.locals as AuthLocals;
     try {
       const range = mobileWorkbenchWeekRange(new Date(), req.query.weekStart);
       res.setHeader('Cache-Control', 'private, no-store');
+      if (productAdapter && await productAdapter.kind(req, res) === 'starter_198') {
+        res.json(starterWorkspaceOverview(await productAdapter.starterWorkspace(req, res), range));
+        return;
+      }
       res.json(await buildMobileWorkbenchOverview(store, tenantId, range));
     } catch (error) {
       const code = error instanceof Error ? error.message : '';

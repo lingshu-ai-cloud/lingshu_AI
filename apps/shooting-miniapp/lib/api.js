@@ -103,9 +103,4 @@ module.exports.chat = messages => new Promise((resolve, reject) => {
   })
 })
 
-module.exports.workspaceKind = session => {
-  if (session && session.productProfile === 'starter_198') return 'starter'
-  if (session && session.productProfile === 'advanced_customer') return 'legacy'
-  throw new Error('账号能力边界暂时无法核验')
-};
 module.exports.command = body => request('starter-198/commands', 'POST', body);

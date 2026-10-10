@@ -8,8 +8,10 @@ import { Router, json, type Request, type Response } from 'express';
 import { requireAuth } from '../middleware/auth.js';
 import { consumeDemoQuota } from '../lib/demo.js';
 import { transcribeAudioWithQwen } from '../agents/qwen.js';
+import { createMobileWorkbenchProductAdapter } from './mobileWorkbenchProductAdapter.js';
 export const mobileWorkbenchRouter = Router();
-mobileWorkbenchRouter.use(requireAuth, createMobileWorkbenchOverviewRouter(store), createMobileWorkbenchQueueRouter(store));
+const productAdapter = createMobileWorkbenchProductAdapter();
+mobileWorkbenchRouter.use(requireAuth, createMobileWorkbenchOverviewRouter(store, productAdapter), createMobileWorkbenchQueueRouter(store, productAdapter));
 mobileWorkbenchRouter.use(requireAuth, createMobileWorkbenchActionsRouter(store, createMobileWorkbenchDomainExecutor({
     decideApproval: decideDigitalEmployeeApproval,
     retryTask: retryDigitalEmployeeTask,

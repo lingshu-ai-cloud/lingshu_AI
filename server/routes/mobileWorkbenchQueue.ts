@@ -4,6 +4,7 @@ import type { DataStore, Record_, Where } from '../storage/datastore.js';
 import { enforceSupportSessionReadOnly, type AuthLocals } from '../middleware/auth.js';
 import { DIGITAL_EMPLOYEE_COLLECTION as C, jsonObject } from './digitalEmployeeRecords.js';
 import { visibleDigitalEmployeeAgentRole } from '../digitalEmployees/agentRoles.js';
+import { starterWorkspaceQueue, type MobileWorkbenchProductAdapter } from './mobileWorkbenchProductAdapter.js';
 
 const STATE = 'mobile_workbench_snoozes';
 function queueFailure(res: Response, error: unknown, fallback: string) {
@@ -23,17 +24,23 @@ async function all(store: DataStore, collection: string, where: Where): Promise<
   }
 }
 // Authentication must be installed by the parent router. Never accept scope from the client.
-export function createMobileWorkbenchQueueRouter(store: DataStore, starterSource?: (req: Request, res: Response) => Promise<Record<string, any>>) {
+export function createMobileWorkbenchQueueRouter(store: DataStore, starterSource?: ((req: Request, res: Response) => Promise<Record<string, any>>) | MobileWorkbenchProductAdapter) {
   const router = Router();
   router.use(enforceSupportSessionReadOnly);
   router.get('/queue', async (req, res) => {
     const { tenantId, userId } = res.locals as AuthLocals;
     try {
-      if (starterSource) {
-        const workspace = await starterSource(req, res);
+      const productAdapter = starterSource && typeof starterSource !== 'function' ? starterSource : null;
+      const useStarter = productAdapter ? await productAdapter.kind(req, res) === 'starter_198' : Boolean(starterSource);
+      if (useStarter) {
+        const workspace = productAdapter ? await productAdapter.starterWorkspace(req, res) : await (starterSource as (req: Request, res: Response) => Promise<Record<string, any>>)(req, res);
         const states = await all(store, STATE, { tenant_id: tenantId, user_id: userId });
         res.setHeader('Cache-Control', 'private, no-store');
-        res.json({ workspace, snoozes: Object.fromEntries(states.filter(s => Number(s.until) > Date.now()).map(s => [String(s.matter_id), Number(s.until)])) });
+        const snoozes = Object.fromEntries(states.filter(s => Number(s.until) > Date.now()).map(s => [String(s.matter_id), Number(s.until)]));
+        // Function sources are the existing starter-only internal route. Keep
+        // its compatibility envelope while the unified product adapter emits
+        // the public mobile-workbench contract.
+        res.json(productAdapter ? { ...starterWorkspaceQueue(workspace), snoozes } : { workspace, snoozes });
         return;
       }
       const [tasks, approvals, shoots, states] = await Promise.all([
@@ -61,9 +68,11 @@ export function createMobileWorkbenchQueueRouter(store: DataStore, starterSource
       res.status(400).json({ error: '事项或稍后时间无效' }); return;
     }
     try {
-      if (starterSource) {
+      const productAdapter = starterSource && typeof starterSource !== 'function' ? starterSource : null;
+      const useStarter = productAdapter ? await productAdapter.kind(req, res) === 'starter_198' : Boolean(starterSource);
+      if (useStarter) {
         if (match[1] !== 'starter') { res.status(400).json({ error: '事项类型无效' }); return; }
-        const w = await starterSource(req, res);
+        const w = productAdapter ? await productAdapter.starterWorkspace(req, res) : await (starterSource as (req: Request, res: Response) => Promise<Record<string, any>>)(req, res);
         const items = [...(w.decisions || []), ...(w.today?.nextSteps || []), ...(w.today?.inProgress || [])];
         if (!items.some(i => i.id === match[2])) { res.status(404).json({ error: '事项不存在或已处理' }); return; }
       } else {

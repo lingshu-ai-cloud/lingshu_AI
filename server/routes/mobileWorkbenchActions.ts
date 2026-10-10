@@ -1,11 +1,31 @@
 import { createHash } from 'node:crypto';
-import { Router, json, type Response } from 'express';
+import { Router, json, type Request, type Response } from 'express';
 import type { DataStore, Record_ } from '../storage/datastore.js';
 import { enforceSupportSessionReadOnly, type AuthLocals } from '../middleware/auth.js';
+import { requestOrganizationRoleStrict, type OrganizationRole } from '../lib/organizationRole.js';
 
 export const MOBILE_WORKBENCH_ACTION_RECEIPTS = 'mobile_workbench_action_receipts';
 export type MobileWorkbenchActionStatus = 'accepted' | 'running' | 'succeeded' | 'failed';
 export type MobileWorkbenchActionKind = 'approval_decision' | 'retry_task' | 'starter_command';
+export type MobileWorkbenchActionCapability = 'approval.decide' | 'task.retry';
+
+const ACTION_CAPABILITY: Readonly<Partial<Record<MobileWorkbenchActionKind, MobileWorkbenchActionCapability>>> = {
+  approval_decision: 'approval.decide',
+  retry_task: 'task.retry',
+};
+
+const CAPABILITY_ROLES: Readonly<Record<MobileWorkbenchActionCapability, ReadonlySet<OrganizationRole>>> = {
+  'approval.decide': new Set<OrganizationRole>(['super_admin', 'admin']),
+  'task.retry': new Set<OrganizationRole>(['super_admin', 'admin', 'social_operator', 'customer_service']),
+};
+
+export function mobileWorkbenchActionCapabilityAllowed(
+  role: OrganizationRole | null,
+  kind: MobileWorkbenchActionKind,
+): boolean {
+  const capability = ACTION_CAPABILITY[kind];
+  return Boolean(role && capability && CAPABILITY_ROLES[capability].has(role));
+}
 
 export interface MobileWorkbenchActionInput {
   kind: MobileWorkbenchActionKind;
@@ -24,6 +44,9 @@ export interface MobileWorkbenchActionExecution {
 }
 
 export type MobileWorkbenchActionExecutor = (input: MobileWorkbenchActionExecution) => Promise<Record<string, unknown> | void>;
+
+const IN_FLIGHT_STATUSES = new Set<MobileWorkbenchActionStatus>(['accepted', 'running']);
+const RECEIPT_CONTRACT_VERSION = 1;
 
 export function createMobileWorkbenchDomainExecutor(dependencies: {
   decideApproval(input: { tenantId: string; userId: string; approvalId: string; decision: 'approved' | 'rejected'; note?: string; expectedSubjectVersion: string }): Promise<unknown>;
@@ -55,23 +78,49 @@ function text(value: unknown, max = 200): string {
   return typeof value === 'string' ? value.trim().slice(0, max) : '';
 }
 
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  if (value && typeof value === 'object') {
+    const source = value as Record<string, unknown>;
+    return `{${Object.keys(source).sort().map(key => `${JSON.stringify(key)}:${canonicalJson(source[key])}`).join(',')}}`;
+  }
+  return JSON.stringify(value) ?? 'null';
+}
+
 function hash(value: unknown): string {
-  return createHash('sha256').update(JSON.stringify(value)).digest('hex');
+  return createHash('sha256').update(canonicalJson(value)).digest('hex');
 }
 
 function publicReceipt(row: Record_) {
+  const status = row.status as MobileWorkbenchActionStatus;
+  const outcomeUnknown = status === 'failed'
+    && Boolean(row.error && typeof row.error === 'object' && (row.error as Record<string, unknown>).code === 'mobile_action_outcome_unknown');
+  const startedAtMs = Date.parse(text(row.started_at));
+  const needsReconciliation = status === 'running' && Number.isFinite(startedAtMs)
+    && Date.now() - startedAtMs >= 15 * 60_000;
   return {
     id: row.id,
     kind: row.kind,
     targetId: row.target_id,
     expectedVersion: row.expected_version,
-    status: row.status,
+    status,
     acceptedAt: row.accepted_at,
     startedAt: row.started_at || null,
     finishedAt: row.finished_at || null,
     result: row.result || null,
     error: row.error || null,
+    terminal: !IN_FLIGHT_STATUSES.has(status),
+    recovery: {
+      pollAfterMs: IN_FLIGHT_STATUSES.has(status) ? 1500 : null,
+      canRetry: status === 'failed' && !outcomeUnknown,
+      outcomeKnown: status === 'succeeded' || (status === 'failed' && !outcomeUnknown),
+      needsReconciliation,
+    },
   };
+}
+
+function receiptEnvelope(row: Record_) {
+  return { contractVersion: RECEIPT_CONTRACT_VERSION, receipt: publicReceipt(row) };
 }
 
 function parseAction(value: unknown): MobileWorkbenchActionInput | null {
@@ -128,7 +177,17 @@ async function persistStatus(store: DataStore, receipt: Record_, status: MobileW
   return updated;
 }
 
-export function createMobileWorkbenchActionsRouter(store: DataStore, executor?: MobileWorkbenchActionExecutor) {
+
+export type MobileWorkbenchRoleResolver = (
+  request: Request,
+  userId: string,
+) => Promise<OrganizationRole | null>;
+
+export function createMobileWorkbenchActionsRouter(
+  store: DataStore,
+  executor?: MobileWorkbenchActionExecutor,
+  resolveRole: MobileWorkbenchRoleResolver = (request, userId) => requestOrganizationRoleStrict(request.headers.authorization, userId),
+) {
   const router = Router();
   router.use(enforceSupportSessionReadOnly);
 
@@ -136,6 +195,20 @@ export function createMobileWorkbenchActionsRouter(store: DataStore, executor?: 
     const { tenantId, userId } = res.locals as AuthLocals;
     const action = parseAction(req.body);
     if (!action) { res.status(400).json({ error: 'mobile_action_invalid' }); return; }
+    let role: OrganizationRole | null;
+    try {
+      role = await resolveRole(req, userId);
+    } catch {
+      res.status(503).json({ error: 'mobile_action_authorization_unavailable' }); return;
+    }
+    if (!mobileWorkbenchActionCapabilityAllowed(role, action.kind)) {
+      res.status(403).json({
+        error: 'mobile_action_capability_required',
+        capability: ACTION_CAPABILITY[action.kind] ?? null,
+        message: '当前组织角色无权执行此操作。',
+      });
+      return;
+    }
     const requestHash = hash(action);
     const receiptId = hash([tenantId, userId, action.idempotencyKey]).slice(0, 24);
     try {
@@ -145,7 +218,7 @@ export function createMobileWorkbenchActionsRouter(store: DataStore, executor?: 
           res.status(409).json({ error: 'mobile_action_idempotency_conflict' }); return;
         }
         res.setHeader('Cache-Control', 'private, no-store');
-        res.status(existing.status === 'accepted' || existing.status === 'running' ? 202 : 200).json({ receipt: publicReceipt(existing), replayed: true });
+        res.status(existing.status === 'accepted' || existing.status === 'running' ? 202 : 200).json({ ...receiptEnvelope(existing), replayed: true });
         return;
       }
       if (action.kind === 'starter_command') {
@@ -169,26 +242,60 @@ export function createMobileWorkbenchActionsRouter(store: DataStore, executor?: 
       try { receipt = await store.create<Record_>(MOBILE_WORKBENCH_ACTION_RECEIPTS, data); } catch { /* verify a concurrent insert below */ }
       if (!receipt) receipt = await store.getById<Record_>(MOBILE_WORKBENCH_ACTION_RECEIPTS, receiptId);
       if (!receipt || receipt.tenant_id !== tenantId || receipt.user_id !== userId || receipt.request_hash !== requestHash) {
+        if (receipt && receipt.tenant_id === tenantId && receipt.user_id === userId && receipt.request_hash !== requestHash) {
+          res.status(409).json({ error: 'mobile_action_idempotency_conflict' }); return;
+        }
         throw new Error('mobile_action_receipt_storage_unavailable');
       }
       if (!executor) {
         res.setHeader('Cache-Control', 'private, no-store');
-        res.status(202).json({ receipt: publicReceipt(receipt), replayed: false });
+        res.status(202).json({ ...receiptEnvelope(receipt), replayed: false });
         return;
       }
       receipt = await persistStatus(store, receipt, 'running', { started_at: new Date().toISOString() });
       try {
         const result = await executor({ tenantId, userId, receiptId, action, subject });
         receipt = await persistStatus(store, receipt, 'succeeded', { result: result ?? {}, error: null, finished_at: new Date().toISOString() });
-        res.status(200).json({ receipt: publicReceipt(receipt), replayed: false });
+        res.status(200).json({ ...receiptEnvelope(receipt), replayed: false });
       } catch (error) {
         const failure = { code: error instanceof Error ? text(error.message, 160) || 'mobile_action_failed' : 'mobile_action_failed' };
         receipt = await persistStatus(store, receipt, 'failed', { error: failure, finished_at: new Date().toISOString() });
-        res.status(200).json({ receipt: publicReceipt(receipt), replayed: false });
+        res.status(200).json({ ...receiptEnvelope(receipt), replayed: false });
       }
     } catch {
       res.status(503).json({ error: 'mobile_action_receipt_unavailable' });
     }
+  });
+
+  router.get('/actions', async (req, res: Response) => {
+    const { tenantId, userId } = res.locals as AuthLocals;
+    const scope = text(req.query.scope, 20) || 'in_flight';
+    const limit = Math.min(100, Math.max(1, Number.parseInt(text(req.query.limit, 3), 10) || 50));
+    if (!['in_flight', 'all'].includes(scope)) { res.status(400).json({ error: 'mobile_action_receipt_scope_invalid' }); return; }
+    try {
+      const baseWhere = { tenant_id: tenantId, user_id: userId };
+      let scoped: Record_[];
+      if (scope === 'in_flight') {
+        const [accepted, running] = await Promise.all([
+          store.list<Record_>(MOBILE_WORKBENCH_ACTION_RECEIPTS, { where: { ...baseWhere, status: 'accepted' }, sort: '-accepted_at', page: 1, perPage: limit }),
+          store.list<Record_>(MOBILE_WORKBENCH_ACTION_RECEIPTS, { where: { ...baseWhere, status: 'running' }, sort: '-accepted_at', page: 1, perPage: limit }),
+        ]);
+        scoped = [...accepted.items, ...running.items]
+          .sort((left, right) => text(right.accepted_at).localeCompare(text(left.accepted_at))).slice(0, limit);
+      } else {
+        const result = await store.list<Record_>(MOBILE_WORKBENCH_ACTION_RECEIPTS, {
+          where: baseWhere, sort: '-accepted_at', page: 1, perPage: limit,
+        });
+        scoped = result.items;
+      }
+      res.setHeader('Cache-Control', 'private, no-store');
+      res.json({
+        contractVersion: RECEIPT_CONTRACT_VERSION,
+        receipts: scoped.map(publicReceipt),
+        scope,
+        serverTime: new Date().toISOString(),
+      });
+    } catch { res.status(503).json({ error: 'mobile_action_receipt_unavailable' }); }
   });
 
   router.get('/actions/:receiptId', async (req, res: Response) => {
@@ -201,7 +308,7 @@ export function createMobileWorkbenchActionsRouter(store: DataStore, executor?: 
         res.status(404).json({ error: 'mobile_action_receipt_not_found' }); return;
       }
       res.setHeader('Cache-Control', 'private, no-store');
-      res.json({ receipt: publicReceipt(receipt) });
+      res.json(receiptEnvelope(receipt));
     } catch { res.status(503).json({ error: 'mobile_action_receipt_unavailable' }); }
   });
   return router;

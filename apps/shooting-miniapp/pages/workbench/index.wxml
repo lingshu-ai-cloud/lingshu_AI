@@ -13,14 +13,22 @@
       <view class="muted sync">{{loading ? '正在同步真实工作数据…' : '最近刷新 ' + (updatedAt || '尚未同步')}}</view>
       <view class="section-head agent-schedule-head"><view><view class="section-title">Agent 排期</view><view class="muted">当前安排 · 随工作台实时更新</view></view></view>
       <view class="agent-schedule panel">
-        <view wx:for="{{agents}}" wx:key="role" class="agent-schedule-row">
-          <view class="agent-avatar">枢</view>
-          <view class="grow">
-            <view class="agent-schedule-meta"><text class="strong">{{item.label}}</text><text class="agent-status">{{item.statusLabel}}</text></view>
-            <view class="agent-assignment">{{item.currentTask || '当前没有安排任务'}}</view>
+        <view wx:for="{{agentScheduleGroups}}" wx:for-item="group" wx:key="role" class="schedule-group">
+          <view class="schedule-group-heading"><view class="agent-avatar">枢</view><text class="strong">{{group.label}}</text><text class="muted schedule-group-count">{{group.items.length ? group.items.length + ' 项安排' : group.unavailable ? '未同步' : '空闲'}}</text></view>
+          <view wx:for="{{group.items}}" wx:key="id" class="schedule-assignment" data-id="{{item.id}}" bindtap="openAgentAssignment">
+            <view class="schedule-dot {{item.blockedLabel ? 'schedule-dot-blocked' : ''}}"></view>
+            <view class="schedule-time">{{item.timeLabel}}<text wx:if="{{item.dueLabel}}"> · {{item.dueLabel}}</text></view>
+            <view class="schedule-title-row"><text class="strong">{{item.title}}</text><text class="agent-status">{{item.statusLabel}}</text></view>
+            <view class="schedule-node">当前节点 · {{item.stageLabel}}</view>
+            <view class="muted">负责 · {{item.ownerLabel}}</view>
+            <view wx:if="{{item.blockedLabel}}" class="schedule-blocked">阻塞 · {{item.blockedLabel}}</view>
+            <view wx:if="{{item.lastEventLabel}}" class="muted">最近进展 · {{item.lastEventLabel}}</view>
+            <view class="schedule-next">下一步 · {{item.nextLabel}}</view>
+            <view class="schedule-footer"><text class="muted">{{item.observedLabel}}</text><text class="link">{{item.needsIntervention ? '需要你处理 ›' : '查看进展 ›'}}</text></view>
           </view>
+          <view wx:if="{{!group.items.length}}" class="schedule-idle muted">{{group.unavailable ? '排期未成功同步，请刷新重试' : '当前没有安排任务'}}</view>
         </view>
-        <view wx:if="{{!agents.length && !loading}}" class="empty">{{error ? 'Agent 排期未成功同步，请刷新重试' : '当前没有 Agent 排期'}}</view>
+        <view wx:if="{{!agentScheduleGroups.length && !loading}}" class="empty">{{error ? 'Agent 排期未成功同步，请刷新重试' : '当前没有 Agent 排期'}}</view>
       </view>
       <button class="secondary refresh-button" loading="{{loading}}" bindtap="refresh">刷新工作数据</button>
     </view>
@@ -35,7 +43,12 @@
       <view class="assistant-switch"><text class="assistant-switch-option {{assistantMode === 'chat' ? 'active' : ''}}" data-mode="chat" bindtap="switchAssistant">对话</text><text class="assistant-switch-option {{assistantMode === 'notifications' ? 'active' : ''}}" data-mode="notifications" bindtap="switchAssistant">通知 {{notifications.length}}</text></view>
       <block wx:if="{{assistantMode === 'chat'}}"><view wx:if="{{!messages.length}}" class="welcome"><view class="assistant-avatar">枢</view><view class="title">我在这。今天想推进什么？</view><view class="muted">查看进展、找到卡点、准备下一步</view></view><view wx:if="{{!messages.length}}" class="suggestions"><view class="suggestion" wx:for="{{suggestions}}" wx:key="*this" data-text="{{item}}" bindtap="askSuggestion">→　{{item}}</view></view>
       <scroll-view wx:else scroll-y class="chat" scroll-into-view="{{chatAnchor}}"><view wx:for="{{messages}}" wx:key="id" id="{{item.id}}" class="message-bubble {{item.role}}"><view class="muted">{{item.role === 'user' ? '你' : '灵小枢'}}</view><text user-select>{{item.content}}</text><view wx:if="{{item.actions.length}}" class="assistant-actions"><button class="assistant-action-button" wx:for="{{item.actions}}" wx:for-item="action" wx:key="id" data-id="{{action.id}}" bindtap="assistantAction"><view class="assistant-action-label">{{action.label}}</view><view class="assistant-action-hint">{{action.hint}} ›</view></button></view></view><view wx:if="{{sending}}" class="muted">正在整理回答…</view></scroll-view>
-      <view class="composer"><textarea class="composer-input" auto-height maxlength="4000" placeholder="说说你想做什么" value="{{input}}" bindinput="inputText"/><view class="composer-actions"><button class="composer-button" size="mini" bindtap="toggleVoice" disabled="{{transcribing || sending}}">{{recording ? '停止录音' : transcribing ? '识别中…' : '语音'}}</button><button class="composer-button" wx:if="{{recording}}" size="mini" bindtap="cancelRecording">取消</button><button size="mini" class="primary composer-button" loading="{{sending}}" disabled="{{!input || recording || transcribing || offline}}" bindtap="send">发送 ↑</button></view><button wx:if="{{workspaceKind === 'starter'}}" size="mini" disabled="{{!input || sending || recording || transcribing || offline}}" bindtap="submitInstruction">提交工作指令</button><view class="muted">{{recording ? '正在录音，最长 60 秒' : '语音识别后可编辑，再发送'}}</view></view></block>
+      <view wx:if="{{assistantLoading}}" class="muted">正在恢复企业对话与执行状态…</view><button size="mini" class="secondary" bindtap="reloadAssistant">同步对话</button>
+      <view wx:for="{{assistantLinks}}" wx:key="id" class="assistant-evidence"><button size="mini" data-index="{{index}}" bindtap="assistantAction">{{item.title || '查看工作证据'}} ›</button></view>
+      <view wx:for="{{assistantActions}}" wx:key="id" class="assistant-evidence"><button size="mini" class="secondary" disabled="{{offline || assistantConfirming}}" data-index="{{index}}" bindtap="previewAssistantAction">{{item.label || '查看操作方案'}} ›</button></view>
+      <view wx:if="{{assistantPreview}}" class="panel assistant-preview"><view class="strong">执行前确认 · {{assistantPreview.target.title}}</view><view class="muted">{{assistantPreview.impact}}</view><view wx:for="{{assistantPreview.steps}}" wx:key="*this" class="event">{{index + 1}}. {{item}}</view><view class="warning">{{assistantPreview.cost.note}}</view><view class="actions"><button class="secondary" disabled="{{assistantConfirming}}" bindtap="dismissAssistantPreview">取消</button><button class="primary" disabled="{{offline || assistantConfirming}}" loading="{{assistantConfirming}}" bindtap="confirmAssistantAction">确认执行</button></view></view>
+      <view wx:if="{{assistantReceipts.length}}" class="panel assistant-receipts"><view class="strong">执行记录</view><view wx:for="{{assistantReceipts}}" wx:key="id" class="event"><view>{{item.statusLabel}}</view><view wx:if="{{item.errorLabel}}" class="warning">{{item.errorLabel}}</view><view class="muted">{{item.acceptedAt}}</view></view><button size="mini" bindtap="refreshAssistantReceipts">刷新执行状态</button></view>
+      <view class="composer"><textarea class="composer-input" auto-height maxlength="4000" placeholder="说说你想做什么" value="{{input}}" bindinput="inputText"/><view class="composer-actions"><button class="composer-button" size="mini" bindtap="toggleVoice" disabled="{{transcribing || sending}}">{{recording ? '停止录音' : transcribing ? '识别中…' : '语音'}}</button><button class="composer-button" wx:if="{{recording}}" size="mini" bindtap="cancelRecording">取消</button><button size="mini" class="primary composer-button" loading="{{sending}}" disabled="{{!input || recording || transcribing || offline}}" bindtap="send">发送 ↑</button></view><view class="muted">{{recording ? '正在录音，最长 60 秒' : '语音识别后可编辑，再发送'}}</view></view></block>
       <view wx:else><view wx:for="{{notifications}}" wx:key="id" class="notification" data-id="{{item.id}}" bindtap="openNotification"><view class="strong">{{item.title}}</view><view class="muted">{{item.time}}</view></view><view wx:if="{{!notifications.length}}" class="empty">当前周期暂无工作通知</view></view>
     </view>
     <view class="tabs"><view class="tab {{tab === 'todo' ? 'active' : ''}}" data-tab="todo" bindtap="switchTab"><text class="tab-icon">◇</text><text>待处理 {{matters.length || ''}}</text></view><view class="tab {{tab === 'work' ? 'active' : ''}}" data-tab="work" bindtap="switchTab"><text class="tab-icon">▦</text><text>工作</text></view><view class="tab {{tab === 'assistant' ? 'active' : ''}}" data-tab="assistant" bindtap="switchTab"><text class="tab-icon">◉</text><text>助手</text></view></view>
