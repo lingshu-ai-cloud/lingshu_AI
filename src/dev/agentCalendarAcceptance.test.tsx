@@ -5,6 +5,7 @@ import {renderToStaticMarkup} from 'react-dom/server';
 import AgentWeeklyCalendar from '../components/smartBusiness/AgentWeeklyCalendar';
 import {agentCalendarDemo as cold} from './agentCalendarDemo';
 import {agentCalendarEstablishedDemo as established} from './agentCalendarEstablishedDemo';
+import {establishedProfilePreviewTasks} from './establishedProfilePreview';
 
 function verifyGraph(tasks: typeof cold, prefix:'Z'|'H') {
   const ids=new Set(tasks.map(task=>task.id));
@@ -17,6 +18,14 @@ function verifyGraph(tasks: typeof cold, prefix:'Z'|'H') {
     assert(tasks.find(item=>item.id===dependency)!.date<=task.date,`${dependency} is after ${task.id}`);
   }
 }
+
+test('H calendar subtitle uses the selected mother-content allocation',()=>{
+  for(const owned of [20,40] as const){
+    const html=renderToStaticMarkup(<AgentWeeklyCalendar startsAt="2026-10-05" tasks={establishedProfilePreviewTasks(owned)} demo/>);
+    assert.match(html,new RegExp(`自有 ${owned}% / 外部 ${100-owned}% · 按播放与赞转评诊断`));
+    if(owned===20)assert(!html.includes('自有 40% / 外部 60%'));
+  }
+});
 
 test('Z and H acceptance calendars expose distinct complete seven-day task graphs',()=>{
   verifyGraph(cold,'Z'); verifyGraph(established,'H');

@@ -114,10 +114,11 @@ export default function AgentWeeklyCalendar({ startsAt, tasks, demo = false, onO
   const days = Array.from({ length: 7 }, (_, i) => shift(monday, i));
   const weekTasks = tasks.filter(task => task.date >= key(days[0]) && task.date <= key(days[6]));
   const establishedDemo = demo && tasks.some(task=>task.chain?.startsWith('H-'));
+  const demoSourceAllocation = establishedDemo ? tasks.find(task=>task.chain==='H-M1')?.output.match(/自有 \d+% \/ 外部 \d+%/)?.[0] ?? '来源配额待核验' : '';
   const earlierTasks = tasks.filter(task => task.date < key(days[0]));
   return <div id="agent-weekly-calendar" className="scroll-mt-4 p-5 sm:p-6">
     <div className="mb-5 flex flex-wrap items-center justify-between gap-4">
-      <div><h3 className="text-lg font-black text-slate-950">{demo ? establishedDemo ? "B2B 有基础 · 增长周任务日历" : "B2B 零基础 · 首周任务日历" : "Agent 周任务日历"}</h3><p className="mt-1 text-xs text-slate-500">{demo ? establishedDemo ? "自有 40% / 外部 60% · 按播放与赞转评诊断 · H 主链路与副链路" : "外部参考 100% · 3 条母版 / 6 个平台版本 · 主链路与按需触发的副链路" : "按每日交付展示已生成的任务、主负责 Agent 和上游依赖"}</p></div>
+      <div><h3 className="text-lg font-black text-slate-950">{demo ? establishedDemo ? "B2B 有基础 · 增长周任务日历" : "B2B 零基础 · 首周任务日历" : "Agent 周任务日历"}</h3><p className="mt-1 text-xs text-slate-500">{demo ? establishedDemo ? `${demoSourceAllocation} · 按播放与赞转评诊断 · H 主链路与副链路` : "外部参考 100% · 3 条母版 / 6 个平台版本 · 主链路与按需触发的副链路" : "按每日交付展示已生成的任务、主负责 Agent 和上游依赖"}</p></div>
       <div className="flex items-center gap-2"><button type="button" aria-label="上一周" onClick={() => setOffset(offset - 1)} className="rounded-lg border border-slate-200 p-2"><ArrowLeft size={14}/></button><span className="text-xs font-bold text-slate-700">{days[0].toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' })} — {days[6].toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' })}</span><button type="button" aria-label="下一周" onClick={() => setOffset(offset + 1)} className="rounded-lg border border-slate-200 p-2"><ArrowRight size={14}/></button><button type="button" onClick={() => setOffset(0)} className="rounded-lg bg-slate-100 px-3 py-2 text-xs font-bold">本周</button></div>
     </div>
     <div className="mb-4 flex flex-wrap items-center gap-3 text-[10px] font-bold">{Object.values(agents).map(agent => <span key={agent.label} className={`rounded-full px-2.5 py-1 ${agent.tone}`}>{agent.label}</span>)}<span className="ml-auto text-slate-400">{weekTasks.length} 项交付{demo ? ' · 示例排期' : ''}</span></div>
