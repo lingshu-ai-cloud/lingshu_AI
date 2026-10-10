@@ -54,6 +54,10 @@ M1 首次完整 runner：独立 `server/runtime/weeklyM1Production.integration.t
 
 本次实际身份：package `0d12a8f4-89a4-4269-b20f-1a4c49b9784d` v2，snapshot `wss_93ff9dda-f157-4a62-8c76-2d55337fb8a0`；正式factory产生19项任务。当前仅business outline排队，其余按真实依赖阻塞，尚无伪success。新增跑通的业务环节是“零基础单条视频从创建到确认容量、目标版本重新规划、派单和激活”；制作、验收及发布尚未通过。
 
+M1 第一次生产推进失败：49452实际退出1（同日志）。五个规划前驱已通过正式adapter、validator和worker核销；`material_preparation` 被真实领取后，生产adapter返回 `weekly_production_budget_required`。当时尚未创建目标内容run/job，也未进入产品素材供给。当前假设是容量/周包预算只形成排期成本证据，没有归一为生产adapter要求的实际预算授权；负责人正核真实capacity/package预算来源。不得通过手改任务或伪造成功绕过。若按明确预算来源修复后仍同因失败一次，将集中评审预算合同。
+
+M1 第二次生产推进已通过素材准备阶段：周包创建时显式写入与容量计划一致的单条预算 `perItemBudgetCny: 1`，没有事后修改周包或放宽校验。受控完整测试实际退出0；五个规划任务和 `material_preparation` 均由正式worker完成，实际经历产品素材需求识别、人工提交、三项审核、绑定、重新检查和任务核销。当前原目标内容的 `script` 已排队，后续分镜、素材就绪、资产生成、视频生成、质检、用户验收与发布仍被真实依赖阻塞，尚未产生内容run/job，也没有真实平台发布回执。素材字节、时间和外部分析仍为本地受控证据，不代表生产环境或付费供应商验证。
+
 M1 首次协议审查结果：当前提案 GET 只返回 proposal，不能证明确认新版本已实际落地；前端丢确认响应后仍可再次 POST。snapshot、旧图冻结、新版本保存为分步写入，有 snapshot 不等于 committed。需增加只读确认结果查询，明确未提交/待恢复/已落地；故障链逐一验证丢响应、保存中断、身份和输入漂移，不能重复生产或将半完成状态显示成功。这是已核源码缺口，尚无故障注入通过证据，纳入 M1 而不另开版本补丁。
 
 M1 协议缺口第一次修复：服务新增只读确认回执，严格绑定原 proposal、source/target 版本、snapshot hash 与实际新草稿 scheduleRevisionRef，返回 `not_committed`、`pending_recovery` 或 `committed`。初次排期路由与前端 API 已接线；确认响应异常后页面只读查询，pending/committed 均移除再次确认入口，未自动重复 POST。实际联合测试34721退出0（`/tmp/weekly-m1-confirmation-recovery.log`，2项），包含真实初次容量正向、未提交/已落地/删除目标模拟分步中断三态，以及实际 HTTP 前端读取未提交状态。受控删除只用于独立内存存储模拟故障，不是用户数据操作。统一 types69507 与 build49401 仍在运行，尚未计为通过。
