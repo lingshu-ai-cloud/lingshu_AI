@@ -25,6 +25,13 @@ test('Z and H acceptance calendars expose distinct complete seven-day task graph
   assert(established.some(task=>/播放、点赞、转发、评论/.test(task.output)));
 });
 
+test('Z/H publication fixtures preserve a full day after both production and review',()=>{
+  for(const [tasks,pairs] of [[cold,[['task-14','task-16'],['task-15','task-16'],['task-27','task-36'],['task-28','task-36']]],[established,[['h-task-12','h-task-15'],['h-task-13','h-task-15'],['h-task-16','h-task-20'],['h-task-28','h-task-20']]]] as const){
+    const at=(id:string)=>{const task=tasks.find(item=>item.id===id)!;return Date.parse(`${task.date}T${task.time}:00+08:00`);};
+    for(const [upstream,publishing] of pairs)assert(at(publishing)-at(upstream)>=86400000,`${publishing} must follow ${upstream} by at least 24h`);
+  }
+});
+
 test('calendar UI renders horizontal week, owner, overdue upload, channels, publishing and repair entries',()=>{
   for(const [tasks,profile] of [[cold,'B2B 零基础'],[established,'B2B 有基础']] as const){
     const html=renderToStaticMarkup(<AgentWeeklyCalendar startsAt="2026-10-05" tasks={[...tasks]} demo/>);
