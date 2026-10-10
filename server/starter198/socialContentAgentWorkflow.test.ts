@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import test from 'node:test';
 import { createSocialAssetSupplyPlan } from '../../shared/socialContentAssetSupply';
 import type {
   SocialContentTaskBrief,
@@ -513,3 +514,44 @@ assert.equal(hybrid.replicationJob?.referenceAssignments.find(item => item.analy
 assert.ok(hybrid.directorBrief.referenceEvidence.some(item => item.analysisId === 'proof-analysis'));
 
 console.log('social content agent workflow tests passed');
+
+// Pure Director→Content contract regressions. These do not call a provider and
+// intentionally expose missing fail-closed identity validation in the builder.
+function sceneIdentityRegression(script: SocialReplicationScriptVersion, assetSupplyPlan = supply) {
+  return buildSocialAgentWorkflow({
+    taskId: 'scene-identity-regression', taskVersion: '12', taskStatus: 'plan_review',
+    mode: 'instant', weeklyPlanId: null, brief, sources: [],
+    factSourceRefs: ['knowledge:product-1'], assetSupplyPlan, referenceAnalysis,
+    replicationScript: script,
+  });
+}
+
+test('missing scene ID cannot borrow the ordinal supply shot', () => {
+  const script = structuredClone(replicationScript);
+  script.shots[0]!.shotId = 'scene-without-supply';
+  const result = sceneIdentityRegression(script);
+  assert.equal(result.executionPlanReview.approved, false,
+    'unknown scene ID must block instead of using supply.shots[0] under a new ID');
+});
+
+test('duplicate scene IDs cannot overwrite a different Director scene during review', () => {
+  const script = structuredClone(replicationScript);
+  script.shots[1]!.shotId = script.shots[0]!.shotId;
+  const result = sceneIdentityRegression(script);
+  assert.equal(result.executionPlanReview.approved, false,
+    'two distinct timed Director scenes must not both approve against the last Map entry');
+});
+
+test('missing reference ID cannot borrow a different ordinal reference after reordering', () => {
+  const script = structuredClone(replicationScript);
+  script.shots[0]!.referenceShotId = 'reference-missing';
+  const reversed = { ...referenceAnalysis, shots: [...referenceAnalysis.shots].reverse() };
+  const result = buildSocialAgentWorkflow({
+    taskId: 'reference-identity-regression', taskVersion: '12', taskStatus: 'plan_review',
+    mode: 'instant', weeklyPlanId: null, brief, sources: [],
+    factSourceRefs: ['knowledge:product-1'], assetSupplyPlan: supply,
+    referenceAnalysis: reversed, replicationScript: script,
+  });
+  assert.equal(result.executionPlanReview.approved, false,
+    'missing reference identity must not inherit the CTA reference at ordinal zero');
+});

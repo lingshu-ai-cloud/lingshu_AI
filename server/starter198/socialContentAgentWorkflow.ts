@@ -352,18 +352,29 @@ function buildDirectorBrief(
   const scriptShots = input.replicationScript?.shots ?? [];
   const supplyShots = input.assetSupplyPlan.shots;
   const supplyById = new Map(supplyShots.map(shot => [shot.shotId, shot]));
-  const referenceById = new Map((input.referenceAnalysis?.shots ?? []).map(shot => [shot.shotId, shot]));
+  const referenceShots = input.referenceAnalysis?.shots ?? [];
+  const referenceById = new Map(referenceShots.map(shot => [shot.shotId, shot]));
+  const scriptIdentityReady = !scriptShots.length || (
+    new Set(scriptShots.map(shot => shot.shotId)).size === scriptShots.length
+    && new Set(supplyShots.map(shot => shot.shotId)).size === supplyShots.length
+    && new Set(referenceShots.map(shot => shot.shotId)).size === referenceShots.length
+    && scriptShots.every(shot => supplyById.has(shot.shotId)
+      && (!shot.referenceShotId || referenceById.has(shot.referenceShotId)))
+  );
   const productSelection = sceneProductSelection(input);
   const scenes = (scriptShots.length ? scriptShots : supplyShots.map(() => null)).map((script, index) => {
-    const supply = (script ? supplyById.get(script.shotId) : undefined) ?? supplyShots[index] ?? supplyShots[0];
+    const supply = script ? supplyById.get(script.shotId) : supplyShots[index] ?? supplyShots[0];
     if (!supply) return null;
+    const reference = script
+      ? referenceById.get(script.referenceShotId || '')
+      : referenceShots[index];
     return directorScene({
       index,
       script,
       supply,
-      reference: referenceById.get(script?.referenceShotId || '') ?? input.referenceAnalysis?.shots[index],
+      reference,
       replicationFactors: replicationJob?.factorSpecs.filter(factor => (
-        factor.referenceShotId === (script?.referenceShotId ?? input.referenceAnalysis?.shots[index]?.shotId ?? null)
+        factor.referenceShotId === (script?.referenceShotId ?? reference?.shotId ?? null)
       )) ?? [],
       productSelection,
       primaryHook: input.referenceAnalysis?.hookAnalysis ?? null,
@@ -389,7 +400,9 @@ function buildDirectorBrief(
     const capacity = /[\u3400-\u9fff]/.test(speech) ? scene.duration.targetSeconds * 5 : scene.duration.targetSeconds * 2.7;
     return units <= Math.max(1, capacity);
   });
-  const status = scenes.length > 0 && referenceReady && factorsReady && timelineValid && dialogueFits ? 'ready' : 'blocked';
+  const expectedSceneCount = scriptShots.length || supplyShots.length;
+  const status = scenes.length > 0 && scenes.length === expectedSceneCount && scriptIdentityReady
+    && referenceReady && factorsReady && timelineValid && dialogueFits ? 'ready' : 'blocked';
   const totalDurationSeconds = Math.max(0, ...scenes.map(scene => scene.duration.endSeconds));
   const inferredProductRef = productSelection.productRef;
   const requirementText = [
@@ -758,7 +771,7 @@ function executionScene(input: {
 function buildExecutionPlan(input: BuildSocialAgentWorkflowInput, directorBrief: SocialDirectorBrief): SocialContentExecutionPlan {
   const supplyById = new Map(input.assetSupplyPlan.shots.map(shot => [shot.shotId, shot]));
   const scenes = directorBrief.scenes.flatMap(scene => {
-    const supply = supplyById.get(scene.sceneId) ?? input.assetSupplyPlan.shots[scene.order - 1];
+    const supply = supplyById.get(scene.sceneId);
     return supply ? [executionScene({
       taskId: input.taskId,
       taskVersion: input.taskVersion,

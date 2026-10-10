@@ -124,6 +124,47 @@ test('freezes collected-video lineage, DirectorBrief and per-shot Content Agent 
     variantDifference: { variantId: 'variant-b', baselineVariantId: 'variant-a', changedSceneIds: ['scene-hook'], dimensions: ['hook'], hypothesis: '新开场提高停留', unchangedConstraints: ['产品事实', 'CTA'], surfaceHashes } }), /source_analysis_version_required/);
 });
 
+test('records the first render as a baseline and reserves variant differences for derived renders', () => {
+  const baseline = buildSocialProductionHandoff({
+    taskId: 'task-baseline',
+    version: '3',
+    sourceAnalysis: analysis,
+    directorBrief: brief,
+    executionPlan,
+    executionPlanReview,
+    variantDifference: {
+      variantId: 'variant-initial',
+      baselineVariantId: null,
+      changedSceneIds: [],
+      dimensions: [],
+      hypothesis: '首次成片只建立基线，不声明提升。',
+      unchangedConstraints: ['产品事实', 'CTA'],
+      surfaceHashes: {
+        firstThreeSeconds: { baseline: null, current: surfaceHashes.firstThreeSeconds.current },
+        caption: { baseline: null, current: surfaceHashes.caption.current },
+        cover: { baseline: null, current: surfaceHashes.cover.current },
+        cta: { baseline: null, current: surfaceHashes.cta.current },
+        copy: { baseline: null, current: surfaceHashes.copy.current },
+        render: { baseline: null, current: surfaceHashes.render.current },
+      },
+    },
+  });
+  assert.equal(baseline.variantDifference.baselineVariantId, null);
+  assert.deepEqual(baseline.variantDifference.dimensions, []);
+  assert.throws(() => buildSocialProductionHandoff({
+    taskId: 'task-false-variant',
+    version: '3',
+    sourceAnalysis: analysis,
+    directorBrief: brief,
+    executionPlan,
+    executionPlanReview,
+    variantDifference: {
+      ...baseline.variantDifference,
+      dimensions: ['render_hash'],
+    },
+  }), /variant_difference_required/);
+});
+
 test('requires append-only G4 technical receipts, Director G5 and business G6 preflight', async () => {
   const handoff = fixture();
   const repository = new MemoryRepository() as unknown as Starter198Repository;

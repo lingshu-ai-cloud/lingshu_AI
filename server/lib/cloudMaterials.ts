@@ -1,3 +1,4 @@
+import type {MaterialTheme,MaterialSourceCategory,MaterialClassificationStatus} from '../../shared/materialTaxonomy.js';
 import { openAsBlob } from 'node:fs';
 import { Readable } from 'node:stream';
 import { adminFetch } from '../storage/pb.js';
@@ -8,6 +9,12 @@ import { postgresListWithPocketBaseFilter, postgresStore, selectedDataBackend } 
 
 export interface CloudMaterialRecord extends Record<string, unknown> {
   id: string;
+  sourceCategory?:MaterialSourceCategory|null;
+  primaryTheme?:MaterialTheme|''|null;
+  themeTags?:MaterialTheme[]|string|null;
+  classificationStatus?:MaterialClassificationStatus|''|null;
+  classificationSource?:string|null;
+  classificationEvidence?:unknown[]|string|null;
   videoFile?: string;
   posterFile?: string;
   objectKey?: string;
@@ -250,6 +257,12 @@ export function cloudMaterialView(item: CloudMaterialRecord): Record<string, unk
     size: humanSize(Number(item.sizeBytes || 0)), sizeBytes: Number(item.sizeBytes || 0), file: String(item.videoFile || item.objectKey || ''),
     url: `/studio-media/${item.id}/media.mp4`, poster: `/studio-media/${item.id}/poster.jpg`,
     scope: String(item.scope || 'own'), tenantId: materialTenantId(item), usage: String(item.usage || 'editable'),
+    sourceCategory:item.sourceCategory,
+    primaryTheme:item.primaryTheme,
+    themeTags:parseSegments(item.themeTags),
+    classificationStatus:item.classificationStatus,
+    classificationSource:item.classificationSource,
+    classificationEvidence:parseSegments(item.classificationEvidence),
     sourceType: String(item.sourceType || 'licensed_upload'), sourceName: String(item.sourceName || ''),
     sourceProvider: String(item.sourceProvider || ''), sourceCreator: String(item.sourceCreator || ''),
     sourceUrl: String(item.sourceUrl || ''),
