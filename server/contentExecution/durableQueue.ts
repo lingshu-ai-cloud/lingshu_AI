@@ -388,19 +388,20 @@ async function claimNextJob(input: {
   }
 }
 
-async function finishSucceeded(dataStore: DataStore, job: ContentExecutionJob, now: Date): Promise<void> {
+async function finishSucceeded(dataStore: DataStore, job: ContentExecutionJob, now: Date): Promise<boolean> {
   const currentRow = await dataStore.getById<JobRow>(CONTENT_EXECUTION_JOB_COLLECTION, job.id);
   const current = currentRow ? jobFromRow(currentRow) : job;
   if (current.status === 'paused' || current.status === 'cancelled') {
     if (!await dataStore.update(CONTENT_EXECUTION_JOB_COLLECTION, job.id, {
       worker_id: '', lease_expires_at: '', updated_at: now.toISOString(),
     })) throw new Error('content_execution_job_control_settlement_failed');
-    return;
+    return false;
   }
   if (!await dataStore.update(CONTENT_EXECUTION_JOB_COLLECTION, job.id, {
     status: 'succeeded', next_attempt_at: '', worker_id: '', lease_expires_at: '', retry_class: '', last_error: '',
     completed_at: now.toISOString(), updated_at: now.toISOString(),
   })) throw new Error('content_execution_job_completion_failed');
+  return true;
 }
 
 async function finishFailed(input: {
@@ -409,17 +410,14 @@ async function finishFailed(input: {
   error: unknown;
   now: Date;
   env: NodeJS.ProcessEnv;
-}): Promise<ContentExecutionRetryDecision> {
+}): Promise<ContentExecutionRetryDecision | null> {
   const currentRow = await input.dataStore.getById<JobRow>(CONTENT_EXECUTION_JOB_COLLECTION, input.job.id);
   const current = currentRow ? jobFromRow(currentRow) : input.job;
   if (current.status === 'paused' || current.status === 'cancelled') {
     await input.dataStore.update(CONTENT_EXECUTION_JOB_COLLECTION, current.id, {
       worker_id: '', lease_expires_at: '', updated_at: input.now.toISOString(),
     });
-    return {
-      failureClass: 'system_fault', disposition: 'block', retryDelayMs: null,
-      maxAttempts: 1, publicReason: current.status === 'paused' ? '任务已暂停' : '任务已取消',
-    };
+    return null;
   }
   const providerPending = hasProviderWork(current);
   const reconcileAttempt = Math.max(1, current.reconciliationAttempt);
@@ -537,7 +535,8 @@ export class DurableContentExecutionWorker {
         providerReceipts: job.providerReceipts,
         action: () => this.options.execute(job),
       });
-      await finishSucceeded(this.options.dataStore, job, this.options.now?.() ?? new Date());
+      const completed = await finishSucceeded(this.options.dataStore, job, this.options.now?.() ?? new Date());
+      if (!completed) return;
       // Execution is already durably successful. A completion projection or
       // notification failure must not put paid production back in the queue.
       // Domain recovery reconciles its saved output without executing again.
@@ -553,6 +552,7 @@ export class DurableContentExecutionWorker {
         dataStore: this.options.dataStore, job, error,
         now: this.options.now?.() ?? new Date(), env: this.env,
       });
+      if (!decision) return;
       if (decision.disposition === 'block') await this.options.onBlocked?.(job, error, decision);
       else await this.options.onRetry?.(job, error, decision);
     } finally {

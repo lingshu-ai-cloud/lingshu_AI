@@ -1,3 +1,4 @@
+import type {WeeklyOwnedProductIdentityPorts} from '../runtime/weeklyOwnedProductIdentityDemand.js';
 import {assessWeeklyOwnedProductIdentity} from '../runtime/weeklyOwnedProductIdentityDemand.js';
 import {readVerifiedNoSharedMaterialDemand,freezeOriginalRunMaterialDemand} from '../runtime/socialWeeklyOriginalRunMaterialDemand.js';
 import {assertExecutionPackageGate,executionPackageFrozen} from '../socialPrograms/weeklyExecutionGate.js';
@@ -11,7 +12,7 @@ import {checkWeeklyMaterialClassification,checkWeeklyHumanRequirementBindings} f
 import {createWeeklyRequiredMaterialAdmission} from '../socialPrograms/weeklyRequiredMaterialAdmission.js';
 import type {WeeklyMaterialPorts} from '../socialPrograms/weeklyMaterialRequests.js';
 function fail(code:string):never{throw new SocialContentWorkflowError(code,409);}
-export async function assertWeeklyProductionMaterialAdmission(input:{repository:Starter198Repository;tenantId:string;taskId:string},ports:WeeklyMaterialPorts={}):Promise<void>{
+export async function assertWeeklyProductionMaterialAdmission(input:{repository:Starter198Repository;tenantId:string;taskId:string},ports:WeeklyMaterialPorts={},ownedPorts?:WeeklyOwnedProductIdentityPorts):Promise<void>{
  const task=await requireSocialTask(input),authority=socialObject(socialObject(socialJson(task.brief))?._weeklyAuthority);if(!authority&&!String(task.create_idempotency_key??'').startsWith('weekly-production:'))return;
  const store=input.repository.dataStore;if(!store||!authority)fail('weekly_production_start_authority_invalid');
  const frozen=socialObject(authority.weeklyPackage),frozenPub=socialObject(authority.publicationTask);if(!frozen||!frozenPub)fail('weekly_production_start_authority_invalid');
@@ -25,7 +26,7 @@ export async function assertWeeklyProductionMaterialAdmission(input:{repository:
  const analysis=plan!.directorAnalyses.find(analysis=>analysis.analysisId===item!.directorAnalysisRef?.id);const classification=await checkWeeklyMaterialClassification({store:store!,tenantId:input.tenantId,programId:pkg!.programId,packageId:pkg!.packageId,packageVersion:pkg!.version,item:item!,analysis});if(!classification.ready)fail(classification.code);
  if(classification.contract.items.some(item=>item.classification==='unknown'))fail('weekly_material_evidence_configuration_required');
  if(!pub.materialRequirement){if(classification.contract.items.some(item=>item.classification==='human_irreplaceable'))fail('weekly_required_material_contract_missing');
- const owned=await assessWeeklyOwnedProductIdentity(store,{tenantId:input.tenantId,programId:pkg.programId,packageId:pkg.packageId,packageVersion:pkg.version,publicationTaskId:pub.publicationTaskId,contentTaskId:input.taskId},{repository:input.repository,materialPorts:ports});if(owned.required){if(owned.status!=='ready')fail(owned.gaps[0]??'weekly_owned_product_identity_verification_required');return;}
+ const owned=await assessWeeklyOwnedProductIdentity(store,{tenantId:input.tenantId,programId:pkg.programId,packageId:pkg.packageId,packageVersion:pkg.version,publicationTaskId:pub.publicationTaskId,contentTaskId:input.taskId},{...ownedPorts,repository:input.repository,materialPorts:ownedPorts?.materialPorts??ports});if(owned.required){if(owned.status!=='ready')fail(owned.gaps[0]??'weekly_owned_product_identity_verification_required');return;}
  const demandScope={tenantId:input.tenantId,taskId:input.taskId,programId:pkg.programId,packageId:pkg.packageId,packageVersion:pkg.version,publicationTaskId:pub.publicationTaskId,accountId:pub.accountId,factRefs:pub.factRefs};
  let demand=await readVerifiedNoSharedMaterialDemand(store,task,demandScope,{repository:input.repository});
  // Freeze only under the existing caller's package admission gate; standalone queue checks remain read-only.

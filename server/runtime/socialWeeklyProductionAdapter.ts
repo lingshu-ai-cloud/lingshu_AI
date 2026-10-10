@@ -17,7 +17,7 @@ import { addSocialTaskSource, createSocialContentTask, startSocialContentTask } 
 import { readSocialTaskDetail } from '../starter198/socialContentRecords.js';
 import { createStarter198OrchestratorQueue } from '../starter198/orchestratorQueue.js';
 import { bindWeeklyProductionAuthority, persistWeeklyProductionResultAuthority } from './socialWeeklyProductionAuthority.js';
-import { socialJson, socialObject } from '../starter198/socialContentValidation.js';
+import { socialJson, socialObject, socialRequestHash } from '../starter198/socialContentValidation.js';
 import { readContentExecutionJob } from '../contentExecution/durableQueue.js';
 import { createSocialOperatingRepository } from '../socialOperating/repository.js';
 import { createWeeklyPlanningAuthority } from '../socialPrograms/planningAuthority.js';
@@ -152,7 +152,16 @@ export function createSocialWeeklyProductionAdapter(dataStore: DataStore, ports:
       const boundRow = boundRows.items[0];
       if (!boundRow || boundRows.totalItems !== 1) return blocked('weekly_production_binding_missing', '内容任务身份无法核对。');
       if (task.schedule.stepKind === 'script') scriptEvidence = weeklyScriptEvidence(boundRow, (item.benchmarkVideoRefs ?? []).map(ref => ref.id));
+      if(task.schedule.stepKind==='script'&&pkg.executionGraphVersion===2){
+        scriptEvidence=null;
+        if(boundRow.run_id){const {readWeeklyReplicationAuthority}=await import('../starter198/socialWeeklyReplicationAuthority.js');const proof=await readWeeklyReplicationAuthority(repository,boundRow);const {freezeSocialAccountProductionConstraints}=await import('../starter198/socialAccountProductionConstraints.js');const baseline=socialObject(socialJson(boundRow.script_baseline));const expected=proof?freezeSocialAccountProductionConstraints(proof.context,detail.brief.callToAction):undefined;if(expected&&socialRequestHash(baseline?.accountPlaybookConstraints)===socialRequestHash(expected))scriptEvidence=weeklyScriptEvidence(boundRow,(item.benchmarkVideoRefs??[]).map(ref=>ref.id));}
+      }
       if (task.schedule.stepKind === 'storyboard') storyboardEvidence = weeklyStoryboardEvidence(boundRow, (item.benchmarkVideoRefs ?? []).map(ref => ref.id));
+      if(task.schedule.stepKind==='storyboard'&&pkg.executionGraphVersion===2&&boundRow.run_id&&!publication.contentTemplateBindingRef){
+        const {readWeeklyPreSupplyHandoff}=await import('../starter198/socialWeeklyPreSupplyHandoff.js');
+        const handoff=await readWeeklyPreSupplyHandoff(repository,task.tenantId,detail.taskId);
+        if(handoff&&handoff.programId===task.programId&&handoff.packageId===task.packageId&&handoff.packageVersion===task.packageVersion&&handoff.publicationTaskId===task.publicationTaskId)storyboardEvidence={type:'starter_weekly_pre_supply_handoff',id:handoff.runId,version:1};
+      }
       if(publication.contentTemplateBindingRef){const baseline=socialObject(socialJson(boundRow.script_baseline));if(JSON.stringify(baseline?.contentTemplateStructure)!==JSON.stringify(item.contentTemplateStructure)){scriptEvidence=null;storyboardEvidence=null;}}
       const brief = socialObject(socialJson(boundRow.brief))!;
       let authority = brief._weeklyAuthority as Awaited<ReturnType<typeof bindWeeklyProductionAuthority>> | undefined;
@@ -289,12 +298,18 @@ export function createSocialWeeklyProductionAdapter(dataStore: DataStore, ports:
       return blocked(code, weeklyProductionAdmissionMessage(code, detail, error instanceof Error ? error.message : '内容生产准入失败。'));
     }
     if (!detail.runId) return blocked('weekly_production_confirmation_required', '内容任务已保留，等待既有生产准入确认。');
-    const job = await readContentExecutionJob(dataStore, task.tenantId, detail.taskId, detail.runId);
+    let job = await readContentExecutionJob(dataStore, task.tenantId, detail.taskId, detail.runId);
+    if(task.schedule.stepKind==='asset_generation'&&job?.status==='paused'&&job.retryClass==='weekly_production_waiting_asset_claim'){
+      try{const {resumeWeeklyProductionAssetStage}=await import('../starter198/socialWeeklyProductionStageResume.js');await resumeWeeklyProductionAssetStage({repository,assetTask:task,assertAdmission,validationPorts:{ownedProductIdentity:ports.ownedProductIdentity}});job=await readContentExecutionJob(dataStore,task.tenantId,detail.taskId,detail.runId);}
+      catch(error){return blocked(error instanceof Error?error.message:'weekly_production_stage_resume_unverified','原生产任务尚不能进入资产阶段，请核验本周前置任务及原运行凭据。');}
+    }
     if (['draft', 'needs_input', 'plan_review'].includes(detail.status) && !job) return blocked('weekly_production_confirmation_required', '运行身份已保留，但尚未完成生产准入确认。');
-    if (job && ['blocked', 'paused', 'cancelled', 'dead_letter'].includes(job.status)) return blocked(job.retryClass || `content_execution_${job.status}`, job.lastError || '后台生产需要处理后才能继续。');
     const progress = detail.productionProgress ? { contentTaskId: detail.taskId, runId: detail.runId, step: detail.productionProgress.step, activity: detail.productionProgress.activity, updatedAt: detail.productionProgress.updatedAt } : undefined;
+    if(job&&['blocked','cancelled','dead_letter'].includes(job.status)||job?.status==='paused'&&job.retryClass!=='weekly_production_waiting_asset_claim')return blocked(job!.retryClass||`content_execution_${job!.status}`,job!.lastError||'后台生产需要处理后才能继续。');
     if (task.schedule.stepKind === 'script' && scriptEvidence) return success(scriptEvidence);
     if (task.schedule.stepKind === 'storyboard' && storyboardEvidence) return success(storyboardEvidence);
+    if(task.schedule.stepKind==='material_readiness'&&automaticMaterialEvidence)return success(automaticMaterialEvidence);
+    if(job&&['blocked','paused','cancelled','dead_letter'].includes(job.status)&&!(job.status==='paused'&&job.retryClass==='weekly_production_waiting_asset_claim'&&task.schedule.stepKind==='material_readiness'))return blocked(job.retryClass || `content_execution_${job.status}`, job.lastError || '后台生产需要处理后才能继续。');
     if (task.schedule.stepKind === 'script' || task.schedule.stepKind === 'storyboard') {
       if (['attention', 'needs_input', 'paused'].includes(detail.status)) return blocked('weekly_production_user_action_required', detail.productionProgress?.activity || '生产已暂停，需先处理真实输入或执行异常。');
       return { ...pending('weekly_locked_handoff_pending', '等待对应冻结参考的锁定脚本或分镜交接凭证。'), progress };

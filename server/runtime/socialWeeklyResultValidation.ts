@@ -156,6 +156,16 @@ export async function validateWeeklyExecutionResults(store: DataStore, task: Wee
           }), 'weekly_owned_reference_diagnosis_unverified');
         }
       } else requireResult(false);
+    } else if(ref.type==='starter_weekly_pre_supply_handoff') {
+      requireResult(task.workflowKind==='directing'&&task.schedule.stepKind==='storyboard'&&ref.version===1);
+      const rows=await store.list<Record_>('starter_social_content_tasks',{where:{tenant_id:task.tenantId,create_idempotency_key:`weekly-production:${task.packageId}:${task.packageVersion}:${task.publicationTaskId}`},perPage:2});
+      requireResult(rows.totalItems===1&&rows.items.length===1);const row=rows.items[0]!;
+      requireResult(row.run_id===ref.id&&!['cancelled','paused','attention','needs_input'].includes(String(row.status)));
+      const {createStarter198Repository}=await import('../starter198/repository.js');
+      const {readWeeklyPreSupplyHandoff}=await import('../starter198/socialWeeklyPreSupplyHandoff.js');
+      const handoff=await readWeeklyPreSupplyHandoff(createStarter198Repository(store),task.tenantId,String(row.task_id));
+      requireResult(handoff?.programId===task.programId&&handoff.packageId===task.packageId&&handoff.packageVersion===task.packageVersion&&handoff.publicationTaskId===task.publicationTaskId);
+      requireResult(!object(object(row.brief)._weeklyAuthority).publicationTask?.contentTemplateBindingRef,'weekly_template_pre_supply_validation_required');
     } else if (['content', 'directing'].includes(task.workflowKind) && (ref.type === 'starter_social_content_script_baseline' && task.schedule.stepKind === 'script'
       || ref.type === 'starter_social_content_director_plan' && task.schedule.stepKind === 'storyboard')) {
       const row = await unique(store, 'starter_social_content_tasks', { tenant_id: task.tenantId, task_id: ref.id });

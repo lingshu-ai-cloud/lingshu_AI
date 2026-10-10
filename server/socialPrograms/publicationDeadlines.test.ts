@@ -43,3 +43,17 @@ test('late plan flags risk and ambiguous publish window is not silently parsed',
  assert.equal(publicationPreparationDeadline('2026-10-05T10:00:00+08:00'),'2026-10-04T02:00:00.000Z');
  for(const window of [null,undefined,'2026-10-05/2026-10-11','2026-10-05T10:00:00','2026-02-30T10:00:00Z'])assert.equal(publicationPreparationDeadline(window),null);
  });
+
+test('material preparation finishes before script and Monday delivery keeps its prior-week production lead', () => {
+ const stages=[task('prep','material_preparation',[]),task('script','script',['prep']),task('storyboard','storyboard',['script']),task('materials','material_readiness',['storyboard']),task('assets','asset_generation',['materials']),task('video','video_generation',['assets']),task('approve','user_approval',['video']),task('publish','publishing',['approve'],'monday')];
+ stages[0]!.schedule.estimatedDurationMinutes=20;
+ const before=JSON.stringify(stages);
+ const rows=new Map(applyPublicationDeadlines([...stages].reverse(),[pub('monday','2026-10-05T10:00:00+08:00')]).map(row=>[row.taskId,row]));
+ const script=rows.get('script')!,prep=rows.get('prep')!,video=rows.get('video')!,approve=rows.get('approve')!;
+ assert.equal(prep.schedule.latestFinishAt,script.schedule.latestStartAt);
+ assert.equal(Date.parse(prep.schedule.latestFinishAt!)-Date.parse(prep.schedule.latestStartAt!),20*60_000);
+ assert.equal(approve.schedule.latestFinishAt,'2026-10-04T02:00:00.000Z');
+ assert(Date.parse(video.schedule.latestFinishAt!)<=Date.parse(approve.schedule.latestStartAt!));
+ for(const stage of stages.slice(0,-1))assert(rows.get(stage.taskId)!.schedule.latestFinishAt!<'2026-10-05T00:00:00.000Z');
+ assert.equal(JSON.stringify(stages),before,'deadline inference must not rewrite the stored graph or forward estimates');
+});

@@ -495,3 +495,75 @@ G5带账号规则的新审核可枚举当前 tenant_profiles 已确认事实版�
 新版工厂与建包/修订已冻结 executionGraphVersion=2，缺字段旧图保留；前置 material_preparation 的实际 adapter/validator已接线，受控实际PNG审核正向与字节漂移拒绝通过。旁支27项回归通过（`/tmp/weekly-material-preparation-final-tests-v2.log`），该证据不表示整周已逐任务执行。前置曾blocked后的明确恢复入口仍在接入，不能仅靠后置consumer恢复声称前置已queued。
 
 Root补前端制作前/分镜后素材标签、Z/H-M4归属及真实preparation/owned素材resultRef内容任务定位。又发现既有脚本与分镜实际workflowKind=directing，却被前后端生产导航过滤器排除；现统一shared严格允许directing仅script/storyboard，content仅真实制作阶段含preparation，publishing仅publishing。完整租户/周包/实际内容创建绑定、原运行和产物检查保持。28项日历与真实持久化导航测试通过（`/tmp/weekly-preparation-production-navigation-final.log`）；对应完整TypeScript退出0（`/tmp/weekly-preparation-navigation-final-types.log`）。后续恢复接口新增仍需再验证。
+
+### 远端快照与本地运行状态复核（2026-10-10）
+
+用户要求的未完成版已提交并推送 `24285ee9f85ed0eea3721ab0da68883c046b6327`，远端 `XIXI改数字员工联调（未完成版）` 与本地 HEAD 一致。运行数据、客户记录、媒体及缓存未纳入提交。此快照不构成生产部署或全链路完成。
+
+继续开发时实际读取本地8790 `/api/overseas/ready`：HTTP成功、status=ready，但 build.commitSha 仍为 `86c225a49c05dca4051be265d0a5618f89ac98b0`，startedAt=`2026-10-09T17:20:57.640Z`；scheduled_publishing 为 false/publishing_worker_not_enabled，starter_workers 未显式启用，数字人自动放行也未就绪。原始响应保存在 `/tmp/weekly-current-local-ready.json`。该进程不能作为最新版执行验收证据，generic worker.ready 不等同于周任务扫描器已启用或已实际执行。未因此重启或开启付费/发布任务。
+
+倒排服务另有已确认缺口：旧图快照不包含新增 preparation，而修订生成v2实际任务图；旧assignment数量不能直接满足新版严格映射。正在补无写预览真实目标图、明确新增准备工时/资源/成本以及冻结前一致性核验；未使用旧图兼容回退、猜测容量或跳过准备任务来消除错误。
+
+恢复开发后完整 TypeScript 检查实际退出0（`/tmp/weekly-pushed-snapshot-types.log`）；覆盖当前快照的前置恢复接口/解析与无写修订预览。后续S8容量服务及前端改动仍须重新验证，本次types结果不证明完整排期或运行时版本已就绪。
+
+### 制作前准备与跨周截止回归（2026-10-10）
+
+新增实际 deadline 算法回归，使用 material_preparation→script→storyboard→material_readiness→assets→video→approval→publishing 完整阶段链，输入故意逆序。验证20分钟准备工时不丢失、准备完成不晚于脚本开工、周一发布前24小时审核成片就绪以及生产前置落在前一周，计算不改原任务或正向估时。与既有真实倒排容量/租约/复盘截止回归合计22项通过（`/tmp/weekly-preparation-publication-deadline.log`）。证据属于算法边界，不替代新版真实factory→冻结→修订服务联测及真实生产执行。
+
+### 目标任务图真实预览入口（2026-10-10）
+
+已补正式 schedule-revisions GET `/target-graph`，注册在 `/:proposalId` 前，避免将预览路径误作提案ID。独立隔离存储里实际创建program/account/周包，经正式Express router→真实previewRevision/工厂目标图→前端parseScheduleTargetGraph读取成功；包含material_preparation且targetVersion=source+1。HTTP回归1项通过（`/tmp/weekly-target-graph-http.log`），核对预览前后业务表一致、没有content jobs/publication attempts，错误版本409、非法版本400。该证据仅证明无写预览入口，不声称容量提案、冻结修订或生产链已完成。
+
+### 完整工厂前置执行与脚本释放（2026-10-10）
+
+Root核读 `/tmp/weekly-preparation-actual-factory-worker.log` 实际2项通过及测试源码：真实factory产生的规划父节点经正式planning adapter、result validator、worker.complete核销；素材准备经实际生产adapter和fresh validator完成，随后真实worker成功领取脚本卡，原prep依赖仍在、inherited阻塞已清空。测试显式在脚本付费调用前defer停止，未把脚本/分镜后素材冒充完成，run/content job/usage ledger为0。输入目标metricTargets在经营初始化前明确配置，未伪造播放或赞转评观测。证据证明前置完成可释放真实脚本，但不证明脚本供应商、成片、发布或整周生产全部完成。后续TOCTOU复核仍需新结果。
+
+目标图接线后的统一TypeScript检查实际失败（`/tmp/weekly-target-graph-current-types.log`）：新HTTP fixture参数需显式类型、nullable来源/映射需收窄、前端误读周包不存在tenantId及新graph夹具缺scope。Root已修自身fixture参数，前后端所属旁支继续修实际scope及收窄；未把此前types通过复用为此次新版容量接线通过。
+
+目标图身份/nullable错误已按真实来源修正：Controls取当前真实任务的唯一tenant，0或多租户明确拒绝；parser同时核顶层与逐任务scope。Root核读前端+实际HTTP7项通过（`/tmp/weekly-target-frontend-http-final.log`）、S8服务13项通过（`/tmp/s8-target-service-final.log`），含真实旧factory升级v2新增prep无source ID、缺容量不冻结且旧记录不改。素材准备实际HTTP+工厂worker组合13项通过（`/tmp/weekly-preparation-actual-http-final.log`），错consumer ID/冒充tenant拒，明确恢复后仍等真实前置完成；写前brief漂移拒，材料阻塞保留。重新统一types已启动，终态前不声明通过。上述证据仍不证明完整有效经营规划下的全部目标图正向容量确认、整周脚本供应商/发布实况或生产部署。
+
+上述真实来源/空值修正后的完整TypeScript检查实际退出0（`/tmp/weekly-target-graph-repaired-types.log`）；前端build实际退出0（`/tmp/weekly-target-preparation-current-build.log`），仍有既有大chunk提示。素材准备freshcoverage最终针对13项通过（`/tmp/weekly-preparation-scoped-final.log`）。这些结果限定于当前本地源码，未推送新增改动、未重启旧运行进程、未部署或迁移生产库。
+
+### 容量提交身份与远端迁移追查（2026-10-10）
+
+Controls现将真实任务tenant集合、周包与登录token纳入作用域，auth/storage事件立即递增epoch，卸载后失活；preview返回后再核验才允许发容量POST。Root核读9项守卫/相关前端测试通过（`/tmp/weekly-control-auth-epoch.log`）；目标图正式HTTP追加跨租户和禁用用户403验证通过（`/tmp/weekly-target-graph-auth-http.log`），无生产作业或发布。新统一types尚在运行，不能复用上一阶段结果。
+
+PRD更新v1.9，原重复5.1节改为5.5，并补5.6明确新增任务工时/费用/窗口、完整图确认、新草稿与旧记录/授权边界及登录切换约束。仍标注未完成。
+
+为查找2008迁移期望字节，实际fetch远端 `1009大合并` 和 `codex/integrated-flow-verified-20261008` 到只读参考remote refs，无checkout/merge/push。两分支该文件SHA256均为当前实际 `2aed450a4c83a5f6133817f47eef9c1f08ecde5e65f22427aa7480c2c96f67f8`，main无该文件，新增远端历史仍只有1f36cf3记录；未找到清单期望的17082原文件。未改变旧迁移或审定校验值，生产预检缺口保留。
+
+### 有效经营规划下的目标图正向确认（2026-10-10）
+
+Root核读 `/tmp/s8-real-positive.log` 的真实正向测试通过及完整源码：以实际planCapacity/resolveAutomationPolicy保存决策、正式packages.create生成周包、实际initialize/analyze/merge/confirm/dispatch，构造未包含prep的历史图后，无写preview新版完整factory，给每任务明确容量并正式propose→confirm→实际revision/materialize。新版本graph2的prep完成时间<=script开始时间，成片<=发布时间前24小时；旧任务完整hash未改，仅确认后产生一个freeze；新草稿未激活，content jobs及publication attempts为0。容量窗口和成本为该独立测试的明确假设，不是生产供应商实测，历史图构造属于测试情景。此证据证明真实服务正向落地，不证明生产或整周已执行。
+
+身份接线修复后的完整types实际退出0（`/tmp/weekly-control-auth-current-types.log`）；后续源码变更仍需对应复核。
+
+### 原生产流水线与周卡阶段依赖缺口（2026-10-10）
+
+S8最终组合14项通过（`/tmp/s8-final-combined.log`），包含真实正向、缺新增容量不冻结、确认后输入漂移拒；制作准入/coverage/start当前11项通过（`/tmp/weekly-post-preparation-production-admission.log`）。这些门禁测试不证明周卡阶段已限制整条生产运行。
+
+后续实际源码审查发现：脚本卡可启动原monolithic run，锁定baseline后继续executeSocialAssetSupplyPlan；开头材料门禁核验accepted素材与身份，但没有实际等后置material_readiness/asset_generation任务准入，供给前也需再次fresh核。该缺口不能只追加开头检查或把卡标为完成解决。PRD补真实阶段等待与同run/job恢复要求；正在修baseline/directorPlan持久后暂停、对应卡凭证核销、后置材料就绪后资产卡明确恢复原job，保持对账与去重。尚未声明阶段执行符合周排期。
+
+S8和身份守卫最终完整types退出0（`/tmp/weekly-s8-auth-final-types.log`），build退出0（`/tmp/weekly-s8-auth-final-build.log`）。接下来阶段暂停源码变化需新验证。
+
+阶段修复的实际断点已定位：旧directorPlan是在供给后绑定真实assets/clips的产物，不能搬到供给前假装素材已可用；将用绑定原run的专用制作前分镜交接凭据明确planned资产。adapter当前对job.paused统一阻塞的分支早于脚本/分镜/素材证据消费，需允许真实阶段交付核销再让资产卡恢复，避免循环等待。队列暂停后仍执行成功回调的路径，以及前端把未知等待stage映射为制作中/异常重试start入口，也列为必须修复。此处记录的是已发现问题及目标，不代表相关暂停、恢复或显示已完成。
+
+### 持久阶段暂停的队列结算（2026-10-10）
+
+Root核读实际durableQueue窄修及 `/tmp/weekly-phase-queue.log` 12项通过：finishSucceeded保留paused/cancelled时返回false，worker不发onSucceeded；pause后execute抛停止错误时finishFailed返回null，不发onBlocked/onRetry。测试包含accepted供应商回执沿用同job恢复reconciling且受控submit一次。此处证明队列结算边界，不替代pipeline实际暂停或资产卡恢复联测。
+
+新阶段hand-off/adapter及stage恢复helper正在接线。恢复要求原job worker/lease为空并持独占durablelease，防旧execute仍运行时恢复并被旧结算覆盖；未知供应商回执先对账，不借恢复重复提交。专用交接仅声明planned_not_generated，旧供给后的directorPlan真实assets语义保留。前端等待状态合同和完整阶段正向仍待验收，未宣称已上线。
+
+### 阶段检查点实际存储演练（2026-10-10）
+
+新增前向2051为真实content_execution_jobs补可选2MiB JSON checkpoint，回滚明确拒绝，避免丢原作业阶段凭据；未改旧2008。当前新增文件SHA256 `9a4fa58af20ede3f86cf4020995046359028ecd4d67c36aa8c0ea93c5f25a3a9` 已登记，旧审定条目不改。独立mkdtemp真实PocketBase0.39.5演练先核旧表无字段，再迁移、保存pausedjob并从实际记录读回完整weeklyStage，后台规则仍全锁；1项通过（`/tmp/weekly-production-stage-schema-final.log`）。未访问用户库，该新字段不能代替生产迁移预检通过。
+
+实际阶段producer首失败进一步定位为fixture企业CTA与启用账号打法不一致，拒绝是正确的；需在经营初始化前明确一致企业目标，不能改已冻结参考证明。随后发现新任务初次baseline锁定早于_weeklyAuthority绑定，缺账号规则约束而在实际core被拒；正在修首次冻结与原生产准入衔接，已完成或已有供应商产物的旧锁仍保留。尚未证明完整stage pause/resume正向。
+
+### 阶段等待的进度节点与当前类型检查（2026-10-10）
+
+Root修真实contentProgressNodes：已核只读等待状态下，脚本节点显示已保存意图，逐镜节点明确等待素材/资产排期且为blocked，剪辑及成片保持pending，既不旋转显示正在生成也不宣告成果。既有progress/shot/achievement测试加该等待负断言通过（`/tmp/weekly-phase-progress-ui.log`），只证明实际投影，不替代浏览器验收。只读stage观察旁支增加存储行/负载taskId及tenant/program/pkg/version一致性，不使用不存在publication列。
+
+统一types此次实际exit2（`/tmp/weekly-phase-current-types.log`）：首次baseline适配的narrativeMode可空与不存在inspiration sourcekind比较需修，未复用此前S8类型通过结果。代码仍在联调，pipeline暂停与samejob恢复完整正向尚未确认。
+
+上述等待UI改动后前端build实际退出0（`/tmp/weekly-phase-progress-current-build.log`），有既有大chunk提示；不表示后端首次baseline类型错误或真实阶段执行已解决。

@@ -366,6 +366,10 @@ export const CUSTOMER_FEEDBACK_TOPIC_FIELDS: FieldDef[] = [
 ];
 
 export async function ensureDeliveryCollections(): Promise<void> {
+  // Jobs are provisioned by the execution migration; never create a truncated queue schema.
+  const executionJobs = await adminFetch('/api/collections/content_execution_jobs');
+  if (!executionJobs.ok) throw new Error('content_execution_jobs_schema_missing');
+  await ensureCollection('content_execution_jobs', [{name:'checkpoint',type:'json'}]);
   await ensureCollection('reference_exact_shot_evidence', [...['tenant_id','record_id','source_sha256','analysis_run_id','analysis_hash','record_hash','created_at'].map(name=>({name,type:'text' as const,required:true})),{name:'payload',type:'json',required:true}]);
   await ensureCollection('weekly_customer_knowledge_quote_requests',[...['tenant_id','program_id','package_id','run_id','request_id','content_hash'].map(name=>({name,type:'text' as const,required:true})),{name:'package_version',type:'number',required:true},{name:'version',type:'number',required:true},{name:'payload',type:'json',required:true}]);
   await ensureCollection('customer_manual_takeovers',[...['tenant_id','scope_key','content_hash'].map(name=>({name,type:'text' as const,required:true})),{name:'version',type:'number',required:true},{name:'payload',type:'json',required:true}]);

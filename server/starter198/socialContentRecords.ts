@@ -1,3 +1,4 @@
+import {readWeeklyStageObservation} from './socialWeeklyStageObservation.js';
 import {readWeeklyReplicationContext} from './weeklyReplicationContext.js';
 import { parseSocialReplicationContext } from './socialContentValidation.js';
 import {
@@ -1044,11 +1045,12 @@ export async function readSocialTaskDetail(input: {
     waiting_for_user_input: '等待确认',
     automatic_recovery_exhausted: '等待重试',
   };
-  const productionProgress = productionStage && productionMessage
+  const stageObservation=input.repository.dataStore&&summary.runId?await readWeeklyStageObservation(input.repository.dataStore,{tenantId:input.tenantId,taskId:input.taskId,runId:summary.runId}):null;
+  const productionProgress = stageObservation ? {step:'等待素材与资产排期',activity:'原运行已保存分镜意图，等待素材二次核验及资产任务领取；对应任务到期后继续原作业，不重新启动。',estimatedRemainingSeconds:null,waitingForScheduledAssets:true,updatedAt:stageObservation.updatedAt||summary.updatedAt} : productionStage && productionMessage
     ? {
       step: productionStepByStage[productionStage] ?? '自动制作',
       activity: productionMessage,
-      estimatedRemainingSeconds: Math.max(0, Math.round(
+      estimatedRemainingSeconds: remainingRatioByStage[productionStage]===undefined?null:Math.max(0, Math.round(
         agentWorkflow.executionPlan.estimatedTotalSeconds
           * (remainingRatioByStage[productionStage] ?? 0.75),
       )),

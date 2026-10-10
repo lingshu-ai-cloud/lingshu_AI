@@ -2,6 +2,7 @@ import {readWeeklyReplicationAuthority} from './socialWeeklyReplicationAuthority
 import {assertAccountPlaybookBaselineCurrent} from './socialAccountProductionConstraints.js';
 import {readWeeklySchedulerMaterialPlan} from './socialWeeklySchedulerMaterialPlan.js';
 import {assertWeeklyProductionMaterialAdmission} from './socialWeeklyProductionMaterialGate.js';
+import {freezeWeeklyPreSupplyHandoff,pauseWeeklyPreSupplyStage} from './socialWeeklyPreSupplyHandoff.js';
 import { persistSocialProductionWorkspace } from './socialContentProductionWorkspace.js';
 import {persistInitialSocialSceneCache,initialSceneCacheInputFingerprint,initialSceneSourceHashes,type InitialSceneQualityReport} from './socialContentInitialSceneCache.js';
 import {buildSocialProductionHandoff} from './socialContentProductionHandoff.js';
@@ -332,8 +333,10 @@ export async function runSocialContentAutoProduction(input: {
   assetSupplyAdapters?: SocialAssetSupplyProviderAdapter[];
   /** Deterministic ports for worker-level tests and alternate local runtimes. */
   runtime?: SocialContentAutoProductionRuntime;
+  /** Server-only canonical material storage ports; never client approval flags. */
+  materialEvidencePorts?: import('../runtime/weeklyOwnedProductIdentityDemand.js').WeeklyOwnedProductIdentityPorts;
 }): Promise<void> {
-  await assertWeeklyProductionMaterialAdmission(input);
+  await assertWeeklyProductionMaterialAdmission(input,input.materialEvidencePorts?.materialPorts,input.materialEvidencePorts);
   const admissionRow=await requireSocialTask(input),admissionAuthority=socialObject(socialObject(socialJson(admissionRow.brief))?._weeklyAuthority);
   if(admissionAuthority||String(admissionRow.create_idempotency_key??'').startsWith('weekly-production:')){if(!admissionAuthority)throw new SocialContentWorkflowError('weekly_production_start_authority_invalid',409);if(!input.repository.dataStore)throw new SocialContentWorkflowError('weekly_production_planning_missing',409);const pkg=socialObject(admissionAuthority.weeklyPackage) as unknown as import('../../shared/contracts/socialProgram.js').WeeklyOperatingPackage,publication=socialObject(admissionAuthority.publicationTask);if(!pkg||!publication?.publicationTaskId)throw new SocialContentWorkflowError('weekly_production_start_authority_invalid',409);await assertStoredWeeklyProductionCoverage({store:input.repository.dataStore,tenantId:input.tenantId,package:pkg,publicationTaskId:String(publication.publicationTaskId),frozenPlanning:pkg.agentPlanning});}
   const detail = await readSocialTaskDetail(input);
@@ -493,6 +496,18 @@ export async function runSocialContentAutoProduction(input: {
   const templateBindingRef=socialObject(weeklyPublication?.contentTemplateBindingRef);
   const contentTemplateStructure=templateBindingRef?await (async()=>{if(!input.repository.dataStore)throw new SocialContentWorkflowError('content_template_storage_unavailable',409);return readWeeklyTemplateStructure(input.repository.dataStore,{tenantId:input.tenantId,programId:String(weeklyPackage?.programId),packageId:String(weeklyPackage?.packageId),packageVersion:Number(weeklyPackage?.version),publicationTaskId:String(weeklyPublication?.publicationTaskId)},templateBindingRef as unknown as import('../../shared/contracts/socialProgram.js').VersionedSocialRef);})():undefined;
   let baseline = parseStoredSocialScriptBaseline(taskRecord.script_baseline);
+  let initialAuthorityBaselineVersion:number|null=null;
+  if(baseline&&originalReplication?.context.verifiedAccountPlaybook&&weeklyPackage?.executionGraphVersion===2&&!baseline.accountPlaybookConstraints){
+    // Creation precedes the weekly authority binding. Such an initial script
+    // cannot be a production lock until the original scheduler rules are captured.
+    const {readContentExecutionJob}=await import('../contentExecution/durableQueue.js');
+    const originalJob=input.repository.dataStore?await readContentExecutionJob(input.repository.dataStore,input.tenantId,input.taskId,input.runId):null;
+    if(!originalJob||originalJob.providerReceipts.length||detail.artifacts.length)throw new SocialContentWorkflowError('account_playbook_baseline_revision_required',409);
+    const scriptRows=await input.repository.dataStore!.list<Record<string,unknown>>('social_weekly_execution_tasks',{where:{tenant_id:input.tenantId,program_id:originalReplication.programId,package_id:originalReplication.packageId,package_version:originalReplication.packageVersion},perPage:500});
+    if(scriptRows.totalItems!==scriptRows.items.length||scriptRows.items.some(row=>{const value=socialObject(socialJson(row.payload));return value?.publicationTaskId===originalReplication.publicationTaskId&&socialObject(value.schedule)?.stepKind==='script'&&value.status==='succeeded';}))throw new SocialContentWorkflowError('account_playbook_baseline_revision_required',409);
+    const prior=Number(baseline.version);if(!Number.isSafeInteger(prior)||prior<1)throw new SocialContentWorkflowError('account_playbook_baseline_revision_required',409);
+    initialAuthorityBaselineVersion=prior+1;baseline=null;
+  }
   if(baseline)assertAccountPlaybookBaselineCurrent(baseline,replicationContext,detail.brief.callToAction);
   if(baseline?.contentTemplateStructure&&socialRequestHash(baseline.contentTemplateStructure)!==socialRequestHash(contentTemplateStructure))throw new SocialContentWorkflowError('content_template_structure_changed_during_production',409);
 
@@ -544,8 +559,18 @@ export async function runSocialContentAutoProduction(input: {
           version: formulaVersion,
         })
       : null;
-    const inspiration = detail.theme?.themeId
-      ? await resolveSocialInspirationScript({
+    const themeId=detail.theme?.themeId;
+    const inspiration = themeId
+      ? originalReplication?await (async()=>{
+          if(!input.repository.dataStore)throw new SocialContentWorkflowError('weekly_replication_authority_unverified',409);
+          const authority=socialObject(socialObject(socialJson(taskRecord.brief))?._weeklyAuthority) as unknown as Awaited<ReturnType<typeof import('../runtime/socialWeeklyProductionAuthority.js').bindWeeklyProductionAuthority>>;
+          const pkg=authority.weeklyPackage,item=pkg.agentPlanning?.dispatch?.scheduleItems.find(item=>item.publicationTaskId===originalReplication.publicationTaskId),analysis=pkg.agentPlanning?.directorAnalyses.find(analysis=>analysis.analysisId===item?.directorAnalysisRef.id);
+          if(!analysis)throw new SocialContentWorkflowError('weekly_production_planning_missing',409);
+          const {readWeeklyReferenceSources,weeklyReferenceResolver}=await import('../runtime/socialWeeklyReferenceSource.js');
+          const references=await readWeeklyReferenceSources(input.repository.dataStore,input.tenantId,authority,analysis);
+          const resolved=await weeklyReferenceResolver(references)({tenantId:input.tenantId,themeId,verifiedContext,referenceSources:detail.sources.filter(source=>source.status==='active'&&source.kind==='reference_link')});
+          if(!resolved)throw new SocialContentWorkflowError('weekly_reference_source_missing',409);return resolved.match;
+        })():await resolveSocialInspirationScript({
           tenantId: input.tenantId,
           themeId: detail.theme.themeId,
           verifiedContext,
@@ -563,6 +588,7 @@ export async function runSocialContentAutoProduction(input: {
       lockedAt: new Date().toISOString(),
       previous: baseline,
     });
+    if(initialAuthorityBaselineVersion!==null)baseline={...baseline,version:String(initialAuthorityBaselineVersion)};
     await input.repository.update(STARTER_COLLECTIONS.socialContentTasks, input.tenantId, taskRecord.id, {
       script_baseline: baseline,
       formula_reference: baseline.formulaReference ?? '',
@@ -582,6 +608,8 @@ export async function runSocialContentAutoProduction(input: {
       userTextUsage: initialBaseline.match?.userTextUsage ?? 'intent_only',
     },
   });
+  const weeklyPreSupply=await freezeWeeklyPreSupplyHandoff({...input,detail,baseline:initialBaseline});
+  if(weeklyPreSupply&&await pauseWeeklyPreSupplyStage(input.repository,weeklyPreSupply,{ownedProductIdentity:input.materialEvidencePorts}))return;
 	  await withSocialContentRenderWorkspace(async outputDir => {
 	  let activeBaseline = initialBaseline;
 	  const productionMode = detail.brief.productionMode ?? 'concept_preview';
@@ -612,6 +640,7 @@ export async function runSocialContentAutoProduction(input: {
 	        || adapter.adapterId === 'existing_customer_asset.v1'
 	        || (productionApproach === 'material_polish' && adapter.adapterId === 'system_safe_motion_graphics.v1')
 	    ));
+	    await assertWeeklyProductionMaterialAdmission(input,input.materialEvidencePorts?.materialPorts,input.materialEvidencePorts);
 	    const supplied = await executeSocialAssetSupplyPlan({
 	      tenantId: input.tenantId,
 	      taskId: input.taskId,

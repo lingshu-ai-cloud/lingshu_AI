@@ -247,7 +247,7 @@ export default function SocialTaskOverview(props: SocialTaskOverviewProps) {
           view={productionView}
           onViewChange={setProductionView}
           onOpenWorkbench={props.onEdit}
-          onRetry={props.onStart}
+          onRetry={()=>{if(!task.productionProgress?.waitingForScheduledAssets)props.onStart();}}
         />
         {task.mode === 'weekly' && <SocialWeeklySummary task={task} onEdit={props.onEdit} />}
         <div className={`grid gap-4 ${showDelivery ? 'xl:grid-cols-2' : ''}`}>

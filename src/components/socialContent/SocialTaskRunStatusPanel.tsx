@@ -2,6 +2,8 @@ import { ArrowRight, Loader2 } from 'lucide-react';
 import type { SocialContentTaskDetail } from '../../../shared/contracts/socialContentWorkflow';
 
 function estimatedTime(task: SocialContentTaskDetail): string {
+  if(task.productionProgress?.waitingForScheduledAssets)return '等待对应任务排期';
+  if(task.productionProgress&&task.productionProgress.estimatedRemainingSeconds===null)return '剩余时间待核验';
   const seconds = task.productionProgress?.estimatedRemainingSeconds
     ?? task.agentWorkflow?.executionPlan.estimatedTotalSeconds
     ?? null;

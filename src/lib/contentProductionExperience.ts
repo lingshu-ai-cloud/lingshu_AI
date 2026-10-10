@@ -112,6 +112,7 @@ function interruption(task: TaskLike): { state: 'blocked' | 'failed'; message: s
   if (!isDetail(task)) return task.status === 'paused' || task.status === 'attention'
     ? { state: 'blocked', message: '任务需要处理，已完成结果会保留' }
     : null;
+  if (task.productionProgress?.waitingForScheduledAssets) return { state: 'blocked', message: '等待本周素材核验与资产任务领取，之后继续原作业' };
   const stage = task.agentWorkflow?.stage;
   if (stage === 'needs_facts') return { state: 'blocked', message: '缺少不可替代的产品事实' };
   if (stage === 'needs_rights') return { state: 'blocked', message: '素材使用权等待确认' };
@@ -143,6 +144,7 @@ export function contentProgressNodes(task: TaskLike): ContentProgressNode[] {
   const issue = interruption(task);
   const counts = sceneCounts(task);
   const detail = isDetail(task) ? task : null;
+  const waitingForAssets = detail?.productionProgress?.waitingForScheduledAssets === true;
   const scriptScenes = task.directorPlan?.sceneCount || detail?.agentWorkflow?.directorBrief.scenes.length || 0;
   const duration = detail?.agentWorkflow?.directorBrief.totalDurationSeconds;
   const artifacts = detail?.artifacts.filter(item => item.status !== 'superseded') || [];
@@ -163,6 +165,8 @@ export function contentProgressNodes(task: TaskLike): ContentProgressNode[] {
     if (qualityBlocked(task) && nodeIndex === 5) state = 'failed';
     if (task.status === 'plan_review' && nodeIndex === 1) state = 'blocked';
     if (task.status === 'asset_review' && nodeIndex === 6) state = 'active';
+    if (waitingForAssets && definition.id === 'script') return { ...definition, state: 'complete' as const, result: '脚本与分镜意图已保存，素材尚未生成' };
+    if (waitingForAssets && definition.id === 'shots') return { ...definition, state: 'blocked' as const, label: '等待素材与资产排期', result: '等待本周素材核验与资产任务领取，之后继续原作业' };
     return { ...definition, state };
   });
 }

@@ -20,14 +20,19 @@ import {createSocialWeeklyProductionAdapter} from './socialWeeklyProductionAdapt
 import {runSocialWeeklyExecutionScan} from './socialWeeklyExecutionRuntime.js';
 import type {WeeklyExecutionTask} from '../../shared/contracts/socialProgram.js';
 
-export async function prepareWeeklyNonPresenterProductionFixture(t:TestContext,options:{ownedReferenceBytes?:boolean;productInventory?:boolean;primaryStructure?:boolean}={ownedReferenceBytes:true}){
+export interface WeeklyNonPresenterFixtureOptions {ownedReferenceBytes?:boolean;productInventory?:boolean;primaryStructure?:boolean;metricTargets?:string[];successCriteria?:string[];targetCta?:string}
+/** Real initialize/analyze/merge/confirm/dispatch over owned media and a controlled
+ * source-analysis contract; no claim that external search or a live model ran. */
+export async function prepareWeeklyNonPresenterPlanningFixture(t:TestContext,options:WeeklyNonPresenterFixtureOptions={ownedReferenceBytes:true}){
  const referenceId=`non-presenter-reference-${randomUUID()}`;
  const f=await prepareWeeklyQualityAuditFixture();t.after(f.cleanup);
  f.tables.social_weekly_agent_planning=[];
  const priorHandoff=f.tables.starter_social_inspiration_handoff_versions![0]!;const actualHandoff=structuredClone(priorHandoff.payload) as Record<string,unknown>;actualHandoff.inspirationId=referenceId;actualHandoff.analysisId='non-presenter-analysis';
- const pkg=f.pkg;pkg.referenceSourcePolicy={profile:'b2b_cold_start',ownedPercent:0,externalPercent:100,allocationUnit:'mother_content'};
+ const pkg=f.pkg;if(options.targetCta!==undefined)for(const publication of pkg.socialContentPackage.publicationTasks)publication.cta=options.targetCta;pkg.referenceSourcePolicy={profile:'b2b_cold_start',ownedPercent:0,externalPercent:100,allocationUnit:'mother_content'};
  Object.assign(pkg.socialContentPackage,{originalContentTarget:1,adaptationVersionTarget:0,publicationTaskTarget:1});
  Object.assign(pkg.socialContentPackage.publicationTasks[0]!,{motherContentId:'new-mother',adaptationOfPublicationTaskId:null,accountPositioning:'B2B采购产品说明',publishWindow:'2026-10-08T10:00:00Z'});
+ if(options.successCriteria)pkg.successCriteria=structuredClone(options.successCriteria);
+ if(options.metricTargets)pkg.socialContentPackage.publicationTasks[0]!.metricTargets=structuredClone(options.metricTargets);
   await f.store.create('social_discovery_scopes', {
     tenant_id: 't', program_id: 'p', status: 'active', keyword_set_id: 'set-1', version: 1,
     payload: { approval: { status: 'approved', scopeVersion: 1 }, keywordSet: { scope: { audienceRole: 'brand_buyer' }, graph: { sceneClusters: [] } } },
@@ -70,7 +75,7 @@ export async function prepareWeeklyNonPresenterProductionFixture(t:TestContext,o
   });
  await f.store.create('social_programs',{tenant_id:'t',program_id:'p',payload:{version:1}});
  await f.store.create('social_owned_accounts',{tenant_id:'t',program_id:'p',account_id:'account',version:1,status:'active',payload:{accountId:'account',programId:'p',version:1,status:'active',platform:'tiktok'}});
- await createSocialProgramService(f.store).savePlaybook('t','owner','p','account',{expectedAccountVersion:1,activate:true,audience:['企业采购'],pillars:['产品介绍'],evidenceRules:['仅展示已确认产品资料'],visualRules:['保留清晰产品外观'],languageRules:['英文说明'],conversionRoute:{entryType:'direct_message',callToAction:'Contact sales'}});
+ await createSocialProgramService(f.store).savePlaybook('t','owner','p','account',{expectedAccountVersion:1,activate:true,audience:['企业采购'],pillars:['产品介绍'],evidenceRules:['仅展示已确认产品资料'],visualRules:['保留清晰产品外观'],languageRules:['英文说明'],conversionRoute:{entryType:'direct_message',callToAction:options.targetCta??'Contact sales'}});
  const goalResult=await createSocialOperatingDecisionService(f.store).buildAndSave({tenantId:'t',operator:{type:'user',id:'owner'},input:{programRef:{type:'social_program',id:'p',version:1},enterprise:{ref:{type:'enterprise_profile',id:'profile',version:1},products:['企业产品'],markets:['US'],audiences:['企业采购'],languages:['en'],publicFacts:pkg.socialContentPackage.publicationTasks[0]!.factRefs.map(ref=>({ref,statement:'已确认的企业产品信息'})),prohibitedClaims:['编造产品性能'],weeklyBudgetCny:10,salesOwnerId:'owner'},accounts:[{ref:{type:'owned_social_account',id:'account',version:1},accountId:'account',platform:'tiktok',role:'核心账号',status:'active',conversionRouteId:'test-contact'}],conversionRoutes:[{ref:{type:'conversion_route',id:'test-contact',version:1},routeId:'test-contact',kind:'website',target:'https://example.test/contact',verified:true}]}});
  assert.equal(goalResult.goal.status,'ready');pkg.businessContentGoalRef={type:'business_content_goal',id:goalResult.goal.goalId,version:goalResult.goal.version};
  const service=createWeeklyPlanningAuthority(f.store);
@@ -83,6 +88,12 @@ export async function prepareWeeklyNonPresenterProductionFixture(t:TestContext,o
  assert.equal(dispatched.status,'dispatched');
  // Remove the unrelated already-produced fixture task; production must use actual creation.
  f.tables.starter_social_content_tasks=[];
+ f.tables.social_weekly_execution_tasks=[];
+ return {referenceId,repository:f.repository,f,pkg,dispatched};
+}
+
+export async function prepareWeeklyNonPresenterProductionFixture(t:TestContext,options:WeeklyNonPresenterFixtureOptions={ownedReferenceBytes:true}){
+ const {referenceId,f,pkg,dispatched}=await prepareWeeklyNonPresenterPlanningFixture(t,options);
  const task:WeeklyExecutionTask={...f.task,taskId:'actual-planning-production',workflowKind:'content',status:'queued',schedule:{...f.task.schedule,stepKind:'material_readiness',responsibleActor:'content_agent'},dependsOnTaskIds:[],upstreamVersionRefs:[],ownBlockingReasons:[],inheritedBlockingTaskIds:[],resultRefs:[],attempt:0,lease:null,nextAttemptAt:null,inputSnapshot:{publicationTask:structuredClone(pkg.socialContentPackage.publicationTasks[0])}};
  f.tables.social_weekly_execution_tasks=[{id:task.taskId,tenant_id:'t',program_id:'p',package_id:pkg.packageId,package_version:pkg.version,task_id:task.taskId,status:'queued',payload:task}];
  let repository=f.repository;

@@ -369,3 +369,21 @@ test('worker pins local storage across claims, execution, callbacks and remote w
   assert.ok(executed && succeeded, 'the persisted job reaches successful completion');
   assert.ok(calls.includes('list') && calls.includes('getById') && calls.includes('update') && calls.includes('delete'));
 });
+
+test('durable phase pause settles without success or failure projections, then resumes the same provider identity',async()=>{
+ const store=new MemoryStore();await store.create('workflow_runs',{id:'phase-run',tenant_id:'tenant-a',status:'running'});
+ const original=await admitContentExecutionJob({dataStore:store,tenantId:'tenant-a',userId:'user-a',taskId:'phase-task',runId:'phase-run',accountId:'account-a',taskType:'social_content_weekly'});
+ let submissions=0,executions=0,succeeded=0,blocked=0,retried=0;
+ const worker=new DurableContentExecutionWorker({dataStore:store,env,async execute(job){executions++;if(executions===1){submissions++;await recordCurrentContentProviderReceipt({provider:'controlled',requestId:'same-request',state:'unknown',providerTaskId:'provider-original'});await controlContentExecutionJob({dataStore:store,tenantId:'tenant-a',jobId:job.id,action:'pause'});return;}
+ const receipt=job.providerReceipts.find(row=>row.requestId==='same-request');assert.equal(receipt?.providerTaskId,'provider-original');assert.equal(receipt?.state,'unknown');await recordCurrentContentProviderReceipt({provider:'controlled',requestId:'same-request',state:'completed',providerTaskId:'provider-original'});},async onSucceeded(){succeeded++;},async onBlocked(){blocked++;},async onRetry(){retried++;}});
+ const settle=async()=>{await worker.drain();for(let n=0;n<30&&worker.isLocallyActive('tenant-a','phase-task');n++)await new Promise<void>(resolve=>setImmediate(resolve));};
+ await settle();const paused=await readContentExecutionJob(store,'tenant-a','phase-task','phase-run');assert.equal(paused?.status,'paused');assert.equal(paused?.completedAt,null);assert.equal(succeeded,0);assert.equal(blocked,0);assert.equal(retried,0);
+ const resumed=await controlContentExecutionJob({dataStore:store,tenantId:'tenant-a',jobId:original.id,action:'resume'});assert.equal(resumed.id,original.id);assert.equal(resumed.runId,'phase-run');assert.equal(resumed.status,'reconciling');assert.equal(resumed.providerReceipts[0]?.providerTaskId,'provider-original');
+ await settle();worker.stop();const complete=await readContentExecutionJob(store,'tenant-a','phase-task','phase-run');assert.equal(complete?.status,'succeeded');assert.equal(complete?.id,original.id);assert.equal(executions,2);assert.equal(submissions,1);assert.equal(succeeded,1);assert.equal(blocked,0);assert.equal(retried,0);
+});
+
+test('an execution stopped after durable pause cannot project a blocked failure',async()=>{
+ const store=new MemoryStore();const job=await admitContentExecutionJob({dataStore:store,tenantId:'tenant-a',userId:'user-a',taskId:'stopped-task',runId:'stopped-run',accountId:'account-a',taskType:'social_content_weekly'});let success=0,block=0,retry=0;
+ const worker=new DurableContentExecutionWorker({dataStore:store,env,async execute(){await controlContentExecutionJob({dataStore:store,tenantId:'tenant-a',jobId:job.id,action:'pause'});throw Error('content_execution_stopped');},async onSucceeded(){success++;},async onBlocked(){block++;},async onRetry(){retry++;}});
+ await worker.drain();for(let n=0;n<30&&worker.isLocallyActive('tenant-a','stopped-task');n++)await new Promise<void>(resolve=>setImmediate(resolve));worker.stop();assert.equal((await readContentExecutionJob(store,'tenant-a','stopped-task','stopped-run'))?.status,'paused');assert.equal(success+block+retry,0);
+});
