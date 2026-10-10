@@ -1,3 +1,4 @@
+import { restoreAgentCalendarReturnContext } from './lib/agentCalendarReturnContext';
 import { pushProductionLocation, requestProductionBack } from './lib/productionNavigation';
 import { isAgentProductionSession } from './lib/agentProductionSession';
 import { Activity, lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
@@ -235,6 +236,7 @@ export default function App() {
       const previous = resolveNavigationPage(event.state?.productionPage, event.state?.productionDetail?.view);
       if (previous) {
         setPage(previous);
+        restoreAgentCalendarReturnContext(event.state?.agentCalendarReturnContext ?? null);
         const socialTaskId = isSocialTaskContextPage(previous)
           ? readSocialContentNavigationTaskId(previous, event.state)
           : null;

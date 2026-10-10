@@ -1,3 +1,4 @@
+import { readAgentCalendarReturnContext, registerAgentCalendarReturnState } from '../lib/agentCalendarReturnContext';
 import InitialPreparationStatusPanel from './InitialPreparationStatusPanel';
 import { productionApi } from '../lib/productionApi';
 import InitialOperatingPlanDialog from './InitialOperatingPlanDialog';
@@ -3463,6 +3464,20 @@ export default function DigitalEmployeePage({
   const [workspaceView, setWorkspaceView] = useState<WorkspaceView>("today");
   const [businessLine, setBusinessLine] = useState<BusinessLine>("full_funnel");
   const [contentPlatform, setContentPlatform] = useState<ContentPlatform>("all");
+  const calendarWorkspaceState = useRef({ workspaceView, selectedAccountId, businessLine, contentPlatform });
+  calendarWorkspaceState.current = { workspaceView, selectedAccountId, businessLine, contentPlatform };
+  const restoreCalendarWorkspace = (value: unknown) => {
+    const saved = value as { workspaceView?: WorkspaceView; selectedAccountId?: string; businessLine?: BusinessLine; contentPlatform?: ContentPlatform } | null;
+    if (saved && ['today', 'matrix', 'overview', 'live', 'review', 'rules'].includes(saved.workspaceView ?? '')) setWorkspaceView(saved.workspaceView!);
+    if (typeof saved?.selectedAccountId === 'string') setSelectedAccountId(saved.selectedAccountId);
+    if (saved?.businessLine && ['full_funnel', 'content_growth', 'customer_conversion'].includes(saved.businessLine)) setBusinessLine(saved.businessLine);
+    if (saved?.contentPlatform && ['all', 'facebook', 'youtube', 'tiktok', 'instagram'].includes(saved.contentPlatform)) setContentPlatform(saved.contentPlatform);
+  };
+  useEffect(() => registerAgentCalendarReturnState('digitalEmployee.workspace', {
+    read: () => calendarWorkspaceState.current,
+    restore: restoreCalendarWorkspace,
+  }), []);
+
   const [navigationNotice, setNavigationNotice] = useState("");
   const [applicationGuideOpen, setApplicationGuideOpen] = useState(false);
   const [onboardingWelcomeOpen, setOnboardingWelcomeOpen] = useState(false);
@@ -3530,6 +3545,8 @@ export default function DigitalEmployeePage({
     let active = true;
     void initialLoadRef.current.then(next => {
       if (!active) return;
+      const calendarReturnState = readAgentCalendarReturnContext()?.states['digitalEmployee.workspace'];
+      if (calendarReturnState) { restoreCalendarWorkspace(calendarReturnState); return; }
       if (businessScope) {
         setWorkspaceView("overview");
         setBusinessLine(businessScope === "traffic" ? "content_growth" : "customer_conversion");

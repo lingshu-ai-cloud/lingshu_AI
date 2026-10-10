@@ -1,3 +1,4 @@
+import { readAgentCalendarReturnContext, registerAgentCalendarReturnState } from '../../lib/agentCalendarReturnContext';
 import {openCustomerCalendarTask,type CustomerCalendarProjection} from '../socialProgram/CustomerWeeklyCalendar';
 import {readWeeklyContentNavigation,weeklyContentNavigationDetail} from '../../lib/weeklyContentNavigationApi';
 import {parseWeeklyProfileCreation,type WeeklyProfileUpgrade,type WeeklyProfileCreationIntent} from '../../lib/weeklyProfileUpgradeApi';
@@ -61,6 +62,14 @@ export default function ConnectedAgentCalendar({accountBindingTasks=[]}:{account
   const program = context?.activeProgram;
   const [packages, setPackages] = useState<WeeklyOperatingPackage[]>([]);
   const [selected, setSelected] = useState('');
+  const retainedSelection = useRef(selected);
+  retainedSelection.current = selected;
+  const packageStateKey = `agentCalendar.package:${program?.programId ?? ''}`;
+  useEffect(() => registerAgentCalendarReturnState(packageStateKey, {
+    read: () => retainedSelection.current,
+    restore: value => { if (typeof value === 'string') setSelected(value); },
+  }), [packageStateKey]);
+
   const [sendRecoveries,setSendRecoveries]=useState<{identity:string;items:WeeklyCustomerSendRecovery[]}|null>(null);
   const sendRecoveryIdentity=useRef('');
   const [crossWeekMaterials,setCrossWeekMaterials]=useState<{identity:string;items:CrossWeekMaterialContinuationView[]}|null>(null);
@@ -97,6 +106,8 @@ export default function ConnectedAgentCalendar({accountBindingTasks=[]}:{account
   useEffect(()=>{sceneReadGeneration.current++;setSceneChoices(null);setSceneUpstream(null);setSceneReading(null);},[program?.programId,selected]);
   useEffect(() => {
     let cancelled = false;
+    const savedSelection = readAgentCalendarReturnContext()?.states[packageStateKey];
+    const originalSelection = typeof savedSelection === 'string' ? savedSelection : retainedSelection.current;
     setPackages([]); setSelected(''); setTasks([]); setError(''); setPackagesLoading(false);
     if (!program) return;
     setPackagesLoading(true);
@@ -105,7 +116,9 @@ export default function ConnectedAgentCalendar({accountBindingTasks=[]}:{account
       setPackages(items);
       const ref = program.activeWeeklyOperatingPackageRef;
       const active = ref ? items.find(item => item.programId === program.programId && item.packageId === ref.id && item.version === ref.version) : undefined;
-      if (active) setSelected(identity(active));
+      const original = items.find(item => item.programId === program.programId && identity(item) === originalSelection);
+      if (original) setSelected(identity(original));
+      else if (active) setSelected(identity(active));
     }).catch(cause => { if (!cancelled) setError(cause instanceof Error ? cause.message : '周任务包读取失败'); })
       .finally(() => { if (!cancelled) setPackagesLoading(false); });
     return () => { cancelled = true; };

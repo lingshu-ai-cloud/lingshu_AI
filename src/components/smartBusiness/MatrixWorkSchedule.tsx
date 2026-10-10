@@ -1,7 +1,8 @@
+import { registerAgentCalendarReturnState } from '../../lib/agentCalendarReturnContext';
 import {projectAccountBindingCalendar} from './accountBindingCalendar';
 import AgentWeeklyCalendar, { type AgentCalendarTask } from "./AgentWeeklyCalendar";
 import ConnectedAgentCalendar from './ConnectedAgentCalendar';
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ContentQueueItem } from "../../lib/digitalEmployees";
 import { AlertTriangle, CalendarRange, Clapperboard } from "lucide-react";
 import type { VideoCreationPlan } from "../../lib/videoCreationPlan";
@@ -95,6 +96,12 @@ export function productionQueueItemForPlan(plan: VideoCreationPlan | undefined, 
 
 export default function MatrixWorkSchedule({ calendarTasks, calendarDemo = false, taskItems = [], onOpenTask, onOpenContent, startsAt, endsAt, accounts, plans, selectedAccountId, onOpenPublishing }: Props) {
   const [view, setView] = useState<"calendar" | "board">(() => typeof window !== "undefined" && new URLSearchParams(window.location.search).get("scheduleView") === "board" ? "board" : "calendar");
+  const calendarView = useRef(view);
+  calendarView.current = view;
+  useEffect(() => registerAgentCalendarReturnState('digitalEmployee.scheduleView', {
+    read: () => calendarView.current,
+    restore: saved => { if (saved === 'calendar' || saved === 'board') setView(saved); },
+  }), []);
   const visibleTasks = taskItems.filter(item => !selectedAccountId || item.accountId === selectedAccountId);
   const goalStart = safeDate(startsAt);
   const goalEnd = safeDate(endsAt, addDays(goalStart, 6));
