@@ -38,13 +38,17 @@ const taskPackagePresetSource = fs.readFileSync('src/lib/weeklyTaskPackagePreset
 const executionStatusSource = fs.readFileSync('src/components/AgentExecutionStatus.tsx', 'utf8');
 const digitalEmployeeRouteSource = fs.readFileSync('server/routes/digitalEmployees.ts', 'utf8');
 const enterpriseRouteSource = fs.readFileSync('server/routes/enterprise.ts', 'utf8');
+const onboardingGuideFrameSource = pageSource.slice(
+  pageSource.indexOf('function OnboardingStepVisual'),
+  pageSource.indexOf('function OnboardingPanel'),
+);
 const firstOnboardingSource = pageSource.slice(
   pageSource.indexOf('if (mode === "first" && !profileConfirmed)'),
   pageSource.indexOf('if (mode === "first" && profileConfirmed && !productConfirmed)'),
 );
 const productTableOnboardingSource = pageSource.slice(
   pageSource.indexOf('if (mode === "first" && profileConfirmed && !productConfirmed)'),
-  pageSource.indexOf('if (mode === "first" && profileConfirmed && productConfirmed)'),
+  pageSource.indexOf('if (mode === "first" && profileConfirmed && productConfirmed && !stageConfirmed)'),
 );
 const currentPlanSource = pageSource.slice(
   pageSource.indexOf('<div aria-label="当前周计划"'),
@@ -57,6 +61,18 @@ const weeklyCommandCenterSource = smartBusinessSource.slice(
 const weeklyPlanControlsSource = pageSource.slice(
   pageSource.indexOf('const weeklyPlanControls'),
   pageSource.indexOf('return (', pageSource.indexOf('const weeklyPlanControls')),
+);
+const matrixViewSource = smartBusinessSource.slice(
+  smartBusinessSource.indexOf('function MatrixView'),
+  smartBusinessSource.indexOf('function openTaskPreviewPage'),
+);
+const queueViewSource = smartBusinessSource.slice(
+  smartBusinessSource.indexOf('function QueueView'),
+  smartBusinessSource.indexOf('function ProductionDetailView'),
+);
+const reviewViewSource = smartBusinessSource.slice(
+  smartBusinessSource.indexOf('function ReviewView'),
+  smartBusinessSource.indexOf('export default function SmartBusinessDashboard'),
 );
 
 for (const label of ['制定本周目标', '数字员工工作排期']) {
@@ -139,7 +155,8 @@ assert.match(pageSource, /实际搜索范围以已批准的灵感范围为准/, 
 assert.match(pageSource, /输出内容语言/, 'content Agent settings must retain only its output-language requirement');
 assert.doesNotMatch(appSource, /SocialOperatingSummary/, 'Smart Business must not render the redundant social-operation background bar');
 assert.match(appSource, /page === 'traffic'[\s\S]{0,1200}initialView="publish"[\s\S]{0,300}visibleModes=\{\['publish'\]\}[\s\S]{0,200}showModeTabs=\{false\}/, 'publishing must not keep the redundant publish/account top-level tabs');
-assert.match(smartBusinessSource, /<AccountActivity embedded\/>/, 'Content Monitoring must be embedded at the bottom of the Smart Business content queue');
+assert.match(matrixViewSource, /<AccountActivity embedded\/>/, 'account monitoring must live at the bottom of the account matrix');
+assert.doesNotMatch(queueViewSource + reviewViewSource, /<AccountActivity embedded\/>/, 'account monitoring must not remain in the content queue or data review');
 for (const label of ['经营总览', '账号矩阵', '内容队列', '数据复盘']) assert.match(pageSource, new RegExp(label), `Smart Business must expose ${label}`);
 assert.doesNotMatch(smartBusinessSource, /本周统一数据口径|One weekly plan/i, 'the four views must not repeat the weekly-plan summary already shown in the command center');
 for (const label of ['演示数据', '真实回传']) assert.match(smartBusinessSource, new RegExp(label), `missing performance data must keep its source label: ${label}`);
@@ -231,7 +248,11 @@ assert.match(pageSource, /onOpenContent=\{openContentProduction\}/, 'Smart Busin
 assert.match(smartBusinessSource, /<Select aria-label="内容平台"[\s\S]{0,150}onChange=\{setPlatformFilter\}/, 'the content queue must expose platform performance filters');
 assert.match(smartBusinessSource, /内容明细与热度/, 'the content queue must expose video performance ranking');
 assert.match(smartBusinessSource, /<Table<UnifiedPlanContent>[\s\S]{0,2300}sorter: \(a, b\) => a\.metrics\.views - b\.metrics\.views/, 'the content ranking must be sortable and keyboard accessible');
-assert.match(smartBusinessSource, /原“内容监控”页已合并到这里/, 'the content queue must explain that account monitoring now lives at its bottom');
+assert.doesNotMatch(smartBusinessSource, /原“内容监控”页已合并到这里/, 'account monitoring must not retain migration copy');
+assert.match(queueViewSource, /<AccountContentPerformanceDetail[^>]+platform=\{platformFilter\}/, 'account content performance detail must live in the content queue and follow its platform filter');
+assert.match(smartBusinessSource, /账号内容表现明细[\s\S]{0,1800}<Table<AccountContentPerformanceRow>/, 'account content performance detail must keep its sortable data table');
+assert.doesNotMatch(reviewViewSource, /账号内容表现明细|AccountContentPerformanceDetail/, 'data review must not retain the account content performance detail');
+assert.doesNotMatch(smartBusinessSource, /当前失败原因|reasonCounts/, 'Smart Business must not aggregate or display blocked-task reasons as a failure chart');
 assert.doesNotMatch(smartBusinessSource, /成本建议/, 'the content queue must not show cost advice');
 for (const platform of ['YouTube', 'TikTok', 'Instagram', 'Facebook']) assert.match(smartBusinessSource, new RegExp(platform), `review ranking must expose ${platform}`);
 assert.match(smartBusinessSource, /loadConnectedSocialPerformance/, 'review must read the same connected-account performance source as Content Monitoring');
@@ -292,7 +313,7 @@ assert.match(pageSource, /statusSourceLabel\[task\.statusSource\]/, 'plan previe
 assert.match(pageSource, /\/api\/overseas\/enterprise\/profile/, 'the onboarding product table must be loaded from the tenant enterprise knowledge profile');
 assert.match(firstOnboardingSource, /label="企业名称"[\s\S]*label="品牌名称"/, 'first onboarding step must ask only for enterprise and brand names');
 assert.doesNotMatch(firstOnboardingSource, /label="(?:所属行业|目标市场|核心客户|经营目标|重点产品|Agent 设置)"/, 'first onboarding step must not ask for operating assumptions');
-assert.match(productTableOnboardingSource, /上传产品表[\s\S]*确认产品表，下一步/, 'second onboarding step must only import or confirm the product table');
+assert.match(productTableOnboardingSource, /primaryLabel="确认产品表，下一步"[\s\S]*上传产品表/, 'second onboarding step must only import or confirm the product table');
 assert.doesNotMatch(productTableOnboardingSource, /确认重点产品|按资料完整度推荐产品|本期暂无产品，先继续|快速添加产品|Agent 设置/, 'product-table onboarding must only accept an imported or existing table, without focus-product or Agent setup');
 
 for (const label of ['\u8fd0\u884c\u4e2d', '\u9700\u8981\u6211\u51b3\u5b9a', '\u4eca\u65e5\u5b8c\u6210', '\u672a\u6765 24 \u5c0f\u65f6', '\u6570\u636e\u7f3a\u53e3']) {
@@ -414,20 +435,29 @@ assert.match(pageSource, /setWorkspaceView\(["']matrix["']\)[\s\S]{0,500}setSele
 assert.match(pageSource, /scrollIntoView\([\s\S]{0,120}behavior:\s*getScrollBehavior\(\)/, 'first-run transitions must focus the next required panel while respecting reduced-motion preferences');
 assert.match(pageSource, /digitalEmployeeOnboarding:\s*\{\s*profileConfirmedAt:/, 'the first-step confirmation must be persisted instead of living only in component memory');
 assert.match(pageSource, /setProductConfirmed\(true\)/, 'confirming the product table must advance to the social-stage step');
-assert.match(pageSource, /第四步 · 社媒经营阶段[\s\S]{0,600}确认阶段并开始使用/, 'first-use onboarding must finish with the social operating stage');
-assert.match(pageSource, /saveSocialContentStage\(stageId\)[\s\S]{0,500}minimalOnboarding:\s*true/, 'minimal onboarding may complete only after its social stage is persisted');
+assert.match(pageSource, /<OnboardingGuideFrame[\s\S]{0,160}step=\{3\}[\s\S]{0,160}title="选择社媒经营阶段"[\s\S]{0,400}primaryLabel="确认阶段，下一步"/, 'the social operating stage must be the third guided step');
+assert.match(pageSource, /saveSocialContentStage\(stageId\)[\s\S]{0,180}!savedStage\.synced[\s\S]{0,180}setContentStage\(savedStage\.profile\.id\)[\s\S]{0,120}setStageConfirmed\(true\)/, 'the third step may advance only after its social stage is confirmed by persistence');
+assert.match(pageSource, /completeMinimalOnboarding[\s\S]{0,200}!stageConfirmed\s*\|\|\s*!contentStage[\s\S]{0,500}minimalOnboarding:\s*true/, 'minimal onboarding may complete only after a persisted social stage exists');
 assert.match(pageSource, /profile\.digitalEmployeeOnboarding\?\.profileConfirmedAt[\s\S]{0,120}loadedProfile\.companyName[\s\S]{0,120}loadedProfile\.brandName[\s\S]{0,80}setProfileConfirmed\(true\)/, 'persisted onboarding progress may restore step two only after both names exist');
 assert.match(pageSource, /profile\.digitalEmployeeOnboarding\?\.productSelectionConfirmedAt[\s\S]{0,120}loadedProducts\.length[\s\S]{0,80}setProductConfirmed\(true\)/, 'persisted product confirmation may restore step three only when products still exist');
 assert.match(pageSource, /!data\?\.config \|\|[\s\S]{0,250}viewGoalId \|\|[\s\S]{0,250}!run/, 'first-time onboarding must not subscribe to an obsolete run stream');
 assert.match(pageSource, /overviewRequestVersionRef/, 'late overview responses must be versioned so they cannot overwrite a completed mutation');
-assert.match(pageSource, /第三步 · 人物与声音[\s\S]{0,500}<EnterprisePresenters initialConfiguration/, 'optional presenter configuration must precede the social-stage step');
-assert.doesNotMatch(pageSource, /第五步/, 'first-time onboarding must end after the social-stage step');
+assert.match(pageSource, /OnboardingGuideFrame[\s\S]{0,180}step=\{4\}[\s\S]{0,180}title="选择出镜人物和声音（可选）"[\s\S]{0,600}<EnterprisePresenters initialConfiguration/, 'presenter configuration must be the fourth guided step');
+assert.match(pageSource, /applicationGuideSteps[\s\S]{0,120}企业与品牌[\s\S]{0,120}产品表[\s\S]{0,120}社媒经营阶段[\s\S]{0,120}人物与声音/, 'Ant Steps must expose the four guided steps in their required order');
+assert.match(onboardingGuideFrameSource, /<LsFlowDialog[\s\S]{0,600}steps=\{applicationGuideSteps\.map/, 'the beginner guide must use the shared flow dialog and Ant Steps contract');
+assert.match(onboardingGuideFrameSource, /footer=\{\[[\s\S]{0,900}<LsBrandAction/, 'the guide must keep a single branded primary action in the fixed modal footer');
+assert.match(onboardingGuideFrameSource, /function OnboardingStepVisual[\s\S]{0,1200}企业与品牌关系图[\s\S]{0,300}产品资料入库流程图[\s\S]{0,300}社媒经营阶段选择图[\s\S]{0,300}人物与声音配置图/, 'every guided step must provide a step-specific, non-fabricated visual diagram');
+assert.doesNotMatch(onboardingGuideFrameSource, /<aside\b|#7C3AED|values:\s*applicationGuideSteps|title=\{null\}/, 'the guide must not simulate an app sidebar or use fabricated chart progress');
+assert.match(pageSource, /applicationGuideOpen && \([\s\S]{0,700}restartFromBeginning[\s\S]{0,300}dismissible/, 'configured users must reopen the shared guide as a dismissible flow dialog');
+assert.doesNotMatch(pageSource, /<Drawer\b/, 'the application guide must not retain the legacy drawer container');
+assert.doesNotMatch(pageSource, /其他经营信息在实际任务需要时再确认。|这里只建立产品资料，不选择重点产品；|选择最接近当前情况的一项，我们会为你准备更合适的内容方向。/, 'guided step headers must not include legacy subtitles');
+assert.doesNotMatch(pageSource, /第五步/, 'first-time onboarding must end after the fourth step');
 assert.doesNotMatch(pageSource, /rulesStepSaved/, 'onboarding must not keep a redundant fourth-step state');
 assert.match(digitalEmployeeRouteSource, /minimalOnboarding[\s\S]{0,1800}enabledWorkflows:\s*\['viral_clone'\]/, 'minimal onboarding must create clone-only Agent content capability');
 assert.doesNotMatch(pageSource, /id:\s*["'](?:product_content|material_content)["']/, 'digital employee settings must not expose free-creation capabilities');
 assert.match(digitalEmployeeRouteSource, /!minimalContentStage\s*\?\s*\['社媒经营阶段'\]/, 'minimal onboarding must reject completion until the application-level social stage exists');
 assert.match(digitalEmployeeRouteSource, /const enterprisePatch = minimalOnboarding \? \{[\s\S]{0,500}brand:\s*\{ \.\.\.enterprise\.brand, name: minimalBrandName \}/, 'minimal defaults must not be written as fabricated enterprise facts');
-assert.match(pageSource, /新手引导[\s\S]{0,500}restartFromBeginning/, 'configured users must have an application-level entry to reopen onboarding');
+assert.match(pageSource, /applicationGuideOpen[\s\S]{0,1000}restartFromBeginning/, 'configured users must have an application-level entry to reopen onboarding');
 assert.match(pageSource, /function OnboardingWelcome[\s\S]{0,600}<Modal open title="准备工作已经完成"[\s\S]{0,600}开始使用灵枢/, 'first completion must show an accessible completion modal with a clear next step');
 assert.match(enterpriseRouteSource, /brand:\s*\{[\s\S]{0,100}name:\s*string/, 'EnterpriseProfile must store a brand name');
 assert.match(enterpriseRouteSource, /const brandInput[\s\S]{0,500}name:\s*text\(brandInput\.name\)/, 'brand name must be normalized as text');

@@ -806,7 +806,7 @@ export default function App() {
       conversations={conversations} activeConvId={activeConvId} onOpenConversation={openConversation} onNewConversation={newConversation}
       suppressRightPanel={starterMode || scriptPanelOpen} onAction={startAgentTask}>
       <Suspense fallback={null}>
-        {!isAgentProductionSession() && <GlobalAssistant
+        {(!isAgentProductionSession() || page === 'digitalEmployees') && <GlobalAssistant
           primaryEntry
           key={`assistant:${session.tenant?.id || session.user.tenantId}:${session.user.id}`}
           page={page}
@@ -816,7 +816,7 @@ export default function App() {
           }}
           restore={restore}
           kickoff={kickoff}
-          suppressForRightSidebar={scriptPanelOpen || conversation !== null || page === 'agentMonitor'}
+          suppressForRightSidebar={page !== 'digitalEmployees' && (scriptPanelOpen || conversation !== null || page === 'agentMonitor')}
           onKickoffConsumed={() => setKickoff(null)}
           onAction={startAgentTask}
           onSessionRefresh={() => void refreshSession()}

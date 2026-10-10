@@ -518,7 +518,7 @@ export default function TrafficPage({
         <WorkspaceErrorBoundary resetKey={viewMode} label={TRAFFIC_MODE_META[viewMode].label}>
           <Suspense fallback={<PageLoading />}>
             {(studioMounted || viewMode === 'create') && (
-              <div ref={studioRootRef} id="traffic-panel-create" role={showModeTabs ? 'tabpanel' : undefined} aria-labelledby={showModeTabs ? 'traffic-tab-create' : undefined} className={viewMode === 'create' ? 'h-full' : 'hidden'} aria-hidden={viewMode !== 'create'}>
+              <div ref={studioRootRef} id="traffic-panel-create" role={showModeTabs ? 'tabpanel' : undefined} aria-labelledby={showModeTabs ? 'traffic-tab-create' : undefined} className={viewMode === 'create' ? 'h-full min-h-0 overflow-hidden' : 'hidden'} aria-hidden={viewMode !== 'create'}>
                 <AiCreateStudio key={socialContentTaskId || studioCreateRequest?.requestId || 'general-studio'} onNavigate={navigateWithinSocialTask} onOpenCreationHome={onOpenCreationHome} onLaunchContentStudio={onLaunchContentStudio} onReturnToContentPlanning={onReturnToContentPlanning} onGoPublish={handleGoPublish} openProjectsSignal={openProjectsSignal} workflowContext={(workflowContextSignal !== undefined ? workflowContextSignal : workflowContext) || undefined} publishStorageScope={storageScope} socialContentTaskId={socialContentTaskId} studioCreateRequest={studioCreateRequest} />
               </div>
             )}

@@ -42,6 +42,7 @@ assert.equal(isDisplayableVideoAnalysis({
 assert.equal(isDisplayableVideoAnalysis({ geminiStatus: 'video_failed' }, 'analyzed'), false, '普通采集视频仍遵守失败隐藏规则');
 
 const componentSource = readFileSync(fileURLToPath(new URL('./InspirationDashboard.tsx', import.meta.url)), 'utf8');
+const videoCardSource = readFileSync(fileURLToPath(new URL('./InspirationVideoCards.tsx', import.meta.url)), 'utf8');
 assert.match(componentSource, /aria-label={`播放 \${material\.name}`}[^]*?event\.stopPropagation\(\); setPreviewMaterial\(material\);[^]*?z-20/, '播放按钮应稳定置于 hover 操作层之上且只打开预览');
 assert.match(componentSource, /contentFormat: isImageMaterial \? 'image' : 'video'/, '图片素材进入工作流时必须保留图片类型，不能伪装成视频');
 assert.match(componentSource, /disabled=\{material\.type === 'audio' \|\| \(material\.type === 'video' && !canProcessVideo\([^]*?<Sparkles[^]*?自由创作/, '图片素材必须可以直接进入生成，只有无有效时长的视频和音频被拦截');
@@ -55,6 +56,14 @@ assert.match(componentSource, /<Pagination current=\{videoPage\}[^]*?pageSize=\{
 assert.doesNotMatch(componentSource, />\s*加载更多\s*</, '灵感列表不再使用追加式“加载更多”');
 assert.doesNotMatch(componentSource, /本页近 3 日新入库|当前显示 <strong/, '灵感中心不应再显示与真实结果集口径冲突的独立统计条');
 assert.match(componentSource, /<LsMasonryGallery layout="grid"/, '带固定操作区的视频卡必须使用齐行网格，避免瀑布流产生空列');
+assert.ok([...componentSource.matchAll(/<LsMasonryGallery layout="grid"/g)].length >= 2, '爆款灵感和我的素材必须共用齐行媒体网格');
+assert.match(videoCardSource, /aspect-\[9\/16\][^]*?flex min-h-52 flex-1 flex-col/, '爆款卡必须使用 9:16 媒体和统一信息区高度');
+assert.match(componentSource, /filteredMaterials\.map[^]*?aspect-\[9\/16\][^]*?flex min-h-52 flex-1 flex-col/, '素材卡必须与爆款卡使用相同媒体比例和信息区高度');
+assert.match(componentSource, /grid-cols-\[160px_[^]*?<Select value=\{platform\}[^]*?<Input allowClear[^]*?aria-label="搜索爆款灵感"/, '发布平台必须位于灵感发现主筛选最左侧');
+const inspirationMoreFilters = componentSource.slice(componentSource.indexOf('id="inspiration-more-filters"'), componentSource.indexOf("innerView === 'inspiration' && videosError"));
+assert.doesNotMatch(inspirationMoreFilters, />发布平台<|aria-label="社媒平台"/, '发布平台不得重复出现在更多筛选');
+assert.doesNotMatch(videoCardSource, /video\.tags\.slice\(0, 2\)/, '爆款卡片与列表首页不得展示 hashtag');
+assert.match(componentSource, /aria-label="内容标签"[^]*?video\.tags\.map/, '爆款 hashtag 必须集中展示在详情顶部');
 assert.match(componentSource, /startInspirationCreation[^]*?requestExactFullAnalysis/, '未完成详细分析的视频点击复刻时必须自动补齐分析');
 assert.match(componentSource, /detailCreationReady =[^;]*exactQuality\.ready && !pending/, '详情复刻入口不能依赖可失败的交接状态读取');
 

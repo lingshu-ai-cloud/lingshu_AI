@@ -260,7 +260,7 @@ for (const [page, component] of [
 assert.match(appSource, /\{\(page === 'smartAssets' \|\| mountedPages\.has\('smartAssets'\) \|\| smartAssetsMounted\) && \(/, 'starter mode must keep the original content studio');
 assert.doesNotMatch(appSource, /StarterProductionSitePage/, 'starter pages must no longer replace the original product UI with a simplified projection');
 assert.match(appSource, /starterMode && page !== 'digitalEmployees'[\s\S]*?<StarterWorkflowContextBar/, 'restored pages must explain their position in the AI workflow');
-assert.match(appSource, /!isAgentProductionSession\(\) && <GlobalAssistant/, 'starter mode must keep Lingxiaoshu as the conversational entry while the workspace presents visual results');
+assert.match(appSource, /\(!isAgentProductionSession\(\) \|\| page === 'digitalEmployees'\) && <GlobalAssistant/, 'starter mode must keep Lingxiaoshu as the conversational entry while the workspace presents visual results, and Smart Operations must keep it mounted');
 assert.equal(appSource.match(/<GlobalAssistant\b/g)?.length, 1, 'the app must expose exactly one visible Lingxiaoshu entry');
 assert.match(appSource, /<GlobalAssistant[\s\S]{0,180}\bprimaryEntry\b/, 'the single Lingxiaoshu instance must be the primary entry');
 assert.doesNotMatch(starterPageSource, /GlobalAssistant/, 'the starter workspace must not embed a second Lingxiaoshu entry');

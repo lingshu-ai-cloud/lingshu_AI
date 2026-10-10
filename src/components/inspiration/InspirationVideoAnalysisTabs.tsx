@@ -159,10 +159,11 @@ export function DirectorShotAnalysisStatus({ benchmark, pending, detailedReady, 
   </section>;
 }
 
-export default function InspirationVideoAnalysisTabs({ benchmark, gemini, pending, detailedReady, detailedReason, onAnalyze, onReanalyze, analysisActionAvailable = true, renderClip, adaptTip, baseRequirements, duration }: {
+export default function InspirationVideoAnalysisTabs({ benchmark, gemini, pending, detailedReady, detailedReason, onAnalyze, onReanalyze, analysisActionAvailable = true, renderClip, adaptTip, baseRequirements, duration, storyboardStatus, speechAlignment }: {
   benchmark: BenchmarkAnalysis; gemini?: GeminiVideoAnalysis; pending: boolean; detailedReady: boolean; detailedReason: string; duration?: number;
   onAnalyze: () => void; onReanalyze: () => void; analysisActionAvailable?: boolean;
   renderClip?: (url: string) => ReactNode; adaptTip?: string; baseRequirements?: string;
+  storyboardStatus?: ReactNode; speechAlignment?: ReactNode;
 }) {
   const [activeTab, setActiveTab] = useState<AnalysisTab>('structure');
   const id = useId();
@@ -182,8 +183,10 @@ export default function InspirationVideoAnalysisTabs({ benchmark, gemini, pendin
     {tabs.map(tab => <div key={tab.id} id={`${id}-${tab.id}-panel`} role="tabpanel" aria-labelledby={`${id}-${tab.id}-tab`} tabIndex={activeTab === tab.id ? 0 : -1} hidden={activeTab !== tab.id} className="mt-4 focus-visible:outline-none">
       {activeTab === tab.id && tab.id === 'structure' && <ContentStructureTab benchmark={benchmark} gemini={gemini} pending={pending} duration={duration} />}
       {activeTab === tab.id && tab.id === 'storyboard' && <div className="space-y-4">
+        {storyboardStatus}
         <DirectorShotAnalysisStatus benchmark={benchmark} pending={pending} detailedReady={detailedReady} detailedReason={detailedReason} onAnalyze={onAnalyze} onReanalyze={onReanalyze} analysisActionAvailable={analysisActionAvailable} />
         <BenchmarkAnalysisSections analysis={benchmark} pending={pending} renderClip={renderClip} mode="shots" />
+        {speechAlignment}
       </div>}
       {activeTab === tab.id && tab.id === 'viral' && <ViralSynthesisTab benchmark={benchmark} gemini={gemini} pending={pending} adaptTip={adaptTip} baseRequirements={baseRequirements} duration={duration} />}
     </div>)}

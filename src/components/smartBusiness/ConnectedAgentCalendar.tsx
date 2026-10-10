@@ -217,6 +217,5 @@ export default function ConnectedAgentCalendar() {
     {!loading&&!error&&pkg&&<div className="px-6 pb-6"><WeeklySupplementRequestsPanel pkg={pkg} tasks={scopedTasks} onExecutionResume={reloadAfterEvidenceResume} onChanged={items=>{if(items.some(item=>item.programId!==pkg.programId||item.packageId!==pkg.packageId||item.packageVersion!==pkg.version||!scopedTasks.some(task=>task.taskId===item.consumerTaskId&&task.tenantId===item.tenantId)))throw Error('补齐任务与实际周包执行身份不一致。');setSupplements({selection:currentSelection.current,items});}}/></div>}
     {!loading&&!error&&pkg&&<div className="px-6 pb-6"><WeeklyReviewEvidencePanel pkg={pkg} tasks={scopedTasks} taskId={selectedReview?.selection===currentSelection.current?selectedReview.taskId:undefined}/></div>}
     {!loading&&!error&&pkg&&<div className="px-6 pb-6"><WeeklyContentTemplatesPanel pkg={pkg} tasks={scopedTasks} taskId={selectedTemplate?.selection===currentSelection.current?selectedTemplate.taskId:undefined} onExecutionResume={reloadAfterEvidenceResume} onTemplateRevision={selectTemplateRevision}/></div>}
-    {!loading && !error && !pkg && <p className="p-6 text-xs text-slate-500">选择已有周包查看排期；无周包时需先生成经营周计划。</p>}
   </div>;
 }

@@ -49,6 +49,7 @@ const rejection = scriptQualityFailure({ script: '', qualityStatus: 'rejected', 
 for (const issue of rejectionIssues) assert.ok(rejection?.includes(issue), '质量阻断不得截断待处理问题');
 
 const studioSource = readFileSync(fileURLToPath(new URL('./AiCreateStudio.tsx', import.meta.url)), 'utf8');
+const workbenchSource = readFileSync(fileURLToPath(new URL('./studio/StudioWorkbenchFrame.tsx', import.meta.url)), 'utf8');
 assert.match(studioSource, /usableDuration > 8[^]*?Math\.ceil\(usableDuration \/ 8\)[^]*?longer final slot[^]*?连续片段/, '单条长视频应拆成连续分镜并为唯一 CTA 留出足够时长');
 assert.match(studioSource, /response\.validationIssues\?\.length[^]*?issueIndex \+ 1/, '脚本质量阻断应把全部可操作问题展示给用户');
 assert.match(studioSource, /const slotsToMatch = storyboardSlots\.filter\(slot => \{\s*if \(lockedAssignments\[slot.id\]\) return false;/, '自动匹配必须保留已经选定的分镜素材');
@@ -62,7 +63,27 @@ assert.doesNotMatch(studioSource, /qualityStatus: result\.qualityStatus \|\| \(r
 
 console.log('AiCreateStudio workflow guard tests passed');
 
-assert.match(studioSource, /modeNotice && <div role="status"/, '镜头制作和预览也必须显示操作及降级提示');
+assert.match(studioSource, /const \{ message, notification \} = AntApp\.useApp\(\)/, '制作反馈必须使用 Ant Design 全局提示');
+assert.match(studioSource, /message\.open\(\{[\s\S]{0,300}duration: 3/, '普通制作反馈必须自动消失且不占用工作台布局');
+assert.match(studioSource, /notification\.warning\(\{[\s\S]{0,300}placement: 'top'[\s\S]{0,100}duration: 6/, '需要后续操作的制作反馈必须使用顶部临时通知');
+assert.doesNotMatch(studioSource, /modeNotice &&\s*\(?\s*<div/, '制作提示不得再渲染为常驻方框');
+assert.match(studioSource, /sceneNavigationError[\s\S]{0,500}notification\.error\(\{[\s\S]{0,500}btn:/, '分镜导航错误必须使用带返回操作的临时通知');
+assert.match(studioSource, /referenceRecoveryMessage[\s\S]{0,500}notification\.warning\(\{[\s\S]{0,700}retryReferenceActionRef\.current/, '参考分析恢复必须在临时通知中保留重试操作');
+for (const persistentRootNotice of [
+  /sceneNavigationError && <div role="alert"/,
+  /sceneNavigationReceipt && <div role="status"/,
+  /localGateBypass && !socialViralTask && <div role="status"/,
+  /referenceRecoveryMessage && <div role="alert"/,
+  /projectId && <div className="shrink-0 border-b border-slate-200/,
+  /!linkedProductionContext && managedProductionProjectRef\.current && <div role="status"/,
+  /rawSceneTarget && !sceneNavigationReceipt && !sceneNavigationError && <p role="status"/,
+]) assert.doesNotMatch(studioSource, persistentRootNotice, '工作台根布局不得保留顶部或底部常驻提示条');
+assert.match(studioSource, /sceneReworkTask\?\.taskId[\s\S]{0,1200}<SocialSceneReworkPanel/, '分镜返工详情是功能面板，必须保留');
+assert.match(studioSource, /linkedProductionContext && <details[\s\S]{0,300}<ProductionTaskScene/, '关联任务进度是功能面板，必须保留');
+assert.match(studioSource, /managedProductionProjectRef\.current && projectId[\s\S]{0,500}<ProductionRevisionPanel/, '生产现场修订面板必须保留');
+assert.match(workbenchSource, /studio-workbench-panel-layout[^"\n]*overflow-hidden/, '工作台面板必须约束在可用高度内');
+assert.match(workbenchSource, /overflow-x-hidden overflow-y-auto overscroll-contain/, '中间制作内容必须可独立纵向滚动');
+assert.doesNotMatch(workbenchSource, /<footer className="sticky bottom-0/, '底部操作栏必须占据正常 flex 布局，不得覆盖中间内容');
 assert.match(studioSource, /index > 0 && socialViralTask && hasIncompleteReferenceAnalysis\(videoKickoff\)/, '参考视频缺少可用切点时不得进入后续制作步骤');
 assert.match(studioSource, /const generateSetupScriptAndContinue = async[^]*?if \(socialViralTask\)[^]*?hasIncompleteReferenceAnalysis\(videoKickoff\)/, '自动口播交接同样必须拦截缺少完整切点的原片');
 assert.match(studioSource, /ranges\.length !== details\.length/, '逐镜分析不能忽略缺少时间码的镜头');

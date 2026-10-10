@@ -1,15 +1,15 @@
 import { useState } from 'react';
 import AgentWeeklyCalendar, { type AgentCalendarTask } from './AgentWeeklyCalendar';
 import ConnectedAgentCalendar from './ConnectedAgentCalendar';
-import type { ContentQueueItem } from '../../lib/digitalEmployees';
+import type { AgentStatus, ContentQueueItem, PlanTask, WorkflowTask } from '../../lib/digitalEmployees';
 import { Alert, Button } from 'antd';
 import { MATERIAL_TYPE_LABELS } from '../../../shared/benchmarkAnalysis';
 import type { VideoCreationPlan } from '../../lib/videoCreationPlan';
 import type { MatrixScheduleAccount } from '../SmartBusinessDashboard';
 import { LsCalendar, calendarDayKey, type LsCalendarEvent } from '../ui/LsCalendar';
-import { LsGradientProgress } from '../ui/LsExperiencePrimitives';
+import AgentWorkMonitor from './AgentWorkMonitor';
 
-type Props = { calendarTasks?: AgentCalendarTask[]; calendarDemo?: boolean; taskItems?: ContentQueueItem[]; onOpenTask?: (taskId: string, contentItemId: string) => void; startsAt?: string; endsAt?: string; accounts: MatrixScheduleAccount[]; plans: VideoCreationPlan[]; selectedAccountId?: string; onOpenPublishing?: () => void };
+type Props = { calendarTasks?: AgentCalendarTask[]; calendarDemo?: boolean; taskItems?: ContentQueueItem[]; workflowTasks?: WorkflowTask[]; planTasks?: PlanTask[]; agentStatuses?: AgentStatus[]; onOpenTask?: (taskId: string, contentItemId: string) => void; startsAt?: string; endsAt?: string; accounts: MatrixScheduleAccount[]; plans: VideoCreationPlan[]; selectedAccountId?: string; onOpenPublishing?: () => void };
 function safeDate(value: string | undefined, fallback = new Date()) {
   const parsed = value ? new Date(`${value.slice(0, 10)}T00:00:00+08:00`) : fallback;
   return Number.isNaN(parsed.getTime()) ? fallback : parsed;
@@ -47,7 +47,7 @@ function planBlockers(plan?: VideoCreationPlan) {
   return [...(!plan.productName ? ['未绑定产品'] : []), ...(!plan.referenceId ? ['缺少已完成精确分析的爆款参考'] : []), ...(plan.preproduction && !plan.preproduction.readiness.canStart ? plan.preproduction.readiness.blockers : [])];
 }
 
-export default function MatrixWorkSchedule({ calendarTasks, calendarDemo = false, taskItems = [], onOpenTask, startsAt, endsAt, accounts, plans, selectedAccountId, onOpenPublishing }: Props) {
+export default function MatrixWorkSchedule({ calendarTasks, calendarDemo = false, taskItems = [], workflowTasks, planTasks, agentStatuses, onOpenTask, startsAt, endsAt, accounts, plans, selectedAccountId, onOpenPublishing }: Props) {
   const [view, setView] = useState<'calendar' | 'board'>(() => typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('scheduleView') === 'board' ? 'board' : 'calendar');
   const visibleTasks = taskItems.filter(item => !selectedAccountId || item.accountId === selectedAccountId);
   const goalStart = safeDate(startsAt), goalEnd = safeDate(endsAt, addDays(goalStart, 6));
@@ -102,6 +102,6 @@ export default function MatrixWorkSchedule({ calendarTasks, calendarDemo = false
       </div>;
     }}/>
     </div>}
-    {view === 'board' && visibleTasks.length > 0 && <section className="border-t border-border p-4" aria-label="内容任务执行进度"><h3 className="mb-3 text-sm font-semibold">内容任务执行进度</h3><div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">{visibleTasks.map(item => <button key={item.id} type="button" disabled={!onOpenTask} onClick={() => onOpenTask?.(item.taskId, item.id)} className="rounded-lg border border-border p-3 text-left transition-colors hover:border-accent disabled:cursor-default"><h4 className="text-sm font-semibold">{item.title}</h4><p className="mt-1 text-xs text-text-secondary">{item.accountLabel || '仅制作'} · {item.platform} · {item.plannedPublishDate || '待排期'}</p><p className="mt-2 text-xs">{item.stage || item.status}</p><LsGradientProgress aria-label={`${item.title}执行进度`} percent={Math.max(0, Math.min(100, item.progress || 0))} showInfo={false} size="small" className="mt-2" />{item.reason && <p className="mt-2 text-xs text-amber-800">{item.reason}</p>}</button>)}</div></section>}
+    {view === 'board' && <AgentWorkMonitor items={visibleTasks} workflowTasks={workflowTasks} planTasks={planTasks} agentStatuses={agentStatuses} onOpenTask={onOpenTask}/>}
   </section>;
 }

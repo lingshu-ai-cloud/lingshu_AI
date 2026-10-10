@@ -5,7 +5,7 @@ import { frozenSceneSlotId, verifiedProductionSlots, verifyProductionSnapshotHas
 import { SocialSceneReworkPanel } from './socialContent/SocialSceneReworkPanel';
 import type { SocialContentTaskDetail } from '../../shared/contracts/socialContentWorkflow';
 import { localFlowRenderRecovery, localFlowRenderInputIdentity } from '../lib/localFlowRenderRecovery';
-import { Button, Modal } from 'antd';
+import { App as AntApp, Button, Modal } from 'antd';
 import { canOpenWorkbenchRenderSettings, workbenchExportBlockReason } from '../lib/replicationWorkbenchNavigation';
 import { digitalHumanQualityState } from '../lib/digitalHumanQuality';
 import StudioReviewIssueActions from './studio/StudioReviewIssueActions';
@@ -2878,6 +2878,7 @@ async function runVoiceTranslationWithTimeout<T>(
 
 /* ── 缩略图与不可预览状态 ──────────────────────────────────────────────── */
 export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunchContentStudio, onReturnToContentPlanning, onGoPublish, openProjectsSignal = 0, workflowContext, publishStorageScope, socialContentTaskId: incomingSocialTaskId, studioCreateRequest: incomingCreateRequest }: { onNavigate?: (p: Page) => void; onOpenCreationHome?: (openChooser?: boolean) => void; onLaunchContentStudio?: (request: SocialContentCreateRequest) => void; onReturnToContentPlanning?: (request: SocialContentCreateRequest) => void; onGoPublish?: (payload: StudioPublishPayload) => void; openProjectsSignal?: number; workflowContext?: StudioWorkflowContext; publishStorageScope?: string; socialContentTaskId?: string | null; studioCreateRequest?: SocialContentCreateRequest | null } = {}) {
+  const { message, notification } = AntApp.useApp();
   const rawSceneTarget = window.history.state?.productionDetail?.sceneTarget;
   const sceneTarget = parseScopedSceneTarget(rawSceneTarget);
   const sceneTargetKey = JSON.stringify(rawSceneTarget || null);
@@ -2891,6 +2892,16 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
   const [restoredSocialTaskId, setRestoredSocialTaskId] = useState<string | null>(null);
   const [restoredCreateRequest, setRestoredCreateRequest] = useState<SocialContentCreateRequest | null>(null);
   const socialContentTaskId = incomingSocialTaskId || restoredSocialTaskId;
+  const announcedSocialTaskRef = useRef('');
+  useEffect(() => {
+    if (!socialContentTaskId || rawSceneTarget || announcedSocialTaskRef.current === socialContentTaskId) return;
+    announcedSocialTaskRef.current = socialContentTaskId;
+    message.info({
+      key: 'studio-social-task-context',
+      content: '任务资料已带入统一制作工作台，可直接继续当前任务。',
+      duration: 3,
+    });
+  }, [message, rawSceneTarget, socialContentTaskId]);
   const [sceneReworkTask, setSceneReworkTask] = useState<SocialContentTaskDetail | null>(null);
   const [sceneReworkReadVersion, setSceneReworkReadVersion] = useState(0);
   useEffect(() => {
@@ -3313,6 +3324,43 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
   const [replicationConfirmationError, setReplicationConfirmationError] = useState('');
   const [materialSelectLoading, setMaterialSelectLoading] = useState(false);
   const [modeNotice, setModeNotice] = useState('');
+  useEffect(() => {
+    if (!modeNotice) return;
+    const requiresEnterpriseConfiguration = /企业中心/.test(modeNotice);
+    const requiresInspirationReview = /灵感中心|参考视频|参考分析|对标视频/.test(modeNotice);
+    if (requiresEnterpriseConfiguration || requiresInspirationReview) {
+      notification.warning({
+        key: 'studio-mode-notice',
+        message: '制作工作台提示',
+        description: modeNotice,
+        placement: 'top',
+        duration: 6,
+        btn: (
+          <Button
+            size="small"
+            onClick={() => {
+              notification.destroy('studio-mode-notice');
+              if (requiresEnterpriseConfiguration) {
+                window.sessionStorage.setItem('lingshu:enterprise-focus', 'language-settings');
+                onNavigate?.('enterprise');
+              } else {
+                onNavigate?.('socialInspiration');
+              }
+            }}
+          >
+            {requiresEnterpriseConfiguration ? '前往企业中心配置' : '返回灵感中心补全分析'}
+          </Button>
+        ),
+      });
+      return;
+    }
+    message.open({
+      key: 'studio-mode-notice',
+      type: /失败|无法|中断|错误/.test(modeNotice) ? 'warning' : /已|完成|成功/.test(modeNotice) ? 'success' : 'info',
+      content: modeNotice,
+      duration: 3,
+    });
+  }, [message, modeNotice, notification, onNavigate]);
   const [evidenceGaps, setEvidenceGaps] = useState<Array<{ shotId: string; slotId: string; index: number; code: string; message: string; canShoot: boolean }> | null>(null);
   const [evidenceBusy, setEvidenceBusy] = useState(false);
   const [modeScripts, setModeScripts] = useState<ModeScriptOutput[]>([]);
@@ -10703,11 +10751,6 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                     {posterLoading ? '生成中' : posterGenerationIsVerified ? 'AI 生成 · 已校验' : posterDraft?.provenance === 'manual_draft' ? '手动草稿 · 待复核' : posterJsonText ? '草稿 · 待确认' : '待生成'}
                   </span>
                 </div>
-                {modeNotice && (
-                  <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-800">
-                    {modeNotice}
-                  </div>
-                )}
                 <textarea
                   value={posterJsonText}
                   onChange={event => markPosterJsonAsManualDraft(event.target.value)}
@@ -12052,7 +12095,6 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
         };
         const activeBooleanQualityChecks = Object.entries(activeQualityScript?.qualityChecks || {})
           .filter((entry): entry is [string, boolean] => typeof entry[1] === 'boolean');
-        const referenceAnalysisIncomplete = mode === 'clone' && hasIncompleteReferenceAnalysis(videoKickoff);
         const referenceSpeechLines = groupReferenceSpeechLines((videoKickoff?.referenceAnalysis?.details || []).flatMap(detail => {
           const shotRange = parseCueRange(detail.time);
           const visual = detail.visual || detail.shot || '画面待分析';
@@ -12073,8 +12115,6 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
         const measuredVoiceCues = measuredVoiceAlignment
           ? (alignedCuesByLang[activeVoiceLang] || voiceoverAudios[activeVoiceLang]?.cues || [])
           : [];
-        const languageConfigurationRequired = !enterpriseScriptLanguage
-          && modeNotice.includes('企业中心尚未配置首选输出语言或主要业务语言');
         const detectedVoiceLang = detectScriptLanguageCode(voiceoverLines || extractVoiceoverText(script));
         const updatePrimaryScriptContent = (value: string) => {
           const spoken = extractVoiceoverText(value);
@@ -12305,36 +12345,6 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                 <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] font-semibold text-amber-700">
                   当前为旧版草稿，未保存对标逐镜分析；请返回灵感中心完成全片精确分析后再生成脚本。
                 </p>
-              )}
-              {modeNotice && (
-                <div
-                  role="status"
-                  aria-live="polite"
-                  className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] font-semibold leading-relaxed text-amber-800"
-                >
-                  <span className="min-w-0 flex-1">{modeNotice}</span>
-                  {referenceAnalysisIncomplete && (
-                    <button
-                      type="button"
-                      onClick={() => onNavigate?.('socialInspiration')}
-                      className="shrink-0 rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-[10px] font-semibold text-amber-800 hover:bg-amber-100"
-                    >
-                      返回灵感中心补全分析
-                    </button>
-                  )}
-                  {languageConfigurationRequired && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        window.sessionStorage.setItem('lingshu:enterprise-focus', 'language-settings');
-                        onNavigate?.('enterprise');
-                      }}
-                      className="shrink-0 rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-[10px] font-semibold text-amber-800 hover:bg-amber-100"
-                    >
-                      前往企业中心配置
-                    </button>
-                  )}
-                </div>
               )}
               {activeQualityScript && (activeQualityStatus || activeQualityWarnings.length > 0 || activeCoveragePercent !== undefined) && (
                 <div className={`mt-3 rounded-lg border px-3 py-3 ${
@@ -15680,6 +15690,95 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
         ? projectWorkflowContext
         : null
     : null;
+  const retryReferenceActionRef = useRef(retryReference);
+  retryReferenceActionRef.current = retryReference;
+
+  useEffect(() => {
+    if (sceneNavigationError) {
+      message.destroy('studio-scene-navigation');
+      notification.error({
+        key: 'studio-scene-navigation-error',
+        message: '无法打开指定分镜',
+        description: sceneNavigationError,
+        placement: 'top',
+        duration: 6,
+        btn: <Button size="small" onClick={() => {
+          notification.destroy('studio-scene-navigation-error');
+          onNavigate?.('socialWorkspace');
+        }}>返回原周任务核对上游</Button>,
+      });
+      return;
+    }
+    if (sceneNavigationReceipt) {
+      message.success({ key: 'studio-scene-navigation', content: sceneNavigationReceipt, duration: 3 });
+      return;
+    }
+    if (rawSceneTarget) {
+      message.loading({ key: 'studio-scene-navigation', content: '正在核对原周任务、视频与失败分镜凭据…', duration: 3 });
+    }
+  }, [message, notification, onNavigate, rawSceneTarget, sceneNavigationError, sceneNavigationReceipt]);
+
+  useEffect(() => {
+    if (!localGateBypass || socialViralTask) return;
+    message.info({
+      key: 'studio-local-demo-mode',
+      content: '本地演示模式：内容制作门禁已放行，内容 Agent 会优先使用最近上传的素材补齐分镜。',
+      duration: 3,
+    });
+  }, [localGateBypass, message, socialViralTask]);
+
+  useEffect(() => {
+    if (!referenceRecoveryMessage) return;
+    notification.warning({
+      key: 'studio-reference-recovery',
+      message: '参考分析需要处理',
+      description: referenceRecoveryMessage,
+      placement: 'top',
+      duration: 6,
+      btn: (
+        <div className="flex items-center gap-2">
+          {!referenceNeedsDirectorReview && <Button size="small" onClick={() => {
+            notification.destroy('studio-reference-recovery');
+            void retryReferenceActionRef.current();
+          }}>重试参考分析</Button>}
+          <Button size="small" type={referenceNeedsDirectorReview ? 'primary' : 'default'} onClick={() => {
+            notification.destroy('studio-reference-recovery');
+            onNavigate?.('socialInspiration');
+          }}>{referenceNeedsDirectorReview ? '前往编导复核' : '更换参考视频'}</Button>
+        </div>
+      ),
+    });
+  }, [notification, onNavigate, referenceNeedsDirectorReview, referenceRecoveryMessage]);
+
+  useEffect(() => {
+    if (socialContentTaskId || socialViralTask || agentProduction.active || workflowContext?.runId || projectWorkflowContext?.runId || !projectId) return;
+    notification.info({
+      key: 'studio-manual-project',
+      message: '手动创作工作台',
+      description: '当前作品未关联智能员工任务。',
+      placement: 'top',
+      duration: 6,
+      btn: <Button size="small" onClick={() => {
+        notification.destroy('studio-manual-project');
+        onNavigate?.('agentMonitor');
+      }}>前往员工监控查看真实任务</Button>,
+    });
+  }, [agentProduction.active, notification, onNavigate, projectId, projectWorkflowContext?.runId, socialContentTaskId, socialViralTask, workflowContext?.runId]);
+
+  useEffect(() => {
+    if (linkedProductionContext || !managedProductionProjectRef.current) return;
+    notification.info({
+      key: 'studio-managed-production',
+      message: '自动生产项目',
+      description: '请使用“生产现场：修改配置并继续原任务”保存配音、素材、字幕等修改。',
+      placement: 'top',
+      duration: 6,
+      btn: <Button size="small" onClick={() => {
+        notification.destroy('studio-managed-production');
+        requestProductionBack();
+      }}>返回上一页</Button>,
+    });
+  }, [linkedProductionContext, notification, projectId]);
 
   const navigateReplicationStep = async (index: number) => {
     if (modeActionLoading || ttsLoading || savingProj || batchShotBusy) return;
@@ -15779,12 +15878,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
   </div>;
 
   return (
-    <div className="flex flex-col h-full relative" onPointerDownCapture={() => { studioSettingsEditedRef.current = true; }}>
-      {sceneNavigationError && <div role="alert" className="p-3 text-amber-900">{sceneNavigationError}<button type="button" onClick={() => onNavigate?.('socialWorkspace')}>返回原周任务核对上游</button></div>}
-      {sceneNavigationReceipt && <div role="status" className="p-3">{sceneNavigationReceipt}</div>}
-      {socialContentTaskId && !rawSceneTarget && <div role="status" className="shrink-0 border-b border-blue-200 bg-blue-50 px-4 py-2 text-xs text-blue-950">
-        任务资料已带入统一制作工作台，继续当前任务即可，不再选择旧制作路线。
-      </div>}
+    <div className="relative flex h-full min-h-0 flex-col overflow-hidden" onPointerDownCapture={() => { studioSettingsEditedRef.current = true; }}>
       {sceneReworkTask?.taskId === socialContentTaskId && sceneReworkTask && (!rawSceneTarget || !!sceneNavigationReceipt) && <details open={rawSceneTarget ? true : undefined} className="mx-4 mt-3 max-h-80 shrink-0 overflow-y-auto rounded border bg-white p-3">
         <summary className="cursor-pointer font-bold">原成片失败镜头 · 局部返工</summary>
         <SocialSceneReworkPanel key={`${sceneReworkTask.taskId}:${sceneReworkTask.runId}`} task={sceneReworkTask} focusedSceneId={sceneNavigationReceipt ? sceneTarget?.sceneId : undefined} initialParentArtifactId={sceneNavigationReceipt ? sceneTarget?.parentArtifactId : undefined} expectedTenantId={sceneNavigationReceipt ? sceneTarget?.tenantId : undefined}
@@ -15801,23 +15895,13 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
         <summary className="cursor-pointer font-bold">关联任务进度 · 点击查看制作状态</summary>
         <div className="mt-2 max-h-80 overflow-y-auto"><ProductionTaskScene key={`${linkedProductionContext.runId}:${linkedProductionContext.taskId}`} runId={linkedProductionContext.runId!} taskId={linkedProductionContext.taskId!} directorContext={linkedProductionContext} embedded /></div>
       </details>}
-      {localGateBypass && !socialViralTask && <div role="status" className="shrink-0 border-b border-sky-200 bg-sky-50 px-4 py-2 text-xs font-semibold text-sky-900">本地演示模式：内容制作门禁已放行；内容 Agent 会优先考虑最近上传素材，并从本地素材库选择不同素材补齐分镜。</div>}
-      {referenceRecoveryMessage && <div role="alert" className="shrink-0 border-b border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900"><span>{referenceRecoveryMessage}</span>{!referenceNeedsDirectorReview && <button type="button" disabled={retryingReference} onClick={() => void retryReference()} className="ml-3 font-bold underline disabled:opacity-50">{retryingReference ? '正在重试…' : '重试参考分析'}</button>}<button type="button" onClick={() => onNavigate?.('socialInspiration')} className="ml-3 font-bold underline">{referenceNeedsDirectorReview ? '前往编导复核' : '更换参考视频'}</button></div>}
       {!socialContentTaskId && !agentProduction.active && <DirectorTaskContext page="smartAssets" runtimeContext={workflowContext || projectWorkflowContext || undefined} />}
-      {!socialContentTaskId && !socialViralTask && !agentProduction.active && !workflowContext?.runId && !projectWorkflowContext?.runId && projectId && <div className="shrink-0 border-b border-slate-200 bg-slate-50 px-4 py-3 text-xs text-slate-700">当前作品未关联智能员工任务，这是手动创作工作台。<button type="button" onClick={() => onNavigate?.('agentMonitor')} className="ml-3 font-semibold text-emerald-700">前往员工监控查看真实任务 →</button></div>}
-
-      {modeNotice && <div role="status" className="flex shrink-0 items-start gap-3 border-b border-amber-200 bg-amber-50 px-4 py-2 text-xs leading-5 text-amber-950"><span className="min-w-0 flex-1">{modeNotice}</span><button type="button" aria-label="关闭创作提示" onClick={() => setModeNotice('')} className="shrink-0 underline">关闭</button></div>}
-      {!linkedProductionContext && managedProductionProjectRef.current && <div role="status" className="flex shrink-0 items-center justify-between gap-3 border-b border-blue-200 bg-blue-50 px-4 py-2 text-xs text-blue-900">
-        <span>自动生产项目 · 请使用“生产现场：修改配置并继续原任务”保存配音、素材、字幕等修改。</span>
-        <button type="button" className="shrink-0 font-semibold underline" onClick={requestProductionBack}>返回上一页</button>
-      </div>}
       {managedProductionProjectRef.current && projectId && ((workflowContext?.taskKey || projectWorkflowContext?.taskKey) === 'content_quality_gate'
         ? <section className="mx-4 mt-3 shrink-0 rounded border bg-white p-3"><h3 className="font-bold">生产现场：修改配置并继续原任务</h3><ProductionRevisionPanel projectId={projectId}/></section>
         : <details className="mx-4 mt-3 shrink-0 rounded border bg-white p-3"><summary className="cursor-pointer font-bold">生产现场：修改配置并继续原任务</summary><ProductionRevisionPanel projectId={projectId}/></details>)}
       {/* BGM 试听用的隐藏音频元素 */}
       <audio ref={audioRef} onEnded={() => setPlayingBgm(null)} className="hidden" />
 
-      {rawSceneTarget && !sceneNavigationReceipt && !sceneNavigationError && <p role="status" className="p-3">正在核对原周任务、视频与失败分镜凭据…</p>}
       <div className={showProjects || (rawSceneTarget && !sceneNavigationReceipt) ? 'hidden' : 'flex min-h-0 flex-1 flex-col'}>
       <StudioWorkbenchFrame
         className="h-full min-h-0 rounded-none border-0 shadow-none lg:h-full lg:min-h-0"

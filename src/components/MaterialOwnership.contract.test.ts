@@ -67,7 +67,10 @@ assert.match(inspirationSource, /选择关联产品（必选）/, '产品素材�
 assert.match(inspirationSource, /aria-label="本次上传素材归属"/, '紧凑上传入口仍必须有清晰的无障碍名称');
 assert.match(inspirationSource, /innerView === 'library' && <Button[\s\S]{0,400}>上传素材<\/Button>/, '我的素材上传按钮必须位于页签工具栏右侧');
 assert.doesNotMatch(inspirationSource, /id="material-upload-product"/, '我的素材主页面不得继续展示独立的上传产品选择行');
-assert.match(inspirationSource, /aria-label="我的素材筛选"[^]*?MaterialTaxonomyFilters[^]*?aria-label="内容形式"[^]*?aria-label="素材收藏状态"/, '我的素材主要筛选必须统一排列在同一工具栏');
+assert.match(inspirationSource, /aria-label="我的素材筛选"[^]*?MaterialTaxonomyFilters[^]*?aria-label="内容形式"[^]*?aria-controls="material-more-filters"/, '我的素材主工具栏应只保留来源、主题和内容形式三个筛选');
+const materialMainFilters = inspirationSource.slice(inspirationSource.indexOf('aria-label="我的素材筛选"'), inspirationSource.indexOf('id="material-more-filters"'));
+assert.doesNotMatch(materialMainFilters, /aria-label="素材收藏状态"/, '收藏状态不得继续占用我的素材主筛选位');
+assert.match(inspirationSource, /id="material-more-filters"[^]*?aria-label="素材收藏状态"/, '收藏状态必须收进更多筛选');
 assert.match(inspirationSource, /updateMaterial\(result\.material\.id,[^]*?productId: uploadProductId/, '前端 P0 上传后必须保存产品归属');
 assert.match(inspirationSource, /material\.productId === filter\.productId/, '产品 ID 存在时必须按 ID 精确筛选');
 assert.doesNotMatch(inspirationSource, /manageTarget\.kind === 'material' && manageProductId === null/, '旧素材未关联产品不得成为保存卡点');
@@ -85,8 +88,11 @@ assert.doesNotMatch(inspirationSource, /enterMaterialSmartGeneration[\s\S]*?mate
 assert.doesNotMatch(inspirationSource, /pinnedMaterialVideos/, '素材库内容不得反向混入爆款视频列表');
 assert.doesNotMatch(inspirationSource, /<MaterialAnalysisStatus material=\{material\}/, '我的素材卡片不得展示内部分析进度和区间标注');
 assert.doesNotMatch(inspirationSource, /采集参考 · 仅供分析|参考素材 ≠ 可商用素材|产品归属待确认|点击智能分类/, '我的素材卡片不得展示内部用途、归属和分类标注');
-assert.match(inspirationSource, /grid-cols-1 gap-3 items-start sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5/, '我的素材卡片必须从移动端单列过渡到桌面端高密度视图');
+assert.match(inspirationSource, /<LsMasonryGallery layout="grid" items=\{filteredMaterials\.map/, '我的素材必须复用完整媒体卡的齐行网格');
 assert.match(inspirationSource, /title=\{materialSemanticLabel\(material\)\}>\{materialSemanticLabel\(material\)\}<\/p>/, '每张我的素材卡片必须显示产品名或主要内容关键词');
+const materialCardSource = inspirationSource.slice(inspirationSource.indexOf('<LsMasonryGallery layout="grid" items={filteredMaterials.map'), inspirationSource.indexOf('aria-label="我的素材分页"'));
+assert.doesNotMatch(materialCardSource, /visibleMaterialTags\(material\.tags\)|materialAssetBadge\(material\)/, '素材卡首页不得展示标签');
+assert.match(inspirationSource, /aria-label="素材标签"[^]*?materialAssetBadge\(detailMaterial\)[^]*?visibleMaterialTags\(detailMaterial\.tags\)/, '素材标签必须集中展示在详情顶部');
 assert.match(inspirationSource, /<Eye size=\{14\} \/>查看详情/, '每张素材卡必须提供查看详情入口');
 assert.match(inspirationSource, /<Sparkles size=\{14\} \/>自由创作/, '每张素材卡必须提供自由创作入口');
 assert.match(inspirationSource, /\{ key: 'library'[\s\S]{0,220}\{ key: 'accounts'/, '对标账号必须排列在我的素材之后');

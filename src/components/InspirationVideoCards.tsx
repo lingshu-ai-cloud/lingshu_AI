@@ -118,17 +118,14 @@ export function VideoCard({ video, index, isSelected, onSelect, onCreate, onWatc
           </div>
         )}
       </div>
-      <div className="flex flex-1 flex-col p-3">
+      <div className="flex min-h-52 flex-1 flex-col p-3">
         <p className="mb-2 min-h-11 ls-type-title-small text-text-primary line-clamp-2" title={video.title}>{video.title}</p>
         {!video.id.startsWith('material-') && <p className="mb-2 truncate ls-type-body-small text-text-muted">账号：{video.aiAnalysis?.author || video.aiAnalysis?.sourceAccountName || '未抓取'}</p>}
         <div className="flex items-center justify-between mb-2">
           <span className={`ls-type-label-medium ${trendColor}`}>{trendLabel}</span>
           <span className="flex items-center gap-1 ls-type-body-small tabular-nums text-text-muted">{isImagePost ? <Images size={12} /> : <Clock size={12} />}{isImagePost ? `${video.aiAnalysis?.imageCount || video.aiAnalysis?.imageUrls?.length || 1} 张` : `${video.views} 次播放`}</span>
         </div>
-        <div className="flex flex-wrap gap-1">
-          {video.tags.slice(0, 2).map(tag => <span key={tag} className="tag ls-type-label-medium">#{tag}</span>)}
-        </div>
-        {!video.id.startsWith('material-') && <div className="mt-2 flex flex-wrap gap-1 ls-type-label-medium" title={serverScore ? serverScore.reasons.join('；') : `来源优先 ${inspirationScores.sourcePriority}；内容机会 ${inspirationScores.contentOpportunityScore}`}>
+        {!video.id.startsWith('material-') && <div className="flex max-h-14 flex-wrap gap-1 overflow-hidden ls-type-label-medium" title={serverScore ? serverScore.reasons.join('；') : `来源优先 ${inspirationScores.sourcePriority}；内容机会 ${inspirationScores.contentOpportunityScore}`}>
           {serverScore && <span className={`rounded-md px-2 py-1 ${serverScore.decision === 'accepted' ? 'bg-emerald-100 text-emerald-900' : serverScore.decision === 'review' ? 'bg-amber-100 text-amber-900' : 'bg-red-100 text-red-800'}`}>服务端 {serverScore.overall} 分 · {serverScore.decision === 'accepted' ? '入选' : serverScore.decision === 'review' ? '复核' : '淘汰'}</span>}
           {video.aiAnalysis?.discoveryBusinessModel && <span className="rounded-md bg-slate-100 px-2 py-1 text-slate-700">{video.aiAnalysis.discoveryBusinessModel.toUpperCase()}</span>}
           <Tag title={discoveryOriginTitle(video)}>{discoverySupplyLabel(video)}</Tag><span className="rounded-md bg-cyan-50 px-2 py-1 text-cyan-900">{candidateDimensions.relevance}</span><span className="rounded-md bg-amber-50 px-2 py-1 text-amber-900">{candidateDimensions.momentum}</span><span className="rounded-md bg-emerald-50 px-2 py-1 text-emerald-800">{candidateDimensions.transferability}</span></div>}
@@ -185,9 +182,6 @@ export function VideoListItem({ video, isSelected, onSelect, onCreate, onWatch, 
         </div>
         <p className="ls-type-title-small text-text-primary line-clamp-2" title={video.title}>{video.title}</p>
         {!video.id.startsWith('material-') && <p className="truncate ls-type-body-small text-text-muted">账号：{video.aiAnalysis?.author || video.aiAnalysis?.sourceAccountName || '未抓取'}</p>}
-      </div>
-      <div className="hidden lg:flex items-center gap-1 flex-shrink-0">
-        {video.tags.slice(0, 2).map(tag => <span key={tag} className="tag ls-type-label-medium">#{tag}</span>)}
       </div>
       <span className="hidden xl:inline-flex flex-shrink-0 px-2 py-1 rounded-md ls-type-label-medium bg-surface-2 border border-border text-text-muted">
         {crawlRule}

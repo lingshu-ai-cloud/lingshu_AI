@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 
 const source = fs.readFileSync(new URL('./GlobalAssistant.tsx', import.meta.url), 'utf8');
+const appSource = fs.readFileSync(new URL('../App.tsx', import.meta.url), 'utf8');
 const composerSource = fs.readFileSync(new URL('./assistant/AssistantComposer.tsx', import.meta.url), 'utf8');
 const assistantGuidesSource = fs.readFileSync(new URL('../lib/assistantGuides.ts', import.meta.url), 'utf8');
 
@@ -21,6 +22,12 @@ assert.equal(source.match(/data-global-assistant=["']root["']/g)?.length, 1, '�
 const launcherClickSource = sourceSection('const handleLauncherClick', '\n  useEffect(', '灵小枢点击处理');
 assert.match(launcherClickSource, /openCurrentPageAgent\(\)/, '主入口点击灵小枢必须直接进入当前工作对话');
 assert.doesNotMatch(launcherClickSource, /setMode\('expanded'\)|quick-actions|SKILL_AGENTS/, '点击灵小枢不得打开四助手快捷轮盘');
+assert.match(source, /handlePointerDown[\s\S]{0,320}setPointerCapture\(event\.pointerId\)/, '灵小枢拖动必须统一使用 Pointer Events');
+assert.doesNotMatch(source, /\bdraggable\b|onDragStartCapture|handleNativeDrag/, '原生 HTML 拖拽不得吞掉灵小枢的普通点击');
+assert.match(source, /if \(page === 'digitalEmployees'\) \{\s*setLauncherRetracted\(false\)/, '智能经营页的灵小枢入口必须常驻展开');
+assert.match(appSource, /\(!isAgentProductionSession\(\) \|\| page === 'digitalEmployees'\) && <GlobalAssistant/, '智能经营页不得因制作会话状态卸载灵小枢');
+assert.match(appSource, /suppressForRightSidebar=\{page !== 'digitalEmployees' && \(/, '智能经营页必须保留入口，其他页仍遵守右侧栏避让规则');
+assert.match(source, /width: assistantPanelWidth,\s*maxWidth: 'calc\(100vw - 32px\)'/, '灵小枢面板必须用视口宽度约束，不能被零宽定位根节点压缩');
 
 assert.match(source, /const PRIMARY_ASSISTANT_THREAD:\s*OrbitAgentId\s*=\s*'business'/, '所有对话必须聚合到 business 主线程');
 const persistThreadSource = sourceSection('const persistThread = useCallback', 'const openAgent', '助手线程持久化队列');

@@ -314,7 +314,7 @@ export function StudioWorkbenchFrame({
 
       <MobilePanelTabs active={mobilePanel} onChange={setMobilePanel} />
 
-      <div className="social-creation-workbench-layout studio-workbench-panel-layout grid min-h-0 flex-1 bg-surface-2">
+      <div className="social-creation-workbench-layout studio-workbench-panel-layout grid min-h-0 flex-1 overflow-hidden bg-surface-2">
         <aside
           role="tabpanel"
           aria-label="分镜与脚本"
@@ -336,7 +336,7 @@ export function StudioWorkbenchFrame({
           )}
         >
           {canvasTitle ? <PanelHeading title={canvasTitle} action={canvasToolbar} /> : canvasToolbar ? <div className="flex min-h-12 shrink-0 items-center justify-end border-b border-border/80 px-4 py-2.5">{canvasToolbar}</div> : null}
-          <div className="flex min-h-[420px] flex-1 items-stretch justify-stretch overflow-hidden p-2.5 sm:p-3 xl:min-h-0">{children}</div>
+          <div className="flex min-h-[420px] flex-1 items-stretch justify-stretch overflow-x-hidden overflow-y-auto overscroll-contain p-2.5 pb-4 sm:p-3 sm:pb-4 xl:min-h-0">{children}</div>
           {replicationWorkflow && timelinePanel && <section className="shrink-0 border-t border-border bg-white" aria-label={timelineTitle}>
             <div className="flex h-10 items-center justify-between gap-2 px-4"><button type="button" aria-expanded={timelineExpanded} onClick={() => setTimelineExpanded(value => !value)} className="text-xs font-bold text-text-secondary">{timelineExpanded ? '收起' : '展开'}时间轴</button>{timelineToolbar}</div>
             <div hidden={!timelineExpanded} className="h-20 overflow-x-auto overflow-y-hidden px-4 pb-2">{timelinePanel}</div>
@@ -370,7 +370,7 @@ export function StudioWorkbenchFrame({
         </section>
       )}
 
-      <footer className="sticky bottom-0 z-20 shrink-0 border-t border-border bg-surface px-4 py-2.5  sm:px-5">
+      <footer className="relative z-20 shrink-0 border-t border-border bg-surface px-4 py-2.5 sm:px-5">
         {actionTodos}
         <div className="grid items-center gap-3 sm:grid-cols-[1fr_auto_1fr]">
           <div className="flex min-w-0 items-center gap-3">

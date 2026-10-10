@@ -3,7 +3,6 @@ import VideoAnalysisProgressPanel, { analysisProgressIsActive } from './inspirat
 import { Alert, Button, Drawer, Input, Modal, Pagination, Segmented, Select, Tabs, Upload as AntUpload } from 'antd';
 import LsPageHeader from './ui/LsPageHeader';
 import { LsLoadingState, LsMasonryGallery, LsProgressiveMedia } from './ui/LsExperiencePrimitives';
-import BenchmarkAnalysisSections from './inspiration/BenchmarkAnalysisSections';
 import ReferenceSpeechAlignmentPanel from './inspiration/ReferenceSpeechAlignmentPanel';
 import { buildBenchmarkAnalysis } from '../../shared/benchmarkAnalysis';
 import MaterialLibraryStatus from './studio/MaterialLibraryStatus';
@@ -3117,23 +3116,13 @@ export function DirectorVideoDetailPanel({
       <div className="border-b border-border px-5 py-3">
         <p className="text-sm font-medium text-text-primary">编导 Agent · {statusLabel}</p>
         <p className="mt-1 flex items-center gap-2 text-xs text-text-secondary"><SocialPlatformIcon platform={video.platform} size={14}/>{PLATFORM_META[video.platform]?.label || video.platform} · {displayDuration(video.duration)} · {payload?.analysisSource || '待确认分析来源'}</p>
+        {video.tags.length > 0 && <div className="mt-3 flex flex-wrap items-center gap-1.5" aria-label="内容标签">
+          <span className="mr-1 text-xs font-semibold text-text-secondary">内容标签</span>
+          {video.tags.map(tag => <span key={tag} className="rounded-md border border-border bg-accent-glow px-2 py-1 text-xs font-semibold text-accent">#{tag}</span>)}
+        </div>}
       </div>
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
-          {!isImagePost && <BenchmarkAnalysisSections analysis={benchmark} pending={pending} renderClip={url => <AuthenticatedVideo apiUrl={url} controls className="max-h-64 w-full rounded-lg bg-black" />} />}
-          {!isImagePost && <ReferenceSpeechAlignmentPanel details={payload?.gemini?.scriptDetails15s} transcript={payload?.gemini?.audioTranscript} />}
-          {!isImagePost && <section aria-label="编导到内容 Agent 交接状态" className="mb-4 rounded-lg border border-border bg-white p-4">
-            <div className="flex flex-wrap items-center gap-2 text-xs font-semibold"><span className="rounded bg-emerald-50 px-2 py-1 text-emerald-700">原片入库</span><ChevronRight size={13} className="text-text-muted" /><span className={`rounded px-2 py-1 ${pending ? 'bg-amber-50 text-amber-700' : draftReady ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>{pending ? '编导分析中' : draftReady ? '可交接内容起稿' : '编导证据不足'}</span><ChevronRight size={13} className="text-text-muted" /><span className={`rounded px-2 py-1 ${draftReady ? 'bg-emerald-50 text-emerald-700' : 'bg-surface-2 text-text-muted'}`}>{handoffReady ? '可制作成片' : draftReady ? '可生成口播草稿' : '内容起稿未开放'}</span></div>
-            {!handoffReady && !pending && <p className="mt-2 text-[11px] leading-5 text-amber-800">系统将使用带估计时间码的原片口播，并继续检查镜头切片、钩子动作和企业“销售”人物资产。如需继续，编导 Agent 会按清单补证，无需人工逐句校时或逐镜勾选。</p>}
-          </section>}
-          {showAnalysisProgress && <VideoAnalysisProgressPanel
-            progress={payload?.analysisProgress}
-            pending={pending}
-            onRetry={onReanalyze || onExactAnalysis}
-            retryDisabled={analyzing}
-          />}
-
-          {notice && <p role="status" className="mt-4 border-l-2 border-accent bg-accent-glow px-3 py-2 text-xs font-semibold text-accent">{notice}</p>}
-
+          {isImagePost && notice && <p role="status" className="mb-4 border-l-2 border-accent bg-accent-glow px-3 py-2 text-xs font-semibold text-accent">{notice}</p>}
           {isImagePost && imageAnalysisReady && imageEvidence ? (
             <div className="mt-4 space-y-4">
               <section className="rounded-lg border border-border bg-white p-4">
@@ -3167,6 +3156,20 @@ export function DirectorVideoDetailPanel({
               renderClip={url => <AuthenticatedVideo apiUrl={url} controls className="max-h-64 w-full rounded-lg bg-black" />}
               adaptTip={analysis?.adaptTip}
               baseRequirements={analysis?.baseRequirements}
+              storyboardStatus={<>
+                {showAnalysisProgress && <VideoAnalysisProgressPanel
+                  progress={payload?.analysisProgress}
+                  pending={pending}
+                  onRetry={onReanalyze || onExactAnalysis}
+                  retryDisabled={analyzing}
+                />}
+                {notice && <p role="status" className="border-l-2 border-accent bg-accent-glow px-3 py-2 text-xs font-semibold text-accent">{notice}</p>}
+                <section aria-label="编导到内容 Agent 交接状态" className="rounded-lg border border-border bg-white p-4">
+                  <div className="flex flex-wrap items-center gap-2 text-xs font-semibold"><span className="rounded bg-surface-2 px-2 py-1 text-green">原片入库</span><ChevronRight size={13} className="text-text-muted" /><span className={`rounded px-2 py-1 ${pending || !draftReady ? 'bg-amber-dim text-amber' : 'bg-surface-2 text-green'}`}>{pending ? '编导分析中' : draftReady ? '可交接内容起稿' : '编导证据不足'}</span><ChevronRight size={13} className="text-text-muted" /><span className={`rounded px-2 py-1 ${draftReady ? 'bg-surface-2 text-green' : 'bg-surface-2 text-text-muted'}`}>{handoffReady ? '可制作成片' : draftReady ? '可生成口播草稿' : '内容起稿未开放'}</span></div>
+                  {!handoffReady && !pending && <p className="mt-2 text-[11px] leading-5 text-amber">系统将使用带估计时间码的原片口播，并继续检查镜头切片、钩子动作和企业“销售”人物资产。如需继续，编导 Agent 会按清单补证，无需人工逐句校时或逐镜勾选。</p>}
+                </section>
+              </>}
+              speechAlignment={<ReferenceSpeechAlignmentPanel details={payload?.gemini?.scriptDetails15s} transcript={payload?.gemini?.audioTranscript} />}
             />
           )}
         </div>
@@ -4526,6 +4529,9 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     setContentFormat('video');
     setInspirationFavoriteFilter('all');
     setCrawlTimeRange('all');
+    setDiscoveryDecision('all');
+    setBusinessModelFilter('all');
+    setMinimumDiscoveryScore(0);
     setSortMode('crawlTime');
     setViewMode('grid');
   };
@@ -4598,6 +4604,12 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     + Number(minimumDiscoveryScore > 0)
     + Number(sortMode !== 'crawlTime')
     + Number(viewMode !== 'grid');
+  const inspirationAdvancedFilterCount = Number(crawlTimeRange !== 'all')
+    + Number(discoveryDecision !== 'all')
+    + Number(businessModelFilter !== 'all')
+    + Number(minimumDiscoveryScore > 0)
+    + Number(sortMode !== 'crawlTime')
+    + Number(viewMode !== 'grid');
   const materialFilterCount = Number(materialSearch.trim().length > 0)
     + Number(materialTheme !== 'all')
     + Number(materialSource !== 'all')
@@ -4609,6 +4621,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     + Number(materialOrientation !== 'all')
     + Number(materialProductFilterEnabled);
   const materialAdvancedFilterCount = Number(materialIndustry !== 'all')
+    + Number(materialFavoriteFilter !== 'all')
     + Number(materialFunction !== 'all')
     + Number(materialApplicability !== 'all')
     + Number(materialOrientation !== 'all')
@@ -4665,7 +4678,8 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
             />}
             {innerView === 'inspiration' && <div className="mb-4 space-y-4 rounded-lg border border-border bg-surface p-4">
               <div className="overflow-x-auto pb-1">
-              <div className="grid min-w-[760px] grid-cols-[minmax(240px,2fr)_minmax(130px,1fr)_minmax(170px,1fr)_160px] gap-3">
+              <div className="grid min-w-[940px] grid-cols-[160px_minmax(240px,2fr)_minmax(130px,1fr)_minmax(170px,1fr)_160px] gap-3">
+                <Select value={platform} onChange={value => handlePlatformFilter(value as Platform)} aria-label="社媒平台" options={PLATFORM_FILTERS.map(item => ({ value: item.id, label: item.label }))} />
                 <Input allowClear prefix={<Search size={15} />} value={search}
                   onChange={event => { setLastCrawlVideoIds([]); setSearch(event.target.value); }}
                   aria-label="搜索爆款灵感" placeholder="搜索标题或标签" />
@@ -4674,13 +4688,12 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                 <Select value={inspirationFavoriteFilter} onChange={value => setInspirationFavoriteFilter(value as FavoriteFilter)} aria-label="爆款收藏状态"
                   options={[{ value: 'all', label: '全部收藏状态' }, { value: 'favorite', label: '仅看收藏' }]} />
                 <Button loading={discoverySupplyLoading || videosLoading} onClick={() => setInspirationFiltersOpen(value => !value)} icon={<SlidersHorizontal size={15} />} aria-expanded={inspirationFiltersOpen} aria-controls="inspiration-more-filters">
-                  更多筛选{inspirationFilterCount > 0 ? ` · ${inspirationFilterCount}` : ''}
+                  更多筛选{inspirationAdvancedFilterCount > 0 ? ` · ${inspirationAdvancedFilterCount}` : ''}
                 </Button>
               </div>
               </div>
               {inspirationFiltersOpen && <div id="inspiration-more-filters" className="space-y-3 border-t border-border pt-4">
                 <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-                  <label className="space-y-1 text-xs text-text-secondary"><span>发布平台</span><Select className="w-full" value={platform} onChange={value => handlePlatformFilter(value as Platform)} aria-label="社媒平台" options={PLATFORM_FILTERS.map(item => ({ value: item.id, label: item.label }))} /></label>
                   <label className="space-y-1 text-xs text-text-secondary"><span>入库时间</span><Select className="w-full" value={crawlTimeRange} onChange={value => { setLastCrawlVideoIds([]); setCrawlTimeRange(value as CrawlTimeRange); }} aria-label="视频抓取入库时间" options={[{ value: 'all', label: '全部时间' }, { value: 'today', label: '今天入库' }, { value: '7d', label: '近 7 天' }, { value: '30d', label: '近 30 天' }]} /></label>
                   <label className="space-y-1 text-xs text-text-secondary"><span>排序方法</span><Select className="w-full" value={sortMode} onChange={value => { setLastCrawlVideoIds([]); setSortMode(value as SortMode); }} aria-label="排序方法" options={[{ value: 'crawlTime', label: '按爬取时间' }, { value: 'heat', label: '按内容机会' }]} /></label>
                   <label className="space-y-1 text-xs text-text-secondary"><span>筛选结论</span><Select className="w-full" value={discoveryDecision} onChange={value => setDiscoveryDecision(value as DiscoveryDecisionFilter)} aria-label="服务端筛选结论" options={[{ value: 'all', label: '全部评分结果' }, { value: 'accepted', label: '已入选' }, { value: 'review', label: '待复核' }, { value: 'rejected', label: '已淘汰' }]} /></label>
@@ -4785,8 +4798,6 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                     onSourceChange={setMaterialSource} onThemeChange={setMaterialTheme} />
                   <Select className="w-32 shrink-0" value={materialType} onChange={value => setMaterialType(value as MaterialTypeFilter)} aria-label="内容形式"
                     options={[{ value: 'all', label: '全部类型' }, { value: 'video', label: '视频' }, { value: 'image', label: '图片' }, { value: 'audio', label: '音频' }]} />
-                  <Select className="w-40 shrink-0" value={materialFavoriteFilter} onChange={value => setMaterialFavoriteFilter(value as FavoriteFilter)} aria-label="素材收藏状态"
-                    options={[{ value: 'all', label: '全部收藏状态' }, { value: 'favorite', label: '仅看收藏' }]} />
                   <Button className="shrink-0" onClick={() => setMaterialFiltersOpen(value => !value)} aria-expanded={materialFiltersOpen} aria-controls="material-more-filters" icon={<SlidersHorizontal size={15} />}>
                     更多筛选{materialAdvancedFilterCount > 0 ? ` · ${materialAdvancedFilterCount}` : ''}
                   </Button>
@@ -4794,6 +4805,8 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                 <AnimatePresence initial={false}>
                   {materialFiltersOpen && <motion.div id="material-more-filters" initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
                     <div className="grid grid-cols-1 gap-3 border-t border-border pt-3 md:grid-cols-2 xl:grid-cols-3">
+                      <label className="space-y-1 text-xs text-text-secondary"><span>收藏状态</span><Select className="w-full" value={materialFavoriteFilter} onChange={value => setMaterialFavoriteFilter(value as FavoriteFilter)} aria-label="素材收藏状态"
+                        options={[{ value: 'all', label: '全部收藏状态' }, { value: 'favorite', label: '仅看收藏' }]} /></label>
                       <label className="relative block h-14 rounded-lg border border-border bg-surface-2 transition-colors focus-within:border-accent">
                         <Package size={15} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
                         <span className="pointer-events-none absolute left-10 top-1.5 text-[10px] font-semibold text-text-muted">关联产品</span>
@@ -4834,25 +4847,24 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                 </AnimatePresence>
               </div>
               <MaterialLibraryStatus onRetry={refreshMaterials} />
-              <div className="grid grid-cols-1 gap-3 items-start sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
-                {materialsLoading ? (
-                  <div className="col-span-full flex items-center justify-center gap-2 py-16 text-sm text-text-muted">
+              {materialsLoading ? (
+                  <div className="flex items-center justify-center gap-2 py-16 text-sm text-text-muted">
                     <Loader2 size={16} className="animate-spin" /> 正在读取素材库...
                   </div>
                 ) : localMaterials.length === 0 ? (
-                  <div className="col-span-full rounded-lg border border-dashed border-border bg-surface px-6 py-16 text-center">
+                  <div className="rounded-lg border border-dashed border-border bg-surface px-6 py-16 text-center">
                     <Film size={30} className="mx-auto mb-3 text-text-muted opacity-50" />
                     <p className="text-sm font-bold text-text-primary">还没有本地社媒素材</p>
                     <p className="mt-1 text-xs text-text-muted">拍摄完成后上传，或从待拍摄素材池用 Seedance 2.0 生成。</p>
                   </div>
                 ) : filteredMaterials.length === 0 ? (
-                  <div className="col-span-full rounded-lg border border-dashed border-border bg-surface px-6 py-16 text-center">
+                  <div className="rounded-lg border border-dashed border-border bg-surface px-6 py-16 text-center">
                     <Search size={30} className="mx-auto mb-3 text-text-muted opacity-50" />
                     <p className="text-sm font-bold text-text-primary">没有符合当前标签的素材</p>
                     <button type="button" onClick={clearMaterialFilters} className="mt-2 text-xs font-bold text-accent">清空筛选条件</button>
                   </div>
-                ) : filteredMaterials.map(material => (
-                  <article key={material.id} className="group flex h-full flex-col overflow-hidden rounded-lg border border-border bg-surface shadow-none transition hover:border-border-bright ">
+                ) : <LsMasonryGallery layout="grid" items={filteredMaterials.map(material => ({ id: material.id, content:
+                  <article className="group flex h-full flex-col overflow-hidden rounded-lg border border-border bg-surface shadow-none transition hover:border-border-bright">
                     <div className="relative aspect-[9/16] bg-surface-2">
                       <div className="absolute right-2 top-2 z-30 flex gap-1">
                         {material.canManage && <button type="button" aria-label={`编辑 ${material.name}`} title="编辑" onClick={() => openManageDialog({ kind: 'material', item: material, action: 'edit' })} className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-white/70 bg-white/95 text-text-secondary shadow transition hover:text-accent"><Pencil size={14} /></button>}
@@ -4886,16 +4898,9 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                         <div className="flex h-full items-center justify-center text-text-muted"><Film size={22} /></div>
                       )}
                     </div>
-                    <div className="flex flex-1 flex-col p-3">
-                      <p className="min-h-9 text-sm font-bold leading-snug text-text-primary line-clamp-2">{material.name}</p>
+                    <div className="flex min-h-52 flex-1 flex-col p-3">
+                      <p className="min-h-11 text-sm font-bold leading-snug text-text-primary line-clamp-2">{material.name}</p>
                       <p className="mt-1 line-clamp-1 min-h-5 text-xs font-semibold leading-5 text-text-muted" title={materialSemanticLabel(material)}>{materialSemanticLabel(material)}</p>
-                      <div className="mt-1 flex min-h-5 flex-wrap gap-1">
-                        {(() => { const badge = materialAssetBadge(material); return <span className={`rounded-md px-1.5 py-0.5 text-[10px] font-semibold ${badge.className}`}>{badge.label}</span>; })()}
-                        {materialPrimaryThemeOf(material)
-                          ? <span className="rounded-md bg-violet-50 px-1.5 py-0.5 text-[10px] font-semibold text-violet-700">{MATERIAL_THEME_LABELS[materialPrimaryThemeOf(material)!]}</span>
-                          : <span className="rounded-md bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700">待识别</span>}
-                        {visibleMaterialTags(material.tags).split(/[,，]/).map(tag => tag.trim()).filter(Boolean).map(tag => <span key={`tag-${tag}`} className="rounded-md bg-violet-50 px-1.5 py-0.5 text-[10px] font-semibold text-violet-700">{tag}</span>)}
-                      </div>
                       <div className="mt-auto grid grid-cols-2 gap-2 pt-3">
                         <button
                           type="button"
@@ -4916,8 +4921,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                       </div>
                     </div>
                   </article>
-                ))}
-              </div>
+                }))} />}
               {materialTotal > MATERIAL_LIBRARY_PAGE_SIZE && (
                 <nav className="flex justify-center border-t border-border pt-5" aria-label="我的素材分页">
                   <Pagination
@@ -4956,7 +4960,15 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
           )}
 
           {detailMaterial && (
-            <Drawer open title={detailMaterial.name} size={800} onClose={() => setDetailMaterial(null)}>
+            <Drawer open title={detailMaterial.name} size={800} onClose={() => setDetailMaterial(null)} styles={{ body: { padding: 0 } }}>
+                <section className="border-b border-border bg-surface-2 px-5 py-4" aria-label="素材标签">
+                  <p className="text-xs font-semibold text-text-primary">素材标签</p>
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {(() => { const badge = materialAssetBadge(detailMaterial); return <span className="rounded-md border border-border bg-white px-2 py-1 text-xs font-semibold text-text-secondary">{badge.label}</span>; })()}
+                    <span className={`rounded-md border border-border px-2 py-1 text-xs font-semibold ${materialPrimaryThemeOf(detailMaterial) ? 'bg-accent-glow text-accent' : 'bg-white text-text-secondary'}`}>{materialPrimaryThemeOf(detailMaterial) ? MATERIAL_THEME_LABELS[materialPrimaryThemeOf(detailMaterial)!] : '主题待识别'}</span>
+                    {visibleMaterialTags(detailMaterial.tags).split(/[,，]/).map(tag => tag.trim()).filter(Boolean).map(tag => <span key={`detail-tag-${tag}`} className="rounded-md border border-border bg-white px-2 py-1 text-xs font-semibold text-text-secondary">{tag}</span>)}
+                  </div>
+                </section>
                 <div className="grid gap-5 p-5 md:grid-cols-[minmax(0,1.2fr)_minmax(240px,0.8fr)]">
                   <div className="overflow-hidden rounded-lg border border-border bg-black">
                     {detailMaterial.type === 'video' ? <video src={detailMaterial.url} poster={detailMaterial.poster} controls playsInline preload="metadata" className="aspect-video h-full max-h-[54vh] w-full object-contain" />

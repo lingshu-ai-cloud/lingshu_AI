@@ -2,7 +2,7 @@ import { getScrollBehavior } from "../lib/usePrefersReducedMotion";
 import { PAGE_REGISTRY } from "../pageRegistry";
 import EnterprisePresenters from "./enterprise/EnterprisePresenters";
 import ManagedPublishingGrantEditor from './ManagedPublishingGrantEditor';
-import { Alert, Button, Drawer, Modal, Tabs } from 'antd';
+import { Alert, Button, Modal, Tabs } from 'antd';
 import { managedPublishingGrantErrors } from '../../shared/contracts/managedPublishingGrant';
 import KnowledgeIntakePanel from "./enterprise/KnowledgeIntakePanel";
 import { normalizeContinuationPolicy, recommendedContinuationPolicy } from '../lib/continuationPolicy';
@@ -33,6 +33,7 @@ import SmartOperationsAccountRail, { type SmartOperationsAccount } from "./Smart
 import WeeklyPlanCalendar from "./smartBusiness/WeeklyPlanCalendar";
 import PlanHistoryDialog from "./PlanHistoryDialog";
 import SocialContentStageOnboarding from "./socialContent/SocialContentStageOnboarding";
+import { LsBrandAction, LsFlowDialog } from "./ui/LsExperiencePrimitives";
 import {
   saveSocialContentStage,
   socialContentStageProfile,
@@ -609,6 +610,100 @@ function configErrors(form: DigitalEmployeeConfig): Record<string, string> {
   return errors;
 }
 
+const applicationGuideSteps = [
+  { index: 1, label: "企业与品牌" },
+  { index: 2, label: "产品表" },
+  { index: 3, label: "社媒经营阶段" },
+  { index: 4, label: "人物与声音" },
+] as const;
+
+function OnboardingStepVisual({ step }: { step: 1 | 2 | 3 | 4 }) {
+  const visuals = {
+    1: { icon: Settings2, label: "企业与品牌关系图", nodes: ["企业主体", "品牌名称"] },
+    2: { icon: FileSpreadsheet, label: "产品资料入库流程图", nodes: ["产品表", "企业知识库"] },
+    3: { icon: TrendingUp, label: "社媒经营阶段选择图", nodes: ["起步验证", "增长进阶", "品牌增长"] },
+    4: { icon: Users, label: "人物与声音配置图", nodes: ["出镜人物", "声音资产"] },
+  } as const;
+  const visual = visuals[step];
+  const Icon = visual.icon;
+  return (
+    <div role="img" aria-label={visual.label} className="flex min-h-48 flex-col justify-center rounded-lg border border-border bg-surface-2 p-5">
+      <span className="mx-auto flex h-12 w-12 items-center justify-center rounded-lg bg-accent-glow text-accent">
+        <Icon size={22} />
+      </span>
+      <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
+        {visual.nodes.map((node, index) => (
+          <div key={node} className="contents">
+            {index > 0 && <ArrowRight size={14} className="text-text-muted" aria-hidden="true" />}
+            <span className="rounded-md border border-border bg-white px-3 py-2 text-xs font-semibold text-text-primary">{node}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function OnboardingGuideFrame({
+  step,
+  title,
+  children,
+  busy = false,
+  dismissible = false,
+  onClose,
+  onBack,
+  onSkip,
+  skipLabel = "跳过",
+  primaryLabel,
+  primaryDisabled = false,
+  onPrimary,
+}: {
+  step: 1 | 2 | 3 | 4;
+  title: string;
+  children: ReactNode;
+  busy?: boolean;
+  dismissible?: boolean;
+  onClose?: () => void;
+  onBack?: () => void;
+  onSkip?: () => void;
+  skipLabel?: string;
+  primaryLabel: string;
+  primaryDisabled?: boolean;
+  onPrimary: () => void;
+}) {
+  return (
+    <LsFlowDialog
+      open
+      title="新手引导"
+      width={880}
+      centered
+      current={step - 1}
+      steps={applicationGuideSteps.map((item) => ({
+        title: item.label,
+        status: item.index < step ? "finish" : item.index === step ? "process" : "wait",
+      }))}
+      closable={dismissible && !busy}
+      keyboard={dismissible && !busy}
+      maskClosable={false}
+      onCancel={() => dismissible && !busy && onClose?.()}
+      styles={{ body: { maxHeight: "min(68vh, 680px)", overflowY: "auto" } }}
+      footer={[
+        onBack ? <Button key="back" disabled={busy} onClick={onBack}>返回上一步</Button> : null,
+        onSkip ? <Button key="skip" type="text" disabled={busy} onClick={onSkip}>{skipLabel}</Button> : null,
+        <LsBrandAction key="primary" loading={busy} disabled={primaryDisabled} onClick={onPrimary}>{primaryLabel}</LsBrandAction>,
+      ].filter(Boolean)}
+    >
+      <div className="grid gap-6 md:grid-cols-[220px_minmax(0,1fr)] md:items-start">
+        <OnboardingStepVisual step={step} />
+        <section aria-labelledby={`onboarding-step-${step}-title`}>
+          <p className="ls-type-body-small font-semibold text-accent">第 {step} 步，共 4 步</p>
+          <h2 id={`onboarding-step-${step}-title`} className="ls-type-title-large mt-2 text-text-primary">{title}</h2>
+          <div className="mt-5">{children}</div>
+        </section>
+      </div>
+    </LsFlowDialog>
+  );
+}
+
 function OnboardingPanel({
   initial,
   readiness,
@@ -616,6 +711,8 @@ function OnboardingPanel({
   mode = "first",
   activeRun = false,
   restartFromBeginning = false,
+  dismissible = false,
+  onClose,
   onSave,
   onOpenReadiness,
   onNavigate,
@@ -626,6 +723,8 @@ function OnboardingPanel({
   mode?: "first" | "rules";
   activeRun?: boolean;
   restartFromBeginning?: boolean;
+  dismissible?: boolean;
+  onClose?: () => void;
   onSave: (config: DigitalEmployeeConfig & { minimalOnboarding?: true; brandName?: string }) => void | boolean | Promise<void | boolean>;
   onOpenReadiness: (item: BusinessReadinessItem) => void;
   onNavigate?: (page: BusinessDestination) => void;
@@ -674,6 +773,7 @@ function OnboardingPanel({
   const [productImporting, setProductImporting] = useState(false);
   const [productImportMessage, setProductImportMessage] = useState("");
   const [contentStage, setContentStage] = useState<SocialContentStageId>();
+  const [stageConfirmed, setStageConfirmed] = useState(mode !== "first");
   const [stageSaving, setStageSaving] = useState(false);
   const [stageError, setStageError] = useState("");
   const themeContentEnabled = form.enabledWorkflows.some((item) =>
@@ -782,7 +882,10 @@ function OnboardingPanel({
         const loadedProducts = Array.isArray(profile.products?.items) ? profile.products.items : [];
         setKnowledgeProducts(loadedProducts);
         const loadedStage = socialContentStageProfile(profile.socialStrategy?.contentStage);
-        if (loadedStage) setContentStage(loadedStage.id);
+        if (loadedStage) {
+          setContentStage(loadedStage.id);
+          if (!restartFromBeginning) setStageConfirmed(true);
+        }
         setCollectionLanguage(primaryEnterpriseLanguage(profile.company?.primaryLanguages));
         // Progress is persisted with the tenant profile so a refresh, HMR remount,
         // or a late overview response cannot throw the user back to step one.
@@ -1027,14 +1130,26 @@ function OnboardingPanel({
     } catch (error) { setProductError(error instanceof Error ? error.message : "产品表确认失败"); }
     finally { setProductSaving(false); }
   };
-  const completeMinimalOnboarding = async (stageId: SocialContentStageId) => {
+  const confirmSocialStage = async (stageId: SocialContentStageId) => {
     if (stageSaving) return;
     setStageSaving(true);
     setStageError("");
     try {
       const savedStage = await saveSocialContentStage(stageId);
-      setContentStage(savedStage.profile.id);
       if (!savedStage.synced) throw new Error("社媒经营阶段保存失败，请稍后重试");
+      setContentStage(savedStage.profile.id);
+      setStageConfirmed(true);
+    } catch (error) {
+      setStageError(error instanceof Error ? error.message : "社媒经营阶段保存失败，请稍后重试");
+    } finally {
+      setStageSaving(false);
+    }
+  };
+  const completeMinimalOnboarding = async () => {
+    if (stageSaving || !stageConfirmed || !contentStage) return;
+    setStageSaving(true);
+    setStageError("");
+    try {
       const completed = await onSave({ ...form, companyName: form.companyName.trim(), focusProducts: "", minimalOnboarding: true, brandName: brandName.trim() });
       if (completed === false) throw new Error("新手引导暂未完成，请稍后重试");
     } catch (error) {
@@ -1076,50 +1191,97 @@ function OnboardingPanel({
     submit();
   };
   if (mode === "first" && !profileConfirmed) return (
-    <section id="onboarding-enterprise-profile" className="scroll-mt-24 rounded-lg border border-slate-200 bg-white p-4 sm:p-5">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-        <div className="flex min-w-0 items-start gap-3"><div className="shrink-0 rounded-lg bg-emerald-50 p-3 text-emerald-700"><Settings2 size={22} /></div><div className="min-w-0"><p className="text-xs font-bold uppercase tracking-[0.18em] text-emerald-700">第一步 · 企业与品牌</p><h2 className="mt-1 text-xl font-bold text-slate-950">先告诉系统企业和品牌叫什么</h2><p className="mt-1 text-sm text-slate-500">其他经营信息在实际任务需要时再确认。</p></div></div>
-      </div>
-      {profileLoading ? <div role="status" className="mt-6 flex items-center gap-2 rounded-lg bg-slate-50 p-5 text-sm text-slate-500"><Loader2 size={16} className="animate-spin" />正在读取企业知识库已有档案…</div> : <>
-        <div className="mt-5 grid gap-4 md:grid-cols-2">
-          <Field label="企业名称" required><input className={inputClass} value={form.companyName} onChange={e=>set("companyName",e.target.value)} placeholder="例如：灵枢科技" /></Field>
-          <Field label="品牌名称" required><input className={inputClass} value={brandName} onChange={e=>setBrandName(e.target.value)} placeholder="例如：Aurelia" /></Field>
-        </div>
-        {profileError && <p role="alert" className="mt-4 rounded-lg bg-red-50 px-4 py-3 text-xs text-red-700">{profileError}</p>}
-        <div className="mt-6 flex flex-wrap items-center justify-between gap-3"><p role="status" className="text-xs text-amber-700">{missingProfileFields.length ? `还需填写：${missingProfileFields.join("、")}` : "企业基础资料已完整，可以保存。"}</p><Button type="primary" htmlType="button" disabled={Boolean(missingProfileFields.length) || profileSaving} onClick={()=>void saveEnterpriseProfile()} className="!h-auto min-h-9 !whitespace-normal inline-flex items-center gap-2 rounded-lg px-5 py-2.5 text-sm font-bold">{profileSaving ? <Loader2 size={16} className="animate-spin" /> : <ArrowRight size={16} />}保存企业档案</Button></div>
-      </>}
-    </section>
+    <OnboardingGuideFrame
+      step={1}
+      title="填写企业与品牌"
+      busy={profileSaving || busy}
+      dismissible={dismissible}
+      onClose={onClose}
+      onSkip={dismissible ? onClose : undefined}
+      skipLabel="稍后继续"
+      primaryLabel="保存企业档案"
+      primaryDisabled={Boolean(missingProfileFields.length)}
+      onPrimary={() => void saveEnterpriseProfile()}
+    >
+      <section id="onboarding-enterprise-profile" className="scroll-mt-24 rounded-lg border border-slate-200 bg-white p-5">
+        {profileLoading ? <div role="status" className="flex items-center gap-2 rounded-lg bg-slate-50 p-5 text-sm text-slate-500"><Loader2 size={16} className="animate-spin" />正在读取企业知识库已有档案…</div> : <>
+          <div className="grid gap-4 md:grid-cols-2">
+            <Field label="企业名称" required><input className={inputClass} value={form.companyName} onChange={e=>set("companyName",e.target.value)} placeholder="例如：灵枢科技" /></Field>
+            <Field label="品牌名称" required><input className={inputClass} value={brandName} onChange={e=>setBrandName(e.target.value)} placeholder="例如：Aurelia" /></Field>
+          </div>
+          {profileError && <p role="alert" className="mt-4 rounded-lg bg-red-50 px-4 py-3 text-xs text-red-700">{profileError}</p>}
+          <p role="status" className="mt-5 text-xs text-amber-700">{missingProfileFields.length ? `还需填写：${missingProfileFields.join("、")}` : "企业基础资料已完整，可以保存。"}</p>
+        </>}
+      </section>
+    </OnboardingGuideFrame>
   );
   if (mode === "first" && profileConfirmed && !productConfirmed) return (
+    <OnboardingGuideFrame
+      step={2}
+      title="导入或确认产品表"
+      busy={productSaving || productImporting || busy}
+      dismissible={dismissible}
+      onClose={onClose}
+      onBack={() => setProfileConfirmed(false)}
+      primaryLabel="确认产品表，下一步"
+      primaryDisabled={!knowledgeProducts.length}
+      onPrimary={() => void confirmProductTable()}
+    >
     <section id="onboarding-focus-products" className="scroll-mt-24 rounded-lg border border-slate-200 bg-white p-6">
-      <div className="flex flex-wrap items-start justify-between gap-4"><div className="flex items-start gap-3"><div className="rounded-lg bg-blue-50 p-3 text-blue-700"><Target size={22} /></div><div><p className="text-xs font-bold uppercase tracking-[0.18em] text-blue-700">第二步 · 产品表</p><h2 className="mt-1 text-xl font-bold text-slate-950">导入或确认企业已有产品表</h2><p className="mt-1 text-sm text-slate-500">这里只建立产品资料，不选择重点产品；具体宣传哪个产品会在内容制作时从企业中心选择。</p></div></div><span className="rounded-full bg-emerald-50 px-3 py-1.5 text-[10px] font-bold text-emerald-700">企业与品牌已保存</span></div>
       {productsLoading ? <div role="status" className="mt-6 flex items-center gap-2 rounded-lg bg-slate-50 p-5 text-sm text-slate-500"><Loader2 size={16} className="animate-spin" />正在读取企业知识库产品…</div> : <>
-        <div className="mt-6 flex flex-wrap items-center justify-between gap-3"><div><p className="text-sm font-bold text-slate-900">企业知识库产品表</p><p className="mt-1 text-xs text-slate-500">已有产品可直接确认，也可以导入 Excel / CSV 补充。</p></div><label className={`inline-flex items-center gap-2 rounded-lg border border-slate-200 px-4 py-2 text-xs font-bold text-slate-700 ${productImporting?"cursor-wait opacity-60":"cursor-pointer hover:bg-slate-50"}`}>{productImporting?<Loader2 size={14} className="animate-spin"/>:<FileSpreadsheet size={14}/>}上传产品表<input type="file" accept=".xlsx,.xls,.csv" className="hidden" disabled={productImporting} onChange={e=>{void importProductFile(e.currentTarget.files?.[0]??null);e.currentTarget.value="";}} /></label></div>
+        <div className="flex flex-wrap items-center justify-between gap-3"><p className="text-sm font-semibold text-slate-900">企业知识库产品表</p><label className={`inline-flex items-center gap-2 rounded-lg border border-slate-200 px-4 py-2 text-xs font-bold text-slate-700 ${productImporting?"cursor-wait opacity-60":"cursor-pointer hover:bg-slate-50"}`}>{productImporting?<Loader2 size={14} className="animate-spin"/>:<FileSpreadsheet size={14}/>}上传产品表<input type="file" accept=".xlsx,.xls,.csv" className="hidden" disabled={productImporting} onChange={e=>{void importProductFile(e.currentTarget.files?.[0]??null);e.currentTarget.value="";}} /></label></div>
         <p className="mt-2 text-[11px] text-slate-500">支持 Excel（.xlsx/.xls）和 CSV。系统自动识别产品名称、SKU、规格、价格、MOQ、材质、图片链接和卖点，并直接写入企业知识库。</p>
         {productImportMessage&&<p role="status" className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-xs font-semibold text-emerald-800">{productImportMessage}</p>}
         {!knowledgeProducts.length ? <div className="mt-4 rounded-lg border border-dashed border-slate-300 p-8 text-center"><p className="font-bold text-slate-800">企业知识库尚未录入产品</p><p className="mt-2 text-xs text-slate-500">请上传产品表后继续。</p></div> : <div className="mt-4 grid gap-3 md:grid-cols-2 lg:grid-cols-3">{knowledgeProducts.map((product,index)=>{const name=productName(product);const details=[product.category,product.sku || product.attributes?.model].filter(Boolean).join(" · ");return <div key={String(product.id||`${name}-${index}`)} className="rounded-lg border border-slate-200 p-4 text-left"><div className="flex items-start justify-between gap-2"><p className="font-bold text-slate-900">{name}</p><CheckCircle2 size={17} className="shrink-0 text-emerald-600" /></div><p className="mt-1 text-xs text-slate-500">{details||"暂无型号与类别"}</p><p className="mt-3 line-clamp-2 text-[11px] leading-relaxed text-slate-500">{product.description||product.highlights||"详细资料可稍后在企业中心完善"}</p></div>})}</div>}
         {productError&&<p role="alert" className="mt-4 rounded-lg bg-red-50 px-4 py-3 text-xs text-red-700">{productError}</p>}
-        <div className="mt-6 flex flex-wrap items-center justify-between gap-3"><p role="status" className="text-xs text-slate-500">{knowledgeProducts.length?`产品表已有 ${knowledgeProducts.length} 个产品，可以继续。`:"导入至少一个产品后即可继续。"}</p><Button type="primary" htmlType="button" disabled={!knowledgeProducts.length||productSaving} onClick={()=>void confirmProductTable()} className="!h-auto min-h-9 !whitespace-normal inline-flex items-center gap-2 rounded-lg px-5 py-2.5 text-sm font-bold">{productSaving?<Loader2 size={16} className="animate-spin"/>:<ArrowRight size={16}/>}确认产品表，下一步</Button></div>
+        <p role="status" className="mt-5 text-xs text-text-muted">{knowledgeProducts.length?`产品表已有 ${knowledgeProducts.length} 个产品，可以继续。`:"导入至少一个产品后即可继续。"}</p>
       </>}
     </section>
+    </OnboardingGuideFrame>
   );
-  if (mode === "first" && profileConfirmed && productConfirmed) return (
-    <div className="space-y-5">
-      <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm" aria-label="初始配置人物授权与声音">
-        <p className="text-xs font-bold text-emerald-700">第三步 · 人物与声音</p>
-        <h2 className="mt-1 text-xl font-bold text-slate-950">选择出镜人物和声音</h2>
-        <EnterprisePresenters initialConfiguration />
-      </section>
-    <SocialContentStageOnboarding
-      embedded
-      eyebrow="第四步 · 社媒经营阶段"
-      submitLabel="确认阶段并开始使用"
-      initialValue={contentStage}
+  if (mode === "first" && profileConfirmed && productConfirmed && !stageConfirmed) return (
+    <OnboardingGuideFrame
+      step={3}
+      title="选择社媒经营阶段"
       busy={stageSaving || busy}
-      error={stageError}
-      onConfirm={(stageId) => void completeMinimalOnboarding(stageId)}
-    />
-    </div>
+      dismissible={dismissible}
+      onClose={onClose}
+      onBack={() => setProductConfirmed(false)}
+      primaryLabel="确认阶段，下一步"
+      primaryDisabled={!contentStage}
+      onPrimary={() => contentStage && void confirmSocialStage(contentStage)}
+    >
+      <SocialContentStageOnboarding
+        embedded
+        hideHeader
+        hideActions
+        eyebrow="第三步 · 社媒经营阶段"
+        initialValue={contentStage}
+        busy={stageSaving || busy}
+        error={stageError}
+        onChange={setContentStage}
+        onConfirm={(stageId) => void confirmSocialStage(stageId)}
+      />
+    </OnboardingGuideFrame>
+  );
+  if (mode === "first" && profileConfirmed && productConfirmed && stageConfirmed) return (
+    <OnboardingGuideFrame
+      step={4}
+      title="选择出镜人物和声音（可选）"
+      busy={stageSaving || busy}
+      dismissible={dismissible}
+      onClose={onClose}
+      onBack={() => setStageConfirmed(false)}
+      onSkip={() => void completeMinimalOnboarding()}
+      skipLabel="稍后设置人物与声音"
+      primaryLabel="完成引导并开始使用"
+      onPrimary={() => void completeMinimalOnboarding()}
+    >
+      <section className="rounded-lg border border-slate-200 bg-white p-5" aria-label="初始配置人物授权与声音">
+        <EnterprisePresenters initialConfiguration />
+        {stageError && <p role="alert" className="mt-4 rounded-lg bg-red-50 px-4 py-3 text-xs font-semibold text-red-700">{stageError}</p>}
+      </section>
+    </OnboardingGuideFrame>
   );
   return (
     <>
@@ -4155,9 +4317,21 @@ export default function DigitalEmployeePage({
           </div>
         </div>
       </div>}
-      <Drawer open={applicationGuideOpen} title="新手引导" size={880} mask={{ closable: false }} onClose={() => !busy && setApplicationGuideOpen(false)}>
-        {applicationGuideOpen && <OnboardingPanel initial={data.config} readiness={data.businessSnapshot?.readiness || []} busy={Boolean(busy)} restartFromBeginning onOpenReadiness={openReadiness} onSave={async () => { setApplicationGuideOpen(false); return true; }}/>}
-      </Drawer>
+      {applicationGuideOpen && (
+        <OnboardingPanel
+          initial={data.config}
+          readiness={data.businessSnapshot?.readiness || []}
+          busy={Boolean(busy)}
+          restartFromBeginning
+          dismissible
+          onClose={() => setApplicationGuideOpen(false)}
+          onOpenReadiness={openReadiness}
+          onSave={async () => {
+            setApplicationGuideOpen(false);
+            return true;
+          }}
+        />
+      )}
       {weeklyPlanOpen && <div className="h-full overflow-y-auto bg-white">
         <section aria-label={goal && !newGoal ? "本周计划详情" : "周计划生成"} className="mx-auto w-full max-w-[1440px] p-4 sm:p-6">
           <header className="mb-5 flex flex-wrap items-start justify-between gap-4 border-b border-border pb-5">
@@ -4310,16 +4484,14 @@ export default function DigitalEmployeePage({
         )}
 
         {!data?.config && (
-          <div className="mt-5">
-            <OnboardingPanel
-              initial={EMPTY_CONFIG}
-              readiness={data?.businessSnapshot?.readiness || []}
-              busy={Boolean(busy)}
-              onOpenReadiness={openReadiness}
-              onNavigate={(page) => openBusiness(page)}
-              onSave={saveConfig}
-            />
-          </div>
+          <OnboardingPanel
+            initial={EMPTY_CONFIG}
+            readiness={data?.businessSnapshot?.readiness || []}
+            busy={Boolean(busy)}
+            onOpenReadiness={openReadiness}
+            onNavigate={(page) => openBusiness(page)}
+            onSave={saveConfig}
+          />
         )}
 
         {data?.config && workspaceView === "today" && (

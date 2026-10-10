@@ -4,7 +4,6 @@ import {
   useMemo,
   useRef,
   useState,
-  type DragEvent as ReactDragEvent,
   type PointerEvent as ReactPointerEvent,
 } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
@@ -745,12 +744,6 @@ export default function GlobalAssistant({
     originX: number;
     originY: number;
     moved: boolean;
-  } | null>(null);
-  const nativeLauncherDragRef = useRef<{
-    startX: number;
-    startY: number;
-    originX: number;
-    originY: number;
   } | null>(null);
   const suppressLauncherClickRef = useRef(false);
   const featureGuideTimerRef = useRef<number | null>(null);
@@ -1847,17 +1840,15 @@ export default function GlobalAssistant({
   const handlePointerDown = (event: ReactPointerEvent<HTMLButtonElement>) => {
     const rootRect = assistantRootRef.current?.getBoundingClientRect();
     if (!rootRect) return;
-    if (event.pointerType !== 'mouse') {
-      event.currentTarget.setPointerCapture(event.pointerId);
-      launcherDragRef.current = {
-        pointerId: event.pointerId,
-        startX: event.clientX,
-        startY: event.clientY,
-        originX: rootRect.left,
-        originY: rootRect.top,
-        moved: false,
-      };
-    }
+    event.currentTarget.setPointerCapture(event.pointerId);
+    launcherDragRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      originX: rootRect.left,
+      originY: rootRect.top,
+      moved: false,
+    };
   };
 
   const handlePointerMove = (event: ReactPointerEvent<HTMLButtonElement>) => {
@@ -1892,54 +1883,10 @@ export default function GlobalAssistant({
         setAssistantPosition(next);
         window.localStorage.setItem(ASSISTANT_POSITION_KEY, JSON.stringify(next));
         suppressLauncherClickRef.current = true;
+        window.setTimeout(() => { suppressLauncherClickRef.current = false; }, 0);
       }
       launcherDragRef.current = null;
     }
-    setLauncherDragging(false);
-  };
-
-  const handleNativeDragStart = (event: ReactDragEvent<HTMLButtonElement>) => {
-    const rootRect = assistantRootRef.current?.getBoundingClientRect();
-    if (!rootRect) {
-      event.preventDefault();
-      return;
-    }
-    nativeLauncherDragRef.current = {
-      startX: event.clientX,
-      startY: event.clientY,
-      originX: rootRect.left,
-      originY: rootRect.top,
-    };
-    event.dataTransfer.effectAllowed = 'move';
-    setLauncherDragging(true);
-    setLauncherRetracted(false);
-    setMode('breathing');
-  };
-
-  const handleNativeDrag = (event: ReactDragEvent<HTMLButtonElement>) => {
-    const drag = nativeLauncherDragRef.current;
-    if (!drag || (event.clientX === 0 && event.clientY === 0)) return;
-    setAssistantPosition(clampAssistantPosition(
-      { x: drag.originX + event.clientX - drag.startX, y: drag.originY + event.clientY - drag.startY },
-      viewport.width,
-      viewport.height,
-    ));
-  };
-
-  const handleNativeDragEnd = (event: ReactDragEvent<HTMLButtonElement>) => {
-    const drag = nativeLauncherDragRef.current;
-    if (!drag) return;
-    const next = event.clientX === 0 && event.clientY === 0
-      ? assistantPosition ?? clampAssistantPosition({ x: drag.originX, y: drag.originY }, viewport.width, viewport.height)
-      : clampAssistantPosition(
-        { x: drag.originX + event.clientX - drag.startX, y: drag.originY + event.clientY - drag.startY },
-        viewport.width,
-        viewport.height,
-      );
-    setAssistantPosition(next);
-    window.localStorage.setItem(ASSISTANT_POSITION_KEY, JSON.stringify(next));
-    nativeLauncherDragRef.current = null;
-    suppressLauncherClickRef.current = true;
     setLauncherDragging(false);
   };
 
@@ -1988,6 +1935,10 @@ export default function GlobalAssistant({
   }, []);
 
   useEffect(() => {
+    if (page === 'digitalEmployees') {
+      setLauncherRetracted(false);
+      return;
+    }
     if (assistantPosition || mode !== 'breathing' || (performance && shouldNotifyAssistant(performance.reason) && !performanceHidden)) {
       setLauncherRetracted(false);
       return;
@@ -2018,7 +1969,11 @@ export default function GlobalAssistant({
             exit={fadeExit}
             transition={fadeTransition}
             className={`absolute z-30 w-[248px] max-w-[calc(100vw-104px)] rounded-lg border border-border bg-surface p-3 shadow-lg ${assistantPosition ? '' : dockOnLeft ? 'left-[72px]' : 'right-[72px]'} ${dockOnTop ? 'top-1' : 'bottom-1'}`}
-            style={assistantPosition ? { left: positionedPopupLeft(Math.min(248, viewport.width - 104)) } : undefined}
+            style={{
+              width: Math.min(248, viewport.width - 104),
+              maxWidth: 'calc(100vw - 104px)',
+              ...(assistantPosition ? { left: positionedPopupLeft(Math.min(248, viewport.width - 104)) } : {}),
+            }}
           >
             <button
               type="button"
@@ -2048,7 +2003,11 @@ export default function GlobalAssistant({
             exit={fadeExit}
             transition={fadeTransition}
             className={`absolute z-30 w-[248px] max-w-[calc(100vw-104px)] rounded-lg border border-border bg-surface p-3 shadow-lg ${assistantPosition ? '' : dockOnLeft ? 'left-[72px]' : 'right-[72px]'} ${dockOnTop ? 'top-1' : 'bottom-1'}`}
-            style={assistantPosition ? { left: positionedPopupLeft(Math.min(248, viewport.width - 104)) } : undefined}
+            style={{
+              width: Math.min(248, viewport.width - 104),
+              maxWidth: 'calc(100vw - 104px)',
+              ...(assistantPosition ? { left: positionedPopupLeft(Math.min(248, viewport.width - 104)) } : {}),
+            }}
           >
             <p className="ls-type-label-medium text-accent">灵小枢</p>
             <p className="ls-type-body-small mt-1 text-text-secondary">{speechBubble.message}</p>
@@ -2068,7 +2027,11 @@ export default function GlobalAssistant({
             exit={fadeExit}
             transition={fadeTransition}
             className={`absolute z-20 w-[236px] max-w-[calc(100vw-104px)] rounded-lg border border-border bg-surface p-3 shadow-lg ${assistantPosition ? '' : dockOnLeft ? 'left-[72px]' : 'right-[72px]'} ${dockOnTop ? 'top-1' : 'bottom-1'}`}
-            style={assistantPosition ? { left: positionedPopupLeft(Math.min(236, viewport.width - 104)) } : undefined}
+            style={{
+              width: Math.min(236, viewport.width - 104),
+              maxWidth: 'calc(100vw - 104px)',
+              ...(assistantPosition ? { left: positionedPopupLeft(Math.min(236, viewport.width - 104)) } : {}),
+            }}
           >
             <button type="button" onClick={() => setFeatureGuide(null)} className="absolute right-2.5 top-2.5 rounded-lg p-1 text-text-muted hover:bg-surface-2" aria-label="关闭用法提示">
               <X size={13} />
@@ -2121,7 +2084,12 @@ export default function GlobalAssistant({
             exit={{ y: reduceMotion ? 0 : 8, opacity: 0, transition: { ...spatialTransition, opacity: fadeExit.transition } }}
             transition={spatialTransition}
             className={`absolute z-10 flex max-h-[calc(100dvh-32px)] max-w-[calc(100vw-32px)] flex-col overflow-hidden rounded-lg border border-border bg-surface shadow-xl outline-none ${assistantPosition ? '' : dockOnLeft ? 'left-0' : 'right-0'} ${dockOnTop ? 'top-14' : 'bottom-14'} ${assistantTool === 'knowledge-intake' ? 'w-[560px]' : 'w-[420px]'} ${mode === 'chat' ? 'pointer-events-auto visible' : 'pointer-events-none invisible'}`}
-            style={{ height: assistantPanelHeight, ...(assistantPosition ? { left: positionedPanelLeft } : {}) }}
+            style={{
+              height: assistantPanelHeight,
+              width: assistantPanelWidth,
+              maxWidth: 'calc(100vw - 32px)',
+              ...(assistantPosition ? { left: positionedPanelLeft } : {}),
+            }}
           >
             <header className="flex h-12 shrink-0 items-center justify-between border-b border-border bg-gradient-to-r from-blue-50 via-violet-50 to-pink-50 px-4">
               <div className="flex min-w-0 items-center gap-2">
@@ -2442,16 +2410,12 @@ export default function GlobalAssistant({
         <div className="relative z-10 h-[72px] w-[60px]">
           <button
             type="button"
-            draggable
             data-global-assistant="launcher"
             aria-label="拖动可移动，点击打开灵小枢"
             onPointerDown={handlePointerDown}
             onPointerMove={handlePointerMove}
             onPointerUp={handlePointerUp}
             onPointerCancel={handlePointerUp}
-            onDragStartCapture={handleNativeDragStart}
-            onDragCapture={handleNativeDrag}
-            onDragEndCapture={handleNativeDragEnd}
             onClick={handleLauncherClick}
             className={`absolute inset-0 flex touch-none items-center justify-center rounded-lg bg-transparent outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 ${launcherDragging ? 'cursor-grabbing' : 'cursor-grab'}`}
             title="拖动可移动，点击打开灵小枢"
