@@ -1,3 +1,4 @@
+import {assertPublicationAtomicStore} from './publicationAtomicStore.js';
 import {weeklyReceiptLookupAuthority,type WeeklyPublishingPurpose} from './weeklyReceiptLookupAuthority.js';
 import {materializeInstagramDelivery} from './instagramDeliveryMedia.js';
 import {instagramDeliveryPublishSourceClaim} from './publishSourceClaim.js';
@@ -78,6 +79,7 @@ async function createSynchronousWeeklyPublishingAdapter(input: {
     capability: unavailableReason ? 'unavailable' : 'available',
     ...(unavailableReason ? { unavailableReason } : {}),
     async publish({ assignment, publicationPackage, attemptId }) {
+      await assertPublicationAtomicStore(dataStore);
       if(input.purpose==='receipt_lookup')return {status:'rejected',failureCode:'receipt_lookup_adapter_read_only'};
       if(unavailableReason)return {status:'rejected',failureCode:unavailableReason};
       if (assignment.tenantId !== input.tenantId || assignment.accountId !== input.accountId

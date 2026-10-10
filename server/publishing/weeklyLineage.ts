@@ -1,3 +1,4 @@
+import {assertPublicationAtomicStore} from './publicationAtomicStore.js';
 import { createHash, randomUUID } from 'node:crypto';
 import {acquireDurableOperationLease,assertDurableOperationLease,releaseDurableOperationLease} from '../runtime/durableLease.js';
 import type { SocialWeeklyContentPackage } from '../../shared/contracts/socialProgram.js';
@@ -256,6 +257,7 @@ export async function executeWeeklyPublication(input: {
   dataStore?: DataStore;
 }): Promise<DurablePublicationAttempt> {
   const dataStore = input.dataStore ?? store;
+  await assertPublicationAtomicStore(dataStore);
   const existing = await assignmentAttempt(input.assignment.tenantId, input.assignment.assignmentId, dataStore);
   if (existing) return existing;
   const lease=await acquireDurableOperationLease({dataStore,tenantId:input.assignment.tenantId,scope:'weekly_publication_quota',subjectId:digest(`${input.assignment.lineage.operatingPackageRef.id}:${input.assignment.lineage.operatingPackageRef.version}`),ownerId:randomUUID(),leaseDurationMs:30000});

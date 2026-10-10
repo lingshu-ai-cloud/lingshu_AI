@@ -10,6 +10,8 @@ type Row = { id: string; [key: string]: any };
 function memoryStore(): DataStore & { rows: Map<string, Row[]> } {
   const rows = new Map<string, Row[]>();
   return {
+    // Explicit isolated, controlled provider fixture capability.
+    supportsAtomicOperationLease: () => true,
     rows,
     async list<T>(collection: string, query: ListQuery = {}) {
       let items = [...(rows.get(collection) || [])];

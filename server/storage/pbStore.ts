@@ -161,6 +161,9 @@ function toPbFilter(where?: Where): string | undefined {
 }
 
 export const pbStore: DataStore = {
+  // Remote schema verification has not yet been implemented. Static migration
+  // presence and disabling fallback do not prove a deployed unique index.
+  supportsAtomicOperationLease: () => false,
   async getById<T = Record_>(collection: string, id: string) {
     const authority = currentDataAuthority();
     if (authority === 'local') {

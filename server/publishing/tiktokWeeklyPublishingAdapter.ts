@@ -1,3 +1,4 @@
+import {assertPublicationAtomicStore} from './publicationAtomicStore.js';
 import {weeklyReceiptLookupAuthority,type WeeklyPublishingPurpose} from './weeklyReceiptLookupAuthority.js';
 import { fileURLToPath } from 'node:url';
 import type { DataStore } from '../storage/datastore.js';
@@ -66,6 +67,7 @@ export async function createTikTokWeeklyPublishingAdapter(input: {
     capability: unavailableReason ? 'unavailable' : 'available',
     ...(unavailableReason ? { unavailableReason } : {}),
     async publish({ assignment, publicationPackage, attemptId }) {
+      await assertPublicationAtomicStore(dataStore);
       if(input.purpose==='receipt_lookup')return {status:'rejected',failureCode:'receipt_lookup_adapter_read_only'};
       if(unavailableReason)return {status:'rejected',failureCode:unavailableReason};
       if (assignment.tenantId !== input.tenantId || assignment.accountId !== input.accountId) return { status: 'rejected', failureCode: 'adapter_account_scope_mismatch' };

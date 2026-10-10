@@ -23,6 +23,8 @@ function memoryStore(): DataStore & { rows: Map<string, Row[]> } {
     return { items: items.slice((page - 1) * perPage, page * perPage) as T[], totalItems, totalPages: Math.ceil(totalItems / perPage), page, perPage };
   };
   return {
+    // Explicit isolated, controlled provider fixture capability.
+    supportsAtomicOperationLease: () => true,
     rows, list,
     async getById<T>(collection: string, id: string) { return ((rows.get(collection) || []).find(item => item.id === id) as T | undefined) ?? null; },
     async create<T>(collection: string, data: Record<string, unknown>) { const item = { id: `${collection}-${(rows.get(collection)?.length || 0) + 1}`, ...data }; rows.set(collection, [...(rows.get(collection) || []), item]); return item as T; },

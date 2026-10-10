@@ -1,3 +1,4 @@
+import {assertPublicationAtomicStore} from './publicationAtomicStore.js';
 import { assertManagedPublishingAuthorization } from './managedPublishingAuthorization.js';
 import {
   assertNoUnresolvedPublishing,
@@ -666,6 +667,7 @@ async function publishVideoToAccountWithLease(
 }
 
 export async function publishVideoToAccount(input: PublishToAccountInput): Promise<PublishToAccountResult> {
+  await assertPublicationAtomicStore(store);
   if (!input.title.trim()) throw publishError('发布标题不能为空', 400);
   const sourceClaim = input.sourceClaim
     ? await verifyFrozenPublishSourceClaim(input.tenantId, input.sourceClaim, input.videoPath)

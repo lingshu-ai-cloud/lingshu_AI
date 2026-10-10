@@ -196,6 +196,28 @@ function sortSql(sort?: string): string {
 }
 
 export class PostgresStore implements DataStore {
+  async supportsAtomicOperationLease(): Promise<boolean> {
+    try {
+      const result = await this.db().query<{valid:boolean;key1:string;key2:string;key3:string;predicate:string}>(`
+        SELECT i.indisvalid AND i.indisready AND i.indimmediate AND i.indisunique AND i.indnkeyatts = 3 AS valid,
+               pg_get_indexdef(i.indexrelid, 1, true) AS key1,
+               pg_get_indexdef(i.indexrelid, 2, true) AS key2,
+               pg_get_indexdef(i.indexrelid, 3, true) AS key3,
+               pg_get_expr(i.indpred, i.indrelid) AS predicate
+        FROM pg_index i JOIN pg_class idx ON idx.oid = i.indexrelid
+        JOIN pg_class tab ON tab.oid = i.indrelid
+        WHERE idx.relname = 'idx_lingshu_durable_operation_lease_subject'
+          AND tab.oid = to_regclass('lingshu_records')
+      `);
+      if (result.rows.length !== 1 || result.rows[0]?.valid !== true) return false;
+      const canonical = (value:string) => value.replace(/::text/g, '').replace(/[()\s]/g, '');
+      const row = result.rows[0];
+      return canonical(row.key1) === "data->>'tenant_id'"
+        && canonical(row.key2) === "data->>'lease_scope'"
+        && canonical(row.key3) === "data->>'subject_id'"
+        && canonical(row.predicate) === "collection='durable_operation_leases'";
+    } catch { return false; }
+  }
   constructor(private readonly configuredDb?: SqlExecutor) {}
 
   private db(): SqlExecutor {
