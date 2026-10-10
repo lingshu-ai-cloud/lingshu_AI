@@ -1,3 +1,4 @@
+import { agentCalendarAuthIdentity, readAgentCalendarReturnContext, registerAgentCalendarReturnState } from '../../lib/agentCalendarReturnContext';
 import {openCustomerCalendarTask,type CustomerCalendarProjection} from '../socialProgram/CustomerWeeklyCalendar';
 import {readWeeklyContentNavigation,weeklyContentNavigationDetail} from '../../lib/weeklyContentNavigationApi';
 import {parseWeeklyProfileCreation,type WeeklyProfileUpgrade,type WeeklyProfileCreationIntent} from '../../lib/weeklyProfileUpgradeApi';
@@ -14,6 +15,7 @@ import type {WeeklyPublicationRecovery} from '../../../shared/contracts/weeklyPu
 import WeeklyPublicationRecoveryPanel from '../socialProgram/WeeklyPublicationRecoveryPanel';
 import WeeklyPublicationExecutionPanel,{publicationExecutionPanelId} from '../socialProgram/WeeklyPublicationExecutionPanel';
 import {validPublicationExecutionTarget} from '../socialProgram/publicationExecutionCalendarNavigation';
+import {validatedCalendarPublicationDestination} from '../socialProgram/calendarPublicationDestination';
 import {projectNativeRecoveries,validNativeRecoveryTarget,nativeRecoveryPanelId} from '../socialProgram/weeklyNativeRecoveryCalendar';
 import type {WeeklyNativeSendRecovery} from '../../../shared/contracts/weeklyNativeSendRecovery';
 import WeeklyNativeSendRecoveryPanel from '../socialProgram/WeeklyNativeSendRecoveryPanel';
@@ -23,8 +25,7 @@ import { Alert, Select, Spin } from 'antd';
 import WeeklyCustomerSendRecoveryPanel,{requestPanelId} from '../socialProgram/WeeklyCustomerSendRecoveryPanel';
 import {validCustomerSendRecoveryTarget} from '../socialProgram/weeklyCustomerSendRecoveryNavigation';
 import type {WeeklyCustomerSendRecovery} from '../../../shared/contracts/weeklyCustomerSendRecovery';
-import {getToken} from '../../lib/auth';
-import { getScrollBehavior } from '../../lib/usePrefersReducedMotion';
+import {AUTH_TOKEN_CHANGED_EVENT,getToken} from '../../lib/auth';
 import {verifyProductionSnapshotHash} from '../../lib/socialSceneReworkNavigation';
 import {sceneCalendarExecution,sceneCalendarChoices,isSceneContentExecution} from '../socialProgram/sceneCalendarNavigation';
 import {socialContentApi} from '../../lib/socialContentApi';
@@ -33,7 +34,8 @@ import {socialSceneReworkApi} from '../../lib/socialSceneReworkApi';
 import {sceneStudioNavigationDetail,type ScopedSceneTarget} from '../../lib/scopedSceneNavigation';
 import AgentWeeklyCalendar, {type AgentCalendarTask} from './AgentWeeklyCalendar';
 import type {WeeklyScheduleConfirmation} from '../../../shared/contracts/socialWeeklyScheduleRevision';
-import WeeklySalesHandoffPanel,{salesPanelId} from '../socialProgram/WeeklySalesHandoffPanel';
+import {revealWeeklySalesAction} from '../socialProgram/weeklySalesNavigation';
+import WeeklySalesHandoffPanel from '../socialProgram/WeeklySalesHandoffPanel';
 import { useEffect, useRef, useState } from 'react';
 import type { WeeklyMaterialRequest } from '../../../server/socialPrograms/weeklyMaterialRequests';
 import { bindWeeklyMaterialRequest,type WeeklyHumanMaterialBinding } from '../../lib/weeklyMaterialBinding';
@@ -60,8 +62,19 @@ const identity = (pkg: WeeklyOperatingPackage) => JSON.stringify([pkg.packageId,
 export default function ConnectedAgentCalendar({accountBindingTasks=[]}:{accountBindingTasks?:AgentCalendarTask[]}={}) {
   const context = useOptionalSocialProgram();
   const program = context?.activeProgram;
+  const [authIdentity,setAuthIdentity]=useState(agentCalendarAuthIdentity);
+  useEffect(()=>{const changed=()=>setAuthIdentity(agentCalendarAuthIdentity());window.addEventListener(AUTH_TOKEN_CHANGED_EVENT,changed);window.addEventListener('storage',changed);return()=>{window.removeEventListener(AUTH_TOKEN_CHANGED_EVENT,changed);window.removeEventListener('storage',changed);};},[]);
   const [packages, setPackages] = useState<WeeklyOperatingPackage[]>([]);
+  const [packageAuthority,setPackageAuthority]=useState(authIdentity);
   const [selected, setSelected] = useState('');
+  const retainedSelection = useRef(selected);
+  retainedSelection.current = selected;
+  const packageStateKey = `agentCalendar.package:${authIdentity}:${program?.programId ?? ''}`;
+  useEffect(() => registerAgentCalendarReturnState(packageStateKey, {
+    read: () => retainedSelection.current,
+    restore: value => { if (typeof value === 'string') setSelected(value); },
+  }), [packageStateKey]);
+
   const [sendRecoveries,setSendRecoveries]=useState<{identity:string;items:WeeklyCustomerSendRecovery[]}|null>(null);
   const sendRecoveryIdentity=useRef('');
   const [crossWeekMaterials,setCrossWeekMaterials]=useState<{identity:string;items:CrossWeekMaterialContinuationView[]}|null>(null);
@@ -94,24 +107,28 @@ export default function ConnectedAgentCalendar({accountBindingTasks=[]}:{account
   const [packagesLoading, setPackagesLoading] = useState(false);
   const [tasksLoading, setTasksLoading] = useState(false);
   const loading = packagesLoading || tasksLoading;
-  currentSelection.current=JSON.stringify([program?.programId,selected]);
-  useEffect(()=>{sceneReadGeneration.current++;setSceneChoices(null);setSceneUpstream(null);setSceneReading(null);},[program?.programId,selected]);
+  currentSelection.current=JSON.stringify([authIdentity,program?.programId,selected]);
+  useEffect(()=>{sceneReadGeneration.current++;setSceneChoices(null);setSceneUpstream(null);setSceneReading(null);},[authIdentity,program?.programId,selected]);
   useEffect(() => {
     let cancelled = false;
+    const savedSelection = readAgentCalendarReturnContext()?.states[packageStateKey];
+    const originalSelection = typeof savedSelection === 'string' ? savedSelection : '';
     setPackages([]); setSelected(''); setTasks([]); setError(''); setPackagesLoading(false);
     if (!program) return;
     setPackagesLoading(true);
     void socialProgramApi.listOperatingPackages(program.programId).then(items => {
-      if (cancelled) return;
-      setPackages(items);
+      if (cancelled || authIdentity!==agentCalendarAuthIdentity()) return;
+      setPackageAuthority(authIdentity);setPackages(items);
       const ref = program.activeWeeklyOperatingPackageRef;
       const active = ref ? items.find(item => item.programId === program.programId && item.packageId === ref.id && item.version === ref.version) : undefined;
-      if (active) setSelected(identity(active));
+      const original = items.find(item => item.programId === program.programId && identity(item) === originalSelection);
+      if (original) setSelected(identity(original));
+      else if (active) setSelected(identity(active));
     }).catch(cause => { if (!cancelled) setError(cause instanceof Error ? cause.message : '周任务包读取失败'); })
       .finally(() => { if (!cancelled) setPackagesLoading(false); });
     return () => { cancelled = true; };
-  }, [program?.programId, program?.activeWeeklyOperatingPackageRef?.id, program?.activeWeeklyOperatingPackageRef?.version]);
-  const pkg = packages.find(item => item.programId === program?.programId && identity(item) === selected);
+  }, [authIdentity,program?.programId, program?.activeWeeklyOperatingPackageRef?.id, program?.activeWeeklyOperatingPackageRef?.version]);
+  const pkg = packageAuthority===authIdentity ? packages.find(item => item.programId === program?.programId && identity(item) === selected) : undefined;
   useEffect(() => {
     let cancelled = false;
     let reading = false;
@@ -125,7 +142,7 @@ export default function ConnectedAgentCalendar({accountBindingTasks=[]}:{account
       try {
         const items = await socialProgramApi.listExecutionTasks(pkg.programId, pkg.packageId, pkg.version);
         if (items.some(item => item.programId !== pkg.programId || item.packageId !== pkg.packageId || item.packageVersion !== pkg.version)) throw new Error('执行任务与所选周包版本不一致，请刷新后重试。');
-        if (!cancelled&&generation===taskReadGeneration.current) { setTasks(items); setError(''); }
+        if (!cancelled&&authIdentity===agentCalendarAuthIdentity()&&generation===taskReadGeneration.current) { setTasks(items); setError(''); }
       } catch (cause) { if (!cancelled) setError(cause instanceof Error ? cause.message : '执行排期读取失败'); }
       finally { reading = false; if (!cancelled) setTasksLoading(false); }
     };
@@ -134,7 +151,7 @@ export default function ConnectedAgentCalendar({accountBindingTasks=[]}:{account
     const visible = () => { if (document.visibilityState === 'visible') void read(); };
     document.addEventListener('visibilitychange', visible);
     return () => { cancelled = true; window.clearInterval(timer); document.removeEventListener('visibilitychange', visible); };
-  }, [pkg?.programId, pkg?.packageId, pkg?.version]);
+  }, [authIdentity,pkg?.programId, pkg?.packageId, pkg?.version]);
   const scopedTasks=tasks.filter(item=>item.programId===pkg?.programId&&item.packageId===pkg?.packageId&&item.packageVersion===pkg?.version);
   const recoveryTenants=[...new Set(scopedTasks.map(task=>task.tenantId))];
   const recoveryTenant=recoveryTenants.length===1?recoveryTenants[0]:null;
@@ -158,7 +175,7 @@ export default function ConnectedAgentCalendar({accountBindingTasks=[]}:{account
     if(currentSelection.current!==captured||getToken()!==token)return;
     setSelectedCustomerRun({selection:captured,taskId:actual.taskId,token,projection});
   }catch(cause){if(currentSelection.current!==captured||getToken()!==token)return;setBindingContext(captured);setBindingError(cause instanceof Error?cause.message:'客服执行详情读取失败。');}};
-  const openPublicationExecution=(card:AgentCalendarTask)=>{try{if(!pkg||!recoveryScope||getToken()!==recoveryToken)throw Error('当前登录或周包已变化。');const actual=validPublicationExecutionTarget(card,{programId:pkg.programId,packageId:pkg.packageId,packageVersion:pkg.version},scopedTasks);if(!actual)throw Error('发布执行卡与当前真实任务不一致。');setSelectedPublicationExecution({selection:currentSelection.current,taskId:actual.taskId});setTimeout(()=>{const node=document.getElementById(publicationExecutionPanelId(recoveryScope,actual.taskId));if(node)node.scrollIntoView({behavior:'smooth',block:'start'});},0);}catch(cause){setBindingContext(currentSelection.current);setBindingError(cause instanceof Error?cause.message:'发布执行详情读取失败。');}};
+  const openPublicationExecution=(card:AgentCalendarTask)=>{try{if(!pkg||!recoveryScope||getToken()!==recoveryToken)throw Error('当前登录或周包已变化。');const actual=validPublicationExecutionTarget(card,{programId:pkg.programId,packageId:pkg.packageId,packageVersion:pkg.version},scopedTasks);if(!actual)throw Error('发布执行卡与当前真实任务不一致。');const selection=currentSelection.current;setSelectedPublicationExecution({selection,taskId:actual.taskId});setTimeout(()=>{if(currentSelection.current!==selection||getToken()!==recoveryToken)return;const node=document.getElementById(publicationExecutionPanelId(recoveryScope,actual.taskId));if(node&&node.dataset.tenant===actual.tenantId&&node.dataset.program===actual.programId&&node.dataset.package===actual.packageId&&node.dataset.version===String(actual.packageVersion)&&node.dataset.task===actual.taskId){node.scrollIntoView({behavior:'smooth',block:'start'});node.focus({preventScroll:true});}},0);}catch(cause){setBindingContext(currentSelection.current);setBindingError(cause instanceof Error?cause.message:'发布执行详情读取失败。');}};
   const selectRevision=(next:WeeklyOperatingPackage,expected=JSON.stringify([program?.programId,selected]))=>{
     if(currentSelection.current!==expected)return false;
     if(!pkg||next.programId!==pkg.programId||next.packageId!==pkg.packageId||next.version<=pkg.version)throw Error('新修订与当前项目、周包或版本不一致，请刷新真实排期。');
@@ -220,14 +237,15 @@ export default function ConnectedAgentCalendar({accountBindingTasks=[]}:{account
     catch(cause){if(currentSelection.current===operationIdentity){setBindingContext(operationIdentity);setBindingError(cause instanceof Error?cause.message:'素材关联失败，请核验真实消费者。');setRetryRequest(request);setRetryBindings(bindings);}throw cause;}
     finally{setBindingBusy(false);}
   }
-  const openMaterial=(requestId:string)=>{if(!pkg)return;if(!openMaterialPanelRequest(materialPanel.current,pkg.programId,pkg.packageId,pkg.version,requestId)){setBindingContext(currentSelection.current);setBindingError('对应素材任务仍在加载或尚未关联此版本，请在下方真实素材工作区核验。');}};
+  const openMaterial=(requestId:string,action?:'upload'|'verification')=>{if(!pkg)return;if(!openMaterialPanelRequest(materialPanel.current,pkg.programId,pkg.packageId,pkg.version,requestId,action)){setBindingContext(currentSelection.current);setBindingError('对应素材任务仍在加载或尚未关联此版本，请在下方真实素材工作区核验。');}};
   async function openContent(card:AgentCalendarTask,chosen?:ScopedSceneTarget){
     if(!pkg)return;
     const selection=currentSelection.current,generation=++sceneReadGeneration.current,token=getToken();const stillCurrent=()=>currentSelection.current===selection&&sceneReadGeneration.current===generation&&getToken()===token;
     setBindingContext(selection);setBindingError('');setSceneChoices(null);setSceneUpstream(null);setSceneReading(selection);
     try{
       const actualTasks=await socialProgramApi.listExecutionTasks(pkg.programId,pkg.packageId,pkg.version);
-      const currentTask=actualTasks.filter(t=>t.taskId===card.id&&t.programId===pkg.programId&&t.packageId===pkg.packageId&&t.packageVersion===pkg.version);
+      const executionTaskId=card.productionExecutionTaskId||card.id;
+      const currentTask=actualTasks.filter(t=>t.taskId===executionTaskId&&t.programId===pkg.programId&&t.packageId===pkg.packageId&&t.packageVersion===pkg.version);
       if(currentTask.length===1&&stillCurrent())setSceneUpstream({selection,tasks:actualTasks.filter(t=>currentTask[0]!.dependsOnTaskIds.includes(t.taskId)&&t.tenantId===currentTask[0]!.tenantId&&t.programId===pkg.programId&&t.packageId===pkg.packageId&&t.packageVersion===pkg.version)});
       if(!stillCurrent())return;
       if(currentTask.length!==1)throw Error('当前周任务身份不唯一，请刷新。');
@@ -260,9 +278,9 @@ export default function ConnectedAgentCalendar({accountBindingTasks=[]}:{account
       <Select aria-label="查看周任务包版本" value={selected || undefined} placeholder="请选择周任务包" onChange={setSelected} style={{ minWidth: 280 }} options={packages.map(item => ({ value: identity(item), label: `${item.weekStart} · v${item.version} · ${item.objective}` }))}/>
       {pkg?.referenceSourcePolicy && <span>自有 {pkg.referenceSourcePolicy.ownedPercent}% / 外部 {pkg.referenceSourcePolicy.externalPercent}% · 按母版</span>}
     </div>
-    {loading && <div className="flex items-center gap-2 p-5 text-xs text-text-secondary"><Spin size="small"/>正在读取真实执行排期…</div>}
-    {error && <Alert className="m-5" type="error" showIcon title="执行排期读取失败" description={error}/>}
-    {!loading && !error && pkg && <WeeklyCustomerCalendar onOpenExecutionTask={openCustomerExecution} sendRecoveries={sendRecoveries?.identity===recoveryIdentity?sendRecoveries.items:[]} onOpenSendRecovery={openSendRecovery} programId={pkg.programId} packageId={pkg.packageId} packageVersion={pkg.version} weekStart={pkg.weekStart} weekEnd={pkg.weekEnd} executionTasks={scopedTasks} onOpenSales={(id,originalPackageId,version)=>{const expected=salesPanelId(pkg.programId,originalPackageId,version,id);const target=Array.from(salesPanel.current?.querySelectorAll<HTMLElement>('[id]')??[]).find(node=>node.id===expected);if(target)target.scrollIntoView({behavior:'smooth',block:'start'});else{setBindingContext(currentSelection.current);setBindingError('真实销售交接仍在加载，请在下方刷新交接工作区。');}}} onOpenMaterial={openMaterial} onOpenTemplate={task=>{try{const actual=revealWeeklyTemplateTask({pkg,tasks:scopedTasks,task});setSelectedTemplate({selection:currentSelection.current,taskId:actual.taskId});}catch(cause){setBindingContext(currentSelection.current);setBindingError(cause instanceof Error?cause.message:'模板入口尚未加载，请刷新真实任务。');}}} onOpenReview={task=>{try{const actual=revealWeeklyReviewTask({pkg,tasks:scopedTasks,task});setSelectedReview({selection:currentSelection.current,taskId:actual.taskId});}catch(cause){setBindingContext(currentSelection.current);setBindingError(cause instanceof Error?cause.message:'观察或复盘入口尚未加载，请刷新。');}}} onOpenPlanning={task=>{try{revealWeeklyPlanningTask({pkg,tasks:scopedTasks,task});}catch(cause){setBindingContext(currentSelection.current);setBindingError(cause instanceof Error?cause.message:'规划入口尚未加载，请刷新真实任务。');}}} onOpenSupplement={card=>{try{const target=card.supplementTarget;if(!target||supplements?.selection!==currentSelection.current)throw Error('补齐任务仍在加载，请刷新真实任务。');const matches=supplements.items.filter(item=>item.requestId===target.requestId&&item.tenantId===target.tenantId&&item.programId===pkg.programId&&item.packageId===pkg.packageId&&item.packageVersion===pkg.version);if(matches.length!==1||target.programId!==pkg.programId||target.packageId!==pkg.packageId||target.packageVersion!==pkg.version||!['submission','verification'].includes(target.action)||card.id!==`supplement:${target.requestId}:${target.action}`)throw Error('补齐任务身份不一致。');const item=matches[0]!;const node=document.getElementById(supplementPanelRequestId(item));if(!node||node.dataset.supplementTenant!==item.tenantId||node.dataset.supplementProgram!==item.programId||node.dataset.supplementPackage!==item.packageId||node.dataset.supplementVersion!==String(item.packageVersion)||node.dataset.supplementRequest!==item.requestId)throw Error('真实补齐工作区尚未加载，请刷新。');node.scrollIntoView({behavior:'smooth',block:'start'});node.focus({preventScroll:true});}catch(cause){setBindingContext(currentSelection.current);setBindingError(cause instanceof Error?cause.message:'补齐入口尚未加载。');}}} mainTasks={[...accountBindingTasks,...(recoveryScope?projectCrossWeekMaterials(crossWeekMaterials?.identity===recoveryIdentity?crossWeekMaterials.items:[],recoveryScope):[]),...(recoveryScope?projectCustomerExceptions(customerExceptions?.identity===recoveryIdentity?customerExceptions.items:[],recoveryScope):[]),...(recoveryScope?projectPublicationRecoveries(publicationRecoveries?.identity===recoveryIdentity?publicationRecoveries.items:[],recoveryScope):[]),...(recoveryScope?projectNativeRecoveries(nativeRecoveries?.identity===recoveryIdentity?nativeRecoveries.items:[],recoveryScope):[]),...projectExecutionCalendar(scopedTasks, STEP_LABEL, Date.now(), {pkg, profile:pkg.referenceSourcePolicy?.profile==='b2b_established'?'account_repair':pkg.referenceSourcePolicy?.profile==='b2b_cold_start'?'cold_start':program.route}),...projectWeeklySupplementRequests(supplements?.selection===currentSelection.current?supplements.items:[],{programId:pkg.programId,packageId:pkg.packageId,packageVersion:pkg.version})]} onOpenContent={task => {if(task.inventoryTarget){try{const target=task.inventoryTarget;if(!recoveryScope||getToken()!==recoveryToken||task.id!==target.taskId||Object.entries(recoveryScope).some(([k,v])=>target[k as keyof typeof target]!==v))throw Error('\u5e93\u5b58\u4efb\u52a1\u8eab\u4efd\u4e0d\u4e00\u81f4');const node=document.getElementById(`inventory-workspace:${target.tenantId}:${target.programId}:${target.packageId}:${target.packageVersion}:${target.bindingId}`);if(!node||node.dataset.publication!==target.publicationTaskId)throw Error('\u771f\u5b9e\u5e93\u5b58\u8bb0\u5f55\u5c1a\u672a\u8bfb\u53d6');node.scrollIntoView({behavior:'smooth',block:'start'});node.focus({preventScroll:true});}catch(e){setBindingContext(currentSelection.current);setBindingError(e instanceof Error?e.message:String(e));}return;}if(task.crossWeekMaterialTarget){try{if(!recoveryScope||getToken()!==recoveryToken)throw Error('当前登录或周包已变化。');const target=validCrossWeekMaterialTarget(task,recoveryScope);if(!target)throw Error('跨周核验卡身份不一致。');const node=document.getElementById(crossWeekMaterialPanelId(recoveryScope,target.continuationId));if(!node||node.dataset.request!==target.requestId||node.dataset.consumer!==target.consumerTaskId)throw Error('真实跨周衔接记录尚未读取。');node.scrollIntoView({behavior:'smooth',block:'start'});node.focus({preventScroll:true});}catch(e){setBindingContext(currentSelection.current);setBindingError(e instanceof Error?e.message:'跨周入口读取失败。');}return;}if(task.customerExceptionTarget){openCustomerException(task);return;}if(task.publicationRecoveryTarget){openPublicationRecovery(task);return;}if(task.publicationExecutionTarget){openPublicationExecution(task);return;}if(task.nativeRecoveryTarget){try{if(!recoveryScope||getToken()!==recoveryToken)throw Error('当前登录或周包已变化。');const target=validNativeRecoveryTarget(task,recoveryScope);if(!target)throw Error('人工任务与当前周范围不一致。');const node=document.getElementById(nativeRecoveryPanelId(recoveryScope,target.id));if(!node||node.dataset.tenant!==target.tenantId||node.dataset.run!==target.runId||node.dataset.task!==target.taskId||node.dataset.request!==target.requestId||node.dataset.channel!==target.channel)throw Error('原人工处理任务尚未读取。');node.scrollIntoView({behavior:'smooth',block:'start'});node.focus({preventScroll:true});}catch(cause){setBindingContext(currentSelection.current);setBindingError(cause instanceof Error?cause.message:'人工处理入口读取失败。');}return;}void openContent(task);}} />}
+    {loading && <p className="p-6 text-xs text-slate-500">正在读取真实执行排期…</p>}
+    {error && <p role="alert" className="m-6 rounded-xl bg-red-50 p-3 text-xs text-red-700">{error}</p>}
+    {!loading && !error && pkg && <WeeklyCustomerCalendar onOpenExecutionTask={openCustomerExecution} sendRecoveries={sendRecoveries?.identity===recoveryIdentity?sendRecoveries.items:[]} onOpenSendRecovery={openSendRecovery} programId={pkg.programId} packageId={pkg.packageId} packageVersion={pkg.version} weekStart={pkg.weekStart} weekEnd={pkg.weekEnd} executionTasks={scopedTasks} onOpenSales={card=>{try{if(!recoveryScope||getToken()!==recoveryToken)throw Error('当前登录或周包已变化。');revealWeeklySalesAction(card,recoveryScope,salesPanel.current);}catch(cause){setBindingContext(currentSelection.current);setBindingError(cause instanceof Error?cause.message:'真实销售交接入口尚未加载。');}}} onOpenMaterial={openMaterial} onOpenTemplate={task=>{try{const actual=revealWeeklyTemplateTask({pkg,tasks:scopedTasks,task});setSelectedTemplate({selection:currentSelection.current,taskId:actual.taskId});}catch(cause){setBindingContext(currentSelection.current);setBindingError(cause instanceof Error?cause.message:'模板入口尚未加载，请刷新真实任务。');}}} onOpenReview={task=>{try{const actual=revealWeeklyReviewTask({pkg,tasks:scopedTasks,task});setSelectedReview({selection:currentSelection.current,taskId:actual.taskId});}catch(cause){setBindingContext(currentSelection.current);setBindingError(cause instanceof Error?cause.message:'观察或复盘入口尚未加载，请刷新。');}}} onOpenPlanning={task=>{try{revealWeeklyPlanningTask({pkg,tasks:scopedTasks,task});}catch(cause){setBindingContext(currentSelection.current);setBindingError(cause instanceof Error?cause.message:'规划入口尚未加载，请刷新真实任务。');}}} onOpenSupplement={card=>{try{const target=card.supplementTarget;if(!target||supplements?.selection!==currentSelection.current)throw Error('补齐任务仍在加载，请刷新真实任务。');const matches=supplements.items.filter(item=>item.requestId===target.requestId&&item.tenantId===target.tenantId&&item.programId===pkg.programId&&item.packageId===pkg.packageId&&item.packageVersion===pkg.version);if(matches.length!==1||target.programId!==pkg.programId||target.packageId!==pkg.packageId||target.packageVersion!==pkg.version||!['submission','verification'].includes(target.action)||card.id!==`supplement:${target.requestId}:${target.action}`)throw Error('补齐任务身份不一致。');const item=matches[0]!;const node=document.getElementById(supplementPanelRequestId(item));if(!node||node.dataset.supplementTenant!==item.tenantId||node.dataset.supplementProgram!==item.programId||node.dataset.supplementPackage!==item.packageId||node.dataset.supplementVersion!==String(item.packageVersion)||node.dataset.supplementRequest!==item.requestId)throw Error('真实补齐工作区尚未加载，请刷新。');node.scrollIntoView({behavior:'smooth',block:'start'});node.focus({preventScroll:true});}catch(cause){setBindingContext(currentSelection.current);setBindingError(cause instanceof Error?cause.message:'补齐入口尚未加载。');}}} mainTasks={[...accountBindingTasks,...(recoveryScope?projectCrossWeekMaterials(crossWeekMaterials?.identity===recoveryIdentity?crossWeekMaterials.items:[],recoveryScope):[]),...(recoveryScope?projectCustomerExceptions(customerExceptions?.identity===recoveryIdentity?customerExceptions.items:[],recoveryScope):[]),...(recoveryScope?projectPublicationRecoveries(publicationRecoveries?.identity===recoveryIdentity?publicationRecoveries.items:[],recoveryScope):[]),...(recoveryScope?projectNativeRecoveries(nativeRecoveries?.identity===recoveryIdentity?nativeRecoveries.items:[],recoveryScope):[]),...projectExecutionCalendar(scopedTasks, STEP_LABEL, Date.now(), {pkg, profile:pkg.referenceSourcePolicy?.profile==='b2b_established'?'account_repair':pkg.referenceSourcePolicy?.profile==='b2b_cold_start'?'cold_start':program.route}),...projectWeeklySupplementRequests(supplements?.selection===currentSelection.current?supplements.items:[],{programId:pkg.programId,packageId:pkg.packageId,packageVersion:pkg.version})]} onOpenContent={task => {if(task.publicationExecutionTarget||task.inventoryTarget){try{if(!pkg||!recoveryScope||getToken()!==recoveryToken)throw Error('当前登录或周包已变化。');const destination=validatedCalendarPublicationDestination(task,recoveryScope,scopedTasks);if(!destination)throw Error('发布或库存卡与当前真实执行任务不一致。');if(destination.kind==='publishing'){openPublicationExecution(task);return;}const target=destination.target;const node=document.getElementById(`inventory-workspace:${target.tenantId}:${target.programId}:${target.packageId}:${target.packageVersion}:${target.bindingId}`);if(!node||node.dataset.publication!==target.publicationTaskId)throw Error('真实库存记录尚未读取。');node.scrollIntoView({behavior:'smooth',block:'start'});node.focus({preventScroll:true});}catch(e){setBindingContext(currentSelection.current);setBindingError(e instanceof Error?e.message:String(e));}return;}if(task.crossWeekMaterialTarget){try{if(!recoveryScope||getToken()!==recoveryToken)throw Error('当前登录或周包已变化。');const target=validCrossWeekMaterialTarget(task,recoveryScope);if(!target)throw Error('跨周核验卡身份不一致。');const node=document.getElementById(crossWeekMaterialPanelId(recoveryScope,target.continuationId));if(!node||node.dataset.request!==target.requestId||node.dataset.consumer!==target.consumerTaskId)throw Error('真实跨周衔接记录尚未读取。');node.scrollIntoView({behavior:'smooth',block:'start'});node.focus({preventScroll:true});}catch(e){setBindingContext(currentSelection.current);setBindingError(e instanceof Error?e.message:'跨周入口读取失败。');}return;}if(task.customerExceptionTarget){openCustomerException(task);return;}if(task.publicationRecoveryTarget){openPublicationRecovery(task);return;}if(task.nativeRecoveryTarget){try{if(!recoveryScope||getToken()!==recoveryToken)throw Error('当前登录或周包已变化。');const target=validNativeRecoveryTarget(task,recoveryScope);if(!target)throw Error('人工任务与当前周范围不一致。');const node=document.getElementById(nativeRecoveryPanelId(recoveryScope,target.id));if(!node||node.dataset.tenant!==target.tenantId||node.dataset.run!==target.runId||node.dataset.task!==target.taskId||node.dataset.request!==target.requestId||node.dataset.channel!==target.channel)throw Error('原人工处理任务尚未读取。');node.scrollIntoView({behavior:'smooth',block:'start'});node.focus({preventScroll:true});}catch(cause){setBindingContext(currentSelection.current);setBindingError(cause instanceof Error?cause.message:'人工处理入口读取失败。');}return;}void openContent(task);}} />}
     {pkg&&selectedCustomerExecution?.selection===currentSelection.current&&<section id="weekly-calendar-customer-execution" aria-label="真实客服承接任务" className="mx-6 my-4 rounded-xl border p-4">{(()=>{
       const actual=scopedTasks.find(task=>task.taskId===selectedCustomerExecution.taskId);
       if(!actual)return <p role="alert">真实客服执行目标已变化，请刷新任务日历。</p>;

@@ -10,3 +10,13 @@ test('material production entry scrolls only a concrete request in the current s
  assert.equal(openMaterialPanelRequest(container,'program/a','week',3,'request/a'),false);
  assert.equal(openMaterialPanelRequest(null,'program/a','week',2,'request/a'),false);
 });
+test('upload and verification focus only their exact live control and reject ambiguous or mismatched metadata',()=>{
+ let scrolled=0,focused=0;const details={tagName:'DETAILS',open:false,parentElement:null};
+ const target=(action:'upload'|'verification')=>({id:`${materialRequestPanelId('p','w',2,'r')}:${action}`,dataset:{materialProgram:'p',materialPackage:'w',materialVersion:'2',materialRequest:'r',materialAction:action},parentElement:details,scrollIntoView:()=>{scrolled++;},querySelector:()=>({focus:()=>{focused++;}})});
+ const upload=target('upload'),verification=target('verification');
+ const container={querySelectorAll:()=>[upload,verification]} as unknown as Pick<HTMLElement,'querySelectorAll'>;
+ assert.equal(openMaterialPanelRequest(container,'p','w',2,'r','verification'),true);assert.equal(scrolled,1);assert.equal(focused,1);assert.equal(details.open,true);
+ assert.equal(openMaterialPanelRequest({querySelectorAll:()=>[upload]} as unknown as Pick<HTMLElement,'querySelectorAll'>,'p','w',2,'r','verification'),false);
+ assert.equal(openMaterialPanelRequest({querySelectorAll:()=>[upload,upload]} as unknown as Pick<HTMLElement,'querySelectorAll'>,'p','w',2,'r','upload'),false);
+ verification.dataset.materialVersion='1';assert.equal(openMaterialPanelRequest(container,'p','w',2,'r','verification'),false);assert.equal(scrolled,1);
+});

@@ -22,6 +22,7 @@ import { STEP_LABEL } from './weeklyExecutionLabels';
 import WeeklyRecoveryPanel from './WeeklyRecoveryPanel';
 import PublicationReceptionSetup from './PublicationReceptionSetup';
 import WeeklyMaterialRequestsPanel from './WeeklyMaterialRequestsPanel';
+import { openMaterialPanelRequest } from './weeklyMaterialNavigation';
 import { bindWeeklyMaterialRequest } from '../../lib/weeklyMaterialBinding';
 import WeeklyCustomerRunBinding from './WeeklyCustomerRunBinding';
 import type {WeeklyProductionRepairCase} from '../../../shared/contracts/weeklyProductionRepairCase';
@@ -127,6 +128,7 @@ export default function WeeklyOperatingWorkbench({ pkg, loading, error, selected
   const [ownedPercent, setOwnedPercent] = useState('');
   const packageIdentity = pkg ? `${pkg.programId}:${pkg.packageId}:${pkg.version}` : '';
   const packageIdentityRef = useRef(packageIdentity);
+  const materialSurface = useRef<HTMLElement>(null);
   const loadGenerationRef = useRef(0);
   packageIdentityRef.current = packageIdentity;
   useEffect(() => { setPlanningBusy(false); setPlanningError(''); }, [packageIdentity]);
@@ -277,8 +279,8 @@ export default function WeeklyOperatingWorkbench({ pkg, loading, error, selected
     : planning?.status === 'awaiting_confirmation' ? '确认本周详细计划'
       : planning?.status === 'confirmed' ? '由经营 Agent 派单开始制作' : '';
   const selectedScheduleItem = planning?.detailedSchedule?.items.find(item => item.publicationTaskId === selectedPublicationTaskId) ?? null;
-  return <section aria-label="统一周工作台" className="space-y-4">
-    {pkg && <section className="rounded-lg border border-border bg-white p-5">
+  return <section ref={materialSurface} aria-label="统一周工作台" className="space-y-4">
+    {pkg && <section className="rounded-xl border border-border bg-white p-5">
       <h3 className="text-sm font-bold">本周复刻来源配额</h3>
       <p className="mt-2 text-xs text-text-secondary">{pkg.referenceSourcePolicy ? `自有 ${pkg.referenceSourcePolicy.ownedPercent}% / 外部 ${pkg.referenceSourcePolicy.externalPercent}% · 按母版计数` : '尚未确认来源配额'}</p>
       {planning && <p className="mt-1 text-xs text-text-muted">实际分配：自有 {planning.skeleton.slots.filter(slot => slot.referenceSource === 'owned').length} 条 / 外部 {planning.skeleton.slots.filter(slot => slot.referenceSource === 'external').length} 条；未标来源 {planning.skeleton.slots.filter(slot => !slot.referenceSource).length} 条。</p>}
@@ -299,12 +301,12 @@ export default function WeeklyOperatingWorkbench({ pkg, loading, error, selected
       const next = await socialProgramApi.reviseOperatingPackage(pkg.programId, pkg.packageId, { expectedVersion: pkg.version, publicationTasks, changeReason: '确认逐视频发布承接要求' });
       onRevision(next);
     }} /></details>}
-    {pkg && <WeeklyMaterialRequestsPanel key={`materials:${pkg.packageId}:${pkg.version}`} pkg={pkg} programId={pkg.programId} packageId={pkg.packageId} packageVersion={pkg.version} tasks={executionTasks} requiredRequestIds={pkg.socialContentPackage.publicationTasks.flatMap(item => item.materialRequirement?.requestIds ?? [])} onBindRequiredRequests={onRevision ? async (request, bindings) => {
+    {pkg && <WeeklyMaterialRequestsPanel key={`materials:${pkg.packageId}:${pkg.version}`} pkg={pkg} programId={pkg.programId} packageId={pkg.packageId} packageVersion={pkg.version} tasks={executionTasks} requiredRequestIds={pkg.socialContentPackage.publicationTasks.flatMap(item => item.materialRequirement?.requestIds ?? [])} onBindRequiredRequests={onRevision ? async (request,bindings) => {
       try { await bindWeeklyMaterialRequest({ pkg, tasks: executionTasks, request, bindings, onRevision }); }
       catch (cause) { setPlanningError(cause instanceof Error ? cause.message : '素材已创建，冻结排期关联尚未完成。'); throw cause; }
     } : undefined} />}
     {pkg && programRoute && <details className="rounded-xl border border-border bg-white p-4"><summary className="cursor-pointer text-sm font-semibold">选择本周客服运行</summary><WeeklyCustomerRunBinding key={`customer:${pkg.packageId}:${pkg.version}`} programId={pkg.programId} packageId={pkg.packageId} packageVersion={pkg.version} profile={programRoute === 'cold_start' ? 'b2b_cold_start' : 'b2b_established'} /></details>}
-    {pkg && !executionLoading && !executionError && <WeeklyCustomerCalendar programId={pkg.programId} packageId={pkg.packageId} packageVersion={pkg.version} weekStart={pkg.weekStart} weekEnd={pkg.weekEnd} executionTasks={executionTasks} onOpenExecutionTask={task=>{if(!task.publicationTaskId)return;setSelectedPublicationTaskId(task.publicationTaskId);window.requestAnimationFrame(()=>window.requestAnimationFrame(()=>{const row=document.getElementById(`weekly-execution-${task.taskId}`);row?.scrollIntoView({behavior:'smooth',block:'center'});row?.focus({preventScroll:true});}));}} onOpenMaterial={requestId => document.getElementById(`weekly-material-request:${pkg.programId}:${pkg.packageId}:${pkg.version}:${requestId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })} mainTasks={projectExecutionCalendar(executionTasks, STEP_LABEL)} onOpenContent={task => {
+    {pkg && !executionLoading && !executionError && <WeeklyCustomerCalendar programId={pkg.programId} packageId={pkg.packageId} packageVersion={pkg.version} weekStart={pkg.weekStart} weekEnd={pkg.weekEnd} executionTasks={executionTasks} onOpenExecutionTask={task=>{if(!task.publicationTaskId)return;setSelectedPublicationTaskId(task.publicationTaskId);window.requestAnimationFrame(()=>window.requestAnimationFrame(()=>{const row=document.getElementById(`weekly-execution-${task.taskId}`);row?.scrollIntoView({behavior:'smooth',block:'center'});row?.focus({preventScroll:true});}));}} onOpenMaterial={(requestId,action) => {if(!openMaterialPanelRequest(materialSurface.current,pkg.programId,pkg.packageId,pkg.version,requestId,action))setExecutionError('对应素材上传或核验控件尚未加载、状态或指定成员不匹配，请刷新真实素材工作区。');}} mainTasks={projectExecutionCalendar(executionTasks, STEP_LABEL)} onOpenContent={task => {
       if (!task.productionTaskId) return;
       window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: { page: 'smartAssets', socialContentTaskId: task.productionTaskId, socialContentPage: 'smartAssets', socialContentView: 'managed' } }));
     }} />}

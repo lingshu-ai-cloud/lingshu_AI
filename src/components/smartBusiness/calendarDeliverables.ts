@@ -26,6 +26,9 @@ export function projectCalendarDeliverables(tasks: AgentCalendarTask[]): AgentCa
     const blocked = nodes.find(n=>n.status==='failed'||n.status==='blocked');
     const active = nodes.some(n=>n.status==='active');
     const videoNode = ordered.find(n=>n.executionStep==='video_generation');
+    const productionNode = ordered.filter(n=>n.productionExecutionTaskId&&n.productionTaskId&&n.executionStep==='quality_check').at(-1)
+      || ordered.filter(n=>n.productionExecutionTaskId&&n.productionTaskId&&n.executionStep==='video_generation').at(-1)
+      || ordered.find(n=>n.productionExecutionTaskId&&n.productionTaskId);
     replacements.set(anchor.id, {...anchor, agent:'content',
       title: videoNode?.title.startsWith('完成视频') ? videoNode.title : '完成视频成片',
       output: videoNode?.output || anchor.output,
@@ -33,6 +36,8 @@ export function projectCalendarDeliverables(tasks: AgentCalendarTask[]): AgentCa
       reason: blocked?.reason || anchor.reason,
       minutes: nodes.some(n=>n.minutes===null)?null:nodes.reduce((sum,n)=>sum+(n.minutes||0),0),
       internalNodes: ordered,
+      productionExecutionTaskId: productionNode?.productionExecutionTaskId,
+      productionTaskId: productionNode?.productionTaskId,
     });
   }
   return tasks.filter(task=>!hidden.has(task.id)&&!task.calendarInternal).map(task=>replacements.get(task.id)||task);

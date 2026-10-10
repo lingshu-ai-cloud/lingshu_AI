@@ -16,3 +16,14 @@ export function weeklySalesOverdue(item: WeeklySalesHandoff, now: number): 'clai
 }
 
 export interface WeeklySalesSource { channel?:'whatsapp'|'messenger'|'instagram'; runId:string; memberId:string; customerId:string; customerName:string; sourceInteractionId:string; body:string; timestamp:number; sourceKind:'new_inquiry'|'existing_customer'|'existing_contact'; }
+
+/** Reject partial or inconsistent handoffs before they become actionable cards. */
+export function isWeeklySalesHandoff(value:unknown):value is WeeklySalesHandoff {
+ if(!value||typeof value!=='object'||Array.isArray(value))return false;
+ const i=value as WeeklySalesHandoff, nonempty=(v:unknown)=>typeof v==='string'&&v.trim().length>0, instant=(v:unknown)=>typeof v==='string'&&/(?:Z|[+-]\d{2}:\d{2})$/.test(v)&&Number.isFinite(Date.parse(v));
+ if(!['id','tenantId','programId','packageId','runId','memberId','customerId','sourceInteractionId','ownerUserId','createdBy','approvedBatchId','approvedContentHash'].every(k=>nonempty(i[k as keyof WeeklySalesHandoff]))||!['packageVersion','version','approvedBatchVersion'].every(k=>Number.isSafeInteger(i[k as keyof WeeklySalesHandoff])&&Number(i[k as keyof WeeklySalesHandoff])>0)||!['new_inquiry','existing_customer','existing_contact'].includes(i.sourceKind)||!['awaiting_claim','in_progress','awaiting_feedback','handled','needs_information'].includes(i.status)||i.channel!==undefined&&!['whatsapp','messenger','instagram'].includes(i.channel)||!instant(i.claimDueAt)||!instant(i.feedbackDueAt)||Date.parse(i.feedbackDueAt)<Date.parse(i.claimDueAt))return false;
+ if(!i.sourceEvidence||typeof i.sourceEvidence!=='object'||Array.isArray(i.sourceEvidence)||!nonempty(i.sourceEvidence.body)||i.sourceEvidence.interactionId!==i.sourceInteractionId||typeof i.sourceEvidence.timestamp!=='number'||!Number.isFinite(i.sourceEvidence.timestamp))return false;
+ if(i.claimedAt!==null&&!instant(i.claimedAt)||i.status==='awaiting_claim'&&i.claimedAt!==null||i.status!=='awaiting_claim'&&i.claimedAt===null)return false;
+ if(i.feedback!==null){const f=i.feedback;if(!f||typeof f!=='object'||!nonempty(f.result)||!nonempty(f.nextStep)||!instant(f.nextDueAt)||!instant(f.recordedAt)||!Array.isArray(f.evidenceInteractionIds)||!f.evidenceInteractionIds.length||!f.evidenceInteractionIds.every(nonempty)||new Set(f.evidenceInteractionIds).size!==f.evidenceInteractionIds.length)return false;}
+ return ['handled','needs_information'].includes(i.status)?i.feedback!==null:i.feedback===null;
+}

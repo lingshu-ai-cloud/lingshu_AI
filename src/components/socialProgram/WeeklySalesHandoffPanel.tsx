@@ -7,6 +7,8 @@ import {
 } from '../../../shared/contracts/socialWeeklySalesHandoff';
 import { authApi, type EmployeeAccount } from '../../lib/auth';
 import { weeklySalesHandoffApi } from '../../lib/weeklySalesHandoffApi';
+import {salesNavigationTarget,salesActionPanelId} from './weeklySalesNavigation';
+import SalesConversationEvidenceSelector from './SalesConversationEvidenceSelector';
 import RelationshipEvidencePanel from './RelationshipEvidencePanel';
 import SalesConversationEvidenceSelector from './SalesConversationEvidenceSelector';
 
@@ -174,10 +176,11 @@ function SalesItem({
     <p className="text-xs">指定销售：{item.ownerUserId} · 领取截止 {new Date(item.claimDueAt).toLocaleString()} · 反馈截止 {new Date(item.feedbackDueAt).toLocaleString()}{overdue ? ` · ${overdue === 'claim' ? '未领取' : overdue === 'feedback' ? '未反馈' : '补资料'}逾期` : ''}</p>
     <p className="mt-1 text-xs">真实问题：{String(item.sourceEvidence.body)} · 客服批准资料 v{item.approvedBatchVersion}</p>
     {item.feedback && <p className="mt-1 text-xs">处理结果：{item.feedback.result} · 下一步：{item.feedback.nextStep} · {item.feedback.nextDueAt}</p>}
-    {owner && item.status === 'awaiting_claim' && <button type="button" disabled={busy} onClick={() => void submit('claim')} className="mt-2 text-xs text-accent underline">由我领取</button>}
+    {owner && item.status === 'awaiting_claim' && <button type="button" id={salesActionPanelId(salesNavigationTarget(item,'claim'))} data-sales-target={JSON.stringify(salesNavigationTarget(item,'claim'))} disabled={busy} onClick={() => void submit('claim')} className="mt-2 text-xs text-accent underline">由我领取</button>}
     {owner && item.status === 'in_progress' && <button type="button" disabled={busy} onClick={() => void submit('request_feedback')} className="ml-3 text-xs text-accent underline">进入待反馈</button>}
     {owner && ['in_progress', 'awaiting_feedback', 'needs_information'].includes(item.status) && <details className="mt-2">
-      <summary className="cursor-pointer text-xs">记录真实反馈</summary>
+      <summary id={salesActionPanelId(salesNavigationTarget(item,'feedback'))} data-sales-target={JSON.stringify(salesNavigationTarget(item,'feedback'))} tabIndex={-1} className="cursor-pointer text-xs">记录真实反馈</summary>
+      {item.status==='needs_information'&&<div id={salesActionPanelId(salesNavigationTarget(item,'information'))} data-sales-target={JSON.stringify(salesNavigationTarget(item,'information'))} tabIndex={-1}>补充原销售交接资料并记录真实证据</div>}
       <div className="mt-2 grid gap-2 sm:grid-cols-2">
         <input aria-label="真实处理结果" placeholder="人工实际处理结果" value={result} onChange={event => setResult(event.target.value)} className={inputClass} />
         <SalesConversationEvidenceSelector handoff={item} selectedIds={evidence} onSelection={setEvidence} disabled={busy} />

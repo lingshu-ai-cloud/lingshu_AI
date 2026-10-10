@@ -1,3 +1,4 @@
+import {validWeeklySalesTaskBinding,type WeeklySalesNavigationTarget} from '../socialProgram/weeklySalesNavigation';
 import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import { Alert, Button, Tag } from 'antd';
 import type { CrossWeekMaterialTarget } from '../socialProgram/crossWeekMaterialCalendar';
@@ -46,6 +47,7 @@ export type AgentCalendarTask = {
   submission?: 'missing' | 'pending' | 'accepted' | 'rejected';
   humanAction?: 'upload' | 'approval';
   availableForHuman?: boolean;
+  salesTarget?: WeeklySalesNavigationTarget;
   salesHandoffId?: string;
   salesPackageId?: string;
   salesPackageVersion?: number;
@@ -63,6 +65,8 @@ export type AgentCalendarTask = {
   crossWeekMaterialTarget?: CrossWeekMaterialTarget;
   customerExceptionTarget?: CustomerExceptionTarget;
   productionTaskId?: string;
+  /** Exact persisted weekly execution task that owns the production binding. */
+  productionExecutionTaskId?: string;
   materialRequestId?: string;
   materialAction?: 'upload' | 'verification';
   materialConsumerTaskIds?: string[];
@@ -156,11 +160,7 @@ export function hasCalendarProductionBinding(task: AgentCalendarTask): boolean {
     && Number.isSafeInteger(task.sendRecoveryTarget.packageVersion)
     && task.sendRecoveryTarget.packageVersion > 0
     && Boolean(task.sendRecoveryTarget.runId && task.sendRecoveryTarget.taskId && task.sendRecoveryTarget.itemId);
-  const sales = task.agent === 'human'
-    && Boolean(task.salesHandoffId && task.salesPackageId)
-    && Number.isSafeInteger(task.salesPackageVersion)
-    && (task.salesPackageVersion ?? 0) > 0
-    && ['claim', 'feedback'].includes(task.salesAction || '');
+  const sales = validWeeklySalesTaskBinding(task);
   const material = task.agent === 'human'
     && Boolean(task.materialRequestId)
     && ['upload', 'verification'].includes(task.materialAction || '');
