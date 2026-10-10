@@ -61,3 +61,33 @@ test('an inventory marker cannot substitute for the actual frozen approved-sourc
  assert.equal((f.tables.starter_social_weekly_g6_reviews??[]).length,0);
  }finally{await f.cleanup();}
 });
+
+test('fresh G6 renews after quota usage changes while preserving trusted history and live release gates',async()=>{
+ const {prepareWeeklyG6Fixture}=await import('./socialWeeklyG6ReviewService.fixture.js');
+ const {verifySocialWeeklyG6Receipt,SOCIAL_WEEKLY_G6_REVIEWS}=await import('./socialWeeklyG6ReviewService.js');
+ const {readSocialProductionState}=await import('./socialContentProductionHandoff.js');
+ const {sealAccountCredential}=await import('../lib/accountCredentials.js');
+ const f=await prepareWeeklyG6Fixture();try{
+ const check=async(requestId:string)=>{const context=await f.service.context(f.scope,'owner');assert.deepEqual(context.gaps,[]);const result=await f.service.check(f.scope,'owner',{programId:f.scope.programId,packageId:f.scope.packageId,packageVersion:f.scope.packageVersion,publicationTaskId:f.scope.publicationTaskId,requestId,expectedContextHash:context.contextHash});assert.equal(result.item?.status,'passed');assert.equal(result.projectionStatus,'applied');return result;};
+ const old=await check('g6-quota-before-0001');
+ const saved=f.tables[SOCIAL_WEEKLY_G6_REVIEWS]!.find(row=>row.request_id==='g6-quota-before-0001')!;assert.ok(saved);
+ const oldPayload=structuredClone(saved.payload) as {receipt:import('./socialContentProductionHandoff.js').SocialProductionReceipt};
+ const oldHash=saved.content_hash;
+ // A different delivery in this same week consumes one authorized publication.
+ // These are publication accounting inputs, not fabricated production outcomes.
+ await f.store.create('social_publication_assignments',{tenant_id:f.scope.tenantId,operating_package_id:f.scope.packageId,operating_package_version:f.scope.packageVersion,publication_task_id:'other-publication',assignment_id:'other-quota-assignment'});
+ await f.store.create('social_publication_attempts',{tenant_id:f.scope.tenantId,assignment_id:'other-quota-assignment',status:'published'});
+ await assert.rejects(verifySocialWeeklyG6Receipt(f.repository,f.scope.tenantId,oldPayload.receipt),/preflight_evidence_changed/);
+ const renewed=await check('g6-quota-after-0002');assert.notEqual(renewed.item?.receiptId,old.item?.receiptId);
+ assert.equal(f.tables[SOCIAL_WEEKLY_G6_REVIEWS]!.length,2);assert.deepEqual(saved.payload,oldPayload);assert.equal(saved.content_hash,oldHash);
+ const state=await readSocialProductionState({repository:f.repository,tenantId:f.scope.tenantId,taskId:f.scope.taskId});assert.ok(state);assert.equal(state.receipts.filter(receipt=>receipt.gate==='G6').length,2);assert.equal(state.gates.readyForRelease,true);
+ const account=f.tables.social_accounts!.find(row=>row.id===f.pkg.socialContentPackage.publicationTasks[0]!.accountId)!;const token=account.accessToken;
+ account.accessToken=sealAccountCredential('g6-renewal-credential-changed');
+ await assert.rejects(readSocialProductionState({repository:f.repository,tenantId:f.scope.tenantId,taskId:f.scope.taskId}),/preflight_evidence_changed/);
+ account.accessToken=token;
+ saved.content_hash='tampered-old-review-hash';
+ await assert.rejects(readSocialProductionState({repository:f.repository,tenantId:f.scope.tenantId,taskId:f.scope.taskId}),/record_corrupt/);
+ saved.content_hash=oldHash;
+ assert.equal((await readSocialProductionState({repository:f.repository,tenantId:f.scope.tenantId,taskId:f.scope.taskId}))?.gates.readyForRelease,true);
+ }finally{await f.cleanup();}
+});

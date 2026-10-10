@@ -13,14 +13,15 @@ import {setContentExecutionLimit} from '../contentExecution/durableQueue.js';
 import {createWeeklyInitialScheduleService} from '../socialPrograms/weeklyInitialSchedule.js';
 /** One tenant, one package and five mother slots. This prepares real planning
  * services only; it never represents production or approval as completed. */
-export async function prepareFiveMotherProductionFixture(t:TestContext,seed?:Awaited<ReturnType<typeof prepareWeeklyNonPresenterPlanningFixture>>){
+export async function prepareFiveMotherProductionFixture(t:TestContext,seed?:Awaited<ReturnType<typeof prepareWeeklyNonPresenterPlanningFixture>>,fixtureOptions:{costPerMotherCny?:number;controlledReception?:boolean;consumerRequirement?:(input:{setup:Awaited<ReturnType<typeof prepareWeeklyNonPresenterPlanningFixture>>;tasks:import('../../shared/contracts/socialProgram.js').WeeklyExecutionTask[];pkg:import('../../shared/contracts/socialProgram.js').WeeklyOperatingPackage})=>Promise<string|Record<string,string>>}={}){
  const setup=seed??await prepareWeeklyNonPresenterPlanningFixture(t,{ownedReferenceBytes:true,productInventory:false,primaryStructure:true,metricTargets:['播放目标1000','点赞目标20','评论目标5','分享目标5']});
- const {f}=setup,clock='2026-10-10T01:00:00Z';
+ const costPerMotherCny=fixtureOptions.costPerMotherCny??1;const {f}=setup,clock='2026-10-10T01:00:00Z';
  const decisions=createSocialOperatingDecisionService(f.store,()=>clock);
+ if(fixtureOptions.controlledReception){const programs=await f.store.list<Record<string,unknown>>('social_programs',{where:{tenant_id:'t',program_id:'p'},perPage:2});assert.equal(programs.totalItems,1);const program=programs.items[0]!;await f.store.update('social_programs',String(program.id),{payload:{...(program.payload as Record<string,unknown>),route:setup.pkg.referenceSourcePolicy?.profile==='b2b_established'?'account_repair':'cold_start'}});}
  const goalRef=setup.pkg.businessContentGoalRef!;
  const goal=await decisions.getGoal('t','p',goalRef.id,goalRef.version);
  const options={operator:{type:'user' as const,id:'owner'},decidedAt:clock};
- const capacity=planCapacity({goal,desiredOriginalContents:5,desiredAdaptations:0,costPerOriginalCny:1,costPerAdaptationCny:1,readyMaterialUnits:5,materialUnitsPerOriginal:1,productionItemsPerDay:1,daysUntilDeadline:7,accounts:[{ref:{type:'owned_social_account',id:'account',version:2},accountId:'account',status:'active',weeklyPublicationCapacity:5}],interactionItemsPerWeek:10,salesLeadsPerWeek:10,expectedInteractionsPerPublication:1,expectedLeadsPerPublication:1,capabilities:{'studio.production':'available','publishing.calendar':'available','customer.attribution':'available'}},options);
+ const capacity=planCapacity({goal,desiredOriginalContents:5,desiredAdaptations:0,costPerOriginalCny:costPerMotherCny,costPerAdaptationCny:1,readyMaterialUnits:5,materialUnitsPerOriginal:1,productionItemsPerDay:1,daysUntilDeadline:7,accounts:[{ref:{type:'owned_social_account',id:'account',version:2},accountId:'account',status:'active',weeklyPublicationCapacity:5}],interactionItemsPerWeek:10,salesLeadsPerWeek:10,expectedInteractionsPerPublication:1,expectedLeadsPerPublication:1,capabilities:{'studio.production':'available','publishing.calendar':'available','customer.attribution':'available'}},options);
  assert.equal(capacity.plan.status,'ready');await decisions.saveOperatingDecision('t','p',capacity.decision);
  const policy=resolveAutomationPolicy({goal,mode:'managed',action:'draft',capability:{key:'studio.production',availability:'available'},factsVerified:true,withinBudget:true,rightsSufficient:true},options);
  await decisions.saveOperatingDecision('t','p',policy.decision);
@@ -28,16 +29,33 @@ export async function prepareFiveMotherProductionFixture(t:TestContext,seed?:Awa
  const original=setup.pkg.socialContentPackage.publicationTasks[0]!;
  const publications=Array.from({length:5},(_,i)=>({...structuredClone(seed?.pkg.socialContentPackage.publicationTasks[i]??original),publicationTaskId:`five-pub-${i+1}`,motherContentId:`five-mother-${i+1}`,adaptationOfPublicationTaskId:null,publishWindow:`2026-10-${14+i}T10:00:00Z`,topic:`企业产品证明角度 ${i+1}`,materialRequirement:{required:true as const,requestIds:[requestId]}}));
  const packages=createWeeklyOperatingPackageService(f.store);
- const pkg=await packages.create('t','owner','p',{weekStart:'2026-10-12',objective:goal.objective,perItemBudgetCny:1,successCriteria:['本周五条独立母版发布'],enterpriseProfileRef:{type:'enterprise_profile',id:'profile',version:1},businessContentGoalRef:goalRef,capacityPlanRef:{type:'capacity_plan',id:capacity.decision.decisionId,version:1},automationPolicyRef:{type:'automation_policy',id:policy.decision.decisionId,version:1},referenceSourcePolicy:setup.pkg.referenceSourcePolicy,publicationTasks:publications});
+ let pkg=await packages.create('t','owner','p',{weekStart:'2026-10-12',objective:goal.objective,perItemBudgetCny:costPerMotherCny,successCriteria:['本周五条独立母版发布'],enterpriseProfileRef:{type:'enterprise_profile',id:'profile',version:1},businessContentGoalRef:goalRef,capacityPlanRef:{type:'capacity_plan',id:capacity.decision.decisionId,version:1},automationPolicyRef:{type:'automation_policy',id:policy.decision.decisionId,version:1},referenceSourcePolicy:setup.pkg.referenceSourcePolicy,publicationTasks:publications});
+ if(fixtureOptions.controlledReception){
+  const {sealAccountCredential}=await import('../lib/accountCredentials.js');
+  const {savePublicationReceptionBinding}=await import('../socialPrograms/publicationReceptionService.js');
+  const {refreshPlatformCapabilityEvidence}=await import('../publishing/platformCapabilities.js');
+  f.tables.social_accounts=[{id:'account',tenantId:'t',platform:'tiktok',status:'connected',providerAccountId:'five-controlled-account',scope:'video.publish',accessToken:sealAccountCredential('five-controlled-token')},{id:'five-sales',tenantId:'t',platform:'facebook',status:'connected',providerAccountId:'five-controlled-sales',messengerSubscribed:true,accessToken:sealAccountCredential('five-controlled-sales-token')}];
+  const owner=await f.store.getById<Record<string,unknown>>('users','owner');assert.ok(owner);await f.store.update('users','owner',{role:'admin',active:true,disabled:false});
+  const bindings=new Map<string,string>();
+  for(const publication of pkg.socialContentPackage.publicationTasks){
+   assert.ok(publication.cta);
+   const binding=await savePublicationReceptionBinding(f.store,{tenantId:'t',programId:'p',packageId:pkg.packageId,packageVersion:pkg.version+2,publicationId:publication.publicationTaskId,cta:publication.cta,enterpriseFactHash:f.profile.factVersion!.contentHash,targets:[{id:'five-sales',required:true,ownerId:'owner',destination:{kind:'messaging',channel:'messenger',receptionMode:'human'},requiredDocumentUrls:[]}]},'owner');
+   bindings.set(publication.publicationTaskId,binding.bindingId);
+  }
+  pkg=await packages.revise('t','owner','p',pkg.packageId,{expectedVersion:pkg.version,publicationTasks:pkg.socialContentPackage.publicationTasks.map(publication=>({...publication,receptionRequirement:{required:true,bindingId:bindings.get(publication.publicationTaskId)!}}))});
+  await refreshPlatformCapabilityEvidence({tenantId:'t',accountId:'account',platform:'tiktok',capability:'publishing.official',dataStore:f.store,providers:{async tiktok(){return{openId:'five-controlled-account',publishGranted:true};},async youtube(){throw Error('unused');},async instagram(){throw Error('unused');},async facebook(){throw Error('unused');},async tiktokReceipt(){throw Error('unused');}}});
+ }
  const planning=createWeeklyPlanningAuthority(f.store);
  const initial=await planning.initialize('t',pkg);
  const analyzed=await planning.runDirectorAnalysis({tenantId:'t',programId:'p',packageId:pkg.packageId,packageVersion:pkg.version,expectedPlanningVersion:initial.version,actor:'director_agent'});
+ if(analyzed.directorGaps?.length)console.log('FIVE_DIRECTOR_GAPS',JSON.stringify(analyzed.directorGaps));
  const detailed=await planning.mergeDetailedSchedule({tenantId:'t',programId:'p',package:pkg,expectedPlanningVersion:analyzed.version,actor:'business_agent'});
  const confirmed=await planning.confirm({tenantId:'t',programId:'p',packageId:pkg.packageId,packageVersion:pkg.version,expectedPlanningVersion:detailed.version,userId:'owner'});
  const dispatched=await planning.dispatch({tenantId:'t',programId:'p',packageId:pkg.packageId,packageVersion:pkg.version,expectedPlanningVersion:confirmed.version,actor:'business_agent'});
  assert.ok(dispatched.dispatch);await applyBusinessDispatchToExecutionTasks(f.store,'t','p',pkg.packageId,pkg.version,dispatched.dispatch,clock);
  const tasks=await listWeeklyExecutionTasks(f.store,'t','p',pkg.packageId,pkg.version);
- const consumers=tasks.filter(task=>task.schedule.stepKind==='material_readiness').map(task=>({taskId:task.taskId,packageId:pkg.packageId,packageVersion:pkg.version,requirement:'同一已授权企业产品身份图'}));
+ const consumerRequirement=fixtureOptions.consumerRequirement?await fixtureOptions.consumerRequirement({setup,tasks,pkg}):'同一已授权企业产品身份图';
+ const consumers=tasks.filter(task=>task.schedule.stepKind==='material_readiness').map(task=>({taskId:task.taskId,packageId:pkg.packageId,packageVersion:pkg.version,requirement:typeof consumerRequirement==='string'?consumerRequirement:consumerRequirement[task.publicationTaskId!]!}));
  assert.equal(consumers.length,5);
  const request=await createWeeklyMaterialRequestService(f.store).create({tenantId:'t',programId:'p',requirementKey,requirements:'五条视频共用的企业产品身份图，须先上传核验',assigneeUserId:'owner',reviewerUserId:'owner',dueAt:'2026-10-09T00:00:00Z',verificationDueAt:'2026-10-09T01:00:00Z',timeZone:'Asia/Shanghai',consumers,actorUserId:'owner'});
  assert.equal(request.requestId,requestId);

@@ -29,7 +29,7 @@ export async function readWeeklyQueueSchedulingEvidence(store:DataStore,tasks:We
  const result=await store.list<Record_>('starter_social_content_tasks',{where:{tenant_id:tenantId,create_idempotency_key:key},perPage:2});
  const assign=(subject:string|null,keys:string[],reasons:string[])=>{for(const task of group)output.tasks[task.taskId]={taskFingerprint:backwardTaskEvidenceFingerprint(task),productionSubjectId:subject,resourceKeys:keys,reasons};};
  if(!first.publicationTaskId){assign(null,[],['queue_job_identity_required']);continue;}
- if(result.totalItems===1&&result.items.length===1&&!result.items[0]!.run_id){const row=result.items[0]!,brief=socialObject(socialJson(row.brief)),authority=socialObject(brief?._weeklyAuthority),pkg=socialObject(authority?.weeklyPackage);if(row.tenant_id!==tenantId||row.create_idempotency_key!==key||row.mode!=='weekly'||pkg?.programId!==first.programId||pkg.packageId!==first.packageId||pkg.version!==first.packageVersion||['cancelled','paused','failed'].includes(String(row.status)))return fail();}
+ if(result.totalItems===1&&result.items.length===1&&!result.items[0]!.run_id){const row=result.items[0]!,brief=socialObject(socialJson(row.brief)),authority=socialObject(brief?._weeklyAuthority),pkg=socialObject(authority?.weeklyPackage);if(row.tenant_id!==tenantId||row.create_idempotency_key!==key||row.task_mode!=='weekly'||pkg?.programId!==first.programId||pkg.packageId!==first.packageId||pkg.version!==first.packageVersion||['cancelled','paused','failed'].includes(String(row.status)))return fail();}
  if(result.totalItems===0||(result.totalItems===1&&result.items.length===1&&!result.items[0]!.run_id)){
  // The actual weekly producer's CreateSocialContentTaskInput fixes mode='weekly';
  // enqueueSocialContentAutoProduction fixes taskType=`social_content_${task.mode}`.
@@ -46,7 +46,7 @@ export async function readWeeklyQueueSchedulingEvidence(store:DataStore,tasks:We
  const run=await store.getById<Record_>('workflow_runs',row.run_id);if(!run||run.tenant_id!==tenantId)return fail();
  const job=await readContentExecutionJob(store,tenantId,row.task_id,row.run_id);
  if(!job){assign(null,[],['queue_job_identity_required']);continue;}
- if(!job.accountId||group.some(t=>t.accountId!==job.accountId)||job.taskType!==`social_content_${row.mode}`)return fail();
+ if(!job.accountId||group.some(t=>t.accountId!==job.accountId)||job.taskType!==`social_content_${row.task_mode}`)return fail();
  const observation=await observeWeeklyQueueResources(store,job,limits,now);const keys:string[]=[],reasons=observation.missingScopes.map(s=>`persisted_${s}_queue_limit_missing`);
  for(const resource of observation.resources){keys.push(resource.resourceKey);const pool={concurrency:resource.configuration.maximumRunning,configurationHash:resource.configuration.recordHash,unknownRunningOccupation:resource.observation.runningJobCount>0};putPool(resource.resourceKey,pool);}
  if(job.status==='succeeded')reasons.push('queue_completed_generation_requires_result_evidence');

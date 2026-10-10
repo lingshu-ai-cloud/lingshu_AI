@@ -1,0 +1,31 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {prepareWeeklyInventoryG6Fixture} from '../runtime/weeklyInventoryG6.fixture.js';
+import {executeWeeklyPublication,type WeeklyPublishingProviderAdapter} from '../publishing/weeklyLineage.js';
+import {collectWeeklyReviewInput,runWeeklyReviewForPackage} from './weeklyReviewWorker.js';
+import type {Record_} from '../storage/datastore.js';
+
+test('formal provider attempt attributes a frozen review without manufacturing manual package evidence',async t=>{
+ t.mock.timers.enable({apis:['Date'],now:new Date('2026-10-07T10:00:00Z')});
+ const f=await prepareWeeklyInventoryG6Fixture();t.after(f.cleanup);
+ t.mock.timers.setTime(Date.parse('2026-10-07T13:00:00Z'));
+ let posts=0;
+ const adapter:WeeklyPublishingProviderAdapter={provider:'tiktok-content-posting-api',platform:'tiktok',capability:'available',async publish(){posts++;return{status:'published',providerReceiptId:'controlled-review-published-receipt',platformPostId:'controlled-review-published-post'};},async reconcile(){throw Error('published attempt must not resubmit');}};
+ const actualRow=f.tables.social_weekly_operating_packages!.find(row=>row.package_id===f.next.packageId&&row.version===f.next.version)!;
+ const actualPackage=actualRow.payload as typeof f.next;
+ const published=await executeWeeklyPublication({assignment:f.assignment.payload,publicationPackage:f.actualPackage,contentPackage:actualPackage.socialContentPackage,existingPublishedCount:0,dataStore:f.store,adapter});assert.equal(published.status,'published');assert.equal(posts,1);
+ const packageRow=f.tables.starter_publication_packages!.find(row=>row.package_id===f.actualPackage.packageId)!;assert.notEqual(packageRow.status,'published');assert.ok(!packageRow.evidence||!(packageRow.evidence as Record<string,unknown>).verificationStatus);
+ const row=f.tables.social_weekly_operating_packages!.find(row=>row.package_id===f.next.packageId&&row.version===f.next.version)!;
+ const now=new Date('2026-10-12T12:00:00Z');t.mock.timers.setTime(now.getTime());
+ const collect=()=>collectWeeklyReviewInput({dataStore:f.store,row:row as Parameters<typeof collectWeeklyReviewInput>[0]['row'],actorId:'owner',now});
+ const {validateWeeklyExecutionResults}=await import('../runtime/socialWeeklyResultValidation.js');await validateWeeklyExecutionResults(f.store,{...f.targetPublishing,workflowKind:'publishing',schedule:{...f.targetPublishing.schedule,stepKind:'publishing'}},[{type:'weekly_publication_attempt',id:published.attempt_id,version:1}],now);
+ const {readWeeklyPublicationMetricEvidence}=await import('../runtime/weeklyPublicationMetricEvidence.js');
+ const proof=await readWeeklyPublicationMetricEvidence(f.store,{tenantId:'t',programId:actualPackage.programId,packageId:actualPackage.packageId,packageVersion:actualPackage.version,accountId:'account',workflowKind:'engagement',schedule:{stepKind:'performance_monitoring'}} as import('../../shared/contracts/socialProgram.js').WeeklyExecutionTask,actualPackage,now,{durableOnly:true});assert.ok(proof.publications.length,JSON.stringify(proof));
+ const input=await collect();assert.equal(input.sourceScanComplete,true);const content=input.contents.find(content=>content.publicationTaskId===f.assignment.publication_task_id)!;assert.ok(content);assert.equal(content.attributionStatus,'attributed');assert.equal(content.evidenceKind,'owned_content_result');assert.equal(content.contentId,f.actualPackage.contentId);assert.deepEqual(content.publicationReceiptRefs,[proof.publications[0]!.receiptRef]);assert.match(proof.publications[0]!.receiptRef,/^[a-f0-9]{64}$/);assert.equal(proof.publications[0]!.providerReceiptId,'controlled-review-published-receipt');
+ const attempt=f.tables.social_publication_attempts!.find(row=>row.attempt_id===published.attempt_id)!;const originalTenant=attempt.tenant_id;
+ attempt.tenant_id='foreign';assert.equal((await collect()).contents.find(c=>c.publicationTaskId===content.publicationTaskId)?.attributionStatus,'unknown');attempt.tenant_id=originalTenant;
+ const originalReceipt=attempt.provider_receipt_id;attempt.provider_receipt_id='';assert.equal((await collect()).sourceScanComplete,false);assert.equal((await collect()).contents.find(c=>c.publicationTaskId===content.publicationTaskId)?.attributionStatus,'unknown');attempt.provider_receipt_id=originalReceipt;
+ const duplicate={...attempt,id:'duplicate-proof',attempt_id:'duplicate-proof'};f.tables.social_publication_attempts!.push(duplicate as Record_);assert.equal((await collect()).sourceScanComplete,false);f.tables.social_publication_attempts!.pop();
+ const frozen=await runWeeklyReviewForPackage({dataStore:f.store,row:row as Parameters<typeof runWeeklyReviewForPackage>[0]['row'],actorId:'owner',now});assert.equal(frozen.status,'completed');assert.ok('snapshot'in frozen&&frozen.snapshot?.contents.some(c=>c.publicationReceiptRefs?.includes(proof.publications[0]!.receiptRef)));
+ assert.equal(posts,1);assert.notEqual(packageRow.status,'published','review must not project or forge manual receipt evidence');
+});

@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto';
+import {readWeeklyPublicationMetricEvidence} from '../runtime/weeklyPublicationMetricEvidence.js';
+import type {WeeklyExecutionTask} from '../../shared/contracts/socialProgram.js';
 import type { MetricSnapshot, MetricValues, SocialMetricKey } from '../socialMetrics/aggregation.js';
 import { SOCIAL_METRIC_KEYS } from '../socialMetrics/aggregation.js';
 import type { DataStore } from '../storage/datastore.js';
@@ -157,13 +159,25 @@ export async function collectWeeklyReviewInput(input: {
   const publicationReceiptRefs: string[] = [];
   const interactionRefs: string[] = [];
   const salesQualificationRefs: string[] = [];
+  const durablePublications=new Map<string,Awaited<ReturnType<typeof readWeeklyPublicationMetricEvidence>>['publications'][number]>();
+  let durableScanComplete=true;
+  for(const task of weekly.socialContentPackage.publicationTasks.filter(task=>task.status!=='cancelled')){
+   try{
+    const evidence=await readWeeklyPublicationMetricEvidence(dataStore,{tenantId:row.tenant_id,programId:weekly.programId,packageId:weekly.packageId,packageVersion:weekly.version,publicationTaskId:task.publicationTaskId,accountId:task.accountId,workflowKind:'engagement',schedule:{stepKind:'performance_monitoring'}} as WeeklyExecutionTask,weekly,now,{durableOnly:true});
+    if(evidence.publicationEvidenceIncomplete)durableScanComplete=false;
+    const matches=evidence.publications.filter(proof=>proof.publicationTaskId===task.publicationTaskId);
+    if(matches.length>1)throw Error('weekly_review_publication_ambiguous');
+    if(matches[0])durablePublications.set(task.publicationTaskId,matches[0]);
+   }catch{durableScanComplete=false;}
+  }
   const contents: ReviewContentInput[] = weekly.socialContentPackage.publicationTasks
     .filter(task => task.status !== 'cancelled')
     .map(task => {
       const publication = publications.items.find(item => publicationMatches(item, weekly, task.publicationTaskId));
       const manifest = object(publication?.manifest);
-      const contentId = text(publication?.content_id || manifest.contentId || task.motherContentId);
-      const receiptRefs = publication && verifiedPublication(publication)
+      const durable=publications.available?durablePublications.get(task.publicationTaskId):undefined;
+      const contentId = durable?.contentId??text(publication?.content_id || manifest.contentId || task.motherContentId);
+      const receiptRefs = durable?[durable.receiptRef]:publication && verifiedPublication(publication)
         ? [text(object(publication.evidence).verificationReceiptHash || object(publication.evidence).sourceReceiptHash || publication.package_id)].filter(Boolean)
         : [];
       publicationReceiptRefs.push(...receiptRefs);
@@ -200,7 +214,7 @@ export async function collectWeeklyReviewInput(input: {
   const unavailableMetricKeys: SocialMetricKey[] = metrics.available ? [] : [...SOCIAL_METRIC_KEYS];
   const workflowEventRefs = weekly.appliedWorkflowEvents.map(event => event.eventId);
   return {
-    sourceScanComplete:[publications,metrics,starterMetrics,interactions,qualifications].every(source=>source.available),
+    sourceScanComplete:durableScanComplete&&[publications,metrics,starterMetrics,interactions,qualifications].every(source=>source.available),
     tenantId: row.tenant_id,
     actorId,
     programId: weekly.programId,
