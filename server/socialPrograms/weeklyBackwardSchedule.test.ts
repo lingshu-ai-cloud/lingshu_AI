@@ -64,6 +64,17 @@ test('capacity collision never publishes earlier to disguise an impossible simul
  assert.equal(result.assignments.filter(row=>row.startAt).length,1);
  request.resources.content!.concurrency=2;assert.equal(planWeeklyBackwardSchedule(request).publicationGap,0);
 });
+test('one Agent cannot gain fictional parallel capacity by using multiple resource keys',()=>{
+ const tasks=[task('a'),task('b')];
+ tasks.forEach(item=>item.schedule.latestFinishAt='2026-10-04T10:00:00Z');
+ const request=input(tasks);
+ request.constraints.b={...request.constraints.b!,resourceKey:'content-second-column'};
+ request.resources['content-second-column']={concurrency:1,workingWindows:[{startAt:now,finishAt:'2026-10-04T10:00:00Z'}]};
+ assert.throws(()=>planWeeklyBackwardSchedule(request),/one capacity resource/i,'columns do not create another content Agent');
+ request.tasks[1]!.schedule.responsibleActor='quality_agent';
+ const separateAgents=planWeeklyBackwardSchedule(request);
+ assert.equal(separateAgents.assignments.filter(row=>row.mode==='planned').length,2,'a distinct Agent may use its own confirmed work window');
+});
 test('human nonworking days and missing estimates block without fabricating capacity',()=>{
  const tasks=[task('human'),task('render',['human']),task('pub',['render'],'p1')];tasks[0]!.schedule.responsibleActor='user';
  const request=input(tasks);request.constraints.human!.resourceKey='human';request.resources.human={concurrency:1,workingWindows:[{startAt:'2026-10-05T09:00:00Z',finishAt:'2026-10-05T17:00:00Z'}]};

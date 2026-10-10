@@ -7,6 +7,7 @@ import { createSocialProgramService } from './service.js';
 import { planWeeklyExecutionTasks, applyBusinessDispatchToExecutionTasks, createWeeklyExecutionTaskService, WEEKLY_EXECUTION_TASKS, getWeeklyExecutionTaskRow, writeWeeklyExecutionTask, recomputePackageExecution } from './executionTasks.js';
 import { createWeeklyOperatingPackageService } from './weeklyOperatingPackages.js';
 import { createSocialOperatingRepository } from '../socialOperating/repository.js';
+import { planWeeklyBackwardSchedule } from './weeklyBackwardSchedule.js';
 
 function memoryStore(): DataStore {
   const rows = new Map<string, Record_[]>();
@@ -244,6 +245,25 @@ test('cold-start Z and established H generate distinct executable chain identiti
   assert.ok(historical.filter(task=>task.inputSnapshot.referenceSource==='external').every(task=>task.chainContract?.requiredInputKinds.includes('external_reference_evidence')));
   assert.equal(historical.find(task=>task.schedule.stepKind==='performance_monitoring')?.inputSnapshot.profileWork,'existing_customer_and_dual_source_attribution');
   assert.equal(cold.find(task=>task.schedule.stepKind==='performance_monitoring')?.inputSnapshot.profileWork,'new_inquiry_and_first_baseline_attribution');
+});
+
+test('real Z and H five-day graphs fit confirmed Agent calendars and finish every video before the preceding-day cutoff',async()=>{
+ const {draft}=await fixture(),prototype=draft.socialContentPackage.publicationTasks[0]!;
+ const schedule=(profile:'b2b_cold_start'|'b2b_established')=>{
+  const pkg=structuredClone(draft);pkg.referenceSourcePolicy=profile==='b2b_cold_start'
+   ?{profile,ownedPercent:0,externalPercent:100,allocationUnit:'mother_content'}
+   :{profile,ownedPercent:40,externalPercent:60,allocationUnit:'mother_content'};
+  pkg.socialContentPackage.publicationTasks=Array.from({length:5},(_,index)=>({...structuredClone(prototype),publicationTaskId:`${profile}-publication-${index}`,motherContentId:`${profile}-mother-${index}`,adaptationOfPublicationTaskId:null,publishWindow:`2026-10-${String(6+index).padStart(2,'0')}T10:00:00Z`}));
+  const all=planWeeklyExecutionTasks('tenant-a',pkg,'2026-10-01T00:00:00Z'),byId=new Map(all.map(t=>[t.taskId,t])),needed=new Set<string>();
+  const add=(id:string)=>{if(needed.has(id))return;needed.add(id);byId.get(id)!.dependsOnTaskIds.forEach(add);};all.filter(t=>t.schedule.stepKind==='publishing').forEach(t=>add(t.taskId));
+  const tasks=all.filter(t=>needed.has(t.taskId)).map(t=>({...t,status:'queued' as const,ownBlockingReasons:[]}));
+  const actors=[...new Set(tasks.map(t=>t.schedule.responsibleActor))];
+  const workingWindows=Array.from({length:11},(_,index)=>({startAt:`2026-10-${String(index+1).padStart(2,'0')}T00:00:00Z`,finishAt:`2026-10-${String(index+1).padStart(2,'0')}T23:59:59Z`}));
+  const resources=Object.fromEntries(actors.map(actor=>[actor,{concurrency:actor==='customer_agent'?3:actor==='content_agent'?2:1,workingWindows}]));
+  const constraints=Object.fromEntries(tasks.map(t=>[t.taskId,{resourceKey:t.schedule.responsibleActor,remainingMinutes:t.schedule.estimatedDurationMinutes,remainingCostCny:0,bufferMinutes:t.schedule.stepKind==='publishing'?0:5,availableAt:'2026-10-01T00:00:00Z'}]));
+  return {pkg,tasks,plan:planWeeklyBackwardSchedule({tasks,now:'2026-10-01T00:00:00Z',remainingBudgetCny:0,resources,constraints,frozenOperationalWeek:{weekStart:'2026-10-05',weekEnd:'2026-10-11'}})};
+ };
+ for(const profile of ['b2b_cold_start','b2b_established'] as const){const result=schedule(profile);assert.equal(result.plan.publicationGap,0,`${profile} ${JSON.stringify(result.plan.publications)} ${JSON.stringify(result.plan.assignments.filter(row=>row.reasons.length))}`);assert.equal(result.plan.unscheduledTaskIds.length,0,profile);const rows=new Map(result.plan.assignments.map(row=>[row.taskId,row]));for(const publication of result.pkg.socialContentPackage.publicationTasks){const video=result.tasks.find(t=>t.publicationTaskId===publication.publicationTaskId&&t.schedule.stepKind==='video_generation')!;assert(Date.parse(rows.get(video.taskId)!.finishAt!)<=Date.parse(publication.publishWindow!)-86_400_000,`${profile}:${publication.publicationTaskId}`);}}
 });
 
 test('worker leases, retries, dead letters and explicit recovery are durable', async () => {

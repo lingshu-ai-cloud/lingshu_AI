@@ -90,6 +90,11 @@ export function planWeeklyBackwardSchedule(input: WeeklyBackwardScheduleInput): 
   const vector=input.queueCapacityEvidence;
   if(vector&&(instant(vector.verifiedAt)!==now||! /^[a-f0-9]{64}$/.test(vector.configurationHash)||! /^[a-f0-9]{64}$/.test(vector.inputEvidenceHash)||Object.keys(vector.tasks).some(id=>!tasks.has(id))||Object.values(vector.pools).some(p=>!Number.isSafeInteger(p.concurrency)||p.concurrency<1)))throw Error('Invalid internal queue capacity evidence');
   const vectorIntervals=new Map<string,Array<{start:number;finish:number;subject:string}>>(Object.keys(vector?.pools??{}).map(key=>[key,[]]));
+  // A resource may be a pool with explicit concurrency, but one named Agent
+  // cannot be split over several arbitrary resource keys. Otherwise callers
+  // could manufacture parallel capacity merely by adding calendar columns.
+  const resourceByActor=new Map<WeeklyExecutionTask['schedule']['responsibleActor'],string>();
+  for(const task of input.tasks){const key=input.constraints[task.taskId]?.resourceKey;if(!key)continue;const current=resourceByActor.get(task.schedule.responsibleActor);if(current&&current!==key)throw Error('One backward scheduling Agent requires one capacity resource');resourceByActor.set(task.schedule.responsibleActor,key);}
   const vectorFits=(taskId:string,start:number,finish:number)=>{const mapping=vector?.tasks[taskId];if(!mapping)return true;return mapping.resourceKeys.every(key=>{const pool=vector!.pools[key],intervals=vectorIntervals.get(key);if(!pool||!intervals)return false;const own=intervals.filter(x=>x.subject===mapping.productionSubjectId),begin=Math.min(start,...own.map(x=>x.start)),end=Math.max(finish,...own.map(x=>x.finish));const points=[begin,...intervals.filter(x=>x.start<end&&x.finish>begin).map(x=>Math.max(begin,x.start))];return points.every(at=>new Set([...intervals.filter(x=>x.start<=at&&x.finish>at).map(x=>x.subject),mapping.productionSubjectId!]).size<=pool.concurrency);});};
   const assignments = new Map<string, WeeklyBackwardSchedule['assignments'][number]>();
   const pending = [...input.tasks];
