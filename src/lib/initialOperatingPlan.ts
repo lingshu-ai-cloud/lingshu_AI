@@ -2,7 +2,7 @@ import type { DigitalEmployeeConfig, PublishingTarget } from './digitalEmployees
 import type { SocialContentStageId } from './socialContentStage';
 import { buildPresetMatrixVideoPlans, weeklyTaskPackagePreset } from './weeklyTaskPackagePresets';
 import { defaultMatrixPlan, linkMatrixVersionsToMasters } from './weeklyMatrix';
-export type InitialOperatingPlan = { stage: SocialContentStageId; products: string[]; market: string; language: string; platforms: PublishingTarget['platform'][]; accountIds?: Partial<Record<PublishingTarget["platform"], string>>; count: number; budgetCapCny: number; deliveryDate: string };
+export type InitialOperatingPlan = { stage: SocialContentStageId; products: string[]; market: string; language: string; platforms: PublishingTarget['platform'][]; accountIds?: Partial<Record<PublishingTarget["platform"], string>>; historyAccounts?: string[]; historyCollectionRequestId?: string; count: number; budgetCapCny: number; deliveryDate: string };
 export function recommendFocusProducts(products: Array<Record<string, any>>): string[] {
   return products.map((p,index)=>({name:String(p.name||p.title||p.productName||'').trim(),index,score:Number(!!p.description)+Number(!!p.highlights)+Number(!!p.sku)+Number(Array.isArray(p.images)&&p.images.length>0)*2})).filter(p=>p.name).sort((a,b)=>b.score-a.score||a.index-b.index).slice(0,2).map(p=>p.name);
 }

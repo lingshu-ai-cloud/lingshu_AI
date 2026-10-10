@@ -1,3 +1,5 @@
+import type { InitialPreparation } from '../../server/digitalEmployees/initialPreparation';
+import type { InitialOperatingPlan } from './initialOperatingPlan';
 import { authHeader } from './auth';
 import type { ReviewTodoBoard } from './reviewTodos';
 import type { WeeklyPackage } from './weeklyPackage';
@@ -48,6 +50,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const digitalEmployeeApi = {
+  startInitialPreparation: (goalId:string,revision:number,plan:InitialOperatingPlan,requestId:string)=>request<{preparation:InitialPreparation}>(`/goals/${encodeURIComponent(goalId)}/initial-preparation`,{method:"POST",body:JSON.stringify({...plan,revision,requestId})}),
+  initialPreparation:(goalId:string)=>request<{preparation:InitialPreparation|null}>(`/goals/${encodeURIComponent(goalId)}/initial-preparation`),
+  resumeInitialPreparation:(goalId:string)=>request<{preparation:InitialPreparation}>(`/goals/${encodeURIComponent(goalId)}/initial-preparation`,{method:"POST",body:JSON.stringify({resume:true})}),
   publishingAccounts: () =>
     request<{ items: Array<PublishingTarget & { status: "connected" }> }>(
       "/publishing-accounts",

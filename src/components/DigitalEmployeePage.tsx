@@ -1,3 +1,4 @@
+import InitialPreparationStatusPanel from './InitialPreparationStatusPanel';
 import { productionApi } from '../lib/productionApi';
 import InitialOperatingPlanDialog from './InitialOperatingPlanDialog';
 import { recommendFocusProducts, initialPlanVideoPlans, initialPlanMatrixRows, type InitialOperatingPlan } from '../lib/initialOperatingPlan';
@@ -3817,13 +3818,11 @@ export default function DigitalEmployeePage({
         setData(created);setNewGoal(false);setWeeklyPlanOpen(true);setOnboardingWelcomeOpen(false);
         const draftPack=created.plan?.businessPackage;
         if(!draftPack?.directorPlan)throw Error('推荐计划缺少可执行任务包或编导预算');
-        await digitalEmployeeApi.savePackage(created.goal.id,{...draftPack,matrixPlan:initialPlanMatrixRows(plan,next.config!),tasks:draftPack.tasks.map(task=>task.templateId==="production"?{...task,videoPlans:initialPlanVideoPlans(plan,next.config!)}:task),directorPlan:{...draftPack.directorPlan,originalTarget:plan.count,platformVersionTarget:plan.count*plan.platforms.length,publishTarget:plan.count*plan.platforms.length,productionBudget:plan.budgetCapCny,productionBudgetMax:plan.budgetCapCny,productionBudgetMin:Math.min(draftPack.directorPlan.productionBudgetMin||0,plan.budgetCapCny)}});
-        const prepared=await digitalEmployeeApi.generatePackageDetails(created.goal.id);
-        setData(prepared);
-        const pack=prepared.plan?.businessPackage;
-        if(pack?.detailGeneration?.status==='ready'){
-          const started=await digitalEmployeeApi.approveGoal(created.goal.id,pack.revision);setData(started);setWorkspaceView('matrix');
-        } else {setError('推荐计划已保存，数字员工正在准备参考与必要素材；具体缺口显示在原计划中。');}
+        const saved=await digitalEmployeeApi.savePackage(created.goal.id,{...draftPack,matrixPlan:initialPlanMatrixRows(plan,next.config!),tasks:draftPack.tasks.map(task=>task.templateId==="production"?{...task,videoPlans:initialPlanVideoPlans(plan,next.config!)}:task),directorPlan:{...draftPack.directorPlan,originalTarget:plan.count,platformVersionTarget:plan.count*plan.platforms.length,publishTarget:plan.count*plan.platforms.length,productionBudget:plan.budgetCapCny,productionBudgetMax:plan.budgetCapCny,productionBudgetMin:Math.min(draftPack.directorPlan.productionBudgetMin||0,plan.budgetCapCny)}});
+        const savedRevision=saved.plan?.businessPackage?.revision;
+        if(!savedRevision)throw Error('已确认计划版本未保存');
+        await digitalEmployeeApi.startInitialPreparation(created.goal.id,savedRevision,plan,crypto.randomUUID());
+        setData(await digitalEmployeeApi.overview(created.goal.id));setError('');
         return true;
       }catch(error){setError(error instanceof Error?error.message:'推荐计划制作准备失败');return false;}
     }
@@ -4219,6 +4218,7 @@ export default function DigitalEmployeePage({
         <section role="dialog" aria-modal="true" aria-label={goal && !newGoal ? "本周计划详情" : "周计划生成"} className="ui-modal-frame ui-modal-frame--wide overflow-hidden bg-white">
           <header className="flex items-start justify-between gap-4 border-b border-slate-100 px-5 py-5 sm:px-7"><div><p className="text-xs font-black uppercase tracking-[0.16em] text-emerald-700">Weekly Plan</p><h2 className="mt-1 text-xl font-black text-slate-950">{goal && !newGoal ? activeRun ? "数字员工工作排期" : "确认本周视频计划" : "制定本周目标"}</h2><p className="mt-1 text-xs text-slate-500">{goal && !newGoal ? activeRun ? "按发布时间查看本周内容，并继续查看 Agent 执行节点。" : "按发布时间查看全部内容；点击卡片打开对应爆款详情。" : "确定每个平台账号的产量、总产量和预计成本。"}</p></div><button type="button" aria-label={goal && !newGoal ? "关闭本周计划详情" : "关闭周计划生成"} disabled={Boolean(busy)} onClick={()=>setWeeklyPlanOpen(false)} className="rounded-full border border-slate-200 p-2 text-slate-500 hover:bg-slate-50 disabled:opacity-40"><X size={18}/></button></header>
           <div className="ui-modal-body px-5 py-5 sm:px-7">
+            {goal&&<InitialPreparationStatusPanel goalId={goal.id} onRunning={()=>void load()} />}
             {(!goal || newGoal) && !activeRun ? <GoalPanel config={data.config} busy={Boolean(busy)} businessLine={businessLine} contentPlatform={contentPlatform} onOpenSettings={()=>{setWeeklyPlanOpen(false);setWorkspaceView("rules");}} onSave={goalInput => void createWeeklyOutline(goalInput)}/>
               : goal ? <div className="space-y-4">
                 <section className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-slate-200 px-4 py-3">

@@ -1,3 +1,5 @@
+import { advanceInitialPreparation, initialPreparationSources, initialPreparationJobKey, type InitialPreparation } from '../digitalEmployees/initialPreparation.js';
+import { createCrawlWorkerJob } from './crawlWorker.js';
 import {createCustomerTaskNavigationRouter} from './customerTaskNavigation.js';
 import { requiresContentHumanAcceptance } from '../digitalEmployees/contentProductionAcceptancePolicy.js';
 import { nextManagedCycleWindow, prepareManagedCyclePackage } from '../digitalEmployees/managedOperatingCycle.js';
@@ -2405,6 +2407,54 @@ digitalEmployeesRouter.get('/overview', async (req, res) => {
     ? { startsAt, endsAt }
     : undefined;
   res.json(await buildOverview(tenantId, goalId, requestedRange));
+});
+
+async function resumeInitialPreparationPlan(tenantId:string,goalId:string,allowBlocked=false){
+ const lease=await acquireDurableOperationLease({dataStore:store,tenantId,scope:'initial_operating_preparation',subjectId:goalId,ownerId:`initial-${randomUUID()}`,leaseDurationMs:30*60_000});
+ if(!lease)return;
+ try{
+ const plan=await first<PlanRecord>(COLLECTION.plans,{tenant_id:tenantId,goal_id:goalId});const goal=await tenantRecord<GoalRecord>(COLLECTION.goals,goalId,tenantId);if(!plan||!goal)return;
+ const body=jsonObject<Record<string,unknown>>(plan.plan,{});const state=body.initialPreparation as InitialPreparation|undefined;if(!state||state.status==='running'||state.status==='blocked'&&!allowBlocked)return;
+ const existingRun=await first<RunRecord>(COLLECTION.runs,{tenant_id:tenantId,goal_id:goalId});if(existingRun&&existingRun.plan_id===plan.id){if(!await store.update(COLLECTION.plans,plan.id,{plan:{...body,initialPreparation:{...state,status:'running',runId:existingRun.id,reason:''}}}))throw Error('运行恢复状态保存失败');return;}
+ const resolved=await resolveCurrentConfiguration(tenantId,await configForTenant(tenantId));if(!resolved)throw Error('初始化配置不存在');const config=executionConfigForPlan(plan,resolved.config);if(config.allowRealPublishing||config.allowRealCustomerMessages)throw Error('初始化制作准备不接受真实发布或客户发送授权');
+ await advanceInitialPreparation(state,{
+ save:async value=>{await assertDurableOperationLease({dataStore:store,lease,minimumRemainingMs:1000});const latest=await tenantRecord<PlanRecord>(COLLECTION.plans,plan.id,tenantId);if(!latest||!await store.update(COLLECTION.plans,plan.id,{plan:{...jsonObject<Record<string,unknown>>(latest.plan,{}),initialPreparation:value}}))throw Error('初始化进度保存失败');},
+ enqueue:async source=>{const job=await createCrawlWorkerJob({tenantId,requestedBy:state.confirmedBy,platform:source.platform,mode:source.mode,keyword:source.mode==='keyword'?source.value:'',accountUrl:source.mode==='account'?source.value:'',accountName:config.companyName,limit:30,idempotencyKey:initialPreparationJobKey(tenantId,state,source)});if(!job)throw Error('真实采集任务创建失败');return job.id;},
+ observe:async id=>{const job=await store.getById<StoredRecord>('crawl_jobs',id);if(!job||job.tenantId!==tenantId)throw Error('原采集任务不存在');const result=jsonObject<{candidateIds?:string[]}>(job.resultJson,{});return {status:String(job.status),candidateIds:result.candidateIds||[],error:String(job.error||'')};},
+ analyzed:async ids=>{const rows=await Promise.all(ids.map(id=>store.getById<StoredRecord>('trend_videos',id)));if(rows.some(row=>!row||row.tenantId!==tenantId))throw Error('原采集候选已失效');const exact=rows.filter(row=>row&&exactVideoAnalysis(row));if(exact.length>=Math.max(1,Number(goal.target)||1))return true;if(rows.every(row=>['analyzed','failed'].includes(String(row!.status))))throw Error('真实全片分析合格参考不足，请调整范围或修复分析后继续');return false;},
+ prepare:async ids=>{const latest=await tenantRecord<PlanRecord>(COLLECTION.plans,plan.id,tenantId);if(!latest)throw Error('原计划不存在');const currentBody=jsonObject<Record<string,unknown>>(latest.plan,{});const pack=currentBody.businessPackage as WeeklyPackage;if(pack.revision!==state.revision)throw Error('计划版本已修改，请重新确认');const videos=await Promise.all(ids.map(id=>store.getById<StoredRecord>('trend_videos',id)));const enriched=enrichPackageWithContentSignals({pack,goal:goalInput(goal),config,videos:videos.filter((v):v is StoredRecord=>!!v),benchmarks:[]});const detailed=await generateWeeklyTaskPreviews({tenantId,goal,plan:latest,pack:enriched,config,planBody:currentBody});const compiled=compilePackage(detailed,goalInput(goal),config);if(!await store.update(COLLECTION.plans,plan.id,{plan:{...currentBody,...compiled}}))throw Error('制作准备保存失败');return {ready:detailed.detailGeneration?.status==='ready',reason:detailed.detailGeneration?.blockers.join('；'),revision:detailed.revision};},
+ activate:async revision=>{const result=await approveGoalForReview(tenantId,state.confirmedBy,goalId,revision,[]);if(result.status!==200)throw Error((result.body as {message?:string;error?:string}).message||(result.body as {error?:string}).error||'制作启动失败');const run=await first<RunRecord>(COLLECTION.runs,{tenant_id:tenantId,goal_id:goalId});if(!run)throw Error('实际制作运行未创建');return run.id;},
+ });
+ }finally{await releaseDurableOperationLease({dataStore:store,lease});}
+}
+export async function resumeConfirmedInitialPlans(){
+ for(let page=1;;page++){const rows=await store.list<PlanRecord>(COLLECTION.plans,{page,perPage:200});
+ for(const row of rows.items){const state=jsonObject<{initialPreparation?:InitialPreparation}>(row.plan,{}).initialPreparation;if(state&&['collecting','analyzing','preparing'].includes(state.status))await resumeInitialPreparationPlan(row.tenant_id,row.goal_id).catch(error=>console.warn('[initial-preparation]',String(error)));}
+ if(page>=rows.totalPages||rows.items.length<200)break;}
+}
+let initialPreparationTimer:ReturnType<typeof setInterval>|undefined;
+export function initInitialPreparationWorker(){if(initialPreparationTimer)return;initialPreparationTimer=setInterval(()=>{void resumeConfirmedInitialPlans().catch(error=>console.warn('[initial-preparation]',String(error)));},30_000);initialPreparationTimer.unref?.();}
+digitalEmployeesRouter.post('/onboarding/history-collection',async(req,res)=>{
+ const {tenantId,userId}=res.locals as AuthLocals;
+ try{const requestId=String(req.body?.requestId||'');if(!/^[a-zA-Z0-9-]{8,100}$/.test(requestId))throw Error('请求身份缺失');const source=initialPreparationSources({platforms:[req.body.platform],products:['企业产品'],stage:'b2b_growth',historyAccounts:[req.body.accountUrl],historyCollectionRequestId:requestId}).find(s=>s.origin==='owned')!;const state={requestId,goalId:'history'} as InitialPreparation;const job=await createCrawlWorkerJob({tenantId,requestedBy:userId,platform:source.platform,mode:'account',accountUrl:source.value,limit:30,idempotencyKey:initialPreparationJobKey(tenantId,state,source)});if(!job)throw Error('采集任务创建失败');res.status(202).json({jobId:job.id,status:job.status});}catch(error){res.status(400).json({error:'history_collection_failed',message:error instanceof Error?error.message:'历史采集失败'});}
+});
+digitalEmployeesRouter.get('/goals/:goalId/initial-preparation',async(req,res)=>{const {tenantId}=res.locals as AuthLocals;const plan=await first<PlanRecord>(COLLECTION.plans,{tenant_id:tenantId,goal_id:String(req.params.goalId)});res.json({preparation:plan?jsonObject<{initialPreparation?:InitialPreparation}>(plan.plan,{}).initialPreparation||null:null});});
+digitalEmployeesRouter.post('/goals/:goalId/initial-preparation',async(req,res)=>{
+ const {tenantId,userId}=res.locals as AuthLocals;const goalId=String(req.params.goalId);
+ const confirmationLease=await acquireDurableOperationLease({dataStore:store,tenantId,scope:'initial_operating_confirmation',subjectId:goalId,ownerId:`confirm-${randomUUID()}`,leaseDurationMs:30*60_000});if(!confirmationLease){res.status(409).json({error:'initial_confirmation_in_progress',message:'原确认正在处理，请查询原计划进度'});return;}
+ try{await withLocalQueue(goalApprovalQueues,`${tenantId}:initial-confirm:${goalId}`,async()=>{
+ const goal=await tenantRecord<GoalRecord>(COLLECTION.goals,goalId,tenantId);const plan=await first<PlanRecord>(COLLECTION.plans,{tenant_id:tenantId,goal_id:goalId});if(!goal||!plan)throw Error('原计划不存在');
+ const body=jsonObject<Record<string,unknown>>(plan.plan,{});const existing=body.initialPreparation as InitialPreparation|undefined;
+ if(req.body?.resume&&existing){await resumeInitialPreparationPlan(tenantId,goalId,true);return;}
+ if(existing){if(existing.requestId!==String(req.body?.requestId))throw Error('已确认原计划，请查询或恢复原请求');if(JSON.stringify(existing.sources.map(({jobId,...source})=>source))!==JSON.stringify(initialPreparationSources(req.body)))throw Error('确认范围变化，请修订计划');return;}
+ if(goal.status!=='draft')throw Error('原计划已执行，不接受新的初始化确认');
+ const requestId=String(req.body?.requestId||'');if(!/^[a-zA-Z0-9-]{8,100}$/.test(requestId))throw Error('请求身份缺失');
+ const pack=body.businessPackage as WeeklyPackage;if(!pack||pack.revision!==Number(req.body?.revision))throw Error('计划版本已变化');
+ const state:InitialPreparation={requestId,goalId,revision:pack.revision,confirmedBy:userId,confirmedAt:new Date().toISOString(),status:'collecting',sources:initialPreparationSources(req.body),candidateIds:[],reason:''};
+ if(!await store.update(COLLECTION.plans,plan.id,{plan:{...body,initialPreparation:state}}))throw Error('已确认计划保存失败');
+ await resumeInitialPreparationPlan(tenantId,goalId);
+ });const latest=await first<PlanRecord>(COLLECTION.plans,{tenant_id:tenantId,goal_id:goalId});res.status(202).json({preparation:jsonObject<{initialPreparation?:InitialPreparation}>(latest?.plan,{}).initialPreparation});
+ }catch(error){res.status(409).json({error:'initial_preparation_failed',message:error instanceof Error?error.message:'初始化准备失败'});}finally{await releaseDurableOperationLease({dataStore:store,lease:confirmationLease});}
 });
 
 digitalEmployeesRouter.post('/onboarding/complete', async (req, res) => {

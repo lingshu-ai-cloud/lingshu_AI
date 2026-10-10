@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { requireAuth, type AuthLocals } from '../middleware/auth.js';
 import { store } from '../storage/index.js';
 import type { Platform } from '../types/index.js';
@@ -45,6 +45,7 @@ export type CreateCrawlWorkerJobInput = {
   requestedBy: string;
   platform: Platform;
   mode: CrawlJobMode;
+  idempotencyKey?: string;
   keyword?: string;
   accountUrl?: string;
   accountName?: string;
@@ -126,7 +127,7 @@ function cloudFallbackPollMs(): number {
 }
 
 function shouldCloudFallback(job: CrawlJob): boolean {
-  if (!supportedWorkerPlatform(job.platform) || job.attempts >= MAX_ATTEMPTS) return false;
+  if (!['youtube','tiktok','instagram','facebook'].includes(job.platform) || job.attempts >= MAX_ATTEMPTS) return false;
   if (job.status === 'failed') return !['cloud-fallback', 'inline'].includes(job.workerId);
   if (job.status === 'queued') {
     const createdAt = Date.parse(job.createdAt || '');
@@ -276,8 +277,11 @@ export function initCrawlWorkerCloudFallback(): void {
 }
 
 export async function createCrawlWorkerJob(input: CreateCrawlWorkerJobInput): Promise<CrawlJob | null> {
+  const id=input.idempotencyKey ? createHash('sha256').update(`${input.tenantId}:${input.idempotencyKey}`).digest('hex').slice(0,15) : undefined;
+  if(id){const existing=await store.getById<CrawlJob>(COL,id);if(existing){if(existing.tenantId!==input.tenantId||existing.platform!==input.platform||existing.mode!==input.mode||existing.accountUrl!==String(input.accountUrl||'').trim()||existing.keyword!==String(input.keyword||'').trim())throw Error('crawl_idempotency_scope_changed');return existing;}}
   const createdAt = nowIso();
   return store.create<CrawlJob>(COL, {
+    ...(id?{id}:{}),
     tenantId: input.tenantId,
     requestedBy: input.requestedBy,
     platform: input.platform,
