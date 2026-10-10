@@ -1,0 +1,74 @@
+{
+  "schemaVersion": "mvp-b-review-input-v1",
+  "date": "2026-10-10",
+  "status": "blocked_before_paid_call",
+  "projectId": "studio_projects_1f987e702c8e4e4e8b40e6432b80ae32",
+  "tenantId": "local_tenant_customer_1b2913131e2c46deab66172228c4df0a",
+  "taskId": null,
+  "taskVersion": null,
+  "assemblyId": "video-1",
+  "slotId": "slot-2",
+  "shotId": "c0d4d117-32cc-496d-b9c9-e21c3f1ee748",
+  "productId": "GUIANFA-RS-014",
+  "firstFrameMaterialId": "d2e5748c-29a7-47a9-bbeb-ec627895493f",
+  "reference": {
+    "id": "trend_videos_192e76d4b21244c4a2922e60672c95f2",
+    "startSeconds": 5.1,
+    "endSeconds": 5.97,
+    "usage": "reference_only",
+    "mayUseInProduction": false,
+    "registeredSha256": "501ec2c4d39ce67630448eff7001e2f911561e962533ca1bdb6aa10e6d2388e9",
+    "bytesVerified": false
+  },
+  "compositionVersion": "91773d02113c7014ea3a7a49a6761341c0a76012673a1140e9c2bb5d4f49f746",
+  "productVersion": "4a841211b87f5c4dd1deb059b4d373331ac2819a2bd9c932b0c99d2dc85846c2",
+  "promptStatus": "draft_not_frozen",
+  "sourceRefsFrozen": false,
+  "firstFrameHumanConfirmed": false,
+  "paidAuthorization": null,
+  "plan": {
+    "provider": "volcengine_ark",
+    "imageModel": "doubao-seedream-5-0-pro-260628",
+    "videoModel": "doubao-seedance-2-0-fast-260128",
+    "durationSeconds": 4,
+    "resolution": "720p",
+    "ratio": "9:16",
+    "generateAudio": false,
+    "maxNewImageRequests": 2,
+    "maxNewVideoRequests": 1,
+    "proposedTotalLimitCny": 6.6,
+    "priceBasis": "repository_estimate_not_verified_supplier_price",
+    "actualSupplierCostCny": null,
+    "submittedThisRun": false
+  },
+  "files": [
+    {
+      "file": "data/acceptance/real-shot-replication-20261008/nonperson-product-first-frame-v2.jpg",
+      "sha256": "acfd81b3376afa75c75f19f3cf1b6af2642c735e7c11ee26bb8c2d18d45d31fa"
+    },
+    {
+      "file": "data/acceptance/real-shot-replication-20261008/nonperson-summary.json",
+      "sha256": "5f30d7bfd1dfe5b93367e530363e74181638499c0aba0a513477abab5dce6688"
+    },
+    {
+      "file": "data/acceptance/real-shot-replication-20261008/nonperson-shot-state.json",
+      "sha256": "9294d4631b76495b9f3a3e11cb19340b114231cfb0777f8f32caba83ce84c31e"
+    },
+    {
+      "file": "data/acceptance/real-shot-replication-20261008/independent-shot-audit.json",
+      "sha256": "324319946d97f423bf7d4ef51bd0378c5c130a4cc2f074a371947f29f8757e02"
+    },
+    {
+      "file": "server/routes/studio.ts",
+      "sha256": "1d6a2c02785a244e400c8a0845d307e276e995af71b3bda6069aa8f43f3938f9"
+    },
+    {
+      "file": "server/lib/seedreamFirstFrameGenerator.ts",
+      "sha256": "04f1290ce597e289bf9a245906349c77e32b93d7fb0c8c13de2c4ec21b4127f4"
+    },
+    {
+      "file": "server/lib/storyboardAigcQuality.ts",
+      "sha256": "4d4e4b05383b39689bdfe7c0fff0aed6027c89130cd33b26547afb4868da6fc7"
+    }
+  ]
+}
