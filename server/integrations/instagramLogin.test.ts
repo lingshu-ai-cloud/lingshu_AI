@@ -16,7 +16,7 @@ test('Instagram Login exchanges a code for an IG User token and reads the matchi
       assert.equal(fields.get('client_id'), 'instagram-app');
       assert.equal(fields.get('redirect_uri'), 'https://app.example.test/api/overseas/social/oauth/instagram/callback');
       assert.equal(fields.get('code'), 'one-time-code');
-      return { data: { access_token: 'short-token', user_id: 'ig-123', permissions: ['instagram_business_basic', 'instagram_business_manage_messages'] } };
+      return { data: { access_token: 'short-token', user_id: 'ig-123', permissions: ['instagram_business_basic', 'instagram_business_content_publish'] } };
     }) as typeof axios.post;
     axios.get = (async (url: string, options: any) => {
       calls.push(url);
@@ -37,7 +37,7 @@ test('Instagram Login exchanges a code for an IG User token and reads the matchi
     assert.equal(token.accessToken, 'long-token');
     assert.equal(token.userId, 'ig-123');
     assert.equal(token.expiresIn, 5184000);
-    assert.ok(token.permissions.includes('instagram_business_manage_messages'));
+    assert.ok(token.permissions.includes('instagram_business_content_publish'));
     assert.deepEqual(await getInstagramLoginAccount(token.accessToken, 'v25.0'), {
       id: 'ig-123', userId: undefined, username: 'brand', profilePictureUrl: undefined, followersCount: 7, mediaCount: 2,
     });

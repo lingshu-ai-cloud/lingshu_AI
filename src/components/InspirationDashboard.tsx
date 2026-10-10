@@ -191,6 +191,19 @@ export function visibleMaterialTags(tags: string | undefined): string {
     .filter(tag => tag !== ENTERPRISE_COMMON_MATERIAL_TAG).join(', ');
 }
 
+export function resolveLinkedFavoriteMaterialId(
+  video: Pick<TrendVideo, 'sourceUrl' | 'aiAnalysis'>,
+  materials: Array<Pick<Material, 'id' | 'sourceUrl'>>,
+): string {
+  const analyzedMaterialId = String(video.aiAnalysis?.materialId || '').trim();
+  const linkedById = analyzedMaterialId && materials.find(material => material.id === analyzedMaterialId);
+  if (linkedById) return linkedById.id;
+  const sourceUrl = String(video.sourceUrl || '').trim();
+  return sourceUrl
+    ? materials.find(material => String(material.sourceUrl || '').trim() === sourceUrl)?.id || ''
+    : '';
+}
+
 type MaterialSemanticSource = Pick<Material, 'productName' | 'tags' | 'visualObservations' | 'scriptAnalysis'>;
 
 const HIDDEN_MATERIAL_KEYWORDS = new Set([
@@ -4175,10 +4188,8 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
 
   const favoriteMaterial = async (video: TrendVideo, quiet = false) => {
     if (favoritingMaterialIds.includes(video.id)) return;
-    const linkedMaterial = localMaterials.find(material =>
-      material.id === video.aiAnalysis?.materialId
-      || (Boolean(material.sourceUrl) && material.sourceUrl === video.sourceUrl));
-    const linkedMaterialId = linkedMaterial?.id || String(video.aiAnalysis?.materialId || '').trim();
+    const linkedMaterialId = resolveLinkedFavoriteMaterialId(video, localMaterials);
+    const linkedMaterial = localMaterials.find(material => material.id === linkedMaterialId);
     const currentlyFavorite = favoritedVideoIds.includes(video.id) || Boolean(linkedMaterial?.pinned);
     setFavoritingMaterialIds(ids => [...ids, video.id]);
     if (!quiet) setMaterialMessage('');

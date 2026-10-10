@@ -332,7 +332,7 @@ function isPublicTestTenantVideo(record: Record<string, unknown>): boolean {
   return isVideoLevelAnalysis(analysis);
 }
 
-function isDisplayableTestTenantVideo(record: Record<string, unknown>): boolean {
+export function isDisplayableTestTenantVideo(record: Record<string, unknown>): boolean {
   const analysis = videoAnalysisOf(record);
   if (analysis.usage === 'reference_only' && typeof analysis.contentSha256 === 'string') return true;
   if (analysis.contentFormat === 'image' || String(record.status || '') === 'failed') return false;
@@ -354,10 +354,12 @@ function isDisplayableTestTenantVideo(record: Record<string, unknown>): boolean 
     'queued', 'downloading', 'download_retrying', 'ops_queued',
     'ops_processing', 'analyzing', 'waiting_for_video',
   ]);
+  const paused = Boolean(analysis.analysisPausedAt)
+    || [downloadStatus, videoFetchStatus, geminiStatus].some(status => status === 'paused');
   return isPlatformUrl(sourceUrl, platform)
     && Boolean(String(record.title || '').trim())
     && hasRealThumbnail({ thumbnailUrl } as CrawledVideo)
-    && [downloadStatus, videoFetchStatus, geminiStatus].some(status => pendingStatuses.has(status));
+    && (paused || [downloadStatus, videoFetchStatus, geminiStatus].some(status => pendingStatuses.has(status)));
 }
 
 function compareCrawledAtDesc(a: Record<string, unknown>, b: Record<string, unknown>): number {

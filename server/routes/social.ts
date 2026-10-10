@@ -35,8 +35,6 @@ export { socialUploadHttpResponse } from '../publishing/directPublishHttp.js';
 import { saveSocialMetricSnapshot } from '../socialMetrics/store.js';
 import { sealedSocialCredentialPatch, socialAccessToken } from '../lib/accountCredentials.js';
 import { instagramLoginOAuthScopes, metaOAuthScopes, tikTokOAuthScopes } from '../lib/socialOAuthScopes.js';
-import { subscribeMessengerPage } from '../integrations/messenger.js';
-import { subscribeInstagramAccount } from '../integrations/instagramWebhook.js';
 
 const COL = 'social_accounts';
 const OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
@@ -311,9 +309,8 @@ async function saveFacebookPageFromMeta(input: {
   tenantId: string;
   userId: string;
   page: Awaited<ReturnType<typeof getMetaPages>>[number];
-  purpose?: 'messenger';
 }) {
-  const account = await upsertSocialAccount({
+  return upsertSocialAccount({
     tenantId: input.tenantId,
     userId: input.userId,
     platform: 'facebook',
@@ -324,7 +321,7 @@ async function saveFacebookPageFromMeta(input: {
     accessToken: input.page.accessToken,
     refreshToken: '',
     tokenExpiresAt: '',
-    scope: metaOAuthScopes(input.purpose || 'facebook').join(','),
+    scope: metaOAuthScopes('facebook').join(','),
     parentPageId: input.page.id,
     parentPageName: input.page.name,
     followerCount: input.page.fanCount || 0,
@@ -332,15 +329,6 @@ async function saveFacebookPageFromMeta(input: {
     viewCount: 0,
     likeCount: 0,
   });
-  try {
-    await subscribeMessengerPage({ pageId: input.page.id, pageAccessToken: input.page.accessToken });
-    await store.update(COL, account.id, { messengerSubscribed: true, messengerSubscriptionError: '' });
-    return { ...account, messengerSubscribed: true, messengerSubscriptionError: '' };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'Messenger webhook subscription failed';
-    await store.update(COL, account.id, { messengerSubscribed: false, messengerSubscriptionError: message });
-    return { ...account, messengerSubscribed: false, messengerSubscriptionError: message };
-  }
 }
 
 async function saveInstagramFromMeta(input: {
@@ -407,13 +395,10 @@ async function connectInstagramLogin(pending: PendingOAuthState, code: string, r
     code,
     redirectUri: redirectUri(req, 'instagram'),
   });
-  if (!tokens.permissions.includes('instagram_business_manage_messages')) {
-    throw new Error('Instagram 未授予私信权限，请重新授权并允许消息访问。');
-  }
   const account = await getInstagramLoginAccount(tokens.accessToken, graphVersion());
   // /me resolves the account represented by the exchanged access token. Its
   // Graph ID can differ from the user_id returned by Instagram's OAuth endpoint.
-  const saved = await upsertSocialAccount({
+  await upsertSocialAccount({
     tenantId: pending.tenantId,
     userId: pending.userId,
     platform: 'instagram',
@@ -435,13 +420,6 @@ async function connectInstagramLogin(pending: PendingOAuthState, code: string, r
     viewCount: 0,
     likeCount: 0,
   });
-  try {
-    await subscribeInstagramAccount({ accountId: account.id, accessToken: tokens.accessToken });
-    await store.update(COL, saved.id, { instagramWebhookSubscribed: true, instagramWebhookSubscriptionError: '' });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'Instagram webhook subscription failed';
-    await store.update(COL, saved.id, { instagramWebhookSubscribed: false, instagramWebhookSubscriptionError: message });
-  }
 }
 
 async function connectMeta(pending: PendingOAuthState, code: string, req: Request) {
@@ -458,7 +436,7 @@ async function connectMeta(pending: PendingOAuthState, code: string, req: Reques
   let saved = 0;
   for (const page of pages) {
     if (pending.platform === 'facebook') {
-      await saveFacebookPageFromMeta({ tenantId: pending.tenantId, userId: pending.userId, page, purpose: pending.purpose });
+      await saveFacebookPageFromMeta({ tenantId: pending.tenantId, userId: pending.userId, page });
       saved += 1;
     }
     if (pending.platform === 'instagram' && page.instagram) {
@@ -561,6 +539,10 @@ socialRouter.post('/oauth/:platform/start', async (req, res) => {
     res.status(404).json({ error: 'Unknown platform' });
     return;
   }
+  if (platform === 'facebook' && req.body?.purpose === 'messenger') {
+    res.status(403).json({ error: '首轮 Meta 审核仅开放账号读取与内容发布，Messenger 私信与 Webhook 接入暂未开放。' });
+    return;
+  }
   const { userId, tenantId } = res.locals as AuthLocals;
   const tiktokClient = platform === 'tiktok' ? await getTikTokClient(tenantId) : null;
   const metaClient = platform === 'facebook' ? await getMetaClient(tenantId) : null;
@@ -570,13 +552,11 @@ socialRouter.post('/oauth/:platform/start', async (req, res) => {
     return;
   }
   cleanupOAuthStates();
-  const purpose = platform === 'facebook' && req.body?.purpose === 'messenger' ? 'messenger' as const : undefined;
   const state = signOAuthState({
     userId,
     tenantId,
     platform,
     returnTo: normalizeReturnTo(req.body?.returnTo),
-    purpose,
   });
   pendingOAuthStates.set(state, {
     userId,
@@ -584,7 +564,6 @@ socialRouter.post('/oauth/:platform/start', async (req, res) => {
     platform,
     returnTo: normalizeReturnTo(req.body?.returnTo),
     expiresAt: Date.now() + OAUTH_STATE_TTL_MS,
-    purpose,
   });
 
   if (platform === 'tiktok') {
@@ -611,7 +590,7 @@ socialRouter.post('/oauth/:platform/start', async (req, res) => {
     return;
   }
 
-  const scopes = metaOAuthScopes(purpose || platform);
+  const scopes = metaOAuthScopes(platform);
   const url = new URL(`${META_AUTH_URL}/${graphVersion()}/dialog/oauth`);
   url.searchParams.set('client_id', metaClient!.appId);
   url.searchParams.set('redirect_uri', redirectUri(req, platform));
@@ -715,15 +694,6 @@ socialRouter.post('/connect/manual', async (req, res) => {
           viewCount: 0,
           likeCount: 0,
         });
-        try {
-          await subscribeMessengerPage({ pageId: page.id, pageAccessToken: page.accessToken });
-          await store.update(COL, account.id, { messengerSubscribed: true, messengerSubscriptionError: '' });
-          account = { ...account, messengerSubscribed: true, messengerSubscriptionError: '' };
-        } catch (subscriptionError) {
-          const message = subscriptionError instanceof Error ? subscriptionError.message : 'Messenger webhook subscription failed';
-          await store.update(COL, account.id, { messengerSubscribed: false, messengerSubscriptionError: message });
-          account = { ...account, messengerSubscribed: false, messengerSubscriptionError: message };
-        }
       }
     }
 

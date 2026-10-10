@@ -240,6 +240,7 @@ assert.equal(shouldBypassStarter198Probe({
 }), true, 'an explicit read-only support session keeps its internal observation surface');
 
 const appSource = fs.readFileSync('src/App.tsx', 'utf8');
+const assistantSource = fs.readFileSync('src/components/GlobalAssistant.tsx', 'utf8');
 const appSessionSource = fs.readFileSync('src/appSession.ts', 'utf8');
 const authRouteSource = fs.readFileSync('server/routes/auth.ts', 'utf8');
 const layoutSource = fs.readFileSync('src/components/Layout.tsx', 'utf8');
@@ -260,7 +261,8 @@ for (const [page, component] of [
 assert.match(appSource, /\{\(page === 'smartAssets' \|\| mountedPages\.has\('smartAssets'\) \|\| smartAssetsMounted\) && \(/, 'starter mode must keep the original content studio');
 assert.doesNotMatch(appSource, /StarterProductionSitePage/, 'starter pages must no longer replace the original product UI with a simplified projection');
 assert.match(appSource, /starterMode && page !== 'digitalEmployees'[\s\S]*?<StarterWorkflowContextBar/, 'restored pages must explain their position in the AI workflow');
-assert.match(appSource, /\(!isAgentProductionSession\(\) \|\| page === 'digitalEmployees'\) && <GlobalAssistant/, 'starter mode must keep Lingxiaoshu as the conversational entry while the workspace presents visual results, and Smart Operations must keep it mounted');
+assert.match(appSource, /<GlobalAssistant[\s\S]{0,650}compactMode=\{starterMode \|\| isAgentProductionSession\(\)\}/, 'starter and production sessions keep a compact decision-first assistant');
+assert.match(assistantSource, /<AssistantDecisionCenter[\s\S]{0,300}page=\{page\}/, 'the compact assistant keeps page-scoped approvals');
 assert.equal(appSource.match(/<GlobalAssistant\b/g)?.length, 1, 'the app must expose exactly one visible Lingxiaoshu entry');
 assert.match(appSource, /<GlobalAssistant[\s\S]{0,180}\bprimaryEntry\b/, 'the single Lingxiaoshu instance must be the primary entry');
 assert.doesNotMatch(starterPageSource, /GlobalAssistant/, 'the starter workspace must not embed a second Lingxiaoshu entry');

@@ -43,6 +43,8 @@ import {
 import AgentReply from './AgentReply';
 import AssistantDecisionMemoryPanel, { AssistantDecisionSaveButton } from './AssistantDecisionMemoryPanel';
 import AssistantComposer, { assistantAttachmentKind } from './assistant/AssistantComposer';
+import { AssistantDecisionCenter } from './assistant';
+import type { AssistantDecisionFeed } from '../../shared/contracts/assistantDecisionCenter';
 import KnowledgeIntakePanel, { type AppliedProfile } from './enterprise/KnowledgeIntakePanel';
 import { studioApi } from '../lib/studioApi';
 import {
@@ -98,7 +100,7 @@ const ASSISTANT_PRIMARY_ENTRY_SEEN_KEY = 'lingshu-assistant-primary-entry-seen-v
 
 type AssistantPerformance = { phase: string; message?: string; reason: AssistantNotificationReason };
 type AssistantSpeech = { id: number; message: string };
-type AssistantPanelView = 'todo' | 'chat' | 'decision';
+type AssistantPanelView = 'approvals' | 'todo' | 'chat' | 'decision';
 
 const PERFORMANCE_LINES: Record<string, string[]> = {
   script: ['我正在把卖点排成能拍的镜头，马上就好。', '好内容值得多想几秒，我先帮你把逻辑捋顺。', '别急，我正在检查每个镜头能不能真正执行。'],
@@ -118,6 +120,7 @@ interface Props {
   page: Page;
   persistenceScope: AssistantJournalScope;
   primaryEntry?: boolean;
+  compactMode?: boolean;
   restore?: { agent: AgentType; messages: Message[]; key: string } | null;
   kickoff?: { agent: AgentType; text: string; key: string } | null;
   suppressForRightSidebar?: boolean;
@@ -134,6 +137,12 @@ const API_PATH: Record<AgentType, string> = {
 };
 
 const DEFAULT_CONTEXT: Record<string, AssistantContext> = {
+  digitalEmployees: {
+    agent: 'strategy',
+    label: '智能经营',
+    summary: '当前在智能经营，优先处理周计划开始、计划调整及其他会阻断后续工作的审批。',
+    suggestions: ['查看当前经营重点', '梳理下一步经营动作', '核对本周计划范围'],
+  },
   strategy: {
     agent: 'strategy',
     label: '首页',
@@ -155,7 +164,7 @@ const DEFAULT_CONTEXT: Record<string, AssistantContext> = {
     suggestions: ['查找可复用脚本', '优化脚本开头', '按平台改写脚本'],
   },
   smartAssets: {
-    agent: 'traffic', label: '智能素材', summary: '当前在智能素材，适合生成脚本、画面、口播和成片。',
+    agent: 'traffic', label: '内容制作', summary: '当前在内容制作，优先处理内容、质量与发布前的必要决定。',
     suggestions: ['生成主推品短视频', '优化前三秒钩子', '生成多平台素材'],
   },
   accountManagement: {
@@ -667,6 +676,7 @@ export default function GlobalAssistant({
   page,
   persistenceScope,
   primaryEntry = false,
+  compactMode = false,
   restore,
   kickoff,
   suppressForRightSidebar = false,
@@ -679,7 +689,8 @@ export default function GlobalAssistant({
   const fadeExit = { opacity: 0, transition: { duration: (reduceMotion ? lsMotion.duration.instant : lsMotion.duration.exit) / 1000, ease: lsMotion.ease.exit } };
   const spatialTransition = reduceMotion ? { duration: 0 } : { ...lsMotion.spring.standard, opacity: fadeTransition };
   const [mode, setMode] = useState<'breathing' | 'chat'>('breathing');
-  const [panelView, setPanelView] = useState<AssistantPanelView>('chat');
+  const [panelView, setPanelView] = useState<AssistantPanelView>('approvals');
+  const [decisionTotal, setDecisionTotal] = useState<number | null>(null);
   const activeAgent = PRIMARY_ASSISTANT_THREAD;
   const [assistantTool, setAssistantTool] = useState<AssistantTool | null>(null);
   const [liveContext, setLiveContext] = useState<AssistantContext | null>(null);
@@ -778,7 +789,7 @@ export default function GlobalAssistant({
       ? focusedTaskCard.title
       : isCustomerTodoView ? '当前：我的客户' : `当前：${activeContext.label}`;
   const assistantPanelHeight = Math.max(120, Math.min(720, viewport.height - 96));
-  const assistantPanelWidth = Math.min(assistantTool === 'knowledge-intake' ? 560 : 420, viewport.width - 32);
+  const assistantPanelWidth = Math.min(assistantTool === 'knowledge-intake' ? 560 : panelView === 'approvals' ? 480 : 420, viewport.width - 32);
   const performanceLines = PERFORMANCE_LINES[performance?.phase || 'default'] || PERFORMANCE_LINES.default;
   const performanceMessage = performance?.message || performanceLines[performanceLineIndex % performanceLines.length];
 
@@ -958,8 +969,12 @@ export default function GlobalAssistant({
   }, [pageContext.agent, pendingCount, persistThread, setUnreadCount, todoItems.length]);
 
   const openCurrentPageAgent = useCallback(() => {
-    openAgent(currentPageAgent, 'chat');
+    openAgent(currentPageAgent, 'approvals');
   }, [currentPageAgent, openAgent]);
+
+  const handleDecisionFeedChange = useCallback((feed: AssistantDecisionFeed) => {
+    setDecisionTotal(Math.max(0, feed.total));
+  }, []);
 
   const rememberGuide = useCallback((id: string, shownAt: number) => {
     seenGuideIdsRef.current.add(id);
@@ -1014,7 +1029,7 @@ export default function GlobalAssistant({
   }, []);
 
   useEffect(() => {
-    if (mode !== 'breathing') {
+    if (compactMode || mode !== 'breathing') {
       setFeatureGuide(null);
       return;
     }
@@ -1067,7 +1082,7 @@ export default function GlobalAssistant({
       document.removeEventListener('focusin', showFromEvent, true);
       document.removeEventListener('click', showFromEvent, true);
     };
-  }, [mode, showFeatureGuide]);
+  }, [compactMode, mode, showFeatureGuide]);
 
   useEffect(() => () => {
     if (featureGuideTimerRef.current) window.clearTimeout(featureGuideTimerRef.current);
@@ -1665,7 +1680,7 @@ export default function GlobalAssistant({
   }, []);
 
   useEffect(() => {
-    if (!primaryEntry) return;
+    if (!primaryEntry || compactMode) return;
     try {
       if (window.localStorage.getItem(ASSISTANT_PRIMARY_ENTRY_SEEN_KEY) === 'true') return;
       window.localStorage.setItem(ASSISTANT_PRIMARY_ENTRY_SEEN_KEY, 'true');
@@ -1675,7 +1690,7 @@ export default function GlobalAssistant({
     setSpeechBubble({ id: Date.now(), message: '告诉灵小枢你想完成什么，我会把目标变成计划并陪你推进。' });
     if (speechTimerRef.current) window.clearTimeout(speechTimerRef.current);
     speechTimerRef.current = window.setTimeout(() => setSpeechBubble(null), 12_000);
-  }, [primaryEntry]);
+  }, [compactMode, primaryEntry]);
 
   useEffect(() => {
     const handler = (event: Event) => {
@@ -1693,7 +1708,7 @@ export default function GlobalAssistant({
         setLiveContext(targetContext);
       }
       const routeAgent = orbitIdForAgent(targetContext.agent, currentPageAgent);
-      openAgent(routeAgent);
+      openAgent(routeAgent, detail?.tool || detail?.text || detail?.assistantText ? 'chat' : 'approvals');
       if (detail?.tool === 'knowledge-intake') setAssistantTool('knowledge-intake');
       const assistantText = detail?.assistantText?.trim();
       if (assistantText) {
@@ -1719,7 +1734,7 @@ export default function GlobalAssistant({
     handledRestores.current.add(restore.key);
     const routeAgent = orbitIdForAgent(restore.agent, currentPageAgent);
     setMessages(PRIMARY_ASSISTANT_THREAD, mergeConsecutiveAssistant(restore.messages));
-    openAgent(routeAgent);
+    openAgent(routeAgent, 'chat');
   }, [currentPageAgent, openAgent, restore, setMessages]);
 
   useEffect(() => {
@@ -1754,6 +1769,7 @@ export default function GlobalAssistant({
 
   useEffect(() => {
     setLiveContext(null);
+    setDecisionTotal(null);
   }, [page]);
 
   useEffect(() => {
@@ -2007,7 +2023,7 @@ export default function GlobalAssistant({
                 </div>
               </div>
               <div className="flex items-center gap-1">
-                {!assistantTool && focusedRunControl && (
+                {!assistantTool && panelView !== 'approvals' && focusedRunControl && (
                   <button
                     type="button"
                     onClick={() => void toggleTaskPaused()}
@@ -2025,6 +2041,23 @@ export default function GlobalAssistant({
               </div>
             </header>
 
+            {!assistantTool && (
+              <nav className="flex shrink-0 gap-2 border-b border-border px-4 py-2" aria-label="灵小枢工作视图">
+                <Button
+                  type="text"
+                  aria-pressed={panelView === 'approvals'}
+                  onClick={() => setPanelView('approvals')}
+                  className={panelView === 'approvals' ? '!bg-surface-2 !text-accent' : ''}
+                >待你决定{decisionTotal ? ` · ${decisionTotal}` : ''}</Button>
+                <Button
+                  type="text"
+                  aria-pressed={panelView === 'chat'}
+                  onClick={returnToConversation}
+                  className={panelView === 'chat' ? '!bg-surface-2 !text-accent' : ''}
+                >问灵小枢</Button>
+              </nav>
+            )}
+
             {assistantTool === 'knowledge-intake' ? (
               <div className="min-h-0 flex-1 overflow-y-auto bg-surface-2 p-3">
                 <KnowledgeIntakePanel
@@ -2034,6 +2067,16 @@ export default function GlobalAssistant({
                     window.dispatchEvent(new CustomEvent('lingshu:knowledge-intake-applied', { detail: { profile } }));
                     onSessionRefresh?.();
                   }}
+                />
+              </div>
+            ) : panelView === 'approvals' ? (
+              <div data-assistant-surface="approvals" className="min-h-0 flex-1 overflow-y-auto p-4">
+                <AssistantDecisionCenter
+                  page={page}
+                  key={`${persistenceScopeKey}:${page}`}
+                  active={mode === 'chat'}
+                  onOpenChat={returnToConversation}
+                  onFeedChange={handleDecisionFeedChange}
                 />
               </div>
             ) : panelView === 'decision' && focusedTaskCard ? (
@@ -2287,7 +2330,7 @@ export default function GlobalAssistant({
         )}
       </AnimatePresence>
 
-      <Badge count={pendingCount} overflowCount={9} size="small">
+      <Badge count={decisionTotal ?? pendingCount} overflowCount={9} size="small">
         <Button
           ref={launcherButtonRef}
           htmlType="button"

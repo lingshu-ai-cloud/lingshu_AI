@@ -1,6 +1,5 @@
 import { SocialConnectionPanel, YouTubeConnectionPanel } from './YouTubeIntegration';
 import UserSocialAppCredentials from './UserSocialAppCredentials';
-import MessengerConnectionPanel from './MessengerConnectionPanel';
 import { LsPageHeader } from './ui/LsPageHeader';
 
 export default function ChannelsPage() {
@@ -17,7 +16,6 @@ export default function ChannelsPage() {
         <SocialConnectionPanel platform="instagram" />
         <SocialConnectionPanel platform="facebook" />
         <SocialConnectionPanel platform="tiktok" />
-        <MessengerConnectionPanel />
       </div>
       </div>
     </main>

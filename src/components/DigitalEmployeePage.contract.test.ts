@@ -114,6 +114,12 @@ assert.match(assistantSource, /const threadAgent = PRIMARY_ASSISTANT_THREAD/, '�
 assert.doesNotMatch(assistantSource, /const SKILL_AGENTS|策略助手|唤醒助手|统筹 Agent/, '灵小枢不应恢复旧助手、放射式 Agent 入口或重复的统筹 Agent');
 assert.match(assistantStoreSource, /\['business', 'director', 'content', 'customer'\]/, '灵小枢应只维护四个现有子 Agent 的独立会话');
 assert.match(assistantSource, /const currentPageAgent = useMemo\(\(\) => orbitIdForPage\(page\)/, '灵小枢必须根据当前工作区选择内部专业 Agent 上下文');
+assert.match(assistantSource, /<AssistantDecisionCenter[\s\S]{0,300}page=\{page\}/, '灵小枢首次打开应进入当前页面的待决策中心');
+assert.match(assistantSource, /openAgent\(currentPageAgent, 'approvals'\)/, '点击灵小枢直接显示当前页面优先审批，不恢复 Agent 选择器');
+assert.match(pageSource, /weeklyPlanNavigation\?: \{ goalId: string; planId: string; requestId: number \}/, '周计划导航必须携带准确目标和重复点击序号');
+assert.match(pageSource, /next\.goal\?\.id !== target\.goalId \|\| next\.plan\?\.id !== target\.planId/, '打开编辑器前必须同时核对目标与计划编号');
+assert.match(pageSource, /目标周计划已更新或不再是当前计划/, '计划不匹配必须明确提示，不能回退打开别的计划');
+assert.match(pageSource, /setViewGoalId\(""\);[\s\S]{0,300}setWeeklyPlanOpen\(true\)/, '准确定位后复用既有编辑器并退出缓存历史视图');
 assert.match(assistantSource, /page === 'smartAssets'\) return 'content'/, '内容制作页应高亮内容 Agent');
 assert.match(assistantSource, /page === 'socialInspiration'[\s\S]{0,160}return 'director'/, '灵感与脚本页面应高亮编导 Agent');
 assert.match(assistantSource, /page === 'conversion'[\s\S]{0,220}return 'customer'/, '客户页面应高亮客服 Agent');

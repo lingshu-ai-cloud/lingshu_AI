@@ -3642,10 +3642,12 @@ export default function DigitalEmployeePage({
   onNavigate,
   onOpenMonitor,
   onViewResults,
+  weeklyPlanNavigation,
 }: {
   onNavigate?: (page: Page) => void;
   onOpenMonitor?: () => void;
   onViewResults?: () => void;
+  weeklyPlanNavigation?: { goalId: string; planId: string; requestId: number } | null;
 }) {
   const [data, setData] = useState<DigitalEmployeeOverview | null>(null);
   const [loading, setLoading] = useState(true);
@@ -3689,6 +3691,7 @@ export default function DigitalEmployeePage({
   const productionRangeRef = useRef<ReturnType<typeof overviewRange> | undefined>(undefined);
   const presentedData = data;
   const initialLoadRef = useRef<Promise<DigitalEmployeeOverview | undefined> | null>(null);
+  const handledWeeklyPlanNavigation = useRef<number | null>(null);
 
   useEffect(() => {
     const openGuide = () => setApplicationGuideOpen(true);
@@ -3762,6 +3765,44 @@ export default function DigitalEmployeePage({
     });
     return () => { active = false; };
   }, []);
+  useEffect(() => {
+    if (!weeklyPlanNavigation || handledWeeklyPlanNavigation.current === weeklyPlanNavigation.requestId) return;
+    const target = weeklyPlanNavigation;
+    const authorization = authHeader().Authorization;
+    const requestVersion = ++overviewRequestVersionRef.current;
+    let active = true;
+    setWeeklyPlanOpen(false);
+    setLoading(true);
+    setError("");
+    void (async () => {
+      try {
+        if (!target.goalId || !target.planId) throw new Error("周计划定位信息不完整，请重新加载灵小枢待办。");
+        // Only open the signed current plan. A changed goal or plan must not
+        // silently fall back to another editable plan or a cached history view.
+        const next = await digitalEmployeeApi.overview();
+        if (!active || requestVersion !== overviewRequestVersionRef.current || authorization !== authHeader().Authorization) return;
+        if (next.goal?.id !== target.goalId || next.plan?.id !== target.planId) {
+          throw new Error("目标周计划已更新或不再是当前计划，请重新加载灵小枢待办后再调整。");
+        }
+        setData(next);
+        setViewGoalId("");
+        setNewGoal(false);
+        setPlanHistoryOpen(false);
+        setShowHistory(false);
+        setSelectedContentItemId("");
+        setWorkspaceView("today");
+        setWeeklyPlanOpen(true);
+        handledWeeklyPlanNavigation.current = target.requestId;
+      } catch (reason) {
+        if (!active || requestVersion !== overviewRequestVersionRef.current || authorization !== authHeader().Authorization) return;
+        setError(reason instanceof Error ? reason.message : "无法定位该周计划，请重新加载待办。");
+        handledWeeklyPlanNavigation.current = target.requestId;
+      } finally {
+        if (active && requestVersion === overviewRequestVersionRef.current && authorization === authHeader().Authorization) setLoading(false);
+      }
+    })();
+    return () => { active = false; };
+  }, [weeklyPlanNavigation]);
   useEffect(() => {
     const run = data?.run;
     if (

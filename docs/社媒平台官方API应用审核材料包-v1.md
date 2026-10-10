@@ -74,7 +74,7 @@
 | 已部署并公网验证 | 官网缺少统一的平台集成与用户控制说明 | 已增加 `/integrations` 公开页面，并公开各平台当前能力边界 |
 | 官网已部署，应用待生产切换 | 官网与发布页存在“规模化分发、自动发布”等易误解表述 | 官网已改为平台适配、人工复核和用户确认；应用发布页随已验证镜像一并等待生产切换 |
 | 本轮不提交，已服务端关闭 | TikTok Direct Post UX 尚不满足正式审核要求 | 默认不申请 `video.publish`，前端不允许选择 TikTok 直发目标，服务端拒绝直发；后续独立整改和审核 |
-| 已修复，待 OAuth 实测 | OAuth 默认权限多于首期场景所需权限 | Meta 按 Facebook/Instagram 分别请求连接与发布权限；YouTube 默认仅 upload + readonly；评论、洞察、Webhook、商业资产权限均需显式开关 |
+| 已修复，待 OAuth 实测 | OAuth 默认权限多于首期场景所需权限 | Meta 按 Facebook/Instagram 分别只请求账号读取与发布权限；私信、评论、洞察、Webhook、商业资产、广告与 WhatsApp 权限不进入本轮 OAuth |
 | P1 | TikTok 官方不接受仅服务内部团队或只管理自有账号的上传工具 | 审核材料和真实产品都应体现面向外部企业客户/创作者，每位用户授权自己的账号并拥有完整控制权 |
 | P1 | 抖音代码已有能力门禁与适配器骨架，但未见完整生产 OAuth、真实发布和审核演示链路 | 暂不声称已支持官方发布；先以发布包为正式能力，完成真实 E2E 后再申请 |
 | 已部署并公网验证 | 官网首页有“规模化创作、多平台分发”等容易引起滥用疑虑的表述 | 已改为内容创作、平台适配和人工确认，并保留真实能力边界；旧 `/stitch` 原型已从发布产物移除 |
@@ -117,7 +117,7 @@
 
 ### 3.4 中文产品说明
 
-> 灵枢 AI 是面向企业内容团队的内容运营工作台。用户登录企业空间后，通过平台官方 OAuth 连接自己有权管理的账号，在发布前查看视频与文案、确认目标账号及平台设置，并主动提交。平台返回处理结果后，灵枢 AI 展示发布状态；在用户另行授权的情况下，还可展示其自有账号内容、评论和表现数据，用于运营复盘。灵枢 AI 不索取社媒账号密码，不出售平台数据，用户可随时断开授权并申请删除已保存数据。
+> 灵枢 AI 是面向企业内容团队的内容运营工作台。用户登录企业空间后，通过平台官方 OAuth 连接自己有权管理的账号，在发布前查看视频与文案、确认目标账号及平台设置，并主动提交。平台返回处理结果后，灵枢 AI 展示发布状态。本轮 Meta 审核不接入私信、评论、洞察、广告、WhatsApp 或额外 Webhook。灵枢 AI 不索取社媒账号密码，不出售平台数据，用户可随时断开授权并申请删除已保存数据。
 
 ### 3.5 通用数据安全说明（英文）
 
@@ -171,7 +171,7 @@
 
 ## 4. 权限申请策略：分阶段，不一次全要
 
-当前代码默认按首期场景请求最小权限：Meta 仅请求对应平台的账号发现、读取基础主页信息与发布权限；YouTube 仅请求 `youtube.upload` 和 `youtube.readonly`；TikTok 仅请求 `user.info.basic`。评论、洞察、Webhook、商业资产、TikTok 扩展只读与 Direct Post 均需显式功能开关，并应在对应页面完整、真实 E2E 通过和平台批准后另行提交。
+当前代码按首期场景固定请求最小权限：Meta 仅请求对应平台的账号发现、读取基础主页信息与发布权限；YouTube 仅请求 `youtube.upload` 和 `youtube.readonly`；TikTok 仅请求 `user.info.basic`。Meta 私信、评论、洞察、Webhook、商业资产、广告和 WhatsApp 权限不会因旧环境开关而进入本轮 OAuth，后续如需启用必须另建审核批次并修改代码、材料与录屏。
 
 ### 4.1 建议分期
 
@@ -223,25 +223,21 @@
 
 ### 5.2 Meta 通用 Use Case（英文）
 
-> Lingshu AI allows an authenticated business user to connect Facebook Pages and Instagram professional accounts that the user is authorized to manage. The user selects a prepared video, reviews the preview and caption, chooses one connected destination, and explicitly submits the content. Lingshu AI uses the granted permissions only to identify eligible assets, perform the user-requested publication, display the resulting status, and—when separately authorized—show the user's own content, comments, and performance metrics. We do not request Facebook or Instagram passwords, publish without user instruction, sell Platform Data, or use Platform Data for unrelated advertising profiles.
+> Lingshu AI allows an authenticated business user to connect Facebook Pages and Instagram professional accounts that the user is authorized to manage. The user selects a prepared video, reviews the preview and caption, chooses one connected destination, and explicitly submits the content. Lingshu AI uses the granted permissions only to identify the selected account, perform the user-requested publication, and display the resulting status. This submission does not request messaging, comments, insights, ads, WhatsApp, business asset, or webhook permissions. We do not request Facebook or Instagram passwords, publish without user instruction, sell Platform Data, or use Platform Data for unrelated advertising profiles.
 
 ### 5.3 建议首批权限与逐项理由
 
-只保留真实流程需要的权限。若首次审核只做发布，优先提交前五项；其余放到第二批。
+只保留真实流程需要的权限。当前产品的 Facebook 入口使用 Facebook Login，Instagram 入口使用 Instagram Login；本轮分别提交前三项与后两项，不同时申请旧的 Page 绑定型 Instagram 权限。
 
 | Permission | 可复制英文理由 | 录屏必须出现 |
 | --- | --- | --- |
 | `pages_show_list` | `We use pages_show_list to display the Facebook Pages that the signed-in user is authorized to manage, so the user can select the correct Page to connect to the Lingshu AI workspace.` | OAuth 后列出可管理主页，用户主动选择 |
-| `pages_read_engagement` | `We use pages_read_engagement to read the selected Page's basic information and the engagement data needed to identify the Page and display the performance of content published by that Page.` | 主页名称/头像与单条内容表现；若首次不展示表现则缩减用途 |
+| `pages_read_engagement` | `We use pages_read_engagement to read the selected Page's basic profile and content metadata needed to identify the Page in the user's publishing workflow.` | 主页名称、头像与用户选择的目标主页 |
 | `pages_manage_posts` | `We use pages_manage_posts only when an authorized user previews a prepared video and explicitly clicks the publish button for the selected Facebook Page. The permission is not used to publish without user instruction.` | 视频预览、目标主页、确认弹窗、点击发布、回执 |
-| `instagram_basic` | `We use instagram_basic to identify and display the Instagram professional account connected to a Facebook Page that the user manages.` | 显示专业账号名称和头像 |
-| `instagram_content_publish` | `We use instagram_content_publish only after an authorized user reviews the media and caption, selects the connected Instagram professional account, and explicitly submits the post.` | 预览、账号、文案、主动确认、处理状态 |
-| `instagram_manage_insights` | `We use instagram_manage_insights to show the authorized user performance metrics for the user's own Instagram professional account and media inside the Performance view.` | 指标页以及数据与账号的对应关系 |
-| `read_insights` | `We use read_insights to display Page-level and content-level performance data for the Facebook Page selected by the authorized user.` | 指标页；若与其他权限重复且无必要，应删除 |
-| `pages_read_user_content` | `We use pages_read_user_content to display user-generated comments on content belonging to the connected Page, so an authorized team member can review them in the Account Activity view.` | 评论列表；没有该 UI 就不要申请 |
-| `instagram_manage_comments` | `We use instagram_manage_comments to display comments on the connected professional account's media and to submit a reply only after an authorized user writes or approves the reply.` | 评论读取、回复编辑、明确发送 |
-| `pages_manage_metadata` | `We use pages_manage_metadata to subscribe the user-selected Page to the webhooks required for the visible account activity feature. We do not change unrelated Page settings.` | Webhook 对应的实时用户功能；没有则不要申请 |
-| `business_management` | `We use business_management only to discover business-owned Pages that the signed-in business administrator is authorized to manage when those Pages are not returned through the standard Page list.` | Business 资产发现流程；若普通 Page 流程足够，建议不申请 |
+| `instagram_business_basic` | `We use instagram_business_basic to identify and display the Instagram professional account that the signed-in user chooses to connect.` | Instagram Login 后显示专业账号名称和头像 |
+| `instagram_business_content_publish` | `We use instagram_business_content_publish only after an authorized user reviews the media and caption, selects the connected Instagram professional account, and explicitly submits the post.` | 预览、账号、文案、主动确认、处理状态 |
+
+本轮不要在 Meta 后台添加 `pages_messaging`、`pages_manage_metadata`、`pages_read_user_content`、`instagram_business_manage_messages`、`instagram_manage_comments`、`read_insights`、`instagram_manage_insights`、`business_management`、任何 Ads 权限或 WhatsApp 权限。
 
 ### 5.4 Reviewer Notes（英文，可复制）
 

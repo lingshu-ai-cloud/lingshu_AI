@@ -452,14 +452,14 @@ const SOCIAL_META: Record<SocialPlatform, {
   },
   instagram: {
     label: 'Instagram',
-    description: '连接 Instagram 专业账号后，可同步私信并在客户会话中回复。',
+    description: '连接 Instagram 专业账号后，可读取账号与媒体基本信息，并由用户确认后发布内容。',
     envHint: 'INSTAGRAM_APP_ID / INSTAGRAM_APP_SECRET',
     color: '#c13584',
     bg: '#fdf2f8',
   },
   facebook: {
     label: 'Facebook',
-    description: '连接 Facebook Page 后可读取主页视频和评论，并发布视频到主页。',
+    description: '连接 Facebook Page 后可读取主页与内容基本信息，并由用户确认后发布视频。',
     envHint: 'META_SOCIAL_APP_ID / META_SOCIAL_APP_SECRET',
     color: '#1877f2',
     bg: '#eff6ff',
@@ -848,6 +848,7 @@ export function ChannelOverview() {
   const selectedVideo = videos.find(v => v.id === selectedVideoId) ?? null;
 
   const currentPlatform = platform as OverviewPlatform;
+  const commentsEnabled = currentPlatform !== 'facebook' && currentPlatform !== 'instagram';
   const accountUrl = (account: OverviewAccount) => externalAccountUrl(account);
   const mapYouTube = (a: YouTubeAccount): OverviewAccount => ({
     id: a.id,
@@ -946,6 +947,11 @@ export function ChannelOverview() {
   }, [selectedAccountId, currentPlatform]);
 
   useEffect(() => {
+    if (!commentsEnabled) {
+      setComments([]);
+      setCommentsLoading(false);
+      return;
+    }
     if (!selectedAccountId || !selectedVideoId) {
       setComments([]);
       return;
@@ -959,7 +965,7 @@ export function ChannelOverview() {
       .then(data => setComments(data.comments ?? []))
       .catch(() => setComments([]))
       .finally(() => setCommentsLoading(false));
-  }, [selectedAccountId, selectedVideoId, currentPlatform]);
+  }, [selectedAccountId, selectedVideoId, currentPlatform, commentsEnabled]);
 
   const platforms = [
     { id: 'youtube' as const, label: 'YouTube', count: counts.youtube },
@@ -1061,7 +1067,7 @@ export function ChannelOverview() {
               </div>
             )}
 
-            <div className="grid min-h-0 flex-1 gap-4 xl:grid-cols-[minmax(0,1.2fr)_minmax(300px,0.8fr)]">
+            <div className={`grid min-h-0 flex-1 gap-4 ${commentsEnabled ? 'xl:grid-cols-[minmax(0,1.2fr)_minmax(300px,0.8fr)]' : ''}`}>
               <section className="min-h-0 overflow-y-auto rounded-lg border border-border bg-white p-3" aria-labelledby="channel-videos-heading">
                 <div className="flex items-center justify-between px-1 pb-3">
                   <p id="channel-videos-heading" className="text-xs font-semibold text-text-secondary">视频</p>
@@ -1093,7 +1099,7 @@ export function ChannelOverview() {
                 )}
               </section>
 
-              <section className="min-h-0 overflow-y-auto rounded-lg border border-border bg-white p-3" aria-labelledby="channel-comments-heading">
+              {commentsEnabled && <section className="min-h-0 overflow-y-auto rounded-lg border border-border bg-white p-3" aria-labelledby="channel-comments-heading">
                 <div className="px-1 pb-3">
                   <p id="channel-comments-heading" className="text-xs font-semibold text-text-secondary">评论</p>
                   {selectedVideo && <p className="mt-1 line-clamp-1 text-[11px] text-text-muted">{selectedVideo.title}</p>}
@@ -1133,7 +1139,7 @@ export function ChannelOverview() {
                     ))}
                   </div>
                 )}
-              </section>
+              </section>}
             </div>
           </main>
         </div>
@@ -1152,7 +1158,7 @@ export default function YouTubeIntegrationPage() {
     <div className="flex h-full flex-col bg-ink">
       <div className="border-b border-border bg-white px-4 py-4 sm:px-6">
         <h1 className="text-xl font-semibold text-text-primary">频道总览</h1>
-        <p className="mt-0.5 text-sm text-text-muted">多个平台账号的视频与评论数据</p>
+        <p className="mt-0.5 text-sm text-text-muted">多个平台账号及已授权内容数据</p>
       </div>
       <div className="flex-1 overflow-y-auto px-4 py-5 sm:px-6 sm:py-6">
         <ChannelOverview />

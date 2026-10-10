@@ -16,5 +16,5 @@ export default function LsPageTransition({ page, children }: PropsWithChildren<{
     return () => animation.cancel();
   }, [page, reducedMotion]);
 
-  return <div ref={surface} data-app-content-stack className="flex min-h-0 flex-1 flex-col overflow-hidden">{children}</div>;
+  return <div ref={surface} data-app-content-stack className="flex min-h-0 min-w-0 w-full flex-1 flex-col overflow-hidden">{children}</div>;
 }

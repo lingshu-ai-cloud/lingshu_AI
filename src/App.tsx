@@ -187,6 +187,9 @@ export default function App() {
   const isRegistrationEntry = window.location.pathname === '/register' &&
     Boolean(new URLSearchParams(window.location.search).get('invite')?.trim());
   const [page, setPage] = useState<Page>(() => availableProductPage(loadPage()));
+  const [weeklyPlanNavigation, setWeeklyPlanNavigation] = useState<{
+    goalId: string; planId: string; requestId: number; identity: string;
+  } | null>(null);
   const pageRef = useRef(page);
   pageRef.current = page;
   const [mountedPages, setMountedPages] = useState<Set<Page>>(() => new Set<Page>(['digitalEmployees', loadPage()]));
@@ -579,7 +582,7 @@ export default function App() {
         socialContentView?: 'managed';
         studioEntry?: boolean;
         directStudio?: boolean;
-        businessRef?: { taskKey?: string; preview?: boolean; entityId?: string; contentId?: string; referenceId?: string };
+        businessRef?: { taskKey?: string; preview?: boolean; entityId?: string; contentId?: string; referenceId?: string; goalId?: string; planId?: string };
         contentCreationRequest?: SocialContentCreateRequest;
       }>).detail;
       const nextPage = resolveNavigationPage(incomingDetail?.page, incomingDetail?.view);
@@ -588,6 +591,14 @@ export default function App() {
       const detail = nextPage === incomingDetail.page
         ? incomingDetail
         : { ...incomingDetail, page: nextPage };
+      if (nextPage === 'digitalEmployees' && (detail.businessRef?.goalId || detail.businessRef?.planId)) {
+        setWeeklyPlanNavigation(previous => ({
+          goalId: String(detail.businessRef?.goalId || '').trim(),
+          planId: String(detail.businessRef?.planId || '').trim(),
+          requestId: (previous?.requestId || 0) + 1,
+          identity: productionNavigationIdentity(),
+        }));
+      }
       if (!detail.restoreHistory) {
         if (nextPage === pageRef.current && detail.workflowTaskId) pushProductionLocation(nextPage);
         handleNavigate(incomingDetail.page === 'socialSetup' || incomingDetail.page === 'socialAccounts' || incomingDetail.page === 'accountManagement' ? incomingDetail.page : nextPage);
@@ -855,7 +866,7 @@ export default function App() {
       conversations={conversations} activeConvId={activeConvId} onOpenConversation={openConversation} onNewConversation={newConversation}
       suppressRightPanel={starterMode || scriptPanelOpen} onAction={startAgentTask}>
       <Suspense fallback={null}>
-        {(!isAgentProductionSession() || page === 'digitalEmployees') && <GlobalAssistant
+        <GlobalAssistant
           primaryEntry
           key={`assistant:${session.tenant?.id || session.user.tenantId}:${session.user.id}`}
           page={page}
@@ -865,11 +876,12 @@ export default function App() {
           }}
           restore={restore}
           kickoff={kickoff}
-          suppressForRightSidebar={page !== 'digitalEmployees' && (scriptPanelOpen || conversation !== null || page === 'agentMonitor')}
+          compactMode={starterMode || isAgentProductionSession()}
+          suppressForRightSidebar={page !== 'digitalEmployees' && (conversation !== null || page === 'agentMonitor')}
           onKickoffConsumed={() => setKickoff(null)}
           onAction={startAgentTask}
           onSessionRefresh={() => void refreshSession()}
-        />}
+        />
       </Suspense>
       <RuntimeVersionBanner />
       {sessionRefreshError && <div role="status" className="shrink-0 border-b border-amber-200 bg-amber-50 px-5 py-2 text-sm text-amber-900">{sessionRefreshError} <button type="button" className="ml-2 font-semibold underline" onClick={() => void refreshSession()}>立即重试</button></div>}
@@ -893,7 +905,7 @@ export default function App() {
           <Activity key={pagePreferenceScope(session)} mode={page === 'digitalEmployees' ? 'visible' : 'hidden'}>
             {starterMode
               ? <StarterWorkspacePage onNavigate={handleNavigate} onNavigateWithTask={handleSocialContentNavigate} />
-              : <DigitalEmployeePage onViewResults={() => handleNavigate('strategy')} onNavigate={handleNavigate} onOpenMonitor={() => handleNavigate('agentMonitor')} />}
+              : <DigitalEmployeePage weeklyPlanNavigation={weeklyPlanNavigation?.identity === productionNavigationIdentity() ? weeklyPlanNavigation : null} onViewResults={() => handleNavigate('strategy')} onNavigate={handleNavigate} onOpenMonitor={() => handleNavigate('agentMonitor')} />}
           </Activity>
           {(page === 'agentMonitor' || mountedPages.has('agentMonitor')) && <Activity key={`monitor-${pagePreferenceScope(session)}`} mode={page === 'agentMonitor' ? 'visible' : 'hidden'}><AgentMonitorPage onBack={requestProductionBack} /></Activity>}
           {(page === 'strategy' || mountedPages.has('strategy')) && (

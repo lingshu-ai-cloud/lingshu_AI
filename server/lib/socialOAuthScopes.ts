@@ -18,42 +18,26 @@ export function tikTokOAuthScopes(env: ScopeEnvironment = process.env): string[]
 }
 
 export function metaOAuthScopes(
-  platform: 'facebook' | 'instagram' | 'combined' | 'messenger',
-  env: ScopeEnvironment = process.env,
+  platform: 'facebook' | 'instagram' | 'combined',
+  _env: ScopeEnvironment = process.env,
 ): string[] {
   const scopes = new Set(['pages_show_list', 'pages_read_engagement']);
-  if (platform === 'messenger') return [...scopes, 'pages_messaging', 'pages_manage_metadata'];
   if (platform === 'facebook' || platform === 'combined') {
     scopes.add('pages_manage_posts');
-    scopes.add('pages_messaging');
-    scopes.add('pages_manage_metadata');
   }
   if (platform === 'instagram' || platform === 'combined') {
     scopes.add('instagram_basic');
     scopes.add('instagram_content_publish');
   }
-  if (enabled(env.META_COMMENTS_FEATURES_ENABLED)) {
-    scopes.add('pages_read_user_content');
-    scopes.add('instagram_manage_comments');
-  }
-  if (enabled(env.META_INSIGHTS_FEATURES_ENABLED)) {
-    scopes.add('read_insights');
-    scopes.add('instagram_manage_insights');
-  }
-  if (enabled(env.META_WEBHOOK_FEATURES_ENABLED)) scopes.add('pages_manage_metadata');
-  if (enabled(env.META_BUSINESS_ASSET_FEATURES_ENABLED)) scopes.add('business_management');
   return Array.from(scopes);
 }
 
 /** Instagram Login grants IG User tokens independently of a Facebook Page. */
-export function instagramLoginOAuthScopes(env: ScopeEnvironment = process.env): string[] {
-  const scopes = [
+export function instagramLoginOAuthScopes(): string[] {
+  return [
     'instagram_business_basic',
-    'instagram_business_manage_messages',
+    'instagram_business_content_publish',
   ];
-  if (enabled(env.INSTAGRAM_CONTENT_PUBLISH_ENABLED)) scopes.push('instagram_business_content_publish');
-  if (enabled(env.INSTAGRAM_COMMENTS_FEATURES_ENABLED)) scopes.push('instagram_business_manage_comments');
-  return scopes;
 }
 
 export function youtubeOAuthScopes(env: ScopeEnvironment = process.env): string[] {

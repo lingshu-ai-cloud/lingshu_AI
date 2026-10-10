@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { buildMarketingEvents } from '../../src/components/publishing/marketingCalendar.js';
+import { canMoveCalendarPost } from '../../src/lib/calendarModel.js';
+import { resolvePendingDrop } from '../../src/components/publishing/schedulePolicy.js';
 
 const root = process.cwd();
 const read = (file: string) => fs.readFileSync(path.join(root, file), 'utf8');
@@ -45,8 +47,11 @@ const assistantUi = read('src/components/GlobalAssistant.tsx');
 assert.match(assistantUi, /ENTERPRISE_GUIDE_MEMORY_ID[\s\S]*?enterpriseGuideSeen/, 'enterprise center must remember its single proactive assistant guide');
 assert.match(assistantUi, /要补资料？点我/, 'enterprise center must leave a concise click-to-open reminder after the proactive guide');
 assert.match(assistantUi, /const closeAssistant = useCallback\(\(\) => \{[\s\S]*?setAssistantTool\(null\)[\s\S]*?setPanelView\('chat'\)[\s\S]*?setMode\('breathing'\)/, 'assistant panels must fully close instead of leaving a hidden intake tool active');
-assert.match(assistantUi, /data-global-assistant="root"[\s\S]{0,220}className="fixed bottom-\[calc\(env\(safe-area-inset-bottom\)\+1rem\)\] right-4 z-\[75\]/, 'the assistant launcher must stay in the bottom-right safe area');
-assert.match(assistantUi, /const handleLauncherClick[\s\S]{0,500}openCurrentPageAgent\(\)/, 'the assistant launcher must open the current-page conversation directly');
+assert.match(assistantUi, /data-global-assistant="root"[\s\S]{0,220}fixed right-4 z-\[75\][\s\S]{0,220}bottom-\[calc\(env\(safe-area-inset-bottom\)\+1rem\)\]/, 'the assistant launcher must stay in the bottom-right safe area');
+assert.match(assistantUi, /page === 'conversion' \? 'bottom-\[calc\(env\(safe-area-inset-bottom\)\+8rem\)\]'/, 'the mobile conversation launcher must clear the message composer');
+assert.match(assistantUi, /const handleLauncherClick[\s\S]{0,500}openCurrentPageAgent\(\)/, 'the assistant launcher must open the current-page panel directly');
+assert.match(assistantUi, /openAgent\(currentPageAgent, 'approvals'\)/, 'the assistant opens the real decision feed first without restoring an agent selector');
+assert.match(assistantUi, /<AssistantDecisionCenter[\s\S]{0,300}page=\{page\}/, 'the assistant decision feed must be scoped to the current page');
 assert.match(assistantUi, /data-global-assistant="launcher"[\s\S]{0,300}aria-label=\{mode === 'chat' \? '收起灵小枢对话' : '询问灵小枢'\}/, 'the launcher must expose its direct open/close conversation behavior');
 assert.doesNotMatch(assistantUi, /ASSISTANT_AUTO_RETRACT_MS|assistantPosition|launcherRetracted|data-global-assistant="edge-launcher"/, 'the assistant must not restore the obsolete draggable or auto-retract launcher');
 assert.match(assistantUi, /lingshu-assistant-performance/, 'content generation must be able to wake the assistant for a waiting-time performance');
@@ -61,18 +66,42 @@ const publishingUi = read('src/components/TrafficPage.tsx');
 assert.doesNotMatch(publishingUi, /平台发布推荐|publish-recommendations/, 'one-click publishing must not render the removed platform recommendation panel');
 assert.match(publishingUi, /applyContentToAll[\s\S]*?title: activeItem\.title[\s\S]*?description: activeItem\.description[\s\S]*?platformCopy:[\s\S]*?firstComment: activeItem\.firstComment/, 'applying content to all videos must copy the current publishing content');
 assert.match(publishingUi, /发布队列[\s\S]*?平台账号选择[\s\S]*?内容编辑/, 'publishing queue, account selection, and content editing must remain separate sections');
-assert.match(publishingUi, /setDeliveryMode\('now'\)[\s\S]*?立即发布[\s\S]*?setDeliveryMode\('flexible'\)[\s\S]*?时间待定[\s\S]*?setDeliveryMode\('schedule'\)[\s\S]*?定点排期/, 'one-click publishing must expose three unambiguous delivery modes');
+assert.match(publishingUi, /<Segmented[\s\S]{0,200}aria-label="发布方式"[\s\S]{0,200}setDeliveryMode\(value as DeliveryMode\)/, 'publishing delivery mode must use the shared segmented control');
+for (const [value, label] of [['now', '立即发布'], ['flexible', '时间待定'], ['schedule', '定点排期']]) {
+  assert.match(publishingUi, new RegExp(`value: '${value}', label: '${label}'`), 'one-click publishing must expose three unambiguous delivery modes');
+}
 assert.match(publishingUi, /item\.deliveryMode !== 'flexible'/, 'time-undecided content must never be included in direct real publishing');
 const calendarPlannerUi = read('src/components/publishing/CalendarPlanner.tsx');
-assert.match(calendarPlannerUi, /tideMonthDays/, 'publishing tide must cover a complete month');
-assert.match(calendarPlannerUi, /onPointerDown=\{startTideDrag\}/, 'publishing tide must support horizontal pointer dragging');
-assert.match(calendarPlannerUi, /全球电商节庆点/, 'publishing tide must label global ecommerce festivals');
+const calendarUi = read('src/components/ui/LsCalendar.tsx');
+assert.match(calendarPlannerUi, /<LsCalendar[\s\S]*?onDatesSet=\{info => \{ setVisibleRange/, 'publishing uses the shared calendar and its visible range');
+assert.match(calendarPlannerUi, /buildMarketingEvents\(anchor\)[\s\S]*?本月电商节庆[\s\S]*?来源：\{event\.source\}/, 'monthly marketing events must retain their dated source attribution');
 assert.doesNotMatch(calendarPlannerUi, /festivalNoticesByDay|dayFestivalNotices/, 'festival markers must not be rendered inside calendar day cells');
 assert.match(calendarPlannerUi, /pendingTimeSelection[\s\S]*?选择具体发布时间[\s\S]*?确认时间/, 'flexible calendar drops must ask for an explicit publishing time');
-assert.match(calendarPlannerUi, /draggable=\{!demoMode && !item\.platformPostId && !item\.scheduleLocked && !\['needs_attention', 'publishing', 'finalize_pending'\]\.includes\(item\.status\)\}/, 'fixed calendar schedules and demo cards must not be draggable');
-assert.match(calendarPlannerUi, /kind: 'tide'[\s\S]*?bestHour[\s\S]*?targetHour[\s\S]*?score/, 'publishing tide hover details must include time, target-market time, and score');
-assert.match(calendarPlannerUi, /kind: 'slot'[\s\S]*?startHour[\s\S]*?endHour[\s\S]*?items/, 'calendar schedule slots must expose detailed hover information');
-assert.match(calendarPlannerUi, /fallbackPeakScore[\s\S]*?Math\.sin/, 'publishing tide must retain a useful curve when live score data is temporarily unavailable');
+assert.match(calendarPlannerUi, /editable: canMoveCalendarPost\(post, canEditSchedule && !demoMode\)/, 'event editing must honor the shared status and permission policy');
+assert.match(calendarPlannerUi, /!canMoveCalendarPost\(current, canEditSchedule && !demoMode\)/, 'rescheduling must recheck the policy before calling the API');
+assert.match(calendarUi, /startEditable: Boolean\(event\.editable && onMoveEvent\)/, 'calendar drag editing requires both event permission and a mutation handler');
+assert.match(calendarUi, /if \(!event\.editable \|\| !moveRef\.current\)/, 'keyboard and pointer movement must share the same guard');
+assert.match(calendarPlannerUi, /renderDetails=[\s\S]*?成片时长[\s\S]*?平台回执/, 'event details must expose actual content and platform receipt data');
+assert.match(calendarPlannerUi, /row\.source === 'account_history'\) \? '账号真实数据' : '平台参考'/, 'recommendation labels must distinguish measured account data from platform references');
+assert.match(calendarPlannerUi, /setScores\(\{\}\)/, 'failed recommendations must clear unavailable scores instead of synthesizing values');
+assert.match(calendarPlannerUi, /selectedBestHour === null \? '暂无可用推荐时段'/, 'missing recommendation data must be visibly unavailable');
+assert.match(calendarPlannerUi, /非账号实测/, 'platform references must not masquerade as account measurements');
+assert.doesNotMatch(calendarPlannerUi, /fallbackPeakScore|Math\.sin|Math\.random/, 'calendar recommendations must not invent fallback scores');
+const movablePost = { id: 'post-1', status: 'scheduled' };
+assert.equal(canMoveCalendarPost(movablePost, true), true);
+assert.equal(canMoveCalendarPost(movablePost, false), false, 'read-only users cannot move events');
+for (const status of ['published', 'needs_attention', 'publishing', 'finalize_pending', 'partial', 'awaiting_reapproval']) {
+  assert.equal(canMoveCalendarPost({ ...movablePost, status }, true), false, `${status} posts cannot move`);
+}
+for (const locked of [{ scheduleLocked: true }, { platformPostId: 'remote-post' }, { id: 'demo-calendar-1' }]) {
+  assert.equal(canMoveCalendarPost({ ...movablePost, ...locked }, true), false, 'locked, published and demo posts cannot move');
+}
+const schedulingNow = new Date('2026-10-10T00:00:00Z');
+const droppedDay = new Date('2026-10-12T00:00:00Z');
+assert.equal(resolvePendingDrop({ deliveryMode: 'now' }, droppedDay, '', schedulingNow).kind, 'blocked');
+assert.equal(resolvePendingDrop({ deliveryMode: 'flexible' }, droppedDay, '', schedulingNow).kind, 'needs-time');
+const fixedSchedule = '2026-10-13T08:30:00Z';
+assert.deepEqual(resolvePendingDrop({ deliveryMode: 'schedule', scheduledAt: fixedSchedule }, droppedDay, '', schedulingNow), { kind: 'ready', scheduledAt: new Date(fixedSchedule), locked: true }, 'dropping a fixed event must preserve its confirmed timestamp');
 assert.doesNotMatch(calendarPlannerUi, /setError\(loadError instanceof Error \? loadError\.message : 'load_failed'\)/, 'calendar UI must not expose raw transport errors');
 const strategyUi = read('src/components/StrategyDataBoard.tsx');
 assert.match(strategyUi, /onClick=\{\(\) => openWorkspaceView\('accountManagement', 'accounts'\)\}[\s\S]{0,450}已接入账号'[\s\S]{0,80}\{exposure\.accountCount\}/, 'home connected-account affordance must navigate to the current account management page');
@@ -130,7 +159,7 @@ assert.match(socialAccountCleanup, /where: \{ tenantId \}/, 'platform account cl
 const userSocialCredentials = read('src/components/UserSocialAppCredentials.tsx');
 assert.match(userSocialCredentials, /清除配置[\s\S]*?role="dialog"[\s\S]*?确认清除/, 'integration-center credential cards must expose a confirmed clear action');
 const socialCredentialsUi = read('src/components/UserSocialAppCredentials.tsx');
-assert.match(socialCredentialsUi, /Messenger Webhook Callback URL[\s\S]*?Messenger Webhook Verify Token/, 'customer integrations must expose Messenger webhook configuration');
+assert.doesNotMatch(socialCredentialsUi, /Messenger Webhook Callback URL|Messenger Webhook Verify Token|Instagram Webhook Callback URL|Instagram Webhook Verify Token/, 'first-review customer integrations must not expose messaging webhook configuration');
 const assistLinks = read('server/routes/assistLinks.ts');
 assert.match(assistLinks, /platform === 'meta' \|\| platform === 'google' \|\| platform === 'tiktok'/, 'assist links must accept TikTok');
 assert.match(assistLinks, /getTenantAwareTikTokOAuthClient\(tenantId\)/, 'TikTok assist links must use the tenant application');

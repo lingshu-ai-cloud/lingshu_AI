@@ -24,10 +24,10 @@ assert.doesNotMatch(source, /data-assistant-surface=["']quick-actions["']|SKILL_
 assert.equal(source.match(/data-global-assistant=["']root["']/g)?.length, 1, '页面只能渲染一个灵小枢根入口');
 
 const launcherClickSource = sourceSection('const handleLauncherClick', '\n  useEffect(', '灵小枢点击处理');
-const launcherMarkup = sourceSection('<Badge count={pendingCount}', '</Button>', '灵小枢右下角入口');
+const launcherMarkup = sourceSection('<Badge count={decisionTotal ?? pendingCount}', '</Button>', '灵小枢右下角入口');
 assert.match(launcherClickSource, /openCurrentPageAgent\(\)/, '主入口点击灵小枢必须直接进入当前工作对话');
 assert.doesNotMatch(launcherClickSource, /setMode\('expanded'\)|quick-actions|SKILL_AGENTS/, '点击灵小枢不得打开四助手快捷轮盘');
-assert.match(source, /data-global-assistant="root"[\s\S]{0,220}className="fixed bottom-\[calc\(env\(safe-area-inset-bottom\)\+1rem\)\] right-4 z-\[75\]/, '灵小枢入口必须固定在页面右下角并避让设备安全区');
+assert.match(source, /data-global-assistant="root"[\s\S]{0,350}fixed right-4[\s\S]{0,350}bottom-\[calc\(env\(safe-area-inset-bottom\)\+1rem\)\]/, '灵小枢入口必须固定在页面右下角并避让设备安全区');
 assert.match(source, /data-global-assistant="launcher"[\s\S]{0,300}aria-label=\{mode === 'chat' \? '收起灵小枢对话' : '询问灵小枢'\}/, '右下角入口必须以清晰文本直接打开或收起对话');
 assert.match(launcherMarkup, /shape="round"/, '灵小枢入口必须采用紧凑胶囊形态');
 assert.match(launcherMarkup, /!h-11/, '灵小枢入口必须保留 44px 触控高度');
@@ -41,7 +41,10 @@ assert.match(source, /max-h-\[calc\(100dvh-env\(safe-area-inset-bottom\)-96px\)\
 assert.match(source, /role="dialog"[\s\S]{0,160}aria-modal="false"[\s\S]{0,160}aria-labelledby="global-assistant-panel-title"[\s\S]{0,160}aria-describedby="global-assistant-panel-description"/, '灵小枢必须以有名称和说明的非模态对话浮层呈现');
 assert.match(source, /mode !== 'chat'\) return;[\s\S]{0,200}getElementById\('global-assistant-panel'\)\?\.focus\(\)/, '打开弹窗后必须把焦点移入对话区域');
 assert.match(source, /setMode\('breathing'\);\s*window\.requestAnimationFrame\(\(\) => launcherButtonRef\.current\?\.focus\(\)\)/, '关闭弹窗后必须把焦点归还右下角入口');
-assert.match(appSource, /\(!isAgentProductionSession\(\) \|\| page === 'digitalEmployees'\) && <GlobalAssistant/, '智能经营页不得因制作会话状态卸载灵小枢');
+assert.match(appSource, /<GlobalAssistant[\s\S]{0,650}compactMode=\{starterMode \|\| isAgentProductionSession\(\)\}/, '制作会话保留紧凑的灵小枢审批和聊天入口');
+assert.match(source, /openAgent\(currentPageAgent, 'approvals'\)/, '入口直接显示真实待审批事项');
+assert.match(source, /<AssistantDecisionCenter[\s\S]{0,300}page=\{page\}/, '待审批事项保持当前页面范围');
+assert.match(source, /onClick=\{returnToConversation\}[\s\S]{0,180}>问灵小枢<\/Button>/, '审批首屏仍提供直接可用的对话入口');
 assert.match(appSource, /suppressForRightSidebar=\{page !== 'digitalEmployees' && \(/, '智能经营页必须保留入口，其他页仍遵守右侧栏避让规则');
 assert.match(source, /width: assistantPanelWidth,\s*maxWidth: 'calc\(100vw - 32px\)'/, '灵小枢面板必须用视口宽度约束，不能被零宽定位根节点压缩');
 

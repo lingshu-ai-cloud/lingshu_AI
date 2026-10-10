@@ -322,11 +322,11 @@ export default function AuthScreen({ onAuthed }: { onAuthed: (s: AuthSession) =>
           )}
 
           <div className="mt-7 flex flex-wrap items-center justify-between gap-3 border-t border-border pt-5 text-[11px] text-text-muted">
-            <span>© 2026 灵枢 AI</span>
+            <span>© 2026 灵小枢（杭州）科技有限公司</span>
             <span className="flex flex-wrap items-center gap-3">
-              <a href="/privacy" className="font-semibold transition-colors hover:text-accent">隐私政策</a>
-              <a href="/terms" className="font-semibold transition-colors hover:text-accent">用户协议</a>
-              <a href="/data-deletion" className="font-semibold transition-colors hover:text-accent">数据删除</a>
+              <a href="/privacy" target="_blank" rel="noreferrer" className="font-semibold transition-colors hover:text-accent">隐私政策</a>
+              <a href="/terms" target="_blank" rel="noreferrer" className="font-semibold transition-colors hover:text-accent">用户协议</a>
+              <a href="/data-deletion" target="_blank" rel="noreferrer" className="font-semibold transition-colors hover:text-accent">数据删除</a>
             </span>
           </div>
         </motion.div>

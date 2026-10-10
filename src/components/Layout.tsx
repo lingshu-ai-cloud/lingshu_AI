@@ -243,7 +243,7 @@ export default function Layout({ page, onNavigate, onPrefetchPage, conversation,
     try { return localStorage.getItem('lingshu:sidebar-collapsed') === 'true'; } catch { return false; }
   });
   const [mobileViewport, setMobileViewport] = useState(() => (
-    typeof window !== 'undefined' && window.matchMedia('(max-width: 760px)').matches
+    typeof window !== 'undefined' && window.matchMedia('(max-width: 767px)').matches
   ));
   const [mobileSidebarExpanded, setMobileSidebarExpanded] = useState(false);
   const sidebarCollapsed = mobileViewport ? !mobileSidebarExpanded : desktopSidebarCollapsed;
@@ -283,7 +283,7 @@ export default function Layout({ page, onNavigate, onPrefetchPage, conversation,
     if (!isInConversation) setMobileRightPanelOpen(false);
   }, [isInConversation]);
   useEffect(() => {
-    const media = window.matchMedia('(max-width: 760px)');
+    const media = window.matchMedia('(max-width: 767px)');
     const syncViewport = () => {
       setMobileViewport(media.matches);
       setMobileSidebarExpanded(false);
@@ -371,14 +371,14 @@ export default function Layout({ page, onNavigate, onPrefetchPage, conversation,
   };
 
   return (
-    <div className="app-shell flex h-[100dvh] min-h-0 overflow-hidden">
+    <div className="app-shell flex h-[100dvh] min-h-0 min-w-0 overflow-hidden">
 
       <ActionFeedbackHost />
 
       {/* ── Left sidebar ─────────────────────────────── */}
       {page !== 'agentMonitor' && <motion.aside
         initial={false}
-        animate={{ width: sidebarWidth }}
+        animate={{ width: sidebarWidth, minWidth: sidebarWidth, maxWidth: sidebarWidth }}
         transition={spatialTransition}
         className="app-sidebar relative z-40 flex flex-shrink-0 flex-col overflow-visible border-r border-border"
       >
@@ -619,7 +619,7 @@ export default function Layout({ page, onNavigate, onPrefetchPage, conversation,
       />
 
       {/* ── Main content ─────────────────────────────── */}
-      <main className="app-main relative flex min-w-0 flex-1 flex-col overflow-hidden">
+      <main className="app-main relative flex min-w-0 flex-1 basis-0 flex-col overflow-hidden">
         {supportAccess && (
           <div className="flex h-10 shrink-0 items-center justify-between gap-4 border-b border-border bg-white px-4 text-xs">
             <div className="flex min-w-0 items-center gap-2 text-text-primary">

@@ -6,6 +6,7 @@ import {
   displayDuration,
   isDisplayableVideoAnalysis,
   materialSemanticLabel,
+  resolveLinkedFavoriteMaterialId,
   resultEmptyState,
   trendFromEvidence,
 } from './InspirationDashboard.js';
@@ -32,6 +33,11 @@ assert.equal(materialSemanticLabel({
 assert.equal(resultEmptyState(0, '', false), 'no-data');
 assert.equal(resultEmptyState(12, 'not-found', false), 'no-match');
 assert.equal(resultEmptyState(12, '', true), 'no-match');
+assert.equal(resolveLinkedFavoriteMaterialId({ aiAnalysis: { materialId: 'stale-material' }, sourceUrl: 'https://example.com/video' } as never, []), '', '历史分析素材 ID 不得直接拿去修改收藏状态');
+assert.equal(resolveLinkedFavoriteMaterialId({ aiAnalysis: { materialId: 'material-1' }, sourceUrl: '' } as never, [{ id: 'material-1', sourceUrl: '' }]), 'material-1', '只有当前素材库真实存在的记录才允许切换收藏');
+assert.equal(resolveLinkedFavoriteMaterialId({ aiAnalysis: { materialId: 'stale-material' }, sourceUrl: ' https://example.com/video ' } as never, [{ id: 'material-2', sourceUrl: 'https://example.com/video' }]), 'material-2', '失效 ID 应按来源关联当前素材');
+assert.equal(resolveLinkedFavoriteMaterialId({ aiAnalysis: { materialId: 'material-1' }, sourceUrl: 'https://example.com/video' } as never, [{ id: 'material-2', sourceUrl: 'https://example.com/video' }, { id: 'material-1', sourceUrl: '' }]), 'material-1', '有效的精确素材 ID 优先于同来源记录');
+assert.equal(resolveLinkedFavoriteMaterialId({ sourceUrl: ' ' }, [{ id: 'unrelated', sourceUrl: '' }]), '', '空来源不能误关联其他素材');
 assert.equal(isDisplayableVideoAnalysis({
   usage: 'reference_only',
   contentSha256: 'sha256',

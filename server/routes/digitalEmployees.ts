@@ -4,7 +4,7 @@ import {createCustomerTaskNavigationRouter} from './customerTaskNavigation.js';
 import { requiresContentHumanAcceptance } from '../digitalEmployees/contentProductionAcceptancePolicy.js';
 import { nextManagedCycleWindow, prepareManagedCyclePackage } from '../digitalEmployees/managedOperatingCycle.js';
 import { acquireDurableOperationLease, assertDurableOperationLease, releaseDurableOperationLease } from '../runtime/durableLease.js';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { managedPublishingGrantErrors } from '../../shared/contracts/managedPublishingGrant.js';
 import { applyManagedPublishingGrant, managedPublishingGrantCovers } from '../digitalEmployees/managedPublishingGrant.js';
 import { productionQualitySummary } from '../digitalEmployees/productionQualitySummary.js';
@@ -68,6 +68,7 @@ import {
 import { dispatchFollowupBatch, recoverStaleFollowupSending, followupDispatchPreflightBlockedReason, getTenantFollowupDispatchStatus, onFollowupWorkerEvent, preflightFollowupBatchDispatch } from '../digitalEmployees/followupDispatchWorker.js';
 import { bindPublishingTargets, listConnectedPublishingAccounts, localPublishingAccountMocksEnabled, publishingTargetPlatforms } from '../digitalEmployees/publishingTargets.js';
 import { digitalEmployeeOperatingGoals, isDigitalEmployeeOperatingGoal } from '../digitalEmployees/overviewGoalScope.js';
+import { directorAnalysisReferenceIds, liveDirectorAnalysisTasks, projectDirectorAnalysisStatus } from '../digitalEmployees/liveDirectorAnalyses.js';
 import {
   VISIBLE_DIGITAL_EMPLOYEE_AGENT_ROLES as VISIBLE_AGENT_ROLES,
   visibleDigitalEmployeeAgentRole as visibleAgentRole,
@@ -77,6 +78,9 @@ import { buildPublishingApprovalPackage, createPublishingCalendarEntries, type P
 import { beijingDate, followupScheduleFromCadence, latestDueReviewSlot, socialScheduleFromCadence } from '../digitalEmployees/runtimeSchedule.js';
 import { withDigitalEmployeeRunLock } from '../digitalEmployees/runControl.js';
 import { cancelDigitalEmployeeRun as cancelDigitalEmployeeRunApplication } from '../digitalEmployees/runCancellation.js';
+import { buildAssistantDecisionFeed, AssistantDecisionValidationError, executeAssistantDecisionCommand, mergeAssistantDecisionFeeds, starterDecisionCards, approvalDecisionVersion, weeklyPlanDecisionVersion, workflowTaskDecisionVersion } from '../digitalEmployees/assistantDecisionCenter.js';
+import { normalizeAssistantDecisionPage, type AssistantDecisionActionId, type AssistantDecisionFeed, type AssistantDecisionPage, type AssistantDecisionCard } from '../../shared/contracts/assistantDecisionCenter.js';
+import { customerApprovalRequestHash } from '../digitalEmployees/customerTaskApprovalNavigation.js';
 import {
   createDigitalEmployeeApprovalDecisionApplication,
   decideDigitalEmployeeApproval as decideDigitalEmployeeApprovalUseCase,
@@ -84,6 +88,13 @@ import {
   registerDigitalEmployeeApprovalDecisionApplication,
 } from '../digitalEmployees/approvalDecision.js';
 import { enqueueApprovedContentPublicationPackageTask } from '../starter198/agentTasks.js';
+import { buildStarter198Workspace } from '../starter198/workspace.js';
+import { starter198Repository } from '../starter198/repository.js';
+import { starter198OrgRole } from '../starter198/profile.js';
+import { requestOrganizationRoleStrict } from '../lib/organizationRole.js';
+import { runStarter198Command, Starter198CommandError } from '../starter198/commands.js';
+import { createStarter198ApprovalDecisionPort } from '../starter198/approvalDecision.js';
+import { createStarter198QuoteDecisionPort } from '../starter198/quoteDecision.js';
 import {
   DEFAULT_FOLLOWUP_SEGMENT_CRITERIA,
   eligibleFollowupCustomerIds,
@@ -1012,7 +1023,7 @@ async function buildOverview(tenantId: string, requestedGoalId = '', requestedRa
     : operatingGoals.find(item => ['active', 'paused'].includes(item.status)) ?? operatingGoals[0] ?? null;
   const resolvedConfiguration = await resolveCurrentConfiguration(tenantId, configRecord);
   if (!goal) {
-    const [businessSnapshot, contentQueue, executionRuntime, industryTrends] = await Promise.all([
+    const [businessSnapshot, contentQueue, executionRuntime, industryTrends, directorAnalyses] = await Promise.all([
       buildBusinessSnapshot(tenantId, requestedRange),
       buildContentQueueProjection({
         tenantId, runId: '', planBody: {}, tasks: [],
@@ -1025,8 +1036,9 @@ async function buildOverview(tenantId: string, requestedGoalId = '', requestedRa
       store.list<StoredRecord>('trend_videos', { where: { tenantId }, sort: '-updatedAt', perPage: 100 })
         .then(result => traceableIndustryTrends(result.items))
         .catch(() => traceableIndustryTrends([])),
+      liveDirectorAnalysisTasks(store, tenantId, { includeUnscoped: !requestedGoalId }).catch(() => []),
     ]);
-    return { config: resolvedConfiguration?.config || null, configuration: publicConfigurationMetadata(resolvedConfiguration), goals: [], goal: null, plan: null, run: null, tasks: [], contentQueue, executionRuntime, industryTrends, events: [], approvals: [], handoffs: [], review: null, liveReview: null, agents: publicAgentStatuses([]), businessSnapshot };
+    return { config: resolvedConfiguration?.config || null, configuration: publicConfigurationMetadata(resolvedConfiguration), goals: [], goal: null, plan: null, run: null, tasks: [], contentQueue, executionRuntime, industryTrends, events: [], approvals: [], handoffs: [], review: null, liveReview: null, agents: projectDirectorAnalysisStatus(publicAgentStatuses([]), directorAnalyses), businessSnapshot };
   }
   const [plan, run, businessSnapshot] = await Promise.all([
     first<PlanRecord>(COLLECTION.plans, { tenant_id: tenantId, goal_id: goal.id }),
@@ -1043,10 +1055,9 @@ async function buildOverview(tenantId: string, requestedGoalId = '', requestedRa
   ]) : [null, null, null, null, null] as const;
   const taskItems = tasks?.items || [];
   const normalizedTasks = taskItems.map(task => ({ ...task, agent_role: visibleAgentRole(task.agent_role, task.task_key) }));
-  const agents = publicAgentStatuses(normalizedTasks);
   const publicTasks = normalizedTasks.map(task => ({ ...task, business_refs: jsonObject(task.business_refs, []), depends_on: jsonObject(task.depends_on, []), output: jsonObject(task.output, {}) })) as WorkflowTask[];
   const planBody = plan ? jsonObject<Record<string, unknown>>(plan.plan, {}) : {};
-  const [deliveryData, contentQueue, executionRuntime, industryTrends] = await Promise.all([
+  const [deliveryData, contentQueue, executionRuntime, industryTrends, directorAnalyses] = await Promise.all([
     buildDeliveryResources(tenantId, publicTasks, goal.title)
       .then(deliveries => ({ deliveries, deliveryNotice: '' }))
       .catch(() => ({ deliveries: undefined, deliveryNotice: '业务产物暂时无法读取，当前展示任务记录。请刷新重试。' })),
@@ -1067,6 +1078,10 @@ async function buildOverview(tenantId: string, requestedGoalId = '', requestedRa
     store.list<StoredRecord>('trend_videos', { where: { tenantId }, sort: '-updatedAt', perPage: 100 })
       .then(result => traceableIndustryTrends(result.items))
       .catch(() => traceableIndustryTrends([])),
+    liveDirectorAnalysisTasks(store, tenantId, {
+      goalId: goal.id, runId, includeUnscoped: !requestedGoalId,
+      referenceVideoIds: directorAnalysisReferenceIds(planBody, publicTasks),
+    }).catch(() => []),
   ]);
   return {
     config: resolvedConfiguration?.config || null,
@@ -1111,7 +1126,7 @@ async function buildOverview(tenantId: string, requestedGoalId = '', requestedRa
     handoffs: handoffs?.items.map(handoff => ({ ...handoff, snapshot: jsonObject(handoff.snapshot, {}) })) || [],
     review: review ? { ...review, summary: jsonObject(review.summary, {}) } : null,
     liveReview: run ? runReviewSummary(run, taskItems, businessSnapshot) : null,
-    agents,
+    agents: projectDirectorAnalysisStatus(publicAgentStatuses(normalizedTasks), directorAnalyses),
     businessSnapshot,
   };
 }
@@ -2454,6 +2469,131 @@ async function supersedeAffectedBusinessState(tenantId: string, run: RunRecord, 
   }
 }
 
+const starterAssistantApprovalDecision = createStarter198ApprovalDecisionPort();
+const starterAssistantQuoteDecision = createStarter198QuoteDecisionPort();
+
+async function buildDigitalEmployeeAssistantFeed(
+  tenantId: string,
+  page: AssistantDecisionPage,
+  requestedGoalId = '',
+  limit = 3,
+): Promise<AssistantDecisionFeed> {
+  const goalResult = await store.list<GoalRecord>(COLLECTION.goals, {
+    where: { tenant_id: tenantId }, sort: '-created_at', page: 1, perPage: 500,
+  });
+  const goals = digitalEmployeeOperatingGoals(goalResult.items);
+  const goal = requestedGoalId
+    ? goals.find(item => item.id === requestedGoalId) ?? null
+    : goals.find(item => ['draft', 'pending_approval', 'active', 'paused'].includes(item.status)) ?? goals[0] ?? null;
+  if (!goal) {
+    return buildAssistantDecisionFeed({ page, goal: null, plan: null, run: null, tasks: [], approvals: [], limit });
+  }
+  const [plan, run] = await Promise.all([
+    first<PlanRecord>(COLLECTION.plans, { tenant_id: tenantId, goal_id: goal.id }),
+    first<RunRecord>(COLLECTION.runs, { tenant_id: tenantId, goal_id: goal.id }, '-started_at'),
+  ]);
+  const taskResult = run
+    ? await store.list<TaskRecord>(COLLECTION.tasks, { where: { tenant_id: tenantId, run_id: run.id }, sort: 'sequence', perPage: 100 })
+    : { items: [] as TaskRecord[] };
+  const approvalResult = run
+    ? await store.list<ApprovalRecord>(COLLECTION.approvals, { where: { tenant_id: tenantId, run_id: run.id, status: 'pending' }, sort: '-created_at', perPage: 100 })
+    : { items: [] as ApprovalRecord[] };
+  return buildAssistantDecisionFeed({ page, goal, plan, run, tasks: taskResult.items, approvals: approvalResult.items, limit });
+}
+
+async function buildStarterAssistantCards(req: Request, tenantId: string, userId: string) {
+  try {
+    const role = starter198OrgRole(await requestOrganizationRoleStrict(req.headers.authorization, userId));
+    if (!role) return [];
+    const workspace = await buildStarter198Workspace({
+      tenantId,
+      role,
+      repository: starter198Repository,
+      decisionAvailable: true,
+      quoteDecisionAvailable: true,
+    });
+    return starterDecisionCards(workspace.decisions);
+  } catch (error) {
+    const code = error instanceof Error ? error.message : '';
+    if (['starter_198_workspace_not_entitled', 'starter_198_not_provisioned'].includes(code)) return [];
+    throw error;
+  }
+}
+
+async function assistantDecisionFeedForRequest(
+  req: Request,
+  identity: AuthLocals,
+  page: AssistantDecisionPage,
+  requestedGoalId = '',
+  limit = 3,
+): Promise<AssistantDecisionFeed> {
+  const [base, starterCards] = await Promise.all([
+    buildDigitalEmployeeAssistantFeed(identity.tenantId, page, requestedGoalId, limit),
+    buildStarterAssistantCards(req, identity.tenantId, identity.userId),
+  ]);
+  return mergeAssistantDecisionFeeds(base, starterCards, limit);
+}
+
+class AssistantDecisionCommandError extends Error {
+  constructor(readonly code: string, readonly status: number, readonly details: Record<string, unknown> = {}) {
+    super(code);
+    this.name = 'AssistantDecisionCommandError';
+  }
+}
+
+function assertAssistantDecisionVersion(decision: AssistantDecisionCard, currentVersion: string): void {
+  if (decision.subject.version !== currentVersion) {
+    throw new AssistantDecisionValidationError('assistant_decision_changed', 409, { currentVersion });
+  }
+}
+
+async function takeOverWorkflowTask(input: { tenantId: string; userId: string; taskId: string; decision: AssistantDecisionCard }): Promise<void> {
+  const initialTask = await tenantRecord<TaskRecord>(COLLECTION.tasks, input.taskId, input.tenantId);
+  if (!initialTask) throw new AssistantDecisionCommandError('task_not_found', 404);
+  await withDigitalEmployeeRunLock(input.tenantId, initialTask.run_id, async () => {
+    const task = await tenantRecord<TaskRecord>(COLLECTION.tasks, input.taskId, input.tenantId);
+    if (!task) throw new AssistantDecisionCommandError('task_not_found', 404);
+    if (input.decision.subject.type === 'approval_request') {
+      const approval = await tenantRecord<ApprovalRecord>(COLLECTION.approvals, input.decision.subject.id, input.tenantId);
+      if (!approval || approval.task_id !== task.id || approval.status !== 'pending') throw new AssistantDecisionCommandError('assistant_decision_not_pending', 409);
+      assertAssistantDecisionVersion(input.decision, approvalDecisionVersion(approval));
+    } else {
+      assertAssistantDecisionVersion(input.decision, workflowTaskDecisionVersion(task));
+    }
+    if (task.status === 'handed_off' && task.owner_id === input.userId) return;
+    const run = await tenantRecord<RunRecord>(COLLECTION.runs, task.run_id, input.tenantId);
+    if (!run || !['waiting_external', 'waiting_approval', 'running'].includes(run.status)) {
+      throw new AssistantDecisionCommandError('run_not_handoff_ready', 409);
+    }
+    if (!['waiting_external', 'waiting_approval', 'running', 'failed', 'pending'].includes(task.status)) {
+      throw new AssistantDecisionCommandError('task_not_handoff_ready', 409);
+    }
+    const now = new Date().toISOString();
+    const session = await requiredCreate<HandoffRecord>(COLLECTION.handoffs, {
+      tenant_id: input.tenantId,
+      run_id: run.id,
+      task_id: task.id,
+      status: 'active',
+      taken_by: input.userId,
+      snapshot: {
+        taskStatus: task.status,
+        taskOutput: jsonObject(task.output, {}),
+        blockedReason: task.blocked_reason,
+        externalActionsPerformed: false,
+        constraints: ['接管期间 Agent 停止外部写入与费用消耗'],
+      },
+      started_at: now,
+      returned_at: '',
+    });
+    await Promise.all([
+      store.update(COLLECTION.tasks, task.id, { status: 'handed_off', owner_id: input.userId, blocked_reason: '人工完整接管', updated_at: now }),
+      store.update(COLLECTION.runs, run.id, { status: 'waiting_human', current_controller: input.userId, pause_reason: '人工完整接管' }),
+    ]);
+    await appendEvent({ tenantId: input.tenantId, runId: run.id, taskId: task.id, type: 'handoff.started', level: 'warning', summary: `${task.title} 已由人工完整接管`, payload: { handoffId: session.id } });
+    await appendAudit({ tenantId: input.tenantId, userId: input.userId, action: 'handoff.started', targetType: 'workflow_task', targetId: task.id, metadata: { runId: run.id, handoffId: session.id } });
+  });
+}
+
 digitalEmployeesRouter.get('/overview', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   const goalId = String(req.query.goalId || '').trim();
@@ -2518,6 +2658,123 @@ digitalEmployeesRouter.post('/goals/:goalId/initial-preparation',async(req,res)=
  await resumeInitialPreparationPlan(tenantId,goalId);
  });const latest=await first<PlanRecord>(COLLECTION.plans,{tenant_id:tenantId,goal_id:goalId});res.status(202).json({preparation:jsonObject<{initialPreparation?:InitialPreparation}>(latest?.plan,{}).initialPreparation});
  }catch(error){res.status(409).json({error:'initial_preparation_failed',message:error instanceof Error?error.message:'初始化准备失败'});}finally{await releaseDurableOperationLease({dataStore:store,lease:confirmationLease});}
+});
+
+digitalEmployeesRouter.get('/assistant/decision-center', async (req, res) => {
+  res.setHeader('Cache-Control', 'private, no-store');
+  const identity = res.locals as AuthLocals;
+  const page = normalizeAssistantDecisionPage(req.query.page);
+  const goalId = String(req.query.goalId || '').trim();
+  if (goalId) {
+    const goal = await tenantRecord<GoalRecord>(COLLECTION.goals, goalId, identity.tenantId);
+    if (!goal || !isDigitalEmployeeOperatingGoal(goal)) {
+      res.status(404).json({ error: 'goal_not_found' });
+      return;
+    }
+  }
+  res.json(await assistantDecisionFeedForRequest(req, identity, page, goalId));
+});
+
+digitalEmployeesRouter.post('/assistant/decision-center/:decisionId/actions', async (req, res) => {
+  res.setHeader('Cache-Control', 'private, no-store');
+  const identity = res.locals as AuthLocals;
+  const page = normalizeAssistantDecisionPage(req.query.page ?? req.body?.page);
+  const goalId = String(req.query.goalId || req.body?.goalId || '').trim();
+  const decisionId = String(req.params.decisionId || '').trim();
+  const actionId = String(req.body?.actionId || '').trim() as AssistantDecisionActionId;
+  const expectedVersion = String(req.body?.expectedVersion || '').trim();
+  const note = String(req.body?.note || '').trim().slice(0, 1000);
+  if (!decisionId || !actionId || !expectedVersion) {
+    res.status(400).json({ error: 'assistant_decision_command_invalid' });
+    return;
+  }
+  try {
+    if (goalId) {
+      const goal = await tenantRecord<GoalRecord>(COLLECTION.goals, goalId, identity.tenantId);
+      if (!goal || !isDigitalEmployeeOperatingGoal(goal)) throw new AssistantDecisionCommandError('goal_not_found', 404);
+    }
+    const fullFeed = await assistantDecisionFeedForRequest(req, identity, page, goalId, 100);
+    const card = fullFeed.items.find(item => item.id === decisionId);
+    if (!card) throw new AssistantDecisionCommandError('assistant_decision_not_pending', 409);
+    const outcome = await executeAssistantDecisionCommand({
+      card, actionId, expectedVersion, note,
+      handlers: {
+        decideStarter: async (selected, decision, decisionNote) => {
+          const role = starter198OrgRole(await requestOrganizationRoleStrict(req.headers.authorization, identity.userId));
+          if (!role) throw new AssistantDecisionCommandError('starter_198_role_required', 403);
+          const suppliedKey = String(req.body?.idempotencyKey || '').trim();
+          const idempotencyKey = suppliedKey || `assistant_${createHash('sha256').update(`${identity.tenantId}|${decisionId}|${actionId}|${expectedVersion}|${decisionNote}`).digest('hex').slice(0, 40)}`;
+          await runStarter198Command({
+            tenantId: identity.tenantId,
+            userId: identity.userId,
+            role,
+            request: {
+              command: 'resolve_decision', idempotencyKey, targetId: selected.subject.id, expectedVersion,
+              payload: { decision, note: decisionNote },
+            },
+            dependencies: {
+              repository: starter198Repository, dataStore: store,
+              approvalDecision: starterAssistantApprovalDecision, quoteDecision: starterAssistantQuoteDecision,
+            },
+          });
+        },
+        approveAndStart: async selected => {
+          const goal = await tenantRecord<GoalRecord>(COLLECTION.goals, selected.subject.id, identity.tenantId);
+          const plan = goal ? await first<PlanRecord>(COLLECTION.plans, { tenant_id: identity.tenantId, goal_id: goal.id }) : null;
+          if (!goal || !plan) throw new AssistantDecisionCommandError('assistant_decision_context_missing', 409);
+          assertAssistantDecisionVersion(selected, weeklyPlanDecisionVersion(goal, plan));
+          const pack = jsonObject<Record<string, unknown>>(plan.plan, {}).businessPackage as WeeklyPackage | undefined;
+          const members = await listTenantEmployees(identity, req.headers.authorization);
+          const result = await approveGoalForReview(identity.tenantId, identity.userId, goal.id, Number(pack?.revision || 0), members);
+          if (result.status !== 200) {
+            const body = result.body as Record<string, unknown>;
+            throw new AssistantDecisionCommandError(String(body.error || 'plan_start_failed'), result.status, body);
+          }
+        },
+        decideApproval: async (selected, decision, decisionNote) => {
+          const approval = await tenantRecord<ApprovalRecord>(COLLECTION.approvals, selected.subject.id, identity.tenantId);
+          if (!approval) throw new AssistantDecisionCommandError('approval_not_found', 404);
+          assertAssistantDecisionVersion(selected, approvalDecisionVersion(approval));
+          await decideDigitalEmployeeApprovalUseCase({
+            tenantId: identity.tenantId, userId: identity.userId, approvalId: approval.id,
+            decision, note: decisionNote, expectedSubjectVersion: String(approval.subject_version ?? '').trim(),
+            expectedRequestHash: customerApprovalRequestHash({ ...approval }),
+            ...(/^[a-f0-9]{64}$/.test(String(approval.content_hash || '')) ? { expectedContentHash: String(approval.content_hash) } : {}),
+          });
+        },
+        takeOver: async selected => {
+          let taskId = selected.subject.id;
+          if (selected.subject.type === 'approval_request') {
+            const approval = await tenantRecord<ApprovalRecord>(COLLECTION.approvals, selected.subject.id, identity.tenantId);
+            if (!approval) throw new AssistantDecisionCommandError('approval_not_found', 404);
+            taskId = approval.task_id;
+          }
+          await takeOverWorkflowTask({ tenantId: identity.tenantId, userId: identity.userId, taskId, decision: selected });
+        },
+      },
+    });
+
+    const feed = await assistantDecisionFeedForRequest(req, identity, page, goalId);
+    res.json({ ok: true, outcome, ...feed });
+  } catch (error) {
+    if (error instanceof AssistantDecisionCommandError) {
+      res.status(error.status).json({ error: error.code, ...error.details });
+      return;
+    }
+    if (error instanceof AssistantDecisionValidationError) {
+      res.status(error.status).json({ error: error.code, ...error.details });
+      return;
+    }
+    if (error instanceof DigitalEmployeeApprovalDecisionError) {
+      res.status(error.status).json({ error: error.code, ...error.details });
+      return;
+    }
+    if (error instanceof Starter198CommandError) {
+      res.status(error.status).json({ error: error.code, message: error.message });
+      return;
+    }
+    throw error;
+  }
 });
 
 digitalEmployeesRouter.post('/onboarding/complete', async (req, res) => {
