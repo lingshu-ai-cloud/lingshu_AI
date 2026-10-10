@@ -99,7 +99,7 @@ const assistantOrbitSource = assistantSource.slice(
   assistantSource.indexOf('const SKILL_AGENTS'),
   assistantSource.indexOf('function pageKey'),
 );
-for (const label of ['经营 Agent', '编导 Agent', '内容 Agent', '客服 Agent']) {
+for (const label of ['灵小枢 · 经营统筹', '编导 Agent', '内容 Agent', '客服 Agent']) {
   assert.match(assistantOrbitSource, new RegExp(label), `灵小枢子 Agent 必须显示现有角色：${label}`);
 }
 assert.doesNotMatch(assistantOrbitSource, /策略助手|唤醒助手|统筹 Agent/, '灵小枢不应再显示旧助手或重复的统筹 Agent');
@@ -108,6 +108,11 @@ assert.match(assistantSource, /const current = agent\.id === currentPageAgent[\s
 assert.match(assistantSource, /page === 'smartAssets'\) return 'content'/, '内容制作页应高亮内容 Agent');
 assert.match(assistantSource, /page === 'socialInspiration'[\s\S]{0,160}return 'director'/, '灵感与脚本页面应高亮编导 Agent');
 assert.match(assistantSource, /page === 'conversion'[\s\S]{0,220}return 'customer'/, '客户页面应高亮客服 Agent');
+assert.match(assistantSource, /const openMainAssistant[\s\S]{0,120}openAgent\('business'\)/, '主入口必须进入灵小枢经营统筹');
+assert.match(assistantSource, /onClick=\{\(\) => openAgent\(agent\.id\)\}/, '专业 Agent 切换必须保留');
+assert.match(assistantSource, /send\(kickoff\.text, orbitIdForAgent\(kickoff\.agent, currentPageAgent\)\)/, '专业工作流启动仍应进入对应 Agent');
+assert.match(assistantSource, /strategyRequest \? '' : await loadLiveIntegrationFacts\(\)/, '经营回答不能重新注入客户端账号事实');
+assert.match(assistantSource, /if \(!currentScope\(\)\) return/, '跨身份异步响应必须被丢弃');
 
 assert.match(pageSource, /输出内容语言/);
 assert.match(pageSource, /需要输出的语言/);
@@ -204,7 +209,7 @@ assert.match(smartBusinessSource, /digitalEmployeeApi\.agentUsageCosts\(\)/, 'Ag
 assert.match(smartBusinessSource, /costCny\.settlementStatus === "settled"[\s\S]{0,120}costCny\.settled/, 'Agent detail must use only the real settled cost rather than estimated or reserved spend');
 assert.match(smartBusinessSource, /过去已核算消耗/, 'Agent detail must expose historical settled spend');
 assert.match(smartBusinessSource, /账号真实结算账本/, 'Agent detail must identify the persisted account ledger as its source');
-assert.match(smartBusinessSource, /<MatrixView data=\{data\}/, 'the account matrix tab must use the deterministic editable weekly matrix');
+assert.match(smartBusinessSource, /<MatrixView\b[^>]*\bdata=\{data\}/, 'the account matrix tab must use the deterministic editable weekly matrix');
 assert.match(smartBusinessSource, /aria-label="数字员工工作排期"[\s\S]{0,1500}账号内容日历 · 甘特排期/, 'the account matrix must expose an account-level calendar and Gantt schedule');
 assert.match(smartBusinessSource, /编导结论与经营排期[\s\S]{0,500}编导 Agent → 经营 Agent[\s\S]{0,1000}内容制作[\s\S]{0,500}内容 Agent[\s\S]{0,1000}质检与发布[\s\S]{0,500}内容 Agent · 质检能力/, 'the work schedule must make the director-to-business-to-content ownership explicit');
 assert.doesNotMatch(smartBusinessSource, /matrixSystemLayers|谁来建立信任|aria-label="按平台查看账号"/, 'the deleted dark explainer and duplicate platform cards must not remain');
@@ -409,13 +414,14 @@ assert.match(pageSource, /setWorkspaceView\(["']matrix["']\)[\s\S]{0,500}setSele
 assert.match(pageSource, /scrollIntoView\([\s\S]{0,120}behavior:\s*["']smooth["']/, 'first-run transitions must focus the next required panel');
 assert.match(pageSource, /digitalEmployeeOnboarding:\s*\{\s*profileConfirmedAt:/, 'the first-step confirmation must be persisted instead of living only in component memory');
 assert.match(pageSource, /setProductConfirmed\(true\)/, 'confirming the product table must advance to the social-stage step');
-assert.match(pageSource, /第三步 · 社媒经营阶段[\s\S]{0,600}确认阶段并开始使用/, 'first-use onboarding must finish with the social operating stage');
+assert.match(pageSource, /第三步 · 人物与声音[\s\S]{0,400}EnterprisePresenters initialConfiguration/, 'first-use onboarding must include the existing presenter and voice setup');
+assert.match(pageSource, /第四步 · 社媒经营阶段[\s\S]{0,600}确认阶段并开始使用/, 'first-use onboarding must finish with the social operating stage');
 assert.match(pageSource, /saveSocialContentStage\(stageId\)[\s\S]{0,500}minimalOnboarding:\s*true/, 'minimal onboarding may complete only after its social stage is persisted');
 assert.match(pageSource, /profile\.digitalEmployeeOnboarding\?\.profileConfirmedAt[\s\S]{0,120}loadedProfile\.companyName[\s\S]{0,120}loadedProfile\.brandName[\s\S]{0,80}setProfileConfirmed\(true\)/, 'persisted onboarding progress may restore step two only after both names exist');
 assert.match(pageSource, /profile\.digitalEmployeeOnboarding\?\.productSelectionConfirmedAt[\s\S]{0,120}loadedProducts\.length[\s\S]{0,80}setProductConfirmed\(true\)/, 'persisted product confirmation may restore step three only when products still exist');
 assert.match(pageSource, /!data\?\.config \|\|[\s\S]{0,250}viewGoalId \|\|[\s\S]{0,250}!run/, 'first-time onboarding must not subscribe to an obsolete run stream');
 assert.match(pageSource, /overviewRequestVersionRef/, 'late overview responses must be versioned so they cannot overwrite a completed mutation');
-assert.doesNotMatch(pageSource, /第四步/, 'first-time onboarding must end after the social-stage step');
+assert.doesNotMatch(pageSource, /第五步/, 'first-time onboarding must end after the social-stage step');
 assert.doesNotMatch(pageSource, /rulesStepSaved/, 'onboarding must not keep a redundant fourth-step state');
 assert.match(digitalEmployeeRouteSource, /minimalOnboarding[\s\S]{0,1800}enabledWorkflows:\s*\['viral_clone'\]/, 'minimal onboarding must create clone-only Agent content capability');
 assert.doesNotMatch(pageSource, /id:\s*["'](?:product_content|material_content)["']/, 'digital employee settings must not expose free-creation capabilities');

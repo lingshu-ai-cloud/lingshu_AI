@@ -1140,6 +1140,21 @@ export async function readTenantEnterpriseProfile(tenantId: string): Promise<Ent
   return readTenantProfile(tenantId);
 }
 
+/** Assistant grounding must never substitute a global demo profile for missing tenant facts. */
+export async function readTenantEnterpriseProfileStrict(tenantId: string): Promise<EnterpriseProfile | null> {
+  if (!tenantId.trim()) throw new Error('enterprise_context_tenant_required');
+  const result = await store.list<Record<string, unknown>>('tenant_profiles', {
+    where: { tenant_id: tenantId }, page: 1, perPage: 1,
+  });
+  const row = result.items[0];
+  if (!row) return null;
+  if (row.tenant_id !== tenantId) throw new Error('enterprise_context_tenant_mismatch');
+  const profile = storedProfile(row.profile);
+  if (!profile) return null;
+  return withConfirmedFactVersion(profile, profile, profile.factVersion?.confirmedBy || 'legacy_migration',
+    new Date(profile.factVersion?.confirmedAt || profile.dataGovernance?.lastSavedAt || 0));
+}
+
 export interface ConfirmedEnterpriseFacts {
   version: NonNullable<EnterpriseProfile['factVersion']>;
   profile: EnterpriseProfile;
