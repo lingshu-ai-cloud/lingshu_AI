@@ -1,0 +1,6 @@
+{
+  "expectedScope": {"tenantId":"", "taskId":"", "runId":"", "version":""},
+  "artifacts": [],
+  "technicalReview": {"status":"pending", "reportRef":""},
+  "creativeReview": {"status":"pending", "reviewerId":"", "reportRef":""}
+}
