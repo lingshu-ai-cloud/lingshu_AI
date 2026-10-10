@@ -41,6 +41,7 @@ import NextRoundRecommendationsSection from "./NextRoundRecommendationsSection";
 import AccountActivity from "./AccountActivity";
 import AccountHealthPanel from "./smartBusiness/AccountHealthPanel";
 import { LsCalendar, calendarDayKey, type LsCalendarEvent } from "./ui/LsCalendar";
+import { thumbnailUrlWithSourceFallback } from "../lib/calendarModel";
 
 export type SmartBusinessView = "home" | "matrix" | "queue" | "production" | "review";
 
@@ -482,10 +483,15 @@ function contentThumbnailUrl(plan: VideoCreationPlan, queueItem: ContentQueueIte
     const readyMaterial = preview?.materials.items.find(item => item.type === "image" && item.status === "ready" && item.previewUrl)?.previewUrl;
     if (readyMaterial) return readyMaterial;
   }
-  return queueItem?.preproduction?.benchmark.thumbnailUrl
+  const thumbnailUrl = queueItem?.preproduction?.benchmark.thumbnailUrl
     || plan.preproduction?.benchmark.thumbnailUrl
     || plan.planningEvidence?.referenceThumbnailUrl
     || "";
+  const sourceUrl = queueItem?.preproduction?.benchmark.sourceUrl
+    || plan.preproduction?.benchmark.sourceUrl
+    || plan.planningEvidence?.referenceSourceUrl
+    || "";
+  return thumbnailUrlWithSourceFallback(thumbnailUrl, sourceUrl);
 }
 
 function buildSmartBusinessDisplayModel(data: DigitalEmployeeOverview, selectedAccountId = ""): SmartBusinessDisplayModel {

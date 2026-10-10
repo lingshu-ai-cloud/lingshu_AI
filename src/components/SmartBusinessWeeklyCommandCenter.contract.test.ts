@@ -25,7 +25,11 @@ assert.ok(thumbnailStart >= 0 && thumbnailEnd > thumbnailStart, '周日历必须
 const thumbnailScript = ts.transpileModule(`${source.slice(thumbnailStart, thumbnailEnd)}\nglobalThis.selectThumbnail = contentThumbnailUrl;`, {
   compilerOptions: { target: ts.ScriptTarget.ES2022 },
 }).outputText;
-const thumbnailContext = vm.createContext({});
+const thumbnailContext = vm.createContext({
+  thumbnailUrlWithSourceFallback: (thumbnailUrl: string, sourceUrl: string) => thumbnailUrl && sourceUrl
+    ? `${thumbnailUrl}${thumbnailUrl.includes('?') ? '&' : '?'}sourceUrl=${encodeURIComponent(sourceUrl)}`
+    : thumbnailUrl,
+});
 vm.runInContext(thumbnailScript, thumbnailContext);
 const selectThumbnail = thumbnailContext.selectThumbnail as (plan: unknown, queueItem: unknown) => string;
 const preview = (frame: string, material: string, benchmark: string) => ({
@@ -37,5 +41,6 @@ const preview = (frame: string, material: string, benchmark: string) => ({
 });
 assert.equal(selectThumbnail({ preproduction: preview('/media/plan-frame.jpg', '/media/plan-material.jpg', 'https://remote.test/plan.jpg') }, { preproduction: preview('/media/queue-frame.jpg', '/media/queue-material.jpg', 'https://remote.test/queue.jpg') }), '/media/queue-frame.jpg', '本地已就绪分镜首帧优先于远程参考图');
 assert.equal(selectThumbnail({ preproduction: { materials: { storyboard: [], items: [] }, benchmark: { thumbnailUrl: 'https://remote.test/fallback.jpg' } } }, null), 'https://remote.test/fallback.jpg', '没有本地预览时才使用参考缩略图');
+assert.equal(selectThumbnail({ planningEvidence: { referenceThumbnailUrl: '/api/overseas/videos/removed/thumbnail', referenceSourceUrl: 'https://www.tiktok.com/@factory/video/123' } }, null), '/api/overseas/videos/removed/thumbnail?sourceUrl=https%3A%2F%2Fwww.tiktok.com%2F%40factory%2Fvideo%2F123', '已删除库存记录的周计划仍必须通过冻结来源恢复封面');
 
 console.log('Smart Business weekly command center contract passed');

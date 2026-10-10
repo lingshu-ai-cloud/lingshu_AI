@@ -1,6 +1,7 @@
 import { Button, Select } from 'antd';
 import { ArrowUpRight, RefreshCcw } from 'lucide-react';
 import type { VideoCreationPlan } from '../../lib/videoCreationPlan';
+import { thumbnailUrlWithSourceFallback } from '../../lib/calendarModel';
 import { LsCalendar, calendarDayKey, type LsCalendarEvent } from '../ui/LsCalendar';
 
 type PublishingAccount = { accountId: string; accountLabel: string; platform: string };
@@ -20,7 +21,9 @@ type Props = {
 
 function familyKey(plan: VideoCreationPlan) { return plan.contentFamilyId || plan.contentId; }
 function referenceThumbnail(plan: VideoCreationPlan) {
-  return plan.preproduction?.benchmark.thumbnailUrl || plan.planningEvidence?.referenceThumbnailUrl || '';
+  const thumbnailUrl = plan.preproduction?.benchmark.thumbnailUrl || plan.planningEvidence?.referenceThumbnailUrl || '';
+  const sourceUrl = plan.preproduction?.benchmark.sourceUrl || plan.planningEvidence?.referenceSourceUrl || '';
+  return thumbnailUrlWithSourceFallback(thumbnailUrl, sourceUrl);
 }
 
 export default function WeeklyPlanCalendar({ startsAt, endsAt, plans, masterPlans, accounts, products, busy, onChangeProduct, onOpenReference, onRefreshReferences }: Props) {

@@ -56,6 +56,12 @@ function loadProtectedThumbnail(src: string, refresh = false): Promise<Blob | nu
       return response.blob();
     })
     .catch(() => null)
+    .then(blob => {
+      // Do not make a transient timeout sticky. Cold thumbnail recovery may
+      // still be persisting the source cover when the first request expires.
+      if (!blob) protectedThumbnailCache.delete(src);
+      return blob;
+    })
     .finally(() => window.clearTimeout(timeout));
   protectedThumbnailCache.set(src, request);
   return request;
@@ -88,11 +94,13 @@ function CalendarThumbnail({ src, title, large = false, card = false }: { src?: 
     }
     let disposed = false;
     let objectUrl = '';
+    let retryTimer = 0;
     void loadProtectedThumbnail(protectedSource, retryKey > 0)
       .then(blob => {
         if (disposed) return;
         if (!blob) {
-          setFailedSource(src);
+          if (retryKey === 0) retryTimer = window.setTimeout(() => setRetryKey(value => value + 1), 1_200);
+          else setFailedSource(src);
           return;
         }
         objectUrl = URL.createObjectURL(blob);
@@ -100,6 +108,7 @@ function CalendarThumbnail({ src, title, large = false, card = false }: { src?: 
       });
     return () => {
       disposed = true;
+      if (retryTimer) window.clearTimeout(retryTimer);
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
   }, [src, retryKey]);

@@ -23,6 +23,19 @@ export type LsCalendarEvent = {
   data?: unknown;
 };
 
+/**
+ * A weekly-plan snapshot may outlive its original discovery record. Preserve
+ * the public source as an authenticated thumbnail fallback without exposing a
+ * general-purpose proxy endpoint.
+ */
+export function thumbnailUrlWithSourceFallback(thumbnailUrl: string | undefined, sourceUrl: string | undefined): string {
+  const thumbnail = String(thumbnailUrl || '').trim();
+  const source = String(sourceUrl || '').trim();
+  if (!thumbnail || !source || !/^\/api\/overseas\/videos\/[^/?]+\/thumbnail(?:\?|$)/.test(thumbnail)) return thumbnail;
+  const separator = thumbnail.includes('?') ? '&' : '?';
+  return `${thumbnail}${separator}sourceUrl=${encodeURIComponent(source)}`;
+}
+
 export const calendarStatusLabels: Record<LsCalendarStatus, string> = {
   planned: '已计划', queued: '待执行', working: '进行中', needs_action: '待处理', failed: '失败', done: '已完成',
 };

@@ -1850,7 +1850,7 @@ export default function GlobalAssistant({
   return (
     <div
       data-global-assistant="root"
-      className="fixed bottom-[calc(env(safe-area-inset-bottom)+1rem)] right-4 z-[75] md:bottom-5 md:right-5"
+      className={`fixed right-4 z-[75] md:bottom-5 md:right-5 ${page === 'conversion' ? 'bottom-[calc(env(safe-area-inset-bottom)+8rem)]' : 'bottom-[calc(env(safe-area-inset-bottom)+1rem)]'}`}
     >
       <AnimatePresence>
         {mode === 'breathing' && performance && shouldNotifyAssistant(performance.reason) && !performanceHidden && (
@@ -2304,10 +2304,10 @@ export default function GlobalAssistant({
               <Bot size={15} />
             </span>
           )}
-          className="!flex !h-11 !gap-2 !border-border !bg-surface !px-3.5 !text-text-primary shadow-sm transition-colors hover:!border-accent/40 hover:!bg-accent-glow focus-visible:!outline-none focus-visible:!ring-2 focus-visible:!ring-accent focus-visible:!ring-offset-2"
+          className="!flex !h-11 !w-11 !gap-0 !border-border !bg-surface !px-2 !text-text-primary shadow-sm transition-colors hover:!border-accent/40 hover:!bg-accent-glow focus-visible:!outline-none focus-visible:!ring-2 focus-visible:!ring-accent focus-visible:!ring-offset-2 sm:!w-auto sm:!gap-2 sm:!px-3.5"
           title={mode === 'chat' ? '收起灵小枢对话' : '询问灵小枢'}
         >
-          <span className="ls-type-label-large whitespace-nowrap">询问灵小枢</span>
+          <span className="ls-type-label-large hidden whitespace-nowrap sm:inline">询问灵小枢</span>
         </Button>
       </Badge>
     </div>

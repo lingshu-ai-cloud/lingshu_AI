@@ -2259,8 +2259,12 @@ videosRouter.get('/inventory-summary', async (_req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   const rawContentFormat = String(_req.query.contentFormat || 'video');
   const contentFormat: ContentFormat = rawContentFormat === 'image' ? 'image' : 'video';
+  const [totalItems, visible] = await Promise.all([
+    tenantInventoryTotal(tenantId, contentFormat),
+    listPublicVideosForTenant({ tenantId, contentFormat, page: 1, perPage: 1, crawlRange: 'all' }),
+  ]);
   res.setHeader('Cache-Control', 'private, no-store, max-age=0');
-  res.json({ contentFormat, totalItems: await tenantInventoryTotal(tenantId, contentFormat) });
+  res.json({ contentFormat, totalItems, visibleItems: visible.totalItems });
 });
 
 videosRouter.get('/', async (req, res) => {
@@ -2930,16 +2934,17 @@ async function generateThumbnailFromStoredVideo(record: Record<string, unknown>)
   const filename = String(record.videoFileId || '');
   const localReference = localReferenceVideoPath(filename, String(record.tenantId || ''));
   let video: Awaited<ReturnType<typeof objectStorageDownload>> | null = null;
-  try {
-    video = videoKey ? await objectStorageDownload(videoKey)
-      : localReference && fs.existsSync(localReference) ? { buf: fs.readFileSync(localReference), contentType: 'video/mp4' }
-        : filename ? await fetchFile(COL, recordId, filename) : null;
-  } catch (error) {
-    // A stale object key must result in a missing thumbnail, not an unhandled
-    // rejection that takes down the local API while the queue is rendering.
-    console.warn('[videos] thumbnail source unavailable:', error instanceof Error ? error.message : error);
-    return null;
+  if (videoKey) {
+    try {
+      video = await objectStorageDownload(videoKey);
+    } catch (error) {
+      // A branch can carry database metadata without the corresponding local
+      // object-storage blob. Continue to the record/local reference fallbacks.
+      console.warn('[videos] object thumbnail source unavailable, trying local fallback:', error instanceof Error ? error.message : error);
+    }
   }
+  if (!video && localReference && fs.existsSync(localReference)) video = { buf: fs.readFileSync(localReference), contentType: 'video/mp4' };
+  if (!video && filename) video = await fetchFile(COL, recordId, filename);
   if (!video?.buf.length) return null;
 
   if (!fs.existsSync(ANALYSIS_DIR)) fs.mkdirSync(ANALYSIS_DIR, { recursive: true });
@@ -2992,7 +2997,22 @@ async function generateThumbnailFromStoredVideo(record: Record<string, unknown>)
 videosRouter.get('/:id/thumbnail', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   const record = await store.getById<Record<string, unknown>>(COL, req.params.id);
-  if (!record) { res.status(404).end(); return; }
+  if (!record) {
+    // Frozen weekly plans intentionally keep their source evidence after a
+    // discovery record is removed. Resolve that public source instead of
+    // turning every historical calendar card into a permanent broken cover.
+    const sourceUrl = String(req.query.sourceUrl || '').trim().slice(0, 2_000);
+    const platform = inferPlatformFromUrl(sourceUrl);
+    if (!sourceUrl || !isPlatformUrl(sourceUrl, platform)) { res.status(404).end(); return; }
+    const remoteUrl = await publicSourceThumbnail({ sourceUrl, platform });
+    const fallback = remoteUrl ? await fetchThumbnailBuffer(remoteUrl) : null;
+    if (!fallback) { res.status(404).end(); return; }
+    res.setHeader('Content-Type', fallback.contentType.startsWith('image/') ? fallback.contentType : 'image/jpeg');
+    res.setHeader('Cache-Control', 'private, max-age=86400');
+    res.setHeader('Content-Length', fallback.buf.length);
+    res.end(fallback.buf);
+    return;
+  }
   const ownsRecord = String(record.tenantId || '') === tenantId;
   if (!ownsRecord && !isSharedInspirationThumbnailReadable(record) && !await isAdminForAssetRequest(req)) {
     res.status(404).end();
@@ -3002,12 +3022,22 @@ videosRouter.get('/:id/thumbnail', async (req, res) => {
   const analysis = parseJsonRecord<Record<string, unknown>>(record.aiAnalysis, {});
   const cosKey = String(analysis.thumbnailObjectKey || '');
   if (cosKey) {
-    if (!await streamCrawlerCosObject(res, cosKey, req.headers.range)) res.status(404).end();
-    return;
+    try {
+      if (await streamCrawlerCosObject(res, cosKey, req.headers.range)) return;
+    } catch (error) {
+      console.warn('[videos] stored thumbnail unavailable, trying fallbacks:', error instanceof Error ? error.message : error);
+    }
   }
   const filename = String(record.thumbnailFile || '');
   let file = filename ? await fetchFile(COL, req.params.id, filename) : null;
   if (!file) file = await generateThumbnailFromStoredVideo(record as Record<string, unknown>);
+  if (!file) {
+    const remoteUrl = await publicSourceThumbnail(record);
+    if (remoteUrl) {
+      file = await fetchThumbnailBuffer(remoteUrl);
+      if (file) void storeThumbnailBuffer(String(record.id), file.buf, file.contentType);
+    }
+  }
   if (!file) { res.status(404).end(); return; }
 
   res.setHeader('Content-Type', file.contentType.startsWith('image/') ? file.contentType : 'image/jpeg');
@@ -3927,6 +3957,12 @@ function isRecordThumbnailUrl(url: string): boolean {
  * 现在图片跟记录绑在一起；本地文件只作为写入失败时的兜底。
  */
 async function cacheThumbnailLocally(recordId: string, url: string): Promise<string | null> {
+  const image = await fetchThumbnailBuffer(url);
+  if (!image) return null;
+  return storeThumbnailBuffer(recordId, image.buf, image.contentType);
+}
+
+async function fetchThumbnailBuffer(url: string): Promise<{ buf: Buffer; contentType: string } | null> {
   try {
     const resp = await fetch(url, {
       signal: AbortSignal.timeout(20_000),
@@ -3940,7 +3976,7 @@ async function cacheThumbnailLocally(recordId: string, url: string): Promise<str
     if (!type.startsWith('image/')) return null;
     const buf = Buffer.from(await resp.arrayBuffer());
     if (!buf.length || buf.length > 5 * 1024 * 1024) return null;
-    return await storeThumbnailBuffer(recordId, buf, type);
+    return { buf, contentType: type };
   } catch {
     return null;
   }
@@ -3959,7 +3995,63 @@ async function storeThumbnailBuffer(recordId: string, buf: Buffer, contentType: 
     return recordThumbnailUrl(recordId);
   } catch (error) {
     console.warn('[videos] COS thumbnail persistence failed:', error instanceof Error ? error.message : error);
-    return null;
+    try {
+      const thumbnailFile = await attachFile(COL, recordId, 'thumbnailFile', {
+        name: `${recordId}-thumbnail.${ext}`,
+        buf,
+        contentType,
+      });
+      if (!thumbnailFile) return null;
+      const record = await store.getById<Record<string, unknown>>(COL, recordId);
+      const analysis = parseJsonRecord<Record<string, unknown>>(record?.aiAnalysis, {});
+      const { thumbnailObjectKey: _staleThumbnailObjectKey, ...restAnalysis } = analysis;
+      await store.update(COL, recordId, {
+        thumbnailFile,
+        thumbnailUrl: recordThumbnailUrl(recordId),
+        aiAnalysis: JSON.stringify({ ...restAnalysis, thumbnailStorage: 'record_file', thumbnailExtension: ext }),
+      });
+      return recordThumbnailUrl(recordId);
+    } catch (fallbackError) {
+      console.warn('[videos] record thumbnail persistence failed:', fallbackError instanceof Error ? fallbackError.message : fallbackError);
+      return null;
+    }
+  }
+}
+
+async function publicSourceThumbnail(record: Record<string, unknown>): Promise<string> {
+  const sourceUrl = String(record.sourceUrl || '').trim();
+  const platform = String(record.platform || '') as Platform;
+  if (!sourceUrl) return '';
+  if (platform === 'youtube') return youtubeThumbnailFromUrl(sourceUrl);
+  if (platform === 'instagram' && /\/(?:p|reel|tv)\//i.test(sourceUrl)) return `${sourceUrl.replace(/[?#].*$/, '').replace(/\/$/, '')}/media/?size=l`;
+  if (platform !== 'tiktok' || !tiktokVideoId(sourceUrl)) return '';
+  try {
+    const response = await fetch(`https://www.tiktok.com/oembed?url=${encodeURIComponent(sourceUrl)}`, {
+      signal: AbortSignal.timeout(12_000),
+      headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json' },
+    });
+    if (response.ok) {
+      const payload = await response.json() as { thumbnail_url?: string };
+      if (/^https?:\/\//i.test(String(payload.thumbnail_url || ''))) return String(payload.thumbnail_url);
+    }
+  } catch {
+    // The public oEmbed endpoint rate-limits bursts; the public video page
+    // still carries an SSR cover preload that is safe to use as evidence.
+  }
+  try {
+    const response = await fetch(sourceUrl, {
+      signal: AbortSignal.timeout(12_000),
+      headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/130 Safari/537.36', 'Accept': 'text/html' },
+    });
+    if (!response.ok) return '';
+    const html = await response.text();
+    const encoded = html.match(/<link[^>]+href=["']([^"']+)["'][^>]+data-source=["']ssr-cover-preload["']/i)?.[1]
+      || html.match(/<link[^>]+data-source=["']ssr-cover-preload["'][^>]+href=["']([^"']+)["']/i)?.[1]
+      || '';
+    const cover = decodeHtml(encoded);
+    return /^https?:\/\//i.test(cover) ? cover : '';
+  } catch {
+    return '';
   }
 }
 

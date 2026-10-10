@@ -1119,7 +1119,7 @@ function summarizePipelineError(raw?: string): string {
   return text.length > 180 ? `${text.slice(0, 180)}...` : text;
 }
 
-function pipelineState(video: TrendVideo): { title: string; desc: string; spinning: boolean; failed: boolean } {
+export function pipelineState(video: TrendVideo): { title: string; desc: string; spinning: boolean; failed: boolean } {
   const analysis = video.aiAnalysis || {};
   const quotaError = /429|RESOURCE_EXHAUSTED|quota|prepayment credits|额度|余额/i.test(String(analysis.analysisError || analysis.downloadError || analysis.crawlerOpsLastError || ''));
   if (quotaError) {
@@ -1128,7 +1128,11 @@ function pipelineState(video: TrendVideo): { title: string; desc: string; spinni
   if (analysis.downloadStatus === 'ops_queued') {
     return { title: '后台增强分析中', desc: '已先生成基础分析；视频获取失败后已进入后台增强队列，成功后会升级为视频级分析。', spinning: true, failed: false };
   }
-  if (analysis.gemini && analysis.analysisQuality === 'video') {
+  if (analysis.gemini && (analysis.geminiStatus === 'needs_review' || analysis.analysisQuality === 'video_review_required')) {
+    const reviewCount = analysis.analysisReviewReasons?.length || 1;
+    return { title: '全片分析已完成，待人工复核', desc: `真实视频的全片结构和逐镜证据已经生成；还有 ${reviewCount} 项质量校验需要编导确认，不会继续显示为“生成中”。`, spinning: false, failed: false };
+  }
+  if (analysis.gemini && (analysis.geminiStatus === 'analyzed' || analysis.analysisQuality === 'video')) {
     return { title: 'AI 策略分析完成', desc: '已基于真实视频提取全片结构、前 10 秒五维拆解和可复用爆点。', spinning: false, failed: false };
   }
   if (analysis.analysisError) {
@@ -1223,7 +1227,7 @@ export function ThumbnailImage({
   }, [src, isDirectUrl]);
   if (failed || !src) return null;
   if (isDirectUrl) return <LsProgressiveMedia src={src} alt={`${title} · ${platform} 缩略图`} className={className} draggable={false} loading="lazy" preview={false} onError={() => setFailed(true)} />;
-  return blobUrl ? <LsProgressiveMedia src={blobUrl} alt={`${title} · ${platform} 缩略图`} className={className} draggable={false} preview={false} /> : null;
+  return blobUrl ? <img src={blobUrl} alt={`${title} · ${platform} 缩略图`} className={className} draggable={false} loading="lazy" decoding="async" onError={() => setFailed(true)} /> : null;
 }
 
 function AuthenticatedImage({ src, alt, className }: { src: string; alt: string; className: string }) {
@@ -2749,7 +2753,15 @@ function WatchModal({ video, onClose }: { video: TrendVideo; onClose: () => void
                 className="max-h-[72vh] w-full bg-black"
                 onReady={() => { setPreviewLoading(false); setPreviewError(''); }}
                 onLoadingChange={setPreviewLoading}
-                onError={message => { setPreviewLoading(false); setPreviewError(message || '视频预览失败'); }}
+                onError={message => {
+                  setPreviewLoading(false);
+                  if (embedUrl) {
+                    setPreviewError('');
+                    setUseEmbedPlayer(true);
+                    return;
+                  }
+                  setPreviewError(message || '视频预览失败');
+                }}
               />
               {previewLoading && !previewError && (
                 <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/45 text-white">
@@ -3090,6 +3102,7 @@ export function DirectorVideoDetailPanel({
   const isReadOnlySnapshot = payload?.analysisSource === 'weekly-plan-snapshot' || video.id.startsWith('weekly-reference-');
   const canRunExactAnalysis = !isReadOnlySnapshot && Boolean(video.recordId || video.id.startsWith('material-'));
   const canRunDetailAnalysis = isImagePost ? Boolean(video.recordId) : canRunExactAnalysis;
+  const needsDirectorReview = !isImagePost && (payload?.geminiStatus === 'needs_review' || payload?.analysisQuality === 'video_review_required');
   const detailedAnalysisReason = isReadOnlySnapshot
     ? '原爆款已删除，仅可查看周计划保存的历史分析快照。'
     : exactQuality.ready
@@ -3126,7 +3139,7 @@ export function DirectorVideoDetailPanel({
         {isImagePost && !imageAnalysisReady && <Button onClick={onReanalyzeImage} loading={analyzing} icon={<Images size={13} />}>重新分析图文</Button>}
         <Button onClick={onPreview}>预览原内容</Button>
         <Button type="primary" onClick={detailCreationReady ? onCreate : isImagePost ? onReanalyzeImage : onExactAnalysis} disabled={!detailCreationReady && !canRunDetailAnalysis} className="ml-auto">{isImagePost || video.id.startsWith('material-') ? '开始创作' : '爆款复刻'}</Button>
-        {!detailCreationReady && <p className="w-full text-xs text-text-secondary">{isImagePost ? '点击“开始创作”会先完成图文证据分析。' : pending ? '详细分析完成后会开放复刻，当前任务不会重复提交。' : canRunExactAnalysis ? '点击“爆款复刻”会先完成详细分析，再进入制作。' : detailedAnalysisReason}</p>}
+        {!detailCreationReady && <p className="w-full text-xs text-text-secondary">{isImagePost ? '点击“开始创作”会先完成图文证据分析。' : pending ? '详细分析完成后会开放复刻，当前任务不会重复提交。' : needsDirectorReview ? '逐镜分析已经完成；需先确认待复核的镜头证据，再进入制作。' : canRunExactAnalysis ? '点击“爆款复刻”会先完成详细分析，再进入制作。' : detailedAnalysisReason}</p>}
       </div>}
       styles={{ body: { padding: 0 } }}>
       <div className="border-b border-border px-5 py-3">
@@ -3527,9 +3540,9 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     const requestId = ++inventoryRequestRef.current;
     try {
       const response = await fetch(`/api/overseas/videos/inventory-summary?contentFormat=${contentFormat}`, { headers: authHeader() });
-      const data = await response.json().catch(() => ({})) as { totalItems?: number };
+      const data = await response.json().catch(() => ({})) as { totalItems?: number; visibleItems?: number };
       if (!response.ok) throw new Error('库存统计加载失败');
-      if (requestId === inventoryRequestRef.current) setTenantVideoTotalItems(Math.max(0, Number(data.totalItems || 0)));
+      if (requestId === inventoryRequestRef.current) setTenantVideoTotalItems(Math.max(0, Number(data.visibleItems ?? data.totalItems ?? 0)));
     } catch {
       // Keep the last successful inventory value. The list response carries
       // the same authoritative total and can repair this value later.
@@ -3561,9 +3574,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
         if (requestId !== videoRequestRef.current) return;
         setVideosError('');
         const videos = recordsToVideos(result.items || []);
-        if (!keyword && platform === 'all' && crawlTimeRange === 'all') {
-          setTenantVideoTotalItems(videos.filter(video => ACTIVE_PLATFORMS.includes(video.platform) && isDisplayableForFormat(video, contentFormat)).length);
-        }
+        if (!keyword && platform === 'all' && crawlTimeRange === 'all') setTenantVideoTotalItems(Math.max(0, Number(result.totalItems ?? 0)));
         setVideoPage(Number(result.page || nextPage));
         setVideoTotalPages(Math.max(1, Number(result.totalPages || nextPage)));
         setCrawledVideos(prev => {
@@ -3667,10 +3678,13 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
   useEffect(() => {
     setVideosLoaded(false);
     setVideoPage(1);
-    setTenantVideoTotalItems(null);
     void refreshInventory();
     void refreshVideos(1);
   }, [contentFormat, crawlTimeRange, platform]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    setTenantVideoTotalItems(null);
+  }, [contentFormat]);
 
   // 输入过程中不逐字请求，停顿 400ms 后再查。
   const searchDebounceRef = useRef(false);
@@ -4926,7 +4940,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                         <div className="flex h-full items-center justify-center text-text-muted"><Film size={22} /></div>
                       )}
                     </div>
-                    <div className="flex flex-1 flex-col p-3">
+                    <div className="flex min-h-52 flex-1 flex-col p-3">
                       <p className="line-clamp-2 text-sm font-bold leading-snug text-text-primary">{material.name}</p>
                       <p className="mt-1 line-clamp-1 text-xs font-semibold leading-5 text-text-muted" title={materialSemanticLabel(material)}>{materialSemanticLabel(material)}</p>
                       <div className="mt-3 grid grid-cols-2 gap-2">

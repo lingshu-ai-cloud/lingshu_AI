@@ -19,3 +19,11 @@ test('customer rail exposes four profile-style quick actions with expandable det
   assert.match(source, /quickPanel === 'notifications'/);
   assert.match(source, /quickPanel === 'search'/);
 });
+
+test('conversation workspace keeps tablet columns and exposes mobile list-chat-profile navigation', () => {
+  assert.match(source, /aria-label="移动端会话导航"/);
+  for (const label of ['会话列表', '当前对话', '客户资料']) assert.ok(source.includes(label), `missing ${label} mobile navigation`);
+  assert.match(source, /mobilePanel === 'list'[\s\S]*?md:contents/);
+  assert.match(source, /mobilePanel === 'chat'[\s\S]*?md:contents/);
+  assert.match(source, /mobilePanel === 'profile'[\s\S]*?md:contents/);
+});

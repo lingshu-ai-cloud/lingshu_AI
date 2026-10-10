@@ -18,6 +18,7 @@ import {
   Filter,
   Info,
   Languages,
+  List,
   MessageSquare,
   Search,
   Share2,
@@ -2417,8 +2418,28 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
       </> : <p className="mt-2 text-xs text-slate-500">没有对应的草稿记录，请返回交付看板选择具体客户任务。</p>}
     </section>}
     <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-ink p-0 lg:p-3" data-lingshu-guide="customer-workbench">
+      <nav aria-label="移动端会话导航" className="grid h-12 shrink-0 grid-cols-3 border-b border-border bg-white md:hidden">
+        {([
+          { id: 'list' as const, label: '会话列表', icon: List },
+          { id: 'chat' as const, label: '当前对话', icon: MessageSquare },
+          { id: 'profile' as const, label: '客户资料', icon: UserRound },
+        ]).map(item => {
+          const Icon = item.icon;
+          const active = mobilePanel === item.id;
+          return <button
+            key={item.id}
+            type="button"
+            aria-current={active ? 'page' : undefined}
+            onClick={() => setMobilePanel(item.id)}
+            className={`flex min-w-0 items-center justify-center gap-1.5 border-b-2 px-2 text-xs font-semibold transition-colors ${active ? 'border-accent text-accent' : 'border-transparent text-text-secondary hover:bg-surface-2 hover:text-text-primary'}`}
+          >
+            <Icon size={15} aria-hidden="true" />
+            <span className="truncate">{item.label}</span>
+          </button>;
+        })}
+      </nav>
       <div data-testid="conversation-workspace-main" className="ls-conversation-workspace min-h-0 flex-1">
-        <div className={mobilePanel === 'list' ? 'ls-conversation-workspace__pane flex min-h-0 min-w-0 flex-1 lg:contents' : 'hidden lg:contents'}>
+        <div className={mobilePanel === 'list' ? 'ls-conversation-workspace__pane flex min-h-0 min-w-0 flex-1 md:contents' : 'hidden md:contents'}>
         <CompactCustomerList
           view={view}
           selectedId={selectedId}
@@ -2431,7 +2452,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
           }}
         />
         </div>
-        <div className={mobilePanel === 'chat' ? 'ls-conversation-workspace__pane flex min-h-0 min-w-0 flex-1 lg:contents' : 'hidden lg:contents'}>
+        <div className={mobilePanel === 'chat' ? 'ls-conversation-workspace__pane flex min-h-0 min-w-0 flex-1 md:contents' : 'hidden md:contents'}>
         {pendingSendIntent&&pendingSendIntent.scope.customerId===selected?.id&&pendingSendIntent.state!=='accepted'&&<div className="border border-amber-200 bg-amber-50 p-3 text-xs">原发送结果未确认；不会自动重发。{pendingSendIntent.state==='prepared'&&<button type="button" className="ml-2 underline" onClick={()=>{if(undoSend?.eventId===pendingSendIntent.eventId){undoQueuedSend();return;}localStorage.removeItem(sendIntentStorageKey(pendingSendIntent.scope));removeTimelineEvent(pendingSendIntent.scope.customerId,pendingSendIntent.eventId);setPendingSendIntent(null);}}>取消尚未发起的请求</button>}<button type="button" className="ml-2 underline" onClick={()=>{void readCustomerSendRequest(pendingSendIntent).then(item=>{const next=recoverSendIntent(pendingSendIntent,item);saveSendIntent(next);updateTimelineEvent(next.scope.customerId,next.eventId,{sendStatus:next.state==='accepted'?'sent':'unknown',audit:{providerMessageId:item.providerMessageId||undefined}});showToast(next.state==='accepted'?'已读取真实平台发送回执':'平台结果仍未知，请勿重复发送');}).catch(error=>showToast(error instanceof Error?error.message:'无法读取发送状态'));}}>读取原发送状态</button></div>}
         {selected&&!selected.isMock&&<div className="border border-slate-200 bg-slate-50 p-3 text-xs"><strong>真人接管</strong>{manualHold?.identity===manualHoldIdentity&&<span className="ml-2">{manualHold.view.active?`负责人 ${manualHold.view.item?.ownerUserId} · 截止 ${manualHold.view.item?.expiresAt}`:'当前没有有效临时接管'}{manualHold.view.humanHandling?'；客户仍处于持久人工处理状态，到期或释放临时接管不会自动切换 AI。':''}</span>}<button type="button" className="ml-2 underline" onClick={reportManualActive} disabled={manualHoldUnknown===manualHoldIdentity}>明确接管十分钟</button><button type="button" className="ml-2 underline" onClick={()=>void refreshManualHold()}>只读刷新状态</button>{manualHold?.identity===manualHoldIdentity&&manualHold.view.active&&manualHold.view.canRelease&&<button type="button" className="ml-2 underline" disabled={manualHoldUnknown===manualHoldIdentity} onClick={()=>void releaseManualHold()}>明确释放临时接管</button>}{manualHoldError?.identity===manualHoldIdentity&&<p role="alert" className="mt-1 text-amber-800">{manualHoldError.message}</p>}{manualHoldUnknown===manualHoldIdentity&&<p className="mt-1 text-amber-800">操作结果未恢复，禁止重复操作；请先只读刷新实际持久状态。</p>}</div>}
         <ChatThread
@@ -2482,7 +2503,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
           onToast={showToast}
         />
         </div>
-        <div className={mobilePanel === 'profile' ? 'ls-conversation-workspace__pane flex min-h-0 min-w-0 flex-1 lg:contents' : 'hidden lg:contents'}>
+        <div className={mobilePanel === 'profile' ? 'ls-conversation-workspace__pane flex min-h-0 min-w-0 flex-1 md:contents' : 'hidden md:contents'}>
         <CustomerInfoRail
           key={selected?.id || 'no-customer'}
           customer={selected}

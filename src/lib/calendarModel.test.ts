@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { calendarDateTimeValue, calendarDayKey, calendarInstant, calendarMovedInstant, calendarPublishStatus, canMoveCalendarPost } from './calendarModel';
+import { calendarDateTimeValue, calendarDayKey, calendarInstant, calendarMovedInstant, calendarPublishStatus, canMoveCalendarPost, thumbnailUrlWithSourceFallback } from './calendarModel';
 
 assert.equal(calendarDayKey('2026-10-08T18:30:00Z'), '2026-10-09', 'publishing dates use Beijing time, independent of the browser timezone');
 assert.equal(calendarDateTimeValue('2026-10-08T18:30:00Z'), '2026-10-09T02:30');
@@ -23,4 +23,10 @@ assert.equal(canMoveCalendarPost({ ...post, id: 'demo-calendar-1' }, true), fals
 assert.equal(calendarPublishStatus({ status: 'needs_attention', platformPostId: 'receipt-1' }), 'needs_action', 'receipt recovery must remain visible even if a receipt exists');
 assert.equal(calendarPublishStatus({ status: 'finalize_pending', platformPostId: 'receipt-1' }), 'working');
 assert.equal(calendarPublishStatus({ status: 'scheduled', platformPostId: 'receipt-1' }), 'done');
+assert.equal(
+  thumbnailUrlWithSourceFallback('/api/overseas/videos/removed-record/thumbnail', 'https://www.tiktok.com/@factory/video/123'),
+  '/api/overseas/videos/removed-record/thumbnail?sourceUrl=https%3A%2F%2Fwww.tiktok.com%2F%40factory%2Fvideo%2F123',
+  'frozen weekly plans retain a public-source thumbnail fallback after the discovery record is removed',
+);
+assert.equal(thumbnailUrlWithSourceFallback('https://cdn.example.test/cover.jpg', 'https://www.tiktok.com/@factory/video/123'), 'https://cdn.example.test/cover.jpg');
 console.log('Calendar timezone and schedule boundary tests passed');

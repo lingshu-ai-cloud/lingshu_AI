@@ -50,7 +50,8 @@ assert.match(componentSource, /refreshMaterialPreviewUrl[^]*?重新获取播放�
 assert.match(componentSource, /aria-label={`编辑 \${material\.name}`}[^]*?aria-label={`删除 \${material\.name}`}/, '每条可管理素材必须固定提供编辑与删除入口');
 assert.match(componentSource, /INSPIRATION_PAGE_SIZE = 100/, '灵感列表必须一次读取当前租户的全部常规库存，避免分页后前端过滤造成假缺失');
 assert.match(componentSource, /inventory-summary[^]*?setTenantVideoTotalItems/, '首屏必须独立优先读取真实库存量');
-assert.match(componentSource, /setTenantVideoTotalItems\(videos\.filter\(video => ACTIVE_PLATFORMS\.includes\(video\.platform\) && isDisplayableForFormat\(video, contentFormat\)\)\.length\)/, '列表加载后 Tab 数量必须改用与可展示卡片一致的去重结果数');
+assert.match(componentSource, /setTenantVideoTotalItems\(Math\.max\(0, Number\(result\.totalItems \?\? 0\)\)\)/, '列表加载后 Tab 数量必须使用服务端完整可见结果数，不能用当前页长度覆盖');
+assert.match(componentSource, /全片分析已完成，待人工复核/, '已完成但待复核的详细分析不能继续显示为生成中');
 assert.match(componentSource, /正在读取真实视频库存/, '首次列表请求完成前必须显示加载动画，不能先显示空状态');
 assert.match(componentSource, /<Pagination current=\{videoPage\}[^]*?pageSize=\{INSPIRATION_PAGE_SIZE\}[^]*?showSizeChanger=\{false\}[^]*?onChange=\{page => void refreshVideos\(page\)\}/, '灵感列表必须使用固定页大小的服务端分页');
 assert.doesNotMatch(componentSource, />\s*加载更多\s*</, '灵感列表不再使用追加式“加载更多”');

@@ -131,6 +131,8 @@ assert.doesNotMatch(css, /(?:^|[;{]\s*)(?:column-count|columns)\s*:/m, 'calendar
 assert.match(source, /const protectedThumbnailCache = new Map<string, Promise<Blob \| null>>\(\)/, 'duplicate protected covers must share one request and cached result');
 assert.match(source, /const THUMBNAIL_TIMEOUT_MS = 4_000/, 'protected cover requests must use a short bounded timeout');
 assert.match(source, /fetch\(src, \{ headers: authHeader\(\), signal: controller\.signal \}\)/, 'same-origin protected thumbnail routes must be normalized and fetched with the active tenant session');
+assert.match(source, /if \(!blob\) protectedThumbnailCache\.delete\(src\)/, 'a transient protected-cover failure must not be cached permanently');
+assert.match(source, /retryKey === 0[^]*?setRetryKey/, 'calendar cards must retry one cold thumbnail recovery automatically');
 assert.match(source, /封面暂不可用/, 'cover failure copy must be neutral and truthful');
 assert.match(source, /<Drawer title="排期详情"/);
 console.log('Calendar bounded time-grid height, 08:00 scrolling and compact event layout tests passed');
