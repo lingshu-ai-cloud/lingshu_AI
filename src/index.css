@@ -943,11 +943,6 @@
   }
 }
 
-body:has([data-lingshu-assistant-clearance="bottom-navigation"]) [data-global-assistant="root"]:not([data-lingshu-assistant-dragged="true"]) {
-  bottom: 5rem;
-  transition: bottom var(--ls-motion-exit) var(--ls-ease-standard);
-}
-
 @media (max-width: 1279px) {
   .studio-workbench-panel-layout { grid-template-columns: 1fr; }
 }

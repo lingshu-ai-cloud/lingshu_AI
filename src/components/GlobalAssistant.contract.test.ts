@@ -5,6 +5,7 @@ const source = fs.readFileSync(new URL('./GlobalAssistant.tsx', import.meta.url)
 const appSource = fs.readFileSync(new URL('../App.tsx', import.meta.url), 'utf8');
 const composerSource = fs.readFileSync(new URL('./assistant/AssistantComposer.tsx', import.meta.url), 'utf8');
 const assistantGuidesSource = fs.readFileSync(new URL('../lib/assistantGuides.ts', import.meta.url), 'utf8');
+const globalStylesSource = fs.readFileSync(new URL('../index.css', import.meta.url), 'utf8');
 
 function sourceSection(startMarker: string, endMarker: string, label: string) {
   const start = source.indexOf(startMarker);
@@ -20,11 +21,22 @@ assert.doesNotMatch(source, /data-assistant-surface=["']quick-actions["']|SKILL_
 assert.equal(source.match(/data-global-assistant=["']root["']/g)?.length, 1, '页面只能渲染一个灵小枢根入口');
 
 const launcherClickSource = sourceSection('const handleLauncherClick', '\n  useEffect(', '灵小枢点击处理');
+const launcherMarkup = sourceSection('<Badge count={pendingCount}', '</Button>', '灵小枢右上角入口');
 assert.match(launcherClickSource, /openCurrentPageAgent\(\)/, '主入口点击灵小枢必须直接进入当前工作对话');
 assert.doesNotMatch(launcherClickSource, /setMode\('expanded'\)|quick-actions|SKILL_AGENTS/, '点击灵小枢不得打开四助手快捷轮盘');
-assert.match(source, /handlePointerDown[\s\S]{0,320}setPointerCapture\(event\.pointerId\)/, '灵小枢拖动必须统一使用 Pointer Events');
-assert.doesNotMatch(source, /\bdraggable\b|onDragStartCapture|handleNativeDrag/, '原生 HTML 拖拽不得吞掉灵小枢的普通点击');
-assert.match(source, /if \(page === 'digitalEmployees'\) \{\s*setLauncherRetracted\(false\)/, '智能经营页的灵小枢入口必须常驻展开');
+assert.match(source, /data-global-assistant="root"[\s\S]{0,220}className="fixed bottom-\[calc\(env\(safe-area-inset-bottom\)\+1rem\)\] right-4 z-\[75\]/, '灵小枢入口必须固定在页面右下角并避让设备安全区');
+assert.match(source, /data-global-assistant="launcher"[\s\S]{0,300}aria-label=\{mode === 'chat' \? '收起灵小枢对话' : '询问灵小枢'\}/, '右上角入口必须以清晰文本直接打开或收起对话');
+assert.match(launcherMarkup, /shape="round"/, '灵小枢入口必须采用紧凑胶囊形态');
+assert.match(launcherMarkup, /!h-11/, '灵小枢入口必须保留 44px 触控高度');
+assert.match(source, /aria-expanded=\{mode === 'chat'\}[\s\S]{0,80}aria-controls="global-assistant-panel"/, '入口必须暴露弹窗展开关系');
+assert.match(launcherMarkup, /aria-haspopup="dialog"/, '灵小枢入口必须声明它会打开对话浮层');
+assert.match(launcherMarkup, /var\(--ls-action-gradient\)/, '灵小枢入口图标必须复用全局主操作渐变 Token');
+assert.doesNotMatch(source, /handlePointerDown|ASSISTANT_POSITION_KEY|data-global-assistant="edge-launcher"|setLauncherRetracted/, '右上角入口不得再保留拖动、旧坐标或自动缩边交互');
+assert.doesNotMatch(globalStylesSource, /data-lingshu-assistant-clearance="bottom-navigation"/, '灵小枢入口不得依赖已经失效的旧底部导航标记');
+assert.match(source, /id="global-assistant-panel"[\s\S]{0,720}bottom-14 right-0/, '灵小枢弹窗必须锚定在右下角入口上方');
+assert.match(source, /role="dialog"[\s\S]{0,160}aria-modal="false"[\s\S]{0,160}aria-labelledby="global-assistant-panel-title"[\s\S]{0,160}aria-describedby="global-assistant-panel-description"/, '灵小枢必须以有名称和说明的非模态对话浮层呈现');
+assert.match(source, /mode !== 'chat'\) return;[\s\S]{0,200}getElementById\('global-assistant-panel'\)\?\.focus\(\)/, '打开弹窗后必须把焦点移入对话区域');
+assert.match(source, /setMode\('breathing'\);\s*window\.requestAnimationFrame\(\(\) => launcherButtonRef\.current\?\.focus\(\)\)/, '关闭弹窗后必须把焦点归还右上角入口');
 assert.match(appSource, /\(!isAgentProductionSession\(\) \|\| page === 'digitalEmployees'\) && <GlobalAssistant/, '智能经营页不得因制作会话状态卸载灵小枢');
 assert.match(appSource, /suppressForRightSidebar=\{page !== 'digitalEmployees' && \(/, '智能经营页必须保留入口，其他页仍遵守右侧栏避让规则');
 assert.match(source, /width: assistantPanelWidth,\s*maxWidth: 'calc\(100vw - 32px\)'/, '灵小枢面板必须用视口宽度约束，不能被零宽定位根节点压缩');
@@ -199,15 +211,8 @@ assert.ok(
 );
 
 assert.match(source, /shouldNotifyAssistant\(detail\.reason \?\? 'routine'\)/, '一次性语音气泡也必须遵守通知策略');
-const launcherSource = sourceSection('data-global-assistant="launcher"', '<AssistantLauncherMascot', '灵小枢启动器动画');
-const policyFlag = source.match(/const (\w*[Pp]erformance\w*)\s*=\s*(?:Boolean\()?performance\s*&&\s*shouldNotifyAssistant\(performance\.reason\)/)?.[1];
 const routinePerformanceIgnored = /if \(!shouldNotifyAssistant\(reason\)\)[\s\S]{0,160}(?:return|setPerformance\(null\))/.test(source);
-const launcherAnimationGated = /animate=\{performance\s*&&\s*shouldNotifyAssistant\(performance\.reason\)/.test(launcherSource)
-  || Boolean(policyFlag && launcherSource.includes(`animate={${policyFlag} &&`));
-assert.ok(
-  routinePerformanceIgnored || launcherAnimationGated,
-  '常规后台性能事件不得触发灵小枢动画',
-);
+assert.ok(routinePerformanceIgnored, '常规后台性能事件不得触发灵小枢提示');
 
 assert.match(source, /focusedTaskCard\.secondaryActions\.map/, '决策形态必须渲染交互选择卡操作');
 assert.match(source, /focusedTaskCard\.workspace\.href/, '完整结果必须可以进入工作区');

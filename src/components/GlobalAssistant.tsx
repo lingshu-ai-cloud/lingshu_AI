@@ -4,8 +4,8 @@ import {
   useMemo,
   useRef,
   useState,
-  type PointerEvent as ReactPointerEvent,
 } from 'react';
+import { Badge, Button } from 'antd';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   ArrowLeft,
@@ -41,7 +41,6 @@ import {
 import AgentReply from './AgentReply';
 import AssistantComposer, { assistantAttachmentKind } from './assistant/AssistantComposer';
 import KnowledgeIntakePanel, { type AppliedProfile } from './enterprise/KnowledgeIntakePanel';
-import AssistantLauncherMascot, { PAGE_EXPRESSION, type AssistantExpression } from './AssistantLauncherMascot';
 import { studioApi } from '../lib/studioApi';
 import {
   clearAssistantThreadJournal,
@@ -91,14 +90,8 @@ const GUIDE_MEMORY_KEY = 'lingshu-feature-guides-human-v1';
 const GUIDE_HOVER_DELAY_MS = 900;
 const GUIDE_COOLDOWN_MS = 45_000;
 const GUIDE_VISIBLE_MS = 6_000;
-const ASSISTANT_AUTO_RETRACT_MS = 5_000;
 const ENTERPRISE_GUIDE_MEMORY_ID = '__enterprise-guide-shown__';
-const ASSISTANT_POSITION_KEY = 'lingshu-global-assistant-position-v1';
 const ASSISTANT_PRIMARY_ENTRY_SEEN_KEY = 'lingshu-assistant-primary-entry-seen-v1';
-const ASSISTANT_LAUNCHER_WIDTH = 60;
-const ASSISTANT_LAUNCHER_HEIGHT = 72;
-const ASSISTANT_VIEWPORT_GAP = 8;
-const ASSISTANT_DRAG_THRESHOLD = 6;
 
 type AssistantPerformance = { phase: string; message?: string; reason: AssistantNotificationReason };
 type AssistantSpeech = { id: number; message: string };
@@ -117,33 +110,6 @@ type GuideMemory = {
   seen: string[];
   lastShownAt: number;
 };
-
-type AssistantPosition = { x: number; y: number };
-
-function clampAssistantPosition(position: AssistantPosition, viewportWidth: number, viewportHeight: number): AssistantPosition {
-  const maxX = Math.max(ASSISTANT_VIEWPORT_GAP, viewportWidth - ASSISTANT_LAUNCHER_WIDTH - ASSISTANT_VIEWPORT_GAP);
-  const maxY = Math.max(ASSISTANT_VIEWPORT_GAP, viewportHeight - ASSISTANT_LAUNCHER_HEIGHT - ASSISTANT_VIEWPORT_GAP);
-  return {
-    x: Math.min(maxX, Math.max(ASSISTANT_VIEWPORT_GAP, position.x)),
-    y: Math.min(maxY, Math.max(ASSISTANT_VIEWPORT_GAP, position.y)),
-  };
-}
-
-function clampViewportStart(preferred: number, size: number, viewportSize: number, gap: number): number {
-  const maxStart = Math.max(gap, viewportSize - size - gap);
-  return Math.min(maxStart, Math.max(gap, preferred));
-}
-
-function readAssistantPosition(): AssistantPosition | null {
-  if (typeof window === 'undefined') return null;
-  try {
-    const parsed = JSON.parse(window.localStorage.getItem(ASSISTANT_POSITION_KEY) || 'null') as Partial<AssistantPosition> | null;
-    if (!parsed || !Number.isFinite(parsed.x) || !Number.isFinite(parsed.y)) return null;
-    return clampAssistantPosition({ x: Number(parsed.x), y: Number(parsed.y) }, window.innerWidth, window.innerHeight);
-  } catch {
-    return null;
-  }
-}
 
 interface Props {
   page: Page;
@@ -715,7 +681,6 @@ export default function GlobalAssistant({
   const fadeExit = { opacity: 0, transition: { duration: (reduceMotion ? lsMotion.duration.instant : lsMotion.duration.exit) / 1000, ease: lsMotion.ease.exit } };
   const spatialTransition = reduceMotion ? { duration: 0 } : { ...lsMotion.spring.standard, opacity: fadeTransition };
   const [mode, setMode] = useState<'breathing' | 'chat'>('breathing');
-  const [launcherRetracted, setLauncherRetracted] = useState(false);
   const [panelView, setPanelView] = useState<AssistantPanelView>('chat');
   const activeAgent = PRIMARY_ASSISTANT_THREAD;
   const [assistantTool, setAssistantTool] = useState<AssistantTool | null>(null);
@@ -731,21 +696,10 @@ export default function GlobalAssistant({
   const [pendingAttachments, setPendingAttachments] = useState<File[]>([]);
   const [attachmentError, setAttachmentError] = useState('');
   const [attachmentUploading, setAttachmentUploading] = useState(false);
-  const [assistantPosition, setAssistantPosition] = useState<AssistantPosition | null>(readAssistantPosition);
   const [viewport, setViewport] = useState(() => ({
     width: typeof window === 'undefined' ? 1440 : window.innerWidth,
     height: typeof window === 'undefined' ? 900 : window.innerHeight,
   }));
-  const [launcherDragging, setLauncherDragging] = useState(false);
-  const launcherDragRef = useRef<{
-    pointerId: number;
-    startX: number;
-    startY: number;
-    originX: number;
-    originY: number;
-    moved: boolean;
-  } | null>(null);
-  const suppressLauncherClickRef = useRef(false);
   const featureGuideTimerRef = useRef<number | null>(null);
   const featureGuideHoverTimerRef = useRef<number | null>(null);
   const speechTimerRef = useRef<number | null>(null);
@@ -754,7 +708,7 @@ export default function GlobalAssistant({
   const lastGuideTargetRef = useRef<HTMLElement | null>(null);
   const messageScrollRef = useRef<HTMLDivElement>(null);
   const assistantInputRef = useRef<HTMLTextAreaElement>(null);
-  const assistantRootRef = useRef<HTMLDivElement>(null);
+  const launcherButtonRef = useRef<HTMLAnchorElement | HTMLButtonElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const handledKickoffs = useRef(new Set<string>());
   const handledRestores = useRef(new Set<string>());
@@ -797,7 +751,6 @@ export default function GlobalAssistant({
 
   const pageContext = useMemo(() => liveContext ?? DEFAULT_CONTEXT[pageKey(page)] ?? DEFAULT_CONTEXT.strategy, [liveContext, page]);
   const currentPageAgent = useMemo(() => orbitIdForPage(page), [page]);
-  const assistantExpression = PAGE_EXPRESSION[page];
   const activeContext = useMemo(() => contextForOrbit(currentPageAgent, pageContext), [currentPageAgent, pageContext]);
   const activeThread = threads[activeAgent];
   const focusedTaskCard = activeThread.focusedTaskId
@@ -809,7 +762,6 @@ export default function GlobalAssistant({
   const completedTodoItems = todoItems.filter(item => item.completed);
   const orderedTodoItems = [...activeTodoItems, ...completedTodoItems];
   const pendingCount = todoItems.length ? activeTodoItems.length : Math.max(0, Number(pageContext.pendingCount ?? 0));
-  const pendingBadge = pendingCount > 9 ? '9+' : String(pendingCount);
   const activeAgentLabel = '灵小枢';
   const isCustomerTodoView = panelView === 'todo' && pageContext.agent === 'conversion';
   const panelTitle = assistantTool === 'knowledge-intake'
@@ -824,30 +776,8 @@ export default function GlobalAssistant({
     : panelView === 'decision' && focusedTaskCard
       ? focusedTaskCard.title
       : isCustomerTodoView ? '当前：我的客户' : `当前：${activeContext.label}`;
-  const dockOnLeft = assistantPosition ? assistantPosition.x < viewport.width / 2 : false;
-  const dockOnTop = assistantPosition ? assistantPosition.y + ASSISTANT_LAUNCHER_HEIGHT / 2 < viewport.height / 2 : false;
-  const launcherAtEdge = mode === 'breathing' && launcherRetracted && !assistantPosition;
-  const assistantPanelHeight = assistantPosition
-    ? Math.max(120, Math.min(720, dockOnTop
-      ? viewport.height - assistantPosition.y - ASSISTANT_LAUNCHER_HEIGHT - 16
-      : assistantPosition.y - 16))
-    : Math.min(720, viewport.height - 112);
+  const assistantPanelHeight = Math.max(120, Math.min(720, viewport.height - 96));
   const assistantPanelWidth = Math.min(assistantTool === 'knowledge-intake' ? 560 : 420, viewport.width - 32);
-  const positionedPopupLeft = (popupWidth: number, gap = 8) => {
-    if (!assistantPosition) return undefined;
-    const preferredViewportLeft = dockOnLeft
-      ? assistantPosition.x + 72
-      : assistantPosition.x - 12 - popupWidth;
-    return clampViewportStart(preferredViewportLeft, popupWidth, viewport.width, gap) - assistantPosition.x;
-  };
-  const positionedPanelLeft = assistantPosition
-    ? clampViewportStart(
-      dockOnLeft ? assistantPosition.x : assistantPosition.x + ASSISTANT_LAUNCHER_WIDTH - assistantPanelWidth,
-      assistantPanelWidth,
-      viewport.width,
-      16,
-    ) - assistantPosition.x
-    : undefined;
   const performanceLines = PERFORMANCE_LINES[performance?.phase || 'default'] || PERFORMANCE_LINES.default;
   const performanceMessage = performance?.message || performanceLines[performanceLineIndex % performanceLines.length];
 
@@ -1257,7 +1187,6 @@ export default function GlobalAssistant({
       const current = useAssistantStore.getState().threads[agentId];
       setUnreadCount(agentId, current.unreadCount + 1);
       setSpeechBubble({ id: Date.now(), message: response.notification.message });
-      setLauncherRetracted(false);
     }
     refreshCurrentStatus();
   }, [executeAssistantAction, focusTaskCard, page, persistThread, setUnreadCount, upsertTaskCard]);
@@ -1625,7 +1554,6 @@ export default function GlobalAssistant({
       const thread = useAssistantStore.getState().threads[targetAgent];
       setUnreadCount(targetAgent, thread.unreadCount + 1);
       setSpeechBubble({ id: Date.now(), message: detail.card.conclusion });
-      setLauncherRetracted(false);
       if (mode !== 'chat') setMode('breathing');
     };
     window.addEventListener('lingshu-assistant-card', handler);
@@ -1656,7 +1584,6 @@ export default function GlobalAssistant({
       setPerformance({ phase: detail.phase || 'default', message: detail.message?.trim() || undefined, reason });
       setPerformanceHidden(false);
       setPerformanceLineIndex(0);
-      setLauncherRetracted(false);
     };
     window.addEventListener('lingshu-assistant-performance', handler);
     return () => window.removeEventListener('lingshu-assistant-performance', handler);
@@ -1680,7 +1607,6 @@ export default function GlobalAssistant({
       if (!shouldNotifyAssistant(detail.reason ?? 'routine')) return;
       if (speechTimerRef.current) window.clearTimeout(speechTimerRef.current);
       setSpeechBubble({ id: Date.now(), message });
-      setLauncherRetracted(false);
       setMode('breathing');
       const durationMs = Math.max(2_500, Math.min(15_000, Number(detail.durationMs || 7_000)));
       speechTimerRef.current = window.setTimeout(() => setSpeechBubble(null), durationMs);
@@ -1700,7 +1626,6 @@ export default function GlobalAssistant({
     } catch {
       // Storage is optional; the primary entry remains usable without it.
     }
-    setLauncherRetracted(false);
     setSpeechBubble({ id: Date.now(), message: '告诉灵小枢你想完成什么，我会把目标变成计划并陪你推进。' });
     if (speechTimerRef.current) window.clearTimeout(speechTimerRef.current);
     speechTimerRef.current = window.setTimeout(() => setSpeechBubble(null), 12_000);
@@ -1769,6 +1694,12 @@ export default function GlobalAssistant({
   }, [activeThread.isFollowingLatest, activeThread.messages, mode, panelView]);
 
   useEffect(() => {
+    if (mode !== 'chat') return;
+    const frame = window.requestAnimationFrame(() => document.getElementById('global-assistant-panel')?.focus());
+    return () => window.cancelAnimationFrame(frame);
+  }, [mode]);
+
+  useEffect(() => {
     const input = assistantInputRef.current;
     if (!input) return;
     input.style.height = 'auto';
@@ -1796,6 +1727,7 @@ export default function GlobalAssistant({
     setAssistantTool(null);
     setPanelView('chat');
     setMode('breathing');
+    window.requestAnimationFrame(() => launcherButtonRef.current?.focus());
   }, [activeAgent, persistThread]);
 
   const returnToConversation = useCallback(() => {
@@ -1837,62 +1769,9 @@ export default function GlobalAssistant({
     onSessionRefresh?.();
   }, [activeAgent, executeAssistantAction, focusedRunControl, loading, onSessionRefresh, page, persistThread, presentActionResponse]);
 
-  const handlePointerDown = (event: ReactPointerEvent<HTMLButtonElement>) => {
-    const rootRect = assistantRootRef.current?.getBoundingClientRect();
-    if (!rootRect) return;
-    event.currentTarget.setPointerCapture(event.pointerId);
-    launcherDragRef.current = {
-      pointerId: event.pointerId,
-      startX: event.clientX,
-      startY: event.clientY,
-      originX: rootRect.left,
-      originY: rootRect.top,
-      moved: false,
-    };
-  };
-
-  const handlePointerMove = (event: ReactPointerEvent<HTMLButtonElement>) => {
-    const drag = launcherDragRef.current;
-    if (!drag || drag.pointerId !== event.pointerId) return;
-    const deltaX = event.clientX - drag.startX;
-    const deltaY = event.clientY - drag.startY;
-    if (!drag.moved && Math.hypot(deltaX, deltaY) < ASSISTANT_DRAG_THRESHOLD) return;
-    if (!drag.moved) {
-      drag.moved = true;
-      setLauncherDragging(true);
-      setLauncherRetracted(false);
-      setMode('breathing');
-    }
-    setAssistantPosition(clampAssistantPosition(
-      { x: drag.originX + deltaX, y: drag.originY + deltaY },
-      viewport.width,
-      viewport.height,
-    ));
-  };
-
-  const handlePointerUp = (event: ReactPointerEvent<HTMLButtonElement>) => {
-    const drag = launcherDragRef.current;
-    if (drag?.pointerId === event.pointerId) {
-      if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
-      if (drag.moved) {
-        const next = clampAssistantPosition(
-          { x: drag.originX + event.clientX - drag.startX, y: drag.originY + event.clientY - drag.startY },
-          viewport.width,
-          viewport.height,
-        );
-        setAssistantPosition(next);
-        window.localStorage.setItem(ASSISTANT_POSITION_KEY, JSON.stringify(next));
-        suppressLauncherClickRef.current = true;
-        window.setTimeout(() => { suppressLauncherClickRef.current = false; }, 0);
-      }
-      launcherDragRef.current = null;
-    }
-    setLauncherDragging(false);
-  };
-
   const handleLauncherClick = () => {
-    if (suppressLauncherClickRef.current) {
-      suppressLauncherClickRef.current = false;
+    if (mode === 'chat') {
+      closeAssistant();
       return;
     }
     if (assistantTool === 'knowledge-intake') {
@@ -1906,60 +1785,29 @@ export default function GlobalAssistant({
     if (mode !== 'chat' && assistantTool !== 'knowledge-intake') return;
     const closePanel = (event: KeyboardEvent) => {
       if (event.key !== 'Escape' || event.defaultPrevented) return;
-      persistThread(activeAgent);
-      setAssistantTool(null);
-      setPanelView('chat');
-      setMode('breathing');
+      closeAssistant();
     };
     window.addEventListener('keydown', closePanel);
     return () => window.removeEventListener('keydown', closePanel);
-  }, [activeAgent, assistantTool, mode, persistThread]);
-
-  useEffect(() => {
-    setLauncherRetracted(false);
-  }, [page]);
+  }, [assistantTool, closeAssistant, mode]);
 
   useEffect(() => {
     const handleResize = () => {
-      const nextViewport = { width: window.innerWidth, height: window.innerHeight };
-      setViewport(nextViewport);
-      setAssistantPosition(current => {
-        if (!current) return null;
-        const next = clampAssistantPosition(current, nextViewport.width, nextViewport.height);
-        window.localStorage.setItem(ASSISTANT_POSITION_KEY, JSON.stringify(next));
-        return next;
-      });
+      setViewport({ width: window.innerWidth, height: window.innerHeight });
     };
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  useEffect(() => {
-    if (page === 'digitalEmployees') {
-      setLauncherRetracted(false);
-      return;
-    }
-    if (assistantPosition || mode !== 'breathing' || (performance && shouldNotifyAssistant(performance.reason) && !performanceHidden)) {
-      setLauncherRetracted(false);
-      return;
-    }
-    if (launcherRetracted) return;
-    const timer = window.setTimeout(() => setLauncherRetracted(true), ASSISTANT_AUTO_RETRACT_MS);
-    return () => window.clearTimeout(timer);
-  }, [assistantPosition, launcherRetracted, mode, page, performance, performanceHidden]);
-
   if (suppressForRightSidebar) return null;
 
   return (
     <div
-      ref={assistantRootRef}
       data-global-assistant="root"
-      data-lingshu-assistant-dragged={assistantPosition ? 'true' : 'false'}
-      className={`fixed ${page === 'digitalEmployees' && mode === 'breathing' ? 'z-[35]' : 'z-[75]'} ${launcherDragging ? '' : 'transition-[left,right,top,bottom]'} ${assistantPosition ? '' : dockOnLeft ? 'bottom-5 left-4 lg:left-[292px]' : launcherAtEdge ? 'bottom-5 right-0' : 'bottom-5 right-5'}`}
-      style={{ ...(assistantPosition ? { left: assistantPosition.x, top: assistantPosition.y } : {}), transitionDuration: reduceMotion || launcherDragging ? '0ms' : 'var(--ls-motion-standard)', transitionTimingFunction: 'var(--ls-ease-standard)' }}
+      className="fixed bottom-[calc(env(safe-area-inset-bottom)+1rem)] right-4 z-[75] md:bottom-5 md:right-5"
     >
       <AnimatePresence>
-        {mode === 'breathing' && !launcherAtEdge && performance && shouldNotifyAssistant(performance.reason) && !performanceHidden && (
+        {mode === 'breathing' && performance && shouldNotifyAssistant(performance.reason) && !performanceHidden && (
           <motion.div
             key={`performance-${performance.phase}`}
             data-assistant-surface="floating-reminder"
@@ -1968,11 +1816,10 @@ export default function GlobalAssistant({
             animate={{ opacity: 1 }}
             exit={fadeExit}
             transition={fadeTransition}
-            className={`absolute z-30 w-[248px] max-w-[calc(100vw-104px)] rounded-lg border border-border bg-surface p-3 shadow-lg ${assistantPosition ? '' : dockOnLeft ? 'left-[72px]' : 'right-[72px]'} ${dockOnTop ? 'top-1' : 'bottom-1'}`}
+            className="absolute bottom-0 right-[calc(100%+8px)] z-30 w-[248px] max-w-[calc(100vw-176px)] rounded-lg border border-border bg-surface p-3 shadow-lg"
             style={{
               width: Math.min(248, viewport.width - 104),
-              maxWidth: 'calc(100vw - 104px)',
-              ...(assistantPosition ? { left: positionedPopupLeft(Math.min(248, viewport.width - 104)) } : {}),
+              maxWidth: 'calc(100vw - 176px)',
             }}
           >
             <button
@@ -1987,13 +1834,13 @@ export default function GlobalAssistant({
             <p className="ls-type-label-medium pr-6 text-accent">灵小枢陪你等</p>
             <p className="ls-type-body-small mt-1 text-text-secondary">{performanceMessage}</p>
             <span className="ls-type-label-medium mt-2 inline-flex items-center gap-1.5 text-accent"><Loader2 size={12} className="motion-safe:animate-spin" aria-hidden="true" />处理中</span>
-            <span className={`absolute h-4 w-4 rotate-45 border-border bg-surface ${dockOnLeft ? '-left-2 border-b border-l' : '-right-2 border-r border-t'} ${dockOnTop ? 'top-6' : 'bottom-6'}`} />
+            <span className="absolute -right-2 bottom-5 h-4 w-4 rotate-45 border-r border-t border-border bg-surface" />
           </motion.div>
         )}
       </AnimatePresence>
 
       <AnimatePresence>
-        {mode === 'breathing' && !launcherAtEdge && (!performance || performanceHidden || !shouldNotifyAssistant(performance.reason)) && speechBubble && (
+        {mode === 'breathing' && (!performance || performanceHidden || !shouldNotifyAssistant(performance.reason)) && speechBubble && (
           <motion.div
             key={`speech-${speechBubble.id}`}
             data-assistant-surface="floating-reminder"
@@ -2002,22 +1849,21 @@ export default function GlobalAssistant({
             animate={{ opacity: 1 }}
             exit={fadeExit}
             transition={fadeTransition}
-            className={`absolute z-30 w-[248px] max-w-[calc(100vw-104px)] rounded-lg border border-border bg-surface p-3 shadow-lg ${assistantPosition ? '' : dockOnLeft ? 'left-[72px]' : 'right-[72px]'} ${dockOnTop ? 'top-1' : 'bottom-1'}`}
+            className="absolute bottom-0 right-[calc(100%+8px)] z-30 w-[248px] max-w-[calc(100vw-176px)] rounded-lg border border-border bg-surface p-3 shadow-lg"
             style={{
               width: Math.min(248, viewport.width - 104),
-              maxWidth: 'calc(100vw - 104px)',
-              ...(assistantPosition ? { left: positionedPopupLeft(Math.min(248, viewport.width - 104)) } : {}),
+              maxWidth: 'calc(100vw - 176px)',
             }}
           >
             <p className="ls-type-label-medium text-accent">灵小枢</p>
             <p className="ls-type-body-small mt-1 text-text-secondary">{speechBubble.message}</p>
-            <span className={`absolute h-4 w-4 rotate-45 border-border bg-surface ${dockOnLeft ? '-left-2 border-b border-l' : '-right-2 border-r border-t'} ${dockOnTop ? 'top-6' : 'bottom-6'}`} />
+            <span className="absolute -right-2 bottom-5 h-4 w-4 rotate-45 border-r border-t border-border bg-surface" />
           </motion.div>
         )}
       </AnimatePresence>
 
       <AnimatePresence>
-        {mode === 'breathing' && !launcherAtEdge && (!performance || performanceHidden || !shouldNotifyAssistant(performance.reason)) && !speechBubble && featureGuide && (
+        {mode === 'breathing' && (!performance || performanceHidden || !shouldNotifyAssistant(performance.reason)) && !speechBubble && featureGuide && (
           <motion.div
             key={featureGuide.id}
             data-assistant-surface="floating-reminder"
@@ -2026,11 +1872,10 @@ export default function GlobalAssistant({
             animate={{ opacity: 1 }}
             exit={fadeExit}
             transition={fadeTransition}
-            className={`absolute z-20 w-[236px] max-w-[calc(100vw-104px)] rounded-lg border border-border bg-surface p-3 shadow-lg ${assistantPosition ? '' : dockOnLeft ? 'left-[72px]' : 'right-[72px]'} ${dockOnTop ? 'top-1' : 'bottom-1'}`}
+            className="absolute bottom-0 right-[calc(100%+8px)] z-20 w-[236px] max-w-[calc(100vw-176px)] rounded-lg border border-border bg-surface p-3 shadow-lg"
             style={{
               width: Math.min(236, viewport.width - 104),
-              maxWidth: 'calc(100vw - 104px)',
-              ...(assistantPosition ? { left: positionedPopupLeft(Math.min(236, viewport.width - 104)) } : {}),
+              maxWidth: 'calc(100vw - 176px)',
             }}
           >
             <button type="button" onClick={() => setFeatureGuide(null)} className="absolute right-2.5 top-2.5 rounded-lg p-1 text-text-muted hover:bg-surface-2" aria-label="关闭用法提示">
@@ -2051,7 +1896,7 @@ export default function GlobalAssistant({
             >
               问问灵小枢 →
             </button>
-            <span className={`absolute h-4 w-4 rotate-45 border-border bg-surface ${dockOnLeft ? '-left-2 border-b border-l' : '-right-2 border-r border-t'} ${dockOnTop ? 'top-6' : 'bottom-6'}`} />
+            <span className="absolute -right-2 bottom-5 h-4 w-4 rotate-45 border-r border-t border-border bg-surface" />
           </motion.div>
         )}
       </AnimatePresence>
@@ -2065,7 +1910,7 @@ export default function GlobalAssistant({
             exit={fadeExit}
             transition={fadeTransition}
             onClick={openCurrentPageAgent}
-            className={`ls-type-label-medium absolute z-10 whitespace-nowrap rounded-md border border-border bg-surface px-3 py-1.5 text-accent shadow-sm hover:border-accent/30 hover:bg-accent-glow ${dockOnLeft ? 'left-[68px]' : 'right-[68px]'} ${dockOnTop ? 'top-5' : 'bottom-5'}`}
+            className="ls-type-label-medium absolute bottom-2 right-[calc(100%+8px)] z-10 whitespace-nowrap rounded-md border border-border bg-surface px-3 py-1.5 text-accent shadow-sm hover:border-accent/30 hover:bg-accent-glow"
           >
             要补资料？点我
           </motion.button>
@@ -2076,19 +1921,21 @@ export default function GlobalAssistant({
         {(mode === 'chat' || assistantTool === 'knowledge-intake') && (
           <motion.section
             data-global-assistant="panel"
+            id="global-assistant-panel"
             role="dialog"
-            aria-label={panelTitle}
+            aria-modal="false"
+            aria-labelledby="global-assistant-panel-title"
+            aria-describedby="global-assistant-panel-description"
             tabIndex={-1}
             initial={{ opacity: 0, y: reduceMotion ? 0 : 8 }}
             animate={mode === 'chat' ? { opacity: 1, y: 0 } : { opacity: 0, y: reduceMotion ? 0 : 8 }}
             exit={{ y: reduceMotion ? 0 : 8, opacity: 0, transition: { ...spatialTransition, opacity: fadeExit.transition } }}
             transition={spatialTransition}
-            className={`absolute z-10 flex max-h-[calc(100dvh-32px)] max-w-[calc(100vw-32px)] flex-col overflow-hidden rounded-lg border border-border bg-surface shadow-xl outline-none ${assistantPosition ? '' : dockOnLeft ? 'left-0' : 'right-0'} ${dockOnTop ? 'top-14' : 'bottom-14'} ${assistantTool === 'knowledge-intake' ? 'w-[560px]' : 'w-[420px]'} ${mode === 'chat' ? 'pointer-events-auto visible' : 'pointer-events-none invisible'}`}
+            className={`absolute bottom-14 right-0 z-10 flex max-h-[calc(100dvh-96px)] max-w-[calc(100vw-32px)] flex-col overflow-hidden rounded-lg border border-border bg-surface shadow-xl outline-none ${assistantTool === 'knowledge-intake' ? 'w-[560px]' : 'w-[420px]'} ${mode === 'chat' ? 'pointer-events-auto visible' : 'pointer-events-none invisible'}`}
             style={{
               height: assistantPanelHeight,
               width: assistantPanelWidth,
               maxWidth: 'calc(100vw - 32px)',
-              ...(assistantPosition ? { left: positionedPanelLeft } : {}),
             }}
           >
             <header className="flex h-12 shrink-0 items-center justify-between border-b border-border bg-gradient-to-r from-blue-50 via-violet-50 to-pink-50 px-4">
@@ -2100,7 +1947,7 @@ export default function GlobalAssistant({
                       setAssistantTool(null);
                       returnToConversation();
                     } else if (isCustomerTodoView || panelView === 'decision') returnToConversation();
-                    else setMode('breathing');
+                    else closeAssistant();
                   }}
                   className="rounded-md p-1.5 text-text-muted hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
                   aria-label={assistantTool === 'knowledge-intake' || panelView === 'decision' || isCustomerTodoView ? '返回灵小枢对话' : '收起灵小枢对话'}
@@ -2109,8 +1956,8 @@ export default function GlobalAssistant({
                   <ArrowLeft size={16} />
                 </button>
                 <div className="min-w-0">
-                  <p className="ls-type-title-small truncate text-text-primary">{panelTitle}</p>
-                  <p className="ls-type-body-small truncate text-text-muted">{panelSubtitle}</p>
+                  <p id="global-assistant-panel-title" className="ls-type-title-small truncate text-text-primary">{panelTitle}</p>
+                  <p id="global-assistant-panel-description" className="ls-type-body-small truncate text-text-muted">{panelSubtitle}</p>
                 </div>
               </div>
               <div className="flex items-center gap-1">
@@ -2388,43 +2235,29 @@ export default function GlobalAssistant({
         )}
       </AnimatePresence>
 
-      {mode !== 'chat' && launcherAtEdge && (
-        <motion.button
-          type="button"
-          data-global-assistant="edge-launcher"
-          aria-label="唤出灵小枢智能助手"
-          title="唤出灵小枢智能助手"
-          onClick={() => setLauncherRetracted(false)}
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={fadeExit}
-          transition={fadeTransition}
-          className="relative z-10 flex h-10 w-8 items-center justify-center rounded-l-md border border-r-0 border-border bg-surface text-accent shadow-md outline-none hover:bg-accent-glow focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2"
+      <Badge count={pendingCount} overflowCount={9} size="small">
+        <Button
+          ref={launcherButtonRef}
+          htmlType="button"
+          shape="round"
+          size="large"
+          data-global-assistant="launcher"
+          aria-label={mode === 'chat' ? '收起灵小枢对话' : '询问灵小枢'}
+          aria-haspopup="dialog"
+          aria-expanded={mode === 'chat'}
+          aria-controls="global-assistant-panel"
+          onClick={handleLauncherClick}
+          icon={(
+            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-white shadow-sm" style={{ background: 'var(--ls-action-gradient)' }} aria-hidden="true">
+              <Bot size={15} />
+            </span>
+          )}
+          className="!flex !h-11 !gap-2 !border-border !bg-surface !px-3.5 !text-text-primary shadow-sm transition-colors hover:!border-accent/40 hover:!bg-accent-glow focus-visible:!outline-none focus-visible:!ring-2 focus-visible:!ring-accent focus-visible:!ring-offset-2"
+          title={mode === 'chat' ? '收起灵小枢对话' : '询问灵小枢'}
         >
-          <Bot size={16} />
-          {pendingCount > 0 && <span className="ls-type-label-small absolute -left-1.5 -top-1 min-w-4 rounded-full bg-red px-1 text-white">{pendingBadge}</span>}
-        </motion.button>
-      )}
-
-      {mode !== 'chat' && !launcherAtEdge && (
-        <div className="relative z-10 h-[72px] w-[60px]">
-          <button
-            type="button"
-            data-global-assistant="launcher"
-            aria-label="拖动可移动，点击打开灵小枢"
-            onPointerDown={handlePointerDown}
-            onPointerMove={handlePointerMove}
-            onPointerUp={handlePointerUp}
-            onPointerCancel={handlePointerUp}
-            onClick={handleLauncherClick}
-            className={`absolute inset-0 flex touch-none items-center justify-center rounded-lg bg-transparent outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 ${launcherDragging ? 'cursor-grabbing' : 'cursor-grab'}`}
-            title="拖动可移动，点击打开灵小枢"
-          >
-            <AssistantLauncherMascot expression={assistantExpression} />
-            {pendingCount > 0 && <span className="ls-type-label-small absolute -right-1 -top-1 min-w-5 rounded-full bg-red px-1 text-white">{pendingBadge}</span>}
-          </button>
-        </div>
-      )}
+          <span className="ls-type-label-large whitespace-nowrap">询问灵小枢</span>
+        </Button>
+      </Badge>
     </div>
   );
 }
