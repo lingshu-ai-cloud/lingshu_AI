@@ -39,7 +39,7 @@ import ProductionTaskScene from "./ProductionTaskScene";
 import MatrixPublicationSchedule from "./smartBusiness/MatrixPublicationSchedule";
 import MatrixWorkSchedule from "./smartBusiness/MatrixWorkSchedule";
 import NextRoundRecommendationsSection from "./NextRoundRecommendationsSection";
-import BusinessHealthOverview from "./smartBusiness/BusinessHealthOverview";
+import BusinessHealthOverview, { type BusinessHealthOverviewRange } from "./smartBusiness/BusinessHealthOverview";
 import BusinessDataReview from "./smartBusiness/BusinessDataReview";
 import { LsCalendar, calendarDayKey, type LsCalendarEvent } from "./ui/LsCalendar";
 import { thumbnailUrlWithSourceFallback } from "../lib/calendarModel";
@@ -271,6 +271,59 @@ function WeeklyRangeVisual({ startsAt, endsAt }: { startsAt: string; endsAt: str
   </div>;
 }
 
+type WeeklyInspirationReference = {
+  referenceId: string;
+  sourceUrl: string;
+  title: string;
+  platform: Platform;
+  thumbnailUrl: string;
+  duration: number;
+  benchmarkAnalysis?: VideoCreationPlan["benchmarkAnalysis"];
+};
+
+function videoPlanFamilyKey(plan: VideoCreationPlan) {
+  return plan.contentFamilyId || plan.masterContentId || plan.contentId || "";
+}
+
+/** Resolve an adapted publication back to its frozen original before reading reference identity. */
+function referencePlanForPublication(plans: VideoCreationPlan[], plan: VideoCreationPlan) {
+  const explicitMaster = plan.masterContentId
+    ? plans.find(candidate => candidate.contentId === plan.masterContentId)
+    : undefined;
+  if (explicitMaster) return explicitMaster;
+  const familyKey = videoPlanFamilyKey(plan);
+  if (!familyKey) return plan;
+  return plans.find(candidate => videoPlanFamilyKey(candidate) === familyKey && candidate.productionRole === "master")
+    || plans.find(candidate => videoPlanFamilyKey(candidate) === familyKey)
+    || plan;
+}
+
+/** Only persisted plan evidence may establish the exact inspiration destination. */
+function inspirationReferenceForPlan(plan: VideoCreationPlan): WeeklyInspirationReference | null {
+  const referenceId = String(plan.referenceId || plan.preproduction?.benchmark.referenceId || "").trim();
+  const sourceUrl = String(plan.preproduction?.benchmark.sourceUrl || plan.planningEvidence?.referenceSourceUrl || "").trim();
+  if (!referenceId && !sourceUrl) return null;
+  return {
+    referenceId,
+    sourceUrl,
+    title: String(plan.planningEvidence?.referenceTitle || plan.preproduction?.benchmark.title || plan.theme || "").trim(),
+    platform: plan.platform,
+    thumbnailUrl: String(plan.preproduction?.benchmark.thumbnailUrl || plan.planningEvidence?.referenceThumbnailUrl || "").trim(),
+    duration: Math.max(0, Number(plan.duration || 0)),
+    benchmarkAnalysis: plan.benchmarkAnalysis,
+  };
+}
+
+function inspirationReferenceNavigationDetail(reference: WeeklyInspirationReference, contentItemId?: string) {
+  return {
+    page: "socialInspiration" as const,
+    view: "inspiration" as const,
+    businessRef: { referenceId: reference.referenceId },
+    inspirationReference: reference,
+    ...(contentItemId ? { contentItemId } : {}),
+  };
+}
+
 export function WeeklyCommandCenter({
   data,
   statusLabel,
@@ -335,12 +388,12 @@ export function WeeklyCommandCenter({
     accountId: item.accountId,
     accountName: item.accountLabel,
     thumbnailUrl: item.thumbnailUrl,
-    sourceId: item.contentId,
+    sourceId: item.inspirationReference?.referenceId || item.contentId,
     description: `${item.productName} · ${item.caption || "发布文案待完善"}`,
     data: item,
   })).filter(event => Boolean(event.start));
 
-  return <section className={`overflow-hidden rounded-lg border border-border bg-white ${className}`.trim()} aria-label="本周任务驾驶舱">
+  return <section className={`overflow-hidden bg-white ${className}`.trim()} aria-label="本周任务驾驶舱">
     <div className="flex flex-wrap items-start justify-between gap-3 border-b border-border px-4 py-3 text-text-primary">
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2">
@@ -361,10 +414,15 @@ export function WeeklyCommandCenter({
         { label: "本周成本范围", value: budgetMax > 0 ? `¥${budgetMin.toFixed(0)}–${budgetMax.toFixed(0)}` : "待核算", color: "var(--color-visual-pink)", note: operatingContext ? `中位估算 ¥${operatingContext.budget.totalCny.toFixed(2)} · 已包含本周全部视频制作` : "按本周视频生产计划综合估算" },
         { label: "预计制作成本", value: estimatedContentCost > 0 ? `¥${estimatedContentCost.toFixed(2)}` : "待核算", color: "var(--color-text-primary)", note: "按当前周计划与供应商报价估算" },
         { label: "已结算成本", value: settledContentCost > 0 ? `¥${settledContentCost.toFixed(2)}` : "暂无结算", color: "var(--color-text-primary)", note: "仅统计供应商对账回执" },
-      ].map(item => <article key={item.label} className="bg-white px-4 py-4"><Statistic title={item.label} value={item.value} valueStyle={{ color: item.color }}/><p className="mt-2 text-xs text-text-secondary">{item.note}</p></article>)}
+      ].map(item => <article key={item.label} className="bg-white px-4 py-4"><Statistic title={item.label} value={item.value} styles={{ content: { color: item.color } }}/><p className="mt-2 text-xs text-text-secondary">{item.note}</p></article>)}
     </div>
     <div className="border-t border-border">
-      <LsCalendar events={calendarEvents} label="本周发布日历" initialDate={display.startsAt ? calendarDayKey(display.startsAt) : undefined} date={display.startsAt ? calendarDayKey(display.startsAt) : undefined} initialView="dayGridWeek" eventCardMode="media" density="compact" flush fixedHeight={640} firstDay={display.startsAt ? new Date(`${display.startsAt}T00:00:00+08:00`).getDay() : 1} renderDetails={event => {
+      <LsCalendar events={calendarEvents} label="本周发布日历" initialDate={display.startsAt ? calendarDayKey(display.startsAt) : undefined} date={display.startsAt ? calendarDayKey(display.startsAt) : undefined} initialView="dayGridWeek" eventCardMode="media" density="compact" flush fixedHeight="clamp(300px, calc(100dvh - 270px), 640px)" firstDay={display.startsAt ? new Date(`${display.startsAt}T00:00:00+08:00`).getDay() : 1} onEventClick={event => {
+        const item = event.data as UnifiedPlanContent;
+        if (!item.inspirationReference || typeof window === "undefined") return false;
+        window.dispatchEvent(new CustomEvent("lingshu:navigate", { detail: inspirationReferenceNavigationDetail(item.inspirationReference, item.contentId) }));
+        return true;
+      }} renderDetails={event => {
         const item = event.data as UnifiedPlanContent;
         return <div className="space-y-3"><div className="flex flex-wrap gap-2">{item.tags.map(tag => <Tag key={tag}>#{tag}</Tag>)}</div><dl className="ls-calendar-details"><div><dt>产品</dt><dd>{item.productName}</dd></div><div><dt>发布文案</dt><dd>{item.caption || "待完善"}</dd></div></dl></div>;
       }}/>
@@ -389,6 +447,7 @@ type UnifiedPlanContent = {
   accountLabel: string;
   plannedPublishDate: string;
   duration: number;
+  inspirationReference: WeeklyInspirationReference | null;
   productionRole: "master" | "platform_adaptation";
   status: ContentQueueItem["status"];
   queueItem: ContentQueueItem | null;
@@ -525,6 +584,7 @@ function buildSmartBusinessDisplayModel(data: DigitalEmployeeOverview, selectedA
 
   const mappedContents = sourcePlans.map((plan, index): UnifiedPlanContent => {
     const queueItem = findQueueItem(plan) || null;
+    const referencePlan = referencePlanForPublication(sourcePlans, plan);
     const accountId = plan.matrix?.accountId || queueItem?.accountId || `plan-${plan.platform}`;
     const account = accountById.get(accountId);
     const target = targetById.get(accountId);
@@ -552,6 +612,7 @@ function buildSmartBusinessDisplayModel(data: DigitalEmployeeOverview, selectedA
       accountLabel: account?.accountLabel || target?.accountLabel || `${data.config?.companyName || "企业"} · ${platformLabels[plan.platform]}`,
       plannedPublishDate: plan.plannedPublishDate || data.goal?.endsAt || "",
       duration: Number(plan.duration || 0),
+      inspirationReference: inspirationReferenceForPlan(referencePlan),
       productionRole: plan.productionRole === "platform_adaptation" ? "platform_adaptation" : "master",
       status: queueItem?.status || "planned",
       queueItem,
@@ -663,9 +724,9 @@ function PlanDataSourceBadge({ source }: { source: DisplayMetricSource }) {
   return <Tag color={source === "real" ? "success" : "default"}>{source === "real" ? "真实回传" : "参考估算"}</Tag>;
 }
 
-function HomeView({ data, onNavigate, selectedAccountId = "" }: { data: DigitalEmployeeOverview; onNavigate?: (page: Page) => void; selectedAccountId?: string }) {
+function HomeView({ data, onNavigate, selectedAccountId = "", overviewRangeBusy = false, onOverviewRangeChange }: { data: DigitalEmployeeOverview; onNavigate?: (page: Page) => void; selectedAccountId?: string; overviewRangeBusy?: boolean; onOverviewRangeChange?: (range: BusinessHealthOverviewRange) => void }) {
   return <div className="space-y-6">
-    <BusinessHealthOverview data={data} selectedAccountId={selectedAccountId} onNavigate={onNavigate}/>
+    <BusinessHealthOverview data={data} selectedAccountId={selectedAccountId} overviewRangeBusy={overviewRangeBusy} onOverviewRangeChange={onOverviewRangeChange} onNavigate={onNavigate}/>
     <NextRoundRecommendationsSection summary={data.review?.status === "generated" ? data.review.summary : undefined} industryTrends={data.industryTrends} onOpen={page => onNavigate?.(page as Page)}/>
   </div>;
 }
@@ -928,8 +989,16 @@ function MatrixView({ calendarTasks, calendarDemo, data, onRefresh, onNavigate, 
 
 function openTaskPreviewPage(item: ContentQueueItem, target: "benchmark" | "materials", onNavigate?: (page: Page) => void) {
   const pendingShoot = item.preproduction?.materials.pendingShootTaskIds[0];
+  const benchmarkReference: WeeklyInspirationReference = {
+    referenceId: String(item.preproduction?.benchmark.referenceId || item.referenceId || "").trim(),
+    sourceUrl: String(item.preproduction?.benchmark.sourceUrl || "").trim(),
+    title: String(item.preproduction?.benchmark.title || item.referenceTitle || item.title || "").trim(),
+    platform: item.platform,
+    thumbnailUrl: String(item.preproduction?.benchmark.thumbnailUrl || "").trim(),
+    duration: Math.max(0, Number(item.outputSummary.durationSeconds || 0)),
+  };
   const detail = target === "benchmark"
-    ? { page: "socialInspiration", view: "inspiration", referenceId: item.preproduction?.benchmark.referenceId || item.referenceId, contentItemId: item.id }
+    ? inspirationReferenceNavigationDetail(benchmarkReference, item.id)
     : pendingShoot
       ? { page: "socialInspiration", view: "shooting", shootingTaskId: pendingShoot, contentItemId: item.id }
       : { page: "enterprise", view: "products", productName: item.productName, materialIds: item.preproduction?.materials.items.map(material => material.id) || [], contentItemId: item.id };
@@ -1260,9 +1329,9 @@ function ProductionDetailView({ data, contentItemId, onBack, onNavigate, onOpenC
 }
 
 
-export default function SmartBusinessDashboard({ calendarTasks, calendarDemo, data, view, selectedAccountId, selectedContentItemId, onRefresh, onNavigate, onGeneratePlan, onGenerateDetails, onOpenContent, onOpenProductionProgress, onBackToQueue, onRetryTask, onControlJob }: { calendarTasks?: AgentCalendarTask[]; calendarDemo?: boolean; data: DigitalEmployeeOverview; view: SmartBusinessView; selectedAccountId?: string; selectedContentItemId?: string; onRefresh?: () => void; onNavigate?: (page: Page) => void; onGeneratePlan?: () => void; onGenerateDetails?: () => void; onOpenContent?: (taskId?: string, socialContentTaskId?: string) => void; onOpenProductionProgress?: (taskId: string, contentItemId: string) => void; onBackToQueue?: () => void; onRetryTask?: (taskId: string) => Promise<boolean>; onControlJob?: (jobId: string, action: ExecutionControlAction) => Promise<boolean> }) {
+export default function SmartBusinessDashboard({ calendarTasks, calendarDemo, data, view, selectedAccountId, selectedContentItemId, overviewRangeBusy, onOverviewRangeChange, onRefresh, onNavigate, onGeneratePlan, onGenerateDetails, onOpenContent, onOpenProductionProgress, onBackToQueue, onRetryTask, onControlJob }: { calendarTasks?: AgentCalendarTask[]; calendarDemo?: boolean; data: DigitalEmployeeOverview; view: SmartBusinessView; selectedAccountId?: string; selectedContentItemId?: string; overviewRangeBusy?: boolean; onOverviewRangeChange?: (range: BusinessHealthOverviewRange) => void; onRefresh?: () => void; onNavigate?: (page: Page) => void; onGeneratePlan?: () => void; onGenerateDetails?: () => void; onOpenContent?: (taskId?: string, socialContentTaskId?: string) => void; onOpenProductionProgress?: (taskId: string, contentItemId: string) => void; onBackToQueue?: () => void; onRetryTask?: (taskId: string) => Promise<boolean>; onControlJob?: (jobId: string, action: ExecutionControlAction) => Promise<boolean> }) {
   if (view === "matrix") return <MatrixView calendarTasks={calendarTasks} calendarDemo={calendarDemo} data={data} selectedAccountId={selectedAccountId} onRefresh={onRefresh} onNavigate={onNavigate} onGeneratePlan={onGeneratePlan} onOpenContent={onOpenContent} onOpenProductionProgress={onOpenProductionProgress} onRetryTask={onRetryTask}/>;
   if (view === "production") return <ProductionDetailView data={data} contentItemId={selectedContentItemId} onBack={onBackToQueue} onNavigate={onNavigate} onOpenContent={onOpenContent} onRetryTask={onRetryTask}/>;
   if (view === "review") return <BusinessDataReview data={data} selectedAccountId={selectedAccountId} onNavigate={onNavigate} onOpenContent={onOpenContent} onOpenProductionProgress={onOpenProductionProgress}/>;
-  return <HomeView data={data} onNavigate={onNavigate}/>;
+  return <HomeView data={data} selectedAccountId={selectedAccountId} overviewRangeBusy={overviewRangeBusy} onOverviewRangeChange={onOverviewRangeChange} onNavigate={onNavigate}/>;
 }

@@ -114,8 +114,8 @@ assert.match(assistantSource, /const threadAgent = PRIMARY_ASSISTANT_THREAD/, '�
 assert.doesNotMatch(assistantSource, /const SKILL_AGENTS|策略助手|唤醒助手|统筹 Agent/, '灵小枢不应恢复旧助手、放射式 Agent 入口或重复的统筹 Agent');
 assert.match(assistantStoreSource, /\['business', 'director', 'content', 'customer'\]/, '灵小枢应只维护四个现有子 Agent 的独立会话');
 assert.match(assistantSource, /const currentPageAgent = useMemo\(\(\) => orbitIdForPage\(page\)/, '灵小枢必须根据当前工作区选择内部专业 Agent 上下文');
-assert.match(assistantSource, /<AssistantDecisionCenter[\s\S]{0,300}page=\{page\}/, '灵小枢首次打开应进入当前页面的待决策中心');
-assert.match(assistantSource, /openAgent\(currentPageAgent, 'approvals'\)/, '点击灵小枢直接显示当前页面优先审批，不恢复 Agent 选择器');
+assert.match(assistantSource, /<AssistantDecisionCenter[\s\S]{0,420}page=\{page\}[\s\S]{0,420}variant="summary"/, '灵小枢默认对话必须展示当前页面真实待办的概要气泡');
+assert.match(assistantSource, /openAgent\(currentPageAgent, 'chat'\)/, '点击灵小枢应直接进入单列对话，不恢复 Agent 选择器或强制打开详情');
 assert.match(pageSource, /weeklyPlanNavigation\?: \{ goalId: string; planId: string; requestId: number \}/, '周计划导航必须携带准确目标和重复点击序号');
 assert.match(pageSource, /next\.goal\?\.id !== target\.goalId \|\| next\.plan\?\.id !== target\.planId/, '打开编辑器前必须同时核对目标与计划编号');
 assert.match(pageSource, /目标周计划已更新或不再是当前计划/, '计划不匹配必须明确提示，不能回退打开别的计划');
@@ -190,7 +190,7 @@ assert.match(weeklyCommandCenterSource, /aria-label="智能经营控制"/, 'the 
 assert.match(weeklyCommandCenterSource, /周经营计划[\s\S]{0,1800}aria-label="智能经营控制"/, 'the weekly-plan visual date range must keep the management controls in the same header');
 assert.match(weeklyCommandCenterSource, /WeeklyRangeVisual/, 'the weekly-plan header must visualize its operating range instead of appending a raw date string');
 assert.match(weeklyCommandCenterSource, /周经营计划[\s\S]{0,500}<WeeklyRangeVisual/, 'the compact week range must remain in the same title row instead of consuming its own line');
-assert.match(weeklyCommandCenterSource, /initialView="dayGridWeek"[^>]*eventCardMode="media"[^>]*fixedHeight=\{640\}/, 'the weekly publishing calendar must open as a fixed, media-first cascading card window');
+assert.match(weeklyCommandCenterSource, /initialView="dayGridWeek"[^>]*eventCardMode="media"[^>]*fixedHeight="clamp\(300px, calc\(100dvh - 270px\), 640px\)"/, 'the weekly publishing calendar must open as a viewport-bounded, media-first cascading card window');
 for (const label of ['本周生产状态', '各平台计划与完成']) assert.doesNotMatch(smartBusinessSource, new RegExp(label), `${label} must not add low-value charts to the overview`);
 assert.match(currentPlanSource, /WeeklyCommandCenter/, 'the full weekly command center must replace the simplified current-plan summary');
 assert.match(currentPlanSource, /notice=\{!activeRun[\s\S]{0,1200}detailGeneration\?\.blockedCount/, 'the weekly-plan header must retain actionable readiness and generation blockers');

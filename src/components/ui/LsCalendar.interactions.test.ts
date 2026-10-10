@@ -6,8 +6,23 @@ import { calendarDayKey, type LsCalendarEvent } from '../../lib/calendarModel';
 
 // Exercise the real async move handler without a browser or a CSS test loader.
 const source = fs.readFileSync('src/components/ui/LsCalendar.tsx', 'utf8');
+const clickStart = source.indexOf('function calendarEventClickConsumed');
+const clickEnd = source.indexOf('\n\nconst THUMBNAIL_TIMEOUT_MS', clickStart);
+assert.ok(clickStart >= 0 && clickEnd > clickStart, 'calendar click consumption helper must exist');
+const clickScript = ts.transpileModule(`${source.slice(clickStart, clickEnd)}\nglobalThis.consume = calendarEventClickConsumed;`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
+const clickContext: any = {};
+vm.createContext(clickContext);
+vm.runInContext(clickScript, clickContext);
+const clickEvent = { id: 'click-1' } as LsCalendarEvent;
+assert.equal(clickContext.consume(clickEvent, undefined), false, 'calendar events without a handler must keep opening the details drawer');
+assert.equal(clickContext.consume(clickEvent, () => undefined), false, 'a handler must explicitly return true to consume a calendar click');
+let consumedId = '';
+assert.equal(clickContext.consume(clickEvent, (item: LsCalendarEvent) => { consumedId = item.id; return true; }), true, 'an explicit navigation handler must consume the click');
+assert.equal(consumedId, clickEvent.id, 'the exact clicked calendar event must be passed to the handler');
+assert.match(source, /if \(calendarEventClickConsumed\(item, onEventClick\)\) \{[\s\S]*setSelectedId\(null\);[\s\S]*return;[\s\S]*\}[\s\S]*setSelectedId\(info\.event\.id\)/, 'a consumed click must close any stale drawer and must not open the clicked event');
+
 const start = source.indexOf('  const move = async ');
-const end = source.indexOf('\n  return <div className=', start);
+const end = source.indexOf('\n  const revealEventElement', start);
 assert.ok(start >= 0 && end > start);
 const script = ts.transpileModule(`${source.slice(start, end)}\nglobalThis.move = move;`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
 function harness(confirm = true, rejectSave = false) {

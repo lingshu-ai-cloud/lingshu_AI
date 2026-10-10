@@ -3995,9 +3995,8 @@ export default function DigitalEmployeePage({
     if (activeRun && newGoal) setNewGoal(false);
   }, [activeRun, newGoal]);
 
-  const changeOverviewPeriod = (period: OverviewPeriod) => {
+  const requestOverviewRange = (nextRange: ReturnType<typeof overviewRange>, period?: OverviewPeriod) => {
     const version = ++overviewRequestVersionRef.current;
-    const nextRange = overviewRange(period);
     productionRangeLoadingRef.current = true;
     setBusy("overview-range");
     setError("");
@@ -4005,16 +4004,23 @@ export default function DigitalEmployeePage({
       .then(next => {
         if (version !== overviewRequestVersionRef.current) return;
         productionRangeRef.current = nextRange;
-        setProductionPeriod(period);
+        if (period) setProductionPeriod(period);
         setData(next);
       })
       .catch(rangeError => {
         if (version === overviewRequestVersionRef.current) setError(rangeError instanceof Error ? rangeError.message : "经营数据加载失败");
       })
       .finally(() => {
+        if (version !== overviewRequestVersionRef.current) return;
         productionRangeLoadingRef.current = false;
         setBusy("");
       });
+  };
+
+  const changeOverviewPeriod = (period: OverviewPeriod) => requestOverviewRange(overviewRange(period), period);
+  const changeOverviewDateRange = (range: { startsAt: string; endsAt: string }) => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(range.startsAt) || !/^\d{4}-\d{2}-\d{2}$/.test(range.endsAt) || range.startsAt > range.endsAt) return;
+    requestOverviewRange(range);
   };
 
   const scrollTo = (target: React.RefObject<HTMLDivElement | null>) => {
@@ -4516,7 +4522,7 @@ export default function DigitalEmployeePage({
             <main className="min-w-0">
             {workspaceView === "rules"
               ? <OnboardingPanel initial={data.config} readiness={data.businessSnapshot?.readiness || []} busy={Boolean(busy)} mode="rules" activeRun={activeRun} onOpenReadiness={openReadiness} onSave={(config) => void saveConfig(config)} />
-              : <SmartBusinessDashboard data={data} view={dashboardView} selectedAccountId={selectedAccountId} selectedContentItemId={selectedContentItemId} onRefresh={() => void load()} onGenerateDetails={() => void generateCurrentPlanDetails()} onOpenContent={openContentProduction} onOpenProductionProgress={openProductionProgress} onBackToQueue={()=>{setSelectedContentItemId("");setWorkspaceView("overview");}} onRetryTask={async taskId => Boolean(await act(`retry:${taskId}`, () => digitalEmployeeApi.retryTask(taskId)))} onControlJob={async (jobId, action) => Boolean(await act(`execution:${jobId}:${action}`, () => digitalEmployeeApi.controlExecutionJob(jobId, action)))} onGeneratePlan={() => { if (!goal || canCreateNextGoal) setNewGoal(true); setWeeklyPlanOpen(true); }} onNavigate={page => {
+              : <SmartBusinessDashboard data={data} view={dashboardView} selectedAccountId={selectedAccountId} selectedContentItemId={selectedContentItemId} overviewRangeBusy={busy === "overview-range"} onOverviewRangeChange={changeOverviewDateRange} onRefresh={() => void load()} onGenerateDetails={() => void generateCurrentPlanDetails()} onOpenContent={openContentProduction} onOpenProductionProgress={openProductionProgress} onBackToQueue={()=>{setSelectedContentItemId("");setWorkspaceView("overview");}} onRetryTask={async taskId => Boolean(await act(`retry:${taskId}`, () => digitalEmployeeApi.retryTask(taskId)))} onControlJob={async (jobId, action) => Boolean(await act(`execution:${jobId}:${action}`, () => digitalEmployeeApi.controlExecutionJob(jobId, action)))} onGeneratePlan={() => { if (!goal || canCreateNextGoal) setNewGoal(true); setWeeklyPlanOpen(true); }} onNavigate={page => {
                   if (page === "socialPlanning") {
                     if (!goal || canCreateNextGoal) setNewGoal(true);
                     setWeeklyPlanOpen(true);

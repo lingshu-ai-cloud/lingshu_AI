@@ -4,8 +4,6 @@ import fs from 'node:fs';
 const source = fs.readFileSync(new URL('./GlobalAssistant.tsx', import.meta.url), 'utf8');
 const appSource = fs.readFileSync(new URL('../App.tsx', import.meta.url), 'utf8');
 const composerSource = fs.readFileSync(new URL('./assistant/AssistantComposer.tsx', import.meta.url), 'utf8');
-const decisionMemoryPanelSource = fs.readFileSync(new URL('./AssistantDecisionMemoryPanel.tsx', import.meta.url), 'utf8');
-const decisionMemoryHookSource = fs.readFileSync(new URL('../lib/useAssistantDecisionMemory.ts', import.meta.url), 'utf8');
 const conversationContextSource = fs.readFileSync(new URL('../lib/assistantConversationContext.ts', import.meta.url), 'utf8');
 const assistantGuidesSource = fs.readFileSync(new URL('../lib/assistantGuides.ts', import.meta.url), 'utf8');
 const globalStylesSource = fs.readFileSync(new URL('../index.css', import.meta.url), 'utf8');
@@ -42,11 +40,15 @@ assert.match(source, /role="dialog"[\s\S]{0,160}aria-modal="false"[\s\S]{0,160}a
 assert.match(source, /mode !== 'chat'\) return;[\s\S]{0,200}getElementById\('global-assistant-panel'\)\?\.focus\(\)/, '打开弹窗后必须把焦点移入对话区域');
 assert.match(source, /setMode\('breathing'\);\s*window\.requestAnimationFrame\(\(\) => launcherButtonRef\.current\?\.focus\(\)\)/, '关闭弹窗后必须把焦点归还右下角入口');
 assert.match(appSource, /<GlobalAssistant[\s\S]{0,650}compactMode=\{starterMode \|\| isAgentProductionSession\(\)\}/, '制作会话保留紧凑的灵小枢审批和聊天入口');
-assert.match(source, /openAgent\(currentPageAgent, 'approvals'\)/, '入口直接显示真实待审批事项');
-assert.match(source, /<AssistantDecisionCenter[\s\S]{0,300}page=\{page\}/, '待审批事项保持当前页面范围');
-assert.match(source, /onClick=\{returnToConversation\}[\s\S]{0,180}>问灵小枢<\/Button>/, '审批首屏仍提供直接可用的对话入口');
+assert.match(source, /useState<AssistantPanelView>\('chat'\)/, '灵小枢默认页必须是单列对话');
+assert.match(source, /openAgent\(currentPageAgent, 'chat'\)/, '入口必须直接打开单列对话而不是强制进入审批详情');
+assert.doesNotMatch(source, /aria-label="灵小枢工作视图"/, '单列对话不得保留待办与聊天页签');
+assert.match(source, /onOpenDetail=\{\(\) => setPanelView\('approvals'\)\}[\s\S]{0,220}variant="summary"/, '真实待办必须先以概要气泡呈现，点击后才进入详情页');
+assert.match(source, /data-assistant-page="decision-detail"[\s\S]{0,800}variant="detail"/, '待办详情必须在独立第二页呈现并重新读取权威状态');
+assert.match(source, /panelView !== 'chat'\) returnToConversation\(\)/, '详情页标题栏返回必须先回到对话页');
 assert.match(appSource, /suppressForRightSidebar=\{page !== 'digitalEmployees' && \(/, '智能经营页必须保留入口，其他页仍遵守右侧栏避让规则');
 assert.match(source, /width: assistantPanelWidth,\s*maxWidth: 'calc\(100vw - 32px\)'/, '灵小枢面板必须用视口宽度约束，不能被零宽定位根节点压缩');
+assert.match(source, /assistantTool === 'knowledge-intake' \? 560 : 420/, '对话概要页与详情页必须保持 420px 同宽，避免切页横向跳变');
 
 assert.match(source, /const PRIMARY_ASSISTANT_THREAD:\s*OrbitAgentId\s*=\s*'business'/, '所有对话必须聚合到 business 主线程');
 const persistThreadSource = sourceSection('const persistThread = useCallback', 'const openAgent', '助手线程持久化队列');
@@ -119,20 +121,14 @@ assert.match(sendSource, /strategyRequest \? '' : await loadLiveIntegrationFacts
 assert.match(sendSource, /userQuestion: visibleText[\s\S]{0,260}retainedUserInstructions/, '经营主对话必须把当前问题与有界历史约束交给服务端组装上下文');
 assert.match(sendSource, /requestToken === getToken\(\)/, '身份切换后旧请求的异步响应必须被丢弃');
 
-assert.match(source, /useAssistantDecisionMemory\(persistenceScopeKey, responseErrorMessage\)/, '经营决策记忆必须绑定当前租户与用户范围');
-assert.match(source, /<AssistantDecisionMemoryPanel memory=\{decisionMemory\}/, '灵小枢对话顶部必须提供已确认决策查看与撤销入口');
-assert.match(source, /<AssistantDecisionSaveButton memory=\{decisionMemory\} text=\{msg\.content\}/, '每条用户原话必须可明确保存为经营决策');
-assert.match(decisionMemoryPanelSource, /对话记忆/, '用户必须能直接识别对话记忆操作区');
-assert.match(decisionMemoryPanelSource, /撤销决策/, '已确认决策必须支持显式撤销');
-assert.match(decisionMemoryPanelSource, /from 'antd'/, '对话记忆操作必须复用 Ant Design 组件');
-assert.match(decisionMemoryPanelSource, /disabled=\{memory\.busy \|\| Boolean\(unavailableReason\)\}/, '超过经营决策长度上限时保存按钮必须不可用');
-assert.match(decisionMemoryPanelSource, /unavailableReason && <span role="status"/, '保存不可用时必须显示明确原因');
-assert.match(decisionMemoryHookSource, /createAssistantDecisionRequestGuard/, '决策记忆请求必须防止旧身份响应污染当前用户');
-assert.match(decisionMemoryHookSource, /ASSISTANT_DECISION_MEMORY_MAX_CHARACTERS = 2000/, '经营决策保存上限必须与服务端 2000 字约束一致');
-assert.match(decisionMemoryHookSource, /operation === 'save' \? assistantDecisionSaveUnavailableReason\(text\) : ''[\s\S]{0,140}if \(unavailableReason\)/, '直接调用决策保存请求时也必须拦截超长内容');
+assert.doesNotMatch(
+  source,
+  /AssistantDecisionMemoryPanel|AssistantDecisionSaveButton|useAssistantDecisionMemory/,
+  '对话记忆由后台默认机制维护，灵小枢前端不得显示查看、保存或撤销入口',
+);
 assert.match(conversationContextSource, /较早用户原话/, '历史用户约束必须保留原文且不得升级为已核验事实');
 
-const responseErrorSource = sourceSection('async function responseErrorMessage', '\n}\n\nfunction quickQuestions', '助手请求错误提示');
+const responseErrorSource = sourceSection('async function responseErrorMessage', '\n}\n\nfunction todoToneClass', '助手请求错误提示');
 const localizedMessageIndex = responseErrorSource.indexOf("if (typeof data?.message === 'string'");
 const rawErrorIndex = responseErrorSource.indexOf('if (data?.error) return data.error;');
 assert.ok(localizedMessageIndex >= 0 && rawErrorIndex > localizedMessageIndex, '额度错误特殊处理后必须优先展示服务端本地化 message，而不是原始错误码');
@@ -210,15 +206,15 @@ assert.match(crossObjectFilterSource, /secondaryActions:[\s\S]*\.filter\(safeAct
 const presentResponseSource = sourceSection('const presentActionResponse', 'const send = useCallback', '操作结果展示');
 const presentNotifyIndex = presentResponseSource.indexOf('shouldNotifyAssistant(');
 const presentFocusIndex = presentResponseSource.indexOf('focusTaskCard(');
-const presentDecisionIndex = presentResponseSource.indexOf("setPanelView('decision')");
+const presentConversationIndex = presentResponseSource.indexOf("setPanelView('chat')");
 assert.ok(
   presentNotifyIndex >= 0
     && presentFocusIndex >= 0
-    && presentDecisionIndex >= 0,
-  '用户主动操作的常规结果必须静默聚焦结果卡，不得只留下文本摘要',
+    && presentConversationIndex >= 0,
+  '用户主动操作的结果必须静默聚焦真实卡片，并留在概要气泡所在的对话页',
 );
 assert.doesNotMatch(presentResponseSource, /role: 'assistant', content: response\.card\.summary/, '用户操作结果不得降级成丢失动作和工作区链接的纯文本摘要');
-assert.match(presentResponseSource, /if \(!shouldNotifyAssistant\(notificationReason\)\)[\s\S]*focusTaskCard\(agentId, stableTaskId\)[\s\S]*setPanelView\('decision'\)/, '常规成功结果必须展示交互卡但不触发通知分支');
+assert.match(presentResponseSource, /if \(!shouldNotifyAssistant\(notificationReason\)\)[\s\S]*focusTaskCard\(agentId, stableTaskId\)[\s\S]*setPanelView\('chat'\)/, '常规成功结果必须保留为概要气泡且不触发强制详情跳转');
 assert.match(presentResponseSource, /WORKFLOW_MUTATION_ACTIONS\.has\(response\.actionId\)[\s\S]*actionId: 'view_status'/, '任一成功 workflow mutation 后必须读取一次最新权威状态，不能依赖响应是否携带下一对象动作');
 assert.match(presentResponseSource, /threads\[agentId\] !== threadAfterMutation/, '跨对象状态回读必须避免覆盖用户后续操作');
 assert.match(presentResponseSource, /actionCardToTaskCard\(statusResponse\.card, statusResponse, CURRENT_STATUS_TASK_ID\)/, '新对象状态必须放入独立权威状态卡');
@@ -236,7 +232,7 @@ const cardDecisionIndex = cardEventSource.indexOf("setPanelView('decision')");
 assert.ok(
   cardNotifyIndex >= 0
     && (cardFocusIndex < 0 || cardNotifyIndex < cardFocusIndex)
-    && (cardDecisionIndex < 0 || cardNotifyIndex < cardDecisionIndex),
+    && cardDecisionIndex < 0,
   '常规后台卡片不得抢焦点、切换界面或打断用户',
 );
 
@@ -246,6 +242,7 @@ assert.ok(routinePerformanceIgnored, '常规后台性能事件不得触发灵小
 
 assert.match(source, /focusedTaskCard\.secondaryActions\.map/, '决策形态必须渲染交互选择卡操作');
 assert.match(source, /focusedTaskCard\.workspace\.href/, '完整结果必须可以进入工作区');
+assert.match(source, /data-assistant-summary="task-card"[\s\S]{0,900}setPanelView\('decision'\)/, '任务结果必须先以概要气泡呈现，用户点击后才打开详情');
 assert.match(source, /<AssistantComposer/, '灵小枢必须使用统一输入组件');
 assert.match(composerSource, /rows=\{1\}/, '输入框必须默认只占一行');
 assert.match(composerSource, /maxLength=\{4000\}/, '输入框必须遵守确定性操作接口的长度边界');

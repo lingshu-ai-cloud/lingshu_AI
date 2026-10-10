@@ -207,14 +207,57 @@ function offsetSuffix(minutes: number): string {
   return `${sign}${String(Math.floor(absolute / 60)).padStart(2, '0')}:${String(absolute % 60).padStart(2, '0')}`;
 }
 
+const calendarDatePattern = /^(\d{4})-(\d{2})-(\d{2})$/;
+const calendarTimePattern = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
+const explicitDateTimePattern = /^(\d{4}-\d{2}-\d{2})T(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d(?:\.\d{1,9})?)?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)?$/;
+
+function validCalendarDate(value: string): boolean {
+  const match = value.match(calendarDatePattern);
+  if (!match) return false;
+  const [, year, month, day] = match;
+  const parsed = new Date(Date.UTC(Number(year), Number(month) - 1, Number(day)));
+  return parsed.getUTCFullYear() === Number(year)
+    && parsed.getUTCMonth() === Number(month) - 1
+    && parsed.getUTCDate() === Number(day);
+}
+
+function explicitTaskDateTime(task: AgentCalendarTask): string | null {
+  const dueAt = String(task.dueAt || '').trim();
+  const match = dueAt.match(explicitDateTimePattern);
+  return match && validCalendarDate(match[1]) && Number.isFinite(Date.parse(dueAt)) ? dueAt : null;
+}
+
+function explicitTaskTime(task: AgentCalendarTask): string | null {
+  const time = String(task.time || '').trim();
+  return calendarTimePattern.test(time) ? time : null;
+}
+
 function taskInstant(task: AgentCalendarTask): string {
-  if (task.dueAt && !/^\d{4}-\d{2}-\d{2}$/.test(task.dueAt) && Number.isFinite(Date.parse(task.dueAt))) return task.dueAt;
+  const dueAt = explicitTaskDateTime(task);
+  if (dueAt) return dueAt;
+  const time = explicitTaskTime(task);
+  if (!time) return task.date;
   const suffix = task.calendarClock?.timeZone ? 'Z' : offsetSuffix(task.calendarClock?.offsetMinutes ?? 8 * 60);
-  return `${task.date}T${task.time || '09:00'}:00${suffix}`;
+  return `${task.date}T${time}:00${suffix}`;
 }
 
 function taskIsAllDay(task: AgentCalendarTask): boolean {
-  return /^\d{4}-\d{2}-\d{2}$/.test(task.dueAt || '') && (!task.time || task.time === '00:00');
+  return !explicitTaskDateTime(task) && !explicitTaskTime(task);
+}
+
+/** Preserve source precision: an absent or invalid time is a date-only task, never a fabricated 09:00 slot. */
+export function agentCalendarTaskTiming(task: AgentCalendarTask): Pick<LsCalendarEvent, 'start' | 'allDay'> {
+  const allDay = taskIsAllDay(task);
+  return { start: allDay ? task.date : taskInstant(task), allDay };
+}
+
+function taskScheduleLabel(task: AgentCalendarTask): string {
+  const dueAt = explicitTaskDateTime(task);
+  if (dueAt) return calendarTimestampLabel(dueAt, task.calendarClock ?? calendarClock(dueAt));
+  const time = explicitTaskTime(task);
+  return time
+    ? `${task.date} ${time} · ${task.calendarClock?.label || '冻结时区未知'}`
+    : `${task.date} · 当天事项（未提供具体时间）`;
 }
 
 function taskDeadlineMillis(task: AgentCalendarTask): number {
@@ -296,8 +339,7 @@ export default function AgentWeeklyCalendar({
   const timeZone = tasks.find(task => task.calendarClock?.timeZone)?.calendarClock?.timeZone || 'Asia/Shanghai';
   const events = useMemo<LsCalendarEvent[]>(() => deliverables.map(task => {
     const overdue = !demo && isCalendarTaskOverdue(task, now);
-    const allDay = taskIsAllDay(task);
-    const start = allDay ? task.date : taskInstant(task);
+    const { allDay, start } = agentCalendarTaskTiming(task);
     const duration = Math.max(30, task.minutes ?? 60) * 60_000;
     return {
       id: task.id,
@@ -343,7 +385,7 @@ export default function AgentWeeklyCalendar({
 
     return <div className="space-y-4">
       <dl className="ls-calendar-details">
-        <div><dt>{task.timeSemantics === 'start' ? '计划开始' : '计划完成'}</dt><dd>{taskIsAllDay(task) ? `${task.date} · 当天事项` : `${task.date} ${task.time} · ${task.calendarClock?.label || '冻结时区未知'}`}</dd></div>
+        <div><dt>{task.timeSemantics === 'start' ? '计划开始' : '计划完成'}</dt><dd>{taskScheduleLabel(task)}</dd></div>
         {task.dueAt && <div><dt>规定完成截止</dt><dd>{calendarTimestampLabel(task.dueAt, task.calendarClock)}</dd></div>}
         {task.sourceVersion !== undefined && <div><dt>原 v{task.sourceVersion} 任务规定截止</dt><dd>{task.sourceDeadlineAt ? calendarTimestampLabel(task.sourceDeadlineAt) : '原截止待核验'}</dd></div>}
         {task.status === 'completed' && <div><dt>实际完成</dt><dd>{task.actualFinishedAt ? calendarTimestampLabel(task.actualFinishedAt, task.sourceVersion !== undefined ? calendarClock(task.sourceDeadlineAt) : task.calendarClock) : '完成时间待核验'} · {task.deliveryTiming === 'late' ? '晚交付' : task.deliveryTiming === 'on_time' ? '按时交付' : '是否按时待核验'}</dd></div>}

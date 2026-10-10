@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { BusinessMetric, BusinessSnapshot, DigitalEmployeeOverview } from '../../lib/digitalEmployees';
-import { availableMetric, buildBusinessHealthModel, businessHealthStatus, meanKnownScores, type BusinessHealthSources } from './businessHealthModel';
+import { availableMetric, buildBusinessHealthModel, businessHealthStatus, meanKnownScores, summarizeHealthCriteria, type BusinessHealthSources } from './businessHealthModel';
 
 const metric = (value: number | null, status: BusinessMetric['status'] = 'available'): BusinessMetric => ({ value, status, source: 'confirmed-receipt' });
 const sources: BusinessHealthSources = { performance: null, channelsLoaded: false, whatsappConnected: false, messengerPages: [] };
@@ -18,6 +18,19 @@ test('missing or unavailable values never turn into low scores', () => {
   assert.equal(result.totalScore, null);
   assert.equal(result.scoreCoverage, 0);
   assert.ok(result.dimensions.every(item => item.score === null));
+});
+
+test('a selected snapshot range overrides the goal range and preserves Beijing calendar days', () => {
+  const data = overview();
+  data.goal = { startsAt: '2026-09-27', endsAt: '2026-10-03' } as DigitalEmployeeOverview['goal'];
+  data.businessSnapshot!.range = {
+    startsAt: '2026-10-03T16:00:00.000Z',
+    endsAt: '2026-10-10T15:59:59.000Z',
+    timeZone: 'Asia/Shanghai',
+  };
+  const result = buildBusinessHealthModel(data, sources);
+  assert.equal(result.startsAt, '2026-10-04');
+  assert.equal(result.endsAt, '2026-10-10');
 });
 
 test('customer attribution has an explicit denominator and partial coverage', () => {
@@ -69,4 +82,13 @@ test('a high score is not a full health judgement when evidence coverage is part
   assert.equal(businessHealthStatus(100, 1, 5), '局部评分');
   assert.equal(businessHealthStatus(83, 5, 5), '基础稳健');
   assert.equal(businessHealthStatus(null, 0, 5), '待补数据');
+});
+
+test('coverage visualization counts status without turning missing or inapplicable criteria into zero scores', () => {
+  const coverage = summarizeHealthCriteria([
+    { label: '有证据', score: 75, current: '3 / 4 条', basis: '真实回执' },
+    { label: '待数据', score: null, current: '待接入', basis: '缺少回执' },
+    { label: '不适用', score: null, current: '当前范围不适用', basis: '已核验范围', coverageStatus: 'not_applicable' },
+  ]);
+  assert.deepEqual(coverage, { scored: 1, pending: 1, notApplicable: 1, applicable: 2, total: 3, coveragePercent: 50 });
 });

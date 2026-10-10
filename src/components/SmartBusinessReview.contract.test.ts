@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 
 const dashboard = fs.readFileSync('src/components/SmartBusinessDashboard.tsx', 'utf8');
+const healthOverview = fs.readFileSync('src/components/smartBusiness/BusinessHealthOverview.tsx', 'utf8');
 const recommendations = fs.readFileSync('src/components/NextRoundRecommendationsSection.tsx', 'utf8');
 const recommendationModel = fs.readFileSync('src/lib/nextRoundRecommendations.ts', 'utf8');
 
@@ -12,6 +13,7 @@ assert.match(home, /summary=\{data\.review\?\.status === "generated" \? data\.re
 assert.match(routes, /view === "review"\) return <BusinessDataReview/, 'data review must have its own data-detail component');
 assert.doesNotMatch(routes, /<NextRoundRecommendationsSection/, 'review routing must not duplicate recommendations outside the overview');
 assert.doesNotMatch(dashboard, /目标、账号与预算怎样调整/, 'the old generic next-round copy must be removed');
+assert.doesNotMatch(healthOverview, /<Alert|暂不可用，已保留上次确认结果/, 'the health overview must not expose a persistent synchronization warning banner');
 for (const label of ['优秀内容继承', 'Tag 与卖点调整', '行业热点与变化']) {
   assert.match(`${recommendations}\n${recommendationModel}`, new RegExp(label), `next-round recommendations must expose ${label}`);
 }

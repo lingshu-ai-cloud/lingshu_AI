@@ -31,16 +31,14 @@ function evaluate(code: string, bindings: Record<string, unknown>) {
 }
 
 assert.equal(attributes.has('height'), false, 'a height=auto override would disable the time scroller even with bounded contentHeight');
-for (const view of ['timeGridDay', 'timeGridWeek']) {
-  assert.equal(evaluate(expression('contentHeight'), { view, fixedHeight: undefined, timeGridHeight: 'clamp(320px, 65dvh, 720px)' }), 'clamp(320px, 65dvh, 720px)');
-}
-for (const view of ['dayGridMonth', 'dayGridWeek', 'dayGridDay', 'listWeek', 'multiMonthYear']) {
-  assert.equal(evaluate(expression('contentHeight'), { view, fixedHeight: undefined, timeGridHeight: 'clamp(320px, 65dvh, 720px)' }), 'auto', 'non-time views retain natural content height');
+for (const view of ['timeGridDay', 'timeGridWeek', 'dayGridMonth', 'dayGridWeek', 'dayGridDay', 'listWeek', 'multiMonthYear']) {
+  assert.equal(evaluate(expression('contentHeight'), { view, fixedHeight: undefined, timeGridHeight: 'clamp(320px, calc(100dvh - 280px), 720px)' }), 'clamp(320px, calc(100dvh - 280px), 720px)', 'every calendar view must use the shared viewport-bounded internal scroller');
 }
 assert.equal(evaluate(expression('contentHeight'), { view: 'dayGridWeek', fixedHeight: 640, timeGridHeight: 520 }), 640, 'a composed calendar may opt into a stable workspace height');
 assert.equal(attributes.get('scrollTime')?.initializer?.getText(file), '"08:00:00"');
 assert.equal(attributes.get('slotMinTime')?.initializer?.getText(file), '"08:00:00"');
 assert.equal(attributes.get('slotMaxTime')?.initializer?.getText(file), '"22:00:00"');
+assert.equal(attributes.get('slotHeaderInterval')?.initializer?.getText(file), '"02:00:00"', 'the left time axis must stay concise');
 assert.ok(attributes.has('scrollTimeReset'));
 assert.equal(evaluate(expression('allDaySlot'), { eventCardMode: 'compact', inputs: [{ allDay: false }] }), false, 'the empty all-day lane must not create a nested-looking calendar layer');
 assert.equal(evaluate(expression('allDaySlot'), { eventCardMode: 'compact', inputs: [{ allDay: true }] }), true, 'real all-day events retain their lane in time-based calendars');
@@ -116,6 +114,10 @@ const event = { allDay: false, extendedProps: { item: { title: '新品短视频�
   assert.equal(result.props?.className, 'ls-calendar-event-content ls-calendar-event-content-media');
   assert.ok(nodes(result).some(node => node.type === 'CalendarThumbnail'), 'the weekly content-card view renders the thumbnail in the day cell');
   assert.ok(nodes(result).some(node => node.type === 'SocialPlatformIcon'), 'the weekly card retains its platform identity');
+  assert.equal(nodes(result).some(node => node.props?.className === 'ls-calendar-event-status-badge'), false, 'weekly cards do not repeat the default planned status over the cover');
+  const exceptional = render({ event: { ...event, allDay: true, extendedProps: { item: { ...event.extendedProps.item, status: 'needs_action', statusLabel: '待处理' } } }, view: { type: 'dayGridWeek' }, isShort: false, timeText: '' }) as RenderNode;
+  const exceptionalBadge = nodes(exceptional).find(node => node.props?.className === 'ls-calendar-event-status-badge');
+  assert.equal(exceptionalBadge?.children[0], '待处理', 'exceptional states remain visible after the redundant planned badge is removed');
 }
 {
   const renderCompact = evaluate(expression('eventContent'), { ...renderBindings, compact: true });
@@ -133,14 +135,24 @@ assert.match(css, /\.ls-calendar-event-content-all-day[^}]*max-height: 44px/, 'a
 assert.match(css, /\.fc-timegrid-slot\s*\{[^}]*height:\s*48px/, 'hourly rows must be tall enough to make the day timeline readable');
 assert.match(css, /\.ls-calendar-media-cards \.fc-daygrid-day-frame\s*\{[^}]*min-height:\s*560px/, 'the weekly card calendar must remain a large, stable workspace');
 assert.match(css, /\.ls-calendar-card-media\s*\{[^}]*aspect-ratio:\s*9\/16/, 'portrait video space must be reserved before media resolves so loading cannot reorder cards');
-assert.match(css, /\.ls-calendar-card-media img\s*\{[^}]*object-fit:\s*contain/, 'calendar covers preserve their entire original image instead of cropping portrait videos to landscape');
-assert.match(css, /\.ls-calendar-compact \.ls-calendar-event-content-media\s*\{[^}]*grid-template-columns:\s*48px minmax\(0, 1fr\)/, 'dense cards place the portrait cover beside the text so a complete daily schedule fits the calendar window');
-assert.match(css, /@container ls-calendar-card \(max-width: 112px\)/, 'very narrow date columns must stack their preview instead of crushing readable text');
+assert.match(css, /\.ls-calendar-card-media\s*\{[^}]*inline-size:\s*100%;[^}]*block-size:\s*100%/, 'the media state frame must fill the complete portrait stage');
+assert.match(css, /\.ls-calendar-card-media img\s*\{[^}]*object-fit:\s*cover;[^}]*object-position:\s*center/, 'calendar covers fill the portrait stage without letterbox whitespace');
+assert.match(css, /\.ls-calendar-event-content-media\s*\{[^}]*padding:\s*0 4px 4px/, 'media covers begin at the top edge of the event card');
+assert.match(css, /\.ls-calendar-event-poster\s*\{[^}]*inline-size:\s*min\(100%,\s*180px\);[^}]*block-size:\s*auto;[^}]*aspect-ratio:\s*9\/16/, 'weekly media stages grow with their date column while retaining a bounded full-portrait ratio');
+assert.doesNotMatch(css, /\.ls-calendar-compact \.ls-calendar-event-poster\s*\{[^}]*\bheight\s*:/, 'compact calendars must not flatten the portrait stage to a fixed square-like height');
+assert.doesNotMatch(css, /\.ls-calendar-event-poster\s*\{[^}]*height:\s*(?:88|96)px/, 'narrow date columns must retain the portrait ratio instead of restoring legacy fixed heights');
+assert.doesNotMatch(css, /\.ls-calendar-compact \.ls-calendar-event-content-media\s*\{[^}]*grid-template-columns:/, 'dense weekly cards must not revert to a small left-thumbnail row');
+assert.match(css, /@container ls-calendar-card \(max-width: 112px\)/, 'very narrow date columns retain an explicit media-card adaptation');
 assert.match(css, /\.ls-calendar\.ls-calendar-flush\s*\{\s*padding:\s*0/, 'composed home calendars can use the full available width');
+assert.match(css, /\.ls-calendar\.ls-calendar-flush \.ls-calendar-toolbar\s*\{[^}]*padding-inline:\s*12px/, 'edge-to-edge calendars keep their controls away from the page edge');
+assert.match(css, /\.ls-calendar\.ls-calendar-flush \.ls-calendar-surface \[role="grid"\]\s*\{[^}]*border-inline-width:\s*0/, 'edge-to-edge calendars remove only the enclosing side rule while retaining the internal day grid');
+assert.match(css, /\.ls-calendar-workspace\.has-date-only-time-rail\s*\{[^}]*grid-template-columns:\s*48px minmax\(0, 1fr\)/, 'date-only schedules reserve a concise truthful time rail');
+assert.match(source, /aria-label="排期时间：全天，具体时刻待定"/, 'date-only schedules must not invent publication times');
 assert.match(css, /\.ls-calendar-compact \.ls-calendar-toolbar\s*\{[^}]*flex-wrap:\s*nowrap[^}]*overflow-x:\s*auto/, 'dense controls stay in one locally scrollable row without page overflow');
 assert.match(source, /!compact && <div className="ls-calendar-meta"/, 'dense calendars do not retain a standalone metadata row');
 assert.match(css, /\.ls-calendar \.fc-daygrid-day-events\s*\{[^}]*display:\s*flex;[^}]*flex-direction:\s*column;[^}]*gap:\s*4px/, 'every FullCalendar day cell uses one dense native card flow');
 assert.match(css, /\.ls-calendar-media-cards \.fc-daygrid-day-events\s*\{[^}]*gap:\s*6px/, 'media-first weekly cards retain accessible separation inside the same native flow');
+assert.match(css, /\.ls-calendar-media-cards \.fc-daygrid-day-events\s*\{[^}]*margin:\s*0 4px 4px/, 'the first media card starts directly below the date header without a blank top gutter');
 assert.doesNotMatch(source, /\bMasonry\b/, 'calendar surfaces must stay on the FullCalendar layout engine');
 assert.doesNotMatch(css, /(?:^|[;{]\s*)(?:column-count|columns)\s*:/m, 'calendar event flow must not use CSS multi-column layout');
 assert.match(source, /const protectedThumbnailCache = new Map<string, Promise<Blob \| null>>\(\)/, 'duplicate protected covers must share one request and cached result');
@@ -149,5 +161,14 @@ assert.match(source, /fetch\(src, \{ headers: authHeader\(\), signal: controller
 assert.match(source, /if \(!blob\) protectedThumbnailCache\.delete\(src\)/, 'a transient protected-cover failure must not be cached permanently');
 assert.match(source, /retryKey === 0[^]*?setRetryKey/, 'calendar cards must retry one cold thumbnail recovery automatically');
 assert.match(source, /封面暂不可用/, 'cover failure copy must be neutral and truthful');
+assert.match(source, /<LsMediaStateFrame state=\{mediaState\}/, 'calendar covers must use the shared stable media-state frame');
+assert.match(source, /className="ls-calendar-event-poster"[^]*?ls-calendar-event-platform-badge/, 'weekly cards retain the account identity over the poster');
+assert.match(source, /item\.status !== 'planned'[^]*?ls-calendar-event-status-badge/, 'weekly covers suppress only the redundant planned badge while retaining exceptional states');
 assert.match(source, /<Drawer title="排期详情"/);
-console.log('Calendar bounded time-grid height, 08:00 scrolling and compact event layout tests passed');
+assert.match(source, /const revealObserverRef = useRef<IntersectionObserver \| null>\(null\)/, 'each calendar instance must own one reveal observer');
+assert.match(source, /revealedEventIdsRef\.current\.has\(info\.event\.id\)/, 'stable event ids prevent replay after refresh or remount');
+assert.match(source, /eventWillUnmount=\{info => \{[\s\S]*?\.unobserve\(element\)[\s\S]*?mountedEventElementsRef\.current\.delete\(element\)/, 'unmounted cards must be detached from reveal observation');
+assert.match(css, /\.ls-calendar \.ls-calendar-event-reveal\s*\{[^}]*opacity:\s*0;[^}]*translateY\(8px\)[^}]*var\(--ls-motion-enter\)[^}]*var\(--ls-ease-enter\)/, 'scroll reveal must use the shared restrained enter motion');
+assert.match(css, /@media \(prefers-reduced-motion: reduce\)[^{]*\{[^}]*\.ls-calendar \.ls-calendar-event-reveal[^}]*opacity:\s*1 !important;[^}]*transform:\s*none !important;[^}]*transition:\s*none !important/, 'reduced motion must reveal every card immediately');
+assert.doesNotMatch(css, /\.ls-calendar[^}]*transition-delay/, 'calendar cards must never use a staggered reveal');
+console.log('Calendar bounded workspace, truthful time axis, scroll reveal and compact event layout tests passed');

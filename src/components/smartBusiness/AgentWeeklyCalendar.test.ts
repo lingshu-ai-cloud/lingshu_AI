@@ -33,6 +33,30 @@ test('unknown human workload is shown as missing estimates rather than zero sche
  assert.equal(calendarDurationLabel([{minutes:60},{minutes:null}] as AgentCalendarTask[]),'已估 1 小时 · 1 项待估');
 });
 
+test('calendar timing never invents 09:00 when a task has no verified time', async () => {
+  const {agentCalendarTaskTiming} = await import('./AgentWeeklyCalendar');
+  const base = {
+    id:'timing', date:'2026-10-06', agent:'content', title:'真实任务', output:'交付', context:'周任务',
+    minutes:30, status:'planned',
+  } as AgentCalendarTask;
+  assert.deepEqual(agentCalendarTaskTiming({...base,time:''}), {start:'2026-10-06',allDay:true});
+  assert.deepEqual(agentCalendarTaskTiming({...base,time:'09:99'}), {start:'2026-10-06',allDay:true});
+  assert.deepEqual(agentCalendarTaskTiming({...base,time:'',dueAt:'2026-10-06'}), {start:'2026-10-06',allDay:true});
+  assert.equal(agentCalendarTaskTiming({...base,time:''}).start.includes('09:00'), false);
+});
+
+test('calendar timing uses only an explicit valid datetime or task time for timed events', async () => {
+  const {agentCalendarTaskTiming} = await import('./AgentWeeklyCalendar');
+  const base = {
+    id:'timing', date:'2026-10-06', time:'', agent:'content', title:'真实任务', output:'交付', context:'周任务',
+    minutes:30, status:'planned',
+  } as AgentCalendarTask;
+  assert.deepEqual(agentCalendarTaskTiming({...base,time:'00:00'}), {start:'2026-10-06T00:00:00+08:00',allDay:false});
+  assert.deepEqual(agentCalendarTaskTiming({...base,time:'16:25'}), {start:'2026-10-06T16:25:00+08:00',allDay:false});
+  assert.deepEqual(agentCalendarTaskTiming({...base,dueAt:'2026-10-06T07:30:00Z'}), {start:'2026-10-06T07:30:00Z',allDay:false});
+  assert.deepEqual(agentCalendarTaskTiming({...base,dueAt:'2026-02-30T07:30:00Z'}), {start:'2026-10-06',allDay:true});
+});
+
 test('running and blocked Agent deliveries become overdue without changing their actual status', async () => {
   const {isCalendarTaskOverdue, calendarPendingReferences, calendarOverdueDuration} = await import('./AgentWeeklyCalendar');
   const now = Date.parse('2026-10-09T12:00:00+08:00');

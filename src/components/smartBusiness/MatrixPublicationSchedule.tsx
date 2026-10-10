@@ -8,6 +8,7 @@ import { AlertTriangle, CalendarRange, Clapperboard } from "lucide-react";
 import type { VideoCreationPlan } from "../../lib/videoCreationPlan";
 import { SocialPlatformIcon } from "../SocialPlatformIcon";
 import type { MatrixScheduleAccount } from "../SmartBusinessDashboard";
+import { LsScheduleViewport } from "../ui/LsScheduleViewport";
 
 type Props = {
   calendarTasks?: AgentCalendarTask[];
@@ -150,9 +151,10 @@ export default function MatrixPublicationSchedule({ calendarTasks, calendarDemo 
     <div className="flex gap-2 border-b border-slate-100 px-5 py-3" role="tablist" aria-label="发布排期视图">
       {([['calendar', '发布日历'], ['board', 'Agent 任务看板']] as const).map(([id, label]) => <button key={id} type="button" role="tab" id={`schedule-tab-${id}`} aria-selected={view === id} aria-controls={`schedule-panel-${id}`} onClick={() => setView(id)} className={`rounded-xl px-4 py-2 text-xs font-black ${view === id ? 'bg-emerald-700 text-white' : 'bg-slate-100 text-slate-600 hover:bg-emerald-50'}`}>{label}</button>)}
     </div>
-    {view === "board" ? <div id="schedule-panel-board" role="tabpanel" aria-labelledby="schedule-tab-board">{calendarTasks !== undefined || calendarDemo ? <AgentWeeklyCalendar startsAt={startsAt} demo={calendarDemo} tasks={calendarTasks ?? []} onOpenProduction={calendarDemo&&onOpenContent?task=>onOpenContent(task.id,task.productionTaskId):undefined}/> : <ConnectedAgentCalendar accountBindingTasks={projectAccountBindingCalendar(taskItems,accounts.map(account=>({...account,connected:account.connected===true})))}/>}</div> : <div id="schedule-panel-calendar" role="tabpanel" aria-labelledby="schedule-tab-calendar" className="overflow-x-auto">
+    {view === "board" ? <div id="schedule-panel-board" role="tabpanel" aria-labelledby="schedule-tab-board">{calendarTasks !== undefined || calendarDemo ? <AgentWeeklyCalendar startsAt={startsAt} demo={calendarDemo} tasks={calendarTasks ?? []} onOpenProduction={calendarDemo&&onOpenContent?task=>onOpenContent(task.id,task.productionTaskId):undefined}/> : <ConnectedAgentCalendar accountBindingTasks={projectAccountBindingCalendar(taskItems,accounts.map(account=>({...account,connected:account.connected===true})))}/>}</div> : <LsScheduleViewport label="账号发布排期矩阵" className="border-b border-slate-100">
+      <div id="schedule-panel-calendar" role="tabpanel" aria-labelledby="schedule-tab-calendar">
       <div style={{ minWidth: `${days.length * 112}px` }}>
-        <div className="grid border-b border-slate-200 bg-slate-50" style={{ gridTemplateColumns: `repeat(${days.length}, minmax(112px, 1fr))` }}>
+        <div className="ls-schedule-sticky-header grid border-b border-slate-200 bg-slate-50" style={{ gridTemplateColumns: `repeat(${days.length}, minmax(112px, 1fr))` }}>
           {days.map(day => { const key = dayKey(day); const inGoal = key >= dayKey(goalStart) && key <= dayKey(goalEnd); const load = dayLoads.get(key); return <div key={key} className={`border-r border-slate-100 px-2 py-2.5 text-center ${key === today ? "bg-emerald-50" : inGoal ? "bg-white" : "bg-slate-50"}`}><p className={`text-[9px] font-black ${key === today ? "text-emerald-700" : "text-slate-400"}`}>{day.toLocaleDateString("zh-CN", { weekday: "short" })}</p><p className="mt-1 text-[10px] font-black text-slate-700">{day.toLocaleDateString("zh-CN", { month: "numeric", day: "numeric" })}</p>{load?<p className="mt-1 rounded-full bg-sky-50 px-1.5 py-0.5 text-[7px] font-black text-sky-700">{load.accounts.size} 账号并行 · {load.tasks} 条</p>:<p className="mt-1 text-[7px] font-bold text-slate-300">无发布</p>}{key === today&&<span className="mt-1 inline-block rounded-full bg-emerald-600 px-1.5 py-0.5 text-[7px] font-black text-white">今天</span>}</div>; })}
         </div>
         <div>{rows.map(({ account, plan, index, accountTotal }, rowIndex) => {
@@ -173,7 +175,8 @@ export default function MatrixPublicationSchedule({ calendarTasks, calendarDemo 
           const schedulePeriod = span === 1 ? `${shortDate(publishDate)} 当日` : `${shortDate(productionStart)}–${shortDate(publishDate)} · ${span} 天`;
           const productionItem = productionQueueItemForPlan(plan, taskItems);
           const openProduction = productionItem && onOpenTask ? () => onOpenTask(productionItem.taskId, productionItem.id) : null;
-          return <div key={`${account.accountId}-${plan?.contentId || index}`} className={`relative grid min-h-[150px] border-b border-slate-100 ${rowIndex % 2 ? "bg-slate-50/35" : "bg-white"}`} style={{ gridTemplateColumns: `repeat(${days.length}, minmax(112px, 1fr))` }}>
+          const revealId = `${account.accountId}-${plan?.contentId || `slot-${index}`}`;
+          return <div key={revealId} data-schedule-reveal-id={revealId} className={`ls-schedule-reveal relative grid min-h-[150px] border-b border-slate-100 ${rowIndex % 2 ? "bg-slate-50/35" : "bg-white"}`} style={{ gridTemplateColumns: `repeat(${days.length}, minmax(112px, 1fr))` }}>
             {days.map((day, dayIndex) => <span key={dayKey(day)} className={`border-r border-slate-100 ${dayKey(day) === today ? "bg-emerald-50/45" : ""}`} style={{ gridColumn: dayIndex + 1, gridRow: 1 }}/>) }
             <article tabIndex={0} role={openProduction ? "button" : undefined} onClick={openProduction || undefined} onKeyDown={openProduction ? event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openProduction(); } } : undefined} aria-label={`${account.accountLabel} 第 ${index + 1} 条视频排期${openProduction ? '，进入生产实况' : ''}`} className={`group relative z-10 m-2 min-w-0 max-w-full overflow-visible rounded-2xl border bg-white shadow-sm outline-none transition hover:z-30 hover:border-emerald-300 hover:shadow-lg focus:z-30 focus:border-emerald-300 focus:shadow-lg ${openProduction ? 'cursor-pointer' : ''} ${blocked ? "border-amber-300" : plan ? "border-slate-200" : "border-dashed border-slate-300"}`} style={{ gridColumn: `${cardStartIndex + 1} / span ${cardSpan}`, gridRow: 1 }}>
               {plan ? <>
@@ -206,6 +209,7 @@ export default function MatrixPublicationSchedule({ calendarTasks, calendarDemo 
         })}{!rows.length&&<div className="px-6 py-16 text-center"><CalendarRange size={28} className="mx-auto text-slate-300"/><p className="mt-3 text-sm font-black text-slate-600">还没有账号内容排期</p><p className="mt-1 text-xs text-slate-400">先制定周目标，系统会为每个平台账号生成视频任务卡。</p></div>}</div>
       </div>
     </div>
+    </LsScheduleViewport>
     }
     <footer className="flex flex-wrap items-center gap-3 bg-slate-50 px-5 py-3 text-[9px] font-bold text-slate-400"><span>{view === 'board' ? '排期规则：先准备必要素材，成片至少提前一天完成；发布须满足验收、审批与账号授权。' : '排期规则：每个账号独立均匀铺满本周；同一天允许多个账号并行制作与发布。'}</span><span className="ml-auto">{view === 'board' ? '任务按上游交付衔接；上传逾期会标红并提示受影响任务。' : '窄工期卡片会扩展到可读宽度；准确工期与发布时间以卡内字段为准。'}</span></footer>
   </section>;

@@ -10,6 +10,7 @@ import { AnimatePresence, motion } from 'motion/react';
 import {
   ArrowLeft,
   ArrowDown,
+  ArrowRight,
   Bot,
   CheckCircle2,
   Loader2,
@@ -22,7 +23,6 @@ import { authHeader, getToken } from '../lib/auth';
 import { lsMotion } from '../lib/designTokens';
 import { usePrefersReducedMotion } from '../lib/usePrefersReducedMotion';
 import { renderAssistantConversationBoundary, selectAssistantConversationContext } from '../lib/assistantConversationContext';
-import { useAssistantDecisionMemory } from '../lib/useAssistantDecisionMemory';
 import {
   ASSISTANT_GUIDES,
   ASSISTANT_NOTIFICATION_POLICY,
@@ -41,7 +41,6 @@ import {
   useAssistantStore,
 } from '../stores/assistantStore';
 import AgentReply from './AgentReply';
-import AssistantDecisionMemoryPanel, { AssistantDecisionSaveButton } from './AssistantDecisionMemoryPanel';
 import AssistantComposer, { assistantAttachmentKind } from './assistant/AssistantComposer';
 import { AssistantDecisionCenter } from './assistant';
 import type { AssistantDecisionFeed } from '../../shared/contracts/assistantDecisionCenter';
@@ -488,10 +487,6 @@ async function responseErrorMessage(resp: Response): Promise<string> {
   return `请求失败（HTTP ${resp.status}），请稍后重试。`;
 }
 
-function quickQuestions(context: AssistantContext) {
-  return context.suggestions.length ? context.suggestions : DEFAULT_CONTEXT.strategy.suggestions;
-}
-
 function todoToneClass(tone: AssistantTodoItem['tone'], completed: boolean) {
   if (completed) return 'border-green/20 bg-green/5 text-green';
   if (tone === 'red') return 'border-red/20 bg-red/5 text-red';
@@ -689,7 +684,7 @@ export default function GlobalAssistant({
   const fadeExit = { opacity: 0, transition: { duration: (reduceMotion ? lsMotion.duration.instant : lsMotion.duration.exit) / 1000, ease: lsMotion.ease.exit } };
   const spatialTransition = reduceMotion ? { duration: 0 } : { ...lsMotion.spring.standard, opacity: fadeTransition };
   const [mode, setMode] = useState<'breathing' | 'chat'>('breathing');
-  const [panelView, setPanelView] = useState<AssistantPanelView>('approvals');
+  const [panelView, setPanelView] = useState<AssistantPanelView>('chat');
   const [decisionTotal, setDecisionTotal] = useState<number | null>(null);
   const activeAgent = PRIMARY_ASSISTANT_THREAD;
   const [assistantTool, setAssistantTool] = useState<AssistantTool | null>(null);
@@ -730,7 +725,6 @@ export default function GlobalAssistant({
     userId: persistenceScope.userId.trim(),
   }), [persistenceScope.tenantId, persistenceScope.userId]);
   const persistenceScopeKey = `${stablePersistenceScope.tenantId}\u0000${stablePersistenceScope.userId}`;
-  const decisionMemory = useAssistantDecisionMemory(persistenceScopeKey, responseErrorMessage);
   const persistenceFenceRef = useRef({ scopeKey: persistenceScopeKey, active: true });
   if (persistenceFenceRef.current.scopeKey !== persistenceScopeKey) {
     persistenceFenceRef.current.active = false;
@@ -778,18 +772,22 @@ export default function GlobalAssistant({
   const isCustomerTodoView = panelView === 'todo' && pageContext.agent === 'conversion';
   const panelTitle = assistantTool === 'knowledge-intake'
     ? '灵小枢 · 快速采集'
-    : panelView === 'decision' && focusedTaskCard
+    : panelView === 'approvals'
+      ? '待你决定'
+      : panelView === 'decision' && focusedTaskCard
       ? focusedTaskCard.status === 'approval' || focusedTaskCard.status === 'needs_input'
         ? '需要你确认'
         : '任务结果'
       : isCustomerTodoView ? '今日待办' : activeAgentLabel;
   const panelSubtitle = assistantTool === 'knowledge-intake'
     ? '当前：智能客服规范'
-    : panelView === 'decision' && focusedTaskCard
+    : panelView === 'approvals'
+      ? '查看详情后再确认，不会在概要卡上直接执行'
+      : panelView === 'decision' && focusedTaskCard
       ? focusedTaskCard.title
       : isCustomerTodoView ? '当前：我的客户' : `当前：${activeContext.label}`;
   const assistantPanelHeight = Math.max(120, Math.min(720, viewport.height - 96));
-  const assistantPanelWidth = Math.min(assistantTool === 'knowledge-intake' ? 560 : panelView === 'approvals' ? 480 : 420, viewport.width - 32);
+  const assistantPanelWidth = Math.min(assistantTool === 'knowledge-intake' ? 560 : 420, viewport.width - 32);
   const performanceLines = PERFORMANCE_LINES[performance?.phase || 'default'] || PERFORMANCE_LINES.default;
   const performanceMessage = performance?.message || performanceLines[performanceLineIndex % performanceLines.length];
 
@@ -953,23 +951,17 @@ export default function GlobalAssistant({
 
   const openAgent = useCallback((routeAgent: OrbitAgentId, preferredView?: AssistantPanelView) => {
     const agentId = PRIMARY_ASSISTANT_THREAD;
-    const thread = useAssistantStore.getState().threads[agentId];
-    const focusedCard = thread.focusedTaskId ? thread.taskCards[thread.focusedTaskId] : null;
-    const nextView = preferredView
-      ?? (focusedCard && shouldNotifyAssistant(focusedCard.notificationReason)
-        ? 'decision'
-        : routeAgent === 'customer' && pageContext.agent === 'conversion' && (pendingCount > 0 || todoItems.length > 0)
-          ? 'todo'
-          : 'chat');
+    const nextView = preferredView ?? 'chat';
+    void routeAgent;
     setAssistantTool(null);
     setPanelView(nextView);
     setUnreadCount(agentId, 0);
     setMode('chat');
     persistThread(agentId);
-  }, [pageContext.agent, pendingCount, persistThread, setUnreadCount, todoItems.length]);
+  }, [persistThread, setUnreadCount]);
 
   const openCurrentPageAgent = useCallback(() => {
-    openAgent(currentPageAgent, 'approvals');
+    openAgent(currentPageAgent, 'chat');
   }, [currentPageAgent, openAgent]);
 
   const handleDecisionFeedChange = useCallback((feed: AssistantDecisionFeed) => {
@@ -1180,7 +1172,7 @@ export default function GlobalAssistant({
           actionCardToTaskCard(statusResponse.card, statusResponse, CURRENT_STATUS_TASK_ID),
         );
         focusTaskCard(agentId, CURRENT_STATUS_TASK_ID);
-        setPanelView('decision');
+        setPanelView('chat');
         setMode('chat');
         persistThread(agentId);
       });
@@ -1188,16 +1180,16 @@ export default function GlobalAssistant({
     const notificationReason = notificationReasonFromResponse(response);
     if (!shouldNotifyAssistant(notificationReason)) {
       // This callback handles direct user actions. Keep routine success silent
-      // (no unread badge or speech bubble), but show the compact result card so
-      // its choices and workspace link are not lost in a plain-text summary.
+      // (no unread badge or speech bubble), but keep the signed task card as a
+      // summary bubble in the conversation so the user chooses when to open it.
       focusTaskCard(agentId, stableTaskId);
-      setPanelView('decision');
+      setPanelView('chat');
       setMode('chat');
       refreshCurrentStatus();
       return;
     }
     focusTaskCard(agentId, stableTaskId);
-    setPanelView('decision');
+    setPanelView('chat');
     setMode('chat');
     if (response.notification) {
       const current = useAssistantStore.getState().threads[agentId];
@@ -1611,7 +1603,6 @@ export default function GlobalAssistant({
       upsertTaskCard(targetAgent, detail.card);
       if (!shouldNotifyAssistant(detail.card.notificationReason)) return;
       focusTaskCard(targetAgent, detail.card.taskId);
-      if (mode === 'chat') setPanelView('decision');
       const thread = useAssistantStore.getState().threads[targetAgent];
       setUnreadCount(targetAgent, thread.unreadCount + 1);
       setSpeechBubble({ id: Date.now(), message: detail.card.conclusion });
@@ -1708,7 +1699,7 @@ export default function GlobalAssistant({
         setLiveContext(targetContext);
       }
       const routeAgent = orbitIdForAgent(targetContext.agent, currentPageAgent);
-      openAgent(routeAgent, detail?.tool || detail?.text || detail?.assistantText ? 'chat' : 'approvals');
+      openAgent(routeAgent, 'chat');
       if (detail?.tool === 'knowledge-intake') setAssistantTool('knowledge-intake');
       const assistantText = detail?.assistantText?.trim();
       if (assistantText) {
@@ -2008,12 +1999,12 @@ export default function GlobalAssistant({
                     if (assistantTool === 'knowledge-intake') {
                       setAssistantTool(null);
                       returnToConversation();
-                    } else if (isCustomerTodoView || panelView === 'decision') returnToConversation();
+                    } else if (panelView !== 'chat') returnToConversation();
                     else closeAssistant();
                   }}
                   className="rounded-md p-1.5 text-text-muted hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
-                  aria-label={assistantTool === 'knowledge-intake' || panelView === 'decision' || isCustomerTodoView ? '返回灵小枢对话' : '收起灵小枢对话'}
-                  title={assistantTool === 'knowledge-intake' || panelView === 'decision' || isCustomerTodoView ? '返回灵小枢对话' : '收起灵小枢对话'}
+                  aria-label={assistantTool === 'knowledge-intake' || panelView !== 'chat' ? '返回灵小枢对话' : '收起灵小枢对话'}
+                  title={assistantTool === 'knowledge-intake' || panelView !== 'chat' ? '返回灵小枢对话' : '收起灵小枢对话'}
                 >
                   <ArrowLeft size={16} />
                 </button>
@@ -2023,7 +2014,7 @@ export default function GlobalAssistant({
                 </div>
               </div>
               <div className="flex items-center gap-1">
-                {!assistantTool && panelView !== 'approvals' && focusedRunControl && (
+                {!assistantTool && panelView === 'decision' && focusedRunControl && (
                   <button
                     type="button"
                     onClick={() => void toggleTaskPaused()}
@@ -2041,23 +2032,6 @@ export default function GlobalAssistant({
               </div>
             </header>
 
-            {!assistantTool && (
-              <nav className="flex shrink-0 gap-2 border-b border-border px-4 py-2" aria-label="灵小枢工作视图">
-                <Button
-                  type="text"
-                  aria-pressed={panelView === 'approvals'}
-                  onClick={() => setPanelView('approvals')}
-                  className={panelView === 'approvals' ? '!bg-surface-2 !text-accent' : ''}
-                >待你决定{decisionTotal ? ` · ${decisionTotal}` : ''}</Button>
-                <Button
-                  type="text"
-                  aria-pressed={panelView === 'chat'}
-                  onClick={returnToConversation}
-                  className={panelView === 'chat' ? '!bg-surface-2 !text-accent' : ''}
-                >问灵小枢</Button>
-              </nav>
-            )}
-
             {assistantTool === 'knowledge-intake' ? (
               <div className="min-h-0 flex-1 overflow-y-auto bg-surface-2 p-3">
                 <KnowledgeIntakePanel
@@ -2070,15 +2044,23 @@ export default function GlobalAssistant({
                 />
               </div>
             ) : panelView === 'approvals' ? (
-              <div data-assistant-surface="approvals" className="min-h-0 flex-1 overflow-y-auto p-4">
+              <motion.div
+                data-assistant-surface="decision"
+                data-assistant-page="decision-detail"
+                initial={{ opacity: 0, x: reduceMotion ? 0 : 8 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={spatialTransition}
+                className="min-h-0 flex-1 overflow-y-auto bg-surface-2 p-4"
+              >
                 <AssistantDecisionCenter
                   page={page}
-                  key={`${persistenceScopeKey}:${page}`}
+                  key={`${persistenceScopeKey}:${page}:detail`}
                   active={mode === 'chat'}
                   onOpenChat={returnToConversation}
                   onFeedChange={handleDecisionFeedChange}
+                  variant="detail"
                 />
-              </div>
+              </motion.div>
             ) : panelView === 'decision' && focusedTaskCard ? (
               <div
                 data-assistant-surface="decision"
@@ -2229,7 +2211,6 @@ export default function GlobalAssistant({
               </div>
             ) : (
               <>
-                <AssistantDecisionMemoryPanel memory={decisionMemory} />
                 <div
                   ref={messageScrollRef}
                   data-assistant-surface="conversation"
@@ -2243,52 +2224,75 @@ export default function GlobalAssistant({
                     );
                   }}
                 >
-                  {!activeThread.messages.length ? (
-                    <div className="flex h-full flex-col justify-center gap-4">
-                      <div>
-                        <p className="ls-type-title-small text-text-primary">我是{activeAgentLabel}</p>
-                        <p className="ls-type-body-medium mt-1 text-text-muted">我会结合当前页面上下文继续帮你处理。</p>
-                      </div>
-                      <div className="grid gap-2">
-                        {quickQuestions(activeContext).map(item => (
-                          <button
-                            key={item}
-                            type="button"
-                            onClick={() => void send(item)}
-                            className="rounded-md border border-border bg-surface px-3 py-2 text-left text-xs font-semibold text-text-secondary hover:border-accent/35 hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
-                          >
-                            {item}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="space-y-4">
-                      {activeThread.messages.map((msg, index) => (
-                        <div key={index} className={`flex gap-2 ${msg.role === 'user' ? 'justify-end' : ''}`}>
-                          {msg.role === 'assistant' && <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-text-primary text-white"><Bot size={13} /></div>}
-                          <div className={msg.role === 'user'
-                            ? 'ls-messenger-bubble ls-messenger-bubble--outbound whitespace-pre-line'
-                            : 'ls-messenger-bubble ls-messenger-bubble--inbound'}>
-                            {msg.role === 'assistant'
-                              ? (msg.content ? <AgentReply content={msg.content} sources={msg.sources} onAction={onAction} /> : <span className="opacity-40">...</span>)
-                              : (
-                                <>
-                                  {msg.content}
-                                  <AssistantDecisionSaveButton memory={decisionMemory} text={msg.content} />
-                                </>
-                              )}
-                          </div>
+                  <div className="space-y-4">
+                    {!activeThread.messages.length && (
+                      <div className="flex items-start gap-2">
+                        <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-text-primary text-white"><Bot size={13} /></div>
+                        <div className="ls-messenger-bubble ls-messenger-bubble--inbound">
+                          <p className="font-semibold text-text-primary">我是{activeAgentLabel}</p>
+                          <p className="mt-1 text-text-secondary">我会结合当前页面上下文继续帮你处理。</p>
                         </div>
-                      ))}
-                      {loading && (
-                        <div className="flex gap-2">
-                          <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-text-primary text-white"><Loader2 size={13} className="motion-safe:animate-spin" /></div>
-                          <div className="ls-type-body-medium rounded-lg rounded-tl-sm border border-border bg-surface-2 px-3 py-2 text-text-muted">思考中...</div>
+                      </div>
+                    )}
+
+                    {activeThread.messages.map((msg, index) => (
+                      <div key={index} className={`flex gap-2 ${msg.role === 'user' ? 'justify-end' : ''}`}>
+                        {msg.role === 'assistant' && <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-text-primary text-white"><Bot size={13} /></div>}
+                        <div className={msg.role === 'user'
+                          ? 'ls-messenger-bubble ls-messenger-bubble--outbound whitespace-pre-line'
+                          : 'ls-messenger-bubble ls-messenger-bubble--inbound'}>
+                          {msg.role === 'assistant'
+                            ? (msg.content ? <AgentReply content={msg.content} sources={msg.sources} onAction={onAction} /> : <span className="opacity-40">...</span>)
+                            : msg.content}
                         </div>
-                      )}
+                      </div>
+                    ))}
+
+                    {loading && (
+                      <div className="flex gap-2">
+                        <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-text-primary text-white"><Loader2 size={13} className="motion-safe:animate-spin" /></div>
+                        <div className="ls-messenger-bubble ls-messenger-bubble--inbound text-text-muted">思考中...</div>
+                      </div>
+                    )}
+
+                    {focusedTaskCard && (
+                      <div className="flex items-start gap-2" data-assistant-summary="task-card">
+                        <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-text-primary text-white"><Bot size={13} /></div>
+                        <button
+                          type="button"
+                          className="assistant-decision-summary min-w-0 flex-1"
+                          onClick={() => {
+                            focusTaskCard(activeAgent, focusedTaskCard.taskId);
+                            setPanelView('decision');
+                          }}
+                          aria-label={`查看任务详情：${focusedTaskCard.title}`}
+                        >
+                          <span className="assistant-decision-summary__icon" aria-hidden="true"><Bot size={18} /></span>
+                          <span className="assistant-decision-summary__content">
+                            <span className="assistant-decision-summary__eyebrow">
+                              <span>{focusedTaskCard.status === 'approval' || focusedTaskCard.status === 'needs_input' ? '待你决定' : '灵小枢已整理'}</span>
+                              <span>{taskStatusLabel(focusedTaskCard)}</span>
+                            </span>
+                            <strong>{focusedTaskCard.title}</strong>
+                            <span className="assistant-decision-summary__description">{focusedTaskCard.conclusion}</span>
+                          </span>
+                          <ArrowRight className="assistant-decision-summary__arrow" size={18} aria-hidden="true" />
+                        </button>
+                      </div>
+                    )}
+
+                    <div className="pl-9" data-assistant-summary="decision-feed">
+                      <AssistantDecisionCenter
+                        page={page}
+                        key={`${persistenceScopeKey}:${page}:summary`}
+                        active={mode === 'chat' && panelView === 'chat'}
+                        onOpenChat={returnToConversation}
+                        onOpenDetail={() => setPanelView('approvals')}
+                        onFeedChange={handleDecisionFeedChange}
+                        variant="summary"
+                      />
                     </div>
-                  )}
+                  </div>
                 </div>
 
                 {!activeThread.isFollowingLatest && (

@@ -5,10 +5,23 @@ import test from 'node:test';
 const source = readFileSync(new URL('./AssistantDecisionCenter.tsx', import.meta.url), 'utf8');
 const styles = readFileSync(new URL('./assistantDecisionCenter.css', import.meta.url), 'utf8');
 
-test('assistant is a one-card decision surface with chat only in the empty state', () => {
+test('assistant is a one-card decision surface with chat only in the detail empty state', () => {
   assert.match(source, /feed\?\.items\[0\]/, 'only the first priority item is selected');
   assert.match(source, /!loading && !first && !error[\s\S]*问灵小枢/, 'chat is offered only after the decision queue is empty');
   assert.doesNotMatch(source, /AgentExecutionStatus|RunEvent|Timeline|执行记录|事件日志/, 'execution history must stay in the workbench');
+});
+
+test('summary variant is a real-feed bubble that opens the separate detail page', () => {
+  assert.match(source, /AssistantDecisionCenterVariant = 'summary' \| 'detail'/);
+  assert.match(source, /variant\?: AssistantDecisionCenterVariant/);
+  assert.match(source, /onOpenDetail\?: \(\) => void/);
+  assert.match(source, /if \(variant === 'summary'\)[\s\S]*if \(!first && !error\) return null/, 'an empty feed must not reserve summary space');
+  assert.match(source, /card\.kind === 'plan_start' \|\| card\.kind === 'plan_adjustment'[\s\S]*请确认本周的内容计划/, 'weekly plan summaries use the requested plain-language title');
+  assert.match(source, /<DecisionSummary card=\{first\} total=\{feed\?\.total \|\| 1\} onOpenDetail=\{onOpenDetail\}/, 'the real first feed card drives the summary bubble');
+  assert.match(source, /className="assistant-decision-summary"[\s\S]*onClick=\{onOpenDetail\}/, 'summary click only opens detail and never executes an action');
+  assert.match(styles, /\.assistant-decision-summary[\s\S]*min-height: 44px/);
+  assert.match(styles, /background: var\(--ls-action-gradient\)/, 'summary uses the shared blue-violet action gradient');
+  assert.match(styles, /\.assistant-decision-summary:focus-visible[\s\S]*outline:/, 'summary bubble keeps a visible keyboard focus state');
 });
 
 test('assistant uses shared Ant controls and the single branded primary action', () => {

@@ -49,12 +49,16 @@ const actionIcon: Partial<Record<AssistantDecisionActionId, typeof ArrowRight>> 
 
 export type AssistantDecisionClient = typeof assistantDecisionApi;
 
+export type AssistantDecisionCenterVariant = 'summary' | 'detail';
+
 export type AssistantDecisionCenterProps = {
   page: string;
   active?: boolean;
   goalId?: string;
   onOpenChat: () => void;
+  onOpenDetail?: () => void;
   onFeedChange?: (feed: AssistantDecisionFeed) => void;
+  variant?: AssistantDecisionCenterVariant;
   className?: string;
   client?: AssistantDecisionClient;
 };
@@ -87,6 +91,43 @@ function decisionLabel(card: AssistantDecisionCard): string {
 
 function selectPrimaryDecision(feed: AssistantDecisionFeed | null): AssistantDecisionCard | null {
   return feed?.items[0] || null;
+}
+
+export function assistantDecisionSummaryTitle(card: AssistantDecisionCard): string {
+  if (card.kind === 'plan_start' || card.kind === 'plan_adjustment') return '请确认本周的内容计划';
+  return card.title;
+}
+
+function DecisionSummary({
+  card,
+  total,
+  onOpenDetail,
+}: {
+  card: AssistantDecisionCard;
+  total: number;
+  onOpenDetail?: () => void;
+}) {
+  const Icon = kindMeta[card.kind].icon;
+  const title = assistantDecisionSummaryTitle(card);
+  return (
+    <button
+      type="button"
+      className="assistant-decision-summary"
+      onClick={onOpenDetail}
+      aria-label={`查看待办详情：${title}`}
+    >
+      <span className="assistant-decision-summary__icon" aria-hidden="true"><Icon size={18} /></span>
+      <span className="assistant-decision-summary__content">
+        <span className="assistant-decision-summary__eyebrow">
+          <span>待你决定</span>
+          {total > 1 ? <span>共 {total} 项</span> : null}
+        </span>
+        <strong>{title}</strong>
+        <span className="assistant-decision-summary__description">{card.summary}</span>
+      </span>
+      <ArrowRight className="assistant-decision-summary__arrow" size={18} aria-hidden="true" />
+    </button>
+  );
 }
 
 function DecisionCard({
@@ -205,7 +246,9 @@ export default function AssistantDecisionCenter({
   active = true,
   goalId,
   onOpenChat,
+  onOpenDetail,
   onFeedChange,
+  variant = 'detail',
   className = '',
   client = assistantDecisionApi,
 }: AssistantDecisionCenterProps) {
@@ -290,8 +333,35 @@ export default function AssistantDecisionCenter({
     }
   }, [busyAction, client, first, goalId, load, message, note, page]);
 
+  if (variant === 'summary') {
+    if (!first && !error) return null;
+    return (
+      <section
+        className={`assistant-decision-center assistant-decision-center--summary ${className}`.trim()}
+        aria-label="待你决定"
+        data-assistant-decision-variant="summary"
+      >
+        {error ? (
+          <Alert
+            className="assistant-decision-center__error assistant-decision-center__error--summary"
+            type="error"
+            showIcon
+            message={error}
+            action={<Button disabled={loading} onClick={() => void load()} icon={<RefreshCw size={14} />}>重新加载</Button>}
+          />
+        ) : first ? (
+          <DecisionSummary card={first} total={feed?.total || 1} onOpenDetail={onOpenDetail} />
+        ) : null}
+      </section>
+    );
+  }
+
   return (
-    <section className={`assistant-decision-center ${className}`.trim()} aria-labelledby="assistant-decision-center-title">
+    <section
+      className={`assistant-decision-center ${className}`.trim()}
+      aria-labelledby="assistant-decision-center-title"
+      data-assistant-decision-variant="detail"
+    >
       <div className="assistant-decision-center__title-row">
         <h2 id="assistant-decision-center-title">待你决定</h2>
         {feed?.total ? <span aria-label={`共有 ${feed.total} 项待办`}>{feed.total}</span> : null}

@@ -1,9 +1,18 @@
 import type { BusinessMetric, DigitalEmployeeOverview } from '../../lib/digitalEmployees';
+import { calendarDayKey } from '../../lib/calendarModel';
 import type { ConnectedSocialPerformance } from '../../lib/socialPerformance';
 import type { Page } from '../../pageRegistry';
 import { scoreAccountHealth, type AccountHealthAccount, type AccountHealthMessengerPage } from './AccountHealthPanel';
 
-export type HealthCriterion = { label: string; score: number | null; current: string; basis: string };
+export type HealthCriterionCoverageStatus = 'scored' | 'pending' | 'not_applicable';
+export type HealthCriterion = {
+  label: string;
+  score: number | null;
+  current: string;
+  basis: string;
+  /** Only set when a criterion is genuinely out of scope; missing evidence remains pending. */
+  coverageStatus?: HealthCriterionCoverageStatus;
+};
 export type BusinessHealthDimension = {
   key: 'accounts' | 'inquiries' | 'content' | 'advertising';
   label: string;
@@ -34,6 +43,25 @@ export function businessHealthStatus(score: number | null, covered: number, tota
   return score >= 80 ? '基础稳健' : score >= 60 ? '持续建设' : '优先补齐';
 }
 
+export function healthCriterionCoverageStatus(criterion: HealthCriterion): HealthCriterionCoverageStatus {
+  return criterion.coverageStatus || (criterion.score === null ? 'pending' : 'scored');
+}
+
+export function summarizeHealthCriteria(criteria: HealthCriterion[]) {
+  const scored = criteria.filter(item => healthCriterionCoverageStatus(item) === 'scored').length;
+  const pending = criteria.filter(item => healthCriterionCoverageStatus(item) === 'pending').length;
+  const notApplicable = criteria.filter(item => healthCriterionCoverageStatus(item) === 'not_applicable').length;
+  const applicable = scored + pending;
+  return {
+    scored,
+    pending,
+    notApplicable,
+    applicable,
+    total: criteria.length,
+    coveragePercent: applicable ? Math.round(scored / applicable * 100) : null,
+  };
+}
+
 const ratio = (numerator: number | null, denominator: number | null) => numerator !== null && denominator !== null && denominator > 0 && numerator <= denominator ? Math.round(numerator / denominator * 100) : null;
 const count = (value: number | null) => value === null ? '—' : value.toLocaleString('zh-CN');
 
@@ -61,8 +89,14 @@ export function businessHealthAccounts(data: DigitalEmployeeOverview): AccountHe
 
 export function buildBusinessHealthModel(data: DigitalEmployeeOverview, sources: BusinessHealthSources, selectedAccountId = '') {
   const snapshot = data.businessSnapshot;
-  const startsAt = data.goal?.startsAt || snapshot?.range.startsAt || '';
-  const endsAt = data.goal?.endsAt || snapshot?.range.endsAt || '';
+  const timeZone = snapshot?.range.timeZone || 'Asia/Shanghai';
+  const rangeDay = (value?: string) => {
+    if (!value) return '';
+    try { return calendarDayKey(value, timeZone); }
+    catch { return value.slice(0, 10); }
+  };
+  const startsAt = snapshot?.range.startsAt ? rangeDay(snapshot.range.startsAt) : data.goal?.startsAt || '';
+  const endsAt = snapshot?.range.endsAt ? rangeDay(snapshot.range.endsAt) : data.goal?.endsAt || '';
   const accounts = businessHealthAccounts(data).filter(account => !selectedAccountId || account.accountId === selectedAccountId);
   const accountHealth = accounts.map(account => {
     const connectionKnown = Boolean(sources.performance && !sources.performance.unavailable.some(item => !item.accountId && (item.platform === account.platform || item.platform === 'facebook' && account.platform !== 'youtube')));
