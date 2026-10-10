@@ -38,8 +38,12 @@ export async function resumeSocialSceneRework(input: {
     const context = await createSocialSceneReworkService(repository).readForJob({ tenantId: input.tenantId,
       taskId: input.taskId, runId: job.runId, actorUserId: input.actorUserId, operationId: input.operationId });
     const providerWork = job.providerReceipts.some(receipt => ['submitting', 'accepted', 'unknown', 'completed'].includes(receipt.state));
-    if (!providerWork) {
-      const ports = createSocialSceneReworkSupplyPorts({ repository, job });
+    const ports = createSocialSceneReworkSupplyPorts({ repository, job });
+    if (job.providerReceipts.some(receipt => receipt.state === 'completed')) {
+      // A completed provider receipt is not considered pending by the durable queue. Only a sealed
+      // local supply checkpoint may advance it to render; otherwise a normal retry could resubmit.
+      if (!await ports.restoreBudgetForRender()) return fail('scene_rework_completed_provider_result_recovery_required');
+    } else if (!providerWork) {
       const evidence = await ports.readBudgetEvidence();
       if (!evidence.localOnly) {
         const policy = await createSocialSceneReworkCostPolicyService(repository).requireConfirmed({ tenantId: input.tenantId,
