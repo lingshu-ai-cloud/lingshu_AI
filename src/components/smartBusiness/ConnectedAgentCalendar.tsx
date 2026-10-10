@@ -1,4 +1,4 @@
-import { readAgentCalendarReturnContext, registerAgentCalendarReturnState } from '../../lib/agentCalendarReturnContext';
+import { agentCalendarAuthIdentity, readAgentCalendarReturnContext, registerAgentCalendarReturnState } from '../../lib/agentCalendarReturnContext';
 import {openCustomerCalendarTask,type CustomerCalendarProjection} from '../socialProgram/CustomerWeeklyCalendar';
 import {readWeeklyContentNavigation,weeklyContentNavigationDetail} from '../../lib/weeklyContentNavigationApi';
 import {parseWeeklyProfileCreation,type WeeklyProfileUpgrade,type WeeklyProfileCreationIntent} from '../../lib/weeklyProfileUpgradeApi';
@@ -24,7 +24,7 @@ import WeeklyCustomerChannelScopePanel from '../socialProgram/WeeklyCustomerChan
 import WeeklyCustomerSendRecoveryPanel,{requestPanelId} from '../socialProgram/WeeklyCustomerSendRecoveryPanel';
 import {validCustomerSendRecoveryTarget} from '../socialProgram/weeklyCustomerSendRecoveryNavigation';
 import type {WeeklyCustomerSendRecovery} from '../../../shared/contracts/weeklyCustomerSendRecovery';
-import {getToken} from '../../lib/auth';
+import {AUTH_TOKEN_CHANGED_EVENT,getToken} from '../../lib/auth';
 import {verifyProductionSnapshotHash} from '../../lib/socialSceneReworkNavigation';
 import {sceneCalendarExecution,sceneCalendarChoices,isSceneContentExecution} from '../socialProgram/sceneCalendarNavigation';
 import {socialContentApi} from '../../lib/socialContentApi';
@@ -61,11 +61,14 @@ const identity = (pkg: WeeklyOperatingPackage) => JSON.stringify([pkg.packageId,
 export default function ConnectedAgentCalendar({accountBindingTasks=[]}:{accountBindingTasks?:AgentCalendarTask[]}={}) {
   const context = useOptionalSocialProgram();
   const program = context?.activeProgram;
+  const [authIdentity,setAuthIdentity]=useState(agentCalendarAuthIdentity);
+  useEffect(()=>{const changed=()=>setAuthIdentity(agentCalendarAuthIdentity());window.addEventListener(AUTH_TOKEN_CHANGED_EVENT,changed);window.addEventListener('storage',changed);return()=>{window.removeEventListener(AUTH_TOKEN_CHANGED_EVENT,changed);window.removeEventListener('storage',changed);};},[]);
   const [packages, setPackages] = useState<WeeklyOperatingPackage[]>([]);
+  const [packageAuthority,setPackageAuthority]=useState(authIdentity);
   const [selected, setSelected] = useState('');
   const retainedSelection = useRef(selected);
   retainedSelection.current = selected;
-  const packageStateKey = `agentCalendar.package:${program?.programId ?? ''}`;
+  const packageStateKey = `agentCalendar.package:${authIdentity}:${program?.programId ?? ''}`;
   useEffect(() => registerAgentCalendarReturnState(packageStateKey, {
     read: () => retainedSelection.current,
     restore: value => { if (typeof value === 'string') setSelected(value); },
@@ -103,18 +106,18 @@ export default function ConnectedAgentCalendar({accountBindingTasks=[]}:{account
   const [packagesLoading, setPackagesLoading] = useState(false);
   const [tasksLoading, setTasksLoading] = useState(false);
   const loading = packagesLoading || tasksLoading;
-  currentSelection.current=JSON.stringify([program?.programId,selected]);
-  useEffect(()=>{sceneReadGeneration.current++;setSceneChoices(null);setSceneUpstream(null);setSceneReading(null);},[program?.programId,selected]);
+  currentSelection.current=JSON.stringify([authIdentity,program?.programId,selected]);
+  useEffect(()=>{sceneReadGeneration.current++;setSceneChoices(null);setSceneUpstream(null);setSceneReading(null);},[authIdentity,program?.programId,selected]);
   useEffect(() => {
     let cancelled = false;
     const savedSelection = readAgentCalendarReturnContext()?.states[packageStateKey];
-    const originalSelection = typeof savedSelection === 'string' ? savedSelection : retainedSelection.current;
+    const originalSelection = typeof savedSelection === 'string' ? savedSelection : '';
     setPackages([]); setSelected(''); setTasks([]); setError(''); setPackagesLoading(false);
     if (!program) return;
     setPackagesLoading(true);
     void socialProgramApi.listOperatingPackages(program.programId).then(items => {
-      if (cancelled) return;
-      setPackages(items);
+      if (cancelled || authIdentity!==agentCalendarAuthIdentity()) return;
+      setPackageAuthority(authIdentity);setPackages(items);
       const ref = program.activeWeeklyOperatingPackageRef;
       const active = ref ? items.find(item => item.programId === program.programId && item.packageId === ref.id && item.version === ref.version) : undefined;
       const original = items.find(item => item.programId === program.programId && identity(item) === originalSelection);
@@ -123,8 +126,8 @@ export default function ConnectedAgentCalendar({accountBindingTasks=[]}:{account
     }).catch(cause => { if (!cancelled) setError(cause instanceof Error ? cause.message : '周任务包读取失败'); })
       .finally(() => { if (!cancelled) setPackagesLoading(false); });
     return () => { cancelled = true; };
-  }, [program?.programId, program?.activeWeeklyOperatingPackageRef?.id, program?.activeWeeklyOperatingPackageRef?.version]);
-  const pkg = packages.find(item => item.programId === program?.programId && identity(item) === selected);
+  }, [authIdentity,program?.programId, program?.activeWeeklyOperatingPackageRef?.id, program?.activeWeeklyOperatingPackageRef?.version]);
+  const pkg = packageAuthority===authIdentity ? packages.find(item => item.programId === program?.programId && identity(item) === selected) : undefined;
   useEffect(() => {
     let cancelled = false;
     let reading = false;
@@ -138,7 +141,7 @@ export default function ConnectedAgentCalendar({accountBindingTasks=[]}:{account
       try {
         const items = await socialProgramApi.listExecutionTasks(pkg.programId, pkg.packageId, pkg.version);
         if (items.some(item => item.programId !== pkg.programId || item.packageId !== pkg.packageId || item.packageVersion !== pkg.version)) throw new Error('执行任务与所选周包版本不一致，请刷新后重试。');
-        if (!cancelled&&generation===taskReadGeneration.current) { setTasks(items); setError(''); }
+        if (!cancelled&&authIdentity===agentCalendarAuthIdentity()&&generation===taskReadGeneration.current) { setTasks(items); setError(''); }
       } catch (cause) { if (!cancelled) setError(cause instanceof Error ? cause.message : '执行排期读取失败'); }
       finally { reading = false; if (!cancelled) setTasksLoading(false); }
     };
@@ -147,7 +150,7 @@ export default function ConnectedAgentCalendar({accountBindingTasks=[]}:{account
     const visible = () => { if (document.visibilityState === 'visible') void read(); };
     document.addEventListener('visibilitychange', visible);
     return () => { cancelled = true; window.clearInterval(timer); document.removeEventListener('visibilitychange', visible); };
-  }, [pkg?.programId, pkg?.packageId, pkg?.version]);
+  }, [authIdentity,pkg?.programId, pkg?.packageId, pkg?.version]);
   const scopedTasks=tasks.filter(item=>item.programId===pkg?.programId&&item.packageId===pkg?.packageId&&item.packageVersion===pkg?.version);
   const recoveryTenants=[...new Set(scopedTasks.map(task=>task.tenantId))];
   const recoveryTenant=recoveryTenants.length===1?recoveryTenants[0]:null;

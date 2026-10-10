@@ -1,0 +1,1255 @@
+{
+  "api": {
+    "/api/overseas/auth/me": {
+      "token": "read-only-audit",
+      "platformAdmin": true,
+      "user": {
+        "id": "owner",
+        "email": "local@example.test",
+        "name": "Local fixture",
+        "tenantId": "tenant",
+        "role": "super_admin"
+      },
+      "tenant": {
+        "id": "tenant",
+        "name": "Local fixture",
+        "subscriptionStatus": "active",
+        "subscriptionPlan": "enterprise",
+        "subscriptionExpiresAt": null
+      }
+    },
+    "/api/overseas/digital-employees/overview": {
+      "config": {
+        "smartOperationsEnabled": true,
+        "companyName": "Local fixture",
+        "industry": "制造",
+        "primaryBusiness": "factory",
+        "targetMarkets": "US",
+        "customerProfile": "buyers",
+        "operatingMaturity": "starting",
+        "socialOperatingProfile": "starter_four_platform",
+        "defaultParticipation": "agent",
+        "autonomyMode": "managed",
+        "approvalOwner": "owner",
+        "constraints": [],
+        "team": [
+          "orchestrator",
+          "business",
+          "director",
+          "content",
+          "customer"
+        ],
+        "primaryGoal": "leads",
+        "focusProducts": "Widget",
+        "enabledWorkflows": [],
+        "socialCadence": "weekly",
+        "followupCadence": "weekly",
+        "reviewSchedule": "weekly",
+        "publishingTargets": [
+          {
+            "platform": "instagram",
+            "accountId": "fixture-content-account",
+            "accountLabel": "Local fixture account",
+            "timezone": "UTC"
+          }
+        ],
+        "allowGeneratedVisuals": false,
+        "allowRealPublishing": false,
+        "allowRealCustomerMessages": false,
+        "approvalPolicy": {
+          "contentPublish": true,
+          "batchFollowup": true,
+          "commercialCommitment": true
+        },
+        "agentApprovalPolicies": {
+          "business": {},
+          "industry": {},
+          "content": {},
+          "customer": {}
+        }
+      },
+      "goals": [],
+      "goal": null,
+      "plan": null,
+      "run": null,
+      "tasks": [],
+      "events": [],
+      "approvals": [],
+      "handoffs": [],
+      "review": null,
+      "agents": [],
+      "businessSnapshot": null,
+      "deliveries": []
+    },
+    "/api/overseas/digital-employees/planning-options": {
+      "members": [],
+      "projects": [],
+      "customers": [],
+      "accounts": []
+    },
+    "/api/overseas/digital-employees/publishing-accounts": {
+      "items": []
+    },
+    "/api/overseas/enterprise/profile": {
+      "profile": {
+        "company": {
+          "name": "Local fixture"
+        },
+        "products": {
+          "items": []
+        }
+      }
+    },
+    "/api/overseas/social-programs": {
+      "items": [
+        {
+          "programId": "program",
+          "brandName": "Local fixture",
+          "businessLine": "content_growth",
+          "market": "US",
+          "targetAudience": "buyers",
+          "candidatePlatforms": [],
+          "route": "cold_start",
+          "stage": "operating",
+          "readiness": {},
+          "enterpriseProfileRef": null,
+          "productMarketingProfileRefs": [],
+          "activeMonthlyPlanRef": null,
+          "activeWeeklyPlanRef": null,
+          "activeWeeklyOperatingPackageRef": {
+            "id": "week",
+            "version": 1
+          },
+          "version": 1,
+          "status": "active",
+          "createdAt": "2026-10-10T00:00:00Z",
+          "updatedAt": "2026-10-10T00:00:00Z"
+        }
+      ]
+    },
+    "/api/overseas/social-programs/program/accounts": {
+      "items": []
+    },
+    "/api/overseas/social-programs/program/operating-packages": {
+      "items": [
+        {
+          "packageId": "week",
+          "programId": "program",
+          "version": 1,
+          "status": "active",
+          "weekStart": "2026-10-05",
+          "weekEnd": "2026-10-11",
+          "objective": "Local read-only test",
+          "enterpriseProfileRef": null,
+          "monthlyPlanRef": null,
+          "workflows": [],
+          "workflowTasks": [],
+          "appliedWorkflowEvents": [],
+          "taskVersionMappings": [],
+          "createdAt": "2026-10-10T00:00:00Z",
+          "updatedAt": "2026-10-10T00:00:00Z",
+          "planningBlockers": [],
+          "capacityPlanRef": null,
+          "automationPolicyRef": null,
+          "discoveryBudgetCny": null,
+          "successCriteria": [],
+          "changeReason": null,
+          "previousVersion": null,
+          "createdBy": "owner",
+          "socialContentPackage": {
+            "contentPackageId": "content-week",
+            "operatingPackageId": "week",
+            "version": 1,
+            "status": "active",
+            "originalContentTarget": 0,
+            "adaptationVersionTarget": 0,
+            "publicationTaskTarget": 0,
+            "publicationTasks": [],
+            "weeklyBudgetCny": 0,
+            "perItemBudgetCny": 0,
+            "capacityNotes": [],
+            "authorization": {
+              "mode": "each",
+              "accountIds": [],
+              "maxPublishItems": 0,
+              "weekStart": "2026-10-05",
+              "weekEnd": "2026-10-11",
+              "allowRealPublishing": false,
+              "authorizedBy": null,
+              "authorizedAt": null,
+              "revokedBy": null,
+              "revokedAt": null
+            }
+          }
+        }
+      ]
+    },
+    "/api/overseas/social-programs/program/operating-packages/week/execution-tasks": {
+      "items": [
+        {
+          "tenantId": "tenant",
+          "programId": "program",
+          "packageId": "week",
+          "packageVersion": 1,
+          "taskId": "scope-readiness",
+          "publicationTaskId": null,
+          "workflowKind": "readiness",
+          "scope": "package",
+          "subjectId": "week",
+          "accountId": null,
+          "dependsOnTaskIds": [],
+          "upstreamVersionRefs": [],
+          "inputSnapshot": {},
+          "idempotencyKey": "fixture-readiness",
+          "budget": {
+            "category": "none",
+            "limitCny": null
+          },
+          "schedule": {
+            "stepKind": "enterprise_readiness",
+            "responsibleActor": "business_agent",
+            "estimatedDurationMinutes": 5,
+            "estimatedStartAt": "2026-10-10T09:00:00+08:00",
+            "estimatedFinishAt": "2026-10-10T09:05:00+08:00",
+            "actualStartedAt": null,
+            "actualFinishedAt": null
+          },
+          "status": "blocked",
+          "ownBlockingReasons": [
+            "Read-only fixture"
+          ],
+          "inheritedBlockingTaskIds": [],
+          "attempt": 0,
+          "maxAttempts": 3,
+          "nextAttemptAt": null,
+          "lease": null,
+          "resultRefs": [],
+          "lastError": null,
+          "recoveredFromDeadLetterAt": null,
+          "cancelReason": null,
+          "createdAt": "2026-10-10T00:00:00Z",
+          "updatedAt": "2026-10-10T00:00:00Z"
+        }
+      ]
+    },
+    "/api/overseas/social-programs/program/operating-packages/week/customer-run-binding": {
+      "item": {
+        "binding": null,
+        "tasks": [],
+        "scheduleGaps": []
+      }
+    },
+    "/api/overseas/social-programs/program/operating-packages/week/customer-run-candidates": {
+      "items": [],
+      "boundRunId": null
+    },
+    "/api/overseas/social-programs/program/operating-packages/week/sales-handoffs": {
+      "items": []
+    },
+    "/api/overseas/social-programs/program/operating-packages/week/publication-recoveries": {
+      "items": []
+    },
+    "/api/overseas/social-programs/program/operating-packages/week/supplement-requests": {
+      "items": []
+    },
+    "/api/overseas/social-programs/program/operating-packages/week/inventory-reuses": {
+      "items": []
+    },
+    "/api/overseas/social-programs/program/operating-packages/week/profile-upgrades": {
+      "items": []
+    },
+    "/api/overseas/social-programs/program/operating-packages/week/repair-cases": {
+      "items": []
+    },
+    "/api/overseas/social-programs/program/operating-packages/week/content-templates": {
+      "items": []
+    },
+    "/api/overseas/social-programs/program/operating-packages/week/running-resource-evidence": {
+      "items": []
+    },
+    "/api/overseas/social-programs/program/operating-packages/week/cross-week-material-continuations": {
+      "item": {
+        "scope": {
+          "tenantId": "tenant",
+          "programId": "program",
+          "packageId": "week",
+          "packageVersion": 1
+        },
+        "items": [],
+        "gaps": []
+      }
+    },
+    "/api/overseas/social-programs/program/material-requests": {
+      "items": []
+    },
+    "/api/overseas/social-programs/program/operating-packages/week/publication-recoveries/sources": [],
+    "/api/overseas/social-programs/program/operating-packages/week/native-send-recoveries/sources": [],
+    "/api/overseas/social-programs/program/operating-packages/week/send-recoveries/sources": [],
+    "/api/overseas/auth/employees": {
+      "employees": []
+    },
+    "/api/overseas/digital-employees/runs/run-whatsapp/customer-task-navigation": {
+      "item": {
+        "tenantId": "tenant",
+        "programId": "program",
+        "packageId": "week",
+        "packageVersion": 1,
+        "runId": "run-whatsapp",
+        "taskId": "task-whatsapp",
+        "itemId": "item-whatsapp",
+        "batchId": "batch-whatsapp",
+        "customerId": "buyer-whatsapp",
+        "channel": "whatsapp",
+        "accountId": "account-whatsapp",
+        "nativeAccountId": "native-whatsapp",
+        "conversationId": "whatsapp:native-whatsapp:recipient-whatsapp",
+        "memberId": "member-whatsapp"
+      }
+    },
+    "/api/overseas/digital-employees/runs/run-whatsapp/customer-task-navigation/workspace": {
+      "scope": {
+        "tenantId": "tenant",
+        "programId": "program",
+        "packageId": "week",
+        "packageVersion": 1,
+        "runId": "run-whatsapp",
+        "taskId": "task-whatsapp",
+        "itemId": "item-whatsapp",
+        "batchId": "batch-whatsapp",
+        "customerId": "buyer-whatsapp",
+        "channel": "whatsapp",
+        "accountId": "account-whatsapp",
+        "nativeAccountId": "native-whatsapp",
+        "conversationId": "whatsapp:native-whatsapp:recipient-whatsapp",
+        "memberId": "member-whatsapp"
+      },
+      "navigation": {
+        "tenantId": "tenant",
+        "programId": "program",
+        "packageId": "week",
+        "packageVersion": 1,
+        "runId": "run-whatsapp",
+        "taskId": "task-whatsapp",
+        "itemId": "item-whatsapp",
+        "batchId": "batch-whatsapp",
+        "customerId": "buyer-whatsapp",
+        "channel": "whatsapp",
+        "accountId": "account-whatsapp",
+        "nativeAccountId": "native-whatsapp",
+        "conversationId": "whatsapp:native-whatsapp:recipient-whatsapp",
+        "memberId": "member-whatsapp"
+      },
+      "run": {
+        "id": "run-whatsapp"
+      },
+      "tasks": [
+        {
+          "id": "task-whatsapp",
+          "run_id": "run-whatsapp",
+          "task_key": "followup_dispatch",
+          "title": "Local original dispatch",
+          "status": "blocked"
+        }
+      ],
+      "segment": {
+        "id": "segment-whatsapp",
+        "tenant_id": "tenant",
+        "run_id": "run-whatsapp",
+        "member_count": 1,
+        "excluded_count": 0
+      },
+      "batch": {
+        "id": "batch-whatsapp",
+        "version": 1,
+        "tenant_id": "tenant",
+        "run_id": "run-whatsapp",
+        "segment_id": "segment-whatsapp",
+        "status": "unknown"
+      },
+      "members": [
+        {
+          "id": "member-whatsapp",
+          "tenant_id": "tenant",
+          "segment_id": "segment-whatsapp",
+          "customer_id": "buyer-whatsapp",
+          "membership": "included"
+        }
+      ],
+      "items": [
+        {
+          "id": "item-whatsapp",
+          "tenant_id": "tenant",
+          "batch_id": "batch-whatsapp",
+          "segment_member_id": "member-whatsapp",
+          "customer_id": "buyer-whatsapp",
+          "draft_body": "Original read-only draft",
+          "status": "unknown"
+        }
+      ]
+    },
+    "/api/overseas/digital-employees/runs/run-messenger/customer-task-navigation": {
+      "item": {
+        "tenantId": "tenant",
+        "programId": "program",
+        "packageId": "week",
+        "packageVersion": 1,
+        "runId": "run-messenger",
+        "taskId": "task-messenger",
+        "itemId": "item-messenger",
+        "batchId": "batch-messenger",
+        "customerId": "buyer-messenger",
+        "channel": "messenger",
+        "accountId": "account-messenger",
+        "nativeAccountId": "native-messenger",
+        "conversationId": "messenger:native-messenger:recipient-messenger",
+        "memberId": "member-messenger"
+      }
+    },
+    "/api/overseas/digital-employees/runs/run-messenger/customer-task-navigation/workspace": {
+      "scope": {
+        "tenantId": "tenant",
+        "programId": "program",
+        "packageId": "week",
+        "packageVersion": 1,
+        "runId": "run-messenger",
+        "taskId": "task-messenger",
+        "itemId": "item-messenger",
+        "batchId": "batch-messenger",
+        "customerId": "buyer-messenger",
+        "channel": "messenger",
+        "accountId": "account-messenger",
+        "nativeAccountId": "native-messenger",
+        "conversationId": "messenger:native-messenger:recipient-messenger",
+        "memberId": "member-messenger"
+      },
+      "navigation": {
+        "tenantId": "tenant",
+        "programId": "program",
+        "packageId": "week",
+        "packageVersion": 1,
+        "runId": "run-messenger",
+        "taskId": "task-messenger",
+        "itemId": "item-messenger",
+        "batchId": "batch-messenger",
+        "customerId": "buyer-messenger",
+        "channel": "messenger",
+        "accountId": "account-messenger",
+        "nativeAccountId": "native-messenger",
+        "conversationId": "messenger:native-messenger:recipient-messenger",
+        "memberId": "member-messenger"
+      },
+      "run": {
+        "id": "run-messenger"
+      },
+      "tasks": [
+        {
+          "id": "task-messenger",
+          "run_id": "run-messenger",
+          "task_key": "followup_dispatch",
+          "title": "Local original dispatch",
+          "status": "blocked"
+        }
+      ],
+      "segment": {
+        "id": "segment-messenger",
+        "tenant_id": "tenant",
+        "run_id": "run-messenger",
+        "member_count": 1,
+        "excluded_count": 0
+      },
+      "batch": {
+        "id": "batch-messenger",
+        "version": 1,
+        "tenant_id": "tenant",
+        "run_id": "run-messenger",
+        "segment_id": "segment-messenger",
+        "status": "unknown"
+      },
+      "members": [
+        {
+          "id": "member-messenger",
+          "tenant_id": "tenant",
+          "segment_id": "segment-messenger",
+          "customer_id": "buyer-messenger",
+          "membership": "included"
+        }
+      ],
+      "items": [
+        {
+          "id": "item-messenger",
+          "tenant_id": "tenant",
+          "batch_id": "batch-messenger",
+          "segment_member_id": "member-messenger",
+          "customer_id": "buyer-messenger",
+          "draft_body": "Original read-only draft",
+          "status": "unknown"
+        }
+      ]
+    },
+    "/api/overseas/digital-employees/runs/run-instagram/customer-task-navigation": {
+      "item": {
+        "tenantId": "tenant",
+        "programId": "program",
+        "packageId": "week",
+        "packageVersion": 1,
+        "runId": "run-instagram",
+        "taskId": "task-instagram",
+        "itemId": "item-instagram",
+        "batchId": "batch-instagram",
+        "customerId": "buyer-instagram",
+        "channel": "instagram",
+        "accountId": "account-instagram",
+        "nativeAccountId": "native-instagram",
+        "conversationId": "instagram:native-instagram:recipient-instagram",
+        "memberId": "member-instagram"
+      }
+    },
+    "/api/overseas/digital-employees/runs/run-instagram/customer-task-navigation/workspace": {
+      "scope": {
+        "tenantId": "tenant",
+        "programId": "program",
+        "packageId": "week",
+        "packageVersion": 1,
+        "runId": "run-instagram",
+        "taskId": "task-instagram",
+        "itemId": "item-instagram",
+        "batchId": "batch-instagram",
+        "customerId": "buyer-instagram",
+        "channel": "instagram",
+        "accountId": "account-instagram",
+        "nativeAccountId": "native-instagram",
+        "conversationId": "instagram:native-instagram:recipient-instagram",
+        "memberId": "member-instagram"
+      },
+      "navigation": {
+        "tenantId": "tenant",
+        "programId": "program",
+        "packageId": "week",
+        "packageVersion": 1,
+        "runId": "run-instagram",
+        "taskId": "task-instagram",
+        "itemId": "item-instagram",
+        "batchId": "batch-instagram",
+        "customerId": "buyer-instagram",
+        "channel": "instagram",
+        "accountId": "account-instagram",
+        "nativeAccountId": "native-instagram",
+        "conversationId": "instagram:native-instagram:recipient-instagram",
+        "memberId": "member-instagram"
+      },
+      "run": {
+        "id": "run-instagram"
+      },
+      "tasks": [
+        {
+          "id": "task-instagram",
+          "run_id": "run-instagram",
+          "task_key": "followup_dispatch",
+          "title": "Local original dispatch",
+          "status": "blocked"
+        }
+      ],
+      "segment": {
+        "id": "segment-instagram",
+        "tenant_id": "tenant",
+        "run_id": "run-instagram",
+        "member_count": 1,
+        "excluded_count": 0
+      },
+      "batch": {
+        "id": "batch-instagram",
+        "version": 1,
+        "tenant_id": "tenant",
+        "run_id": "run-instagram",
+        "segment_id": "segment-instagram",
+        "status": "unknown"
+      },
+      "members": [
+        {
+          "id": "member-instagram",
+          "tenant_id": "tenant",
+          "segment_id": "segment-instagram",
+          "customer_id": "buyer-instagram",
+          "membership": "included"
+        }
+      ],
+      "items": [
+        {
+          "id": "item-instagram",
+          "tenant_id": "tenant",
+          "batch_id": "batch-instagram",
+          "segment_member_id": "member-instagram",
+          "customer_id": "buyer-instagram",
+          "draft_body": "Original read-only draft",
+          "status": "unknown"
+        }
+      ]
+    },
+    "/api/overseas/social-programs/program/operating-packages/week/send-recoveries": {
+      "items": [
+        {
+          "tenantId": "tenant",
+          "programId": "program",
+          "packageId": "week",
+          "packageVersion": 1,
+          "channel": "whatsapp",
+          "id": "recover-whatsapp",
+          "runId": "run-whatsapp",
+          "taskId": "task-whatsapp",
+          "batchId": "batch-whatsapp",
+          "itemId": "item-whatsapp",
+          "customerId": "buyer-whatsapp",
+          "ownerUserId": "owner",
+          "createdBy": "owner",
+          "deadlineAt": "2026-10-17T10:00:00+08:00",
+          "reason": "Original uncertain send; local read-only fixture",
+          "batchVersion": 1,
+          "memberId": "member-whatsapp",
+          "recipientMasked": "…1234",
+          "recipientHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "awaiting_receipt",
+          "version": 1,
+          "createdAt": "2026-10-10T00:00:00Z",
+          "resolvedAt": null,
+          "batchContentHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "itemContentHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "claimTokenHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "sourceRef": {
+            "type": "weekly_customer_followup_batch",
+            "id": "batch-whatsapp",
+            "version": 1
+          }
+        }
+      ]
+    },
+    "/api/overseas/social-programs/program/operating-packages/week/native-send-recoveries": {
+      "items": [
+        {
+          "tenantId": "tenant",
+          "programId": "program",
+          "packageId": "week",
+          "packageVersion": 1,
+          "channel": "messenger",
+          "id": "recover-messenger",
+          "runId": "run-messenger",
+          "taskId": "task-messenger",
+          "batchId": "batch-messenger",
+          "itemId": "item-messenger",
+          "customerId": "buyer-messenger",
+          "ownerUserId": "owner",
+          "createdBy": "owner",
+          "deadlineAt": "2026-10-17T11:00:00+08:00",
+          "reason": "Original uncertain send; local read-only fixture",
+          "batchVersion": 1,
+          "memberId": "member-messenger",
+          "recipientMasked": "…1234",
+          "recipientHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "awaiting_receipt",
+          "version": 1,
+          "createdAt": "2026-10-10T00:00:00Z",
+          "resolvedAt": null,
+          "requestId": "request-messenger",
+          "originalActorUserId": "owner",
+          "accountId": "account-messenger",
+          "gap": "missing_mid",
+          "overdue": false,
+          "batchHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "itemHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "weeklyAuthorityHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "intentHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "bodyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "accountAuthorityHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "selectionHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        {
+          "tenantId": "tenant",
+          "programId": "program",
+          "packageId": "week",
+          "packageVersion": 1,
+          "channel": "instagram",
+          "id": "recover-instagram",
+          "runId": "run-instagram",
+          "taskId": "task-instagram",
+          "batchId": "batch-instagram",
+          "itemId": "item-instagram",
+          "customerId": "buyer-instagram",
+          "ownerUserId": "owner",
+          "createdBy": "owner",
+          "deadlineAt": "2026-10-17T12:00:00+08:00",
+          "reason": "Original uncertain send; local read-only fixture",
+          "batchVersion": 1,
+          "memberId": "member-instagram",
+          "recipientMasked": "…1234",
+          "recipientHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "awaiting_receipt",
+          "version": 1,
+          "createdAt": "2026-10-10T00:00:00Z",
+          "resolvedAt": null,
+          "requestId": "request-instagram",
+          "originalActorUserId": "owner",
+          "accountId": "account-instagram",
+          "gap": "missing_mid",
+          "overdue": false,
+          "batchHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "itemHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "weeklyAuthorityHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "intentHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "bodyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "accountAuthorityHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "selectionHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ]
+    },
+    "/api/overseas/customers": {
+      "items": [
+        {
+          "id": "buyer-whatsapp",
+          "name": "whatsapp local buyer",
+          "avatar": "",
+          "countryName": "US",
+          "language": "en",
+          "languageLocked": true,
+          "source": "whatsapp",
+          "product": "Widget",
+          "outboundProduct": "Widget",
+          "estimatedValue": "0",
+          "stage": "lead",
+          "intentScore": 50,
+          "intentSignals": [],
+          "handlingMode": "human_needed",
+          "handlingReason": "Read-only fixture",
+          "priority": 1,
+          "lastActive": "2026-10-10",
+          "tags": [],
+          "orders": [],
+          "timeline": [
+            {
+              "id": "inbound-whatsapp",
+              "type": "whatsapp",
+              "actor": "buyer",
+              "title": "Existing message",
+              "body": "Please review Widget",
+              "time": "10:00",
+              "timestamp": 1791597600000,
+              "translatedBody": "已有询问，仅本地测试。"
+            }
+          ],
+          "isMock": false,
+          "waNumber": "15550001234",
+          "pageId": "native-whatsapp",
+          "instagramAccountId": "native-whatsapp",
+          "messengerUserId": "recipient-whatsapp",
+          "instagramUserId": "recipient-whatsapp",
+          "summary": "Local read-only conversation",
+          "nextStep": "Read existing task",
+          "lastMessage": "Read-only local fixture",
+          "lastMessageAt": "2026-10-10T00:00:00Z",
+          "timeZone": "UTC"
+        },
+        {
+          "id": "buyer-messenger",
+          "name": "messenger local buyer",
+          "avatar": "",
+          "countryName": "US",
+          "language": "en",
+          "languageLocked": true,
+          "source": "messenger",
+          "product": "Widget",
+          "outboundProduct": "Widget",
+          "estimatedValue": "0",
+          "stage": "lead",
+          "intentScore": 50,
+          "intentSignals": [],
+          "handlingMode": "human_needed",
+          "handlingReason": "Read-only fixture",
+          "priority": 1,
+          "lastActive": "2026-10-10",
+          "tags": [],
+          "orders": [],
+          "timeline": [
+            {
+              "id": "inbound-messenger",
+              "type": "messenger",
+              "actor": "buyer",
+              "title": "Existing message",
+              "body": "Please review Widget",
+              "time": "10:00",
+              "timestamp": 1791597600000,
+              "translatedBody": "已有询问，仅本地测试。"
+            }
+          ],
+          "isMock": false,
+          "waNumber": "15550001234",
+          "pageId": "native-messenger",
+          "instagramAccountId": "native-messenger",
+          "messengerUserId": "recipient-messenger",
+          "instagramUserId": "recipient-messenger",
+          "summary": "Local read-only conversation",
+          "nextStep": "Read existing task",
+          "lastMessage": "Read-only local fixture",
+          "lastMessageAt": "2026-10-10T00:00:00Z",
+          "timeZone": "UTC"
+        },
+        {
+          "id": "buyer-instagram",
+          "name": "instagram local buyer",
+          "avatar": "",
+          "countryName": "US",
+          "language": "en",
+          "languageLocked": true,
+          "source": "instagram",
+          "product": "Widget",
+          "outboundProduct": "Widget",
+          "estimatedValue": "0",
+          "stage": "lead",
+          "intentScore": 50,
+          "intentSignals": [],
+          "handlingMode": "human_needed",
+          "handlingReason": "Read-only fixture",
+          "priority": 1,
+          "lastActive": "2026-10-10",
+          "tags": [],
+          "orders": [],
+          "timeline": [
+            {
+              "id": "inbound-instagram",
+              "type": "instagram",
+              "actor": "buyer",
+              "title": "Existing message",
+              "body": "Please review Widget",
+              "time": "10:00",
+              "timestamp": 1791597600000,
+              "translatedBody": "已有询问，仅本地测试。"
+            }
+          ],
+          "isMock": false,
+          "waNumber": "15550001234",
+          "pageId": "native-instagram",
+          "instagramAccountId": "native-instagram",
+          "messengerUserId": "recipient-instagram",
+          "instagramUserId": "recipient-instagram",
+          "summary": "Local read-only conversation",
+          "nextStep": "Read existing task",
+          "lastMessage": "Read-only local fixture",
+          "lastMessageAt": "2026-10-10T00:00:00Z",
+          "timeZone": "UTC"
+        }
+      ]
+    },
+    "/api/overseas/customers/templates": {
+      "items": []
+    },
+    "/api/overseas/social-programs/": {
+      "items": [
+        {
+          "programId": "program",
+          "brandName": "Local fixture",
+          "businessLine": "content_growth",
+          "market": "US",
+          "targetAudience": "buyers",
+          "candidatePlatforms": [],
+          "route": "cold_start",
+          "stage": "operating",
+          "readiness": {},
+          "enterpriseProfileRef": null,
+          "productMarketingProfileRefs": [],
+          "activeMonthlyPlanRef": null,
+          "activeWeeklyPlanRef": null,
+          "activeWeeklyOperatingPackageRef": {
+            "id": "week",
+            "version": 1
+          },
+          "version": 1,
+          "status": "active",
+          "createdAt": "2026-10-10T00:00:00Z",
+          "updatedAt": "2026-10-10T00:00:00Z"
+        }
+      ]
+    },
+    "/api/overseas/customers/buyer-whatsapp": {
+      "item": {
+        "id": "buyer-whatsapp",
+        "name": "whatsapp local buyer",
+        "avatar": "",
+        "countryName": "US",
+        "language": "en",
+        "languageLocked": true,
+        "source": "whatsapp",
+        "product": "Widget",
+        "outboundProduct": "Widget",
+        "estimatedValue": "0",
+        "stage": "lead",
+        "intentScore": 50,
+        "intentSignals": [],
+        "handlingMode": "human_needed",
+        "handlingReason": "Read-only fixture",
+        "priority": 1,
+        "lastActive": "2026-10-10",
+        "tags": [],
+        "orders": [],
+        "timeline": [
+          {
+            "id": "inbound-whatsapp",
+            "type": "whatsapp",
+            "actor": "buyer",
+            "title": "Existing message",
+            "body": "Please review Widget",
+            "time": "10:00",
+            "timestamp": 1791597600000,
+            "translatedBody": "已有询问，仅本地测试。"
+          }
+        ],
+        "isMock": false,
+        "waNumber": "15550001234",
+        "pageId": "native-whatsapp",
+        "instagramAccountId": "native-whatsapp",
+        "messengerUserId": "recipient-whatsapp",
+        "instagramUserId": "recipient-whatsapp",
+        "summary": "Local read-only conversation",
+        "nextStep": "Read existing task",
+        "lastMessage": "Read-only local fixture",
+        "lastMessageAt": "2026-10-10T00:00:00Z",
+        "timeZone": "UTC"
+      }
+    },
+    "/api/overseas/customers/buyer-messenger": {
+      "item": {
+        "id": "buyer-messenger",
+        "name": "messenger local buyer",
+        "avatar": "",
+        "countryName": "US",
+        "language": "en",
+        "languageLocked": true,
+        "source": "messenger",
+        "product": "Widget",
+        "outboundProduct": "Widget",
+        "estimatedValue": "0",
+        "stage": "lead",
+        "intentScore": 50,
+        "intentSignals": [],
+        "handlingMode": "human_needed",
+        "handlingReason": "Read-only fixture",
+        "priority": 1,
+        "lastActive": "2026-10-10",
+        "tags": [],
+        "orders": [],
+        "timeline": [
+          {
+            "id": "inbound-messenger",
+            "type": "messenger",
+            "actor": "buyer",
+            "title": "Existing message",
+            "body": "Please review Widget",
+            "time": "10:00",
+            "timestamp": 1791597600000,
+            "translatedBody": "已有询问，仅本地测试。"
+          }
+        ],
+        "isMock": false,
+        "waNumber": "15550001234",
+        "pageId": "native-messenger",
+        "instagramAccountId": "native-messenger",
+        "messengerUserId": "recipient-messenger",
+        "instagramUserId": "recipient-messenger",
+        "summary": "Local read-only conversation",
+        "nextStep": "Read existing task",
+        "lastMessage": "Read-only local fixture",
+        "lastMessageAt": "2026-10-10T00:00:00Z",
+        "timeZone": "UTC"
+      }
+    },
+    "/api/overseas/customers/buyer-instagram": {
+      "item": {
+        "id": "buyer-instagram",
+        "name": "instagram local buyer",
+        "avatar": "",
+        "countryName": "US",
+        "language": "en",
+        "languageLocked": true,
+        "source": "instagram",
+        "product": "Widget",
+        "outboundProduct": "Widget",
+        "estimatedValue": "0",
+        "stage": "lead",
+        "intentScore": 50,
+        "intentSignals": [],
+        "handlingMode": "human_needed",
+        "handlingReason": "Read-only fixture",
+        "priority": 1,
+        "lastActive": "2026-10-10",
+        "tags": [],
+        "orders": [],
+        "timeline": [
+          {
+            "id": "inbound-instagram",
+            "type": "instagram",
+            "actor": "buyer",
+            "title": "Existing message",
+            "body": "Please review Widget",
+            "time": "10:00",
+            "timestamp": 1791597600000,
+            "translatedBody": "已有询问，仅本地测试。"
+          }
+        ],
+        "isMock": false,
+        "waNumber": "15550001234",
+        "pageId": "native-instagram",
+        "instagramAccountId": "native-instagram",
+        "messengerUserId": "recipient-instagram",
+        "instagramUserId": "recipient-instagram",
+        "summary": "Local read-only conversation",
+        "nextStep": "Read existing task",
+        "lastMessage": "Read-only local fixture",
+        "lastMessageAt": "2026-10-10T00:00:00Z",
+        "timeZone": "UTC"
+      }
+    },
+    "/api/overseas/enterprise/customer-service/status": {
+      "enabled": false,
+      "enabledAt": "",
+      "observationDay": 0,
+      "remainingHours": 0,
+      "eligibleForPartialAutoReply": false,
+      "partialAutoReplyEnabled": false,
+      "partialAutoReplyDecision": "declined",
+      "shouldAskPartialAutoReply": false,
+      "canAutoSend": false,
+      "approvedFaqCount": 0,
+      "autoReplyReady": false
+    },
+    "/api/overseas/competitor-accounts": {
+      "items": [],
+      "notifications": [],
+      "threads": [],
+      "unreadCount": 0
+    },
+    "/api/overseas/agent-notifications": {
+      "items": [],
+      "notifications": [],
+      "threads": [],
+      "unreadCount": 0
+    },
+    "/api/overseas/assistant-threads": {
+      "items": [],
+      "notifications": [],
+      "threads": [],
+      "unreadCount": 0
+    },
+    "/api/overseas/social/accounts": {
+      "items": [],
+      "notifications": [],
+      "threads": [],
+      "unreadCount": 0
+    },
+    "/api/overseas/enterprise/context": {
+      "context": {},
+      "profile": {}
+    },
+    "/api/overseas/health": {
+      "ok": true,
+      "version": "local-read-only-audit"
+    },
+    "/api/oauth/whatsapp/config": {
+      "connected": false,
+      "configured": false
+    },
+    "/api/overseas/social-programs/program/operating-packages/week/cross-week-material-continuations/records": {
+      "items": []
+    },
+    "/api/overseas/social-programs/program/content-templates": {
+      "items": [],
+      "page": 1,
+      "perPage": 50,
+      "totalItems": 0,
+      "totalPages": 0
+    },
+    "/api/overseas/social-programs/program/operating-packages/week/supplement-requests/owned-metric-options": {
+      "items": [],
+      "gaps": []
+    },
+    "/api/overseas/social-programs/program/customer-feedback-topics": {
+      "items": [],
+      "gaps": []
+    },
+    "/api/overseas/social-programs/program/customer-feedback-topics/confirmations": {
+      "items": [],
+      "gaps": []
+    },
+    "/api/overseas/social-programs/program/customer-feedback-topics/sources": {
+      "items": [],
+      "gaps": []
+    },
+    "/api/overseas/social-programs/program/operating-packages/week/sales-handoffs/sources": {
+      "items": [],
+      "gaps": []
+    },
+    "/api/overseas/enterprise/facts": {
+      "items": [],
+      "facts": []
+    },
+    "/api/overseas/studio/materials": {
+      "items": [],
+      "materials": [],
+      "total": 0,
+      "page": 1,
+      "perPage": 50
+    },
+    "/api/overseas/enterprise/knowledge-completion": {
+      "sections": {
+        "bizRules": {
+          "completed": false
+        }
+      },
+      "notificationsReady": false
+    },
+    "/api/overseas/customers/buyer-whatsapp/outbox/context": {
+      "item": {
+        "tenantId": "tenant",
+        "actorUserId": "owner",
+        "customerId": "buyer-whatsapp",
+        "channel": "whatsapp",
+        "accountId": "account-whatsapp"
+      }
+    },
+    "/api/overseas/customers/buyer-whatsapp/manual-active": {
+      "scope": {
+        "tenantId": "tenant",
+        "actorUserId": "owner",
+        "customerId": "buyer-whatsapp",
+        "channel": "whatsapp",
+        "accountId": "account-whatsapp",
+        "nativeAccountId": "native-whatsapp",
+        "conversationId": "whatsapp:native-whatsapp:recipient-whatsapp",
+        "accountHash": "local-frozen",
+        "handlingMode": "human_needed"
+      },
+      "item": null,
+      "actorUserId": "owner",
+      "canRelease": false,
+      "active": false,
+      "humanHandling": true
+    },
+    "/api/overseas/customers/buyer-messenger/outbox/context": {
+      "item": {
+        "tenantId": "tenant",
+        "actorUserId": "owner",
+        "customerId": "buyer-messenger",
+        "channel": "messenger",
+        "accountId": "account-messenger"
+      }
+    },
+    "/api/overseas/customers/buyer-messenger/manual-active": {
+      "scope": {
+        "tenantId": "tenant",
+        "actorUserId": "owner",
+        "customerId": "buyer-messenger",
+        "channel": "messenger",
+        "accountId": "account-messenger",
+        "nativeAccountId": "native-messenger",
+        "conversationId": "messenger:native-messenger:recipient-messenger",
+        "accountHash": "local-frozen",
+        "handlingMode": "human_needed"
+      },
+      "item": null,
+      "actorUserId": "owner",
+      "canRelease": false,
+      "active": false,
+      "humanHandling": true
+    },
+    "/api/overseas/customers/buyer-instagram/outbox/context": {
+      "item": {
+        "tenantId": "tenant",
+        "actorUserId": "owner",
+        "customerId": "buyer-instagram",
+        "channel": "instagram",
+        "accountId": "account-instagram"
+      }
+    },
+    "/api/overseas/customers/buyer-instagram/manual-active": {
+      "scope": {
+        "tenantId": "tenant",
+        "actorUserId": "owner",
+        "customerId": "buyer-instagram",
+        "channel": "instagram",
+        "accountId": "account-instagram",
+        "nativeAccountId": "native-instagram",
+        "conversationId": "instagram:native-instagram:recipient-instagram",
+        "accountHash": "local-frozen",
+        "handlingMode": "human_needed"
+      },
+      "item": null,
+      "actorUserId": "owner",
+      "canRelease": false,
+      "active": false,
+      "humanHandling": true
+    },
+    "/api/overseas/quote-skill/availability": {
+      "enabled": false
+    }
+  },
+  "cases": [
+    {
+      "channel": "whatsapp",
+      "cardId": "send-recovery:recover-whatsapp",
+      "openButtonName": "核验原发送异常与真实回执",
+      "entryButtonName": "进入原客户会话",
+      "entrySelector": "[data-recovery=\"recover-whatsapp\"]",
+      "prepare": [
+        {
+          "selector": "button:has-text(\"账号矩阵\")"
+        },
+        {
+          "selector": "section[aria-label=\"智能经营账号列表\"] button:has-text(\"Local fixture account\")"
+        },
+        {
+          "selector": "#schedule-tab-board"
+        },
+        {
+          "selector": "button[aria-label=\"下一周\"]"
+        }
+      ]
+    },
+    {
+      "channel": "messenger",
+      "cardId": "native-send-recovery:recover-messenger",
+      "openButtonName": "核验此任务生产对象与上游",
+      "entryButtonName": "进入原客户会话",
+      "entrySelector": "[data-request=\"request-messenger\"]",
+      "prepare": [
+        {
+          "selector": "button:has-text(\"账号矩阵\")"
+        },
+        {
+          "selector": "section[aria-label=\"智能经营账号列表\"] button:has-text(\"Local fixture account\")"
+        },
+        {
+          "selector": "#schedule-tab-board"
+        },
+        {
+          "selector": "button[aria-label=\"下一周\"]"
+        }
+      ]
+    },
+    {
+      "channel": "instagram",
+      "cardId": "native-send-recovery:recover-instagram",
+      "openButtonName": "核验此任务生产对象与上游",
+      "entryButtonName": "进入原客户会话",
+      "entrySelector": "[data-request=\"request-instagram\"]",
+      "prepare": [
+        {
+          "selector": "button:has-text(\"账号矩阵\")"
+        },
+        {
+          "selector": "section[aria-label=\"智能经营账号列表\"] button:has-text(\"Local fixture account\")"
+        },
+        {
+          "selector": "#schedule-tab-board"
+        },
+        {
+          "selector": "button[aria-label=\"下一周\"]"
+        }
+      ]
+    }
+  ]
+}

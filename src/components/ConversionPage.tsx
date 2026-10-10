@@ -22,7 +22,7 @@ import {
   X,
 } from 'lucide-react';
 import type { EmojiClickData, PickerProps } from 'emoji-picker-react';
-import { authHeader } from '../lib/auth';
+import { authHeader, AUTH_TOKEN_CHANGED_EVENT } from '../lib/auth';
 import {customerManualTakeoverApi,type CustomerManualTakeoverView} from '../lib/customerManualTakeoverApi';
 import {assertSendScope,readCustomerSendScope,readCustomerSendRequest,readSendIntent,recoverSendIntent,sendIntentStorageKey,type CustomerSendIntent} from '../lib/customerSendIntent';
 import type { AgentAction, ConversationContext, KickoffSignal, RestoreSignal } from '../App';
@@ -1587,7 +1587,7 @@ function CustomerInfoRail({
           hasReplyReady={hasReplyReady}
         />
         <QuoteSkillCard
-          key={customer.id}
+          key={`quote:${customer.id}`}
           customer={customer}
           onInsertReply={onInsertQuoteReply}
           onToast={onToast}
@@ -1595,7 +1595,7 @@ function CustomerInfoRail({
           onCardSent={onQuoteCardSent}
         />
         <BasicInfoWidget customer={customer} onCustomerPatch={onCustomerPatch} />
-        <TagsWidget key={customer.id} customer={customer} onCustomerPatch={onCustomerPatch} onToast={onToast} />
+        <TagsWidget key={`tags:${customer.id}`} customer={customer} onCustomerPatch={onCustomerPatch} onToast={onToast} />
         <RulesDisclosure
           customerServiceStatus={customerServiceStatus}
           customerServiceSaving={customerServiceSaving}
@@ -1662,6 +1662,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
   const deliveryHandoff = agentProduction.active ? window.__agentProductionTarget?.link : navigationHandoff;
   const [deliveryDraft, setDeliveryDraft] = useState<{ body: string; version: number; customerId: string } | null>(null);
   const [deliveryError, setDeliveryError] = useState('');
+  useEffect(()=>{let authorization=authHeader().Authorization;const clear=()=>{const next=authHeader().Authorization;if(next===authorization)return;authorization=next;setSelectedId(null);setDeliveryDraft(null);setDeliveryError('');};window.addEventListener(AUTH_TOKEN_CHANGED_EVENT,clear);window.addEventListener('storage',clear);return()=>{window.removeEventListener(AUTH_TOKEN_CHANGED_EVENT,clear);window.removeEventListener('storage',clear);};},[]);
   useEffect(() => {
     const ref = deliveryHandoff?.businessRef;
     setDeliveryDraft(null);
@@ -2529,7 +2530,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
     <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
     {includeMockCustomers && <div className="shrink-0 border-b border-emerald-200 bg-emerald-50 px-4 py-2 text-xs text-emerald-900"><strong>本地模拟 · 外贸客户全流程</strong>　收件箱、潜客、成交客户和沉默客户均已加入多语言工厂采购场景。</div>}
     {deliveryHandoff?.runId&&deliveryError&&<p role="alert" className="mx-4 mt-3 text-sm text-red-700">{deliveryError}</p>}
-    {deliveryHandoff?.runId && <div className="shrink-0"><CustomerWorkflowPanel handoff={deliveryHandoff} customers={customers} /></div>}
+    {deliveryHandoff?.runId && <div className="max-h-[35%] shrink-0 overflow-y-auto"><CustomerWorkflowPanel handoff={deliveryHandoff} customers={customers} /></div>}
     {deliveryHandoff && !deliveryHandoff.runId && <section className="mx-4 mt-3 shrink-0 border-l-2 border-accent bg-accent-glow p-3">
       <div className="flex items-center justify-between gap-3"><p className="text-xs font-bold text-accent">来自业务交付看板 · 客户跟进草稿</p></div>
       {deliveryError ? <p role="alert" className="mt-2 text-xs text-red-700">{deliveryError}</p> : deliveryDraft ? <>
@@ -2556,7 +2557,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
           }}
         />
         </div>
-        <div className={mobilePanel === 'chat' ? 'flex min-h-0 min-w-0 flex-1 lg:contents' : 'hidden lg:contents'}>
+        <div className={mobilePanel === 'chat' ? 'flex min-h-0 min-w-0 flex-1 flex-col' : 'hidden min-h-0 min-w-0 lg:flex lg:flex-1 lg:flex-col'}>
         {pendingSendIntent&&pendingSendIntent.scope.customerId===selected?.id&&pendingSendIntent.state!=='accepted'&&<div className="border border-amber-200 bg-amber-50 p-3 text-xs">原发送结果未确认；不会自动重发。{pendingSendIntent.state==='prepared'&&<button type="button" className="ml-2 underline" onClick={()=>{if(undoSend?.eventId===pendingSendIntent.eventId){undoQueuedSend();return;}localStorage.removeItem(sendIntentStorageKey(pendingSendIntent.scope));removeTimelineEvent(pendingSendIntent.scope.customerId,pendingSendIntent.eventId);setPendingSendIntent(null);}}>取消尚未发起的请求</button>}<button type="button" className="ml-2 underline" onClick={()=>{const captured=manualHoldIdentity;void readCustomerSendRequest(pendingSendIntent).then(item=>{if(actualManualIdentity.current!==captured)return;const next=recoverSendIntent(pendingSendIntent,item);saveSendIntent(next);updateTimelineEvent(next.scope.customerId,next.eventId,{sendStatus:next.state==='accepted'?'sent':'unknown',audit:{providerMessageId:item.providerMessageId||undefined}});showToast(next.state==='accepted'?'已读取真实平台发送回执':'平台结果仍未知，请勿重复发送');}).catch(error=>{if(actualManualIdentity.current===captured)showToast(error instanceof Error?error.message:'无法读取发送状态');});}}>读取原发送状态</button></div>}
         {selected&&!selected.isMock&&<div className="border border-slate-200 bg-slate-50 p-3 text-xs"><strong>真人接管</strong>{manualHold?.identity===manualHoldIdentity&&<span className="ml-2">{manualHold.view.active?`负责人 ${manualHold.view.item?.ownerUserId} · 截止 ${manualHold.view.item?.expiresAt}`:'当前没有有效临时接管'}{manualHold.view.humanHandling?'；客户仍处于持久人工处理状态，到期或释放临时接管不会自动切换 AI。':''}</span>}<button type="button" className="ml-2 underline" onClick={reportManualActive} disabled={manualHoldUnknown===manualHoldIdentity}>明确接管十分钟</button><button type="button" className="ml-2 underline" onClick={()=>void refreshManualHold()}>只读刷新状态</button>{manualHold?.identity===manualHoldIdentity&&manualHold.view.active&&manualHold.view.canRelease&&<button type="button" className="ml-2 underline" disabled={manualHoldUnknown===manualHoldIdentity} onClick={()=>void releaseManualHold()}>明确释放临时接管</button>}{manualHoldError?.identity===manualHoldIdentity&&<p role="alert" className="mt-1 text-amber-800">{manualHoldError.message}</p>}{manualHoldUnknown===manualHoldIdentity&&<p className="mt-1 text-amber-800">操作结果未恢复，禁止重复操作；请先只读刷新实际持久状态。</p>}</div>}
         <ChatThread

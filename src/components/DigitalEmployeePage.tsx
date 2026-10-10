@@ -84,7 +84,7 @@ import {
   X,
   XCircle,
 } from "lucide-react";
-import { authHeader } from "../lib/auth";
+import { authHeader, AUTH_TOKEN_CHANGED_EVENT } from "../lib/auth";
 import { showActionSuccess } from "../lib/actionFeedback";
 import { socialDiscoveryApi } from "../lib/socialDiscoveryApi";
 import type { SocialCrawlStrategy } from '../../shared/contracts/socialContentWorkflow';
@@ -3515,11 +3515,12 @@ export default function DigitalEmployeePage({
 
   const load = async (goalId = viewGoalId) => {
     const requestVersion = ++overviewRequestVersionRef.current;
+    const authorization=authHeader().Authorization;
     try {
       const next = await digitalEmployeeApi.overview(goalId, productionRangeRef.current);
-      if (requestVersion !== overviewRequestVersionRef.current) return;
+      if (requestVersion !== overviewRequestVersionRef.current || authorization!==authHeader().Authorization) return;
       setData(next);
-      if (next.goal?.businessLine) {
+      if (next.goal?.businessLine && !readAgentCalendarReturnContext()?.states['digitalEmployee.workspace']) {
         setBusinessLine(next.goal.businessLine);
         setContentPlatform(
           next.goal.businessLine === "content_growth" && next.goal.contentPlatforms.length === 1
@@ -3530,11 +3531,14 @@ export default function DigitalEmployeePage({
       setError("");
       return next;
     } catch (loadError) {
+      if(requestVersion!==overviewRequestVersionRef.current||authorization!==authHeader().Authorization)return;
       setError(loadError instanceof Error ? loadError.message : "加载失败");
     } finally {
-      setLoading(false);
+      if(requestVersion===overviewRequestVersionRef.current&&authorization===authHeader().Authorization)setLoading(false);
     }
   };
+
+  useEffect(()=>{let authorization=authHeader().Authorization;const clear=()=>{const next=authHeader().Authorization;if(next===authorization)return;authorization=next;overviewRequestVersionRef.current+=1;initialLoadRef.current=null;setData(null);setSelectedTaskId('');setSelectedContentItemId('');setSelectedAccountId('');setWeeklyPlanOpen(false);setPlanHistoryOpen(false);setWorkspaceView('today');setBusinessLine('full_funnel');setContentPlatform('all');setViewGoalId('');productionRangeRef.current=undefined;setLoading(true);initialLoadRef.current=load('');};window.addEventListener(AUTH_TOKEN_CHANGED_EVENT,clear);window.addEventListener('storage',clear);return()=>{window.removeEventListener(AUTH_TOKEN_CHANGED_EVENT,clear);window.removeEventListener('storage',clear);};},[]);
 
   useEffect(() => {
     const businessScope = consumeBusinessPageContext("production");
@@ -3570,6 +3574,7 @@ export default function DigitalEmployeePage({
     )
       return;
     const controller = new AbortController();
+    const streamAuthorization=authHeader().Authorization;
     const after = Math.max(
       0,
       ...(data?.events || []).map((event) => Number(event.sequence) || 0),
@@ -3578,6 +3583,7 @@ export default function DigitalEmployeePage({
       run.id,
       after,
       (event) => {
+        if(controller.signal.aborted||streamAuthorization!==authHeader().Authorization)return;
         setData((current) =>
           current
             ? {
@@ -3593,13 +3599,13 @@ export default function DigitalEmployeePage({
         void digitalEmployeeApi
           .overview(undefined, productionRangeRef.current)
           .then((next) => {
-            if (requestVersion === overviewRequestVersionRef.current) setData(next);
+            if (requestVersion === overviewRequestVersionRef.current&&streamAuthorization===authHeader().Authorization) setData(next);
           })
           .catch(() => {});
       },
       controller.signal,
     ).catch((streamError) => {
-      if (!controller.signal.aborted)
+      if (!controller.signal.aborted&&streamAuthorization===authHeader().Authorization)
         setError(
           streamError instanceof Error ? streamError.message : "实时连接失败",
         );
