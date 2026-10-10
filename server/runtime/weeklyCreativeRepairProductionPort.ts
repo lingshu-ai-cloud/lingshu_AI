@@ -98,10 +98,10 @@ export function createWeeklyCreativeRepairProductionPort(store:DataStore,clock:(
    // The child requirement is projected during start. Revalidation and resealing
    // happen there under the same subject lease, after the projection is current.
    child=(await readSocialTaskDetail({repository,tenantId:input.case.tenantId,taskId}))!;
-   const queue=createStarter198OrchestratorQueue({repository,dataStore:store,now:clock});
+   const queue=createStarter198OrchestratorQueue({repository,dataStore:store,now:clock,materialEvidencePorts:materialPorts});
    if(!child.runId)child=await startSocialContentTask({repository,orchestratorQueue:queue,tenantId:input.case.tenantId,userId:input.actorUserId,taskId,expectedVersion:child.version,referenceResolver,weeklyOwnedProductIdentity:materialPorts,idempotencyKey:`${input.mapping.startIdempotencyKey}:starter-run`,now:clock()});
    if(!child.runId)return{status:'unknown'};
-   let job=await readContentExecutionJob(store,input.case.tenantId,taskId,child.runId);if(!job){await enqueueSocialContentAutoProduction({repository,tenantId:input.case.tenantId,userId:input.actorUserId,taskId,runId:child.runId});job=await readContentExecutionJob(store,input.case.tenantId,taskId,child.runId);}
+   let job=await readContentExecutionJob(store,input.case.tenantId,taskId,child.runId);if(!job){await enqueueSocialContentAutoProduction({repository,tenantId:input.case.tenantId,userId:input.actorUserId,taskId,runId:child.runId,materialEvidencePorts:materialPorts});job=await readContentExecutionJob(store,input.case.tenantId,taskId,child.runId);}
    if(!job)return{status:'unknown'};return{status:'started',childTaskId:taskId,childBindingKey:issued.bindingKey,runId:child.runId,jobId:job.id};
   },
   async reconcileStart(input){const bindingKey=`weekly-creative-repair:${input.case.packageId}:${input.case.packageVersion}:${input.case.publicationTaskId}:${input.case.caseId}`;const found=await findStarted({tenantId:input.case.tenantId,bindingKey});return found??{status:'absent'};},

@@ -653,6 +653,7 @@ export function createStarter198OrchestratorQueue(dependencies: {
   socialContentProductionRunner?: (
     input: Parameters<typeof enqueueSocialContentAutoProduction>[0],
   ) => void | Promise<void>;
+  materialEvidencePorts?: Parameters<typeof scheduleSocialContentWork>[0]['materialEvidencePorts'];
   now?: () => Date;
 } = {}): Starter198OrchestratorQueuePort {
   const repository = dependencies.repository ?? starter198Repository;
@@ -672,6 +673,7 @@ export function createStarter198OrchestratorQueue(dependencies: {
           accessResolver: dependencies.socialContentAccessResolver,
           productionRunner: dependencies.socialContentProductionRunner
             ?? (dataStore === store ? enqueueSocialContentAutoProduction : undefined),
+          materialEvidencePorts: dependencies.materialEvidencePorts,
         });
       }
       const access = await repository.access(input.tenantId);

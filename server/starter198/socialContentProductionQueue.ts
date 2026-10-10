@@ -1,5 +1,6 @@
 import {readWeeklyReplicationAuthority} from './socialWeeklyReplicationAuthority.js';
 import {assertWeeklyProductionMaterialAdmission} from './socialWeeklyProductionMaterialGate.js';
+import type {WeeklyOwnedProductIdentityPorts} from '../runtime/weeklyOwnedProductIdentityDemand.js';
 import { existsSync, statSync } from 'node:fs';
 import fsp from 'node:fs/promises';
 import { createRequire } from 'node:module';
@@ -116,6 +117,7 @@ export async function runSocialContentAutoProductionWithRetry(input: {
   userId: string;
   taskId: string;
   runId: string;
+  materialEvidencePorts?:Omit<WeeklyOwnedProductIdentityPorts,'repository'>;
 }): Promise<void> {
   // The durable queue owns retry classification and delay. Keeping retries in
   // one layer prevents one paid failure from multiplying across nested loops.
@@ -253,7 +255,7 @@ export async function enqueueSocialContentAutoProduction(input: {
 }): Promise<void> {
   const dataStore = input.repository.dataStore ?? store;
   // Admission gaps precede all execution writes; an unqueued owned run has not failed production.
-  await assertWeeklyProductionMaterialAdmission(input);
+  await assertWeeklyProductionMaterialAdmission(input,input.materialEvidencePorts?.materialPorts,input.materialEvidencePorts?{...input.materialEvidencePorts,repository:input.repository}:undefined);
   await readWeeklyReplicationAuthority(input.repository,await requireSocialTask(input));
   try {
     const record = await requireSocialTask(input);
