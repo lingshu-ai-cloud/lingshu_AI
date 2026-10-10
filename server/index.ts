@@ -1,3 +1,4 @@
+import { mountWhatsAppOAuthRoutes } from './routes/whatsappParentMount.js';
 import './loadEnvironment.js';
 import { startMessengerContextTagRecovery } from './messenger/conversations.js';
 import path from 'path';
@@ -257,6 +258,7 @@ app.use('/api/overseas/platform-ads', platformAdMetricHistoryRouter);
 app.use('/api/overseas/platform-ads', platformAdAutomationStatusRouter);
 app.use('/api/v1/products', productApiRouter);
 app.use('/api/webhooks', webhookRouter);
+mountWhatsAppOAuthRoutes(app);
 
 if (processRoleStartsBackgroundJobs(processRole)) await startBackgroundJobs(processRole);
 

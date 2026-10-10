@@ -1,3 +1,4 @@
+import { readTikTokCanonicalAttemptReceipt } from './platformPublisher.js';
 import {weeklyFormalPublicationBoundary,assertWeeklyPublicationStoredScope} from './weeklyFormalPublicationBoundary.js';
 import {publicationInstant} from '../socialPrograms/publicationDeadlines.js';
 import type { WeeklyOperatingPackage } from '../../shared/contracts/socialProgram.js';
@@ -77,7 +78,7 @@ export async function runWeeklyPublicationExecutionScan(input: {
       assertWeeklyPublicationStoredScope(row,weeklyRows.items[0].payload);
       const attempts = await dataStore.list<DurablePublicationAttempt>(PUBLICATION_ATTEMPTS, { where: { tenant_id: row.tenant_id, assignment_id: row.assignment_id }, page: 1, perPage: 2 });
       if(attempts.totalItems!==attempts.items.length||attempts.items.length>1||attempts.items.some(attempt=>attempt.tenant_id!==row.tenant_id||attempt.assignment_id!==row.assignment_id||attempt.package_id!==row.package_id))throw Error('publication_attempt_scope_ambiguous');
-      const existing=attempts.items[0];
+      let existing=attempts.items[0];
       const clearTerminalRecovery = async (attempt: DurablePublicationAttempt) => {
         const terminal=await dataStore.list<DurablePublicationAttempt>(PUBLICATION_ATTEMPTS,{where:{tenant_id:row.tenant_id,assignment_id:row.assignment_id},page:1,perPage:2});
         const fresh=terminal.items[0];
@@ -96,6 +97,18 @@ export async function runWeeklyPublicationExecutionScan(input: {
       if(recoveryAttempt && (!existing || existing.id!==recoveryAttempt.id || existing.attempt_id!==recoveryAttempt.attempt_id || existing.provider!==recoveryAttempt.provider || existing.provider_receipt_id!==recoveryAttempt.provider_receipt_id)) throw Error('publication_recovery_attempt_changed');
       const reconciling=Boolean(existing&&['unknown','in_flight'].includes(existing.status));
       if((recoveryAttempt||row.status!=='package_ready')&&!reconciling){result.skipped++;continue;}
+      if (reconciling && !existing?.provider_receipt_id?.trim() && row.platform === 'tiktok' && existing?.provider === 'tiktok-content-posting-api') {
+        const receiptId = await readTikTokCanonicalAttemptReceipt({ tenantId: row.tenant_id, accountId: row.account_id, attemptId: existing.attempt_id, dataStore });
+        if (receiptId) {
+          const actual = await dataStore.list<DurablePublicationAttempt>(PUBLICATION_ATTEMPTS, { where: { tenant_id: row.tenant_id, assignment_id: row.assignment_id }, perPage: 2 });
+          const current = actual.items[0];
+          if (actual.totalItems !== 1 || actual.items.length !== 1 || !current || current.id !== existing.id || current.tenant_id !== row.tenant_id || current.attempt_id !== existing.attempt_id || current.assignment_id !== row.assignment_id || current.package_id !== row.package_id || current.provider !== existing.provider || current.status !== existing.status || !['unknown','in_flight'].includes(current.status) || (current.provider_receipt_id && current.provider_receipt_id !== receiptId)) throw Error('publication_canonical_recovery_attempt_changed');
+          if (!await dataStore.update(PUBLICATION_ATTEMPTS, current.id, { provider_receipt_id: receiptId, updated_at: new Date().toISOString() })) throw Error('publication_canonical_recovery_persistence_failed');
+          const saved = await dataStore.getById<DurablePublicationAttempt>(PUBLICATION_ATTEMPTS, current.id);
+          if (!saved || saved.tenant_id !== row.tenant_id || saved.attempt_id !== current.attempt_id || saved.assignment_id !== row.assignment_id || saved.package_id !== row.package_id || saved.provider !== current.provider || saved.status !== current.status || saved.provider_receipt_id !== receiptId) throw Error('publication_canonical_recovery_attempt_changed');
+          existing = saved;
+        }
+      }
       if(reconciling&&!existing?.provider_receipt_id?.trim()){result.pending++;continue;}
       if(!reconciling&&await weeklyFormalPublicationBoundary(dataStore,row,weeklyRows.items[0].payload)==='formal'){result.skipped++;continue;}
       const publicationPackage = await readStarterPublicationPackage(row.tenant_id, row.package_id, dataStore);

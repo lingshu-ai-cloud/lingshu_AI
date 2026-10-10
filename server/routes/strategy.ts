@@ -1,10 +1,10 @@
+import {readAuthorizedWhatsAppCustomers} from '../whatsapp/authorizedCustomerRead.js';
 import { Router } from 'express';
 import { callLLM, callLLMChatStream, type ChatMessage } from '../agents/llm.js';
 import { buildStrategyPrompt, type StrategyParams } from '../prompts/strategyPrompts.js';
 import { enterpriseRouter as _er, buildEnterpriseContext, readTenantEnterpriseProfile } from './enterprise.js';
 import { consumeDemoQuota } from '../lib/demo.js';
 import { requireAuth, type AuthLocals } from '../middleware/auth.js';
-import { getWhatsAppCustomers } from '../whatsapp/historyImport.js';
 
 async function getEnterpriseContext(tenantId: string): Promise<string> {
   try { return buildEnterpriseContext(await readTenantEnterpriseProfile(tenantId)); }
@@ -317,7 +317,7 @@ function shouldRequireSources(messages: ChatMessage[]): boolean {
 strategyRouter.post('/advisor', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   const snapshot = normalizeAdvisorSnapshot(req.body?.snapshot);
-  const customers = getWhatsAppCustomers(tenantId);
+  const customers = await readAuthorizedWhatsAppCustomers(tenantId);
   if (customers.length) {
     const effective = customers.filter((customer: any) => Number(customer.intentScore || 0) >= 70);
     snapshot.inquiries = effective.length;

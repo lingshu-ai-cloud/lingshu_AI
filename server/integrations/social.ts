@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+import { prepareTikTokAttemptReceipt, probeTikTokVideoDuration, validateTikTokCreatorInfo, tikTokContractHash, type TikTokAttemptPreparedReceipt, type TikTokDirectPostOptions } from '../lib/tikTokDirectPostContract.js';
 import axios from 'axios';
 import FormData from 'form-data';
 import fs from 'node:fs';
@@ -239,7 +241,7 @@ export async function probeTikTokPublishingPermission(accessToken: string): Prom
   const response = await axios.post(`${TIKTOK_API}/v2/post/publish/creator_info/query/`, {}, {
     headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json; charset=UTF-8' },
   });
-  return { granted: Boolean(response.data?.data?.creator_username) };
+  return { granted: response.data?.error?.code === 'ok' && Boolean(response.data?.data?.creator_username) };
 }
 
 /** Provider-granted permissions, queried from Meta rather than trusted from our account row. */
@@ -353,57 +355,49 @@ export async function getInstagramAccountInsights(
   return normalizeMetaInsights(res.data);
 }
 
-export async function uploadTikTokVideo(accessToken: string, input: SocialUploadInput): Promise<SocialUploadResult> {
+export interface TikTokUploadLifecycle {
+  tenantId: string; accountId: string; attemptId: string; accountIdentityHash: string;
+  options: TikTokDirectPostOptions;
+  onTikTokAttemptPrepared(receipt: TikTokAttemptPreparedReceipt): Promise<void>;
+  onProviderReceipt(publishId: string, initialized: { uploadUrlHash: string }): Promise<void>;
+  beforeInit(): Promise<void>; beforeUpload(): Promise<void>;
+  probeDuration?: (filePath: string) => Promise<number>;
+}
+export async function uploadTikTokVideo(accessToken: string, input: SocialUploadInput, lifecycle?: TikTokUploadLifecycle): Promise<SocialUploadResult> {
+  if (String(process.env.TIKTOK_DIRECT_POST_RELEASE_MODE || '').trim().toLowerCase() !== 'approved') throw Error('tiktok_direct_post_not_approved');
+  if (!lifecycle) throw Error('tiktok_attempt_persistence_required');
   const stat = requireFile(input.filePath);
-  const title = (input.title || input.description || 'Untitled video').slice(0, 150);
-  const init = await axios.post(
-    `${TIKTOK_API}/v2/post/publish/video/init/`,
-    {
-      post_info: {
-        title,
-        privacy_level: input.privacyStatus === 'public' ? 'PUBLIC_TO_EVERYONE' : 'SELF_ONLY',
-        disable_duet: false,
-        disable_comment: false,
-        disable_stitch: false,
-      },
-      source_info: {
-        source: 'FILE_UPLOAD',
-        video_size: stat.size,
-        chunk_size: stat.size,
-        total_chunk_count: 1,
-      },
-    },
-    {
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        'Content-Type': 'application/json; charset=UTF-8',
-      },
-    },
-  );
-  const uploadUrl = init.data?.data?.upload_url;
-  const publishId = init.data?.data?.publish_id;
-  if (!uploadUrl || !publishId) throw new Error('TikTok 未返回上传地址');
-
-  await axios.put(uploadUrl, fs.createReadStream(input.filePath!), {
-    headers: {
-      'Content-Type': mimeType(input.filePath!),
-      'Content-Length': String(stat.size),
-      'Content-Range': `bytes 0-${stat.size - 1}/${stat.size}`,
-    },
-    maxBodyLength: Infinity,
-    maxContentLength: Infinity,
-    timeout: 0,
-  });
-
-  return {
-    // publish_id identifies the asynchronous operation, not a public post.
-    id: '',
-    title,
-    privacyStatus: input.privacyStatus === 'public' ? 'public' : 'private',
-    url: '',
-    deliveryStatus: 'provider_accepted',
-    providerReceiptId: String(publishId),
-  };
+  const fileHash = () => createHash('sha256').update(fs.readFileSync(input.filePath!)).digest('hex');
+  const creator = await axios.post(`${TIKTOK_API}/v2/post/publish/creator_info/query/`, {}, { maxRedirects: 0, timeout: 30_000, headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json; charset=UTF-8' } });
+  if (creator.data?.error?.code !== 'ok') throw Error(`tiktok_creator_info_rejected:${String(creator.data?.error?.code || 'missing_error_code')}`);
+  const receipt = prepareTikTokAttemptReceipt({ tenantId: lifecycle.tenantId, accountId: lifecycle.accountId, attemptId: lifecycle.attemptId, accountIdentityHash: lifecycle.accountIdentityHash,
+    creator: validateTikTokCreatorInfo(creator.data?.data), options: lifecycle.options, videoSha256: fileHash(), videoSize: stat.size,
+    durationSeconds: await (lifecycle.probeDuration || probeTikTokVideoDuration)(input.filePath!), validatedAt: new Date().toISOString() });
+  await lifecycle.onTikTokAttemptPrepared(structuredClone(receipt));
+  const freshCreator = await axios.post(`${TIKTOK_API}/v2/post/publish/creator_info/query/`, {}, { maxRedirects: 0, timeout: 30_000, headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json; charset=UTF-8' } });
+  if (freshCreator.data?.error?.code !== 'ok' || tikTokContractHash(validateTikTokCreatorInfo(freshCreator.data?.data)) !== tikTokContractHash(receipt.creator)) throw Error('tiktok_creator_changed_before_init');
+  await lifecycle.beforeInit();
+  if (fileHash() !== receipt.videoSha256 || fs.statSync(input.filePath!).size !== receipt.videoSize) throw Error('tiktok_video_changed_before_init');
+  const options = receipt.options;
+  const title = (input.title || input.description || 'Untitled video').slice(0, 2200);
+  const init = await axios.post(`${TIKTOK_API}/v2/post/publish/video/init/`, {
+    post_info: { title, privacy_level: options.privacyLevel, disable_duet: !options.allowDuet, disable_comment: !options.allowComment, disable_stitch: !options.allowStitch,
+      brand_organic_toggle: options.commercial.ownBrand, brand_content_toggle: options.commercial.brandedContent, is_aigc: options.isAigc },
+    source_info: { source: 'FILE_UPLOAD', video_size: stat.size, chunk_size: stat.size, total_chunk_count: 1 },
+  }, { maxRedirects: 0, timeout: 30_000, headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json; charset=UTF-8' } });
+  if (init.data?.error?.code !== 'ok') throw Error(`tiktok_init_rejected:${String(init.data?.error?.code || 'missing_error_code')}`);
+  const publishId = String(init.data?.data?.publish_id || '').trim();
+  if (!publishId || publishId.length > 64) throw Error('tiktok_publish_id_missing');
+  const uploadUrl = String(init.data?.data?.upload_url || '');
+  await lifecycle.onProviderReceipt(publishId, { uploadUrlHash: tikTokContractHash(uploadUrl) });
+  if (!uploadUrl || uploadUrl.length > 256) throw Error('tiktok_upload_url_invalid');
+  const parsed = new URL(uploadUrl);
+  if (parsed.protocol !== 'https:' || !/^([a-z0-9-]+\.)*tiktokapis\.com$/i.test(parsed.hostname) || parsed.username || parsed.password || (parsed.port && parsed.port !== '443')) throw Error('tiktok_upload_url_untrusted');
+  await lifecycle.beforeUpload();
+  if (fileHash() !== receipt.videoSha256 || fs.statSync(input.filePath!).size !== receipt.videoSize) throw Error('tiktok_video_changed_before_upload');
+  await axios.put(uploadUrl, fs.createReadStream(input.filePath!), { maxRedirects: 0, headers: {
+    'Content-Type': mimeType(input.filePath!), 'Content-Length': String(stat.size), 'Content-Range': `bytes 0-${stat.size - 1}/${stat.size}` }, maxBodyLength: stat.size, maxContentLength: stat.size, timeout: 120_000 });
+  return { id: '', title, privacyStatus: options.privacyLevel === 'PUBLIC_TO_EVERYONE' ? 'public' : 'private', url: '', deliveryStatus: 'provider_accepted', providerReceiptId: publishId };
 }
 
 /** Read-only recovery for a TikTok Content Posting API init receipt. */
@@ -419,12 +413,14 @@ export async function getTikTokPublishStatus(
     `${TIKTOK_API}/v2/post/publish/status/fetch/`,
     { publish_id: normalizedPublishId },
     {
+      maxRedirects: 0, timeout: 30_000,
       headers: {
         Authorization: `Bearer ${accessToken}`,
         'Content-Type': 'application/json; charset=UTF-8',
       },
     },
   );
+  if (response.data?.error?.code !== 'ok') throw Error(`tiktok_status_rejected:${String(response.data?.error?.code || 'missing_error_code')}`);
   const data = response.data?.data;
   const providerStatus = String(data?.status || '').trim().toUpperCase();
   const rawIds = data?.publicaly_available_post_id ?? data?.publicly_available_post_id;

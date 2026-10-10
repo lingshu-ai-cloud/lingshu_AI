@@ -1,5 +1,6 @@
+import {readAuthorizedWhatsAppCustomers} from '../whatsapp/authorizedCustomerRead.js';
 import { isBrowserReadToken } from '../digitalEmployees/browserReadSession.js';
-import { getWhatsAppCustomers, patchWhatsAppCustomer } from '../whatsapp/historyImport.js';
+import { patchWhatsAppCustomer } from '../whatsapp/historyImport.js';
 import { orderStatuses, transitionOrder, updateAfterSales, type OrderStatus, type OrderAudit, type AfterSales } from '../../shared/orderLifecycle.js';
 import { Router } from 'express';
 import fs from 'fs';
@@ -487,7 +488,7 @@ async function upsertOrder(tenantId: string, order: OrderRecord): Promise<boolea
   if (!stored) return false;
   if (!order.customerId) return true;
   try {
-    const customer = getWhatsAppCustomers(tenantId).find(item => item.id === order.customerId);
+    const customer = (await readAuthorizedWhatsAppCustomers(tenantId)).find(item => item.id === order.customerId);
     if (!customer) throw new Error('客户已不存在');
     const canonical = (await readOrders(tenantId)).filter(item => item.customerId === order.customerId);
     const orderNumbers = new Set(canonical.map(item => item.orderNo));
@@ -2165,7 +2166,7 @@ enterpriseRouter.post('/orders', async (req, res) => {
     res.json(repeated); return;
   }
   if (order.customerId) {
-    const customer = getWhatsAppCustomers(tenantId).find(item => item.id === order.customerId);
+    const customer = (await readAuthorizedWhatsAppCustomers(tenantId)).find(item => item.id === order.customerId);
     if (!customer) { res.status(422).json({ error: '客户不存在或不属于当前租户' }); return; }
     if (!order.sourcePostId) order.sourcePostId = customer.sourcePostId || '';
   }

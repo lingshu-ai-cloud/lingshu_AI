@@ -1,3 +1,4 @@
+import {assertWhatsAppSendBoundary} from './sendBoundary.js';
 import { decryptSecret, getTenantPlatformApp, type TenantPlatformAppRecord } from '../lib/tenantPlatformApps.js';
 import { sendWhatsAppImage, sendWhatsAppTemplate, sendWhatsAppText, type WhatsAppConfig, type WhatsAppSendReceipt } from '../integrations/whatsapp.js';
 import { planMobileChatMessages } from '../agents/mobileChatStyle.js';
@@ -51,8 +52,8 @@ export async function sendTenantWhatsAppImageWithReceipt(input: {
 }): Promise<WhatsAppSendReceipt> {
   const to = text(input.to);
   if (!to || !input.bytes.length) throw new Error('whatsapp_image_target_required');
-  const config = await getTenantWhatsAppConfig(input.tenantId);
-  return sendWhatsAppImage(config, to, input.bytes, text(input.caption), input.filename, input.callbackData);
+  const boundary = await assertWhatsAppSendBoundary({tenantId:input.tenantId,to});
+  return sendWhatsAppImage(boundary.config, boundary.to, input.bytes, text(input.caption), input.filename, input.callbackData, async () => { await assertWhatsAppSendBoundary({tenantId:input.tenantId,to,expectedAccountHash:boundary.accountHash}); });
 }
 
 export async function sendTenantWhatsAppTextWithReceipts(
@@ -65,7 +66,7 @@ export async function sendTenantWhatsAppTextWithReceipts(
   const waNumber = text(to);
   const content = text(body);
   if (!waNumber || !content) throw new Error('whatsapp_to_and_body_required');
-  const config = await getTenantWhatsAppConfig(tenantId);
+  const initial = await assertWhatsAppSendBoundary({tenantId,to:waNumber});
   const plan = planMobileChatMessages(content);
   const messages = plan.messages;
   if (!messages.length) throw new Error('whatsapp_body_required');
@@ -73,7 +74,8 @@ export async function sendTenantWhatsAppTextWithReceipts(
   const receipts: WhatsAppSendReceipt[] = [];
   for (let index = 0; index < messages.length; index += 1) {
     if (index > 0) await wait(pacingDelayMs());
-    const receipt = await sendWhatsAppText(config, waNumber, messages[index], callbackData?.(index));
+    const current = await assertWhatsAppSendBoundary({tenantId,to:waNumber,expectedAccountHash:initial.accountHash});
+    const receipt = await sendWhatsAppText(current.config, current.to, messages[index], callbackData?.(index));
     receipts.push(receipt);
     await onReceipt?.({ message: messages[index], receipt, index, total: messages.length });
   }
@@ -110,6 +112,6 @@ export async function sendTenantWhatsAppTemplateWithReceipt(input: {
       }]
     : [];
 
-  const config = await getTenantWhatsAppConfig(input.tenantId);
-  return sendWhatsAppTemplate(config, to, templateName, input.languageCode || 'en_US', components, input.callbackData);
+  const boundary = await assertWhatsAppSendBoundary({tenantId:input.tenantId,to,requireRecentInbound:false});
+  return sendWhatsAppTemplate(boundary.config, boundary.to, templateName, input.languageCode || 'en_US', components, input.callbackData);
 }

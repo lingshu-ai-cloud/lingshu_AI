@@ -11,7 +11,7 @@ import { readTenantEnterpriseProfile } from '../routes/enterprise.js';
 import { createHash } from 'node:crypto';
 import { guardOutboundSync } from '../autonomy/outboundGuard.js';
 import { store } from '../storage/index.js';
-import { getWhatsAppCustomers } from '../whatsapp/historyImport.js';
+import { readAuthorizedWhatsAppCustomers as getWhatsAppCustomers } from '../whatsapp/authorizedCustomerRead.js';
 import { followupWorkerMode } from './followupWorkerConfig.js';
 
 type StoredRecord = { id: string; [key: string]: unknown };
@@ -315,7 +315,7 @@ export async function createCustomerSegmentSnapshot(input: {
   name?: string;
   criteria?: unknown;
   idempotent?: boolean;
-}, customersForTenant: (tenantId: string) => Array<Record<string, unknown>> = getWhatsAppCustomers, segmentStore:DataStore=store): Promise<{ segment: CustomerSegmentRecord; members: CustomerSegmentMemberRecord[]; created: boolean }> {
+}, customersForTenant: (tenantId: string) => Array<Record<string, unknown>> | Promise<Array<Record<string, unknown>>> = getWhatsAppCustomers, segmentStore:DataStore=store): Promise<{ segment: CustomerSegmentRecord; members: CustomerSegmentMemberRecord[]; created: boolean }> {
   if (input.idempotent !== false) {
     const existing = await segmentStore.list<CustomerSegmentRecord>(COLLECTION.segments, {
       where: { tenant_id: input.tenantId, run_id: input.runId, task_id: input.taskId }, sort: '-version', page: 1, perPage: 100,
@@ -330,7 +330,7 @@ export async function createCustomerSegmentSnapshot(input: {
   });
   const version = Number(allVersions.items[0]?.version || 0) + 1;
   const now = new Date();
-  let customers = customersForTenant(input.tenantId);
+  let customers = await customersForTenant(input.tenantId);
   const relationshipScope=await readWeeklyCustomerRelationshipScope(segmentStore,input.tenantId,input.runId);
   if(relationshipScope){customers=await attachSelectedWeeklyWhatsAppCustomers(segmentStore,relationshipScope,customers);customers.push(...await readSelectedWeeklyNativeCustomers(segmentStore,relationshipScope));}
   const evaluated = await Promise.all(customers.map(async customer => {
@@ -494,7 +494,7 @@ export async function createFollowupBatch(input: {
   revisionNote?: string;
   draftOverrides?: Record<string, string>;
   knowledgeQuoteResolution?: {requestId:string;verifiedVersion:number};
-}, customersForTenant: (tenantId: string) => Array<Record<string, unknown>> = getWhatsAppCustomers): Promise<{ batch: FollowupBatchRecord; items: FollowupBatchItemRecord[]; created: boolean }> {
+}, customersForTenant: (tenantId: string) => Array<Record<string, unknown>> | Promise<Array<Record<string, unknown>>> = getWhatsAppCustomers): Promise<{ batch: FollowupBatchRecord; items: FollowupBatchItemRecord[]; created: boolean }> {
   if(input.knowledgeQuoteResolution){const {materializeVerifiedKnowledgeQuoteBatch}=await import('../socialPrograms/weeklyCustomerKnowledgeQuote.js');return materializeVerifiedKnowledgeQuoteBatch(store,{...input,knowledgeQuoteResolution:input.knowledgeQuoteResolution});}
   if (input.idempotent !== false) {
     const existing = await store.list<FollowupBatchRecord>(COLLECTION.batches, {
@@ -509,7 +509,7 @@ export async function createFollowupBatch(input: {
   const relationshipScope=await readWeeklyCustomerRelationshipScope(store,input.tenantId,input.runId);
   if(relationshipScope)for(const member of members){await verifyWeeklyCustomerMemberProof(store,relationshipScope,member.customer_id,member.customer_snapshot);}
   const customerMap = new Map<string, Record<string, unknown>>(
-    customersForTenant(input.tenantId).map(customer => [String(customer.id || ''), customer] as const),
+    (await customersForTenant(input.tenantId)).map(customer => [String(customer.id || ''), customer] as const),
   );
   if(relationshipScope){for(const customer of await attachSelectedWeeklyWhatsAppCustomers(store,relationshipScope,[...customerMap.values()]))customerMap.set(String(customer.id),customer);for(const customer of await readSelectedWeeklyNativeCustomers(store,relationshipScope))customerMap.set(String(customer.id),customer);}
   const deliveryPolicy = normalizeDeliveryPolicy(input.deliveryPolicy);

@@ -1,3 +1,4 @@
+import { readAuthorizedWhatsAppCustomers } from '../whatsapp/authorizedCustomerRead.js';
 import { Router } from 'express';
 import { callLLM } from '../agents/llm.js';
 import { requireAuth, type AuthLocals } from '../middleware/auth.js';
@@ -6,7 +7,7 @@ import { buildKnowledgePromptBlock } from '../knowledge/promptBlocks.js';
 import { buildStrategyPromptBlock, retrieveResponseStrategies, strategyEvidence } from '../knowledge/strategyRetrieve.js';
 import { aggregateKnowledgeMisses } from '../knowledge/misses.js';
 import { recordStyleMemory } from '../knowledge/styleMemory.js';
-import { getNightModeMorningBriefing,getWhatsAppCustomers } from '../whatsapp/historyImport.js';
+import { getNightModeMorningBriefing } from '../whatsapp/historyImport.js';
 import { analyzeMessengerCustomerTags, getMessengerCustomers, patchMessengerCustomer, sendTenantMessengerText,upsertMessengerMessage } from '../messenger/conversations.js';
 import { analyzeInstagramCustomerTags, getInstagramCustomers, patchInstagramCustomer,upsertInstagramMessage } from '../instagram/conversations.js';
 import { sendTenantInstagramText } from '../instagram/send.js';
@@ -97,7 +98,7 @@ customerSuggestionsRouter.post('/knowledge-misses/recompute', async (_req, res) 
   res.json({ ok: true, items });
 });
 
-function manualCustomerChannel(tenantId:string,id:string){return getWhatsAppCustomers(tenantId).some(c=>c.id===id)?'whatsapp' as const:customerChannel(tenantId,id);}
+async function manualCustomerChannel(tenantId:string,id:string){return (await readAuthorizedWhatsAppCustomers(tenantId)).some(c=>c.id===id)?'whatsapp' as const:customerChannel(tenantId,id);}
 customerSuggestionsRouter.use('/:id/manual-active',createCustomerManualTakeoverRouter({service:manualTakeoverService,resolveChannel:manualCustomerChannel}));
 
 customerSuggestionsRouter.patch('/:id', (req, res) => {

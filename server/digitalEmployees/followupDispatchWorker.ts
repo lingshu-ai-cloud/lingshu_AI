@@ -1,3 +1,4 @@
+import {readAuthorizedWhatsAppCustomers} from '../whatsapp/authorizedCustomerRead.js';
 import {verifyWeeklyCustomerMemberProof} from '../socialPrograms/weeklyCustomerMemberProof.js';
 import {readWeeklyCustomerRelationshipScope,verifyFrozenWeeklyCustomerRelationship,verifyLatestWeeklyCustomerSegment} from '../socialPrograms/weeklyCustomerRelationshipScope.js';
 import { planMobileChatMessages } from '../agents/mobileChatStyle.js';
@@ -8,7 +9,7 @@ import { guardOutbound } from '../autonomy/outboundGuard.js';
 import { store } from '../storage/index.js';
 import type { DataStore } from '../storage/datastore.js';
 import { isRealWhatsAppNumber } from '../whatsapp/customerVisibility.js';
-import { getWhatsAppCustomers, markWhatsAppHumanReply } from '../whatsapp/historyImport.js';
+import { markWhatsAppHumanReply } from '../whatsapp/historyImport.js';
 import { sendTenantWhatsAppTemplateWithReceipt, sendTenantWhatsAppTextWithReceipts } from '../whatsapp/send.js';
 import {
   followupItemContentHash,
@@ -132,7 +133,7 @@ interface DispatchDependencies {
   resolveTemplate: typeof resolveTenantFollowupTemplate;
   sendText: typeof sendTenantWhatsAppTextWithReceipts;
   sendTemplate: typeof sendTenantWhatsAppTemplateWithReceipt;
-  customers: (tenantId: string) => Array<Record<string, unknown>>;
+  customers: (tenantId: string) => Array<Record<string, unknown>> | Promise<Array<Record<string, unknown>>>;
   guard: typeof guardOutbound;
   recordOutbound: typeof markWhatsAppHumanReply;
   authorization: (tenantId: string) => Promise<CustomerMessagingAuthorization>;
@@ -229,7 +230,7 @@ async function runtimeSafety(tenantId: string, item: FollowupBatchItemRecord, no
   const digits = String(item.wa_number || '').replace(/\D/g, '');
   if (!isRealWhatsAppNumber(item.wa_number) || digits.length < 7 || digits.length > 15) return { allowed: false, reason: 'invalid_whatsapp_number' };
   if (item.risk_level === 'high') return { allowed: false, reason: 'high_risk_requires_individual_review' };
-  const customer = dependencies.customers(tenantId).find(candidate => String(candidate.id || '') === item.customer_id);
+  const customer = (await dependencies.customers(tenantId)).find(candidate => String(candidate.id || '') === item.customer_id);
   if (!customer) return { allowed: false, reason: 'customer_no_longer_available' };
   if (String(customer.waNumber || '') !== item.wa_number) return { allowed: false, reason: 'customer_whatsapp_number_changed' };
   const customerRisk = customerRiskReason(customer);
@@ -361,7 +362,7 @@ function defaultDependencies(): DispatchDependencies {
     resolveTemplate: resolveTenantFollowupTemplate,
     sendText: sendTenantWhatsAppTextWithReceipts,
     sendTemplate: sendTenantWhatsAppTemplateWithReceipt,
-    customers: tenantId => getWhatsAppCustomers(tenantId) as Array<Record<string, unknown>>,
+    customers: tenantId => readAuthorizedWhatsAppCustomers(tenantId),
     guard: guardOutbound,
     recordOutbound: markWhatsAppHumanReply,
     authorization: tenantId => readCustomerMessagingAuthorization(tenantId, 'whatsapp'),
@@ -577,12 +578,12 @@ export async function dispatchFollowupBatch(
         if (item.send_mode === 'template') {
           const variables = Array.isArray(item.template_variables) ? item.template_variables.map(value => String(value || '')) : [];
           const receipt = await dependencies.sendTemplate({ tenantId, to: item.wa_number, templateName: item.template_name, languageCode: item.template_language || 'en_US', variables, callbackData: `followup:${claimToken}:0` });
-          if (!receipt.messageId) throw new Error('whatsapp_provider_message_id_missing');
+          if (!receipt.messageId || String(receipt.recipientId || '').replace(/^\+/, '') !== item.wa_number.replace(/^\+/, '')) throw new Error('whatsapp_provider_receipt_identity_invalid');
           accepted.push({ index: 0, body: item.draft_body, messageId: receipt.messageId, recipientId: receipt.recipientId, raw: receipt.raw, acceptedAt: dependencies.now().toISOString() });
           providerComplete = true;
         } else {
           await dependencies.sendText(tenantId, item.wa_number, item.draft_body, async progress => {
-            if (!progress.receipt.messageId) throw new Error('whatsapp_provider_message_id_missing');
+            if (!progress.receipt.messageId || String(progress.receipt.recipientId || '').replace(/^\+/, '') !== item.wa_number.replace(/^\+/, '')) throw new Error('whatsapp_provider_receipt_identity_invalid');
             accepted.push({ index: progress.index, body: progress.message, messageId: progress.receipt.messageId, recipientId: progress.receipt.recipientId, raw: progress.receipt.raw, acceptedAt: dependencies.now().toISOString() });
             providerComplete = progress.total > 0 && progress.index + 1 === progress.total;
             await persistFollowupItem(item.id, {

@@ -1,3 +1,5 @@
+import type { DataStore } from '../storage/datastore.js';
+import { assertTikTokAttemptReceipt, tikTokAccountIdentityHash, type TikTokAttemptPreparedReceipt, type TikTokDirectPostOptions } from '../lib/tikTokDirectPostContract.js';
 import { resolveInstagramPublishingContract, assertInstagramPublishingScopes } from './instagramPublishingContract.js';
 import {assertPublicationAtomicStore} from './publicationAtomicStore.js';
 import { assertManagedPublishingAuthorization } from './managedPublishingAuthorization.js';
@@ -88,6 +90,8 @@ export interface PublishToAccountInput {
   publishAttemptId?: string;
   onProviderReceipt?: (receiptId: string) => Promise<void>;
   onPublishedMedia?: (mediaId: string) => Promise<void>;
+  tiktokPostOptions?: TikTokDirectPostOptions;
+  onTikTokAttemptPrepared?: (receipt: TikTokAttemptPreparedReceipt) => Promise<void>;
 }
 
 export interface PublishToAccountResult {
@@ -252,9 +256,13 @@ async function persistProviderAccepted(input: {
 }): Promise<void> {
   if (input.request.finalizeTracking === false) return;
   const now = new Date().toISOString();
-  const currentStats = recordObject(input.tracked.stats);
+  const current = await store.getById<PostRecord>('posts', input.tracked.id);
+  if (!current || current.tenant_id !== input.request.tenantId) throw publishError('tiktok_attempt_missing', 503);
+  const currentStats = recordObject(current.stats);
   const publishResults = recordObject(currentStats.publishResults);
-  const attemptId = input.request.publishAttemptId || `provider:${input.providerReceiptId}`;
+  const existing = recordObject(publishResults[input.request.accountId]);
+  const attemptId = String(existing.attemptId || input.request.publishAttemptId || '');
+  if (!attemptId || existing.providerReceiptId !== input.providerReceiptId) throw publishError('tiktok_attempt_changed', 409);
   const updated = await store.update('posts', input.tracked.id, {
     stats: {
       ...currentStats,
@@ -266,6 +274,7 @@ async function persistProviderAccepted(input: {
       publishResults: {
         ...publishResults,
         [input.request.accountId]: {
+          ...existing,
           status: 'provider_accepted',
           attemptId,
           startedAt: now,
@@ -287,7 +296,7 @@ async function beginDirectAttempt(
   input: PublishToAccountInput,
   tracked: PostRecord,
 ): Promise<{ attemptId: string; startedAt: string } | null> {
-  if (input.finalizeTracking === false) return null;
+  if (input.finalizeTracking === false && input.platform !== 'tiktok') return null;
   const attemptId = input.publishAttemptId || `direct:${tracked.id}`;
   const startedAt = new Date().toISOString();
   const currentStats = recordObject(tracked.stats);
@@ -382,6 +391,32 @@ async function markDirectAttemptUnknown(
   }).catch(() => undefined);
 }
 
+/** Recover only a durably recorded real init identity after an outer callback failed. */
+export async function readTikTokCanonicalAttemptReceipt(input: {
+  tenantId: string; accountId: string; attemptId: string; dataStore?: DataStore;
+}): Promise<string | null> {
+  if (!input.tenantId.trim() || !input.accountId.trim() || !input.attemptId.trim()) return null;
+  const dataStore = input.dataStore ?? store;
+  const account = await dataStore.getById<SocialAccountRecord>('social_accounts', input.accountId);
+  if (!account || account.tenantId !== input.tenantId || account.platform !== 'tiktok' || account.status !== 'connected') return null;
+  let identityHash: string;
+  try { identityHash = tikTokAccountIdentityHash({ tenantId: input.tenantId, accountId: input.accountId, providerAccountId: account.providerAccountId, accessToken: socialAccessToken(account as unknown as Record<string, unknown>) }); }
+  catch { return null; }
+  const posts = await dataStore.list<PostRecord>('posts', { where: { tenant_id: input.tenantId }, perPage: 500 });
+  if (posts.totalItems !== posts.items.length) return null;
+  const candidates = posts.items.filter(post => post.tenant_id === input.tenantId && post.platform === 'tiktok').map(post => recordObject(recordObject(recordObject(post.stats).publishResults)[input.accountId])).filter(attempt => attempt.attemptId === input.attemptId);
+  if (candidates.length !== 1) return null;
+  const attempt = candidates[0]!, receiptId = String(attempt.providerReceiptId || '').trim();
+  if (!receiptId || receiptId.length > 64 || /[\u0000-\u001f\u007f]/.test(receiptId) || !['in_flight','unknown','provider_accepted','published'].includes(String(attempt.status))) return null;
+  try { assertTikTokAttemptReceipt(attempt.tiktokValidationReceipt as TikTokAttemptPreparedReceipt, { tenantId: input.tenantId, accountId: input.accountId, attemptId: input.attemptId, accountIdentityHash: identityHash }); }
+  catch { return null; }
+  const fresh = await dataStore.getById<SocialAccountRecord>('social_accounts', input.accountId);
+  if (!fresh || fresh.tenantId !== input.tenantId || fresh.platform !== 'tiktok' || fresh.status !== 'connected') return null;
+  try { if (tikTokAccountIdentityHash({ tenantId: input.tenantId, accountId: input.accountId, providerAccountId: fresh.providerAccountId, accessToken: socialAccessToken(fresh as unknown as Record<string, unknown>) }) !== identityHash) return null; }
+  catch { return null; }
+  return receiptId;
+}
+
 /** Resolve an already accepted provider receipt without submitting content again. */
 export async function resolvePendingPublishToAccount(input: {
   tenantId: string;
@@ -389,6 +424,7 @@ export async function resolvePendingPublishToAccount(input: {
   platform: PublishPlatform;
   providerReceiptId: string;
   platformPostId?: string;
+  publishAttemptId?: string;
 }): Promise<PendingPublishResolution> {
   const receipt = input.providerReceiptId.trim();
   if (!receipt) throw publishError('平台发布回执为空', 400);
@@ -489,10 +525,19 @@ export async function resolvePendingPublishToAccount(input: {
     throw publishError('TikTok account not found', 404);
   }
   if (account.status !== 'connected') throw publishError('TikTok account is not connected', 400);
+  const identityHash = tikTokAccountIdentityHash({ tenantId: input.tenantId, accountId: input.accountId, providerAccountId: account.providerAccountId, accessToken: socialAccessToken(account as unknown as Record<string, unknown>) });
+  const posts = await store.list<PostRecord>('posts', { where: { tenant_id: input.tenantId }, perPage: 500 });
+  if (posts.totalItems !== posts.items.length) throw publishError('tiktok_canonical_attempt_scan_incomplete', 409);
+  const candidates = posts.items.map(post => recordObject(recordObject(recordObject(post.stats).publishResults)[input.accountId])).filter(attempt => attempt.providerReceiptId === input.providerReceiptId && (!input.publishAttemptId || attempt.attemptId === input.publishAttemptId));
+  if (candidates.length !== 1) throw publishError('tiktok_canonical_attempt_missing_or_ambiguous', 409);
+  const canonical = candidates[0]!;
+  assertTikTokAttemptReceipt(canonical.tiktokValidationReceipt as TikTokAttemptPreparedReceipt, { tenantId: input.tenantId, accountId: input.accountId, attemptId: String(canonical.attemptId), accountIdentityHash: identityHash });
   const result = await getTikTokPublishStatus(
     socialAccessToken(account as unknown as Record<string, unknown>),
     input.providerReceiptId,
   );
+  const freshAccount = await store.getById<SocialAccountRecord>('social_accounts', input.accountId);
+  if (!freshAccount || freshAccount.tenantId !== input.tenantId || freshAccount.platform !== 'tiktok' || freshAccount.status !== 'connected' || tikTokAccountIdentityHash({ tenantId: input.tenantId, accountId: input.accountId, providerAccountId: freshAccount.providerAccountId, accessToken: socialAccessToken(freshAccount as unknown as Record<string, unknown>) }) !== identityHash) throw publishError('tiktok_account_changed_during_lookup', 409);
   return {
     status: result.state,
     providerReceiptId: result.publishId,
@@ -625,10 +670,36 @@ async function publishVideoToAccountWithLease(
     directAttempt = await beginDirectAttempt(input, tracked);
     let video: unknown;
     if (account.platform === 'tiktok') {
-      await publishLease.beforeEffect();
-      await revalidatePublishSource(input);
-      providerStarted = true;
-      video = await uploadTikTokVideo(accessToken, socialInput);
+      if (!directAttempt) throw publishError('tiktok_durable_attempt_missing', 503);
+      if (!String(account.scope || '').split(/[\s,]+/).includes('video.publish')) throw publishError('provider_publish_scope_missing', 403);
+      const accountIdentityHash = tikTokAccountIdentityHash({ tenantId: input.tenantId, accountId: input.accountId, providerAccountId: account.providerAccountId, accessToken });
+      const assertAccount = async () => {
+        const fresh = await store.getById<SocialAccountRecord>('social_accounts', input.accountId);
+        if (!fresh || fresh.tenantId !== input.tenantId || fresh.platform !== 'tiktok' || fresh.status !== 'connected' || tikTokAccountIdentityHash({ tenantId: input.tenantId, accountId: input.accountId, providerAccountId: fresh.providerAccountId, accessToken: socialAccessToken(fresh as unknown as Record<string, unknown>) }) !== accountIdentityHash) throw publishError('tiktok_account_identity_changed', 409);
+        const user = await axios.get('https://open.tiktokapis.com/v2/user/info/', { maxRedirects: 0, timeout: 30_000, params: { fields: 'open_id,display_name' }, headers: { Authorization: `Bearer ${accessToken}` } });
+        if (user.data?.error?.code !== 'ok' || String(user.data?.data?.user?.open_id || '') !== account.providerAccountId) throw publishError('tiktok_provider_account_changed', 409);
+      };
+      const persistAttempt = async (patch: Record<string, unknown>) => {
+        const current = await store.getById<PostRecord>('posts', tracked.id);
+        if (!current || current.tenant_id !== input.tenantId) throw publishError('tiktok_attempt_missing', 503);
+        const stats = recordObject(current.stats), results = recordObject(stats.publishResults), attempt = recordObject(results[input.accountId]);
+        if (attempt.attemptId !== directAttempt!.attemptId || attempt.status !== 'in_flight') throw publishError('tiktok_attempt_changed', 409);
+        if (patch.providerReceiptId && attempt.providerReceiptId && patch.providerReceiptId !== attempt.providerReceiptId) throw publishError('tiktok_receipt_changed', 409);
+        if (!await store.update('posts', tracked.id, { stats: { ...stats, publishResults: { ...results, [input.accountId]: { ...attempt, ...patch } } } })) throw publishError('tiktok_attempt_persistence_failed', 503);
+      };
+      await assertAccount();
+      video = await uploadTikTokVideo(accessToken, socialInput, {
+        tenantId: input.tenantId, accountId: input.accountId, attemptId: directAttempt.attemptId, accountIdentityHash, options: input.tiktokPostOptions!,
+        async onTikTokAttemptPrepared(receipt) {
+          await assertAccount();
+          if (input.onTikTokAttemptPrepared) await input.onTikTokAttemptPrepared(structuredClone(receipt));
+          assertTikTokAttemptReceipt(receipt, { tenantId: input.tenantId, accountId: input.accountId, accountIdentityHash, attemptId: directAttempt!.attemptId });
+          await persistAttempt({ tiktokValidationReceipt: receipt });
+        },
+        async beforeInit() { await assertAccount(); await publishLease.beforeEffect(); await revalidatePublishSource(input); providerStarted = true; },
+        async onProviderReceipt(receipt, initialized) { await persistAttempt({ providerReceiptId: receipt, tiktokUploadUrlHash: initialized.uploadUrlHash }); if (input.onProviderReceipt) await input.onProviderReceipt(receipt); },
+        async beforeUpload() { await assertAccount(); await publishLease.beforeEffect(); await revalidatePublishSource(input); },
+      });
     }
     if (account.platform === 'facebook') {
       await publishLease.beforeEffect();

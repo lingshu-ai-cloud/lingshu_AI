@@ -1,3 +1,4 @@
+import type {TikTokDirectPostOptions} from '../lib/tikTokDirectPostContract.js';
 import type {SocialInstagramDeliveryPublishProof} from '../../shared/contracts/socialInstagramDelivery.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
@@ -42,6 +43,7 @@ export interface StarterPublicationPackage {
   copy: PublicationCopy;
   assets: PublicationPackageAsset[];
   inquiryUrl?: string;
+  tiktokPostOptions?: TikTokDirectPostOptions;
   publishingSteps: string[];
   packageHash: string;
   generatedAt: string;
@@ -136,7 +138,7 @@ function sha256(value: unknown): string {
 
 function packageBusinessSubject(input: Pick<
   StarterPublicationPackage,
-  'tenantId' | 'contentId' | 'contentVersion' | 'contentHash' | 'platform' | 'copy' | 'assets' | 'inquiryUrl' | 'workflowBinding' | 'operatingLineage'
+  'tenantId' | 'contentId' | 'contentVersion' | 'contentHash' | 'platform' | 'copy' | 'assets' | 'inquiryUrl' | 'workflowBinding' | 'operatingLineage' | 'tiktokPostOptions'
 >): Record<string, unknown> {
   return {
     tenantId: input.tenantId,
@@ -147,6 +149,7 @@ function packageBusinessSubject(input: Pick<
     copy: input.copy,
     assets: input.assets,
     ...(input.inquiryUrl ? { inquiryUrl: input.inquiryUrl } : {}),
+    ...(input.tiktokPostOptions ? { tiktokPostOptions: input.tiktokPostOptions } : {}),
     ...(input.workflowBinding ? { workflowBinding: input.workflowBinding } : {}),
     ...(input.operatingLineage ? { operatingLineage: input.operatingLineage } : {}),
   };
@@ -222,6 +225,7 @@ export interface BuildStarterPublicationPackageInput {
   copy: PublicationCopy;
   assets: PublicationPackageAsset[];
   inquiryUrl?: string;
+  tiktokPostOptions?: TikTokDirectPostOptions;
   workflowBinding?: StarterPublicationWorkflowBinding;
   operatingLineage?: StarterPublicationOperatingLineage;
   idempotencyKey: string;
@@ -250,6 +254,7 @@ export function buildStarterPublicationPackage(input: BuildStarterPublicationPac
       contentHash: text(asset.contentHash).toLowerCase(),
     })),
     ...(input.operatingLineage ? { operatingLineage: input.operatingLineage } : {}),
+    ...(input.tiktokPostOptions ? { tiktokPostOptions: structuredClone(input.tiktokPostOptions) } : {}),
     ...(text(input.inquiryUrl) ? { inquiryUrl: text(input.inquiryUrl) } : {}),
     ...(input.workflowBinding ? { workflowBinding: {
       schemaVersion: input.workflowBinding.schemaVersion,
@@ -508,6 +513,7 @@ function packageFromRecord(record: StoredPublicationPackage): StarterPublication
         copy: manifest.copy,
         assets: manifest.assets,
         ...(manifest.inquiryUrl ? { inquiryUrl: manifest.inquiryUrl } : {}),
+        ...(manifest.tiktokPostOptions ? { tiktokPostOptions: manifest.tiktokPostOptions } : {}),
         ...(manifest.workflowBinding ? { workflowBinding: manifest.workflowBinding } : {}),
         ...(manifest.operatingLineage ? { operatingLineage: manifest.operatingLineage } : {}),
         idempotencyKey: record.idempotency_key,

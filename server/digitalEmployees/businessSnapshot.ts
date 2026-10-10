@@ -2,7 +2,7 @@ import { contentAccepted } from './contentAcceptance.js';
 import fs from 'node:fs';
 import { paidOrder } from '../../shared/orderLifecycle.js';
 import { readOrders, readTenantEnterpriseProfile } from '../routes/enterprise.js';
-import { getWhatsAppCustomers } from '../whatsapp/historyImport.js';
+import { readAuthorizedWhatsAppCustomers as getWhatsAppCustomers } from '../whatsapp/authorizedCustomerRead.js';
 import { store } from '../storage/index.js';
 import { buildDailyTotals, type SocialMetricKey } from '../socialMetrics/aggregation.js';
 import { listSocialMetricSnapshots } from '../socialMetrics/store.js';
@@ -315,7 +315,7 @@ export async function buildBusinessSnapshot(
     store.list<GenericRecord>('platform_ad_metric_snapshots', { where: { tenant_id: tenantId }, perPage: 1000, sort: '-date' }).then(result => ({ ...result, failed: false })).catch(() => ({ items: [], failed: true } as { items: GenericRecord[]; failed: boolean })),
   ]);
 
-  const customers = getWhatsAppCustomers(tenantId);
+  const customers = await getWhatsAppCustomers(tenantId);
   const scheduled = scheduledResult.items.filter(item => !syntheticRecord(item, jsonObject(item.payload)));
   const videos = videoResult.items.filter(item => !syntheticRecord(item, jsonObject(item.aiAnalysis)));
   const projects = projectResult.items.filter(realContentProject);

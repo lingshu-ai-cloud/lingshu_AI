@@ -1,3 +1,4 @@
+import { prepareTikTokAttemptReceipt, tikTokAccountIdentityHash } from '../lib/tikTokDirectPostContract.js';
 import assert from 'node:assert/strict';
 import type { DataStore, ListQuery } from '../storage/datastore.js';
 import { buildPublicationAssignment, type PublishableProductionResult } from '../digitalEmployees/publishingExecution.js';
@@ -212,3 +213,25 @@ assert.equal(competingQuotaScan.errors.some(item => item.code === 'authorization
 releaseFirst();
 await firstQuotaScan;
 assert.equal(parallelSubmissions, 1);
+
+// Formal worker repairs a lost outer callback from the original canonical init only.
+const canonicalStore = memoryStore();
+await seed(canonicalStore);
+canonicalStore.rows.set(PUBLICATION_ASSIGNMENTS, [canonicalStore.rows.get(PUBLICATION_ASSIGNMENTS)![0]!]);
+let canonicalCreates = 0, canonicalStatusQueries = 0;
+const canonicalAdapter: WeeklyPublishingProviderAdapter = {provider:'tiktok-content-posting-api',platform:'tiktok',capability:'available',async publish(){canonicalCreates++;return {status:'unknown'};},async reconcile({attempt}){canonicalStatusQueries++;assert.equal(attempt.provider_receipt_id,'v_pub_file~v2-1.123456789');return {status:'unknown',providerReceiptId:attempt.provider_receipt_id};}};
+await runWeeklyPublicationExecutionScan({dataStore:canonicalStore,now:new Date('2026-09-25T00:00:00Z'),adapterFactory:async()=>canonicalAdapter});
+assert.equal(canonicalCreates,1);
+const canonicalAssignment = canonicalStore.rows.get(PUBLICATION_ASSIGNMENTS)![0]!;
+const canonicalAttempt = canonicalStore.rows.get(PUBLICATION_ATTEMPTS)![0]!;
+canonicalStore.rows.set('social_accounts',[{id:canonicalAssignment.account_id,tenantId:'tenant-a',platform:'tiktok',status:'connected',providerAccountId:'controlled-open',accessToken:sealAccountCredential('controlled-token')}]);
+const prepared=prepareTikTokAttemptReceipt({tenantId:'tenant-a',accountId:canonicalAssignment.account_id,attemptId:canonicalAttempt.attempt_id,accountIdentityHash:tikTokAccountIdentityHash({tenantId:'tenant-a',accountId:canonicalAssignment.account_id,providerAccountId:'controlled-open',accessToken:'controlled-token'}),creator:{creator_username:'controlled',creator_nickname:'Controlled',privacy_level_options:['SELF_ONLY'],comment_disabled:true,duet_disabled:true,stitch_disabled:true,max_video_post_duration_sec:60},options:{privacyLevel:'SELF_ONLY',allowComment:false,allowDuet:false,allowStitch:false,commercial:{ownBrand:false,brandedContent:false},isAigc:false,musicUsageConfirmed:true,userConsent:true},videoSha256:'a'.repeat(64),videoSize:20,durationSeconds:1,validatedAt:new Date().toISOString()});
+canonicalStore.rows.set('posts',[{id:'canonical-post',tenant_id:'tenant-a',platform:'tiktok',stats:{publishResults:{[canonicalAssignment.account_id]:{status:'unknown',attemptId:canonicalAttempt.attempt_id,providerReceiptId:'v_pub_file~v2-1.123456789',tiktokValidationReceipt:prepared}}}}]);
+const badPrepared = structuredClone(prepared); badPrepared.accountId='other-account';
+canonicalStore.rows.get('posts')![0]!.stats.publishResults[canonicalAssignment.account_id].tiktokValidationReceipt=badPrepared;
+const badCanonical = await runWeeklyPublicationExecutionScan({dataStore:canonicalStore,now:new Date('2026-09-25T00:01:00Z'),adapterFactory:async()=>{throw Error('bad canonical must remain pending before provider');}});
+assert.equal(badCanonical.pending,1);assert.equal(canonicalStatusQueries,0);assert.equal(canonicalCreates,1);
+canonicalStore.rows.get('posts')![0]!.stats.publishResults[canonicalAssignment.account_id].tiktokValidationReceipt=prepared;
+const repaired = await runWeeklyPublicationExecutionScan({dataStore:canonicalStore,now:new Date('2026-09-25T00:02:00Z'),adapterFactory:async()=>{assert.equal(canonicalStore.rows.get(PUBLICATION_ATTEMPTS)![0]!.provider_receipt_id,'v_pub_file~v2-1.123456789');return canonicalAdapter;}});
+assert.equal(repaired.pending,1);assert.equal(canonicalStatusQueries,1);assert.equal(canonicalCreates,1);
+assert.equal(canonicalStore.rows.get(PUBLICATION_ATTEMPTS)![0]!.attempt_id,prepared.attemptId);
