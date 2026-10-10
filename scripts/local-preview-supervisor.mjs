@@ -17,6 +17,9 @@ const startupGraceMs = Number(process.env.LINGSHU_PREVIEW_STARTUP_GRACE_MS || 12
 const healthCheckTimeoutMs = Number(process.env.LINGSHU_PREVIEW_HEALTH_TIMEOUT_MS || 20_000);
 const maxConsecutiveHealthFailures = Number(process.env.LINGSHU_PREVIEW_HEALTH_FAILURE_LIMIT || 5);
 const forceOptimizeDependencies = process.env.LINGSHU_PREVIEW_FORCE_OPTIMIZE === '1';
+const localPreviewAuthEmail = String(
+  process.env.LINGSHU_PREVIEW_AUTH_EMAIL || 'beauty-showcase@local.test',
+).trim().toLowerCase();
 
 function stableLocalAuthSecret() {
   const configured = String(process.env.LOCAL_DEMO_TOKEN_SECRET || '').trim();
@@ -92,6 +95,9 @@ const services = [
       // supplies a private, machine-local secret only for this dev service.
       LOCAL_DEMO_TOKEN_SECRET: localAuthSecret,
       LOCAL_DEMO_TOKEN_TTL_SECONDS: '86400',
+      // This is a local-record selector, never a credential. The auth route
+      // accepts it only in the supervised, non-production preview process.
+      LINGSHU_PREVIEW_AUTH_EMAIL: localPreviewAuthEmail,
     },
     // Health monitoring must stay cheap and independent of business data.
     // Business queries can be temporarily slow while background jobs are busy;
@@ -103,13 +109,16 @@ const services = [
     args: [
       path.join(runtimeRoot, 'node_modules/vite/bin/vite.js'),
       '--host',
-      '0.0.0.0',
+      '127.0.0.1',
       '--port',
       '5177',
       '--strictPort',
       ...(forceOptimizeDependencies ? ['--force'] : []),
     ],
-    env: { DEV_API_TARGET: 'http://127.0.0.1:8790' },
+    env: {
+      DEV_API_TARGET: 'http://127.0.0.1:8790',
+      VITE_LINGSHU_LOCAL_PREVIEW: '1',
+    },
     // Serve source in the local workspace. A dist preview can keep an old HTML
     // document while a build removes its hashed chunks, which Safari presents
     // as an intermittent white screen.

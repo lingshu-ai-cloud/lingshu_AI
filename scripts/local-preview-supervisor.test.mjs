@@ -17,6 +17,10 @@ assert.match(source, /for \(const service of services\) start\(service\)/, '后�
 assert.match(source, /stableLocalAuthSecret/, '本地预览必须持久化独立签名密钥，后端重启不能让浏览器会话失效');
 assert.match(source, /LOCAL_DEMO_TOKEN_SECRET: localAuthSecret/, '本地预览后端必须复用机器本地的稳定签名密钥');
 assert.match(source, /LOCAL_DEMO_TOKEN_TTL_SECONDS: '86400'/, '本地预览登录应保持完整一天，不能在工作过程中提前失效');
+assert.match(source, /VITE_LINGSHU_LOCAL_PREVIEW: '1'/, '本地预览前端必须显式启用仅回环地址可用的会话引导');
+assert.match(source, /LINGSHU_PREVIEW_AUTH_EMAIL: localPreviewAuthEmail/, '本地预览后端必须只选择显式的本地测试身份');
+assert.doesNotMatch(source, /'0\.0\.0\.0'/, '受监督的本地预览不能监听局域网接口');
+assert.match(source, /'--host',\s*'127\.0\.0\.1'/, '受监督的本地预览必须只绑定 IPv4 回环地址');
 assert.match(viteSource, /optimizeDeps:\s*\{[^}]*exclude:\s*\['xlsx'\]/s, '本地预览不能给 vendored xlsx 生成会失效的优化哈希');
 
 console.log('local preview supervisor contract passed');

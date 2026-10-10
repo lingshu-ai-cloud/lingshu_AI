@@ -1,10 +1,11 @@
 import { pushProductionLocation, requestProductionBack } from './lib/productionNavigation';
 import { isAgentProductionSession } from './lib/agentProductionSession';
 import { Activity, lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
+import { Button, Result } from 'antd';
 import { Loader2 } from 'lucide-react';
 import Layout from './components/Layout';
 import AuthScreen from './components/AuthScreen';
-import { authApi, getToken, type AuthSession } from './lib/auth';
+import { authApi, getToken, startInitialAuthSessionRefresh, type AuthSession } from './lib/auth';
 import { isEnterpriseHomepageDemoAccount } from './mocks/enterpriseHomepageDemo';
 import { isLocalForeignTradeMockEnabled } from './mocks/foreignTradeOperations';
 import { completeDemoStep, setDemoProgressScope } from './lib/demoProgress';
@@ -344,13 +345,26 @@ export default function App() {
       setAuthLoading(false);
       return;
     }
-    authApi.me().then(s => {
-      setDemoProgressScope(progressScopeFor(s));
-      setSession(s);
-      setSessionRefreshError('');
-    }).catch(() => {
-      setSessionRefreshError('暂时无法连接服务，登录状态未被清除。');
-    }).finally(() => setAuthLoading(false));
+    setAuthLoading(true);
+    return startInitialAuthSessionRefresh({
+      refresh: () => authApi.me(),
+      getToken,
+      schedule: (callback, delayMs) => window.setTimeout(callback, delayMs),
+      cancel: timer => window.clearTimeout(timer),
+      onSuccess: s => {
+        setDemoProgressScope(progressScopeFor(s));
+        setSession(s);
+        setSessionRefreshError('');
+        setAuthLoading(false);
+      },
+      onRetry: () => {
+        setSessionRefreshError('本地服务正在启动，正在恢复预览会话。');
+      },
+      onFailure: () => {
+        setSessionRefreshError('暂时无法连接服务，登录状态未被清除。');
+        setAuthLoading(false);
+      },
+    });
   }, [isRegistrationEntry]);
   useEffect(() => {
     if (!session) return;
@@ -731,14 +745,22 @@ export default function App() {
       </div>
     );
   }
-  if (!session && sessionRefreshError && getToken()) {
+  if (!session && sessionRefreshError) {
+    const retainedSessionToken = Boolean(getToken());
     return (
-      <div className="flex min-h-screen items-center justify-center bg-slate-50 p-6">
-        <div className="max-w-md rounded-2xl border border-amber-200 bg-white p-6 text-center shadow-sm">
-          <p className="text-base font-semibold text-slate-900">服务连接暂时中断</p>
-          <p className="mt-2 text-sm text-slate-600">{sessionRefreshError} 请重试；不会因为一次服务抖动清除登录凭据。</p>
-          <button type="button" onClick={() => { setAuthLoading(true); void refreshSession().finally(() => setAuthLoading(false)); }} className="mt-5 rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white">重新连接</button>
-        </div>
+      <div role="alert" className="flex min-h-[100dvh] items-center justify-center bg-white p-6">
+        <Result
+          status="warning"
+          title="服务连接暂时中断"
+          subTitle={retainedSessionToken
+            ? `${sessionRefreshError} 登录凭据已保留，请重新连接。`
+            : `${sessionRefreshError} 本地预览会话尚未恢复，请重新连接。`}
+          extra={(
+            <Button type="primary" onClick={() => { setAuthLoading(true); void refreshSession().finally(() => setAuthLoading(false)); }}>
+              重新连接
+            </Button>
+          )}
+        />
       </div>
     );
   }

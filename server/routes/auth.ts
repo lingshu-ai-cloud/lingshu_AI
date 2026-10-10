@@ -66,6 +66,28 @@ interface LocalLoginResult {
   expiresAt?: string | null;
 }
 
+const LOCAL_PREVIEW_ORIGINS = new Set([
+  'http://127.0.0.1:5177',
+  'http://localhost:5177',
+  'http://[::1]:5177',
+]);
+
+export function isLocalPreviewLoopbackAddress(address: string | undefined): boolean {
+  const normalized = String(address || '').trim().toLowerCase();
+  return normalized === '127.0.0.1'
+    || normalized === '::1'
+    || normalized === '::ffff:127.0.0.1';
+}
+
+export function localPreviewRequestRejection(
+  origin: string | undefined,
+  remoteAddress: string | undefined,
+): 'local_preview_origin_required' | 'local_preview_loopback_required' | null {
+  if (!LOCAL_PREVIEW_ORIGINS.has(String(origin || ''))) return 'local_preview_origin_required';
+  if (!isLocalPreviewLoopbackAddress(remoteAddress)) return 'local_preview_loopback_required';
+  return null;
+}
+
 function localId(value: string): string {
   return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'demo';
 }
@@ -228,6 +250,42 @@ function localLogin(email: string, password: string): LocalLoginResult | null {
     });
   }
   return { token: issueVerifiedLocalIdentityToken({ userId: record.id, tenantId: record.tenantId! }), record, accountType, expiresAt };
+}
+
+function localPreviewIdentity(): LocalAccount {
+  const email = String(process.env.LINGSHU_PREVIEW_AUTH_EMAIL || '').trim().toLowerCase();
+  if (!/^[a-z0-9._%+-]+@local\.test$/.test(email)) {
+    throw new Error('local_preview_identity_not_configured');
+  }
+  const accounts = readLocalAccounts();
+  const existing = accounts.find(account => account.email === email);
+  if (existing) {
+    if (!getLocalTenant(existing.tenantId)) throw new Error('local_preview_tenant_missing');
+    return existing;
+  }
+
+  const suffix = localId(email);
+  const tenantId = `local_tenant_preview_${suffix}`;
+  const userId = `local_user_preview_${suffix}`;
+  const name = '灵枢本地预览';
+  ensureLocalIdentityTenant({ tenantId, name, accountType: 'customer', email });
+  const salt = randomBytes(16).toString('hex');
+  const account: LocalAccount = {
+    userId,
+    tenantId,
+    email,
+    name,
+    accountType: 'customer',
+    role: 'admin',
+    salt,
+    // No usable preview password is generated or exposed. This opaque random
+    // verifier only satisfies the fail-closed local account record schema.
+    passwordHash: passwordHash(randomBytes(48).toString('base64url'), salt).toString('hex'),
+    createdAt: new Date().toISOString(),
+  };
+  accounts.push(account);
+  writeLocalAccounts(accounts);
+  return account;
 }
 
 function localRegister(email: string, password: string, tenant: LocalTenantRecord):
@@ -514,6 +572,37 @@ authRouter.post('/login', async (req, res) => {
       guideScope: guide.scope,
     },
   });
+});
+
+// The supervised loopback preview must not depend on a developer knowing a
+// local account password. Production, ordinary dev servers, and non-loopback
+// browser origins cannot reach this token issuer.
+authRouter.post('/local-preview-session', (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  if (
+    process.env.NODE_ENV === 'production'
+    || process.env.LINGSHU_LOCAL_PREVIEW !== '1'
+    || !localFallbacksEnabled()
+  ) {
+    res.status(404).json({ error: 'not_found' });
+    return;
+  }
+  const requestRejection = localPreviewRequestRejection(req.headers.origin, req.socket.remoteAddress);
+  if (requestRejection) {
+    res.status(403).json({ error: requestRejection });
+    return;
+  }
+  try {
+    const account = localPreviewIdentity();
+    bindDataAuthority('local');
+    res.json({ token: issueVerifiedLocalIdentityToken(account) });
+  } catch (error) {
+    if (isLocalAccountStoreError(error)) { localStoreUnavailable(res); return; }
+    console.error('[auth/local-preview-session] local preview identity unavailable', {
+      errorType: error instanceof Error ? error.message : 'UnknownError',
+    });
+    res.status(503).json({ error: 'local_preview_auth_unavailable' });
+  }
 });
 
 authRouter.post('/logout', (_req, res) => {
