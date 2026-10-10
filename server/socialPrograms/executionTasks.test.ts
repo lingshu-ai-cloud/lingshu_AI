@@ -475,6 +475,8 @@ test('inventory refs cannot be injected into a new package or revised without th
 
 test('legacy graph has no synthetic preparation and current immutable graph cannot be silently replaced',async()=>{
  const {draft,execution,dataStore:store}=await fixture();const legacy=structuredClone(draft);delete legacy.executionGraphVersion;
+ const prototype=legacy.socialContentPackage.publicationTasks[0]!;
+ legacy.socialContentPackage.publicationTasks=Array.from({length:2},(_,index)=>({...structuredClone(prototype),publicationTaskId:`legacy-shared-${index}`,motherContentId:`legacy-mother-${index}`,adaptationOfPublicationTaskId:null,materialRequirement:{required:true,requestIds:['legacy-shared-request'],bindings:[{requirementId:`legacy-requirement-${index}`,requestId:'legacy-shared-request'}]}}));
  const old=planWeeklyExecutionTasks('tenant-a',legacy);assert.ok(!old.some(t=>t.schedule.stepKind==='material_preparation'));
  for(const script of old.filter(t=>t.schedule.stepKind==='script'))assert.ok(old.find(t=>t.taskId===script.dependsOnTaskIds[0])?.schedule.stepKind==='business_schedule');
  const before=await execution.list('tenant-a',draft.programId,draft.packageId,draft.version);

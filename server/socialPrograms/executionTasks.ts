@@ -519,7 +519,9 @@ export function planWeeklyExecutionTasks(
       stepKind: 'template_performance_validation', responsibleActor: 'business_agent', estimatedDurationMinutes: 15,
     });
   }
-  applySharedMaterialPreparation(tasks,publications);
+  // Legacy immutable graphs have no preparation stage; retain their original
+  // dependencies until an explicit revision upgrades them to the current graph.
+  if((pkg.executionGraphVersion??1)>=2)applySharedMaterialPreparation(tasks,publications);
   return applyPublicationDeadlines(tasks, publications);
 }
 
