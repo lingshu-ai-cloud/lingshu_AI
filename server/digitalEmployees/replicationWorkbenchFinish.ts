@@ -52,8 +52,10 @@ export type ReplicationFinishDependencies = {
 /** Finish only a fully adopted, real-video workbench. Never borrow reference audio. */
 export async function finishReplicationWorkbench(input: { tenantId: string; projectId: string; spec: Record<string, any> }, deps: ReplicationFinishDependencies = {}): Promise<Record<string, any>> {
   const { tenantId, projectId, spec } = input;
-  const shots = spec.automatedReplicationShots as Array<{ shotId: string; slotId: string; kind: 'person' | 'nonperson'; start: number; end: number }>;
+  const shots = spec.automatedReplicationShots as Array<{ shotId: string; slotId: string; kind: 'person' | 'nonperson' | 'blocked'; start: number; end: number; productionState?: 'ready' | 'blocked'; blocker?: string; fingerprintContext?: string }>;
   if (!tenantId || !projectId || !Array.isArray(shots) || !shots.length || shots.length > 32) throw new Error('逐镜装配缺少有效时间轴');
+  const blocked = shots.filter(shot => shot.kind === 'blocked' || shot.productionState === 'blocked');
+  if (blocked.length) throw new Error(`逐镜装配仍有必需镜头未就绪：${blocked.map(shot => shot.blocker || shot.shotId).join('；')}`);
   const root = path.resolve(deps.workRoot || 'data/replication-workbench-finish', digest(`${tenantId}:${projectId}`));
   return withPaidOperationLock(path.join(root, '.locks'), 'finish', async () => {
     fs.mkdirSync(root, { recursive: true, mode: 0o700 });
@@ -94,7 +96,7 @@ export async function finishReplicationWorkbench(input: { tenantId: string; proj
       if (slot.kind === 'person') {
         const adoption = spec.digitalHumanAssemblyAdoptions?.[`${spec.activeAssemblyId}:${slot.shotId}`];
         if (!adoption?.executionId || adoption.materialId !== materialId || adoption.candidateContentSha256 !== hash) throw new Error(`第 ${index + 1} 镜缺少当前数字人执行装配凭据`);
-        if (shotFingerprint(production, String(spec.shotProductionContext || ''), slot.shotId) !== adoption.fingerprint) throw new Error(`第 ${index + 1} 镜采用后参数已变化，请重新生成并采用当前版本`);
+        if (shotFingerprint(production, String(slot.fingerprintContext || spec.shotProductionContext || ''), slot.shotId) !== adoption.fingerprint) throw new Error(`第 ${index + 1} 镜采用后参数已变化，请重新生成并采用当前版本`);
         const proof = { tenantId, projectId, assemblyId: String(spec.activeAssemblyId), shotId: slot.shotId, materialId, contentSha256: hash, adoption };
         if (deps.verifyPersonAdoption) await deps.verifyPersonAdoption(proof);
         else {

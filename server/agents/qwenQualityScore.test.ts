@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { materialAnalysisTokenBudget, normalizeQwenQualityScore } from './qwen.js';
+import { materialAnalysisTokenBudget, normalizeQwenQualityScore, QWEN_SHOT_CLASSIFICATION_FIELDS } from './qwen.js';
 
 assert.equal(normalizeQwenQualityScore(9), 90);
 assert.equal(normalizeQwenQualityScore('8.5'), 85);
@@ -10,5 +10,7 @@ assert.equal(normalizeQwenQualityScore('not-a-score'), 0);
 assert.equal(materialAnalysisTokenBudget(8), 2400);
 assert.equal(materialAnalysisTokenBudget(48), 6720, 'long factory reels need enough output room for complete JSON');
 assert.equal(materialAnalysisTokenBudget(100), 7200, 'material analysis output remains bounded');
+assert.deepEqual(QWEN_SHOT_CLASSIFICATION_FIELDS, ['materialType', 'narrativeRole', 'classificationEvidence'],
+  'every explicit Qwen shot schema must request evidence-backed production classification');
 
 console.log('qwen quality score normalization tests passed');

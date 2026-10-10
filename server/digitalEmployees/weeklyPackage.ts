@@ -205,6 +205,35 @@ export function validatePackage(pack: WeeklyPackage, goal: WeeklyGoalInput, conf
     .map(e => `第 ${i + 1} 条视频：${e}`)))];
 }
 
+/**
+ * Admission validation for starting an operating run. It keeps the package,
+ * budget and tenant-owned strategy boundaries, while deferring per-video
+ * inputs and real publishing-account authorization to the affected runtime
+ * task. `validatePackage` remains the strict editor/review validator.
+ */
+export function validatePackageForStart(pack: WeeklyPackage, goal: WeeklyGoalInput, config?: DigitalEmployeeConfig): string[] {
+  const deferredPublishingIssues = new Set([
+    '发布内容需要制作任务，或选择已有作品',
+    '已连接矩阵账号不在本周允许发布的账号范围内',
+    '矩阵账号必须属于本计划及本周平台范围',
+    '发布次数目标不能少于平台交付版本目标',
+    '已有作品的账号安排与发布任务不一致，请同步视频计划',
+    '请安排至少一个矩阵账号，或移除本周发布任务',
+    '双账号增长发布前必须配置逐账号矩阵，禁止把同一成片无差别广播到全部账号',
+    '请选择有效的矩阵账号',
+  ]);
+  const strictIssues = validatePackage(pack, goal, config).filter(issue => {
+    if (/^第 \d+ 条视频：/.test(issue)) return false;
+    if (/^(?:youtube|tiktok|instagram|facebook) 需要 \d+ 个账号，当前已接入 \d+ 个$/.test(issue)) return false;
+    return !deferredPublishingIssues.has(issue);
+  });
+  const validPlatforms = new Set(goal.contentPlatforms);
+  if (pack.matrixPlan?.some(row => !['facebook', 'instagram', 'tiktok', 'youtube'].includes(row.platform) || !validPlatforms.has(row.platform))) {
+    strictIssues.push('矩阵制作平台必须属于本周目标范围');
+  }
+  return [...new Set(strictIssues)];
+}
+
 export function packageConfig(pack: WeeklyPackage, config: DigitalEmployeeConfig): DigitalEmployeeConfig {
   const selected = new Set(pack.tasks.map(t => t.templateId));
   const workflows: DigitalEmployeeConfig['enabledWorkflows'] = [];

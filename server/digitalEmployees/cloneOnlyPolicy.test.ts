@@ -5,7 +5,7 @@ import { normalizeVideoPlan } from '../../shared/contracts/videoCreationPlan.js'
 
 const config = normalizeDigitalEmployeeConfig({
   companyName: '企业', focusProducts: '产品 A', socialCadence: '每周 2 条',
-  enabledWorkflows: ['viral_clone', 'product_content', 'material_content'],
+  enabledWorkflows: ['viral_clone'],
 });
 const goal = { title: '周计划', objective: '询盘', metric: 'approved_content_packages' as const, baseline: 0, target: 2, unit: '条', startsAt: '2026-10-08', endsAt: '2026-10-14', constraints: [], scope: '', businessLine: 'content_growth' as const, contentPlatforms: ['tiktok' as const] };
 const versions = { configVersion: 1, policyVersion: '1', factsVersion: '1' };
@@ -19,8 +19,8 @@ assert.equal(missingAnalysis.eligibleRoutes.includes('material'), false);
 
 const manualRoute = normalizeVideoPlan({ route: 'product', productName: '产品 A', theme: '介绍', language: 'en', duration: 30, platform: 'tiktok' });
 const rejected = buildContentBatchPlan({ goalId: 'g1', goal: { ...goal, videoPlans: [manualRoute] }, config, evidence, versions });
-assert.equal(rejected.status, 'blocked');
-assert.match(rejected.blocker, /只执行爆款复刻/);
+assert.equal(rejected.status, 'planned', 'one invalid route must remain an order-local blocker so unrelated workflow branches can start');
+assert.match(rejected.orders[0]?.readinessBlockers?.join('；') || '', /指定内容路径/);
 
 const plan = buildWeeklyPlan(goal, config);
 const keys = plan.tasks.map(item => item.key);

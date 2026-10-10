@@ -28,8 +28,24 @@ try {
   await budget.reserve({ ...video, operationId: 'video-a' });
   await assert.rejects(budget.reserve({ ...video, operationId: 'video-b' }), /预算剩余/);
   assert.equal((await budget.status('tenant', 'project')).usedCny, 10);
+  await budget.reserve({ ...base, tenantId: 'frozen-cap', operationId: 'frame-a', limitCny: 3 });
+  await assert.rejects(budget.reserve({ ...base, tenantId: 'frozen-cap', shotId: 'shot-b', operationId: 'frame-b', limitCny: 3 }), /预算剩余/,
+    'an order-local frozen ceiling must be stricter than the installation default');
+  await assert.rejects(budget.reserve({ ...base, tenantId: 'missing-cap', operationId: 'frame-a', limitCny: 0 }), /冻结制作额度无效/);
   const otherTenant = await budget.reserve({ ...base, tenantId: 'other', operationId: 'frame-a' });
   assert.equal(otherTenant.existing, false);
+  await budget.reserve({ ...video, tenantId: 'accepted', operationId: 'video-accepted' });
+  await budget.recordProviderAcceptance('accepted', 'project', 'video-accepted', 'supplier-task-1', 'model-1');
+  await budget.releaseRejected('accepted', 'project', 'video-accepted');
+  const accepted = (await budget.status('accepted', 'project')).entries[0]!;
+  assert.equal(accepted.status, 'reserved', 'provider acceptance is not video completion');
+  assert.equal(accepted.output?.providerTaskId, 'supplier-task-1');
+  assert.equal((await budget.status('accepted', 'project')).usedCny, 6, 'accepted spend cannot be released as a rejection');
+  await assert.rejects(budget.recordProviderAcceptance('accepted', 'project', 'video-accepted', 'different-task', 'model-1'), /不同供应商任务/);
+  await budget.mark('accepted', 'project', 'video-accepted', 'uncertain', { error: 'poll_timeout' });
+  assert.equal((await budget.status('accepted', 'project')).entries[0]?.output?.providerTaskId, 'supplier-task-1', 'poll failure preserves the original supplier receipt');
+  await budget.mark('accepted', 'project', 'video-accepted', 'completed', { materialId: 'generated-video' });
+  assert.equal((await budget.status('accepted', 'project')).entries[0]?.output?.providerTaskId, 'supplier-task-1', 'material completion preserves acceptance identity');
   await budget.reserve({ ...base, tenantId: 'fingerprint', operationId: 'frame-input', inputFingerprint: 'version-1' });
   await assert.rejects(budget.reserve({ ...base, tenantId: 'fingerprint', operationId: 'frame-input', inputFingerprint: 'version-2' }), /参考资产或镜头输入已变化/);
   const revised = await budget.reserve({ ...base, tenantId: 'fingerprint', operationId: 'frame-revised', inputFingerprint: 'version-2' });

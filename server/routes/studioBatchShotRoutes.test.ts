@@ -165,6 +165,13 @@ const lockedUnassigned = planStudioBatchShotRoutes({ activeAssemblyId: 'a',
 }, { talkingExecutorReady: false, actionExecutorReady: false, authorizedPresenterIds: [] });
 assert.equal(lockedUnassigned[0]?.route, 'unresolved');
 assert.equal(lockedUnassigned[0]?.status, 'blocked');
+const evidenceBlocked = planStudioBatchShotRoutes({ activeAssemblyId: 'a',
+  shootingSlots: [{ id: 'unknown', slotId: 'unknown-slot', detail: '待确认镜头', locked: true, blocker: '镜头类型待确认' }],
+  storyboardSourcePlans: { 'unknown-slot': { mode: 'blocked', blocker: '镜头类型待确认' } },
+}, { talkingExecutorReady: false, actionExecutorReady: false, authorizedPresenterIds: [] });
+assert.equal(evidenceBlocked[0]?.route, 'unresolved');
+assert.equal(evidenceBlocked[0]?.status, 'blocked');
+assert.match(evidenceBlocked[0]!.reason, /镜头类型待确认/);
 const installation = planStudioBatchShotRoutes({ activeAssemblyId: 'a',
   shootingSlots: [{ id: 'install', slotId: 'install-slot', detail: '在客厅安装吊灯', duration: 18 }],
   shotProductions: { 'a:install': { source: 'ai' } as never },

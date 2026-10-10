@@ -32,6 +32,8 @@ export interface ContentProductionOrderInput extends Partial<DirectorScriptContr
   platform: string; productId: string; productName: string;
   evidenceRefs: Array<{ type: 'exact_analysis' | 'enterprise_material'; id: string }>;
   theme?: { key: string; label: string }; cta?: string; constraints?: string[];
+  /** Frozen, order-local preparation gaps. They block only this content item. */
+  readinessBlockers?: string[];
   sourceContentOrderId?: string; masterContentOrderId?: string; masterLanguage?: string;
 }
 

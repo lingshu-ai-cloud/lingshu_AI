@@ -27,12 +27,45 @@ export function narrationNaturalnessIssues(lines: string[]): string[] {
   if (lines.some(line => /^(?:首先|其次|最后)[，,]?/.test(line)) && lines.length <= 4) issues.push('短视频口播不应套用报告式“首先、其次、最后”结构');
   return issues;
 }
+
+/**
+ * Narrow proof that a visual can support conservative, directly observable
+ * narration when the product table contains only an identity. Callers must
+ * report authorization and product ownership explicitly; a non-empty asset
+ * label or upload receipt is not visual evidence.
+ */
+export interface NarrationVisibleEvidence {
+  authorization: 'owned' | 'licensed' | 'unknown';
+  productMatched: boolean;
+  synthetic?: boolean;
+  observations: readonly string[];
+}
+
+export function narrationVisibleObservations(evidence: readonly NarrationVisibleEvidence[] = []): string[] {
+  return [...new Set(evidence.flatMap(item => {
+    if (item.authorization === 'unknown' || !item.productMatched || item.synthetic === true) return [];
+    return item.observations.map(value => String(value || '').trim()).filter(value => value
+      && !/^(?:无|暂无|未知|待补充|待确认|未分析|未识别|unknown|n\/?a|none)$/i.test(value)
+      && !/^企业知识库产品.+的已上传(?:视频|图片)$/.test(value)
+      && !/^(?:已上传|uploaded)(?:素材|material|image|video)?$/i.test(value));
+  }))];
+}
+
 /** Require substantive product evidence before spending on narration or approving legacy output. */
-export function narrationEvidenceIssues(facts: string, spoken = ''): string[] {
+export function narrationEvidenceIssues(
+  facts: string,
+  spoken = '',
+  visibleEvidence: readonly NarrationVisibleEvidence[] = [],
+): string[] {
   const substantive = facts.split(/[；;\n]/).map(value => value.trim()).filter(value => value && !/^(?:产品|product|SKU|型号)\s*[:：]/i.test(value));
-  if (!substantive.length || substantive.every(value => /[:：]\s*(?:无|暂无|未知|待补充|unknown|n\/a)?$/i.test(value))) {
-    return ['产品资料缺少已确认的类别、材质、特点或规格，无法核验口播；请补充企业知识库产品事实'];
-  }
+  const hasSubstantiveProductFacts = substantive.length > 0
+    && !substantive.every(value => /[:：]\s*(?:无|暂无|未知|待补充|unknown|n\/a)?$/i.test(value));
+  const visibleObservations = narrationVisibleObservations(visibleEvidence);
+  if (!hasSubstantiveProductFacts && !visibleObservations.length) return ['产品资料缺少已确认的类别、材质、特点或规格，且没有已授权并归属当前产品的可见素材观察，无法核验口播；请补充企业知识库产品事实或真实素材分析'];
+  // Visible observations only satisfy the minimum entry gate. They never
+  // prove performance, specifications or certification; deterministic rules
+  // below and the final narration review continue to check those claims
+  // against `facts`, not against visual observations.
   const unsupported = [
     { claim: /voltage|电压/i, evidence: /voltage|电压/i, name: '电压' },
     { claim: /temperature|温度/i, evidence: /temperature|温度/i, name: '温度' },
@@ -42,8 +75,9 @@ export function narrationEvidenceIssues(facts: string, spoken = ''): string[] {
   return unsupported.map(rule => `口播涉及未提供依据的${rule.name}，需补充对应事实或移除该内容`);
 }
 
-export async function generateNarration(input: { facts: string; theme: string; audience: string; language: string; duration: number; cta: string; constraints: string[]; reference?: string; styleProfile?: string }): Promise<string[]> {
-  const evidenceIssues = narrationEvidenceIssues(input.facts);
+export async function generateNarration(input: { facts: string; theme: string; audience: string; language: string; duration: number; cta: string; constraints: string[]; reference?: string; styleProfile?: string; visibleEvidence?: readonly NarrationVisibleEvidence[] }): Promise<string[]> {
+  const visibleObservations = narrationVisibleObservations(input.visibleEvidence);
+  const evidenceIssues = narrationEvidenceIssues(input.facts, '', input.visibleEvidence);
   if (evidenceIssues.length) throw new Error(evidenceIssues.join('；'));
   const units = Math.floor(input.duration * (narrationRate(input.language) * 0.87));
   const languageName = VIDEO_LANGUAGES[input.language as keyof typeof VIDEO_LANGUAGES] || input.language;
@@ -55,6 +89,7 @@ ${input.duration <= 15 ? '短于或等于15秒时，只保留三个必要信息�
 仅允许陈述下列已确认事实，所有数字和条件需有原文依据。行业猜测改成买家要核实的问题；不承诺资料外的效果或服务。收尾仅邀请讨论需求，不承诺提供未经确认存在的清单、指南、方案或测试服务。提到几个问题，就必须完整给出对应数量的问题。
 不要朗读内部素材编号、资料标题或测试标签。没有画面分析时，不断言视频里有/没有某技术内容，只讲买家应该向供应商核实什么，不扩展主题外的系统和型号。
 事实：${input.facts}
+已授权且归属当前产品的可见素材观察（只允许描述画面，不证明功效、规格或认证）：${visibleObservations.join('；') || '（无）'}
 约束：${input.constraints.join('；')}
 ${input.reference ? '参考只迁移表达顺序，不复制事实：' + input.reference : ''}
 ${input.styleProfile ? '历史优质口播只提供抽象风格指纹，绝不复用原句：' + input.styleProfile : ''}
@@ -73,15 +108,16 @@ ${input.styleProfile ? '历史优质口播只提供抽象风格指纹，绝不�
   }
   throw Error('口播生成失败');
 }
-export async function reviewFinalNarration(input: { spoken: string; facts: string; visualFacts?: string[]; sceneEvidence?: Array<{ spoken: string; asset: string; observations: string[] }>; language: string; constraints: string[] }): Promise<string[]> {
-  const evidenceIssues = narrationEvidenceIssues(input.facts, input.spoken);
+export async function reviewFinalNarration(input: { spoken: string; facts: string; visualFacts?: string[]; visibleEvidence?: readonly NarrationVisibleEvidence[]; sceneEvidence?: Array<{ spoken: string; asset: string; observations: string[] }>; language: string; constraints: string[] }): Promise<string[]> {
+  const visibleObservations = narrationVisibleObservations(input.visibleEvidence);
+  const evidenceIssues = narrationEvidenceIssues(input.facts, input.spoken, input.visibleEvidence);
   if (evidenceIssues.length) return evidenceIssues;
   if (!spokenLanguageMatches(input.spoken, input.language)) return ['最终口播语言与制作计划不符'];
   const naturalnessIssues = narrationNaturalnessIssues(input.spoken.match(/[^。！？!?]+[。！？!?]?/g)?.map(line => line.trim()).filter(Boolean) || [input.spoken]);
   if (naturalnessIssues.length) return naturalnessIssues;
   const { text: raw } = await callVideoModel(`审核最终口播，首先检查正文是否为目标语言 ${input.language}（品牌、型号可保留原文），包括区分英语、西语、法语等拉丁字母语言。再检查会改变事实或理解的问题：未提供依据的数字/效果/承诺，条件或否定丢失，要求“这几个问题”却未列出，制作审稿腔。不要按个人文风改写。私信领取清单/指南/方案等也属于服务承诺，事实中未明确提供则指出。只检查口播，不检查画面标识是否出现或出现位置；画面标识由渲染单独验证。
 已确认事实：${input.facts}
-已核验素材观察（只能证明画面，不能证明功效或合规）：${(input.visualFacts || []).join('；')}
+已核验素材观察（只能证明画面，不能证明功效或合规）：${[...(input.visualFacts || []), ...visibleObservations].join('；')}
 逐镜口播与实际素材对应（判断指代时以本镜为准，其他镜头不表示同一商品）：${JSON.stringify(input.sceneEvidence || [])}
 约束：${input.constraints.join('；')}
 最终口播：${input.spoken}

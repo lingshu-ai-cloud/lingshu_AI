@@ -4,9 +4,25 @@ import { authHeader } from './auth';
 import type { ReviewTodoBoard } from './reviewTodos';
 import type { WeeklyPackage } from './weeklyPackage';
 import type { DirectorDecision, DirectorDecisionReason } from './directorDecision';
-import type { DigitalEmployeeConfig, DigitalEmployeeOverview, FollowupDispatchResponse, PublishingTarget, RunEvent, WeeklyGoal } from './digitalEmployees';
+import type { DigitalEmployeeConfig, DigitalEmployeeOverview, EnterpriseFactsRebuildInput, FollowupDispatchResponse, PublishingTarget, RunEvent, WeeklyGoal } from './digitalEmployees';
 
 const BASE = "/api/overseas/digital-employees";
+
+export type DigitalEmployeeApiErrorDetails = Readonly<Record<string, unknown>>;
+
+export class DigitalEmployeeApiError extends Error {
+  constructor(
+    readonly status: number,
+    readonly code: string,
+    message: string,
+    readonly details: DigitalEmployeeApiErrorDetails,
+  ) {
+    super(message);
+    this.name = "DigitalEmployeeApiError";
+  }
+}
+
+const rebuildGoalRequests = new Map<string, Promise<DigitalEmployeeOverview>>();
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${BASE}${path}`, {
@@ -17,7 +33,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       ...(init?.headers || {}),
     },
   });
-  const body = (await response.json().catch(() => ({}))) as T & {
+  const rawBody: unknown = await response.json().catch(() => ({}));
+  const isObjectBody = Boolean(rawBody && typeof rawBody === "object" && !Array.isArray(rawBody));
+  const body = (isObjectBody ? rawBody : {}) as T & {
     error?: string;
     message?: string;
     missing?: string[];
@@ -42,11 +60,42 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       content_execution_job_not_resumable: "当前任务不在可恢复状态",
       content_execution_job_not_retryable: "当前任务尚未进入可人工重试状态",
     };
-    throw new Error(
+    throw new DigitalEmployeeApiError(
+      response.status,
+      body.error || "request_failed",
       `${body.message || friendlyErrors[body.error || ""] || body.error || "请求失败"}${detail}${effectDetail}`,
+      isObjectBody
+        ? { ...(rawBody as Record<string, unknown>) }
+        : { response: rawBody },
     );
   }
   return body;
+}
+
+function rebuildGoalFromLatestFacts(
+  goalId: string,
+  input: EnterpriseFactsRebuildInput,
+): Promise<DigitalEmployeeOverview> {
+  const authorization = authHeader().Authorization || "";
+  const key = [
+    authorization,
+    goalId,
+    input.expectedGoalVersion,
+    input.sourcePlanId,
+    input.expectedFactsVersion,
+    input.expectedSourcePlanDigest,
+  ].join("\u0000");
+  const pending = rebuildGoalRequests.get(key);
+  if (pending) return pending;
+  const created = request<DigitalEmployeeOverview>(
+    `/goals/${encodeURIComponent(goalId)}/rebuild-from-latest-facts`,
+    { method: "POST", body: JSON.stringify(input) },
+  );
+  rebuildGoalRequests.set(key, created);
+  void created.finally(() => {
+    if (rebuildGoalRequests.get(key) === created) rebuildGoalRequests.delete(key);
+  }).catch(() => undefined);
+  return created;
 }
 
 export const digitalEmployeeApi = {
@@ -80,6 +129,7 @@ export const digitalEmployeeApi = {
       method: "POST",
       body: JSON.stringify(goal),
     }),
+  rebuildGoalFromLatestFacts,
   recommendPackage: (goalId: string) => request<WeeklyPackage>(`/goals/${encodeURIComponent(goalId)}/package/recommend`, { method: "POST" }),
   generatePackageDetails: (goalId: string) => request<DigitalEmployeeOverview>(`/goals/${encodeURIComponent(goalId)}/package/details`, { method: "POST" }),
   planningOptions: () => request<{

@@ -4,11 +4,14 @@ import {
   agentCursorPercent,
   agentUiActionFromEvent,
   buildTaskDeepLink,
+  digitalEmployeeApi,
   digitalEmployeeConfigFingerprint,
+  enterpriseFactsRebuildInput,
   type DigitalEmployeeConfig,
   type PlanTask,
   type WorkflowTask,
 } from '../lib/digitalEmployees.js';
+import { DigitalEmployeeApiError } from '../lib/digitalEmployeeApi.js';
 import { nodeDeepLink } from './WeeklyExecutionNodes.js';
 
 const pageSource = fs.readFileSync('src/components/DigitalEmployeePage.tsx', 'utf8');
@@ -32,6 +35,9 @@ const productionSource = fs.readFileSync('src/components/ProductionProgressPanel
 const liveSceneSource = fs.readFileSync('src/components/ProductionTaskScene.tsx', 'utf8');
 const boardSource = fs.readFileSync('src/components/DeliveryBoard.tsx', 'utf8');
 const libSource = fs.readFileSync('src/lib/digitalEmployees.ts', 'utf8');
+const digitalEmployeeApiSource = fs.readFileSync('src/lib/digitalEmployeeApi.ts', 'utf8');
+const weeklyWorkStatusSource = fs.readFileSync('src/lib/weeklyWorkStatus.ts', 'utf8');
+const weeklyWorkEventsSource = fs.readFileSync('src/lib/weeklyWorkEvents.ts', 'utf8');
 const appSource = fs.readFileSync('src/App.tsx', 'utf8');
 const layoutSource = fs.readFileSync('src/components/Layout.tsx', 'utf8');
 const assistantSource = fs.readFileSync('src/components/GlobalAssistant.tsx', 'utf8');
@@ -80,10 +86,86 @@ const initialPlanSaveSource = pageSource.slice(
   pageSource.indexOf('const saveConfig'),
   pageSource.indexOf('const saveGoal'),
 );
+const enterpriseFactsRecoverySource = pageSource.slice(
+  pageSource.indexOf('const recoverEnterpriseFactsChanged'),
+  pageSource.indexOf('const act', pageSource.indexOf('const recoverEnterpriseFactsChanged')),
+);
+const mutationActionSource = pageSource.slice(
+  pageSource.indexOf('const act'),
+  pageSource.indexOf('const goal =', pageSource.indexOf('const act')),
+);
+const weeklyStartFailureSource = pageSource.slice(
+  pageSource.indexOf('const reportWeeklyStartFailure'),
+  pageSource.indexOf('const confirmWeeklyPlan'),
+);
+const weeklyWorkUpdateSource = pageSource.slice(
+  pageSource.indexOf('const publishWeeklyWorkUpdate'),
+  pageSource.indexOf('const confirmWeeklyPlan'),
+);
+const confirmWeeklyPlanSource = pageSource.slice(
+  pageSource.indexOf('const confirmWeeklyPlan'),
+  pageSource.indexOf('const goLive'),
+);
+const controlWeeklyWorkSource = pageSource.slice(
+  pageSource.indexOf('const controlWeeklyWork'),
+  pageSource.indexOf('const weeklyControlLabel', pageSource.indexOf('const controlWeeklyWork')),
+);
 
-for (const label of ['制定本周目标', '数字员工工作排期']) {
-  assert.match(pageSource, new RegExp(label), `Smart Operations must expose the confirmed weekly workflow: ${label}`);
+const factRebuildDetails = {
+  expectedGoalVersion: 4,
+  sourcePlanId: 'source-plan-a',
+  expectedFactsVersion: 'facts-v3',
+  expectedSourcePlanDigest: 'a'.repeat(64),
+};
+const factRebuildV4 = enterpriseFactsRebuildInput({ id: 'goal/事实-a', version: 4 }, factRebuildDetails);
+assert.deepEqual(
+  enterpriseFactsRebuildInput({ id: 'goal/事实-a', version: 4 }, factRebuildDetails),
+  factRebuildV4,
+  'the same complete recovery intent must reuse one durable rebuild request identity',
+);
+assert.match(factRebuildV4.requestId, /^[A-Za-z0-9_-]{8,120}$/, 'fact rebuild request ids must satisfy the server idempotency-key contract');
+assert.equal(factRebuildV4.expectedGoalVersion, 4, 'a rebuild must carry the exact goal version observed by the page');
+assert.deepEqual(
+  { expectedGoalVersion: factRebuildV4.expectedGoalVersion, sourcePlanId: factRebuildV4.sourcePlanId, expectedFactsVersion: factRebuildV4.expectedFactsVersion, expectedSourcePlanDigest: factRebuildV4.expectedSourcePlanDigest },
+  factRebuildDetails,
+  'a rebuild must echo the source-plan identity, frozen fact version and exact source-plan digest supplied by the conflict',
+);
+assert.notEqual(
+  enterpriseFactsRebuildInput({ id: 'goal/事实-a', version: 4 }, { ...factRebuildDetails, expectedFactsVersion: 'facts-v3b' }).requestId,
+  factRebuildV4.requestId,
+  'a different fact binding at the same goal version must receive a distinct idempotency identity',
+);
+assert.notEqual(
+  enterpriseFactsRebuildInput({ id: 'goal/事实-a', version: 4 }, { ...factRebuildDetails, expectedSourcePlanDigest: 'c'.repeat(64) }).requestId,
+  factRebuildV4.requestId,
+  'a different source-plan payload at the same goal version must receive a distinct idempotency identity',
+);
+assert.notEqual(
+  enterpriseFactsRebuildInput({ id: 'goal/事实-a', version: 5 }, { ...factRebuildDetails, expectedGoalVersion: 5 }).requestId,
+  factRebuildV4.requestId,
+  'a newly observed goal version must not reuse an older rebuild identity',
+);
+for (const missingField of ['expectedGoalVersion', 'sourcePlanId', 'expectedFactsVersion', 'expectedSourcePlanDigest']) {
+  const incompleteDetails: Record<string, unknown> = { ...factRebuildDetails };
+  delete incompleteDetails[missingField];
+  assert.throws(
+    () => enterpriseFactsRebuildInput({ id: 'goal/事实-a', version: 4 }, incompleteDetails),
+    /invalid_enterprise_facts_rebuild_target/,
+    `missing ${missingField} evidence must disable automatic recovery`,
+  );
 }
+assert.throws(
+  () => enterpriseFactsRebuildInput({ id: 'goal/事实-a', version: 4 }, { ...factRebuildDetails, expectedGoalVersion: 5 }),
+  /invalid_enterprise_facts_rebuild_target/,
+  'a conflict for another observed goal version must disable automatic recovery',
+);
+assert.throws(
+  () => enterpriseFactsRebuildInput({ id: 'goal/事实-a', version: 4 }, { ...factRebuildDetails, expectedSourcePlanDigest: 'not-a-sha256' }),
+  /invalid_enterprise_facts_rebuild_target/,
+  'malformed source-plan evidence must disable automatic recovery',
+);
+
+assert.match(pageSource, /制定本周目标/, 'Smart Operations must retain the editor for a genuinely new weekly goal');
 assert.match(weeklyPlanCalendarSource, /本周发布日历/, 'weekly planning must use the compact publishing calendar');
 for (const deprecated of ['生成免费任务总纲', '免费的周任务总纲', '步骤 1 · 免费', '步骤 2 · Agent 预分析']) {
   assert.doesNotMatch(pageSource, new RegExp(deprecated), `Smart Operations must remove the deprecated free/paid two-step copy: ${deprecated}`);
@@ -119,7 +201,7 @@ assert.match(assistantSource, /openAgent\(currentPageAgent, 'chat'\)/, '点击�
 assert.match(pageSource, /weeklyPlanNavigation\?: \{ goalId: string; planId: string; requestId: number \}/, '周计划导航必须携带准确目标和重复点击序号');
 assert.match(pageSource, /next\.goal\?\.id !== target\.goalId \|\| next\.plan\?\.id !== target\.planId/, '打开编辑器前必须同时核对目标与计划编号');
 assert.match(pageSource, /目标周计划已更新或不再是当前计划/, '计划不匹配必须明确提示，不能回退打开别的计划');
-assert.match(pageSource, /setViewGoalId\(""\);[\s\S]{0,300}setWeeklyPlanOpen\(true\)/, '准确定位后复用既有编辑器并退出缓存历史视图');
+assert.match(pageSource, /setViewGoalId\(""\);[\s\S]{0,300}setWeeklyPlanOpen\(false\)[\s\S]{0,220}可直接点击“开始周任务”启动生产/, '准确定位后必须回到当前经营页的直接启动入口，不得复用已删除的详情页');
 assert.match(assistantSource, /page === 'smartAssets'\) return 'content'/, '内容制作页应高亮内容 Agent');
 assert.match(assistantSource, /page === 'socialInspiration'[\s\S]{0,160}return 'director'/, '灵感与脚本页面应高亮编导 Agent');
 assert.match(assistantSource, /page === 'conversion'[\s\S]{0,220}return 'customer'/, '客户页面应高亮客服 Agent');
@@ -191,38 +273,82 @@ assert.match(weeklyCommandCenterSource, /周经营计划[\s\S]{0,1800}aria-label
 assert.match(weeklyCommandCenterSource, /WeeklyRangeVisual/, 'the weekly-plan header must visualize its operating range instead of appending a raw date string');
 assert.match(weeklyCommandCenterSource, /周经营计划[\s\S]{0,500}<WeeklyRangeVisual/, 'the compact week range must remain in the same title row instead of consuming its own line');
 assert.match(weeklyCommandCenterSource, /initialView="dayGridWeek"[^>]*eventCardMode="media"[^>]*fixedHeight="clamp\(300px, calc\(100dvh - 270px\), 640px\)"/, 'the weekly publishing calendar must open as a viewport-bounded, media-first cascading card window');
-for (const label of ['本周生产状态', '各平台计划与完成']) assert.doesNotMatch(smartBusinessSource, new RegExp(label), `${label} must not add low-value charts to the overview`);
+assert.doesNotMatch(smartBusinessSource, />各平台计划与完成</, 'the overview must not add a low-value platform summary chart');
 assert.match(currentPlanSource, /WeeklyCommandCenter/, 'the full weekly command center must replace the simplified current-plan summary');
 assert.match(currentPlanSource, /notice=\{!activeRun[\s\S]{0,1200}detailGeneration\?\.blockedCount/, 'the weekly-plan header must retain actionable readiness and generation blockers');
 for (const label of ['开始周任务', '暂停周任务', '继续周任务']) assert.match(pageSource, new RegExp(label), `the merged weekly control must support ${label}`);
+assert.match(pageSource, /const recoverableProductionTask = data\.run\?\.goal_id === goal\?\.id[^]*?task\.run_id === data\.run!\.id && task\.task_key === "content_production"/, 'continue production must target only this goal and run’s production task');
+assert.match(controlWeeklyWorkSource, /if \(recoverableProductionTask\)[^]*?digitalEmployeeApi\.retryTask\(recoverableProductionTask\.id\)[^]*?return;/, 'recovering a failed production node must not create another weekly run');
 assert.match(pageSource, /controlWeeklyWork[\s\S]{0,900}pauseRun[\s\S]{0,400}resumeRun|controlWeeklyWork[\s\S]{0,900}resumeRun[\s\S]{0,400}pauseRun/, 'the merged weekly control must pause and resume the persisted run');
 assert.match(weeklyPlanControlsSource, /controlWeeklyWork[\s\S]{0,900}weeklyControlLabel/, 'the weekly-plan header must own the merged start and pause control');
-assert.match(pageSource, /const startWeeklyWork[\s\S]{0,900}setWeeklyPlanOpen\(true\)/, 'the prominent start-work action must open the persisted plan confirmation workflow');
 assert.doesNotMatch(currentPlanSource, /查看内容队列|查看完整周计划|新手引导/, 'the current-plan card must not keep duplicate queue, full-plan, or guide buttons');
-assert.match(pageSource, /aria-label=\{goal && !newGoal \? "本周计划详情" : "周计划生成"\}/, 'the weekly-plan dialog must distinguish inspecting the current plan from generating a new one');
+assert.match(controlWeeklyWorkSource, /if\s*\(!goal\s*\|\|\s*canCreateNextGoal\)\s*\{[\s\S]{0,320}setNewGoal\(true\)[\s\S]{0,160}setWeeklyPlanOpen\(true\)[\s\S]{0,120}return;[\s\S]{0,220}setWeeklyPlanOpen\(false\)[\s\S]{0,100}await confirmWeeklyPlan\(\)/, 'the primary weekly control must reserve the editor for a new goal and directly start an existing plan');
+assert.doesNotMatch(controlWeeklyWorkSource, /setNewGoal\(false\)[\s\S]{0,160}setWeeklyPlanOpen\(true\)/, 'an existing plan must never enter the removed confirmation page before starting');
+for (const removedCopy of ['本周计划详情', '确认本周视频计划', '返回智能经营']) {
+  assert.doesNotMatch(pageSource, new RegExp(removedCopy), `the removed weekly-plan detail flow must not retain: ${removedCopy}`);
+}
+assert.match(pageSource, /aria-label="周计划生成"/, 'new and next-week goals may retain a dedicated editing flow');
+assert.match(pageSource, /const weeklyControlLabel = busy === ["']confirm-weekly-plan["'][\s\S]{0,100}正在启动生产…/, 'the primary control must name its real production-start loading state');
+assert.match(weeklyPlanControlsSource, /loading=\{Boolean\(busy\)\}/, 'the primary start button must render a loading state and block duplicate clicks while launch is in flight');
+const confirmedExecutionSource = pageSource.slice(
+  pageSource.indexOf('function confirmedWeeklyExecution'),
+  pageSource.indexOf('function weeklyStartResultNeedsReconciliation'),
+);
+assert.match(confirmedExecutionSource, /run\.goal_id !== goalId/, 'the page must verify the returned run belongs to the requested goal');
+assert.match(confirmedExecutionSource, /Date\.parse\(run\.started_at\)/, 'the page must require a persisted start time before treating launch as confirmed');
+assert.match(confirmedExecutionSource, /task\.run_id === run\.id[\s\S]{0,100}tasks\.length > 0/, 'the page must require tasks scoped to the returned run before treating launch as confirmed');
+assert.match(pageSource, /const presentConfirmedWeeklyExecution[\s\S]{0,360}setData\(next\)[\s\S]{0,120}publishWeeklyWorkUpdate\(next\)/, 'a real start receipt, including an immediate terminal result, must replace stale page state and refresh assistant decisions');
+assert.match(pageSource, /const presentConfirmedWeeklyExecution[\s\S]{0,600}weeklyWorkStatus\(next\)[\s\S]{0,700}showActionFeedback\([\s\S]{0,260}tone: feedbackTone/, 'launch feedback must use the authoritative queued, running, blocked, paused or terminal state instead of always showing a green success');
+assert.match(pageSource, /setWorkspaceView\(launchedStatus\?\.phase === ["']running["'] \|\| launchedStatus\?\.phase === ["']queued["'] \? ["']matrix["'] : ["']live["']\)/, 'confirmed queued/running work must enter the persisted schedule while blocked or terminal work opens its status view');
+assert.match(pageSource, /周任务未启动/, 'a failed start must have a visible, explicit failure title');
+assert.match(weeklyStartFailureSource, /setError\(message\)[\s\S]{0,240}showActionFeedback\([\s\S]{0,160}title: ["']周任务未启动["'][\s\S]{0,120}description: message[\s\S]{0,120}tone: ["']error["']/, 'a failed start must remain visible and use the same concrete reason in its error feedback');
+assert.match(confirmWeeklyPlanSource, /catch \(actionError\)[\s\S]{0,2200}reportWeeklyStartFailure\(actionError instanceof Error \? actionError\.message/, 'a definitive API launch failure without a structured conflict must preserve the concrete server reason instead of reporting success');
+assert.match(confirmWeeklyPlanSource, /weeklyStartConflictFromError\(actionError\)[\s\S]{0,500}setWeeklyStartConflict\(conflict\)[\s\S]{0,500}本轮计划没有被重复启动/, 'active_goal_exists must retain the other persisted goal/run as a visible blocker without cancelling or starting either run');
+assert.match(confirmWeeklyPlanSource, /launchRequestSent && weeklyStartResultNeedsReconciliation\(actionError\)[\s\S]{0,300}digitalEmployeeApi\.overview\(goal\.id\)[\s\S]{0,220}presentConfirmedWeeklyExecution\(reconciled, goal\.id\)[\s\S]{0,500}启动结果待确认/, 'an uncertain launch response must perform one read-only reconciliation and never repeat the start mutation');
+assert.match(pageSource, /<WeeklyStartConflictAlert[\s\S]{0,220}openConflictingRun/, 'the persistent active-run conflict must provide a direct view-run action');
+assert.match(pageSource, /<WeeklyWorkStatusAlert[\s\S]{0,220}goLive\(currentWeeklyWorkStatus\.currentTaskId\)/, 'production progress must open this goal current task rather than an unscoped global monitor');
+assert.match(weeklyWorkStatusSource, /制作准备已完成，尚未开始生产/, 'generated details without a persisted run must never be labelled as production');
+assert.match(weeklyWorkStatusSource, /run\.goal_id !== data\.goal\.id[\s\S]{0,300}运行与页面周目标不一致/, 'a run for another goal must not be presented as current production');
+assert.match(weeklyWorkStatusSource, /run\.status === 'waiting_external'[\s\S]{0,900}本周任务已启动，等待外部服务/, 'waiting for an external service must not be described as active production');
+assert.match(weeklyWorkStatusSource, /else if \(run\.status === 'running'\) phase = 'running';[\s\S]{0,80}else phase = 'unknown'/, 'an unrecognized run status must remain unknown rather than defaulting to running');
+assert.doesNotMatch(weeklyWorkStatusSource, /COMPLETED_TASK_STATUSES = new Set\([^\n]*(?:cancelled|skipped)/, 'cancelled or skipped tasks must not inflate the completed-output count');
+assert.match(weeklyWorkEventsSource, /WEEKLY_WORK_UPDATED_EVENT = 'lingshu:weekly-work-updated'/, 'the page and assistant must share one weekly-work refresh event');
+assert.match(weeklyWorkUpdateSource, /notifyWeeklyWorkUpdated\([\s\S]{0,420}source: ["']page["'][\s\S]{0,520}runId: run\.id[\s\S]{0,220}taskCount: tasks\.length/, 'a confirmed start must publish the normalized persisted execution receipt for assistant refresh');
+assert.match(weeklyWorkUpdateSource, /run && run\.goal_id === updatedGoal\.id/, 'an execution event must never relabel a run belonging to another goal');
+assert.match(pageSource, /detail\.source !== ["']assistant["'][\s\S]{0,420}addEventListener\(WEEKLY_WORK_UPDATED_EVENT, refreshFromAssistant\)/, 'assistant-originated weekly-work updates must reload the visible goal from the authoritative overview');
+assert.match(weeklyCommandCenterSource, /status\?: ReactNode/, 'the command center must expose a reusable production-status slot');
+const weeklyStatusSlotIndex = weeklyCommandCenterSource.indexOf('aria-label="本周生产状态"');
+const weeklyMetricsIndex = weeklyCommandCenterSource.indexOf('<div className="grid gap-px', weeklyStatusSlotIndex);
+assert.ok(weeklyStatusSlotIndex > weeklyCommandCenterSource.indexOf('aria-label="智能经营控制"') && weeklyMetricsIndex > weeklyStatusSlotIndex, 'the production status slot must remain directly below the command header and above metrics/calendar content');
+assert.match(currentPlanSource, /status=\{weeklyStatusSlot\}/, 'the current plan must place persistent status and errors in the command-center status slot');
+assert.match(pageSource, /\{error && <Alert type="error" showIcon title=\{error\}/, 'start failure feedback must remain visible in the command-center status slot');
+assert.doesNotMatch(pageSource, /\{error && <Alert className="mt-5"/, 'the page must not duplicate launch errors below the large calendar');
+for (const label of ['执行失败', '已取消', '已暂停', '等待外部服务', '待处理', '准备中', '已完成', '执行中']) assert.match(pageSource, new RegExp(label), `the command header must expose the persisted run state: ${label}`);
 assert.doesNotMatch(pageSource, /按发布时间查看内容，检查产品与参考依据后确认排期。|确定各平台账号的产量、总产量和预计成本。/, 'the weekly-plan page title must not repeat an explanatory subtitle');
 assert.match(pageSource, /<Tabs[^>]+aria-label="智能经营视图"/, 'Smart Operations must use accessible shared Ant tabs');
-assert.match(pageSource, /返回智能经营/, 'the full-page weekly plan must expose a return action');
 const outlineFlowSource = pageSource.slice(pageSource.indexOf('const createWeeklyOutline'), pageSource.indexOf('const generateCurrentPlanDetails'));
 assert.match(outlineFlowSource, /digitalEmployeeApi\.createGoal/, 'weekly goal creation must persist before product confirmation');
-assert.match(pageSource, /const confirmWeeklyPlan[\s\S]{0,2400}generatePackageDetails[\s\S]{0,1600}approveGoal/, 'one confirmation must prepare persisted details and then approve the same plan revision');
+assert.match(confirmWeeklyPlanSource, /launchRequestSent = true;[\s\S]{0,200}approveGoal/, 'one click must directly request a real run, with preparation left to its pipeline');
 assert.match(weeklyPlanCalendarSource, /publication\?\.title/, 'weekly calendar cards must show the future publishing title');
 assert.match(weeklyPlanCalendarSource, /planningEvidence\?\.referenceThumbnailUrl/, 'weekly calendar cards must render persisted viral thumbnails');
-assert.match(pageSource, /updateWeeklyPlanProduct[\s\S]{0,2500}savePackage/, 'product selection must persist product-bound material ids and publishing copy in the weekly package');
-assert.match(pageSource, /refreshWeeklyViralPlan[\s\S]{0,900}recommendPackage[\s\S]{0,400}savePackage/, 'persisted legacy drafts must support rebuilding the one-to-one viral plan from the current weekly target');
+assert.doesNotMatch(pageSource, /const updateWeeklyPlanProduct|const refreshWeeklyViralPlan/, 'removed plan-detail editing actions must not survive as unreachable page code');
 assert.match(weeklyPlanCalendarSource, /补齐 \{missingReferences\} 条爆款/, 'a weekly plan with missing references must expose an actionable repair instead of a dead-end warning');
 assert.match(pageSource, /预计成本/, 'the compact weekly-plan summary must retain its cost estimate');
-assert.match(pageSource, /Agent To Do List[\s\S]{0,1800}expectedMinutes/, 'confirmed weekly plans must show Agent ownership and expected duration');
+assert.doesNotMatch(pageSource, /aria-label="Agent To Do List"/, 'the removed weekly-plan detail page must not retain its embedded Agent task list');
 assert.match(pageSource, /aria-label="社媒视频矩阵"[\s\S]{0,2500}编辑完整矩阵/, 'the default weekly proposal must visibly restore the social video matrix');
 assert.match(pageSource, /workspaceView === "matrix" && <SmartOperationsAccountRail/, 'the account rail must only appear inside the account-matrix tab');
 assert.match(weeklyPlanCalendarSource, /plans\.length[\s\S]{0,300}条内容/, 'the weekly calendar must expose the conserved total publishing count');
 assert.match(weeklyPlanCalendarSource, /plans\.map[\s\S]{0,650}plan\.plannedPublishDate/, 'the weekly calendar must adapt every publishing version with its real planned date');
 assert.match(weeklyPlanCalendarSource, /<LsCalendar/, 'the weekly calendar must use FullCalendar for all views');
-assert.match(pageSource, /inspirationReference:[\s\S]{0,160}referenceId[\s\S]{0,160}sourceUrl[\s\S]{0,160}title/, 'weekly content cards must pass a traceable reference into Inspiration Center');
+assert.match(smartBusinessSource, /function inspirationReferenceForPlan[\s\S]{0,700}referenceId[\s\S]{0,260}sourceUrl[\s\S]{0,260}title:/, 'weekly content cards must preserve a traceable reference for Inspiration Center after the detail page is removed');
+assert.match(weeklyCommandCenterSource, /detailsTitle="内容制作进度"[\s\S]{0,600}WeeklyContentProgressPanel/, 'the homepage calendar must open read-only content progress in the shared drawer');
+assert.match(weeklyCommandCenterSource, /onOpenReference[\s\S]{0,350}inspirationReferenceNavigationDetail/, 'the drawer must retain the exact persisted inspiration reference as a secondary action');
+assert.doesNotMatch(confirmWeeklyPlanSource, /approvalBlocked|missingProducts|missingReferences|generatePackageDetails|readiness\.canStart/, 'launch must not duplicate production preparation or publishing readiness gates in the UI');
+assert.match(confirmWeeklyPlanSource, /approveGoal\(goal\.id, data\.plan\.businessPackage\.revision\)/, 'launch must submit the exact plan revision to authoritative server validation');
 assert.match(inspirationSource, /receiveReference[\s\S]{0,5000}setSelectedVideo\(match\)/, 'Inspiration Center must open the exact requested viral-video detail');
 assert.match(inspirationSource, /weekly-plan-snapshot[\s\S]{0,600}setSelectedVideo\(snapshot\)/, 'deleted references must still open the frozen weekly-plan analysis snapshot');
 assert.match(pageSource, /具体缺少/, 'weekly-plan validation must name the missing business fields instead of showing a generic warning');
-assert.match(pageSource, /page === "socialPlanning"[\s\S]{0,240}setWeeklyPlanOpen\(true\)/, 'the account matrix next step must open weekly-plan generation inside Smart Business');
+assert.match(pageSource, /page === "socialPlanning"[\s\S]{0,160}void controlWeeklyWork\(\)/, 'the account-matrix next step must share the direct-start/new-goal control instead of reopening the removed detail page');
 assert.match(weeklyPlanControlsSource, /历史计划/, 'Smart Business must expose plan history from the weekly-plan header controls');
 assert.doesNotMatch(smartBusinessSource, /后台并发与异常中心|Background operations/, 'the overview must not expose the deleted background-operations panel');
 assert.match(planHistorySource, /按周查看[\s\S]{0,200}按月查看/, 'plan history must support weekly and monthly views');
@@ -330,7 +456,7 @@ assert.match(initialPlanSaveSource, /digitalEmployeeApi\.initialPreparation\(nex
 assert.match(initialPlanSaveSource, /initial-\$\{created\.goal\.id\.replace/, 'initial preparation retries must use a stable goal-derived request id');
 assert.match(initialPlanSaveSource, /initialOperatingPlanFingerprint\(plan\)[\s\S]{0,500}next\.goal\.constraints\.includes\(fingerprintConstraint\)/, 'retrying a partial first plan must refuse edits that would bind a new plan to the old goal');
 assert.match(pageSource, /closeRecommendedPlan[\s\S]{0,300}requestAnimationFrame[\s\S]{0,200}recommendedPlanTriggerId/, 'closing the initial-plan dialog must restore focus to the remounted trigger');
-assert.match(pageSource, /<InitialPreparationStatusPanel goalId=\{goal\.id\} onRunning=\{\(\) => void load\(goal\.id\)\}/, 'the weekly-plan page must expose real initial-preparation progress');
+assert.doesNotMatch(pageSource, /<InitialPreparationStatusPanel/, 'initial-preparation progress must not revive the removed weekly-plan detail page');
 assert.match(initialPreparationSource, /digitalEmployeeApi\.initialPreparation\(goalId\)/, 'initial-preparation progress must come from the persisted backend state');
 assert.match(pageSource, /allowInitialPlan=\{false\}[\s\S]{0,500}const saved = await saveConfig\(config\)/, 'reopening the guide must save settings without creating another initial plan');
 assert.match(agentWeeklyCalendarSource, /projectCalendarDeliverables\(tasks\)/, 'the Agent calendar must collapse scoped production internals into user-visible deliverables');
@@ -457,7 +583,7 @@ assert.match(libSource, /CustomEvent\(["']lingshu:navigate["'],\s*\{\s*detail:\s
 assert.match(appSource, /setSmartAssetsView\(detail\.view === ["']publish["'] \? ["']publish["'] : ["']create["']\)/, 'the application shell must honor create versus publish deep links');
 
 assert.match(pageSource, /allowGeneratedVisuals:\s*false/, 'generated visuals must default to fail-closed');
-assert.match(pageSource, /setWorkspaceView\(["']matrix["']\)[\s\S]{0,500}setSelectedTaskId/, 'approving a plan must open the account work schedule while preserving task focus');
+assert.match(pageSource, /setWorkspaceView\(launchedStatus\?\.phase === ["']running["'] \|\| launchedStatus\?\.phase === ["']queued["'] \? ["']matrix["'] : ["']live["']\)[\s\S]{0,220}setSelectedTaskId/, 'approving a plan must route from the real launch state while preserving task focus');
 assert.match(pageSource, /scrollIntoView\([\s\S]{0,120}behavior:\s*getScrollBehavior\(\)/, 'first-run transitions must focus the next required panel while respecting reduced-motion preferences');
 assert.match(pageSource, /digitalEmployeeOnboarding:\s*\{\s*profileConfirmedAt:/, 'the first-step confirmation must be persisted instead of living only in component memory');
 assert.match(pageSource, /setProductConfirmed\(true\)/, 'confirming the product table must advance to the social-stage step');
@@ -468,6 +594,23 @@ assert.match(pageSource, /profile\.digitalEmployeeOnboarding\?\.profileConfirmed
 assert.match(pageSource, /profile\.digitalEmployeeOnboarding\?\.productSelectionConfirmedAt[\s\S]{0,120}loadedProducts\.length[\s\S]{0,80}setProductConfirmed\(true\)/, 'persisted product confirmation may restore step three only when products still exist');
 assert.match(pageSource, /!data\?\.config \|\|[\s\S]{0,250}viewGoalId \|\|[\s\S]{0,250}!run/, 'first-time onboarding must not subscribe to an obsolete run stream');
 assert.match(pageSource, /overviewRequestVersionRef/, 'late overview responses must be versioned so they cannot overwrite a completed mutation');
+assert.match(digitalEmployeeApiSource, /class DigitalEmployeeApiError[\s\S]{0,300}readonly code:[\s\S]{0,300}readonly details:/, 'digital employee API failures must retain a structured code and details payload');
+assert.match(digitalEmployeeApiSource, /isObjectBody[\s\S]{0,1800}\{ \.\.\.\(rawBody as Record<string, unknown>\) \}/, 'structured API errors must preserve the complete raw response object for recovery decisions and diagnostics');
+assert.match(digitalEmployeeApiSource, /rebuildGoalRequests = new Map<[\s\S]{0,100}Promise<DigitalEmployeeOverview>/, 'fact rebuild requests must share one in-flight registry');
+for (const field of ['requestId', 'expectedGoalVersion', 'sourcePlanId', 'expectedFactsVersion', 'expectedSourcePlanDigest']) {
+  assert.match(libSource, new RegExp(`${field}:`), `the frontend rebuild protocol must require ${field}`);
+}
+assert.match(digitalEmployeeApiSource, /function rebuildGoalFromLatestFacts[\s\S]{0,300}input: EnterpriseFactsRebuildInput[\s\S]{0,800}rebuildGoalRequests\.get\(key\)[\s\S]{0,500}rebuild-from-latest-facts[\s\S]{0,200}JSON\.stringify\(input\)/, 'fact rebuilds must deduplicate identical guarded requests and send the full source-plan protocol to the dedicated endpoint');
+assert.match(enterpriseFactsRecoverySource, /instanceof DigitalEmployeeApiError[\s\S]{0,180}actionError\.code !== ENTERPRISE_FACTS_CHANGED_ERROR_CODE/, 'only the structured enterprise_facts_changed code may trigger automatic recovery');
+assert.match(enterpriseFactsRecoverySource, /enterpriseFactsRebuildInput\(staleGoal, actionError\.details\)[\s\S]{0,900}enterpriseFactsRecoveryRef\.current\.get\(recoveryKey\)/, 'the page must require conflict-provided source-plan evidence and coalesce only an identical guarded rebuild');
+assert.match(enterpriseFactsRecoverySource, /catch \{[\s\S]{0,80}return false/, 'missing or malformed source-plan evidence must fall back without attempting automatic rebuild');
+assert.match(enterpriseFactsRecoverySource, /digitalEmployeeApi\.rebuildGoalFromLatestFacts\(staleGoal\.id, rebuildInput\)/, 'automatic recovery must use the dedicated latest-facts rebuild operation');
+assert.match(enterpriseFactsRecoverySource, /let rebuildAttempt = 0[\s\S]{0,700}rebuildAttempt >= 1[\s\S]{0,500}rebuildAttempt \+= 1/, 'a second enterprise fact change may retry the idempotent rebuild once, but recovery must remain bounded');
+assert.match(enterpriseFactsRecoverySource, /setData\(rebuilt\)[\s\S]{0,700}计划已按最新企业资料重建[\s\S]{0,300}新版周计划已回到智能经营[\s\S]{0,200}开始周任务/, 'successful recovery must replace the overview and return the user to the direct-start entry without replaying the stale launch');
+assert.doesNotMatch(enterpriseFactsRecoverySource, /digitalEmployeeApi\.(?:savePackage|approveGoal|startInitialPreparation|generatePackageDetails|recommendPackage)/, 'recovery must never replay the stale save, approval, launch, or generation action');
+assert.match(mutationActionSource, /catch \(actionError\)[\s\S]{0,180}recoverEnterpriseFactsChanged\(actionError, actionGoal\)[\s\S]{0,80}return null/, 'mutations must stop after handled fact recovery instead of replaying the original action');
+assert.match(confirmWeeklyPlanSource, /catch \(actionError\)[\s\S]{0,180}recoverEnterpriseFactsChanged\(actionError, goal\)[\s\S]{0,40}return/, 'plan confirmation must stop after rebuilding and must not auto-start the replacement plan');
+assert.doesNotMatch(pageSource, /经营包未保存，请检查页面提示后重试|未能启动，请检查账号、资料和授权范围后重试/, 'a handled rebuild must not be replaced by the legacy red save or launch blocker');
 assert.match(pageSource, /OnboardingGuideFrame[\s\S]{0,180}step=\{4\}[\s\S]{0,180}title="选择出镜人物和声音（可选）"[\s\S]{0,600}<EnterprisePresenters initialConfiguration/, 'presenter configuration must be the fourth guided step');
 assert.match(pageSource, /applicationGuideSteps[\s\S]{0,120}企业与品牌[\s\S]{0,120}产品表[\s\S]{0,120}社媒经营阶段[\s\S]{0,120}人物与声音/, 'Ant Steps must expose the four guided steps in their required order');
 assert.match(onboardingGuideFrameSource, /<LsFlowDialog[\s\S]{0,600}steps=\{applicationGuideSteps\.map/, 'the beginner guide must use the shared flow dialog and Ant Steps contract');
@@ -492,9 +635,10 @@ assert.match(pageSource, /id:\s*String\(existing\.id \|\| existing\.productId \|
 assert.match(enterpriseRouteSource, /mergeEnterpriseProductIdentity\(next\[index\], product, index\)/,
   'server-side product API upserts must retain the existing stable product id');
 assert.match(enterpriseRouteSource, /return \{[\s\S]{0,200}\bcompany,[\s\S]{0,100}\bbrand,/, 'normalized brand must be returned and preserved by recursive profile merge');
-assert.match(pageSource, /activeRun && newGoal[\s\S]{0,120}setNewGoal\(false\)/, 'an active run must close any duplicate goal form');
+assert.match(pageSource, /weeklyPlanOpen && \(!goal \|\| newGoal\) && !activeRun/, 'an active run must suppress the new-goal editor instead of exposing a duplicate plan flow');
+assert.match(pageSource, /const presentConfirmedWeeklyExecution[\s\S]{0,500}setWeeklyPlanOpen\(false\)[\s\S]{0,120}setNewGoal\(false\)/, 'a successful direct start must close and reset any new-goal editor state');
 assert.match(pageSource, /完成或取消当前运行后才能制定下一周目标/, 'the UI must explain why a second active goal is unavailable');
-assert.match(pageSource, /requiredReadiness[\s\S]{0,300}firstMissingReadiness/, 'plan approval must derive its blocker from real resource readiness');
+assert.doesNotMatch(confirmWeeklyPlanSource, /firstMissingReadiness|approvalBlocked/, 'readiness gaps must be resolved in their production stage, not as a blanket launch gate');
 assert.match(packageSource, /issues.length > 0/, 'invalid packages must block launch and explain missing dependencies');
 assert.match(pageSource, /<WeeklyPackagePanel/, 'the execution view must expose the editable weekly business package');
 assert.match(packageSource, /每条内容发布到一个账号计一次/, 'bounded publishing must explain that the limit counts actual account-level publish actions');
@@ -544,6 +688,84 @@ const fingerprint = digitalEmployeeConfigFingerprint(fingerprintConfig);
 assert.match(fingerprint, /^CFG-[0-9A-F]{6}$/, 'a persisted config snapshot must have a compact deterministic display identifier');
 assert.equal(digitalEmployeeConfigFingerprint({ ...fingerprintConfig }), fingerprint, 'equivalent config snapshots must keep the same display identifier');
 assert.notEqual(digitalEmployeeConfigFingerprint({ ...fingerprintConfig, targetMarkets: '德国' }), fingerprint, 'material config changes must produce a different display identifier');
+
+const originalFetch = globalThis.fetch;
+const originalLocalStorage = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
+let contractAuthToken = 'contract-token';
+Object.defineProperty(globalThis, 'localStorage', {
+  configurable: true,
+  value: { getItem: () => contractAuthToken, setItem: () => undefined, removeItem: () => undefined },
+});
+try {
+  let rebuildCalls = 0;
+  const rebuildBodies: unknown[] = [];
+  const releaseRebuilds: Array<(response: Response) => void> = [];
+  globalThis.fetch = (async (_input, init) => {
+    rebuildCalls += 1;
+    rebuildBodies.push(JSON.parse(String(init?.body)));
+    return new Promise<Response>(resolve => { releaseRebuilds.push(resolve); });
+  }) as typeof fetch;
+  const runtimeRebuildInput = enterpriseFactsRebuildInput({ id: 'goal/a', version: 4 }, factRebuildDetails);
+  const firstRebuild = digitalEmployeeApi.rebuildGoalFromLatestFacts('goal/a', runtimeRebuildInput);
+  const duplicateRebuild = digitalEmployeeApi.rebuildGoalFromLatestFacts('goal/a', runtimeRebuildInput);
+  assert.equal(firstRebuild, duplicateRebuild, 'concurrent recovery calls for one observed goal version must share the same promise');
+  assert.equal(rebuildCalls, 1, 'concurrent recovery must issue only one network request');
+  assert.deepEqual(rebuildBodies[0], runtimeRebuildInput, 'the rebuild body must include its stable request id and the complete source-plan guard');
+  const changedEvidenceInput = enterpriseFactsRebuildInput(
+    { id: 'goal/a', version: 4 },
+    { ...factRebuildDetails, expectedSourcePlanDigest: 'c'.repeat(64) },
+  );
+  const changedEvidenceRebuild = digitalEmployeeApi.rebuildGoalFromLatestFacts('goal/a', changedEvidenceInput);
+  assert.notEqual(changedEvidenceRebuild, firstRebuild, 'different source-plan evidence must not share an in-flight rebuild even at the same goal version');
+  assert.equal(rebuildCalls, 2, 'changed source-plan evidence must be checked by its own guarded request');
+  contractAuthToken = 'other-contract-token';
+  const otherAuthorizationRebuild = digitalEmployeeApi.rebuildGoalFromLatestFacts('goal/a', runtimeRebuildInput);
+  assert.notEqual(otherAuthorizationRebuild, firstRebuild, 'the same goal identity must never share an in-flight rebuild across authorization contexts');
+  assert.equal(rebuildCalls, 3, 'a new authorization context must issue its own tenant-scoped rebuild request');
+  releaseRebuilds[0](new Response(JSON.stringify({ goal: { id: 'replacement-goal' } }), {
+    status: 200,
+    headers: { 'Content-Type': 'application/json' },
+  }));
+  releaseRebuilds[1](new Response(JSON.stringify({ goal: { id: 'changed-evidence-replacement-goal' } }), {
+    status: 200,
+    headers: { 'Content-Type': 'application/json' },
+  }));
+  releaseRebuilds[2](new Response(JSON.stringify({ goal: { id: 'other-replacement-goal' } }), {
+    status: 200,
+    headers: { 'Content-Type': 'application/json' },
+  }));
+  await Promise.all([firstRebuild, duplicateRebuild, changedEvidenceRebuild, otherAuthorizationRebuild]);
+
+  const structuredFailure = {
+    error: 'enterprise_facts_changed',
+    message: '企业事实再次更新',
+    factVersion: 'facts-v9',
+    expectedGoalVersion: 5,
+    sourcePlanId: 'source-plan-a',
+    expectedFactsVersion: 'facts-v3',
+    expectedSourcePlanDigest: 'b'.repeat(64),
+    recoveryAction: 'rebuild_weekly_goal',
+    diagnostics: { sourceGoalVersion: 4 },
+  };
+  globalThis.fetch = (async () => new Response(JSON.stringify(structuredFailure), {
+    status: 409,
+    headers: { 'Content-Type': 'application/json' },
+  })) as typeof fetch;
+  await assert.rejects(
+    () => digitalEmployeeApi.rebuildGoalFromLatestFacts('goal/a', enterpriseFactsRebuildInput({ id: 'goal/a', version: 5 }, structuredFailure)),
+    (reason: unknown) => {
+      assert.ok(reason instanceof DigitalEmployeeApiError);
+      assert.equal(reason.status, 409);
+      assert.equal(reason.code, 'enterprise_facts_changed');
+      assert.deepEqual(reason.details, structuredFailure, 'the complete raw error object must remain available to callers');
+      return true;
+    },
+  );
+} finally {
+  globalThis.fetch = originalFetch;
+  if (originalLocalStorage) Object.defineProperty(globalThis, 'localStorage', originalLocalStorage);
+  else delete (globalThis as { localStorage?: Storage }).localStorage;
+}
 
 console.log('DigitalEmployeePage contract tests passed');
 

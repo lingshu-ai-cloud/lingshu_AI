@@ -101,6 +101,77 @@ export interface WeeklyGoal {
   updatedAt: string;
 }
 
+export const ENTERPRISE_FACTS_CHANGED_ERROR_CODE = "enterprise_facts_changed" as const;
+
+export interface EnterpriseFactsRebuildInput {
+  requestId: string;
+  expectedGoalVersion: number;
+  sourcePlanId: string;
+  expectedFactsVersion: string;
+  expectedSourcePlanDigest: string;
+}
+
+function enterpriseFactsRebuildToken(value: string): string {
+  let first = 0x811c9dc5;
+  let second = 0x1505;
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    first = Math.imul(first ^ code, 0x01000193);
+    second = Math.imul(second, 33) ^ code;
+  }
+  return `${(first >>> 0).toString(16).padStart(8, "0")}${(second >>> 0).toString(16).padStart(8, "0")}`;
+}
+
+/**
+ * Returns the durable identity for rebuilding one exact stale draft. An exact
+ * recovery intent keeps the same request id across retries; any source-plan or
+ * fact-binding change receives a different identity.
+ */
+export function enterpriseFactsRebuildInput(
+  goal: Pick<WeeklyGoal, "id" | "version">,
+  details: Readonly<Record<string, unknown>>,
+): EnterpriseFactsRebuildInput {
+  const goalId = String(goal.id || "").trim();
+  const observedGoalVersion = Number(goal.version);
+  const expectedGoalVersion = details.expectedGoalVersion;
+  const rawSourcePlanId = typeof details.sourcePlanId === "string" ? details.sourcePlanId : "";
+  const rawExpectedFactsVersion = typeof details.expectedFactsVersion === "string" ? details.expectedFactsVersion : "";
+  const rawExpectedSourcePlanDigest = typeof details.expectedSourcePlanDigest === "string" ? details.expectedSourcePlanDigest : "";
+  const sourcePlanId = rawSourcePlanId.trim();
+  const expectedFactsVersion = rawExpectedFactsVersion.trim();
+  const expectedSourcePlanDigest = rawExpectedSourcePlanDigest.trim();
+  if (
+    !goalId
+    || typeof expectedGoalVersion !== "number"
+    || !Number.isSafeInteger(expectedGoalVersion)
+    || expectedGoalVersion < 1
+    || expectedGoalVersion !== observedGoalVersion
+    || rawSourcePlanId !== sourcePlanId
+    || rawExpectedFactsVersion !== expectedFactsVersion
+    || rawExpectedSourcePlanDigest !== expectedSourcePlanDigest
+    || !/^[A-Za-z0-9_-]{1,200}$/.test(sourcePlanId)
+    || !expectedFactsVersion
+    || expectedFactsVersion.length > 160
+    || /[\u0000-\u001f\u007f]/.test(expectedFactsVersion)
+    || !/^[a-f0-9]{64}$/.test(expectedSourcePlanDigest)
+  ) {
+    throw new Error("invalid_enterprise_facts_rebuild_target");
+  }
+  return {
+    requestId: `facts-rebuild-${enterpriseFactsRebuildToken([
+      goalId,
+      expectedGoalVersion,
+      sourcePlanId,
+      expectedFactsVersion,
+      expectedSourcePlanDigest,
+    ].join("\u0000"))}-v${expectedGoalVersion}`,
+    expectedGoalVersion,
+    sourcePlanId,
+    expectedFactsVersion,
+    expectedSourcePlanDigest,
+  };
+}
+
 export interface PlanTask {
   key: string;
   title: string;

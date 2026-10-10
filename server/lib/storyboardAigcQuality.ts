@@ -70,6 +70,45 @@ export function storyboardQaRequiredChecks(input: {
   return [...out];
 }
 
+/** Reject incomplete/misattributed model output before it can be converted
+ * into product or asset failures. Technical checks may satisfy their own key,
+ * but model pass/fail claims must cite a real candidate frame. */
+export function storyboardQaObservationContractIssues(input: {
+  observations: unknown;
+  requiredKeys: string[];
+  allowedCitationLabels: string[];
+  candidateLabels: string[];
+  technicalKeys?: string[];
+}): string[] {
+  const observations = Array.isArray(input.observations) ? input.observations : [];
+  const allowed = new Set(input.allowedCitationLabels);
+  const candidates = new Set(input.candidateLabels);
+  const technical = new Set(input.technicalKeys || []);
+  const byKey = new Map<string, Record<string, unknown>>();
+  const issues: string[] = [];
+  for (const raw of observations) {
+    if (!raw || typeof raw !== 'object') continue;
+    const item = raw as Record<string, unknown>;
+    const key = String(item.key || '');
+    if (!key || byKey.has(key)) continue;
+    byKey.set(key, item);
+  }
+  for (const key of input.requiredKeys) {
+    if (technical.has(key)) continue;
+    const item = byKey.get(key);
+    const verdict = String(item?.verdict || '');
+    if (!item || !['pass', 'fail', 'uncertain'].includes(verdict)) {
+      issues.push(`${key}:missing_or_invalid_verdict`);
+      continue;
+    }
+    const cited = Array.isArray(item.evidenceFrames) ? item.evidenceFrames.map(String) : [];
+    if (cited.some(label => !allowed.has(label))) issues.push(`${key}:unknown_evidence_label`);
+    if ((verdict === 'pass' || verdict === 'fail') && !cited.some(label => candidates.has(label)))
+      issues.push(`${key}:candidate_evidence_required`);
+  }
+  return issues;
+}
+
 function defaultAction(phase: StoryboardQaPhase, key: string): StoryboardQaAction {
   if (key === 'product_identity' || key === 'person_identity') return 'needs_assets';
   return phase === 'first_frame' ? 'retry_first_frame' : 'retry_video';

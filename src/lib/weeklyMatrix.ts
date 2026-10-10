@@ -94,8 +94,11 @@ export function normalizeMatrixPlan(value: unknown): MatrixAccountPlan[] {
   });
 }
 export function bindMatrixVideo(plan: VideoCreationPlan, row?: MatrixAccountPlan): VideoCreationPlan {
-  return normalizeVideoPlan({ ...plan, ...(row ? { platform: row.platform, productName: row.productName, language: row.language,
-    ...(plan.productName !== row.productName ? { materialIds: [], scenePlan: plan.scenePlan?.map(scene => ({ ...scene, materialId: '' })) } : {}) } : {}),
+  // The account product is a default, not a constraint on explicitly selected products.
+  const legacyProductChanged = row !== undefined && !plan.productId?.trim() && plan.productName !== row.productName;
+  return normalizeVideoPlan({ ...plan, ...(row ? { platform: row.platform, language: row.language,
+    ...(!plan.productId?.trim() ? { productName: row.productName } : {}),
+    ...(legacyProductChanged ? { materialIds: [], scenePlan: plan.scenePlan?.map(scene => ({ ...scene, materialId: '' })) } : {}) } : {}),
     matrix: row ? { accountId: row.accountId, audience: row.audience, objective: row.objective, cta: row.cta, accountRole: row.accountRole || 'brand_combined', formats: row.formats || [] } : { accountId: '', audience: '', objective: '', cta: '', accountRole: 'brand_combined', formats: [] } });
 }
 
@@ -179,8 +182,27 @@ export function matrixIssues(pack: WeeklyPackage): string[] {
     const assigned = plans.filter(plan => plan.matrix?.accountId === row.accountId);
     if (assigned.length + row.sourceProjectIds.length !== row.weeklyCount) issues.push(`${row.platform} 账号的内容数量与本周计划不一致，请补齐视频计划或调整条数`);
     if (publishing && row.connected !== false && !pack.authorization.accountIds.includes(row.accountId)) issues.push('已连接矩阵账号不在本周允许发布的账号范围内');
-    if (assigned.some(plan => plan.platform !== row.platform || plan.productName !== row.productName || plan.language !== row.language || plan.matrix?.audience !== row.audience || plan.matrix?.objective !== row.objective || plan.matrix?.cta !== row.cta)) issues.push('账号策略已修改，请同步视频计划后再执行');
+    if (assigned.some(plan => {
+      const hasIndependentProduct = Boolean(plan.productId?.trim() && plan.productName.trim());
+      return plan.platform !== row.platform
+        || !plan.productName
+        || (!hasIndependentProduct && plan.productName !== row.productName)
+        || plan.language !== row.language
+        || plan.matrix?.audience !== row.audience
+        || plan.matrix?.objective !== row.objective
+        || plan.matrix?.cta !== row.cta;
+    })) issues.push('账号策略已修改，请同步视频计划后再执行');
   }
+  const productIdsByFamily = new Map<string, Set<string>>();
+  for (const plan of plans) {
+    const familyId = plan.contentFamilyId?.trim();
+    const productId = plan.productId?.trim();
+    if (!familyId || !productId) continue;
+    const productIds = productIdsByFamily.get(familyId) || new Set<string>();
+    productIds.add(productId);
+    productIdsByFamily.set(familyId, productIds);
+  }
+  if ([...productIdsByFamily.values()].some(productIds => productIds.size > 1)) issues.push('同一母版的平台版本必须使用同一产品');
   for (const platform of [...new Set(rows.map(row => row.platform))]) {
     const families = plans.filter(plan => plan.platform === platform).map(plan => plan.contentFamilyId).filter(Boolean);
     if (new Set(families).size !== families.length) issues.push(`${platform} 平台存在重复母版，请调整内容分配，确保同平台不发布相似内容`);

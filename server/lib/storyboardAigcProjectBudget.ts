@@ -71,7 +71,7 @@ export class StoryboardAigcProjectBudget {
     });
   }
   async reserve(input: { tenantId: string; projectId: string; shotId: string;
-    stage: StoryboardAigcStage; operationId: string; estimatedCostCny: number; inputFingerprint?: string }) {
+    stage: StoryboardAigcStage; operationId: string; estimatedCostCny: number; inputFingerprint?: string; limitCny?: number }) {
     if (!input.tenantId || !input.projectId || !input.shotId || !/^[A-Za-z0-9_:.-]{1,180}$/.test(input.operationId))
       throw new Error('分镜 AIGC 预算请求标识无效，未调用供应商');
     return this.lock(input.tenantId, input.projectId, async () => {
@@ -94,7 +94,10 @@ export class StoryboardAigcProjectBudget {
       const acceptedAttempts = Object.values(ledger.entries).filter(entry => entry.shotId === input.shotId
         && entry.stage === input.stage && entry.inputFingerprint === input.inputFingerprint).length;
       if (acceptedAttempts >= maxRetries + 1) throw new Error(`当前镜头${input.stage === 'first_frame' ? '首帧' : '视频'}已达到 ${maxRetries + 1} 次生成上限，未调用供应商`);
-      const limitMicros = micros(this.limitCny());
+      const configuredLimit = this.limitCny();
+      const requestedLimit = input.limitCny === undefined ? configuredLimit : Number(input.limitCny);
+      if (!Number.isFinite(requestedLimit) || requestedLimit <= 0) throw new Error('冻结制作额度无效，未调用供应商');
+      const limitMicros = micros(Math.min(configuredLimit, requestedLimit));
       const usedMicros = Object.values(ledger.entries).reduce((sum, entry) => sum + entry.amountMicros, 0);
       const amountMicros = micros(input.estimatedCostCny);
       if (!Number.isSafeInteger(usedMicros) || usedMicros + amountMicros > limitMicros)
@@ -107,6 +110,23 @@ export class StoryboardAigcProjectBudget {
       return { existing: false, entry };
     });
   }
+  /** Persist provider acceptance before polling: a timeout must not erase the
+   * only receipt that lets us inspect the original paid task without resubmitting. */
+  async recordProviderAcceptance(tenantId: string, projectId: string, operationId: string,
+    providerTaskId: string, providerModel: string) {
+    if (!providerTaskId.trim() || !providerModel.trim()) throw new Error('供应商任务回执不完整');
+    return this.lock(tenantId, projectId, async () => {
+      const ledger = this.read(tenantId, projectId);
+      const entry = ledger.entries[operationId];
+      if (!entry) throw new Error('分镜 AIGC 预算预留不存在');
+      if (entry.output?.providerTaskId && entry.output.providerTaskId !== providerTaskId)
+        throw new Error('同一付费请求不能绑定不同供应商任务');
+      entry.output = { ...entry.output, providerTaskId, providerModel,
+        providerAcceptedAt: entry.output?.providerAcceptedAt || new Date().toISOString() };
+      this.write(ledger);
+      return entry;
+    });
+  }
   async mark(tenantId: string, projectId: string, operationId: string,
     status: 'uncertain' | 'completed', output?: Record<string, unknown>) {
     return this.lock(tenantId, projectId, async () => {
@@ -114,7 +134,7 @@ export class StoryboardAigcProjectBudget {
       const entry = ledger.entries[operationId];
       if (!entry) throw new Error('分镜 AIGC 预算预留不存在');
       entry.status = status;
-      if (output) entry.output = output;
+      if (output) entry.output = { ...entry.output, ...output };
       this.write(ledger);
       return entry;
     });
@@ -122,7 +142,7 @@ export class StoryboardAigcProjectBudget {
   async releaseRejected(tenantId: string, projectId: string, operationId: string) {
     return this.lock(tenantId, projectId, async () => {
       const ledger = this.read(tenantId, projectId);
-      if (ledger.entries[operationId]?.status === 'reserved') {
+      if (ledger.entries[operationId]?.status === 'reserved' && !ledger.entries[operationId]?.output?.providerTaskId) {
         delete ledger.entries[operationId];
         this.write(ledger);
       }

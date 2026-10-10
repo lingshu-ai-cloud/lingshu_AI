@@ -46,6 +46,16 @@ test('blocks wrong tenant, changed hash and missing digital human adoption befor
   }
 });
 
+test('a required blocked shot fails before reading materials or invoking paid finish work', async () => {
+  const f = fixture('nonperson'); let materialReads = 0;
+  f.spec.automatedReplicationShots.unshift({ shotId: 'blocked', slotId: 'blocked-slot', kind: 'blocked', productionState: 'blocked', start: 0, end: 1, blocker: '镜头类型待确认' });
+  f.deps.materials = async () => { materialReads++; return [f.material]; };
+  try {
+    await assert.rejects(finishReplicationWorkbench({ tenantId: 'tenant', projectId: 'p', spec: f.spec }, f.deps), /镜头类型待确认/);
+    assert.equal(materialReads, 0); assert.equal(f.paidCalls(), 0);
+  } finally { fs.rmSync(f.root, { recursive: true, force: true }); }
+});
+
 test('hard visual failure does not emit a successful completion', async () => {
   const f = fixture(); f.deps.visuals = async () => ({ passed: false, failures: ['decode failed'], metrics: {} as any, evidenceFrames: [] });
   try { await assert.rejects(finishReplicationWorkbench({ tenantId: 'tenant', projectId: 'p', spec: f.spec }, f.deps), /decode failed/); }

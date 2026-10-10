@@ -40,7 +40,7 @@ test('initial-preparation route passes only history scope from the request',()=>
 
 test('progress CAS retries against the latest plan and preserves a concurrent edit',async()=>{
  const state:InitialPreparation={requestId:'request-1',goalId:'goal-1',revision:2,confirmedBy:'owner',confirmedAt:'2026-10-10T00:00:00Z',status:'analyzing',sources:[],candidateIds:['candidate-1'],reason:''};
- let row:any={id:'plan-1',tenant_id:'tenant-1',plan:{businessPackage:{revision:2},concurrentLabel:'before'}};let calls=0;
+ let row:any={id:'plan-1',tenant_id:'tenant-1',status:'draft',plan:{businessPackage:{revision:2},concurrentLabel:'before'}};let calls=0;
  const dataStore:any={getById:async()=>structuredClone(row),compareAndSwap:async(_collection:string,_id:string,expected:Record<string,unknown>,patch:Record<string,unknown>)=>{
   calls+=1;if(calls===1){row.plan={...row.plan,concurrentLabel:'after'};return false;}
   if(!isDeepStrictEqual(row.plan,expected.plan))return false;row={...row,...structuredClone(patch)};return true;
@@ -50,7 +50,7 @@ test('progress CAS retries against the latest plan and preserves a concurrent ed
 });
 
 test('prepared plan CAS refuses to overwrite a plan changed during generation',async()=>{
- let row:any={id:'plan-1',tenant_id:'tenant-1',plan:{businessPackage:{revision:2},marker:'source'}};
+ let row:any={id:'plan-1',tenant_id:'tenant-1',status:'draft',plan:{businessPackage:{revision:2},marker:'source'}};
  const expected=structuredClone(row);
  const dataStore:any={getById:async()=>structuredClone(row),compareAndSwap:async(_collection:string,_id:string,guard:Record<string,unknown>,patch:Record<string,unknown>)=>{
   if(!isDeepStrictEqual(row.plan,guard.plan))return false;row={...row,...structuredClone(patch)};return true;
@@ -58,4 +58,16 @@ test('prepared plan CAS refuses to overwrite a plan changed during generation',a
  row.plan={businessPackage:{revision:3},marker:'concurrent'};
  await assert.rejects(()=>replaceInitialPreparationPlan({dataStore,collection:'weekly_plans',expected,tenantId:'tenant-1',nextPlan:{businessPackage:{revision:2},marker:'stale'}}),/计划版本已修改/);
  assert.deepEqual(row.plan,{businessPackage:{revision:3},marker:'concurrent'});
+});
+
+test('progress may finish after activation but never crosses a fact-rebuild fence',async()=>{
+ const state:InitialPreparation={requestId:'request-1',goalId:'goal-1',revision:2,confirmedBy:'owner',confirmedAt:'2026-10-10T00:00:00Z',status:'running',sources:[],candidateIds:[],reason:'',runId:'run-1'};
+ let row:any={id:'plan-1',tenant_id:'tenant-1',status:'approved',plan:{businessPackage:{revision:2}}};
+ const dataStore:any={getById:async()=>structuredClone(row),compareAndSwap:async(_collection:string,_id:string,guard:Record<string,unknown>,patch:Record<string,unknown>)=>{
+  if(row.status!==guard.status||!isDeepStrictEqual(row.plan,guard.plan))return false;row={...row,...structuredClone(patch)};return true;
+ }};
+ await persistInitialPreparationState({dataStore,collection:'weekly_plans',planId:row.id,tenantId:'tenant-1',state});
+ assert.equal(row.plan.initialPreparation.status,'running');
+ row={...row,status:'draft',plan:{...row.plan,factRebuildFence:{sourceGoalId:'source'}}};
+ await assert.rejects(()=>persistInitialPreparationState({dataStore,collection:'weekly_plans',planId:row.id,tenantId:'tenant-1',state}),/正在重建/);
 });

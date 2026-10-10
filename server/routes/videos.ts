@@ -281,6 +281,7 @@ interface Material {
 function isVisibleVideoPipelineRecord(record: Record<string, unknown>): boolean {
   const analysis = videoAnalysisOf(record);
   if (analysis.usage === 'reference_only' && typeof analysis.contentSha256 === 'string') return true;
+  if (hasCompletedExactVideoEvidence(analysis)) return true;
   return Boolean(analysis.requestedAnalysisMode)
     || Boolean(analysis.materialId && (
       analysis.analysisError
@@ -336,6 +337,7 @@ export function isDisplayableTestTenantVideo(record: Record<string, unknown>): b
   const analysis = videoAnalysisOf(record);
   if (analysis.usage === 'reference_only' && typeof analysis.contentSha256 === 'string') return true;
   if (analysis.contentFormat === 'image' || String(record.status || '') === 'failed') return false;
+  if (hasCompletedExactVideoEvidence(analysis)) return analysis.userVisible !== false;
   if (analysis.adminOnlyVideoFailure || analysis.userVisible === true) {
     return analysis.userVisible === true && isPublicTestTenantVideo(record);
   }
@@ -360,6 +362,35 @@ export function isDisplayableTestTenantVideo(record: Record<string, unknown>): b
     && Boolean(String(record.title || '').trim())
     && hasRealThumbnail({ thumbnailUrl } as CrawledVideo)
     && (paused || [downloadStatus, videoFetchStatus, geminiStatus].some(status => pendingStatuses.has(status)));
+}
+
+/** A failed exact reanalysis must not erase the last completed video evidence.
+ * Keep the prior evidence readable while recording the new run failure. */
+export function queuedVideoAnalysisFailurePatch(
+  previous: Record<string, unknown>,
+  compactError: string,
+  failedAt: string,
+): Record<string, unknown> {
+  const retainedEvidence = hasCompletedExactVideoEvidence(previous) || isVideoLevelAnalysis(previous);
+  return {
+    ...previous,
+    manualVideoUploadStatus: 'failed',
+    downloadStatus: retainedEvidence ? previous.downloadStatus || 'analyzed' : 'manual_upload_analyze_failed',
+    videoFetchStatus: retainedEvidence ? previous.videoFetchStatus || 'fetched' : 'manual_upload',
+    geminiStatus: retainedEvidence
+      ? previous.analysisQuality === 'video_review_required' ? 'needs_review' : 'analyzed'
+      : 'video_failed',
+    requestedAnalysisMode: undefined,
+    analysisQueueState: 'failed',
+    analysisStage: 'failed',
+    analysisStageUpdatedAt: failedAt,
+    analysisFailedAt: failedAt,
+    analysisRetryable: true,
+    analysisError: compactError,
+    videoLevelFailureStatus: '视频级失败/需人工处理',
+    manualRequiredReason: 'manual_upload_analysis_failed',
+    userVisible: retainedEvidence ? previous.userVisible : false,
+  };
 }
 
 function compareCrawledAtDesc(a: Record<string, unknown>, b: Record<string, unknown>): number {
@@ -3567,6 +3598,8 @@ async function triggerVideoAnalysis(
       videoId: recordId,
       tenantId: String(record?.tenantId || ''),
       analysisMode: previous.requestedAnalysisMode === 'strategy' ? 'strategy' : 'exact',
+      analysisRunId: runId,
+      videoObjectKey: String(previous.videoObjectKey || record?.videoFileId || ''),
     });
     if (previous.requestedAnalysisMode !== 'strategy') {
       const evidenceStartedAt = new Date().toISOString();
@@ -3591,6 +3624,7 @@ async function triggerVideoAnalysis(
       return;
     }
 
+    const measuredDuration = exactSourceClockDuration(result.analysis, runId);
     await store.update(COL, recordId, {
       aiAnalysis: JSON.stringify({
         ...latestAnalysis,
@@ -3602,6 +3636,7 @@ async function triggerVideoAnalysis(
         }),
       }),
       status: 'analyzed',
+      ...(measuredDuration ? { duration: measuredDuration } : {}),
     });
     updateVideoAdminAlertByRecordId(recordId, {
       statusLabel: '已上传/分析完成',
@@ -3622,23 +3657,7 @@ async function triggerVideoAnalysis(
     const failedAt = new Date().toISOString();
     await store.update(COL, recordId, {
       status: 'analyzed' as VideoStatus,
-      aiAnalysis: JSON.stringify({
-        ...previous,
-        manualVideoUploadStatus: 'failed',
-        downloadStatus: 'manual_upload_analyze_failed',
-        videoFetchStatus: 'manual_upload',
-        geminiStatus: 'video_failed',
-        requestedAnalysisMode: undefined,
-        analysisQueueState: 'failed',
-        analysisStage: 'failed',
-        analysisStageUpdatedAt: failedAt,
-        analysisFailedAt: failedAt,
-        analysisRetryable: true,
-        analysisError: compactError,
-        videoLevelFailureStatus: '视频级失败/需人工处理',
-        manualRequiredReason: 'manual_upload_analysis_failed',
-        userVisible: false,
-      }),
+      aiAnalysis: JSON.stringify(queuedVideoAnalysisFailurePatch(previous, compactError, failedAt)),
     });
     updateVideoAdminAlertByRecordId(recordId, {
       statusLabel: '上传后分析失败',
@@ -4870,6 +4889,8 @@ async function analyzeSourceVideoJobInner(input: {
       videoId: recordId,
       tenantId: String(input.record?.tenantId || ''),
       analysisMode,
+      analysisRunId,
+      videoObjectKey: String(parseJsonRecord<Record<string, unknown>>(input.record?.aiAnalysis, {}).videoObjectKey || input.record?.videoFileId || ''),
     });
 
     if (recordId && analysisMode === 'exact') {
@@ -4895,8 +4916,10 @@ async function analyzeSourceVideoJobInner(input: {
       }
       const latest = await store.getById(COL, recordId);
       const previous = parseJsonRecord<Record<string, unknown>>(latest?.aiAnalysis ?? input.record?.aiAnalysis, {});
+      const measuredDuration = exactSourceClockDuration(videoAnalysis.analysis, analysisRunId);
       const persisted = await store.update(COL, recordId, {
         status: 'analyzed' as VideoStatus,
+        ...(measuredDuration ? { duration: measuredDuration } : {}),
         aiAnalysis: JSON.stringify({
           ...previous,
           ...videoLevelSuccessPatch({
@@ -5291,6 +5314,8 @@ async function analyzeDownloadedMaterial(recordId: string, filePath: string, mat
       videoId: recordId,
       tenantId: material.tenantId,
       analysisMode,
+      analysisRunId: expectedRunId,
+      videoObjectKey: String(material.objectKey || ''),
     });
     if (analysisMode === 'exact') {
       const evidenceStartedAt = new Date().toISOString();
@@ -5313,8 +5338,10 @@ async function analyzeDownloadedMaterial(recordId: string, filePath: string, mat
       console.warn(`[videos] stale material analysis success ignored for ${recordId}: ${expectedRunId}`);
       return;
     }
+    const measuredDuration = exactSourceClockDuration(videoAnalysis.analysis, expectedRunId || '');
     await store.update(COL, recordId, {
       status: 'analyzed' as VideoStatus,
+      ...(measuredDuration ? { duration: measuredDuration } : {}),
       aiAnalysis: JSON.stringify({
         ...previous,
         ...videoLevelSuccessPatch({
@@ -7419,6 +7446,14 @@ export function exactAnalysisDuration(duration: number, frameTimes: number[]): n
   return Math.max(...frameTimes.filter(Number.isFinite).map(time => time + 3), 3);
 }
 
+export function exactSourceClockDuration(analysis: VideoAiAnalysis, expectedRunId: string): number | undefined {
+  const clock = analysis.sourceMediaClock;
+  if (!clock || !expectedRunId || clock.analysisRunId !== expectedRunId
+    || !/^[a-f0-9]{64}$/i.test(clock.sourceSha256)
+    || !Number.isFinite(clock.duration) || clock.duration <= 0) return undefined;
+  return clock.duration;
+}
+
 export async function analyzeDownloadedVideoWithFallback(opts: {
   filePath: string;
   mimeType: string;
@@ -7431,9 +7466,12 @@ export async function analyzeDownloadedVideoWithFallback(opts: {
   videoId?: string;
   tenantId?: string;
   analysisMode?: 'strategy' | 'exact';
+  analysisRunId?: string;
+  videoObjectKey?: string;
 }): Promise<{ analysis: VideoAiAnalysis; source: string }> {
   const sourceClock = await probeReferenceMediaClock(opts.filePath);
   opts = { ...opts, duration: sourceClock.duration };
+  const sourceSha256 = createHash('sha256').update(fs.readFileSync(opts.filePath)).digest('hex');
   let speechPromise: Promise<ReferenceSpeechTranscript | undefined> | undefined;
   const sourceSpeech = () => speechPromise ??= prepareReferenceNarration(opts.filePath, Number(opts.duration), { tenantId: opts.tenantId || undefined })
     .catch(error => {
@@ -7444,17 +7482,23 @@ export async function analyzeDownloadedVideoWithFallback(opts: {
   const finishSourceAnalysis = async (analysis: VideoAiAnalysis) => {
     const locked = lockReferenceSpeechTimeline(analysis, await sourceSpeech(),
       { duration: sourceClock.duration, fps: sourceClock.fps ?? undefined });
-    if (opts.analysisMode !== 'exact' || !locked.audioTranscript?.words?.length) return locked;
+    const withClock: VideoAiAnalysis = opts.analysisMode === 'exact' && opts.analysisRunId ? {
+      ...locked,
+      sourceMediaClock: { schemaVersion: 1, duration: sourceClock.duration, fps: sourceClock.fps,
+        sourceSha256, analysisRunId: opts.analysisRunId, ...(opts.videoObjectKey ? { videoObjectKey: opts.videoObjectKey } : {}),
+        measuredAt: new Date().toISOString() },
+    } : locked;
+    if (opts.analysisMode !== 'exact' || !withClock.audioTranscript?.words?.length) return withClock;
     try {
-      const sourceInput = { filePath: opts.filePath, analysis: locked,
+      const sourceInput = { filePath: opts.filePath, analysis: withClock,
         videoId: opts.videoId || path.basename(opts.filePath, path.extname(opts.filePath)),
-        sourceSha256: createHash('sha256').update(fs.readFileSync(opts.filePath)).digest('hex'),
+        sourceSha256,
         duration: sourceClock.duration, tenantId: opts.tenantId };
       const classified = await produceReferenceCriticalShots(sourceInput);
       try { return await produceReferenceProductionRouting({ ...sourceInput, analysis: classified }); }
       catch (error) { return { ...classified, referenceProductionRoutingError: error instanceof Error ? error.message : 'person_continuity_unavailable' }; }
     } catch (error) {
-      return { ...locked, criticalShotError: error instanceof Error ? error.message : 'critical_shot_unavailable' };
+      return { ...withClock, criticalShotError: error instanceof Error ? error.message : 'critical_shot_unavailable' };
     }
   };
   const runQwen = async () => {
@@ -10252,14 +10296,18 @@ async function analyzeOpsVideo(task: CrawlerOpsTask, videoBase64: string, mimeTy
       videoId: task.recordId,
       tenantId: String(record?.tenantId || ''),
       analysisMode,
+      analysisRunId: String(previous.analysisRunId || ''),
+      videoObjectKey: String(previous.videoObjectKey || record?.videoFileId || ''),
     });
     if (analysisMode === 'exact') {
       videoAnalysis.analysis = await persistExactShotEvidence(task.recordId, tempPath, videoAnalysis.analysis);
     }
     cleanupTempVideo(tempPath);
     tempPath = '';
+    const measuredDuration = exactSourceClockDuration(videoAnalysis.analysis, String(previous.analysisRunId || ''));
     await store.update(COL, task.recordId, {
       status: 'analyzed' as VideoStatus,
+      ...(measuredDuration ? { duration: measuredDuration } : {}),
       aiAnalysis: JSON.stringify({
         ...previous,
         ...videoLevelSuccessPatch({

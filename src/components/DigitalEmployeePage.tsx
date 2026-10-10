@@ -1,7 +1,6 @@
 import { getScrollBehavior } from "../lib/usePrefersReducedMotion";
 import { PAGE_REGISTRY, type Page } from "../pageRegistry";
 import { readAgentCalendarReturnContext, registerAgentCalendarReturnState } from '../lib/agentCalendarReturnContext';
-import InitialPreparationStatusPanel from './InitialPreparationStatusPanel';
 import InitialOperatingPlanDialog from './InitialOperatingPlanDialog';
 import { initialOperatingPlanFingerprint, recommendFocusProducts, initialPlanVideoPlans, initialPlanMatrixRows, type InitialOperatingPlan } from '../lib/initialOperatingPlan';
 import EnterprisePresenters from "./enterprise/EnterprisePresenters";
@@ -34,7 +33,6 @@ import ProductionTaskScene from "./ProductionTaskScene";
 import AgentDecisionCard, { type AgentDecisionKind } from "./AgentDecisionCard";
 import SmartBusinessDashboard, { WeeklyCommandCenter } from "./SmartBusinessDashboard";
 import SmartOperationsAccountRail, { type SmartOperationsAccount } from "./SmartOperationsAccountRail";
-import WeeklyPlanCalendar from "./smartBusiness/WeeklyPlanCalendar";
 import PlanHistoryDialog from "./PlanHistoryDialog";
 import SocialContentStageOnboarding from "./socialContent/SocialContentStageOnboarding";
 import { LsBrandAction, LsFlowDialog } from "./ui/LsExperiencePrimitives";
@@ -89,7 +87,14 @@ import {
   XCircle,
 } from "lucide-react";
 import { authHeader, AUTH_TOKEN_CHANGED_EVENT } from "../lib/auth";
-import { showActionSuccess } from "../lib/actionFeedback";
+import { showActionFeedback, showActionSuccess } from "../lib/actionFeedback";
+import { DigitalEmployeeApiError } from "../lib/digitalEmployeeApi";
+import {
+  WEEKLY_WORK_UPDATED_EVENT,
+  notifyWeeklyWorkUpdated,
+  type WeeklyWorkUpdatedDetail,
+} from "../lib/weeklyWorkEvents";
+import { weeklyWorkStatus, type WeeklyWorkStatus } from "../lib/weeklyWorkStatus";
 import { socialDiscoveryApi } from "../lib/socialDiscoveryApi";
 import type { SocialCrawlStrategy } from '../../shared/contracts/socialContentWorkflow';
 import EnterpriseProductMultiSelect, { splitSelectedProducts } from './EnterpriseProductMultiSelect';
@@ -102,6 +107,8 @@ import {
   consumeDigitalEmployeeReturnContext,
   digitalEmployeeApi,
   dispatchDigitalEmployeeDeepLink,
+  ENTERPRISE_FACTS_CHANGED_ERROR_CODE,
+  enterpriseFactsRebuildInput,
   streamRunEvents,
   type AgentUiAction,
   type BusinessDestination,
@@ -429,6 +436,9 @@ const EMPTY_GOAL = {
 const statusLabel: Record<string, string> = {
   draft: "待确认",
   active: "运行中",
+  initializing: "初始化中",
+  queued: "排队中",
+  blocked: "等待处理",
   paused: "已暂停",
   completed: "已完成",
   cancelled: "已取消",
@@ -444,6 +454,22 @@ const statusLabel: Record<string, string> = {
   approved: "已批准",
   rejected: "已驳回",
   idle: "空闲",
+};
+
+const weeklyRunHeaderLabel: Record<string, string> = {
+  failed: "执行失败",
+  cancelled: "已取消",
+  paused: "已暂停",
+  waiting_external: "等待外部服务",
+  waiting_approval: "待处理",
+  waiting_human: "待处理",
+  blocked: "待处理",
+  queued: "准备中",
+  planning: "准备中",
+  initializing: "准备中",
+  pending: "准备中",
+  succeeded: "已完成",
+  running: "执行中",
 };
 
 const statusTone: Record<string, string> = {
@@ -462,6 +488,120 @@ const statusTone: Record<string, string> = {
   cancelled: "border-slate-200 bg-slate-100 text-slate-600",
   paused: "border-slate-200 bg-slate-100 text-slate-600",
 };
+
+type WeeklyStartConflict = {
+  goalId: string;
+  runId: string;
+  goalTitle: string;
+  goalStatus: string;
+  runStatus: string;
+  startsAt: string;
+  endsAt: string;
+};
+
+function weeklyStartConflictFromError(error: unknown): WeeklyStartConflict | null {
+  if (!(error instanceof DigitalEmployeeApiError) || error.code !== "active_goal_exists") return null;
+  const stringDetail = (key: string) => typeof error.details[key] === "string" ? String(error.details[key]).trim() : "";
+  const goalId = stringDetail("activeGoalId");
+  const runId = stringDetail("activeRunId");
+  if (!goalId && !runId) return null;
+  return {
+    goalId,
+    runId,
+    goalTitle: stringDetail("activeGoalTitle"),
+    goalStatus: stringDetail("activeGoalStatus"),
+    runStatus: stringDetail("activeRunStatus"),
+    startsAt: stringDetail("activeStartsAt"),
+    endsAt: stringDetail("activeEndsAt"),
+  };
+}
+
+function confirmedWeeklyExecution(data: DigitalEmployeeOverview, goalId: string) {
+  const run = data.run;
+  if (!run || run.goal_id !== goalId || !Number.isFinite(Date.parse(run.started_at))) return null;
+  const tasks = data.tasks.filter((task) => task.run_id === run.id);
+  return tasks.length > 0 ? { run, tasks } : null;
+}
+
+function weeklyStartResultNeedsReconciliation(error: unknown): boolean {
+  if (!(error instanceof DigitalEmployeeApiError)) return true;
+  return error.status === 408 || error.status >= 500;
+}
+
+function WeeklyWorkStatusAlert({
+  status,
+  onViewProgress,
+}: {
+  status: WeeklyWorkStatus;
+  onViewProgress: () => void;
+}) {
+  const validStartedAt = status.startedAt && Number.isFinite(Date.parse(status.startedAt))
+    ? new Date(status.startedAt).toLocaleString("zh-CN")
+    : "";
+  const alertType = status.phase === "blocked" || (status.phase === "finished" && status.outcome === "failed")
+    ? "error"
+    : status.phase === "paused" || status.phase === "unknown" || (status.phase === "finished" && status.outcome === "cancelled")
+      ? "warning"
+      : status.phase === "finished" && status.outcome === "succeeded"
+        ? "success"
+        : "info";
+  const controller = status.controller ? agentLabel[status.controller] || status.controller : "";
+  return (
+    <Alert
+      type={alertType}
+      showIcon
+      title={status.title}
+      description={(
+        <div className="space-y-1 text-xs leading-5">
+          <p>{status.description}</p>
+          {status.runId && (
+            <p className="text-text-muted">
+              运行编号 <span className="font-mono text-text-secondary">{status.runId}</span>
+              {controller ? ` · 当前责任：${controller}` : ""}
+              {validStartedAt ? ` · 启动于 ${validStartedAt}` : ""}
+            </p>
+          )}
+        </div>
+      )}
+      action={status.runId ? (
+        <Button className="min-h-11" onClick={onViewProgress}>
+          {status.phase === "finished" ? "查看运行详情" : "查看生产进度"}
+        </Button>
+      ) : undefined}
+    />
+  );
+}
+
+function WeeklyStartConflictAlert({
+  conflict,
+  onViewRun,
+}: {
+  conflict: WeeklyStartConflict;
+  onViewRun: () => void;
+}) {
+  const state = statusLabel[conflict.runStatus] || statusLabel[conflict.goalStatus] || conflict.runStatus || conflict.goalStatus || "执行中";
+  const range = conflict.startsAt && conflict.endsAt ? `${conflict.startsAt} 至 ${conflict.endsAt}` : "";
+  return (
+    <Alert
+      type="warning"
+      showIcon
+      title="周任务未启动：已有另一轮任务正在执行"
+      description={(
+        <div className="space-y-1 text-xs leading-5">
+          <p>
+            {conflict.goalTitle || "另一轮周任务"}{range ? `（${range}）` : ""}当前为“{state}”。本轮计划仍未开工，系统不会自动取消或重复启动任何运行。
+          </p>
+          {(conflict.runId || conflict.goalId) && (
+            <p className="font-mono text-text-muted">
+              {conflict.runId ? `运行 ${conflict.runId}` : ""}{conflict.runId && conflict.goalId ? " · " : ""}{conflict.goalId ? `目标 ${conflict.goalId}` : ""}
+            </p>
+          )}
+        </div>
+      )}
+      action={<Button className="min-h-11" onClick={onViewRun}>查看该运行</Button>}
+    />
+  );
+}
 
 const agentLabel: Record<string, string> = {
   orchestrator: "灵小枢 · 统筹 Agent",
@@ -3653,6 +3793,7 @@ export default function DigitalEmployeePage({
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
+  const [weeklyStartConflict, setWeeklyStartConflict] = useState<WeeklyStartConflict | null>(null);
   const [newGoal, setNewGoal] = useState(false);
   const [approvalNote, setApprovalNote] = useState("");
   const [selectedTaskId, setSelectedTaskId] = useState("");
@@ -3683,9 +3824,9 @@ export default function DigitalEmployeePage({
   const [onboardingWelcomeOpen, setOnboardingWelcomeOpen] = useState(false);
   const [weeklyPlanOpen, setWeeklyPlanOpen] = useState(false);
   const [planHistoryOpen, setPlanHistoryOpen] = useState(false);
-  const [planningOptions, setPlanningOptions] = useState<Awaited<ReturnType<typeof digitalEmployeeApi.planningOptions>> | null>(null);
   const goalPanelRef = useRef<HTMLDivElement>(null);
   const overviewRequestVersionRef = useRef(0);
+  const enterpriseFactsRecoveryRef = useRef(new Map<string, Promise<void>>());
   const [productionPeriod, setProductionPeriod] = useState<OverviewPeriod>("week");
   const productionRangeLoadingRef = useRef(false);
   const productionRangeRef = useRef<ReturnType<typeof overviewRange> | undefined>(undefined);
@@ -3705,15 +3846,6 @@ export default function DigitalEmployeePage({
     return () => window.removeEventListener('lingshu:open-digital-employee-guide', openGuide);
   }, []);
 
-  useEffect(() => {
-    if (!weeklyPlanOpen || !data?.goal) return;
-    let active = true;
-    void digitalEmployeeApi.planningOptions()
-      .then(options => { if (active) setPlanningOptions(options); })
-      .catch(() => { if (active) setPlanningOptions(null); });
-    return () => { active = false; };
-  }, [weeklyPlanOpen, data?.goal?.id]);
-
   const load = async (goalId = viewGoalId) => {
     const requestVersion = ++overviewRequestVersionRef.current;
     const authorization=authHeader().Authorization;
@@ -3721,6 +3853,7 @@ export default function DigitalEmployeePage({
       const next = await digitalEmployeeApi.overview(goalId, productionRangeRef.current);
       if (requestVersion !== overviewRequestVersionRef.current || authorization!==authHeader().Authorization) return;
       setData(next);
+      setWeeklyStartConflict((current) => next.run && current && (next.run.id === current.runId || next.goal?.id === current.goalId) ? null : current);
       if (next.goal?.businessLine && !readAgentCalendarReturnContext()?.states['digitalEmployee.workspace']) {
         setBusinessLine(next.goal.businessLine);
         setContentPlatform(
@@ -3739,7 +3872,19 @@ export default function DigitalEmployeePage({
     }
   };
 
-  useEffect(()=>{let authorization=authHeader().Authorization;const clear=()=>{const next=authHeader().Authorization;if(next===authorization)return;authorization=next;overviewRequestVersionRef.current+=1;initialLoadRef.current=null;setData(null);setSelectedTaskId('');setSelectedContentItemId('');setSelectedAccountId('');setWeeklyPlanOpen(false);setPlanHistoryOpen(false);setWorkspaceView('today');setBusinessLine('full_funnel');setContentPlatform('all');setViewGoalId('');productionRangeRef.current=undefined;setLoading(true);initialLoadRef.current=load('');};window.addEventListener(AUTH_TOKEN_CHANGED_EVENT,clear);window.addEventListener('storage',clear);return()=>{window.removeEventListener(AUTH_TOKEN_CHANGED_EVENT,clear);window.removeEventListener('storage',clear);};},[]);
+  useEffect(() => {
+    const refreshFromAssistant = (event: Event) => {
+      const detail = (event as CustomEvent<WeeklyWorkUpdatedDetail>).detail;
+      if (!detail || detail.source !== "assistant" || !detail.goalId?.trim()) return;
+      const visibleGoalId = viewGoalId || data?.goal?.id || "";
+      if (visibleGoalId && detail.goalId !== visibleGoalId) return;
+      void load(viewGoalId || detail.goalId);
+    };
+    window.addEventListener(WEEKLY_WORK_UPDATED_EVENT, refreshFromAssistant);
+    return () => window.removeEventListener(WEEKLY_WORK_UPDATED_EVENT, refreshFromAssistant);
+  }, [viewGoalId, data?.goal?.id]);
+
+  useEffect(()=>{let authorization=authHeader().Authorization;const clear=()=>{const next=authHeader().Authorization;if(next===authorization)return;authorization=next;overviewRequestVersionRef.current+=1;initialLoadRef.current=null;setData(null);setWeeklyStartConflict(null);setSelectedTaskId('');setSelectedContentItemId('');setSelectedAccountId('');setWeeklyPlanOpen(false);setPlanHistoryOpen(false);setWorkspaceView('today');setBusinessLine('full_funnel');setContentPlatform('all');setViewGoalId('');productionRangeRef.current=undefined;setLoading(true);initialLoadRef.current=load('');};window.addEventListener(AUTH_TOKEN_CHANGED_EVENT,clear);window.addEventListener('storage',clear);return()=>{window.removeEventListener(AUTH_TOKEN_CHANGED_EVENT,clear);window.removeEventListener('storage',clear);};},[]);
 
   useEffect(() => {
     const businessScope = consumeBusinessPageContext("production");
@@ -3791,7 +3936,8 @@ export default function DigitalEmployeePage({
         setShowHistory(false);
         setSelectedContentItemId("");
         setWorkspaceView("today");
-        setWeeklyPlanOpen(true);
+        setWeeklyPlanOpen(false);
+        showActionSuccess("已定位本周计划", "可直接点击“开始周任务”启动生产，不再进入单独的计划详情页。");
         handledWeeklyPlanNavigation.current = target.requestId;
       } catch (reason) {
         if (!active || requestVersion !== overviewRequestVersionRef.current || authorization !== authHeader().Authorization) return;
@@ -3878,11 +4024,93 @@ export default function DigitalEmployeePage({
     return () => window.clearInterval(timer);
   }, [data?.run?.id, data?.run?.status, viewGoalId, workspaceView]);
 
+  const recoverEnterpriseFactsChanged = async (
+    actionError: unknown,
+    staleGoal: Pick<WeeklyGoal, "id" | "version"> | null | undefined,
+  ): Promise<boolean> => {
+    if (
+      !(actionError instanceof DigitalEmployeeApiError)
+      || actionError.code !== ENTERPRISE_FACTS_CHANGED_ERROR_CODE
+      || !staleGoal
+    ) return false;
+
+    let rebuildInput: ReturnType<typeof enterpriseFactsRebuildInput>;
+    try {
+      rebuildInput = enterpriseFactsRebuildInput(staleGoal, actionError.details);
+    } catch {
+      return false;
+    }
+    const authorization = authHeader().Authorization;
+    const recoveryKey = [
+      authorization || "",
+      staleGoal.id,
+      rebuildInput.expectedGoalVersion,
+      rebuildInput.sourcePlanId,
+      rebuildInput.expectedFactsVersion,
+      rebuildInput.expectedSourcePlanDigest,
+    ].join("\u0000");
+    const pending = enterpriseFactsRecoveryRef.current.get(recoveryKey);
+    if (pending) {
+      await pending;
+      return true;
+    }
+    const recovery = (async () => {
+      try {
+        let rebuildAttempt = 0;
+        let rebuilt: DigitalEmployeeOverview;
+        while (true) {
+          try {
+            rebuilt = await digitalEmployeeApi.rebuildGoalFromLatestFacts(staleGoal.id, rebuildInput);
+            break;
+          } catch (rebuildError) {
+            if (
+              rebuildAttempt >= 1
+              || !(rebuildError instanceof DigitalEmployeeApiError)
+              || rebuildError.code !== ENTERPRISE_FACTS_CHANGED_ERROR_CODE
+            ) throw rebuildError;
+            // Enterprise facts changed again while the replacement was being
+            // assembled. Retry this dedicated, idempotent rebuild once; never
+            // replay the original save, approval, or launch action.
+            rebuildAttempt += 1;
+          }
+        }
+        if (authorization !== authHeader().Authorization) return;
+        overviewRequestVersionRef.current += 1;
+        setData(rebuilt);
+        setError("");
+        setViewGoalId("");
+        setNewGoal(false);
+        setPlanHistoryOpen(false);
+        setShowHistory(false);
+        setSelectedContentItemId("");
+        setWorkspaceView("today");
+        setWeeklyPlanOpen(false);
+        showActionSuccess(
+          "计划已按最新企业资料重建",
+          "新版周计划已回到智能经营。请再次点击“开始周任务”确认启动；原保存、批准或启动操作没有自动重试。",
+        );
+      } catch (rebuildError) {
+        if (authorization !== authHeader().Authorization) return;
+        setError(rebuildError instanceof Error ? `计划自动重建失败：${rebuildError.message}` : "计划自动重建失败，请刷新后重试");
+      }
+    })();
+    enterpriseFactsRecoveryRef.current.set(recoveryKey, recovery);
+    try {
+      await recovery;
+    } finally {
+      if (enterpriseFactsRecoveryRef.current.get(recoveryKey) === recovery) {
+        enterpriseFactsRecoveryRef.current.delete(recoveryKey);
+      }
+    }
+    return true;
+  };
+
   const act = async (
     key: string,
     action: () => Promise<DigitalEmployeeOverview>,
     throwOnError = false,
   ): Promise<DigitalEmployeeOverview | null> => {
+    const actionGoal = data?.goal;
     setBusy(key);
     setError("");
     try {
@@ -3893,6 +4121,7 @@ export default function DigitalEmployeePage({
       setData(next);
       return next;
     } catch (actionError) {
+      if (await recoverEnterpriseFactsChanged(actionError, actionGoal)) return null;
       setError(actionError instanceof Error ? actionError.message : "操作失败");
       if (throwOnError) throw actionError;
       return null;
@@ -3975,25 +4204,12 @@ export default function DigitalEmployeePage({
   const cycleLabel = goal
       ? `${goal.startsAt} 至 ${goal.endsAt}`
       : "尚未制定周期目标";
-  const readiness = data?.businessSnapshot?.readiness || [];
-  const requiredReadiness = data?.config
-    ? requiredReadinessKeys(data.config)
-    : [];
-  const readinessMap = new Map(readiness.map((item) => [item.key, item]));
-  const firstMissingReadiness = requiredReadiness
-    .map((key) => readinessMap.get(key))
-    .find((item): item is BusinessReadinessItem => Boolean(item && item.status !== "ready"));
-  const approvalBlocked = Boolean(
-    data?.config &&
-      (readiness.length === 0 ||
-        requiredReadiness.some(
-          (key) => readinessMap.get(key)?.status !== "ready",
-        )),
-  );
 
   useEffect(() => {
-    if (activeRun && newGoal) setNewGoal(false);
-  }, [activeRun, newGoal]);
+    if (!activeRun) return;
+    if (newGoal) setNewGoal(false);
+    if (weeklyPlanOpen) setWeeklyPlanOpen(false);
+  }, [activeRun, newGoal, weeklyPlanOpen]);
 
   const requestOverviewRange = (nextRange: ReturnType<typeof overviewRange>, period?: OverviewPeriod) => {
     const version = ++overviewRequestVersionRef.current;
@@ -4076,11 +4292,13 @@ export default function DigitalEmployeePage({
   const saveConfig = async (config: DigitalEmployeeConfig & { minimalOnboarding?: true; brandName?: string; initialPlan?: InitialOperatingPlan }) => {
     const firstLogin = !data?.config;
     const createInitialPlan = Boolean(config.initialPlan && firstLogin && !data?.goal && !activeRun);
+    let recoveryGoal = data?.goal;
     setBusy(createInitialPlan ? "initial-plan" : "config");
     setError("");
     overviewRequestVersionRef.current += 1;
     try {
       const next = await digitalEmployeeApi.completeOnboarding(config);
+      recoveryGoal = next.goal || recoveryGoal;
       if (createInitialPlan && config.initialPlan) {
         const plan = config.initialPlan;
         const planFingerprint = initialOperatingPlanFingerprint(plan);
@@ -4097,7 +4315,7 @@ export default function DigitalEmployeePage({
             setData(resumed);
             setWorkspaceView("today");
             setNewGoal(false);
-            setWeeklyPlanOpen(true);
+            setWeeklyPlanOpen(false);
             setOnboardingWelcomeOpen(false);
             return true;
           }
@@ -4116,6 +4334,7 @@ export default function DigitalEmployeePage({
             constraints: [`制作预算上限：${plan.budgetCapCny} 元`, "真实发布前绑定账号并取得授权", fingerprintConstraint],
             videoPlans,
           });
+        recoveryGoal = created.goal || recoveryGoal;
         if (!created.goal) throw new Error("推荐计划创建失败");
         const draftPackage = created.plan?.businessPackage;
         if (!draftPackage?.directorPlan) throw new Error("推荐计划缺少可执行任务包或编导预算");
@@ -4142,7 +4361,7 @@ export default function DigitalEmployeePage({
         setData(refreshed);
         setWorkspaceView("today");
         setNewGoal(false);
-        setWeeklyPlanOpen(true);
+        setWeeklyPlanOpen(false);
         setOnboardingWelcomeOpen(false);
         return true;
       }
@@ -4161,6 +4380,7 @@ export default function DigitalEmployeePage({
       }
       return true;
     } catch (configError) {
+      if (await recoverEnterpriseFactsChanged(configError, recoveryGoal)) return false;
       setError(configError instanceof Error ? configError.message : createInitialPlan ? "推荐计划制作准备失败" : "设置保存失败");
       return false;
     } finally {
@@ -4188,8 +4408,9 @@ export default function DigitalEmployeePage({
       overviewRequestVersionRef.current += 1;
       setData(created);
       setNewGoal(false);
-      setWeeklyPlanOpen(true);
-      showActionSuccess("周目标已生成", "请核对账号产量、爆款参考并为每条视频选择产品。");
+      setWeeklyPlanOpen(false);
+      setWorkspaceView("today");
+      showActionSuccess("周目标已生成", "计划已回到智能经营；点击“开始周任务”即可编排并启动生产。");
     } catch (actionError) {
       setError(actionError instanceof Error ? actionError.message : "周目标生成失败");
       await load();
@@ -4209,123 +4430,113 @@ export default function DigitalEmployeePage({
     else showActionSuccess("制作准备已完成", `有 ${detail?.blockedCount || 0} 条任务需要先补素材、授权或预算。`);
   };
 
-  const updateWeeklyPlanProduct = async (index: number, productName: string) => {
-    const pack = data?.plan?.businessPackage;
-    const product = planningOptions?.products.find(item => item.name === productName || item.id === productName);
-    if (!goal || !pack || !product || busy) return;
-    const sourcePlans = pack.tasks.find(task => task.templateId === "production")?.videoPlans || [];
-    const selectedMaster = sourcePlans.filter(plan => plan.productionRole !== "platform_adaptation")[index];
-    if (!selectedMaster) return;
-    const selectedFamily = selectedMaster.contentFamilyId || selectedMaster.contentId;
-    const nextPack = {
-      ...pack,
-      tasks: pack.tasks.map(task => task.templateId !== "production" ? task : {
-        ...task,
-        videoPlans: (task.videoPlans || []).map(plan => {
-          if ((plan.contentFamilyId || plan.contentId) !== selectedFamily) return plan;
-          const subject = plan.buyerProblem || plan.theme || "产品价值说明";
-          return {
-            ...plan,
-            productId: product.id,
-            productName: product.name,
-            materialIds: [...product.materialIds],
-            publication: {
-              title: `${product.name}｜${subject}`.slice(0, 80),
-              caption: `${subject}。本条视频将结合 ${product.name} 的真实产品素材与爆款结构完成制作。`,
-              tags: Array.from(new Set([
-                product.name.replace(/\s+/g, ""),
-                contentPlatformLabel[plan.platform],
-                "产品视频",
-              ])),
-              status: "planned" as const,
-              generatedBy: "business_agent" as const,
-            },
-          };
-        }),
-      }),
-    };
-    const next = await act(`select-product:${index}`, () => digitalEmployeeApi.savePackage(goal.id, nextPack));
-    if (next) showActionSuccess("产品已绑定", `${product.name} 的产品素材已同步到第 ${index + 1} 条母版及其平台版本。`);
+  const reportWeeklyStartFailure = (message: string) => {
+    setError(message);
+    showActionFeedback({
+      title: "周任务未启动",
+      description: message,
+      tone: "error",
+    });
   };
 
-  const refreshWeeklyViralPlan = async () => {
-    if (!goal || busy) return;
-    setBusy("refresh-weekly-viral-plan");
-    setError("");
-    try {
-      const proposal = await digitalEmployeeApi.recommendPackage(goal.id);
-      const next = await digitalEmployeeApi.savePackage(goal.id, proposal);
-      overviewRequestVersionRef.current += 1;
-      setData(next);
-      showActionSuccess("爆款计划已重新匹配", "系统已按本周账号产量重新选择爆款、自动绑定默认产品，并同步更新账号、预计成本和发布标题。爆款供给不足的任务会明确标记，补齐后即可确认。");
-    } catch (actionError) {
-      setError(actionError instanceof Error ? actionError.message : "爆款计划重新匹配失败");
-    } finally {
-      setBusy("");
-    }
+  const publishWeeklyWorkUpdate = (next: DigitalEmployeeOverview) => {
+    const updatedGoal = next.goal;
+    if (!updatedGoal) return;
+    const run = next.run;
+    const tasks = run ? next.tasks.filter((task) => task.run_id === run.id) : [];
+    notifyWeeklyWorkUpdated({
+      source: "page",
+      goalId: updatedGoal.id,
+      ...(run && run.goal_id === updatedGoal.id && tasks.length > 0 && Number.isFinite(Date.parse(run.started_at))
+        ? {
+            execution: {
+              goalId: updatedGoal.id,
+              runId: run.id,
+              status: run.status,
+              taskCount: tasks.length,
+              startedAt: run.started_at,
+            },
+          }
+        : {}),
+    });
+  };
+
+  const presentConfirmedWeeklyExecution = (next: DigitalEmployeeOverview, goalId: string) => {
+    const execution = confirmedWeeklyExecution(next, goalId);
+    if (!execution) return false;
+    overviewRequestVersionRef.current += 1;
+    setData(next);
+    publishWeeklyWorkUpdate(next);
+    setWeeklyPlanOpen(false);
+    setNewGoal(false);
+    const launchedStatus = weeklyWorkStatus(next);
+    setWorkspaceView(launchedStatus?.phase === "running" || launchedStatus?.phase === "queued" ? "matrix" : "live");
+    setSelectedTaskId(launchedStatus?.currentTaskId || execution.tasks[0]?.id || "");
+    const feedbackTone = launchedStatus?.phase === "running" || (launchedStatus?.phase === "finished" && launchedStatus.outcome === "succeeded")
+      ? "success"
+      : launchedStatus?.phase === "finished" && launchedStatus.outcome === "failed"
+        ? "error"
+        : launchedStatus?.phase === "queued"
+          ? "info"
+          : "warning";
+    showActionFeedback({
+      title: launchedStatus?.title || "本周任务运行状态待确认",
+      description: launchedStatus?.description || "真实运行已建立，请查看生产进度。",
+      tone: feedbackTone,
+    });
+    return true;
   };
 
   const confirmWeeklyPlan = async () => {
-    if (!goal || !data?.plan?.businessPackage || approvalBlocked || busy) return;
-    const plans = data.plan.businessPackage.tasks.find(task => task.templateId === "production")?.videoPlans || [];
-    const masters = plans.filter(plan => plan.productionRole !== "platform_adaptation");
-    const missingProducts = masters.filter(plan => !plan.productName).length;
-    const missingReferences = masters.filter(plan => !plan.referenceId).length;
-    if (missingProducts || missingReferences) {
-      setError([missingProducts ? `${missingProducts} 条原创母版未选择产品` : "", missingReferences ? `爆款库还缺 ${missingReferences} 条母版所需的可执行参考` : ""].filter(Boolean).join("；"));
+    if (busy) return;
+    if (!goal) {
+      reportWeeklyStartFailure("尚未创建本周目标，请先完成目标设置。");
+      return;
+    }
+    if (!data?.plan?.businessPackage) {
+      reportWeeklyStartFailure("本周计划尚未生成完整，请刷新后重试。");
       return;
     }
     setBusy("confirm-weekly-plan");
     setError("");
+    setWeeklyStartConflict(null);
+    let launchRequestSent = false;
     try {
-      let prepared = data;
-      const currentPlans = prepared.plan?.businessPackage?.tasks.find(task => task.templateId === "production")?.videoPlans || [];
-      const currentMasters = currentPlans.filter(plan => plan.productionRole !== "platform_adaptation");
-      const ready = prepared.plan?.businessPackage?.detailGeneration?.status === "ready"
-        && currentMasters.some(plan => plan.preproduction?.readiness.canStart);
-      if (!ready) {
-        prepared = await digitalEmployeeApi.generatePackageDetails(goal.id);
-        overviewRequestVersionRef.current += 1;
-        setData(prepared);
+      // Preparation is runtime work. Only the server decides whether this exact
+      // revision can start; missing media or publishing accounts are not UI gates.
+      launchRequestSent = true;
+      const next = await digitalEmployeeApi.approveGoal(goal.id, data.plan.businessPackage.revision);
+      if (!presentConfirmedWeeklyExecution(next, goal.id)) {
+        throw new Error("启动结果未返回可确认的真实运行；系统不会自动重复提交同一周计划。");
       }
-      const detail = prepared.plan?.businessPackage?.detailGeneration;
-      const preparedPlans = prepared.plan?.businessPackage?.tasks.find(task => task.templateId === "production")?.videoPlans || [];
-      const preparedMasters = preparedPlans.filter(plan => plan.productionRole !== "platform_adaptation");
-      if (detail?.status !== "ready" || !preparedMasters.some(plan => plan.preproduction?.readiness.canStart)) {
-        throw new Error(`当前没有可开工内容：${detail?.blockers.slice(0, 3).join("；") || "请为至少一条母版补齐对应素材、授权或产品资料"}`);
-      }
-      const next = await digitalEmployeeApi.approveGoal(goal.id, prepared.plan?.businessPackage?.revision);
-      overviewRequestVersionRef.current += 1;
-      setData(next);
-      setWorkspaceView("matrix");
-      setSelectedTaskId(next.tasks.find(task => ["running", "waiting_external", "waiting_approval"].includes(task.status))?.id || next.tasks[0]?.id || "");
-      showActionSuccess("本周任务已启动", detail.blockedCount
-        ? `${detail.readyCount} 条母版开始生产，${detail.blockedCount} 条仅在各自缺失镜头处等待补素材。`
-        : "经营 Agent 已把编导结论、内容制作、发布文案与复盘节点排入 To Do List。");
     } catch (actionError) {
-      setError(actionError instanceof Error ? actionError.message : "周任务启动失败");
+      if (await recoverEnterpriseFactsChanged(actionError, goal)) return;
+      const conflict = weeklyStartConflictFromError(actionError);
+      if (conflict) {
+        setError("");
+        setWeeklyStartConflict(conflict);
+        showActionFeedback({
+          title: "周任务未启动",
+          description: `${conflict.goalTitle || "另一轮周任务"}正在执行；请先查看该运行。本轮计划没有被重复启动。`,
+          tone: "error",
+        });
+        return;
+      }
+      if (launchRequestSent && weeklyStartResultNeedsReconciliation(actionError)) {
+        try {
+          const reconciled = await digitalEmployeeApi.overview(goal.id);
+          if (presentConfirmedWeeklyExecution(reconciled, goal.id)) return;
+        } catch {
+          // A failed read cannot prove whether the mutating request was accepted.
+        }
+        const message = "启动请求已经发出，但暂未取得可确认的运行回执。系统已执行一次只读核对，不会自动重复启动；请稍后刷新查看。";
+        setError(message);
+        showActionFeedback({ title: "启动结果待确认", description: message, tone: "warning" });
+        return;
+      }
+      reportWeeklyStartFailure(actionError instanceof Error ? actionError.message : "周任务启动失败");
     } finally {
       setBusy("");
-    }
-  };
-
-  const approveCurrentGoal = async () => {
-    if (!goal || approvalBlocked) return;
-    const next = await act("approve-goal", () =>
-      digitalEmployeeApi.approveGoal(goal.id, data?.plan?.businessPackage?.revision),
-    );
-    if (next) {
-      setWorkspaceView("matrix");
-      setWeeklyPlanOpen(false);
-      setSelectedTaskId(
-        next.tasks.find((task) =>
-          ["running", "waiting_external", "waiting_approval"].includes(
-            task.status,
-          ),
-        )?.id ||
-          next.tasks[0]?.id ||
-          "",
-      );
     }
   };
 
@@ -4365,7 +4576,6 @@ export default function DigitalEmployeePage({
     );
 
   if (data?.config) {
-    const activeConfig = data.config;
     const dashboardView = workspaceView === "matrix"
       ? "matrix"
       : workspaceView === "overview"
@@ -4383,8 +4593,6 @@ export default function DigitalEmployeePage({
     const missingReferenceMasters = currentMasterPlans.filter(plan => !plan.referenceId);
     const missingProductMasters = currentMasterPlans.filter(plan => !plan.productName);
     const detailGeneration = data.plan?.businessPackage?.detailGeneration;
-    const planDetailsReady = detailGeneration?.status === 'ready'
-      && currentMasterPlans.some(plan => plan.preproduction?.readiness.canStart);
     const currentMatrix = data.plan?.businessPackage?.matrixPlan || [];
     const plannedAccountTaskCounts = currentVideoPlans.reduce<Record<string, number>>((counts, plan) => {
       const accountId = plan.matrix?.accountId;
@@ -4422,52 +4630,72 @@ export default function DigitalEmployeePage({
         connected: Boolean(connected),
       };
     });
-    const operatingContext = data.plan?.businessPackage?.operatingContext;
-    const currentEstimatedCost = operatingContext?.budget.totalCny || currentVideoPlans.reduce((sum, plan) => sum + Number(plan.estimatedCost || 0), 0) || Number(data.plan?.estimatedCost || 0);
-    const currentCostMin = operatingContext?.budget.totalMinCny ?? currentVideoPlans.reduce((sum, plan) => sum + Number(plan.estimatedCostRange?.minCny || 0), 0);
-    const currentCostMax = operatingContext?.budget.totalMaxCny ?? currentVideoPlans.reduce((sum, plan) => sum + Number(plan.estimatedCostRange?.maxCny || 0), 0);
-    const plannedDurationSeconds = operatingContext?.outputs.totalDurationSeconds || currentMasterPlans.reduce((sum, plan) => sum + Number(plan.duration || 0), 0);
-    const assignmentCounts = (data.plan?.tasks || []).reduce<Record<string, number>>((counts, task) => ({ ...counts, [task.agentRole]: (counts[task.agentRole] || 0) + 1 }), {});
+    const currentWeeklyWorkStatus = weeklyWorkStatus(data);
+    const openConflictingRun = async () => {
+      const conflict = weeklyStartConflict;
+      if (!conflict) return;
+      if (!conflict.goalId) {
+        onOpenMonitor?.();
+        return;
+      }
+      setViewGoalId(conflict.goalId);
+      setSelectedTaskId("");
+      setShowHistory(false);
+      const next = await load(conflict.goalId);
+      if (!next) return;
+      setSelectedTaskId(next.tasks.find((task) => ["running", "waiting_external", "waiting_approval", "waiting_human", "failed"].includes(task.status))?.id || next.tasks[0]?.id || "");
+      setWorkspaceView("live");
+    };
     const currentPlanStatusLabel = viewGoalId
       ? "历史计划"
-      : goal?.status === "draft"
-        ? "待确认"
-        : activeRun
-          ? "执行中"
-          : terminal || goal?.status === "completed"
+      : data.run
+        ? weeklyRunHeaderLabel[data.run.status] || "状态待确认"
+        : goal?.status === "draft"
+          ? "待确认"
+          : goal?.status === "completed"
             ? "已完成"
-            : "已确认";
-    const startWeeklyWork = () => {
+            : goal?.status === "cancelled"
+              ? "已取消"
+              : "已确认";
+    // Recover only the failed production node of this run, never create another
+    // weekly run or implicitly approve publishing/human acceptance tasks.
+    const recoverableProductionTask = data.run?.goal_id === goal?.id && ["waiting_human", "failed"].includes(data.run?.status || "")
+      ? data.tasks.find(task => task.run_id === data.run!.id && task.task_key === "content_production" && ["failed", "waiting_human"].includes(task.status))
+      : undefined;
+    const controlWeeklyWork = async () => {
+      if (busy) return;
       if (viewGoalId) {
-        void returnToLatest();
+        await returnToLatest();
         return;
       }
-      if (activeRun) {
-        setWorkspaceView("overview");
+      if (recoverableProductionTask) {
+        const next = await act(`retry:${recoverableProductionTask.id}`, () => digitalEmployeeApi.retryTask(recoverableProductionTask.id));
+        if (next && goal) presentConfirmedWeeklyExecution(next, goal.id);
         return;
       }
-      if (canCreateNextGoal) {
+      if (activeRun && data.run) {
+        const next = data.run.status === "paused"
+          ? await act("resume", () => digitalEmployeeApi.resumeRun(data.run!.id))
+          : await act("pause", () => digitalEmployeeApi.pauseRun(data.run!.id));
+        if (next) publishWeeklyWorkUpdate(next);
+        return;
+      }
+      if (!goal || canCreateNextGoal) {
+        setError("");
         setNewGoal(true);
         setWeeklyPlanOpen(true);
         return;
       }
       setNewGoal(false);
-      setWeeklyPlanOpen(true);
+      setWeeklyPlanOpen(false);
+      await confirmWeeklyPlan();
     };
-    const controlWeeklyWork = async () => {
-      if (viewGoalId) {
-        await returnToLatest();
-        return;
-      }
-      if (activeRun && data.run) {
-        if (data.run.status === "paused") await act("resume", () => digitalEmployeeApi.resumeRun(data.run!.id));
-        else await act("pause", () => digitalEmployeeApi.pauseRun(data.run!.id));
-        return;
-      }
-      startWeeklyWork();
-    };
-    const weeklyControlLabel = viewGoalId
+    const weeklyControlLabel = busy === "confirm-weekly-plan"
+      ? "正在启动生产…"
+      : viewGoalId
       ? "返回当前周计划"
+      : recoverableProductionTask
+        ? busy ? "正在恢复生产…" : "继续生产"
       : activeRun
         ? data.run?.status === "paused" ? "继续周任务" : "暂停周任务"
         : canCreateNextGoal ? "开始下一周任务" : "开始周任务";
@@ -4495,10 +4723,18 @@ export default function DigitalEmployeePage({
       setWorkspaceView("live");
       window.setTimeout(() => document.querySelector('[data-testid="production-task-scene"]')?.scrollIntoView({ behavior: getScrollBehavior(), block: "start" }), 50);
     };
+    const weeklyStatusSlot = weeklyStartConflict || currentWeeklyWorkStatus || error ? (
+      <div className="space-y-2">
+        {weeklyStartConflict && !viewGoalId
+          ? <WeeklyStartConflictAlert conflict={weeklyStartConflict} onViewRun={() => void openConflictingRun()} />
+          : currentWeeklyWorkStatus && <WeeklyWorkStatusAlert status={currentWeeklyWorkStatus} onViewProgress={() => goLive(currentWeeklyWorkStatus.currentTaskId)} />}
+        {error && <Alert type="error" showIcon title={error} closable onClose={() => setError("")} />}
+      </div>
+    ) : undefined;
     const weeklyPlanControls = <>
       <Button onClick={()=>setWorkspaceView("rules")} icon={<Settings2 size={15}/>}>Agent 设置</Button>
       <Button onClick={()=>setPlanHistoryOpen(true)} icon={<History size={15}/>}>历史计划</Button>
-      <Button type="primary" loading={Boolean(busy)} onClick={()=>void controlWeeklyWork()} icon={activeRun && data.run?.status !== "paused" ? <Pause size={15}/> : <Play size={15}/>}>{weeklyControlLabel}</Button>
+      <Button type="primary" loading={Boolean(busy)} onClick={()=>void controlWeeklyWork()} icon={activeRun && !recoverableProductionTask && data.run?.status !== "paused" ? <Pause size={15}/> : <Play size={15}/>}>{weeklyControlLabel}</Button>
     </>;
     return (
       <>
@@ -4510,22 +4746,23 @@ export default function DigitalEmployeePage({
               data={data}
               statusLabel={currentPlanStatusLabel}
               actions={weeklyPlanControls}
-              notice={!activeRun && !viewGoalId && (approvalBlocked || missingReferenceMasters.length > 0 || missingProductMasters.length > 0 || detailGeneration?.status === "blocked")
-                ? <p className="mr-auto text-[10px] font-bold text-amber-700">{approvalBlocked ? `开始前需补齐：${firstMissingReadiness?.label || "经营基础信息"}` : missingReferenceMasters.length ? `爆款库还缺 ${missingReferenceMasters.length} 条母版所需的已分析视频` : missingProductMasters.length ? `还有 ${missingProductMasters.length} 条原创母版未绑定产品` : `开始前需处理 ${detailGeneration?.blockedCount || 0} 条母版任务卡点`}</p>
+              status={weeklyStatusSlot}
+              onRefresh={() => void load()}
+              onOpenProductionProgress={openProductionProgress}
+              notice={!activeRun && !viewGoalId && (missingReferenceMasters.length > 0 || missingProductMasters.length > 0 || detailGeneration?.status === "blocked")
+                ? <p className="mr-auto text-xs text-text-secondary">可直接开始任务；{detailGeneration?.blockedCount || missingReferenceMasters.length || missingProductMasters.length} 条内容的待补资料将在对应制作步骤提示，不阻止其他内容推进。账号连接与发布授权在正式发布前核验。</p>
                 : undefined}
-            /> : <section className="overflow-hidden rounded-lg border border-border bg-white"><div className="flex flex-wrap items-start justify-between gap-4 px-5 py-4"><div><p className="text-xs font-semibold text-accent">周经营计划</p><p className="mt-1 text-sm font-bold text-slate-800">本周还没有可执行计划</p><p className="mt-1 text-xs text-slate-500">点击“开始周任务”确定平台、账号、视频产量和预算，再选择产品并确认工作排期。</p></div><div aria-label="智能经营控制" className="flex max-w-full flex-wrap items-center justify-end gap-2">{weeklyPlanControls}</div></div></section>}
+            /> : <><section className="overflow-hidden rounded-lg border border-border bg-white"><div className="flex flex-wrap items-start justify-between gap-4 px-5 py-4"><div><p className="text-xs font-semibold text-accent">周经营计划</p><p className="mt-1 text-sm font-bold text-slate-800">本周还没有可执行计划</p><p className="mt-1 text-xs text-slate-500">点击“开始周任务”确定平台、账号、视频产量和预算，再选择产品并确认工作排期。</p></div><div aria-label="智能经营控制" className="flex max-w-full flex-wrap items-center justify-end gap-2">{weeklyPlanControls}</div></div></section>{weeklyStatusSlot && <div className="border-x border-b border-border px-4 py-2.5">{weeklyStatusSlot}</div>}</>}
           </div>
           <Tabs className="mt-3" aria-label="智能经营视图" activeKey={workspaceView === "live" || workspaceView === "overview" ? "review" : workspaceView} onChange={key => {setWorkspaceView(key as WorkspaceView); setSelectedContentItemId("");}} items={views.map(view => ({key: view.id, label: view.label}))}/>
-          {error && <Alert className="mt-5" type="error" showIcon title={error} closable onClose={()=>setError("")}/>}
           <div className="grid grid-cols-1 gap-4 pb-6 pt-2">
             {workspaceView === "matrix" && <SmartOperationsAccountRail targets={smartOperationsAccounts} selectedAccountId={selectedAccountId} taskCounts={accountTaskCounts} onSelect={setSelectedAccountId} onManage={() => onNavigate?.('plugins')}/>}
             <main className="min-w-0">
             {workspaceView === "rules"
               ? <OnboardingPanel initial={data.config} readiness={data.businessSnapshot?.readiness || []} busy={Boolean(busy)} mode="rules" activeRun={activeRun} onOpenReadiness={openReadiness} onSave={(config) => void saveConfig(config)} />
-              : <SmartBusinessDashboard data={data} view={dashboardView} selectedAccountId={selectedAccountId} selectedContentItemId={selectedContentItemId} overviewRangeBusy={busy === "overview-range"} onOverviewRangeChange={changeOverviewDateRange} onRefresh={() => void load()} onGenerateDetails={() => void generateCurrentPlanDetails()} onOpenContent={openContentProduction} onOpenProductionProgress={openProductionProgress} onBackToQueue={()=>{setSelectedContentItemId("");setWorkspaceView("overview");}} onRetryTask={async taskId => Boolean(await act(`retry:${taskId}`, () => digitalEmployeeApi.retryTask(taskId)))} onControlJob={async (jobId, action) => Boolean(await act(`execution:${jobId}:${action}`, () => digitalEmployeeApi.controlExecutionJob(jobId, action)))} onGeneratePlan={() => { if (!goal || canCreateNextGoal) setNewGoal(true); setWeeklyPlanOpen(true); }} onNavigate={page => {
+              : <SmartBusinessDashboard data={data} view={dashboardView} selectedAccountId={selectedAccountId} selectedContentItemId={selectedContentItemId} overviewRangeBusy={busy === "overview-range"} onOverviewRangeChange={changeOverviewDateRange} onRefresh={() => void load()} onGenerateDetails={() => void generateCurrentPlanDetails()} onOpenContent={openContentProduction} onOpenProductionProgress={openProductionProgress} onBackToQueue={()=>{setSelectedContentItemId("");setWorkspaceView("overview");}} onRetryTask={async taskId => Boolean(await act(`retry:${taskId}`, () => digitalEmployeeApi.retryTask(taskId)))} onControlJob={async (jobId, action) => Boolean(await act(`execution:${jobId}:${action}`, () => digitalEmployeeApi.controlExecutionJob(jobId, action)))} onGeneratePlan={() => { void controlWeeklyWork(); }} onNavigate={page => {
                   if (page === "socialPlanning") {
-                    if (!goal || canCreateNextGoal) setNewGoal(true);
-                    setWeeklyPlanOpen(true);
+                    void controlWeeklyWork();
                     return;
                   }
                   if (page === "socialAccounts") {
@@ -4555,59 +4792,17 @@ export default function DigitalEmployeePage({
           }}
         />
       )}
-      {weeklyPlanOpen && <div className="h-full overflow-y-auto bg-white">
-        <section aria-label={goal && !newGoal ? "本周计划详情" : "周计划生成"} className="mx-auto w-full max-w-[1440px] p-4 sm:p-6">
+      {weeklyPlanOpen && (!goal || newGoal) && !activeRun && <div className="h-full overflow-y-auto bg-white">
+        <section aria-label="周计划生成" className="mx-auto w-full max-w-[1440px] p-4 sm:p-6">
           <header className="mb-5 flex flex-wrap items-start justify-between gap-4 border-b border-border pb-5">
-            <h1 className="text-[28px] font-semibold">{goal && !newGoal ? activeRun ? "数字员工工作排期" : "确认本周视频计划" : "制定本周目标"}</h1>
-            <Button disabled={Boolean(busy)} onClick={() => setWeeklyPlanOpen(false)} icon={<ChevronLeft size={15}/>}>返回智能经营</Button>
+            <h1 className="text-[28px] font-semibold">制定本周目标</h1>
+            <Button disabled={Boolean(busy)} onClick={() => setWeeklyPlanOpen(false)} icon={<ChevronLeft size={15}/>}>返回经营首页</Button>
           </header>
           {error && (
             <Alert className="mb-4" type="error" showIcon title={error}/>
           )}
           <div className="py-5">
-            {goal && !newGoal && <InitialPreparationStatusPanel goalId={goal.id} onRunning={() => void load(goal.id)} />}
-            {(!goal || newGoal) && !activeRun ? <GoalPanel config={data.config} busy={Boolean(busy)} businessLine={businessLine} contentPlatform={contentPlatform} onOpenSettings={()=>{setWeeklyPlanOpen(false);setWorkspaceView("rules");}} onSave={goalInput => void createWeeklyOutline(goalInput)}/>
-              : goal ? <div className="space-y-4">
-                <section className="flex flex-wrap items-center justify-between gap-4 rounded-lg border border-slate-200 px-4 py-3">
-                  <div className="min-w-0"><div className="flex items-center gap-2"><h3 className="truncate text-sm font-semibold text-slate-950">{goal.title}</h3><span className={`shrink-0 rounded-full px-2.5 py-1 text-[9px] font-semibold ${activeRun?"bg-emerald-50 text-emerald-700":"bg-amber-50 text-amber-700"}`}>{activeRun?"执行中":"待确认"}</span></div><p className="mt-1 text-[10px] text-slate-500">{goal.startsAt} 至 {goal.endsAt}</p></div>
-                  <div className="grid grid-cols-4 gap-4 text-right"><div><p className="text-[9px] font-bold text-slate-400">发布内容</p><p className="mt-0.5 text-sm font-semibold text-slate-900">{currentVideoPlans.length} 条</p></div><div><p className="text-[9px] font-bold text-slate-400">原创母版</p><p className="mt-0.5 text-sm font-semibold text-slate-900">{currentMasterPlans.length} 条</p></div><div><p className="text-[9px] font-bold text-slate-400">母版时长</p><p className="mt-0.5 text-sm font-semibold text-slate-900">{plannedDurationSeconds>0?`${plannedDurationSeconds} 秒`:"待确认"}</p></div><div><p className="text-[9px] font-bold text-slate-400">预计成本</p><p className="mt-0.5 text-sm font-semibold text-slate-900">{currentCostMax>0?`¥${currentCostMin.toFixed(0)}–${currentCostMax.toFixed(0)}`:currentEstimatedCost>0?`约 ¥${currentEstimatedCost.toFixed(0)}`:"待核算"}</p></div></div>
-                </section>
-                <WeeklyPlanCalendar
-                  startsAt={goal.startsAt}
-                  endsAt={goal.endsAt}
-                  plans={currentVideoPlans}
-                  masterPlans={currentMasterPlans}
-                  accounts={activeConfig.publishingTargets}
-                  products={planningOptions?.products || []}
-                  busy={Boolean(busy) || activeRun}
-                  onChangeProduct={(index, productName) => void updateWeeklyPlanProduct(index, productName)}
-                  onRefreshReferences={missingReferenceMasters.length ? () => void refreshWeeklyViralPlan() : undefined}
-                  onOpenReference={plan => {
-                    const referenceId = plan.referenceId || plan.preproduction?.benchmark.referenceId || "";
-                    const sourceUrl = plan.preproduction?.benchmark.sourceUrl || plan.planningEvidence?.referenceSourceUrl || "";
-                    const title = plan.planningEvidence?.referenceTitle || plan.theme;
-                    if (!referenceId && !sourceUrl) return;
-                    setWeeklyPlanOpen(false);
-                    window.dispatchEvent(new CustomEvent("lingshu:navigate", { detail: {
-                      page: "socialInspiration",
-                      view: "inspiration",
-                      businessRef: { referenceId },
-                      inspirationReference: {
-                        referenceId,
-                        sourceUrl,
-                        title,
-                        platform: plan.platform,
-                        thumbnailUrl: plan.preproduction?.benchmark.thumbnailUrl || plan.planningEvidence?.referenceThumbnailUrl || "",
-                        duration: plan.duration,
-                        benchmarkAnalysis: plan.benchmarkAnalysis,
-                      },
-                    } }));
-                  }}
-                />
-                {!activeRun && <div className="flex flex-wrap items-center justify-between gap-4"><p className={`text-xs ${approvalBlocked||missingProductMasters.length||missingReferenceMasters.length?'font-bold text-amber-700':'text-slate-500'}`}>{approvalBlocked?`开始前需补齐：${firstMissingReadiness?.label||'企业资料或社媒账号'}`:missingReferenceMasters.length?`爆款库还缺 ${missingReferenceMasters.length} 条母版所需的已分析视频`:missingProductMasters.length?`还有 ${missingProductMasters.length} 条原创母版未选择产品`:'确认后系统只生产 5 条母版，并生成各平台标题、文案、Tag 与轻适配版本。'}</p><Button type="primary" htmlType="button" disabled={Boolean(busy)||approvalBlocked||Boolean(missingProductMasters.length)||Boolean(missingReferenceMasters.length)} onClick={()=>void confirmWeeklyPlan()} className="!h-auto min-h-9 !whitespace-normal shrink-0 rounded-lg px-5 py-2.5 text-sm font-semibold">{busy==='confirm-weekly-plan'?<span className="inline-flex items-center gap-2"><Loader2 size={14} className="animate-spin"/>正在编排并启动…</span>:"确认周计划并开始工作"}</Button></div>}
-                {activeRun&&<section aria-label="Agent To Do List" className="overflow-hidden rounded-lg border border-slate-200"><div className="border-b border-slate-100 bg-slate-950 px-5 py-4 text-white"><p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-emerald-300">Agent 工作清单</p><h3 className="mt-1 text-lg font-semibold">数字员工工作排期</h3><p className="mt-1 text-[10px] text-slate-300">每一步都标明负责 Agent、预计用时、输出和下一节点。</p></div><div className="divide-y divide-slate-100">{(data.plan?.tasks||[]).map((task,index)=>{const runtime=data.tasks.find(item=>item.task_key===task.key);return <article key={task.key} className="grid gap-3 px-5 py-4 sm:grid-cols-[40px_150px_minmax(0,1fr)_100px]"><span className={`flex h-8 w-8 items-center justify-center rounded-full text-xs font-semibold ${runtime?.status==='succeeded'?'bg-emerald-100 text-emerald-700':runtime?.status==='running'?'bg-blue-100 text-blue-700':'bg-slate-100 text-slate-500'}`}>{index+1}</span><div><p className="text-xs font-semibold text-slate-900">{agentLabel[task.agentRole]||task.agentRole}</p><p className="mt-1 text-[10px] text-slate-500">预计 {task.expectedMinutes} 分钟</p></div><div><p className="text-sm font-semibold text-slate-950">{task.title}</p><p className="mt-1 text-[10px] leading-5 text-slate-500">{task.description}</p><p className="mt-1 text-[10px] font-bold text-emerald-700">结果：{runtime?outputSummary(runtime)||'完成后自动保存到对应业务页面':task.statusSource||'完成后持久化'} · 下一步：{data.plan?.tasks[index+1]?.title||'进入周复盘'}</p></div><span className={`h-fit rounded-full border px-2 py-1 text-center text-[9px] font-semibold ${statusTone[runtime?.status||'']||'border-slate-200 bg-slate-50 text-slate-500'}`}>{runtime?.status==='running'?'进行中':runtime?.status==='succeeded'?'已完成':runtime?.status==='failed'?'需处理':'待执行'}</span></article>})}</div></section>}
-                {activeRun&&<div className="flex justify-end"><Button htmlType="button" onClick={()=>{setWeeklyPlanOpen(false);setWorkspaceView("matrix");}} className="!h-auto min-h-9 !whitespace-normal rounded-lg bg-slate-950 px-5 py-2.5 text-sm font-semibold text-white">查看账号排期甘特图</Button></div>}
-              </div> : null}
+            <GoalPanel config={data.config} busy={Boolean(busy)} businessLine={businessLine} contentPlatform={contentPlatform} onOpenSettings={()=>{setWeeklyPlanOpen(false);setWorkspaceView("rules");}} onSave={goalInput => void createWeeklyOutline(goalInput)}/>
           </div>
         </section>
       </div>}
@@ -4890,8 +5085,8 @@ export default function DigitalEmployeePage({
               }}
               onLinkProject={async (taskId, projectId) => { if (!await act("link-project", () => digitalEmployeeApi.linkTaskProject(data.run!.id, taskId, projectId), true)) throw new Error("关联失败，请重试。"); }}
               onTask={taskId => { setSelectedTaskId(taskId); window.setTimeout(() => document.getElementById("task-production-scene")?.scrollIntoView({ behavior: getScrollBehavior(), block: "start" }), 50); }}
-              onSave={async pack => { const result = await act("save-package", () => digitalEmployeeApi.savePackage(goal!.id, pack), true); if (!result) throw new Error("经营包未保存，请检查页面提示后重试。"); return true; }}
-              onApprove={async revision => { const result = await act("approve-goal", () => digitalEmployeeApi.approveGoal(goal!.id, revision), true); if (!result) throw new Error("未能启动，请检查账号、资料和授权范围后重试。"); }}
+              onSave={async pack => Boolean(await act("save-package", () => digitalEmployeeApi.savePackage(goal!.id, pack), true))}
+              onApprove={async revision => { await act("approve-goal", () => digitalEmployeeApi.approveGoal(goal!.id, revision), true); }}
             />}
             {!data.run && data.plan && <section id="weekly-plan-preview" className="scroll-mt-6 rounded-lg border border-slate-200 bg-white p-6">
               <h2 className="text-lg font-bold">本周目标与执行计划</h2>

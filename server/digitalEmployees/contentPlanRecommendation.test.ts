@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { normalizeDigitalEmployeeConfig, normalizeWeeklyGoal } from './domain.js';
-import { recommendPackage } from './weeklyPackage.js';
+import { recommendPackage, validatePackage } from './weeklyPackage.js';
+import { fillMatrixVideos, matrixIssues } from '../../src/lib/weeklyMatrix.js';
+import type { VideoCreationPlan } from '../../shared/contracts/videoCreationPlan.js';
 import { bindDefaultProductsToPackage, enrichPackageWithContentSignals, publishDateForAccountSlot, rankContentReferences } from './contentPlanRecommendation.js';
 import { buildContentBatchPlan } from './contentBatchPlan.js';
 
@@ -140,6 +142,78 @@ const fourPlatformBatch = buildContentBatchPlan({
 assert.equal(fourPlatformBatch.status, 'planned', fourPlatformBatch.blocker);
 assert.equal(fourPlatformBatch.orders.length, 5, 'production receives five orders instead of resubmitting all 18 versions');
 assert.equal(fourPlatformBatch.orders.flatMap(order => order.deliveryVariants || []).length, 18, 'five production orders retain every platform delivery destination');
+
+// Exercise the actual recommendation order: matrix defaults are created first,
+// enterprise products are then bound by master family, and viral references are
+// enriched last. A stale account default is not an authored product constraint.
+const staleProductConfig = normalizeDigitalEmployeeConfig({ ...fourPlatformConfig, focusProducts: '旧目录默认产品' });
+const confirmedProducts = Array.from({ length: 5 }, (_, index) => ({
+  id: `confirmed-product-${index + 1}`,
+  name: `已确认检测设备 ${index + 1}`,
+  materialIds: [`product-${index + 1}-front`, `product-${index + 1}-demo`],
+}));
+const recommendedMultiProduct = recommendPackage(fourPlatformGoal, staleProductConfig);
+const recommendedBeforeBinding = structuredClone(recommendedMultiProduct);
+assert.ok(recommendedMultiProduct.matrixPlan?.every(row => row.productName === '旧目录默认产品'));
+const boundMultiProduct = bindDefaultProductsToPackage(recommendedMultiProduct, confirmedProducts);
+assert.deepEqual(recommendedMultiProduct, recommendedBeforeBinding, 'binding real product defaults must not mutate the source package');
+const boundMultiProductPlans = boundMultiProduct.tasks.find(task => task.templateId === 'production')!.videoPlans!;
+const identity = (plan: VideoCreationPlan) => ({
+  contentId: plan.contentId,
+  contentFamilyId: plan.contentFamilyId,
+  productionRole: plan.productionRole,
+  masterContentId: plan.masterContentId,
+  productId: plan.productId,
+  productName: plan.productName,
+  materialIds: plan.materialIds,
+  accountId: plan.matrix?.accountId,
+  platform: plan.platform,
+});
+const boundIdentities = structuredClone(boundMultiProductPlans.map(identity));
+const multiProduct = enrichPackageWithContentSignals({
+  pack: boundMultiProduct, goal: fourPlatformGoal, config: staleProductConfig, videos, benchmarks,
+});
+const multiProductPlans = multiProduct.tasks.find(task => task.templateId === 'production')!.videoPlans!;
+const multiProductMasters = multiProductPlans.filter(plan => plan.productionRole === 'master');
+assert.equal(multiProductPlans.length, 18);
+assert.equal(multiProductMasters.length, 5);
+assert.equal(new Set(multiProductMasters.map(plan => plan.productId)).size, 5, 'five original families must retain five independently selected products');
+assert.equal(new Set(multiProductMasters.map(plan => plan.referenceId)).size, 5);
+assert.deepEqual(multiProductPlans.map(identity), boundIdentities, 'reference enrichment must preserve selected products, materials and master-family identity');
+assert.deepEqual(matrixIssues(multiProduct), [], 'a valid multi-product recommendation must pass the same matrix guard used when starting a week');
+assert.deepEqual(validatePackage(multiProduct, fourPlatformGoal, staleProductConfig), [], 'the complete generated package must pass backend approval validation without rewriting all products to the stale account default');
+for (const master of multiProductMasters) {
+  const product = confirmedProducts.find(item => item.id === master.productId)!;
+  assert.ok(product);
+  const family = multiProductPlans.filter(plan => plan.contentFamilyId === master.contentFamilyId);
+  assert.ok(family.every(plan => plan.productId === product.id && plan.productName === product.name));
+  assert.ok(family.every(plan => plan.masterContentId === master.contentId && plan.referenceId === master.referenceId));
+  for (const plan of family) assert.deepEqual(plan.materialIds, product.materialIds, 'every platform adaptation must keep the correct product material evidence');
+}
+const synchronizedMultiProduct = fillMatrixVideos(multiProduct, staleProductConfig.videoDefaults || {}, fourPlatformGoal.endsAt);
+const synchronizedPlans = synchronizedMultiProduct.tasks.find(task => task.templateId === 'production')!.videoPlans!;
+assert.deepEqual(synchronizedPlans.map(identity), boundIdentities, 'repeated matrix synchronization must not clear materials or replace explicitly bound products with account defaults');
+assert.deepEqual(synchronizedPlans.map(plan => plan.referenceId), multiProductPlans.map(plan => plan.referenceId), 'matrix synchronization must retain all five frozen references and their platform adaptations');
+assert.deepEqual(matrixIssues(synchronizedMultiProduct), []);
+assert.deepEqual(validatePackage(synchronizedMultiProduct, fourPlatformGoal, staleProductConfig), []);
+const multiProductBatch = buildContentBatchPlan({
+  goalId: 'multi-product-regression', goal: { ...fourPlatformGoal, videoPlans: synchronizedPlans }, config: staleProductConfig,
+  evidence: { products: confirmedProducts, exactAnalysisIds: videos.map(item => item.id), materialIds: confirmedProducts.flatMap(item => item.materialIds) },
+  versions: { configVersion: 1, policyVersion: '1', factsVersion: '1' },
+});
+assert.equal(multiProductBatch.status, 'planned', multiProductBatch.blocker);
+assert.equal(multiProductBatch.orders.length, 5, 'the recommendation-to-approval path must still produce exactly five paid master orders');
+assert.equal(multiProductBatch.orders.flatMap(order => order.deliveryVariants || []).length, 18);
+assert.deepEqual(multiProductBatch.orders.map(order => order.productId), multiProductMasters.map(plan => plan.productId));
+// Both products and their materials are individually valid, but an adaptation
+// cannot silently become a different product while still sharing its master.
+const inconsistentFamily = structuredClone(multiProduct);
+const mismatchedAdaptation = inconsistentFamily.tasks.find(task => task.templateId === 'production')!.videoPlans!
+  .find(plan => plan.productionRole === 'platform_adaptation')!;
+const anotherValidProduct = confirmedProducts.find(product => product.id !== mismatchedAdaptation.productId)!;
+Object.assign(mismatchedAdaptation, { productId: anotherValidProduct.id, productName: anotherValidProduct.name, materialIds: [...anotherValidProduct.materialIds] });
+assert.ok(matrixIssues(inconsistentFamily).includes('同一母版的平台版本必须使用同一产品'), 'valid individual product IDs must not bypass shared-master product identity');
+assert.ok(validatePackage(inconsistentFamily, fourPlatformGoal, staleProductConfig).includes('同一母版的平台版本必须使用同一产品'), 'backend package approval must retain the same cross-platform family guard');
 
 console.log('content plan recommendation tests passed');
 

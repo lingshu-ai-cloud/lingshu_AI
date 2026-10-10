@@ -14,6 +14,12 @@ const QWEN_VL_MODEL = () => (process.env.QWEN_VL_MODEL ?? 'qwen-vl-max').trim();
 const QWEN_EXACT_VL_MODEL = () => (process.env.QWEN_EXACT_VL_MODEL ?? 'qwen3-vl-flash').trim();
 const BASE_URL = () => (process.env.DASHSCOPE_BASE_URL ?? 'https://dashscope.aliyuncs.com/compatible-mode/v1').trim();
 
+/** Keep these evidence fields explicit in every per-shot Qwen schema. The
+ * shared benchmark contract defines their semantics, while the concrete list
+ * prevents compatible gateways from treating them as optional prose. */
+export const QWEN_SHOT_CLASSIFICATION_FIELDS = ['materialType', 'narrativeRole', 'classificationEvidence'] as const;
+const QWEN_SHOT_CLASSIFICATION_FIELD_TEXT = QWEN_SHOT_CLASSIFICATION_FIELDS.join('、');
+
 export function dashscopeApiKey(): string {
   const envKey = process.env.DASHSCOPE_API_KEY?.trim();
   if (envKey) return envKey;
@@ -272,14 +278,19 @@ export async function inspectStoryboardAigcFramesWithQwen(opts: {
   const selectedFrames = opts.frames.length <= availableFrames ? opts.frames
     : Array.from({ length: availableFrames }, (_, index) => opts.frames[Math.round(index * (opts.frames.length - 1) / (availableFrames - 1))]);
   const images = [...references, ...(opts.previousTerminalFrame ? [opts.previousTerminalFrame] : []), ...selectedFrames];
+  const candidateLabels = selectedFrames.map(item => item.timeLabel);
+  const exampleLabel = candidateLabels[0] || opts.frames[0]!.timeLabel;
   const expected = opts.phase === 'first_frame'
     ? 'product_identity, person_identity, environment_fidelity, layout, contact, start_state, visual_integrity'
     : `product_identity, person_identity, environment_fidelity, layout_continuity, contact_continuity, ${opts.previousTerminalFrame ? 'seam_continuity, ' : ''}action_order, end_state, visual_integrity`;
   const request = {
     model: QWEN_VL_MODEL(),
     messages: [{ role: 'user', content: [
-      { type: 'text', text: `你是逐镜视觉质检员。产品身份必须以标注为企业产品参考的图片中实际可见的品牌、包装正面图案（包括包装印刷的人像）、颜色、轮廓和文字布局为依据。企业参考图已经存在的品牌应保留，不能把企业品牌误当原片竞品品牌；不能只凭产品名称臆造无品牌版本。只有明确提供原片品牌证据时才判定原片品牌残留。即使品牌正确，包装印刷图案缺失、人物图案被删除或排版变化仍需独立判定产品身份失败，不能以“无人物脸”的场景要求删除包装上的印刷人像。产品和指定人物参考图只用于身份；环境参考图只用于直接可见的设备外观、工位布局与产线方向，不证明工厂归属、产能或资质。候选图才是质检对象。若有环境参考图，environment_fidelity 必须对照可见空间与设备；没有环境参考图则标 uncertain。${opts.previousTerminalFrame ? '上一段合格末帧仅用于与当前候选第一帧比较交界处；seam_continuity 必须同时引用「上一段合格末帧」和当前候选起始帧，检查产品、接触关系、人物、背景和机位是否连续，突变则 fail，无法判断则 uncertain。' : ''}不得根据参考图推定候选中已完成动作。对于静态首帧，只判断起始状态，不声称动作完成；对于视频帧，按时间顺序判断动作顺序与终点。看不到或证据不足时写 uncertain，不得猜测通过。无法通过稀疏抽帧确认的闪烁、短暂变形、隐藏标签和精确接触写 uncertain。\n镜头类型：${opts.sceneType}；质检阶段：${opts.phase}\n分镜要求：${opts.storyboard.slice(0, 1800)}\n企业产品资料：${opts.productInfo.slice(0, 1200)}\n动作起点：${String(opts.startState || '').slice(0, 500)}\n动作步骤：${(opts.beats || []).slice(0, 8).join(' → ').slice(0, 800)}\n动作终点：${String(opts.endState || '').slice(0, 500)}\n图像时间与角色：${images.map(item => item.timeLabel).join('、')}\n逐项输出 ${expected}。没有相关人物身份或接触时仍可标 uncertain，由调用方决定是否必检。每项 verdict 只能为 pass/fail/uncertain，evidenceFrames 只能引用上列标签，action 只能为 retry_first_frame/retry_video/needs_assets/manual_review。产品身份失败若因参考角度或图片不足，选 needs_assets；候选画面失真选对应重做。只输出 JSON：{"observations":[{"key":"product_identity","verdict":"uncertain","evidenceFrames":["候选0s"],"note":"可见证据","action":"manual_review"}]}。` },
-      ...images.map(frame => ({ type: 'image_url', image_url: { url: `data:${frame.mimeType};base64,${frame.base64}` } })),
+      { type: 'text', text: `你是逐镜视觉质检员。产品身份必须以标注为企业产品参考的图片中实际可见的品牌、包装正面图案（包括包装印刷的人像）、颜色、轮廓和文字布局为依据。企业参考图已经存在的品牌应保留，不能把企业品牌误当原片竞品品牌；不能只凭产品名称臆造无品牌版本。只有明确提供原片品牌证据时才判定原片品牌残留。即使品牌正确，包装印刷图案缺失、人物图案被删除或排版变化仍需独立判定产品身份失败，不能以“无人物脸”的场景要求删除包装上的印刷人像。产品和指定人物参考图只用于身份；环境参考图只用于直接可见的设备外观、工位布局与产线方向，不证明工厂归属、产能或资质。候选图才是质检对象。若有环境参考图，environment_fidelity 必须对照可见空间与设备；没有环境参考图则标 uncertain。${opts.previousTerminalFrame ? '上一段合格末帧仅用于与当前候选第一帧比较交界处；seam_continuity 必须同时引用「上一段合格末帧」和当前候选起始帧，检查产品、接触关系、人物、背景和机位是否连续，突变则 fail，无法判断则 uncertain。' : ''}不得根据参考图推定候选中已完成动作。对于静态首帧，只判断起始状态，不声称动作完成；对于视频帧，按时间顺序判断动作顺序与终点。看不到或证据不足时写 uncertain，不得猜测通过。无法通过稀疏抽帧确认的闪烁、短暂变形、隐藏标签和精确接触写 uncertain。\n镜头类型：${opts.sceneType}；质检阶段：${opts.phase}\n分镜要求：${opts.storyboard.slice(0, 1800)}\n企业产品资料：${opts.productInfo.slice(0, 1200)}\n动作起点：${String(opts.startState || '').slice(0, 500)}\n动作步骤：${(opts.beats || []).slice(0, 8).join(' → ').slice(0, 800)}\n动作终点：${String(opts.endState || '').slice(0, 500)}\n图像时间与角色：${images.map(item => item.timeLabel).join('、')}\n候选质检画面标签：${candidateLabels.join('、')}。pass/fail 必须至少引用一个候选质检画面的准确标签，不能只引用参考图。\n逐项输出 ${expected}。没有相关人物身份或接触时仍可标 uncertain，由调用方决定是否必检。每项 verdict 只能为 pass/fail/uncertain，evidenceFrames 只能引用上列标签，action 只能为 retry_first_frame/retry_video/needs_assets/manual_review。产品身份失败若因参考角度或图片不足，选 needs_assets；候选画面失真选对应重做。只输出 JSON：${JSON.stringify({ observations: [{ key: 'product_identity', verdict: 'uncertain', evidenceFrames: [exampleLabel], note: '可见证据', action: 'manual_review' }] })}。` },
+      ...images.flatMap(frame => [
+        { type: 'text', text: `下一张图片的准确标签：${frame.timeLabel}；角色：${candidateLabels.includes(frame.timeLabel) ? '候选质检对象' : '对照参考，不是候选'}。` },
+        { type: 'image_url', image_url: { url: `data:${frame.mimeType};base64,${frame.base64}` } },
+      ]),
     ] as any }], response_format: { type: 'json_object' }, max_tokens: 1800,
   } as any;
   const completion = await client().chat.completions.create(request);
@@ -324,7 +335,7 @@ ${BENCHMARK_ANALYSIS_CONTRACT}
 - firstTenSeconds: object，详细分析视频前 10 秒，包含中文字段 atmosphere、audioVisual、camera、visuals、voiceMusic
 - coarseStructure: array，覆盖原视频完整时长，按内容结构变化拆解；每项包含 time、label、description
 - scriptSummary15s: object，15 秒脚本详析摘要，包含 visualStyle、coreEmotion、competitors
-  - scriptDetails15s: array（字段名仅为历史兼容），必须覆盖原视频完整时长，不得在15秒处截断；按导演镜头详析；每项包含 time（start-end区间，最多两位小数）、environment、shot、camera、motionClass、bodyMovement、cameraMovement、tempoPhases、purpose、visual、personContinuityId、observedPresenterRole、dialogue、voiceover、onScreenText、ambientSound、bgm、soundEffects、beats、persistentState、authenticity、observedFacts、inferredIntent、causalGap、omniPrompt、omniNegativePrompt、confidence、needsReview、viralPotential（object：score 为 0-100 且必须拉开差距，锚点 85以上=强钩子或强证据、70-84=有明确记忆点、50-69=功能性过渡、50以下=信息稀薄；mechanisms 最多4项只写本镜头真实成立的机制，没有就空数组；whyEffective 一句话说明理由并引用本镜头具体画面或台词，低于50分要说明弱在哪里。禁止套用通用话术）、subtitle、audio、note。personContinuityId 对可确认的同一出镜人物跨镜头保持相同稳定 ID，无人物或身份不能确认时留空，不能只凭性别推断。observedPresenterRole 取 sales_presenter（确认贯穿视频的固定销售主讲者对镜说话并绑定稳定人物 ID；路人、D to C 插镜演员不得归入）、presenter_action（主讲人物动作展示）、background（背景人物）、none（无人）、unknown（证据不足）；画外音不能当口播人物，工厂或产品背景不能排除前景销售。observedFacts 只写可见事实；inferredIntent 明确标注推断的表达意图；causalGap 写意图中存在但视频未展示的因果动作；omniPrompt 用英文写可直接交给视频模型的逐时段动作提示，必须复现可见动作，不得擅自补 causalGap；omniNegativePrompt 用英文列出最容易生成错的动作、物理关系和 UI。主体动作/对象/运镜/营销功能改变才切镜；长镜头用 beats 记录镜头内 time/action/dialogue/onScreenText。tempoPhases 每项包含 time、tempo、action。dialogue仅为确认的画内人物口播，voiceover仅为实际听到且确认的画外旁白原文；不能确认留空，不复制dialogue或填“无”。口播、画外旁白、画面字幕、环境声、BGM和音效必须分开；无法确认留空，专名/价格/左右方向/ASR不确定需 needsReview=true
+- scriptDetails15s: array（字段名仅为历史兼容），必须覆盖原视频完整时长，不得在15秒处截断；按导演镜头详析；每项包含 time（start-end区间，最多两位小数）、${QWEN_SHOT_CLASSIFICATION_FIELD_TEXT}、environment、shot、camera、motionClass、bodyMovement、cameraMovement、tempoPhases、purpose、visual、personContinuityId、observedPresenterRole、dialogue、voiceover、onScreenText、ambientSound、bgm、soundEffects、beats、persistentState、authenticity、observedFacts、inferredIntent、causalGap、omniPrompt、omniNegativePrompt、confidence、needsReview、viralPotential（object：score 为 0-100 且必须拉开差距，锚点 85以上=强钩子或强证据、70-84=有明确记忆点、50-69=功能性过渡、50以下=信息稀薄；mechanisms 最多4项只写本镜头真实成立的机制，没有就空数组；whyEffective 一句话说明理由并引用本镜头具体画面或台词，低于50分要说明弱在哪里。禁止套用通用话术）、subtitle、audio、note。personContinuityId 对可确认的同一出镜人物跨镜头保持相同稳定 ID，无人物或身份不能确认时留空，不能只凭性别推断。observedPresenterRole 取 sales_presenter（确认贯穿视频的固定销售主讲者对镜说话并绑定稳定人物 ID；路人、D to C 插镜演员不得归入）、presenter_action（主讲人物动作展示）、background（背景人物）、none（无人）、unknown（证据不足）；画外音不能当口播人物，工厂或产品背景不能排除前景销售。observedFacts 只写可见事实；inferredIntent 明确标注推断的表达意图；causalGap 写意图中存在但视频未展示的因果动作；omniPrompt 用英文写可直接交给视频模型的逐时段动作提示，必须复现可见动作，不得擅自补 causalGap；omniNegativePrompt 用英文列出最容易生成错的动作、物理关系和 UI。主体动作/对象/运镜/营销功能改变才切镜；长镜头用 beats 记录镜头内 time/action/dialogue/onScreenText。tempoPhases 每项包含 time、tempo、action。dialogue仅为确认的画内人物口播，voiceover仅为实际听到且确认的画外旁白原文；不能确认留空，不复制dialogue或填“无”。口播、画外旁白、画面字幕、环境声、BGM和音效必须分开；无法确认留空，专名/价格/左右方向/ASR不确定需 needsReview=true
 - recommendedScriptType: "voiceover" | "storyboard"`;
 
   const externalEvidence = untrustedPromptData('video_metadata_and_asr', JSON.stringify({
@@ -373,7 +384,7 @@ ${BENCHMARK_ANALYSIS_CONTRACT}
       model: opts.analysisMode === 'exact' ? QWEN_EXACT_VL_MODEL() : QWEN_VL_MODEL(),
       messages: [
         { role: 'system', content: `你是视频导演分镜修复器。只输出合法JSON对象，且只能包含scriptDetails15s。${BENCHMARK_ANALYSIS_CONTRACT}
-首4秒是每秒3帧，必须逐相邻帧比较，不得跳过亚秒动作。每项包含time、environment、shot、camera、purpose、visual、dialogue、onScreenText、ambientSound、bgm、soundEffects、beats、persistentState、authenticity、observedFacts、inferredIntent、causalGap、omniPrompt、omniNegativePrompt、confidence、needsReview、viralPotential（object：score 为 0-100 且必须拉开差距，锚点 85以上=强钩子或强证据、70-84=有明确记忆点、50-69=功能性过渡、50以下=信息稀薄；mechanisms 最多4项只写本镜头真实成立的机制，没有就空数组；whyEffective 一句话说明理由并引用本镜头具体画面或台词，低于50分要说明弱在哪里。禁止套用通用话术）、subtitle、audio、note。observedFacts只能写实际可见内容，inferredIntent写推断含义，causalGap写未展示的因果动作；绝不能把causalGap补进visual、beats或omniPrompt。omniPrompt和omniNegativePrompt使用英文。time必须为start-end s区间；口播与屏幕字幕分离；品牌、款名、价格、左右眼不确定时needsReview=true。` },
+首4秒是每秒3帧，必须逐相邻帧比较，不得跳过亚秒动作。每项包含time、${QWEN_SHOT_CLASSIFICATION_FIELD_TEXT}、environment、shot、camera、purpose、visual、dialogue、onScreenText、ambientSound、bgm、soundEffects、beats、persistentState、authenticity、observedFacts、inferredIntent、causalGap、omniPrompt、omniNegativePrompt、confidence、needsReview、viralPotential（object：score 为 0-100 且必须拉开差距，锚点 85以上=强钩子或强证据、70-84=有明确记忆点、50-69=功能性过渡、50以下=信息稀薄；mechanisms 最多4项只写本镜头真实成立的机制，没有就空数组；whyEffective 一句话说明理由并引用本镜头具体画面或台词，低于50分要说明弱在哪里。禁止套用通用话术）、subtitle、audio、note。observedFacts只能写实际可见内容，inferredIntent写推断含义，causalGap写未展示的因果动作；绝不能把causalGap补进visual、beats或omniPrompt。omniPrompt和omniNegativePrompt使用英文。time必须为start-end s区间；口播与屏幕字幕分离；品牌、款名、价格、左右眼不确定时needsReview=true。` },
         { role: 'user', content: content as any },
       ],
       response_format: { type: 'json_object' },
@@ -470,7 +481,7 @@ ${BENCHMARK_ANALYSIS_CONTRACT}
 时间窗口：${JSON.stringify(boundaries)}
 ${opts.transcript?.segments.length ? `独立ASR：${JSON.stringify(opts.transcript.segments)}` : '无可靠ASR，dialogue留空。'}
 summary字段：theme、identityEntities（仅提取明确可见或可听的企业名、品牌名和产品名，每项含type/text/evidence/confidence，不确定时不输出）、hooks、sellingPoints、mood、structure、baseRequirements、firstTenSeconds（atmosphere/audioVisual/camera/visuals/voiceMusic）、coarseStructure（time/label/description）、scriptSummary15s（visualStyle/coreEmotion/competitors）、recommendedScriptType。
-shots每项字段：boundaryId、environment、shot、camera、angle、composition、motionClass、bodyMovement、cameraMovement、purpose、visual、dialogue、onScreenText、ambientSound、bgm、soundEffects、beats、persistentState、startState、endState、transitionToNext、authenticity、observedFacts、inferredIntent、causalGap、omniPrompt、omniNegativePrompt、confidence、needsReview、viralPotential、subtitle、audio、note。每个字符串简洁、具体、尽量不超过24个汉字。shots必须完整返回${boundaries.length}项；无法确认时也必须保留对应boundaryId，用needsReview=true和较低confidence表达不确定，禁止省略分镜。连续报出多个产品名且画面逐个切换时，每个窗口只写本窗口实际可见的那个产品及字幕，不能把整段产品清单合成一个人物或产品镜头。
+shots每项字段：boundaryId、${QWEN_SHOT_CLASSIFICATION_FIELD_TEXT}、environment、shot、camera、angle、composition、motionClass、bodyMovement、cameraMovement、purpose、visual、dialogue、onScreenText、ambientSound、bgm、soundEffects、beats、persistentState、startState、endState、transitionToNext、authenticity、observedFacts、inferredIntent、causalGap、omniPrompt、omniNegativePrompt、confidence、needsReview、viralPotential、subtitle、audio、note。每个字符串简洁、具体、尽量不超过24个汉字。shots必须完整返回${boundaries.length}项；无法确认时也必须保留对应boundaryId，用needsReview=true和较低confidence表达不确定，禁止省略分镜。连续报出多个产品名且画面逐个切换时，每个窗口只写本窗口实际可见的那个产品及字幕，不能把整段产品清单合成一个人物或产品镜头。
 observedFacts仅写真实可见内容；推断只写inferredIntent；缺失因果只写causalGap，不得进入visual或omniPrompt。分别记录口播、屏幕文字、环境声、BGM、音效。动作写初态、接触/路径、终态；运镜、角度、构图分开。必须把走播与站播分开：人物相对背景持续换位或出现连续步态时写走播，bodyMovement 写行走方向与步态，cameraMovement 独立写跟拍、平移、推进或固定。专名、价格、型号、左右方向或ASR不确定时needsReview=true，禁止猜测。omni字段使用英文。` },
       ...opts.frames.flatMap(frame => [
         { type: 'text', text: `以下画面采样时间为 ${frame.timeLabel}；只把画面中的产品、字幕归入包含该时间点的窗口，不能沿用邻镜内容。` },

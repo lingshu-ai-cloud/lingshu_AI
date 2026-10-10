@@ -90,8 +90,10 @@ import { planStoryboardActionSegments } from '../../shared/storyboardActionSegme
 import type { StoryboardKeyState } from '../../shared/storyboardActionSegments.js';
 import { assembleStoryboardActionSegments } from '../lib/storyboardActionAssembly.js';
 import { storyboardAigcProjectBudget } from '../lib/storyboardAigcProjectBudget.js';
-import { applyStoryboardReplicationAutomation, automaticStoryboardFrameAdmission, buildStoryboardQaReport, inspectStoryboardTechnicalFrames, reviewStoryboardQaReport, type StoryboardQaReport } from '../lib/storyboardAigcQuality.js';
-import { studioAigcBudgetConfigFromEnv, studioAigcBudgetPreviewForSpec } from './studioAigcBatchBudget.js';
+import { projectStoryboardProviderReceipt } from '../lib/storyboardProviderReceipt.js';
+import { applyStoryboardReplicationAutomation, automaticStoryboardFrameAdmission, buildStoryboardQaReport, inspectStoryboardTechnicalFrames, reviewStoryboardQaReport, storyboardQaObservationContractIssues, storyboardQaRequiredChecks, type StoryboardQaReport } from '../lib/storyboardAigcQuality.js';
+import { readTenantMaterialBytes } from '../lib/sentenceReplicationProduction.js';
+import { studioAigcBudgetConfigForSpec, studioAigcBudgetConfigFromEnv, studioAigcBudgetPreviewForSpec } from './studioAigcBatchBudget.js';
 import { enterpriseAssetObjectKey, enterpriseAssetTenantKey } from '../storage/enterpriseAssets.js';
 import { videoAnalysisOf } from '../lib/videoAnalysisCodec.js';
 import { getPublicOrigin } from '../lib/oauthConfig.js';
@@ -2130,7 +2132,8 @@ studioRouter.post('/storyboard-first-frame', async (req, res) => {
   if (!projectShotInput || !['ai', 'hybrid'].includes(projectShotInput.input.source.mode)) {
     res.status(409).json({ ok: false, code: 'STORYBOARD_PROJECT_INPUT_CHANGED', error: '当前分镜制作要求已变化，未调用供应商' }); return;
   }
-  const budgetPlan = studioAigcBudgetPreviewForSpec(firstFrameProject?.spec ?? {}, studioAigcBudgetConfigFromEnv());
+  const budgetPlan = studioAigcBudgetPreviewForSpec(firstFrameProject?.spec ?? {},
+    studioAigcBudgetConfigForSpec(firstFrameProject?.spec ?? {}, body.maxCostCny));
   const planned = budgetPlan.shotPlans.find(item => item.shotId === firstFrameProjectShotId);
   if (!planned || planned.status !== 'ready') {
     res.status(409).json({ ok: false, code: 'STORYBOARD_BUDGET_PLAN_UNAVAILABLE', error: '当前分镜未进入智能生成预算计划，未调用供应商', plan: planned }); return;
@@ -2151,7 +2154,7 @@ studioRouter.post('/storyboard-first-frame', async (req, res) => {
   try {
     const admission = await storyboardAigcProjectBudget.reserve({ tenantId, projectId: String(body.projectId), shotId,
       stage: 'first_frame', operationId: frameOperationId,
-      estimatedCostCny: reservedFirstFrameCostCny, inputFingerprint: fingerprint });
+      estimatedCostCny: reservedFirstFrameCostCny, inputFingerprint: fingerprint, limitCny: budgetPlan.batchBudgetCny });
     if (admission.existing) {
       const recovered = admission.entry.status === 'completed' && admission.entry.output?.materialId
         ? loadMaterials().find(item => item.id === String(admission.entry.output?.materialId) && item.tenantId === tenantId
@@ -2373,6 +2376,184 @@ studioRouter.post('/storyboard-first-frame', async (req, res) => {
   }
 });
 
+// Re-run visual QA against the already generated first frame. This endpoint
+// never generates an image or reserves budget; it only replaces the QA report
+// after the material and every current project/reference binding are verified.
+studioRouter.post('/storyboard-first-frame/:id/recheck-quality', async (req, res) => {
+  const { tenantId } = res.locals as AuthLocals;
+  const list = loadMaterials();
+  const material = list.find(item => item.id === req.params.id && item.tenantId === tenantId
+    && item.scope === 'own' && item.type === 'image' && item.sourceType === 'ai-storyboard-first-frame');
+  if (!material) { res.status(404).json({ ok: false, error: '首帧候选不存在' }); return; }
+  const fingerprint = String(req.body?.fingerprint || '');
+  const shotId = String(req.body?.shotId || '');
+  if (!fingerprint || material.provenance?.fingerprint !== fingerprint || material.provenance?.shotId !== shotId) {
+    res.status(409).json({ ok: false, code: 'FIRST_FRAME_INPUT_CHANGED', error: '首帧输入已变化，不能复用原图质检' }); return;
+  }
+  if (material.objectKey && !isTenantPrivateObjectKey(material.objectKey, tenantId)) {
+    res.status(409).json({ ok: false, code: 'FIRST_FRAME_SOURCE_UNTRUSTED', error: '首帧原图不属于当前企业的私有存储空间' }); return;
+  }
+  const projectId = String(material.provenance?.projectId || '');
+  const currentProject = await store.getById<any>('studio_projects', projectId);
+  const currentInput = currentProject?.tenant_id === tenantId ? storyboardProjectShotInput(currentProject.spec ?? {}, shotId) : null;
+  if (!currentInput || currentInput.fingerprint !== material.provenance?.projectShotFingerprint) {
+    res.status(409).json({ ok: false, code: 'STORYBOARD_PROJECT_INPUT_CHANGED', error: '当前分镜输入已变化，不能复用原图质检' }); return;
+  }
+  const shotSpec = material.provenance?.shotSpec as StoryboardShotSpec | undefined;
+  if (!shotSpec || shotSpec.shotId !== shotId) {
+    res.status(409).json({ ok: false, code: 'STORYBOARD_PROJECT_INPUT_CHANGED', error: '首帧缺少当前分镜规格，不能复用原图质检' }); return;
+  }
+  const productIds = Array.isArray(material.provenance?.productIds)
+    ? material.provenance.productIds.map(String) : material.productId ? [material.productId] : [];
+  const currentProductIds = currentInput.input.source.productIds;
+  const shotProductIds = shotSpec.assets.filter(asset => asset.role === 'product' && asset.source === 'knowledge_base').map(asset => asset.id);
+  const hasSelectedProductContract = Array.isArray(currentProject.spec?.selectedProductIds);
+  const selectedProductIds = hasSelectedProductContract ? currentProject.spec.selectedProductIds.map(String) : [];
+  if (JSON.stringify(productIds) !== JSON.stringify(currentProductIds)
+    || JSON.stringify(productIds) !== JSON.stringify(shotProductIds)
+    || (hasSelectedProductContract && productIds.some(id => !selectedProductIds.includes(id)))
+    || (material.productId && material.productId !== productIds[0])) {
+    res.status(409).json({ ok: false, code: 'STORYBOARD_PRODUCT_BINDING_CHANGED', error: '首帧绑定的产品与当前分镜不一致，不能复用原图质检' }); return;
+  }
+  const kbIssues = await storyboardKbFrameVersionIssues(tenantId, shotSpec);
+  if (kbIssues.length) { res.status(409).json({ ok: false, code: 'STORYBOARD_PRODUCT_IMAGE_CHANGED', error: kbIssues.join('；') }); return; }
+  const personIssues = await storyboardPersonFrameVersionIssues(tenantId, shotSpec);
+  if (personIssues.length) { res.status(409).json({ ok: false, code: 'STORYBOARD_PERSON_IMAGE_CHANGED', error: personIssues.join('；') }); return; }
+  const environmentIssues = await storyboardEnvironmentFrameVersionIssues(tenantId, currentProject.spec ?? {}, shotSpec);
+  if (environmentIssues.length) { res.status(409).json({ ok: false, code: 'STORYBOARD_ENVIRONMENT_IMAGE_CHANGED', error: environmentIssues.join('；') }); return; }
+
+  let source: { bytes: Buffer; mimeType: string };
+  try { source = await readTenantMaterialBytes(material as any, tenantId); }
+  catch (error) {
+    res.status(422).json({ ok: false, code: 'FIRST_FRAME_SOURCE_UNAVAILABLE', error: error instanceof Error ? error.message : '首帧原图不可读取' }); return;
+  }
+  if (!/^image\/(?:png|jpe?g|webp)$/i.test(source.mimeType)) {
+    res.status(422).json({ ok: false, code: 'FIRST_FRAME_SOURCE_UNAVAILABLE', error: '首帧原图格式不可质检' }); return;
+  }
+  const sourceSha256 = createHash('sha256').update(source.bytes).digest('hex');
+  const storedSha256 = String((material as any).contentSha256 || '');
+  if (storedSha256 && storedSha256 !== sourceSha256) {
+    res.status(409).json({ ok: false, code: 'FIRST_FRAME_SOURCE_CHANGED', error: '首帧原图内容已变化，不能复用原图质检' }); return;
+  }
+
+  const productReferences: Array<ReferenceImage & { timeLabel: string }> = [];
+  const productNames: string[] = [];
+  if (productIds.length) {
+    const profile = await readTenantEnterpriseProfile(tenantId);
+    const products = profile.products.items || [];
+    for (const [index, productId] of productIds.entries()) {
+      let product = products.find((item, productIndex) => productIdentity(item, productIndex) === productId);
+      if (!product) {
+        const legacy = productId.match(/^product-(\d+)-(.+)$/);
+        const candidate = legacy ? products[Number(legacy[1])] : undefined;
+        if (candidate && candidate.name === legacy?.[2] && products.filter(item => item.name === candidate.name).length === 1) product = candidate;
+      }
+      const imageUrl = String(product?.images?.[0]?.url || product?.imageUrl || '');
+      const image = imageUrl ? await storyboardEnterpriseImage(imageUrl, tenantId) : null;
+      if (!product || !image) {
+        res.status(422).json({ ok: false, code: 'PRODUCT_REFERENCE_UNAVAILABLE', error: `知识库产品 ${productId} 的参考图不可读取` }); return;
+      }
+      productNames.push(String(product.name || ''));
+      productReferences.push({ ...image, timeLabel: `企业产品参考${index + 1}：${String(product.name || '')}` });
+    }
+  }
+  const viewAssets = shotSpec.assets.filter(asset => asset.role === 'product_view');
+  const viewReferences = await storyboardKbProductViewReferences(tenantId, shotSpec);
+  if (viewReferences.length !== viewAssets.length) {
+    res.status(409).json({ ok: false, code: 'STORYBOARD_PRODUCT_IMAGE_CHANGED', error: '产品多角度参考图已变化或无法读取' }); return;
+  }
+  productReferences.push(...viewReferences);
+  const personAsset = shotSpec.assets.find(asset => asset.role === 'person');
+  const personReference = personAsset ? await storyboardPersonAssetImage(personAsset.id, tenantId) : null;
+  if (personAsset && !personReference) {
+    res.status(422).json({ ok: false, code: 'PERSON_REFERENCE_UNAVAILABLE', error: '指定人物参考图已失效，请补充资产后重新质检' }); return;
+  }
+  const environmentAsset = shotSpec.assets.find(asset => asset.role === 'environment');
+  const environmentReference = environmentAsset ? await storyboardMaterialImage(environmentAsset.id, tenantId) : null;
+  if (environmentAsset && !environmentReference) {
+    res.status(422).json({ ok: false, code: 'ENVIRONMENT_REFERENCE_UNAVAILABLE', error: '工厂环境参考图已失效，请补充资产后重新质检' }); return;
+  }
+
+  const qaShape = {
+    phase: 'first_frame' as const, sceneType: shotSpec.scene,
+    hasProduct: productIds.length > 0, hasNamedPerson: !!personReference,
+    hasEnvironmentReference: !!environmentReference,
+    hasContact: shotSpec.constraints.includes('physical_contact'),
+    hasAction: !!(shotSpec.action.startState || shotSpec.action.beats.length),
+  };
+  const frame = { bytes: source.bytes, timeLabel: '候选首帧' };
+  const technical = await inspectStoryboardTechnicalFrames('first_frame', [frame]);
+  let observations: unknown;
+  try {
+    observations = await inspectStoryboardAigcFramesWithQwen({
+      phase: 'first_frame', sceneType: shotSpec.scene,
+      frames: [{ base64: source.bytes.toString('base64'), mimeType: source.mimeType, timeLabel: '候选首帧' }],
+      productReferences,
+      personReferences: personReference ? [{ ...personReference, timeLabel: '企业人物参考' }] : [],
+      environmentReferences: environmentReference && !(shotSpec.mode === 'replication' && !personReference)
+        ? [{ ...environmentReference, timeLabel: '企业工厂环境参考' }] : [],
+      storyboard: shotSpec.description, productInfo: productNames.join('、'),
+      startState: shotSpec.action.startState, beats: shotSpec.action.beats, endState: shotSpec.action.endState,
+    });
+  } catch (error) {
+    console.warn('[studio] first-frame QA recheck service unavailable:', error);
+    res.status(503).json({ ok: false, code: 'FIRST_FRAME_QA_SERVICE_UNAVAILABLE',
+      error: '首帧视觉质检服务暂不可用，已保留原图和原质检状态，可稍后重试', retryable: true }); return;
+  }
+  const rawObservations = Array.isArray(observations) ? observations : [];
+  const candidateLabels = ['候选首帧'];
+  const contractIssues = storyboardQaObservationContractIssues({ observations: rawObservations,
+    requiredKeys: storyboardQaRequiredChecks(qaShape), candidateLabels,
+    allowedCitationLabels: [...productReferences.map(item => item.timeLabel),
+      ...(personReference ? ['企业人物参考'] : []), ...(environmentReference ? ['企业工厂环境参考'] : []), ...candidateLabels],
+    technicalKeys: technical.map(item => item.key),
+  });
+  if (contractIssues.length) {
+    res.status(502).json({ ok: false, code: 'FIRST_FRAME_QA_RESPONSE_INVALID',
+      error: `首帧质检响应不完整（${contractIssues.join('、')}），已保留原质检状态`, retryable: true }); return;
+  }
+  let quality = buildStoryboardQaReport({ ...qaShape,
+    observations: [...rawObservations.filter(item => !technical.some(check => check.key === (item as any)?.key)), ...technical],
+    evidenceFrameLabels: ['候选首帧'],
+  });
+  if (shotSpec.mode === 'replication' && !personReference) quality = applyStoryboardReplicationAutomation(quality);
+
+  const latest = loadMaterials();
+  const current = latest.find(item => item.id === material.id && item.tenantId === tenantId
+    && item.sourceType === 'ai-storyboard-first-frame');
+  const latestProject = await store.getById<any>('studio_projects', projectId);
+  const latestInput = latestProject?.tenant_id === tenantId ? storyboardProjectShotInput(latestProject.spec ?? {}, shotId) : null;
+  if (!current || current.objectKey !== material.objectKey || current.file !== material.file
+    || current.provenance?.fingerprint !== fingerprint
+    || current.provenance?.projectShotFingerprint !== material.provenance?.projectShotFingerprint
+    || latestInput?.fingerprint !== material.provenance?.projectShotFingerprint) {
+    res.status(409).json({ ok: false, code: 'FIRST_FRAME_SOURCE_CHANGED', error: '质检期间首帧版本已变化，未覆盖质检结果' }); return;
+  }
+  let currentBytes: { bytes: Buffer; mimeType: string };
+  try { currentBytes = await readTenantMaterialBytes(current as any, tenantId); }
+  catch { res.status(409).json({ ok: false, code: 'FIRST_FRAME_SOURCE_CHANGED', error: '质检期间首帧原图已不可读取，未覆盖质检结果' }); return; }
+  if (createHash('sha256').update(currentBytes.bytes).digest('hex') !== sourceSha256) {
+    res.status(409).json({ ok: false, code: 'FIRST_FRAME_SOURCE_CHANGED', error: '质检期间首帧原图内容已变化，未覆盖质检结果' }); return;
+  }
+  const previousProvenance = current.provenance || {};
+  const automaticallyConfirmed = quality.acceptanceSource === 'automatic_policy' && quality.passed;
+  current.provenance = { ...previousProvenance, firstFrameQuality: quality,
+    firstFrameQualityInput: { sourceSha256, checkedAt: quality.checkedAt, provider: 'qwen_vl' },
+    confirmed: automaticallyConfirmed,
+    confirmationSource: automaticallyConfirmed ? 'automatic_policy' : undefined,
+    qualityStatus: quality.acceptanceSource === 'automatic_policy'
+      ? (!quality.passed ? 'automated_checks_failed' : quality.automatedPassed ? 'automated_checks_passed' : 'automatic_policy_with_uncertainties')
+      : quality.status === 'needs_review' ? 'needs_review' : 'automated_checks_failed',
+    confirmedAt: automaticallyConfirmed ? new Date().toISOString() : undefined };
+  persistMaterials(latest);
+  if (quality.findings.some(item => item.severity === 'hard_failure')) {
+    res.status(409).json({ ok: false, code: 'FIRST_FRAME_QA_FAILED', error: '首帧真实视觉质检未通过，已保留原图并记录失败项',
+      materialId: current.id, fingerprint, firstFrameQuality: quality }); return;
+  }
+  res.json({ ok: true, materialId: current.id, fingerprint, sourceSha256, firstFrameQuality: quality,
+    reusedOriginalImage: true });
+});
+
 studioRouter.post('/storyboard-first-frame/:id/confirm', async (req, res) => {
   const { tenantId, userId } = res.locals as AuthLocals;
   const list = loadMaterials();
@@ -2492,7 +2673,8 @@ studioRouter.post('/storyboard-action-video', async (req, res) => {
       || String(currentSourcePlan.actionEndState || '') !== shotSpec.action.endState)) {
     res.status(409).json({ ok: false, code: 'STORYBOARD_ACTION_CHANGED', error: '本镜头动作关键状态变化，请重新生成首帧' }); return;
   }
-  const budgetPreview = studioAigcBudgetPreviewForSpec(project.spec ?? {}, studioAigcBudgetConfigFromEnv());
+  const budgetPreview = studioAigcBudgetPreviewForSpec(project.spec ?? {},
+    studioAigcBudgetConfigForSpec(project.spec ?? {}, req.body?.maxCostCny));
   const budgetShotId = String((Array.isArray(project.spec?.shootingSlots) ? project.spec.shootingSlots : [])
     .find((slot: any) => String(slot.slotId || slot.id || '') === shotId || String(slot.id || '') === shotId)?.id || shotId);
   const budgetPlan = budgetPreview.shotPlans.find(item => item.shotId === budgetShotId);
@@ -2540,7 +2722,8 @@ studioRouter.post('/storyboard-action-video', async (req, res) => {
 
   const operationId = `storyboard-action:${requestId}`;
   try {
-    const reserved = await storyboardAigcProjectBudget.reserve({ tenantId, projectId, shotId, stage: 'video', operationId, estimatedCostCny: plannedCost });
+    const reserved = await storyboardAigcProjectBudget.reserve({ tenantId, projectId, shotId, stage: 'video', operationId,
+      estimatedCostCny: plannedCost, limitCny: budgetPreview.batchBudgetCny });
     if (reserved.existing) {
       const completedMaterialId = reserved.entry.status === 'completed' ? String(reserved.entry.output?.materialId || '') : '';
       const completedMaterial = completedMaterialId ? loadMaterials().find(item => item.id === completedMaterialId
@@ -2799,6 +2982,7 @@ studioRouter.post('/seedance-video', async (req, res) => {
   const config = seedanceVideoConfig();
   let storyboardProjectId = '';
   let storyboardOperationId = '';
+  let storyboardBudgetLimitCny: number | undefined;
   const storyboardEstimatedCostCny = estimateSeedanceCostCny(duration, String(resolution));
   if (firstFrame && !/^[A-Za-z0-9_:.-]{8,180}$/.test(String(requestId))) {
     res.status(400).json({ ok: false, code: 'STORYBOARD_VIDEO_REQUEST_ID_REQUIRED', error: '分镜视频需要稳定请求 ID，未调用供应商' }); return;
@@ -2831,7 +3015,9 @@ studioRouter.post('/seedance-video', async (req, res) => {
         || String(currentSourcePlan.actionEndState || '') !== storyboardShotSpec.action.endState)) {
       res.status(409).json({ ok: false, code: 'STORYBOARD_ACTION_CHANGED', error: '使用动作关键状态已变化，请重新生成首帧' }); return;
     }
-    const preview = studioAigcBudgetPreviewForSpec(project.spec ?? {}, studioAigcBudgetConfigFromEnv());
+    const preview = studioAigcBudgetPreviewForSpec(project.spec ?? {},
+      studioAigcBudgetConfigForSpec(project.spec ?? {}, req.body?.maxCostCny));
+    storyboardBudgetLimitCny = preview.batchBudgetCny;
     const persistedShotId = String((Array.isArray(project.spec?.shootingSlots) ? project.spec.shootingSlots : [])
       .find((slot: any) => String(slot.slotId || slot.id || '') === String(shotId) || String(slot.id || '') === String(shotId))?.id || shotId);
     const plan = preview.shotPlans.find(item => item.shotId === persistedShotId);
@@ -2855,7 +3041,7 @@ studioRouter.post('/seedance-video', async (req, res) => {
     try {
       const reserved = await storyboardAigcProjectBudget.reserve({ tenantId, projectId: storyboardProjectId,
         shotId: String(shotId), stage: 'video', operationId: storyboardOperationId,
-        estimatedCostCny: storyboardEstimatedCostCny });
+        estimatedCostCny: storyboardEstimatedCostCny, limitCny: storyboardBudgetLimitCny });
       if (reserved.existing) {
         const materialId = reserved.entry.status === 'completed' ? String(reserved.entry.output?.materialId || '') : '';
         const recovered = materialId ? loadMaterials().find(item => item.id === materialId && item.tenantId === tenantId
@@ -2871,7 +3057,10 @@ studioRouter.post('/seedance-video', async (req, res) => {
           code: reserved.entry.status === 'reserved' ? 'STORYBOARD_VIDEO_IN_PROGRESS' : 'STORYBOARD_VIDEO_RECONCILIATION_REQUIRED',
           error: reserved.entry.status === 'reserved' ? '原视频请求仍在处理，请稍后查询；未重复调用供应商'
             : '原视频请求已提交但产物暂不可核验，请核对任务记录；未重复调用供应商',
-          operationId: storyboardOperationId }); return;
+          operationId: storyboardOperationId,
+          providerTaskId: reserved.entry.output?.providerTaskId,
+          providerModel: reserved.entry.output?.providerModel,
+          providerAcceptedAt: reserved.entry.output?.providerAcceptedAt }); return;
       }
     } catch (error) {
       res.status(429).json({ ok: false, code: 'STORYBOARD_PROJECT_BUDGET_EXCEEDED',
@@ -2960,6 +3149,14 @@ studioRouter.post('/seedance-video', async (req, res) => {
     const taskId = seedanceTaskId(created);
     if (!taskId) throw new Error('Seedance 未返回任务 ID');
     taskAccepted = true;
+    if (storyboardOperationId) {
+      const receipt = await storyboardAigcProjectBudget.recordProviderAcceptance(tenantId, storyboardProjectId,
+        storyboardOperationId, taskId, config.model);
+      await projectStoryboardProviderReceipt({ store, tenantId, projectId: storyboardProjectId,
+        slotId: String(shotId), firstFrameMaterialId: String(firstFrameMaterialId),
+        firstFrameFingerprint: String(firstFrameFingerprint), providerTaskId: taskId,
+        providerModel: config.model, providerAcceptedAt: String(receipt.output!.providerAcceptedAt) });
+    }
     const task = await waitForSeedanceTask(config, taskId);
     const remoteUrl = findUrlDeep(task);
     if (!remoteUrl) throw new Error('Seedance 未返回可下载的视频地址');

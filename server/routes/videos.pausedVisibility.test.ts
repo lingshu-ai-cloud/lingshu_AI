@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { isDisplayableTestTenantVideo } from './videos.js';
+import { isDisplayableTestTenantVideo, queuedVideoAnalysisFailurePatch } from './videos.js';
 
 const video = {
   id: 'paused-visibility-fixture',
@@ -25,5 +25,20 @@ assert.equal(isDisplayableTestTenantVideo({ ...video, aiAnalysis: { geminiStatus
   'pause visibility must not override a terminal media failure');
 assert.equal(isDisplayableTestTenantVideo({ ...video, aiAnalysis: { geminiStatus: 'paused', adminOnlyVideoFailure: true, userVisible: false } }), false,
   'pause visibility must not override the existing administrator-only boundary');
+
+const completedExact = {
+  analysisMode: 'exact', analysisQuality: 'video_review_required', geminiStatus: 'needs_review', userVisible: true,
+  downloadStatus: 'analyzed', videoFetchStatus: 'fetched',
+  gemini: { scriptDetails15s: [{ time: '0-4.7s', visual: '产品近景' }, { time: '4.7-9.41s', visual: '工厂全景' }] },
+};
+const failedRetry = queuedVideoAnalysisFailurePatch(completedExact, 'provider model unavailable', '2026-10-11T00:00:00Z');
+assert.equal(failedRetry.userVisible, true, 'a failed retry must preserve the prior user visibility decision');
+assert.equal(failedRetry.geminiStatus, 'needs_review', 'the retained exact evidence remains reviewable rather than becoming a missing video');
+assert.equal(failedRetry.analysisQueueState, 'failed');
+assert.equal(isDisplayableTestTenantVideo({ ...video, status: 'analyzed', aiAnalysis: failedRetry }), true,
+  'completed exact evidence remains in the inspiration inventory after a failed upgrade');
+const firstFailure = queuedVideoAnalysisFailurePatch({ analysisQuality: 'pending', userVisible: true }, 'provider failed', '2026-10-11T00:00:00Z');
+assert.equal(firstFailure.userVisible, false, 'a first analysis failure without completed evidence stays hidden');
+assert.equal(isDisplayableTestTenantVideo({ ...video, status: 'analyzed', aiAnalysis: firstFailure }), false);
 
 console.log('Paused inspiration visibility tests passed');

@@ -4,8 +4,9 @@ import {
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
 } from 'react';
-import { Badge, Button } from 'antd';
+import { Badge, Button, Modal } from 'antd';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   ArrowLeft,
@@ -42,8 +43,11 @@ import {
 } from '../stores/assistantStore';
 import AgentReply from './AgentReply';
 import AssistantComposer, { assistantAttachmentKind } from './assistant/AssistantComposer';
-import { AssistantDecisionCenter } from './assistant';
-import type { AssistantDecisionFeed } from '../../shared/contracts/assistantDecisionCenter';
+import AssistantDecisionCenter, {
+  assistantDecisionExecutionFeedback,
+  type AssistantDecisionActionResult,
+} from './assistant/AssistantDecisionCenter';
+import type { AssistantDecisionDeepLink, AssistantDecisionFeed } from '../../shared/contracts/assistantDecisionCenter';
 import KnowledgeIntakePanel, { type AppliedProfile } from './enterprise/KnowledgeIntakePanel';
 import { studioApi } from '../lib/studioApi';
 import {
@@ -96,10 +100,15 @@ const GUIDE_COOLDOWN_MS = 45_000;
 const GUIDE_VISIBLE_MS = 6_000;
 const ENTERPRISE_GUIDE_MEMORY_ID = '__enterprise-guide-shown__';
 const ASSISTANT_PRIMARY_ENTRY_SEEN_KEY = 'lingshu-assistant-primary-entry-seen-v1';
+const ASSISTANT_CONVERSATION_WELCOME_SEEN_KEY = 'lingshu-assistant-conversation-welcome-seen-v1';
 
 type AssistantPerformance = { phase: string; message?: string; reason: AssistantNotificationReason };
 type AssistantSpeech = { id: number; message: string };
-type AssistantPanelView = 'approvals' | 'todo' | 'chat' | 'decision';
+type AssistantPanelView = 'todo' | 'chat';
+type AssistantDecisionDialog =
+  | { kind: 'feed' }
+  | { kind: 'task'; taskId: string }
+  | null;
 
 const PERFORMANCE_LINES: Record<string, string[]> = {
   script: ['我正在把卖点排成能拍的镜头，马上就好。', '好内容值得多想几秒，我先帮你把逻辑捋顺。', '别急，我正在检查每个镜头能不能真正执行。'],
@@ -256,6 +265,14 @@ function emptyAssistantThread(): AgentThreadState {
     taskCards: {},
     focusedTaskId: null,
   };
+}
+
+function assistantBubbleStyle(index: number): CSSProperties {
+  const boundedIndex = Math.min(Math.max(0, index), 6);
+  return {
+    '--assistant-bubble-index': boundedIndex,
+    '--assistant-bubble-delay': `${boundedIndex * 15}ms`,
+  } as CSSProperties;
 }
 
 function assistantPersistenceRetryDelay(attempt: number): number {
@@ -685,6 +702,8 @@ export default function GlobalAssistant({
   const spatialTransition = reduceMotion ? { duration: 0 } : { ...lsMotion.spring.standard, opacity: fadeTransition };
   const [mode, setMode] = useState<'breathing' | 'chat'>('breathing');
   const [panelView, setPanelView] = useState<AssistantPanelView>('chat');
+  const [decisionDialog, setDecisionDialog] = useState<AssistantDecisionDialog>(null);
+  const [decisionFeedRevision, setDecisionFeedRevision] = useState(0);
   const [decisionTotal, setDecisionTotal] = useState<number | null>(null);
   const activeAgent = PRIMARY_ASSISTANT_THREAD;
   const [assistantTool, setAssistantTool] = useState<AssistantTool | null>(null);
@@ -697,6 +716,8 @@ export default function GlobalAssistant({
   const [performanceLineIndex, setPerformanceLineIndex] = useState(0);
   const [speechBubble, setSpeechBubble] = useState<AssistantSpeech | null>(null);
   const [loading, setLoading] = useState(false);
+  const [assistantThreadHydrated, setAssistantThreadHydrated] = useState(false);
+  const [welcomeBubbleVisible, setWelcomeBubbleVisible] = useState(false);
   const [pendingAttachments, setPendingAttachments] = useState<File[]>([]);
   const [attachmentError, setAttachmentError] = useState('');
   const [attachmentUploading, setAttachmentUploading] = useState(false);
@@ -713,6 +734,10 @@ export default function GlobalAssistant({
   const messageScrollRef = useRef<HTMLDivElement>(null);
   const assistantInputRef = useRef<HTMLTextAreaElement>(null);
   const launcherButtonRef = useRef<HTMLAnchorElement | HTMLButtonElement>(null);
+  const decisionDialogTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const decisionDialogKindRef = useRef<Exclude<AssistantDecisionDialog, null>['kind'] | null>(null);
+  const decisionDialogRestoreFocusRef = useRef(true);
+  const handledDecisionResultsRef = useRef(new Set<string>());
   const abortRef = useRef<AbortController | null>(null);
   const handledKickoffs = useRef(new Set<string>());
   const handledRestores = useRef(new Set<string>());
@@ -720,11 +745,13 @@ export default function GlobalAssistant({
   const initialAssistantPageRef = useRef(page);
   const assistantThreadSaveQueuesRef = useRef(new Map<OrbitAgentId, AssistantThreadSaveQueue>());
   const uploadedAttachmentCacheRef = useRef(new WeakMap<File, UploadedAssistantAttachment>());
+  const welcomeBubbleScopeRef = useRef('');
   const stablePersistenceScope = useMemo<AssistantJournalScope>(() => ({
     tenantId: persistenceScope.tenantId.trim(),
     userId: persistenceScope.userId.trim(),
   }), [persistenceScope.tenantId, persistenceScope.userId]);
   const persistenceScopeKey = `${stablePersistenceScope.tenantId}\u0000${stablePersistenceScope.userId}`;
+  const welcomeBubbleStorageKey = `${ASSISTANT_CONVERSATION_WELCOME_SEEN_KEY}:${encodeURIComponent(stablePersistenceScope.tenantId)}:${encodeURIComponent(stablePersistenceScope.userId)}`;
   const persistenceFenceRef = useRef({ scopeKey: persistenceScopeKey, active: true });
   if (persistenceFenceRef.current.scopeKey !== persistenceScopeKey) {
     persistenceFenceRef.current.active = false;
@@ -762,7 +789,10 @@ export default function GlobalAssistant({
   const focusedTaskCard = activeThread.focusedTaskId
     ? activeThread.taskCards[activeThread.focusedTaskId] ?? null
     : null;
-  const focusedRunControl = assistantRunControl(focusedTaskCard);
+  const dialogTaskCard = decisionDialog?.kind === 'task'
+    ? activeThread.taskCards[decisionDialog.taskId] ?? null
+    : null;
+  const focusedRunControl = assistantRunControl(dialogTaskCard);
   const todoItems = pageContext.todoItems ?? [];
   const activeTodoItems = todoItems.filter(item => !item.completed);
   const completedTodoItems = todoItems.filter(item => item.completed);
@@ -772,20 +802,10 @@ export default function GlobalAssistant({
   const isCustomerTodoView = panelView === 'todo' && pageContext.agent === 'conversion';
   const panelTitle = assistantTool === 'knowledge-intake'
     ? '灵小枢 · 快速采集'
-    : panelView === 'approvals'
-      ? '待你决定'
-      : panelView === 'decision' && focusedTaskCard
-      ? focusedTaskCard.status === 'approval' || focusedTaskCard.status === 'needs_input'
-        ? '需要你确认'
-        : '任务结果'
-      : isCustomerTodoView ? '今日待办' : activeAgentLabel;
+    : isCustomerTodoView ? '今日待办' : activeAgentLabel;
   const panelSubtitle = assistantTool === 'knowledge-intake'
     ? '当前：智能客服规范'
-    : panelView === 'approvals'
-      ? '查看详情后再确认，不会在概要卡上直接执行'
-      : panelView === 'decision' && focusedTaskCard
-      ? focusedTaskCard.title
-      : isCustomerTodoView ? '当前：我的客户' : `当前：${activeContext.label}`;
+    : isCustomerTodoView ? '当前：我的客户' : `当前：${activeContext.label}`;
   const assistantPanelHeight = Math.max(120, Math.min(720, viewport.height - 96));
   const assistantPanelWidth = Math.min(assistantTool === 'knowledge-intake' ? 560 : 420, viewport.width - 32);
   const performanceLines = PERFORMANCE_LINES[performance?.phase || 'default'] || PERFORMANCE_LINES.default;
@@ -949,6 +969,28 @@ export default function GlobalAssistant({
     };
   }, [persistThread]);
 
+  const revealConversationWelcomeOnce = useCallback(() => {
+    const thread = useAssistantStore.getState().threads[PRIMARY_ASSISTANT_THREAD];
+    if (thread.messages.length) {
+      setWelcomeBubbleVisible(false);
+      return;
+    }
+    if (welcomeBubbleScopeRef.current === welcomeBubbleStorageKey) {
+      setWelcomeBubbleVisible(false);
+      return;
+    }
+    welcomeBubbleScopeRef.current = welcomeBubbleStorageKey;
+    let alreadySeen = false;
+    try {
+      alreadySeen = window.localStorage.getItem(welcomeBubbleStorageKey) === 'true';
+      if (!alreadySeen) window.localStorage.setItem(welcomeBubbleStorageKey, 'true');
+    } catch {
+      // Storage is optional. The in-memory scope guard still prevents repeats
+      // while this assistant instance is mounted.
+    }
+    setWelcomeBubbleVisible(!alreadySeen);
+  }, [welcomeBubbleStorageKey]);
+
   const openAgent = useCallback((routeAgent: OrbitAgentId, preferredView?: AssistantPanelView) => {
     const agentId = PRIMARY_ASSISTANT_THREAD;
     const nextView = preferredView ?? 'chat';
@@ -966,6 +1008,83 @@ export default function GlobalAssistant({
 
   const handleDecisionFeedChange = useCallback((feed: AssistantDecisionFeed) => {
     setDecisionTotal(Math.max(0, feed.total));
+  }, []);
+
+  const openDecisionDialog = useCallback((
+    dialog: Exclude<AssistantDecisionDialog, null>,
+    trigger?: HTMLButtonElement | null,
+  ) => {
+    decisionDialogTriggerRef.current = trigger ?? null;
+    decisionDialogKindRef.current = dialog.kind;
+    decisionDialogRestoreFocusRef.current = true;
+    setDecisionDialog(dialog);
+  }, []);
+
+  const closeDecisionDialog = useCallback(() => {
+    decisionDialogRestoreFocusRef.current = true;
+    setDecisionDialog(null);
+    // The conversation summary owns an independent request. Refresh it only
+    // after the external dialog closes so opening a detail does not immediately
+    // remount the trigger or duplicate the authoritative detail request.
+    setDecisionFeedRevision(revision => revision + 1);
+  }, []);
+
+  const closeDecisionDialogForNavigation = useCallback((_link?: AssistantDecisionDeepLink) => {
+    // Navigation replaces the trigger's page context. Close the external
+    // detail immediately, but do not move focus back into the page being left.
+    decisionDialogRestoreFocusRef.current = false;
+    setDecisionDialog(null);
+  }, []);
+
+  const handleDecisionDialogFeedChange = useCallback((feed: AssistantDecisionFeed) => {
+    handleDecisionFeedChange(feed);
+  }, [handleDecisionFeedChange]);
+
+  const handleDecisionActionResult = useCallback((result: AssistantDecisionActionResult) => {
+    if (result.action.id !== 'approve_and_start' || !result.response.execution) return;
+    const execution = result.response.execution;
+    if (execution.goalId !== result.card.subject.id) return;
+    const resultKey = `${execution.runId}:${execution.status}`;
+    if (handledDecisionResultsRef.current.has(resultKey)) return;
+    handledDecisionResultsRef.current.add(resultKey);
+    const feedback = assistantDecisionExecutionFeedback(execution);
+    const current = useAssistantStore.getState().threads[PRIMARY_ASSISTANT_THREAD].messages;
+    setMessages(PRIMARY_ASSISTANT_THREAD, [
+      ...current,
+      { role: 'assistant', content: `**${feedback.title}**\n\n${feedback.detail}` },
+    ]);
+    setFollowingLatest(PRIMARY_ASSISTANT_THREAD, true);
+    setDecisionTotal(Math.max(0, result.response.total));
+    closeDecisionDialog();
+    persistThread(PRIMARY_ASSISTANT_THREAD);
+    onSessionRefresh?.();
+  }, [closeDecisionDialog, onSessionRefresh, persistThread, setFollowingLatest, setMessages]);
+
+  const restoreDecisionDialogFocus = useCallback(() => {
+    const shouldRestoreFocus = decisionDialogRestoreFocusRef.current;
+    const originalTrigger = decisionDialogTriggerRef.current;
+    const triggerKind = decisionDialogKindRef.current;
+    decisionDialogRestoreFocusRef.current = true;
+    decisionDialogTriggerRef.current = null;
+    decisionDialogKindRef.current = null;
+    if (!shouldRestoreFocus) return;
+    window.requestAnimationFrame(() => {
+      if (originalTrigger?.isConnected) {
+        originalTrigger.focus();
+        return;
+      }
+      // Closing refreshes the authoritative summary, so the original trigger
+      // may have been replaced. Restore focus to its current semantic peer.
+      const summaryScope = triggerKind === 'feed'
+        ? '[data-assistant-summary="decision-feed"]'
+        : '[data-assistant-summary="task-card"]';
+      const replacement = document.querySelector<HTMLButtonElement>(
+        `#global-assistant-panel ${summaryScope} .assistant-decision-summary`,
+      );
+      if (replacement) replacement.focus();
+      else if (document.getElementById('global-assistant-panel')) document.getElementById('global-assistant-panel')?.focus();
+      else launcherButtonRef.current?.focus();
+    });
   }, []);
 
   const rememberGuide = useCallback((id: string, shownAt: number) => {
@@ -1458,16 +1577,21 @@ export default function GlobalAssistant({
         presentActionResponse(activeAgent, request, response);
         persistThread(activeAgent);
         onSessionRefresh?.();
+        closeDecisionDialog();
       }
       return;
     }
     if (action.prompt) {
       setPanelView('chat');
+      closeDecisionDialog();
       void send(action.prompt, currentPageAgent);
       return;
     }
-    if (action.href) window.location.assign(action.href);
-  }, [activeAgent, currentPageAgent, executeAssistantAction, onSessionRefresh, page, persistThread, presentActionResponse, send]);
+    if (action.href) {
+      closeDecisionDialogForNavigation();
+      window.location.assign(action.href);
+    }
+  }, [activeAgent, closeDecisionDialog, closeDecisionDialogForNavigation, currentPageAgent, executeAssistantAction, onSessionRefresh, page, persistThread, presentActionResponse, send]);
 
   const persistRecoveredThread = useCallback(() => {
     persistThread(PRIMARY_ASSISTANT_THREAD, 'retry');
@@ -1495,6 +1619,7 @@ export default function GlobalAssistant({
         const latestLocal = useAssistantStore.getState().threads[PRIMARY_ASSISTANT_THREAD];
         if (!Array.isArray(data?.items)) {
           if (journal) persistRecoveredThread();
+          setAssistantThreadHydrated(true);
           return;
         }
         const item = data.items.find((candidate: { agentId?: unknown } | null) => candidate?.agentId === PRIMARY_ASSISTANT_THREAD);
@@ -1516,6 +1641,7 @@ export default function GlobalAssistant({
         hydrateThread(PRIMARY_ASSISTANT_THREAD, merged);
         const hydratedThread = useAssistantStore.getState().threads[PRIMARY_ASSISTANT_THREAD];
         const persistedFocusedTaskId = hydratedThread.focusedTaskId;
+        setAssistantThreadHydrated(true);
 
         if (journal) persistRecoveredThread();
 
@@ -1547,12 +1673,20 @@ export default function GlobalAssistant({
         focusTaskCard(PRIMARY_ASSISTANT_THREAD, CURRENT_STATUS_TASK_ID);
       })
       .catch(() => {
-        if (!cancelled && journal) persistRecoveredThread();
+        if (!cancelled) {
+          if (journal) persistRecoveredThread();
+          setAssistantThreadHydrated(true);
+        }
       });
     return () => {
       cancelled = true;
     };
   }, [executeAssistantAction, focusTaskCard, hydrateThread, persistRecoveredThread, stablePersistenceScope, upsertTaskCard]);
+
+  useEffect(() => {
+    if (!assistantThreadHydrated || mode !== 'chat' || panelView !== 'chat') return;
+    revealConversationWelcomeOnce();
+  }, [assistantThreadHydrated, mode, panelView, revealConversationWelcomeOnce]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1761,6 +1895,8 @@ export default function GlobalAssistant({
   useEffect(() => {
     setLiveContext(null);
     setDecisionTotal(null);
+    decisionDialogRestoreFocusRef.current = false;
+    setDecisionDialog(null);
   }, [page]);
 
   useEffect(() => {
@@ -1779,6 +1915,8 @@ export default function GlobalAssistant({
     persistThread(activeAgent);
     setAssistantTool(null);
     setPanelView('chat');
+    setDecisionDialog(null);
+    setWelcomeBubbleVisible(false);
     setMode('breathing');
     window.requestAnimationFrame(() => launcherButtonRef.current?.focus());
   }, [activeAgent, persistThread]);
@@ -1837,12 +1975,12 @@ export default function GlobalAssistant({
   useEffect(() => {
     if (mode !== 'chat' && assistantTool !== 'knowledge-intake') return;
     const closePanel = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape' || event.defaultPrevented) return;
+      if (event.key !== 'Escape' || event.defaultPrevented || decisionDialog) return;
       closeAssistant();
     };
     window.addEventListener('keydown', closePanel);
     return () => window.removeEventListener('keydown', closePanel);
-  }, [assistantTool, closeAssistant, mode]);
+  }, [assistantTool, closeAssistant, decisionDialog, mode]);
 
   useEffect(() => {
     const handleResize = () => {
@@ -2014,18 +2152,6 @@ export default function GlobalAssistant({
                 </div>
               </div>
               <div className="flex items-center gap-1">
-                {!assistantTool && panelView === 'decision' && focusedRunControl && (
-                  <button
-                    type="button"
-                    onClick={() => void toggleTaskPaused()}
-                    disabled={loading}
-                    className="rounded-md p-1.5 text-text-muted hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
-                    title={focusedRunControl.actionId === 'resume_task' ? '继续当前任务' : '暂停当前任务'}
-                    aria-label={focusedRunControl.actionId === 'resume_task' ? '继续当前任务' : '暂停当前任务'}
-                  >
-                    {focusedRunControl.actionId === 'resume_task' ? <Play size={15} /> : <Pause size={15} />}
-                  </button>
-                )}
                 <button type="button" onClick={closeAssistant} className="rounded-md p-1.5 text-text-muted hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent" title="关闭窗口（任务继续）" aria-label="关闭灵枢助手窗口，任务继续运行">
                   <X size={15} />
                 </button>
@@ -2042,120 +2168,6 @@ export default function GlobalAssistant({
                     onSessionRefresh?.();
                   }}
                 />
-              </div>
-            ) : panelView === 'approvals' ? (
-              <motion.div
-                data-assistant-surface="decision"
-                data-assistant-page="decision-detail"
-                initial={{ opacity: 0, x: reduceMotion ? 0 : 8 }}
-                animate={{ opacity: 1, x: 0 }}
-                transition={spatialTransition}
-                className="min-h-0 flex-1 overflow-y-auto bg-surface-2 p-4"
-              >
-                <AssistantDecisionCenter
-                  page={page}
-                  key={`${persistenceScopeKey}:${page}:detail`}
-                  active={mode === 'chat'}
-                  onOpenChat={returnToConversation}
-                  onFeedChange={handleDecisionFeedChange}
-                  variant="detail"
-                />
-              </motion.div>
-            ) : panelView === 'decision' && focusedTaskCard ? (
-              <div
-                data-assistant-surface="decision"
-                className="min-h-0 flex-1 overflow-y-auto bg-surface-2 px-4 py-4"
-              >
-                <article className="rounded-lg border border-border bg-surface p-4">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="ls-type-label-medium text-accent">灵小枢已整理</p>
-                      <h3 className="ls-type-title-medium mt-1 text-text-primary">{focusedTaskCard.title}</h3>
-                    </div>
-                    <span className="ls-type-label-medium shrink-0 rounded-full border border-border bg-surface-2 px-2 py-1 text-text-secondary">
-                      {taskStatusLabel(focusedTaskCard)}
-                    </span>
-                  </div>
-
-                  <p className="ls-type-body-medium mt-4 font-semibold text-text-primary">{focusedTaskCard.conclusion}</p>
-                  {focusedTaskCard.details.length > 0 && (
-                    <ul className="mt-3 space-y-2 border-l-2 border-accent/30 pl-3">
-                      {focusedTaskCard.details.map(detail => (
-                        <li key={detail} className="ls-type-body-small text-text-secondary">{detail}</li>
-                      ))}
-                    </ul>
-                  )}
-
-                  {focusedTaskCard.items.length > 0 && (
-                    <div className="mt-4 space-y-2" aria-label="待调整视频">
-                      {focusedTaskCard.items.map(item => (
-                        <div key={item.id} className="flex min-w-0 gap-3 rounded-md border border-border bg-surface-2 p-2.5">
-                          <div className="h-16 w-12 shrink-0 overflow-hidden rounded bg-surface-3">
-                            {item.thumbnailUrl ? (
-                              <img src={item.thumbnailUrl} alt="" className="h-full w-full object-cover" loading="lazy" />
-                            ) : (
-                              <div className="ls-type-label-small flex h-full items-center justify-center px-1 text-center text-text-muted">暂无缩略图</div>
-                            )}
-                          </div>
-                          <div className="min-w-0 flex-1">
-                            <p className="ls-type-label-medium line-clamp-2 text-text-primary">{item.title}</p>
-                            {item.accountLabel && <p className="ls-type-body-small mt-1 truncate text-text-muted">{item.accountLabel}</p>}
-                            <div className="mt-1.5 flex flex-wrap gap-1.5">
-                              {item.transition && <span className="ls-type-label-small rounded bg-accent-glow px-1.5 py-0.5 text-accent">{item.transition}</span>}
-                              {item.note && <span className="ls-type-label-small rounded bg-surface px-1.5 py-0.5 text-text-secondary">{item.note}</span>}
-                            </div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  {(focusedTaskCard.primaryAction || focusedTaskCard.secondaryActions.length > 0) && (
-                    <div className="mt-5 grid gap-2">
-                      {focusedTaskCard.primaryAction && (
-                        <button
-                          type="button"
-                          disabled={focusedTaskCard.primaryAction.disabled || loading}
-                          onClick={() => void handleTaskCardAction(focusedTaskCard, focusedTaskCard.primaryAction!)}
-                          className="btn-primary ls-type-label-large w-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2"
-                        >
-                          {focusedTaskCard.primaryAction.label}
-                        </button>
-                      )}
-                      {focusedTaskCard.secondaryActions.length > 0 && (
-                        <div className="grid grid-cols-2 gap-2">
-                          {focusedTaskCard.secondaryActions.map(action => (
-                            <button
-                              key={action.id}
-                              type="button"
-                              disabled={action.disabled || loading}
-                              onClick={() => void handleTaskCardAction(focusedTaskCard, action)}
-                              className="ls-type-label-medium rounded-md border border-border bg-surface px-3 py-2 text-text-secondary hover:border-accent/40 hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-40"
-                            >
-                              {action.label}
-                            </button>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {focusedTaskCard.workspace && (
-                    <a
-                      href={focusedTaskCard.workspace.href}
-                      className="ls-type-label-medium mt-4 block rounded-md border border-border bg-surface-2 px-3 py-2 text-center text-accent hover:border-accent/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
-                    >
-                      {focusedTaskCard.workspace.label}
-                    </a>
-                  )}
-                </article>
-                <button
-                  type="button"
-                  onClick={returnToConversation}
-                  className="ls-type-label-medium mt-3 w-full rounded-md px-3 py-2 text-text-muted hover:bg-surface hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
-                >
-                  返回对话
-                </button>
               </div>
             ) : isCustomerTodoView ? (
               <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
@@ -2225,8 +2237,12 @@ export default function GlobalAssistant({
                   }}
                 >
                   <div className="space-y-4">
-                    {!activeThread.messages.length && (
-                      <div className="flex items-start gap-2">
+                    {welcomeBubbleVisible && !activeThread.messages.length && (
+                      <div
+                        data-assistant-bubble="welcome"
+                        className="ls-assistant-bubble-enter flex items-start gap-2"
+                        style={assistantBubbleStyle(0)}
+                      >
                         <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-text-primary text-white"><Bot size={13} /></div>
                         <div className="ls-messenger-bubble ls-messenger-bubble--inbound">
                           <p className="font-semibold text-text-primary">我是{activeAgentLabel}</p>
@@ -2236,7 +2252,12 @@ export default function GlobalAssistant({
                     )}
 
                     {activeThread.messages.map((msg, index) => (
-                      <div key={index} className={`flex gap-2 ${msg.role === 'user' ? 'justify-end' : ''}`}>
+                      <div
+                        key={`${msg.role}-${index}`}
+                        data-assistant-bubble={msg.role}
+                        className={`ls-assistant-bubble-enter flex gap-2 ${msg.role === 'user' ? 'justify-end' : ''}`}
+                        style={assistantBubbleStyle(index + (welcomeBubbleVisible ? 1 : 0))}
+                      >
                         {msg.role === 'assistant' && <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-text-primary text-white"><Bot size={13} /></div>}
                         <div className={msg.role === 'user'
                           ? 'ls-messenger-bubble ls-messenger-bubble--outbound whitespace-pre-line'
@@ -2249,21 +2270,34 @@ export default function GlobalAssistant({
                     ))}
 
                     {loading && (
-                      <div className="flex gap-2">
+                      <div
+                        data-assistant-bubble="loading"
+                        className="ls-assistant-bubble-enter flex gap-2"
+                        style={assistantBubbleStyle(activeThread.messages.length + (welcomeBubbleVisible ? 1 : 0))}
+                      >
                         <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-text-primary text-white"><Loader2 size={13} className="motion-safe:animate-spin" /></div>
                         <div className="ls-messenger-bubble ls-messenger-bubble--inbound text-text-muted">思考中...</div>
                       </div>
                     )}
 
                     {focusedTaskCard && (
-                      <div className="flex items-start gap-2" data-assistant-summary="task-card">
+                      <div
+                        key={`task-${focusedTaskCard.taskId}`}
+                        className="ls-assistant-summary-bubble-enter flex items-start gap-2"
+                        data-assistant-bubble="task-summary"
+                        data-assistant-summary="task-card"
+                        style={assistantBubbleStyle(activeThread.messages.length + (welcomeBubbleVisible ? 2 : 1))}
+                      >
                         <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-text-primary text-white"><Bot size={13} /></div>
                         <button
                           type="button"
                           className="assistant-decision-summary min-w-0 flex-1"
-                          onClick={() => {
+                          onClick={event => {
                             focusTaskCard(activeAgent, focusedTaskCard.taskId);
-                            setPanelView('decision');
+                            openDecisionDialog(
+                              { kind: 'task', taskId: focusedTaskCard.taskId },
+                              event.currentTarget,
+                            );
                           }}
                           aria-label={`查看任务详情：${focusedTaskCard.title}`}
                         >
@@ -2281,13 +2315,19 @@ export default function GlobalAssistant({
                       </div>
                     )}
 
-                    <div className="pl-9" data-assistant-summary="decision-feed">
+                    <div
+                      key={`decision-feed-${decisionFeedRevision}`}
+                      className="ls-assistant-summary-bubble-enter pl-9"
+                      data-assistant-bubble="decision-summary"
+                      data-assistant-summary="decision-feed"
+                      style={assistantBubbleStyle(activeThread.messages.length + (welcomeBubbleVisible ? 3 : 2))}
+                    >
                       <AssistantDecisionCenter
                         page={page}
-                        key={`${persistenceScopeKey}:${page}:summary`}
+                        key={`${persistenceScopeKey}:${page}:summary:${decisionFeedRevision}`}
                         active={mode === 'chat' && panelView === 'chat'}
                         onOpenChat={returnToConversation}
-                        onOpenDetail={() => setPanelView('approvals')}
+                        onOpenDetail={trigger => openDecisionDialog({ kind: 'feed' }, trigger)}
                         onFeedChange={handleDecisionFeedChange}
                         variant="summary"
                       />
@@ -2333,6 +2373,140 @@ export default function GlobalAssistant({
           </motion.section>
         )}
       </AnimatePresence>
+
+      <Modal
+        open={Boolean(decisionDialog)}
+        title={decisionDialog?.kind === 'task' ? (dialogTaskCard?.title || '任务详情') : '待你决定'}
+        footer={null}
+        width={640}
+        centered
+        destroyOnHidden
+        getContainer={() => document.body}
+        onCancel={closeDecisionDialog}
+        afterClose={restoreDecisionDialogFocus}
+        focusTriggerAfterClose={false}
+        mask={{ closable: false }}
+        className="ls-assistant-decision-dialog"
+        styles={{ body: { maxHeight: 'min(70dvh, 680px)', overflowY: 'auto' } }}
+      >
+        <div
+          data-global-assistant="decision-dialog"
+          data-assistant-detail-kind={decisionDialog?.kind || undefined}
+          data-assistant-surface="decision"
+        >
+          {decisionDialog?.kind === 'feed' ? (
+            <AssistantDecisionCenter
+              page={page}
+              key={`${persistenceScopeKey}:${page}:dialog`}
+              active
+              onOpenChat={closeDecisionDialog}
+              onNavigate={closeDecisionDialogForNavigation}
+              onFeedChange={handleDecisionDialogFeedChange}
+              onActionResult={handleDecisionActionResult}
+              variant="detail"
+              showHeading={false}
+            />
+          ) : dialogTaskCard ? (
+            <article className="assistant-task-dialog-card rounded-lg border border-border bg-surface">
+              <div className="flex items-center justify-between gap-3 border-b border-border px-5 py-3">
+                <p className="ls-type-label-medium text-accent">灵小枢已整理</p>
+                <div className="flex items-center gap-2">
+                  <span className="ls-type-label-medium shrink-0 rounded-full border border-border bg-surface-2 px-2 py-1 text-text-secondary">
+                    {taskStatusLabel(dialogTaskCard)}
+                  </span>
+                  {focusedRunControl && (
+                    <button
+                      type="button"
+                      onClick={() => void toggleTaskPaused()}
+                      disabled={loading}
+                      className="inline-flex min-h-9 items-center gap-1.5 rounded-md border border-border bg-surface px-3 text-text-secondary hover:border-accent/40 hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-40"
+                      title={focusedRunControl.actionId === 'resume_task' ? '继续当前任务' : '暂停当前任务'}
+                      aria-label={focusedRunControl.actionId === 'resume_task' ? '继续当前任务' : '暂停当前任务'}
+                    >
+                      {focusedRunControl.actionId === 'resume_task' ? <Play size={15} /> : <Pause size={15} />}
+                      <span className="ls-type-label-medium">{focusedRunControl.actionId === 'resume_task' ? '继续' : '暂停'}</span>
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              <div className="px-5 py-4">
+                <p className="ls-type-body-medium font-semibold text-text-primary">{dialogTaskCard.conclusion}</p>
+                {dialogTaskCard.details.length > 0 && (
+                  <ul className="mt-3 space-y-2 border-l-2 border-accent/30 pl-3">
+                    {dialogTaskCard.details.map(detail => (
+                      <li key={detail} className="ls-type-body-small text-text-secondary">{detail}</li>
+                    ))}
+                  </ul>
+                )}
+
+                {dialogTaskCard.items.length > 0 && (
+                  <div className="mt-4 grid gap-2 sm:grid-cols-2" aria-label="待调整视频">
+                    {dialogTaskCard.items.map(item => (
+                      <div key={item.id} className="flex min-w-0 gap-3 rounded-md border border-border bg-surface-2 p-2.5">
+                        <div className="h-20 w-14 shrink-0 overflow-hidden rounded bg-surface-3">
+                          {item.thumbnailUrl ? (
+                            <img src={item.thumbnailUrl} alt="" className="h-full w-full object-cover" loading="lazy" />
+                          ) : (
+                            <div className="ls-type-label-small flex h-full items-center justify-center px-1 text-center text-text-muted">暂无缩略图</div>
+                          )}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="ls-type-label-medium line-clamp-2 text-text-primary">{item.title}</p>
+                          {item.accountLabel && <p className="ls-type-body-small mt-1 truncate text-text-muted">{item.accountLabel}</p>}
+                          <div className="mt-1.5 flex flex-wrap gap-1.5">
+                            {item.transition && <span className="ls-type-label-small rounded bg-accent-glow px-1.5 py-0.5 text-accent">{item.transition}</span>}
+                            {item.note && <span className="ls-type-label-small rounded bg-surface px-1.5 py-0.5 text-text-secondary">{item.note}</span>}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {(dialogTaskCard.primaryAction || dialogTaskCard.secondaryActions.length > 0 || dialogTaskCard.workspace) && (
+                <footer className="assistant-task-dialog-card__actions flex flex-wrap items-center justify-end gap-2 border-t border-border bg-surface px-5 py-3">
+                  {dialogTaskCard.workspace && (
+                    <a
+                      href={dialogTaskCard.workspace.href}
+                      onClick={() => closeDecisionDialogForNavigation()}
+                      className="ls-type-label-medium mr-auto inline-flex min-h-10 items-center rounded-md border border-border bg-surface px-3 text-accent hover:border-accent/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+                    >
+                      {dialogTaskCard.workspace.label}
+                    </a>
+                  )}
+                  {dialogTaskCard.secondaryActions.map(action => (
+                    <button
+                      key={action.id}
+                      type="button"
+                      disabled={action.disabled || loading}
+                      onClick={() => void handleTaskCardAction(dialogTaskCard, action)}
+                      className="ls-type-label-medium min-h-10 rounded-md border border-border bg-surface px-3 text-text-secondary hover:border-accent/40 hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      {action.label}
+                    </button>
+                  ))}
+                  {dialogTaskCard.primaryAction && (
+                    <button
+                      type="button"
+                      disabled={dialogTaskCard.primaryAction.disabled || loading}
+                      onClick={() => void handleTaskCardAction(dialogTaskCard, dialogTaskCard.primaryAction!)}
+                      className="btn-primary ls-type-label-large min-h-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2"
+                    >
+                      {dialogTaskCard.primaryAction.label}
+                    </button>
+                  )}
+                </footer>
+              )}
+            </article>
+          ) : decisionDialog?.kind === 'task' ? (
+            <div className="ls-type-body-medium rounded-lg border border-border bg-surface-2 px-4 py-8 text-center text-text-secondary" role="status">
+              任务状态已经更新，请关闭后查看最新概要。
+            </div>
+          ) : null}
+        </div>
+      </Modal>
 
       <Badge count={decisionTotal ?? pendingCount} overflowCount={9} size="small">
         <Button

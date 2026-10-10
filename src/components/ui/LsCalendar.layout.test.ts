@@ -164,7 +164,8 @@ assert.match(source, /封面暂不可用/, 'cover failure copy must be neutral a
 assert.match(source, /<LsMediaStateFrame state=\{mediaState\}/, 'calendar covers must use the shared stable media-state frame');
 assert.match(source, /className="ls-calendar-event-poster"[^]*?ls-calendar-event-platform-badge/, 'weekly cards retain the account identity over the poster');
 assert.match(source, /item\.status !== 'planned'[^]*?ls-calendar-event-status-badge/, 'weekly covers suppress only the redundant planned badge while retaining exceptional states');
-assert.match(source, /<Drawer title="排期详情"/);
+assert.match(source, /detailsTitle = '排期详情'/);
+assert.match(source, /<Drawer title=\{detailsTitle\}/);
 assert.match(source, /const revealObserverRef = useRef<IntersectionObserver \| null>\(null\)/, 'each calendar instance must own one reveal observer');
 assert.match(source, /revealedEventIdsRef\.current\.has\(info\.event\.id\)/, 'stable event ids prevent replay after refresh or remount');
 assert.match(source, /eventWillUnmount=\{info => \{[\s\S]*?\.unobserve\(element\)[\s\S]*?mountedEventElementsRef\.current\.delete\(element\)/, 'unmounted cards must be detached from reveal observation');

@@ -38,6 +38,25 @@ assert.ok(matrixIssues({ ...pack, matrixPlan: [row('a', { weeklyCount: 2 }), row
 const edited = normalizeVideoPlan({ ...plans[0], theme: '手工确认主题', materialIds: ['asset-a'] });
 assert.equal(bindMatrixVideo(edited, row('a', { audience: '新受众' })).theme, '手工确认主题');
 assert.deepEqual(bindMatrixVideo(edited, row('a', { productName: '产品 B' })).materialIds, [], 'changing product must not retain old product material bindings');
+const independentlySelected = normalizeVideoPlan({ ...plans[0], productId: 'product-b', productName: '产品 B', materialIds: ['asset-b'], scenePlan: [{ source: 'material', materialId: 'asset-b' }] });
+const independentlyBound = bindMatrixVideo(independentlySelected, row('a'));
+assert.equal(independentlyBound.productName, '产品 B', 'a stable product selection must not be replaced by the account default product');
+assert.deepEqual(independentlyBound.materialIds, ['asset-b'], 'syncing account strategy must preserve independently selected product materials');
+assert.deepEqual(independentlyBound.scenePlan, [{ source: 'material', materialId: 'asset-b' }], 'syncing account strategy must preserve independently selected product scenes');
+const productionTask = pack.tasks.find(task => task.templateId === 'production')!;
+const withFirstPlan = (plan: ReturnType<typeof normalizeVideoPlan>): WeeklyPackage => ({ ...pack, tasks: pack.tasks.map(task => task.templateId === 'production' ? { ...productionTask, videoPlans: [plan, ...plans.slice(1)] } : task) });
+const multiProductPack = withFirstPlan(independentlyBound);
+assert.deepEqual(matrixIssues(multiProductPack), [], 'an account default product must not reject a video with an explicit stable product selection');
+const instagramRow = row('b', { platform: 'instagram', language: 'es', audience: '零售买家', objective: '增加互动', contentDirection: '使用场景' });
+const familySibling = bindMatrixVideo(normalizeVideoPlan({ ...plans[1], contentFamilyId: independentlyBound.contentFamilyId, productionRole: 'platform_adaptation', masterContentId: independentlyBound.contentId, productId: 'product-b', productName: '产品 B 新名称' }), instagramRow);
+const familyPack = { ...multiProductPack, matrixPlan: [rows[0], instagramRow], tasks: multiProductPack.tasks.map(task => task.templateId === 'production' ? { ...productionTask, videoPlans: [independentlyBound, familySibling] } : task) };
+assert.deepEqual(matrixIssues(familyPack), [], 'versions in one family may use different display names when their stable product id is unchanged');
+const wrongProductSibling = normalizeVideoPlan({ ...familySibling, productId: 'product-c', productName: '产品 C' });
+const mixedProductFamilyPack = { ...familyPack, tasks: familyPack.tasks.map(task => task.templateId === 'production' ? { ...productionTask, videoPlans: [independentlyBound, wrongProductSibling] } : task) };
+assert.ok(matrixIssues(mixedProductFamilyPack).includes('同一母版的平台版本必须使用同一产品'), 'one content family must not mix two stable product ids');
+assert.ok(matrixIssues({ ...multiProductPack, matrixPlan: [row('a', { cta: '填写表单' }), rows[1]] }).includes('账号策略已修改，请同步视频计划后再执行'), 'an explicit product selection must not hide a changed account CTA');
+assert.ok(matrixIssues(withFirstPlan(normalizeVideoPlan({ ...plans[0], productId: '', productName: '产品 B' }))).includes('账号策略已修改，请同步视频计划后再执行'), 'legacy videos without a product id must still match the account default product');
+assert.ok(matrixIssues(withFirstPlan(normalizeVideoPlan({ ...plans[0], productId: 'product-b', productName: '' }))).includes('账号策略已修改，请同步视频计划后再执行'), 'a product id without a product name is not a complete independent product selection');
 assert.equal(bindMatrixVideo(edited).matrix?.accountId, '', 'unbinding explicitly makes content production-only');
 
 const config = normalizeDigitalEmployeeConfig({ companyName: '测试公司', focusProducts: '产品 A', enabledWorkflows: ['viral_clone', 'content_publish'], publishingTargets: targets, videoLanguages: ['en', 'zh'], socialCadence: '' });

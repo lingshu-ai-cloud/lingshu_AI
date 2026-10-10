@@ -43,6 +43,7 @@ import BusinessHealthOverview, { type BusinessHealthOverviewRange } from "./smar
 import BusinessDataReview from "./smartBusiness/BusinessDataReview";
 import { LsCalendar, calendarDayKey, type LsCalendarEvent } from "./ui/LsCalendar";
 import { thumbnailUrlWithSourceFallback } from "../lib/calendarModel";
+import WeeklyContentProgressPanel from "./smartBusiness/WeeklyContentProgressPanel";
 
 export type SmartBusinessView = "home" | "matrix" | "production" | "review";
 
@@ -328,13 +329,19 @@ export function WeeklyCommandCenter({
   data,
   statusLabel,
   actions,
+  status,
   notice,
+  onRefresh,
+  onOpenProductionProgress,
   className = "",
 }: {
   data: DigitalEmployeeOverview;
   statusLabel: string;
   actions?: ReactNode;
+  status?: ReactNode;
   notice?: ReactNode;
+  onRefresh?: () => void;
+  onOpenProductionProgress?: (taskId: string, contentItemId: string) => void;
   className?: string;
 }) {
   const display = buildSmartBusinessDisplayModel(data);
@@ -398,7 +405,15 @@ export function WeeklyCommandCenter({
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2">
           <h2 className="text-xl font-semibold">周经营计划</h2>
-          <Tag color={statusLabel === "执行中" ? "processing" : statusLabel === "待确认" ? "warning" : "default"}>{statusLabel}</Tag>
+          <Tag color={statusLabel === "执行中"
+            ? "processing"
+            : statusLabel === "执行失败"
+              ? "error"
+              : statusLabel === "已完成"
+                ? "success"
+                : ["待确认", "准备中", "待处理", "等待外部服务", "已暂停"].includes(statusLabel)
+                  ? "warning"
+                  : "default"}>{statusLabel}</Tag>
           {data.goal && (
             <WeeklyRangeVisual startsAt={data.goal.startsAt} endsAt={data.goal.endsAt} />
           )}
@@ -406,25 +421,26 @@ export function WeeklyCommandCenter({
       </div>
       {actions && <div aria-label="智能经营控制" className="flex max-w-full flex-wrap items-center justify-end gap-2">{actions}</div>}
     </div>
+    {status && <div aria-label="本周生产状态" className="border-b border-slate-100 bg-white px-4 py-2.5">{status}</div>}
     <div className="grid gap-px bg-slate-100 sm:grid-cols-3 lg:grid-cols-6">
       {[
         { label: "待验收成片", value: `${weeklyStatusCounts.review} 条`, color: "var(--color-accent)", note: weeklyStatusCounts.review > 0 ? "等待你确认成片效果" : "当前没有待验收成片" },
         { label: "本周计划视频", value: `${plannedOutputCount} 条`, color: "var(--color-visual-lavender)", note: `${plannedPublishCount} 个发布任务 · ${operatingContext?.accounts.length || 0} 个账号` },
         { label: "本周视频总时长", value: plannedDurationSeconds > 0 ? `${plannedDurationSeconds} 秒` : "待确认", color: "var(--color-visual-teal)", note: operatingContext?.outputs.formats.join(" / ") || "短视频" },
-        { label: "本周成本范围", value: budgetMax > 0 ? `¥${budgetMin.toFixed(0)}–${budgetMax.toFixed(0)}` : "待核算", color: "var(--color-visual-pink)", note: operatingContext ? `中位估算 ¥${operatingContext.budget.totalCny.toFixed(2)} · 已包含本周全部视频制作` : "按本周视频生产计划综合估算" },
+        { label: "本周成本范围", value: budgetMax > 0 ? `¥${budgetMin.toFixed(0)}–${budgetMax.toFixed(0)}` : "待核算", color: "var(--color-visual-pink)", note: operatingContext ? `中位估算 ¥${operatingContext.budget.totalCny.toFixed(2)} · 计划估算，逐镜生成与重试费用待核算` : "计划估算，逐镜生成与重试费用待核算" },
         { label: "预计制作成本", value: estimatedContentCost > 0 ? `¥${estimatedContentCost.toFixed(2)}` : "待核算", color: "var(--color-text-primary)", note: "按当前周计划与供应商报价估算" },
         { label: "已结算成本", value: settledContentCost > 0 ? `¥${settledContentCost.toFixed(2)}` : "暂无结算", color: "var(--color-text-primary)", note: "仅统计供应商对账回执" },
       ].map(item => <article key={item.label} className="bg-white px-4 py-4"><Statistic title={item.label} value={item.value} styles={{ content: { color: item.color } }}/><p className="mt-2 text-xs text-text-secondary">{item.note}</p></article>)}
     </div>
     <div className="border-t border-border">
-      <LsCalendar events={calendarEvents} label="本周发布日历" initialDate={display.startsAt ? calendarDayKey(display.startsAt) : undefined} date={display.startsAt ? calendarDayKey(display.startsAt) : undefined} initialView="dayGridWeek" eventCardMode="media" density="compact" flush fixedHeight="clamp(300px, calc(100dvh - 270px), 640px)" firstDay={display.startsAt ? new Date(`${display.startsAt}T00:00:00+08:00`).getDay() : 1} onEventClick={event => {
+      <LsCalendar events={calendarEvents} label="本周发布日历" initialDate={display.startsAt ? calendarDayKey(display.startsAt) : undefined} date={display.startsAt ? calendarDayKey(display.startsAt) : undefined} initialView="dayGridWeek" eventCardMode="media" density="compact" flush fixedHeight="clamp(300px, calc(100dvh - 270px), 640px)" firstDay={display.startsAt ? new Date(`${display.startsAt}T00:00:00+08:00`).getDay() : 1} detailsTitle="内容制作进度" detailsMedia="compact" renderDetails={(event, closeDetails) => {
         const item = event.data as UnifiedPlanContent;
-        if (!item.inspirationReference || typeof window === "undefined") return false;
-        window.dispatchEvent(new CustomEvent("lingshu:navigate", { detail: inspirationReferenceNavigationDetail(item.inspirationReference, item.contentId) }));
-        return true;
-      }} renderDetails={event => {
-        const item = event.data as UnifiedPlanContent;
-        return <div className="space-y-3"><div className="flex flex-wrap gap-2">{item.tags.map(tag => <Tag key={tag}>#{tag}</Tag>)}</div><dl className="ls-calendar-details"><div><dt>产品</dt><dd>{item.productName}</dd></div><div><dt>发布文案</dt><dd>{item.caption || "待完善"}</dd></div></dl></div>;
+        return <WeeklyContentProgressPanel key={item.contentId} data={data} contentId={item.contentId} onRefresh={onRefresh}
+          onOpenProduction={onOpenProductionProgress ? (taskId, contentItemId) => { closeDetails(); onOpenProductionProgress(taskId, contentItemId); } : undefined}
+          onOpenReference={item.inspirationReference ? () => {
+            closeDetails();
+            window.dispatchEvent(new CustomEvent("lingshu:navigate", { detail: inspirationReferenceNavigationDetail(item.inspirationReference!, item.contentId) }));
+          } : undefined}/>;
       }}/>
     </div>
     {notice && <div className="flex flex-wrap items-center gap-2 border-t border-slate-100 bg-slate-50/70 px-5 py-3">{notice}</div>}
@@ -554,42 +570,84 @@ function contentThumbnailUrl(plan: VideoCreationPlan, queueItem: ContentQueueIte
 }
 
 function buildSmartBusinessDisplayModel(data: DigitalEmployeeOverview, selectedAccountId = ""): SmartBusinessDisplayModel {
+  // Older model responses sometimes persisted a structured title or its accidental
+  // string coercion. Only named text fields are displayable; never stringify facts.
+  const displayText = (value: unknown, depth = 0): string => {
+    if (typeof value === "string") {
+      const normalized = value.trim();
+      return /\[object\s+[^\]]+\]|^(?:undefined|null|NaN)$/i.test(normalized) ? "" : normalized;
+    }
+    if (!value || typeof value !== "object" || Array.isArray(value) || depth >= 3) return "";
+    const record = value as Record<string, unknown>;
+    for (const key of ["title", "text", "headline", "name", "label", "zh-CN", "zh", "en"]) {
+      const candidate = displayText(record[key], depth + 1);
+      if (candidate) return candidate;
+    }
+    return "";
+  };
   const operatingContext = data.plan?.businessPackage?.operatingContext;
   const packagePlans = data.plan?.businessPackage?.tasks.find(task => task.templateId === "production")?.videoPlans || [];
   const goalPlans = data.goal?.videoPlans || [];
   const sourcePlans = packagePlans.length ? packagePlans : goalPlans;
-  const queue = data.contentQueue?.items || [];
+  const runMatches = Boolean(data.run && data.run.goal_id === data.goal?.id && data.run.plan_id === data.plan?.id);
+  const queue = (data.contentQueue?.items || []).filter(item => item.origin === "weekly_plan"
+    && Boolean(data.goal?.id && data.plan?.id)
+    && item.lineage.goalId === data.goal!.id && item.lineage.planId === data.plan!.id
+    && (item.taskId ? runMatches && data.tasks.some(task => task.id === item.taskId && task.run_id === data.run!.id)
+      : !item.projectIds.length && (!data.run || runMatches)));
   const deliveries = data.deliveries || [];
   const connectedIds = new Set((data.config?.publishingTargets || []).map(target => target.accountId));
   const operatingAccounts = operatingContext?.accounts || [];
   const accountById = new Map(operatingAccounts.map(account => [account.accountId, account]));
   const targetById = new Map((data.config?.publishingTargets || []).map(target => [target.accountId, target]));
-  const queueByContentId = new Map(queue.filter(item => item.contentId).map(item => [item.contentId, item]));
   const claimedQueueIds = new Set<string>();
 
   const findQueueItem = (plan: VideoCreationPlan) => {
-    const direct = plan.contentId ? queueByContentId.get(plan.contentId) : undefined;
-    if (direct) {
-      claimedQueueIds.add(direct.id);
-      return direct;
+    if (plan.contentId) {
+      const direct = queue.filter(item => item.contentId === plan.contentId);
+      if (direct.length === 1) {
+        claimedQueueIds.add(direct[0]!.id);
+        return direct[0];
+      }
+      // A stable content ID must not borrow another date/account's production.
+      return undefined;
     }
-    const candidate = queue.find(item => !claimedQueueIds.has(item.id)
-      && item.origin === "weekly_plan"
+    const candidates = queue.filter(item => !claimedQueueIds.has(item.id)
+      && !item.contentId
       && item.platform === plan.platform
       && (!plan.matrix?.accountId || item.accountId === plan.matrix.accountId)
       && (!plan.plannedPublishDate || item.plannedPublishDate === plan.plannedPublishDate));
+    const candidate = candidates.length === 1 ? candidates[0] : undefined;
     if (candidate) claimedQueueIds.add(candidate.id);
     return candidate;
   };
+  const sharedProductionItem = (plan: VideoCreationPlan) => {
+    if (plan.productionRole !== "platform_adaptation") return undefined;
+    const masters = sourcePlans.filter(candidate => candidate.productionRole === "master"
+      && (plan.masterContentId ? candidate.contentId === plan.masterContentId
+        : Boolean(plan.contentFamilyId && candidate.contentFamilyId === plan.contentFamilyId))
+      && (!plan.contentFamilyId || candidate.contentFamilyId === plan.contentFamilyId)
+      && (!plan.productId || candidate.productId === plan.productId));
+    if (masters.length !== 1 || !masters[0]!.contentId) return undefined;
+    const candidates = queue.filter(item => item.contentId === masters[0]!.contentId);
+    return candidates.length === 1 ? candidates[0] : undefined;
+  };
 
   const mappedContents = sourcePlans.map((plan, index): UnifiedPlanContent => {
-    const queueItem = findQueueItem(plan) || null;
+    const directQueueItem = findQueueItem(plan) || null;
+    const queueItem = directQueueItem || sharedProductionItem(plan) || null;
     const referencePlan = referencePlanForPublication(sourcePlans, plan);
-    const accountId = plan.matrix?.accountId || queueItem?.accountId || `plan-${plan.platform}`;
+    const accountId = plan.matrix?.accountId || directQueueItem?.accountId || `plan-${plan.platform}`;
     const account = accountById.get(accountId);
     const target = targetById.get(accountId);
-    const identity = plan.contentId || `${plan.platform}-${plan.plannedPublishDate}-${plan.theme}-${index}`;
-    const actual = queueItem ? performanceForQueueItem(queueItem, deliveries) : null;
+    const productName = displayText(plan.productName) || displayText(directQueueItem?.productName) || displayText(data.config?.focusProducts) || "待绑定产品";
+    const referenceTitle = displayText(plan.planningEvidence?.referenceTitle) || displayText(plan.preproduction?.benchmark.title)
+      || displayText(referencePlan.planningEvidence?.referenceTitle) || displayText(referencePlan.preproduction?.benchmark.title);
+    const factualFallback = [productName === "待绑定产品" ? "" : productName, referenceTitle].filter(Boolean).join("｜");
+    const title = displayText(plan.publication?.title) || displayText(plan.theme) || factualFallback || `本周视频 ${index + 1}`;
+    const identity = plan.contentId || `${plan.platform}-${plan.plannedPublishDate}-${title}-${index}`;
+    // Sharing production never copies the master's platform performance/publication.
+    const actual = directQueueItem ? performanceForQueueItem(directQueueItem, deliveries) : null;
     const fallback = demoMetrics(plan.platform, identity);
     const hasActual = Boolean(actual?.hasPlatformData);
     const views = hasActual ? actual?.views || 0 : fallback.views;
@@ -602,10 +660,10 @@ function buildSmartBusinessDisplayModel(data: DigitalEmployeeOverview, selectedA
       id: identity,
       contentId: plan.contentId || identity,
       familyId: plan.contentFamilyId || plan.masterContentId || plan.contentId || identity,
-      title: engagingContentTitle(plan.publication?.title || plan.theme || plan.planningEvidence?.referenceTitle || `本周视频 ${index + 1}`, index),
-      caption: plan.publication?.caption || "",
+      title: engagingContentTitle(title, index),
+      caption: displayText(plan.publication?.caption),
       tags: plan.publication?.tags || [],
-      productName: queueItem?.productName || plan.productName || data.config?.focusProducts || "待绑定产品",
+      productName,
       thumbnailUrl: contentThumbnailUrl(plan, queueItem),
       platform: plan.platform,
       accountId,
@@ -672,7 +730,7 @@ function buildSmartBusinessDisplayModel(data: DigitalEmployeeOverview, selectedA
     : contents.reduce((sum, item) => sum + item.metrics.interactions, 0);
   const publishedCount = actualPublishedCount !== null && actualPublishedCount !== undefined
     ? actualPublishedCount
-    : contents.filter(item => item.status === "completed").length;
+    : contents.filter(item => item.status === "completed" && item.queueItem?.contentId === item.contentId).length;
   const platforms = platformOptions.map(platform => {
     const rows = contents.filter(item => item.platform === platform);
     const platformSnapshot = data.businessSnapshot?.social.platformBreakdown.find(item => item.platform.toLowerCase() === platform);
